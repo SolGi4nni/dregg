@@ -106,30 +106,36 @@ theorem recomp_eval (a : Assignment) :
 
 /-! ## §2 — Membership of each descriptor gate in `committedThresholdDesc.constraints`. -/
 
+-- The descriptor is `core ++ ctLastGateFix`, `core = ([lookup, gate c3, gate c4, gate recomp] ++
+-- binaryGates ++ [pi0, pi1, gate highbit])` (left-assoc). Navigation strips the outer `++
+-- ctLastGateFix` (one extra `mem_append_left`) before reaching the `core` legs; the last-row lemmas
+-- take `mem_append_right` into `ctLastGateFix`.
+
 theorem mem_lookup : hash2Lookup ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_cons_self
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_cons_self
 
 theorem mem_c3 : VmConstraint2.base (.gate c3Body) ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_of_mem; apply List.mem_cons_self
 
 theorem mem_c4 : VmConstraint2.base (.gate c4Body) ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_self
 
 theorem mem_recomp : VmConstraint2.base (.gate recompBody) ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_left
   apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_of_mem
   apply List.mem_cons_self
 
 theorem mem_bin (j : Nat) (hj : j < COMMITTED_DIFF_BITS) :
     VmConstraint2.base (.gate (binBody j)) ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_left; apply List.mem_append_right
+  apply List.mem_append_left; apply List.mem_append_left; apply List.mem_append_right
   simp only [binaryGates]
   exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
 
@@ -137,13 +143,41 @@ theorem mem_pi0 :
     VmConstraint2.base (.piBinding VmRow.first THRESHOLD_COMMITMENT 0)
       ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_right; apply List.mem_cons_self
+  apply List.mem_append_left; apply List.mem_append_right; apply List.mem_cons_self
 
 theorem mem_pi1 :
     VmConstraint2.base (.piBinding VmRow.first FACT_COMMITMENT 1)
       ∈ committedThresholdDesc.constraints := by
   simp only [committedThresholdDesc]
-  apply List.mem_append_right; apply List.mem_cons_of_mem; apply List.mem_cons_self
+  apply List.mem_append_left; apply List.mem_append_right
+  apply List.mem_cons_of_mem; apply List.mem_cons_self
+
+/-! The last-row fix (`ctLastGateFix`) memberships: `ctLastGateFix = [bnd c3, bnd c4, bnd recomp] ++
+(range).map (bnd ∘ binBody) ++ [bnd highbit]` sits at the RIGHT of the descriptor append. -/
+
+theorem mem_c3_last :
+    VmConstraint2.base (.boundary VmRow.last c3Body) ∈ committedThresholdDesc.constraints := by
+  simp only [committedThresholdDesc, ctLastGateFix]
+  apply List.mem_append_right; apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_cons_self
+
+theorem mem_c4_last :
+    VmConstraint2.base (.boundary VmRow.last c4Body) ∈ committedThresholdDesc.constraints := by
+  simp only [committedThresholdDesc, ctLastGateFix]
+  apply List.mem_append_right; apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_cons_of_mem; apply List.mem_cons_self
+
+theorem mem_recomp_last :
+    VmConstraint2.base (.boundary VmRow.last recompBody) ∈ committedThresholdDesc.constraints := by
+  simp only [committedThresholdDesc, ctLastGateFix]
+  apply List.mem_append_right; apply List.mem_append_left; apply List.mem_append_left
+  apply List.mem_cons_of_mem; apply List.mem_cons_of_mem; apply List.mem_cons_self
+
+theorem mem_bin_last (j : Nat) (hj : j < COMMITTED_DIFF_BITS) :
+    VmConstraint2.base (.boundary VmRow.last (binBody j)) ∈ committedThresholdDesc.constraints := by
+  simp only [committedThresholdDesc, ctLastGateFix]
+  apply List.mem_append_right; apply List.mem_append_left; apply List.mem_append_right
+  exact List.mem_map.mpr ⟨j, List.mem_range.mpr hj, rfl⟩
 
 /-! ## §3 — The whole-descriptor soundness bridge. -/
 
@@ -159,10 +193,17 @@ def MeetsCommittedThreshold (hash : List ℤ → ℤ) (e : VmRowEnv) : Prop :=
 
 /-- **THE WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM).** A multi-table witness that `Satisfied2` the
 committed-threshold descriptor, against a SOUND Poseidon2 chip table (the NAMED `ChipTableSound`
-carrier — Poseidon2 collision-resistance) and with at least two rows (so row 0 is an active,
-non-last, first row on which every gate fires and the PI pins bind), forces the genuine semantic
-relation on row 0: the private value meets the committed threshold, the public commitment is a
-genuine hash preimage, and the commitments are the public inputs.
+carrier — Poseidon2 collision-resistance) on ANY non-empty trace (`0 < rows.length` — INCLUDING a
+height-1 trace, where row 0 IS the last row), forces the genuine semantic relation on row 0: the
+private value meets the committed threshold, the public commitment is a genuine hash preimage, and the
+commitments are the public inputs.
+
+⚑ The height-1 coverage is the FIX (the `ctLastGateFix` last-row re-lowering): the semantic gates are
+transition-only `.base (.gate …)`, VACUOUS on the last row (`holdsVm … isLast=true (.gate _) = True`),
+so on a height-1 trace they would drop the whole range/diff/binding chain. Each is now ALSO emitted as
+`.base (.boundary VmRow.last …)`, so `gate_forces` derives `body = 0` on row 0 in BOTH cases (via the
+`.gate` when row 0 is not last, via the last-row boundary when it is). This is exactly what closes the
+forgery the older `1 < rows.length` bridge could not rule out.
 
 The ORDER leg composes `diff_body_zero_iff` + `binary_body_zero_iff` + the recomposition-fold algebra
 (`recomp_eval`) into `RecordCircuit.range_proves_le` — the EXACT conclusion `Crypto/RangeProof.lean`
@@ -172,19 +213,28 @@ theorem committedThreshold_satisfied2_sound
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hsat : Satisfied2 hash committedThresholdDesc minit mfin maddrs t)
-    (hlen : 1 < t.rows.length) :
+    (hlen : 0 < t.rows.length) :
     MeetsCommittedThreshold hash (envAt t 0) := by
-  have hi0 : 0 < t.rows.length := by omega
-  have hlast : (0 + 1 == t.rows.length) = false := by
-    simp only [beq_eq_false_iff_ne]; omega
-  -- every declared gate forces its body to vanish on the active non-last row 0.
+  have hi0 : 0 < t.rows.length := hlen
+  -- every semantic gate forces its body to vanish on row 0 — via the transition `.gate` when row 0 is
+  -- NOT the last row, and via its `.boundary VmRow.last` counterpart (the `ctLastGateFix` fix) when it
+  -- IS. So the range/diff/binding chain binds on row 0 for EVERY trace height, including height-1.
   have gate_forces : ∀ g : EmittedExpr,
       VmConstraint2.base (.gate g) ∈ committedThresholdDesc.constraints →
+      VmConstraint2.base (.boundary VmRow.last g) ∈ committedThresholdDesc.constraints →
       g.eval (envAt t 0).loc = 0 := by
-    intro g hmem
-    have h := hsat.rowConstraints 0 hi0 _ hmem
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlast] at h
-    exact h
+    intro g hgate hbnd
+    by_cases hlast : (0 + 1 == t.rows.length) = true
+    · -- row 0 IS the last row (height-1 trace): the last-row boundary fires.
+      have h := hsat.rowConstraints 0 hi0 _ hbnd
+      simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
+      exact h hlast
+    · -- row 0 is NOT the last row: the transition `.gate` fires.
+      have hfalse : (0 + 1 == t.rows.length) = false := by
+        simp only [Bool.not_eq_true] at hlast; exact hlast
+      have h := hsat.rowConstraints 0 hi0 _ hgate
+      simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hfalse] at h
+      exact h
   -- the two PI pins bind on the first row.
   have pi_forces : ∀ (col k : Nat),
       VmConstraint2.base (.piBinding VmRow.first col k) ∈ committedThresholdDesc.constraints →
@@ -196,16 +246,17 @@ theorem committedThreshold_satisfied2_sound
   -- === ORDER: threshold ≤ value, welded to RecordCircuit.range_proves_le ===
   have hdiff : (envAt t 0).loc DIFF
       = (envAt t 0).loc PRIVATE_VALUE - (envAt t 0).loc THRESHOLD :=
-    (diff_body_zero_iff (envAt t 0).loc).mp (gate_forces c4Body mem_c4)
+    (diff_body_zero_iff (envAt t 0).loc).mp (gate_forces c4Body mem_c4 mem_c4_last)
   have hrec : bitsToInt (bitVals (envAt t 0).loc) = (envAt t 0).loc DIFF := by
     have h := recomp_eval (envAt t 0).loc
-    rw [gate_forces recompBody mem_recomp] at h
+    rw [gate_forces recompBody mem_recomp mem_recomp_last] at h
     omega
   have hbool : Boolean (bitVals (envAt t 0).loc) := by
     intro b hb
     simp only [bitVals, List.mem_map, List.mem_range] at hb
     obtain ⟨j, hj, rfl⟩ := hb
-    exact (binary_body_zero_iff j (envAt t 0).loc).mp (gate_forces (binBody j) (mem_bin j hj))
+    exact (binary_body_zero_iff j (envAt t 0).loc).mp
+      (gate_forces (binBody j) (mem_bin j hj) (mem_bin_last j hj))
   have horder : (envAt t 0).loc THRESHOLD ≤ (envAt t 0).loc PRIVATE_VALUE :=
     range_proves_le _ _ (bitVals (envAt t 0).loc) hbool (hrec.trans hdiff)
   -- === BINDING: threshold_commitment = hash(threshold, blinding), welded to chip_lookup_sound ===
@@ -215,7 +266,7 @@ theorem committedThreshold_satisfied2_sound
     [.var THRESHOLD, .var BLINDING] POSEIDON2_RESULT CHIP_LANES (by decide) hlook
   simp only [List.map_cons, List.map_nil, EmittedExpr.eval] at hdig
   have hpr : (envAt t 0).loc POSEIDON2_RESULT = (envAt t 0).loc THRESHOLD_COMMITMENT := by
-    have h := gate_forces c3Body mem_c3
+    have h := gate_forces c3Body mem_c3 mem_c3_last
     simp only [c3Body, subE, EmittedExpr.eval] at h
     omega
   have hbind : (envAt t 0).loc THRESHOLD_COMMITMENT
@@ -312,13 +363,15 @@ theorem underThreshold_has_no_range_witness :
 
 /-- **`underThreshold_rejected` — a concrete `Satisfied2` that FAILS (constraint bites, whole
 descriptor).** ANY witness whose row-0 private value is strictly below the threshold CANNOT satisfy
-the committed-threshold descriptor (against a sound chip table, with ≥ 2 rows). The hypothesis
-`value < threshold` is freely satisfiable, so this rejection is non-vacuous — the descriptor is a
-genuine, biting filter, not a rubber stamp. Directly contraposes the soundness bridge. -/
+the committed-threshold descriptor (against a sound chip table, on ANY non-empty trace — `0 <
+rows.length`, INCLUDING a single-row trace). The hypothesis `value < threshold` is freely
+satisfiable, so this rejection is non-vacuous — the descriptor is a genuine, biting filter, not a
+rubber stamp. Directly contraposes the (now height-1-covering) soundness bridge, so the height-1
+last-row-vacuity forge the transition-only `.gate` lowering used to admit is now REJECTED. -/
 theorem underThreshold_rejected
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hunder : (envAt t 0).loc PRIVATE_VALUE < (envAt t 0).loc THRESHOLD) :
     ¬ Satisfied2 hash committedThresholdDesc minit mfin maddrs t := by
   intro hsat
