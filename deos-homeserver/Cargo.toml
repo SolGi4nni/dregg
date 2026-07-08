@@ -23,5 +23,46 @@ tokio = { version = "1", features = ["full"] }
 anyhow = "1"
 
 [dev-dependencies]
-reqwest = { version = "0.12", features = ["json"] }
+reqwest = { version = "0.12", features = ["json", "blocking"] }
 serde_json = "1"
+
+# REQUIRED for the embed to compile. continuwuity's own workspace pins these
+# crates to forgejo forks via [patch.crates-io], but Cargo `[patch]` tables do
+# NOT propagate through a git dependency — so without mirroring them here our
+# workspace resolves the crates.io versions, and the crates.io `core_affinity`
+# lacks `set_each_for_current` (a hard compile error in conduwuit_core). These
+# revs are copied verbatim from continuwuity's root Cargo.toml at the pinned rev
+# so our resolution matches upstream's tested one exactly (the other four are
+# behavioral forks: event-listener LIFO scheduling, async-channel, a hyper-util
+# federation-resolver revert, rustyline-async).
+[patch.crates-io.core_affinity]
+git = "https://forgejo.ellis.link/continuwuation/core_affinity_rs"
+rev = "7c7a9dea35382743a63837cdd1d977efdb8f1b8a"
+
+[patch.crates-io.event-listener]
+git = "https://forgejo.ellis.link/continuwuation/event-listener"
+rev = "b2c19bcaf5a0a69c38c034e417bda04a9b991529"
+
+[patch.crates-io.async-channel]
+git = "https://forgejo.ellis.link/continuwuation/async-channel"
+rev = "e990f0006b68dc9bace7a3c95fc90b5c4e44948d"
+
+[patch.crates-io.hyper-util]
+git = "https://forgejo.ellis.link/continuwuation/hyper-util"
+rev = "09fcd3bf4656c81a8ad573bee410ab2b57f60b86"
+
+[patch.crates-io.rustyline-async]
+git = "https://forgejo.ellis.link/continuwuation/rustyline-async"
+rev = "b13aca2cc08d5f78303746cd192d9a03d73e768e"
+
+# REQUIRED for conduwuit_web to compile. askama 0.16.0's caller-relative
+# change-tracking emits `include_bytes!` paths that are wrong for continuwuity's
+# `template!` macro_rules-wrapped `#[derive(Template)]` on this toolchain (the
+# derive's span reports the macro DEFINITION site while rustc resolves the
+# `include_bytes!` against the INVOCATION site — off by the invocation dir depth,
+# so it reads e.g. `pages/account/../askama.toml`, a missing file, and ~50
+# templates fail). Our vendored copy is byte-identical to crates.io 0.16.0 except
+# it falls back to ABSOLUTE include_bytes paths (always resolvable, identically
+# change-tracked). Full rationale: vendor/askama_derive/PATCH.md.
+[patch.crates-io.askama_derive]
+path = "vendor/askama_derive"
