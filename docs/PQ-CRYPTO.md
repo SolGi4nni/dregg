@@ -60,7 +60,8 @@ hybrid's PQ slot once it earns deployment-grade maturity + audit.
 **Irreducible** (assumed, never proved — the shared floor of all lattice crypto, FIPS ML-DSA included):
 MLWE and MSIS hardness (`Lattice.MSISHard` / `MLWESearchHard`).
 
-**The single open lemma — general-n Lyubashevsky–Seiler at d≥2 factors.** Challenge-difference
+**Invertibility — the GENERAL-n lemma is proved; only the tight threshold is open.**
+`InvertibilityHadamard.norm_lt_isUnit`: for ANY n=2^k and ANY prime q, a nonzero v with `‖v‖₂ⁿ < q` is a unit in `ℤ_q[X]/(Xⁿ+1)` — via `q∤N(v) ⟺ unit`, a self-proved Hadamard determinant bound (Mathlib lacks one — proved via Hermitian eigenvalues + AM-GM), and `N(v)≠0` from `Xⁿ+1` irreducibility. Fully general in n and q, welded into `HermineDischarge`, fires at n=8/q=17 (a 7×10⁹-element ring beyond any decide). The ONLY residual is the *tighter* Lyubashevsky–Seiler `q^(d/n)` threshold (vs the `q^(1/n)` proved here) — which needs the ideal-norm multiplicity `q^d ∣ N(v)`, the one genuinely-hard refinement. Prior/complementary: Challenge-difference
 invertibility is proved *parametrically* (no decide) for **every odd prime at n=2** — the `q^(d/n)`-shape
 min-norm bound `minNorm_linear_factor` for linear (d=1) factors, plus the split-vs-inert dichotomy via a
 constructed CRT iso — for **n=4 linear-split** (q≡1 mod 8), and a concrete **degree-2** case (`InvertibilityD2`: n=4, q=13, `X⁴+1`=two irreducible quadratics, min-norm exactly 3, `decide`d). What remains is the general **degree-d≥2**
