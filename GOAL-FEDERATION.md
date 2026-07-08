@@ -377,3 +377,20 @@ Two sequential gates on one pipeline:
 - NOW: config-only capstone test — restart the mesh with a SLOWER block cadence so the verified gate
   keeps pace → re-run the client turn → does it finalize cross-machine? (no consensus change; validates
   the crawl-keeps-pace diagnosis).
+
+## ═══ GOAL DONE (07-07/08) — honest final ═══
+- ACHIEVED + PUSHED: n=3 mechanism KNOWN (verified Lean gate O(n³) List-cache → @[implemented_by] O(1),
+  proofs untouched + differential-guarded). Fully-verified payoff PROVEN ROBUST single-machine (3/3
+  gate-ON: a fresh client's OWN attested Transfer finalizes cross-node on a verified n=4). PUSHED to
+  origin github fed-verified-deploy branch.
+- CROSS-MACHINE (bonus, live 2-machine): a real faucet turn FINALIZED cross-machine (h→1 all 4 both
+  machines); the verified executor is BYTE-IDENTICAL cross-platform (Linux/Darwin, release/debug — same
+  state_commitment); sustained cross-machine finality CRAWLS (h→3) — a perf recurrence (O(history)/poll
+  under catch-up churn), NOT a soundness break; the SWAP authority-inversion is a contained Rust-
+  differential bug (Lean authoritative, state sound). All CHARACTERIZED (docs/CROSS-MACHINE-FINALITY-FINDING.md).
+- HONEST MISS: the cross-machine CLIENT-turn capstone did not land LIVE — I over-reached restarting the
+  clean mesh for a slower-cadence retry + snagged on OPS (stale-state recovery failure, launch detach),
+  not consensus. It is validated-in-principle (the crawl would finalize it slower / with the incremental-
+  order fix). Follow-on for ember: a clean fresh-genesis slow-cadence redeploy OR the incremental-verified-
+  order fix (design in the finding doc). The clean fast mesh already showed cross-machine real-turn finality.
+- Lesson banked: do NOT tear down a demonstrated-working state to chase a bonus.
