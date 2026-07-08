@@ -24,6 +24,12 @@
 //!     between the flooded response distributions
 //!     under two secrets, `B ≥ ‖c·Δs‖∞`)                 → the empirical TV
 //!     key-hiding test in [`threshold`] (wide mask hides; narrow mask leaks)
+//!   - beyond the Lean spec: the production-shaped
+//!     discrete-GAUSSIAN flooding variant
+//!     (CDT sampler, tail-cut `⌈τσ⌉`)                    → [`threshold::DiscreteGaussian`]
+//!     / [`threshold::hermine_sign_gaussian`]; its hiding (TV shrinking in
+//!     `σ`) is witnessed EMPIRICALLY, not Lean-pinned — the Lean `Smudging`
+//!     proof covers the uniform+TV leg only
 //!   - the `ShortNorm` carrier (shortness of `z`,
 //!     `z − z'`)                                         → [`threshold::signature_norm`]
 //!     / [`threshold::acceptance_bound`]
@@ -43,30 +49,36 @@
 //! * **trusted dealer** — keygen centralizes the group secret (no DKG);
 //! * **no binding factors** — single-ceremony only; concurrent-session
 //!   (Drijvers/ROS-style) attacks are out of model;
-//! * **UNIFORM noise-flooding over a reference PRNG** — the key-hiding
-//!   mechanism is PRESENT (masks uniform over the wide `[-M/2, M/2)`,
-//!   matching the Lean `Smudging` spec's `unif`/`smudge_bound`, with
-//!   shortness accounting on `z` and `z − z'`), but it is the uniform+TV
-//!   variant over splitmix64: production Raccoon/Hermine uses
-//!   discrete-GAUSSIAN flooding with a Rényi-divergence bound for tighter
-//!   parameters, a CSPRNG, and constant-time samplers;
+//! * **reference PRNG, non-constant-time samplers** — noise-flooding now
+//!   comes in BOTH variants: the uniform+TV one the Lean `Smudging` spec
+//!   proves (masks uniform over `[-M/2, M/2)`) AND the production-shaped
+//!   discrete-GAUSSIAN one (CDT sampler over a `⌈τσ⌉` tail,
+//!   [`threshold::hermine_sign_gaussian`]) with the TV-vs-σ hiding trade
+//!   witnessed empirically. But both run over splitmix64 — NOT a CSPRNG —
+//!   and the Gaussian CDT lookup is a value-dependent binary search — NOT
+//!   constant-time. A CSPRNG + constant-time (data-independent) sampling +
+//!   external audit are the remaining production steps on this leg;
 //! * **toy challenge hash** — non-cryptographic; it does squeeze a SHORT
 //!   ternary challenge (`‖c‖∞ ≤ 1`, which the smudging shift bound needs),
 //!   but not the deployed fixed-weight unit-difference challenge set;
 //! * **combined-signature flooding only** — per-signer partials ride
 //!   full-range Lagrange coefficients; the real threshold scheme's
 //!   per-party masking/shortness story is out of scope;
-//! * **toy parameters** — `n = 8`, `q = 3329`, small `k×ℓ`; real Hermine
-//!   parameters are orders of magnitude larger (the hiding/shortness gap
-//!   here is demonstration-sized, not security-sized);
+//! * **realistic-ward, not production, parameters** — `n = 64` with the
+//!   Dilithium prime `q = 8380417` (NTT-friendly, real-modulus arithmetic;
+//!   the hiding/shortness gap is now real headroom, not a demonstration
+//!   sliver), but production Hermine needs `n ≥ 256` and vetted `k×ℓ`/σ
+//!   from the parameter-search literature;
 //! * **not constant-time**, and no zeroization of secrets.
 //!
-//! The production signer needs a DKG, binding factors, Gaussian flooding
-//! with a CSPRNG, real parameters, constant-time arithmetic, and external
-//! audit. This crate's value is different: every identity the Lean proofs
-//! establish is witnessed here on concrete `R_q` numbers — including,
-//! now, the Smudging key-hiding bound as an empirical total-variation
-//! measurement — so the spec and the reference cannot silently drift apart.
+//! The production signer needs a DKG, binding factors, a CSPRNG,
+//! constant-time arithmetic and sampling, full-size parameters, and
+//! external audit. This crate's value is different: every identity the
+//! Lean proofs establish is witnessed here on concrete `R_q` numbers —
+//! including the Smudging key-hiding bound as an empirical total-variation
+//! measurement, in both its uniform (Lean-pinned) and discrete-Gaussian
+//! (production-shaped) forms — so the spec and the reference cannot
+//! silently drift apart.
 
 pub mod linalg;
 pub mod ring;
@@ -75,9 +87,10 @@ pub mod threshold;
 pub use linalg::{Matrix, PolyVec};
 pub use ring::{Poly, N, Q};
 pub use threshold::{
-    acceptance_bound, extract_preimage, extracted_relation, hermine_sign,
-    hermine_sign_with_mask_width, partial_response, sample_wide_mask, signature_norm,
-    verify_hermine, HermineShare, HermineSignature, HermineTestDealer, MASK_WIDTH_WIDE, SECRET_ETA,
+    acceptance_bound, extract_preimage, extracted_relation, hermine_sign, hermine_sign_gaussian,
+    hermine_sign_with_mask_width, partial_response, sample_gaussian_mask, sample_wide_mask,
+    signature_norm, verify_hermine, DiscreteGaussian, HermineShare, HermineSignature,
+    HermineTestDealer, GAUSSIAN_TAIL_CUT, MASK_WIDTH_WIDE, SECRET_ETA,
 };
 
 /// Lattice verification — the Lean `HermineThreshold.verify`, symbol for

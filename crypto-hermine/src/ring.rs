@@ -1,15 +1,21 @@
 //! `R_q = ℤ_q[X]/(Xⁿ+1)` — the negacyclic polynomial quotient ring the Lean
 //! spec's abstract `CommRing R` is instantiated at for this reference.
 //!
-//! Small concrete parameters (`N = 8`, `Q = 3329`, the Kyber prime) and
+//! Realistic-ward parameters (`N = 64`, `Q = 8380417`, the Dilithium prime
+//! `2²³ − 2¹³ + 1`; `2N | Q − 1`, so the ring is NTT-friendly) but still
 //! schoolbook negacyclic convolution: this is a REFERENCE, not a performant
-//! or constant-time implementation.
+//! or constant-time implementation. Production dimension is `n ≥ 256`; the
+//! step to `N = 64` keeps the whole test suite (including the empirical
+//! key-hiding TV measurements) fast under schoolbook `O(n²)` multiplication
+//! while exercising real-modulus arithmetic.
 
-/// Ring dimension `n` in `Xⁿ + 1`.
-pub const N: usize = 8;
+/// Ring dimension `n` in `Xⁿ + 1`. Production target is `n ≥ 256`; this
+/// reference runs at 64 (see the module doc).
+pub const N: usize = 64;
 
-/// The coefficient modulus `q` (prime; 3329 = 13·2⁸ + 1, the Kyber prime).
-pub const Q: u64 = 3329;
+/// The coefficient modulus `q` (prime; `8380417 = 2²³ − 2¹³ + 1`, the
+/// Dilithium prime — `2¹³ | q − 1`, so negacyclic NTTs exist up to `n = 2¹²`).
+pub const Q: u64 = 8380417;
 
 /// An element of `R_q`: coefficients of `1, X, …, X^{N-1}`, each in `[0, Q)`.
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
@@ -32,8 +38,8 @@ impl Poly {
     /// Ring addition, coefficientwise mod `q`.
     pub fn add(&self, other: &Self) -> Self {
         let mut coeffs = [0u64; N];
-        for i in 0..N {
-            coeffs[i] = (self.coeffs[i] + other.coeffs[i]) % Q;
+        for (i, c) in coeffs.iter_mut().enumerate() {
+            *c = (self.coeffs[i] + other.coeffs[i]) % Q;
         }
         Poly { coeffs }
     }
@@ -41,8 +47,8 @@ impl Poly {
     /// Ring subtraction, coefficientwise mod `q`.
     pub fn sub(&self, other: &Self) -> Self {
         let mut coeffs = [0u64; N];
-        for i in 0..N {
-            coeffs[i] = (self.coeffs[i] + Q - other.coeffs[i]) % Q;
+        for (i, c) in coeffs.iter_mut().enumerate() {
+            *c = (self.coeffs[i] + Q - other.coeffs[i]) % Q;
         }
         Poly { coeffs }
     }
@@ -55,7 +61,7 @@ impl Poly {
     /// Ring multiplication: schoolbook NEGACYCLIC convolution — the index
     /// wraparound `X^N = -1` is the quotient by `Xⁿ + 1`.
     pub fn mul(&self, other: &Self) -> Self {
-        // |acc| ≤ N · (Q-1)² ≈ 8.9e7 — comfortably inside i64.
+        // |acc| ≤ N · (Q-1)² = 64 · (8380416)² ≈ 4.5e15 — inside i64 (≈ 9.2e18).
         let mut acc = [0i64; N];
         for i in 0..N {
             for j in 0..N {
@@ -157,17 +163,24 @@ mod tests {
         assert_eq!(prod, Poly::constant(Q - 1));
     }
 
+    /// Deterministic pseudorandom ring element (LCG; test data only).
+    fn test_poly(seed: u64) -> Poly {
+        let mut coeffs = [0u64; N];
+        let mut s = seed;
+        for c in coeffs.iter_mut() {
+            s = s
+                .wrapping_mul(6364136223846793005)
+                .wrapping_add(1442695040888963407);
+            *c = (s >> 17) % Q;
+        }
+        Poly { coeffs }
+    }
+
     #[test]
     fn ring_laws_spot_checks() {
-        let a = Poly {
-            coeffs: [1, 7, 0, 3328, 12, 0, 5, 900],
-        };
-        let b = Poly {
-            coeffs: [3300, 2, 2, 2, 0, 0, 1, 1],
-        };
-        let c = Poly {
-            coeffs: [17, 0, 0, 0, 0, 4, 0, 2500],
-        };
+        let a = test_poly(0xA11CE);
+        let b = test_poly(0xB0B);
+        let c = test_poly(0xC0FFEE);
         // Commutativity and associativity of mul; distributivity over add.
         assert_eq!(a.mul(&b), b.mul(&a));
         assert_eq!(a.mul(&b).mul(&c), a.mul(&b.mul(&c)));
@@ -181,7 +194,7 @@ mod tests {
 
     #[test]
     fn constant_inversion() {
-        for v in [1u64, 2, 13, 256, 3328] {
+        for v in [1u64, 2, 13, 256, 3328, Q - 1] {
             let p = Poly::constant(v);
             let inv = p.inverse_constant().unwrap();
             assert_eq!(p.mul(&inv), Poly::constant(1));

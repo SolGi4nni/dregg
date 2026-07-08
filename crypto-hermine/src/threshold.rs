@@ -7,27 +7,39 @@
 //! # Noise-flooding — the key-hiding mechanism (`Dregg2.Crypto.Smudging`)
 //!
 //! A lattice signature `z = y + c·s` leaks `s` unless the mask distribution
-//! smudges the secret-dependent shift out. This reference implements the
-//! UNIFORM noise-flooding variant the Lean `Smudging` module proves sound:
-//! each mask coefficient is sampled uniformly over the WIDE centered range
-//! `[-M/2, M/2)` ([`sample_wide_mask`], `M =` [`MASK_WIDTH_WIDE`] by
-//! default), so by `smudge_bound` the statistical distance between response
-//! distributions under two secrets is `≤ ‖c·Δs‖∞ / M` per coefficient —
-//! driven small by making `M` dwarf the shift. The algebra (`z_i = y_i +
-//! c·(λ_i·s_i)`, `z = Σ z_i`, `w = A(Σ y_i)`) is unchanged: flooding changes
-//! only the mask DISTRIBUTION. The flooded mask also gives the signature its
-//! SHORTNESS: [`signature_norm`] and [`acceptance_bound`] carry the norm
-//! side (the Lean `Lattice.ShortNorm` carrier, now concrete).
+//! smudges the secret-dependent shift out. This reference implements BOTH
+//! flooding variants:
+//!
+//! * **UNIFORM** — the variant the Lean `Smudging` module proves sound: each
+//!   mask coefficient uniform over the WIDE centered range `[-M/2, M/2)`
+//!   ([`sample_wide_mask`], `M =` [`MASK_WIDTH_WIDE`] by default), so by
+//!   `smudge_bound` the statistical distance between response distributions
+//!   under two secrets is `≤ ‖c·Δs‖∞ / M` per coefficient — driven small by
+//!   making `M` dwarf the shift.
+//! * **DISCRETE GAUSSIAN** — the variant production Raccoon/Hermine deploys
+//!   (tighter parameters via Rényi-divergence accounting): each mask
+//!   coefficient from a centered discrete Gaussian of width `σ`
+//!   ([`DiscreteGaussian`] / [`sample_gaussian_mask`], signing path
+//!   [`hermine_sign_gaussian`]). The Lean spec pins the uniform+TV leg only;
+//!   the Gaussian leg's hiding is witnessed EMPIRICALLY here (the TV between
+//!   z-distributions under two secrets shrinks as `σ` grows — the Gaussian
+//!   analogue of `smudge_bound`, `TV ≲ ‖c·Δs‖∞ / (σ√(2π))` per coefficient).
+//!
+//! Either way the algebra (`z_i = y_i + c·(λ_i·s_i)`, `z = Σ z_i`,
+//! `w = A(Σ y_i)`) is unchanged: flooding changes only the mask
+//! DISTRIBUTION. The flooded mask also gives the signature its SHORTNESS:
+//! [`signature_norm`] and [`acceptance_bound`] carry the norm side (the
+//! Lean `Lattice.ShortNorm` carrier, now concrete).
 //!
 //! # Production-signing boundary (read before even THINKING about wiring)
 //!
 //! Everything here is fit for tests and differentials against the Lean spec,
 //! and for NOTHING else:
 //! * the dealer transiently knows the group secret (no DKG);
-//! * noise-flooding is the UNIFORM variant over a REFERENCE PRNG
-//!   (splitmix64) — production Raccoon/Hermine uses discrete-GAUSSIAN
-//!   flooding with a Rényi-divergence bound for tighter parameters, a
-//!   CSPRNG, and constant-time samplers; none of that is here;
+//! * both flooding samplers run over a REFERENCE PRNG (splitmix64) — NOT a
+//!   CSPRNG — and the Gaussian CDT sampler is table-lookup-by-binary-search,
+//!   NOT constant-time (its timing depends on the sampled value); those two
+//!   plus external audit are the remaining production steps;
 //! * the challenge is a toy non-cryptographic hash — it does squeeze a SHORT
 //!   (ternary, `‖c‖∞ ≤ 1`) challenge so the smudging shift bound is real,
 //!   but it is not the deployed fixed-weight unit-difference challenge set;
@@ -90,19 +102,19 @@ fn sample_short_vec(state: &mut u64, len: usize, eta: u64) -> PolyVec {
 
 /// The default flooding width `M` used by [`hermine_sign`].
 ///
-/// Chosen for the toy parameters so that BOTH sides of the trade hold at
-/// threshold `t = 3`:
-/// * **hiding** — the smudging leakage `‖c·s‖∞ / M ≤ 16/1024 ≈ 1.6%` per
+/// Chosen for the current parameters (`N = 64`, `q = 8380417`) so that BOTH
+/// sides of the trade hold at threshold `t = 3`:
+/// * **hiding** — the smudging leakage `‖c·s‖∞ / M ≤ 128/2²¹ ≈ 0.006%` per
 ///   coefficient (ternary `c`, secret `‖s‖∞ ≤` [`SECRET_ETA`], so the shift
-///   is `≤ N·1·η = 16`);
+///   is `≤ N·1·η = 128`);
 /// * **shortness** — the combined honest signature stays wrap-free and
-///   genuinely short: `t·(M/2) + 16 = 1552 < ⌊q/2⌋ = 1664`, so the
+///   genuinely short: `t·(M/2) + 128 = 3145856 < ⌊q/2⌋ = 4190208`, so the
 ///   [`acceptance_bound`] has teeth.
 ///
-/// Production parameters make this gap astronomically wider (that is what
-/// real Raccoon/Hermine parameter sets are); the toy `q = 3329` only leaves
-/// room to DEMONSTRATE the mechanism, which is this crate's whole job.
-pub const MASK_WIDTH_WIDE: u64 = 1024;
+/// Production parameter sets widen this gap further still (larger `n`,
+/// Gaussian flooding with Rényi accounting); this reference now leaves real
+/// headroom rather than the old demonstration-sized `16/1024` sliver.
+pub const MASK_WIDTH_WIDE: u64 = 1 << 21; // 2097152
 
 /// The short-secret coefficient bound `η`: [`HermineTestDealer::deal`]
 /// samples the group secret with `‖s‖∞ ≤ η` (centered), the MLWE shape.
@@ -129,6 +141,108 @@ pub fn sample_wide_mask(state: &mut u64, m: u64) -> Poly {
 /// A flooding mask vector: `len` components from [`sample_wide_mask`].
 fn sample_wide_mask_vec(state: &mut u64, len: usize, m: u64) -> PolyVec {
     PolyVec((0..len).map(|_| sample_wide_mask(state, m)).collect())
+}
+
+/// The Gaussian tail-cut multiplier τ: the CDT support is `[-⌈τσ⌉, ⌈τσ⌉]`.
+///
+/// The truncated mass is `≤ 2·exp(-τ²/2) = 2·exp(-50) ≈ 4·10⁻²²` — below
+/// f64 resolution, so the table IS the distribution as far as any consumer
+/// of this reference can observe.
+pub const GAUSSIAN_TAIL_CUT: f64 = 10.0;
+
+/// A centered discrete Gaussian sampler over ℤ, width `σ`, by CDT
+/// (cumulative distribution table) — the production-shaped flooding noise
+/// (Raccoon/Hermine deploy Gaussian flooding for its tighter
+/// Rényi-divergence parameter accounting).
+///
+/// **Method.** `P[X = k] ∝ exp(-k²/(2σ²))` for `k ∈ [-T, T]`,
+/// `T = ⌈τσ⌉` with `τ =` [`GAUSSIAN_TAIL_CUT`] (tail-cut mass `≈ 4e-22`,
+/// documented there). [`DiscreteGaussian::new`] normalizes the cumulative
+/// table once in f64; [`DiscreteGaussian::sample`] draws a 53-bit uniform
+/// from splitmix64 and binary-searches the table. Building the table once
+/// per ceremony (not per coefficient) is what keeps the empirical TV tests
+/// cheap.
+///
+/// **Reference boundary.** splitmix64 is NOT a CSPRNG, the binary search is
+/// NOT constant-time (timing depends on the sampled value), and f64
+/// probabilities carry ≈2⁻⁵³ rounding — production needs a CSPRNG-driven
+/// constant-time sampler with fixed-point tables (and audit). Those are the
+/// LAST production steps; the distribution itself is right, which is what
+/// the reference needs.
+pub struct DiscreteGaussian {
+    /// The Gaussian width σ.
+    sigma: f64,
+    /// Tail bound `T = ⌈τσ⌉`: samples lie in `[-T, T]`.
+    tail: i64,
+    /// `cdt[i] = P[X ≤ i - T]`, monotone, `cdt[2T] = 1`.
+    cdt: Vec<f64>,
+}
+
+impl DiscreteGaussian {
+    /// Build the CDT for width `sigma`. `None` if `sigma` is not strictly
+    /// positive and finite, or the tail `⌈τσ⌉` reaches `⌊q/2⌋` (a sample
+    /// could then alias under centered reduction mod `q`, breaking the norm
+    /// accounting).
+    pub fn new(sigma: f64) -> Option<Self> {
+        if !sigma.is_finite() || sigma <= 0.0 {
+            return None;
+        }
+        let tail = (GAUSSIAN_TAIL_CUT * sigma).ceil() as i64;
+        if tail >= (Q / 2) as i64 {
+            return None;
+        }
+        let mut cdt: Vec<f64> = Vec::with_capacity((2 * tail + 1) as usize);
+        let mut acc = 0.0f64;
+        for k in -tail..=tail {
+            acc += (-(k as f64) * (k as f64) / (2.0 * sigma * sigma)).exp();
+            cdt.push(acc);
+        }
+        let total = acc;
+        for p in &mut cdt {
+            *p /= total;
+        }
+        Some(Self { sigma, tail, cdt })
+    }
+
+    /// The width σ this sampler was built for.
+    pub fn sigma(&self) -> f64 {
+        self.sigma
+    }
+
+    /// The tail bound `T = ⌈τσ⌉`: every sample satisfies `|X| ≤ T`.
+    pub fn tail_bound(&self) -> i64 {
+        self.tail
+    }
+
+    /// Draw one discrete-Gaussian integer: inverse-CDF by binary search on a
+    /// 53-bit splitmix64 uniform. NOT constant-time (see the type doc).
+    pub fn sample(&self, state: &mut u64) -> i64 {
+        let u = (splitmix64(state) >> 11) as f64 / (1u64 << 53) as f64;
+        let idx = self.cdt.partition_point(|&p| p <= u);
+        idx.min(self.cdt.len() - 1) as i64 - self.tail
+    }
+}
+
+/// Sample one Gaussian noise-flooding mask element: each coefficient from
+/// the centered discrete Gaussian `gauss`, stored mod `q` — the Gaussian
+/// counterpart of [`sample_wide_mask`]. Takes the prebuilt sampler (not a
+/// raw σ) so the CDT is built once per ceremony, not once per coefficient.
+pub fn sample_gaussian_mask(state: &mut u64, gauss: &DiscreteGaussian) -> Poly {
+    let mut coeffs = [0u64; N];
+    for c in coeffs.iter_mut() {
+        *c = gauss.sample(state).rem_euclid(Q as i64) as u64;
+    }
+    Poly { coeffs }
+}
+
+/// A Gaussian flooding mask vector: `len` components from
+/// [`sample_gaussian_mask`].
+fn sample_gaussian_mask_vec(state: &mut u64, len: usize, gauss: &DiscreteGaussian) -> PolyVec {
+    PolyVec(
+        (0..len)
+            .map(|_| sample_gaussian_mask(state, gauss))
+            .collect(),
+    )
 }
 
 /// The toy Fiat–Shamir challenge `c = H(w ‖ t ‖ message)`, squeezed into the
@@ -378,7 +492,61 @@ pub fn hermine_sign_with_mask_width(
     message: &[u8],
     mask_width: u64,
 ) -> Option<HermineSignature> {
-    if signers.is_empty() || mask_width < 2 || !mask_width.is_multiple_of(2) || mask_width > Q {
+    if mask_width < 2 || !mask_width.is_multiple_of(2) || mask_width > Q {
+        return None;
+    }
+    sign_ceremony(a, group_key, signers, message, |index| {
+        let mut state = mask_seed ^ index.wrapping_mul(0x9e3779b97f4a7c15);
+        sample_wide_mask_vec(&mut state, a.cols, mask_width)
+    })
+}
+
+/// [`hermine_sign`] with DISCRETE-GAUSSIAN noise-flooding of width `sigma` —
+/// the production-shaped variant (Raccoon/Hermine deploy Gaussian flooding
+/// for its tighter Rényi-divergence parameter accounting).
+///
+/// Identical ceremony to the uniform path; only the mask DISTRIBUTION
+/// changes: each mask coefficient comes from a centered [`DiscreteGaussian`]
+/// of width `sigma` (CDT method, tail-cut `⌈τσ⌉`, τ =
+/// [`GAUSSIAN_TAIL_CUT`]). The hiding story is the Gaussian analogue of the
+/// Lean `smudge_bound`: per coefficient, `TV ≲ ‖c·Δs‖∞ / (σ√(2π))` — narrow
+/// σ leaks the secret, wide σ hides it (witnessed empirically by the
+/// key-hiding test). The shortness story: every mask coefficient is
+/// tail-bounded by `T = ⌈τσ⌉`, so the combined honest response obeys
+/// [`acceptance_bound`]`(num_signers, 2·T, shift_bound)`.
+///
+/// NOTE the Lean `Smudging` spec pins the UNIFORM+TV leg only; this path is
+/// spec-shaped but its bound is witnessed empirically, not Lean-pinned.
+/// `None` if [`DiscreteGaussian::new`] rejects `sigma` or the signer set is
+/// degenerate. Same reference boundary as everything here: splitmix64, not
+/// constant-time.
+pub fn hermine_sign_gaussian(
+    a: &Matrix,
+    group_key: &PolyVec,
+    signers: &[&HermineShare],
+    mask_seed: u64,
+    message: &[u8],
+    sigma: f64,
+) -> Option<HermineSignature> {
+    let gauss = DiscreteGaussian::new(sigma)?;
+    sign_ceremony(a, group_key, signers, message, |index| {
+        let mut state = mask_seed ^ index.wrapping_mul(0x9e3779b97f4a7c15);
+        sample_gaussian_mask_vec(&mut state, a.cols, &gauss)
+    })
+}
+
+/// The shared single-ceremony core: validate the signer set, draw each
+/// signer's mask via `mask_for(index)`, form `w = A·(Σ y_i)`, the challenge,
+/// the Lagrange-weighted partials, and the combined certificate. The two
+/// public entry points differ ONLY in the mask distribution they plug in.
+fn sign_ceremony(
+    a: &Matrix,
+    group_key: &PolyVec,
+    signers: &[&HermineShare],
+    message: &[u8],
+    mut mask_for: impl FnMut(u64) -> PolyVec,
+) -> Option<HermineSignature> {
+    if signers.is_empty() {
         return None;
     }
     let parts: Vec<u64> = signers.iter().map(|s| s.index).collect();
@@ -391,13 +559,7 @@ pub fn hermine_sign_with_mask_width(
     }
 
     // Round 1: flooded masks + combined commitment.
-    let masks: Vec<PolyVec> = signers
-        .iter()
-        .map(|s| {
-            let mut state = mask_seed ^ s.index.wrapping_mul(0x9e3779b97f4a7c15);
-            sample_wide_mask_vec(&mut state, a.cols, mask_width)
-        })
-        .collect();
+    let masks: Vec<PolyVec> = signers.iter().map(|s| mask_for(s.index)).collect();
     let y_sum = masks
         .iter()
         .fold(PolyVec::zero(a.cols), |acc, y| acc.add(y));
@@ -572,9 +734,13 @@ mod tests {
         // commitment A·y_i — so a bad share is caught by verifying it alone.
         let d = dealer_5_of_3();
         let parts = [1u64, 2, 3];
-        let c = Poly::constant(7).add(&Poly {
-            coeffs: [0, 5, 0, 0, 11, 0, 0, 2],
-        });
+        let c = {
+            let mut c = Poly::constant(7);
+            c.coeffs[1] = 5;
+            c.coeffs[N / 2] = 11;
+            c.coeffs[N - 1] = 2;
+            c
+        };
         for signer in &d.shares[0..3] {
             let mut state = 0x51_6E45 ^ signer.index;
             let mask = super::sample_vec(&mut state, d.a.cols);
@@ -753,61 +919,85 @@ mod tests {
         px.iter().zip(&py).map(|(a, b)| (a - b).abs()).sum::<f64>() / 2.0
     }
 
-    /// Sign the same message `count` times (fresh mask seeds) at flooding
-    /// width `m` and collect the first coefficient of `z` (centered) — the
-    /// observable whose distribution the Smudging spec bounds.
-    fn z_coeff_samples(d: &HermineTestDealer, m: u64, count: usize) -> Vec<i64> {
-        let signers: Vec<&HermineShare> = d.shares[0..3].iter().collect();
+    /// Sign the same message `count` times (fresh mask seeds) with the given
+    /// signing closure and pool ALL centered coefficients of the first `z`
+    /// component — the observable whose distribution the Smudging spec
+    /// bounds. Pooling coefficients (each carries its own independent mask
+    /// noise) gives `count·N` samples per run, which is what keeps the
+    /// empirical TV cheap at `N = 64`.
+    fn z_coeff_samples(
+        d: &HermineTestDealer,
+        count: usize,
+        mut sign_at: impl FnMut(&HermineTestDealer, u64) -> HermineSignature,
+    ) -> Vec<i64> {
         (0..count)
-            .map(|i| {
-                let sig = hermine_sign_with_mask_width(
+            .flat_map(|i| {
+                let sig = sign_at(d, 0x71DE_0000 + i as u64);
+                assert!(verify_hermine(
                     &d.a,
                     &d.group_key,
-                    &signers,
-                    0x71DE_0000 + i as u64,
                     b"key-hiding-probe",
-                    m,
-                )
-                .unwrap();
-                assert!(verify_hermine(&d.a, &d.group_key, b"key-hiding-probe", &sig));
-                sig.z.0[0].centered_coeff(0)
+                    &sig
+                ));
+                (0..N).map(move |k| sig.z.0[0].centered_coeff(k))
             })
             .collect()
     }
 
-    #[test]
-    fn key_hiding_wide_mask_hides_narrow_mask_leaks() {
-        // THE Smudging demonstration: two dealers on the same public shape
-        // with two known short secrets, s0 = 0 and s1 with ‖s1‖∞ = η. The
-        // signature distributions differ by ≤ ‖c·Δs‖∞ / M (smudge_bound):
-        // wide M makes them statistically indistinguishable; a narrow M
-        // (comparable to the shift — the unflooded regime) leaks the secret
-        // as a large total-variation gap.
+    /// Two dealers on the same public shape with two known short secrets:
+    /// s0 = 0 and s1 with ‖s1‖∞ = η — the key-hiding test pair.
+    fn key_hiding_dealer_pair() -> (HermineTestDealer, HermineTestDealer) {
         let (rows, cols, n, t, seed) = (2usize, 3usize, 5u64, 3u64, 0x51_D6E5u64);
         let s0 = PolyVec::zero(cols);
-        let s1 = PolyVec(vec![Poly { coeffs: [SECRET_ETA; N] }; cols]);
+        let s1 = PolyVec(vec![
+            Poly {
+                coeffs: [SECRET_ETA; N]
+            };
+            cols
+        ]);
         let d0 = HermineTestDealer::deal_with_group_secret(rows, cols, n, t, seed, s0).unwrap();
         let d1 = HermineTestDealer::deal_with_group_secret(rows, cols, n, t, seed, s1).unwrap();
+        (d0, d1)
+    }
 
-        const SAMPLES: usize = 4000;
-        const BINS: usize = 16;
-        // Narrow = BELOW the shift bound (‖c·Δs‖∞ ≤ 16): the unflooded
+    const KEY_HIDING_SAMPLES: usize = 400; // signatures per distribution; ×N pooled coefficients
+    const KEY_HIDING_BINS: usize = 16;
+
+    #[test]
+    fn key_hiding_wide_mask_hides_narrow_mask_leaks() {
+        // THE Smudging demonstration, UNIFORM leg: the signature
+        // distributions under the two secrets differ by ≤ ‖c·Δs‖∞ / M
+        // (smudge_bound): wide M makes them statistically indistinguishable;
+        // a narrow M (comparable to the shift — the unflooded regime) leaks
+        // the secret as a large total-variation gap.
+        let (d0, d1) = key_hiding_dealer_pair();
+        // Narrow = BELOW the shift bound (‖c·Δs‖∞ ≤ 128): the unflooded
         // regime, where the mask cannot smudge the secret's contribution.
         let m_narrow = 4u64;
-        let m_mid = 32u64;
+        let m_mid = 128u64;
         let tv_at = |m: u64| {
-            empirical_tv(
-                &z_coeff_samples(&d0, m, SAMPLES),
-                &z_coeff_samples(&d1, m, SAMPLES),
-                BINS,
-            )
+            let samples = |d: &HermineTestDealer| {
+                z_coeff_samples(d, KEY_HIDING_SAMPLES, |d, seed| {
+                    let signers: Vec<&HermineShare> = d.shares[0..3].iter().collect();
+                    hermine_sign_with_mask_width(
+                        &d.a,
+                        &d.group_key,
+                        &signers,
+                        seed,
+                        b"key-hiding-probe",
+                        m,
+                    )
+                    .unwrap()
+                })
+            };
+            empirical_tv(&samples(&d0), &samples(&d1), KEY_HIDING_BINS)
         };
         let tv_narrow = tv_at(m_narrow);
         let tv_mid = tv_at(m_mid);
         let tv_wide = tv_at(MASK_WIDTH_WIDE);
         println!(
-            "key-hiding TV: narrow(M={m_narrow}) = {tv_narrow:.4}, mid(M={m_mid}) = {tv_mid:.4}, \
-             wide(M={MASK_WIDTH_WIDE}) = {tv_wide:.4}"
+            "key-hiding TV (uniform): narrow(M={m_narrow}) = {tv_narrow:.4}, \
+             mid(M={m_mid}) = {tv_mid:.4}, wide(M={MASK_WIDTH_WIDE}) = {tv_wide:.4}"
         );
         // Wide flooding hides: the gap sits at the sampling-noise floor,
         // far below what any usable distinguisher needs.
@@ -817,6 +1007,147 @@ mod tests {
         // And the leakage SHRINKS as M grows — the smudge_bound ‖c·Δs‖/M
         // in motion.
         assert!(tv_narrow > 3.0 * tv_mid && tv_mid > 3.0 * tv_wide);
+    }
+
+    #[test]
+    fn key_hiding_gaussian_wide_sigma_hides_narrow_sigma_leaks() {
+        // The GAUSSIAN analogue of the smudging demonstration: same two
+        // secrets, discrete-Gaussian flooding. Per coefficient the gap is
+        // TV ≲ ‖c·Δs‖∞ / (σ√(2π)) — narrow σ leaks, wide σ hides, and the
+        // TV shrinks monotonically as σ grows.
+        let (d0, d1) = key_hiding_dealer_pair();
+        let tv_at = |sigma: f64| {
+            let samples = |d: &HermineTestDealer| {
+                z_coeff_samples(d, KEY_HIDING_SAMPLES, |d, seed| {
+                    let signers: Vec<&HermineShare> = d.shares[0..3].iter().collect();
+                    hermine_sign_gaussian(
+                        &d.a,
+                        &d.group_key,
+                        &signers,
+                        seed,
+                        b"key-hiding-probe",
+                        sigma,
+                    )
+                    .unwrap()
+                })
+            };
+            empirical_tv(&samples(&d0), &samples(&d1), KEY_HIDING_BINS)
+        };
+        let sigmas = [2.0f64, 16.0, 128.0, 1024.0];
+        let tvs: Vec<f64> = sigmas.iter().map(|&s| tv_at(s)).collect();
+        println!(
+            "key-hiding TV (gaussian): {}",
+            sigmas
+                .iter()
+                .zip(&tvs)
+                .map(|(s, tv)| format!("sigma={s} -> {tv:.4}"))
+                .collect::<Vec<_>>()
+                .join(", ")
+        );
+        // Narrow sigma (below the typical shift magnitude) leaks hard.
+        assert!(tvs[0] > 0.35, "narrow-sigma TV too small: {}", tvs[0]);
+        // Wide sigma hides down to the sampling-noise floor.
+        assert!(
+            *tvs.last().unwrap() < 0.05,
+            "wide-sigma TV too large: {}",
+            tvs.last().unwrap()
+        );
+        // And the leakage shrinks as sigma grows — the Gaussian smudging
+        // trade in motion.
+        for pair in tvs.windows(2) {
+            assert!(
+                pair[0] > pair[1],
+                "TV must shrink with sigma: {:?} at sigmas {:?}",
+                tvs,
+                sigmas
+            );
+        }
+    }
+
+    // -- the Gaussian sampler itself ----------------------------------------
+
+    #[test]
+    fn gaussian_sampler_matches_its_moments_and_tail() {
+        for sigma in [2.0f64, 16.0, 256.0] {
+            let gauss = DiscreteGaussian::new(sigma).unwrap();
+            let mut state = 0x6A_0551A2u64 ^ sigma.to_bits();
+            const COUNT: usize = 40_000;
+            let (mut sum, mut sum_sq) = (0f64, 0f64);
+            let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+            for _ in 0..COUNT {
+                let v = gauss.sample(&mut state);
+                assert!(v.abs() <= gauss.tail_bound(), "tail cut violated");
+                sum += v as f64;
+                sum_sq += (v * v) as f64;
+                lo = lo.min(v);
+                hi = hi.max(v);
+            }
+            let mean = sum / COUNT as f64;
+            let var = sum_sq / COUNT as f64 - mean * mean;
+            // Centered: mean within a few standard errors of 0.
+            assert!(
+                mean.abs() < 4.0 * sigma / (COUNT as f64).sqrt(),
+                "sigma={sigma}: mean {mean} off-center"
+            );
+            // Width: sample variance within 10% of σ² (discrete ≈ continuous
+            // for σ ≥ 2; sampling error at 40k samples is ~1%).
+            assert!(
+                (var - sigma * sigma).abs() < 0.1 * sigma * sigma,
+                "sigma={sigma}: variance {var} vs sigma^2 {}",
+                sigma * sigma
+            );
+            // Both signs actually exercised.
+            assert!(lo < 0 && hi > 0);
+        }
+    }
+
+    #[test]
+    fn gaussian_sampler_rejects_degenerate_widths() {
+        assert!(DiscreteGaussian::new(0.0).is_none());
+        assert!(DiscreteGaussian::new(-1.0).is_none());
+        assert!(DiscreteGaussian::new(f64::NAN).is_none());
+        assert!(DiscreteGaussian::new(f64::INFINITY).is_none());
+        // Tail ⌈τσ⌉ reaching ⌊q/2⌋ would alias under centered reduction.
+        assert!(DiscreteGaussian::new((Q / 2) as f64 / GAUSSIAN_TAIL_CUT + 1.0).is_none());
+        assert!(DiscreteGaussian::new(64.0).is_some());
+    }
+
+    #[test]
+    fn gaussian_signature_verifies_and_is_short() {
+        // The ceremony algebra is distribution-blind: the Gaussian path
+        // produces verifying signatures, short under the tail-cut bound
+        // t·T + shift (= acceptance_bound with mask "width" 2T).
+        let d = dealer_5_of_3();
+        let sigma = 512.0;
+        let tail = DiscreteGaussian::new(sigma).unwrap().tail_bound() as u64;
+        let bound = acceptance_bound(3, 2 * tail, SHIFT_BOUND);
+        assert!(
+            bound < Q / 2,
+            "gaussian acceptance bound must be non-vacuous"
+        );
+        let signers: Vec<&HermineShare> = d.shares[0..3].iter().collect();
+        for seed in 0..25u64 {
+            let sig = hermine_sign_gaussian(
+                &d.a,
+                &d.group_key,
+                &signers,
+                0x6055_0000 + seed,
+                b"gaussian-z",
+                sigma,
+            )
+            .unwrap();
+            assert!(verify_hermine(&d.a, &d.group_key, b"gaussian-z", &sig));
+            assert!(signature_norm(&sig.z) <= bound);
+        }
+        // And the forked-transcript extractor identity holds unchanged.
+        let sig1 = hermine_sign_gaussian(&d.a, &d.group_key, &signers, 0xF0F2, b"g-fork-1", sigma)
+            .unwrap();
+        let sig2 = hermine_sign_gaussian(&d.a, &d.group_key, &signers, 0xF0F2, b"g-fork-2", sigma)
+            .unwrap();
+        assert_eq!(sig1.w, sig2.w);
+        assert_ne!(sig1.c, sig2.c);
+        let (lhs, rhs) = extracted_relation(&d.a, &d.group_key, &sig1, &sig2);
+        assert_eq!(lhs, rhs);
     }
 
     // -- harness hygiene (mirroring frost.rs's refusals) ---------------------
