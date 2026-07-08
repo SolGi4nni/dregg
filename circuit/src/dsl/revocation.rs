@@ -40,9 +40,15 @@ pub const REVOCATION_TREE_DEPTH: usize = TREE_DEPTH;
 pub const ORDERING_BITS: usize = 30;
 
 /// Trace width for the non-revocation DSL circuit.
-/// 5 shared + 1 diff_left + 30 diff_left_bits + 1 diff_right + 30 diff_right_bits + 3 selectors
-/// + 1 sentinel selector = 71
-pub const TRACE_WIDTH: usize = 71;
+/// 5 shared + 1 diff_left + 30 diff_left_bits (`HALF−diff`) + 1 diff_right
+/// + 30 diff_right_bits (`HALF−diff`) + 30 diff_left DIRECT bits + 30 diff_right
+/// DIRECT bits + 3 selectors + 1 sentinel selector = 131.
+///
+/// The two DIRECT bit groups pin `diff ∈ [0, 2^30)` (see C13–C16); intersected
+/// with the `HALF−diff ∈ [0, 2^30)` groups (C8–C11) this forces `diff ∈ [0,
+/// HALF]` — closing the member-forgery hole where a negative `diff` (`x == L/R`,
+/// i.e. `diff = -1 = p-1`) previously satisfied only the upper `HALF−diff` bound.
+pub const TRACE_WIDTH: usize = 131;
 
 /// (p-1)/2 for BabyBear, used in ordering range checks.
 pub const HALF_P_MINUS_1: u32 = 1006632959;
@@ -74,11 +80,21 @@ pub mod col {
     pub const DIFF_RIGHT: usize = DIFF_LEFT_BITS_START + ORDERING_BITS; // 36
     pub const DIFF_RIGHT_BITS_START: usize = DIFF_RIGHT + 1; // 37
 
+    // DIRECT decompositions of `diff` itself (control row only). Bounding
+    // `HALF−diff` above (the groups above) only caps `diff ≤ HALF`; a NEGATIVE
+    // diff (a committed member, `diff = -1 = p-1`) also lands in the accepting
+    // window (`HALF−(-1) = HALF+1 < 2^30`). Decomposing `diff` DIRECTLY into 30
+    // bits forces `diff ∈ [0, 2^30)`; the intersection with the `HALF−diff`
+    // groups pins `diff ∈ [0, HALF]` (no member forgery). `p-1` does NOT fit in
+    // 30 bits, so a member trace is UNSAT.
+    pub const DIFF_LEFT_DIRECT_BITS_START: usize = DIFF_RIGHT_BITS_START + ORDERING_BITS; // 67
+    pub const DIFF_RIGHT_DIRECT_BITS_START: usize = DIFF_LEFT_DIRECT_BITS_START + ORDERING_BITS; // 97
+
     // Row type selectors
-    pub const IS_CONTROL: usize = DIFF_RIGHT_BITS_START + ORDERING_BITS; // 67
-    pub const IS_MERKLE_LEFT: usize = IS_CONTROL + 1; // 68
-    pub const IS_MERKLE_RIGHT: usize = IS_MERKLE_LEFT + 1; // 69
-    pub const RIGHT_IS_SENTINEL: usize = IS_MERKLE_RIGHT + 1; // 70
+    pub const IS_CONTROL: usize = DIFF_RIGHT_DIRECT_BITS_START + ORDERING_BITS; // 127
+    pub const IS_MERKLE_LEFT: usize = IS_CONTROL + 1; // 128
+    pub const IS_MERKLE_RIGHT: usize = IS_MERKLE_LEFT + 1; // 129
+    pub const RIGHT_IS_SENTINEL: usize = IS_MERKLE_RIGHT + 1; // 130
 
     #[inline]
     pub const fn diff_left_bit(i: usize) -> usize {
@@ -88,6 +104,16 @@ pub mod col {
     #[inline]
     pub const fn diff_right_bit(i: usize) -> usize {
         DIFF_RIGHT_BITS_START + i
+    }
+
+    #[inline]
+    pub const fn diff_left_direct_bit(i: usize) -> usize {
+        DIFF_LEFT_DIRECT_BITS_START + i
+    }
+
+    #[inline]
+    pub const fn diff_right_direct_bit(i: usize) -> usize {
+        DIFF_RIGHT_DIRECT_BITS_START + i
     }
 }
 
@@ -294,6 +320,86 @@ pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
         terms.push(PolyTerm {
             coeff: -BabyBear::new(HALF_P_MINUS_1),
             col_indices: vec![],
+        });
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::InvertedGated {
+                selector_col: col::RIGHT_IS_SENTINEL,
+                inner: Box::new(ConstraintExpr::Polynomial { terms }),
+            }),
+        });
+    }
+
+    // ---- DIRECT diff decompositions (member-forgery guard) ----
+    // The C8-C11 groups above range-check `HALF−diff`, which only bounds `diff`
+    // ABOVE (diff ≤ HALF). A NEGATIVE diff — the boundary member case x==L (=>
+    // diff_left = -1) or x==R (=> diff_right = -1), where -1 = p-1 — also passes
+    // that upper bound (HALF−(p-1) = HALF+1 < 2^30). To pin `diff ∈ [0, HALF]`
+    // we ALSO decompose `diff` DIRECTLY into 30 bits: the reconstructed value is
+    // a 30-bit field element in [0, 2^30) (< p, no wrap), and `p-1` cannot be so
+    // reconstructed. Intersection of `HALF−diff ∈ [0,2^30)` and
+    // `diff ∈ [0,2^30)` ⟺ `diff ∈ [0, HALF]` (completeness unchanged: honest
+    // brackets already required diff ≤ HALF).
+
+    // C13: diff_left DIRECT bits are binary (gated by is_control)
+    for i in 0..ORDERING_BITS {
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::Binary {
+                col: col::diff_left_direct_bit(i),
+            }),
+        });
+    }
+
+    // C14: diff_right DIRECT bits are binary (gated by is_control)
+    for i in 0..ORDERING_BITS {
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::Binary {
+                col: col::diff_right_direct_bit(i),
+            }),
+        });
+    }
+
+    // C15: diff_left DIRECT reconstruction (gated by is_control):
+    // sum(diff_left_direct_bits[i] * 2^i) == diff_left
+    // => sum(bits[i] * 2^i) - diff_left == 0
+    {
+        let mut terms = Vec::new();
+        let mut power_of_two = BabyBear::ONE;
+        for i in 0..ORDERING_BITS {
+            terms.push(PolyTerm {
+                coeff: power_of_two,
+                col_indices: vec![col::diff_left_direct_bit(i)],
+            });
+            power_of_two = power_of_two + power_of_two;
+        }
+        terms.push(PolyTerm {
+            coeff: -BabyBear::ONE,
+            col_indices: vec![col::DIFF_LEFT],
+        });
+        constraints.push(ConstraintExpr::Gated {
+            selector_col: col::IS_CONTROL,
+            inner: Box::new(ConstraintExpr::Polynomial { terms }),
+        });
+    }
+
+    // C16: diff_right DIRECT reconstruction (gated by is_control, disabled for
+    // the max sentinel exactly like C11):
+    // sum(diff_right_direct_bits[i] * 2^i) == diff_right
+    {
+        let mut terms = Vec::new();
+        let mut power_of_two = BabyBear::ONE;
+        for i in 0..ORDERING_BITS {
+            terms.push(PolyTerm {
+                coeff: power_of_two,
+                col_indices: vec![col::diff_right_direct_bit(i)],
+            });
+            power_of_two = power_of_two + power_of_two;
+        }
+        terms.push(PolyTerm {
+            coeff: -BabyBear::ONE,
+            col_indices: vec![col::DIFF_RIGHT],
         });
         constraints.push(ConstraintExpr::Gated {
             selector_col: col::IS_CONTROL,
@@ -631,6 +737,8 @@ pub fn generate_non_revocation_trace(
         let check_val = HALF_P_MINUS_1 - diff_left_u32;
         for i in 0..ORDERING_BITS {
             control[col::diff_left_bit(i)] = BabyBear::new((check_val >> i) & 1);
+            // DIRECT decomposition of diff_left itself (C15 member-forgery guard).
+            control[col::diff_left_direct_bit(i)] = BabyBear::new((diff_left_u32 >> i) & 1);
         }
     }
 
@@ -648,6 +756,8 @@ pub fn generate_non_revocation_trace(
             let check_val = HALF_P_MINUS_1 - diff_right_u32;
             for i in 0..ORDERING_BITS {
                 control[col::diff_right_bit(i)] = BabyBear::new((check_val >> i) & 1);
+                // DIRECT decomposition of diff_right itself (C16 member-forgery guard).
+                control[col::diff_right_direct_bit(i)] = BabyBear::new((diff_right_u32 >> i) & 1);
             }
         }
     }
