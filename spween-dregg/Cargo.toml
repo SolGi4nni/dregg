@@ -17,7 +17,7 @@ description = "spween (a narrative-choice DSL) running on a dregg world-cell: ve
 [dependencies]
 # The story engine — the sibling repo. We implement ITS `EffectHandler` trait
 # over a dregg cell (never fork the engine; dregg is the backend behind the seam).
-spween = { path = "../../spween" }
+spween = { git = "https://github.com/emberian/spween", rev = "afb5b1fce8c9dd3b787e197bddf105adca20e08a" }
 # The flagship dregg substrate: `EmbeddedExecutor` (one real verified executor +
 # ledger), `AppCipherclerk`/`make_action`, `Effect`/`Turn`/`TurnReceipt`, and the
 # re-exported `CellProgram`/`StateConstraint`/`TransitionCase`/`TransitionGuard`

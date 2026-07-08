@@ -3859,6 +3859,7 @@ dependencies = [
  "dregg-doc",
  "dregg-firmament",
  "dregg-sdk",
+ "dregg-sdk-net",
  "dregg-turn",
  "dregg-zkoracle-prove",
  "gpui",
@@ -3870,9 +3871,11 @@ dependencies = [
  "hex",
  "image",
  "libc",
+ "postcard",
  "reqwest 0.12.28",
  "serde",
  "serde_json",
+ "tokio",
 ]
 
 [[package]]
@@ -5146,6 +5149,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "cc",
+ "dregg-circuit",
  "proptest 1.11.0",
 ]
 
@@ -5541,6 +5545,7 @@ dependencies = [
  "base64 0.22.1",
  "blake3",
  "chacha20poly1305",
+ "deos-js",
  "dregg-captp",
  "dregg-cell",
  "dregg-cell-crypto",
@@ -9317,7 +9322,7 @@ dependencies = [
  "collective-choice",
  "dregg-governance",
  "mud-dregg",
- "spween",
+ "spween 0.1.0",
  "spween-dregg",
 ]
 
@@ -18429,6 +18434,17 @@ dependencies = [
 ]
 
 [[package]]
+name = "spween"
+version = "0.1.0"
+source = "git+https://github.com/emberian/spween?rev=afb5b1fce8c9dd3b787e197bddf105adca20e08a#afb5b1fce8c9dd3b787e197bddf105adca20e08a"
+dependencies = [
+ "logos",
+ "serde_yaml",
+ "smol_str",
+ "thiserror 2.0.18",
+]
+
+[[package]]
 name = "spween-dregg"
 version = "0.1.0"
 dependencies = [
@@ -18437,7 +18453,7 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-node-target",
- "spween",
+ "spween 0.1.0 (git+https://github.com/emberian/spween?rev=afb5b1fce8c9dd3b787e197bddf105adca20e08a)",
  "zeroize",
 ]
 
@@ -19006,6 +19022,7 @@ dependencies = [
  "blake3",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-sdk",
  "dregg-turn",
  "dregg-types",
  "serde",

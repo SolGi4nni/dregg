@@ -284,114 +284,170 @@ footer.site .discl{max-width:820px;margin:18px auto 0;text-align:center;font-siz
 .poster.dated .bar .t{color:var(--gold)}
 .postergroup{margin:0 0 44px}
 
-/* ═══ acid revision (after the 07-07 mock): glitch type · circuit plate ·
-   ember-orange kicker · magenta heat · chip buttons · marked phrases ═══ */
+
+/* ═══ the numinous revision (after the 07-07 mist mock) — cathedral, not arcade:
+   painterly abyss · fog and grain · a warm light at the heart · wide-tracked
+   quiet caps · thin outlined buttons · text floating on mist ═══ */
 :root{
-  --acid:#59ff4a;
-  --acid-deep:#2ee01f;
-  --magenta:#ff4dd2;
-  --cyan:#4de8ff;
-  --embero:#ff7a2f;
-  --hl-yellow:#ffe066;
-  --glow-acid:0 0 14px rgba(89,255,74,.55),0 0 46px rgba(89,255,74,.22);
+  --mist-ink:#dcefdd;
+  --mist-dim:#9fbfa4;
+  --mist-faint:#5f7f66;
+  --lumen:#eaffdc;
+  --lumen-gold:#e9d9a0;
+  --lumen-deep:#b8cf9e;
+  --glow-lumen:0 0 22px rgba(234,255,220,.35), 0 0 80px rgba(233,217,160,.14);
 }
 
-/* circuit plate: procedural traces behind everything, teal + magenta whispers */
+/* the painted abyss: nebula gradients + turbulent fog + grain + vignette */
+body{color:var(--mist-ink)}
 body::before{
   background:
-    radial-gradient(900px 540px at 12% 0%, rgba(255,77,210,.10), transparent 55%),
-    radial-gradient(1100px 640px at 88% 4%, rgba(77,232,255,.08), transparent 55%),
-    radial-gradient(1200px 700px at 50% -10%, rgba(31,84,67,.30), transparent 60%),
-    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cg fill='none' stroke='%231b4a3c' stroke-opacity='.5'%3E%3Cpath d='M20 0v56l28 28h60'/%3E%3Cpath d='M240 40h-72l-20 20v60'/%3E%3Cpath d='M0 150h44l24 24v66'/%3E%3Cpath d='M180 240v-52l30-30h30'/%3E%3Cpath d='M120 0v30'/%3E%3Cpath d='M60 240v-36'/%3E%3C/g%3E%3Cg fill='%23245e4c'%3E%3Ccircle cx='20' cy='0' r='2.5'/%3E%3Ccircle cx='108' cy='84' r='2.5'/%3E%3Ccircle cx='148' cy='120' r='2.5'/%3E%3Ccircle cx='68' cy='240' r='2.5'/%3E%3Ccircle cx='240' cy='158' r='2.5'/%3E%3C/g%3E%3Cg fill='none' stroke='%233b1b3a' stroke-opacity='.55'%3E%3Cpath d='M200 0v40l-24 24'/%3E%3Cpath d='M0 90h30l18 18'/%3E%3C/g%3E%3C/svg%3E"),
-    linear-gradient(180deg,#04100d 0%,#030807 45%,#020605 100%);
+    radial-gradient(1000px 640px at 50% 22%, rgba(233,217,160,.16), transparent 55%),
+    radial-gradient(520px 380px at 50% 20%, rgba(234,255,220,.20), transparent 60%),
+    radial-gradient(1400px 900px at 50% 30%, rgba(38,92,62,.45), transparent 70%),
+    radial-gradient(1200px 800px at 8% 85%, rgba(46,98,64,.35), transparent 60%),
+    radial-gradient(1200px 800px at 92% 80%, rgba(52,96,58,.32), transparent 60%),
+    linear-gradient(180deg,#0a1710 0%,#08130d 40%,#0c1a11 75%,#0a150e 100%);
+}
+body::after{
+  opacity:.85;
+  background:
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='700' height='700'%3E%3Cfilter id='f'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.004 0.007' numOctaves='4' seed='7'/%3E%3CfeColorMatrix values='0 0 0 0 0.55  0 0 0 0 0.85  0 0 0 0 0.6  0 0 0 0.05 0'/%3E%3C/filter%3E%3Crect width='700' height='700' filter='url(%23f)'/%3E%3C/svg%3E"),
+    url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='240' height='240'%3E%3Cfilter id='g'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.9' numOctaves='2' seed='3'/%3E%3CfeColorMatrix values='0 0 0 0 1  0 0 0 0 1  0 0 0 0 1  0 0 0 0.025 0'/%3E%3C/filter%3E%3Crect width='240' height='240' filter='url(%23g)'/%3E%3C/svg%3E"),
+    radial-gradient(140% 100% at 50% 40%, transparent 55%, rgba(2,6,4,.55) 100%);
 }
 
-/* kicker → ember orange */
-.kicker{color:var(--embero);letter-spacing:.5em;font-weight:700}
-.kicker::before,.kicker::after{color:var(--embero)}
-
-/* display type → acid green with chromatic-glitch edges */
+/* type: wide-tracked quiet caps, lit from within */
+.kicker{color:var(--lumen-gold);letter-spacing:.5em;font-weight:500}
+.kicker::before,.kicker::after{color:var(--mist-faint)}
 .display,h1.pagetitle{
-  color:var(--acid);
-  text-shadow:
-    0 0 16px rgba(89,255,74,.55), 0 0 52px rgba(89,255,74,.22),
-    2px 0 0 rgba(255,77,210,.55), -2px 0 0 rgba(77,232,255,.5);
+  font-family:var(--mono);font-weight:500;text-transform:uppercase;
+  letter-spacing:.22em;line-height:1.15;
+  font-size:clamp(30px,5.2vw,58px);
+  color:var(--lumen);text-shadow:var(--glow-lumen);
 }
-.glitch{position:relative;display:inline-block}
-.glitch::before,.glitch::after{
-  content:attr(data-text);position:absolute;left:0;top:0;width:100%;overflow:hidden;
-  pointer-events:none;
+.display .dot,h1.pagetitle .gold{color:var(--lumen-gold);text-shadow:0 0 18px rgba(233,217,160,.5)}
+.glitch::before,.glitch::after{content:none}
+.subline{color:var(--lumen-gold);letter-spacing:.4em;font-size:clamp(12px,1.6vw,15px);opacity:.9}
+.h2{
+  font-family:var(--mono);font-weight:600;text-transform:uppercase;
+  letter-spacing:.3em;font-size:clamp(16px,2.2vw,21px);color:var(--lumen-gold);
 }
-.glitch::before{color:var(--magenta);z-index:-1;clip-path:inset(12% 0 58% 0);transform:translate(3px,-2px);opacity:.8}
-.glitch::after{color:var(--cyan);z-index:-1;clip-path:inset(62% 0 8% 0);transform:translate(-3px,2px);opacity:.75}
-.display .dot{color:var(--gold);text-shadow:0 0 18px rgba(233,201,138,.6)}
-.h2 .lit{color:var(--acid);text-shadow:var(--glow-acid)}
-nav.site a:hover{color:var(--acid);text-shadow:var(--glow-acid)}
-nav.site a{text-decoration:underline;text-underline-offset:4px;text-decoration-color:rgba(125,243,214,.35)}
-nav.site .brand .glyph{color:var(--acid);text-shadow:var(--glow-acid)}
+.h2 .lit{color:var(--lumen);text-shadow:var(--glow-lumen)}
+.sectionsub{color:var(--mist-dim)}
+.lede{color:var(--mist-ink)}
+.lede b,.lede strong{color:var(--lumen)}
+a{color:var(--lumen-deep)}
+a:hover{color:var(--lumen)}
 
-/* buttons → textured chips with underlined labels */
+/* nav: sparse letterspaced caps */
+header.site{background:rgba(6,14,9,.55);border-bottom-color:rgba(95,127,102,.25)}
+nav.site{text-transform:uppercase;letter-spacing:.22em;font-size:11.5px}
+nav.site a{color:var(--mist-dim);text-decoration:none}
+nav.site a:hover,nav.site a[aria-current="page"]{color:var(--lumen);text-shadow:var(--glow-lumen)}
+nav.site .brand{letter-spacing:.14em}
+nav.site .brand .glyph{color:var(--lumen-gold);text-shadow:0 0 14px rgba(233,217,160,.45)}
+.rail,.tickline{color:var(--mist-faint);border-color:rgba(95,127,102,.2)}
+
+/* buttons: thin quiet outlines */
 .btn{
-  text-decoration:underline;text-underline-offset:3px;
-  background:
-    repeating-linear-gradient(135deg, rgba(255,255,255,.028) 0 2px, transparent 2px 4px),
-    linear-gradient(180deg,#15251e,#0b1512);
-  border:1px solid #2a4c3d;border-top-color:#3f7a5f;border-bottom-color:#12251c;
-  box-shadow:0 2px 0 #050c09, inset 0 1px 0 rgba(255,255,255,.06);
-  color:var(--ink);
+  background:rgba(10,23,16,.35);border:1px solid rgba(220,239,221,.5);
+  color:var(--mist-ink);text-transform:uppercase;letter-spacing:.22em;
+  font-size:11.5px;font-weight:600;padding:13px 22px;text-decoration:none;
+  box-shadow:none;
 }
-.btn:hover{color:var(--acid);border-color:var(--acid);box-shadow:0 2px 0 #050c09, var(--glow-acid)}
+.btn:hover{border-color:var(--lumen);color:var(--lumen);box-shadow:var(--glow-lumen);text-decoration:none}
 .btn.primary{
-  background:
-    repeating-linear-gradient(135deg, rgba(0,0,0,.06) 0 2px, transparent 2px 4px),
-    linear-gradient(180deg,#83ff70,#3fe22e);
-  color:#04230a;border-color:var(--acid-deep);border-top-color:#b8ffab;
-  box-shadow:0 2px 0 #0a3a06, 0 0 24px rgba(89,255,74,.35);
+  background:rgba(234,255,220,.1);border:1px solid var(--lumen);color:var(--lumen);
+  box-shadow:0 0 18px rgba(234,255,220,.14);
 }
-.btn.primary:hover{filter:brightness(1.06);color:#04230a}
+.btn.primary:hover{background:rgba(234,255,220,.18);filter:none;color:var(--lumen)}
 
-/* marked phrases in body copy */
-.hl-y{color:var(--hl-yellow);font-style:normal;font-weight:600;text-shadow:0 0 12px rgba(255,224,102,.28)}
-.hl-m{color:var(--magenta);font-weight:600;text-shadow:0 0 12px rgba(255,77,210,.3)}
-.hl-r{background:#8a1420;color:#ffd9d9;padding:0 5px;border-radius:2px;font-weight:600}
-.quote{border-left-color:var(--acid)}
-.quote b{color:var(--magenta);text-shadow:0 0 12px rgba(255,77,210,.3)}
-
-/* checkmarks + panel accents pick up the acid */
-.checkpanel li::before{color:var(--acid);text-shadow:var(--glow-acid)}
-.panel h3{color:var(--acid)}
-a{color:var(--teal)}
-a:hover{color:var(--acid)}
-
-/* embers drifting at the hero base */
-.hero{isolation:isolate}
-.hero::after{
-  content:"";position:absolute;inset:auto 0 0 0;height:220px;pointer-events:none;z-index:-1;
-  background:
-    radial-gradient(3px 3px at 12% 62%, rgba(255,122,47,.8), transparent 60%),
-    radial-gradient(2px 2px at 22% 38%, rgba(255,180,90,.7), transparent 60%),
-    radial-gradient(2.5px 2.5px at 84% 55%, rgba(255,122,47,.65), transparent 60%),
-    radial-gradient(2px 2px at 71% 30%, rgba(255,77,210,.5), transparent 60%),
-    radial-gradient(2px 2px at 92% 74%, rgba(255,180,90,.55), transparent 60%),
-    radial-gradient(3px 3px at 35% 78%, rgba(255,122,47,.5), transparent 60%);
+/* panels dissolve: text floating on the mist */
+.panel{background:transparent;border:none;padding:18px 20px;text-align:center}
+.panel::before,.panel::after{content:none}
+.panel h3{
+  color:var(--lumen-gold);letter-spacing:.28em;font-size:12.5px;
+  justify-content:center;
 }
+.panel p{color:var(--mist-dim)}
+.panel p b{color:var(--mist-ink)}
 
-/* ── deep-only: the corner banner to the simplified site ── */
-.simple-banner{
-  position:fixed;top:0;right:0;z-index:60;overflow:hidden;
-  width:190px;height:190px;pointer-events:none;
-}
+/* structured surfaces stay, but breathe */
+.checkpanel{background:rgba(8,18,12,.45);border-color:rgba(95,127,102,.3)}
+.checkpanel .title{border-color:rgba(95,127,102,.3);color:var(--lumen-gold);letter-spacing:.3em}
+.checkpanel li::before{color:var(--lumen);text-shadow:var(--glow-lumen)}
+.checkpanel li.open::before{color:var(--lumen-gold)}
+.checkpanel li b{color:var(--mist-ink)}
+.rows .row,.row{background:rgba(8,18,12,.45);border-color:rgba(95,127,102,.28)}
+.row .name{color:var(--lumen)}
+.row .desc{color:var(--mist-dim)}
+.badge{border-color:rgba(95,127,102,.4)}
+.b-ship{color:#bfe8a8;border-color:rgba(160,220,140,.35);background:rgba(30,60,35,.35)}
+.b-prog{color:#a8c8e8;border-color:rgba(140,180,220,.3);background:rgba(25,40,60,.3)}
+.b-plan{color:#c8ccc2;border-color:rgba(160,170,160,.3);background:rgba(40,45,40,.3)}
+.floor{background:rgba(8,18,12,.5);border-color:rgba(233,217,160,.3)}
+.floor .sig{color:var(--lumen-gold);border-color:rgba(233,217,160,.35)}
+.floor .body{color:var(--mist-dim)}
+.floor .body b{color:var(--lumen-gold);letter-spacing:.18em}
+.floor .chips{color:var(--mist-faint)}
+section{border-bottom-color:rgba(95,127,102,.18)}
+.quote{border-left-color:rgba(233,217,160,.5);color:var(--mist-ink)}
+.quote b{color:var(--lumen-gold);font-style:normal}
+pre{background:rgba(5,12,8,.6);border-color:rgba(95,127,102,.3)}
+code{color:var(--lumen-deep)}
+.ca{background:rgba(5,12,8,.5);border-color:rgba(95,127,102,.3)}
+footer.site .strip{color:var(--mist-faint)}
+footer.site .strip .glyph{color:var(--lumen-gold)}
+footer.site .discl{color:var(--mist-faint)}
+
+/* marked phrases soften into the light */
+.hl-y{color:var(--lumen-gold);text-shadow:0 0 12px rgba(233,217,160,.3)}
+.hl-m{color:#d9c8ef;text-shadow:0 0 12px rgba(200,170,240,.25)}
+.hl-r{background:rgba(140,40,40,.4);color:#f2d9d2;padding:0 5px;border-radius:2px}
+
+/* the hero: the light at the heart of the mist */
+.hero{border-bottom-color:rgba(95,127,102,.18)}
+.hero::after{content:none}
+.hero .eggart{opacity:.85;top:-10px}
+.hero .eggart svg{width:min(620px,90vw);filter:blur(.4px)}
+.shot{background:rgba(8,18,12,.5);border-color:rgba(95,127,102,.28)}
+.shot .cap{color:var(--mist-dim)}
+.tag{color:#bfe8a8;border-color:rgba(160,220,140,.3);background:rgba(30,60,35,.3)}
+
+/* the simple-banner (deep only) keeps working, quieted */
 .simple-banner a{
-  position:absolute;display:block;width:280px;text-align:center;
-  transform:rotate(45deg);top:52px;right:-72px;
-  background:
-    repeating-linear-gradient(135deg, rgba(0,0,0,.06) 0 2px, transparent 2px 4px),
-    linear-gradient(180deg,#83ff70,#3fe22e);
-  color:#04230a;font-weight:700;font-size:12px;letter-spacing:.12em;
-  text-transform:lowercase;text-decoration:none;padding:8px 0;
-  border-top:1px solid #b8ffab;border-bottom:1px solid #0a3a06;
-  box-shadow:0 2px 14px rgba(89,255,74,.35);
-  pointer-events:auto;
+  background:rgba(234,255,220,.92);color:#12240f;border:none;
+  box-shadow:0 2px 16px rgba(234,255,220,.3);
 }
-.simple-banner a:hover{filter:brightness(1.08)}
-@media(max-width:760px){.simple-banner{width:150px;height:150px}.simple-banner a{top:36px;right:-84px;font-size:11px}}
+
+/* ── the warm blood (second mist mock): rust in the light, fire at the horizon ── */
+body::before{
+  background:
+    radial-gradient(720px 460px at 46% 16%, rgba(196,110,60,.14), transparent 60%),
+    radial-gradient(1000px 640px at 50% 22%, rgba(233,217,160,.15), transparent 55%),
+    radial-gradient(480px 360px at 50% 19%, rgba(240,255,225,.18), transparent 60%),
+    radial-gradient(1400px 900px at 50% 30%, rgba(38,92,62,.45), transparent 70%),
+    radial-gradient(900px 300px at 82% 96%, rgba(190,110,50,.10), transparent 65%),
+    radial-gradient(700px 260px at 12% 98%, rgba(180,100,45,.08), transparent 65%),
+    radial-gradient(1200px 800px at 8% 85%, rgba(46,98,64,.35), transparent 60%),
+    radial-gradient(1200px 800px at 92% 80%, rgba(52,96,58,.32), transparent 60%),
+    linear-gradient(180deg,#0a1710 0%,#08130d 40%,#0c1a11 75%,#0a150e 100%);
+}
+/* faint film scratches */
+.rail::after{content:none}
+body{position:relative}
+main::before{
+  content:"";position:fixed;inset:0;z-index:-1;pointer-events:none;opacity:.5;
+  background:
+    linear-gradient(100deg, transparent 12.2%, rgba(220,240,220,.05) 12.28%, transparent 12.36%),
+    linear-gradient(95deg, transparent 63.1%, rgba(220,240,220,.04) 63.16%, transparent 63.22%),
+    linear-gradient(102deg, transparent 87.4%, rgba(230,220,200,.045) 87.46%, transparent 87.52%);
+}
+/* the question, spoken in the hero */
+.hero-question{
+  margin:30px auto 0;text-align:center;max-width:760px;
+  color:var(--lumen-gold);text-transform:uppercase;letter-spacing:.24em;
+  font-size:clamp(12px,1.7vw,15.5px);font-weight:600;line-height:1.9;
+  text-shadow:0 0 16px rgba(233,217,160,.3);
+}
