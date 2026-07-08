@@ -243,3 +243,21 @@ gated] → (b) flip producer+consumer [COUPLED, main-loop, runtime-gated] → co
 bridge residue + delete hand AIRs → git rm circuit/src/stark.rs. This is ~4 increments, not one turn.
 The 14 refs also include comment-only/false-positives (aggregate_bilateral already Ir2, binding_proof
 hashes-only, fri_from_scratch a self-contained example) that need no flip.
+
+## ⚑⚑ REORIENTATION (2026-07-08, ember): ASSURANCE FIRST — the flip is GATED on argus-grade correctness
+ember: "major bugs in the old Rust AIRs we ported over... carefully audit the new Lean for correctness
+and expand our proofs; the assurance story vs primary argus is not very good." CORRECT — and the 3 bugs
+we found (relational diff-unbound / membership ordering / non-rev forgery) are EVIDENCE: all found by
+proving Rung-2 adversarially, all the SAME class (descriptor accepts a witness that doesn't satisfy the
+intended semantic relation — a free column / missing gate; byte-identity does NOT catch it).
+CENSUS (ground truth): assurance is UNEVEN — Rung-2 THIN on MembershipDepthGeneral(3)/NoteSpendingLeaf(5)/
+GarbledEval(5)/EffectActionBinding(5); Rung-2 ABSENT on BridgeAction/CommittedThreshold/Derivation/Fold/
+MerkleMembership/MultiStepChain/PredicatesArithmetic/Presentation; NONE tied into AssuranceCase.lean /
+the argus adversary machinery (CoinductiveAdversary/CTLLiveness/Temporal).
+NEW THRUST (supersedes flip-and-delete as the priority): (1) adversarial correctness AUDIT of every
+security-critical emitted family, hunting the found-bug class [RUNNING wf_1b09d713-b46]; (2) Rung-2
+COMPLETION — every family a real no-forgery proof w/ genuine cheat-witnesses, deepen the thin; (3) tie
+the emitted descriptors into AssuranceCase.lean (argus citizens, not islands).
+⚑ THE FLIP/DELETE IS NOW GATED: do NOT flip consumers onto a descriptor until it is audited-correct +
+Rung-2-full. Replacing known-buggy Rust with unaudited Lean is a lateral move. The Gate-1.6 witness
+builders (wrwj5nf6q) may finish (additive, needed post-audit) but the consumer flips WAIT on assurance.
