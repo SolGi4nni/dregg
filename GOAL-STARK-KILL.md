@@ -421,3 +421,24 @@ RANKED HITLIST (deferred — dirty-file-blocked or deeper surgery; do on a quiet
 6. ConditionalTurn.lean:989 — the tree's ONLY native_decide → decide. DIRTY.
 Method proven: scout ranks (parallel, safe) → measure single-file via `lake env lean` under .bin/lean-safe
 → fix → re-measure. NEVER parallel builds.
+
+## ⚑ RECOVERY (2026-07-08, power-loss cleanup, I am the main lane)
+Tree recovering from a power-loss (22 dirty paths, NO merge conflicts = clean crash). Reconciled the
+crash-orphaned final-flips debris:
+- ✅ sdk RED (FullTurnWitness.authorization E0560) CLEARED during recovery — dregg-sdk builds green.
+- ✅ COMMITTED 4 completed consumer flips recovered from debris (build green, 51.7s): bridge/verifier.rs,
+  storage/blinded.rs, turn/executor/apply.rs, wire/server.rs — fully off stark:: onto descriptor_by_name
+  → verify_vm_descriptor2 (postcard(Ir2BatchProof)).
+REMAINING = ONE coherent unit: the BRIDGE-PRESENTATION ISSUER-MEMBERSHIP migration (the last 10 stark
+refs), a SECURITY-CRITICAL data-model flip (do carefully/fresh, NOT tired):
+  · bridge/present.rs — RealPresentationProof.issuer_membership_stark_proof (typed StarkProof, ~10 field
+    accesses) + 4 PUBLIC verify fns (verify_presentation_full/_proof_complete/_presentation/_presentation_bb)
+    still on stark::verify. The NEW path is BUILT alongside (Ir2IssuerWire, prove_issuer_membership_ir2_wire,
+    DescriptorDispatchVerifier) — needs the struct+producer+4 verifiers moved to it in lockstep. NOTE:
+    present.rs:150 says the field may be "only populated locally for debugging/off-chain" — CONFIRM whether
+    the 4 verifiers are debug-only (lower risk) or the live wire path before flipping.
+  · sdk/privacy.rs:736 (1 issuer verify), sdk/verify.rs (×12), sdk/cipherclerk.rs (×2) — same/adjacent path.
+  · dregg-sdk-net/client.rs:290 — calls the removed BridgePresentationProof::issuer_proof_bytes(); a
+    CONSUMER of this migration (fix in lockstep, update to the new wire API). This is the workspace-red crate.
+Then: delete hand AIRs → git rm circuit/src/stark.rs when grep==0. The migration is scoped; it wants
+fresh careful attention + a round-trip test on the presentation-verify path (fail-open if wrong).
