@@ -279,15 +279,24 @@ impl SiloClient {
             self.cclerk.public_key().hex(),
         );
 
-        // Serialize the STARK proof for transmission using the canonical binary format
-        // (proof_to_bytes / proof_from_bytes). The wire server deserializes with
-        // proof_from_bytes() which expects the DREG header format, not postcard.
+        // MIGRATION SEAM (`StarkProof` → `Ir2BatchProof`): the opaque issuer-STARK
+        // wire (`BridgePresentationProof::issuer_proof_bytes()`) was REMOVED from the
+        // bridge, and the migrated wire server (`dregg_wire::server::StarkVerifier`)
+        // consumes a `PresentationProofWire` (presentation-freshness IR-v2 proof +
+        // public inputs) — it rejects any legacy blob unconditionally. Until the
+        // client-side freshness-wire PRODUCER lands, transmit the privacy-stripped
+        // `WirePresentationProof` postcard encoding (the SDK's canonical proof wire
+        // form, same as `AgentCipherclerk::serialize_proof`). A migrated verifier
+        // fail-closes on it exactly as it did on the legacy STARK blob (no
+        // acceptance-surface change); Noop/size-gated test silos still exercise the
+        // transport.
         //
         // NOTE: No binding tag is appended here. Replay protection is provided by
         // the wire-layer nonce + timestamp checks (server.rs lines 1061-1094):
         // the server validates request freshness and rejects replayed nonces, which
         // is strictly stronger than a BLAKE3 binding tag over the same fields.
-        let proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
+        let proof_bytes = postcard::to_stdvec(&proof.into_wire_proof())
+            .map_err(|e| SdkError::Wire(format!("failed to serialize wire proof: {e}")))?;
 
         let msg = WireMessage::PresentToken {
             proof: proof_bytes,
@@ -375,7 +384,11 @@ impl SiloClient {
         );
 
         // No binding tag — wire-layer nonce/timestamp checks provide replay protection.
-        let proof_bytes = proof.issuer_proof_bytes().unwrap_or_default();
+        // MIGRATION SEAM: same `WirePresentationProof` postcard encoding as
+        // `present_token` (the opaque `issuer_proof_bytes()` wire was removed on the
+        // `StarkProof` → `Ir2BatchProof` migration; see the note there).
+        let proof_bytes = postcard::to_stdvec(&proof.into_wire_proof())
+            .map_err(|e| SdkError::Wire(format!("failed to serialize wire proof: {e}")))?;
 
         let msg = WireMessage::PresentToken {
             proof: proof_bytes,

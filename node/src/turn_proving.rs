@@ -930,7 +930,6 @@ pub fn prove_and_verify_finalized_turn_freshness(
     let witness = FullTurnWitness {
         initial_cell_state: initial_vm_state,
         effects: vm_effects,
-        authorization: None,
         membership: None,
         conservation: None,
         non_revocation: Some(NonRevocationWitness { tree, item_hash }),
@@ -1307,7 +1306,6 @@ pub fn prove_and_verify_finalized_turn_capability_holder(
     let witness = FullTurnWitness {
         initial_cell_state: initial_vm_state,
         effects: vm_effects,
-        authorization: None,
         membership: None,
         conservation: None,
         non_revocation: non_revocation
