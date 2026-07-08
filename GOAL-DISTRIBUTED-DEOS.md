@@ -226,6 +226,13 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
   both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
   the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
+- homeserver-grain STEP 1 (community thread) — `deos-homeserver/`: continuwuity boots IN-PROCESS as a
+  library (`conduwuit::run_with_args`) and serves the CS API — `cs_api_roundtrip` proves versions →
+  register → createRoom → send → sync round-trips. Embed PROVEN. Real blockers found+fixed: `[patch]`
+  doesn't propagate through git-deps (mirrored continuwuity's 5 fork pins) + an askama 0.16 macro-span
+  bug (vendored one-line patch, `vendor/askama_derive/PATCH.md`); `force_disable_first_run_mode` for
+  open reg. Doors teed up: `data_dir()` (grant_read_write) + `port()` (with_fds). RocksDB: keep it,
+  system-link later. NEXT: card-carry over this homeserver (subprocess), then the confined spawn.
 - dregg-forge review-threads (community thread) — `dregg-doc/review.rs`: comments + approvals as
   owned receipted atoms (Op::Add through the cap gate, attributed by blame, immutable; a non-holder
   comment refused in-band); approval-as-required-check wired into the CI gate. Both poles, substrate
