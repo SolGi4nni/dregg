@@ -63,7 +63,7 @@ MLWE and MSIS hardness (`Lattice.MSISHard` / `MLWESearchHard`).
 **The single open lemma — general-n Lyubashevsky–Seiler at d≥2 factors.** Challenge-difference
 invertibility is proved *parametrically* (no decide) for **every odd prime at n=2** — the `q^(d/n)`-shape
 min-norm bound `minNorm_linear_factor` for linear (d=1) factors, plus the split-vs-inert dichotomy via a
-constructed CRT iso — and for **n=4 linear-split** (q≡1 mod 8). What remains is the general **degree-d≥2**
+constructed CRT iso — for **n=4 linear-split** (q≡1 mod 8), and a concrete **degree-2** case (`InvertibilityD2`: n=4, q=13, `X⁴+1`=two irreducible quadratics, min-norm exactly 3, `decide`d). What remains is the general **degree-d≥2**
 factor case: the two-squares argument that carries d=1 is special to `ℤ[i] ⊆ ℤ[ζ_2n]`, and the general
 degree-d min-norm needs Lyubashevsky–Seiler's complex-resultant bound, for which Mathlib has no
 infrastructure. That single case (and q≡5 mod 8 at n=4, still decide-only) is the honest edge — everything
