@@ -20,6 +20,23 @@
 //!     homeserver-proven membrane wire path. But deos-matrix never links the card
 //!     type, so it cannot fire the tooth — it only CARRIES the tooth's two inputs.
 //!
+//! **What the tooth actually guarantees (integrity, not authenticity — honest scope).**
+//! The `fork_root` tooth binds the carried bytes to the carried root: it REFUSES a
+//! carry whose bytes were tampered while the root was left STALE, or whose root was
+//! swapped — the anti-*substitution* property. It does NOT, on its own, prove WHO
+//! originated the envelope: a MITM / malicious homeserver that mints wholesale-new
+//! bytes AND recomputes a matching `fork_root` (a *consistent* forge, with any chosen
+//! `who`) produces a self-consistent carry the tooth admits — because both tooth
+//! inputs travel on the same wire and nothing here anchors the root to an originator
+//! identity (`card_fork_membrane` sets `lineage: Vec::new()`). AUTHENTICITY is
+//! therefore delegated to the Matrix TRANSPORT: matrix-sdk authenticates the message
+//! SENDER (device/room keys), so "which principal put this on the wire" is the
+//! homeserver-membrane's guarantee, and this tooth is the integrity check layered on
+//! top. Closing the gap in-layer would fold an originator signature over `fork_root`
+//! and verify it on open — a named follow-up. (The `a_forged_card_carry_is_refused_*`
+//! test covers the STALE-root pole; the consistent-forge pole's actual behavior — admitted
+//! by the tooth, caught by transport auth — is the follow-up test.)
+//!
 //! This bridge joins them, and it is the ONLY place the tooth re-fires over the wire:
 //!   * [`seal_card_fork_to_membrane`] — an originator seals its driven card-fork and
 //!     wraps it into a card-carry `MembraneEnvelope` (hand to
