@@ -101,9 +101,11 @@ theorem range_lookup_sound {bits : Nat} {tbl : Table} (hS : RangeTableSound bits
 Row 0 is the ACTIVE window when `1 < t.rows.length`: it is non-last (the `.gate`s fire) AND first
 (the `.piBinding VmRow.first` pins fire). The lookups fire on every row. -/
 
-/-- Constraint-membership tactic: every constraint we name is literally in `nonRevocationDesc`. -/
+/-- Constraint-membership tactic: every constraint we name is literally in `nonRevocationDesc`
+(including the two direct diff range lookups added by the lower-bound fix). -/
 local macro "nr_mem" : tactic =>
-  `(tactic| (simp [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup]))
+  `(tactic| (simp [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+      rangeLDiffLookup, rangeRDiffLookup]))
 
 /-- A declared `.gate` fires on the active row 0 (non-last, since `length ≥ 2`): its body vanishes. -/
 theorem gateZero0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
@@ -244,30 +246,47 @@ theorem fragment_strict {hash : List ℤ → ℤ} {t : VmTrace} (frag : NonRevoc
   · have hd := frag.diffL; omega
   · have hd := frag.diffR; omega
 
-/-- **`nonRevocation_nonmembership` — THE FULL FUNCTIONAL REFINEMENT (SAT_IMPLIES_SEM, welded).**
-A `Satisfied2` active-row-0 window, against the two named carriers, the field-canonicity residual,
-and the committed sorted spine in which the bracketing leaves `L, R` are ADJACENT (the
-`SpineCommits`-style tree↔spine interface, exactly as `SortedTreeNonMembership.nonMembership_sound`
-takes it), forces the queried item to be a GENUINE non-member of the committed set — `NonMember spine
-x`, welded to `Crypto.NonMembership.sorted_gap_excludes`. The queried item is NOT revoked. -/
+/-- **`sat_forces_canon` — THE FORMER RESIDUAL IS NOW FORCED (the lower-bound fix's teeth).** The
+descriptor's two DIRECT diff range lookups (`rangeLDiffLookup = .lookup ⟨range, [.var DIFF_L]⟩`,
+`rangeRDiffLookup = .lookup ⟨range, [.var DIFF_R]⟩`) put the diff wires THEMSELVES into `[0, 2^30)`
+under `Satisfied2` + `RangeTableSound` (via `range0`, the exact extraction Rung 1 runs on `RL`/`RR`).
+Their `0 ≤` halves ARE `FieldCanonicalDiffs`: the strict-lower half of the half-field ordering is no
+longer a re-assumed hypothesis but a genuine consequence of the deployed descriptor. This is what the
+soundness fix bought — the `x == R` / `x ≤ L` freshness forgery no longer `Satisfied2`s. -/
+theorem sat_forces_canon {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
+    {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+    (hlen : 1 < t.rows.length)
+    (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
+    (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
+    FieldCanonicalDiffs t :=
+  ⟨(range0 hsat hRange hlen DIFF_L (by nr_mem)).1,
+   (range0 hsat hRange hlen DIFF_R (by nr_mem)).1⟩
+
+/-- **`nonRevocation_nonmembership` — THE FULL FUNCTIONAL REFINEMENT (SAT_IMPLIES_SEM, welded,
+UNCONDITIONAL).** A `Satisfied2` active-row-0 window, against the two named crypto carriers
+(`ChipTableSound` Poseidon2-CR, `RangeTableSound`) and the committed sorted spine in which the
+bracketing leaves `L, R` are ADJACENT, forces the queried item to be a GENUINE non-member of the
+committed set — `NonMember spine x`, welded to `Crypto.NonMembership.sorted_gap_excludes`. The queried
+item is NOT revoked. The former `FieldCanonicalDiffs` residual is now DISCHARGED internally by
+`sat_forces_canon` (the descriptor's direct diff range lookups) — no re-assumed ordering hypothesis. -/
 theorem nonRevocation_nonmembership {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
-    (hcanon : FieldCanonicalDiffs t)
     (spine : List ℤ)
     (hsorted : Sorted spine)
     (hadj : Adjacent spine ((envAt t 0).loc LEAF_L) ((envAt t 0).loc LEAF_R)) :
     NonMember spine ((envAt t 0).loc X) := by
   have frag := nonRevocation_sat_refines hlen hsat hChip hRange
-  obtain ⟨hlo, hhi⟩ := fragment_strict frag hcanon
+  obtain ⟨hlo, hhi⟩ := fragment_strict frag (sat_forces_canon hlen hsat hRange)
   exact ⟨hsorted, sorted_gap_excludes spine _ _ _ hsorted hadj hlo hhi⟩
 
 #assert_axioms range_lookup_sound
 #assert_axioms nonRevocation_sat_refines
 #assert_axioms fragment_strict
+#assert_axioms sat_forces_canon
 #assert_axioms nonRevocation_nonmembership
 
 /-! ## §4 — non-vacuity of the SPEC (the anti-scar: the target is TRUE and FALSE, not a stub). -/
@@ -320,8 +339,10 @@ private def cTbl : List (List ℤ) :=
   [ chipRow demoHash [100, 300] (List.replicate 7 0)
   , chipRow demoHash [100000300, 7] (List.replicate 7 0) ]
 
-/-- The range table: the single 30-bit range-wire value `1006632860 = HALF_P_MINUS_1 − 99`. -/
-private def cRange : List (List ℤ) := [[1006632860]]
+/-- The range table: the 30-bit range-wire value `1006632860 = HALF_P_MINUS_1 − 99` AND the honest
+diff value `99` itself (the two direct `[DIFF_L]`/`[DIFF_R]` lookups of the fixed descriptor range-check
+`diff_left = diff_right = 99`). -/
+private def cRange : List (List ℤ) := [[1006632860], [99]]
 
 private def cTrace : VmTrace :=
   { rows := [cRow, cRow], pub := cPub
@@ -342,8 +363,9 @@ theorem concrete_chipSound : ChipTableSound demoHash (cTrace.tf .poseidon2) := b
 theorem concrete_rangeSound : RangeTableSound ORDERING_BITS (cTrace.tf .range) := by
   intro r hr
   simp only [cTrace, cRange, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl
-  exact ⟨1006632860, rfl, by decide, by decide⟩
+  rcases hr with rfl | rfl
+  · exact ⟨1006632860, rfl, by decide, by decide⟩
+  · exact ⟨99, rfl, by decide, by decide⟩
 
 /-- **The `Satisfied2` HYPOTHESIS IS INHABITED.** The concrete 2-row trace genuinely satisfies the
 deployed descriptor's whole denotation — every constraint holds on both row windows (the gates on the
@@ -356,7 +378,8 @@ theorem concrete_sat :
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro i hi c hc
     rw [show cTrace.rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup] at hc
+    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+      rangeLDiffLookup, rangeRDiffLookup] at hc
     interval_cases i
     · have hF : ((0 : Nat) == 0) = true := rfl
       have hLf : ((0 : Nat) + 1 == cTrace.rows.length) = false := rfl
@@ -391,7 +414,7 @@ theorem concrete_nonmembership : NonMember ([100, 300] : List ℤ) 200 := by
   have hadj : Adjacent ([100, 300] : List ℤ)
       ((envAt cTrace 0).loc LEAF_L) ((envAt cTrace 0).loc LEAF_R) := ⟨[], [], rfl⟩
   exact nonRevocation_nonmembership (by decide) concrete_sat concrete_chipSound
-    concrete_rangeSound concrete_canon [100, 300] hsorted hadj
+    concrete_rangeSound [100, 300] hsorted hadj
 
 /-- The FAILING trace: identical, but the neighbor positions are NON-consecutive (`RPOS = 8`), so the
 adjacency gate `RPOS − LPOS − 1 = 8 − 5 − 1 = 2 ≠ 0` bites on the active row 0. -/

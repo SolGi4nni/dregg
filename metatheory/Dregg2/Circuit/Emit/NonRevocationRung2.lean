@@ -1,51 +1,36 @@
 /-
-# Dregg2.Circuit.Emit.NonRevocationRung2 — the RUNG-2 discharge of the `FieldCanonicalDiffs`
-residual for the emitted non-revocation descriptor (`nonRevocationDesc`, the `revocation` family).
+# Dregg2.Circuit.Emit.NonRevocationRung2 — the RUNG-2 no-forgery discharge for the emitted
+non-revocation descriptor (`nonRevocationDesc`, the `revocation` family), UNCONDITIONAL after the
+lower-bound soundness fix, plus the historical witness of the CLOSED bug.
 
-## What Rung 1 gave us and what remained
+## What Rung 1 gave us and what the lower-bound fix closed
 
 `NonRevocationRefine.lean` (RUNG 1) proves the whole-descriptor bridge
-`nonRevocation_nonmembership` : `Satisfied2 ∧ ChipTableSound ∧ RangeTableSound ∧ FieldCanonicalDiffs
-∧ (sorted, adjacent spine) ⟹ NonMember spine x` — the queried item is a GENUINE non-member of the
-committed set (NOT revoked). But it consumes an EXPLICIT residual hypothesis
-`FieldCanonicalDiffs t := 0 ≤ DIFF_L ∧ 0 ≤ DIFF_R` (Rung 1's status PARTIAL): the STRICT-LOWER half
-of the half-field ordering. The half-field range argument only certifies `RL = HALF_P_MINUS_1 − diff
-∈ [0, 2^30)`, which over ℤ bounds `diff ∈ (HALF_P_MINUS_1 − 2^30, HALF_P_MINUS_1]` — the UPPER half.
-The lower bound `diff ≥ 0` is NOT forced.
+`nonRevocation_nonmembership` : `Satisfied2 ∧ ChipTableSound ∧ RangeTableSound ∧ (sorted, adjacent
+spine) ⟹ NonMember spine x` — the queried item is a GENUINE non-member of the committed set (NOT
+revoked). Before the fix, that bridge consumed an EXPLICIT residual `FieldCanonicalDiffs t :=
+0 ≤ DIFF_L ∧ 0 ≤ DIFF_R` (the STRICT-LOWER half of the half-field ordering). The old half-field range
+argument certified only `RL = HALF_P_MINUS_1 − diff ∈ [0, 2^30)`, which over ℤ bounds `diff ∈
+(HALF_P_MINUS_1 − 2^30, HALF_P_MINUS_1]` — the lower bound `diff ≥ 0` was NOT forced.
 
-## The measured gap (MODEL-FOUND — this is a REAL circuit seam, not a modelling artifact)
+The FIX (now deployed in `nonRevocationDesc`) adds two DIRECT range lookups binding `DIFF_L`, `DIFF_R`
+themselves to `[0, 2^30)`. So `Satisfied2` now FORCES `DiffLowerRangeSound` (`sat_forces_lowerRange`)
+and hence `FieldCanonicalDiffs` (Rung 1's `sat_forces_canon`) — the residual is discharged BY THE
+EMITTED CIRCUIT, and `nonRevocation_rung2` is UNCONDITIONAL.
 
-`HALF_P_MINUS_1 = 1006632959` and `2^30 = 1073741824 > (p−1)/2`, so the single range lookup
-`RL ∈ [0, 2^30)` OVERSHOOTS the honest positive window by exactly `2^30 − 1 − HALF_P_MINUS_1 = 2^26`.
-Both the ℤ `Satisfied2` model AND the deployed BabyBear circuit (`revocation.rs`: `HALF_P_MINUS_1 −
-diff` reconstructed from 30 bits) admit a NEGATIVE window `diff ∈ [−2^26, −1]`: a canonical felt
-`diff = p−1` (signed `−1`) gives `RL = HALF_P_MINUS_1 + 1 = 1006632960 < 2^30`, which decomposes into
-30 bits. So the ℤ model is FAITHFUL to the field here, and the gap is genuine on BOTH sides —
-`satisfied_admits_negative_window` extracts the exact ℤ lower bound `−2^26 ≤ DIFF_L`, and
-`cheat_carriers_do_not_force_nonmembership` exhibits a concrete forgery: the queried item set EQUAL to
-a present leaf (`x = L = 100`, `diff_left = −1`) PROVABLY `Satisfied2`s `nonRevocationDesc` against
-realizable `ChipTableSound` / `RangeTableSound`, yet `x` is a genuine MEMBER — a revoked item forging
-freshness. `Satisfied2` + the two named carriers alone therefore CANNOT force non-membership.
+## The measured gap the fix closed (MODEL-FOUND — a REAL circuit seam, not a modelling artifact)
 
-## The discharge + the NAMED carrier / emit-fix
-
-The carrier that closes it is `DiffLowerRangeSound` — the range argument ALSO certifies the diff
-wires THEMSELVES lie in `[0, 2^30)` (`0 ≤ diff_left, diff_right < 2^30`). This is the TWIN of Rung 1's
-`RangeTableSound` on the `RL`/`RR` range-wires, and is exactly the lower-gap tooth the emitted
-descriptor is MISSING. `lowerRange_discharges_canon` derives `FieldCanonicalDiffs` from it (the `0 ≤`
-halves), and `nonRevocation_rung2` composes with Rung 1 for the genuine no-forgery conclusion
-`NonMember spine x`. The carrier is NAMED (never a Lean axiom), is proven LOAD-BEARING (the cheat
-above `Satisfied2`s yet violates it), and NON-VACUOUS (the honest witness satisfies it and the full
-bridge fires — `honest_rung2_fires` proves `200 ∉ [100,300]`).
-
-### PRECISE emit-fix (the residual this file names, status RUNG2_PARTIAL)
-
-`nonRevocationDesc` must add two range lookups binding `DIFF_L`, `DIFF_R` directly to `[0, 2^30)`
-(equivalently: `revocation.rs` must range-check `diff_left`/`diff_right` themselves, not only
-`HALF_P_MINUS_1 − diff`; equivalently, bound the leaf/query value domain below `(p−1)/2 − 2^26`). As
-emitted, the `2^26` negative window admits a revoked-item freshness forgery. With that tooth present,
-`DiffLowerRangeSound` is DISCHARGED by `RangeTableSound` on the new columns and the Rung-2 conclusion
-becomes unconditional.
+`HALF_P_MINUS_1 = 1006632959` and `2^30 = 1073741824 > (p−1)/2`, so the single `RL ∈ [0, 2^30)` lookup
+overshoots the honest positive window by exactly `2^30 − 1 − HALF_P_MINUS_1 = 2^26`
+(`window_width`). The OLD 12-constraint descriptor (`nonRevocationDescPreFix`) therefore admitted a
+NEGATIVE window `diff ∈ [−2^26, −1]`: a canonical felt `diff = p−1` (signed `−1`) gives
+`RL = HALF_P_MINUS_1 + 1 = 1006632960 < 2^30`. `satisfied_admits_negative_window` records that the
+`RL`-lookup-alone bound is only `−2^26 ≤ DIFF_L`, and `prefix_carriers_admitted_forgery` exhibits the
+concrete forgery: the queried item set EQUAL to a present leaf (`x = L = 100`, `diff_left = −1`)
+PROVABLY `Satisfied2`s the PRE-FIX descriptor against realizable carriers, yet `x` is a genuine MEMBER
+— a revoked item forging freshness. The DEPLOYED descriptor REJECTS this same trace
+(`fixed_forbids_the_forgery`): its direct `[DIFF_L]` lookup refuses `[−1]`. That contrast IS the
+closed soundness bug, kept true on both sides.
 
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The range-argument faithfulness enters
@@ -71,9 +56,10 @@ open Dregg2.Crypto.NonMembership (Sorted Adjacent NonMember sorted_gap_excludes)
 set_option autoImplicit false
 
 /-- Constraint-membership tactic (twin of Rung 1's local `nr_mem`): every constraint we name is
-literally in `nonRevocationDesc`. -/
+literally in `nonRevocationDesc` (including the two direct diff range lookups added by the fix). -/
 local macro "nr_mem" : tactic =>
-  `(tactic| (simp [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup]))
+  `(tactic| (simp [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+      rangeLDiffLookup, rangeRDiffLookup]))
 
 /-! ## §1 — MEASURING the gap (the half-field overshoot is exactly `2^26`). -/
 
@@ -81,11 +67,14 @@ local macro "nr_mem" : tactic =>
 HALF_P_MINUS_1]` by exactly `2^26` — the width of the negative window both models admit. -/
 theorem window_width : (2 : ℤ) ^ ORDERING_BITS - 1 - HALF_P_MINUS_1 = 2 ^ 26 := by decide
 
-/-- **The ℤ model is FAITHFUL to the field: it admits `DIFF_L` down to exactly `−2^26`.** From the
-range lookup `RL < 2^30` and the binding `RL = HALF_P_MINUS_1 − DIFF_L`, `Satisfied2` forces only
-`DIFF_L ≥ HALF_P_MINUS_1 − (2^30 − 1) = −2^26`. So the negative window `[−2^26, −1]` is genuinely
-un-forced — this is a REAL circuit gap, not a modelling loss (`revocation.rs` reconstructs the SAME
-`HALF_P_MINUS_1 − diff` from 30 bits, admitting `diff = p−1` as signed `−1`). -/
+/-- **The `RL` range-wire lookup ALONE bounds `DIFF_L` only down to `−2^26`.** From the range lookup
+`RL < 2^30` and the binding `RL = HALF_P_MINUS_1 − DIFF_L`, that single lookup forces only
+`DIFF_L ≥ HALF_P_MINUS_1 − (2^30 − 1) = −2^26` — it does NOT exclude the negative window `[−2^26, −1]`.
+This is the exact overshoot the OLD (pre-fix) 12-constraint descriptor left open, admitting the
+`x ≤ L` freshness forgery (`nonRevocationDescPreFix` below). It is still TRUE of the fixed descriptor
+(the `RL` lookup is unchanged), but is no longer load-bearing: the fix's DIRECT `[DIFF_L]` range lookup
+now additionally forces `0 ≤ DIFF_L` (`sat_forces_lowerRange`), so the OVERALL `Satisfied2` closes the
+window this single-lookup bound leaves. -/
 theorem satisfied_admits_negative_window {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hlen : 1 < t.rows.length)
@@ -112,35 +101,46 @@ def DiffLowerRangeSound (t : VmTrace) : Prop :=
 
 /-- **`lowerRange_discharges_canon`** — the carrier discharges Rung 1's `FieldCanonicalDiffs` residual
 (its `0 ≤` halves). Genuine, not laundering: `DiffLowerRangeSound` STRICTLY refines
-`FieldCanonicalDiffs` (it additionally caps the diffs at `2^30`), and — proven in §4 —
-`Satisfied2` + Rung 1's carriers do NOT imply it. -/
+`FieldCanonicalDiffs` (it additionally caps the diffs at `2^30`). -/
 theorem lowerRange_discharges_canon {t : VmTrace} (h : DiffLowerRangeSound t) :
     FieldCanonicalDiffs t :=
   ⟨h.1.1, h.2.1⟩
 
-/-- **`nonRevocation_rung2` — THE RUNG-2 NO-FORGERY DISCHARGE (conditional on the named emit-fix).**
-A `Satisfied2` active-row-0 window, against the Poseidon2 chip carrier, the `RL`/`RR` range carrier,
-AND the missing lower-gap range tooth `DiffLowerRangeSound`, with the committed sorted spine in which
-the bracketing leaves are adjacent, forces the queried item to be a GENUINE non-member of the
-committed set (NOT revoked) — `NonMember spine x`, welded to `sorted_gap_excludes`. WITHOUT
-`FieldCanonicalDiffs` as a hypothesis: it is discharged by the named carrier. -/
+/-- **`sat_forces_lowerRange` — THE DEPLOYED DESCRIPTOR NOW FORCES THE CARRIER.** With the lower-bound
+fix in `nonRevocationDesc`, the two direct diff range lookups put `[DIFF_L]`, `[DIFF_R]` into the range
+table; against `RangeTableSound` (via Rung 1's `range0`) that forces `DiffLowerRangeSound`
+UNCONDITIONALLY — the carrier that Rung 2 had to RE-ASSUME is now a consequence of `Satisfied2`. -/
+theorem sat_forces_lowerRange {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
+    {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+    (hlen : 1 < t.rows.length)
+    (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
+    (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
+    DiffLowerRangeSound t :=
+  ⟨range0 hsat hRange hlen DIFF_L (by nr_mem), range0 hsat hRange hlen DIFF_R (by nr_mem)⟩
+
+/-- **`nonRevocation_rung2` — THE RUNG-2 NO-FORGERY DISCHARGE (now UNCONDITIONAL).**
+A `Satisfied2` active-row-0 window, against the Poseidon2 chip carrier and the range carrier, with the
+committed sorted spine in which the bracketing leaves are adjacent, forces the queried item to be a
+GENUINE non-member of the committed set (NOT revoked) — `NonMember spine x`, welded to
+`sorted_gap_excludes`. WITHOUT `FieldCanonicalDiffs` / `DiffLowerRangeSound` as a hypothesis: with the
+lower-bound fix present, the descriptor's own diff range lookups force them (`sat_forces_lowerRange`),
+so Rung 1's `nonRevocation_nonmembership` already discharges the whole thing. -/
 theorem nonRevocation_rung2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
-    (hlower : DiffLowerRangeSound t)
     (spine : List ℤ)
     (hsorted : Sorted spine)
     (hadj : Adjacent spine ((envAt t 0).loc LEAF_L) ((envAt t 0).loc LEAF_R)) :
     NonMember spine ((envAt t 0).loc X) :=
-  nonRevocation_nonmembership hlen hsat hChip hRange (lowerRange_discharges_canon hlower)
-    spine hsorted hadj
+  nonRevocation_nonmembership hlen hsat hChip hRange spine hsorted hadj
 
 #assert_axioms window_width
 #assert_axioms satisfied_admits_negative_window
 #assert_axioms lowerRange_discharges_canon
+#assert_axioms sat_forces_lowerRange
 #assert_axioms nonRevocation_rung2
 
 /-! ## §3 — the shared committed tree + honest / cheating traces.
@@ -187,7 +187,7 @@ private def hnRow : Assignment := fun c =>
 private def hnPub : Assignment := fun k =>
   if k = ROOT_PI then 100000300000007 else if k = QUERIED_PI then 200 else 0
 
-private def hnRangeTbl : List (List ℤ) := [[1006632860]]
+private def hnRangeTbl : List (List ℤ) := [[1006632860], [99]]
 
 private def hnTrace : VmTrace :=
   { rows := [hnRow, hnRow], pub := hnPub
@@ -203,7 +203,8 @@ private theorem hn_sat :
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro i hi c hc
     rw [show hnTrace.rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup] at hc
+    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+      rangeLDiffLookup, rangeRDiffLookup] at hc
     interval_cases i
     · have hF : ((0 : Nat) == 0) = true := rfl
       have hLf : ((0 : Nat) + 1 == hnTrace.rows.length) = false := rfl
@@ -232,31 +233,66 @@ private theorem hn_chipSound : ChipTableSound demoHash (hnTrace.tf .poseidon2) :
 private theorem hn_rangeSound : RangeTableSound ORDERING_BITS (hnTrace.tf .range) := by
   intro r hr
   simp only [hnTrace, hnRangeTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl
-  exact ⟨1006632860, rfl, by decide, by decide⟩
+  rcases hr with rfl | rfl
+  · exact ⟨1006632860, rfl, by decide, by decide⟩
+  · exact ⟨99, rfl, by decide, by decide⟩
 
-/-- The honest witness SATISFIES the named lower-gap carrier (`diff = 99 ∈ [0, 2^30)`). -/
-private theorem hn_lower : DiffLowerRangeSound hnTrace :=
-  ⟨⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩
+/-- **The deployed descriptor FORCES the lower-gap carrier on the honest witness** — `DiffLowerRangeSound`
+is not merely satisfiable, it is DERIVED from the honest trace's `Satisfied2` + `RangeTableSound` through
+the fix's direct diff range lookups (`sat_forces_lowerRange`). Non-vacuity of the forcing lemma. -/
+theorem honest_forces_lowerRange : DiffLowerRangeSound hnTrace :=
+  sat_forces_lowerRange (by decide) hn_sat hn_rangeSound
 
 /-- **NON-VACUITY (TRUE half) — the RUNG-2 discharge FIRES end-to-end.** Every hypothesis of
 `nonRevocation_rung2` jointly holds on the concrete honest instance (inhabited `Satisfied2`,
-realizable chip / range carriers, the named lower-gap carrier, a concrete sorted spine with `100`/`300`
-adjacent), and the conclusion is the GENUINE non-membership `200 ∉ [100,300]` — WITHOUT any
-`FieldCanonicalDiffs` hypothesis. Not a hollow green. -/
+realizable chip / range carriers, a concrete sorted spine with `100`/`300` adjacent), and the
+conclusion is the GENUINE non-membership `200 ∉ [100,300]` — WITHOUT any `FieldCanonicalDiffs` /
+`DiffLowerRangeSound` hypothesis (the descriptor forces them). Not a hollow green. -/
 theorem honest_rung2_fires : NonMember ([100, 300] : List ℤ) 200 := by
   have hsorted : Sorted ([100, 300] : List ℤ) := by simp [Sorted, List.pairwise_cons]
   have hadj : Adjacent ([100, 300] : List ℤ)
       ((envAt hnTrace 0).loc LEAF_L) ((envAt hnTrace 0).loc LEAF_R) := ⟨[], [], rfl⟩
-  exact nonRevocation_rung2 (by decide) hn_sat hn_chipSound hn_rangeSound hn_lower
+  exact nonRevocation_rung2 (by decide) hn_sat hn_chipSound hn_rangeSound
     [100, 300] hsorted hadj
 
-/-! ### §3b — THE LOAD-BEARING CHEAT (the model-found forgery): `x = L = 100`, `diff_left = −1`.
+/-! ### §3b — THE CLOSED BUG: the PRE-FIX descriptor admitted a member-forgery; the fixed one rejects it.
 
-A revoked item forges freshness. The queried item is set EQUAL to the present left neighbor
-(`x = LEAF_L = 100`), so `diff_left = x − L − 1 = −1`, a canonical felt `p−1` whose range-wire
-`RL = HALF_P_MINUS_1 + 1 = 1006632960 < 2^30` decomposes into 30 bits (the negative window). Same
+The `revocation` soundness bug (now closed): the OLD 12-constraint descriptor range-checked only the
+half-field wires `RL`/`RR`, never `DIFF_L`/`DIFF_R`, so the `2^26` negative window admitted a revoked
+(present) item forging freshness. `nonRevocationDescPreFix` is that exact pre-fix descriptor, kept as a
+TRUE historical witness. The model-found forgery: the queried item set EQUAL to the present left
+neighbor (`x = LEAF_L = 100`), so `diff_left = x − L − 1 = −1`, a canonical felt `p−1` whose range-wire
+`RL = HALF_P_MINUS_1 + 1 = 1006632960 < 2^30` decomposes into 30 bits. It PROVABLY `Satisfied2`s the
+PRE-FIX descriptor (`prefix_cheat_sat`) yet is a genuine member — but does NOT `Satisfied2` the deployed
+fixed descriptor, whose direct `[DIFF_L]` lookup rejects `[−1]` (`fixed_forbids_the_forgery`). Same
 committed tree/root as the honest witness — only the queried item and the diff/range wires change. -/
+
+/-- **`nonRevocationDescPreFix` — THE HISTORICAL PRE-FIX DESCRIPTOR (the CLOSED soundness bug).** The
+12-constraint non-revocation descriptor as emitted BEFORE the lower-bound fix: identical to
+`nonRevocationDesc` but WITHOUT the two direct diff range lookups (`rangeLDiffLookup`,
+`rangeRDiffLookup`). It range-checks only the half-field wires `RL`/`RR`, so the `2^26` negative window
+leaks — a revoked item can forge freshness (`prefix_carriers_admitted_forgery`). Retained as a TRUE
+witness that the bug was real; the deployed descriptor closes it (`fixed_forbids_the_forgery`). -/
+def nonRevocationDescPreFix : EffectVmDescriptor2 :=
+  { name        := "dregg-non-revocation-sorted-tree::poseidon2-v1-PREFIX-BUGGY"
+  , traceWidth  := NONREV_WIDTH
+  , piCount     := 2
+  , tables      := [Dregg2.Circuit.DescriptorIR2.rangeTableDef ORDERING_BITS]
+  , constraints :=
+      [ level0Lookup
+      , level1Lookup
+      , .base (.gate contBody)
+      , .base (.gate diffLBody)
+      , .base (.gate diffRBody)
+      , .base (.gate rangeLBindBody)
+      , .base (.gate rangeRBindBody)
+      , rangeLLookup
+      , rangeRLookup
+      , .base (.gate adjBody)
+      , .base (.piBinding VmRow.first PAR1 ROOT_PI)
+      , .base (.piBinding VmRow.first X QUERIED_PI) ]
+  , hashSites   := []
+  , ranges      := [] }
 
 private def chRow : Assignment := fun c =>
   if c = X then 100
@@ -286,18 +322,19 @@ private def chTrace : VmTrace :=
       | .range => chRangeTbl
       | _ => [] }
 
-/-- **The forgery PROVABLY `Satisfied2`s the DEPLOYED descriptor.** With `x = L = 100`,
-`diff_left = −1`, and the range-wire `RL = 1006632960 ∈ [0, 2^30)`, every constraint of
-`nonRevocationDesc` holds on the active row 0 (and the vacuous/lookup legs on the padding row 1). The
-`Satisfied2` hypothesis of Rung 1 is met by an item that is a genuine member. -/
-theorem cheat_sat :
-    Satisfied2 demoHash nonRevocationDesc (fun _ => 0) (fun _ => (0, 0)) [] chTrace := by
-  have hmemlog : memLog nonRevocationDesc chTrace = [] := rfl
-  have hmaplog : mapLog nonRevocationDesc chTrace = [] := rfl
+/-- **The forgery PROVABLY `Satisfied2`s the PRE-FIX descriptor (the bug was real).** With `x = L = 100`,
+`diff_left = −1`, and the range-wire `RL = 1006632960 ∈ [0, 2^30)`, every constraint of the OLD
+12-constraint `nonRevocationDescPreFix` holds on the active row 0 (and the vacuous/lookup legs on the
+padding row 1) — the pre-fix `Satisfied2` is met by an item that is a genuine member. The deployed FIXED
+descriptor rejects this same trace (`fixed_forbids_the_forgery`). -/
+theorem prefix_cheat_sat :
+    Satisfied2 demoHash nonRevocationDescPreFix (fun _ => 0) (fun _ => (0, 0)) [] chTrace := by
+  have hmemlog : memLog nonRevocationDescPreFix chTrace = [] := rfl
+  have hmaplog : mapLog nonRevocationDescPreFix chTrace = [] := rfl
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro i hi c hc
     rw [show chTrace.rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup] at hc
+    simp only [nonRevocationDescPreFix, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup] at hc
     interval_cases i
     · have hF : ((0 : Nat) == 0) = true := rfl
       have hLf : ((0 : Nat) + 1 == chTrace.rows.length) = false := rfl
@@ -312,7 +349,7 @@ theorem cheat_sat :
           EmittedExpr.eval, List.map_cons, List.map_nil, hFf, hL] <;>
         decide
   · intro i _; trivial
-  · intro i _ r hr; simp [nonRevocationDesc] at hr
+  · intro i _ r hr; simp [nonRevocationDescPreFix] at hr
   · exact List.nodup_nil
   · intro op hop; rw [hmemlog] at hop; simp at hop
   · rw [hmemlog]; trivial
@@ -339,15 +376,15 @@ theorem cheat_violates_lower : ¬ DiffLowerRangeSound chTrace := by
 theorem cheat_violates_canon : ¬ FieldCanonicalDiffs chTrace := by
   intro h; exact absurd h.1 (by decide)
 
-/-- **THE ANCHOR IS LOAD-BEARING — `Satisfied2` + Rung 1's two carriers do NOT force non-membership.**
-On the forgery: the descriptor `Satisfied2`s, both named carriers (`ChipTableSound`,
-`RangeTableSound`) are realizable, the committed spine `[100,300]` is sorted with `100`/`300` adjacent
-— yet the queried item `x = 100` is a genuine MEMBER (`¬ NonMember [100,300] 100`). So NO theorem
-concluding `NonMember` from `Satisfied2` + those carriers alone can exist: the `DiffLowerRangeSound`
-carrier (equivalently the `FieldCanonicalDiffs` residual, which the cheat violates) is a REAL filter,
-not `True`. This is the revoked-item freshness forgery the `2^26` negative window admits. -/
-theorem cheat_carriers_do_not_force_nonmembership :
-    Satisfied2 demoHash nonRevocationDesc (fun _ => 0) (fun _ => (0, 0)) [] chTrace
+/-- **`prefix_carriers_admitted_forgery` — THE CLOSED BUG, WITNESSED.** On the forgery, the PRE-FIX
+descriptor `Satisfied2`s, both named carriers (`ChipTableSound`, `RangeTableSound`) are realizable, the
+committed spine `[100,300]` is sorted with `100`/`300` adjacent — yet the queried item `x = 100` is a
+genuine MEMBER (`¬ NonMember [100,300] 100`), and the `FieldCanonicalDiffs` residual is violated. So NO
+theorem concluding `NonMember` from the PRE-FIX `Satisfied2` + those carriers alone could exist: the
+`2^26` negative window admitted a revoked-item freshness forgery. This is the exact soundness hole the
+lower-bound fix closes — the fixed descriptor rejects this same trace (`fixed_forbids_the_forgery`). -/
+theorem prefix_carriers_admitted_forgery :
+    Satisfied2 demoHash nonRevocationDescPreFix (fun _ => 0) (fun _ => (0, 0)) [] chTrace
     ∧ ChipTableSound demoHash (chTrace.tf .poseidon2)
     ∧ RangeTableSound ORDERING_BITS (chTrace.tf .range)
     ∧ Sorted ([100, 300] : List ℤ)
@@ -355,16 +392,33 @@ theorem cheat_carriers_do_not_force_nonmembership :
     ∧ (envAt chTrace 0).loc X ∈ ([100, 300] : List ℤ)
     ∧ ¬ NonMember ([100, 300] : List ℤ) ((envAt chTrace 0).loc X)
     ∧ ¬ FieldCanonicalDiffs chTrace := by
-  refine ⟨cheat_sat, cheat_chipSound, cheat_rangeSound, ?_, ⟨[], [], rfl⟩, ?_, ?_, cheat_violates_canon⟩
+  refine ⟨prefix_cheat_sat, cheat_chipSound, cheat_rangeSound, ?_, ⟨[], [], rfl⟩, ?_, ?_,
+    cheat_violates_canon⟩
   · simp [Sorted, List.pairwise_cons]
   · show (100 : ℤ) ∈ ([100, 300] : List ℤ); simp
   · rintro ⟨_, hni⟩
     exact hni (by show (100 : ℤ) ∈ ([100, 300] : List ℤ); simp)
 
+/-- **`fixed_forbids_the_forgery` — THE FIX BITES (the positive closure).** The SAME forgery trace does
+NOT `Satisfied2` the deployed FIXED `nonRevocationDesc`: its direct `[DIFF_L]` range lookup requires
+`[−1] ∈ tf.range = chRangeTbl = [[1006632960],[1006632760]]`, which fails. So the revoked-item freshness
+forgery that `Satisfied2`d the pre-fix descriptor is now rejected — the soundness bug is closed. -/
+theorem fixed_forbids_the_forgery :
+    ¬ Satisfied2 demoHash nonRevocationDesc (fun _ => 0) (fun _ => (0, 0)) [] chTrace := by
+  intro h
+  have hmem : VmConstraint2.lookup ⟨TableId.range, [.var DIFF_L]⟩ ∈ nonRevocationDesc.constraints := by
+    nr_mem
+  have h0 := h.rowConstraints 0 (by decide) _ hmem
+  simp only [VmConstraint2.holdsAt, Lookup.holdsAt, List.map_cons, List.map_nil,
+    EmittedExpr.eval] at h0
+  revert h0; decide
+
 #assert_axioms honest_rung2_fires
-#assert_axioms cheat_sat
+#assert_axioms honest_forces_lowerRange
+#assert_axioms prefix_cheat_sat
 #assert_axioms cheat_violates_lower
 #assert_axioms cheat_violates_canon
-#assert_axioms cheat_carriers_do_not_force_nonmembership
+#assert_axioms prefix_carriers_admitted_forgery
+#assert_axioms fixed_forbids_the_forgery
 
 end Dregg2.Circuit.Emit.NonRevocationRung2

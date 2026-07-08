@@ -102,9 +102,12 @@ def semTable (hash : List ℤ → ℤ) (L R sib : ℤ) : Table :=
   [ chipRow hash [L, R] (List.replicate 7 0)
   , chipRow hash [hash [L, R], sib] (List.replicate 7 0) ]
 
-/-- The 30-bit range table: the two half-field range-wires `HALF_P_MINUS_1 − diff`. -/
+/-- The 30-bit range table: the two half-field range-wires `HALF_P_MINUS_1 − diff` (checked by the
+`RL`/`RR` lookups) AND the two diff wires `diff` themselves (checked by the fix's direct
+`[DIFF_L]`/`[DIFF_R]` lookups). -/
 def semRange (L x R : ℤ) : Table :=
-  [ [HALF_P_MINUS_1 - (x - L - 1)], [HALF_P_MINUS_1 - (R - x - 1)] ]
+  [ [HALF_P_MINUS_1 - (x - L - 1)], [HALF_P_MINUS_1 - (R - x - 1)]
+  , [x - L - 1], [R - x - 1] ]
 
 /-- The two-row witness trace: the active row (row 0) plus an identical padding row (row 1, the last
 row, on which the `.gate`s / `.piBinding .first`s are vacuous and only the lookups fire). -/
@@ -198,18 +201,21 @@ theorem sem_rangeSound (hash : List ℤ → ℤ) (L x R sib pos : ℤ)
   have hH : HALF_P_MINUS_1 = 1006632959 := rfl
   intro r hr
   simp only [semTrace, semRange, List.mem_cons, List.not_mem_nil, or_false] at hr
-  rcases hr with rfl | rfl
+  rcases hr with rfl | rfl | rfl | rfl
   · exact ⟨HALF_P_MINUS_1 - (x - L - 1), rfl, by omega, by omega⟩
   · exact ⟨HALF_P_MINUS_1 - (R - x - 1), rfl, by omega, by omega⟩
+  · exact ⟨x - L - 1, rfl, by omega, by omega⟩
+  · exact ⟨R - x - 1, rfl, by omega, by omega⟩
 
 /-! ## §5 — the completeness core: the deployed `Satisfied2` is genuinely inhabited. -/
 
 /-- **`sem_satisfied` — THE COMPLETENESS CORE (SEM_IMPLIES_SAT).** For every bracketing instance
 `L < x < R` in the half-field window, the constructed two-row trace GENUINELY SATISFIES the deployed
-whole-trace denotation `Satisfied2` of `nonRevocationDesc`: every one of the 12 declared constraints
-holds on both row windows (the two chip lookups and two range lookups on both rows; the six gates and
-two PI pins fire on the active row 0, vacuous on the last row 1), and the empty memory / map-op legs
-close. The hypothesis of the committed soundness bridge is therefore inhabited PARAMETRICALLY.
+whole-trace denotation `Satisfied2` of `nonRevocationDesc`: every one of the 14 declared constraints
+holds on both row windows (the two chip lookups and FOUR range lookups — `RL`/`RR` plus the fix's
+direct `[DIFF_L]`/`[DIFF_R]` — on both rows; the six gates and two PI pins fire on the active row 0,
+vacuous on the last row 1), and the empty memory / map-op legs close. The hypothesis of the committed
+soundness bridge is therefore inhabited PARAMETRICALLY.
 
 Note it needs NO ordering hypothesis: the gate equations and table memberships are satisfiable for any
 bracketing data — the strict ordering enters ONLY through the range-table SOUNDNESS carrier
@@ -225,7 +231,8 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
   · -- rowConstraints
     intro i hi c hc
     rw [show (semTrace hash L x R sib pos).rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup] at hc
+    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+      rangeLDiffLookup, rangeRDiffLookup] at hc
     interval_cases i
     · -- active row 0: isFirst = true (pins fire), isLast = false (gates fire).
       fin_cases hc
@@ -258,6 +265,14 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
         simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc0, List.map_cons, List.map_nil,
           EmittedExpr.eval, r_RR]
         exact List.mem_cons_of_mem _ List.mem_cons_self
+      · -- direct diff-left lookup: [DIFF_L] = [x−L−1] ∈ range table (the lower-bound fix)
+        simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc0, List.map_cons, List.map_nil,
+          EmittedExpr.eval, r_DIFF_L]
+        exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)
+      · -- direct diff-right lookup: [DIFF_R] = [R−x−1] ∈ range table (the lower-bound fix)
+        simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc0, List.map_cons, List.map_nil,
+          EmittedExpr.eval, r_DIFF_R]
+        exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))
       · -- adjacency gate: (pos+1) − pos − 1 = 0
         show adjBody.eval (envAt (semTrace hash L x R sib pos) 0).loc = 0
         simp only [adjBody, EmittedExpr.eval, loc0, r_RPOS, r_LPOS]; ring
@@ -288,6 +303,14 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
         simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc1, List.map_cons, List.map_nil,
           EmittedExpr.eval, r_RR]
         exact List.mem_cons_of_mem _ List.mem_cons_self
+      · -- direct diff-left lookup (fires on every row)
+        simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc1, List.map_cons, List.map_nil,
+          EmittedExpr.eval, r_DIFF_L]
+        exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self)
+      · -- direct diff-right lookup (fires on every row)
+        simp only [VmConstraint2.holdsAt, Lookup.holdsAt, loc1, List.map_cons, List.map_nil,
+          EmittedExpr.eval, r_DIFF_R]
+        exact List.mem_cons_of_mem _ (List.mem_cons_of_mem _ (List.mem_cons_of_mem _ List.mem_cons_self))
       · exact trivial            -- adjacency gate
       · -- root PI pin vacuous (not the first row)
         intro h; exact absurd h (by decide)
@@ -333,8 +356,6 @@ theorem sem_roundtrip (hash : List ℤ → ℤ) (L x R sib pos : ℤ)
     (hlt : L < x) (hgt : x < R) (hbL : x - L - 1 ≤ HALF_P_MINUS_1) (hbR : R - x - 1 ≤ HALF_P_MINUS_1) :
     NonMember [L, R] x := by
   have hsat := sem_satisfied hash L x R sib pos
-  have hcanon : FieldCanonicalDiffs (semTrace hash L x R sib pos) := by
-    refine ⟨?_, ?_⟩ <;> simp only [loc0, r_DIFF_L, r_DIFF_R] <;> omega
   have hsorted : Sorted ([L, R] : List ℤ) := by
     show ([L, R] : List ℤ).Pairwise (· < ·)
     exact List.Pairwise.cons
@@ -347,7 +368,7 @@ theorem sem_roundtrip (hash : List ℤ → ℤ) (L x R sib pos : ℤ)
   have hlen : 1 < (semTrace hash L x R sib pos).rows.length := by
     show (1 : Nat) < 2; decide
   have := nonRevocation_nonmembership hlen hsat (sem_chipSound hash L x R sib pos)
-    (sem_rangeSound hash L x R sib pos hlt hgt hbL hbR) hcanon [L, R] hsorted hadj
+    (sem_rangeSound hash L x R sib pos hlt hgt hbL hbR) [L, R] hsorted hadj
   simpa only [loc0, r_X] using this
 
 #assert_axioms sem_satisfied
