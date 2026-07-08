@@ -202,3 +202,15 @@ PLAN: generalize-then-rewire, per consumer-family, whole-tree-build-gated + benc
 - kill order: (a) test/bench surface (delete/migrate to emit gate tests) · (b) rewire prod
   consumers per family (generalize descriptor + producer) · (c) delete hand AIRs · (d) wasm
   decision · (e) git rm stark.rs when grep circuit::stark (non-vendored prod) == 0.
+
+## ⚑ GATE 1.5 COMPLETE (2026-07-07) — foundations done, Gate 2 unblocked
+All 4 gaps closed + committed (7e103edd2 trait, 3a65bb285 circuit), verified on my tree:
+4-ary membership (root byte-equal to production, 6 tests) · adjacency witness (3) · IR-v2
+delegate descriptor (4) · ProofVerifier::verify_with_predicate + DescriptorDispatchVerifier.
+The adversarial verify CAUGHT the trait impl shipping a red test as green → corrected honestly.
+NAMED RESIDUAL: Rung-2 depth-general soundness lift (depth is a name/VK label; the path is
+root-bound via Poseidon2 CR; production is depth-2 → no regression; in-circuit depth-binding is
+a Lean follow-on, NOT a migration blocker).
+NEXT = GATE 2: flip the ~15 consumer sites against the now-complete foundations, per-cluster
+runtime-gated (bridge · turn-executor+~8-apps [fail-open, run app suites] · sdk · wire/storage ·
+wasm) → delete hand AIRs → git rm circuit/src/stark.rs.
