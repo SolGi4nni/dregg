@@ -65,7 +65,9 @@ use crate::resolution::{RegionResolutions, ResolutionChoice, resolutions};
 use crate::threeway::{ThreeWayConflict, merge_base, render_three_way, three_way};
 
 #[cfg(feature = "substrate")]
-use crate::check::{CheckId, CheckRefusal, CheckWitness, RequiredCheck};
+use crate::check::{CheckId, CheckRefusal, CheckRequirement, CheckWitness, RequiredCheck};
+#[cfg(feature = "substrate")]
+use crate::ci_verdict::{CiNullifierSet, ci_nullifier};
 #[cfg(feature = "substrate")]
 use crate::executor_drive::ExecutorDrivenDoc;
 #[cfg(feature = "substrate")]
@@ -229,11 +231,12 @@ impl PullRequest {
     /// unsatisfied check's refusal, as [`PullRequestError::CheckNotSatisfied`].
     #[cfg(feature = "substrate")]
     pub fn checks_satisfied(&self) -> Result<(), PullRequestError> {
+        let input_root = self.input_root();
         for check in &self.required {
             let witness = self.witnesses.iter().find(|(c, _)| *c == check.id);
             let refusal = match witness {
                 None => CheckRefusal::NoWitness,
-                Some((_, w)) => match check.satisfied_by(w) {
+                Some((_, w)) => match check.satisfied_by(w, input_root) {
                     Ok(()) => continue,
                     Err(r) => r,
                 },
@@ -244,6 +247,20 @@ impl PullRequest {
             });
         }
         Ok(())
+    }
+
+    /// **THE PR'S INPUT ROOT** — a stable digest of the exact post-merge state
+    /// that would land ([`PullRequest::merged_graph`], the pushout-with-
+    /// resolutions), via the REAL substrate commitment
+    /// ([`crate::substrate_commit`], the sorted-Poseidon2 heap root). This is the
+    /// code a work-binding CI check ([`crate::CiVerdict`]) must have run on: a
+    /// [`CheckRequirement::CiRun`] verdict whose `input_root` is not this value
+    /// is refused ([`CheckRefusal::InputRootMismatch`]), so "CI green" is bound
+    /// to THIS PR's real code — a verdict for other code, or a trivial/empty
+    /// input, cannot satisfy it.
+    #[cfg(feature = "substrate")]
+    pub fn input_root(&self) -> [u8; 32] {
+        crate::substrate_commit(&self.merged_graph())
     }
 
     /// The target history.
@@ -382,17 +399,64 @@ impl PullRequest {
     /// conflicts → doc-at-base → REQUIRED CHECKS → the executor's cap gate
     /// (in-band, per driven turn); checks and caps are INDEPENDENT — a
     /// satisfied check set does not confer the region cap.
+    ///
+    /// This convenience form uses a FRESH per-call nullifier set, so it provides
+    /// no cross-land replay protection for [`crate::CheckRequirement::CiRun`]
+    /// checks. A CI-grade caller that must stop one signed [`crate::CiVerdict`]
+    /// from satisfying the check across multiple lands / PRs uses
+    /// [`PullRequest::land_checked`] with a shared [`CiNullifierSet`].
     #[cfg(feature = "substrate")]
     pub fn land(&self, doc: &mut ExecutorDrivenDoc) -> Result<Vec<TurnReceipt>, PullRequestError> {
+        self.land_checked(doc, &mut CiNullifierSet::new())
+    }
+
+    /// LAND with an explicit anti-replay nullifier set (the CI-grade form).
+    ///
+    /// Identical to [`PullRequest::land`] plus a nullifier gate for
+    /// [`crate::CheckRequirement::CiRun`] checks: after the checks verify and
+    /// BEFORE driving any turn, each satisfied CI-run witness's
+    /// [`ci_nullifier`]`(base fold, verdict)` is checked against `nullifiers`;
+    /// an already-consumed one refuses with
+    /// [`PullRequestError::CheckNotSatisfied`]`{ reason: WitnessReplayed }` and
+    /// nothing lands. On a SUCCESSFUL land the nullifiers are consumed, so the
+    /// same signed verdict presented to a second land / second PR on the same
+    /// base lineage (sharing `nullifiers`) is refused. A failed land consumes
+    /// nothing (the verdict was not "used").
+    ///
+    /// The nullifier is keyed by `(base fold root, verdict)`, so the same
+    /// verdict is legitimately reusable on a DIFFERENT base lineage but never
+    /// twice on the same — the durable cross-node store is the deferred seam
+    /// (see [`CiNullifierSet`]).
+    #[cfg(feature = "substrate")]
+    pub fn land_checked(
+        &self,
+        doc: &mut ExecutorDrivenDoc,
+        nullifiers: &mut CiNullifierSet,
+    ) -> Result<Vec<TurnReceipt>, PullRequestError> {
         let outcome = self.merge()?;
         if *doc.graph() != self.base.replay() {
             return Err(PullRequestError::DocNotAtBase);
         }
         // THE CI GATE: verify every required check's witness BEFORE driving
         // any turn. The proof IS the pass — a committed executor-signed
-        // check-turn receipt or a verified ProofCondition witness, never a
-        // bool (crate::check).
+        // check-turn receipt, a verified ProofCondition witness, or a
+        // work-binding CiRun verdict, never a bool (crate::check).
         self.checks_satisfied()?;
+
+        // ANTI-REPLAY: the CI-run witnesses that just satisfied their checks.
+        // Compute each verdict's nullifier over THIS PR's base fold; refuse a
+        // replay before any turn is driven (nothing lands on a replay).
+        let base_fold_root = crate::substrate_commit(&self.base.replay());
+        let pending_nullifiers = self.ci_run_nullifiers(base_fold_root);
+        for (check_id, nullifier) in &pending_nullifiers {
+            if nullifiers.contains(nullifier) {
+                return Err(PullRequestError::CheckNotSatisfied {
+                    check: check_id.clone(),
+                    reason: CheckRefusal::WitnessReplayed,
+                });
+            }
+        }
+
         // The reviewed pushout (what the reviewer + CI saw). The drive below
         // must reproduce it exactly (see DriveDivergedFromPushout).
         let expected = outcome.graph;
@@ -417,7 +481,33 @@ impl PullRequest {
         if *doc.graph() != expected {
             return Err(PullRequestError::DriveDivergedFromPushout(receipts));
         }
+        // The land SUCCEEDED: consume the CI-run nullifiers so this signed
+        // verdict cannot satisfy the check again on this base lineage.
+        for (_, nullifier) in pending_nullifiers {
+            nullifiers.consume(nullifier);
+        }
         Ok(receipts)
+    }
+
+    /// The `(check id, nullifier)` for every required [`CheckRequirement::CiRun`]
+    /// check that has a matching, presented CI-run witness — the anti-replay
+    /// entries [`PullRequest::land_checked`] checks-then-consumes. Only reached
+    /// after [`PullRequest::checks_satisfied`] passed, so each such witness is a
+    /// verified, work-binding verdict.
+    #[cfg(feature = "substrate")]
+    fn ci_run_nullifiers(&self, base_fold_root: [u8; 32]) -> Vec<(CheckId, [u8; 32])> {
+        let mut out = Vec::new();
+        for check in &self.required {
+            if !matches!(check.requirement, CheckRequirement::CiRun { .. }) {
+                continue;
+            }
+            if let Some((_, CheckWitness::CiRun { verdict, .. })) =
+                self.witnesses.iter().find(|(c, _)| *c == check.id)
+            {
+                out.push((check.id.clone(), ci_nullifier(base_fold_root, verdict)));
+            }
+        }
+        out
     }
 
     /// The PR's REVIEW THREAD (comments + approvals as owned, receipted atoms).
@@ -1060,6 +1150,328 @@ mod tests {
             // Both gates open → lands.
             let receipts = pr.land(&mut held).expect("check + cap → lands");
             assert!(!receipts.is_empty());
+        }
+    }
+
+    // ── WORK-BINDING CI: the CiRun required-check gate on landing ────────────
+
+    #[cfg(feature = "substrate")]
+    mod ci_run_checks {
+        use super::*;
+        use crate::check::{CheckRefusal, CheckWitness, RequiredCheck};
+        use crate::ci_verdict::{CiNullifierSet, CiVerdict, run_ci_verdict};
+        use crate::executor_drive::ExecutorDrivenDoc;
+
+        /// RFC 8032 §7.1 TEST 1 Ed25519 (seed, verifying-key) pair — the same
+        /// real pair the other CI-gate tests use; the executor derives this
+        /// pubkey from this seed by standard key generation.
+        const SEED: [u8; 32] = [
+            0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec,
+            0x2c, 0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03,
+            0x1c, 0xae, 0x7f, 0x60,
+        ];
+        const KEY: [u8; 32] = [
+            0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64,
+            0x07, 0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68,
+            0xf7, 0x07, 0x51, 0x1a,
+        ];
+
+        // The CI-run region cell's identity (repo policy — the verifier rebuilds
+        // the identical genesis cell). Distinct from the landing doc's cells.
+        const CI_EDITOR: u8 = 7;
+        const CI_REGION: u8 = 8;
+        const COMMAND: [u8; 32] = [0x11; 32];
+        const CONFINEMENT: [u8; 32] = [0xC0; 32];
+        const OUTPUT: [u8; 32] = [0xD1; 32];
+
+        fn ci_check() -> RequiredCheck {
+            RequiredCheck::ci_run("build", COMMAND, CI_EDITOR, CI_REGION, vec![KEY])
+        }
+
+        /// A verdict for `input_root` running `COMMAND` with `exit_code`.
+        fn verdict(input_root: [u8; 32], exit_code: i32) -> CiVerdict {
+            CiVerdict {
+                input_root,
+                command_id: COMMAND,
+                confinement_id: CONFINEMENT,
+                exit_code,
+                output_digest: OUTPUT,
+            }
+        }
+
+        /// A SECOND, distinct clean PR (head appends "four" not "three") — its
+        /// real post-merge code has a DIFFERENT input_root than [`clean_pr`].
+        fn other_clean_pr() -> PullRequest {
+            let (shared, s1, s2) = shared_history();
+            let mut base = shared.branch();
+            base.commit(Patch::by(Author(1), [Op::Delete { id: s1 }]));
+            let mut head = shared.branch();
+            head.commit(Patch::by(Author(2), [Patch::add(4, "four\n", s2).1]));
+            PullRequest::open(base, head)
+        }
+
+        fn refusal_of(pr: &PullRequest) -> CheckRefusal {
+            match pr.checks_satisfied() {
+                Err(PullRequestError::CheckNotSatisfied { reason, .. }) => reason,
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            }
+        }
+
+        // ── POLE (i): a bound verdict on THIS pr's code, exit 0, satisfies + lands.
+        #[test]
+        fn a_work_bound_verdict_for_this_prs_code_satisfies_and_lands() {
+            let mut pr = clean_pr().with_required_check(ci_check());
+            let v = verdict(pr.input_root(), 0);
+            let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
+            assert!(
+                receipt.executor_signature.is_some(),
+                "the CI executor signed the verdict receipt"
+            );
+
+            let mut doc = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, true);
+            let pre = doc.state_commitment();
+
+            // No witness yet → refused, byte-untouched.
+            match pr.land(&mut doc) {
+                Err(PullRequestError::CheckNotSatisfied { reason, .. }) => {
+                    assert!(matches!(reason, CheckRefusal::NoWitness), "{reason:?}");
+                }
+                other => panic!("expected CheckNotSatisfied, got {other:?}"),
+            }
+            assert_eq!(doc.state_commitment(), pre, "no turn ran");
+
+            // Present the bound, signed verdict → satisfies and lands.
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt,
+                    verdict: v,
+                },
+            );
+            pr.checks_satisfied()
+                .expect("a work-bound, signed, exit-0 verdict satisfies");
+            let receipts = pr.land(&mut doc).expect("the CI-checked PR lands");
+            assert!(!receipts.is_empty());
+            assert_eq!(*doc.graph(), pr.merge().unwrap().graph);
+            assert!(doc.commitment_matches_projection());
+            assert_eq!(content(doc.graph()).to_marked_string(), "two\nthree\n");
+        }
+
+        // ── POLE (ii): a genuine signed verdict for a DIFFERENT pr's code → InputRootMismatch.
+        #[test]
+        fn a_verdict_for_another_prs_code_is_refused_input_root_mismatch() {
+            let mut pr = clean_pr().with_required_check(ci_check());
+            let other = other_clean_pr();
+            assert_ne!(
+                pr.input_root(),
+                other.input_root(),
+                "the two PRs have distinct real code"
+            );
+
+            // A genuinely run + signed verdict — but for the OTHER pr's code.
+            let v = verdict(other.input_root(), 0);
+            let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt,
+                    verdict: v,
+                },
+            );
+
+            match refusal_of(&pr) {
+                CheckRefusal::InputRootMismatch { expected, got } => {
+                    assert_eq!(expected, pr.input_root());
+                    assert_eq!(got, other.input_root());
+                }
+                other => panic!("expected InputRootMismatch, got {other:?}"),
+            }
+
+            // Nothing lands.
+            let mut doc = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, true);
+            let pre = doc.state_commitment();
+            assert!(pr.land(&mut doc).is_err());
+            assert_eq!(doc.state_commitment(), pre, "no turn ran");
+        }
+
+        // ── POLE (iii): a trivial verdict with an empty input_root → refused.
+        #[test]
+        fn a_trivial_empty_input_root_verdict_is_refused() {
+            let mut pr = clean_pr().with_required_check(ci_check());
+            // A genuinely signed verdict, but committing an EMPTY input root —
+            // it ran on nothing (the trivial-workflow forge the review found).
+            let v = verdict([0u8; 32], 0);
+            let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt,
+                    verdict: v,
+                },
+            );
+            match refusal_of(&pr) {
+                CheckRefusal::InputRootMismatch { got, .. } => {
+                    assert_eq!(got, [0u8; 32], "the trivial verdict bound no code");
+                }
+                other => panic!("expected InputRootMismatch, got {other:?}"),
+            }
+        }
+
+        // ── POLE (iv): a failing check (exit_code != 0) → CheckFailed.
+        #[test]
+        fn a_failing_verdict_is_refused_check_failed() {
+            let mut pr = clean_pr().with_required_check(ci_check());
+            // Correct code, correctly bound + signed — but the command FAILED.
+            let v = verdict(pr.input_root(), 5);
+            let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt,
+                    verdict: v,
+                },
+            );
+            match refusal_of(&pr) {
+                CheckRefusal::CheckFailed { exit_code } => assert_eq!(exit_code, 5),
+                other => panic!("expected CheckFailed, got {other:?}"),
+            }
+        }
+
+        // ── POLE (v): a verdict LOOSE next to an unrelated signed receipt → refused
+        //    (proves the binding is real — a favorable verdict cannot ride an
+        //    unrelated signature).
+        #[test]
+        fn a_loose_verdict_next_to_an_unrelated_signed_receipt_is_refused() {
+            let mut pr = clean_pr().with_required_check(ci_check());
+            // A FAVORABLE verdict for the right code + exit 0 — but never run.
+            let favorable = verdict(pr.input_root(), 0);
+
+            // An unrelated, genuinely signed receipt (a plain edit by the SAME
+            // trusted executor — real Ed25519 signature, wrong turn).
+            let mut d = ExecutorDrivenDoc::new(CI_EDITOR, CI_REGION, true);
+            d.set_receipt_signing_key(SEED);
+            let unrelated = d
+                .edit(Patch::by(
+                    Author(9),
+                    [Patch::add(1, "not a ci run\n", AtomId::ROOT).1],
+                ))
+                .expect("the unrelated turn commits");
+            assert!(unrelated.executor_signature.is_some(), "genuinely signed");
+
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt: unrelated,
+                    verdict: favorable.clone(),
+                },
+            );
+            // The signature verifies, command/input_root/exit are all favorable —
+            // yet it REFUSES, because the verdict is not committed in that turn.
+            assert!(
+                matches!(refusal_of(&pr), CheckRefusal::VerdictNotCommitted),
+                "a loose verdict must not ride an unrelated signature"
+            );
+
+            // The SAME verdict, actually RUN (bound in its turn), satisfies —
+            // proving it was specifically the binding that refused the loose one.
+            let receipt =
+                run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &favorable).expect("CI run commits");
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt,
+                    verdict: favorable,
+                },
+            );
+            pr.checks_satisfied()
+                .expect("the bound form of the same verdict satisfies");
+        }
+
+        // ── POLE (vi): replaying one signed verdict on a second land → WitnessReplayed.
+        #[test]
+        fn replaying_a_verdict_on_a_second_land_is_refused() {
+            // A shared nullifier store across both lands (the forge's per-lineage
+            // nullifier registry).
+            let mut nullifiers = CiNullifierSet::new();
+
+            // Two IDENTICAL PRs (same base fold, same code) — so the same verdict
+            // binds to both, and the nullifier collides.
+            let v = verdict(clean_pr().input_root(), 0);
+            let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
+
+            let mut pr1 = clean_pr().with_required_check(ci_check());
+            pr1.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt: receipt.clone(),
+                    verdict: v.clone(),
+                },
+            );
+            let mut doc1 = ExecutorDrivenDoc::new_at(&pr1.base().replay(), 1, 2, true);
+            pr1.land_checked(&mut doc1, &mut nullifiers)
+                .expect("the first land consumes the verdict");
+
+            // REPLAY: a second, identical PR presents the SAME signed verdict.
+            let mut pr2 = clean_pr().with_required_check(ci_check());
+            pr2.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt,
+                    verdict: v,
+                },
+            );
+            let mut doc2 = ExecutorDrivenDoc::new_at(&pr2.base().replay(), 1, 2, true);
+            let pre2 = doc2.state_commitment();
+            match pr2.land_checked(&mut doc2, &mut nullifiers) {
+                Err(PullRequestError::CheckNotSatisfied { reason, .. }) => {
+                    assert!(
+                        matches!(reason, CheckRefusal::WitnessReplayed),
+                        "{reason:?}"
+                    );
+                }
+                other => panic!("expected WitnessReplayed, got {other:?}"),
+            }
+            assert_eq!(doc2.state_commitment(), pre2, "the replay landed nothing");
+        }
+
+        // ── POLE (vii): unsigned / wrong-key receipts → refused (as CommittedReceipt).
+        #[test]
+        fn an_unsigned_or_wrong_key_verdict_is_refused() {
+            let base_pr = clean_pr();
+            let v = verdict(base_pr.input_root(), 0);
+            let real = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
+
+            // UNSIGNED: strip the signature — fail-closed.
+            let mut unsigned = real.clone();
+            unsigned.executor_signature = None;
+            let mut pr = clean_pr().with_required_check(ci_check());
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt: unsigned,
+                    verdict: v.clone(),
+                },
+            );
+            assert!(matches!(refusal_of(&pr), CheckRefusal::Unsigned));
+
+            // WRONG KEY: the check trusts a key that did NOT sign.
+            let mut wrong = [0u8; 32];
+            wrong[0] = 0xAA;
+            let mut pr = clean_pr().with_required_check(RequiredCheck::ci_run(
+                "build",
+                COMMAND,
+                CI_EDITOR,
+                CI_REGION,
+                vec![wrong],
+            ));
+            pr.present_witness(
+                "build",
+                CheckWitness::CiRun {
+                    receipt: real,
+                    verdict: v,
+                },
+            );
+            assert!(matches!(refusal_of(&pr), CheckRefusal::SignatureUnverified));
         }
     }
 }

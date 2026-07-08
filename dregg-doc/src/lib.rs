@@ -154,6 +154,13 @@ mod executor_drive;
 // proof IS the pass; no trusted CI runner. See docs/deos/DREGG-FORGE.md.
 #[cfg(feature = "substrate")]
 pub mod check;
+// WORK-BINDING CI — a CiVerdict ("command_id ran in confinement_id against
+// input_root -> exit_code + output_digest") bound INSIDE a signed check-turn
+// receipt, so a required CiRun check proves the actual work ran against THIS
+// PR's code, not that a trusted key signed a content-free cursor turn. See
+// docs/deos/DREGG-FORGE.md and src/ci_verdict.rs.
+#[cfg(feature = "substrate")]
+pub mod ci_verdict;
 #[cfg(feature = "rope")]
 pub mod rope;
 #[cfg(feature = "cell-heap")]
@@ -176,6 +183,10 @@ pub use atom::{Atom, AtomId, Author, PatchId, Provenance, Status};
 pub use blame::{BlameLine, blame, blame_summary};
 #[cfg(feature = "substrate")]
 pub use check::{CheckId, CheckRefusal, CheckRequirement, CheckWitness, RequiredCheck};
+#[cfg(feature = "substrate")]
+pub use ci_verdict::{
+    CiNullifierSet, CiVerdict, ci_nullifier, ci_run_patch, planned_ci_run_hash, run_ci_verdict,
+};
 pub use commit::{Commitment, commit};
 pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};
 pub use depend::{
