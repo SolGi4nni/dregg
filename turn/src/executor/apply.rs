@@ -29,6 +29,78 @@ fn shielded_nullifier_key(field_nullifier: u32) -> Nullifier {
     Nullifier(*hasher.finalize().as_bytes())
 }
 
+/// Verify a note-spend leaf proof (BridgeMint) against the IR-v2 descriptor
+/// prover — the consumer half of the `StarkProof` → `Ir2BatchProof` wire flip
+/// (stark-kill). This is the leaf leg `apply_bridge_mint`'s `verify_stark`
+/// closure delegates to after compressing the byte-domain bridge material to
+/// the six source felts.
+///
+/// `proof_bytes` is a `postcard`-encoded
+/// [`dregg_circuit::descriptor_ir2::Ir2BatchProof`] (the NEW wire format, NOT
+/// the legacy hand-STARK blob). The descriptor is fetched FAIL-CLOSED by name
+/// (`note-spend-leaf::dregg-note-spending-dsl-v3`); an unregistered name rejects
+/// rather than falling back to any legacy path. The 7-slot claim tuple is
+/// `[nullifier, merkle_root, value_lo, asset_type, destination_federation,
+/// value_hi, mint_hash]` — the same six compressed felts the retired
+/// `verify_note_spend_dsl_full` bound, plus the appended felt-domain mint
+/// identity ([`note_spend_mint_hash_felt`]) that the note-spend AIR recomputes
+/// in-circuit and pins to `pi[6]`. The boundary pins over
+/// {NULLIFIER, VALUE, VALUE_HI, ASSET_TYPE, DESTINATION_FEDERATION}, the
+/// last-row Merkle-root pin, and the `MINT_HASH` pin make every one of those
+/// slots a cryptographic binding, so the four bridge trapdoors
+/// (cross-federation replay, value inflation, asset-type confusion,
+/// recipient substitution) stay closed.
+///
+/// [`note_spend_mint_hash_felt`]: dregg_circuit::dsl::note_spending::note_spend_mint_hash_felt
+#[allow(clippy::too_many_arguments)]
+fn verify_note_spend_descriptor2(
+    nullifier: dregg_circuit::BabyBear,
+    merkle_root: dregg_circuit::BabyBear,
+    value_lo: dregg_circuit::BabyBear,
+    value_hi: dregg_circuit::BabyBear,
+    asset_type: dregg_circuit::BabyBear,
+    destination_federation: dregg_circuit::BabyBear,
+    proof_bytes: &[u8],
+) -> Result<(), String> {
+    use dregg_circuit::descriptor_by_name::descriptor_by_name;
+    use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
+    use dregg_circuit::dsl::note_spending::note_spend_mint_hash_felt;
+    use dregg_circuit::note_spend_witness::NOTE_SPEND_LEAF_NAME;
+
+    // 1. Fail-closed descriptor dispatch by name.
+    let desc = descriptor_by_name(NOTE_SPEND_LEAF_NAME).ok_or_else(|| {
+        format!("note-spend leaf descriptor `{NOTE_SPEND_LEAF_NAME}` is not registered")
+    })?;
+
+    // 2. Decode the NEW wire format: postcard(Ir2BatchProof).
+    let batch: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
+        .map_err(|e| format!("note-spend BatchProof postcard decode failed: {e}"))?;
+
+    // 3. Rebuild the 7-slot claim tuple in descriptor PI order and check it.
+    //    (nullifier, merkle_root, value_lo, asset_type, destination_federation,
+    //    value_hi) are pi[0..6]; the felt-domain mint identity is pi[6].
+    let mint = note_spend_mint_hash_felt(
+        nullifier,
+        merkle_root,
+        value_lo,
+        asset_type,
+        destination_federation,
+        value_hi,
+    );
+    let pi = vec![
+        nullifier,
+        merkle_root,
+        value_lo,
+        asset_type,
+        destination_federation,
+        value_hi,
+        mint,
+    ];
+
+    verify_vm_descriptor2(&desc, &batch, &pi)
+        .map_err(|e| format!("note-spend descriptor verification failed: {e}"))
+}
+
 impl TurnExecutor {
     /// Apply a single effect to the ledger, recording undo entries in the journal.
     ///
@@ -1591,16 +1663,20 @@ impl TurnExecutor {
         // never compared against the proof's embedded PI vector.
         //
         // The fix: skip the generic `ProofVerifier` trait entirely for
-        // bridge mints and call the typed `verify_note_spend_dsl_with_destination`
-        // entry point. This verifier:
+        // bridge mints and check the proof against the typed 7-slot claim
+        // tuple through the IR-v2 descriptor prover (`verify_note_spend_descriptor2`
+        // → `verify_vm_descriptor2` over the fail-closed `note-spend-leaf`
+        // descriptor). This verifier:
         //
-        //   * deserializes the STARK proof,
-        //   * recomputes the AIR's boundary constraints over the typed PI
-        //     (nullifier, merkle_root, value, asset_type, destination_federation),
+        //   * decodes the postcard(Ir2BatchProof) wire blob,
+        //   * rebuilds the descriptor's public-input vector over the typed PI
+        //     (nullifier, merkle_root, value_lo, asset_type,
+        //     destination_federation, value_hi, mint_hash),
         //   * algebraically rejects any proof whose trace columns at row 0
-        //     (col::NULLIFIER, col::VALUE, col::ASSET_TYPE,
-        //     col::DESTINATION_FEDERATION) do not match the PI vector that
-        //     the executor supplies from the `PortableNoteProof`.
+        //     (col::NULLIFIER, col::VALUE, col::VALUE_HI, col::ASSET_TYPE,
+        //     col::DESTINATION_FEDERATION), whose last-row Merkle root, or
+        //     whose in-AIR mint-hash do not match the PI vector that the
+        //     executor supplies from the `PortableNoteProof`.
         //
         // Combined with `verify_portable_note`'s local-federation-id check
         // and `BridgedNullifierSet::insert`'s replay protection, this
@@ -1631,9 +1707,7 @@ impl TurnExecutor {
                             proof_bytes: &[u8]|
          -> Result<(), String> {
             use dregg_circuit::BabyBear;
-            use dregg_circuit::dsl::note_spending::verify_note_spend_dsl_full;
             use dregg_circuit::poseidon2;
-            use dregg_circuit::stark::proof_from_bytes;
 
             // Compress a 32-byte value to a single BabyBear via Poseidon2 of 8 limbs.
             // Matches `bridge::present::bytes_to_babybear` so prover and verifier agree.
@@ -1655,9 +1729,6 @@ impl TurnExecutor {
                 (BabyBear::new(lo), BabyBear::new(hi))
             }
 
-            let stark_proof = proof_from_bytes(proof_bytes)
-                .map_err(|e| format!("STARK proof deserialization failed: {e}"))?;
-
             let nullifier_bb = compress(nullifier);
             let root_bb = compress(root);
             let dest_bb = compress(dest_federation);
@@ -1666,23 +1737,23 @@ impl TurnExecutor {
             // enumerated tags, not balances, so 30-bit binding is faithful.
             let asset_bb = BabyBear::new((asset_type & ((1u64 << 30) - 1)) as u32);
 
-            // SECURITY: This call rejects any proof whose embedded PI vector
-            // does not match (nullifier_bb, root_bb, value_lo, value_hi,
-            // asset_bb, dest_bb). The AIR's boundary constraints at row 0
-            // columns {NULLIFIER, VALUE, VALUE_HI, ASSET_TYPE,
-            // DESTINATION_FEDERATION} and at the last row col CURRENT (merkle
-            // root) pin the prover's trace to whatever the verifier passes
-            // here — including the FULL u64 amount via the two value limbs.
-            verify_note_spend_dsl_full(
+            // SECURITY: This rejects any IR-v2 batch proof whose embedded PI
+            // vector does not match the 7-slot claim tuple
+            // (nullifier_bb, root_bb, value_lo, asset_bb, dest_bb, value_hi,
+            // mint_hash). The note-spend descriptor's boundary pins over
+            // {NULLIFIER, VALUE, VALUE_HI, ASSET_TYPE, DESTINATION_FEDERATION},
+            // the last-row Merkle-root pin, and the MINT_HASH pin bind the
+            // prover's trace to whatever the verifier passes here — including
+            // the FULL u64 amount via the two value limbs.
+            verify_note_spend_descriptor2(
                 nullifier_bb,
                 root_bb,
                 value_lo,
                 value_hi,
                 asset_bb,
                 dest_bb,
-                &stark_proof,
+                proof_bytes,
             )
-            .map_err(|e| format!("STARK spending proof verification failed: {e}"))
         };
 
         dregg_cell_crypto::note_bridge::verify_portable_note(
@@ -4089,6 +4160,205 @@ mod shielded_executor_tests {
         assert_ne!(
             a.inputs[0].proof, b.inputs[0].proof,
             "the hidden proofs reveal nothing linking the two transfers"
+        );
+    }
+}
+
+// ─── Note-spend BridgeMint verify: the StarkProof → Ir2BatchProof wire flip ──
+//
+// Round-trips a REAL note-spend witness (spending key + 28-limb note commitment
+// + Merkle path) through the committed IR-v2 descriptor prover
+// (`note_spend_witness` → `prove_vm_descriptor2` → `postcard`) and back through
+// the executor's BridgeMint consumer leg (`verify_note_spend_descriptor2` →
+// `verify_vm_descriptor2` over the FAIL-CLOSED `note-spend-leaf` descriptor).
+// The honest proof is ACCEPTED (so the accept is non-vacuous); every tampered
+// PI claim and every corrupted/empty blob is REJECTED (so the descriptor's
+// boundary pins are load-bearing — the four bridge trapdoors stay closed).
+#[cfg(test)]
+mod note_spend_descriptor_flip_tests {
+    use dregg_circuit::BabyBear;
+    use dregg_circuit::descriptor_by_name::descriptor_by_name;
+    use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+    use dregg_circuit::dsl::note_spending::note_spend_mint_hash_felt;
+    use dregg_circuit::note_spend_witness::{NOTE_SPEND_LEAF_NAME, note_spend_witness};
+    use dregg_circuit::note_spending_air::{NoteSpendingWitness, test_spending_key};
+    use dregg_circuit::poseidon2::hash_many;
+
+    /// A REAL full-width note-spend witness — depth-2 Merkle path, a value above
+    /// 2^30 so the high limb is live. Mirrors the shape the circuit crate's own
+    /// `note_spend_witness` tests use.
+    fn make_witness(tag: u8) -> NoteSpendingWitness {
+        let owner = [tag; 32];
+        let nonce = [tag ^ 0x5A; 32];
+        let rand = [tag ^ 0xA5; 32];
+        let key = test_spending_key(tag as u32 + 0x77);
+        let depth = 2usize;
+        let mut siblings = Vec::with_capacity(depth);
+        let mut positions = Vec::with_capacity(depth);
+        for i in 0..depth {
+            siblings.push([
+                hash_many(&[BabyBear::new((i * 3 + 1) as u32), BabyBear::new(tag as u32)]),
+                hash_many(&[BabyBear::new((i * 3 + 2) as u32), BabyBear::new(tag as u32)]),
+                hash_many(&[BabyBear::new((i * 3 + 3) as u32), BabyBear::new(tag as u32)]),
+            ]);
+            positions.push((i % 4) as u8);
+        }
+        NoteSpendingWitness::from_note_limbs(
+            &owner,
+            0xDEAD_BEEF_CAFE, // > 2^30: the value_hi limb is live
+            3,
+            &nonce,
+            &rand,
+            key,
+            siblings,
+            positions,
+        )
+    }
+
+    /// Prove a real note-spend through the emitted descriptor and postcard-encode
+    /// it (the producer half, exactly what the SDK/bridge does). Returns the
+    /// witness's 7-slot PI vector and the wire blob.
+    fn prove_blob(w: &NoteSpendingWitness) -> (Vec<BabyBear>, Vec<u8>) {
+        let desc = descriptor_by_name(NOTE_SPEND_LEAF_NAME).expect("note-spend leaf dispatches");
+        let (trace, pis) = note_spend_witness(w).expect("witness builds");
+        let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+            .expect("honest note-spend proves through the emitted descriptor");
+        let blob = postcard::to_allocvec(&proof).expect("postcard-encode Ir2BatchProof");
+        (pis, blob)
+    }
+
+    /// The consumer leg (`verify_note_spend_descriptor2`) ACCEPTS an honest proof
+    /// and REJECTS every tampered claim / corrupted blob — through the REAL
+    /// `verify_vm_descriptor2`. The felt arg order matches the retired
+    /// `verify_note_spend_dsl_full`: (nullifier, root, value_lo, value_hi, asset,
+    /// dest).
+    #[test]
+    fn honest_note_spend_verifies_and_tamper_rejects() {
+        let w = make_witness(0x10);
+        let (pis, blob) = prove_blob(&w);
+
+        // pis layout (descriptor order): [nullifier, merkle_root, value_lo,
+        // asset_type, destination_federation, value_hi, mint_hash].
+        let (null, root, value_lo, asset, dest, value_hi) =
+            (pis[0], pis[1], pis[2], pis[3], pis[4], pis[5]);
+
+        // The executor leg re-derives the appended mint identity from the six
+        // source felts; it must match the witness's 7th PI (guards our PI order).
+        assert_eq!(
+            note_spend_mint_hash_felt(null, root, value_lo, asset, dest, value_hi),
+            pis[6],
+            "reconstructed mint identity must equal the witness's appended 7th PI"
+        );
+
+        let verify = |nullifier, root, value_lo, value_hi, asset, dest, bytes: &[u8]| {
+            super::verify_note_spend_descriptor2(
+                nullifier, root, value_lo, value_hi, asset, dest, bytes,
+            )
+        };
+
+        // HONEST ACCEPT — non-vacuity: the accept path is genuinely reached.
+        assert!(
+            verify(null, root, value_lo, value_hi, asset, dest, &blob).is_ok(),
+            "honest note-spend proof must verify through the descriptor leg"
+        );
+
+        // REJECT — wrong nullifier claim (row-0 NULLIFIER boundary pin).
+        assert!(
+            verify(
+                null + BabyBear::ONE,
+                root,
+                value_lo,
+                value_hi,
+                asset,
+                dest,
+                &blob
+            )
+            .is_err(),
+            "a mismatched nullifier claim must be REJECTED"
+        );
+        // REJECT — wrong merkle root (last-row root pin + MINT_ROOT pin).
+        assert!(
+            verify(
+                null,
+                root + BabyBear::ONE,
+                value_lo,
+                value_hi,
+                asset,
+                dest,
+                &blob
+            )
+            .is_err(),
+            "a mismatched merkle root must be REJECTED (membership binding)"
+        );
+        // REJECT — wrong upper value limb (full-u64 binding, VALUE_HI pin).
+        assert!(
+            verify(
+                null,
+                root,
+                value_lo,
+                value_hi + BabyBear::ONE,
+                asset,
+                dest,
+                &blob
+            )
+            .is_err(),
+            "a mismatched value_hi (upper limb) must be REJECTED (no 30-bit collision)"
+        );
+        // REJECT — wrong asset type (ASSET_TYPE pin).
+        assert!(
+            verify(
+                null,
+                root,
+                value_lo,
+                value_hi,
+                asset + BabyBear::ONE,
+                dest,
+                &blob
+            )
+            .is_err(),
+            "a mismatched asset type must be REJECTED"
+        );
+        // REJECT — wrong destination federation (cross-federation replay tooth).
+        assert!(
+            verify(
+                null,
+                root,
+                value_lo,
+                value_hi,
+                asset,
+                dest + BabyBear::ONE,
+                &blob
+            )
+            .is_err(),
+            "a mismatched destination federation must be REJECTED (replay closed)"
+        );
+        // REJECT — a corrupted proof blob (postcard decode / verify failure).
+        let mut corrupt = blob.clone();
+        *corrupt.last_mut().unwrap() ^= 0xFF;
+        assert!(
+            verify(null, root, value_lo, value_hi, asset, dest, &corrupt).is_err(),
+            "a corrupted proof blob must be REJECTED"
+        );
+        // REJECT — an empty blob (fail-closed decode; never a legacy fallback).
+        assert!(
+            verify(null, root, value_lo, value_hi, asset, dest, &[]).is_err(),
+            "an empty proof blob must be REJECTED"
+        );
+    }
+
+    /// A proof for witness A must NOT verify against witness B's claim tuple —
+    /// the descriptor binds the WHOLE identity, not just a shape.
+    #[test]
+    fn proof_for_one_note_rejects_another_notes_claim() {
+        let (_pis_a, blob_a) = prove_blob(&make_witness(0x20));
+        let (pis_b, _blob_b) = prove_blob(&make_witness(0x21));
+
+        let r = super::verify_note_spend_descriptor2(
+            pis_b[0], pis_b[1], pis_b[2], pis_b[5], pis_b[3], pis_b[4], &blob_a,
+        );
+        assert!(
+            r.is_err(),
+            "note A's proof must be REJECTED against note B's claim tuple"
         );
     }
 }

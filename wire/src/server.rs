@@ -30,6 +30,14 @@ use dregg_captp::{
     PipelinedAction, PipelinedMessage, SwissTable, validate_handoff,
 };
 
+use dregg_circuit::descriptor_by_name::descriptor_by_name;
+use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
+use dregg_circuit::field::BabyBear;
+use dregg_circuit::presentation_descriptor_witness::{
+    PRES_PI_COUNT, PRESENTATION_FRESHNESS_NAME, REQUEST_PREDICATE_BASE,
+};
+use serde::{Deserialize, Serialize};
+
 // =============================================================================
 // Proof Verifier Trait
 // =============================================================================
@@ -44,67 +52,99 @@ pub trait ProofVerifier: Send + Sync + std::fmt::Debug {
     fn verify(&self, proof_bytes: &[u8], action: &str, resource: &str) -> Result<bool, String>;
 }
 
-/// Real STARK proof verifier using dregg-circuit.
+/// The presentation proof wire envelope: the IR-v2 batch proof plus the
+/// descriptor public inputs it must be checked against.
 ///
-/// Deserializes the proof bytes and runs full STARK verification
-/// (Merkle commitments, FRI low-degree test, Fiat-Shamir checks).
+/// The `postcard(Ir2BatchProof)` blob carries NO public inputs of its own, so
+/// the presentation-freshness descriptor's public-input vector
+/// (`[summary(19) ‖ verifier_block_height]`, `PRES_PI_COUNT` slots) travels
+/// alongside it — the same shape the reference wire flips use
+/// (`turn::executor::MembershipProofWire`, `turn::conditional`'s
+/// `public_outputs`). The verifier reduces each `u32` mod `p` and re-derives the
+/// action binding from the server-supplied `(action, resource)`, so a prover
+/// cannot claim a binding it did not commit to.
+#[derive(Serialize, Deserialize)]
+pub struct PresentationProofWire {
+    /// The descriptor public inputs, one canonical `BabyBear` per `u32`
+    /// (`PRES_PI_COUNT` slots).
+    pub public_inputs: Vec<u32>,
+    /// The IR-v2 batch proof (`postcard(Ir2BatchProof)`).
+    pub proof: Ir2BatchProof<DreggStarkConfig>,
+}
+
+impl PresentationProofWire {
+    /// Encode as the `postcard` wire blob the [`StarkVerifier`] consumes.
+    pub fn to_bytes(&self) -> Vec<u8> {
+        postcard::to_allocvec(self).expect("PresentationProofWire postcard encode is infallible")
+    }
+
+    /// Decode from the `postcard` wire blob.
+    pub fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        postcard::from_bytes(bytes).map_err(|e| format!("presentation proof decode failed: {e}"))
+    }
+}
+
+/// Real presentation proof verifier using the p3 descriptor prover.
 ///
-/// Uses the DSL `merkle_poseidon2_circuit()` (production path, collision-resistant),
-/// then falls back to `MerkleStarkAir` (legacy linear binding) for backward
-/// compatibility with older proofs.
+/// This is the STARK-kill consumer flip: it decodes a [`PresentationProofWire`]
+/// (`postcard(Ir2BatchProof)` + public inputs), resolves the emitted
+/// presentation-freshness descriptor by its committed name
+/// (`descriptor_by_name(PRESENTATION_FRESHNESS_NAME)`, fail-closed on a miss —
+/// the blob never chooses the constraint semantics it is checked against), and
+/// verifies with [`verify_vm_descriptor2`]. It replaced the hand
+/// `stark::proof_from_bytes` / `stark::verify` STARK over `merkle_poseidon2_circuit`.
+///
+/// The action-binding property is preserved: the descriptor's `request_predicate`
+/// slots (`pi[REQUEST_PREDICATE_BASE .. +ACTION_BINDING_WIDTH]`) must equal
+/// `compute_action_binding(action, resource)` re-derived from the server-supplied
+/// pair, so a proof captured for one `(action, resource)` cannot be replayed
+/// against another. Freshness is enforced in-circuit by the descriptor's two
+/// range gates (`diff = not_after − verifier ∈ [0, p/2]`).
 #[derive(Clone, Debug)]
 pub struct StarkVerifier;
 
 impl ProofVerifier for StarkVerifier {
     fn verify(&self, proof_bytes: &[u8], action: &str, resource: &str) -> Result<bool, String> {
-        let proof = dregg_circuit::stark::proof_from_bytes(proof_bytes)?;
-        // Use new_canonical() to reduce modulo p, preventing non-canonical field
-        // element malleability from deserialized proof data.
-        let public_inputs: Vec<dregg_circuit::field::BabyBear> = proof
+        // Decode the wire envelope (proof + carried public inputs).
+        let wire = match PresentationProofWire::from_bytes(proof_bytes) {
+            Ok(w) => w,
+            Err(_) => return Ok(false),
+        };
+
+        // Reconstruct the descriptor public inputs, reducing each u32 modulo p to
+        // prevent non-canonical field-element malleability from the wire data.
+        let public_inputs: Vec<BabyBear> = wire
             .public_inputs
             .iter()
-            .map(|&v| dregg_circuit::field::BabyBear::new_canonical(v))
+            .map(|&v| BabyBear::new_canonical(v))
             .collect();
-
-        // Verify action binding: public_inputs[2..6] must be the canonical commitment
-        // to (action, resource) via compute_action_binding (8 elements, ~124-bit birthday).
-        // Layout: [leaf_hash, merkle_root, action_binding[0..8], composition_commitment[0..8]]
-        // The bridge verifier (bridge/src/verifier.rs) uses the same ACTION_BINDING_WIDTH offset.
-        let expected_binding = dregg_circuit::compute_action_binding(action, resource);
-        if public_inputs.len() < 2 + dregg_circuit::ACTION_BINDING_WIDTH {
+        if public_inputs.len() != PRES_PI_COUNT {
             return Ok(false);
         }
+
+        // Action binding: the descriptor's request_predicate slots must be the
+        // canonical commitment to (action, resource). The bridge verifier
+        // (bridge/src/verifier.rs) binds the same 8-element ACTION_BINDING_WIDTH.
+        let expected_binding = dregg_circuit::compute_action_binding(action, resource);
         for i in 0..dregg_circuit::ACTION_BINDING_WIDTH {
-            if public_inputs[2 + i] != expected_binding[i] {
+            if public_inputs[REQUEST_PREDICATE_BASE + i] != expected_binding[i] {
                 return Ok(false); // Proof not bound to this (action, resource)
             }
         }
 
-        // SECURITY: Verify composition commitment is present and non-zero.
-        // The composition commitment occupies pi[2+ABW .. 2+ABW+WHW] (WideHash::WIDTH = 8
-        // elements). It binds the issuer membership STARK to the derivation proof that
-        // concluded "Allow". Without this check, a federation member could present a valid
-        // membership proof even when their authorization was DENIED.
-        let composition_start = 2 + dregg_circuit::ACTION_BINDING_WIDTH;
-        let composition_width = dregg_circuit::binding::WideHash::WIDTH;
-        if public_inputs.len() < composition_start + composition_width {
-            return Ok(false); // No composition commitment present
-        }
-        let has_nonzero_composition = public_inputs
-            [composition_start..composition_start + composition_width]
-            .iter()
-            .any(|&v| v != dregg_circuit::field::BabyBear::ZERO);
-        if !has_nonzero_composition {
-            return Ok(false); // Zeroed composition = no authorization binding
-        }
+        // Resolve the emitted presentation-freshness descriptor (fail-closed).
+        let desc = match descriptor_by_name(PRESENTATION_FRESHNESS_NAME) {
+            Some(d) => d,
+            None => return Ok(false),
+        };
 
-        // Production verification uses the DSL Merkle Poseidon2 circuit.
-        // The legacy hand-written AIR is deprecated.
-        let circuit = dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit();
-        match dregg_circuit::stark::verify(&circuit, &proof, &public_inputs) {
-            Ok(()) => Ok(true),
-            Err(_reason) => Ok(false),
-        }
+        // Verify against the descriptor + public inputs. A structurally-malformed
+        // proof can panic inside verification; treat any panic as a rejection.
+        let verified = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            verify_vm_descriptor2(&desc, &wire.proof, &public_inputs).is_ok()
+        }))
+        .unwrap_or(false);
+        Ok(verified)
     }
 }
 
@@ -3750,8 +3790,79 @@ mod tests {
     fn stark_verifier_rejects_garbage() {
         let garbage = vec![0u8; 100];
         let verifier = StarkVerifier;
-        // Random bytes should not pass STARK verification
+        // Random bytes fail to decode as a PresentationProofWire → reject.
         assert!(!SiloServer::verify_proof_with(&garbage, &verifier));
+    }
+
+    // NON-VACUOUS end-to-end round-trip through the migrated `StarkVerifier`: a
+    // real presentation-freshness witness is proven with `prove_vm_descriptor2`
+    // and the resulting `PresentationProofWire` blob is consumed by the flipped
+    // `descriptor_by_name(PRESENTATION_FRESHNESS_NAME)` + `verify_vm_descriptor2`
+    // path. An honest proof under the correct (action, resource) is ACCEPTED; a
+    // wrong action/resource, a tampered blob, and garbage are all REJECTED.
+    #[test]
+    fn stark_verifier_descriptor_accepts_honest_rejects_wrong() {
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+        use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::presentation_descriptor_witness::{
+            PRESENTATION_FRESHNESS_NAME, presentation_freshness_witness, summary_from_fields,
+        };
+
+        let action = "read";
+        let resource = "res://alpha";
+
+        // Honest presentation summary whose request_predicate IS the action
+        // binding for (action, resource).
+        let binding = dregg_circuit::compute_action_binding(action, resource);
+        let revealed: [BabyBear; 8] = std::array::from_fn(|k| BabyBear::new(500 + k as u32));
+        let summary = summary_from_fields(
+            BabyBear::new(111), // federation_root
+            &binding,           // request_predicate (== action binding)
+            BabyBear::new(300), // timestamp
+            BabyBear::new(400), // presentation_tag
+            &revealed,          // revealed_facts_commitment
+        );
+
+        // Fresh token: not_after ≥ verifier and diff ≤ p/2.
+        let verifier_height = BabyBear::new(1000);
+        let not_after = BabyBear::new(1500);
+        let (trace, pis) =
+            presentation_freshness_witness(&summary, verifier_height, not_after).expect("witness");
+        let desc = descriptor_by_name(PRESENTATION_FRESHNESS_NAME)
+            .expect("presentation descriptor dispatches");
+        let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+            .expect("honest presentation must prove");
+
+        let wire = PresentationProofWire {
+            public_inputs: pis.iter().map(|f| f.as_u32()).collect(),
+            proof,
+        };
+        let blob = wire.to_bytes();
+
+        let v = StarkVerifier;
+
+        // ACCEPT: honest proof under the correct (action, resource).
+        assert_eq!(
+            v.verify(&blob, action, resource),
+            Ok(true),
+            "an honest presentation proof must be accepted"
+        );
+
+        // REJECT: a different action → the re-derived binding no longer matches
+        // the carried request_predicate.
+        assert_eq!(v.verify(&blob, "write", resource), Ok(false));
+        // REJECT: a different resource → binding mismatch.
+        assert_eq!(v.verify(&blob, action, "res://beta"), Ok(false));
+
+        // REJECT: a single-byte tampered blob.
+        let mut tampered = blob.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0x01;
+        assert_eq!(v.verify(&tampered, action, resource), Ok(false));
+
+        // REJECT: garbage bytes.
+        assert_eq!(v.verify(&[0x01, 0x02, 0x03], action, resource), Ok(false));
     }
 
     // =========================================================================

@@ -53,9 +53,11 @@
 
 use std::collections::HashSet;
 
-use dregg_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination;
+use dregg_circuit::descriptor_by_name::descriptor_by_name;
+use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
+use dregg_circuit::dsl::note_spending::note_spend_mint_hash_felt;
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::stark::proof_from_bytes;
+use dregg_circuit::note_spend_witness::NOTE_SPEND_LEAF_NAME;
 
 use crate::commitment::{
     BlindedItemCommitment, BlindedItemSetRoot, BlindedNullifierCommitment, Commitment4, MerkleRoot,
@@ -217,22 +219,30 @@ impl BlindedQueue {
     /// caller publishes only a nullifier + tree root + STARK proof, never
     /// revealing which commitment is being consumed.
     ///
-    /// The STARK proof is verified via
-    /// `dregg_circuit::dsl::note_spending::verify_note_spend_dsl_with_destination`
-    /// using the DSL note-spending AIR — the same AIR that backs production
-    /// `Effect::NoteSpend`. The verifier pins:
-    /// - `pi[0] = nullifier` (Poseidon2 form, single felt)
-    /// - `pi[1] = merkle_root` (Poseidon2 form, first limb)
-    /// - `pi[2] = 0` (value — unused for blinded items)
-    /// - `pi[3] = 0` (asset_type — unused for blinded items)
-    /// - `pi[4] = 0` (destination_federation — local consumption, never
-    ///   cross-federation)
+    /// The proof is the NEW wire format `postcard(Ir2BatchProof)` and is verified
+    /// against the emitted note-spend leaf descriptor
+    /// (`descriptor_by_name(NOTE_SPEND_LEAF_NAME)` → [`verify_vm_descriptor2`]) —
+    /// the p3 descriptor prover that replaced the hand `stark::proof_from_bytes`
+    /// STARK in the STARK-kill migration. The descriptor is the SAME emitted
+    /// note-spend leaf that backs production `Effect::NoteSpend`. The verifier
+    /// reconstructs the descriptor's 7-slot public-input claim
+    /// `[nullifier, merkle_root, value_lo, asset_type, destination_federation,
+    /// value_hi, mint_hash]` from the declared nullifier + tree root:
+    /// - `pi[0] = nullifier` (Poseidon2 form, leading limb)
+    /// - `pi[1] = merkle_root` (Poseidon2 form, leading limb)
+    /// - `pi[2] = pi[3] = pi[4] = pi[5] = 0` (value / asset_type /
+    ///   destination_federation / value_hi — all ZERO for blinded items)
+    /// - `pi[6] = note_spend_mint_hash_felt(..)` (the felt-domain mint identity
+    ///   the descriptor recomputes in-AIR)
     ///
     /// The 4-limb Poseidon2 form of the nullifier and tree root is reduced
     /// to a single BabyBear by taking the first limb — this matches the
-    /// AIR's single-felt PI slot. The other limbs participate in the
-    /// commitment-tree hashing but are not part of the AIR's PI (which is
-    /// already collision-resistant at ~31 bits per slot × tree depth).
+    /// descriptor's single-felt PI slot. The other limbs participate in the
+    /// commitment-tree hashing but are not part of the descriptor's PI (which is
+    /// already collision-resistant at ~31 bits per slot × tree depth). Reading
+    /// the descriptor by its committed name (never from prover-controlled bytes)
+    /// keeps the prover from choosing the constraint semantics it is checked
+    /// against.
     pub fn consume_private(&mut self, proof: &PrivateConsumptionProof) -> ConsumeResult {
         // Check for double-consumption (BLAKE3-keyed)
         if self.nullifiers.contains(&proof.nullifier.blake3) {
@@ -251,45 +261,69 @@ impl BlindedQueue {
             return ConsumeResult::InvalidProof;
         }
 
-        // Deserialize the STARK proof.
-        let stark_proof = match proof_from_bytes(&proof.spending_proof) {
-            Ok(p) => p,
-            Err(_) => return ConsumeResult::InvalidProof,
-        };
+        // Decode the IR-v2 batch proof (the NEW wire format `postcard(Ir2BatchProof)`
+        // that replaced the hand `stark::proof_from_bytes` STARK).
+        let batch: Ir2BatchProof<DreggStarkConfig> =
+            match postcard::from_bytes(&proof.spending_proof) {
+                Ok(p) => p,
+                Err(_) => return ConsumeResult::InvalidProof,
+            };
 
-        // Map the dual-form nullifier + tree root into the AIR's PI shape.
-        // The AIR expects a single BabyBear felt per PI slot; we take the
+        // Map the dual-form nullifier + tree root into the descriptor's PI shape.
+        // The descriptor expects a single BabyBear felt per PI slot; we take the
         // Poseidon2 leading limb. Collision resistance for the full nullifier
         // is provided by the BLAKE3 form check above (set-membership rejection
-        // on duplicate). The STARK only needs to prove derivation correctness
+        // on duplicate). The proof only needs to prove derivation correctness
         // and Merkle membership; the single-felt nullifier slot is sufficient
-        // for the AIR's commitment-binding constraint.
+        // for the descriptor's commitment-binding constraint.
         let nullifier_pi = proof.nullifier.poseidon2[0];
         let root_pi = proof.tree_root.poseidon2_root[0];
 
-        // Blinded items are value/asset-agnostic from the AIR's perspective
-        // (the privacy property is "you consumed *some* item"; the AIR doesn't
-        // need a value/asset binding for blinded queues). The prover sets
-        // value = asset_type = ZERO when generating the proof; the verifier
-        // requires the same.
+        // Blinded items are value/asset-agnostic from the descriptor's
+        // perspective (the privacy property is "you consumed *some* item"; the
+        // descriptor doesn't need a value/asset binding for blinded queues).
+        // Blinded queue consumption is always local — no cross-federation bridge
+        // replay is possible against a blinded queue — so `destination_federation`
+        // and `value_hi` are ZERO too. The prover sets these ZERO when generating
+        // the proof; the verifier reconstructs the same PI vector, so a proof
+        // whose trace carries a non-zero value/asset/destination cannot verify.
         let value_pi = BabyBear::ZERO;
         let asset_type_pi = BabyBear::ZERO;
-        // Blinded queue consumption is always local — no cross-federation
-        // bridge replay is possible against a blinded queue. We pin pi[4] to
-        // ZERO and reject any proof whose prover put a non-zero destination
-        // in the trace.
         let dest_fed_pi = BabyBear::ZERO;
-
-        if verify_note_spend_dsl_with_destination(
+        let value_hi_pi = BabyBear::ZERO;
+        // The appended 7th slot is the felt-domain mint identity the descriptor
+        // recomputes in-AIR over the six preceding PI slots.
+        let mint_pi = note_spend_mint_hash_felt(
             nullifier_pi,
             root_pi,
             value_pi,
             asset_type_pi,
             dest_fed_pi,
-            &stark_proof,
-        )
-        .is_err()
-        {
+            value_hi_pi,
+        );
+        let pi = vec![
+            nullifier_pi,
+            root_pi,
+            value_pi,
+            asset_type_pi,
+            dest_fed_pi,
+            value_hi_pi,
+            mint_pi,
+        ];
+
+        // Resolve the emitted note-spend leaf descriptor by its committed name
+        // (fail-closed on a miss — the proof blob never chooses which descriptor
+        // it is checked against) and verify. A structurally-malformed proof can
+        // panic inside verification; treat any panic as a rejection.
+        let desc = match descriptor_by_name(NOTE_SPEND_LEAF_NAME) {
+            Some(d) => d,
+            None => return ConsumeResult::InvalidProof,
+        };
+        let verified = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            verify_vm_descriptor2(&desc, &batch, &pi).is_ok()
+        }))
+        .unwrap_or(false);
+        if !verified {
             return ConsumeResult::InvalidProof;
         }
 
@@ -1012,5 +1046,135 @@ mod tests {
 
         let result = queue.consume_private(&proof);
         assert_eq!(result, ConsumeResult::InvalidProof);
+    }
+
+    // --- Test 19: Private consumption with an HONEST descriptor proof is ACCEPTED,
+    // and a tampered / wrong-root proof is REJECTED (the STARK-kill wire flip). ---
+    //
+    // NON-VACUOUS end-to-end round-trip through the REAL descriptor prover: a real
+    // note-spend witness is proven with `prove_vm_descriptor2` and the resulting
+    // `postcard(Ir2BatchProof)` blob is consumed by `consume_private`'s migrated
+    // `descriptor_by_name(NOTE_SPEND_LEAF_NAME)` + `verify_vm_descriptor2` path.
+    #[test]
+    fn private_consumption_honest_descriptor_proof_accepts_tamper_rejects() {
+        use dregg_circuit::descriptor_by_name::descriptor_by_name;
+        use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+        use dregg_circuit::field::BabyBear;
+        use dregg_circuit::note_spend_witness::{NOTE_SPEND_LEAF_NAME, note_spend_witness};
+        use dregg_circuit::note_spending_air::{
+            NoteSpendingWitness, key_to_field_elements, pi as np,
+        };
+
+        // A REAL value-0 note-spend witness (blinded items are value/asset/dest
+        // agnostic → the four amount/asset/destination PI slots are all ZERO).
+        let owner = [0x11u8; 32];
+        let nonce = [0x22u8; 32];
+        let rand = [0x33u8; 32];
+        let key = key_to_field_elements(&[0x77u8; 32]);
+        let depth = 2usize;
+        let mut siblings = Vec::with_capacity(depth);
+        let mut positions = Vec::with_capacity(depth);
+        for i in 0..depth {
+            siblings.push([
+                BabyBear::new((i * 3 + 1) as u32),
+                BabyBear::new((i * 3 + 2) as u32),
+                BabyBear::new((i * 3 + 3) as u32),
+            ]);
+            positions.push((i % 4) as u8);
+        }
+        let witness = NoteSpendingWitness::from_note_limbs(
+            &owner, 0, /* value */
+            0, /* asset_type */
+            &nonce, &rand, key, siblings, positions,
+        );
+        let (trace, pis) = note_spend_witness(&witness).expect("build note-spend witness");
+        // The blinded-item shape: value / asset / destination / value_hi are ZERO.
+        assert_eq!(pis[np::VALUE], BabyBear::ZERO);
+        assert_eq!(pis[np::ASSET_TYPE], BabyBear::ZERO);
+        assert_eq!(pis[np::DESTINATION_FEDERATION], BabyBear::ZERO);
+        assert_eq!(pis[np::VALUE_HI], BabyBear::ZERO);
+
+        let desc =
+            descriptor_by_name(NOTE_SPEND_LEAF_NAME).expect("note-spend descriptor dispatches");
+        let batch = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+            .expect("honest note-spend must prove");
+        let blob = postcard::to_allocvec(&batch).expect("encode batch proof");
+
+        // Declared nullifier + tree root whose Poseidon2 leading limbs match the
+        // proof's PIs (the queue's root is set to the declared tree root so the
+        // tree-root gate passes and we reach `verify_vm_descriptor2`).
+        let null_p2 = [
+            pis[np::NULLIFIER],
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ];
+        let root_p2 = [
+            pis[np::MERKLE_ROOT],
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ];
+        let tree_root = BlindedItemSetRoot::from_parts([0xAB; 32], root_p2);
+        let nullifier = BlindedNullifierCommitment::from_parts([0xCD; 32], null_p2);
+
+        // ACCEPT: honest proof, declared nullifier/root match the proof's PIs.
+        let mut queue = BlindedQueue::new(4);
+        queue.commitment_root = tree_root;
+        let pcp = PrivateConsumptionProof {
+            nullifier,
+            tree_root,
+            spending_proof: blob.clone(),
+        };
+        assert_eq!(
+            queue.consume_private(&pcp),
+            ConsumeResult::Consumed {
+                nullifier: [0xCD; 32]
+            },
+            "an honest descriptor proof must be accepted"
+        );
+
+        // REJECT: a single-byte tampered proof blob (fresh nullifier so the
+        // double-consume gate does not short-circuit).
+        let mut queue_t = BlindedQueue::new(4);
+        queue_t.commitment_root = tree_root;
+        let mut tampered = blob.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0x01;
+        let pcp_t = PrivateConsumptionProof {
+            nullifier: BlindedNullifierCommitment::from_parts([0xEE; 32], null_p2),
+            tree_root,
+            spending_proof: tampered,
+        };
+        assert_eq!(
+            queue_t.consume_private(&pcp_t),
+            ConsumeResult::InvalidProof,
+            "a tampered proof blob must be rejected"
+        );
+
+        // REJECT: the HONEST proof but a declared root that does not match the
+        // proof's committed merkle_root → the reconstructed PI vector disagrees
+        // with the trace the proof binds, so `verify_vm_descriptor2` fails. This
+        // bites AFTER the tree-root equality gate (the queue root is set to the
+        // wrong root), so it exercises the descriptor verification itself.
+        let mut queue_w = BlindedQueue::new(4);
+        let wrong_root_p2 = [
+            pis[np::MERKLE_ROOT] + BabyBear::ONE,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+            BabyBear::ZERO,
+        ];
+        let wrong_root = BlindedItemSetRoot::from_parts([0xAB; 32], wrong_root_p2);
+        queue_w.commitment_root = wrong_root;
+        let pcp_w = PrivateConsumptionProof {
+            nullifier: BlindedNullifierCommitment::from_parts([0x01; 32], null_p2),
+            tree_root: wrong_root,
+            spending_proof: blob.clone(),
+        };
+        assert_eq!(
+            queue_w.consume_private(&pcp_w),
+            ConsumeResult::InvalidProof,
+            "a proof whose committed root disagrees with the declared root must be rejected"
+        );
     }
 }
