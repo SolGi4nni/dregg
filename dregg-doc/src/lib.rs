@@ -198,10 +198,11 @@ pub use blame::{BlameLine, blame, blame_summary};
 pub use check::{CheckId, CheckRefusal, CheckRequirement, CheckWitness, RequiredCheck};
 #[cfg(feature = "substrate")]
 pub use ci_assurance::{
-    AssuranceInput, AssuranceOutcome, BondRef, ChallengeContext, CiAssurance, CiExecutionProof,
-    CiProofVerifier, Conviction, ConvictionEvidence, GovernedKeySet, KeyGovernance,
-    StarkCiProofVerifier, TrustedKey, ci_attestation_program, ci_attestation_vk,
-    ci_verdict_public_inputs, prove_ci_attestation, verify_ci_proof,
+    AssuranceInput, AssuranceOutcome, BondRef, Challenge, ChallengeContext, CiAssurance,
+    CiExecutionProof, CiProofVerifier, Conviction, ConvictionEvidence, GovernedKeySet,
+    KeyGovernance, ReexecDivergence, StarkCiProofVerifier, TrustedKey, ci_attestation_program,
+    ci_attestation_vk, ci_verdict_public_inputs, detect_upheld_challenge, post_challenge,
+    prove_ci_attestation, verify_ci_proof,
 };
 #[cfg(feature = "substrate")]
 pub use ci_verdict::{

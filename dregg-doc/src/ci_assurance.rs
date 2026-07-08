@@ -58,10 +58,14 @@
 //!   a general command is the confined-execution zkVM AIR (a `custom_proof_bind`
 //!   sub-proof), which drops in as the circuit predicate with no policy change.
 //!   The BINDING + verification are real dregg proving today.
-//!   - `OptimisticChallenge`'s live dispute transport — the gossip/challenge
-//!     network that WRITES a [`ChallengeContext::upheld_challenge`] id is
-//!     out-of-crate; the height/conviction gate here actually gates on what it is
-//!     told, and MINTS the [`Conviction`] from the upheld-challenge id it saw.
+//!   - `OptimisticChallenge`'s dispute detection is now REAL and in-crate: a
+//!     challenger posts a signed [`Challenge`] block to the blocklace
+//!     ([`post_challenge`]), and [`detect_upheld_challenge`] scans the presented
+//!     [`ChallengeContext::challenge_lace`] for a trusted-signed block that
+//!     CONTRADICTS the host verdict on the same run (an equivocation), MINTING the
+//!     [`Conviction`] from the detected block id. What stays out-of-crate is only
+//!     the live NETWORK dissemination of those challenge blocks across nodes (the
+//!     gossip transport that fills the lace); the equivocation logic is real.
 //!   - `Staked`'s slash-transfer is now REAL and in-crate: an inner conviction
 //!     produces a [`crate::staked_bond::SlashOutcome`] that
 //!     [`crate::staked_bond::slash_bond`] fires as a conserving (`Σδ=0`), one-shot
@@ -72,7 +76,9 @@
 //!     stake registry — the deployment wires those.
 
 use crate::ci_verdict::{CiVerdict, planned_ci_run_hash};
+use dregg_blocklace::{Block, Blocklace};
 use dregg_turn::{Finality, TurnReceipt, verify_receipt_signature_with_keys};
+use ed25519_dalek::SigningKey;
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The governed trusted-executor key set (Finding-3): NOT a bare `Vec`.
@@ -553,28 +559,247 @@ impl Conviction {
     }
 }
 
-/// The optimistic-challenge context for [`CiAssurance::OptimisticChallenge`]:
-/// where in the challenge window the verdict is, and the id of an upheld
-/// challenge if one landed. The live gossip/dispute transport that WRITES
-/// `upheld_challenge` is the named seam; the height/conviction gate here gates on
-/// what it is told.
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OPTIMISTIC-CHALLENGE CARRIER — a challenge is a signed blocklace block, and
+// an upheld challenge is a real equivocation the gate DETECTS (not a stub signal).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// Domain tag separating a challenge's canonical encoding from any other bytes.
+const CHALLENGE_DOMAIN: &[u8] = b"dregg-forge/ci-challenge/v1";
+/// A challenge's fixed-width encoding: domain ‖ input_root(32) ‖ command_id(32)
+/// ‖ claimed_output(32) ‖ claimed_exit(4) ‖ recomputed_output(32) ‖
+/// recomputed_exit(4).
+const CHALLENGE_ENCODED_LEN: usize = 32 + 32 + 32 + 4 + 32 + 4;
+
+/// A CHALLENGE against a host's CI verdict — a fraud claim a re-executor posts to
+/// the blocklace. It NAMES the disputed run (`input_root` + `command_id`, the same
+/// identity the host verdict carries), QUOTES what the host claimed
+/// (`claimed_output`/`claimed_exit`), and states what the challenger RECOMPUTED
+/// (`recomputed_output`/`recomputed_exit`) re-executing that same command. When the
+/// recomputed result differs from the host's claim, the challenge and the host
+/// verdict are two contradictory attestations about ONE CI run — an equivocation.
 ///
-/// Note `upheld_challenge` is a plain id, NOT a [`ConvictionEvidence`]: the
-/// transport signals "this challenge was upheld", and [`CiAssurance::evaluate`]
-/// MINTS the [`Conviction`] from that id. The evidence in the resulting
-/// conviction is thus produced by evaluate from the id it verified — it is not a
-/// caller-supplied [`ConvictionEvidence`] (which a caller cannot construct
-/// anyway).
+/// A challenge is not loose data: it rides a signed [`Block`] on the blocklace
+/// (see [`post_challenge`]), so a challenger cannot be impersonated and the fraud
+/// proof is disseminated with feed integrity. [`detect_upheld_challenge`] is what
+/// turns a valid, trusted-signed, contradicting challenge into the upheld-challenge
+/// id [`CiAssurance::evaluate`] mints a [`ConvictionEvidence::ChallengeUpheld`]
+/// [`Conviction`] from.
 #[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Challenge {
+    /// The disputed run's input root — must equal the host verdict's `input_root`.
+    pub input_root: [u8; 32],
+    /// The disputed run's command id — must equal the host verdict's `command_id`.
+    pub command_id: [u8; 32],
+    /// The output digest the HOST claimed (binds the challenge to this attestation).
+    pub claimed_output: [u8; 32],
+    /// The exit code the HOST claimed.
+    pub claimed_exit: i32,
+    /// What the challenger RECOMPUTED re-executing the same command (the fraud
+    /// evidence when it differs from `claimed_output`).
+    pub recomputed_output: [u8; 32],
+    /// The exit code the challenger recomputed.
+    pub recomputed_exit: i32,
+}
+
+impl Challenge {
+    /// The canonical, domain-tagged, fixed-width (hence injective) encoding — the
+    /// blocklace block payload a challenger signs.
+    pub fn encoding(&self) -> Vec<u8> {
+        let mut b = Vec::with_capacity(CHALLENGE_DOMAIN.len() + CHALLENGE_ENCODED_LEN);
+        b.extend_from_slice(CHALLENGE_DOMAIN);
+        b.extend_from_slice(&self.input_root);
+        b.extend_from_slice(&self.command_id);
+        b.extend_from_slice(&self.claimed_output);
+        b.extend_from_slice(&self.claimed_exit.to_le_bytes());
+        b.extend_from_slice(&self.recomputed_output);
+        b.extend_from_slice(&self.recomputed_exit.to_le_bytes());
+        b
+    }
+
+    /// Decode a challenge from a block payload; `None` if the bytes are not a
+    /// canonical challenge encoding (wrong domain / length). So a non-challenge
+    /// block on the lace is simply ignored by [`detect_upheld_challenge`].
+    pub fn decode(bytes: &[u8]) -> Option<Challenge> {
+        let dom = CHALLENGE_DOMAIN.len();
+        if bytes.len() != dom + CHALLENGE_ENCODED_LEN || &bytes[..dom] != CHALLENGE_DOMAIN {
+            return None;
+        }
+        let take32 = |o: &mut usize| -> [u8; 32] {
+            let mut a = [0u8; 32];
+            a.copy_from_slice(&bytes[*o..*o + 32]);
+            *o += 32;
+            a
+        };
+        let mut o = dom;
+        let input_root = take32(&mut o);
+        let command_id = take32(&mut o);
+        let claimed_output = take32(&mut o);
+        let claimed_exit = i32::from_le_bytes(bytes[o..o + 4].try_into().ok()?);
+        o += 4;
+        let recomputed_output = take32(&mut o);
+        let recomputed_exit = i32::from_le_bytes(bytes[o..o + 4].try_into().ok()?);
+        Some(Challenge {
+            input_root,
+            command_id,
+            claimed_output,
+            claimed_exit,
+            recomputed_output,
+            recomputed_exit,
+        })
+    }
+
+    /// Whether this challenge CONTRADICTS `host_verdict`: it is about the same run
+    /// (`input_root` + `command_id` match), it quotes the host's exact claim
+    /// (`claimed_*` == the verdict's output/exit — so it disputes THIS
+    /// attestation), and its recomputed result DIFFERS (a distinct output digest
+    /// or exit code). A challenge that matches the host output, or names a
+    /// different run, is not a contradiction.
+    pub fn contradicts(&self, host_verdict: &CiVerdict) -> bool {
+        let same_run = self.input_root == host_verdict.input_root
+            && self.command_id == host_verdict.command_id;
+        let quotes_host = self.claimed_output == host_verdict.output_digest
+            && self.claimed_exit == host_verdict.exit_code;
+        let diverges = self.recomputed_output != host_verdict.output_digest
+            || self.recomputed_exit != host_verdict.exit_code;
+        same_run && quotes_host && diverges
+    }
+}
+
+/// THE RE-EXECUTION DIVERGENCE a challenger observed — the input to
+/// [`post_challenge`]. It pairs the host verdict the challenger re-executed
+/// against (which names the run and carries the host's claim) with what the
+/// challenger's own confined re-run RECOMPUTED. This is the typed shape of an
+/// L3 audit's [`AuditVerdict::HostLied`](../../forge_ci_runner) outcome
+/// (`forge-ci-runner::reexecute_and_verify`): the runner reports a divergent
+/// field; here the whole recomputed output/exit is carried so the posted
+/// challenge is self-contained.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct ReexecDivergence {
+    /// The host verdict the challenger re-executed against.
+    pub host_verdict: CiVerdict,
+    /// The output digest the challenger's re-run produced (the fraud evidence when
+    /// it differs from `host_verdict.output_digest`).
+    pub recomputed_output: [u8; 32],
+    /// The exit code the challenger's re-run produced.
+    pub recomputed_exit: i32,
+}
+
+/// POST A CHALLENGE to the blocklace: a challenger who ran L3
+/// (`forge-ci-runner::reexecute_and_verify`) and found the host lied
+/// ([`ReexecDivergence`]) mints a signed [`Block`] whose payload is the canonical
+/// [`Challenge`] encoding, signed with `challenger_key` ([`Block::new_signed`]).
+///
+/// The block is a GENESIS strand block (sequence 0, no predecessors), so it is
+/// causally closed and insertable on any node's lace; its `creator` is
+/// `challenger_key`'s public key, so the fraud proof is attributable and its
+/// signature is verifiable by anyone. The disseminated block IS the challenge;
+/// [`detect_upheld_challenge`] reads it back off the lace.
+pub fn post_challenge(divergence: &ReexecDivergence, challenger_key: &SigningKey) -> Block {
+    let challenge = Challenge {
+        input_root: divergence.host_verdict.input_root,
+        command_id: divergence.host_verdict.command_id,
+        claimed_output: divergence.host_verdict.output_digest,
+        claimed_exit: divergence.host_verdict.exit_code,
+        recomputed_output: divergence.recomputed_output,
+        recomputed_exit: divergence.recomputed_exit,
+    };
+    Block::new_signed(
+        challenger_key,
+        /* sequence */ 0,
+        /* predecessors */ vec![],
+        challenge.encoding(),
+    )
+}
+
+/// DETECT AN UPHELD CHALLENGE against `host_verdict` on the presented `lace`,
+/// returning the challenge id (the block id) if one is upheld.
+///
+/// A challenge is UPHELD iff there is a block on the lace that is
+/// 1. **trusted-signed (anti-Sybil)** — its `creator` is one of `trusted_keys`
+///    (the policy's ACTIVE governed key set) AND its Ed25519 signature verifies
+///    (real [`Block::verify_signature`]); a block by a non-active/untrusted key,
+///    or one with a bad signature, is IGNORED, so a malicious stranger cannot
+///    grief an honest host; and
+/// 2. **a genuine contradiction** — its payload decodes to a [`Challenge`] that
+///    [`Challenge::contradicts`] `host_verdict`: the SAME run (`input_root` +
+///    `command_id`), quoting the host's exact claim, with a DISTINCT recomputed
+///    output/exit. The host verdict (output D over the run) and this challenge
+///    (recomputed D' ≠ D over the same run) are two contradictory attestations
+///    about ONE CI run — the equivocation.
+///
+/// The returned id is the block's own [`Block::id`] — the dispute transport's
+/// evidence handle. [`CiAssurance::evaluate`] mints the [`Conviction`] from it, so
+/// the conviction evidence is PRODUCED here from a real detected block, never
+/// caller-supplied.
+pub fn detect_upheld_challenge(
+    host_verdict: &CiVerdict,
+    lace: &Blocklace,
+    trusted_keys: &[[u8; 32]],
+) -> Option<[u8; 32]> {
+    for id in lace.block_ids() {
+        let Some(block) = lace.get(&id) else {
+            continue;
+        };
+        // (1) Anti-Sybil: the challenger must be an ACTIVE trusted key, and the
+        //     block's signature must really verify (defensive: a lace assembled
+        //     outside `insert` might carry an unverified block).
+        if !trusted_keys.contains(&block.creator) {
+            continue;
+        }
+        if block.verify_signature().is_err() {
+            continue;
+        }
+        // (2) A genuine contradiction about THIS run.
+        let Some(challenge) = Challenge::decode(&block.payload) else {
+            continue;
+        };
+        if challenge.contradicts(host_verdict) {
+            return Some(id);
+        }
+    }
+    None
+}
+
+/// The optimistic-challenge context for [`CiAssurance::OptimisticChallenge`]:
+/// where in the challenge window the verdict is, plus the presented `challenge_lace`
+/// — the blocklace of disseminated challenge blocks.
+///
+/// The upheld-challenge id is NO LONGER a caller-supplied signal: [`CiAssurance::evaluate`]
+/// runs [`detect_upheld_challenge`] over `challenge_lace` (against the policy's
+/// ACTIVE governed key set) and MINTS the [`Conviction`] from the detected block
+/// id. So a conviction rides a REAL equivocation — a trusted-signed challenge that
+/// contradicts the host verdict on the same run — not a flag anyone can set. The
+/// residual seam is only the live NETWORK dissemination of those blocks across
+/// nodes (the transport that fills `challenge_lace`); the detection + equivocation
+/// logic here is real.
+#[derive(Clone, Debug, Default)]
 pub struct ChallengeContext {
     /// The height the verdict was posted (accepted provisionally) at.
     pub posted_height: u64,
     /// The current height (the verifier's clock).
     pub now_height: u64,
-    /// The id of an upheld challenge, if one landed during the window (written by
-    /// the out-of-crate dispute transport). `Some(id)` convicts; evaluate mints
-    /// the [`Conviction`] from `id`.
-    pub upheld_challenge: Option<[u8; 32]>,
+    /// The presented blocklace of challenge blocks. `evaluate` scans it with
+    /// [`detect_upheld_challenge`]; an empty lace means no challenge landed.
+    pub challenge_lace: Blocklace,
+}
+
+impl ChallengeContext {
+    /// A context at `posted_height`/`now_height` with an EMPTY challenge lace (no
+    /// challenge posted — the happy path).
+    pub fn new(posted_height: u64, now_height: u64) -> Self {
+        ChallengeContext {
+            posted_height,
+            now_height,
+            challenge_lace: Blocklace::new(),
+        }
+    }
+
+    /// Replace the presented challenge lace (the disseminated challenge blocks).
+    pub fn with_lace(mut self, challenge_lace: Blocklace) -> Self {
+        self.challenge_lace = challenge_lace;
+        self
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -841,17 +1066,24 @@ impl CiAssurance {
                 }
             }
 
-            // L2.5: satisfied iff past the window with no recorded conviction.
+            // L2.5: satisfied iff past the window with no upheld challenge. An
+            // upheld challenge is DETECTED from the presented blocklace against
+            // the policy's ACTIVE key set (anti-Sybil) — a trusted-signed block
+            // that contradicts this verdict on the same run is an equivocation and
+            // convicts (even inside the window: a proven lie need not wait it out).
             CiAssurance::OptimisticChallenge {
+                keys,
                 challenge_window_height,
-                ..
             } => {
                 let Some(ctx) = input.challenge else {
                     return AssuranceOutcome::Unmet(
                         "optimistic challenge: no challenge context presented".to_string(),
                     );
                 };
-                if let Some(challenge_id) = ctx.upheld_challenge {
+                let active = keys.active_keys();
+                if let Some(challenge_id) =
+                    detect_upheld_challenge(input.verdict, &ctx.challenge_lace, &active)
+                {
                     return AssuranceOutcome::Convicted(Conviction::challenge_upheld(challenge_id));
                 }
                 let ready_at = ctx.posted_height.saturating_add(*challenge_window_height);
@@ -1046,61 +1278,164 @@ mod tests {
         }
     }
 
-    // ── POLE (iii): OptimisticChallenge — inside window refused; past window ──
-    //    unconvicted satisfies; a recorded conviction refuses.
+    // ── POLE (iii): OptimisticChallenge — the REAL blocklace-carried challenge.
+    //    A challenger who re-executed and found the host lied POSTS a signed
+    //    Challenge block; `detect_upheld_challenge` turns a trusted-signed block
+    //    that contradicts the host verdict on the same run into a CONVICTION. Five
+    //    poles: (i) no challenge past the window satisfies; (ii) a genuine
+    //    challenge (active key, divergent recompute) convicts, NOT satisfied;
+    //    (iii) inside the window refuses; (iv) a FORGED challenge (untrusted key,
+    //    or wrong run) is ignored so an honest host is not griefed; (v) the
+    //    conviction id is MINTED from the detected block, not caller-supplied.
     #[test]
-    fn optimistic_challenge_window_and_conviction() {
+    fn optimistic_challenge_detects_real_equivocation() {
+        // The governed set trusts S1 (the host) and S2 (a trusted re-executor who
+        // may challenge). S3 is an outsider — NOT trusted.
         let policy = || CiAssurance::OptimisticChallenge {
-            keys: GovernedKeySet::operator([vk(S1)]),
+            keys: GovernedKeySet::operator([vk(S1), vk(S2)]),
             challenge_window_height: 10,
         };
+        // The host's committed verdict (input INPUT, command COMMAND, exit 0,
+        // output OUTPUT), signed by S1.
         let (receipt, v) = run(S1, OUTPUT);
 
-        // Inside the window (now 105 < posted 100 + 10) → unmet.
-        let inside = ChallengeContext {
-            posted_height: 100,
-            now_height: 105,
-            upheld_challenge: None,
+        // Helper: a lace carrying one challenge block signed by `seed`, disputing
+        // `host` with a recomputed `(output, exit)`.
+        let lace_with = |seed: [u8; 32], host: &CiVerdict, out: [u8; 32], exit: i32| {
+            let divergence = ReexecDivergence {
+                host_verdict: host.clone(),
+                recomputed_output: out,
+                recomputed_exit: exit,
+            };
+            let block = post_challenge(&divergence, &SigningKey::from_bytes(&seed));
+            let mut lace = Blocklace::new();
+            lace.insert(block.clone())
+                .expect("signed genesis challenge inserts");
+            (lace, block)
         };
+
+        // POLE (i): NO CHALLENGE, past the window (now 110 ≥ posted 100 + 10) →
+        // satisfies. Empty lace = nobody challenged.
+        satisfied(
+            policy(),
+            CiRunWitness::signed(receipt.clone(), v.clone())
+                .with_challenge(ChallengeContext::new(100, 110)),
+        )
+        .expect("past the challenge window with no challenge satisfies");
+
+        // POLE (ii): GENUINE CHALLENGE — the trusted re-executor S2 re-ran the
+        // command and recomputed a DIFFERENT digest (0xEE ≠ OUTPUT) for the SAME
+        // run, and posts it. `detect_upheld_challenge` finds it → CONVICTED, even
+        // past the window (a proven lie need not wait it out). NOT satisfied.
+        let (lace, block) = lace_with(S2, &v, [0xEE; 32], 0);
         match satisfied(
             policy(),
-            CiRunWitness::signed(receipt.clone(), v.clone()).with_challenge(inside),
+            CiRunWitness::signed(receipt.clone(), v.clone())
+                .with_challenge(ChallengeContext::new(100, 999).with_lace(lace)),
+        ) {
+            Err(CheckRefusal::Convicted(c)) => match c.evidence() {
+                // POLE (v): the id is the DETECTED block's own id — minted by
+                // evaluate from the real block, not a caller-supplied signal.
+                ConvictionEvidence::ChallengeUpheld { challenge_id } => {
+                    assert_eq!(
+                        *challenge_id,
+                        block.id(),
+                        "the conviction id is the detected challenge block's id"
+                    );
+                }
+                other => panic!("expected ChallengeUpheld, got {other:?}"),
+            },
+            other => panic!("expected Convicted for a genuine challenge, got {other:?}"),
+        }
+
+        // POLE (iii): INSIDE the window (now 105 < 110), no challenge → refused
+        // with AssuranceUnmet (regardless — the window has not elapsed).
+        match satisfied(
+            policy(),
+            CiRunWitness::signed(receipt.clone(), v.clone())
+                .with_challenge(ChallengeContext::new(100, 105)),
         ) {
             Err(CheckRefusal::AssuranceUnmet(why)) => assert!(why.contains("window"), "{why}"),
             other => panic!("expected AssuranceUnmet inside window, got {other:?}"),
         }
 
-        // Past the window, unconvicted → satisfied.
-        let past = ChallengeContext {
-            posted_height: 100,
-            now_height: 110,
-            upheld_challenge: None,
-        };
+        // POLE (iv-a): FORGED CHALLENGE by an UNTRUSTED key. S3 (not in the
+        // governed set) posts a perfectly-divergent challenge; it is IGNORED, so
+        // past the window the honest host still SATISFIES — a stranger cannot grief.
+        let (forged_lace, _) = lace_with(S3, &v, [0xEE; 32], 0);
         satisfied(
             policy(),
-            CiRunWitness::signed(receipt.clone(), v.clone()).with_challenge(past),
+            CiRunWitness::signed(receipt.clone(), v.clone())
+                .with_challenge(ChallengeContext::new(100, 999).with_lace(forged_lace)),
         )
-        .expect("past the challenge window with no conviction satisfies");
+        .expect("a challenge by an untrusted key is ignored — the host is not convicted");
 
-        // A recorded upheld challenge refuses even past the window; evaluate mints
-        // the ChallengeUpheld conviction from the id it was handed.
-        let convicted = ChallengeContext {
-            posted_height: 100,
-            now_height: 999,
-            upheld_challenge: Some([0x7C; 32]),
+        // POLE (iv-b): a challenge by the TRUSTED S2 but about a DIFFERENT run
+        // (its host_verdict names a different input_root) does not match this
+        // verdict — IGNORED, so the host still satisfies past the window.
+        let other_run = CiVerdict {
+            input_root: [0x55; 32], // ≠ INPUT — a different run
+            ..v.clone()
         };
-        match satisfied(
+        let (mismatched_lace, _) = lace_with(S2, &other_run, [0xEE; 32], 0);
+        satisfied(
             policy(),
-            CiRunWitness::signed(receipt, v).with_challenge(convicted),
-        ) {
-            Err(CheckRefusal::Convicted(c)) => match c.evidence() {
-                ConvictionEvidence::ChallengeUpheld { challenge_id } => {
-                    assert_eq!(*challenge_id, [0x7C; 32], "evidence carries the upheld id");
-                }
-                other => panic!("expected ChallengeUpheld, got {other:?}"),
+            CiRunWitness::signed(receipt, v)
+                .with_challenge(ChallengeContext::new(100, 999).with_lace(mismatched_lace)),
+        )
+        .expect("a challenge about a different run does not convict this verdict");
+    }
+
+    // A focused check on the detector itself (unit-level), independent of the
+    // whole gate: a trusted-signed contradicting challenge is upheld; an
+    // untrusted signer, a matching (non-divergent) recompute, and a
+    // wrong-run challenge are each NOT upheld.
+    #[test]
+    fn detect_upheld_challenge_poles() {
+        let host = verdict(OUTPUT);
+        let trusted = [vk(S1), vk(S2)];
+
+        // A genuine contradiction by trusted S2 → Some(block id).
+        let genuine = post_challenge(
+            &ReexecDivergence {
+                host_verdict: host.clone(),
+                recomputed_output: [0xEE; 32],
+                recomputed_exit: 0,
             },
-            other => panic!("expected Convicted, got {other:?}"),
-        }
+            &SigningKey::from_bytes(&S2),
+        );
+        let mut lace = Blocklace::new();
+        lace.insert(genuine.clone()).unwrap();
+        assert_eq!(
+            detect_upheld_challenge(&host, &lace, &trusted),
+            Some(genuine.id()),
+            "a trusted-signed contradicting challenge is upheld"
+        );
+
+        // The SAME lace but S2 is NOT trusted → ignored (anti-Sybil).
+        assert_eq!(
+            detect_upheld_challenge(&host, &lace, &[vk(S1)]),
+            None,
+            "a challenge by a non-active key is not upheld"
+        );
+
+        // A non-divergent "challenge" (recompute AGREES with the host) → not a
+        // contradiction, not upheld.
+        let agreeing = post_challenge(
+            &ReexecDivergence {
+                host_verdict: host.clone(),
+                recomputed_output: OUTPUT, // agrees
+                recomputed_exit: 0,
+            },
+            &SigningKey::from_bytes(&S2),
+        );
+        let mut lace2 = Blocklace::new();
+        lace2.insert(agreeing).unwrap();
+        assert_eq!(
+            detect_upheld_challenge(&host, &lace2, &trusted),
+            None,
+            "a challenge whose recompute agrees is not a contradiction"
+        );
     }
 
     // ── POLE (iv): Proven — a REAL dregg STARK. A genuinely-produced proof

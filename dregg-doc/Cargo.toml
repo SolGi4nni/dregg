@@ -56,7 +56,14 @@ cell-heap = ["dep:dregg-cell", "dep:blake3"]
 # through the real `TurnExecutor` (cap-gated, finalized, journaled), producing a
 # real `dregg_turn::TurnReceipt`. The receipt IS the provenance: no more stand-in
 # `PatchId` for who-wrote-what. That is why `dregg-turn` is pulled in here.
-substrate = ["cell-heap", "dep:dregg-turn", "dep:dregg-commit", "dep:dregg-circuit"]
+substrate = [
+    "cell-heap",
+    "dep:dregg-turn",
+    "dep:dregg-commit",
+    "dep:dregg-circuit",
+    "dep:dregg-blocklace",
+    "dep:ed25519-dalek",
+]
 
 # `rope` welds the patch core onto a `ropey::Rope`-backed editor buffer — the
 # rope<->patch BRIDGE the editor needs (DOCUMENT-LANGUAGE.md §4.1, APPS-AS-CELLS.md
@@ -106,6 +113,22 @@ dregg-circuit = { path = "../circuit", optional = true }
 # so gating it on `substrate` adds no new transitive dependency; with the
 # feature OFF the core pulls in nothing.
 blake3 = { version = "1", optional = true }
+# The REAL blocklace carrier (optional, behind `substrate`): the SSB-style
+# feed-integrity DAG (`dregg_blocklace::{Block, Blocklace}`) that carries an
+# OptimisticChallenge dispute. A challenger who re-executed and found the host
+# lied posts a signed `Block` (`Block::new_signed`) whose payload is a `Challenge`;
+# `detect_upheld_challenge` scans the presented lace for a trusted-signed block
+# that CONTRADICTS the host verdict on the same run — the real equivocation the
+# `OptimisticChallenge` conviction rides. A path dep into the parent workspace's
+# `../blocklace` (package `dregg-blocklace`), resolving its own workspace
+# inheritance from `../Cargo.toml` exactly as `dregg-cell` / `dregg-turn` do.
+dregg-blocklace = { path = "../blocklace", optional = true }
+# Ed25519 signing for a challenger's block (`post_challenge` takes the
+# challenger's `SigningKey`; `Block::new_signed` signs the fraud proof). It is the
+# SAME `ed25519-dalek` (pinned 2.x) already in the substrate dep tree via
+# `dregg-turn` / `dregg-blocklace`, so gating it on `substrate` adds no new
+# transitive dependency; with the feature OFF the core pulls in nothing.
+ed25519-dalek = { version = "2", optional = true }
 
 # Test-only: derive distinct Ed25519 verifying keys from seeds so the CI-assurance
 # tests can exercise a quorum of DISTINCT trusted executors and key revocation.
