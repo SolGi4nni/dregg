@@ -4,16 +4,36 @@
 //! `FrostTestDealer` / `frost_sign`, over a module instead of a prime-order
 //! group.
 //!
+//! # Noise-flooding — the key-hiding mechanism (`Dregg2.Crypto.Smudging`)
+//!
+//! A lattice signature `z = y + c·s` leaks `s` unless the mask distribution
+//! smudges the secret-dependent shift out. This reference implements the
+//! UNIFORM noise-flooding variant the Lean `Smudging` module proves sound:
+//! each mask coefficient is sampled uniformly over the WIDE centered range
+//! `[-M/2, M/2)` ([`sample_wide_mask`], `M =` [`MASK_WIDTH_WIDE`] by
+//! default), so by `smudge_bound` the statistical distance between response
+//! distributions under two secrets is `≤ ‖c·Δs‖∞ / M` per coefficient —
+//! driven small by making `M` dwarf the shift. The algebra (`z_i = y_i +
+//! c·(λ_i·s_i)`, `z = Σ z_i`, `w = A(Σ y_i)`) is unchanged: flooding changes
+//! only the mask DISTRIBUTION. The flooded mask also gives the signature its
+//! SHORTNESS: [`signature_norm`] and [`acceptance_bound`] carry the norm
+//! side (the Lean `Lattice.ShortNorm` carrier, now concrete).
+//!
 //! # Production-signing boundary (read before even THINKING about wiring)
 //!
 //! Everything here is fit for tests and differentials against the Lean spec,
 //! and for NOTHING else:
 //! * the dealer transiently knows the group secret (no DKG);
-//! * masks are sampled uniformly from a toy PRNG — real Raccoon/Hermine masks
-//!   carry the noise-flooding distribution that makes Fiat–Shamir-without-
-//!   aborts zero-knowledge, absent here;
-//! * the challenge is a toy non-cryptographic hash into all of `R_q` — the
-//!   deployed scheme uses a short challenge set with unit differences;
+//! * noise-flooding is the UNIFORM variant over a REFERENCE PRNG
+//!   (splitmix64) — production Raccoon/Hermine uses discrete-GAUSSIAN
+//!   flooding with a Rényi-divergence bound for tighter parameters, a
+//!   CSPRNG, and constant-time samplers; none of that is here;
+//! * the challenge is a toy non-cryptographic hash — it does squeeze a SHORT
+//!   (ternary, `‖c‖∞ ≤ 1`) challenge so the smudging shift bound is real,
+//!   but it is not the deployed fixed-weight unit-difference challenge set;
+//! * only the COMBINED signature `z` is short/flooded — per-signer partials
+//!   ride Lagrange coefficients that are full-range in `ℤ_q` (the real
+//!   threshold scheme's per-party masking story is out of scope);
 //! * no RFC-style per-signer binding factors (concurrent-session attacks
 //!   apply), no constant-time arithmetic, toy parameters.
 
@@ -48,12 +68,79 @@ fn sample_vec(state: &mut u64, len: usize) -> PolyVec {
     PolyVec((0..len).map(|_| sample_poly(state)).collect())
 }
 
-/// The toy Fiat–Shamir challenge `c = H(w ‖ t ‖ message)` into `R_q`.
+/// A SHORT ring element with coefficients uniform in `{-η, …, η}` (centered,
+/// stored mod `q`) — the MLWE-style short secret sampler. Toy PRNG.
+fn sample_short_poly(state: &mut u64, eta: u64) -> Poly {
+    let mut coeffs = [0u64; N];
+    for c in coeffs.iter_mut() {
+        let v = (splitmix64(state) % (2 * eta + 1)) as i64 - eta as i64;
+        *c = v.rem_euclid(Q as i64) as u64;
+    }
+    Poly { coeffs }
+}
+
+/// A short vector: `len` components from [`sample_short_poly`].
+fn sample_short_vec(state: &mut u64, len: usize, eta: u64) -> PolyVec {
+    PolyVec((0..len).map(|_| sample_short_poly(state, eta)).collect())
+}
+
+// =============================================================================
+// Noise-flooding mask sampling — the Smudging.lean mechanism
+// =============================================================================
+
+/// The default flooding width `M` used by [`hermine_sign`].
+///
+/// Chosen for the toy parameters so that BOTH sides of the trade hold at
+/// threshold `t = 3`:
+/// * **hiding** — the smudging leakage `‖c·s‖∞ / M ≤ 16/1024 ≈ 1.6%` per
+///   coefficient (ternary `c`, secret `‖s‖∞ ≤` [`SECRET_ETA`], so the shift
+///   is `≤ N·1·η = 16`);
+/// * **shortness** — the combined honest signature stays wrap-free and
+///   genuinely short: `t·(M/2) + 16 = 1552 < ⌊q/2⌋ = 1664`, so the
+///   [`acceptance_bound`] has teeth.
+///
+/// Production parameters make this gap astronomically wider (that is what
+/// real Raccoon/Hermine parameter sets are); the toy `q = 3329` only leaves
+/// room to DEMONSTRATE the mechanism, which is this crate's whole job.
+pub const MASK_WIDTH_WIDE: u64 = 1024;
+
+/// The short-secret coefficient bound `η`: [`HermineTestDealer::deal`]
+/// samples the group secret with `‖s‖∞ ≤ η` (centered), the MLWE shape.
+pub const SECRET_ETA: u64 = 2;
+
+/// Sample one noise-flooding mask element: each coefficient UNIFORM over the
+/// wide centered range `[-m/2, m/2)`, stored mod `q` — the `unif S` of the
+/// Lean `Smudging` spec with `S` an `m`-element interval.
+///
+/// REFERENCE PRNG ONLY: splitmix64 with a `% m` reduction (the mod bias is
+/// irrelevant at reference scale). Production flooding needs a CSPRNG and a
+/// constant-time sampler; this sampler's job is to make the DISTRIBUTION
+/// right so the smudging bound is testable.
+pub fn sample_wide_mask(state: &mut u64, m: u64) -> Poly {
+    debug_assert!(m >= 2 && m.is_multiple_of(2) && m <= Q);
+    let mut coeffs = [0u64; N];
+    for c in coeffs.iter_mut() {
+        let v = (splitmix64(state) % m) as i64 - (m / 2) as i64;
+        *c = v.rem_euclid(Q as i64) as u64;
+    }
+    Poly { coeffs }
+}
+
+/// A flooding mask vector: `len` components from [`sample_wide_mask`].
+fn sample_wide_mask_vec(state: &mut u64, len: usize, m: u64) -> PolyVec {
+    PolyVec((0..len).map(|_| sample_wide_mask(state, m)).collect())
+}
+
+/// The toy Fiat–Shamir challenge `c = H(w ‖ t ‖ message)`, squeezed into the
+/// SHORT ternary set `{-1, 0, 1}^N` (stored mod `q`), so `‖c‖∞ ≤ 1`.
 ///
 /// Domain-separated FNV-1a absorb, splitmix64 squeeze. NON-cryptographic:
 /// its only job in the reference is to be a deterministic function of the
 /// commitment, the public key, and the message (so honest verification and
-/// the two-message forking test are both exact).
+/// the two-message forking test are both exact). The SHORTNESS, though, is
+/// load-bearing: the smudging shift `‖c·λs‖∞` is only bounded because the
+/// challenge is — the deployed scheme's short challenge set, minus its
+/// fixed weight and unit-difference structure.
 fn challenge(w: &PolyVec, group_key: &PolyVec, message: &[u8]) -> Poly {
     let mut h: u64 = 0xcbf29ce484222325;
     let mut absorb = |byte: u64| {
@@ -77,7 +164,7 @@ fn challenge(w: &PolyVec, group_key: &PolyVec, message: &[u8]) -> Poly {
         absorb(b as u64);
     }
     let mut state = h;
-    sample_poly(&mut state)
+    sample_short_poly(&mut state, 1)
 }
 
 // =============================================================================
@@ -133,14 +220,44 @@ pub struct HermineTestDealer {
 impl HermineTestDealer {
     /// Deal an `n`-member committee with threshold `t`, public matrix
     /// `rows × cols`, deterministically from `seed`.
+    ///
+    /// The group secret is SHORT (`‖s‖∞ ≤` [`SECRET_ETA`], the MLWE shape) —
+    /// that is what makes the smudging shift `‖c·s‖∞` bounded and the
+    /// signature norm accounting non-vacuous. The Shamir blinding
+    /// coefficients (and hence the SHARES) stay full-range: only the
+    /// reconstructed `Σ λ_i·s_i = s` enters the combined signature.
     pub fn deal(rows: usize, cols: usize, n: u64, t: u64, seed: u64) -> Option<Self> {
-        if t == 0 || t > n || n >= Q || rows == 0 || cols == 0 {
+        // Domain-separate the secret's randomness from the matrix/blinding
+        // stream (which deal_with_group_secret re-derives from `seed`).
+        let mut state = seed.wrapping_mul(0x2545f4914f6cdd1d) ^ 0x5ec2e7;
+        let group_secret = sample_short_vec(&mut state, cols, SECRET_ETA);
+        Self::deal_with_group_secret(rows, cols, n, t, seed, group_secret)
+    }
+
+    /// Deal with a CALLER-CHOSEN group secret (the Shamir constant term);
+    /// blinding coefficients and the public matrix still come from `seed`.
+    ///
+    /// This exists so tests can put two dealers on the same public shape
+    /// with two known secrets `s₀ ≠ s₁` and witness the smudging bound
+    /// empirically. Callers wanting the norm accounting to mean anything
+    /// must choose a SHORT secret.
+    pub fn deal_with_group_secret(
+        rows: usize,
+        cols: usize,
+        n: u64,
+        t: u64,
+        seed: u64,
+        group_secret: PolyVec,
+    ) -> Option<Self> {
+        if t == 0 || t > n || n >= Q || rows == 0 || cols == 0 || group_secret.len() != cols {
             return None;
         }
         let mut state = seed;
         let a = Matrix::from_fn(rows, cols, |_, _| sample_poly(&mut state));
-        // f(x) = a_0 + a_1·x + … + a_{t-1}·x^{t-1}, coefficients in R_q^ℓ.
-        let coeffs: Vec<PolyVec> = (0..t).map(|_| sample_vec(&mut state, cols)).collect();
+        // f(x) = a_0 + a_1·x + … + a_{t-1}·x^{t-1}, coefficients in R_q^ℓ;
+        // a_0 is the group secret, the blinding coefficients are full-range.
+        let mut coeffs: Vec<PolyVec> = vec![group_secret];
+        coeffs.extend((1..t).map(|_| sample_vec(&mut state, cols)));
         let eval = |x: &Poly| -> PolyVec {
             // Horner over the module.
             coeffs
@@ -220,16 +337,10 @@ pub struct HermineSignature {
 }
 
 /// Produce a Hermine threshold signature from a signing subset — the Lean
-/// `hermine_cert_verifies_under_group_key` algebra, executably.
+/// `hermine_cert_verifies_under_group_key` algebra with the DEFAULT flooding
+/// width [`MASK_WIDTH_WIDE`]. See [`hermine_sign_with_mask_width`].
 ///
-/// Each participant `i ∈ parts` contributes mask `y_i` (derived from
-/// `mask_seed` and its index, NOT from the message — so re-signing a
-/// different message under the same seed forks the transcript at the
-/// challenge, exactly the extractor's hypothesis); the ceremony forms
-/// `w = A·(Σ y_i)`, the challenge `c = H(w ‖ t ‖ M)`, partial responses
-/// `z_i = y_i + c·(λ_i·s_i)`, and the certificate `(w, c, z = Σ z_i)`.
-///
-/// SINGLE-CEREMONY, TOY-SAMPLING ONLY — see the module boundary doc.
+/// SINGLE-CEREMONY, REFERENCE-SAMPLING ONLY — see the module boundary doc.
 /// `mask_seed` must be fresh per ceremony (mask reuse across two DIFFERENT
 /// challenges hands out the secret — that leak IS the extractor identity
 /// this crate's tests witness).
@@ -240,7 +351,34 @@ pub fn hermine_sign(
     mask_seed: u64,
     message: &[u8],
 ) -> Option<HermineSignature> {
-    if signers.is_empty() {
+    hermine_sign_with_mask_width(a, group_key, signers, mask_seed, message, MASK_WIDTH_WIDE)
+}
+
+/// [`hermine_sign`] with an explicit noise-flooding width `M`.
+///
+/// Each participant `i ∈ parts` contributes a FLOODED mask `y_i` — every
+/// coefficient uniform over `[-M/2, M/2)` ([`sample_wide_mask`]; derived
+/// from `mask_seed` and its index, NOT from the message — so re-signing a
+/// different message under the same seed forks the transcript at the
+/// challenge, exactly the extractor's hypothesis). The ceremony forms
+/// `w = A·(Σ y_i)`, the challenge `c = H(w ‖ t ‖ M)`, partial responses
+/// `z_i = y_i + c·(λ_i·s_i)`, and the certificate `(w, c, z = Σ z_i)`.
+///
+/// The Lean `Smudging.smudge_bound` says what `M` buys: the response
+/// distribution under two secrets differs by `≤ ‖c·Δs‖∞ / M` — callers pick
+/// `M` to dwarf the shift (and the key-hiding test demonstrates the leak a
+/// narrow `M` reopens). `M` must be even, in `[2, q]`. Exposed primarily so
+/// tests can turn the flooding knob; everything else should use
+/// [`hermine_sign`].
+pub fn hermine_sign_with_mask_width(
+    a: &Matrix,
+    group_key: &PolyVec,
+    signers: &[&HermineShare],
+    mask_seed: u64,
+    message: &[u8],
+    mask_width: u64,
+) -> Option<HermineSignature> {
+    if signers.is_empty() || mask_width < 2 || !mask_width.is_multiple_of(2) || mask_width > Q {
         return None;
     }
     let parts: Vec<u64> = signers.iter().map(|s| s.index).collect();
@@ -252,12 +390,12 @@ pub fn hermine_sign(
         }
     }
 
-    // Round 1: masks + combined commitment.
+    // Round 1: flooded masks + combined commitment.
     let masks: Vec<PolyVec> = signers
         .iter()
         .map(|s| {
             let mut state = mask_seed ^ s.index.wrapping_mul(0x9e3779b97f4a7c15);
-            sample_vec(&mut state, a.cols)
+            sample_wide_mask_vec(&mut state, a.cols, mask_width)
         })
         .collect();
     let y_sum = masks
@@ -296,6 +434,32 @@ pub fn verify_hermine(
     sig: &HermineSignature,
 ) -> bool {
     sig.c == challenge(&sig.w, group_key, message) && verify(a, group_key, &sig.w, &sig.c, &sig.z)
+}
+
+// =============================================================================
+// Shortness accounting — the concrete Lattice.ShortNorm carrier
+// =============================================================================
+
+/// The signature's L∞ norm in centered representation, `‖z‖∞` — the concrete
+/// realization of the norm the Lean spec leaves abstract (the
+/// `Lattice.ShortNorm` carrier; what makes an extracted `z − z'` an MSIS
+/// witness rather than an arbitrary ring element).
+pub fn signature_norm(z: &PolyVec) -> u64 {
+    z.norm_inf()
+}
+
+/// The honest-signature acceptance bound for the combined response of
+/// `num_signers` flooded parties: `‖z‖∞ ≤ num_signers·(M/2) + shift_bound`,
+/// where `shift_bound ≥ ‖c·s‖∞` (for ternary `c` and `‖s‖∞ ≤ η`,
+/// `shift_bound = N·η` works, since a negacyclic product's coefficient is a
+/// ±sum of `N` coefficient products).
+///
+/// This bound only SAYS anything when it is `< ⌊q/2⌋` (every centered
+/// element clears that ceiling for free) — the flooding-width choice in
+/// [`MASK_WIDTH_WIDE`] keeps it there at threshold-sized signer sets, and
+/// the tests assert non-vacuity explicitly.
+pub fn acceptance_bound(num_signers: u64, mask_width: u64, shift_bound: u64) -> u64 {
+    num_signers * (mask_width / 2) + shift_bound
 }
 
 // =============================================================================
@@ -500,6 +664,169 @@ mod tests {
             let shares: Vec<&HermineShare> = subset.iter().map(|&i| &d.shares[i]).collect();
             assert_ne!(&HermineTestDealer::reconstruct(&shares), d.group_secret());
         }
+    }
+
+    // -- (d) noise-flooding: Smudging.lean, empirically ---------------------
+
+    /// The worst-case smudging shift bound at these parameters: ternary
+    /// challenge (`‖c‖∞ ≤ 1`) times a short secret (`‖s‖∞ ≤ η`), through a
+    /// negacyclic product whose every coefficient is a ±sum of `N` terms.
+    const SHIFT_BOUND: u64 = (N as u64) * SECRET_ETA;
+
+    #[test]
+    fn wide_mask_coefficients_are_centered_and_bounded() {
+        for m in [16u64, 512, MASK_WIDTH_WIDE] {
+            let mut state = 0xA5A5_0001;
+            let (mut lo, mut hi) = (i64::MAX, i64::MIN);
+            for _ in 0..500 {
+                let p = sample_wide_mask(&mut state, m);
+                for i in 0..N {
+                    let v = p.centered_coeff(i);
+                    assert!(-((m / 2) as i64) <= v && v < (m / 2) as i64);
+                    lo = lo.min(v);
+                    hi = hi.max(v);
+                }
+            }
+            // Both halves of the centered range are actually exercised.
+            assert!(lo < 0 && hi > 0);
+        }
+    }
+
+    #[test]
+    fn honest_signature_is_short_under_the_acceptance_bound() {
+        // The shortness leg: with flooding width M and t signers, the
+        // combined honest response obeys ‖z‖∞ ≤ t·(M/2) + ‖c·s‖∞ — and at
+        // these parameters that bound is BELOW the ⌊q/2⌋ ceiling, so it has
+        // teeth (a full-range vector violates it).
+        let d = dealer_5_of_3();
+        let bound = acceptance_bound(3, MASK_WIDTH_WIDE, SHIFT_BOUND);
+        assert!(bound < Q / 2, "acceptance bound must be non-vacuous");
+        let signers: Vec<&HermineShare> = d.shares[0..3].iter().collect();
+        for seed in 0..50u64 {
+            let sig =
+                hermine_sign(&d.a, &d.group_key, &signers, 0x5407_0000 + seed, b"short-z").unwrap();
+            assert!(verify_hermine(&d.a, &d.group_key, b"short-z", &sig));
+            assert!(signature_norm(&sig.z) <= bound);
+        }
+        // Teeth: a full-range (unflooded, q-wide) vector blows the bound.
+        let mut state = 0xFEED_F00D;
+        let full_range = super::sample_vec(&mut state, d.a.cols);
+        assert!(signature_norm(&full_range) > bound);
+    }
+
+    #[test]
+    fn extracted_difference_is_short() {
+        // The MSIS-witness leg: forked transcripts share masks, so
+        // z − z' = (c − c')·s — short because c, c' are ternary and s is
+        // short: ‖z − z'‖∞ ≤ N·2·η, far inside the generic 2×acceptance
+        // bound a verifier derives from two accepted signatures.
+        let d = dealer_5_of_3();
+        let signers: Vec<&HermineShare> = d.shares[1..4].iter().collect();
+        let seed = 0xF0F1;
+        let sig1 = hermine_sign(&d.a, &d.group_key, &signers, seed, b"norm-fork-1").unwrap();
+        let sig2 = hermine_sign(&d.a, &d.group_key, &signers, seed, b"norm-fork-2").unwrap();
+        assert_eq!(sig1.w, sig2.w);
+        assert_ne!(sig1.c, sig2.c);
+        let diff = sig1.z.sub(&sig2.z);
+        assert!(signature_norm(&diff) <= 2 * SHIFT_BOUND);
+        assert!(signature_norm(&diff) <= 2 * acceptance_bound(3, MASK_WIDTH_WIDE, SHIFT_BOUND));
+        // And the extractor relation holds under flooding, unchanged.
+        let (lhs, rhs) = extracted_relation(&d.a, &d.group_key, &sig1, &sig2);
+        assert_eq!(lhs, rhs);
+    }
+
+    /// Empirical total-variation distance between two samples over `k`
+    /// equiprobable bins derived from the POOLED sample — scale-free binning,
+    /// so the same estimator serves the narrow and the wide distributions.
+    fn empirical_tv(xs: &[i64], ys: &[i64], k: usize) -> f64 {
+        let mut pooled: Vec<i64> = xs.iter().chain(ys.iter()).copied().collect();
+        pooled.sort_unstable();
+        let edges: Vec<i64> = (1..k).map(|i| pooled[i * pooled.len() / k]).collect();
+        let bucket = |v: i64| edges.partition_point(|&e| e <= v);
+        let (mut px, mut py) = (vec![0f64; k], vec![0f64; k]);
+        for &x in xs {
+            px[bucket(x)] += 1.0 / xs.len() as f64;
+        }
+        for &y in ys {
+            py[bucket(y)] += 1.0 / ys.len() as f64;
+        }
+        px.iter().zip(&py).map(|(a, b)| (a - b).abs()).sum::<f64>() / 2.0
+    }
+
+    /// Sign the same message `count` times (fresh mask seeds) at flooding
+    /// width `m` and collect the first coefficient of `z` (centered) — the
+    /// observable whose distribution the Smudging spec bounds.
+    fn z_coeff_samples(d: &HermineTestDealer, m: u64, count: usize) -> Vec<i64> {
+        let signers: Vec<&HermineShare> = d.shares[0..3].iter().collect();
+        (0..count)
+            .map(|i| {
+                let sig = hermine_sign_with_mask_width(
+                    &d.a,
+                    &d.group_key,
+                    &signers,
+                    0x71DE_0000 + i as u64,
+                    b"key-hiding-probe",
+                    m,
+                )
+                .unwrap();
+                assert!(verify_hermine(
+                    &d.a,
+                    &d.group_key,
+                    b"key-hiding-probe",
+                    &sig
+                ));
+                sig.z.0[0].centered_coeff(0)
+            })
+            .collect()
+    }
+
+    #[test]
+    fn key_hiding_wide_mask_hides_narrow_mask_leaks() {
+        // THE Smudging demonstration: two dealers on the same public shape
+        // with two known short secrets, s0 = 0 and s1 with ‖s1‖∞ = η. The
+        // signature distributions differ by ≤ ‖c·Δs‖∞ / M (smudge_bound):
+        // wide M makes them statistically indistinguishable; a narrow M
+        // (comparable to the shift — the unflooded regime) leaks the secret
+        // as a large total-variation gap.
+        let (rows, cols, n, t, seed) = (2usize, 3usize, 5u64, 3u64, 0x51_D6E5u64);
+        let s0 = PolyVec::zero(cols);
+        let s1 = PolyVec(vec![
+            Poly {
+                coeffs: [SECRET_ETA; N]
+            };
+            cols
+        ]);
+        let d0 = HermineTestDealer::deal_with_group_secret(rows, cols, n, t, seed, s0).unwrap();
+        let d1 = HermineTestDealer::deal_with_group_secret(rows, cols, n, t, seed, s1).unwrap();
+
+        const SAMPLES: usize = 4000;
+        const BINS: usize = 16;
+        // Narrow = BELOW the shift bound (‖c·Δs‖∞ ≤ 16): the unflooded
+        // regime, where the mask cannot smudge the secret's contribution.
+        let m_narrow = 4u64;
+        let m_mid = 32u64;
+        let tv_at = |m: u64| {
+            empirical_tv(
+                &z_coeff_samples(&d0, m, SAMPLES),
+                &z_coeff_samples(&d1, m, SAMPLES),
+                BINS,
+            )
+        };
+        let tv_narrow = tv_at(m_narrow);
+        let tv_mid = tv_at(m_mid);
+        let tv_wide = tv_at(MASK_WIDTH_WIDE);
+        println!(
+            "key-hiding TV: narrow(M={m_narrow}) = {tv_narrow:.4}, mid(M={m_mid}) = {tv_mid:.4}, \
+             wide(M={MASK_WIDTH_WIDE}) = {tv_wide:.4}"
+        );
+        // Wide flooding hides: the gap sits at the sampling-noise floor,
+        // far below what any usable distinguisher needs.
+        assert!(tv_wide < 0.05, "wide-mask TV too large: {tv_wide}");
+        // Narrow mask leaks: the same secrets, glaringly distinguishable.
+        assert!(tv_narrow > 0.35, "narrow-mask TV too small: {tv_narrow}");
+        // And the leakage SHRINKS as M grows — the smudge_bound ‖c·Δs‖/M
+        // in motion.
+        assert!(tv_narrow > 3.0 * tv_mid && tv_mid > 3.0 * tv_wide);
     }
 
     // -- harness hygiene (mirroring frost.rs's refusals) ---------------------

@@ -56,6 +56,14 @@ impl PolyVec {
     pub fn scale(&self, c: &Poly) -> Self {
         PolyVec(self.0.iter().map(|a| c.mul(a)).collect())
     }
+
+    /// The L∞ norm of the vector in centered representation: the max of
+    /// [`Poly::norm_inf`] over the components — the module-level shortness
+    /// carrier (see `Poly::norm_inf` for why a bound needs to be `< ⌊q/2⌋`
+    /// to say anything).
+    pub fn norm_inf(&self) -> u64 {
+        self.0.iter().map(Poly::norm_inf).max().unwrap_or(0)
+    }
 }
 
 /// The public matrix `A`: `rows × cols` over `R_q`, row-major.

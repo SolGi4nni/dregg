@@ -18,6 +18,15 @@
 //!     (`A(z − z') = (c − c')•t` from two accepting
 //!     transcripts sharing a commitment)                 → [`threshold::extracted_relation`]
 //!   - `extractPreimage c c' z z' = (c−c')⁻¹•(z−z')`     → [`threshold::extract_preimage`]
+//! * `metatheory/Dregg2/Crypto/Smudging.lean` — noise-flooding, the KEY-HIDING leg
+//!   - `unif S` over a wide interval `[-M/2, M/2)`       → [`threshold::sample_wide_mask`]
+//!   - `smudge_bound` (statistical distance `≤ B/M`
+//!     between the flooded response distributions
+//!     under two secrets, `B ≥ ‖c·Δs‖∞`)                 → the empirical TV
+//!     key-hiding test in [`threshold`] (wide mask hides; narrow mask leaks)
+//!   - the `ShortNorm` carrier (shortness of `z`,
+//!     `z − z'`)                                         → [`threshold::signature_norm`]
+//!     / [`threshold::acceptance_bound`]
 //!
 //! The Lean spec is stated over an abstract `R`-linear map `A : M →ₗ[R] N`.
 //! This reference instantiates `R = R_q = ℤ_q[X]/(Xⁿ+1)` ([`ring`]),
@@ -34,22 +43,30 @@
 //! * **trusted dealer** — keygen centralizes the group secret (no DKG);
 //! * **no binding factors** — single-ceremony only; concurrent-session
 //!   (Drijvers/ROS-style) attacks are out of model;
-//! * **toy sampling** — masks are toy-PRNG uniform, with none of Raccoon's
-//!   noise-flooding distribution (the zero-knowledge side), and none of the
-//!   short/Gaussian secret sampling (the MSIS/MLWE norm side — "shortness"
-//!   appears nowhere in this crate, exactly as it appears nowhere in the
-//!   Lean module algebra: it is the named norm carrier);
-//! * **toy challenge hash** — non-cryptographic, ranges over all of `R_q`
-//!   rather than a short unit-difference challenge set;
+//! * **UNIFORM noise-flooding over a reference PRNG** — the key-hiding
+//!   mechanism is PRESENT (masks uniform over the wide `[-M/2, M/2)`,
+//!   matching the Lean `Smudging` spec's `unif`/`smudge_bound`, with
+//!   shortness accounting on `z` and `z − z'`), but it is the uniform+TV
+//!   variant over splitmix64: production Raccoon/Hermine uses
+//!   discrete-GAUSSIAN flooding with a Rényi-divergence bound for tighter
+//!   parameters, a CSPRNG, and constant-time samplers;
+//! * **toy challenge hash** — non-cryptographic; it does squeeze a SHORT
+//!   ternary challenge (`‖c‖∞ ≤ 1`, which the smudging shift bound needs),
+//!   but not the deployed fixed-weight unit-difference challenge set;
+//! * **combined-signature flooding only** — per-signer partials ride
+//!   full-range Lagrange coefficients; the real threshold scheme's
+//!   per-party masking/shortness story is out of scope;
 //! * **toy parameters** — `n = 8`, `q = 3329`, small `k×ℓ`; real Hermine
-//!   parameters are orders of magnitude larger;
+//!   parameters are orders of magnitude larger (the hiding/shortness gap
+//!   here is demonstration-sized, not security-sized);
 //! * **not constant-time**, and no zeroization of secrets.
 //!
-//! The production signer needs a DKG, binding factors, real noise-flooding
-//! samplers, real parameters, constant-time arithmetic, and external audit.
-//! This crate's value is different: every identity the Lean proofs establish
-//! is witnessed here on concrete `R_q` numbers, so the spec and the reference
-//! cannot silently drift apart.
+//! The production signer needs a DKG, binding factors, Gaussian flooding
+//! with a CSPRNG, real parameters, constant-time arithmetic, and external
+//! audit. This crate's value is different: every identity the Lean proofs
+//! establish is witnessed here on concrete `R_q` numbers — including,
+//! now, the Smudging key-hiding bound as an empirical total-variation
+//! measurement — so the spec and the reference cannot silently drift apart.
 
 pub mod linalg;
 pub mod ring;
@@ -58,8 +75,9 @@ pub mod threshold;
 pub use linalg::{Matrix, PolyVec};
 pub use ring::{Poly, N, Q};
 pub use threshold::{
-    extract_preimage, extracted_relation, hermine_sign, partial_response, verify_hermine,
-    HermineShare, HermineSignature, HermineTestDealer,
+    acceptance_bound, extract_preimage, extracted_relation, hermine_sign,
+    hermine_sign_with_mask_width, partial_response, sample_wide_mask, signature_norm,
+    verify_hermine, HermineShare, HermineSignature, HermineTestDealer, MASK_WIDTH_WIDE, SECRET_ETA,
 };
 
 /// Lattice verification — the Lean `HermineThreshold.verify`, symbol for

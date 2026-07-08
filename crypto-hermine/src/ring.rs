@@ -75,6 +75,30 @@ impl Poly {
         Poly { coeffs }
     }
 
+    /// Coefficient `i` in CENTERED representation: the unique integer in
+    /// `(-q/2, q/2]` congruent to `coeffs[i]` mod `q`.
+    pub fn centered_coeff(&self, i: usize) -> i64 {
+        let c = self.coeffs[i];
+        if c * 2 > Q {
+            c as i64 - Q as i64
+        } else {
+            c as i64
+        }
+    }
+
+    /// The L∞ norm in centered representation: `max_i |centered_coeff(i)|`.
+    ///
+    /// This is the norm carrier the Lean spec names but leaves abstract
+    /// (`Lattice.ShortNorm` / the "shortness" of MSIS witnesses): every
+    /// element of `ℤ_q` trivially has centered norm `≤ ⌊q/2⌋`, so a norm
+    /// bound only has teeth when it is strictly below that ceiling.
+    pub fn norm_inf(&self) -> u64 {
+        (0..N)
+            .map(|i| self.centered_coeff(i).unsigned_abs())
+            .max()
+            .unwrap_or(0)
+    }
+
     /// Is this the image of a base-ring constant?
     pub fn is_constant(&self) -> bool {
         self.coeffs[1..].iter().all(|&c| c == 0)
