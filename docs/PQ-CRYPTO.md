@@ -1,4 +1,4 @@
-# Post-Quantum Quorum Certificates — verified stack, implementation, and the one open lemma
+# Post-Quantum Quorum Certificates — verified stack, implementation, and the closed invertibility lemma
 
 Two paths to a quantum-safe federation quorum certificate: one deployable now with mature crypto, one
 the compact future. This is the honest map — what is **machine-checked in Lean** (`#assert_axioms`-clean,
@@ -61,7 +61,7 @@ hybrid's PQ slot once it earns deployment-grade maturity + audit.
 MLWE and MSIS hardness (`Lattice.MSISHard` / `MLWESearchHard`).
 
 **Invertibility — the GENERAL-n lemma is proved; only the tight threshold is open.**
-`InvertibilityHadamard.norm_lt_isUnit`: for ANY n=2^k and ANY prime q, a nonzero v with `‖v‖₂ⁿ < q` is a unit in `ℤ_q[X]/(Xⁿ+1)` — via `q∤N(v) ⟺ unit`, a self-proved Hadamard determinant bound (Mathlib lacks one — proved via Hermitian eigenvalues + AM-GM), and `N(v)≠0` from `Xⁿ+1` irreducibility. Fully general in n and q, welded into `HermineDischarge`, fires at n=8/q=17 (a 7×10⁹-element ring beyond any decide). The ONLY residual is the *tighter* Lyubashevsky–Seiler `q^(d/n)` threshold (vs the `q^(1/n)` proved here) — which needs the ideal-norm multiplicity `q^d ∣ N(v)`, the one genuinely-hard refinement. Prior/complementary: Challenge-difference
+`InvertibilityHadamard.norm_lt_isUnit`: for ANY n=2^k and ANY prime q, a nonzero v with `‖v‖₂ⁿ < q` is a unit in `ℤ_q[X]/(Xⁿ+1)` — via `q∤N(v) ⟺ unit`, a self-proved Hadamard determinant bound (Mathlib lacks one — proved via Hermitian eigenvalues + AM-GM), and `N(v)≠0` from `Xⁿ+1` irreducibility. Fully general in n and q, welded into `HermineDischarge`, fires at n=8/q=17 (a 7×10⁹-element ring beyond any decide). And the TIGHT LS `q^(d/n)` threshold is now ALSO proved (`InvertibilityTight.norm_lt_isUnit_tight`): `‖v‖₂ⁿ < q^d ⟹ unit` where d is the residue degree — via the multiplicity `q^{f(P)} ∣ N(v)`, proved *underneath* `Ideal.absNorm` (which needs `IsDedekindDomain`) by Smith normal form + index-divisibility + `card_eq_pow_finrank`. Both the general and tight invertibility lemmas are proved and welded into `HermineDischarge`. Item (1) is CLOSED — the only un-formalized loose ends are conveniences, not gaps: the exact `d = ord_{2n}(q)` (unneeded for invertibility) and a Bézout certificate for d>2 concrete instances. Prior/complementary: Challenge-difference
 invertibility is proved *parametrically* (no decide) for **every odd prime at n=2** — the `q^(d/n)`-shape
 min-norm bound `minNorm_linear_factor` for linear (d=1) factors, plus the split-vs-inert dichotomy via a
 constructed CRT iso — for **n=4 linear-split** (q≡1 mod 8), and a concrete **degree-2** case (`InvertibilityD2`: n=4, q=13, `X⁴+1`=two irreducible quadratics, min-norm exactly 3, `decide`d). What remains is the general **degree-d≥2**
