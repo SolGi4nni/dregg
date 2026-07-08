@@ -1048,31 +1048,38 @@ impl BlocklaceHandle {
             // STARVED the runtime (gossip/QUIC/`/status` froze) on a cross-linked DAG (the finality
             // wedge). On a blocking thread the async runtime stays responsive regardless of how long the
             // ordering takes. The lace snapshot + participants are moved into the closure (owned).
-            // ── CROSS-POLL VERIFIED-ORDER CACHE ──────────────────────────────────────────────
+            // ── CROSS-POLL VERIFIED-ORDER CACHE (INCREMENTAL, FINALITY-KEYED) ─────────────────
             // The verified-Lean tau-order FFI below is O(history) and, absent a cache, is
             // recomputed FROM SCRATCH on every finality poll — the Lean `tauOrderFast` memo
-            // (PastCache/RoundCache) is rebuilt inside each FFI call and thrown away. As a round-2
-            // DAG grows the per-poll cost outpaces block production and the finalized prefix never
+            // (PastCache/RoundCache) is rebuilt inside each FFI call and thrown away. As the DAG
+            // grows the per-poll cost outpaces block production and the finalized prefix never
             // reaches the frontier turn in-window (docs/VERIFIED-GATE-PERF.md).
             //
-            // A cheap SOUND fingerprint short-circuits the FFI when the lace is UNCHANGED across
-            // polls: block ids are blake3 content hashes, so an identical SORTED id-set ⇒ an
-            // identical lace ⇒ an identical deterministic `tauOrder` (a pure function of the lace).
-            // A fingerprint MISMATCH always recomputes, so the cache never returns a stale order
-            // for a changed lace. Cheap relative to the O(n²) FFI (a single DefaultHasher pass).
+            // The prior cache fingerprinted the WHOLE LACE id-set, so ANY new frontier block (an
+            // ack/heartbeat/round block that is NOT yet super-ratified) busted it — and under
+            // continuous cross-machine catch-up the lace grows EVERY poll, so the fingerprint MISSED
+            // every poll and the full O(n²) FFI ran every poll while the finalized order barely
+            // moved (docs/CROSS-MACHINE-FINALITY-FINDING.md §3). We instead key the cache on the
+            // FINALIZED ORDER itself — the ordered `rust_order` id sequence (now edge-faithful after
+            // the topological `build_ordering_blocklace` fix, so it equals the verified `tauOrder`).
+            // Frontier-only growth leaves the finalized order UNCHANGED ⇒ cache HIT ⇒ FFI skipped;
+            // the FFI runs ONLY when finality actually ADVANCES or a catch-up block SHIFTS the
+            // prefix (docs/CROSS-MACHINE-FINALITY-FINDING.md §4 / TauPrefixMonotone). This is the
+            // O(finality-delta) reuse of §"Fix direction 1", not O(lace-churn). Sound: identical
+            // finalized order ⇒ identical `tauOrder` (a pure function of the finalized causal DAG);
+            // a change always recomputes, so the cache never serves a stale order for a moved prefix.
             let order_fingerprint: u64 = {
                 use std::hash::{Hash, Hasher};
-                let mut ids: Vec<&BlockId> = lace.iter().map(|(id, _)| id).collect();
-                ids.sort_unstable();
                 let mut hasher = std::collections::hash_map::DefaultHasher::new();
-                ids.len().hash(&mut hasher);
-                for id in ids {
+                rust_order.len().hash(&mut hasher);
+                for id in &rust_order {
                     id.hash(&mut hasher);
                 }
                 hasher.finish()
             };
             let lean_order_opt = if order_gate_armed {
-                // Cache HIT: an unchanged lace ⇒ an identical verified order — skip the FFI.
+                // Cache HIT: the finalized order is byte-identical to the last poll whose verified
+                // order we cached ⇒ reuse that verified order, skip the FFI.
                 let cached = {
                     let fp_guard = self.last_order_fingerprint.read().await;
                     if *fp_guard == Some(order_fingerprint) {
@@ -1086,36 +1093,52 @@ impl BlocklaceHandle {
                         debug!(
                             fingerprint = order_fingerprint,
                             finalized = order.len(),
-                            "verified-order cache HIT, skipped FFI"
+                            "verified-order cache HIT (finality unchanged), skipped FFI"
                         );
                         Some(order)
                     }
                     None => {
                         let lace_ffi = lace.clone();
                         let participants_ffi = participants.clone();
-                        // Timing observability for the O(history) verified-order FFI: a cache MISS
-                        // pays the full recompute. Under continuous round/heartbeat production the
-                        // lace changes every poll, so the fingerprint differs and this branch runs
-                        // every poll — the per-poll wall + lace size here is the honest measure of
-                        // the residual O(n²) cost (docs/VERIFIED-GATE-PERF.md).
+                        // Cache MISS: finality ADVANCED or the prefix SHIFTED — recompute the
+                        // verified order. BOUNDED (Fix: un-stall the serial executor from the slow
+                        // FFI). The `poll_finalized_blocks` loop awaits this before the next poll, so
+                        // one slow O(n²) FFI on a large cross-linked lace would freeze ALL
+                        // finalization. Cap it: on timeout we use the edge-faithful Rust `tau` order
+                        // (== `tauOrder` after the topological build fix) for THIS poll, so a single
+                        // slow poll can never freeze the executor. The abandoned `spawn_blocking`
+                        // finishes in the background pool; a later, in-budget poll re-anchors the
+                        // cache to the genuine verified order.
                         let lace_size = lace.iter().count();
                         let ffi_started = std::time::Instant::now();
-                        let computed = match tokio::task::spawn_blocking(move || {
+                        let timeout = verified_order_ffi_timeout();
+                        let ffi = tokio::task::spawn_blocking(move || {
                             crate::finality_gate::VerifiedFinality::compute_order(
                                 &lace_ffi,
                                 &participants_ffi,
                             )
-                        })
-                        .await
-                        {
-                            Ok(v) => v,
-                            Err(e) => {
+                        });
+                        let (computed, timed_out) = match tokio::time::timeout(timeout, ffi).await {
+                            Ok(Ok(v)) => (v, false),
+                            Ok(Err(e)) => {
                                 warn!(
                                     error = %e,
                                     "verified tau-order FFI blocking task panicked/cancelled — \
                                      falling back to the Rust `ordering::tau` order for this poll"
                                 );
-                                None
+                                (None, false)
+                            }
+                            Err(_elapsed) => {
+                                warn!(
+                                    fingerprint = order_fingerprint,
+                                    lace_size,
+                                    timeout_ms = timeout.as_millis() as u64,
+                                    "verified tau-order FFI exceeded the per-poll budget — using the \
+                                     edge-faithful Rust `ordering::tau` order for THIS poll so the \
+                                     serial finality executor does not freeze; the verified order \
+                                     re-anchors on a later in-budget poll"
+                                );
+                                (None, true)
                             }
                         };
                         debug!(
@@ -1125,12 +1148,29 @@ impl BlocklaceHandle {
                             finalized = computed.as_ref().map(|o| o.len()).unwrap_or(0),
                             "verified-order cache MISS, recomputed FFI"
                         );
-                        // Cache only a SUCCESSFUL verified order (a None fallback is not authoritative).
-                        if let Some(ref order) = computed {
-                            *self.last_order_fingerprint.write().await = Some(order_fingerprint);
-                            *self.last_lean_order.write().await = Some(order.clone());
+                        match computed {
+                            Some(order) => {
+                                // Genuine verified order: cache under the finality fingerprint.
+                                *self.last_order_fingerprint.write().await =
+                                    Some(order_fingerprint);
+                                *self.last_lean_order.write().await = Some(order.clone());
+                                Some(order)
+                            }
+                            None => {
+                                // FFI unavailable (stale archive / ERR) or over-budget: use the
+                                // edge-faithful Rust `tau` order for this poll. Cache it under the
+                                // finality fingerprint so an identical next poll does not re-pay the
+                                // slow/failing FFI — SOUND because the topological `build_ordering_
+                                // blocklace` makes `rust_order == compute_order(lace)` on the same
+                                // lace. A `timed_out` fallback still re-attempts the FFI whenever
+                                // finality next moves (the fingerprint changes).
+                                let _ = timed_out;
+                                *self.last_order_fingerprint.write().await =
+                                    Some(order_fingerprint);
+                                *self.last_lean_order.write().await = Some(rust_order.clone());
+                                Some(rust_order.clone())
+                            }
                         }
-                        computed
                     }
                 }
             } else {
@@ -1591,6 +1631,25 @@ impl BlocklaceHandle {
     }
 }
 
+/// Per-poll wall-clock budget for the verified-Lean tau-order FFI
+/// (`VerifiedFinality::compute_order`). The single serial finality executor
+/// awaits this FFI before the next poll can start, so an O(history) recompute on
+/// a large cross-linked lace that exceeds a round of block production freezes ALL
+/// finalization. `poll_finalized_blocks` bounds the FFI by this budget and, on
+/// timeout, uses the edge-faithful Rust `ordering::tau` order for that poll (it
+/// equals `compute_order` after the topological `build_ordering_blocklace` fix),
+/// so one slow poll cannot stall the executor. Default 2500 ms; operators can
+/// tune it via `DREGG_FINALITY_ORDER_TIMEOUT_MS` (a value of 0 falls back to the
+/// default rather than disabling the bound).
+fn verified_order_ffi_timeout() -> Duration {
+    let ms = std::env::var("DREGG_FINALITY_ORDER_TIMEOUT_MS")
+        .ok()
+        .and_then(|v| v.parse::<u64>().ok())
+        .filter(|v| *v > 0)
+        .unwrap_or(2500);
+    Duration::from_millis(ms)
+}
+
 /// Build a `dregg_blocklace::Blocklace` (the ordering-compatible type) from
 /// the finality-layer blocklace. The ordering module's `tau()` function
 /// operates on the simpler `Blocklace` from `lib.rs`.
@@ -1609,12 +1668,64 @@ pub(crate) fn build_ordering_blocklace(
     // Reverse mapping: ordering block ID -> finality block ID (for result translation)
     let mut ordering_to_finality: HashMap<dregg_blocklace::BlockId, BlockId> = HashMap::new();
 
-    // Insert blocks in topological order (by sequence, then by creator for ties).
-    let mut blocks: Vec<(&BlockId, &Block)> = finality_lace.iter().collect();
-    blocks.sort_by(|(_, a), (_, b)| a.seq.cmp(&b.seq).then_with(|| a.creator.cmp(&b.creator)));
+    // ── TOPOLOGICAL (CAUSAL) INSERTION — Kahn's algorithm ───────────────────────
+    // `insert_unverified` enforces causal closure: a block whose predecessors are
+    // not YET inserted has those edges DROPPED (`filter_map(finality_to_ordering.get)`
+    // below only keeps already-inserted preds). The prior code inserted sorted by
+    // `(seq, creator)`, which equals topological order ONLY on a clean round-
+    // synchronous single-machine DAG. In the CROSS-MACHINE CATCH-UP case a lagging
+    // creator's late block has a LOW `seq` but cites the current tips (a HIGH
+    // DAG-depth round); the `(seq, creator)` sort then places it BEFORE its
+    // predecessors, dropping those edges and collapsing the projected DAG depth.
+    // Rust `ordering::tau` then finds no super-ratified leader and returns
+    // `rust_len = 0` while the verified Lean order — which runs on the FULL edge
+    // set — returns hundreds: the 291 false `DIFFERENTIAL DIVERGENCE lean_len=180
+    // rust_len=0` alarms (docs/CROSS-MACHINE-FINALITY-FINDING.md §2).
+    //
+    // Insert in TOPOLOGICAL order instead: every in-lace predecessor lands before
+    // its dependent, so NO in-lace edge is ever dropped and the Rust projection
+    // carries the SAME edge set as the Lean authority. Ties (blocks whose
+    // predecessors are all satisfied at the same frontier) break by
+    // `(seq, creator, id)` for a deterministic linearization. Predecessors NOT
+    // present in the lace are edges NEITHER order traverses (the Lean wire-build
+    // filters them identically), so they impose no ordering constraint.
+    let mut indeg: HashMap<BlockId, usize> = HashMap::new();
+    let mut succ: HashMap<BlockId, Vec<BlockId>> = HashMap::new();
+    for (id, block) in finality_lace.iter() {
+        let in_lace_preds = block
+            .predecessors
+            .iter()
+            .filter(|p| finality_lace.get(p).is_some())
+            .count();
+        indeg.insert(*id, in_lace_preds);
+        for p in &block.predecessors {
+            if finality_lace.get(p).is_some() {
+                succ.entry(*p).or_default().push(*id);
+            }
+        }
+    }
+    // Deterministic ready-frontier: a min-heap keyed by `(seq, creator, id)`.
+    let heap_key = |id: &BlockId| -> std::cmp::Reverse<(u64, [u8; 32], BlockId)> {
+        let b = finality_lace
+            .get(id)
+            .expect("indexed id is present in the lace");
+        std::cmp::Reverse((b.seq, b.creator, *id))
+    };
+    let mut ready: std::collections::BinaryHeap<std::cmp::Reverse<(u64, [u8; 32], BlockId)>> =
+        std::collections::BinaryHeap::new();
+    for (id, d) in &indeg {
+        if *d == 0 {
+            ready.push(heap_key(id));
+        }
+    }
 
-    for (finality_id, block) in blocks {
-        // Translate predecessors from finality IDs to ordering IDs.
+    while let Some(std::cmp::Reverse((_, _, finality_id))) = ready.pop() {
+        let block = finality_lace
+            .get(&finality_id)
+            .expect("ready-frontier id is present in the lace");
+        // Translate predecessors from finality IDs to ordering IDs. By topological
+        // order every in-lace predecessor is ALREADY inserted, so this keeps the
+        // full in-lace edge set (no dropped edge).
         let predecessors: Vec<dregg_blocklace::BlockId> = block
             .predecessors
             .iter()
@@ -1645,8 +1756,21 @@ pub(crate) fn build_ordering_blocklace(
         let _ = ordering_lace.insert_unverified(ordering_block);
 
         // Record the bidirectional mapping.
-        finality_to_ordering.insert(*finality_id, ordering_id);
-        ordering_to_finality.insert(ordering_id, *finality_id);
+        finality_to_ordering.insert(finality_id, ordering_id);
+        ordering_to_finality.insert(ordering_id, finality_id);
+
+        // Relax successors: once all of a block's in-lace predecessors are
+        // inserted it joins the ready frontier (Kahn's algorithm).
+        if let Some(children) = succ.get(&finality_id) {
+            for child in children.clone() {
+                if let Some(d) = indeg.get_mut(&child) {
+                    *d -= 1;
+                    if *d == 0 {
+                        ready.push(heap_key(&child));
+                    }
+                }
+            }
+        }
     }
     (ordering_lace, ordering_to_finality)
 }
