@@ -226,6 +226,15 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
   both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
   the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
+- ⚑ homeserver-grain STEP 3 COMPLETE — DREGG HOSTS A MATRIX HOMESERVER AS A CONFINED GRAIN
+  (`sel4/dregg-firmament/{sandbox,process_kernel}.rs` + `tests/homeserver_confined.rs`): firmament's
+  heavy-body `Confinement` tier (write/listen/mach-allow-list/system-reads/exec-one-image, additive —
+  all-empty Confinement byte-identical, regression-proven) + `spawn_pd_confined_exec` fork+confine+
+  execve the grain bin. PROVEN: continuwuity serves `/versions → 200` THROUGH the firmament jail
+  (confinement real — its non-loopback DNS denied "Operation not permitted"); 3 named-door negatives
+  (sibling-write / unlisted-port / unlisted-mach each distinctly refused). The town's square is a
+  confined, named-door grain — caps all the way down. NEXT (step 4, gated on the breadstuffs session):
+  agent-platform lease + grain-turn R2 = the metered/verifiable homeserver.
 - homeserver-grain RocksDB + confinement design (community thread) — RocksDB system-link VERIFIED:
   `ROCKSDB_LIB_DIR=brew` (rocksdb 11.1.2 vs vendored 11.1.1, ABI-compat) skips the vendored C++ build,
   CS-API test still green (env, not a Linux-breaking hardcode). Confined-spawn DESIGNED (recon-corrected
