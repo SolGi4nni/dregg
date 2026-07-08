@@ -120,7 +120,6 @@ pub mod federation;
 /// both-schemes-valid selector over the opaque QC bytes. BLS is untouched.
 pub mod frost;
 pub mod identity;
-pub mod node;
 pub mod receipt;
 pub mod revocation;
 pub mod solo;
@@ -130,8 +129,6 @@ pub mod threshold_decrypt;
 /// `threshold_decrypt` (GF(256) field, Shamir/Lagrange reconstruction, the combine gate). Test-only.
 #[cfg(test)]
 mod threshold_decrypt_diff;
-#[cfg(feature = "runtime")]
-pub mod transport;
 pub mod types;
 pub mod verified_gate;
 /// Per-agent ECVRF sortition (RFC 9381 ECVRF-EDWARDS25519-SHA512-TAI): each
@@ -156,28 +153,17 @@ pub use court::{
     equivocation_predicate_vk, register_equivocation_court, seed_council,
 };
 pub use verified_gate::{FederationVerifiedGate, register_federation_verified_gate};
-// The unified `Federation` type (FEDERATION-UNIFICATION-DESIGN.md §2).
-// Frees the bare name `Federation` for the canonical attestation context;
-// the Morpheus-era simulator type that previously held this name is now
-// re-exported as `MorpheusFederation` pending its deletion (design §6 step 7).
+// The unified `Federation` type (FEDERATION-UNIFICATION-DESIGN.md §2) —
+// the canonical attestation context. The Morpheus-era BFT simulator that
+// previously held this name (`node.rs` + `transport.rs`, re-exported as
+// `MorpheusFederation`) is DELETED (design §6 step 7): `dregg-blocklace`
+// is the live consensus path, and the live hybrid-PQ quorum types live in
+// [`types`] (`HybridVote`, `HybridQuorumCertificate`, `ConsensusMessage`)
+// with their verifiers in [`frost`].
 pub use cross_fed_bundle::CrossFedReceiptBundle;
+pub use dregg_types::FederationId;
 pub use federation::{Federation, KnownFederations, LocalSeat};
 pub use identity::{derive_federation_id, derive_federation_id_with_epoch};
-// NOTE (FEDERATION-UNIFICATION-DESIGN.md §6 step 6): the Morpheus BFT
-// simulator (`node.rs` + `transport.rs`) is legally dead — `dregg-blocklace`
-// is the live consensus path. The simulator survives as in-crate code only
-// because `teasting`, `wasm`, and `demo/sdk-consensus` still import it. As
-// each of those consumers migrates to drive a real blocklace, the relevant
-// `node.rs` symbols can be deleted; the unified `Federation` type
-// (`federation::Federation`) is the canonical replacement at the type-system
-// layer. The re-exports below are kept only so the existing simulator
-// consumers compile.
-pub use dregg_types::FederationId;
-pub use node::{
-    ConsensusConfig, ConsensusError, ConsensusOrchestrator, ConsensusState,
-    Federation as MorpheusFederation, FederationNode, PendingStateRoots, ReconfigurationProposal,
-    ReconfigurationVotes,
-};
 pub use receipt::{FederationReceipt, FederationReceiptBody, ReceiptQc};
 pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
 pub use solo::{
@@ -190,11 +176,6 @@ pub use threshold::{
 pub use threshold_decrypt::{
     DecryptionShare, KeyShare, ThresholdCiphertext, ThresholdDecryptError, ThresholdEncryptionKey,
     combine_shares, generate_epoch_key, produce_decryption_share, threshold_encrypt,
-};
-#[cfg(feature = "runtime")]
-pub use transport::{
-    FederationEnvelope, FederationTransport, LocalTransport, NetworkConsensusNode,
-    TcpFederationTransport, TransportError,
 };
 pub use types::{
     AttestedRoot, ConsensusMessage, HybridQuorumCertificate, HybridVote, LightClientProof,

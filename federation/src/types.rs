@@ -330,9 +330,10 @@ impl QuorumCertificate {
 /// ed25519 (inside [`Vote`], exactly as today) AND ML-DSA-65 (under
 /// [`crate::frost::HYBRID_PQ_CTX`]).
 ///
-/// Only produced when the committee's `HybridPq` flag is ON
-/// ([`crate::node::ConsensusConfig::hybrid_pq`]); the default path never
-/// constructs one, and [`Vote`] itself is untouched.
+/// Only produced when the committee runs with `HybridPq` active (a
+/// position-aligned ML-DSA-65 key table, as `dregg-node`'s finalization-vote
+/// collector requires); the default path never constructs one, and [`Vote`]
+/// itself is untouched.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct HybridVote {
     /// The classical vote — byte-identical to today's [`Vote`].
