@@ -56,7 +56,7 @@ cell-heap = ["dep:dregg-cell", "dep:blake3"]
 # through the real `TurnExecutor` (cap-gated, finalized, journaled), producing a
 # real `dregg_turn::TurnReceipt`. The receipt IS the provenance: no more stand-in
 # `PatchId` for who-wrote-what. That is why `dregg-turn` is pulled in here.
-substrate = ["cell-heap", "dep:dregg-turn", "dep:dregg-commit"]
+substrate = ["cell-heap", "dep:dregg-turn", "dep:dregg-commit", "dep:dregg-circuit"]
 
 # `rope` welds the patch core onto a `ropey::Rope`-backed editor buffer — the
 # rope<->patch BRIDGE the editor needs (DOCUMENT-LANGUAGE.md §4.1, APPS-AS-CELLS.md
@@ -91,6 +91,16 @@ dregg-turn = { path = "../turn", optional = true }
 # dep tree (`dregg-turn` depends on `dregg-commit`), so this adds no new
 # transitive dependency; with the feature OFF the core pulls in nothing.
 dregg-commit = { path = "../commit", optional = true }
+# The REAL circuit prove+verify surface (optional, behind `substrate`): the
+# production `dregg_circuit::dsl::circuit::CellProgram` STARK — the prover
+# ([`CellProgram::prove_transition`]) and the light-client verifier
+# ([`CellProgram::verify_transition`]) the `CiAssurance::Proven` rung composes so
+# the proof ALONE attests the CI verdict (no re-execution, no quorum). ALREADY in
+# the substrate dep tree (`dregg-turn` depends unconditionally on `dregg-circuit`,
+# which resolves its own p3/workspace inheritance from the parent `../Cargo.toml`),
+# so this adds no new transitive dependency; with the feature OFF the core pulls
+# in nothing.
+dregg-circuit = { path = "../circuit", optional = true }
 # The leaf-digest hash for the heap projection (32-byte leaf values that bind
 # provenance). `blake3` is ALREADY in the substrate dep tree via `dregg-cell`,
 # so gating it on `substrate` adds no new transitive dependency; with the

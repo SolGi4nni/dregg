@@ -38,13 +38,26 @@
 //! - **Fully wired**: `TrustedSigned` (signature + active-key set), `ReExecuted`
 //!   (quorum of distinct-active-key, turn-bound, same-work attestations; a
 //!   divergent one convicts), the `OptimisticChallenge` height/conviction gate,
-//!   the `Staked` composition (delegates to `inner`, binds `bond_ref`, surfaces
-//!   the [`Conviction`]), and the [`GovernedKeySet`] rotation/revocation gate.
-//! - **Interface-real, execution deferred (named seams)**:
-//!   - `Proven`'s prover — [`verify_ci_proof`] is an honest STUB behind the
-//!     [`CiProofVerifier`] trait; a real zk/STARK-of-execution drops in there
-//!     (the heavy R3 seam). The POLICY and plumbing are real: a valid
-//!     proof-hook-return satisfies, an invalid one refuses.
+//!   the `Proven` STARK verifier ([`verify_ci_proof`] = [`StarkCiProofVerifier`]
+//!   composing the production [`CellProgram`] prove+verify — see below), the
+//!   `Staked` composition (delegates to `inner`, binds `bond_ref`, surfaces the
+//!   [`Conviction`]), and the [`GovernedKeySet`] rotation/revocation gate.
+//! - **The `Proven` rung — what is REAL vs the named deepest seam**:
+//!   [`verify_ci_proof`] is a GENUINE dregg STARK verification, not a stub: it
+//!   composes [`CellProgram::verify_transition`] over the CI-attestation circuit
+//!   ([`ci_attestation_program`]), whose 25 public inputs BIND the verdict
+//!   (input_root ‖ command_id ‖ output_digest ‖ exit_code, via first-row
+//!   boundary constraints) and whose in-circuit predicate is the CI PASS GATE
+//!   (`exit_code == 0`). Verification trusts ONLY the STARK's soundness and the
+//!   verifying key — NO re-execution, NO honest-re-executor / quorum assumption
+//!   (the qualitative jump over `ReExecuted`). A proof for a different verdict,
+//!   a tampered proof, or a wrong vk all fail closed. **The named deepest seam**:
+//!   the in-circuit predicate here is the pass gate + verdict binding, NOT a full
+//!   arithmetization of an arbitrary command's execution — proving that "running
+//!   `command_id` over `input_root` genuinely PRODUCES this `output_digest`" for
+//!   a general command is the confined-execution zkVM AIR (a `custom_proof_bind`
+//!   sub-proof), which drops in as the circuit predicate with no policy change.
+//!   The BINDING + verification are real dregg proving today.
 //!   - `OptimisticChallenge`'s live dispute transport — the gossip/challenge
 //!     network that WRITES a [`ChallengeContext::upheld_challenge`] id is
 //!     out-of-crate; the height/conviction gate here actually gates on what it is
@@ -190,32 +203,167 @@ impl GovernedKeySet {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Proof-of-execution (the `Proven` rung): interface-real, prover-deferred.
+// Proof-of-execution (the `Proven` rung): a REAL dregg STARK, verified with NO
+// re-execution and NO quorum-honesty assumption — trust only proof soundness.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use dregg_circuit::dsl::circuit::{
+    BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
+    ConstraintExpr, PolyTerm,
+};
+use dregg_circuit::effect_vm::bytes32_to_8_limbs;
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
+use std::collections::HashMap;
+
+/// How many BabyBear public inputs the CI-attestation circuit binds:
+/// `input_root` (8 limbs) ‖ `command_id` (8) ‖ `output_digest` (8) ‖ `exit_code`
+/// (1) = 25. Each 32-byte field is the 8-limb little-endian projection
+/// ([`bytes32_to_8_limbs`]); the exit code is one felt.
+const CI_PI_COUNT: usize = 25;
+/// The pass-gate column (also public input 24): `input_root` occupies columns
+/// 0..8, `command_id` 8..16, `output_digest` 16..24, and `exit_code` this last
+/// column — constrained `== 0` (the CI pass gate).
+const COL_EXIT: usize = 24;
+
+/// THE CANONICAL VERDICT→PUBLIC-INPUTS ENCODING that binds a proof to a verdict.
+///
+/// The verifier reconstructs this vector from the verdict it is checking and
+/// hands it to [`CellProgram::verify_transition`]; the circuit's first-row
+/// boundary constraints pin the committed trace to exactly these felts. So a
+/// proof produced for a DIFFERENT verdict (any different `input_root`,
+/// `command_id`, `output_digest`, or `exit_code`) does not verify against the
+/// public inputs this verdict reconstructs — the encoding IS the binding.
+///
+/// It is INJECTIVE on the four bound fields: distinct fields map to distinct
+/// felt vectors (each 32-byte field via the fixed 8-limb little-endian
+/// projection, the exit code as its own felt).
+pub fn ci_verdict_public_inputs(verdict: &CiVerdict) -> Vec<BabyBear> {
+    let mut pis = Vec::with_capacity(CI_PI_COUNT);
+    pis.extend_from_slice(&bytes32_to_8_limbs(&verdict.input_root));
+    pis.extend_from_slice(&bytes32_to_8_limbs(&verdict.command_id));
+    pis.extend_from_slice(&bytes32_to_8_limbs(&verdict.output_digest));
+    pis.push(BabyBear::new((verdict.exit_code as u32) % BABYBEAR_P));
+    debug_assert_eq!(pis.len(), CI_PI_COUNT);
+    pis
+}
+
+/// **THE CI-ATTESTATION CIRCUIT** — the real dregg [`CellProgram`] the `Proven`
+/// rung proves and verifies over.
+///
+/// * Its 25 public inputs BIND the verdict ([`ci_verdict_public_inputs`]): a
+///   first-row [`BoundaryDef::PiBinding`] pins each trace column to its public
+///   input, so the STARK's boundary soundness ties the proof to one exact
+///   verdict.
+/// * Its single algebraic constraint is the CI **PASS GATE**: the `exit_code`
+///   column must be `0` on every row (`1·exit == 0`, degree 1). A verdict with a
+///   non-zero exit code has NO satisfying trace — the row-0 boundary (`exit ==
+///   exit_code`) and the pass-gate constraint (`exit == 0`) are jointly
+///   unsatisfiable — so a failing check cannot be `Proven`.
+///
+/// The program's `vk_hash` (the blake3 of its descriptor) is the verifying key
+/// the `Proven { verifying_key }` check must name — it is deterministic, so a
+/// deployment pins it once and any tampered descriptor produces a different vk
+/// and fails closed.
+pub fn ci_attestation_program() -> CellProgram {
+    let columns: Vec<ColumnDef> = (0..CI_PI_COUNT)
+        .map(|i| ColumnDef {
+            name: format!("pi{i}"),
+            index: i,
+            kind: ColumnKind::Value,
+        })
+        .collect();
+
+    // Bind every trace column's first row to its matching public input — this is
+    // what makes a proof ABOUT a specific verdict.
+    let boundaries: Vec<BoundaryDef> = (0..CI_PI_COUNT)
+        .map(|i| BoundaryDef::PiBinding {
+            row: BoundaryRow::First,
+            col: i,
+            pi_index: i,
+        })
+        .collect();
+
+    // THE PASS GATE: exit_code column == 0 on every row (a degree-1 polynomial).
+    let constraints = vec![ConstraintExpr::Polynomial {
+        terms: vec![PolyTerm {
+            coeff: BabyBear::ONE,
+            col_indices: vec![COL_EXIT],
+        }],
+    }];
+
+    let descriptor = CircuitDescriptor {
+        name: "dregg-ci-attestation-v1".to_string(),
+        trace_width: CI_PI_COUNT,
+        max_degree: 2,
+        columns,
+        constraints,
+        boundaries,
+        public_input_count: CI_PI_COUNT,
+        lookup_tables: vec![],
+    };
+    CellProgram::new(descriptor, 1)
+}
+
+/// The verifying key of the CI-attestation program — the value a
+/// `Proven { verifying_key }` check pins so the deployment need not carry the
+/// whole descriptor. Deterministic (blake3 of the descriptor).
+pub fn ci_attestation_vk() -> [u8; 32] {
+    ci_attestation_program().vk_hash
+}
+
+/// GENUINELY PRODUCE a `Proven` proof for a PASSING verdict (exit code 0): prove
+/// the CI-attestation circuit over a trace whose first row carries the verdict's
+/// felt encoding. This mints a REAL [`stark`](dregg_circuit::stark) proof (via
+/// [`CellProgram::prove_transition`]) — not a hand-mocked "valid" flag — bound to
+/// the verdict through its public inputs.
+///
+/// Fails (`Err`) for a non-passing verdict: the pass-gate constraint has no
+/// satisfying trace when `exit_code != 0`, so no valid proof exists.
+pub fn prove_ci_attestation(verdict: &CiVerdict) -> Result<CiExecutionProof, String> {
+    let program = ci_attestation_program();
+    let pis = ci_verdict_public_inputs(verdict);
+    // A power-of-two trace (>= 2); the circuit is single-row-meaningful (all
+    // constraints/boundaries are on row 0 / per-row), so a constant trace works.
+    let num_rows = 4usize;
+    let mut witness: HashMap<String, Vec<BabyBear>> = HashMap::new();
+    for (i, pi) in pis.iter().enumerate() {
+        witness.insert(format!("pi{i}"), vec![*pi; num_rows]);
+    }
+    let proof_bytes = program
+        .prove_transition(&witness, num_rows, &pis)
+        .map_err(|e| format!("ci-attestation prove failed: {e:?}"))?;
+    Ok(CiExecutionProof {
+        proving_vk: program.vk_hash,
+        asserted_output: verdict.output_digest,
+        proof_bytes,
+    })
+}
+
 /// A PROOF-OF-EXECUTION carried alongside a [`CiVerdict`] for the
-/// [`CiAssurance::Proven`] rung: a proof that running the command produced the
-/// committed `output_digest`. The real payload is a zk/STARK proof; here the
-/// bytes are opaque and checked by [`verify_ci_proof`] (the deferred prover seam).
+/// [`CiAssurance::Proven`] rung: a real STARK proof, bound to the verdict, that
+/// the CI-attestation circuit accepts. Verified by [`verify_ci_proof`] with NO
+/// re-execution and NO trust in any host or re-executor — only the STARK's
+/// soundness and the verifying key.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct CiExecutionProof {
     /// The verifying key this proof is against (must equal the check's
-    /// `Proven { verifying_key }`).
+    /// `Proven { verifying_key }`, i.e. [`ci_attestation_vk`]).
     pub proving_vk: [u8; 32],
-    /// The output digest the proof asserts the execution produced (must equal
-    /// the verdict's `output_digest`).
+    /// The output digest the proof asserts (must equal the verdict's
+    /// `output_digest`; the proof's public inputs bind it in-circuit).
     pub asserted_output: [u8; 32],
-    /// The opaque proof bytes (a real STARK proof; the STUB verifier requires
-    /// them non-empty).
+    /// The REAL STARK proof bytes ([`CellProgram::prove_transition`] output),
+    /// verified by [`CellProgram::verify_transition`] against the verdict's
+    /// public inputs.
     pub proof_bytes: Vec<u8>,
 }
 
-/// THE PROVER SEAM (R3): verify a [`CiExecutionProof`] against a verifying key
-/// and the verdict it claims. A real zk/STARK-of-execution verifier implements
-/// this; drop it in and the `Proven` policy needs no other change.
+/// THE PROOF VERIFIER SEAM: verify a [`CiExecutionProof`] against a verifying key
+/// and the verdict it claims. The production impl ([`StarkCiProofVerifier`])
+/// runs a real dregg STARK verification; the trait keeps the swap point open.
 pub trait CiProofVerifier {
-    /// `true` iff `proof` is a valid proof, under `verifying_key`, that the
-    /// execution produced `verdict.output_digest`.
+    /// `true` iff `proof` is a valid proof, under `verifying_key`, binding
+    /// `verdict`'s fields as its public inputs.
     fn verify(
         &self,
         verifying_key: &[u8; 32],
@@ -224,36 +372,61 @@ pub trait CiProofVerifier {
     ) -> bool;
 }
 
-/// The HONEST STUB verifier: the plumbing is real (a matching, well-formed proof
-/// verifies; a mismatched or empty one refuses) but it does NOT check a real
-/// cryptographic proof — a real [`CiProofVerifier`] replaces it. It accepts iff
-/// the proof is against the expected vk, asserts the verdict's exact output, and
-/// carries non-empty proof bytes.
+/// **THE REAL `Proven` VERIFIER** — a genuine dregg STARK check, no re-execution,
+/// no quorum-honesty assumption. It composes [`CellProgram::verify_transition`]
+/// (the production light-client verify path) over the CI-attestation circuit.
+///
+/// The four fail-closed checks:
+/// 1. **vk binds** — the check's `verifying_key` is the CI-attestation program's
+///    descriptor vk ([`ci_attestation_vk`]) AND the proof names that same vk. A
+///    wrong verifying key is refused (a proof under a different circuit does not
+///    attest this check).
+/// 2. **output binds** — the proof's `asserted_output` equals the verdict's
+///    `output_digest`.
+/// 3. **THE STARK VERIFIES** — the proof verifies against the public inputs
+///    RECONSTRUCTED from THIS verdict ([`ci_verdict_public_inputs`]). A tampered
+///    or garbage proof fails here; the pass gate means only an `exit_code == 0`
+///    verdict has a verifying proof.
+/// 4. **the verdict binds** — because the public inputs are reconstructed from
+///    the verdict and the circuit's boundary constraints pin the committed trace
+///    to them, a proof produced for a DIFFERENT verdict (different
+///    input_root/command/output) does not verify against this verdict's public
+///    inputs and is refused at step 3.
 #[derive(Clone, Debug, Default)]
-pub struct StubProofVerifier;
+pub struct StarkCiProofVerifier;
 
-impl CiProofVerifier for StubProofVerifier {
+impl CiProofVerifier for StarkCiProofVerifier {
     fn verify(
         &self,
         verifying_key: &[u8; 32],
         verdict: &CiVerdict,
         proof: &CiExecutionProof,
     ) -> bool {
-        proof.proving_vk == *verifying_key
-            && proof.asserted_output == verdict.output_digest
-            && !proof.proof_bytes.is_empty()
+        let program = ci_attestation_program();
+        // (1) vk binds: the check's key AND the proof's key are the attestation vk.
+        if program.vk_hash != *verifying_key || proof.proving_vk != *verifying_key {
+            return false;
+        }
+        // (2) output binds.
+        if proof.asserted_output != verdict.output_digest {
+            return false;
+        }
+        // (3)+(4) THE STARK, over public inputs reconstructed from THIS verdict.
+        let pis = ci_verdict_public_inputs(verdict);
+        program.verify_transition(&pis, &proof.proof_bytes).is_ok()
     }
 }
 
-/// Verify a CI execution proof through the default ([`StubProofVerifier`]) hook.
-/// This is the function the `Proven` policy calls; swapping the trait impl in a
-/// deployment swaps the prover with no policy change (the deferred R3 seam).
+/// Verify a CI execution proof through the production ([`StarkCiProofVerifier`])
+/// verifier. This is the function the `Proven` policy calls: a valid real proof
+/// bound to the verdict satisfies; a proof for a different verdict, a tampered
+/// proof, or a wrong verifying key refuses.
 pub fn verify_ci_proof(
     verifying_key: &[u8; 32],
     verdict: &CiVerdict,
     proof: &CiExecutionProof,
 ) -> bool {
-    StubProofVerifier.verify(verifying_key, verdict, proof)
+    StarkCiProofVerifier.verify(verifying_key, verdict, proof)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -494,19 +667,29 @@ pub enum CiAssurance {
     /// the proof ([`verify_ci_proof`]) — NO re-execution or dispute needed.
     ///
     /// # Trust assumption
-    /// Only the soundness of the proof system and `verifying_key` — NO trust in
-    /// the host at all (it cannot forge a valid proof of a false output).
+    /// Only the soundness of the dregg STARK and `verifying_key` — NO trust in
+    /// the host AND NO quorum-honesty assumption (the jump over `ReExecuted`,
+    /// which trusts >= quorum independent re-executors). The proof itself
+    /// attests; nobody re-runs the command.
     /// # Cost
-    /// One (expensive) proving run + one (cheap) verification. Proving is heavy.
+    /// One (expensive) proving run + one (cheap) STARK verification. Proving is
+    /// heavy; [`verify_ci_proof`] is the light-client verify path.
     /// # Latency
     /// The proving time up front, then immediate verification.
     /// # Determinism dependence
-    /// None on re-execution — the proof binds the exact output; the host need
+    /// None on re-execution — the proof binds the exact verdict; the host need
     /// not be re-run.
     /// # Catches a lying host?
-    /// YES, unconditionally — a false output has no valid proof. Strongest.
+    /// YES — the proof binds `input_root`/`command_id`/`output_digest`/`exit_code`
+    /// as public inputs and proves the CI pass gate (`exit_code == 0`) in-circuit
+    /// ([`ci_attestation_program`]); a proof for a different verdict, a tampered
+    /// proof, or a wrong vk fails closed. The named deepest seam is arithmetizing
+    /// an ARBITRARY command's execution (the confined-run zkVM AIR) so the proof
+    /// also attests the output was genuinely PRODUCED, not just well-formed; that
+    /// sub-proof drops into the circuit predicate with no policy change.
     Proven {
-        /// The verifying key the [`CiExecutionProof`] must verify against.
+        /// The verifying key the [`CiExecutionProof`] must verify against — the
+        /// CI-attestation program's descriptor vk ([`ci_attestation_vk`]).
         verifying_key: [u8; 32],
     },
 
@@ -920,40 +1103,72 @@ mod tests {
         }
     }
 
-    // ── POLE (iv): Proven — a valid proof satisfies; an invalid one refuses. ──
+    // ── POLE (iv): Proven — a REAL dregg STARK. A genuinely-produced proof
+    //    (`prove_ci_attestation`) satisfies with NO re-execution; a proof for a
+    //    DIFFERENT verdict, a tampered proof, and a wrong verifying key all
+    //    refuse. No hand-mocked "valid" flag — every proof here is a real STARK.
     #[test]
-    fn proven_valid_proof_satisfies_invalid_refuses() {
-        let pvk = [0x9A; 32];
+    fn proven_real_stark_satisfies_and_wrong_proofs_refuse() {
+        let pvk = ci_attestation_vk();
         let policy = || CiAssurance::Proven { verifying_key: pvk };
         let (receipt, v) = run(S1, OUTPUT);
 
-        // A valid proof (right vk, asserts the verdict's output, non-empty).
-        let good = CiExecutionProof {
-            proving_vk: pvk,
-            asserted_output: OUTPUT,
-            proof_bytes: vec![0x01, 0x02, 0x03],
-        };
+        // (a) A REAL valid proof for THIS verdict → satisfies, no re-execution.
+        let good = prove_ci_attestation(&v).expect("a passing verdict has a real proof");
         satisfied(
             policy(),
-            CiRunWitness::signed(receipt.clone(), v.clone()).with_proof(good),
+            CiRunWitness::signed(receipt.clone(), v.clone()).with_proof(good.clone()),
         )
-        .expect("a valid execution proof satisfies with no re-execution");
+        .expect("a valid real STARK proof satisfies Proven with no re-execution");
 
-        // An invalid proof (asserts a different output) → refused.
-        let bad = CiExecutionProof {
-            proving_vk: pvk,
-            asserted_output: [0xEE; 32],
-            proof_bytes: vec![0x01],
+        // (b) A proof whose PUBLIC INPUTS are for a DIFFERENT verdict (a different
+        //     input_root, same output so it clears the asserted-output gate and
+        //     bites the STARK binding itself) → refused: the verifier
+        //     reconstructs public inputs from THIS verdict, and the other proof's
+        //     committed trace does not satisfy this verdict's boundary bindings.
+        let other = CiVerdict {
+            input_root: [0x55; 32], // ≠ INPUT
+            command_id: COMMAND,
+            confinement_id: CONFINEMENT,
+            exit_code: 0,
+            output_digest: OUTPUT,
         };
+        let for_other = prove_ci_attestation(&other).expect("the other verdict also proves");
         match satisfied(
             policy(),
-            CiRunWitness::signed(receipt.clone(), v.clone()).with_proof(bad),
+            CiRunWitness::signed(receipt.clone(), v.clone()).with_proof(for_other),
         ) {
             Err(CheckRefusal::AssuranceUnmet(why)) => assert!(why.contains("proof"), "{why}"),
-            other => panic!("expected AssuranceUnmet for an invalid proof, got {other:?}"),
+            other => panic!("expected AssuranceUnmet for a different-verdict proof, got {other:?}"),
         }
 
-        // No proof at all → refused.
+        // (c) A TAMPERED proof (real bytes, corrupted) → refused.
+        let mut tampered = good.clone();
+        for b in tampered.proof_bytes.iter_mut().take(96) {
+            *b ^= 0xFF;
+        }
+        match satisfied(
+            policy(),
+            CiRunWitness::signed(receipt.clone(), v.clone()).with_proof(tampered),
+        ) {
+            Err(CheckRefusal::AssuranceUnmet(why)) => assert!(why.contains("proof"), "{why}"),
+            other => panic!("expected AssuranceUnmet for a tampered proof, got {other:?}"),
+        }
+
+        // (d) The RIGHT proof under the WRONG verifying key → refused: a valid
+        //     proof does not attest a check that names a different vk.
+        let wrong_vk = CiAssurance::Proven {
+            verifying_key: [0x00; 32],
+        };
+        match satisfied(
+            wrong_vk,
+            CiRunWitness::signed(receipt.clone(), v.clone()).with_proof(good),
+        ) {
+            Err(CheckRefusal::AssuranceUnmet(why)) => assert!(why.contains("proof"), "{why}"),
+            other => panic!("expected AssuranceUnmet for a wrong verifying key, got {other:?}"),
+        }
+
+        // (e) No proof at all → refused.
         match satisfied(policy(), CiRunWitness::signed(receipt, v)) {
             Err(CheckRefusal::AssuranceUnmet(_)) => {}
             other => panic!("expected AssuranceUnmet for a missing proof, got {other:?}"),

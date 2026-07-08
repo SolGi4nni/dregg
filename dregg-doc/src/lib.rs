@@ -200,7 +200,8 @@ pub use check::{CheckId, CheckRefusal, CheckRequirement, CheckWitness, RequiredC
 pub use ci_assurance::{
     AssuranceInput, AssuranceOutcome, BondRef, ChallengeContext, CiAssurance, CiExecutionProof,
     CiProofVerifier, Conviction, ConvictionEvidence, GovernedKeySet, KeyGovernance,
-    StubProofVerifier, TrustedKey, verify_ci_proof,
+    StarkCiProofVerifier, TrustedKey, ci_attestation_program, ci_attestation_vk,
+    ci_verdict_public_inputs, prove_ci_attestation, verify_ci_proof,
 };
 #[cfg(feature = "substrate")]
 pub use ci_verdict::{
