@@ -169,6 +169,13 @@ version = "0.3"
 features = ["Performance", "Window"]
 
 [dev-dependencies]
+# ML-DSA-65 (FIPS 204) — used ONLY by the light-client hybrid-vote test
+# (`bindings_lightclient`) to mint a genuine post-quantum vote half and prove the
+# reconstruct → finality-leg path re-verifies it. Already a transitive dep (via
+# dregg-turn / dregg-lightclient), so this pins no new version; it just names it
+# for the test's direct `use fips204::…`. Pure-Rust (rand_core + sha2/sha3),
+# wasm32-safe — the same crate the light client verifies with.
+fips204 = "0.4"
 # Drives the `#[wasm_bindgen]` surface as a REAL wasm module under node /
 # headless-Chrome (`wasm-pack test --node` / `--headless --chrome`). The
 # card-in-the-tab loop (`tests/card_fires_a_verified_turn.rs`) runs the EXACT

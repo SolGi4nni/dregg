@@ -660,6 +660,18 @@ export interface DreggWasm {
     signer_pubkey: string;
   };
   /**
+   * Assemble the canonical HYBRID `SignedTurn` submission envelope (the exact
+   * postcard bytes the node's `/api/turns/submit-signed` decodes) from an
+   * encoded `Turn` and the 32-byte Ed25519 seed.
+   *
+   * Routes envelope assembly through the SDK's `AgentCipherclerk::sign_turn`, so
+   * the client emits BOTH the Ed25519 and the ML-DSA-65 (FIPS 204) half over the
+   * canonical `Turn::hash` — no hand-rolled postcard layout, and the PQ half
+   * (`pq_signature` / `pq_signer`) rides end-to-end. Pass the round-trippable
+   * `turn_bytes_json` from `sign_turn_v3`.
+   */
+  assemble_signed_turn_envelope(turnBytes: Uint8Array, senderPrivkey: Uint8Array): Uint8Array;
+  /**
    * Build a canonical `Authorization::CapTpDelivered` envelope (postcard bytes).
    * `handoffCertB58` is the compact `dregg-handoff:<base58>` or bare base58 of
    * the cert; the three key/sig args are hex.

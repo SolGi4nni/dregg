@@ -2586,6 +2586,16 @@ pub struct ActionView {
 pub enum AuthorizationView {
     /// Ed25519 signature (r, s as hex).
     Signature { r: String, s: String },
+    /// HYBRID (ed25519 + ML-DSA-65 / FIPS 204) turn authorization — the classical
+    /// ed25519 half (r, s) alongside the lengths of the post-quantum half's
+    /// signature and public key (byte payloads are surfaced by length, not inline).
+    /// `ml_dsa_len == 0` ⇒ the PQ half is absent (legacy classical envelope).
+    HybridSignature {
+        r: String,
+        s: String,
+        ml_dsa_len: usize,
+        ml_dsa_pk_len: usize,
+    },
     /// Zero-knowledge proof authorization.
     Proof {
         bound_action: String,
@@ -2661,6 +2671,19 @@ fn authorization_to_view(auth: &Authorization) -> AuthorizationView {
             r: hex_encode(r),
             s: hex_encode(s),
         },
+        Authorization::HybridSignature {
+            ed25519,
+            ml_dsa,
+            ml_dsa_pk,
+        } => {
+            let (r, s) = ed25519.split_at(32);
+            AuthorizationView::HybridSignature {
+                r: hex_encode(r),
+                s: hex_encode(s),
+                ml_dsa_len: ml_dsa.len(),
+                ml_dsa_pk_len: ml_dsa_pk.len(),
+            }
+        }
         Authorization::Proof {
             bound_action,
             bound_resource,

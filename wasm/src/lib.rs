@@ -2135,6 +2135,72 @@ pub fn sign_turn_v3(
 }
 
 // ============================================================================
+// Canonical HYBRID SignedTurn envelope assembler (submit path)
+// ============================================================================
+
+/// Assemble the canonical `SignedTurn` submission envelope — the exact bytes the
+/// node's `POST /api/turns/submit-signed` decodes with
+/// `postcard::from_bytes::<dregg_sdk::SignedTurn>` — from an encoded `Turn` and a
+/// 32-byte Ed25519 seed.
+///
+/// This routes envelope assembly through the SDK's canonical
+/// [`AgentCipherclerk::sign_turn`] instead of the extension hand-rolling the
+/// postcard layout in JS. That matters now that the envelope is **HYBRID**: the
+/// SDK signs the canonical `Turn::hash` (v3) with BOTH the Ed25519 identity AND
+/// the ML-DSA-65 (FIPS 204) key derived deterministically from the same seed
+/// (`dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed`, ctx `b"dregg-hybrid-turn-v1"`),
+/// and the resulting `SignedTurn` carries the trailing `pq_signature` / `pq_signer`
+/// fields. Hand-encoding those two variable-length halves (a 3309-byte ML-DSA
+/// signature + a 1952-byte public key, each behind a postcard varint) in JS is
+/// exactly the postcard-layout coupling this removes: the client emits the PQ half
+/// end-to-end, and the wire shape stays owned by the SDK's own serializer.
+///
+/// The classical half is unchanged — the node still re-derives `turn.hash()` and
+/// verifies the Ed25519 signature; the PQ half is verified over the SAME hash when
+/// present (fail-closed) and only *required* once the node flips `require_pq`.
+///
+/// Arguments:
+/// - `turn_bytes`: the signed, encoded `Turn` (postcard or self-describing JSON —
+///   tried in that order, matching [`sign_turn_v3`]'s encoding contract). Pass the
+///   `turn_bytes_json` that `sign_turn_v3` emits for a guaranteed round-trip.
+/// - `sender_privkey`: the 32-byte Ed25519 seed (the cipherclerk's secret key).
+///
+/// Returns a `Uint8Array` of the postcard-encoded `SignedTurn` ready to POST.
+#[wasm_bindgen]
+pub fn assemble_signed_turn_envelope(
+    turn_bytes: &[u8],
+    sender_privkey: &[u8],
+) -> Result<Vec<u8>, JsError> {
+    use dregg_sdk::AgentCipherclerk;
+    use dregg_turn::Turn;
+    use zeroize::Zeroizing;
+
+    if sender_privkey.len() != 32 {
+        return Err(JsError::new("sender_privkey must be exactly 32 bytes"));
+    }
+    let mut seed = [0u8; 32];
+    seed.copy_from_slice(sender_privkey);
+
+    // Decode the Turn — postcard first (the compact form), JSON fallback (the
+    // form that always round-trips `Turn`; see the `sign_turn_v3` encoding note).
+    let turn: Turn = match postcard::from_bytes::<Turn>(turn_bytes) {
+        Ok(t) => t,
+        Err(pc_err) => serde_json::from_slice::<Turn>(turn_bytes).map_err(|json_err| {
+            JsError::new(&format!(
+                "turn decode failed as postcard ({pc_err}) and as JSON ({json_err})"
+            ))
+        })?,
+    };
+
+    let cclerk = AgentCipherclerk::from_key_bytes(Zeroizing::new(seed));
+    // Canonical hybrid sign: Ed25519 + ML-DSA-65 over `Turn::hash()`, both halves
+    // carried in the `SignedTurn`. Identical to the native SDK submission path.
+    let signed = cclerk.sign_turn(&turn);
+    postcard::to_allocvec(&signed)
+        .map_err(|e| JsError::new(&format!("SignedTurn postcard encode failed: {e}")))
+}
+
+// ============================================================================
 // Canonical CapTpDelivered authorization constructor (createCapTpDeliveredAuth)
 // ============================================================================
 

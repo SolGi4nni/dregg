@@ -277,6 +277,18 @@ pub struct FinalityVoteJson {
     /// The Ed25519 signature over `finality_signing_message(finalized_root, participant_count)`
     /// (128 hex chars / 64 bytes).
     pub signature_hex: String,
+    /// The voter's ML-DSA-65 public key (FIPS 204, 1952 bytes → 3904 hex chars), carried
+    /// SELF-CONTAINED so the post-quantum half of the HYBRID vote is re-verifiable in-tab with no
+    /// committee PQ-key history — the client half of the end-to-end-PQ perimeter. `#[serde(default)]`
+    /// so a legacy classical-only envelope still parses; it then reconstructs an empty PQ half, which
+    /// the light client's hybrid gate REJECTS (fail-closed — never a silent ed25519-only accept).
+    #[serde(default)]
+    pub ml_dsa_pubkey_hex: String,
+    /// The ML-DSA-65 (FIPS 204) signature over the SAME `finality_signing_message` the Ed25519 half
+    /// signs, bound to `dregg_lightclient::HYBRID_PQ_CTX`. `#[serde(default)]` for legacy envelopes;
+    /// a missing/empty half fails the hybrid check closed.
+    #[serde(default)]
+    pub pq_signature_hex: String,
 }
 
 /// **VERIFY AN EXTERNAL HISTORY against a config-pinned VK anchor** — the real
@@ -592,9 +604,19 @@ fn reconstruct_finality_cert(
     for v in &json.votes {
         let validator = parse_hex32(&v.validator_hex).map_err(|e| format!("validator key: {e}"))?;
         let signature = parse_hex64(&v.signature_hex).map_err(|e| format!("signature: {e}"))?;
+        // HYBRID: the PQ half rides self-contained. An empty/absent hex string reconstructs an
+        // empty Vec, which the light client's `verify_ml_dsa_half` rejects fail-closed (so a legacy
+        // classical-only cert simply does not finalize under the hybrid gate). A present-but-malformed
+        // hex string is a hard error (never a silent drop).
+        let ml_dsa_pubkey =
+            parse_hex_var(&v.ml_dsa_pubkey_hex).map_err(|e| format!("ml-dsa pk: {e}"))?;
+        let pq_signature =
+            parse_hex_var(&v.pq_signature_hex).map_err(|e| format!("pq sig: {e}"))?;
         votes.push(SignedVote {
             validator,
             signature,
+            ml_dsa_pubkey,
+            pq_signature,
         });
     }
     Ok(dregg_lightclient::FinalityCert {
@@ -905,6 +927,31 @@ fn parse_hex32(s: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
+/// Decode a variable-length hex string (optional `0x` prefix) to bytes. An empty string decodes to
+/// an empty `Vec` (the "PQ half absent" sentinel the hybrid gate rejects fail-closed). An odd length
+/// or a non-hex character is a hard error — never a silent truncation.
+fn parse_hex_var(s: &str) -> Result<Vec<u8>, String> {
+    let s = s.trim();
+    let s = s.strip_prefix("0x").unwrap_or(s);
+    if s.is_empty() {
+        return Ok(Vec::new());
+    }
+    if s.len() % 2 != 0 {
+        return Err(format!(
+            "expected an even number of hex chars, got {}",
+            s.len()
+        ));
+    }
+    let bytes = s.as_bytes();
+    let mut out = Vec::with_capacity(s.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        let hi = hex_nibble(pair[0])?;
+        let lo = hex_nibble(pair[1])?;
+        out.push((hi << 4) | lo);
+    }
+    Ok(out)
+}
+
 fn hex_nibble(c: u8) -> Result<u8, String> {
     match c {
         b'0'..=b'9' => Ok(c - b'0'),
@@ -1111,8 +1158,12 @@ mod tests {
     #[test]
     fn finality_leg_anchors_to_the_trusted_committee() {
         use dregg_circuit::field::BabyBear;
-        use dregg_lightclient::{FinalityCert, SignedVote, finality_signing_message};
+        use dregg_lightclient::{
+            FinalityCert, HYBRID_PQ_CTX, SignedVote, finality_signing_message,
+        };
         use ed25519_dalek::{Signer, SigningKey};
+        use fips204::ml_dsa_65;
+        use fips204::traits::{KeyGen as _, SerDes as _, Signer as _};
 
         // A deterministic committee of 4 (threshold = 2*4/3 + 1 = 3).
         let n = 4usize;
@@ -1128,11 +1179,23 @@ mod tests {
 
         let root_felt = 555_123u32;
         let root = BabyBear::new(root_felt);
+        // A genuine HYBRID vote: the ed25519 half AND an ML-DSA-65 half, both over the SAME
+        // `finality_signing_message`. The PQ key is derived deterministically from the same 32-byte
+        // seed as the ed25519 identity (mirroring `MlDsaTurnKey::from_ed25519_seed`), and its public
+        // key rides self-contained in the vote — exactly what the light client's hybrid gate
+        // re-verifies. A vote with only the classical half would be dropped fail-closed.
         let sign_vote = |k: &SigningKey| -> SignedVote {
             let msg = finality_signing_message(root, n);
+            let (ml_pk, ml_sk) = ml_dsa_65::KG::keygen_from_seed(&k.to_bytes());
+            let pq_signature = ml_sk
+                .try_sign(&msg, HYBRID_PQ_CTX)
+                .expect("ml-dsa-65 sign cannot fail on a valid key")
+                .to_vec();
             SignedVote {
                 validator: k.verifying_key().to_bytes(),
                 signature: k.sign(&msg).to_bytes(),
+                ml_dsa_pubkey: ml_pk.into_bytes().to_vec(),
+                pq_signature,
             }
         };
 
@@ -1201,6 +1264,8 @@ mod tests {
                 .map(|v| FinalityVoteJson {
                     validator_hex: v.validator.iter().map(|b| format!("{b:02x}")).collect(),
                     signature_hex: v.signature.iter().map(|b| format!("{b:02x}")).collect(),
+                    ml_dsa_pubkey_hex: v.ml_dsa_pubkey.iter().map(|b| format!("{b:02x}")).collect(),
+                    pq_signature_hex: v.pq_signature.iter().map(|b| format!("{b:02x}")).collect(),
                 })
                 .collect(),
             participant_count: n,

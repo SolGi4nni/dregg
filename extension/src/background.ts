@@ -767,39 +767,37 @@ interface SubmitSignedTurnResponse {
 }
 
 /**
- * Wrap signed postcard `Turn` bytes in the `SignedTurn` envelope the node's
+ * Wrap a signed, encoded `Turn` in the HYBRID `SignedTurn` envelope the node's
  * `/turns/submit` (alias `/api/turns/submit-signed`) expects, and submit.
  *
- * `SignedTurn { turn: Turn, signature: Signature, signer: PublicKey }`
- * postcard-serializes as the concatenation of its fields; `Signature` /
- * `PublicKey` serialize their inner arrays as byte slices (one varint length
- * byte — 0x40 / 0x20 — then the raw bytes). The signature is Ed25519 over the
- * canonical `Turn::hash` (v3) — exactly the `turn_id` the wasm signer
- * returned — which the node re-derives and verifies, then checks
+ * The envelope is assembled by the wasm `assemble_signed_turn_envelope` export,
+ * which routes through the SDK's canonical `AgentCipherclerk::sign_turn`:
+ * `SignedTurn { turn, signature, signer, pq_signature, pq_signer }` is postcard-
+ * serialized by the SDK's own serializer — no hand-rolled layout. The clerk signs
+ * the canonical `Turn::hash` (v3) with BOTH the Ed25519 identity AND the ML-DSA-65
+ * (FIPS 204) key derived from the same seed, so the post-quantum half rides
+ * end-to-end; the node re-derives `turn.hash()`, verifies the Ed25519 half, checks
+ * the PQ half fail-closed when present, and checks
  * `turn.agent == CellId::derive_raw(signer, blake3("default"))`.
  *
- * This replaces the legacy JSON `{turn_id, turn_bytes, sender_pubkey}` body,
- * which the current node (postcard `SignedTurn` decoder) rejects outright.
+ * `turnBytesJson` MUST be the round-trippable JSON `Turn` encoding (postcard `Turn`
+ * is not self-describing); `sign_turn_v3` emits it as `turn_bytes_json`. The 32-byte
+ * Ed25519 seed is the only key material the assembler needs (the PQ key is derived
+ * from it inside the SDK).
  */
 async function submitSignedTurnBytes(input: {
-  turnBytes: Uint8Array;
+  turnBytesJson: Uint8Array;
   turnIdHex: string;
   secretKey: number[];
-  publicKey: number[];
   label: string;
   metadata?: Record<string, unknown>;
 }): Promise<OutboxSubmitResult<SubmitSignedTurnResponse>> {
   requireWasm("submitSignedTurn");
   const w = wasm!;
-  const turnHash = hexToBytes(input.turnIdHex);
-  const signature = w.sign_message(new Uint8Array(input.secretKey), turnHash);
-  const envelope = new Uint8Array(input.turnBytes.length + 1 + 64 + 1 + 32);
-  let off = 0;
-  envelope.set(input.turnBytes, off); off += input.turnBytes.length;
-  envelope[off++] = 0x40; // varint len 64 (Signature inner slice)
-  envelope.set(signature, off); off += 64;
-  envelope[off++] = 0x20; // varint len 32 (PublicKey inner slice)
-  envelope.set(new Uint8Array(input.publicKey), off);
+  const envelope = w.assemble_signed_turn_envelope(
+    input.turnBytesJson,
+    new Uint8Array(input.secretKey),
+  );
 
   const headers: Record<string, string> = {};
   if (nodeConfig.devnetKey) headers["Authorization"] = `Bearer ${nodeConfig.devnetKey}`;
@@ -832,17 +830,18 @@ async function signAndSubmitBuiltTurn(input: {
 }): Promise<{ turnId: string; submit: OutboxSubmitResult<SubmitSignedTurnResponse> } | { error: string }> {
   requireWasm("signAndSubmitBuiltTurn");
   const w = wasm!;
-  let signed: { turn_id: string; turn_bytes: Uint8Array };
+  let signed: { turn_id: string; turn_bytes: Uint8Array; turn_bytes_json: Uint8Array };
   try {
     signed = w.sign_turn_v3(input.turnBytes, new Uint8Array(input.secretKey), new Uint8Array(32));
   } catch (e: unknown) {
     return { error: (e as Error).message || "sign_turn_v3 failed" };
   }
   const submit = await submitSignedTurnBytes({
-    turnBytes: new Uint8Array(signed.turn_bytes),
+    // The round-trippable JSON `Turn` encoding — the assembler re-signs it into
+    // the canonical HYBRID `SignedTurn` (Ed25519 + ML-DSA-65).
+    turnBytesJson: new Uint8Array(signed.turn_bytes_json),
     turnIdHex: signed.turn_id,
     secretKey: input.secretKey,
-    publicKey: input.publicKey,
     label: input.label,
     metadata: input.metadata,
   });
@@ -2942,10 +2941,11 @@ async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignT
   }
 
   const submit = await submitSignedTurnBytes({
-    turnBytes: new Uint8Array(signed.turn_bytes),
+    // The round-trippable JSON `Turn` the signer emitted — the assembler re-signs
+    // it into the canonical HYBRID `SignedTurn` envelope (Ed25519 + ML-DSA-65).
+    turnBytesJson: new Uint8Array(signed.turn_bytes_json),
     turnIdHex: signed.turn_id,
     secretKey: cc.secretKey,
-    publicKey: cc.publicKey,
     label: "sign turn (v3)",
     metadata: { action: "signTurnV3" },
   });
