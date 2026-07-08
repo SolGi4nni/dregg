@@ -98,8 +98,18 @@ def level1Lookup : VmConstraint2 :=
 level's parent — the emitted twin of `poseidon2_air.rs`'s chain-continuity constraint). -/
 def contBody : EmittedExpr := .add (.var CUR1) (.mul (.const (-1)) (.var PARENT0))
 
-/-- The chain-continuity Base gate. -/
+/-- The chain-continuity Base gate — a `when_transition` constraint (vacuous on the LAST row). It
+binds `CUR1 = PARENT0` on rows `0..n-2`. -/
 def continuityGate : VmConstraint2 := .base (.gate contBody)
+
+/-- **The last-row continuity fix** (`merkleLastContFix`, the `adjLastOrderFix` shape from commit
+`0f8d478b2`). The transition `.gate` above is VACUOUS on the last row (`holdsVm … isLast=true (.gate _)
+= True`, `EffectVmEmit.lean:465`), so on a height-1 trace — where row 0 IS the last row — `CUR1` is
+FREE, decoupling the level-0 (leaf) side from the level-1 (root) side and admitting a forged
+non-member leaf (`MerkleMembershipRung2.forgeTrace`). This `.boundary VmRow.last` counterpart fires on
+the last row, so together with the transition `.gate` the level-tie `CUR1 = PARENT0` is enforced on
+EVERY row — matching the deployed every-row `assert_zero` lowering. -/
+def continuityLastFix : VmConstraint2 := .base (.boundary VmRow.last contBody)
 
 /-- The root pin: `PARENT1` (last parent) equals the public root PI on the first row. -/
 def rootPin : VmConstraint2 := .base (.piBinding VmRow.first PARENT1 ROOT_PI)
@@ -107,13 +117,15 @@ def rootPin : VmConstraint2 := .base (.piBinding VmRow.first PARENT1 ROOT_PI)
 /-- **`merkleMembershipDesc`** — the depth-2, 4-ary Poseidon2 Merkle-membership descriptor.
 Constraints: two child→parent chip lookups, the level-tying continuity gate, and the root pin.
 The chip table (`TID_P2`) is IMPLICITLY present (Presence-detected from the lookups), so `tables`
-is empty exactly as the working `node8`/`deco` descriptors leave it. -/
+is empty exactly as the working `node8`/`deco` descriptors leave it. The level-tie is enforced on
+EVERY row: the transition `continuityGate` covers rows `0..n-2` and `continuityLastFix` covers the
+last row (so a height-1 trace is not under-constrained). -/
 def merkleMembershipDesc : EffectVmDescriptor2 :=
   { name        := "merkle-membership-depth2-4ary::poseidon2-v1"
   , traceWidth  := MEMBERSHIP_WIDTH
   , piCount     := 1
   , tables      := []
-  , constraints := [level0Lookup, level1Lookup, continuityGate, rootPin]
+  , constraints := [level0Lookup, level1Lookup, continuityGate, rootPin, continuityLastFix]
   , hashSites   := []
   , ranges      := [] }
 
@@ -125,7 +137,7 @@ THE EQUALITY-GATE ANCHOR: this exact string is embedded verbatim in
 `assert_eq!(decoded, hand_built)` — neither can silently diverge. -/
 
 #guard emitVmJson2 merkleMembershipDesc ==
-  "{\"name\":\"merkle-membership-depth2-4ary::poseidon2-v1\",\"ir\":2,\"trace_width\":24,\"public_input_count\":1,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":0}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"merkle-membership-depth2-4ary::poseidon2-v1\",\"ir\":2,\"trace_width\":24,\"public_input_count\":1,\"tables\":[],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"var\",\"v\":3},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":9,\"pi_index\":0},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":4}}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — A genuinely-proven, non-vacuous semantic lemma (the continuity gate teeth).
 
@@ -145,7 +157,7 @@ theorem continuity_body_zero_iff (a : Assignment) :
 -- Shape pins.
 #guard merkleMembershipDesc.traceWidth == MEMBERSHIP_WIDTH
 #guard merkleMembershipDesc.piCount == 1
-#guard merkleMembershipDesc.constraints.length == 4
+#guard merkleMembershipDesc.constraints.length == 5
 #guard (chipLookupTuple [.var LEAF, .var SIB0A, .var SIB0B, .var SIB0C] PARENT0 LEVEL0_LANES).length
          == CHIP_RATE + 1 + CHIP_OUT_LANES
 

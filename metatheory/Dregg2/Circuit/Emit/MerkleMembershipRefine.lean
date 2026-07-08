@@ -66,7 +66,7 @@ open Dregg2.Circuit.DescriptorIR2
    ChipTableSound chip_lookup_sound chipLookupTuple chipRow CHIP_RATE CHIP_OUT_LANES
    memLog mapLog memCheck_nil)
 open Dregg2.Circuit.Emit.MerkleMembershipEmit
-  (merkleMembershipDesc level0Lookup level1Lookup continuityGate rootPin contBody
+  (merkleMembershipDesc level0Lookup level1Lookup continuityGate continuityLastFix rootPin contBody
    continuity_body_zero_iff
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1
    LEVEL0_LANES LEVEL1_LANES ROOT_PI)
@@ -113,7 +113,8 @@ theorem merkleMembers2_as_fold (hash : List ℤ → ℤ) (leaf s0a s0b s0c s1a s
 /-- The membership tactic: every constraint we name is literally in `merkleMembershipDesc`. -/
 local macro "mm_mem" : tactic =>
   `(tactic| (show _ ∈ merkleMembershipDesc.constraints;
-             simp [merkleMembershipDesc, level0Lookup, level1Lookup, continuityGate, rootPin]))
+             simp [merkleMembershipDesc, level0Lookup, level1Lookup, continuityGate,
+               continuityLastFix, rootPin]))
 
 /-- A declared arity-4 chip lookup, against the NAMED sound chip table, forces the digest column to
 be the genuine Poseidon2 hash of the four evaluated input columns — on ANY row (the lookup is not
@@ -262,11 +263,11 @@ theorem concrete_sat :
   · intro i hi c hc
     rw [show cTrace.rows.length = 2 from rfl] at hi
     rw [show merkleMembershipDesc.constraints
-          = [level0Lookup, level1Lookup, continuityGate, rootPin] from rfl] at hc
+          = [level0Lookup, level1Lookup, continuityGate, rootPin, continuityLastFix] from rfl] at hc
     interval_cases i <;>
       (fin_cases hc <;>
         simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
-          level0Lookup, level1Lookup, continuityGate, rootPin] <;>
+          level0Lookup, level1Lookup, continuityGate, continuityLastFix, rootPin] <;>
         trivial)
   · intro i _; trivial
   · intro i _ r hr; simp [merkleMembershipDesc] at hr
