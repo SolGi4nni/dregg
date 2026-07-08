@@ -302,6 +302,19 @@ pub mod block_conservation;
 /// `SortedNeighborNonMembershipVerifier` / `CredentialSetMembershipVerifier`.
 pub mod membership_adjacency_air;
 
+/// Foundation 2 of the StarkProof→descriptor-prover migration: the depth-GENERAL binary
+/// Poseidon2 Merkle-membership IR-v2 descriptor builder. One Merkle level per trace row, tied by
+/// a `WindowGate` continuity gate (the `AdjacencyMembershipEmit` multi-level precedent), so a
+/// depth-`d` witness genuinely hashes `d` levels — replacing the executor's depth-2 pad hack. See
+/// module docs; the Rung-2 depth-general soundness lift is a named Lean follow-on.
+pub mod membership_descriptor_general;
+
+/// Foundation 1 of the StarkProof→descriptor-prover migration: `descriptor_by_name`, the
+/// descriptor-world analog of `dsl::descriptors::circuit_for_air_name`. Maps a predicate-kind /
+/// AIR-name to its emitted `EffectVmDescriptor2` (byte-pinned golden decode + the depth-general
+/// membership builder); a miss returns `None` (never a silent accept). See module docs.
+pub mod descriptor_by_name;
+
 pub mod backends;
 // `ivc_turn_chain`, `joint_turn_aggregation`, `joint_turn_recursive` moved to
 // `dregg-circuit-prove`.

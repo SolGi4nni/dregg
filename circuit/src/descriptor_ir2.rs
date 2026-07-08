@@ -1274,6 +1274,16 @@ impl MainLayout {
 }
 
 /// Bounds- and shape-check a v2 descriptor for assembly. Returns the resolved layout.
+/// Crate-internal well-formedness gate: `Ok(())` iff [`check_descriptor2`] accepts the
+/// descriptor (column bounds, chip arities, table presence) — i.e. it is provable-shaped, the
+/// exact structural check `prove_vm_descriptor2`/`verify_vm_descriptor2` run first. Used by the
+/// [`crate::descriptor_by_name`] dispatch round-trip to assert every dispatched descriptor is
+/// well-formed without leaking the private `MainLayout`.
+#[cfg(test)]
+pub(crate) fn check_descriptor2_wellformed(desc: &EffectVmDescriptor2) -> Result<(), String> {
+    check_descriptor2(desc).map(|_| ())
+}
+
 fn check_descriptor2(desc: &EffectVmDescriptor2) -> Result<MainLayout, String> {
     if !desc.hash_sites.is_empty() || !desc.ranges.is_empty() {
         return Err(
