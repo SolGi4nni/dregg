@@ -176,9 +176,9 @@ impl<T: deos_js::WorldSink> BridgeWorld for T {
     }
 }
 
-/// Serve the world bridge at `socket_path` over `world`: bind (removing a stale
-/// socket file), accept ONE client, answer requests until the client closes the
-/// connection (EOF). Returns the number of requests served.
+/// Serve the world bridge at `socket_path` over `world`: bind, accept ONE
+/// client, answer requests until the client closes the connection (EOF). Returns
+/// the number of requests served.
 ///
 /// DESIGN (non-`Send` reality): the served world is typically an
 /// `Rc<RefCell<World>>` pinned to one thread, so this loop is single-threaded
@@ -187,14 +187,52 @@ impl<T: deos_js::WorldSink> BridgeWorld for T {
 /// world-owning thread here or uses the starbridge-v2 twin's non-blocking
 /// `WorldBridgeServer::pump` from its frame loop). The world never crosses a
 /// thread; the socket comes to IT.
+///
+/// ## No takeover, and where peer trust actually rests
+///
+/// We DO NOT unlink `socket_path` before binding. A `UnixListener::bind` on a
+/// name a LIVE listener already holds FAILS with `AddrInUse`, and that failure
+/// IS the "someone is already serving here" signal — preserving it is what stops
+/// a socket TAKEOVER. (Unlinking first would let the bind SUCCEED even while a
+/// live server holds the name: the classic hijack, after which the squatter
+/// answers the client's `FireEffects` with a fabricated `Fired(Ok([_; 32]))`
+/// receipt hash the JS would trust as a committed turn — and an arbitrary crawl
+/// ledger.)
+///
+/// PEER TRUST rests on the socket-path DIRECTORY ACLs. The responses here carry
+/// authority-bearing receipt hashes, and a Unix-domain `connect`/`bind` carries
+/// no in-band peer identity, so the ONLY thing keeping a hostile local process
+/// off this name is filesystem permission on the CONTAINING directory. The
+/// socket MUST live in a private-mode directory (0700, owner-only — e.g. a
+/// per-session `$XDG_RUNTIME_DIR` or `mkdtemp` path), NEVER a world-writable one.
+/// A cross-trust deployment should additionally carry an out-of-band shared-
+/// secret first-frame handshake (both twins would gate on it); that is future
+/// hardening and not yet on the wire.
+///
+/// STALE SOCKET (a leftover file from a server that DIED without unlinking): the
+/// bind also fails with `AddrInUse`, and this call cannot safely distinguish it
+/// from a live server (a liveness probe would race). It surfaces a clear,
+/// actionable error; a caller that KNOWS no server is live removes the path and
+/// retries.
 pub fn serve_world_bridge(
     socket_path: &Path,
     world: &mut dyn BridgeWorld,
 ) -> std::io::Result<usize> {
-    // A stale socket file from a dead server would make `bind` fail; a LIVE
-    // server's bind still fails (the listener holds the name) — no takeover.
-    let _ = std::fs::remove_file(socket_path);
-    let listener = UnixListener::bind(socket_path)?;
+    let listener = UnixListener::bind(socket_path).map_err(|e| {
+        if e.kind() == std::io::ErrorKind::AddrInUse {
+            std::io::Error::new(
+                std::io::ErrorKind::AddrInUse,
+                format!(
+                    "world-bridge address in use at {}: a server may already be \
+                     serving here, or a stale socket remains from a dead server — \
+                     remove the path ONLY if you know no server is live",
+                    socket_path.display()
+                ),
+            )
+        } else {
+            e
+        }
+    })?;
     let (mut stream, _addr) = listener.accept()?;
     serve_connection(&mut stream, world)
 }

@@ -22,6 +22,11 @@ blake3 = "1"
 # ed25519-dalek already pins here — no new curve enters the tree.
 curve25519-dalek = { version = "4", features = ["alloc"] }
 ed25519-dalek = { version = "2", features = ["std"] }
+# FIPS 204 ML-DSA (Dilithium) — a MATURE, standardized post-quantum signature, pure Rust (no C).
+# Used for the HYBRID quorum certificate (`frost.rs`): each vote carries an ed25519 (FROST) AND an
+# ML-DSA signature, so the QC survives a quantum adversary that breaks the classical half. Staged
+# behind the `QuorumScheme` selector, not yet wired into live consensus.
+fips204 = "0.4"
 sha2 = { workspace = true }
 hex = "0.4"
 getrandom = { workspace = true }

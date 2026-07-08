@@ -30,7 +30,7 @@
 //! (SpiderMonkey) dependency; the light HTTP client here carries no such dep.
 
 use dregg_cell::state::FieldElement;
-use dregg_cell::{Cell, Ledger};
+use dregg_cell::{CapabilityRef, CapabilitySet, Cell, Ledger};
 use dregg_sdk::AgentCipherclerk;
 use dregg_sdk::error::SdkError;
 use dregg_turn::action::Effect;
@@ -329,6 +329,37 @@ fn cell_from_detail(v: &serde_json::Value) -> Option<Cell> {
             cell.delegate = Some(CellId(bytes));
         }
     }
+    // Rebuild the c-list EDGES so an authority read (`has_access`) over the
+    // crawled ledger answers IDENTICALLY to a read on the origin box (Pillar-2b).
+    // Without this the cell would carry the empty `CapabilitySet::with_balance`
+    // starts with, and EVERY `has_access` would read uniformly FALSE — silently
+    // revoking every speak-cap / marking every gadget "Discoverable" over the
+    // real wire. Each edge is a full serde `CapabilityRef`; a malformed edge is
+    // SKIPPED (fail-closed: never fabricate an authority we cannot decode).
+    let refs: Vec<CapabilityRef> = v
+        .get("capabilities")
+        .and_then(|c| c.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| serde_json::from_value::<CapabilityRef>(e.clone()).ok())
+                .collect()
+        })
+        .unwrap_or_default();
+    let tombstones: Vec<u32> = v
+        .get("capability_tombstones")
+        .and_then(|t| t.as_array())
+        .map(|arr| {
+            arr.iter()
+                .filter_map(|e| e.as_u64().and_then(|n| u32::try_from(n).ok()))
+                .collect()
+        })
+        .unwrap_or_default();
+    if !refs.is_empty() || !tombstones.is_empty() {
+        // `reconstruct` PRESERVES each cap's original slot and re-derives
+        // `next_slot`/tombstones from both planes — the same c-list, not a
+        // re-slotted copy.
+        cell.capabilities = CapabilitySet::reconstruct(refs, tombstones);
+    }
     Some(cell)
 }
 
@@ -559,6 +590,62 @@ mod tests {
             );
         });
         handle.join().expect("sink thread");
+    }
+
+    /// PILLAR-2b over the REAL wire: a cell that HOLDS a capability to a target
+    /// must read `has_access(target) == true` after being crawled through the
+    /// remote explorer surface (`/api/cells` + `/api/cell/{id}`), and an UNHELD
+    /// target must read `false`. This is the test that the in-process adapter
+    /// dodged — it exercises the actual `fetch_ledger_snapshot` → `cell_from_detail`
+    /// c-list reconstruction. Before the fix `cell_from_detail` rebuilt an EMPTY
+    /// `CapabilitySet`, so BOTH poles read `false` (total silence / everything
+    /// Discoverable); now the held edge crosses the wire and reconstructs.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn crawl_reconstructs_the_capability_clist_over_the_wire() {
+        use crate::test_support::default_token_id;
+        use dregg_cell::AuthRequired;
+
+        // A holder cell that HOLDS a signature-gated cap to `target`; `unheld` is
+        // a target the holder has NO cap to.
+        let holder_pk = [7u8; 32];
+        let target = CellId::derive_raw(&[9u8; 32], &default_token_id());
+        let unheld = CellId::derive_raw(&[11u8; 32], &default_token_id());
+
+        let node_public_key = *blake3::hash(b"clist-crawl-node").as_bytes();
+        let (mut node, _agent) = TestNode::genesis(node_public_key, [1u8; 32], 0);
+
+        let mut holder = Cell::with_balance(holder_pk, default_token_id(), 0);
+        holder
+            .capabilities
+            .grant(target, AuthRequired::Signature)
+            .expect("grant cap to target");
+        // Sanity on the ORIGIN cell: the held cap reads reachable here.
+        assert!(holder.capabilities.has_access(&target));
+        assert!(!holder.capabilities.has_access(&unheld));
+        let holder_id = node.insert_cell(holder);
+
+        let spawned = node.spawn().await;
+        let client = NodeHttpClient::new(spawned.base_url().to_string());
+
+        // The CRAWL: rebuild the snapshot ledger purely from the HTTP surface.
+        let ledger = client
+            .fetch_ledger_snapshot()
+            .await
+            .expect("crawl the remote ledger");
+        let crawled = ledger
+            .get(&holder_id)
+            .expect("holder cell is present in the crawled ledger");
+
+        // The two poles over the REAL wire.
+        assert!(
+            crawled.capabilities.has_access(&target),
+            "a HELD cap must read reachable over the crawled ledger (Pillar-2b) \
+             — this was FALSE before the c-list edges crossed the wire"
+        );
+        assert!(
+            !crawled.capabilities.has_access(&unheld),
+            "an UNHELD cap must NOT read reachable (fail-closed, no fabricated authority)"
+        );
     }
 
     /// The federation-id fetch helper resolves a solo node's executor id

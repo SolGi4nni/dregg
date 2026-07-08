@@ -15,12 +15,19 @@
 //!   `check_cross_cell_permission` gates the write. A reviewer whose editor
 //!   lacks the thread region's **review cap** is refused IN-BAND
 //!   ([`dregg_turn::TurnError::CapabilityNotHeld`]) and the thread is
-//!   byte-untouched — there is no forge-an-author path, because the only way in
-//!   is a receipted turn the executor signs off on.
-//! - **Attributable by blame.** Each comment atom carries its reviewer as
-//!   [`crate::Provenance`]; [`crate::blame`] reads "who said what" straight off
-//!   the committed atom — stable across every later post (the git-blame
-//!   middle-insert smear cannot happen).
+//!   byte-untouched — the only way in is a receipted turn the executor signs
+//!   off on.
+//! - **Attributable by blame — bound to the authenticated editor.** Each
+//!   comment atom carries its reviewer as [`crate::Provenance`]; the reviewer is
+//!   NOT a caller-chosen label but [`author_of_editor`]`(doc.editor_id())`, a
+//!   deterministic projection of the editor cell whose cap gated the write
+//!   ([`ReviewThread::comment`] refuses any other claimed author with
+//!   [`dregg_turn::TurnError::InvalidAuthorization`] before driving the turn).
+//!   So there is genuinely NO forge-an-author path: a single cap-holder cannot
+//!   blame a post to an arbitrary reviewer — blame IS the authenticated editor.
+//!   [`crate::blame`] reads "who said what" straight off the committed atom —
+//!   stable across every later post (the git-blame middle-insert smear cannot
+//!   happen).
 //! - **Immutable once said.** A posted comment is a committed atom bound in the
 //!   region cell's `fields_root`; this API offers no edit/delete of it, and a
 //!   forged author would move the commitment (§4.4 anti-forge).
@@ -76,7 +83,39 @@ use crate::executor_drive::ExecutorDrivenDoc;
 #[cfg(feature = "substrate")]
 use crate::patch::Patch;
 #[cfg(feature = "substrate")]
+use dregg_cell::CellId;
+#[cfg(feature = "substrate")]
 use dregg_turn::{TurnError, TurnReceipt};
+
+/// Derive the provenance [`Author`] BOUND to an executor-authenticated editor
+/// cell — the non-forgeable identity a review post's blame carries.
+///
+/// A review post's [`Author`] is NOT a caller-chosen label; it is a
+/// deterministic projection of the editor cell that the executor authenticated
+/// as the turn's agent ([`ExecutorDrivenDoc::editor_id`]). [`ReviewThread::comment`]
+/// / [`ReviewThread::approve`] stamp exactly this author, so "who said what" is
+/// bound to the cell whose capability gated the write — there is no path to
+/// blame a post to a cell you did not authenticate as.
+///
+/// Because [`Author`] is a 64-bit tag (`atom::Author(u64)`) while a [`CellId`]
+/// is 256 bits, this is a FOLD, not an injection: it maps each editor cell to a
+/// stable `Author` via a splitmix64-style avalanche of the cell-id bytes. Two
+/// DISTINCT editor cells folding to the same `Author` is a ~2⁻⁶⁴ accident and,
+/// even then, only MERGES their blame — it never lets a non-editor forge an
+/// author (you still cannot drive the turn without the editor cell's cap). The
+/// full 256-bit editor identity remains the [`CellId`] the receipt's `agent`
+/// carries; this fold is the document-blame VIEW of that identity.
+#[cfg(feature = "substrate")]
+pub fn author_of_editor(editor: CellId) -> Author {
+    let mut acc: u64 = 0x9E37_79B9_7F4A_7C15;
+    for chunk in editor.as_bytes().chunks_exact(8) {
+        let w = u64::from_le_bytes(chunk.try_into().unwrap());
+        acc ^= w;
+        acc = acc.wrapping_mul(0xBF58_476D_1CE4_E5B9);
+        acc ^= acc >> 31;
+    }
+    Author(acc)
+}
 
 /// The committed content tag marking a review atom as a COMMENT; the reviewer's
 /// prose follows the tag. Bound inside the atom's committed leaf, so the atom's
@@ -202,12 +241,15 @@ impl ReviewThread {
         (id, Patch::by(author, [op]))
     }
 
-    /// The exact patch the next [`ReviewThread::approve`] post will drive.
-    /// Exposed so a caller can plan its turn hash
+    /// The exact patch the next [`ReviewThread::approve`] post on `doc` will
+    /// drive. Exposed so a caller can plan its turn hash
     /// ([`ExecutorDrivenDoc::planned_turn_hash`]) — the binding surface for
     /// approval-as-required-check ([`ReviewThread::planned_approval_check`]).
-    pub fn approval_patch(&self, author: Author) -> Patch {
-        self.next_approval(author).1
+    /// The approval's author is bound to `doc`'s authenticated editor cell
+    /// ([`author_of_editor`]), exactly as the [`ReviewThread::approve`] post
+    /// that satisfies the plan — so the planned turn hash matches the post.
+    pub fn approval_patch(&self, doc: &ExecutorDrivenDoc) -> Patch {
+        self.next_approval(author_of_editor(doc.editor_id())).1
     }
 
     /// POST A COMMENT — a receipted, cap-gated, finalized turn appending the
@@ -219,31 +261,60 @@ impl ReviewThread {
     /// (finalized, journaled); one WITHOUT it is refused IN-BAND
     /// ([`TurnError::CapabilityNotHeld`]) and NOTHING lands — the thread is
     /// byte-untouched (the executor rolled back) and this object's tip/seq are
-    /// not advanced. Blame attributes the landed comment to `author`.
+    /// not advanced.
+    ///
+    /// **Blame is bound to the authenticated editor.** `author` MUST equal
+    /// [`author_of_editor`]`(doc.editor_id())` — the identity of the cell whose
+    /// cap gates this write. A post claiming any OTHER author is refused with
+    /// [`TurnError::InvalidAuthorization`] BEFORE any turn is driven (the thread
+    /// untouched), so a single cap-holder cannot stamp blame to an arbitrary
+    /// author. Multi-author threads therefore need multiple editor cells (the
+    /// named per-reviewer-caps seam), one per reviewer identity.
     pub fn comment(
         &mut self,
         doc: &mut ExecutorDrivenDoc,
         author: Author,
         text: &str,
     ) -> Result<TurnReceipt, TurnError> {
-        let (id, patch) = self.next_comment(author, text);
+        let bound = Self::require_bound_author(doc, author)?;
+        let (id, patch) = self.next_comment(bound, text);
         let receipt = doc.edit(patch)?;
         self.advance(id, receipt.clone());
         Ok(receipt)
     }
 
     /// POST AN APPROVAL — the same receipted-turn path with a distinguished
-    /// marker atom ([`APPROVAL_TAG`]) authored by `author`. Refused in-band for
-    /// a non-cap-holder, exactly like [`ReviewThread::comment`].
+    /// marker atom ([`APPROVAL_TAG`]) authored by the authenticated editor.
+    /// Refused in-band for a non-cap-holder, exactly like
+    /// [`ReviewThread::comment`]; and `author` must be bound to `doc`'s editor
+    /// cell (see [`ReviewThread::comment`]) or the post is refused with
+    /// [`TurnError::InvalidAuthorization`].
     pub fn approve(
         &mut self,
         doc: &mut ExecutorDrivenDoc,
         author: Author,
     ) -> Result<TurnReceipt, TurnError> {
-        let (id, patch) = self.next_approval(author);
+        let bound = Self::require_bound_author(doc, author)?;
+        let (id, patch) = self.next_approval(bound);
         let receipt = doc.edit(patch)?;
         self.advance(id, receipt.clone());
         Ok(receipt)
+    }
+
+    /// The blame-binding gate: the claimed `author` must be the identity of
+    /// `doc`'s executor-authenticated editor cell ([`author_of_editor`]).
+    /// Returns that bound author on success, or refuses a forged one with
+    /// [`TurnError::InvalidAuthorization`] — the non-forgeable-blame invariant.
+    fn require_bound_author(doc: &ExecutorDrivenDoc, author: Author) -> Result<Author, TurnError> {
+        let bound = author_of_editor(doc.editor_id());
+        if author != bound {
+            return Err(TurnError::InvalidAuthorization {
+                reason:
+                    "review post's author is not the authenticated editor cell — blame is bound to the editor identity (author_of_editor)"
+                        .to_string(),
+            });
+        }
+        Ok(bound)
     }
 
     /// Advance the thread ONLY after a post committed (a refused post never
@@ -278,12 +349,14 @@ impl ReviewThread {
 
     /// APPROVAL-AS-REQUIRED-CHECK: the [`crate::check::RequiredCheck`] a merge
     /// that "requires an approval" carries, bound to the EXACT turn the next
-    /// [`ReviewThread::approve`] post will commit and trusting `keys` (the
-    /// thread executor's verifying key). The approval receipt returned by
-    /// `approve` is then the committed, signed witness that satisfies it —
-    /// verified by [`crate::check`] as any other committed-receipt check, no new
-    /// machinery. `None` if the approval turn has no projection delta (never,
-    /// for a fresh approval atom).
+    /// [`ReviewThread::approve`] post on `doc` will commit and trusting `keys`
+    /// (the thread executor's verifying key). The approving identity is `doc`'s
+    /// authenticated editor cell ([`author_of_editor`]) — the same non-forgeable
+    /// author the `approve` post stamps — so the planned turn hash matches the
+    /// post. The approval receipt returned by `approve` is then the committed,
+    /// signed witness that satisfies it — verified by [`crate::check`] as any
+    /// other committed-receipt check, no new machinery. `None` if the approval
+    /// turn has no projection delta (never, for a fresh approval atom).
     ///
     /// The plan matches the post iff no edit interleaves on `doc` between this
     /// call and the `approve` (turn construction is deterministic — see
@@ -291,11 +364,10 @@ impl ReviewThread {
     pub fn planned_approval_check(
         &self,
         doc: &ExecutorDrivenDoc,
-        author: Author,
         id: impl Into<crate::check::CheckId>,
         trusted_executor_keys: Vec<[u8; 32]>,
     ) -> Option<crate::check::RequiredCheck> {
-        let patch = self.approval_patch(author);
+        let patch = self.approval_patch(doc);
         let hash = doc.planned_turn_hash(&patch)?;
         Some(crate::check::RequiredCheck::committed_receipt(
             id,
@@ -364,8 +436,11 @@ mod tests {
             let mut doc = ExecutorDrivenDoc::new(1, 2, /* holds review cap */ true);
             let pre = doc.state_commitment();
 
+            // Blame is BOUND to the authenticated editor: the reviewer's author
+            // is derived from the editor cell, not a free label.
+            let reviewer = author_of_editor(doc.editor_id());
             let receipt = thread
-                .comment(&mut doc, Author(3), "needs a test")
+                .comment(&mut doc, reviewer, "needs a test")
                 .expect("a cap-holding reviewer's comment lands");
 
             // A REAL finalized, journaled executor turn — not a settable field.
@@ -387,38 +462,96 @@ mod tests {
             assert!(doc.commitment_matches_projection());
             assert_eq!(thread.receipts().len(), 1, "the owned-turn evidence");
 
-            // Attributable by blame, reads back in the thread.
+            // Attributable by blame, reads back in the thread — bound to the
+            // authenticated editor cell.
             let comments = thread.comments(&doc);
             assert_eq!(comments.len(), 1);
             assert_eq!(
+                comments[0].author, reviewer,
+                "blame attributes the authenticated editor"
+            );
+            assert_eq!(
                 comments[0].author,
-                Author(3),
-                "blame attributes the reviewer"
+                author_of_editor(doc.editor_id()),
+                "the blamed author IS the editor identity"
             );
             assert_eq!(comments[0].text, "needs a test");
         }
 
+        /// FIX #4a: a cap-holder CANNOT stamp blame to an arbitrary author — a
+        /// post claiming any identity other than the authenticated editor cell
+        /// is refused with `InvalidAuthorization` BEFORE any turn is driven, and
+        /// the thread is byte-untouched. Blame is non-forgeable.
         #[test]
-        fn a_second_reviewers_comment_coexists_multi_author_order_preserved() {
+        fn a_forged_author_is_refused_and_the_thread_is_untouched() {
+            let mut thread = ReviewThread::new();
+            let mut doc = ExecutorDrivenDoc::new(1, 2, /* holds review cap */ true);
+            let pre = doc.state_commitment();
+
+            let editor = author_of_editor(doc.editor_id());
+            // Claim SOMEONE ELSE's author (guaranteed distinct from the editor's).
+            let forged = Author(editor.0 ^ 0xDEAD_BEEF);
+            assert_ne!(forged, editor);
+
+            match thread.comment(&mut doc, forged, "blame you") {
+                Err(TurnError::InvalidAuthorization { .. }) => {}
+                other => panic!("expected InvalidAuthorization for a forged author, got {other:?}"),
+            }
+            // Nothing landed: the forge never reached the executor.
+            assert_eq!(doc.state_commitment(), pre, "the forged post did not land");
+            assert!(
+                thread.comments(&doc).is_empty(),
+                "no forged comment in the thread"
+            );
+            assert!(thread.receipts().is_empty(), "no owned-turn evidence");
+
+            // The SAME post, correctly claiming the editor identity, lands.
+            thread
+                .comment(&mut doc, editor, "blame you")
+                .expect("the authenticated editor's own post lands");
+            let comments = thread.comments(&doc);
+            assert_eq!(comments.len(), 1);
+            assert_eq!(comments[0].author, editor, "blamed to the real editor");
+
+            // An approval forge is refused on the same gate.
+            let mut thread2 = ReviewThread::new();
+            let mut doc2 = ExecutorDrivenDoc::new(3, 4, true);
+            match thread2.approve(&mut doc2, Author(author_of_editor(doc2.editor_id()).0 ^ 1)) {
+                Err(TurnError::InvalidAuthorization { .. }) => {}
+                other => {
+                    panic!("expected InvalidAuthorization for a forged approver, got {other:?}")
+                }
+            }
+            assert!(thread2.approvals(&doc2).is_empty());
+        }
+
+        /// Two posts on ONE editor cell coexist and preserve post order; both
+        /// blame to the SAME authenticated editor identity (blame binding — a
+        /// genuinely multi-author thread requires multiple editor cells, the
+        /// named per-reviewer-caps seam).
+        #[test]
+        fn a_second_comment_coexists_order_preserved_same_editor_identity() {
             let mut thread = ReviewThread::new();
             let mut doc = ExecutorDrivenDoc::new(1, 2, true);
+            let editor = author_of_editor(doc.editor_id());
 
             thread
-                .comment(&mut doc, Author(3), "first")
-                .expect("reviewer 3 comments");
+                .comment(&mut doc, editor, "first")
+                .expect("first comment");
             thread
-                .comment(&mut doc, Author(5), "second")
-                .expect("reviewer 5 comments");
+                .comment(&mut doc, editor, "second")
+                .expect("second comment");
 
             let comments = thread.comments(&doc);
             assert_eq!(comments.len(), 2, "both comments coexist");
             // ORDER preserved (post order = document order via blame).
-            assert_eq!(comments[0].author, Author(3));
+            assert_eq!(comments[0].author, editor);
             assert_eq!(comments[0].text, "first");
-            assert_eq!(comments[1].author, Author(5));
+            assert_eq!(comments[1].author, editor);
             assert_eq!(comments[1].text, "second");
-            // A genuine multi-author thread.
-            assert_ne!(comments[0].author, comments[1].author);
+            // Both posts blame to the SAME authenticated editor (binding): a
+            // multi-author thread needs multiple editor cells.
+            assert_eq!(comments[0].author, comments[1].author);
             assert_eq!(thread.receipts().len(), 2);
             // The receipt chain links the second post off the first.
             assert_eq!(
@@ -430,12 +563,15 @@ mod tests {
 
         #[test]
         fn a_non_holder_comment_is_refused_in_band_thread_untouched() {
-            // The reviewer's editor LACKS the thread region's review cap.
+            // The reviewer's editor LACKS the thread region's review cap. The
+            // reviewer honestly claims its own (editor-bound) identity — so the
+            // refusal here is the CAP gate, not the author-binding gate.
             let mut thread = ReviewThread::new();
             let mut doc = ExecutorDrivenDoc::new(1, 2, /* holds review cap */ false);
             let pre = doc.state_commitment();
+            let reviewer = author_of_editor(doc.editor_id());
 
-            match thread.comment(&mut doc, Author(9), "sneak") {
+            match thread.comment(&mut doc, reviewer, "sneak") {
                 Err(TurnError::CapabilityNotHeld { actor, target }) => {
                     assert_eq!(actor, doc.editor_id(), "the reviewer is the refused actor");
                     assert_eq!(target, doc.region_id(), "the thread region is gated");
@@ -443,16 +579,16 @@ mod tests {
                 other => panic!("expected an in-band CapabilityNotHeld refusal, got {other:?}"),
             }
 
-            // The thread is BYTE-UNTOUCHED: no forged-author comment landed.
+            // The thread is BYTE-UNTOUCHED: no comment landed.
             assert_eq!(doc.state_commitment(), pre, "nothing landed");
             assert!(thread.comments(&doc).is_empty(), "no comment in the thread");
             assert!(thread.receipts().is_empty(), "no owned-turn evidence");
             assert_eq!(content(doc.graph()).to_marked_string(), "", "thread empty");
 
-            // WITH the cap, the same post is admitted.
+            // WITH the cap, the same post is admitted (its own editor identity).
             let mut held = ExecutorDrivenDoc::new(1, 2, true);
             thread
-                .comment(&mut held, Author(9), "sneak")
+                .comment(&mut held, author_of_editor(held.editor_id()), "sneak")
                 .expect("a cap-holding reviewer is admitted");
             assert_eq!(thread.comments(&held).len(), 1);
         }
@@ -461,18 +597,16 @@ mod tests {
         fn approvals_read_back_attributable_and_immutable() {
             let mut thread = ReviewThread::new();
             let mut doc = ExecutorDrivenDoc::new(1, 2, true);
+            let approver = author_of_editor(doc.editor_id());
 
-            thread
-                .approve(&mut doc, Author(3))
-                .expect("reviewer 3 approves");
-            thread
-                .approve(&mut doc, Author(5))
-                .expect("reviewer 5 approves");
+            thread.approve(&mut doc, approver).expect("first approval");
+            thread.approve(&mut doc, approver).expect("second approval");
 
             let approvals = thread.approvals(&doc);
             assert_eq!(approvals.len(), 2, "both approvals read back");
-            assert_eq!(approvals[0].author, Author(3), "attributable");
-            assert_eq!(approvals[1].author, Author(5), "attributable");
+            // Attributable — bound to the authenticated editor cell.
+            assert_eq!(approvals[0].author, approver, "attributable to the editor");
+            assert_eq!(approvals[1].author, approver, "attributable to the editor");
             assert_eq!(thread.approval_count(&doc), 2);
 
             // IMMUTABLE: reading does not mutate; the committed state is stable
@@ -512,12 +646,15 @@ mod tests {
             let mut thread_doc = ExecutorDrivenDoc::new(7, 8, true);
             thread_doc.set_receipt_signing_key(SIGNING_SEED);
 
+            // The approving identity is bound to the thread doc's editor cell.
+            let approver = author_of_editor(thread_doc.editor_id());
+
             let mut pr = clean_pr();
             // The merge REQUIRES an approval: bind the check to the exact
             // approval turn the reviewer is about to post + the trusted key.
             let check = pr
                 .review()
-                .planned_approval_check(&thread_doc, Author(3), "approved", vec![VERIFYING_KEY])
+                .planned_approval_check(&thread_doc, "approved", vec![VERIFYING_KEY])
                 .expect("the approval turn has a projection delta");
             pr = pr.with_required_check(check);
 
@@ -537,7 +674,7 @@ mod tests {
 
             // The reviewer approves — a committed, executor-signed receipt.
             let receipt = pr
-                .approve(&mut thread_doc, Author(3))
+                .approve(&mut thread_doc, approver)
                 .expect("the approval posts");
             assert_eq!(receipt.finality, Finality::Final);
             assert!(
@@ -560,10 +697,11 @@ mod tests {
                 "both sides' edits landed"
             );
 
-            // The approval is attributable + immutable in the thread.
+            // The approval is attributable + immutable in the thread — bound to
+            // the authenticated approver editor cell.
             let approvals = pr.review().approvals(&thread_doc);
             assert_eq!(approvals.len(), 1);
-            assert_eq!(approvals[0].author, Author(3));
+            assert_eq!(approvals[0].author, approver);
         }
     }
 }

@@ -923,6 +923,7 @@ dependencies = [
  "bs58",
  "dregg-cell",
  "dregg-circuit",
+ "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-macaroon",
@@ -1247,6 +1248,7 @@ version = "0.1.0"
 dependencies = [
  "blake3",
  "cc",
+ "dregg-circuit",
 ]
 
 [[package]]

@@ -34,6 +34,11 @@
 // always compiled, under BOTH the `native` and `web` renderers.
 pub mod console;
 pub mod fmt;
+/// The dregg-native forge's VISUAL surface — a repo / diff / pull-request /
+/// review-thread as a serializable [`tree::ViewNode`] tree, so the forge paints in
+/// every glass (native gpui / web HTML / discord / seL4). PURE serde + `tree` (no
+/// `dregg-doc`, no gpui): the self-contained `ForgeView` data model + `forge_view`.
+pub mod forge_card;
 /// Console data-source honesty: unreachable ≠ empty ≠ fixtures (never render a
 /// live-green surface over an unreachable node). Wired into `console::ConsoleModel`
 /// (`ConsoleModel::health` drives the page banner + panel gate + per-surface notes).
@@ -45,6 +50,11 @@ pub use console::{
     WitnessStance,
 };
 pub use fmt::BindFmt;
+pub use forge_card::{
+    forge_view, forge_view_json, CheckStatus, CheckView, ConflictView, DiffHunk, DiffKind,
+    DiffLine, FileEntry, FileStatus, ForgeView, MergeGate, PullRequest, Repo, ReviewEntry,
+    ReviewKind,
+};
 pub use source_health::{Banner, SourceHealth, SurfaceNote};
 pub use tree::{
     disclose, parse_view_tree, pill_display, resolve_mounts, Crumb, Disclosure, HaloHandle,

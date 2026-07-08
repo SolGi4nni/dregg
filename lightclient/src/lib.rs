@@ -114,6 +114,8 @@
 #![cfg(feature = "prover")]
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
+
 use dregg_circuit::field::BabyBear;
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, RecursionVk, SEG_ANCHOR_WIDTH, SEG_DIGEST_WIDTH, TurnChainError,
@@ -336,7 +338,7 @@ impl FinalityCert {
     /// threshold and the `NoQuorum` rejection are taken against.
     pub fn distinct_signers(&self) -> usize {
         let msg = self.signing_message();
-        let mut verified: Vec<[u8; 32]> = Vec::with_capacity(self.votes.len());
+        let mut verified: HashSet<[u8; 32]> = HashSet::with_capacity(self.votes.len());
         for vote in &self.votes {
             // Already counted this validator — distinct only.
             if verified.contains(&vote.validator) {
@@ -350,7 +352,7 @@ impl FinalityCert {
             // `verify_strict` rejects non-canonical signatures / small-order keys — a forged or
             // unbound (wrong-root) signature does NOT verify, so it is not counted.
             if vk.verify_strict(&msg, &sig).is_ok() {
-                verified.push(vote.validator);
+                verified.insert(vote.validator);
             }
         }
         verified.len()
@@ -360,11 +362,9 @@ impl FinalityCert {
     /// diagnostic (NOT the quorum count). Use [`distinct_signers`](Self::distinct_signers) for any
     /// soundness decision; this only reports how many keys were presented.
     pub fn listed_signers(&self) -> usize {
-        let mut seen: Vec<[u8; 32]> = Vec::with_capacity(self.votes.len());
+        let mut seen: HashSet<[u8; 32]> = HashSet::with_capacity(self.votes.len());
         for vote in &self.votes {
-            if !seen.contains(&vote.validator) {
-                seen.push(vote.validator);
-            }
+            seen.insert(vote.validator);
         }
         seen.len()
     }
@@ -394,7 +394,10 @@ impl FinalityCert {
     /// quorum threshold is taken against.
     pub fn distinct_committee_signers(&self, committee: &[[u8; 32]]) -> usize {
         let msg = self.signing_message();
-        let mut verified: Vec<[u8; 32]> = Vec::with_capacity(self.votes.len());
+        // Hoist the trusted committee into a set once per call — the per-vote membership
+        // test below is otherwise O(committee) each, making the whole count O(votes·committee).
+        let committee_set: HashSet<[u8; 32]> = committee.iter().copied().collect();
+        let mut verified: HashSet<[u8; 32]> = HashSet::with_capacity(self.votes.len());
         for vote in &self.votes {
             // Distinct only — a participant listed twice counts once.
             if verified.contains(&vote.validator) {
@@ -402,7 +405,7 @@ impl FinalityCert {
             }
             // MUST be a member of the trusted committee (the anchor). A forged/fresh key is rejected
             // here regardless of how validly it signed.
-            if !committee.contains(&vote.validator) {
+            if !committee_set.contains(&vote.validator) {
                 continue;
             }
             // A malformed verifying key cannot ratify.
@@ -413,7 +416,7 @@ impl FinalityCert {
             // `verify_strict` rejects non-canonical sigs / small-order keys; an unbound (wrong-root
             // or wrong-count) signature does not verify, so it is not counted.
             if vk.verify_strict(&msg, &sig).is_ok() {
-                verified.push(vote.validator);
+                verified.insert(vote.validator);
             }
         }
         verified.len()
@@ -627,17 +630,21 @@ pub fn verify_finalized_history(
 
     // Leg 3: the COMMITTEE-ANCHORED quorum (super-ratification) check — a supermajority of the
     // TRUSTED committee, threshold taken over `committee.len()` (not the cert-supplied count).
-    if !cert.has_committee_quorum(committee) {
+    // Count the committee-anchored signers ONCE (each call re-verifies every vote's signature);
+    // the quorum gate, the rejection diagnostic, and the attestation all read this one count.
+    let quorum_signers = cert.distinct_committee_signers(committee);
+    let threshold = dregg_blocklace::ordering::supermajority_threshold(committee.len());
+    if quorum_signers < threshold {
         return Err(FinalizedError::NoQuorum {
-            distinct_signers: cert.distinct_committee_signers(committee),
-            threshold: dregg_blocklace::ordering::supermajority_threshold(committee.len()),
+            distinct_signers: quorum_signers,
+            threshold,
         });
     }
 
     Ok(FinalizedAttestation {
         history,
         finalized_root,
-        quorum_signers: cert.distinct_committee_signers(committee),
+        quorum_signers,
     })
 }
 

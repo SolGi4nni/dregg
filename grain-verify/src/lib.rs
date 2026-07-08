@@ -562,6 +562,10 @@ impl GrainAttestation {
     /// `committed_turns`. Returns how many linked. Run only AFTER the chain has
     /// been re-witnessed (the links ride the signed bodies).
     fn check_turn_links(&self, committed_turns: &[[u8; 32]]) -> Result<usize, GrainVerifyError> {
+        // O(1) membership over the manifest instead of a linear `any` per receipt — the
+        // loop below is otherwise O(receipts · committed_turns) in session length.
+        let committed: std::collections::HashSet<[u8; 32]> =
+            committed_turns.iter().copied().collect();
         let mut linked = 0usize;
         for r in &self.report.receipts {
             // The re-attach carryover genesis is a synthetic root step, not an
@@ -573,7 +577,7 @@ impl GrainAttestation {
             match link {
                 None => return Err(GrainVerifyError::R2Unlinked { seq: r.seq }),
                 Some(h) => {
-                    if !committed_turns.iter().any(|t| t == &h) {
+                    if !committed.contains(&h) {
                         return Err(GrainVerifyError::R2FabricatedLink {
                             seq: r.seq,
                             found: h,

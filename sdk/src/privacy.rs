@@ -1141,4 +1141,136 @@ mod tests {
             "a forged value claim must be REJECTED"
         );
     }
+
+    /// GATE-3 RUNTIME round-trip for the `StarkProof` → `Ir2BatchProof` wire migration,
+    /// exercised through the SDK's one migrated producer→consumer leg (the `note-spend-leaf`
+    /// descriptor). The proof blob is opaque `postcard` bytes, so `cargo build` cannot see the
+    /// byte-format flip (`stark::proof_to_bytes(StarkProof)` → `postcard(Ir2BatchProof)`) nor the
+    /// descriptor dispatch — this test is the gate the build cannot provide. It drives the exact
+    /// consumer contract the migration installs, through the REAL `prove_vm_descriptor2` /
+    /// `verify_vm_descriptor2` (never a mock):
+    ///   PRODUCER: honest full-width note-spend witness → `prove_vm_descriptor2` → `Ir2BatchProof`.
+    ///   WIRE:     `postcard`-encode (the NEW format); the blob carries NO air-name.
+    ///   CONSUMER: `verify_note_spending` decodes `postcard(Ir2BatchProof)` and checks it against the
+    ///             `note_spend_to_descriptor2()` descriptor via `verify_vm_descriptor2`.
+    /// NON-VACUOUS: the honest witness ACCEPTS, and each of a forged claim, a tampered blob, and a
+    /// cross-KIND descriptor is REJECTED (so the descriptor prover did not install a trivially-
+    /// accepting proof, and the descriptor dispatch is load-bearing).
+    #[test]
+    fn note_spend_wire_roundtrip_gate3() {
+        use std::panic::AssertUnwindSafe;
+
+        // ── PRODUCER: an honest local-spend witness (value < 2^30 ⇒ value_hi = 0, dest = 0). ──
+        let spending_key = key_to_field_elements(&[0x5Cu8; 32]);
+        let merkle_siblings = vec![
+            [BabyBear::new(7), BabyBear::new(8), BabyBear::new(9)],
+            [BabyBear::new(10), BabyBear::new(11), BabyBear::new(12)],
+        ];
+        let merkle_positions = vec![1u8, 0u8];
+        let witness = NoteSpendingWitness::from_note_limbs(
+            &[0xA1u8; 32],
+            2000,
+            3,
+            &[0xB2u8; 32],
+            &[0xC3u8; 32],
+            spending_key,
+            merkle_siblings,
+            merkle_positions,
+        );
+
+        let desc = note_spend_to_descriptor2().expect("descriptor builds");
+        let (mut trace, base_pis) = generate_note_spending_trace(&witness);
+        for row in &mut trace {
+            row.resize(NOTE_SPENDING_WIDTH + 3, BabyBear::ZERO);
+        }
+        let m1 = poseidon2::hash_fact(
+            base_pis[note_spend_pi::NULLIFIER],
+            &[
+                base_pis[note_spend_pi::MERKLE_ROOT],
+                base_pis[note_spend_pi::DESTINATION_FEDERATION],
+                base_pis[note_spend_pi::ASSET_TYPE],
+            ],
+        );
+        let mint = poseidon2::hash_fact(
+            m1,
+            &[
+                base_pis[note_spend_pi::VALUE],
+                base_pis[note_spend_pi::VALUE_HI],
+            ],
+        );
+        trace[0][NOTE_SPENDING_WIDTH] = base_pis[note_spend_pi::MERKLE_ROOT];
+        trace[0][NOTE_SPENDING_WIDTH + 1] = m1;
+        trace[0][NOTE_SPENDING_WIDTH + 2] = mint;
+        let claim = note_spend_leaf_public_inputs(&witness);
+        let proof =
+            prove_vm_descriptor2(&desc, &trace, &claim, &MemBoundaryWitness::default(), &[])
+                .expect("honest note-spend witness must prove through the descriptor");
+
+        // ── WIRE: the NEW opaque byte format = postcard(Ir2BatchProof). ──
+        let blob = postcard::to_allocvec(&proof).expect("postcard-encode the batch proof");
+        // The blob really is an Ir2BatchProof and NOT the retired StarkProof wire form.
+        let _decoded: Ir2BatchProof<DreggStarkConfig> =
+            postcard::from_bytes(&blob).expect("blob decodes as the migrated Ir2BatchProof");
+
+        let nullifier = claim[note_spend_pi::NULLIFIER];
+        let merkle_root = claim[note_spend_pi::MERKLE_ROOT];
+        let value = claim[note_spend_pi::VALUE];
+        let asset = claim[note_spend_pi::ASSET_TYPE];
+        assert_eq!(value, BabyBear::new(2000));
+        assert_eq!(
+            claim[note_spend_pi::VALUE_HI],
+            BabyBear::ZERO,
+            "value < 2^30"
+        );
+        assert_eq!(
+            claim[note_spend_pi::DESTINATION_FEDERATION],
+            BabyBear::ZERO,
+            "local spend"
+        );
+
+        // ── POSITIVE POLE: honest ACCEPT through the real consumer. ──
+        verify_note_spending(nullifier, merkle_root, value, asset, &blob)
+            .expect("honest note-spend proof must ACCEPT through verify_note_spending");
+
+        // ── NEGATIVE 1 — a forged claim (wrong value): the descriptor's value PiBinding bites. ──
+        assert!(
+            verify_note_spending(nullifier, merkle_root, value + BabyBear::ONE, asset, &blob)
+                .is_err(),
+            "a forged value claim must be REJECTED"
+        );
+        // and a forged asset.
+        assert!(
+            verify_note_spending(nullifier, merkle_root, value, asset + BabyBear::ONE, &blob)
+                .is_err(),
+            "a forged asset claim must be REJECTED"
+        );
+
+        // ── NEGATIVE 2 — a tampered blob (bit-flip in the postcard bytes). ──
+        let mut tampered = blob.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0xFF;
+        let tampered_rejected = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            verify_note_spending(nullifier, merkle_root, value, asset, &tampered)
+        }))
+        .map(|r| r.is_err())
+        .unwrap_or(true); // a decode/verify panic is itself a rejection
+        assert!(tampered_rejected, "a tampered proof blob must be REJECTED");
+
+        // ── NEGATIVE 3 — cross-KIND descriptor: the note-spend proof under a DFA descriptor.
+        // A wrong dispatch arm cannot launder the proof (structural mismatch → Err/panic). This
+        // pins that the descriptor dispatch is load-bearing, not decorative. ──
+        let dfa = dregg_circuit::descriptor_by_name::descriptor_by_name(
+            "dfa-routing-toggle-2state::poseidon2-v1",
+        )
+        .expect("the DFA descriptor dispatches");
+        let cross_kind_rejected = std::panic::catch_unwind(AssertUnwindSafe(|| {
+            verify_vm_descriptor2(&dfa, &proof, &claim)
+        }))
+        .map(|r| r.is_err())
+        .unwrap_or(true);
+        assert!(
+            cross_kind_rejected,
+            "verifying the note-spend proof under the wrong-KIND (DFA) descriptor must be REJECTED"
+        );
+    }
 }

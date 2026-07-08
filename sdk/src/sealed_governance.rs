@@ -563,8 +563,13 @@ pub struct SealedBallot {
     phase: Phase,
     submissions: Vec<Submission>,
     /// For the unlinkable mode: the spent nullifiers, parallel to `submissions`.
-    /// Empty in roster-bound mode.
+    /// Empty in roster-bound mode. Kept ordered because `tally` reads index `i` to
+    /// line each seal up with its public nullifier.
     nullifiers: Vec<[u8; 32]>,
+    /// An O(1)-membership mirror of `nullifiers` for the double-vote check in
+    /// `collect_unlinkable` — the ordered `nullifiers` Vec stays authoritative for
+    /// the position-parallel tally; this only replaces its linear `contains` scan.
+    nullifier_set: std::collections::HashSet<[u8; 32]>,
     unlinkable: bool,
     closed_transcript: Option<[u8; 32]>,
 }
@@ -580,6 +585,7 @@ impl SealedBallot {
             phase: Phase::Collecting,
             submissions: Vec::new(),
             nullifiers: Vec::new(),
+            nullifier_set: std::collections::HashSet::new(),
             unlinkable: false,
             closed_transcript: None,
         }
@@ -649,9 +655,10 @@ impl SealedBallot {
         if self.phase != Phase::Collecting {
             return Err(GovernanceError::WrongPhase);
         }
-        if self.nullifiers.contains(&ballot.nullifier) {
+        if self.nullifier_set.contains(&ballot.nullifier) {
             return Err(GovernanceError::DoubleVote);
         }
+        self.nullifier_set.insert(ballot.nullifier);
         self.nullifiers.push(ballot.nullifier);
         self.submissions.push(ballot.submission);
         Ok(())

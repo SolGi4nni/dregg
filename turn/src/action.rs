@@ -641,11 +641,15 @@ impl core::fmt::Display for StarkDelegationBindingError {
 /// recursion/prover dependency), so the inspector/wasm verifier runs the *same*
 /// binding check the in-ledger executor runs.
 ///
-/// Note: this does NOT run the STARK FRI verification of `proof_bytes` itself
-/// (that is the executor's `EffectVmAir` leg, which is a v1-floor artifact gated
-/// to `not(feature = "prover")`). It establishes that the proof is *bound to
-/// this scope*; a verifier that also has the FRI/AIR leg available composes the
-/// two.
+/// The proof blob is the IR-v2 wire format (`postcard(Ir2BatchProof)`). This runs
+/// the FULL [`verify_vm_descriptor2`](dregg_circuit::descriptor_ir2::verify_vm_descriptor2)
+/// batch verification against the [`delegate_binding_descriptor`](dregg_circuit::delegate_descriptor::delegate_binding_descriptor):
+/// its 24 row-0 `PiBinding`s pin every scope limb to the recomputed
+/// `stark_delegation_expected_public_inputs`, so the proof verifies iff it was
+/// minted for EXACTLY this scope. The scope-forge rejection that the old
+/// executor-side field compare performed is now enforced in-circuit by the batch
+/// STARK (a proof bound to scope `A` fails to verify against any forged wider
+/// scope `B` — the boundary constraint is UNSAT).
 pub fn verify_stark_delegation_binding(
     proof_bytes: &[u8],
     root_issuer_commitment: &[u8; 32],
@@ -653,9 +657,17 @@ pub fn verify_stark_delegation_binding(
     permissions: &AuthRequired,
     expires_at: u64,
     federation_id: &[u8; 32],
-) -> Result<dregg_circuit::stark::StarkProof, StarkDelegationBindingError> {
-    let stark_proof = dregg_circuit::stark::proof_from_bytes(proof_bytes)
-        .map_err(StarkDelegationBindingError::Deserialization)?;
+) -> Result<
+    dregg_circuit::descriptor_ir2::Ir2BatchProof<dregg_circuit::descriptor_ir2::DreggStarkConfig>,
+    StarkDelegationBindingError,
+> {
+    use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
+
+    // Decode the IR-v2 batch proof (the wire format `postcard(Ir2BatchProof)`).
+    let proof: Ir2BatchProof<DreggStarkConfig> = postcard::from_bytes(proof_bytes)
+        .map_err(|e| StarkDelegationBindingError::Deserialization(e.to_string()))?;
+
+    // The canonical 24-limb scope vector for the grant being exercised.
     let expected = stark_delegation_expected_public_inputs(
         target,
         permissions,
@@ -663,18 +675,16 @@ pub fn verify_stark_delegation_binding(
         federation_id,
         root_issuer_commitment,
     );
-    if stark_proof.public_inputs.len() < expected.len() {
-        return Err(StarkDelegationBindingError::TooFewPublicInputs {
-            have: stark_proof.public_inputs.len(),
-            expected: expected.len(),
-        });
-    }
-    for (i, exp) in expected.iter().enumerate() {
-        if dregg_circuit::field::BabyBear(stark_proof.public_inputs[i]) != *exp {
-            return Err(StarkDelegationBindingError::PublicInputMismatch { index: i });
-        }
-    }
-    Ok(stark_proof)
+
+    // Full in-circuit binding verification against the delegation descriptor: its
+    // 24 row-0 `PiBinding`s pin every scope limb to `expected[i]`, so the proof
+    // verifies iff it was minted for EXACTLY this scope. A relayed proof bound to a
+    // narrower grant commits to a different scope vector and the binding is UNSAT.
+    let desc = dregg_circuit::delegate_descriptor::delegate_binding_descriptor();
+    verify_vm_descriptor2(&desc, &proof, &expected)
+        .map_err(|_| StarkDelegationBindingError::PublicInputMismatch { index: 0 })?;
+
+    Ok(proof)
 }
 
 impl Authorization {

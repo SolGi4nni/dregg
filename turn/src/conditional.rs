@@ -16,7 +16,8 @@
 use std::collections::HashSet;
 
 use dregg_circuit::BabyBear;
-use dregg_circuit::stark;
+use dregg_circuit::descriptor_by_name::descriptor_by_name;
+use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
 use serde::{Deserialize, Serialize};
 
 use crate::error::TurnError;
@@ -166,14 +167,20 @@ pub enum ConditionProof {
     Preimage([u8; 32]),
     /// Present a STARK proof (for RemoteProof or LocalProof conditions).
     StarkProof {
-        /// Serialized proof bytes.
+        /// The IR-v2 batch proof, wire-encoded as `postcard(Ir2BatchProof)`.
+        ///
+        /// This blob carries NO air-name of its own — it is prover-controlled and
+        /// MUST NOT choose the constraint semantics it is checked against. The
+        /// verifier resolves the descriptor from the condition's committed
+        /// predicate identity (`air_name` below, checked `== expected_air`) via
+        /// [`descriptor_by_name`] and verifies with [`verify_vm_descriptor2`].
         proof_bytes: Vec<u8>,
         /// The federation root this proof was generated against.
         federation_root: [u8; 32],
-        /// Public inputs / outputs from the proof.
+        /// The public inputs the descriptor binds (canonical `u32` field elements).
         public_outputs: Vec<u32>,
-        /// The AIR identifier this proof was generated for.
-        /// Must match `expected_air` in the condition.
+        /// The descriptor identity (`descriptor_by_name` dispatch key) this proof
+        /// was generated for. Must match `expected_air` in the condition.
         air_name: String,
     },
     /// Present a turn receipt (for TurnExecuted conditions).
@@ -323,36 +330,39 @@ fn resolve_inner(
                 return ConditionalResult::InvalidProof("proof bytes are empty".to_string());
             }
 
-            // Deserialize and verify the STARK proof cryptographically.
-            let stark_proof = match stark::proof_from_bytes(proof_bytes) {
-                Ok(p) => p,
-                Err(e) => {
-                    return ConditionalResult::InvalidProof(format!(
-                        "proof deserialization failed: {}",
-                        e
-                    ));
-                }
-            };
-
-            // Reconstruct public inputs as BabyBear field elements.
-            let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
-
-            // Verify the STARK proof using DSL circuit dispatch.
-            // FAIL-CLOSED: an AIR name with no registered descriptor is REFUSED —
-            // falling back to a default circuit would let the prover choose the
-            // constraint semantics the verifier checks against.
-            let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(
-                &stark_proof.air_name,
-            ) {
-                Some(c) => c,
+            // Resolve the IR-v2 descriptor from the CONDITION's committed predicate
+            // identity (`air_name`, already checked `== expected_air`). FAIL-CLOSED:
+            // an AIR name with no registered descriptor is REFUSED. The proof blob is
+            // prover-controlled and carries NO air-name of its own — the verifier
+            // never lets the blob choose the constraint semantics it is checked
+            // against (the #1 migration danger).
+            let descriptor = match descriptor_by_name(air_name) {
+                Some(d) => d,
                 None => {
                     return ConditionalResult::InvalidProof(format!(
                         "unknown AIR '{}': no registered circuit descriptor — refusing to verify",
-                        stark_proof.air_name
+                        air_name
                     ));
                 }
             };
-            if stark::verify(&circuit, &stark_proof, &pi).is_err() {
+
+            // Decode the IR-v2 batch proof (the wire format `postcard(Ir2BatchProof)`).
+            let batch_proof: Ir2BatchProof<DreggStarkConfig> =
+                match postcard::from_bytes(proof_bytes) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return ConditionalResult::InvalidProof(format!(
+                            "proof deserialization failed: {}",
+                            e
+                        ));
+                    }
+                };
+
+            // Reconstruct the public inputs the descriptor binds as BabyBear elements.
+            let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
+
+            // Verify the batch proof against the dispatched descriptor + public inputs.
+            if verify_vm_descriptor2(&descriptor, &batch_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
 
@@ -390,34 +400,37 @@ fn resolve_inner(
                 return ConditionalResult::InvalidProof("proof bytes are empty".to_string());
             }
 
-            // Deserialize and verify the STARK proof cryptographically.
-            let stark_proof = match stark::proof_from_bytes(proof_bytes) {
-                Ok(p) => p,
-                Err(e) => {
-                    return ConditionalResult::InvalidProof(format!(
-                        "proof deserialization failed: {}",
-                        e
-                    ));
-                }
-            };
-
-            // Reconstruct public inputs as BabyBear field elements.
-            let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
-
-            // Verify the STARK proof using DSL circuit dispatch.
-            // FAIL-CLOSED: unknown AIR names are refused (see RemoteProof arm).
-            let circuit = match dregg_dsl_runtime::descriptors::circuit_for_air_name(
-                &stark_proof.air_name,
-            ) {
-                Some(c) => c,
+            // Resolve the IR-v2 descriptor from the CONDITION's committed predicate
+            // identity (`air_name`, already checked `== expected_air`).
+            // FAIL-CLOSED: unknown AIR names are refused (see RemoteProof arm). The
+            // proof blob never chooses the descriptor it is checked against.
+            let descriptor = match descriptor_by_name(air_name) {
+                Some(d) => d,
                 None => {
                     return ConditionalResult::InvalidProof(format!(
                         "unknown AIR '{}': no registered circuit descriptor — refusing to verify",
-                        stark_proof.air_name
+                        air_name
                     ));
                 }
             };
-            if stark::verify(&circuit, &stark_proof, &pi).is_err() {
+
+            // Decode the IR-v2 batch proof (the wire format `postcard(Ir2BatchProof)`).
+            let batch_proof: Ir2BatchProof<DreggStarkConfig> =
+                match postcard::from_bytes(proof_bytes) {
+                    Ok(p) => p,
+                    Err(e) => {
+                        return ConditionalResult::InvalidProof(format!(
+                            "proof deserialization failed: {}",
+                            e
+                        ));
+                    }
+                };
+
+            // Reconstruct the public inputs the descriptor binds as BabyBear elements.
+            let pi: Vec<BabyBear> = public_outputs.iter().map(|&v| BabyBear::new(v)).collect();
+
+            // Verify the batch proof against the dispatched descriptor + public inputs.
+            if verify_vm_descriptor2(&descriptor, &batch_proof, &pi).is_err() {
                 return ConditionalResult::InvalidProof("STARK verification failed".to_string());
             }
 
@@ -553,52 +566,58 @@ pub fn burn_conditional_deposit(_conditional: &ConditionalTurn) -> u64 {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_circuit::stark::{self as circuit_stark, proof_to_bytes};
-    use dregg_dsl_runtime::descriptors::merkle_poseidon2_circuit;
-    use dregg_dsl_runtime::membership::generate_merkle_poseidon2_trace;
+    use dregg_circuit::descriptor_by_name::MEMBERSHIP_GENERAL_NAME_PREFIX;
+    use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+    use dregg_circuit::membership_descriptor_general::{MembershipStep, membership_witness};
 
     fn nullifiers() -> HashSet<[u8; 32]> {
         HashSet::new()
     }
 
-    /// Generate a valid STARK proof for the DSL Merkle Poseidon2 circuit with the given
-    /// public outputs (as raw u32 values). Returns (proof_bytes, public_outputs).
+    /// The descriptor identity used by the STARK-proof fixtures: a depth-4
+    /// Poseidon2 Merkle-membership descriptor (the depth-general builder). It is a
+    /// REAL registered descriptor (`descriptor_by_name` dispatches it), so the
+    /// resolve path exercises the production dispatch + `verify_vm_descriptor2`.
+    const FIXTURE_DEPTH: usize = 4;
+
+    fn membership_air_name() -> String {
+        format!("{MEMBERSHIP_GENERAL_NAME_PREFIX}{FIXTURE_DEPTH}")
+    }
+
+    /// Generate a valid IR-v2 batch proof for the depth-general Merkle-membership
+    /// descriptor with a leaf derived from `leaf_val`. Returns
+    /// `(postcard(Ir2BatchProof), public_outputs)` where `public_outputs == [leaf, root]`
+    /// — the exact wire shape a migrated `ConditionProof::StarkProof` carries.
     fn generate_valid_stark_proof(leaf_val: u32) -> (Vec<u8>, Vec<u32>) {
-        let leaf_hash = BabyBear::new(leaf_val);
-        let siblings = [
-            [BabyBear::new(100), BabyBear::new(200), BabyBear::new(300)],
-            [BabyBear::new(400), BabyBear::new(500), BabyBear::new(600)],
-            [BabyBear::new(700), BabyBear::new(800), BabyBear::new(900)],
-            [
-                BabyBear::new(1000),
-                BabyBear::new(1100),
-                BabyBear::new(1200),
-            ],
-        ];
-        let positions: [u8; 4] = [0, 1, 2, 3];
-        let (trace, public_inputs) =
-            generate_merkle_poseidon2_trace(leaf_hash, &siblings, &positions);
-        let circuit = merkle_poseidon2_circuit();
-        let proof = circuit_stark::prove(&circuit, &trace, &public_inputs);
-        let proof_bytes = proof_to_bytes(&proof);
-        let public_outputs: Vec<u32> = public_inputs.iter().map(|bb| bb.0).collect();
+        let leaf = BabyBear::new(leaf_val);
+        let path: Vec<MembershipStep> = (0..FIXTURE_DEPTH)
+            .map(|i| MembershipStep {
+                sibling: BabyBear::new(1000 + i as u32),
+                dir: i % 2 == 1,
+            })
+            .collect();
+        let desc = descriptor_by_name(&membership_air_name())
+            .expect("depth-general membership descriptor dispatches");
+        let (trace, pis) = membership_witness(leaf, &path).expect("honest membership witness");
+        let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+            .expect("honest membership witness must prove");
+        let proof_bytes =
+            postcard::to_allocvec(&proof).expect("postcard-encode the IR-v2 batch proof");
+        let public_outputs: Vec<u32> = pis.iter().map(|bb| bb.0).collect();
         (proof_bytes, public_outputs)
     }
 
-    /// Task #163 fail-closed regression: a proof carrying an AIR name that does
-    /// not resolve to a registered circuit descriptor must be REFUSED with a
-    /// typed, loud `InvalidProof` naming the unknown AIR — never dispatched to
-    /// a default circuit. (Previously unknown names fell through to
-    /// `merkle_poseidon2_circuit()` and were only rejected incidentally by the
-    /// air-name binding inside `stark::verify`.)
+    /// Task #163 fail-closed regression, descriptor world: a `ConditionProof`
+    /// carrying an AIR name that `descriptor_by_name` does not resolve must be
+    /// REFUSED with a typed, loud `InvalidProof` naming the unknown AIR — never
+    /// dispatched to a stand-in descriptor. Dispatch happens BEFORE the (opaque,
+    /// prover-controlled) proof blob is ever decoded, so an unknown predicate is
+    /// rejected regardless of what the blob contains.
     #[test]
     fn unknown_air_refused_remote_proof() {
         let fed_root = [7u8; 32];
+        // An otherwise-valid IR-v2 proof, but the condition names an unregistered AIR.
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(777);
-        // Relabel the otherwise-valid proof with an unregistered AIR name.
-        let mut stark_proof = circuit_stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
-        stark_proof.air_name = "evil-unregistered-air-v0".to_string();
-        let relabeled_bytes = proof_to_bytes(&stark_proof);
 
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
@@ -606,7 +625,7 @@ mod tests {
             expected_conclusion: public_outputs[0],
         };
         let proof = ConditionProof::StarkProof {
-            proof_bytes: relabeled_bytes,
+            proof_bytes,
             federation_root: fed_root,
             public_outputs,
             air_name: "evil-unregistered-air-v0".to_string(),
@@ -634,16 +653,13 @@ mod tests {
     #[test]
     fn unknown_air_refused_local_proof() {
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(778);
-        let mut stark_proof = circuit_stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
-        stark_proof.air_name = "evil-unregistered-air-v0".to_string();
-        let relabeled_bytes = proof_to_bytes(&stark_proof);
 
         let condition = ProofCondition::LocalProof {
             expected_air: "evil-unregistered-air-v0".to_string(),
             expected_public_inputs: public_outputs.clone(),
         };
         let proof = ConditionProof::StarkProof {
-            proof_bytes: relabeled_bytes,
+            proof_bytes,
             federation_root: [0u8; 32],
             public_outputs,
             air_name: "evil-unregistered-air-v0".to_string(),
@@ -670,16 +686,13 @@ mod tests {
     #[test]
     fn empty_air_name_refused_local_proof() {
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(779);
-        let mut stark_proof = circuit_stark::proof_from_bytes(&proof_bytes).expect("roundtrip");
-        stark_proof.air_name = String::new();
-        let relabeled_bytes = proof_to_bytes(&stark_proof);
 
         let condition = ProofCondition::LocalProof {
             expected_air: String::new(),
             expected_public_inputs: public_outputs.clone(),
         };
         let proof = ConditionProof::StarkProof {
-            proof_bytes: relabeled_bytes,
+            proof_bytes,
             federation_root: [0u8; 32],
             public_outputs,
             air_name: String::new(),
@@ -768,14 +781,14 @@ mod tests {
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(12345);
         let condition = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
+            expected_air: membership_air_name(),
             expected_conclusion: public_outputs[0],
         };
         let proof = ConditionProof::StarkProof {
             proof_bytes,
             federation_root: fed_root,
             public_outputs,
-            air_name: "dregg-merkle-poseidon2-v1".to_string(),
+            air_name: membership_air_name(),
         };
         let trusted = vec![(fed_root, 5u64)];
         let mut n = nullifiers();
@@ -853,14 +866,14 @@ mod tests {
     fn test_local_proof_resolved() {
         let (proof_bytes, public_outputs) = generate_valid_stark_proof(54321);
         let condition = ProofCondition::LocalProof {
-            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
+            expected_air: membership_air_name(),
             expected_public_inputs: public_outputs.clone(),
         };
         let proof = ConditionProof::StarkProof {
             proof_bytes,
             federation_root: [0u8; 32],
             public_outputs,
-            air_name: "dregg-merkle-poseidon2-v1".to_string(),
+            air_name: membership_air_name(),
         };
         let mut n = nullifiers();
         let result = resolve_condition(
@@ -1327,12 +1340,12 @@ mod tests {
         // could both be satisfied by the same proof if we didn't have nullifiers.
         let condition_1 = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
+            expected_air: membership_air_name(),
             expected_conclusion: public_outputs[0],
         };
         let condition_2 = ProofCondition::RemoteProof {
             federation_root: fed_root,
-            expected_air: "dregg-merkle-poseidon2-v1".to_string(),
+            expected_air: membership_air_name(),
             expected_conclusion: public_outputs[0],
         };
 
@@ -1341,7 +1354,7 @@ mod tests {
             proof_bytes,
             federation_root: fed_root,
             public_outputs,
-            air_name: "dregg-merkle-poseidon2-v1".to_string(),
+            air_name: membership_air_name(),
         };
 
         let mut used = nullifiers();

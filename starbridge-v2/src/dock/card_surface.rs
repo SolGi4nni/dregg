@@ -2348,6 +2348,130 @@ impl CockpitSurface for ChatCardSurface {
 }
 
 // ===========================================================================
+// THE DREGG-NATIVE FORGE CARD as a dock surface — a repo / diff / pull-request /
+// review-thread painted by the SAME `CardPane` renderer over an INERT (read-only)
+// substance. The forge core (`PullRequest`/pushout-merge/`ConflictRegion`/CI/review)
+// lives in the EXCLUDED `dregg-doc` workspace, so the mount carries the
+// self-contained `deos_view::ForgeView` snapshot (opaque data at the boundary, the
+// `card_carry` decoupling) and renders THAT — the live `From<PullRequest>` wiring in
+// `dregg-doc` is the thin follow-up. The forge card has no affordances (a read-only
+// survey, like the directory / proofs cards), so its substance is inert: a fire is
+// refused, no slot advances.
+// ===========================================================================
+
+/// The forge card's INERT read-only substance — the forge surface is a survey (no
+/// affordances yet), so it reads no live slots and fires nothing. `cell()` is a stable
+/// nil cell (the card carries no `bind` nodes, so nothing registers on it) and `fire`
+/// is refused (a read-only card, the same posture as the directory / proofs cards whose
+/// genuine actions stay in the gpui panel).
+struct ForgeCardSubstance;
+
+impl CardSubstance for ForgeCardSubstance {
+    fn cell(&self) -> CellId {
+        // The forge card has no `bind`/`gauge` nodes, so no binding registers on this
+        // cell; a stable nil id is the honest "no live sovereign backing" marker.
+        CellId::ZERO
+    }
+    fn receipt_count(&self) -> usize {
+        0
+    }
+    fn get_u64(&self, _slot: usize) -> u64 {
+        0
+    }
+    fn get_view(&self, _key: &str) -> Option<String> {
+        None
+    }
+    fn fire(&mut self, method: &str, _arg: i64) -> Result<(), String> {
+        Err(format!(
+            "forge card: read-only survey — no affordance '{method}' (actions land in the forge panel)"
+        ))
+    }
+}
+
+/// The forge card mounted as a [`CockpitSurface`] — the [`CardPane`] gpui entity (the
+/// same renderer every other card mounts through) over the inert [`ForgeCardSubstance`].
+pub struct ForgeCardSurface {
+    id: SurfaceId,
+    entity: Entity<CardPane>,
+    focus: FocusHandle,
+}
+
+/// **Mount the forge card as a dock surface** — the same bridge shape as the composer /
+/// chat cards: project the [`deos_view::ForgeView`] to the renderer-independent
+/// `deos.ui.*` view-tree ([`deos_view::forge_view_json`]), bridge it through the
+/// canonical [`deos_view::parse_view_tree`], and host the resulting [`CardPane`] over the
+/// inert read-only substance. So the SAME repo / diff / PR / review card that paints in
+/// the browser (`deos_view::web::render_html`) and Discord (`deos_view::discord`) paints
+/// in the cockpit's native glass.
+///
+/// A build error is returned for the caller to surface fail-soft.
+#[allow(clippy::result_large_err)]
+pub fn build_forge_card_surface(
+    id: u64,
+    forge: deos_view::ForgeView,
+    cx: &mut App,
+) -> Result<ForgeCardSurface, String> {
+    // Project the forge snapshot to the renderer-independent view-tree and bridge it into
+    // the renderer's `ViewNode` (the same JSON every renderer — native / web / discord /
+    // seL4 viewer — parses).
+    let json = deos_view::forge_view_json(&forge);
+    let tree: ViewNode = deos_view::parse_view_tree(&json)
+        .map_err(|e| format!("forge card view-tree bridge: {e}"))?;
+
+    let title = if forge.repo.name.is_empty() {
+        "forge · repo · diff · pull request (deos-view card)".to_string()
+    } else {
+        format!("forge · {} (deos-view card)", forge.repo.name)
+    };
+
+    let sub_dyn: CardSubstanceRef = Rc::new(RefCell::new(ForgeCardSubstance));
+    let entity = cx.new(|_cx| CardPane::new_substance(sub_dyn, tree, title));
+
+    Ok(ForgeCardSurface {
+        id: SurfaceId(id),
+        entity,
+        focus: cx.focus_handle(),
+    })
+}
+
+impl ForgeCardSurface {
+    /// The [`CardPane`] gpui entity (for a host that mounts the card body directly).
+    pub fn entity_handle(&self) -> Entity<CardPane> {
+        self.entity.clone()
+    }
+}
+
+impl CockpitSurface for ForgeCardSurface {
+    fn item_id(&self) -> SurfaceId {
+        self.id
+    }
+
+    fn tab_label(&self) -> SharedString {
+        SharedString::from("forge")
+    }
+
+    fn render_body(&mut self, _window: &mut Window, cx: &mut App) -> AnyElement {
+        self.entity.update(cx, |_card, cx| cx.notify());
+        div()
+            .size_full()
+            .child(self.entity.clone())
+            .into_any_element()
+    }
+
+    fn focus_handle(&self, _cx: &App) -> FocusHandle {
+        self.focus.clone()
+    }
+
+    fn boxed_clone(&self) -> Box<dyn CockpitSurface> {
+        Box::new(ForgeCardSurface {
+            id: self.id,
+            entity: self.entity.clone(),
+            focus: self.focus.clone(),
+        })
+    }
+}
+
+// ===========================================================================
 // TESTS — the stateful cards render LIVE state, not stale data. The honesty
 // claim: a carded surface reflects the SAME live cockpit state its gpui panel
 // shows. These exercise the pure view-builders over the render-models (the same
@@ -2697,5 +2821,59 @@ mod tests {
             find_input(&tree).expect("the parsed tree carries the composer input");
         assert_eq!(bind_view, CHAT_DRAFT_KEY);
         assert_eq!(fire_turn, CHAT_SEND_TURN);
+    }
+
+    /// FORGE: the forge card's mount data-path — the `deos_view::ForgeView` snapshot
+    /// projects through the SAME canonical bridge `build_forge_card_surface` uses
+    /// (`forge_view_json` → `parse_view_tree` → a `tabs` ViewNode), and its inert
+    /// substance is genuinely read-only (a fire is refused). This exercises everything
+    /// the mount does except the gpui `cx.new` entity host (which needs a live `App`).
+    #[test]
+    fn forge_card_bridges_and_the_substance_is_read_only() {
+        let forge = deos_view::ForgeView {
+            repo: deos_view::Repo {
+                name: "cell-git".to_string(),
+                files: vec![deos_view::FileEntry {
+                    path: "src/lib.rs".to_string(),
+                    status: deos_view::FileStatus::Modified,
+                }],
+            },
+            pull_request: Some(deos_view::PullRequest {
+                title: "mount smoke".to_string(),
+                base: "main".to_string(),
+                head: "forge".to_string(),
+                diff: vec![],
+                conflicts: vec![],
+                checks: vec![deos_view::CheckView {
+                    name: "build".to_string(),
+                    status: deos_view::CheckStatus::Passed,
+                }],
+                review: vec![],
+            }),
+        };
+
+        // The exact bridge the mount performs: project → parse → a `tabs` ViewNode.
+        let json = deos_view::forge_view_json(&forge);
+        let tree = deos_view::parse_view_tree(&json)
+            .expect("the forge projection parses through the canonical bridge");
+        assert!(
+            matches!(tree, ViewNode::Tabs { .. }),
+            "the forge card is a tabs tree (repo + pull request)"
+        );
+        assert!(json.contains("mount smoke"), "the PR title bridges through");
+        assert!(
+            json.contains("ready to merge"),
+            "the clean merge-gate bridges through"
+        );
+
+        // The substance is inert: reads are zero, and a fire is refused (read-only card).
+        let mut sub = ForgeCardSubstance;
+        assert_eq!(sub.cell(), CellId::ZERO);
+        assert_eq!(sub.get_u64(0), 0);
+        assert!(sub.get_view("anything").is_none());
+        assert!(
+            sub.fire("merge", 0).is_err(),
+            "the forge card fires nothing — a read-only survey"
+        );
     }
 }

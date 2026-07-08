@@ -281,6 +281,58 @@ pub fn verify_receipt_chain_with_keys(
     Ok(())
 }
 
+/// Verify a receipt's Ed25519 executor signature IN ISOLATION.
+///
+/// Unlike [`verify_receipt_chain_with_keys`], this performs NO genesis /
+/// `previous_receipt_hash` / hash-chain / state-continuity checks. It answers
+/// exactly one question: does this receipt carry a genuine executor signature
+/// over its canonical executor-signed message that verifies against one of
+/// `executor_pubkeys`?
+///
+/// This is the primitive a point-verifier (e.g. the forge's required-check
+/// gate) needs when the receipt is NOT the genesis of a chain — a check turn
+/// that is the second (or later) edit on its document carries
+/// `previous_receipt_hash = Some(..)`, which [`verify_receipt_chain_with_keys`]
+/// (treating element [0] as a chain genesis) hard-rejects. Here we ignore the
+/// chain position entirely and only bind the executor's authorship.
+///
+/// A receipt with no `executor_signature` is rejected with
+/// [`VerifyError::ExecutorSignatureInvalid`] (an absent signature is not a
+/// pass): callers wanting to distinguish "unsigned" from "wrong signer" should
+/// pre-check `receipt.executor_signature.is_none()` themselves.
+///
+/// The signature is checked over [`TurnReceipt::canonical_executor_signed_message`]
+/// — the exact message the executor produces (Stage 9 R-4) and the exact bytes
+/// [`verify_receipt_chain_with_keys`] checks; this reproduces that check WITHOUT
+/// the chain constraints.
+pub fn verify_receipt_signature_with_keys(
+    receipt: &TurnReceipt,
+    executor_pubkeys: &[[u8; 32]],
+) -> Result<(), VerifyError> {
+    let Some(ref sig_bytes) = receipt.executor_signature else {
+        return Err(VerifyError::ExecutorSignatureInvalid { index: 0 });
+    };
+    if sig_bytes.len() != 64 {
+        return Err(VerifyError::ExecutorSignatureInvalid { index: 0 });
+    }
+    let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
+    // Stage 9 R-4: the executor signs the canonical narrow message (see
+    // `TurnReceipt::canonical_executor_signed_message`), not the full
+    // `receipt_hash()`. Verifiers reproduce that message here.
+    let msg = receipt.canonical_executor_signed_message();
+    let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
+
+    for pubkey_bytes in executor_pubkeys {
+        if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(pubkey_bytes) {
+            if vk.verify_strict(&msg, &signature).is_ok() {
+                return Ok(());
+            }
+        }
+    }
+
+    Err(VerifyError::ExecutorSignatureInvalid { index: 0 })
+}
+
 /// Sign a receipt with the given Ed25519 signing key.
 /// Returns the 64-byte signature over
 /// [`TurnReceipt::canonical_executor_signed_message`] (Stage 9 R-4).
@@ -538,6 +590,73 @@ mod tests {
         let err = verify_receipt_chain_with_keys(&[tampered], &[pk])
             .expect_err("tampered post_state_hash must invalidate executor signature");
         assert!(matches!(err, VerifyError::ExecutorSignatureInvalid { .. }));
+    }
+
+    /// FIX #2: `verify_receipt_signature_with_keys` verifies a correctly-signed
+    /// receipt IN ISOLATION — crucially, one whose `previous_receipt_hash` is
+    /// `Some(..)` (a NON-genesis receipt, e.g. a reviewer's approval posted
+    /// after a comment). `verify_receipt_chain_with_keys` rejects that as
+    /// `GenesisHasPrevious`; the isolated signature check must NOT.
+    #[test]
+    fn test_verify_receipt_signature_non_genesis_isolated() {
+        let agent = CellId::from_bytes([1u8; 32]);
+        // A receipt that is NOT the first on its chain: previous_receipt_hash is Some.
+        let mut receipt = make_receipt(agent, [1u8; 32], [2u8; 32], Some([7u8; 32]));
+        receipt.timestamp = 0xC0FFEE;
+        receipt.turn_hash = [0xAB; 32];
+
+        let signing_seed = [0x42u8; 32];
+        receipt.executor_signature = Some(sign_receipt(&receipt, &signing_seed));
+        let pk = ed25519_dalek::SigningKey::from_bytes(&signing_seed)
+            .verifying_key()
+            .to_bytes();
+
+        // The isolated signature check ACCEPTS the non-genesis receipt.
+        verify_receipt_signature_with_keys(&receipt, &[pk])
+            .expect("a correctly-signed non-genesis receipt verifies in isolation");
+
+        // The chain check would (wrongly, for a point verifier) reject it as
+        // GenesisHasPrevious — the exact false negative FIX #2 removes.
+        let chain_err = verify_receipt_chain_with_keys(&[receipt.clone()], &[pk]).unwrap_err();
+        assert!(matches!(chain_err, VerifyError::GenesisHasPrevious { .. }));
+    }
+
+    /// The isolated check's negatives: wrong key, tampered body, unsigned.
+    #[test]
+    fn test_verify_receipt_signature_negatives() {
+        let agent = CellId::from_bytes([1u8; 32]);
+        let mut receipt = make_receipt(agent, [1u8; 32], [2u8; 32], Some([7u8; 32]));
+        receipt.turn_hash = [0xAB; 32];
+        let signing_seed = [0x42u8; 32];
+        receipt.executor_signature = Some(sign_receipt(&receipt, &signing_seed));
+        let pk = ed25519_dalek::SigningKey::from_bytes(&signing_seed)
+            .verifying_key()
+            .to_bytes();
+
+        // Untrusted key → refused.
+        assert!(matches!(
+            verify_receipt_signature_with_keys(&receipt, &[[0x99u8; 32]]).unwrap_err(),
+            VerifyError::ExecutorSignatureInvalid { .. }
+        ));
+        // Empty key set → refused.
+        assert!(matches!(
+            verify_receipt_signature_with_keys(&receipt, &[]).unwrap_err(),
+            VerifyError::ExecutorSignatureInvalid { .. }
+        ));
+        // Tampered signed field → signature no longer verifies.
+        let mut tampered = receipt.clone();
+        tampered.post_state_hash = [0xFF; 32];
+        assert!(matches!(
+            verify_receipt_signature_with_keys(&tampered, &[pk]).unwrap_err(),
+            VerifyError::ExecutorSignatureInvalid { .. }
+        ));
+        // Unsigned → refused (absent signature is not a pass).
+        let mut unsigned = receipt.clone();
+        unsigned.executor_signature = None;
+        assert!(matches!(
+            verify_receipt_signature_with_keys(&unsigned, &[pk]).unwrap_err(),
+            VerifyError::ExecutorSignatureInvalid { .. }
+        ));
     }
 
     #[test]

@@ -6746,3 +6746,19 @@ leave a receipt — all on the verified substrate.
 - **storage::commitment from_leaves doesn't bind leaf COUNT across the zero-pad pow2 boundary.**
 Wave-2 DONE: DAS index-fix (a6b0dcccf), inverted-deadline fix (2b986558d, kernel-verified two-pole),
 honesty-2 (0a7842ba8), commitment/content/wal bound. 2 real BUGS fixed + 3 residuals named.
+
+## ⚑ VISITOR-SIDE VERIFICATION WELD (2026-07-08) — make "the host cannot lie" TRUE for *.dregg.works
+Ground truth (ember-prompted): hello.dregg.works serves plain HTML — NO in-browser verification exists;
+only the publish-side commitment (cap-gated receipted turn, hash on-ledger) is real. Site copy corrected on
+dregg.net + site/deep in the same breath (commitment real / visitor-side check = named open half).
+CLOSURE LANE: the ./extension as the independent trust anchor (a page can't verify itself — a tamperer
+strips the verifier). Flow: on *.dregg.works load → hash received bytes → read the site cell's committed
+root from a node (LC-verified if possible) → compare → badge/fail-visible. Scout dispatched for: extension
+rot state, the commitment read path, DreggNet SiteHostHandler byte-identity, and the exact publish hash
+discipline. Design lands as docs/VISITOR-VERIFY-WELD.md when grounded.
+- EXTENSION of the visitor-verify weld (ember, same session): the STARBRIDGE-NATIVE path — the cockpit's
+  servo web-shell verifies *.dregg.works loads against the ledger NATIVELY (verdict chip + fail-closed
+  option); dregg:// is presumably already the verified path (confirm). Design = ONE shared verification
+  core (fetch→hash→commitment-read→verdict), two skins: the browser extension (their browser) + the
+  servo pane (our browser). Second scout dispatched (servo byte-interception points, net-cap choke point,
+  existing Rust verify cores, cockpit verdict UX slots). Both scouts feed docs/VISITOR-VERIFY-WELD.md.

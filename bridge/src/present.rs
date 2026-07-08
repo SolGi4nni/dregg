@@ -379,6 +379,78 @@ pub struct WirePresentationProof {
     pub composition_commitment: WideHash,
 }
 
+/// The NEW IR-v2 issuer-membership wire triple — the flipped replacement for the
+/// opaque `stark::proof_to_bytes(RealPresentationProof.issuer_membership_stark_proof)`
+/// encoding on the `StarkProof` → `Ir2BatchProof` migration.
+///
+/// * `predicate` — the descriptor identity the CONSUMER dispatches on
+///   (`merkle-membership::poseidon2-4ary-general-depth{N}`). NO air-name rides the
+///   blob: the descriptor is resolved from this committed predicate identity via
+///   [`dregg_circuit::descriptor_by_name::descriptor_by_name`], never from
+///   prover-controlled proof bytes.
+/// * `blob` — `postcard(Ir2BatchProof)`: the deployed 4-ary depth-general
+///   Merkle-membership descriptor's proof, produced by the real
+///   [`dregg_circuit::descriptor_ir2::prove_vm_descriptor2`].
+/// * `vk` — the expected public inputs `[leaf, root]`, one canonical little-endian
+///   `u32` per 4 bytes — exactly the encoding
+///   [`crate::verifier::DescriptorDispatchVerifier`] (and the routed
+///   `ProofVerifier::verify_with_predicate`) decodes.
+#[derive(Clone, Debug)]
+pub struct Ir2IssuerWire {
+    /// Descriptor identity the consumer dispatches on (never rides the blob).
+    pub predicate: String,
+    /// `postcard(Ir2BatchProof)` — the NEW wire format for the membership proof.
+    pub blob: Vec<u8>,
+    /// Expected public inputs `[leaf, root]` as one canonical LE `u32` per 4 bytes.
+    pub vk: Vec<u8>,
+}
+
+/// Prove issuer federation membership in the NEW IR-v2 descriptor wire format.
+///
+/// `(leaf, siblings, positions)` is a 4-ary Poseidon2 authentication path — each
+/// `position ∈ {0,1,2,3}`, three co-path siblings per level — EXACTLY the shape
+/// [`compute_parent_poseidon2`] / [`BridgePresentationBuilder::build_issuer_membership_poseidon2`]
+/// already build. The implied root is BYTE-EQUAL to the deployed `hash_4_to_1`-chained
+/// federation root and is committed as the second public input (`vk`'s second limb).
+///
+/// This is the opaque-byte-encoder flip: it replaces
+/// `stark::proof_to_bytes(StarkProof)` with `postcard(Ir2BatchProof)` and drops the
+/// air-name entirely. `depth` (`siblings.len()`) must be a power of two ≥ 2 (the
+/// trace-height requirement of [`dregg_circuit::membership_descriptor_4ary::membership_witness_4ary`]).
+pub fn prove_issuer_membership_ir2(
+    leaf: BabyBear,
+    siblings: &[[BabyBear; 3]],
+    positions: &[u8],
+) -> Result<Ir2IssuerWire, AuthError> {
+    use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+    use dregg_circuit::membership_descriptor_4ary::{
+        membership_descriptor_of_depth_4ary, membership_witness_4ary,
+    };
+
+    let depth = siblings.len();
+    // Honest 4-ary witness → base trace + public inputs `[leaf, root]`.
+    let (trace, pis) = membership_witness_4ary(leaf, siblings, positions)
+        .map_err(|e| AuthError::InvalidRequest(format!("issuer membership 4-ary witness: {e}")))?;
+    // The depth-general 4-ary descriptor (name pins the depth ⇒ VK-separated).
+    let desc = membership_descriptor_of_depth_4ary(depth);
+    // The REAL IR-v2 prover — the deployed descriptor-prover, not a mock.
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+        .map_err(|e| AuthError::InvalidRequest(format!("issuer membership IR-v2 prove: {e}")))?;
+    // WIRE: postcard-encode the BatchProof (replaces stark::proof_to_bytes).
+    let blob = postcard::to_allocvec(&proof)
+        .map_err(|e| AuthError::InvalidRequest(format!("issuer membership blob encode: {e}")))?;
+    // VK carries the expected public inputs as canonical LE-u32 limbs.
+    let mut vk = Vec::with_capacity(pis.len() * 4);
+    for p in &pis {
+        vk.extend_from_slice(&p.0.to_le_bytes());
+    }
+    Ok(Ir2IssuerWire {
+        predicate: desc.name,
+        blob,
+        vk,
+    })
+}
+
 impl BridgePresentationBuilder {
     /// Create a new presentation builder.
     ///
@@ -1717,6 +1789,29 @@ impl BridgePresentationBuilder {
         {
             Err(AuthError::IssuerNotInFederation)
         }
+    }
+
+    /// Produce the issuer-membership proof in the NEW IR-v2 descriptor wire format
+    /// from THIS builder's real federation authentication path.
+    ///
+    /// This is the flipped issuer-membership PRODUCER: it re-expresses the same
+    /// [`Self::build_issuer_membership_poseidon2`] `MerkleWitness` (leaf + 4-ary path
+    /// to the federation root) as a `postcard(Ir2BatchProof)` blob that a
+    /// descriptor-dispatch consumer verifies with `verify_vm_descriptor2` — no
+    /// air-name, no `StarkProof`. The returned [`Ir2IssuerWire`] is the exact
+    /// `(predicate, blob, vk)` triple the routed
+    /// [`crate::verifier::StarkProofVerifier::verify_with_predicate`] (via
+    /// [`crate::verifier::DescriptorDispatchVerifier`]) consumes.
+    ///
+    /// The federation path depth must be a power of two ≥ 2 (the 4-ary witness
+    /// trace-height requirement); the synthetic test path (depth 8) and any
+    /// power-of-two federation tree satisfy it.
+    pub fn prove_issuer_membership_ir2_wire(&self) -> Result<Ir2IssuerWire, AuthError> {
+        let issuer_key_hash = bytes_to_babybear(&self.issuer_key);
+        let witness = self.build_issuer_membership_poseidon2(issuer_key_hash)?;
+        let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+        let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+        prove_issuer_membership_ir2(witness.leaf_hash, &siblings, &positions)
     }
 
     /// Build Poseidon2 issuer membership from a real federation Merkle tree.
@@ -3945,6 +4040,214 @@ mod tests {
         assert_eq!(
             stark_pi1[1], stark_pi2[1],
             "Both proofs should have the same federation root"
+        );
+    }
+}
+
+// =============================================================================
+// Gate-3 RUNTIME round-trip: the `StarkProof` → `Ir2BatchProof` wire flip for the
+// bridge issuer-membership producer, consumed through THIS cluster's verifiers.
+// =============================================================================
+#[cfg(test)]
+mod ir2_issuer_wire_roundtrip {
+    //! The build cannot see this flip: the issuer-membership proof blob is an
+    //! OPAQUE `Vec<u8>`, so the byte-format change (`stark::proof_to_bytes(StarkProof)`
+    //! → `postcard(Ir2BatchProof)`) and the air-name→predicate dispatch are invisible
+    //! to `cargo build`. This is the gate the build can't provide: a REAL
+    //! [`prove_issuer_membership_ir2`] proof, serialized, then consumed/verified
+    //! through the deployed `verify_vm_descriptor2` via the FLIPPED
+    //! [`crate::verifier::StarkProofVerifier`]/[`crate::verifier::DslAwareProofVerifier`]
+    //! `verify_with_predicate` route (which delegates to
+    //! [`crate::verifier::DescriptorDispatchVerifier`]). Honest ACCEPT, and every
+    //! wrong case (missing predicate, unknown predicate, cross-kind descriptor,
+    //! forged root, tampered blob, malformed VK) REJECTED — non-vacuous.
+
+    use super::*;
+    use crate::verifier::{DescriptorDispatchVerifier, DslAwareProofVerifier, StarkProofVerifier};
+    use dregg_circuit::membership_descriptor_4ary::membership_root_4ary;
+    use dregg_turn::ProofVerifier;
+    use std::sync::Arc;
+
+    /// A deterministic depth-`d` 4-ary authentication path: fixed leaf, distinct
+    /// siblings, cycling positions ∈ {0,1,2,3}. Returns `(leaf, siblings, positions, root)`
+    /// where `root` is the deployed `hash_4_to_1`-chained root.
+    fn fixture(depth: usize) -> (BabyBear, Vec<[BabyBear; 3]>, Vec<u8>, BabyBear) {
+        let leaf = BabyBear::new(0xABCD);
+        let siblings: Vec<[BabyBear; 3]> = (0..depth)
+            .map(|i| {
+                let b = 1000 + (i as u32) * 3;
+                [BabyBear::new(b), BabyBear::new(b + 1), BabyBear::new(b + 2)]
+            })
+            .collect();
+        let positions: Vec<u8> = (0..depth).map(|i| (i % 4) as u8).collect();
+        let root = membership_root_4ary(leaf, &siblings, &positions);
+        (leaf, siblings, positions, root)
+    }
+
+    /// PRIMARY GATE — a real IR-v2 issuer-membership proof, wired producer→consumer
+    /// through the FLIPPED `StarkProofVerifier`/`DslAwareProofVerifier`
+    /// `verify_with_predicate`. Honest ACCEPT + every wrong case REJECTED.
+    #[test]
+    fn issuer_membership_ir2_wire_accepts_honest_rejects_wrong() {
+        let depth = 4usize;
+        let (leaf, siblings, positions, root) = fixture(depth);
+
+        // PRODUCER: real prove → `postcard(Ir2BatchProof)` blob + predicate + VK.
+        let wire = prove_issuer_membership_ir2(leaf, &siblings, &positions)
+            .expect("honest issuer membership must prove");
+        assert_eq!(
+            wire.predicate, "merkle-membership::poseidon2-4ary-general-depth4",
+            "descriptor identity names the 4-ary depth-general family + depth"
+        );
+        // VK is exactly `[leaf, root]` as canonical LE-u32 limbs.
+        let mut expected_vk = Vec::new();
+        expected_vk.extend_from_slice(&leaf.0.to_le_bytes());
+        expected_vk.extend_from_slice(&root.0.to_le_bytes());
+        assert_eq!(wire.vk, expected_vk, "VK commits [leaf, root]");
+
+        let stark_v = StarkProofVerifier::new();
+        let dsl_v = DslAwareProofVerifier::new(Arc::new(dregg_dsl_runtime::ProgramRegistry::new()));
+        let desc_v = DescriptorDispatchVerifier::new();
+
+        // ACCEPT — the flipped StarkProofVerifier consumer, keyed on predicate identity.
+        assert!(
+            stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &wire.vk),
+            "StarkProofVerifier::verify_with_predicate must ACCEPT the honest IR-v2 proof"
+        );
+        // ACCEPT — the flipped DslAwareProofVerifier consumer.
+        assert!(
+            dsl_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &wire.vk),
+            "DslAwareProofVerifier::verify_with_predicate must ACCEPT the honest IR-v2 proof"
+        );
+        // ACCEPT — the reference descriptor-dispatch consumer directly.
+        assert!(
+            desc_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &wire.vk),
+            "DescriptorDispatchVerifier must ACCEPT the honest IR-v2 proof"
+        );
+
+        // REJECT — legacy predicate-LESS path: the Ir2 blob is not a StarkProof, and
+        // without a predicate there is no descriptor to name. This is the load-bearing
+        // contrast: the SAME blob the predicate path accepts is refused here, proving the
+        // threaded predicate is what makes descriptor verification possible.
+        assert!(
+            !stark_v.verify(&wire.blob, "read", "res", &wire.vk),
+            "StarkProofVerifier::verify (no predicate) must REJECT the IR-v2 blob"
+        );
+
+        // REJECT — unknown predicate (fail-closed dispatch miss, never silent accept).
+        assert!(
+            !stark_v.verify_with_predicate(
+                "no-such-predicate::v0",
+                &wire.blob,
+                "read",
+                "res",
+                &wire.vk
+            ),
+            "an unknown predicate must fail closed at dispatch"
+        );
+
+        // REJECT — cross-KIND: a real but WRONG descriptor name.
+        assert!(
+            !stark_v.verify_with_predicate(
+                "dfa-routing-toggle-2state::poseidon2-v1",
+                &wire.blob,
+                "read",
+                "res",
+                &wire.vk
+            ),
+            "the IR-v2 proof under the wrong-KIND descriptor must be REJECTED"
+        );
+
+        // REJECT — forged expected root (leaf is not a member under this root).
+        let mut forged_vk = Vec::new();
+        forged_vk.extend_from_slice(&leaf.0.to_le_bytes());
+        forged_vk.extend_from_slice(&BabyBear::new_canonical(root.0 ^ 1).0.to_le_bytes());
+        assert!(
+            !stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &forged_vk),
+            "a forged expected root must be REJECTED"
+        );
+
+        // REJECT — tampered blob (bit-flip in the postcard bytes).
+        let mut tampered = wire.blob.clone();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0xFF;
+        assert!(
+            !stark_v.verify_with_predicate(&wire.predicate, &tampered, "read", "res", &wire.vk),
+            "a tampered blob must be REJECTED"
+        );
+
+        // REJECT — malformed VK (not a positive multiple of 4 bytes).
+        assert!(
+            !stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &[1, 2, 3]),
+            "a malformed VK must be REJECTED"
+        );
+
+        // Object-safety: the flipped route survives `Box<dyn ProofVerifier>` — the
+        // exact shape the executor stores.
+        let boxed: Box<dyn ProofVerifier> = Box::new(StarkProofVerifier::new());
+        assert!(
+            boxed.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &wire.vk),
+            "trait-object dispatch must ACCEPT the honest IR-v2 proof"
+        );
+    }
+
+    /// THE ACTUAL PRESENT PATH — the real [`BridgePresentationBuilder`] issuer
+    /// `MerkleWitness` (its synthetic depth-8 4-ary federation path) is re-expressed
+    /// as the IR-v2 wire and verified through the flipped consumer. Proves the
+    /// producer is fed by the genuine present-side membership construction, and that
+    /// the IR-v2 root is byte-equal to the federation root the builder committed.
+    #[test]
+    fn builder_issuer_membership_ir2_wire_roundtrips() {
+        // Reproduce the builder's synthetic depth-8 federation root (same
+        // `compute_parent_poseidon2` chain the synthetic membership path validates).
+        let key = [7u8; 32];
+        let issuer_hash = bytes_to_babybear(&key);
+        let mut current = issuer_hash;
+        for i in 0..8usize {
+            let position = (i % 4) as u8;
+            let siblings = [
+                BabyBear::new(hash_index(i, 0, &key)),
+                BabyBear::new(hash_index(i, 1, &key)),
+                BabyBear::new(hash_index(i, 2, &key)),
+            ];
+            current = compute_parent_poseidon2(current, position, &siblings);
+        }
+        let fed_root_bb = current;
+        let fed_root_bytes = bb_to_bytes(fed_root_bb);
+
+        let builder = BridgePresentationBuilder::new_with_root_bb(key, fed_root_bytes, fed_root_bb);
+
+        // PRODUCER: the real builder issuer witness → IR-v2 wire.
+        let wire = builder
+            .prove_issuer_membership_ir2_wire()
+            .expect("builder issuer membership must prove");
+        assert_eq!(
+            wire.predicate, "merkle-membership::poseidon2-4ary-general-depth8",
+            "synthetic federation path is depth 8"
+        );
+
+        // The IR-v2 root (VK's second limb) is BYTE-EQUAL to the federation root
+        // the builder committed — the binding the migration must preserve.
+        let root_limb = u32::from_le_bytes([wire.vk[4], wire.vk[5], wire.vk[6], wire.vk[7]]);
+        assert_eq!(
+            BabyBear::new_canonical(root_limb),
+            fed_root_bb,
+            "IR-v2 membership root must equal the committed federation root"
+        );
+
+        // CONSUMER: honest ACCEPT through the flipped StarkProofVerifier route.
+        let stark_v = StarkProofVerifier::new();
+        assert!(
+            stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &wire.vk),
+            "the real builder's IR-v2 issuer proof must ACCEPT"
+        );
+
+        // Non-vacuous: a forged federation root is REJECTED.
+        let mut forged_vk = wire.vk.clone();
+        forged_vk[4] ^= 0x01;
+        assert!(
+            !stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &forged_vk),
+            "a forged federation root must be REJECTED"
         );
     }
 }

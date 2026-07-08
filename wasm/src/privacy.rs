@@ -1553,7 +1553,7 @@ pub fn compose_proofs(proofs_json: &str, mode: &str) -> Result<JsValue, JsError>
 ///
 /// ```json
 /// [
-///   { "kind": "membership",   "proof_json": "<StarkProof JSON>" },
+///   { "kind": "membership",   "proof_json": "<Ir2ProofEnvelope JSON>" },
 ///   { "kind": "range",        "commitment_hex": "<64-hex>", "range_proof_hex": "<hex>" },
 ///   { "kind": "conservation", "input_commitments": ["<64-hex>", ...],
 ///                             "output_commitments": ["<64-hex>", ...],
@@ -1585,8 +1585,6 @@ pub fn compose_and_verify_proofs(proofs_json: &str, mode: &str) -> Result<JsValu
         ConservationProof, ValueCommitment, ValueCommitmentBytes, verify_conservation,
         verify_full_conservation_bytes,
     };
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit::stark::{MerkleStarkAir, StarkProof, verify as stark_verify};
 
     #[derive(Deserialize)]
     struct ConservationProofJson {
@@ -1656,11 +1654,10 @@ pub fn compose_and_verify_proofs(proofs_json: &str, mode: &str) -> Result<JsValu
                     .proof_json
                     .as_ref()
                     .ok_or("membership requires 'proof_json'")?;
-                let proof: StarkProof =
-                    serde_json::from_str(pj).map_err(|e| format!("proof_json: {e}"))?;
-                let public_inputs: Vec<BabyBear> =
-                    proof.public_inputs.iter().map(|&v| BabyBear(v)).collect();
-                stark_verify(&MerkleStarkAir, &proof, &public_inputs)
+                // The `proof_json` is now an `Ir2ProofEnvelope` (the StarkProof ->
+                // Ir2BatchProof migration): fail-closed `descriptor_by_name` dispatch +
+                // the deployed `verify_vm_descriptor2`, shared with `verify_demo_stark_proof`.
+                crate::ir2_verify_membership_envelope(pj)
             }
             "range" => {
                 let ch = p

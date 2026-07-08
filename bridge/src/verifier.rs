@@ -205,6 +205,27 @@ impl ProofVerifier for StarkProofVerifier {
             };
         stark::verify(&circuit, &stark_proof, &pi).is_ok()
     }
+
+    /// MIGRATED consumer contract: when the executor threads the expected
+    /// PREDICATE identity, this verifier routes through the descriptor-dispatch
+    /// path — `descriptor_by_name(predicate)` → decode `postcard(Ir2BatchProof)`
+    /// → `verify_vm_descriptor2` — via [`DescriptorDispatchVerifier`], NOT the
+    /// legacy `stark::proof_from_bytes` path in [`Self::verify`]. The `vk` carries
+    /// the expected public inputs (one canonical LE `u32` per 4 bytes). This is the
+    /// `StarkProof` → `Ir2BatchProof` wire flip for the standard verifier: the
+    /// descriptor is chosen from the committed predicate identity supplied by the
+    /// executor, never from an air-name in the prover-controlled blob.
+    fn verify_with_predicate(
+        &self,
+        predicate: &str,
+        proof: &[u8],
+        action: &str,
+        resource: &str,
+        vk: &[u8],
+    ) -> bool {
+        DescriptorDispatchVerifier::new()
+            .verify_with_predicate(predicate, proof, action, resource, vk)
+    }
 }
 
 /// DEPRECATED: Known AIR names previously handled by the hardcoded verification path.
@@ -503,6 +524,26 @@ impl ProofVerifier for DslAwareProofVerifier {
 
         // Second: treat as custom program (VK hash -> registry lookup).
         self.verify_dsl_program(&stark_proof, action, resource, vk)
+    }
+
+    /// MIGRATED consumer contract: same descriptor-dispatch route as
+    /// [`StarkProofVerifier::verify_with_predicate`]. When the executor threads the
+    /// expected PREDICATE identity, dispatch through [`DescriptorDispatchVerifier`]
+    /// (`descriptor_by_name(predicate)` → decode `postcard(Ir2BatchProof)` →
+    /// `verify_vm_descriptor2`) instead of the legacy `stark::proof_from_bytes`
+    /// path in [`Self::verify`]. `vk` carries the expected public inputs (one
+    /// canonical LE `u32` per 4 bytes); the descriptor is chosen from the committed
+    /// predicate identity, never from a prover-controlled air-name.
+    fn verify_with_predicate(
+        &self,
+        predicate: &str,
+        proof: &[u8],
+        action: &str,
+        resource: &str,
+        vk: &[u8],
+    ) -> bool {
+        DescriptorDispatchVerifier::new()
+            .verify_with_predicate(predicate, proof, action, resource, vk)
     }
 }
 

@@ -113,6 +113,12 @@ pub mod epoch;
 #[cfg(test)]
 mod epoch_diff;
 pub mod federation;
+/// FROST (threshold-Schnorr) quorum certificates — the ADDITIVE alternative to
+/// [`threshold`]'s BLS path (`docs/FROST-MIGRATION.md`): a t-of-n cert is ONE
+/// ed25519-shaped Schnorr signature verified under the federation's group key
+/// (`metatheory/Dregg2/Crypto/Frost.lean`), with [`frost::QuorumScheme`] the
+/// both-schemes-valid selector over the opaque QC bytes. BLS is untouched.
+pub mod frost;
 pub mod identity;
 pub mod node;
 pub mod receipt;

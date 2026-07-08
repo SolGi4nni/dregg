@@ -30,13 +30,18 @@
 //!
 //! These gates are the emit-side deployed-column realization of the Lean soundness, and the flag-day
 //! regen (`scripts/emit-descriptors.sh` over the welded `v3RegistryCapOpenDep`) has LANDED them into the
-//! committed cohort. Every one of the 36 `rotation-v3-staged-registry.tsv` cohort rows now carries the
-//! `-gentian-deployed-bare-refuse` suffix, `trace_width` 1626, and the three per-tag `floor == 0`-refuse
-//! gates on cols `floor_col(0/1/2) = 1593/1609/1625` — witnessed on the DEPLOYED bytes by
-//! `deployed_cohort_bytes_carry_the_refuse` below (not just the synthetic gates). The apex `Rfix`
-//! re-keys over the SAME `v3RegistryCapOpenDep`, so the committed VK and the soundness apex coincide on
-//! the refuse. The anti-launder forge tooth still BITES on the constructed gates (declared-capacity row
-//! UNSAT, non-declared row SAT); the deployed-bytes test proves the flip is REAL, not staged.
+//! committed cohort. Every one of the 36 `rotation-v3-staged-registry.tsv` cohort rows carries the
+//! `-gentian-deployed-bare-refuse` suffix and the three per-tag `floor == 0`-refuse gates over ITS OWN
+//! base (§HETEROGENEOUS GEOMETRY): the 34 standard graduated members base at `GRAD_ROT_WIDTH = 1581`
+//! (widen to `trace_width` 1626, floor cols 1593/1609/1625 — the `bit_col`/`floor_col` constants here);
+//! the two DISTINCT V1Face members (`setFieldDyn` / `custom`, base 1553) base at 1553 (widen to 1598,
+//! floor cols 1565/1581/1597) so the block never strands a 28-column dead gap. The prove-side
+//! [`fill_refuse_aux`] recovers each member's aux base from its OWN committed floor gates
+//! ([`refuse_aux_base`]), so it lands right regardless of geometry. Witnessed on the DEPLOYED bytes by
+//! `deployed_cohort_bytes_carry_the_refuse` below. The apex `Rfix` re-keys over the SAME
+//! `v3RegistryCapOpenDep`, so the committed VK and the soundness apex coincide on the refuse. The
+//! anti-launder forge tooth still BITES (declared-capacity row UNSAT, non-declared row SAT); the
+//! deployed-bytes test proves the flip is REAL, not staged.
 
 use super::carrier_floor_weld::caveat_tag_col;
 use super::pi::{

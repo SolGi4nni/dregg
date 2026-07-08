@@ -852,6 +852,65 @@ mod tests {
             );
         }
 
+        /// FIX #2 REGRESSION: a check turn need not be its document's GENESIS.
+        /// When the CI job's backing document commits a setup turn FIRST and the
+        /// real check turn SECOND, the check receipt carries
+        /// `previous_receipt_hash = Some(..)`. The point-verifier
+        /// (`verify_receipt_signature_with_keys`) must satisfy it — the old
+        /// chain verifier wrongly rejected it as `GenesisHasPrevious`, a false
+        /// negative that broke the approval-as-check / multi-turn-CI workflow.
+        #[test]
+        fn a_non_genesis_check_receipt_satisfies() {
+            let mut ci_doc = ExecutorDrivenDoc::new(7, 8, true);
+            ci_doc.set_receipt_signing_key(CI_SIGNING_SEED);
+
+            // FIRST (setup) turn — makes the real check turn a NON-genesis one.
+            let (setup_atom, setup_op) = Patch::add(50, "setup: fixtures ready\n", AtomId::ROOT);
+            let setup_receipt = ci_doc
+                .edit(Patch::by(Author(9), [setup_op]))
+                .expect("the setup turn commits");
+            assert!(
+                setup_receipt.previous_receipt_hash.is_none(),
+                "the setup turn is the genesis of the CI doc"
+            );
+
+            // SECOND turn: the real check, `Add`-ed after the setup atom. Its
+            // receipt links off the setup one (non-genesis).
+            let check_patch = Patch::by(
+                Author(9),
+                [Patch::add(100, "check: build PASS\n", setup_atom).1],
+            );
+            let planned = ci_doc
+                .planned_turn_hash(&check_patch)
+                .expect("the check turn has a projection delta");
+
+            let mut pr = clean_pr().with_required_check(RequiredCheck::committed_receipt(
+                "build",
+                planned,
+                vec![CI_VERIFYING_KEY],
+            ));
+
+            let receipt = ci_doc.edit(check_patch).expect("the check turn commits");
+            assert_eq!(receipt.turn_hash, planned);
+            assert!(
+                receipt.previous_receipt_hash.is_some(),
+                "the check turn is NOT the genesis — it carries a previous receipt hash"
+            );
+            assert!(receipt.executor_signature.is_some());
+
+            // The NON-GENESIS committed, signed receipt now SATISFIES the check
+            // (was wrongly refused as GenesisHasPrevious → SignatureUnverified).
+            pr.present_witness("build", CheckWitness::Receipt(receipt));
+            pr.checks_satisfied()
+                .expect("a non-genesis signed check receipt satisfies the required check");
+
+            // …and the PR lands.
+            let mut doc = ExecutorDrivenDoc::new_at(&pr.base().replay(), 1, 2, true);
+            let receipts = pr.land(&mut doc).expect("the checked PR lands");
+            assert!(!receipts.is_empty());
+            assert_eq!(*doc.graph(), pr.merge().unwrap().graph);
+        }
+
         #[test]
         fn a_fabricated_or_tampered_check_receipt_never_satisfies() {
             let (mut ci_doc, check_patch, planned) = ci_job();

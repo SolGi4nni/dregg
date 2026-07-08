@@ -80,3 +80,82 @@ verified-resident demo, then **(3) N3 on the unified/fixed foundation**. Rung-5 
   feature-gated path on real iron is exactly what caught it. Worktree cleaned. The confined mind's attestation now
   rides a genuine MPC-TLS presentation. RESTING POINT: forceable frontier complete; remainder ALL ember-gated (live
   api.anthropic.com session · DECO rung-5 · VK-epoch flip · origin re-genesis).
+
+## 2026-07-07 (afternoon) — ember re-opened aggressive mode: rungs + VK-freedom + cleanup
+Ember: "we CAN do any vk-flip / vk-breaking code, drift arbitrarily from deployed infra" + "aggressively
+pursue the rungs" + "clean up cruft" + FULL EMPOWERMENT (don't check in for every call).
+- CLEANUP: build-fix `3ad63a278` (untracked zkoracle_leaf_adapter.rs — clean clone was broken); removed 332M
+  chain/ orphan + stale Cargo.toml comment (`e12918060`). 13 green audit tests staged to commit; 4 zero-byte-golden
+  ASK-EMBER; other-lane WIP left. Census map by lane abbf067506.
+- ⚑⚑⚑ SOUNDNESS BUG FOUND (the gate on the audit tests caught it): the DEPLOYED non-revocation circuit's
+  half-field ordering range tooth checks `HALF−diff ∈ [0,2^30)` — ONLY bounds diff ABOVE. A negative diff
+  (x==R → diff_r=−1=p−1 → HALF+1 < 2^30) is ACCEPTED → a committed MEMBER provable as "fresh" (non-membership
+  bypass). Confirmed by my run (x==R/x==L/x>R all `rejected? false`) on byte-identical `by-name/non-revocation.json`.
+  SAME bug in the Lean spec (NonRevocationEmit.lean:32-36) → the refinement proof faithfully refines a buggy spec.
+  FIX (elegant, 0 new columns): add a direct range-lookup on the diff wire (var 5/6) alongside HALF−diff — intersection
+  pins diff ∈ [0,HALF]. Emit is Lean-authoritative → fix NonRevocationEmit.lean + regen + fix refinement. VK-breaking (OK now).
+- SWEEP (lane a33837789): is the wrap bug systemic across adjacency/quantified-absence/tiered_revocation/accumulator?
+- RUNGS (deferred behind the bug): rung-5 full-UC = 2-4wk framework; tractable intermediate = perfect-hiding leg under a
+  NAMED hiding floor (CR≠hiding), covers only the commitment component (STARK-ZK stays the framework carrier).
+
+- ⚑⚑⚑ NON-REVOCATION SOUNDNESS FIX — CONFIRMED (verified by my eyes): the deployed descriptor's boundary
+  bypass is CLOSED. Fix = add a DIRECT range-lookup on the diff wires (var 5/6) alongside HALF−diff →
+  pins diff ∈ [0,HALF]. Audit test flipped 2/5→5/5: x==R/x==L/x>R now REJECTED, honest_still_accepts + continuity
+  still bite. Patched: by-name/non-revocation.json (deployed) + audit + emit_gate GOLDENs. PROMOTED to the
+  Lean source-of-truth (NonRevocationEmit.lean: +2 diff lookups, 14 constraints, expectedJson + length #guard
+  GREEN by lake env lean) so regen can't revert it. This is the metatheory's own pre-proven `emitfix` made real.
+  REMAINING: reconcile downstream proofs (bug-proof emitted_carriers_do_not_force_nonmembership FLIPS →
+  retire/restate; refinement residual CLOSES) + the 2 Rust DSL copies (revocation.rs/descriptors.rs, secondary)
+  + whole-tree gauntlet. Sweep (a33837789): bug is NARROW (non-revocation only). 2 NEW findings queued:
+  temporal_absence.rs (bracket enforced OFF-circuit only) + garbled.rs (ordering unenforced) — verify if deployed.
+
+- SIDE FINDINGS (lane aac87662) — BOTH real under-constraints but VULNERABLE-DSL-ONLY (NOT deployed, no
+  dispatch arm / product caller): temporal_absence.rs (unbound PIs t1/t2/excluded_attr, dead TIMING_OK —
+  live temporal path is the sound temporal-predicate.json); garbled.rs (gate_index_delta monotonicity
+  unenforced — no runtime garbled descriptor, but the Lean emit GarbledEvalEmit.lean MIRRORS the hole +
+  a 2nd hash_out lookup gap). Disposition: not emergencies; delete the orphans OR fix garbled's Lean emit
+  BEFORE any future wiring. Non-revocation was the one real DEPLOYED hole — fixed + committed 604a32792.
+
+- ⚑ NON-REVOCATION FIX WHOLE-TREE GREEN ✅ — hbox GAUNTLET-RESULT: PASS @604a32792 (verified by me). The
+  IR2/deployed (by-name JSON, from the Lean emit) path is definitively closed. CHECKING NOW: is the DSL
+  bit-decomp copy (revocation.rs) ALSO dispatched via the v1 loader circuit_for_air_name's "non-rev" arm?
+  If so it's a SECOND live hole (bit-decomp form) needing the same fix; if v1 is dead/legacy, revocation.rs
+  is consistency-only.
+
+- ⚑⚑ CORRECTION (surfaced to ember): the IR2 by-name fix (604a32792) is NOT the whole story. The DEPLOYED
+  SDK turn-proof path (sdk/full_turn_proof.rs → non_revocation_circuit_descriptor() [revocation.rs bit-decomp]
+  + prove_non_revocation_p3, VK computed from it; dispatched live via circuit_for_air_name ← bridge/turn/sdk)
+  uses a DIFFERENT descriptor with the SAME HALF-diff wrap bug — STILL OPEN. Re-verified soundness: pin
+  diff∈[0,HALF] is correct (HALF<p/2 ⟹ x∈(L,L+HALF] ⟹ x>L canonical, no wrap; same completeness). Fixing the
+  bit-decomp form (revocation.rs + descriptors.rs dup) via lane a8cde37b: add direct-diff decomp (mirror the
+  SAFE committed_threshold pattern), verify with a REAL prove_non_revocation_p3 boundary probe (x==R/L/x>R
+  REJECT, honest ACCEPT), whole-tree gauntlet. THEN the deployed non-revocation is fully closed on BOTH paths.
+
+- ⚑⚑ NON-REVOCATION FULLY CLOSED (both deployed paths, verified by me): IR2 604a32792 (audit 5/5, gauntlet PASS,
+  metatheory axiom-clean) + SDK/p3 deployed 5a879b22d (p3 probe 5/5, gauntlet PASS, genuine C13-C16 direct-diff
+  decomp). SDK ripple (lane a9c31e82): NO vk_hash literals (auto-recompute); only artifact rebuilds (wasm/pyo3) +
+  the A′ descriptors.rs sync (done in the fix). Clean.
+- ⚑⚑⚑ 2nd DEPLOYED HOLE (audit lane a5d3ccf5) — committed-threshold TOTAL BREAK: CommittedThresholdAir asserts
+  POSEIDON2_RESULT==THRESHOLD_COMMITMENT but never computes Poseidon2(threshold,blinding) in-circuit; BLINDING free.
+  Forge: threshold=0/blinding=0/result=C ⟹ ANY value proves "≥ committed threshold" (credit score 0 clears 680).
+  Live via cipherclerk FactDisclosure::CommittedThreshold. Verified by me (line 176 c3, col2 unread, :2586 dispatch).
+  FIX in flight (lane a76c3bbc): repoint to the SOUND dsl/committed_threshold (real Hash2to1 gadget) OR add the
+  gadget; forge-probe gate + gauntlet. Also checking fact_commitment binding. Same class as temporal/garbled/p3.
+- SET/MEMBERSHIP audit (a5d3ccf5): everything else SOUND (both merkle, adjacency, quantified-absence, note-spending,
+  cap-membership all bind every PI + column in-circuit); accumulator pi[8] transcript-bound (wart not hole);
+  tiered-revocation + openable-insertion DEAD. PREDICATE/effectvm audit (af4a8cb7) still running.
+
+- ⚑⚑⚑ EMBER REDIRECT (the key turn): the hand-written Rust AIRs are being DELETED; the real question is
+  whether the NEW LEAN EMIT (the canonical replacement) carries the same verdict-decoupling flaw. IT DOES —
+  confirmed by me in PredicatesRelationalCompoundEmit.lean:
+  • relational: result_bit HARD-PINNED to 1 (C2) + DIFF (col4) NOT tied to VALUE_A−VALUE_B → the relation is
+    never checked. Forge: any values, result_bit=1, range_flag=0.
+  • compound: AND_INT(15)/GATE_OUT(37) FREE (nothing computes them from sub_result[0..7]) → composed decoupled.
+    Forge: op_and=1, and_int=1, composed=1, all sub_result=0 → "all true" with every one false.
+  • committed-threshold Lean emit: threshold hash binding CORRECT (hash2Lookup), but private_value not welded to
+    fact_commitment (same as base predicate — possibly composition-handled).
+  FIXING (ember: "make them actually good, go in"): added the relational weld DIFF==VALUE_A−VALUE_B myself
+  (the load-bearing fix). Campaign lane a304a27b: regen JSONs + reconcile Refine/Rung2 GENUINELY (non-vacuous) +
+  compute the compound boolean tree (AND/OR/threshold/custom from sub_results, degree-safe intermediates) + forge
+  probes (decoupling forge must REJECT) + gauntlet; assess the sub_result↔verdict & value↔fact composition seams.
+  My adversarial verification (read constraints + run forges + #assert_axioms) before believing green.

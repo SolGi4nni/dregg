@@ -13,11 +13,14 @@
 //!   ([`crate::ExecutorDrivenDoc::planned_turn_hash`]). It is satisfied only by
 //!   that turn's committed [`TurnReceipt`] — finalized, carrying a genuine
 //!   `executor_signature` that verifies (real Ed25519, via
-//!   [`dregg_turn::verify_receipt_chain_with_keys`]) against the check's
+//!   [`dregg_turn::verify_receipt_signature_with_keys`]) against the check's
 //!   trusted executor keys. A `TurnReceipt` struct anyone can populate; the
 //!   signature over its canonical message they cannot — so a fabricated
 //!   "passing" receipt is refused, fail-closed (an UNSIGNED receipt is refused
-//!   too, since chain verification skips absent signatures).
+//!   too, by the explicit `Unsigned` pre-check). The signature is checked IN
+//!   ISOLATION (not as a chain genesis), so a check turn that is NOT its
+//!   document's first edit — an approval posted after a comment, whose receipt
+//!   carries `previous_receipt_hash = Some(..)` — still satisfies the check.
 //! - **A [`ProofCondition`] witness** ([`CheckRequirement::Condition`]): the
 //!   check is any provable statement in dregg-turn's conditional grammar
 //!   (hash preimage, local/remote STARK proof), satisfied by a
@@ -58,7 +61,7 @@ use std::collections::HashSet;
 
 use dregg_turn::{
     ConditionProof, ConditionalResult, DEFAULT_MAX_ROOT_AGE, Finality, ProofCondition, TurnReceipt,
-    resolve_condition, verify_receipt_chain_with_keys,
+    resolve_condition, verify_receipt_signature_with_keys,
 };
 
 /// The name of a required check — the forge's "required status check" key
@@ -216,12 +219,15 @@ impl RequiredCheck {
                     return Err(CheckRefusal::Unsigned);
                 }
                 // Real Ed25519 verification of the signature over the
-                // receipt's canonical executor-signed message.
-                verify_receipt_chain_with_keys(
-                    core::slice::from_ref(receipt),
-                    trusted_executor_keys,
-                )
-                .map_err(|_| CheckRefusal::SignatureUnverified)
+                // receipt's canonical executor-signed message — IN ISOLATION.
+                // A check turn need not be its document's genesis: an approval
+                // posted after a comment carries `previous_receipt_hash =
+                // Some(..)`, which the chain verifier rejects as
+                // `GenesisHasPrevious`. The point-verifier here only binds the
+                // executor's authorship of THIS receipt, not its chain
+                // position.
+                verify_receipt_signature_with_keys(receipt, trusted_executor_keys)
+                    .map_err(|_| CheckRefusal::SignatureUnverified)
             }
 
             (CheckRequirement::Condition(condition), CheckWitness::Condition(proof)) => {

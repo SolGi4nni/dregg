@@ -447,8 +447,17 @@ structure RelClassified (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop where
   neqBool     : env.loc NEQ_FLAG = 0 ∨ env.loc NEQ_FLAG = 1
   /-- Exactly one of the {range, eq, neq} comparison relations is selected. -/
   exactlyOne  : env.loc RANGE_FLAG + env.loc EQ_FLAG + env.loc NEQ_FLAG = 1
+  /-- ⚑ THE VERDICT WELD (C2b): the free difference witness IS the committed-value difference
+  `value_a − value_b`. WITHOUT this the eq/neq/range comparisons below operate on a prover-chosen
+  free `diff` decoupled from the committed values (the forgery item 1 names); WITH it, every selected
+  comparison is genuinely a comparison of `VALUE_A` against `VALUE_B`. -/
+  diffWeld    : env.loc DIFF = env.loc VALUE_A - env.loc VALUE_B
   /-- The selected relation holds on the private difference witness: EQ ⇒ `diff = 0`. -/
   eqRel       : env.loc EQ_FLAG = 1 → env.loc DIFF = 0
+  /-- RANGE ⇒ every diff bit is boolean (the recomposition is a sum of nonnegative terms). -/
+  rangeBits   : env.loc RANGE_FLAG = 1 →
+                  ∀ i, i < NUM_DIFF_BITS → env.loc (DIFF_BITS_START + i) = 0
+                    ∨ env.loc (DIFF_BITS_START + i) = 1
   /-- NEQ ⇒ `diff ≠ 0` (witnessed by the supplied inverse). -/
   neqRel      : env.loc NEQ_FLAG = 1 → env.loc DIFF ≠ 0
   /-- RANGE ⇒ the top diff bit clears (`diff < 2^29`). -/
@@ -461,10 +470,18 @@ structure RelClassified (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop where
 theorem rmem_resultPin : piFirst RESULT_BIT 2 ∈ relationalPredicateDesc.constraints := by
   show _ ∈ relationalConstraints
   unfold relationalConstraints
-  iterate 13 apply List.mem_append_left
+  iterate 14 apply List.mem_append_left
   simp
 
 theorem rmem_c2 : gate (subC (.var RESULT_BIT) 1) ∈ relationalPredicateDesc.constraints := by
+  show _ ∈ relationalConstraints
+  unfold relationalConstraints
+  iterate 13 apply List.mem_append_left
+  apply List.mem_append_right; simp
+
+/-- ⚑ THE VERDICT-WELD constraint `diff == value_a − value_b` (C2b) is genuinely present. -/
+theorem rmem_c2b :
+    gate (.add (subV (.var DIFF) VALUE_A) (.var VALUE_B)) ∈ relationalPredicateDesc.constraints := by
   show _ ∈ relationalConstraints
   unfold relationalConstraints
   iterate 12 apply List.mem_append_left
@@ -495,6 +512,15 @@ theorem rmem_c4 :
   unfold relationalConstraints
   iterate 10 apply List.mem_append_left
   apply List.mem_append_right; simp
+
+theorem rmem_c6 (i : Nat) (hi : i < NUM_DIFF_BITS) :
+    gate (.mul (.var RANGE_FLAG) (binBody (DIFF_BITS_START + i)))
+      ∈ relationalPredicateDesc.constraints := by
+  show _ ∈ relationalConstraints
+  unfold relationalConstraints
+  iterate 8 apply List.mem_append_left
+  apply List.mem_append_right
+  exact List.mem_map_of_mem (List.mem_range.mpr hi)
 
 theorem rmem_c7 :
     gate (.mul (.var RANGE_FLAG) (subV recomposeExpr DIFF)) ∈ relationalPredicateDesc.constraints := by
@@ -588,7 +614,8 @@ theorem relational_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
   refine
     { commitAOpen := ?_, commitBOpen := ?_, commitAPin := ?_, commitBPin := ?_,
       resultTrue := ?_, resultPin := ?_, rangeBool := ?_, eqBool := ?_, neqBool := ?_,
-      exactlyOne := ?_, eqRel := ?_, neqRel := ?_, rangeHigh := ?_, rangeRecomp := ?_ }
+      exactlyOne := ?_, diffWeld := ?_, eqRel := ?_, rangeBits := ?_, neqRel := ?_,
+      rangeHigh := ?_, rangeRecomp := ?_ }
   · -- commitment A opens (via the named chip-lookup soundness carrier).
     have h := hsat.rowConstraints 0 h0 (commitLookup VALUE_A BLINDING_A COMMIT_A LANES_A) rmem_lookupA
     simp only [commitLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
@@ -608,8 +635,16 @@ theorem relational_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
   · exact (binBody_zero_iff _ EQ_FLAG).mp (gforce _ rmem_c3eq)
   · exact (binBody_zero_iff _ NEQ_FLAG).mp (gforce _ rmem_c3neq)
   · have h := gforce _ rmem_c4; simp only [sumE, EmittedExpr.eval] at h; omega
+  · -- ⚑ diffWeld: the C2b gate forces `diff = value_a − value_b`.
+    have h := gforce _ rmem_c2b; simp only [subV, EmittedExpr.eval] at h; omega
   · intro heq; have h := gforce _ rmem_c9
     simp only [EmittedExpr.eval] at h; rw [heq, one_mul] at h; exact h
+  · -- rangeBits: each diff bit is boolean when range mode is selected.
+    intro hr i hi
+    have h2 : (envAt t 0).loc RANGE_FLAG * (binBody (DIFF_BITS_START + i)).eval (envAt t 0).loc = 0 :=
+      gforce _ (rmem_c6 i hi)
+    rw [hr, one_mul] at h2
+    exact (binBody_zero_iff _ (DIFF_BITS_START + i)).mp h2
   · intro hneq; have h := gforce _ rmem_c10
     simp only [subC, EmittedExpr.eval] at h; rw [hneq, one_mul] at h
     intro hz; rw [hz, zero_mul] at h; omega
@@ -628,6 +663,86 @@ theorem relational_eq_forces_diff_zero {hash : List ℤ → ℤ} {minit : ℤ �
     (heq : (envAt t 0).loc EQ_FLAG = 1) :
     (envAt t 0).loc DIFF = 0 :=
   (relational_sat_imp_sem hlen hChip hsat).eqRel heq
+
+/-! ### §9b — THE RELATION OVER THE COMMITTED VALUES (the verdict-weld payoff).
+
+With `diffWeld` tying `diff` to `value_a − value_b`, each selected comparison is now a genuine
+comparison of the two committed values, not of a prover-chosen free `diff`. -/
+
+/-- A sum of nonnegative sub-expressions evaluates nonnegatively. -/
+theorem sumE_eval_nonneg (a : Assignment) (l : List EmittedExpr)
+    (h : ∀ e ∈ l, 0 ≤ e.eval a) : 0 ≤ (sumE l).eval a := by
+  induction l with
+  | nil => simp [sumE, EmittedExpr.eval]
+  | cons x xs ih =>
+    cases xs with
+    | nil => simpa [sumE] using h x (by simp)
+    | cons y ys =>
+      simp only [sumE, EmittedExpr.eval]
+      have hx : 0 ≤ x.eval a := h x (by simp)
+      have hrest : 0 ≤ (sumE (y :: ys)).eval a := ih (fun e he => h e (List.mem_cons_of_mem _ he))
+      omega
+
+/-- **`recompose_nonneg`** — the bit recomposition `Σ 2^i·bit_i` is a sum of nonnegative terms when
+every bit is boolean, so it is `≥ 0`. This is the tooth that turns the range mode into `value_a ≥
+value_b` (over ℤ): the difference, being a nonnegative bit-sum, is nonnegative. -/
+theorem recompose_nonneg {a : Assignment}
+    (hb : ∀ i, i < NUM_DIFF_BITS → a (DIFF_BITS_START + i) = 0 ∨ a (DIFF_BITS_START + i) = 1) :
+    0 ≤ recomposeExpr.eval a := by
+  unfold recomposeExpr
+  apply sumE_eval_nonneg
+  intro e he
+  simp only [List.mem_map, List.mem_range] at he
+  obtain ⟨i, hi, rfl⟩ := he
+  simp only [EmittedExpr.eval]
+  have hbit : 0 ≤ a (DIFF_BITS_START + i) := by rcases hb i hi with h | h <;> omega
+  have hpow : 0 ≤ ((2 ^ i : Nat) : Int) := by positivity
+  exact mul_nonneg hpow hbit
+
+/-- **EQ ⇒ the committed values are EQUAL.** An accepting EQ-mode relational trace forces
+`value_a = value_b` — the genuine "equality over committed values", via `diffWeld` + `eqRel`. -/
+theorem relational_eq_forces_values_equal {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (hlen : 2 ≤ t.rows.length)
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hsat : Satisfied2 hash relationalPredicateDesc minit mfin maddrs t)
+    (heq : (envAt t 0).loc EQ_FLAG = 1) :
+    (envAt t 0).loc VALUE_A = (envAt t 0).loc VALUE_B := by
+  have sem := relational_sat_imp_sem hlen hChip hsat
+  have hd := sem.eqRel heq
+  have hw := sem.diffWeld
+  omega
+
+/-- **NEQ ⇒ the committed values are DISTINCT.** An accepting NEQ-mode trace forces
+`value_a ≠ value_b`, via `diffWeld` + `neqRel` (the witnessed inverse). -/
+theorem relational_neq_forces_values_distinct {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
+    {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hlen : 2 ≤ t.rows.length)
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hsat : Satisfied2 hash relationalPredicateDesc minit mfin maddrs t)
+    (hneq : (envAt t 0).loc NEQ_FLAG = 1) :
+    (envAt t 0).loc VALUE_A ≠ (envAt t 0).loc VALUE_B := by
+  have sem := relational_sat_imp_sem hlen hChip hsat
+  have hd := sem.neqRel hneq
+  have hw := sem.diffWeld
+  omega
+
+/-- **RANGE ⇒ the committed values satisfy `value_a ≥ value_b`** (over ℤ). The range mode's diff
+bits recompose `diff` as a nonnegative bit-sum (`recompose_nonneg`), `rangeRecomp` ties that sum to
+`diff`, and `diffWeld` ties `diff` to `value_a − value_b` — so `value_b ≤ value_a`. -/
+theorem relational_range_forces_ge {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (hlen : 2 ≤ t.rows.length)
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hsat : Satisfied2 hash relationalPredicateDesc minit mfin maddrs t)
+    (hr : (envAt t 0).loc RANGE_FLAG = 1) :
+    (envAt t 0).loc VALUE_B ≤ (envAt t 0).loc VALUE_A := by
+  have sem := relational_sat_imp_sem hlen hChip hsat
+  have hnn := recompose_nonneg (sem.rangeBits hr)
+  have hrec := sem.rangeRecomp hr
+  have hw := sem.diffWeld
+  rw [hrec] at hnn
+  omega
 
 /-! ## §10 — RELATIONAL non-vacuity: a committed EQ witness, and a bad `diff = 1` run. -/
 
@@ -729,6 +844,14 @@ theorem relBad_not_satisfies :
   simp only [gate, VmConstraint2.holdsAt, holdsVm_gate_false, EmittedExpr.eval] at hrc
   revert hrc; decide
 
+/-- **The EQ-over-committed corollary FIRES on the witness (non-vacuity):** the honest EQ trace
+(`value_a = value_b = 0`) discharges `relational_eq_forces_values_equal` to the concrete `0 = 0` —
+a genuine committed-value equality recovered from an accepting proof. -/
+theorem relWitness_values_equal :
+    (envAt relWitness 0).loc VALUE_A = (envAt relWitness 0).loc VALUE_B :=
+  relational_eq_forces_values_equal (t := relWitness) (by decide) relTf_chip_sound
+    relWitness_satisfies (by decide)
+
 /-! ## §11 — axiom hygiene: every keystone is `#assert_axioms`-clean (carriers named). -/
 
 #assert_axioms compound_sat_imp_sem
@@ -738,9 +861,15 @@ theorem relBad_not_satisfies :
 #assert_axioms compoundBad_not_satisfies
 #assert_axioms relational_sat_imp_sem
 #assert_axioms relational_eq_forces_diff_zero
+#assert_axioms sumE_eval_nonneg
+#assert_axioms recompose_nonneg
+#assert_axioms relational_eq_forces_values_equal
+#assert_axioms relational_neq_forces_values_distinct
+#assert_axioms relational_range_forces_ge
 #assert_axioms relWitness_satisfies
 #assert_axioms relTf_chip_sound
 #assert_axioms relWitness_sem_concrete
+#assert_axioms relWitness_values_equal
 #assert_axioms relBad_not_satisfies
 
 end Dregg2.Circuit.Emit.PredicatesRelationalCompoundRefine

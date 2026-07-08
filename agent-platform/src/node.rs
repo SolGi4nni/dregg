@@ -41,6 +41,7 @@
 //! also carries full multi-node blocklace consensus finalization; the in-process
 //! node models the executor + receipt-log half a single node runs locally.
 
+use std::collections::HashSet;
 use std::sync::{Arc, Mutex, RwLock};
 
 use dregg_agent::agent::GrainTurnMinter;
@@ -98,6 +99,12 @@ pub struct LocalNode {
     /// The node's finalized receipt log — the committed, linked receipt chain a
     /// light client verifies. Grown by [`land`](Self::land), the finalization gate.
     log: Arc<Mutex<Vec<TurnReceipt>>>,
+    /// An O(1)-membership index of the finalized log's `turn_hash`es, maintained in
+    /// lockstep with [`land`](Self::land). It carries no ground truth the log does not
+    /// (every entry mirrors a receipt on `log`); it only lets [`contains`](Self::contains)
+    /// — the hot membership check three verify paths (`verify_landed`, `audit_fund`,
+    /// `grain-verify`) loop over — answer in O(1) instead of scanning the whole log.
+    hashes: Arc<Mutex<HashSet<[u8; 32]>>>,
 }
 
 impl LocalNode {
@@ -107,6 +114,7 @@ impl LocalNode {
             domain: domain.to_string(),
             ledger: Arc::new(Mutex::new(Ledger::new())),
             log: Arc::new(Mutex::new(Vec::new())),
+            hashes: Arc::new(Mutex::new(HashSet::new())),
         }
     }
 
@@ -142,7 +150,14 @@ impl LocalNode {
                     .map_err(|e| NodeError::Rejected(format!("{e:?}")))?;
             }
         }
+        let turn_hash = receipt.turn_hash;
         log.push(receipt);
+        // Maintain the membership index under the log lock so `contains` never sees a
+        // landed receipt the index is missing (or vice versa).
+        self.hashes
+            .lock()
+            .expect("node hashes poisoned")
+            .insert(turn_hash);
         Ok(())
     }
 
@@ -150,11 +165,10 @@ impl LocalNode {
     /// membership check a light client runs to confirm a receipt's link names a turn
     /// the node actually committed.
     pub fn contains(&self, turn_hash: &[u8; 32]) -> bool {
-        self.log
+        self.hashes
             .lock()
-            .expect("node log poisoned")
-            .iter()
-            .any(|r| &r.turn_hash == turn_hash)
+            .expect("node hashes poisoned")
+            .contains(turn_hash)
     }
 
     /// The number of turns finalized on the node's log.

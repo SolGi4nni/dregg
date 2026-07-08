@@ -404,16 +404,23 @@ impl SharedResourceBudget {
     /// - `blocklace`: The local blocklace view.
     /// - `resource_id`: The 32-byte resource identifier to filter debits for.
     pub fn sync_from_blocklace(&mut self, blocklace: &Blocklace, resource_id: &[u8; 32]) {
+        // One pass over the DAG, grouping each block's debit-for-this-resource by its
+        // creator — instead of calling `virtual_chain` (a full filter+sort of the whole
+        // DAG) once per participant. O(P·N) → O(N). The per-creator sum is order-
+        // independent, so dropping `virtual_chain`'s seq-sort changes nothing.
+        let mut spent_by_creator: HashMap<[u8; 32], u64> = HashMap::new();
+        for (_id, block) in blocklace.iter() {
+            if let Some(amount) = extract_debit_for_resource(block, resource_id) {
+                *spent_by_creator.entry(block.creator).or_insert(0) += amount;
+            }
+        }
         // Collect participants to avoid borrow conflict (participants borrows self
-        // immutably, but we need to mutate allowances).
+        // immutably, but we need to mutate allowances). Same update set as before: only
+        // participants in `self.participants` that already have an allowance.
         let participants: Vec<ParticipantId> = self.participants.clone();
         for participant in &participants {
             let creator_key: [u8; 32] = *participant.as_bytes();
-            let chain = blocklace.virtual_chain(&creator_key);
-            let total_spent: u64 = chain
-                .iter()
-                .filter_map(|block| extract_debit_for_resource(block, resource_id))
-                .sum();
+            let total_spent = spent_by_creator.get(&creator_key).copied().unwrap_or(0);
             if let Some(allowance) = self.allowances.get_mut(participant) {
                 allowance.spent = total_spent;
             }

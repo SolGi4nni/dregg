@@ -9,8 +9,9 @@
 //! membership relation is never algebraically enforced).
 //!
 //! This module provides [`MerkleMembershipStarkVerifier`]: a real verifier that
-//! checks an in-circuit Poseidon2 Merkle-membership STARK
-//! (`dregg_circuit::dsl::membership`). A turn whose sender is genuinely a leaf
+//! checks an in-circuit Poseidon2 4-ary Merkle-membership STARK — the emitted
+//! `membership_descriptor_of_depth_4ary` descriptor, dispatched by
+//! `descriptor_by_name` and checked by `verify_vm_descriptor2`. A turn whose sender is genuinely a leaf
 //! under the authorized-set root carries a proof that verifies; a turn whose
 //! sender is NOT in the set cannot produce a proof that verifies against the
 //! root (Poseidon2 collision resistance), so it is rejected **at the circuit /
@@ -43,22 +44,29 @@ use dregg_cell::predicate::{
 };
 use dregg_cell_crypto::value_commitment::verify_range_bytes;
 use dregg_circuit::BabyBear;
+use dregg_circuit::adjacency_witness::{
+    PI_IDX_LOWER as ADJ_PI_IDX_LOWER, PI_IDX_UPPER as ADJ_PI_IDX_UPPER, adjacency_witness,
+};
+use dregg_circuit::descriptor_by_name::{MEMBERSHIP_4ARY_NAME_PREFIX, descriptor_by_name};
+use dregg_circuit::descriptor_ir2::{
+    DreggStarkConfig, Ir2BatchProof, MemBoundaryWitness, prove_vm_descriptor2,
+    verify_vm_descriptor2,
+};
 use dregg_circuit::dsl::circuit::ProgramRegistry;
-use dregg_circuit::dsl::membership::{
-    generate_merkle_poseidon2_trace, prove_membership_dsl, verify_membership_dsl,
-};
-use dregg_circuit::membership_adjacency_air::{
-    ADJ_PUBLIC_INPUT_COUNT, AdjStep, adj_pi, prove_adjacency, verify_adjacency,
-};
+use dregg_circuit::dsl::membership::generate_merkle_poseidon2_trace;
+use dregg_circuit::membership_descriptor_4ary::membership_witness_4ary;
 use dregg_circuit::predicate_air::{
     PredicateProof, PredicateType, verify_in_range, verify_predicate,
 };
-use dregg_circuit::stark::{StarkProof, proof_from_bytes, proof_to_bytes};
 use dregg_circuit::temporal_predicate_dsl::{
     TemporalPredicateProof, TemporalPredicateRequirement, verify_temporal_predicate,
 };
 
 const KIND_NAME: &str = "MerkleMembership";
+
+/// The emitted neighbor-adjacency descriptor name (`descriptor_by_name` key) —
+/// the sorted-set non-membership consecutiveness STARK.
+const ADJACENCY_DESCRIPTOR_NAME: &str = "dregg-membership-adjacency::poseidon2-v1";
 
 /// Compress a 32-byte value to its membership leaf felt — THE canonical
 /// chip-native compress (`dregg_commit::typed::compress_member`): lane 0 of the
@@ -91,6 +99,44 @@ fn compress(bytes: &[u8; 32]) -> BabyBear {
 fn root_felt_from_slot(bytes: &[u8; 32]) -> BabyBear {
     let v = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
     BabyBear::new(v)
+}
+
+/// Wire encoding for a `MerkleMembership` proof blob.
+///
+/// Layout: `depth: u32 LE || postcard(Ir2BatchProof)`. The `depth` selects the
+/// VK-distinct 4-ary membership descriptor (`descriptor_by_name`); the proof is
+/// the IR-v2 `BatchProof` produced by [`prove_vm_descriptor2`] against that
+/// descriptor. The `[leaf, root]` public inputs are NOT transmitted — the
+/// verifier derives them from the sender candidate + the cell's committed root,
+/// so they cannot be lied about independently of the honest witness.
+struct MembershipProofWire {
+    depth: u32,
+    proof: Ir2BatchProof<DreggStarkConfig>,
+}
+
+impl MembershipProofWire {
+    fn to_bytes(&self) -> Vec<u8> {
+        let mut out = Vec::new();
+        out.extend_from_slice(&self.depth.to_le_bytes());
+        out.extend_from_slice(
+            &postcard::to_allocvec(&self.proof)
+                .expect("Ir2BatchProof postcard serialization is infallible"),
+        );
+        out
+    }
+
+    fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
+        if bytes.len() < 4 {
+            return Err(format!(
+                "membership proof wire too short: {} bytes (need >= 4 for the depth header)",
+                bytes.len()
+            ));
+        }
+        let depth = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
+        let proof = postcard::from_bytes(&bytes[4..])
+            .map_err(|e| format!("membership BatchProof postcard decode failed: {e}"))?;
+        Ok(Self { depth, proof })
+    }
 }
 
 /// Real STARK-backed MerkleMembership verifier for `SenderAuthorized`.
@@ -154,22 +200,33 @@ impl WitnessedPredicateVerifier for MerkleMembershipStarkVerifier {
         let leaf = compress(&candidate);
         let root = root_felt_from_slot(commitment);
 
-        let proof: StarkProof =
-            proof_from_bytes(proof_bytes).map_err(|e| WitnessedPredicateError::Rejected {
-                kind_name: KIND_NAME,
-                reason: format!("membership STARK deserialization failed: {e}"),
+        // The wire is [depth: u32 LE || postcard(Ir2BatchProof)]. The depth picks
+        // the VK-distinct 4-ary membership descriptor via the fail-closed
+        // `descriptor_by_name` dispatch; that descriptor pins public inputs
+        // [leaf, root]. Verification accepts iff the prover knew a depth-N 4-ary
+        // Poseidon2 Merkle path from `leaf` to the committed `root` — a non-member
+        // has no such path (collision resistance), so verify fails and
+        // SenderAuthorized rejects. Decode + verify run under `catch_unwind` so a
+        // malformed / tampered blob is a fail-closed rejection, never a panic.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let wire = MembershipProofWire::from_bytes(proof_bytes)?;
+            let name = format!("{MEMBERSHIP_4ARY_NAME_PREFIX}{}", wire.depth);
+            let desc = descriptor_by_name(&name).ok_or_else(|| {
+                format!("no membership descriptor dispatches for {name:?} (fail-closed)")
             })?;
-
-        // SECURITY: the membership circuit binds public inputs [leaf, root] via
-        // row-0 / last-row boundary constraints over a Poseidon2 Merkle path.
-        // A proof verifies iff the prover knew a Merkle path from `leaf` to
-        // `root`. If the sender is not a leaf under the authorized-set root, no
-        // such path exists (Poseidon2 collision resistance), so verification
-        // fails and SenderAuthorized rejects.
-        verify_membership_dsl(&proof, leaf, root).map_err(|e| WitnessedPredicateError::Rejected {
-            kind_name: KIND_NAME,
-            reason: format!("sender is not a member of the authorized set: {e}"),
-        })
+            verify_vm_descriptor2(&desc, &wire.proof, &[leaf, root])
+        }));
+        match result {
+            Ok(Ok(())) => Ok(()),
+            Ok(Err(reason)) => Err(WitnessedPredicateError::Rejected {
+                kind_name: KIND_NAME,
+                reason: format!("sender is not a member of the authorized set: {reason}"),
+            }),
+            Err(_) => Err(WitnessedPredicateError::Rejected {
+                kind_name: KIND_NAME,
+                reason: "membership proof decode/verify panicked (treated as rejection)".into(),
+            }),
+        }
     }
 }
 
@@ -194,15 +251,18 @@ pub fn registry_with_real_sender_membership() -> WitnessedPredicateRegistry {
 /// `dregg_cell::predicate::NonMembershipProofV2` /
 /// `CredentialSetMembershipProof::revocation_adjacency_proof`.
 ///
-/// Layout: `idx_lower: u32 LE || idx_upper: u32 LE || proof_to_bytes(StarkProof)`.
+/// Layout: `idx_lower: u32 LE || idx_upper: u32 LE || postcard(Ir2BatchProof)`.
 /// The `root`/`leaf_lower`/`leaf_upper` BabyBear public inputs are *not*
 /// transmitted — the verifier derives them deterministically from the cell's
 /// 32-byte `(root, lower, upper)` via [`compress`], so they cannot be lied
-/// about independently of the cell-side neighbor witness.
+/// about independently of the cell-side neighbor witness. The two reconstructed
+/// indices ARE transmitted (they are the descriptor's `IDX_LOWER`/`IDX_UPPER`
+/// public inputs); the descriptor's internalized `idx_upper == idx_lower + 1`
+/// Last-row tooth judges consecutiveness on the trace regardless of them.
 struct AdjacencyProofWire {
     idx_lower: u32,
     idx_upper: u32,
-    proof: StarkProof,
+    proof: Ir2BatchProof<DreggStarkConfig>,
 }
 
 impl AdjacencyProofWire {
@@ -210,21 +270,24 @@ impl AdjacencyProofWire {
         let mut out = Vec::new();
         out.extend_from_slice(&self.idx_lower.to_le_bytes());
         out.extend_from_slice(&self.idx_upper.to_le_bytes());
-        out.extend_from_slice(&proof_to_bytes(&self.proof));
+        out.extend_from_slice(
+            &postcard::to_allocvec(&self.proof)
+                .expect("Ir2BatchProof postcard serialization is infallible"),
+        );
         out
     }
 
     fn from_bytes(bytes: &[u8]) -> Result<Self, String> {
         if bytes.len() < 8 {
             return Err(format!(
-                "adjacency proof wire too short: {} bytes (need ≥ 8 for the index header)",
+                "adjacency proof wire too short: {} bytes (need >= 8 for the index header)",
                 bytes.len()
             ));
         }
         let idx_lower = u32::from_le_bytes([bytes[0], bytes[1], bytes[2], bytes[3]]);
         let idx_upper = u32::from_le_bytes([bytes[4], bytes[5], bytes[6], bytes[7]]);
-        let proof = proof_from_bytes(&bytes[8..])
-            .map_err(|e| format!("adjacency STARK deserialization failed: {e}"))?;
+        let proof = postcard::from_bytes(&bytes[8..])
+            .map_err(|e| format!("adjacency BatchProof postcard decode failed: {e}"))?;
         Ok(Self {
             idx_lower,
             idx_upper,
@@ -235,7 +298,8 @@ impl AdjacencyProofWire {
 
 /// Real, STARK-backed [`NeighborAdjacencyVerifier`]: verifies that the two
 /// sorted-set neighbors are **consecutive leaves under the committed root**
-/// using the `dregg_circuit::membership_adjacency_air` AIR.
+/// using the emitted `dregg-membership-adjacency::poseidon2-v1` descriptor STARK
+/// (`descriptor_by_name` / `verify_vm_descriptor2`).
 ///
 /// This is the teeth the cell crate cannot grow on its own (it must not link
 /// `dregg-circuit`). Installed into a `WitnessedPredicateRegistry` by
@@ -255,8 +319,6 @@ impl NeighborAdjacencyVerifier for CircuitNeighborAdjacencyVerifier {
         upper: &[u8; 32],
         adjacency_proof: &[u8],
     ) -> Result<(), String> {
-        let wire = AdjacencyProofWire::from_bytes(adjacency_proof)?;
-
         // Derive the BabyBear public inputs from the cell's 32-byte values.
         //
         // ROOT: the committed sorted-set root is ALREADY a felt — the set's
@@ -271,21 +333,35 @@ impl NeighborAdjacencyVerifier for CircuitNeighborAdjacencyVerifier {
         let leaf_lower = compress(lower);
         let leaf_upper = compress(upper);
 
-        let mut public_inputs = vec![BabyBear::ZERO; ADJ_PUBLIC_INPUT_COUNT];
-        public_inputs[adj_pi::ROOT] = root_felt;
-        public_inputs[adj_pi::LEAF_LOWER] = leaf_lower;
-        public_inputs[adj_pi::LEAF_UPPER] = leaf_upper;
-        public_inputs[adj_pi::IDX_LOWER] = BabyBear::from_u64(wire.idx_lower as u64);
-        public_inputs[adj_pi::IDX_UPPER] = BabyBear::from_u64(wire.idx_upper as u64);
-
-        verify_adjacency(
-            &wire.proof,
-            root_felt,
-            leaf_lower,
-            leaf_upper,
-            &public_inputs,
-        )
-        .map_err(|e| e.to_string())
+        // Decode + verify under `catch_unwind`: a tampered / malformed blob is a
+        // fail-closed rejection, never a panic. The emitted adjacency descriptor
+        // (`descriptor_by_name`, fail-closed on a miss) pins PIs
+        // [root, leaf_lower, leaf_upper, idx_lower, idx_upper] and — the teeth —
+        // internalizes `idx_upper == idx_lower + 1` as a Last-row boundary, so a
+        // non-consecutive (wide-bracket) pair cannot produce a verifying proof
+        // against the committed root.
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let wire = AdjacencyProofWire::from_bytes(adjacency_proof)?;
+            let pis = vec![
+                root_felt,
+                leaf_lower,
+                leaf_upper,
+                BabyBear::from_u64(wire.idx_lower as u64),
+                BabyBear::from_u64(wire.idx_upper as u64),
+            ];
+            let desc = descriptor_by_name(ADJACENCY_DESCRIPTOR_NAME).ok_or_else(|| {
+                format!(
+                    "no adjacency descriptor dispatches for {ADJACENCY_DESCRIPTOR_NAME:?} (fail-closed)"
+                )
+            })?;
+            verify_vm_descriptor2(&desc, &wire.proof, &pis)
+        }));
+        match result {
+            Ok(r) => r,
+            Err(_) => {
+                Err("adjacency proof decode/verify panicked (treated as rejection)".to_string())
+            }
+        }
     }
 }
 
@@ -301,16 +377,31 @@ impl NeighborAdjacencyVerifier for CircuitNeighborAdjacencyVerifier {
 /// credential-set `revocation_adjacency_proof`).
 pub fn prove_neighbor_adjacency(
     lower: &[u8; 32],
-    lower_path: &[AdjStep],
+    lower_path: &[NeighborAdjStep],
     upper: &[u8; 32],
-    upper_path: &[AdjStep],
+    upper_path: &[NeighborAdjStep],
 ) -> Result<Vec<u8>, String> {
     let leaf_lower = compress(lower);
     let leaf_upper = compress(upper);
-    let (proof, public_inputs) = prove_adjacency(leaf_lower, lower_path, leaf_upper, upper_path)
-        .map_err(|e| e.to_string())?;
-    let idx_lower = public_inputs[adj_pi::IDX_LOWER].as_u32();
-    let idx_upper = public_inputs[adj_pi::IDX_UPPER].as_u32();
+    let (trace, pis) = adjacency_witness(leaf_lower, lower_path, leaf_upper, upper_path)?;
+    let idx_lower = pis[ADJ_PI_IDX_LOWER].as_u32();
+    let idx_upper = pis[ADJ_PI_IDX_UPPER].as_u32();
+
+    // Honest-prover contract: refuse a non-consecutive bracket up front. The
+    // descriptor's internalized `idx_upper == idx_lower + 1` Last-row tooth also
+    // rejects it at verify, but an honest prover never attempts a wide bracket
+    // (preserving the retired `prove_adjacency`'s "not consecutive" refusal).
+    if idx_upper != idx_lower + 1 {
+        return Err(format!(
+            "adjacency leaves are not consecutive: idx_lower={idx_lower}, idx_upper={idx_upper} \
+             (require idx_upper == idx_lower + 1)"
+        ));
+    }
+
+    let desc = descriptor_by_name(ADJACENCY_DESCRIPTOR_NAME).ok_or_else(|| {
+        format!("no adjacency descriptor dispatches for {ADJACENCY_DESCRIPTOR_NAME:?}")
+    })?;
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])?;
     Ok(AdjacencyProofWire {
         idx_lower,
         idx_upper,
@@ -319,8 +410,8 @@ pub fn prove_neighbor_adjacency(
     .to_bytes())
 }
 
-/// Re-export of the adjacency `AdjStep` for prover-side callers.
-pub use dregg_circuit::membership_adjacency_air::AdjStep as NeighborAdjStep;
+/// Re-export of the adjacency step (`AdjWitnessStep`) for prover-side callers.
+pub use dregg_circuit::adjacency_witness::AdjWitnessStep as NeighborAdjStep;
 
 /// The 32-byte set-commitment form a cell must publish for an adjacency tree
 /// whose binary-Poseidon2 root is `root_felt`: the felt's canonical 4-byte LE
@@ -360,10 +451,11 @@ pub fn adjacency_leaf_felt(neighbor: &[u8; 32]) -> BabyBear {
 /// prover who knows the public nullifier root can pick a WIDE BRACKET
 /// (`lo = 0x00…`, `hi = 0xFF…`) that brackets-but-isn't-adjacent, "proving"
 /// non-membership for a nullifier that IS in the set — a double-spend. This
-/// verifier closes that by running the `membership_adjacency_air` STARK, which
+/// verifier closes that by running the emitted `dregg-membership-adjacency`
+/// descriptor STARK (`descriptor_by_name` / `verify_vm_descriptor2`), which
 /// reconstructs the two leaf indices in-circuit and enforces
 /// `idx_upper == idx_lower + 1`. A non-consecutive pair cannot produce a proof
-/// (`forge_nonconsecutive_wide_bracket_is_rejected`).
+/// (`notespend_wide_bracket_double_spend_rejected`).
 ///
 /// This is the deployed-verifier realization of the Lean
 /// `Circuit/Argus/Effects/NoteSpend.lean` §8¾ discharge: `NmRowEncodes` is no
@@ -811,18 +903,60 @@ pub fn registry_with_real_verifiers_full(
 /// `(siblings, positions)` under the authorized-set root.
 ///
 /// `sender_pk` is the 32-byte sender public key (the candidate); the returned
-/// serialized STARK proof verifies under [`MerkleMembershipStarkVerifier`]
-/// against the set root computed from the same path. The `siblings`/`positions`
-/// are BabyBear-domain Merkle witness data (leaf-to-root), matching
-/// [`dregg_circuit::dsl::membership::prove_membership_dsl`].
+/// serialized proof blob ([`MembershipProofWire`]: depth + `postcard(Ir2BatchProof)`)
+/// verifies under [`MerkleMembershipStarkVerifier`] against the set root computed
+/// from the same path. The `siblings`/`positions` are BabyBear-domain Merkle
+/// witness data (leaf-to-root); the path is padded to a power-of-two depth (as
+/// [`generate_merkle_poseidon2_trace`] pads) and proven through the 4-ary
+/// `membership_descriptor_of_depth_4ary` descriptor.
 pub fn prove_sender_membership(
     sender_pk: &[u8; 32],
     siblings: &[[BabyBear; 3]],
     positions: &[u8],
 ) -> Result<Vec<u8>, String> {
+    if siblings.len() != positions.len() {
+        return Err(format!(
+            "membership siblings/positions length mismatch ({} vs {})",
+            siblings.len(),
+            positions.len()
+        ));
+    }
     let leaf = compress(sender_pk);
-    let proof = prove_membership_dsl(leaf, siblings, positions)?;
-    Ok(dregg_circuit::stark::proof_to_bytes(&proof))
+    // Pad the authentication path to the next power-of-two depth (min 2) with
+    // zero-sibling, position-0 levels — EXACTLY how `generate_merkle_poseidon2_trace`
+    // pads internally — so the descriptor's committed root stays BYTE-EQUAL to the
+    // production root (`authorized_set_root_felt`). `membership_witness_4ary`
+    // requires a power-of-two depth >= 2; the pad reproduces production's root.
+    let (padded_siblings, padded_positions) = pad_membership_path(siblings, positions);
+    let depth = padded_siblings.len();
+    let (trace, pis) = membership_witness_4ary(leaf, &padded_siblings, &padded_positions)?;
+    let name = format!("{MEMBERSHIP_4ARY_NAME_PREFIX}{depth}");
+    let desc = descriptor_by_name(&name)
+        .ok_or_else(|| format!("no membership descriptor dispatches for {name:?}"))?;
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])?;
+    Ok(MembershipProofWire {
+        depth: depth as u32,
+        proof,
+    }
+    .to_bytes())
+}
+
+/// Pad a Merkle authentication path to the next power-of-two depth (min 2) with
+/// zero-sibling, position-0 levels — the SAME padding
+/// [`generate_merkle_poseidon2_trace`] applies internally, so the padded 4-ary
+/// descriptor root is byte-equal to the production `authorized_set_root_felt`.
+fn pad_membership_path(
+    siblings: &[[BabyBear; 3]],
+    positions: &[u8],
+) -> (Vec<[BabyBear; 3]>, Vec<u8>) {
+    let mut s = siblings.to_vec();
+    let mut p = positions.to_vec();
+    let target = s.len().next_power_of_two().max(2);
+    while s.len() < target {
+        s.push([BabyBear::ZERO; 3]);
+        p.push(0);
+    }
+    (s, p)
 }
 
 /// The authorized-set Merkle root as a BabyBear felt (the value the membership
@@ -862,7 +996,7 @@ pub fn authorized_set_root_bytes(
 //
 // The common honest-issuer case authorizes exactly ONE public key (the
 // issuer's own pk). For this the Merkle tree degenerates to a single leaf;
-// the membership STARK still needs depth ≥ 2 (`prove_membership_dsl`), so the
+// the 4-ary membership descriptor needs a power-of-two depth ≥ 2, so the
 // member sits at position 0 of a depth-2 tree padded with zero siblings. Both
 // the slot value and the proof are derived from the SAME `compress` /
 // `generate_merkle_poseidon2_trace` convention the [`MerkleMembershipStarkVerifier`]
@@ -870,8 +1004,8 @@ pub fn authorized_set_root_bytes(
 // commits to is exactly the root the verifier reconstructs from the slot).
 
 /// The canonical depth-2 single-member witness: position 0 at each level,
-/// zero siblings. `prove_membership_dsl` requires depth ≥ 2; this is the
-/// minimal honest path for a one-element authorized set.
+/// zero siblings. The 4-ary membership descriptor requires a power-of-two
+/// depth ≥ 2; this is the minimal honest path for a one-element authorized set.
 const SINGLE_MEMBER_SIBLINGS: [[BabyBear; 3]; 2] = [
     [BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
     [BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
@@ -1495,7 +1629,7 @@ mod tests {
         levels
     }
 
-    fn auth_path(levels: &[Vec<BabyBear>], mut index: usize) -> Vec<AdjStep> {
+    fn auth_path(levels: &[Vec<BabyBear>], mut index: usize) -> Vec<NeighborAdjStep> {
         let depth = levels.len() - 1;
         let mut path = Vec::with_capacity(depth);
         for level in &levels[..depth] {
@@ -1505,7 +1639,7 @@ mod tests {
             } else {
                 level[index + 1]
             };
-            path.push(AdjStep {
+            path.push(NeighborAdjStep {
                 sibling,
                 dir: is_right,
             });
@@ -1915,7 +2049,7 @@ mod tests {
     /// - a genuine member's proof is ADMITTED (valid leaf reaches the root), and
     /// - a non-member's forge against the same root is REJECTED at the STARK
     ///   level (Poseidon2 collision resistance — no path exists, so
-    ///   `verify_membership_dsl` fails and `SenderAuthorized` rejects).
+    ///   `verify_vm_descriptor2` fails and `SenderAuthorized` rejects).
     ///
     /// If a future edit silently reverts the default back to
     /// `dregg_cell::default_builtins()` (the `NotYetWiredVerifier` stub), the

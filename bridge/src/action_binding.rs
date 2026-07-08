@@ -1,9 +1,19 @@
 //! Bridge-action binding wrapper.
 //!
-//! Wraps `dregg_circuit::bridge_action_air` with bridge-side ergonomics: a
-//! `PortableActionBinding` type that bundles a serialized STARK proof with
-//! its typed parameters, plus prove/verify helpers tied to
-//! `dregg_cell_crypto::note_bridge`'s shapes.
+//! Wraps `dregg_circuit::bridge_action_air`'s trace shape with bridge-side
+//! ergonomics: a `PortableActionBinding` type that bundles a serialized IR-v2
+//! (`descriptor_ir2`) batch proof with its typed parameters, plus prove/verify
+//! helpers tied to `dregg_cell_crypto::note_bridge`'s shapes.
+//!
+//! The proof is minted through the plonky3 descriptor prover
+//! (`descriptor_ir2::prove_vm_descriptor2`) against the
+//! `bridge-action-leaf::bridge_action_air_v1` descriptor
+//! (`dregg_circuit_prove::bridge_leaf_adapter::bridge_action_to_descriptor2`).
+//! That descriptor is the Lean-authored, byte-pinned emit of the binding AIR and is
+//! certified a term-for-term FAITHFUL twin of the hand `BridgeActionAir` (26 first-row
+//! `PiBinding` pins ++ 26 column-constancy `WindowGate`s) by
+//! `circuit-prove/tests/bridge_action_emit_gate.rs` — the SAME statement the old hand
+//! STARK engine proved, now on the descriptor prover.
 //!
 //! # Why this exists
 //!
@@ -38,16 +48,31 @@
 //! attests that the typed parameters used to apply the mint match the ones
 //! the prover committed to at trace-generation time.
 
-use dregg_circuit::bridge_action_air::{
-    BridgeActionWitness, prove_bridge_action, verify_bridge_action,
+use std::panic::AssertUnwindSafe;
+
+use dregg_circuit::bridge_action_air::{BridgeActionAir, BridgeActionWitness};
+use dregg_circuit::descriptor_ir2::{
+    DreggStarkConfig, Ir2BatchProof, MemBoundaryWitness, prove_vm_descriptor2,
+    verify_vm_descriptor2,
 };
-use dregg_circuit::stark::{StarkProof, proof_from_bytes, proof_to_bytes};
+use dregg_circuit_prove::bridge_leaf_adapter::bridge_action_to_descriptor2;
 use serde::{Deserialize, Serialize};
+
+/// Serialize an IR-v2 batch proof for the wire (`postcard`, the same binary codec the
+/// per-turn aggregate uses — `Ir2BatchProof` is `Serialize`/`Deserialize`).
+fn proof_to_bytes(proof: &Ir2BatchProof<DreggStarkConfig>) -> Vec<u8> {
+    postcard::to_allocvec(proof).expect("Ir2BatchProof serializes")
+}
+
+/// Deserialize an IR-v2 batch proof produced by [`proof_to_bytes`].
+fn proof_from_bytes(bytes: &[u8]) -> Result<Ir2BatchProof<DreggStarkConfig>, String> {
+    postcard::from_bytes(bytes).map_err(|e| e.to_string())
+}
 
 /// A portable, self-describing bridge-action binding.
 ///
 /// Carries the typed parameters in plaintext (so the executor can dispatch
-/// on them without parsing the proof) alongside a serialized STARK proof
+/// on them without parsing the proof) alongside a serialized IR-v2 batch proof
 /// that algebraically attests to those exact bytes.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct PortableActionBinding {
@@ -59,8 +84,8 @@ pub struct PortableActionBinding {
     pub destination_federation: [u8; 32],
     /// The full u64 amount.
     pub amount: u64,
-    /// The serialized `dregg_circuit::stark::StarkProof` for the
-    /// `bridge_action_air::BridgeActionAir`.
+    /// The serialized IR-v2 `descriptor_ir2::Ir2BatchProof` for the
+    /// `bridge-action-leaf::bridge_action_air_v1` descriptor (postcard-encoded).
     pub proof_bytes: Vec<u8>,
 }
 
@@ -80,7 +105,21 @@ pub fn create_action_binding(
         destination_federation,
         amount,
     };
-    let proof = prove_bridge_action(&witness);
+    // The descriptor prover binds the 26-slot typed tuple exactly as the hand AIR did:
+    // `generate_trace` lays the typed limbs at row 0 (padded to a power of 2), and the
+    // `bridge_action_air_v1` descriptor pins each PI slot to its column (`PiBinding{First}`)
+    // and holds every column constant across rows (`WindowGate{on_transition}`).
+    let (trace, public_inputs) = BridgeActionAir::generate_trace(&witness);
+    let desc =
+        bridge_action_to_descriptor2().expect("bridge_action_to_descriptor2 is total (always Ok)");
+    let proof = prove_vm_descriptor2(
+        &desc,
+        &trace,
+        &public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+    )
+    .expect("honest bridge-action witness proves (row0 pinned to its 26 PIs)");
     let proof_bytes = proof_to_bytes(&proof);
     PortableActionBinding {
         nullifier,
@@ -94,9 +133,9 @@ pub fn create_action_binding(
 /// Errors from `verify_action_binding`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub enum ActionBindingError {
-    /// The proof bytes did not deserialize as a STARK proof.
+    /// The proof bytes did not deserialize as an IR-v2 batch proof.
     DeserializationFailed { reason: String },
-    /// The STARK proof failed the AIR boundary / constraint checks.
+    /// The IR-v2 proof failed the descriptor boundary / transition checks.
     /// This catches any mismatch on nullifier / recipient /
     /// destination_federation / amount limbs.
     AirVerificationFailed { reason: String },
@@ -122,16 +161,17 @@ impl std::error::Error for ActionBindingError {}
 ///
 /// The executor passes its own view of `(nullifier, recipient,
 /// destination_federation, amount)` — the parameters it is about to apply.
-/// This function deserializes the embedded STARK proof and checks that the
-/// AIR's boundary constraints all hold against those parameters. Any
+/// This function deserializes the embedded IR-v2 batch proof and checks that the
+/// descriptor's first-row `PiBinding` pins all hold against those parameters. Any
 /// mismatch on ANY limb of any field causes rejection.
 ///
 /// # Why the executor passes the parameters
 ///
 /// We do NOT trust the parameters embedded in the `PortableActionBinding`
 /// itself for the verify step — those are dispatch hints. The cryptographic
-/// binding is the AIR boundary check, which compares the executor's typed
-/// values against the prover's committed trace. This pattern matches
+/// binding is the descriptor's `PiBinding{First}` check, which compares the
+/// executor's typed values (rebuilt into the 26-slot public-input tuple) against
+/// the prover's committed trace. This pattern matches
 /// `verify_note_spend_dsl_with_destination`.
 pub fn verify_action_binding(
     binding: &PortableActionBinding,
@@ -140,16 +180,36 @@ pub fn verify_action_binding(
     expected_destination_federation: &[u8; 32],
     expected_amount: u64,
 ) -> Result<(), ActionBindingError> {
-    let proof: StarkProof = proof_from_bytes(&binding.proof_bytes)
+    let proof = proof_from_bytes(&binding.proof_bytes)
         .map_err(|reason| ActionBindingError::DeserializationFailed { reason })?;
-    verify_bridge_action(
-        expected_nullifier,
-        expected_recipient,
-        expected_destination_federation,
-        expected_amount,
-        &proof,
-    )
-    .map_err(|e| ActionBindingError::AirVerificationFailed { reason: e })
+
+    // Rebuild the EXPECTED 26-slot public-input tuple from the executor's typed view
+    // (`witness.public_inputs()` lays the 8/8/8/2 nullifier/recipient/dest/amount limbs).
+    // The descriptor pins row 0 to these PIs, so a proof committed to different values is
+    // UNSAT — exactly the binding the hand `verify_bridge_action` enforced.
+    let expected_pis = BridgeActionWitness {
+        nullifier: *expected_nullifier,
+        recipient: *expected_recipient,
+        destination_federation: *expected_destination_federation,
+        amount: expected_amount,
+    }
+    .public_inputs();
+
+    let desc =
+        bridge_action_to_descriptor2().expect("bridge_action_to_descriptor2 is total (always Ok)");
+
+    // Fail-closed: any panic in the descriptor verifier (a structurally malformed proof
+    // that survived postcard decode) is a rejection, not a process abort.
+    let verified = std::panic::catch_unwind(AssertUnwindSafe(|| {
+        verify_vm_descriptor2(&desc, &proof, &expected_pis)
+    }));
+    match verified {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(reason)) => Err(ActionBindingError::AirVerificationFailed { reason }),
+        Err(_) => Err(ActionBindingError::AirVerificationFailed {
+            reason: "descriptor verifier panicked on malformed proof".to_string(),
+        }),
+    }
 }
 
 #[cfg(test)]

@@ -222,8 +222,9 @@ pub struct IntentPool {
     auto_fulfill: AutoFulfillPolicy,
     /// Pending matches waiting for user approval or auto-fulfillment.
     pending_matches: Vec<(Intent, Match)>,
-    /// Intents we have broadcast (to avoid re-matching our own).
-    our_intent_ids: Vec<[u8; 32]>,
+    /// Intents we have broadcast (to avoid re-matching our own). A `HashSet` so the
+    /// `receive`/`rematch_all` membership tests are O(1) instead of a linear scan.
+    our_intent_ids: HashSet<[u8; 32]>,
     /// Rate limiting: tracks (window_start, count) per creator.
     recent_by_creator: HashMap<CommitmentId, (u64, usize)>,
     /// Global rate limiting: (window_start, count).
@@ -268,7 +269,7 @@ impl IntentPool {
             config,
             auto_fulfill,
             pending_matches: Vec::new(),
-            our_intent_ids: Vec::new(),
+            our_intent_ids: HashSet::new(),
             recent_by_creator: HashMap::new(),
             global_rate: (0, 0),
             pending_commitments: HashMap::new(),
@@ -336,7 +337,7 @@ impl IntentPool {
         // Validate self-submitted intents too (issue #11)
         validation::validate_intent(&intent).map_err(ReceiveError::Invalid)?;
 
-        self.our_intent_ids.push(intent.id);
+        self.our_intent_ids.insert(intent.id);
         self.intents.insert(
             intent.id,
             StoredIntent {

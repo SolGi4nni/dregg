@@ -538,6 +538,25 @@ pub struct CellDetailResponse {
     /// rather than only replaying events.
     #[serde(default)]
     pub fields: Vec<String>,
+    /// The cell's c-list EDGES — every held capability serialized IN FULL
+    /// (`target`, `slot`, `permissions`, `breadstuff`, `expires_at`,
+    /// `allowed_effects`, R7 `stored_epoch`), NOT merely `capability_count`.
+    ///
+    /// A remote crawl (`dregg-sdk-net`'s `NodeWorldSink`) rebuilds the real
+    /// [`CapabilitySet`](dregg_cell::CapabilitySet) from these edges so an
+    /// authority read (`has_access`) over a crawled ledger answers IDENTICALLY
+    /// to a read on the origin box (Pillar-2b: "any box derives the same cap
+    /// from its own ledger copy"). Serializing the whole `CapabilityRef` via
+    /// serde is byte-faithful — it carries the `Custom` vk_hash, the breadstuff
+    /// token hash, and the facet mask that a hand-rolled projection would drop.
+    #[serde(default)]
+    pub capabilities: Vec<dregg_cell::CapabilityRef>,
+    /// The revoked-slot TOMBSTONES (the openable-tree ghost leaves). Carried so
+    /// a crawled c-list reproduces the post-revoke cap-root shape via
+    /// [`CapabilitySet::reconstruct`](dregg_cell::CapabilitySet::reconstruct),
+    /// not a compacted rebuild.
+    #[serde(default)]
+    pub capability_tombstones: Vec<u32>,
 }
 
 #[derive(Serialize)]
@@ -4047,6 +4066,8 @@ async fn get_cell_detail(
             },
             program: cell.program.to_view(),
             fields: cell.state.fields.iter().map(|f| hex_encode(f)).collect(),
+            capabilities: cell.capabilities.iter().cloned().collect(),
+            capability_tombstones: cell.capabilities.tombstoned_slots().collect(),
         })),
         None => Ok(Json(CellDetailResponse {
             id,
@@ -4066,6 +4087,8 @@ async fn get_cell_detail(
             program_kind: "None".to_string(),
             program: dregg_cell::program::CellProgramView::None,
             fields: Vec::new(),
+            capabilities: Vec::new(),
+            capability_tombstones: Vec::new(),
         })),
     }
 }

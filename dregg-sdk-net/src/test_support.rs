@@ -282,6 +282,11 @@ fn cell_detail_json(id_hex: &str, node: &TestNode) -> serde_json::Value {
             "delegate": cell.delegate.as_ref().map(|d| dregg_types::hex_encode(&d.0)),
             "fields": cell.state.fields.iter()
                 .map(|f| dregg_types::hex_encode(f)).collect::<Vec<_>>(),
+            // The c-list EDGES, serialized exactly as `node::api::get_cell_detail`
+            // does — the real node's explorer surface carries them, so the crawl
+            // rebuilds the true `CapabilitySet` (Pillar-2b authority fidelity).
+            "capabilities": cell.capabilities.iter().cloned().collect::<Vec<_>>(),
+            "capability_tombstones": cell.capabilities.tombstoned_slots().collect::<Vec<u32>>(),
         }),
         None => serde_json::json!({"id": id_hex, "found": false}),
     }

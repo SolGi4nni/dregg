@@ -8981,34 +8981,33 @@ fn test_bearer_cap_stark_delegation_invalid_proof_rejected() {
     }
 }
 
-/// Build a minimal serialized `StarkProof` carrying exactly `public_inputs`.
-///
-/// The scope-binding verifier (`verify_stark_delegation_binding`) only inspects
-/// the deserialized `public_inputs` (and length); the FRI/query payload is not
-/// touched. So an empty-query proof with the chosen public inputs is a faithful
-/// vehicle for exercising the binding teeth, feature-uniform (works under
-/// `prover`, where the v1 `EffectVmAir` prover is retired).
+/// Build a REAL IR-v2 delegation-binding batch proof committing to `public_inputs`
+/// (the 24-limb canonical scope vector, as raw `u32` limbs), wire-encoded as
+/// `postcard(Ir2BatchProof)` — the new format a `DelegationProofData::StarkDelegation`
+/// carries. `verify_stark_delegation_binding` decodes it and runs the full
+/// `verify_vm_descriptor2` binding check against the delegation descriptor (whose 24
+/// row-0 `PiBinding`s pin every scope limb), so a proof bound to scope `A` fails to
+/// verify against any forged wider scope `B`. Feature-uniform (`prove_vm_descriptor2`
+/// is unconditional in `dregg-circuit`).
 #[cfg(test)]
 fn stark_proof_bytes_with_public_inputs(public_inputs: &[u32]) -> Vec<u8> {
-    use dregg_circuit::stark::{StarkProof, proof_to_bytes};
-    let proof = StarkProof {
-        trace_commitment: [0u8; 32],
-        constraint_commitment: [0u8; 32],
-        fri_commitments: vec![],
-        fri_final_poly: vec![],
-        query_proofs: vec![],
-        public_inputs: public_inputs.to_vec(),
-        trace_len: 64,
-        num_cols: 1,
-        air_name: "dregg-effect-vm-v1".to_string(),
-        nonce: None,
-        boundary_commitment: None,
-        boundary_query_values: vec![],
-        boundary_query_paths: vec![],
-        pow_nonce: 0,
-        pow_bits: 0,
+    use dregg_circuit::delegate_descriptor::{
+        DELEGATE_SCOPE_LIMBS, delegate_binding_descriptor, delegate_binding_witness,
     };
-    proof_to_bytes(&proof)
+    use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
+    use dregg_circuit::field::BabyBear;
+    assert_eq!(
+        public_inputs.len(),
+        DELEGATE_SCOPE_LIMBS,
+        "the delegation scope is a fixed 24-limb vector"
+    );
+    let scope: [BabyBear; DELEGATE_SCOPE_LIMBS] =
+        std::array::from_fn(|i| BabyBear::new(public_inputs[i]));
+    let desc = delegate_binding_descriptor();
+    let (trace, pis) = delegate_binding_witness(&scope);
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+        .expect("honest delegation-binding must prove");
+    postcard::to_allocvec(&proof).expect("postcard-encode the delegation-binding batch proof")
 }
 
 /// Both-polarity teeth for the shared STARK-delegation scope-binding verifier
@@ -9159,21 +9158,21 @@ fn stark_delegation_binding_admits_valid_rejects_forged() {
         "non-deserializable proof bytes must be rejected"
     );
 
-    // TOOTH 8 (reject): too few public inputs (a stripped proof).
-    let short_bytes = stark_proof_bytes_with_public_inputs(&pis[..pis.len() - 1]);
+    // TOOTH 8 (reject): a truncated proof blob does not deserialize.
+    let short_bytes = &valid_bytes[..valid_bytes.len() / 2];
     assert!(
         matches!(
             verify_stark_delegation_binding(
-                &short_bytes,
+                short_bytes,
                 &root_issuer,
                 &target,
                 &permissions,
                 expires_at,
                 &federation,
             ),
-            Err(StarkDelegationBindingError::TooFewPublicInputs { .. })
+            Err(StarkDelegationBindingError::Deserialization(_))
         ),
-        "a proof with fewer public inputs than the scope requires must be rejected"
+        "a truncated proof blob must be rejected at deserialization"
     );
 }
 

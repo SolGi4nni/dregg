@@ -9,7 +9,9 @@
 # it leaves the tree byte-identical. After moving any Lean emit, run this and commit.
 #
 # Usage:  scripts/emit-descriptors.sh
-# Exit:   0 = regenerated (or no-op); nonzero = an emitter failed or a routing gap.
+# Exit:   0 = installed (or no-op); 2 = an emitter failed; 3 = REGEN REFUSED —
+#         a byte-CHANGING install needs DREGG_VK_REGEN_ACK (the regen re-keys the
+#         federation; see docs/VK-REGEN-CONTROLS.md); other nonzero = routing gap.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"

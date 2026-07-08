@@ -195,7 +195,7 @@ pub use turn::{
 };
 pub use verify::{
     VerifyError, sign_receipt, verify_receipt_chain, verify_receipt_chain_head,
-    verify_receipt_chain_with_keys, verify_receipt_extends,
+    verify_receipt_chain_with_keys, verify_receipt_extends, verify_receipt_signature_with_keys,
 };
 pub use witnessed_receipt::{
     AggregateMembership, RecursiveProofVariant, WitnessAvailability, WitnessBundle,
