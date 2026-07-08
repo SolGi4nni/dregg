@@ -1,7 +1,8 @@
 use dregg_circuit::cap_root::fold_bytes32;
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{
-    HeapLeaf, compute_canonical_heap_root_8 as compute_canonical_heap_root_8_circuit,
+    CanonicalHeapTree, HEAP_TREE_DEPTH, HeapLeaf,
+    compute_canonical_heap_root_8 as compute_canonical_heap_root_8_circuit,
     compute_heap_root as compute_heap_root_felt, empty_heap_root as empty_heap_root_felt,
     heap_addr,
 };
@@ -85,6 +86,44 @@ pub enum FieldVisibility {
 impl Default for FieldVisibility {
     fn default() -> Self {
         FieldVisibility::Public
+    }
+}
+
+/// A **non-committed, reconstructable-from-`heap_map`** incremental cache of the
+/// sorted-Poseidon2 heap tree ([`CanonicalHeapTree`]) that produces
+/// [`CellState::heap_root`]. Kept in [`CellState`] so a heap write that only
+/// changes an EXISTING address's value ([`CanonicalHeapTree::apply_value_update`])
+/// is an O(log n) path recompute instead of an O(n) full
+/// [`compute_heap_root`] rebuild.
+///
+/// It is deliberately EXCLUDED from the cell's identity and its serialized bytes:
+/// - `PartialEq`/`Eq` ignore it — two cells are equal iff their COMMITTED state
+///   (including the `heap_root` felt) matches, regardless of whether the perf
+///   cache happens to be populated;
+/// - `#[serde(skip)]` on the field keeps the serialized/committed bytes
+///   BYTE-IDENTICAL to before this cache existed (the committed value is the
+///   `heap_root`, which stays equal to [`compute_heap_root`] at every step);
+/// - `Default` is the empty (`None`) cache — a freshly deserialized or
+///   wholesale-assigned cell lazily rebuilds it on its first heap op / reseal.
+///
+/// `Clone` copies the built tree (cheaper than a rebuild). `Debug` is opaque.
+#[derive(Clone, Default)]
+struct HeapTreeCache(Option<CanonicalHeapTree>);
+
+impl PartialEq for HeapTreeCache {
+    /// The cache is not part of a cell's committed identity.
+    fn eq(&self, _other: &Self) -> bool {
+        true
+    }
+}
+
+impl Eq for HeapTreeCache {}
+
+impl std::fmt::Debug for HeapTreeCache {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.debug_tuple("HeapTreeCache")
+            .field(&self.0.is_some())
+            .finish()
     }
 }
 
@@ -228,6 +267,16 @@ pub struct CellState {
     /// `#[serde(default)]` keeps every existing serialized cell deserializing.
     #[serde(default)]
     pub heap_map: BTreeMap<(u32, u32), FieldElement>,
+    /// Perf cache (NOT committed, NOT serialized): the incremental
+    /// sorted-Poseidon2 heap tree that produces [`heap_root`](Self::heap_root).
+    /// Reconstructable from [`heap_map`](Self::heap_map); see [`HeapTreeCache`].
+    /// Maintained incrementally by [`set_heap`](Self::set_heap) (O(log n) on a
+    /// value update at an existing address) and rebuilt on the reshaping paths
+    /// ([`remove_heap`](Self::remove_heap), fresh inserts, and
+    /// [`reseal_heap_root`](Self::reseal_heap_root) — the authoritative resync a
+    /// caller invokes after any out-of-band `heap_map` mutation).
+    #[serde(skip)]
+    heap_tree_cache: HeapTreeCache,
 }
 
 /// The all-empty-tree-sentinel `system_roots` sub-block a LEGACY cell carries:
@@ -667,6 +716,8 @@ impl CellState {
             // Universal-map rotation §2.4: empty heap.
             heap_root: empty_heap_root(),
             heap_map: BTreeMap::new(),
+            // Perf cache: built lazily on the first heap op / reseal.
+            heap_tree_cache: HeapTreeCache::default(),
         }
     }
 
@@ -874,29 +925,86 @@ impl CellState {
         self.heap_map.get(&(coll, key)).copied()
     }
 
-    /// Write a heap entry by its `(collection_id, key)` and recompute
+    /// The [`HeapLeaf`] a `(coll, key) → value` heap entry commits: keyed by
+    /// [`heap_addr`], valued by the folded 32-byte value. The SAME leaf shape
+    /// [`compute_heap_root`] builds — so the cached tree's root is byte-identical
+    /// to the free-function root over the same map.
+    #[inline]
+    fn heap_leaf(coll: u32, key: u32, value: &FieldElement) -> HeapLeaf {
+        HeapLeaf {
+            addr: heap_addr(BabyBear::new(coll), BabyBear::new(key)),
+            value: fold_bytes32(value),
+        }
+    }
+
+    /// Rebuild the incremental heap-tree cache from the CURRENT `heap_map` and
+    /// re-store `heap_root` from its root. O(n). The authoritative resync point:
+    /// used for the reshaping heap writes (fresh insert / remove) and by
+    /// [`reseal_heap_root`](Self::reseal_heap_root). The resulting `heap_root` is
+    /// byte-identical to [`compute_heap_root`]`(&self.heap_map)` (both fold the
+    /// same leaves through the same [`CanonicalHeapTree`]).
+    fn rebuild_heap_cache(&mut self) {
+        let leaves: Vec<HeapLeaf> = self
+            .heap_map
+            .iter()
+            .map(|((coll, key), value)| Self::heap_leaf(*coll, *key, value))
+            .collect();
+        let tree = CanonicalHeapTree::new(leaves, HEAP_TREE_DEPTH);
+        self.heap_root = babybear_to_bytes32(tree.root());
+        self.heap_tree_cache.0 = Some(tree);
+    }
+
+    /// Write a heap entry by its `(collection_id, key)` and advance
     /// [`heap_root`](Self::heap_root).
+    ///
+    /// **Perf:** the common case — a value update at an ALREADY-PRESENT address —
+    /// is an O(log n) incremental path recompute via
+    /// [`CanonicalHeapTree::apply_value_update`] over the persistent cache. A
+    /// FRESH address is a sorted insert that shifts leaf positions, so it rebuilds
+    /// the cache (O(n)); that reshaping cost is unavoidable and matches the prior
+    /// behaviour. Either way the stored `heap_root` equals
+    /// [`compute_heap_root`]`(&self.heap_map)` after the call.
     pub fn set_heap(&mut self, coll: u32, key: u32, value: FieldElement) -> bool {
+        let existed = self.heap_map.contains_key(&(coll, key));
         self.heap_map.insert((coll, key), value);
-        self.heap_root = compute_heap_root(&self.heap_map);
+        if existed {
+            // Value update at an existing address: O(log n) incremental path,
+            // provided the cache is present (invariant: it reflects the pre-write
+            // map). Missing cache (first op after load / wholesale assign) falls
+            // through to a rebuild that also populates it.
+            let addr = heap_addr(BabyBear::new(coll), BabyBear::new(key));
+            let vfelt = fold_bytes32(&value);
+            if let Some(tree) = self.heap_tree_cache.0.as_mut() {
+                if let Some(root) = tree.apply_value_update(addr, vfelt) {
+                    self.heap_root = babybear_to_bytes32(root);
+                    return true;
+                }
+            }
+        }
+        // Fresh address (sorted insert reshapes) or no live cache: full rebuild.
+        self.rebuild_heap_cache();
         true
     }
 
     /// Remove a heap entry by its `(collection_id, key)` and recompute
     /// [`heap_root`](Self::heap_root). Returns `true` if the key was present.
+    /// A removal reshapes the sorted tree (position shift), so the cache is
+    /// rebuilt (O(n)).
     pub fn remove_heap(&mut self, coll: u32, key: u32) -> bool {
         let removed = self.heap_map.remove(&(coll, key)).is_some();
         if removed {
-            self.heap_root = compute_heap_root(&self.heap_map);
+            self.rebuild_heap_cache();
         }
         removed
     }
 
     /// Recompute and store `heap_root` from the current `heap_map`. Idempotent;
     /// callers that mutate `heap_map` out-of-band must call this to re-seal the
-    /// root.
+    /// root. This is also the incremental cache's authoritative resync — it
+    /// rebuilds the cache from the current map, so a following
+    /// [`set_heap`](Self::set_heap) trusts an up-to-date tree.
     pub fn reseal_heap_root(&mut self) {
-        self.heap_root = compute_heap_root(&self.heap_map);
+        self.rebuild_heap_cache();
     }
 
     /// **Membership witness** for a committed heap key: returns the value
@@ -1338,6 +1446,87 @@ mod heap_root_tests {
         let mut b = CellState::new(0);
         b.set_heap(2, 2, fe(1));
         assert_ne!(a.heap_root, b.heap_root);
+    }
+
+    /// THE INCREMENTAL DIFFERENTIAL: a long random `set_heap`/`remove_heap`
+    /// sequence — fresh inserts, value updates at existing addrs, and deletes —
+    /// keeps the incrementally-maintained `heap_root` BYTE-IDENTICAL to a from-
+    /// scratch [`compute_heap_root`] at every single step. This is the tooth that
+    /// the O(log n) `apply_value_update` fast path never diverges from the exact
+    /// sorted-tree root the free function computes.
+    #[test]
+    fn incremental_heap_root_matches_full_recompute() {
+        // xorshift — deterministic, no dev-dep.
+        struct Rng(u64);
+        impl Rng {
+            fn next(&mut self) -> u64 {
+                let mut x = self.0;
+                x ^= x << 13;
+                x ^= x >> 7;
+                x ^= x << 17;
+                self.0 = x;
+                x
+            }
+            fn below(&mut self, n: u32) -> u32 {
+                (self.next() % n as u64) as u32
+            }
+        }
+        let mut rng = Rng(0xD1CE_F00D_2026_0708);
+        let mut s = CellState::new(0);
+
+        let mut updates = 0usize;
+        let mut inserts = 0usize;
+        let mut deletes = 0usize;
+        for step in 0..4000 {
+            // Small key space ⇒ many collisions ⇒ exercises the value-UPDATE fast
+            // path densely (not just fresh inserts).
+            let coll = rng.below(4);
+            let key = rng.below(6);
+            let op = rng.below(10);
+            if op < 2 {
+                // ~20% deletes (reshaping).
+                if s.get_heap(coll, key).is_some() {
+                    deletes += 1;
+                }
+                s.remove_heap(coll, key);
+            } else {
+                if s.get_heap(coll, key).is_some() {
+                    updates += 1;
+                } else {
+                    inserts += 1;
+                }
+                s.set_heap(coll, key, fe((rng.next() & 0xff) as u8));
+            }
+            assert_eq!(
+                s.heap_root,
+                compute_heap_root(&s.heap_map),
+                "incremental heap_root diverged from full recompute at step {step}"
+            );
+        }
+        // The sequence genuinely exercised all three paths (not a vacuous run).
+        assert!(updates > 100, "expected many value updates, got {updates}");
+        assert!(
+            inserts > 0 && deletes > 0,
+            "insert/delete paths unexercised"
+        );
+    }
+
+    /// After a DIRECT (out-of-band) `heap_map` mutation, `reseal_heap_root`
+    /// resyncs the cache: a subsequent `set_heap` value-update stays correct
+    /// (the documented reseal contract keeps the incremental cache honest).
+    #[test]
+    fn reseal_resyncs_cache_after_out_of_band_mutation() {
+        let mut s = CellState::new(0);
+        s.set_heap(1, 1, fe(10));
+        s.set_heap(1, 2, fe(20));
+        // Mutate the map directly (out-of-band), then reseal per contract.
+        s.heap_map.insert((1, 3), fe(30));
+        s.reseal_heap_root();
+        assert_eq!(s.heap_root, compute_heap_root(&s.heap_map));
+        // A value update at an existing addr now uses the resynced cache.
+        assert!(s.set_heap(1, 2, fe(99)));
+        assert_eq!(s.heap_root, compute_heap_root(&s.heap_map));
+        assert_eq!(s.get_heap(1, 3), Some(fe(30)));
     }
 
     /// A legacy serialized cell (no `heap_root`/`heap_map`) deserializes with

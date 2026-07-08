@@ -162,25 +162,45 @@ impl From<serde_json::Error> for UmemError {
 /// canonical state commitment — so what is laid here is durable, passable, and
 /// witnessed with no separate store.
 pub fn lay(state: &mut CellState, coll: u32, bytes: &[u8]) {
-    // Clear any prior leaves in this collection so a shrunk record leaves no stale
-    // chunk behind. `heap_map` is the prover-side witness store; we reseal below.
-    state.heap_map.retain(|&(c, _), _| c != coll);
-
     // Header leaf: the payload byte length (LE u64 in the low 8 bytes).
     let mut header = [0u8; 32];
     header[..8].copy_from_slice(&(bytes.len() as u64).to_le_bytes());
-    state.heap_map.insert((coll, LEN_SLOT), header);
 
-    // Payload chunks at slots 1.., the last zero-padded to a full 32-byte leaf.
-    for (i, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
-        let mut leaf = [0u8; 32];
-        leaf[..chunk.len()].copy_from_slice(chunk);
-        state.heap_map.insert((coll, 1 + i as u32), leaf);
+    // The record occupies keys `0..=n_chunks` in `coll` (header at 0, chunks at
+    // 1..=n_chunks). Compare that target key set to what is CURRENTLY laid there.
+    let n_chunks = bytes.chunks(CHUNK_BYTES).count() as u32;
+    let same_key_set = state
+        .heap_map
+        .range((coll, 0)..=(coll, u32::MAX))
+        .map(|(&(_, k), _)| k)
+        .eq(0..=n_chunks);
+
+    if same_key_set {
+        // COMMON PATH (a re-lay at the SAME size, e.g. a checkpoint cursor bump):
+        // every write is a value update at an already-present address, so each
+        // `set_heap` is the O(log n) incremental heap-tree path — no clear, no
+        // O(n) full reseal. Total O(n_chunks · log n).
+        state.set_heap(coll, LEN_SLOT, header);
+        for (i, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+            let mut leaf = [0u8; 32];
+            leaf[..chunk.len()].copy_from_slice(chunk);
+            state.set_heap(coll, 1 + i as u32, leaf);
+        }
+    } else {
+        // RESHAPING PATH (first lay, or the record grew/shrank): the key set
+        // changes, so clear the collection (a shorter re-lay leaves no stale
+        // chunk) and rebuild once. `heap_map` is the prover-side witness store;
+        // the single `reseal_heap_root` reseals + resyncs the cache (O(n) once —
+        // the prior behaviour, not worse).
+        state.heap_map.retain(|&(c, _), _| c != coll);
+        state.heap_map.insert((coll, LEN_SLOT), header);
+        for (i, chunk) in bytes.chunks(CHUNK_BYTES).enumerate() {
+            let mut leaf = [0u8; 32];
+            leaf[..chunk.len()].copy_from_slice(chunk);
+            state.heap_map.insert((coll, 1 + i as u32), leaf);
+        }
+        state.reseal_heap_root();
     }
-
-    // Reseal ONCE (cheaper than resealing per `set_heap`): `heap_root` now binds
-    // the whole laid record.
-    state.reseal_heap_root();
 }
 
 /// **Lay** a serde-serialisable record into heap collection `coll` (its canonical

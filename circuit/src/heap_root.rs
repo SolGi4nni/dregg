@@ -407,6 +407,43 @@ impl CanonicalHeapTree {
             new_root: new_tree.root(),
         })
     }
+
+    /// Apply an in-place VALUE update at an EXISTING address, returning the new
+    /// root, in **O(depth)** node hashes: only the single leaf→root path is
+    /// recomposed (every off-path node is unchanged), and the retained sorted
+    /// leaf's value is refreshed so `position_of` / `update_witness` stay honest.
+    /// Returns `None` if `addr` is not present — a fresh address is a sorted
+    /// INSERT that shifts positions (rebuild via [`CanonicalHeapTree::new`] or use
+    /// [`insert_witness`](Self::insert_witness)).
+    ///
+    /// The result is byte-identical to rebuilding the tree over the updated leaf
+    /// set: the same sorted positions, the same sibling nodes, only the one
+    /// path's digests differ. This is the incremental producer a persistent cache
+    /// (e.g. `dregg_cell::CellState`'s heap-tree cache) drives on the common heap
+    /// write, turning the O(n) full recompute into an O(log n) path update.
+    pub fn apply_value_update(&mut self, addr: BabyBear, value: BabyBear) -> Option<BabyBear> {
+        let pos = self.position_of(addr)?;
+        // Refresh the retained sorted leaf (addr unchanged ⇒ sort order preserved).
+        self.sorted_leaves[pos].value = value;
+        // Recompute only the leaf→root path. A sibling beyond the stored prefix is
+        // the all-padding empty-subtree root for its level (unchanged by this
+        // write); `node()` supplies it. Every ancestor of a stored leaf is itself
+        // within its level's non-empty prefix, so the parent writes are in-bounds.
+        let mut idx = pos;
+        let mut cur = HeapLeaf { addr, value }.digest();
+        self.levels[0][idx] = cur;
+        for level in 0..self.depth {
+            let (l, r) = if idx & 1 == 0 {
+                (cur, self.node(level, idx + 1))
+            } else {
+                (self.node(level, idx - 1), cur)
+            };
+            cur = heap_node(l, r);
+            idx >>= 1;
+            self.levels[level + 1][idx] = cur;
+        }
+        Some(cur)
+    }
 }
 
 /// Compute the canonical heap root over a set of `(addr, value)` leaves at
@@ -962,6 +999,85 @@ mod tests {
         assert_eq!(cur, w.new_root, "witness path must open to the new root");
         // A present address has no insert witness.
         assert!(tree.insert_witness(entry(1, 1, 99)).is_none());
+    }
+
+    /// The in-place `apply_value_update` reproduces the rebuilt-tree root
+    /// byte-identically, chains correctly across successive updates, and refuses
+    /// an absent address.
+    #[test]
+    fn apply_value_update_matches_rebuild() {
+        let base = vec![
+            entry(1, 1, 10),
+            entry(1, 2, 20),
+            entry(2, 1, 30),
+            entry(5, 9, 7),
+        ];
+        let mut tree = CanonicalHeapTree::new(base, HEAP_TREE_DEPTH);
+
+        // Update (1,2) → 77.
+        let addr = heap_addr(BabyBear::new(1), BabyBear::new(2));
+        let root = tree.apply_value_update(addr, BabyBear::new(77)).unwrap();
+        let rebuilt = compute_heap_root(vec![
+            entry(1, 1, 10),
+            entry(1, 2, 77),
+            entry(2, 1, 30),
+            entry(5, 9, 7),
+        ]);
+        assert_eq!(root, rebuilt, "path-recomputed root == rebuilt tree root");
+        assert_eq!(
+            tree.root(),
+            rebuilt,
+            "the tree's own root is updated in place"
+        );
+
+        // Chain a second update on the already-mutated tree: (2,1) → 88.
+        let addr2 = heap_addr(BabyBear::new(2), BabyBear::new(1));
+        let root2 = tree.apply_value_update(addr2, BabyBear::new(88)).unwrap();
+        let rebuilt2 = compute_heap_root(vec![
+            entry(1, 1, 10),
+            entry(1, 2, 77),
+            entry(2, 1, 88),
+            entry(5, 9, 7),
+        ]);
+        assert_eq!(
+            root2, rebuilt2,
+            "chained update stays byte-identical to rebuild"
+        );
+
+        // An absent address has no in-place update.
+        assert!(
+            tree.apply_value_update(
+                heap_addr(BabyBear::new(9), BabyBear::new(9)),
+                BabyBear::new(1)
+            )
+            .is_none()
+        );
+    }
+
+    /// A randomized chain of in-place value updates over a fixed key set stays
+    /// byte-identical to a fresh rebuild at every step.
+    #[test]
+    fn apply_value_update_random_chain_matches_rebuild() {
+        const DEPTH: usize = 10;
+        let mut rng = Rng(0x1CE_BEEF_1234_0001u64);
+        // A fixed set of 25 distinct addresses.
+        let keys: Vec<(u32, u32)> = (0..25).map(|i| (i % 5, i / 5)).collect();
+        let mut values: std::collections::BTreeMap<(u32, u32), u32> =
+            keys.iter().map(|&k| (k, 1)).collect();
+        let leaves = |vals: &std::collections::BTreeMap<(u32, u32), u32>| -> Vec<HeapLeaf> {
+            vals.iter().map(|(&(c, k), &v)| entry(c, k, v)).collect()
+        };
+        let mut tree = CanonicalHeapTree::new(leaves(&values), DEPTH);
+        for _ in 0..500 {
+            let (c, k) = keys[(rng.below(keys.len() as u32)) as usize];
+            let v = rng.next_u64() as u32;
+            *values.get_mut(&(c, k)).unwrap() = v;
+            let addr = heap_addr(BabyBear::new(c), BabyBear::new(k));
+            let got = tree.apply_value_update(addr, BabyBear::new(v)).unwrap();
+            let rebuilt = CanonicalHeapTree::new(leaves(&values), DEPTH).root();
+            assert_eq!(got, rebuilt, "incremental root diverged from rebuild");
+            assert_eq!(tree.root(), rebuilt);
+        }
     }
 
     // ---- SPARSE-FOLD BYTE-IDENTITY DIFFERENTIAL (temp; pins step 1 of INCREMENTAL-COMMITMENT.md) ----
