@@ -516,7 +516,8 @@ mod tests {
             // An approval forge is refused on the same gate.
             let mut thread2 = ReviewThread::new();
             let mut doc2 = ExecutorDrivenDoc::new(3, 4, true);
-            match thread2.approve(&mut doc2, Author(author_of_editor(doc2.editor_id()).0 ^ 1)) {
+            let forged_approver = Author(author_of_editor(doc2.editor_id()).0 ^ 1);
+            match thread2.approve(&mut doc2, forged_approver) {
                 Err(TurnError::InvalidAuthorization { .. }) => {}
                 other => {
                     panic!("expected InvalidAuthorization for a forged approver, got {other:?}")
@@ -587,8 +588,9 @@ mod tests {
 
             // WITH the cap, the same post is admitted (its own editor identity).
             let mut held = ExecutorDrivenDoc::new(1, 2, true);
+            let held_author = author_of_editor(held.editor_id());
             thread
-                .comment(&mut held, author_of_editor(held.editor_id()), "sneak")
+                .comment(&mut held, held_author, "sneak")
                 .expect("a cap-holding reviewer is admitted");
             assert_eq!(thread.comments(&held).len(), 1);
         }
