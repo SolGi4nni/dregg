@@ -46,7 +46,16 @@
 //! differentials. It is NOT deployment-grade and must never be wired into
 //! live signing:
 //!
-//! * **trusted dealer** — keygen centralizes the group secret (no DKG);
+//! * **keygen** — the real-key path is now the dealerless Pedersen-style DKG
+//!   ([`dkg::HermineDkg`]): every member deals its OWN short secret with
+//!   Feldman-style commitments (`A·coeff` broadcasts), received shares are
+//!   VERIFIED against the broadcasts (a cheating dealer is detected and
+//!   named), final shares sum to a t-of-n sharing of `s = Σᵢ sᵢ` that no
+//!   party ever holds. The trusted [`threshold::HermineTestDealer`] remains
+//!   ONLY for known-secret algebra tests. The DKG itself is still a
+//!   REFERENCE: synchronous/in-process (no broadcast channel or network),
+//!   detection without complaint-round arbitration, no rushing-adversary
+//!   bias fix (Gennaro et al.), reference PRNG — see [`dkg`]'s boundary doc;
 //! * **no binding factors** — single-ceremony only; concurrent-session
 //!   (Drijvers/ROS-style) attacks are out of model;
 //! * **reference PRNG, non-constant-time samplers** — noise-flooding now
@@ -71,26 +80,29 @@
 //!   from the parameter-search literature;
 //! * **not constant-time**, and no zeroization of secrets.
 //!
-//! The production signer needs a DKG, binding factors, a CSPRNG,
-//! constant-time arithmetic and sampling, full-size parameters, and
-//! external audit. This crate's value is different: every identity the
+//! The production signer needs the DKG's deployment machinery (real
+//! broadcast/private channels, complaint-round arbitration, the bias fix),
+//! binding factors, a CSPRNG, constant-time arithmetic and sampling,
+//! full-size parameters, and external audit. This crate's value is different: every identity the
 //! Lean proofs establish is witnessed here on concrete `R_q` numbers —
 //! including the Smudging key-hiding bound as an empirical total-variation
 //! measurement, in both its uniform (Lean-pinned) and discrete-Gaussian
 //! (production-shaped) forms — so the spec and the reference cannot
 //! silently drift apart.
 
+pub mod dkg;
 pub mod linalg;
 pub mod ring;
 pub mod threshold;
 
+pub use dkg::{dkg_deal, verify_dkg_share, DkgDealing, DkgError, DkgShareMsg, HermineDkg};
 pub use linalg::{Matrix, PolyVec};
 pub use ring::{Poly, N, Q};
 pub use threshold::{
     acceptance_bound, extract_preimage, extracted_relation, hermine_sign, hermine_sign_gaussian,
-    hermine_sign_with_mask_width, partial_response, sample_gaussian_mask, sample_wide_mask,
-    signature_norm, verify_hermine, DiscreteGaussian, HermineShare, HermineSignature,
-    HermineTestDealer, GAUSSIAN_TAIL_CUT, MASK_WIDTH_WIDE, SECRET_ETA,
+    hermine_sign_with_mask_width, lagrange_reconstruct, partial_response, sample_gaussian_mask,
+    sample_wide_mask, signature_norm, verify_hermine, DiscreteGaussian, HermineShare,
+    HermineSignature, HermineTestDealer, GAUSSIAN_TAIL_CUT, MASK_WIDTH_WIDE, SECRET_ETA,
 };
 
 /// Lattice verification — the Lean `HermineThreshold.verify`, symbol for

@@ -35,7 +35,10 @@
 //!
 //! Everything here is fit for tests and differentials against the Lean spec,
 //! and for NOTHING else:
-//! * the dealer transiently knows the group secret (no DKG);
+//! * the TRUSTED DEALER here transiently knows the group secret — it stays
+//!   only for the algebra tests; the real-key path is the dealerless
+//!   Pedersen-style DKG in [`crate::dkg`] (itself a synchronous in-process
+//!   reference — see its boundary doc);
 //! * both flooding samplers run over a REFERENCE PRNG (splitmix64) — NOT a
 //!   CSPRNG — and the Gaussian CDT sampler is table-lookup-by-binary-search,
 //!   NOT constant-time (its timing depends on the sampled value); those two
@@ -70,7 +73,7 @@ fn splitmix64(state: &mut u64) -> u64 {
 }
 
 /// A uniform-ish (mod-biased; irrelevant for a reference) element of `R_q`.
-fn sample_poly(state: &mut u64) -> Poly {
+pub(crate) fn sample_poly(state: &mut u64) -> Poly {
     let mut coeffs = [0u64; N];
     for c in coeffs.iter_mut() {
         *c = splitmix64(state) % Q;
@@ -79,7 +82,7 @@ fn sample_poly(state: &mut u64) -> Poly {
 }
 
 /// A vector of `len` sampled ring elements.
-fn sample_vec(state: &mut u64, len: usize) -> PolyVec {
+pub(crate) fn sample_vec(state: &mut u64, len: usize) -> PolyVec {
     PolyVec((0..len).map(|_| sample_poly(state)).collect())
 }
 
@@ -95,7 +98,7 @@ fn sample_short_poly(state: &mut u64, eta: u64) -> Poly {
 }
 
 /// A short vector: `len` components from [`sample_short_poly`].
-fn sample_short_vec(state: &mut u64, len: usize, eta: u64) -> PolyVec {
+pub(crate) fn sample_short_vec(state: &mut u64, len: usize, eta: u64) -> PolyVec {
     PolyVec((0..len).map(|_| sample_short_poly(state, eta)).collect())
 }
 
@@ -346,7 +349,7 @@ pub struct HermineShare {
     /// 1-based Shamir evaluation index (x-coordinate; 0 is the group secret).
     pub index: u64,
     /// The share vector `f(index) ∈ R_q^ℓ`.
-    share: PolyVec,
+    pub(crate) share: PolyVec,
 }
 
 impl HermineShare {
@@ -362,8 +365,10 @@ impl HermineShare {
 
 /// Trusted-dealer Shamir keygen over `R_q^ℓ`, and the sampled public matrix.
 ///
-/// The dealer transiently knows the group secret — exactly what a production
-/// DKG removes. Mirror of `frost.rs`'s `FrostTestDealer`, with the Shamir
+/// The dealer transiently knows the group secret — exactly what a DKG
+/// removes; the dealerless real-key path is [`crate::dkg::HermineDkg`], and
+/// this dealer stays only for the algebra tests (known-secret witnesses).
+/// Mirror of `frost.rs`'s `FrostTestDealer`, with the Shamir
 /// polynomial's coefficients living in the module `R_q^ℓ` and evaluation
 /// points the constant polynomials `1..=n` (whose pairwise differences are
 /// units in `R_q` since `q` is prime and `n < q` — the "everywhere-short"
@@ -426,19 +431,12 @@ impl HermineTestDealer {
         // a_0 is the group secret, the blinding coefficients are full-range.
         let mut coeffs: Vec<PolyVec> = vec![group_secret];
         coeffs.extend((1..t).map(|_| sample_vec(&mut state, cols)));
-        let eval = |x: &Poly| -> PolyVec {
-            // Horner over the module.
-            coeffs
-                .iter()
-                .rev()
-                .fold(PolyVec::zero(cols), |acc, c| acc.scale(x).add(c))
-        };
         let group_secret = coeffs[0].clone();
         let group_key = a.mul_vec(&group_secret);
         let shares = (1..=n)
             .map(|i| HermineShare {
                 index: i,
-                share: eval(&Poly::constant(i)),
+                share: horner_eval(&coeffs, &Poly::constant(i)),
             })
             .collect();
         Some(Self {
@@ -452,17 +450,11 @@ impl HermineTestDealer {
 
     /// Lagrange-reconstruct `Σ λ_i • s_i` over a share subset — the Lean
     /// `hrecon` right-hand side. Equals the group secret iff the subset
-    /// carries ≥ threshold genuine shares.
+    /// carries ≥ threshold genuine shares. Delegates to
+    /// [`lagrange_reconstruct`] (shares from ANY keygen path — dealer or
+    /// DKG — reconstruct the same way).
     pub fn reconstruct(shares: &[&HermineShare]) -> PolyVec {
-        let parts: Vec<u64> = shares.iter().map(|s| s.index).collect();
-        shares
-            .iter()
-            .map(|s| {
-                s.share
-                    .scale(&Poly::constant(lagrange_at_zero(s.index, &parts)))
-            })
-            .reduce(|acc, v| acc.add(&v))
-            .expect("reconstruct requires a nonempty subset")
+        lagrange_reconstruct(shares)
     }
 
     /// Test-only witness of the dealt secret (see the field doc).
@@ -470,6 +462,36 @@ impl HermineTestDealer {
     pub(crate) fn group_secret(&self) -> &PolyVec {
         &self.group_secret
     }
+}
+
+/// Horner evaluation of a module-coefficient polynomial
+/// `f(x) = coeffs[0] + coeffs[1]·x + … + coeffs[d]·x^d` (each coefficient in
+/// `R_q^ℓ`) at a ring point `x` — the shared Shamir-share evaluator behind
+/// both the trusted dealer and the DKG's per-member dealings.
+pub(crate) fn horner_eval(coeffs: &[PolyVec], x: &Poly) -> PolyVec {
+    let cols = coeffs.first().map_or(0, PolyVec::len);
+    coeffs
+        .iter()
+        .rev()
+        .fold(PolyVec::zero(cols), |acc, c| acc.scale(x).add(c))
+}
+
+/// Lagrange-reconstruct `Σ λ_i • s_i` at 0 over a share subset — the Lean
+/// `hrecon` right-hand side, as a free function (shares may come from the
+/// trusted dealer OR the DKG; reconstruction is the same linear algebra).
+/// Equals the group secret iff the subset carries ≥ threshold genuine shares.
+///
+/// Panics on an empty subset (a caller bug, mirroring the dealer method).
+pub fn lagrange_reconstruct(shares: &[&HermineShare]) -> PolyVec {
+    let parts: Vec<u64> = shares.iter().map(|s| s.index).collect();
+    shares
+        .iter()
+        .map(|s| {
+            s.share
+                .scale(&Poly::constant(lagrange_at_zero(s.index, &parts)))
+        })
+        .reduce(|acc, v| acc.add(&v))
+        .expect("reconstruct requires a nonempty subset")
 }
 
 /// The Lagrange coefficient at 0 for participant `i` over the index set
