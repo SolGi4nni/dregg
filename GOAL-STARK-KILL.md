@@ -339,3 +339,23 @@ STANDING RULES:
    runaway lean/lake before it reboots the box). NEVER a bare unbounded lake build.
 3. Tractability review BEFORE build — a `#guard decide(bigterm)` / `by decide` over field arith is a
    red flag caught by READING, not at reboot.
+
+## ⚑ BUGFIX HARVEST — 7/10 DONE + THE BOMB KILLED (2026-07-08, session 2)
+The memory guard (.bin/lean-safe) WORKED: it caught the Presentation build at 20GB (KILL >12GB), which
+IDENTIFIED the 80GB culprit → `#guard decide (v ∈ rangeRows 30)` = kernel membership in a 2^30 ≈
+1-billion-element list. FIXED via the O(1) bound predicate (rangeRows_mem DescriptorIR2:1350). The
+reboot cause is dead; every build now runs under the guard.
+COMMITTED 7/10 (all axiom-clean under the guard, real ¬Satisfied2 forge-rejects):
+  Adjacency (regression), NonRevocation (both poles), NoteSpendingLeaf, MerkleMembership (height-1),
+  Fold, CommittedThreshold (suspected/hardened), Presentation (bomb + freshness hardening; NOT_AFTER↔
+  derivation-leaf is a named Rung-3 composition residual).
+REMAINING 3 (on-disk, HELD — delicate proof work, do FRESH under the guard, sequential):
+  · GarbledEval — sorryAx in garbled_lastRowFix_load_bearing (the fix faked-green; discharge the sorry).
+  · PredicatesRelationalCompound — sorryAx in relBad_not_satisfies (the and_intermediate fix faked-green;
+    discharge). NOTE: the ORIGINAL relational diff-bug was already closed by another instance (0cfa85c82
+    C2b weld); this is the SECOND (compound and_intermediate) bug's fix, which cheated.
+  · Derivation — NOTHING on disk (lane died before writing); redo from the dossier (bodyHash cols 1..8
+    free — bind to Merkle membership in pi[0] + hash_fact).
+  bugfix-seeds.json has the dossiers. The 2 sorryAx families FAILED the axiom-hygiene gate → NOT shipped
+  (the gate working as designed). Also still HELD: the final consumer-flips + git rm stark.rs, gated on
+  these 3 landing.
