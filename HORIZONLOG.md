@@ -22,8 +22,13 @@ availability/confidentiality; the design's open obligations, each a lane:
   family. MUST land before M0 is *claimed* (unanchored resurrection = rollback footgun).
 - **M2** — cap-scoped sync (interest = read-cap, sync unit = umem tag-isolated slice, membrane =
   n=1 case); rides umem Stage B/C (`UMEM-STAGE-B-DESIGN.md`, carriers named-not-built).
-Ember-facing: this is a design for discussion, not a fired lane — checkpoint cadence, provider-set
-policy, and the anchor's committed-state shape are ember-taste calls.
+DECIDED (ember, same session): anchor = dedicated system-root sub-block (staged-additive, flip
+ember-gated — the one commitment-layout touch); checkpointing = 4 fixed theorem-bearing verbs
+(`checkpoint`/`resurrect`/`branch-resurrect`/`retire`) with PLUGGABLE guard-shaped policies
+(cadence/retention/compression — §3a; deliberate rollback = explicit `Virtual` fork via
+branch-and-stitch, never bindable as the main lineage); ViewKey social recovery = M3+; M0 =
+node-level pipeline first, kernel-witnessed via umem Stage B when it lands. Design is now
+build-ready at M0/M1; remaining opens are policy DEFAULTS and provider-set selection.
 
 ## NOW-STATE addition (2026-07-07, Fable — forge CI-gate lane surfaced a real dregg-turn bug)
 

@@ -6,6 +6,13 @@
 > one new theorem that close the gap, and the staged path. The model for this document's
 > discipline is `PRIVACY-CONFIDENTIALITY.md` (census → gap → design → milestones → honest
 > hard parts).
+>
+> **Design decisions recorded 2026-07-08 (ember design session):** the anchor is a
+> **dedicated system-root sub-block** (§3); checkpointing is a **fixed small mechanism with
+> pluggable policies** (§3a — cadence/retention/compression/rollback are policy, never
+> mechanism); ViewKey social recovery is confirmed **M3+, named not vital** (§7); M0
+> sequencing is **node-level pipeline first, kernel-witnessed via umem Stage B when it
+> lands** (§6).
 
 The through-line, stated once: *a sovereign image should survive the loss of every machine
 its owner touches, recoverable from strangers who are trusted for availability only — never
@@ -154,6 +161,15 @@ evaluated at the tip, not at checkpoint time.**
   cell's committed state on each checkpoint, epoch strictly increasing (the evidence
   substance's growth law — appending a new anchor invalidates no observer, forgetting one is
   not a frame-preserving update).
+- **The anchor's home is a dedicated system-root sub-block** (decided, ember 07-08): a
+  `RESURRECT` sub-block alongside the existing kernel side-tables, following the
+  `system_roots` pattern (`cell/src/state.rs:191` — a per-cell sub-block of roots with
+  namespace separation proven; `UMEM-PRIMITIVE.md` §5 already reads it as "a composed umem
+  of roots"). Not an ordinary user slot: the anchor is kernel-shaped evidence, not app
+  state, and the sub-block route gives it the same commitment-binding discipline as
+  `NULLIFIER`/`COMMIT`/`DELEG`. This touches the commitment layout, so it lands with the
+  usual VK-affecting care (staged-additive, ember-gated flip) — the direction is blessed,
+  the flip stays gated.
 - **Resurrection binds against the TIP anchor only.** Step 1 of §2 is a finalized
   light-client read (`server_cannot_omit_position` makes the anchor non-omittable;
   unfoolability makes it non-forgeable). An image whose root ≠ the tip anchor's root does
@@ -169,6 +185,44 @@ loss are gone — resurrection recovers the *anchored* image, and the anchor tel
 exactly how much you lost (tip height − anchor epoch). Checkpoint cadence is a
 durability/cost dial, not a soundness hole; continuous journal-tail streaming to providers
 is a later optimization (fountain droplets fit naturally), not R1.
+
+### 3a. The mechanism/policy split (decided, ember 07-08)
+
+Cadence, retention, compression, and rollback discipline are **policies**, and the design
+must not bake any of them into the mechanism. The split:
+
+**The mechanism is four small verbs, fixed and theorem-bearing:**
+
+| verb | what it does | its theorem |
+| --- | --- | --- |
+| `checkpoint` | derive root → seal → shard → deals → append anchor | `resurrection_sound` (§2) |
+| `resurrect` | tip-anchor read → fetch/audit → decode → decrypt → init-pin → resume | `resurrection_sound` + `resurrection_no_rollback` |
+| `branch-resurrect` | resurrect a *superseded* epoch as an explicit, receipted **fork** | confinement + settlement at the stitch (below) |
+| `retire` | stop paying rent on a superseded checkpoint's deals | explicit linear-logic drop (§5), never silent |
+
+**Policy is a pluggable predicate over the mechanism** — the same move the kernel already
+makes everywhere (one `Pred` algebra, four polarities): a `CheckpointPolicy` decides *when*
+`checkpoint` fires (per-N-turns, per-epoch, on-idle, on-membrane-handoff, on-demand), a
+`RetentionPolicy` decides *which* anchors stay funded (keep-last-k, log-spaced history for
+time-travel depth), a `CompressionPolicy` decides *what* a checkpoint materializes (full
+image; journal-tail delta against the previous anchor — a passable umem whose init root is
+the prior checkpoint, so deltas inherit the same binding; fountain-streamed tail between
+full images). Policies are guard-shaped and therefore cell-program-expressible — an agent,
+a household, and a federation operator can run different snapshotting regimes over the
+*identical* four verbs, and no policy choice can weaken a theorem, because the theorems
+attach to the verbs.
+
+**Rollback is a policy question with a mechanism answer.** §3 refuses *silent* rollback;
+it must not refuse *deliberate* time-travel — the TIME scrubber already does this locally
+and it is a houyhnhnm virtue, not an attack. The reconciliation: `branch-resurrect` of a
+superseded epoch is legal but produces an explicitly-`Virtual`-typed **fork with
+provenance** (the branch-and-stitch discipline, `BRANCH-AND-STITCH-PROTOCOL.md`): it holds
+no cap to the main lineage, its receipts are marked as branch receipts, and the only way
+its effects re-enter the real world is the one gated stitch door — where settlement
+soundness re-evaluates authority at the tip. So the same act is (a) refused when laundered
+as recovery, (b) welcomed when declared as branching. The anchor sub-block is what makes
+the distinction checkable: "the" lineage is the one the tip anchor names; everything else
+is honestly a branch.
 
 ---
 
@@ -218,8 +272,12 @@ getting its own trust model.
 - **M0 — the Resurrection Weld (§2).** Pure composition of green organs: checkpoint
   pipeline (image → seal → shard → deals → anchor) + recovery pipeline + the
   `resurrection_sound` composition theorem + the four non-vacuity teeth as tests. No new
-  crypto, no VK change. Depends on nothing forward; umem Stage B's effect surface makes the
-  checkpoint *kernel-witnessed* but a node-level pipeline can land first.
+  crypto. **Sequencing (decided): node-level pipeline first; the checkpoint becomes
+  kernel-witnessed via umem Stage B's effect surface when that lands** — the node-level
+  weld neither blocks on nor prejudices Stage B, and the anchor sub-block (§3, the one
+  commitment-layout touch) rides its own staged-additive lane with the flip ember-gated.
+  M0 builds the four §3a verbs with a trivial default policy (on-demand + keep-last-1);
+  policy richness is not M0 scope.
 - **M1 — freshness (§3).** The `CheckpointAnchor` committed-state shape, the tip-read
   recovery gate, `resurrection_no_rollback`. The one new theorem; settlement-soundness
   family.
@@ -247,7 +305,8 @@ as a feature); M2 rides Stage B/C and the live federation work; M3 rides the mar
 - **Key custody is the human seam.** The ViewKey IS the resurrection; lose both your
   machines and your key, and the root is a tombstone. Ties to the powerbox/human-layer
   workstream; social-recovery (threshold-split the ViewKey — `crypto-hermine` DKG/threshold
-  organs exist in-tree) is a natural M3+ candidate, named not promised.
+  organs exist in-tree) is confirmed **M3+** (ember, 07-08: important, not vital — must not
+  delay M0/M1).
 - **Provider collusion.** k-of-n withstands n−k withholders; a colluding supermajority of
   your chosen providers is an availability failure the market prices (bond sizing,
   provider-set diversity) but cannot make impossible. The federation-level DAS path
