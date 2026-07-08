@@ -309,6 +309,24 @@ pub mod membership_adjacency_air;
 /// module docs; the Rung-2 depth-general soundness lift is a named Lean follow-on.
 pub mod membership_descriptor_general;
 
+/// The depth-GENERAL **4-ary** Poseidon2 Merkle-membership IR-v2 descriptor builder — the arity-4
+/// twin of `membership_descriptor_general`, byte-faithful to the DEPLOYED `hash_4_to_1`-chained set
+/// root (production membership is 4-ary; the binary builder is an arity mismatch). One 4-ary Merkle
+/// level per row, position carried as two bits so the child-selection gates keep integer
+/// coefficients while reproducing production's Lagrange-on-position arrangement. See module docs.
+pub mod membership_descriptor_4ary;
+
+/// Rust witness builder for the emitted neighbor-adjacency descriptor
+/// (`dregg-membership-adjacency::poseidon2-v1`) — the analog of `membership_witness`, so consumers of
+/// `descriptor_by_name` can prove/verify a sorted-set non-membership (consecutive-leaf) witness. See
+/// module docs.
+pub mod adjacency_witness;
+
+/// The IR-v2 delegation scope-binding descriptor (`dregg-delegate::v2`) — the descriptor-world twin
+/// of the executor's `StarkDelegation` scope check (`action.rs::verify_stark_delegation_binding`),
+/// pinning the 24-limb `[root_issuer ‖ target ‖ scope_hash]` scope to public inputs. See module docs.
+pub mod delegate_descriptor;
+
 /// Foundation 1 of the StarkProof→descriptor-prover migration: `descriptor_by_name`, the
 /// descriptor-world analog of `dsl::descriptors::circuit_for_air_name`. Maps a predicate-kind /
 /// AIR-name to its emitted `EffectVmDescriptor2` (byte-pinned golden decode + the depth-general
