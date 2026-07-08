@@ -1,0 +1,5 @@
+# Match continuwuity's pin (it is edition-2024 / toolchain-pinned). The breadstuffs
+# root uses rolling-nightly; this isolated workspace pins the homeserver's toolchain
+# so the embed builds exactly as the upstream does.
+[toolchain]
+channel = "1.96.1"
