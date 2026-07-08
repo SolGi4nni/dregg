@@ -462,3 +462,31 @@ sequential main-loop (coupled, no swarm), each build-gated + committed before th
 3. sdk/cipherclerk.rs (2) — compress/verify_compressed_history (0-caller PUBLIC): sovereign-history IVC.
    The REAL rewire (onto IvcBuilder/recursion, already imported) — do last, most care.
 Then: the 7 comment-only files are fine; delete hand AIRs; git rm circuit/src/stark.rs when grep==0.
+
+## ⚑⚑⚑ THE GOLDEN LIFT (2026-07-08, ember: "don't wuss out; comprehensive, matters for recursion/aggregation")
+⚠ SOUNDNESS FINDING (ember caught it, I verified): the Ir2 migration REGRESSED the presentation/
+authorization proof to LIGHT-CLIENT-UNSOUND. Proof:
+- LEGACY bound StarkProof (circuit/presentation.rs generate_merkle_poseidon2_stark_proof_bound) carried
+  action_binding[8] + composition + revealed-facts in the VERIFIED public inputs; verify_proof_complete
+  checked pi[2..6]==compute_action_binding → a LIGHT CLIENT could verify the action binding.
+- LIVE Ir2 path (prove_issuer_membership_ir2 → membership_witness_4ary) verifies ONLY [leaf,root].
+  action/composition/facts fell to EXECUTOR-ONLY cross-checks (STARBRIDGE-FOLLOWUP-03 "Silver posture").
+- Executor cross-checks protect NEITHER light clients NOR the recursion/aggregation FOLD (both verify
+  proof+descriptor+PIs, never executor runtime). A membership proof minted for action X is replayable
+  for action Y as far as a light client / an aggregator can tell. Kills the Rung-3 light-client goal.
+DECISION: do B2 = THE GOLDEN LIFT (the deferred FOLLOWUP-03), comprehensively — make action_binding +
+composition + revealed-facts genuine CONSTRAINED/committed public inputs of a bound-presentation
+descriptor, so light clients AND the fold can verify them. This is a SOUNDNESS FIX gating the stark-kill
+finish (do NOT flip the presentation fns onto plain [leaf,root] — that enshrines the hole).
+STAGES (design-first, then Lean under .bin/lean-safe, sequential — NO parallel builds):
+1. DESIGN scout RUNNING (a418b326) — map action-binding across binding/presentation/ivc/fold so the new
+   descriptor COMPOSES into aggregation (binding must survive the fold to the root).
+2. Author the bound-presentation descriptor in Lean (Emit) — leaf,root,action_binding[8],composition,
+   revealed_facts as committed PIs; byte-pin.
+3. Rung 0/1/2 (the audit's found-bug class applies: the PIs must genuinely BIND, not just be carried —
+   prove a forge with wrong action REJECTS).
+4. Circuit witness builder + descriptor_by_name arm.
+5. Flip the presentation verify path (bridge 4 fns + circuit RealPresentationProof::verify + sdk) onto it.
+6. THEN resume the stark-kill finish (sdk/verify, cipherclerk) + git rm stark.rs.
+This is the campaign becoming what it was always about: not "delete the Rust" but "everything a
+re-executor/light-client/aggregator checks is bound in the proof." The oaks, roots down to the source.
