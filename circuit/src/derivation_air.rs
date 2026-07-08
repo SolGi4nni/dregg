@@ -371,7 +371,11 @@ impl crate::constraint_prover::Air for DerivationAir {
     }
     fn constraints(&self) -> Vec<crate::constraint_prover::Constraint> {
         let descriptor = crate::dsl::derivation::derivation_circuit_descriptor();
-        let tables = descriptor.lookup_tables.clone();
+        // Build the O(1) lookup index once and share it (Arc) into every
+        // per-row constraint closure, rather than a linear table scan per row.
+        let index = std::sync::Arc::new(crate::dsl::circuit::LookupIndex::build(
+            &descriptor.lookup_tables,
+        ));
         descriptor
             .constraints
             .into_iter()
@@ -383,11 +387,16 @@ impl crate::constraint_prover::Air for DerivationAir {
                 } else {
                     format!("dsl_constraint_{idx}")
                 };
-                let tables = tables.clone();
+                let index = index.clone();
                 crate::constraint_prover::Constraint {
                     name,
                     eval: Box::new(move |local, next, pi| {
-                        cexpr.evaluate_with_tables(local, next.unwrap_or(local), pi, &tables)
+                        cexpr.evaluate_with_tables(
+                            local,
+                            next.unwrap_or(local),
+                            pi,
+                            crate::dsl::circuit::TableSource::Index(&index),
+                        )
                     }),
                 }
             })

@@ -10,7 +10,7 @@
 //! deploy time, validated for safety, and then executed/verified at runtime via
 //! the [`CellProgram`] and [`ProgramRegistry`] types.
 
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::sync::Mutex;
 
 use crate::field::BabyBear;
@@ -34,6 +34,56 @@ pub struct LookupTable {
     pub width: usize,
     /// The valid tuples (each inner Vec has `width` elements).
     pub entries: Vec<Vec<u32>>,
+}
+
+/// O(1)-membership view over a set of [`LookupTable`]s, built once (e.g. per
+/// prove/verify) and consulted per trace row. Replaces the per-row `find` +
+/// linear `entries` scan (O(rows·entries), tables up to 2^16) with a hashed
+/// lookup keyed by table id then by tuple.
+#[derive(Debug, Clone, Default)]
+pub struct LookupIndex {
+    tables: HashMap<String, HashSet<Vec<u32>>>,
+}
+
+impl LookupIndex {
+    /// Build the index from a table set. O(total entries), paid once.
+    pub fn build(tables: &[LookupTable]) -> Self {
+        let tables = tables
+            .iter()
+            .map(|t| (t.id.clone(), t.entries.iter().cloned().collect()))
+            .collect();
+        Self { tables }
+    }
+
+    /// `Some(true)` if `query` is a member of the named table, `Some(false)` if
+    /// the table exists but lacks the tuple, `None` if the table is absent.
+    fn membership(&self, table_id: &str, query: &[u32]) -> Option<bool> {
+        self.tables.get(table_id).map(|set| set.contains(query))
+    }
+}
+
+/// The source a `Lookup` constraint consults for table membership: either a raw
+/// slice of tables (linear scan — fine for one-off/test evaluation) or a
+/// prebuilt [`LookupIndex`] (O(1) — used for the per-row prover/verifier loop).
+/// Both yield identical membership results.
+#[derive(Clone, Copy)]
+pub enum TableSource<'a> {
+    Slice(&'a [LookupTable]),
+    Index(&'a LookupIndex),
+}
+
+impl TableSource<'_> {
+    /// `Some(true)` if `query` is in the named table, `Some(false)` if the table
+    /// exists but lacks the tuple, `None` if the table is absent.
+    fn membership(&self, table_id: &str, query: &[u32]) -> Option<bool> {
+        match self {
+            TableSource::Slice(tables) => tables
+                .iter()
+                .find(|t| t.id.as_str() == table_id)
+                .map(|t| t.entries.iter().any(|entry| entry.as_slice() == query)),
+            TableSource::Index(index) => index.membership(table_id, query),
+        }
+    }
 }
 
 /// A complete description of an AIR circuit — trace layout, constraints, boundaries.
@@ -321,7 +371,7 @@ impl ConstraintExpr {
     /// NOTE: `Lookup` constraints always return zero from this method (no table context).
     /// Use [`evaluate_with_tables`] when lookup tables are available.
     pub fn evaluate(&self, local: &[BabyBear], next: &[BabyBear], pi: &[BabyBear]) -> BabyBear {
-        self.evaluate_with_tables(local, next, pi, &[])
+        self.evaluate_with_tables(local, next, pi, TableSource::Slice(&[]))
     }
 
     /// Evaluate this constraint expression with access to lookup tables.
@@ -333,7 +383,7 @@ impl ConstraintExpr {
         local: &[BabyBear],
         next: &[BabyBear],
         pi: &[BabyBear],
-        lookup_tables: &[LookupTable],
+        tables: TableSource<'_>,
     ) -> BabyBear {
         match self {
             Self::Equality { col_a, col_b } => local[*col_a] - local[*col_b],
@@ -358,16 +408,16 @@ impl ConstraintExpr {
             Self::Gated {
                 selector_col,
                 inner,
-            } => local[*selector_col] * inner.evaluate_with_tables(local, next, pi, lookup_tables),
+            } => local[*selector_col] * inner.evaluate_with_tables(local, next, pi, tables),
             Self::InvertedGated {
                 selector_col,
                 inner,
             } => {
                 (BabyBear::ONE - local[*selector_col])
-                    * inner.evaluate_with_tables(local, next, pi, lookup_tables)
+                    * inner.evaluate_with_tables(local, next, pi, tables)
             }
             Self::Squared { inner } => {
-                let v = inner.evaluate_with_tables(local, next, pi, lookup_tables);
+                let v = inner.evaluate_with_tables(local, next, pi, tables);
                 v * v
             }
             Self::Hash {
@@ -489,19 +539,13 @@ impl ConstraintExpr {
                 table_id,
                 query_columns,
             } => {
-                // Find the named table in the provided lookup tables.
-                if let Some(table) = lookup_tables.iter().find(|t| &t.id == table_id) {
-                    // Extract the query tuple from the current row.
-                    let query: Vec<u32> = query_columns.iter().map(|&c| local[c].0).collect();
-                    // Check membership: zero if found, one if not.
-                    if table.entries.iter().any(|entry| entry == &query) {
-                        BabyBear::ZERO
-                    } else {
-                        BabyBear::ONE
-                    }
-                } else {
-                    // Table not found — treat as unsatisfied.
-                    BabyBear::ONE
+                // Extract the query tuple from the current row.
+                let query: Vec<u32> = query_columns.iter().map(|&c| local[c].0).collect();
+                // Membership: zero if the tuple is in the named table, one
+                // otherwise (missing table also treated as unsatisfied).
+                match tables.membership(table_id, &query) {
+                    Some(true) => BabyBear::ZERO,
+                    _ => BabyBear::ONE,
                 }
             }
             Self::ChainedHash2to1 {
@@ -624,11 +668,19 @@ pub fn intern_air_name(name: &str) -> &'static str {
 /// A circuit defined entirely by its descriptor. Implements `StarkAir` generically.
 pub struct DslCircuit {
     pub descriptor: CircuitDescriptor,
+    /// O(1) membership index over `descriptor.lookup_tables`, built once at
+    /// construction so `eval_constraints` (called per trace row) does not
+    /// re-scan the tables on every row.
+    lookup_index: LookupIndex,
 }
 
 impl DslCircuit {
     pub fn new(descriptor: CircuitDescriptor) -> Self {
-        Self { descriptor }
+        let lookup_index = LookupIndex::build(&descriptor.lookup_tables);
+        Self {
+            descriptor,
+            lookup_index,
+        }
     }
 }
 
@@ -664,7 +716,7 @@ impl StarkAir for DslCircuit {
                 local,
                 next,
                 public_inputs,
-                &self.descriptor.lookup_tables,
+                TableSource::Index(&self.lookup_index),
             );
             result += alpha_power * value;
             alpha_power *= alpha;
@@ -1266,9 +1318,7 @@ impl CellProgram {
         public_inputs: &[BabyBear],
         proof_bytes: &[u8],
     ) -> Result<(), ProgramError> {
-        let circuit = DslCircuit {
-            descriptor: self.descriptor.clone(),
-        };
+        let circuit = DslCircuit::new(self.descriptor.clone());
         let proof = stark::proof_from_bytes(proof_bytes).map_err(ProgramError::InvalidProof)?;
         stark::verify(&circuit, &proof, public_inputs).map_err(ProgramError::VerificationFailed)
     }
@@ -1322,9 +1372,7 @@ impl CellProgram {
         public_inputs: &[BabyBear],
     ) -> Result<Vec<u8>, ProgramError> {
         let trace = self.generate_trace(witness_values, num_rows)?;
-        let circuit = DslCircuit {
-            descriptor: self.descriptor.clone(),
-        };
+        let circuit = DslCircuit::new(self.descriptor.clone());
         let proof = stark::prove(&circuit, &trace, public_inputs);
         Ok(stark::proof_to_bytes(&proof))
     }
@@ -2114,7 +2162,12 @@ mod tests {
 
         // Valid tuple: (1, 0x61, 1)
         let valid_row = vec![BabyBear::new(1), BabyBear::new(0x61), BabyBear::new(1)];
-        let result = constraint.evaluate_with_tables(&valid_row, &valid_row, &[], &tables);
+        let result = constraint.evaluate_with_tables(
+            &valid_row,
+            &valid_row,
+            &[],
+            TableSource::Slice(&tables),
+        );
         assert_eq!(
             result,
             BabyBear::ZERO,
@@ -2123,7 +2176,12 @@ mod tests {
 
         // Invalid tuple: (3, 0x61, 0) - state 3 has no transitions in the table
         let invalid_row = vec![BabyBear::new(3), BabyBear::new(0x61), BabyBear::new(0)];
-        let result = constraint.evaluate_with_tables(&invalid_row, &invalid_row, &[], &tables);
+        let result = constraint.evaluate_with_tables(
+            &invalid_row,
+            &invalid_row,
+            &[],
+            TableSource::Slice(&tables),
+        );
         assert_eq!(
             result,
             BabyBear::ONE,
@@ -2140,7 +2198,7 @@ mod tests {
         };
 
         let row = vec![BabyBear::new(42)];
-        let result = constraint.evaluate_with_tables(&row, &row, &[], &[]);
+        let result = constraint.evaluate_with_tables(&row, &row, &[], TableSource::Slice(&[]));
         assert_eq!(
             result,
             BabyBear::ONE,
