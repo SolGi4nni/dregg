@@ -102,6 +102,17 @@ pub enum PullRequestError {
         /// Why its witness (or absence) failed verification.
         reason: CheckRefusal,
     },
+    /// The driven landing set does NOT reproduce the reviewed pushout. For the
+    /// monotone grammar the sequential drive equals `merge()`'s pushout by
+    /// commutativity, but a superseding `SetField` in the head suffix is
+    /// order-sensitive (see the module doc) and can collapse a concurrent
+    /// base-side assignment the pushout would have preserved as a clash. Rather
+    /// than commit a document that diverges from what the reviewer/CI saw
+    /// (`MergeOutcome.graph`), landing is REFUSED. Defense-in-depth: the drive
+    /// result must equal the reviewed pushout. The turns already committed are
+    /// returned so the caller can see how far it got before the divergence.
+    #[cfg(feature = "substrate")]
+    DriveDivergedFromPushout(Vec<TurnReceipt>),
 }
 
 /// A clean (or fully reviewed) merge: the merged fold plus the exact patch set
@@ -382,6 +393,9 @@ impl PullRequest {
         // check-turn receipt or a verified ProofCondition witness, never a
         // bool (crate::check).
         self.checks_satisfied()?;
+        // The reviewed pushout (what the reviewer + CI saw). The drive below
+        // must reproduce it exactly (see DriveDivergedFromPushout).
+        let expected = outcome.graph;
         let mut receipts = Vec::new();
         for patch in outcome.patches {
             match doc.edit(patch) {
@@ -391,10 +405,17 @@ impl PullRequest {
                 Err(TurnError::EmptyForest) => continue,
                 // The executor's in-band refusal (the cap gate, or any other
                 // real refusal): stop and surface it. A cap refusal hits the
-                // FIRST turn (the cap is per (editor, region)), so nothing has
-                // landed.
+                // FIRST mutating turn (the cap is per (editor, region)), so
+                // nothing has landed.
                 Err(e) => return Err(PullRequestError::Refused(e)),
             }
+        }
+        // FAIL-CLOSED: the sequentially-driven document must equal the reviewed
+        // pushout. A superseding SetField in the head suffix (order-sensitive)
+        // can otherwise land a document that silently drops a base edit the
+        // pushout preserved — refuse rather than commit a divergent result.
+        if *doc.graph() != expected {
+            return Err(PullRequestError::DriveDivergedFromPushout(receipts));
         }
         Ok(receipts)
     }
