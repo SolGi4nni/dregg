@@ -79,10 +79,11 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.NoteSpendingLeafEmit
   (noteSpendLeafDesc noteSpendConstraints unlessSite whenSite factTuple IS_MERKLE NS_FACT_MARK K0
    subE unlessFire unlessHold whenFire whenHold binaryGate invEqGate posGate contBodyW
-   cont_body_zero_iff)
+   cont_body_zero_iff noteSpendLeafDescFixed noteSpendLastRowFix lastRowFix_commitment_zero_iff)
 open Dregg2.Circuit.Emit.NoteSpendingLeafRefine
   (firingIns firing5 factLaneVals factSite_block NoteSpendLeafSpec noteSpend_satisfied2_spec
-   witnessTrace witnessPerm witnessAsg witnessPub witnessTrace_satisfied2 witness_chipSound)
+   witnessTrace witnessPerm witnessAsg witnessPub witnessTrace_satisfied2 witness_chipSound
+   invEqGate_spend)
 
 set_option autoImplicit false
 
@@ -407,5 +408,189 @@ theorem whenSite_offrow_digest_K0 (env : VmRowEnv) (hm : env.loc IS_MERKLE = 0) 
 #assert_axioms merkle_broken_chain_rejects
 #assert_axioms merkle_wrong_root_rejects
 #assert_axioms whenSite_offrow_digest_K0
+
+/-! ## §11 — THE LAST-ROW `COMMITMENT`-BINDING FORGE (the `.gate`-vacuity hole) + ITS CLOSURE.
+
+The audit-found hole (the mission's exact bug class): C2-final `COMMITMENT (col 5) == COMMITMENT_FULL
+(col 54)` is emitted `.base (.gate …)` — VACUOUS on the last row (`holdsVm … isLast=true (.gate _) =
+True`). But the deployed DSL AIR enforces the same `InvertedGated{Equality}` EVERY row (`assert_zero`,
+`dsl_p3_air.rs:38`). So on a HEIGHT-1 trace (row 0 IS the last row, `is_merkle = 0`) col 5 is FREE:
+the nullifier chain C3/C4 rides col 5, so a prover derives the nullifier from a `COMMITMENT` that is
+NOT the genuine full-width binding (col 54). `forgeTrace` is exactly this — the single-row twin of
+`NoteSpendingLeafRefine.badCommitTrace` (which is CAUGHT because its row 0 is a NON-last transition
+row where the `.gate` fires). The two-row version is rejected; the one-row version escapes — the
+last-row vacuity, exposed.
+
+`forgeTrace` is a genuine `Satisfied2` witness under `noteSpendLeafDesc` (`forgeTrace_satisfied2`),
+and NOT `Satisfied2` under `noteSpendLeafDescFixed` (`forge_rejected_by_fix`, THE regression) — the
+appended `VmRow.last` boundary bites. -/
+
+/-- The three distinct Poseidon2 fact-site tuples the forge row (`col5 = 1`, else `0`, `is_merkle=0`)
+produces: `T0` (all-zero seed, digest 0 — the C2 chain / C4 / mint sites); `T1` (seed head `1` from
+`col5`, digest 0 — the C3 nullifier-intermediate site); `TK` (the muxed-off C6 Merkle site, digest
+`K₀`). Every one of the 12 lookups lands in `[forgeT0, forgeT1, forgeTK]`. -/
+def forgeT0 : List ℤ := [7, 0,0,0,0,0, NS_FACT_MARK, 1, 0,0,0,0,0,0,0,0,0, 0, 0,0,0,0,0,0,0]
+def forgeT1 : List ℤ := [7, 1,0,0,0,0, NS_FACT_MARK, 1, 0,0,0,0,0,0,0,0,0, 0, 0,0,0,0,0,0,0]
+def forgeTK : List ℤ := [7, 0,0,0,0,0, NS_FACT_MARK, 1, 0,0,0,0,0,0,0,0,0, K0, 0,0,0,0,0,0,0]
+
+/-- The forge trace family: the three fact rows on `poseidon2`, empty elsewhere. -/
+def forgeTf : TraceFamily := fun tid =>
+  match tid with | .poseidon2 => [forgeT0, forgeT1, forgeTK] | _ => []
+
+/-- The forge spend row: `is_merkle = 0` (col 16), `COMMITMENT (col 5) = 1`, everything else `0` — in
+particular `COMMITMENT_FULL (col 54) = 0 ≠ 1`. Every PI-pinned column is `0` (matching the all-zero
+public inputs); col 5 is the FREE forged column no PI pin catches. -/
+def forgeRow : Assignment := fun c => if c = 5 then 1 else 0
+
+/-- **THE HEIGHT-1 FORGE** — a single row (row 0 = first = last), all-zero public inputs. -/
+def forgeTrace : VmTrace := { rows := [forgeRow], pub := zeroAsg, tf := forgeTf }
+
+/-- The forge row VIOLATES commitment binding: `COMMITMENT (col 5) = 1 ≠ 0 = COMMITMENT_FULL (col 54)`
+— the exact non-satisfying content the last-row `.gate` fails to reject. -/
+theorem forge_breaks_commitment_binding : (envAt forgeTrace 0).loc 5 ≠ (envAt forgeTrace 0).loc 54 := by
+  decide
+
+/-- The forge's memory / map logs are empty (the note-spend leaf declares no mem/map ops). -/
+theorem forge_memLog : Dregg2.Circuit.DescriptorIR2.memLog noteSpendLeafDesc forgeTrace = [] := rfl
+theorem forge_mapLog : Dregg2.Circuit.DescriptorIR2.mapLog noteSpendLeafDesc forgeTrace = [] := rfl
+
+/-- **NON-VACUITY POLE — the forge IS accepted under the CURRENT descriptor.** The single-row
+`forgeTrace` SATISFIES the whole (buggy) `noteSpendLeafDesc`: the 12 chip lookups land in the table,
+every base `.gate` is VACUOUS on the last row (isLast=true), the C7 window is vacuous (on_transition),
+and the eight PI pins close on `forgeRow`/`zeroAsg` — even though `col5 ≠ col54`
+(`forge_breaks_commitment_binding`). This turns the prose double-spend/commitment-freedom hole into a
+PROVEN acceptance: the exact witness the fix must reject. -/
+theorem forgeTrace_satisfied2 :
+    Satisfied2 (fun _ => 0) noteSpendLeafDesc (fun _ => 0) (fun _ => (0, 0)) [] forgeTrace := by
+  refine ⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩
+  · intro i hi c hc
+    have hc2 : c ∈ noteSpendConstraints := hc
+    have hi2 : i < 1 := hi
+    interval_cases i <;>
+      (fin_cases hc2 <;>
+        simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
+          Lookup.holdsAt, unlessSite, whenSite] <;>
+        first
+          | trivial
+          | decide
+          | (intro _; decide))
+  · intro i hi; trivial
+  · intro i hi r hr; simp only [noteSpendLeafDesc] at hr; cases hr
+  · intro op hop; rw [forge_memLog] at hop; simp at hop
+  · rw [forge_memLog]; exact (by decide)
+  · rw [forge_memLog]; exact Dregg2.Circuit.DescriptorIR2.memCheck_nil _ _
+  · rw [forge_memLog]; rfl
+  · rw [forge_mapLog]; rfl
+
+/-- **THE REGRESSION GATE — the forge is REJECTED under the FIXED descriptor.** The appended
+`.base (.boundary VmRow.last (invEqGate IS_MERKLE 5 54))` fires on the single (last) row: with
+`is_merkle = 0` it forces `col5 - col54 = 0`, i.e. `1 = 0`. So the exact witness
+`forgeTrace_satisfied2` accepts is no longer `Satisfied2` — the `.gate`-vacuity forge is closed. -/
+theorem forge_rejected_by_fix (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat)
+    (maddrs : List ℤ) :
+    ¬ Satisfied2 hash noteSpendLeafDescFixed minit mfin maddrs forgeTrace := by
+  intro h
+  have hmem : VmConstraint2.base (.boundary VmRow.last (invEqGate IS_MERKLE 5 54))
+      ∈ noteSpendLeafDescFixed.constraints := by
+    show _ ∈ noteSpendConstraints ++ noteSpendLastRowFix
+    apply List.mem_append_right
+    simp only [noteSpendLastRowFix, List.mem_cons]; tauto
+  have hc := h.rowConstraints 0 (by decide) _ hmem
+  have hislast : ((0 : Nat) + 1 == forgeTrace.rows.length) = true := by decide
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hc
+  have hbody := hc hislast
+  revert hbody; decide
+
+/-! ## §12 — THE RUNG-2 NO-FORGERY UPGRADE: the fixed descriptor binds `COMMITMENT` on EVERY row.
+
+The fix's no-forgery tooth, stated over the FIXED descriptor: ANY satisfying trace binds `COMMITMENT
+(col 5) = COMMITMENT_FULL (col 54)` on its LAST row too (when that row is a spend row) — the binding
+the transition `.gate` alone leaves free. `forge_rejected_by_fix` is its permanent non-vacuity pole
+(a concrete last row where the binding FAILS is rejected), and `witnessTrace_satisfied2` witnesses the
+positive pole (an honest trace still satisfies the fixed descriptor — proved in `§13`). -/
+
+/-- **`fixed_commitment_binds_last` — THE FIXED DESCRIPTOR'S LAST-ROW COMMITMENT BINDING.** A trace
+that satisfies `noteSpendLeafDescFixed` has `COMMITMENT (col 5) = COMMITMENT_FULL (col 54)` on its LAST
+row whenever that row is a spend row (`is_merkle = 0`). This is the property `noteSpendLeafDesc` LACKS
+(exploited by `forgeTrace`); the appended `VmRow.last` boundary supplies it. Composed with the
+existing every-transition-row binding, `COMMITMENT` is now bound on EVERY row of the fixed descriptor
+— matching the deployed every-row `assert_zero`. -/
+theorem fixed_commitment_binds_last {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash noteSpendLeafDescFixed minit mfin maddrs t)
+    (hlen : 0 < t.rows.length)
+    (hspendLast : (envAt t (t.rows.length - 1)).loc IS_MERKLE = 0) :
+    (envAt t (t.rows.length - 1)).loc 5 = (envAt t (t.rows.length - 1)).loc 54 := by
+  have hidx : t.rows.length - 1 < t.rows.length := by omega
+  have hmem : VmConstraint2.base (.boundary VmRow.last (invEqGate IS_MERKLE 5 54))
+      ∈ noteSpendLeafDescFixed.constraints := by
+    show _ ∈ noteSpendConstraints ++ noteSpendLastRowFix
+    apply List.mem_append_right
+    simp only [noteSpendLastRowFix, List.mem_cons]; tauto
+  have hc := hsat.rowConstraints (t.rows.length - 1) hidx _ hmem
+  have hislast : ((t.rows.length - 1) + 1 == t.rows.length) = true := by
+    have he : (t.rows.length - 1) + 1 = t.rows.length := by omega
+    rw [he]; exact beq_self_eq_true _
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hc
+  exact invEqGate_spend (envAt t (t.rows.length - 1)) hspendLast 5 54 (hc hislast)
+
+/-! ## §13 — the FIXED descriptor still ACCEPTS the honest witness (the fix is not over-tight).
+
+An HONEST trace's LAST row is a PADDING row with `is_merkle = 1` (the deployed generator,
+`note_spending.rs:680`), so each appended `InvertedGated` boundary `(1 − is_merkle)·body = 0·body = 0`
+is INERT there, and the `binaryGate`/`posGate` boundaries close on the padding row's booleans. So the
+fix rejects the height-1 forge WITHOUT rejecting any honest spend. `witnessTrace` (RUNG-1's concrete
+2-row witness) demonstrates: its last row carries `witnessAsg` with `is_merkle = 0` — but that is the
+`is_merkle = 0` DEGENERATE witness, so we show acceptance for the shape where the last row satisfies
+the boundaries directly. -/
+
+/-- The fixed descriptor's last-row boundaries all VANISH on RUNG-1's `witnessAsg` row (every body is
+`0` there: `is_merkle = 0` makes each `InvertedGated` body `1·(a−b)` with `a = b = 0`, `binaryGate
+0·(0−1) = 0`, `posGate` at `pos = 0` is `0`) — so appending them keeps `witnessTrace` satisfying. -/
+theorem witnessAsg_last_boundaries_vanish :
+    (binaryGate IS_MERKLE).eval witnessAsg = 0
+    ∧ (invEqGate IS_MERKLE 5 54).eval witnessAsg = 0
+    ∧ (invEqGate IS_MERKLE 1 28).eval witnessAsg = 0
+    ∧ (invEqGate IS_MERKLE 19 29).eval witnessAsg = 0
+    ∧ (invEqGate IS_MERKLE 2 30).eval witnessAsg = 0
+    ∧ posGate.eval witnessAsg = 0 := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩ <;> decide
+
+/-- **The FIXED descriptor still ACCEPTS the honest witness.** RUNG-1's concrete `witnessTrace`
+satisfies `noteSpendLeafDescFixed` too: it satisfies every original constraint
+(`witnessTrace_satisfied2`) and the six appended `VmRow.last` boundaries vanish on its rows
+(`witnessAsg_last_boundaries_vanish`). The positive pole survives the fix. -/
+theorem fixed_accepts_honest_witness :
+    Satisfied2 (fun _ => 0) noteSpendLeafDescFixed (fun _ => 0) (fun _ => (0, 0)) [] witnessTrace := by
+  obtain ⟨hbin, h554, h128, h1929, h230, hpos⟩ := witnessAsg_last_boundaries_vanish
+  have hbase := witnessTrace_satisfied2
+  have hml : Dregg2.Circuit.DescriptorIR2.memLog noteSpendLeafDescFixed witnessTrace = [] := rfl
+  have hmapl : Dregg2.Circuit.DescriptorIR2.mapLog noteSpendLeafDescFixed witnessTrace = [] := rfl
+  refine ⟨?_, hbase.rowHashes, hbase.rowRanges, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩
+  · intro i hi c hc
+    -- `c` is either an original constraint or one of the six appended boundaries.
+    have hcc : c ∈ noteSpendConstraints ++ noteSpendLastRowFix := hc
+    rcases List.mem_append.mp hcc with hc0 | hcfix
+    · exact hbase.rowConstraints i hi c hc0
+    · -- the appended boundaries: on either row the body vanishes on `witnessAsg`.
+      have hrow : (envAt witnessTrace i).loc = witnessAsg := by
+        have hi2 : i < 2 := hi
+        interval_cases i <;> rfl
+      fin_cases hcfix <;>
+        (simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]; intro _; rw [hrow]; assumption)
+  · intro op hop; rw [hml] at hop; simp at hop
+  · rw [hml]; exact (by decide)
+  · rw [hml]; exact Dregg2.Circuit.DescriptorIR2.memCheck_nil _ _
+  · rw [hml]; rfl
+  · rw [hmapl]; rfl
+
+#assert_axioms forgeTrace_satisfied2
+#assert_axioms forge_rejected_by_fix
+#assert_axioms fixed_commitment_binds_last
+#assert_axioms fixed_accepts_honest_witness
+
+/-! ## §14 — shape pins for the forge / fix. -/
+#guard decide (forgeTrace.rows.length = 1)
+#guard decide (noteSpendLeafDescFixed.constraints.length = 33)
 
 end Dregg2.Circuit.Emit.NoteSpendingLeafRung2

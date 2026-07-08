@@ -93,7 +93,8 @@ set_option autoImplicit false
 literally in `adjacencyDesc.constraints` (= `adjacencyConstraints`). -/
 local macro "adj_mem" : tactic =>
   `(tactic| (show _ ∈ adjacencyConstraints;
-             simp [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, pathBlock]))
+             simp [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, adjLastIdxFix,
+               pathBlock]))
 
 /-! ## §1 — `LastRowOrdered`: the emit-fix's semantic content (the residual, phrased as a hypothesis
 the fixed emit supplies). Exactly the three child-ordering bodies of each path, forced to vanish on the
@@ -203,8 +204,9 @@ theorem adjLastOrderFix_subset :
     ∀ c ∈ adjLastOrderFix, c ∈ adjacencyDesc.constraints := by
   intro c hc
   show c ∈ adjacencyConstraints
-  rw [show adjacencyConstraints = adjacencyConstraintsCore ++ adjLastOrderFix from rfl]
-  exact List.mem_append_right _ hc
+  rw [show adjacencyConstraints
+        = (adjacencyConstraintsCore ++ adjLastOrderFix) ++ adjLastIdxFix from rfl]
+  exact List.mem_append_left _ (List.mem_append_right _ hc)
 
 /-- **`adjacency_rung2_fixed_closes` — THE UNCONDITIONAL CROWN on the REAL descriptor.** A `Satisfied2`
 of the emitted `adjacencyDesc` (which now carries the emit-fix), against the NAMED Poseidon2 chip
@@ -313,8 +315,8 @@ theorem wtSat :
     rw [show wTrace.rows.length = 1 from rfl] at hi
     interval_cases i
     rw [show adjacencyDesc.constraints = adjacencyConstraints from rfl] at hc
-    simp only [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, pathBlock,
-      List.cons_append, List.nil_append] at hc
+    simp only [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, adjLastIdxFix,
+      pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
         copyWindow, Lookup.holdsAt, hF, hL] <;>
@@ -458,6 +460,167 @@ theorem cheat_load_bearing :
     ∧ ¬ Satisfied2 mHash adjacencyDesc (fun _ => 0) (fun _ => (0, 0)) [] fTrace :=
   ⟨fSatCore, fChipSound, cheat_not_topLevelOrdered, fNotSat⟩
 
+/-! ## §9 — THE INDEX-RECONSTRUCTION FIX (`adjLastIdxFix`, now LANDED), proven to ENFORCE
+`LastRowIdxReconstructed`, with the BETWEEN-LEAF forgery as its LOAD-BEARING witness.
+
+Conjunct C of a sound non-membership witness — the two leaves sit at CONSECUTIVE tree positions,
+i.e. the indices reconstructed from the path direction bits differ by exactly 1 — was un-bound on the
+last row. `idxStepBody` (`idx_out - idx_in - dir*pow`) was emitted only as a transition `.gate`
+(`pathBlock`), which `holdsVm_gate_true` makes VACUOUS on the last row, so `L_IDX_OUT[last]` /
+`U_IDX_OUT[last]` were FREE — pinned only to the index PIs and the consecutiveness tooth, DECOUPLED from
+the genuine reconstruction `idx_in[last] + dir[last]*pow[last]`. A prover could therefore publish index
+values inconsistent with the actual leaf positions: present two NON-adjacent leaves as adjacent (fake
+consecutiveness), a bogus non-membership witness. This is ISOMORPHIC to the top-level ORDERING drop the
+authors already closed with `adjLastOrderFix` — the same last-row `.gate`-vacuity, one conjunct over.
+
+`adjLastIdxFix` re-lowers the two index bodies as `.base (.boundary VmRow.last …)`, firing on the last
+row too (the deployed every-row `assert_zero` semantics, `dsl_plonky3.rs`), so the published last-row
+index is bound to the in-circuit reconstruction on EVERY row. -/
+
+/-- The two index-accumulation bodies of both paths, vanishing on the last trace row: the published
+last-row `idx_out` equals the genuine in-circuit reconstruction `idx_in + dir*pow`. -/
+def LastRowIdxReconstructed (t : VmTrace) : Prop :=
+  (idxStepBody L_DIR L_IDX_IN L_IDX_OUT).eval (envAt t (t.rows.length - 1)).loc = 0 ∧
+  (idxStepBody U_DIR U_IDX_IN U_IDX_OUT).eval (envAt t (t.rows.length - 1)).loc = 0
+
+/-- **`adjLastIdxFix ⊆ adjacencyDesc.constraints`** — the index fix is genuinely part of the emitted
+descriptor (the rightmost append component of `adjacencyConstraints`). -/
+theorem adjLastIdxFix_subset :
+    ∀ c ∈ adjLastIdxFix, c ∈ adjacencyDesc.constraints := by
+  intro c hc
+  show c ∈ adjacencyConstraints
+  rw [show adjacencyConstraints
+        = (adjacencyConstraintsCore ++ adjLastOrderFix) ++ adjLastIdxFix from rfl]
+  exact List.mem_append_right _ hc
+
+/-- **`lastRowIdxReconstructed_of_fix` — the index fix ENFORCES `LastRowIdxReconstructed`.** For any
+descriptor `d` whose constraints CONTAIN `adjLastIdxFix`, a `Satisfied2` of `d` forces the last-row
+index reconstruction (each fix constraint is a last-row boundary read). -/
+theorem lastRowIdxReconstructed_of_fix {hash : List ℤ → ℤ} {d : EffectVmDescriptor2} {minit : ℤ → ℤ}
+    {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash d minit mfin maddrs t) (hlen : 0 < t.rows.length)
+    (hmem : ∀ c ∈ adjLastIdxFix, c ∈ d.constraints) :
+    LastRowIdxReconstructed t := by
+  have g : ∀ b : EmittedExpr, VmConstraint2.base (.boundary VmRow.last b) ∈ adjLastIdxFix →
+      b.eval (envAt t (t.rows.length - 1)).loc = 0 :=
+    fun b hb => genLastBoundaryZero hsat hlen b (hmem _ hb)
+  refine ⟨g _ ?_, g _ ?_⟩ <;>
+    (show _ ∈ adjLastIdxFix) <;>
+    repeat' first | exact List.Mem.head _ | apply List.Mem.tail
+
+/-- **`adjacency_rung2_idx_bound` — THE UNCONDITIONAL INDEX CROWN on the REAL descriptor.** A
+`Satisfied2` of the emitted `adjacencyDesc` (which now carries the index fix) forces
+`LastRowIdxReconstructed`: `idx_out[last] = idx_in[last] + dir[last]*pow[last]` for both paths — the
+published index cannot be decoupled from the committed path's reconstruction. UNCONDITIONAL, no
+re-assumed hypothesis. Together with `adjacency_rung2_fixed_closes` (the ordering/hash/consecutive
+crown), the two exhaust conjuncts A/B/C of a sound non-membership witness. -/
+theorem adjacency_rung2_idx_bound {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} {t : VmTrace}
+    (hlen : 0 < t.rows.length)
+    (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t) :
+    LastRowIdxReconstructed t :=
+  lastRowIdxReconstructed_of_fix hsat hlen adjLastIdxFix_subset
+
+/-! ### §9b — THE LOAD-BEARING witness: `adjLastIdxFix` is exactly what rejects the between-leaf forgery.
+
+A depth-1 shape whose child-ordering, hashing, root pins and consecutiveness ALL genuinely hold, but the
+published indices are FORGED away from the reconstruction: the lower leaf `20` genuinely sits at position
+`1` (`L_DIR = 1`, right child) and the upper leaf `10` at position `0` (`U_DIR = 0`, left child) — a
+genuinely NON-consecutive-ascending pair (`idx_lower = 1 > idx_upper = 0`). The prover publishes the
+forged `(idx_lower, idx_upper) = (0, 1)` to FAKE ascending consecutiveness. The index step that would
+force `L_IDX_OUT = L_IDX_IN + L_DIR*pow = 1` is VACUOUS on the last row under the transition-only `.gate`
+mapping, so the forged trace `Satisfied2`s the CORE descriptor (`adjacencyDescCore`, without the fix) —
+yet the published index `0` is NOT the genuine reconstruction `1`. The landed `adjLastIdxFix` is EXACTLY
+what catches this: the fixed real `adjacencyDesc` REJECTS the forged trace (its last-row `idxStepBody`
+boundary is `0 - 0 - 1*1 = -1 ≠ 0`). The core accepts the forgery, the real emit does not. -/
+
+/-- The forged row: lower leaf `20` genuinely at position 1 (`L_DIR=1`), upper leaf `10` genuinely at
+position 0 (`U_DIR=0`), both genuinely dir-ordered children `(10,20)` of the shared root `1020`, but the
+published indices FORGED to `L_IDX_OUT=0` / `U_IDX_OUT=1` (fake ascending consecutiveness). -/
+private def gRow : Assignment := fun c =>
+  if c = L_CUR then 20 else if c = L_SIB then 10 else if c = L_DIR then 1
+  else if c = L_LEFT then 10 else if c = L_RIGHT then 20 else if c = L_PAR then 1020
+  else if c = U_CUR then 10 else if c = U_SIB then 20
+  else if c = U_LEFT then 10 else if c = U_RIGHT then 20 else if c = U_PAR then 1020
+  else if c = U_IDX_OUT then 1 else if c = POW then 1 else 0
+
+private def gPub : Assignment := fun k =>
+  if k = PI_ROOT then 1020 else if k = PI_LEAF_LOWER then 20
+  else if k = PI_LEAF_UPPER then 10 else if k = PI_IDX_UPPER then 1 else 0
+
+private def gTbl : List (List ℤ) :=
+  [chipRow mHash [10, 20] (List.replicate 7 0)]
+
+private def gTrace : VmTrace :=
+  { rows := [gRow], pub := gPub
+    tf := fun tid => match tid with | .poseidon2 => gTbl | _ => [] }
+
+theorem gChipSound : ChipTableSound mHash (gTrace.tf .poseidon2) := by
+  intro r hr
+  simp only [gTrace, gTbl, List.mem_singleton] at hr
+  exact ⟨[10, 20], List.replicate 7 0, by decide, by decide, hr⟩
+
+/-- **The forged trace PROVABLY `Satisfied2`s the fix-less CORE descriptor** — the transition-only index
+`.gate` is vacuous on the last row, so the published index lies while every other constraint (ordering,
+hash, root pins, consecutiveness) holds. -/
+theorem gSatCore :
+    Satisfied2 mHash adjacencyDescCore (fun _ => 0) (fun _ => (0, 0)) [] gTrace := by
+  have hmemlog : memLog adjacencyDescCore gTrace = [] := rfl
+  have hmaplog : mapLog adjacencyDescCore gTrace = [] := rfl
+  have hF : (0 == 0) = true := rfl
+  have hL : (0 + 1 == gTrace.rows.length) = true := rfl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro i hi c hc
+    rw [show gTrace.rows.length = 1 from rfl] at hi
+    interval_cases i
+    rw [show adjacencyDescCore.constraints = adjacencyConstraintsCore from rfl] at hc
+    simp only [adjacencyConstraintsCore, pathBlock, List.cons_append, List.nil_append] at hc
+    fin_cases hc <;>
+      simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
+        copyWindow, Lookup.holdsAt, hF, hL] <;>
+      decide
+  · intro i _; trivial
+  · intro i _ r hr; simp [adjacencyDescCore, adjacencyDesc] at hr
+  · exact List.nodup_nil
+  · intro op hop; rw [hmemlog] at hop; simp at hop
+  · rw [hmemlog]; trivial
+  · rw [hmemlog]; exact memCheck_nil _ _
+  · rw [hmemlog]; rfl
+  · rw [hmaplog]; rfl
+
+/-- **`LastRowIdxReconstructed` genuinely FAILS on the forged trace** — the lower `idxStepBody` is
+`0 - 0 - 1*1 = -1 ≠ 0` (published position `0` ≠ genuine reconstruction `1`). So `LastRowIdxReconstructed`
+is NOT derivable from a fix-less `Satisfied2`: it is load-bearing, and the same fact makes the forged
+trace FAIL the fixed real `adjacencyDesc`. -/
+theorem gForge_not_idxReconstructed : ¬ LastRowIdxReconstructed gTrace := by
+  intro h; exact absurd h.1 (by decide)
+
+/-- **THE GATE — the landed fix REJECTS the forged trace.** The forged trace does NOT `Satisfied2` the
+real (fixed-emit) `adjacencyDesc`: its added last-row lower `idxStepBody` boundary is `0 - 0 - 1*1 =
+-1 ≠ 0`. This is the constraint `adjLastIdxFix` supplies — the between-leaf index forgery is now caught
+IN the descriptor. This is the REGRESSION: the trace that WAS `Satisfied2` (of the core) is now NOT. -/
+theorem gNotSat :
+    ¬ Satisfied2 mHash adjacencyDesc (fun _ => 0) (fun _ => (0, 0)) [] gTrace := by
+  intro h
+  have hmem : VmConstraint2.base (.boundary VmRow.last (idxStepBody L_DIR L_IDX_IN L_IDX_OUT))
+      ∈ adjacencyDesc.constraints := by adj_mem
+  have h0 := h.rowConstraints 0 (by decide) _ hmem
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
+    show (0 + 1 == gTrace.rows.length) = true from rfl] at h0
+  revert h0
+  decide
+
+/-- The forged trace witnesses that `adjLastIdxFix` is LOAD-BEARING, not decorative: it `Satisfied2`s
+the fix-less CORE descriptor (with a sound chip table) yet BREAKS the no-forgery invariant
+`LastRowIdxReconstructed` AND is REJECTED by the fixed real `adjacencyDesc`. The fix is exactly what
+turns the accepted between-leaf index forgery into a rejection. -/
+theorem gForge_load_bearing :
+    Satisfied2 mHash adjacencyDescCore (fun _ => 0) (fun _ => (0, 0)) [] gTrace
+    ∧ ChipTableSound mHash (gTrace.tf .poseidon2)
+    ∧ ¬ LastRowIdxReconstructed gTrace
+    ∧ ¬ Satisfied2 mHash adjacencyDesc (fun _ => 0) (fun _ => (0, 0)) [] gTrace :=
+  ⟨gSatCore, gChipSound, gForge_not_idxReconstructed, gNotSat⟩
+
 /-! ## §8 — Axiom tripwires. -/
 
 #assert_axioms topLevelOrdered_of_lastRowOrdered
@@ -474,5 +637,12 @@ theorem cheat_load_bearing :
 #assert_axioms cheat_not_topLevelOrdered
 #assert_axioms cheat_not_lastRowOrdered
 #assert_axioms cheat_load_bearing
+#assert_axioms adjLastIdxFix_subset
+#assert_axioms lastRowIdxReconstructed_of_fix
+#assert_axioms adjacency_rung2_idx_bound
+#assert_axioms gSatCore
+#assert_axioms gNotSat
+#assert_axioms gForge_not_idxReconstructed
+#assert_axioms gForge_load_bearing
 
 end Dregg2.Circuit.Emit.AdjacencyMembershipRung2

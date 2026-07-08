@@ -102,10 +102,11 @@ Row 0 is the ACTIVE window when `1 < t.rows.length`: it is non-last (the `.gate`
 (the `.piBinding VmRow.first` pins fire). The lookups fire on every row. -/
 
 /-- Constraint-membership tactic: every constraint we name is literally in `nonRevocationDesc`
-(including the two direct diff range lookups added by the lower-bound fix). -/
+(including the two direct diff range lookups added by the lower-bound fix and the six
+`.boundary VmRow.last` re-lowerings added by the last-row fix). -/
 local macro "nr_mem" : tactic =>
-  `(tactic| (simp [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
-      rangeLDiffLookup, rangeRDiffLookup]))
+  `(tactic| (simp [nonRevocationDesc, nonRevLastRowFix, level0Lookup, level1Lookup, rangeLLookup,
+      rangeRLookup, rangeLDiffLookup, rangeRDiffLookup]))
 
 /-- A declared `.gate` fires on the active row 0 (non-last, since `length ≥ 2`): its body vanishes. -/
 theorem gateZero0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
@@ -120,10 +121,34 @@ theorem gateZero0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} 
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlast] at h
   exact h
 
-/-- A declared first-row PI binding pins `loc[col] = pub[k]` on row 0. -/
+/-- **`gateBodyZero0` — the LAST-ROW-FIX extraction (works on ANY non-empty trace).** The body of a
+binding gate vanishes on row 0 REGARDLESS of whether row 0 is the last row: if row 0 is a transition
+row the `.gate body` fires; if row 0 IS the last row (a HEIGHT-1 trace) the `.boundary VmRow.last body`
+counterpart supplied by `nonRevLastRowFix` fires. Either way `body.eval (envAt t 0).loc = 0`. This is
+what closes the last-row / height-1 forgery: the six semantic bindings are now forced on row 0 for
+every `0 < length`, not only for `1 < length`. -/
+theorem gateBodyZero0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
+    {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
+    (hlen : 0 < t.rows.length) (body : EmittedExpr)
+    (hgate : VmConstraint2.base (.gate body) ∈ nonRevocationDesc.constraints)
+    (hbnd : VmConstraint2.base (.boundary VmRow.last body) ∈ nonRevocationDesc.constraints) :
+    body.eval (envAt t 0).loc = 0 := by
+  by_cases hlast : (0 + 1 == t.rows.length) = true
+  · -- row 0 IS the last row: the boundary-last re-lowering fires.
+    have h := hsat.rowConstraints 0 hlen _ hbnd
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlast] at h
+    exact h trivial
+  · -- row 0 is a transition row: the `.gate` fires.
+    have hlf : (0 + 1 == t.rows.length) = false := by
+      simpa using hlast
+    have h := hsat.rowConstraints 0 hlen _ hgate
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlf] at h
+    exact h
+
+/-- A declared first-row PI binding pins `loc[col] = pub[k]` on row 0 (row 0 is always first). -/
 theorem piFirst0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
-    (hlen : 1 < t.rows.length) (col k : Nat)
+    (hlen : 0 < t.rows.length) (col k : Nat)
     (hmem : VmConstraint2.base (.piBinding VmRow.first col k) ∈ nonRevocationDesc.constraints) :
     (envAt t 0).loc col = t.pub k := by
   have h0 : 0 < t.rows.length := by omega
@@ -136,7 +161,7 @@ carry the genuine hash of the inputs (on row 0). This is where the Poseidon2 CR 
 theorem chip0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
-    (hlen : 1 < t.rows.length) (ins : List EmittedExpr) (digestCol : Nat) (lanes : List Nat)
+    (hlen : 0 < t.rows.length) (ins : List EmittedExpr) (digestCol : Nat) (lanes : List Nat)
     (hins : ins.length ≤ CHIP_RATE)
     (hmem : VmConstraint2.lookup ⟨TableId.poseidon2, chipLookupTuple ins digestCol lanes⟩
               ∈ nonRevocationDesc.constraints) :
@@ -150,7 +175,7 @@ theorem chip0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfi
 theorem range0 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
-    (hlen : 1 < t.rows.length) (col : Nat)
+    (hlen : 0 < t.rows.length) (col : Nat)
     (hmem : VmConstraint2.lookup ⟨TableId.range, [.var col]⟩ ∈ nonRevocationDesc.constraints) :
     0 ≤ (envAt t 0).loc col ∧ (envAt t 0).loc col < 2 ^ ORDERING_BITS := by
   have h0 : 0 < t.rows.length := by omega
@@ -189,7 +214,7 @@ range carriers, forces `NonRevocationFragment`. The one un-ℤ-forced fact (the 
 field-canonicity of the diff wires) is the named residual — see `fragment_strict`. -/
 theorem nonRevocation_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
@@ -198,17 +223,20 @@ theorem nonRevocation_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit
   have hp0 := chip0 hsat hChip hlen [.var LEAF_L, .var LEAF_R] PAR0 LEVEL0_LANES (by decide) (by nr_mem)
   have hp1 := chip0 hsat hChip hlen [.var CUR1, .var SIB1] PAR1 LEVEL1_LANES (by decide) (by nr_mem)
   simp only [List.map_cons, List.map_nil, EmittedExpr.eval] at hp0 hp1
-  -- the gate equations (through the byte-pinned per-gate lemmas).
-  have hcont := (cont_body_zero_iff _).mp (gateZero0 hsat hlen contBody (by nr_mem))
-  have hdl := (diffL_body_zero_iff _).mp (gateZero0 hsat hlen diffLBody (by nr_mem))
-  have hdr := (diffR_body_zero_iff _).mp (gateZero0 hsat hlen diffRBody (by nr_mem))
-  have hrl := (rangeLBind_body_zero_iff _).mp (gateZero0 hsat hlen rangeLBindBody (by nr_mem))
+  -- the gate equations (through the byte-pinned per-gate lemmas) — each forced on row 0 for ANY
+  -- non-empty trace via `gateBodyZero0` (the `.gate` on a transition row OR the last-row fix's
+  -- `.boundary VmRow.last` counterpart on a height-1 trace).
+  have hcont := (cont_body_zero_iff _).mp (gateBodyZero0 hsat hlen contBody (by nr_mem) (by nr_mem))
+  have hdl := (diffL_body_zero_iff _).mp (gateBodyZero0 hsat hlen diffLBody (by nr_mem) (by nr_mem))
+  have hdr := (diffR_body_zero_iff _).mp (gateBodyZero0 hsat hlen diffRBody (by nr_mem) (by nr_mem))
+  have hrl := (rangeLBind_body_zero_iff _).mp
+    (gateBodyZero0 hsat hlen rangeLBindBody (by nr_mem) (by nr_mem))
   -- (NonRevocationEmit proves only the L-variant `*_zero_iff`; the R-binding is the structural twin.)
   have hrr : (envAt t 0).loc RR = HALF_P_MINUS_1 - (envAt t 0).loc DIFF_R := by
-    have hg := gateZero0 hsat hlen rangeRBindBody (by nr_mem)
+    have hg := gateBodyZero0 hsat hlen rangeRBindBody (by nr_mem) (by nr_mem)
     simp only [rangeRBindBody, EmittedExpr.eval] at hg
     omega
-  have hadj := (adj_body_zero_iff _).mp (gateZero0 hsat hlen adjBody (by nr_mem))
+  have hadj := (adj_body_zero_iff _).mp (gateBodyZero0 hsat hlen adjBody (by nr_mem) (by nr_mem))
   -- the two 30-bit range bounds (their ≥ 0 half gives the ℤ-sound upper half-field bound).
   have hRLb := range0 hsat hRange hlen RL (by nr_mem)
   have hRRb := range0 hsat hRange hlen RR (by nr_mem)
@@ -255,7 +283,7 @@ longer a re-assumed hypothesis but a genuine consequence of the deployed descrip
 soundness fix bought — the `x == R` / `x ≤ L` freshness forgery no longer `Satisfied2`s. -/
 theorem sat_forces_canon {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
     FieldCanonicalDiffs t :=
@@ -271,7 +299,7 @@ item is NOT revoked. The former `FieldCanonicalDiffs` residual is now DISCHARGED
 `sat_forces_canon` (the descriptor's direct diff range lookups) — no re-assumed ordering hypothesis. -/
 theorem nonRevocation_nonmembership {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
@@ -378,7 +406,8 @@ theorem concrete_sat :
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro i hi c hc
     rw [show cTrace.rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+    simp only [nonRevocationDesc, nonRevLastRowFix, List.cons_append, List.nil_append,
+      level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
       rangeLDiffLookup, rangeRDiffLookup] at hc
     interval_cases i
     · have hF : ((0 : Nat) == 0) = true := rfl

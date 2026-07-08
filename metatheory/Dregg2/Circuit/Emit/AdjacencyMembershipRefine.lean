@@ -133,7 +133,8 @@ theorem combine_of_gates (hash : List ℤ → ℤ) (a : Assignment)
 /-- The membership tactic: every constraint we name is literally in `adjacencyDesc.constraints`. -/
 local macro "adj_mem" : tactic =>
   `(tactic| (show _ ∈ adjacencyConstraints;
-             simp [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, pathBlock]))
+             simp [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, adjLastIdxFix,
+               pathBlock]))
 
 /-- The window's `nxt` field at row `j` IS the `loc` field at row `j+1` (`envAt` reads the same
 `getD (j+1)` row). -/
@@ -297,6 +298,15 @@ structure AdjacencyAuthFragment (hash : List ℤ → ℤ) (t : VmTrace) : Prop w
     = hash [(envAt t (t.rows.length - 1)).loc U_LEFT, (envAt t (t.rows.length - 1)).loc U_RIGHT]
   /-- The published indices are consecutive (the internalized catch tooth). -/
   consecutive : t.pub PI_IDX_UPPER = t.pub PI_IDX_LOWER + 1
+  /-- The lower published index at the last row is the GENUINE in-circuit reconstruction
+  `idx_in + dir*pow` (the landed `adjLastIdxFix` binding) — not a free, prover-chosen value. -/
+  idxReconLower : (envAt t (t.rows.length - 1)).loc L_IDX_OUT
+    = (envAt t (t.rows.length - 1)).loc L_IDX_IN
+      + (envAt t (t.rows.length - 1)).loc L_DIR * (envAt t (t.rows.length - 1)).loc POW
+  /-- The upper published index at the last row is the GENUINE in-circuit reconstruction (twin). -/
+  idxReconUpper : (envAt t (t.rows.length - 1)).loc U_IDX_OUT
+    = (envAt t (t.rows.length - 1)).loc U_IDX_IN
+      + (envAt t (t.rows.length - 1)).loc U_DIR * (envAt t (t.rows.length - 1)).loc POW
 
 /-- **`adjacency_sat_refines` — THE WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM, sound fragment).**
 A `Satisfied2` of `adjacencyDesc`, against the NAMED Poseidon2 chip carrier, is a genuine
@@ -332,7 +342,14 @@ theorem adjacency_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit : �
   -- consecutiveness: the last-row catch tooth + the two index pins.
   have hcons0 := lastBoundaryZero hsat hlen consecutiveBody (by adj_mem)
   have hcons := (consecutive_body_zero_iff (envAt t (t.rows.length - 1)).loc).mp hcons0
-  refine ⟨⟨_, hfoldL⟩, ⟨_, hfoldU⟩, hrootL, hrootU, ?_, ?_, ?_⟩
+  -- index reconstruction: the last-row `adjLastIdxFix` boundaries bind `idx_out` to `idx_in+dir*pow`.
+  have hidxReconL0 := lastBoundaryZero hsat hlen (idxStepBody L_DIR L_IDX_IN L_IDX_OUT) (by adj_mem)
+  have hidxReconL :=
+    (idx_step_body_zero_iff (envAt t (t.rows.length - 1)).loc L_DIR L_IDX_IN L_IDX_OUT).mp hidxReconL0
+  have hidxReconU0 := lastBoundaryZero hsat hlen (idxStepBody U_DIR U_IDX_IN U_IDX_OUT) (by adj_mem)
+  have hidxReconU :=
+    (idx_step_body_zero_iff (envAt t (t.rows.length - 1)).loc U_DIR U_IDX_IN U_IDX_OUT).mp hidxReconU0
+  refine ⟨⟨_, hfoldL⟩, ⟨_, hfoldU⟩, hrootL, hrootU, ?_, ?_, ?_, hidxReconL, hidxReconU⟩
   · rw [hrootL] at hhashL; exact hhashL
   · rw [hrootU] at hhashU; exact hhashU
   · rw [← hidxU, ← hidxL]; exact hcons
@@ -457,8 +474,8 @@ theorem concrete_sat :
     rw [show cTrace.rows.length = 1 from rfl] at hi
     interval_cases i
     rw [show adjacencyDesc.constraints = adjacencyConstraints from rfl] at hc
-    simp only [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, pathBlock,
-      List.cons_append, List.nil_append] at hc
+    simp only [adjacencyConstraints, adjacencyConstraintsCore, adjLastOrderFix, adjLastIdxFix,
+      pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
         copyWindow, Lookup.holdsAt, hF, hL] <;>

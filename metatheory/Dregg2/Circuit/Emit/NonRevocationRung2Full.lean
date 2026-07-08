@@ -84,7 +84,7 @@ tf.range` (Rung 2's `sat_forces_lowerRange`), so `nonRevocation_rung2` is now un
 is DISCHARGED by the emitted circuit, not re-named. -/
 theorem nonRevocation_full_discharge {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))

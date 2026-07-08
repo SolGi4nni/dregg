@@ -58,8 +58,8 @@ set_option autoImplicit false
 /-- Constraint-membership tactic (twin of Rung 1's local `nr_mem`): every constraint we name is
 literally in `nonRevocationDesc` (including the two direct diff range lookups added by the fix). -/
 local macro "nr_mem" : tactic =>
-  `(tactic| (simp [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
-      rangeLDiffLookup, rangeRDiffLookup]))
+  `(tactic| (simp [nonRevocationDesc, nonRevLastRowFix, level0Lookup, level1Lookup, rangeLLookup,
+      rangeRLookup, rangeLDiffLookup, rangeRDiffLookup]))
 
 /-! ## §1 — MEASURING the gap (the half-field overshoot is exactly `2^26`). -/
 
@@ -82,7 +82,7 @@ theorem satisfied_admits_negative_window {hash : List ℤ → ℤ} {t : VmTrace}
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
     (-(2 ^ 26) : ℤ) ≤ (envAt t 0).loc DIFF_L := by
   have hrl := (rangeLBind_body_zero_iff _).mp (gateZero0 hsat hlen rangeLBindBody (by nr_mem))
-  have hub := (range0 hsat hRange hlen RL (by nr_mem)).2
+  have hub := (range0 hsat hRange (by omega) RL (by nr_mem)).2
   rw [hrl] at hub
   have hpow : (2 : ℤ) ^ ORDERING_BITS = 1073741824 := by decide
   rw [hpow] at hub
@@ -112,7 +112,7 @@ table; against `RangeTableSound` (via Rung 1's `range0`) that forces `DiffLowerR
 UNCONDITIONALLY — the carrier that Rung 2 had to RE-ASSUME is now a consequence of `Satisfied2`. -/
 theorem sat_forces_lowerRange {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range)) :
     DiffLowerRangeSound t :=
@@ -127,7 +127,7 @@ lower-bound fix present, the descriptor's own diff range lookups force them (`sa
 so Rung 1's `nonRevocation_nonmembership` already discharges the whole thing. -/
 theorem nonRevocation_rung2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
-    (hlen : 1 < t.rows.length)
+    (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash nonRevocationDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hRange : RangeTableSound ORDERING_BITS (t.tf .range))
@@ -203,7 +203,8 @@ private theorem hn_sat :
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · intro i hi c hc
     rw [show hnTrace.rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+    simp only [nonRevocationDesc, nonRevLastRowFix, List.cons_append, List.nil_append,
+      level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
       rangeLDiffLookup, rangeRDiffLookup] at hc
     interval_cases i
     · have hF : ((0 : Nat) == 0) = true := rfl
@@ -420,5 +421,166 @@ theorem fixed_forbids_the_forgery :
 #assert_axioms cheat_violates_canon
 #assert_axioms prefix_carriers_admitted_forgery
 #assert_axioms fixed_forbids_the_forgery
+
+/-! ### §3c — THE LAST-ROW / HEIGHT-1 FORGERY: the transition-only `.gate` mapping re-opened the
+member-forgery on a single-row trace; the `nonRevLastRowFix` boundary re-lowerings close it.
+
+The deployed IR-v2 AIR lowers a `.base (.gate _)` with `builder.when_transition()` — VACUOUS on the
+last row. On a HEIGHT-1 trace (`rows.length = 1`) row 0 IS the last row, so EVERY one of the six
+semantic binding gates is exempt: the ordering witness `DIFF_L` is DECOUPLED from `x − L − 1`, so the
+`x = L` member-forgery the direct `[DIFF_L]` lookup was meant to reject slips back in — the adversary
+sets `DIFF_L = 0` (which the range lookup happily serves) while `x = L = 100` is a genuine committed
+member (revoked). `nonRevocationDescPreLast` is the descriptor BEFORE the last-row fix (the 14
+transition-only constraints); the forged single-row trace `Satisfied2`s it (`flr_satCore`) yet `x = 100`
+is a MEMBER of the committed set `[100, 300]`. The landed `nonRevLastRowFix` is EXACTLY what catches
+it: the fixed real `nonRevocationDesc` REJECTS the forged trace — its last-row `diffLBody` boundary is
+`0 − 100 + 100 + 1 = 1 ≠ 0` (`fixed_forbids_lastrow_forgery`, THE GATE). -/
+
+/-- **`nonRevocationDescPreLast` — the descriptor WITHOUT the last-row fix** (the 14 transition-only
+constraints; identical to `nonRevocationDesc` minus `nonRevLastRowFix`). This is what the emit produced
+before the fix; it is the descriptor the height-1 forgery exploits. -/
+def nonRevocationDescPreLast : EffectVmDescriptor2 :=
+  { name        := "dregg-non-revocation-sorted-tree::poseidon2-v1-PRELAST"
+  , traceWidth  := NONREV_WIDTH
+  , piCount     := 2
+  , tables      := [Dregg2.Circuit.DescriptorIR2.rangeTableDef ORDERING_BITS]
+  , constraints :=
+      [ level0Lookup
+      , level1Lookup
+      , .base (.gate contBody)
+      , .base (.gate diffLBody)
+      , .base (.gate diffRBody)
+      , .base (.gate rangeLBindBody)
+      , .base (.gate rangeRBindBody)
+      , rangeLLookup
+      , rangeRLookup
+      , rangeLDiffLookup
+      , rangeRDiffLookup
+      , .base (.gate adjBody)
+      , .base (.piBinding VmRow.first PAR1 ROOT_PI)
+      , .base (.piBinding VmRow.first X QUERIED_PI) ]
+  , hashSites   := []
+  , ranges      := [] }
+
+/-- The forged HEIGHT-1 row: `x = L = 100` (a genuine member of the committed set `[100,300]`), but the
+lower ordering witness `DIFF_L = 0` (not the honest `x − L − 1 = −1`). On a single-row trace the
+`.gate diffLBody` binding is vacuous, so this decoupling is admitted. The committed tree/root is the
+SAME as the honest witness (`root = hash [hash [100,300], 7]`); only the queried item and `DIFF_L`
+change. `DIFF_R = 199` honest, `RL = RR = 0` (free — their binding gates are vacuous too, only the
+range lookup on them bites, and `0 ∈ [0,2^30)`). -/
+private def flrRow : Assignment := fun c =>
+  if c = X then 100
+  else if c = LEAF_L then 100
+  else if c = LEAF_R then 300
+  else if c = LPOS then 5
+  else if c = RPOS then 6
+  else if c = DIFF_L then 0
+  else if c = DIFF_R then 199
+  else if c = RL then 0
+  else if c = RR then 0
+  else if c = PAR0 then 100000300
+  else if c = CUR1 then 100000300
+  else if c = SIB1 then 7
+  else if c = PAR1 then 100000300000007
+  else 0
+
+private def flrPub : Assignment := fun k =>
+  if k = ROOT_PI then 100000300000007 else if k = QUERIED_PI then 100 else 0
+
+private def flrRangeTbl : List (List ℤ) := [[0], [199]]
+
+private def flrTrace : VmTrace :=
+  { rows := [flrRow], pub := flrPub
+    tf := fun tid => match tid with
+      | .poseidon2 => demoTbl
+      | .range => flrRangeTbl
+      | _ => [] }
+
+/-- **The height-1 forgery PROVABLY `Satisfied2`s the pre-last (transition-only) descriptor.** All six
+binding gates are vacuous on the single row (which is the last row), so `x = L = 100` with a decoupled
+`DIFF_L = 0` sails through: the chip lookups hold (same committed root), the four range lookups hold
+(`0, 199 ∈ [0,2^30)`), the pins hold (`root`, `x = 100`). The fixed descriptor rejects the same trace
+(`fixed_forbids_lastrow_forgery`). -/
+theorem flr_satCore :
+    Satisfied2 demoHash nonRevocationDescPreLast (fun _ => 0) (fun _ => (0, 0)) [] flrTrace := by
+  have hmemlog : memLog nonRevocationDescPreLast flrTrace = [] := rfl
+  have hmaplog : mapLog nonRevocationDescPreLast flrTrace = [] := rfl
+  have hF : (0 == 0) = true := rfl
+  have hL : (0 + 1 == flrTrace.rows.length) = true := rfl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro i hi c hc
+    rw [show flrTrace.rows.length = 1 from rfl] at hi
+    interval_cases i
+    simp only [nonRevocationDescPreLast, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+      rangeLDiffLookup, rangeRDiffLookup] at hc
+    fin_cases hc <;>
+      simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, Lookup.holdsAt,
+        EmittedExpr.eval, List.map_cons, List.map_nil, hF, hL] <;>
+      decide
+  · intro i _; trivial
+  · intro i _ r hr; simp [nonRevocationDescPreLast] at hr
+  · exact List.nodup_nil
+  · intro op hop; rw [hmemlog] at hop; simp at hop
+  · rw [hmemlog]; trivial
+  · rw [hmemlog]; exact Dregg2.Circuit.DescriptorIR2.memCheck_nil _ _
+  · rw [hmemlog]; rfl
+  · rw [hmaplog]; rfl
+
+theorem flr_chipSound : ChipTableSound demoHash (flrTrace.tf .poseidon2) :=
+  demoTbl_chipSound _ rfl
+
+theorem flr_rangeSound : RangeTableSound ORDERING_BITS (flrTrace.tf .range) := by
+  intro r hr
+  simp only [flrTrace, flrRangeTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with rfl | rfl
+  · exact ⟨0, rfl, by decide, by decide⟩
+  · exact ⟨199, rfl, by decide, by decide⟩
+
+/-- The forged queried item is a GENUINE MEMBER of the committed set — so no theorem concluding
+`NonMember` from the pre-last `Satisfied2` could exist: it admits a revoked item forging freshness. -/
+theorem flr_not_nonmember : ¬ NonMember ([100, 300] : List ℤ) ((envAt flrTrace 0).loc X) := by
+  rintro ⟨_, hni⟩
+  exact hni (by show (100 : ℤ) ∈ ([100, 300] : List ℤ); simp)
+
+/-- **`fixed_forbids_lastrow_forgery` — THE GATE (the last-row fix bites).** The SAME height-1 forgery
+does NOT `Satisfied2` the deployed FIXED `nonRevocationDesc`: `nonRevLastRowFix` supplies a
+`.boundary VmRow.last diffLBody` constraint that FIRES on the single (last) row, and there
+`diffLBody = DIFF_L − x + L + 1 = 0 − 100 + 100 + 1 = 1 ≠ 0`. The member-forgery that `Satisfied2`d the
+transition-only descriptor is rejected — the last-row soundness hole is closed. -/
+theorem fixed_forbids_lastrow_forgery :
+    ¬ Satisfied2 demoHash nonRevocationDesc (fun _ => 0) (fun _ => (0, 0)) [] flrTrace := by
+  intro h
+  have hmem : VmConstraint2.base (.boundary VmRow.last diffLBody) ∈ nonRevocationDesc.constraints := by
+    nr_mem
+  have h0 := h.rowConstraints 0 (by decide) _ hmem
+  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
+    show (0 + 1 == flrTrace.rows.length) = true from rfl] at h0
+  revert h0; decide
+
+/-- **`lastrow_carriers_admitted_forgery` — THE CLOSED BUG, WITNESSED (last-row class).** On the
+height-1 forgery, the transition-only pre-last descriptor `Satisfied2`s, both named carriers are
+realizable, the committed spine `[100,300]` is sorted with `100`/`300` adjacent — yet the queried item
+`x = 100` is a genuine MEMBER, and the FIXED descriptor rejects the same trace. The `nonRevLastRowFix`
+re-lowerings are LOAD-BEARING: they turn the accepted member-forgery into a rejection. -/
+theorem lastrow_carriers_admitted_forgery :
+    Satisfied2 demoHash nonRevocationDescPreLast (fun _ => 0) (fun _ => (0, 0)) [] flrTrace
+    ∧ ChipTableSound demoHash (flrTrace.tf .poseidon2)
+    ∧ RangeTableSound ORDERING_BITS (flrTrace.tf .range)
+    ∧ Sorted ([100, 300] : List ℤ)
+    ∧ Adjacent ([100, 300] : List ℤ) ((envAt flrTrace 0).loc LEAF_L) ((envAt flrTrace 0).loc LEAF_R)
+    ∧ (envAt flrTrace 0).loc X ∈ ([100, 300] : List ℤ)
+    ∧ ¬ NonMember ([100, 300] : List ℤ) ((envAt flrTrace 0).loc X)
+    ∧ ¬ Satisfied2 demoHash nonRevocationDesc (fun _ => 0) (fun _ => (0, 0)) [] flrTrace := by
+  refine ⟨flr_satCore, flr_chipSound, flr_rangeSound, ?_, ⟨[], [], rfl⟩, ?_, flr_not_nonmember,
+    fixed_forbids_lastrow_forgery⟩
+  · simp [Sorted, List.pairwise_cons]
+  · show (100 : ℤ) ∈ ([100, 300] : List ℤ); simp
+
+#assert_axioms flr_satCore
+#assert_axioms flr_chipSound
+#assert_axioms flr_rangeSound
+#assert_axioms flr_not_nonmember
+#assert_axioms fixed_forbids_lastrow_forgery
+#assert_axioms lastrow_carriers_admitted_forgery
 
 end Dregg2.Circuit.Emit.NonRevocationRung2

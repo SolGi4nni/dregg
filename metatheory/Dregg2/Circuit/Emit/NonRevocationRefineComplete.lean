@@ -230,8 +230,9 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · -- rowConstraints
     intro i hi c hc
-    rw [show (semTrace hash L x R sib pos).rows.length = 2 from rfl] at hi
-    simp only [nonRevocationDesc, level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
+    rw [show (semTrace hash L x R sib pos).rows.length = 2 from rfl] at hi ⊢
+    simp only [nonRevocationDesc, nonRevLastRowFix, List.cons_append, List.nil_append,
+      level0Lookup, level1Lookup, rangeLLookup, rangeRLookup,
       rangeLDiffLookup, rangeRDiffLookup] at hc
     interval_cases i
     · -- active row 0: isFirst = true (pins fire), isLast = false (gates fire).
@@ -282,6 +283,13 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
       · -- queried-item PI pin: loc X = pub QUERIED_PI
         simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
         intro _; simp only [loc0, pub_i, r_X, p_QUERIED]
+      -- the six LAST-ROW-FIX boundary constraints are vacuous on the active (non-last) row 0.
+      · intro h; exact absurd h (by decide)   -- boundary-last continuity
+      · intro h; exact absurd h (by decide)   -- boundary-last diff_left
+      · intro h; exact absurd h (by decide)   -- boundary-last diff_right
+      · intro h; exact absurd h (by decide)   -- boundary-last range-left binding
+      · intro h; exact absurd h (by decide)   -- boundary-last range-right binding
+      · intro h; exact absurd h (by decide)   -- boundary-last adjacency
     · -- padding row 1: isFirst = false, isLast = true (gates + first-row pins vacuous).
       fin_cases hc
       · -- level-0 chip lookup (fires on every row)
@@ -316,6 +324,20 @@ theorem sem_satisfied (hash : List ℤ → ℤ) (L x R sib pos : ℤ) :
         intro h; exact absurd h (by decide)
       · -- queried-item PI pin vacuous
         intro h; exact absurd h (by decide)
+      -- the six LAST-ROW-FIX boundary constraints FIRE on the last row 1 (the fix): each body
+      -- vanishes on the (identical) padding row — the same equations as the row-0 gates.
+      · intro _; show contBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
+        simp only [contBody, subBody, EmittedExpr.eval, loc1, r_CUR1, r_PAR0]; ring
+      · intro _; show diffLBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
+        simp only [diffLBody, EmittedExpr.eval, loc1, r_DIFF_L, r_X, r_LEAF_L]; ring
+      · intro _; show diffRBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
+        simp only [diffRBody, EmittedExpr.eval, loc1, r_DIFF_R, r_LEAF_R, r_X]; ring
+      · intro _; show rangeLBindBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
+        simp only [rangeLBindBody, EmittedExpr.eval, loc1, r_RL, r_DIFF_L]; ring
+      · intro _; show rangeRBindBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
+        simp only [rangeRBindBody, EmittedExpr.eval, loc1, r_RR, r_DIFF_R]; ring
+      · intro _; show adjBody.eval (envAt (semTrace hash L x R sib pos) 1).loc = 0
+        simp only [adjBody, EmittedExpr.eval, loc1, r_RPOS, r_LPOS]; ring
   · intro i _; trivial
   · intro i _ r hr; simp [nonRevocationDesc] at hr
   · exact List.nodup_nil
@@ -365,8 +387,8 @@ theorem sem_roundtrip (hash : List ℤ → ℤ) (L x R sib pos : ℤ)
       ((envAt (semTrace hash L x R sib pos) 0).loc LEAF_L)
       ((envAt (semTrace hash L x R sib pos) 0).loc LEAF_R) := by
     simp only [loc0, r_LEAF_L, r_LEAF_R]; exact ⟨[], [], rfl⟩
-  have hlen : 1 < (semTrace hash L x R sib pos).rows.length := by
-    show (1 : Nat) < 2; decide
+  have hlen : 0 < (semTrace hash L x R sib pos).rows.length := by
+    show (0 : Nat) < 2; decide
   have := nonRevocation_nonmembership hlen hsat (sem_chipSound hash L x R sib pos)
     (sem_rangeSound hash L x R sib pos hlt hgt hbL hbR) [L, R] hsorted hadj
   simpa only [loc0, r_X] using this

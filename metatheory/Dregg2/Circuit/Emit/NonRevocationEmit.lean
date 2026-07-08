@@ -178,11 +178,31 @@ def rangeLDiffLookup : VmConstraint2 := .lookup ⟨TableId.range, [.var DIFF_L]�
 strictly (closes the `x == R` / `x > R` member-claimed-fresh window). -/
 def rangeRDiffLookup : VmConstraint2 := .lookup ⟨TableId.range, [.var DIFF_R]⟩
 
+/-- **THE LAST-ROW BINDING FIX** (`adjLastOrderFix` precedent, commit 0f8d478b2). Each of the six
+semantic binding gates is emitted as a transition-only `.base (.gate _)` — which the deployed IR-v2
+AIR lowers with `builder.when_transition()`, VACUOUS on the LAST row (and hence on a HEIGHT-1 trace
+where row 0 IS the last row). On such a trace EVERY binding is dropped: the ordering witnesses
+(`DIFF_L`/`DIFF_R`), the level-continuity (`CUR1 = PAR0`, which is what ties the committed root to the
+bracketing pair), the half-field range wires and the adjacency all go FREE — re-opening the `x = L`
+(revoked-item) freshness forgery that the direct diff range lookup was supposed to have closed (the
+lookup only bounds `DIFF_L ∈ [0,2^30)`; with `DIFF_L` decoupled from `x − L − 1` the adversary sets
+`DIFF_L = 0` while `x = L`). The deployed hand AIR (`revocation.rs`) binds all six EVERY row
+(`assert_zero`); this re-lowers each as a `.base (.boundary VmRow.last _)` counterpart so it ALSO fires
+on the last row — the emit is now at least as strong as the correct Rust (every-row binding). -/
+def nonRevLastRowFix : List VmConstraint2 :=
+  [ .base (.boundary VmRow.last contBody)
+  , .base (.boundary VmRow.last diffLBody)
+  , .base (.boundary VmRow.last diffRBody)
+  , .base (.boundary VmRow.last rangeLBindBody)
+  , .base (.boundary VmRow.last rangeRBindBody)
+  , .base (.boundary VmRow.last adjBody) ]
+
 /-- **`nonRevocationDesc`** — the sorted-tree NON-MEMBERSHIP descriptor.
 Constraints (in order): the two child→parent chip lookups, the continuity gate, the two ordering
-gates, the two range-wire binding gates, the two range lookups, the adjacency gate, the root pin, and
-the queried-item pin. The chip table (`TID_P2`) is IMPLICITLY present (Presence-detected from the
-chip lookups); the range table is DECLARED (it carries the `bits`). -/
+gates, the two range-wire binding gates, the two range lookups, the adjacency gate, the root pin, the
+queried-item pin, and (the LAST-ROW FIX) the six `.boundary VmRow.last` re-lowerings that bind the same
+six semantic bodies on the last row too. The chip table (`TID_P2`) is IMPLICITLY present
+(Presence-detected from the chip lookups); the range table is DECLARED (it carries the `bits`). -/
 def nonRevocationDesc : EffectVmDescriptor2 :=
   { name        := "dregg-non-revocation-sorted-tree::poseidon2-v1"
   , traceWidth  := NONREV_WIDTH
@@ -202,14 +222,14 @@ def nonRevocationDesc : EffectVmDescriptor2 :=
       , rangeRDiffLookup
       , .base (.gate adjBody)
       , .base (.piBinding VmRow.first PAR1 ROOT_PI)
-      , .base (.piBinding VmRow.first X QUERIED_PI) ]
+      , .base (.piBinding VmRow.first X QUERIED_PI) ] ++ nonRevLastRowFix
   , hashSites   := []
   , ranges      := [] }
 
 /-! ## §4 — The byte-pinned wire golden (the Rust decoder ingests THIS string). -/
 
 #guard emitVmJson2 nonRevocationDesc ==
-  "{\"name\":\"dregg-non-revocation-sorted-tree::poseidon2-v1\",\"ir\":2,\"trace_width\":27,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":9}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"var\",\"v\":0}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"const\",\"v\":-1006632959}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":-1006632959}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":1}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-non-revocation-sorted-tree::poseidon2-v1\",\"ir\":2,\"trace_width\":27,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":30}],\"constraints\":[{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":1},{\"t\":\"var\",\"v\":2},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23},{\"t\":\"var\",\"v\":24},{\"t\":\"var\",\"v\":25},{\"t\":\"var\",\"v\":26}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":9}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"var\",\"v\":0}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"const\",\"v\":-1006632959}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":-1006632959}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":7}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":8}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":5}]},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":6}]},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":12,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":0,\"pi_index\":1},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":10},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":9}}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":5},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}},\"r\":{\"t\":\"var\",\"v\":1}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":6},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":2}}},\"r\":{\"t\":\"var\",\"v\":0}},\"r\":{\"t\":\"const\",\"v\":1}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":7},\"r\":{\"t\":\"var\",\"v\":5}},\"r\":{\"t\":\"const\",\"v\":-1006632959}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":8},\"r\":{\"t\":\"var\",\"v\":6}},\"r\":{\"t\":\"const\",\"v\":-1006632959}}},{\"t\":\"boundary\",\"row\":\"last\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":4},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":3}}},\"r\":{\"t\":\"const\",\"v\":-1}}}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §5 — Genuinely-proven, non-vacuous semantic lemmas (the gate teeth). -/
 
@@ -258,7 +278,8 @@ theorem adj_body_zero_iff (a : Assignment) :
 -- Shape pins.
 #guard nonRevocationDesc.traceWidth == NONREV_WIDTH
 #guard nonRevocationDesc.piCount == 2
-#guard nonRevocationDesc.constraints.length == 14
+#guard nonRevocationDesc.constraints.length == 20
+#guard nonRevLastRowFix.length == 6
 #guard nonRevocationDesc.tables.length == 1
 #guard (chipLookupTuple [.var LEAF_L, .var LEAF_R] PAR0 LEVEL0_LANES).length
          == CHIP_RATE + 1 + CHIP_OUT_LANES
