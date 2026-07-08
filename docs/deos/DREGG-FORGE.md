@@ -117,6 +117,24 @@ CLEAN of the other terminal) · the membrane PR carry (extend `card_carry` — t
 CI-runner grain is the highest-leverage next: it's the "no trusted runner" property, and it's a direct
 composition of two things we shipped tonight (the confined exec-spawn + the receipt-gated check).
 
+## Follow-ups (post 2026-07-07 adversarial-review + surfaces session)
+
+The forge core is built + hardened + surfaced (card in every glass; `dregg-forge` CLI). Named residues:
+- **Live-repo wiring (the primary one):** a `From<PullRequest> for deos_view::ForgeView` (+ diff/conflict/
+  check/review sub-shapes) in `dregg-doc`, and the CLI driving a real `DocHeapCell` / `cell_git` on-disk
+  tree instead of the in-memory demo. `cell_git` already computes status/diff/blame — this is the last mile.
+- **Re-export `author_of_editor` + a `bound_author()` convenience** from the dregg-doc crate root (the CLI
+  had to reproduce the editor-identity fold because `review` is a private module).
+- **card-carry authenticity (F4c):** fold an originator signature over `fork_root` + verify on open, so the
+  tooth is authenticity-not-just-integrity in-layer (today authenticity is the Matrix transport's job — see
+  `card_carry_bridge.rs` honest-scope note); + the consistent-forge test.
+- **world_bridge (F4b):** confirm the deos-hermes test on hbox (the bind-semantics fix is code-correct; the
+  local build kept timing out).
+- **THE CI-RUNNER GRAIN (the exciting next build):** `spawn_pd_confined_exec` a check runner under the
+  heavy-body `Confinement` whose only output is committing the `check.rs::CommittedReceipt` — the "no trusted
+  runner, the proof IS the pass" property, a direct composition of two things shipped 2026-07-07, both in
+  CLEAN excluded workspaces (firmament + dregg-doc). See the forge-as-a-grain design above.
+
 ## Why this is not "GitHub on dregg"
 
 - **The history is owned + unforgeable.** A commit is a cap-gated receipted turn; a forged history is
