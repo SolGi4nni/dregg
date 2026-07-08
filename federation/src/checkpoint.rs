@@ -16,6 +16,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::types::{NodeIdentity, PublicKey, QuorumCertificate};
+use dregg_types::HybridQuorumSig;
 
 /// Default interval between checkpoints (in blocks).
 pub const DEFAULT_CHECKPOINT_INTERVAL: u64 = 1000;
@@ -41,6 +42,16 @@ pub struct Checkpoint {
     pub qc: QuorumCertificate,
     /// Unix timestamp (seconds) when the checkpoint was created.
     pub timestamp: i64,
+    /// Optional HYBRID (ed25519 ∧ ML-DSA-65) quorum over the SAME checkpoint
+    /// vote message the classical `qc` covers ([`checkpoint_vote_message`]).
+    /// Each [`HybridQuorumSig`] carries a voter's classical signature AND its
+    /// post-quantum signature plus its self-contained ML-DSA public key. Empty
+    /// on the classical path (the default); when populated, verified by
+    /// [`Checkpoint::verify_hybrid`], which counts a signer only when BOTH
+    /// halves pass. `#[serde(default)]` keeps classical checkpoints' shape, but
+    /// a populated field is a postcard flag-day (big-bang state wipe, accepted).
+    #[serde(default)]
+    pub hybrid_votes: Vec<HybridQuorumSig>,
 }
 
 /// Errors from checkpoint operations.
@@ -140,7 +151,54 @@ impl Checkpoint {
         Ok(())
     }
 
+    /// Verify the HYBRID (ed25519 ∧ ML-DSA-65) quorum over this checkpoint.
+    ///
+    /// The hybrid signers in `hybrid_votes` sign the SAME canonical checkpoint
+    /// vote message as the classical `qc` ([`checkpoint_vote_message`] over the
+    /// content hash). A signer counts toward `threshold` only when BOTH its
+    /// ed25519 and its ML-DSA-65 halves verify under `committee` (its ML-DSA key
+    /// rides self-contained in the signature) — see
+    /// [`crate::receipt::verify_hybrid_quorum_sigs`]. Fail-closed: a forged or
+    /// missing PQ half, a non-member signer, or fewer than `threshold` valid
+    /// hybrid signers is rejected, even if the classical `qc` alone would pass.
+    ///
+    /// This is the post-quantum checkpoint path; the BLS-aggregate
+    /// [`Self::verify_with_committee`] path stays classical (see its doc).
+    pub fn verify_hybrid(
+        &self,
+        committee: &[PublicKey],
+        threshold: usize,
+    ) -> Result<(), CheckpointError> {
+        let content_hash = self.content_hash();
+        if self.qc.block_hash != content_hash {
+            return Err(CheckpointError::QcMismatch);
+        }
+        if self.qc.height != self.height {
+            return Err(CheckpointError::QcMismatch);
+        }
+        let message = checkpoint_vote_message(&content_hash, self.height);
+        if !crate::receipt::verify_hybrid_quorum_sigs(
+            &self.hybrid_votes,
+            &message,
+            committee,
+            threshold,
+        ) {
+            return Err(CheckpointError::InsufficientQuorum {
+                have: self.hybrid_votes.len(),
+                need: threshold,
+            });
+        }
+        Ok(())
+    }
+
     /// Verify using the threshold committee (preferred path for BLS aggregate QCs).
+    ///
+    /// **PQ boundary (scoped, honest).** The `aggregate_qc` BLS path is a single
+    /// committee-independent aggregate with NO per-signer material, so it cannot
+    /// be hybridized the per-signer way [`Self::verify_hybrid`] is. A
+    /// post-quantum checkpoint uses the hybrid-votes flavor; the BLS path is out
+    /// of hybrid scope until a threshold-PQ aggregate exists. No PQ check is
+    /// faked here.
     pub fn verify_with_committee(
         &self,
         committee: &crate::threshold::FederationCommittee,
@@ -199,6 +257,7 @@ pub fn create_checkpoint(
             threshold: 0,
         },
         timestamp,
+        hybrid_votes: Vec::new(),
     }
 }
 
@@ -385,5 +444,74 @@ mod tests {
             public_key,
         }];
         assert!(finalized.verify(&nodes).is_ok());
+    }
+
+    #[test]
+    fn hybrid_checkpoint_verifies_and_pq_teeth() {
+        use crate::frost::MlDsaSigningKey;
+        use dregg_types::HybridQuorumSig;
+
+        // 3 ed25519 committee keypairs + a per-member ML-DSA-65 keypair.
+        let kps: Vec<(_, _)> = (0..3).map(|_| generate_keypair()).collect();
+        let members: Vec<PublicKey> = kps.iter().map(|(_, pk)| pk.clone()).collect();
+        let pq: Vec<(_, _)> = (0..3)
+            .map(|i| {
+                let mut s = [0u8; 32];
+                s[0] = 0x40;
+                s[1] = i as u8;
+                MlDsaSigningKey::from_seed(&s)
+            })
+            .collect();
+
+        let mut cp = create_checkpoint(
+            1000,
+            [1u8; 32],
+            [2u8; 32],
+            [3u8; 32],
+            [4u8; 32],
+            members.clone(),
+            1,
+        );
+        // verify_hybrid binds the classical qc's block_hash/height too.
+        let content_hash = cp.content_hash();
+        cp.qc.block_hash = content_hash;
+        cp.qc.height = 1000;
+
+        let message = checkpoint_vote_message(&content_hash, 1000);
+        let make = |idxs: &[usize]| -> Vec<HybridQuorumSig> {
+            idxs.iter()
+                .map(|&i| HybridQuorumSig {
+                    pubkey: kps[i].1.clone(),
+                    signature: crate::types::sign(&kps[i].0, &message),
+                    ml_dsa_pubkey: pq[i].0.0.to_vec(),
+                    pq_signature: pq[i].1.sign(&message).expect("ml-dsa sign"),
+                })
+                .collect()
+        };
+
+        // Honest 2-of-3 hybrid checkpoint verifies (BOTH halves).
+        cp.hybrid_votes = make(&[0, 1]);
+        assert!(
+            cp.verify_hybrid(&members, 2).is_ok(),
+            "honest hybrid checkpoint must verify"
+        );
+
+        // TEETH: forge the ML-DSA half, keep a VALID ed25519 half → REJECT.
+        let mut forged = cp.clone();
+        forged.hybrid_votes = make(&[0, 1]);
+        forged.hybrid_votes[0].pq_signature[0] ^= 0xFF;
+        assert!(
+            forged.verify_hybrid(&members, 2).is_err(),
+            "forged ML-DSA half must reject even with a valid ed25519 half"
+        );
+
+        // TEETH: missing (empty) PQ half → REJECT.
+        let mut missing = cp.clone();
+        missing.hybrid_votes = make(&[0, 1]);
+        missing.hybrid_votes[1].pq_signature = Vec::new();
+        assert!(
+            missing.verify_hybrid(&members, 2).is_err(),
+            "missing ML-DSA half must reject"
+        );
     }
 }

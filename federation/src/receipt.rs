@@ -25,10 +25,13 @@
 
 use serde::{Deserialize, Serialize};
 
+use fips204::ml_dsa_65;
+
+use crate::frost::MlDsaPublicKey;
 use crate::identity::derive_federation_id_with_epoch;
 use crate::threshold::{FederationCommittee, ThresholdQC};
 use crate::types::{PublicKey, Signature};
-use dregg_types::{CellId, ThresholdQC as OpaqueThresholdQC};
+use dregg_types::{CellId, HybridQuorumSig, ThresholdQC as OpaqueThresholdQC};
 
 // =============================================================================
 // FederationReceiptBody
@@ -104,10 +107,81 @@ pub enum ReceiptQc {
     /// This is the production path. Stored as opaque bytes (the serialized
     /// `hints::Signature`) so callers without the verifier can pass it
     /// through without dragging in the heavy hints crate.
+    ///
+    /// **PQ boundary (scoped, honest).** A BLS aggregate is a SINGLE
+    /// committee-independent object with NO per-signer material, so it cannot be
+    /// hybridized the per-signer way [`Self::HybridVotes`] is: there is nowhere
+    /// to hang each voter's ML-DSA-65 companion. A post-quantum receipt uses the
+    /// [`Self::HybridVotes`] flavor instead; the BLS path stays out of hybrid
+    /// scope until a threshold-PQ aggregate (e.g. the Hermine lattice-threshold
+    /// certificate in [`crate::frost::HermineHybridQC`]) is production-ready. No
+    /// PQ check is faked onto this variant.
     Threshold(OpaqueThresholdQC),
     /// Per-voter Ed25519 fallback: signatures over the same `body_hash`,
-    /// signed by each voter's federation key.
+    /// signed by each voter's federation key. CLASSICAL only.
     Votes(Vec<(PublicKey, Signature)>),
+    /// Per-voter HYBRID (ed25519 ∧ ML-DSA-65) signatures over the same
+    /// `body_hash`. Each [`HybridQuorumSig`] carries a voter's classical
+    /// signature AND its post-quantum signature plus the self-contained ML-DSA
+    /// public key. A signer counts toward threshold only when BOTH halves
+    /// verify; a forged or missing PQ half fails the whole certificate closed
+    /// (see [`verify_hybrid_quorum_sigs`]). Appended LAST so the postcard
+    /// discriminants of [`Self::Threshold`]/[`Self::Votes`] — and thus every
+    /// classical receipt's wire bytes — are unchanged.
+    HybridVotes(Vec<HybridQuorumSig>),
+}
+
+/// Verify a SELF-CONTAINED hybrid quorum — the Lean `hybridVerify = classical ∧ pq`.
+///
+/// Accepts iff at least `threshold` DISTINCT signers each satisfy ALL of:
+/// * committee membership — `pubkey ∈ known_keys`;
+/// * (classical) the ed25519 `signature` verifies over `message`;
+/// * (post-quantum) the self-carried `ml_dsa_pubkey` decodes to a valid FIPS 204
+///   key AND the `pq_signature` ML-DSA-65-verifies over `message` (bound to
+///   [`crate::frost::HYBRID_PQ_CTX`]).
+///
+/// FAIL-CLOSED: any signer outside `known_keys`, any signature that does not
+/// verify, an undecodable/wrong-length ML-DSA public key, or a missing PQ half
+/// rejects the WHOLE quorum — a signer is counted only when BOTH halves pass.
+/// `threshold == 0` (a vacuous quorum) is refused outright.
+///
+/// Shared by the receipt QC's [`ReceiptQc::HybridVotes`], the hybrid checkpoint
+/// ([`crate::checkpoint::Checkpoint::verify_hybrid`]), and the cross-fed
+/// attested-root hybrid quorum — the one place the classical ∧ pq rule lives.
+pub fn verify_hybrid_quorum_sigs(
+    sigs: &[HybridQuorumSig],
+    message: &[u8],
+    known_keys: &[PublicKey],
+    threshold: usize,
+) -> bool {
+    if threshold == 0 || sigs.len() < threshold {
+        return false;
+    }
+    let known: std::collections::HashSet<&PublicKey> = known_keys.iter().collect();
+    let mut seen: std::collections::HashSet<[u8; 32]> = std::collections::HashSet::new();
+    let mut valid = 0usize;
+    for qs in sigs {
+        // Committee membership.
+        if !known.contains(&qs.pubkey) {
+            return false;
+        }
+        // Classical (ed25519) half.
+        if !qs.pubkey.verify(message, &qs.signature) {
+            return false;
+        }
+        // Post-quantum (ML-DSA-65) half — decode the self-carried key, then verify.
+        let Ok(pk_bytes) = <[u8; ml_dsa_65::PK_LEN]>::try_from(qs.ml_dsa_pubkey.as_slice()) else {
+            return false;
+        };
+        if !MlDsaPublicKey(pk_bytes).verify(message, &qs.pq_signature) {
+            return false;
+        }
+        // Count only DISTINCT signers whose BOTH halves passed.
+        if seen.insert(qs.pubkey.0) {
+            valid += 1;
+        }
+    }
+    valid >= threshold
 }
 
 // =============================================================================
@@ -174,6 +248,28 @@ impl FederationReceipt {
             committee_epoch,
             body,
             qc: ReceiptQc::Votes(votes),
+        }
+    }
+
+    /// Build a receipt carrying the HYBRID (ed25519 ∧ ML-DSA-65) fallback.
+    ///
+    /// Each [`HybridQuorumSig`] must carry BOTH a valid ed25519 signature and a
+    /// valid ML-DSA-65 signature (with the signer's self-contained ML-DSA public
+    /// key) over `body.body_hash()`. This is the post-quantum cross-federation
+    /// receipt: [`FederationReceipt::verify`] counts a signer only when both
+    /// halves pass (see [`verify_hybrid_quorum_sigs`]).
+    pub fn with_hybrid_vote_signatures(
+        federation_id: [u8; 32],
+        committee_epoch: u64,
+        body: FederationReceiptBody,
+        sigs: Vec<HybridQuorumSig>,
+    ) -> Self {
+        Self {
+            version: Self::VERSION,
+            federation_id,
+            committee_epoch,
+            body,
+            qc: ReceiptQc::HybridVotes(sigs),
         }
     }
 
@@ -251,6 +347,10 @@ impl FederationReceipt {
                     }
                 }
                 valid >= threshold
+            }
+            ReceiptQc::HybridVotes(sigs) => {
+                // classical ∧ pq per signer, membership, ≥ threshold distinct.
+                verify_hybrid_quorum_sigs(sigs, &body_hash, known_keys, threshold)
             }
         }
     }
@@ -463,6 +563,86 @@ mod tests {
         assert!(
             !receipt.verify(None, &known_keys, 2, 0),
             "duplicate-signer replay must not satisfy threshold"
+        );
+    }
+
+    #[test]
+    fn hybrid_votes_receipt_verifies_and_pq_teeth() {
+        use crate::frost::MlDsaSigningKey;
+        // 3 ed25519 committee keypairs + a per-member ML-DSA-65 keypair.
+        let kps: Vec<(_, _)> = (0..3).map(|_| generate_keypair()).collect();
+        let known_keys: Vec<PublicKey> = kps.iter().map(|(_, pk)| pk.clone()).collect();
+        let fed_id = derive_federation_id(&known_keys);
+        let pq: Vec<(_, _)> = (0..3)
+            .map(|i| {
+                let mut s = [0u8; 32];
+                s[0] = 0x30;
+                s[1] = i as u8;
+                MlDsaSigningKey::from_seed(&s)
+            })
+            .collect();
+
+        let body = sample_body(9);
+        let body_hash = body.body_hash();
+        let make = |idxs: &[usize]| -> Vec<HybridQuorumSig> {
+            idxs.iter()
+                .map(|&i| HybridQuorumSig {
+                    pubkey: kps[i].1.clone(),
+                    signature: sign(&kps[i].0, &body_hash),
+                    ml_dsa_pubkey: pq[i].0.0.to_vec(),
+                    pq_signature: pq[i].1.sign(&body_hash).expect("ml-dsa sign"),
+                })
+                .collect()
+        };
+
+        // Honest 2-of-3 hybrid quorum verifies (BOTH halves).
+        let receipt =
+            FederationReceipt::with_hybrid_vote_signatures(fed_id, 0, body.clone(), make(&[0, 1]));
+        assert!(
+            receipt.verify(None, &known_keys, 2, 0),
+            "honest hybrid receipt must verify"
+        );
+
+        // TEETH: forge the ML-DSA half, keep a VALID ed25519 half → REJECT.
+        let mut forged = make(&[0, 1]);
+        forged[0].pq_signature[0] ^= 0xFF;
+        let bad = FederationReceipt::with_hybrid_vote_signatures(fed_id, 0, body.clone(), forged);
+        assert!(
+            !bad.verify(None, &known_keys, 2, 0),
+            "forged ML-DSA half must reject even with a valid ed25519 half"
+        );
+
+        // TEETH: missing (empty) PQ half → REJECT.
+        let mut missing = make(&[0, 1]);
+        missing[1].pq_signature = Vec::new();
+        let bad2 = FederationReceipt::with_hybrid_vote_signatures(fed_id, 0, body.clone(), missing);
+        assert!(
+            !bad2.verify(None, &known_keys, 2, 0),
+            "missing ML-DSA half must reject"
+        );
+
+        // TEETH: an undecodable (wrong-length) ML-DSA pubkey → REJECT.
+        let mut badkey = make(&[0, 1]);
+        badkey[0].ml_dsa_pubkey = vec![0u8; 10];
+        let bad3 = FederationReceipt::with_hybrid_vote_signatures(fed_id, 0, body.clone(), badkey);
+        assert!(
+            !bad3.verify(None, &known_keys, 2, 0),
+            "undecodable ML-DSA pubkey must reject"
+        );
+
+        // Membership: a fully-valid hybrid signer OUTSIDE the committee → REJECT.
+        let (outsider_sk, outsider_pk) = generate_keypair();
+        let (out_pq_pk, out_pq_sk) = MlDsaSigningKey::from_seed(&[0x99; 32]);
+        let outsider = vec![HybridQuorumSig {
+            pubkey: outsider_pk,
+            signature: sign(&outsider_sk, &body_hash),
+            ml_dsa_pubkey: out_pq_pk.0.to_vec(),
+            pq_signature: out_pq_sk.sign(&body_hash).expect("ml-dsa sign"),
+        }];
+        let bad4 = FederationReceipt::with_hybrid_vote_signatures(fed_id, 0, body, outsider);
+        assert!(
+            !bad4.verify(None, &known_keys, 1, 0),
+            "non-member hybrid signer must reject"
         );
     }
 }

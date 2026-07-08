@@ -1197,6 +1197,111 @@ mod tests {
         )
     }
 
+    /// The cross-fed AttestedRoot quorum, made HYBRID (ed25519 ∧ ML-DSA-65).
+    ///
+    /// The cross-fed verifier checks `AttestedRoot.quorum_signatures` (ed25519)
+    /// over `root.signing_message()`. Here a SELF-CONTAINED hybrid quorum (each
+    /// signer's ed25519 signature AND its ML-DSA-65 signature + self-carried
+    /// ML-DSA public key) over the SAME message is verified via the shared
+    /// `dregg_federation::receipt::verify_hybrid_quorum_sigs` — the one place the
+    /// classical ∧ pq rule lives. A forged or missing ML-DSA half is rejected
+    /// even with a valid ed25519 half (the teeth), and a non-member signer is
+    /// rejected. (Wiring this into `verify_cross_fed_bundle` and the `AttestedRoot`
+    /// wire shape is a deferred flag-day: those live in `verifier/` and the
+    /// `sdk/`-shared `types::AttestedRoot`, outside this lane.)
+    #[test]
+    fn cross_fed_attested_root_hybrid_quorum_teeth() {
+        use dregg_federation::frost::MlDsaSigningKey;
+        use dregg_federation::receipt::verify_hybrid_quorum_sigs;
+        use dregg_types::{AttestedRoot, FederationId, HybridQuorumSig};
+
+        let kps: Vec<(dregg_types::SigningKey, dregg_types::PublicKey)> = (0..3)
+            .map(|i| {
+                let mut s = [0u8; 32];
+                s[0] = 0x51;
+                s[1] = i as u8;
+                let sk = dregg_types::SigningKey::from_bytes(&s);
+                let pk = sk.public_key();
+                (sk, pk)
+            })
+            .collect();
+        let members: Vec<dregg_types::PublicKey> = kps.iter().map(|(_, pk)| *pk).collect();
+        let pq: Vec<_> = (0..3)
+            .map(|i| {
+                let mut s = [0u8; 32];
+                s[0] = 0x52;
+                s[1] = i as u8;
+                MlDsaSigningKey::from_seed(&s)
+            })
+            .collect();
+        let fed_id = dregg_federation::derive_federation_id_with_epoch(&members, 0);
+
+        let root = AttestedRoot {
+            merkle_root: [7u8; 32],
+            note_tree_root: None,
+            nullifier_set_root: None,
+            height: 42,
+            timestamp: 1_700_000_042,
+            blocklace_block_id: Some([9u8; 32]),
+            finality_round: Some(42),
+            quorum_signatures: Vec::new(),
+            threshold_qc: None,
+            threshold: 2,
+            federation_id: FederationId(fed_id),
+            receipt_stream_root: None,
+        };
+        let message = root.signing_message();
+
+        let make = |idxs: &[usize]| -> Vec<HybridQuorumSig> {
+            idxs.iter()
+                .map(|&i| HybridQuorumSig {
+                    pubkey: kps[i].1,
+                    signature: dregg_types::sign(&kps[i].0, &message),
+                    ml_dsa_pubkey: pq[i].0.0.to_vec(),
+                    pq_signature: pq[i].1.sign(&message).expect("ml-dsa sign"),
+                })
+                .collect()
+        };
+
+        // Honest 2-of-3 hybrid cross-fed quorum verifies (BOTH halves).
+        assert!(
+            verify_hybrid_quorum_sigs(&make(&[0, 1]), &message, &members, 2),
+            "honest hybrid cross-fed quorum must verify"
+        );
+
+        // TEETH: forge the ML-DSA half, keep a VALID ed25519 half → REJECT.
+        let mut forged = make(&[0, 1]);
+        forged[0].pq_signature[0] ^= 0xFF;
+        assert!(
+            !verify_hybrid_quorum_sigs(&forged, &message, &members, 2),
+            "forged ML-DSA half must reject even with a valid ed25519 half"
+        );
+
+        // TEETH: missing (empty) PQ half → REJECT.
+        let mut missing = make(&[0, 1]);
+        missing[1].pq_signature = Vec::new();
+        assert!(
+            !verify_hybrid_quorum_sigs(&missing, &message, &members, 2),
+            "missing ML-DSA half must reject"
+        );
+
+        // Non-member fully-valid hybrid signer → REJECT.
+        let mut outs = [0u8; 32];
+        outs[0] = 0xEE;
+        let outsider_sk = dregg_types::SigningKey::from_bytes(&outs);
+        let (out_pq_pk, out_pq_sk) = MlDsaSigningKey::from_seed(&[0xEF; 32]);
+        let outsider = vec![HybridQuorumSig {
+            pubkey: outsider_sk.public_key(),
+            signature: dregg_types::sign(&outsider_sk, &message),
+            ml_dsa_pubkey: out_pq_pk.0.to_vec(),
+            pq_signature: out_pq_sk.sign(&message).expect("ml-dsa sign"),
+        }];
+        assert!(
+            !verify_hybrid_quorum_sigs(&outsider, &message, &members, 1),
+            "non-member hybrid signer must reject"
+        );
+    }
+
     // V1-FLOOR (prover-gated): both silver-captp tests first COMMIT a handoff-cert exercise
     // through the MCP tool, which under the v1 floor gates the commit on the standalone DREG proof
     // (`require_effect_vm_proof`). Under `prover` that v1 standalone proof is retired so the
