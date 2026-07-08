@@ -78,6 +78,9 @@ use dregg_turn::{
     resolve_condition, verify_receipt_signature_with_keys,
 };
 
+use crate::ci_assurance::{
+    AssuranceInput, AssuranceOutcome, ChallengeContext, CiAssurance, CiExecutionProof, Conviction,
+};
 use crate::ci_verdict::{CiVerdict, planned_ci_run_hash};
 
 /// The name of a required check — the forge's "required status check" key
@@ -127,9 +130,10 @@ pub enum CheckRequirement {
     /// on `TurnExecuted`'s signing-message mismatch).
     Condition(ProofCondition),
     /// **THE WORK-BINDING CI CHECK** ([`crate::ci_verdict`]): satisfied only by
-    /// a committed, executor-signed receipt that COMMITS a [`CiVerdict`] whose
-    /// `command_id` matches, whose `input_root` equals the PR's real post-merge
-    /// code ([`crate::PullRequest::input_root`]), and whose `exit_code == 0`.
+    /// a committed receipt that COMMITS a [`CiVerdict`] whose `command_id`
+    /// matches, whose `input_root` equals the PR's real post-merge code
+    /// ([`crate::PullRequest::input_root`]), and whose `exit_code == 0` — AND
+    /// whose [`CiAssurance`] policy is met.
     ///
     /// Unlike [`CheckRequirement::CommittedReceipt`] (which binds AUTHORSHIP —
     /// "a trusted key signed *some* finalized turn"), this binds WORK: the
@@ -138,13 +142,21 @@ pub enum CheckRequirement {
     /// through [`crate::ci_verdict::planned_ci_run_hash`] against the CI-run
     /// region cell identity `(editor_seed, region_seed)`; a loose verdict next
     /// to an unrelated receipt refuses ([`CheckRefusal::VerdictNotCommitted`]).
+    ///
+    /// The `assurance` field is the PLURALISTIC dispute-resolution choice
+    /// ([`CiAssurance`]): a repo dials the assurance it wants (trusted-signed →
+    /// re-executed-to-quorum → optimistic-challenge → proven, optionally staked),
+    /// and the trusted-key set lives inside the policy as a governed
+    /// [`crate::GovernedKeySet`] (revocation/rotation aware). The
+    /// work-binding (command/input/exit/turn-hash) is common to every policy;
+    /// the assurance decides WHY the reported output is believed.
     CiRun {
         /// The required check's command id — the verdict's `command_id` must
         /// equal this, so the check binds to the intended command, not any turn.
         command_id: [u8; 32],
-        /// Ed25519 verifying keys whose signature over the receipt's canonical
-        /// executor-signed message is accepted (the trusted CI executors).
-        trusted_executor_keys: Vec<[u8; 32]>,
+        /// THE ASSURANCE POLICY: which dispute-resolution strategy satisfies this
+        /// check (and, for key-based rungs, the governed trusted-executor keys).
+        assurance: CiAssurance,
         /// The CI-run region cell's editor identity seed — fixed repo policy, so
         /// the verifier rebuilds the identical genesis cell the runner drove on
         /// ([`crate::ci_verdict::run_ci_verdict`]).
@@ -152,6 +164,61 @@ pub enum CheckRequirement {
         /// The CI-run region cell's region identity seed (see `editor_seed`).
         region_seed: u8,
     },
+}
+
+/// The witness for a [`CheckRequirement::CiRun`] check: the primary committed
+/// CI-run receipt + its verdict PLUS the extra data a richer [`CiAssurance`]
+/// rung needs. `TrustedSigned` uses only `receipt`/`verdict`; `ReExecuted`
+/// carries `attestations`; `Proven` carries `proof`; `OptimisticChallenge`
+/// carries `challenge`. Build the common case with [`CiRunWitness::signed`].
+#[derive(Clone, Debug)]
+pub struct CiRunWitness {
+    /// The committed, (usually) executor-signed primary CI-run receipt.
+    pub receipt: TurnReceipt,
+    /// The verdict that receipt's turn must have committed (verified, not
+    /// trusted-on-presentation).
+    pub verdict: CiVerdict,
+    /// Independent re-execution attestations for [`CiAssurance::ReExecuted`]:
+    /// each a signed `(receipt, verdict)` from a DISTINCT active key over the
+    /// SAME work. Empty for the other rungs.
+    pub attestations: Vec<(TurnReceipt, CiVerdict)>,
+    /// The proof-of-execution for [`CiAssurance::Proven`].
+    pub proof: Option<CiExecutionProof>,
+    /// The challenge context for [`CiAssurance::OptimisticChallenge`].
+    pub challenge: Option<ChallengeContext>,
+}
+
+impl CiRunWitness {
+    /// The base witness — a primary receipt + verdict, no extra assurance data
+    /// (exactly what [`CiAssurance::TrustedSigned`] needs; the shape the old
+    /// `CheckWitness::CiRun { receipt, verdict }` carried).
+    pub fn signed(receipt: TurnReceipt, verdict: CiVerdict) -> Self {
+        CiRunWitness {
+            receipt,
+            verdict,
+            attestations: Vec::new(),
+            proof: None,
+            challenge: None,
+        }
+    }
+
+    /// Attach re-execution attestations (for [`CiAssurance::ReExecuted`]).
+    pub fn with_attestations(mut self, attestations: Vec<(TurnReceipt, CiVerdict)>) -> Self {
+        self.attestations = attestations;
+        self
+    }
+
+    /// Attach a proof-of-execution (for [`CiAssurance::Proven`]).
+    pub fn with_proof(mut self, proof: CiExecutionProof) -> Self {
+        self.proof = Some(proof);
+        self
+    }
+
+    /// Attach a challenge context (for [`CiAssurance::OptimisticChallenge`]).
+    pub fn with_challenge(mut self, challenge: ChallengeContext) -> Self {
+        self.challenge = Some(challenge);
+        self
+    }
 }
 
 /// The witness presented against a [`RequiredCheck`]. Presenting is
@@ -163,18 +230,14 @@ pub enum CheckWitness {
     Receipt(TurnReceipt),
     /// A condition proof (for [`CheckRequirement::Condition`]).
     Condition(ConditionProof),
-    /// A CI run (for [`CheckRequirement::CiRun`]): the committed, executor-signed
-    /// receipt of the CI-run turn PLUS the [`CiVerdict`] that turn committed. The
-    /// verdict is not trusted because it is presented — it is trusted only after
-    /// [`RequiredCheck::satisfied_by`] proves the signed `receipt`'s turn hash
-    /// equals the hash re-derived from this verdict (the in-turn binding).
-    CiRun {
-        /// The committed, executor-signed CI-run receipt.
-        receipt: TurnReceipt,
-        /// The verdict that receipt's turn must have committed (verified, not
-        /// trusted-on-presentation).
-        verdict: CiVerdict,
-    },
+    /// A CI run (for [`CheckRequirement::CiRun`]): a [`CiRunWitness`] — the
+    /// committed CI-run receipt + the [`CiVerdict`] that turn committed, plus any
+    /// assurance-specific data (re-execution attestations / a proof / a challenge
+    /// context). The verdict is not trusted because it is presented — it is
+    /// trusted only after [`RequiredCheck::satisfied_by`] proves the receipt's
+    /// turn hash equals the hash re-derived from this verdict (the in-turn
+    /// binding) AND the [`CiAssurance`] policy is met.
+    CiRun(CiRunWitness),
 }
 
 /// Why a required check is NOT satisfied (carried inside
@@ -237,6 +300,16 @@ pub enum CheckRefusal {
     /// (detected at [`crate::PullRequest::land_checked`], per the
     /// [`crate::ci_verdict::ci_nullifier`]).
     WitnessReplayed,
+    /// The verdict is work-bound but the [`CiAssurance`] policy is NOT (yet) met,
+    /// with no lie proven: a short re-execution quorum, still inside the
+    /// optimistic challenge window, an invalid execution proof, or missing
+    /// assurance witness data. Carries the policy's legible reason.
+    AssuranceUnmet(String),
+    /// The [`CiAssurance`] policy PROVED a lie — a divergent re-execution
+    /// attestation or an upheld optimistic challenge. Carries the [`Conviction`]
+    /// evidence and, when the policy was [`CiAssurance::Staked`], the forfeit
+    /// `bond_ref`. This is a refusal that additionally names what to slash.
+    Convicted(Conviction),
 }
 
 /// A named check a [`crate::PullRequest`] must pass before it can land.
@@ -286,11 +359,32 @@ impl RequiredCheck {
         region_seed: u8,
         trusted_executor_keys: Vec<[u8; 32]>,
     ) -> Self {
+        RequiredCheck::ci_run_assured(
+            id,
+            command_id,
+            editor_seed,
+            region_seed,
+            CiAssurance::trusted_signed(trusted_executor_keys),
+        )
+    }
+
+    /// **THE PLURALISTIC CI CHECK**: a work-binding CI check dialed to an
+    /// explicit [`CiAssurance`] policy (re-execution quorum / optimistic
+    /// challenge / proof / staked). The work-binding is identical to
+    /// [`RequiredCheck::ci_run`]; `assurance` chooses the dispute-resolution
+    /// strategy (and carries the governed trusted-key set for key-based rungs).
+    pub fn ci_run_assured(
+        id: impl Into<CheckId>,
+        command_id: [u8; 32],
+        editor_seed: u8,
+        region_seed: u8,
+        assurance: CiAssurance,
+    ) -> Self {
         RequiredCheck {
             id: id.into(),
             requirement: CheckRequirement::CiRun {
                 command_id,
-                trusted_executor_keys,
+                assurance,
                 editor_seed,
                 region_seed,
             },
@@ -382,43 +476,50 @@ impl RequiredCheck {
             (
                 CheckRequirement::CiRun {
                     command_id,
-                    trusted_executor_keys,
+                    assurance,
                     editor_seed,
                     region_seed,
                 },
-                CheckWitness::CiRun { receipt, verdict },
+                CheckWitness::CiRun(w),
             ) => {
-                // (a) The receipt must be a COMMITTED (finalized), executor-SIGNED
-                //     receipt whose signature verifies against a trusted CI
-                //     executor key — same fail-closed discipline as
-                //     CommittedReceipt (an unsigned/wrong-key receipt refuses).
+                let receipt = &w.receipt;
+                let verdict = &w.verdict;
+
+                // (a) The primary receipt must be COMMITTED (finalized). A
+                //     non-final primary is a self-reported pass, refused for
+                //     every assurance rung.
                 if receipt.finality != Finality::Final {
                     return Err(CheckRefusal::NotFinal);
                 }
-                if receipt.executor_signature.is_none() {
-                    return Err(CheckRefusal::Unsigned);
-                }
-                verify_receipt_signature_with_keys(receipt, trusted_executor_keys)
-                    .map_err(|_| CheckRefusal::SignatureUnverified)?;
 
-                // (b) THE CRUX — the verdict must be BOUND INSIDE the signed
+                // (b) The PRIMARY SIGNATURE — fail-closed, per the assurance's
+                //     ACTIVE (non-revoked) governed key set. A proof-only policy
+                //     ([`CiAssurance::Proven`]) trusts no host key, so it skips
+                //     this; every key-based rung requires a signature that
+                //     verifies against a currently-active key (a revoked key
+                //     therefore no longer satisfies).
+                if let Some(active_keys) = assurance.primary_active_keys() {
+                    if receipt.executor_signature.is_none() {
+                        return Err(CheckRefusal::Unsigned);
+                    }
+                    verify_receipt_signature_with_keys(receipt, &active_keys)
+                        .map_err(|_| CheckRefusal::SignatureUnverified)?;
+                }
+
+                // (c) THE CRUX — the verdict must be BOUND INSIDE the committed
                 //     turn. Re-derive the CI-run turn hash from the PRESENTED
                 //     verdict on the (repo-policy-fixed) CI runner identity, and
-                //     require it to equal the signed receipt's turn hash. Since
-                //     the executor signs over a message covering `turn_hash`, a
-                //     match proves the trusted key attested a turn that
-                //     committed EXACTLY this verdict. A loose verdict waved next
-                //     to an unrelated signed receipt re-derives a different hash
-                //     and refuses here (the verdict is not committed in the
-                //     turn) — the projection is injective in the verdict's bytes.
+                //     require it to equal the receipt's turn hash. A loose verdict
+                //     waved next to an unrelated receipt re-derives a different
+                //     hash and refuses here (the projection is injective in the
+                //     verdict's bytes).
                 let expected = planned_ci_run_hash(*editor_seed, *region_seed, verdict)
                     .ok_or(CheckRefusal::VerdictNotCommitted)?;
                 if receipt.turn_hash != expected {
                     return Err(CheckRefusal::VerdictNotCommitted);
                 }
 
-                // (c) The verdict must be the result of the REQUIRED command
-                //     (not some other turn that happens to be a valid CI run).
+                // (d) The verdict must be the result of the REQUIRED command.
                 if verdict.command_id != *command_id {
                     return Err(CheckRefusal::WrongCommand {
                         expected: *command_id,
@@ -426,10 +527,7 @@ impl RequiredCheck {
                     });
                 }
 
-                // (d) The verdict must bind THIS PR's real post-merge code. A
-                //     verdict for a different PR's code — or a trivial verdict
-                //     with no/empty input root — is refused: the CI ran on the
-                //     wrong (or no) input.
+                // (e) The verdict must bind THIS PR's real post-merge code.
                 if verdict.input_root != pr_input_root {
                     return Err(CheckRefusal::InputRootMismatch {
                         expected: pr_input_root,
@@ -437,21 +535,42 @@ impl RequiredCheck {
                     });
                 }
 
-                // (e) The check must have PASSED. A failing run does not satisfy.
+                // (f) The check must have PASSED.
                 if verdict.exit_code != 0 {
                     return Err(CheckRefusal::CheckFailed {
                         exit_code: verdict.exit_code,
                     });
                 }
 
-                Ok(())
+                // (g) THE ASSURANCE POLICY — the pluralistic dispute-resolution
+                //     leg. The work-binding above is common to every rung; here
+                //     the chosen policy decides WHY the reported output is
+                //     believed (a bare signature / re-execution agreement / an
+                //     elapsed challenge window / a verified proof / staked). A
+                //     conviction (a proven lie) refuses AND names what to slash.
+                let input = AssuranceInput {
+                    receipt,
+                    verdict,
+                    attestations: &w.attestations,
+                    proof: w.proof.as_ref(),
+                    challenge: w.challenge.as_ref(),
+                    editor_seed: *editor_seed,
+                    region_seed: *region_seed,
+                };
+                match assurance.evaluate(&input) {
+                    AssuranceOutcome::Satisfied => Ok(()),
+                    AssuranceOutcome::Unmet(why) => Err(CheckRefusal::AssuranceUnmet(why)),
+                    AssuranceOutcome::Convicted(conviction) => {
+                        Err(CheckRefusal::Convicted(conviction))
+                    }
+                }
             }
 
             // A witness of the wrong shape never satisfies.
             (CheckRequirement::CommittedReceipt { .. }, CheckWitness::Condition(_))
-            | (CheckRequirement::CommittedReceipt { .. }, CheckWitness::CiRun { .. })
+            | (CheckRequirement::CommittedReceipt { .. }, CheckWitness::CiRun(_))
             | (CheckRequirement::Condition(_), CheckWitness::Receipt(_))
-            | (CheckRequirement::Condition(_), CheckWitness::CiRun { .. })
+            | (CheckRequirement::Condition(_), CheckWitness::CiRun(_))
             | (CheckRequirement::CiRun { .. }, CheckWitness::Receipt(_))
             | (CheckRequirement::CiRun { .. }, CheckWitness::Condition(_)) => {
                 Err(CheckRefusal::WrongWitnessKind)

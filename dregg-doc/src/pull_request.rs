@@ -501,10 +501,10 @@ impl PullRequest {
             if !matches!(check.requirement, CheckRequirement::CiRun { .. }) {
                 continue;
             }
-            if let Some((_, CheckWitness::CiRun { verdict, .. })) =
+            if let Some((_, CheckWitness::CiRun(w))) =
                 self.witnesses.iter().find(|(c, _)| *c == check.id)
             {
-                out.push((check.id.clone(), ci_nullifier(base_fold_root, verdict)));
+                out.push((check.id.clone(), ci_nullifier(base_fold_root, &w.verdict)));
             }
         }
         out
@@ -1158,7 +1158,7 @@ mod tests {
     #[cfg(feature = "substrate")]
     mod ci_run_checks {
         use super::*;
-        use crate::check::{CheckRefusal, CheckWitness, RequiredCheck};
+        use crate::check::{CheckRefusal, CheckWitness, CiRunWitness, RequiredCheck};
         use crate::ci_verdict::{CiNullifierSet, CiVerdict, run_ci_verdict};
         use crate::executor_drive::ExecutorDrivenDoc;
 
@@ -1243,10 +1243,7 @@ mod tests {
             // Present the bound, signed verdict → satisfies and lands.
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt,
-                    verdict: v,
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt, v)),
             );
             pr.checks_satisfied()
                 .expect("a work-bound, signed, exit-0 verdict satisfies");
@@ -1273,10 +1270,7 @@ mod tests {
             let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt,
-                    verdict: v,
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt, v)),
             );
 
             match refusal_of(&pr) {
@@ -1304,10 +1298,7 @@ mod tests {
             let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt,
-                    verdict: v,
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt, v)),
             );
             match refusal_of(&pr) {
                 CheckRefusal::InputRootMismatch { got, .. } => {
@@ -1326,10 +1317,7 @@ mod tests {
             let receipt = run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &v).expect("CI run commits");
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt,
-                    verdict: v,
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt, v)),
             );
             match refusal_of(&pr) {
                 CheckRefusal::CheckFailed { exit_code } => assert_eq!(exit_code, 5),
@@ -1360,10 +1348,7 @@ mod tests {
 
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt: unrelated,
-                    verdict: favorable.clone(),
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(unrelated, favorable.clone())),
             );
             // The signature verifies, command/input_root/exit are all favorable —
             // yet it REFUSES, because the verdict is not committed in that turn.
@@ -1378,10 +1363,7 @@ mod tests {
                 run_ci_verdict(CI_EDITOR, CI_REGION, SEED, &favorable).expect("CI run commits");
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt,
-                    verdict: favorable,
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt, favorable)),
             );
             pr.checks_satisfied()
                 .expect("the bound form of the same verdict satisfies");
@@ -1402,10 +1384,7 @@ mod tests {
             let mut pr1 = clean_pr().with_required_check(ci_check());
             pr1.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt: receipt.clone(),
-                    verdict: v.clone(),
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt.clone(), v.clone())),
             );
             let mut doc1 = ExecutorDrivenDoc::new_at(&pr1.base().replay(), 1, 2, true);
             pr1.land_checked(&mut doc1, &mut nullifiers)
@@ -1415,10 +1394,7 @@ mod tests {
             let mut pr2 = clean_pr().with_required_check(ci_check());
             pr2.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt,
-                    verdict: v,
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(receipt, v)),
             );
             let mut doc2 = ExecutorDrivenDoc::new_at(&pr2.base().replay(), 1, 2, true);
             let pre2 = doc2.state_commitment();
@@ -1447,10 +1423,7 @@ mod tests {
             let mut pr = clean_pr().with_required_check(ci_check());
             pr.present_witness(
                 "build",
-                CheckWitness::CiRun {
-                    receipt: unsigned,
-                    verdict: v.clone(),
-                },
+                CheckWitness::CiRun(CiRunWitness::signed(unsigned, v.clone())),
             );
             assert!(matches!(refusal_of(&pr), CheckRefusal::Unsigned));
 
@@ -1464,13 +1437,7 @@ mod tests {
                 CI_REGION,
                 vec![wrong],
             ));
-            pr.present_witness(
-                "build",
-                CheckWitness::CiRun {
-                    receipt: real,
-                    verdict: v,
-                },
-            );
+            pr.present_witness("build", CheckWitness::CiRun(CiRunWitness::signed(real, v)));
             assert!(matches!(refusal_of(&pr), CheckRefusal::SignatureUnverified));
         }
     }

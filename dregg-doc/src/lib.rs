@@ -161,6 +161,12 @@ pub mod check;
 // docs/deos/DREGG-FORGE.md and src/ci_verdict.rs.
 #[cfg(feature = "substrate")]
 pub mod ci_verdict;
+// PLURALISTIC CI ASSURANCE — a documented lattice of dispute-resolution
+// strategies (TrustedSigned → ReExecuted → OptimisticChallenge → Proven, plus a
+// Staked wrapper) that a CiRun check dials, so the assurance level is a
+// first-class, self-documenting choice. See src/ci_assurance.rs.
+#[cfg(feature = "substrate")]
+pub mod ci_assurance;
 #[cfg(feature = "rope")]
 pub mod rope;
 #[cfg(feature = "cell-heap")]
@@ -183,6 +189,12 @@ pub use atom::{Atom, AtomId, Author, PatchId, Provenance, Status};
 pub use blame::{BlameLine, blame, blame_summary};
 #[cfg(feature = "substrate")]
 pub use check::{CheckId, CheckRefusal, CheckRequirement, CheckWitness, RequiredCheck};
+#[cfg(feature = "substrate")]
+pub use ci_assurance::{
+    AssuranceInput, AssuranceOutcome, BondRef, ChallengeContext, CiAssurance, CiExecutionProof,
+    CiProofVerifier, Conviction, ConvictionEvidence, GovernedKeySet, KeyGovernance,
+    StubProofVerifier, TrustedKey, verify_ci_proof,
+};
 #[cfg(feature = "substrate")]
 pub use ci_verdict::{
     CiNullifierSet, CiVerdict, ci_nullifier, ci_run_patch, planned_ci_run_hash, run_ci_verdict,
