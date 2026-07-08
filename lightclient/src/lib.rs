@@ -285,16 +285,57 @@ pub fn finality_signing_message(finalized_root: BabyBear, participant_count: usi
     m
 }
 
-/// One validator's signed ratification vote in a [`FinalityCert`] — an Ed25519 verifying key plus its
-/// signature over [`finality_signing_message`]. The light client counts a vote toward the quorum ONLY
-/// when the signature verifies under the claimed key over the cert's `(finalized_root, participant_count)`
-/// — the `CertValid` binding leg, not a bare pubkey count.
+/// One validator's HYBRID ratification vote in a [`FinalityCert`] — an Ed25519 (classical) half AND
+/// an ML-DSA-65 (post-quantum) half, BOTH over [`finality_signing_message`]. The light client counts
+/// a vote toward the quorum ONLY when the claimed key verifies the Ed25519 half over the cert's
+/// `(finalized_root, participant_count)` AND the carried `ml_dsa_pubkey` verifies the `pq_signature`
+/// over the same message — the full hybrid `CertValid` binding, not a bare pubkey count and not an
+/// ed25519-only downgrade. The ML-DSA public key rides ALONGSIDE its signature (self-contained,
+/// exactly like [`dregg_persist::QuorumSignature`]), so no committee PQ-key table has to be threaded
+/// to re-verify the quantum-safe half off-node.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct SignedVote {
     /// The validator's Ed25519 verifying-key bytes (the participant id).
     pub validator: [u8; 32],
-    /// The Ed25519 signature over [`finality_signing_message`] for this cert's root + committee size.
+    /// The Ed25519 (classical) signature over [`finality_signing_message`] for this cert's root +
+    /// committee size.
     pub signature: [u8; 64],
+    /// The voter's ML-DSA-65 public key (FIPS 204, 1952 bytes) — carried SELF-CONTAINED so the
+    /// post-quantum half is re-verifiable off-node with no committee PQ-key history. An
+    /// undecodable/wrong-length key drops the signer (fail-closed).
+    pub ml_dsa_pubkey: Vec<u8>,
+    /// The ML-DSA-65 (post-quantum) signature over the SAME [`finality_signing_message`] the Ed25519
+    /// half signs, bound to [`HYBRID_PQ_CTX`]. A missing/forged PQ half drops the signer — never a
+    /// silent ed25519-only acceptance.
+    pub pq_signature: Vec<u8>,
+}
+
+/// The domain-separation context every hybrid-quorum ML-DSA-65 signature binds — byte-identical to
+/// `dregg_federation::frost::HYBRID_PQ_CTX` (`b"dregg-hybrid-qc-v1"`), the tag the committee's
+/// finalization signers use when they produce the PQ half. Re-declared here so the light client can
+/// re-verify the post-quantum half on `fips204` ALONE (a light client must stay minimal / WASM-
+/// buildable and not pull the heavy `dregg-federation` crate). A mismatch would fail EVERY PQ half
+/// closed, so it is exercised end-to-end by the `hybrid_*` teeth tests below.
+pub const HYBRID_PQ_CTX: &[u8] = b"dregg-hybrid-qc-v1";
+
+/// Verify the POST-QUANTUM half of one hybrid vote: an ML-DSA-65 signature `sig` over `message`
+/// under [`HYBRID_PQ_CTX`], for the self-contained `pubkey` bytes the vote carries. Returns `false`
+/// (fail-closed) on a wrong-length / undecodable key or signature, or a failing verify — so a missing
+/// or forged PQ half never counts. Mirrors `dregg_federation::frost::MlDsaPublicKey::verify` on the
+/// light-client side, on `fips204` alone.
+fn verify_ml_dsa_half(pubkey: &[u8], message: &[u8], sig: &[u8]) -> bool {
+    use fips204::ml_dsa_65;
+    use fips204::traits::{SerDes as _, Verifier as _};
+    let Ok(pk_bytes) = <[u8; ml_dsa_65::PK_LEN]>::try_from(pubkey) else {
+        return false;
+    };
+    let Ok(sig_bytes) = <[u8; ml_dsa_65::SIG_LEN]>::try_from(sig) else {
+        return false;
+    };
+    let Ok(vk) = ml_dsa_65::PublicKey::try_from_bytes(pk_bytes) else {
+        return false;
+    };
+    vk.verify(message, &sig_bytes, HYBRID_PQ_CTX)
 }
 
 /// The Rust mirror of `FinalizedLightClient.FinalityCert` + `CertValid`: `votes` are the ratifying
@@ -349,9 +390,13 @@ impl FinalityCert {
                 continue;
             };
             let sig = Signature::from_bytes(&vote.signature);
-            // `verify_strict` rejects non-canonical signatures / small-order keys — a forged or
-            // unbound (wrong-root) signature does NOT verify, so it is not counted.
-            if vk.verify_strict(&msg, &sig).is_ok() {
+            // HYBRID: BOTH halves must verify over this cert's message. `verify_strict` rejects
+            // non-canonical / small-order ed25519; `verify_ml_dsa_half` rejects a missing/forged
+            // ML-DSA-65 half (fail-closed). A signer counts ONLY when the classical AND the
+            // post-quantum signature both bind THIS `(root, count)` — no ed25519-only downgrade.
+            if vk.verify_strict(&msg, &sig).is_ok()
+                && verify_ml_dsa_half(&vote.ml_dsa_pubkey, &msg, &vote.pq_signature)
+            {
                 verified.insert(vote.validator);
             }
         }
@@ -413,9 +458,14 @@ impl FinalityCert {
                 continue;
             };
             let sig = Signature::from_bytes(&vote.signature);
-            // `verify_strict` rejects non-canonical sigs / small-order keys; an unbound (wrong-root
-            // or wrong-count) signature does not verify, so it is not counted.
-            if vk.verify_strict(&msg, &sig).is_ok() {
+            // HYBRID acceptance gate: a trusted committee member counts ONLY when BOTH the ed25519
+            // (classical) AND the ML-DSA-65 (post-quantum) half verify over this cert's `(root,
+            // count)` message. `verify_ml_dsa_half` fails closed on a missing/forged/undecodable PQ
+            // half, so an off-node light client can no longer be fooled by a quorum that carries only
+            // the classical half — the last verifier-side quantum-safety gap.
+            if vk.verify_strict(&msg, &sig).is_ok()
+                && verify_ml_dsa_half(&vote.ml_dsa_pubkey, &msg, &vote.pq_signature)
+            {
                 verified.insert(vote.validator);
             }
         }
@@ -665,13 +715,35 @@ mod tests {
         SigningKey::from_bytes(&seed)
     }
 
-    /// A genuine signed vote: validator `i` signs THIS cert's `(root, participant_count)` message.
+    /// A deterministic ML-DSA-65 keypair for validator `i` (test fixtures only) — the post-quantum
+    /// half of validator `i`'s hybrid vote, keyed off the same index as [`validator_key`].
+    fn validator_ml_dsa_key(i: u8) -> (Vec<u8>, fips204::ml_dsa_65::PrivateKey) {
+        use fips204::ml_dsa_65;
+        use fips204::traits::{KeyGen as _, SerDes as _};
+        let mut xi = [0u8; 32];
+        xi[0] = i;
+        xi[31] = 0xD5; // a distinct domain byte from the ed25519 seed
+        let (pk, sk) = ml_dsa_65::KG::keygen_from_seed(&xi);
+        (pk.into_bytes().to_vec(), sk)
+    }
+
+    /// A genuine HYBRID vote: validator `i` signs THIS cert's `(root, participant_count)` message with
+    /// BOTH its ed25519 key and its ML-DSA-65 key (over [`HYBRID_PQ_CTX`]).
     fn signed_vote(i: u8, root: BabyBear, participant_count: usize) -> SignedVote {
+        use fips204::traits::Signer as _;
         let sk = validator_key(i);
-        let sig = sk.sign(&finality_signing_message(root, participant_count));
+        let msg = finality_signing_message(root, participant_count);
+        let sig = sk.sign(&msg);
+        let (ml_dsa_pubkey, ml_sk) = validator_ml_dsa_key(i);
+        let pq_signature = ml_sk
+            .try_sign(&msg, HYBRID_PQ_CTX)
+            .expect("ml-dsa-65 sign cannot fail on a valid key")
+            .to_vec();
         SignedVote {
             validator: sk.verifying_key().to_bytes(),
             signature: sig.to_bytes(),
+            ml_dsa_pubkey,
+            pq_signature,
         }
     }
 
@@ -700,6 +772,8 @@ mod tests {
                 .map(|i| SignedVote {
                     validator: validator_key(i).verifying_key().to_bytes(),
                     signature: [0u8; 64],
+                    ml_dsa_pubkey: Vec::new(),
+                    pq_signature: Vec::new(),
                 })
                 .collect(),
             participant_count: n,
@@ -835,6 +909,103 @@ mod tests {
         // EMPTY committee: nothing is anchored, so nothing is a quorum.
         assert_eq!(honest.distinct_committee_signers(&[]), 0);
         assert!(!honest.has_committee_quorum(&[]));
+    }
+
+    /// **THE HYBRID (POST-QUANTUM) QUORUM TOOTH (fold-free unit).** The off-node light client counts a
+    /// signer ONLY when BOTH halves verify: a quorum whose ed25519 halves are ALL valid but whose
+    /// ML-DSA-65 half is FORGED, MISSING, or under the WRONG key is dropped to sub-quorum — a quantum
+    /// adversary that has broken ed25519 alone cannot mint a finalized root the light client accepts.
+    #[test]
+    fn hybrid_finality_quorum_requires_the_pq_half() {
+        let root = BabyBear::new(424_242);
+        let n = 4usize; // committee supermajority = 2*4/3 + 1 = 3
+        let trusted: Vec<[u8; 32]> = (0..n as u8)
+            .map(|i| validator_key(i).verifying_key().to_bytes())
+            .collect();
+
+        // Honest: a 3-of-4 HYBRID quorum — both halves bind THIS root — is a genuine quorum.
+        let honest = FinalityCert {
+            votes: (0..3u8).map(|i| signed_vote(i, root, n)).collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(
+            honest.distinct_committee_signers(&trusted),
+            3,
+            "both halves verify → three hybrid-valid signers"
+        );
+        assert!(honest.has_committee_quorum(&trusted));
+
+        // FORGED PQ: keep every ed25519 half genuine, but corrupt each ML-DSA signature. The classical
+        // check still passes; the post-quantum half fails, so NO signer counts.
+        let forged_pq = FinalityCert {
+            votes: (0..3u8)
+                .map(|i| {
+                    let mut v = signed_vote(i, root, n);
+                    // flip a byte in the ML-DSA signature — the ed25519 half is untouched
+                    v.pq_signature[0] ^= 0xFF;
+                    v
+                })
+                .collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(
+            forged_pq.distinct_committee_signers(&trusted),
+            0,
+            "a forged ML-DSA half drops the signer even though ed25519 is valid"
+        );
+        assert!(
+            !forged_pq.has_committee_quorum(&trusted),
+            "all-ed25519-valid + forged PQ is REJECTED — no ed25519-only downgrade"
+        );
+
+        // MISSING PQ: valid ed25519, empty ML-DSA half (the classical-only certificate a
+        // quantum-blind producer would emit) — fail-closed, sub-quorum.
+        let missing_pq = FinalityCert {
+            votes: (0..3u8)
+                .map(|i| {
+                    let mut v = signed_vote(i, root, n);
+                    v.ml_dsa_pubkey = Vec::new();
+                    v.pq_signature = Vec::new();
+                    v
+                })
+                .collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(
+            missing_pq.distinct_committee_signers(&trusted),
+            0,
+            "a missing ML-DSA half is not an ed25519-only acceptance"
+        );
+        assert!(!missing_pq.has_committee_quorum(&trusted));
+
+        // WRONG PQ KEY: a valid ML-DSA signature, but the carried pubkey is a DIFFERENT signer's key
+        // — the self-contained key must actually verify the carried signature.
+        let wrong_key = FinalityCert {
+            votes: (0..3u8)
+                .map(|i| {
+                    let mut v = signed_vote(i, root, n);
+                    // swap in validator (i+9)'s ML-DSA pubkey; the signature was made under i's key
+                    v.ml_dsa_pubkey = validator_ml_dsa_key(i + 9).0;
+                    v
+                })
+                .collect(),
+            participant_count: n,
+            finalized_root: root,
+        };
+        assert_eq!(
+            wrong_key.distinct_committee_signers(&trusted),
+            0,
+            "the carried ML-DSA pubkey must verify the carried PQ signature"
+        );
+        assert!(!wrong_key.has_committee_quorum(&trusted));
+
+        // The unanchored diagnostic agrees: the hybrid gate is in `distinct_signers` too.
+        assert_eq!(honest.distinct_signers(), 3);
+        assert_eq!(forged_pq.distinct_signers(), 0);
+        assert_eq!(missing_pq.distinct_signers(), 0);
     }
 
     /// OPEN permissions so the rotated producer-witness path admits the actor cell without auth
@@ -1426,6 +1597,8 @@ mod tests {
                 .map(|i| SignedVote {
                     validator: validator_key(i).verifying_key().to_bytes(),
                     signature: [0u8; 64],
+                    ml_dsa_pubkey: Vec::new(),
+                    pq_signature: Vec::new(),
                 })
                 .collect(),
             participant_count: 4,
@@ -1476,6 +1649,70 @@ mod tests {
         assert_eq!(honest.distinct_signers(), 3);
         assert!(
             verify_finalized_history(&agg, &vk, final_root, &honest, &committee(4), None).is_ok()
+        );
+    }
+
+    /// **THE HYBRID QUORUM TOOTH — END TO END through `verify_finalized_history`.** A correct,
+    /// genuinely-folded history whose finality cert carries a 3-of-4 committee quorum with ALL ed25519
+    /// halves valid is STILL refused when the ML-DSA-65 (post-quantum) halves are forged or missing —
+    /// the off-node light client checks the quantum-safe half, closing the last verifier-side gap. The
+    /// happy path (both halves valid) is exercised by `finalized_light_client_accepts_finalized_history`,
+    /// whose votes are now hybrid.
+    #[test]
+    fn finalized_light_client_rejects_classical_only_quorum() {
+        let (turns, _g, final_root) = make_chain(1000, 0, 7, 2);
+        let (agg, _att) = fold_and_attest(&turns).expect("the honest chain must fold");
+        let vk = agg.root_vk_fingerprint();
+
+        // FORGED PQ: 3-of-4 real committee members, every ed25519 half valid over the finalized root,
+        // but each ML-DSA half corrupted. The classical quorum is complete; the hybrid gate refuses.
+        let forged_pq = FinalityCert {
+            votes: (0..3u8)
+                .map(|i| {
+                    let mut v = signed_vote(i, final_root, 4);
+                    v.pq_signature[0] ^= 0xFF;
+                    v
+                })
+                .collect(),
+            participant_count: 4,
+            finalized_root: final_root,
+        };
+        match verify_finalized_history(&agg, &vk, final_root, &forged_pq, &committee(4), None) {
+            Err(FinalizedError::NoQuorum {
+                distinct_signers, ..
+            }) => assert_eq!(
+                distinct_signers, 0,
+                "an all-ed25519-valid but forged-PQ quorum drops to zero hybrid-valid signers"
+            ),
+            other => {
+                panic!("a classical-only (forged-PQ) finality cert must be rejected; got {other:?}")
+            }
+        }
+
+        // MISSING PQ: the classical-only certificate a quantum-blind producer would emit.
+        let missing_pq = FinalityCert {
+            votes: (0..3u8)
+                .map(|i| {
+                    let mut v = signed_vote(i, final_root, 4);
+                    v.ml_dsa_pubkey = Vec::new();
+                    v.pq_signature = Vec::new();
+                    v
+                })
+                .collect(),
+            participant_count: 4,
+            finalized_root: final_root,
+        };
+        match verify_finalized_history(&agg, &vk, final_root, &missing_pq, &committee(4), None) {
+            Err(FinalizedError::NoQuorum { .. }) => {}
+            other => panic!("a finality cert missing the PQ half must be rejected; got {other:?}"),
+        }
+
+        // CONTROL: the SAME validators with BOTH halves intact DO finalize it — the tooth bites the
+        // quantum-blind forgery, not the honest hybrid cert.
+        let honest = make_cert(3, 4, final_root);
+        assert!(
+            verify_finalized_history(&agg, &vk, final_root, &honest, &committee(4), None).is_ok(),
+            "an intact hybrid quorum finalizes"
         );
     }
 

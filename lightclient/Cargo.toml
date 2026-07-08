@@ -35,6 +35,13 @@ dregg-turn = { path = "../turn" }
 # blocks with (`node/Cargo.toml`'s `ed25519-dalek = "2"`), counting only signature-bound votes toward
 # the supermajority quorum.
 ed25519-dalek = { version = "2", features = ["std"] }
+# FIPS 204 ML-DSA-65 (Dilithium) — the POST-QUANTUM half of the hybrid finalization quorum. The
+# off-node finality-cert verifier re-checks the SAME ML-DSA-65 signature the committee's finalization
+# signers produce (matching `dregg_federation::frost` / `dregg_persist::QuorumSignature`), so a
+# quantum adversary that breaks ed25519 alone still cannot forge a finalized root the light client
+# accepts. Pure Rust (no C) — keeps the WASM light-client build (`wasm/`) intact; the heavy
+# `dregg-federation` crate is deliberately NOT pulled in for a single verify.
+fips204 = "0.4"
 
 [features]
 # `prover` forwards to dregg-circuit's prover feature (which is in its default set) and gates

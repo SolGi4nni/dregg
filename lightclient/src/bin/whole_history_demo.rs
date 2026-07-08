@@ -39,14 +39,29 @@ fn demo_signed_vote(
     root: dregg_circuit::field::BabyBear,
     participant_count: usize,
 ) -> SignedVote {
+    use fips204::ml_dsa_65;
+    use fips204::traits::{KeyGen as _, SerDes as _, Signer as _};
     let mut seed = [0u8; 32];
     seed[0] = i;
     seed[31] = 0xA5;
     let sk = SigningKey::from_bytes(&seed);
-    let sig = sk.sign(&finality_signing_message(root, participant_count));
+    let msg = finality_signing_message(root, participant_count);
+    let sig = sk.sign(&msg);
+    // The POST-QUANTUM half: an ML-DSA-65 signature over the SAME message, bound to the shared hybrid
+    // context, so the light client's hybrid quorum check (BOTH halves) accepts the demo's votes.
+    let mut xi = [0u8; 32];
+    xi[0] = i;
+    xi[31] = 0xD5;
+    let (ml_pk, ml_sk) = ml_dsa_65::KG::keygen_from_seed(&xi);
+    let pq_signature = ml_sk
+        .try_sign(&msg, dregg_lightclient::HYBRID_PQ_CTX)
+        .expect("ml-dsa-65 sign cannot fail on a valid key")
+        .to_vec();
     SignedVote {
         validator: sk.verifying_key().to_bytes(),
         signature: sig.to_bytes(),
+        ml_dsa_pubkey: ml_pk.into_bytes().to_vec(),
+        pq_signature,
     }
 }
 
