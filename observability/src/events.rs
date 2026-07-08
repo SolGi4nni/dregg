@@ -349,6 +349,19 @@ impl AuthorizationPayload {
                 r_hex: hex32(r),
                 s_hex: hex32(s),
             },
+            // The HYBRID (ed25519 + ML-DSA-65) turn authorization. Its classical
+            // ed25519 half is projected identically to a plain `Signature` (the
+            // type already classifies `HybridSignature` as `AuthKind::Signature`);
+            // the post-quantum half (`ml_dsa` / `ml_dsa_pk`) is elided from the
+            // observability payload, matching the boundary discipline for the
+            // other large opaque byte payloads here.
+            Authorization::HybridSignature { ed25519, .. } => {
+                let (r, s) = ed25519.split_at(32);
+                AuthorizationPayload::Signature {
+                    r_hex: hex32(r.try_into().expect("ed25519 signature is 64 bytes")),
+                    s_hex: hex32(s.try_into().expect("ed25519 signature is 64 bytes")),
+                }
+            }
             Authorization::Proof {
                 proof_bytes,
                 bound_action,
@@ -494,6 +507,7 @@ fn token_format_tag(encoded: &[u8]) -> &'static str {
 fn authorization_tag(auth: &Authorization) -> &'static str {
     match auth {
         Authorization::Signature(_, _) => "signature",
+        Authorization::HybridSignature { .. } => "hybrid_signature",
         Authorization::Proof { .. } => "proof",
         Authorization::Breadstuff(_) => "breadstuff",
         Authorization::Bearer(_) => "bearer",
