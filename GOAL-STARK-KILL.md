@@ -398,3 +398,26 @@ Did measured optimization + a proactive OOM sweep on the emissions code:
     but the REINCARNATION VECTOR for the 80GB bomb if a witness's `.range` is ever pointed at deployed
     `rangeRows 30` + decided. Highest-value proactive guardrail: a lint forbidding decide/#guard/#eval
     over `rangeRows`/`rangeTable`/`subsetTable` with bits ≥ ~20. Core file — coordinate the edit.
+
+## ⚑ LEAN COMPILE-COST PROFILING (2026-07-08) — measured fruit + ranked hitlist
+Read-only scout (wf_38b54aa8, OOM-safe, no builds) over all 1025 Dregg2 .lean + my sequential guarded
+measurement. MEASURED WINS (committed):
+- EffectVmEmitV2 13.3→4.2s (−9s, 68%): a `#guard v2Registry.all (emitVmJson2 d).startsWith "…"`
+  serialized all 39 descriptors to JSON per build → cheap structural smoke. 32 dependents.
+- RotationV3 52.7→49.9s (−3s): same fix on v3Registry; its 50s is structural (below).
+THE PATTERN (safe, mechanical, do across the tree when QUIET): registry-wide `#guard <reg>.all
+(emitVmJson2 d).startsWith …` → `#guard <reg>.all fun (_,d) => !d.name.isEmpty && !d.constraints.isEmpty
+&& d.traceWidth != 0`. emitVmJson2 stays byte-pinned per-family; only a #guard changes (can't break
+dependents). The 49 per-family `#guard emitVmJson2 == "<exact>"` byte-pins are the LEGIBILITY assurance —
+KEEP them.
+RANKED HITLIST (deferred — dirty-file-blocked or deeper surgery; do on a quiet tree):
+1. RotationV3 (~50s, imported×32) — 44 full-set `simp [memOpsOf, withRecordPin8Headroom2, …]` → `simp
+   only [named lemmas]` (5-30x each); the file's real cost. HIGHEST cumulative value.
+2. CrossTurnFreshness.lean — 65 bare `by simp` closing `none=some _` ctor-clashes → `by nofun`. DIRTY
+   (another lane) — do when clean.
+3. Transfer.lean — 15 `absurd _ (by simp)` → `nofun` + `hsat cX (by simp)` → `simp only [List.mem_*]`.
+4. CapOpenEmit — registry length/shape facts proved by full-set simp → `by decide`/`rfl`.
+5. FoldRefine — 13x `(by simp [foldDesc, foldConstraints])` → one reusable membership lemma.
+6. ConditionalTurn.lean:989 — the tree's ONLY native_decide → decide. DIRTY.
+Method proven: scout ranks (parallel, safe) → measure single-file via `lake env lean` under .bin/lean-safe
+→ fix → re-measure. NEVER parallel builds.
