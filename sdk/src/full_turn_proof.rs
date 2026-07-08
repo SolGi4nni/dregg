@@ -5260,15 +5260,21 @@ pub fn verify_full_turn_bound(
         //     for a DIFFERENT effect (kind / target cell / amount / params)
         //     carries a different derived_hash and is rejected here.
         //
-        //     This tooth binds the CONCLUSION (`Allow(h)`) to the effect. That the
-        //     conclusion genuinely follows from a capability the actor HOLDS is the
-        //     membership leg's job: the derivation circuit proves "body fact ⊢
-        //     Allow(h)" but treats the body fact hash as a free (nonzero) witness;
-        //     the c-list membership proof (bound via step 5: auth state_root ==
-        //     membership root) is what proves that body fact actually exists in the
-        //     cell's fact tree. Together: membership(fact ∈ tree) + derivation(fact
-        //     ⊢ Allow(h)) + this tooth(h == this effect) + the cell binding above
-        //     (tree == cell mutated) = the full capability-security chain.
+        //     This tooth binds the CONCLUSION (`Allow(h)`) to the effect. ⚠ SOUNDNESS
+        //     GAP in the auth+membership chain (do NOT rely on it as a capability
+        //     boundary as-is): the derivation circuit proves "body fact ⊢ Allow(h)"
+        //     while treating the body fact hash as a FREE (nonzero) witness, and
+        //     step 5 binds only the ROOTS (auth state_root == membership root) — it
+        //     does NOT bind the membership proof's LEAF to the derivation's body
+        //     fact. So this leg proves "SOME fact ∈ tree" + "body ⊢ Allow(h)"
+        //     WITHOUT connecting them: a prover can present a genuine membership
+        //     proof for a real leaf they DO hold while deriving Allow(h) from a
+        //     different body fact they do NOT hold. Closing it requires the
+        //     derivation circuit to export a `body_fact_hash` PI and this verifier
+        //     to bind `membership.leaf_hash == derivation.body_fact_hash`. The LIVE
+        //     authority path is `cap_membership` (below, ~step at 5519), whose leaf
+        //     IS bound to the disclosed `CapLeaf` — sound; this auth+membership path
+        //     has no live producer in-repo (loaded gun, not fired).
         let auth_derived_hash = auth_sub
             .sub_public_inputs
             .get(AUTH_PI_DERIVED_HASH)

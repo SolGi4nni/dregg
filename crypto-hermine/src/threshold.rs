@@ -769,12 +769,7 @@ mod tests {
                     m,
                 )
                 .unwrap();
-                assert!(verify_hermine(
-                    &d.a,
-                    &d.group_key,
-                    b"key-hiding-probe",
-                    &sig
-                ));
+                assert!(verify_hermine(&d.a, &d.group_key, b"key-hiding-probe", &sig));
                 sig.z.0[0].centered_coeff(0)
             })
             .collect()
@@ -790,12 +785,7 @@ mod tests {
         // as a large total-variation gap.
         let (rows, cols, n, t, seed) = (2usize, 3usize, 5u64, 3u64, 0x51_D6E5u64);
         let s0 = PolyVec::zero(cols);
-        let s1 = PolyVec(vec![
-            Poly {
-                coeffs: [SECRET_ETA; N]
-            };
-            cols
-        ]);
+        let s1 = PolyVec(vec![Poly { coeffs: [SECRET_ETA; N] }; cols]);
         let d0 = HermineTestDealer::deal_with_group_secret(rows, cols, n, t, seed, s0).unwrap();
         let d1 = HermineTestDealer::deal_with_group_secret(rows, cols, n, t, seed, s1).unwrap();
 
