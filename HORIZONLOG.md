@@ -8,6 +8,23 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-08, Fable — sovereign-state netlayer design, ember design session)
+
+**Sovereign Resurrection / cap-scoped dissemination — DESIGN COMMITTED, closure lanes named.**
+`docs/deos/SOVEREIGN-RESURRECTION.md` (census + staged design; PRIVACY-CONFIDENTIALITY.md-style).
+The netlayer for disseminating umems/sovereign images amongst nodes: the storage-in-lean cluster
+(`ClientProtocol.lean` end-to-end) + the umem passable keystone already discharge integrity/
+availability/confidentiality; the design's open obligations, each a lane:
+- **M0 weld** — checkpoint pipeline (image → ViewKey-seal → rs_encode → ProviderMarket deals →
+  anchor) + recovery pipeline + `resurrection_sound` composition theorem + 4 non-vacuity teeth.
+- **M1 THE NEW THEOREM** — `resurrection_no_rollback`: recovery authority evaluated at the TIP
+  anchor (monotone evidence epoch), refusing genuine-but-stale images; settlement-soundness proof
+  family. MUST land before M0 is *claimed* (unanchored resurrection = rollback footgun).
+- **M2** — cap-scoped sync (interest = read-cap, sync unit = umem tag-isolated slice, membrane =
+  n=1 case); rides umem Stage B/C (`UMEM-STAGE-B-DESIGN.md`, carriers named-not-built).
+Ember-facing: this is a design for discussion, not a fired lane — checkpoint cadence, provider-set
+policy, and the anchor's committed-state shape are ember-taste calls.
+
 ## NOW-STATE addition (2026-07-07, Fable — forge CI-gate lane surfaced a real dregg-turn bug)
 
 **`ProofCondition::TurnExecuted` verifies over the WRONG signing message.** `turn/src/conditional.rs:478`
