@@ -9,6 +9,7 @@
 
 use std::path::{Path, PathBuf};
 
+use dregg_doc::check::CiRunWitness;
 use dregg_doc::{planned_ci_run_hash, CheckRefusal, CheckWitness, CiVerdict, RequiredCheck};
 use forge_ci_runner::{
     confinement_id, input_root_of_dir, reexecute_and_verify, run_check_confined, AuditVerdict,
@@ -87,10 +88,10 @@ fn honest_run_reverifies_and_satisfies_the_forge_gate() {
     // `PullRequest::land` calls): bound to a PR whose input_root matches, the
     // work-bound, signed, exit-0 verdict SATISFIES.
     let check = RequiredCheck::ci_run("build", COMMAND, CI_EDITOR, CI_REGION, vec![KEY]);
-    let witness = CheckWitness::CiRun {
-        receipt: out.receipt.clone(),
-        verdict: out.verdict.clone(),
-    };
+    let witness = CheckWitness::CiRun(CiRunWitness::signed(
+        out.receipt.clone(),
+        out.verdict.clone(),
+    ));
     check
         .satisfied_by(&witness, out.verdict.input_root)
         .expect("the L1 forge CiRun check accepts the work-bound signed verdict");

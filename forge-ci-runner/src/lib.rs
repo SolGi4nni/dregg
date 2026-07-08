@@ -67,6 +67,9 @@ pub use confined::{
     reexecute_and_verify, run_check_confined, AuditVerdict, CiRunReceipt, RunError,
 };
 
+pub mod materialize;
+pub use materialize::{canonical_input_root, materialize};
+
 use dregg_doc::{substrate_commit, AtomId, Author, DocGraph, Patch};
 
 /// The placeholder the runner substitutes with the per-run confined WORK dir in
@@ -110,13 +113,24 @@ pub fn confinement_id(command_image: &str, argv: &[String], homebrew_prefix: &st
 /// the [`CiVerdict::input_root`](dregg_doc::CiVerdict::input_root) the forge gate
 /// binds to.
 ///
-/// The projection is deterministic: files are collected recursively, sorted by
-/// relative path, and each becomes one atom whose content is
-/// `"<relpath>\0<blake3-hex of file bytes>"` (chained in sorted order). Distinct
-/// trees project to distinct graphs, hence distinct roots. See the crate/module
-/// docs for the materialization seam that makes this equal a real PR's
-/// `input_root`.
+/// THE MATERIALIZATION ROUND-TRIP (the closed seam): when `dir` carries a
+/// [`materialize`]d patch-history sidecar
+/// ([`materialize::history_sidecar_path`]), this DESERIALIZES it, REPLAYS it to a
+/// [`DocGraph`], and returns [`substrate_commit`] of that graph — the exact value
+/// [`canonical_input_root`] and a real PR's `pr.input_root()` compute, provenance
+/// and all. So a verdict this crate produces over a materialized tree carries the
+/// `input_root` the forge L1 gate binds.
+///
+/// FALLBACK (no sidecar — a raw tree): the projection is deterministic: files are
+/// collected recursively, sorted by relative path, and each becomes one atom
+/// whose content is `"<relpath>\0<blake3-hex of file bytes>"` (chained in sorted
+/// order). Distinct trees project to distinct graphs, hence distinct roots. This
+/// path does NOT equal a document's `substrate_commit` (different atom grammar) —
+/// it is the last-resort digest for a non-materialized tree.
 pub fn input_root_of_dir(dir: &std::path::Path) -> std::io::Result<[u8; 32]> {
+    if let Some(history) = materialize::read_materialized_history(dir)? {
+        return Ok(substrate_commit(&history.replay()));
+    }
     Ok(substrate_commit(&doc_graph_of_dir(dir)?))
 }
 

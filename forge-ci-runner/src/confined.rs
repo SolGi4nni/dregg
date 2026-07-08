@@ -273,6 +273,122 @@ fn copy_tree_into(src: &Path, dst: &Path) -> io::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::materialize::{canonical_input_root, materialize};
+    use dregg_doc::check::CiRunWitness;
+    use dregg_doc::{
+        substrate_commit, AtomId, Author, CheckWitness, History, Patch, PullRequest, RequiredCheck,
+    };
+
+    // RFC 8032 §7.1 TEST 1 Ed25519 (seed, verifying-key) pair — the exact pair
+    // dregg-doc's own CI-gate tests use; the executor derives KEY from SEED by
+    // standard key generation.
+    const SEED: [u8; 32] = [
+        0x9d, 0x61, 0xb1, 0x9d, 0xef, 0xfd, 0x5a, 0x60, 0xba, 0x84, 0x4a, 0xf4, 0x92, 0xec, 0x2c,
+        0xc4, 0x44, 0x49, 0xc5, 0x69, 0x7b, 0x32, 0x69, 0x19, 0x70, 0x3b, 0xac, 0x03, 0x1c, 0xae,
+        0x7f, 0x60,
+    ];
+    const KEY: [u8; 32] = [
+        0xd7, 0x5a, 0x98, 0x01, 0x82, 0xb1, 0x0a, 0xb7, 0xd5, 0x4b, 0xfe, 0xd3, 0xc9, 0x64, 0x07,
+        0x3a, 0x0e, 0xe1, 0x72, 0xf3, 0xda, 0xa6, 0x23, 0x25, 0xaf, 0x02, 0x1a, 0x68, 0xf7, 0x07,
+        0x51, 0x1a,
+    ];
+    const CI_EDITOR: u8 = 7;
+    const CI_REGION: u8 = 8;
+    const COMMAND: [u8; 32] = [0x11; 32];
+
+    fn sample_history() -> History {
+        let mut h = History::new();
+        let (a, op_a) = Patch::add(1, "two\n", AtomId::ROOT);
+        h.commit(Patch::by(Author(2), [op_a]));
+        let (_b, op_b) = Patch::add(2, "three\n", a);
+        h.commit(Patch::by(Author(2), [op_b]));
+        h
+    }
+
+    fn tempdir(tag: &str) -> std::path::PathBuf {
+        use std::sync::atomic::{AtomicU64, Ordering};
+        static N: AtomicU64 = AtomicU64::new(0);
+        let p = std::env::temp_dir().join(format!(
+            "{tag}-{}-{}",
+            std::process::id(),
+            N.fetch_add(1, Ordering::Relaxed)
+        ));
+        std::fs::create_dir_all(&p).unwrap();
+        p
+    }
+
+    /// **POLE (ii) — END TO END.** Materialize a real PR's merged code, run a
+    /// deterministic command confined over it, and show the produced verdict
+    /// carries `input_root == pr.input_root()` AND satisfies the real forge L1
+    /// gate (`RequiredCheck::ci_run(...).satisfied_by`) bound to that root.
+    #[test]
+    fn materialized_run_produces_a_verdict_the_real_pr_gate_accepts() {
+        let h = sample_history();
+
+        // The real PR's binding target (clean PR over an empty base → merged ==
+        // head.replay()).
+        let pr = PullRequest::open(History::new(), h.clone());
+        let pr_root = pr.input_root();
+        assert_eq!(pr_root, canonical_input_root(&h));
+
+        // Materialize the merged code into a work dir the confined command reads.
+        let work = tempdir("fcr-e2e");
+        materialize(&h, &work).unwrap();
+
+        // A deterministic, exit-0 command: /usr/bin/true (empty stdout, code 0).
+        let receipt = run_check_confined(
+            &work,
+            std::path::Path::new("/usr/bin/true"),
+            &[],
+            COMMAND,
+            SEED,
+            CI_EDITOR,
+            CI_REGION,
+        )
+        .expect("confined CI run commits a signed verdict");
+
+        // The verdict binds THIS PR's real code.
+        assert_eq!(
+            receipt.verdict.input_root,
+            substrate_commit(&h.replay()),
+            "verdict.input_root == substrate_commit(merged_graph)"
+        );
+        assert_eq!(
+            receipt.verdict.input_root, pr_root,
+            "verdict.input_root == pr.input_root()"
+        );
+        assert_eq!(receipt.verdict.exit_code, 0);
+        assert!(
+            receipt.receipt.executor_signature.is_some(),
+            "the CI executor signed the verdict receipt"
+        );
+
+        // THE PAYOFF: the real forge gate accepts this runner-produced witness.
+        let check = RequiredCheck::ci_run("build", COMMAND, CI_EDITOR, CI_REGION, vec![KEY]);
+        let witness = CheckWitness::CiRun(CiRunWitness::signed(
+            receipt.receipt.clone(),
+            receipt.verdict.clone(),
+        ));
+        check
+            .satisfied_by(&witness, pr_root)
+            .expect("a work-bound, signed, exit-0 verdict for THIS pr's code satisfies the gate");
+
+        // Sanity: the same witness against a DIFFERENT root is refused (the bind
+        // is real, not vacuous).
+        let mut other = [0u8; 32];
+        other[0] = 0xEE;
+        assert!(
+            check.satisfied_by(&witness, other).is_err(),
+            "the verdict does not satisfy an unrelated input_root"
+        );
+
+        let _ = std::fs::remove_dir_all(work);
+    }
+}
+
 /// Lowercase-hex a byte slice (for the audit-divergence rendering).
 fn hex(b: &[u8]) -> String {
     const HEX: &[u8; 16] = b"0123456789abcdef";
