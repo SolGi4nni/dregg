@@ -158,15 +158,14 @@ impl OrphanBuffer {
     /// (each returned block's predecessors are guaranteed present-or-earlier-in-list).
     ///
     /// This is the cascade: landing one predecessor can release an orphan, whose
-    /// own landing can release further orphans, transitively. `present` is the
-    /// lace keyset *after* `landed` was inserted (so it contains `landed`); the
-    /// released blocks are removed from the buffer and the caller must feed them
-    /// back through `receive_block` (which re-verifies sig/seq/equivocation).
-    pub fn ready_after(&mut self, landed: BlockId, present: &HashSet<BlockId>) -> Vec<Block> {
+    /// own landing can release further orphans, transitively. The released blocks
+    /// are removed from the buffer and the caller must feed them back through
+    /// `receive_block` (which re-verifies sig/seq/equivocation). The cascade is
+    /// driven purely by the wait-set bookkeeping (`waits` / `waiting_on`), so it
+    /// needs no snapshot of the lace keyset.
+    pub fn ready_after(&mut self, landed: BlockId) -> Vec<Block> {
         let mut released: Vec<Block> = Vec::new();
-        // BFS over the unblock cascade. We treat blocks as "present" if they were
-        // already present OR we have released them in this cascade.
-        let mut now_present: HashSet<BlockId> = present.clone();
+        // BFS over the unblock cascade.
         let mut frontier: VecDeque<BlockId> = VecDeque::new();
         frontier.push_back(landed);
 
@@ -189,7 +188,6 @@ impl OrphanBuffer {
                 // All predecessors satisfied: release it.
                 self.waits.remove(&orphan_id);
                 if let Some(block) = self.orphans.remove(&orphan_id) {
-                    now_present.insert(orphan_id);
                     released.push(block);
                     // This release may unblock further orphans.
                     frontier.push_back(orphan_id);
@@ -254,10 +252,11 @@ pub fn apply_with_buffering(
     let mut pull_roots: HashSet<BlockId> = HashSet::new();
     let mut equivocations = Vec::new();
 
-    // Local helper: try to insert one block; on success cascade the buffer.
-    fn present_set(lace: &Blocklace) -> HashSet<BlockId> {
-        lace.iter().map(|(id, _)| *id).collect()
-    }
+    // The lace keyset, seeded ONCE and maintained incrementally: every accepted
+    // block (Ok or Equivocation-evidence) is inserted below, so `present` always
+    // equals the current lace keyset at each use — without an O(N) rescan per
+    // block on the sync path.
+    let mut present: HashSet<BlockId> = lace.iter().map(|(id, _)| *id).collect();
 
     // Process the incoming batch, then drain any cascades.
     let mut queue: VecDeque<Block> = blocks.into_iter().collect();
@@ -270,17 +269,16 @@ pub fn apply_with_buffering(
         match lace.receive_block(block) {
             Ok(()) => {
                 inserted.push(block_clone);
+                present.insert(block_id);
                 // A buffered duplicate of this id is now satisfied/irrelevant.
                 buffer.drop_orphan(&block_id);
                 // Cascade: release orphans this block unblocks, in causal order.
-                let present = present_set(lace);
-                let released = buffer.ready_after(block_id, &present);
+                let released = buffer.ready_after(block_id);
                 for r in released {
                     queue.push_back(r);
                 }
             }
             Err(BlockError::MissingPredecessor { .. }) => {
-                let present = present_set(lace);
                 // WAIT-SET: every predecessor not yet in the LACE — these are what the
                 // orphan must wait on before it can be applied (a pred that is itself
                 // a buffered orphan still gates this block until it lands). Computed
@@ -308,10 +306,10 @@ pub fn apply_with_buffering(
             Err(BlockError::Equivocation { proof, .. }) => {
                 // receive_block still inserted the block (evidence). Record it.
                 inserted.push(block_clone);
+                present.insert(block_id);
                 equivocations.push(proof);
                 buffer.drop_orphan(&block_id);
-                let present = present_set(lace);
-                let released = buffer.ready_after(block_id, &present);
+                let released = buffer.ready_after(block_id);
                 for r in released {
                     queue.push_back(r);
                 }
