@@ -20,7 +20,7 @@ description = "The on-chain interactive-fiction stack composed into one running 
 
 [dependencies]
 # The story engine (its `parse`/`Scene`) + the dregg narrative core.
-spween = { path = "../../spween" }
+spween = { git = "https://github.com/emberian/spween", rev = "afb5b1fce8c9dd3b787e197bddf105adca20e08a" }
 spween-dregg = { path = "../spween-dregg" }
 # The canonical vote engine (named directly for its light-client tally leg).
 collective-choice = { path = "../collective-choice" }

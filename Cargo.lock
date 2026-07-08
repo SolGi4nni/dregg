@@ -9322,7 +9322,7 @@ dependencies = [
  "collective-choice",
  "dregg-governance",
  "mud-dregg",
- "spween 0.1.0",
+ "spween",
  "spween-dregg",
 ]
 
@@ -18426,16 +18426,6 @@ checksum = "3b9b39299b249ad65f3b7e96443bad61c02ca5cd3589f46cb6d610a0fd6c0d6a"
 [[package]]
 name = "spween"
 version = "0.1.0"
-dependencies = [
- "logos",
- "serde_yaml",
- "smol_str",
- "thiserror 2.0.18",
-]
-
-[[package]]
-name = "spween"
-version = "0.1.0"
 source = "git+https://github.com/emberian/spween?rev=afb5b1fce8c9dd3b787e197bddf105adca20e08a#afb5b1fce8c9dd3b787e197bddf105adca20e08a"
 dependencies = [
  "logos",
@@ -18453,7 +18443,7 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-node-target",
- "spween 0.1.0 (git+https://github.com/emberian/spween?rev=afb5b1fce8c9dd3b787e197bddf105adca20e08a)",
+ "spween",
  "zeroize",
 ]
 
