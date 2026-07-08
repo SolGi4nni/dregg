@@ -127,7 +127,12 @@ fn heap_membership_is_subquadratic_in_leaf_count() {
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
 
-    let sizes = [512usize, 2048, 8192];
+    // A single big-span ratio N: 8000 → 64000 leaves (ratio 8). At ratio 8 an O(n log n)
+    // batch reads ~9–10× and a re-introduced O(n) position scan inside the N-lookup loop
+    // (→ O(n²)) reads ~64×, so they separate well outside the shared-machine noise band
+    // (a ratio-2 step's ~2× signal is swamped by µs/scheduler noise). Smallest baseline
+    // (8000 lookups) clears the 50 µs floor; capped under the tree's 2^16-2 leaf capacity.
+    let sizes = [8_000usize, 64_000];
     let mut times = Vec::new();
     for &n in &sizes {
         let leaves: Vec<HeapLeaf> = (0..n)
