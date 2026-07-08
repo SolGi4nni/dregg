@@ -226,6 +226,15 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
   `check_endpoint` gates the endpoint before booting anything; fail-closed on node refusal. 94 green,
   both poles (Pole B admits-layer per provider_egress). Round-trip THROUGH node execution deferred to
   the `test-support` TestNode export (next unit — shared infra for the 4a full proof + 2b).
+- homeserver-grain RocksDB + confinement design (community thread) — RocksDB system-link VERIFIED:
+  `ROCKSDB_LIB_DIR=brew` (rocksdb 11.1.2 vs vendored 11.1.1, ABI-compat) skips the vendored C++ build,
+  CS-API test still green (env, not a Linux-breaking hardcode). Confined-spawn DESIGNED (recon-corrected
+  to TWO doors: `grant_read_write` db-dir + `grant_listen` one-port — continuwuity binds its own TCP
+  listener, so `with_fds` needs a fork; `execve` stays denied via lib-embed). `docs/deos/GRAIN-HOMESERVER.md`.
+  ⚑ CONFINEMENT BUILD IS THE DELIBERATE-NEXT (per goal: design-first, not a swarm; don't touch
+  breadstuffs crates mid other-session): the two doors extend `deos-hermes/egress.rs` + firmament
+  sandbox (kernel-adjacent), AND a real UNKNOWN — can a firmament PD host a HEAVY rocksdb+tokio body
+  (the jails so far held lightweight bodies)? De-risk that before/with the doors.
 - homeserver-grain STEP 2 (community thread) — `deos-homeserver/{src/bin,scripts}`: the card-carry
   membrane rides OUR embedded homeserver, not Docker Conduit. A `deos-homeserver` bin (READY <url>) +
   `card-carry-local.sh` boot it as a subprocess the deos-matrix clients dial; `live_two_user_card_
