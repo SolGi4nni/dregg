@@ -49,6 +49,9 @@
 //! * no RFC-style per-signer binding factors (concurrent-session attacks
 //!   apply), no constant-time arithmetic, toy parameters.
 
+use rand_chacha::ChaCha20Rng;
+use rand_core::RngCore;
+
 use crate::linalg::{Matrix, PolyVec};
 use crate::ring::{inv_mod_q, Poly, N, Q};
 use crate::verify;
@@ -174,8 +177,12 @@ pub struct DiscreteGaussian {
     sigma: f64,
     /// Tail bound `T = ⌈τσ⌉`: samples lie in `[-T, T]`.
     tail: i64,
-    /// `cdt[i] = P[X ≤ i - T]`, monotone, `cdt[2T] = 1`.
+    /// `cdt[i] = P[X ≤ i - T]`, monotone, `cdt[2T] = 1` (reference/float path).
     cdt: Vec<f64>,
+    /// Fixed-point CDT: `cdt_fixed[i] = round(cdt[i] · 2⁶⁴⁻¹)` as `u64` — the
+    /// INTEGER table the constant-time sampler ([`sample_ct`]) scans, so the
+    /// comparisons are exact integer ops (no data-dependent float timing).
+    cdt_fixed: Vec<u64>,
 }
 
 impl DiscreteGaussian {
@@ -201,7 +208,16 @@ impl DiscreteGaussian {
         for p in &mut cdt {
             *p /= total;
         }
-        Some(Self { sigma, tail, cdt })
+        // Fixed-point table for the constant-time scan: scale each cumulative
+        // probability into a u64. The reference float `cdt` stays for `sample`.
+        let scale = u64::MAX as f64;
+        let cdt_fixed: Vec<u64> = cdt.iter().map(|&p| (p * scale).round() as u64).collect();
+        Some(Self {
+            sigma,
+            tail,
+            cdt,
+            cdt_fixed,
+        })
     }
 
     /// The width σ this sampler was built for.
@@ -221,6 +237,29 @@ impl DiscreteGaussian {
         let idx = self.cdt.partition_point(|&p| p <= u);
         idx.min(self.cdt.len() - 1) as i64 - self.tail
     }
+
+    /// **Constant-time** inverse-CDF sample from a raw `u64` uniform `u`: a
+    /// DATA-INDEPENDENT linear scan over the fixed-point table, counting entries
+    /// `≤ u` with `subtle` constant-time integer comparisons. No early exit, no
+    /// data-dependent branch or index — the control flow and memory access
+    /// pattern are identical for every sampled value, closing the timing leak of
+    /// [`sample`] (whose binary search branches on the value). The returned
+    /// integer is identical in distribution to `sample` for the same uniform.
+    pub fn sample_ct(&self, u: u64) -> i64 {
+        use subtle::{ConditionallySelectable, ConstantTimeGreater};
+        // count = #{ i : cdt_fixed[i] ≤ u }, accumulated without branching.
+        let mut count: u64 = 0;
+        for &c in &self.cdt_fixed {
+            // `c > u` is a Choice (1/0); we want `c ≤ u`, i.e. its complement.
+            let gt = c.ct_gt(&u).unwrap_u8();
+            count += (1u8 ^ gt) as u64;
+        }
+        // Clamp to the last index (the `u = u64::MAX` edge), constant-time.
+        let maxidx = (self.cdt_fixed.len() - 1) as u64;
+        let over = count.ct_gt(&maxidx);
+        let idx = u64::conditional_select(&count, &maxidx, over);
+        idx as i64 - self.tail
+    }
 }
 
 /// Sample one Gaussian noise-flooding mask element: each coefficient from
@@ -231,6 +270,21 @@ pub fn sample_gaussian_mask(state: &mut u64, gauss: &DiscreteGaussian) -> Poly {
     let mut coeffs = [0u64; N];
     for c in coeffs.iter_mut() {
         *c = gauss.sample(state).rem_euclid(Q as i64) as u64;
+    }
+    Poly { coeffs }
+}
+
+/// **Production-shaped** Gaussian mask: every coefficient sampled by the
+/// constant-time [`DiscreteGaussian::sample_ct`], driven by a real ChaCha20
+/// CSPRNG. This is the hardened counterpart of [`sample_gaussian_mask`] — a
+/// cryptographic PRNG (not the toy splitmix64) feeding a data-independent
+/// sampler. What remains for deployment is a full side-channel/audit pass; the
+/// two algorithmic hardening steps (CSPRNG + constant-time sampling) are present.
+pub fn sample_gaussian_mask_csprng(rng: &mut ChaCha20Rng, gauss: &DiscreteGaussian) -> Poly {
+    let mut coeffs = [0u64; N];
+    for c in coeffs.iter_mut() {
+        let u = rng.next_u64();
+        *c = gauss.sample_ct(u).rem_euclid(Q as i64) as u64;
     }
     Poly { coeffs }
 }
@@ -683,6 +737,61 @@ mod tests {
         assert!(verify_hermine(&d.a, &d.group_key, message, &sig));
         // And the raw Lean relation directly, not just via the wrapper.
         assert!(verify(&d.a, &d.group_key, &sig.w, &sig.c, &sig.z));
+    }
+
+    // -- (d) production hardening: CSPRNG + constant-time Gaussian sampler ---
+
+    #[test]
+    fn sample_ct_bounded_and_monotone() {
+        let g = DiscreteGaussian::new(64.0).unwrap();
+        let t = g.tail_bound();
+        // Every sample stays inside the tail [-T, T].
+        for k in 0u64..3000 {
+            let u = k.wrapping_mul(0x9E37_79B9_7F4A_7C15);
+            let s = g.sample_ct(u);
+            assert!(s >= -t && s <= t, "sample_ct out of tail: {s} (T={t})");
+        }
+        // Monotone non-decreasing in the uniform (a correct inverse-CDF).
+        let us = [
+            0u64,
+            1 << 50,
+            1 << 60,
+            1 << 62,
+            1 << 63,
+            u64::MAX / 2,
+            u64::MAX,
+        ];
+        for w in us.windows(2) {
+            assert!(
+                g.sample_ct(w[0]) <= g.sample_ct(w[1]),
+                "sample_ct not monotone"
+            );
+        }
+        // The u = MAX edge lands exactly at +T (the clamp is correct).
+        assert_eq!(g.sample_ct(u64::MAX), t);
+    }
+
+    #[test]
+    fn csprng_ct_mask_deterministic_and_bounded() {
+        use rand_core::SeedableRng;
+        let g = DiscreteGaussian::new(64.0).unwrap();
+        let t = g.tail_bound();
+        let m1 = sample_gaussian_mask_csprng(&mut ChaCha20Rng::from_seed([7u8; 32]), &g);
+        let m2 = sample_gaussian_mask_csprng(&mut ChaCha20Rng::from_seed([7u8; 32]), &g);
+        // Deterministic given the CSPRNG seed.
+        assert_eq!(m1.coeffs, m2.coeffs);
+        // Every coefficient is a valid centered Gaussian sample (|centered| ≤ T).
+        for &c in m1.coeffs.iter() {
+            let centered = if c > Q / 2 {
+                c as i64 - Q as i64
+            } else {
+                c as i64
+            };
+            assert!(centered.abs() <= t, "coeff out of tail: {centered}");
+        }
+        // A different seed gives a different mask — the CSPRNG is actually driving it.
+        let m3 = sample_gaussian_mask_csprng(&mut ChaCha20Rng::from_seed([8u8; 32]), &g);
+        assert_ne!(m1.coeffs, m3.coeffs);
     }
 
     #[test]

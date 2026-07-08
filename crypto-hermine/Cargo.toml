@@ -2,7 +2,7 @@
 name = "crypto-hermine"
 version = "0.1.0"
 edition = "2021"
-description = "Spec-faithful REFERENCE implementation of the Hermine lattice threshold signature, pinned to the Lean spec in metatheory/Dregg2/Crypto/{HermineThreshold,HermineExtractor}.lean. Trusted dealer, reference PRNG (no CSPRNG, not constant-time), realistic-ward params (n=64, Dilithium prime), NOT deployment-grade."
+description = "Spec-faithful REFERENCE implementation of the Hermine lattice threshold signature, pinned to the Lean spec in metatheory/Dregg2/Crypto/{HermineThreshold,HermineExtractor}.lean. Trusted dealer; a reference splitmix64 path for the deterministic algebra tests PLUS a hardened path — a ChaCha20 CSPRNG driving a constant-time (fixed-point integer CDT) Gaussian sampler; realistic-ward params (n=64, Dilithium prime). Still pre-audit, NOT deployment-grade."
 license = "AGPL-3.0-only"
 publish = false
 
@@ -11,5 +11,10 @@ publish = false
 [workspace]
 
 [dependencies]
-# Intentionally none: the reference is pure module algebra over R_q, and the
-# deterministic sampling/challenge helpers are toy (documented at the seam).
+# Production-hardening deps for the CSPRNG + constant-time Gaussian sampler
+# (all pure-Rust, no C). rand_chacha = a real ChaCha20 CSPRNG; subtle = constant-
+# time primitives for the data-independent (fixed-point) CDT scan. The reference
+# splitmix64 + binary-search path remains for the deterministic algebra tests.
+rand_chacha = "0.3"
+rand_core = "0.6"
+subtle = "2"
