@@ -362,3 +362,18 @@ Two sequential gates on one pipeline:
   single-machine (3/3). Real turn finalized cross-machine once. Sustained cross-machine finality = a
   REAL finding, characterized + surfaced (not papered). The live deploy DISCOVERED a real Rust-executor
   consensus bug — the differential doing its job.
+
+## ✅ CROSS-MACHINE FINDING RESOLVED (90b71dd95) — perf, NOT a soundness break
+- THE VERIFIED EXECUTOR IS BYTE-IDENTICAL CROSS-PLATFORM: cell 0a0b3c0b state_commitment eff88f02...,
+  balance 5000 IDENTICAL on hbox (Linux release+seed) AND nextop (Darwin debug+seed); per-turn post-states
+  match. The two Lean seeds are DETERMINISTIC cross-platform. Committed state NOT corrupted. (Strong result.)
+- Finality CRAWLS not deadlocks (h advanced 1→3). Same O(history) per-poll cost recurring under
+  cross-machine churn (the exact-match cross-poll cache misses under lace growth). rust_len=0 = benign
+  differential-observability artifact (Rust sorts seq≠topo). SWAP inversion = a real but CONTAINED Rust-
+  executor bug (Lean authoritative wins, state byte-identical). Prefix-shifts absorbed correctly (identity cursor).
+- FIX DIRECTION (ember's call, design-only): (1) incremental verified tau-order across polls (reuse
+  verified prefix on lace growth); (2) bound the FFI off the serial executor (timeout→already-computed
+  order); (3) Rust differential in topological order (observability); (4) SWAP-inversion golden.
+- NOW: config-only capstone test — restart the mesh with a SLOWER block cadence so the verified gate
+  keeps pace → re-run the client turn → does it finalize cross-machine? (no consensus change; validates
+  the crawl-keeps-pace diagnosis).
