@@ -1,0 +1,51 @@
+# forge-ci-runner — "check, don't trust" CI for the dregg-native forge.
+#
+# TWO FACES OF ONE CONFINED-RUN CORE:
+#   * L2 `run_check_confined` — run a required check inside a macOS-Seatbelt
+#     confined subprocess (firmament `spawn_pd_confined_exec`), digest its output,
+#     and commit the result as a `dregg_doc::CiVerdict` bound INSIDE a signed
+#     genesis turn (the work-binding attestation the forge gate `CiRun` verifies).
+#   * L3 `reexecute_and_verify` — re-run the SAME command in a FRESH confinement
+#     and compare to the verdict. A host can SIGN a well-formed verdict, but
+#     re-execution CONVICTS it (`AuditVerdict::HostLied`) if it lied. This is the
+#     non-circular audit.
+#
+# STANDALONE by design (mirrors `sel4/dregg-firmament` + `deos-homeserver`): this
+# crate is its OWN workspace root (the empty `[workspace]` below), path-depending
+# on the REAL `dregg-doc` (features=substrate — the genuine CiVerdict + signed
+# genesis-turn commit path) and `dregg-firmament` (features=process-pd-sandbox —
+# the genuine macOS Seatbelt confinement). It is in the repo-root `Cargo.toml`
+# `exclude` list, so `cargo build/test --workspace` at the root never pulls it.
+[workspace]
+
+# THE FORK SEAM — replicated from `sel4/dregg-firmament/Cargo.toml`. Because this
+# crate is its own workspace root, the repo-root `[patch]` does NOT apply, so the
+# transitive `dregg-circuit`/`dregg-hints` (via `dregg-doc` → `dregg-turn`) must be
+# pointed at the SAME local forks the root + firmament use. Relative depth here is
+# `../../` (forge-ci-runner → breadstuffs → dev). Keep in sync with firmament.
+[patch."https://github.com/emberian/plonky3-recursion"]
+p3-recursion = { path = "../../plonky3-recursion/recursion" }
+p3-circuit = { path = "../../plonky3-recursion/circuit" }
+p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
+p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+[package]
+name = "forge-ci-runner"
+version = "0.1.0"
+edition = "2021"
+publish = false
+description = "Confined CI runner (work-binding CiVerdict) + re-executor (catches a lying host) — the two faces of one macOS-Seatbelt confined-run core."
+
+[dependencies]
+# The REAL work-binding CI attestation + signed genesis-turn commit path.
+dregg-doc = { path = "../dregg-doc", features = ["substrate"] }
+# The REAL macOS-Seatbelt confinement (spawn_pd_confined_exec + Confinement).
+dregg-firmament = { path = "../sel4/dregg-firmament", features = ["process-pd-sandbox"] }
+# Name `TurnReceipt`/`TurnError` in the public API (SAME crate dregg-doc rides).
+dregg-turn = { path = "../turn" }
+# The output/confinement digests (same hash the CiVerdict machinery uses).
+blake3 = "1"
