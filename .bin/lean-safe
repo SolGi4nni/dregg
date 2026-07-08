@@ -1,0 +1,19 @@
+#!/usr/bin/env bash
+# Memory-guarded lake/lean build. Kills any lean/lake child exceeding CAP_GB RSS so a
+# pathological elaboration is killed instead of OOM-rebooting the machine.
+CAP_GB="${CAP_GB:-12}"; CAP_KB=$(( CAP_GB * 1024 * 1024 ))
+"$@" &
+BUILD_PID=$!
+( while kill -0 "$BUILD_PID" 2>/dev/null; do
+    # match EXACT executable basename lean/lake (not substrings like "Cleanup")
+    ps -Ao pid=,rss=,comm= | awk -v cap="$CAP_KB" '{ n=split($3,a,"/"); base=a[n] } (base=="lean"||base=="lake") && $2>cap { print $1, $2 }' \
+      | while read pid rss; do
+          echo "[lean-safe] KILL pid=$pid rss=$((rss/1024/1024))GB > ${CAP_GB}GB cap" >&2
+          kill -9 "$pid" 2>/dev/null
+        done
+    sleep 2
+  done ) &
+WATCH_PID=$!
+wait "$BUILD_PID"; rc=$?
+kill "$WATCH_PID" 2>/dev/null
+exit $rc

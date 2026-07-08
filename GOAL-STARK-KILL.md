@@ -318,3 +318,19 @@ HARVESTED (on-disk edits survived the reboot; verified sequentially, memory-capp
   DO NOT resume as concurrent Lean swarms — finish sequentially.
 - final-flips (wf_0438144d-602) also OOM-died with consumer-crate edits on disk (uncommitted, GATED
   on the descriptors being fixed — do not commit until the 7 held fixes land).
+
+## ⚑⚑ LEAN TRACTABILITY DISCIPLINE (2026-07-08) — the 80GB-per-process bug
+ember: individual lean processes hit 80GB+ (NOT concurrency) → hard reboot. CAUSE: fix-lanes wrote
+`#guard decide (…)` / `by decide` over HEAVY computation — Poly.eval over BabyBear field arithmetic and
+26KB emitVmJson2 descriptor structures. `decide` forces the KERNEL to fully reduce the Decidable
+instance → materializes enormous terms → 80GB. (Adjacency/NonRev/NoteSpend built fine: their decides
+were small structural props.)
+STANDING RULES:
+1. NEVER `decide`/`native_decide` on heavy computation (emitVmJson2, descriptor structs, Poly.eval over
+   field elements). Use COMPILED `#guard (a == b)` (a Bool, run by the compiler NOT the kernel) or `#eval`
+   or a structural simp/rfl proof. `decide` is ONLY for small finite props that reduce trivially.
+   FIX PATTERN: `#guard decide (X = 0)` → `#guard (X == 0)`.
+2. EVERY build memory-capped: run via `.bin/lean-safe lake build …` (CAP_GB=12, RSS watchdog kills a
+   runaway lean/lake before it reboots the box). NEVER a bare unbounded lake build.
+3. Tractability review BEFORE build — a `#guard decide(bigterm)` / `by decide` over field arith is a
+   red flag caught by READING, not at reboot.
