@@ -62,11 +62,10 @@
 //! comparison MEANINGFUL by binding the attestation to (this code, this command,
 //! a real signature) — see the crate report.
 
-use std::collections::HashSet;
-
 use crate::atom::{AtomId, Author};
 use crate::executor_drive::ExecutorDrivenDoc;
 use crate::patch::Patch;
+use dregg_commit::merkle::{MerkleProof, MerkleTree, NonMembershipProof};
 use dregg_turn::{TurnError, TurnReceipt};
 
 /// The fixed author of every CI-run commit patch. The CI-run region cell is
@@ -195,32 +194,143 @@ pub fn ci_nullifier(base_fold_root: [u8; 32], verdict: &CiVerdict) -> [u8; 32] {
     *h.finalize().as_bytes()
 }
 
-/// The in-process consumed-nullifier set threaded through
-/// [`crate::PullRequest::land_checked`]. Represents the forge's durable
-/// nullifier store for one base lineage; a real cross-node deployment replaces
-/// this with a committed accumulator (the durable seam — see the crate report).
-#[derive(Clone, Debug, Default)]
-pub struct CiNullifierSet {
-    consumed: HashSet<[u8; 32]>,
+/// THE COMMITTED anti-replay accumulator for CI-run nullifiers — the durable
+/// cross-node seam, closed.
+///
+/// Each consumed [`ci_nullifier`]`(base fold, verdict)` is a leaf of the
+/// production sorted 4-ary Merkle accumulator ([`dregg_commit::MerkleTree`]):
+///
+/// - [`root`](Self::root) is the committed digest of the WHOLE consumed set —
+///   the shareable state a federation commits so a replay is refused mesh-wide,
+///   not merely within one process. It is a pure function of the leaf SET, so
+///   two nodes that consumed the same nullifiers in ANY order commit the SAME
+///   root (the cross-node-shareable property).
+/// - [`contains`](Self::contains) is decided by the committed structure itself
+///   (the sorted leaf map that defines the root), not a parallel side set.
+/// - [`insert`](Self::insert) adds a leaf and advances the committed root.
+///
+/// A light client / another node that holds only `root()` verifies a nullifier
+/// WAS consumed via [`membership_proof`](Self::membership_proof) (checked with
+/// [`verify_membership`](Self::verify_membership)) or was NOT yet consumed via
+/// [`non_membership_proof`](Self::non_membership_proof) (checked with
+/// [`verify_non_membership`](Self::verify_non_membership)) — without holding the
+/// whole set. The sorted-Merkle construction offers a genuine NON-membership
+/// proof, so "this verdict was never consumed against this root" is client-
+/// verifiable, not a named seam.
+#[derive(Clone, Debug)]
+pub struct CiNullifierAccumulator {
+    tree: MerkleTree,
 }
 
-impl CiNullifierSet {
-    /// A fresh, empty consumed-set.
+impl CiNullifierAccumulator {
+    /// A fresh, empty committed accumulator (root = the canonical empty root).
     pub fn new() -> Self {
-        CiNullifierSet {
-            consumed: HashSet::new(),
+        CiNullifierAccumulator {
+            tree: MerkleTree::new(),
         }
     }
 
-    /// Whether `nullifier` has already been consumed.
+    /// The committed root over the consumed-nullifier set — the cross-node
+    /// shareable state. Deterministic in the leaf SET (order-independent).
+    pub fn root(&self) -> [u8; 32] {
+        self.tree.root_immutable()
+    }
+
+    /// Whether `nullifier` has already been consumed — decided by the committed
+    /// tree's own leaf set (not a naive side lookup).
+    pub fn contains(&self, nullifier: &[u8; 32]) -> bool {
+        self.tree.contains_hash(nullifier)
+    }
+
+    /// Consume `nullifier`, advancing the committed root. Returns the new root.
+    pub fn insert(&mut self, nullifier: [u8; 32]) -> [u8; 32] {
+        self.tree.insert_hash(nullifier)
+    }
+
+    /// Number of consumed nullifiers.
+    pub fn len(&self) -> usize {
+        self.tree.len()
+    }
+
+    /// Whether no nullifier has been consumed yet.
+    pub fn is_empty(&self) -> bool {
+        self.tree.is_empty()
+    }
+
+    /// A membership proof a light client verifies against the shared
+    /// [`root`](Self::root) to confirm a nullifier WAS consumed, without holding
+    /// the whole set. `None` if the nullifier is not present.
+    pub fn membership_proof(&self, nullifier: &[u8; 32]) -> Option<MerkleProof> {
+        self.tree.membership_proof_hash(nullifier)
+    }
+
+    /// A non-membership proof a light client verifies against
+    /// [`root`](Self::root) to confirm a nullifier was NOT yet consumed (so a
+    /// fresh verdict can safely land). `None` if the nullifier IS present.
+    pub fn non_membership_proof(&self, nullifier: &[u8; 32]) -> Option<NonMembershipProof> {
+        self.tree.non_membership_proof_hash(nullifier)
+    }
+
+    /// Verify a membership proof against a (possibly shared) committed root.
+    pub fn verify_membership(root: &[u8; 32], proof: &MerkleProof) -> bool {
+        MerkleTree::verify_membership(root, proof)
+    }
+
+    /// Verify a non-membership proof against a (possibly shared) committed root.
+    pub fn verify_non_membership(root: &[u8; 32], proof: &NonMembershipProof) -> bool {
+        MerkleTree::verify_non_membership(root, proof)
+    }
+}
+
+impl Default for CiNullifierAccumulator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+/// The consumed-nullifier store threaded through
+/// [`crate::PullRequest::land_checked`]. Now backed by the COMMITTED
+/// [`CiNullifierAccumulator`] (was an in-process `HashSet`): the CI-grade land
+/// path rides a real shareable root, so a replayed verdict is refused against a
+/// committed cross-node state, not merely within one process. The `contains` /
+/// `consume` surface `land_checked` uses is unchanged — the migration is
+/// transparent to callers, and [`root`](Self::root) exposes the shareable state.
+#[derive(Clone, Debug, Default)]
+pub struct CiNullifierSet {
+    consumed: CiNullifierAccumulator,
+}
+
+impl CiNullifierSet {
+    /// A fresh, empty consumed-set (an empty committed accumulator).
+    pub fn new() -> Self {
+        CiNullifierSet {
+            consumed: CiNullifierAccumulator::new(),
+        }
+    }
+
+    /// Whether `nullifier` has already been consumed (committed-structure check).
     pub fn contains(&self, nullifier: &[u8; 32]) -> bool {
         self.consumed.contains(nullifier)
     }
 
-    /// Consume `nullifier`; returns `true` if it was newly consumed, `false` if
-    /// it had already been consumed (a replay).
+    /// Consume `nullifier`, advancing the committed root; returns `true` if it
+    /// was newly consumed, `false` if it had already been consumed (a replay).
     pub fn consume(&mut self, nullifier: [u8; 32]) -> bool {
-        self.consumed.insert(nullifier)
+        let newly = !self.consumed.contains(&nullifier);
+        self.consumed.insert(nullifier);
+        newly
+    }
+
+    /// The committed root over the consumed nullifiers — the cross-node
+    /// shareable state (see [`CiNullifierAccumulator`]).
+    pub fn root(&self) -> [u8; 32] {
+        self.consumed.root()
+    }
+
+    /// Borrow the underlying committed accumulator (for membership /
+    /// non-membership proofs a light client verifies against [`root`](Self::root)).
+    pub fn accumulator(&self) -> &CiNullifierAccumulator {
+        &self.consumed
     }
 }
 
@@ -234,4 +344,144 @@ fn hex_encode(bytes: &[u8]) -> String {
         s.push(HEX[(b & 0x0f) as usize] as char);
     }
     s
+}
+
+#[cfg(test)]
+mod committed_nullifier_tests {
+    //! THE COMMITTED anti-replay accumulator, four poles: a fresh nullifier
+    //! lands and advances the root; a replay is refused with the root unchanged;
+    //! two distinct verdicts give two distinct insertable nullifiers; and the
+    //! committed root is deterministic in the leaf SET (the cross-node-shareable
+    //! property). Plus a membership / non-membership proof round-trip, so a light
+    //! client verifies "consumed" / "not consumed" against the shared root alone.
+    use super::*;
+
+    /// A verdict distinguished by `command_id` (every field is otherwise fixed);
+    /// distinct `tag`s yield distinct canonical encodings, hence distinct nullifiers.
+    fn verdict(tag: u8) -> CiVerdict {
+        CiVerdict {
+            input_root: [0x11; 32],
+            command_id: [tag; 32],
+            confinement_id: [0x33; 32],
+            exit_code: 0,
+            output_digest: [0x44; 32],
+        }
+    }
+
+    const BASE: [u8; 32] = [0x55; 32];
+
+    // POLE (i): a fresh verdict's nullifier — contains==false → insert → after,
+    // contains==true and the committed root CHANGED.
+    #[test]
+    fn fresh_nullifier_lands_and_advances_root() {
+        let mut acc = CiNullifierAccumulator::new();
+        let nf = ci_nullifier(BASE, &verdict(1));
+
+        assert!(!acc.contains(&nf), "a fresh nullifier is not consumed");
+        let root_before = acc.root();
+
+        acc.insert(nf);
+
+        assert!(acc.contains(&nf), "after insert the nullifier is consumed");
+        assert_ne!(root_before, acc.root(), "the committed root advanced");
+    }
+
+    // POLE (ii): replay the SAME verdict → contains==true → the `consume` path
+    // reports it as a replay and the committed root is UNCHANGED by the re-insert.
+    #[test]
+    fn replay_is_refused_root_unchanged() {
+        let mut set = CiNullifierSet::new();
+        let nf = ci_nullifier(BASE, &verdict(1));
+
+        assert!(set.consume(nf), "first consume is newly-consumed");
+        let root_after_first = set.root();
+        assert!(set.contains(&nf), "the nullifier is now consumed");
+
+        // The replay: consume reports NOT-newly-consumed, root does not move.
+        assert!(!set.consume(nf), "a replay is reported as already-consumed");
+        assert_eq!(
+            root_after_first,
+            set.root(),
+            "re-inserting an existing nullifier leaves the committed root fixed"
+        );
+    }
+
+    // POLE (iii): two DIFFERENT verdicts → two distinct nullifiers, both
+    // insertable, the root advances on EACH (no collision).
+    #[test]
+    fn two_distinct_verdicts_both_insertable() {
+        let nf_a = ci_nullifier(BASE, &verdict(1));
+        let nf_b = ci_nullifier(BASE, &verdict(2));
+        assert_ne!(nf_a, nf_b, "distinct verdicts give distinct nullifiers");
+
+        let mut acc = CiNullifierAccumulator::new();
+        let r0 = acc.root();
+        acc.insert(nf_a);
+        let r1 = acc.root();
+        acc.insert(nf_b);
+        let r2 = acc.root();
+
+        assert_ne!(r0, r1, "first insert advanced the root");
+        assert_ne!(r1, r2, "second insert advanced the root again");
+        assert!(
+            acc.contains(&nf_a) && acc.contains(&nf_b),
+            "both are consumed"
+        );
+        assert_eq!(acc.len(), 2, "no collision — two distinct leaves");
+    }
+
+    // POLE (iv): the committed root is deterministic — the SAME leaf set commits
+    // the SAME root regardless of INSERT ORDER (the cross-node-shareable property:
+    // two federation nodes that consumed the same nullifiers agree on the root).
+    #[test]
+    fn committed_root_is_order_independent() {
+        let nf_a = ci_nullifier(BASE, &verdict(1));
+        let nf_b = ci_nullifier(BASE, &verdict(2));
+
+        let mut node1 = CiNullifierAccumulator::new();
+        node1.insert(nf_a);
+        node1.insert(nf_b);
+
+        let mut node2 = CiNullifierAccumulator::new();
+        node2.insert(nf_b); // reverse order
+        node2.insert(nf_a);
+
+        assert_eq!(
+            node1.root(),
+            node2.root(),
+            "same consumed SET → same committed root, independent of order"
+        );
+    }
+
+    // A light client holding ONLY the root verifies "consumed" (membership) and
+    // "not consumed" (non-membership) without holding the whole set.
+    #[test]
+    fn client_verifies_membership_and_non_membership_against_root() {
+        let mut acc = CiNullifierAccumulator::new();
+        let consumed = ci_nullifier(BASE, &verdict(1));
+        let fresh = ci_nullifier(BASE, &verdict(2));
+        acc.insert(consumed);
+
+        let root = acc.root();
+
+        let mp = acc
+            .membership_proof(&consumed)
+            .expect("consumed → proof exists");
+        assert!(
+            CiNullifierAccumulator::verify_membership(&root, &mp),
+            "membership proof verifies against the shared root"
+        );
+
+        let nmp = acc
+            .non_membership_proof(&fresh)
+            .expect("fresh → non-membership proof exists");
+        assert!(
+            CiNullifierAccumulator::verify_non_membership(&root, &nmp),
+            "non-membership proof verifies against the shared root"
+        );
+        // A consumed nullifier has no non-membership proof; a fresh one has no
+        // membership proof — the proofs are exclusive.
+        assert!(acc.non_membership_proof(&consumed).is_none());
+        assert!(acc.membership_proof(&fresh).is_none());
+    }
 }

@@ -204,7 +204,8 @@ pub use ci_assurance::{
 };
 #[cfg(feature = "substrate")]
 pub use ci_verdict::{
-    CiNullifierSet, CiVerdict, ci_nullifier, ci_run_patch, planned_ci_run_hash, run_ci_verdict,
+    CiNullifierAccumulator, CiNullifierSet, CiVerdict, ci_nullifier, ci_run_patch,
+    planned_ci_run_hash, run_ci_verdict,
 };
 pub use commit::{Commitment, commit};
 pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};

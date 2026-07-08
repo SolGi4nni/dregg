@@ -56,7 +56,7 @@ cell-heap = ["dep:dregg-cell", "dep:blake3"]
 # through the real `TurnExecutor` (cap-gated, finalized, journaled), producing a
 # real `dregg_turn::TurnReceipt`. The receipt IS the provenance: no more stand-in
 # `PatchId` for who-wrote-what. That is why `dregg-turn` is pulled in here.
-substrate = ["cell-heap", "dep:dregg-turn"]
+substrate = ["cell-heap", "dep:dregg-turn", "dep:dregg-commit"]
 
 # `rope` welds the patch core onto a `ropey::Rope`-backed editor buffer — the
 # rope<->patch BRIDGE the editor needs (DOCUMENT-LANGUAGE.md §4.1, APPS-AS-CELLS.md
@@ -84,6 +84,13 @@ dregg-cell = { path = "../cell", optional = true }
 # turn (DOCUMENT-LANGUAGE.md §1.1). Same cross-workspace path-dep resolution as
 # `dregg-cell` (turn resolves its own workspace inheritance from `../Cargo.toml`).
 dregg-turn = { path = "../turn", optional = true }
+# The REAL committed accumulator (optional, behind `substrate`): the production
+# sorted 4-ary Merkle tree (`dregg_commit::merkle::MerkleTree`) that backs the
+# CI anti-replay nullifier store (`CiNullifierAccumulator`) with a shareable
+# committed root + membership / non-membership proofs. ALREADY in the substrate
+# dep tree (`dregg-turn` depends on `dregg-commit`), so this adds no new
+# transitive dependency; with the feature OFF the core pulls in nothing.
+dregg-commit = { path = "../commit", optional = true }
 # The leaf-digest hash for the heap projection (32-byte leaf values that bind
 # provenance). `blake3` is ALREADY in the substrate dep tree via `dregg-cell`,
 # so gating it on `substrate` adds no new transitive dependency; with the
