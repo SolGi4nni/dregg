@@ -29,7 +29,7 @@ hybrid's PQ slot once it earns deployment-grade maturity + audit.
   assumed). `MSISHard ⟹ no forgery`.
 - lossiness is **proved** by the pigeonhole (`HermineLossiness`); invertibility is **proved** at n=2
   (`HermineInvertibility`, a field) and reduced to nonzero-per-CRT-factor at general n
-  (`InvertibilityCRT`), with the norm-bound number-theory **proved at n=4/q=5** (`InvertibilityNorm`).
+  (`InvertibilityCRT`), with the **parametric** min-norm lemma `q^(d/n)`-shape **proved for all odd primes at n=2 and n=4-linear-split** (`InvertibilityNorm`, `InvertibilityNormGen`), no decide.
 - fires on real numbers (`HermineConcrete`).
 
 **Key-hiding — signing does not leak the secret** (`Smudging`, `HermineHiding`, `RenyiHiding`):
@@ -60,13 +60,14 @@ hybrid's PQ slot once it earns deployment-grade maturity + audit.
 **Irreducible** (assumed, never proved — the shared floor of all lattice crypto, FIPS ML-DSA included):
 MLWE and MSIS hardness (`Lattice.MSISHard` / `MLWESearchHard`).
 
-**The single open lemma — full general-n Lyubashevsky–Seiler invertibility.** Challenge-difference
-invertibility is proved at n=2 (all q≡3 mod 4) and n=4/q=5, and *reduced* to its number-theoretic core
-for general n (a low-∞-norm nonzero element does not vanish mod any degree-d factor of `Xⁿ+1`). The
-fully-general arbitrary-(n,q) bound — the tight `q^(d/n)` coefficient estimate over the cyclotomic
-factorization mod q — is the one genuinely-hard residual; the frameworks and concrete cases are proved,
-the general estimate is research-level (and light on Mathlib support). This is the honest edge of the
-stack, not a dodge: everything provable with current tooling is proved.
+**The single open lemma — general-n Lyubashevsky–Seiler at d≥2 factors.** Challenge-difference
+invertibility is proved *parametrically* (no decide) for **every odd prime at n=2** — the `q^(d/n)`-shape
+min-norm bound `minNorm_linear_factor` for linear (d=1) factors, plus the split-vs-inert dichotomy via a
+constructed CRT iso — and for **n=4 linear-split** (q≡1 mod 8). What remains is the general **degree-d≥2**
+factor case: the two-squares argument that carries d=1 is special to `ℤ[i] ⊆ ℤ[ζ_2n]`, and the general
+degree-d min-norm needs Lyubashevsky–Seiler's complex-resultant bound, for which Mathlib has no
+infrastructure. That single case (and q≡5 mod 8 at n=4, still decide-only) is the honest edge — everything
+provable with current tooling is proved.
 
 Non-Lean deployment gaps (not ours to prove): a full side-channel audit of `crypto-hermine`, full-size
 (n≥256) parameters, and external cryptanalysis of Hermine — exactly why it belongs *inside the hybrid*
