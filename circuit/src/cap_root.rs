@@ -519,7 +519,18 @@ impl CanonicalCapTree {
     /// exists. The sorted-tree placement is by `slot_hash` ordering, so this
     /// is the canonical position the membership path opens.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        self.sorted_leaves.iter().position(|l| l.slot_hash == key)
+        // `sorted_leaves` is ordered by `slot_hash.as_u32()`. Binary-search for
+        // the first leaf with that key (O(log n)); returns its index only on an
+        // exact hit — identical to the former first-match linear scan.
+        let needle = key.as_u32();
+        let i = self
+            .sorted_leaves
+            .partition_point(|l| l.slot_hash.as_u32() < needle);
+        if i < self.sorted_leaves.len() && self.sorted_leaves[i].slot_hash.as_u32() == needle {
+            Some(i)
+        } else {
+            None
+        }
     }
 
     /// Generate a Merkle **membership** path for the leaf at the given padded
@@ -778,8 +789,10 @@ impl CanonicalCapTree {
         // and successor exist in the sorted BEFORE leaves.
         let succ_pos = self
             .sorted_leaves
-            .iter()
-            .position(|l| l.slot_hash.as_u32() > key.as_u32())?;
+            .partition_point(|l| l.slot_hash.as_u32() <= key.as_u32());
+        if succ_pos == self.sorted_leaves.len() {
+            return None;
+        }
         if succ_pos == 0 {
             return None; // unreachable (MIN sentinel sorts first) — defensive.
         }

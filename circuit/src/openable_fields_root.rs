@@ -228,7 +228,11 @@ impl OpenableFieldsTree {
     /// leaf whose `key_hash == key`, or `None` if no such (non-padding) leaf
     /// exists.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        self.sorted_leaves.iter().position(|l| l.key_hash == key)
+        // `sorted_leaves` is sorted+deduped by `key_hash.as_u32()`, so an exact
+        // match is a binary search — O(log n) vs the former O(n) scan.
+        self.sorted_leaves
+            .binary_search_by(|l| l.key_hash.cmp(&key))
+            .ok()
     }
 
     /// Generate a Merkle membership path for the leaf at the given padded

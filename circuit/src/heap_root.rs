@@ -257,7 +257,12 @@ impl CanonicalHeapTree {
     /// leaf whose `addr == key`, or `None` if no such (non-padding) leaf
     /// exists.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        self.sorted_leaves.iter().position(|l| l.addr == key)
+        // `sorted_leaves` is sorted+deduped by `addr` (BabyBear `Ord` agrees
+        // with the `as_u32` sort key for canonical values), so an exact hit is a
+        // binary search — O(log n) vs the former O(n) scan.
+        self.sorted_leaves
+            .binary_search_by(|l| l.addr.cmp(&key))
+            .ok()
     }
 
     /// Generate a Merkle **membership** path for the leaf at the given padded
@@ -376,7 +381,14 @@ impl CanonicalHeapTree {
             return None;
         }
         // Insertion position in the sentinel-bracketed sorted leaf list.
-        let pos = self.sorted_leaves.iter().position(|l| l.addr > key)?;
+        // First index whose `addr > key`, found by binary search on the sorted
+        // leaves (O(log n)). `partition_point` returns `len` when no such leaf
+        // exists (only when `key >= SENTINEL_MAX`), matching the old
+        // `position(...)?` early-return.
+        let pos = self.sorted_leaves.partition_point(|l| l.addr <= key);
+        if pos == self.sorted_leaves.len() {
+            return None;
+        }
         let new_real: Vec<HeapLeaf> = self.sorted_leaves[..pos]
             .iter()
             .chain(std::iter::once(&new_leaf))
@@ -698,7 +710,12 @@ impl CanonicalHeapTree8 {
 
     /// The padded-level position of the leaf whose `addr == key`, or `None`.
     pub fn position_of(&self, key: BabyBear) -> Option<usize> {
-        self.sorted_leaves.iter().position(|l| l.addr == key)
+        // `sorted_leaves` is sorted+deduped by `addr` (BabyBear `Ord` agrees
+        // with the `as_u32` sort key for canonical values), so an exact hit is a
+        // binary search — O(log n) vs the former O(n) scan.
+        self.sorted_leaves
+            .binary_search_by(|l| l.addr.cmp(&key))
+            .ok()
     }
 
     /// The 8-felt membership path `(siblings8, directions)` for the leaf at
@@ -751,7 +768,14 @@ impl CanonicalHeapTree8 {
         if self.position_of(key).is_some() {
             return None;
         }
-        let pos = self.sorted_leaves.iter().position(|l| l.addr > key)?;
+        // First index whose `addr > key`, found by binary search on the sorted
+        // leaves (O(log n)). `partition_point` returns `len` when no such leaf
+        // exists (only when `key >= SENTINEL_MAX`), matching the old
+        // `position(...)?` early-return.
+        let pos = self.sorted_leaves.partition_point(|l| l.addr <= key);
+        if pos == self.sorted_leaves.len() {
+            return None;
+        }
         let new_real: Vec<HeapLeaf> = self.sorted_leaves[..pos]
             .iter()
             .chain(std::iter::once(&new_leaf))
