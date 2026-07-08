@@ -373,6 +373,43 @@ impl EmbeddedExecutor {
         self.cell_id
     }
 
+    /// ROUTE (ii), app-framework side — install a HOST executor signing seed on
+    /// the embedded runtime, so every subsequently COMMITTED receipt carries a
+    /// genuine Ed25519 `executor_signature` over
+    /// [`dregg_turn::TurnReceipt::canonical_executor_signed_message`]
+    /// (dregg-turn Stage 9 R-4). This is the app-layer mirror of
+    /// [`dregg_sdk::AgentRuntime::set_executor_signing_key`]: a deos-app fire
+    /// path (`GatedAffordance::fire_through_executor_with` →
+    /// [`Self::submit_turn`]) then produces a FORGE-ADMISSIBLE receipt —
+    /// `dregg_turn::verify_receipt_signature_with_keys` against
+    /// [`Self::executor_pubkey`] passes, exactly the check a forge
+    /// `RequiredCheck::CommittedReceipt` runs. Additive + opt-in: without it the
+    /// runtime keeps today's UNSIGNED behaviour (`executor_signature == None`).
+    pub fn set_executor_signing_key(&self, seed: [u8; 32]) {
+        let mut rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+        rt.set_executor_signing_key(seed);
+    }
+
+    /// The Ed25519 executor PUBLIC key the embedded runtime signs receipts under
+    /// (derived from the installed seed via
+    /// [`dregg_sdk::executor_pubkey_from_seed`]), or `None` if no seed is
+    /// installed. A forge / auditor pins this in `trusted_executor_keys` to
+    /// admit this runtime's signed receipts.
+    pub fn executor_pubkey(&self) -> Option<[u8; 32]> {
+        let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+        rt.executor_pubkey()
+    }
+
+    /// The embedded runtime's current agent nonce — the value the next submitted
+    /// turn will ride (see [`Self::submit_turn_executed`], which sets
+    /// `turn.nonce = rt.nonce()`). Exposed so a caller can DETERMINISTICALLY
+    /// pre-image the next fire's `turn_hash` (naming a check turn before it runs,
+    /// the analogue of `dregg_doc::ExecutorDrivenDoc::planned_turn_hash`).
+    pub fn agent_nonce(&self) -> u64 {
+        let rt = self.runtime.lock().unwrap_or_else(|e| e.into_inner());
+        rt.nonce()
+    }
+
     /// THE SWAP — toggle producer mode on the embedded runtime (authority inversion).
     ///
     /// When enabled, every turn this executor submits is committed by the VERIFIED Lean executor

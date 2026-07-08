@@ -25,6 +25,16 @@ serde_json = { workspace = true }
 axum = "0.8"
 tokio = { version = "1", features = ["full"] }
 tower = "0.5"
+# The forge (dregg-doc, EXCLUDED own-workspace crate) with its executor-drive
+# substrate — for the `tests/forge_ci_weld.rs` binding: a CWM CI charter's signed
+# terminal `advance_step` receipt satisfies a forge `PullRequest`'s
+# `RequiredCheck::CommittedReceipt`. Consumed from WITHIN the parent workspace, so
+# the parent's `[patch]` (ark-serialize fork) governs its `substrate` graph;
+# dregg-turn/dregg-cell are already in CWM's tree, so this adds only dregg-doc.
+dregg-doc = { path = "../../dregg-doc", features = ["substrate"] }
+# For the explicit `verify_receipt_signature_with_keys` / `Finality` assertions in
+# the weld test (already in CWM's tree via app-framework -> dregg-sdk -> dregg-turn).
+dregg-turn = { path = "../../turn" }
 
 [lints]
 workspace = true

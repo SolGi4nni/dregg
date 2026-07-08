@@ -831,6 +831,74 @@ pub fn fire_advance_step(
     })
 }
 
+/// **Route (ii) for the CWM charter** — install the grain HOST's executor signing
+/// seed on the mandate cell's embedded executor, then [`fire_advance_step`]. The
+/// committed advance `TurnReceipt` is then `Finality::Final` AND carries a genuine
+/// Ed25519 `executor_signature` over the canonical executor-signed message —
+/// FORGE-ADMISSIBLE: a `dregg_doc::RequiredCheck::CommittedReceipt{turn_hash,
+/// [host_pubkey]}` (where `host_pubkey == dregg_sdk::executor_pubkey_from_seed(&seed)`)
+/// is satisfied by exactly this receipt. The seed install is idempotent (installing
+/// it before the TERMINAL fire is enough — only the terminal step's receipt is the
+/// forge's completion witness); the intermediate steps need no signature.
+///
+/// This mirrors `dregg_sdk::AgentRuntime::with_executor_signing_key` (the grain
+/// drive path) at the deos-app fire seam, so a CI charter's terminal `advance_step`
+/// directly produces the check receipt with NO bridging commit (the "one weld" of
+/// `docs/deos/DREGG-FORGE.md`).
+pub fn fire_advance_step_signed(
+    app: &DeosApp,
+    held: &AuthRequired,
+    actor_clearance: FieldElement,
+    cipherclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+    executor_signing_seed: [u8; 32],
+) -> Result<TurnReceipt, FireExecuteError> {
+    executor.set_executor_signing_key(executor_signing_seed);
+    fire_advance_step(app, held, actor_clearance, cipherclerk, executor)
+}
+
+/// **The deterministic pre-image of the NEXT `advance_step` turn's `turn_hash`** —
+/// the CWM analogue of `dregg_doc::ExecutorDrivenDoc::planned_turn_hash`, so a forge
+/// `RequiredCheck::committed_receipt(id, hash, [host_pubkey])` can NAME the terminal
+/// advance turn BEFORE it runs.
+///
+/// It reconstructs EXACTLY the turn [`fire_advance_step`] would drive against the
+/// mandate cell's LIVE state: the same `advance_step` action over
+/// [`advance_effects`] at `live_cursor + 1` (with `actor_clearance` +
+/// [`phase_label_for`]), wrapped by `AppCipherclerk::make_turn`, then normalized the
+/// way [`dregg_app_framework::EmbeddedExecutor::submit_turn`] normalizes it before
+/// committing (`fee = 10_000` when unset, `nonce = executor.agent_nonce()`). Turn
+/// construction is deterministic — the agent, nonce, effects, chain head, and the
+/// (deterministic Ed25519) action signature are all fixed by the current state — so
+/// driving that same fire next, with no interleaved turn, commits a receipt whose
+/// `turn_hash` equals this value.
+///
+/// `None` if the mandate cell has no live state in the embedded ledger. Call it
+/// immediately before the terminal [`fire_advance_step_signed`] (i.e. with the
+/// cursor one step from the charter terminal) to bind the forge check to the
+/// terminal turn.
+pub fn planned_advance_turn_hash(
+    app: &DeosApp,
+    cipherclerk: &AppCipherclerk,
+    executor: &EmbeddedExecutor,
+    actor_clearance: FieldElement,
+) -> Option<[u8; 32]> {
+    let cell = app.cells()[0].cell();
+    let live = executor.cell_state(cell)?;
+    let live_cursor = field_to_u64(&live.fields[STEP_CURSOR_SLOT as usize]);
+    let next = live_cursor + 1;
+    let effects = advance_effects(cell, next, actor_clearance, phase_label_for(next));
+    let action = cipherclerk.make_action(cell, "advance_step", effects);
+    let mut turn = cipherclerk.make_turn(action);
+    // Mirror `EmbeddedExecutor::submit_turn_executed`'s pre-commit normalization so
+    // the pre-image equals the committed receipt's `turn_hash`.
+    if turn.fee == 0 {
+        turn.fee = 10_000;
+    }
+    turn.nonce = executor.agent_nonce();
+    Some(turn.hash())
+}
+
 /// Read a `u64` from the last 8 big-endian bytes of a field element (the inverse of
 /// [`field_from_u64`] for the `STEP_CURSOR` the workflow stores).
 fn field_to_u64(f: &FieldElement) -> u64 {
