@@ -2991,7 +2991,12 @@ async fn post_submit_turn(
     let turn_hash_bytes = turn.hash();
     let turn_hash = hex_encode(&turn_hash_bytes);
 
-    let pre_ledger = s.ledger.clone();
+    // O(touched) atomic rollback: arm a per-turn undo journal instead of cloning
+    // the whole O(cells) ledger. The executor mutates `s.ledger` IN PLACE below;
+    // on the rare `append_receipt` failure the journal restores exactly the
+    // touched cells (byte-identical to the old `s.ledger = pre_ledger.clone()`),
+    // and on success it is dropped after the pre-turn actor/effect state is read.
+    s.ledger.begin_restore_point();
 
     // Execute the turn locally FIRST — through the ONE shared producer gate
     // (#171): same authoritative (Lean-producer-aware) path as the signed
@@ -3034,7 +3039,7 @@ async fn post_submit_turn(
             // effect-vm leg through the LEAN-emitted ROTATED descriptor — is built +
             // self-verified asynchronously off the lock by the prove pool below.
             if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
-                s.ledger = pre_ledger;
+                s.ledger.rollback_restore_point();
                 crate::metrics::inc_turns_executed("rejected");
                 drop(s);
                 return Ok(Json(SubmitTurnResponse {
@@ -3046,6 +3051,11 @@ async fn post_submit_turn(
                     error: Some(format!("receipt chain mismatch: {err}")),
                 }));
             }
+            // Receipt is on the chain: read the pre-turn actor/effect cells from
+            // the journal (the O(touched) stand-in for the old `pre_ledger` clone),
+            // then drop the journal — the in-place commit stands.
+            let pre_ledger = s.ledger.pre_turn_touched_ledger();
+            s.ledger.commit_restore_point();
             crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
             let receipt_hash = receipt.receipt_hash();
             // Gather the rotated attestation material from the REAL before/after
@@ -3172,6 +3182,9 @@ async fn post_submit_turn(
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            // The executor already rolled its own mutations back on rejection;
+            // just drop the (unused) journal.
+            s.ledger.commit_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::note_turn_rejected(&reason);
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -3186,6 +3199,7 @@ async fn post_submit_turn(
             }))
         }
         _ => {
+            s.ledger.commit_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             drop(s);
             Ok(Json(SubmitTurnResponse {
@@ -3297,7 +3311,9 @@ async fn post_submit_signed_turn(
         }));
     }
 
-    let pre_ledger = s.ledger.clone();
+    // O(touched) atomic rollback: arm an undo journal instead of cloning the
+    // whole O(cells) ledger up front.
+    s.ledger.begin_restore_point();
     // ONE executor gate (#171): the remote signed envelope executes through the
     // same producer-aware path as local thin-HTTP turns and finalized turns —
     // a remote agent's turn is covered by the verified Lean producer exactly
@@ -3320,46 +3336,36 @@ async fn post_submit_signed_turn(
     // MULTI-PARTY: consensus FINALIZATION is the SOLE authoritative application of a
     // client turn — `execute_finalized_turn` runs identically on every node and
     // provisions the actor (`provision_signer_actor_cell`) + destinations
-    // deterministically from the finalized turn's own data. Mutating the local
+    // deterministically from the finalized turn's own data. Committing the local
     // authoritative ledger HERE would advance the actor nonce / create cells
     // LOCAL-ONLY, so peers reject the finalized re-execution as nonce-replay /
     // destination-not-found — wedging cross-node commit (the exact faucet full-mode
-    // hazard). So in full mode we execute against a SCRATCH CLONE (with the actor
-    // cell provisioned, the IDENTICAL provisioning the finalized path applies)
-    // purely to build the HTTP receipt; the authoritative ledger is untouched until
-    // finalization. Solo (n=1) has no finalization pass, so it provisions the actor
-    // + commits authoritatively here.
-    let exec_result = if is_solo {
-        crate::blocklace_sync::provision_signer_actor_cell(&mut s.ledger, &signed.signer.0);
-        crate::blocklace_sync::provision_transfer_destinations(
-            &mut s.ledger,
-            &signed.turn.call_forest,
-        );
-        crate::executor_setup::execute_via_producer(
-            &executor,
-            &signed.turn,
-            &mut s.ledger,
-            lean_producer_enabled,
-        )
-    } else {
-        // The scratch clone carries the SAME provisioning the finalized path applies
-        // (`execute_finalized_turn`): the actor cell (fix 2b) AND any Transfer
-        // destination — so the receipt-only ingress execution reflects exactly the
-        // authoritative finalized outcome instead of rejecting on a not-yet-seen
-        // actor/destination. Identical functions, no drift (mirrors the faucet).
-        let mut scratch = s.ledger.clone();
-        crate::blocklace_sync::provision_signer_actor_cell(&mut scratch, &signed.signer.0);
-        crate::blocklace_sync::provision_transfer_destinations(
-            &mut scratch,
-            &signed.turn.call_forest,
-        );
-        crate::executor_setup::execute_via_producer(
-            &executor,
-            &signed.turn,
-            &mut scratch,
-            lean_producer_enabled,
-        )
-    };
+    // hazard). Both regimes execute IN PLACE under this exclusive write lock, with
+    // the IDENTICAL provisioning the finalized path applies; the difference is the
+    // FATE of the mutation (resolved just below):
+    //  * MULTI-PARTY rolls the journal back so the authoritative ledger ends
+    //    UNTOUCHED (the in-place run only built the HTTP receipt) — the O(touched)
+    //    stand-in for the old full SCRATCH CLONE, byte-identical outcome.
+    //  * SOLO (n=1) has no finalization pass, so it keeps the in-place commit
+    //    authoritatively (rolled back only if the receipt-chain append fails).
+    crate::blocklace_sync::provision_signer_actor_cell(&mut s.ledger, &signed.signer.0);
+    crate::blocklace_sync::provision_transfer_destinations(&mut s.ledger, &signed.turn.call_forest);
+    let exec_result = crate::executor_setup::execute_via_producer(
+        &executor,
+        &signed.turn,
+        &mut s.ledger,
+        lean_producer_enabled,
+    );
+
+    // Capture the pre-turn actor/effect cells from the journal BEFORE resolving
+    // it (the O(touched) stand-in for the old full `pre_ledger` clone).
+    let pre_ledger = s.ledger.pre_turn_touched_ledger();
+    // MULTI-PARTY: restore the authoritative ledger to its pre-turn state NOW, so
+    // every subsequent path sees it untouched. SOLO keeps the journal armed and
+    // resolves it below on the receipt-append outcome.
+    if !is_solo {
+        s.ledger.rollback_restore_point();
+    }
 
     match exec_result {
         dregg_turn::TurnResult::Committed { mut receipt, .. } => {
@@ -3391,7 +3397,9 @@ async fn post_submit_signed_turn(
             // otherwise reject a client whose own chain differs from the node head).
             if is_operator_agent || is_solo {
                 if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
-                    s.ledger = pre_ledger;
+                    // SOLO: undo the in-place commit. MULTI-PARTY: already rolled
+                    // back above (no-op). Either way the ledger ends pre-turn.
+                    s.ledger.rollback_restore_point();
                     crate::metrics::inc_turns_executed("rejected");
                     drop(s);
                     return Ok(Json(SubmitSignedTurnResponse {
@@ -3407,6 +3415,9 @@ async fn post_submit_signed_turn(
                 }
                 crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
             }
+            // SOLO success: keep the in-place commit, drop the journal. (No-op
+            // under MULTI-PARTY, already resolved to untouched above.)
+            s.ledger.commit_restore_point();
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
                 &signed.turn,
@@ -3506,6 +3517,9 @@ async fn post_submit_signed_turn(
             }))
         }
         dregg_turn::TurnResult::Rejected { reason, .. } => {
+            // Drop the (unused) journal; the executor already restored its own
+            // mutations on rejection, and MULTI-PARTY was rolled back above.
+            s.ledger.commit_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::note_turn_rejected(&reason);
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
@@ -3522,6 +3536,7 @@ async fn post_submit_signed_turn(
             }))
         }
         _ => {
+            s.ledger.commit_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             drop(s);
             Ok(Json(SubmitSignedTurnResponse {
@@ -3820,7 +3835,10 @@ async fn post_submit_encrypted_turn(
     let expected_prev = s.cclerk.receipt_chain().last().map(|r| r.receipt_hash());
     seed_executor_receipt_head(&executor, encrypted.agent, expected_prev);
 
-    let pre_ledger = s.ledger.clone();
+    // O(touched) atomic rollback: arm an undo journal rather than cloning the
+    // whole O(cells) ledger. The executor mutates `s.ledger` in place; the
+    // journal restores exactly the touched cells if the receipt append fails.
+    s.ledger.begin_restore_point();
     let result = executor.apply_encrypted_turn(&encrypted, &sealer_secret, &mut s.ledger);
 
     match result {
@@ -3852,7 +3870,7 @@ async fn post_submit_encrypted_turn(
             // inline re-check. The composed proof (rotated effect-vm leg) is built +
             // self-verified asynchronously off the lock by the prove pool below.
             if let Err(err) = s.cclerk.append_receipt(receipt.clone()) {
-                s.ledger = pre_ledger;
+                s.ledger.rollback_restore_point();
                 crate::metrics::inc_turns_executed("rejected");
                 drop(s);
                 return Ok(Json(SubmitEncryptedTurnResponse {
@@ -3865,6 +3883,10 @@ async fn post_submit_encrypted_turn(
                     error: Some(format!("receipt chain mismatch: {err}")),
                 }));
             }
+            // Receipt is on the chain: read the pre-turn cells from the journal
+            // (the O(touched) stand-in for the old `pre_ledger` clone), drop it.
+            let pre_ledger = s.ledger.pre_turn_touched_ledger();
+            s.ledger.commit_restore_point();
             crate::metrics::set_receipt_chain_length(s.cclerk.receipt_chain_length() as f64);
             let receipt_hash = receipt.receipt_hash();
             let witness_outcome = match prepare_rotatable_turn(
@@ -3931,6 +3953,9 @@ async fn post_submit_encrypted_turn(
             }))
         }
         Err(reason) => {
+            // Drop the (unused) journal; the executor already restored its own
+            // mutations on rejection.
+            s.ledger.commit_restore_point();
             crate::metrics::inc_turns_executed("rejected");
             crate::metrics::record_turn_execution_duration(start.elapsed().as_secs_f64());
             drop(s);
@@ -6841,22 +6866,23 @@ async fn post_faucet(
     let turn_hash_bytes = faucet_turn.hash();
     let turn_hash_hex = hex_encode(&turn_hash_bytes);
 
-    // Pre-execution ledger snapshot for the witness revalidation below (the
-    // proof's pre-state must be captured BEFORE the executor mutates it).
-    let pre_ledger = s.ledger.clone();
+    // O(touched) atomic rollback: arm an undo journal rather than cloning the
+    // whole O(cells) ledger. Both regimes execute IN PLACE under this exclusive
+    // write lock; the fate of the mutation is resolved right after execution.
+    s.ledger.begin_restore_point();
     let lean_producer_enabled = s.lean_producer_enabled;
 
     // MULTI-PARTY: consensus FINALIZATION is the authoritative application of the
     // faucet turn (the SAME `execute_finalized_turn` runs on every node and emits
-    // the attested root). Eagerly committing here would mutate ONLY this node's
-    // ledger — advancing the faucet cell's nonce so the finalized re-execution is
-    // rejected as a "nonce replay", and creating the recipient cell only locally
-    // so PEERS reject the finalized Transfer as "destination not found" — both of
-    // which block cross-node commit (`latest_height` stuck at 0). So in full mode
-    // we execute against a SCRATCH CLONE purely to build the receipt/proof for the
-    // HTTP response, leaving the authoritative ledger untouched; the finalized
-    // executor then applies the turn uniformly on all nodes (it auto-materializes
-    // the Transfer destination identically on every node, see
+    // the attested root). Committing here would mutate ONLY this node's ledger —
+    // advancing the faucet cell's nonce so the finalized re-execution is rejected
+    // as a "nonce replay", and creating the recipient cell only locally so PEERS
+    // reject the finalized Transfer as "destination not found" — both of which
+    // block cross-node commit (`latest_height` stuck at 0). So in full mode the
+    // in-place run is purely to build the receipt/proof for the HTTP response, and
+    // the journal rolls it back below, leaving the authoritative ledger untouched;
+    // the finalized executor then applies the turn uniformly on all nodes (it
+    // auto-materializes the Transfer destination identically on every node, see
     // `provision_transfer_destinations` / `execute_finalized_turn`). Solo (n=1)
     // keeps the direct authoritative commit — it has no separate finalization pass
     // and already provisioned the faucet + recipient cells above.
@@ -6870,38 +6896,44 @@ async fn post_faucet(
             lean_producer_enabled,
         )
     } else {
-        // Full mode: receipt-only execution against a scratch clone; do NOT mutate
-        // the authoritative ledger (finalization is authoritative, cross-node). The
-        // scratch must carry the SAME provisioned destination the finalized executor
-        // will install on every node, or the receipt-building Transfer here would hit
-        // `TransferDestNotFound` and diverge from the authoritative outcome. We call
-        // the IDENTICAL provisioning function the finalized path uses, on the SAME
-        // call forest — so the receipt this node returns reflects exactly the
-        // authoritative finalized provisioning (one implementation, no drift).
-        let mut scratch = s.ledger.clone();
+        // Full mode: receipt-only IN-PLACE execution, rolled back below so the
+        // authoritative ledger ends untouched (finalization is authoritative,
+        // cross-node). Provision the Transfer destination — the IDENTICAL function
+        // the finalized path uses on the SAME call forest — so the receipt-building
+        // Transfer does not hit `TransferDestNotFound`; the provisioning is journaled
+        // and undone by the rollback.
         crate::blocklace_sync::provision_transfer_destinations(
-            &mut scratch,
+            &mut s.ledger,
             &faucet_turn.call_forest,
         );
-        // PIPELINING: this receipt-build runs against a clone of the AUTHORITATIVE
-        // ledger, whose faucet nonce only advances at finalization. For a turn
+        // PIPELINING: the faucet nonce only advances at finalization. For a turn
         // submitted before the prior finalizes, `faucet_nonce` (the reserved
-        // pipelined nonce) is ahead of that authoritative nonce, so the executor's
+        // pipelined nonce) is ahead of the authoritative nonce, so the executor's
         // exact nonce gate would reject the receipt build. Reflect the reserved
-        // nonce onto the scratch faucet cell so the receipt builds for the turn that
-        // WILL be valid at finalization (turns finalize in submission/tau order, each
-        // advancing the authoritative nonce to meet the next). The authoritative
-        // ledger is untouched; only this throwaway scratch is adjusted.
-        if let Some(cell) = scratch.get_mut(&faucet_cell_id) {
+        // nonce onto the faucet cell so the receipt builds for the turn that WILL be
+        // valid at finalization; this is journaled and restored by the rollback, so
+        // the authoritative ledger is untouched.
+        if let Some(cell) = s.ledger.get_mut(&faucet_cell_id) {
             cell.state.set_nonce(faucet_nonce);
         }
         crate::executor_setup::execute_via_producer(
             &executor,
             &faucet_turn,
-            &mut scratch,
+            &mut s.ledger,
             lean_producer_enabled,
         )
     };
+
+    // Capture the pre-turn cells from the journal BEFORE resolving it (the
+    // O(touched) stand-in for the old full `pre_ledger` clone), then resolve:
+    // SOLO keeps the authoritative in-place commit; MULTI-PARTY restores the
+    // untouched ledger for finalization. Both drop the journal.
+    let pre_ledger = s.ledger.pre_turn_touched_ledger();
+    if is_solo {
+        s.ledger.commit_restore_point();
+    } else {
+        s.ledger.rollback_restore_point();
+    }
 
     match exec_result {
         dregg_turn::TurnResult::Committed { mut receipt, .. } => {
