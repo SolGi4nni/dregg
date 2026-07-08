@@ -79,12 +79,47 @@ the name→cell *read endpoint* does not yet.
    verify manifest, then each fetched asset. DreggNet's content-root/`dregg-deploy` manifest is
    the design reference (but Poseidon2/off-ledger — don't import wholesale).
 
-## The starbridge-native half (scout in flight)
+## The starbridge-native half (grounded 2026-07-08)
 
-To be grounded: servo byte-interception points (embedder traits vs internal fetch), the net-cap
-choke point, dregg:// as the already-verified path, verdict-chip UX slots, fail-closed precedent.
-One core, two skins — the native skin should share the hash/compare/refusal core with the
-extension via the wasm/Rust boundary, not duplicate it.
+**The byte socket is already ours.** The vendored servo-net fork removed http/https from
+`FORBIDDEN_SCHEMES`; `CapGatedHttpHandler` (`servo-render/src/netcap_http.rs:75-296`) owns the
+whole http(s) fetch — in `load` (:206) the entire response body sits in our hands as
+`HttpFetch { status, content_type, body }` (:275-291) *before servo lays anything out*. Hashing
+is one `blake3(&body)` line. It already keeps per-fetch audit state to extend into a manifest.
+
+**The gap is one wiring**: the live web-shell pane's `LiveWebView::new` builds servo with **no
+`protocol_registry`** (`servo-render/src/webview.rs:1056-1058`), so its bytes still ride servo's
+internal hyper. `CapGatedHttpEngine::new` (:556-571) already shows the 6 lines that register the
+handler. Mind the one-engine-per-process `OnceCell` (:1049-1051): the registry must be installed
+at first engine build — on from the start of the cockpit session.
+
+**dregg:// is the already-closed leg**: `WebCellsBrowser` fetches through `AttestedResource::verify`
+(`starbridge-web-surface/src/web_of_cells.rs:138` — blake3 content hash, receipt-in-stream,
+Merkle root, quorum sigs) and only then hands bytes to `render_dregg_page` — verify-then-render,
+the exact shape wanted everywhere. The "✓ attested / ⚠ unattested" chips exist
+(`cockpit/panels_web.rs:249-252`). Remaining: route the *remote* dregg:// fetch (`NodeWorldSink`)
+through the same verify.
+
+**Fail-closed is structurally available**: on mismatch, return `Response::network_error(...)`
+from the handler — exactly the existing `RefusedByCap` arm (`netcap_http.rs:232-237`) — making a
+tampered page **unrenderable**, not merely badged. UX slots all exist: web-shell status line
+(`panels_webshell.rs:709-726`), the kept-tile fail-closed precedent (:298-303), the toolbar for
+a verdict chip + fail-closed toggle (:646-706), the `OriginChrome` anti-phishing badge pattern.
+
+**The shared core**: `dregg-page-verify` (blake3 content check + node commitment read + verdict
+vocabulary; upgrade rungs = `AttestedResource::verify_anchored` quorum leg, then the whole-history
+lightclient anchor `lightclient/src/lib.rs:188/:579`), compiled twice — native for the handler,
+wasm for the extension — on the exact `grain-verify`/`grain-verify-wasm` precedent ("reimplements
+NO check"). verify-badge.js remains the zero-install fallback skin.
+
+**Native effort ladder**: verdict chip (small) → hash-in-handler + manifest (small/medium) →
+LiveWebView takes the registry (medium) → dregg-page-verify crate + extension skin (medium) →
+in-cockpit trust story for the commitment read: multi-node cross-check → LC anchor (medium/hard)
+→ multi-asset manifest (hard design, shared with rung 6 above; `WebBundle::asset_origin` is a
+starting shape).
+
+Churn note: `panels_webshell.rs:49-56`'s module doc still says the fork is out of reach — stale;
+`netcap_http.rs` landed it. Trust the code.
 
 ## Honest UI language (binding, per the register)
 
