@@ -54,7 +54,25 @@ for p in "${GUARDED[@]}"; do
 done
 
 echo "check-descriptor-drift: regenerating from Lean (source of truth)..."
-"$ROOT/scripts/emit-descriptors.sh"
+# The emit script's regen gate (docs/VK-REGEN-CONTROLS.md) refuses a byte-CHANGING
+# install without an explicit DREGG_VK_REGEN_ACK — exit 3, tree untouched. For this
+# gate that refusal IS the drift verdict: the Lean emission and the checked-in
+# artifacts disagree. We deliberately do NOT pass an ack here: a CI/pre-commit
+# drift check must never silently install a re-keying descriptor set.
+emit_rc=0
+"$ROOT/scripts/emit-descriptors.sh" || emit_rc=$?
+if [ "$emit_rc" -eq 3 ]; then
+  echo "" >&2
+  echo "DESCRIPTOR DRIFT: the Lean emission and the checked-in JSON disagree." >&2
+  echo "  (the regen gate refused the unauthorized install; the tree is UNTOUCHED)" >&2
+  echo "  To apply, review the Lean change, then run:" >&2
+  echo "    DREGG_VK_REGEN_ACK=\"\$(git rev-parse HEAD:metatheory/Dregg2)\" scripts/emit-descriptors.sh" >&2
+  echo "  and commit the result. (Lean is the source of truth; the JSON + *_FP" >&2
+  echo "  constants are generated. See docs/VK-REGEN-CONTROLS.md.)" >&2
+  exit 1
+elif [ "$emit_rc" -ne 0 ]; then
+  exit "$emit_rc"
+fi
 
 echo "check-descriptor-drift: diffing the regenerated artifacts against the pre-emit snapshot..."
 drift=0
@@ -69,10 +87,9 @@ if [ "$drift" -eq 0 ]; then
   exit 0
 else
   echo "" >&2
-  echo "DESCRIPTOR DRIFT: the Lean emission and the checked-in JSON disagree." >&2
-  echo "  Run:  scripts/emit-descriptors.sh   and commit the result." >&2
-  echo "  (Lean is the source of truth; the JSON + *_FP constants are generated.)" >&2
-  echo "  NOTE: the working tree has been left REGENERATED (the fix is applied);" >&2
-  echo "        re-run this gate after committing to confirm it is green." >&2
+  echo "DESCRIPTOR DRIFT: the emit run changed guarded artifacts despite reporting" >&2
+  echo "  a no-op (this should be unreachable now that a byte-changing install is" >&2
+  echo "  ack-gated — investigate). Run scripts/emit-descriptors.sh with the ack" >&2
+  echo "  (see docs/VK-REGEN-CONTROLS.md) and commit the result." >&2
   exit 1
 fi
