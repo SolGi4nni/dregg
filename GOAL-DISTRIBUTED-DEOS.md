@@ -286,7 +286,14 @@ a new `NodeWorldSink` home). Serialize Pillars 1/2/4 after the foundation lands.
 - Pillar 2b (a-bar) — `mud.rs`: `hosts`/`speak_cap_for`/`who_is_here` refactored to take `&Ledger`;
   the derivation is a pure function of ledger state, proven identical across the `WorldSink` boundary
   (`world.ledger()` vs `WorldSinkAdapter::with_ledger`), both poles. 15/15 mud green; cockpit gate
-  green. Composes with Pillar 0 → any box derives the identical cap from its own ledger copy.
+  green. ⚠ RISE-TO-MEET (adversarial review, 2026-07-07): "any box derives the identical cap from its
+  own ledger copy" is proven only across the IN-PROCESS `WorldSinkAdapter` — it does NOT yet hold over
+  a real `NodeWorldSink`, because the node's `/api/cell/{id}` exposes a capability COUNT, not the
+  c-list EDGES, so a NodeWorldSink crawl reconstructs cells with an EMPTY `CapabilitySet` → every
+  authority read is uniformly false (all speak-caps revoked). Fail-closed (silence, not
+  over-grant), but the multi-box b-bar is BLOCKED until the node explorer surfaces c-list edges +
+  `cell_from_detail` reconstructs them (touches `node/api.rs` + `cell/`). CLOSURE = expose the edges
+  + a Pillar-2b test over a real `NodeHttpClient::fetch_ledger_snapshot` (not the in-process adapter).
 - Pillar 0 (a-bar) — `NodeWorldSink` (dregg-sdk-net, `world-sink` feat): remote WorldSink commits via
   `/turns/submit` + reads via `/api/cell/{id}`. Both poles vs a real-executor test node (commit+read;
   overreach refused); 70 lib green; no-feature build mozjs-free. Unblocks 1/2/4.
