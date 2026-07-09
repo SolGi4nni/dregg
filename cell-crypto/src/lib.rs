@@ -80,8 +80,9 @@ pub mod delegation {
 // ─────────────────────────────────────────────────────────────────────────────
 
 pub use capability_proof::{
-    CapabilityExerciseRequest, CapabilityExerciseResponse, CapabilityProof, CapabilityProofData,
-    CapabilityProofError, PeerEffect, VerificationContext, sign_capability_proof,
+    CAP_PROOF_PQ_CTX, CapabilityExerciseRequest, CapabilityExerciseResponse, CapabilityProof,
+    CapabilityProofData, CapabilityProofError, MlDsaCapKey, PeerEffect, VerificationContext,
+    enrolled_ml_dsa_pubkey, ml_dsa_cap_verify, sign_capability_proof,
 };
 pub use note_bridge::{
     BridgeDestination, BridgeError, BridgeReceipt, BridgeState, BridgedNullifierSet, PendingBridge,
