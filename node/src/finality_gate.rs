@@ -205,13 +205,11 @@ impl VerifiedFinality {
     }
 
     /// Number of `(creator, seq)` coordinates the verified rule finalized (for diagnostics).
-    #[allow(dead_code)] // Diagnostic accessor retained on the verified-finality surface.
     pub fn len(&self) -> usize {
         self.finalized.len()
     }
 
     /// Whether the verified rule finalized nothing.
-    #[allow(dead_code)] // Diagnostic accessor retained on the verified-finality surface.
     pub fn is_empty(&self) -> bool {
         self.finalized.is_empty()
     }

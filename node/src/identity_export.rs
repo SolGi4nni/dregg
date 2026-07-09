@@ -495,7 +495,6 @@ pub fn extract_identity_log(
 
 /// One refusal. Every variant names the failing seq where applicable.
 // Retained scaffolding for the portable identity-export verify path (no node required).
-#[allow(dead_code)]
 #[derive(Debug, PartialEq, Eq)]
 pub enum VerifyError {
     UnknownFormat(String),
@@ -577,7 +576,6 @@ impl std::fmt::Display for VerifyError {
 /// What the verifier checked (counts; all checks are mandatory where the
 /// material is present — these report coverage, not pass/fail).
 // Retained scaffolding for the portable identity-export verify path (no node required).
-#[allow(dead_code)]
 #[derive(Debug, Default, PartialEq, Eq)]
 pub struct VerifyReport {
     pub events: usize,
@@ -590,7 +588,6 @@ pub struct VerifyReport {
 
 /// Decoded event surface + attachments, ready for checking.
 // Retained scaffolding for the portable identity-export verify path (no node required).
-#[allow(dead_code)]
 struct DecodedEvent {
     surface: DigestSurface,
     stated_digest: [u8; 32],
@@ -598,7 +595,6 @@ struct DecodedEvent {
     exhibited_preimage: Option<[u8; 32]>,
 }
 
-#[allow(dead_code)] // Retained scaffolding for the portable identity-export verify path.
 fn decode_event(cell: &[u8; 32], ev: &IdentityEvent) -> Result<DecodedEvent, VerifyError> {
     let seq = ev.seq;
     let bad = |field: &'static str, detail: String| VerifyError::BadHex { seq, field, detail };
@@ -645,7 +641,6 @@ fn decode_event(cell: &[u8; 32], ev: &IdentityEvent) -> Result<DecodedEvent, Ver
 /// preimage does not hash to the prior pre-commitment, key state moving
 /// outside rotation/inception, events after retirement, receipt-hash
 /// mismatches, bad executor signatures, and unbound witness artifacts.
-#[allow(dead_code)] // Retained scaffolding: the portable identity-export verifier (no node required).
 pub fn verify_export(
     log: &IdentityEventLog,
     pinned_executor_key: Option<&[u8; 32]>,

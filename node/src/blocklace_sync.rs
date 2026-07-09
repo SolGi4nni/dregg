@@ -7474,7 +7474,6 @@ pub fn latest_blocklace_checkpoint_height(store: &dregg_persist::PersistentStore
         .unwrap_or(0)
 }
 
-#[allow(dead_code)]
 pub async fn bootstrap_from_checkpoint(
     peer_url: &str,
     self_key: ed25519_dalek::SigningKey,

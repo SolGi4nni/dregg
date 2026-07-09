@@ -53,7 +53,7 @@ pub(super) fn mcp_authority_cell(node_pk: &[u8; 32], issuer_pubkey: &[u8; 32]) -
 /// the verbs in [`tool_required_scope`] (`"read"` / `"write"` / `"admin"`).
 ///
 /// Returns the encoded `eb2_…` biscuit string.
-#[allow(dead_code)] // Retained MCP cap-minting helper for the tools/call gate.
+#[allow(dead_code)] // Retained MCP cap-minting helper for the tools/call gate (not yet wired).
 pub(super) fn mint_tool_cap(
     cclerk: &AgentCipherclerk,
     node_pk: &[u8; 32],

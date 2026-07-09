@@ -196,7 +196,6 @@ pub fn execute_via_producer(
 /// on `s.cclerk`'s chain and the ledger is mutated in place — identical to the
 /// HTTP path's committed-turn semantics, minus the wire shell.
 // In-process committed-turn entry mirroring the HTTP path; reached via tests / the deos-host program.
-#[allow(dead_code)]
 pub fn commit_effects_as(
     s: &mut crate::state::NodeStateInner,
     agent: dregg_cell::CellId,

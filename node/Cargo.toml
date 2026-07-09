@@ -156,6 +156,10 @@ dregg-verifier = { path = "../verifier" }
 # production code); tests that need it (`lean_producer_mode.rs`, the finality-gate differential)
 # inherit it from there — no separate dev-dependency entry required.
 
+[lib]
+name = "dregg_node"
+path = "src/lib.rs"
+
 [[bin]]
 name = "dregg-node"
 path = "src/main.rs"

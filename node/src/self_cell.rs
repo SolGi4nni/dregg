@@ -90,7 +90,6 @@ fn pack_bool(b: bool) -> FieldElement {
 /// `/status`). This is the cell-shaped view's source of truth — every field is a
 /// live read, nothing is fabricated.
 // Reflexive node-as-cell view; some fields are informational and not yet read in the binary path.
-#[allow(dead_code)]
 #[derive(Clone, Debug)]
 pub struct NodeSelfStatus {
     /// The operator's Ed25519 public key (the node's identity key).
@@ -197,14 +196,12 @@ pub struct BlocklaceFacts {
 /// The node projected AS A CELL — the reflexive image. Holds the node-self-cell id
 /// and a one-cell [`Ledger`] carrying it, so the node can be reflected by the SAME
 /// `deos_reflect::reflect_cell` deos-js's crawl uses.
-#[allow(dead_code)] // reflexive node-as-cell view; the read API is not yet wired in the binary path
 pub struct NodeSelfCell {
     id: CellId,
     ledger: Ledger,
     status: NodeSelfStatus,
 }
 
-#[allow(dead_code)] // reflexive node-as-cell read API; not yet wired in the binary path
 impl NodeSelfCell {
     /// Build the node-self-cell from the collected live status.
     ///
@@ -287,7 +284,6 @@ impl NodeSelfCell {
     /// public, so it renders as a revealed `FieldSlot`.
     // Consumed by the `GET /api/node/self` route + the dregg-mcp reflect surface,
     // both of which live in `api.rs` (a parallel lane); exercised here by the tests.
-    #[allow(dead_code)]
     pub fn reflect_json(&self) -> String {
         let cell = self
             .ledger
@@ -301,7 +297,6 @@ impl NodeSelfCell {
 /// Serialize a [`deos_reflect::Inspectable`] to JSON. Mirrors the shape deos-js's
 /// `reflect_binding::inspectable_json` emits (kind/title/subtitle/fields) so the
 /// node's reflexive render is wire-shaped like every other deos-js cell reflection.
-#[allow(dead_code)] // Reached via `reflect_json` (the api.rs `/api/node/self` route lane).
 fn inspectable_to_json(insp: &deos_reflect::Inspectable) -> String {
     use deos_reflect::substance::{FieldValue, hex_encode};
 

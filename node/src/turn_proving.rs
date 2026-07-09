@@ -823,7 +823,6 @@ pub fn canonical_revocation_tree_for_set(
 /// sorted-Merkle tree the audited non-revocation circuit authenticates against,
 /// derived deterministically from the node's authoritative set. A peer/light
 /// client re-deriving from the same set obtains the same root.
-#[allow(dead_code)] // Retained light-client/peer revocation-root re-derivation helper.
 pub fn canonical_revocation_root_for_set(
     previously_spent: &[[u8; 32]],
 ) -> Result<BabyBear, FullTurnProvingError> {

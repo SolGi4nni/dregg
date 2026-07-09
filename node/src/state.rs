@@ -149,7 +149,6 @@ pub struct NodeState {
 /// The inner mutable state of the node.
 // Some fields back cfg-conditional / not-yet-consulted node surfaces (routing,
 // cross-federation revocation, threshold shares); retained as wired scaffolding.
-#[allow(dead_code)]
 pub struct NodeStateInner {
     /// The agent cipherclerk (identity, wallet, receipts).
     pub cclerk: AgentCipherclerk,
@@ -596,7 +595,6 @@ fn decode_witnessed_receipt_artifacts(encoded: &[u8]) -> Result<Vec<WitnessedRec
 #[serde(rename_all = "snake_case")]
 pub enum ActivityStatus {
     Committed,
-    #[allow(dead_code)] // Retained activity-status variant for the rejected-turn surface.
     Rejected,
 }
 
@@ -612,9 +610,7 @@ pub enum ActivityProofStatus {
     /// endpoint until the attestation lands.
     ProofPending,
     NotRequired,
-    #[allow(dead_code)] // Retained proof-status variant for the failed-prestate path.
     MissingPreState,
-    #[allow(dead_code)] // Retained proof-status variant for the prove-failure path.
     ProofGenerationFailed,
     NotCommitted,
 }
@@ -972,7 +968,6 @@ impl NodeState {
     }
 
     /// Create a NodeState with a pre-existing cipherclerk (restored from key material).
-    #[allow(dead_code)]
     pub fn with_cclerk(
         data_dir: &Path,
         peers: Vec<String>,
@@ -1575,7 +1570,6 @@ impl NodeState {
     /// (`ledger_height`, the operator balance/nonce, `block_count`, the producer mode).
     // Consumed by the `GET /api/node/self` route in `api.rs` (a parallel lane); the
     // projection it returns is covered by `self_cell` unit tests.
-    #[allow(dead_code)]
     pub async fn self_cell(&self) -> crate::self_cell::NodeSelfCell {
         let dag = match self.blocklace().await {
             Some(handle) => crate::self_cell::BlocklaceFacts {
@@ -1744,7 +1738,6 @@ impl NodeStateInner {
     }
 
     /// Whether a committed receipt's async attestation is still in flight.
-    #[allow(dead_code)] // Retained query on the async-attestation tracking surface.
     pub fn is_proof_pending(&self, receipt_hash: &[u8; 32]) -> bool {
         self.proof_pending.contains(receipt_hash)
     }
@@ -1767,7 +1760,6 @@ impl NodeStateInner {
 // Budget Coordination Methods
 // =============================================================================
 
-#[allow(dead_code)] // Some methods back cfg-conditional / not-yet-wired node surfaces; retained.
 impl NodeStateInner {
     /// Initialize or update a budget coordinator for an agent.
     ///

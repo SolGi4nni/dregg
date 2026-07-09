@@ -33,7 +33,6 @@
 // integration proof (a `cfg(test)` sibling) and are the engine a cockpit / thin client
 // drives; the plain `--bin` build (no `cfg(test)`) compiles them but reaches none, so the
 // honest annotation is that this is a demonstrative harness surface, not bin-dead code.
-#![allow(dead_code)]
 
 use dregg_cell::{AuthRequired, Cell, CellId, Permissions};
 use dregg_sdk::AgentCipherclerk;

@@ -397,7 +397,7 @@ fn collateral_name(c: TrustlineCollateral) -> &'static str {
 /// `OpenRequest.collateral` field AND a pureCredit funding branch that escrows
 /// nothing (cf. `dregg_sdk::trustline::open_with_collateral`). Kept (not
 /// deleted) to preserve the migration's intent; currently unreached.
-#[allow(dead_code)]
+#[allow(dead_code)] // Retained pureCredit-open request parser; not yet wired.
 fn parse_collateral(s: Option<&str>) -> Result<TrustlineCollateral, TrustlineRefusal> {
     match s {
         None | Some("fullReserve") => Ok(TrustlineCollateral::FullReserve),

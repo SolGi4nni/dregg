@@ -239,7 +239,6 @@ impl VoteCollector {
     /// Replace the committee (e.g. after an epoch transition) without dropping
     /// already-accumulated votes; re-counting against the new membership happens
     /// implicitly on the next vote.
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn set_committee(
         &mut self,
         committee: impl IntoIterator<Item = [u8; 32]>,
@@ -277,13 +276,11 @@ impl VoteCollector {
     }
 
     /// The current admissible committee size (number of distinct signer keys).
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn committee_size(&self) -> usize {
         self.committee.len()
     }
 
     /// Whether a given key is currently an admissible (committee) signer.
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn is_committee_member(&self, key: &[u8; 32]) -> bool {
         self.committee.contains(key)
     }
@@ -297,13 +294,11 @@ impl VoteCollector {
     }
 
     /// The quorum threshold this collector enforces.
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn quorum_threshold(&self) -> usize {
         self.quorum_threshold
     }
 
     /// Number of distinct member votes recorded for a block.
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn vote_count(&self, block_id: &BlockId) -> usize {
         self.votes.get(block_id).map_or(0, |s| s.len())
     }
@@ -371,13 +366,11 @@ impl VoteCollector {
 
     /// Has this block reached consensus-wide Attested (a quorum of distinct
     /// member signers)?
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn is_consensus_attested(&self, block_id: &BlockId) -> bool {
         self.attested.contains(block_id)
     }
 
     /// All blocks that have reached consensus-wide Attested.
-    #[allow(dead_code)] // collector query/maintenance API; exercised by tests
     pub fn consensus_attested(&self) -> impl Iterator<Item = &BlockId> {
         self.attested.iter()
     }

@@ -1549,7 +1549,6 @@ const MAX_BODY_SIZE: usize = 1_024 * 1_024;
 /// per-identity rate limiting on turn submission, and Bearer token
 /// authentication on protected routes.
 // Convenience constructor retained for embedders/tests; the binary uses router_with_cors.
-#[allow(dead_code)]
 pub fn router(
     state: NodeState,
     enable_faucet: bool,
@@ -8198,8 +8197,10 @@ fn verify_ed25519_sig(
 // =============================================================================
 // Queue Operations
 // =============================================================================
-// Wire DTOs retained for the queue HTTP surface (deserialized by clients).
-
+// Wire DTOs retained for the not-yet-wired queue HTTP surface (deserialized by
+// clients). These are unconstructed private scaffolding for a route lane that is
+// not yet mounted; retained (with dead_code allows) rather than deleted so wiring
+// the queue endpoints stays a small diff.
 #[allow(dead_code)]
 #[derive(Deserialize)]
 struct QueueAllocateRequest {
