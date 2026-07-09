@@ -1,0 +1,21 @@
+[package]
+name = "crypto-traccoon"
+version = "0.1.0"
+edition = "2021"
+description = "Correctness-first REFERENCE implementation of Threshold Raccoon (TRaccoon), the 3-round lattice threshold signature of del Pino/Espitau/Katsumata/Maller/Mouhartem/Prest/Saarinen/Takemure (Eurocrypt 2024). The 'what a cited-proven 3-round looks like' reference, alongside crypto-tanuki (2-round), that our self-argued crypto-hermine is benchmarked against. Faithful 3-round commit->reveal->masked-respond with the one-time row/column additive masks; reference params, NOT deployment-grade; the TS-UF proof is CITED, not re-proven."
+license = "AGPL-3.0-only"
+publish = false
+
+# Standalone: opt out of the breadstuffs root workspace (a pre-audit reference
+# crate, deliberately NOT a member; builds in its own dir — mirrors
+# crypto-hermine and crypto-tanuki).
+[workspace]
+
+[dependencies]
+# The only external dependency: a real hash. blake3 realizes the random oracles
+# the scheme names — H_com (the round-1 nonce commitment), H (the fixed-weight
+# challenge), and the session mask PRF (the fresh per-session uniform masks
+# m_{i,j}) — and doubles as the XOF that drives the reference deterministic
+# samplers. No `rand` crate: sampling rides a caller-supplied seed through
+# blake3's XOF (reproducible tests). Pure Rust.
+blake3 = "1"
