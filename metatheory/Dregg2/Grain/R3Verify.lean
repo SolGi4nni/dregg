@@ -6,8 +6,15 @@ aggregate, with NO host trust. The EXECUTABLE verifier, EXPORTED to run as nativ
 guarantee that the WHOLE execution history BEHIND that head is unfoolable: every turn executed correctly
 per the verified executor (execution INTEGRITY) and the chain is correctly ordered with nothing dropped,
 inserted or reordered (COMPLETENESS — no host fabrication) — learned from ONE succinct aggregate, the
-host re-witnessing nothing. This closes `grain-verify`'s `WHOLE_HISTORY_GAP`: without R3 a lying host
-could serve a fabricated or truncated history under an honest-looking head.
+host re-witnessing nothing. **Honest scope (not an overclaim):** this REDUCES `grain-verify`'s
+`WHOLE_HISTORY_GAP` to the STARK/apex soundness — it does NOT close it unconditionally. The load-bearing
+`EngineSound` hypothesis is an ASSUMED boundary: `recursive_sound`/`binding_sound` are the FRI legs
+proved *outside* Lean, and `leaf_sound` is only *dischargeable* by the single-turn apex
+(`EngineSoundOfApex`) modulo its three still-open reconciliation mismatches. GIVEN that soundness, a
+lying host cannot serve a fabricated or truncated history under an honest-looking head — but R3 here is a
+genuine *reduction plus head-binding*, not an unconditional proof of unfoolability. The new delta over
+the existing aggregation theorem is exactly the one head-equality rewrite that binds the sound history to
+THIS grain's R1 anchor.
 
 **Lean-first, the assurance IS the code (the `Fips204Verify` / storage-in-Lean pattern).** The R3 accept
 DECISION lives here as a plain executable `def` (`r3VerifyCore`), `@[export]`ed as `r3VerifyFFI` for the
