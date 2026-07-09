@@ -101,6 +101,26 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         PREDICATE_ARITH_JSON,
     ),
     (
+        "dregg-predicate-arith-le::threshold-v1",
+        PREDICATE_ARITH_LE_JSON,
+    ),
+    (
+        "dregg-predicate-arith-gt::threshold-v1",
+        PREDICATE_ARITH_GT_JSON,
+    ),
+    (
+        "dregg-predicate-arith-lt::threshold-v1",
+        PREDICATE_ARITH_LT_JSON,
+    ),
+    (
+        "dregg-predicate-arith-neq::threshold-v1",
+        PREDICATE_ARITH_NEQ_JSON,
+    ),
+    (
+        "dregg-predicate-arith-inrange::bounds-v1",
+        PREDICATE_ARITH_INRANGE_JSON,
+    ),
+    (
         "dregg-presentation-freshness::summary-v1",
         PRESENTATION_FRESHNESS_JSON,
     ),
@@ -138,6 +158,21 @@ const ACCUMULATOR_NONREV_JSON: &str =
     include_str!("../descriptors/by-name/accumulator-nonrev.json");
 const BRIDGE_ACTION_JSON: &str = include_str!("../descriptors/by-name/bridge-action.json");
 const PREDICATE_ARITH_JSON: &str = include_str!("../descriptors/by-name/predicate-arith.json");
+/// The arithmetic COMPARISON goldens (`≤`/`>`/`<`/`≠`/InRange), authored + byte-pinned in
+/// `metatheory/Dregg2/Circuit/Emit/Predicates{Le,Gt,Lt,Neq,InRange}Emit.lean`. The `≥` sibling above
+/// (`PREDICATE_ARITH_JSON`) carries the Poseidon2 value↔fact weld; these leaner comparison descriptors
+/// carry the same C1/C2/C3/C5/C6 comparison teeth with `fact_commitment` as the pass-through PI. Their
+/// Rust witness builders are in `crate::predicate_comparison_witness`.
+const PREDICATE_ARITH_LE_JSON: &str =
+    include_str!("../descriptors/by-name/predicate-arith-le.json");
+const PREDICATE_ARITH_GT_JSON: &str =
+    include_str!("../descriptors/by-name/predicate-arith-gt.json");
+const PREDICATE_ARITH_LT_JSON: &str =
+    include_str!("../descriptors/by-name/predicate-arith-lt.json");
+const PREDICATE_ARITH_NEQ_JSON: &str =
+    include_str!("../descriptors/by-name/predicate-arith-neq.json");
+const PREDICATE_ARITH_INRANGE_JSON: &str =
+    include_str!("../descriptors/by-name/predicate-arith-inrange.json");
 /// The `presentation` family (token-presentation summary AIR + internalized FRESHNESS binding),
 /// authored in `metatheory/Dregg2/Circuit/Emit/PresentationEmit.lean` (`presentationFreshnessDesc`)
 /// and byte-pinned there by an `emitVmJson2` `#guard`. The blinded-presentation path
@@ -222,6 +257,11 @@ pub fn descriptor_names_for_kind(kind: PredicateKind) -> &'static [&'static str]
         PredicateKind::BridgePredicate => &[
             "bridge-action-leaf::bridge_action_air_v1",
             "dregg-predicate-arith-ge::threshold-v1",
+            "dregg-predicate-arith-le::threshold-v1",
+            "dregg-predicate-arith-gt::threshold-v1",
+            "dregg-predicate-arith-lt::threshold-v1",
+            "dregg-predicate-arith-neq::threshold-v1",
+            "dregg-predicate-arith-inrange::bounds-v1",
         ],
         PredicateKind::Custom => &["dregg-effectvm-custom-v1"],
         PredicateKind::PedersenEquality => &[],

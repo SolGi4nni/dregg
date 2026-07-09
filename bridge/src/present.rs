@@ -2668,34 +2668,66 @@ pub fn prove_predicate_for_fact(
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
     use dregg_circuit::descriptor_ir2::{MemBoundaryWitness, prove_vm_descriptor2};
     use dregg_circuit::predicate_arith_witness::{PREDICATE_ARITH_NAME, predicate_arith_witness};
-
-    let fact_commitment = dregg_circuit::compute_fact_commitment(fact_hash, state_root);
-
-    // Only the ≥ (`Gte`) predicate has an emitted IR-v2 descriptor
-    // (`dregg-predicate-arith-ge::threshold-v1`, PIs `[threshold, fact_commitment]`).
-    // The other operators (Lte/Gt/Lt/Neq) and `InRange` have no descriptor, so no
-    // proof can be produced for them (the retired hand-AIR gadgets are gone).
-    let threshold = match predicate {
-        Predicate::Gte(t) => *t,
-        Predicate::Lte(_)
-        | Predicate::Gt(_)
-        | Predicate::Lt(_)
-        | Predicate::Neq(_)
-        | Predicate::InRange(..) => return None,
+    use dregg_circuit::predicate_comparison_witness::{
+        PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
+        PREDICATE_ARITH_NEQ_NAME, predicate_gt_witness, predicate_le_witness, predicate_lt_witness,
+        predicate_neq_witness,
     };
 
-    let desc = descriptor_by_name(PREDICATE_ARITH_NAME)?;
-    // `predicate_arith_witness` computes `DIFF = value − threshold` and lets the
-    // descriptor's range lookup be the judge; a `value < threshold` witness has no
-    // satisfying decomposition and prove refuses (→ `None`, the false-statement pole).
-    let (trace, pis) =
-        predicate_arith_witness(private_value as u64, threshold as u64, fact_commitment, 2).ok()?;
-    let proof =
-        prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[]).ok()?;
-    let proof_bytes = postcard::to_allocvec(&proof).ok()?;
+    let fact_commitment = dregg_circuit::compute_fact_commitment(fact_hash, state_root);
+    let v = private_value as u64;
+
+    // Prove ONE single-bound witness against `desc_name`; `None` when the witness cannot be built or
+    // the comparison is FALSE (prove refuses — the false-statement pole, per-op range / nonzero tooth).
+    let prove_one = |desc_name: &str,
+                     built: Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String>|
+     -> Option<Vec<u8>> {
+        let desc = descriptor_by_name(desc_name)?;
+        let (trace, pis) = built.ok()?;
+        let proof =
+            prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[]).ok()?;
+        postcard::to_allocvec(&proof).ok()
+    };
+
+    // Each comparison now has an emitted IR-v2 descriptor. Single-bound ops emit a `Single` proof;
+    // `InRange(low, high)` emits a `Range` pair — `value ≥ low` (the `≥` descriptor) and
+    // `value ≤ high` (the `≤` descriptor), both pinned to the same `fact_commitment`.
+    let inner = match predicate {
+        Predicate::Gte(t) => BridgePredicateProofInner::Single(prove_one(
+            PREDICATE_ARITH_NAME,
+            predicate_arith_witness(v, *t as u64, fact_commitment, 2),
+        )?),
+        Predicate::Lte(t) => BridgePredicateProofInner::Single(prove_one(
+            PREDICATE_ARITH_LE_NAME,
+            predicate_le_witness(v, *t as u64, fact_commitment, 2),
+        )?),
+        Predicate::Gt(t) => BridgePredicateProofInner::Single(prove_one(
+            PREDICATE_ARITH_GT_NAME,
+            predicate_gt_witness(v, *t as u64, fact_commitment, 2),
+        )?),
+        Predicate::Lt(t) => BridgePredicateProofInner::Single(prove_one(
+            PREDICATE_ARITH_LT_NAME,
+            predicate_lt_witness(v, *t as u64, fact_commitment, 2),
+        )?),
+        Predicate::Neq(t) => BridgePredicateProofInner::Single(prove_one(
+            PREDICATE_ARITH_NEQ_NAME,
+            predicate_neq_witness(v, *t as u64, fact_commitment, 2),
+        )?),
+        Predicate::InRange(low, high) => {
+            let low_proof = prove_one(
+                PREDICATE_ARITH_NAME,
+                predicate_arith_witness(v, *low as u64, fact_commitment, 2),
+            )?;
+            let high_proof = prove_one(
+                PREDICATE_ARITH_LE_NAME,
+                predicate_le_witness(v, *high as u64, fact_commitment, 2),
+            )?;
+            BridgePredicateProofInner::Range(low_proof, high_proof)
+        }
+    };
     Some(BridgePredicateProof {
         predicate: predicate.clone(),
-        proof: BridgePredicateProofInner::Single(proof_bytes),
+        proof: inner,
         fact_commitment,
     })
 }
@@ -2719,46 +2751,57 @@ pub fn verify_predicate_proof(
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
     use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
     use dregg_circuit::predicate_arith_witness::PREDICATE_ARITH_NAME;
+    use dregg_circuit::predicate_comparison_witness::{
+        PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
+        PREDICATE_ARITH_NEQ_NAME,
+    };
 
-    match &proof.proof {
-        BridgePredicateProofInner::Single(inner) => {
-            // Only the ≥ (`Gte`) predicate has an emitted descriptor; any other
-            // operator fails closed (never accepted against the wrong comparison).
-            let threshold = match &proof.predicate {
-                Predicate::Gte(t) => BabyBear::new(*t),
-                Predicate::Lte(_)
-                | Predicate::Gt(_)
-                | Predicate::Lt(_)
-                | Predicate::Neq(_)
-                | Predicate::InRange(..) => return false,
-            };
-            let desc = match descriptor_by_name(PREDICATE_ARITH_NAME) {
-                Some(d) => d,
-                None => return false,
-            };
-            let batch: Ir2BatchProof<DreggStarkConfig> = match postcard::from_bytes(inner) {
-                Ok(p) => p,
-                Err(_) => return false,
-            };
-            // PIs `[threshold, fact_commitment]`, both host-supplied; the descriptor
-            // pins them, so a proof committed to a different threshold / fact, or a
-            // `value < threshold` witness, is UNSAT. Any panic → rejection.
-            let pis = vec![threshold, expected_fact_commitment];
-            std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                verify_vm_descriptor2(&desc, &batch, &pis).is_ok()
-            }))
-            .unwrap_or(false)
+    // Verify ONE single-bound proof against `desc_name`, pinning PIs `[bound, fact_commitment]`. A
+    // proof committed to a different bound / fact, or a witness that violates the comparison, is UNSAT.
+    let verify_one = |desc_name: &str, bound: u32, bytes: &[u8]| -> bool {
+        let desc = match descriptor_by_name(desc_name) {
+            Some(d) => d,
+            None => return false,
+        };
+        let batch: Ir2BatchProof<DreggStarkConfig> = match postcard::from_bytes(bytes) {
+            Ok(p) => p,
+            Err(_) => return false,
+        };
+        let pis = vec![BabyBear::new(bound), expected_fact_commitment];
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            verify_vm_descriptor2(&desc, &batch, &pis).is_ok()
+        }))
+        .unwrap_or(false)
+    };
+
+    // The predicate operator selects the descriptor; the wire shape must match (single vs range).
+    // Any shape mismatch, or a `CommittedThreshold` inner (its own descriptor path), fails closed.
+    match (&proof.predicate, &proof.proof) {
+        (Predicate::Gte(t), BridgePredicateProofInner::Single(inner)) => {
+            verify_one(PREDICATE_ARITH_NAME, *t, inner)
         }
-        BridgePredicateProofInner::Range(_low_proof, _high_proof) => {
-            // The two-bound InRange predicate has no emitted IR-v2 descriptor (only
-            // the one-sided ≥ threshold descriptor exists) — fail closed.
-            false
+        (Predicate::Lte(t), BridgePredicateProofInner::Single(inner)) => {
+            verify_one(PREDICATE_ARITH_LE_NAME, *t, inner)
         }
-        BridgePredicateProofInner::CommittedThreshold(_ct_proof) => {
-            // The committed-threshold (hidden threshold) predicate has no emitted
-            // IR-v2 descriptor — fail closed rather than accept an unverified claim.
-            false
+        (Predicate::Gt(t), BridgePredicateProofInner::Single(inner)) => {
+            verify_one(PREDICATE_ARITH_GT_NAME, *t, inner)
         }
+        (Predicate::Lt(t), BridgePredicateProofInner::Single(inner)) => {
+            verify_one(PREDICATE_ARITH_LT_NAME, *t, inner)
+        }
+        (Predicate::Neq(t), BridgePredicateProofInner::Single(inner)) => {
+            verify_one(PREDICATE_ARITH_NEQ_NAME, *t, inner)
+        }
+        (
+            Predicate::InRange(low, high),
+            BridgePredicateProofInner::Range(low_proof, high_proof),
+        ) => {
+            // `low ≤ value ≤ high` = `value ≥ low` (≥ descriptor) AND `value ≤ high` (≤ descriptor),
+            // both pinned to the same `fact_commitment`. Either failing ⇒ reject.
+            verify_one(PREDICATE_ARITH_NAME, *low, low_proof)
+                && verify_one(PREDICATE_ARITH_LE_NAME, *high, high_proof)
+        }
+        _ => false,
     }
 }
 
@@ -3951,5 +3994,60 @@ mod ir2_issuer_wire_roundtrip {
             !stark_v.verify_with_predicate(&wire.predicate, &wire.blob, "read", "res", &forged_vk),
             "a forged federation root must be REJECTED"
         );
+    }
+
+    /// End-to-end prove+verify for EVERY comparison operator now that each has an emitted descriptor.
+    /// A TRUE statement proves and verifies; a FALSE statement either fails to prove (`None`) or
+    /// produces a proof that fails to verify — non-vacuous both poles. This exercises the wired
+    /// `prove_predicate_for_fact` / `verify_predicate_proof` onto the new descriptors.
+    #[test]
+    fn comparison_predicates_prove_and_verify_end_to_end() {
+        let fact_hash = BabyBear::new(0xABCD);
+        let state_root = BabyBear::new(0x1234);
+        let fc = dregg_circuit::compute_fact_commitment(fact_hash, state_root);
+
+        // (value, predicate, expected-true).
+        let cases: &[(u32, Predicate, bool)] = &[
+            (100, Predicate::Gte(40), true),
+            (30, Predicate::Gte(40), false),
+            (40, Predicate::Lte(100), true),
+            (110, Predicate::Lte(100), false),
+            (101, Predicate::Gt(40), true),
+            (40, Predicate::Gt(40), false),
+            (40, Predicate::Lt(101), true),
+            (101, Predicate::Lt(101), false),
+            (41, Predicate::Neq(40), true),
+            (40, Predicate::Neq(40), false),
+            (40, Predicate::InRange(10, 100), true),
+            (5, Predicate::InRange(10, 100), false),
+            (150, Predicate::InRange(10, 100), false),
+        ];
+
+        for (value, predicate, expect_true) in cases {
+            let proof = prove_predicate_for_fact(*value, fact_hash, state_root, predicate);
+            if *expect_true {
+                let proof = proof
+                    .unwrap_or_else(|| panic!("true statement {value} {predicate:?} must PROVE"));
+                assert!(
+                    verify_predicate_proof(&proof, fc),
+                    "true statement {value} {predicate:?} must VERIFY"
+                );
+                // Non-vacuity: a forged expected fact commitment REJECTS.
+                assert!(
+                    !verify_predicate_proof(&proof, BabyBear::new(0xDEAD)),
+                    "a forged fact commitment must REJECT for {predicate:?}"
+                );
+            } else {
+                // A false statement either cannot be proved, or its proof fails to verify.
+                let rejected = match proof {
+                    None => true,
+                    Some(p) => !verify_predicate_proof(&p, fc),
+                };
+                assert!(
+                    rejected,
+                    "false statement {value} {predicate:?} must be REJECTED"
+                );
+            }
+        }
     }
 }

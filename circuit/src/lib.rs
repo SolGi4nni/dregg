@@ -367,6 +367,11 @@ pub mod non_revocation_witness;
 /// range-decomposition limbs). See module docs.
 pub mod predicate_arith_witness;
 
+/// Rust witness builders for the emitted arithmetic COMPARISON descriptors — the `≤` / `>` / `<` /
+/// `≠` / `InRange` siblings of `predicate_arith_witness` (`≥`). Each rides the same range/diff tooth
+/// (`≠` swaps in a nonzero-inverse gadget), dispatched via `descriptor_by_name`. See module docs.
+pub mod predicate_comparison_witness;
+
 /// The IR-v2 delegation scope-binding descriptor (`dregg-delegate::v2`) — the descriptor-world twin
 /// of the executor's `StarkDelegation` scope check (`action.rs::verify_stark_delegation_binding`),
 /// pinning the 24-limb `[root_issuer ‖ target ‖ scope_hash]` scope to public inputs. See module docs.

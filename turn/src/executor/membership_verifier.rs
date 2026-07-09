@@ -57,6 +57,10 @@ use dregg_circuit::dsl::membership::generate_merkle_poseidon2_trace;
 use dregg_circuit::membership_descriptor_4ary::membership_witness_4ary;
 use dregg_circuit::predicate_air::PredicateType;
 use dregg_circuit::predicate_arith_witness::PREDICATE_ARITH_NAME;
+use dregg_circuit::predicate_comparison_witness::{
+    PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
+    PREDICATE_ARITH_NEQ_NAME,
+};
 use dregg_circuit::temporal_predicate_dsl::TemporalPredicateRequirement;
 use dregg_circuit_prove::custom_leaf_adapter::cellprogram_to_descriptor2;
 
@@ -1215,6 +1219,52 @@ enum BridgePredicateWire {
     ),
 }
 
+/// Verify ONE single-bound comparison proof against the emitted descriptor `desc_name`, pinning its
+/// public inputs `[bound, fact_commitment]` from the HOST policy / committed fact (never the proof).
+/// A proof committed to a different `bound` / `fact_commitment`, or whose private value violates the
+/// comparison (its `DIFF` wraps out of the range lookup, or — for `≠` — has no inverse), is UNSAT and
+/// rejected. A `desc_name` that fails to dispatch is a fail-closed rejection.
+fn verify_predicate_single(
+    desc_name: &str,
+    bound: u32,
+    fact_commitment: BabyBear,
+    proof: &Ir2BatchProof<DreggStarkConfig>,
+) -> Result<(), WitnessedPredicateError> {
+    let desc = descriptor_by_name(desc_name).ok_or_else(|| WitnessedPredicateError::Rejected {
+        kind_name: "BridgePredicate",
+        reason: format!("no predicate descriptor dispatches for {desc_name:?} (fail-closed)"),
+    })?;
+    let pis = vec![BabyBear::new(bound), fact_commitment];
+    let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        verify_vm_descriptor2(&desc, proof, &pis)
+    }));
+    match result {
+        Ok(Ok(())) => Ok(()),
+        Ok(Err(e)) => Err(WitnessedPredicateError::Rejected {
+            kind_name: "BridgePredicate",
+            reason: format!("predicate STARK ({desc_name}) rejected: {e}"),
+        }),
+        Err(_) => Err(WitnessedPredicateError::Rejected {
+            kind_name: "BridgePredicate",
+            reason: "predicate proof decode/verify panicked (treated as rejection)".into(),
+        }),
+    }
+}
+
+/// The emitted IR-v2 descriptor name for a single-bound comparison operator, or `None` for the
+/// two-bound range half-operators (`InRangeLow`/`InRangeHigh` are only valid inside an
+/// [`BridgePredicateRequirement::InRange`], never as a standalone `Threshold`).
+fn single_comparison_descriptor(op: PredicateType) -> Option<&'static str> {
+    match op {
+        PredicateType::Gte => Some(PREDICATE_ARITH_NAME),
+        PredicateType::Lte => Some(PREDICATE_ARITH_LE_NAME),
+        PredicateType::Gt => Some(PREDICATE_ARITH_GT_NAME),
+        PredicateType::Lt => Some(PREDICATE_ARITH_LT_NAME),
+        PredicateType::Neq => Some(PREDICATE_ARITH_NEQ_NAME),
+        PredicateType::InRangeLow | PredicateType::InRangeHigh => None,
+    }
+}
+
 /// Real predicate-AIR-STARK-backed verifier for
 /// [`WitnessedPredicateKind::BridgePredicate`].
 ///
@@ -1281,66 +1331,44 @@ impl WitnessedPredicateVerifier for BridgePredicateStarkVerifier {
                 BridgePredicateRequirement::Threshold { op, threshold },
                 BridgePredicateWire::Single(proof),
             ) => {
-                // Only the ≥ ("value ≥ threshold") predicate has an emitted IR-v2
-                // descriptor (`dregg-predicate-arith-ge::threshold-v1`). Any other
-                // operator (Lte/Gt/Lt/Neq) has no descriptor and fails closed — it
-                // is never accepted against the wrong comparison.
-                if op != PredicateType::Gte {
-                    return Err(WitnessedPredicateError::Rejected {
-                        kind_name: "BridgePredicate",
-                        reason: format!(
-                            "predicate operator {op:?} has no IR-v2 descriptor (only Gte / \
-                             `dregg-predicate-arith-ge::threshold-v1` is emitted)"
-                        ),
-                    });
-                }
-                // Authoritative STARK gate: the descriptor pins its public inputs
-                // `[threshold, fact_commitment]` to the trace, both reconstructed
-                // from the HOST policy / committed fact (not the proof). A proof
-                // committed to a different threshold / fact, or one whose private
-                // value is `< threshold` (its `DIFF` wraps out of the range
-                // lookup), is UNSAT and rejected.
-                let desc = descriptor_by_name(PREDICATE_ARITH_NAME).ok_or_else(|| {
+                // Each single-bound comparison (`Gte`/`Lte`/`Gt`/`Lt`/`Neq`) now has
+                // an emitted IR-v2 descriptor
+                // (`dregg-predicate-arith-{ge,le,gt,lt,neq}::threshold-v1`). The
+                // descriptor pins its public inputs `[threshold, fact_commitment]`,
+                // both reconstructed from the HOST policy / committed fact (not the
+                // proof). A proof committed to a different threshold / fact, or one
+                // whose private value violates the comparison (its `DIFF` wraps out
+                // of the range lookup, or — for `≠` — `DIFF = 0` has no inverse), is
+                // UNSAT and rejected. `InRangeLow`/`InRangeHigh` are not valid
+                // standalone requirements (fail-closed).
+                let desc_name = single_comparison_descriptor(op).ok_or_else(|| {
                     WitnessedPredicateError::Rejected {
                         kind_name: "BridgePredicate",
                         reason: format!(
-                            "no predicate descriptor dispatches for {PREDICATE_ARITH_NAME:?} \
-                             (fail-closed)"
+                            "predicate operator {op:?} is not a valid single-bound requirement \
+                             (use InRange); fails closed"
                         ),
                     }
                 })?;
-                let pis = vec![BabyBear::new(threshold), fact_commitment];
-                let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                    verify_vm_descriptor2(&desc, &proof, &pis)
-                }));
-                match result {
-                    Ok(Ok(())) => Ok(()),
-                    Ok(Err(e)) => Err(WitnessedPredicateError::Rejected {
-                        kind_name: "BridgePredicate",
-                        reason: format!("predicate STARK rejected: {e}"),
-                    }),
-                    Err(_) => Err(WitnessedPredicateError::Rejected {
-                        kind_name: "BridgePredicate",
-                        reason: "predicate proof decode/verify panicked (treated as rejection)"
-                            .into(),
-                    }),
-                }
+                verify_predicate_single(desc_name, threshold, fact_commitment, &proof)
             }
             (
-                BridgePredicateRequirement::InRange { low: _, high: _ },
-                BridgePredicateWire::Range(_low_proof, _high_proof),
+                BridgePredicateRequirement::InRange { low, high },
+                BridgePredicateWire::Range(low_proof, high_proof),
             ) => {
-                // The two-bound `low ≤ value ≤ high` predicate has no emitted IR-v2
-                // descriptor (only the one-sided ≥ threshold descriptor exists), so
-                // it fails closed rather than accept an unverified range claim.
-                let _ = fact_commitment;
-                Err(WitnessedPredicateError::Rejected {
-                    kind_name: "BridgePredicate",
-                    reason: "InRange predicate has no IR-v2 descriptor yet (only the one-sided \
-                             `dregg-predicate-arith-ge::threshold-v1` ≥ threshold is emitted); \
-                             fails closed"
-                        .into(),
-                })
+                // The two-bound `low ≤ value ≤ high` predicate is verified as the
+                // conjunction of two emitted one-sided descriptors, both pinned to
+                // the SAME `fact_commitment`: the low bound is `value ≥ low` (the
+                // `≥` descriptor) and the high bound is `value ≤ high` (the `≤`
+                // descriptor). Either proof failing ⇒ fail-closed.
+                verify_predicate_single(PREDICATE_ARITH_NAME, low, fact_commitment, &low_proof)?;
+                verify_predicate_single(
+                    PREDICATE_ARITH_LE_NAME,
+                    high,
+                    fact_commitment,
+                    &high_proof,
+                )?;
+                Ok(())
             }
             // Wire shape disagrees with the policy shape (single-vs-range).
             (BridgePredicateRequirement::Threshold { .. }, BridgePredicateWire::Range(..)) => {
