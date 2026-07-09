@@ -39,12 +39,13 @@
 //!   (quorum of distinct-active-key, turn-bound, same-work attestations; a
 //!   divergent one convicts), the `OptimisticChallenge` height/conviction gate,
 //!   the `Proven` STARK verifier ([`verify_ci_proof`] = [`StarkCiProofVerifier`]
-//!   composing the production [`CellProgram`] prove+verify — see below), the
+//!   composing the deployed descriptor prover+verifier — see below), the
 //!   `Staked` composition (delegates to `inner`, binds `bond_ref`, surfaces the
 //!   [`Conviction`]), and the [`GovernedKeySet`] rotation/revocation gate.
 //! - **The `Proven` rung — what is REAL vs the named deepest seam**:
 //!   [`verify_ci_proof`] is a GENUINE dregg STARK verification, not a stub: it
-//!   composes [`CellProgram::verify_transition`] over the CI-attestation circuit
+//!   composes the deployed descriptor verifier ([`verify_vm_descriptor2`]) over
+//!   the CI-attestation IR-v2 descriptor
 //!   ([`ci_attestation_program`]), whose 25 public inputs BIND the verdict
 //!   (input_root ‖ command_id ‖ output_digest ‖ exit_code, via first-row
 //!   boundary constraints) and whose in-circuit predicate is the CI PASS GATE
@@ -213,13 +214,16 @@ impl GovernedKeySet {
 // re-execution and NO quorum-honesty assumption — trust only proof soundness.
 // ─────────────────────────────────────────────────────────────────────────────
 
+use dregg_circuit::descriptor_ir2::{
+    DreggStarkConfig, EffectVmDescriptor2, Ir2BatchProof, MemBoundaryWitness, parse_vm_descriptor2,
+    prove_vm_descriptor2, verify_vm_descriptor2,
+};
 use dregg_circuit::dsl::circuit::{
     BoundaryDef, BoundaryRow, CellProgram, CircuitDescriptor, ColumnDef, ColumnKind,
     ConstraintExpr, PolyTerm,
 };
 use dregg_circuit::effect_vm::bytes32_to_8_limbs;
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-use std::collections::HashMap;
 
 /// How many BabyBear public inputs the CI-attestation circuit binds:
 /// `input_root` (8 limbs) ‖ `command_id` (8) ‖ `output_digest` (8) ‖ `exit_code`
@@ -234,7 +238,7 @@ const COL_EXIT: usize = 24;
 /// THE CANONICAL VERDICT→PUBLIC-INPUTS ENCODING that binds a proof to a verdict.
 ///
 /// The verifier reconstructs this vector from the verdict it is checking and
-/// hands it to [`CellProgram::verify_transition`]; the circuit's first-row
+/// hands it to [`verify_vm_descriptor2`]; the descriptor's first-row
 /// boundary constraints pin the committed trace to exactly these felts. So a
 /// proof produced for a DIFFERENT verdict (any different `input_root`,
 /// `command_id`, `output_digest`, or `exit_code`) does not verify against the
@@ -317,27 +321,67 @@ pub fn ci_attestation_vk() -> [u8; 32] {
     ci_attestation_program().vk_hash
 }
 
+/// THE CI-ATTESTATION STATEMENT AS AN IR-v2 DESCRIPTOR — the deployed descriptor
+/// prover ([`prove_vm_descriptor2`] / [`verify_vm_descriptor2`]) the `Proven` rung
+/// proves and verifies over after the hand-STARK engine (`CellProgram::{prove,
+/// verify}_transition`) was removed in the stark-kill campaign.
+///
+/// It is the SAME statement as [`ci_attestation_program`]'s DSL descriptor,
+/// re-expressed in the IR-v2 grammar: `CI_PI_COUNT` value columns, each bound to
+/// its matching public input by a first-row `pi_binding` (so a proof is ABOUT one
+/// exact verdict — the binding), plus the single CI **PASS GATE** — the exit-code
+/// column ([`COL_EXIT`]) must be `0` on every row. A verdict with a non-zero exit
+/// code has NO satisfying trace (the `pi_binding` pins that column to the non-zero
+/// exit while the gate demands `0`), so a failing check cannot be `Proven`. No
+/// tables, no memory, no lookups — the statement is pure boundary-binding + one
+/// degree-1 gate.
+fn ci_attestation_descriptor2() -> EffectVmDescriptor2 {
+    let mut constraints = String::new();
+    for i in 0..CI_PI_COUNT {
+        if i > 0 {
+            constraints.push(',');
+        }
+        constraints.push_str(&format!(
+            "{{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":{i},\"pi_index\":{i}}}"
+        ));
+    }
+    // THE PASS GATE: the exit-code column == 0 (a degree-1 polynomial in one var).
+    constraints.push_str(&format!(
+        ",{{\"t\":\"gate\",\"body\":{{\"t\":\"var\",\"v\":{COL_EXIT}}}}}"
+    ));
+    let json = format!(
+        "{{\"name\":\"dregg-ci-attestation-v1\",\"ir\":2,\
+         \"trace_width\":{CI_PI_COUNT},\"public_input_count\":{CI_PI_COUNT},\
+         \"tables\":[],\"constraints\":[{constraints}],\"hash_sites\":[],\"ranges\":[]}}"
+    );
+    parse_vm_descriptor2(&json).expect("the CI-attestation IR-v2 descriptor is well-formed")
+}
+
 /// GENUINELY PRODUCE a `Proven` proof for a PASSING verdict (exit code 0): prove
-/// the CI-attestation circuit over a trace whose first row carries the verdict's
-/// felt encoding. This mints a REAL [`stark`](dregg_circuit::stark) proof (via
-/// [`CellProgram::prove_transition`]) — not a hand-mocked "valid" flag — bound to
-/// the verdict through its public inputs.
+/// the CI-attestation IR-v2 descriptor over a trace whose every row carries the
+/// verdict's felt encoding. This mints a REAL descriptor-prover proof (via
+/// [`prove_vm_descriptor2`]) — not a hand-mocked "valid" flag — bound to the
+/// verdict through its public inputs.
 ///
 /// Fails (`Err`) for a non-passing verdict: the pass-gate constraint has no
 /// satisfying trace when `exit_code != 0`, so no valid proof exists.
 pub fn prove_ci_attestation(verdict: &CiVerdict) -> Result<CiExecutionProof, String> {
     let program = ci_attestation_program();
+    let desc = ci_attestation_descriptor2();
     let pis = ci_verdict_public_inputs(verdict);
-    // A power-of-two trace (>= 2); the circuit is single-row-meaningful (all
-    // constraints/boundaries are on row 0 / per-row), so a constant trace works.
+    // A power-of-two trace (>= 2); the statement is single-row-meaningful (all
+    // pi-bindings on row 0, the pass gate per-row), so a constant trace whose every
+    // row IS the public-input vector works. The `pi_binding` constraints pin the
+    // first row's columns to `pis`; the pass gate demands column COL_EXIT == 0, so a
+    // non-passing verdict (exit != 0) has no satisfying trace and `prove` fails.
     let num_rows = 4usize;
-    let mut witness: HashMap<String, Vec<BabyBear>> = HashMap::new();
-    for (i, pi) in pis.iter().enumerate() {
-        witness.insert(format!("pi{i}"), vec![*pi; num_rows]);
-    }
-    let proof_bytes = program
-        .prove_transition(&witness, num_rows, &pis)
-        .map_err(|e| format!("ci-attestation prove failed: {e:?}"))?;
+    let trace: Vec<Vec<BabyBear>> = vec![pis.clone(); num_rows];
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+        .map_err(|e| format!("ci-attestation prove failed: {e}"))?;
+    // Crate-internal wire: the batch proof (produced here, consumed only by
+    // `StarkCiProofVerifier`) is serde-encoded into `proof_bytes`.
+    let proof_bytes = serde_json::to_vec(&proof)
+        .map_err(|e| format!("ci-attestation proof encode failed: {e}"))?;
     Ok(CiExecutionProof {
         proving_vk: program.vk_hash,
         asserted_output: verdict.output_digest,
@@ -358,9 +402,9 @@ pub struct CiExecutionProof {
     /// The output digest the proof asserts (must equal the verdict's
     /// `output_digest`; the proof's public inputs bind it in-circuit).
     pub asserted_output: [u8; 32],
-    /// The REAL STARK proof bytes ([`CellProgram::prove_transition`] output),
-    /// verified by [`CellProgram::verify_transition`] against the verdict's
-    /// public inputs.
+    /// The REAL STARK proof bytes (serde-encoded [`prove_vm_descriptor2`] batch
+    /// proof), verified by [`verify_vm_descriptor2`] against the verdict's public
+    /// inputs.
     pub proof_bytes: Vec<u8>,
 }
 
@@ -379,8 +423,8 @@ pub trait CiProofVerifier {
 }
 
 /// **THE REAL `Proven` VERIFIER** — a genuine dregg STARK check, no re-execution,
-/// no quorum-honesty assumption. It composes [`CellProgram::verify_transition`]
-/// (the production light-client verify path) over the CI-attestation circuit.
+/// no quorum-honesty assumption. It composes [`verify_vm_descriptor2`] (the
+/// deployed descriptor verify path) over the CI-attestation IR-v2 descriptor.
 ///
 /// The four fail-closed checks:
 /// 1. **vk binds** — the check's `verifying_key` is the CI-attestation program's
@@ -417,9 +461,22 @@ impl CiProofVerifier for StarkCiProofVerifier {
         if proof.asserted_output != verdict.output_digest {
             return false;
         }
-        // (3)+(4) THE STARK, over public inputs reconstructed from THIS verdict.
+        // (3)+(4) THE STARK, over public inputs reconstructed from THIS verdict. A
+        // proof produced for a DIFFERENT verdict committed its trace to different
+        // pi-binding felts, so it fails the first-row `pi_binding` constraints when
+        // verified against this verdict's public inputs. A garbage / tampered wire
+        // fails the decode or the verify (both fail closed).
+        let desc = ci_attestation_descriptor2();
         let pis = ci_verdict_public_inputs(verdict);
-        program.verify_transition(&pis, &proof.proof_bytes).is_ok()
+        let batch: Ir2BatchProof<DreggStarkConfig> =
+            match serde_json::from_slice(&proof.proof_bytes) {
+                Ok(b) => b,
+                Err(_) => return false,
+            };
+        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            verify_vm_descriptor2(&desc, &batch, &pis).is_ok()
+        }))
+        .unwrap_or(false)
     }
 }
 
@@ -742,12 +799,19 @@ pub fn detect_upheld_challenge(
             continue;
         };
         // (1) Anti-Sybil: the challenger must be an ACTIVE trusted key, and the
-        //     block's signature must really verify (defensive: a lace assembled
-        //     outside `insert` might carry an unverified block).
+        //     block's HYBRID signature must really verify (defensive: a lace
+        //     assembled outside `insert` might carry an unverified block). The
+        //     ML-DSA half is pinned to the creator's ENROLLED roster key — taken
+        //     from the lace's own PQ roster, the SAME source `Blocklace::insert`
+        //     verifies against. A creator with no enrolled PQ key is not a
+        //     trusted-signed challenger (fail closed: skip).
         if !trusted_keys.contains(&block.creator) {
             continue;
         }
-        if block.verify_signature().is_err() {
+        let Some(enrolled_pq) = lace.pq_roster().get(&block.creator) else {
+            continue;
+        };
+        if block.verify_signature(enrolled_pq).is_err() {
             continue;
         }
         // (2) A genuine contradiction about THIS run.
@@ -1165,6 +1229,20 @@ mod tests {
     use super::*;
     use crate::check::{CheckRefusal, CheckWitness, CiRunWitness, RequiredCheck};
     use crate::ci_verdict::run_ci_verdict;
+    use dregg_blocklace::MlDsaSigningKey;
+
+    /// Insert a signed challenge `block` (creator derived from `seed`) into a
+    /// fresh lace, ENROLLING the creator's ML-DSA public key — derived from the
+    /// SAME ed25519 seed `Block::sign` derives the PQ signing key from — so the
+    /// lace's hybrid-verifying `insert` (and `detect_upheld_challenge`) accepts it.
+    fn lace_of(seed: [u8; 32], block: Block) -> Blocklace {
+        let mut lace = Blocklace::new();
+        let (pq_pub, _) = MlDsaSigningKey::from_seed(&seed);
+        lace.enroll_pq(block.creator, pq_pub);
+        lace.insert(block)
+            .expect("signed genesis challenge inserts");
+        lace
+    }
 
     // The CI-run region cell identity (repo policy; the verifier rebuilds it).
     const CI_EDITOR: u8 = 7;
@@ -1308,9 +1386,7 @@ mod tests {
                 recomputed_exit: exit,
             };
             let block = post_challenge(&divergence, &SigningKey::from_bytes(&seed));
-            let mut lace = Blocklace::new();
-            lace.insert(block.clone())
-                .expect("signed genesis challenge inserts");
+            let lace = lace_of(seed, block.clone());
             (lace, block)
         };
 
@@ -1404,8 +1480,7 @@ mod tests {
             },
             &SigningKey::from_bytes(&S2),
         );
-        let mut lace = Blocklace::new();
-        lace.insert(genuine.clone()).unwrap();
+        let lace = lace_of(S2, genuine.clone());
         assert_eq!(
             detect_upheld_challenge(&host, &lace, &trusted),
             Some(genuine.id()),
@@ -1429,8 +1504,7 @@ mod tests {
             },
             &SigningKey::from_bytes(&S2),
         );
-        let mut lace2 = Blocklace::new();
-        lace2.insert(agreeing).unwrap();
+        let lace2 = lace_of(S2, agreeing);
         assert_eq!(
             detect_upheld_challenge(&host, &lace2, &trusted),
             None,
