@@ -85,8 +85,8 @@ fn virtual_chain_is_ordered() {
 fn merge_two_independent_blocklaces() {
     let key_a = random_key();
     let key_b = random_key();
-    let creator_a = key_a.verifying_key().to_bytes();
-    let creator_b = key_b.verifying_key().to_bytes();
+    let creator_a = Block::hybrid_id(&key_a);
+    let creator_b = Block::hybrid_id(&key_b);
 
     let mut lace_a = Blocklace::new_simple(key_a);
     let mut lace_b = Blocklace::new_simple(key_b);
@@ -109,7 +109,7 @@ fn merge_two_independent_blocklaces() {
 #[test]
 fn detect_equivocation_same_seq() {
     let key = random_key();
-    let creator = key.verifying_key().to_bytes();
+    let creator = Block::hybrid_id(&key);
 
     // Create two blocks with same seq but different content.
     let block_a = Block::new(&key, 1, Payload::Data(b"version A".to_vec()), vec![]);
@@ -148,7 +148,7 @@ fn detect_equivocation_incomparable_different_seq() {
     // branch_a (seq 2) and branch_b (seq 3) are by the same creator, distinct,
     // and neither is in the other's causal past (both only see `base`).
     let key = random_key();
-    let creator = key.verifying_key().to_bytes();
+    let creator = Block::hybrid_id(&key);
 
     let base = Block::new(&key, 1, Payload::Data(b"base".to_vec()), vec![]);
     let base_id = base.id();
@@ -181,7 +181,7 @@ fn causally_ordered_blocks_not_flagged() {
     // the other (a genuine honest virtual chain) must NOT be flagged. seq 1 →
     // seq 2 → seq 3, each acking the previous tip, are pairwise comparable.
     let key = random_key();
-    let creator = key.verifying_key().to_bytes();
+    let creator = Block::hybrid_id(&key);
 
     let b1 = Block::new(&key, 1, Payload::Data(b"1".to_vec()), vec![]);
     let b1_id = b1.id();
@@ -410,7 +410,7 @@ fn large_scale_merge() {
 
     // Each creator's virtual chain should be totally ordered.
     for key in &keys {
-        let creator = key.verifying_key().to_bytes();
+        let creator = Block::hybrid_id(&key);
         let chain = target.virtual_chain(&creator);
         assert_eq!(chain.len(), blocks_per_creator);
         for (i, block) in chain.iter().enumerate() {
@@ -576,7 +576,7 @@ fn finality_never_regresses() {
 fn remove_equivocator_excludes_from_tips() {
     let key_a = random_key();
     let key_b = random_key();
-    let creator_b = key_b.verifying_key().to_bytes();
+    let creator_b = Block::hybrid_id(&key_b);
 
     let mut lace = Blocklace::new_simple(key_a);
 
@@ -604,7 +604,7 @@ fn remove_equivocator_excludes_from_tips() {
 fn equivocator_blocks_dont_update_tips() {
     let key_a = random_key();
     let key_b = random_key();
-    let creator_b = key_b.verifying_key().to_bytes();
+    let creator_b = Block::hybrid_id(&key_b);
 
     let mut lace = Blocklace::new_simple(key_a);
 
@@ -761,7 +761,7 @@ fn process_finalized_no_duplicates() {
 fn merge_equivocator_blocks_marks_equivocator() {
     let key_a = random_key();
     let key_b = random_key();
-    let creator_b = key_b.verifying_key().to_bytes();
+    let creator_b = Block::hybrid_id(&key_b);
 
     let mut lace = Blocklace::new_simple(key_a);
 
@@ -782,7 +782,7 @@ fn merge_removes_tip_on_equivocation_detection() {
     // Closes audit gap C: merge() must mirror receive_block()'s tip removal.
     let key_a = random_key();
     let key_b = random_key();
-    let creator_b = key_b.verifying_key().to_bytes();
+    let creator_b = Block::hybrid_id(&key_b);
 
     let mut lace = Blocklace::new_simple(key_a);
 
@@ -917,7 +917,7 @@ fn merge_join_order_independent_with_fork_differential() {
 
     // The fork IS detected (the equivocation view is a deterministic function of the
     // converged keyset — the same on every replica, per LaceMerge's §1 note).
-    let byz_creator = key_byz.verifying_key().to_bytes();
+    let byz_creator = Block::hybrid_id(&key_byz);
     assert!(r1.is_equivocator(&byz_creator));
     assert!(r2.is_equivocator(&byz_creator));
     assert!(r3.is_equivocator(&byz_creator));

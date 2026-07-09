@@ -88,11 +88,7 @@ pub unsafe fn commit(value: u64, blinding: *const u8, out32: *mut u8) {
 ///
 /// # Safety
 /// `blinding` / `commitment32` must each point to 32 readable bytes.
-pub unsafe fn verify_opening(
-    value: u64,
-    blinding: *const u8,
-    commitment32: *const u8,
-) -> u8 {
+pub unsafe fn verify_opening(value: u64, blinding: *const u8, commitment32: *const u8) -> u8 {
     if blinding.is_null() || commitment32.is_null() {
         return 0;
     }

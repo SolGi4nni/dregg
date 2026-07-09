@@ -76,10 +76,12 @@ impl EvidenceHeader {
     }
 
     /// The exact bytes the creator signed (byte-identical to
-    /// `Block::signing_content` for the full block).
-    fn signing_content(&self, creator: &[u8; 32]) -> Vec<u8> {
+    /// `Block::signing_content` for the full block). The signed content commits
+    /// to the block's HYBRID id (`Block::creator`), so reconstruction takes the
+    /// hybrid id, NOT the ed25519 strand identity.
+    fn signing_content(&self, hybrid_id: &[u8; 32]) -> Vec<u8> {
         Block::signing_content_from_payload_hash(
-            creator,
+            hybrid_id,
             self.seq,
             &self.payload_hash,
             &self.predecessors,
@@ -87,21 +89,23 @@ impl EvidenceHeader {
     }
 
     /// The block id this header denotes — same derivation as [`Block::id`]
-    /// (blake3 of signed content ‖ signature).
-    pub fn block_id(&self, creator: &[u8; 32]) -> BlockId {
-        let mut buf = self.signing_content(creator);
+    /// (blake3 of signed content ‖ signature). Takes the block's HYBRID id.
+    pub fn block_id(&self, hybrid_id: &[u8; 32]) -> BlockId {
+        let mut buf = self.signing_content(hybrid_id);
         buf.extend_from_slice(&self.signature);
         BlockId(*blake3::hash(&buf).as_bytes())
     }
 
-    /// Real Ed25519 verification of this header's signature against `creator`.
-    /// A malformed creator key or forged signature is `false`.
-    pub fn verify_signature(&self, creator: &[u8; 32]) -> bool {
-        let Ok(vk) = VerifyingKey::from_bytes(creator) else {
+    /// Real Ed25519 verification of this header's signature. The signed content
+    /// commits to the block's `hybrid_id`, but the signature is verified against
+    /// the accused strand's `ed25519` verify key (the hybrid id is not itself a
+    /// key). A malformed key or forged signature is `false`.
+    pub fn verify_signature(&self, hybrid_id: &[u8; 32], ed25519: &[u8; 32]) -> bool {
+        let Ok(vk) = VerifyingKey::from_bytes(ed25519) else {
             return false;
         };
         let sig = ed25519_dalek::Signature::from_bytes(&self.signature);
-        vk.verify(&self.signing_content(creator), &sig).is_ok()
+        vk.verify(&self.signing_content(hybrid_id), &sig).is_ok()
     }
 }
 
@@ -153,8 +157,18 @@ impl std::error::Error for EvidenceError {}
 /// Self-contained — verification needs nothing but these bytes.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub struct EvidenceOfEquivocation {
-    /// The accused creator's Ed25519 public key.
+    /// The accused strand's Ed25519 public key — the ECONOMIC / strand identity
+    /// the court, admission registry and equivocation predicate atom all key on
+    /// (bonds are posted under this key). Unchanged by the hybrid-id re-basing:
+    /// an equivocation exhibit proves that an ed25519 key double-signed, and the
+    /// accused is that key. Both headers' signatures verify against it.
     pub creator: [u8; 32],
+    /// The accused's HYBRID consensus id (`H(ed25519 ‖ ml_dsa)` == the block's
+    /// `Block::creator`). NOT the strand identity — carried only to re-derive the
+    /// exact signed content and block ids (the signed content commits to the
+    /// hybrid id, not the ed25519 key).
+    #[serde(default)]
+    pub hybrid_id: [u8; 32],
     /// The first conflicting signed header.
     pub header_a: EvidenceHeader,
     /// The second conflicting signed header.
@@ -169,7 +183,8 @@ impl EvidenceOfEquivocation {
             return Err(EvidenceError::CreatorMismatch);
         }
         let ev = Self {
-            creator: a.creator,
+            creator: a.ed25519,
+            hybrid_id: a.creator,
             header_a: EvidenceHeader::from_block(a),
             header_b: EvidenceHeader::from_block(b),
         };
@@ -200,10 +215,16 @@ impl EvidenceOfEquivocation {
         {
             return Err(EvidenceError::IdenticalContent);
         }
-        if !self.header_a.verify_signature(&self.creator) {
+        if !self
+            .header_a
+            .verify_signature(&self.hybrid_id, &self.creator)
+        {
             return Err(EvidenceError::BadSignature { which: 'a' });
         }
-        if !self.header_b.verify_signature(&self.creator) {
+        if !self
+            .header_b
+            .verify_signature(&self.hybrid_id, &self.creator)
+        {
             return Err(EvidenceError::BadSignature { which: 'b' });
         }
         Ok(())
@@ -212,8 +233,8 @@ impl EvidenceOfEquivocation {
     /// The two conflicting block ids `(id_a, id_b)` this evidence names.
     pub fn block_ids(&self) -> (BlockId, BlockId) {
         (
-            self.header_a.block_id(&self.creator),
-            self.header_b.block_id(&self.creator),
+            self.header_a.block_id(&self.hybrid_id),
+            self.header_b.block_id(&self.hybrid_id),
         )
     }
 
@@ -368,6 +389,8 @@ mod tests {
         };
         let ev = EvidenceOfEquivocation::from_proof(&proof).expect("retained proof certifies");
         ev.verify().expect("wire value verifies lace-free");
-        assert_eq!(ev.creator, a.creator);
+        // The evidence identifies the accused by their ed25519 strand key.
+        assert_eq!(ev.creator, a.ed25519);
+        assert_eq!(ev.hybrid_id, a.creator);
     }
 }

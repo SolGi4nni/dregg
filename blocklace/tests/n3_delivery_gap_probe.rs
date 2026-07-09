@@ -27,7 +27,9 @@ fn key(seed: u8) -> SigningKey {
     SigningKey::from_bytes(&[seed; 32])
 }
 fn pubkey(sk: &SigningKey) -> [u8; 32] {
-    sk.verifying_key().to_bytes()
+    // The identity LABEL is now the HYBRID id (== `Block::creator`), so tau
+    // participants match the creators the finality blocks actually carry.
+    Block::hybrid_id(sk)
 }
 
 fn round_block(sk: &SigningKey, seq: u64, preds: &[BlockId]) -> Block {

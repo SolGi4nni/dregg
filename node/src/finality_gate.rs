@@ -267,8 +267,7 @@ mod tests {
         // Three nodes, three fully-connected rounds (the shape of the Lean `trace3`). Each node's
         // round-(r+1) block references all of round r; payloads are Turns (actionable).
         let keys = [key(1), key(2), key(3)];
-        let participants: Vec<[u8; 32]> =
-            keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let participants: Vec<[u8; 32]> = keys.iter().map(Block::hybrid_id).collect();
 
         let mut lace = Blocklace::new(keys[0].clone(), 3);
 
@@ -365,8 +364,7 @@ mod tests {
         }
 
         let keys = [key(1), key(2), key(3)];
-        let participants: Vec<[u8; 32]> =
-            keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let participants: Vec<[u8; 32]> = keys.iter().map(Block::hybrid_id).collect();
         let mut lace = Blocklace::new(keys[0].clone(), 3);
 
         let mut r1_ids = Vec::new();
@@ -464,8 +462,7 @@ mod tests {
         // round-synchronous DAG. Three rounds = wave 0 (wavelength 3), the minimal shape that can
         // super-ratify a wave-0 leader. Every block carries a Turn payload.
         let keys: Vec<SigningKey> = (1u8..=5).map(key).collect();
-        let participants: Vec<[u8; 32]> =
-            keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let participants: Vec<[u8; 32]> = keys.iter().map(Block::hybrid_id).collect();
         assert_eq!(
             dregg_blocklace::ordering::supermajority_threshold(participants.len()),
             4,
@@ -590,8 +587,7 @@ mod tests {
         // 5 nodes, 6 fully cross-linked rounds: each round's block references ALL of the previous
         // round (the dense cross-linking that explodes an un-memoized causal-past traversal).
         let keys: Vec<SigningKey> = (1u8..=5).map(key).collect();
-        let participants: Vec<[u8; 32]> =
-            keys.iter().map(|k| k.verifying_key().to_bytes()).collect();
+        let participants: Vec<[u8; 32]> = keys.iter().map(Block::hybrid_id).collect();
         let mut lace = Blocklace::new(keys[0].clone(), 3);
 
         let mut r1_ids = Vec::new();

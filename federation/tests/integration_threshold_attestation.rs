@@ -67,7 +67,7 @@ fn threshold_attestation_full_committee_verifies() {
     let receipt = FederationReceipt::with_threshold_qc(fed_id, 0, body, &qc);
 
     assert!(
-        receipt.verify(Some(&committee), &ed_keys, 0, 0),
+        receipt.verify(Some(&committee), &ed_keys, &[], 0, 0),
         "full-committee receipt must verify"
     );
 }
@@ -111,7 +111,7 @@ fn tampered_body_fails_verification() {
     let receipt = FederationReceipt::with_threshold_qc(fed_id, 0, body_b, &qc);
 
     assert!(
-        !receipt.verify(Some(&committee), &ed_keys, 0, 0),
+        !receipt.verify(Some(&committee), &ed_keys, &[], 0, 0),
         "QC over body_a must not satisfy body_b"
     );
 }
@@ -137,7 +137,7 @@ fn cross_committee_qc_rejected() {
 
     // Verify against committee B (different universe) — must fail.
     assert!(
-        !receipt.verify(Some(&committee_b), &ed_keys, 0, 0),
+        !receipt.verify(Some(&committee_b), &ed_keys, &[], 0, 0),
         "QC from committee A must not satisfy committee B"
     );
 }
@@ -162,7 +162,7 @@ fn qc_bytes_round_trip_verifies() {
 
     let receipt = FederationReceipt::with_threshold_qc(fed_id, 0, body, &qc2);
     assert!(
-        receipt.verify(Some(&committee), &ed_keys, 0, 0),
+        receipt.verify(Some(&committee), &ed_keys, &[], 0, 0),
         "receipt with deserialized QC must still verify"
     );
 }
@@ -183,7 +183,7 @@ fn federation_id_mismatch_rejected() {
     // Tag with an all-zeros fed_id instead of the derived one.
     let receipt = FederationReceipt::with_threshold_qc([0u8; 32], 0, body, &qc);
     assert!(
-        !receipt.verify(Some(&committee), &ed_keys, 0, 0),
+        !receipt.verify(Some(&committee), &ed_keys, &[], 0, 0),
         "receipt tagged with wrong federation_id must be rejected"
     );
 }
@@ -211,7 +211,7 @@ fn votes_qc_threshold_and_unknown_signer_rejection() {
 
     let receipt = FederationReceipt::with_vote_signatures(fed_id, 0, body.clone(), votes);
     assert!(
-        receipt.verify(None, &known, 3, 0),
+        receipt.verify(None, &known, &[], 3, 0),
         "3-of-4 votes must meet threshold 3"
     );
 
@@ -220,7 +220,7 @@ fn votes_qc_threshold_and_unknown_signer_rejection() {
     let bad_votes = vec![(outsider_pk, sign(&outsider_sk, &hash))];
     let bad_receipt = FederationReceipt::with_vote_signatures(fed_id, 0, body, bad_votes);
     assert!(
-        !bad_receipt.verify(None, &known, 1, 0),
+        !bad_receipt.verify(None, &known, &[], 1, 0),
         "vote from unknown signer must be rejected"
     );
 }

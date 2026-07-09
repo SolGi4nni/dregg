@@ -363,7 +363,8 @@ async fn single_process_node_binds_consensus_executor_and_finalizes_a_verifiable
         // A fresh "peer" signing key — a creator the lace will see for the first
         // time at seq 1, then try to fork.
         let peer_sk = ed25519_dalek::SigningKey::from_bytes(&[0x42u8; 32]);
-        let peer_creator = peer_sk.verifying_key().to_bytes();
+        // Tips / equivocators are keyed by the HYBRID id (== `Block::creator`).
+        let peer_creator = Block::hybrid_id(&peer_sk);
 
         let mut lace = handle.lace.write().await;
         let honest = Block::new(

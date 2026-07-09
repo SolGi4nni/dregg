@@ -11,6 +11,11 @@ kzg = ["poly-commitment", "ark-ec", "ark-ff", "ark-poly", "ark-bn254", "ark-std"
 [dependencies]
 blake3 = "1"
 serde = { version = "1", features = ["derive"] }
+# postcard (de)serialization of the IR-v2 batch proof (`Ir2BatchProof`) that the
+# private-consumption path verifies via the p3 descriptor prover. This replaced
+# the hand `dregg_circuit::stark::proof_from_bytes` decode in the STARK-kill
+# wire migration (`descriptor_by_name` + `verify_vm_descriptor2`).
+postcard = { version = "1", features = ["use-std"] }
 # JSON (de)serialization of the `ErasureChunk` / `AvailabilityManifest` DA bodies
 # the node's `/storage/{manifest,chunk}` routes return — used by the
 # `retrieval::HttpChunkSource` light-client adapter.

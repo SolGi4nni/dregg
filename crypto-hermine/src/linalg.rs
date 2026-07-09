@@ -8,7 +8,9 @@
 use crate::ring::Poly;
 
 /// A module element: a vector over `R_q` (the Lean `M`/`N` carriers).
-#[derive(Clone, PartialEq, Eq, Debug)]
+/// Serde: the wire form is the sequence of its ring elements (the ceremony
+/// messages carry shares, commitments, and responses as `PolyVec`s).
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct PolyVec(pub Vec<Poly>);
 
 impl PolyVec {

@@ -37,7 +37,7 @@
 //! and eligibility is enforced by the same `ConstitutionManager` quorum rule
 //! the live path uses.
 
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 
 use dregg_blocklace::constitution::{
     ConstitutionManager, LeaveReason, MembershipProposal, MembershipVote,
@@ -167,7 +167,20 @@ fn finalized_order(lace: &Blocklace, participants: &[[u8; 32]]) -> Vec<BlockId> 
         v.into_iter().map(|(_, _, id)| id).collect()
     } else {
         let (ordering_lace, back) = crate::blocklace_sync::build_ordering_blocklace(lace);
-        tau(&ordering_lace, participants)
+        // The ordering projection is keyed by the HYBRID id (`Block::creator`),
+        // but the constitution's `participants` are ed25519 strand identities.
+        // Project each participant to its hybrid id using the ed25519→hybrid map
+        // the lace itself carries (every block pairs `ed25519` with its hybrid
+        // `creator`), so `tau`'s leader election matches the ordering creators.
+        let mut ed_to_hybrid: HashMap<[u8; 32], [u8; 32]> = HashMap::new();
+        for (_, b) in lace.iter() {
+            ed_to_hybrid.entry(b.ed25519).or_insert(b.creator);
+        }
+        let hybrid_participants: Vec<[u8; 32]> = participants
+            .iter()
+            .filter_map(|p| ed_to_hybrid.get(p).copied())
+            .collect();
+        tau(&ordering_lace, &hybrid_participants)
             .into_iter()
             .filter_map(|oid| back.get(&oid).copied())
             .collect()
@@ -220,7 +233,10 @@ pub fn derive_from_lace(
                 continue;
             };
             let action = action.clone();
-            let creator = block.creator;
+            // Membership is an ECONOMIC/strand act: the proposer/voter identity is
+            // the ed25519 strand key (the constitution's participant space), NOT
+            // the hybrid consensus id.
+            let creator = block.ed25519;
             folded.insert(id);
             if fold_membership_block(&mut cm, id, creator, &action) {
                 amendments += 1;

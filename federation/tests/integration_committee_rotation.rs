@@ -107,13 +107,13 @@ fn old_receipt_verifies_under_old_epoch_not_new() {
 
     // Verifies at epoch 0.
     assert!(
-        receipt.verify(Some(&committee), &ed_keys, 0, 0),
+        receipt.verify(Some(&committee), &ed_keys, &[], 0, 0),
         "receipt must verify under the epoch 0 it was produced in"
     );
 
     // Does NOT verify if the caller expects epoch 1 (epoch binding check).
     assert!(
-        !receipt.verify(Some(&committee), &ed_keys, 0, 1),
+        !receipt.verify(Some(&committee), &ed_keys, &[], 0, 1),
         "old receipt must not pass when verifier expects epoch 1"
     );
 }
@@ -200,13 +200,13 @@ fn old_attested_root_still_verifies_under_old_committee_vk() {
 
     // Old receipt still verifies against epoch 0 committee and epoch 0 keys.
     assert!(
-        old_receipt.verify(Some(&committee_e0), &ed_e0, 0, 0),
+        old_receipt.verify(Some(&committee_e0), &ed_e0, &[], 0, 0),
         "old receipt must remain verifiable against epoch-0 committee"
     );
 
     // Old receipt does NOT verify under epoch 1 material.
     assert!(
-        !old_receipt.verify(Some(&committee_e1), &ed_e1, 0, 1),
+        !old_receipt.verify(Some(&committee_e1), &ed_e1, &[], 0, 1),
         "old receipt must not verify under epoch-1 committee"
     );
 }
@@ -233,10 +233,10 @@ fn ed25519_votes_rotation_backward_compat() {
     let receipt = FederationReceipt::with_vote_signatures(fed_id_e0, 0, body.clone(), votes);
 
     // Verifies under epoch 0.
-    assert!(receipt.verify(None, &ed_e0, 3, 0));
+    assert!(receipt.verify(None, &ed_e0, &[], 3, 0));
 
     // Does not verify if epoch expectation is 1.
-    assert!(!receipt.verify(None, &ed_e0, 3, 1));
+    assert!(!receipt.verify(None, &ed_e0, &[], 3, 1));
 
     // After rotation: epoch-1 federation has different keys → new fed_id.
     let kps_e1 = pk_vec(4);
@@ -244,7 +244,7 @@ fn ed25519_votes_rotation_backward_compat() {
 
     // Old receipt over ed_e0 does not verify under ed_e1 keys (different id + different signers).
     assert!(
-        !receipt.verify(None, &ed_e1, 3, 0),
+        !receipt.verify(None, &ed_e1, &[], 3, 0),
         "epoch-0 receipt must not verify under epoch-1 member keys"
     );
 }

@@ -159,3 +159,31 @@ pursue the rungs" + "clean up cruft" + FULL EMPOWERMENT (don't check in for ever
   compute the compound boolean tree (AND/OR/threshold/custom from sub_results, degree-safe intermediates) + forge
   probes (decoupling forge must REJECT) + gauntlet; assess the sub_result↔verdict & value↔fact composition seams.
   My adversarial verification (read constraints + run forges + #assert_axioms) before believing green.
+
+- ⚑⚑ RELATIONAL EMIT FIXED ✅ (verified 3 ways, my hand): weld DIFF==VALUE_A−VALUE_B (0cfa85c82) makes
+  result_bit=1 genuinely mean the committed values satisfy the relation. Lean decoupled_forge_rejected
+  (¬Satisfied2 on the value_a=5/value_b=3/diff=0 forge, machine-checked via the weld gate, #assert_axioms-clean)
+  + eq/neq/range_forces corollaries; Rust forge probes 14/14 (decoupling forges REJECTED, honest ACCEPTS,
+  my run); gauntlet PASS @d8e0fc43. The worst of the two decoupled predicates now enforces its verdict.
+- COMPOUND + COMMITTED-THRESHOLD value-weld: COMPOSITION-DEPENDENT (honest determination, lane a304a27b):
+  • compound AND needs the active-set/arity (variable-arity AIR; a product-chain AND would REJECT honest
+    2-input proofs — MODEL-FOUND-THE-BUG, reverted, no degradation shipped). sub_result↔verdict is cross-proof.
+  • committed-threshold value↔fact needs state_root in-circuit → full-turn weld. NOT emit-level.
+  • relational ≥ field-wrap residual: unbounded VALUE_B still forges a≥b; needs value range checks (the
+    non-revocation/DeployedFaithful carrier). NAMED, not swept.
+- OPEN (awaiting ember steer): the COMPOSITION-WELD AUDIT — do the full-turn welds actually enforce compound
+  sub-verdict / committed-threshold value↔fact / base value↔fact / derivation premise, or missing one level up?
+  Predicates are loaded-but-unfired (no live consumer) → important-not-urgent.
+
+- ⚑⚑ COMPOSITION-WELD AUDIT (lane ae46a0bc, ember-approved) — DECISIVE: NONE of the 4 open predicate welds
+  are closed by full-turn composition. #1 base value↔fact + #2 committed-threshold value↔fact: NOT in the full
+  turn; self-referential consumers (verify against the proof's OWN fact_commitment); live intent path passes
+  predicate_proofs:vec![]. #3 compound sub_result↔verdict: SYNTHETIC (compute_sub_proof_commitment hashes the
+  CLAIMED bit, not a real sub-proof); ZERO consumers. #4 derivation body↔membership-leaf: REAL composition-contract
+  hole — verify_full_turn_bound CLAIMED the membership leg proves the body fact exists, but binds only ROOTS
+  (step5), leaf!=body free, derivation exports no body PI → forge: membership-prove a held leaf while deriving
+  Allow from an unheld body. NOT fired live (live node authorizes via leaf-bound cap_membership). ALL FOUR
+  loaded-but-unfired. ACTED: corrected the false capability-chain comment in full_turn_proof.rs (honesty, no
+  false guarantee in a security verifier). OPEN (ember steer): the real #4 closure = add a body_fact_hash PI to
+  the derivation circuit + bind membership.leaf_hash==body — fix the auth+membership path, OR deprecate it for
+  cap_membership? #1/#2/#3 = mark not-ready-to-fire (welds needed before any live consumer).

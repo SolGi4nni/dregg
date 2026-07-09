@@ -1020,6 +1020,7 @@ mod tests {
         // …in EITHER block order (the digest is order-insensitive).
         let flipped = EvidenceOfEquivocation {
             creator: ev.creator,
+            hybrid_id: ev.hybrid_id,
             header_a: ev.header_b.clone(),
             header_b: ev.header_a.clone(),
         };
@@ -1048,7 +1049,8 @@ mod tests {
         let mut b = Block::new(&attacker, 3, Payload::Data(b"y".to_vec()), vec![]);
         b.creator = a.creator;
         let forged = EvidenceOfEquivocation {
-            creator: a.creator,
+            creator: a.ed25519,
+            hybrid_id: a.creator,
             header_a: dregg_blocklace::evidence::EvidenceHeader::from_block(&a),
             header_b: dregg_blocklace::evidence::EvidenceHeader::from_block(&b),
         };
@@ -1271,6 +1273,7 @@ mod tests {
         assert_eq!(json["reason"], "already-resolved");
         let flipped = EvidenceOfEquivocation {
             creator: ev.creator,
+            hybrid_id: ev.hybrid_id,
             header_a: ev.header_b.clone(),
             header_b: ev.header_a.clone(),
         };

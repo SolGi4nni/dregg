@@ -3481,6 +3481,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "crypto-hermine"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "rand_chacha 0.3.1",
+ "rand_core 0.6.4",
+ "serde",
+ "serde_json",
+ "subtle",
+]
+
+[[package]]
 name = "cssparser"
 version = "0.36.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -4539,6 +4551,7 @@ dependencies = [
  "base64 0.22.1",
  "biscuit-auth",
  "blake3",
+ "dregg-pq",
  "dregg-token",
  "ed25519-dalek",
  "getrandom 0.2.17",
@@ -4553,6 +4566,7 @@ name = "dregg-blocklace"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-pq",
  "dregg-types",
  "ed25519-dalek",
  "postcard",
@@ -4609,6 +4623,7 @@ dependencies = [
  "bs58",
  "chacha20poly1305",
  "dregg-cell",
+ "dregg-pq",
  "dregg-types",
  "getrandom 0.3.4",
  "hkdf",
@@ -4648,6 +4663,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-pq",
  "dregg-types",
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -4955,9 +4971,15 @@ name = "dregg-doc"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "dregg-blocklace",
  "dregg-cell",
+ "dregg-circuit",
+ "dregg-commit",
  "dregg-turn",
+ "ed25519-dalek",
  "ropey",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]
@@ -5045,7 +5067,7 @@ dependencies = [
  "ark-std 0.5.0",
  "blake3",
  "criterion",
- "crossbeam-channel",
+ "crypto-hermine",
  "curve25519-dalek",
  "dregg-blocklace",
  "dregg-captp",
@@ -5053,17 +5075,16 @@ dependencies = [
  "dregg-cell-crypto",
  "dregg-commit",
  "dregg-hints",
+ "dregg-pq",
  "dregg-turn",
  "dregg-types",
  "ed25519-dalek",
- "fips204",
  "getrandom 0.3.4",
  "hex",
  "postcard",
  "serde",
  "serde_json",
  "sha2 0.10.9",
- "tokio",
  "tracing",
 ]
 
@@ -5118,6 +5139,7 @@ dependencies = [
  "blake3",
  "chacha20poly1305",
  "curve25519-dalek",
+ "dregg-bridge",
  "dregg-cell",
  "dregg-cell-crypto",
  "dregg-circuit",
@@ -5162,6 +5184,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
+ "dregg-pq",
  "dregg-turn",
  "ed25519-dalek",
 ]
@@ -5366,6 +5389,20 @@ dependencies = [
  "serde",
  "tempfile",
  "tracing",
+]
+
+[[package]]
+name = "dregg-pq"
+version = "0.1.0"
+dependencies = [
+ "fips204",
+ "getrandom 0.3.4",
+ "hkdf",
+ "ml-kem",
+ "rand_core 0.6.4",
+ "sha2 0.10.9",
+ "x25519-dalek",
+ "zeroize",
 ]
 
 [[package]]
@@ -5604,6 +5641,7 @@ dependencies = [
  "dregg-cell",
  "dregg-circuit",
  "poly-commitment",
+ "postcard",
  "reed-solomon-erasure",
  "serde",
  "serde_json",
@@ -5698,6 +5736,7 @@ dependencies = [
  "criterion",
  "dregg-commit",
  "dregg-macaroon",
+ "dregg-pq",
  "dregg-trace",
  "ed25519-dalek",
  "getrandom 0.3.4",
@@ -5754,6 +5793,7 @@ dependencies = [
  "dregg-commit",
  "dregg-dsl-runtime",
  "dregg-hints",
+ "dregg-pq",
  "dregg-token",
  "dregg-types",
  "ed25519-dalek",
@@ -15669,7 +15709,10 @@ name = "sandstorm-bridge"
 version = "0.1.0"
 dependencies = [
  "data-encoding",
+ "deos-view",
  "dregg-auth",
+ "dregg-cell",
+ "dregg-circuit",
  "ed25519-dalek",
  "lzma-rs",
  "serde",
@@ -18698,6 +18741,8 @@ dependencies = [
  "blake3",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-doc",
+ "dregg-turn",
  "dregg-types",
  "serde",
  "serde_json",

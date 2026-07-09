@@ -370,7 +370,8 @@ mod tests {
     /// enrolled key is the SAME one `Block::new` signs the PQ half with (both
     /// derive from the ed25519 seed via `ml_dsa_65::keygen_from_seed`).
     fn enroll(lace: &mut Blocklace, sk: &SigningKey) {
-        lace.enroll_pq(sk.verifying_key().to_bytes(), Block::pq_public_key(sk));
+        // The roster is keyed by the HYBRID id (== `Block::creator`).
+        lace.enroll_pq(Block::hybrid_id(sk), Block::pq_public_key(sk));
     }
 
     /// Build a chain of `n` heartbeat blocks on a fresh lace, returning the blocks

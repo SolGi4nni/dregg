@@ -109,12 +109,7 @@ pub unsafe fn open(
 ///
 /// # Safety
 /// As `open`, minus the output buffer.
-pub unsafe fn authenticate(
-    key: *const u8,
-    nonce: *const u8,
-    ct: *const u8,
-    ct_len: usize,
-) -> u8 {
+pub unsafe fn authenticate(key: *const u8, nonce: *const u8, ct: *const u8, ct_len: usize) -> u8 {
     if key.is_null() || nonce.is_null() || ct.is_null() || ct_len < 16 {
         return 0;
     }

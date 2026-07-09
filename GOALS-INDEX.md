@@ -13,6 +13,7 @@ file; never clobber another lane's.
 | **fable** | `GOAL-fable.md` | make it real, and keep it honest (general Fable driver) |
 | **federation** | `GOAL-FEDERATION.md` | make the corpus RUN FOR REAL on the living federation, and know WHY |
 | **stark-kill** | `GOAL-STARK-KILL.md` | kill `circuit/src/stark.rs` + ~45 hand AIRs by re-deriving every circuit from Lean; climb the refinement ladder (Rung 1 functional → Rung 2 semantic → Rung 3 fold → apex) |
+| **no-prequantum** | `GOAL-PQ.md` | leave no classical-only load-bearing crypto standing: hybridize every signature (ed25519∧ML-DSA, enrolled+pinned) + key-exchange (X25519+ML-KEM); per the 07-09 audit |
 
 **Shared-tree discipline (all lanes):** additive-only in swarms; commit surgically — NEVER
 stage another lane's files (e.g. `dregg-lean-ffi/src/lib.rs`, another `GOAL-*.md`); no git

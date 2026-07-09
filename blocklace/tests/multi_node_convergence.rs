@@ -59,7 +59,9 @@ fn key(seed: u8) -> SigningKey {
 }
 
 fn pubkey(sk: &SigningKey) -> [u8; 32] {
-    sk.verifying_key().to_bytes()
+    // The identity LABEL is now the HYBRID id (== `Block::creator`), so tau
+    // participants match the creators the finality blocks actually carry.
+    Block::hybrid_id(sk)
 }
 
 /// One in-process node: a finality blocklace (the live consensus state) plus the
