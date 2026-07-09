@@ -36,7 +36,13 @@ of one (carrying the turn-receipt hash it projects). A struct that is neither is
   prev-hash-chained, Ed25519-signed receipt: `previous_receipt_hash` makes the
   stream append-only; `executor_signature` lets a non-witness verify the step;
   the canonical `receipt_hash()` (domain-tag `dregg-receipt-v3`) binds every
-  disclosed field. The chain's tamper-evidence is proven in Lean —
+  disclosed field. The executor holds an `executor_signing_key`
+  (`TurnExecutor::with_executor_signing_key`) and signs
+  `canonical_executor_signed_message()` — domain-tag `executor-receipt-sig-v3:`
+  over the *full* `receipt_hash` — so a downstream verifier checks the signature
+  alone and it attests every field bound into the receipt hash (the legacy `v2`
+  narrow prefix message is preserved only for fixtures). The chain's
+  tamper-evidence is proven in Lean —
   `metatheory/Dregg2/Exec/Receipt.lean`, `theorem chain_tamper_evident` (the
   keystone: two well-linked chains agreeing at the head agree everywhere).
 - **`BridgeReceipt` / `BridgeReceiptEnvelope`** — `cell-crypto/src/note_bridge.rs`.

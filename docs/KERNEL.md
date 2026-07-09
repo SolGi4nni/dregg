@@ -11,7 +11,8 @@ design, the circuit's job and never Lean's.
 ## Cells and the four substances
 
 A cell holds four substances, each a distinct epistemic mode (`cell/src/state.rs`; the
-kernel-reserved slots `DELEG`/`NULLIFIER`/`COMMIT` are `state.rs:58–63`):
+kernel-reserved system-root slots `DELEG`/`NULLIFIER`/`COMMIT` are indices 4/5/6 of the
+`system_root` module, `state.rs:48–68`):
 
 - **value** — per-asset signed (`i64`) balances. An asset *is* its issuer cell, which
   carries −supply, so every asset's units sum to identically 0. Conserved knowledge:
@@ -39,12 +40,15 @@ step-invariant conjuncts.
 
 ## The verbs and the executor
 
-The conserved/generative/neutral coloring of effects is total and exhaustive —
+The six-color linearity coloring of effects is total and exhaustive —
 `Dregg2.Spec.Conservation.linearity` over the `Effect` enum
-(`Dregg2/Spec/Conservation.lean`: transfer = conservative, mint = disclosed generative,
-setField = neutral), with `linearity_examples` witnessing it discriminates. The deployed
-effect vocabulary (`turn/src/action.rs`, `enum Effect`) is the full catalog (Transfer,
-GrantCapability, Introduce, NoteCreate/NoteSpend, SpawnWithDelegation, …). The executor is
+(`Dregg2/Spec/Conservation.lean:164`; the colors are Conservative / Monotonic / Terminal /
+Generative / Annihilative / Neutral — transfer = conservative, mint = disclosed generative,
+setField = neutral), with `linearity_examples` (`:171`) witnessing it discriminates. The
+deployed effect vocabulary (`turn/src/action.rs`, `enum Effect`) is the full catalog
+(Transfer, GrantCapability, Introduce, NoteCreate/NoteSpend, SpawnWithDelegation, Mint/Burn,
+ShieldedTransfer, the reactive Promise/Notify/React, …), and the Rust `Effect::linearity`
+mirrors the Lean coloring with the same six `LinearityClass` colors. The executor is
 one gated entry: `execFullAGated` reads `gateOK na s` on the same pre-state it then steps
 (within-cell no-TOCTOU is automatic), and the running kernel is reached through the
 `@[export]` C-ABI entries in `Dregg2/Exec/DistributedExports.lean` so the Rust runtime
