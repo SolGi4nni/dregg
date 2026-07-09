@@ -29,7 +29,15 @@ never self-carried). Every security-critical **key-exchange** → hybrid KEM (X2
 - d53b54b52 / 367742dd8  de-launder Hint-MLWE→MLWE + DKG→lossiness+Shamir (pre-goal)
 
 ## ⚑ FLAGGED-OPEN (honest — not done)
-- **NEEDS-EMBER — identity binding.** The capability/handoff/peer/block ML-DSA keys are enrolled OUT-OF-BAND;
+- **RESOLVED — IN-BAND hybrid identity (ember 07-09).** Id = H(ed25519 ‖ ml_dsa) IS the direction. DONE:
+  dregg-types verify_committed_ml_dsa (7e3ea27ec) + cell-crypto/captp/wire re-based, rosters retired
+  (77bf19e54/546599824/1ff660708) + FORMAL backing IdentityCommitment.lean (a875a9104, binds under
+  hash-CR). REMAINING = the COUPLED CONSENSUS CORE (genesis committee ids / finality::Block.creator /
+  federation_id) — it is GENESIS/VK-EPOCH-SHAPED: cheap+invisible done AT a re-genesis (mint hybrid ids
+  from genesis), RUG retrofitted onto a running federation. → RIDES THE NEXT RE-GENESIS / VK-epoch flip
+  (ember-gated), NOT a live-mesh retrofit. Lane left a precise cohesive-migration recipe; I'll keep it
+  re-genesis-ready. (Superseded flag below kept for context.)
+- (superseded) NEEDS-EMBER — identity binding. The capability/handoff/peer/block ML-DSA keys are enrolled OUT-OF-BAND;
   the identities (CellId, FederationId, participant-id) are ed25519-only and don't CRYPTOGRAPHICALLY commit
   to the ML-DSA key. Full closure = hybrid identity `Id = H(ed25519_pk ‖ ml_dsa_pk)` (or the id struct carries
   both) — a tree-wide `dregg-types` change. Flagged by GAP #2/#4/#6/#1. **Ember decision: do the H(ed25519‖ml_dsa) identity, or keep out-of-band enrollment?**
