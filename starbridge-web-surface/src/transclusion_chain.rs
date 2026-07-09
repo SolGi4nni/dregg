@@ -243,8 +243,10 @@ impl TransclusionChain {
         let mut final_field: Option<TranscludedField> = None;
 
         // Resolve every hop as a REAL one-hop transclusion. Each include() runs the
-        // genuine finalized read + provenance verification + finalized gate; a broken
-        // link fails HERE and we name its index (the composed anti-forge tooth).
+        // genuine finalized read + committee-anchored (`verify_anchored`) provenance
+        // verification + finalized gate; a broken OR UNANCHORED link fails HERE and we
+        // name its index (the composed anti-forge tooth). Every hop anchors to the
+        // resolver's trusted committee — signature verification, never a structural count.
         for (index, hop) in self.hops.iter().enumerate() {
             let field = TranscludedField::include(web, hop).map_err(|error| ChainError::Link {
                 index,

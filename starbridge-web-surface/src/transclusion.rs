@@ -57,6 +57,7 @@ use crate::delegate::SurfaceCapability;
 use crate::rehydrate::{Membrane, RehydrateError};
 use crate::web_of_cells::{AttestedResource, DreggUri, FetchError, OriginChrome, WebOfCells};
 use dregg_cell::CellId;
+use dregg_types::PublicKey;
 
 /// The provenance a transclusion carries — the cited, immutable source citation.
 ///
@@ -119,25 +120,58 @@ pub enum TransclusionError {
 impl TranscludedField {
     /// **Include a peer cell's finalized field by reference** — the definitional
     /// bridge (`transclusion_is_observed_finalized_read`): a transclusion IS a
-    /// verified cross-cell finalized read.
+    /// verified cross-cell finalized read, **committee-anchored**.
     ///
-    /// Performs the REAL `dregg://` attested fetch against `web`, VERIFIES the
-    /// provenance (content → commitment → receipt → receipt-stream root → quorum),
-    /// and pins the cited value. Refuses (`ProvenanceUnverified`) if the provenance
-    /// does not verify — a forged or absent quote cannot be opened — and refuses
-    /// (`NotFinalized`) if the read is not quorum-finalized. On success the field's
-    /// displayed bytes ARE the source's committed bytes, with the citation that dates
-    /// them.
+    /// The default anchor is the resolver's own held committee ([`WebOfCells::committee`]
+    /// — the client's genesis/checkpoint validator set, NEVER the fetched resource). To
+    /// anchor against a committee held SEPARATELY from the resolver (a client verifying a
+    /// possibly-malicious content server), call [`Self::include_anchored`] with that
+    /// trusted set. This convenience form threads `web.committee()` into
+    /// [`Self::include_anchored`], so the CRYPTOGRAPHIC `verify_anchored` gate is on the
+    /// include path for every caller — not the old structural quorum count.
     pub fn include(
         web: &WebOfCells,
         source: &DreggUri,
     ) -> Result<TranscludedField, TransclusionError> {
+        Self::include_anchored(web, source, &web.committee())
+    }
+
+    /// **Include a peer cell's finalized field, anchored to an EXPLICIT trusted
+    /// committee** — the F3 live hole closed by construction.
+    ///
+    /// Performs the REAL `dregg://` attested fetch against `web`, then gates the quote
+    /// on the **committee-anchored CRYPTOGRAPHIC verifier**
+    /// ([`AttestedResource::verify_anchored`]): the content chain (content → commitment
+    /// → receipt → receipt-stream root) PLUS `is_valid(committee)` — every counted
+    /// signature must verify under a key IN the client's TRUSTED `committee`, and the
+    /// distinct verified signers must meet the threshold. This is signature
+    /// verification, NOT a structural quorum count: a fabricated root signed by keys the
+    /// client does not trust is REFUSED here, where the old `verify()` (count-only) path
+    /// would have accepted it (`Dregg2.Deos.AnchoredQuote`'s `anchored_quote_unforgeable`,
+    /// discharged to signature-unforgeability + hash collision-resistance).
+    ///
+    /// `committee` is the validator set the client holds from genesis/checkpoint config;
+    /// it is NEVER read from the fetched resource. **FAIL-CLOSED:** an empty committee (an
+    /// unanchored client) accepts NOTHING, and a quote that does not anchor to the
+    /// committee is refused (`ProvenanceUnverified`) — never accepted on a structural
+    /// quorum count alone. Refuses (`NotFinalized`) if the read is not quorum-finalized.
+    /// On success the field's displayed bytes ARE the source's committed bytes, with the
+    /// citation that dates them.
+    pub fn include_anchored(
+        web: &WebOfCells,
+        source: &DreggUri,
+        committee: &[PublicKey],
+    ) -> Result<TranscludedField, TransclusionError> {
         // (1) THE FINALIZED READ — the real verified cross-cell observation.
         let (resource, chrome) = web.fetch(source).map_err(TransclusionError::Fetch)?;
-        // (2) PROVENANCE FAITHFUL — run the genuine verification chain. A forged or
-        //     absent provenance fails here; no opened provenance ⇒ reject.
+        // (2) PROVENANCE FAITHFUL, COMMITTEE-ANCHORED — the CRYPTOGRAPHIC gate: the
+        //     content chain PLUS `is_valid(committee)` (signature verification against the
+        //     client's trusted keys), NOT a structural quorum count. A fabricated root by
+        //     untrusted keys — or an unanchored (empty-committee) client — is REFUSED
+        //     here. This is the F3 hole closed by construction: `include` cannot open a
+        //     quote it cannot cryptographically anchor.
         resource
-            .verify()
+            .verify_anchored(committee)
             .map_err(TransclusionError::ProvenanceUnverified)?;
         // (3) FINALIZED — a transclusion quotes FINALIZED state; a non-quorum read is
         //     not a faithful quote (the Lean importValid well-linkedness, structurally).
@@ -217,8 +251,9 @@ impl TransclusionAffordance {
         TransclusionAffordance { affordance, source }
     }
 
-    /// Resolve the embedded quote by performing the finalized read (the same verified
-    /// observation [`TranscludedField::include`] runs).
+    /// Resolve the embedded quote by performing the committee-anchored finalized read
+    /// (the same verified observation [`TranscludedField::include`] runs — gated on the
+    /// resolver's trusted committee via `verify_anchored`, never a structural count).
     pub fn resolve(&self, web: &WebOfCells) -> Result<TranscludedField, TransclusionError> {
         TranscludedField::include(web, &self.source)
     }
@@ -391,6 +426,64 @@ mod tests {
         // …and so a TranscludedField built around it would not have passed include's
         // verify gate (we assert the gate's polarity directly):
         let _ = chrome; // chrome is ledger-drawn (trusted path), unaffected by the forge
+    }
+
+    // (2c) THE F3 LIVE HOLE, CLOSED — a FABRICATED root from an UNTRUSTED committee is
+    //      REFUSED by the committee-anchored `include()`, exactly where the OLD structural
+    //      (count-only) path would have ACCEPTED it. This is the whole point of putting
+    //      `verify_anchored` on the include() path (`Dregg2.Deos.AnchoredQuote`).
+    #[test]
+    fn a_fabricated_root_from_an_untrusted_committee_is_refused() {
+        use crate::web_of_cells::WebOfCells;
+
+        // A malicious content server (its OWN federation) publishes a page and attests it
+        // with ITS OWN quorum keys — a fabricated root, from the client's point of view.
+        let mut attacker_web = WebOfCells::new(3);
+        let uri = attacker_web.publish(42, b"<h1>fabricated page</h1>", "dregg://evil");
+
+        // The client's TRUSTED committee: a genuine federation it holds from genesis
+        // config — freshly generated, so genuinely NOT the attacker's keys.
+        let trusted_committee: Vec<PublicKey> =
+            (0..3).map(|_| dregg_types::generate_keypair().1).collect();
+
+        // THE OLD STRUCTURAL PATH IS FOOLED: the fabricated root carries a quorum, so the
+        // count-only `verify()` accepts it — this is exactly the F3 hole `include` used to
+        // ride (it called `verify()`, never `verify_anchored`).
+        let (fabricated, _chrome) = attacker_web.fetch(&uri).expect("fetch resolves");
+        assert!(
+            fabricated.verify().is_ok(),
+            "the OLD structural (count-only) path accepts the fabricated root — the F3 hole"
+        );
+
+        // THE COMMITTEE-ANCHORED include() REFUSES it: the fabricated root is signed by no
+        // key in the client's trusted committee, so it does not anchor.
+        let refused = TranscludedField::include_anchored(&attacker_web, &uri, &trusted_committee);
+        assert!(
+            matches!(
+                refused,
+                Err(TransclusionError::ProvenanceUnverified(FetchError::Unattested))
+            ),
+            "the anchored include refuses a root the trusted committee never signed, got {refused:?}"
+        );
+
+        // FAIL-CLOSED: an unanchored client (empty committee) accepts NOTHING.
+        let unanchored = TranscludedField::include_anchored(&attacker_web, &uri, &[]);
+        assert!(
+            matches!(
+                unanchored,
+                Err(TransclusionError::ProvenanceUnverified(FetchError::Unattested))
+            ),
+            "an unanchored (empty-committee) client refuses even a well-formed quote, got {unanchored:?}"
+        );
+
+        // The refusal is PRECISELY the committee mismatch, not a malformed quote: the same
+        // quote OPENS under the committee that actually signed it.
+        let genuine =
+            TranscludedField::include_anchored(&attacker_web, &uri, &attacker_web.committee());
+        assert!(
+            genuine.is_ok(),
+            "the same quote opens under the committee that actually signed it, got {genuine:?}"
+        );
     }
 
     // (3) NO AMPLIFY — a weaker viewer sees the transclusion ATTENUATED; the

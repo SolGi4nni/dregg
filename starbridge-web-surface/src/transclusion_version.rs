@@ -150,7 +150,9 @@ impl VersionedTransclusion {
     /// verified finalized read — a forge cannot be snapshotted.
     pub fn snapshot(web: &WebOfCells, source: &DreggUri) -> Result<Self, TransclusionError> {
         // Resolve ONCE through the REAL one-hop primitive — the genuine finalized read
-        // + provenance verification + finalized gate. A forge/absent source refuses here.
+        // + committee-anchored (`verify_anchored`) provenance verification + finalized
+        // gate. A forge/absent source, or one not anchored to the trusted committee,
+        // refuses here.
         let field = TranscludedField::include(web, source)?;
         // Date the snapshot to the current federation height (the `at_root` the pin is
         // taken at), drawn from the web's monotone attestation height.
@@ -215,7 +217,7 @@ impl VersionedTransclusion {
             }
             Pinning::Live => {
                 // Re-resolve LIVE through the REAL one-hop primitive — the source's
-                // current finalized value, verified now.
+                // current finalized value, committee-anchored + verified now.
                 let field = TranscludedField::include(web, &self.source)?;
                 Ok(VersionedRead {
                     field,
