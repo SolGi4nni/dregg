@@ -94,5 +94,12 @@ lanes' files, or Cargo.lock. Scale with ultracode/Workflow. Sign Co-Authored-By:
   HashCR · 3a a52eea5f1 FIPS-204 SIGN extracted to leanc-native, Fips204Correct now a THEOREM (both
   directions; 591 C facets via leanc, dregg-pq 9/9) · 5a 7f2cd66c3 deployed XM-VRF refines the abstract VRF,
   uniqueness reduced to HashCR.
-- ▶ WAVE 2 firing: P1 parameter-level theorem · 2a AIR soundness · 2b FRI soundness (BBHR18/DEEP-FRI) ·
+- ✅ WAVE 2 (all 6, whole-tree green): P1 3f45ef062 λ=79 (⚠ loose reductions → P1-TIGHT firing) · 3b 3d65cb122
+  ML-KEM extracted (Fips203Correct discharged) · 3c 13281a768 X25519Correct a THEOREM + HkdfCorrect + DualPRF
+  reduced · 5b 04f30baa5 beacon → HashCR.
+- ✅✅ **CRITERION #2 ACHIEVED** — P2 complete: 2a 73b099d43 AIR soundness · 2b 15ae7114c FRI soundness
+  (BBHR18 key lemma proved, error ≤ 1/|F|) · 2c 80835f90f `circuit_sound` is a THEOREM (residual HashCR
+  alone) ⇒ `turn_sound_unconditional`: a valid receipt ⟹ correct authorized evolution under (DL∨MSIS)∧HashCR.
+- ▶ IN FLIGHT: wave 3 (wzcavo9hm: 4a/4b/4c/5c/5d/6-cap-weld) · P1-TIGHT (wh5extheb) · 4d (effect-VM semantics).
+- (superseded) WAVE 2 firing: P1 parameter-level theorem · 2a AIR soundness · 2b FRI soundness (BBHR18/DEEP-FRI) ·
   3b ML-KEM extraction · 3c X25519+HKDF extraction (DualPRF reduced) · 5b beacon refinement.
