@@ -319,6 +319,10 @@ import Dregg2.Deos.FireProgramAgreement
 -- vs field_not_iconfluent (a single-valued field clashes — the non-monotone boundary, a clashing pair
 -- CONSTRUCTED whose merge holds two values at one name). 18 keystones #assert_axioms-clean; 12 #guard teeth.
 import Dregg2.Deos.DocMerge
+import Dregg2.Deos.DocMergeComposed -- the composed-document merge = a PRODUCT OF PUSHOUTS (F1); boundary_no_joint_conflict at the ConflictAt level.
+import Dregg2.Deos.PatchCategory -- the full labelled patch category (residual retired): pushout up-to-REAL-iso; conflict = a MISSING pushout (Mimram-Di Giusto).
+import Dregg2.Deos.AnchoredQuote -- the anchored quote verifier (F3): anti-forge INVOKES the signature/hash floor (closes the include() hole).
+import Dregg2.Deos.DocSubstrateSound -- doc-soundness on the DEPLOYED substrate_commit: Element-structure + conflict-as-state bound, thin over Substrate/Heap.root_binds_get.
 
 namespace Dregg2.Deos
 
