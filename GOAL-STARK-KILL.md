@@ -539,9 +539,10 @@ generate_blinded_merkle_poseidon2_stark_proof circuit/presentation.rs:1377) + (b
 UNLINKABILITY (fresh blinded_leaf per show; anonymity_soundness test + verify_anonymous_presentation +
 test_ring_membership_unlinkable depend on it). ember chose: BUILD the blinded-membership descriptor too
 (both in-circuit/fold-sound), not retire it. A full Golden-Lift-style sub-campaign mirroring S1-S3b:
-  S3d-1: blinded-membership descriptor (Emit) — blinded_leaf (hidden blinding witness → unlinkability) +
-    Merkle path to federation_root (4-ary chip, like membership_descriptor_4ary) as CONSTRAINED PIs.
-    Rung 0/1/2 (forge non-member REJECTS; two shows of one credential → different blinded_leaf, unlinkable).
+  ✅ S3d-1 DONE (69f1af7bf): blindedMembershipDesc ("dregg-blinded-membership::v1", width 33) — 4-ary
+    Merkle path proves HIDDEN leaf∈tree(root) + blinded_leaf=hash_2_to_1(leaf,blinding) via arity-2 chip
+    (leaf+blinding hidden → unlinkable). Rung 0/1/2: forge_nonmember_rejected, forge_blinded_leaf_rejected,
+    honest_two_shows_unlinkable (anonymity proven IN-CIRCUIT). Axiom-clean. Verified on my tree.
   S3d-2: blinded_membership_binding_from_fold (Lean) — the 10th carrier; binding rides the fold.
   S3d-3: witness builder + descriptor_by_name arm + fold adapter (mirror bound_presentation_witness +
     presentation_leaf_adapter).
