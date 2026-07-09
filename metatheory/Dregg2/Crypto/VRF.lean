@@ -5,6 +5,14 @@ Reusable scaffolding for a post-quantum VRF (lattice **LB-VRF** or hash-based **
 instantiate later. This is the metatheory for the consensus's **leader sortition**: a VRF is what lets a
 validator prove "I was chosen" without letting anyone else predict or forge the choice.
 
+**Undischarged-scaffolding boundary (read first).** There is NO concrete VRF construction in this file; the
+security definitions below are the abstract GAMES. `UniqueOutputs` and `Pseudorandom` are ASSUMED
+predicates — a concrete instantiation MUST discharge them, and until one is supplied they are definitions,
+not proved properties. The one genuine reduction here is the `§ Lattice` skeleton, where LB-VRF's
+uniqueness is REDUCED to Module-SIS (`lattice_vrf_unique_under_msis`) — that leg IS proved, down to the
+`MSISHard` floor. Everything else about `Pseudorandom` is well-formedness/non-vacuity of the game, not a
+discharge of it.
+
 A **VRF** (Micali–Rabin–Vadhan) is a triple `(keygen, eval, verify)` where `eval sk x = (y, π)` produces an
 output `y` and a proof `π`, and `verify pk x y π : Bool` checks the pair. We model it abstractly over
 carrier types `SK PK Input Output Proof` (a `structure` with the `pkOf`/`eval`/`verify` maps), then
@@ -18,10 +26,14 @@ formalize the three standard properties:
    that admits two outputs — a uniqueness failure — so `two_outputs_break_uniqueness` shows two distinct
    verifying outputs REFUTE `UniqueOutputs`. The teeth are exhibited concretely: a uniqueness-RESPECTING
    toy VRF (one output verifies) and a uniqueness-VIOLATING one (two outputs verify), `#guard`-separated.
-3. **PSEUDORANDOMNESS** — the output is indistinguishable from uniform without the secret. Modeled as a
-   named assumption/carrier `Pseudorandom` (the `MSISHard`-analogue for this leg), with the trivial
-   reductions proved: an output-blind distinguisher gains nothing unconditionally, and a subsingleton
-   output space is unconditionally pseudorandom (non-vacuity of the carrier).
+3. **PSEUDORANDOMNESS** — the output is indistinguishable from uniform without the secret. This is the
+   abstract security GAME `Pseudorandom`, an ASSUMED definition (the `MSISHard`-analogue for this leg), NOT
+   a proved property of any construction: a concrete instantiation MUST discharge it (LB-VRF from MLWE,
+   XM-VRF from hash-CR/PRG), and until such a construction is supplied it stands undischarged as
+   scaffolding — this file proves NO reduction of it to a hardness floor. What IS proved here are only the
+   game's well-formedness facts: an output-blind distinguisher gains nothing unconditionally, and a
+   subsingleton output space is unconditionally pseudorandom (non-vacuity of the carrier — it is
+   satisfiable). Neither discharges `Pseudorandom` for a real VRF.
 
 Finally, a **lattice instantiation skeleton** (`§ Lattice`): LB-VRF's public key is `t = A·s`, the exact
 shape of `Dregg2.Crypto.HermineMSIS`, so the lattice VRF's uniqueness REDUCES to Module-SIS — two verifying

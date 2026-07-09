@@ -17,8 +17,10 @@ party / contribution / output types so a hash-based instantiation plugs in:
    contributions, distinct honest contributions give distinct outputs (`honest_makes_unbiasable`), so the
    adversary that committed its part first cannot pin the output — the honest contribution moves it. A
    "bias" (making the output insensitive to a distinct honest contribution) is exactly a hash collision
-   (`bias_breaks_honest_slot_cr`), and against the imported `HashCR` carrier the reduction is direct
-   (`unbiasable_of_hashcr`): distinct honest reveals hash to distinct outputs.
+   (`bias_breaks_honest_slot_cr`). The honest-slot carrier `HonestSlotCR` is NOT bespoke: it is DISCHARGED
+   by the imported `HashCR` (`honestSlotCR_of_hashcr` — hash collision-resistance of the combine plus
+   multiset cons-cancellation), and against `HashCR` the reduction is direct (`unbiasable_of_hashcr`):
+   distinct honest reveals hash to distinct outputs.
 
 2. **UNPREDICTABILITY.** The output is unpredictable before the honest contributions are revealed. We model
    commit-then-reveal (each party commits `cmᵢ = H(i, cᵢ)` then reveals `cᵢ`; the output depends on all
@@ -68,11 +70,12 @@ committed the adversary cannot re-roll the output — there is nothing left to c
 theorem beacon_output_determined (b : Beacon Ct O) {cs cs' : Multiset Ct} (h : cs = cs') :
     b.output cs = b.output cs' := congrArg b.combine h
 
-/-- **`HonestSlotCR`** — the beacon's collision-resistance carrier. Fixing the other (adversarial)
+/-- **`HonestSlotCR`** — honest-slot collision-resistance of the combine. Fixing the other (adversarial)
 contributions `rest`, the map from an honest contribution to the output is INJECTIVE: distinct honest
-contributions in the SAME position give distinct outputs. This is the `HashCR`-shaped assumption a
-hash-combine provides on the honest slot (see `unbiasable_of_hashcr`, which derives it from the imported
-`HashCR`). -/
+contributions in the SAME position give distinct outputs. This is PURE collision-resistance — it asserts
+nothing about honest-input entropy or unpredictability — so it is NOT a bespoke carrier: for the
+hash-combine realization it is DISCHARGED by the imported standard `HashCR` (`honestSlotCR_of_hashcr`),
+being hash collision-resistance composed with multiset cons-cancellation. -/
 def HonestSlotCR (b : Beacon Ct O) : Prop :=
   ∀ (rest : Multiset Ct) (c c' : Ct), b.combine (c ::ₘ rest) = b.combine (c' ::ₘ rest) → c = c'
 
@@ -117,6 +120,30 @@ theorem unbiasable_of_hashcr {Idx Ct Adv O : Type*} (cr : CommitReveal Idx (Ct �
     (hcr : HashCR cr) (i : Idx) (adv : Adv) (c c' : Ct) (hne : c ≠ c') :
     beaconViaHash cr i adv c ≠ beaconViaHash cr i adv c' :=
   fun h => hne (congrArg Prod.fst (hcr i (c, adv) (c', adv) h))
+
+/-! ### `HonestSlotCR` is NOT a bespoke carrier — it REDUCES to the standard `HashCR`.
+
+The honest-slot carrier `HonestSlotCR` (§ Model) is not an independent assumption: when the beacon combine
+is the standard collision-resistant hash over the committed multiset, `HonestSlotCR` is exactly `HashCR`
+(the SAME carrier `HermineHintMLWE` uses) composed with multiset cons-left-cancellation. We realize the
+beacon as such a hash and DISCHARGE `HonestSlotCR` from `HashCR`, so the honest slot bottoms out at the one
+named hash carrier — no fresh beacon carrier. -/
+
+/-- A beacon whose combine is the STANDARD collision-resistant hash over the committed contribution
+multiset: `combine cs = H((), cs)`, reusing the imported `CommitReveal`/`HashCR` carrier (index `Unit`,
+committed domain `Multiset Ct`). This is the honest realization of the abstract `Beacon`. -/
+def beaconOfHash {Ct O : Type*} (cr : CommitReveal Unit (Multiset Ct) O) : Beacon Ct O :=
+  ⟨fun cs => cr.H () cs⟩
+
+/-- **`HonestSlotCR` REDUCES to the imported `HashCR`.** When the beacon combine is a collision-resistant
+hash over the committed multiset, honest-slot injectivity is NOT a fresh assumption: it is exactly hash
+collision-resistance (`HashCR`) — distinct committed multisets hash to distinct outputs — composed with
+multiset cons-left-cancellation (`Multiset.cons_inj_left`, a pure fact). So `HonestSlotCR` bottoms out at
+the SAME `HashCR` carrier the concurrent-signature argument uses, the true floor, with no bespoke beacon
+carrier. -/
+theorem honestSlotCR_of_hashcr {Ct O : Type*} (cr : CommitReveal Unit (Multiset Ct) O)
+    (hcr : HashCR cr) : HonestSlotCR (beaconOfHash cr) := fun rest c c' h =>
+  (Multiset.cons_inj_left rest).mp (hcr () (c ::ₘ rest) (c' ::ₘ rest) h)
 
 end HashReduction
 
@@ -167,6 +194,7 @@ end Unpredictability
 #assert_axioms honest_makes_unbiasable
 #assert_axioms bias_breaks_honest_slot_cr
 #assert_axioms unbiasable_of_hashcr
+#assert_axioms honestSlotCR_of_hashcr
 #assert_axioms commit_binds_contribution
 #assert_axioms output_unpredictable_before_reveal
 #assert_axioms prediction_matching_two_reveals_breaks_hashcr
@@ -231,6 +259,21 @@ theorem hash_beacon_unbiasable :
 #guard beaconViaHash exBeaconHash 0 (1 : ℤ) (5 : ℤ) = (0, 5, 1)
 #guard beaconViaHash exBeaconHash 0 (1 : ℤ) (5 : ℤ) ≠ beaconViaHash exBeaconHash 0 (1 : ℤ) (6 : ℤ)
 
+/-- The identity multiset-hash `H((), cs) = cs` is collision-resistant (`HashCR`). -/
+def idMultisetHash : CommitReveal Unit (Multiset ℤ) (Multiset ℤ) := ⟨fun _ cs => cs⟩
+
+theorem idMultisetHash_hashcr : HashCR idMultisetHash := fun _ _ _ h => h
+
+/-- **`HonestSlotCR` FROM `HashCR` FIRES.** The beacon induced by a collision-resistant multiset-hash
+satisfies `HonestSlotCR` via `honestSlotCR_of_hashcr` — the honest-slot carrier discharged by the standard
+`HashCR`, non-vacuously (no bespoke carrier assumed). -/
+theorem hashBeacon_honest_slot_cr : HonestSlotCR (beaconOfHash idMultisetHash) :=
+  honestSlotCR_of_hashcr idMultisetHash idMultisetHash_hashcr
+
+-- The discharged honest slot moves the output: distinct honest contributions give distinct beacons.
+#guard (beaconOfHash idMultisetHash).combine (5 ::ₘ ({1} : Multiset ℤ))
+  ≠ (beaconOfHash idMultisetHash).combine (6 ::ₘ ({1} : Multiset ℤ))
+
 /-! ### (c) Commit-binding teeth — equivocation and bias each break `HashCR`. -/
 
 /-- A COLLIDING commitment hash `H(i, c) = 0` for all `c` — every reveal opens every commitment. -/
@@ -265,6 +308,8 @@ end Teeth
 #assert_axioms sum_honest_unbiasable
 #assert_axioms exBeaconHash_hashcr
 #assert_axioms hash_beacon_unbiasable
+#assert_axioms idMultisetHash_hashcr
+#assert_axioms hashBeacon_honest_slot_cr
 #assert_axioms badCommit_not_binding
 #assert_axioms bias_predicts_and_breaks_hashcr
 
