@@ -520,7 +520,11 @@ STAGES (sequential, Lean under .bin/lean-safe, each verified+committed before ne
   ✅ S2 DONE (d86fe24dc): presentation_binding_from_fold — the 9th BindingFromFold carrier; verifying
      aggregate FORCES the published authorization claim backed → binding RIDES THE FOLD to the root
      (light-client + aggregation soundness). Both poles non-vacuous, welds to the S1 leaf, NO axioms.
-  S3: circuit witness builder (bound_presentation_witness) + descriptor_by_name arm + the dual-expose
-     fold-carrier Rust wiring (prove_descriptor_leaf_dual_expose_at + a presentation carrier arm +
-     carrier_claim_pins_admitted) + flip bridge/circuit/sdk verify onto it.
+  ✅ S3a DONE (6056abc13): bound_presentation_witness + descriptor_by_name arm — bound descriptor USABLE
+     end-to-end (7 round-trip tests, genuine Poseidon2 tag lanes, honest ACCEPT + 4 forge REJECT).
+  S3b (NEXT, target ivc_turn_chain.rs is CLEAN): the dual-expose fold-carrier Rust wiring
+     (prove_descriptor_leaf_dual_expose_at + a presentation carrier arm + carrier_claim_pins_admitted) —
+     deploys S2's proof so the binding rides the fold in the DEPLOYED prover. Delicate hot-file edit.
+  S3c (BLOCKED by other terminals: bridge/present.rs + sdk/cipherclerk.rs currently DIRTY): flip the
+     live verify path onto the bound descriptor. Wait for those files to clear.
   S4: finish stark-kill (sdk/verify, cipherclerk) + git rm circuit/src/stark.rs.
