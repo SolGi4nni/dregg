@@ -4,9 +4,17 @@
  */
 
 import type { MessageType } from "./types";
+import { startDetector } from "./detect";
 
 // Generate a random nonce for this injection session to prevent event spoofing.
 const SESSION_NONCE = crypto.randomUUID();
+
+// ── Quiet-upgrade detector (DREGG-QUIET-UPGRADE.md §2/§3) ───────────────────
+// Runs in this isolated content-script world (NOT the page's main world): it
+// registers <dregg-poll> and scans for plaintext dregg-things, upgrading each
+// into a live, verified, votable thin view whose engine lives in the
+// background. Per-origin opt-in (default-deny) gates whether anything upgrades.
+void startDetector();
 
 // Methods that any page origin can call without prior approval.
 const UNRESTRICTED_METHODS = new Set<MessageType>([

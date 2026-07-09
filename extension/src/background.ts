@@ -10,6 +10,7 @@ import { explainTurn } from "./explain";
 import { createSseParser } from "./sse";
 import { mnemonicConfirmed, walletPassphraseOk } from "./onboarding";
 import { defaultNodeUrl, defaultNodeWssUrl } from "./endpoints";
+import { PollEngine, defaultResolveObject, type PollPortRequest, type PollWorldCtor } from "./port";
 import {
   AUTH_CHALLENGE_PATH,
   AUTH_LOGIN_PATH,
@@ -3168,6 +3169,7 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:federationStatus", "dregg:proposeRoutes", "dregg:voteOnProposal",
   "dregg:registerFederation", "dregg:listKnownFederations",
   "dregg:createCapTpDeliveredAuth", "dregg:getReceiptWitnesses",
+  "dregg:poll",  // quiet-upgrade thin-view port (§3): resolve/render/fire/verify
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
@@ -3186,6 +3188,40 @@ const POPUP_ONLY_METHODS = new Set<MessageType>([
   "dregg:getRecentReceipts",
   "dregg:capLogin", "dregg:capLogout", "dregg:getLoginStatus",
 ]);
+
+// ---------------------------------------------------------------------------
+// Quiet-upgrade poll engine (DREGG-QUIET-UPGRADE.md §3, steps 1–3).
+//
+// The ENGINE side of the split: it owns the wasm PollWorld, resolves the
+// content-addressed poll, renders/fires/verifies, and routes custody consent to
+// the un-overlayable confirm-intent chrome (`showTurnConfirmation`). The thin
+// view (<dregg-poll>, in the content-script world) reaches it ONLY through the
+// "dregg:poll" message — no wasm, no keys ever leave this context.
+// ---------------------------------------------------------------------------
+
+let pollEngine: PollEngine | null = null;
+
+function getPollEngine(): PollEngine {
+  requireWasm("poll");
+  if (!pollEngine) {
+    const PollWorld = (wasm as unknown as { PollWorld?: PollWorldCtor }).PollWorld;
+    if (!PollWorld) throw new Error("PollWorld unavailable in wasm module");
+    pollEngine = new PollEngine({
+      PollWorld,
+      resolveObject: defaultResolveObject,
+      // Custody consent: the faithful reading shown in extension chrome the
+      // page cannot overlay or clickjack (§3 — the load-bearing property).
+      consent: (req) =>
+        showTurnConfirmation({
+          explanation: req.explanation,
+          turnId: req.turnId,
+          origin: req.origin,
+          hasUnknown: false,
+        }),
+    });
+  }
+  return pollEngine;
+}
 
 async function handleMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
   // Security: strip _skipDisclosure from page-originated requests.
@@ -3213,6 +3249,21 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
 
     case "dregg:isConnected":
       return { id: message.id, result: true };
+
+    case "dregg:poll": {
+      const origin =
+        (message._origin as string) ||
+        (sender?.tab?.url ? new URL(sender.tab.url).origin : undefined) ||
+        "unknown";
+      const req: PollPortRequest = {
+        op: message.op as PollPortRequest["op"],
+        uri: message.uri as string,
+        turn: message.turn as string,
+        arg: Number(message.arg ?? 0),
+      } as PollPortRequest;
+      const result = await getPollEngine().handle(req, origin);
+      return { id: message.id, result };
+    }
 
     case "dregg:canAuthorize":
       return { id: message.id, result: await canAuthorize(message.request as AuthorizeRequest) };
@@ -4068,7 +4119,10 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, sender: 
         return { id: message.id, error: `"${msgType}" is not available from page context.` };
       }
     }
-    if (message.type === "dregg:authorize" && !ready) {
+    // Queue turns that need the wasm world until it is ready (the SW may still
+    // be instantiating on wake) so a quiet-upgrade poll never fails closed on a
+    // transient cold start rather than a real verification failure.
+    if ((message.type === "dregg:authorize" || message.type === "dregg:poll") && !ready) {
       return new Promise((resolve) => {
         pendingQueue.push({ msg: message, sender, resolve });
       });

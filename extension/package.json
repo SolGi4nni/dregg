@@ -7,6 +7,7 @@
     "typecheck": "tsc --noEmit",
     "pretest": "node build-tests.mjs",
     "test": "node --test 'test/*.test.mjs'",
+    "test:quiet-upgrade": "node --test tests/quiet-upgrade/run.mjs",
     "clean": "rm -rf dist test/.build"
   },
   "devDependencies": {

@@ -104,6 +104,46 @@ let wasm_bindgen = (function(exports) {
             const ret = wasm.cardworld_receiptCount(this.__wbg_ptr);
             return ret >>> 0;
         }
+        /**
+         * **RENDER THE COUNTER CARD TO HTML, IN-WASM** — [`Self::view_tree_json`] walked through
+         * the gpui-free web renderer (`deos-view::render_html`), the live `bind` painted from the
+         * committed slot ([`Self::read`]). A Custom Element sets this as its shadow root's
+         * `innerHTML` and re-calls it after each `fire` to repaint. Byte-identical to the server
+         * bake of the counter card at the same committed value.
+         * @returns {string}
+         */
+        renderHtml() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.cardworld_renderHtml(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * **THE COUNTER CARD'S VIEW-TREE** — byte-for-byte the shape the SpiderMonkey engine
+         * produces for the counter card (`deos.ui.vstack(text, bind, button)`): a titled column
+         * with a live `bind` of the bound `slot` and a `+1` affordance `button`
+         * (`{turn:"inc", arg:1}`). The SAME `{kind, props, children}` JSON the web renderer
+         * (`deos-view::parse_view_tree`) consumes — [`Self::render_html`] walks it in-tab.
+         * @returns {string}
+         */
+        viewTreeJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.cardworld_viewTreeJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
     }
     if (Symbol.dispose) CardWorld.prototype[Symbol.dispose] = CardWorld.prototype.free;
     exports.CardWorld = CardWorld;
@@ -423,6 +463,24 @@ let wasm_bindgen = (function(exports) {
             return ret >>> 0;
         }
         /**
+         * **RENDER THE INSPECTOR CARD TO HTML, IN-WASM** — [`Self::view_tree_json`] walked through
+         * the gpui-free web renderer, each live `Bind` row painted from its own slot off the
+         * committed ledger ([`Self::read`]). The Custom Element repaints via this after each fire.
+         * @returns {string}
+         */
+        renderHtml() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.inspectorworld_renderHtml(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
          * **THE INSPECTOR VIEW-TREE, GENERATED FROM THE LIVE CELL'S FACES.** Reads the focused
          * cell's RawFields + Affordances faces off the live ledger (via [`deos_reflect`], the
          * SAME substrate the native `inspector_view_for` reads) and lifts them into the view-tree
@@ -589,6 +647,25 @@ let wasm_bindgen = (function(exports) {
             return ret >>> 0;
         }
         /**
+         * **RENDER THE KV-STORE CARD TO HTML, IN-WASM** — [`Self::view_tree_json`] (the version row
+         * + a `Table` of register rows) walked through the gpui-free web renderer, each live `bind`
+         * painted from its own slot off the committed ledger ([`Self::read`] over the canonical
+         * big-endian felt lane). The Custom Element repaints via this after each `put`/`del` fire.
+         * @returns {string}
+         */
+        renderHtml() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.kvstoreworld_renderHtml(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
          * **Prove `get` is a NAMED SEAM, not a faked write** — route `get(reg)` through the
          * interface; because it is `Semantics::Serviced` its answer rides the OFE cross-cell-read,
          * so the router REFUSES to desugar it to a turn. Returns the refusal message (the honest
@@ -660,6 +737,283 @@ let wasm_bindgen = (function(exports) {
     }
     if (Symbol.dispose) KvStoreWorld.prototype[Symbol.dispose] = KvStoreWorld.prototype.free;
     exports.KvStoreWorld = KvStoreWorld;
+
+    /**
+     * The real `collective-choice` vote, driven from the browser tab over its own embedded
+     * verified executor. One `PollWorld` owns one runtime with one poll (tally-board) cell and
+     * one factory-shaped ballot cell per voter; each `cast` is a genuine cap-gated verified turn
+     * (a ballot `WriteOnce(VOTE)` + a poll `Monotonic` tally bump), one-vote-per-ballot enforced
+     * three depths deep, the decision-turn quorum-gated by the polis `AffineLe`.
+     */
+    class PollWorld {
+        __destroy_into_raw() {
+            const ptr = this.__wbg_ptr;
+            this.__wbg_ptr = 0;
+            PollWorldFinalization.unregister(this);
+            return ptr;
+        }
+        free() {
+            const ptr = this.__destroy_into_raw();
+            wasm.__wbg_pollworld_free(ptr, 0);
+        }
+        /**
+         * **Cast one vote for `option`** using the next fresh voter's ballot — a genuine
+         * one-vote-per-ballot turn (each successive `cast` is a distinct ballot cell, so the
+         * board grows one verified vote at a time). Returns option `option`'s re-read tally.
+         * @param {number} option
+         * @returns {bigint}
+         */
+        cast(option) {
+            const ret = wasm.pollworld_cast(this.__wbg_ptr, option);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return BigInt.asUintN(64, ret[0]);
+        }
+        /**
+         * **Cast voter `voter`'s ballot for `option`** — the explicit-ballot cast (the shape a
+         * `<dregg-poll>` uses to bind a cast to the visitor's own ballot). Re-casting the SAME
+         * voter is refused by the nullifier set (the engine double-vote depth).
+         * @param {number} voter
+         * @param {number} option
+         * @returns {bigint}
+         */
+        castAs(voter, option) {
+            const ret = wasm.pollworld_castAs(this.__wbg_ptr, voter, option);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return BigInt.asUintN(64, ret[0]);
+        }
+        /**
+         * The poll cell's id (hex) — the board's sovereignty boundary, the target of tally turns.
+         * @returns {string}
+         */
+        cellId() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_cellId(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * **The affordance wire entry** — the web renderer fires `data-turn`/`data-arg` here.
+         * `cast` casts the NEXT fresh voter's ballot for option `arg`; any other name errors.
+         * @param {string} turn
+         * @param {number} arg
+         * @returns {bigint}
+         */
+        fire(turn, arg) {
+            const ptr0 = passStringToWasm0(turn, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+            const len0 = WASM_VECTOR_LEN;
+            const ret = wasm.pollworld_fire(this.__wbg_ptr, ptr0, len0, arg);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            return BigInt.asUintN(64, ret[0]);
+        }
+        /**
+         * **THE LIGHT-CLIENT TALLY** — recompute the board from the append-only cast log ALONE
+         * (never re-reading the executor's slots), as a JSON array. A verifier that never
+         * re-executes replays the recorded casts and sums them; when this AGREES with
+         * [`Self::tally`] the board is unforged ([`Self::verified`]).
+         * @returns {string}
+         */
+        lightClientTally() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_lightClientTally(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * Open a poll over `num_options` options with quorum threshold `quorum_m`, on its own
+         * embedded executor. Mints the poll (tally-board) cell and installs the quorum-gated
+         * program (`Monotonic` tallies + `WriteOnce(RESOLVED)` + the polis quorum `AffineLe`).
+         * The operator (agent 0) signs + fee-pays every ballot / tally / resolve turn.
+         * @param {number} num_options
+         * @param {bigint} quorum_m
+         */
+        constructor(num_options, quorum_m) {
+            const ret = wasm.pollworld_new(num_options, quorum_m);
+            if (ret[2]) {
+                throw takeFromExternrefTable0(ret[1]);
+            }
+            this.__wbg_ptr = ret[0];
+            PollWorldFinalization.register(this, this.__wbg_ptr, this);
+            return this;
+        }
+        /**
+         * The number of active options in this poll.
+         * @returns {number}
+         */
+        optionCount() {
+            const ret = wasm.pollworld_optionCount(this.__wbg_ptr);
+            return ret >>> 0;
+        }
+        /**
+         * A witnessed read of option `option`'s running tally off the live poll cell (the
+         * canonical big-endian felt lane the `Monotonic`/`AffineLe` constraints read).
+         * @param {number} option
+         * @returns {bigint}
+         */
+        read(option) {
+            const ret = wasm.pollworld_read(this.__wbg_ptr, option);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * The committed-receipt count — the audit tape length (ballot mints + every ballot /
+         * tally / resolve turn). A browser shows it to prove a cast was real, not a local poke.
+         * @returns {number}
+         */
+        receiptCount() {
+            const ret = wasm.pollworld_receiptCount(this.__wbg_ptr);
+            return ret >>> 0;
+        }
+        /**
+         * **RENDER THE LIVE TALLY TO HTML, IN-WASM** — [`Self::view_tree_json`] walked through the
+         * gpui-free web renderer, each option's live `bind` painted from its `Monotonic` tally slot
+         * off the committed poll cell. The `<dregg-poll>` Custom Element repaints via this after
+         * each `cast`.
+         * @returns {string}
+         */
+        renderHtml() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_renderHtml(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The executor's stored monotone tally as a JSON array `[c0, c1, …]` — the board a light
+         * client re-derives. `nobody can stuff or forge it: each vote is a verifiable turn.
+         * @returns {string}
+         */
+        tally() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_tally(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * The total across all options (the running Σ TALLY the quorum gate compares to `M`).
+         * @returns {bigint}
+         */
+        total() {
+            const ret = wasm.pollworld_total(this.__wbg_ptr);
+            return BigInt.asUintN(64, ret);
+        }
+        /**
+         * **Prove the ballot's `WriteOnce(VOTE)` BITES at the EXECUTOR depth** — attempt a second,
+         * value-CHANGING write to voter `voter`'s already-voted ballot directly over the verified
+         * executor (bypassing the engine nullifier), which the ballot cell's `WriteOnce(VOTE)`
+         * caveat must REFUSE on the commit path. Returns JSON `{refused, reason}`; `refused: true`
+         * is the on-ledger one-vote-per-ballot enforcement (`collective-choice` depth (i)).
+         * @param {number} voter
+         * @returns {string}
+         */
+        tryBallotWriteOnce(voter) {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_tryBallotWriteOnce(this.__wbg_ptr, voter);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * **Prove one-vote-per-ballot BITES at the engine depth** — attempt to re-cast voter
+         * `voter`'s already-consumed ballot for `option`. Returns JSON `{refused, reason}`;
+         * `refused: true` is the witnessed nullifier refusal (the consumed-ballot-proof depth).
+         * @param {number} voter
+         * @param {number} option
+         * @returns {string}
+         */
+        tryDoubleVote(voter, option) {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_tryDoubleVote(this.__wbg_ptr, voter, option);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * **Attempt the decision-turn** — set `RESOLVED := 1` on the poll cell, which the polis
+         * quorum `AffineLe` (`M·RESOLVED − Σ TALLY ≤ 0`) admits ONLY once `Σ TALLY ≥ M`. Returns
+         * JSON `{resolved, winner, winner_tally, total, reason}`. Below quorum the executor
+         * refuses the turn (`resolved: false`); at/above quorum it commits. Idempotent once resolved.
+         * @returns {string}
+         */
+        tryResolve() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_tryResolve(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
+         * **THE SELF-VERIFY** — `true` iff the executor's stored monotone tally EQUALS the
+         * light-client recompute from the cast log (the anti-stuffing check, in the tab).
+         * @returns {boolean}
+         */
+        verified() {
+            const ret = wasm.pollworld_verified(this.__wbg_ptr);
+            return ret !== 0;
+        }
+        /**
+         * **THE POLL VIEW-TREE** — a titled column over a `table` of option rows, each
+         * `row(text(label), bind(tally slot))`. The SAME `{kind, props, children}` JSON the web
+         * renderer (`deos-view::parse_view_tree`) consumes — serve it and the live board paints.
+         * @returns {string}
+         */
+        viewTreeJson() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.pollworld_viewTreeJson(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+    }
+    if (Symbol.dispose) PollWorld.prototype[Symbol.dispose] = PollWorld.prototype.free;
+    exports.PollWorld = PollWorld;
 
     /**
      * The tally-board card, driven from the browser tab over its own embedded verified executor.
@@ -752,6 +1106,25 @@ let wasm_bindgen = (function(exports) {
             return ret >>> 0;
         }
         /**
+         * **RENDER THE TALLY BOARD TO HTML, IN-WASM** — [`Self::view_tree_json`] (a `Table` of
+         * `Row`s) walked through the gpui-free web renderer, each row's live `bind` painted from
+         * its own tally slot off the committed ledger ([`Self::read`]). The Custom Element repaints
+         * via this after each `+1`/`−1` fire.
+         * @returns {string}
+         */
+        renderHtml() {
+            let deferred1_0;
+            let deferred1_1;
+            try {
+                const ret = wasm.tallyworld_renderHtml(this.__wbg_ptr);
+                deferred1_0 = ret[0];
+                deferred1_1 = ret[1];
+                return getStringFromWasm0(ret[0], ret[1]);
+            } finally {
+                wasm.__wbindgen_free(deferred1_0, deferred1_1, 1);
+            }
+        }
+        /**
          * **THE TALLY VIEW-TREE** — a `table` of `row`s, one per named tally: each row carries a
          * `text` label, a live `bind` of that tally's slot, and `+1`/`-1` affordance `button`s.
          * The SAME `{kind, props, children}` JSON the web renderer (`deos-view::parse_view_tree`)
@@ -833,6 +1206,54 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.agent_mint_token = agent_mint_token;
+
+    /**
+     * Assemble the canonical `SignedTurn` submission envelope — the exact bytes the
+     * node's `POST /api/turns/submit-signed` decodes with
+     * `postcard::from_bytes::<dregg_sdk::SignedTurn>` — from an encoded `Turn` and a
+     * 32-byte Ed25519 seed.
+     *
+     * This routes envelope assembly through the SDK's canonical
+     * [`AgentCipherclerk::sign_turn`] instead of the extension hand-rolling the
+     * postcard layout in JS. That matters now that the envelope is **HYBRID**: the
+     * SDK signs the canonical `Turn::hash` (v3) with BOTH the Ed25519 identity AND
+     * the ML-DSA-65 (FIPS 204) key derived deterministically from the same seed
+     * (`dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed`, ctx `b"dregg-hybrid-turn-v1"`),
+     * and the resulting `SignedTurn` carries the trailing `pq_signature` / `pq_signer`
+     * fields. Hand-encoding those two variable-length halves (a 3309-byte ML-DSA
+     * signature + a 1952-byte public key, each behind a postcard varint) in JS is
+     * exactly the postcard-layout coupling this removes: the client emits the PQ half
+     * end-to-end, and the wire shape stays owned by the SDK's own serializer.
+     *
+     * The classical half is unchanged — the node still re-derives `turn.hash()` and
+     * verifies the Ed25519 signature; the PQ half is verified over the SAME hash when
+     * present (fail-closed) and only *required* once the node flips `require_pq`.
+     *
+     * Arguments:
+     * - `turn_bytes`: the signed, encoded `Turn` (postcard or self-describing JSON —
+     *   tried in that order, matching [`sign_turn_v3`]'s encoding contract). Pass the
+     *   `turn_bytes_json` that `sign_turn_v3` emits for a guaranteed round-trip.
+     * - `sender_privkey`: the 32-byte Ed25519 seed (the cipherclerk's secret key).
+     *
+     * Returns a `Uint8Array` of the postcard-encoded `SignedTurn` ready to POST.
+     * @param {Uint8Array} turn_bytes
+     * @param {Uint8Array} sender_privkey
+     * @returns {Uint8Array}
+     */
+    function assemble_signed_turn_envelope(turn_bytes, sender_privkey) {
+        const ptr0 = passArray8ToWasm0(turn_bytes, wasm.__wbindgen_malloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passArray8ToWasm0(sender_privkey, wasm.__wbindgen_malloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.assemble_signed_turn_envelope(ptr0, len0, ptr1, len1);
+        if (ret[3]) {
+            throw takeFromExternrefTable0(ret[2]);
+        }
+        var v3 = getArrayU8FromWasm0(ret[0], ret[1]).slice();
+        wasm.__wbindgen_free(ret[0], ret[1] * 1, 1);
+        return v3;
+    }
+    exports.assemble_signed_turn_envelope = assemble_signed_turn_envelope;
 
     /**
      * Attempt time-travel rewind on the sim runtime (STARBRIDGE-FOLLOWUP-03
@@ -1273,7 +1694,7 @@ let wasm_bindgen = (function(exports) {
      *
      * ```json
      * [
-     *   { "kind": "membership",   "proof_json": "<StarkProof JSON>" },
+     *   { "kind": "membership",   "proof_json": "<Ir2ProofEnvelope JSON>" },
      *   { "kind": "range",        "commitment_hex": "<64-hex>", "range_proof_hex": "<hex>" },
      *   { "kind": "conservation", "input_commitments": ["<64-hex>", ...],
      *                             "output_commitments": ["<64-hex>", ...],
@@ -2304,13 +2725,14 @@ let wasm_bindgen = (function(exports) {
     exports.garbled_compare = garbled_compare;
 
     /**
-     * Demo/playground only. Uses simplified linear AIR (field-addition parent
-     * computation), not cryptographically sound for production. Generates a STARK
-     * proof for a Merkle membership claim using `MerkleStarkAir`.
+     * Generates a REAL arity-4 Poseidon2 Merkle-membership proof as an
+     * `Ir2BatchProof`, wrapped in the serde_json `Ir2ProofEnvelope` wire (the
+     * StarkProof->Ir2BatchProof migration). `leaf_value` is a u32 field element;
+     * `depth` is snapped to a power of two in `{2, 4, 8}`. The returned
+     * `proof_json` feeds straight into `verify_demo_stark_proof`.
      *
-     * `leaf_value` is a u32 field element, `depth` controls the Merkle tree depth (2-8).
-     *
-     * Returns JSON with proof bytes, generation time, proof size, etc.
+     * Returns JSON with the envelope, generation time, proof size, and the
+     * descriptor dispatch name.
      * @param {number} leaf_value
      * @param {number} depth
      * @returns {any}
@@ -3319,13 +3741,13 @@ let wasm_bindgen = (function(exports) {
      *
      * Returns JSON with: proof bytes, threshold_commitment, fact_commitment, verified status.
      * Returns error if the predicate is not satisfiable (value < threshold).
-     * @param {number} value
-     * @param {number} threshold
-     * @param {number} blinding
+     * @param {number} _value
+     * @param {number} _threshold
+     * @param {number} _blinding
      * @returns {any}
      */
-    function prove_committed_threshold(value, threshold, blinding) {
-        const ret = wasm.prove_committed_threshold(value, threshold, blinding);
+    function prove_committed_threshold(_value, _threshold, _blinding) {
+        const ret = wasm.prove_committed_threshold(_value, _threshold, _blinding);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -3959,10 +4381,12 @@ let wasm_bindgen = (function(exports) {
     exports.surface_rights_held = surface_rights_held;
 
     /**
-     * Demo/playground only. Tamper with a demo STARK proof by flipping bits in
-     * the first query's trace values.
+     * Tamper with a demo membership proof by flipping the claimed root in its
+     * envelope's public inputs. The `Ir2BatchProof` still decodes, but its claim no
+     * longer matches the witnessed root, so `verify_demo_stark_proof` REJECTS it --
+     * demonstrating the binding between an IR-v2 proof and its public claim.
      *
-     * Returns the tampered proof JSON.
+     * Returns the tampered envelope JSON.
      * @param {string} proof_json
      * @returns {string}
      */
@@ -4013,6 +4437,30 @@ let wasm_bindgen = (function(exports) {
         return BigInt.asUintN(64, ret[0]);
     }
     exports.transclusion_amend = transclusion_amend;
+
+    /**
+     * **BACKLINKS** (the two-way link, finally honest): enumerate WHO transcludes the
+     * source named `name` — the reverse index [`transclusion_include_into`] populates,
+     * wrapping the real [`Backlinks::observers_of`]. Each entry carries the cited
+     * receipt + content commitment from the observation's provenance, so a backlink is
+     * a verifiable claim ("observer O quoted source S's value V at receipt R") that a
+     * third party can recheck — never a dangling pointer. Returns a
+     * [`BacklinksReadout`]; a source nobody quotes yields an EMPTY readout, not an
+     * error.
+     * @param {number} handle
+     * @param {string} name
+     * @returns {any}
+     */
+    function transclusion_backlinks(handle, name) {
+        const ptr0 = passStringToWasm0(name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ret = wasm.transclusion_backlinks(handle, ptr0, len0);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.transclusion_backlinks = transclusion_backlinks;
 
     /**
      * **CREATE** a fresh transclusion demo world (a real [`WebOfCells`] with a 3-of-3
@@ -4085,6 +4533,36 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.transclusion_include = transclusion_include;
+
+    /**
+     * **INCLUDE INTO** an observing document (the two-way-link write): transclude the
+     * source named `source_name` INTO the published document named `observer_name` —
+     * the same verified finalized read as [`transclusion_include`], PLUS recording the
+     * observation in the demo's [`Backlinks`] reverse index (the real
+     * [`Backlinks::observe`]). The backlink carries the cited receipt + content
+     * commitment from the quote's provenance, so "who quotes this cell" becomes a
+     * verifiable fact, not Xanadu's hand-maintained pointer. Returns a [`QuoteView`].
+     *
+     * The observer must itself be a PUBLISHED document (it observes from its own
+     * `dregg://` cell) — an unpublished observer name is a clear error, never a
+     * silent default.
+     * @param {number} handle
+     * @param {string} observer_name
+     * @param {string} source_name
+     * @returns {any}
+     */
+    function transclusion_include_into(handle, observer_name, source_name) {
+        const ptr0 = passStringToWasm0(observer_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(source_name, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ret = wasm.transclusion_include_into(handle, ptr0, len0, ptr1, len1);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.transclusion_include_into = transclusion_include_into;
 
     /**
      * **PROJECT FOR** a viewer (the no-amplification tooth `transclusion_no_amplify`):
@@ -4303,15 +4781,15 @@ let wasm_bindgen = (function(exports) {
      * `proof_json`: serialized STARK proof (from prove_committed_threshold)
      *
      * Returns JSON: { "valid": bool, "verification_time_ms": f64 }
-     * @param {string} proof_json
-     * @param {number} threshold_commitment
-     * @param {number} fact_commitment
+     * @param {string} _proof_json
+     * @param {number} _threshold_commitment
+     * @param {number} _fact_commitment
      * @returns {any}
      */
-    function verify_committed_threshold(proof_json, threshold_commitment, fact_commitment) {
-        const ptr0 = passStringToWasm0(proof_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+    function verify_committed_threshold(_proof_json, _threshold_commitment, _fact_commitment) {
+        const ptr0 = passStringToWasm0(_proof_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
         const len0 = WASM_VECTOR_LEN;
-        const ret = wasm.verify_committed_threshold(ptr0, len0, threshold_commitment, fact_commitment);
+        const ret = wasm.verify_committed_threshold(ptr0, len0, _threshold_commitment, _fact_commitment);
         if (ret[2]) {
             throw takeFromExternrefTable0(ret[1]);
         }
@@ -4398,8 +4876,11 @@ let wasm_bindgen = (function(exports) {
     exports.verify_conservation_proof = verify_conservation_proof;
 
     /**
-     * Demo/playground only. Uses simplified linear AIR, not cryptographically
-     * sound for production. Verifies a previously generated demo STARK proof.
+     * Verifies an `Ir2ProofEnvelope` produced by `generate_demo_stark_proof`
+     * through the migrated CONSUMER contract: fail-closed `descriptor_by_name`
+     * dispatch on the envelope's name, postcard-decode the `Ir2BatchProof`, and
+     * check it with the deployed `verify_vm_descriptor2`. A dispatch miss, a
+     * malformed blob, or a failed cryptographic check all yield `valid: false`.
      *
      * Returns JSON: { "valid": bool, "error": null | "..." }
      * @param {string} proof_json
@@ -4461,6 +4942,58 @@ let wasm_bindgen = (function(exports) {
         return takeFromExternrefTable0(ret[0]);
     }
     exports.verify_devnet_history = verify_devnet_history;
+
+    /**
+     * **LC-3 — THE FINALIZED OVER-WIRE LIGHT-CLIENT CHECK.** The same byte-path verify as
+     * [`verify_devnet_history`] (legs 1+2: the aggregate is genuine, the publics are re-attested),
+     * PLUS the THIRD leg — finality — that the bare wasm client lacked: the head root the aggregate
+     * proves was QUORUM-FINALIZED by the client's TRUSTED committee.
+     *
+     * Without this leg a *correct-looking* history is indistinguishable from a *finalized* one: an
+     * equivocating prover can fold a perfectly valid aggregate over a FORK the network never finalized
+     * (legs 1+2 pass). This entry runs the Rust embodiment of
+     * `FinalizedLightClient.light_client_accepts_finalized_history`'s third leg over the wire — the
+     * composition `verify_finalized_history` performs, realized for the byte path where the in-memory
+     * `WholeChainProof` is unavailable (only its publics are, which tooth 2 just re-attested):
+     *
+     * 1. byte-verify the aggregate against the CONFIG anchor (legs 1+2, exactly [`verify_devnet_history`]);
+     * 2. the **root seam**: the envelope's finality cert finalizes the SAME head felt the aggregate proves;
+     * 3. the **committee-anchored quorum**: a supermajority of the TRUSTED `committee_hex_csv` (the
+     *    client's CONFIG validator set — a separate argument, NEVER read from the envelope) cast a
+     *    verifying Ed25519 vote over the head root. The threshold is taken over the committee size, not
+     *    the cert-supplied `participant_count` — closing red-team LC-2/LC-3.
+     *
+     * `committee_hex_csv` is a comma-separated list of 64-hex ed25519 validator keys.
+     * `ml_dsa_committee_hex_csv` is the PARALLEL comma-separated list of the committee's genesis-ENROLLED
+     * ML-DSA-65 (FIPS 204) public keys (3904 hex chars / 1952 bytes each), aligned index-for-index with
+     * `committee_hex_csv` and sourced from the SAME genesis/epoch config — the GAP #0 pin's enrolled PQ
+     * roster (NEVER the votes' self-carried keys). Pass an EMPTY string for the staged-rollout
+     * fail-closed case: an absent or misaligned roster counts NO signer, so leg 3 refuses the hybrid
+     * quorum (a refusal, never a silent ed25519-only downgrade). An empty committee, a missing finality
+     * cert, a seam break, or a sub-quorum (e.g. a fork signed by foreign keys) all yield
+     * `attested: false` with the precise reason — NO finalized attestation is laundered.
+     * @param {string} envelope_json
+     * @param {string} config_anchor_hex
+     * @param {string} committee_hex_csv
+     * @param {string} ml_dsa_committee_hex_csv
+     * @returns {any}
+     */
+    function verify_finalized_devnet_history(envelope_json, config_anchor_hex, committee_hex_csv, ml_dsa_committee_hex_csv) {
+        const ptr0 = passStringToWasm0(envelope_json, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len0 = WASM_VECTOR_LEN;
+        const ptr1 = passStringToWasm0(config_anchor_hex, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len1 = WASM_VECTOR_LEN;
+        const ptr2 = passStringToWasm0(committee_hex_csv, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len2 = WASM_VECTOR_LEN;
+        const ptr3 = passStringToWasm0(ml_dsa_committee_hex_csv, wasm.__wbindgen_malloc, wasm.__wbindgen_realloc);
+        const len3 = WASM_VECTOR_LEN;
+        const ret = wasm.verify_finalized_devnet_history(ptr0, len0, ptr1, len1, ptr2, len2, ptr3, len3);
+        if (ret[2]) {
+            throw takeFromExternrefTable0(ret[1]);
+        }
+        return takeFromExternrefTable0(ret[0]);
+    }
+    exports.verify_finalized_devnet_history = verify_finalized_devnet_history;
 
     /**
      * **THE CONFIG-NOT-ARTIFACT TOOTH** — fold a real chain, then run the REAL
@@ -4880,6 +5413,9 @@ let wasm_bindgen = (function(exports) {
     const KvStoreWorldFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_kvstoreworld_free(ptr, 1));
+    const PollWorldFinalization = (typeof FinalizationRegistry === 'undefined')
+        ? { register: () => {}, unregister: () => {} }
+        : new FinalizationRegistry(ptr => wasm.__wbg_pollworld_free(ptr, 1));
     const TallyWorldFinalization = (typeof FinalizationRegistry === 'undefined')
         ? { register: () => {}, unregister: () => {} }
         : new FinalizationRegistry(ptr => wasm.__wbg_tallyworld_free(ptr, 1));

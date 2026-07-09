@@ -1,0 +1,23 @@
+<!doctype html>
+<html lang="en">
+<head><meta charset="utf-8"><title>quiet upgrade fixture</title></head>
+<body>
+  <h1>quiet upgrade fixture — the old web carrying a reference</h1>
+
+  <!-- Canonical form as PLAINTEXT inside prose (the core case). -->
+  <p id="prose">Should we ship it? Vote in our poll: dregg://poll/b3_a1a1a1 — thanks!</p>
+
+  <!-- Mirror form as a clickable anchor (graceful-degradation link). -->
+  <p id="mirror">Or via the mirror: <a href="https://dregg.net/d/poll/b3_b2b2b2">the b2 poll</a>.</p>
+
+  <!-- t.co shortener: href rewritten, visible text preserves the canonical. -->
+  <p id="tco">Shortened by the platform: <a href="https://t.co/xYz789Q">dregg://poll/b3_c3c3c3</a></p>
+
+  <!-- Malformed addr: detector matches loosely, engine fails closed. -->
+  <p id="bad">A broken one: dregg://poll/notahash should not verify.</p>
+
+  <script src="/dregg_wasm.js"></script>
+  <script>window.wasm_bindgen = wasm_bindgen;</script>
+  <script src="/harness.js"></script>
+</body>
+</html>

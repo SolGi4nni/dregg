@@ -170,6 +170,8 @@ export type MessageType =
   | "dregg:getLoginStatus"
   // Receipt stream (node SSE /api/events/stream)
   | "dregg:getRecentReceipts"
+  // Quiet-upgrade poll port (resolve/render/fire/verify over the wasm PollWorld)
+  | "dregg:poll"
   // Node configuration
   | "dregg:getNodeConfig"
   | "dregg:setNodeConfig"
