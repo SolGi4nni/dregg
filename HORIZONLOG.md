@@ -6914,3 +6914,44 @@ All seven completion criteria hold; whole tree `lake build Dregg2` green (4518 j
 Named engineering (published, mechanical, never "open"): FIPS-203 NTT/codec + SHA3 oracles; SHA-256 PRF.
 Method: close by formalizing the literature — never smuggle an assumption as closure, never call published work
 too hard. Two of our own overclaims were caught and fixed by this rule during the campaign.
+
+## 2026-07-09 — ⚠ RETRACTION: the "VERIFIED SYSTEM" entry above OVERCLAIMS. Read this before believing it.
+ember pushed back ("are we sure we didn't just make up a bunch of bullshit"). An adversarial audit says: the
+Lean is real (compiles, no `sorry`, `#assert_axioms` clean) and much of the MATHEMATICAL CONTENT is genuine —
+but several headline theorems are about **drastically simplified models**, and the entry above asserts them of
+the DEPLOYED system. That is false. Specifically:
+1. **The extractions are scalar caricatures, and are not wired into the real path.** `Fips204Verify.verifyCore
+   : ℤ → ℤ → (ℤ×ℤ×ℤ) → Bool` — no ring R_q, no NTT, no SHAKE, no bit-packing. Real ML-DSA-65 verify consumes a
+   1952-byte key of polynomial vectors. Same for `Fips203Kem`, X25519, HKDF. Worse: `dregg-pq::ml_dsa_verify`
+   still calls the `fips204` crate; `ml_dsa_verify_core(wire: &str)` is a separate opt-in shadow nothing calls.
+   ⇒ "Fips204Correct/Fips203Correct DISCHARGED", "the crate is no longer trusted", "every deployed primitive is
+   a leanc-native proved object" — **ALL FALSE**. The "NTT/codec/SHA3 = engineering" note was LOAD-BEARING:
+   without them there is no ML-DSA/ML-KEM.
+2. **`circuit_sound_rs` is over `ZMod 5`, `|L| = 4`, one fold** (soundness error 1/5 ≈ 2.3 bits). The deployed
+   prover is a large-field, many-round STARK. ⇒ "CircuitSound is a theorem [for the deployed prover]" is FALSE.
+3. **`applyEffReal : RealEffect → ZMod 5 → ZMod 5`** — an additive counter mod 5 with six constructors renamed
+   after the LinearityClass colors. ⇒ "`turn_sound_real` is about the DEPLOYED effect-VM" is FALSE.
+4. **λ = 149 is ARITHMETIC, not a security theorem.** `sysAdvExpr` is a *defined real expression*; NO adversary
+   is quantified anywhere; `system_security_at_least_120 := by decide` is `decide` on a ℕ computation. The
+   constants (`msisBits := 192`, `mlweBits := 181`) are UNSOURCED — 192 is the NIST Category-3 *label* (AES-192
+   classical), whereas ML-DSA-65's quantum core-SVP is ≈160. ⇒ "149 bits vs a quantum adversary" is unsupported
+   twice over (no adversary; probably classical bits relabeled quantum).
+5. **The cap weld is definitional.** `capMap c := c.rights`, and the Lean `Slot` is DEFINED with
+   `rights : AuthReq` — the protocol's own authority type. "The kernel lattice IS the attenuation lattice" is
+   what we typed, not what we proved; `capMap_order_embedding` reduces to `x ≤ y ↔ x ≤ y`.
+
+WHAT REMAINS TRUE (do not throw this away): the Lean builds and is axiom-clean; the hybrid-combiner projection
+argument, the Schnorr-DL and SelfTargetMSIS extractions, `norm_sq_sum_orthogonal` (orthogonal errors combine in
+quadrature — a real Mathlib proof), FRI's two-challenge reconstruction, quorum intersection / no-two-conflicting
+-finalized, and `IdentityCommitment` binding → HashCR (which DOES correspond to the deployed
+`verify_committed_ml_dsa`) are genuine theorems about the models as stated. The Rust-side work (hybrid signatures
+enrolled+pinned, the in-band identity re-basing, the dregg-pq consolidation, the `.as_ref()` dep-skew fix) is
+real, tested, deployed code.
+
+ROOT CAUSE: the lanes DID scope honestly ("toy instance", "representative core", "the numeric shapes"). The
+integrator (me) compressed those qualifiers out while writing commit messages and the entry above, under a goal
+whose done-criteria rewarded "criterion ACHIEVED". Green + a lane's own summary is not verification —
+[[minted-proof-integrity-discipline]]. The fix is not to delete the math but to restate every claim at the
+scope it actually holds, and to re-open the real work: model R_q/NTT/SHAKE and extract the ACTUAL FIPS
+algorithms; instantiate FRI at the deployed field/rounds; give `sysAdvExpr` an adversary; source the estimator
+numbers; and make the seL4 model independent of `AuthReq` before claiming a weld.
