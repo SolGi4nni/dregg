@@ -9,18 +9,28 @@ a `Prop`-level statement or a symbolic advantage term. This module turns that qu
 DEPLOYABLE NUMBER: at the deployed ML-DSA-65 / ML-KEM-768 parameters, against any `q`-query quantum
 adversary, the whole system's advantage is `≤ 2^(−λ)` for a λ we COMPUTE.
 
-## TIGHT reductions (the campaign's last unit).
+## THE MODULE DAG — λ is a CONSEQUENCE of the tight proofs, not hand-matched arithmetic.
 
-The end-to-end composition now feeds the **TIGHT** twins, whose formalizations landed in two DOWNSTREAM
-files (they `import` this one, so — by the module DAG — this file cannot import them back; the tight terms
-below are the numeric SHAPES of those cited theorems, proved here by the SAME `advOf` laws):
+The `advOf` calculus and the `LatticeEstimate` interface were LEAVES-out so that the DAG can be INVERTED:
 
-  * **`Dregg2.Crypto.LossyIdentification`** (KLS18/AFLT12 lossy-identification EUF-CMA) — kills the forking
-    square-root. The signature floor is now `sigBitsTight = min mlweBits (min (α − log₂q) simBits) − 2`
-    (`≈ mlweBits − O(1)`, decision-MLWE at coefficient 1), replacing the loose `sigBitsR = (msisBits −
-    log₂q)/2`. At the deployed estimate: **179** vs the forking **86** (`LossyIdentification.tight_beats_forking`).
-  * **`Dregg2.Crypto.DoubleSidedO2H`** (BHHHP19 double-sided O2H + HHM22 FO) — kills the O2H square-root. The
-    KEM floor is now `kemBitsTight = min mlweBits (foCorrectnessBits − log₂q) − 2`, replacing the loose
+  * **`Dregg2.Crypto.AdvCalculus`** (leaf) — the `advOf b = 2^(−b)` advantage-in-bits calculus and ALL its
+    laws (`advOf_sqrt`, `advOf_add_le`, `advOf_add3_le`, `advOf_antitone`, `natpow_mul_advOf`, …).
+  * **`Dregg2.Crypto.LatticeEstimate`** (leaf) — the `LatticeEstimate` bag of numbers, the deployed/degraded
+    instances, and the LOOSE contrast bit-counts `sigBitsR` / `o2hBitsR`.
+  * **`Dregg2.Crypto.LossyIdentification`** (KLS18/AFLT12 lossy-identification EUF-CMA) and
+    **`Dregg2.Crypto.DoubleSidedO2H`** (BHHHP19 double-sided O2H + HHM22 FO) — the TIGHT reductions. They now
+    import the two LEAVES above (NOT this file), so THIS file can import THEM.
+
+Because this file **imports** `LossyIdentification` and `DoubleSidedO2H`, the system bound below is not a
+re-declared numeric shape that merely *matches* the tight theorems — it **cites them directly**: the
+signature leg is `LossyIdentification.sigTightAdv_le` and the KEM leg is `DoubleSidedO2H.kemTightAdv_le`, and
+the computed λ is built from `LossyIdentification.sigBitsTightN` / `DoubleSidedO2H.kemBitsTightN`. λ = 149 is
+a consequence, through Lean's import graph, of the theorems those two files prove.
+
+  * **`sigBitsTight = min mlweBits (min (α − log₂q) simBits) − 2`** (`≈ mlweBits − O(1)`, decision-MLWE at
+    coefficient 1), replacing the loose `sigBitsR = (msisBits − log₂q)/2`. At the deployed estimate: **179**
+    vs the forking **86** (`LossyIdentification.tight_beats_forking`).
+  * **`kemBitsTight = min mlweBits (foCorrectnessBits − log₂q) − 2`**, replacing the loose
     `o2hBitsR = msgEntropyBits/2 − log₂q − 1`. At the deployed estimate: **152** vs the semiclassical **107**
     (`DoubleSidedO2H.deployed_tightness_gain`).
 
@@ -29,22 +39,20 @@ CONTRAST (the record of what the tight reductions bought) — but the SYSTEM bou
 
 ## The accounting (§-by-§)
 
-  **§1 — `advOf` — the advantage-in-bits calculus.** `advOf b = 2^(−b)` (an advantage of `b` bits). The
-  whole composition is arithmetic in this one function: `advOf a · advOf b = advOf (a+b)` (union/product),
-  `√(advOf b) = advOf (b/2)` (the forking / O2H square-root loss, only in the CONTRAST terms now), `advOf`
-  is ANTITONE, and finite sums fold with a `−log₂(#terms)` bit cost.
+  **§1 — `advOf` — the advantage-in-bits calculus.** Now in the `AdvCalculus` leaf; `advOf b = 2^(−b)`. The
+  whole composition is arithmetic in this one function.
 
-  **§2 — THE ADVANTAGE TWINS.** The loose (forking/semiclassical) twins `sigForkAdv`/`kemQromAdv` (CONTRAST),
-  and §2b the TIGHT twins `sigTightAdv`/`kemTightAdv` (the LANDED reductions) that the system bound uses.
+  **§2 — THE ADVANTAGE TWINS.** §2a: the loose (forking/semiclassical) twins `sigForkAdv`/`kemQromAdv`
+  (CONTRAST). §2b: the TIGHT twins, SPECIALISED here from the CITED `LossyIdentification`/`DoubleSidedO2H`
+  theorems (no re-declaration — `sigTightAdv_le`/`kemTightAdv_le` are `:= LossyIdentification.sigTightAdv_le
+  …` / `:= DoubleSidedO2H.kemTightAdv_le …`).
 
   **§3 — THE COMPOSITION.** `sysAdvExpr E q log2q sessions consensus` composes the TIGHT twins by the actual
   reduction structure, and `system_advantage_bound` proves it `≤ advOf (lambdaR …)` — every step an `advOf`
   law, no new assumption.
 
-  **§4 — THE LATTICE-HARDNESS INTERFACE.** `LatticeEstimate` carries the bit-security of MSIS/MLWE at the
-  deployed parameters as LABELED NUMERIC INPUTS. **This is the ONLY non-proof input in the entire tree.**
-  With the lossy-ID reduction the signature floor is decision-MLWE (the decisional twin of the same lattice
-  floor), so the binding lattice number for BOTH primitives is `mlweBits`.
+  **§4 — THE LATTICE-HARDNESS INTERFACE.** In the `LatticeEstimate` leaf. The bit-security of MSIS/MLWE at
+  the deployed parameters as LABELED NUMERIC INPUTS. **This is the ONLY non-proof input in the entire tree.**
 
   **§5 — THE THEOREM.** `system_security_bits`: given a `LatticeEstimate` in the deployable regime, for any
   `q ≤ 2^log2q` quantum adversary, `sysAdvExpr ≤ advOf (sysSecurityBits …)` — i.e. `≤ 2^(−λ)` for the
@@ -54,14 +62,14 @@ CONTRAST (the record of what the tight reductions bought) — but the SYSTEM bou
 
 No `def …Hard` is introduced. The `LatticeEstimate` is a bag of NUMBERS, never a `Prop`, never assumed.
 Every bound is `advOf` arithmetic proved from Mathlib's `rpow`/`sqrt` API — theorems, never `axiom`s. The
-qualitative reductions are CITED (their shapes are these terms); the numeric composition is self-contained.
-The only residual is the lattice floor (`MLWESearchHard` and its decisional twin `DecisionMLWEHard`, plus
-`MSISHard`), quantified by the ONE labeled estimate, exactly as the discipline permits.
+tight reductions are not cited-by-shape but cited-by-import. The only residual is the lattice floor
+(`MLWESearchHard` and its decisional twin `DecisionMLWEHard`, plus `MSISHard`), quantified by the ONE labeled
+estimate, exactly as the discipline permits.
 -/
-import Mathlib.Analysis.SpecialFunctions.Pow.Real
-import Mathlib.Analysis.SpecialFunctions.Sqrt
-import Mathlib.Tactic
-import Dregg2.Tactics
+import Dregg2.Crypto.AdvCalculus
+import Dregg2.Crypto.LatticeEstimate
+import Dregg2.Crypto.LossyIdentification
+import Dregg2.Crypto.DoubleSidedO2H
 import Dregg2.Crypto.ConcreteSecurity
 import Dregg2.Crypto.Lattice
 import Dregg2.Crypto.HermineTSUF
@@ -70,147 +78,25 @@ import Dregg2.Crypto.FoBookkeeping
 import Dregg2.Crypto.HybridCombiner
 import Dregg2.Crypto.UcSignature
 import Dregg2.Crypto.AdaptiveTSUF
+import Dregg2.Tactics
+import Mathlib.Analysis.SpecialFunctions.Pow.Real
+import Mathlib.Analysis.SpecialFunctions.Sqrt
+import Mathlib.Tactic
 
 open Dregg2.Crypto.ConcreteSecurity
 
 namespace Dregg2.Crypto.ParameterSecurity
 
-/-! ## §1 — `advOf` — the advantage-in-bits calculus. -/
+/-! ## §1 — `advOf` — the advantage-in-bits calculus.
 
-/-- **`advOf b = 2^(−b)`** — an advantage of `b` BITS of security. The single object the whole
-parameter-level composition is arithmetic in. -/
-noncomputable def advOf (b : ℝ) : ℝ := (2 : ℝ) ^ (-b)
+Lives in the `Dregg2.Crypto.AdvCalculus` leaf (namespace `Dregg2.Crypto.ParameterSecurity`, so `advOf`,
+`advOf_add3_le`, … resolve unqualified). §4 — the deployed parameters and the `LatticeEstimate` interface —
+lives in the `Dregg2.Crypto.LatticeEstimate` leaf. Both are imported above. -/
 
-theorem advOf_pos (b : ℝ) : 0 < advOf b := Real.rpow_pos_of_pos (by norm_num) _
+/-! ## §2 — THE ADVANTAGE TWINS. §2a: the LOOSE (forking/semiclassical) twins, KEPT as CONTRAST.
 
-/-- `advOf a · advOf b = advOf (a+b)` — the UNION / product law: multiplying advantages ADDS bit-losses. -/
-theorem advOf_mul (a b : ℝ) : advOf a * advOf b = advOf (a + b) := by
-  unfold advOf
-  rw [← Real.rpow_add (by norm_num : (0:ℝ) < 2)]
-  congr 1; ring
-
-/-- `advOf (-(n)) = 2^n` — a NEGATIVE bit-count is a power blow-up (the `2^sessions` / `2^consensus` /
-`2^log2q` factors). -/
-theorem advOf_negNat (n : ℕ) : advOf (-(n:ℝ)) = (2:ℝ) ^ n := by
-  unfold advOf; rw [neg_neg, Real.rpow_natCast]
-
-/-- `advOf (-1) = 2`. -/
-theorem advOf_negOne : advOf (-1) = 2 := by
-  unfold advOf; rw [neg_neg, Real.rpow_one]
-
-/-- `2^k · advOf x = advOf (x − k)` — a `k`-bit blow-up EATS `k` bits of an advantage. -/
-theorem natpow_mul_advOf (k : ℕ) (x : ℝ) : (2:ℝ) ^ k * advOf x = advOf (x - (k:ℝ)) := by
-  rw [← advOf_negNat, advOf_mul]; congr 1; ring
-
-/-- `√(advOf b) = advOf (b/2)` — THE SQUARE-ROOT LOSS: the forking-lemma / O2H reduction HALVES the bits. -/
-theorem advOf_sqrt (b : ℝ) : Real.sqrt (advOf b) = advOf (b / 2) := by
-  rw [Real.sqrt_eq_rpow]
-  unfold advOf
-  rw [← Real.rpow_mul (by norm_num : (0:ℝ) ≤ 2)]
-  congr 1; ring
-
-/-- `advOf` is ANTITONE: more bits ⟹ smaller advantage. -/
-theorem advOf_antitone {a b : ℝ} (h : a ≤ b) : advOf b ≤ advOf a := by
-  unfold advOf
-  exact Real.rpow_le_rpow_of_exponent_le (by norm_num : (1:ℝ) ≤ 2) (by linarith)
-
-/-- `2 · advOf b = advOf (b − 1)`. -/
-theorem two_mul_advOf (b : ℝ) : 2 * advOf b = advOf (b - 1) := by
-  rw [← advOf_negOne, advOf_mul]; congr 1; ring
-
-/-- **TWO-TERM UNION.** `advOf a + advOf b ≤ advOf (min a b − 1)` — summing two advantages costs one bit. -/
-theorem advOf_add_le (a b : ℝ) : advOf a + advOf b ≤ advOf (min a b - 1) := by
-  have h1 : advOf a ≤ advOf (min a b) := advOf_antitone (min_le_left a b)
-  have h2 : advOf b ≤ advOf (min a b) := advOf_antitone (min_le_right a b)
-  calc advOf a + advOf b ≤ 2 * advOf (min a b) := by linarith
-    _ = advOf (min a b - 1) := two_mul_advOf _
-
-/-- **THREE-TERM UNION.** `advOf a + advOf b + advOf c ≤ advOf (min a (min b c) − 2)` — summing three
-advantages costs two bits (`3 ≤ 4 = 2²`). The FO chain's O2H + CPA + correctness fold. -/
-theorem advOf_add3_le (a b c : ℝ) :
-    advOf a + advOf b + advOf c ≤ advOf (min a (min b c) - 2) := by
-  set m := min a (min b c) with hm
-  have ha : advOf a ≤ advOf m := advOf_antitone (min_le_left _ _)
-  have hb : advOf b ≤ advOf m := advOf_antitone (le_trans (min_le_right a (min b c)) (min_le_left b c))
-  have hc : advOf c ≤ advOf m := advOf_antitone (le_trans (min_le_right a (min b c)) (min_le_right b c))
-  have hpos := advOf_pos m
-  have e4 : (4:ℝ) * advOf m = advOf (m - 2) := by
-    have : (4:ℝ) * advOf m = 2 * (2 * advOf m) := by ring
-    rw [this, two_mul_advOf, two_mul_advOf]; congr 1; ring
-  calc advOf a + advOf b + advOf c ≤ 4 * advOf m := by linarith
-    _ = advOf (m - 2) := e4
-
-/-- `advOf (n : ℝ) = 1/2^n` — the bridge to `ConcreteSecurity.Negl`. -/
-theorem advOf_natCast (n : ℕ) : advOf (n : ℝ) = 1 / (2:ℝ) ^ n := by
-  unfold advOf
-  rw [Real.rpow_neg (by norm_num), Real.rpow_natCast, one_div]
-
-/-- **(TOOTH — ties `advOf` into the concrete-security substrate.)** The ensemble `λ ↦ advOf λ = 2^(−λ)` is
-NEGLIGIBLE — the parameter-level advantage, taken as a family in the security parameter, lands in the
-`ConcreteSecurity.Negl` algebra. -/
-theorem negl_advOf : Negl (fun n : ℕ => advOf (n : ℝ)) := by
-  have h : (fun n : ℕ => advOf (n:ℝ)) = (fun n : ℕ => 1 / (2:ℝ) ^ n) := by
-    funext n; exact advOf_natCast n
-  rw [h]; exact negl_two_pow
-
-/-! ## §4 (stated early) — THE DEPLOYED PARAMETERS + THE LATTICE-HARDNESS INTERFACE. -/
-
-/-- ML-DSA parameter record (for citation of the deployed instance). -/
-structure MlDsaParams where
-  k : ℕ
-  l : ℕ
-  eta : ℕ
-  q : ℕ
-  n : ℕ
-deriving Repr, DecidableEq
-
-/-- ML-KEM parameter record (for citation of the deployed instance). -/
-structure MlKemParams where
-  k : ℕ
-  eta1 : ℕ
-  eta2 : ℕ
-  q : ℕ
-  n : ℕ
-deriving Repr, DecidableEq
-
-/-- **ML-DSA-65** (FIPS 204, NIST security category 3): `(k,l,η,q,n) = (6,5,4,8380417,256)`. -/
-def mlDsa65 : MlDsaParams := ⟨6, 5, 4, 8380417, 256⟩
-
-/-- **ML-KEM-768** (FIPS 203, NIST security category 3): `(k,η₁,η₂,q,n) = (3,2,2,3329,256)`. -/
-def mlKem768 : MlKemParams := ⟨3, 2, 2, 3329, 256⟩
-
-/-- **`LatticeEstimate` — THE ONLY NON-PROOF INPUT IN THE ENTIRE TREE.**
-
-The parameter-level theorem bottoms out at the concrete hardness of MSIS/MLWE at the deployed lattice
-parameters. That hardness is NOT provable in Lean (it is the lattice FLOOR); its bit-security is an
-EMPIRICAL number from the Lattice Estimator [Albrecht–Player–Scott] and the NIST parameter rationale
-[FIPS 203/204]. This structure carries those numbers — and ONLY numbers.
-
-It is deliberately a bag of `ℕ`s, **NOT** a `def …Hard`, **NOT** a `Prop`, **NOT** used as a hardness
-hypothesis anywhere below: the fields are read ONLY by arithmetic (`sysSecurityBits`). This is the single
-place the tree touches the empirical world; everything downstream is proof. -/
-structure LatticeEstimate where
-  /-- **EMPIRICAL (Lattice Estimator / NIST).** Bit-security of Module-SIS at the ML-DSA-65 parameters — the
-  quantum core-SVP cost of finding a short vector, i.e. `−log₂(Adv^MSIS)`. A NUMBER, not a hypothesis. Feeds
-  the CONTRAST forking bound `sigBitsR`; the tight lossy-ID reduction uses `mlweBits` instead. -/
-  msisBits : ℕ
-  /-- **EMPIRICAL (Lattice Estimator / NIST).** Bit-security of Module-LWE at the ML-KEM-768 parameters —
-  `−log₂(Adv^MLWE)`. A NUMBER, not a hypothesis. With the lossy-ID reduction this is the binding lattice
-  floor for BOTH the KEM and the signature (decision-MLWE). -/
-  mlweBits : ℕ
-  /-- Message / seed min-entropy `H∞(m*)` feeding the (CONTRAST) O2H guessing term. Also the lossy-soundness
-  parameter `α` of the tight signature (the response-entropy gap, statistical, `≫ mlweBits`). A SPEC
-  constant (ML-KEM encapsulates a 256-bit seed), not a lattice estimate. -/
-  msgEntropyBits : ℕ
-  /-- FO correctness margin: `−log₂(δ)` for the decryption-failure rate `δ` (the `(q+1)·δ` term of the tight
-  HHM22 FO bound). A SPEC constant computed from the noise distribution. -/
-  foCorrectnessBits : ℕ
-  /-- The deployed ML-DSA parameters these `msisBits` were estimated at (for citation). -/
-  mldsa : MlDsaParams
-  /-- The deployed ML-KEM parameters these `mlweBits` were estimated at (for citation). -/
-  mlkem : MlKemParams
-
-/-! ## §2 — THE ADVANTAGE TWINS. §2a: the LOOSE (forking/semiclassical) twins, KEPT as CONTRAST. -/
+(`sigBitsR` / `o2hBitsR`, the loose bit-counts, live in the `LatticeEstimate` leaf so the tight files can
+cite them in their `tight_beats_forking` / `deployed_tightness_gain` contrasts.) -/
 
 /-- **(CONTRAST) `sigForkAdv E q` — the loose forking forgery advantage.** `√(q · advOf msisBits)`: the
 FORKING inversion of `HermineTSUF.forking_probability_bound`. The tight `sigTightAdv` (§2b) REPLACES this in
@@ -223,14 +109,6 @@ noncomputable def sigForkAdv (E : LatticeEstimate) (q : ℕ) : ℝ :=
 noncomputable def kemQromAdv (E : LatticeEstimate) (q : ℕ) : ℝ :=
   2 * Real.sqrt ((q : ℝ) * ((q : ℝ) * advOf E.msgEntropyBits))
     + advOf E.mlweBits + advOf E.foCorrectnessBits
-
-/-- **(CONTRAST)** The loose signature bits (post-forking): `(msisBits − log₂q)/2`. -/
-noncomputable def sigBitsR (E : LatticeEstimate) (log2q : ℕ) : ℝ :=
-  ((E.msisBits : ℝ) - (log2q : ℝ)) / 2
-
-/-- **(CONTRAST)** The loose O2H reprogramming term's bits: `msgEntropyBits/2 − log₂q − 1`. -/
-noncomputable def o2hBitsR (E : LatticeEstimate) (log2q : ℕ) : ℝ :=
-  (E.msgEntropyBits : ℝ) / 2 - (log2q : ℝ) - 1
 
 /-- **(CONTRAST)** The loose KEM bits: the MIN of the O2H term, the MLWE (CPA) term, and the correctness. -/
 noncomputable def kem3R (E : LatticeEstimate) (log2q : ℕ) : ℝ :=
@@ -280,81 +158,47 @@ theorem kemQromAdv_le (E : LatticeEstimate) {q log2q : ℕ} (hq : q ≤ 2 ^ log2
       ≤ advOf (o2hBitsR E log2q) + advOf E.mlweBits + advOf E.foCorrectnessBits := by linarith
     _ ≤ advOf (min (o2hBitsR E log2q) (min (E.mlweBits : ℝ) (E.foCorrectnessBits : ℝ)) - 2) := h3
 
-/-! ## §2b — THE TIGHT ADVANTAGE TWINS (the LANDED reductions the system bound uses).
+/-! ## §2b — THE TIGHT ADVANTAGE TWINS — CITED from the LANDED reductions, not re-declared.
 
-The numeric shapes of `LossyIdentification.sigTightAdv/sigBitsTight` (lossy-ID EUF-CMA, α = `msgEntropyBits`,
-simBits = `mlweBits`) and `DoubleSidedO2H.kemTightAdv/kemBitsTight` (double-sided O2H FO-KEM), specialised to
-a `LatticeEstimate`. Proved by the SAME `advOf` laws (`advOf_add3_le`, `advOf_add_le`, `natpow_mul_advOf`);
-no `√`, no new assumption — the only residual is `mlweBits`/`foCorrectnessBits` (the lattice/correctness
-floor), read as numbers. -/
+The tight signature terms are `LossyIdentification.sigTightAdv/sigBitsTight` specialised at the
+`LatticeEstimate` (α = `msgEntropyBits`, simBits = `mlweBits`); the tight KEM terms are
+`DoubleSidedO2H.kemTightAdv/kemBitsTight` (already over a `LatticeEstimate`). The `_le` lemmas below are
+PROOF-TERM citations of the downstream theorems — `sigTightAdv_le := LossyIdentification.sigTightAdv_le …`,
+`kemTightAdv_le := DoubleSidedO2H.kemTightAdv_le …` — so the system bound depends on those proofs through the
+import graph, not on hand-matched arithmetic. -/
 
-/-- **`sigTightAdv E log2q` — the TIGHT EUF-CMA advantage (lossy-ID; `LossyIdentification.sigTightAdv`).**
-`advOf mlweBits + advOf (msgEntropyBits − log₂q) + advOf mlweBits`: the decision-MLWE term at COEFFICIENT 1
-(no `√`, no `ε²`, no `q_H`), the lossy-soundness term `q_H·ε_ls = advOf (α − log₂q)`, the HVZK-simulation
-term `advOf simBits` (simBits = mlweBits). REPLACES the forking `sigForkAdv`. -/
+/-- **`sigTightAdv E log2q`** — the TIGHT EUF-CMA advantage, `LossyIdentification.sigTightAdv` specialised at
+the estimate (α = `msgEntropyBits`, simBits = `mlweBits`): `advOf mlweBits + advOf (msgEntropyBits − log₂q) +
+advOf mlweBits`. REPLACES the forking `sigForkAdv`. -/
 noncomputable def sigTightAdv (E : LatticeEstimate) (log2q : ℕ) : ℝ :=
-  advOf (E.mlweBits : ℝ) + advOf ((E.msgEntropyBits : ℝ) - (log2q : ℝ)) + advOf (E.mlweBits : ℝ)
+  LossyIdentification.sigTightAdv E.mlweBits E.msgEntropyBits E.mlweBits log2q
 
-/-- **`sigBitsTight E log2q` — the TIGHT signature bits: `min mlweBits (min (msgEntropyBits − log₂q) mlweBits)
-− 2 ≈ mlweBits − O(1)`.** No halving, no `log₂q` under a `/2`. REPLACES `sigBitsR = (msisBits − log₂q)/2`. -/
+/-- **`sigBitsTight E log2q`** — the TIGHT signature bits, `LossyIdentification.sigBitsTight` at the estimate:
+`min mlweBits (min (msgEntropyBits − log₂q) mlweBits) − 2 ≈ mlweBits − O(1)`. REPLACES `sigBitsR`. -/
 noncomputable def sigBitsTight (E : LatticeEstimate) (log2q : ℕ) : ℝ :=
-  min (E.mlweBits : ℝ) (min ((E.msgEntropyBits : ℝ) - (log2q : ℝ)) (E.mlweBits : ℝ)) - 2
+  LossyIdentification.sigBitsTight E.mlweBits E.msgEntropyBits E.mlweBits log2q
 
-/-- **`sigTightAdv ≤ advOf sigBitsTight`** — directly `advOf_add3_le` (three-term union costs 2 bits), no
-`√`, no new assumption. -/
+/-- **`sigTightAdv ≤ advOf sigBitsTight`** — a PROOF-TERM CITATION of `LossyIdentification.sigTightAdv_le`
+(the lossy-ID EUF-CMA tight bound), specialised at the estimate. -/
 theorem sigTightAdv_le (E : LatticeEstimate) (log2q : ℕ) :
-    sigTightAdv E log2q ≤ advOf (sigBitsTight E log2q) := by
-  unfold sigTightAdv sigBitsTight
-  exact advOf_add3_le (E.mlweBits : ℝ) ((E.msgEntropyBits : ℝ) - (log2q : ℝ)) (E.mlweBits : ℝ)
+    sigTightAdv E log2q ≤ advOf (sigBitsTight E log2q) :=
+  LossyIdentification.sigTightAdv_le E.mlweBits E.msgEntropyBits E.mlweBits log2q
 
-/-- **`kemTightAdv E q` — the TIGHT ML-KEM IND-CCA advantage (HHM22; `DoubleSidedO2H.kemTightAdv`).**
-`2·advOf mlweBits + (q+1)·advOf foCorrectnessBits`: the IND-CPA/MLWE term LINEAR at full strength (the
-double-sided O2H removed the `√`), the query budget confined to the `(q+1)·δ` correctness term. REPLACES the
-semiclassical `kemQromAdv`. -/
+/-- **`kemTightAdv E q`** — the TIGHT ML-KEM IND-CCA advantage, `DoubleSidedO2H.kemTightAdv` at the estimate:
+`2·advOf mlweBits + (q+1)·advOf foCorrectnessBits`. REPLACES the semiclassical `kemQromAdv`. -/
 noncomputable def kemTightAdv (E : LatticeEstimate) (q : ℕ) : ℝ :=
-  2 * advOf (E.mlweBits : ℝ) + ((q : ℝ) + 1) * advOf (E.foCorrectnessBits : ℝ)
+  DoubleSidedO2H.kemTightAdv E q
 
-/-- **`kemBitsTight E log2q` — the TIGHT KEM bits: `min mlweBits (foCorrectnessBits − log₂q) − 2`.** Governed
-by the LATTICE floor `mlweBits`, not the (halved) message entropy. REPLACES `o2hBitsR` / `kem3R`. -/
+/-- **`kemBitsTight E log2q`** — the TIGHT KEM bits, `DoubleSidedO2H.kemBitsTight` at the estimate:
+`min mlweBits (foCorrectnessBits − log₂q) − 2`. REPLACES `o2hBitsR` / `kem3R`. -/
 noncomputable def kemBitsTight (E : LatticeEstimate) (log2q : ℕ) : ℝ :=
-  min (E.mlweBits : ℝ) ((E.foCorrectnessBits : ℝ) - (log2q : ℝ)) - 2
+  DoubleSidedO2H.kemBitsTight E log2q
 
-/-- **`kemTightAdv_le` — the tight KEM bit bound** (`DoubleSidedO2H.kemTightAdv_le`, re-proved here on the
-`LatticeEstimate` specialisation). `2·advOf mlweBits = advOf (mlweBits−1)`; `(q+1)·advOf foCorrectnessBits ≤
-2^(log2q+1)·advOf foCorrectnessBits = advOf (foCorrectnessBits−log2q−1)`; the two-term union costs one more
-bit — folding to `min mlweBits (foCorrectnessBits−log2q) − 2`. -/
+/-- **`kemTightAdv_le` — the tight KEM bit bound** — a PROOF-TERM CITATION of
+`DoubleSidedO2H.kemTightAdv_le` (the double-sided-O2H FO-KEM tight bound). -/
 theorem kemTightAdv_le (E : LatticeEstimate) {q log2q : ℕ} (hq : q ≤ 2 ^ log2q) :
-    kemTightAdv E q ≤ advOf (kemBitsTight E log2q) := by
-  unfold kemTightAdv kemBitsTight
-  have h2mlwe : 2 * advOf (E.mlweBits : ℝ) = advOf ((E.mlweBits : ℝ) - 1) := two_mul_advOf _
-  have hq1n : q + 1 ≤ 2 ^ (log2q + 1) := by
-    have hp : 2 ^ (log2q + 1) = 2 * 2 ^ log2q := by rw [pow_succ]; ring
-    have h1 : 1 ≤ 2 ^ log2q := Nat.one_le_pow log2q 2 (by norm_num)
-    omega
-  have hq1 : ((q : ℝ) + 1) ≤ (2 : ℝ) ^ (log2q + 1) := by exact_mod_cast hq1n
-  have hcorr : ((q : ℝ) + 1) * advOf (E.foCorrectnessBits : ℝ)
-      ≤ advOf ((E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1)) := by
-    calc ((q : ℝ) + 1) * advOf (E.foCorrectnessBits : ℝ)
-        ≤ (2 : ℝ) ^ (log2q + 1) * advOf (E.foCorrectnessBits : ℝ) :=
-          mul_le_mul_of_nonneg_right hq1 (le_of_lt (advOf_pos _))
-      _ = advOf ((E.foCorrectnessBits : ℝ) - ((log2q + 1 : ℕ) : ℝ)) := natpow_mul_advOf _ _
-      _ = advOf ((E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1)) := by rw [Nat.cast_add, Nat.cast_one]
-  have hsum : 2 * advOf (E.mlweBits : ℝ) + ((q : ℝ) + 1) * advOf (E.foCorrectnessBits : ℝ)
-      ≤ advOf (min ((E.mlweBits : ℝ) - 1) ((E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1)) - 1) := by
-    rw [h2mlwe]
-    calc advOf ((E.mlweBits : ℝ) - 1) + ((q : ℝ) + 1) * advOf (E.foCorrectnessBits : ℝ)
-        ≤ advOf ((E.mlweBits : ℝ) - 1) + advOf ((E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1)) := by
-          linarith [hcorr]
-      _ ≤ advOf (min ((E.mlweBits : ℝ) - 1) ((E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1)) - 1) :=
-          advOf_add_le _ _
-  refine hsum.trans (advOf_antitone ?_)
-  rcases le_total (E.mlweBits : ℝ) ((E.foCorrectnessBits : ℝ) - (log2q : ℝ)) with hle | hle
-  · rw [min_eq_left hle,
-        min_eq_left (by linarith : (E.mlweBits : ℝ) - 1 ≤ (E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1))]
-    linarith
-  · rw [min_eq_right hle,
-        min_eq_right (by linarith : (E.foCorrectnessBits : ℝ) - ((log2q : ℝ) + 1) ≤ (E.mlweBits : ℝ) - 1)]
-    linarith
+    kemTightAdv E q ≤ advOf (kemBitsTight E log2q) :=
+  DoubleSidedO2H.kemTightAdv_le E hq
 
 /-! ## §3 — THE COMPOSITION (over the TIGHT twins). -/
 
@@ -372,8 +216,9 @@ noncomputable def lambdaR (E : LatticeEstimate) (log2q sessions consensus : ℕ)
 
 /-- **THE END-TO-END ADVANTAGE BOUND.** For any `q ≤ 2^log2q` quantum adversary,
 `sysAdvExpr E q log2q sessions consensus ≤ advOf (lambdaR E log2q sessions consensus)`. Every step is an
-`advOf` law composing the TIGHT twins — lossy-ID decision-MLWE (coefficient 1), double-sided O2H (no `√`),
-session/consensus union — with NO new assumption. -/
+`advOf` law composing the TIGHT twins (whose `_le` lemmas cite `LossyIdentification`/`DoubleSidedO2H`) —
+lossy-ID decision-MLWE (coefficient 1), double-sided O2H (no `√`), session/consensus union — NO new
+assumption. -/
 theorem system_advantage_bound (E : LatticeEstimate) {q log2q : ℕ} (hq : q ≤ 2 ^ log2q)
     (sessions consensus : ℕ) :
     sysAdvExpr E q log2q sessions consensus ≤ advOf (lambdaR E log2q sessions consensus) := by
@@ -397,14 +242,14 @@ theorem system_advantage_bound (E : LatticeEstimate) {q log2q : ℕ} (hq : q ≤
 
 /-! ## §5 — THE THEOREM. The computed λ and the deployable-regime restatement. -/
 
-/-- **`sigBitsTightN`** — ℕ mirror of `sigBitsTight` (`LossyIdentification.sigBitsTightN` at α = msgEntropy,
+/-- **`sigBitsTightN`** — ℕ mirror, `LossyIdentification.sigBitsTightN` at the estimate (α = msgEntropy,
 simBits = mlwe). No division ⟹ exact under the deployable regime. -/
 def sigBitsTightN (E : LatticeEstimate) (log2q : ℕ) : ℕ :=
-  min E.mlweBits (min (E.msgEntropyBits - log2q) E.mlweBits) - 2
+  LossyIdentification.sigBitsTightN E.mlweBits E.msgEntropyBits E.mlweBits log2q
 
-/-- **`kemBitsTightN`** — ℕ mirror of `kemBitsTight` (`DoubleSidedO2H.kemBitsTightN`). -/
+/-- **`kemBitsTightN`** — ℕ mirror, `DoubleSidedO2H.kemBitsTightN` at the estimate. -/
 def kemBitsTightN (E : LatticeEstimate) (log2q : ℕ) : ℕ :=
-  min E.mlweBits (E.foCorrectnessBits - log2q) - 2
+  DoubleSidedO2H.kemBitsTightN E log2q
 
 /-- **`sysSecurityBits E log2q sessions consensus` — THE COMPUTED SECURITY PARAMETER λ (in bits).**
 `min (sigBitsTightN − sessions) kemBitsTightN − 1 − consensus`, all `ℕ`. Instantiating a `LatticeEstimate`
@@ -442,11 +287,11 @@ theorem sysSecurityBits_le_lambdaR (E : LatticeEstimate) {log2q sessions consens
     (sysSecurityBits E log2q sessions consensus : ℝ) ≤ lambdaR E log2q sessions consensus := by
   obtain ⟨h1, h2, h3, h4, h5, h6⟩ := hdep
   have hsigN : (sigBitsTightN E log2q : ℝ) = sigBitsTight E log2q := by
-    unfold sigBitsTightN sigBitsTight
+    unfold sigBitsTightN sigBitsTight LossyIdentification.sigBitsTightN LossyIdentification.sigBitsTight
     rw [Nat.cast_sub h3, Nat.cast_min, Nat.cast_min, Nat.cast_sub h1]
     norm_num
   have hkemN : (kemBitsTightN E log2q : ℝ) = kemBitsTight E log2q := by
-    unfold kemBitsTightN kemBitsTight
+    unfold kemBitsTightN kemBitsTight DoubleSidedO2H.kemBitsTightN DoubleSidedO2H.kemBitsTight
     rw [Nat.cast_sub h4, Nat.cast_min, Nat.cast_sub h2]
     norm_num
   have hmm : ((min (sigBitsTightN E log2q - sessions) (kemBitsTightN E log2q) : ℕ) : ℝ)
@@ -468,32 +313,17 @@ the entire system's advantage is bounded:
   `sysAdvExpr E q log2q sessions consensus ≤ 2^(−λ)`,  where λ = `sysSecurityBits E log2q sessions consensus`.
 
 Instantiating the estimate and the budget yields a CONCRETE λ (see the `#guard`s below). Every reduction is
-cited and proved; the ONLY empirical input is the `LatticeEstimate`'s `mlweBits`/`foCorrectnessBits`. -/
+cited (`LossyIdentification.sigTightAdv_le`, `DoubleSidedO2H.kemTightAdv_le` — through the import graph) and
+proved; the ONLY empirical input is the `LatticeEstimate`'s `mlweBits`/`foCorrectnessBits`. -/
 theorem system_security_bits (E : LatticeEstimate) {q log2q : ℕ} (hq : q ≤ 2 ^ log2q)
     (sessions consensus : ℕ) (hdep : Deployable E log2q sessions consensus) :
     sysAdvExpr E q log2q sessions consensus ≤ advOf ((sysSecurityBits E log2q sessions consensus : ℕ) : ℝ) := by
   refine (system_advantage_bound E hq sessions consensus).trans ?_
   exact advOf_antitone (sysSecurityBits_le_lambdaR E hdep)
 
-/-! ## §6 — INSTANTIATION AT THE NIST-CLAIMED ESTIMATES + THE LOAD-BEARING TEETH. -/
+/-! ## §6 — INSTANTIATION AT THE NIST-CLAIMED ESTIMATES + THE LOAD-BEARING TEETH.
 
-/-- **THE DEPLOYED ESTIMATE.** ML-DSA-65 / ML-KEM-768, NIST security category 3. The empirical inputs:
-`msisBits = 192` (category-3 MSIS; only feeds the CONTRAST forking bound), `mlweBits = 181` (Kyber768 MLWE —
-the binding lattice floor for the tight signature AND KEM), `msgEntropyBits = 256` (encapsulated seed /
-lossy-soundness α), `foCorrectnessBits = 174` (ML-KEM-768 `δ ≈ 2^(−174)`). -/
-def deployedEstimate : LatticeEstimate where
-  msisBits := 192
-  mlweBits := 181
-  msgEntropyBits := 256
-  foCorrectnessBits := 174
-  mldsa := mlDsa65
-  mlkem := mlKem768
-
-/-- **A DEGRADED ESTIMATE — the tooth.** Halve the lattice-hardness bits (`msisBits 192→96`,
-`mlweBits 181→90`), everything else identical. Models the Lattice Estimator delivering a WEAKER hardness
-number (better cryptanalysis). Since the TIGHT bounds track `mlweBits`, halving it moves λ. -/
-def degradedEstimate : LatticeEstimate :=
-  { deployedEstimate with msisBits := 96, mlweBits := 90 }
+(`deployedEstimate` / `degradedEstimate` live in the `LatticeEstimate` leaf, imported above.) -/
 
 /-- **λ = 149.** At the DEPLOYED estimate a `2^20`-query, `2^4`-session, `2^2`-turn quantum adversary faces
 **149 bits** of security. The composition: `sigBitsTight = min 181 (min 236 181) − 2 = 179`, minus

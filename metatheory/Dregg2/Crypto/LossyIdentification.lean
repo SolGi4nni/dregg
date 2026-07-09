@@ -57,7 +57,10 @@ The ONLY assumption is `DecisionMLWEHard` (decision-MLWE, the standard lattice f
 `MLWESearchHard`). Lossy soundness is a PROVED counting number, not a hypothesis. The composition is `advOf`
 arithmetic reusing `ParameterSecurity`'s proved laws. Residual = **decision-MLWE + MSIS** (the floor).
 -/
-import Dregg2.Crypto.ParameterSecurity
+import Dregg2.Crypto.AdvCalculus
+import Dregg2.Crypto.LatticeEstimate
+import Dregg2.Crypto.Lattice
+import Dregg2.Crypto.HermineTSUF
 import Dregg2.Crypto.HermineThreshold
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
 

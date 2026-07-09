@@ -61,7 +61,9 @@ No `sorry`; `#assert_axioms`-clean. No `def …Hard`; the only residual is `mlwe
 Cite: Bindel–Hamburg–Hövelmanns–Hülsing–Persichetti (TCC 2019); Hövelmanns–Hülsing–Majenz (ASIACRYPT 2022);
 Ambainis–Hamburg–Unruh (semiclassical O2H, the baseline this beats).
 -/
-import Dregg2.Crypto.ParameterSecurity
+import Dregg2.Crypto.AdvCalculus
+import Dregg2.Crypto.LatticeEstimate
+import Dregg2.Crypto.OneWayToHiding
 import Mathlib.Analysis.InnerProductSpace.Basic
 
 open scoped BigOperators InnerProductSpace
