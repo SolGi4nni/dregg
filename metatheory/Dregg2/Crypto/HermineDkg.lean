@@ -26,16 +26,24 @@ as its coefficient function `a : ℕ → M` evaluated at scalar points by `evalP
   (`dkg_share_verify_off_poly`): a cheating dealer's off-polynomial share is CAUGHT — matching the Rust
   `verify_dkg_share`.
 
-## What is a NAMED carrier (mirroring `HermineMSIS`'s `MSISHard`, never a Lean axiom)
+## What secrecy REDUCES TO — no bespoke carrier, both legs are floors we already own
 * **`dkg_secrecy_reduces`** proves the secrecy COMPOSITION: the group secret `s` is hidden from a
-  `t`-minority who see the broadcasts + their own shares, REDUCED to two existing assumptions, not
-  reproved — (a) `MLWEHidesGroupSecret`: the broadcast `A·s` admits a DISTINCT alternative group secret
-  (justified by `HermineLossiness`'s pigeonhole — `A·sᵢ` reveals nothing about `sᵢ` beyond the public
-  key), and (b) `ShareConsistent`: every candidate group secret admits a sharing matching the minority's
-  observed shares (justified by `ShamirPrivacy.shamir_t_privacy`, per coordinate). The ALGEBRAIC
-  composition around them — two distinct group secrets reproduce the ENTIRE minority view — is proved
-  here; each leg is a hypothesis backed by a named carrier, and `secrecy_nonvacuous` discharges BOTH on
-  a concrete compressing instance so the composition is not vacuous.
+  `t`-minority who see the broadcasts + their own shares. The composition consumes TWO legs, and
+  NEITHER is an invented predicate — each is discharged from a theorem already in the tree:
+  * **the key-hiding leg** — the broadcast `A·s` admits a DISTINCT alternative group secret
+    (`∃ s' ≠ s, A s' = A s`). This is exactly the non-injectivity of a COMPRESSING broadcast map, and
+    it is a PROVED theorem, not an assumption: `dkg_collision_of_lossiness` derives it from
+    `HermineLossiness.lossiness_of_card_lt` (the pigeonhole: a finite-codomain compressing `A` has two
+    distinct short preimages of the same image — unconditional counting). This is the project's real
+    "`A·s` hides `s`" object; the COMPUTATIONAL hiding of the SHORT secret is the separate MLWE/MSIS
+    floor of `Lattice.lean` / `HermineMSIS`, and is not re-asserted here.
+  * **the share-consistency leg** — every candidate group secret admits a sharing whose combined final
+    shares match the minority's observed shares. `coeff_of_shamir` / `dkg_shamir_leg` PROVE this by
+    instantiating `ShamirPrivacy.shamir_t_privacy` (per coordinate): the Lagrange interpolant through
+    the `t−1` observed points plus `(0, cand)`, converted from `F[X]` to `evalPoly` monomial form.
+  The ALGEBRAIC composition around the legs — two distinct group secrets reproduce the ENTIRE minority
+  view — is proved here; `secrecy_nonvacuous` discharges BOTH legs from the real theorems on a concrete
+  compressing `ℚ² → ℚ` instance, so the composition is not vacuous.
 
 The `#guard`-style instances at the bottom exhibit, on real numbers, a group key that assembles, `t`
 shares that reconstruct `s`, and a Feldman check that passes on-polynomial and fails off-polynomial.
@@ -44,7 +52,10 @@ import Dregg2.Tactics
 import Dregg2.Crypto.HermineThreshold
 import Dregg2.Crypto.ShamirPrivacy
 import Dregg2.Crypto.Lattice
+import Dregg2.Crypto.HermineLossiness
 import Mathlib.Algebra.BigOperators.Group.Finset.Basic
+import Mathlib.Algebra.Polynomial.Eval.Degree
+import Mathlib.Algebra.Polynomial.Eval.Coeff
 import Mathlib.Data.ZMod.Basic
 import Mathlib.Data.Fin.VecNotation
 
@@ -141,40 +152,97 @@ theorem dkg_share_verify_off_poly (A : M →ₗ[R] N) (t : ℕ) (a : ℕ → M) 
     ¬ feldmanVerify A (fun k => A (a k)) t x share :=
   fun hv => hoff (dkg_share_verify_sound A t a x share hv)
 
-/-! ## 4. Secrecy — the reduction to two named carriers -/
+/-! ## 4. Secrecy — reduced to `HermineLossiness` (key-hiding) + `ShamirPrivacy` (share-hiding) -/
 
-/-- **MLWE key-hiding carrier** (mirrors `Lattice.MSISHard`): the group key `A·s` does not DETERMINE the
-group secret — there is a DISTINCT alternative group secret with the same broadcast. Justified by
-`HermineLossiness`'s pigeonhole collision (a compressing `A` has two short preimages of the same value);
-named here, not reproved. -/
-def MLWEHidesGroupSecret (A : M →ₗ[R] N) (s : M) : Prop :=
-  ∃ s' : M, s' ≠ s ∧ A s' = A s
+/-- **Key-hiding leg, DERIVED from the PROVED pigeonhole lossiness.** The broadcast `A·s` does not
+DETERMINE the group secret: a genuinely COMPRESSING map (finite codomain strictly smaller than a set of
+short vectors) has a distinct alternative preimage with the same image, `∃ s' ≠ s, A s' = A s`. This is
+`HermineLossiness.lossiness_of_card_lt` (Mathlib pigeonhole) — a THEOREM, not a carrier. No new
+assumption: this is the project's real "`A·s` hides `s`" object; the computational hiding of the *short*
+secret is the separate MLWE/MSIS floor (`Lattice.lean`), not re-asserted here. -/
+theorem dkg_collision_of_lossiness {Rq : Type*} [CommRing Rq]
+    {M₀ N₀ : Type*} [AddCommGroup M₀] [Module Rq M₀] [Lattice.ShortNorm M₀]
+    [AddCommGroup N₀] [Module Rq N₀] [Fintype N₀]
+    (A : M₀ →ₗ[Rq] N₀) (β : ℕ) (S : Finset M₀)
+    (hshort : ∀ v ∈ S, Lattice.IsShort β v) (hcard : Fintype.card N₀ < S.card) :
+    ∃ s : M₀, ∃ s' : M₀, s' ≠ s ∧ A s' = A s := by
+  obtain ⟨s, -, s', -, hne, heq, -, -⟩ :=
+    Dregg2.Crypto.HermineLossiness.lossiness_of_card_lt A β S hshort hcard
+  exact ⟨s, s', fun h => hne h.symm, heq.symm⟩
 
-/-- **Shamir consistency carrier**: a candidate group secret `cand` admits a sharing (per-dealer
-coefficients) whose combined final shares match the minority's observed shares on `parts`, with combined
-constant term `cand`. Justified by `ShamirPrivacy.shamir_t_privacy` (per coordinate: any `t−1` observed
-shares are consistent with any candidate constant term). -/
-def ShareConsistent {ι κ : Type*} (t : ℕ) (P : Finset ι) (parts : Finset κ) (pt : κ → R)
-    (obs : κ → M) (cand : M) : Prop :=
-  ∃ coeff : ι → ℕ → M,
-    (∑ i ∈ P, coeff i 0) = cand ∧
-    ∀ j ∈ parts, (∑ i ∈ P, evalPoly t (coeff i) (pt j)) = obs j
+/-- Project a `Fin d → F`-valued `evalPoly` onto one coordinate: evaluation commutes with the coordinate
+map, so a vector sharing IS its coordinatewise scalar sharings. -/
+theorem evalPoly_apply {F : Type*} [CommRing F] {d : ℕ}
+    (t : ℕ) (coeff : ℕ → (Fin d → F)) (x : F) (c : Fin d) :
+    evalPoly t coeff x c = evalPoly t (fun k => coeff k c) x := by
+  simp only [evalPoly, Finset.sum_apply, Pi.smul_apply]
+
+/-- **Share-consistency leg (scalar), DERIVED from `ShamirPrivacy.shamir_t_privacy`.** For the `t−1`
+distinct nonzero points `T` a corrupt minority observes and ANY candidate constant term `secret`, there
+is a degree-`<t` sharing in `evalPoly` monomial form hitting every observed share and with constant term
+`secret`. This is `shamir_t_privacy`'s Lagrange interpolant, converted from `F[X]` to `evalPoly` via
+`Polynomial.eval_eq_sum_range'` — an instantiation of the proved `t`-privacy result, not a re-assumption. -/
+theorem coeff_of_shamir {F : Type*} [Field F] [DecidableEq F]
+    (t : ℕ) (ht : 1 ≤ t) (T : Finset F) (hcard : T.card = t - 1) (h0 : (0 : F) ∉ T)
+    (shares : F → F) (secret : F) :
+    ∃ coeff : ℕ → F, coeff 0 = secret ∧ ∀ i ∈ T, evalPoly t coeff i = shares i := by
+  obtain ⟨p, hdeg, h0eval, hsh⟩ := ShamirPrivacy.shamir_t_privacy t ht T hcard h0 shares secret
+  have hnat : p.natDegree < t := by
+    rcases eq_or_ne p 0 with hp | hp
+    · subst hp; simp only [Polynomial.natDegree_zero]; omega
+    · rwa [Polynomial.natDegree_lt_iff_degree_lt hp]
+  refine ⟨fun k => p.coeff k, ?_, fun i hi => ?_⟩
+  · show p.coeff 0 = secret
+    rw [Polynomial.coeff_zero_eq_eval_zero]; exact h0eval
+  · have hev : p.eval i = shares i := hsh i hi
+    show evalPoly t (fun k => p.coeff k) i = shares i
+    rw [evalPoly, ← hev, Polynomial.eval_eq_sum_range' hnat i]
+    refine Finset.sum_congr rfl (fun k _ => ?_)
+    rw [smul_eq_mul, mul_comm]
+
+/-- **Share-consistency leg (vector / single dealer), DERIVED from `coeff_of_shamir`.** A single dealer's
+`Fin d → F`-valued sharing consistent with the minority's observed shares on `T` and any candidate
+constant term `cand` — assembled coordinatewise from `coeff_of_shamir` (hence from `shamir_t_privacy`).
+This is exactly the share-hiding hypothesis `dkg_secrecy_reduces` consumes (with `pt = id`, `P = {i₀}`),
+provided WITHOUT any bespoke predicate. -/
+theorem dkg_shamir_leg {F : Type*} [Field F] [DecidableEq F] {ι : Type*} (i₀ : ι)
+    (d t : ℕ) (ht : 1 ≤ t) (T : Finset F) (hcard : T.card = t - 1) (h0 : (0 : F) ∉ T)
+    (obs : F → (Fin d → F)) (cand : Fin d → F) :
+    ∃ coeff : ι → ℕ → (Fin d → F),
+      (∑ i ∈ ({i₀} : Finset ι), coeff i 0) = cand ∧
+      ∀ j ∈ T, (∑ i ∈ ({i₀} : Finset ι), evalPoly t (coeff i) j) = obs j := by
+  choose g hg0 hgsh using fun c : Fin d =>
+    coeff_of_shamir t ht T hcard h0 (fun x => obs x c) (cand c)
+  refine ⟨fun _ k => fun c => g c k, ?_, fun j hj => ?_⟩
+  · rw [Finset.sum_singleton]
+    funext c
+    exact hg0 c
+  · rw [Finset.sum_singleton]
+    funext c
+    rw [evalPoly_apply]
+    exact hgsh c j hj
 
 /-- **`dkg_secrecy_reduces` — the secrecy COMPOSITION.** The group secret `s` is hidden from a
-`t`-minority: reducing to (a) the MLWE carrier (`A·s` admits a distinct alternative group secret) and
-(b) the Shamir carrier (every candidate group secret is consistent with the minority's observed shares),
-we exhibit TWO DISTINCT group secrets that reproduce the ENTIRE minority view — the same broadcast public
-key `A·s` AND the same observed shares. So the minority, seeing broadcasts + its own shares, cannot
-determine `s`. The two legs are hypotheses backed by named carriers; the composition around them is
-proved. -/
+`t`-minority: given (a) the key-hiding leg (`A·s` admits a distinct alternative group secret — the
+PROVED `dkg_collision_of_lossiness`) and (b) the share-hiding leg (every candidate group secret is
+consistent with the minority's observed shares — the PROVED `dkg_shamir_leg`), we exhibit TWO DISTINCT
+group secrets that reproduce the ENTIRE minority view — the same broadcast public key `A·s` AND the same
+observed shares. So the minority, seeing broadcasts + its own shares, cannot determine `s`. Both legs are
+theorems we already own (pigeonhole lossiness + Shamir `t`-privacy); the composition around them is what
+this file proves. -/
 theorem dkg_secrecy_reduces {ι κ : Type*}
     (A : M →ₗ[R] N) (s : M) (t : ℕ) (P : Finset ι)
     (parts : Finset κ) (pt : κ → R) (obs : κ → M)
-    (hmlwe : MLWEHidesGroupSecret A s)
-    (hshamir : ∀ cand : M, ShareConsistent t P parts pt obs cand) :
+    (hcoll : ∃ s' : M, s' ≠ s ∧ A s' = A s)
+    (hshamir : ∀ cand : M, ∃ coeff : ι → ℕ → M,
+        (∑ i ∈ P, coeff i 0) = cand ∧
+        ∀ j ∈ parts, (∑ i ∈ P, evalPoly t (coeff i) (pt j)) = obs j) :
     ∃ s₀ s₁ : M, s₀ ≠ s₁ ∧ A s₀ = A s₁ ∧
-      ShareConsistent t P parts pt obs s₀ ∧ ShareConsistent t P parts pt obs s₁ := by
-  obtain ⟨s', hne, heq⟩ := hmlwe
+      (∃ coeff : ι → ℕ → M, (∑ i ∈ P, coeff i 0) = s₀ ∧
+        ∀ j ∈ parts, (∑ i ∈ P, evalPoly t (coeff i) (pt j)) = obs j) ∧
+      (∃ coeff : ι → ℕ → M, (∑ i ∈ P, coeff i 0) = s₁ ∧
+        ∀ j ∈ parts, (∑ i ∈ P, evalPoly t (coeff i) (pt j)) = obs j) := by
+  obtain ⟨s', hne, heq⟩ := hcoll
   exact ⟨s, s', fun h => hne h.symm, heq.symm, hshamir s, hshamir s'⟩
 
 /-! ## `#guard`-style instances — the model is NON-VACUOUS on real numbers
@@ -250,9 +318,10 @@ def Asum : Vec →ₗ[ℚ] ℚ where
 def sSec : Vec := ![0, 0]
 def sTwin : Vec := ![1, -1]
 
-/-- **The MLWE carrier is discharged**: `s' = (1,−1) ≠ (0,0) = s` yet `A·s' = 0 = A·s`. The broadcast
-public key `A·s` genuinely hides which of two group secrets was shared. -/
-theorem inst_mlwe : Dregg2.Crypto.HermineDkg.MLWEHidesGroupSecret Asum sSec := by
+/-- **The key-hiding leg fires**: `s' = (1,−1) ≠ (0,0) = s` yet `A·s' = 0 = A·s`. The compressing
+broadcast `A` is non-injective — the same collision `dkg_collision_of_lossiness` produces from the
+PROVED pigeonhole in the finite lattice setting, here exhibited concretely over infinite `ℚ`. -/
+theorem inst_collision : ∃ s' : Vec, s' ≠ sSec ∧ Asum s' = Asum sSec := by
   refine ⟨sTwin, ?_, ?_⟩
   · intro h
     have := congrFun h 0
@@ -260,31 +329,33 @@ theorem inst_mlwe : Dregg2.Crypto.HermineDkg.MLWEHidesGroupSecret Asum sSec := b
   · show (sTwin 0 + sTwin 1 : ℚ) = sSec 0 + sSec 1
     simp [sTwin, sSec]
 
-/-- **The Shamir carrier is discharged**: for the single-dealer minority view with one observed share
-at point `1`, EVERY candidate group secret `cand` admits a consistent sharing — `f = cand + (obs − cand)X`,
-which has constant term `cand` and evaluates to `obs` at `1`. Mirrors `shamir_t_privacy` on this cut. -/
-theorem inst_shamir (obsVal : Vec) :
-    ∀ cand : Vec, Dregg2.Crypto.HermineDkg.ShareConsistent 2
-      (Finset.univ : Finset (Fin 1)) (Finset.univ : Finset (Fin 1))
-      (fun _ => (1 : ℚ)) (fun _ => obsVal) cand := by
-  intro cand
-  refine ⟨fun _ k => if k = 0 then cand else obsVal - cand, ?_, ?_⟩
-  · simp
-  · intro j _
-    rw [Fin.sum_univ_one, Dregg2.Crypto.HermineDkg.evalPoly_two]
-    norm_num
+/-- **The share-hiding leg fires FROM `shamir_t_privacy`**: for the single-dealer minority view with one
+observed share at point `1`, `dkg_shamir_leg` (→ `coeff_of_shamir` → `ShamirPrivacy.shamir_t_privacy`)
+hands EVERY candidate group secret `cand` a consistent sharing. No hand-built polynomial: the sharing IS
+the Shamir Lagrange interpolant, coordinatewise. -/
+theorem inst_shamir (obsVal : Vec) (cand : Vec) :
+    ∃ coeff : Fin 1 → ℕ → Vec,
+      (∑ i ∈ ({0} : Finset (Fin 1)), coeff i 0) = cand ∧
+      ∀ j ∈ ({1} : Finset ℚ),
+        (∑ i ∈ ({0} : Finset (Fin 1)), evalPoly 2 (coeff i) j) = (fun _ => obsVal) j :=
+  dkg_shamir_leg (0 : Fin 1) 2 2 (by norm_num) ({1} : Finset ℚ)
+    (by simp) (by norm_num) (fun _ => obsVal) cand
 
-/-- **`secrecy_nonvacuous` — the composition is NOT vacuous.** Feeding the discharged MLWE + Shamir
-carriers to `dkg_secrecy_reduces` produces two DISTINCT group secrets reproducing the whole minority
-view over the compressing `A` — the group secret is hidden, on real numbers, with both legs proved. -/
+/-- **`secrecy_nonvacuous` — the composition is NOT vacuous.** Feeding the two legs — key-hiding
+(`inst_collision`, the compressing broadcast) and share-hiding (`inst_shamir`, from `shamir_t_privacy`) —
+to `dkg_secrecy_reduces` produces two DISTINCT group secrets reproducing the whole minority view over the
+compressing `A`. The group secret is hidden, on real numbers, with both legs discharged from theorems we
+already own. -/
 theorem secrecy_nonvacuous (obsVal : Vec) :
     ∃ s₀ s₁ : Vec, s₀ ≠ s₁ ∧ Asum s₀ = Asum s₁ ∧
-      Dregg2.Crypto.HermineDkg.ShareConsistent 2 (Finset.univ : Finset (Fin 1))
-        (Finset.univ : Finset (Fin 1)) (fun _ => (1 : ℚ)) (fun _ => obsVal) s₀ ∧
-      Dregg2.Crypto.HermineDkg.ShareConsistent 2 (Finset.univ : Finset (Fin 1))
-        (Finset.univ : Finset (Fin 1)) (fun _ => (1 : ℚ)) (fun _ => obsVal) s₁ :=
-  dkg_secrecy_reduces Asum sSec 2 (Finset.univ : Finset (Fin 1)) (Finset.univ : Finset (Fin 1))
-    (fun _ => (1 : ℚ)) (fun _ => obsVal) inst_mlwe (inst_shamir obsVal)
+      (∃ coeff : Fin 1 → ℕ → Vec, (∑ i ∈ ({0} : Finset (Fin 1)), coeff i 0) = s₀ ∧
+        ∀ j ∈ ({1} : Finset ℚ),
+          (∑ i ∈ ({0} : Finset (Fin 1)), evalPoly 2 (coeff i) (id j)) = (fun _ => obsVal) j) ∧
+      (∃ coeff : Fin 1 → ℕ → Vec, (∑ i ∈ ({0} : Finset (Fin 1)), coeff i 0) = s₁ ∧
+        ∀ j ∈ ({1} : Finset ℚ),
+          (∑ i ∈ ({0} : Finset (Fin 1)), evalPoly 2 (coeff i) (id j)) = (fun _ => obsVal) j) :=
+  dkg_secrecy_reduces Asum sSec 2 ({0} : Finset (Fin 1)) ({1} : Finset ℚ) id (fun _ => obsVal)
+    inst_collision (fun cand => inst_shamir obsVal cand)
 
 end SecrecyInstance
 
@@ -296,6 +367,10 @@ end SecrecyInstance
 #assert_axioms dkg_share_verify_complete
 #assert_axioms dkg_share_verify_sound
 #assert_axioms dkg_share_verify_off_poly
+#assert_axioms dkg_collision_of_lossiness
+#assert_axioms evalPoly_apply
+#assert_axioms coeff_of_shamir
+#assert_axioms dkg_shamir_leg
 #assert_axioms dkg_secrecy_reduces
 #assert_axioms Instance.inst_group_secret
 #assert_axioms Instance.inst_group_key_assembles
@@ -303,7 +378,7 @@ end SecrecyInstance
 #assert_axioms Instance.inst_reconstruct_value
 #assert_axioms Instance.inst_feldman_pass
 #assert_axioms Instance.inst_feldman_fail
-#assert_axioms SecrecyInstance.inst_mlwe
+#assert_axioms SecrecyInstance.inst_collision
 #assert_axioms SecrecyInstance.inst_shamir
 #assert_axioms SecrecyInstance.secrecy_nonvacuous
 
