@@ -44,11 +44,18 @@ pub enum HandoffError {
     /// The recipient's signature on the presentation is invalid.
     InvalidRecipientSignature,
     /// The introducer's ML-DSA-65 (post-quantum) half of the HYBRID signature is
-    /// invalid *against the enrolled introducer key*. Raised when the classical
-    /// ed25519 half may be valid but the PQ half is missing, malformed, or signed
-    /// under a key other than the identity's ENROLLED ML-DSA key — the exact
-    /// forgery a quantum adversary would mount. Fail-closed.
+    /// invalid *against the introducer's id-committed ML-DSA key*. Raised when the
+    /// classical ed25519 half may be valid but the PQ half is missing, malformed,
+    /// or signed under a key other than the one the introducer's FederationId
+    /// commits to — the exact forgery a quantum adversary would mount. Fail-closed.
     InvalidIntroducerPqSignature,
+    /// The introducer's FederationId does not COMMIT to the self-carried ML-DSA-65
+    /// public key (`H("dregg-hybrid-id-v1", P_ed ‖ P_ml) != introducer`). The key
+    /// was not enrolled by the introducer's identity — e.g. a quantum adversary who
+    /// forged the ed25519 half and self-supplied their OWN ML-DSA key, or a legacy
+    /// ed25519-only FederationId that commits to no ML-DSA key at all. The
+    /// FederationId IS the enrollment (replacing the out-of-band enrolled roster).
+    IntroducerIdentityCommitmentMismatch,
     /// The recipient's ML-DSA-65 (post-quantum) half of the HYBRID presentation is
     /// invalid against the introducer-PINNED recipient ML-DSA key. Fail-closed.
     InvalidRecipientPqSignature,
@@ -93,7 +100,12 @@ impl std::fmt::Display for HandoffError {
             }
             HandoffError::InvalidIntroducerPqSignature => write!(
                 f,
-                "invalid introducer ML-DSA (post-quantum) half: not signed under the enrolled key"
+                "invalid introducer ML-DSA (post-quantum) half: not signed under the id-committed key"
+            ),
+            HandoffError::IntroducerIdentityCommitmentMismatch => write!(
+                f,
+                "introducer FederationId does not commit to the presented ML-DSA-65 public key \
+                 (the key was not enrolled by the introducer's identity)"
             ),
             HandoffError::InvalidRecipientPqSignature => write!(
                 f,
@@ -396,19 +408,26 @@ impl HandoffPresentation {
 // AND the ML-DSA halves both check, so forging requires breaking ed25519 AND
 // ML-SIS/ML-LWE simultaneously.
 //
-// ENROLL + PIN (the whole point). The ML-DSA public key is NOT self-carried in
-// the handoff — that would give ZERO post-quantum security (a quantum adversary
-// forges the ed25519 half over identity P, generates its OWN ML-DSA keypair, and
-// signs the PQ half under it). Instead:
-//   * The INTRODUCER's ML-DSA key is PINNED to the identity's ENROLLED key,
-//     which `validate_handoff_hybrid` takes as a parameter (the caller supplies
-//     the introducer's enrolled ML-DSA public key exactly as it already supplies
-//     the introducer's enrolled ed25519 `PublicKey`). The verifier RECOMPUTES the
-//     signed message using the enrolled key; a signature under any other key fails.
+// ENROLL + PIN (the whole point). Self-carrying an ML-DSA public key with no
+// binding gives ZERO post-quantum security (a quantum adversary forges the
+// ed25519 half over identity P, generates its OWN ML-DSA keypair, and signs the
+// PQ half under it — a self-consistent forgery). We close that TWO ways:
+//   * The INTRODUCER's ML-DSA key is self-carried in the certificate but GATED by
+//     the introducer's IDENTITY: `validate_handoff_hybrid` requires the
+//     introducer's `FederationId` to COMMIT to it —
+//     `introducer.verify_committed_ml_dsa(introducer_ed25519, introducer_ml_dsa_pk)`
+//     recomputes `H("dregg-hybrid-id-v1", P_ed ‖ P_ml)` and equality-checks the
+//     FederationId. The FederationId IS the enrollment (replacing the old
+//     out-of-band enrolled ML-DSA parameter, GAP #2): a self-supplied key that
+//     does not hash into the introducer's identity is REJECTED, so the adversary's
+//     own ML-DSA key can never anchor a forged handoff. The verifier then verifies
+//     the PQ half under that id-committed key.
 //   * The RECIPIENT's ML-DSA key is PINNED into the certificate by the
-//     introducer: `recipient_ml_dsa_pk` is covered by the introducer's ML-DSA
-//     signature, so a quantum adversary cannot substitute their own without
-//     forging the (lattice-hard) introducer PQ half.
+//     introducer: `recipient_ml_dsa_pk` is covered by the introducer's (now
+//     id-committed) ML-DSA signature, so a quantum adversary cannot substitute
+//     their own without forging the (lattice-hard) introducer PQ half. The
+//     recipient's PQ half is thus authenticated in-band — there is no out-of-band
+//     recipient parameter to enroll.
 //
 // The ML-DSA key is derived DETERMINISTICALLY from the same 32-byte ed25519 seed
 // the classical identity uses (`ML-DSA.KeyGen(ξ = seed)`), mirroring
@@ -472,15 +491,23 @@ pub use hybrid_pq::{ML_DSA_PK_LEN, MlDsaHandoffKey};
 pub struct HybridHandoffCertificate {
     /// The classical certificate (carries the ed25519 introducer signature).
     pub base: HandoffCertificate,
+    /// The introducer's ML-DSA-65 public key, SELF-CARRIED in the certificate.
+    ///
+    /// Safe to self-carry because the verifier does NOT trust it on its own:
+    /// [`validate_handoff_hybrid`] first requires the introducer's IDENTITY to
+    /// commit to it — `base.introducer.verify_committed_ml_dsa(introducer_ed25519,
+    /// introducer_ml_dsa_pk)` recomputes `H("dregg-hybrid-id-v1", P_ed ‖ P_ml)`
+    /// and equality-checks the introducer `FederationId`. A key not committed by
+    /// the introducer's identity is REJECTED (the FederationId is the enrollment,
+    /// replacing the out-of-band enrolled parameter — GAP #2).
+    pub introducer_ml_dsa_pk: Vec<u8>,
     /// The recipient's ML-DSA-65 public key, PINNED here by the introducer:
     /// covered by `introducer_ml_dsa_sig`, so a quantum adversary cannot swap in
     /// their own recipient PQ key without forging the (lattice-hard) introducer
     /// PQ half.
     pub recipient_ml_dsa_pk: Vec<u8>,
-    /// The introducer's ML-DSA-65 signature over [`HybridHandoffCertificate::hybrid_signing_message`].
-    /// The introducer's ML-DSA *public* key is deliberately NOT carried here — the
-    /// verifier recomputes the message with the ENROLLED introducer key, so a
-    /// signature made under any other key fails to verify.
+    /// The introducer's ML-DSA-65 signature over [`HybridHandoffCertificate::hybrid_signing_message`],
+    /// made under the id-committed `introducer_ml_dsa_pk`.
     pub introducer_ml_dsa_sig: Vec<u8>,
 }
 
@@ -518,11 +545,13 @@ impl HybridHandoffCertificate {
             swiss,
         );
         let intro_pq = MlDsaHandoffKey::from_ed25519_seed(&introducer_key.to_bytes());
-        let intro_pq_pk = intro_pq.public_bytes();
-        let message = Self::hybrid_signing_message(&base, &intro_pq_pk, &recipient_ml_dsa_pk);
+        let introducer_ml_dsa_pk = intro_pq.public_bytes();
+        let message =
+            Self::hybrid_signing_message(&base, &introducer_ml_dsa_pk, &recipient_ml_dsa_pk);
         let introducer_ml_dsa_sig = intro_pq.sign(&message);
         HybridHandoffCertificate {
             base,
+            introducer_ml_dsa_pk,
             recipient_ml_dsa_pk,
             introducer_ml_dsa_sig,
         }
@@ -531,8 +560,9 @@ impl HybridHandoffCertificate {
     /// The canonical message the introducer signs with ML-DSA. Binds the entire
     /// classical signing message PLUS both hybrid public keys (the introducer's
     /// own and the pinned recipient's), each length-prefixed and domain-separated.
-    /// Signer passes its own ML-DSA public key; the verifier passes the ENROLLED
-    /// key — mismatch ⇒ different message ⇒ signature fails (this IS the pin).
+    /// Both signer and verifier pass the introducer's self-carried ML-DSA public
+    /// key; the verifier only trusts that key after the introducer's FederationId
+    /// is shown to commit to it (`verify_committed_ml_dsa`).
     pub fn hybrid_signing_message(
         base: &HandoffCertificate,
         introducer_ml_dsa_pk: &[u8],
@@ -877,23 +907,29 @@ pub fn validate_handoff(
 /// the ed25519 AND the ML-DSA-65 halves of the introducer's and recipient's
 /// signatures. Closes the post-quantum capability-handoff forgery:
 ///
-/// * `introducer_ml_dsa_pk` — the introducer identity's ENROLLED ML-DSA-65 public
-///   key (supplied by the caller from its identity roster, exactly as
-///   `introducer_pk` is). The introducer's PQ half is verified UNDER this enrolled
-///   key (the signed message is recomputed with it), so a signature made under any
-///   other — e.g. a quantum adversary's fresh — ML-DSA key is rejected. NEVER
-///   trusts a self-carried PQ key.
+/// * The introducer's ML-DSA-65 public key is SELF-CARRIED in the certificate
+///   (`certificate.introducer_ml_dsa_pk`) but trusted ONLY after the introducer's
+///   IDENTITY commits to it: `certificate.base.introducer.verify_committed_ml_dsa(
+///   introducer_ed25519, introducer_ml_dsa_pk)` recomputes `H("dregg-hybrid-id-v1",
+///   P_ed ‖ P_ml)` and equality-checks the introducer `FederationId`. The
+///   FederationId IS the enrollment — this replaces the old out-of-band enrolled
+///   ML-DSA parameter (GAP #2). A quantum adversary who forges the ed25519 half and
+///   self-supplies their OWN ML-DSA key is rejected, because that key does not hash
+///   into the introducer's FederationId; a legacy ed25519-only FederationId (which
+///   commits to no ML-DSA key) is also rejected (staged flag-day). The PQ half is
+///   then verified under that id-committed key.
 /// * the recipient's PQ half is verified under the introducer-PINNED
-///   `certificate.recipient_ml_dsa_pk` (authenticated by the introducer PQ half).
+///   `certificate.recipient_ml_dsa_pk` (authenticated in-band by the introducer PQ
+///   half, which is itself now id-committed) — no out-of-band recipient parameter.
 ///
-/// Fail-CLOSED: a missing, malformed, or mis-keyed PQ half rejects. The PQ checks
-/// are pure and run BEFORE any swiss-budget mutation (this fn then delegates the
-/// swiss / non-amplification / target-binding / replay / enliven logic to
-/// [`validate_handoff`], which uses a read-only `check` until the success path).
+/// Fail-CLOSED: a missing, malformed, mis-keyed, or non-id-committed PQ half
+/// rejects. The PQ checks are pure and run BEFORE any swiss-budget mutation (this
+/// fn then delegates the swiss / non-amplification / target-binding / replay /
+/// enliven logic to [`validate_handoff`], which uses a read-only `check` until the
+/// success path).
 pub fn validate_handoff_hybrid(
     presentation: &HybridHandoffPresentation,
     introducer_pk: &PublicKey,
-    introducer_ml_dsa_pk: &[u8],
     swiss_table: &mut SwissTable,
     known_federations: &[FederationId],
     current_height: u64,
@@ -906,31 +942,50 @@ pub fn validate_handoff_hybrid(
         return Err(HandoffError::InvalidIntroducerSignature);
     }
 
-    // 2. Introducer post-quantum (ML-DSA-65) half — PINNED to the ENROLLED key.
-    //    The message is recomputed with `introducer_ml_dsa_pk`, so a signature
-    //    under any other ML-DSA key (the quantum-forgery case) fails.
+    // 2. Introducer IDENTITY id-commitment gate (replaces the out-of-band enrolled
+    //    ML-DSA parameter, GAP #2). The introducer self-carries its ML-DSA-65
+    //    public key, but we do NOT trust it on its own: the introducer's
+    //    FederationId must COMMIT to it. `verify_committed_ml_dsa` recomputes
+    //    `H("dregg-hybrid-id-v1", P_ed ‖ P_ml)` and equality-checks the
+    //    FederationId, so the FederationId IS the enrollment. A self-supplied key
+    //    not committed by the introducer's identity — the quantum-forgery case,
+    //    where the adversary forges the ed25519 half and presents their OWN ML-DSA
+    //    key — is rejected here BEFORE its (self-consistent) signature is ever
+    //    trusted. A legacy ed25519-only FederationId commits to no ML-DSA key and
+    //    also fails CLOSED (staged flag-day).
+    if !base_cert
+        .introducer
+        .verify_committed_ml_dsa(&introducer_pk.0, &hcert.introducer_ml_dsa_pk)
+    {
+        return Err(HandoffError::IntroducerIdentityCommitmentMismatch);
+    }
+
+    // 3. Introducer post-quantum (ML-DSA-65) half — verified under the now
+    //    id-committed self-carried key. A signature under any other ML-DSA key
+    //    fails.
     let intro_msg = HybridHandoffCertificate::hybrid_signing_message(
         base_cert,
-        introducer_ml_dsa_pk,
+        &hcert.introducer_ml_dsa_pk,
         &hcert.recipient_ml_dsa_pk,
     );
     if !hybrid_pq::ml_dsa_verify(
-        introducer_ml_dsa_pk,
+        &hcert.introducer_ml_dsa_pk,
         &intro_msg,
         &hcert.introducer_ml_dsa_sig,
     ) {
         return Err(HandoffError::InvalidIntroducerPqSignature);
     }
 
-    // 3. Recipient classical (ed25519) half.
+    // 4. Recipient classical (ed25519) half.
     let recip_pk = PublicKey(base_cert.recipient_pk);
     let present_msg = HandoffPresentation::presentation_message(base_cert);
     if !recip_pk.verify(&present_msg, &presentation.recipient_signature) {
         return Err(HandoffError::InvalidRecipientSignature);
     }
 
-    // 4. Recipient post-quantum half — verified UNDER the introducer-pinned
-    //    `recipient_ml_dsa_pk` (authenticated by step 2). Fail-closed.
+    // 5. Recipient post-quantum half — verified UNDER the introducer-pinned
+    //    `recipient_ml_dsa_pk` (authenticated in-band by the id-committed
+    //    introducer PQ half, steps 2–3). Fail-closed.
     let recip_msg = HybridHandoffCertificate::hybrid_presentation_message(
         base_cert,
         &hcert.recipient_ml_dsa_pk,
@@ -943,7 +998,7 @@ pub fn validate_handoff_hybrid(
         return Err(HandoffError::InvalidRecipientPqSignature);
     }
 
-    // 5+. Delegate the swiss / non-amplification / target-binding / replay /
+    // 6+. Delegate the swiss / non-amplification / target-binding / replay /
     //     enliven logic (which re-checks the ed25519 halves, harmless).
     let base_pres = HandoffPresentation {
         certificate: base_cert.clone(),
@@ -1476,23 +1531,27 @@ mod tests {
     // ── Hybrid post-quantum handoff (ed25519 ∧ ML-DSA-65) ───────────────────
 
     /// Full hybrid setup: returns the presentation, the introducer's ed25519 pk,
-    /// the introducer's ENROLLED ML-DSA pk, the introducer federation, and the
-    /// target swiss table (with the swiss pre-registered).
+    /// the introducer's HYBRID FederationId (which cryptographically COMMITS to the
+    /// introducer's ed25519 AND ML-DSA keys — the enrollment), and the target swiss
+    /// table (with the swiss pre-registered). No out-of-band enrolled ML-DSA key is
+    /// threaded: the identity commitment replaces it (GAP #2).
     fn full_hybrid_setup() -> (
         HybridHandoffPresentation,
         PublicKey,    // introducer ed25519 pk
-        Vec<u8>,      // introducer ENROLLED ml-dsa pk
-        FederationId, // introducer federation
+        FederationId, // introducer HYBRID federation id (commits to ed25519 ∧ ml-dsa)
         SwissTable,
     ) {
-        let (intro_sk, intro_pk, intro_fed) = setup_introducer();
+        let (intro_sk, intro_pk) = generate_keypair();
         let (recip_sk, recip_pk) = setup_recipient();
         let target_fed = FederationId([0xDD; 32]);
         let target_cell = CellId([0xEE; 32]);
 
-        // The introducer's ENROLLED ML-DSA key (derived from its ed25519 seed).
+        // The introducer's ML-DSA key (derived from its ed25519 seed) and its
+        // HYBRID FederationId = H("dregg-hybrid-id-v1", P_ed ‖ P_ml). The id IS the
+        // enrollment: the self-carried ML-DSA key hashes into it.
         let intro_ml_dsa_pk =
             MlDsaHandoffKey::from_ed25519_seed(&intro_sk.to_bytes()).public_bytes();
+        let intro_fed = FederationId::derive_hybrid(&intro_pk.0, &intro_ml_dsa_pk);
         // The recipient's ML-DSA key, which the introducer pins into the cert.
         let recip_ml_dsa_pk =
             MlDsaHandoffKey::from_ed25519_seed(&recip_sk.to_bytes()).public_bytes();
@@ -1514,36 +1573,23 @@ mod tests {
             recip_ml_dsa_pk,
         );
         let presentation = HybridHandoffPresentation::create(cert, &recip_sk);
-        (
-            presentation,
-            intro_pk,
-            intro_ml_dsa_pk,
-            intro_fed,
-            swiss_table,
-        )
+        (presentation, intro_pk, intro_fed, swiss_table)
     }
 
     #[test]
     fn hybrid_honest_handoff_passes() {
-        let (presentation, intro_pk, intro_ml_dsa_pk, intro_fed, mut swiss_table) =
-            full_hybrid_setup();
+        let (presentation, intro_pk, intro_fed, mut swiss_table) = full_hybrid_setup();
         let known = vec![intro_fed];
-        let acceptance = validate_handoff_hybrid(
-            &presentation,
-            &intro_pk,
-            &intro_ml_dsa_pk,
-            &mut swiss_table,
-            &known,
-            150,
-        )
-        .expect("honest hybrid handoff must be accepted");
+        let acceptance =
+            validate_handoff_hybrid(&presentation, &intro_pk, &mut swiss_table, &known, 150)
+                .expect("honest hybrid handoff must be accepted");
         assert_eq!(acceptance.cell_id, CellId([0xEE; 32]));
         assert_eq!(acceptance.permissions, AuthRequired::Signature);
     }
 
     #[test]
     fn hybrid_roundtrips_out_of_band() {
-        let (presentation, _, _, _, _) = full_hybrid_setup();
+        let (presentation, _, _, _) = full_hybrid_setup();
         let bytes = presentation.to_bytes();
         let decoded = HybridHandoffPresentation::from_bytes(&bytes).unwrap();
         assert_eq!(
@@ -1556,26 +1602,36 @@ mod tests {
         );
     }
 
-    /// THE ADVERSARIAL TEST. The introducer's ed25519 half is valid for identity P
-    /// (as a quantum adversary who broke ed25519 could produce), but the ML-DSA
-    /// half is signed under an ATTACKER's fresh ML-DSA key — NOT P's enrolled key.
-    /// `validate_handoff_hybrid` must REJECT.
+    /// THE ADVERSARIAL TEST (GAP #2 id-commitment closure). The introducer's
+    /// HYBRID FederationId = `H("dregg-hybrid-id-v1", P_ed ‖ P_ml)`. A quantum
+    /// adversary who broke ed25519 keeps P_ed (forges the classical half), but
+    /// self-supplies their OWN fresh ML-DSA key AND a valid ML-DSA signature under
+    /// it. Because that key does NOT hash into the introducer's FederationId, the
+    /// id-commitment gate REJECTS it (`IntroducerIdentityCommitmentMismatch`)
+    /// BEFORE the (self-consistent) PQ signature is ever trusted — and it is NOT a
+    /// roster / known-federation mismatch (the FederationId is in `known`).
+    ///
+    /// This is the crux the hybrid-id foundation buys: the introducer self-carries
+    /// its ML-DSA key (previously an unsafe out-of-band / self-carry pattern), but
+    /// the verifier trusts it ONLY because the introducer's IDENTITY commits to it.
     #[test]
     fn hybrid_introducer_pq_under_attacker_key_rejected() {
-        let (intro_sk, intro_pk, intro_fed) = setup_introducer();
+        let (intro_sk, intro_pk) = generate_keypair();
         let (recip_sk, recip_pk) = setup_recipient();
         let target_fed = FederationId([0xDD; 32]);
         let target_cell = CellId([0xEE; 32]);
 
-        let enrolled_intro_ml_dsa_pk =
+        // The HONEST introducer identity commits to BOTH of its keys.
+        let honest_intro_ml =
             MlDsaHandoffKey::from_ed25519_seed(&intro_sk.to_bytes()).public_bytes();
+        let intro_fed = FederationId::derive_hybrid(&intro_pk.0, &honest_intro_ml);
         let recip_ml_dsa_pk =
             MlDsaHandoffKey::from_ed25519_seed(&recip_sk.to_bytes()).public_bytes();
 
         let mut swiss_table = SwissTable::new();
         let swiss = swiss_table.export(target_cell, AuthRequired::Signature, 100, None);
 
-        // Honest classical cert (valid ed25519 introducer half).
+        // Honest classical cert (valid ed25519 introducer half over the same id).
         let base = HandoffCertificate::create(
             &intro_sk,
             intro_fed,
@@ -1588,33 +1644,84 @@ mod tests {
             None,
             swiss,
         );
-        // Attacker forges the PQ half under their OWN fresh ML-DSA key.
+        // The attacker self-supplies their OWN fresh ML-DSA key and signs the
+        // hybrid message under it — a self-consistent PQ half that verifies against
+        // the attacker key.
         let attacker_pq = MlDsaHandoffKey::from_ed25519_seed(&[0xAB; 32]);
-        let forged_msg = HybridHandoffCertificate::hybrid_signing_message(
-            &base,
-            &attacker_pq.public_bytes(),
-            &recip_ml_dsa_pk,
-        );
+        let attacker_ml = attacker_pq.public_bytes();
+        let forged_msg =
+            HybridHandoffCertificate::hybrid_signing_message(&base, &attacker_ml, &recip_ml_dsa_pk);
         let forged_cert = HybridHandoffCertificate {
             base,
+            introducer_ml_dsa_pk: attacker_ml.clone(),
             recipient_ml_dsa_pk: recip_ml_dsa_pk,
             introducer_ml_dsa_sig: attacker_pq.sign(&forged_msg),
         };
-        let presentation = HybridHandoffPresentation::create(forged_cert, &recip_sk);
+        // The forged PQ half IS itself a valid ML-DSA signature under the
+        // attacker's key — so had the verifier trusted a self-carried key on its
+        // own, this forgery would PASS. It is rejected ONLY because the introducer's
+        // FederationId does not commit to that key.
+        assert!(super::hybrid_pq::ml_dsa_verify(
+            &attacker_ml,
+            &forged_msg,
+            &forged_cert.introducer_ml_dsa_sig
+        ));
 
-        let known = vec![intro_fed];
-        let result = validate_handoff_hybrid(
-            &presentation,
-            &intro_pk,
-            &enrolled_intro_ml_dsa_pk, // enrolled key ≠ attacker key
-            &mut swiss_table,
-            &known,
-            150,
-        );
+        let presentation = HybridHandoffPresentation::create(forged_cert, &recip_sk);
+        let known = vec![intro_fed]; // the honest id IS trusted — not a roster miss
+        let result =
+            validate_handoff_hybrid(&presentation, &intro_pk, &mut swiss_table, &known, 150);
         assert_eq!(
             result.unwrap_err(),
-            HandoffError::InvalidIntroducerPqSignature,
-            "PQ half under a non-enrolled ML-DSA key must be rejected"
+            HandoffError::IntroducerIdentityCommitmentMismatch,
+            "a self-supplied ML-DSA key not committed by the introducer FederationId \
+             must be rejected by the id-commitment, not a roster mismatch"
+        );
+    }
+
+    /// STAGED FLAG-DAY: a LEGACY ed25519-only introducer FederationId
+    /// (`FederationId(pk.0)`, the raw ed25519 pk) commits to NO ML-DSA key, so the
+    /// id-commitment gate fails CLOSED — a hybrid handoff requires a hybrid
+    /// introducer identity. Even with an honestly self-carried ML-DSA key and a
+    /// valid PQ signature under it, a legacy id can never satisfy the enrollment.
+    #[test]
+    fn hybrid_legacy_ed25519_only_introducer_rejected() {
+        let (intro_sk, intro_pk) = generate_keypair();
+        let (recip_sk, recip_pk) = setup_recipient();
+        let target_fed = FederationId([0xDD; 32]);
+        let target_cell = CellId([0xEE; 32]);
+
+        // Legacy identity: the FederationId is the raw ed25519 pk, not H(ed ‖ ml).
+        let intro_fed = FederationId(intro_pk.0);
+        let recip_ml_dsa_pk =
+            MlDsaHandoffKey::from_ed25519_seed(&recip_sk.to_bytes()).public_bytes();
+
+        let mut swiss_table = SwissTable::new();
+        let swiss = swiss_table.export(target_cell, AuthRequired::Signature, 100, None);
+
+        // `create` honestly self-carries the introducer's real ML-DSA key.
+        let cert = HybridHandoffCertificate::create(
+            &intro_sk,
+            intro_fed,
+            target_fed,
+            target_cell,
+            recip_pk.0,
+            AuthRequired::Signature,
+            None,
+            None,
+            None,
+            swiss,
+            recip_ml_dsa_pk,
+        );
+        let presentation = HybridHandoffPresentation::create(cert, &recip_sk);
+        let known = vec![intro_fed];
+        let result =
+            validate_handoff_hybrid(&presentation, &intro_pk, &mut swiss_table, &known, 150);
+        assert_eq!(
+            result.unwrap_err(),
+            HandoffError::IntroducerIdentityCommitmentMismatch,
+            "a legacy ed25519-only introducer FederationId commits to no ML-DSA key \
+             and must be rejected (staged flag-day)"
         );
     }
 
@@ -1623,8 +1730,7 @@ mod tests {
     /// `recipient_ml_dsa_pk`. Must REJECT.
     #[test]
     fn hybrid_recipient_pq_under_attacker_key_rejected() {
-        let (presentation, intro_pk, intro_ml_dsa_pk, intro_fed, mut swiss_table) =
-            full_hybrid_setup();
+        let (presentation, intro_pk, intro_fed, mut swiss_table) = full_hybrid_setup();
 
         // Overwrite the recipient PQ signature with one under an attacker key,
         // leaving the (introducer-pinned) recipient_ml_dsa_pk and the valid
@@ -1638,35 +1744,23 @@ mod tests {
         forged.recipient_ml_dsa_sig = attacker_pq.sign(&recip_msg);
 
         let known = vec![intro_fed];
-        let result = validate_handoff_hybrid(
-            &forged,
-            &intro_pk,
-            &intro_ml_dsa_pk,
-            &mut swiss_table,
-            &known,
-            150,
-        );
+        let result = validate_handoff_hybrid(&forged, &intro_pk, &mut swiss_table, &known, 150);
         assert_eq!(
             result.unwrap_err(),
             HandoffError::InvalidRecipientPqSignature
         );
     }
 
-    /// A missing PQ half (empty signature bytes) must fail CLOSED.
+    /// A missing PQ half (empty signature bytes) must fail CLOSED. The introducer
+    /// identity still commits to the self-carried ML-DSA key, so the id-commitment
+    /// gate passes and it is the ABSENT signature that rejects.
     #[test]
     fn hybrid_missing_pq_half_fails_closed() {
-        let (mut presentation, intro_pk, intro_ml_dsa_pk, intro_fed, mut swiss_table) =
-            full_hybrid_setup();
+        let (mut presentation, intro_pk, intro_fed, mut swiss_table) = full_hybrid_setup();
         presentation.certificate.introducer_ml_dsa_sig = Vec::new();
         let known = vec![intro_fed];
-        let result = validate_handoff_hybrid(
-            &presentation,
-            &intro_pk,
-            &intro_ml_dsa_pk,
-            &mut swiss_table,
-            &known,
-            150,
-        );
+        let result =
+            validate_handoff_hybrid(&presentation, &intro_pk, &mut swiss_table, &known, 150);
         assert_eq!(
             result.unwrap_err(),
             HandoffError::InvalidIntroducerPqSignature,
@@ -1674,25 +1768,23 @@ mod tests {
         );
     }
 
-    /// Verifying against the WRONG enrolled introducer key (as if the roster
-    /// pinned a different identity's PQ key) must reject even an otherwise honest
-    /// certificate — the pin is load-bearing.
+    /// The introducer's self-carried ML-DSA key must be BOUND into the id: mutating
+    /// a single byte of `introducer_ml_dsa_pk` (so it no longer hashes into the
+    /// FederationId) is rejected by the id-commitment even though the FederationId
+    /// is trusted — the commitment is load-bearing.
     #[test]
-    fn hybrid_wrong_enrolled_key_rejected() {
-        let (presentation, intro_pk, _correct, intro_fed, mut swiss_table) = full_hybrid_setup();
-        let wrong_enrolled = MlDsaHandoffKey::from_ed25519_seed(&[0x99; 32]).public_bytes();
+    fn hybrid_tampered_introducer_ml_dsa_pk_rejected() {
+        let (mut presentation, intro_pk, intro_fed, mut swiss_table) = full_hybrid_setup();
+        // Flip a byte of the self-carried key: it now differs from the key the
+        // FederationId commits to.
+        presentation.certificate.introducer_ml_dsa_pk[0] ^= 0xff;
         let known = vec![intro_fed];
-        let result = validate_handoff_hybrid(
-            &presentation,
-            &intro_pk,
-            &wrong_enrolled,
-            &mut swiss_table,
-            &known,
-            150,
-        );
+        let result =
+            validate_handoff_hybrid(&presentation, &intro_pk, &mut swiss_table, &known, 150);
         assert_eq!(
             result.unwrap_err(),
-            HandoffError::InvalidIntroducerPqSignature
+            HandoffError::IntroducerIdentityCommitmentMismatch,
+            "a self-carried ML-DSA key not committed by the FederationId must reject"
         );
     }
 }
