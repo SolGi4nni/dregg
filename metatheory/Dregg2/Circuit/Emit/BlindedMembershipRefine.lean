@@ -44,6 +44,7 @@ read-only.
 -/
 import Dregg2.Circuit.Emit.BlindedMembershipEmit
 import Dregg2.Circuit.Emit.MerkleMembershipRefine
+import Dregg2.Circuit.DecideSatisfied2
 
 namespace Dregg2.Circuit.Emit.BlindedMembershipRefine
 
@@ -369,5 +370,344 @@ theorem concrete_fail_blind :
 #assert_axioms concrete_fail_chain
 #assert_axioms concrete_fail_root
 #assert_axioms concrete_fail_blind
+
+/-! ============================================================================================
+## §7 — the DEPTH-GENERAL, 4-ARY, GENERAL-POSITION bridge (Golden Lift, stage 3d-DIM).
+
+The whole-descriptor SAT ⟹ SEM bridge for `blindedMembership4aryDesc depth` — the depth-8,
+general-position descriptor that carries production presentations. Unlike the depth-2 single-row
+descriptor above, this one is ONE 4-ary level per row tied by a continuity WINDOW gate, so the
+membership half is a genuine MULTI-ROW fold. The bridge is UNIVERSAL over depth (any non-empty
+trace); depth-8 is an instance. -/
+
+section General
+
+open Dregg2.Circuit.DescriptorIR2
+  (WindowConstraint envAt)
+open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
+open Dregg2.Circuit.Emit.BlindedMembershipEmit
+  (blindedMembership4aryDesc gConstraints gPerRowGates gLastRowBoundaries gPerRowBodies
+   gParentLookup gBlindLookup gContinuity gBlindedLeafPin gRootPin gContWindow gCont_zero_iff
+   gArrangeList gChildren_arranged bitBinaryBody child0Body child1Body child2Body child3Body
+   gCUR gSIB0 gSIB1 gSIB2 gB0 gB1 gC0 gC1 gC2 gC3 gPAR gBLINDING gBLINDED_LEAF
+   gPATH_LANES gBLIND_LANES gPI_BLINDED_LEAF gPI_ROOT)
+
+/-! ### The positional 4-ary fold spec (trace-independent). -/
+
+/-- One 4-ary level step: hash the positional arrangement of the running hash + siblings. -/
+def gStep (hash : List ℤ → ℤ) (cur : ℤ) (s : ℤ × ℤ × ℤ × ℤ × ℤ) : ℤ :=
+  match s with
+  | (s0, s1, s2, b0, b1) => hash (gArrangeList cur s0 s1 s2 b0 b1)
+
+/-- The positional 4-ary Merkle fold over a list of `(s0,s1,s2,b0,b1)` authentication steps. -/
+def gFoldPos (hash : List ℤ → ℤ) (leaf : ℤ) (steps : List (ℤ × ℤ × ℤ × ℤ × ℤ)) : ℤ :=
+  steps.foldl (gStep hash) leaf
+
+/-- The fold peels at the TOP (last) level. -/
+theorem gFoldPos_concat (hash : List ℤ → ℤ) (leaf : ℤ)
+    (steps : List (ℤ × ℤ × ℤ × ℤ × ℤ)) (s : ℤ × ℤ × ℤ × ℤ × ℤ) :
+    gFoldPos hash leaf (steps ++ [s]) = gStep hash (gFoldPos hash leaf steps) s := by
+  simp only [gFoldPos, List.foldl_append, List.foldl_cons, List.foldl_nil]
+
+/-- **`Blinded4aryMembers`** — THE FUNCTIONAL SPEC of the depth-general blinded ring-membership: the
+published `blinded_leaf` is the arity-2 Poseidon2 blinding of the hidden `(leaf, blinding)`, AND that
+`leaf` positionally folds up the `steps` to the public `root`. -/
+def Blinded4aryMembers (hash : List ℤ → ℤ)
+    (blinded_leaf leaf blinding root : ℤ) (steps : List (ℤ × ℤ × ℤ × ℤ × ℤ)) : Prop :=
+  blinded_leaf = hash [leaf, blinding] ∧ gFoldPos hash leaf steps = root
+
+/-- The authentication steps a length-`n` prefix of the trace exposes (one per row). -/
+def gStepsOf (t : VmTrace) (n : Nat) : List (ℤ × ℤ × ℤ × ℤ × ℤ) :=
+  (List.range n).map (fun j =>
+    ((envAt t j).loc gSIB0, (envAt t j).loc gSIB1, (envAt t j).loc gSIB2,
+     (envAt t j).loc gB0, (envAt t j).loc gB1))
+
+/-! ### Membership tactic + universal row extractions. -/
+
+local macro "g_mem" : tactic =>
+  `(tactic| (show _ ∈ gConstraints;
+             simp [gConstraints, gPerRowGates, gLastRowBoundaries, gPerRowBodies, gParentLookup,
+               gBlindLookup, gContinuity, gBlindedLeafPin, gRootPin]))
+
+variable {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
+  {depth : Nat}
+
+/-- Every per-row body (bit-binary ×2, child-selection ×4) vanishes on EVERY row: on non-last rows
+via the transition `.gate`, on the last row via the re-lowered `.boundary .last`. -/
+theorem gPerRowBodyZero
+    (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (b : EmittedExpr) (hb : b ∈ gPerRowBodies) (j : Nat) (hj : j < t.rows.length) :
+    b.eval (envAt t j).loc = 0 := by
+  by_cases hlast : (j + 1 == t.rows.length) = true
+  · have hmem : VmConstraint2.base (.boundary VmRow.last b)
+        ∈ (blindedMembership4aryDesc depth).constraints := by
+      show _ ∈ gConstraints
+      simp only [gConstraints, gLastRowBoundaries, List.mem_append, List.mem_map]
+      exact Or.inr ⟨b, hb, rfl⟩
+    have h := hsat.rowConstraints j hj _ hmem
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
+    exact h hlast
+  · have hf : (j + 1 == t.rows.length) = false := by
+      simp only [Bool.not_eq_true] at hlast; exact hlast
+    have hmem : VmConstraint2.base (.gate b) ∈ (blindedMembership4aryDesc depth).constraints := by
+      show _ ∈ gConstraints
+      simp only [gConstraints, gPerRowGates, List.mem_append, List.mem_map]
+      exact Or.inl (Or.inl ⟨b, hb, rfl⟩)
+    have h := hsat.rowConstraints j hj _ hmem
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hf] at h
+    exact h
+
+/-- On any row, the four child columns are the positional arrangement of the running hash + siblings
+(the six per-row gates + the arrangement reduction). -/
+theorem gArrangeAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (j : Nat) (hj : j < t.rows.length) :
+    [(envAt t j).loc gC0, (envAt t j).loc gC1, (envAt t j).loc gC2, (envAt t j).loc gC3]
+      = gArrangeList ((envAt t j).loc gCUR) ((envAt t j).loc gSIB0) ((envAt t j).loc gSIB1)
+          ((envAt t j).loc gSIB2) ((envAt t j).loc gB0) ((envAt t j).loc gB1) := by
+  have hz := fun b hb => gPerRowBodyZero hsat b hb j hj
+  exact gChildren_arranged _
+    (hz _ (by simp [gPerRowBodies])) (hz _ (by simp [gPerRowBodies]))
+    (hz _ (by simp [gPerRowBodies])) (hz _ (by simp [gPerRowBodies]))
+    (hz _ (by simp [gPerRowBodies])) (hz _ (by simp [gPerRowBodies]))
+
+/-- The arity-4 parent chip binds `gPAR` to `hash` of the four child columns, on any row. -/
+theorem gParentAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hChip : ChipTableSound hash (t.tf .poseidon2)) (j : Nat) (hj : j < t.rows.length) :
+    (envAt t j).loc gPAR
+      = hash [(envAt t j).loc gC0, (envAt t j).loc gC1, (envAt t j).loc gC2,
+              (envAt t j).loc gC3] := by
+  have hmem : gParentLookup ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
+  have h := hsat.rowConstraints j hj _ hmem
+  simp only [gParentLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
+  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var gC0, .var gC1, .var gC2, .var gC3] gPAR gPATH_LANES
+    (by show (4 : Nat) ≤ CHIP_RATE; decide) h
+  simpa [EmittedExpr.eval] using hs
+
+/-- The arity-2 blinding tooth binds `gBLINDED_LEAF` to `hash [cur, blinding]`, on any row. -/
+theorem gBlindAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hChip : ChipTableSound hash (t.tf .poseidon2)) (j : Nat) (hj : j < t.rows.length) :
+    (envAt t j).loc gBLINDED_LEAF
+      = hash [(envAt t j).loc gCUR, (envAt t j).loc gBLINDING] := by
+  have hmem : gBlindLookup ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
+  have h := hsat.rowConstraints j hj _ hmem
+  simp only [gBlindLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
+  have hs := chip_lookup_sound hash (t.tf .poseidon2) hChip (envAt t j).loc
+    [.var gCUR, .var gBLINDING] gBLINDED_LEAF gBLIND_LANES
+    (by show (2 : Nat) ≤ CHIP_RATE; decide) h
+  simpa [EmittedExpr.eval] using hs
+
+/-- The continuity window gate ties `next.cur = this.par` on every non-last row. -/
+theorem gContAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (j : Nat) (hj : j < t.rows.length) (hnl : (j + 1 == t.rows.length) = false) :
+    (envAt t (j + 1)).loc gCUR = (envAt t j).loc gPAR := by
+  have hmem : gContinuity ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
+  have h := hsat.rowConstraints j hj _ hmem
+  simp only [gContinuity, VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true] at h
+  have hz : gContWindow.eval (envAt t j) = 0 := h hnl
+  have hkey := (gCont_zero_iff (envAt t j)).mp hz
+  have heq : (envAt t (j + 1)).loc gCUR = (envAt t j).nxt gCUR := rfl
+  rw [heq]; exact hkey
+
+/-- The row-0 blinded-leaf pin: `loc gBLINDED_LEAF = pub gPI_BLINDED_LEAF`. -/
+theorem gBlindedLeafPi (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hlen : 0 < t.rows.length) :
+    (envAt t 0).loc gBLINDED_LEAF = t.pub gPI_BLINDED_LEAF := by
+  have hmem : gBlindedLeafPin ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
+  have h := hsat.rowConstraints 0 hlen _ hmem
+  simp only [gBlindedLeafPin, VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
+  exact h (by decide)
+
+/-- The last-row root pin: `loc gPAR = pub gPI_ROOT`. -/
+theorem gRootPi (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hlen : 0 < t.rows.length) :
+    (envAt t (t.rows.length - 1)).loc gPAR = t.pub gPI_ROOT := by
+  have hmem : gRootPin ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
+  have hj : t.rows.length - 1 < t.rows.length := by omega
+  have h := hsat.rowConstraints (t.rows.length - 1) hj _ hmem
+  simp only [gRootPin, VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
+  refine h ?_
+  have : t.rows.length - 1 + 1 = t.rows.length := by omega
+  simp [this]
+
+/-! ### The multi-row fold assembly (the genuine cross-row induction). -/
+
+/-- **`gFoldsTo`** — reading the per-row steps, the row-0 running hash positionally folds up to each
+row's parent digest. The load-bearing cross-row induction: base = the level-0 parent; step chains via
+the continuity gate (`cur_{j+1} = par_j`) and the arrangement + parent chip at level `j+1`. -/
+theorem gFoldsTo (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    ∀ j, j < t.rows.length →
+      gFoldPos hash ((envAt t 0).loc gCUR) (gStepsOf t (j + 1)) = (envAt t j).loc gPAR := by
+  intro j
+  induction j with
+  | zero =>
+    intro hj0
+    have key : gFoldPos hash ((envAt t 0).loc gCUR) (gStepsOf t 1)
+        = hash (gArrangeList ((envAt t 0).loc gCUR) ((envAt t 0).loc gSIB0)
+            ((envAt t 0).loc gSIB1) ((envAt t 0).loc gSIB2) ((envAt t 0).loc gB0)
+            ((envAt t 0).loc gB1)) := by
+      simp only [gStepsOf, List.range_one, List.map_cons, List.map_nil, gFoldPos,
+        List.foldl_cons, List.foldl_nil, gStep]
+    rw [key, ← gArrangeAt hsat 0 hj0, ← gParentAt hsat hChip 0 hj0]
+  | succ j ih =>
+    intro hj
+    have hjS : j < t.rows.length := by omega
+    have hnl : (j + 1 == t.rows.length) = false := by
+      simp only [beq_eq_false_iff_ne]; omega
+    have hjplus : j + 1 < t.rows.length := hj
+    have hcont : (envAt t (j + 1)).loc gCUR = (envAt t j).loc gPAR := gContAt hsat j hjS hnl
+    -- gStepsOf t (j+2) = gStepsOf t (j+1) ++ [step_{j+1}]
+    have hsteps : gStepsOf t (j + 2)
+        = gStepsOf t (j + 1)
+          ++ [((envAt t (j + 1)).loc gSIB0, (envAt t (j + 1)).loc gSIB1,
+               (envAt t (j + 1)).loc gSIB2, (envAt t (j + 1)).loc gB0,
+               (envAt t (j + 1)).loc gB1)] := by
+      simp only [gStepsOf, List.range_succ, List.map_append, List.map_cons, List.map_nil]
+    show gFoldPos hash ((envAt t 0).loc gCUR) (gStepsOf t (j + 1 + 1)) = (envAt t (j + 1)).loc gPAR
+    have key : gFoldPos hash ((envAt t 0).loc gCUR) (gStepsOf t (j + 1 + 1))
+        = hash (gArrangeList ((envAt t j).loc gPAR) ((envAt t (j + 1)).loc gSIB0)
+            ((envAt t (j + 1)).loc gSIB1) ((envAt t (j + 1)).loc gSIB2)
+            ((envAt t (j + 1)).loc gB0) ((envAt t (j + 1)).loc gB1)) := by
+      rw [show j + 1 + 1 = j + 2 from rfl, hsteps, gFoldPos_concat, ih hjS]
+      simp only [gStep]
+    rw [key, ← hcont, ← gArrangeAt hsat (j + 1) hjplus, ← gParentAt hsat hChip (j + 1) hjplus]
+
+/-- **`blinded4ary_sat_refines` — THE WHOLE-DESCRIPTOR BRIDGE (SAT ⟹ SEM), depth-general.**
+A trace SATISFYING `blindedMembership4aryDesc depth`, against the NAMED Poseidon2 chip carrier, binds
+the genuine blinded ring-membership relation: the published `blinded_leaf` PI is `hash [leaf,
+blinding]` of the hidden row-0 `(cur, blinding)`, AND that `cur` positionally folds up the per-row
+steps to the public `root` PI. Holds for ANY non-empty trace — the production depth-8 is the instance
+`depth := 8`, `t.rows.length = 8`. The blind tooth and the level-0 arrangement share the `gCUR`
+column, so the published `blinded_leaf` commits to exactly the member proven under `root`. -/
+theorem blinded4ary_sat_refines
+    (hlen : 0 < t.rows.length)
+    (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    Blinded4aryMembers hash
+      (t.pub gPI_BLINDED_LEAF) ((envAt t 0).loc gCUR) ((envAt t 0).loc gBLINDING)
+      (t.pub gPI_ROOT) (gStepsOf t t.rows.length) := by
+  refine ⟨?_, ?_⟩
+  · -- the blind tooth: blinded_leaf PI = hash [cur_0, blinding_0].
+    rw [← gBlindedLeafPi hsat hlen]
+    exact gBlindAt hsat hChip 0 hlen
+  · -- the membership fold: cur_0 folds to the last parent = root PI.
+    have hj : t.rows.length - 1 < t.rows.length := by omega
+    have hfold := gFoldsTo hsat hChip (t.rows.length - 1) hj
+    rw [Nat.sub_add_cancel hlen] at hfold
+    rw [hfold]
+    exact gRootPi hsat hlen
+
+/-! ### Non-vacuity: a CONCRETE depth-2 (2-row) general-position accepting trace fires the bridge. -/
+
+/-- An order-sensitive digit hash (order- and arity-sensitive, so it separates levels/positions). -/
+private def gHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 100 + x) 0
+
+/-- **Row 0** — a MIXED-position level (position 1: `b0=1,b1=0`, so children `[s0, cur, s1, s2] =
+[2,1,3,4]`, parent `gHash [2,1,3,4] = 2010304`). Member `leaf = 1`, siblings `2,3,4`; blinding `8`,
+blinded leaf `gHash [1,8] = 108`. -/
+private def gRow0 : Assignment := fun c =>
+  if c = gCUR then 1 else if c = gSIB0 then 2 else if c = gSIB1 then 3 else if c = gSIB2 then 4
+  else if c = gB0 then 1 else if c = gB1 then 0
+  else if c = gC0 then 2 else if c = gC1 then 1 else if c = gC2 then 3 else if c = gC3 then 4
+  else if c = gPAR then 2010304
+  else if c = gBLINDING then 8 else if c = gBLINDED_LEAF then 108 else 0
+
+/-- **Row 1 (the last row)** — position 0 (leftmost): running hash `cur = 2010304` (= row-0 parent, the
+continuity chain), siblings `5,6,7`, children `[2010304,5,6,7]`, parent (root)
+`gHash [2010304,5,6,7] = 2010304050607`. Blinding `8`, blinded leaf `gHash [2010304,8] = 201030408`. -/
+private def gRow1 : Assignment := fun c =>
+  if c = gCUR then 2010304 else if c = gSIB0 then 5 else if c = gSIB1 then 6 else if c = gSIB2 then 7
+  else if c = gB0 then 0 else if c = gB1 then 0
+  else if c = gC0 then 2010304 else if c = gC1 then 5 else if c = gC2 then 6 else if c = gC3 then 7
+  else if c = gPAR then 2010304050607
+  else if c = gBLINDING then 8 else if c = gBLINDED_LEAF then 201030408 else 0
+
+private def gPub : Assignment := fun k =>
+  if k = gPI_BLINDED_LEAF then 108 else if k = gPI_ROOT then 2010304050607 else 0
+
+/-- The chip table: the two genuine `child → parent` arity-4 rows and the two arity-2 blinding rows. -/
+private def gTbl : List (List ℤ) :=
+  [chipRow gHash [2, 1, 3, 4] (List.replicate 7 0),
+   chipRow gHash [2010304, 5, 6, 7] (List.replicate 7 0),
+   chipRow gHash [1, 8] (List.replicate 7 0),
+   chipRow gHash [2010304, 8] (List.replicate 7 0)]
+
+private def gTrace : VmTrace :=
+  { rows := [gRow0, gRow1], pub := gPub
+    tf := fun tid => match tid with | .poseidon2 => gTbl | _ => [] }
+
+/-- The concrete chip table is genuinely SOUND for `gHash`. -/
+theorem gConcrete_chipSound : ChipTableSound gHash (gTrace.tf .poseidon2) := by
+  intro r hr
+  simp only [gTrace, gTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
+  rcases hr with h | h | h | h
+  · exact ⟨[2, 1, 3, 4], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[2010304, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[1, 8], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[2010304, 8], List.replicate 7 0, by decide, by decide, h⟩
+
+/-- **The `Satisfied2` hypothesis is INHABITED at depth 2 (2 rows, GENERAL position).** Every
+constraint holds on both rows: the two arity-4 parent lookups and two arity-2 blinding lookups land in
+the table, the per-row bit-binary + child-selection gates close (row 0 uses position 1, row 1 position
+0), the continuity window ties row 1's `cur` to row 0's parent, and the blinded-leaf/root PI pins
+close. Refutes the vacuity scar for the general family. -/
+theorem gConcrete_sat :
+    Satisfied2 gHash (blindedMembership4aryDesc 2) (fun _ => 0) (fun _ => (0, 0)) [] gTrace := by
+  have hmemlog : memLog (blindedMembership4aryDesc 2) gTrace = [] := rfl
+  have hmaplog : mapLog (blindedMembership4aryDesc 2) gTrace = [] := rfl
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro i hi c hc
+    rw [show gTrace.rows.length = 2 from rfl] at hi
+    rw [show (blindedMembership4aryDesc 2).constraints = gConstraints from rfl] at hc
+    interval_cases i <;>
+      (fin_cases hc <;>
+        simp only [VmConstraint2.holdsAt] <;>
+        first
+          | exact (Dregg2.Circuit.Argus.InterpCore.decideConstraint_iff _ _ _ _).mp (by decide)
+          | exact (Dregg2.Circuit.DecideSatisfied2.decideLookup_iff _ _ _).mp (by decide)
+          | exact (Dregg2.Circuit.DecideSatisfied2.decideWindow_iff _ _ _).mp (by decide))
+  · intro i _; trivial
+  · intro i _ r hr; simp [blindedMembership4aryDesc] at hr
+  · exact List.nodup_nil
+  · intro op hop; rw [hmemlog] at hop; simp at hop
+  · rw [hmemlog]; trivial
+  · rw [hmemlog]; exact memCheck_nil _ _
+  · rw [hmemlog]; rfl
+  · rw [hmaplog]; rfl
+
+/-- **The bridge FIRES end-to-end on the concrete inhabited depth-2 general-position witness** (SAT ⟹
+SEM, non-vacuously): all hypotheses hold, and the whole blinded-membership relation is DERIVED. -/
+theorem gWitness_spec :
+    Blinded4aryMembers gHash (gTrace.pub gPI_BLINDED_LEAF) ((envAt gTrace 0).loc gCUR)
+      ((envAt gTrace 0).loc gBLINDING) (gTrace.pub gPI_ROOT) (gStepsOf gTrace gTrace.rows.length) :=
+  blinded4ary_sat_refines (by decide) gConcrete_sat gConcrete_chipSound
+
+/-- The fired witness IS the closed-form true instance (blind tooth `108 = gHash [1,8]`, and `1`
+folds through position 1 then position 0 to `2010304050607`). -/
+theorem gWitness_spec_closed :
+    Blinded4aryMembers gHash 108 1 8 2010304050607 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
+  unfold Blinded4aryMembers gFoldPos gStep gArrangeList gHash; decide
+
+/-- **Witness FALSE — the spec CONSTRAINS.** The same member/blinding with the WRONG blinded leaf is
+rejected. -/
+theorem gWitness_spec_false_blind :
+    ¬ Blinded4aryMembers gHash 999 1 8 2010304050607 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
+  unfold Blinded4aryMembers gFoldPos gStep gArrangeList gHash; decide
+
+/-- **Witness FALSE — the membership half CONSTRAINS.** The right blinded leaf but the WRONG root is
+rejected: the positional fold must reach the committed root. -/
+theorem gWitness_spec_false_root :
+    ¬ Blinded4aryMembers gHash 108 1 8 999 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
+  unfold Blinded4aryMembers gFoldPos gStep gArrangeList gHash; decide
+
+#assert_axioms gFoldsTo
+#assert_axioms blinded4ary_sat_refines
+#assert_axioms gConcrete_sat
+#assert_axioms gWitness_spec
+#assert_axioms gBlindAt
+#assert_axioms gArrangeAt
+
+end General
 
 end Dregg2.Circuit.Emit.BlindedMembershipRefine

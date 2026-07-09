@@ -165,7 +165,10 @@ fn child3_body() -> LeanExpr {
 }
 
 /// The per-row constraint bodies re-lowered on the last row (bit-binary ×2 + child-selection ×4).
-fn per_row_gate_bodies() -> Vec<LeanExpr> {
+/// `pub(crate)` so the blinded ring-membership twin ([`crate::blinded_membership_witness`]) reuses the
+/// IDENTICAL 4-ary path gates (same column indices `CUR..PAR`), guaranteeing its path constraints are
+/// byte-for-byte the deployed membership path plus the blinding tooth.
+pub(crate) fn per_row_gate_bodies() -> Vec<LeanExpr> {
     vec![
         bit_binary_body(B0),
         bit_binary_body(B1),
@@ -179,7 +182,8 @@ fn per_row_gate_bodies() -> Vec<LeanExpr> {
 /// The single arity-4 `TID_P2` chip lookup: `hash_4_to_1(c0,c1,c2,c3)` → `par` (out0), lanes 1..7
 /// witnessed. Built EXACTLY as the depth-2 4-ary golden's `chipLookupTuple` (arity tag 4,
 /// `CHIP_RATE` zero-padded inputs, then out0 :: 7 lane vars).
-fn parent_chip_lookup() -> VmConstraint2 {
+/// `pub(crate)` so the blinded twin reuses the identical parent-hash lookup.
+pub(crate) fn parent_chip_lookup() -> VmConstraint2 {
     let mut tuple: Vec<LeanExpr> = Vec::with_capacity(CHIP_TUPLE_LEN);
     tuple.push(k(4)); // arity tag
     let inputs = [C0, C1, C2, C3];

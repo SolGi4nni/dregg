@@ -112,6 +112,9 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     ),
 ];
 
+pub use crate::blinded_membership_witness::{
+    BLINDED_4ARY_NAME_PREFIX, blinded_membership_descriptor_of_depth_4ary,
+};
 pub use crate::delegate_descriptor::{DELEGATE_V2_NAME, delegate_binding_descriptor};
 pub use crate::membership_descriptor_4ary::{
     MEMBERSHIP_4ARY_NAME_PREFIX, membership_descriptor_of_depth_4ary,
@@ -240,6 +243,14 @@ pub fn descriptor_by_name(name: &str) -> Option<EffectVmDescriptor2> {
             .parse::<usize>()
             .ok()
             .map(membership_descriptor_of_depth_4ary);
+    }
+    // The depth-general 4-ARY BLINDED ring-membership family (built, not parsed) — the depth-8,
+    // general-position twin that carries production presentations; PIs `[blinded_leaf, root]`.
+    if let Some(depth_str) = name.strip_prefix(BLINDED_4ARY_NAME_PREFIX) {
+        return depth_str
+            .parse::<usize>()
+            .ok()
+            .map(blinded_membership_descriptor_of_depth_4ary);
     }
     // The IR-v2 delegation scope-binding descriptor (built once, then cloned — it is a singleton).
     if name == DELEGATE_V2_NAME {
