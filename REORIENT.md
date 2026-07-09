@@ -1,6 +1,25 @@
 # REORIENT — read this first after any context loss
 
-*(maintained for session continuity; update at every major landing. Last: 2026-07-05 — grounded re-orient after a ~2-day drive by a different instance (07-02→07-04). THE HEADLINE: the universal-fold carrier campaign + the v13 faithful-commitment geometry are BUILT + COMMITTED + apex-clean + tooth-gated — but STAGED, not the deployed default; the VK-epoch flip + devnet re-genesis are the pending human-go. Read the 2026-07-05 CURRENT STATE block below FIRST; the older blocks are dead history.)*
+*(maintained for session continuity; update at every major landing. Last: 2026-07-09 — see the CURRENT block immediately below; the 2026-07-05 block under it is the prior grounding, older blocks are dead history.)*
+
+## ⚑⚑⚑ CURRENT STATE (2026-07-09 — position re-eval, ember present; the tree moved HARD under every stale deploy premise)
+
+**THE HEADLINE: nothing is broken, but "the federation payoff is ready to deploy" is FALSE — the proven artifact no longer exists in the form it was proven.** Since 07-07, two campaigns swept the exact consensus/circuit layers a live deploy rides:
+
+1. **no-prequantum lane (NEW — `GOAL-PQ.md`, 07-09):** every consensus signature is now hybrid ed25519∧ML-DSA-65 (blocklace block, LIVE `finality::Block`, CapTP handoff, peer-auth, revocation attestation, credentials, cap proof — GAPs #0–#6 done). **The consensus wire signing changed.** OPEN + ember-gated: **hybrid identity binding** (`Id = H(ed25519‖ml_dsa)` tree-wide `dregg-types` change vs keep out-of-band enrollment) — this is VK-epoch-shaped: **decide it BEFORE re-genesis**, because re-basing identity after community state exists is rug-shaped.
+2. **stark-kill (`f04b2dd1e`, 07-09):** the hand-rolled STARK engine is DELETED; circuit/turn/bridge ride the descriptor prover. **The proving path changed.**
+
+**Deploy-readiness ledger (what must be TRUE before homelab/live-mesh deploy, none of it certified now):**
+- the 07-07 payoff was proven on a binary that PREDATES both sweeps → **re-validate the live run on the current HEAD binary** (empirical-validation law: this build has never had its live run).
+- **verified-gate perf gate-ON round-2 is UNPROVEN** — the cross-poll cache landed (`node/src/blocklace_sync.rs:276`) but no commit records gate-ON round-2 finalizing; still gate-off/Rust-tau only.
+- **tree green is UNCERTIFIABLE right now** — 3+ lanes committing every ~7 min (PQ, stark-kill, crypto-hermine). Integration is UNOWNED: every lane is individually green+shipping; nobody owns "deployable as a coherent whole."
+- VK-epoch flip + re-genesis: still the pending eyes-open human-go (07-05 block below) — now ALSO carries the hybrid-identity decision + the RESURRECT sub-block bundle proposal (`docs/deos/SOVEREIGN-RESURRECTION.md`).
+
+**THE MOVE (not yet fired):** freeze an integration point → build current HEAD green → re-run the federation payoff live on it → THEN the VK-epoch + identity + re-genesis eyes-open batch. Do the breaking things (identity re-base, VK flip, re-genesis) while no community state exists.
+
+---
+
+## ⚑ (2026-07-05) prior grounding — universal-fold carrier campaign + v13 faithful-commitment geometry: BUILT + COMMITTED + apex-clean + tooth-gated, STAGED not default; VK-epoch flip + devnet re-genesis were the pending human-go. Detail in the CURRENT STATE (2026-07-05) block below.
 
 > ⚑ POST-COMPACT: read `HORIZONLOG.md` → the "POST-COMPACT ORIENTATION (2026-06-21)" entry FIRST — it carries the
 > live 8-agent swarm roster, the held-welds-to-bank, the Track-1 queue (the revokeCapability #1 route-FORGE is the

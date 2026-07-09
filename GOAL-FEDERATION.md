@@ -7,6 +7,20 @@ A real agent (confined + attested) executing real turns that stream-finalize, cr
 on a real dregg federation — VERIFIED, not marshal — every claim empirically demonstrated,
 not modeled. Turn "assembled from real parts" into an actually-running machine.
 
+## ⚑⚑ SUPERSEDED-BINARY WARNING (2026-07-09, position re-eval) — READ BEFORE ACTING ON "PAYOFF ACHIEVED"
+The 07-07 "★★★ PAYOFF ACHIEVED" verdict below is REAL but was proven on a binary that PREDATES two
+sweeps that changed the deploy surface. Do NOT ship the 07-07 artifact as "the proven mesh":
+- **PQ hybrid (07-09, `GOAL-PQ.md`):** consensus signatures are now ed25519∧ML-DSA-65 — blocklace/live
+  `finality::Block`/CapTP/peer-auth wire signing CHANGED. Re-validate the live run on current HEAD.
+- **stark-kill (07-09, `f04b2dd1e`):** hand STARK engine DELETED; proving path on the descriptor prover.
+- **verified-gate gate-ON round-2: STILL UNPROVEN.** Cross-poll cache landed (`blocklace_sync.rs:276`);
+  no commit records gate-ON round-2 finalizing. Payoff remains gate-off/Rust-tau only.
+- **hybrid-identity decision (ember-gated, `GOAL-PQ.md` FLAGGED-OPEN):** `Id=H(ed25519‖ml_dsa)` vs
+  out-of-band enroll — VK-epoch-shaped, DECIDE BEFORE re-genesis.
+GATES before homelab deploy: (1) freeze integration point + build HEAD green; (2) re-run the payoff
+LIVE on the HEAD binary; (3) complete gate-ON perf OR ship gate-off explicitly; (4) ember: identity +
+VK-epoch + re-genesis eyes-open batch (do the breaking things before community state exists).
+
 ## Live state (2026-07-06 night)
 - ember's n=4 federation LIVE on hbox(192.168.50.39) + nextop(192.168.50.130), streaming,
   marshal-only (`full_turn_proving=false`), idle at height 22 (advances per turn).
