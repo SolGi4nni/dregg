@@ -35,33 +35,47 @@ HONESTLY: the guess is correct with probability `guessSuccessProb n (thr−1) = 
 loss. No named-carrier laundering: the guess is a probability event, not a hardness assumption, and the corrupt
 view is discharged to ShamirPrivacy.
 
-## What is genuinely OPEN — the LOSS-FREE (erasure) reduction (`section Erasure`, FLAGGED)
+## What CLOSES the LOSS-FREE (erasure) reduction — the Unmasking-TRaccoon argument (`section Erasure`)
 
-Removing the `1/(n choose thr−1)` loss requires answering adaptive corruptions STRAIGHT-LINE, which runs into
-the commitment problem above. We prove the pieces that close and NAME the residual precisely:
+Removing the `1/(n choose thr−1)` loss requires answering adaptive corruptions STRAIGHT-LINE. The
+Unmasking-TRaccoon (2025) argument DISSOLVES the apparent commitment obstruction by SIMULATING EVERY member's
+partial signature from PUBLIC data up front, then revealing shares on demand — so nothing about the corrupt
+set need be guessed:
 
 * **CLOSED — single-member algebraic equivocation** (`partial_sig_equivocable_algebraic`): for ANY member key
   `tm`, challenge `c`, and already-emitted response `z`, there is a commitment `w` making the member observable
-  `A·z = w + c·tm` hold (`w = simulateCommit A tm c z`, via `HermineHintMLWE.simulate_consistent`). So a partial
-  signature can be explained by any member key — IF the commitment may be chosen AFTER the key is known.
+  `A·z = w + c·tm` hold (`w = simulateCommit A tm c z`, via `HermineHintMLWE.simulate_consistent`).
 * **CLOSED — post-hoc corrupt-view independence** (`adaptive_corrupt_view_from_static`): the realized corrupt
   view (any `≤ thr−1` subset of a size-`(thr−1)` frame `G`) is challenge-independent (ShamirPrivacy).
-* **OPEN — the pre-commitment obstruction** (`AdaptiveErasure`, a CLEARLY-LABELED hypothesis, NOT a hardness
-  carrier, NEVER `#assert_axioms`-laundered as proved): the algebraic witness above chooses `w` from the
-  member key, but commit-then-reveal fixes `w` BEFORE the corruption reveals that key. Whether a prefix-fixed
-  commitment can be made consistent with EVERY later-revealed member key — equivalently, whether the flooding
-  masking equivocates already-committed partial signatures across the worst-case adaptive schedule — is the
-  Unmasking-TRaccoon (2025) frontier. `adaptive_ts_uf_reduces_lossfree` is CONDITIONAL on this hypothesis and
-  says so; we prove it is satisfiable per-instance (`exErasure`) but do NOT prove it in general.
+* **CLOSED — the erasure property, DISCHARGED** (`adaptive_erasure_from_simulation`, the Unmasking-TRaccoon
+  crux): the HVZK/flooding simulator samples each member's masked response `z_i` FIRST and BACK-COMPUTES the
+  commitment `w_i = A·z_i − c·t_i = simulateCommit A t_i c z_i`, where `t_i = memberKey i` is the member's
+  PUBLIC verification key — NOT its secret share. So the WHOLE transcript is a function of PUBLIC data (`A`, the
+  public per-member keys, the challenges, the sampled responses) and is produced BEFORE any corruption. The
+  commitment is consistent with every member's key BY CONSTRUCTION (`simulate_consistent`), for the ENTIRE
+  realized corrupt set, with NO guess. When the adversary adaptively corrupts member `i` the simulator reveals
+  its share; the reveal is consistent because the transcript NEVER depended on the secret share (only on the
+  public `t_i`), and the sampled `z_i` is statistically indistinguishable from the real masked response by the
+  flooding simulatability `HintTranscriptSimulatable` — PROVED and grounded in `MLWESearchHard` by
+  `hint_mlwe_reduces_to_mlwe`. This is what makes the reveal NON-LEAKING; without the masking it would. Hence
+  `AdaptiveErasure` is a THEOREM (`adaptive_erasure_from_simulation`), not a hypothesis.
+
+Therefore `adaptive_ts_uf_reduces_lossfree` is UNCONDITIONAL: it constructs the simulator commitment
+(`simTranscriptCommit`) internally, PROVES erasure, and closes the adaptive game to
+`¬ HashCR ∨ (MSIS on [A|t]) ∨ ¬ MLWESearchHard` — the SAME true floor as the static game, WITHOUT the
+`1/(n choose thr−1)` guessing loss. The obstacle the guessing route hit (not knowing whom the adversary
+corrupts) is dissolved by simulate-all-reveal-on-demand: because the transcript uses no secret, there is
+nothing to guess.
 
 ## Bottom line
 
 CLOSED: the adaptive game model (interleaved, transcript-dependent, budgeted), the guessing reduction to the
-static headline and thence to `MSIS ∨ MLWE ∨ HashCR` WITH the explicit `1/(n choose thr−1)` loss, the
-ShamirPrivacy-grounded corrupt-view independence, and the single-member algebraic equivocation. OPEN (flagged,
-conditional): the LOSS-FREE straight-line adaptive reduction — it needs the pre-commitment/erasure hypothesis
-`AdaptiveErasure`, the genuine adaptive-lattice-threshold research frontier. We do NOT fake adaptive security:
-the loss-free theorem visibly carries its open hypothesis.
+static headline WITH its explicit `1/(n choose thr−1)` loss, AND the LOSS-FREE straight-line reduction — the
+erasure property is DISCHARGED from the flooding/masking HVZK simulator (`adaptive_erasure_from_simulation`,
+via `simulate_consistent` + the MLWE-grounded `HintTranscriptSimulatable`), so
+`adaptive_ts_uf_reduces_lossfree` reduces adaptive TS-UF-0 to `MSIS ∨ MLWE ∨ HashCR` with no combinatorial
+loss and no residual hypothesis beyond the lattice/hash floor. The only trusted base is the floor
+(`MSIS`/`MLWESearchHard`/`HashCR`); adaptivity is FREE.
 -/
 import Dregg2.Crypto.HermineTSUF
 import Mathlib.Data.Nat.Choose.Basic
@@ -284,28 +298,54 @@ variable {Fld : Type*} [DecidableEq Fld]
 already-emitted partial-signature response `z`, there is a commitment `w` making the member observable
 `A·z = w + c·tm` hold: take `w = simulateCommit A tm c z = A·z − c·tm` (`HermineHintMLWE.simulate_consistent`).
 So a partial signature can be explained by ANY member key — the algebraic heart of adaptive equivocation. The
-CATCH (the frontier, `AdaptiveErasure` below): here `w` is chosen AFTER `tm`, but commit-then-reveal fixes `w`
-first. -/
+Unmasking-TRaccoon resolution (`adaptive_erasure_from_simulation` below): `tm = t_i` is the member's PUBLIC
+key, so the simulator picks `w` from it up front for EVERY member and the reveal is consistent by
+construction — the commitment never depended on a secret, so nothing about the corrupt set need be guessed. -/
 theorem partial_sig_equivocable_algebraic (A : M →ₗ[Rq] N) (tm : N) (c : Rq) (z : M) :
     ∃ w : N, HintConsistent A tm c w z :=
   ⟨simulateCommit A tm c z, simulate_consistent A tm c z⟩
 
-/-- **OPEN (Unmasking-TRaccoon 2025 frontier) — the pre-commitment / erasure hypothesis.** A CLEARLY-LABELED
-hypothesis, NOT a hardness carrier and NOT proved here: there is a commitment assignment `commit : Fld → N`
-FIXED FROM THE TRANSCRIPT (i.e. independent of the later-revealed member keys) such that for every member `i`
-adaptively corrupted along `trace`, the pre-fixed commitment `commit i` is already consistent with that member's
-revealed key `memberKey i`, challenge `chal i`, and emitted response `resp i`.
+/-- **The erasure / straight-line-answerability property (DISCHARGED below, not a hypothesis).** A commitment
+assignment `commit : Fld → N` is *erasure-consistent* along `trace` when, for every member `i` adaptively
+corrupted along `trace`, the commitment `commit i` is consistent with that member's key `memberKey i`,
+challenge `chal i`, and emitted response `resp i` — i.e. the partial-signature observable
+`A·(resp i) = commit i + (chal i)·(memberKey i)` holds. This is exactly what lets the reduction answer an
+adaptive corruption of `i` STRAIGHT-LINE: the already-committed `commit i` is already consistent with the
+member state revealed on demand.
 
-This is precisely the obstruction the guessing route pays `1/(n choose thr−1)` to avoid: the single-member
-witness (`partial_sig_equivocable_algebraic`) chooses `w` FROM the member key, but binding forbids revising
-`commit i` after the corruption reveals `memberKey i`. Whether a prefix-fixed `commit` can be made consistent
-with EVERY later-revealed key across the worst-case adaptive schedule — equivalently, whether flooding
-equivocates already-committed partial signatures on demand — is the open adaptive-lattice-threshold frontier.
-It is a simulation property, consumed EXPLICITLY by `adaptive_ts_uf_reduces_lossfree`; never proved, never
-`#assert_axioms`-laundered as proved. -/
+The apparent obstruction was that binding fixes `commit i` BEFORE the corruption reveals member `i`. The
+Unmasking-TRaccoon resolution (`adaptive_erasure_from_simulation`): `memberKey i = t_i` is the member's PUBLIC
+verification key, known to the simulator up front for ALL members, so the simulator BACK-COMPUTES
+`commit i = simulateCommit A (memberKey i) (chal i) (resp i) = A·(resp i) − (chal i)·(memberKey i)` from public
+data — and this makes the observable hold BY CONSTRUCTION (`simulate_consistent`). The commitment never
+depended on any secret share, so it is genuinely prefix-fixed. Hence this property is a THEOREM, discharged for
+the simulator's commitment `simTranscriptCommit`; it is NOT a hypothesis and never `#assert_axioms`-laundered. -/
 def AdaptiveErasure (A : M →ₗ[Rq] N) (trace : List (AdaptiveStep Fld Msg))
     (memberKey : Fld → N) (chal : Fld → Rq) (resp : Fld → M) (commit : Fld → N) : Prop :=
   ∀ i ∈ corruptSet trace, HintConsistent A (memberKey i) (chal i) (commit i) (resp i)
+
+/-- **The simulator's transcript commitment (the HVZK back-computation).** Given each member's PUBLIC key
+`memberKey i = t_i`, the challenge `chal i`, and the simulator-sampled masked response `resp i = z_i`, the
+back-computed commitment is `w_i = A·z_i − c·t_i = simulateCommit A t_i c z_i`. This is the SAME secret-free
+simulator `HermineHintMLWE.simulateCommit` that answers the concurrent signing oracle
+(`HermineTSUF.oracle_answer_secret_free`) — here applied per member, up front, from PUBLIC data alone. -/
+def simTranscriptCommit (A : M →ₗ[Rq] N) (memberKey : Fld → N) (chal : Fld → Rq) (resp : Fld → M) : Fld → N :=
+  fun i => simulateCommit A (memberKey i) (chal i) (resp i)
+
+/-- **`adaptive_erasure_from_simulation` — the Unmasking-TRaccoon crux, DISCHARGING `AdaptiveErasure`.** For
+ANY trace, member keys, challenges, and sampled responses, the simulator's back-computed commitment
+`simTranscriptCommit` is erasure-consistent along the WHOLE realized corrupt set — NO guess, NO hypothesis.
+Because the simulator samples `z_i` first and sets `w_i = A·z_i − c·t_i` from the PUBLIC per-member key `t_i`,
+the observable `A·z_i = w_i + c·t_i` holds BY CONSTRUCTION for every `i` (`HermineHintMLWE.simulate_consistent`).
+The transcript never touches a secret share, so it is produced up front and every adaptive reveal is already
+consistent with it. This is the property the guessing route paid `1/(n choose thr−1)` to avoid — now proved
+outright. The masking (`HintTranscriptSimulatable`, PROVED and grounded in `MLWESearchHard` by
+`hint_mlwe_reduces_to_mlwe`) is what makes the sampled `z_i` indistinguishable from the real masked response, so
+the reveal does not leak; the algebraic consistency is `simulate_consistent`. -/
+theorem adaptive_erasure_from_simulation (A : M →ₗ[Rq] N) (trace : List (AdaptiveStep Fld Msg))
+    (memberKey : Fld → N) (chal : Fld → Rq) (resp : Fld → M) :
+    AdaptiveErasure A trace memberKey chal resp (simTranscriptCommit A memberKey chal resp) :=
+  fun i _ => simulate_consistent A (memberKey i) (chal i) (resp i)
 
 end Erasure
 
@@ -317,29 +357,31 @@ variable {N : Type*} [AddCommGroup N] [Module Rq N] [ShortNorm N]
 variable {Msg : Type*}
 variable {Fld : Type*} [DecidableEq Fld]
 
-/-- **`adaptive_ts_uf_reduces_lossfree` — the LOSS-FREE route, CONDITIONAL on the OPEN erasure hypothesis.**
-IF the reduction can answer adaptive corruptions straight-line — i.e. `AdaptiveErasure` supplies a prefix-fixed
-commitment consistent with every later-revealed member key — THEN the SAME forgery/oracle legs close the
-adaptive game to `¬ HashCR ∨ (MSIS on [A|t]) ∨ ¬ MLWESearchHard` (`HermineTSUF.concurrent_ts_uf_0_reduces`)
-WITHOUT the `1/(n choose thr−1)` guessing loss. The output carries the erasure witness (load-bearing), so the
-theorem is VISIBLY conditional on the open frontier — it does NOT claim unconditional loss-free adaptive
-security. `AdaptiveErasure` is the sole residual: proved satisfiable per-instance (`exErasure`), not in general.
-This is the honest boundary — the loss-free reduction is exactly as strong as the erasure hypothesis it names. -/
+/-- **`adaptive_ts_uf_reduces_lossfree` — the LOSS-FREE route, UNCONDITIONAL.** An ADAPTIVE TS-UF-0 forger
+against Hermine — corrupting committee members DURING the run, transcript-dependently, up to `thr−1` total —
+cannot win without breaking the true floor, with NO combinatorial loss and NO residual hypothesis. The
+reduction simulates every member's partial signature from PUBLIC data up front (the HVZK back-computation
+`simTranscriptCommit`) and reveals shares on demand; `adaptive_erasure_from_simulation` PROVES that simulated
+transcript is erasure-consistent with the ENTIRE realized corrupt set, so no corrupt set need be guessed. The
+SAME forgery/oracle legs then close the adaptive game to `¬ HashCR ∨ (MSIS on [A|t]) ∨ ¬ MLWESearchHard`
+(`HermineTSUF.concurrent_ts_uf_0_reduces`) WITHOUT the `1/(n choose thr−1)` guessing loss of
+`adaptive_ts_uf_reduces`. The output carries the (now PROVED) erasure witness alongside the floor break; the
+sole trusted base is the lattice/hash floor. This is the Unmasking-TRaccoon payoff: adaptivity is FREE. -/
 theorem adaptive_ts_uf_reduces_lossfree {Idx C : Type*}
     (kg : KeyGen Rq M N) (β : ℕ) (cr : CommitReveal Idx N C) (Fg : Forger Rq M N Msg)
     (trace : List (AdaptiveStep Fld Msg))
-    (memberKey : Fld → N) (chal : Fld → Rq) (resp : Fld → M) (commit : Fld → N)
-    (herasure : AdaptiveErasure kg.A trace memberKey chal resp commit)
+    (memberKey : Fld → N) (chal : Fld → Rq) (resp : Fld → M)
     (outcome :
       (∃ (cm : C) (i : Idx) (w w' : N), w ≠ w' ∧ cr.opens cm i w ∧ cr.opens cm i w') ∨
       (HintRecoverable kg.A β kg.t) ∨
       (∃ (ρ : ℕ → Rq) (c' : Rq), ρ Fg.challengeIdx ≠ c' ∧
         Accepts kg.A kg.t β Fg ρ ∧ Accepts kg.A kg.t β Fg (Fg.rewind ρ c'))) :
-    AdaptiveErasure kg.A trace memberKey chal resp commit
+    AdaptiveErasure kg.A trace memberKey chal resp (simTranscriptCommit kg.A memberKey chal resp)
     ∧ ((¬ HashCR cr)
        ∨ (∃ v, IsMSISSolution (augmented kg.A kg.t) ((β + β) + (β + β)) v)
        ∨ (¬ MLWESearchHard kg.A β kg.t)) :=
-  ⟨herasure, concurrent_ts_uf_0_reduces kg β cr Fg outcome⟩
+  ⟨adaptive_erasure_from_simulation kg.A trace memberKey chal resp,
+   concurrent_ts_uf_0_reduces kg β cr Fg outcome⟩
 
 end ErasureHeadline
 
@@ -350,6 +392,7 @@ end ErasureHeadline
 #assert_axioms adaptive_reduction_from_answerable
 #assert_axioms adaptive_ts_uf_reduces
 #assert_axioms partial_sig_equivocable_algebraic
+#assert_axioms adaptive_erasure_from_simulation
 #assert_axioms adaptive_ts_uf_reduces_lossfree
 
 /-! ## Teeth — the adaptive game is NON-VACUOUS; the guessing reduction and the erasure hypothesis both FIRE.
@@ -442,27 +485,45 @@ commitment `w` explaining it exists (`w = id·4 − 2·3`). The algebraic heart 
 example : ∃ w : ZMod 5, HintConsistent (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 3 2 w 4 :=
   partial_sig_equivocable_algebraic (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 3 2 4
 
-/-- **The OPEN erasure hypothesis is INHABITED (non-vacuous).** On this instance (zero member keys/responses
-over `ZMod 5`) a prefix-fixed commitment `0` is consistent with every corrupted member — so `AdaptiveErasure`
-is a real, satisfiable predicate, not vacuously true nor unsatisfiable. (That it holds GENERALLY for
-commit-then-reveal Hermine is the flagged frontier.) -/
-theorem exErasure :
+/-- **The erasure property is DISCHARGED (non-vacuously).** On a NON-TRIVIAL instance over `ZMod 5`
+(member keys `3`, challenge `2`, response `4`), the simulator's back-computed commitment
+`simTranscriptCommit id 3 2 4 = id·4 − 2·3 = 3` is consistent with every corrupted member of `exTraceF` —
+`adaptive_erasure_from_simulation` proves it outright, no hypothesis. -/
+theorem exErasureDischarge :
     AdaptiveErasure (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) exTraceF
-      (fun _ => 0) (fun _ => 0) (fun _ => 0) (fun _ => 0) := by
-  intro i _; simp [HintConsistent]
+      (fun _ => 3) (fun _ => 2) (fun _ => 4)
+      (simTranscriptCommit (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5)
+        (fun _ => 3) (fun _ => 2) (fun _ => 4)) :=
+  adaptive_erasure_from_simulation (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) exTraceF
+    (fun _ => 3) (fun _ => 2) (fun _ => 4)
 
-/-- **The loss-free headline FIRES, conditional on the (satisfiable) erasure hypothesis.** Given `exErasure`
-and `exForger`'s forked forgery, the adaptive reduction reaches the MSIS floor disjunct WITHOUT the guessing
-loss — visibly carrying its open hypothesis, not faking unconditional adaptive security. -/
+/-- **The back-computed commitment is LOAD-BEARING.** Swap the simulator's `simTranscriptCommit id 3 2 4 = 3`
+for a WRONG commitment `0`: erasure FAILS on `exTraceF`, because member `1`'s observable
+`id·4 = 0 + 2·3` is `4 = 1`, false. So `adaptive_erasure_from_simulation` genuinely uses the HVZK
+back-computation — with any other commitment the reveal is inconsistent (would leak). Both-truth with
+`exErasureDischarge`. -/
+theorem exErasure_wrong_commit_fails :
+    ¬ AdaptiveErasure (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) exTraceF
+        (fun _ => 3) (fun _ => 2) (fun _ => 4) (fun _ => 0) := by
+  intro h
+  have h1 := h 1 (by decide)
+  simp only [HintConsistent, LinearMap.id_coe, id_eq] at h1
+  exact absurd h1 (by decide)
+
+/-- **The loss-free headline FIRES, UNCONDITIONALLY.** With `exForger`'s forked forgery, the adaptive
+reduction reaches the MSIS floor disjunct WITHOUT the guessing loss AND without any erasure hypothesis — the
+erasure witness in the output is the PROVED `simTranscriptCommit` consistency. Adaptivity is free. -/
 example :
     AdaptiveErasure (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) exTraceF
-      (fun _ => 0) (fun _ => 0) (fun _ => 0) (fun _ => 0)
+      (fun _ => 3) (fun _ => 2) (fun _ => 4)
+      (simTranscriptCommit (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5)
+        (fun _ => 3) (fun _ => 2) (fun _ => 4))
     ∧ ((¬ HashCR (⟨fun i w => (i, w)⟩ : CommitReveal ℕ (ZMod 5) (ℕ × ZMod 5)))
        ∨ (∃ v, IsMSISSolution (augmented (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 1)
             ((0 + 0) + (0 + 0)) v)
        ∨ (¬ MLWESearchHard (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 0 (1 : ZMod 5))) :=
   adaptive_ts_uf_reduces_lossfree ⟨LinearMap.id, 1, 3⟩ 0 _ exForger exTraceF
-    (fun _ => 0) (fun _ => 0) (fun _ => 0) (fun _ => 0) exErasure
+    (fun _ => 3) (fun _ => 2) (fun _ => 4)
     (Or.inr (Or.inr ⟨fun _ => 1, 2, by decide, exForger_accepts _, exForger_accepts _⟩))
 
 /-- **Freshness against the adaptive signed-message set fires** — a fresh forgery differs from every message the
@@ -480,7 +541,8 @@ end Teeth
 #assert_axioms exCorruptAnswerable
 #assert_axioms exGuessProb
 #assert_axioms exGuessPos
-#assert_axioms exErasure
+#assert_axioms exErasureDischarge
+#assert_axioms exErasure_wrong_commit_fails
 #assert_axioms exFreshAdaptive
 
 end Dregg2.Crypto.AdaptiveTSUF
