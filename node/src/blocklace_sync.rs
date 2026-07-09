@@ -5043,6 +5043,25 @@ async fn execute_finalized_turn(
                 .map(|(_, sigs)| sigs)
                 .unwrap_or_default();
 
+            // CROSS-FED PRODUCER: carry the hybrid (ed25519 ∧ ML-DSA-65) quorum on
+            // the WIRE AttestedRoot, mapped from the assembled finalization quorum —
+            // each QuorumSignature already holds both halves + the voter's self-
+            // contained ML-DSA-65 pubkey. A cross-fed receipt verifier checks THIS
+            // (`verify_hybrid_quorum_sigs`), so this is what lifts cross-fed finality
+            // verification from fail-closed to actually verifying the PQ half.
+            // (Empty at first persist while the quorum is still assembling; the
+            // backfill path below carries the completed quorum on the stored root,
+            // and the same mapping applies wherever the root is exported cross-fed.)
+            attested.hybrid_quorum = finalization_quorum
+                .iter()
+                .map(|qs| dregg_types::HybridQuorumSig {
+                    pubkey: qs.voter,
+                    signature: qs.signature,
+                    ml_dsa_pubkey: qs.ml_dsa_pubkey.clone(),
+                    pq_signature: qs.pq_signature.clone(),
+                })
+                .collect();
+
             let stored = dregg_persist::StoredAttestedRoot {
                 merkle_root: attested.merkle_root,
                 note_tree_root: attested.note_tree_root,
