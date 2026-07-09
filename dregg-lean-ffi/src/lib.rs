@@ -169,6 +169,32 @@ pub fn shadow_decide_refines(wire: &str) -> Result<String, String> {
     lean_decide_refines(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified ML-DSA verify core
+/// (`dregg_fips204_verify`, the C-ABI entry over `Dregg2.Crypto.Fips204Verify.verifyFFI` =
+/// `Fips204Spec.verifyB` at the deployed ML-DSA-65 parameters). When false, a caller must fall back to
+/// the `fips204` crate verify. Distinct from [`lean_available`]: a stale archive can lack this export.
+pub fn fips204_verify_core_available() -> bool {
+    ffi::fips204_verify_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted ML-DSA verify core `@[export] dregg_fips204_verify` (the executable
+/// `Dregg2.Crypto.Fips204Verify.verifyCore`, proved equal to the `Fips204Spec.verifyB` predicate and to
+/// discharge `DreggPqRefinement.Fips204Correct` for the verify direction). This runs the SECURITY-CRITICAL
+/// verify as a Lean-verified object (leanc-native) — a forged signature REJECTS.
+///
+/// Wire grammar the export reads:
+///   * in:  `"thi μ c̃ z h"` (five decimal ints — the deployed-parameter public high part, message,
+///     challenge digest, response, hint).
+///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed wire).
+///
+/// `dregg-pq` routes its ML-DSA verify through this entry when [`fips204_verify_core_available`], so the
+/// verify runs the verified Lean core rather than a trusted primitive. Returns `Err` if the archive lacks
+/// the export.
+pub fn shadow_fips204_verify(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_fips204_verify(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -280,6 +306,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_storage_content_root_present)]
         fn dregg_storage_content_root_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_fips204_verify_present)]
+        fn dregg_fips204_verify_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -431,6 +463,51 @@ mod ffi {
         )
     }
 
+    /// FIPS-204-VERIFY EXTRACTION — run the VERIFIED Lean ML-DSA verify core (leanc-native).
+    /// Input: `"thi μ c̃ z h"` (five decimal ints); output: `"1"` (accept) / `"0"` (reject). This is
+    /// the SECURITY-CRITICAL verify direction as a Lean-verified object: the extracted `verifyCore`
+    /// (= `Fips204Spec.verifyB` at the deployed ML-DSA-65 parameters), proved to reject forgeries.
+    #[cfg(dregg_fips204_verify_present)]
+    pub fn lean_fips204_verify(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_fips204_verify_str, "dregg_fips204_verify_str")
+    }
+
+    #[cfg(not(dregg_fips204_verify_present))]
+    pub fn lean_fips204_verify(_wire: &str) -> Result<String, String> {
+        Err("dregg_fips204_verify not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted ML-DSA verify core.
+    #[cfg(dregg_fips204_verify_present)]
+    pub fn fips204_verify_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_fips204_verify_present))]
+    pub fn fips204_verify_present() -> bool {
+        false
+    }
+
+    #[cfg(all(test, dregg_fips204_verify_present))]
+    mod fips204_verify_extraction {
+        use super::*;
+        /// THE ROUND-TRIP: the verified Lean ML-DSA verify core runs (leanc-compiled native). An honest
+        /// deployed-parameter signature ACCEPTS ("1"); a tampered `c̃`/`z` and an out-of-range `z` REJECT
+        /// ("0") — the extracted `verifyCore` is the real gate, not `fun _ => true`.
+        #[test]
+        fn verified_ml_dsa_verify_runs_in_lean() {
+            lean_init_once().expect("init the Lean runtime");
+            // Honest: thi=3, μ=7, sig=(c̃=7, z=45, h=0) — the `realParams` round-trip.
+            assert_eq!(lean_fips204_verify("3 7 7 45 0").expect("round-trip"), "1");
+            // Tampered c̃ (breaks the challenge fixed-point) REJECTS.
+            assert_eq!(lean_fips204_verify("3 7 8 45 0").unwrap(), "0");
+            // Out-of-range z (fails ‖z‖ < γ₁−β) REJECTS.
+            assert_eq!(lean_fips204_verify("3 7 7 100000000 0").unwrap(), "0");
+            // Malformed wire fails CLOSED.
+            assert_eq!(lean_fips204_verify("garbage").unwrap(), "0");
+        }
+    }
+
     #[cfg(all(test, dregg_storage_content_root_present))]
     mod storage_extraction {
         use super::*;
@@ -494,6 +571,14 @@ mod ffi {
     }
 
     pub fn lean_decide_refines(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn fips204_verify_present() -> bool {
+        false
+    }
+
+    pub fn lean_fips204_verify(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }

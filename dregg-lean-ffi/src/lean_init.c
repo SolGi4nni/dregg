@@ -153,6 +153,18 @@ extern lean_object *initialize_Dregg2_Dregg2_Storage_Deployed(uint8_t builtin);
 extern lean_object *dregg_storage_content_root(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED ML-DSA VERIFY CORE
+ * (`Dregg2.Crypto.Fips204Verify.verifyFFI`): decodes the wire `"thi μ c̃ z h"`, runs the extracted,
+ * spec-agreeing `verifyCore` (= `Fips204Spec.MlDsaParams.verifyB` at the deployed ML-DSA-65 parameters —
+ * the round-to-nearest rounding, the hint round-trip, the norm gate, the challenge fixed-point), returns
+ * `"1"` (accept) / `"0"` (reject). The SECURITY-CRITICAL verify direction as leanc-native code — a forged
+ * signature REJECTS. GATED on DREGG_FIPS204_VERIFY (the module is OUTSIDE the FFI closure; build.rs probes
+ * + defines it, and dregg_ffi_init runs its initializer). */
+#ifdef DREGG_FIPS204_VERIFY
+extern lean_object *initialize_Dregg2_Dregg2_Crypto_Fips204Verify(uint8_t builtin);
+extern lean_object *dregg_fips204_verify(lean_object *input);
+#endif
+
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
  * `lean_dec_ref`, `lean_box`, and `lean_string_cstr` are `static inline` in the header (no
@@ -251,6 +263,18 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(sres);
 #endif
+#ifdef DREGG_FIPS204_VERIFY
+    /* The verified ML-DSA verify-core module is OUTSIDE the FFI closure; initialize it explicitly so
+     * `dregg_fips204_verify` is callable. Its dependency closure (Crypto.Fips204Spec /
+     * Crypto.DreggPqRefinement / Crypto.HybridCombiner) is re-entrant-safe under Lean's init guards. */
+    lean_object *fvres = initialize_Dregg2_Dregg2_Crypto_Fips204Verify(1);
+    if (!lean_io_result_is_ok(fvres)) {
+        lean_io_result_show_error(fvres);
+        lean_dec_ref(fvres);
+        return 1;
+    }
+    lean_dec_ref(fvres);
+#endif
     lean_io_mark_end_initialization();
     return 0;
 }
@@ -333,6 +357,28 @@ size_t dregg_storage_content_root_str(const char *in_utf8, char *out, size_t out
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_storage_content_root(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_FIPS204_VERIFY
+/* dregg_fips204_verify_str — the C string bridge over the VERIFIED Lean `String -> String` ML-DSA
+ * verify-core export (`Dregg2.Crypto.Fips204Verify.verifyFFI`). Input: `"thi μ c̃ z h"` (five decimal
+ * ints). Output: `"1"` (accept) / `"0"` (reject). Runs the extracted `verifyCore` — the
+ * `Fips204Spec.verifyB` predicate at the deployed ML-DSA-65 parameters, PROVED to reject forgeries by
+ * the `#guard` teeth. Same return contract as the bridges above. */
+size_t dregg_fips204_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_fips204_verify(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

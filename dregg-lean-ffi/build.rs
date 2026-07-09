@@ -248,6 +248,11 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // (`@[export] dregg_storage_content_root`), OUTSIDE the FFI closure — build it so its `.c` IR
         // is emitted and the splice picks up the export.
         "Dregg2.Storage.Deployed",
+        // FIPS-204-VERIFY extraction: the verified ML-DSA verify core over the deployed parameters
+        // (`@[export] dregg_fips204_verify`), OUTSIDE the FFI closure — build it so its `.c` IR is
+        // emitted and the splice picks up the export. Discharges the security-critical verify: the
+        // extracted `verifyCore` (= the `Fips204Spec.verifyB` predicate) runs as leanc-native code.
+        "Dregg2.Crypto.Fips204Verify",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1324,6 +1329,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_decide_refines_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_direct_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_storage_content_root_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_fips204_verify_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1675,6 +1681,14 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_storage_content_root_present");
     }
 
+    // FIPS-204-VERIFY extraction: probe the spliced archive for the `@[export] dregg_fips204_verify`
+    // symbol (the extracted, Lean-verified ML-DSA verify core). Present ⇒ gate the Rust `extern "C"`
+    // block, the C shim string bridge, and the module initializer.
+    let fips204_verify_present = archive_exports(&build_archive, "dregg_fips204_verify");
+    if fips204_verify_present {
+        println!("cargo:rustc-cfg=dregg_fips204_verify_present");
+    }
+
     let mut shim = cc::Build::new();
     shim.file("src/lean_init.c").include(&lean_include);
     // The SINGLE-THREADED / libuv-thread-free init (docs/EMBEDDABLE-LEAN-RUNTIME.md).
@@ -1722,6 +1736,9 @@ fn main() {
     }
     if storage_content_root_present {
         shim.define("DREGG_STORAGE_CONTENT_ROOT", None);
+    }
+    if fips204_verify_present {
+        shim.define("DREGG_FIPS204_VERIFY", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);
