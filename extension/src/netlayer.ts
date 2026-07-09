@@ -396,7 +396,7 @@ export function httpsNetlayerTransport(getConfig: () => NetlayerNodeConfigLike):
 // unverified resolve yields `null` / `unresolved`, never a fabricated shape.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { PollSpec, ResolveObjectFn, ResolveCellFn, ResolveValueFn, CellLookup, ValueQuote, ResolvedCell } from "./port";
+import type { PollSpec, DocSpec, ResolveObjectFn, ResolveDocFn, ResolveCellFn, ResolveValueFn, CellLookup, ValueQuote, ResolvedCell } from "./port";
 
 /** `PollEngine.resolveObject` over the Netlayer: the verified poll object's body is
  *  canonical JSON `{ kind:"poll", numOptions, quorumM }`. Unverified ⇒ `null`. */
@@ -411,6 +411,21 @@ export function netlayerResolveObject(net: Netlayer): ResolveObjectFn {
     if (!Number.isInteger(numOptions) || numOptions < 2) return null;
     if (!Number.isInteger(quorumM) || quorumM < 1) return null;
     return { kind: "poll", addr: r.object.addr, numOptions, quorumM };
+  };
+}
+
+/** `DocEngine.resolveDoc` over the Netlayer: the verified doc object's body is
+ *  canonical JSON `{ kind:"doc", stitch? }`. The content-addressed + attested fetch
+ *  IS the resolve; an unverified body ⇒ `null` (fail-closed, exactly like the poll
+ *  bridge). `stitch` (a concurrent divergence the loaded document already carries)
+ *  rides in the verified body — never fabricated here. */
+export function netlayerResolveDoc(net: Netlayer): ResolveDocFn {
+  return async (uri: string): Promise<DocSpec | null> => {
+    const r = await net.resolve(uri);
+    if (!r.ok || !r.verified || !r.object) return null;
+    const j = r.object.json as { kind?: string; stitch?: boolean } | undefined;
+    if (!j || j.kind !== "doc") return null;
+    return { kind: "doc", addr: r.object.addr, stitch: j.stitch === true };
   };
 }
 

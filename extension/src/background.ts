@@ -10,12 +10,27 @@ import { explainTurn } from "./explain";
 import { createSseParser } from "./sse";
 import { mnemonicConfirmed, walletPassphraseOk } from "./onboarding";
 import { defaultNodeUrl, defaultNodeWssUrl } from "./endpoints";
-import { PollEngine, defaultResolveObject, type PollPortRequest, type PollWorldCtor } from "./port";
+import {
+  PollEngine,
+  CellEngine,
+  DocEngine,
+  MapWebOfCells,
+  defaultResolveObject,
+  defaultResolveDoc,
+  type PollPortRequest,
+  type PollWorldCtor,
+  type CellPortRequest,
+  type DocPortRequest,
+  type DocWorldCtor,
+} from "./port";
 import {
   Netlayer,
   wasmNetlayerCrypto,
   httpsNetlayerTransport,
   netlayerResolveObject,
+  netlayerResolveDoc,
+  netlayerResolveCell,
+  netlayerResolveValue,
   type NetlayerWasmLike,
 } from "./netlayer";
 import {
@@ -3177,6 +3192,8 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:registerFederation", "dregg:listKnownFederations",
   "dregg:createCapTpDeliveredAuth", "dregg:getReceiptWitnesses",
   "dregg:poll",  // quiet-upgrade thin-view port (§3): resolve/render/fire/verify
+  "dregg:cell",  // composition port: <dregg-embed> / <dregg-transclude>
+  "dregg:doc",   // verifiable-document authoring port: <dregg-doc>
 ]);
 
 const POPUP_ONLY_METHODS = new Set<MessageType>([
@@ -3244,6 +3261,95 @@ function getPollEngine(): PollEngine {
   return pollEngine;
 }
 
+// ---------------------------------------------------------------------------
+// Quiet-upgrade composition engine — <dregg-embed> (whole child cell, recursive)
+// and <dregg-transclude> (value quote). DOC-CELL-COMPOSITION.md §1.
+//
+// The SAME split as the poll engine: this ENGINE (background, wasm-side) resolves
+// + verifies + makes the CAP/TRUST decision (darkening is engine-side — the bytes
+// of an out-of-cap child never leave here) + the CYCLE decision; the element is a
+// thin, closed-shadow VIEW reachable ONLY through the "dregg:cell" message. Real
+// cells resolve over the NETLAYER (content-addressed blake3 fetch, verified
+// client-side, committee-anchored quorum) — fail-closed: an unverifiable child is
+// `unresolved`, a bad value quote fails closed, neither is ever fabricated. Absent
+// a configured node, an EMPTY web-of-cells is the stand-in (every child resolves
+// to `unresolved` — fail-closed, never a forged shape).
+// ---------------------------------------------------------------------------
+
+let cellEngine: CellEngine | null = null;
+
+function getCellEngine(): CellEngine {
+  requireWasm("cell");
+  if (!cellEngine) {
+    if (nodeConfig.nodeUrl) {
+      // THE NETLAYER: resolve each child cell / value quote as a verified cross-cell
+      // read (recomputed digest == addr; receipt/proof chain; committee-anchored
+      // quorum). Unverified ⇒ `unresolved` / fail-closed — the membrane/darkening
+      // and the five-state discipline stay intact on the engine side.
+      const net = new Netlayer(
+        httpsNetlayerTransport(() => ({ nodeUrl: nodeConfig.nodeUrl, devnetKey: nodeConfig.devnetKey })),
+        wasmNetlayerCrypto(wasm as unknown as NetlayerWasmLike),
+        {},
+      );
+      cellEngine = new CellEngine({
+        resolveCell: netlayerResolveCell(net),
+        resolveValue: netlayerResolveValue(net),
+      });
+    } else {
+      // No node configured: an empty web-of-cells — every child is `unresolved`
+      // (fail-closed), a value quote fails closed. Never a fabricated cell.
+      const web = new MapWebOfCells();
+      cellEngine = new CellEngine({ resolveCell: web.resolveCell, resolveValue: web.resolveValue });
+    }
+  }
+  return cellEngine;
+}
+
+// ---------------------------------------------------------------------------
+// Verifiable-document authoring engine — <dregg-doc>. DREGG-DOCUMENT-FOUNDATION.md,
+// wasm/src/bindings_doc.rs (`DocCollabWorld`).
+//
+// The SAME split again: this ENGINE (background, wasm-side) owns the real wasm
+// `DocCollabWorld`, resolves the document over the NETLAYER, renders the
+// ConflictView (BOTH alternatives, attributed — NEVER hidden), stages a resolution
+// pick, and PUBLISHES a real cap-gated verified turn (reseal the umem `heap_root`)
+// ONLY after the un-overlayable confirm-intent consent approves the faithful
+// reading. The element reaches it ONLY through the "dregg:doc" message — no wasm,
+// no keys, no doc graph ever leave this context. Absent a node, `defaultResolveDoc`
+// is the stand-in (a fresh document; a malformed addr fails closed) — mirrors the
+// poll engine's `defaultResolveObject` exactly.
+// ---------------------------------------------------------------------------
+
+let docEngine: DocEngine | null = null;
+
+function getDocEngine(): DocEngine {
+  requireWasm("doc");
+  if (!docEngine) {
+    const DocWorld = (wasm as unknown as { DocCollabWorld?: DocWorldCtor }).DocCollabWorld;
+    if (!DocWorld) throw new Error("DocCollabWorld unavailable in wasm module");
+    const net = new Netlayer(
+      httpsNetlayerTransport(() => ({ nodeUrl: nodeConfig.nodeUrl, devnetKey: nodeConfig.devnetKey })),
+      wasmNetlayerCrypto(wasm as unknown as NetlayerWasmLike),
+      {},
+    );
+    docEngine = new DocEngine({
+      DocWorld,
+      resolveDoc: nodeConfig.nodeUrl ? netlayerResolveDoc(net) : defaultResolveDoc,
+      // Custody consent for PUBLISH: the faithful reading shown in extension chrome
+      // the page cannot overlay or clickjack (the load-bearing property). Every
+      // publish is a real verified turn, so every publish asks — BEFORE any commit.
+      consent: (req) =>
+        showTurnConfirmation({
+          explanation: req.explanation,
+          turnId: req.turnId,
+          origin: req.origin,
+          hasUnknown: false,
+        }),
+    });
+  }
+  return docEngine;
+}
+
 async function handleMessage(message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<Record<string, unknown>> {
   // Security: strip _skipDisclosure from page-originated requests.
   if (sender?.tab && message?.request) {
@@ -3283,6 +3389,38 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
         arg: Number(message.arg ?? 0),
       } as PollPortRequest;
       const result = await getPollEngine().handle(req, origin);
+      return { id: message.id, result };
+    }
+
+    case "dregg:cell": {
+      // <dregg-embed> / <dregg-transclude>: resolve a whole child cell (five states,
+      // engine-side darkening) or a value quote (fail-closed) over the real Netlayer.
+      // The engine makes the cap/cycle decision — the page never sees the bytes.
+      const req: CellPortRequest = {
+        op: message.op as CellPortRequest["op"],
+        uri: message.uri as string,
+        pin: message.pin,
+        ancestors: message.ancestors,
+      } as CellPortRequest;
+      const result = await getCellEngine().handle(req);
+      return { id: message.id, result };
+    }
+
+    case "dregg:doc": {
+      // <dregg-doc>: resolve / render (ConflictView — both alternatives) / stitch /
+      // resolveConflict (stage a pick) / publish (a real verified turn, consent
+      // BEFORE commit) / verify (the stranger's light-client re-check). Conflict is
+      // never silently resolved or hidden — only a consented publish collapses it.
+      const origin =
+        (message._origin as string) ||
+        (sender?.tab?.url ? new URL(sender.tab.url).origin : undefined) ||
+        "unknown";
+      const req: DocPortRequest = {
+        op: message.op as DocPortRequest["op"],
+        uri: message.uri as string,
+        choice: Number(message.choice ?? 0),
+      } as DocPortRequest;
+      const result = await getDocEngine().handle(req, origin);
       return { id: message.id, result };
     }
 
@@ -4143,7 +4281,8 @@ chrome.runtime.onMessage.addListener((message: Record<string, unknown>, sender: 
     // Queue turns that need the wasm world until it is ready (the SW may still
     // be instantiating on wake) so a quiet-upgrade poll never fails closed on a
     // transient cold start rather than a real verification failure.
-    if ((message.type === "dregg:authorize" || message.type === "dregg:poll") && !ready) {
+    if ((message.type === "dregg:authorize" || message.type === "dregg:poll" ||
+         message.type === "dregg:cell" || message.type === "dregg:doc") && !ready) {
       return new Promise((resolve) => {
         pendingQueue.push({ msg: message, sender, resolve });
       });

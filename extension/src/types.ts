@@ -172,6 +172,10 @@ export type MessageType =
   | "dregg:getRecentReceipts"
   // Quiet-upgrade poll port (resolve/render/fire/verify over the wasm PollWorld)
   | "dregg:poll"
+  // Composition port — <dregg-embed> (whole child cell) / <dregg-transclude> (value quote)
+  | "dregg:cell"
+  // Verifiable-document authoring port — <dregg-doc> (resolve/render/stitch/resolveConflict/publish/verify)
+  | "dregg:doc"
   // Node configuration
   | "dregg:getNodeConfig"
   | "dregg:setNodeConfig"
