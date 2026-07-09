@@ -100,6 +100,17 @@ lanes' files, or Cargo.lock. Scale with ultracode/Workflow. Sign Co-Authored-By:
 - ✅✅ **CRITERION #2 ACHIEVED** — P2 complete: 2a 73b099d43 AIR soundness · 2b 15ae7114c FRI soundness
   (BBHR18 key lemma proved, error ≤ 1/|F|) · 2c 80835f90f `circuit_sound` is a THEOREM (residual HashCR
   alone) ⇒ `turn_sound_unconditional`: a valid receipt ⟹ correct authorized evolution under (DL∨MSIS)∧HashCR.
-- ▶ IN FLIGHT: wave 3 (wzcavo9hm: 4a/4b/4c/5c/5d/6-cap-weld) · P1-TIGHT (wh5extheb) · 4d (effect-VM semantics).
+- ✅ WAVE 3 (all 6, whole-tree green 4513): 4a 9a35d3a44 BFT liveness w/ view-change · 4b cf2694df9 blocklace
+  equivocation detector (sound+complete) + dissemination · 4c 52040c675 light-client soundness (a forged
+  history BREAKS the floor) · 5c a8e4d6658 threshold-signer refined (live vs staged path stated honestly) ·
+  5d 5b04c0dad wire handshake as an AKE game.
+- ✅✅ **CRITERION #6 ACHIEVED** — 8479e55fd THE CAP WELD: capMap is an order embedding that preserves AND
+  reflects, so the seL4 rights lattice and the protocol attenuation lattice are the SAME lattice. The
+  capability you hold in the kernel IS the one you can prove in the protocol.
+- ✅ **CRITERION #5 ACHIEVED** (5a VRF · 5b beacon · 5c threshold signer · 5d wire-AKE — every deployed impl
+  model-connected). **CRITERION #3** essentially achieved (ML-DSA both directions, ML-KEM, X25519, HKDF all
+  leanc-native; DualPRF reduced).
+- ▶ REMAINING: criterion #1 (λ ≥ 120 — P1-TIGHT wh5extheb killing the forking + O2H square roots) and 4d
+  (effect-VM real step semantics, agent ac65b7f7).
 - (superseded) WAVE 2 firing: P1 parameter-level theorem · 2a AIR soundness · 2b FRI soundness (BBHR18/DEEP-FRI) ·
   3b ML-KEM extraction · 3c X25519+HKDF extraction (DualPRF reduced) · 5b beacon refinement.
