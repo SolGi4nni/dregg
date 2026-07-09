@@ -531,11 +531,32 @@ pub enum WireMessage {
     },
 
     /// Response to a `PeerChallenge`, proving the peer holds a constitution key.
+    ///
+    /// HYBRID: the peer proves possession with BOTH a classical Ed25519
+    /// signature and a post-quantum ML-DSA-65 (FIPS 204) signature over the
+    /// SAME challenge bytes. Forging it therefore requires breaking Ed25519
+    /// discrete-log AND module-lattice SIS/LWE simultaneously — a quantum
+    /// adversary that can forge the Ed25519 half alone cannot impersonate the
+    /// peer on the gossip transport.
     PeerAuthResponse {
         /// The participant's Ed25519 public key (must be in the constitution).
         participant_key: [u8; 32],
         /// Signature over blake3("dregg-wire peer-auth v1" || nonce || server_node_id).
         signature: Signature,
+        /// The PQ half of the HYBRID: an ML-DSA-65 (FIPS 204) signature over the
+        /// SAME `peer_auth_signing_message` bytes the Ed25519 `signature`
+        /// covers. The ML-DSA key is derived deterministically from the peer's
+        /// Ed25519 seed (`dregg_turn::pq::MlDsaTurnKey::from_ed25519_seed`).
+        ///
+        /// ENROLL + PIN: the verifier checks this against the peer's ENROLLED
+        /// ML-DSA public key — bound to `participant_key` in the constitution
+        /// via `ParticipantSource::ml_dsa_pubkey_for` — NEVER a pubkey carried
+        /// in this response. The ML-DSA pubkey is therefore NOT self-carried, so
+        /// an attacker cannot present a fresh ML-DSA key of their own. `None`
+        /// marks a legacy Ed25519-only peer; a server that has an enrolled PQ
+        /// key for this identity fails CLOSED (rejects a `None` PQ half).
+        #[serde(default)]
+        pq_signature: Option<Vec<u8>>,
         /// The constitution version the peer believes is current.
         claimed_constitution_version: u64,
     },
@@ -890,6 +911,7 @@ mod tests {
             WireMessage::PeerAuthResponse {
                 participant_key: [0x77; 32],
                 signature: Signature([0x88; 64]),
+                pq_signature: Some(vec![0x99; 3309]),
                 claimed_constitution_version: 42,
             },
             WireMessage::PeerAuthenticated {
