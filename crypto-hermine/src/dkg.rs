@@ -45,8 +45,11 @@
 //! This is a REFERENCE DKG: the trust structure is real (no dealer, shares
 //! verifiable, key jointly formed), the deployment machinery is not:
 //! * **synchronous & in-process** — [`HermineDkg::run`] plays all `n` members
-//!   in one address space; there is no real broadcast channel, no
-//!   authenticated point-to-point transport, no round timeouts;
+//!   in one address space. The MESSAGE-SHAPED form of this same protocol
+//!   (each party driving its rounds against a transport abstraction) is
+//!   [`crate::ceremony::run_dkg_ceremony`]; its reference transport is still
+//!   in-memory and synchronous — no real network, no authenticated
+//!   point-to-point encryption, no round timeouts;
 //! * **detection only, no arbitration** — a bad share aborts the ceremony
 //!   with the accused dealer's index ([`DkgError::Complaint`]); the full
 //!   complaint round (accused dealer publishes the disputed share, majority
@@ -73,7 +76,7 @@ use crate::threshold::{HermineShare, SECRET_ETA};
 /// authenticated PRIVATE channel; in this in-process reference it is a plain
 /// field (which is also what lets tests tamper with it to exercise
 /// detection).
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub struct DkgShareMsg {
     /// The 1-based member index this share is addressed to.
     pub recipient: u64,
@@ -301,8 +304,8 @@ mod tests {
     use super::*;
     use crate::ring::N;
     use crate::threshold::{
-        acceptance_bound, hermine_sign, lagrange_reconstruct, signature_norm, verify_hermine,
-        MASK_WIDTH_WIDE,
+        acceptance_bound, hermine_sign, hermine_sign_raccoon, lagrange_reconstruct, signature_norm,
+        verify_hermine, verify_hermine_raccoon, MASK_WIDTH_WIDE,
     };
 
     /// k=2, ℓ=3, n=5 members, threshold t=3 — the same shape as the trusted
@@ -418,6 +421,52 @@ mod tests {
         let sub: Vec<&HermineShare> = dkg.shares[0..2].iter().collect();
         let sig = hermine_sign(&dkg.a, &dkg.group_key, &sub, 0xD6_FFFF, message).unwrap();
         assert!(!verify_hermine(&dkg.a, &dkg.group_key, message, &sig));
+    }
+
+    // -- (2b) the RACCOON 2-round ceremony runs off DKG shares end-to-end ----
+
+    #[test]
+    fn dkg_shares_sign_raccoon_two_round() {
+        // THE real production shape end-to-end: dealerless keygen feeding the
+        // Raccoon 2-round masking + commit-then-reveal ceremony — no dealer
+        // anywhere, every wᵢ hash-committed before any reveal.
+        let dkg = HermineDkg::run(ROWS, COLS, MEMBERS, THRESHOLD, SEED).unwrap();
+        let message = b"dregg-federation-vote-v1:hermine-dkg-raccoon";
+        // Shortness budget: DKG secret is a sum of n short secrets
+        // (‖s‖∞ ≤ n·η → shift ≤ N·n·η); no ρ-inflation on this path.
+        let shift = (N as u64) * MEMBERS * crate::threshold::SECRET_ETA;
+        let bound = acceptance_bound(THRESHOLD, MASK_WIDTH_WIDE, shift);
+        assert!(
+            bound < Q / 2,
+            "DKG raccoon-path acceptance must be non-vacuous"
+        );
+        for subset in [[0usize, 1, 2], [1, 3, 4]] {
+            let signers: Vec<&HermineShare> = subset.iter().map(|&i| &dkg.shares[i]).collect();
+            let sig = hermine_sign_raccoon(
+                &dkg.a,
+                &dkg.group_key,
+                &signers,
+                0x4ACC_D600 + subset[0] as u64,
+                message,
+            )
+            .unwrap();
+            assert!(verify_hermine_raccoon(
+                &dkg.a,
+                &dkg.group_key,
+                message,
+                &sig
+            ));
+            assert!(signature_norm(&sig.z) <= bound);
+        }
+        // Sub-threshold still cannot forge through the raccoon path.
+        let sub: Vec<&HermineShare> = dkg.shares[0..2].iter().collect();
+        let sig = hermine_sign_raccoon(&dkg.a, &dkg.group_key, &sub, 0x4ACC_FFFF, message).unwrap();
+        assert!(!verify_hermine_raccoon(
+            &dkg.a,
+            &dkg.group_key,
+            message,
+            &sig
+        ));
     }
 
     // -- (3) the teeth: a cheating dealer is caught and named -----------------

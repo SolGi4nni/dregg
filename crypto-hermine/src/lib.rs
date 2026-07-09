@@ -40,10 +40,13 @@
 //!   `w_i = A·y_i` bound by a blake3 hash commitment BEFORE any reveal, then
 //!   the same verify relation `A·z = w + c•t` over `w = Σ w_i` — the
 //!   concurrency security is the Hint-MLWE straight-line argument
-//!   (formalized in the metatheory separately). The FROST-style per-signer
-//!   binding factors ([`threshold::binding_factor`] /
-//!   [`threshold::hermine_sign_bound`]) are SUPERSEDED — NOT the Raccoon
-//!   mechanism — retained only for the differential/regression tests
+//!   (formalized in the metatheory separately)
+//! * beyond the Lean spec: the NETWORK-CEREMONY shape ([`ceremony`]) — the
+//!   DKG and the Raccoon 2-round signing driven as MESSAGE-PASSING protocols
+//!   over a transport abstraction ([`ceremony::Channel`]), with serde-carried
+//!   round messages and the commit-then-reveal boundary enforced by the
+//!   transport's round barrier; reference [`ceremony::LocalNetwork`] only —
+//!   a real async network transport is the next engineering layer
 //!
 //! The Lean spec is stated over an abstract `R`-linear map `A : M →ₗ[R] N`.
 //! This reference instantiates `R = R_q = ℤ_q[X]/(Xⁿ+1)` ([`ring`]),
@@ -64,9 +67,11 @@
 //!   named), final shares sum to a t-of-n sharing of `s = Σᵢ sᵢ` that no
 //!   party ever holds. The trusted [`threshold::HermineTestDealer`] remains
 //!   ONLY for known-secret algebra tests. The DKG itself is still a
-//!   REFERENCE: synchronous/in-process (no broadcast channel or network),
-//!   detection without complaint-round arbitration, no rushing-adversary
-//!   bias fix (Gennaro et al.), reference PRNG — see [`dkg`]'s boundary doc;
+//!   REFERENCE: message-shaped over a transport abstraction
+//!   ([`ceremony::run_dkg_ceremony`]) but with an in-memory synchronous
+//!   reference transport only, detection without complaint-round
+//!   arbitration, no rushing-adversary bias fix (Gennaro et al.), reference
+//!   PRNG — see [`dkg`]'s and [`ceremony`]'s boundary docs;
 //! * **concurrency defense = Raccoon commit-then-reveal (reference)** — the
 //!   concurrent/rushing-adversary defense is the Raccoon-aligned 2-round
 //!   ceremony ([`threshold::hermine_sign_raccoon`]): Round 1 broadcasts only
@@ -75,11 +80,10 @@
 //!   then `w = Σ w_i`, a domain-separated blake3 challenge, and the
 //!   unchanged threshold algebra. The concurrency security argument is
 //!   STRAIGHT-LINE under Hint-MLWE (the metatheory's leg, not this crate's);
-//!   this reference is in-process (no network transport), non-constant-time,
-//!   pre-audit. The FROST-style binding factors
-//!   ([`threshold::hermine_sign_bound`] / [`threshold::binding_factor`]) are
-//!   SUPERSEDED — not the Raccoon mechanism — and stay only as
-//!   differential/regression material. The unbound [`threshold::hermine_sign`]
+//!   the ceremony is MESSAGE-SHAPED over a transport abstraction
+//!   ([`ceremony`]) but the reference transport is in-memory and synchronous
+//!   (no real network, timeouts, or retransmission), non-constant-time,
+//!   pre-audit. The unbound [`threshold::hermine_sign`]
 //!   remains single-ceremony-only (its shared-commitment fork is the
 //!   extractor tests' hypothesis);
 //! * **reference PRNG, non-constant-time samplers** — noise-flooding now
@@ -104,11 +108,12 @@
 //!   from the parameter-search literature;
 //! * **not constant-time**, and no zeroization of secrets.
 //!
-//! The production signer needs the DKG's deployment machinery (real
-//! broadcast/private channels, complaint-round arbitration, the bias fix),
-//! real transport for the 2-round commit/reveal broadcasts (plus the
-//! Hint-MLWE straight-line concurrency formalization, the metatheory's
-//! leg), a CSPRNG,
+//! The production signer needs the DKG's deployment machinery (a REAL
+//! network transport behind the [`ceremony::Channel`] seam — encrypted
+//! private channels, timeouts, retransmission — complaint-round arbitration,
+//! the bias fix; the PROTOCOL is already message-shaped in [`ceremony`]),
+//! plus the Hint-MLWE straight-line concurrency formalization (the
+//! metatheory's leg), a CSPRNG,
 //! constant-time arithmetic and sampling, full-size parameters, and external
 //! audit. This crate's value is different: every identity the
 //! Lean proofs establish is witnessed here on concrete `R_q` numbers —
@@ -117,22 +122,27 @@
 //! (production-shaped) forms — so the spec and the reference cannot
 //! silently drift apart.
 
+pub mod ceremony;
 pub mod dkg;
 pub mod linalg;
 pub mod ring;
 pub mod threshold;
 
+pub use ceremony::{
+    run_dkg_ceremony, run_sign_ceremony, CeremonyError, Channel, ChannelError, DkgAckMsg,
+    DkgCeremonyParams, DkgDealingMsg, DkgPartyOutput, LocalChannel, LocalNetwork,
+    RaccoonResponseMsg,
+};
 pub use dkg::{dkg_deal, verify_dkg_share, DkgDealing, DkgError, DkgShareMsg, HermineDkg};
 pub use linalg::{Matrix, PolyVec};
 pub use ring::{Poly, N, Q};
 pub use threshold::{
-    acceptance_bound, binding_factor, extract_preimage, extracted_relation, hermine_sign,
-    hermine_sign_bound, hermine_sign_gaussian, hermine_sign_raccoon, hermine_sign_with_mask_width,
-    lagrange_reconstruct, partial_response, raccoon_challenge, raccoon_commitment,
-    sample_gaussian_mask, sample_wide_mask, signature_norm, verify_hermine, verify_hermine_raccoon,
-    DiscreteGaussian, HermineShare, HermineSignature, HermineTestDealer, NonceCommitment,
-    RaccoonCommitMsg, RaccoonError, RaccoonRevealMsg, RaccoonSignSession, RaccoonSigner,
-    BINDING_WEIGHT, GAUSSIAN_TAIL_CUT, MASK_WIDTH_BOUND, MASK_WIDTH_WIDE, SECRET_ETA,
+    acceptance_bound, extract_preimage, extracted_relation, hermine_sign, hermine_sign_gaussian,
+    hermine_sign_raccoon, hermine_sign_with_mask_width, lagrange_reconstruct, partial_response,
+    raccoon_challenge, raccoon_commitment, sample_gaussian_mask, sample_wide_mask, signature_norm,
+    verify_hermine, verify_hermine_raccoon, DiscreteGaussian, HermineShare, HermineSignature,
+    HermineTestDealer, RaccoonCommitMsg, RaccoonError, RaccoonRevealMsg, RaccoonSignSession,
+    RaccoonSigner, GAUSSIAN_TAIL_CUT, MASK_WIDTH_WIDE, SECRET_ETA,
 };
 
 /// Lattice verification — the Lean `HermineThreshold.verify`, symbol for

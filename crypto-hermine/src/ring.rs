@@ -136,6 +136,37 @@ impl Poly {
     }
 }
 
+// ============================================================================
+// serde — the wire encoding of a ring element (the ceremony messages ride it)
+// ============================================================================
+
+/// Serialize a [`Poly`] as its coefficient sequence (`N` integers in
+/// `[0, Q)`). Manual impl: serde's derive stops at 32-element arrays, and the
+/// wire form of a ring element IS its coefficient list.
+impl serde::Serialize for Poly {
+    fn serialize<S: serde::Serializer>(&self, s: S) -> Result<S::Ok, S::Error> {
+        s.collect_seq(self.coeffs.iter())
+    }
+}
+
+/// Deserialize a [`Poly`] with WIRE HYGIENE: exactly `N` coefficients, each
+/// already reduced mod `q` — a mis-shaped or out-of-range ring element from a
+/// remote party is a decode error, not a silent aliasing.
+impl<'de> serde::Deserialize<'de> for Poly {
+    fn deserialize<D: serde::Deserializer<'de>>(d: D) -> Result<Self, D::Error> {
+        let v: Vec<u64> = Vec::deserialize(d)?;
+        let coeffs: [u64; N] = v.try_into().map_err(|v: Vec<u64>| {
+            serde::de::Error::invalid_length(v.len(), &"exactly N ring coefficients")
+        })?;
+        if coeffs.iter().any(|&c| c >= Q) {
+            return Err(serde::de::Error::custom(
+                "ring coefficient not reduced mod q",
+            ));
+        }
+        Ok(Poly { coeffs })
+    }
+}
+
 /// `a⁻¹ mod q` by Fermat (q prime), or `None` for `a ≡ 0`.
 pub fn inv_mod_q(a: u64) -> Option<u64> {
     let a = a % Q;

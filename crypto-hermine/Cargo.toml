@@ -19,6 +19,10 @@ rand_chacha = "0.3"
 rand_core = "0.6"
 subtle = "2"
 # Real hash for the Raccoon 2-round ceremony (the commit-then-reveal hash
-# commitments cm_i and the domain-separated session challenge) and for the
-# SUPERSEDED FROST-style binding factors (differential/regression only).
+# commitments cm_i and the domain-separated session challenge).
 blake3 = "1"
+# The network-ceremony shape (src/ceremony.rs): round messages are serde
+# types so a real transport can carry them; the in-memory reference channel
+# routes serde_json BYTES (the messages provably survive a byte transport).
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
