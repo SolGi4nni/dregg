@@ -177,3 +177,17 @@ doc-soundness ride the REAL one. STOPPING the autonomous lane-firing until this 
 what produced the inflated claims.
 - done-log: free-text authoring landed (d2debaf80). Then caught + owned: DocSubstrateSound proves a sponge
   model, not the code's Merkle tree — "proven on the real commit" retracted pending the correct-scheme decision.
+
+## ✅ AUDIT RESULT (verified on the real tree, reading the modules) — the code IS proven; I rode the WRONG model
+NOT a floating proof: the code's Merkle heap-root is FAITHFULLY proven — Circuit/MapMerkleRoot.mapRoot_injective
+(depth-16 binary map root, "against perfectRoot_injective NOT the sponge") + Circuit/DeployedHeapTree
+(Heap8Scheme arity-2 [addr,value] leaf, membersAt8_functional = "the 8-felt root binds the opened (addr,value)",
+over the deployed compute_canonical_heap_root_8 fold), #assert_axioms-clean. The tree flags the sponge as
+SUPERSEDED: DeployedCapTree = "THE HONEST replacement for the flat-sponge Substrate.Heap opensTo".
+MY PRECISE ERROR: DocSubstrateSound (bd541b9bc) rode Substrate/Heap.root (the SUPERSEDED sponge model), not the
+faithful Merkle proof that models the code. So it proved doc-soundness over a retired model, not the code's root.
+DESIGN QUESTION DISSOLVES: the Merkle tree IS the correct scheme AND is proven — no scheme decision needed.
+FIX (bounded, correcting my own commit): re-home DocSubstrateSound to compose over DeployedHeapTree.membersAt8_
+functional (the REAL root binding (addr,value)) instead of the sponge's root_binds_get. Then the doc-soundness
+rides the root the code actually computes.
+- done-log: audited honestly — code's Merkle root proven; DocSubstrateSound rode the superseded sponge; re-homing onto the faithful Merkle proof now.
