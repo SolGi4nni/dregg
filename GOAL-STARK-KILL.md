@@ -545,8 +545,10 @@ test_ring_membership_unlinkable depend on it). ember chose: BUILD the blinded-me
     honest_two_shows_unlinkable (anonymity proven IN-CIRCUIT). Axiom-clean. Verified on my tree.
   ✅ S3d-2 DONE (02fc76cb3): blinded_membership_binding_from_fold — 10th carrier; ring+unlinkability ride
     the fold to the root. Payload+corollary+poles NO axioms; welds to deployed leaf. Verified my tree.
-  S3d-3: witness builder + descriptor_by_name arm + fold adapter (mirror bound_presentation_witness +
-    presentation_leaf_adapter).
+  ✅ S3d-3 DONE (c1ebf5910): blinded_membership_witness + blinded_membership_leaf_adapter + dispatch arm
+    — usable+foldable end-to-end, 14 tests, unlinkability at witness AND fold levels. (+ a cross-lane
+    turn/action.rs E0282 unblock committed separately.) Position-0 leftmost-child (like merkle);
+    position-general = a named descriptor-lane follow-up.
   S3d-4: THEN S3c flip — RealPresentationProof carries BOTH wires (bound-presentation for auth +
     blinded-membership for ring/unlinkability); flip the 4 verify fns + verify_anonymous_presentation +
     the anonymity tests onto them. → 0 true-live stark in presentation → S4 git rm.
