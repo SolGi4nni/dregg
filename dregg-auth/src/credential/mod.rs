@@ -65,11 +65,14 @@
 
 mod caveat;
 mod chain;
+mod pq;
 mod pred;
 mod wire;
 
 pub use caveat::{Caveat, Context};
-pub use chain::{Credential, Discharge, GatewayKey, KeyError, PublicKey, Refusal, RootKey};
+pub use chain::{
+    Credential, Discharge, GatewayKey, HybridRootPublic, KeyError, PublicKey, Refusal, RootKey,
+};
 pub use pred::{Pred, Unbound};
 pub use wire::{CREDENTIAL_PREFIX, DISCHARGE_PREFIX, WireError};
 

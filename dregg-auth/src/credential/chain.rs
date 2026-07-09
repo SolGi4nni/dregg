@@ -37,6 +37,7 @@ use serde::Serialize;
 
 use super::caveat::{Caveat, Context};
 use super::hex;
+use super::pq;
 use super::pred::{Pred, Unbound};
 
 /// Domain-separation contexts for every BLAKE3 derivation (versioned with the
@@ -66,6 +67,20 @@ impl PublicKey {
 #[derive(Clone, Debug, PartialEq, Eq, thiserror::Error)]
 #[error("invalid key: {0}")]
 pub struct KeyError(pub(crate) String);
+
+/// The **enrolled hybrid root** a verifier holds for [`Credential::verify_hybrid`]:
+/// the ed25519 root public key AND the root authority's ML-DSA-65 public key
+/// (1952 bytes, FIPS 204). Both are the trust anchor; the PQ half is enrolled,
+/// never derived from the ed25519 half and never asserted by the credential
+/// itself. Obtain it from [`RootKey::public_hybrid`]; publish it wherever the
+/// classical [`PublicKey`] is published.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct HybridRootPublic {
+    /// The classical ed25519 root public key.
+    pub ed25519: PublicKey,
+    /// The root authority's serialized ML-DSA-65 public key.
+    pub ml_dsa: Vec<u8>,
+}
 
 fn fresh_signing_key() -> SigningKey {
     let mut seed = [0u8; 32];
@@ -108,6 +123,18 @@ impl RootKey {
         PublicKey(self.key.verifying_key().to_bytes())
     }
 
+    /// The **enrolled hybrid root** verifiers hold for the post-quantum path:
+    /// the ed25519 public key plus this root's ML-DSA-65 public key (derived
+    /// from the same seed). Pass it to [`Credential::verify_hybrid`]. This is
+    /// the PQ trust anchor — the ML-DSA half a credential's chain roots at, and
+    /// which no credential may assert for itself.
+    pub fn public_hybrid(&self) -> HybridRootPublic {
+        HybridRootPublic {
+            ed25519: self.public(),
+            ml_dsa: pq::ml_dsa_public_from_seed(&self.key.to_bytes()).to_vec(),
+        }
+    }
+
     /// Mint a root credential carrying `caveats` (the root grant).
     ///
     /// Lean: constructing the `Token` with its initial caveat list
@@ -119,14 +146,20 @@ impl RootKey {
         let caveats: Vec<Caveat> = caveats.into_iter().collect();
         let next = fresh_signing_key();
         let next_pub = next.verifying_key().to_bytes();
-        let msg = block_digest(&nonce, &caveats, &next_pub);
+        let next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&next.to_bytes()).to_vec();
+        let msg = block_digest(&nonce, &caveats, &next_pub, &next_pub_ml_dsa);
         let sig = self.key.sign(&msg).to_bytes();
+        let sig_ml_dsa = pq::ml_dsa_sign(&self.key.to_bytes(), &msg)
+            .expect("ml-dsa signing is available")
+            .to_vec();
         Credential {
             nonce,
             blocks: vec![Block {
                 caveats,
                 next_pub,
+                next_pub_ml_dsa,
                 sig,
+                sig_ml_dsa,
             }],
             proof: next,
         }
@@ -201,7 +234,16 @@ impl GatewayKey {
 pub(crate) struct Block {
     pub(crate) caveats: Vec<Caveat>,
     pub(crate) next_pub: [u8; 32],
+    /// The ML-DSA-65 public key of the *next* block's signer — the PQ half of
+    /// the carried attenuation key. Covered by THIS block's ed25519 ∧ ML-DSA
+    /// signatures (it is hashed into `block_digest`), so a self-inserted PQ key
+    /// not authorized by the parent fails: the chain's PQ integrity roots at
+    /// the enrolled [`HybridRootPublic`], never a self-asserted per-block key.
+    pub(crate) next_pub_ml_dsa: Vec<u8>,
     pub(crate) sig: [u8; 64],
+    /// The ML-DSA-65 signature over the SAME `block_digest` the ed25519 `sig`
+    /// covers — the hybrid half. Verified in [`Credential::verify_hybrid`].
+    pub(crate) sig_ml_dsa: Vec<u8>,
 }
 
 /// An attenuable, offline-verifiable credential — the token.
@@ -247,17 +289,23 @@ impl Credential {
         let caveats: Vec<Caveat> = caveats.into_iter().collect();
         let next = fresh_signing_key();
         let next_pub = next.verifying_key().to_bytes();
+        let next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&next.to_bytes()).to_vec();
         let prev_sig = self
             .blocks
             .last()
             .expect("a credential has a root block")
             .sig;
-        let msg = block_digest(&prev_sig, &caveats, &next_pub);
+        let msg = block_digest(&prev_sig, &caveats, &next_pub, &next_pub_ml_dsa);
         let sig = self.proof.sign(&msg).to_bytes();
+        let sig_ml_dsa = pq::ml_dsa_sign(&self.proof.to_bytes(), &msg)
+            .expect("ml-dsa signing is available")
+            .to_vec();
         self.blocks.push(Block {
             caveats,
             next_pub,
+            next_pub_ml_dsa,
             sig,
+            sig_ml_dsa,
         });
         self.proof = next;
         self
@@ -310,8 +358,15 @@ impl Credential {
         let mut prev: Option<[u8; 64]> = None;
         for (i, block) in self.blocks.iter().enumerate() {
             let msg = match prev {
-                None => block_digest(&self.nonce, &block.caveats, &block.next_pub),
-                Some(ps) => block_digest(&ps, &block.caveats, &block.next_pub),
+                None => block_digest(
+                    &self.nonce,
+                    &block.caveats,
+                    &block.next_pub,
+                    &block.next_pub_ml_dsa,
+                ),
+                Some(ps) => {
+                    block_digest(&ps, &block.caveats, &block.next_pub, &block.next_pub_ml_dsa)
+                }
             };
             let sig = Signature::from_bytes(&block.sig);
             vkey.verify(&msg, &sig)
@@ -322,6 +377,82 @@ impl Credential {
         }
 
         // 3. The meet of all caveats (Token.admits) — fail-closed.
+        self.check_caveats(ctx)
+    }
+
+    /// Verify this credential HYBRID: the ed25519 ∧ ML-DSA-65 signature chain
+    /// from the **enrolled** [`HybridRootPublic`], plus the same possession and
+    /// caveat gates as [`Credential::verify`] — fully offline, deterministic,
+    /// quantum-safe.
+    ///
+    /// This is the post-quantum verification. Where [`verify`](Self::verify)
+    /// anchors only ed25519 (the classical/compat path), this anchors BOTH the
+    /// ed25519 AND the ML-DSA-65 root under the verifier's enrolled hybrid root
+    /// key. A block verifies only when BOTH halves check; forging an
+    /// attenuation therefore requires breaking ed25519 discrete-log AND
+    /// module-lattice SIS/LWE simultaneously.
+    ///
+    /// **Enroll + pin.** The PQ trust anchor is the enrolled `root.ml_dsa` — NOT
+    /// a key the credential carries for itself. Each block's carried next
+    /// ML-DSA key is covered by its parent's (hybrid) signatures back to the
+    /// enrolled root, so a self-inserted ML-DSA key — or a PQ half signed under
+    /// a key the parent never authorized — fails closed. A missing or malformed
+    /// PQ half is a [`Refusal::BadPqSignature`], never a silent downgrade.
+    pub fn verify_hybrid(&self, root: &HybridRootPublic, ctx: &Context) -> Result<(), Refusal> {
+        // 1. Proof of possession, BOTH halves: the carried tail key (ed25519
+        //    and ML-DSA, both derived from the same held seed) must match the
+        //    last block's next keys. Without the PQ half, a quantum forger who
+        //    broke ed25519 could still not present a stripped prefix.
+        let last = self.blocks.last().expect("a credential has a root block");
+        if self.proof.verifying_key().to_bytes() != last.next_pub {
+            return Err(Refusal::ProofMismatch);
+        }
+        if pq::ml_dsa_public_from_seed(&self.proof.to_bytes()).as_slice()
+            != last.next_pub_ml_dsa.as_slice()
+        {
+            return Err(Refusal::PqProofMismatch);
+        }
+
+        // 2. The hybrid signature chain, anchored at the ENROLLED hybrid root
+        //    (ed25519 ∧ ML-DSA). Each block advances to its carried next hybrid
+        //    key, which the just-verified signatures pinned.
+        let mut vkey = VerifyingKey::from_bytes(&root.ed25519.0)
+            .map_err(|_| Refusal::MalformedKey { block: 0 })?;
+        let mut pq_vkey: Vec<u8> = root.ml_dsa.clone();
+        let mut prev: Option<[u8; 64]> = None;
+        for (i, block) in self.blocks.iter().enumerate() {
+            let msg = match prev {
+                None => block_digest(
+                    &self.nonce,
+                    &block.caveats,
+                    &block.next_pub,
+                    &block.next_pub_ml_dsa,
+                ),
+                Some(ps) => {
+                    block_digest(&ps, &block.caveats, &block.next_pub, &block.next_pub_ml_dsa)
+                }
+            };
+            let sig = Signature::from_bytes(&block.sig);
+            vkey.verify(&msg, &sig)
+                .map_err(|_| Refusal::BadSignature { block: i })?;
+            // The PQ half over the SAME digest, under the parent-pinned key.
+            if !pq::ml_dsa_verify(&pq_vkey, &msg, &block.sig_ml_dsa) {
+                return Err(Refusal::BadPqSignature { block: i });
+            }
+            vkey = VerifyingKey::from_bytes(&block.next_pub)
+                .map_err(|_| Refusal::MalformedKey { block: i })?;
+            pq_vkey = block.next_pub_ml_dsa.clone();
+            prev = Some(block.sig);
+        }
+
+        // 3. The meet of all caveats (Token.admits) — fail-closed.
+        self.check_caveats(ctx)
+    }
+
+    /// The meet of all caveats (`Token.admits`) — fail-closed, shared by
+    /// [`verify`](Self::verify) and [`verify_hybrid`](Self::verify_hybrid). The
+    /// signature/possession gates differ; the authorization decision does not.
+    fn check_caveats(&self, ctx: &Context) -> Result<(), Refusal> {
         let tail = self.tail();
         for (block, caveat) in self.caveats() {
             match caveat {
@@ -549,6 +680,22 @@ pub enum Refusal {
         /// Index of the offending block.
         block: usize,
     },
+    /// A block's ML-DSA-65 (PQ) signature did not verify under the
+    /// parent-pinned (or enrolled-root) ML-DSA key — a forged, tampered, or
+    /// self-inserted PQ half, OR a missing/malformed one (fail-closed). This is
+    /// the post-quantum forged-block tooth of [`Credential::verify_hybrid`].
+    #[error(
+        "refused: block {block} ML-DSA signature does not verify under its parent-pinned PQ key"
+    )]
+    BadPqSignature {
+        /// Index of the offending block.
+        block: usize,
+    },
+    /// The carried proof key's ML-DSA-65 half does not match the last block's
+    /// pinned PQ key — a stripped or reassembled chain caught by the PQ
+    /// possession check (the quantum-safe analog of [`Refusal::ProofMismatch`]).
+    #[error("refused: proof-of-possession ML-DSA key does not match the credential tail")]
+    PqProofMismatch,
     /// A chained verification key (or the root key) is not a valid ed25519
     /// point.
     #[error("refused: block {block} carries a malformed verification key")]
@@ -636,14 +783,23 @@ pub enum Refusal {
 }
 
 /// The signed digest of one block: BLAKE3 (domain-separated) over
-/// `seed-or-parent-sig || postcard(caveats) || next_pub`. Fixed-width fields at
-/// both ends make the concatenation unambiguous; postcard is deterministic for
-/// a given type, so the encoding is canonical.
-fn block_digest(prev: &[u8], caveats: &[Caveat], next_pub: &[u8; 32]) -> [u8; 32] {
+/// `seed-or-parent-sig || postcard(caveats) || next_pub || next_pub_ml_dsa`.
+/// Fixed-width fields at both ends make the concatenation unambiguous; postcard
+/// is deterministic for a given type, so the encoding is canonical. The next
+/// block's ML-DSA-65 public key is INSIDE the digest, so BOTH of this block's
+/// signatures (ed25519 and ML-DSA) cover — and thereby PIN — the child's PQ
+/// key: a self-inserted PQ key not authorized by this parent cannot verify.
+fn block_digest(
+    prev: &[u8],
+    caveats: &[Caveat],
+    next_pub: &[u8; 32],
+    next_pub_ml_dsa: &[u8],
+) -> [u8; 32] {
     let mut h = blake3::Hasher::new_derive_key(BLOCK_CTX);
     h.update(prev);
     h.update(&postcard::to_stdvec(caveats).expect("caveat encoding is total"));
     h.update(next_pub);
+    h.update(next_pub_ml_dsa);
     *h.finalize().as_bytes()
 }
 
@@ -669,4 +825,134 @@ fn discharge_digest(caveat_id: &[u8], caveats: &[Pred], binding: Option<&[u8; 32
         .expect("discharge encoding is total"),
     );
     *h.finalize().as_bytes()
+}
+
+#[cfg(test)]
+mod hybrid_pq_tests {
+    //! The HYBRID (ed25519 ∧ ML-DSA-65) chain verify, its enroll+pin root, and
+    //! the adversarial teeth: an attacker's PQ half, a missing PQ half, a
+    //! swapped carried PQ key, a wrong enrolled root, and PQ possession.
+    use super::*;
+
+    fn read_caveat() -> Caveat {
+        Caveat::FirstParty(Pred::AttrEq {
+            key: "tool".into(),
+            value: "read".into(),
+        })
+    }
+    fn ok_ctx() -> Context {
+        Context::new().at(10).attr("tool", "read")
+    }
+
+    #[test]
+    fn honest_hybrid_chain_passes() {
+        let root = RootKey::from_seed([21u8; 32]);
+        let cred = root.mint([read_caveat()]).attenuate([read_caveat()]);
+        // Both the classical and the enrolled-hybrid path admit the honest chain.
+        assert_eq!(cred.verify(&root.public(), &ok_ctx()), Ok(()));
+        assert_eq!(cred.verify_hybrid(&root.public_hybrid(), &ok_ctx()), Ok(()));
+    }
+
+    #[test]
+    fn attacker_ml_dsa_half_rejected_ed25519_still_valid() {
+        let root = RootKey::from_seed([22u8; 32]);
+        let mut cred = root.mint([read_caveat()]).attenuate([read_caveat()]);
+
+        // Attacker forges the PQ half of the attenuation block (block 1) under
+        // their OWN ML-DSA key, over the exact honest digest — the ed25519
+        // chain is untouched and remains valid.
+        let attacker_seed = [0xAAu8; 32];
+        let prev_sig = cred.blocks[0].sig;
+        let (caveats, next_pub, next_pub_ml_dsa) = {
+            let b1 = &cred.blocks[1];
+            (b1.caveats.clone(), b1.next_pub, b1.next_pub_ml_dsa.clone())
+        };
+        let digest = block_digest(&prev_sig, &caveats, &next_pub, &next_pub_ml_dsa);
+        cred.blocks[1].sig_ml_dsa = pq::ml_dsa_sign(&attacker_seed, &digest).unwrap().to_vec();
+
+        // The ed25519 chain is still valid: the classical path passes.
+        assert_eq!(cred.verify(&root.public(), &ok_ctx()), Ok(()));
+        // The HYBRID path REJECTS: block 1's PQ key is pinned by block 0 to the
+        // honest key, which the attacker's ML-DSA signature does not match.
+        assert_eq!(
+            cred.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
+            Err(Refusal::BadPqSignature { block: 1 })
+        );
+    }
+
+    #[test]
+    fn missing_pq_half_fails_closed() {
+        let root = RootKey::from_seed([23u8; 32]);
+        let mut cred = root.mint([read_caveat()]).attenuate([read_caveat()]);
+        cred.blocks[1].sig_ml_dsa = Vec::new();
+        assert_eq!(
+            cred.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
+            Err(Refusal::BadPqSignature { block: 1 })
+        );
+    }
+
+    #[test]
+    fn swapping_the_carried_pq_key_breaks_the_signature() {
+        // The PIN is enforced by BOTH halves: the ed25519 signature also covers
+        // the child's carried ML-DSA key, so swapping in an attacker PQ key at
+        // block 0 cannot keep even the ed25519 chain valid.
+        let root = RootKey::from_seed([24u8; 32]);
+        let mut cred = root.mint([read_caveat()]).attenuate([read_caveat()]);
+        cred.blocks[0].next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&[0xBBu8; 32]).to_vec();
+        assert_eq!(
+            cred.verify(&root.public(), &ok_ctx()),
+            Err(Refusal::BadSignature { block: 0 })
+        );
+        assert_eq!(
+            cred.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
+            Err(Refusal::BadSignature { block: 0 })
+        );
+    }
+
+    #[test]
+    fn pq_roots_at_enrolled_root_not_self_asserted() {
+        // The PQ chain roots at the ENROLLED hybrid root, never a self-asserted
+        // key. A verifier enrolling the wrong ML-DSA root rejects at block 0.
+        let root = RootKey::from_seed([25u8; 32]);
+        let attacker_root = RootKey::from_seed([26u8; 32]);
+        let cred = root.mint([read_caveat()]);
+        // Correct ed25519 root, attacker's ML-DSA root: the PQ half rejects.
+        let mixed = HybridRootPublic {
+            ed25519: root.public(),
+            ml_dsa: attacker_root.public_hybrid().ml_dsa,
+        };
+        assert_eq!(
+            cred.verify_hybrid(&mixed, &ok_ctx()),
+            Err(Refusal::BadPqSignature { block: 0 })
+        );
+        // An entirely wrong enrolled root: the ed25519 half rejects first.
+        assert_eq!(
+            cred.verify_hybrid(&attacker_root.public_hybrid(), &ok_ctx()),
+            Err(Refusal::BadSignature { block: 0 })
+        );
+    }
+
+    #[test]
+    fn pq_possession_mismatch_rejected() {
+        // The tail block's carried ML-DSA key must match the held proof seed —
+        // the quantum-safe possession gate. Swap it and the gate fails closed.
+        let root = RootKey::from_seed([27u8; 32]);
+        let mut cred = root.mint([read_caveat()]);
+        cred.blocks[0].next_pub_ml_dsa = pq::ml_dsa_public_from_seed(&[0xCCu8; 32]).to_vec();
+        assert_eq!(
+            cred.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
+            Err(Refusal::PqProofMismatch)
+        );
+    }
+
+    #[test]
+    fn hybrid_survives_the_wire_roundtrip() {
+        let root = RootKey::from_seed([28u8; 32]);
+        let cred = root.mint([read_caveat()]).attenuate([read_caveat()]);
+        let decoded = Credential::decode(&cred.encode()).expect("decode");
+        assert_eq!(
+            decoded.verify_hybrid(&root.public_hybrid(), &ok_ctx()),
+            Ok(())
+        );
+    }
 }

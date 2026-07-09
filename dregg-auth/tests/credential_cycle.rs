@@ -205,7 +205,10 @@ fn tampered_signature_is_refused() {
         .unwrap();
     // Flip a byte in the middle of the chain (a block signature / caveat
     // byte): either the schema breaks or a signature stops verifying. Both
-    // are refusals — never a silent wider grant.
+    // are refusals — never a silent wider grant. The whole-wire integrity
+    // check is the HYBRID verifier (ed25519 ∧ ML-DSA): it covers the PQ
+    // signature/key bytes the classical ed25519-only path does not, so a
+    // tamper anywhere in the wire is caught by `verify_hybrid`.
     let mid = bytes.len() / 2;
     bytes[mid] ^= 0x40;
     let tampered = format!("{CREDENTIAL_PREFIX}{}", eng.encode(bytes));
@@ -213,8 +216,8 @@ fn tampered_signature_is_refused() {
         Err(_) => {} // schema-level refusal
         Ok(c) => {
             let ctx = Context::new().at(1).attr("tool", "read");
-            let v = c.verify(&root.public(), &ctx);
-            assert!(v.is_err(), "tampered credential must not verify");
+            let v = c.verify_hybrid(&root.public_hybrid(), &ctx);
+            assert!(v.is_err(), "tampered credential must not verify (hybrid)");
         }
     }
 }

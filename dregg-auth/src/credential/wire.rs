@@ -56,8 +56,14 @@ pub enum WireError {
 struct BlockWire {
     caveats: Vec<Caveat>,
     next_pub: [u8; 32],
-    /// 64 signature bytes (postcard byte-seq; length checked on decode).
+    /// The next block's ML-DSA-65 public key (FIPS 204 = 1952 bytes; length
+    /// checked on decode). The PQ half of the carried attenuation key.
+    next_pub_ml_dsa: Vec<u8>,
+    /// 64 ed25519 signature bytes (postcard byte-seq; length checked on decode).
     sig: Vec<u8>,
+    /// The ML-DSA-65 signature over the same block digest (length checked on
+    /// decode). A missing/short PQ half fails structurally — fail-closed.
+    sig_ml_dsa: Vec<u8>,
 }
 
 #[derive(Serialize, Deserialize)]
@@ -83,6 +89,24 @@ fn sig64(v: &[u8]) -> Result<[u8; 64], WireError> {
         .map_err(|_| WireError::Malformed("signature is not 64 bytes"))
 }
 
+/// Structural fail-closed check on a block's PQ half: the carried ML-DSA public
+/// key and signature must be exactly the FIPS 204 lengths. A missing or
+/// truncated PQ half is rejected here, before any cryptographic check.
+fn check_pq_lengths(next_pub_ml_dsa: &[u8], sig_ml_dsa: &[u8]) -> Result<(), WireError> {
+    use super::pq::{ML_DSA_PK_LEN, ML_DSA_SIG_LEN};
+    if next_pub_ml_dsa.len() != ML_DSA_PK_LEN {
+        return Err(WireError::Malformed(
+            "block ML-DSA public key is not the FIPS 204 length (missing/truncated PQ half)",
+        ));
+    }
+    if sig_ml_dsa.len() != ML_DSA_SIG_LEN {
+        return Err(WireError::Malformed(
+            "block ML-DSA signature is not the FIPS 204 length (missing/truncated PQ half)",
+        ));
+    }
+    Ok(())
+}
+
 impl Credential {
     /// Encode to the `dga1_…` string form. **Bearer**: the string carries the
     /// tail key, i.e. both the right to present and the right to attenuate
@@ -96,7 +120,9 @@ impl Credential {
                 .map(|b| BlockWire {
                     caveats: b.caveats.clone(),
                     next_pub: b.next_pub,
+                    next_pub_ml_dsa: b.next_pub_ml_dsa.clone(),
                     sig: b.sig.to_vec(),
+                    sig_ml_dsa: b.sig_ml_dsa.clone(),
                 })
                 .collect(),
             proof_seed: self.proof.to_bytes(),
@@ -126,10 +152,13 @@ impl Credential {
             .blocks
             .iter()
             .map(|b| {
+                check_pq_lengths(&b.next_pub_ml_dsa, &b.sig_ml_dsa)?;
                 Ok(Block {
                     caveats: b.caveats.clone(),
                     next_pub: b.next_pub,
+                    next_pub_ml_dsa: b.next_pub_ml_dsa.clone(),
                     sig: sig64(&b.sig)?,
+                    sig_ml_dsa: b.sig_ml_dsa.clone(),
                 })
             })
             .collect::<Result<Vec<_>, WireError>>()?;
