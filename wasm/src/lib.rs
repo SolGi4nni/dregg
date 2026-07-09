@@ -537,20 +537,23 @@ pub fn generate_predicate_proof(
     attribute_key: &str,
     state_root: u32,
 ) -> Result<JsValue, JsError> {
+    use dregg_circuit::descriptor_by_name::descriptor_by_name;
+    use dregg_circuit::descriptor_ir2::{
+        MemBoundaryWitness, prove_vm_descriptor2, verify_vm_descriptor2,
+    };
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::poseidon2;
-    use dregg_circuit::predicate_types::{PredicateType, PredicateWitness, prove_predicate};
+    use dregg_circuit::predicate_arith_witness::{PREDICATE_ARITH_NAME, predicate_arith_witness};
+    use dregg_circuit::predicate_comparison_witness::{
+        PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
+        PREDICATE_ARITH_NEQ_NAME, predicate_gt_witness, predicate_le_witness, predicate_lt_witness,
+        predicate_neq_witness,
+    };
 
     let start = perf_now();
 
-    let pred_type = match predicate_type {
-        "gte" | "Gte" | "GTE" | ">=" => PredicateType::Gte,
-        "lte" | "Lte" | "LTE" | "<=" => PredicateType::Lte,
-        "gt" | "Gt" | "GT" | ">" => PredicateType::Gt,
-        "lt" | "Lt" | "LT" | "<" => PredicateType::Lt,
-        "neq" | "Neq" | "NEQ" | "!=" => PredicateType::Neq,
-        other => return Err(JsError::new(&format!("unknown predicate type: {other}"))),
-    };
+    let v = private_value as u64;
+    let t = threshold as u64;
 
     // Compute fact hash from attribute key.
     let fact_hash = poseidon2::hash_bytes(attribute_key.as_bytes());
@@ -565,33 +568,74 @@ pub fn generate_predicate_proof(
         .map_err(|e| JsError::new(&format!("getrandom failed: {e}")))?;
     let blinding = BabyBear::from_u64(u64::from_le_bytes(blinding_bytes));
 
+    // The fact commitment binds the predicate to token state (opaque pass-through public input of
+    // the arithmetic-predicate descriptors). Unchanged blinded Poseidon2 commitment: only
+    // `predicate_types::{prove,verify}_predicate` were deleted; `predicate_types` survives as a
+    // backward-compat alias and still re-exports `compute_blinded_fact_commitment`.
     let fact_commitment = dregg_circuit::predicate_types::compute_blinded_fact_commitment(
         fact_hash,
         state_root_bb,
         blinding,
     );
 
-    let witness = PredicateWitness {
-        private_value: BabyBear::new(private_value),
-        threshold: BabyBear::new(threshold),
-        predicate_type: pred_type,
-        fact_commitment,
-        blinding: Some(blinding),
-        fact_hash: Some(fact_hash),
-        state_root: Some(state_root_bb),
+    // Map the predicate op -> the emitted IR-v2 arithmetic-predicate descriptor + its witness
+    // builder (the analog of `bridge::present::prove_predicate_for_fact`). The descriptor is the
+    // judge: a FALSE comparison wraps the range/nonzero diff and `prove_vm_descriptor2` REFUSES.
+    let (desc_name, built) = match predicate_type {
+        "gte" | "Gte" | "GTE" | ">=" => (
+            PREDICATE_ARITH_NAME,
+            predicate_arith_witness(v, t, fact_commitment, 2),
+        ),
+        "lte" | "Lte" | "LTE" | "<=" => (
+            PREDICATE_ARITH_LE_NAME,
+            predicate_le_witness(v, t, fact_commitment, 2),
+        ),
+        "gt" | "Gt" | "GT" | ">" => (
+            PREDICATE_ARITH_GT_NAME,
+            predicate_gt_witness(v, t, fact_commitment, 2),
+        ),
+        "lt" | "Lt" | "LT" | "<" => (
+            PREDICATE_ARITH_LT_NAME,
+            predicate_lt_witness(v, t, fact_commitment, 2),
+        ),
+        "neq" | "Neq" | "NEQ" | "!=" => (
+            PREDICATE_ARITH_NEQ_NAME,
+            predicate_neq_witness(v, t, fact_commitment, 2),
+        ),
+        other => return Err(JsError::new(&format!("unknown predicate type: {other}"))),
     };
 
-    let proof = prove_predicate(witness).ok_or_else(|| {
-        JsError::new(&format!(
-            "predicate not satisfiable: {} {} {}",
-            private_value, predicate_type, threshold
-        ))
-    })?;
+    let desc = descriptor_by_name(desc_name)
+        .ok_or_else(|| JsError::new(&format!("fail-closed: no descriptor for {desc_name}")))?;
+    let (trace, pis) = built.map_err(|e| JsError::new(&e))?;
+
+    // A FALSE comparison (e.g. `value < threshold` for `gte`) wraps the diff out of `[0, 2^29)` and
+    // the descriptor's range/nonzero lookup makes the proof UNSAT -> surfaced as "not satisfiable".
+    let proof = prove_vm_descriptor2(&desc, &trace, &pis, &MemBoundaryWitness::default(), &[])
+        .map_err(|_| {
+            JsError::new(&format!(
+                "predicate not satisfiable: {private_value} {predicate_type} {threshold}"
+            ))
+        })?;
+
+    let proof_postcard =
+        postcard::to_allocvec(&proof).map_err(|e| JsError::new(&format!("proof encode: {e}")))?;
+    let proof_size_bytes = proof_postcard.len();
+
+    // Self-verify against the public `[threshold, fact_commitment]`.
+    let verified = verify_vm_descriptor2(&desc, &proof, &pis).is_ok();
+
+    // Package as the canonical `Ir2ProofEnvelope` wire (descriptor NAME + PIs + postcard blob) so
+    // `verify_predicate_proof` can dispatch and re-check it -- mirrors the membership-envelope path.
+    let envelope = Ir2ProofEnvelope {
+        descriptor_name: desc.name.clone(),
+        public_inputs: pis.iter().map(|f| f.as_u32()).collect(),
+        proof_postcard,
+    };
+    let proof_json = serde_json::to_string(&envelope)
+        .map_err(|e| JsError::new(&format!("envelope encode: {e}")))?;
 
     let elapsed_ms = perf_now() - start;
-
-    // Serialize proof to JSON bytes for size measurement.
-    let proof_bytes = serde_json::to_vec(&proof).unwrap_or_default();
 
     #[derive(Serialize)]
     struct PredicateProofResult {
@@ -604,17 +648,9 @@ pub fn generate_predicate_proof(
         verified: bool,
     }
 
-    // Self-verify.
-    let verified = dregg_circuit::predicate_types::verify_predicate(
-        &proof,
-        BabyBear::new(threshold),
-        fact_commitment,
-    )
-    .is_ok();
-
     let result = PredicateProofResult {
-        proof_json: serde_json::to_string(&proof).unwrap_or_default(),
-        proof_size_bytes: proof_bytes.len(),
+        proof_json,
+        proof_size_bytes,
         generation_time_ms: elapsed_ms,
         predicate_type: predicate_type.to_string(),
         threshold,
@@ -637,14 +673,48 @@ pub fn verify_predicate_proof(
     threshold: u32,
     fact_commitment: u32,
 ) -> Result<JsValue, JsError> {
+    use dregg_circuit::descriptor_by_name::descriptor_by_name;
+    use dregg_circuit::descriptor_ir2::{DreggStarkConfig, Ir2BatchProof, verify_vm_descriptor2};
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit::predicate_types::{PredicateProof, verify_predicate};
+    use dregg_circuit::predicate_arith_witness::PREDICATE_ARITH_NAME;
+    use dregg_circuit::predicate_comparison_witness::{
+        PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
+        PREDICATE_ARITH_NEQ_NAME,
+    };
 
-    let proof: PredicateProof =
+    let env: Ir2ProofEnvelope =
         serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;
 
-    let valid =
-        verify_predicate(&proof, BabyBear::new(threshold), BabyBear(fact_commitment)).is_ok();
+    // Fail-closed descriptor-identity gate: only the arithmetic-predicate family is a valid
+    // predicate-proof descriptor. Any other name is REFUSED (never checked against the wrong
+    // constraint semantics), mirroring the SDK's `check_bundle_predicates` guard.
+    let is_arith = matches!(
+        env.descriptor_name.as_str(),
+        PREDICATE_ARITH_NAME
+            | PREDICATE_ARITH_LE_NAME
+            | PREDICATE_ARITH_GT_NAME
+            | PREDICATE_ARITH_LT_NAME
+            | PREDICATE_ARITH_NEQ_NAME
+    );
+
+    let valid = is_arith
+        && match descriptor_by_name(&env.descriptor_name) {
+            Some(desc) => {
+                match postcard::from_bytes::<Ir2BatchProof<DreggStarkConfig>>(&env.proof_postcard) {
+                    Ok(proof) => {
+                        // Pin the VERIFIER's expected public inputs `[threshold, fact_commitment]`
+                        // -- a proof committed to a different bound / fact is UNSAT.
+                        let pis = vec![BabyBear::new(threshold), BabyBear::new(fact_commitment)];
+                        std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                            verify_vm_descriptor2(&desc, &proof, &pis).is_ok()
+                        }))
+                        .unwrap_or(false)
+                    }
+                    Err(_) => false,
+                }
+            }
+            None => false,
+        };
 
     #[derive(Serialize)]
     struct VerifyResult {
@@ -1306,66 +1376,21 @@ struct CanonicalIntentBody<'a> {
 /// Returns error if the predicate is not satisfiable (value < threshold).
 #[wasm_bindgen]
 pub fn prove_committed_threshold(
-    value: u32,
-    threshold: u32,
-    blinding: u32,
+    _value: u32,
+    _threshold: u32,
+    _blinding: u32,
 ) -> Result<JsValue, JsError> {
-    use dregg_circuit::committed_threshold::{
-        CommittedThresholdWitness, compute_threshold_commitment,
-        prove_committed_threshold as prove_ct, verify_committed_threshold as verify_ct,
-    };
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit::poseidon2;
-
-    let start = perf_now();
-
-    let value_bb = BabyBear::new(value);
-    let threshold_bb = BabyBear::new(threshold);
-    let blinding_bb = BabyBear::new(blinding);
-
-    // Compute a fact commitment (binding to token state).
-    let fact_hash = poseidon2::hash_many(&[value_bb, BabyBear::new(42)]);
-    let state_root = BabyBear::new(99999);
-    let fact_commitment = poseidon2::hash_2_to_1(fact_hash, state_root);
-
-    let witness = CommittedThresholdWitness {
-        private_value: value_bb,
-        threshold: threshold_bb,
-        blinding: blinding_bb,
-        fact_commitment,
-    };
-
-    let threshold_commitment = compute_threshold_commitment(threshold_bb, blinding_bb);
-
-    let proof = prove_ct(witness).ok_or_else(|| {
-        JsError::new(&format!(
-            "predicate not satisfiable: {} >= {} is false",
-            value, threshold
-        ))
-    })?;
-
-    let verified = verify_ct(&proof, threshold_commitment, fact_commitment);
-    let elapsed_ms = perf_now() - start;
-
-    let proof_bytes = serde_json::to_vec(&proof.stark_proof).unwrap_or_default();
-
-    #[derive(Serialize)]
-    struct CommittedThresholdResult {
-        threshold_commitment: u32,
-        fact_commitment: u32,
-        proof_size_bytes: usize,
-        generation_time_ms: f64,
-        verified: bool,
-    }
-
-    let result = CommittedThresholdResult {
-        threshold_commitment: threshold_commitment.as_u32(),
-        fact_commitment: fact_commitment.as_u32(),
-        proof_size_bytes: proof_bytes.len(),
-        generation_time_ms: elapsed_ms,
-        verified,
-    };
-    Ok(serde_wasm_bindgen::to_value(&result)?)
+    // FAIL-CLOSED. The committed-threshold predicate (hidden value AND hidden threshold) was proved
+    // by the retired hand-STARK engine (`dregg_circuit::committed_threshold::prove_committed_threshold`
+    // / `CommittedThresholdProof`), which was deleted. No IR-v2 descriptor for the committed-threshold
+    // statement has been emitted yet -- the bridge/SDK counterparts (`prove_committed_threshold` /
+    // `verify_committed_threshold`) are themselves fail-closed. Rather than mint an unverifiable claim
+    // (fail-open), refuse to produce a proof.
+    Err(JsError::new(
+        "committed-threshold proving is unsupported in this build: the hand-STARK engine was retired \
+         and no IR-v2 descriptor for the committed-threshold (hidden value + hidden threshold) \
+         statement exists yet (fail-closed)",
+    ))
 }
 
 /// Verify a committed threshold proof given the public commitments.
@@ -1377,33 +1402,14 @@ pub fn prove_committed_threshold(
 /// Returns JSON: { "valid": bool, "verification_time_ms": f64 }
 #[wasm_bindgen]
 pub fn verify_committed_threshold(
-    proof_json: &str,
-    threshold_commitment: u32,
-    fact_commitment: u32,
+    _proof_json: &str,
+    _threshold_commitment: u32,
+    _fact_commitment: u32,
 ) -> Result<JsValue, JsError> {
-    use dregg_circuit::committed_threshold::{
-        CommittedThresholdProof, verify_committed_threshold as verify_ct,
-    };
-    use dregg_circuit::field::BabyBear;
-    use dregg_circuit::stark::StarkProof;
-
-    let start = perf_now();
-
-    let stark_proof: StarkProof =
-        serde_json::from_str(proof_json).map_err(|e| JsError::new(&e.to_string()))?;
-
-    let tc = BabyBear(threshold_commitment);
-    let fc = BabyBear(fact_commitment);
-
-    let proof = CommittedThresholdProof {
-        threshold_commitment: tc,
-        fact_commitment: fc,
-        stark_proof,
-    };
-
-    let valid = verify_ct(&proof, tc, fc);
-    let elapsed_ms = perf_now() - start;
-
+    // FAIL-CLOSED. No committed-threshold verifier exists in this build: the hand-STARK
+    // `verify_committed_threshold` / `CommittedThresholdProof` were deleted and no IR-v2 descriptor
+    // replaces them (matching `sdk::verify::verify_committed_threshold`, which returns `Ok(false)`).
+    // Never accept an unverifiable claim -- always report invalid.
     #[derive(Serialize)]
     struct VerifyResult {
         valid: bool,
@@ -1411,8 +1417,8 @@ pub fn verify_committed_threshold(
     }
 
     let result = VerifyResult {
-        valid,
-        verification_time_ms: elapsed_ms,
+        valid: false,
+        verification_time_ms: 0.0,
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)
 }
@@ -1616,7 +1622,6 @@ pub fn schnorr_verify(
 /// Returns JSON with: result (pass/fail), proof_size, garbling_time_ms
 #[wasm_bindgen]
 pub fn garbled_compare(prover_value: u32, verifier_threshold: u32) -> Result<JsValue, JsError> {
-    use dregg_circuit::dsl::garbled::{prove_private_threshold_dsl, verify_private_threshold_dsl};
     use dregg_circuit::garbled::{
         COMPARISON_BITS, evaluate_garbled_circuit, garble_comparison_circuit,
     };
@@ -1640,26 +1645,17 @@ pub fn garbled_compare(prover_value: u32, verifier_threshold: u32) -> Result<JsV
         })
         .collect();
 
-    // Prover evaluates.
+    // Prover evaluates the garbled circuit -- this is the REAL private comparison result
+    // (`output_bit`), unaffected by the hand-STARK deletion.
     let eval_result = evaluate_garbled_circuit(&circuit, &prover_labels);
-    let _eval_time = perf_now() - start;
-
-    // Prover generates STARK proof (if passed).
-    let proof = prove_private_threshold_dsl(&circuit, &prover_labels);
     let proof_time = perf_now() - start;
 
-    let (proof_size, verified) = match &proof {
-        Some(p) => {
-            let size = serde_json::to_vec(&p.stark_proof).unwrap_or_default().len();
-            let v = verify_private_threshold_dsl(
-                p,
-                &circuit.circuit_commitment,
-                &secrets.true_output_hash,
-            );
-            (size, v)
-        }
-        None => (0, false),
-    };
+    // FAIL-CLOSED on the succinct attestation: the DSL STARK that proved the garbled evaluation
+    // (`dregg_circuit::dsl::garbled::{prove,verify}_private_threshold_dsl`) was retired with the
+    // hand-STARK engine, and no IR-v2 descriptor for the garbled private-threshold shape has been
+    // emitted yet. The garbled comparison still runs, but we cannot emit/verify a proof of it here,
+    // so report proof_size 0 / proof_verified false rather than fabricate an unverifiable claim.
+    let (proof_size, verified) = (0usize, false);
 
     #[derive(Serialize)]
     struct GarbledResult {
