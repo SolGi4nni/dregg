@@ -3997,211 +3997,35 @@ impl AgentCipherclerk {
     // Arithmetic Predicate Proofs
     // =========================================================================
 
-    /// Prove an arithmetic predicate over multiple private token attributes.
-    ///
-    /// This generates a zero-knowledge proof that an arithmetic expression over
-    /// multiple private values from a held token satisfies a predicate, without
-    /// revealing any of the individual values.
-    ///
-    /// # Arguments
-    ///
-    /// * `token` - The held token containing the attributes.
-    /// * `inputs` - Pairs of (attribute_name, private_value) for each input to the expression.
-    /// * `expression` - The arithmetic expression to evaluate (e.g., `Var(0) + Var(1)`).
-    /// * `predicate` - The predicate to prove (e.g., `ExprGte(expr, threshold)`).
-    ///
-    /// # Returns
-    ///
-    /// A proof that can be verified by anyone knowing the fact commitments.
-    ///
-    /// Note: Arithmetic predicate bridge integration is not yet complete.
-    /// This method will return an error until `dregg_bridge::prove_arithmetic_for_facts`
-    /// is implemented.
-    pub fn prove_arithmetic(
-        &self,
-        token: &HeldToken,
-        inputs: &[(String, u64)],
-        expression: dregg_circuit::ArithExpr,
-        predicate: dregg_circuit::ArithPredicate,
-    ) -> Result<dregg_circuit::ArithmeticPredicateProof, SdkError> {
-        // Decode the token to verify it's valid.
-        let _decoded = token.decode()?;
-
-        // Derive the state root from the token's proof key (consistent with other proofs).
-        let proof_key = Self::derive_proof_key(token.root_key());
-        let state_root = Self::bytes_to_babybear(&proof_key);
-
-        // Convert inputs to BabyBear values and compute per-attribute fact hashes.
-        let input_values: Vec<u32> = inputs.iter().map(|(_, v)| *v as u32).collect();
-
-        let fact_commitments: Vec<BabyBear> = inputs
-            .iter()
-            .map(|(attr, value)| {
-                let attr_bytes = blake3::hash(attr.as_bytes());
-                let attr_bb = Self::bytes_to_babybear(attr_bytes.as_bytes());
-                let value_bb = BabyBear::new(*value as u32);
-                let fact_hash =
-                    poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
-                dregg_circuit::compute_arithmetic_fact_commitment(fact_hash, state_root)
-            })
-            .collect();
-
-        // Aggregate fact commitments into a single binding commitment.
-        let aggregate_commitment = poseidon2::hash_many(&fact_commitments);
-
-        // Construct the predicate with the expression embedded.
-        let full_predicate = match predicate {
-            dregg_circuit::ArithPredicate::ExprGte(_, threshold) => {
-                dregg_circuit::ArithPredicate::ExprGte(expression, threshold)
-            }
-            dregg_circuit::ArithPredicate::ExprLte(_, threshold) => {
-                dregg_circuit::ArithPredicate::ExprLte(expression, threshold)
-            }
-            dregg_circuit::ArithPredicate::ExprEq(_, value) => {
-                dregg_circuit::ArithPredicate::ExprEq(expression, value)
-            }
-            dregg_circuit::ArithPredicate::ExprInRange(_, low, high) => {
-                dregg_circuit::ArithPredicate::ExprInRange(expression, low, high)
-            }
-            dregg_circuit::ArithPredicate::ExprCompare(_, expr_b, op) => {
-                dregg_circuit::ArithPredicate::ExprCompare(expression, expr_b, op)
-            }
-            dregg_circuit::ArithPredicate::ExprNeq(_, value) => {
-                dregg_circuit::ArithPredicate::ExprNeq(expression, value)
-            }
-        };
-
-        let witness = dregg_circuit::ArithmeticPredicateWitness {
-            inputs: input_values,
-            predicate: full_predicate,
-            fact_commitment: aggregate_commitment,
-        };
-
-        dregg_circuit::prove_arithmetic_predicate(witness).ok_or_else(|| {
-            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(
-                "arithmetic predicate is not satisfiable for the given inputs".into(),
-            ))
-        })
-    }
+    // NOTE: `prove_arithmetic` was RETIRED with the hand-STARK engine deletion. Its
+    // return type (`dregg_circuit::ArithmeticPredicateProof`) and prover
+    // (`prove_arithmetic_predicate`) were removed with `circuit/src/stark.rs`, and it had
+    // zero live callers. No IR-v2 descriptor for the arithmetic-expression predicate
+    // statement exists yet, so there is nothing to migrate onto; the method is deleted
+    // rather than stubbed. (The `ArithExpr` / `ArithPredicate` / `ArithmeticPredicateWitness`
+    // types and `compute_arithmetic_fact_commitment` survive in `dregg_circuit` for the
+    // descriptor re-wire.)
 
     // =========================================================================
     // Relational and Committed-Threshold Predicate Proofs
     // =========================================================================
 
-    /// Prove a relational predicate comparing this cipherclerk's private value against
-    /// a counterparty's committed value.
-    ///
-    /// This generates a zero-knowledge proof that a specific attribute of a held
-    /// token satisfies a relational comparison against a counterparty's committed
-    /// value (e.g., "my bid > their bid") without revealing either party's value.
-    ///
-    /// The prover must have received the counterparty's value and blinding via a
-    /// sealed channel (e.g., OT, MPC, trusted comparison service).
-    ///
-    /// # Arguments
-    ///
-    /// * `token` - The held token containing the attribute.
-    /// * `my_attribute` - The attribute name (e.g., "bid").
-    /// * `my_value` - The actual (private) value of the attribute.
-    /// * `my_blinding` - The prover's blinding factor for their own commitment.
-    /// * `their_value` - The counterparty's value (received via sealed channel).
-    /// * `their_blinding` - The counterparty's blinding factor (received via sealed channel).
-    /// * `relation` - The relation to prove (e.g., GreaterThan).
-    ///
-    /// # Returns
-    ///
-    /// A `RelationalPredicateProof` that can be verified by anyone knowing both
-    /// commitments, or an error if the relation is not satisfiable.
-    pub fn prove_relational(
-        &self,
-        token: &HeldToken,
-        my_attribute: &str,
-        my_value: u64,
-        my_blinding: BabyBear,
-        their_value: u64,
-        their_blinding: BabyBear,
-        relation: dregg_circuit::RelationType,
-    ) -> Result<dregg_circuit::RelationalPredicateProof, SdkError> {
-        // Decode the token to verify it's valid.
-        let _decoded = token.decode()?;
+    // NOTE: `prove_relational` was RETIRED with the hand-STARK engine deletion. Its
+    // return type (`dregg_circuit::RelationalPredicateProof`) and prover
+    // (`prove_value_comparison`) were removed with `circuit/src/stark.rs`, and it had
+    // zero live callers. No IR-v2 descriptor for the relational-comparison statement
+    // exists yet, so there is nothing to migrate onto; the method is deleted rather than
+    // stubbed. (The committed-value commitment helper `compute_value_commitment` survives
+    // in `dregg_circuit` for the descriptor re-wire.)
 
-        let proof = dregg_circuit::prove_value_comparison(
-            BabyBear::new(my_value as u32),
-            my_blinding,
-            BabyBear::new(their_value as u32),
-            their_blinding,
-            relation,
-        )
-        .ok_or_else(|| {
-            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
-                "relational predicate proof failed: '{}' {:?} is not satisfiable \
-                 (my_value={}, their_value={})",
-                my_attribute, relation, my_value, their_value
-            )))
-        })?;
-
-        Ok(proof)
-    }
-
-    /// Prove a committed-threshold predicate: the cipherclerk's private value satisfies
-    /// a threshold that is also kept secret from third-party verifiers.
-    ///
-    /// This generates a zero-knowledge proof that a specific attribute value is
-    /// at least as large as a threshold, where both the value AND the threshold are
-    /// hidden behind Poseidon2 commitments. Third-party verifiers learn only that
-    /// "some committed value satisfies some committed threshold."
-    ///
-    /// The verifier provides the threshold and blinding via a secure channel.
-    ///
-    /// # Arguments
-    ///
-    /// * `token` - The held token containing the attribute.
-    /// * `attribute` - The attribute name (e.g., "credit_score").
-    /// * `attribute_value` - The actual (private) value of the attribute.
-    /// * `threshold` - The verifier's secret threshold (received via secure channel).
-    /// * `blinding` - The verifier's blinding randomness (received via secure channel).
-    ///
-    /// # Returns
-    ///
-    /// A `CommittedThresholdProof` that can be verified against the threshold
-    /// commitment and fact commitment, or an error if value < threshold.
-    pub fn prove_committed_threshold(
-        &self,
-        token: &HeldToken,
-        attribute: &str,
-        attribute_value: u64,
-        threshold: u64,
-        blinding: BabyBear,
-    ) -> Result<dregg_circuit::CommittedThresholdProof, SdkError> {
-        // Decode the token to verify it's valid.
-        let _decoded = token.decode()?;
-
-        // Compute the fact hash and fact commitment for binding to the token state.
-        let attr_bytes = blake3::hash(attribute.as_bytes());
-        let attr_bb = Self::bytes_to_babybear(attr_bytes.as_bytes());
-        let value_bb = BabyBear::new(attribute_value as u32);
-        let fact_hash = poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
-
-        let proof_key = Self::derive_proof_key(token.root_key());
-        let state_root = Self::bytes_to_babybear(&proof_key);
-        let fact_commitment = dregg_circuit::compute_fact_commitment(fact_hash, state_root);
-
-        let witness = dregg_circuit::CommittedThresholdWitness {
-            private_value: value_bb,
-            threshold: BabyBear::new(threshold as u32),
-            blinding,
-            fact_commitment,
-        };
-
-        let proof = dregg_circuit::prove_committed_threshold(witness).ok_or_else(|| {
-            SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
-                "committed-threshold proof failed: '{}' value {} does not satisfy threshold {}",
-                attribute, attribute_value, threshold
-            )))
-        })?;
-
-        Ok(proof)
-    }
+    // NOTE: `prove_committed_threshold` was RETIRED with the hand-STARK engine deletion.
+    // Its return type (`dregg_circuit::CommittedThresholdProof`) and prover
+    // (`dregg_circuit::prove_committed_threshold`) were removed with `circuit/src/stark.rs`,
+    // and it had zero live callers. The committed-threshold (hidden value + hidden
+    // threshold) predicate has NO emitted IR-v2 descriptor yet (the bridge's
+    // `prove_committed_threshold` / `verify_committed_threshold_proof` are themselves
+    // fail-closed), so there is nothing to migrate onto; the method is deleted rather than
+    // stubbed.
 
     // =========================================================================
     // Programmable Predicate Programs
@@ -4231,7 +4055,7 @@ impl AgentCipherclerk {
         token: &HeldToken,
         program: &dregg_circuit::predicate_program::PredicateProgram,
         attribute_values: &std::collections::HashMap<String, u64>,
-    ) -> Result<dregg_circuit::predicate_program::ProgramProof, SdkError> {
+    ) -> Result<dregg_bridge::present::ProgramProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -4274,7 +4098,7 @@ impl AgentCipherclerk {
         token: &HeldToken,
         program: &dregg_circuit::predicate_program::PredicateProgram,
         private_state: &dregg_circuit::predicate_program::PrivateState,
-    ) -> Result<dregg_circuit::predicate_program::ProgramProof, SdkError> {
+    ) -> Result<dregg_bridge::present::ProgramProof, SdkError> {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
@@ -4315,9 +4139,13 @@ impl AgentCipherclerk {
     ///
     /// # Returns
     ///
-    /// A vector of `(requirement_index, PredicateProof)` for each requirement
+    /// A vector of `(requirement_index, BridgePredicateProof)` for each requirement
     /// that could be proven. Requirements whose attributes are not in `my_values`
     /// or whose predicates are not satisfiable are skipped (returns error).
+    ///
+    /// The proof is the bridge's descriptor-backed [`dregg_bridge::BridgePredicateProof`]:
+    /// only the `Gte` predicate has an emitted IR-v2 descriptor; other operators are
+    /// carried but fail closed at verify (the retired hand-AIR predicate gadgets are gone).
     ///
     /// # Example
     ///
@@ -4341,7 +4169,7 @@ impl AgentCipherclerk {
         intent: &dregg_intent::Intent,
         my_values: &std::collections::HashMap<String, u64>,
         state_root: BabyBear,
-    ) -> Result<Vec<(usize, dregg_circuit::PredicateProof)>, SdkError> {
+    ) -> Result<Vec<(usize, dregg_bridge::BridgePredicateProof)>, SdkError> {
         use dregg_bridge::Predicate;
         use dregg_circuit::poseidon2;
         use dregg_intent::fulfillment::parse_predicate_type;
@@ -4398,32 +4226,12 @@ impl AgentCipherclerk {
                 )))
             })?;
 
-            // Extract the inner circuit proof(s).
-            // For simple predicates (Gte, Lte, etc.) we get a single proof.
-            // For InRange we get a pair; the intent system expects one proof per requirement,
-            // so for InRange we use the lower-bound proof (the requirement is verified
-            // against the lower threshold).
+            // Carry the bridge's descriptor-backed proof directly. It is exactly the type
+            // the migrated `FulfillmentWithPredicates.predicate_proofs` consumes and is
+            // verified via `dregg_bridge::verify_predicate_proof` (fail-closed for every
+            // operator except `Gte`, which is the only one with an emitted IR-v2 descriptor).
             let _ = parse_predicate_type; // ensure import is used
-            let circuit_proof = match bridge_proof.proof {
-                dregg_bridge::BridgePredicateProofInner::Single(p) => p,
-                dregg_bridge::BridgePredicateProofInner::Range(low_proof, _high_proof) => {
-                    // For in_range, the lower bound proof demonstrates value >= threshold.
-                    low_proof
-                }
-                dregg_bridge::BridgePredicateProofInner::CommittedThreshold(p) => {
-                    // CommittedThreshold uses a committed comparison proof.
-                    // Convert to PredicateProof with Gte semantics (committed threshold
-                    // proves value >= threshold).
-                    dregg_circuit::PredicateProof {
-                        op: dregg_circuit::PredicateType::Gte,
-                        threshold: p.threshold_commitment,
-                        fact_commitment: p.fact_commitment,
-                        stark_proof: p.stark_proof,
-                    }
-                }
-            };
-
-            proofs.push((idx, circuit_proof));
+            proofs.push((idx, bridge_proof));
         }
 
         Ok(proofs)
@@ -7043,127 +6851,15 @@ impl AgentCipherclerk {
     // IVC Compression (Sovereign History)
     // =========================================================================
 
-    /// Compress sovereign history into a single IVC proof.
-    ///
-    /// Takes the receipt chain entries for a given cell and produces a constant-size
-    /// STARK proof that the entire state transition history from genesis to the current
-    /// state is valid. The proof covers the hash chain:
-    ///   `genesis_commitment -> commitment_1 -> ... -> current_commitment`
-    ///
-    /// This is the key primitive for sovereign cell portability: anyone can verify
-    /// the cell's entire history by checking a single ~24 KiB proof instead of
-    /// replaying all turns.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell_id` - The sovereign cell whose history to compress.
-    ///
-    /// # Returns
-    ///
-    /// Serialized STARK proof bytes, or an error if the cell is not sovereign or
-    /// has no history.
-    pub fn compress_sovereign_history(&self, cell_id: &CellId) -> Result<Vec<u8>, SdkError> {
-        // The cell must be in sovereign mode (stored locally).
-        let _cell = self.sovereign_cells.get(cell_id).ok_or_else(|| {
-            SdkError::NotSovereign(format!(
-                "cell {} is not stored as sovereign; call store_sovereign_state() first",
-                cell_id
-            ))
-        })?;
-
-        // Collect the state commitments from the receipt chain for this cell.
-        // Each receipt has pre_state_hash and post_state_hash — we build the
-        // chain of BabyBear commitments.
-        let cell_receipts: Vec<&dregg_turn::TurnReceipt> = self
-            .receipt_chain
-            .iter()
-            .filter(|r| {
-                // Match receipts targeting this cell.
-                // The agent field on the receipt is the cell_id the turn targeted.
-                r.agent == *cell_id
-            })
-            .collect();
-
-        if cell_receipts.is_empty() {
-            return Err(SdkError::IvcError(
-                "no receipts found for this cell; execute at least one turn first".into(),
-            ));
-        }
-
-        // Build the hash chain: genesis_root -> post_state[0] -> post_state[1] -> ...
-        let genesis_root = Self::bytes_to_babybear(&cell_receipts[0].pre_state_hash);
-        let transitions: Vec<dregg_circuit::BabyBear> = cell_receipts
-            .iter()
-            .map(|r| Self::bytes_to_babybear(&r.post_state_hash))
-            .collect();
-
-        // Generate the IVC STARK proof over the hash chain.
-        let (proof, _public_inputs) = dregg_circuit::prove_ivc_stark(genesis_root, &transitions);
-        // WIRE (flip): postcard-encode the StateTransition StarkProof, mirroring the non-stark
-        // codec `verify_validated_ivc_proof` uses — replaces the removed hand-STARK `proof_to_bytes`.
-        postcard::to_allocvec(&proof)
-            .map_err(|e| SdkError::IvcError(format!("failed to serialize IVC proof: {e}")))
-    }
-
-    /// Verify a compressed history proof.
-    ///
-    /// Given proof bytes, the genesis state commitment, the expected current
-    /// commitment, and the number of steps, verifies the IVC STARK proof.
-    ///
-    /// This is the verifier-side operation: anyone with the genesis root and
-    /// proof bytes can check the cell's entire state transition history without
-    /// replaying the turns.
-    ///
-    /// # Arguments
-    ///
-    /// * `proof_bytes` - Serialized STARK proof (from `compress_sovereign_history`).
-    /// * `genesis` - The genesis state commitment (32-byte hash).
-    /// * `current` - The expected current state commitment (32-byte hash).
-    /// * `step_count` - Number of state transitions in the history.
-    ///
-    /// # Returns
-    ///
-    /// `Ok(true)` if the proof is valid, `Ok(false)` if verification fails cleanly,
-    /// or `Err` if the proof cannot be deserialized.
-    pub fn verify_compressed_history(
-        proof_bytes: &[u8],
-        genesis: [u8; 32],
-        _current: [u8; 32],
-        step_count: u64,
-    ) -> Result<bool, SdkError> {
-        // WIRE (flip): postcard-decode the StateTransition StarkProof — replaces the removed
-        // the removed hand-STARK `proof_from_bytes`; the verify below stays `verify_ivc_stark`.
-        let proof: dregg_circuit::stark::StarkProof = postcard::from_bytes(proof_bytes)
-            .map_err(|e| SdkError::IvcError(format!("failed to deserialize IVC proof: {}", e)))?;
-
-        // Reconstruct the public inputs expected by verify_ivc_stark.
-        // The IVC proof's public inputs encode: initial_root and the accumulated hash.
-        // We need to reconstruct them from the genesis root and step count.
-        let genesis_bb = Self::bytes_to_babybear(&genesis);
-
-        // Build a synthetic PI vector matching what prove_ivc_stark would produce.
-        // The StateTransitionAir's public inputs are:
-        //   [initial_root, final_accumulated_hash, step_count]
-        // We verify by calling verify_ivc_stark with the proof + its embedded PIs.
-        // Since we don't have the intermediate transitions, we use the proof's
-        // own public inputs and just check that genesis matches.
-        //
-        // For now, reconstruct with step_count transitions of zeros (the verifier
-        // only needs the proof and PI to check FRI consistency).
-        let transitions: Vec<dregg_circuit::BabyBear> = (0..step_count)
-            .map(|i| dregg_circuit::BabyBear::new(i as u32))
-            .collect();
-        let (_regenerated_proof, public_inputs) =
-            dregg_circuit::prove_ivc_stark(genesis_bb, &transitions);
-
-        // Verify using the actual proof bytes against the reconstructed PIs.
-        // NOTE: In production, the public inputs would be transmitted alongside
-        // the proof. For now we verify the proof we were given against its own PIs.
-        match dregg_circuit::verify_ivc_stark(&proof, &public_inputs) {
-            Ok(()) => Ok(true),
-            Err(_) => Ok(false),
-        }
-    }
+    // NOTE: `compress_sovereign_history` (producer) and `verify_compressed_history`
+    // (consumer) were RETIRED with the hand-STARK engine deletion. They rode the removed
+    // hash-chain IVC prover/verifier (`prove_ivc_stark` / `verify_ivc_stark`) and the
+    // removed `dregg_circuit::stark::StarkProof` wire type; both had zero live callers. No
+    // IR-v2 descriptor for the state-transition hash-chain statement exists yet, so there
+    // is nothing to migrate the pair onto — they are deleted rather than stubbed. (Note the
+    // old `verify_compressed_history` was already unsound: it re-derived synthetic public
+    // inputs and checked the proof against ITS OWN PIs, so the retirement removes a
+    // fail-open path, not a working one.)
 
     /// Get a peer exchange session for direct sovereign interactions.
     ///
@@ -7349,68 +7045,12 @@ impl AgentCipherclerk {
         exchange.create_transition(old_commitment, new_commitment, effects_hash)
     }
 
-    /// Execute a sovereign turn with a custom program proof.
-    ///
-    /// Generates a STARK proof of a valid state transition under the given program
-    /// and builds a proof-carrying turn for submission to the federation.
-    ///
-    /// # Arguments
-    ///
-    /// * `cell_id` - The sovereign cell to transition.
-    /// * `program` - The deployed cell program (must match the cell's VK).
-    /// * `witness` - Column name -> values mapping for trace generation.
-    /// * `num_rows` - Number of trace rows (must be a power of 2, >= 2).
-    /// * `public_inputs` - Public inputs for the proof (encodes old/new commitments).
-    /// * `new_commitment` - The new 32-byte state commitment after the transition.
-    /// * `nonce` - Turn nonce.
-    /// * `fee` - Turn fee in computrons.
-    ///
-    /// # Errors
-    ///
-    /// Returns an error if witness generation or proof generation fails.
-    pub fn execute_with_program(
-        &self,
-        cell_id: &CellId,
-        program: &dregg_dsl_runtime::CellProgram,
-        witness: &HashMap<String, Vec<BabyBear>>,
-        num_rows: usize,
-        public_inputs: &[BabyBear],
-        new_commitment: [u8; 32],
-        nonce: u64,
-        fee: u64,
-    ) -> Result<Turn, SdkError> {
-        // Generate the STARK proof using the program.
-        let proof_bytes = program
-            .prove_transition(witness, num_rows, public_inputs)
-            .map_err(SdkError::Program)?;
-
-        // Build a proof-carrying turn.
-        let agent_id = self.cell_id("default");
-        let turn = Turn {
-            agent: agent_id,
-            nonce,
-            fee,
-            call_forest: dregg_turn::CallForest {
-                roots: vec![],
-                forest_hash: [0u8; 32],
-            },
-            valid_until: None,
-            execution_proof: Some(proof_bytes),
-            execution_proof_cell: Some(*cell_id),
-            execution_proof_new_commitment: Some(new_commitment),
-            custom_program_proofs: None,
-            effect_binding_proofs: Vec::new(),
-            cross_effect_dependencies: Vec::new(),
-            effect_witness_index_map: Vec::new(),
-            sovereign_witnesses: HashMap::new(),
-            memo: None,
-            previous_receipt_hash: self.receipt_chain.last().map(|r| r.receipt_hash()),
-            depends_on: vec![],
-            conservation_proof: None,
-        };
-
-        Ok(turn)
-    }
+    // NOTE: `execute_with_program` was RETIRED with the hand-STARK engine deletion. It
+    // built a proof-carrying turn from `CellProgram::prove_transition`, which was removed
+    // with `circuit/src/stark.rs` (the descriptor prover replaced the per-program hand
+    // STARK). It had zero live callers. `CellProgram` still exposes `generate_trace`, so a
+    // descriptor-prover re-wire (`prove_dsl_plonky3` over the generated trace) is possible,
+    // but until that consumer exists the dead method is deleted rather than stubbed.
 }
 
 /// A note detected as belonging to this cipherclerk during stealth scanning.

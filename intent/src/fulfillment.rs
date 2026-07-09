@@ -23,11 +23,16 @@ use crate::{CommitmentId, Intent, Match, PredicateRequirement, VerificationMode}
 use dregg_cell::CellId;
 use dregg_cell::Ledger;
 use dregg_circuit::BabyBear;
+use dregg_circuit::PredicateType;
 use dregg_circuit::compute_action_binding_narrow;
-use dregg_circuit::dsl::verify_authorization_dsl;
-use dregg_circuit::multi_step_air::{MultiStepWitness, pi, prove_authorization_stark};
-use dregg_circuit::stark;
-use dregg_circuit::{PredicateProof, PredicateType, verify_predicate};
+use dregg_circuit::multi_step_air::MultiStepWitness;
+// The retired hand-STARK proof types (`PredicateProof`, `verify_predicate`,
+// `prove_authorization_stark`, `verify_authorization_dsl`, the `stark` codec) are gone.
+// Predicate fulfillment now rides the bridge's descriptor-backed `BridgePredicateProof`
+// (only `Gte` has an emitted IR-v2 descriptor; every other operator fails closed at verify).
+use dregg_bridge::present::{
+    BridgePredicateProof, Predicate as BridgePredicate, verify_predicate_proof,
+};
 use dregg_token::{Attenuation, AuthToken, MacaroonToken};
 use dregg_turn::conditional::{ConditionalTurn, ProofCondition, compute_conditional_deposit};
 use dregg_turn::{
@@ -365,45 +370,26 @@ pub fn verify_fulfillment_with_key(
             })?;
         }
         VerificationMode::Private | VerificationMode::Selective => {
-            // Verify the STARK proof cryptographically.
-            let proof_bytes = fulfillment.proof.as_ref().ok_or_else(|| {
+            // FAIL-CLOSED. The Private/Selective fulfillment proof was the hand-STARK
+            // multi-step authorization proof (`prove_authorization_stark` +
+            // `verify_authorization_dsl`, wire-encoded through the `stark` codec). That
+            // engine was retired and NO descriptor replacement for the multi-step
+            // authorization statement exists yet, so there is no way to cryptographically
+            // verify such a proof. Rather than accept an unverifiable claim (fail-open),
+            // reject: a Private/Selective fulfillment cannot be verified in this build.
+            //
+            // The `request_hash` replay binding this branch used to enforce
+            // (`compute_intent_request_hash`) rode inside that same retired proof; it is
+            // subsumed by this outright rejection.
+            let _ = fulfillment.proof.as_ref().ok_or_else(|| {
                 FulfillmentError::MissingData("private/selective mode requires proof".into())
             })?;
-            let proof = stark::proof_from_bytes(proof_bytes).map_err(|e| {
-                FulfillmentError::ProofVerificationFailed(format!("deserialize: {}", e))
-            })?;
-
-            // The proof's public inputs contain conclusion and accumulated_hash.
-            // We verify that the conclusion is ALLOW (1).
-            if proof.public_inputs.len() < 5 {
-                return Err(FulfillmentError::ProofVerificationFailed(
-                    "proof has insufficient public inputs".into(),
-                ));
-            }
-            let conclusion = BabyBear(proof.public_inputs[2]); // pi::CONCLUSION
-            let accumulated_hash = BabyBear(proof.public_inputs[4]); // pi::FINAL_ACCUMULATED_HASH
-
-            if conclusion != BabyBear::ONE {
-                return Err(FulfillmentError::ProofVerificationFailed(
-                    "proof conclusion is DENY, not ALLOW".into(),
-                ));
-            }
-
-            verify_authorization_dsl(conclusion, accumulated_hash, &proof)
-                .map_err(FulfillmentError::ProofVerificationFailed)?;
-
-            // SECURITY: Verify the proof is bound to THIS intent's requirements.
-            // The proof's request_hash (public input) must match the intent's
-            // action/resource binding. Without this check, a proof from a prior
-            // authorization can be replayed against a different intent.
-            let proof_request_hash = BabyBear(proof.public_inputs[pi::REQUEST_HASH]);
-            let required_binding = compute_intent_request_hash(intent);
-            if proof_request_hash != required_binding {
-                return Err(FulfillmentError::ProofActionMismatch(format!(
-                    "proof request_hash {:?} does not match intent binding {:?}",
-                    proof_request_hash, required_binding
-                )));
-            }
+            return Err(FulfillmentError::ProofVerificationFailed(
+                "private/selective fulfillment verification is unavailable: the multi-step \
+                 authorization hand-STARK engine was retired and no descriptor replacement \
+                 exists yet (fail-closed)"
+                    .into(),
+            ));
         }
     }
 
@@ -489,7 +475,12 @@ pub struct FulfillmentWithPredicates {
     /// Predicate proofs, one per requirement.
     /// Each entry is `(requirement_index, proof)` where requirement_index
     /// refers to the index in `intent.matcher.predicate_requirements`.
-    pub predicate_proofs: Vec<(usize, PredicateProof)>,
+    ///
+    /// The proof is the bridge's descriptor-backed [`BridgePredicateProof`]: only the
+    /// `Gte` (`≥ threshold`) predicate has an emitted IR-v2 descriptor
+    /// (`dregg-predicate-arith-ge::threshold-v1`); every other operator fails closed at
+    /// verify (the retired hand-AIR predicate gadgets are gone).
+    pub predicate_proofs: Vec<(usize, BridgePredicateProof)>,
     /// The state root the proofs are attested against.
     /// The verifier checks this root is recent enough per the freshness requirements.
     pub state_root: BabyBear,
@@ -565,37 +556,58 @@ pub fn verify_fulfillment_with_predicates_and_key(
 }
 
 /// Verify a single predicate proof against its requirement.
+///
+/// Migrated onto the bridge's descriptor-backed [`BridgePredicateProof`]: the proof's
+/// declared predicate must match the requirement (operator + threshold), and the proof
+/// must verify via [`verify_predicate_proof`] against its own committed fact commitment.
+/// Only `Gte` has an emitted IR-v2 descriptor; every other operator fails closed inside
+/// [`verify_predicate_proof`] (never accepted against the wrong comparison semantics).
 fn verify_predicate_requirement(
-    proof: &PredicateProof,
+    proof: &BridgePredicateProof,
     requirement: &PredicateRequirement,
 ) -> Result<(), FulfillmentError> {
-    let expected_type = parse_predicate_type(&requirement.predicate_type).ok_or_else(|| {
+    // Ensure the requirement names a predicate type we understand (parity with the
+    // legacy path's typed rejection of unknown types).
+    let _expected_type = parse_predicate_type(&requirement.predicate_type).ok_or_else(|| {
         FulfillmentError::PredicateProofFailed(format!(
             "unknown predicate type: '{}'",
             requirement.predicate_type
         ))
     })?;
 
-    if proof.op != expected_type {
+    // Map the requirement to the bridge predicate the proof must carry.
+    let threshold = requirement.threshold as u32;
+    let upper = requirement.upper_bound.unwrap_or(requirement.threshold) as u32;
+    let expected_predicate = match requirement.predicate_type.as_str() {
+        "gte" => BridgePredicate::Gte(threshold),
+        "lte" => BridgePredicate::Lte(threshold),
+        "gt" => BridgePredicate::Gt(threshold),
+        "lt" => BridgePredicate::Lt(threshold),
+        "neq" => BridgePredicate::Neq(threshold),
+        "in_range" | "in_range_low" | "in_range_high" => BridgePredicate::InRange(threshold, upper),
+        other => {
+            return Err(FulfillmentError::PredicateProofFailed(format!(
+                "unsupported predicate type '{}' for bridge predicate proof",
+                other
+            )));
+        }
+    };
+
+    if proof.predicate != expected_predicate {
         return Err(FulfillmentError::PredicateProofFailed(format!(
-            "proof type {:?} does not match requirement type '{}'",
-            proof.op, requirement.predicate_type
+            "proof predicate {:?} does not match requirement {:?}",
+            proof.predicate, expected_predicate
         )));
     }
 
-    let expected_threshold = BabyBear::new(requirement.threshold as u32);
-    if proof.threshold != expected_threshold {
-        return Err(FulfillmentError::PredicateProofFailed(format!(
-            "proof threshold {:?} does not match requirement threshold {}",
-            proof.threshold, requirement.threshold
-        )));
-    }
-
-    if let Err(e) = verify_predicate(proof, expected_threshold, proof.fact_commitment) {
-        return Err(FulfillmentError::PredicateProofFailed(format!(
-            "predicate proof cryptographic verification failed: {}",
-            e
-        )));
+    // Cryptographically verify against the proof's committed fact commitment. This is
+    // fail-closed for every operator except `Gte` (no descriptor → rejection).
+    if !verify_predicate_proof(proof, proof.fact_commitment) {
+        return Err(FulfillmentError::PredicateProofFailed(
+            "predicate proof cryptographic verification failed (no descriptor for this \
+             operator, or the committed proof did not verify)"
+                .to_string(),
+        ));
     }
 
     Ok(())
@@ -667,17 +679,23 @@ fn produce_attenuated_token(
 /// intent's requirements WITHOUT revealing which token, what delegation chain,
 /// or any other private data.
 fn produce_stark_proof(options: &FulfillOptions) -> Result<Vec<u8>, FulfillmentError> {
-    let witness = options.stark_witness.as_ref().ok_or_else(|| {
+    // FAIL-CLOSED. The multi-step authorization proof was produced by the retired
+    // hand-STARK engine (`prove_authorization_stark` + the `stark` codec). No descriptor
+    // replacement for the multi-step authorization statement exists yet, so a
+    // Private/Selective fulfillment proof cannot be produced. Report the failure rather
+    // than emit an unverifiable placeholder blob (which the verifier now rejects anyway).
+    let _ = options.stark_witness.as_ref().ok_or_else(|| {
         FulfillmentError::ProofGenerationFailed(
             "stark_witness required for Private/Selective mode".into(),
         )
     })?;
 
-    // Generate the real STARK proof using the multi-step authorization AIR
-    let proof = prove_authorization_stark(witness);
-    let proof_bytes = stark::proof_to_bytes(&proof);
-
-    Ok(proof_bytes)
+    Err(FulfillmentError::ProofGenerationFailed(
+        "private/selective fulfillment proof generation is unavailable: the multi-step \
+         authorization hand-STARK engine was retired and no descriptor replacement exists \
+         yet (fail-closed)"
+            .into(),
+    ))
 }
 
 // ---------------------------------------------------------------------------

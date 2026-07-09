@@ -18,6 +18,7 @@ postcard = { version = "1", features = ["alloc"] }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-circuit = { path = "../circuit" }
+dregg-bridge = { path = "../bridge" }
 dregg-commit = { path = "../commit" }
 dregg-dfa = { path = "../dfa" }
 dregg-federation = { path = "../federation", default-features = false }  # pure threshold_decrypt; no tokio

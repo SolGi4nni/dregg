@@ -404,16 +404,16 @@ pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresent
 ///
 /// # Returns
 ///
-/// `Ok(true)` if the proof verifies, `Ok(false)` if verification fails,
-/// or `Err(...)` if deserialization fails.
-pub fn verify_validated_ivc_proof(proof_bytes: &[u8]) -> Result<bool, SdkError> {
-    let proof: dregg_circuit::ValidatedIvcProof =
-        postcard::from_bytes(proof_bytes).map_err(|_| {
-            SdkError::Wire("validated IVC proof bytes could not be deserialized".into())
-        })?;
-
-    Ok(dregg_circuit::verify_validated_ivc(&proof)
-        == dregg_circuit::ValidatedIvcVerification::Valid)
+/// Currently always `Ok(false)` (fail-closed). The validated-IVC fold proof was produced
+/// and checked by the retired hand-STARK engine (`ValidatedIvcProof` /
+/// `verify_validated_ivc`), which was deleted; no descriptor replacement for the
+/// validated-IVC fold statement exists yet. Rather than accept an unverifiable claim
+/// (fail-open), this rejects every input — mirroring the bridge's validated-IVC handling
+/// (`dregg_bridge` returns `false` with no proof to check).
+pub fn verify_validated_ivc_proof(_proof_bytes: &[u8]) -> Result<bool, SdkError> {
+    // FAIL-CLOSED: no way to cryptographically verify a validated-IVC fold proof in this
+    // build (the hand-STARK verifier was retired, no descriptor path exists). Never accept.
+    Ok(false)
 }
 
 // ============================================================================
@@ -539,37 +539,19 @@ pub fn verify_any_tier(
 /// }
 /// ```
 pub fn verify_committed_threshold(
-    proof_bytes: &[u8],
-    threshold_commitment: &[u8; 32],
-    fact_commitment: &[u8; 32],
+    _proof_bytes: &[u8],
+    _threshold_commitment: &[u8; 32],
+    _fact_commitment: &[u8; 32],
 ) -> Result<bool, SdkError> {
-    use dregg_circuit::BabyBear;
-
-    // Deserialize the proof.
-    let proof: dregg_circuit::CommittedThresholdProof =
-        postcard::from_bytes(proof_bytes).map_err(|_| {
-            SdkError::Wire("committed threshold proof bytes could not be deserialized".into())
-        })?;
-
-    // Convert 32-byte commitments to BabyBear field elements (first 4 bytes, LE).
-    let threshold_bb = BabyBear::new(u32::from_le_bytes([
-        threshold_commitment[0],
-        threshold_commitment[1],
-        threshold_commitment[2],
-        threshold_commitment[3],
-    ]));
-    let fact_bb = BabyBear::new(u32::from_le_bytes([
-        fact_commitment[0],
-        fact_commitment[1],
-        fact_commitment[2],
-        fact_commitment[3],
-    ]));
-
-    Ok(dregg_circuit::verify_committed_threshold(
-        &proof,
-        threshold_bb,
-        fact_bb,
-    ))
+    // FAIL-CLOSED. The committed-threshold (hidden value + hidden threshold) predicate was
+    // produced/checked by the retired hand-STARK engine (`CommittedThresholdProof` /
+    // `dregg_circuit::verify_committed_threshold`), which was deleted. No IR-v2 descriptor
+    // for the committed-threshold statement exists yet — the bridge's counterparts
+    // (`prove_committed_threshold` / `verify_committed_threshold_proof`) are themselves
+    // fail-closed. Rather than accept an unverifiable claim (fail-open), reject every input.
+    // (Since no valid committed-threshold proof can be produced in this build, this rejects
+    // all inputs, including the empty-`ProgramProof`-style placeholder blobs.)
+    Ok(false)
 }
 
 /// Build a federation Merkle tree from member public keys and return the root.

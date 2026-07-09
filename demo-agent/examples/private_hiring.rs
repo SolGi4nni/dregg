@@ -266,10 +266,9 @@ fn main() {
     println!("  Number of proofs: {}", predicate_proofs.len());
     for (idx, proof) in &predicate_proofs {
         println!(
-            "    [{}] {:?} — threshold: {}, commitment: {}",
+            "    [{}] {:?} — commitment: {}",
             idx,
-            proof.op,
-            proof.threshold.as_u32(),
+            proof.predicate,
             proof.fact_commitment.as_u32()
         );
     }
