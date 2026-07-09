@@ -20,8 +20,8 @@
 //!    waiting on. When a predecessor finally lands, [`OrphanBuffer::ready_after`]
 //!    returns exactly the orphans that have become satisfiable, in CAUSAL order
 //!    (predecessor-before-dependent), so the caller can feed them straight back
-//!    into `receive_block` — which re-runs the full A1 verification. This is the
-//!    "apply in causal order" step of catch-up.
+//!    into `receive_block_pinned` — which re-runs the full A1 verification plus
+//!    the hybrid PQ pin. This is the "apply in causal order" step of catch-up.
 //!
 //! 2. **[`missing_predecessors`]** — given a block and the set of block ids a
 //!    replica already holds (plus those it has buffered), compute the FULL set of
@@ -158,7 +158,8 @@ impl OrphanBuffer {
     /// This is the cascade: landing one predecessor can release an orphan, whose
     /// own landing can release further orphans, transitively. The released blocks
     /// are removed from the buffer and the caller must feed them back through
-    /// `receive_block` (which re-verifies sig/seq/equivocation). The cascade is
+    /// `receive_block_pinned` (which re-verifies sig/seq/equivocation + the
+    /// hybrid PQ pin). The cascade is
     /// driven purely by the wait-set bookkeeping (`waits` / `waiting_on`), so it
     /// needs no snapshot of the lace keyset.
     pub fn ready_after(&mut self, landed: BlockId) -> Vec<Block> {
@@ -264,7 +265,15 @@ pub fn apply_with_buffering(
             continue;
         }
         let block_clone = block.clone();
-        match lace.receive_block(block) {
+        // LIVE WIRE INGEST (GAP #1b): PIN each incoming consensus block's
+        // post-quantum half to its creator's ENROLLED ML-DSA-65 key
+        // (`receive_block_pinned`), NOT the ed25519-only `receive_block`. Fails
+        // closed (`BlockError::UnenrolledCreator`) on a creator absent from the
+        // roster, so a quantum adversary who forges only the classical half
+        // cannot inject a block under an enrolled member's identity. The roster
+        // is enrolled from the committee in `blocklace_sync::run_blocklace_sync`
+        // (and re-enrolled on every committee rotation) before any ingest runs.
+        match lace.receive_block_pinned(block) {
             Ok(()) => {
                 inserted.push(block_clone);
                 present.insert(block_id);
@@ -312,8 +321,16 @@ pub fn apply_with_buffering(
                     queue.push_back(r);
                 }
             }
-            Err(BlockError::InvalidSignature { .. }) => {
-                // Drop forged blocks (A1: signature verification is the gate).
+            Err(BlockError::InvalidSignature { .. })
+            | Err(BlockError::UnsignedPq { .. })
+            | Err(BlockError::BadPqSignature { .. })
+            | Err(BlockError::UnenrolledCreator { .. }) => {
+                // Drop forged / unpinnable blocks (A1 + GAP #1b: BOTH signature
+                // halves are the gate). A bad ed25519 half, a missing/forged
+                // post-quantum half, or a creator with no enrolled ML-DSA key
+                // fails CLOSED here — never inserted, never buffered, never
+                // pulled. A quantum adversary who forges only the classical half
+                // cannot inject a block under an enrolled member's identity.
             }
         }
     }
@@ -345,6 +362,15 @@ mod tests {
 
     fn key(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
+    }
+
+    /// Enroll a creator's ML-DSA-65 public key into `lace`'s PQ roster so the
+    /// pinned live ingest (`receive_block_pinned`, exercised by
+    /// `apply_with_buffering`) accepts that creator's hybrid-signed blocks. The
+    /// enrolled key is the SAME one `Block::new` signs the PQ half with (both
+    /// derive from the ed25519 seed via `ml_dsa_65::keygen_from_seed`).
+    fn enroll(lace: &mut Blocklace, sk: &SigningKey) {
+        lace.enroll_pq(sk.verifying_key().to_bytes(), Block::pq_public_key(sk));
     }
 
     /// Build a chain of `n` heartbeat blocks on a fresh lace, returning the blocks
@@ -382,6 +408,7 @@ mod tests {
         let leader_ids: HashSet<BlockId> = chain.iter().map(|b| b.id()).collect();
 
         let mut lace = Blocklace::new_simple(key(99)); // joiner has its own key
+        enroll(&mut lace, &sk);
         let mut buf = OrphanBuffer::new();
 
         let mut reversed = chain.clone();
@@ -408,6 +435,7 @@ mod tests {
         let leader_ids: HashSet<BlockId> = chain.iter().map(|b| b.id()).collect();
 
         let mut lace = Blocklace::new_simple(key(98));
+        enroll(&mut lace, &sk);
         let mut buf = OrphanBuffer::new();
 
         // First batch: blocks 2,3 (tail) — they depend on 1, which depends on 0.
@@ -439,6 +467,7 @@ mod tests {
         let chain = build_chain(&sk, 3);
 
         let mut lace = Blocklace::new_simple(key(97));
+        enroll(&mut lace, &sk);
         let mut buf = OrphanBuffer::new();
 
         let _ = apply_with_buffering(&mut lace, &mut buf, chain.clone());
@@ -488,6 +517,8 @@ mod tests {
         let leader_ids: HashSet<BlockId> = blocks.iter().map(|b| b.id()).collect();
 
         let mut lace = Blocklace::new_simple(key(50));
+        enroll(&mut lace, &sk_a);
+        enroll(&mut lace, &sk_b);
         let mut buf = OrphanBuffer::new();
         let mut reversed = blocks.clone();
         reversed.reverse();
@@ -511,12 +542,14 @@ mod tests {
         let chain = build_chain(&sk, 6);
 
         let mut lace_a = Blocklace::new_simple(key(10));
+        enroll(&mut lace_a, &sk);
         let mut buf_a = OrphanBuffer::new();
         let mut order_a = chain.clone();
         order_a.reverse();
         let _ = apply_with_buffering(&mut lace_a, &mut buf_a, order_a);
 
         let mut lace_b = Blocklace::new_simple(key(11));
+        enroll(&mut lace_b, &sk);
         let mut buf_b = OrphanBuffer::new();
         let mut order_b = chain.clone();
         order_b.rotate_left(3);
@@ -526,5 +559,76 @@ mod tests {
         let ids_b: HashSet<BlockId> = lace_b.iter().map(|(id, _)| *id).collect();
         assert_eq!(ids_a, ids_b, "two replicas converge to the same keyset");
         assert!(buf_a.is_empty() && buf_b.is_empty());
+    }
+
+    #[test]
+    fn pinned_ingest_finalizes_honest_and_refuses_forged_pq() {
+        // GAP #1b live path: the wire ingest (`apply_with_buffering` →
+        // `receive_block_pinned`) accepts an ENROLLED creator's hybrid-signed
+        // chain and REFUSES a block whose post-quantum half is forged.
+
+        // Honest hybrid-signed chain from an enrolled creator → finalizes.
+        let sk = key(30);
+        let honest = build_chain(&sk, 3);
+        let honest_ids: HashSet<BlockId> = honest.iter().map(|b| b.id()).collect();
+
+        let mut lace = Blocklace::new_simple(key(60));
+        enroll(&mut lace, &sk);
+        let mut buf = OrphanBuffer::new();
+        let out = apply_with_buffering(&mut lace, &mut buf, honest);
+        let got: HashSet<BlockId> = lace.iter().map(|(id, _)| *id).collect();
+        assert_eq!(
+            got, honest_ids,
+            "an enrolled creator's hybrid chain finalizes through the pinned ingest"
+        );
+        assert_eq!(out.inserted.len(), 3);
+        assert!(buf.is_empty());
+
+        // Forged PQ half: a genuinely ed25519-signed block (empty predecessors,
+        // so no gap) whose ML-DSA half is corrupted. The classical half still
+        // verifies, but the PQ pin against the enrolled key FAILS — the block is
+        // refused (never inserted, never buffered).
+        let mut forged = {
+            let mut producer = Blocklace::new_simple(sk.clone());
+            producer.add_block(Payload::Ack)
+        };
+        assert!(
+            !forged.pq_signature.is_empty(),
+            "Block::new must carry a PQ half to forge"
+        );
+        forged.pq_signature[0] ^= 0xff; // tamper the post-quantum signature
+
+        let mut lace_f = Blocklace::new_simple(key(61));
+        enroll(&mut lace_f, &sk); // creator IS enrolled — only the PQ half is bad
+        let mut buf_f = OrphanBuffer::new();
+        let out_f = apply_with_buffering(&mut lace_f, &mut buf_f, vec![forged.clone()]);
+        assert!(
+            !lace_f.contains(&forged.id()),
+            "a forged post-quantum half is refused by the pinned ingest"
+        );
+        assert!(
+            out_f.inserted.is_empty(),
+            "nothing inserts from a forged block"
+        );
+        assert!(
+            buf_f.is_empty(),
+            "a forged block fails closed — it is dropped, not buffered/pulled"
+        );
+
+        // Unenrolled creator (valid hybrid block, but its key is not in the
+        // roster) is also refused — fail-closed on an unknown identity.
+        let stranger = key(31);
+        let stranger_block = {
+            let mut producer = Blocklace::new_simple(stranger.clone());
+            producer.add_block(Payload::Ack)
+        };
+        let mut lace_u = Blocklace::new_simple(key(62)); // stranger NOT enrolled
+        let mut buf_u = OrphanBuffer::new();
+        let out_u = apply_with_buffering(&mut lace_u, &mut buf_u, vec![stranger_block.clone()]);
+        assert!(
+            !lace_u.contains(&stranger_block.id()),
+            "a block from an unenrolled creator is refused fail-closed"
+        );
+        assert!(out_u.inserted.is_empty());
     }
 }

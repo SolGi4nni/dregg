@@ -1595,14 +1595,26 @@ impl BlocklaceHandle {
         pq_committee: HashMap<[u8; 32], dregg_federation::frost::MlDsaPublicKey>,
         threshold: usize,
     ) {
-        // 1. Advance the finalization-vote committee + quorum threshold — and
+        // 1. Enroll the new committee's ML-DSA-65 keys into the finality
+        //    Blocklace's PQ roster across the epoch transition, so the live wire
+        //    ingest (`receive_block_pinned`) accepts a rotated-in validator's
+        //    hybrid-signed blocks (and still fails closed on any creator whose PQ
+        //    key the committee has not learned). `enroll_pq` is additive; a
+        //    removed member's stale key is inert (it can no longer finalize).
+        {
+            let mut lace = self.lace.write().await;
+            for (creator, pq_pk) in &pq_committee {
+                lace.enroll_pq(*creator, dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0));
+            }
+        }
+        // 2. Advance the finalization-vote committee + quorum threshold — and
         //    the HYBRID-PQ key map alongside them (a participant absent from
         //    `pq_committee` cannot contribute to quorum; fail-closed).
         {
             let mut votes = self.votes.write().await;
             votes.reconfigure(participants.iter().copied(), pq_committee, threshold);
         }
-        // 2. Admit every current participant to the authenticated gossip mesh.
+        // 3. Admit every current participant to the authenticated gossip mesh.
         for pk in participants {
             let node_id = *blake3::hash(pk).as_bytes();
             self.gossip
@@ -2238,6 +2250,21 @@ pub async fn run_blocklace_sync(
     // (fail-closed; never an ed25519-only downgrade).
     let mut pq_committee = pq_committee_for_participants(&state, &participants).await;
     pq_committee.insert(self_key, pq_public_key.clone());
+    // HYBRID-PQ pinning (GAP #1b live-wiring): enroll every committee member's
+    // ML-DSA-65 public key into the finality Blocklace's PQ roster, so the live
+    // wire ingest (`catchup::apply_with_buffering` → `receive_block_pinned`) PINS
+    // each incoming consensus block's post-quantum half to its creator's ENROLLED
+    // key and FAILS CLOSED on an unenrolled/forged creator. This is the SAME
+    // genesis-published + self-derived ML-DSA key set the finalization-vote path
+    // uses; the `frost` and `blocklace` newtypes both wrap the raw
+    // `ml_dsa_65::keygen_from_seed` bytes, so the key transfers directly. Enrolled
+    // BEFORE the gossip receiver task is spawned, so no ingest runs unpinned.
+    {
+        let mut l = lace.write().await;
+        for (creator, pq_pk) in &pq_committee {
+            l.enroll_pq(*creator, dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0));
+        }
+    }
     let votes = Arc::new(RwLock::new(crate::finalization_votes::VoteCollector::new(
         participants.iter().copied(),
         pq_committee,
