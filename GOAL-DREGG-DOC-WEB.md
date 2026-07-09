@@ -221,3 +221,14 @@ convenience)? Needs careful tracing; I will NOT assert it either way (that's the
 FIX DIRECTION (once traced): where a ~31-bit heap-root is load-bearing for a verifier, use the 8-felt
 compute_canonical_heap_root_8 (proven-CR via DeployedHeapTree) — diverging from the weak old code toward the proof.
 - done-log: blast-radius scoped; precise about verified (doc check is ~31 bits) vs open (substrate-wide exploitability = ember's trace). Loop stays STOPPED.
+
+## TRACE RESULT (verified) — the ~31-bit scalar IS load-bearing (the canonical umem boundary), not display
+boundary_matches_projection (bindings_doc.rs:174) = `cell.state.heap_root == substrate_commit(published)` — a
+BARE ~31-bit scalar equality, NO STARK. turn/umem.rs:438: cell.state.heap_root IS the compute_heap_root (~31-bit)
+value = the canonical umem BOUNDARY. So off-chain verifiers (the doc's stranger-check, cross-cell reads) trust
+~31 bits. NOT isolated to docs — it's the embedded-executor boundary. RESIDUAL: the on-chain STARK path binds the
+8-felt (GENTIAN), so whether every verifier is ultimately 8-felt-backed (scalar redundant on-chain) needs the
+full on-chain trace. But the off-chain canonical boundary, verified, is ~31 bits. → EMBER's substrate call:
+widening the canonical umem boundary (cell.state.heap_root) from ~31-bit compute_heap_root to the proven-CR
+8-felt compute_canonical_heap_root_8 is a substrate-wide FORMAT change (the thing you gate). Loop STAYS stopped.
+- done-log: traced it — ~31-bit scalar is the load-bearing canonical boundary (bare compare, no STARK off-chain), not a convenience. Ember-gated substrate fix.
