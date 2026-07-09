@@ -125,7 +125,7 @@ mod serde_pk {
         bytes: &[u8; PK_LEN],
         serializer: S,
     ) -> Result<S::Ok, S::Error> {
-        bytes.as_ref().serialize(serializer)
+        AsRef::<[u8]>::as_ref(bytes).serialize(serializer)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(

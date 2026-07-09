@@ -127,7 +127,7 @@ impl Serialize for Attestation {
         use serde::ser::SerializeTuple;
         let mut tup = serializer.serialize_tuple(2)?;
         tup.serialize_element(&self.signer)?;
-        tup.serialize_element(&self.signature.as_ref())?;
+        tup.serialize_element(&AsRef::<[u8]>::as_ref(&self.signature))?;
         tup.end()
     }
 }

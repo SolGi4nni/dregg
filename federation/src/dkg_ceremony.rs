@@ -257,7 +257,7 @@ mod serde_sig64 {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
 
     pub fn serialize<S: Serializer>(bytes: &[u8; 64], serializer: S) -> Result<S::Ok, S::Error> {
-        bytes.as_ref().serialize(serializer)
+        AsRef::<[u8]>::as_ref(bytes).serialize(serializer)
     }
 
     pub fn deserialize<'de, D: Deserializer<'de>>(deserializer: D) -> Result<[u8; 64], D::Error> {

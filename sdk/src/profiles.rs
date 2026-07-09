@@ -179,7 +179,7 @@ pub fn create(name: &str) -> Result<ProfileInfo, ProfileError> {
     let record = ProfileFile {
         version: 1,
         name: name.to_string(),
-        seed_hex: hex::encode(seed.as_ref()),
+        seed_hex: hex::encode(&seed[..]),
         public_key_hex: public_key_hex.clone(),
         created_at,
     };
