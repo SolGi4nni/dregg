@@ -1,0 +1,19 @@
+[package]
+name = "crypto-tanuki"
+version = "0.1.0"
+edition = "2021"
+description = "Correctness-first REFERENCE implementation of the Tanuki two-round lattice threshold signature (NIST MPTS 2026 / EKT24 + Ringtail). The 'what a cited-proven 2-round looks like' reference to benchmark crypto-hermine's commit-then-reveal 2-round against: wide in-the-clear W_i, hashed b-aggregation, pairwise zero-sum PRF masks, rounded MLWE key. Reference params, NOT deployment-grade; the TS-UF-0 proof is CITED, not re-proven."
+license = "AGPL-3.0-only"
+publish = false
+
+# Standalone: opt out of the breadstuffs root workspace (a pre-audit reference
+# crate, deliberately NOT a member; builds in its own dir — mirrors crypto-hermine).
+[workspace]
+
+[dependencies]
+# The only external dependency: a real hash. blake3 realizes the three random
+# oracles the scheme names — G (aggregation vector), H (fixed-weight challenge),
+# and MaskGen/PRF (the pairwise zero-sum masks) — and doubles as the XOF that
+# drives the reference deterministic samplers. No `rand` crate: sampling rides a
+# caller-supplied master seed through blake3's XOF (reproducible tests). Pure Rust.
+blake3 = "1"
