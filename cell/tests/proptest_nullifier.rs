@@ -92,7 +92,7 @@ proptest! {
                     if tracked.spent {
                         // Already spent; attempt should fail (double-spend).
                         let nullifier = tracked.note.nullifier(&tracked.spending_key);
-                        let result = nullifier_set.insert(nullifier);
+                        let result = nullifier_set.insert(nullifier, tracked.note.value());
                         prop_assert!(result.is_err(),
                             "Double-spend should be rejected but was accepted");
                     } else {
@@ -100,7 +100,7 @@ proptest! {
                         // Use the stored spending key (not the random one from the op,
                         // since the "real" owner uses their key).
                         let nullifier = tracked.note.nullifier(&tracked.spending_key);
-                        let result = nullifier_set.insert(nullifier);
+                        let result = nullifier_set.insert(nullifier, tracked.note.value());
                         prop_assert!(result.is_ok(),
                             "First spend should succeed but was rejected: {:?}", result);
                         tracked.spent = true;

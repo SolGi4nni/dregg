@@ -1,17 +1,28 @@
-//! Nullifier set: an append-only set of revealed nullifiers.
+//! Nullifier accumulator: an append-only `(nullifier → value)` map of revealed
+//! nullifiers.
 //!
-//! When a note is spent, its nullifier is revealed and added to this set.
-//! Double-spend detection is simply checking set membership. The set also
-//! supports non-membership proofs (proving a note is NOT spent) via a
-//! Merkle tree over the nullifier hashes.
+//! When a note is spent, its nullifier is revealed and recorded here TOGETHER
+//! with the spent note's value — the SAME `(addr, value)` leaf the deployed
+//! circuit noteSpend grow-gate inserts (`trace_rotated.rs`
+//! `generate_rotated_note_spend_trace_with_nullifier_tree`: `HeapLeaf { addr:
+//! fold(nf), value: NOTE_VALUE_LO }`). The accumulator is therefore an auditable
+//! `(nullifier, value)` record, NOT a bare set: keeping the value is what makes
+//! the committed [`Self::root8`] cross-turn-continuous with the circuit (turn
+//! N's after-root == turn N+1's before-root over the same leaves). The value is
+//! already a circuit public input (`PI[38]`), so recording it leaks nothing new;
+//! unlinkability rides the nullifier derivation, not the leaf value.
+//!
+//! Double-spend detection is checking key membership. The map also supports
+//! non-membership proofs (proving a note is NOT spent) via a Merkle tree over
+//! the nullifier keys (the value plays no role in the byte-Merkle
+//! non-membership machinery — only in the felt-domain [`Self::root8`]).
 //!
 //! # Performance
 //!
-//! Uses `BTreeSet<Nullifier>` internally for O(log N) insert and lookup.
-//! Previous implementation used `Vec::insert` at a binary-search position
-//! which was O(N) due to element shifting on every insert.
+//! Uses `BTreeMap<Nullifier, u64>` internally for O(log N) insert and lookup,
+//! iterating keys in sorted order.
 
-use std::collections::BTreeSet;
+use std::collections::BTreeMap;
 
 use serde::{Deserialize, Serialize};
 
@@ -53,23 +64,26 @@ pub struct NonMembershipProof {
     pub root: [u8; 32],
 }
 
-/// Append-only set of revealed nullifiers.
+/// Append-only `(nullifier → value)` accumulator of revealed nullifiers.
 /// Supports efficient membership checks and non-membership proofs.
 ///
-/// Uses `BTreeSet` for O(log N) insert and contains operations.
-/// For non-membership proofs, the set is materialized into a sorted vec
-/// on demand (the BTreeSet iterator yields elements in sorted order).
+/// Uses `BTreeMap<Nullifier, u64>` for O(log N) insert and contains operations.
+/// For non-membership proofs, the keys are materialized into a sorted vec on
+/// demand (the BTreeMap iterator yields keys in sorted order). The value is the
+/// spent note value carried into the circuit-faithful [`Self::root8`] leaf.
 #[derive(Clone, Debug)]
 pub struct NullifierSet {
-    /// All nullifiers ever published, kept in a BTreeSet for O(log N) operations.
-    nullifiers: BTreeSet<Nullifier>,
+    /// Every revealed nullifier mapped to its spent-note value, kept in a
+    /// BTreeMap for O(log N) operations and sorted-key iteration. The value is
+    /// the circuit's `NOTE_VALUE_LO` felt source for the accumulator leaf.
+    nullifiers: BTreeMap<Nullifier, u64>,
 }
 
 impl NullifierSet {
     /// Create an empty nullifier set.
     pub fn new() -> Self {
         Self {
-            nullifiers: BTreeSet::new(),
+            nullifiers: BTreeMap::new(),
         }
     }
 
@@ -83,28 +97,47 @@ impl NullifierSet {
         self.nullifiers.is_empty()
     }
 
-    /// Add a nullifier (note is now spent). Returns error if already present (double-spend).
+    /// Add a nullifier with its spent-note value (note is now spent). Returns
+    /// error if the nullifier is already present (double-spend).
     ///
-    /// O(log N) via BTreeSet insertion.
-    pub fn insert(&mut self, nullifier: Nullifier) -> Result<(), NoteError> {
-        if !self.nullifiers.insert(nullifier) {
-            Err(NoteError::DoubleSpend { nullifier })
-        } else {
-            Ok(())
+    /// The `value` is the spent note's value — the SAME `u64` the circuit
+    /// noteSpend row publishes as `NOTE_VALUE_LO`/`NOTE_VALUE_HI` and folds into
+    /// the grow-gate leaf (`split_u64(value).0`); carrying it here is what keeps
+    /// [`Self::root8`] byte-identical to the in-circuit accumulator across turns.
+    ///
+    /// O(log N) via BTreeMap insertion (does not overwrite on collision, so a
+    /// double-spend never mutates the recorded value).
+    pub fn insert(&mut self, nullifier: Nullifier, value: u64) -> Result<(), NoteError> {
+        if self.nullifiers.contains_key(&nullifier) {
+            return Err(NoteError::DoubleSpend { nullifier });
         }
+        self.nullifiers.insert(nullifier, value);
+        Ok(())
     }
 
     /// Check if a nullifier is in the set (note is spent).
     ///
-    /// O(log N) via BTreeSet contains.
+    /// O(log N) via BTreeMap key lookup.
     pub fn contains(&self, nullifier: &Nullifier) -> bool {
-        self.nullifiers.contains(nullifier)
+        self.nullifiers.contains_key(nullifier)
     }
 
-    /// Iterate the nullifiers in sorted order (the universal-memory projection
+    /// The spent-note value recorded for a nullifier, if present.
+    pub fn value_of(&self, nullifier: &Nullifier) -> Option<u64> {
+        self.nullifiers.get(nullifier).copied()
+    }
+
+    /// Iterate the nullifiers in sorted key order (the universal-memory projection
     /// walks the set: every spent nullifier is a present `nullifiers`-domain cell).
     pub fn iter(&self) -> impl Iterator<Item = &Nullifier> {
-        self.nullifiers.iter()
+        self.nullifiers.keys()
+    }
+
+    /// Iterate `(nullifier, value)` pairs in sorted key order — the full
+    /// accumulator record (the projection/persistence path that must carry the
+    /// value to reconstruct a matching [`Self::root8`]).
+    pub fn iter_with_values(&self) -> impl Iterator<Item = (&Nullifier, u64)> {
+        self.nullifiers.iter().map(|(n, v)| (n, *v))
     }
 
     /// Remove a nullifier from the set.
@@ -114,21 +147,22 @@ impl NullifierSet {
     /// the set is append-only.
     ///
     /// Returns `true` if the nullifier was present and removed, `false`
-    /// otherwise. O(log N) via BTreeSet remove.
+    /// otherwise. O(log N) via BTreeMap remove.
     pub fn remove(&mut self, nullifier: &Nullifier) -> bool {
-        self.nullifiers.remove(nullifier)
+        self.nullifiers.remove(nullifier).is_some()
     }
 
-    /// Get the sorted list of nullifiers (materializes from BTreeSet iterator).
-    /// Used internally for Merkle tree construction and non-membership proofs.
+    /// Get the sorted list of nullifier keys (materializes from the BTreeMap key
+    /// iterator). Used internally for Merkle tree construction and non-membership
+    /// proofs — the byte-Merkle machinery keys on the nullifier only.
     fn sorted_vec(&self) -> Vec<Nullifier> {
-        self.nullifiers.iter().copied().collect()
+        self.nullifiers.keys().copied().collect()
     }
 
     /// Prove non-membership (note is NOT spent).
     /// Returns None if the nullifier IS in the set.
     pub fn prove_non_membership(&self, nullifier: &Nullifier) -> Option<NonMembershipProof> {
-        if self.nullifiers.contains(nullifier) {
+        if self.nullifiers.contains_key(nullifier) {
             return None; // It IS in the set, can't prove non-membership.
         }
 
@@ -272,32 +306,45 @@ impl NullifierSet {
         if self.nullifiers.is_empty() {
             return [0u8; 32];
         }
-        // BTreeSet iterates in sorted order, matching the old Vec behavior.
+        // BTreeMap keys iterate in sorted order, matching the old Vec behavior.
         let leaves: Vec<[u8; 32]> = self
             .nullifiers
-            .iter()
+            .keys()
             .map(|n| Self::leaf_hash(&n.0))
             .collect();
         Self::merkle_root_from_leaves(&leaves)
     }
 
-    /// The circuit-faithful node8 leaf for a single nullifier — the EXACT
-    /// [`dregg_circuit::heap_root::HeapLeaf`] the deployed rotated noteSpend
-    /// grow-gate keys the nullifier accumulator on: `addr` is the folded
-    /// nullifier felt (`dregg_circuit::effect_vm::fold_bytes32_to_bb`, the SAME
-    /// `nullifier_to_field` fold the freshness path / `DslRevocationTree` use),
-    /// `value` is `1` (the existence bit — matching the BEFORE-set leaf shape the
-    /// SDK threads into `generate_rotated_note_spend_wide`, `full_turn_proof.rs`).
+    /// The circuit-faithful node8 leaf for a single `(nullifier, value)` — the
+    /// EXACT [`dregg_circuit::heap_root::HeapLeaf`] the deployed rotated noteSpend
+    /// grow-gate keys the nullifier accumulator on
+    /// (`trace_rotated.rs::generate_rotated_note_spend_trace_with_nullifier_tree`,
+    /// lines ~1204/1225): `addr` is the folded nullifier felt
+    /// (`dregg_circuit::effect_vm::fold_bytes32_to_bb`, the SAME `nullifier_to_field`
+    /// fold the freshness path / `DslRevocationTree` use — matching the spend row's
+    /// `PARAM_BASE + param::NULLIFIER` column), and `value` is the spent note value
+    /// folded through the circuit's `split_u64(value).0` — the identical
+    /// `PARAM_BASE + param::NOTE_VALUE_LO` felt (the low 30 bits) the grow-gate reads
+    /// from row 0.
     ///
     /// Byte-for-byte agreement with the grow-gate is load-bearing: the committed
     /// `nullifier_root` group (rotated limb 26 lane-0 ‖ completion limbs 67..=73)
     /// is opened in-circuit against a `CanonicalHeapTree8` built from these leaves,
     /// so the executor-derived accumulator root must fold through the identical
-    /// leaf encoding or the published commitment would not match the proof.
-    pub fn accumulator_leaf(nullifier: &[u8; 32]) -> dregg_circuit::heap_root::HeapLeaf {
+    /// leaf encoding or the published commitment would not match the proof. The
+    /// prior `value: 1` existence-bit encoding was the Rust-side incoherence this
+    /// fixes: the circuit always inserted `value = NOTE_VALUE_LO`, so `value: 1`
+    /// made turn N's after-root ≠ turn N+1's before-root.
+    pub fn accumulator_leaf(
+        nullifier: &[u8; 32],
+        value: u64,
+    ) -> dregg_circuit::heap_root::HeapLeaf {
         dregg_circuit::heap_root::HeapLeaf {
             addr: dregg_circuit::effect_vm::fold_bytes32_to_bb(nullifier),
-            value: dregg_circuit::field::BabyBear::ONE,
+            // The circuit's leaf value is `split_u64(value).0` — the low 30 bits
+            // of the note value as a BabyBear (`NOTE_VALUE_LO`). Fold through the
+            // circuit's OWN helper so the encoding cannot drift.
+            value: dregg_circuit::effect_vm::split_u64(value).0,
         }
     }
 
@@ -310,12 +357,11 @@ impl NullifierSet {
     /// This is the native `CanonicalHeapTree8` (arity-16 sorted-Poseidon2, depth
     /// [`dregg_circuit::heap_root::HEAP_TREE_DEPTH`]) root the deployed noteSpend
     /// grow-gate opens against — built from [`Self::accumulator_leaf`] over every
-    /// nullifier in the set, so it equals the BEFORE-tree root the SDK derives
-    /// from `previously_spent` (`full_turn_proof::wide_commit_anchors`) lane-for-lane.
-    /// The empty set folds to the native empty root
+    /// `(nullifier, value)` in the map, so it equals the BEFORE-tree root the SDK
+    /// derives from `previously_spent` (`full_turn_proof::wide_commit_anchors`)
+    /// lane-for-lane. The empty set folds to the native empty root
     /// (`dregg_circuit::heap_root::empty_heap_root_8`), NOT the degenerate
-    /// `hash_bytes([0u8; 32])` / `[0u8; 32]` the producer path still fills — that
-    /// is the vacuous 1-felt binding this replaces.
+    /// `hash_bytes([0u8; 32])` / `[0u8; 32]` the producer path still fills.
     ///
     /// UNLIKE the byte-Merkle [`Self::root`] (which serves the non-membership
     /// proof machinery), this is the FELT-domain accumulator root the rotated
@@ -324,7 +370,7 @@ impl NullifierSet {
         let leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = self
             .nullifiers
             .iter()
-            .map(|n| Self::accumulator_leaf(&n.0))
+            .map(|(n, v)| Self::accumulator_leaf(&n.0, *v))
             .collect();
         dregg_circuit::heap_root::CanonicalHeapTree8::new(
             leaves,
@@ -423,14 +469,21 @@ mod tests {
         note.nullifier(&spending_key)
     }
 
+    /// A deterministic spent-note value for a seed — distinct per nullifier so
+    /// the `(nf, value)` leaves are genuinely value-carrying in the teeth below.
+    fn make_value(seed: u8) -> u64 {
+        1_000 + (seed as u64) * 7
+    }
+
     #[test]
     fn test_nullifier_set_insert_and_contains() {
         let mut set = NullifierSet::new();
         let n = make_nullifier(1);
 
         assert!(!set.contains(&n));
-        set.insert(n).unwrap();
+        set.insert(n, make_value(1)).unwrap();
         assert!(set.contains(&n));
+        assert_eq!(set.value_of(&n), Some(make_value(1)));
     }
 
     #[test]
@@ -438,9 +491,11 @@ mod tests {
         let mut set = NullifierSet::new();
         let n = make_nullifier(1);
 
-        set.insert(n).unwrap();
-        let result = set.insert(n);
+        set.insert(n, make_value(1)).unwrap();
+        // A double-spend is rejected AND must not overwrite the recorded value.
+        let result = set.insert(n, 999_999);
         assert_eq!(result, Err(NoteError::DoubleSpend { nullifier: n }));
+        assert_eq!(set.value_of(&n), Some(make_value(1)));
     }
 
     #[test]
@@ -448,7 +503,7 @@ mod tests {
         let mut set = NullifierSet::new();
         for i in 0..10 {
             let n = make_nullifier(i);
-            set.insert(n).unwrap();
+            set.insert(n, make_value(i)).unwrap();
         }
         assert_eq!(set.len(), 10);
 
@@ -465,8 +520,8 @@ mod tests {
         let n2 = make_nullifier(2);
         let absent = make_nullifier(3);
 
-        set.insert(n1).unwrap();
-        set.insert(n2).unwrap();
+        set.insert(n1, make_value(1)).unwrap();
+        set.insert(n2, make_value(2)).unwrap();
 
         // absent is not in the set.
         assert!(!set.contains(&absent));
@@ -480,7 +535,7 @@ mod tests {
     fn test_nullifier_set_non_membership_present_returns_none() {
         let mut set = NullifierSet::new();
         let n = make_nullifier(1);
-        set.insert(n).unwrap();
+        set.insert(n, make_value(1)).unwrap();
 
         // Can't prove non-membership for something that IS in the set.
         assert!(set.prove_non_membership(&n).is_none());
@@ -491,11 +546,11 @@ mod tests {
         let mut set = NullifierSet::new();
         let root_empty = set.root();
 
-        set.insert(make_nullifier(1)).unwrap();
+        set.insert(make_nullifier(1), make_value(1)).unwrap();
         let root_one = set.root();
         assert_ne!(root_empty, root_one);
 
-        set.insert(make_nullifier(2)).unwrap();
+        set.insert(make_nullifier(2), make_value(2)).unwrap();
         let root_two = set.root();
         assert_ne!(root_one, root_two);
     }
@@ -527,7 +582,7 @@ mod tests {
         let mut set = NullifierSet::new();
         let empty8 = set.root8();
 
-        set.insert(make_nullifier(1)).unwrap();
+        set.insert(make_nullifier(1), make_value(1)).unwrap();
         let one8 = set.root8();
         assert_ne!(
             empty8, one8,
@@ -539,7 +594,7 @@ mod tests {
              be NON-ZERO — the whole point of the faithful 8-felt fill"
         );
 
-        set.insert(make_nullifier(2)).unwrap();
+        set.insert(make_nullifier(2), make_value(2)).unwrap();
         let two8 = set.root8();
         assert_ne!(
             one8, two8,
@@ -547,30 +602,41 @@ mod tests {
         );
     }
 
-    /// **Encoding-match tooth (the load-bearing differential):** `root8` over the set
-    /// equals a `CanonicalHeapTree8` built DIRECTLY from the deployed grow-gate's
-    /// leaf encoding — `HeapLeaf { addr: fold_bytes32_to_bb(nf), value: 1 }` — so the
-    /// executor-derived accumulator root is byte-identical to the BEFORE-tree root
-    /// the SDK opens the committed `nullifier_root` group against
-    /// (`full_turn_proof::wide_commit_anchors` → `generate_rotated_note_spend_wide`).
+    /// **Encoding-match tooth (the load-bearing differential):** `root8` over the
+    /// set equals a `CanonicalHeapTree8` built by REPRODUCING the deployed grow-gate's
+    /// exact after-tree construction from `trace_rotated.rs`
+    /// (`generate_rotated_note_spend_trace_with_nullifier_tree`, lines ~1204/1225):
+    /// each inserted leaf is `HeapLeaf { addr: <spend row NULLIFIER col>, value:
+    /// <spend row NOTE_VALUE_LO col> }`, where the NULLIFIER column is
+    /// `fold_bytes32_to_bb(nf)` (what the executor threads as `Effect::NoteSpend.nullifier`)
+    /// and NOTE_VALUE_LO is `split_u64(value).0`. Both are folded through the
+    /// circuit's OWN `fold_bytes32_to_bb`/`split_u64` helpers, so this is genuine
+    /// byte-identity with the grow-gate, not a re-assertion of a private formula.
     /// A drift in this encoding would publish a root the in-circuit open cannot match.
     #[test]
-    fn root8_matches_growgate_before_tree_encoding() {
-        use dregg_circuit::field::BabyBear;
+    fn root8_matches_growgate_after_tree_encoding() {
+        use dregg_circuit::effect_vm::{fold_bytes32_to_bb, split_u64};
         use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
 
-        let nfs = [make_nullifier(7), make_nullifier(42), make_nullifier(99)];
+        let spends = [
+            (make_nullifier(7), make_value(7)),
+            (make_nullifier(42), make_value(42)),
+            (make_nullifier(99), make_value(99)),
+        ];
         let mut set = NullifierSet::new();
-        for n in &nfs {
-            set.insert(*n).unwrap();
+        for (n, v) in &spends {
+            set.insert(*n, *v).unwrap();
         }
 
-        // The grow-gate's BEFORE-tree encoding, reconstructed independently.
-        let growgate_leaves: Vec<HeapLeaf> = nfs
+        // The grow-gate's after-tree encoding, reconstructed EXACTLY as
+        // `generate_rotated_note_spend_trace_with_nullifier_tree` builds it: the
+        // spend row's `nf_key = trace[0][PARAM_BASE + NULLIFIER]` (= fold(nf)) and
+        // `nf_value = trace[0][PARAM_BASE + NOTE_VALUE_LO]` (= split_u64(value).0).
+        let growgate_leaves: Vec<HeapLeaf> = spends
             .iter()
-            .map(|n| HeapLeaf {
-                addr: dregg_circuit::effect_vm::fold_bytes32_to_bb(&n.0),
-                value: BabyBear::ONE,
+            .map(|(n, v)| HeapLeaf {
+                addr: fold_bytes32_to_bb(&n.0),
+                value: split_u64(*v).0,
             })
             .collect();
         let expected = CanonicalHeapTree8::new(growgate_leaves, HEAP_TREE_DEPTH).root8();
@@ -578,8 +644,69 @@ mod tests {
         assert_eq!(
             set.root8(),
             expected,
-            "root8 must fold through the EXACT node8 leaf encoding the deployed \
-             noteSpend grow-gate opens against"
+            "root8 must fold through the EXACT (addr, value) node8 leaf encoding the \
+             deployed noteSpend grow-gate inserts"
+        );
+    }
+
+    /// **The `value` is load-bearing:** two accumulators over the SAME nullifiers but
+    /// DIFFERENT values fold to DIFFERENT `root8`s. This is the regression guard for
+    /// the exact bug being fixed — the old `value: 1` encoding threw the value away,
+    /// so a spend of nf@value=5 and nf@value=500 committed the same root, breaking
+    /// cross-turn continuity with the circuit (which always inserts `NOTE_VALUE_LO`).
+    #[test]
+    fn root8_depends_on_the_note_value() {
+        let n = make_nullifier(3);
+
+        let mut lo = NullifierSet::new();
+        lo.insert(n, 5).unwrap();
+
+        let mut hi = NullifierSet::new();
+        hi.insert(n, 500).unwrap();
+
+        assert_ne!(
+            lo.root8(),
+            hi.root8(),
+            "the committed accumulator root MUST depend on the spent-note value — \
+             the whole point of the (nf, value) leaf (the old value:1 bug erased it)"
+        );
+    }
+
+    /// **CONTINUITY tooth (INV-2):** turn N's *after*-root over `S ∪ {nf, value}`
+    /// equals turn N+1's *before*-root over the same set — the property the old
+    /// `value: 1` encoding broke. We model it exactly: the set AFTER inserting a new
+    /// spend on turn N is byte-identical to the set a turn N+1 re-executor rebuilds
+    /// from the same `(nf, value)` records (order-independent — a BTreeMap sorts).
+    #[test]
+    fn root8_is_cross_turn_continuous() {
+        let base = [
+            (make_nullifier(10), make_value(10)),
+            (make_nullifier(20), make_value(20)),
+        ];
+        let new_spend = (make_nullifier(30), make_value(30));
+
+        // Turn N: start from S (base), insert the new spend, publish the AFTER root.
+        let mut turn_n = NullifierSet::new();
+        for (nf, v) in &base {
+            turn_n.insert(*nf, *v).unwrap();
+        }
+        turn_n.insert(new_spend.0, new_spend.1).unwrap();
+        let after_root_n = turn_n.root8();
+
+        // Turn N+1: a re-executor reconstructs S ∪ {new_spend} from the durable
+        // (nf, value) records — here in a DIFFERENT insertion order — and reads its
+        // BEFORE root. It must equal turn N's after-root.
+        let mut turn_n1 = NullifierSet::new();
+        turn_n1.insert(new_spend.0, new_spend.1).unwrap();
+        for (nf, v) in base.iter().rev() {
+            turn_n1.insert(*nf, *v).unwrap();
+        }
+        let before_root_n1 = turn_n1.root8();
+
+        assert_eq!(
+            after_root_n, before_root_n1,
+            "turn N after-root must equal turn N+1 before-root over the same \
+             (nf, value) set (INV-2 continuity, insertion-order-independent)"
         );
     }
 }

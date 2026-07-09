@@ -1435,7 +1435,7 @@ impl DreggRuntime {
         let commitment = note.commitment();
         let nullifier = note.nullifier(&spending);
         self.nullifier_set
-            .insert(nullifier)
+            .insert(nullifier, note.value())
             .map_err(|e| e.to_string())?;
         // Reflect the spend in the agent's note index so `get_notes` reports the
         // note as spent (with its revealed nullifier). If the note was never

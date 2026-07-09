@@ -2246,7 +2246,15 @@ pub fn reify_executor_state(
     for (k, v) in proj.iter() {
         match k {
             UKey::NoteNullifier(n) => {
-                let _ = note_nullifiers.insert(dregg_cell::note::Nullifier(*n));
+                // STAGE-D GAP (reported): the universal-memory projection stores
+                // `UKey::NoteNullifier(n) → UVal::Present` — it does NOT carry the
+                // spent-note value, so a reconstruction here CANNOT rebuild a
+                // `root8()` matching the committed accumulator (INV-3). Recording
+                // `0` reconstructs correct MEMBERSHIP (double-spend still holds)
+                // but a WRONG felt-root. Closing this needs the projection schema
+                // to carry the value (e.g. `UVal::NullifierValue(u64)`) — the
+                // Stage-D persistence/reconstruction work.
+                let _ = note_nullifiers.insert(dregg_cell::note::Nullifier(*n), 0);
             }
             UKey::BridgedNullifier(n) => {
                 let _ = bridged_nullifiers.insert(*n);
@@ -2553,8 +2561,8 @@ mod working_non_projection_tests {
 
         // project_executor_state over ledger + side tables — no Working.
         let mut note_nullifiers = NullifierSet::new();
-        note_nullifiers.insert(Nullifier(bytes(0xA1))).unwrap();
-        note_nullifiers.insert(Nullifier(bytes(0xA2))).unwrap();
+        note_nullifiers.insert(Nullifier(bytes(0xA1)), 100).unwrap();
+        note_nullifiers.insert(Nullifier(bytes(0xA2)), 200).unwrap();
         let mut bridged_nullifiers = BridgedNullifierSet::new();
         bridged_nullifiers.insert(bytes(0xB1)).unwrap();
         let factories = FactoryRegistry::new();

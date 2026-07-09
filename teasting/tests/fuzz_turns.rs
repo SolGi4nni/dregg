@@ -401,13 +401,13 @@ fn test_fuzz_nullifier_uniqueness() {
 
     for _ in 0..200 {
         let nullifier = rng.gen_bytes();
-        nullifier_set.insert(Nullifier(nullifier)).unwrap();
+        nullifier_set.insert(Nullifier(nullifier), 1).unwrap();
         all_nullifiers.push(nullifier);
     }
 
     // Try to insert each one again -- must fail.
     for nullifier in &all_nullifiers {
-        let result = nullifier_set.insert(Nullifier(*nullifier));
+        let result = nullifier_set.insert(Nullifier(*nullifier), 1);
         assert!(
             result.is_err(),
             "Double-spend should be rejected for nullifier {:02x}{:02x}...",

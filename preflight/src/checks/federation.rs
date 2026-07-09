@@ -92,7 +92,7 @@ fn check_nullifier_double_spend() -> Result<(), String> {
 
     // First spend: should succeed
     nullifier_set
-        .insert(nullifier)
+        .insert(nullifier, note.value())
         .map_err(|e| format!("first insert failed: {e:?}"))?;
 
     if !nullifier_set.contains(&nullifier) {
@@ -100,7 +100,7 @@ fn check_nullifier_double_spend() -> Result<(), String> {
     }
 
     // Double spend: should fail
-    let result = nullifier_set.insert(nullifier);
+    let result = nullifier_set.insert(nullifier, note.value());
     match result {
         Err(dregg_cell::NoteError::DoubleSpend { .. }) => {
             // Correct: double spend prevented

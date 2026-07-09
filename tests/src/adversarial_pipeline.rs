@@ -187,11 +187,11 @@ fn adversarial_revocation_propagation() {
     let token_nullifier = Nullifier(*blake3::hash(b"revocable-token-1-nullifier").as_bytes());
 
     // First insertion (marking as spent/revoked) succeeds
-    nullifier_set.insert(token_nullifier).unwrap();
+    nullifier_set.insert(token_nullifier, 1).unwrap();
     assert!(nullifier_set.contains(&token_nullifier));
 
     // Second insertion fails (already revoked)
-    let double_revoke = nullifier_set.insert(token_nullifier);
+    let double_revoke = nullifier_set.insert(token_nullifier, 1);
     assert!(
         double_revoke.is_err(),
         "Double-revocation (nullifier already in set) MUST be rejected"
@@ -471,7 +471,7 @@ fn adversarial_note_double_spend() {
 
     // --- Step 2: First spend succeeds ---
     let mut nullifier_set = NullifierSet::new();
-    let insert_result = nullifier_set.insert(nullifier);
+    let insert_result = nullifier_set.insert(nullifier, note.value());
     assert!(
         insert_result.is_ok(),
         "First spend (nullifier insertion) should succeed"
@@ -479,7 +479,7 @@ fn adversarial_note_double_spend() {
     assert!(nullifier_set.contains(&nullifier));
 
     // --- Step 3: Second spend (replay) -> REJECTED ---
-    let double_spend_result = nullifier_set.insert(nullifier);
+    let double_spend_result = nullifier_set.insert(nullifier, note.value());
     assert!(
         double_spend_result.is_err(),
         "Double-spend MUST be rejected"
@@ -500,7 +500,7 @@ fn adversarial_note_double_spend() {
         "Different notes should have different nullifiers"
     );
 
-    let other_result = nullifier_set.insert(other_nullifier);
+    let other_result = nullifier_set.insert(other_nullifier, other_note.value());
     assert!(
         other_result.is_ok(),
         "Spending a different note should succeed"

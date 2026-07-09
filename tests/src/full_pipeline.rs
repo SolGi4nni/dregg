@@ -550,12 +550,12 @@ fn test_full_note_lifecycle() {
     // --- Step 6: Insert nullifier into NullifierSet ---
     let mut nullifier_set = NullifierSet::new();
     nullifier_set
-        .insert(nullifier1)
+        .insert(nullifier1, 1)
         .expect("first insert should succeed");
     assert!(nullifier_set.contains(&nullifier1));
 
     // --- Step 7: Attempt double-spend -> NullifierSet rejects ---
-    let double_spend_result = nullifier_set.insert(nullifier1);
+    let double_spend_result = nullifier_set.insert(nullifier1, 1);
     assert!(
         double_spend_result.is_err(),
         "double-spend should be rejected"

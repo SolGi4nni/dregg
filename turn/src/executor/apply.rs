@@ -1110,7 +1110,10 @@ impl TurnExecutor {
                     path.to_vec(),
                 ));
             }
-            set.insert(*nullifier).map_err(|e| {
+            // Record the spent-note `value` in the accumulator leaf — the SAME
+            // `NOTE_VALUE_LO` the circuit noteSpend grow-gate inserts, so the
+            // committed `root8()` stays cross-turn-continuous with the proof.
+            set.insert(*nullifier, value).map_err(|e| {
                 // `insert` returns DoubleSpend on collision; we just
                 // checked above, so this is defensive against future
                 // concurrent races (the Mutex makes that impossible today).
@@ -1247,7 +1250,17 @@ impl TurnExecutor {
                 }
             }
             for nf in &nullifiers {
-                set.insert(*nf).map_err(|e| {
+                // STAGE-B RESIDUAL (reported): a shielded transfer HIDES the
+                // cleartext value (it lives in a Pedersen commitment, never a
+                // public `NOTE_VALUE_LO` felt), and it does NOT flow through the
+                // effect_vm noteSpend grow-gate (it is a separate hiding STARK).
+                // So there is no circuit-continuous note value to record here;
+                // `0` is a placeholder until the shielded accumulator wiring is
+                // designed. This entry pollutes `note_nullifiers.root8()` vs the
+                // in-circuit accumulator regardless of value — segregating the
+                // committed accumulator from the Rust double-spend dedup set is
+                // Stage-B/D work.
+                set.insert(*nf, 0).map_err(|e| {
                     invalid(match e {
                         NoteError::DoubleSpend { .. } => {
                             "double-spend: race on shielded nullifier insert".into()
@@ -1493,7 +1506,14 @@ impl TurnExecutor {
                     path.to_vec(),
                 ));
             }
-            set.insert(*pending_id).map_err(|e| {
+            // STAGE-B RESIDUAL (reported): a promise-hole (`pending_id`) carries
+            // no monetary note value — the React one-shot spend is a reactive
+            // gate, not a fungible transfer — so `0` is the correct "no value"
+            // record for the Rust dedup. If the React descriptor's in-circuit
+            // grow-gate ever commits this hole into the SAME limb-26 accumulator,
+            // its `NOTE_VALUE` column must be confirmed `0` (Stage-B live-root
+            // threading) for continuity to hold.
+            set.insert(*pending_id, 0).map_err(|e| {
                 let reason = match e {
                     NoteError::DoubleSpend { .. } => {
                         "React: double-spend — race on pending_id insert".to_string()

@@ -295,7 +295,9 @@ impl TurnExecutor {
             if set.contains(&req.lock_nullifier) {
                 return Err(BridgeMintError::DuplicateLock);
             }
-            set.insert(req.lock_nullifier)
+            // Record the minted amount as the accumulator leaf value (the value
+            // this lock nullifier authorizes) — the natural `(nf, value)` record.
+            set.insert(req.lock_nullifier, req.amount)
                 .map_err(|_| BridgeMintError::DuplicateLock)?;
         }
         journal.record_note_nullifier_inserted(req.lock_nullifier);
@@ -404,7 +406,8 @@ impl TurnExecutor {
             if set.contains(&req.escrow_nullifier) {
                 return Err(BridgeMintError::DuplicateLock);
             }
-            set.insert(req.escrow_nullifier)
+            // Record the escrowed amount as the accumulator leaf value.
+            set.insert(req.escrow_nullifier, req.escrowed)
                 .map_err(|_| BridgeMintError::DuplicateLock)?;
         }
         journal.record_note_nullifier_inserted(req.escrow_nullifier);

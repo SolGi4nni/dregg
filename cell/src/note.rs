@@ -497,8 +497,8 @@ mod tests {
 
         // A nullifier set in any federation can detect the double-spend.
         let mut set = crate::nullifier_set::NullifierSet::new();
-        set.insert(nullifier).unwrap();
-        let double_spend = set.insert(same_nullifier);
+        set.insert(nullifier, note.value()).unwrap();
+        let double_spend = set.insert(same_nullifier, note.value());
         assert!(matches!(double_spend, Err(NoteError::DoubleSpend { .. })));
     }
 

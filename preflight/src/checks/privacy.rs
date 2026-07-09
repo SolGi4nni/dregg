@@ -218,11 +218,11 @@ fn check_note_nullifier_derivation() -> Result<(), String> {
     // Double-spend prevention via NullifierSet.
     let mut nullifier_set = NullifierSet::new();
     nullifier_set
-        .insert(nullifier)
+        .insert(nullifier, note.value())
         .map_err(|e| format!("first spend failed: {e:?}"))?;
 
     // Second spend of same nullifier: MUST fail.
-    let double_result = nullifier_set.insert(nullifier);
+    let double_result = nullifier_set.insert(nullifier, note.value());
     if double_result.is_ok() {
         return Err("double-spend (same nullifier inserted twice) should be REJECTED".into());
     }

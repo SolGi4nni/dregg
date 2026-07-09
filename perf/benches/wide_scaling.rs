@@ -53,7 +53,7 @@ fn nullifier(i: u64) -> Nullifier {
 fn filled_set(n: usize) -> NullifierSet {
     let mut s = NullifierSet::new();
     for i in 0..n as u64 {
-        s.insert(nullifier(i)).expect("distinct");
+        s.insert(nullifier(i), 1).expect("distinct");
     }
     s
 }
@@ -95,7 +95,7 @@ fn bench_wide(c: &mut Criterion) {
             b.iter_batched(
                 || set.clone(),
                 |mut s| {
-                    let _ = s.insert(nullifier((n + 1) as u64));
+                    let _ = s.insert(nullifier((n + 1) as u64), 1);
                     black_box(s.len())
                 },
                 criterion::BatchSize::SmallInput,

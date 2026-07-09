@@ -1110,7 +1110,7 @@ mod tests {
     fn nset_with(nullifiers: &[[u8; 32]]) -> NullifierSet {
         let mut s = NullifierSet::new();
         for n in nullifiers {
-            s.insert(Nullifier(*n)).unwrap();
+            s.insert(Nullifier(*n), 1).unwrap();
         }
         s
     }

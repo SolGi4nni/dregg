@@ -305,7 +305,7 @@ fn test_nullifier_uniqueness_basic() {
 
     for _ in 0..50 {
         let nullifier = rng.gen_bytes();
-        nullifier_set.insert(Nullifier(nullifier)).unwrap();
+        nullifier_set.insert(Nullifier(nullifier), 1).unwrap();
         history.push(nullifier);
     }
 
@@ -318,8 +318,8 @@ fn test_nullifier_double_spend_detected() {
     let mut nullifier_set = NullifierSet::new();
     let nullifier = Nullifier([0xDE; 32]);
 
-    nullifier_set.insert(nullifier).unwrap();
-    let result = nullifier_set.insert(nullifier);
+    nullifier_set.insert(nullifier, 1).unwrap();
+    let result = nullifier_set.insert(nullifier, 1);
     assert!(result.is_err(), "Double-spend should be rejected");
 }
 
