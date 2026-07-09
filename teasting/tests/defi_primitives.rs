@@ -726,8 +726,8 @@ fn test_cross_state_derivation_tampered_proof_rejected() {
         &[alice, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
     );
 
-    // Tamper with the source STARK.
-    proof.source_derivations[0].proof.trace_commitment[0] ^= 0xFF;
+    // Tamper with the source descriptor proof blob.
+    proof.source_derivations[0].proof.blob[0] ^= 0xFF;
 
     let result = verify_cross_state_derivation(&proof, &[root_a], expected_final);
     assert!(result.is_err(), "Tampered STARK should be rejected");

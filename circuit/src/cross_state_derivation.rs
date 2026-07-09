@@ -38,9 +38,11 @@
 
 use crate::body_membership::MembershipEntry;
 use crate::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
+use crate::derivation_witness::{DERIVATION_NAME, derivation_descriptor_witness};
+use crate::descriptor_by_name::descriptor_by_name;
 use crate::field::BabyBear;
 use crate::poseidon2::hash_4_to_1;
-use crate::stark::StarkProof;
+use crate::presentation::{DescriptorProofWire, build_descriptor_wire, verify_descriptor_wire};
 use serde::{Deserialize, Serialize};
 
 // ============================================================================
@@ -54,8 +56,10 @@ pub struct CrossStateDerivationProof {
     /// Per-source derivation: each proves "under root R_i, I derived fact F_i".
     pub source_derivations: Vec<SourceDerivation>,
     /// The composition: proves the final derivation under a merged root
-    /// that commits only to the derived intermediate facts.
-    pub final_derivation: StarkProof,
+    /// that commits only to the derived intermediate facts. A committed-descriptor proof
+    /// (`dregg-derivation-v1`) in wire form — the consumer verifies it via
+    /// [`descriptor_by_name`] → [`verify_descriptor_wire`].
+    pub final_derivation: DescriptorProofWire,
     /// The merged/composition root (public input to final_derivation).
     pub composition_root: BabyBear,
     /// Source roots (one per source_derivations entry).
@@ -69,8 +73,9 @@ pub struct CrossStateDerivationProof {
 pub struct SourceDerivation {
     /// The state root this derivation operates under.
     pub source_root: BabyBear,
-    /// STARK proof of derivation under `source_root`.
-    pub proof: StarkProof,
+    /// Committed-descriptor proof (`dregg-derivation-v1`) of derivation under `source_root`, in
+    /// wire form — the consumer verifies it via [`descriptor_by_name`] → [`verify_descriptor_wire`].
+    pub proof: DescriptorProofWire,
     /// The derived fact hash (output of this derivation).
     pub derived_fact_hash: BabyBear,
     /// Body atom 0's fact hash — the derivation descriptor exports it as `pi[5]`
@@ -230,9 +235,16 @@ pub fn prove_cross_state_derivation_with_depth(
     }
 }
 
-/// Generate a STARK proof for a single derivation witness.
-fn prove_source_derivation_stark(witness: &DerivationWitness) -> StarkProof {
-    crate::dsl::derivation::prove_derivation_dsl(witness)
+/// Generate a committed-descriptor proof for a single derivation witness: build the deployed
+/// 379-col derivation trace + the descriptor's 13 public inputs
+/// ([`derivation_descriptor_witness`]), prove through the emitted `dregg-derivation-v1` descriptor
+/// ([`crate::descriptor_ir2::prove_vm_descriptor2`], via [`build_descriptor_wire`]), and return the
+/// self-verifying wire (postcard batch proof + the 13 PIs in `vk`).
+fn prove_source_derivation_stark(witness: &DerivationWitness) -> DescriptorProofWire {
+    let desc = descriptor_by_name(DERIVATION_NAME)
+        .expect("the emitted derivation descriptor must be registered in descriptor_by_name");
+    let (trace, pis) = derivation_descriptor_witness(witness);
+    build_descriptor_wire(&desc, &trace, &pis)
         .expect("honestly-constructed derivation witness should always prove")
 }
 
@@ -372,18 +384,44 @@ pub fn verify_cross_state_derivation_with_depth(
             ));
         }
 
-        // Verify the STARK proof. Public inputs are
-        // [state_root, derived_fact_hash, 0, 0, 0, body_fact_hash].
-        let public_inputs = vec![
-            source.source_root,
-            source.derived_fact_hash,
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-            BabyBear::ZERO,
-            source.body_fact_hash,
-        ];
-        crate::derivation_air::verify_derivation_stark(&source.proof, &public_inputs)
-            .map_err(|e| format!("Source derivation {} STARK verification failed: {}", i, e))?;
+        // Verify the committed-descriptor proof end-to-end (descriptor_by_name → decode →
+        // verify_vm_descriptor2) and recover its 13 verified public inputs. A tampered/malformed
+        // wire, an unknown descriptor, or a failed verify all yield `None` — never a silent accept.
+        let pis = verify_descriptor_wire(&source.proof).ok_or_else(|| {
+            format!(
+                "Source derivation {} STARK verification failed: descriptor proof rejected",
+                i
+            )
+        })?;
+        if pis.len() != crate::derivation_witness::DERIVATION_PI_COUNT {
+            return Err(format!(
+                "Source derivation {} STARK verification failed: expected {} PIs, got {}",
+                i,
+                crate::derivation_witness::DERIVATION_PI_COUNT,
+                pis.len()
+            ));
+        }
+        // Bind the verified PIs to the declared facts: pi[0] the committed state_root (the
+        // state-binding tooth), pi[1] the derived fact used to build the composition root, pi[5]
+        // the exported body-fact hash (the body↔membership-leaf pin).
+        if pis[0] != source.source_root {
+            return Err(format!(
+                "Source derivation {} STARK verification failed: bound state_root ({}) != declared source root ({})",
+                i, pis[0].0, source.source_root.0
+            ));
+        }
+        if pis[1] != source.derived_fact_hash {
+            return Err(format!(
+                "Source derivation {} STARK verification failed: bound conclusion ({}) != declared derived fact ({})",
+                i, pis[1].0, source.derived_fact_hash.0
+            ));
+        }
+        if pis[5] != source.body_fact_hash {
+            return Err(format!(
+                "Source derivation {} STARK verification failed: bound body-fact hash ({}) != declared body fact ({})",
+                i, pis[5].0, source.body_fact_hash.0
+            ));
+        }
 
         intermediate_facts.push(source.derived_fact_hash);
     }
@@ -397,22 +435,42 @@ pub fn verify_cross_state_derivation_with_depth(
         ));
     }
 
-    // Check 4: Verify the final derivation STARK under the composition root. The final
-    // derivation's body facts are the intermediate derived-fact hashes, so its exported
-    // body-fact PI (pi[5], C6b) is the first intermediate fact (body atom 0).
-    let final_public_inputs = vec![
-        proof.composition_root,
-        proof.final_derived_hash,
-        BabyBear::ZERO,
-        BabyBear::ZERO,
-        BabyBear::ZERO,
-        intermediate_facts
-            .first()
-            .copied()
-            .unwrap_or(BabyBear::ZERO),
-    ];
-    crate::derivation_air::verify_derivation_stark(&proof.final_derivation, &final_public_inputs)
-        .map_err(|e| format!("Final derivation STARK verification failed: {}", e))?;
+    // Check 4: Verify the final derivation descriptor proof under the composition root. The final
+    // derivation's body facts are the intermediate derived-fact hashes, so its exported body-fact
+    // PI (pi[5], C6b) is the first intermediate fact (body atom 0). Recover the verified PIs and
+    // bind pi[0] to the recomputed composition root and pi[1] to the claimed final hash.
+    let final_pis = verify_descriptor_wire(&proof.final_derivation).ok_or_else(|| {
+        "Final derivation STARK verification failed: descriptor proof rejected".to_string()
+    })?;
+    if final_pis.len() != crate::derivation_witness::DERIVATION_PI_COUNT {
+        return Err(format!(
+            "Final derivation STARK verification failed: expected {} PIs, got {}",
+            crate::derivation_witness::DERIVATION_PI_COUNT,
+            final_pis.len()
+        ));
+    }
+    if final_pis[0] != proof.composition_root {
+        return Err(format!(
+            "Final derivation STARK verification failed: bound state_root ({}) != composition root ({})",
+            final_pis[0].0, proof.composition_root.0
+        ));
+    }
+    if final_pis[1] != proof.final_derived_hash {
+        return Err(format!(
+            "Final derivation STARK verification failed: bound conclusion ({}) != claimed final hash ({})",
+            final_pis[1].0, proof.final_derived_hash.0
+        ));
+    }
+    let expected_body0 = intermediate_facts
+        .first()
+        .copied()
+        .unwrap_or(BabyBear::ZERO);
+    if final_pis[5] != expected_body0 {
+        return Err(format!(
+            "Final derivation STARK verification failed: bound body-fact hash ({}) != first intermediate fact ({})",
+            final_pis[5].0, expected_body0.0
+        ));
+    }
 
     // Check 5: Final derived hash matches expectation.
     if proof.final_derived_hash != expected_final_hash {
@@ -758,8 +816,8 @@ mod tests {
             &[alice, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
         );
 
-        // Tamper with source derivation 0's STARK.
-        proof.source_derivations[0].proof.trace_commitment[0] ^= 0xFF;
+        // Tamper with source derivation 0's descriptor proof blob.
+        proof.source_derivations[0].proof.blob[0] ^= 0xFF;
 
         let result = verify_cross_state_derivation(&proof, &[root_a, root_b], expected_final);
         assert!(result.is_err(), "Tampered STARK should be rejected");
@@ -810,8 +868,8 @@ mod tests {
             &[alice, BabyBear::ZERO, BabyBear::ZERO, BabyBear::ZERO],
         );
 
-        // Tamper with the final derivation STARK.
-        proof.final_derivation.trace_commitment[0] ^= 0xFF;
+        // Tamper with the final derivation descriptor proof blob.
+        proof.final_derivation.blob[0] ^= 0xFF;
 
         let result = verify_cross_state_derivation(&proof, &[root_a], expected_final);
         assert!(result.is_err(), "Tampered final STARK should be rejected");
@@ -1048,9 +1106,9 @@ mod tests {
         let source_sizes: Vec<usize> = proof
             .source_derivations
             .iter()
-            .map(|s| crate::stark::proof_to_bytes(&s.proof).len())
+            .map(|s| postcard::to_allocvec(&s.proof).map_or(0, |v| v.len()))
             .collect();
-        let final_size = crate::stark::proof_to_bytes(&proof.final_derivation).len();
+        let final_size = postcard::to_allocvec(&proof.final_derivation).map_or(0, |v| v.len());
         let total: usize = source_sizes.iter().sum::<usize>() + final_size;
 
         println!(

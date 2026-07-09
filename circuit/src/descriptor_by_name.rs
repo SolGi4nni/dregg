@@ -106,6 +106,7 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     ),
     ("dregg-bound-presentation::v1", BOUND_PRESENTATION_JSON),
     ("dregg-blinded-membership::v1", BLINDED_MEMBERSHIP_JSON),
+    ("dregg-derivation-v1", DERIVATION_JSON),
     (
         "dregg-effectvm-custom-v1",
         crate::effect_vm_descriptors::DREGG_EFFECTVM_CUSTOM_IR2_JSON,
@@ -164,6 +165,16 @@ const BOUND_PRESENTATION_JSON: &str =
 /// [`crate::blinded_membership_witness::blinded_membership_witness`].
 const BLINDED_MEMBERSHIP_JSON: &str =
     include_str!("../descriptors/by-name/blinded-membership.json");
+/// The **Datalog derivation** family (`dregg-derivation-v1`), authored in
+/// `metatheory/Dregg2/Circuit/Emit/DerivationEmit.lean` (`derivationDesc`) and byte-pinned there by
+/// an `emitVmJson2` `#guard`. This is the emit-from-Lean twin of the hand derivation AIR
+/// (`circuit/src/dsl/derivation.rs::derivation_circuit_descriptor`): a Datalog rule FIRES — the head
+/// fact is the genuine `hash_fact` of `(head_pred, head_terms)` (the C4 chip tooth), the body facts
+/// are membership-authenticated against the committed `state_root` (pi[0]), the conclusion is bound
+/// to pi[1], and the EIGHT exported body-fact hashes to pi[5..12] (C6b/C6c, the
+/// body↔membership-leaf binding). Its Rust witness builder is
+/// [`crate::derivation_witness::derivation_descriptor_witness`].
+const DERIVATION_JSON: &str = include_str!("../descriptors/by-name/derivation.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).

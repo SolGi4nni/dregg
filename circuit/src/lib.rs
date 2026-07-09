@@ -322,6 +322,14 @@ pub mod membership_descriptor_4ary;
 /// module docs.
 pub mod adjacency_witness;
 
+/// Rust witness builder for the emitted **Datalog derivation** descriptor
+/// (`dregg-derivation-v1`, `DerivationEmit.lean`) — maps a `DerivationWitness` to the real deployed
+/// 379-col trace (via `dsl::derivation::generate_derivation_trace_dsl`) plus the 13 public inputs the
+/// emitted descriptor pins (`state_root`, `derived_hash`, and the 8 exported body-fact hashes), so
+/// consumers of `descriptor_by_name` can prove/verify a derivation step through the real p3 prover
+/// (the descriptor prover extends the trace to 386 cols and fills the C4 chip lanes). See module docs.
+pub mod derivation_witness;
+
 /// Rust witness builder for the emitted `presentation` descriptor
 /// (`dregg-presentation-freshness::summary-v1`, `PresentationEmit.lean`) — the analog of
 /// `membership_witness_4ary` for the blinded-presentation family, so consumers of
