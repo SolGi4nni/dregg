@@ -449,14 +449,21 @@ pub fn verify_devnet_history(
 ///    verifying Ed25519 vote over the head root. The threshold is taken over the committee size, not
 ///    the cert-supplied `participant_count` — closing red-team LC-2/LC-3.
 ///
-/// `committee_hex_csv` is a comma-separated list of 64-hex validator keys. An empty committee, a
-/// missing finality cert, a seam break, or a sub-quorum (e.g. a fork signed by foreign keys) all
-/// yield `attested: false` with the precise reason — NO finalized attestation is laundered.
+/// `committee_hex_csv` is a comma-separated list of 64-hex ed25519 validator keys.
+/// `ml_dsa_committee_hex_csv` is the PARALLEL comma-separated list of the committee's genesis-ENROLLED
+/// ML-DSA-65 (FIPS 204) public keys (3904 hex chars / 1952 bytes each), aligned index-for-index with
+/// `committee_hex_csv` and sourced from the SAME genesis/epoch config — the GAP #0 pin's enrolled PQ
+/// roster (NEVER the votes' self-carried keys). Pass an EMPTY string for the staged-rollout
+/// fail-closed case: an absent or misaligned roster counts NO signer, so leg 3 refuses the hybrid
+/// quorum (a refusal, never a silent ed25519-only downgrade). An empty committee, a missing finality
+/// cert, a seam break, or a sub-quorum (e.g. a fork signed by foreign keys) all yield
+/// `attested: false` with the precise reason — NO finalized attestation is laundered.
 #[wasm_bindgen]
 pub fn verify_finalized_devnet_history(
     envelope_json: &str,
     config_anchor_hex: &str,
     committee_hex_csv: &str,
+    ml_dsa_committee_hex_csv: &str,
 ) -> Result<JsValue, JsError> {
     use base64::Engine as _;
     use dregg_circuit_prove::ivc_turn_chain::RecursionVk;
@@ -484,14 +491,15 @@ pub fn verify_finalized_devnet_history(
     // config EXACTLY like the ed25519 committee above (a separate trusted input) and NEVER
     // assembled from the cert's self-carried per-vote keys (that self-carry hole IS GAP #0: a
     // quantum adversary who breaks ed25519 for a validator could otherwise substitute its own
-    // ML-DSA key). This wasm boundary does NOT yet thread an enrolled ML-DSA roster (the only
-    // ML-DSA keys reaching here are the self-carried `FinalityVoteJson.ml_dsa_pubkey_hex` on the
-    // votes, which the GAP #0 pin explicitly forbids trusting). So we FAIL CLOSED with an empty
-    // roster: `distinct_committee_signers`/`has_committee_quorum` count ZERO signers against a
-    // misaligned (empty ≠ committee.len()) roster, so leg 3 refuses the hybrid quorum — a refusal,
-    // NOT a silent ed25519-only downgrade. Threading the real enrolled roster through this wasm
-    // boundary (a new config param, parallel to `committee_hex_csv`) is FLAGGED in GOAL-PQ.md.
-    let ml_dsa_committee: Vec<Vec<u8>> = Vec::new();
+    // ML-DSA key). This boundary now THREADS that enrolled roster: `ml_dsa_committee_hex_csv`
+    // carries the committee's ML-DSA-65 public keys from the SAME genesis/epoch config the ed25519
+    // committee comes from, parsed here into the index-for-index roster that
+    // `distinct_committee_signers`/`has_committee_quorum` pin each signer's carried PQ key against.
+    // A misaligned roster (count ≠ committee.len(), e.g. the empty staged-rollout string) still
+    // counts ZERO signers, so leg 3 refuses the hybrid quorum — a refusal, NOT a silent
+    // ed25519-only downgrade.
+    let ml_dsa_committee = parse_ml_dsa_committee_csv(ml_dsa_committee_hex_csv)
+        .map_err(|e| JsError::new(&format!("config ML-DSA committee parse failed: {e}")))?;
 
     // (3) Anchor-discipline pre-check (same as verify_devnet_history): claim vs config.
     let claimed_bytes = parse_hex32(&env.vk_fingerprint_hex)
@@ -671,6 +679,33 @@ fn parse_committee_csv(s: &str) -> Result<Vec<[u8; 32]>, String> {
         .map(|t| t.trim())
         .filter(|t| !t.is_empty())
         .map(parse_hex32)
+        .collect()
+}
+
+/// Parse a comma-separated list of hex-encoded ENROLLED ML-DSA-65 public keys into the trusted PQ
+/// roster, aligned index-for-index with the ed25519 `committee` from [`parse_committee_csv`]. Each
+/// token is a `ML_DSA_PK_LEN`-byte (FIPS 204 = 1952 bytes → 3904 hex chars) ML-DSA-65 public key.
+/// Blank tokens are skipped (mirroring `parse_committee_csv`, so a trailing comma is tolerated); a
+/// malformed or wrong-length token is a HARD error — a fat-fingered enrolled key is a clear config
+/// error, never a silent drop. An EMPTY input yields an empty roster which, being misaligned with a
+/// non-empty committee, fails the hybrid quorum CLOSED (never an ed25519-only downgrade). The caller
+/// sources these keys from the SAME genesis/epoch config the ed25519 committee comes from.
+fn parse_ml_dsa_committee_csv(s: &str) -> Result<Vec<Vec<u8>>, String> {
+    s.split(',')
+        .map(|t| t.trim())
+        .filter(|t| !t.is_empty())
+        .map(|t| {
+            let bytes = parse_hex_var(t)?;
+            if bytes.len() != dregg_pq::ML_DSA_PK_LEN {
+                return Err(format!(
+                    "expected a {}-byte ML-DSA-65 public key ({} hex chars), got {} bytes",
+                    dregg_pq::ML_DSA_PK_LEN,
+                    dregg_pq::ML_DSA_PK_LEN * 2,
+                    bytes.len()
+                ));
+            }
+            Ok(bytes)
+        })
         .collect()
 }
 
@@ -1185,9 +1220,8 @@ mod tests {
         use dregg_lightclient::{
             FinalityCert, HYBRID_PQ_CTX, SignedVote, finality_signing_message,
         };
+        use dregg_pq::MlDsaKey;
         use ed25519_dalek::{Signer, SigningKey};
-        use fips204::ml_dsa_65;
-        use fips204::traits::{KeyGen as _, SerDes as _, Signer as _};
 
         // A deterministic committee of 4 (threshold = 2*4/3 + 1 = 3).
         let n = 4usize;
@@ -1206,12 +1240,7 @@ mod tests {
         // pin checks each carried per-vote key against.
         let ml_dsa_committee: Vec<Vec<u8>> = keys
             .iter()
-            .map(|k| {
-                ml_dsa_65::KG::keygen_from_seed(&k.to_bytes())
-                    .0
-                    .into_bytes()
-                    .to_vec()
-            })
+            .map(|k| MlDsaKey::from_ed25519_seed(&k.to_bytes()).public_bytes())
             .collect();
 
         let root_felt = 555_123u32;
@@ -1223,15 +1252,14 @@ mod tests {
         // re-verifies. A vote with only the classical half would be dropped fail-closed.
         let sign_vote = |k: &SigningKey| -> SignedVote {
             let msg = finality_signing_message(root, n);
-            let (ml_pk, ml_sk) = ml_dsa_65::KG::keygen_from_seed(&k.to_bytes());
-            let pq_signature = ml_sk
-                .try_sign(&msg, HYBRID_PQ_CTX)
-                .expect("ml-dsa-65 sign cannot fail on a valid key")
-                .to_vec();
+            let ml_key = MlDsaKey::from_ed25519_seed(&k.to_bytes());
+            let pq_signature = ml_key
+                .try_sign(HYBRID_PQ_CTX, &msg)
+                .expect("ml-dsa-65 sign cannot fail on a valid key");
             SignedVote {
                 validator: k.verifying_key().to_bytes(),
                 signature: k.sign(&msg).to_bytes(),
-                ml_dsa_pubkey: ml_pk.into_bytes().to_vec(),
+                ml_dsa_pubkey: ml_key.public_bytes(),
                 pq_signature,
             }
         };
@@ -1314,5 +1342,61 @@ mod tests {
             Ok(3),
             "the reconstructed wire cert verifies identically"
         );
+    }
+
+    /// **THE ENROLLED-ROSTER BOUNDARY (GAP #0 pin at the wasm surface).** The new
+    /// `ml_dsa_committee_hex_csv` param parses into the index-for-index enrolled roster the finality
+    /// leg pins carried PQ keys against — NOT the fail-closed empty the boundary carried before. This
+    /// exercises the pure `parse_ml_dsa_committee_csv` the `#[wasm_bindgen]` entry calls: a genuine
+    /// enrolled roster (minted via `dregg_pq::MlDsaKey`, the SAME primitive the committee enrolls with)
+    /// hex-encodes → parses back index-for-index; the empty staged-rollout string yields an empty
+    /// (fail-closed) roster; and a wrong-length token is a HARD config error, never a silent drop.
+    #[test]
+    fn ml_dsa_committee_csv_threads_the_enrolled_roster_and_fails_closed() {
+        use dregg_pq::MlDsaKey;
+
+        // A real enrolled roster, index-for-index with a 3-member committee (same seeds the ed25519
+        // committee would derive from — config, exactly like the ed25519 CSV).
+        let roster: Vec<Vec<u8>> = (0..3u8)
+            .map(|i| {
+                let mut seed = [0u8; 32];
+                seed[0] = i;
+                seed[31] = 0xC3;
+                MlDsaKey::from_ed25519_seed(&seed).public_bytes()
+            })
+            .collect();
+        let csv = roster
+            .iter()
+            .map(|k| k.iter().map(|b| format!("{b:02x}")).collect::<String>())
+            .collect::<Vec<_>>()
+            .join(",");
+
+        // (a) A genuine enrolled roster round-trips index-for-index — the boundary now carries the
+        // ENROLLED keys, not the fail-closed empty.
+        let parsed = parse_ml_dsa_committee_csv(&csv).expect("the enrolled roster parses");
+        assert_eq!(parsed, roster, "the roster parses back index-for-index");
+        assert_eq!(parsed.len(), 3);
+        assert!(parsed.iter().all(|k| k.len() == dregg_pq::ML_DSA_PK_LEN));
+
+        // (b) The empty staged-rollout string yields an empty roster — misaligned with any non-empty
+        // committee, so leg 3 counts ZERO signers (fail-closed, never an ed25519-only downgrade).
+        assert!(
+            parse_ml_dsa_committee_csv("").unwrap().is_empty(),
+            "an empty roster CSV is the fail-closed absent case"
+        );
+        // A trailing comma / blank token is tolerated without shifting alignment.
+        assert_eq!(
+            parse_ml_dsa_committee_csv(&format!("{csv},"))
+                .unwrap()
+                .len(),
+            3,
+            "a trailing comma does not add a phantom roster slot"
+        );
+
+        // (c) A wrong-length token is a HARD error — a fat-fingered enrolled key is a clear config
+        // error, not a silent short key that would later fail the pin quietly.
+        let short = "abcd";
+        let e = parse_ml_dsa_committee_csv(short).unwrap_err();
+        assert!(e.contains("ML-DSA-65 public key"), "got: {e}");
     }
 }

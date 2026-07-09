@@ -36,6 +36,13 @@ dregg-circuit = { path = "../circuit", default-features = false }
 dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-cell = { path = "../cell", default-features = false }
 dregg-cell-crypto = { path = "../cell-crypto" }
+# THE ONE SHARED POST-QUANTUM LEAF — `dregg-pq`'s consolidated ML-DSA-65 (FIPS 204)
+# from-seed derivation + fail-closed verify. The light-client boundary uses
+# `dregg_pq::ML_DSA_PK_LEN` to length-check the enrolled ML-DSA roster CSV, and the
+# hybrid-vote test mints its PQ vote halves through `dregg_pq::MlDsaKey` — the SAME
+# audited primitive the committee enrolls, replacing wasm's direct `fips204` use.
+# Pure-Rust (fips204 + ml-kem + x25519-dalek, all already in this graph), wasm32-safe.
+dregg-pq = { path = "../dregg-pq" }
 dregg-turn = { path = "../turn", default-features = false }
 # coord / intent are FFI-FREE by construction (they route their verified gates through their
 # `verified_gate` seams, which only a Lean-boundary crate — never depended on here — registers).
@@ -168,14 +175,6 @@ biscuit-auth = { version = "6.0.0", features = ["wasm"] }
 version = "0.3"
 features = ["Performance", "Window"]
 
-[dev-dependencies]
-# ML-DSA-65 (FIPS 204) — used ONLY by the light-client hybrid-vote test
-# (`bindings_lightclient`) to mint a genuine post-quantum vote half and prove the
-# reconstruct → finality-leg path re-verifies it. Already a transitive dep (via
-# dregg-turn / dregg-lightclient), so this pins no new version; it just names it
-# for the test's direct `use fips204::…`. Pure-Rust (rand_core + sha2/sha3),
-# wasm32-safe — the same crate the light client verifies with.
-fips204 = "0.4"
 # Drives the `#[wasm_bindgen]` surface as a REAL wasm module under node /
 # headless-Chrome (`wasm-pack test --node` / `--headless --chrome`). The
 # card-in-the-tab loop (`tests/card_fires_a_verified_turn.rs`) runs the EXACT
