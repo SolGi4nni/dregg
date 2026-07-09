@@ -157,3 +157,23 @@ Scrub "deployed" everywhere above — the honest words:
   to checked-bound) — actionable now; or (b) the invasive FFI call-Lean (an architecture tradeoff worth
   ember's taste: call-proven-Lean vs keep-dependency-free-Rust). Neither is a "deployment" gate.
 - done-log: free-text edit engine landed (e5a23c76b); language corrected — no more "deployed".
+
+## ⚠⚠ HONEST FINDING — "doc-soundness on the real commit" was INFLATED (the model ≠ the code)
+Checked (ember pushed): cell::compute_heap_root (the real commit's root) is a DEPTH-16 SORTED-POSEIDON2
+MERKLE TREE. But Substrate/Heap.root — which DocSubstrateSound (bd541b9bc) + root_binds_get ride — is a
+SPONGE OVER THE SORTED LEAF LIST (`hash (h.map leafOf)`, the file's own header confirms). DIFFERENT FUNCTIONS.
+So DocSubstrateSound proves Element-structure/conflict-binding for a MODEL that is NOT what the code computes.
+The "doc-soundness re-homed onto the real commit, thin over root_binds_get" claim (and "scheme-pinned to the
+proven heap-root", and "deployed") was INFLATED — the same skip each time: assert "proven" without checking
+the Lean object equals what the code runs.
+CORRECTED PRINCIPLE (ember): do NOT make the Lean match the (unverified, maybe-buggy) Rust byte-for-byte —
+that validates a proof against buggy code. The Lean is the SOURCE OF TRUTH for correct; the code should BE it;
+divergence from the old Rust is a FIX, not a regression (nothing running depends on the bytes — weeks-old
+snapshot, new testnet from genesis). "Byte-pinned" is only meaningful when pinning TO the source of truth (Lean).
+OPEN (ember's call — substrate-level, the heap-root for EVERY cell, not just docs): which heap-root scheme is
+CORRECT — the Merkle tree (positional, what the AIR seems over), the sponge-over-list (simpler, what my Lean
+proves), or a new design? Then: define it in Lean, prove it binds the map, make the code compute THAT, and let
+doc-soundness ride the REAL one. STOPPING the autonomous lane-firing until this is decided — the velocity is
+what produced the inflated claims.
+- done-log: free-text authoring landed (d2debaf80). Then caught + owned: DocSubstrateSound proves a sponge
+  model, not the code's Merkle tree — "proven on the real commit" retracted pending the correct-scheme decision.
