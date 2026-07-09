@@ -1,0 +1,22 @@
+[package]
+name = "crypto-xmvrf"
+version = "0.1.0"
+edition = "2021"
+description = "Correctness-first REFERENCE implementation of a post-quantum, hash-based, KEY-UPDATABLE VRF for leader sortition — the XM-VRF family (\"Key Updatable Hash Based VRF\", eprint 2026/052), which fixes the UNIQUENESS break of X-VRF (\"Breaking X-VRF\", FC24). Pure hash/PRG (blake3), no lattice. The full uniqueness/pseudorandomness proofs live in the Lean framework metatheory/Dregg2/Crypto/VRF.lean; this is the executable reference. Pre-audit, NOT deployment-grade."
+license = "AGPL-3.0-only"
+publish = false
+
+# Standalone: opt OUT of the breadstuffs root workspace (staged reference work,
+# deliberately NOT a member — builds in its own dir with its own target/lock,
+# exactly like crypto-hermine).
+[workspace]
+
+[dependencies]
+# Collision-resistant hash (the Merkle binding that gives UNIQUENESS) AND the PRG
+# (blake3's keyed mode + XOF drive the forward-secure seed chain and the output).
+# Pure-Rust, no C.
+blake3 = "1"
+
+# No dev-dependencies: tests pin fixed seeds via `keygen_from_seed`, so every run
+# is deterministic and self-contained (the statistical smoke test draws its sample
+# from the VRF itself and blake3's XOF — no external RNG).
