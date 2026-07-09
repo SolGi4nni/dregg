@@ -116,7 +116,13 @@ lanes' files, or Cargo.lock. Scale with ultracode/Workflow. Sign Co-Authored-By:
 - **SIX OF SEVEN CRITERIA BANKED**: #2 CircuitSound-is-a-theorem · #3 every primitive leanc-native · #4
   protocol end-to-end on the real VM · #5 every impl model-connected · #6 THE CAP WELD · #7 whole tree green
   (4514 jobs), nothing laundered.
-- ▶ LAST ONE: criterion #1 — λ ≥ 120. P1-TIGHT (wh5extheb) is killing the forking square root (KLS18 lossy
+- ✅✅✅ **CRITERION #1 ACHIEVED — λ = 149 BITS** (d349cacfc; derived-not-asserted via the DAG inversion
+  0be716c0d). Tight reductions: 099f54d74 lossy identification (+93), 56ef72184 double-sided O2H (+45).
+  `system_security_at_least_120 : 120 ≤ 149` by decide; 29-bit margin; stress budget 121.
+- 🏁 **ALL SEVEN CRITERIA HOLD — CAMPAIGN DONE.** Whole tree green (4518 jobs). Final trusted base: the
+  lattice/DL/hash floor + the leanc toolchain + ONE labeled lattice-estimate + seL4's cited proofs.
+  HORIZONLOG 4479b11a7; memory project-verified-system.
+- (superseded) LAST ONE: criterion #1 — λ ≥ 120. P1-TIGHT (wh5extheb) is killing the forking square root (KLS18 lossy
   identification) and the O2H square root (BHHHP19 double-sided). Then recompute λ in ParameterSecurity and
   hold it to the bar; if short, diagnose the dominant term and tighten THAT.
 - (superseded) WAVE 2 firing: P1 parameter-level theorem · 2a AIR soundness · 2b FRI soundness (BBHR18/DEEP-FRI) ·
