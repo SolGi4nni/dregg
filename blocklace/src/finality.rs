@@ -139,6 +139,23 @@ pub struct Block {
     /// Ed25519 signature over (creator, seq, payload_hash, predecessors).
     #[serde(with = "crate::serde_sig64")]
     pub signature: [u8; 64],
+    /// The POST-QUANTUM half of the HYBRID block signature: an ML-DSA-65
+    /// (FIPS 204) signature over the SAME canonical bytes as the ed25519 half
+    /// (`id()`), produced by the key DERIVED from the creator's ed25519 seed
+    /// ([`crate::pq::MlDsaSigningKey::from_seed`]). Empty (`vec![]`) is the
+    /// PQ-absent sentinel — it fails [`Block::verify_hybrid`] closed. A hybrid
+    /// block carries [`crate::pq::SIG_LEN`] (3309) bytes here.
+    ///
+    /// The live-consensus verifier PINS this against the creator's ENROLLED
+    /// ML-DSA public key (the committee roster, [`Blocklace::enroll_pq`] /
+    /// [`Blocklace::receive_block_pinned`]), NOT a key carried in the block — so
+    /// a quantum adversary who forges the ed25519 half still cannot inject
+    /// consensus blocks under another creator's identity. It is DELIBERATELY
+    /// excluded from `id()` / [`PartialEq`] (ML-DSA hedged signing is
+    /// randomized, so two signings of one block differ in these bytes yet are
+    /// the same block).
+    #[serde(default)]
+    pub pq_signature: Vec<u8>,
 }
 
 impl PartialEq for Block {
@@ -233,6 +250,20 @@ pub enum BlockError {
         seq: u64,
         proof: EquivocationProof,
     },
+
+    #[error("block from creator {creator:?} seq {seq} carries no post-quantum signature half")]
+    UnsignedPq { creator: [u8; 32], seq: u64 },
+
+    #[error(
+        "invalid ML-DSA post-quantum signature on block from creator {creator:?} seq {seq} \
+         (not signed by the creator's ENROLLED key)"
+    )]
+    BadPqSignature { creator: [u8; 32], seq: u64 },
+
+    #[error(
+        "no ML-DSA key enrolled for creator {creator:?} (block seq {seq} rejected fail-closed)"
+    )]
+    UnenrolledCreator { creator: [u8; 32], seq: u64 },
 }
 
 /// Errors during delta-merge.
@@ -389,7 +420,17 @@ impl Block {
         postcard::from_bytes(bytes).ok()
     }
 
-    /// Create and sign a new block.
+    /// Create and HYBRID-sign a new block (ed25519 ∧ ML-DSA-65).
+    ///
+    /// The ed25519 half signs the compact `signing_content`; the post-quantum
+    /// half signs the canonical `id()` (which already commits to the ed25519
+    /// signature) with a key DERIVED from the SAME ed25519 seed
+    /// (`signing_key.to_bytes()`, [`crate::pq::MlDsaSigningKey::from_seed`]), so
+    /// the creator never manages a separate PQ key and the enrolled PQ public
+    /// key is a deterministic function of the ed25519 identity. On a transient
+    /// OS-entropy failure during hedged ML-DSA signing the PQ half is left empty
+    /// — such a block fails [`Block::verify_hybrid`] closed rather than passing
+    /// half-signed.
     pub fn new(
         signing_key: &SigningKey,
         seq: u64,
@@ -399,13 +440,66 @@ impl Block {
         let creator: [u8; 32] = signing_key.verifying_key().to_bytes();
         let content = Self::signing_content(&creator, seq, &payload, &predecessors);
         let signature = signing_key.sign(&content);
-        Block {
+        let mut block = Block {
             creator,
             seq,
             payload,
             predecessors,
             signature: signature.to_bytes(),
+            pq_signature: Vec::new(),
+        };
+        // POST-QUANTUM half: derive the ML-DSA key from the SAME ed25519 seed
+        // and sign the SAME canonical bytes the verifier pins (`id()`).
+        let id = block.id();
+        let (_pk, pq_sk) = crate::pq::MlDsaSigningKey::from_seed(&signing_key.to_bytes());
+        block.pq_signature = pq_sk.sign(&id.0).unwrap_or_default();
+        block
+    }
+
+    /// The enrollable ML-DSA-65 public key for a creator whose ed25519 signing
+    /// key is `signing_key` — the roster entry a verifier PINS this creator's
+    /// consensus blocks against ([`Blocklace::enroll_pq`]). Equal to
+    /// [`crate::pq::public_from_ed25519_seed`] on the key's seed.
+    pub fn pq_public_key(signing_key: &SigningKey) -> crate::pq::MlDsaPublicKey {
+        crate::pq::public_from_ed25519_seed(&signing_key.to_bytes())
+    }
+
+    /// Whether this block carries BOTH halves of a (syntactically) non-zero
+    /// hybrid signature. A zeroed ed25519 signature or an empty ML-DSA half is
+    /// the unsigned sentinel; neither can be a valid hybrid signature.
+    pub fn is_signed_hybrid(&self) -> bool {
+        self.signature != [0u8; 64] && !self.pq_signature.is_empty()
+    }
+
+    /// Verify this block's HYBRID signature: Ed25519 against its self-carried
+    /// `creator` pubkey AND ML-DSA-65 against the creator's ENROLLED PQ public
+    /// key `enrolled_pq` (the committee roster, NOT a key carried in the block).
+    ///
+    /// Returns `Ok(())` iff BOTH halves verify. Rejects the missing-PQ sentinel
+    /// ([`BlockError::UnsignedPq`]), a forged/mismatched ed25519 half
+    /// ([`BlockError::InvalidSignature`]), and a PQ half that was not signed by
+    /// the enrolled key ([`BlockError::BadPqSignature`]) — the case a quantum
+    /// adversary who forges the ed25519 half, or who signs the PQ half under
+    /// their OWN fresh ML-DSA key, cannot escape.
+    pub fn verify_hybrid(&self, enrolled_pq: &crate::pq::MlDsaPublicKey) -> Result<(), BlockError> {
+        // (a) Classical half: real Ed25519 verification against `creator`.
+        self.verify_signature()?;
+        // (b) Post-quantum half MUST be present (fail-closed, never treated as a
+        // valid ed25519-only block).
+        if self.pq_signature.is_empty() {
+            return Err(BlockError::UnsignedPq {
+                creator: self.creator,
+                seq: self.seq,
+            });
         }
+        // (c) ML-DSA-65 PINNED to the ENROLLED roster key over the same `id()`.
+        if !enrolled_pq.verify(&self.id().0, &self.pq_signature) {
+            return Err(BlockError::BadPqSignature {
+                creator: self.creator,
+                seq: self.seq,
+            });
+        }
+        Ok(())
     }
 }
 
@@ -507,6 +601,15 @@ pub struct Blocklace {
     self_seq: u64,
     /// Finality tracking.
     pub finality: FinalityTracker,
+    /// The ENROLLED ML-DSA-65 committee roster: `creator (ed25519 pubkey) ->
+    /// enrolled ML-DSA public key`. The live-consensus reception
+    /// [`Blocklace::receive_block_pinned`] PINS a block's post-quantum half to
+    /// the enrolled key for its creator; a block whose creator is absent from
+    /// the roster is rejected fail-closed ([`BlockError::UnenrolledCreator`]).
+    /// Populated out-of-band from the trusted committee roster (genesis /
+    /// membership), via [`Blocklace::enroll_pq`] — the block never carries its
+    /// own PQ key.
+    pq_roster: HashMap<[u8; 32], crate::pq::MlDsaPublicKey>,
 }
 
 impl Blocklace {
@@ -519,7 +622,24 @@ impl Blocklace {
             self_key,
             self_seq: 0,
             finality: FinalityTracker::new(quorum_threshold),
+            pq_roster: HashMap::new(),
         }
+    }
+
+    /// Enroll a creator's ML-DSA-65 public key into the committee roster.
+    ///
+    /// After enrollment, [`Blocklace::receive_block_pinned`] PINS every block by
+    /// `creator` to `pubkey`. The key comes from trusted out-of-band enrollment
+    /// (genesis / membership committee roster); the block never carries its own
+    /// PQ key. Re-enrolling replaces the key (committee rotation). The enrollable
+    /// key is [`Block::pq_public_key`] on the creator's ed25519 signing key.
+    pub fn enroll_pq(&mut self, creator: [u8; 32], pubkey: crate::pq::MlDsaPublicKey) {
+        self.pq_roster.insert(creator, pubkey);
+    }
+
+    /// The enrolled ML-DSA committee roster (`creator -> enrolled PQ pubkey`).
+    pub fn pq_roster(&self) -> &HashMap<[u8; 32], crate::pq::MlDsaPublicKey> {
+        &self.pq_roster
     }
 
     /// Create a blocklace without finality tracking (quorum = 1, for testing).
@@ -629,9 +749,54 @@ impl Blocklace {
             return Ok(());
         }
 
-        // Verify signature.
+        // Verify signature (ed25519 half).
         block.verify_signature()?;
 
+        self.insert_checked(id, block)
+    }
+
+    /// Receive a consensus block on the LIVE wire path, PINNING its post-quantum
+    /// half to the creator's ENROLLED ML-DSA key.
+    ///
+    /// This is the hybrid, quantum-resistant reception used by the node's
+    /// consensus ingest (`node/src/blocklace_sync.rs`). Unlike [`receive_block`]
+    /// (ed25519-only, for local DAG reconstruction and equivocation
+    /// bookkeeping), it FAILS CLOSED when the creator is not in the enrolled
+    /// roster ([`BlockError::UnenrolledCreator`]) and verifies BOTH signature
+    /// halves ([`Block::verify_hybrid`]) — so a quantum adversary who forges the
+    /// classical half cannot inject a block under an enrolled member's identity.
+    /// The roster is populated out-of-band from the committee via
+    /// [`Blocklace::enroll_pq`]; a self-carried PQ key is never trusted.
+    pub fn receive_block_pinned(&mut self, block: Block) -> Result<(), BlockError> {
+        let id = block.id();
+
+        // Already have it.
+        if self.blocks.contains_key(&id) {
+            return Ok(());
+        }
+
+        // PIN: the creator's post-quantum half MUST verify against the ENROLLED
+        // roster key. No enrolled key ⇒ reject fail-closed (never trust a
+        // self-carried or on-the-fly-derived key).
+        match self.pq_roster.get(&block.creator) {
+            Some(enrolled_pq) => block.verify_hybrid(enrolled_pq)?,
+            None => {
+                return Err(BlockError::UnenrolledCreator {
+                    creator: block.creator,
+                    seq: block.seq,
+                });
+            }
+        }
+
+        self.insert_checked(id, block)
+    }
+
+    /// Shared post-verification reception body: closure check, equivocation
+    /// detection (retaining the conflicting block as evidence), tip update, and
+    /// ack accounting. Both [`receive_block`] (after the ed25519 check) and
+    /// [`receive_block_pinned`] (after the hybrid + pinned check) call this;
+    /// `id` is `block.id()` recomputed by the caller.
+    fn insert_checked(&mut self, id: BlockId, block: Block) -> Result<(), BlockError> {
         // Check closure: all predecessors must be known.
         for pred in &block.predecessors {
             if !self.blocks.contains_key(pred) {
@@ -1383,4 +1548,153 @@ fn topological_sort(
     }
 
     Ok(sorted)
+}
+
+// ─── HYBRID PQ (ed25519 ∧ ML-DSA-65) enroll+PIN tests ─────────────────────────
+#[cfg(test)]
+mod pq_hybrid_tests {
+    use super::*;
+    use crate::pq;
+    use ed25519_dalek::{Signer, SigningKey};
+
+    /// Deterministic per-index test key (mirrors the strand-layer test helper).
+    fn key_for(i: u8) -> SigningKey {
+        SigningKey::from_bytes(&[i; 32])
+    }
+
+    /// A blocklace whose committee (members 1..=8) is pre-enrolled in the
+    /// ML-DSA roster, so the pinned live path can verify their blocks.
+    fn enrolled_lace() -> Blocklace {
+        let mut lace = Blocklace::new(key_for(1), 3);
+        for c in 1..=8u8 {
+            let k = key_for(c);
+            lace.enroll_pq(k.verifying_key().to_bytes(), Block::pq_public_key(&k));
+        }
+        lace
+    }
+
+    /// An honest hybrid consensus block — both halves from the creator's
+    /// from-seed keys — passes `verify_hybrid` and the pinned live path.
+    #[test]
+    fn hybrid_honest_block_passes() {
+        let creator = key_for(7);
+        let enrolled = Block::pq_public_key(&creator);
+        let block = Block::new(&creator, 1, Payload::Data(b"honest".to_vec()), vec![]);
+        assert!(block.is_signed_hybrid(), "carries both halves");
+        assert!(
+            !block.pq_signature.is_empty(),
+            "PQ half present (~{} bytes)",
+            pq::SIG_LEN
+        );
+        assert!(block.verify_hybrid(&enrolled).is_ok());
+
+        let mut lace = enrolled_lace();
+        assert!(lace.receive_block_pinned(block).is_ok());
+        assert_eq!(lace.len(), 1);
+    }
+
+    /// THE adversarial test: a consensus block with a VALID ed25519 half from
+    /// committee member P, but an ML-DSA half signed under an ATTACKER's OWN
+    /// fresh key (≠ P's enrolled key) MUST be rejected. The quantum-adversary
+    /// scenario: assume the classical half is forgeable, but the PQ half is
+    /// pinned to P's enrolled key, which the attacker does not hold.
+    #[test]
+    fn hybrid_attacker_pq_key_rejected() {
+        let p_key = key_for(7); // committee member P
+        let p_enrolled = Block::pq_public_key(&p_key); // P's ENROLLED ML-DSA key
+
+        // Honest-looking block: valid ed25519 half by P over its signing content.
+        let mut forged = Block::new(&p_key, 1, Payload::Data(b"inject".to_vec()), vec![]);
+        // (Block::new already produced P's genuine ed25519 half; re-affirm it.)
+        let content = Block::signing_content(
+            &forged.creator,
+            forged.seq,
+            &forged.payload,
+            &forged.predecessors,
+        );
+        forged.signature = p_key.sign(&content).to_bytes();
+
+        // The ATTACKER controls the PQ half but NOT P's from-seed ML-DSA key:
+        // they generate their own ML-DSA key (a different seed) and sign id().
+        let attacker_seed = [0xAB_u8; 32];
+        let (attacker_pq_pub, attacker_pq_sk) = pq::MlDsaSigningKey::from_seed(&attacker_seed);
+        forged.pq_signature = attacker_pq_sk.sign(&forged.id().0).unwrap();
+        assert_ne!(
+            attacker_pq_pub, p_enrolled,
+            "attacker key must differ from P's enrolled key"
+        );
+
+        // The forged PQ half is a VALID ML-DSA signature — under the ATTACKER's
+        // key — so it MUST NOT verify against P's ENROLLED key.
+        assert!(
+            attacker_pq_pub.verify(&forged.id().0, &forged.pq_signature),
+            "sanity: forged sig is valid under the attacker's own key"
+        );
+        match forged.verify_hybrid(&p_enrolled) {
+            Err(BlockError::BadPqSignature { .. }) => {}
+            other => panic!("expected BadPqSignature, got {other:?}"),
+        }
+
+        // And it is rejected by the pinned live reception path.
+        let mut lace = enrolled_lace();
+        match lace.receive_block_pinned(forged) {
+            Err(BlockError::BadPqSignature { .. }) => {}
+            other => panic!("expected BadPqSignature on insert, got {other:?}"),
+        }
+        assert_eq!(lace.len(), 0, "forged block must not be stored");
+    }
+
+    /// A block with a missing / empty PQ half fails CLOSED — never treated as a
+    /// valid ed25519-only block on the pinned path.
+    #[test]
+    fn hybrid_missing_pq_half_fails_closed() {
+        let p_key = key_for(7);
+        let enrolled = Block::pq_public_key(&p_key);
+
+        let mut ed_only = Block::new(&p_key, 1, Payload::Data(b"x".to_vec()), vec![]);
+        ed_only.pq_signature.clear(); // strip the PQ half
+        assert!(!ed_only.is_signed_hybrid());
+        match ed_only.verify_hybrid(&enrolled) {
+            Err(BlockError::UnsignedPq { .. }) => {}
+            other => panic!("expected UnsignedPq (fail-closed), got {other:?}"),
+        }
+        let mut lace = enrolled_lace();
+        match lace.receive_block_pinned(ed_only) {
+            Err(BlockError::UnsignedPq { .. }) => {}
+            other => panic!("expected UnsignedPq on insert, got {other:?}"),
+        }
+        assert_eq!(lace.len(), 0);
+    }
+
+    /// A creator with NO enrolled ML-DSA key is rejected fail-closed — the
+    /// pinned path never trusts a self-carried or on-the-fly-derived PQ key.
+    #[test]
+    fn hybrid_unenrolled_creator_rejected() {
+        // A fully-valid hybrid block by creator 200, but enrolled_lace only
+        // enrolls members 1..=8.
+        let block = Block::new(
+            &key_for(200),
+            1,
+            Payload::Data(b"stranger".to_vec()),
+            vec![],
+        );
+        assert!(block.is_signed_hybrid());
+        let mut lace = enrolled_lace();
+        match lace.receive_block_pinned(block) {
+            Err(BlockError::UnenrolledCreator { .. }) => {}
+            other => panic!("expected UnenrolledCreator, got {other:?}"),
+        }
+        assert_eq!(lace.len(), 0);
+    }
+
+    /// The ed25519-only `receive_block` still accepts an honest block (the
+    /// hybrid pin is an ADDITIVE live-path gate; local DAG reconstruction and
+    /// the 41 existing reception tests are unaffected).
+    #[test]
+    fn ed25519_only_receive_block_still_accepts() {
+        let block = Block::new(&key_for(3), 1, Payload::Data(b"local".to_vec()), vec![]);
+        let mut lace = Blocklace::new(key_for(1), 3);
+        assert!(lace.receive_block(block).is_ok());
+        assert_eq!(lace.len(), 1);
+    }
 }
