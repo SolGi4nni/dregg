@@ -98,7 +98,9 @@ pub mod verified_gate;
 pub use data_plane::{Bus, ChannelName, DataPlaneError, Delivery, SendCap, TopicName, Wake, Waker};
 pub use gc::{DropMessage, DropResult, ExportGcManager, ImportGcManager, SessionId};
 pub use handoff::{
-    HandoffAcceptance, HandoffCertificate, HandoffError, HandoffPresentation, validate_handoff,
+    HandoffAcceptance, HandoffCertificate, HandoffError, HandoffPresentation,
+    HybridHandoffCertificate, HybridHandoffPresentation, MlDsaHandoffKey, validate_handoff,
+    validate_handoff_hybrid,
 };
 pub use netlayer::{
     InProcessFabric, InProcessNetlayer, NetConnection, NetSession, Netlayer, NetlayerError, PeerId,
