@@ -10,6 +10,7 @@
 //! lets `FederationReceipt::verify` reject receipts where the carried
 //! `federation_id` does not match the committee handed to the verifier.
 
+use crate::frost::MlDsaPublicKey;
 use crate::types::PublicKey;
 
 /// Domain separator for the committee → federation_id mapping.
@@ -43,13 +44,64 @@ pub fn derive_federation_id_with_epoch(
     committee_pubkeys: &[PublicKey],
     committee_epoch: u64,
 ) -> [u8; 32] {
-    let mut sorted: Vec<&PublicKey> = committee_pubkeys.iter().collect();
-    sorted.sort_by_key(|a| a.0);
+    let ids: Vec<[u8; 32]> = committee_pubkeys.iter().map(|pk| pk.0).collect();
+    federation_id_over_member_ids(&ids, committee_epoch)
+}
+
+/// The COUPLED-CORE committee identity: derive a federation id from committee
+/// members whose canonical id COMMITS to BOTH their Ed25519 and their ML-DSA-65
+/// key (`dregg_types::hybrid_id_commitment`), so the federation id is a
+/// commitment to the hybrid roster rather than to Ed25519 alone.
+///
+/// `committee_ed` and `committee_ml_dsa` are aligned index-for-index (member `i`
+/// contributes `hybrid_id_commitment(committee_ed[i], committee_ml_dsa[i])`).
+/// When `committee_ml_dsa` is empty (or a length mismatch) the derivation falls
+/// back to the legacy Ed25519-only member ids — this keeps a PQ-less committee
+/// (threshold/BLS-only receipts, no enrolled ML-DSA roster) deriving a stable
+/// id, while the live hybrid genesis path (every validator carries a
+/// deterministic ML-DSA key) commits to both halves. Genesis and the runtime
+/// receipt/state re-derivation MUST agree on which form they use, or a receipt's
+/// carried `federation_id` will not match and it fails closed.
+pub fn derive_federation_id_hybrid_with_epoch(
+    committee_ed: &[PublicKey],
+    committee_ml_dsa: &[MlDsaPublicKey],
+    committee_epoch: u64,
+) -> [u8; 32] {
+    let ids: Vec<[u8; 32]> = member_ids_hybrid(committee_ed, committee_ml_dsa);
+    federation_id_over_member_ids(&ids, committee_epoch)
+}
+
+/// The per-member canonical committee ids for `(committee_ed, committee_ml_dsa)`
+/// under the COUPLED-CORE identity rule: `hybrid_id_commitment(ed, ml)` per
+/// member when a PQ roster is present and aligned, else the legacy Ed25519 id.
+/// Shared by federation-id derivation and any committee-membership check that
+/// must speak the same identity as genesis.
+pub fn member_ids_hybrid(
+    committee_ed: &[PublicKey],
+    committee_ml_dsa: &[MlDsaPublicKey],
+) -> Vec<[u8; 32]> {
+    if !committee_ml_dsa.is_empty() && committee_ml_dsa.len() == committee_ed.len() {
+        committee_ed
+            .iter()
+            .zip(committee_ml_dsa.iter())
+            .map(|(ed, ml)| dregg_types::hybrid_id_commitment(&ed.0, &ml.0))
+            .collect()
+    } else {
+        committee_ed.iter().map(|pk| pk.0).collect()
+    }
+}
+
+/// Hash a set of canonical member ids (each 32 bytes) + epoch into a federation
+/// id. The ids are sorted lexicographically so the result is independent of
+/// input order; duplicates are hashed as given (not deduplicated).
+fn federation_id_over_member_ids(member_ids: &[[u8; 32]], committee_epoch: u64) -> [u8; 32] {
+    let mut sorted: Vec<&[u8; 32]> = member_ids.iter().collect();
+    sorted.sort();
 
     let mut hasher = blake3::Hasher::new_derive_key(FEDERATION_ID_DOMAIN);
     hasher.update(&(sorted.len() as u64).to_le_bytes());
-    for pk in &sorted {
-        hasher.update(&pk.0);
+    for id in &sorted {
+        hasher.update(*id);
     }
     hasher.update(&committee_epoch.to_le_bytes());
     *hasher.finalize().as_bytes()
@@ -58,7 +110,67 @@ pub fn derive_federation_id_with_epoch(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::frost::MlDsaSigningKey;
     use crate::types::generate_keypair;
+
+    /// COUPLED-CORE ADVERSARIAL TEST. The committee identity is `H(P_ed ‖ P_ml)`
+    /// per member, so the federation_id commits to the ML-DSA roster. An attacker
+    /// who KEEPS a member's Ed25519 key but substitutes their OWN ML-DSA key
+    /// produces a DIFFERENT member id — hence a different federation_id — so a
+    /// receipt bound to the honest federation cannot be re-derived (and verifies
+    /// closed). The honest roster reproduces the id; an empty (unconfigured)
+    /// roster falls back to the legacy Ed25519-only id (a distinct value), so a
+    /// hybrid-bound id never silently matches a PQ-less re-derivation.
+    #[test]
+    fn hybrid_federation_id_binds_the_ml_dsa_roster() {
+        let (_, a) = generate_keypair();
+        let (_, b) = generate_keypair();
+        let ed = vec![a.clone(), b.clone()];
+
+        // Honest per-member ML-DSA keys (deterministic; genesis derives from seed).
+        let (a_ml, _) = MlDsaSigningKey::from_seed(&[0x11; 32]);
+        let (b_ml, _) = MlDsaSigningKey::from_seed(&[0x22; 32]);
+        let honest_ml = vec![a_ml.clone(), b_ml.clone()];
+
+        let honest_id = derive_federation_id_hybrid_with_epoch(&ed, &honest_ml, 0);
+
+        // ATTACKER: keeps a's Ed25519 key, swaps in their OWN ML-DSA key.
+        let (attacker_ml, _) = MlDsaSigningKey::from_seed(&[0xAA; 32]);
+        let substituted = vec![attacker_ml, b_ml.clone()];
+        let attacker_id = derive_federation_id_hybrid_with_epoch(&ed, &substituted, 0);
+        assert_ne!(
+            honest_id, attacker_id,
+            "substituting a member's ML-DSA key MUST change the federation_id \
+             (the committee identity commits to the hybrid roster)"
+        );
+
+        // HONEST roster reproduces the id (genesis ↔ runtime re-derivation agree).
+        assert_eq!(
+            honest_id,
+            derive_federation_id_hybrid_with_epoch(&ed, &honest_ml, 0),
+            "the honest hybrid roster must re-derive the same id"
+        );
+
+        // A single member's canonical id is exactly the coupled-core commitment.
+        let ids = member_ids_hybrid(&ed, &honest_ml);
+        assert_eq!(ids[0], dregg_types::hybrid_id_commitment(&a.0, &a_ml.0));
+        assert_eq!(ids[1], dregg_types::hybrid_id_commitment(&b.0, &b_ml.0));
+
+        // FAIL-CLOSED distinctness: an empty (unconfigured) roster derives the
+        // legacy Ed25519-only id, which must NOT equal the hybrid-bound id — so a
+        // receipt carrying the hybrid id can never verify against a PQ-less
+        // re-derivation (it fails closed rather than silently downgrading).
+        let legacy_id = derive_federation_id_hybrid_with_epoch(&ed, &[], 0);
+        assert_eq!(
+            legacy_id,
+            derive_federation_id_with_epoch(&ed, 0),
+            "empty roster falls back to the legacy Ed25519-only derivation"
+        );
+        assert_ne!(
+            honest_id, legacy_id,
+            "the hybrid-bound id must be distinct from the legacy Ed25519-only id"
+        );
+    }
 
     #[test]
     fn deterministic_and_order_independent() {

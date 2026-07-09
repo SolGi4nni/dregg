@@ -26,7 +26,7 @@
 
 use std::sync::Arc;
 
-use crate::identity::derive_federation_id_with_epoch;
+use crate::identity::{derive_federation_id_hybrid_with_epoch, derive_federation_id_with_epoch};
 use crate::threshold::FederationCommittee;
 use crate::types::PublicKey;
 use dregg_types::FederationId;
@@ -174,6 +174,16 @@ impl Federation {
         ml_dsa_members: Vec<crate::frost::MlDsaPublicKey>,
     ) -> Self {
         self.ml_dsa_members = ml_dsa_members;
+        // COUPLED-CORE: with the ML-DSA roster attached (aligned to the sorted
+        // members), the federation identity becomes the commitment to the HYBRID
+        // roster — `hybrid_id_commitment(ed, ml)` per member — matching what
+        // genesis wrote and what the runtime receipt/state re-derivation computes.
+        // Without a roster the id stays the legacy Ed25519-only form.
+        self.id = FederationId(derive_federation_id_hybrid_with_epoch(
+            &self.members,
+            &self.ml_dsa_members,
+            self.epoch,
+        ));
         self
     }
 

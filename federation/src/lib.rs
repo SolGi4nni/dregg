@@ -163,7 +163,10 @@ pub use verified_gate::{FederationVerifiedGate, register_federation_verified_gat
 pub use cross_fed_bundle::CrossFedReceiptBundle;
 pub use dregg_types::FederationId;
 pub use federation::{Federation, KnownFederations, LocalSeat};
-pub use identity::{derive_federation_id, derive_federation_id_with_epoch};
+pub use identity::{
+    derive_federation_id, derive_federation_id_hybrid_with_epoch, derive_federation_id_with_epoch,
+    member_ids_hybrid,
+};
 pub use receipt::{FederationReceipt, FederationReceiptBody, ReceiptQc};
 pub use revocation::{RevocationTree, RevocationVerification, RevocationVerifier};
 pub use solo::{

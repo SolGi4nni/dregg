@@ -218,10 +218,13 @@ pub struct NodeStateInner {
     /// Whether federation keys have been configured. When `false`, the node operates
     /// in "discovery mode" and will not finalize attested roots (Issue 10).
     pub federation_configured: bool,
-    /// Canonical federation_id — derived from `known_federation_keys` +
-    /// `committee_epoch` via [`dregg_federation::derive_federation_id_with_epoch`].
-    /// Recomputed whenever the committee changes via [`Self::set_federation_keys`].
-    /// Closes audit F1: this id is bound to the committee, not a random tag.
+    /// Canonical federation_id. COUPLED-CORE: derived from the HYBRID committee
+    /// member ids (`hybrid_id_commitment` over `known_federation_keys` +
+    /// `known_federation_ml_dsa_keys`) + `committee_epoch` via
+    /// [`dregg_federation::derive_federation_id_hybrid_with_epoch`], so it commits
+    /// to the ML-DSA roster and matches what genesis wrote. Recomputed whenever
+    /// the committee changes via [`Self::set_federation_keys_hybrid`]. Closes
+    /// audit F1: this id is bound to the committee, not a random tag.
     pub federation_id: [u8; 32],
     /// Current committee epoch (rotates with key rotations).
     pub committee_epoch: u64,
@@ -2042,12 +2045,23 @@ impl NodeStateInner {
         } else {
             ml_dsa_keys
         };
-        let id = dregg_federation::derive_federation_id_with_epoch(&keys, self.committee_epoch);
+        // COUPLED-CORE: the committee identity is the HYBRID id — a commitment to
+        // both the Ed25519 and the ML-DSA-65 key per member — so this runtime
+        // re-derivation matches what genesis wrote. `ml_dsa_keys` is aligned
+        // index-for-index with `keys`; `derive_federation_id_hybrid_with_epoch`
+        // sorts the resulting member ids internally, so the pre-sort pairing here
+        // yields the same id genesis / the sorted Federation compute. An empty
+        // (unconfigured) ML-DSA set falls back to the legacy Ed25519-only id.
+        let id = dregg_federation::derive_federation_id_hybrid_with_epoch(
+            &keys,
+            &ml_dsa_keys,
+            self.committee_epoch,
+        );
         tracing::info!(
             key_count = keys.len(),
             committee_epoch = self.committee_epoch,
             federation_id = %dregg_types::hex_encode(&id),
-            "federation keys loaded — exiting discovery mode; federation_id derived",
+            "federation keys loaded — exiting discovery mode; federation_id derived (hybrid)",
         );
         // Self-register the local federation in KnownFederations so receipt
         // verification can route through one lookup path for both own and
@@ -2065,13 +2079,32 @@ impl NodeStateInner {
         } else {
             None
         };
-        let fed = dregg_federation::Federation::from_committee(
+        let mut fed = dregg_federation::Federation::from_committee(
             keys.clone(),
             self.committee_epoch,
             threshold,
             None,
             local_seat,
         );
+        // COUPLED-CORE: attach the ML-DSA roster PERMUTED to the sorted committee
+        // (`Federation::from_committee` sorts members by ed25519 bytes) so the
+        // roster stays aligned index-for-index and the Federation's cached id is
+        // the same HYBRID id as `id` above. Without a configured roster the
+        // Federation keeps its legacy Ed25519 id.
+        if !ml_dsa_keys.is_empty() && ml_dsa_keys.len() == keys.len() {
+            let mut pairs: Vec<(
+                dregg_types::PublicKey,
+                dregg_federation::frost::MlDsaPublicKey,
+            )> = keys
+                .iter()
+                .cloned()
+                .zip(ml_dsa_keys.iter().cloned())
+                .collect();
+            pairs.sort_by_key(|(ed, _)| ed.0);
+            let sorted_ml_dsa: Vec<dregg_federation::frost::MlDsaPublicKey> =
+                pairs.into_iter().map(|(_, ml)| ml).collect();
+            fed = fed.with_ml_dsa_members(sorted_ml_dsa);
+        }
         self.known_federations.register(std::sync::Arc::new(fed));
         self.known_federation_keys = keys;
         self.known_federation_ml_dsa_keys = ml_dsa_keys;

@@ -92,9 +92,11 @@ pub struct StarbridgeGenesisCell {
 /// The complete genesis configuration.
 #[derive(Serialize)]
 struct GenesisConfig {
-    /// Hex-encoded 32-byte federation id, derived from the sorted committee
-    /// public keys via [`dregg_federation::derive_federation_id`]. Closes
-    /// audit finding F1: not random bytes anymore.
+    /// Hex-encoded 32-byte federation id. COUPLED-CORE: derived from the sorted
+    /// committee HYBRID member ids — `hybrid_id_commitment(ed25519, ml_dsa)` per
+    /// validator — via [`dregg_federation::derive_federation_id_hybrid_with_epoch`],
+    /// so the id commits to the ML-DSA roster, not Ed25519 alone. Closes audit
+    /// finding F1: not random bytes anymore.
     federation_id: String,
     /// The committee epoch this id was minted for. Always 0 at genesis;
     /// rotated by epoch transitions which mint a fresh id.
@@ -139,6 +141,11 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // the committee pubkeys AFTER this loop — see below.
     let mut genesis_validators = Vec::with_capacity(validators);
     let mut committee_pubkeys: Vec<dregg_types::PublicKey> = Vec::with_capacity(validators);
+    // Aligned index-for-index with `committee_pubkeys`: the published ML-DSA-65
+    // key of each validator. Threaded into the COUPLED-CORE federation_id so the
+    // committee identity commits to the hybrid roster, not Ed25519 alone.
+    let mut committee_ml_dsa: Vec<dregg_federation::frost::MlDsaPublicKey> =
+        Vec::with_capacity(validators);
 
     for i in 0..validators {
         // Generate a 32-byte signing key.
@@ -177,6 +184,7 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
         let hybrid_id_hex = hex_encode(&hybrid_id);
 
         committee_pubkeys.push(dregg_types::PublicKey(public_key.to_bytes()));
+        committee_ml_dsa.push(ml_dsa_pk.clone());
         genesis_validators.push(GenesisValidator {
             name: format!("node-{i}"),
             public_key: pk_hex,
@@ -236,8 +244,11 @@ pub fn run_genesis(validators: usize, epoch_length: u64, checkpoint_interval: u6
     // Closes audit F1: federation_id is now a commitment to the committee,
     // not random bytes. Adding/removing/rekeying a member changes the id.
     let committee_epoch: u64 = 0;
-    let federation_id_bytes =
-        dregg_federation::derive_federation_id_with_epoch(&committee_pubkeys, committee_epoch);
+    let federation_id_bytes = dregg_federation::derive_federation_id_hybrid_with_epoch(
+        &committee_pubkeys,
+        &committee_ml_dsa,
+        committee_epoch,
+    );
     let federation_id = hex_encode(&federation_id_bytes);
 
     // Build genesis config.

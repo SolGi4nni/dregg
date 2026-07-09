@@ -26,7 +26,7 @@
 use serde::{Deserialize, Serialize};
 
 use crate::frost::MlDsaPublicKey;
-use crate::identity::derive_federation_id_with_epoch;
+use crate::identity::derive_federation_id_hybrid_with_epoch;
 use crate::threshold::{FederationCommittee, ThresholdQC};
 use crate::types::{PublicKey, Signature};
 use dregg_types::{CellId, HybridQuorumSig, ThresholdQC as OpaqueThresholdQC};
@@ -338,11 +338,16 @@ impl FederationReceipt {
             return false;
         }
 
-        // F1: federation_id must commit to the actual committee + epoch.
-        // We bind to the Ed25519 `known_keys` because that's the substrate the
-        // live node operates over (genesis validators). The BLS committee
-        // is auxiliary; it shares the same federation, so the same id.
-        let expected_id = derive_federation_id_with_epoch(known_keys, self.committee_epoch);
+        // F1 + COUPLED-CORE: federation_id must commit to the actual committee +
+        // epoch. The committee identity is the HYBRID id — `hybrid_id_commitment(
+        // ed25519, ml_dsa)` per member — so the id commits to the enrolled ML-DSA
+        // roster, not Ed25519 alone. `ml_dsa_keys` is aligned index-for-index with
+        // `known_keys` (both from genesis / the live roster); when it is present
+        // this derives the same hybrid id genesis wrote. An empty `ml_dsa_keys`
+        // (threshold/BLS-only receipts with no PQ roster) falls back to the legacy
+        // Ed25519-only id — genesis and this re-derivation MUST agree on the form.
+        let expected_id =
+            derive_federation_id_hybrid_with_epoch(known_keys, ml_dsa_keys, self.committee_epoch);
         if expected_id != self.federation_id {
             return false;
         }
@@ -396,7 +401,10 @@ impl FederationReceipt {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::identity::derive_federation_id;
+    use crate::identity::{
+        derive_federation_id, derive_federation_id_hybrid_with_epoch,
+        derive_federation_id_with_epoch,
+    };
     use crate::threshold::generate_test_committee;
     use dregg_types::{generate_keypair, sign};
     use hints::PartialSignature;
@@ -605,7 +613,6 @@ mod tests {
         // 3 ed25519 committee keypairs + a per-member ML-DSA-65 keypair.
         let kps: Vec<(_, _)> = (0..3).map(|_| generate_keypair()).collect();
         let known_keys: Vec<PublicKey> = kps.iter().map(|(_, pk)| pk.clone()).collect();
-        let fed_id = derive_federation_id(&known_keys);
         let pq: Vec<(_, _)> = (0..3)
             .map(|i| {
                 let mut s = [0u8; 32];
@@ -617,6 +624,10 @@ mod tests {
 
         // The ENROLLED ML-DSA roster — aligned index-for-index with `known_keys`.
         let ml_dsa_roster: Vec<MlDsaPublicKey> = pq.iter().map(|(pk, _)| pk.clone()).collect();
+        // COUPLED-CORE: the receipt's federation_id commits to the HYBRID roster,
+        // so it must be derived from (known_keys, ml_dsa_roster) — the same id the
+        // verifier re-derives from the enrolled roster.
+        let fed_id = derive_federation_id_hybrid_with_epoch(&known_keys, &ml_dsa_roster, 0);
 
         let body = sample_body(9);
         let body_hash = body.body_hash();
@@ -697,7 +708,6 @@ mod tests {
         use crate::frost::MlDsaSigningKey;
         let kps: Vec<(_, _)> = (0..3).map(|_| generate_keypair()).collect();
         let known_keys: Vec<PublicKey> = kps.iter().map(|(_, pk)| pk.clone()).collect();
-        let fed_id = derive_federation_id(&known_keys);
         // The genesis-ENROLLED ML-DSA roster (aligned with `known_keys`).
         let pq: Vec<(_, _)> = (0..3)
             .map(|i| {
@@ -708,6 +718,8 @@ mod tests {
             })
             .collect();
         let ml_dsa_roster: Vec<MlDsaPublicKey> = pq.iter().map(|(pk, _)| pk.clone()).collect();
+        // COUPLED-CORE: federation_id commits to the hybrid roster.
+        let fed_id = derive_federation_id_hybrid_with_epoch(&known_keys, &ml_dsa_roster, 0);
 
         let body = sample_body(21);
         let body_hash = body.body_hash();
