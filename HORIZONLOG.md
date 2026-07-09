@@ -6813,4 +6813,10 @@ HONESTLY OPEN (not overclaimed):
   Cargo.lock dep-skew (not these diffs); clears when that lane lands.
 - **Hermine concurrent TS-UF-0 game:** masking reduced to MLWE, but the full oracle+corruption+forking game is
   unclosed (genuinely open, flagged not faked).
-- **Frontier (bonus, not started):** Tanuki/TRaccoon reference impls, HashRand beacon, XM-VRF sortition.
+- **Frontier (bonus, LANDED — all 4):** crypto-tanuki (2-round Tanuki, 22 tests, mapped to NIST MPTS-2026
+  Fig.1) · crypto-traccoon (3-round TRaccoon, 17) · crypto-xmvrf (hash-VRF, uniqueness-correct — exhibits +
+  defeats the X-VRF/WOTS+ break, 17) · crypto-hashrand (commit-reveal beacon, 8). All standalone reference
+  crates (isolated from the unstable main tree), honest-boundaried (reference params, security proofs in the
+  Lean framework + cited papers, async/Gaussian/DKG/deployment layers flagged not faked). Commits 6da5262f0 /
+  4ccfbef73 / a91d171e7 / 06bad30ea. The self-argued Hermine 2-round now has cited-proven benchmarks
+  (Tanuki/TRaccoon) to migrate toward; the sortition VRF + randomness beacon have PQ replacements to build on.
