@@ -573,4 +573,11 @@ depth/positions; (c) the fold proof/adapter generalize trivially (claim shape un
     name dregg-blinded-membership-4ary-general-depth{N}. THE PRODUCTION PROOF passes:
     honest_depth8_general_position_proves_and_verifies (real prover). Lean general-depth SAT⟹SEM +
     forge-rejects + unlinkability; Rust==Lean byte-parity depth 2&8. Staged-additive (depth-2 intact).
-    → the flip is now capability-preserving. NEXT: S3c flip onto BOTH descriptors → 0 stark → git rm.
+    → the flip is now capability-preserving.
+  ✅ S3c FLIP DONE (79c630951): presentation family off hand-StarkProof onto BOTH descriptors (bound +
+    blinded), 6 files, capability-preserving. dregg-circuit+bridge GREEN, 19+21 tests. presentation
+    family = 0 true-live stark. Total prod true-live: 10→14... wait, DOWN to 14 in just 2 files.
+  REMAINING (14 true-live, 2 files): sdk/verify.rs (12: verify_authorization_proof + verify_selective_
+    disclosure, 0-external-caller legacy + #[test]s) + sdk/cipherclerk.rs (2: compress/verify_compressed_
+    history sovereign-history, 0-caller). Both flip onto existing descriptors (membership/bound) or the IVC
+    path. Then: delete hand AIRs + git rm circuit/src/stark.rs. The 8 other files are comment-only.
