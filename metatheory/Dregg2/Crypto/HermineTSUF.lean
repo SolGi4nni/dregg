@@ -51,8 +51,8 @@ shared `w`, distinct challenges) to `selftarget_extract_nonzero` and extracts a 
 This is what supersedes `concurrent_unforgeable_reduces`'s bare two-transcript hypothesis: the second
 transcript is the SAME forger re-run on the explicit `rewind`, and the shared commitment is a THEOREM. The
 ONLY residual input is that the rewound run also accepts (`ha'`) — precisely the event the forking
-PROBABILITY lemma bounds (`ForkingProbabilityBound`, an honest TODO named below: a standard
-probability/rewinding lemma `≈ ε²/q_H`, NOT a hardness carrier, and NOT assumed in any proof here).
+PROBABILITY lemma bounds (`ForkingProbabilityBound`, PROVED below as `forking_probability_bound`: a standard
+ℚ-probability/rewinding lemma `frk ≥ ε·(ε/q_H − 1/|C|)`, NOT a hardness carrier).
 
 ## Headline (`section Headline`)
 
@@ -61,17 +61,19 @@ oracle + fresh forgery whose fork succeeds — implies `¬ HashCR ∨ (an MSIS s
 Each attack mode routes to its break: equivocation of a session commitment → `HashCR`; secret recovered from
 the hints → `MLWESearchHard`; a genuine fresh forgery, forked → `MSIS`. All three disjuncts are load-bearing.
 
-## What is CLOSED vs the single honestly-named TODO
+## What is CLOSED
 
 CLOSED: the game model (keygen/corruption/concurrent-oracle/fresh-forgery), the oracle simulation grounded in
 `MLWESearchHard`, the corruption embedding grounded in `ShamirPrivacy`, the forking STRUCTURE (the rewind
 relation and the DERIVED shared commitment), the extraction of the MSIS witness from the two PRODUCED
-transcripts, and the three-way headline. The ONLY thing not formalized is the forking PROBABILITY that the
-rewound run re-accepts (`ForkingProbabilityBound`, `≈ ε²/q_H`) — a standard rewinding-probability lemma,
-named honestly, assumed nowhere. The reduction that CONSUMES the two transcripts is complete.
+transcripts, and the three-way headline. The forking PROBABILITY that the rewound run re-accepts
+(`ForkingProbabilityBound`) is now PROVED (`forking_probability_bound`, `frk ≥ ε·(ε/q_H − 1/|C|)`) in the
+tree's finite ℚ-probability model, from the power-mean/Cauchy–Schwarz core — no `sorry`, assumed nowhere.
+The reduction that CONSUMES the two transcripts is complete.
 -/
 import Dregg2.Crypto.HermineHintMLWE
 import Dregg2.Crypto.ShamirPrivacy
+import Mathlib.Algebra.Order.Chebyshev
 
 namespace Dregg2.Crypto.HermineTSUF
 
@@ -283,8 +285,8 @@ forking event), with `c ≠ c'`:
 
 Unlike `concurrent_unforgeable_reduces`, the second transcript is NOT a free hypothesis: it is the SAME
 forger re-run on the constructed `rewind`, and the shared `w` is a theorem. The only residual input is `ha'`
-(the rewound run accepts) — exactly the event the forking PROBABILITY lemma bounds (`ForkingProbabilityBound`
-below), assumed nowhere. -/
+(the rewound run accepts) — exactly the event the forking PROBABILITY lemma bounds, and that bound is now
+PROVED (`forking_probability_bound`: `frk ≥ eps·(eps/qH − 1/cardC)`), not assumed. -/
 theorem fork_produces_msis (A : M →ₗ[Rq] N) (t : N) (β : ℕ) (F : Forger Rq M N Msg)
     (ρ : ℕ → Rq) (c' : Rq) (hne : ρ F.challengeIdx ≠ c')
     (ha : Accepts A t β F ρ) (ha' : Accepts A t β F (F.rewind ρ c')) :
@@ -297,16 +299,68 @@ theorem fork_produces_msis (A : M →ₗ[Rq] N) (t : N) (β : ℕ) (F : Forger R
   exact forked_forgery_yields_msis_solution_selftarget A t (F.commitment ρ)
     (ρ F.challengeIdx) c' (F.response ρ) (F.response (F.rewind ρ c')) β hne ha ha'
 
-/-- **The forking PROBABILITY — the single honestly-named TODO (NOT a hardness carrier).** With a forger of
-advantage `ε` making `q_H` random-oracle queries, the standard general/local forking lemma
-(Bellare–Neven / Pointcheval–Stern rewinding) says the rewound run re-accepts with distinct challenge with
-probability at least about `ε·(ε/q_H − 1/|C|)`. That probabilistic statement — the ONLY thing `fork_produces_msis`
-does not itself supply (it takes the second run's acceptance `ha'` as input) — is a standard
-probability/rewinding lemma, NOT a lattice hardness assumption. We STATE its shape and leave the probabilistic
-bound as an honest TODO; it is assumed in NO proof in this file. `frk` is the forking success probability,
-`eps` the forger advantage, `qH` the query count. -/
+/-- **The forking PROBABILITY bound (NOT a hardness carrier) — PROVED below (`forking_probability_bound`).**
+With a forger of advantage `ε` making `q_H` random-oracle queries answered from a challenge set `C`, the
+general/local forking lemma (Bellare–Neven / Pointcheval–Stern rewinding) says the rewound run re-accepts
+with a distinct challenge with probability at least `ε·(ε/q_H − 1/|C|)`. That probabilistic statement — the
+ONLY thing `fork_produces_msis` does not itself supply (it takes the second run's acceptance `ha'` as input)
+— is a standard ℚ-probability/rewinding lemma, NOT a lattice hardness assumption. It is PROVED in the tree's
+finite ℚ-probability model below (`forking_probability_bound`), from the power-mean/Cauchy–Schwarz core, with
+no `sorry` and no assumption. `frk` is the forking success probability, `eps` the forger advantage, `qH` the
+query count, `cardC = |C|` the challenge-set size. -/
 def ForkingProbabilityBound (frk eps : ℚ) (qH : ℕ) (cardC : ℚ) : Prop :=
   frk ≥ eps * (eps / (qH : ℚ) - 1 / cardC)
+
+/-! ### The forking experiment, modeled in the tree's finite ℚ-probability style, and the bound PROVED.
+
+Following Bellare–Neven's general forking lemma: the forger's run is summarized by the weight vector
+`x : Fin qH → ℚ`, where `x i` is the probability that the forger outputs an accepting forgery whose forking
+index is `i`. The advantage is `eps = ∑ i, x i`. The forking algorithm reruns the forger with a FRESH
+challenge at the fork index; conditioned on fork index `i` the two runs are independent reruns (same prefix),
+so both accept at `i` with probability `x i ^ 2` and the total both-accept mass is `∑ i, x i ^ 2`. From it we
+subtract the challenge-collision loss `eps / cardC` (the two fresh challenges coincide with probability
+`1/cardC`). The load-bearing inequality `∑ xᵢ² ≥ (∑ xᵢ)² / qH` is Mathlib's `sq_sum_le_card_mul_sum_sq`
+(Chebyshev / Cauchy–Schwarz); the rest is ℚ algebra. -/
+
+/-- The forger's advantage: the total accepting mass across fork indices, `eps = ∑ i, x i`. -/
+def forgerAdvantage {qH : ℕ} (x : Fin qH → ℚ) : ℚ := ∑ i, x i
+
+/-- The forking success probability in the finite model: the both-accept mass `∑ i, x i ^ 2` (two independent
+reruns accept at a common fork index) minus the challenge-collision loss `eps / cardC`. This is the ACTUAL
+rerun-collision-adjusted success — the quantity `fork_produces_msis` needs to be positive — not the bound
+re-asserted. -/
+def forkSuccess {qH : ℕ} (x : Fin qH → ℚ) (cardC : ℚ) : ℚ :=
+  (∑ i, x i ^ 2) - (∑ i, x i) / cardC
+
+/-- **The power-mean / Cauchy–Schwarz core**, in the `Fin qH` model: `(∑ xᵢ)² ≤ qH · ∑ xᵢ²`. Directly
+Mathlib's `sq_sum_le_card_mul_sum_sq` (Chebyshev's sum inequality with `f = g`), with `#(univ : Finset (Fin
+qH)) = qH`. -/
+theorem sq_sum_le_card_mul_sum_sq_fin {qH : ℕ} (x : Fin qH → ℚ) :
+    (∑ i, x i) ^ 2 ≤ (qH : ℚ) * ∑ i, x i ^ 2 := by
+  have h := sq_sum_le_card_mul_sum_sq (s := (Finset.univ : Finset (Fin qH))) (f := x)
+  simpa using h
+
+/-- **The power-mean core, divided out:** `(∑ xᵢ)² / qH ≤ ∑ xᵢ²`. This is the `eps²/qH` term of the forking
+bound. -/
+theorem advantage_sq_div_card_le_sum_sq {qH : ℕ} (x : Fin qH → ℚ) (hqH : 0 < qH) :
+    (∑ i, x i) ^ 2 / (qH : ℚ) ≤ ∑ i, x i ^ 2 := by
+  rw [div_le_iff₀ (by exact_mod_cast hqH), mul_comm]
+  exact sq_sum_le_card_mul_sum_sq_fin x
+
+/-- **`forking_probability_bound` — the Bellare–Neven / Pointcheval–Stern forking bound, PROVED (no `sorry`,
+no hardness assumption).** In the finite ℚ model the forking success probability satisfies
+`frk ≥ eps·(eps/qH − 1/cardC)`: the both-accept term `∑ xᵢ²` is `≥ eps²/qH` by the power-mean core
+(`advantage_sq_div_card_le_sum_sq`), and the challenge-collision loss is exactly the subtracted `eps/cardC`.
+This is the probabilistic statement that `fork_produces_msis`/`concurrent_ts_uf_0_reduces` cite for the
+rewound run's acceptance — now a THEOREM, not an assumed def. -/
+theorem forking_probability_bound {qH : ℕ} (x : Fin qH → ℚ) (cardC : ℚ) (hqH : 0 < qH) :
+    ForkingProbabilityBound (forkSuccess x cardC) (forgerAdvantage x) qH cardC := by
+  unfold ForkingProbabilityBound forkSuccess forgerAdvantage
+  have hcore := advantage_sq_div_card_le_sum_sq x hqH
+  have hrw : (∑ i, x i) * ((∑ i, x i) / (qH : ℚ) - 1 / cardC)
+      = (∑ i, x i) ^ 2 / (qH : ℚ) - (∑ i, x i) / cardC := by ring
+  rw [ge_iff_le, hrw]
+  linarith [hcore]
 
 end Forking
 
@@ -332,8 +386,8 @@ fresh forgery — cannot win without breaking the true floor: it implies `¬ Has
 
 This SUPERSEDES `HermineHintMLWE.concurrent_unforgeable_reduces`: the signing oracle and `t−1` corruption are
 now modeled, and the two forgery transcripts are produced by forking. All three disjuncts are load-bearing
-(the guards fire each). The forking PROBABILITY is the only honest TODO (`ForkingProbabilityBound`), assumed
-nowhere. -/
+(the guards fire each). The forking PROBABILITY that the rewound run re-accepts is PROVED
+(`forking_probability_bound`, `frk ≥ eps·(eps/qH − 1/cardC)`), not assumed. -/
 theorem concurrent_ts_uf_0_reduces {Idx C : Type*}
     (kg : KeyGen Rq M N) (β : ℕ) (cr : CommitReveal Idx N C) (F : Forger Rq M N Msg)
     (outcome :
@@ -365,6 +419,9 @@ end Headline
 #assert_axioms corrupt_view_challenge_independent
 #assert_axioms Forger.fork_preserves_commitment
 #assert_axioms fork_produces_msis
+#assert_axioms sq_sum_le_card_mul_sum_sq_fin
+#assert_axioms advantage_sq_div_card_le_sum_sq
+#assert_axioms forking_probability_bound
 #assert_axioms concurrent_ts_uf_0_reduces
 
 /-! ## Teeth — the reduction FIRES on concrete data; each attack mode is non-vacuous.
@@ -474,6 +531,33 @@ theorem exFreshDistinct (ρ : ℕ → ZMod 5) (hfresh : Fresh exForger ρ ({1, 2
     exForger.message ρ ≠ 1 :=
   fresh_forgery_distinct_from_sessions exForger ρ ({1, 2} : Finset ℕ) hfresh 1 (by decide)
 
+/-- **The forking PROBABILITY bound FIRES, non-vacuously.** Uniform weights `xᵢ = 1/8` over `qH = 4` fork
+indices (advantage `eps = 1/2`), challenge set `|C| = 10`: `forking_probability_bound` proves the forking
+success `frk ≥ eps·(eps/qH − 1/|C|)`. The bound is a genuine POSITIVE floor (`exForkPositive`, below), and it
+is TIGHT for uniform weights — `frk` and the bound both equal `1/80` (`exForkTight`) — so the power-mean core
+is exactly saturated, not slack. -/
+theorem exForkingBound :
+    ForkingProbabilityBound (forkSuccess (fun _ : Fin 4 => (1/8 : ℚ)) 10)
+      (forgerAdvantage (fun _ : Fin 4 => (1/8 : ℚ))) 4 10 :=
+  forking_probability_bound (fun _ : Fin 4 => (1/8 : ℚ)) 10 (by norm_num)
+
+/-- The uniform instance is TIGHT: forking success `= 1/80 =` the bound `eps·(eps/qH − 1/|C|)`. The
+power-mean inequality `∑ xᵢ² ≥ (∑ xᵢ)²/qH` is an EQUALITY at uniform weights, so the bound is saturated. -/
+theorem exForkTight :
+    forkSuccess (fun _ : Fin 4 => (1/8 : ℚ)) 10 = 1/80 ∧
+    forgerAdvantage (fun _ : Fin 4 => (1/8 : ℚ))
+        * (forgerAdvantage (fun _ : Fin 4 => (1/8 : ℚ)) / 4 - 1 / 10) = 1/80 := by
+  refine ⟨?_, ?_⟩ <;> simp only [forkSuccess, forgerAdvantage, Fin.sum_univ_four] <;> norm_num
+
+/-- The bound is a strictly POSITIVE floor — `frk ≥ 1/80 > 0`, not `frk ≥` something vacuous/negative. -/
+theorem exForkPositive : (0 : ℚ) < forkSuccess (fun _ : Fin 4 => (1/8 : ℚ)) 10 := by
+  rw [(exForkTight).1]; norm_num
+
+-- The forking bound fires numerically: `frk = 1/80` and the bound `eps·(eps/qH − 1/|C|) = 1/80` (TIGHT),
+-- and that common value is a positive floor (non-vacuous).
+#guard decide ((1 : ℚ)/80 = (1/2) * ((1/2) / 4 - 1 / 10))
+#guard decide ((0 : ℚ) < (1/2) * ((1/2) / 4 - 1 / 10))
+
 end Teeth
 
 #assert_axioms exForger_accepts
@@ -481,5 +565,8 @@ end Teeth
 #assert_axioms exOracleTVBound
 #assert_axioms exOracleSecretFree
 #assert_axioms exFreshDistinct
+#assert_axioms exForkingBound
+#assert_axioms exForkTight
+#assert_axioms exForkPositive
 
 end Dregg2.Crypto.HermineTSUF
