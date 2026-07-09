@@ -987,6 +987,8 @@ dependencies = [
  "dregg-turn",
  "ed25519-dalek",
  "ropey",
+ "serde",
+ "serde_json",
 ]
 
 [[package]]

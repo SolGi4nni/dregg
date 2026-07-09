@@ -47,8 +47,25 @@
 //! A signed verdict must not satisfy the same check across multiple lands / PRs.
 //! [`ci_nullifier`] keys a consumed-set entry by `(pr base fold, verdict)`;
 //! [`crate::PullRequest::land_checked`] consumes it on a successful land so the
-//! same verdict presented again is refused. The in-process consumed-set is
-//! [`CiNullifierSet`] (see the crate report for the durable cross-node seam).
+//! same verdict presented again is refused. The consumed-set is [`CiNullifierSet`],
+//! backed by the committed [`CiNullifierAccumulator`].
+//!
+//! ## Cross-node anti-replay (the last federation seam, closed)
+//!
+//! Refusing a replay within one process is not enough: a verdict already spent on
+//! node A must be refused on node B too. The accumulator's
+//! [`root`](CiNullifierAccumulator::root) is a shareable digest of the WHOLE consumed
+//! set, so publishing it lets every node share the consumed-verdict set via the
+//! ledger, not a private structure. The accumulator lives in a dedicated nullifier
+//! CELL whose committed value IS that Merkle root; [`publish_nullifier_root`] is the
+//! owner-signed WRITE to node's `/cells/update-commitment`, and
+//! [`fetch_nullifier_root`] is the READ back out of a `GET /api/cell/{id}` response.
+//! A node given only {fetched shared root, nullifier, membership proof} confirms
+//! consumption with the static
+//! [`verify_membership`](CiNullifierAccumulator::verify_membership) — refusing an
+//! already-spent verdict WITHOUT holding the publisher's full accumulator. The
+//! residual seam is the live HTTP transport only; the request, signature, and
+//! shared-root verification are real.
 //!
 //! ## What this binds — and what it does NOT (the L2/L3 seam)
 //!
@@ -67,6 +84,8 @@ use crate::executor_drive::ExecutorDrivenDoc;
 use crate::patch::Patch;
 use dregg_commit::merkle::{MerkleProof, MerkleTree, NonMembershipProof};
 use dregg_turn::{TurnError, TurnReceipt};
+use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
+use serde::{Deserialize, Serialize};
 
 /// The fixed author of every CI-run commit patch. The CI-run region cell is
 /// dedicated to a single verdict, so the authoring identity is a constant — the
@@ -332,6 +351,226 @@ impl CiNullifierSet {
     pub fn accumulator(&self) -> &CiNullifierAccumulator {
         &self.consumed
     }
+}
+
+// =============================================================================
+// THE FEDERATION PUBLISH/FETCH HALF — the last thin cross-node anti-replay seam.
+//
+// `CiNullifierAccumulator::root()` is a shareable digest of the WHOLE consumed
+// set, but nothing PUBLISHED it cross-node, so replay-refusal held only within one
+// process. This section closes that: the accumulator lives in a dedicated nullifier
+// CELL whose committed value IS its Merkle root. `publish_nullifier_root` produces
+// the exact owner-signed body a node POSTs to node's `/cells/update-commitment` at
+// each honest checkpoint (the WRITE); `fetch_nullifier_root` reads that root back
+// out of a `GET /api/cell/{id}` response (the READ). With the root on the ledger,
+// ANY node can check a verdict's `ci_nullifier` against the SHARED root using the
+// static `verify_membership` / `verify_non_membership` proofs — so a replay is
+// refused mesh-wide, not merely within the process that consumed it.
+//
+// The pattern MIRRORS `sandstorm-bridge/src/{grain,bridge}.rs` exactly (node is not
+// a dregg-doc dependency, so the request/response types are FAITHFULLY MIRRORED, not
+// imported; the live wire uses node's own structs, and a body built here
+// deserializes into node's struct and passes its signature check unchanged).
+// =============================================================================
+
+/// A faithful mirror of node's `UpdateCommitmentRequest` (`node/src/api.rs`) — the
+/// JSON body an owner POSTs to `/cells/update-commitment`. node is not a dependency
+/// of this crate (it would be a heavy, cyclic dependency), so the type is MIRRORED,
+/// not imported; the LIVE wire uses node's own struct. The mirror is field-for-field
+/// identical (same JSON names, same hex encodings, same signed message), so a body
+/// built here deserializes into node's struct and its signature passes node's
+/// `post_update_commitment` check unchanged.
+///
+/// The signature signs `cell_id ‖ old_commitment ‖ new_commitment` (96 bytes),
+/// verified with the `cell_id` bytes AS the ed25519 public key — node's
+/// sovereign-cell convention (`verify_ed25519_signature(&cell_id_bytes, …)`). So a
+/// nullifier cell whose root is published this way has `cell_id == owner_pubkey`.
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct UpdateCommitmentRequest {
+    /// Hex-encoded 32-byte cell id — doubles as the owner's ed25519 public key.
+    pub cell_id: String,
+    /// Hex-encoded 32-byte previously-committed root (node checks it matches stored).
+    pub old_commitment: String,
+    /// Hex-encoded 32-byte new committed root — the accumulator's Merkle root now.
+    pub new_commitment: String,
+    /// Hex-encoded 64-byte ed25519 signature over `cell_id ‖ old_commitment ‖ new_commitment`.
+    pub signature: String,
+}
+
+/// **The WRITE half: publish the CI nullifier accumulator's committed root to the
+/// federation ledger.** The consumed-nullifier set lives in a dedicated **nullifier
+/// CELL** whose committed value IS the accumulator's Merkle root
+/// ([`CiNullifierAccumulator::root`]). At each honest checkpoint the cell's owner
+/// posts that root as the cell's new committed value, OWNER-SIGNED so a real node
+/// accepts it. The returned [`UpdateCommitmentRequest`] is the exact body sent to
+/// node's `/cells/update-commitment`; only the HTTP transport is out of a unit test.
+///
+/// `accumulator_cell_id` is the 32-byte sovereign nullifier-cell id, which under
+/// node's convention IS the owner's ed25519 public key (the signature is verified
+/// against it). `owner_key` must be the signing key for that public key
+/// (`owner_key.verifying_key().to_bytes() == *accumulator_cell_id`) — or a real node
+/// rejects the signature (the OWNER-SIGNED negative pole). `previous_root` is the
+/// last-committed root the ledger stores (node checks `old_commitment` matches); use
+/// [`CiNullifierAccumulator::new`]`().root()` (the canonical empty root) for the
+/// genesis publish of a freshly-registered accumulator cell.
+///
+/// The published `new_commitment` is `acc.root()` — the real committed digest of the
+/// whole consumed set — hex-encoded exactly as node returns commitments, so the value
+/// another node later fetches with [`fetch_nullifier_root`] is byte-identical to the
+/// root the accumulator's membership proofs fold to. That WRITE/READ consistency is
+/// what closes the cross-node anti-replay seam.
+pub fn publish_nullifier_root(
+    accumulator_cell_id: &[u8; 32],
+    acc: &CiNullifierAccumulator,
+    owner_key: &SigningKey,
+    previous_root: [u8; 32],
+) -> UpdateCommitmentRequest {
+    let new_commitment = acc.root();
+    // Mirror node's signed message EXACTLY: cell_id ‖ old_commitment ‖ new_commitment.
+    let mut message = Vec::with_capacity(96);
+    message.extend_from_slice(accumulator_cell_id);
+    message.extend_from_slice(&previous_root);
+    message.extend_from_slice(&new_commitment);
+    let signature = owner_key.sign(&message);
+    UpdateCommitmentRequest {
+        cell_id: hex_encode(accumulator_cell_id),
+        old_commitment: hex_encode(&previous_root),
+        new_commitment: hex_encode(&new_commitment),
+        signature: hex_encode(&signature.to_bytes()),
+    }
+}
+
+/// Mirror of node's `post_update_commitment` signature check: the signature must
+/// sign `cell_id ‖ old_commitment ‖ new_commitment`, verified with the `cell_id`
+/// bytes AS the ed25519 public key. Returns `true` iff a real node would ACCEPT the
+/// request's signature. It does NOT run node's stateful `old_commitment`-matches-
+/// stored ledger check (that is node-side state); it is the offline half a test uses
+/// to assert node-acceptance without a running node. A wrong signing key, or a
+/// mutated commitment under a genuine signature, fails here exactly as node's check.
+pub fn verify_nullifier_update_signature(req: &UpdateCommitmentRequest) -> bool {
+    let (Some(cell_id), Some(old_c), Some(new_c), Some(sig)) = (
+        hex_decode(&req.cell_id),
+        hex_decode(&req.old_commitment),
+        hex_decode(&req.new_commitment),
+        hex_decode(&req.signature),
+    ) else {
+        return false;
+    };
+    let (Ok(cell_id), Ok(sig)) = (
+        <[u8; 32]>::try_from(cell_id.as_slice()),
+        <[u8; 64]>::try_from(sig.as_slice()),
+    ) else {
+        return false;
+    };
+    if old_c.len() != 32 || new_c.len() != 32 {
+        return false;
+    }
+    let Ok(vk) = VerifyingKey::from_bytes(&cell_id) else {
+        return false;
+    };
+    let mut message = Vec::with_capacity(96);
+    message.extend_from_slice(&cell_id);
+    message.extend_from_slice(&old_c);
+    message.extend_from_slice(&new_c);
+    vk.verify(&message, &Signature::from_bytes(&sig)).is_ok()
+}
+
+/// A faithful mirror of the subset of node's `GET /api/cell/{id}` response body a
+/// fetching node needs. Only the fields the READ path uses are modeled; serde
+/// ignores the rest, so a real node's full response deserializes into it unchanged.
+/// The LIVE wire uses node's own type; node is not a dependency of this crate.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CellDetailResponse {
+    /// Whether the cell was found in the ledger.
+    #[serde(default)]
+    pub found: bool,
+    /// The nullifier cell's committed root, hex-encoded — node's `state_commitment`
+    /// field. For the nullifier cell this committed value IS the accumulator's
+    /// Merkle root; a fetching node verifies membership / non-membership against it.
+    #[serde(default)]
+    pub state_commitment: String,
+}
+
+/// Why [`fetch_nullifier_root`] could not extract a committed root from a cell-detail
+/// response.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum NullifierFetchError {
+    /// The response body was not valid `CellDetailResponse` JSON.
+    Malformed,
+    /// The cell was not found in the ledger (`found: false`).
+    NotFound,
+    /// The cell exists but carries no committed value yet.
+    NoCommitment,
+    /// The `state_commitment` field was not valid 32-byte hex.
+    BadCommitmentHex,
+}
+
+impl std::fmt::Display for NullifierFetchError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            NullifierFetchError::Malformed => "cell-detail response is not valid JSON",
+            NullifierFetchError::NotFound => "nullifier cell not found in the federation ledger",
+            NullifierFetchError::NoCommitment => "nullifier cell has no committed value yet",
+            NullifierFetchError::BadCommitmentHex => "state_commitment is not valid 32-byte hex",
+        })
+    }
+}
+
+impl std::error::Error for NullifierFetchError {}
+
+/// **The READ half: extract the shared nullifier-accumulator root a node verifies
+/// consumption against, from a `GET /api/cell/{id}` response.** Parses the response
+/// body (node's [`CellDetailResponse`]) and decodes its `state_commitment` hex field
+/// to raw 32 bytes. This is the value the accumulator's owner published with
+/// [`publish_nullifier_root`], so
+/// `fetch_nullifier_root(response_after(publish_nullifier_root(.., R))) == R`: the
+/// fetching node's independent root equals the root the accumulator's membership
+/// proofs fold to. Feed the returned bytes as the `root` argument to
+/// [`CiNullifierAccumulator::verify_membership`] /
+/// [`CiNullifierAccumulator::verify_non_membership`] — so a node that holds NEITHER
+/// the publisher's full accumulator NOR its process state can still refuse a replay
+/// using only {ledger root, nullifier, proof}.
+///
+/// The root here is sourced from the FEDERATION response, never a peer's in-process
+/// structure — that is what makes cross-node anti-replay real. (The residual seam is
+/// the LIVE HTTP transport only: on a stock node `state_commitment` is the whole-cell
+/// digest that absorbs this root; a deployment surfaces the nullifier cell's
+/// committed value as this root directly — the SCHEME and hex wire already match what
+/// [`publish_nullifier_root`] writes.)
+pub fn fetch_nullifier_root(cell_detail_json: &str) -> Result<[u8; 32], NullifierFetchError> {
+    let detail: CellDetailResponse =
+        serde_json::from_str(cell_detail_json).map_err(|_| NullifierFetchError::Malformed)?;
+    if !detail.found {
+        return Err(NullifierFetchError::NotFound);
+    }
+    if detail.state_commitment.is_empty() {
+        return Err(NullifierFetchError::NoCommitment);
+    }
+    let bytes =
+        hex_decode(&detail.state_commitment).ok_or(NullifierFetchError::BadCommitmentHex)?;
+    <[u8; 32]>::try_from(bytes.as_slice()).map_err(|_| NullifierFetchError::BadCommitmentHex)
+}
+
+/// Lowercase-hex decode (the inverse of [`hex_encode`]); `None` on any non-hex
+/// character or an odd length. No dependency — mirrors the crate's own encoder.
+fn hex_decode(s: &str) -> Option<Vec<u8>> {
+    let bytes = s.as_bytes();
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let nibble = |c: u8| -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    };
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        out.push((nibble(pair[0])? << 4) | nibble(pair[1])?);
+    }
+    Some(out)
 }
 
 /// Lowercase-hex encode (no dependency — the atom content just needs to be a

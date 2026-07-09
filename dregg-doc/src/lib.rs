@@ -206,8 +206,9 @@ pub use ci_assurance::{
 };
 #[cfg(feature = "substrate")]
 pub use ci_verdict::{
-    CiNullifierAccumulator, CiNullifierSet, CiVerdict, ci_nullifier, ci_run_patch,
-    planned_ci_run_hash, run_ci_verdict,
+    CellDetailResponse, CiNullifierAccumulator, CiNullifierSet, CiVerdict, NullifierFetchError,
+    UpdateCommitmentRequest, ci_nullifier, ci_run_patch, fetch_nullifier_root, planned_ci_run_hash,
+    publish_nullifier_root, run_ci_verdict, verify_nullifier_update_signature,
 };
 pub use commit::{Commitment, commit};
 pub use content::{Alternative, ConflictRegion, Rendered, Segment, content, walk_atoms};

@@ -63,6 +63,8 @@ substrate = [
     "dep:dregg-circuit",
     "dep:dregg-blocklace",
     "dep:ed25519-dalek",
+    "dep:serde",
+    "dep:serde_json",
 ]
 
 # `rope` welds the patch core onto a `ropey::Rope`-backed editor buffer — the
@@ -129,6 +131,17 @@ dregg-blocklace = { path = "../blocklace", optional = true }
 # `dregg-turn` / `dregg-blocklace`, so gating it on `substrate` adds no new
 # transitive dependency; with the feature OFF the core pulls in nothing.
 ed25519-dalek = { version = "2", optional = true }
+# The federation cross-node anti-replay seam (optional, behind `substrate`): the
+# nullifier accumulator's committed root is PUBLISHED to the ledger as an
+# owner-signed `UpdateCommitmentRequest` (a serde-serialized JSON body mirroring
+# node's `/cells/update-commitment`) and FETCHED back from a modeled
+# `GET /api/cell/{id}` response (a serde-deserialized JSON body). Both `serde` and
+# `serde_json` are ALREADY in the `--features substrate` dep tree (transitively via
+# `dregg-turn` / `dregg-circuit` — present in the lockfile), so gating them on
+# `substrate` adds no new transitive dependency; with the feature OFF the core
+# pulls in nothing. See `src/ci_verdict.rs` (the nullifier-root federation half).
+serde = { version = "1", optional = true, features = ["derive"] }
+serde_json = { version = "1", optional = true }
 
 # Test-only: derive distinct Ed25519 verifying keys from seeds so the CI-assurance
 # tests can exercise a quorum of DISTINCT trusted executors and key revocation.
