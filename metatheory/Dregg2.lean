@@ -635,6 +635,8 @@ import Dregg2.Crypto.VRF -- abstract Micali-Rabin-Vadhan VRF security framework 
 import Dregg2.Crypto.SortitionGame
 import Dregg2.Crypto.XmVrfRefinement
 import Dregg2.Crypto.ParameterSecurity
+import Dregg2.Crypto.DoubleSidedO2H
+import Dregg2.Crypto.LossyIdentification
 import Dregg2.Circuit.AirSoundness
 import Dregg2.Circuit.FriSoundness
 import Dregg2.Circuit.CircuitSoundCompose
