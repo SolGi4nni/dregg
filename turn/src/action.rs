@@ -19,7 +19,7 @@ use serde::{Deserialize, Serialize};
 pub mod serde_sig64 {
     use serde::{Deserialize, Deserializer, Serialize, Serializer};
     pub fn serialize<S: Serializer>(bytes: &[u8; 64], ser: S) -> Result<S::Ok, S::Error> {
-        bytes.as_ref().serialize(ser)
+        bytes.as_slice().serialize(ser)
     }
     pub fn deserialize<'de, D: Deserializer<'de>>(de: D) -> Result<[u8; 64], D::Error> {
         let v: Vec<u8> = Deserialize::deserialize(de)?;
