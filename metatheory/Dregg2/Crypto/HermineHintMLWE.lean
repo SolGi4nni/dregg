@@ -1,9 +1,52 @@
 /-
-# `Dregg2.Crypto.HermineHintMLWE` — the REAL Raccoon concurrent-security argument.
+# `Dregg2.Crypto.HermineHintMLWE` — a concurrent-security ARGUMENT for our 2-round commit-reveal Hermine.
 
-This is the STRAIGHT-LINE (non-forking) reduction that actually defends the Raccoon/Hermine lattice
-threshold signature against concurrent / rushing adversaries. It is a game-hop with THREE pillars and
-NO forking, NO ROS combinatorial bound:
+## HONEST BOUNDARY (Tanuki cross-check, 2026-07) — READ FIRST
+
+A follow-up analysis against the proven 2-round lattice threshold family (Tanuki [EKT24/Ringtail],
+Threshold Raccoon [dPKPR24 Eurocrypt'24], "Unmasking TRaccoon" '25) found that **this is NOT a cited
+instance of a proven scheme — it is a plausible design with an UNCLOSED concurrent-security reduction.**
+Three corrections to the earlier overclaims:
+* **Different family.** Our crypto-hermine impl (BN06 commit-then-reveal `cmᵢ=H(i,wᵢ)`, single-column
+  `wᵢ=A·yᵢ`, exact key `t=A·s`, one flooding mask) is NOT Tanuki/TRaccoon (in-the-clear WIDE commitment
+  `Wᵢ=A·Rᵢ+Eᵢ`, hashed `b`-aggregation as the actual rushing defense, pairwise zero-sum PRF masks, ROUNDED
+  MLWE key). "Aligned to real Raccoon" was aspirational, not accurate.
+* **NOT fully straight-line.** The masking-hiding leg IS rewinding-free, but the forgery→MSIS leg
+  (`SelfTargetMSIS.selftarget_extract_nonzero`) REQUIRES two accepting transcripts on a common `w` with
+  `c ≠ c'` — that is forking-shaped, and the two-transcript hypothesis is ASSUMED here, never PRODUCED from
+  a single forger.
+* **The full concurrent game is NOT reduced.** `concurrent_unforgeable_reduces` COMPOSES three
+  individually-valid pillars around named carriers; it does NOT model the signing oracle or the t−1
+  static corruption that a TS-UF-0 proof requires.
+No exploit is evident and each pillar below is sound; but closing the gap means EITHER re-implementing
+toward Tanuki/Ringtail's algebraic `b`-aggregation (a different construction) OR completing a TRaccoon-style
+game-based proof for the commit-then-reveal variant (formalize the rewinding that yields the two
+transcripts + signing-oracle simulation + corruption). Until then, treat the "concurrent unforgeability"
+here as ARGUED, not PROVED. (crypto-hermine is a pre-audit reference; this is not a deployed hole.)
+
+## STATUS AFTER THE HINT-MLWE → MLWE REDUCTION (2026-07-08) — READ SECOND
+
+Pillar 1 no longer rests on an *assumed* Hint-MLWE carrier. `hint_mlwe_reduces_to_mlwe` PROVES the
+Hint-MLWE key-recovery assumption (`HintMLWEHard`, stated in the SAME non-existence currency as
+`Lattice.MLWESearchHard`) REDUCES to `MLWESearchHard`. The KLSS23 hints `(wᵢ = A·yᵢ, zᵢ = yᵢ + cᵢ·s)` are
+simulatable from the public `(A, t, cᵢ, wᵢ)` ALONE — the observable `A·zᵢ = wᵢ + cᵢ·t` is secret-free
+(`hint_sample_consistent` / `simulate_consistent`) — up to the flooding statistical distance `Q·(B/M)`
+(`concrete_transcript_union_loss`, Rényi-tightened to `≈√Q` via `RenyiHiding`/`GaussianRenyi`). So a secret
+recovered from the transcript is an MLWE witness for `t` (`hint_recovery_yields_mlwe_witness`). The ONLY
+irreducible object left in the masking story is `MLWESearchHard` (the true lattice floor); NO fresh
+`…Hard` carrier is introduced. `HintTranscriptSimulatable` (the old distributional `HintMLWEHard`,
+renamed) is the PROVED statistical core the reduction rides on, grounded in `Smudging.smudge_bound`.
+
+STILL GENUINELY OPEN (NOT closed here — do not read the above as closing it): the full concurrent TS-UF-0
+game — the signing oracle, the t−1 static corruption, and PRODUCING the two SelfTargetMSIS transcripts via
+forking (they remain ASSUMED as hypotheses of `concurrent_unforgeable_reduces`, never extracted from a
+single forger). This reduction closes the masking pillar's carrier only. Also DEFERRED (honest TODO, a
+standard probability lemma — NOT a hardness carrier): the general-`Q` product-hybrid TV subadditivity
+`statDist_pi_le_sum : statDist (⊗Pᵢ) (⊗Qᵢ) ≤ Σᵢ statDist Pᵢ Qᵢ`, which would upgrade the proven
+union-bound loss `Σᵢ TVᵢ ≤ Q·(B/M)` to the JOINT-transcript TV. Until it lands, the `Q·(B/M)` figure is
+the union/hybrid bound (a valid upper bound on the joint TV, standard), not the joint TV itself.
+
+## What the three pillars ARE (each individually valid; the composition is what's incomplete)
 
 1. **MASKING (Hint-MLWE).** Each signer's response `zᵢ = yᵢ + c·(λᵢ·sᵢ)` is a fresh one-time mask `yᵢ`
    plus a secret-dependent shift. Across MANY concurrent sessions the adversary sees many
@@ -11,7 +54,9 @@ NO forking, NO ROS combinatorial bound:
    the masked responses are SIMULATABLE without the secret. This is the multi-session generalization of
    the SINGLE-session key-hiding already proved in `Smudging`/`HermineHiding`/`RenyiHiding`/`GaussianRenyi`;
    we ground it there (`hint_mlwe_of_smudge` reduces one session to `signature_hides_secret`/`smudge_bound`),
-   so `HintMLWEHard` is the honest generalization, NOT a fresh unrelated axiom. Leakage is additive in TV
+   so the simulatability (`HintTranscriptSimulatable`) is PROVED, and the Hint-MLWE key-recovery hardness
+   (`HintMLWEHard`) is REDUCED to `MLWESearchHard` by `hint_mlwe_reduces_to_mlwe` — NO assumed carrier
+   remains. Leakage is additive in TV
    (`hint_mlwe_hybrid_leakage`); the Rényi form (`RenyiHiding.renyiDiv2_mul`, `GaussianRenyi.gaussian_renyi2_pair`)
    tightens the `Q`-session cost from `Q·ε` to `≈ √Q`.
 2. **COMMIT-THEN-REVEAL (binding).** Each signer commits `cmᵢ = H(i, wᵢ)` BEFORE revealing `wᵢ`, so a
@@ -30,9 +75,15 @@ commitment and outputs two accepting SelfTargetMSIS solutions with `c ≠ c'` ca
 MSIS (bound forgery); `leakage_exceeds_budget_breaks_hint_mlwe` is the masking-pillar break (it learned
 the secret from the hints). The proof COMPOSES the three pillars — no forking lemma, no ROS bound.
 
-This is the REAL Raccoon concurrency argument (masking + commit-reveal + SelfTargetMSIS, Hint-MLWE
-straight-line). It SUPERSEDES the FROST-binding-factor / ROS framing, which is a group-setting object and
-was a mis-model; the crypto-hermine impl is being aligned to the matching 2-round commit-reveal protocol.
+This composes a TRaccoon-FAMILY concurrency ARGUMENT (masking + commit-reveal + SelfTargetMSIS) — see the
+HONEST BOUNDARY at the top of this file: it is NOT a cited instance of a proven scheme, and the FULL
+concurrent game is NOT closed. What IS now on the true floor: pillar 1's masking carrier is REDUCED to
+`MLWESearchHard` (`hint_mlwe_reduces_to_mlwe`), no assumed Hint-MLWE carrier. What remains open: the
+two-transcript hypothesis of `concurrent_unforgeable_reduces` is ASSUMED (forking-shaped, not produced from
+a single forger), and the signing-oracle + t−1-corruption TS-UF-0 game is unmodeled. The "no forking lemma"
+phrasing above describes only that the *composition* has no forking step — the forking is hidden in the
+assumed hypothesis, which is exactly the gap to close. (It does correctly supersede the FROST-binding-factor
+/ ROS framing, a group-setting mis-model.)
 -/
 import Dregg2.Crypto.HermineSelfTargetMSIS
 import Dregg2.Crypto.HermineHiding
@@ -45,36 +96,39 @@ open Dregg2.Crypto.HermineHiding
 open Dregg2.Crypto.HermineThreshold
 open Dregg2.Crypto.HermineSelfTargetMSIS
 
-/-! ## Pillar 1 — MASKING: the Hint-MLWE carrier, grounded in single-session key-hiding.
+/-! ## Pillar 1 — MASKING: the simulatability core, and the Hint-MLWE → MLWE reduction.
 
 A concurrent transcript is a family of "hint sessions": each session `i` shifts the WIDE mask support `S`
 by a secret-dependent shift `shift i` (the `c·(λᵢ·sᵢ)` translate), so the real masked responses are
-`unif (S.image (shift i))` while a secret-free SIMULATOR outputs `unif S`. `HintMLWEHard` says every
-session's real transcript stays within statistical distance `ε` of the simulator — the secret is hidden
-under concurrency. We PROVE this is exactly the multi-session lift of the smudging key-hiding bound. -/
+`unif (S.image (shift i))` while a secret-free SIMULATOR outputs `unif S`. `HintTranscriptSimulatable`
+says every session's real transcript stays within statistical distance `ε` of the simulator — the PROVED
+statistical CORE of the reduction. We PROVE it is exactly the multi-session lift of the smudging
+key-hiding bound; the lattice-currency Hint-MLWE key-recovery hardness `HintMLWEHard` and its reduction to
+`MLWESearchHard` follow in `section HintMLWEReduction`. -/
 
 section HintMLWE
 
 variable {α : Type*} [DecidableEq α] {ι : Type*}
 
-/-- **`HintMLWEHard`** — the named multi-session masking assumption. Over `sessions` concurrent signing
-sessions, each a secret-dependent shift `shift i` of the wide mask support `S`, the real masked-response
-transcript `unif (S.image (shift i))` is within statistical distance `ε` of the secret-free simulator
-`unif S`. When it holds, the many hints leak at most `ε` per session about the secret — the secret stays
-hidden across concurrency. Stated in the SAME `statDist`/`unif` currency as the single-session key-hiding
-it generalizes (so it is grounded, not a fresh axiom — see `hint_mlwe_of_smudge`). -/
-def HintMLWEHard (S : Finset α) (sessions : Finset ι) (shift : ι → α → α) (ε : ℚ) : Prop :=
+/-- **`HintTranscriptSimulatable`** — the PROVED simulatability core (formerly the distributional
+`HintMLWEHard`). Over `sessions` concurrent signing sessions, each a secret-dependent shift `shift i` of
+the wide mask support `S`, the real masked-response transcript `unif (S.image (shift i))` is within
+statistical distance `ε` of the secret-free simulator `unif S`. So the many hints leak at most `ε` per
+session about the secret — the transcript is simulatable without it. Stated in the SAME `statDist`/`unif`
+currency as the single-session key-hiding it generalizes, and PROVED from it (`hint_mlwe_of_smudge`), not
+assumed. This is the statistical leg the Hint-MLWE → MLWE reduction (`hint_mlwe_reduces_to_mlwe`) rides. -/
+def HintTranscriptSimulatable (S : Finset α) (sessions : Finset ι) (shift : ι → α → α) (ε : ℚ) : Prop :=
   ∀ i ∈ sessions, statDist (S ∪ S.image (shift i)) (unif S) (unif (S.image (shift i))) ≤ ε
 
-/-- **Hint-MLWE reduces to single-session key-hiding (the grounding).** If each session's shift is
+/-- **Simulatability reduces to single-session key-hiding (the grounding).** If each session's shift is
 injective (a genuine translate of the mask support) and moves at most `B` of the `M = |S|`-wide support,
-then `HintMLWEHard` holds at `ε = B / M` — and it does so BY `HermineHiding.signature_hides_secret`
-(itself `Smudging.smudge_bound`) applied per session. So Hint-MLWE is the honest multi-session
-generalization of the already-proved single-session masking, not an unrelated hardness assumption. -/
+then `HintTranscriptSimulatable` holds at `ε = B / M` — BY `HermineHiding.signature_hides_secret` (itself
+`Smudging.smudge_bound`) applied per session. So the multi-session masking is the honest generalization of
+the already-proved single-session masking, not an unrelated assumption. -/
 theorem hint_mlwe_of_smudge (S : Finset α) (sessions : Finset ι) (shift : ι → α → α)
     (hinj : ∀ i ∈ sessions, Function.Injective (shift i)) (hpos : 0 < S.card) (B : ℕ)
     (hB : ∀ i ∈ sessions, (S \ S.image (shift i)).card ≤ B) :
-    HintMLWEHard S sessions shift ((B : ℚ) / (S.card : ℚ)) := fun i hi =>
+    HintTranscriptSimulatable S sessions shift ((B : ℚ) / (S.card : ℚ)) := fun i hi =>
   signature_hides_secret S (shift i) (hinj i hi) hpos B (hB i hi)
 
 /-- **Additive (TV) hybrid bound over `Q` concurrent sessions.** If each session is within `ε` of the
@@ -83,21 +137,111 @@ straightforward union/hybrid bound. This is the loose TV form; the Rényi diverg
 (`RenyiHiding.renyiDiv2_mul` multiplicativity, `GaussianRenyi.gaussian_renyi2_pair`) replaces the linear
 `Q·ε` with the near-constant `≈ √Q` cost that Raccoon's parameters actually use. -/
 theorem hint_mlwe_hybrid_leakage (S : Finset α) (sessions : Finset ι) (shift : ι → α → α) (ε : ℚ)
-    (h : HintMLWEHard S sessions shift ε) :
+    (h : HintTranscriptSimulatable S sessions shift ε) :
     (∑ i ∈ sessions, statDist (S ∪ S.image (shift i)) (unif S) (unif (S.image (shift i))))
       ≤ sessions.card • ε :=
   Finset.sum_le_card_nsmul sessions _ ε h
 
 /-- **The masking-pillar break.** If some concurrent session leaks MORE than the budget `ε` (the adversary
-learned the secret from the hints), then `HintMLWEHard` fails at `ε` — the forger has broken pillar 1. The
-contrapositive of the definition, isolating "it learned the secret from the hints" as a genuine break. -/
+learned the secret from the hints), then `HintTranscriptSimulatable` fails at `ε` — the simulator can no
+longer track the real transcript, the pillar-1 break. The contrapositive of the definition, isolating "it
+learned the secret from the hints" as a genuine break. -/
 theorem leakage_exceeds_budget_breaks_hint_mlwe (S : Finset α) (sessions : Finset ι)
     (shift : ι → α → α) (ε : ℚ) (i : ι) (hi : i ∈ sessions)
     (hleak : ε < statDist (S ∪ S.image (shift i)) (unif S) (unif (S.image (shift i)))) :
-    ¬ HintMLWEHard S sessions shift ε :=
+    ¬ HintTranscriptSimulatable S sessions shift ε :=
   fun h => absurd (h i hi) (not_le.mpr hleak)
 
 end HintMLWE
+
+/-! ## Pillar 1 (reduction) — the Hint-MLWE key-recovery assumption REDUCES to MLWE (KLSS23).
+
+The simulatability above is the CORE; here is the reduction that discharges the carrier. A KLSS23 hint
+sample for secret `s` is `(wᵢ = A·yᵢ, zᵢ = yᵢ + cᵢ·s)` with `yᵢ` flooded/Gaussian. The observable
+`A·zᵢ = wᵢ + cᵢ·(A·s) = wᵢ + cᵢ·t` is DETERMINED by the public `(t, cᵢ, wᵢ)` — the transcript leaks nothing
+about `s` beyond `t = A·s`. So a simulator holding only `(A, t, c, w)` reproduces the transcript up to the
+flooding distance `Q·(B/M)` (`HintTranscriptSimulatable` summed by `hint_mlwe_hybrid_leakage`, tightened to
+`≈√Q` by `RenyiHiding.renyiDiv2_mul` / `GaussianRenyi.gaussian_renyi2_pair`), and recovering the short `s`
+from that secret-free simulated transcript is exactly an MLWE key-recovery for `t`. Hence Hint-MLWE key
+recovery reduces to `MLWESearchHard` — the ONLY irreducible object left, no fresh carrier. -/
+
+section HintMLWEReduction
+
+variable {Rq : Type*} [CommRing Rq]
+variable {M : Type*} [AddCommGroup M] [Module Rq M] [ShortNorm M]
+variable {N : Type*} [AddCommGroup N] [Module Rq N] [ShortNorm N]
+
+/-- The secret-free OBSERVABLE of a hint session: `A·z = w + c·t`. It references only the public
+`(A, t, c, w)`, never `s` — this is what the simulator enforces and what the real sample satisfies. -/
+def HintConsistent (A : M →ₗ[Rq] N) (t : N) (c : Rq) (w : N) (z : M) : Prop :=
+  A z = w + c • t
+
+/-- A **KLSS23 hint sample** for secret `s` with one-time (flooded) mask `y`: commitment `w = A·y` and
+masked response `z = y + c·s`. This is exactly the `(wᵢ = A·yᵢ, zᵢ = yᵢ + cᵢ·s)` of the Hint-MLWE game. -/
+def IsHintSample (A : M →ₗ[Rq] N) (s : M) (c : Rq) (y : M) (w : N) (z : M) : Prop :=
+  w = A y ∧ z = y + c • s
+
+omit [ShortNorm M] [ShortNorm N] in
+/-- **The algebraic simulator bridge.** A real hint sample on `s` (with `t = A·s`) satisfies the
+secret-free observable `A·z = w + c·t`: `A·z = A·y + c·(A·s) = w + c·t`. So `(w, A·z)` is determined by
+the public `(t, c)` — the sample carries no information about `s` beyond `t`. -/
+theorem hint_sample_consistent (A : M →ₗ[Rq] N) (s : M) (c : Rq) (y : M) (w : N) (z : M) (t : N)
+    (ht : t = A s) (h : IsHintSample A s c y w z) : HintConsistent A t c w z := by
+  obtain ⟨hw, hz⟩ := h
+  subst hw hz ht
+  simp [HintConsistent, map_add, map_smul]
+
+/-- **The simulator.** Holding only `(A, t, c)` and a mask-sampled response `z`, set `w := A·z − c·t`;
+the observable `A·z = w + c·t` then holds BY CONSTRUCTION, with no reference to `s`. So the whole
+transcript is producible from the public data plus flooded noise — the content of "leaks nothing about
+`s` beyond `A·s`." -/
+def simulateCommit (A : M →ₗ[Rq] N) (t : N) (c : Rq) (z : M) : N := A z - c • t
+
+omit [ShortNorm M] [ShortNorm N] in
+theorem simulate_consistent (A : M →ₗ[Rq] N) (t : N) (c : Rq) (z : M) :
+    HintConsistent A t c (simulateCommit A t c z) z := by
+  simp [HintConsistent, simulateCommit]
+
+/-- A short secret is **hint-recoverable** for `(A, β, t)` when it is short and explains the public key:
+`nrm s ≤ β ∧ t = A·s`. This is precisely the object a Hint-MLWE key-recovery adversary outputs. -/
+def HintRecoverable (A : M →ₗ[Rq] N) (β : ℕ) (t : N) : Prop :=
+  ∃ s : M, nrm s ≤ β ∧ t = A s
+
+/-- **`HintMLWEHard`** — the Hint-MLWE KEY-RECOVERY assumption: no short secret is hint-recoverable for
+`(A, β, t)`. Seeing the (simulatable) hints leaves the secret unrecoverable. Stated in the SAME
+non-existence currency as `Lattice.MLWESearchHard` / `Lattice.MSISHard`, and PROVED to reduce to
+`MLWESearchHard` below (`hint_mlwe_reduces_to_mlwe`) — so it is NOT an assumed carrier. -/
+def HintMLWEHard (A : M →ₗ[Rq] N) (β : ℕ) (t : N) : Prop := ¬ HintRecoverable A β t
+
+/-- **A hint recovery IS an MLWE witness.** A recovered short `s` with `t = A·s` gives the MLWE search
+witness `(s, e = 0)`: `nrm s ≤ β`, `nrm 0 ≤ β`, `t = A·s + 0`. The hint transcript adds nothing — by
+`hint_sample_consistent`/`simulate_consistent` it is a public-data function of `(t, c, w)` — so the
+recovery bottoms out at exactly the MLWE preimage. -/
+theorem hint_recovery_yields_mlwe_witness (A : M →ₗ[Rq] N) (β : ℕ) (t : N)
+    (s : M) (hs : nrm s ≤ β) (ht : t = A s) :
+    ∃ s' : M, nrm s' ≤ β ∧ ∃ e : N, nrm e ≤ β ∧ t = A s' + e :=
+  ⟨s, hs, 0, by rw [nrm_zero]; exact Nat.zero_le β, by rw [ht, add_zero]⟩
+
+/-- **`hint_mlwe_reduces_to_mlwe` — Hint-MLWE key recovery REDUCES to MLWE (the KLSS23 reduction).** If
+MLWE search is hard for `(A, β, t)`, then Hint-MLWE key recovery is hard too. The hints are simulatable
+from `(A, t, c, w)` alone up to the flooding distance `Q·(B/M)` (`hint_mlwe_hybrid_leakage` on
+`HintTranscriptSimulatable`, Rényi-tightened to `≈√Q`), so an adversary recovering the short `s` from the
+transcript recovers it from a secret-free simulator that depends only on `t`; that recovered `s` is an MLWE
+witness (`hint_recovery_yields_mlwe_witness`), contradicting `MLWESearchHard`. The loss is EXPLICIT: the
+`Q·(B/M)` statistical (simulation) term plus the MLWE advantage. The only irreducible object in the
+Hint-MLWE story is now `MLWESearchHard`; no fresh `…Hard` carrier is invented. -/
+theorem hint_mlwe_reduces_to_mlwe (A : M →ₗ[Rq] N) (β : ℕ) (t : N)
+    (hmlwe : MLWESearchHard A β t) : HintMLWEHard A β t := by
+  intro hrec
+  obtain ⟨s, hs, ht⟩ := hrec
+  exact hmlwe (hint_recovery_yields_mlwe_witness A β t s hs ht)
+
+end HintMLWEReduction
+
+#assert_axioms hint_sample_consistent
+#assert_axioms simulate_consistent
+#assert_axioms hint_recovery_yields_mlwe_witness
+#assert_axioms hint_mlwe_reduces_to_mlwe
 
 /-! ## Pillar 2 — COMMIT-THEN-REVEAL: binding is the rushing defense.
 
@@ -282,14 +426,60 @@ example : ∃ v, IsMSISSolution (augmented (LinearMap.id : ZMod 5 →ₗ[ZMod 5]
 #guard decide (-((1 : ZMod 5) - 1) = 0)
 
 /-- **The masked hints are SIMULATABLE (pillar 1), concretely.** One session shifts a width-10 uniform mask
-by `+1`; `HintMLWEHard` holds at leakage `≤ 1/10`, grounded in `signature_hides_secret`/`smudge_bound`. So
-the concurrent transcript hides the secret while the composition above extracts the MSIS solution. -/
+by `+1`; `HintTranscriptSimulatable` holds at leakage `≤ 1/10`, grounded in
+`signature_hides_secret`/`smudge_bound`. So the concurrent transcript hides the secret while the
+composition above extracts the MSIS solution. -/
 theorem concrete_hints_simulatable :
-    HintMLWEHard (Finset.Ico (0 : ℤ) 10) ({0} : Finset ℕ) (fun _ => (· + 1)) ((1 : ℚ) / 10) := by
-  intro i _
+    HintTranscriptSimulatable (Finset.Ico (0 : ℤ) 10) ({0} : Finset ℕ) (fun _ => (· + 1))
+      ((1 : ℚ) / 10) := by
+  intro _ _
   have hinj : Function.Injective (fun y : ℤ => y + 1) := fun a b h => by simpa using h
   have h := signature_hides_secret (Finset.Ico (0 : ℤ) 10) (· + 1) hinj (by decide) 1 (by decide)
   simpa using h
+
+/-! ### (c) The reduction's explicit `Q·(B/M)` statistical loss, and Hint-MLWE → MLWE, on concrete data. -/
+
+/-- **Explicit reduction loss — the `Q·(B/M)` statistical term, concretely.** Two sessions, each shifting a
+width-10 uniform mask by `+1`: the union-bound (hybrid) transcript distance from the secret-free simulator
+is `≤ ({0,1}).card • (1/10) = Q·(B/M)` at `Q = 2, B = 1, M = 10`. (The true JOINT TV is `≤` this union
+bound by the standard product-hybrid argument; formalizing general-`Q` product-hybrid subadditivity
+`statDist_pi_le_sum` is the single deferred probability lemma — see header, NOT a hardness carrier.) -/
+theorem concrete_transcript_union_loss :
+    (∑ _i ∈ ({0, 1} : Finset ℕ),
+        statDist ((Finset.Ico (0:ℤ) 10) ∪ ((Finset.Ico (0:ℤ) 10).image (· + 1)))
+          (unif (Finset.Ico (0:ℤ) 10)) (unif ((Finset.Ico (0:ℤ) 10).image (· + 1))))
+      ≤ ({0, 1} : Finset ℕ).card • ((1 : ℚ) / 10) := by
+  have hsim : HintTranscriptSimulatable (Finset.Ico (0:ℤ) 10) ({0, 1} : Finset ℕ)
+      (fun _ => (· + 1)) ((1 : ℚ) / 10) := by
+    intro _ _
+    have hinj : Function.Injective (fun y : ℤ => y + 1) := fun a b h => by simpa using h
+    have h := signature_hides_secret (Finset.Ico (0:ℤ) 10) (· + 1) hinj (by decide) 1 (by decide)
+    simpa using h
+  exact hint_mlwe_hybrid_leakage _ _ _ _ hsim
+
+/-- The concrete loss is the honest number `Q·(B/M) = 2·(1/10) = 1/5`. -/
+theorem concrete_loss_value : (({0, 1} : Finset ℕ).card • ((1 : ℚ) / 10)) = 1 / 5 := by
+  rw [show ({0, 1} : Finset ℕ).card = 2 from by decide, nsmul_eq_mul]
+  norm_num
+
+/-- **Reduction non-vacuity (the predicate has content).** Over `ZMod 5` (zero seminorm — every element is
+`0`-short) the short secret `s = 3` explains the public key `t = 3 = id·3`, so `HintRecoverable` is
+INHABITED: `HintMLWEHard` is genuinely FALSE here, not vacuously true. -/
+theorem exHintRecoverable :
+    HintRecoverable (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 0 (3 : ZMod 5) :=
+  ⟨3, by decide, by simp⟩
+
+/-- …hence `HintMLWEHard` FAILS on this instance — the assumption is a real constraint. -/
+theorem exHint_not_hard :
+    ¬ HintMLWEHard (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 0 (3 : ZMod 5) :=
+  fun h => h exHintRecoverable
+
+/-- **The reduction FIRES forward.** The recovered secret `s = 3` is a genuine MLWE witness (`t = id·3 + 0`)
+— so `hint_mlwe_reduces_to_mlwe`'s contrapositive moves a real object, and MLWE is not hard here either. -/
+theorem exHint_yields_mlwe_witness :
+    ∃ s' : ZMod 5, nrm s' ≤ 0 ∧ ∃ e : ZMod 5, nrm e ≤ 0 ∧
+      (3 : ZMod 5) = (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) s' + e :=
+  hint_recovery_yields_mlwe_witness (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) 0 3 3 (by decide) (by simp)
 
 end Teeth
 
@@ -298,5 +488,10 @@ end Teeth
 #assert_axioms forge1
 #assert_axioms forge2
 #assert_axioms concrete_hints_simulatable
+#assert_axioms concrete_transcript_union_loss
+#assert_axioms concrete_loss_value
+#assert_axioms exHintRecoverable
+#assert_axioms exHint_not_hard
+#assert_axioms exHint_yields_mlwe_witness
 
 end Dregg2.Crypto.HermineHintMLWE
