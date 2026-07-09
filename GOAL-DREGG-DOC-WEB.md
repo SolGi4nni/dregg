@@ -52,3 +52,21 @@ alternatives, from contentRoot_injective + to_heap_map faithfulness), and relabe
 as a non-security content-address. F2/F4a's linear sponge KEPT (honest parallel; could become the deployed
 default if commit::commit is ever un-toy'd) but its deployment-relevance corrected. Firing Path A now.
 - done-log: F4b Step-0 finding verified; Path A chosen (additive); F2/F4a scope corrected in-trail.
+
+## 🔥 DELETING THE DUPLICATION (ember: "delete the bullshit toys, stop duplicating")
+Verified: the DEPLOYED document commitment is `substrate_commit` (dregg-doc/src/substrate.rs, the
+sorted-Poseidon2 heap-root via cell::compute_heap_root), and it is ALREADY PROVEN in Lean via the umem
+heap-root keystones (Dregg2/Substrate/Heap.lean, Crypto/UniversalMemory.lean::boundary_root_derived,
+Crypto/PerCellUmem.lean::percell_boundary_root_derived — scheme-pinned to the deployed circuit::heap_root,
+AssuranceCase.lean:1043). So:
+- ⚠ RETRACT F2 (08d255113 DocCommit) + F4a (703bef7a4 DocCore/DocProofs) + the ElementGrammar closure:
+  they proved a PARALLEL linear-sponge commit (`commit::commit`, DefaultHasher default, ZERO external
+  consumers, test-only) — a TOY duplication, NOT the deployed commit. DELETED the 4 Lean modules.
+- The `commit::commit` toy (DefaultHasher, commit.rs) is being DELETED too; the anti-forge tests re-point
+  to the real substrate_commit.
+- KEPT (real, deployed): F1 (DocMergeComposed — the merge), F3 (AnchoredQuote — the quote verifier),
+  P (PatchCategory — the algebra), COLL_EMBEDS (binds the embed pointer in the REAL substrate_commit).
+- The wasm-Lean RECIPE (F4a §4: Init-only @[export] reaches wasm) is KEPT as knowledge (spec §4 + memory);
+  the specific DocCore module was a toy instance. The DEPLOYED substrate_commit reaches wasm as Rust
+  (bindings_doc.rs), gauntlet-bound to the proven heap-root keystones.
+- ONE commit now: substrate_commit. done-log: 4 toy Lean modules deleted; Rust toy commit deletion firing.
