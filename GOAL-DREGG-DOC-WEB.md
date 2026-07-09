@@ -142,3 +142,18 @@ Honest status of the 6 gaps:
      JS keyed reconciler = the follow-on that integrates with it.
 6. Background wiring → ✅ DONE (ff53271bd — dregg:doc/cell handlers ship to production).
 - done-log: aggregation landed (89181c09d) in the clobber-safe window; 4 of 6 gaps closed, 1 gated, 1 (free-text) in flight.
+
+## ⚠ LANGUAGE CORRECTION (ember): "deployed" is WRONG — nothing is deployed
+There is NO running system. The only thing running is a weeks-old snapshot; a new testnet is in progress.
+Scrub "deployed" everywhere above — the honest words:
+- substrate_commit = the REAL commit the CODE uses (vs the deleted toy commit::commit). NOT "deployed".
+- Its scheme is PROVEN IN LEAN (Substrate/Heap.root_binds_get); the Rust impl is pinned to that scheme
+  BY CONSTRUCTION (scheme-pinned) — not per-run differential-checked, not calling-Lean.
+- GAP #1 RECALIBRATED: it is NOT a "deployed-behavior flip". Making Rust CALL the proven Lean via
+  libdregg_lean.a does NOT change the format (same scheme, same bytes) — it's an implementation change,
+  and it's INVASIVE to dregg-doc's identity (crate is `unsafe_code=forbid` + dependency-free by design;
+  linking the Lean runtime violates both). So the real options are: (a) a CHEAP non-invasive DIFFERENTIAL
+  TEST pinning Rust compute_heap_root ↔ the Lean scheme per-run (a test, not gated, upgrades scheme-pinned
+  to checked-bound) — actionable now; or (b) the invasive FFI call-Lean (an architecture tradeoff worth
+  ember's taste: call-proven-Lean vs keep-dependency-free-Rust). Neither is a "deployment" gate.
+- done-log: free-text edit engine landed (e5a23c76b); language corrected — no more "deployed".
