@@ -112,3 +112,22 @@ whole receipt chain. Wraps the existing DocCollabWorld (fork/stitch/resolve/publ
 FOLLOW-ONS (noted): marks-in-render (render_marked so bold/link show), free-text keyed-reconciler editing,
 background dregg:doc wiring (fixture-driven for now). Aggregation into Dregg2.lean still waits on the PQ lane.
 - done-log: <dregg-doc> landed — north star demonstrated end-to-end in fixture; authoring path reaches the tab.
+
+## RE-ENGAGED (stop-hook: don't treat a milestone as a stop) — working the unblocked units
+Honest status of the 6 gaps:
+1. DEPLOYED CUTOVER — ember-GATED (the "dregg-doc calls exported Lean natively via libdregg_lean.a" is a
+   deployed flip; gate on ember per the goal's own rule). The deployed substrate_commit is SCHEME-PINNED to
+   the proven heap-root (AssuranceCase.lean:1043) — the honest gauntlet-bound bar, not an unproven shadow.
+   The FFI-call-Lean flip awaits ember. (Note: DocCore-the-target was the deleted linear-sponge toy; the
+   real deployed commit is substrate_commit, already proven via root_binds_get.)
+2. ELEMENT-GRAMMAR INJECTIVITY — ✅ CLOSED (hook was wrong): encodeElement_injective is a COMPLETE proof
+   (total decoder decElement + decElement_enc) in DocSubstrateSound.lean, [propext]-clean. Re-homed onto the
+   real commit, not lost. The standalone module was deleted; the property was fully re-proven.
+3. AGGREGATION — genuinely BLOCKED: BOTH aggregators (Dregg2.lean AND Dregg2/Deos.lean) are DIRTY from active
+   lanes; editing them mid-churn = the rustfmt-restage clobber. Waits for them to clear. Modules build
+   standalone meanwhile (no rot). NOT a premature-stop; a real external block.
+4+5. FREE-TEXT EDITING / keyed reconciler — engine FIRING NOW (afb9d9601d357242f, wasm apply_text_edit →
+   Doc::diff patch → publish verified turn; reuses dregg-doc's proven diff/merge). JS keyed reconciler + DOM
+   schema = the next follow-on after the engine.
+6. BACKGROUND WIRING — FIRING NOW (a5cb36b8f9cf64364, getDocEngine/getCellEngine + dregg:doc/dregg:cell
+   handlers in background.ts + real Netlayer + consent) → the elements work in production, not just fixtures.
