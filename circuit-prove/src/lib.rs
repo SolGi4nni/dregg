@@ -18,6 +18,7 @@
 //! `dregg-circuit`; the gate is gone because this whole crate IS the prover.
 
 pub mod accumulator;
+pub mod blinded_membership_leaf_adapter;
 pub mod bridge_leaf_adapter;
 pub mod carrier_pin_twin;
 pub mod custom_leaf_adapter;

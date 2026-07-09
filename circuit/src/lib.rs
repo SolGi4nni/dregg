@@ -335,6 +335,13 @@ pub mod presentation_descriptor_witness;
 /// prove/verify a bound presentation through the real p3 prover. See module docs.
 pub mod bound_presentation_witness;
 
+/// Rust witness builder for the emitted blinded ring-membership descriptor
+/// (`dregg-blinded-membership::v1`, `BlindedMembershipEmit.lean`) — the blinded-membership twin of
+/// `bound_presentation_witness`: `blinded_leaf` and the Merkle path are both constrained in-circuit,
+/// so consumers of `descriptor_by_name` can prove/verify a blinded membership through the real p3
+/// prover (and the fold adapter can wrap it as a recursion leaf). See module docs.
+pub mod blinded_membership_witness;
+
 /// Descriptor + Rust witness builder for the emitted note-spend recursion-leaf descriptor
 /// (`note-spend-leaf::dregg-note-spending-dsl-v3`, `NoteSpendingLeafEmit.lean`) — the analog of
 /// `membership_witness_4ary` / `adjacency_witness` for the note-spend (blinded-note) family, so

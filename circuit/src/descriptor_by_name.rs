@@ -105,6 +105,7 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         PRESENTATION_FRESHNESS_JSON,
     ),
     ("dregg-bound-presentation::v1", BOUND_PRESENTATION_JSON),
+    ("dregg-blinded-membership::v1", BLINDED_MEMBERSHIP_JSON),
     (
         "dregg-effectvm-custom-v1",
         crate::effect_vm_descriptors::DREGG_EFFECTVM_CUSTOM_IR2_JSON,
@@ -150,6 +151,16 @@ const PRESENTATION_FRESHNESS_JSON: &str =
 /// witness builder is [`crate::bound_presentation_witness::bound_presentation_witness`].
 const BOUND_PRESENTATION_JSON: &str =
     include_str!("../descriptors/by-name/bound-presentation.json");
+/// The **blinded ring-membership** family (`dregg-blinded-membership::v1`), authored in
+/// `metatheory/Dregg2/Circuit/Emit/BlindedMembershipEmit.lean` (`blindedMembershipDesc`) and
+/// byte-pinned there by an `emitVmJson2` `#guard`. The Golden-Lift-stage-3d successor to the
+/// off-descriptor blinded-Merkle STARK (`poseidon2_air.rs:647`): both the unlinkability blinding
+/// (`blinded_leaf = hash_2_to_1(leaf, blinding)`) and the 4-ary Merkle membership are CONSTRAINED
+/// in-circuit (chip lookups), so a light client / the recursion fold re-verifies them from the
+/// descriptor alone. Its Rust witness builder is
+/// [`crate::blinded_membership_witness::blinded_membership_witness`].
+const BLINDED_MEMBERSHIP_JSON: &str =
+    include_str!("../descriptors/by-name/blinded-membership.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).
