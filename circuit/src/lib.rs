@@ -328,6 +328,13 @@ pub mod adjacency_witness;
 /// `descriptor_by_name` can prove/verify a fresh-token presentation summary. See module docs.
 pub mod presentation_descriptor_witness;
 
+/// Rust witness builder for the emitted **bound-presentation** descriptor
+/// (`dregg-bound-presentation::v1`, `BoundPresentationEmit.lean`) — the Golden-Lift-stage-3a analog
+/// of `presentation_descriptor_witness`, producing a trace whose `presentation_tag` PI is CONSTRAINED
+/// in-circuit to its arity-4 Poseidon2 chip image, so consumers of `descriptor_by_name` can
+/// prove/verify a bound presentation through the real p3 prover. See module docs.
+pub mod bound_presentation_witness;
+
 /// Descriptor + Rust witness builder for the emitted note-spend recursion-leaf descriptor
 /// (`note-spend-leaf::dregg-note-spending-dsl-v3`, `NoteSpendingLeafEmit.lean`) — the analog of
 /// `membership_witness_4ary` / `adjacency_witness` for the note-spend (blinded-note) family, so

@@ -104,6 +104,7 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
         "dregg-presentation-freshness::summary-v1",
         PRESENTATION_FRESHNESS_JSON,
     ),
+    ("dregg-bound-presentation::v1", BOUND_PRESENTATION_JSON),
     (
         "dregg-effectvm-custom-v1",
         crate::effect_vm_descriptors::DREGG_EFFECTVM_CUSTOM_IR2_JSON,
@@ -140,6 +141,15 @@ const PREDICATE_ARITH_JSON: &str = include_str!("../descriptors/by-name/predicat
 /// (the `FITS_WITH_NAMED_GATE` verdict), so it is not internalized here.
 const PRESENTATION_FRESHNESS_JSON: &str =
     include_str!("../descriptors/by-name/presentation-freshness.json");
+/// The **bound-presentation** family (`dregg-bound-presentation::v1`), authored in
+/// `metatheory/Dregg2/Circuit/Emit/BoundPresentationEmit.lean` (`boundPresentationDesc`) and
+/// byte-pinned there by an `emitVmJson2` `#guard`. This is the Golden-Lift-stage-1 successor to the
+/// freshness summary: the `presentation_tag` PI is CONSTRAINED in-circuit to its arity-4 Poseidon2
+/// chip image (the tag-binding tooth `presentationFreshnessDesc` left to a named STARK leaf), so a
+/// light client / the recursion fold re-verifies the tag binding from the descriptor alone. Its Rust
+/// witness builder is [`crate::bound_presentation_witness::bound_presentation_witness`].
+const BOUND_PRESENTATION_JSON: &str =
+    include_str!("../descriptors/by-name/bound-presentation.json");
 
 /// The prefix of the depth-GENERAL Merkle-membership descriptor name
 /// ([`membership_descriptor_of_depth`] pins `depth{N}` after it).
