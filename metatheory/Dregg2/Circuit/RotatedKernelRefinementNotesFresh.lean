@@ -162,6 +162,8 @@ structure noteSpendFreshEncodes (S8 : Cap8Scheme)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`noteSpendFresh_freshness` — the freshness is FORCED (not carried).** On the strengthened decode,
 the non-membership open FORCES `nf ∉ pre.nullifiers` (via `freshness_forced`). This is exactly the
@@ -204,6 +206,8 @@ def noteSpendFresh_to_base (S8 : Cap8Scheme)
   frDelegationEpoch := henc.frDelegationEpoch
   frDelegationEpochAt := henc.frDelegationEpochAt
   frHeaps := henc.frHeaps
+  frNullifierRoot := henc.frNullifierRoot
+  frRevokedRoot := henc.frRevokedRoot
 
 /-- **`noteSpendFresh_descriptorRefines` — THE PHASE-D REFINEMENT for noteSpend (freshness FORCED).**
 A satisfying STRENGTHENED noteSpend descriptor witness forces the KERNEL's spend step `NoteSpendSpec

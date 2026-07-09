@@ -90,7 +90,8 @@ def RestIffNoBal (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-- **`RestIffNoNullifiers RH`** — the rest hash binds the 15 non-`cell`-non-`nullifiers` components
 (BIDIRECTIONAL), omitting `nullifiers` (the touched field of `noteSpendA`). -/
@@ -103,7 +104,8 @@ def RestIffNoNullifiers (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-! ## §2 — the `ActiveComponent` interface + the two/three smart constructors.
 

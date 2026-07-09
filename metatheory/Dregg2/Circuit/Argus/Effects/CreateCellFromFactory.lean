@@ -163,7 +163,9 @@ theorem recordKernelState_ext {k k' : RecordKernelState}
     (hdelegate : k.delegate = k'.delegate) (hdelegations : k.delegations = k'.delegations)
     (hdelegationEpoch : k.delegationEpoch = k'.delegationEpoch)
     (hdelegationEpochAt : k.delegationEpochAt = k'.delegationEpochAt)
-    (hheaps : k.heaps = k'.heaps) : k = k' := by
+    (hheaps : k.heaps = k'.heaps)
+    (hnullifierRoot : k.nullifierRoot = k'.nullifierRoot)
+    (hrevokedRoot : k.revokedRoot = k'.revokedRoot) : k = k' := by
   cases k; cases k'; simp_all
 
 /-- `factoryAdmit` is a conjunction of decidable propositions (a `0 ≤ vk`, a `findFactory` equality, two

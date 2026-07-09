@@ -53,7 +53,8 @@ def RestIffNoCellHeaps (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.lifecycle = k.lifecycle ∧ k'.deathCert = k.deathCert
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-- The heap-write arguments: actor, target, and the wire-carried digests
 (`addr = H[coll,key]`, value, post-root). -/
@@ -124,7 +125,8 @@ def heapWriteE (DCell : (CellId → Value) → ℤ) (hDCell : Function.Injective
       ∧ k'.lifecycle = k.lifecycle ∧ k'.deathCert = k.deathCert
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.delegationEpochAt = k.delegationEpochAt)
+      ∧ k'.delegationEpochAt = k.delegationEpochAt
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := heapWriteGuardGates
   guardProp    := heapWriteGuardProp
   guardWidth   := 1
@@ -175,13 +177,13 @@ theorem apex_iff_heapWriteSpec (DCell : (CellId → Value) → ℤ) (hDCell : Fu
   unfold HeapWriteSpec heapWriteGuardProp heapWriteE
   constructor
   · rintro ⟨hg, hcell, hheaps, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hDE, hDEA⟩
+      hDC, hDel, hDgs, hDE, hDEA, hNR, hRR⟩
     exact ⟨hg, hcell, hheaps, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hDE, hDEA⟩
+      hDC, hDel, hDgs, hDE, hDEA, hNR, hRR⟩
   · rintro ⟨hg, hcell, hheaps, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hDE, hDEA⟩
+      hDC, hDel, hDgs, hDE, hDEA, hNR, hRR⟩
     exact ⟨hg, hcell, hheaps, hlog, hAcc, hCaps, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hDE, hDEA⟩
+      hDC, hDel, hDgs, hDE, hDEA, hNR, hRR⟩
 
 /-- **`heapWriteA_full_sound` — THE VALIDATION (the heap write through the dual framework).** A
 satisfying v2-dual full-state witness for `heapWriteE` proves the complete declarative leaf

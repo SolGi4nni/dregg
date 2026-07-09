@@ -140,6 +140,8 @@ def SetFieldSpec (s : RecChainedState) (actor cell : CellId) (f : FieldName) (v 
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
   ∧ s'.kernel.heaps = s.kernel.heaps
+  ∧ s'.kernel.nullifierRoot = s.kernel.nullifierRoot
+  ∧ s'.kernel.revokedRoot = s.kernel.revokedRoot
 
 /-! ## §4 — executor ⟺ spec (FULL state, both directions). -/
 
@@ -222,16 +224,17 @@ theorem execFullA_setFieldA_iff_spec
   constructor
   · rintro ⟨hnr, hg, hs'⟩
     subst hs'
-    refine ⟨hnr, hg, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    refine ⟨hnr, hg, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
     · exact (setFieldCellMap_eq_writeField s.kernel cell f v).symm
     all_goals rfl
-  · rintro ⟨hnr, hg, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
+  · rintro ⟨hnr, hg, hcell, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15,
+            h16, h17⟩
     refine ⟨hnr, hg, ?_⟩
-    -- rebuild s' field-by-field: the touched cell map, the log, and the 16 frame fields, then η.
+    -- rebuild s' field-by-field: the touched cell map, the log, and the 18 frame fields, then η.
     obtain ⟨k', lg'⟩ := s'
-    obtain ⟨acc, cl, cps, nul, rev, cmt, bl, sc, fac, lc, dc, dg, dgs, dge, dgea, hp⟩ := k'
-    simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
-    subst hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+    obtain ⟨acc, cl, cps, nul, rev, cmt, bl, sc, fac, lc, dc, dg, dgs, dge, dgea, hp, nr, rr⟩ := k'
+    simp only at hcell hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+    subst hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
     -- the touched cell map: rewrite the declarative map to the executor's writeField form.
     rw [setFieldCellMap_eq_writeField] at hcell
     subst hcell

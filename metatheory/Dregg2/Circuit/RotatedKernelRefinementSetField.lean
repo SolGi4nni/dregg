@@ -191,6 +191,8 @@ structure rotatedEncodesSF (slot : Fin 8) (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-! ## §3 — the apex obligation: the circuit FORCES the written value.
 
@@ -246,7 +248,7 @@ theorem setField_descriptorRefines (slot : Fin 8) (hash : List ℤ → ℤ)
     henc.frAccounts, henc.frCaps, henc.frNullifiers, henc.frRevoked, henc.frCommitments,
     henc.frBal, henc.frSlotCaveats, henc.frFactories, henc.frLifecycle, henc.frDeathCert,
     henc.frDelegate, henc.frDelegations, henc.frDelegationEpoch, henc.frDelegationEpochAt,
-    henc.frHeaps⟩
+    henc.frHeaps, henc.frNullifierRoot, henc.frRevokedRoot⟩
 
 /-- **The refinement, stated against `fullActionStep` directly.** `SetFieldSpec` IS the `.setFieldA`
 arm of the kernel dispatcher, so a satisfying rotated setField witness forces

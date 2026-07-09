@@ -117,6 +117,8 @@ def cellUnseal_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem cellUnseal_readout_inhabited :
     Nonempty (CellUnsealTraceReadout (fun ins => (permOutZ ins).headD 0)
@@ -183,6 +185,8 @@ def cellDestroy_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem cellDestroy_readout_inhabited :
     Nonempty (CellDestroyTraceReadout cZero (fun ins => (permOutZ ins).headD 0)
@@ -246,6 +250,8 @@ def refusal_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem refusal_readout_inhabited :
     Nonempty (RefusalTraceReadout cZero (fun ins => (permOutZ ins).headD 0)
@@ -308,6 +314,8 @@ def receiptArchive_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem receiptArchive_readout_inhabited :
     Nonempty (ReceiptArchiveTraceReadout (fun ins => (permOutZ ins).headD 0)

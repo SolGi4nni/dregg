@@ -202,6 +202,8 @@ def transfer_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
   logAdv := rfl
 
 theorem transfer_readout_inhabited :

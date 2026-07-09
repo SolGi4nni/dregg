@@ -191,7 +191,8 @@ theorem stateCommit_binds_cells_and_rest
           ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
           ∧ k'.delegationEpoch = k.delegationEpoch
           ∧ k'.delegationEpochAt = k.delegationEpochAt
-          ∧ k'.heaps = k.heaps) := by
+          ∧ k'.heaps = k.heaps
+          ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot) := by
   -- root split: cellDigest equal ∧ RH equal.
   obtain ⟨hcd, hRHeq⟩ := recStateCommit_binds CH RH cmb compress compressN hCmb k k' t hroot
   -- the 16 non-cell fields (needed FIRST: the accounts-frame makes the two cellDigest carriers match).
@@ -233,7 +234,8 @@ theorem setFieldCommit_binds_all
           ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
           ∧ k'.delegationEpoch = k.delegationEpoch
           ∧ k'.delegationEpochAt = k.delegationEpochAt
-          ∧ k'.heaps = k.heaps)
+          ∧ k'.heaps = k.heaps
+          ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
       ∧ log = log' := by
   unfold recSetFieldCommit at hroot
   -- outer cmb split: cell-side equal ∧ (rest⊕log)-side equal.
@@ -286,7 +288,8 @@ theorem crossbind_rest_agree (hRest : RestHashIffFrame RH)
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps :=
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot :=
   (hRest k k').mp hPI
 
 /-- **`crossbind_cells_agree`.** If the circuit root's frame child and the executor root's
@@ -320,7 +323,8 @@ theorem crossbind_circuit_exec_same_state
           ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
           ∧ k'.delegationEpoch = k.delegationEpoch
           ∧ k'.delegationEpochAt = k.delegationEpochAt
-          ∧ k'.heaps = k.heaps) :=
+          ∧ k'.heaps = k.heaps
+          ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot) :=
   ⟨crossbind_cells_agree CH compressN hCompressN hLeaf k k' S hFramePI,
    crossbind_rest_agree RH hRest k k' hRestPI⟩
 

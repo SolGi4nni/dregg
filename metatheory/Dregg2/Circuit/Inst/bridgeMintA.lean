@@ -110,7 +110,8 @@ def bridgeMintE (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Inject
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := bridgeMintGuardGates
   guardProp    := bridgeMintGuardProp
   guardWidth   := 1
@@ -168,13 +169,13 @@ theorem apex_iff_inboundMintSpec (D : (CellId → AssetId → ℤ) → ℤ) (hD 
   unfold InboundMintSpec bridgeMintGuardProp bridgeMintE
   constructor
   · rintro ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
   · rintro ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
 
 /-! ### §1c — THE DELIVERABLE: `bridgeMintA_full_sound ⇒ InboundMintSpec` through the framework. -/
 

@@ -165,6 +165,8 @@ structure TransferTraceReadout (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
   logAdv : post.log = tr :: pre.log
 
 /-! ## §2 — `TransferAuthorityWitness`: the cap-open authority residual (the SOLE irreducible carry).
@@ -254,6 +256,8 @@ def rotatedEncodes_of_floors (hash : List ℤ → ℤ) (S : CommitSurface)
   frDelegationEpoch := rd.frDelegationEpoch
   frDelegationEpochAt := rd.frDelegationEpochAt
   frHeaps := rd.frHeaps
+  frNullifierRoot := rd.frNullifierRoot
+  frRevokedRoot := rd.frRevokedRoot
   logAdv := rd.logAdv
 
 /-! ## §3a — the authority witness FORCES the deployed gate (the cap-open is not decorative). -/

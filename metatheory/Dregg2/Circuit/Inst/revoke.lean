@@ -90,7 +90,8 @@ def RestIffNoCaps (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-! ## §2 — the `revoke` instance (touched component = `caps`).
 
@@ -158,7 +159,8 @@ def revokeE (D : Caps → ℤ) (hD : Function.Injective D) :
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := revokeGuardGates
   guardProp    := revokeGuardProp
   guardWidth   := 1

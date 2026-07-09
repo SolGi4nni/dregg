@@ -108,6 +108,8 @@ def makeSov_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem makeSov_readout_inhabited :
     Nonempty (MakeSovereignTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
@@ -175,6 +177,8 @@ def setField_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem setField_readout_inhabited :
     Nonempty (SetFieldDynTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
@@ -230,6 +234,8 @@ def noteSpend_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem noteSpend_readout_inhabited :
     Nonempty (NoteSpendTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
@@ -282,6 +288,8 @@ def noteCreate_readout :
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
   frHeaps := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem noteCreate_readout_inhabited :
     Nonempty (NoteCreateTraceReadout (fun ins => (permOutZ ins).headD 0) (fun _ => 0) (fun _ => (0, 0)) []
@@ -339,6 +347,8 @@ def heapWrite_readout :
   frDelegations := rfl
   frDelegationEpoch := rfl
   frDelegationEpochAt := rfl
+  frNullifierRoot := rfl
+  frRevokedRoot := rfl
 
 theorem heapWrite_readout_inhabited :
     Nonempty (HeapWriteTraceReadout (fun ins => (permOutZ ins).headD 0)

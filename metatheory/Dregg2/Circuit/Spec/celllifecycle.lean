@@ -30,11 +30,12 @@ theorem recKernel_ext {k k' : RecordKernelState}
     (h13 : k'.deathCert = k.deathCert) (h14 : k'.delegate = k.delegate)
     (h15 : k'.delegations = k.delegations)
     (h17 : k'.delegationEpoch = k.delegationEpoch) (h18 : k'.delegationEpochAt = k.delegationEpochAt)
-    (h19 : k'.heaps = k.heaps) :
+    (h19 : k'.heaps = k.heaps)
+    (h20 : k'.nullifierRoot = k.nullifierRoot) (h21 : k'.revokedRoot = k.revokedRoot) :
     k' = k := by
   cases k; cases k'
-  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
-  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19
+  simp only at h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19 h20 h21
+  subst h1 h2 h3 h4 h5 h6 h7 h10 h11 h12 h13 h14 h15 h17 h18 h19 h20 h21
   rfl
 
 /-! ## §1 — `cellSealA`: Live → Sealed. -/
@@ -63,6 +64,8 @@ def CellSealSpec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedSta
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
   ∧ s'.kernel.heaps = s.kernel.heaps
+  ∧ s'.kernel.nullifierRoot = s.kernel.nullifierRoot
+  ∧ s'.kernel.revokedRoot = s.kernel.revokedRoot
 
 /-- **`cellSeal_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions).** -/
 theorem cellSeal_iff_spec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedState) :
@@ -75,12 +78,15 @@ theorem cellSeal_iff_spec (s : RecChainedState) (actor cell : CellId) (s' : RecC
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hlif, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl⟩
+    · rintro ⟨_, hlif, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+              h17⟩
       obtain ⟨k', lg'⟩ := s'
-      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp⟩ := k'
-      simp only at hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
-      subst hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp, nr, rr⟩
+        := k'
+      simp only at hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+      subst hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
       rfl
   · rw [if_neg hg]
     constructor
@@ -112,6 +118,8 @@ def CellUnsealSpec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedS
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
   ∧ s'.kernel.heaps = s.kernel.heaps
+  ∧ s'.kernel.nullifierRoot = s.kernel.nullifierRoot
+  ∧ s'.kernel.revokedRoot = s.kernel.revokedRoot
 
 /-- **`cellUnseal_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions).** -/
 theorem cellUnseal_iff_spec (s : RecChainedState) (actor cell : CellId) (s' : RecChainedState) :
@@ -124,12 +132,15 @@ theorem cellUnseal_iff_spec (s : RecChainedState) (actor cell : CellId) (s' : Re
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hlif, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl⟩
+    · rintro ⟨_, hlif, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+              h17⟩
       obtain ⟨k', lg'⟩ := s'
-      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp⟩ := k'
-      simp only at hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
-      subst hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp, nr, rr⟩
+        := k'
+      simp only at hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+      subst hlif hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
       rfl
   · rw [if_neg hg]
     constructor
@@ -167,6 +178,8 @@ def CellDestroySpec (s : RecChainedState) (actor cell : CellId) (certHash : Nat)
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
   ∧ s'.kernel.heaps = s.kernel.heaps
+  ∧ s'.kernel.nullifierRoot = s.kernel.nullifierRoot
+  ∧ s'.kernel.revokedRoot = s.kernel.revokedRoot
 
 /-- **`cellDestroy_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions).** -/
 theorem cellDestroy_iff_spec (s : RecChainedState) (actor cell : CellId) (certHash : Nat)
@@ -181,12 +194,15 @@ theorem cellDestroy_iff_spec (s : RecChainedState) (actor cell : CellId) (certHa
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hlif, hdc, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl⟩
+    · rintro ⟨_, hlif, hdc, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15,
+              h16⟩
       obtain ⟨k', lg'⟩ := s'
-      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp⟩ := k'
-      simp only at hlif hdc hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
-      subst hlif hdc hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+      obtain ⟨acc, cellm, caps, nul, rev, com, bal, sc, fac, lc, dc, dg, dgs, dge, dgea, hp, nr, rr⟩
+        := k'
+      simp only at hlif hdc hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
+      subst hlif hdc hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16
       rfl
   · rw [if_neg hg]
     constructor

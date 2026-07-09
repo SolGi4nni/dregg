@@ -146,6 +146,8 @@ def InboundMintSpec (st : RecChainedState) (actor cell : CellId) (a : AssetId) (
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
   ∧ st'.kernel.heaps = st.kernel.heaps
+  ∧ st'.kernel.nullifierRoot = st.kernel.nullifierRoot
+  ∧ st'.kernel.revokedRoot = st.kernel.revokedRoot
 
 /-- **`recCMintAsset_iff_inboundSpec` — CHAINED EXECUTOR ⟺ SPEC (FULL state, both directions).** The
 chained record kernel commits a `bridgeMintA` (via `recCMintAsset`) into `st'` IFF `st'` is EXACTLY
@@ -164,13 +166,15 @@ theorem recCMintAsset_iff_inboundSpec (st : RecChainedState) (actor cell : CellI
     · intro h
       simp only [Option.some.injEq] at h
       subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hbal, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+        rfl, rfl⟩
+    · rintro ⟨_, hbal, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16,
+              h17⟩
       -- reconstruct st' from the spec: split both records and substitute every field.
       obtain ⟨k', lg'⟩ := st'
-      obtain ⟨acc, cl, cp, nl, rv, cm, bl, sc, fc, lc, dc, dl, dn, dge, dgea, hp⟩ := k'
-      simp only at hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
-      subst hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      obtain ⟨acc, cl, cp, nl, rv, cm, bl, sc, fc, lc, dc, dl, dn, dge, dgea, hp, nr, rr⟩ := k'
+      simp only at hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
+      subst hbal hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
       rfl
   · rw [if_neg hg]
     constructor

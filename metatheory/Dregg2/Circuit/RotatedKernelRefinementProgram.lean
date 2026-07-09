@@ -100,6 +100,8 @@ structure SetProgramTraceReadout (compressN : List ℤ → ℤ) (hash : List ℤ
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- The DEPLOYED `setProgramV3` is graduable (the record-pin shape, REUSING the setVK v1 face). -/
 theorem setProgram_rcp_graduable :
@@ -150,7 +152,7 @@ theorem setProgram_descriptorRefines_sat (compressN : List ℤ → ℤ)
   ⟨rd.guard, rd.cellMapMove, rd.logAdv, rd.frAccounts, rd.frCaps,
     rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
     rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
-    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩
+    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps, rd.frNullifierRoot, rd.frRevokedRoot⟩
 
 /-- **CLASS-A TOOTH — a frozen-program forgery is UNSAT.** A readout whose post `cell` program slot is
 NOT the declared `prog` cannot ride a satisfying `setProgramV3` witness — the deployed record pin bites.

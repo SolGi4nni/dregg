@@ -140,7 +140,8 @@ def noteSpendE (LE : Nat → ℤ) (cN : List ℤ → ℤ)
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := noteSpendGuardGates
   guardProp    := noteSpendGuardProp
   guardWidth   := 1
@@ -204,13 +205,13 @@ theorem apex_iff_noteSpendSpec (LE : Nat → ℤ) (cN : List ℤ → ℤ)
   unfold NoteSpendSpec noteSpendGuardProp noteSpendE
   constructor
   · rintro ⟨hg, hnull, hlog, hAcc, hCell, hCaps, hBal, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hnull, hlog, hAcc, hCell, hCaps, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
   · rintro ⟨hg, hnull, hlog, hAcc, hCell, hCaps, hRev, hCom, hBal, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hnull, hlog, hAcc, hCell, hCaps, hBal, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
 
 /-! ### §1c — THE VALIDATION: `noteSpendA_full_sound ⇒ NoteSpendSpec` through the framework. -/
 

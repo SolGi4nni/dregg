@@ -489,8 +489,13 @@ structure RelClassified (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop where
 theorem rmem_resultPin : piFirst RESULT_BIT 2 ∈ relationalPredicateDesc.constraints := by
   apply List.mem_append_left
   unfold relationalConstraints
+<<<<<<< ours
   simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
   tauto
+=======
+  iterate 14 apply List.mem_append_left
+  simp
+>>>>>>> theirs
 
 theorem rmem_c2 : gate (subC (.var RESULT_BIT) 1) ∈ relationalPredicateDesc.constraints := by
   apply List.mem_append_left
@@ -503,8 +508,21 @@ theorem rmem_c2b :
     gate (.add (subV (.var DIFF) VALUE_A) (.var VALUE_B)) ∈ relationalPredicateDesc.constraints := by
   apply List.mem_append_left
   unfold relationalConstraints
+<<<<<<< ours
   simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
   tauto
+=======
+  iterate 13 apply List.mem_append_left
+  apply List.mem_append_right; simp
+
+/-- ⚑ THE VERDICT-WELD constraint `diff == value_a − value_b` (C2b) is genuinely present. -/
+theorem rmem_c2b :
+    gate (.add (subV (.var DIFF) VALUE_A) (.var VALUE_B)) ∈ relationalPredicateDesc.constraints := by
+  show _ ∈ relationalConstraints
+  unfold relationalConstraints
+  iterate 12 apply List.mem_append_left
+  apply List.mem_append_right; simp
+>>>>>>> theirs
 
 theorem rmem_c3range : gate (binBody RANGE_FLAG) ∈ relationalPredicateDesc.constraints := by
   apply List.mem_append_left
@@ -543,6 +561,15 @@ theorem rmem_c6 (i : Nat) (hi : i < NUM_DIFF_BITS) :
   unfold relationalConstraints
   simp only [List.mem_append, List.mem_cons, List.mem_singleton, List.not_mem_nil]
   tauto
+
+theorem rmem_c6 (i : Nat) (hi : i < NUM_DIFF_BITS) :
+    gate (.mul (.var RANGE_FLAG) (binBody (DIFF_BITS_START + i)))
+      ∈ relationalPredicateDesc.constraints := by
+  show _ ∈ relationalConstraints
+  unfold relationalConstraints
+  iterate 8 apply List.mem_append_left
+  apply List.mem_append_right
+  exact List.mem_map_of_mem (List.mem_range.mpr hi)
 
 theorem rmem_c7 :
     gate (.mul (.var RANGE_FLAG) (subV recomposeExpr DIFF)) ∈ relationalPredicateDesc.constraints := by
@@ -693,8 +720,12 @@ theorem relational_sat_imp_sem {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {
     { commitAOpen := ?_, commitBOpen := ?_, commitAPin := ?_, commitBPin := ?_,
       resultTrue := ?_, resultPin := ?_, rangeBool := ?_, eqBool := ?_, neqBool := ?_,
       exactlyOne := ?_, diffWeld := ?_, eqRel := ?_, rangeBits := ?_, neqRel := ?_,
+<<<<<<< ours
       rangeHigh := ?_, rangeRecomp := ?_, valueABits := ?_, valueARecomp := ?_,
       valueBBits := ?_, valueBRecomp := ?_ }
+=======
+      rangeHigh := ?_, rangeRecomp := ?_ }
+>>>>>>> theirs
   · -- commitment A opens (via the named chip-lookup soundness carrier).
     have h := hsat.rowConstraints 0 h0 (commitLookup VALUE_A BLINDING_A COMMIT_A LANES_A) rmem_lookupA
     simp only [commitLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at h
@@ -796,6 +827,7 @@ theorem recompose_nonneg {a : Assignment}
   have hpow : 0 ≤ ((2 ^ i : Nat) : Int) := by positivity
   exact mul_nonneg hpow hbit
 
+<<<<<<< ours
 /-- **`recomposeA_nonneg`** — value_a's bit recomposition is a nonnegative bit-sum (`0 ≤ value_a`). -/
 theorem recomposeA_nonneg {a : Assignment}
     (hb : ∀ i, i < NUM_DIFF_BITS → a (VALUE_A_BITS_START + i) = 0 ∨ a (VALUE_A_BITS_START + i) = 1) :
@@ -824,6 +856,8 @@ theorem recomposeB_nonneg {a : Assignment}
   have hpow : 0 ≤ ((2 ^ i : Nat) : Int) := by positivity
   exact mul_nonneg hpow hbit
 
+=======
+>>>>>>> theirs
 /-- **EQ ⇒ the committed values are EQUAL.** An accepting EQ-mode relational trace forces
 `value_a = value_b` — the genuine "equality over committed values", via `diffWeld` + `eqRel`. -/
 theorem relational_eq_forces_values_equal {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
@@ -869,6 +903,7 @@ theorem relational_range_forces_ge {hash : List ℤ → ℤ} {minit : ℤ → �
   rw [hrec] at hnn
   omega
 
+<<<<<<< ours
 /-- **⚑ RANGE ⇒ the committed values are BOUNDED `0 ≤ value_a` and `0 ≤ value_b`** — the value bounds
 that close the field-wrap `≥` forgery. WITHOUT them a large `value_b` (e.g. `p − 95`) yields an in-range
 `diff = value_a − value_b` mod p that forges `value_a ≥ value_b` while `value_a < value_b` canonically;
@@ -889,6 +924,8 @@ theorem relational_range_value_bounds {hash : List ℤ → ℤ} {minit : ℤ →
   rw [sem.valueBRecomp hr] at hnnB
   exact ⟨hnnA, hnnB⟩
 
+=======
+>>>>>>> theirs
 /-! ## §10 — RELATIONAL non-vacuity: a committed EQ witness, and a bad `diff = 1` run. -/
 
 /-- The honest relational witness: EQ is selected (`eq_flag = 1`), the difference witness `diff = 0`
@@ -1008,12 +1045,18 @@ theorem relWitness_values_equal :
 #assert_axioms relational_eq_forces_diff_zero
 #assert_axioms sumE_eval_nonneg
 #assert_axioms recompose_nonneg
+<<<<<<< ours
 #assert_axioms recomposeA_nonneg
 #assert_axioms recomposeB_nonneg
 #assert_axioms relational_eq_forces_values_equal
 #assert_axioms relational_neq_forces_values_distinct
 #assert_axioms relational_range_forces_ge
 #assert_axioms relational_range_value_bounds
+=======
+#assert_axioms relational_eq_forces_values_equal
+#assert_axioms relational_neq_forces_values_distinct
+#assert_axioms relational_range_forces_ge
+>>>>>>> theirs
 #assert_axioms relWitness_satisfies
 #assert_axioms relTf_chip_sound
 #assert_axioms relWitness_sem_concrete

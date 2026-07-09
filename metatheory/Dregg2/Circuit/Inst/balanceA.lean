@@ -123,7 +123,8 @@ def balanceAE (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injectiv
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := balanceGuardGates
   guardProp    := balanceGuardProp
   guardWidth   := 1
@@ -182,13 +183,13 @@ theorem apex_iff_balanceASpec (D : (CellId → AssetId → ℤ) → ℤ) (hD : F
   unfold BalanceMovementSpec balanceGuardProp balanceAE
   constructor
   · rintro ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
   · rintro ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hbal, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
 
 /-! ### §1c — THE INSTANCE: `balanceA_full_sound ⇒ BalanceMovementSpec` through the framework. -/
 

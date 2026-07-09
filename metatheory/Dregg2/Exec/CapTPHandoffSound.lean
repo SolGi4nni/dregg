@@ -305,7 +305,7 @@ theorem handoff_installs_exactly
                           (attenuate c.keep (heldCapTo s.kernel.caps c.introducer c.targetCell)) }
             , log := authReceipt c.introducer :: s.log }, ?_⟩
     exact ⟨hconn, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-      rfl⟩
+      rfl, rfl, rfl⟩
   refine ⟨s', ?_, hspec, ?_, ?_, ?_⟩
   · -- the executor commits exactly this state, via the verified iff.
     rw [delegateAtten_iff_spec]; exact hspec

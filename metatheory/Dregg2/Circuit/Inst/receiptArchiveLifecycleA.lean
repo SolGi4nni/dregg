@@ -46,7 +46,8 @@ def RestIffNoLifecycle (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 structure ReceiptArchiveArgs where
   actor : CellId
@@ -101,7 +102,8 @@ def receiptArchiveLifecycleE (D : (CellId → Nat) → ℤ) (hD : Function.Injec
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := archiveGuardGates
   guardProp    := archiveGuardProp
   guardWidth   := 1
@@ -144,13 +146,13 @@ theorem apex_iff_ReceiptArchiveLifecycleSpec (D : (CellId → Nat) → ℤ) (hD 
   unfold ReceiptArchiveLifecycleSpec archiveGuardProp receiptArchiveLifecycleE
   constructor
   · rintro ⟨hg, hlif, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps⟩
+      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps, hNR, hRR⟩
     exact ⟨hg, hlif, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps⟩
+      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps, hNR, hRR⟩
   · rintro ⟨hg, hlif, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps⟩
+      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps, hNR, hRR⟩
     exact ⟨hg, hlif, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps⟩
+      hDC, hDel, hDgs, hDgE, hDgEA, hHeaps, hNR, hRR⟩
 
 theorem receiptArchiveLifecycleA_full_sound
     (S : Surface2) (D : (CellId → Nat) → ℤ) (hD : Function.Injective D)

@@ -77,6 +77,8 @@ def HeapWriteSpec (s : RecChainedState) (actor target : CellId) (addr v newRoot 
   ∧ s'.kernel.delegations = s.kernel.delegations
   ∧ s'.kernel.delegationEpoch = s.kernel.delegationEpoch
   ∧ s'.kernel.delegationEpochAt = s.kernel.delegationEpochAt
+  ∧ s'.kernel.nullifierRoot = s.kernel.nullifierRoot
+  ∧ s'.kernel.revokedRoot = s.kernel.revokedRoot
 
 /-! ## §3 — executor ⟺ spec (FULL state, both directions). -/
 
@@ -129,17 +131,17 @@ theorem execFullA_heapWriteA_iff_spec (s : RecChainedState) (actor target : Cell
   constructor
   · rintro ⟨hg, hs'⟩
     subst hs'
-    refine ⟨hg, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+    refine ⟨hg, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
       rfl, rfl⟩
     exact (setFieldCellMap_eq_writeField s.kernel target
       Dregg2.Substrate.HeapKernel.heapRootField newRoot).symm
   · rintro ⟨hg, hcell, hheaps, hlog, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12,
-      h13, h14⟩
+      h13, h14, hnr, hrr⟩
     refine ⟨hg, ?_⟩
     obtain ⟨k', lg'⟩ := s'
-    obtain ⟨acc, cl, cps, nul, rev, cmt, bl, sc, fac, lc, dc, dg, dgs, dge, dgea, hp⟩ := k'
-    simp only at hcell hheaps hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
-    subst hlog hheaps h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+    obtain ⟨acc, cl, cps, nul, rev, cmt, bl, sc, fac, lc, dc, dg, dgs, dge, dgea, hp, nr', rr'⟩ := k'
+    simp only at hcell hheaps hnr hrr hlog h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
+    subst hlog hheaps hnr hrr h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14
     rw [setFieldCellMap_eq_writeField] at hcell
     subst hcell
     rfl

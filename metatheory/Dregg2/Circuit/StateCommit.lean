@@ -235,7 +235,8 @@ def RestHashIffFrame : Prop :=
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-- **LEMMA `MovedDigestBindsCells` (from `compressInjective compress` + `cellLeafInjective`).**
 Equal moved (2-leaf) node hashes force WHOLE-`Value` equality of BOTH `src` and `dst` leaves. The old
@@ -483,7 +484,7 @@ theorem transfer_circuit_full_sound
   have hRHeq : RH k = RH k' := (srestframe_iff CH RH cmb compress compressN k t k').mp hrestgate
   have hframe16 := (hRest k k').mp hRHeq
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs,
-    hDE, hDEA, hHeaps⟩ := hframe16
+    hDE, hDEA, hHeaps, hNR, hRR⟩ := hframe16
   -- frame digests equal ⇒ untouched cells equal (FrameDigestBindsCells).
   have hfdeq : frameDigest CH compressN k (frameCarrier k t)
       = frameDigest CH compressN k' (frameCarrier k t) :=
@@ -519,7 +520,7 @@ theorem transfer_circuit_full_sound
           exact (hwf c hcacc).symm
   -- assemble TransferSpec (admitGuard ∧ cell map ∧ the frame clauses, `heaps` included).
   exact ⟨⟨hauth, hnn, hav, hne, hsrc, hdst⟩, hcellmap,
-    hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps⟩
+    hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps, hNR, hRR⟩
 
 #assert_axioms transfer_circuit_full_sound
 
@@ -613,8 +614,8 @@ theorem recStateCommit_binds_kernel
     k = k' := by
   obtain ⟨hcd, hRHeq⟩ := recStateCommit_binds CH RH cmb compress compressN hCmb k k' t hroot
   -- the 15 non-cell fields from RH (RestHashIffFrame is `RH k = RH k' ↔ (k'.* = k.*)`).
-  obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps⟩ :=
-    (hRest k k').mp hRHeq
+  obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps,
+    hNR, hRR⟩ := (hRest k k').mp hRHeq
   -- the cell map from the cell-digest (needs equal `accounts` for matching carriers).
   have hcell : k.cell = k'.cell :=
     cellDigest_binds_cells CH compress compressN hCompress hCompressN hLeaf k k' t hwf hwf'
@@ -639,7 +640,7 @@ theorem transfer_circuit_full_complete
     satisfiedS cmb compress (encodeS CH RH cmb compress compressN k t k') := by
   have hexec : recKExec k t = some k' := (recKExec_iff_spec k t k').mpr hspec
   obtain ⟨hg, hcell, hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel,
-    hDgs, hDE, hDEA, hHeaps⟩ := hspec
+    hDgs, hDE, hDEA, hHeaps, hNR, hRR⟩ := hspec
   obtain ⟨_, _, _, hne, hsrc, hdst⟩ := hg
   -- the 9 transfer gates hold under encodeT (Transfer's completeness), transport to encodeS.
   have htsat : satisfied transferCircuit (encodeT k t k') := transfer_circuit_complete hexec
@@ -656,7 +657,7 @@ theorem transfer_circuit_full_complete
   have e10 := encodeS_agrees_encodeT CH RH cmb compress compressN k t k' vTDstLive  (by decide)
   -- frame-gate facts.
   have hRHeq : RH k = RH k' := (hRest k k').mpr
-    ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps⟩
+    ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA, hHeaps, hNR, hRR⟩
   have hcellc : ∀ c ∈ frameCarrier k t, CH c (k.cell c) = CH c (k'.cell c) := by
     intro c hc
     unfold frameCarrier at hc

@@ -80,7 +80,8 @@ def RestIffNoCommitments (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-! ## §2 — the `noteCreateA` instance (touched component = `commitments`). -/
 
@@ -144,7 +145,8 @@ def noteCreateE (LE : Nat → ℤ) (cN : List ℤ → ℤ)
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := noteCreateGuardGates
   guardProp    := noteCreateGuardProp
   guardWidth   := 1
@@ -205,13 +207,13 @@ theorem apex_iff_noteCreateASpec (LE : Nat → ℤ) (cN : List ℤ → ℤ)
   unfold NoteCreateASpec noteCreateGuardProp noteCreateE
   constructor
   · rintro ⟨hg, hcom, hlog, hAcc, hCell, hCaps, hNul, hRev, hBal, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hcom, hlog, hAcc, hCell, hCaps, hNul, hRev, hBal, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
   · rintro ⟨hg, hcom, hlog, hAcc, hCell, hCaps, hNul, hRev, hBal, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
     exact ⟨hg, hcom, hlog, hAcc, hCell, hCaps, hNul, hRev, hBal, hQ, hSC, hFac, hLif,
-      hDC, hDel, hDgs, hSB⟩
+      hDC, hDel, hDgs, hSB, hNR, hRR⟩
 
 /-! ### §2c — THE DELIVERABLE: `noteCreateA_full_sound ⇒ NoteCreateASpec` through the framework. -/
 

@@ -139,6 +139,8 @@ def RevokeSpec (st : RecChainedState) (holder t : CellId) (st' : RecChainedState
   ∧ st'.kernel.delegationEpoch = st.kernel.delegationEpoch
   ∧ st'.kernel.delegationEpochAt = st.kernel.delegationEpochAt
   ∧ st'.kernel.heaps = st.kernel.heaps
+  ∧ st'.kernel.nullifierRoot = st.kernel.nullifierRoot
+  ∧ st'.kernel.revokedRoot = st.kernel.revokedRoot
 
 /-! ## §3 — The executor ⟺ spec equivalence, shared core then per-variant. -/
 
@@ -153,20 +155,21 @@ theorem recCRevoke_iff_spec (st : RecChainedState) (holder t : CellId) (st' : Re
   unfold RevokeSpec
   constructor
   · intro h; subst h
-    refine ⟨trivial, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    refine ⟨trivial, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
+      rfl, rfl⟩
     exact removeEdgeCaps_correct st.kernel holder t
   · rintro ⟨_, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsc, hfac, hlif,
-           hdc, hdel, hdels, hde, hdea, hhp⟩
+           hdc, hdel, hdels, hde, hdea, hhp, hnr, hrr⟩
     -- `st'` is the spec'd full post-state: rebuild the committed `RecChainedState` field-by-field.
     -- The `caps` post (`removeEdgeCaps`) is the executor's `recKRevokeTarget` post (§1), so
     -- `recCRevoke st holder t` has EXACTLY `st'`'s fields. Destructure `st'` so each spec field hyp
     -- has a fresh field VAR to `subst`.
     obtain ⟨k', log'⟩ := st'
     obtain ⟨acc', cell', caps', null', rev', com', bal', sc', fac', lif', dc', del',
-            dels', de', dea', hp'⟩ := k'
+            dels', de', dea', hp', nr', rr'⟩ := k'
     rw [← removeEdgeCaps_correct st.kernel holder t] at hcaps
     subst hacc hcell hcaps hnull hrev hcom hbal hsc hfac hlif hdc hdel hdels hlog
-      hde hdea hhp
+      hde hdea hhp hnr hrr
     rfl
 
 /-- **`execFullA_revoke_iff_spec` — EXECUTOR ⟺ SPEC for the `revoke` arm (FULL state, both
@@ -213,6 +216,8 @@ def RevokeDelegationFullSpec (st : RecChainedState) (parent child : CellId)
   ∧ st'.kernel.deathCert = st.kernel.deathCert
   ∧ st'.kernel.delegate = st.kernel.delegate
   ∧ st'.kernel.heaps = st.kernel.heaps
+  ∧ st'.kernel.nullifierRoot = st.kernel.nullifierRoot
+  ∧ st'.kernel.revokedRoot = st.kernel.revokedRoot
   -- THE EPOCH STEP (legs 2+3), no longer framed-unchanged:
   ∧ st'.kernel.delegationEpoch
       = (fun c => if c = parent then st.kernel.delegationEpoch c + 1 else st.kernel.delegationEpoch c)
@@ -234,17 +239,18 @@ theorem recCRevokeDelegationFull_iff_spec (st : RecChainedState) (parent child :
   constructor
   · intro h; subst h
     refine ⟨trivial, ?_, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl,
-            rfl, rfl, rfl⟩
+            rfl, rfl, rfl, rfl, rfl⟩
     -- the `caps` post is the shared `recKRevokeTarget` post = `removeEdgeCaps` (the epoch legs touch
     -- no `caps`, so `recKRevokeDelegationFull_caps` carries the §1 equality verbatim).
     exact removeEdgeCaps_correct st.kernel parent child
   · rintro ⟨_, hcaps, hlog, hacc, hcell, hnull, hrev, hcom, hbal, hsc, hfac, hlif,
-           hdc, hdel, hhp, hde, hdels, hdea⟩
+           hdc, hdel, hhp, hnr, hrr, hde, hdels, hdea⟩
     obtain ⟨k', log'⟩ := st'
     obtain ⟨acc', cell', caps', null', rev', com', bal', sc', fac', lif', dc', del',
-            dels', de', dea', hp'⟩ := k'
+            dels', de', dea', hp', nr', rr'⟩ := k'
     rw [← removeEdgeCaps_correct st.kernel parent child] at hcaps
-    subst hacc hcell hcaps hnull hrev hcom hbal hsc hfac hlif hdc hdel hhp hde hdels hdea hlog
+    subst hacc hcell hcaps hnull hrev hcom hbal hsc hfac hlif hdc hdel hhp hnr hrr hde hdels hdea
+      hlog
     rfl
 
 /-- **`execFullA_revokeDelegation_iff_spec` — EXECUTOR ⟺ STRENGTHENED SPEC for the `revokeDelegationA`
@@ -277,7 +283,7 @@ theorem revokeDelegationFull_stales_child (st : RecChainedState) (parent child :
     (st' : RecChainedState) (h : RevokeDelegationFullSpec st parent child st')
     (hpoint : st'.kernel.delegate child = some parent) :
     delegationStale st'.kernel child = true := by
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hde, _, hdea⟩ := h
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hde, _, hdea⟩ := h
   have hstamp : st'.kernel.delegationEpochAt child = 0 := by
     have := congrFun hdea child; simpa using this
   have hpar : st'.kernel.delegationEpoch parent = st.kernel.delegationEpoch parent + 1 := by

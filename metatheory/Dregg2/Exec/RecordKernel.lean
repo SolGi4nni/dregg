@@ -418,6 +418,28 @@ structure RecordKernelState where
   The WIRE/CIRCUIT binding of `heap_root` (registers 8→16, PI v3, the state-commitment conjunct)
   rides THE ONE ROTATION; until then the field is Lean-side only and uncommitted. -/
   heaps : CellId → List (ℤ × ℤ) := fun _ => []
+  /-- **THE NULLIFIER ACCUMULATOR ROOT** (VK-epoch flip; the O(1)-wire double-spend frontier,
+  `docs/NULLIFIER-ACCUMULATOR-DESIGN.md` §3/§10). The Poseidon2 sorted-tree root of the spent-note
+  nullifier SET — the `Digest8` (`= Fin 8 → ℤ`) the circuit already commits at `nullifier_root`
+  @ limb 26. It carries ONLY the commitment; the whole spent-set NEVER crosses the wire (the
+  transaction supplies a client-side non-membership + insert witness verified against this root, the
+  proven `Exec.NullifierAccumulator.NfAccWitness` gate). The type is stated LITERALLY as `Fin 8 → ℤ`
+  (the `Digest8` abbrev lives in `Circuit.DeployedCapTree`, ABOVE this module in the import order —
+  `RecordKernel → … → Circuit.StateCommit`; they are definitionally the same type). Balance-NEUTRAL
+  (`recTotalAsset` reads `bal`, never a root). DEFAULTS the all-zero empty-tree root (`fun _ => 0`),
+  so every existing construction/proof that ignores it is unaffected (the additive extension, exactly
+  as `nullifiers`/`heaps` were added — a state that never spends carries the empty root). The frame
+  apex now ABSORBS this root (`StateCommit.RestHashIffFrame`), so it is committed each turn. -/
+  nullifierRoot : Fin 8 → ℤ := fun _ => 0
+  /-- **THE REVOCATION ACCUMULATOR ROOT** (VK-epoch flip; the O(1)-wire revocation frontier, the dual
+  of `nullifierRoot`). The Poseidon2 sorted-tree root of the revoked-credential-nullifier SET — the
+  `Digest8` twin the revocation gate (`FullForestAuth.revocationGate`) reads: a credential passes iff
+  its `credNul` is provably ABSENT from THIS root (the `NfAccWitness` non-membership leg, opposite
+  gate polarity to the double-spend gate; `cap_revoke` INSERTS on revocation). Carries ONLY the
+  commitment; the revoked set never crosses the wire. Same `Fin 8 → ℤ` literal typing as
+  `nullifierRoot`. Balance-NEUTRAL. DEFAULTS the empty-tree root (`fun _ => 0`), the additive
+  extension. Absorbed by the frame apex (`RestHashIffFrame`) alongside `nullifierRoot`. -/
+  revokedRoot   : Fin 8 → ℤ := fun _ => 0
 
 /-- **The `balance`-domain measure** over the record cell-state: the total `balance` field across
 the live accounts. This is the conserved quantity — a domain measure over the named `balance`

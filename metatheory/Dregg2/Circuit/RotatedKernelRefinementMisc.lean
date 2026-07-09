@@ -162,6 +162,8 @@ structure makeSovereignEncodes (compressN : List FieldElem → FieldElem)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`makeSovereign_commit_forced` — the published commitment IS the genuine pre-value commitment.**
 The FIX gate forces the committed sovereign-commit limb to `stateCommitment (pre.cell cell)`; the
@@ -187,7 +189,7 @@ theorem makeSovereign_descriptorRefines (compressN : List FieldElem → FieldEle
   ⟨henc.guard, henc.cellMapMove, henc.logAdv, henc.frAccounts, henc.frCaps,
     henc.frNullifiers, henc.frRevoked, henc.frCommitments, henc.frBal, henc.frSlotCaveats,
     henc.frFactories, henc.frLifecycle, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
-    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps⟩
+    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps, henc.frNullifierRoot, henc.frRevokedRoot⟩
 
 /-- The refinement against `execFullA` directly (via `execFullA_makeSovereignA_iff_spec`). -/
 theorem makeSovereign_descriptorRefines_execFullA (compressN : List FieldElem → FieldElem)
@@ -277,6 +279,8 @@ structure setFieldDynEncodes (compressN : List FieldElem → FieldElem)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`setFieldDyn_slot_forced` — the committed dynamic-slot value is FIX-CIRCUIT-FORCED to `v`.** -/
 theorem setFieldDyn_slot_forced (compressN : List FieldElem → FieldElem)
@@ -300,7 +304,7 @@ theorem setFieldDyn_descriptorRefines (compressN : List FieldElem → FieldElem)
   ⟨hnr, henc.guard, henc.cellMapMove, henc.logAdv, henc.frAccounts, henc.frCaps,
     henc.frNullifiers, henc.frRevoked, henc.frCommitments, henc.frBal, henc.frSlotCaveats,
     henc.frFactories, henc.frLifecycle, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
-    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps⟩
+    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps, henc.frNullifierRoot, henc.frRevokedRoot⟩
 
 /-- The refinement against `execFullA` directly (via `execFullA_setFieldA_iff_spec`). The dynamic
 SetField is the developer write — its `reservedField f = false` precondition (`hnr`) is the
@@ -400,6 +404,8 @@ structure MakeSovereignTraceReadout (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- `rotateV3WithModeGate SEL_MAKE_SOVEREIGN_RT modeSovereign makeSovereignRuntimeVmDescriptor` is
 graduable (the appended mode gate is a CONSTRAINT; graduation reads only sites/ranges). -/
@@ -460,7 +466,7 @@ theorem makeSovereign_descriptorRefines_sat (hash : List ℤ → ℤ)
    rd.logAdv, rd.frAccounts, rd.frCaps,
    rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
    rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
-   rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩
+   rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps, rd.frNullifierRoot, rd.frRevokedRoot⟩
 
 /-- **CLASS-A TOOTH — a forged un-promoted makeSovereign witness is UNSAT.** A `MakeSovereignTraceReadout`
 whose post cell-map is NOT the sovereign rebind cannot ride a satisfying `makeSovereignV3` witness: the
@@ -558,6 +564,8 @@ structure SetFieldDynTraceReadout (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`setFieldDyn_forced_sat` — the dynamic field write is FORCED by the DEPLOYED `setFieldDynForcedV3`
 (Class A).** A `Satisfied2 hash setFieldDynForcedV3` witness plus the realizable `SetFieldDynTraceReadout`
@@ -606,7 +614,7 @@ theorem setFieldDyn_descriptorRefines_sat (hash : List ℤ → ℤ)
   ⟨hnr, rd.guard, rd.cellMapMove, rd.logAdv, rd.frAccounts, rd.frCaps,
    rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
    rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
-   rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩
+   rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps, rd.frNullifierRoot, rd.frRevokedRoot⟩
 
 /-- **CLASS-A TOOTH — a forged dynamic-write witness is UNSAT.** A `SetFieldDynTraceReadout` whose post
 `cell.f` slot is NOT `v` cannot ride a satisfying `setFieldDynForcedV3` witness: the DEPLOYED `fields_root`
@@ -654,6 +662,8 @@ structure pipelinedSendEncodes (pre post : RecChainedState) (actor : CellId) : T
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`pipelinedSend_descriptorRefines` — THE CIRCUIT→KERNEL REFINEMENT for pipelinedSend, against the
 LIVE descriptor.** A satisfying LIVE pipelinedSend witness (its kernel frame forced by the deployed
@@ -667,7 +677,7 @@ theorem pipelinedSend_descriptorRefines
   ⟨henc.logAdv, henc.frAccounts, henc.frCell, henc.frCaps,
     henc.frNullifiers, henc.frRevoked, henc.frCommitments, henc.frBal, henc.frSlotCaveats,
     henc.frFactories, henc.frLifecycle, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
-    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps⟩
+    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps, henc.frNullifierRoot, henc.frRevokedRoot⟩
 
 /-- The refinement against `execFullA` directly (via `execFullA_pipelinedSend_iff_spec`). -/
 theorem pipelinedSend_descriptorRefines_execFullA

@@ -253,6 +253,8 @@ structure cellSealGenuineEncodes (compressN : List FieldElem → FieldElem)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-! ## §4 — the apex obligation: the FIX circuit FORCES the seal write.
 
@@ -290,7 +292,7 @@ theorem cellSeal_descriptorRefines (compressN : List FieldElem → FieldElem)
   refine ⟨henc.guard, ?_, henc.logAdv, henc.frAccounts, henc.frCell, henc.frCaps,
     henc.frNullifiers, henc.frRevoked, henc.frCommitments, henc.frBal, henc.frSlotCaveats,
     henc.frFactories, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
-    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps⟩
+    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frHeaps, henc.frNullifierRoot, henc.frRevokedRoot⟩
   exact cellSeal_lifecycle_forced compressN hN pre post actor cell henc
 
 /-- **The refinement, stated against `execFullA` directly.** `CellSealSpec` IS the `.cellSealA` arm of
@@ -407,6 +409,8 @@ structure CellSealTraceReadout (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- `rotateV3WithLifecyclePayloadGate SEL_CELLSEAL (some discLive) discSealed cellSealVmDescriptor` is
 graduable (the appended disc + payload gates are CONSTRAINTS; graduation reads only sites/ranges). The
@@ -488,7 +492,7 @@ theorem cellSeal_descriptorRefines_sat (hash : List ℤ → ℤ)
   refine ⟨rd.guard, ?_, rd.logAdv, rd.frAccounts, rd.frCell, rd.frCaps,
     rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
     rd.frFactories, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
-    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps⟩
+    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frHeaps, rd.frNullifierRoot, rd.frRevokedRoot⟩
   exact cellSeal_forced_map hash hside hsat pre post actor cell rd
 
 /-- **CLASS-A TOOTH — a forged un-sealed cellSeal witness is UNSAT.** A `CellSealTraceReadout` whose post

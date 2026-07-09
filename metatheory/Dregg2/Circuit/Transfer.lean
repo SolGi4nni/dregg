@@ -367,6 +367,7 @@ def TransferSpec (k : RecordKernelState) (t : Turn) (k' : RecordKernelState) : P
   ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
   ∧ k'.delegationEpoch = k.delegationEpoch ∧ k'.delegationEpochAt = k.delegationEpochAt
   ∧ k'.heaps = k.heaps
+  ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot
 
 /-- **`recKExec_iff_spec` — EXECUTOR ⟺ SPEC (FULL state, both directions).** The executable record
 kernel commits a transfer into `k'` IFF `k'` is EXACTLY the spec'd full post-state. The `→`
@@ -383,10 +384,10 @@ theorem recKExec_iff_spec (k : RecordKernelState) (t : Turn) (k' : RecordKernelS
     constructor
     · intro h
       simp only [Option.some.injEq] at h; subst h
-      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
-    · rintro ⟨_, hcell, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩
+      exact ⟨hg, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl, rfl⟩
+    · rintro ⟨_, hcell, h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩
       cases k'
-      subst hcell h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15
+      subst hcell h1 h2 h3 h4 h5 h6 h7 h8 h9 h10 h11 h12 h13 h14 h15 h16 h17
       rfl
   · rw [if_neg hg]
     constructor

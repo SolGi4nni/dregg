@@ -65,7 +65,8 @@ def RestIffNoCapsEpoch (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.bal = k.bal
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 /-! ## §2 — the `revokeDelegationFullE` instance (touched components = `caps` + the epoch triple). -/
 
@@ -152,7 +153,8 @@ def revokeDelegationFullE (D : Caps → ℤ) (hD : Function.Injective D)
       ∧ k'.bal = k.bal
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := revokeGuardGates
   guardProp    := revokeGuardProp
   guardWidth   := 1
@@ -221,15 +223,15 @@ theorem apex_iff_revokeDelegationFullSpec (D : Caps → ℤ) (hD : Function.Inje
     revokeEpochMap revokeDelegationsMap revokeEpochAtMap
   constructor
   · rintro ⟨hg, hcaps, hstep, hlog, hAcc, hCell, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hHp⟩
+      hDC, hDel, hHp, hNulR, hRevR⟩
     rw [Prod.ext_iff, Prod.ext_iff] at hstep
     obtain ⟨hde, hdels, hdea⟩ := hstep
     exact ⟨hg, hcaps, hlog, hAcc, hCell, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hHp, hde, hdels, hdea⟩
+      hDC, hDel, hHp, hNulR, hRevR, hde, hdels, hdea⟩
   · rintro ⟨hg, hcaps, hlog, hAcc, hCell, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hHp, hde, hdels, hdea⟩
+      hDC, hDel, hHp, hNulR, hRevR, hde, hdels, hdea⟩
     refine ⟨hg, hcaps, ?_, hlog, hAcc, hCell, hNul, hRev, hCom, hBal, hSC, hFac, hLif,
-      hDC, hDel, hHp⟩
+      hDC, hDel, hHp, hNulR, hRevR⟩
     rw [Prod.ext_iff, Prod.ext_iff]
     exact ⟨hde, hdels, hdea⟩
 
@@ -276,7 +278,7 @@ theorem revokeDelegationFull_rejects_frozen_epoch
         (encodeE2Dual S (revokeDelegationFullE D hD DStep hDStep) s args s') := by
   intro h
   have hspec := revokeDelegationFull_full_sound S D hD DStep hDStep hRest hLog s args s' h
-  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hde, hdels, hdea⟩ := hspec
+  obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, _, hde, hdels, hdea⟩ := hspec
   exact hfrozen (by rw [Prod.ext_iff, Prod.ext_iff]; exact ⟨hde, hdels, hdea⟩)
 
 /-! ## EMISSION — Lean→Plonky3 wire (auto-generated Wave 2). -/

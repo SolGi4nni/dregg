@@ -39,7 +39,8 @@ def RestIffNoDelegations (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 structure RefreshDelegationArgs where
   actor : CellId
@@ -102,7 +103,8 @@ def refreshDelegationE
       ∧ k'.slotCaveats = k.slotCaveats ∧ k'.factories = k.factories ∧ k'.lifecycle = k.lifecycle
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate
       ∧ k'.delegationEpoch = k.delegationEpoch
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := refreshDelegationGuardGates
   guardProp    := refreshDelegationGuardProp
   guardWidth   := 1
@@ -154,14 +156,14 @@ theorem apex_iff_refreshDelegationSpec
   unfold RefreshDelegationFullSpec refreshDelegationGuardProp refreshDelegationE
   constructor
   · rintro ⟨hg, hprod, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hLif, hDC, hDel, hDE, hSB⟩
+      hLif, hDC, hDel, hDE, hSB, hNulR, hRevR⟩
     rw [Prod.mk.injEq] at hprod
     exact ⟨hg, hprod.1, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hLif, hDC, hDel, hDE, hprod.2, hSB⟩
+      hLif, hDC, hDel, hDE, hprod.2, hSB, hNulR, hRevR⟩
   · rintro ⟨hg, hdgs, hlog, hAcc, hCell, hCaps, hNul, hRev, hCom, hBal, hSC, hFac,
-      hLif, hDC, hDel, hDE, hstamp, hSB⟩
+      hLif, hDC, hDel, hDE, hstamp, hSB, hNulR, hRevR⟩
     exact ⟨hg, by rw [Prod.mk.injEq]; exact ⟨hdgs, hstamp⟩, hlog, hAcc, hCell, hCaps, hNul, hRev,
-      hCom, hBal, hSC, hFac, hLif, hDC, hDel, hDE, hSB⟩
+      hCom, hBal, hSC, hFac, hLif, hDC, hDel, hDE, hSB, hNulR, hRevR⟩
 
 /-- **`refreshDelegationA_full_sound`** — the deployed refresh descriptor FORCES the STRENGTHENED
 `RefreshDelegationFullSpec` (the freshness-restore stamp is now WRITE-GATE-forced by the product

@@ -175,6 +175,8 @@ structure TransferEncodeResidual (hash : List ℤ → ℤ)
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
   frHeaps : post.kernel.heaps = pre.kernel.heaps
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
   logAdv : post.log = tr :: pre.log
 
 /-! ## §3 — `transfer_decodeBridge`: `StateDecode` ⟹ `rotatedEncodes` (ledger part discharged).
@@ -251,6 +253,8 @@ def transfer_decodeBridge (hash : List ℤ → ℤ) (S : CommitSurface)
   frDelegationEpoch := res.frDelegationEpoch
   frDelegationEpochAt := res.frDelegationEpochAt
   frHeaps := res.frHeaps
+  frNullifierRoot := res.frNullifierRoot
+  frRevokedRoot := res.frRevokedRoot
   logAdv := res.logAdv
 
 /-! ## §4 — compose with `transfer_descriptorRefines`: the `EffectDecodeBridge`-shaped discharge.

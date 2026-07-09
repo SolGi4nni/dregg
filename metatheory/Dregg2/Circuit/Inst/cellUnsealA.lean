@@ -39,7 +39,8 @@ def RestIffNoLifecycle (RH : RecordKernelState → ℤ) : Prop :=
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
 
 structure CellUnsealArgs where
   actor : CellId
@@ -89,7 +90,8 @@ def cellUnsealE (D : (CellId → Nat) → ℤ) (hD : Function.Injective D) :
       ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := cellUnsealGuardGates
   guardProp    := cellUnsealGuardProp
   guardWidth   := 1

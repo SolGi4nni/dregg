@@ -262,6 +262,8 @@ structure heapWriteEncodes (hash : List ℤ → ℤ) (pre post : RecChainedState
   frDelegations : post.kernel.delegations = pre.kernel.delegations
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`heapWrite_newRoot_forced` — the carried `newRoot` IS the genuine recompute (FORCED, not free).**
 The recompute-honest row pins its new-root register to the deterministic `heapWriteNewRoot` over the
@@ -296,7 +298,7 @@ theorem heapWrite_descriptorRefines (hash : List ℤ → ℤ) (pre post : RecCha
   ⟨henc.guard, henc.cellMapMove, henc.heapsSplice, henc.logAdv, henc.frAccounts, henc.frCaps,
     henc.frNullifiers, henc.frRevoked, henc.frCommitments, henc.frBal, henc.frSlotCaveats,
     henc.frFactories, henc.frLifecycle, henc.frDeathCert, henc.frDelegate, henc.frDelegations,
-    henc.frDelegationEpoch, henc.frDelegationEpochAt⟩
+    henc.frDelegationEpoch, henc.frDelegationEpochAt, henc.frNullifierRoot, henc.frRevokedRoot⟩
 
 /-- The heapWrite refinement against `execFullA` directly (via `execFullA_heapWriteA_iff_spec`). -/
 theorem heapWrite_descriptorRefines_execFullA (hash : List ℤ → ℤ) (pre post : RecChainedState)
@@ -494,6 +496,8 @@ structure HeapWriteTraceReadout (hash : List ℤ → ℤ)
   frDelegations : post.kernel.delegations = pre.kernel.delegations
   frDelegationEpoch : post.kernel.delegationEpoch = pre.kernel.delegationEpoch
   frDelegationEpochAt : post.kernel.delegationEpochAt = pre.kernel.delegationEpochAt
+  frNullifierRoot : post.kernel.nullifierRoot = pre.kernel.nullifierRoot
+  frRevokedRoot : post.kernel.revokedRoot = pre.kernel.revokedRoot
 
 /-- **`heapWrite_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for heapWrite.** A
 satisfying DEPLOYED `heapWriteV3` witness + the realizable `HeapWriteTraceReadout` forces
@@ -512,7 +516,7 @@ theorem heapWrite_descriptorRefines_sat (hash : List ℤ → ℤ)
   ⟨rd.guard, rd.cellMapMove, rd.heapsSplice, rd.logAdv, rd.frAccounts, rd.frCaps,
     rd.frNullifiers, rd.frRevoked, rd.frCommitments, rd.frBal, rd.frSlotCaveats,
     rd.frFactories, rd.frLifecycle, rd.frDeathCert, rd.frDelegate, rd.frDelegations,
-    rd.frDelegationEpoch, rd.frDelegationEpochAt⟩
+    rd.frDelegationEpoch, rd.frDelegationEpochAt, rd.frNullifierRoot, rd.frRevokedRoot⟩
 
 /-- **`heapWrite_newRoot_splice_forced` — THE PHASE-E DISCHARGE: the carried `newRoot` IS the genuine
 sorted-Merkle SPLICE (content-bound, no longer free).** A satisfying `heapWriteV3` row + the readout

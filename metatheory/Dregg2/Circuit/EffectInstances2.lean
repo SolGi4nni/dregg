@@ -122,7 +122,8 @@ def mintE (D : (CellId → AssetId → ℤ) → ℤ) (hD : Function.Injective D)
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := mintGuardGates
   guardProp    := mintGuardProp
   guardWidth   := 1
@@ -303,7 +304,8 @@ def noteSpendE (LE : Nat → ℤ) (cN : List ℤ → ℤ)
       ∧ k'.deathCert = k.deathCert ∧ k'.delegate = k.delegate ∧ k'.delegations = k.delegations
       ∧ k'.delegationEpoch = k.delegationEpoch
       ∧ k'.delegationEpochAt = k.delegationEpochAt
-      ∧ k'.heaps = k.heaps)
+      ∧ k'.heaps = k.heaps
+      ∧ k'.nullifierRoot = k.nullifierRoot ∧ k'.revokedRoot = k.revokedRoot)
   guardGates   := noteSpendGuardGates
   guardProp    := noteSpendGuardProp
   guardWidth   := 1
