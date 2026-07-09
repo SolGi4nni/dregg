@@ -325,6 +325,15 @@ impl LayoutGraph {
         self.atoms.get(&id)
     }
 
+    /// Iterate every layout atom (alive and dead), in id order — the canonical,
+    /// construction-order-independent projection order the substrate commitment
+    /// folds over (`crate::substrate::layout_to_heap_map`). A text atom lands in
+    /// the atom collection; an embed-atom lands in the `COLL_EMBEDS` collection,
+    /// so the parent commitment binds each embed POINTER.
+    pub fn atoms(&self) -> impl Iterator<Item = &LayoutAtom> {
+        self.atoms.values()
+    }
+
     /// The successors of an atom in the order relation, in id order.
     pub fn successors(&self, id: AtomId) -> impl Iterator<Item = AtomId> + '_ {
         self.edges.get(&id).into_iter().flatten().copied()

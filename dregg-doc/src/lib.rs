@@ -251,7 +251,10 @@ pub use staked_bond::{
     SlashOutcome, StakedBond, bond_disposition, post_bond, release_bond, slash_bond,
 };
 #[cfg(feature = "cell-heap")]
-pub use substrate::{COLL_ATOMS, COLL_EDGES, COLL_FIELDS, substrate_commit, to_heap_map};
+pub use substrate::{
+    COLL_ATOMS, COLL_EDGES, COLL_EMBEDS, COLL_FIELDS, layout_substrate_commit, layout_to_heap_map,
+    substrate_commit, to_heap_map,
+};
 pub use threeway::{ConflictSide, ThreeWayConflict, merge_base, render_three_way, three_way};
 
 #[cfg(test)]
