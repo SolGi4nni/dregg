@@ -128,8 +128,23 @@ pub enum MembershipAction {
 /// A block in the blocklace.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Block {
-    /// The creator's public key (Ed25519 compressed point).
+    /// The creator's HYBRID identity: `H(ed25519_pubkey ‖ ml_dsa_pubkey)`
+    /// ([`dregg_types::hybrid_id_commitment`]). This is the block's IDENTITY
+    /// LABEL — the key the roster, tips, equivocation bookkeeping, cohort
+    /// counting, votes and gossip `NodeId` all consume. It is NO LONGER the
+    /// ed25519 verify key (that is carried separately in [`Self::ed25519`]); the
+    /// id cryptographically COMMITS to BOTH the classical and the post-quantum
+    /// public key, so an attacker who keeps the honest ed25519 key but presents
+    /// their own ML-DSA key produces a DIFFERENT identity that the enroll+pin
+    /// commitment check ([`dregg_types::verify_committed_ml_dsa`]) rejects.
     pub creator: [u8; 32],
+    /// The creator's Ed25519 verify key (compressed point). Carried SEPARATELY
+    /// from [`Self::creator`] (which is now the hybrid id) so it stays usable as
+    /// the classical verify key. [`Self::verify_hybrid`] gates that this key,
+    /// together with the enrolled ML-DSA key, commits to [`Self::creator`]
+    /// BEFORE either signature is checked.
+    #[serde(default)]
+    pub ed25519: [u8; 32],
     /// Sequence number within this creator's virtual chain.
     pub seq: u64,
     /// The block's payload.
@@ -387,12 +402,15 @@ impl Block {
         BlockId(*blake3::hash(&buf).as_bytes())
     }
 
-    /// Verify this block's Ed25519 signature.
+    /// Verify this block's Ed25519 signature against the CARRIED ed25519 key
+    /// ([`Self::ed25519`]), over the signing content (which commits to the hybrid
+    /// [`Self::creator`] id). The ed25519 key is no longer the identity label, so
+    /// verification parses [`Self::ed25519`], not `creator`.
     pub fn verify_signature(&self) -> Result<(), BlockError> {
         let content =
             Self::signing_content(&self.creator, self.seq, &self.payload, &self.predecessors);
         let verifying_key =
-            VerifyingKey::from_bytes(&self.creator).map_err(|_| BlockError::InvalidSignature {
+            VerifyingKey::from_bytes(&self.ed25519).map_err(|_| BlockError::InvalidSignature {
                 creator: self.creator,
                 seq: self.seq,
             })?;
@@ -437,23 +455,50 @@ impl Block {
         payload: Payload,
         predecessors: Vec<BlockId>,
     ) -> Self {
-        let creator: [u8; 32] = signing_key.verifying_key().to_bytes();
+        let ed25519: [u8; 32] = signing_key.verifying_key().to_bytes();
+        // Derive the ML-DSA key from the SAME ed25519 seed, and bind BOTH public
+        // keys into the HYBRID identity `creator = H(ed25519 ‖ ml_dsa)`.
+        let (pq_pk, pq_sk) = crate::pq::MlDsaSigningKey::from_seed(&signing_key.to_bytes());
+        let creator = dregg_types::hybrid_id_commitment(&ed25519, &pq_pk.0);
+        // The ed25519 half signs the content, which commits to the hybrid id.
         let content = Self::signing_content(&creator, seq, &payload, &predecessors);
         let signature = signing_key.sign(&content);
         let mut block = Block {
             creator,
+            ed25519,
             seq,
             payload,
             predecessors,
             signature: signature.to_bytes(),
             pq_signature: Vec::new(),
         };
-        // POST-QUANTUM half: derive the ML-DSA key from the SAME ed25519 seed
-        // and sign the SAME canonical bytes the verifier pins (`id()`).
+        // POST-QUANTUM half: sign the SAME canonical bytes the verifier pins
+        // (`id()`) with the from-seed ML-DSA key.
         let id = block.id();
-        let (_pk, pq_sk) = crate::pq::MlDsaSigningKey::from_seed(&signing_key.to_bytes());
         block.pq_signature = pq_sk.sign(&id.0).unwrap_or_default();
         block
+    }
+
+    /// The HYBRID identity for a creator whose ed25519 signing key is
+    /// `signing_key`: `H(ed25519_pubkey ‖ from-seed ml_dsa_pubkey)`. This is the
+    /// value [`Block::new`] stamps as `creator`, the key the roster / tips /
+    /// votes / gossip `NodeId` are all keyed by. Equal to
+    /// [`Block::hybrid_id_from_parts`] on the two derived public keys.
+    pub fn hybrid_id(signing_key: &SigningKey) -> [u8; 32] {
+        let ed25519 = signing_key.verifying_key().to_bytes();
+        let pq_pk = crate::pq::public_from_ed25519_seed(&signing_key.to_bytes());
+        dregg_types::hybrid_id_commitment(&ed25519, &pq_pk.0)
+    }
+
+    /// The HYBRID identity from an ed25519 verify key and an ML-DSA public key.
+    /// Used at committee-learning boundaries (enrollment / participant sets)
+    /// where both public halves are known but no secret seed is: the same value
+    /// [`Block::new`] produces as `creator`.
+    pub fn hybrid_id_from_parts(
+        ed25519: &[u8; 32],
+        ml_dsa: &crate::pq::MlDsaPublicKey,
+    ) -> [u8; 32] {
+        dregg_types::hybrid_id_commitment(ed25519, &ml_dsa.0)
     }
 
     /// The enrollable ML-DSA-65 public key for a creator whose ed25519 signing
@@ -482,7 +527,20 @@ impl Block {
     /// adversary who forges the ed25519 half, or who signs the PQ half under
     /// their OWN fresh ML-DSA key, cannot escape.
     pub fn verify_hybrid(&self, enrolled_pq: &crate::pq::MlDsaPublicKey) -> Result<(), BlockError> {
-        // (a) Classical half: real Ed25519 verification against `creator`.
+        // (0) COMMITMENT GATE (out-of-band → cryptographic): the block's `creator`
+        // id MUST commit to BOTH the carried ed25519 key AND the enrolled ML-DSA
+        // key. An attacker who keeps the honest ed25519 key but signs / presents
+        // their OWN ML-DSA key gets an id that does not recompute to `creator`, so
+        // this rejects BEFORE either signature is examined. This is what upgrades
+        // the roster PIN from a trusted out-of-band binding to a cryptographic one:
+        // the id IS the enrollment.
+        if !dregg_types::verify_committed_ml_dsa(&self.creator, &self.ed25519, &enrolled_pq.0) {
+            return Err(BlockError::BadPqSignature {
+                creator: self.creator,
+                seq: self.seq,
+            });
+        }
+        // (a) Classical half: real Ed25519 verification against the carried key.
         self.verify_signature()?;
         // (b) Post-quantum half MUST be present (fail-closed, never treated as a
         // valid ed25519-only block).
@@ -647,8 +705,16 @@ impl Blocklace {
         Self::new(self_key, 1)
     }
 
-    /// Our own public key.
+    /// Our own HYBRID creator id (`H(ed25519 ‖ ml_dsa)`) — the same value
+    /// [`Block::new`] stamps on the blocks we author, so `tips`, cohort counting
+    /// and round planning key our own blocks consistently.
     pub fn self_creator(&self) -> [u8; 32] {
+        Block::hybrid_id(&self.self_key)
+    }
+
+    /// Our own Ed25519 verify key (the CARRIED classical half). Distinct from
+    /// [`Self::self_creator`], which is now the hybrid identity.
+    pub fn self_ed25519(&self) -> [u8; 32] {
         self.self_key.verifying_key().to_bytes()
     }
 
@@ -1568,7 +1634,8 @@ mod pq_hybrid_tests {
         let mut lace = Blocklace::new(key_for(1), 3);
         for c in 1..=8u8 {
             let k = key_for(c);
-            lace.enroll_pq(k.verifying_key().to_bytes(), Block::pq_public_key(&k));
+            // Roster is keyed by the HYBRID id (== the block's `creator`).
+            lace.enroll_pq(Block::hybrid_id(&k), Block::pq_public_key(&k));
         }
         lace
     }
@@ -1642,6 +1709,58 @@ mod pq_hybrid_tests {
             other => panic!("expected BadPqSignature on insert, got {other:?}"),
         }
         assert_eq!(lace.len(), 0, "forged block must not be stored");
+    }
+
+    /// THE COMMITMENT ADVERSARIAL TEST (out-of-band → cryptographic upgrade): an
+    /// attacker who KEEPS the honest member P's ed25519 key but presents their OWN
+    /// ML-DSA key is rejected by the identity commitment — the `creator` id binds
+    /// BOTH public halves, so a swapped ML-DSA key no longer recomputes to
+    /// `creator`, and forming a fresh id that reuses P's ed25519 key is simply a
+    /// DIFFERENT (unenrolled) identity, never P.
+    #[test]
+    fn hybrid_commitment_rejects_swapped_ml_dsa() {
+        let p_key = key_for(7);
+        let p_enrolled = Block::pq_public_key(&p_key); // P's committed ML-DSA key
+        let block = Block::new(&p_key, 1, Payload::Data(b"x".to_vec()), vec![]);
+        // The id genuinely commits to (P_ed, P_mldsa).
+        assert!(block.verify_hybrid(&p_enrolled).is_ok());
+        assert!(dregg_types::verify_committed_ml_dsa(
+            &block.creator,
+            &block.ed25519,
+            &p_enrolled.0
+        ));
+
+        // Attacker keeps P's ed25519 key but presents their OWN ML-DSA key: the
+        // commitment does NOT recompute to `creator`, so verify rejects BEFORE any
+        // signature is checked.
+        let (attacker_mldsa, _sk) = pq::MlDsaSigningKey::from_seed(&[0xCD_u8; 32]);
+        assert_ne!(attacker_mldsa, p_enrolled);
+        assert!(!dregg_types::verify_committed_ml_dsa(
+            &block.creator,
+            &block.ed25519,
+            &attacker_mldsa.0
+        ));
+        match block.verify_hybrid(&attacker_mldsa) {
+            Err(BlockError::BadPqSignature { .. }) => {}
+            other => panic!("commitment gate must reject a swapped ML-DSA key, got {other:?}"),
+        }
+
+        // Forming a fresh id that REUSES P's ed25519 key is a DISTINCT creator —
+        // not P — so on the pinned live path it is UnenrolledCreator (it never
+        // inherits P's enrolled slot).
+        let attacker_creator = Block::hybrid_id_from_parts(&block.ed25519, &attacker_mldsa);
+        assert_ne!(
+            attacker_creator, block.creator,
+            "reusing P's ed25519 key yields a distinct hybrid id"
+        );
+        let mut forged = block.clone();
+        forged.creator = attacker_creator;
+        let mut lace = enrolled_lace();
+        match lace.receive_block_pinned(forged) {
+            Err(BlockError::UnenrolledCreator { .. }) => {}
+            other => panic!("a reused-ed25519 identity must be UnenrolledCreator, got {other:?}"),
+        }
+        assert_eq!(lace.len(), 0);
     }
 
     /// A block with a missing / empty PQ half fails CLOSED — never treated as a

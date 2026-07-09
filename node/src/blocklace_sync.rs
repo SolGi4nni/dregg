@@ -1604,7 +1604,12 @@ impl BlocklaceHandle {
         {
             let mut lace = self.lace.write().await;
             for (creator, pq_pk) in &pq_committee {
-                lace.enroll_pq(*creator, dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0));
+                // Roster keyed by the HYBRID id (== `Block::creator`), computed
+                // from the rotated-in member's ed25519 + ML-DSA public keys.
+                let ml_dsa = dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0);
+                let hybrid =
+                    dregg_blocklace::finality::Block::hybrid_id_from_parts(creator, &ml_dsa);
+                lace.enroll_pq(hybrid, ml_dsa);
             }
         }
         // 2. Advance the finalization-vote committee + quorum threshold — and
@@ -2262,7 +2267,14 @@ pub async fn run_blocklace_sync(
     {
         let mut l = lace.write().await;
         for (creator, pq_pk) in &pq_committee {
-            l.enroll_pq(*creator, dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0));
+            // The finality roster is keyed by the HYBRID id (== `Block::creator`):
+            // `H(ed25519 ‖ ml_dsa)`. Compute it from the member's published
+            // ed25519 + ML-DSA public keys — the same value `Block::new` stamps —
+            // so `receive_block_pinned` finds the enrolled key for every honest
+            // creator and the commitment gate binds them cryptographically.
+            let ml_dsa = dregg_blocklace::pq::MlDsaPublicKey(pq_pk.0);
+            let hybrid = dregg_blocklace::finality::Block::hybrid_id_from_parts(creator, &ml_dsa);
+            l.enroll_pq(hybrid, ml_dsa);
         }
     }
     let votes = Arc::new(RwLock::new(crate::finalization_votes::VoteCollector::new(

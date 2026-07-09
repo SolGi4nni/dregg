@@ -358,6 +358,7 @@ mod tests {
         // … in EITHER block order (the digest is order-insensitive).
         let flipped = EvidenceOfEquivocation {
             creator: ev.creator,
+            hybrid_id: ev.hybrid_id,
             header_a: ev.header_b.clone(),
             header_b: ev.header_a.clone(),
         };
@@ -380,7 +381,8 @@ mod tests {
         let mut b = Block::new(&attacker, 3, Payload::Data(b"y".to_vec()), vec![]);
         b.creator = a.creator; // claim the victim authored it; sig won't verify.
         let forged = EvidenceOfEquivocation {
-            creator: a.creator,
+            creator: a.ed25519,
+            hybrid_id: a.creator,
             header_a: dregg_blocklace::evidence::EvidenceHeader::from_block(&a),
             header_b: dregg_blocklace::evidence::EvidenceHeader::from_block(&b),
         };
@@ -403,7 +405,8 @@ mod tests {
         // Same payload (identical content, re-presented): not a fork.
         let a = Block::new(&dalek, 5, Payload::Data(b"same".to_vec()), vec![]);
         let same = EvidenceOfEquivocation {
-            creator: a.creator,
+            creator: a.ed25519,
+            hybrid_id: a.creator,
             header_a: dregg_blocklace::evidence::EvidenceHeader::from_block(&a),
             header_b: dregg_blocklace::evidence::EvidenceHeader::from_block(&a.clone()),
         };
@@ -416,7 +419,8 @@ mod tests {
         let p1 = Block::new(&dalek, 1, Payload::Data(b"x".to_vec()), vec![]);
         let p2 = Block::new(&dalek, 2, Payload::Data(b"y".to_vec()), vec![]);
         let diff = EvidenceOfEquivocation {
-            creator: p1.creator,
+            creator: p1.ed25519,
+            hybrid_id: p1.creator,
             header_a: dregg_blocklace::evidence::EvidenceHeader::from_block(&p1),
             header_b: dregg_blocklace::evidence::EvidenceHeader::from_block(&p2),
         };
