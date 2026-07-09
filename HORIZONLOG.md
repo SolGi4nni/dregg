@@ -6787,3 +6787,30 @@ discipline. Design lands as docs/VISITOR-VERIFY-WELD.md when grounded.
   core (fetch→hash→commitment-read→verdict), two skins: the browser extension (their browser) + the
   servo pane (our browser). Second scout dispatched (servo byte-interception points, net-cap choke point,
   existing Rust verify cores, cockpit verdict UX slots). Both scouts feed docs/VISITOR-VERIFY-WELD.md.
+
+## 2026-07-09 — NO-PRE-QUANTUM sweep (goal: leave no classical-only load-bearing crypto standing)
+Every load-bearing SIGNATURE surface is now hybrid (ed25519 ∧ ML-DSA-65, ENROLLED+PINNED, adversarial-tested)
+and the CapTP transport is hybrid-KEM (X25519+ML-KEM-768, X-Wing combiner). Commits:
+- Finality: GAP #0 pin-enrolled-roster (04ba2901d) · blocklace lib::Block (78c1d2081) · LIVE finality::Block
+  (a840498bf) + node enforcement (22951c72b, re-verify owed).
+- Capability/authority: CapTP handoff (1868c2180) · biscuit/credential (526ff41d1) · cell-crypto cap-proof
+  (d7baf652c) · revocation attestation (149c78013) + wire authority-sig (cea1fdc18, re-verify owed).
+- Transport/peer: wire peer-auth (d83921917) · HNDL hybrid-KEM (1868c2180) · wasm roster config (f08987bdc).
+- Consolidation: dregg-pq — ONE PQ-primitive audit surface for all 9 crates, pre-release `kem` pin dropped
+  (77f125197 + 7eb8dc256).
+- Identity binding: hybrid `Id = H(ed25519 ‖ ml_dsa)` + verify_committed_ml_dsa (7e3ea27ec); applied
+  CRYPTOGRAPHICALLY where the id is a DERIVED identifier — cell-crypto CellId (77bf19e54) + captp FederationId
+  (546599824): a self-supplied ML-DSA key not committed by the id is REJECTED (self-carry now safe).
+- De-laundering: Hint-MLWE→MLWE (d53b54b52) · DKG→lossiness+Shamir (367742dd8) · beacon HonestSlotCR→hash-CR
+  (a0136958f). Named-carrier lesson → memory feedback-no-named-carrier-laundering.
+
+HONESTLY OPEN (not overclaimed):
+- **Identity re-basing (EMBER decision):** surfaces whose identity IS the raw ed25519 key (wire
+  participant_key, blocklace finality creator, wire constitution/federation_id) can't use the id-commitment
+  without re-basing the identity model (derived H(ed‖ml) id + separate ed25519 field). The enrolled roster
+  (GAP #1b/#6, fail-closed, adversarial-tested) is sound meanwhile.
+- **Re-verify owed:** federation/blocklace/lightclient/node/wire — blocked by a PAUSED lane's serde/hybrid_array
+  Cargo.lock dep-skew (not these diffs); clears when that lane lands.
+- **Hermine concurrent TS-UF-0 game:** masking reduced to MLWE, but the full oracle+corruption+forking game is
+  unclosed (genuinely open, flagged not faked).
+- **Frontier (bonus, not started):** Tanuki/TRaccoon reference impls, HashRand beacon, XM-VRF sortition.
