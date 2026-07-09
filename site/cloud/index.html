@@ -7,7 +7,7 @@
   <meta name="description" content="Dragon's Egg is the kernel; the starbridge apps are its userspace; the grain economy is the cloud that hosts them. Your apps run on rented, confined, metered grains you can verify — a cloud that can't lie to you.">
   <meta property="og:type" content="website">
   <meta property="og:title" content="The dreggnet cloud — the userspace of Dragon's Egg">
-  <meta property="og:description" content="Your apps run on rented, confined, metered grains you can verify — a cloud that can't lie to you. ~30 starbridge apps, two flagship grains, trustless serving.">
+  <meta property="og:description" content="Your apps run on rented, confined, metered grains you can verify — a cloud that can't lie to you. ~30 starbridge apps, three flagship grains, trustless serving.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
   <link rel="stylesheet" href="../assets/style.css">
   <style>
@@ -444,6 +444,23 @@
         <li><strong>Metered and auditable.</strong> Its lease is cap-metered and reaped like any grain, and the interesting part &mdash; a room is a cell, a message an event &mdash; means the server's accept of a message can be surfaced as a verifiable turn. The relay is auditable, not a trusted black box.</li>
       </ul>
       <p class="flag__note">Honest scope: the confinement design is proven and de-risked &mdash; the embedded server serves confined in a demonstrator. The one new kernel door (an inbound listen door for the confined tier) is a deliberate, ember-aware lane, not a shipped guarantee.</p>
+    </div>
+
+    <div class="flag">
+      <div class="flag__eyebrow">the mind on a leash</div>
+      <div class="flag__name">A real AI agent, confined</div>
+      <p class="flag__lead">
+        Hermes &mdash; a real self-improving agent &mdash; runs as a deos grain, and you don't have
+        to trust it. Every move it makes is intercepted <em>before</em> it happens and turned into a
+        move the system can check. The thesis, with a real mind on the other end: <em>a turn is the
+        exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt.</em>
+      </p>
+      <ul class="flag__list">
+        <li><strong>Every tool-call becomes a turn.</strong> The agent exposes itself over the Agent Client Protocol; a deos client intercepts each tool-call and drives it through the proven capability gateway &mdash; it becomes a cap-gated, metered, <em>receipted</em> turn on the verified executor. Not an editor's allow/deny popup: the system itself says no.</li>
+        <li><strong>No ambient authority.</strong> The agent acts only through capabilities you granted &mdash; attenuable, revocable, and unforgeable. An unauthorized act isn't expressible, and a refusal is <em>in-band</em>: Hermes sees it and adapts, instead of escaping the box.</li>
+        <li><strong>The whole run is auditable.</strong> Every action leaves a receipt anyone can re-check &mdash; the agent's session is a verifiable trail, not a trusted black box. A powerful mind, on a leash you actually hold.</li>
+      </ul>
+      <p class="flag__note">Honest scope: the tool-call interception &rarr; receipted-turn seam is the built first slice (a real ACP agent, cap-gated through the gateway). A fully confined agent body and forking a live session are the named frontier.</p>
     </div>
   </div>
 </section>
