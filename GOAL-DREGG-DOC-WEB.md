@@ -70,3 +70,19 @@ AssuranceCase.lean:1043). So:
   the specific DocCore module was a toy instance. The DEPLOYED substrate_commit reaches wasm as Rust
   (bindings_doc.rs), gauntlet-bound to the proven heap-root keystones.
 - ONE commit now: substrate_commit. done-log: 4 toy Lean modules deleted; Rust toy commit deletion firing.
+
+## ⚖️ CORRECTION TO THE CORRECTION (ember: "were those good work we should have FINISHED?")
+Yes — partly. I over-deleted. The honest split, verified:
+- The linear-sponge SCHEME (DocCommit/DocCore/DocProofs) WAS redundant: the deployed substrate_commit's
+  conflict-as-state is ALREADY covered by Substrate/Heap.lean::root_binds_get (proven) + the COLL_FIELDS
+  leaf-per-alternative encoding. That deletion stands. The toy Rust commit::commit deletion stands (genuine
+  toy hash, zero consumers).
+- BUT ElementGrammar (canonical_bytes/Element-structure injectivity) was a GENUINE GAP-FILLER for the real
+  commit — root_binds_get binds the leaf BYTES, not that different Elements → different bytes. Deleting it
+  was loss. Recovered (git + report). FINISHING it now, re-homed onto substrate_commit.
+- FINISH lane (a62b2a3c4706342b0, DocSubstrateSound.lean): (1) encodeElement_injective ∘ root_binds_get ⟹
+  substrate heap-root binds the Element STRUCTURE; (2) substrate_root_binds_conflict_alternatives (explicit
+  document conflict-as-state ON the deployed commit, thin over root_binds_get). Both reuse the proven umem
+  heap-root — NO re-introduced linear sponge. This captures the over-deleted VALUE without the duplication.
+- Rust toy deletion lane (af1274775c63b4360): delete commit.rs, re-point anti-forge tests to substrate_commit.
+- done-log: over-deletion caught + owned; gap-fillers redirected onto the ONE real commit (substrate_commit).
