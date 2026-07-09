@@ -28,10 +28,10 @@ thiserror = { workspace = true }
 # (+ postcard/base64 for the wire form, getrandom for key generation) — no
 # cell/turn/node/circuit edge, ever.
 ed25519-dalek = { version = "2", features = ["std"] }
-# The ML-DSA-65 (FIPS 204) half of the HYBRID credential block chain. Same
-# crate/parameter set as the turn-authorization PQ perimeter (`turn/src/pq.rs`),
-# derived from the SAME ed25519 seed via `keygen_from_seed`.
-fips204 = "0.4"
+# The ML-DSA-65 (FIPS 204) half of the HYBRID credential block chain, via the
+# shared `dregg-pq` leaf (one from-seed derivation + sign + fail-closed verify);
+# derived from the SAME ed25519 seed the classical identity uses.
+dregg-pq = { path = "../dregg-pq" }
 blake3 = "1"
 postcard = { version = "1", features = ["use-std"] }
 base64 = { workspace = true }

@@ -1,0 +1,35 @@
+[package]
+name = "dregg-pq"
+version.workspace = true
+edition.workspace = true
+
+# The ONE shared post-quantum leaf. Consolidates the ML-DSA-65 (FIPS 204)
+# from-seed derivation + sign/verify that had been copy-pasted into 9 crates,
+# and the X25519+ML-KEM-768 hybrid session KEM that captp embedded inline.
+#
+# ml-kem 0.2.3 re-exports the Encapsulate/Decapsulate traits it is built on via
+# its own `ml_kem::kem` module, so this crate depends ONLY on `ml-kem` and never
+# names the pinned pre-release `kem = "=0.3.0-pre.0"` in its manifest. (That
+# crate is still an UNAVOIDABLE transitive dep of ml-kem 0.2.3 itself — ml-kem's
+# trait bounds are defined over it — but no first-party manifest pins it.)
+
+[dependencies]
+# ML-DSA-65 signatures (FIPS 204), deterministic keygen from a 32-byte seed.
+fips204 = "0.4"
+# ML-KEM-768 (FIPS 203) for the post-quantum half of the hybrid session KEM.
+ml-kem = "0.2.3"
+# X25519 classical half of the hybrid KEM.
+x25519-dalek = { workspace = true }
+# Concatenation-KDF combiner for the hybrid KEM.
+hkdf = "0.12"
+sha2 = { workspace = true }
+zeroize = { workspace = true }
+# OS entropy for the hybrid KEM RNG adapter.
+getrandom = { workspace = true }
+# The rand_core 0.6 CryptoRngCore that ml-kem / x25519-dalek consume.
+rand_core = "0.6"
+
+[dev-dependencies]
+
+[lints]
+workspace = true

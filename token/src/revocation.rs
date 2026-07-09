@@ -392,8 +392,8 @@ impl HybridAuthorityKey {
 /// yields both halves with no separate ceremony (mirrors
 /// `dregg_turn::pq::MlDsaTurnKey`).
 mod pq {
-    use fips204::ml_dsa_65;
-    use fips204::traits::{KeyGen as _, SerDes as _, Signer as _, Verifier as _};
+    //! Delegates to the shared `dregg-pq` leaf, pinning the revocation-root
+    //! attestation domain-separation context.
 
     /// Domain-separation context (FIPS 204 `ctx`) for the revocation-root
     /// attestation PQ half. Distinct from the turn-path (`dregg-hybrid-turn-v1`)
@@ -403,33 +403,20 @@ mod pq {
 
     /// Derive the authority's ML-DSA-65 public key from its 32-byte ed25519 seed.
     pub fn ml_dsa_public_from_seed(seed: &[u8; 32]) -> Vec<u8> {
-        let (pk, _sk) = ml_dsa_65::KG::keygen_from_seed(seed);
-        pk.into_bytes().to_vec()
+        dregg_pq::ml_dsa_public_from_seed(seed)
     }
 
     /// Sign `message` with the ML-DSA-65 key derived from `seed`, under the
     /// revocation-root context. `None` only on the vanishingly rare RNG failure.
     pub fn ml_dsa_sign_from_seed(seed: &[u8; 32], message: &[u8]) -> Option<Vec<u8>> {
-        let (_pk, sk) = ml_dsa_65::KG::keygen_from_seed(seed);
-        sk.try_sign(message, REVOCATION_ROOT_PQ_CTX)
-            .ok()
-            .map(|s| s.to_vec())
+        dregg_pq::ml_dsa_sign_from_seed(seed, REVOCATION_ROOT_PQ_CTX, message)
     }
 
     /// Verify an ML-DSA-65 signature over `message` under the enrolled public
     /// key. Returns `false` — never panics — on any malformed input or failed
     /// check (the fail-CLOSED primitive).
     pub fn ml_dsa_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
-        let Ok(pk_arr) = <[u8; ml_dsa_65::PK_LEN]>::try_from(public_bytes) else {
-            return false;
-        };
-        let Ok(sig) = <[u8; ml_dsa_65::SIG_LEN]>::try_from(sig_bytes) else {
-            return false;
-        };
-        let Ok(vk) = ml_dsa_65::PublicKey::try_from_bytes(pk_arr) else {
-            return false;
-        };
-        vk.verify(message, &sig, REVOCATION_ROOT_PQ_CTX)
+        dregg_pq::ml_dsa_verify(public_bytes, REVOCATION_ROOT_PQ_CTX, message, sig_bytes)
     }
 }
 

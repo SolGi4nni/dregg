@@ -492,22 +492,16 @@ fn verify_ed25519(pubkey_bytes: &[u8; 32], message: &[u8], signature: &[u8; 64])
 pub const CAP_PROOF_PQ_CTX: &[u8] = b"dregg-cap-proof-pq-v1";
 
 /// Serialized length of an ML-DSA-65 public key (FIPS 204 = 1952 bytes).
-pub const ML_DSA_CAP_PK_LEN: usize = fips204::ml_dsa_65::PK_LEN;
+pub const ML_DSA_CAP_PK_LEN: usize = dregg_pq::ML_DSA_PK_LEN;
 
 /// The post-quantum half of a hybrid capability identity: an ML-DSA-65 signing
 /// key plus its serialized public key, derived from the SAME 32-byte ed25519
 /// seed the classical identity uses.
-#[derive(Clone)]
-pub struct MlDsaCapKey {
-    secret: fips204::ml_dsa_65::PrivateKey,
-    public_bytes: [u8; fips204::ml_dsa_65::PK_LEN],
-}
-
-impl core::fmt::Debug for MlDsaCapKey {
-    fn fmt(&self, f: &mut core::fmt::Formatter<'_>) -> core::fmt::Result {
-        f.write_str("MlDsaCapKey(..)")
-    }
-}
+///
+/// A thin newtype over the shared [`dregg_pq::MlDsaKey`] primitive that pins the
+/// capability-proof domain-separation context ([`CAP_PROOF_PQ_CTX`]).
+#[derive(Clone, Debug)]
+pub struct MlDsaCapKey(dregg_pq::MlDsaKey);
 
 impl MlDsaCapKey {
     /// Derive the ML-DSA-65 keypair DETERMINISTICALLY from a 32-byte ed25519
@@ -515,28 +509,19 @@ impl MlDsaCapKey {
     /// holder's PQ public key can be re-derived at enrollment with no separate
     /// ceremony.
     pub fn from_ed25519_seed(seed: &[u8; 32]) -> Self {
-        use fips204::traits::{KeyGen as _, SerDes as _};
-        let (pk, sk) = fips204::ml_dsa_65::KG::keygen_from_seed(seed);
-        Self {
-            secret: sk,
-            public_bytes: pk.into_bytes(),
-        }
+        Self(dregg_pq::MlDsaKey::from_ed25519_seed(seed))
     }
 
     /// The serialized ML-DSA-65 public key — the value a verifier ENROLLS and
     /// PINS to this holder's identity.
     pub fn public_bytes(&self) -> Vec<u8> {
-        self.public_bytes.to_vec()
+        self.0.public_bytes()
     }
 
     /// Sign `message` under [`CAP_PROOF_PQ_CTX`]. `None` only on the vanishingly
     /// rare internal RNG failure (which then fails CLOSED at verification).
     pub fn sign(&self, message: &[u8]) -> Option<Vec<u8>> {
-        use fips204::traits::Signer as _;
-        self.secret
-            .try_sign(message, CAP_PROOF_PQ_CTX)
-            .ok()
-            .map(|s| s.to_vec())
+        self.0.try_sign(CAP_PROOF_PQ_CTX, message)
     }
 }
 
@@ -544,7 +529,7 @@ impl MlDsaCapKey {
 /// identity uses `ed25519_seed`. Convenience over
 /// [`MlDsaCapKey::from_ed25519_seed`] for enrollment flows.
 pub fn enrolled_ml_dsa_pubkey(ed25519_seed: &[u8; 32]) -> Vec<u8> {
-    MlDsaCapKey::from_ed25519_seed(ed25519_seed).public_bytes()
+    dregg_pq::ml_dsa_public_from_seed(ed25519_seed)
 }
 
 /// Verify an ML-DSA-65 signature over `message` under [`CAP_PROOF_PQ_CTX`].
@@ -553,18 +538,7 @@ pub fn enrolled_ml_dsa_pubkey(ed25519_seed: &[u8; 32]) -> Vec<u8> {
 /// wrong-length signature, an undecodable key, or a failed cryptographic check.
 /// This is the fail-CLOSED primitive for the PQ half of the hybrid proof.
 pub fn ml_dsa_cap_verify(public_bytes: &[u8], message: &[u8], sig_bytes: &[u8]) -> bool {
-    use fips204::ml_dsa_65;
-    use fips204::traits::{SerDes as _, Verifier as _};
-    let Ok(pk_arr) = <[u8; ml_dsa_65::PK_LEN]>::try_from(public_bytes) else {
-        return false;
-    };
-    let Ok(sig) = <[u8; ml_dsa_65::SIG_LEN]>::try_from(sig_bytes) else {
-        return false;
-    };
-    let Ok(vk) = ml_dsa_65::PublicKey::try_from_bytes(pk_arr) else {
-        return false;
-    };
-    vk.verify(message, &sig, CAP_PROOF_PQ_CTX)
+    dregg_pq::ml_dsa_verify(public_bytes, CAP_PROOF_PQ_CTX, message, sig_bytes)
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

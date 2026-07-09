@@ -15,7 +15,6 @@ bulletproofs = { version = "5" }
 chacha20poly1305 = { workspace = true }
 curve25519-dalek = { version = "4", features = ["alloc"] }
 ed25519-dalek = { version = "2", features = ["hazmat"] }
-fips204 = "0.4"
 getrandom = { workspace = true }
 merlin = { version = "3" }
 postcard = { version = "1", features = ["alloc"] }
@@ -23,6 +22,7 @@ x25519-dalek = { workspace = true }
 zeroize = { workspace = true }
 dregg-cell = { path = "../cell" }
 dregg-circuit = { path = "../circuit" }
+dregg-pq = { path = "../dregg-pq" }
 dregg-types = { path = "../types" }
 serde = { version = "1", features = ["derive", "std"] }
 serde_json = { workspace = true }

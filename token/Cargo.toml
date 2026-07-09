@@ -21,7 +21,7 @@ macaroon = ["dep:dregg-macaroon", "dregg-macaroon/crypto", "dep:dregg-commit"]
 default = ["biscuit", "macaroon", "rand-deps"]
 # Revocation registry + RNG. base64 moved OUT of here (it belongs to `biscuit`'s
 # wire codec) so the biscuit encode/decode path no longer requires `rand-deps`.
-rand-deps = ["dep:getrandom", "dep:rand", "dep:scalable_cuckoo_filter", "dep:ed25519-dalek", "dep:fips204"]
+rand-deps = ["dep:getrandom", "dep:rand", "dep:scalable_cuckoo_filter", "dep:ed25519-dalek", "dep:dregg-pq"]
 zkvm = ["dep:dregg-macaroon", "dregg-macaroon/zkvm"]
 
 [dependencies]
@@ -29,7 +29,7 @@ base64 = { workspace = true, optional = true }
 biscuit-auth = { version = "6.0.0", optional = true }
 blake3 = "1"
 ed25519-dalek = { version = "2", features = ["std"], optional = true }
-fips204 = { version = "0.4", optional = true }
+dregg-pq = { path = "../dregg-pq", optional = true }
 dregg-macaroon = { workspace = true, optional = true }
 dregg-trace = { path = "../trace" }
 dregg-commit = { path = "../commit", optional = true }
