@@ -1370,7 +1370,7 @@ mod tests {
     // threshold certificate (committee-independent), not ML-DSA's per-signer
     // Vec. STAGED reference — crypto-hermine is pre-audit.
 
-    use crypto_hermine::{HermineShare, HermineTestDealer, hermine_sign_bound};
+    use crypto_hermine::{HermineShare, HermineTestDealer, hermine_sign};
 
     /// The Hermine lattice parameters used by these tests: `k = 2`, `ℓ = 3`.
     /// The certificate size is fixed by THESE, independent of committee size.
@@ -1408,7 +1408,7 @@ mod tests {
             .collect();
         let signers: Vec<&HermineShare> = dealer.shares[0..t].iter().collect();
         let hermine_cert =
-            hermine_sign_bound(&dealer.a, &dealer.group_key, &signers, mask_seed, message).unwrap();
+            hermine_sign(&dealer.a, &dealer.group_key, &signers, mask_seed, message).unwrap();
         HermineHybridQC {
             votes,
             hermine_cert,
@@ -1489,8 +1489,7 @@ mod tests {
         // A sub-threshold Hermine signer set cannot forge a verifying cert
         // either: 2 of a t=3 sharing reconstruct the wrong secret.
         let sub_signers: Vec<&HermineShare> = d.shares[0..2].iter().collect();
-        let bad_cert =
-            hermine_sign_bound(&d.a, &d.group_key, &sub_signers, 0x7070, message).unwrap();
+        let bad_cert = hermine_sign(&d.a, &d.group_key, &sub_signers, 0x7070, message).unwrap();
         let sub_qc = HermineHybridQC {
             votes: qc.votes.clone(),
             hermine_cert: bad_cert,
