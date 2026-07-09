@@ -191,3 +191,19 @@ FIX (bounded, correcting my own commit): re-home DocSubstrateSound to compose ov
 functional (the REAL root binding (addr,value)) instead of the sponge's root_binds_get. Then the doc-soundness
 rides the root the code actually computes.
 - done-log: audited honestly — code's Merkle root proven; DocSubstrateSound rode the superseded sponge; re-homing onto the faithful Merkle proof now.
+
+## 🔴 REAL SOUNDNESS BUG (verified precisely) — the doc commitment is ~31 bits / FORGEABLE
+substrate_commit = compute_heap_root(to_heap_map(g)) = babybear_to_bytes32(compute_heap_root_felt(...)).
+babybear_to_bytes32(felt) = out[0..4] = felt.as_u32().to_le_bytes() (rest zero) — ONE BabyBear felt (~31 bits).
+state.rs confirms: this is "the lane-0 projection, the historical SCALAR root; lanes 1..7 are the ~124-bit
+completion". The circuit's OWN GENTIAN proof (HeapOpenEmit.lean:219) proves lane-0 ALONE is FORGEABLE (a
+colliding heap shares lane-0, caught only by lanes 1..7). So a light client checking substrate_commit checks
+~31 bits — a forged document whose heap collides on lane-0 PASSES. This is a genuine soundness bug, not naming.
+My DocSubstrateSound was wrong TWICE: rode the superseded sponge model AND the code commits to a forgeable scalar.
+VINDICATES the principle: "fixing" this by making Lean match the Rust would PROVE a forgeable commitment sound —
+laundering the bug into a proof. The correct fix DIVERGES: substrate_commit → compute_canonical_heap_root_8 (the
+FULL 8-felt ~124-bit root DeployedHeapTree PROVES binds (addr,value)); DocSubstrateSound rides THAT.
+EMBER-RELEVANT (substrate-adjacent): (a) does anything ELSE consume the ~31-bit compute_heap_root as a security
+commitment (not just docs)? (b) the fix changes the doc commitment value (fine — nothing running depends on it;
+new testnet from genesis) and makes it actually collision-resistant. STOPPED for ember's call before the code fix.
+- done-log: found a REAL bug by verifying (not asserting) — the doc commitment is a forgeable ~31-bit scalar; the fix diverges from the buggy old code toward the proven 8-felt root.
