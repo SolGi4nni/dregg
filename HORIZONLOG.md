@@ -29,6 +29,9 @@ ember-gated — the one commitment-layout touch); checkpointing = 4 fixed theore
 branch-and-stitch, never bindable as the main lineage); ViewKey social recovery = M3+; M0 =
 node-level pipeline first, kernel-witnessed via umem Stage B when it lands. Design is now
 build-ready at M0/M1; remaining opens are policy DEFAULTS and provider-set selection.
+⏸ **EMBER-GATED START (07-08): do NOT fire this lane until ember says "go" — explicitly deferred
+until the other live lanes calm down.** The sub-block additionally waits on the vk-epoch flip
+(bundling proposed, not yet blessed by that lane).
 
 ## NOW-STATE addition (2026-07-07, Fable — forge CI-gate lane surfaced a real dregg-turn bug)
 
