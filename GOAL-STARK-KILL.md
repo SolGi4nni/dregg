@@ -600,3 +600,22 @@ orphaned hand-AIR files (*_air.rs, the dsl/*.rs StarkAir impls) — KEEPING pose
 descriptor prover uses (poseidon2_air.rs needs the chip/trace-gen split checked) — then rm stark.rs +
 fix the #[cfg(test)] site. This is the deletion sweep, gated only on: is poseidon2_air chip-vs-AIR
 separable, and confirming no non-vendored prod path breaks.
+
+## ⚑⚑⚑ THE ENGINE IS DELETED (2026-07-09) — stark-kill core COMPLETE
+- ✅ `circuit/src/stark.rs` DELETED + committed (f04b2dd1e). circuit/turn/bridge/sdk all GREEN on the
+  descriptor prover. The O(n²) engine that started this (perf review 3e88a1a40) is gone.
+- ✅ sdk+intent repaired (95836f657) — onto the descriptor prover; deleted an old fail-OPEN
+  verify_compressed_history hole in passing.
+- ✅ 5 predicate-comparison descriptors EMITTED (2d2c93801): Lte/Gt/Lt/Neq/InRange, Rung 0/1/2,
+  axiom-clean, dispatched, consumers WIRED (emit-not-record).
+- ✅ Golden Lift intact: bound-presentation + blinded-membership, in-circuit + fold-carried,
+  light-client-sound (the hole ember caught, sealed).
+HONEST TAIL (fail-CLOSED — safe, never fail-open — the remaining emit-forward work):
+  · committed-threshold descriptor (golden exists in a circuit-prove test; register + emit Rung 0/1/2).
+  · validated-IVC-fold verify, multi-step-authorization, programmable-predicate-programs — compositional
+    proof types with no single descriptor yet.
+  · Broken tooling crates from the deletion (NOT core): dregg-doc, preflight, wasm, the circuit lib-TEST
+    target (ivc.rs MultiTurnVerification/ValidatedIvcVerification dead refs), intent #[cfg(test)] modules.
+  · Workspace-wide build still blocked by the PARALLEL PQ-lane blocklace/crypto-hermine break (not ours).
+NEXT NORTH STAR (ember's actual pre-quest goal, resumed): governance-as-stories + SPWEEN (verifiable
+collaborative CYOA/MUDs) + substrate-native voting — now on a fast, verified, light-client-sound prover.
