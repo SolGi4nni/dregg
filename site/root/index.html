@@ -3,389 +3,402 @@
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>dregg — the technical index</title>
-  <meta name="description" content="dregg is a formally verified, distributed object-capability operating system. A turn is the exercise of an attenuable, proof-carrying token over owned state, leaving a verifiable receipt. This page is the dense technical index of the repository: entry points for LLMs, developers, operators, and provers, plus the live in-browser demo surfaces.">
+  <title>dregg / deos — a capability-secure, witnessed substrate</title>
+  <meta name="description" content="dregg is a capability-secure, proof-carrying substrate. A turn is the exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt. deos is the desktop you can run on it — live in your browser, no backend.">
   <meta property="og:type" content="website">
-  <meta property="og:title" content="dregg — the technical index">
-  <meta property="og:description" content="A turn is the exercise of an attenuable, proof-carrying token over owned state, leaving a verifiable receipt. The dense, cross-linked index of the dregg repository.">
+  <meta property="og:title" content="dregg / deos — a capability-secure, witnessed substrate">
+  <meta property="og:description" content="A turn is the exercise of an attenuable proof-carrying token over owned state, leaving a verifiable receipt. Play with it in your browser — every click is a real verified turn.">
   <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='22' font-size='16' text-anchor='middle' fill='%235b8a5a' font-family='monospace'%3E%CF%80%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="assets/style.css">
   <style>
-    :root {
-      --bg: #0a0f0d; --bg2: #10160f12; --raised: #101711;
-      --fg: #d9d3c6; --dim: #a49b8a; --mute: #7a7265;
-      --acc: #5b8a5a; --acc2: #8fbe8d; --line: #223026; --line2: #2f4234;
-      --warn: #c9a15a;
-    }
-    * { box-sizing: border-box; margin: 0; padding: 0; }
-    html { scroll-behavior: smooth; }
-    body {
-      background: var(--bg); color: var(--fg);
-      font: 15px/1.6 ui-monospace, "SF Mono", SFMono-Regular, Menlo, Consolas, "DejaVu Sans Mono", monospace;
-      padding: 2.5rem 1.25rem 5rem;
-    }
-    main { max-width: 66rem; margin: 0 auto; }
-    a { color: var(--acc2); text-decoration: none; border-bottom: 1px solid var(--line2); }
-    a:hover { color: #b7e0b5; border-bottom-color: var(--acc2); }
-    h1 { font-size: 1.5rem; font-weight: 600; letter-spacing: .01em; }
-    h2 { font-size: 1.05rem; font-weight: 600; color: var(--acc2); margin: 0 0 .75rem;
-         padding-top: 2.5rem; border-top: 1px solid var(--line); }
-    h2 .anchor { color: var(--mute); border: none; margin-left: .4rem; font-weight: 400; }
-    h3 { font-size: .9rem; font-weight: 600; color: var(--fg); margin: 1.4rem 0 .4rem; }
-    p { margin: 0 0 .8rem; }
-    code, .k { color: var(--acc2); }
-    .note {
-      border: 1px solid var(--line2); border-left: 3px solid var(--acc);
-      background: var(--raised); padding: .7rem .9rem; margin: 1.1rem 0; color: var(--dim);
-      font-size: .88rem;
-    }
-    .note b { color: var(--fg); }
-    .sentence {
-      margin: 1.4rem 0; padding: 1rem 1.1rem; border: 1px solid var(--line2);
-      background: var(--raised); color: var(--fg); font-size: 1.02rem; line-height: 1.55;
-    }
-    .sentence em { color: var(--acc2); font-style: normal; }
-    .toc { margin: 1.2rem 0 0; color: var(--mute); font-size: .85rem; line-height: 2; }
-    .toc a { margin-right: .35rem; }
-    ul.idx { list-style: none; margin: 0 0 .6rem; }
-    ul.idx li { padding: .28rem 0 .28rem 1.2rem; text-indent: -1.2rem; font-size: .88rem; color: var(--dim); }
-    ul.idx li::before { content: "·"; color: var(--acc); padding-right: .7rem; }
-    ul.idx b { color: var(--fg); font-weight: 500; }
-    table { border-collapse: collapse; width: 100%; font-size: .85rem; margin: .6rem 0 1rem; }
-    .tscroll { overflow-x: auto; }
-    th, td { text-align: left; padding: .35rem .7rem .35rem 0; vertical-align: top;
-             border-bottom: 1px solid var(--line); }
-    th { color: var(--mute); font-weight: 500; }
-    td:first-child { white-space: nowrap; }
-    .dim { color: var(--dim); }
-    .mute { color: var(--mute); }
-    .warn { color: var(--warn); }
-    .grid2 { display: grid; grid-template-columns: repeat(auto-fit, minmax(19rem, 1fr)); gap: 0 2rem; }
-    footer { margin-top: 3.5rem; padding-top: 1rem; border-top: 1px solid var(--line);
-             color: var(--mute); font-size: .82rem; }
+    /* page-local: the demo tiles + quickstart tabs, on the shared green tokens */
+    .tiles { display: grid; grid-template-columns: repeat(auto-fit, minmax(260px, 1fr)); gap: var(--s4); }
+    .tile { display: flex; flex-direction: column; gap: var(--s2); padding: var(--s5);
+      border-radius: var(--r3); border: 1px solid var(--line); background: var(--bg-raised);
+      text-decoration: none; transition: border-color var(--dur) var(--ease), transform var(--dur) var(--ease); }
+    .tile:hover { border-color: var(--accent); transform: translateY(-2px); }
+    .tile__eyebrow { font-family: var(--font-mono); font-size: 0.68rem; letter-spacing: 0.08em;
+      text-transform: uppercase; color: var(--accent); }
+    .tile__name { font-family: var(--font-display); font-size: 1.2rem; color: var(--chalk); }
+    .tile__desc { font-size: 0.86rem; color: var(--fg-muted); line-height: 1.55; }
+    .tile__go { font-family: var(--font-mono); font-size: 0.76rem; color: var(--accent-bright); margin-top: auto; }
+    .live-note { display: flex; align-items: center; gap: 8px; font-family: var(--font-mono);
+      font-size: 0.78rem; color: var(--fg-dim); margin: var(--s4) 0 var(--s5); }
+    .live-dot { width: 8px; height: 8px; border-radius: 50%; background: var(--accent-bright);
+      box-shadow: 0 0 8px var(--accent-bright); animation: lpulse 1.6s ease-in-out infinite; }
+    @keyframes lpulse { 0%,100% { opacity: .35 } 50% { opacity: 1 } }
+    .qs-tabs { display: flex; gap: var(--s2); flex-wrap: wrap; margin-bottom: var(--s4); }
+    .qs-tab { font-family: var(--font-mono); font-size: 0.8rem; padding: 6px 14px; border-radius: var(--r2);
+      border: 1px solid var(--line-strong); background: transparent; color: var(--fg-dim); cursor: pointer; }
+    .qs-tab.active { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-bright); }
+    .qs-panel { display: none; }
+    .qs-panel.active { display: block; }
+    .qs-panel p { font-size: 0.9rem; margin-bottom: var(--s3); }
+    .defn { display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: var(--s4); margin-top: var(--s5); }
+    .defn__term { padding: var(--s5); border-radius: var(--r3); border: 1px solid var(--line);
+      border-left: 3px solid var(--accent); background: var(--bg-raised); }
+    .defn__k { font-family: var(--font-mono); font-size: 0.82rem; color: var(--accent-bright); margin-bottom: var(--s2); }
+    .defn__v { font-size: 0.88rem; color: var(--fg-dim); line-height: 1.6; }
+    .thesis { font-family: var(--font-display); font-size: clamp(1.15rem, 2.4vw, 1.6rem);
+      color: var(--chalk); line-height: 1.5; max-width: 40ch; }
+    .thesis em { font-style: italic; color: var(--accent-bright); }
   </style>
 </head>
 <body>
-<main>
 
-<h1>dregg / Dragon's Egg — the technical index</h1>
-<p class="dim" style="margin-top:.4rem">
-  a formally verified, distributed object-capability operating system.
-  <span class="mute">robigalia</span> the project · <span class="mute">dregg</span> the kernel ·
-  <span class="mute">deos</span> the desktop. deos runs on dregg runs in robigalia.
-</p>
-
-<div class="note">
-  The human-facing, educational site is <a href="https://www.dregg.net">https://www.dregg.net</a> —
-  this page is the dense technical index: written for LLMs, experts, and developers, organized as
-  entry points into the repository at <a href="https://github.com/emberian/dregg">github.com/emberian/dregg</a>.
-  Every link below points at a real file at <code>HEAD</code> or a live surface on this site.
-  The full dense <em>product</em> site — every subsystem page with its theorem names, test counts,
-  and seam ledgers — lives at <a href="deep/">/deep/</a>.
-</div>
-
-<div class="sentence">
-  A turn is the exercise of an attenuable, proof-carrying token over owned state,
-  <em>leaving a verifiable receipt.</em>
-</div>
-
-<p class="dim" style="font-size:.88rem">
-  The kernel is a Lean 4 program with machine-checked soundness, and it is the <b>exact</b> function
-  the running node executes (<code>execFullForestG</code>, linked via
-  <a href="https://github.com/emberian/dregg/tree/main/dregg-lean-ffi">dregg-lean-ffi/</a>).
-  All proof circuits are emitted from proved Lean modules as byte-pinned descriptors; Rust authors zero
-  constraint semantics. Research software: the named seams below are named, there has been no
-  independent audit, and it is not for anything security-critical.
-</p>
-
-<nav class="toc">
-  <a href="#model">model</a> ·
-  <a href="#guarantees">guarantees</a> ·
-  <a href="#llms">for LLMs</a> ·
-  <a href="#developers">for developers</a> ·
-  <a href="#operators">for operators</a> ·
-  <a href="#provers">for provers</a> ·
-  <a href="#demos">live demos</a> ·
-  <a href="#map">repo map</a> ·
-  <a href="#colophon">this site</a>
+<nav class="nav">
+  <span class="nav__mark">&pi;</span>
+  <span class="nav__name"><code>dregg</code> / deos</span>
+  <span class="nav__tag">capability-secure &middot; proof-carrying &middot; witnessed</span>
+  <div class="nav__links">
+    <a class="nav__link" href="#what">What it is</a>
+    <a class="nav__link nav__link--active" href="#verify">Verify</a>
+    <a class="nav__link" href="#play">Play</a>
+    <a class="nav__link" href="#quickstart">Quickstart</a>
+    <a class="nav__link" href="./dregg-works/">dregg.works</a>
+    <a class="nav__link" href="./technical.html">Technical index</a>
+    <a class="nav__link" href="https://github.com/emberian/dregg">Source</a>
+  </div>
 </nav>
 
-<!-- ================= MODEL ================= -->
-<h2 id="model">The model — four substances, eight verbs<a class="anchor" href="#model">#</a></h2>
-<p class="dim" style="font-size:.9rem">
-  A <b>cell</b> is the unit of isolation and identity. Everything a cell holds is one of
-  <b>four substances</b>, each with its own discipline:
-</p>
-<ul class="idx">
-  <li><b>value</b> — linear per-asset balances. An asset <i>is</i> its issuer cell, which carries −supply, so every asset&rsquo;s sum is identically zero.</li>
-  <li><b>state</b> — a heap of programmable slots plus a nonce, guarded by the cell&rsquo;s own program (a predicate over its transitions).</li>
-  <li><b>authority</b> — a capability tree (c-list) that grows only by authorized, receipt-disclosed production from held connectivity, and narrows freely.</li>
-  <li><b>evidence</b> — monotone nullifier / commitment / epoch ledgers. <i>Birth</i> and <i>retirement</i> bracket the cell lifecycle.</li>
-</ul>
-<p class="dim" style="font-size:.9rem">
-  The kernel is <b>eight verbs</b> — <code>create · write · move · grant · revoke · shield/unshield ·
-  lifecycle · exercise</code> — with machine-checked <b>minimality</b> (each verb irreplaceable) and
-  <b>completeness</b> (they cover every effect) theorems. The catalog is generated from
-  <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Substrate/VerbRegistry.lean">VerbRegistry.lean</a>;
-  nothing in it is hand-asserted. Queues, escrows, auctions, namespaces, councils, bridges, channels
-  are cell-program <i>patterns</i> over these verbs, not kernel primitives. A <b>turn</b> is an atomic,
-  capability-gated transition across one or more cells — a forest of effects with delegation edges;
-  delegation only attenuates (<code>granted ≤ held</code>). All four guard polarities — caveat, program,
-  precondition, intent-demand — are one <code>Pred</code> algebra; holding a capability means being able
-  to exhibit the witness that discharges its caveats.
-</p>
+<!-- ==================== HERO ==================== -->
+<header class="hero">
+  <div class="hero__inner">
+    <p class="hero__eyebrow">a capability-secure, witnessed substrate</p>
+    <h1>A turn is the exercise of an attenuable proof-carrying token over owned state, <em>leaving a verifiable receipt.</em></h1>
+    <p class="hero__sub">
+      <code>dregg</code> is the substrate: cells own state and hold capabilities, a turn changes state
+      only as those capabilities permit, and every turn proves itself — leaving a receipt anyone can check.
+      <strong>deos</strong> is a desktop built on it. Everything below runs client-side, in your browser tab,
+      in WebAssembly: the verified executor runs <em>here</em>, with no backend server. Every click you make is a real, cap-gated, verified turn.
+    </p>
+    <div class="hero__cta">
+      <a class="btn btn--primary" href="./light-client/">Watch a whole history verify</a>
+      <a class="btn btn--secondary" href="./deos/">Open deos in your browser</a>
+      <a class="btn btn--secondary" href="https://github.com/emberian/dregg">Read the source</a>
+    </div>
+    <span class="hero__pulse"><span class="pulse-dot"></span> the verified executor runs <b>in this tab</b> — no backend, every click a real cap-gated turn</span>
+  </div>
+</header>
 
-<!-- ================= GUARANTEES ================= -->
-<h2 id="guarantees">The five guarantees + the running entry<a class="anchor" href="#guarantees">#</a></h2>
-<p class="dim" style="font-size:.9rem">
-  Stated as Lean theorems in
-  <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/AssuranceCase.lean">AssuranceCase.lean</a>,
-  each pinned by <code>#assert_axioms</code> to exactly <code>{propext, Classical.choice, Quot.sound}</code>,
-  each with non-vacuity witnesses. The reading companion is
-  <a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-assurance.md">docs/reference/lean-assurance.md</a>.
-</p>
-<div class="tscroll"><table>
-  <tr><th></th><th>guarantee</th><th>theorem</th><th>statement</th></tr>
-  <tr><td>A</td><td>Authority</td><td><code>authority_guarantee</code></td>
-      <td class="dim">Every state change is justified by an unforgeable, non-amplified, fresh token chain. Production (mint) is gated on holding the issuer&rsquo;s capability; the gate discriminates — it is not <code>:= True</code>.</td></tr>
-  <tr><td>B</td><td>Conservation</td><td><code>conservation_guarantee</code> · <code>conservation_guarantee_step</code></td>
-      <td class="dim">Per asset, the resource sum is identically zero on every reachable state. Under <code>AssetId := CellId</code> every asset is its issuer cell; mint, burn, and fees are ordinary moves against negative-capable wells.</td></tr>
-  <tr><td>C</td><td>Integrity</td><td><code>integrity_guarantee</code> · <code>integrity_guarantee_whole_turn_covered</code></td>
-      <td class="dim">A receipt binds the <i>whole</i> post-state; circuit and executor provably produce the same receipt. Tampering a field the effect did not legitimately touch makes the turn unprovable (anti-ghost).</td></tr>
-  <tr><td>D</td><td>Freshness</td><td><code>freshness_guarantee</code></td>
-      <td class="dim">No replay, no double-spend: a committed spend&rsquo;s nullifier was fresh (in-circuit sorted-tree non-membership), revocation takes effect at finality, and a stored capability cannot outlive its grantor&rsquo;s revocation (retrieval-epoch rule).</td></tr>
-  <tr><td>E</td><td>Unfoolability</td><td><code>unfoolability_guarantee</code></td>
-      <td class="dim">A light client checking only the aggregate root learns A&ndash;D for the entire history, re-witnessing nothing; a tampered or reordered aggregate cannot bind. Conjoins <code>light_client_verifies_whole_history</code> with <code>conserves_from_verification</code>; the anti-ghost tooth is <code>tampered_aggregate_cannot_bind</code>.</td></tr>
-  <tr><td>R</td><td>Running entry</td><td><code>running_entry_sound</code></td>
-      <td class="dim">A∧B∧C hold over <code>execFullForestG</code> <i>itself</i> — the exact gated function the deployed node invokes — not just an abstract model.</td></tr>
-  <tr><td>&nbsp;</td><td>Composed apex</td><td><code>deployed_system_secure</code></td>
-      <td class="dim">ONE theorem whose conclusion is the conjunction A ∧ B ∧ C ∧ D ∧ E over one committed running-entry forest.</td></tr>
-</table></div>
-<p class="dim" style="font-size:.88rem">
-  <b>Assumed, named, never hidden.</b> The cryptographic floor enters as typed hypotheses, never
-  <code>axiom</code>: Poseidon2 collision-resistance, BLAKE3 CR, Ed25519 EUF-CMA, HMAC/PRF,
-  AEAD, FRI/STARK soundness, BLS quorum certs, post-GST synchrony.
-  <b>Open, named.</b> The largest open distance from l4v-grade is the deployed-binary bridge — the
-  Lean→C/<code>.a</code> link correspondence and the wire-codec translation validation
-  (<a href="https://github.com/emberian/dregg/blob/main/dregg-lean-ffi/src/marshal.rs">dregg-lean-ffi/src/marshal.rs</a>)
-  are stated as obligations, not yet proven. Key-leak blast radius is bounded to the attenuation-closure of
-  the leaked c-list (<a href="https://github.com/emberian/dregg/blob/main/metatheory/Metatheory/KeyLeak.lean">Metatheory/KeyLeak.lean</a>).
-  The open-obligation ledger is <a href="https://github.com/emberian/dregg/blob/main/metatheory/CLAIMS.md">metatheory/CLAIMS.md</a> § OPEN.
-  <span class="warn">No independent audit. Not for anything security-critical.</span>
-</p>
+<main class="wrap">
 
-<!-- ================= FOR LLMS ================= -->
-<h2 id="llms">For LLMs and machine readers<a class="anchor" href="#llms">#</a></h2>
-<p class="dim" style="font-size:.9rem">Dense, narration-free, file:line-grounded. Read in this order.</p>
-<ul class="idx">
-  <li><a href="https://github.com/emberian/dregg/blob/main/README-LLMs.md"><b>README-LLMs.md</b></a> — the machine-facing reference: the one sentence, nouns/verbs, the architectural laws, the execution+proof architecture, the crate map, build/test/verify, working conventions for agents.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/OVERVIEW.md"><b>docs/OVERVIEW.md</b></a> — the whole-system what-is: model in four words, the map, where to go next.</li>
-  <li><a href="https://github.com/emberian/dregg/tree/main/docs/reference"><b>docs/reference/</b></a> — 23 per-subsystem references grounded to <code>file:line</code> at HEAD (index: <a href="https://github.com/emberian/dregg/blob/main/docs/reference/README.md">README.md</a>). When any other doc and a reference disagree, the reference wins. Full inventory below.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/CLAIMS.md"><b>metatheory/CLAIMS.md</b></a> — the axiom ledger, human half: exactly what is proved and what is not, with honesty labels (PROVED-axiom-clean / rests-on-§8-primitive / honest-OPEN).</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Claims.lean"><b>Dregg2/Claims.lean</b></a> — the axiom ledger, machine half: the corpus-wide pin-net (165 theorem pins + 50 namespace pins); a silently-regressed keystone breaks the build at the ledger.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/AssuranceCase.lean"><b>Dregg2/AssuranceCase.lean</b></a> — the load-bearing apex, organized by guarantee; each apex followed by <code>#assert_axioms</code> on itself and its keystone DAG.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/KERNEL.md"><b>docs/KERNEL.md</b></a> — the verified kernel core.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/CONSTRUCTIVE-KNOWLEDGE.md"><b>metatheory/CONSTRUCTIVE-KNOWLEDGE.md</b></a> — the conceptual spine: a capability is constructive knowledge; to hold one is to exhibit a witness that verifies.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/REORIENT.md"><b>REORIENT.md</b></a> — the architectural laws and build notes; the durable orientation record (then <a href="https://github.com/emberian/dregg/blob/main/HORIZONLOG.md">HORIZONLOG.md</a>, the named-follow-up burn-down).</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/guide/AGENT-QUICKSTART.md"><b>docs/guide/AGENT-QUICKSTART.md</b></a> — you are an agent; how to earn, spend, and run on dregg in a few lines (pay → lease → metered workload → receipts).</li>
-</ul>
+<!-- ==================== WHAT IT IS ==================== -->
+<section class="section" id="what">
+  <span class="section__label">What it is</span>
+  <h2 class="section__title">Six words, and what they mean</h2>
+  <p class="section__intro">
+    The model is small. State lives in cells; capabilities say what may touch it; a turn is one atomic
+    change; effects are the fixed vocabulary of changes a turn can make; a proof witnesses that the change
+    obeyed the rules; a receipt is the record a third party can verify without trusting you.
+  </p>
+  <div class="defn">
+    <div class="defn__term">
+      <div class="defn__k">cell</div>
+      <div class="defn__v">An owned object: some state, a balance, and a capability list — the set of things it is allowed to reference. A cell can only act on what its c-list names.</div>
+    </div>
+    <div class="defn__term">
+      <div class="defn__k">capability</div>
+      <div class="defn__v">An unforgeable, attenuable token of authority. You can hand someone a strictly weaker copy; you cannot hand them more than you hold. Authority only ever narrows.</div>
+    </div>
+    <div class="defn__term">
+      <div class="defn__k">turn</div>
+      <div class="defn__v">One atomic state transition. A call forest runs depth-first across cells; if any step is refused, the whole turn rolls back. Nothing partial commits.</div>
+    </div>
+    <div class="defn__term">
+      <div class="defn__k">effect</div>
+      <div class="defn__v">The fixed verb vocabulary a turn may use — transfer, set a field, mint, hand off a capability, and so on. The vocabulary is closed: an unauthorized act is not expressible.</div>
+    </div>
+    <div class="defn__term">
+      <div class="defn__k">proof</div>
+      <div class="defn__v">A turn carries a witness that it obeyed the rules — produced once, verified cheaply. The check does not re-run the work; it checks the proof.</div>
+    </div>
+    <div class="defn__term">
+      <div class="defn__k">receipt</div>
+      <div class="defn__v">The verifiable record a turn leaves behind: the before-state, the after-state, the effects, the proof. A light client can fold a whole history of receipts into one proof and check it, re-witnessing nothing.</div>
+    </div>
+  </div>
+</section>
 
-<h3>The reference set (docs/reference/ — Rust subsystems)</h3>
-<ul class="idx">
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/cells.md">cells.md</a> — cells &amp; substances: sovereign capability-secure state folded into one canonical commitment.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/turns.md">turns.md</a> — <code>dregg-turn</code>: Turn → CallForest → Action → Effect, executed atomically with journaled rollback and a chained receipt.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/umem.md">umem.md</a> — universal memory: the witnessed key→value store whose committed root is its boundary; six domains, per-cell heaps, umem-refs, time travel.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/services.md">services.md</a> — cells as service objects: <code>InterfaceDescriptor</code>, the <code>invoke()</code> front door (no <code>Effect::Invoke</code>), the kvstore exemplar.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/circuit.md">circuit.md</a> — descriptor circuit &amp; light client: a turn proven as a batch STARK, folded into a constant-size recursive whole-chain aggregate.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/faithful-commitment.md">faithful-commitment.md</a> — the faithful state commitment: every Merkle-root component at 8-felt (~124-bit), shape-matched keystones, named residuals.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/persist.md">persist.md</a> — <code>dregg-persist</code>: the node&rsquo;s durable redb store; crash-consistent commit log, torn-tail recovery, the Lean-verified recover = checkpoint ⊕ overlay model.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/auth.md">auth.md</a> — macaroons, biscuits &amp; capabilities: two authorization mechanisms converging on one idea — a key may only narrow.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/node.md">node.md</a> — <code>dregg-node</code>: the federation daemon — cipherclerk host, consensus participant, localhost HTTP/WS API.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/sdk.md">sdk.md</a> — the SDK &amp; embedding: <code>dregg-sdk</code> (offline core) + <code>dregg-sdk-net</code> (networked layer).</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/captp.md">captp.md</a> — CapTP / promises / conditional turns: pipelining grants latency, not authority.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/deos-view.md">deos-view.md</a> — <code>deos-view</code>: renderer extraction over one gpui-free <code>deos.ui.*</code> view-tree; native and web HTML renderers.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/deos-js.md">deos-js.md</a> — the JS scripting surface: real SpiderMonkey drives sovereign cells via cap-gated verified turns.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/cockpit.md">cockpit.md</a> — starbridge-v2 shell: cap-first window manager, verified-scene compositor, the shared-fork membrane, login/logout cap ceremony.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/firmament.md">firmament.md</a> — firmament &amp; seL4: one Capability handle dispatched to four backings over an emulated seL4 CNode kernel.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/wasm-web.md">wasm-web.md</a> — wasm &amp; in-browser deos: two cdylib crates compiling the real verified substrate to wasm32.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/dsl-apps.md">dsl-apps.md</a> — <code>dregg-dsl</code> (one constraint → eight backends), the app framework (cap-gated affordances), <code>starbridge-apps</code>.</li>
-</ul>
-<h3>The reference set (docs/reference/ — Lean theory)</h3>
-<ul class="idx">
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-kernel.md">lean-kernel.md</a> — the l4v-shaped spec ⊑ design formalization: conservation algebra, the law layer, the fail-closed Exec machine, Exec ⊑ Spec.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-authority.md">lean-authority.md</a> — authority = production under non-forgeability: the attenuation algebra, credential lifecycle, the macaroon↔kernel-gate bridge.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-circuit.md">lean-circuit.md</a> — circuit soundness / unfoolability: the apex <code>lightclient_unfoolable</code>, per-effect refinement, whole-history aggregation, settlement soundness.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-conserve.md">lean-conserve.md</a> — conservation &amp; supply: the six-color linearity law, per-domain Σδ = 0 over an arbitrary value monoid, the <code>conserve</code> tactics.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-distributed.md">lean-distributed.md</a> — distributed theory: single-machine proofs reindexed over a topology — settlement soundness at the tip, the membrane, revocation, joint turns.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/reference/lean-assurance.md">lean-assurance.md</a> — the assurance case as a reading artifact: guarantee → keystone theorem-DAG, the <code>#assert_axioms</code> hygiene mechanism, the §8 carrier floor.</li>
-</ul>
+<!-- ==================== THE KILLER FEATURE: LIGHT CLIENT ==================== -->
+<section class="section" id="verify">
+  <span class="section__label">The killer feature</span>
+  <h2 class="section__title">Verify a whole history — re-executing nothing</h2>
+  <p class="section__intro">
+    A finalized history is a chain of turns: each turn's after-state is the next one's before-state. A
+    producer folds the whole chain into <em>one</em> succinct recursive STARK. Your browser tab verifies that
+    single proof — no re-execution, no re-hashing, no walk of the chain. If it verifies, every folded turn
+    executed correctly, in order, from genesis to the final root. <strong>This is the in-browser recursive-STARK
+    verification, and it runs right here.</strong>
+  </p>
+  <div class="stage">
+    <div class="stage__rows" aria-hidden="true">
+      <div class="stage__turn"><span class="dot"></span> turn 1 · transfer <span class="root">root a3f1…</span></div>
+      <div class="stage__turn"><span class="dot"></span> turn 2 · set-field <span class="root">root 7b09…</span></div>
+      <div class="stage__turn"><span class="dot"></span> turn 3 · mint <span class="root">root e4c2…</span></div>
+      <div class="stage__turn"><span class="dot"></span> … k turns <span class="root">final root c1d4…</span></div>
+    </div>
+    <div class="stage__fold">▼ folded once, off the verifier ▼</div>
+    <div class="stage__proof">
+      <div class="glyph">π ✓</div>
+      <div class="cap">one recursive proof — verified in your tab, independent of how many turns the history holds</div>
+    </div>
+    <p class="stage__floor">
+      named floor: the verification carries the recursion engine's FRI soundness. The verification <em>is</em>
+      the trust — not "re-run it and hope they match."
+    </p>
+  </div>
+  <p class="section__intro" style="margin-top:var(--s5)">
+    The trust anchor is <em>your</em> configuration, held separately — never read off the artifact under
+    verification. Tamper one hex digit of the anchor and the proof is refused, not laundered. This is the
+    executable counterpart of the Lean theorem <code>light_client_verifies_whole_history</code>.
+  </p>
+  <div class="hero__cta" style="margin-top:var(--s4)">
+    <a class="btn btn--primary" href="./light-client/">Run the verifier in your tab</a>
+    <a class="btn btn--secondary" href="./dregg-works/">See it on a live host &rarr; dregg.works</a>
+  </div>
+</section>
 
-<!-- ================= FOR DEVELOPERS ================= -->
-<h2 id="developers">For developers<a class="anchor" href="#developers">#</a></h2>
-<p class="dim" style="font-size:.9rem">
-  There is no public server; everything runs from a clean checkout on <code>localhost</code>. The verified
-  build needs the gitignored Lean seed archive
-  (<a href="https://github.com/emberian/dregg/blob/main/scripts/fetch-lean-seed.sh">scripts/fetch-lean-seed.sh</a> fetches a prebuilt one);
-  a plain <code>cargo build</code> without it is the un-verified marshal-only node, which refuses to start
-  without an explicit opt-in.
-</p>
-<ul class="idx">
-  <li><a href="https://github.com/emberian/dregg/blob/main/QUICKSTART.md"><b>QUICKSTART.md</b></a> — dregg in 15 minutes: run a node, sign a real turn, the guided demo, a governance ceremony, the site in your browser. Verified vs marshal-only explained first.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/scripts/run-node-10min.sh"><b>scripts/run-node-10min.sh</b></a> — the one-command path: fetch seed → build → run → report which producer mode you got.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/guide/README.md"><b>docs/guide/</b></a> — the developer onramp, in order:
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/BUILD-WITH-DREGG.md">BUILD-WITH-DREGG.md</a> (the model + your first app + the core build patterns),
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/WHAT-YOU-CAN-BUILD.md">WHAT-YOU-CAN-BUILD.md</a> (a gallery, each capability anchored to a runnable exemplar),
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/DEOS-FROM-THE-WEB.md">DEOS-FROM-THE-WEB.md</a> (card-worlds firing real turns over an in-tab executor),
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/AGENT-QUICKSTART.md">AGENT-QUICKSTART.md</a> (the agent economy loop),
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/SERVICE-ECONOMY-SDK.md">SERVICE-ECONOMY-SDK.md</a> (per-call → underlying-turn mapping),
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/CONFINED-AGENTS.md">CONFINED-AGENTS.md</a> (rent a confined, verifiable agent — an OS-jailed grain body),
-    <a href="https://github.com/emberian/dregg/blob/main/docs/guide/FEDERATION-JOIN.md">FEDERATION-JOIN.md</a> (join a live federation, no genesis re-roll).</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/MANUAL/README.md"><b>docs/MANUAL/</b></a> — the trail guide for a person who is not the author:
-    <a href="https://github.com/emberian/dregg/blob/main/docs/MANUAL/USER.md">USER.md</a> (use deos) ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/MANUAL/DEVELOPER.md">DEVELOPER.md</a> (build the unified workspace, write a deos-js program).</li>
-  <li><b>SDKs</b> — the same shape in every language, with an inescapable authorization step (<code>.turn().sign().submit()</code>):
-    <a href="https://github.com/emberian/dregg/tree/main/sdk">sdk/</a> (Rust; <code>AgentRuntime</code> embeds the executor) ·
-    <a href="https://github.com/emberian/dregg/blob/main/sdk-ts/README.md">sdk-ts/</a> (TypeScript, <code>@dregg/sdk</code>, browser-parsable) ·
-    <a href="https://github.com/emberian/dregg/blob/main/sdk-py/README.md">sdk-py/</a> (Python; embeds the real Lean kernel via FFI). Reference: <a href="https://github.com/emberian/dregg/blob/main/docs/reference/sdk.md">docs/reference/sdk.md</a>.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/sdk/examples/agent_business_loop.rs"><b>sdk/examples/agent_business_loop.rs</b></a> — the runnable agent-economy loop: fund → lease → metered run → receipts.</li>
-  <li><a href="https://github.com/emberian/dregg/tree/main/cli"><b>cli/</b></a> — the <code>dregg</code> binary: key management (<code>dregg id</code>), turns, the app-machine decoders, the guided <code>demo</code>.</li>
-  <li><a href="https://github.com/emberian/dregg/tree/main/node/src/mcp"><b>node/src/mcp/</b></a> — the MCP server: every AI tool-call carries a biscuit-style capability the node admits or refuses through the Lean producer gate. Manual: <a href="https://github.com/emberian/dregg/blob/main/docs/deos/DREGG-MCP.md">docs/deos/DREGG-MCP.md</a>.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/pg-dregg/README.md"><b>pg-dregg/</b></a> — capabilities as PostgreSQL row-level security + durable verified workflows (<code>dregg_admits('read', id)</code> is the same decision the kernel makes); the workflow spine is <a href="https://github.com/emberian/dregg/blob/main/pg-dregg/src/workflow.rs">src/workflow.rs</a>.</li>
-  <li><a href="https://github.com/emberian/dregg/tree/main/app-framework"><b>app-framework/</b></a> + <a href="https://github.com/emberian/dregg/tree/main/starbridge-apps"><b>starbridge-apps/</b></a> — the deos app framework (GatedAffordance, DeosApp) and the userspace apps built on it. What an app <i>is</i>: <a href="https://github.com/emberian/dregg/blob/main/docs/deos/DURABLE-WORKFLOW.md">docs/deos/DURABLE-WORKFLOW.md</a> (a cap-mandated, verified, durable workflow) and <a href="https://github.com/emberian/dregg/blob/main/docs/deos/APPS-AS-CELLS.md">APPS-AS-CELLS.md</a>.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/deos/DREGG-FORGE.md"><b>docs/deos/DREGG-FORGE.md</b></a> — the dregg-native code forge: no git underneath, the Pijul patch theory <i>is</i> the version control (<a href="https://github.com/emberian/dregg/tree/main/dregg-doc">dregg-doc/</a>). A merge is a proven pushout (never a silent overwrite), a comment/approval is signed by the reviewer it names, and a required check is satisfied only by a committed executor-signed receipt — no trusted CI runner, the proof is the pass. CLI: <a href="https://github.com/emberian/dregg/blob/main/dregg-doc/src/bin/dregg-forge.rs">dregg-forge</a> · every-glass card in <a href="https://github.com/emberian/dregg/tree/main/deos-view">deos-view</a>. Forge-as-a-grain (a CI-runner grain, PR-as-a-bounty) composes the existing grain economy; the grain-host signing weld is the one new piece and is landing — the composition is named.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/deos/GRAIN-HOMESERVER.md"><b>docs/deos/GRAIN-HOMESERVER.md</b></a> — a real Matrix homeserver (continuwuity) embedded as a library and run as a <b>confined grain</b> (<a href="https://github.com/emberian/dregg/tree/main/deos-homeserver">deos-homeserver/</a>): it serves the client-server API through a deny-default OS jail that reaches exactly one folder and one loopback port and nothing else, and the co-driven-card membrane rides <i>this</i> homeserver instead of an external one. The community platform hosts its own chat, cap-metered like any rented room.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/WALKTHROUGH.md"><b>docs/WALKTHROUGH.md</b></a> — the end-to-end tour · <a href="https://github.com/emberian/dregg/blob/main/docs/ONBOARDING.md">docs/ONBOARDING.md</a> — contributor orientation.</li>
-  <li><b>The browser doors</b> — no install at all: the <a href="#demos">live demos on this site</a> run the verified executor client-side in your tab.</li>
-</ul>
+<!-- ==================== PLAY WITH IT ==================== -->
+<section class="section" id="play">
+  <span class="section__label">Play with it</span>
+  <h2 class="section__title">Everything here is live, in your tab</h2>
+  <p class="section__intro">
+    Each surface below loads a verified executor compiled to WebAssembly and runs it in your browser.
+    Click an affordance and you fire a real cap-gated turn against an in-tab ledger; the bound fields
+    re-paint from the committed state. No install, no account, no server.
+  </p>
+  <p class="live-note"><span class="live-dot"></span> client-side WebAssembly &middot; real verified turns &middot; nothing leaves your machine</p>
+  <div class="tiles">
+    <a class="tile" href="./deos/">
+      <span class="tile__eyebrow">the desktop</span>
+      <span class="tile__name">deos cockpit</span>
+      <span class="tile__desc">Land inside deos: cells, a moldable inspector, the affordances each cell exposes, and the ocap graph. Click an authorized affordance and a real verified turn commits, leaving a receipt in the log.</span>
+      <span class="tile__go">open the cockpit &rsaquo;</span>
+    </a>
+    <a class="tile" href="./cards/">
+      <span class="tile__eyebrow">live cards</span>
+      <span class="tile__name">Card gallery</span>
+      <span class="tile__desc">A counter, a reflective inspector, a tally board, a key-value store cell, and document collaboration with conflicts as first-class objects — each a real verified turn over an in-tab executor.</span>
+      <span class="tile__go">open the gallery &rsaquo;</span>
+    </a>
+    <a class="tile" href="./explorer/">
+      <span class="tile__eyebrow">capabilities</span>
+      <span class="tile__name">Caps as rows</span>
+      <span class="tile__desc">Your capabilities expressed as the rows you may read. Present a token, change its caveats, and watch the cell rows narrow exactly as the row-level-security gate narrows them — fail-closed, no amplification.</span>
+      <span class="tile__go">open the explorer &rsaquo;</span>
+    </a>
+    <a class="tile" href="./light-client/">
+      <span class="tile__eyebrow">light client</span>
+      <span class="tile__name">Verify a whole history</span>
+      <span class="tile__desc">Fold a multi-turn history into one succinct recursive proof, in your tab, then verify it — re-executing nothing. Check it against a config anchor; a tampered anchor is refused, not laundered.</span>
+      <span class="tile__go">run the verifier &rsaquo;</span>
+    </a>
+    <a class="tile" href="./transclusion/">
+      <span class="tile__eyebrow">transclusion</span>
+      <span class="tile__name">Xanadu made honest</span>
+      <span class="tile__desc">Quote the web without copying it: a transcluded span is a verified dregg:// finalized read. Amend the source and the live quote follows; forge the bytes and the quote refuses to open; every quote leaves a receipt-pinned backlink.</span>
+      <span class="tile__go">open the docuverse &rsaquo;</span>
+    </a>
+    <a class="tile" href="./atlas/">
+      <span class="tile__eyebrow">reference</span>
+      <span class="tile__name">The atlas</span>
+      <span class="tile__desc">An interactive map of the whole protocol and its UI surfaces — the nouns, the effects, the screens — browsable end to end.</span>
+      <span class="tile__go">open the atlas &rsaquo;</span>
+    </a>
+    <a class="tile" href="./cockpit-gpui/">
+      <span class="tile__eyebrow">full renderer · needs WebGPU</span>
+      <span class="tile__name">gpui cockpit</span>
+      <span class="tile__desc">The full native gpui renderer — the same one the desktop draws with — on a WebGPU canvas, driving the same in-tab executor. Heavier; shown when the build is available in this deploy.</span>
+      <span class="tile__go">open the full cockpit &rsaquo;</span>
+    </a>
+  </div>
+</section>
 
-<!-- ================= FOR OPERATORS ================= -->
-<h2 id="operators">For operators<a class="anchor" href="#operators">#</a></h2>
-<ul class="idx">
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/OPERATOR-ONBOARDING.md"><b>docs/OPERATOR-ONBOARDING.md</b></a> — from zero to a running, joined node.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/guide/FEDERATION-JOIN.md"><b>docs/guide/FEDERATION-JOIN.md</b></a> — joining a federation live: candidate proposes, quorum approves, the committee advances at the next wave boundary; the <code>federation_id</code> never changes.</li>
-  <li><a href="https://github.com/emberian/dregg/tree/main/docs/ops"><b>docs/ops/</b></a> — first-responder + lifecycle runbooks for the native deploy:
-    <a href="https://github.com/emberian/dregg/blob/main/docs/ops/MONITORING.md">MONITORING.md</a> ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/ops/INCIDENT-RESPONSE.md">INCIDENT-RESPONSE.md</a> ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/ops/KEY-MANAGEMENT.md">KEY-MANAGEMENT.md</a> ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/ops/DISASTER-RECOVERY.md">DISASTER-RECOVERY.md</a> ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/ops/UPGRADE.md">UPGRADE.md</a>.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/BUILD-LEAN-LINKED-NODE.md"><b>docs/BUILD-LEAN-LINKED-NODE.md</b></a> — building the verified (Lean-linked) node · <a href="https://github.com/emberian/dregg/blob/main/docs/LEAN-SEED-ARTIFACT.md">docs/LEAN-SEED-ARTIFACT.md</a> — what the seed archive is and how it is produced/fetched.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/deos/DEV-NODE-RUNBOOK.md"><b>docs/deos/DEV-NODE-RUNBOOK.md</b></a> — the dev-node runbook · <a href="https://github.com/emberian/dregg/blob/main/docs/deos/HOMELAB-N3-RUNBOOK.md">HOMELAB-N3-RUNBOOK.md</a> — a three-node homelab federation.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/docs/deos/SELF-HOSTING-LOOP.md"><b>docs/deos/SELF-HOSTING-LOOP.md</b></a> — the system editing, building, and operating itself · <a href="https://github.com/emberian/dregg/blob/main/docs/deos/LOG-A-HERMES-IN.md">LOG-A-HERMES-IN.md</a> — log an agent in (the identical login ceremony with a narrower capability template).</li>
-</ul>
+<!-- ==================== QUICKSTART ==================== -->
+<section class="section" id="quickstart">
+  <span class="section__label">Quickstart</span>
+  <h2 class="section__title">Call it from your own code</h2>
+  <p class="section__intro">
+    The shape is the same in every language: an identity makes a turn, signs it, and submits it; you get
+    back a receipt. An unauthorized act is not expressible on the public surface — every action carries a
+    real signature over the canonical, federation-bound message.
+  </p>
+  <div class="qs-tabs">
+    <button class="qs-tab active" data-qs="ts">TypeScript &mdash; @dregg/sdk</button>
+    <button class="qs-tab" data-qs="py">Python &mdash; dregg</button>
+    <button class="qs-tab" data-qs="pg">Postgres &mdash; pg-dregg</button>
+  </div>
 
-<!-- ================= FOR PROVERS ================= -->
-<h2 id="provers">For provers and experts<a class="anchor" href="#provers">#</a></h2>
-<p class="dim" style="font-size:.9rem">
-  The system itself is <a href="https://github.com/emberian/dregg/tree/main/metatheory">metatheory/</a>
-  (Lean 4, library <code>Dregg2</code>): the eight-verb kernel, the gated executor, the circuit IR +
-  descriptor emission, the assurance case, the deos modeling. l4v-shaped: abstract spec → executable
-  design → refinement proofs. Build: <code>cd metatheory &amp;&amp; lake build</code>.
-</p>
-<ul class="idx">
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/AssuranceCase.lean"><b>AssuranceCase.lean</b></a> — the apex by guarantee (the table above) · <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Claims.lean">Claims.lean</a> — the build-enforced pin-net · <a href="https://github.com/emberian/dregg/blob/main/metatheory/CLAIMS.md">CLAIMS.md</a> — the skeptic-facing ledger.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Tactics.lean"><b>Dregg2/Tactics.lean</b></a> — <code>#assert_axioms</code> / <code>#assert_all_clean</code>: elaborates to an error unless the declaration&rsquo;s axiom set is exactly the three standard kernel axioms · <a href="https://github.com/emberian/dregg/blob/main/metatheory/docs/AXIOM-HYGIENE.md">metatheory/docs/AXIOM-HYGIENE.md</a> — the hygiene discipline.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Substrate/VerbRegistry.lean"><b>Substrate/VerbRegistry.lean</b></a> — the verb catalog source of truth (minimality + completeness are theorems, not prose).</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Spec/ExecRefinement.lean"><b>Spec/ExecRefinement.lean</b></a> — Exec ⊑ Abstract: the abstract state is witness-free; the symbolic/full witness-mode split (<a href="https://github.com/emberian/dregg/blob/main/turn/src/collapse.rs">turn/src/collapse.rs</a>) is exactly what the refinement throws away.</li>
-  <li><a href="https://github.com/emberian/dregg/tree/main/metatheory/Dregg2/Circuit"><b>Dregg2/Circuit/</b></a> — the circuit IR + descriptor emission: constraints generated from proved Lean modules as byte-pinned, SHA-256-fingerprinted artifacts; the Rust prover (<a href="https://github.com/emberian/dregg/tree/main/circuit">circuit/</a>) interprets them and authors zero constraint semantics.</li>
-  <li><a href="https://github.com/emberian/dregg/blob/main/metatheory/Metatheory/KeyLeak.lean"><b>Metatheory/KeyLeak.lean</b></a> — a leaked key is a compromised principal: blast radius bounded to the attenuation-closure of the leaked c-list; the named open construction is Settlement Soundness.</li>
-  <li><b>The deos models</b> (deos adds zero new trust — every UI primitive reduces to a kernel theorem):
-    <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Deos/GatedAffordance.lean">GatedAffordance.lean</a> (cap-gate × state-gate buttons) ·
-    <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Deos/Transclusion.lean">Transclusion.lean</a> (provenanced citation) ·
-    <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Deos/Rehydration.lean">Rehydration.lean</a> (membranes compose <code>is_attenuation</code>; a forwarded view can never amplify) ·
-    <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Deos/DocMerge.lean">DocMerge.lean</a> (branch-and-stitch merge correctness) ·
-    <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Deos/FlowRefine.lean">FlowRefine.lean</a> (decidable flow refinement: <code>decideRefines</code>, sound and complete) ·
-    <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Protocol/Workflow.lean">Protocol/Workflow.lean</a> + <a href="https://github.com/emberian/dregg/blob/main/metatheory/Dregg2/Deos/WorkflowBridge.lean">Deos/WorkflowBridge.lean</a> (a step is a verified turn; the surface renders the choreography, it does not fork it).</li>
-  <li><b>The deployment seam, in the open:</b>
-    <a href="https://github.com/emberian/dregg/blob/main/dregg-lean-ffi/README.md">dregg-lean-ffi/</a> (Lean executor → <code>libdregg_lean.a</code> → the node&rsquo;s C-ABI entry) ·
-    <a href="https://github.com/emberian/dregg/blob/main/dregg-lean-ffi/src/marshal.rs">src/marshal.rs</a> (the wire-codec translation-validation obligation) ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/RUST-LEAN-EXECUTOR-PARITY.md">docs/RUST-LEAN-EXECUTOR-PARITY.md</a> (the parity gauntlet) ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/RECEIPT-CONTRACT.md">docs/RECEIPT-CONTRACT.md</a> ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/FAITHFUL-COMMITMENT-LAW.md">docs/FAITHFUL-COMMITMENT-LAW.md</a> ·
-    <a href="https://github.com/emberian/dregg/blob/main/docs/VERIFIED-STORAGE.md">docs/VERIFIED-STORAGE.md</a>.</li>
-  <li><b>Design corpora:</b>
-    <a href="https://github.com/emberian/dregg/tree/main/docs/deos">docs/deos/</a> (the deos vision + design set: <a href="https://github.com/emberian/dregg/blob/main/docs/deos/DEOS.md">DEOS.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/HIG.md">HIG.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/COCKPIT-UX.md">COCKPIT-UX.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/HYPERDREGGMEDIA.md">HYPERDREGGMEDIA.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/DOCUMENT-LANGUAGE.md">DOCUMENT-LANGUAGE.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/SESSION-LOGIN.md">SESSION-LOGIN.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/DEOS-DISTRIBUTION.md">DEOS-DISTRIBUTION.md</a>, <a href="https://github.com/emberian/dregg/blob/main/docs/deos/WEB-DEOS.md">WEB-DEOS.md</a>, and ~150 more) ·
-    <a href="https://github.com/emberian/dregg/tree/main/docs/design-frontiers">docs/design-frontiers/</a> ·
-    <a href="https://github.com/emberian/dregg/tree/main/docs/desktop-os-research">docs/desktop-os-research/</a> ·
-    <a href="https://github.com/emberian/dregg/tree/main/docs/audit">docs/audit/</a> (adversarial gap audits).</li>
-</ul>
+  <div class="qs-panel active" data-qs="ts">
+    <p>Install the SDK and run a turn against a local dev node.</p>
+    <pre><code>npm install @dregg/sdk</code></pre>
+    <pre><code>import { AgentRuntime, NodeClient, profiles } from "@dregg/sdk";
 
-<!-- ================= DEMOS ================= -->
-<h2 id="demos">Live demos on this site<a class="anchor" href="#demos">#</a></h2>
-<p class="dim" style="font-size:.9rem">
-  Every surface below is static and client-side: the verified executor is compiled to WebAssembly and
-  runs in your tab — no backend, no account. A click is a real cap-gated verified turn against an
-  in-tab ledger.
-</p>
-<div class="tscroll"><table>
-  <tr><th>surface</th><th>what it is</th></tr>
-  <tr><td><a href="./deos/">/deos/</a></td>
-      <td class="dim">The deos cockpit (WebImage skin): cells, a moldable inspector, per-cell affordances, the ocap graph. Fire an authorized affordance → a verified turn commits, leaving a receipt in the log.</td></tr>
-  <tr><td><a href="./cards/">/cards/</a></td>
-      <td class="dim">The deos-js card gallery — counter, reflective inspector, tally board, kv-store, and doc-collab with conflicts as first-class objects — each card a real verified turn over the in-tab executor.</td></tr>
-  <tr><td><a href="./explorer/">/explorer/</a></td>
-      <td class="dim">Caps-as-rows: your capabilities expressed as the rows you may read; change a token&rsquo;s caveats and watch the visible rows narrow, fail-closed. The browser twin of pg-dregg&rsquo;s cap-gated RLS.</td></tr>
-  <tr><td><a href="./light-client/">/light-client/</a></td>
-      <td class="dim">Verify a whole finalized history in ONE recursive STARK, in-tab, re-executing nothing. Ships a real pre-folded aggregate (<a href="./light-client/history.json">history.json</a>); a tampered trust anchor is refused, not laundered. The executable counterpart of guarantee E.</td></tr>
-  <tr><td><a href="./transclusion/">/transclusion/</a></td>
-      <td class="dim">Xanadu made honest: a transcluded span is a verified <code>dregg://</code> finalized read. Amend the source and the live quote follows; forge the bytes and the quote is refused with <code>ContentHashMismatch</code>; every quote leaves a receipt-pinned backlink. Verification lightens; nothing else does.</td></tr>
-  <tr><td><a href="./dregg-works/">/dregg-works/</a></td>
-      <td class="dim">The trustless-host front door: publish = commit <code>blake3(page)</code> to your cell in a receipted turn; the host serves bytes it cannot alter undetected. Embeddable scripts: <a href="./dregg-works/verify-badge.js">verify-badge.js</a> (re-hash the served body against the on-chain commitment) and <a href="./dregg-works/transclude.js">transclude.js</a> (carry a verified <code>dregg://</code> quote on any web page).</td></tr>
-  <tr><td><a href="./deos-viewer/">/deos-viewer/</a></td>
-      <td class="dim">The desktop in a link: a shared desktop is a tape (pinned instant + message sequence + claimed root), replayed through the verified executor by the reader&rsquo;s own viewer — the headline is a root equality, not an image.</td></tr>
-  <tr><td><a href="./atlas/">/atlas/</a></td>
-      <td class="dim">The comprehension atlas: an interactive, grounded map of the whole protocol and its UI surfaces. Source + build: <a href="https://github.com/emberian/dregg/tree/main/docs/atlas">docs/atlas/</a> (vanilla HTML/CSS/JS, no build step).</td></tr>
-  <tr><td><a href="./cockpit-gpui/">/cockpit-gpui/</a></td>
-      <td class="dim">The full native gpui renderer on a WebGPU canvas, driving the same in-tab executor. Heavier; present only when the gpui-web build resolved in this deploy.</td></tr>
-</table></div>
+// 1. a named identity (the same store as the `dregg id` CLI)
+const identity = profiles.loadActive() ?? (profiles.create("me"), profiles.load("me"));
 
-<!-- ================= MAP ================= -->
-<h2 id="map">The repository map<a class="anchor" href="#map">#</a></h2>
-<div class="tscroll"><table>
-  <tr><th>where</th><th>what</th></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/metatheory">metatheory/</a></td><td class="dim">The system itself, in Lean 4 (library <code>Dregg2</code>): kernel, gated executor, circuit IR + descriptor emission, assurance case, deos modeling.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/dregg-lean-ffi">dregg-lean-ffi/</a></td><td class="dim">The link: compiles the Lean executor into <code>libdregg_lean.a</code> and exports the entry the node calls.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/node">node/</a></td><td class="dim">The daemon: HTTP/MCP API, gossip + blocklace sync, block production driven by the Lean producer.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/circuit">circuit/</a></td><td class="dim">The STARK stack: the Lean-descriptor interpreter (the prover), Plonky3 (BabyBear · Poseidon2 · FRI), recursive aggregation, the light-client verifier. No hand-authored AIRs.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/cell">cell/</a> · <a href="https://github.com/emberian/dregg/tree/main/cell-crypto">cell-crypto/</a> · <a href="https://github.com/emberian/dregg/tree/main/turn">turn/</a> · <a href="https://github.com/emberian/dregg/tree/main/wire">wire/</a></td><td class="dim">The Rust data plane: zero-crypto cell types (the four substances + programs); the crypto (notes, value-commitments, seal/stealth); turn types + executor + witness-mode/collapse; the wire codec.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/blocklace">blocklace/</a> · <a href="https://github.com/emberian/dregg/tree/main/federation">federation/</a> · <a href="https://github.com/emberian/dregg/tree/main/captp">captp/</a> · <a href="https://github.com/emberian/dregg/tree/main/coord">coord/</a></td><td class="dim">The signed, equivocation-detecting, BFT-final DAG; committee machinery; capability transport (OCapN; the data plane is <a href="https://github.com/emberian/dregg/blob/main/captp/src/data_plane.rs">captp/src/data_plane.rs</a>); coordination protocols.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/dregg-doc">dregg-doc/</a></td><td class="dim">The document language: a Pijul-shaped patch core — changes as first-class objects, conflicts as objects, the branch-and-stitch pushout merge — plus a <code>ropey</code>↔patch bridge.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/pg-dregg">pg-dregg/</a></td><td class="dim">dregg capabilities + durable verified workflows as a PostgreSQL extension (RLS + the AUTHZ → CHAIN → APPLY write spine).</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/starbridge-v2">starbridge-v2/</a> · <a href="https://github.com/emberian/dregg/tree/main/starbridge-web-surface">starbridge-web-surface/</a></td><td class="dim">deos: the native gpui cockpit embedding the real executor (<a href="https://github.com/emberian/dregg/tree/main/starbridge-v2/src/dock">src/dock/</a> panes, <a href="https://github.com/emberian/dregg/blob/main/starbridge-v2/src/session.rs">session.rs</a> login=root-cap, <a href="https://github.com/emberian/dregg/blob/main/starbridge-v2/src/powerbox.rs">powerbox.rs</a> designate-then-attenuate) + the web-surface/affordance/rehydration stack.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/deos-zed">deos-zed/</a> · <a href="https://github.com/emberian/dregg/tree/main/deos-terminal">deos-terminal/</a> · <a href="https://github.com/emberian/dregg/tree/main/deos-matrix">deos-matrix/</a> · <a href="https://github.com/emberian/dregg/tree/main/deos-hermes">deos-hermes/</a></td><td class="dim">The dock apps: a code editor, a real PTY terminal, a Matrix client carrying rehydratable membranes, a ToolGateway-gated agent bridge — deos editing, building, and operating itself.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/sdk">sdk/</a> · <a href="https://github.com/emberian/dregg/tree/main/sdk-ts">sdk-ts/</a> · <a href="https://github.com/emberian/dregg/tree/main/sdk-py">sdk-py/</a> · <a href="https://github.com/emberian/dregg/tree/main/cli">cli/</a></td><td class="dim">The three SDKs + the <code>dregg</code> CLI.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/wasm">wasm/</a> · <a href="https://github.com/emberian/dregg/tree/main/site">site/</a></td><td class="dim">The in-browser executor (standalone workspace) and this site&rsquo;s source (see <a href="#colophon">colophon</a>).</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/app-framework">app-framework/</a> · <a href="https://github.com/emberian/dregg/tree/main/starbridge-apps">starbridge-apps/</a></td><td class="dim">The deos app framework + the userspace apps built on the substrate.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/dregg-deploy">dregg-deploy/</a></td><td class="dim">DreggDL, declarative deployment specs: an over-grant in a spec is caught as in-forest capability amplification before anything deploys.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/sel4">sel4/</a></td><td class="dim">The Robigalia/seL4 embedding: protection-domain crates, the Microkit assembly, the booting executor PD (the Lean kernel inside a real seL4 protection domain, under QEMU), the crypto floor. Reference: <a href="https://github.com/emberian/dregg/blob/main/docs/reference/firmament.md">docs/reference/firmament.md</a>.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/discord-bot">discord-bot/</a></td><td class="dim">Councils, real signed turns, cipherclerk macaroons — not a read-only mirror.</td></tr>
-  <tr><td><a href="https://github.com/emberian/dregg/tree/main/docs">docs/</a></td><td class="dim">The design documents; <a href="https://github.com/emberian/dregg/blob/main/docs/OVERVIEW.md">OVERVIEW.md</a> is the top.</td></tr>
-</table></div>
+// 2. bind to a node (your local dev node, or a remote node + its operator token)
+const node = new NodeClient("http://localhost:8421");
+const runtime = new AgentRuntime(identity, node);
 
-<!-- ================= COLOPHON ================= -->
-<h2 id="colophon">This site<a class="anchor" href="#colophon">#</a></h2>
-<p class="dim" style="font-size:.9rem">
-  This page and every demo surface are static files assembled by
-  <a href="https://github.com/emberian/dregg/blob/main/scripts/build-pages-dist.sh">scripts/build-pages-dist.sh</a>
-  from <a href="https://github.com/emberian/dregg/tree/main/site">site/</a> (source layout + build knobs:
-  <a href="https://github.com/emberian/dregg/blob/main/site/README.md">site/README.md</a>) and deployed by the
-  manual-dispatch <a href="https://github.com/emberian/dregg/blob/main/.github/workflows/pages.yml">pages workflow</a>
-  — green-or-bust: a broken wasm crate fails the deploy; nothing stale ships. The wasm executors are built
-  from <a href="https://github.com/emberian/dregg/tree/main/wasm">wasm/</a> and
-  <a href="https://github.com/emberian/dregg/tree/main/starbridge-v2/web">starbridge-v2/web/</a> at deploy time.
-  The human-facing, educational site is <a href="https://www.dregg.net">dregg.net</a>; this index is the
-  machine- and expert-facing half of the split, written to be read by LLMs as much as by people.
-</p>
+// 3. identity -&gt; turn -&gt; sign -&gt; submit -&gt; receipt
+const receipt = await runtime.turn()
+  .transfer({ to: "cell:...", amount: 10n })
+  .sign()
+  .submit();
 
-<footer>
-  <code>dregg</code> / deos — a capability-secure, witnessed substrate.
-  AGPL-3.0-or-later (<a href="https://github.com/emberian/dregg/blob/main/LICENSE">LICENSE</a>) ·
-  <a href="https://github.com/emberian/dregg">source</a> ·
-  <a href="https://github.com/emberian/dregg/blob/main/readme.md">human README</a> ·
-  <a href="https://github.com/emberian/dregg/blob/main/README-LLMs.md">machine README</a> ·
-  <a href="https://discord.gg/eSTsv7DWcR">Discord</a> ·
-  <a href="https://www.dregg.net">dregg.net</a>
-</footer>
+console.log(receipt.committed, receipt.postState);</code></pre>
+    <p class="hero__sub" style="font-size:0.82rem;margin:0;">There is no public server today; run a node locally first (<code>dregg-node init &amp;&amp; dregg-node run --enable-faucet --port 8421</code>). See the SDK's <code>QUICKSTART.md</code>.</p>
+  </div>
+
+  <div class="qs-panel" data-qs="py">
+    <p>The default wheel is the light, kernel-free client. The same shape: identity &rarr; turn &rarr; sign &rarr; submit &rarr; receipt.</p>
+    <pre><code>pip install dregg</code></pre>
+    <pre><code>from dregg import Identity, NodeClient
+
+identity = Identity.load_active() or Identity.create("me")
+node = NodeClient("http://localhost:8421")
+
+receipt = (
+    node.turn(identity)
+        .transfer(to="cell:...", amount=10)
+        .sign()
+        .submit()
+)
+print(receipt.committed, receipt.post_state)</code></pre>
+    <p class="hero__sub" style="font-size:0.82rem;margin:0;">For the embedded verified Lean kernel, install the heavy build: <code>pip install "dregg[kernel]"</code>.</p>
+  </div>
+
+  <div class="qs-panel" data-qs="pg">
+    <p>pg-dregg adds three things to a database — cap-secure row-level security, a verified store that refuses a tampered batch, and proof-attested ranges. See them end to end without installing Postgres:</p>
+    <pre><code>git clone https://github.com/emberian/dregg
+cd dregg/pg-dregg
+cargo run --example three_pillars</code></pre>
+    <p>The same behaviour runs through real SQL on pg18 via <code>cargo pgrx test pg18</code> / <code>cargo pgrx run pg18</code>. The browser twin of pillar one is the <a href="./explorer/">caps-as-rows explorer</a>.</p>
+  </div>
+</section>
+
+<!-- ==================== WHAT IT DOES ==================== -->
+<section class="section" id="does">
+  <span class="section__label">What it does</span>
+  <h2 class="section__title">The guarantees, stated plainly</h2>
+  <div class="problems">
+    <div class="problem">
+      <p class="problem__label problem__label--solve">cap-gating</p>
+      <p class="problem__text"><strong>No amplification.</strong> Authority only narrows. An attenuated token sees a strict subset of what its parent saw and can do a strict subset of what its parent could do. There is no path from a weaker token to a stronger one.</p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--solve">conservation</p>
+      <p class="problem__text"><strong>Nothing is created or destroyed off the books.</strong> Balances are conserved across a turn by construction; a turn that would violate conservation does not commit.</p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--solve">verified store</p>
+      <p class="problem__text"><strong>A tampered or reordered batch is refused</strong> by the chain tooth the database engine itself runs — without re-running any prover. The store checks the proof, not the work.</p>
+    </div>
+    <div class="problem">
+      <p class="problem__label problem__label--solve">light-client</p>
+      <p class="problem__text"><strong>A whole history folds into one proof.</strong> A client can verify that every finalized turn executed correctly, in order, from genesis to the final root — re-witnessing nothing. The trust anchor is configuration, never read off the artifact under verification.</p>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== WHAT IT ENABLES ==================== -->
+<section class="section" id="enables">
+  <span class="section__label">What it enables</span>
+  <h2 class="section__title">What you can build on it</h2>
+  <div class="usecases">
+    <div class="usecase">
+      <div class="usecase__icon">sovereign apps</div>
+      <div class="usecase__title">Apps that own their state</div>
+      <div class="usecase__desc">An application is a set of cells and the capabilities between them. It runs the same way on your phone, on a server, or fully in a browser tab — the executor is the same verified code.</div>
+    </div>
+    <div class="usecase">
+      <div class="usecase__icon">agent memory</div>
+      <div class="usecase__title">Witnessed memory for agents</div>
+      <div class="usecase__desc">Per-cell heaps, working memory, and passable intermediate states — a portable, witnessed primitive. An agent's memory becomes something you can attenuate, hand off, and verify.</div>
+    </div>
+    <div class="usecase">
+      <div class="usecase__icon">collaboration</div>
+      <div class="usecase__title">Documents with conflicts as objects</div>
+      <div class="usecase__desc">Fork a document, diverge, then stitch. A merge surfaces conflicts as first-class objects — both alternatives held side by side — and resolving one is itself a verified turn.</div>
+    </div>
+    <div class="usecase">
+      <div class="usecase__icon">disclosure</div>
+      <div class="usecase__title">Cross-org selective disclosure</div>
+      <div class="usecase__desc">Reveal exactly the facts you choose, with a proof — or reveal one allow/deny bit and nothing else. The verifier learns the verdict without learning the data behind it.</div>
+    </div>
+    <div class="usecase">
+      <div class="usecase__icon">settlement</div>
+      <div class="usecase__title">Settlement across chains</div>
+      <div class="usecase__desc">A finalized history can be wrapped for an external chain to settle against — the recursive aggregate is the bridge. The same receipts, checked elsewhere.</div>
+    </div>
+    <div class="usecase">
+      <div class="usecase__icon">databases</div>
+      <div class="usecase__title">A database that checks itself</div>
+      <div class="usecase__desc">pg-dregg makes row-level security a capability predicate, refuses a tampered commit log, and attests ranges with a proof — inside the engine, with no separate trusted service.</div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== dregg.works — the trustless host ==================== -->
+<section class="section" id="works">
+  <span class="section__label">dregg.works</span>
+  <h2 class="section__title">A host that cannot tamper with what it serves</h2>
+  <p class="section__intro">
+    Publish a minisite and you commit its <code>blake3</code> hash to your cell, on-chain, in one cap-gated
+    receipted turn. <code>&lt;name&gt;.dregg.works</code> then serves the bytes — but the host has no way to
+    change them. Every served page carries a verify badge: your browser re-hashes the bytes it received and
+    checks them against the commitment fetched from the node. <strong>✓ match, or ✗ tampered — and you don't
+    have to take the host's word for either.</strong>
+  </p>
+  <div class="dw-flow">
+    <div class="dw-step"><span class="dw-step__n">1 · commit</span><span class="dw-step__t">Publish</span>
+      <span class="dw-step__d">A cap-gated turn writes <code>blake3(page)</code> into slot 0 of your cell. The commitment is the trust-bearing half — yours, on-chain, receipted.</span></div>
+    <div class="dw-step"><span class="dw-step__n">2 · serve</span><span class="dw-step__t">Host the bytes</span>
+      <span class="dw-step__d"><code>&lt;name&gt;.dregg.works</code> ships the raw bytes. Convenience, not trust — the host is untrusted infrastructure.</span></div>
+    <div class="dw-step"><span class="dw-step__n">3 · verify</span><span class="dw-step__t">Check it yourself</span>
+      <span class="dw-step__d">The badge re-hashes the served body in your tab and compares it to the cell's committed hash. A tampered byte is caught before you trust a word.</span></div>
+  </div>
+  <div class="hero__cta" style="margin-top:var(--s5)">
+    <a class="btn btn--primary" href="./dregg-works/">Enter dregg.works</a>
+  </div>
+</section>
+
+<!-- ==================== CLOSING THESIS ==================== -->
+<section class="section">
+  <div class="arch" style="display:flex;align-items:center;justify-content:center;padding:var(--s8) var(--s6);">
+    <p class="thesis">A turn is the exercise of an attenuable proof-carrying token over owned state, <em>leaving a verifiable receipt.</em></p>
+  </div>
+</section>
 
 </main>
+
+<footer class="site-foot">
+  <div class="site-foot__inner">
+    <span class="site-foot__left"><code>dregg</code> / deos &mdash; a capability-secure, witnessed substrate. AGPL-3.0-or-later.</span>
+    <div class="site-foot__links">
+      <a href="./light-client/">Light client</a>
+      <a href="./dregg-works/">dregg.works</a>
+      <a href="./deos/">deos</a>
+      <a href="./cards/">Cards</a>
+      <a href="./explorer/">Explorer</a>
+      <a href="./transclusion/">Transclusion</a>
+      <a href="./atlas/">Atlas</a>
+      <a href="https://github.com/emberian/dregg">GitHub</a>
+    </div>
+  </div>
+</footer>
+
+<script>
+  // quickstart tabs
+  for (const tab of document.querySelectorAll('.qs-tab')) {
+    tab.addEventListener('click', () => {
+      const which = tab.dataset.qs;
+      for (const t of document.querySelectorAll('.qs-tab')) t.classList.toggle('active', t === tab);
+      for (const p of document.querySelectorAll('.qs-panel')) p.classList.toggle('active', p.dataset.qs === which);
+    });
+  }
+</script>
 </body>
 </html>
