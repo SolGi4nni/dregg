@@ -583,3 +583,20 @@ depth/positions; (c) the fold proof/adapter generalize trivially (claim shape un
     defi_primitives.rs. It's the DERIVATION family → flip onto the emitted derivation descriptor (exists;
     DerivationEmit + Rung-2 from the bugfix campaign). Needs a derivation witness builder (mirror the
     others) + flip the struct/producer/verify. Then: 0 true-live → delete hand AIRs → git rm stark.rs.
+
+
+## ⚑⚑⚑ CONSUMER MIGRATION COMPLETE (2026-07-09) — the deletion gate is essentially clear
+Rigorous recount (grepping ACTUAL call-sites, excluding p3_uni_stark:: false-positives + comments):
+- **ZERO** cross-crate `dregg_circuit::stark::(prove|verify|proof_*)` calls.
+- **ZERO** non-test `crate::stark::(prove|verify)` calls inside circuit/ production code.
+- Remaining hand-engine references are: (a) the hand-AIR DEFINITION files (*_air.rs, dsl/*) — the
+  DELETE TARGETS themselves, not consumers; (b) circuit/src/dsl/circuit.rs:1474 = a #[cfg(test)] use;
+  (c) sel4/.../crypto-floor uses `stark_core::stark` — a SEPARATE VENDORED copy (decoupled by design,
+  NOT circuit/src/stark.rs — does not block the rm).
+Every real production consumer is flipped onto the descriptor prover. The Golden Lift closed the
+presentation family (auth + ring membership + unlinkability, in-circuit, fold-carried) + cross_state_
+derivation (last StarkProof struct consumer). WHAT REMAINS for git rm circuit/src/stark.rs: delete the
+orphaned hand-AIR files (*_air.rs, the dsl/*.rs StarkAir impls) — KEEPING poseidon2 CHIP machinery the
+descriptor prover uses (poseidon2_air.rs needs the chip/trace-gen split checked) — then rm stark.rs +
+fix the #[cfg(test)] site. This is the deletion sweep, gated only on: is poseidon2_air chip-vs-AIR
+separable, and confirming no non-vendored prod path breaks.
