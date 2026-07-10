@@ -347,3 +347,17 @@ REMAINING, and NONE is a research open — they are composition + a decision:
   correspondence (harness EXISTS: dregg-lean-ffi + goldens; import-cycle + 25/42-file ripple), or (B) keep it
   opaque and name `StarkSound` as an explicit floor/TCB item. This is a design choice, not a proof.
 - SEPARATE CAMPAIGN: #4 FriExtract (the recursive/aggregated apex — a knowledge-extraction obligation, not FRI).
+
+## ★★★ THE DEBT-A KEYSTONE (2026-07-10, `b064b99b9`, verified by type): the FRI tower lands on a TOY VM
+`circuit_sound_via_fri` / `friProximity_bridge` conclude over `applyEff : Effect → State → State`, `Step State
+Effect`, payload `satisfiesTransition` (single functional step `new = applyEff eff old`) — ABSTRACT types.
+`MainAirAccept (hash)(d : EffectVmDescriptor2)(t : VmTrace)` is over the DEPLOYED trace. **No committed term :
+`verifyAlgo … = true → MainAirAccept … t`.** So #2 (query soundness) + #3 (bridge) + #6 (arity) are real math for
+a TOY single-step VM, NOT the deployed 16-column BabyBear AIR. `ZMod 5 ≠ BabyBear`, one level up.
+⇒ `StarkSound` is NOT "a KAT correspondence away." The real keystone is `verifyAlgo @ fullChecks accepts ⟹
+MainAirAccept hash d t` over the DEPLOYED trace, and its argument is NOT `circuit_sound_via_fri` — it is the OOD
+QUOTIENT-CONSISTENCY step: verifyAlgo checks `C(ζ) = Z_H(ζ)·q(ζ)` at a random OOD ζ AND FRI proves q low-degree ⟹
+(Schwartz–Zippel on ζ, err ≤ deg/|F|) `C = Z_H·q` as polynomials ⟹ C vanishes on H (the trace rows) ⟹
+MainAirAccept. The FRI low-degree half is banked (#2); the OOD-ζ consistency over the deployed descriptor is the
+unwritten keystone. Same SHAPE as DEBT-B's finite-map refinement (make the proof faithful to the deployed object).
+The `MainAirAccept ⟹ Satisfied2` half is already proved (6/8 legs @ transferV3, `AirLegsDischarged`).

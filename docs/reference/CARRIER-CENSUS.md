@@ -358,3 +358,17 @@ CONSEQUENCES, stated plainly:
 - The missing piece is the standard FRI soundness-error bound at `num_queries = 38`, `log_blowup = 3`
   (rate 1/8): the probability that 38 uniform queries miss a δ-far disagreement set. That is the quantitative
   step no lane has taken, and it is the honest content of "the FRI verifier is sound at the deployed params."
+
+## ★★★ THE DEBT-A KEYSTONE (2026-07-10, `b064b99b9`, verified by type): the FRI tower lands on a TOY VM
+`circuit_sound_via_fri` / `friProximity_bridge` conclude over `applyEff : Effect → State → State`, `Step State
+Effect`, payload `satisfiesTransition` (single functional step `new = applyEff eff old`) — ABSTRACT types.
+`MainAirAccept (hash)(d : EffectVmDescriptor2)(t : VmTrace)` is over the DEPLOYED trace. **No committed term :
+`verifyAlgo … = true → MainAirAccept … t`.** So #2 (query soundness) + #3 (bridge) + #6 (arity) are real math for
+a TOY single-step VM, NOT the deployed 16-column BabyBear AIR. `ZMod 5 ≠ BabyBear`, one level up.
+⇒ `StarkSound` is NOT "a KAT correspondence away." The real keystone is `verifyAlgo @ fullChecks accepts ⟹
+MainAirAccept hash d t` over the DEPLOYED trace, and its argument is NOT `circuit_sound_via_fri` — it is the OOD
+QUOTIENT-CONSISTENCY step: verifyAlgo checks `C(ζ) = Z_H(ζ)·q(ζ)` at a random OOD ζ AND FRI proves q low-degree ⟹
+(Schwartz–Zippel on ζ, err ≤ deg/|F|) `C = Z_H·q` as polynomials ⟹ C vanishes on H (the trace rows) ⟹
+MainAirAccept. The FRI low-degree half is banked (#2); the OOD-ζ consistency over the deployed descriptor is the
+unwritten keystone. Same SHAPE as DEBT-B's finite-map refinement (make the proof faithful to the deployed object).
+The `MainAirAccept ⟹ Satisfied2` half is already proved (6/8 legs @ transferV3, `AirLegsDischarged`).
