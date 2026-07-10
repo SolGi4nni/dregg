@@ -231,3 +231,12 @@ AirSoundness.lean:234). `fold_close_of_two_alpha`/`friProximity_discharge` are f
 - ▶ brick 4 (in flight): realize `Satisfied2Faithful` at the REAL `Poseidon2BabyBearW16.perm` (deployed, KAT-
   validated bit-exact) — permWidth / chipHashIsLane0 / ChipTableSoundN over the genuine chip. If the deployed
   hash is NOT lane 0 of the real perm, that FALSE obligation is the finding.
+- ⚠⚠ DEBT-A CARRIER AUDIT `96f9fd9a5` (spot-verified by hand) — the STARK core is UN-DEPLOYED everywhere:
+  `StarkSound`'s apparent instance is LAUNDERING (FriVerifierBridge builds it from `[carrier : AlgoStarkSound]`
+  taken as a HYPOTHESIS; AlgoStarkSound has 0 instances). `FriExtract`'s sole realization is over
+  `witVerify := fun _ => true` (ACCEPT-EVERYTHING). `ChipTableSoundN`: 0 realizations at the deployed perm, 139
+  hypothesis sites. `FriProximity` = a NAME COLLISION with NO bridge term. Counts: NON-VACUITY-ONLY 3 · ASSUMED 5
+  · DISCHARGED-AT-DEPLOYED 3 (ChipTableSound legacy, RangeTableSound, GuardDecodes2 — the AIR support layer is
+  genuinely real) · FLOOR 2. Doc: docs/reference/DEBT-A-CARRIER-AUDIT.md.
+  ⇒ DEBT-A MUST PROVE: ChipTableSoundN @ real perm · FRI proximity @ deployed params · the FriProximity bridge ·
+  a real per-node FriExtract · an actual instance : StarkSound not routed through assumed AlgoStarkSound.
