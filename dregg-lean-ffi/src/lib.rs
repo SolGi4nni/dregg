@@ -910,6 +910,16 @@ mod ffi {
         Err("Lean static lib not linked".into())
     }
 
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-DSA verify
+    /// core. Unlinked stub: the archive is absent, so the real core is never present.
+    pub fn fips204_verify_real_present() -> bool {
+        false
+    }
+
+    pub fn lean_fips204_verify_real(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
     pub fn fips204_sign_present() -> bool {
         false
     }
