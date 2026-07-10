@@ -1,3 +1,5 @@
+> **New here? Read [README.md](README.md)** — the clean, present-tense overview of the whole system. This file keeps the detailed walkthroughs + recorded driven-run transcripts.
+
 # ▶ START HERE — the verifiable-fiction arcade
 
 **One command serves everything:**
