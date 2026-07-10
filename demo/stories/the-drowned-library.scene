@@ -1,0 +1,140 @@
+---
+id: drowned_library
+title: The Drowned Library
+weight: 10
+---
+
+=== intro
+
+The tide-bell has already rung twice. In an hour the sea reclaims the
+Library of Vael for another century, and the Ledger of Tides — the only
+record of who owns what along this whole drowned coast — goes with it,
+unless your company carries it out tonight.
+
+Torchlight. Three arches. The water is at your ankles and rising.
+
+The company decides together. Choose.
+
+* [Take the LANTERN from the warden's hook — the deep stacks are lightless]
+  ~ lantern = 1
+  -> arches
+
+* [Leave the lantern; speed matters more than light]
+  -> arches
+
+=== arches
+
+Three ways down. The bell tolls a third time somewhere above.
+
+* [The Grand Stair — wide, obvious, and already half-flooded]
+  -> stair
+
+* [The Cipher Door — sealed with a lock of seven rings] { lantern >= 1 }
+  ~ chose_cipher = 1
+  -> cipher_door
+
+* [The Drowned Cut — a flooded crawlway only the desperate use]
+  -> cut
+
+=== stair
+
+You descend the Grand Stair into the reading-hall. Shelves rise into the
+dark like the ribs of a whale. Somewhere ahead, the Ledger's iron case.
+
+But the water here is chest-high and moving with intent.
+
+* [Wade for the case — the Ledger is close] { lantern >= 1 }
+  ~ have_ledger = 1
+  -> hall_with_light
+
+* [Wade for the case blind, feeling along the shelves]
+  -> hall_dark
+
+* [Retreat — the Cut, while there's time]
+  -> cut
+
+=== hall_dark
+
+Blind, you misjudge the current. A shelf goes over; the case tumbles into
+black water. You feel for it, and feel, and the cold climbs to your throat.
+
+The company hauls each other back to the stair, empty-handed. Some things
+the dark just keeps.
+
+* [Climb out with your lives]
+  -> ending_lost
+
+=== hall_with_light
+
+The lantern throws your shadows huge across the drowned hall. There: the
+iron case, chained to a reading-desk. The Ledger is inside, dry.
+
+The chain needs a key. Or a stubborn company and a pry-bar of driftwood.
+
+* [Break the chain — loud, slow, but sure]
+  ~ have_ledger = 1
+  -> escape
+
+* [You brought no key; improvise and go]
+  ~ have_ledger = 1
+  -> escape
+
+=== cipher_door
+
+By lantern-light the seven rings resolve into a riddle in the old coast-
+script: a sequence of tides. Your company argues, aligns the rings, and
+the door sighs inward onto a dry vault — the Keeper's own room, the Ledger
+on a lectern, and beside it, the Keeper's Key.
+
+* [Take the Ledger AND the Key — leave nothing]
+  ~ have_ledger = 1
+  ~ have_key = 1
+  -> escape
+
+* [Take only the Ledger; the Key is not yours to take]
+  ~ have_ledger = 1
+  -> escape
+
+=== cut
+
+The Drowned Cut is exactly as bad as its name. You go through it hand over
+hand, lungs burning, and surface in a side-gallery — past the worst of the
+flooding, but nowhere near the Ledger. You've bought speed and lost the prize.
+
+* [Press on to the reading-hall from here] { lantern >= 1 }
+  -> hall_with_light
+
+* [Press on blind]
+  -> hall_dark
+
+=== escape
+
+Ledger in its oilcloth, you run the rising dark for the tide-bell stair.
+The sea is at your waists, then your chests. The last arch is a throat of
+black water and you go through it together or not at all.
+
+* [Go — all of you, at once, the Ledger held high]
+  -> ending_saved
+
+=== ending_saved
+
+You break the surface under a sky going grey with dawn, the Ledger dry
+above your heads, the Library gone under behind you for another hundred
+years.
+
+The coast will know, tomorrow and for every tomorrow, exactly who owns
+what — because your company carried the record out of the dark, and no
+tide, and no lord, can quietly rewrite what is written and witnessed.
+
+A record saved is a truth the sea cannot take. THE END.
+
+=== ending_lost
+
+You make the shore alive but empty-handed. By noon the Library is fully
+drowned, and with it the only witnessed record of the coast.
+
+Within a year there are three claimants to every acre and no way to say
+who is right — only who is loudest. What the sea took, the powerful will
+invent.
+
+Some things you only get to carry out of the dark once. THE END.
