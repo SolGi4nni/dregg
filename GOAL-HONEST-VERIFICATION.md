@@ -308,3 +308,9 @@ AIR soundness (`d569bf31e`, partial) · Merkle binding (REAL, `merkleVerify := d
 on the accept path). Then `StarkSound = AlgoStarkSound + DeployedRefines`, and `DeployedRefines` reduces to
 `DeployedMatchesModel` — a KAT-dischargeable Rust↔Lean correspondence with the harness already built.
 `FriExtract` is a SEPARATE campaign: the recursive/aggregated apex (proof composition).
+- ✅ DEBT-A #3 PROVED — `friProximity_bridge` under 3 EXPLICIT hypotheses (hFRI supplied at deployed field+rate;
+  hplumb = Merkle binding → HashCR; hcode_sat with `g` LOAD-BEARING). `deployedRate_circuit_sound` composes
+  `circuit_sound_via_fri` at the deployed field+rate. ⚖ The lane REFUSED the degenerate `hcode_sat` I propagated
+  (bound `g` unused ⇒ holds-by-unfolding) and fixed it. Teeth: honest decoder fires; a lying decoder BITES.
+  ⚠ Bridge is at the ARITY-2 setup; #6's arity-8 lemma is proved but not yet threaded through it.
+  ⇒ #1 ✅ · #2 ◐ · #3 ✅ · #4 = RECURSION (separate campaign) · #5 = DeployedMatchesModel (KAT) · #6 ✅
