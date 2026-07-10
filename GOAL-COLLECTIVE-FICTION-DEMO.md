@@ -583,3 +583,12 @@ Aside: @DreggNet is fielding a real prospect (@itplaysout) — drafted 3 reply o
 Re-run resolve_action over each landed turn's bound action from genesis; reject a forged "valid chain, wrong
 effect" playthrough that chain-only verify() would pass. Split verification into levels (chain vs replay). The
 foundation randomness + folded proofs build on.
+
+## ✅✅ verify_replay COMMITTED + verified by driving+reading (the trust foundation)
+The re-execution correctness layer closes 'verify doesn't replay the resolver'. verify_ledger_replay re-runs
+resolve_action over each bound action from genesis + compares effects; verify_report() splits chain vs replay.
+NON-VACUITY confirmed by READING the test: a forged effect (Move entry #2 AdvanceScene->GrantItem(crown)) is
+relink()ed so world.verify_ledger() STILL PASSES (chain-valid) while verify_ledger_replay() catches it
+(Err Effect seq 2). 90 lib + 19 dsl green; 5 games pass both tiers; example prints the forgery caught. HONEST:
+trust-MINIMIZED re-execution (assumption = the resolver is the rules), NOT a zk proof. Phase 1 of the trust story.
+## NEXT: Phase 2 verifiable randomness — codex speccing dregg-dice (VRF+beacon), then build.
