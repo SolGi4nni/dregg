@@ -41,9 +41,21 @@ product for ALL poly pairs, not just the one `native_decide` sample `MlDsaRing.n
   for any element with `ζ²⁵⁶ = −1` (geometric telescope + `orderOf`; Mathlib ships no DFT lemma, built from
   primitives), axiom-clean; `zeta_root_witness` pins that `ζ = 1753` satisfies the hypothesis.
 
-## RUNG 2 — the butterfly WALL (engine BUILT; outer-loop peel + CT invariant the named residual)
+## RUNG 2 — the butterfly WALL (engine BUILT; outer-loop peel + CT invariant CLOSED, forward direction)
 
-`RingRepFaithful` is still **not discharged**; but the residual has shrunk again. With rung 3 (orthogonality)
+The FORWARD half is now discharged: `nttEvalsAtRoots_canonical` (below) proves the 8-stage butterfly network
+computes evaluation at the negacyclic roots for every canonical (size-256) poly, via the CT stage-invariant
+induction `stage_inv`. The two named residuals are now `NttMulHom` (the negacyclic-convolution ring-hom, needing
+a separate `schoolbookMul`-loop coefficient characterization) and the `intt` interpolation induction.
+
+⚠ **The `∀`-over-all-Poly props are FALSE as literally stated** (`NttEvalsAtRoots` / `NttMulHom` /
+`NttLeftInverse` / `VerifyCoreSpec.RingRepFaithful`): a non-256-length input makes the imperative `Array.set!`
+butterflies no-op out of bounds and keep the wrong length (`ntt #[5]` stays length 1, so `(ntt #[5])[1]! = 0 ≠
+eval256 #[5] (evalRoot 1)`). The theorems here carry the `a.size = 256` guard — the operationally-correct form,
+since the deployed pipeline only feeds decoded size-256 coefficient arrays. `ζ²⁵⁶ = −1` is discharged by plain
+`decide` (NOT `native_decide`), so every keystone is axiom-clean without the `ofReduceBool` residual.
+
+With rung 3 (orthogonality)
 proven, both `NttLeftInverse` and `NttMulHom` reduce to a SINGLE identification: that the 8-stage Cooley–Tukey
 `Id.run do` butterfly schedule (FIPS 204 `ζ^{brv(k)}` twiddles, `256⁻¹` scaling) realizes the abstract linear
 map "evaluate at the negacyclic roots `ζ^{2·brv(m)+1}`" — stated as the props `NttEvalsAtRoots` (forward) and
@@ -61,15 +73,18 @@ map "evaluate at the negacyclic roots `ζ^{2·brv(m)+1}`" — stated as the prop
 * **The twiddle-in-field cast is now BUILT** (`cast_zetaTwiddle : zetaTwiddle k = (ζ:ℤ_q)^{brv8 k}`): both the
   `powModQ` square-and-multiply ladder (`cast_powModQ`, a loop invariant `result = base^{e mod 2ᵗ}`) and the
   `brv8` 8-bit reversal (`brv8_lt < 256`) are characterized from their actual imperative defs. No `native_decide`.
-* **The exact remaining step**: the CT stage-invariant induction over `nttFold`. The invariant "after stage `s`,
-  slot `g·len_s+i` holds `Σ_{u<2ˢ} w_{i+u·len_s}·ρ(s,g)^u` (= the `ℤ_q`-eval of the `g`-th decimated
-  subpolynomial at its root `ρ(s,g) = ζ^{2·brv8(2ˢ+g)}`)", each stage preserved by `cast_bfSweep` +
-  `cast_zetaTwiddle` + an even/odd `Finset` reindex (`ring`) + the `brv8` exponent identities mod 512,
-  collapsing at `len = 1` (`s=8`) to `NttEvalsAtRoots`. That nested block-disjoint stage invariant is the single
-  sub-step still open; the peel, the butterfly engine, the twiddle-field cast, and orthogonality under it are closed.
+* **The CT stage-invariant induction over `nttFold` is now BUILT** (`stage_inv`). The invariant "after stage `s`,
+  slot `g·(256>>>s)+i` holds `Σ_{u<2ˢ} w_{i+u·(256>>>s)}·(rootAt s g)^u` (= the `ℤ_q`-eval of the `g`-th decimated
+  subsequence at its root `rootAt s g`)" is proven by induction on `s`: each stage is preserved by `block_char`
+  (one full CT stage as a positionwise Nat-level accumulation, by induction on block count on `bfSweep_getElem`) +
+  `cast_zetaTwiddle` + the even/odd `Finset` reindex `split_collapse` + the `brv8` exponent congruences
+  `brv_even`/`brv_odd`/`brv_high` (proved by `decide` on the 8-bit fold), which pin `rootAt` consistent under the
+  recurrence (`rootAt_closed`). At `len = 1` (`s=8`) it collapses (`rootAt_final : rootAt 8 m = ζ^{2·brv8(m)+1}`)
+  to `nttEvalsAtRoots_canonical`. Axiom-clean.
 
-Given `NttEvalsAtRoots`/`InttInterpolates`, `NttLeftInverse` = eval∘interp collapsed by `omega_orthogonality`
-(brv bijective), and `NttMulHom` = eval-is-a-ring-hom + `evalRoot²⁵⁶ = −1`.
+The two residuals: `NttLeftInverse` = eval∘interp collapsed by `omega_orthogonality`
+(brv bijective) — the second (`intt`) interpolation induction; and `NttMulHom` = eval-is-a-ring-hom +
+`evalRoot²⁵⁶ = −1` (`evalRoot_pow256`, proven below) atop a `schoolbookMul`-loop coefficient characterization.
 -/
 import Dregg2.Crypto.VerifyCoreSpec
 import Mathlib.Data.ZMod.Basic
