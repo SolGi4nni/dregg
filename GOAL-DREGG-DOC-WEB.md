@@ -232,3 +232,19 @@ full on-chain trace. But the off-chain canonical boundary, verified, is ~31 bits
 widening the canonical umem boundary (cell.state.heap_root) from ~31-bit compute_heap_root to the proven-CR
 8-felt compute_canonical_heap_root_8 is a substrate-wide FORMAT change (the thing you gate). Loop STAYS stopped.
 - done-log: traced it — ~31-bit scalar is the load-bearing canonical boundary (bare compare, no STARK off-chain), not a convenience. Ember-gated substrate fix.
+
+## ✅ TRACE CLOSED (verified) — on-chain SECURE (8-felt/GENTIAN); off-chain ledgerless boundary is the weak lane-0
+Confirmed on the real tree (circuit/tests/heap_root_gentian_weld.rs header + heap_root.rs:551): the ROTATED
+commitment (the STARK boundary) absorbs the FULL 8-felt heap root — limb 28 (lane 0) ‖ limbs 58..64 (lanes 1..7,
+compute_rotated_pre_limbs). The GENTIAN weld PROVES a forged colliding heap is rejected on-chain. So an on-chain
+STARK-verified turn binds the strong root: SECURE.
+The weld test states the residual VERBATIM: "A ledgerless light client holding only the lane-0 projection could
+not tell which state the cell committed to." That IS cell.state.heap_root (~31-bit) — and my <dregg-doc>
+(embedded executor, NO STARK; boundaryMatchesProjection = bare lane-0 compare) is exactly that ledgerless client.
+So the honest severity: NOT an on-chain break. The off-chain canonical boundary (cell.state.heap_root), trusted
+by ledgerless/light clients (my doc, cross-cell reads, checkpoints) WITHOUT the backing STARK, is the weak lane-0
+~31-bit projection the codebase already KNOWS is forgeable.
+FIX (ember-gated, substrate-wide, DIVERGES toward the proof): make the off-chain canonical boundary the 8-felt
+(compute_canonical_heap_root_8), so ledgerless clients get the 8-felt security the STARK already has on-chain.
+Nothing running depends on the old bytes (weeks-old snapshot, new testnet from genesis).
+- done-log: TRACE CLOSED — verified on-chain binds the 8-felt (GENTIAN weld, secure); the ~31-bit lane-0 is the OFF-CHAIN ledgerless boundary the doc trusts (weak). Widening it = ember's substrate call. This is where the doc-web goal honestly rests.
