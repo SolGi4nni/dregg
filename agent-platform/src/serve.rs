@@ -73,6 +73,28 @@ pub struct DriveRequest {
     pub tools: Vec<String>,
 }
 
+/// **BYOK — a remote request to take ONE proposed action on a grain** (POSTed to
+/// the grain's host). This is the seam that lets the model run in the RENTER's
+/// browser under the RENTER's own API key: the browser proposes a single tool
+/// call, and only THIS — never the key — reaches the host, which cap-gates,
+/// meters, mints, and receipts it exactly like a host-driven action. The host
+/// executes the action (it holds the workdir) and sees the proposed action + its
+/// result; it never sees the model or the key.
+#[derive(Debug, Clone, Deserialize)]
+pub struct ActRequest {
+    /// The operator tool the model proposed (`fs_write`, `fs_read`, `list_dir`,
+    /// `mkdir`, … — one of [`dregg_agent::agent::op`]). Cap-gated per resource; a
+    /// tool outside the grain's caps is honestly `cap_refused`, not an error.
+    pub tool: String,
+    /// The tool's string arguments (`path`/`content` for fs, etc.), the exact arg
+    /// keys [`dregg_agent::agent::ToolCall`] expects.
+    #[serde(default)]
+    pub args: std::collections::BTreeMap<String, String>,
+    /// An optional goal label for the transcript (defaults to `byok:<tool>`).
+    #[serde(default)]
+    pub goal: Option<String>,
+}
+
 /// A remote request to share a grain (POSTed to the grain's host by an Admin).
 #[derive(Debug, Clone, Deserialize)]
 pub struct ShareRequest {
@@ -268,6 +290,27 @@ impl AgentPlatform {
                 Err(e) => return HttpResponse::error(400, format!("bad drive request: {e}")),
             };
             return self.drive_over_http(&req.host, spec);
+        }
+
+        // **BYOK — POST /act: cap-gate + meter + mint + receipt ONE proposed
+        // action.** Same Driver+ gate as `/drive` (it spends): a Viewer 403s, a
+        // non-member 404s. The model that PROPOSED this action ran in the renter's
+        // browser under the renter's own key — the host never sees the key, only the
+        // single action it now gates. NO host LLM key needed, so this path works on a
+        // stock build (unlike `/drive`).
+        if req.method == HttpMethod::Post && path == "/act" {
+            let role = match self.authorize(req) {
+                Ok((_, r)) => r,
+                Err(resp) => return resp,
+            };
+            if !role.can_drive() {
+                return HttpResponse::error(403, "acting on this grain requires the driver role");
+            }
+            let spec: ActRequest = match serde_json::from_slice(&req.body) {
+                Ok(s) => s,
+                Err(e) => return HttpResponse::error(400, format!("bad act request: {e}")),
+            };
+            return self.act_over_http(&req.host, spec);
         }
 
         // The live drive transcript — any member (Viewer+) may WATCH the grain work:
@@ -510,6 +553,79 @@ impl AgentPlatform {
             "no live brain: rebuild the platform with --features live-brain and set an LLM key",
         )
     }
+
+    /// **BYOK — mint ONE renter-proposed action and shape the HTTP reply.** Wrap the
+    /// single proposed tool call in a ONE-SHOT [`PlannedBrain`] (exactly this action
+    /// at step 0, then `None`) and hand it to the EXISTING
+    /// [`drive_serving`](AgentPlatform::drive_serving) — so the whole cap-gate / meter
+    /// / mint / receipt path runs UNCHANGED, with zero new trust surface and no
+    /// bypass. A cap- or budget-refused action comes back HONESTLY (`cap_refused` /
+    /// `budget_refused` counted, `admitted:0`), never a 4xx/5xx error — the model
+    /// proposed, the capabilities disposed. On success the reply mirrors `/attest`'s
+    /// receipt view (the last committed receipt: seq / action / cost / consumed_after
+    /// / cell_root). No host LLM key is ever consulted on this path.
+    fn act_over_http(&self, host: &str, spec: ActRequest) -> HttpResponse {
+        use dregg_agent::agent::{AgentAction, PlannedBrain, ToolCall};
+        let goal = spec
+            .goal
+            .clone()
+            .unwrap_or_else(|| format!("byok:{}", spec.tool));
+        let action = AgentAction::Op(ToolCall::new(spec.tool, spec.args));
+        let mut brain = PlannedBrain::new(vec![action]);
+        match self.drive_serving(host, goal, &mut brain) {
+            Ok(report) => {
+                // The last committed receipt is THIS action when it was admitted (the
+                // minted receipt is appended); on a refusal it is the grain's prior
+                // tip (or `null` on a fresh grain) — the honest reflection of state.
+                let last = self
+                    .attest(host)
+                    .ok()
+                    .and_then(|a| a.report.receipts.last().cloned());
+                HttpResponse::json(act_response_json(&report, last.as_ref()))
+            }
+            Err(crate::AgentPlatformError::Lapsed) => {
+                HttpResponse::error(402, "the hosting lease has lapsed: grain reclaimed")
+            }
+            Err(crate::AgentPlatformError::NoSuchGrain(_)) => {
+                HttpResponse::error(404, "no grain hosted here")
+            }
+            Err(e) => HttpResponse::error(500, e.to_string()),
+        }
+    }
+}
+
+/// Shape the `/act` reply: the goal's admit/refuse counts + running meter, plus the
+/// last committed receipt as a `/attest`-mirroring view (seq / action / cost /
+/// consumed_after / cell_root), or `null` when the grain has committed nothing.
+fn act_response_json(
+    report: &dregg_agent::session::GoalReport,
+    receipt: Option<&dregg_agent::agent::AgentReceipt>,
+) -> Vec<u8> {
+    let receipt_json = match receipt {
+        Some(r) => format!(
+            "{{\"seq\":{},\"action\":{},\"cost\":{},\"consumed_after\":{},\"cell_root\":\"{}\"}}",
+            r.seq,
+            serde_json::to_string(&r.action).unwrap_or_else(|_| "\"\"".to_string()),
+            r.cost,
+            r.consumed_after,
+            hex32_str(&r.cell_root),
+        ),
+        None => "null".to_string(),
+    };
+    format!(
+        "{{\"admitted\":{},\"cap_refused\":{},\"budget_refused\":{},\"consumed\":{},\"receipt\":{}}}",
+        report.admitted, report.cap_refused, report.budget_refused, report.consumed, receipt_json
+    )
+    .into_bytes()
+}
+
+/// Lowercase hex of a 32-byte commitment (the receipt's `cell_root` on the wire).
+fn hex32_str(b: &[u8; 32]) -> String {
+    let mut s = String::with_capacity(64);
+    for x in b {
+        s.push_str(&format!("{x:02x}"));
+    }
+    s
 }
 
 /// Parse a 64-char hex string into 32 bytes (for the R1 renter nonce / pubkey on
@@ -1131,6 +1247,135 @@ mod tests {
             401,
             "no verified subject → 401"
         );
+    }
+
+    /// **BYOK — `POST /act` cap-gates + meters + mints ONE renter-proposed action,
+    /// with NO host LLM key.** The model ran in the renter's browser under the
+    /// renter's key; only the single proposed action reaches the host. Proven here:
+    /// a valid `fs_write` on a fresh grain → `admitted:1`, `consumed:1`, and a receipt
+    /// whose `action` is `fs_write:<path>` (a genuine minted receipt, `/attest`'s
+    /// view); a Viewer is refused (403 — `/act` spends, so it is Driver+); a
+    /// non-member 404s (no existence oracle); no verified subject → 401; and an action
+    /// OUTSIDE the grain's caps (`http_get` under an `fs`-only grain) comes back an
+    /// HONEST `cap_refused:1` / `admitted:0` at 200 — the capabilities disposed of
+    /// what the model proposed — never a 4xx/5xx error.
+    #[test]
+    fn the_act_route_gates_and_mints_one_proposed_action() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        // A FRESH grain (no prior drive) so the meter reads exactly this action.
+        let terms = LeaseTerms::new(cid(2), cid(7), cid(9), 100, 50, 1000, 0);
+        platform
+            .rent(
+                GRAIN,
+                OWNER,
+                "fs",
+                100_000,
+                wd.to_str().unwrap(),
+                terms,
+                None,
+            )
+            .expect("rent the grain");
+        // Share a Driver (may act) and a Viewer (may not).
+        platform
+            .share(GRAIN, OWNER, DRIVER, crate::Role::Driver)
+            .expect("share driver");
+        platform
+            .share(GRAIN, OWNER, VIEWER, crate::Role::Viewer)
+            .expect("share viewer");
+
+        // ── a valid proposed fs_write is minted: admitted + a real receipt ────────
+        let act_body = "{\"tool\":\"fs_write\",\"args\":{\"path\":\"haiku.txt\",\"content\":\"a grain wakes\"}}";
+        let a = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Post, GRAIN, "/act", Some(OWNER), act_body),
+        );
+        assert_eq!(
+            a.status,
+            200,
+            "the proposed action is minted: {}",
+            a.body_str()
+        );
+        let body = a.body_str();
+        assert!(
+            body.contains("\"admitted\":1,"),
+            "admitted one action: {body}"
+        );
+        assert!(body.contains("\"cap_refused\":0"), "no cap refusal: {body}");
+        assert!(
+            body.contains("\"consumed\":1,"),
+            "meter drew one unit: {body}"
+        );
+        assert!(
+            body.contains("\"action\":\"fs_write:haiku.txt\""),
+            "the receipt is a view of the fs_write: {body}"
+        );
+        assert!(
+            body.contains("\"consumed_after\":1"),
+            "receipt meter: {body}"
+        );
+        // The action actually ran (the host executes it — it holds the workdir).
+        assert!(
+            wd.join("haiku.txt").exists(),
+            "the fs_write reached the grain's workdir"
+        );
+        // R2: the minted action is a view over a committed kernel turn.
+        let v2 = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Get, GRAIN, "/verify?r2", Some(OWNER), ""),
+        );
+        assert_eq!(v2.status, 200, "the minted /act turn verifies at R2");
+        assert!(v2.body_str().contains("\"linked\":1"), "one linked receipt");
+
+        // ── a Viewer cannot /act (403 — it spends), a non-member 404s ─────────────
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Post, GRAIN, "/act", Some(VIEWER), act_body)
+            )
+            .status,
+            403,
+            "a viewer cannot act"
+        );
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Post, GRAIN, "/act", Some(MALLORY), act_body)
+            )
+            .status,
+            404,
+            "a non-member 404s (no existence oracle)"
+        );
+        // ── no verified subject → 401 ─────────────────────────────────────────────
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Post, GRAIN, "/act", None, act_body)
+            )
+            .status,
+            401,
+            "acting requires a verified subject"
+        );
+
+        // ── an action OUTSIDE the grain's caps is an honest cap_refused, not error ─
+        let outside = "{\"tool\":\"http_get\",\"args\":{\"url\":\"https://example.com/\"}}";
+        let ref_resp = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Post, GRAIN, "/act", Some(DRIVER), outside),
+        );
+        assert_eq!(
+            ref_resp.status, 200,
+            "a capability refusal is reported honestly at 200, not an error"
+        );
+        let rb = ref_resp.body_str();
+        assert!(rb.contains("\"admitted\":0"), "nothing admitted: {rb}");
+        assert!(rb.contains("\"cap_refused\":1"), "the cap gate bit: {rb}");
     }
 
     /// The platform-level ACL directly: owner is implicit Admin, a shared subject

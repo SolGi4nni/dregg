@@ -55,12 +55,24 @@
     .grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(200px,1fr)); gap: var(--s3); }
     label { display: block; font-size: 0.72rem; letter-spacing: 0.05em; text-transform: uppercase;
       color: var(--accent); margin-bottom: var(--s1); }
-    input, textarea {
+    input, textarea, select {
       width: 100%; background: var(--bg-inset); color: var(--chalk);
       border: 1px solid var(--line-strong); border-radius: var(--r2);
       padding: var(--s2) var(--s3); font-family: var(--font-mono); font-size: 0.85rem;
     }
-    input:focus, textarea:focus { outline: none; border-color: var(--accent); }
+    input:focus, textarea:focus, select:focus { outline: none; border-color: var(--accent); }
+    /* the key-stays-here safety line + the persist warning */
+    .safety { display: flex; align-items: flex-start; gap: var(--s2); font-size: 0.78rem;
+      color: var(--accent-bright); background: var(--accent-soft); border: 1px solid var(--accent);
+      border-radius: var(--r2); padding: var(--s2) var(--s3); margin: var(--s3) 0; }
+    .safety b { color: var(--chalk); font-weight: 600; }
+    .warn-line { font-size: 0.75rem; color: var(--warm); margin-top: var(--s1); }
+    .checkline { display: flex; align-items: center; gap: var(--s2); font-size: 0.78rem;
+      color: var(--fg-dim); margin-top: var(--s3); }
+    .checkline input { width: auto; }
+    .frame--act { border-left-color: var(--accent-bright); }
+    .frame--act.refused { border-left-color: var(--danger); }
+    .frame--model { border-left-color: var(--warm); }
     textarea { resize: vertical; min-height: 56px; }
     .field { margin-bottom: var(--s3); }
 
@@ -140,7 +152,7 @@
   <!-- ── drive + watch ──────────────────────────────────────────────────── -->
   <section class="card">
     <h2><span class="num">2 · drive</span>Give it a goal &amp; watch it work</h2>
-    <p class="card__hint"><b>Drive</b> POSTs <code>/drive</code> (spends the grain's budget + key — needs the driver role and a live brain; without a model the server honestly answers <code>503 no live brain</code>). <b>Watch transcript</b> opens the <code>/transcript</code> SSE (query-param form, since <code>EventSource</code> sets no headers) and replays the committed meta/step/done frames of every drive so far — this works with no model.</p>
+    <p class="card__hint"><b>Drive</b> POSTs <code>/drive</code> — this uses the <b>HOST's model + key</b> (simpler, but the host sees the key; the renter mails their key to the host). Needs the driver role and a live brain; without a model the server honestly answers <code>503 no live brain</code>. <b>For true bring-your-own-key, use §2b below</b> — the model runs in your browser and the host never sees the key. <b>Watch transcript</b> opens the <code>/transcript</code> SSE (query-param form, since <code>EventSource</code> sets no headers) and replays the committed meta/step/done frames of every drive so far — this works with no model.</p>
     <div class="field"><label>goal</label><textarea id="d-goal">clone the repo and summarize the readme</textarea></div>
     <div class="field"><label>tools (comma-separated, optional)</label><input id="d-tools" value="fs_write"></div>
     <div class="btns">
@@ -151,6 +163,46 @@
     <div class="out" id="drive-out"></div>
     <div class="stream" id="stream"></div>
     <div class="status" id="stream-status"></div>
+  </section>
+
+  <!-- ── 2b · bring your own key (BYOK) ──────────────────────────────────── -->
+  <section class="card">
+    <h2><span class="num">2b · byok</span>Bring your own key — the model runs in <em>your</em> browser</h2>
+    <p class="card__hint">The real prize: the model runs <b>here, in this tab, under your own API key (any provider)</b>. Each action the model proposes is POSTed one at a time to the grain's <code>/act</code> route, which cap-gates, meters, mints, and receipts it — <b>the host never sees your key</b>. Needs the driver role. No host model required.</p>
+
+    <div class="safety">
+      <span>🔑</span>
+      <span><b>Your key stays in this browser.</b> It is sent only to the provider you choose below — <b>never to the grain host</b>. The host receives only the single proposed action (<code>tool</code> + <code>args</code>) and returns a receipt.</span>
+    </div>
+
+    <div class="grid">
+      <div class="field">
+        <label>provider</label>
+        <select id="byok-provider" onchange="byokProviderChange()">
+          <option value="openrouter">OpenRouter (browser-callable)</option>
+          <option value="ollama">local ollama</option>
+          <option value="custom">custom base</option>
+        </select>
+      </div>
+      <div class="field"><label>model</label><input id="byok-model" value="openai/gpt-4o-mini"></div>
+      <div class="field" id="byok-base-field" style="display:none"><label>base url</label><input id="byok-base" value="https://openrouter.ai/api/v1"></div>
+    </div>
+    <div class="field"><label>api key (stays in this tab)</label><input id="byok-key" type="password" placeholder="sk-or-…  (leave blank for keyless local ollama)"></div>
+    <p class="card__hint" id="byok-cors-note"></p>
+    <div class="field"><label>goal</label><textarea id="byok-goal">write a haiku about grains to haiku.txt</textarea></div>
+
+    <div class="checkline">
+      <input type="checkbox" id="byok-persist" onchange="byokPersistToggle()">
+      <label for="byok-persist" style="text-transform:none;letter-spacing:0;color:inherit;margin:0">persist my key in this browser's localStorage</label>
+    </div>
+    <p class="warn-line">Off by default — the key lives in memory only and is gone when you close the tab. Persisting stores it in <code>localStorage</code> on this device in cleartext; only do so on a machine you trust.</p>
+
+    <div class="btns">
+      <button onclick="byokRun()">Run in my browser (BYOK)</button>
+      <button class="ghost" onclick="el('byok-stream').innerHTML=''">Clear</button>
+    </div>
+    <div class="out" id="byok-out"></div>
+    <div class="stream" id="byok-stream"></div>
   </section>
 
   <!-- ── verify ─────────────────────────────────────────────────────────── -->
@@ -359,6 +411,160 @@
     } catch (e) {
       out.innerHTML = `<span class="pill bad">net</span> ${esc(e.message)}`;
     }
+  }
+
+  // ── 2b · BYOK — the model runs in THIS browser under YOUR key ────────────
+  // The grain's granted op-rail tools, mirrored from dregg_agent::agent::op — the
+  // schemas we advertise to the model. The host is the one that actually cap-gates
+  // each proposed call; these are only what we let the model *reach for*.
+  const GRAIN_TOOLS = [
+    { type:'function', function:{ name:'fs_write', description:'Write a file under the grain workdir.',
+      parameters:{ type:'object', properties:{ path:{type:'string'}, content:{type:'string'} }, required:['path','content'] } } },
+    { type:'function', function:{ name:'fs_read', description:'Read a file under the grain workdir. (The host returns a receipt, not the file body.)',
+      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
+    { type:'function', function:{ name:'list_dir', description:'List a directory under the grain workdir.',
+      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
+    { type:'function', function:{ name:'mkdir', description:'Create a directory under the grain workdir.',
+      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
+  ];
+  // CORS reality per provider — surfaced honestly so a browser call that CAN'T work
+  // is not a mystery.
+  const BYOK_PROVIDERS = {
+    openrouter: { base:'https://openrouter.ai/api/v1', model:'openai/gpt-4o-mini',
+      cors:'OpenRouter allows browser calls (CORS open). Your key is sent to openrouter.ai only.' },
+    ollama: { base:'http://localhost:11434/v1', model:'llama3.1',
+      cors:'Local ollama needs CORS enabled: start it with OLLAMA_ORIGINS=* ollama serve. No key needed.' },
+    custom: { base:'', model:'',
+      cors:'Note: OpenAI’s api.openai.com BLOCKS browser calls (no CORS) — point this at a local base or a CORS-enabling proxy. Anthropic likewise needs a proxy for browser use.' },
+  };
+  function byokProviderChange() {
+    const p = el('byok-provider').value;
+    const meta = BYOK_PROVIDERS[p];
+    el('byok-base-field').style.display = (p === 'custom') ? '' : 'none';
+    if (p !== 'custom') { el('byok-base').value = meta.base; if (meta.model) el('byok-model').value = meta.model; }
+    el('byok-cors-note').textContent = meta.cors;
+  }
+  function byokBase() {
+    const p = el('byok-provider').value;
+    return (p === 'custom' ? el('byok-base').value : BYOK_PROVIDERS[p].base).replace(/\/+$/, '');
+  }
+  // Key persistence — OFF by default: the key lives ONLY in the input (this tab).
+  function byokPersistToggle() {
+    if (el('byok-persist').checked) localStorage.setItem('dregg_byok_key', el('byok-key').value);
+    else localStorage.removeItem('dregg_byok_key');
+  }
+  (function byokInit() {
+    byokProviderChange();
+    const saved = localStorage.getItem('dregg_byok_key');
+    if (saved) { el('byok-key').value = saved; el('byok-persist').checked = true; }
+    el('byok-key').addEventListener('input', () => {
+      if (el('byok-persist').checked) localStorage.setItem('dregg_byok_key', el('byok-key').value);
+    });
+  })();
+
+  // Call the RENTER's chosen provider from the browser — the ONE place the key
+  // travels, and it goes to the provider, never to the grain host.
+  async function providerChat(base, key, model, messages) {
+    const res = await fetch(base + '/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', ...(key ? { 'Authorization': 'Bearer ' + key } : {}) },
+      body: JSON.stringify({ model, messages, tools: GRAIN_TOOLS, tool_choice: 'auto' }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
+    return res.json();
+  }
+
+  function byokFrame(stream, cls, tag, line, sub) {
+    const div = document.createElement('div');
+    div.className = 'frame ' + cls;
+    div.innerHTML = `<div class="frame__tag">${esc(tag)}</div>
+      <div class="frame__line">${line}</div>${sub ? `<div class="frame__sub">${sub}</div>` : ''}`;
+    stream.appendChild(div);
+  }
+
+  // Render the host's /act verdict — a green admitted receipt, or a RED refusal
+  // ("the model proposed, the capabilities disposed").
+  function renderAct(stream, tool, args, r) {
+    const d = r.data || {};
+    const label = `<code>${esc(tool)}</code>(${esc(Object.entries(args).map(([k,v]) => `${k}=${String(v).slice(0,40)}`).join(', '))})`;
+    if (r.status === 200 && d.admitted > 0 && d.receipt) {
+      byokFrame(stream, 'frame--act', 'act · admitted', label,
+        `<span class="kv">action <b>${esc(d.receipt.action)}</b></span>
+         <span class="kv">cost <b>${d.receipt.cost}</b></span>
+         <span class="kv">consumed_after <b>${d.receipt.consumed_after}</b></span>
+         <span class="kv">cell_root <b>${esc(String(d.receipt.cell_root || '').slice(0,12))}…</b></span>`);
+    } else if (r.status === 200) {
+      const why = d.cap_refused ? 'cap-refused' : (d.budget_refused ? 'budget-refused' : 'refused');
+      byokFrame(stream, 'frame--act refused', `act · ${why}`, label,
+        `<span class="kv">the model proposed, the capabilities disposed — <b>${why}</b> (admitted 0)</span>`);
+    } else {
+      byokFrame(stream, 'frame--act refused', `act · error ${r.status}`, label,
+        `<span class="kv">${esc(d.error || JSON.stringify(d))}</span>`);
+    }
+  }
+  // The tool result we append back into the conversation (what the model sees next).
+  function actToToolResult(r) {
+    const d = r.data || {};
+    if (r.status === 200 && d.admitted > 0) {
+      return `admitted. receipt: action=${d.receipt?.action}, cost=${d.receipt?.cost}, consumed_after=${d.receipt?.consumed_after}, cell_root=${String(d.receipt?.cell_root||'').slice(0,16)}. (The host executed the action and returns this receipt, not the file body.)`;
+    }
+    if (r.status === 200) {
+      const why = d.cap_refused ? 'cap-refused (outside the grain’s capabilities)' : (d.budget_refused ? 'budget-refused (the grain’s spend ceiling was reached)' : 'refused');
+      return `REFUSED by the host capability gate: ${why}. This action did NOT run. Choose a different action within the grain’s caps, or stop.`;
+    }
+    return `error ${r.status}: ${d.error || JSON.stringify(d)}`;
+  }
+
+  async function byokRun() {
+    const out = el('byok-out'); const stream = el('byok-stream');
+    stream.innerHTML = ''; out.innerHTML = '<span class="mono">running the model in your browser…</span>';
+    const host = el('r-host').value.trim() || currentGrain; currentGrain = host;
+    const base = byokBase(); const model = el('byok-model').value.trim(); const key = el('byok-key').value;
+    const goal = el('byok-goal').value;
+    if (!base) { out.innerHTML = `<span class="pill bad">config</span> set a base url for the custom provider.`; return; }
+    const messages = [
+      { role: 'system', content: 'You are a confined agent driving a hosted grain. Use ONLY the provided tools to accomplish the goal. Each tool call is cap-gated, metered, and receipted by the host — some may be refused, and that is fine. Call one tool at a time. When the goal is done, reply with a short summary and stop calling tools.' },
+      { role: 'user', content: goal },
+    ];
+    const MAX_STEPS = 8;
+    for (let step = 0; step < MAX_STEPS; step++) {
+      let completion;
+      try {
+        completion = await providerChat(base, key, model, messages);
+      } catch (e) {
+        byokFrame(stream, 'frame--model', 'provider error', esc(e.message),
+          'The key is sent ONLY to your provider — check the base url, model, key, and CORS (see the note above).');
+        out.innerHTML = `<span class="pill bad">provider</span> ${esc(e.message)}`;
+        return;
+      }
+      const msg = completion.choices && completion.choices[0] && completion.choices[0].message;
+      if (!msg) { out.innerHTML = `<span class="pill bad">provider</span> the provider returned no message.`; return; }
+      messages.push(msg);
+      const calls = msg.tool_calls || [];
+      if (!calls.length) {
+        if (msg.content) byokFrame(stream, 'frame--model', 'model', esc(msg.content), 'the model stopped calling tools');
+        out.innerHTML = `<span class="pill ok">done</span> the model finished after ${step} tool call(s) — verify below (trust no host).`;
+        return;
+      }
+      // ONE proposed action per turn → a one-shot POST /act on the host.
+      const call = calls[0];
+      let args = {}; try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
+      let r;
+      try {
+        // The key is NOT in this request — only the single proposed action crosses to the host.
+        r = await apiJson('/act', { method: 'POST', grainHost: host, body: { tool: call.function.name, args, goal } });
+      } catch (e) {
+        byokFrame(stream, 'frame--act refused', 'act · net error', esc(e.message));
+        out.innerHTML = `<span class="pill bad">net</span> ${esc(e.message)} — is the grain server up?`;
+        return;
+      }
+      renderAct(stream, call.function.name, args, r);
+      messages.push({ role: 'tool', tool_call_id: call.id, content: actToToolResult(r) });
+      if (r.status === 403) { out.innerHTML = `${pill(403)} the driver role is required to act on this grain.`; return; }
+      if (r.status === 404 || r.status === 401) { out.innerHTML = `${pill(r.status)} ${esc((r.data && r.data.error) || 'not authorized / no such grain')}`; return; }
+      if (r.status !== 200) { out.innerHTML = `${pill(r.status)} the host rejected the action.`; return; }
+    }
+    out.innerHTML = `<span class="pill warn">cap</span> stopped at the ${MAX_STEPS}-step cap.`;
   }
 </script>
 </body>
