@@ -733,6 +733,7 @@ import Dregg2.Circuit.BabyBearFriField
 import Dregg2.Circuit.BabyBearFriSetup
 import Dregg2.Circuit.BabyBearFriDeployed
 import Dregg2.Circuit.FriFoldArity
+import Dregg2.Circuit.FriProximityBridge
 import Dregg2.Circuit.FriExtractReal
 import Dregg2.Circuit.DeployedRefinesProof
 import Dregg2.Circuit.ShieldedTransferStark
