@@ -288,11 +288,32 @@ theorem execFullForestA_revoked_eq (s s' : RecChainedState) (f : FullForestA)
 
 /-- **`execFullForestA_revoked_grow` — the grow-only COROLLARY.** Read off the equality:
 `s.kernel.revoked ⊆ s'.kernel.revoked` (the permanent-revocation frame as the dregg1
-`RevocationRegistry`'s insert-only `HashSet` sees it). Stated as `⊆` so the carry below is forward-
-compatible with a future explicit `cap_revoke` effect that GROWS the registry. -/
+`RevocationRegistry`'s insert-only `HashSet` sees it). This ⊆ is genuine, not laundered: the CURRENT
+46-effect `FullActionA` set has NO arm wired to `capRevoke`, so `execFullForestA` frames `revoked` by
+EQUALITY (`execFullForestA_revoked_eq`) and the ⊆ is that equality read forward. The GROWER is now real
+— `RecordKernel.capRevoke` — and `capRevoke_revoked_strict_grow` below proves it STRICTLY grows the
+registry; wiring it into a `FullActionA` arm (the Rust effect-layer step) is a later stage, at which
+point this frame relaxes from `=` to a genuine `⊂` on the revoke arm. -/
 theorem execFullForestA_revoked_grow (s s' : RecChainedState) (f : FullForestA)
     (h : execFullForestA s f = some s') : s.kernel.revoked ⊆ s'.kernel.revoked := by
   rw [execFullForestA_revoked_eq s s' f h]; exact List.Subset.refl _
+
+/-- **`capRevoke_revoked_strict_grow` — THE REAL GROWTH THEOREM (kills the reflexivity lie).** The
+`⊆` above was proved by REFLEXIVITY because no effect grew `revoked`. `RecordKernel.capRevoke` now GROWS
+it: revoking a FRESH `credNul` (`credNul ∉ revoked`) leaves it (i) grown (`revoked ⊆` the new registry),
+(ii) with `credNul` PRESENT that (iii) was NOT present before — so the new registry is NOT a subset of
+the old, i.e. STRICT growth (`⊂`). This is the writer the whole campaign was missing: an ACTION that
+makes `credNul ∈ revoked` TRUE, discharging the antecedent every revocation theorem used to assume. -/
+theorem capRevoke_revoked_strict_grow (k : RecordKernelState) (credNul : Nat) (newRoot : Fin 8 → ℤ)
+    (hfresh : credNul ∉ k.revoked) :
+    k.revoked ⊆ (capRevoke k credNul newRoot).revoked ∧
+      credNul ∈ (capRevoke k credNul newRoot).revoked ∧
+      ¬ ((capRevoke k credNul newRoot).revoked ⊆ k.revoked) := by
+  refine ⟨?_, capRevoke_present k credNul newRoot, ?_⟩
+  · rw [capRevoke_revoked]; exact List.subset_cons_self _ _
+  · rw [capRevoke_revoked]
+    intro hsub
+    exact hfresh (hsub List.mem_cons_self)
 
 /-! ## Step 3 — THE CROWN: `rev0 ⊆ s.kernel.revoked` carried FOREVER by `livingCellA_carries`. -/
 
@@ -378,6 +399,7 @@ def fmaRevoked : RecChainedState :=
 #assert_axioms execFullTurnA_revoked_eq
 #assert_axioms execFullForestA_revoked_eq
 #assert_axioms execFullForestA_revoked_grow
+#assert_axioms capRevoke_revoked_strict_grow
 #assert_axioms livingCellA_revoked_grow
 #assert_axioms livingCellA_identity_revoked_forever
 #assert_axioms identity_gate_revoked_forever

@@ -1068,6 +1068,49 @@ ledger. -/
 theorem noteCreate_recTotalAsset (k : RecordKernelState) (cm : Nat) (b : AssetId) :
     recTotalAsset (noteCreateCommitment k cm) b = recTotalAsset k b := rfl
 
+/-! ### §CAP-REVOKE — the credential-revocation WRITER (the def `:319`/`:438` have DESCRIBED forever).
+
+dregg1's `credentials/src/revocation.rs` inserts a credential's id into a grow-only
+`RevocationRegistry` (`HashSet<[u8;32]>`, insert-only). The kernel-state model is the `revoked : List Nat`
+registry (§ line 319) plus its committed accumulator `revokedRoot` (§ line 434): `cap_revoke` GROWS the
+registry AND advances the committed root (`:438`, "cap_revoke INSERTS on revocation"). Until now those
+docstrings named an op with no def behind it — a perfect lock on an empty registry: the reader
+(`gateOK_revoked_fails`, `kernel_revoked_gate_fails`) was proven, the WRITER never built.
+
+This is the writer. It is GROW-ONLY (a re-revocation is a harmless idempotent insert, NOT a
+fail-closed reject — the accumulator-backed `revokeCredentialAcc` in the bridge only admits a witness for
+a genuinely-fresh `credNul`, so the committed root advances exactly once per distinct revocation). The
+committed root is advanced to `newRoot` here (an OPAQUE `Digest8` at the kernel layer, matching how
+`RecordKernelState` stores `revokedRoot` as a bare `Fin 8 → ℤ`); the FAITHFULNESS that `newRoot` actually
+contains `credNul` is discharged one level up by `revokeCredentialAcc_present`, where the
+`NfAccWitness` lives (the crypto layer `RecordKernel` deliberately does not import). Balance-NEUTRAL. -/
+
+/-- **`capRevoke` (executable) — the credential-revocation writer.** Insert `credNul` into the grow-only
+`revoked` registry AND advance the committed `revokedRoot` to `newRoot`. The kernel-op the identity app's
+`revoke` verb runs; the accumulator-faithful wrapper is `Bridge.revokeCredentialAcc`. -/
+def capRevoke (k : RecordKernelState) (credNul : Nat) (newRoot : Fin 8 → ℤ) : RecordKernelState :=
+  { k with revoked := credNul :: k.revoked, revokedRoot := newRoot }
+
+/-- **`capRevoke_revoked`.** `capRevoke` grows the registry by exactly `credNul` (prepend). -/
+@[simp] theorem capRevoke_revoked (k : RecordKernelState) (credNul : Nat) (newRoot : Fin 8 → ℤ) :
+    (capRevoke k credNul newRoot).revoked = credNul :: k.revoked := rfl
+
+/-- **`capRevoke_revokedRoot`.** `capRevoke` advances the committed root to `newRoot`. -/
+@[simp] theorem capRevoke_revokedRoot (k : RecordKernelState) (credNul : Nat) (newRoot : Fin 8 → ℤ) :
+    (capRevoke k credNul newRoot).revokedRoot = newRoot := rfl
+
+/-- **`capRevoke_present`.** After `capRevoke`, `credNul` is in the `revoked` registry — so the
+list-side gate (`gateOK`, `List.contains`) fail-closes it. The ACTION that discharges the
+`credNul ∈ revoked` antecedent every revocation theorem used to take as an unmet hypothesis. -/
+theorem capRevoke_present (k : RecordKernelState) (credNul : Nat) (newRoot : Fin 8 → ℤ) :
+    credNul ∈ (capRevoke k credNul newRoot).revoked := by
+  rw [capRevoke_revoked]; exact List.mem_cons_self
+
+/-- **`capRevoke_recTotalAsset` (bal-NEUTRALITY).** `capRevoke` leaves `recTotalAsset b` UNCHANGED for
+EVERY asset `b`: it grows only the `revoked` registry + swaps the root, never the `bal` ledger. -/
+theorem capRevoke_recTotalAsset (k : RecordKernelState) (credNul : Nat) (newRoot : Fin 8 → ℤ)
+    (b : AssetId) : recTotalAsset (capRevoke k credNul newRoot) b = recTotalAsset k b := rfl
+
 
 /-! ## §NOTE runs (`#eval`) — the commitment/nullifier sets move; double-spend fail-closed. -/
 
@@ -1083,6 +1126,10 @@ def res0 : RecordKernelState :=
 #guard ((noteCreateCommitment res0 42).commitments) == [42]  --  [42]
 #guard ((noteSpendNullifier res0 7).map (fun k => k.nullifiers)) == some [7]  --  some [7]
 #guard (((noteSpendNullifier res0 7).bind (fun k => noteSpendNullifier k 7)).isSome) == false  --  false
+-- capRevoke grows the revocation registry by exactly `credNul` (grow-only writer):
+#guard ((capRevoke res0 42 (fun _ => 0)).revoked) == [42]                                --  [42]
+#guard ((capRevoke res0 42 (fun _ => 0)).revoked.contains 42)                            --  true (revoked)
+#guard ((capRevoke res0 42 (fun _ => 0)).revoked.contains 99) == false                   --  false (has teeth)
 
 /-! ## Axiom-hygiene tripwires — pin the re-proved keystones over the content-addressed cell. -/
 
@@ -1102,6 +1149,9 @@ def res0 : RecordKernelState :=
 #assert_axioms note_no_double_spend
 #assert_axioms note_spend_inserts
 #assert_axioms note_spend_then_reject
+-- The credential-revocation WRITER (the def `:319`/`:438` described with no def, now built):
+#assert_axioms capRevoke_present
+#assert_axioms capRevoke_recTotalAsset
 -- The per-asset CONSERVATION_VECTOR keystones (FILL 1) over the REAL executable state + gate:
 #assert_axioms recTransferBal_sum_conserve_moved
 #assert_axioms recTransferBal_untouched

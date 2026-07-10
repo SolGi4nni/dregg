@@ -136,4 +136,81 @@ theorem noteCreateCommitmentAcc_present {S8 : Heap8Scheme} (k : RecordKernelStat
 #assert_axioms noteCreateCommitmentAcc_present
 #assert_axioms noteCreateCommitmentAcc_commitments
 
+/-! ## The REVOCATION accumulator dual — GROW-ONLY WRITER (closing hole #3 / #139).
+
+The revoked-credential set is the grow-only dual of the nullifier set on the REVOCATION frontier: a
+`cap_revoke` INSERTS a fresh `credNul` (the capability's provenance/derivation-node hash, domain-
+separated `H("dregg-cred-revocation-v1" ‖ provenance_hash)` — `docs/REVOKED-ROOT-COMMITTED-LIMB.md`
+§3b), advancing the committed `revokedRoot`, and — unlike a spend — there is NO rejection at the writer
+(a re-revocation of an already-present `credNul` simply admits no witness; the root advances once per
+distinct revocation). The reader side was ALREADY proven (`kernel_revoked_gate_fails`): a `credNul`
+present in `revokedRoot` admits NO non-membership witness ⇒ the revocation gate refuses it. What was
+MISSING — the entire hole — is the WRITER that makes an ACTION grow that committed root. This is it.
+
+It reduces to the SAME banked `spend_inserts_root` (the `y = nf` disjunct of `update_sound8`) through
+`toRevAccState`, which reads `revokedRoot` as the accumulator's active root — the exact analog of
+`toCmAccState` for commitments. The kernel-op `RecordKernel.capRevoke` grows the `revoked : List Nat`
+migration registry and swaps the root; this wrapper supplies the `NfAccWitness` that PROVES the swap
+faithful (`credNul` genuinely present in the advanced root). Grow-only: no `present_no_witness`
+obligation, no fail-closed leg at the writer. -/
+
+/-- Project the kernel's `revokedRoot` into the standalone `NfAccState`'s active root, so the proven
+insert-is-faithful gate operates over it. Definitional. The revocation-frontier analog of
+`toCmAccState`. -/
+def RecordKernelState.toRevAccState (k : RecordKernelState) : NfAccState :=
+  { nullifierRoot := k.revokedRoot }
+
+@[simp] theorem toRevAccState_nullifierRoot (k : RecordKernelState) :
+    k.toRevAccState.nullifierRoot = k.revokedRoot := rfl
+
+/-- **`revokeCredentialAcc` — the accumulator-backed credential-revocation WRITER over the kernel.**
+Given a valid client-supplied `NfAccWitness` against the committed `revokedRoot`, insert `credNul`:
+advance the root to the witness after-root (via `RecordKernel.capRevoke`) and keep the migration `List`
+in sync. GROW-ONLY: a fresh `credNul` always has a witness; a re-revocation admits none (the root
+already commits it) — the dual of `noteSpendNullifierAcc` WITHOUT the double-spend gate, on the
+revocation frontier. THE WRITER hole #3 / #139 named and never built. -/
+def revokeCredentialAcc {S8 : Heap8Scheme} (k : RecordKernelState) (credNul : Nat)
+    (w : NfAccWitness S8 k.revokedRoot (credNul : ℤ)) : RecordKernelState :=
+  capRevoke k credNul w.newRoot
+
+@[simp] theorem revokeCredentialAcc_revokedRoot {S8 : Heap8Scheme} (k : RecordKernelState)
+    (credNul : Nat) (w : NfAccWitness S8 k.revokedRoot (credNul : ℤ)) :
+    (revokeCredentialAcc k credNul w).revokedRoot = w.newRoot := rfl
+
+/-- **`revokeCredentialAcc_revoked` — the migration `List` stays in sync.** The writer grows the
+`revoked` registry by exactly `credNul`, so the `List`-side reader (`gateOK`) and the root-side reader
+(`kernel_revoked_gate_fails`) refuse the SAME credential. -/
+theorem revokeCredentialAcc_revoked {S8 : Heap8Scheme} (k : RecordKernelState) (credNul : Nat)
+    (w : NfAccWitness S8 k.revokedRoot (credNul : ℤ)) :
+    (revokeCredentialAcc k credNul w).revoked = credNul :: k.revoked := rfl
+
+/-- **THE INSERT IS FAITHFUL (kernel terms, GROW-ONLY tooth).** After a committed `revokeCredentialAcc`,
+`credNul` is PRESENT in the new committed `revokedRoot` — the `revoke_inserts_root` analog of the
+nullifier `spend_inserts_root`, reducing to it through the `toRevAccState` projection. Non-vacuous: the
+witness type is genuinely inhabitable (`witness_inhabited_of_bindings`), so this is a real membership
+over an occupied domain, not a claim over an empty hypothesis. -/
+theorem revokeCredentialAcc_present {S8 : Heap8Scheme} (k : RecordKernelState) (credNul : Nat)
+    (w : NfAccWitness S8 k.revokedRoot (credNul : ℤ)) :
+    (credNul : ℤ) ∈ keysOf8 S8 (revokeCredentialAcc k credNul w).revokedRoot := by
+  simpa [revokeCredentialAcc, capRevoke, spendNullifierRoot] using
+    spend_inserts_root k.toRevAccState (credNul : ℤ) w
+
+/-- **`capRevoke_then_gate_refuses` — THE ACCEPTANCE TEST, THE WHOLE POINT OF THE CAMPAIGN.** Every
+prior revocation theorem took `credNul ∈ keysOf8 revokedRoot` (equivalently `credNul ∈ revoked`) as a
+HYPOTHESIS, dischargeable only by hand-built fixtures — that is why the lock sat on an EMPTY registry.
+Here an ACTION discharges it: after `revokeCredentialAcc k credNul w`, the antecedent of
+`kernel_revoked_gate_fails` HOLDS (`revokeCredentialAcc_present`), hence the committed revocation gate
+CANNOT pass for that credential — no matter how valid its signature. Revocation is now ATTESTABLE: a
+light client verifies from commitment + proof alone that the credential was revoked and the turn honoured
+it. -/
+theorem capRevoke_then_gate_refuses {S8 : Heap8Scheme} (k : RecordKernelState) (credNul : Nat)
+    (w : NfAccWitness S8 k.revokedRoot (credNul : ℤ)) :
+    ¬ revocationGateRootOK S8 (revokeCredentialAcc k credNul w).toNfAccState (credNul : ℤ) :=
+  kernel_revoked_gate_fails (revokeCredentialAcc k credNul w) (credNul : ℤ)
+    (revokeCredentialAcc_present k credNul w)
+
+#assert_axioms revokeCredentialAcc_present
+#assert_axioms revokeCredentialAcc_revoked
+#assert_axioms capRevoke_then_gate_refuses
+
 end Dregg2.Exec
