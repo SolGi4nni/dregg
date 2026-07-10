@@ -3491,6 +3491,20 @@ function getStoryEngine(): StoryEngine {
           origin: req.origin,
           hasUnknown: false,
         }),
+      // The collective VOTER identity — the active profile's ed25519 public key
+      // (hex). Public, so no unlock is needed to establish WHO is voting; the vote
+      // itself is a custody write (consent-gated above). Stable across the session,
+      // so `castVote`'s one-vote-per-voter holds. `null` (no profile) ⇒ the engine
+      // refuses the vote (fail-closed). (The extension-less passkey voter derives its
+      // id from the PRF-wrapped key in the page-bundled SDK runtime, not here.)
+      voterIdentity: async () => {
+        const s = await loadState();
+        const p =
+          s.profiles.find((pr) => pr.name === s.activeProfile) ?? s.profiles[0];
+        return p?.publicKey?.length
+          ? p.publicKey.map((b) => b.toString(16).padStart(2, "0")).join("")
+          : null;
+      },
     });
   }
   return storyEngine;
