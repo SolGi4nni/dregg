@@ -5,10 +5,11 @@
 #
 # What this does (idempotent — every step skips itself when already satisfied):
 #   1. checks the toolchain prerequisites (cargo, elan/lake) and TEACHES the fix when absent;
-#   2. checks the mathlib checkout the Lean build requires (metatheory/lakefile.toml pins
-#      mathlib as a LOCAL PATH dependency — a fresh machine does not have it);
-#   3. `lake build`s the verified executor's FFI module (incremental; the FIRST run compiles
-#      mathlib and takes a long time — see the note printed at that step);
+#   2. checks the mathlib dependency (metatheory/lakefile.toml pins mathlib as a portable
+#      git+rev require) and pulls its PREBUILT oleans via `lake exe cache get` — minutes,
+#      mathlib is never compiled from source here;
+#   3. `lake build`s the verified executor's three FFI splice roots (incremental; the FIRST
+#      run compiles the Dregg2 corpus and takes a while — see the note printed at that step);
 #   4. seeds dregg-lean-ffi/libdregg_lean.a (the static archive of the compiled Lean kernel;
 #      ~6000 objects, one-time — afterwards `cargo build` keeps it fresh automatically);
 #   5. verifies the result by running the FFI smoke binary: Rust calls the PROVED Lean
@@ -75,8 +76,11 @@ else
 fi
 
 # ── 3. build the verified executor (Lean → C facets) ────────────────────────
-step "lake build Dregg2.Exec.FFI (incremental; FIRST run compiles the Dregg2 corpus — long; mathlib comes prebuilt from the cache step above)"
-( cd "$META" && lake build Dregg2.Exec.FFI ) \
+step "lake build the three FFI splice roots (incremental; FIRST run compiles the Dregg2 corpus — long; mathlib comes prebuilt from the cache step above)"
+# All three splice roots (the triple in build.rs + scripts/lean-ffi-closure.py):
+# DistributedExports is a root (nothing imports it) and pulls Dregg2.Coord.*,
+# which FFI alone never emits — the seed archive step needs those objects.
+( cd "$META" && lake build Dregg2.Exec.FFI Dregg2.Exec.DistributedExports Dregg2.Exec.FFIDirect ) \
   || die "lake build failed. Common causes:
   * mathlib checkout at the wrong revision (see the pin check above);
   * a partial earlier build — re-running this script resumes it (lake is incremental)."

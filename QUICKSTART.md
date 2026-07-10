@@ -17,8 +17,10 @@ node's state producer IS the *verified Lean executor*. But that executor links a
 - **verified** (`state_producer:"lean"`): the node runs the proved Lean function.
   Needs the seed **and** the elan/Lean toolchain on PATH. Get the seed the fast
   way — `./scripts/fetch-lean-seed.sh` downloads a prebuilt one in minutes — or
-  the slow way, `./scripts/bootstrap.sh` (compiles it from source, **hours** the
-  first time because it builds mathlib).
+  the slow way, `./scripts/bootstrap.sh` (compiles it from source; mathlib is
+  NOT the cost — its prebuilt oleans arrive in minutes via the cloud cache — the
+  long part is the leanc compile of the Dregg2 closure, ~30–90 min on a beefy
+  box).
 - **marshal-only** (`state_producer:"rust"`): a plain `cargo build` with **no
   seed** builds this — the node would run the *un-verified* Rust executor. It is
   fine for UI/dev, but it is **not** the verified node. The node **refuses to

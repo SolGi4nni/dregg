@@ -35,8 +35,14 @@ NCPU="$(sysctl -n hw.logicalcpu 2>/dev/null || nproc)"
 
 command -v lake >/dev/null 2>&1 || { echo "FATAL: lake not on PATH (install elan; ./scripts/bootstrap.sh teaches the fix)"; exit 1; }
 
-echo "==> lake build Dregg2.Exec.FFI (full transitive closure → :c facets)"
-( cd "$META" && lake build Dregg2.Exec.FFI )
+# Build ALL THREE archive splice roots (the same triple build.rs and
+# scripts/lean-ffi-closure.py name). FFI alone is NOT enough: DistributedExports
+# is a ROOT (nothing imports it), and it imports Dregg2.Coord.* — on a fresh box
+# `lake build Dregg2.Exec.FFI` emits no IR for those, and the closure-only
+# archive step below dies asking for Dregg2_Coord_*.o (bit for real on a fresh
+# Linux bootstrap, 2026-07-10).
+echo "==> lake build the three FFI splice roots (full transitive closure → :c facets)"
+( cd "$META" && lake build Dregg2.Exec.FFI Dregg2.Exec.DistributedExports Dregg2.Exec.FFIDirect )
 
 INC="$(cd "$META" && lake env printenv LEAN_SYSROOT)/include"
 
