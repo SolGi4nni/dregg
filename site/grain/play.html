@@ -130,6 +130,8 @@
       background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r2);
       padding: var(--s2) var(--s3); margin-top: var(--s2); white-space: pre-wrap; word-break: break-word; }
     .run-status { color: var(--fg-muted); font-size: 0.92rem; margin-top: var(--s4); text-align: center; }
+    .spin { display: inline-block; animation: spin 1.1s linear infinite; }
+    @keyframes spin { to { transform: rotate(360deg); } }
 
     /* ── the payoff / verify ──────────────────────────────────────────────── */
     #verify-card { display: none; }
@@ -166,32 +168,16 @@
       you permitted.</p>
   </header>
 
-  <!-- ── STEP 1 · KEY ──────────────────────────────────────────────────── -->
+  <!-- ── STEP 1 · TASK ─────────────────────────────────────────────────── -->
   <section class="card">
-    <h2><span class="step">Step 1</span>Bring a key for the AI</h2>
-    <p class="hint">The thinking happens at an AI provider. Paste an
-      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter key</a> — the
-      free tier works fine.</p>
-    <label class="field-label" for="key">Your OpenRouter key</label>
-    <input type="password" id="key" placeholder="sk-or-v1-…  (paste here)">
-    <div class="safety">
-      <span>🔐</span>
-      <span><b>It stays in your browser.</b> Your key is sent only to OpenRouter to do the thinking —
-        <b>never to the sandbox</b>. The sandbox only ever sees the single action the AI wants to take.</span>
-    </div>
-    <details class="why">
-      <summary>Why do I need this?</summary>
-      <p>The AI's "brain" is a language model, and running it costs a little money — so it runs under
-        <em>your</em> account, not ours. That's also what keeps your key private: it never leaves this
-        page except to talk to the model provider. A free OpenRouter key is plenty for this demo.</p>
-    </details>
-  </section>
-
-  <!-- ── STEP 2 · TASK ─────────────────────────────────────────────────── -->
-  <section class="card">
-    <h2><span class="step">Step 2</span>Tell your agent what to do</h2>
+    <h2><span class="step">Step 1</span>Tell your agent what to do</h2>
     <p class="hint">Type a job, or tap an example. The sandbox is allowed to work with files in its
       own scratch folder — nothing else.</p>
+    <div class="safety">
+      <span>✨</span>
+      <span><b>No key needed.</b> The agent is powered by the host's own model
+        (<b>AWS Bedrock · Nova-Micro</b>) — you just give it a job.</span>
+    </div>
     <div class="taskrow">
       <textarea id="task" placeholder="e.g. Write me a haiku about grains, then read it back to me.">Write me a haiku about grains, then read it back to me.</textarea>
     </div>
@@ -211,7 +197,7 @@
 
   <!-- ── THE PAYOFF ────────────────────────────────────────────────────── -->
   <section class="card" id="verify-card">
-    <h2><span class="step">Step 3</span>Check the agent's work</h2>
+    <h2><span class="step">Step 2</span>Check the agent's work</h2>
     <p class="hint">You don't have to take the sandbox's word for it. Re-derive the record yourself —
       the sandbox can't have faked a single step.</p>
     <button class="btn" id="verify" onclick="verify()">✓  Check the agent's work</button>
@@ -233,6 +219,7 @@
     ? location.origin.replace(/\/+$/, '') : 'http://127.0.0.1:8903';
   const CONTROL = 'control.localhost';
   const BUDGET = 100000;
+  const MODEL = 'AWS Bedrock · Nova-Micro';   // the host's server-side brain (keyless)
 
   // A fresh, private identity + sandbox for this session. The person never sees any
   // of this — renting is auto-provisioned behind the scenes on their first run.
@@ -251,38 +238,14 @@
     http_get:  { verb: 'reach out to the internet', icon: '🌐' },
     shell:     { verb: 'run a shell command',   icon: '⌨️' },
   };
-  // Human reason a forbidden tool is blocked (why the box said no).
-  const BLOCK_REASON = {
-    http_get: 'reach the internet',
-    shell:    'run commands on the computer',
-  };
-  function proposeText(tool, args) {
-    const v = VERB[tool] || { verb: tool, icon: '🤖' };
-    let what = `<strong>${esc(v.verb)}</strong>`;
+  // The address the agent points at (path/url/cmd) for a proposed tool call.
+  function targetHtml(tool, args) {
     if ((tool === 'fs_write' || tool === 'fs_read' || tool === 'list_dir' || tool === 'mkdir') && args.path)
-      what += ` called <code>${esc(args.path)}</code>`;
-    else if (tool === 'http_get' && args.url) what += ` at <code>${esc(String(args.url).slice(0,60))}</code>`;
-    else if (tool === 'shell' && args.cmd) what += `: <code>${esc(String(args.cmd).slice(0,60))}</code>`;
-    return `${v.icon} The agent wants to ${what}…`;
+      return ` <code>${esc(args.path)}</code>`;
+    if (tool === 'http_get' && args.url) return ` <code>${esc(String(args.url).slice(0, 60))}</code>`;
+    if (tool === 'shell' && args.cmd) return ` <code>${esc(String(args.cmd).slice(0, 60))}</code>`;
+    return '';
   }
-
-  // ── the tools we let the AI reach for. The fs ones are permitted by the sandbox;
-  //    http_get + shell are advertised too so the AI CAN try them — and the sandbox
-  //    will refuse them (the delightful "it can't escape" moment).
-  const TOOLS = [
-    { type:'function', function:{ name:'fs_write', description:'Write a text file in the sandbox scratch folder.',
-      parameters:{ type:'object', properties:{ path:{type:'string'}, content:{type:'string'} }, required:['path','content'] } } },
-    { type:'function', function:{ name:'fs_read', description:'Read back a file you wrote in the sandbox scratch folder.',
-      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
-    { type:'function', function:{ name:'list_dir', description:'List the files in the sandbox scratch folder.',
-      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
-    { type:'function', function:{ name:'mkdir', description:'Make a folder in the sandbox scratch folder.',
-      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
-    { type:'function', function:{ name:'http_get', description:'Fetch a web page over the internet.',
-      parameters:{ type:'object', properties:{ url:{type:'string'} }, required:['url'] } } },
-    { type:'function', function:{ name:'shell', description:'Run a shell command on the host computer.',
-      parameters:{ type:'object', properties:{ cmd:{type:'string'} }, required:['cmd'] } } },
-  ];
 
   // ── example chips (the last two are secretly forbidden — the block is a surprise)
   const CHIPS = [
@@ -322,18 +285,6 @@
     return false;
   }
 
-  // ── talk to the AI provider (OpenRouter). The ONE place the key travels — and it
-  //    goes to the provider, never to the sandbox. ──────────────────────────
-  async function think(key, messages) {
-    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-      method: 'POST',
-      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
-      body: JSON.stringify({ model: 'meta-llama/llama-3.2-3b-instruct', messages, tools: TOOLS, tool_choice: 'auto' }),
-    });
-    if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
-    return res.json();
-  }
-
   function addLine(cls, big, note) {
     const div = document.createElement('div');
     div.className = 'line ' + cls;
@@ -346,12 +297,35 @@
     el('budget').innerHTML = `budget: <b>${spent.toLocaleString()}</b> of ${BUDGET.toLocaleString()} spent`;
   }
 
-  const MAX_STEPS = 8;
+  // ── render one step the host's model actually took, in plain language ─────
+  function renderAct(s) {
+    const tool = s.tool;
+    const args = s.args || {};
+    const v = VERB[tool] || { verb: tool, icon: '🤖' };
+    const target = targetHtml(tool, args);
+    if (s.receipt && typeof s.receipt.consumed_after === 'number') { spent = s.receipt.consumed_after; setBudget(); }
+
+    if (s.admitted) {
+      const out = s.output != null ? String(s.output) : '';
+      const isRead = tool === 'fs_read';
+      const tail = isRead
+        ? ' — here is what it read back:'
+        : (out ? ` — ${esc(out)}` : '.');
+      const line = addLine('allow',
+        `🤖 wanted to <strong>${esc(v.verb)}</strong>${target} → ✅ <strong>Allowed</strong>${tail}`);
+      if (isRead && out) {
+        const peek = document.createElement('div');
+        peek.className = 'filepeek'; peek.textContent = out.slice(0, 600);
+        line.appendChild(peek);
+      }
+    } else {
+      addLine('block',
+        `🤖 wanted to <strong>${esc(v.verb)}</strong>${target} → ⛔ <strong>Blocked</strong> — the sandbox never gave it that permission.`,
+        `<em>The agent proposes; the sandbox disposes.</em>`);
+    }
+  }
 
   async function run() {
-    const key = el('key').value.trim();
-    if (!key) { el('key').focus(); el('key').style.borderColor = 'var(--danger)'; return; }
-    el('key').style.borderColor = '';
     const task = el('task').value.trim();
     if (!task) { el('task').focus(); return; }
 
@@ -372,81 +346,45 @@
         `Is <span class="mono">agent-platform</span> running at <code>${esc(BASE)}</code>?`);
       el('run').disabled = false; return;
     }
-    el('run-status').textContent = 'The agent is thinking…';
 
-    const messages = [
-      { role: 'system', content: 'You are an AI agent working inside a sealed sandbox. Use ONLY the provided tools to accomplish the user\'s task, one tool call at a time. Some tools may be refused by the sandbox — that is expected; do not retry a refused tool, just adapt or stop. When the task is done, reply with a short friendly summary and stop calling tools.' },
-      { role: 'user', content: task },
-    ];
+    // The host's model drives the whole thing server-side and hands back the finished
+    // steps in one response — no key, no browser loop. Show a spinner while it works.
+    el('run-status').innerHTML =
+      `<span class="spin">⏳</span> the agent is working… <em>(thinking with ${esc(MODEL)})</em>`;
 
+    let data;
+    try {
+      const res = await fetch(BASE + '/keyless-drive', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', 'X-Dregg-Subject': SUBJECT },
+        body: JSON.stringify({ goal: task, host: GRAIN, subject: SUBJECT }),
+      });
+      const text = await res.text();
+      try { data = JSON.parse(text); } catch { data = { raw: text }; }
+      if (!res.ok) throw new Error(`${res.status} ${text.slice(0, 200)}`);
+    } catch (e) {
+      el('run-status').textContent = '';
+      addLine('err', '⚠️ The agent could not run.', esc(e.message));
+      el('run').disabled = false; return;
+    }
+
+    const steps = Array.isArray(data.steps) ? data.steps : [];
     let didWork = false;
-    for (let step = 0; step < MAX_STEPS; step++) {
-      let completion;
-      try { completion = await think(key, messages); }
-      catch (e) {
-        el('run-status').textContent = '';
-        addLine('err', '⚠️ The AI provider returned an error.',
-          `${esc(e.message)} — check your key is a valid OpenRouter key with free credit.`);
-        break;
+    for (const s of steps) {
+      if (s.kind === 'act') {
+        renderAct(s);
+        if (s.admitted) didWork = true;
+      } else if (s.kind === 'say') {
+        addLine('think', '💬 ' + esc(s.text || ''));
+      } else if (s.kind === 'error') {
+        addLine('err', '⚠️ The agent hit a snag.', esc(s.text || ''));
       }
-      const msg = completion.choices && completion.choices[0] && completion.choices[0].message;
-      if (!msg) { addLine('err', '⚠️ The AI returned nothing.'); break; }
-      messages.push(msg);
-      const calls = msg.tool_calls || [];
-
-      if (!calls.length) {
-        el('run-status').textContent = '';
-        if (msg.content) addLine('think', '💬 ' + esc(msg.content));
-        break;
-      }
-
-      const call = calls[0];
-      let args = {}; try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
-      const tool = call.function.name;
-
-      addLine('propose', proposeText(tool, args));
-      el('run-status').textContent = 'The sandbox is checking that request…';
-
-      let r;
-      try { r = await api('/act', { method:'POST', grainHost: GRAIN, body: { tool, args, goal: task } }); }
-      catch (e) { addLine('err', '⚠️ Lost contact with the sandbox.', esc(e.message)); break; }
-
-      const d = r.data || {};
-      let toolResult;
-      if (r.status === 200 && d.admitted > 0) {
-        didWork = true;
-        if (typeof d.receipt?.consumed_after === 'number') { spent = d.receipt.consumed_after; setBudget(); }
-        const out = d.output != null ? String(d.output) : '';
-        const isRead = tool === 'fs_read';
-        const bytesNote = out ? (isRead ? '' : ` <em>(${out.length} characters)</em>`) : '';
-        const line = addLine('allow', `✅ <strong>Allowed</strong> — the sandbox let it through.${bytesNote}`);
-        if (out && isRead) {
-          const peek = document.createElement('div');
-          peek.className = 'filepeek'; peek.textContent = out.slice(0, 600);
-          line.appendChild(peek);
-        }
-        toolResult = `Done. The action succeeded.` + (out ? `\nResult: ${out}` : '');
-      } else if (r.status === 200) {
-        const why = BLOCK_REASON[tool] || 'do that';
-        addLine('block',
-          `⛔ <strong>Blocked</strong> — you never gave it permission to <strong>${esc(why)}</strong>.`,
-          `The agent proposes; the sandbox disposes. Nothing happened.`);
-        toolResult = `REFUSED by the sandbox: you are not permitted to ${why}. This did NOT run. Do not retry it — accomplish the task another way, or stop and summarize.`;
-      } else if (r.status === 402) {
-        addLine('block', '⛔ <strong>Out of budget</strong> — the sandbox stopped spending.'); break;
-      } else {
-        addLine('err', `⚠️ The sandbox returned an error (${r.status}).`, esc(d.error || '')); break;
-      }
-      messages.push({ role: 'tool', tool_call_id: call.id, content: toolResult });
-      el('run-status').textContent = 'The agent is thinking…';
-
-      if (step === MAX_STEPS - 1) el('run-status').textContent = 'Reached the step limit for this demo.';
     }
 
     el('run').disabled = false;
     el('run-status').textContent = didWork
       ? "The agent finished. Now check its work below — you don't have to trust anyone."
-      : (el('run-status').textContent || 'The agent stopped.');
+      : 'The agent stopped without changing anything.';
     if (didWork) {
       el('verify-card').style.display = 'block';
       el('verify-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
