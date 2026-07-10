@@ -142,4 +142,13 @@ the sibling lane settles — not mine to touch/stash.
   ⚠ FAITHFULNESS BUG CAUGHT: step 3's comment said allocCell resets `cell` to `.record []` (an `erase`). WRONG —
   `(default : Value) = Value.int 0` (Exec/Value.lean:69), NOT the cell map's default `.record []`. It is an
   `insertNZ` of a non-default value. Erasing would have made `denote_finAllocCell` FALSE. Measurement caught it.
-- ▶ IN FLIGHT: step 3B — FiniteDiff obligations + squares for the remaining ~28 deployed `*Stmt` programs.
+- ✅ STEP 3B `cbd3884de` — **28 of 30** deployed `*Stmt` programs have PROVED commuting squares (I COUNTED the
+  `_square` theorems myself: 28, names verified). 11 FiniteDiff obligations PROVED as real theorems, never
+  assumed — empirically confirming step 3's measurement that every deployed writer is a point diff. VACUOUS:
+  `setDelegate` has no deployed program. COUNT CORRECTION: 30 distinct `*Stmt` terms, not 32 (`legStmt` aliases
+  reduce to `balanceAStmt`). Teeth: `cellSealStmt_fires` + `cellSeal_notFiniteDiff_over_empty` (BITES).
+  R1's `hpres` gate discharged for these 28.
+- ▶ IN FLIGHT: step 3C (the last 2 squares — createCellStmt/createCellFromFactoryStmt, unblocked by 3A) ·
+  step 4 R4 (`recStateCommit_binds_kernel_fin`: collapse the 5 carried hypotheses — 4 injectivity + 
+  RestHashIffFrame — to `Poseidon2SpongeCR` ALONE, scoped to denote-images/reachable states, realizing
+  `LeafRealization` rather than assuming it).
