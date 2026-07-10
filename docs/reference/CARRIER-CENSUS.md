@@ -87,3 +87,28 @@ argument). Lower leverage than A/B; do them as the effects they gate get grounde
 - "realized" ≠ "realized for the DEPLOYED object" — verify the realization isn't a toy (the `ZMod 5` lesson).
 - This census counts CIRCUIT/soundness carriers. The crypto-floor reductions (DL/MSIS/MLWE) are separately
   audited in `METATHEORY-GROUND-TRUTH.md`.
+
+
+## ⚠ CORRECTION (2026-07-10): `Satisfied2Faithful` / `DeployedFaithful*` are NOT DEBT-B carriers
+This census filed `Satisfied2Faithful` (32 uses) and `DeployedFaithful*` (9) under DEBT-B ("provable from the
+simulation"). **That was wrong.** Read at HEAD: `Satisfied2Faithful` (Dregg2/Circuit/Satisfied2Faithful.lean:109)
+`extends Satisfied2` and asserts AIR/STARK CHIP-LAYER facts — `permOut` exposing `CHIP_OUT_LANES`,
+`chipHashIsLane0` (the v1 digest is lane 0 of the genuine Poseidon2 permutation), `chipTableFaithful :
+ChipTableSoundN permOut (t.tf .poseidon2)`. This is the SAME family as `StarkSound` (DEBT A) — the AIR being
+faithful to the effect step at the CHIP level. The finite-map data refinement (`denote`, `FinKernelState`,
+`FinFrameHash`, `FinInterp`) never mentions `permOut`/chip-tables/`Satisfied2` (verified: zero occurrences), so it
+CANNOT and does NOT discharge them. RECLASSIFIED to DEBT A / the AIR-chip layer. DEBT-B's actual carriers are
+`RestHashIffFrame` + the 4 injectivity carriers (state-commitment binding) — DISCHARGED to `Poseidon2SpongeCR` on
+the reachable subclass by `FinBindsKernel.recStateCommit_binds_kernel_fin` (3b6ed68af, non-vacuous per 8cd504be3).
+
+## DEBT-B terminus (2026-07-10) — the mathematical core is PROVED; the tail is named
+- ✅ `RestHashIffFrame` + `compressInjective`×2 + `compressNInjective` + `cellLeafInjective` → `Poseidon2SpongeCR`
+  ALONE, on the reachable denote-image subclass (`recStateCommit_binds_kernel_fin`, instantiable). `LeafRealization`
+  CONSTRUCTED, not assumed. All 30 deployed `*Stmt` program commuting squares proved (R1's `hpres` gate discharged).
+- ◑ The ~1200-use injectivity CLUSTER (`compressNInjective`/`cellLeafInjective` as bare hypotheses across ~139
+  files) is MECHANICAL PLUMBING, not debt: the reductions (`compressNInjective_of_poseidon2CR`,
+  `poseidon2CommitSurface`) EXIST and are proved. Threading them through all 139 downstream theorems (so each takes
+  `Poseidon2SpongeCR` instead of the alias) is a large mechanical sweep that COLLIDES with the active
+  import-slimming lane — NAMED here as the remaining tail, not force-churned into a live tree. The floor is
+  singular WHERE IT BINDS (the R4 path); making it singular everywhere is bounded mechanical work for a calm tree.
+- → `Satisfied2Faithful` / `DeployedFaithful*` reclassified to DEBT A (above).
