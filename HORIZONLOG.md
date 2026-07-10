@@ -7039,3 +7039,46 @@ pending upstream). That convergence is item #1 in the DEBT-B remaining plan, bef
 NEW FILES: `GOAL-HONEST-VERIFICATION.md` · `docs/reference/{METATHEORY-GROUND-TRUTH,CARRIER-CENSUS,
 DEBT-B-FINITE-MAP-REFINEMENT,DELTA-FUTURE}.md` · `metatheory/Dregg2/Circuit/{Freshness,FinKernelState,FinFrameHash,
 FinKernelStep,EffectsAsDataProto}.lean`.
+
+## 2026-07-10 — DEBT-B CORE PROVED: RestHashIffFrame is a theorem, not a named carrier
+The largest carrier cluster the census found (`RestHashIffFrame`, 199 uses, which the tree ITSELF admitted was
+"the ONLY carrier with no realization into ℤ") is DISCHARGED. Whole tree `lake build Dregg2` green throughout
+(4530 → 4536). All units audited BY TYPE (proof bodies read, `_square`/theorem counts done by hand — the "30 of
+32" and "hpres for 30 programs" overclaims were caught by counting), 0 carriers, 0 sorries.
+
+The finite-map data refinement (ember's idea): model `RecordKernelState`'s function-valued fields (total
+functions over an infinite `CellId` domain — unhashable, hence `RestHashIffFrame` unsatisfiable) as sorted-nodup
+finite maps matching the deployed Rust (which already commits over sorted-canonical leaves). Then the
+"unrealizable" carrier becomes a proved lemma.
+- **R1** `6458e10d2` — `FinKernelState` + `denote_injective` (UNCONDITIONAL) + the surjectivity honesty-gate.
+- **Root convergence** `ca51d3fde` — carry `nullifierRoot`/`revokedRoot`; `serializeFin` binds them; the vacuity
+  a tooth *bites* (`serializeFin_separates_nullifierRoot` was false before).
+- **Delta de-risk** `519ecb219` — measured: the deployed Rust is already delta-based (`ledger.rs`), so the
+  recurring per-effect `by_cases` is ZERO via an effect-free naturality lemma; the residue is one-time migration.
+  Redefining the deployed ops = 150 files/112 sites, DEFERRED (`DELTA-FUTURE.md`).
+- **Step 3** `e6344b504`+`80d4a2987`+`cbd3884de`+`63c904d56` — re-planned onto Argus's `RecStmt` (19-ctor
+  statement language the 32 deployed effects compile into). ALL 30 deployed `*Stmt` programs have proved commuting
+  squares `denote (finInterp s f) = interp s (denote f)`; **R1's `hpres` gate FULLY DISCHARGED** for every
+  deployed effect. `allocCell` needed a `filterErase` primitive. The 7 whole-function writers' FiniteDiff
+  obligations are PROVED (every deployed writer is a point diff — the infinite-support hazard was a raw-constructor
+  artifact, not a property of the effects).
+- **R4** `3b6ed68af` + `8cd504be3` — `recStateCommit_binds_kernel_fin`: on the reachable denote-image subclass,
+  ALL FIVE carried hypotheses (`RestHashIffFrame` + 4 injectivity) collapse to **`Poseidon2SpongeCR` ALONE**.
+  `LeafRealization` CONSTRUCTED, not assumed. The `AccountsWF` vacuity closed by aligning `FinKernelState.cell`'s
+  default to the kernel's `Value.int 0` — a real, non-vacuous, instantiable theorem (fires at `finInit`).
+
+THE FAITHFUL MODEL REFUSED THREE UNSOUNDNESSES that would each have built green as a lie: the roots forced to be
+bound (`serializeFin_injective`), the born-cell value forced to `.int 0` not an erase (`CanonMap` default), the
+factory-miss forced into a `dite`. A faithful representation makes the wrong statement HARD TO WRITE DOWN — the
+argument for doing DEBT-B rather than assuming `RestHashIffFrame`.
+
+HONEST RE-PLAN (census corrected `365af3d82`): `Satisfied2Faithful` (32) + `DeployedFaithful*` (9) are NOT
+DEBT-B — read at HEAD they assert AIR/STARK chip-layer facts (`permOut`/`ChipTableSoundN`, `extends Satisfied2`),
+the `StarkSound` family. The finite-map files never touch `permOut`/chips (0 occurrences). RECLASSIFIED to DEBT A.
+REMAINING DEBT-B tail (named, not force-churned into the live import-slimming tree): the ~1200-use injectivity
+CLUSTER is mechanical plumbing (the `_of_poseidon2CR` reductions EXIST) — route the 139 downstream files through
+the single floor when the tree is calm. `RestFrameDecodes2*` (8 assumed / 5 realized) — the 3 residual to check.
+NEXT REAL CAMPAIGN: DEBT A — discharge `StarkSound` (the p3/FRI-over-BabyBear verifier), which ALSO owns the
+reclassified `Satisfied2Faithful`.
+NEW FILES: `Dregg2/Circuit/{FinKernelState,FinFrameHash,FinInterp,FinKernelStep,FinAllocCell,FinProgramSquares,
+FinCreateCellSquares,FinBindsKernel,DeltaProto,EffectsAsDataProto}.lean`.
