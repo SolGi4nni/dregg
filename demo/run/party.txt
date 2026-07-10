@@ -1,6 +1,6 @@
 THE COLLECTIVE DUNGEON — a crowd steers one shared party by VOTE
 driven run · attested-dm /party contract · narratorKind: model:gemma2:2b (a REAL local model)
-served at http://127.0.0.1:63166/party
+served at http://127.0.0.1:56907/party
 ==============================================================================
 
 Each turn: OPEN a vote over the party's candidate moves, the seated adventurers cast

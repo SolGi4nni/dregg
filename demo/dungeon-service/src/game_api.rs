@@ -976,6 +976,181 @@ pub fn handle_reset(gs: &Mutex<GameState>, body: &[u8]) -> WebResponse {
     )
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE FORGE LANE — POST /game/author {"source":"<.dungeon text>"}. Author a world in the
+// dungeon DSL, fail-closed, and PLAY it through the same GameSession as a registered game.
+//
+// Three-stage response:
+//   * a SYNTAX error (`parse_world` refuses)   → {ok:false, stage:"parse", line, message}
+//   * SEMANTIC errors (`validate` finds any)   → {ok:false, stage:"validate", issues:[…]}   (ALL of them)
+//   * else → OPEN a fresh session over the authored world and return {ok:true, warnings, state}.
+// A subsequent /game/act, /game/state, /game/verify plays the authored world exactly like a
+// registered one; /game/reset {world} still returns to a registered dungeon.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// `POST /game/author {"source":"<.dungeon text>"}` — parse + validate the DSL source
+/// fail-closed, then open a live session over the authored world. The narrator's probed
+/// Model/Scripted mode is preserved (as `/game/reset` does).
+pub fn handle_author(gs: &Mutex<GameState>, body: &[u8]) -> WebResponse {
+    let parsed: Value = match serde_json::from_slice(body) {
+        Ok(v) => v,
+        Err(e) => return WebResponse::error(400, format!("bad JSON: {e}")),
+    };
+    let source = match parsed.get("source").and_then(Value::as_str) {
+        Some(s) => s.to_string(),
+        None => return WebResponse::error(400, "missing string field `source`"),
+    };
+
+    // Stage 1 — SYNTAX. `parse_world` builds a GameWorld from the text with syntactic checks
+    // only (a semantically-broken world is still returned so stage 2 can surface EVERY issue).
+    // A syntax error refuses fail-closed with its source line.
+    let world = match attested_dm::parse_world(&source) {
+        Ok(w) => w,
+        Err(e) => {
+            return WebResponse::json(
+                json!({
+                    "ok": false,
+                    "stage": "parse",
+                    "line": e.line,
+                    "message": e.message,
+                })
+                .to_string()
+                .into_bytes(),
+            );
+        }
+    };
+
+    // Stage 2 — SEMANTICS. Report EVERY issue (dangling exit, unreachable objective, an
+    // unplaced item, an actor in an unknown room, …); any `Error` blocks and mounts no world.
+    let issues = attested_dm::validate(&world);
+    if issues.iter().any(|i| i.is_error()) {
+        let issues_json: Vec<Value> = issues.iter().map(|i| issue_json(&source, i)).collect();
+        return WebResponse::json(
+            json!({
+                "ok": false,
+                "stage": "validate",
+                "issues": issues_json,
+            })
+            .to_string()
+            .into_bytes(),
+        );
+    }
+
+    // Stage 3 — OPEN. The world is sound: open a fresh session over it, preserving the narrator.
+    let name = extract_name(&source).unwrap_or_else(|| "Your Dungeon".to_string());
+    let warnings: Vec<Value> = issues.iter().map(|i| issue_json(&source, i)).collect();
+
+    let mut g = gs.lock().unwrap();
+    let brain = g.brain.clone();
+    *g = open_authored(brain, world, &name);
+    let state = state_json(&g);
+    WebResponse::json(
+        json!({
+            "ok": true,
+            "warnings": warnings,
+            "state": state,
+        })
+        .to_string()
+        .into_bytes(),
+    )
+}
+
+/// One validator [`attested_dm::Issue`] as JSON, best-effort line-pinned. The validator drops
+/// the source line, but its messages NAME the offending id in backticks — so we locate it in the
+/// source the way the authoring page does (a `-> id` target first, else any line mentioning it).
+fn issue_json(source: &str, issue: &attested_dm::Issue) -> Value {
+    json!({
+        "line": locate_issue(source, &issue.message),
+        "severity": if issue.is_error() { "error" } else { "warning" },
+        "message": issue.message,
+    })
+}
+
+/// Best-effort source line for a validator message: scan its backtick-quoted tokens. First locate
+/// a dangling `-> target` whose target is NOT a defined room (the offending exit itself); else fall
+/// back to any line that mentions a token (e.g. the `objective:` line for a bad win item). `0` when
+/// nothing matches.
+fn locate_issue(source: &str, message: &str) -> usize {
+    let tokens: Vec<&str> = message.split('`').skip(1).step_by(2).collect();
+    let lines: Vec<&str> = source.lines().collect();
+    let is_defined_room = |tok: &str| {
+        lines.iter().any(|l| {
+            let t = l.trim_start();
+            t.strip_prefix("room ").is_some_and(|rest| {
+                rest.trim_start()
+                    .split(|c: char| c.is_whitespace() || c == '"')
+                    .next()
+                    == Some(tok)
+            })
+        })
+    };
+    // Pass 1 — an exit whose target room is UNDEFINED (the dangling exit line), skipping tokens
+    // that name a real room (so `-> gate` does not shadow the dangling `-> antechamer`).
+    for tok in &tokens {
+        if tok.is_empty() || is_defined_room(tok) {
+            continue;
+        }
+        let needle = format!("-> {tok}");
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains(&needle) {
+                return i + 1;
+            }
+        }
+    }
+    // Pass 2 — any line mentioning a token, in message order.
+    for tok in &tokens {
+        if tok.is_empty() {
+            continue;
+        }
+        for (i, line) in lines.iter().enumerate() {
+            if line.contains(tok) {
+                return i + 1;
+            }
+        }
+    }
+    0
+}
+
+/// The authored world's display name — the DSL's flavour-only `name:` / `title:` line (the
+/// engine's [`GameWorld`] carries no name field, so we read it from the source ourselves).
+fn extract_name(source: &str) -> Option<String> {
+    for raw in source.lines() {
+        let line = raw.split('#').next().unwrap_or(raw);
+        let t = line.trim();
+        for kw in ["name:", "title:"] {
+            if let Some(rest) = t.strip_prefix(kw) {
+                let name = rest.trim().trim_matches('"').trim();
+                if !name.is_empty() {
+                    return Some(name.to_string());
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Open a fresh session over an AUTHORED (DSL-parsed) world with the given narrator. The world id
+/// is `authored` and the theme is derived from its name so gemma2 narrates in-genre — otherwise
+/// this is a first-class [`GameSession`], identical to a registered dungeon's.
+fn open_authored(brain: VaultNarrator, world: GameWorld, name: &str) -> GameState {
+    let last_narrator_kind = brain.base_kind();
+    let session = GameSession::open(world);
+    let theme = format!(
+        "{name}, a dungeon authored in the dungeon DSL \u{2014} narrate its rooms and moves \
+         vividly and atmospherically, letting the room's own prose set the genre"
+    );
+    GameState {
+        session,
+        brain,
+        world_id: "authored".to_string(),
+        world_name: name.to_string(),
+        theme,
+        last_narrator_kind,
+        party: None,
+        next_round_id: 1,
+    }
+}
+
 /// Extract the optional `world` id from a `/game/reset` body. An empty body, `{}`, or a missing
 /// `world` yields `None` (→ the default world).
 fn world_from_body(body: &[u8]) -> Option<String> {

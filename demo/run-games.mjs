@@ -110,7 +110,7 @@ async function main() {
     if (bootErr) throw new Error(`the game page failed to boot (could not reach /game):\n    ${bootErr}`);
 
     // ── A. THE GAME REGISTRY — /game/list serves the registered games ──
-    const EXPECTED_GAMES = ["bramble-keep", "starfall-spire", "sunken-vault"];
+    const EXPECTED_GAMES = ["bramble-keep", "deepdark-mine", "starfall-spire", "sunken-vault"];
     const list = await page.evaluate(async () => await (await fetch("/game/list")).json());
     assert.ok(Array.isArray(list), "/game/list returns an array");
     const ids = list.map((g) => g.id).sort();

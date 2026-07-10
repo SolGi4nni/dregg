@@ -1,6 +1,6 @@
 THE ATTESTED DUNGEON — the model proposes, the capabilities dispose
 driven run · attested-dm service contract · narratorKind: null
-served at http://127.0.0.1:57892/dungeon
+served at http://127.0.0.1:60394/dungeon
 ==========================================================================
 
 PROSE IS NOT POWER. Prompt injection cannot be filtered away — natural language

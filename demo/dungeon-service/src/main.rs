@@ -506,6 +506,9 @@ fn route(
         (HttpMethod::Post, "/game/act") => game_api::handle_act(game, &req.body),
         (HttpMethod::Get, "/game/verify") => game_api::handle_verify(game),
         (HttpMethod::Post, "/game/reset") => game_api::handle_reset(game, &req.body),
+        // ── THE FORGE — author a world in the dungeon DSL and PLAY it. Parse + validate fail-closed
+        //    (stage "parse" / "validate"); on success a fresh GameSession over the authored world.
+        (HttpMethod::Post, "/game/author") => game_api::handle_author(game, &req.body),
         // ── THE COLLECTIVE DUNGEON — a crowd steers ONE shared party through the SAME dungeon by
         //    vote. Additive over the same GameSession: /party/{options,open,vote,tally,close}. The
         //    crowd DECIDES the next command; the WORLD still RESOLVES it via the /game/act path.
@@ -529,6 +532,7 @@ const INDEX_HELP: &str = "attested dungeon-master — the model proposes, the ca
     POST /game/act {\"command\":\"<free text>\"}\n\
     GET  /game/verify\n\
     POST /game/reset {\"world\":\"<game id>\"}\n\
+    POST /game/author {\"source\":\"<.dungeon text>\"}   (author + play a DSL world)\n\
     -- THE COLLECTIVE DUNGEON (a crowd votes the shared party's next move) --\n\
     GET  /party/options\n\
     POST /party/open\n\

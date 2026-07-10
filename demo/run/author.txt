@@ -1,6 +1,6 @@
 AUTHOR — write a verifiable story, play it, verify it
 driven run · real wasm StoryWorld compiled from live editor text
-served at http://127.0.0.1:51130/author
+served at http://127.0.0.1:56526/author
 ================================================================
 
 STARTER   compiled · 4 passages, 5 choices · 1 receipt(s) · verify=true

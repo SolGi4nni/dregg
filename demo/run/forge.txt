@@ -1,0 +1,50 @@
+THE FORGE — write a .dungeon world, play it, verify it
+driven run · attested-dm /game/author contract · narratorKind: model:gemma2:2b (a REAL local model)
+served at http://127.0.0.1:57337/forge
+============================================================================
+
+Write a .dungeon world in text; hit ▶ Play and it becomes a real attested AI dungeon:
+a local model narrates, the WORLD resolves every move, a hash-chain remembers it. A
+broken world fails closed with the line (parse), or lists EVERY unsound thing (validate).
+
+----------------------------------------------------------------------------
+THE AUTHOR -> PLAY -> VERIFY LOOP
+----------------------------------------------------------------------------
+  STARTER   authored "The Candle Crypt" · 4 rooms, 6 exits · mounted
+            "take candle" → LANDED · receipt rail #1 · /game/verify=true
+  PARSE     syntax-broken → stage="parse" · line 6: expected a destination room after `->` · NO world mounted
+  VALIDATE  broken.dungeon → stage="validate" · 3 errors listed (ALL, not just the first) · NO world mounted
+              line 11: exit `north` in room `gate` leads to unknown room `antechamer`
+              line 6: objective room `vault` is unreachable from start `gate`
+              line 6: objective requires holding `crown`, which is never placed in any room
+  FIXED     re-authored the starter → played to WIN · 5 verified turns · carrying [candle, relic]
+
+----------------------------------------------------------------------------
+THE WINNING PLAYTHROUGH OF THE AUTHORED WORLD  (each move LANDS; the rail grows by one)
+----------------------------------------------------------------------------
+
+  » take candle   (a light for the dark stair)
+    gemma2: The stone archway hums faintly, as if the moss itself is breathing. You reach out to grasp the candle, its wick still unlit, and feel a chill settle in your bones.
+    world : LANDED → room gatehouse · receipt rail #1 · status playing
+
+  » go north   (into the long hall)
+    gemma2: The archway groans as you push through, its moss-covered surface slick with dampness. A faint scent of mildew hangs in the air, mingling with the chill of the stone.
+    world : LANDED → room hall · receipt rail #2 · status playing
+
+  » go down   (down the now-passable stair)
+    gemma2: The stone steps are slick and cold beneath your feet, echoing with a faint, mournful hum. A chill wind whispers through the crypt's maw as you descend into darkness.
+    world : LANDED → room crypt · receipt rail #3 · status playing
+
+  » take relic   (the glowing relic)
+    gemma2: As you approach the bier, its surface seems to shimmer with an inner light. The relic's form is obscured by a veil of smoke and dust, but you can feel its presence as if it were breathing in your direction.
+    world : LANDED → room crypt · receipt rail #4 · status playing
+
+  » go north   (into the shrine — WIN)
+    gemma2: The crypt's stone walls are slick with age, and a chill settles in your bones as you approach the bier. A faint scent of incense hangs heavy in the air, mingling with the musty smell of decay.
+    world : LANDED → room shrine · receipt rail #5 · status won
+
+  RESULT: status = WON · 5 verified turns · carrying [candle, relic]
+          the authored ledger re-verifies as a hash chain (authentic ∧ well-formed ∧ injection-free ∧ prev-linked).
+
+============================================================================
+You wrote a world in text. It became an attested dungeon. No Rust. No recompile.

@@ -136,6 +136,17 @@
       <div class="note">a spween-dregg scene; plays through the collective story surface</div>
     </a>
 
+    <a class="card" href="/forge">
+      <div class="kind">the authoring surface × the AI dungeon</div>
+      <h2>Forge a dungeon 🔨</h2>
+      <p>Write a world, play it, verify it. Type a <code>.dungeon</code> in the editor and hit Play — it becomes a
+        real attested AI dungeon in the tab: a local LLM narrates, the <em>world</em> resolves every move, the
+        hash-chain remembers it. A broken world fails closed with the line. No Rust, no recompile.</p>
+      <div class="tags"><span class="tag">author → play</span><span class="tag">real gemma2</span><span class="tag verify">world-resolved</span></div>
+      <span class="play">Play →</span>
+      <div class="note">needs the game service (see below)</div>
+    </a>
+
     <a class="card" href="/author">
       <div class="kind">the authoring surface</div>
       <h2>Author your own ✍</h2>
@@ -150,8 +161,8 @@
 
   <footer>
     <p>Play the AI games live: run the game service <code>cargo run -p dungeon-service</code> (with ollama +
-      gemma2:2b), then <code>DM_PORT=7878 node demo/serve.mjs</code> and open <code>/vault</code> or
-      <code>/dungeon</code>. The collective stories play out of the box.</p>
+      gemma2:2b), then <code>DM_PORT=7878 node demo/serve.mjs</code> and open <code>/vault</code>,
+      <code>/dungeon</code>, or <code>/forge</code> (write your own). The collective stories play out of the box.</p>
     <p>the walls stay where the story-master set them.</p>
   </footer>
 </div>

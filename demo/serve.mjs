@@ -34,6 +34,7 @@ const MIME = {
   ".mjs": "text/javascript; charset=utf-8",
   ".wasm": "application/wasm",
   ".scene": "text/plain; charset=utf-8",
+  ".dungeon": "text/plain; charset=utf-8",
   ".txt": "text/plain; charset=utf-8",
 };
 
@@ -75,6 +76,11 @@ export async function buildVault() {
 /** Bundle THE COLLECTIVE DUNGEON play surface (self-contained — only speaks the /party + /game service). */
 export async function buildParty() {
   return bundle("party.ts");
+}
+
+/** Bundle THE FORGE (write a .dungeon, author + play it live over the /game service). */
+export async function buildForge() {
+  return bundle("forge.ts");
 }
 
 // ── The DM service ────────────────────────────────────────────────────────────
@@ -126,14 +132,18 @@ export async function makeServer(port = 0, opts = {}) {
   const dungeonJs = await buildDungeon();
   const vaultJs = await buildVault();
   const partyJs = await buildParty();
+  const forgeJs = await buildForge();
   const index = await readFile(path.join(__dirname, "index.html"), "utf8");
   const dungeon = await readFile(path.join(__dirname, "dungeon.html"), "utf8");
   const vault = await readFile(path.join(__dirname, "vault.html"), "utf8");
   const party = await readFile(path.join(__dirname, "party.html"), "utf8");
   const hub = await readFile(path.join(__dirname, "hub.html"), "utf8");
   const author = await readFile(path.join(__dirname, "author.html"), "utf8");
+  const forge = await readFile(path.join(__dirname, "forge.html"), "utf8");
   const scene = await readFile(path.join(__dirname, "stories", "the-commons.scene"), "utf8");
   const STORIES_DIR = path.join(__dirname, "stories");
+  // The committed .dungeon samples the Forge editor loads (read-only, from the attested-dm crate).
+  const DUNGEONS_DIR = path.join(REPO, "attested-dm", "dungeons");
 
   // The DM world: an in-memory stand-in (default) unless proxying to the real service.
   const dm = DM_URL ? null : (opts.dm ?? createDmStandin(opts.dmOptions));
@@ -211,6 +221,23 @@ export async function makeServer(port = 0, opts = {}) {
       if (url === "/party" || url === "/party.html") return send(res, party, MIME[".html"]);
       if (url === "/party.js") return send(res, partyJs, MIME[".js"]);
 
+      // ── The Forge (write a .dungeon, author + play it live over the /game service) ──
+      if (url === "/forge" || url === "/forge.html") return send(res, forge, MIME[".html"]);
+      if (url === "/forge.js") return send(res, forgeJs, MIME[".js"]);
+      // The committed .dungeon samples (path-safe: basename only, must stay in the dir).
+      if (url.startsWith("/dungeons/") && url.endsWith(".dungeon")) {
+        const name = path.basename(url);
+        const file = path.join(DUNGEONS_DIR, name);
+        if (path.dirname(file) !== DUNGEONS_DIR) { res.writeHead(403); return res.end("forbidden"); }
+        try {
+          const body = await readFile(file, "utf8");
+          return send(res, body, MIME[".dungeon"]);
+        } catch {
+          res.writeHead(404, { "content-type": "text/plain" });
+          return res.end("dungeon not found");
+        }
+      }
+
       res.writeHead(404, { "content-type": "text/plain" });
       res.end("not found");
     } catch (e) {
@@ -246,5 +273,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   console.log(`  THE COLLECTIVE DUNGEON — a crowd steers one party by vote (the crowd decides, the world resolves)`);
   console.log(`  open:  ${base}/party`);
   console.log(`  /party service: ${DM_URL ? "proxied → " + DM_URL : "NOT wired — set DM_URL or DM_PORT to the native attested-dm service (default 8790)"}\n`);
+  console.log(`  THE FORGE — write a .dungeon world, hit ▶ Play, and it becomes a real attested AI dungeon (author → play → verify)`);
+  console.log(`  open:  ${base}/forge`);
+  console.log(`  /game service: ${DM_URL ? "proxied → " + DM_URL : "NOT wired — set DM_URL or DM_PORT to the native attested-dm service (default 8790)"}\n`);
   console.log(`  (Ctrl-C to stop)\n`);
 }

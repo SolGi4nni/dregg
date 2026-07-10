@@ -1,0 +1,275 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'self'; style-src 'unsafe-inline'; connect-src 'self'; img-src 'self' data:; base-uri 'none'; form-action 'none'" />
+  <title>The Forge — write a dungeon, play it, verify it</title>
+  <style>
+    :root {
+      --parchment: #ece6d6; --parchment-2: #e0d8c2; --card: #f7f2e7;
+      --ink: #1b1728; --ink-soft: #453f57; --ink-faint: #766f86; --rule: #cfc5ac;
+      --violet: #6b5ce0; --violet-deep: #43349c; --teal: #2b7f7a; --green: #3f8f57;
+      --amber: #b06e1f; --red: #a8262f; --red-soft: #f7e6e6; --red-line: #e7c4c4; --gold: #a9812f;
+      --editor-bg: #201d33; --editor-ink: #e9e5ff; --editor-gutter: #6a6394; --editor-comment: #8f88c0;
+      --shadow: 24px 34px 66px -34px rgba(20, 16, 34, .5);
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --parchment: #14110d; --parchment-2: #100d0a; --card: #1c1813;
+        --ink: #e8e0cf; --ink-soft: #b8ae97; --ink-faint: #8f836b; --rule: #37301f;
+        --violet: #b493e6; --violet-deep: #c9b3f0; --teal: #4fb3ac; --green: #6fc98a;
+        --red: #e8837f; --red-soft: #2a1a1a; --red-line: #4a2f2f; --amber: #d8b45a; --gold: #d8b45a;
+        --editor-bg: #0c0a12; --editor-ink: #e6e1ff; --editor-gutter: #4a4470; --editor-comment: #746da0;
+        --shadow: 24px 30px 60px -30px rgba(0,0,0,.6);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: var(--sans); color: var(--ink);
+      background: radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--parchment) 88%, #fff 12%) 0%, var(--parchment) 45%, var(--parchment-2) 100%);
+      min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    }
+    .page { max-width: 82rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+    a { color: var(--violet-deep); }
+
+    .eyebrow { font-size: .72rem; letter-spacing: .22em; text-transform: uppercase; color: var(--violet-deep); font-weight: 600; margin: 0 0 .8rem; }
+    h1.title { font-family: var(--serif); font-weight: 600; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.04; letter-spacing: -.01em; margin: 0; }
+    h1.title .amp { color: var(--violet); font-style: italic; }
+    .lede { font-family: var(--serif); font-size: 1.12rem; color: var(--ink-soft); margin: .9rem 0 0; max-width: 46rem; text-wrap: pretty; }
+    .backlink { font-size: .8rem; color: var(--ink-faint); margin: 0 0 1.4rem; }
+    .rule { height: 1px; background: linear-gradient(90deg, var(--rule), transparent); margin: 1.8rem 0; border: 0; }
+
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; align-items: start; }
+    @media (max-width: 960px) { .split { grid-template-columns: 1fr; } }
+
+    .pane { background: var(--card); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+    .pane-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; padding: .8rem 1rem; border-bottom: 1px solid var(--rule); }
+    .pane-head .label { font-size: .64rem; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; color: var(--ink-faint); margin-right: auto; }
+
+    /* editor */
+    .editor-wrap { display: grid; grid-template-columns: auto 1fr; font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--editor-bg); height: 34rem; }
+    .gutter { overflow: hidden; text-align: right; padding: .8rem .5rem .8rem 0; color: var(--editor-gutter); user-select: none; background: color-mix(in srgb, var(--editor-bg) 82%, #000 18%); }
+    .gutter span { display: block; padding-right: .55rem; }
+    #editor { font: inherit; color: var(--editor-ink); background: transparent; border: 0; outline: none; resize: none; padding: .8rem .9rem; white-space: pre; overflow: auto; tab-size: 2; }
+    #editor::selection { background: rgba(123,108,240,.4); }
+    .counts { font-size: .74rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; padding: .5rem 1rem; border-top: 1px solid var(--rule); }
+
+    /* controls */
+    button.ctrl { font: inherit; font-size: .82rem; padding: .42rem .8rem; border-radius: 8px; border: 1px solid var(--violet); background: transparent; color: var(--violet-deep); cursor: pointer; transition: background .14s, color .14s; }
+    button.ctrl:hover { background: var(--violet); color: #fff; }
+    button.ctrl.play { background: var(--violet); color: #fff; font-weight: 600; }
+    button.ctrl.play:hover { background: var(--violet-deep); }
+    button.ctrl:disabled { opacity: .5; cursor: default; }
+    button.ctrl:focus-visible { outline: 2px solid var(--violet-deep); outline-offset: 2px; }
+    select.ctrl { font: inherit; font-size: .8rem; padding: .38rem .5rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--card); color: var(--ink); cursor: pointer; }
+
+    /* play surface */
+    .status { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--ink-faint); padding: .7rem 1rem 0; font-variant-numeric: tabular-nums; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); flex: none; }
+    .dot.ok { background: var(--green); } .dot.bad { background: var(--red); }
+
+    .stage { padding: 1rem 1.1rem 1.2rem; min-height: 20rem; }
+    .stage.empty { display: flex; align-items: center; justify-content: center; }
+    .placeholder { color: var(--ink-faint); font-style: italic; font-family: var(--serif); font-size: 1.05rem; padding: 3rem 1rem; text-align: center; }
+
+    .narrator { margin: 0 0 .9rem; font-size: .82rem; color: var(--ink-soft); padding: .5rem .85rem; border-radius: 9px; background: color-mix(in srgb, var(--ink-faint) 8%, transparent); border: 1px dashed var(--rule); }
+    .narrator.model { border-style: solid; border-color: color-mix(in srgb, var(--violet) 45%, var(--rule)); background: color-mix(in srgb, var(--violet) 12%, var(--card)); color: var(--violet-deep); }
+    .narrator code { font-family: var(--mono); font-size: .8rem; }
+
+    .objective { margin: 0 0 .9rem; padding: .6rem .9rem; border-radius: 10px; background: color-mix(in srgb, var(--gold) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--gold) 40%, var(--rule)); color: color-mix(in srgb, var(--gold) 70%, var(--ink)); font-size: .92rem; display: flex; gap: .5rem; align-items: baseline; }
+    .objective .star { color: var(--gold); }
+
+    .scene-frame { padding: 1.2rem 1.3rem 1.1rem; border-radius: 13px; background: color-mix(in srgb, var(--ink-faint) 6%, var(--card)); border: 1px solid var(--rule); position: relative; }
+    #roomName { font-family: var(--serif); font-size: 1.4rem; color: var(--ink); margin: 0; letter-spacing: -.01em; }
+    #roomDesc { font-family: var(--serif); font-size: 1rem; color: var(--ink-soft); margin: .3rem 0 0; font-style: italic; }
+    #narration { font-family: var(--serif); font-size: 1.06rem; color: var(--ink); margin: .9rem 0 0; padding: .75rem .9rem; border-left: 3px solid var(--violet); background: color-mix(in srgb, var(--violet) 7%, transparent); border-radius: 0 10px 10px 0; min-height: 1.2rem; }
+    #narration .who { display: block; font-family: var(--sans); font-size: .62rem; letter-spacing: .14em; text-transform: uppercase; color: var(--violet-deep); font-weight: 700; margin-bottom: .3rem; }
+
+    .cols { display: grid; grid-template-columns: 1fr 1fr; gap: .9rem; margin: 1rem 0 0; }
+    @media (max-width: 30rem) { .cols { grid-template-columns: 1fr; } }
+    .panel { padding: .9rem 1rem; border-radius: 12px; background: color-mix(in srgb, var(--ink-faint) 6%, var(--card)); border: 1px solid var(--rule); }
+    .panel h3 { margin: 0 0 .55rem; font-size: .62rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+    .exits { display: grid; gap: .4rem; }
+    button.exit { text-align: left; font: inherit; font-size: .9rem; padding: .45rem .7rem; border-radius: 9px; border: 1px solid var(--violet); background: var(--card); color: var(--violet-deep); cursor: pointer; transition: background .14s, color .14s; display: flex; justify-content: space-between; gap: .5rem; align-items: baseline; }
+    button.exit:hover { background: var(--violet); color: #fff; }
+    button.exit .dir { font-weight: 600; text-transform: capitalize; }
+    button.exit .dest { font-size: .8rem; opacity: .82; }
+    button.exit.locked { border-color: color-mix(in srgb, var(--amber) 55%, var(--rule)); color: var(--amber); background: color-mix(in srgb, var(--amber) 10%, var(--card)); }
+    button.exit.locked:hover { background: var(--amber); color: #fff; }
+    button.exit.locked .reason { display: block; font-size: .72rem; font-style: italic; opacity: .95; margin-top: .1rem; }
+    .exits .none { color: var(--ink-faint); font-family: var(--serif); font-style: italic; font-size: .88rem; }
+    #inventory, #itemsHere { list-style: none; margin: 0; padding: 0; display: grid; gap: .26rem; }
+    #inventory li { display: flex; justify-content: space-between; align-items: baseline; font-size: .88rem; padding: .12rem .1rem; border-bottom: 1px dotted var(--rule); }
+    #inventory li:last-child { border-bottom: 0; }
+    #inventory .state { font-family: var(--mono); font-size: .68rem; color: var(--green); letter-spacing: .04em; }
+    #inventory .empty, #itemsHere .empty { color: var(--ink-faint); font-family: var(--serif); font-style: italic; font-size: .88rem; }
+    .here-row { display: flex; justify-content: space-between; align-items: center; gap: .5rem; }
+    button.take { font: inherit; font-size: .74rem; padding: .2rem .55rem; border-radius: 7px; border: 1px solid var(--teal); background: var(--card); color: var(--teal); cursor: pointer; }
+    button.take:hover { background: var(--teal); color: #fff; }
+    .items-sub { margin-top: .75rem; }
+
+    .controls { margin: 1.1rem 0 0; }
+    .action-row { display: flex; gap: .5rem; }
+    #cmdInput { flex: 1; font: inherit; font-size: .94rem; padding: .55rem .85rem; border-radius: 10px; border: 1px solid var(--rule); background: var(--card); color: var(--ink); }
+    #cmdInput:focus-visible { outline: 2px solid var(--violet); outline-offset: 1px; }
+    .controls button.ctrl { font-size: .84rem; padding: .5rem .9rem; border-radius: 10px; background: var(--card); }
+    .quick { margin: .55rem 0 0; display: flex; gap: .5rem; flex-wrap: wrap; }
+
+    /* the error panel (parse: one line-pinned · validate: EVERY issue) */
+    .error { margin: 0 1rem; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .2s ease, opacity .18s ease, margin .2s ease, padding .2s ease; border-radius: 10px; }
+    .error.live { max-height: 40rem; overflow: auto; opacity: 1; margin: .9rem 1rem 0; padding: .9rem 1rem; background: var(--red-soft); border: 1px solid var(--red-line); }
+    .err-head { font-weight: 700; color: var(--red); font-size: .95rem; }
+    .err-sub { font-size: .8rem; color: var(--ink-soft); margin-top: .15rem; }
+    .err-msg { font-family: var(--mono); font-size: .82rem; color: var(--ink); margin-top: .45rem; white-space: pre-wrap; }
+    .err-line { display: flex; gap: .6rem; align-items: baseline; margin-top: .45rem; padding: .35rem .5rem; border-radius: 7px; background: var(--editor-bg); }
+    .err-line .ln { color: var(--editor-gutter); font-family: var(--mono); font-size: .76rem; min-width: 1.6em; text-align: right; }
+    .err-line code { font-family: var(--mono); font-size: .8rem; color: var(--editor-ink); }
+    .issue { margin-top: .6rem; padding: .5rem .6rem; border-radius: 8px; background: color-mix(in srgb, var(--red) 8%, var(--card)); border-left: 3px solid var(--red); }
+    .issue.warn { background: color-mix(in srgb, var(--amber) 10%, var(--card)); border-left-color: var(--amber); }
+    .issue-tag { font-family: var(--mono); font-size: .66rem; text-transform: uppercase; letter-spacing: .1em; font-weight: 700; color: var(--red); margin-right: .5rem; }
+    .issue.warn .issue-tag { color: var(--amber); }
+    .issue-msg { font-size: .84rem; color: var(--ink); }
+    .err-foot { margin-top: .6rem; font-size: .76rem; color: var(--ink-faint); }
+
+    /* advisory warnings (world still plays) */
+    .warnings { margin: 0 1rem; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .2s ease, opacity .18s ease, margin .2s ease, padding .2s ease; border-radius: 10px; }
+    .warnings.live { max-height: 20rem; opacity: 1; margin: .8rem 1rem 0; padding: .7rem .9rem; background: color-mix(in srgb, var(--amber) 12%, var(--card)); border: 1px solid color-mix(in srgb, var(--amber) 40%, var(--rule)); }
+    .warn-head { font-weight: 700; color: var(--amber); font-size: .84rem; }
+    .warn-row { display: flex; gap: .5rem; align-items: baseline; margin-top: .3rem; font-size: .8rem; color: var(--ink-soft); }
+    .warn-row .ln { font-family: var(--mono); font-size: .74rem; color: var(--ink-faint); min-width: 1.6em; text-align: right; }
+
+    /* receipt rail + verify */
+    .rail { margin: 1rem 1rem 0; padding: .85rem 1rem; border-radius: 12px; background: color-mix(in srgb, var(--ink-faint) 6%, var(--card)); border: 1px solid var(--rule); }
+    .rail h3 { margin: 0 0 .5rem; font-size: .62rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+    .chain-links { display: flex; flex-wrap: wrap; align-items: center; gap: .1rem; font-size: 1rem; color: var(--green); line-height: 1; min-height: 1.1rem; }
+    .chain-links .rope { color: var(--rule); }
+    .chain-links .empty { color: var(--ink-faint); font-size: .8rem; }
+    .chain-meta { margin-top: .5rem; font-size: .78rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+    .chain-meta code { font-family: var(--mono); color: var(--ink-soft); font-size: .7rem; }
+    .chain-meta b { color: var(--ink); }
+    .verify { margin: .65rem 0 0; padding: 0; border-radius: 10px; font-size: .82rem; font-weight: 600; border: 1px solid transparent; }
+    .verify.ok { padding: .55rem .85rem; background: color-mix(in srgb, var(--green) 16%, var(--card)); border-color: color-mix(in srgb, var(--green) 45%, var(--rule)); color: var(--green); }
+    .verify.bad { padding: .55rem .85rem; background: var(--red-soft); border-color: var(--red-line); color: var(--red); }
+
+    /* the tale log */
+    .log-frame { margin: 1.1rem 0 0; }
+    .log-frame h3 { font-size: .62rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin: 0 0 .55rem; }
+    #log { max-height: 18rem; overflow-y: auto; display: grid; gap: .6rem; padding-right: .2rem; }
+    #log .empty { color: var(--ink-faint); font-family: var(--serif); font-style: italic; }
+    .entry { padding: .7rem .9rem; border-radius: 11px; background: var(--card); border: 1px solid var(--rule); }
+    .entry .cmd { font-size: .76rem; color: var(--ink-faint); }
+    .entry .cmd b { color: var(--ink-soft); font-weight: 600; }
+    .entry .prose { font-family: var(--serif); font-size: 1rem; color: var(--ink); margin-top: .3rem; }
+    .entry .verdict { margin-top: .4rem; font-size: .78rem; font-weight: 600; }
+    .entry.landed .verdict { color: var(--green); }
+    .entry.refused { background: var(--red-soft); border-color: var(--red-line); }
+    .entry.refused .verdict { color: var(--red); }
+    .entry .worldnote { margin-top: .26rem; font-size: .8rem; color: var(--ink-faint); font-style: italic; }
+
+    /* win / lose banner */
+    .banner { margin: 1rem 0 0; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .4s ease, opacity .3s ease, margin .3s ease; }
+    .banner.show { max-height: 22rem; opacity: 1; }
+    .banner .inner { padding: 1.1rem 1.2rem; border-radius: 14px; }
+    .banner.won .inner { background: color-mix(in srgb, var(--gold) 20%, var(--card)); border: 1px solid color-mix(in srgb, var(--gold) 45%, var(--rule)); }
+    .banner.lost .inner { background: #2a2330; border: 1px solid #4a3f52; }
+    .banner .b-title { font-family: var(--serif); font-size: 1.5rem; margin: 0; }
+    .banner.won .b-title { color: color-mix(in srgb, var(--gold) 70%, var(--ink)); }
+    .banner.lost .b-title { color: #e9d9ef; }
+    .banner .b-body { margin: .35rem 0 0; font-size: .92rem; }
+    .banner.won .b-body { color: color-mix(in srgb, var(--gold) 60%, var(--ink)); }
+    .banner.lost .b-body { color: #b7abc2; }
+
+    /* cheat-sheet */
+    .cheat { margin: 1.6rem 0 0; padding: 1.4rem 1.6rem; border-radius: 14px; background: var(--card); border: 1px solid var(--rule); }
+    .cheat h2 { font-family: var(--serif); font-size: 1.15rem; margin: 0 0 1rem; font-weight: 600; }
+    .cheat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(16rem, 1fr)); gap: 1rem 1.6rem; }
+    .cheat dt { font-family: var(--mono); font-size: .8rem; color: var(--violet-deep); margin-bottom: .2rem; }
+    .cheat dd { margin: 0 0 .8rem; font-size: .84rem; color: var(--ink-soft); }
+    .cheat dd b { color: var(--ink); }
+    .cheat code { font-family: var(--mono); font-size: .82em; background: color-mix(in srgb, var(--ink-faint) 16%, transparent); padding: .05rem .3rem; border-radius: 4px; }
+    footer { margin-top: 2.4rem; font-size: .76rem; color: var(--ink-faint); }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">The Forge · write it, play it, verify it</p>
+    <h1 class="title">Forge your own <span class="amp">attested</span> dungeon</h1>
+    <p class="lede">
+      Write a <code>.dungeon</code> world on the left and hit <b>▶ Play</b>. It becomes a real attested AI dungeon on
+      the right — a local model (<code>gemma2:2b</code>) narrates, the <em>world</em> resolves every move, and a
+      hash-chain remembers it. Author → play → verify. No Rust, no recompile. A broken world fails closed with the line.
+    </p>
+    <p class="backlink"><a href="/hub">← all the games</a> · <a href="/vault">the bundled dungeons</a></p>
+
+    <hr class="rule" />
+
+    <section class="split">
+      <!-- LEFT: the .dungeon editor -->
+      <div class="pane" aria-label="dungeon editor">
+        <div class="pane-head">
+          <span class="label">the .dungeon source</span>
+          <select id="sample" class="ctrl" aria-label="load a sample dungeon">
+            <option value="starter">The Candle Crypt (starter)</option>
+            <option value="lantern_fen">The Lantern of the Fen (sample)</option>
+            <option value="ember_observatory">The Ember Observatory (every construct)</option>
+            <option value="broken">The Broken Hold (fails validation)</option>
+          </select>
+          <button id="restartBtn" class="ctrl" type="button" title="re-forge fresh from the top">↺ Restart</button>
+          <button id="playBtn" class="ctrl play" type="button" title="author + play (⌘/Ctrl+Enter)">▶ Play</button>
+        </div>
+        <div class="editor-wrap">
+          <div id="gutter" class="gutter" aria-hidden="true"></div>
+          <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="dungeon source"></textarea>
+        </div>
+        <div id="counts" class="counts">—</div>
+      </div>
+
+      <!-- RIGHT: the live play surface -->
+      <div class="pane" aria-label="live play surface">
+        <div class="pane-head"><span class="label">the live dungeon</span></div>
+        <div class="status"><span id="statusDot" class="dot"></span><span id="status">warming up…</span></div>
+        <div id="error" class="error" role="alert" aria-live="assertive"></div>
+        <div id="warnings" class="warnings" role="status"></div>
+        <div id="stage" class="stage empty"><div class="placeholder">no world mounted yet — hit ▶ Play.</div></div>
+        <div class="rail">
+          <h3>receipt rail — every landed move is a verified turn</h3>
+          <div id="chainLinks" class="chain-links"></div>
+          <div id="chainMeta" class="chain-meta"></div>
+          <div id="verifyBadge" class="verify" role="status"></div>
+        </div>
+      </div>
+    </section>
+
+    <aside class="cheat">
+      <h2>The dungeon language, in one glance</h2>
+      <div class="cheat-grid">
+        <dl>
+          <dt>name: / start: / objective:</dt>
+          <dd><b>The header.</b> <code>start:</code> is the opening room; <code>objective: reach &lt;room&gt; holding &lt;item&gt;</code> is how you win. <code>name:</code> is flavour.</dd>
+          <dt>room &lt;id&gt; "&lt;Name&gt;"</dt>
+          <dd><b>A room.</b> Indent the lines under it: plain prose is the description; <code>items: a, b</code> places takeable items.</dd>
+          <dt>exit &lt;dir&gt; -&gt; &lt;room&gt;</dt>
+          <dd><b>A way out.</b> One per line, indented under the room. <code>exit north -&gt; hall</code>.</dd>
+        </dl>
+        <dl>
+          <dt>exit … requires item &lt;x&gt;</dt>
+          <dd><b>A gated exit.</b> <code>requires item lantern</code> or <code>requires flag door_open</code>. Shown but barred until it holds.</dd>
+          <dt>use &lt;item&gt; on &lt;target&gt; in &lt;room&gt;</dt>
+          <dd><b>A use-rule.</b> <code>-&gt; flag &lt;name&gt; "narration"</code> sets a flag other gates read.</dd>
+          <dt>npc · hostile · combat · spell · light</dt>
+          <dd><b>Actors &amp; systems.</b> Trade with an NPC, fell a foe, learn a word of power, or race a burning lamp. See <a href="/dungeons/ember_observatory.dungeon">the Ember Observatory</a> for every construct.</dd>
+        </dl>
+      </div>
+    </aside>
+
+    <footer>The Forge · attested-dm dungeon DSL · the AI narrates, the world resolves, the chain remembers · self-contained.</footer>
+  </main>
+
+  <script src="forge.js"></script>
+</body>
+</html>
