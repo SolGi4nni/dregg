@@ -503,3 +503,14 @@ it composes fine regardless — no new `links` conflict (narrator pulls aws-sdk,
   `arcade.dregg.fg-goose.online` would need a Caddy site block added + the arcade running where Caddy reaches it.
   The OLD discord bot is the `dreggnet-discord-bot` CONTAINER (docker stop at cutover, not kill).
 - token placed on hbox at ~/.config/dregg/discord-bot.env; hbox worktree ~/dev/bot-deploy (branch bot-deploy).
+
+## bot build — unblocking the committed-broken kernel (WORKTREE-ONLY, hbox:~/dev/bot-deploy)
+The shared tree HEAD is committed-broken by a half-landed revocation/provenance refactor (finalize.rs 7.5h stale).
+Patched hbox WORKTREE ONLY (NOT the shared tree — the refactor author fixes that properly):
+- finalize.rs DerivationEdge parent_provenance x3: Grant=cap.provenance (CORRECT, matches capability.rs existing.provenance);
+  Introduce/Delegate=mint_provenance() (PROVISIONAL root — source_slot 0 = no c-list parent; dead code for the bot,
+  which submits turns to a node).
+- finalize.rs ledger-delta match + umem.rs umem-touch match: RevocationInserted no-op — CORRECT, not provisional
+  (there is NO UKey::Revocation; revocations live in the plain note_revoked set, so no ledger-delta + no umem touch —
+  exactly the NoteCommitmentInserted marker family). Verified by reading UKey + journal.rs:524.
+Building; polling the log for EXIT=.
