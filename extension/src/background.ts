@@ -10,6 +10,9 @@ import { explainTurn } from "./explain";
 import { createSseParser } from "./sse";
 import { mnemonicConfirmed, walletPassphraseOk } from "./onboarding";
 import { defaultNodeUrl, defaultNodeWssUrl } from "./endpoints";
+import { CustodyWasm } from "./custody";
+import { ChromeCustodyStore } from "./passkey";
+import { resolveCustody } from "./custody-resolve";
 import {
   PollEngine,
   CellEngine,
@@ -798,6 +801,25 @@ interface SubmitSignedTurnResponse {
 }
 
 /**
+ * The extension's own custody as a mnemonic unlock for `resolveCustody`: recover
+ * the ACTIVE profile's recovery phrase (via the existing `getMnemonic`), so the
+ * extension key can be expressed as a `MnemonicCustody`. The BIP39 passphrase is
+ * the standard-dregg empty string; `resolveCustody` re-derives and compares to the
+ * active public key, falling back to the byte-exact seed provider on any mismatch
+ * (e.g. a BIP39-passphrase wallet) — signing never blocks on the phrase.
+ */
+function activeMnemonicUnlock(
+  publicKey?: number[],
+): (() => Promise<{ mnemonic: string; passphrase: string } | null>) | undefined {
+  if (!publicKey || publicKey.length !== 32) return undefined;
+  return async () => {
+    const mnemonic = await getMnemonic();
+    if (!mnemonic) return null;
+    return { mnemonic, passphrase: "" };
+  };
+}
+
+/**
  * Wrap a signed, encoded `Turn` in the HYBRID `SignedTurn` envelope the node's
  * `/turns/submit` (alias `/api/turns/submit-signed`) expects, and submit.
  *
@@ -820,15 +842,46 @@ async function submitSignedTurnBytes(input: {
   turnBytesJson: Uint8Array;
   turnIdHex: string;
   secretKey: number[];
+  publicKey?: number[];
   label: string;
   metadata?: Record<string, unknown>;
 }): Promise<OutboxSubmitResult<SubmitSignedTurnResponse>> {
   requireWasm("submitSignedTurn");
-  const w = wasm!;
-  const envelope = w.assemble_signed_turn_envelope(
-    input.turnBytesJson,
-    new Uint8Array(input.secretKey),
-  );
+  // The SIGNATURE now comes from the active CustodyProvider (§4.5 chain), not a
+  // hard-wired `assemble_signed_turn_envelope`: the extension's own key is a
+  // MnemonicCustody (byte-identical to the old direct path) / SeedCustody, and a
+  // passkey is the SAME interface. FAIL-CLOSED when no custody is available.
+  const custodyWasm = wasm! as unknown as CustodyWasm;
+  const { provider, tier } = await resolveCustody({
+    wasm: custodyWasm,
+    extension:
+      input.secretKey && input.secretKey.length === 32
+        ? {
+            secretKey: new Uint8Array(input.secretKey),
+            publicKey: new Uint8Array(input.publicKey ?? []),
+            getMnemonic: activeMnemonicUnlock(input.publicKey),
+          }
+        : undefined,
+    passkeyStore: new ChromeCustodyStore(),
+  });
+  if (!provider) {
+    return {
+      submitted: false,
+      queued: false,
+      error: `no custody available (tier=${tier}): refusing to sign a write`,
+    };
+  }
+  let envelope: Uint8Array;
+  try {
+    const signed = await provider.signTurn(input.turnBytesJson);
+    envelope = signed.bytes;
+  } catch (e: unknown) {
+    return {
+      submitted: false,
+      queued: false,
+      error: `custody sign failed (tier=${tier}): ${(e as Error).message || String(e)}`,
+    };
+  }
 
   const headers: Record<string, string> = {};
   if (nodeConfig.devnetKey) headers["Authorization"] = `Bearer ${nodeConfig.devnetKey}`;
@@ -873,6 +926,7 @@ async function signAndSubmitBuiltTurn(input: {
     turnBytesJson: new Uint8Array(signed.turn_bytes_json),
     turnIdHex: signed.turn_id,
     secretKey: input.secretKey,
+    publicKey: input.publicKey,
     label: input.label,
     metadata: input.metadata,
   });
@@ -2977,6 +3031,7 @@ async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignT
     turnBytesJson: new Uint8Array(signed.turn_bytes_json),
     turnIdHex: signed.turn_id,
     secretKey: cc.secretKey,
+    publicKey: cc.publicKey,
     label: "sign turn (v3)",
     metadata: { action: "signTurnV3" },
   });

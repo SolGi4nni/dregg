@@ -176,3 +176,49 @@ export class MnemonicCustody implements CustodyProvider {
     return "Extension cipherclerk";
   }
 }
+
+/**
+ * The extension's ALREADY-UNLOCKED 32-byte seed as a `CustodyProvider`.
+ *
+ * This is the exact operation the background worker performs today
+ * (`assemble_signed_turn_envelope(turnBytes, secretKey)`), now expressed through
+ * the interface — the extension holds the derived seed in worker memory, not the
+ * mnemonic. It is BYTE-IDENTICAL to a `MnemonicCustody` over the same key: both
+ * feed the same 32-byte seed to the same wasm signing path, so the mnemonic-derived
+ * provider and this seed provider are two interchangeable expressions of the SAME
+ * custody. Used when the extension has a derived key but the mnemonic is not
+ * recoverable / does not re-derive to the active identity (e.g. a BIP39-passphrase
+ * wallet), so signing never depends on decrypting the recovery phrase.
+ */
+export class SeedCustody implements CustodyProvider {
+  private readonly seed: Uint8Array;
+  private readonly signer: Uint8Array;
+
+  /** `publicKey` is the 32-byte ed25519 identity this seed signs as (the extension already holds it). */
+  constructor(
+    private readonly wasm: CustodyWasm,
+    seed: Uint8Array,
+    publicKey: Uint8Array,
+  ) {
+    if (seed.length !== 32) throw new Error("SeedCustody: seed must be exactly 32 bytes");
+    this.seed = new Uint8Array(seed); // copy: signing material, kept alive for the provider's life
+    this.signer = new Uint8Array(publicKey);
+  }
+
+  async isAvailable(): Promise<boolean> {
+    return this.seed.length === 32;
+  }
+
+  async publicKey(): Promise<Uint8Array> {
+    return new Uint8Array(this.signer);
+  }
+
+  async signTurn(turnBytes: Uint8Array): Promise<SignedTurnEnvelope> {
+    const bytes = this.wasm.assemble_signed_turn_envelope(turnBytes, this.seed);
+    return { bytes, signer: new Uint8Array(this.signer) };
+  }
+
+  label(): string {
+    return "Extension cipherclerk";
+  }
+}

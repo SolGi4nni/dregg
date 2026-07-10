@@ -14,6 +14,7 @@
     "test:dregg-story": "node --test tests/dregg-story/run.mjs",
     "test:netlayer": "node --test tests/netlayer/run.mjs",
     "test:passkey": "node --test tests/passkey/run.mjs",
+    "test:passkey-sign": "node --test tests/passkey-sign/run.mjs",
     "clean": "rm -rf dist test/.build"
   },
   "devDependencies": {
