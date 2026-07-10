@@ -306,3 +306,18 @@ RESIDUALS: (1) sandstorm grain /var root still 1-felt lane-0 (same class, stale 
 FALLOUT: starbridge-v2 refs dregg_doc::commit/Commitment (the toy I deleted this session) — a real build regression
 I must fix. (3) pre-existing (not mine): dregg-circuit ivc.rs test refs removed IvcProof.stark_proof.
 - done-log: OFF-CHAIN FORGE CLOSED + verified + committed (bfbe3139c). The ~31-bit finding is now a FIXED bug, not an open one.
+
+## ✅✅ THE FOUNDATION FIX IS COMPLETE (verified + committed + hardened)
+- OFF-CHAIN FORGE CLOSED (bfbe3139c) — heap/fields/cap now wide off-chain; acid test 3/3 (lane-0-colliding
+  states separate; compute_canonical_state_commitment differs). VERIFIED my tree.
+- DOC-SOUNDNESS re-homed (158b54d04) — DocSubstrateSound rides the wide Merkle proof (opensToMerkle8_functional
+  → heapNodeOf8 GENTIAN), not the sponge; axiom-clean; wideRoot_separates_lane0_collision a theorem.
+- HARDENED (121fa5759) — cell.state.{heap,fields}_root : Faithful8; lane-0 is now UNTYPEABLE (compile error).
+  Pure hardening, byte-identical. Ends the whack-a-mole for these roots.
+- COCKPIT reconciled (7e3a39dd1) — starbridge-v2 consumers fixed (Commitment/Faithful8/AtomContent fallout).
+- commitment.rs CLEARED for the vk-epoch nullifier lane (disjoint limbs: doc-web 28/58-64, nullifier 26/67-73).
+NOT MINE / other lanes / deferred: the vk-epoch nullifier Rust-ghost + commitments-dual (another terminal);
+the sandstorm grain /var 1-felt root (same class, separate lane); the pre-existing dregg-circuit ivc.rs test
+breakage (removed IvcProof.stark_proof); the Digest32 newtype campaign (~3461 bare [u8;32], deferred good-to-know).
+- done-log: THE FOUNDATION WEAKNESS IS FIXED — off-chain forge closed, doc-soundness re-homed to the real root,
+  and hardened so lane-0 can't come back. The doc's stranger-check is now the wide path, not the forgeable one.
