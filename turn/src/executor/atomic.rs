@@ -1272,6 +1272,7 @@ impl TurnExecutor {
                         &self.bridged_nullifiers,
                         &self.note_nullifiers,
                         &self.note_commitments,
+                        &self.note_revoked,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1295,6 +1296,7 @@ impl TurnExecutor {
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
                     &self.note_commitments,
+                    &self.note_revoked,
                 );
                 return Err(AtomicTurnError::HostedAuthorizationFailed {
                     cell: action.target,
@@ -1309,6 +1311,7 @@ impl TurnExecutor {
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
                     &self.note_commitments,
+                    &self.note_revoked,
                 );
                 return Err(AtomicTurnError::HostedApplyFailed {
                     cell: action.target,
@@ -1395,6 +1398,7 @@ impl TurnExecutor {
                         &self.bridged_nullifiers,
                         &self.note_nullifiers,
                         &self.note_commitments,
+                        &self.note_revoked,
                     );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
@@ -1448,6 +1452,7 @@ impl TurnExecutor {
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
                 &self.note_commitments,
+                &self.note_revoked,
             );
             return Err(e);
         }
@@ -1469,6 +1474,7 @@ impl TurnExecutor {
                     &self.bridged_nullifiers,
                     &self.note_nullifiers,
                     &self.note_commitments,
+                    &self.note_revoked,
                 );
                 return Err(AtomicTurnError::ProofFailed {
                     cell: mixed_turn.agent,

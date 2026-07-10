@@ -9,7 +9,7 @@ use std::sync::Mutex;
 
 use dregg_cell::{
     CapabilityRef, CellId, CellProgram, CommitmentSet, DelegatedRef, Ledger, NoteCommitment,
-    Nullifier, Permissions, VerificationKey,
+    Nullifier, Permissions, RevokedSet, VerificationKey,
     lifecycle::CellLifecycle,
     nullifier_set::NullifierSet,
     permissions::AuthRequired,
@@ -97,6 +97,15 @@ pub(crate) enum JournalEntry {
     /// would diverge the committed `commitments_root` from what an honest
     /// re-executor reproduces). The CREATE-side dual of `NoteNullifierInserted`.
     NoteCommitmentInserted { commitment: NoteCommitment },
+    /// A revocation key was inserted into the executor's production `note_revoked`
+    /// accumulator (either a `cred_nul(provenance)` from an `Effect::RevokeCapability`
+    /// or a `chan_nul(channel_id)` from a batch channel trip — both are opaque
+    /// `[u8; 32]` keys in the same set). On rollback this key must be REMOVED so a
+    /// failed turn does not leave a phantom revocation in the committed
+    /// `revoked_root` (which would let a node claim a credential was revoked when the
+    /// turn that revoked it did not commit). The REVOCATION-side dual of
+    /// `NoteNullifierInserted` / `NoteCommitmentInserted`.
+    RevocationInserted { revocation_key: [u8; 32] },
     /// A cell's lifecycle state was changed (Seal, Unseal, Destroy, Archive).
     /// Records the old lifecycle so rollback can restore it.
     SetLifecycle {
@@ -203,7 +212,8 @@ impl LedgerJournal {
                 | JournalEntry::NoteCreate
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
-                | JournalEntry::NoteCommitmentInserted { .. } => continue,
+                | JournalEntry::NoteCommitmentInserted { .. }
+                | JournalEntry::RevocationInserted { .. } => continue,
             };
             if !out.contains(&cell) {
                 out.push(cell);
@@ -362,6 +372,15 @@ impl LedgerJournal {
             .push(JournalEntry::NoteCommitmentInserted { commitment });
     }
 
+    /// Record that a revocation key (`cred_nul` or `chan_nul`) was inserted into
+    /// the executor's production `note_revoked` accumulator. On rollback, this key
+    /// will be removed so a failed turn doesn't leave a phantom revocation in the
+    /// committed `revoked_root`.
+    pub fn record_revocation_inserted(&mut self, revocation_key: [u8; 32]) {
+        self.entries
+            .push(JournalEntry::RevocationInserted { revocation_key });
+    }
+
     /// Record a cell-lifecycle change (Seal/Unseal/Destroy/Archive).
     pub fn record_set_lifecycle(&mut self, cell: CellId, old_lifecycle: CellLifecycle) {
         self.entries.push(JournalEntry::SetLifecycle {
@@ -400,6 +419,7 @@ impl LedgerJournal {
         bridged_nullifiers: &Mutex<BridgedNullifierSet>,
         note_nullifiers: &Mutex<NullifierSet>,
         note_commitments: &Mutex<CommitmentSet>,
+        note_revoked: &Mutex<RevokedSet>,
     ) {
         for entry in self.entries.into_iter().rev() {
             match entry {
@@ -499,6 +519,9 @@ impl LedgerJournal {
                 }
                 JournalEntry::NoteCommitmentInserted { commitment } => {
                     note_commitments.lock().unwrap().remove(&commitment);
+                }
+                JournalEntry::RevocationInserted { revocation_key } => {
+                    note_revoked.lock().unwrap().remove(&revocation_key);
                 }
                 JournalEntry::SetLifecycle {
                     cell,

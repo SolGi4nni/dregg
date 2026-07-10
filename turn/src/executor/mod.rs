@@ -43,7 +43,7 @@ use tracing::info;
 
 use dregg_cell::{
     AuthRequired, Cell, CellId, CellStateDelta, CommitmentSet, FIELD_ZERO, FieldElement, Ledger,
-    LedgerDelta, RevocationChannelSet,
+    LedgerDelta, RevocationChannelSet, RevokedSet,
     note::NoteError,
     nullifier_set::NullifierSet,
     preconditions::EvalContext,
@@ -780,6 +780,27 @@ pub struct TurnExecutor {
     /// lanes 74..=80), so the published commitment binds the grown shielded-note set
     /// the noteCreate grow-gate opens against.
     pub note_commitments: Mutex<CommitmentSet>,
+    /// Production credential-REVOCATION accumulator: every capability revoked by a
+    /// successful `Effect::RevokeCapability` (and, via the batch path, every
+    /// revocation-channel trip) records its domain-separated revocation key here
+    /// mapped to the block height at which it was revoked. Append-only (GROW-ONLY);
+    /// a re-revoke of an already-revoked key is an idempotent no-op (revocation is
+    /// monotone). Rolled back via `JournalEntry::RevocationInserted` if the turn
+    /// fails after the insert.
+    ///
+    /// The REVOCATION-side sibling of `note_nullifiers` / `note_commitments`: its
+    /// `root8` is the committed `revoked_root` (the same `Heap8Scheme` slot the
+    /// canonical Lean's `toNfAccState { nullifierRoot, revokedRoot }` models). This
+    /// is the native runtime registry that closes hole #3 / #139 — today the
+    /// authorization gate trusts a WIRE-SUPPLIED revocation root, so a node can claim
+    /// nothing was revoked and the commitment faithfully records the lie; committing
+    /// this registry's root lets a light client READ revocation off committed state.
+    ///
+    /// TWO domain-separated key-kinds share this ONE accumulator (see
+    /// [`cred_nul`] / [`chan_nul`]): `cred_nul(provenance)` for an individual cap
+    /// instance and `chan_nul(channel_id)` for a batch channel trip. The gate (stage
+    /// E, `authorize.rs`) checks non-membership of BOTH.
+    pub note_revoked: Mutex<RevokedSet>,
     /// REACTIVE registry (Track 2): the executor's promise-hole store. An
     /// `Effect::Promise`/`Effect::Notify` deposits a kernel-backed pending entry
     /// (the standing commitment / wake) here; an `Effect::React` discharges it.
@@ -1061,6 +1082,7 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
             note_commitments: Mutex::new(CommitmentSet::new()),
+            note_revoked: Mutex::new(RevokedSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
@@ -1125,6 +1147,7 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
             note_commitments: Mutex::new(CommitmentSet::new()),
+            note_revoked: Mutex::new(RevokedSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
@@ -1171,6 +1194,7 @@ impl TurnExecutor {
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
             note_commitments: Mutex::new(CommitmentSet::new()),
+            note_revoked: Mutex::new(RevokedSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,

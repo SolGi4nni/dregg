@@ -315,6 +315,7 @@ impl TurnExecutor {
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
                 &self.note_commitments,
+                &self.note_revoked,
             );
             return Err(BridgeMintError::InsufficientLocked {
                 live,
@@ -334,6 +335,7 @@ impl TurnExecutor {
                         &self.bridged_nullifiers,
                         &self.note_nullifiers,
                         &self.note_commitments,
+                        &self.note_revoked,
                     );
                     return Err(BridgeMintError::LedgerCellNotFound(req.ledger_cell));
                 }
@@ -362,6 +364,7 @@ impl TurnExecutor {
                 &self.bridged_nullifiers,
                 &self.note_nullifiers,
                 &self.note_commitments,
+                &self.note_revoked,
             );
             return Err(BridgeMintError::MintFailed(e.to_string()));
         }
@@ -437,6 +440,7 @@ impl TurnExecutor {
                         &self.bridged_nullifiers,
                         &self.note_nullifiers,
                         &self.note_commitments,
+                        &self.note_revoked,
                     );
                     return Err(BridgeMintError::LedgerCellNotFound(req.ledger_cell));
                 }

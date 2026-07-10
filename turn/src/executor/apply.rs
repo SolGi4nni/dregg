@@ -11,6 +11,15 @@
 
 use super::*;
 use dregg_cell::*;
+// The CANONICAL revocation-key domain separation lives in `dregg_cell` (spec §3b):
+// `cred_nul = BLAKE3("dregg-cred-revocation-v1" ‖ provenance)` and
+// `chan_nul  = BLAKE3("dregg-chan-revocation-v1" ‖ channel_id)`. The circuit /
+// gate / persistence layers all key on these, so the executor writer MUST use the
+// same functions (not a re-derived copy) or the committed `revoked_root` would
+// drift from what the non-revocation gate opens against. The credential path goes
+// through `CapabilityRef::cred_nul()` (= `cred_nul(&self.provenance)`); the batch
+// channel path folds a raw channel id via `chan_nul`.
+use dregg_cell::derivation::chan_nul;
 use dregg_cell_crypto::PortableNoteProof;
 
 /// Domain-separate a shielded transfer's BabyBear field nullifier into a 32-byte
@@ -735,11 +744,92 @@ impl TurnExecutor {
         let c = ledger
             .get_mut(cell)
             .ok_or_else(|| (TurnError::CellNotFound { id: *cell }, path.to_vec()))?;
-        if let Some(old_cap) = c.capabilities.lookup(slot).cloned() {
+        // Compute the revoked cap's `cred_nul` (= `cred_nul(&provenance)`, its
+        // committed revocation-registry key) BEFORE moving `old_cap` into the
+        // journal. `provenance` is the SAME derivation-node identity the
+        // non-revocation circuit already queries; keying the registry on it — NOT on
+        // the REUSABLE slot — is what makes a revoke-then-regrant NOT inherit the
+        // revoked identity (see `docs/REVOKED-ROOT-COMMITTED-LIMB.md` §3b). It is
+        // always present (`[u8; 32]`); a legacy/decoded cap carries the `[0u8; 32]`
+        // sentinel, which a fresh-genesis flip (this campaign's VK regen) avoids, so
+        // deployed caps all carry a chained, distinct provenance.
+        let revoked_cred_nul = if let Some(old_cap) = c.capabilities.lookup(slot).cloned() {
+            let key = old_cap.cred_nul();
             journal.record_revoke_capability(*cell, old_cap);
-        }
+            Some(key)
+        } else {
+            None
+        };
+        // The per-cell c-list TOMBSTONE (slot revocation, limb 25 `cap_root`) —
+        // orthogonal to the credential registry and preserved exactly as before.
         c.capabilities.revoke(slot);
+
+        // GROW the committed credential-revocation accumulator: record this cap's
+        // `cred_nul` at the current block height. This is the WRITER half of hole
+        // #3 / #139 — the runtime now COMMITS which credentials were revoked, instead
+        // of leaving the gate to trust a wire-supplied revocation root. Journaled, so
+        // a turn that fails after this rolls the insert back (no phantom revocation in
+        // the committed `revoked_root`). Descendants die automatically: each cap
+        // proves NO ANCESTOR OF MINE IS REVOKED, so this ONE insert tears down the
+        // whole derivation subtree (seL4 MDB semantics, no subtree walk).
+        if let Some(key) = revoked_cred_nul {
+            self.insert_revocation(journal, key, self.block_height);
+        }
         Ok(())
+    }
+
+    /// Insert a revocation key (`cred_nul` or `chan_nul`) into the committed
+    /// `note_revoked` accumulator at `revocation_height`, journaled for rollback.
+    ///
+    /// GROW-ONLY + IDEMPOTENT: revocation is monotone, so a key already present is a
+    /// no-op (NOT an error — a credential revoked twice, or a channel tripped after
+    /// one of its caps was individually revoked, must not fail the turn). Only a
+    /// genuinely new insert is journaled, so rollback removes exactly what this turn
+    /// added and nothing it did not.
+    fn insert_revocation(
+        &self,
+        journal: &mut LedgerJournal,
+        revocation_key: [u8; 32],
+        revocation_height: u64,
+    ) {
+        let mut set = self.note_revoked.lock().unwrap();
+        if set.contains(&revocation_key) {
+            return;
+        }
+        set.insert(revocation_key, revocation_height)
+            .expect("RevokedSet::insert cannot fail: !contains checked immediately above");
+        drop(set);
+        journal.record_revocation_inserted(revocation_key);
+    }
+
+    /// BATCH revocation path — a revocation-channel trip revokes EVERY subscriber
+    /// with a SINGLE `chan_nul(channel_id)` insert into the committed `note_revoked`
+    /// accumulator. The gate (stage E, `authorize.rs`) checks non-membership of a
+    /// cap's `chan_nul` as well as its `cred_nul`, so this one insert fail-closes
+    /// every cap that named the channel — O(1), no subscriber walk.
+    ///
+    /// ⚠ HONEST UNIMPLEMENTED SEAM — SIGNED trip evidence is NOT verified here.
+    /// Admitting a channel trip must first check a signature over
+    /// `(channel_id, reason, tripped_at)` by the channel's registered `revoker` key.
+    /// Today `RevocationChannel::trip` (cell/src/revocation_channel.rs:128) only
+    /// compares `CellId`s in memory with no signature, and there is NO `Effect`
+    /// variant that trips a channel through the executor at all — so this method has
+    /// no production caller yet. It provides the committed-registry INSERT half
+    /// only; an authenticated `Effect::TripRevocationChannel` carrying signed
+    /// `TripEvidence` is the remaining work. This method does NOT fabricate a
+    /// signature check.
+    #[allow(dead_code)]
+    fn apply_revocation_channel_trip(
+        &self,
+        journal: &mut LedgerJournal,
+        channel_id: &[u8; 32],
+        tripped_at: u64,
+    ) {
+        // TODO(seam:signed-trip-evidence): verify a signature over
+        // (channel_id, reason, tripped_at) by the channel's revoker BEFORE this
+        // insert is admitted. Until then this path must only be reached behind an
+        // already-authorized trip.
+        self.insert_revocation(journal, chan_nul(channel_id), tripped_at);
     }
 
     fn apply_emit_event(
