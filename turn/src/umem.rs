@@ -1664,9 +1664,13 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
         // (`project_executor_state` does not walk `note_commitments`), so emitting a
         // touch here would break the agreement square. A NAMED SEAM, like the heap
         // domain's staged wiring — the CREATE-side dual of `UKey::NoteNullifier`.
+        // `RevocationInserted` is the same NAMED SEAM on the revocation side: the
+        // `note_revoked` accumulator commits via the rotated `revoked_root` group but
+        // `project_executor_state` does not walk it, so it too is a no-touch marker.
         JournalEntry::NoteSpend
         | JournalEntry::NoteCreate
-        | JournalEntry::NoteCommitmentInserted { .. } => vec![],
+        | JournalEntry::NoteCommitmentInserted { .. }
+        | JournalEntry::RevocationInserted { .. } => vec![],
         JournalEntry::EventEmitted { .. } => vec![],
     }
 }

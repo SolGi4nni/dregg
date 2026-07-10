@@ -597,7 +597,12 @@ impl TurnExecutor {
                 | JournalEntry::EventEmitted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
                 | JournalEntry::NoteNullifierInserted { .. }
-                | JournalEntry::NoteCommitmentInserted { .. } => {}
+                | JournalEntry::NoteCommitmentInserted { .. }
+                // A revocation insert into `note_revoked` is rollback-only
+                // bookkeeping (undone by `LedgerJournal::rollback`); it commits
+                // via the rotated `revoked_root` group, not the LedgerDelta —
+                // the revocation-side sibling of the nullifier/commitment inserts.
+                | JournalEntry::RevocationInserted { .. } => {}
                 // Lifecycle / capability narrowing: rollback-only — no
                 // separate LedgerDelta field today. On commit the cell's
                 // CellLifecycle / CapabilityRef change is read off the
@@ -963,6 +968,10 @@ impl TurnExecutor {
                             source_cell: *from,
                             source_slot: cap.slot,
                             derivation_type: dregg_cell::DerivationType::Grant,
+                            // The source (parent) cap carries its own provenance in
+                            // the effect; chaining it is what lets the ancestor-chain
+                            // non-revocation gate catch this grant's descendants.
+                            parent_provenance: cap.provenance,
                         },
                         created_at: timestamp,
                     });
@@ -980,6 +989,14 @@ impl TurnExecutor {
                             source_cell: *introducer,
                             source_slot: 0,
                             derivation_type: dregg_cell::DerivationType::Introduce,
+                            // PROVISIONAL root marker: the introducer's held cap over
+                            // `target` is the real parent, but this effect carries no
+                            // source-cap provenance and `source_slot` is already the
+                            // 0 placeholder. Threading the real parent provenance
+                            // needs ledger access in `collect_derivation_records_tree`
+                            // — a design change (see lane report), not a guessed
+                            // sentinel.
+                            parent_provenance: dregg_cell::derivation::mint_provenance(),
                         },
                         created_at: timestamp,
                     });
@@ -998,6 +1015,13 @@ impl TurnExecutor {
                             source_cell: tree.action.target,
                             source_slot: 0,
                             derivation_type: dregg_cell::DerivationType::Delegate,
+                            // PROVISIONAL root marker: a spawn snapshots the parent's
+                            // whole c-list, so no single parent cap provenance exists
+                            // in this coarse one-record-per-spawn edge (source_slot is
+                            // already the 0 placeholder). Threading real per-cap
+                            // provenance needs ledger access — a design change (see
+                            // lane report), not a guessed sentinel.
+                            parent_provenance: dregg_cell::derivation::mint_provenance(),
                         },
                         created_at: timestamp,
                     });
