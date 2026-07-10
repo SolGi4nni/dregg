@@ -498,12 +498,14 @@ fn route(
         (HttpMethod::Post, "/narrate") => handle_narrate(state, &req.body),
         (HttpMethod::Get, "/world") => handle_world(state),
         (HttpMethod::Get, "/verify") => handle_verify(state),
-        // ── THE SUNKEN VAULT — a playable dungeon over one GameSession (the AI narrates,
-        //    the world resolves). Additive to the /narrate demo above.
+        // ── THE ATTESTED DUNGEONS — playable worlds over one GameSession (the AI narrates,
+        //    the world resolves). A registry of games (The Sunken Vault, Bramble Keep) selectable
+        //    at /game/reset. Additive to the /narrate demo above.
+        (HttpMethod::Get, "/game/list") => game_api::handle_list(),
         (HttpMethod::Get, "/game/state") => game_api::handle_state(game),
         (HttpMethod::Post, "/game/act") => game_api::handle_act(game, &req.body),
         (HttpMethod::Get, "/game/verify") => game_api::handle_verify(game),
-        (HttpMethod::Post, "/game/reset") => game_api::handle_reset(game),
+        (HttpMethod::Post, "/game/reset") => game_api::handle_reset(game, &req.body),
         (HttpMethod::Get, "/") => WebResponse::text(INDEX_HELP),
         _ => WebResponse::error(404, "not found"),
     }
@@ -513,11 +515,12 @@ const INDEX_HELP: &str = "attested dungeon-master — the model proposes, the ca
     POST /narrate {\"player\":\"<message>\"}\n\
     GET  /world\n\
     GET  /verify\n\
-    -- THE SUNKEN VAULT (playable dungeon) --\n\
+    -- THE ATTESTED DUNGEONS (playable: The Sunken Vault, Bramble Keep) --\n\
+    GET  /game/list\n\
     GET  /game/state\n\
     POST /game/act {\"command\":\"<free text>\"}\n\
     GET  /game/verify\n\
-    POST /game/reset\n";
+    POST /game/reset {\"world\":\"<game id>\"}\n";
 
 fn main() -> std::io::Result<()> {
     if std::env::args().any(|a| a == "--self-check") {

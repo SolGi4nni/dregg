@@ -3,7 +3,7 @@
 <head>
   <meta charset="utf-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>The Sunken Vault — the AI narrates, the world resolves</title>
+  <title>The Attested Dungeons — the AI narrates, the world resolves</title>
   <style>
     :root {
       --parchment: #ece6d6;
@@ -44,6 +44,24 @@
     h1.title em { color: #b9abf2; font-style: italic; }
     .lede { font-family: var(--serif); font-size: 1.14rem; color: #d8d2c2; margin: 1rem 0 0; max-width: 40rem; text-wrap: pretty; }
     .lede b { color: #fff; font-weight: 600; }
+
+    /* ── the game picker ── */
+    .picker { margin: 1.5rem 0 0; padding: 1.1rem 1.2rem 1.2rem; border-radius: 14px; background: rgba(255,255,255,.66); border: 1px solid var(--rule); box-shadow: var(--shadow); }
+    .picker h3 { margin: 0 0 .2rem; font-size: .64rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+    .picker .sub { margin: 0 0 .85rem; font-size: .84rem; color: var(--ink-soft); }
+    .game-cards { display: grid; grid-template-columns: 1fr 1fr; gap: .7rem; }
+    @media (max-width: 38rem) { .game-cards { grid-template-columns: 1fr; } }
+    button.game-card { text-align: left; font: inherit; cursor: pointer; padding: .8rem .95rem; border-radius: 11px; border: 1px solid var(--rule); background: var(--card); color: var(--ink); transition: border-color .14s, box-shadow .14s, transform .06s; display: block; }
+    button.game-card:hover { border-color: var(--violet); box-shadow: 0 6px 18px -10px rgba(107,92,224,.5); }
+    button.game-card:active { transform: translateY(1px); }
+    button.game-card.current { border-color: var(--violet); background: #f2efff; }
+    button.game-card .g-name { font-family: var(--serif); font-size: 1.15rem; font-weight: 600; color: var(--ink); display: flex; align-items: baseline; gap: .5rem; }
+    button.game-card .g-badge { font-family: var(--sans); font-size: .58rem; letter-spacing: .12em; text-transform: uppercase; font-weight: 700; color: var(--violet-deep); background: #e6e1fb; border-radius: 5px; padding: .1rem .4rem; }
+    button.game-card .g-blurb { font-size: .84rem; color: var(--ink-soft); margin-top: .3rem; line-height: 1.4; }
+    button.game-card .g-obj { font-size: .76rem; color: var(--amber); margin-top: .4rem; }
+    .now-playing { margin: 1.2rem 0 0; font-family: var(--serif); font-size: 1.05rem; color: #f4efe2; display: flex; align-items: baseline; gap: .6rem; flex-wrap: wrap; }
+    .now-playing .np-label { font-family: var(--sans); font-size: .62rem; letter-spacing: .16em; text-transform: uppercase; color: #c9c0ee; font-weight: 700; }
+    .now-playing .np-name { font-weight: 600; color: #fff; }
 
     .narrator { margin: 1.4rem 0 0; font-size: .84rem; color: var(--ink-soft); padding: .55rem .9rem; border-radius: 9px; background: rgba(255,255,255,.6); border: 1px dashed var(--rule); }
     .narrator.model { border-style: solid; border-color: #cfc6ee; background: #f2efff; color: var(--violet-deep); }
@@ -155,14 +173,22 @@
 </head>
 <body>
   <main class="page">
-    <p class="eyebrow">An attested dungeon · the AI narrates, the world resolves</p>
-    <h1 class="title">The Sunken Vault</h1>
+    <p class="eyebrow">Attested dungeons · the AI narrates, the world resolves</p>
+    <h1 class="title">The Attested Dungeons</h1>
     <p class="lede">
-      The tide has broken open a drowned vault. A local AI dungeon-master narrates every
-      room and every move — but <b>you cannot narrate yourself through a locked door</b>.
-      The prose is atmosphere; the <em>world</em> resolves the move by its own rules. No
-      lantern, no descent. No sword, no passing the Warden. The truth is the ledger.
+      Pick a dungeon. A local AI dungeon-master narrates every room and every move — but
+      <b>you cannot narrate yourself through a locked door</b>. The prose is atmosphere; the
+      <em>world</em> resolves each move by its own rules. A Hedge-Witch will not part with her
+      sickle for flattery; a Warden will not fall to an empty hand. The truth is the ledger.
     </p>
+
+    <section class="picker" aria-label="choose a dungeon">
+      <h3>choose your dungeon</h3>
+      <p class="sub">Each world plays through the same attested engine — its rooms, its gates, its receipt rail.</p>
+      <div id="gameCards" class="game-cards"></div>
+    </section>
+
+    <p class="now-playing"><span class="np-label">now playing</span><span id="nowPlaying" class="np-name">…</span></p>
 
     <div id="narratorKind" class="narrator">…</div>
     <div id="objective" class="objective"><span class="star">★</span><span id="objectiveText">…</span></div>
@@ -196,7 +222,7 @@
       <div class="quick">
         <button id="lookBtn" class="ctrl" type="button">👁 look</button>
         <button id="cheatBtn" class="ctrl cheat" type="button">⛔ force the dark stair (no lantern)</button>
-        <button id="resetBtn" class="ctrl reset" type="button">↺ restart the vault</button>
+        <button id="resetBtn" class="ctrl reset" type="button">↺ restart this dungeon</button>
       </div>
       <div class="quick-note">
         <b>Force the dark stair</b> sends <code>go down</code> before you hold the lantern. The AI may
@@ -230,7 +256,7 @@
       <p class="foot">Honest scope: the narration is a real local model (<span class="tag">gemma2:2b</span>) when reachable, else a deterministic scripted narrator (shown honestly above). The attestation's "authentic" leg is an in-tree fixture. What is load-bearing is the <b>world resolution</b>, the <b>capability gate</b>, and the <b>receipt hash-chain</b>.</p>
     </aside>
 
-    <footer>The Sunken Vault · attested-dm · the AI narrates, the world resolves · self-contained.</footer>
+    <footer>The Attested Dungeons · attested-dm · the AI narrates, the world resolves · self-contained.</footer>
   </main>
 
   <script src="vault.js"></script>

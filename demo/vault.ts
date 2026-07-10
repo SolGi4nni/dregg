@@ -17,7 +17,10 @@ declare const window: any;
 
 interface Exit { name: string; to: string; toName: string; locked: boolean; gateReason: string | null }
 interface RoomView { id: string; name: string; description: string }
+interface GameDef { id: string; name: string; blurb: string; objective: string }
 interface GameState {
+  world: string;
+  worldName: string;
   room: RoomView;
   inventory: string[];
   exits: Exit[];
@@ -68,6 +71,35 @@ function renderNarratorKind(kind: string) {
     el.className = "narrator";
     el.innerHTML = "🎭 <b>narration is a deterministic scripted narrator</b> (ollama unreachable) — the world resolution, the capability gate, and the receipt rail are <b>real</b>. Bring up <code>gemma2:2b</code> for live narration.";
   }
+}
+
+// ── the game picker ──────────────────────────────────────────────────────────
+// The registry is served by /game/list; the current world by /game/state. Clicking a card
+// resets the session over that world and re-renders. The room/inventory/exits UI is generic
+// (it renders whatever /game/state returns), so every game plays through the same surface.
+let GAMES: GameDef[] = [];
+let currentWorld = "";
+
+function renderPicker() {
+  const el = $("gameCards");
+  if (!GAMES.length) { el.innerHTML = '<span class="empty">— no games registered —</span>'; return; }
+  el.innerHTML = GAMES.map((g) => {
+    const current = g.id === currentWorld;
+    return `<button class="game-card ${current ? "current" : ""}" data-world="${escapeHtml(g.id)}" type="button">` +
+      `<span class="g-name">${escapeHtml(g.name)}${current ? '<span class="g-badge">now playing</span>' : ""}</span>` +
+      `<span class="g-blurb">${escapeHtml(g.blurb)}</span>` +
+      `<span class="g-obj">★ ${escapeHtml(g.objective)}</span></button>`;
+  }).join("");
+  el.querySelectorAll<HTMLButtonElement>("button.game-card").forEach((b) => {
+    b.addEventListener("click", () => {
+      const w = b.dataset.world || "";
+      if (w && w !== currentWorld) reset(w).catch((e) => console.error(e));
+    });
+  });
+}
+
+function renderNowPlaying(worldName: string) {
+  $("nowPlaying").textContent = worldName || "…";
 }
 
 // ── the room, exits, inventory, items ────────────────────────────────────────
@@ -224,14 +256,22 @@ async function act(command: string): Promise<ActResp> {
   } finally { busy = false; setBusy(false); }
 }
 
+function applyWorld(s: GameState) {
+  currentWorld = s.world || currentWorld;
+  renderNowPlaying(s.worldName || "");
+  renderPicker();
+}
+
 async function loadState(): Promise<GameState> {
   const s = await jget<GameState>("/game/state");
+  applyWorld(s);
   renderNarratorKind(s.narratorKind || "scripted");
   renderRoom(s);
   renderChain(s.receiptCount, s.commitmentHex);
   renderBanner(s.status);
   await renderVerifyBadge();
   window.__VAULT_STATE = {
+    world: s.world, worldName: s.worldName,
     status: s.status, receiptCount: s.receiptCount, commitmentHex: s.commitmentHex,
     beforeCount: s.receiptCount, beforeCommit: s.commitmentHex, beforeRoom: s.room.id,
     roomId: s.room.id, inventory: s.inventory, narratorKind: s.narratorKind,
@@ -239,16 +279,23 @@ async function loadState(): Promise<GameState> {
   return s;
 }
 
-async function reset(): Promise<GameState> {
-  const { state } = await jpost<{ ok: boolean; state: GameState }>("/game/reset", {});
+// Reset the session. Pass a world id to SWITCH games; omit it to restart the CURRENT world
+// (the service defaults to the sunken vault only when nothing has been selected yet — so the
+// committed run-vault driver, which resets with no argument on a fresh boot, still gets the vault).
+async function reset(world?: string): Promise<GameState> {
+  const body = world ? { world } : (currentWorld ? { world: currentWorld } : {});
+  const { state } = await jpost<{ ok: boolean; state: GameState }>("/game/reset", body);
   tale.length = 0;
-  $("narrationText").textContent = "The tide has broken open a drowned vault. What do you do?";
+  applyWorld(state);
+  $("narrationText").textContent = `You stand at the threshold of ${state.worldName || "the dungeon"}. What do you do?`;
+  renderNarratorKind(state.narratorKind || "scripted");
   renderRoom(state);
   renderLog();
   renderChain(state.receiptCount, state.commitmentHex);
   renderBanner(state.status);
   await renderVerifyBadge();
   window.__VAULT_STATE = {
+    world: state.world, worldName: state.worldName,
     status: state.status, receiptCount: state.receiptCount, commitmentHex: state.commitmentHex,
     beforeCount: state.receiptCount, beforeCommit: state.commitmentHex, beforeRoom: state.room.id,
     roomId: state.room.id, inventory: state.inventory, narratorKind: state.narratorKind,
@@ -259,6 +306,7 @@ async function reset(): Promise<GameState> {
 // ── boot ─────────────────────────────────────────────────────────────────────
 async function boot() {
   try {
+    try { GAMES = await jget<GameDef[]>("/game/list"); } catch (e) { console.error("could not load /game/list", e); GAMES = []; }
     await loadState();
     renderLog();
 
@@ -281,7 +329,8 @@ async function boot() {
 
 // Driver hooks (the same path the buttons take).
 window.__vaultAct = (c: string) => act(c);
-window.__vaultReset = () => reset();
+window.__vaultReset = (world?: string) => reset(world);
 window.__vaultLoad = () => loadState();
+window.__vaultGames = () => GAMES;
 
 boot();

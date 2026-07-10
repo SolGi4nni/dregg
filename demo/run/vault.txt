@@ -1,6 +1,6 @@
 THE SUNKEN VAULT — the AI narrates, the world resolves
 driven run · attested-dm /game contract · narratorKind: model:gemma2:2b (a REAL local model)
-served at http://127.0.0.1:60455/vault
+served at http://127.0.0.1:62016/vault
 ==========================================================================
 
 A local AI dungeon-master narrates every room and move, but its prose has NO
@@ -13,7 +13,7 @@ A · THE WINNING PLAYTHROUGH  (each move LANDS; the receipt rail grows by one)
 --------------------------------------------------------------------------
 
   » go north   (into the salt antechamber)
-    gemma2: The archway groans as you push it open, its rusted hinges protesting with a metallic screech. A thick fog rolls in from the depths of the ocean, obscuring the path ahead.
+    gemma2: The archway groans under your weight as you step through, a chill wind whipping salt spray into your face. The sound of waves crashing against the cliff is almost drowned out by the rhythmic drip of water from unseen cracks in the stone.
     world : LANDED → room antechamber · receipt rail #1 · status playing
 
   » take lantern   (a light against the dark)
@@ -21,19 +21,19 @@ A · THE WINNING PLAYTHROUGH  (each move LANDS; the receipt rail grows by one)
     world : LANDED → room antechamber · receipt rail #2 · status playing
 
   » go down   (down the now-lit stair)
-    gemma2: The lantern's light flickers as you descend, casting dancing shadows on the salt-encrusted walls. The air grows thick and heavy, smelling of brine and decay.
+    gemma2: The lantern's light flickers, casting dancing shadows on the salt-encrusted walls. A damp chill settles over you as you descend into the darkness of the antechamber.
     world : LANDED → room dark_stair · receipt rail #3 · status playing
 
   » go down   (into the flooded cistern)
-    gemma2: The steps groan beneath your weight, each one slick and cold. A faint phosphorescent glow emanates from the depths of the vault.
+    gemma2: The steps groan beneath your weight, each one slick and cold. A faint, metallic tang hangs in the air as you descend further into the darkness.
     world : LANDED → room cistern · receipt rail #4 · status playing
 
   » take rusted_key   (the key caught in the grate)
-    gemma2: The lantern's weak light struggles against the oppressive gloom, revealing only a glimpse of the rusted key wedged in the drain grate. A faint, metallic scent hangs heavy in the air, like the memory of blood and decay.
+    gemma2: The lantern's weak light struggles against the oppressive gloom, revealing only a sliver of rusted iron. The key seems to hum faintly with an unseen energy as you reach for it.
     world : LANDED → room cistern · receipt rail #5 · status playing
 
   » go north   (to the drowned vestry)
-    gemma2: The lantern's weak light struggles against the oppressive gloom, revealing only a few inches of the murky water. A faint, metallic scent hangs in the air as you inch north, the rusted key glinting faintly in your hand.
+    gemma2: The lantern's weak light struggles against the oppressive gloom, revealing only a sliver of the flooded chamber. A faint, metallic scent hangs in the air as you inch north, the rusted key glinting faintly in your hand.
     world : LANDED → room vestry · receipt rail #6 · status playing
 
   » use rusted_key on iron_door   (the lock gives)
@@ -41,31 +41,31 @@ A · THE WINNING PLAYTHROUGH  (each move LANDS; the receipt rail grows by one)
     world : LANDED → room vestry · receipt rail #7 · status playing
 
   » go east   (through the opened iron door)
-    gemma2: The lantern's weak light reveals only the warped wood and chipped paint of the pews, their once vibrant colors now faded to a sickly grey. A faint, metallic scent hangs in the air as you approach the iron door, its surface covered in barnacles and seaweed.
+    gemma2: The lantern's weak light struggles against the oppressive gloom, revealing only a sliver of the iron door. A faint, metallic scent hangs in the air, like old blood and decay.
     world : LANDED → room armory · receipt rail #8 · status playing
 
   » take sword   (one blade still keen)
-    gemma2: The rusted blade sings softly as you grasp it, its edge catching the faint light of your lantern. A chill wind whispers through the broken window frames, carrying with it the scent of brine and decay.
+    gemma2: The rusted blade sings softly as you grasp it, its edge catching the faint glow of your lantern. A chill wind whistles through the broken window frames, carrying with it the scent of brine and decay.
     world : LANDED → room armory · receipt rail #9 · status playing
 
   » go north   (into the Warden's hall)
-    gemma2: The rusted metal groans as you shift your weight, the lantern's light flickering across the decaying armor. A chill wind whispers through the broken window frames, carrying with it the scent of brine and decay.
+    gemma2: The rusted metal groans as you shift your weight, the lantern's light flickering across the damp stone walls. A faint echo of a clang rings out from deeper within the vault.
     world : LANDED → room warden_hall · receipt rail #10 · status playing
 
   » attack warden   (sword against drowned plate)
-    gemma2: The rusted key clangs against the stone floor as you raise your sword, its blade catching the faint glow of the lantern's flame. The Warden stirs, a groan echoing through the waterlogged hall.
+    gemma2: A groan echoes from the depths as the Warden's rusted plate armor creaks, a single eye flickering open. The lantern's light catches the glint of barnacles clinging to the Warden's weathered face.
     world : LANDED → room warden_hall · receipt rail #11 · status playing
 
   » go east   (past the fallen Warden)
-    gemma2: A groan echoes from the depths as the rusted key clangs against the stone floor. The Warden's eyes, milky and cloudy with age, snap open, revealing a face etched with centuries of sorrow. The lantern's light flickers in the gloom.
+    gemma2: A groan echoes from the depths as the Warden stirs, his rusted plate armor clanking against the damp stone. The lantern's weak light reveals a face etched with centuries of hardship and the weight of untold secrets.
     world : LANDED → room treasury · receipt rail #12 · status playing
 
   » take amulet   (the Drowned Amulet)
-    gemma2: The Drowned Amulet, cool and heavy in your hand, pulses faintly with a spectral light. A faint echo of whispers seems to emanate from its depths as you grasp it tight.
+    gemma2: The Drowned Amulet, heavy and cold in your hand, pulses faintly with a spectral light. A chill wind whistles through the crumbling stone archway as if to warn you of the secrets held within this sunken vault.
     world : LANDED → room treasury · receipt rail #13 · status playing
 
   » go up   (toward grey daylight — WIN)
-    gemma2: The rusted key clicks against the stone, its metal cold and damp. A faint shimmer of light emanates from the amulet as you lift it, a strange pull drawing your gaze upwards.
+    gemma2: The rusted key clicks against the metal grate, its sound swallowed by the oppressive silence of the sunken vault. A faint luminescence emanates from the amulet in your hand as you lift it to your eye, a spectral glow that seems to dance with the shadows cast by the lantern's flame.
     world : LANDED → room sunken_gate · receipt rail #14 · status won
 
   RESULT: status = WON · 14 verified turns · carrying [amulet, lantern, rusted_key, sword]
@@ -76,7 +76,7 @@ B · THE "you can't cheat" MOMENT  (force the dark stair with no lantern)
 --------------------------------------------------------------------------
 
   » go down   (the dark stair, before taking the lantern)
-    gemma2 may narrate the darkness parting: The lantern's light flickers, casting dancing shadows on the salt-encrusted walls. A damp chill permeates the air as you descend into the darkness.
+    gemma2 may narrate the darkness parting: The lantern's light flickers, casting dancing shadows on the salt-encrusted walls. A damp chill settles over you as you descend into the darkness of the antechamber.
     world : REFUSED — the way to Dark Stair is barred: it needs the lantern
             the room is UNCHANGED (still antechamber) and the receipt rail did NOT grow
             (#1, no receipt — the anti-ghost tooth). The world disposes.
