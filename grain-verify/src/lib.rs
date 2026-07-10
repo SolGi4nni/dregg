@@ -95,7 +95,7 @@
 //! still trusts the executor host that produced the manifest and committed the
 //! turns; it does not re-execute them.
 //!
-//! ## R3 — the whole-history STARK leg (THE GAP; the road to unfoolability)
+//! ## R3 — the whole-history STARK leg, wired to the Lean-proven verifier
 //!
 //! dregg ships a stronger endpoint: the whole-history light client
 //! (`dregg_lightclient::verify_history`) folds a chain of [`FinalizedTurn`]s into
@@ -103,9 +103,23 @@
 //! verifier is protected even against a host that HOLDS the signing key (a
 //! self-consistent forged chain still has no satisfying leaf). Composing it — with
 //! R1's renter anchor pinning *which* history — is what turns this ladder from
-//! tamper-evident into unfoolable. We do **not** compose it here yet: R2's grain
-//! turns are genuine committed executor turns, but they are not yet minted as the
-//! input `verify_history` folds:
+//! tamper-evident into unfoolable.
+//!
+//! [`r3_verify`](r3::r3_verify) wires exactly that: it folds a grain's finalized
+//! turns (ungated), light-verifies the aggregate, and routes the verified-status +
+//! the aggregate's committed head vs the R1-anchored head to the extracted,
+//! `#assert_axioms`-clean Lean `Dregg2.Grain.R3Verify.r3VerifyCore` (via
+//! [`dregg_lean_ffi::shadow_grain_r3_verify`]) — whose `"1"` IS the R3-accept. The
+//! DECISION is the Lean-proven object; Rust does the heavy fold + marshals. **Honest
+//! scope — reduced, not closed:** the proved `r3_unfoolable` REDUCES this crate's
+//! [`WHOLE_HISTORY_GAP`] to the named `RecursiveAggregation.EngineSound` STARK floor
+//! (the FRI/recursion legs proved outside Lean + the single-turn apex's still-open
+//! reconciliation) plus the head binding — it is a genuine reduction, not an
+//! unconditional proof of unfoolability.
+//!
+//! The remaining ADAPTER seam is upstream of `r3_verify`, not in its decision: R2's
+//! grain turns are genuine committed executor turns, but they are not yet minted as
+//! the [`FinalizedTurn`] the fold folds —
 //!
 //! - `verify_history` consumes `WholeChainProof` built (via `fold_and_attest`)
 //!   from `FinalizedTurn { participant: DescriptorParticipant::rotated(leg) }`,
@@ -116,12 +130,13 @@
 //!   rotated wide-anchored leg is minted per turn, so there is nothing for the
 //!   recursion to fold.
 //!
-//! So the remaining bridge is a **breadstuffs-side build** in `grain-turn`, not a
-//! wiring gap this crate can close: mint each grain turn's rotated wide-anchored
-//! EffectVM leg, then this crate can additionally fold the session and hand the
-//! renter a 32-byte `verify_history` check. Until then this crate ships the
-//! **maximal real subset over `verify_agent_run`**. See [`WHOLE_HISTORY_GAP`] for
-//! the exact, machine-readable ask.
+//! So [`r3_verify`](r3::r3_verify) is wired and PROVEN over the [`FinalizedTurn`]
+//! chain it is handed (the tests fold a real rotated chain minted by the
+//! `whole_history_demo` recipe); the remaining bridge is a **breadstuffs-side build**
+//! in `grain-turn`, not a wiring gap in the R3 decision: mint each grain turn's
+//! rotated wide-anchored EffectVM leg alongside the committed turn, then a live grain
+//! session's real turns become the `FinalizedTurn`s `r3_verify` folds. See
+//! [`WHOLE_HISTORY_GAP`] for the exact, machine-readable ask.
 //!
 //! ## The ladder, one line each (rung ↔ verifier)
 //!
@@ -130,7 +145,7 @@
 //! | R0 | third-party forgery (random persisted receipt key) + in-transit mutation | [`GrainAttestation::verify`] |
 //! | R1 | host rewrite/truncation vs a renter-acknowledged checkpoint | [`GrainAttestation::verify_for_renter`] |
 //! | R2 | receipts with no kernel behind them (meter only session-local) | [`GrainAttestation::verify_r2`] / [`verify_r2_for_renter`](GrainAttestation::verify_r2_for_renter) |
-//! | R3 | host fabrication — execution integrity + completeness (GAP) | [`WHOLE_HISTORY_GAP`] |
+//! | R3 | host fabrication — execution integrity + completeness (REDUCED to the `EngineSound` STARK floor, not unconditionally closed) | [`r3_verify`](r3::r3_verify) → the Lean-proven `Dregg2.Grain.R3Verify.r3VerifyCore` |
 //!
 //! Each rung's verifier RUNS every rung below it: `verify_for_renter` includes
 //! `verify`; `verify_r2*` includes the base (and, via `verify_r2_for_renter`, the
@@ -143,6 +158,14 @@ use dregg_agent::agent::{AgentRunReport, AgentVerifyError, verify_agent_run};
 use dregg_agent::receipt::{ReceiptBody, ReceiptSigner, verify_signature};
 use dregg_agent::session::Session;
 use serde::{Deserialize, Serialize};
+
+/// **R3 — the whole-history STARK leg, wired to the Lean-proven verifier.** Folds a
+/// grain's finalized turns into ONE recursive-STARK aggregate and lets the extracted,
+/// `#assert_axioms`-clean `Dregg2.Grain.R3Verify.r3VerifyCore` render the accept
+/// decision — the road to unfoolability (reduced to the named `EngineSound` STARK
+/// floor + the R1 head binding; see [`WHOLE_HISTORY_GAP`] and [`r3::r3_verify`]).
+pub mod r3;
+pub use r3::{R3Error, R3Verified, r3_verify};
 
 /// The exact gap between what a hosted session supplies today and what the
 /// whole-history light client (`dregg_lightclient::verify_history`) needs — the

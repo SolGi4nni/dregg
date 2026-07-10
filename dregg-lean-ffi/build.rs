@@ -259,6 +259,12 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // security-critical decaps (re-encryption check + implicit reject) as leanc-native code, and the
         // encaps→decaps round-trip: the extracted cores discharge `DreggKemRefinement.Fips203Correct`.
         "Dregg2.Crypto.Fips203Kem",
+        // GRAIN R3 whole-history verify extraction: the verified R3-accept DECISION over the
+        // whole-chain STARK verified-status + the R1 head binding (`@[export] dregg_grain_r3_verify`),
+        // OUTSIDE the FFI closure — build it so its `.c` IR is emitted and the splice picks up the
+        // export (and its Dregg2.Circuit.RecursiveAggregation import closure's freshly-emitted objects).
+        // The Rust `grain-verify::r3_verify` calls it as the LEAN-PROVEN R3-accept gate.
+        "Dregg2.Grain.R3Verify",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1340,6 +1346,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_fips204_sign_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fips203_encaps_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fips203_decaps_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1735,6 +1742,16 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_fips203_decaps_present");
     }
 
+    // GRAIN R3 whole-history verify extraction: probe the spliced archive for the
+    // `@[export] dregg_grain_r3_verify` symbol (the extracted, Lean-verified R3-accept decision over
+    // the whole-chain STARK verified-status + the R1 head binding). Present ⇒ gate the Rust
+    // `extern "C"` block, the C shim string bridge, and the module initializer. `grain-verify::r3_verify`
+    // marshals the fold's verified-status + heads through this to run the LEAN-PROVEN R3 decision.
+    let grain_r3_verify_present = archive_exports(&build_archive, "dregg_grain_r3_verify");
+    if grain_r3_verify_present {
+        println!("cargo:rustc-cfg=dregg_grain_r3_verify_present");
+    }
+
     let mut shim = cc::Build::new();
     shim.file("src/lean_init.c").include(&lean_include);
     // The SINGLE-THREADED / libuv-thread-free init (docs/EMBEDDABLE-LEAN-RUNTIME.md).
@@ -1801,6 +1818,9 @@ fn main() {
     }
     if fips203_decaps_present {
         shim.define("DREGG_FIPS203_DECAPS", None);
+    }
+    if grain_r3_verify_present {
+        shim.define("DREGG_GRAIN_R3_VERIFY", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

@@ -215,6 +215,27 @@ extern lean_object *dregg_fips203_encaps(lean_object *input);
 extern lean_object *dregg_fips203_decaps(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED GRAIN R3 whole-history verify core
+ * (`Dregg2.Grain.R3Verify.r3VerifyFFI`): decodes the wire `"aggregateVerified aggregateHead
+ * anchoredHead"` (three decimal ints), runs the PROVED `r3VerifyCore`
+ * (`aggregateVerified && aggregateHead == anchoredHead`) and returns `"1"` (accept) / `"0"` (reject;
+ * also the fail-closed answer for a malformed wire). This is the R3-accept DECISION as leanc-native
+ * code: `aggregateVerified` is the whole-chain STARK verifier's status and the head equality binds the
+ * verified history to THIS grain's R1 anchor (`Dregg2.Grain.R3Verify.r3_unfoolable` — the unfoolable
+ * whole history REDUCED to the named `EngineSound` boundary + head-binding, not an unconditional
+ * proof). GATED on DREGG_GRAIN_R3_VERIFY (the module is OUTSIDE the FFI closure; build.rs probes +
+ * defines it). NOTE: unlike the crypto cores, R3's export needs NO module initializer — its
+ * generated C hoists the "1"/"0"/" " string literals into STATIC CONST `lean_string_object`s and its
+ * one closure into a LAZY `lean_once_cell`, so `dregg_grain_r3_verify` is self-contained. We therefore
+ * deliberately do NOT reference `initialize_Dregg2_Dregg2_Grain_R3Verify`: that initializer chains into
+ * `Dregg2.Circuit.RecursiveAggregation`'s Mathlib-tactic import closure (ProofWidgets / Batteries
+ * init symbols the leanc-native archive does not carry), so calling it would drag undefined
+ * initializer symbols into the final link. Leaving it unreferenced lets `-dead_strip` drop the whole
+ * proof closure — the pure verify core links and runs on the always-initialized Init runtime. */
+#ifdef DREGG_GRAIN_R3_VERIFY
+extern lean_object *dregg_grain_r3_verify(lean_object *input);
+#endif
+
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
  * `lean_dec_ref`, `lean_box`, and `lean_string_cstr` are `static inline` in the header (no
@@ -340,6 +361,10 @@ int dregg_ffi_init(void) {
     }
     lean_dec_ref(kres);
 #endif
+    /* NOTE: DREGG_GRAIN_R3_VERIFY needs NO module initializer here — `dregg_grain_r3_verify`'s
+     * generated C is self-contained (static-const string literals + a lazy once-cell), and calling
+     * `initialize_Dregg2_Dregg2_Grain_R3Verify` would drag its Mathlib-tactic import closure's
+     * undefined initializer symbols into the link. See the extern-decl note above. */
     lean_io_mark_end_initialization();
     return 0;
 }
@@ -444,6 +469,29 @@ size_t dregg_fips204_verify_str(const char *in_utf8, char *out, size_t out_cap) 
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_fips204_verify(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_GRAIN_R3_VERIFY
+/* dregg_grain_r3_verify_str — the C string bridge over the VERIFIED Lean `String -> String` GRAIN R3
+ * whole-history verify-core export (`Dregg2.Grain.R3Verify.r3VerifyFFI`). Input:
+ * `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints). Output: `"1"` (accept) /
+ * `"0"` (reject). Runs the PROVED `r3VerifyCore` — a lying host cannot serve a fabricated/truncated
+ * history under an honest-looking anchored head (reduced to `EngineSound` + head-binding). Same return
+ * contract as the bridges above. */
+size_t dregg_grain_r3_verify_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_grain_r3_verify(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

@@ -301,6 +301,34 @@ pub fn shadow_fips203_decaps(wire: &str) -> Result<String, String> {
     ffi::lean_fips203_decaps(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified GRAIN R3 whole-history verify core
+/// (`dregg_grain_r3_verify`, the C-ABI entry over `Dregg2.Grain.R3Verify.r3VerifyFFI` = the PROVED
+/// `r3VerifyCore`). When false, a caller (`grain-verify::r3_verify`) cannot render the Lean-proven R3
+/// decision and must surface the archive gap. Distinct from [`lean_available`]: a stale archive can
+/// lack this export.
+pub fn grain_r3_verify_core_available() -> bool {
+    ffi::grain_r3_verify_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted GRAIN R3 whole-history verify core `@[export] dregg_grain_r3_verify`
+/// (the executable `Dregg2.Grain.R3Verify.r3VerifyCore`, PROVED `r3_unfoolable` to reduce a grain's
+/// `WHOLE_HISTORY_GAP` to the named `EngineSound` boundary + the R1 head binding). This runs the
+/// R3-ACCEPT DECISION as a Lean-verified object (leanc-native): a whole-history proof cannot be
+/// re-pointed at a foreign anchor (`r3_head_mismatch_rejected`), and a non-verifying aggregate rejects.
+///
+/// Wire grammar the export reads:
+///   * in:  `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints — the whole-chain STARK
+///     verifier's status as 0/1, the aggregate's committed head, and the R1-anchored attestation head).
+///   * out: `"1"` (accept) · `"0"` (reject; also the fail-closed answer for a malformed wire).
+///
+/// `grain-verify::r3_verify` folds the finalized-turn chain, reads the verified-status from
+/// `verify_whole_chain_proof_bytes`, and routes the accept decision through THIS entry — the DECISION is
+/// the Lean-proven object, Rust is the thin marshaller. Returns `Err` if the archive lacks the export.
+pub fn shadow_grain_r3_verify(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_grain_r3_verify(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -442,6 +470,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_fips203_decaps_present)]
         fn dregg_fips203_decaps_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_grain_r3_verify_present)]
+        fn dregg_grain_r3_verify_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -727,6 +761,34 @@ mod ffi {
         false
     }
 
+    /// GRAIN-R3 extraction — run the VERIFIED Lean whole-history R3-accept core (leanc-native).
+    /// Input: `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints); output: `"1"`
+    /// (accept) / `"0"` (reject, and the fail-closed answer for a malformed wire). This is the PROVED
+    /// `Dregg2.Grain.R3Verify.r3VerifyCore` (`aggregateVerified && aggregateHead == anchoredHead`) — the
+    /// R3 whole-history-unfoolable accept decision, reduced to the named `EngineSound` boundary + the R1
+    /// head binding — as a Lean-verified object, the object `grain-verify::r3_verify` routes its accept
+    /// decision through.
+    #[cfg(dregg_grain_r3_verify_present)]
+    pub fn lean_grain_r3_verify(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_grain_r3_verify_str, "dregg_grain_r3_verify_str")
+    }
+
+    #[cfg(not(dregg_grain_r3_verify_present))]
+    pub fn lean_grain_r3_verify(_wire: &str) -> Result<String, String> {
+        Err("dregg_grain_r3_verify not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted GRAIN R3 whole-history verify core.
+    #[cfg(dregg_grain_r3_verify_present)]
+    pub fn grain_r3_verify_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_grain_r3_verify_present))]
+    pub fn grain_r3_verify_present() -> bool {
+        false
+    }
+
     #[cfg(all(test, dregg_fips204_verify_present))]
     mod fips204_verify_extraction {
         use super::*;
@@ -744,6 +806,29 @@ mod ffi {
             assert_eq!(lean_fips204_verify("3 7 7 100000000 0").unwrap(), "0");
             // Malformed wire fails CLOSED.
             assert_eq!(lean_fips204_verify("garbage").unwrap(), "0");
+        }
+    }
+
+    #[cfg(all(test, dregg_grain_r3_verify_present))]
+    mod grain_r3_verify_extraction {
+        use super::*;
+        /// THE R3 DECISION IN LEAN: the verified GRAIN R3 whole-history verify core runs
+        /// (leanc-compiled native) — the object `grain-verify::r3_verify` routes its accept decision
+        /// through. Mirrors the Lean `#guard`s in `Dregg2.Grain.R3Verify` on the wire: a verified
+        /// aggregate with matching heads ACCEPTS ("1"); a MISMATCHED anchored head REJECTS ("0", the
+        /// anti-ghost head tooth); a NON-verifying aggregate REJECTS ("0"); a malformed wire fails
+        /// CLOSED ("0"). The extracted `r3VerifyCore` is the real gate, not `fun _ => true`.
+        #[test]
+        fn verified_grain_r3_verify_runs_in_lean() {
+            lean_init_once().expect("init the Lean runtime");
+            // Verified aggregate + matching heads ACCEPT.
+            assert_eq!(lean_grain_r3_verify("1 42 42").expect("round-trip"), "1");
+            // Mismatched anchored head REJECTS (a whole-history proof cannot be re-pointed).
+            assert_eq!(lean_grain_r3_verify("1 42 43").unwrap(), "0");
+            // Non-verifying aggregate REJECTS regardless of the heads.
+            assert_eq!(lean_grain_r3_verify("0 42 42").unwrap(), "0");
+            // Malformed wire fails CLOSED.
+            assert_eq!(lean_grain_r3_verify("garbage").unwrap(), "0");
         }
     }
 
@@ -941,6 +1026,14 @@ mod ffi {
     }
 
     pub fn lean_fips203_decaps(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn grain_r3_verify_present() -> bool {
+        false
+    }
+
+    pub fn lean_grain_r3_verify(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }

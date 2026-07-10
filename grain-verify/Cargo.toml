@@ -34,3 +34,20 @@ path = "src/bin/grain_demo.rs"
 dregg-agent = { path = "../dregg-agent" }
 serde = { version = "1", features = ["derive"] }
 serde_json = "1"
+# R3 — the whole-history STARK leg. `dregg-circuit-prove` carries the recursive fold
+# (`prove_turn_chain_recursive_without_host_gate`) + the succinct-aggregate verify
+# (`verify_whole_chain_proof_bytes`) over a `FinalizedTurn` chain; `dregg-circuit` carries
+# `BabyBear::as_u32` (the aggregate's committed-head lane).
+dregg-circuit = { path = "../circuit" }
+dregg-circuit-prove = { path = "../circuit-prove" }
+# The FFI reach to the extracted, Lean-proven R3 verify core (`shadow_grain_r3_verify` →
+# `@[export] dregg_grain_r3_verify`) — the object that RENDERS the R3 accept decision.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+
+[dev-dependencies]
+# R3 test fixtures MIRROR `lightclient/src/bin/whole_history_demo.rs`: a real rotated
+# finalized-turn chain is minted from before/after actor `Cell`s via
+# `dregg_turn::rotation_witness::mint_rotated_participant_leg` (prover-gated), over
+# `dregg_circuit::effect_vm::{CellState, Effect}` and `dregg_cell::Cell`.
+dregg-turn = { path = "../turn", features = ["prover"] }
+dregg-cell = { path = "../cell" }
