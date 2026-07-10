@@ -29,9 +29,9 @@ const EXT_ROOT = path.resolve(__dirname, "..", "..");
 // Bundle the REAL netlayer module (+ its port.ts imports) to ESM in-memory and
 // import it via a data: URL — no generated file touches the tree (mirrors the
 // other harnesses' write:false bundling).
-async function loadNetlayer() {
+async function loadModule(rel) {
   const out = await esbuild.build({
-    entryPoints: [path.join(EXT_ROOT, "src", "netlayer.ts")],
+    entryPoints: [path.join(EXT_ROOT, "src", rel)],
     bundle: true,
     format: "esm",
     platform: "neutral",
@@ -40,6 +40,17 @@ async function loadNetlayer() {
   });
   const b64 = Buffer.from(out.outputFiles[0].text, "utf8").toString("base64");
   return import(`data:text/javascript;base64,${b64}`);
+}
+
+async function loadNetlayer() {
+  return loadModule("netlayer.ts");
+}
+
+// The port module carries the `StoryEngine` + `defaultResolveStory` — bundled so the
+// story-netlayer test drives the SAME wiring `getStoryEngine` uses in production
+// (`resolveStory: netlayerResolveStory(net)`), minting a world from the verified scene.
+async function loadPort() {
+  return loadModule("port.ts");
 }
 
 // ── the deterministic crypto (real cryptographic hash — the property is genuine) ──
@@ -192,4 +203,85 @@ test("netlayer bridge: netlayerResolveObject yields a PollSpec iff verified (fai
   const net2 = new NL.Netlayer(mapTransport(new Map([[uri, hostile]])), crypto, { committee: COMMITTEE });
   const spec2 = await NL.netlayerResolveObject(net2)(uri);
   assert.equal(spec2, null, "hostile transport ⇒ null (fail-closed) — never the FNV-shaped stand-in");
+});
+
+// ═══════════════════════════════════════════════════════════════════════════
+// THE STORY NETLAYER — `dregg://story/<addr>` → a content-addressed, VERIFIED
+// `.scene` SOURCE that mints a `StoryWorld` BEFORE it plays. The load-bearing
+// property is identical to the object bridge: the untrusted transport carries the
+// scene bytes but CANNOT substitute a different story — a swapped scene hashes to a
+// different addr and the content-addressed gate refuses it (no scene, no world).
+// ═══════════════════════════════════════════════════════════════════════════
+
+// A minimal stand-in `StoryWorld` whose ctor COMPILES the verified scene source (a
+// JSON `{ start, prose }`), exactly as the real wasm `StoryWorld::new(scene)` does —
+// FAIL-CLOSED: an unparseable scene throws, minting no world.
+class StandInStoryWorld {
+  constructor(scene) {
+    const s = JSON.parse(scene); // throws on a non-scene → fail-closed ctor
+    if (!s || typeof s.start !== "string") throw new Error("not a scene");
+    this._passage = s.start;
+    this._prose = String(s.prose ?? "");
+  }
+  currentPassage() { return this._passage; }
+  passageProse() { return this._prose; }
+  choicesJson() { return "[]"; }
+  advance() { return JSON.stringify({ ok: false, error: "no choice" }); }
+  verify() { return true; }
+  commitmentHex() { return "00"; }
+  receiptCount() { return 0; }
+}
+
+// The canonical `.scene` SOURCE the transport serves; its addr IS its blake3.
+const SCENE_SOURCE = JSON.stringify({ start: "clearing", prose: "You stand at a fork." });
+
+test("story netlayer: content-hash MATCHES addr → verified scene returned + a StoryWorld mints", async () => {
+  const NL = await loadNetlayer();
+  const port = await loadPort();
+  const { addr, env } = await makeObject(NL, SCENE_SOURCE);
+  const uri = `dregg://story/${addr}`;
+  const net = new NL.Netlayer(mapTransport(new Map([[uri, env]])), crypto, { committee: COMMITTEE });
+
+  // The bridge yields a StorySpec carrying the VERIFIED scene (addr == blake3(scene)).
+  const spec = await NL.netlayerResolveStory(net)(uri);
+  assert.deepEqual(spec, { kind: "story", addr, scene: SCENE_SOURCE }, "verified story → StorySpec with the scene source");
+
+  // And the SAME wiring `getStoryEngine` uses mints a real world from that scene.
+  const engine = new port.StoryEngine({ StoryWorld: StandInStoryWorld, resolveStory: NL.netlayerResolveStory(net) });
+  const r = await engine.handle({ op: "resolveStory", uri });
+  assert.equal(r.ok, true, "story resolved");
+  assert.equal(r.verified, true, "verified");
+  assert.equal(r.tier, "extension", "extension tier on a verified story");
+  assert.equal(r.passage, "clearing", "the world minted from the verified scene (passage from the scene source)");
+});
+
+// ── THE UNTRUSTED-TRANSPORT PROPERTY — a hostile gateway CANNOT swap the story ──
+test("story netlayer: served bytes DON'T hash to the addr → REFUSED (no scene, no world — hostile story defeated)", async () => {
+  const NL = await loadNetlayer();
+  const port = await loadPort();
+  const { addr, env } = await makeObject(NL, SCENE_SOURCE);
+  const uri = `dregg://story/${addr}`;
+
+  // The gateway keeps the ADDRESS the client asked for but swaps the SCENE (and lies
+  // about contentHash to try to pass its own self-consistency check).
+  const forgedScene = JSON.stringify({ start: "trap", prose: "A pit opens beneath you." });
+  const hostile = { ...env, contentText: forgedScene, contentHash: sha256Hex(forgedScene) };
+  const net = new NL.Netlayer(mapTransport(new Map([[uri, hostile]])), crypto, { committee: COMMITTEE });
+
+  const spec = await NL.netlayerResolveStory(net)(uri);
+  assert.equal(spec, null, "content-hash-mismatch ⇒ null (no scene returned) — the substituted story is refused");
+
+  // Through the engine: no world mints, and the resolve fails closed (never plays).
+  const engine = new port.StoryEngine({ StoryWorld: StandInStoryWorld, resolveStory: NL.netlayerResolveStory(net) });
+  const r = await engine.handle({ op: "resolveStory", uri });
+  assert.equal(r.ok, false, "hostile story fails closed (no world minted)");
+  assert.equal(r.verified, false, "not verified");
+  assert.equal(r.tier, "none", "no trust tier on a refused story");
+});
+
+test("story netlayer: malformed content address fails closed (never fetched, never minted)", async () => {
+  const NL = await loadNetlayer();
+  const net = new NL.Netlayer(() => { throw new Error("transport must not be reached"); }, crypto, {});
+  const spec = await NL.netlayerResolveStory(net)("dregg://story/notahash");
+  assert.equal(spec, null, "a bad addr is refused before any fetch (fail-closed, transport untouched)");
 });

@@ -1331,7 +1331,10 @@ export interface StoryWorldLike {
   receiptCount(): number;
 }
 export interface StoryWorldCtor {
-  new (): StoryWorldLike;
+  /** Mint a world from the VERIFIED `.scene` source (the real wasm `StoryWorld::new`
+   *  compiles it; a fail-closed ctor throws on an unparseable scene). The fixture's
+   *  in-memory stand-in ignores the argument and drives its own embedded graph. */
+  new (scene?: string): StoryWorldLike;
 }
 
 // ── the COLLECTIVE surface (the killer mode) ─────────────────────────────────
@@ -1519,6 +1522,11 @@ export interface StoryPort {
 export interface StorySpec {
   kind: string;
   addr: string;
+  /** The VERIFIED `.scene` SOURCE (addr == blake3(scene)) the real netlayer fetched.
+   *  Present on a netlayer resolve; the StoryEngine hands it to `new StoryWorld(scene)`.
+   *  Absent on the stand-in resolver (the fixture's stand-in world carries its own
+   *  scene) — then the wasm `StoryWorld` ctor's own default/embedded scene is used. */
+  scene?: string;
 }
 /** Resolve a canonical story uri to a spec, or `null` (fail-closed). May be async. */
 export type ResolveStoryFn = (uri: string) => StorySpec | null | Promise<StorySpec | null>;
@@ -1602,7 +1610,17 @@ export class StoryEngine {
     if (existing) return existing;
     const spec = await this.deps.resolveStory(key);
     if (!spec) return null;
-    const w = new this.deps.StoryWorld();
+    // Mint the world from the VERIFIED scene source the netlayer fetched (addr ==
+    // blake3(scene)); a fail-closed wasm ctor throws on an unparseable scene, so a
+    // hostile story that slipped a bad addr past resolve still mints NOTHING. The
+    // stand-in resolver carries no scene (`undefined`) — the fixture's stand-in world
+    // and the wasm ctor's own embedded scene both handle that.
+    let w: StoryWorldLike;
+    try {
+      w = new this.deps.StoryWorld(spec.scene);
+    } catch {
+      return null; // an unparseable/hostile scene mints no world (fail-closed)
+    }
     this.worlds.set(key, w);
     this.specs.set(key, spec);
     return w;

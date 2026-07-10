@@ -396,7 +396,7 @@ export function httpsNetlayerTransport(getConfig: () => NetlayerNodeConfigLike):
 // unverified resolve yields `null` / `unresolved`, never a fabricated shape.
 // ═══════════════════════════════════════════════════════════════════════════
 
-import type { PollSpec, DocSpec, ResolveObjectFn, ResolveDocFn, ResolveCellFn, ResolveValueFn, CellLookup, ValueQuote, ResolvedCell } from "./port";
+import type { PollSpec, DocSpec, StorySpec, ResolveObjectFn, ResolveDocFn, ResolveStoryFn, ResolveCellFn, ResolveValueFn, CellLookup, ValueQuote, ResolvedCell } from "./port";
 
 /** `PollEngine.resolveObject` over the Netlayer: the verified poll object's body is
  *  canonical JSON `{ kind:"poll", numOptions, quorumM }`. Unverified ⇒ `null`. */
@@ -426,6 +426,28 @@ export function netlayerResolveDoc(net: Netlayer): ResolveDocFn {
     const j = r.object.json as { kind?: string; stitch?: boolean } | undefined;
     if (!j || j.kind !== "doc") return null;
     return { kind: "doc", addr: r.object.addr, stitch: j.stitch === true };
+  };
+}
+
+/** `StoryEngine.resolveStory` over the Netlayer: a `dregg://story/<addr>` resolve is a
+ *  content-addressed fetch of the `.scene` SOURCE, and the verified body IS that source.
+ *  The netlayer's mandatory content-addressed gate already required `blake3(scene) ==
+ *  addr` (the untrusted-transport property): a hostile gateway that SUBSTITUTES a
+ *  different story produces a different digest → refused → `r.verified` is false here,
+ *  so NO scene is returned and no `StoryWorld` is minted (fail-closed). Only a verified,
+ *  content-matched scene flows to the StoryEngine, which hands it to `new
+ *  StoryWorld(scene)`. Unverified / wrong-kind / empty ⇒ `null`, exactly like the
+ *  poll/doc bridges. */
+export function netlayerResolveStory(net: Netlayer): ResolveStoryFn {
+  return async (uri: string): Promise<StorySpec | null> => {
+    const r = await net.resolve(uri);
+    if (!r.ok || !r.verified || !r.object) return null;
+    if (r.object.kind !== "story") return null; // a non-story ref never mints a story
+    // The verified content bytes ARE the scene source (addr == blake3(scene), already
+    // enforced by `net.resolve`). An empty body is not a scene ⇒ fail-closed.
+    const scene = r.object.text;
+    if (typeof scene !== "string" || scene.length === 0) return null;
+    return { kind: "story", addr: r.object.addr, scene };
   };
 }
 

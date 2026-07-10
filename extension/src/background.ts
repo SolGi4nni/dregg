@@ -40,6 +40,7 @@ import {
   httpsNetlayerTransport,
   netlayerResolveObject,
   netlayerResolveDoc,
+  netlayerResolveStory,
   netlayerResolveCell,
   netlayerResolveValue,
   type NetlayerWasmLike,
@@ -3476,11 +3477,20 @@ function getStoryEngine(): StoryEngine {
   if (!storyEngine) {
     const StoryWorld = (wasm as unknown as { StoryWorld?: StoryWorldCtor }).StoryWorld;
     if (!StoryWorld) throw new Error("StoryWorld unavailable in wasm module");
+    // THE NETLAYER (mirrors the poll/doc engines): a `dregg://story/<addr>` resolve is
+    // a content-addressed fetch of the `.scene` SOURCE over the UNTRUSTED node
+    // transport, verified CLIENT-SIDE (recomputed blake3 == addr; receipt/proof chain;
+    // committee-anchored quorum). Only the verified, content-matched scene reaches
+    // `new StoryWorld(scene)`; a hostile/mismatched story fails closed (no scene, no
+    // world). `defaultResolveStory` remains the no-node/fixture stand-in only.
+    const net = new Netlayer(
+      httpsNetlayerTransport(() => ({ nodeUrl: nodeConfig.nodeUrl, devnetKey: nodeConfig.devnetKey })),
+      wasmNetlayerCrypto(wasm as unknown as NetlayerWasmLike),
+      {},
+    );
     storyEngine = new StoryEngine({
       StoryWorld,
-      // TODO: a story netlayer fetch (content-addressed story → world); until then
-      // the stand-in resolver (a malformed addr fails closed).
-      resolveStory: defaultResolveStory,
+      resolveStory: nodeConfig.nodeUrl ? netlayerResolveStory(net) : defaultResolveStory,
       // Custody consent for a CHOICE: the faithful reading shown in extension chrome
       // the page cannot overlay or clickjack (the load-bearing property). Every choice
       // is a real verified turn, so every choice asks — BEFORE the story advances.
