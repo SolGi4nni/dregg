@@ -470,3 +470,15 @@ persisted ledger. And: **the ledger REFUSES any model it has no pinned price for
 before any network call) — you cannot enforce a budget on a model whose cost you do not know.
 Verified prices retained as fallbacks: nova-2-lite $0.00006/$0.00024 per 1K; nova-pro $0.0008/$0.0032 per 1K
 (AWS Pricing API + bulk price list, us-east-1, 2026-07-10).
+
+## note: the discord-bot separate-workspace "sqlite schism" (someday cleanup, not now)
+discord-bot is EXCLUDED from the root workspace because sqlx→libsqlite3-sys 0.30 collides with deos-matrix's
+rusqlite 0.35 (Cargo allows one `links="sqlite3"` per workspace). Cost: a standalone [workspace] + hand-replicated
+[patch]/[workspace.dependencies] slivers (see the comment atop discord-bot/Cargo.toml). REAL fix, someday (one
+afternoon, NOT mid-flight): converge both onto ONE sqlite crate (deos-matrix→sqlx, or bot→rusqlite) → the bot
+rejoins root and the replicated scaffolding evaporates. attested-dm + the new dregg-narrator are ROOT members the
+bot reaches as path-deps; that crossing is clean (path-dep deps resolve against the manifest they live under), so
+it composes fine regardless — no new `links` conflict (narrator pulls aws-sdk, not sqlite).
+- done: dregg-narrator COMMITTED + verified by DRIVING — HARD $20 ledger (reservation refuses BEFORE the network, proven by an injected PanicBackend; concurrency test races a real Barrier(2)+sleep; corrupt fails closed; unpriced refused; kind() honest). Default Claude Haiku 4.5 (us. prefix REQUIRED), pinned as a CONSERVATIVE UPPER BOUND (Sonnet-5 rate, dominates Haiku). LIVE smoke I ran myself: ledger delta $0.00128400 == computed cost EXACTLY. dungeon-service swapped onto it (ollama.rs gone), --self-check all 6 vs real Haiku. 11/11 tests.
+- CAVEAT (cosmetic, honest): the demo run-*.mjs drivers still print a hardcoded "gemma2:" prefix in their transcript render fns; the structured narratorKind field in every RESPONSE is honest (Haiku/Nova). A one-line driver label fix is a nice-to-have, outside the swap scope.
+- WAITING (do NOT touch — lane still live, no completion notification): the Discord lane a816c5e310b271ecc owns discord-bot/.
