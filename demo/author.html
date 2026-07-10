@@ -1,0 +1,207 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>Author — write a verifiable story, play it, verify it</title>
+  <style>
+    :root {
+      --parchment: #f2ecdd;
+      --parchment-2: #e9e1cd;
+      --card: #fbf8f0;
+      --ink: #1d1a2e;
+      --ink-soft: #4a4560;
+      --ink-faint: #7d768f;
+      --rule: #d8cfb8;
+      --violet: #6b5ce0;
+      --violet-deep: #4a3aa8;
+      --teal: #2b7f7a;
+      --green: #3f8f57;
+      --red: #b02a37;
+      --amber: #bd7b2c;
+      --editor-bg: #201d33;
+      --editor-ink: #e9e5ff;
+      --editor-gutter: #6a6394;
+      --editor-comment: #8f88c0;
+      --shadow: 24px 30px 60px -30px rgba(29, 26, 46, .35);
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    }
+    @media (prefers-color-scheme: dark) {
+      :root {
+        --parchment: #14110d; --parchment-2: #100d0a; --card: #1c1813;
+        --ink: #e8e0cf; --ink-soft: #b8ae97; --ink-faint: #8f836b; --rule: #37301f;
+        --violet: #b493e6; --violet-deep: #c9b3f0; --teal: #4fb3ac; --green: #6fc98a;
+        --red: #e8837f; --amber: #d8b45a;
+        --editor-bg: #0c0a12; --editor-ink: #e6e1ff; --editor-gutter: #4a4470; --editor-comment: #746da0;
+        --shadow: 24px 30px 60px -30px rgba(0,0,0,.6);
+      }
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: var(--sans); color: var(--ink);
+      background: radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--parchment) 88%, #fff 12%) 0%, var(--parchment) 45%, var(--parchment-2) 100%);
+      min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    }
+    .page { max-width: 78rem; margin: 0 auto; padding: 3rem 1.5rem 5rem; }
+    a { color: var(--violet-deep); }
+
+    /* ── masthead ── */
+    .eyebrow { font-size: .72rem; letter-spacing: .22em; text-transform: uppercase; color: var(--violet-deep); font-weight: 600; margin: 0 0 .8rem; }
+    h1.title { font-family: var(--serif); font-weight: 600; font-size: clamp(2rem, 5vw, 3rem); line-height: 1.04; letter-spacing: -.01em; margin: 0; }
+    h1.title .amp { color: var(--violet); font-style: italic; }
+    .lede { font-family: var(--serif); font-size: 1.12rem; color: var(--ink-soft); margin: .9rem 0 0; max-width: 44rem; text-wrap: pretty; }
+    .backlink { font-size: .8rem; color: var(--ink-faint); margin: 0 0 1.4rem; }
+    .rule { height: 1px; background: linear-gradient(90deg, var(--rule), transparent); margin: 1.8rem 0; border: 0; }
+
+    /* ── the split ── */
+    .split { display: grid; grid-template-columns: 1fr 1fr; gap: 1.4rem; align-items: start; }
+    @media (max-width: 900px) { .split { grid-template-columns: 1fr; } }
+
+    .pane { background: var(--card); border: 1px solid var(--rule); border-radius: 14px; box-shadow: var(--shadow); overflow: hidden; }
+    .pane-head { display: flex; align-items: center; gap: .6rem; flex-wrap: wrap; padding: .8rem 1rem; border-bottom: 1px solid var(--rule); }
+    .pane-head .label { font-size: .64rem; letter-spacing: .16em; text-transform: uppercase; font-weight: 700; color: var(--ink-faint); margin-right: auto; }
+
+    /* ── the editor ── */
+    .editor-wrap { display: grid; grid-template-columns: auto 1fr; font-family: var(--mono); font-size: 13px; line-height: 1.5; background: var(--editor-bg); height: 30rem; }
+    .gutter { overflow: hidden; text-align: right; padding: .8rem .5rem .8rem 0; color: var(--editor-gutter); user-select: none; background: color-mix(in srgb, var(--editor-bg) 82%, #000 18%); }
+    .gutter span { display: block; padding-right: .55rem; }
+    #editor {
+      font: inherit; color: var(--editor-ink); background: transparent; border: 0; outline: none; resize: none;
+      padding: .8rem .9rem; white-space: pre; overflow: auto; tab-size: 2;
+    }
+    #editor::selection { background: rgba(123,108,240,.4); }
+
+    /* ── controls ── */
+    button.ctrl { font: inherit; font-size: .82rem; padding: .42rem .8rem; border-radius: 8px; border: 1px solid var(--violet); background: transparent; color: var(--violet-deep); cursor: pointer; transition: background .14s, color .14s; }
+    button.ctrl:hover { background: var(--violet); color: #fff; }
+    button.ctrl.play { background: var(--violet); color: #fff; font-weight: 600; }
+    button.ctrl.play:hover { background: var(--violet-deep); }
+    button.ctrl:focus-visible { outline: 2px solid var(--violet-deep); outline-offset: 2px; }
+    select.ctrl { font: inherit; font-size: .8rem; padding: .38rem .5rem; border-radius: 8px; border: 1px solid var(--rule); background: var(--card); color: var(--ink); cursor: pointer; }
+    .counts { font-size: .74rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; padding: .5rem 1rem; border-top: 1px solid var(--rule); }
+
+    /* ── the play surface ── */
+    .stage { padding: 1.1rem; min-height: 18rem; }
+    .placeholder { color: var(--ink-faint); font-style: italic; font-family: var(--serif); font-size: 1.05rem; padding: 3rem 1rem; text-align: center; }
+    dregg-story { display: block; }
+
+    .status { display: flex; align-items: center; gap: .5rem; font-size: .8rem; color: var(--ink-faint); padding: .7rem 1rem 0; font-variant-numeric: tabular-nums; }
+    .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--ink-faint); flex: none; }
+    .dot.ok { background: var(--green); }
+    .dot.bad { background: var(--red); }
+
+    /* ── the compile-error panel (prominent, legible) ── */
+    .error { margin: 0 1rem; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .2s ease, opacity .18s ease, margin .2s ease, padding .2s ease; border-radius: 10px; }
+    .error.live { max-height: 24rem; opacity: 1; margin: .9rem 1rem 0; padding: .9rem 1rem; background: color-mix(in srgb, var(--red) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--red) 45%, var(--rule)); }
+    .err-head { font-weight: 700; color: var(--red); font-size: .92rem; }
+    .err-msg { font-family: var(--mono); font-size: .82rem; color: var(--ink); margin-top: .35rem; white-space: pre-wrap; }
+    .err-line { display: flex; gap: .6rem; align-items: baseline; margin-top: .6rem; padding: .4rem .55rem; border-radius: 7px; background: var(--editor-bg); }
+    .err-line .ln { color: var(--editor-gutter); font-family: var(--mono); font-size: .78rem; min-width: 1.6em; text-align: right; }
+    .err-line code { font-family: var(--mono); font-size: .82rem; color: var(--editor-ink); }
+    .err-foot { margin-top: .55rem; font-size: .76rem; color: var(--ink-faint); }
+
+    /* ── the receipt-chain + verify readout ── */
+    .chain { padding: 1rem 1rem 0; }
+    .chain-links { display: flex; flex-wrap: wrap; align-items: center; gap: .12rem; font-size: 1rem; color: var(--green); line-height: 1; }
+    .chain-links .link.empty { color: var(--ink-faint); }
+    .chain-links .rope { color: var(--rule); }
+    .chain-meta { margin-top: .45rem; font-size: .76rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+    .chain-meta code, .chain-meta b { font-family: var(--mono); font-size: .72rem; color: var(--ink-soft); font-weight: 600; }
+    .verify { margin: .9rem 1rem 1rem; padding: 0; border-radius: 10px; font-size: .9rem; font-weight: 600; transition: opacity .3s; }
+    .verify.ok { padding: .7rem .9rem; background: color-mix(in srgb, var(--green) 16%, var(--card)); border: 1px solid color-mix(in srgb, var(--green) 45%, var(--rule)); color: var(--green); }
+    .verify.bad { padding: .7rem .9rem; background: color-mix(in srgb, var(--red) 14%, var(--card)); border: 1px solid color-mix(in srgb, var(--red) 45%, var(--rule)); color: var(--red); }
+
+    /* ── the cheat-sheet ── */
+    .cheat { margin: 1.6rem 0 0; padding: 1.4rem 1.6rem; border-radius: 14px; background: var(--card); border: 1px solid var(--rule); }
+    .cheat h2 { font-family: var(--serif); font-size: 1.15rem; margin: 0 0 1rem; font-weight: 600; }
+    .cheat-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(15rem, 1fr)); gap: 1rem 1.6rem; }
+    .cheat dt { font-family: var(--mono); font-size: .8rem; color: var(--violet-deep); margin-bottom: .2rem; }
+    .cheat dd { margin: 0 0 .8rem; font-size: .84rem; color: var(--ink-soft); }
+    .cheat dd b { color: var(--ink); }
+    .cheat code { font-family: var(--mono); font-size: .82em; background: color-mix(in srgb, var(--ink-faint) 16%, transparent); padding: .05rem .3rem; border-radius: 4px; }
+    footer { margin-top: 2.4rem; font-size: .76rem; color: var(--ink-faint); }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">Author · write it, play it, verify it</p>
+    <h1 class="title">Author your own <span class="amp">verifiable</span> story</h1>
+    <p class="lede">
+      Write a <code>.scene</code> on the left and hit <b>▶ Play</b>. It compiles in your tab and plays as a real
+      verifiable story on the right — every choice a signed turn, a growing receipt chain, and a stranger's replay that
+      proves nothing was rewritten. No server. No extension. Parse errors surface with the line.
+    </p>
+    <p class="backlink"><a href="/hub">← all the games</a> · <a href="/">The Commons</a></p>
+
+    <hr class="rule" />
+
+    <section class="split">
+      <!-- LEFT: the editor -->
+      <div class="pane" aria-label="scene editor">
+        <div class="pane-head">
+          <span class="label">the .scene source</span>
+          <select id="sample" class="ctrl" aria-label="load a sample story">
+            <option value="starter">The Lantern-Keeper (starter)</option>
+            <option value="the-commons">The Commons (sample)</option>
+            <option value="the-drowned-library">The Drowned Library (sample)</option>
+          </select>
+          <button id="restartBtn" class="ctrl" type="button" title="recompile fresh from the top">↺ Restart</button>
+          <button id="playBtn" class="ctrl play" type="button" title="compile + play (⌘/Ctrl+Enter)">▶ Play</button>
+        </div>
+        <div class="editor-wrap">
+          <div id="gutter" class="gutter" aria-hidden="true"></div>
+          <textarea id="editor" spellcheck="false" autocomplete="off" autocapitalize="off" aria-label="scene source code"></textarea>
+        </div>
+        <div id="counts" class="counts">—</div>
+      </div>
+
+      <!-- RIGHT: the live play surface -->
+      <div class="pane" aria-label="live play surface">
+        <div class="pane-head">
+          <span class="label">the live story</span>
+        </div>
+        <div class="status"><span id="statusDot" class="dot"></span><span id="status">warming up…</span></div>
+        <div id="error" class="error" role="alert" aria-live="assertive"></div>
+        <div id="stage" class="stage">
+          <div class="placeholder">no world mounted yet — hit ▶ Play.</div>
+        </div>
+        <div id="chain" class="chain"></div>
+        <div id="verifyBadge" class="verify" role="status"></div>
+      </div>
+    </section>
+
+    <aside class="cheat">
+      <h2>The scene language, in one glance</h2>
+      <div class="cheat-grid">
+        <dl>
+          <dt>--- id / title ---</dt>
+          <dd><b>Frontmatter.</b> Between two <code>---</code> fences at the top: <code>id:</code> and <code>title:</code>. Every story needs one.</dd>
+          <dt>=== passage_name</dt>
+          <dd><b>A passage.</b> A named section of the story. The first passage is where play begins; prose below it is the narration.</dd>
+          <dt>* [choice text]</dt>
+          <dd><b>A choice.</b> One line per option. Taking it is a real verified turn.</dd>
+        </dl>
+        <dl>
+          <dt>* [text] { gate }</dt>
+          <dd><b>A gated choice.</b> The condition (e.g. <code>{ lit &gt;= 1 }</code>) goes on the <b>SAME line</b> as the choice. Shown but not takeable until it holds.</dd>
+          <dt>~ var = value</dt>
+          <dd><b>An effect.</b> Under a choice: <code>~ x = 1</code>, <code>~ x += 2</code>, <code>~ x -= 1</code>. Sets story state the gates read.</dd>
+          <dt>-&gt; target</dt>
+          <dd><b>Navigation.</b> Where a choice leads. <code>-&gt; END</code> (or prose ending a leaf passage) ends the story.</dd>
+        </dl>
+      </div>
+    </aside>
+
+    <footer>the walls stay where you set them · dregg verifiable-fiction authoring surface · self-contained, page-SDK.</footer>
+  </main>
+
+  <!-- The wasm-bindgen glue (no-modules): binds a top-level `let wasm_bindgen`. -->
+  <script src="dregg_wasm.js"></script>
+  <script>window.wasm_bindgen = wasm_bindgen;</script>
+  <!-- The authoring wiring (bundled from author.ts): editor + compile loop + element. -->
+  <script src="author.js"></script>
+</body>
+</html>

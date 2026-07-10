@@ -1,0 +1,17 @@
+AUTHOR — write a verifiable story, play it, verify it
+driven run · real wasm StoryWorld compiled from live editor text
+served at http://127.0.0.1:51130/author
+================================================================
+
+STARTER   compiled · 4 passages, 5 choices · 1 receipt(s) · verify=true
+          opening passage: "start"
+ADVANCE   chose a branch → receipts 1 → 2 · now at "gallery" · verify=true
+BROKEN    Play → error shown, NO world mounted (fail-closed)
+          line 11: compile error: choice navigates to unknown passage `nowhere`
+TYPED     a fresh valid scene → compiled · 2 passages · 1 receipt(s) · verify=true
+          advanced → receipts 1 → 2 · at "clearing" · verify=true
+
+----------------------------------------------------------------
+the compile loop: ▶ Play → new StoryWorld(editorText).
+  · a good scene mounts the real <dregg-story> and plays as verified turns;
+  · a bad scene fails closed — a legible, line-pinned error, and NO world mounted.

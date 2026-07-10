@@ -57,6 +57,11 @@ export async function buildApp() {
   return bundle("app.ts");
 }
 
+/** Bundle THE AUTHORING SURFACE (write a .scene, compile + play it live, in-tab). */
+export async function buildAuthor() {
+  return bundle("author.ts");
+}
+
 /** Bundle the dungeon play surface (self-contained — only speaks the DM service over fetch). */
 export async function buildDungeon() {
   return bundle("dungeon.ts");
@@ -117,6 +122,7 @@ async function handleDm(url, method, body, dm, res) {
 /** Serve both demos. Returns { server, base, dm } (dm = the in-memory stand-in, or null when proxying). */
 export async function makeServer(port = 0, opts = {}) {
   const appJs = await buildApp();
+  const authorJs = await buildAuthor();
   const dungeonJs = await buildDungeon();
   const vaultJs = await buildVault();
   const partyJs = await buildParty();
@@ -125,7 +131,9 @@ export async function makeServer(port = 0, opts = {}) {
   const vault = await readFile(path.join(__dirname, "vault.html"), "utf8");
   const party = await readFile(path.join(__dirname, "party.html"), "utf8");
   const hub = await readFile(path.join(__dirname, "hub.html"), "utf8");
+  const author = await readFile(path.join(__dirname, "author.html"), "utf8");
   const scene = await readFile(path.join(__dirname, "stories", "the-commons.scene"), "utf8");
+  const STORIES_DIR = path.join(__dirname, "stories");
 
   // The DM world: an in-memory stand-in (default) unless proxying to the real service.
   const dm = DM_URL ? null : (opts.dm ?? createDmStandin(opts.dmOptions));
@@ -164,7 +172,23 @@ export async function makeServer(port = 0, opts = {}) {
       // ── The Commons (existing, unchanged) ──
       if (url === "/" || url === "/index.html") return send(res, index, MIME[".html"]);
       if (url === "/app.js") return send(res, appJs, MIME[".js"]);
-      if (url === "/stories/the-commons.scene") return send(res, scene, MIME[".scene"]);
+      // Any `.scene` under stories/ (path-safe: basename only, must stay in the dir).
+      if (url.startsWith("/stories/") && url.endsWith(".scene")) {
+        const name = path.basename(url);
+        const file = path.join(STORIES_DIR, name);
+        if (path.dirname(file) !== STORIES_DIR) { res.writeHead(403); return res.end("forbidden"); }
+        try {
+          const body = await readFile(file, "utf8");
+          return send(res, body, MIME[".scene"]);
+        } catch {
+          res.writeHead(404, { "content-type": "text/plain" });
+          return res.end("scene not found");
+        }
+      }
+
+      // ── The Authoring Surface (write a .scene, compile + play it live) ──
+      if (url === "/author" || url === "/author.html") return send(res, author, MIME[".html"]);
+      if (url === "/author.js") return send(res, authorJs, MIME[".js"]);
       if (url === "/dregg_wasm.js") {
         const js = await readFile(path.join(EXT, "dregg_wasm.js"), "utf8");
         return send(res, js, MIME[".js"]);
@@ -210,6 +234,8 @@ if (import.meta.url === `file://${process.argv[1]}`) {
   const { base } = await makeServer(port);
   console.log(`\n  The Commons — verifiable story demo`);
   console.log(`  open:  ${base}/`);
+  console.log(`\n  Author — write a .scene, compile + play it live, in-tab (the authoring surface)`);
+  console.log(`  open:  ${base}/author`);
   console.log(`\n  The Attested Dungeon — the model proposes, the capabilities dispose`);
   console.log(`  open:  ${base}/dungeon`);
   console.log(`  DM service: ${DM_URL ? "proxied → " + DM_URL : "in-memory stand-in (narratorKind scripted)"}`);
