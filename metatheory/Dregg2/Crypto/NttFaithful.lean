@@ -731,6 +731,424 @@ theorem nttLeftInverse_sample : intt (ntt sampleA) = sampleA := by native_decide
 theorem nttMulHom_sample :
     ntt (schoolbookMul sampleA sampleB) = pointwiseMul (ntt sampleA) (ntt sampleB) := by native_decide
 
+/-! ### RUNG 2, step 2 — THE CT STAGE-INVARIANT INDUCTION, CLOSED (forward `nttEvalsAtRoots`).
+
+The single sub-step the header named as still-open is discharged here. The peeled fold `nttUpto`/`stageStep`/
+`blockFn` is re-expressed block-by-block through the `block_char` accumulation lemma (a positionwise, Nat-level
+characterization of one full CT stage — each block a disjoint segment, proven by induction on block count on top
+of the `bfSweep_getElem` butterfly primitive). `stage_inv` then proves, by induction on the stage number `s`,
+the invariant: after `s` stages, array slot `g·(256>>>s)+i` holds `∑_{u<2ˢ} w_{i+u·(256>>>s)}·(rootAt s g)^u`
+— the `ℤ_q`-eval of the `g`-th decimated subsequence at its root. The stage step is `cast_bfSweep` (the 2×2
+field map) + `cast_zetaTwiddle` (the twiddle `ζ^{brv8(2ˢ+blk)}`) + the even/odd `Finset` reindex
+(`split_collapse`) + the `brv8` exponent congruences (`brv_even`/`brv_odd`/`brv_high`, proved by `decide` on the
+8-bit fold), pinning `rootAt` consistent under the recurrence (`rootAt_closed`). At `s = 8` (`len = 1`) the
+invariant collapses (`rootAt_final`: `rootAt 8 m = ζ^{2·brv8(m)+1} = evalRoot m`) to eval-at-the-roots.
+
+⚠ **The forward statement is TRUE only for canonical (size-256) polys** and is stated with that guard
+(`nttEvalsAtRoots_canonical`). The unguarded `∀ (a : Poly)` form (`NttEvalsAtRoots` / `NttMulHom` /
+`NttLeftInverse` / `VerifyCoreSpec.RingRepFaithful`) is FALSE: for a non-256-length input the imperative
+butterflies read/write out of bounds and the output length is wrong (e.g. `ntt #[5]` stays length 1, so
+`(ntt #[5])[1]! = 0 ≠ eval256 #[5] (evalRoot 1)`). The deployed ML-DSA pipeline only ever feeds decoded
+size-256 coefficient arrays, so the size-256 guard is the operationally-correct statement; it is what the
+`verifyCore = spec` bridge needs. `ζ^256 = -1` is discharged here by plain `decide` (NOT `native_decide`), so
+every theorem below is axiom-clean without the `ofReduceBool` residual. -/
+
+set_option maxRecDepth 4000 in
+theorem brv_even (n : Nat) (hn : n < 128) : 2 * brv8 (2*n) = brv8 n := by
+  simp only [brv8_eq_fold]; revert hn; revert n; decide
+
+set_option maxRecDepth 4000 in
+theorem brv_odd (n : Nat) (hn : n < 128) : 2 * brv8 (2*n+1) = brv8 n + 256 := by
+  simp only [brv8_eq_fold]; revert hn; revert n; decide
+
+set_option maxRecDepth 4000 in
+theorem brv_high (n : Nat) (hn : n < 128) : brv8 (128 + n) = brv8 n + 1 := by
+  simp only [brv8_eq_fold]; revert hn; revert n; decide
+
+set_option maxRecDepth 100000 in
+theorem zeta_pow_neg_one : (zeta : ZMod q)^256 = -1 := by
+  unfold zeta q; decide
+
+theorem zeta_pow_add256 (e : Nat) : (zeta:ZMod q)^(e + 256) = -(zeta:ZMod q)^e := by
+  rw [pow_add, zeta_pow_neg_one]; ring
+
+theorem sum_range_two_mul {M} [AddCommMonoid M] (f : Nat → M) (n : Nat) :
+    ∑ u ∈ range (2*n), f u = ∑ v ∈ range n, f (2*v) + ∑ v ∈ range n, f (2*v+1) := by
+  induction n with
+  | zero => simp
+  | succ n ih =>
+    rw [show 2*(n+1) = 2*n+1+1 from by ring, Finset.sum_range_succ, Finset.sum_range_succ,
+        ih, Finset.sum_range_succ, Finset.sum_range_succ]
+    abel
+
+/-- The root a slot's segment is being evaluated at, after `s` code stages, segment `g`. -/
+def rootAt (s g : Nat) : ZMod q :=
+  match s with
+  | 0 => (zeta:ZMod q)^(2*brv8 (1+g))
+  | s+1 => (if g % 2 = 0 then (1:ZMod q) else -1) * (zeta:ZMod q)^(brv8 (2^s + g/2))
+
+theorem rootAt_even_step (s blk : Nat) :
+    rootAt (s+1) (2*blk) = (zeta:ZMod q)^(brv8 (2^s + blk)) := by
+  simp [rootAt, Nat.mul_mod_right]
+
+theorem rootAt_odd_step (s blk : Nat) :
+    rootAt (s+1) (2*blk+1) = -(zeta:ZMod q)^(brv8 (2^s + blk)) := by
+  have h1 : (2*blk+1) % 2 = 1 := by omega
+  have h2 : (2*blk+1) / 2 = blk := by omega
+  simp [rootAt, h1, h2]
+
+/-- `rootAt s g = ζ^{2·brv8(2^s+g)}` for the input levels `s ≤ 7`, `g < 2^s`. -/
+theorem rootAt_closed (s g : Nat) (hs : s ≤ 7) (hg : g < 2^s) :
+    rootAt s g = (zeta:ZMod q)^(2 * brv8 (2^s + g)) := by
+  match s with
+  | 0 => simp [rootAt, pow_zero]
+  | s+1 =>
+    rcases Nat.even_or_odd g with ⟨c, hc⟩ | ⟨c, hc⟩
+    · have hc' : g = 2 * c := by omega
+      subst hc'
+      have hclt : c < 2^s := by
+        have h2 : 2^(s+1) = 2^s + 2^s := by rw [pow_succ]; ring
+        omega
+      have hc128 : 2^s + c < 128 := by
+        have hpow : 2^s ≤ 2^6 := Nat.pow_le_pow_right (by norm_num) (by omega)
+        have : 2^6 = 64 := by norm_num
+        omega
+      rw [rootAt_even_step]
+      have := brv_even (2^s + c) hc128
+      have hh : 2^(s+1) + 2*c = 2*(2^s+c) := by rw [pow_succ]; ring
+      rw [hh, ← this]
+    · subst hc
+      have hclt : c < 2^s := by
+        have h2 : 2^(s+1) = 2^s + 2^s := by rw [pow_succ]; ring
+        omega
+      have hc128 : 2^s + c < 128 := by
+        have hpow : 2^s ≤ 2^6 := Nat.pow_le_pow_right (by norm_num) (by omega)
+        have : 2^6 = 64 := by norm_num
+        omega
+      rw [rootAt_odd_step]
+      have := brv_odd (2^s + c) hc128
+      have hh : 2^(s+1) + (2*c+1) = 2*(2^s+c)+1 := by rw [pow_succ]; ring
+      rw [hh, this, zeta_pow_add256]
+
+/-- At the final level `s = 8`, `rootAt 8 m = evalRoot m = ζ^{2·brv8(m)+1}`. -/
+theorem rootAt_final (m : Nat) (hm : m < 256) : rootAt 8 m = evalRoot m := by
+  unfold evalRoot
+  rcases Nat.even_or_odd m with ⟨blk, hb⟩ | ⟨blk, hb⟩
+  · have hb' : m = 2 * blk := by omega
+    subst hb'
+    have hblk : blk < 128 := by omega
+    rw [show (8:Nat) = 7+1 from rfl, rootAt_even_step]
+    have hp : (2:Nat)^7 = 128 := by norm_num
+    rw [hp, brv_high blk hblk, brv_even blk hblk]
+  · subst hb
+    have hblk : blk < 128 := by omega
+    rw [show (8:Nat) = 7+1 from rfl, rootAt_odd_step]
+    have hp : (2:Nat)^7 = 128 := by norm_num
+    rw [hp, brv_high blk hblk]
+    have ho := brv_odd blk hblk
+    -- goal: -(ζ)^(brv8 blk + 1) = ζ^(2*brv8(2*blk+1)+1)
+    rw [ho]
+    -- ζ^(2*blk+1 side): 2*brv8(2blk+1)+1 = brv8 blk + 256 + 1 = (brv8 blk + 1) + 256
+    rw [show brv8 blk + 256 + 1 = (brv8 blk + 1) + 256 from by ring, zeta_pow_add256]
+
+theorem evalRoot_pow256 (m : Nat) : (evalRoot m)^256 = -1 := by
+  unfold evalRoot
+  rw [← pow_mul]
+  have : (2 * brv8 m + 1) * 256 = 256 * (2*brv8 m) + 256 := by ring
+  rw [this, pow_add, pow_mul, zeta_pow_neg_one]
+  rw [show ((-1:ZMod q))^(2*brv8 m) = 1 by
+        rw [pow_mul]; simp]
+  ring
+
+
+
+-- numeric helpers
+theorem shr_pow (s : Nat) (hs : s ≤ 8) : 256 >>> s = 2^(8-s) := by
+  rw [Nat.shiftRight_eq_div_pow, show (256:Nat) = 2^8 from rfl, Nat.pow_div hs (by norm_num)]
+theorem shl_pow (s : Nat) (hs : s ≤ 7) : 128 >>> s = 2^(7-s) := by
+  rw [Nat.shiftRight_eq_div_pow, show (128:Nat) = 2^7 from rfl, Nat.pow_div hs (by norm_num)]
+theorem len_pos (s : Nat) (hs : s ≤ 7) : 1 ≤ 128 >>> s := by
+  rw [shl_pow s hs]; exact Nat.one_le_two_pow
+theorem L_eq_2len (s : Nat) (hs : s ≤ 7) : 256 >>> s = 2 * (128 >>> s) := by
+  rw [shr_pow s (by omega), shl_pow s hs, ← pow_succ']
+  congr 1; omega
+theorem seg_total (s : Nat) (hs : s ≤ 8) : 2^s * (256 >>> s) = 256 := by
+  rw [shr_pow s hs, ← pow_add, show s + (8-s) = 8 from by omega]; norm_num
+
+-- fold structure
+def blockFn (s : Nat) (st2 : Poly × Nat) (blk : Nat) : Poly × Nat :=
+  (bfSweep (zetaTwiddle (st2.2 + 1)) (blk * 2 * (128 >>> s)) (128 >>> s) st2.1, st2.2 + 1)
+
+def stageStep (s : Nat) (st : Poly × Nat) : Poly × Nat :=
+  List.foldl (blockFn s) st (List.range' 0 (128 / (128 >>> s)) 1)
+
+def nttUpto (n : Nat) (w : Poly) : Poly × Nat :=
+  List.foldl (fun st s => stageStep s st) (w, 0) (List.range' 0 n 1)
+
+theorem nttFold_eq (w : Poly) : nttFold w = (nttUpto 8 w).1 := by
+  unfold nttFold nttUpto stageStep blockFn; rfl
+
+theorem nttUpto_succ (n : Nat) (w : Poly) : nttUpto (n+1) w = stageStep n (nttUpto n w) := by
+  unfold nttUpto
+  rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+
+theorem foldl_blockFn_snd (s : Nat) (l : List Nat) (st : Poly × Nat) :
+    (List.foldl (blockFn s) st l).2 = st.2 + l.length := by
+  induction l generalizing st with
+  | nil => simp
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; simp [blockFn]; omega
+
+theorem bfSweep_size (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) (h : a0.size = 256) :
+    (bfSweep z start len a0).size = 256 := by
+  rw [bfSweep_eq_foldl z start len hlen a0]
+  suffices hgen : ∀ (L : List Nat) (b : Poly), b.size = 256 →
+      (List.foldl (bfStepC z len) b L).size = 256 by exact hgen _ a0 h
+  intro L
+  induction L with
+  | nil => intro b hb; simpa using hb
+  | cons hd tl ih => intro b hb; simp only [List.foldl_cons]; exact ih _ (by rw [bfStepC_size]; exact hb)
+
+set_option maxHeartbeats 1000000 in
+/-- **Inner block-fold characterization** (one full CT stage, positionwise, Nat-level). -/
+theorem block_char (s : Nat) (hs : s ≤ 7) (a_in : Poly) (hsz : a_in.size = 256) (c0 : Nat) :
+    ∀ nb, nb ≤ 2^s →
+      ((List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).1.size = 256) ∧
+      (∀ p, nb * (256>>>s) ≤ p → p < 256 →
+          (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]! = a_in[p]!) ∧
+      (∀ blk, blk < nb → ∀ p, blk*(256>>>s) ≤ p → p < blk*(256>>>s)+(128>>>s) →
+          (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]!
+            = addQ a_in[p]! (mulModQ (zetaTwiddle (c0+blk+1)) a_in[p+(128>>>s)]!)) ∧
+      (∀ blk, blk < nb → ∀ p, blk*(256>>>s)+(128>>>s) ≤ p → p < blk*(256>>>s)+(256>>>s) →
+          (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]!
+            = subQ a_in[p-(128>>>s)]! (mulModQ (zetaTwiddle (c0+blk+1)) a_in[p]!)) := by
+  set len := 128 >>> s with hlendef
+  set L := 256 >>> s with hLdef
+  have hlen1 : 1 ≤ len := len_pos s hs
+  have hL2 : L = 2 * len := L_eq_2len s hs
+  have hLtot : 2^s * L = 256 := seg_total s (by omega)
+  have hmono : ∀ i j : Nat, i ≤ j → i * L ≤ j * L := fun i j h => Nat.mul_le_mul_right _ h
+  intro nb
+  induction nb with
+  | zero =>
+    intro _; refine ⟨by simpa using hsz, ?_, ?_, ?_⟩
+    · intro p _ _; simp
+    · intro blk hblk; omega
+    · intro blk hblk; omega
+  | succ nb ih =>
+    intro hnb
+    have hnb' : nb ≤ 2^s := by omega
+    obtain ⟨ihsz, ihun, ihlo, ihhi⟩ := ih hnb'
+    have hcnt : (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).2 = c0 + nb := by
+      rw [foldl_blockFn_snd]; simp
+    set A := (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).1 with hAdef
+    have hstart : nb * 2 * len = nb * L := by rw [hL2]; ring
+    have hAeq : (List.foldl (blockFn s) (a_in, c0) (List.range' 0 (nb+1) 1)).1
+        = bfSweep (zetaTwiddle (c0+nb+1)) (nb * L) len A := by
+      rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+      have hbf1 : (blockFn s (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)) nb).1
+          = bfSweep (zetaTwiddle ((List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).2 + 1))
+              (nb * 2 * len) len (List.foldl (blockFn s) (a_in, c0) (List.range' 0 nb 1)).1 := rfl
+      rw [hbf1, hcnt, ← hAdef, hstart]
+    set z := zetaTwiddle (c0+nb+1) with hzdef
+    have hnbL : nb * L + L ≤ 256 := by
+      have h1 := hmono (nb+1) (2^s) (by omega)
+      have h2 : (nb+1) * L = nb * L + L := by ring
+      rw [hLtot] at h1; omega
+    have hbound : nb * L + 2 * len ≤ 256 := by rw [← hL2]; exact hnbL
+    obtain ⟨hlo, hhi, hunt⟩ := bfSweep_getElem z (nb*L) len hlen1 A (by rw [hAdef]; exact ihsz) hbound
+    have hApsize : (List.foldl (blockFn s) (a_in, c0) (List.range' 0 (nb+1) 1)).1.size = 256 := by
+      rw [hAeq]; exact bfSweep_size z (nb*L) len hlen1 A (by rw [hAdef]; exact ihsz)
+    refine ⟨hApsize, ?_, ?_, ?_⟩
+    · intro p hp1 hp2
+      rw [hAeq]
+      have hpge : nb * L + 2 * len ≤ p := by
+        have hh : (nb+1) * L = nb * L + L := by ring
+        rw [← hL2]; omega
+      rw [hunt p (Or.inr hpge), hAdef]
+      exact ihun p (by omega) hp2
+    · intro blk hblk p hp1 hp2
+      rw [hAeq]
+      rcases Nat.lt_or_ge blk nb with hlt | hge
+      · have hpltnbL : p < nb * L := by
+          have h1 : (blk+1) * L ≤ nb * L := hmono (blk+1) nb (by omega)
+          have h3 : (blk+1)*L = blk*L + L := by ring
+          omega
+        rw [hunt p (Or.inl hpltnbL), hAdef]
+        exact ihlo blk hlt p hp1 hp2
+      · have hblkeq : blk = nb := by omega
+        have hbb : blk * L = nb * L := by rw [hblkeq]
+        rw [hblkeq]
+        rw [hlo p (by omega) (by omega)]
+        have hAp : A[p]! = a_in[p]! := by rw [hAdef]; exact ihun p (by omega) (by omega)
+        have hAplen : A[p+len]! = a_in[p+len]! := by
+          rw [hAdef]; exact ihun (p+len) (by omega) (by omega)
+        rw [hAp, hAplen]
+    · intro blk hblk p hp1 hp2
+      rw [hAeq]
+      rcases Nat.lt_or_ge blk nb with hlt | hge
+      · have hpltnbL : p < nb * L := by
+          have h1 : (blk+1) * L ≤ nb * L := hmono (blk+1) nb (by omega)
+          have h3 : (blk+1)*L = blk*L + L := by ring
+          omega
+        rw [hunt p (Or.inl hpltnbL), hAdef]
+        exact ihhi blk hlt p hp1 hp2
+      · have hblkeq : blk = nb := by omega
+        have hbb : blk * L = nb * L := by rw [hblkeq]
+        rw [hblkeq]
+        have hp2' : p < nb * L + 2 * len := by rw [← hL2]; omega
+        rw [hhi p (by omega) hp2']
+        have hAplen : A[p-len]! = a_in[p-len]! := by
+          rw [hAdef]; exact ihun (p-len) (by omega) (by omega)
+        have hAp : A[p]! = a_in[p]! := by rw [hAdef]; exact ihun p (by omega) (by omega)
+        rw [hAplen, hAp]
+
+theorem split_collapse (len Lval nn i' : Nat) (hL : Lval = 2*len) (r : ZMod q) (w : Poly) :
+    ∑ u ∈ range (2*2^nn), (w[i'+u*len]! : ZMod q) * r^u
+      = (∑ v ∈ range (2^nn), (w[i'+v*Lval]! : ZMod q) * (r^2)^v)
+        + r * (∑ v ∈ range (2^nn), (w[i'+len+v*Lval]! : ZMod q) * (r^2)^v) := by
+  rw [sum_range_two_mul]
+  congr 1
+  · apply Finset.sum_congr rfl; intro v _
+    rw [show i' + 2*v*len = i' + v*Lval from by rw [hL]; ring, pow_mul]
+  · rw [Finset.mul_sum]
+    apply Finset.sum_congr rfl; intro v _
+    rw [show i' + (2*v+1)*len = i' + len + v*Lval from by rw [hL]; ring,
+        show r^(2*v+1) = r*(r^2)^v from by rw [pow_succ, ← pow_mul]; ring]
+    ring
+
+theorem nblk_pow (n : Nat) (hn : n ≤ 7) : 128 / (128 >>> n) = 2^n := by
+  rw [shl_pow n hn, show (128:Nat) = 2^7 from rfl, Nat.pow_div (by omega) (by norm_num)]
+  congr 1; omega
+
+theorem shr_succ (n : Nat) (hn : n ≤ 7) : 256 >>> (n+1) = 128 >>> n := by
+  rw [shr_pow (n+1) (by omega), shl_pow n hn]; congr 1; omega
+
+set_option maxHeartbeats 2000000 in
+/-- **THE CT STAGE INVARIANT.** After `n` code stages, array slot `g·L_n+i` (`L_n = 256>>>n`) holds the
+`ℤ_q`-evaluation of the `g`-th decimated subsequence at its root `rootAt n g`. -/
+theorem stage_inv (w : Poly) (hw : w.size = 256) :
+    ∀ n, n ≤ 8 →
+      (nttUpto n w).1.size = 256 ∧
+      (nttUpto n w).2 = 2^n - 1 ∧
+      ∀ g i, g < 2^n → i < 256 >>> n →
+        ((nttUpto n w).1[g * (256 >>> n) + i]! : ZMod q)
+          = ∑ u ∈ range (2^n), (w[i + u * (256 >>> n)]! : ZMod q) * (rootAt n g)^u := by
+  intro n
+  induction n with
+  | zero =>
+    intro _
+    refine ⟨by simpa [nttUpto] using hw, by simp [nttUpto], ?_⟩
+    intro g i hg hi
+    have hg0 : g = 0 := by omega
+    subst hg0
+    simp only [nttUpto, List.range'_zero, List.foldl_nil, pow_zero, Nat.zero_mul, Nat.zero_add,
+      range_one, Finset.sum_singleton, Nat.add_zero, pow_zero, mul_one]
+  | succ n ih =>
+    intro hn1
+    have hn7 : n ≤ 7 := by omega
+    obtain ⟨ihsz, ihcnt, ihform⟩ := ih (by omega)
+    set len := 128 >>> n with hlendef
+    have hL2 : (256 >>> n) = 2 * len := L_eq_2len n hn7
+    have hLn1 : (256 >>> (n+1)) = len := shr_succ n hn7
+    have hpow2 : (2:Nat)^(n+1) = 2 * 2^n := by rw [pow_succ]; ring
+    have hpowpos : 1 ≤ 2^n := Nat.one_le_two_pow
+    -- unfold one stage via block_char
+    have hstage : nttUpto (n+1) w = List.foldl (blockFn n) (nttUpto n w) (List.range' 0 (2^n) 1) := by
+      rw [nttUpto_succ]; unfold stageStep; rw [nblk_pow n hn7]
+    set a_in := (nttUpto n w).1 with haindef
+    have hain_c : (nttUpto n w).2 = 2^n - 1 := ihcnt
+    obtain ⟨bsz, bun, blo, bhi⟩ :=
+      block_char n hn7 a_in ihsz (nttUpto n w).2 (2^n) (le_refl _)
+    -- rewrite (nttUpto n w) as a pair to feed block_char (it folds over (a_in, c0))
+    have hpair : (nttUpto n w) = (a_in, (nttUpto n w).2) := by rw [haindef]
+    rw [hpair] at hstage
+    -- twiddle counter: c0 + blk + 1 = 2^n + blk
+    have htw : ∀ blk, (nttUpto n w).2 + blk + 1 = 2^n + blk := by
+      intro blk; rw [hain_c]; omega
+    refine ⟨?_, ?_, ?_⟩
+    · rw [hstage]; exact bsz
+    · rw [nttUpto_succ]; unfold stageStep
+      rw [nblk_pow n hn7, foldl_blockFn_snd, hain_c]
+      have : (List.range' 0 (2^n) 1).length = 2^n := by simp
+      rw [this]; omega
+    · -- the invariant
+      intro g i hg hi
+      rw [hLn1] at hi ⊢
+      -- z := ζ^{brv8(2^n+blk)} in field ; r := rootAt (n+1) g
+      rcases Nat.even_or_odd g with ⟨blk, hgb⟩ | ⟨blk, hgb⟩
+      · -- g = 2*blk, low half, r = z
+        have hgb' : g = 2 * blk := by omega
+        subst hgb'
+        have hblk : blk < 2^n := by
+          have := hg; rw [hpow2] at this; omega
+        -- position p = 2blk*len + i = blk*(256>>>n) + i
+        have hpos : 2*blk*len + i = blk*(256>>>n) + i := by rw [hL2]; ring
+        rw [hpos]
+        -- block_char low at p = blk*(256>>>n)+i
+        have hp1 : blk*(256>>>n) ≤ blk*(256>>>n)+i := by omega
+        have hp2 : blk*(256>>>n)+i < blk*(256>>>n)+len := by omega
+        rw [hstage, blo blk hblk (blk*(256>>>n)+i) hp1 hp2]
+        -- cast
+        rw [cast_addQ, cast_mulModQ, htw blk, cast_zetaTwiddle]
+        -- INV(n) for the two reads
+        have e1 : (a_in[blk*(256>>>n)+i]! : ZMod q)
+            = ∑ v ∈ range (2^n), (w[i + v*(256>>>n)]! : ZMod q) * (rootAt n blk)^v := by
+          have := ihform blk i hblk (by rw [hL2]; omega); rw [haindef]; exact this
+        have e2 : (a_in[blk*(256>>>n)+i+len]! : ZMod q)
+            = ∑ v ∈ range (2^n), (w[(i+len) + v*(256>>>n)]! : ZMod q) * (rootAt n blk)^v := by
+          have := ihform blk (i+len) hblk (by rw [hL2]; omega)
+          rw [haindef]
+          rw [show blk*(256>>>n)+i+len = blk*(256>>>n)+(i+len) from by ring]
+          exact this
+        rw [e1, e2]
+        -- RHS via split_collapse with r = ζ^{brv8(2^n+blk)} = rootAt (n+1) (2blk)
+        have hr : rootAt (n+1) (2*blk) = (zeta:ZMod q)^(brv8 (2^n+blk)) := rootAt_even_step n blk
+        have hrho : rootAt n blk = ((zeta:ZMod q)^(brv8 (2^n+blk)))^2 := by
+          rw [rootAt_closed n blk hn7 hblk, ← pow_mul]; ring_nf
+        rw [hr, hpow2, split_collapse len (256>>>n) n i hL2 _ w, ← hrho]
+      · -- g = 2*blk+1, high half, r = -z
+        subst hgb
+        have hblk : blk < 2^n := by
+          have := hg; rw [hpow2] at this; omega
+        have hpos : (2*blk+1)*len + i = blk*(256>>>n)+len+i := by rw [hL2]; ring
+        rw [hpos]
+        have hp1 : blk*(256>>>n)+len ≤ blk*(256>>>n)+len+i := by omega
+        have hp2 : blk*(256>>>n)+len+i < blk*(256>>>n)+(256>>>n) := by rw [hL2]; omega
+        rw [hstage, bhi blk hblk (blk*(256>>>n)+len+i) hp1 hp2]
+        rw [cast_subQ _ _ (by have := mulModQ_lt (zetaTwiddle ((nttUpto n w).2 + blk + 1)) a_in[blk*(256>>>n)+len+i]!; omega),
+            cast_mulModQ, htw blk, cast_zetaTwiddle]
+        have e1 : (a_in[blk*(256>>>n)+len+i-len]! : ZMod q)
+            = ∑ v ∈ range (2^n), (w[i + v*(256>>>n)]! : ZMod q) * (rootAt n blk)^v := by
+          rw [show blk*(256>>>n)+len+i-len = blk*(256>>>n)+i from by omega]
+          have := ihform blk i hblk (by rw [hL2]; omega); rw [haindef]; exact this
+        have e2 : (a_in[blk*(256>>>n)+len+i]! : ZMod q)
+            = ∑ v ∈ range (2^n), (w[(i+len) + v*(256>>>n)]! : ZMod q) * (rootAt n blk)^v := by
+          have := ihform blk (i+len) hblk (by rw [hL2]; omega)
+          rw [haindef, show blk*(256>>>n)+len+i = blk*(256>>>n)+(i+len) from by ring]
+          exact this
+        rw [e1, e2]
+        have hr : rootAt (n+1) (2*blk+1) = -(zeta:ZMod q)^(brv8 (2^n+blk)) := rootAt_odd_step n blk
+        have hrho : rootAt n blk = (-(zeta:ZMod q)^(brv8 (2^n+blk)))^2 := by
+          rw [rootAt_closed n blk hn7 hblk, neg_pow, ← pow_mul]; ring_nf
+        rw [hr, hpow2, split_collapse len (256>>>n) n i hL2 _ w, ← hrho]
+        ring
+
+/-- **CT STAGE-INVARIANT COLLAPSE (forward, size-256).** The 8-stage Cooley–Tukey butterfly network computes
+evaluation at the negacyclic roots `ζ^{2·brv(m)+1}` for every canonical (size-256) poly: `(ntt a)_m =
+eval256 a (evalRoot m)`. This is the size-256-guarded form of `NttEvalsAtRoots` (the unguarded `∀`-form is
+false — see the note above). Axiom-clean, no `native_decide`. -/
+theorem nttEvalsAtRoots_canonical (a : Poly) (ha : a.size = 256) (m : Nat) (hm : m < 256) :
+    ((ntt a)[m]! : ZMod q) = eval256 a (evalRoot m) := by
+  obtain ⟨_, _, hform⟩ := stage_inv a ha 8 (by omega)
+  have hm8 : m < 2^8 := by rw [show (2:Nat)^8 = 256 from by norm_num]; exact hm
+  have h := hform m 0 hm8 (by decide)
+  rw [show (256 >>> 8) = 1 from by decide] at h
+  rw [show (2:Nat)^8 = 256 from by norm_num] at h
+  simp only [Nat.mul_one, Nat.add_zero, Nat.zero_add] at h
+  rw [ntt_eq_fold, nttFold_eq, h, rootAt_final m hm]
+  rfl
+
+
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
 deliberately NOT gated here — it is the accepted computational residual, isolated from the ∀-theorems. -/
@@ -748,5 +1166,11 @@ deliberately NOT gated here — it is the accepted computational residual, isola
 #assert_axioms ntt_eq_fold
 #assert_axioms cast_powModQ
 #assert_axioms cast_zetaTwiddle
+#assert_axioms brv_even
+#assert_axioms rootAt_closed
+#assert_axioms rootAt_final
+#assert_axioms block_char
+#assert_axioms stage_inv
+#assert_axioms nttEvalsAtRoots_canonical
 
 end Dregg2.Crypto.MlDsaRing
