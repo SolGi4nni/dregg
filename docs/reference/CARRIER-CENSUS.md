@@ -237,3 +237,26 @@ untouched, both carriers are assumed AND abstract, and the trusted surface grew 
 TO DISCHARGE: FRI-proximity @ BabyBear + AIR soundness (positive dir) + ChipTableSoundN @ real perm + a real
 FriExtract ⟹ `instance : AlgoStarkSound`; PLUS prove `DeployedRefines` (the deployed verifyBatch refines
 verifyAlgo — the deployment-refinement half, which nobody has attempted).
+
+## ⚠⚠ DEBT-A ARITY GAP (2026-07-10, brick 3 `c9e8439ad`) — our FRI fold is 2-to-1; the deployed fold is 8-to-1
+`circuit/src/plonky3_prover.rs:98` — `PROD_FRI_MAX_LOG_ARITY = 3`: the shipped FRI folds up to **8-to-1** per
+round. Lean's `FriGeom.q : ι → κ` is the **squaring quotient (2-to-1)**, and `fold_close_of_two_alpha` is the
+TWO-challenge Vandermonde reconstruction (BBHR18 arity-2). **Instantiating it at the right field/rate/domain does
+NOT close this** — the folding map itself differs from deployment. This is a sixth DEBT-A obligation, provable
+(BBHR18/DEEP-FRI generalize to arity `2^k` via a size-`2^k` Vandermonde) but not yet done.
+ALSO measured: the deployed FRI evaluation-domain size is NOT static — `padded_trace_height << log_blowup`, fixed
+per-proof, bounded by 2-adicity 2^27. Static params: log_blowup=3 (rate 1/8), num_queries=38, query_pow_bits=16,
+log_final_poly_len=0 (`plonky3_prover.rs:96-100`). Other shipped configs: `stark_zk.rs:113` (lb=3,q=38),
+`descriptor_ir2.rs:4740` (lb=6,q=19, rate 1/64).
+
+## DEBT-A obligations, live tally (2026-07-10)
+1. ChipTableSoundN @ the real Poseidon2BabyBearW16 perm — ✅ **CLOSED** (`37b121f55`).
+2. FRI proximity @ deployed params — ◐ rate 1/8 modeled + 2-adicity cap instantiated (`c9e8439ad`); domain size
+   is per-proof (no single k); **arity gap open**.
+3. The `FriProximity` bridge (geometric ⟶ operational) — statement now PRECISE; `hFRI` half supplied by brick 3;
+   `hcode_sat` + plumbing open; `air_binds_of_proximity` (FriSoundness:423) is the proved codeword half.
+4. A real (non-degenerate) `FriExtract` — open; current witness is over `witVerify := fun _ => true`.
+5. `DeployedRefines` (verifyBatch refines verifyAlgo) — never attempted; first question: is `verifyBatch` defined
+   or opaque?
+6. **Arity-2^k folding soundness** (NEW, above).
+Then: 1+2+3+4+6 ⟹ `instance : AlgoStarkSound`; + 5 ⟹ `instance : StarkSound` with no assumed carrier.
