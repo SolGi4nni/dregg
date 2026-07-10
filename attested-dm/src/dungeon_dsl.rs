@@ -1506,3 +1506,70 @@ mod tests {
         }
     }
 }
+
+#[cfg(test)]
+mod dogfood {
+    use super::*;
+    use crate::{GameSession, GameStatus, PlayResult};
+
+    /// DOGFOOD: a world authored BY HAND in this DSL (no Rust) parses, validates clean, and plays
+    /// its critical path to a WIN through the real engine — a gated exit and a world-bounded NPC
+    /// trade included. If the format is not authorable, this test is where it shows.
+    #[test]
+    fn a_hand_authored_orchard_parses_validates_and_wins() {
+        let src = include_str!("../dungeons/clockwork_orchard.dungeon");
+        let world = parse_dungeon(src).expect("a hand-authored world must parse");
+        let errors: Vec<_> = validate(&world)
+            .into_iter()
+            .filter(|i| i.is_error())
+            .collect();
+        assert!(
+            errors.is_empty(),
+            "hand-authored world validates clean, got {errors:?}"
+        );
+
+        let mut game = GameSession::open(world);
+        for cmd in [
+            "go north", // rows
+            "take brass_apple",
+            "go east",              // shed
+            "ask keeper about key", // world-bounded: the apple buys the winding-key
+            "go west",              // rows
+            "go north",             // greenhouse (gated on winding_key)
+            "take heartspring",
+            "go west", // sundial -> WIN
+        ] {
+            match game.command("hero", cmd) {
+                PlayResult::Landed { .. } => {}
+                other => panic!("the authored critical path should land `{cmd}`, got {other:?}"),
+            }
+        }
+        assert_eq!(
+            game.status(),
+            GameStatus::Won,
+            "the hand-authored orchard is winnable"
+        );
+        game.verify()
+            .expect("the authored playthrough verifies on-chain");
+    }
+
+    /// NON-VACUITY of the NPC gate in an AUTHORED world: without the apple, the Keeper withholds
+    /// the key, so the greenhouse stays wound shut — the DSL's `requires` is load-bearing.
+    #[test]
+    fn the_authored_keeper_withholds_the_key_without_the_apple() {
+        let world = parse_dungeon(include_str!("../dungeons/clockwork_orchard.dungeon")).unwrap();
+        let mut game = GameSession::open(world);
+        game.command("hero", "go north"); // rows (leave the apple)
+        game.command("hero", "go east"); // shed
+        game.command("hero", "ask keeper about key");
+        assert!(
+            !game.world().inventory.contains("winding_key"),
+            "no apple, no key — the authored DialogueRule holds"
+        );
+        game.command("hero", "go west");
+        match game.command("hero", "go north") {
+            PlayResult::Refused(_) => {} // greenhouse gated on the key
+            other => panic!("the greenhouse stays wound shut without the key, got {other:?}"),
+        }
+    }
+}

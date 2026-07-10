@@ -1,0 +1,43 @@
+# THE CLOCKWORK ORCHARD
+#
+# Authored BY HAND in the .dungeon DSL — no Rust, no recompile. A small, fully-solvable
+# adventure that dogfoods the format: a gated exit, a world-bounded NPC trade, and a win
+# that must be carried. The gate forces the order:
+#   fallen apple -> the Keeper's winding-key -> the greenhouse -> the Heartspring -> the sundial.
+
+name: The Clockwork Orchard
+start: gate
+objective: reach sundial holding heartspring
+
+room gate "The Orchard Gate"
+  Brass trees stand in still rows beyond a wrought gate, their leaves ticking softly out of time.
+  items: oilcan
+  exit north -> rows
+
+room rows "The Ticking Rows"
+  Row upon row of clockwork apple-trees, each ticking a little out of step with the next.
+  One brass apple has fallen into the grass.
+  items: brass_apple
+  exit south -> gate
+  exit east -> shed
+  # The greenhouse is wound shut; only the Keeper's key opens it.
+  exit north -> greenhouse requires item winding_key
+
+room shed "The Keeper's Shed"
+  A lean-to of oiled wood. The Keeper sits within, unmoving but for its eyes.
+  exit west -> rows
+
+npc keeper "The Clockwork Keeper" in shed
+  about "a brass automaton that has tended the orchard since before the rain"
+  topic key requires item brass_apple -> gives winding_key "The Keeper turns your apple in its palm, and presses a winding-key into your hand." else "The Keeper's eyes track you. 'Bring me a fallen apple,' it ticks."
+  topic orchard -> reveals "It tells of the Heartspring beneath the glass, which keeps every tree in time."
+
+room greenhouse "The Glass Greenhouse"
+  Under cracked glass a single spring of gold turns slowly, and every tree outside keeps its hour by it.
+  items: heartspring
+  exit south -> rows
+  exit west -> sundial
+
+room sundial "The Sundial Court"
+  A great brass sundial, its gnomon bent, its hours gone silent. A cradle at its centre waits, empty.
+  exit east -> greenhouse
