@@ -260,3 +260,20 @@ log_final_poly_len=0 (`plonky3_prover.rs:96-100`). Other shipped configs: `stark
    or opaque?
 6. **Arity-2^k folding soundness** (NEW, above).
 Then: 1+2+3+4+6 ⟹ `instance : AlgoStarkSound`; + 5 ⟹ `instance : StarkSound` with no assumed carrier.
+
+## ⚠⚠⚠ THE DEBT-A KEYSTONE (2026-07-10, `35ee89ec9`): `verifyBatch` is OPAQUE — StarkSound CANNOT be discharged
+`CircuitSoundness.lean:353` — `opaque verifyBatch : VerifyKey → BatchPublicInputs → BatchProof → Verdict`. **No
+body.** Its own doc-comment is honest: "Its only SPECIFIED behaviour is via the `StarkSound` class below — we make
+NO unjustified claim about its internals."
+CONSEQUENCE: `StarkSound` is not a hard theorem awaiting proof — **it is the ONLY specification an opaque function
+has.** It cannot be discharged while `verifyBatch` has no definition. Neither FRI-at-BabyBear (bricks 1–3), nor AIR
+soundness (brick 5), nor ChipTableSoundN@real-perm (brick 4, CLOSED) touches it. `DeployedRefines` is likewise
+UNPROVABLE-AS-STATED: nothing can be derived from an uninterpreted function's acceptance.
+⇒ **THE DEBT-A CAMPAIGN AS ORIGINALLY SCOPED WAS WRONG.** "Prove the FRI verifier sound" is not the keystone. The
+keystone is: **MODEL `verifyBatch` in Lean** (the p3 batch verify = Merkle openings + quotient check + FRI query
+loop) and establish the Rust↔Lean correspondence — precisely the discharge `Poseidon2BabyBearW16` already has
+(KAT-validated bit-exact against the deployed permutation). Note `verifyAlgo` (FriVerifier.lean:557) IS already a
+real `Bool` function of exactly that shape; the gap is that opaque `verifyBatch` is merely ASSUMED to refine it
+(`DeployedRefines`, never proved). The honest fix: DEFINE `verifyBatch` as the model and carry
+`DeployedMatchesModel` as an explicit, KAT-dischargeable correspondence obligation.
+Then and only then do bricks 1–5 + the arity fix + the bridge compose into a real `instance : StarkSound`.

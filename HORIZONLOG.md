@@ -7132,3 +7132,26 @@ deployed effect has a proved commuting square; (3) the non-covered effects are p
 or STARK-gated (ShieldedTransfer). Whole tree green 4539, every claim audited by type.
 REMAINING (distinct campaigns, correctly out of DEBT-B): DEBT-A (StarkSound + the AIR carriers Satisfied2Faithful/
 DeployedFaithful + ShieldedTransfer's STARK) · the reactive-registry subsystem's own model (Promise/Notify).
+
+## 2026-07-10 — DEBT-A opened, and the keystone is not where the plan said
+Fanned six→nine lanes across DEBT-A. Whole tree green 4551. Every claim spot-verified by hand.
+**CLOSED:** obligation #1 — `Satisfied2Faithful`/`ChipTableSoundN` PROVED at the REAL KAT-bit-exact
+`Poseidon2BabyBearW16.perm` (`37b121f55`), killing the `permOutZ` finding (every prior "realization" was over the
+CONSTANT-ZERO permutation, which also forced `hash = 0`).
+**THE KEYSTONE (`35ee89ec9`):** `verifyBatch` is `opaque` — no body (CircuitSoundness.lean:353). `StarkSound` is
+its ONLY specification. So StarkSound cannot be discharged by any amount of FRI/AIR work; the real task is to
+MODEL `verifyBatch` and establish the Rust↔Lean correspondence (as `Poseidon2BabyBearW16` already did via KAT).
+The tree is HONEST at that definition site ("we make NO unjustified claim about its internals"); the dishonesty
+was downstream — `FriVerifierBridge`'s "the apex on the PROVEN verifier algorithm" (corrected in-file), and a
+`StarkSound` "instance" that is `carrier.extract ∘ href` over TWO assumed carriers (`AlgoStarkSound`, 0 instances,
+`F = Int` not BabyBear; `DeployedRefines`, never proved). The bridge grew the trusted surface from one to two.
+**OTHER FINDINGS:** `FriExtract`'s sole realization is over `witVerify := fun _ => true` — and it provably
+certifies a time-reversed `brokenSeg` (`3ee8b5ee8`); `FriExtract` is a KNOWLEDGE-EXTRACTION obligation ABOVE FRI
+(proximity takes a transcript ⟹ property; extraction takes a property ⟹ must yield a witness — wrong direction).
+Our FRI fold is arity-2 (squaring); the deployed `PROD_FRI_MAX_LOG_ARITY = 3` folds 8-to-1 (`b404d4b9f`). The
+deployed FRI domain size is per-proof, not static; rate 1/8 IS static and is now instantiated (`c9e8439ad`).
+A DEPLOYED SOUNDNESS GAP: `apply.rs:1178` — "M2-a relies on the honest prover" for `verify_value_link`.
+**BANKED:** AIR quotient acceptance PROVES rowConstraints' arithmetic arms (`d569bf31e`, 8 legs as explicit
+premises); ShieldedTransfer's kernel part proved, nullifier-ONLY (my census said "nullifier+balance" — wrong,
+corrected); the reactive subsystem turned DEBT-B's off-kernel claim into THEOREMS + proved no-double-react by
+riding the committed nullifier gate (`515f635d9`).
