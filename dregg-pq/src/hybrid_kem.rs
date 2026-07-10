@@ -634,6 +634,43 @@ impl HybridResponder {
     }
 }
 
+/// **Bare ML-KEM-768 (FIPS 203) key generation** — the post-quantum KEM half exposed on its own, for the
+/// X-Wing hybrids that combine it with a SEPARATELY-run X25519 (e.g. the orb TLS 1.3 `X25519MLKEM768`
+/// key exchange, whose classical half is its own EverCrypt X25519 and whose combiner is its own concat-KDF).
+/// Returns `(ek, dk)` — the 1184-byte encapsulation key and the 2400-byte decapsulation key at their
+/// FIPS-203 ML-KEM-768 sizes. The SAME `ml-kem` v0.2.3 primitive [`responder_offer`] mints its post-quantum
+/// half from; dregg `MlKemIndCca` grounds its IND-CCA in the MLWE lattice floor.
+pub fn ml_kem768_keygen() -> (Vec<u8>, Vec<u8>) {
+    let mut rng = OsCsprng;
+    let (dk, ek) = MlKem768::generate(&mut rng);
+    (ek.as_bytes().to_vec(), dk.as_bytes().to_vec())
+}
+
+/// **Bare ML-KEM-768 encapsulation.** Encapsulate to a 1184-byte encapsulation key `ek`, returning the
+/// 1088-byte ciphertext and the 32-byte shared secret `(ct, ss)`. `None` on a wrong-length/malformed `ek`
+/// (fail-closed). The SAME primitive [`initiate`]s post-quantum half calls; the encaps randomness is fresh
+/// OS entropy. The orb TLS X-Wing server side runs this for the ML-KEM half, then concat-KDFs `ss` with its
+/// X25519 secret.
+pub fn ml_kem768_encaps(ek: &[u8]) -> Option<(Vec<u8>, [u8; 32])> {
+    let ek_encoded = Encoded::<Ek>::try_from(ek).ok()?;
+    let ek = Ek::from_bytes(&ek_encoded);
+    let mut rng = OsCsprng;
+    let (ct, ss) = ek.encapsulate(&mut rng).ok()?;
+    Some((ct.as_slice().to_vec(), shared_to_array(ss)))
+}
+
+/// **Bare ML-KEM-768 decapsulation.** Recover the 32-byte shared secret from a 1088-byte ciphertext `ct`
+/// under the 2400-byte decapsulation key `dk`. `None` on a wrong-length/malformed `dk`/`ct` (fail-closed).
+/// A well-formed-but-tampered ciphertext does NOT fail: it implicit-rejects to a DIFFERENT (message-
+/// independent) secret — ML-KEM FO implicit-reject — so the two parties diverge without leaking, exactly the
+/// behavior [`HybridResponder::finish`] relies on. The orb TLS X-Wing client side runs this.
+pub fn ml_kem768_decaps(dk: &[u8], ct: &[u8]) -> Option<[u8; 32]> {
+    let dk_encoded = Encoded::<Dk>::try_from(dk).ok()?;
+    let dk = Dk::from_bytes(&dk_encoded);
+    let ct = Ciphertext::<MlKem768>::try_from(ct).ok()?;
+    Some(shared_to_array(dk.decapsulate(&ct).ok()?))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

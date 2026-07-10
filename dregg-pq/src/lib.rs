@@ -38,7 +38,8 @@ pub use hybrid_kem::{
     MlKemDecapsCoreInstall, MlKemEncapsCoreInstall, install_lean_decaps_core,
     install_lean_encaps_core, install_lean_kem_decaps_core_real, install_lean_kem_encaps_core_real,
     install_verified_mlkem_decaps_core, install_verified_mlkem_encaps_core, ml_kem_decaps_core,
-    ml_kem_encaps_core, mlkem_decaps_real_core_installed, mlkem_encaps_real_core_installed,
+    ml_kem_encaps_core, ml_kem768_decaps, ml_kem768_encaps, ml_kem768_keygen,
+    mlkem_decaps_real_core_installed, mlkem_encaps_real_core_installed,
 };
 
 pub use mldsa::{
