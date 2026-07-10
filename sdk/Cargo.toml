@@ -32,6 +32,11 @@ dregg-bridge = { path = "../bridge" }
 # archive-gated by `lean_available()`). The ONE opt-out is the `no-lean-link` platform
 # feature (wasm32/zkvm — targets that cannot link libdregg_lean.a).
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# The ML-DSA-65 (FIPS 204) verify seam (a light leaf, already in the graph transitively). Direct dep so
+# the SDK can call the SHARED `dregg_pq::install_verified_mldsa_verify_core` at agent-runtime startup —
+# routing the wire-silo + turn/captp verifies through the Lean-verified core (taking the `fips204` crate
+# out of the SDK-hosted process's verify TCB), the SAME install the node performs.
+dregg-pq = { path = "../dregg-pq" }
 # THE SWAP producer-mode cluster (`produce_via_lean` = the authoritative verified-Lean state
 # producer). Native-only crate (links libdregg_lean.a); pulled by the default-on `exec-lean`
 # feature. A `no-lean-link` (wasm/zkvm) build passes `default-features = false`, so `exec-lean` is
@@ -128,6 +133,10 @@ unsafe-test-utils = []
 
 [dev-dependencies]
 x25519-dalek = { workspace = true }
+# The running-binary ML-DSA verify gate (`tests/mldsa_wire_silo_verify.rs`) mints a GENUINE ML-DSA-65
+# `(pk, msg, ctx, sig)` with the SAME `fips204` 0.4.x the `dregg-pq` leaf carries, then asserts the
+# SDK-startup-installed Lean core is the authority behind `dregg_pq::ml_dsa_verify`.
+fips204 = "0.4"
 # The human-layer social-recovery e2e seam (`tests/identity_social_recovery_e2e.rs`):
 # the guardian M-of-N quorum is a REAL HINTS weighted-threshold BLS aggregate
 # (`hints`), assembled test-side via `dregg-federation`'s committee wrapper —

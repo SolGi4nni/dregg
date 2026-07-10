@@ -52,6 +52,57 @@ pub fn lean_producer_env_enabled() -> bool {
     }
 }
 
+/// Install the Lean-verified REAL ML-DSA verify core as `dregg_pq::ml_dsa_verify`'s accept/reject AUTHORITY
+/// for THIS process — taking the `fips204` crate out of the SDK-hosted process's verify TCB.
+///
+/// `dregg_pq::ml_dsa_verify` is the process-global ML-DSA-65 verify behind the SDK-hosted surfaces the
+/// crate-TCB audit flagged: the wire `SiloServer`'s token/revocation verify (`wire/src/server.rs` sites
+/// V2/V3) and the SDK's own turn/captp receipt verifies. It routes through an install-time function pointer;
+/// with the REAL core installed it takes its verdict from the extracted, full-byte `MlDsaVerifyReal.verifyCore`
+/// (BRICK 8) and NEVER consults the `fips204` crate. Only the node installed it before — so an SDK-hosted
+/// process (or starbridge-v2) was falling through to the crate at every verify. This is the SAME shared
+/// install the node performs (`dregg_pq::install_verified_mldsa_verify_core`), injecting the two
+/// `dregg-lean-ffi` archive symbols; it is idempotent and once-per-process.
+///
+/// Gated on `fips204_verify_real_core_available()`: install ONLY when the linked archive EXPORTS the real
+/// core. A build without it (or a `no-lean-link` wasm/zkvm target) keeps the `fips204`-crate fallback (a
+/// valid FIPS-204 verify) rather than bricking verify. Returns the outcome so callers / the running-binary
+/// gate can assert routing.
+pub fn install_verified_mldsa_verify_core() -> dregg_pq::MlDsaVerifyCoreInstall {
+    dregg_pq::install_verified_mldsa_verify_core(
+        dregg_lean_ffi::fips204_verify_real_core_available,
+        |w| dregg_lean_ffi::shadow_fips204_verify_real(w).ok(),
+    )
+}
+
+/// Perform the once-per-process verify-core install at SDK agent-runtime startup, logging the outcome once.
+/// Called from every [`AgentRuntime`] constructor so ANY SDK-hosted process routes its wire-silo +
+/// turn/captp verifies through the Lean-verified core without the host having to remember to install.
+fn ensure_verified_mldsa_verify_core_installed() {
+    use dregg_pq::MlDsaVerifyCoreInstall as I;
+    use std::sync::Once;
+    static LOGGED: Once = Once::new();
+    let outcome = install_verified_mldsa_verify_core();
+    LOGGED.call_once(|| match outcome {
+        I::Installed => tracing::info!(
+            "ML-DSA verify: verified Lean core installed at SDK agent-runtime startup — the extracted \
+             full-byte `MlDsaVerifyReal.verifyCore` is now `dregg_pq::ml_dsa_verify`'s accept/reject \
+             authority for this process (wire silo + turn/captp verifies); the `fips204` crate is out of \
+             the SDK-hosted verify TCB"
+        ),
+        I::AlreadyInstalled => tracing::debug!(
+            "ML-DSA verify: a verified Lean core was already installed this process (install is \
+             once-per-process) — the `fips204` crate remains out of the SDK-hosted verify TCB"
+        ),
+        I::ExportAbsent => tracing::warn!(
+            "ML-DSA verify: the linked Lean archive does NOT export the real verify core \
+             (`fips204_verify_real_core_available()` is false) — the SDK-hosted process's ML-DSA verify \
+             falls back to the `fips204` crate (a valid FIPS-204 verify, but NOT the Lean-verified \
+             authority). Rebuild against a HEAD-matching archive to route verify through Lean."
+        ),
+    });
+}
+
 /// Build the `TurnExecutor` every [`AgentRuntime`] runs on, with the **real**
 /// witnessed-predicate verifiers installed (not the fail-closed defaults).
 ///
@@ -272,6 +323,10 @@ impl AgentRuntime {
     /// * `cipherclerk` - Shared read-write reference to the agent's cipherclerk.
     /// * `domain` - The domain this agent operates in (e.g., "compute", "storage").
     pub fn new(cipherclerk: Arc<RwLock<AgentCipherclerk>>, domain: &str) -> Self {
+        // Route this SDK-hosted process's ML-DSA verify (wire silo + turn/captp) through the
+        // Lean-verified core (idempotent, once-per-process) — see
+        // [`ensure_verified_mldsa_verify_core_installed`].
+        ensure_verified_mldsa_verify_core_installed();
         let cell_id;
         let public_key;
         {
@@ -324,6 +379,8 @@ impl AgentRuntime {
         domain: &str,
         ledger: Arc<Mutex<Ledger>>,
     ) -> Self {
+        // Same once-per-process verify-core install as `new` (this is an independent construction path).
+        ensure_verified_mldsa_verify_core_installed();
         let cell_id = cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())

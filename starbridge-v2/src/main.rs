@@ -69,6 +69,34 @@ fn main() {
     let args: Vec<String> = std::env::args().collect();
     let headless = args.iter().any(|a| a == "--headless");
 
+    // ── ML-DSA VERIFY: route this process's verify through the Lean-verified core ──────────────
+    // starbridge-v2 embeds the real verified executor and does turn/captp receipt verifies (and can
+    // host the wire silo) — all through the process-global `dregg_pq::ml_dsa_verify`. Like the node,
+    // it must install the extracted, full-byte `MlDsaVerifyReal.verifyCore` as that global's authority
+    // at startup, or its verifies fall through to the `fips204` crate. This is the SAME shared install
+    // the node + the SDK agent-runtime perform (`dregg_pq::install_verified_mldsa_verify_core`, via the
+    // SDK re-export); idempotent, once-per-process, and it runs BEFORE any subcommand branch so every
+    // path (windowed cockpit, headless bake, `--serve-ie6`, `--node`) is covered. Gated on
+    // `embedded-executor` — the only build with the SDK + the linked Lean archive; the `sel4-thin` thin
+    // client verifies against a remote node and has no local verify TCB to close.
+    #[cfg(feature = "embedded-executor")]
+    {
+        use dregg_sdk::MlDsaVerifyCoreInstall as I;
+        match dregg_sdk::install_verified_mldsa_verify_core() {
+            I::Installed => eprintln!(
+                "ML-DSA verify: verified Lean core installed — `dregg_pq::ml_dsa_verify` (turn/captp + \
+                 wire silo) is now Lean-authoritative for this process; the `fips204` crate is out of \
+                 starbridge-v2's verify TCB"
+            ),
+            I::AlreadyInstalled => {}
+            I::ExportAbsent => eprintln!(
+                "ML-DSA verify: the linked Lean archive does NOT export the real verify core — \
+                 starbridge-v2's ML-DSA verify falls back to the `fips204` crate (a valid FIPS-204 \
+                 verify, but NOT the Lean-verified authority). Rebuild against a HEAD-matching archive."
+            ),
+        }
+    }
+
     // `--render-cockpit <out>`: the HEADLESS COCKPIT BAKE (the seL4 deos-image
     // weld). Drive the REAL `cockpit::Cockpit` element tree through a headless
     // gpui `App`/`Window` (no GPU, no display) and render the resolved gpui

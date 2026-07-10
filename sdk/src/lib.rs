@@ -206,10 +206,15 @@ pub use turns::{AuthorizedTurn, TurnBuilder};
 // The identity, its runtime, and the effect vocabulary the verbs speak.
 pub use cipherclerk::{AgentCipherclerk, SignedTurn};
 pub use dregg_cell::{CellId, Ledger};
+/// The verify-core install outcome (from `dregg-pq`), re-exported so SDK-hosted processes can match on
+/// [`install_verified_mldsa_verify_core`]'s result without a direct `dregg-pq` dependency.
+pub use dregg_pq::MlDsaVerifyCoreInstall;
 pub use dregg_turn::Effect;
 pub use dregg_types::{PublicKey, Signature};
 pub use error::SdkError;
-pub use runtime::{AgentRuntime, SubAgent, executor_pubkey_from_seed};
+pub use runtime::{
+    AgentRuntime, SubAgent, executor_pubkey_from_seed, install_verified_mldsa_verify_core,
+};
 
 // ORGAN 4 — THE GATEWAY surface: the delegated tool-access seam for a live
 // tool-calling agent loop (the proven `delegAdmit` mandate over the cap-gated
