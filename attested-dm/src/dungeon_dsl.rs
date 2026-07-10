@@ -516,6 +516,14 @@ fn build(src: &str) -> Result<(GameWorld, Prov), DungeonError> {
                 let arrow = arrow_pos(&toks).ok_or_else(|| {
                     DungeonError::at(line.no, "a lose condition needs `-> \"description\"`")
                 })?;
+                // The flag must sit between `lose:` and `->` (arrow >= 2). Without this guard,
+                // `lose: -> "x"` (arrow == 1) mis-reads `->` as the flag AND panics on `toks[2..1]`.
+                if arrow < 2 {
+                    return Err(DungeonError::at(
+                        line.no,
+                        "a lose condition needs a flag: `lose: <flag> [>= v] -> \"description\"`",
+                    ));
+                }
                 let flag = word_at(&toks, 1, line.no, "the lose flag")?.to_string();
                 let (v, _) = parse_flag_val(&toks[2..arrow]);
                 let desc = first_str(&toks[arrow + 1..]).ok_or_else(|| {
@@ -1204,12 +1212,45 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
             ),
         );
     }
+    // The win item must be obtainable from a room REACHABLE from start — existing SOMEWHERE
+    // (`all_items`) is not enough: an item placed only in a graph-disconnected room makes the
+    // objective unwinnable. Mirror `all_items` but restricted to reachable rooms (gates ignored,
+    // like `reachable` — a gated-but-connected room is still solvable).
+    let reach = reachable(world);
+    let mut reachable_items: BTreeSet<&str> = BTreeSet::new();
+    for (id, room) in &world.rooms {
+        if reach.contains(id) {
+            reachable_items.extend(room.items.iter().map(String::as_str));
+        }
+    }
+    for r in &world.dialogue {
+        if reach.contains(&r.room) {
+            if let DialogueGrant::GivesItem(i) = &r.grant {
+                reachable_items.insert(i.as_str());
+            }
+        }
+    }
+    for r in &world.spell_rules {
+        if reach.contains(&r.room) {
+            if let SpellEffect::Conjure(i) = &r.effect {
+                reachable_items.insert(i.as_str());
+            }
+        }
+    }
     if !obtainable.contains(&world.objective.holding) {
         err!(
             prov.map(|p| p.objective_line),
             format!(
                 "objective requires holding `{}`, which is never placed in any room",
                 world.objective.holding
+            ),
+        );
+    } else if !reachable_items.contains(world.objective.holding.as_str()) {
+        err!(
+            prov.map(|p| p.objective_line),
+            format!(
+                "objective requires holding `{}`, which is placed only in a room unreachable from start `{}`",
+                world.objective.holding, world.start
             ),
         );
     }
@@ -1334,6 +1375,47 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
                         ),
                     );
                 }
+            }
+        }
+    }
+
+    // Flag-gates whose flag NO declared rule sets → likely a permanently-sealed door / dead topic.
+    // A WARNING, not an error: the engine also sets some flags internally (light `<lamp>_oil`,
+    // combat `player_wounds` / `wounds_<foe>`, the stranded flag), which an author MAY legitimately
+    // gate on — so we surface the suspicion without ever false-blocking a valid exotic design.
+    for room in world.rooms.values() {
+        for (dir, exit) in &room.exits {
+            if let Some(Gate::NeedsFlag(flag, _)) = &exit.gate {
+                if !settable.contains(flag) {
+                    let line = prov
+                        .and_then(|p| p.exit_line.get(&(room.id.clone(), dir.clone())).copied());
+                    out.push((
+                        line,
+                        Issue {
+                            severity: Severity::Warning,
+                            message: format!(
+                                "exit `{dir}` (room `{}`) is gated on flag `{flag}`, which no declared rule sets — it may be permanently sealed",
+                                room.id
+                            ),
+                        },
+                    ));
+                }
+            }
+        }
+    }
+    for r in &world.dialogue {
+        if let Some(Gate::NeedsFlag(flag, _)) = &r.requires {
+            if !settable.contains(flag) {
+                out.push((
+                    None,
+                    Issue {
+                        severity: Severity::Warning,
+                        message: format!(
+                            "dialogue topic `{}` (npc `{}`) requires flag `{flag}`, which no declared rule sets",
+                            r.topic, r.npc
+                        ),
+                    },
+                ));
             }
         }
     }
