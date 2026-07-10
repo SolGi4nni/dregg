@@ -145,3 +145,11 @@ GrantCapability (apply_grant_capability), SpawnWithDelegation (apply_spawn_with_
 to covered machinery (React/Promise ↔ noteSpend/noteCreate nullifier set; GrantCapability ↔ grant), but that is
 UNVERIFIED. hpres is discharged for RecStmt-expressible effects ONLY. This is a real remaining DEBT-B gap, not a
 count quibble — the DEBT-B carrier result (RestHashIffFrame→Poseidon2SpongeCR) is unaffected.
+
+## measured (2026-07-10): the 6 uncovered effects have NO Argus model
+None of GrantCapability/SpawnWithDelegation/ShieldedTransfer/Notify/React/Promise has an Argus `*Stmt` program —
+they are UNMODELED in the finite-map RecStmt kernel (no square to prove within DEBT-B). Classification:
+ShieldedTransfer = DEBT-A (STARK-verified); Notify/React/Promise = reactive "Track 2" subsystem (turn/src/
+reactive.rs, promise-hole-is-a-nullifier); GrantCapability/SpawnWithDelegation = distinct apply, no Argus program
+(possibly compositions). The finite-map refinement covers the Argus-modeled kernel (30 programs); these 6 are a
+named scope boundary. DEBT-B carrier result (RestHashIffFrame→Poseidon2SpongeCR) unaffected.
