@@ -41,19 +41,29 @@ product for ALL poly pairs, not just the one `native_decide` sample `MlDsaRing.n
   for any element with `ζ²⁵⁶ = −1` (geometric telescope + `orderOf`; Mathlib ships no DFT lemma, built from
   primitives), axiom-clean; `zeta_root_witness` pins that `ζ = 1753` satisfies the hypothesis.
 
-## RUNG 2 — the named WALL (the ONE remaining open frontier for both residuals)
+## RUNG 2 — the butterfly WALL (engine BUILT; outer-loop peel + CT invariant the named residual)
 
-`RingRepFaithful` is still **not discharged**; but the residual has shrunk. With rung 3 (orthogonality)
-proven, both `NttLeftInverse` and `NttMulHom` now reduce to a SINGLE open identification: that the 8-stage
-Cooley–Tukey `Id.run do` butterfly schedule (FIPS 204 `ζ^{brv(k)}` twiddles, `256⁻¹` scaling) realizes the
-abstract linear map "evaluate at the negacyclic roots `ζ^{2·brv(m)+1}`" — stated precisely as the props
-`NttEvalsAtRoots` (forward) and `InttInterpolates` (inverse), over the exact factorization
-`X²⁵⁶+1 = ∏_{m<256}(X − ζ^{2·brv(m)+1})`. Given those, `NttLeftInverse` = eval∘interp collapsed by
-`omega_orthogonality` (brv bijective), and `NttMulHom` = eval-is-a-ring-hom + `evalRoot²⁵⁶ = −1`. What is left
-is a from-scratch butterfly-index induction over the nested loops with the threaded mutable twiddle counter
-`k` and TWO-index, array-DEPENDENT writes per butterfly (`a[j], a[j+len] ← a[j] ± z·a[j+len]`) — which the
-`foldSet_*` engine (single-index, array-INDEPENDENT writes `g i`) does not reach; it needs a new "butterfly
-sweep preserves the coefficientwise linear relation" loop primitive. That is the exact top rung.
+`RingRepFaithful` is still **not discharged**; but the residual has shrunk again. With rung 3 (orthogonality)
+proven, both `NttLeftInverse` and `NttMulHom` reduce to a SINGLE identification: that the 8-stage Cooley–Tukey
+`Id.run do` butterfly schedule (FIPS 204 `ζ^{brv(k)}` twiddles, `256⁻¹` scaling) realizes the abstract linear
+map "evaluate at the negacyclic roots `ζ^{2·brv(m)+1}`" — stated as the props `NttEvalsAtRoots` (forward) and
+`InttInterpolates` (inverse), over `X²⁵⁶+1 = ∏_{m<256}(X − ζ^{2·brv(m)+1})`.
+
+* **The butterfly-sweep loop primitive the prior lane named as missing is now BUILT** (`bfFold_spec`,
+  `bfSweep_getElem`, `cast_bfSweep`; all axiom-clean). The innermost `for j` loop — TWO-index, array-DEPENDENT
+  writes `a[j], a[j+len] ← a[j] ± z·a[j+len]` per butterfly, which the single-index `foldSet_*` engine could
+  not reach — is characterized entrywise from the actual imperative def, and `cast_bfSweep` proves the sweep
+  IS the 2×2 ℤ_q-linear map over the honest field. The disjointness of the write pairs `{j, j+len}` (so each
+  read sees the ORIGINAL array) is the crux and is proven. `bfSweep` is a verbatim copy of `ntt`'s inner loop.
+* **The exact remaining step** (named precisely after `cast_bfSweep`): a separate, larger induction that peels
+  the two OUTER loops (`for s`, `for blk`, mutable state `(a, k)`) — expressing `ntt` as the ordered
+  composition of `bfSweep`s with `k = 1 … 255` — and carries the CT stage invariant "after stage `s`, position
+  `g·len_s+i` holds `eval256` of the `g`-th decimated subpolynomial at its root", each step preserved by
+  `cast_bfSweep` (`ring`), collapsing at `len = 1` to `NttEvalsAtRoots`. That outer-peel + stage invariant is
+  the single sub-step still open; the butterfly engine under it is closed.
+
+Given `NttEvalsAtRoots`/`InttInterpolates`, `NttLeftInverse` = eval∘interp collapsed by `omega_orthogonality`
+(brv bijective), and `NttMulHom` = eval-is-a-ring-hom + `evalRoot²⁵⁶ = −1`.
 -/
 import Dregg2.Crypto.VerifyCoreSpec
 import Mathlib.Data.ZMod.Basic
@@ -290,7 +300,207 @@ So orthogonality (rung 3) is now DISCHARGED; the residual has shrunk to the loop
 Proving it is a from-scratch butterfly-index induction over the nested `for`-loops with the threaded mutable
 twiddle counter `k` — two-index, array-DEPENDENT writes per butterfly (`a[j], a[j+len] ← a[j] ± z·a[j+len]`),
 which the `foldSet_*` engine (single-index, array-INDEPENDENT writes `g i`) does not reach; it needs a new
-"butterfly sweep preserves the coefficientwise linear relation" primitive. -/
+"butterfly sweep preserves the coefficientwise linear relation" primitive. **This primitive is now
+BUILT below** (`bfFold_spec`/`bfSweep_getElem`/`cast_bfSweep`); what remains is peeling the two OUTER
+loops and assembling the CT stage invariant on top of it — see the note after `cast_bfSweep`. -/
+
+/-! ### The butterfly-sweep loop primitive (the RUNG-2 engine the `foldSet_*` engine could not reach).
+
+The innermost `for j in [start : start+len]` loop of `ntt`/`intt` does TWO-index, array-DEPENDENT writes
+per butterfly (`a[j], a[j+len] ← a[j] ± z·a[j+len]`). These lemmas characterize that sweep entrywise from
+the actual imperative loop def (no `native_decide`), proving each butterfly is the 2×2 ℤ_q-linear map — the
+exact relation the CT stage invariant is preserved by. `bfFold_spec` is axiom-clean `{propext, Quot.sound}`. -/
+
+/-- Pointwise-equal step functions fold to the same result (missing from this build's `List` API). -/
+theorem foldl_ext {A B : Type} (f g : B → A → B) (h : ∀ b a, f b a = g b a)
+    (l : List A) (init : B) : l.foldl f init = l.foldl g init := by
+  induction l generalizing init with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [h init hd]; exact ih _
+
+/-- `get!` after `set!` at a DIFFERENT index is unchanged. -/
+theorem getElem!_set!_ne (b : Poly) (i j v : Nat) (h : i ≠ j) :
+    (b.set! i v)[j]! = b[j]! := by
+  simp only [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?,
+    Array.getElem?_setIfInBounds, Array.set!_eq_setIfInBounds]
+  rw [if_neg h]
+
+/-- `get!` after in-bounds `set!` at the SAME index reads the written value. -/
+theorem getElem!_set!_self (b : Poly) (i v : Nat) (h : i < b.size) :
+    (b.set! i v)[i]! = v := by
+  simp only [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?,
+    Array.getElem?_setIfInBounds, Array.set!_eq_setIfInBounds]
+  simp [h]
+
+theorem size_set! (b : Poly) (i v : Nat) : (b.set! i v).size = b.size := by
+  simp [Array.set!_eq_setIfInBounds]
+
+/-- The butterfly step (matches the desugared inner-loop body of `ntt` once `len ≥ 1`):
+`b[j] ← b[j] + z·b[j+len]`, `b[j+len] ← b[j] − z·b[j+len]`. -/
+def bfStepC (z len : Nat) (b : Poly) (j : Nat) : Poly :=
+  (b.set! (j + len) (subQ b[j]! (mulModQ z b[j + len]!))).set! j (addQ b[j]! (mulModQ z b[j + len]!))
+
+theorem bfStepC_size (z len : Nat) (b : Poly) (j : Nat) :
+    (bfStepC z len b j).size = b.size := by
+  unfold bfStepC; rw [size_set!, size_set!]
+
+/-- **THE BUTTERFLY-SWEEP LOOP PRIMITIVE.** Folding the butterfly step over `range' s m` (one contiguous
+sweep, window `m ≤ len`, indices in bounds) sets the low half to `a[p] + z·a[p+len]`, the high half to
+`a[p−len] − z·a[p]`, and leaves everything else fixed — each read seeing the ORIGINAL array `a0` (proven
+via the disjointness of the write pairs `{j, j+len}`). This is precisely the two-index, array-dependent
+write primitive the single-index `foldSet_*` engine does not reach. Axiom-clean `{propext, Quot.sound}`. -/
+theorem bfFold_spec (z len : Nat) (hlen : 1 ≤ len) (a0 : Poly) :
+    ∀ (m s : Nat) (b : Poly),
+      b.size = 256 → s + m + len ≤ 256 → m ≤ len →
+      (∀ p, s ≤ p → p < s + m → b[p]! = a0[p]!) →
+      (∀ p, s + len ≤ p → p < s + m + len → b[p]! = a0[p]!) →
+      (List.foldl (bfStepC z len) b (List.range' s m)).size = 256 ∧
+      (∀ p, s ≤ p → p < s + m →
+        (List.foldl (bfStepC z len) b (List.range' s m))[p]! = addQ a0[p]! (mulModQ z a0[p+len]!)) ∧
+      (∀ p, s + len ≤ p → p < s + m + len →
+        (List.foldl (bfStepC z len) b (List.range' s m))[p]! = subQ a0[p-len]! (mulModQ z a0[p]!)) ∧
+      (∀ p, (p < s ∨ s + m ≤ p) → (p < s + len ∨ s + m + len ≤ p) →
+        (List.foldl (bfStepC z len) b (List.range' s m))[p]! = b[p]!) := by
+  intro m
+  induction m with
+  | zero =>
+    intro s b hsz _ _ _ _
+    refine ⟨by simpa using hsz, ?_, ?_, ?_⟩
+    · intro p h1 h2; omega
+    · intro p h1 h2; omega
+    · intro p _ _; simp
+  | succ m' ih =>
+    intro s b hsz hbound hmlen hagLo hagHi
+    have hbs : b[s]! = a0[s]! := hagLo s (by omega) (by omega)
+    have hbsl : b[s+len]! = a0[s+len]! := hagHi (s+len) (by omega) (by omega)
+    have hs256 : s < b.size := by rw [hsz]; omega
+    have hsl256 : s + len < b.size := by rw [hsz]; omega
+    set b1 := bfStepC z len b s with hb1def
+    have hb1size : b1.size = 256 := by rw [hb1def, bfStepC_size]; exact hsz
+    have hb1_s : b1[s]! = addQ a0[s]! (mulModQ z a0[s+len]!) := by
+      rw [hb1def]; unfold bfStepC
+      rw [getElem!_set!_self _ s _ (by rw [size_set!]; exact hs256), hbs, hbsl]
+    have hb1_sl : b1[s+len]! = subQ a0[s]! (mulModQ z a0[s+len]!) := by
+      rw [hb1def]; unfold bfStepC
+      rw [getElem!_set!_ne _ s (s+len) _ (by omega),
+          getElem!_set!_self _ (s+len) _ hsl256, hbs, hbsl]
+    have hb1_other : ∀ p, p ≠ s → p ≠ s + len → b1[p]! = b[p]! := by
+      intro p hps hpsl
+      rw [hb1def]; unfold bfStepC
+      rw [getElem!_set!_ne _ s p _ (by omega), getElem!_set!_ne _ (s+len) p _ (by omega)]
+    have hrange : List.range' s (m'+1) = s :: List.range' (s+1) m' := by
+      rw [List.range'_succ]
+    have hagLo1 : ∀ p, s+1 ≤ p → p < s+1+m' → b1[p]! = a0[p]! := by
+      intro p h1 h2
+      rw [hb1_other p (by omega) (by omega)]
+      exact hagLo p (by omega) (by omega)
+    have hagHi1 : ∀ p, s+1+len ≤ p → p < s+1+m'+len → b1[p]! = a0[p]! := by
+      intro p h1 h2
+      rw [hb1_other p (by omega) (by omega)]
+      exact hagHi p (by omega) (by omega)
+    obtain ⟨ihsz, ihlo, ihhi, ihun⟩ :=
+      ih (s+1) b1 hb1size (by omega) (by omega) hagLo1 hagHi1
+    rw [hrange, List.foldl_cons, ← hb1def]
+    refine ⟨ihsz, ?_, ?_, ?_⟩
+    · intro p h1 h2
+      by_cases hp : p = s
+      · subst hp
+        rw [ihun p (by omega) (by omega), hb1_s]
+      · rw [ihlo p (by omega) (by omega)]
+    · intro p h1 h2
+      by_cases hp : p = s + len
+      · subst hp
+        rw [ihun (s+len) (by omega) (by omega), hb1_sl, Nat.add_sub_cancel]
+      · rw [ihhi p (by omega) (by omega)]
+    · intro p hlo hhi
+      rw [ihun p (by omega) (by omega)]
+      exact hb1_other p (by omega) (by omega)
+
+/-- One full butterfly sweep over the half-open block `[start, start+len)` with twiddle `z` — a VERBATIM
+copy of the innermost `for j` loop of `ntt` (and, with `z = −ζ^{brv(k)}`, of `intt`). -/
+def bfSweep (z start len : Nat) (a0 : Poly) : Poly := Id.run do
+  let mut a := a0
+  for j in [start : start + len] do
+    let t := mulModQ z a[j + len]!
+    a := a.set! (j + len) (subQ a[j]! t)
+    a := a.set! j (addQ a[j]! t)
+  return a
+
+/-- The imperative sweep is exactly the `bfStepC` fold (needs `len ≥ 1` to drop the `[j]!`-after-`set!`). -/
+theorem bfSweep_eq_foldl (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) :
+    bfSweep z start len a0 = List.foldl (bfStepC z len) a0 (List.range' start len) := by
+  unfold bfSweep
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure]
+  have hsize : [start:start+len].size = len := by
+    simp only [Std.Legacy.Range.size]; omega
+  rw [hsize]
+  refine foldl_ext _ _ ?_ _ _
+  intro b j
+  unfold bfStepC
+  congr 1
+  rw [getElem!_set!_ne _ (j+len) j _ (by omega)]
+
+/-- **Full-sweep entrywise characterization** (the clean corollary of `bfFold_spec` at `m = len`):
+low half `p ↦ a[p] + z·a[p+len]`, high half `p ↦ a[p−len] − z·a[p]`, rest untouched. -/
+theorem bfSweep_getElem (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly)
+    (hsz : a0.size = 256) (hbound : start + 2 * len ≤ 256) :
+    (∀ p, start ≤ p → p < start + len →
+      (bfSweep z start len a0)[p]! = addQ a0[p]! (mulModQ z a0[p+len]!)) ∧
+    (∀ p, start + len ≤ p → p < start + 2 * len →
+      (bfSweep z start len a0)[p]! = subQ a0[p-len]! (mulModQ z a0[p]!)) ∧
+    (∀ p, (p < start ∨ start + 2 * len ≤ p) →
+      (bfSweep z start len a0)[p]! = a0[p]!) := by
+  rw [bfSweep_eq_foldl z start len hlen a0]
+  obtain ⟨_, hlo, hhi, hun⟩ :=
+    bfFold_spec z len hlen a0 len start a0 hsz (by omega) (le_refl _)
+      (fun p _ _ => rfl) (fun p _ _ => rfl)
+  refine ⟨?_, ?_, ?_⟩
+  · intro p h1 h2; exact hlo p h1 (by omega)
+  · intro p h1 h2; exact hhi p (by omega) (by omega)
+  · intro p h
+    apply hun p
+    · omega
+    · omega
+
+theorem mulModQ_lt (a b : Nat) : mulModQ a b < q := by
+  unfold mulModQ; exact Nat.mod_lt _ (by unfold q; omega)
+
+/-- **The butterfly is the 2×2 ℤ_q-linear map** — the full-sweep entrywise formula lifted into `ZMod q`
+via the RUNG-0 cast homomorphism (`cast_addQ`/`cast_subQ`/`cast_mulModQ`). Low half `↦ a[p] + z·a[p+len]`,
+high half `↦ a[p−len] − z·a[p]`, rest fixed. This is the exact linear relation over the honest field that
+the CT stage invariant is preserved by. -/
+theorem cast_bfSweep (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly)
+    (hsz : a0.size = 256) (hbound : start + 2 * len ≤ 256) :
+    (∀ p, start ≤ p → p < start + len →
+      ((bfSweep z start len a0)[p]! : ZMod q)
+        = (a0[p]! : ZMod q) + (z : ZMod q) * (a0[p+len]! : ZMod q)) ∧
+    (∀ p, start + len ≤ p → p < start + 2 * len →
+      ((bfSweep z start len a0)[p]! : ZMod q)
+        = (a0[p-len]! : ZMod q) - (z : ZMod q) * (a0[p]! : ZMod q)) := by
+  obtain ⟨hlo, hhi, _⟩ := bfSweep_getElem z start len hlen a0 hsz hbound
+  constructor
+  · intro p h1 h2
+    rw [hlo p h1 h2, cast_addQ, cast_mulModQ]
+  · intro p h1 h2
+    rw [hhi p h1 h2, cast_subQ _ _ (by have := mulModQ_lt z a0[p]!; omega), cast_mulModQ]
+
+/-! ### The EXACT remaining step (the top of RUNG 2).
+
+`bfSweep` above is a verbatim copy of `ntt`'s innermost `for j` loop, and `cast_bfSweep` proves that sweep
+IS the 2×2 ℤ_q-linear butterfly. What remains to discharge `NttEvalsAtRoots` (and dually `InttInterpolates`)
+is a genuinely separate, larger induction over the two OUTER loops of `ntt`:
+
+* **peel** the `for s in [0:8]` / `for blk in [0:nblk]` loops (state = the mutable pair `(a, k)`), expressing
+  `ntt w` as the ordered composition of `bfSweep (zetaTwiddle kᵢ) startᵢ (128 >>> s)` — the twiddle counter
+  `k` runs `1 … 255` across all blocks (`Σ_s nblk = 1+2+…+128 = 255`), so global block `g` uses `zetaTwiddle g`;
+* carry the **CT stage invariant**: after stage `s`, array position `g·len_s + i` (`len_s = 2^{7−s}`) holds
+  `eval256` of the `g`-th length-`2^{s+1}` decimated subpolynomial at the appropriate `ζ^{odd}` root, each
+  butterfly step preserving it by `cast_bfSweep` (`ring`);
+* collapse the final stage (`len = 1`) to `(ntt a)[m]! = eval256 a (evalRoot m)`.
+
+That outer-loop-peel + stage-invariant induction is the single named sub-step still open; the butterfly
+engine it rests on is closed above. -/
 
 /-- The 256 negacyclic evaluation points `ζ^{2·brv(m)+1}` (the roots of `X²⁵⁶+1` over `ℤ_q`). -/
 def evalRoot (m : Nat) : ZMod q := (zeta : ZMod q)^(2 * brv8 m + 1)
@@ -354,5 +564,8 @@ deliberately NOT gated here — it is the accepted computational residual, isola
 #assert_axioms cast_pointwiseMul
 #assert_axioms omega_orthogonality
 #assert_axioms orderOf_zeta
+#assert_axioms bfFold_spec
+#assert_axioms bfSweep_getElem
+#assert_axioms cast_bfSweep
 
 end Dregg2.Crypto.MlDsaRing
