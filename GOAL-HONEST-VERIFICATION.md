@@ -379,3 +379,11 @@ over BabyBear — its constraints ARE field constraints; raw-ℤ was the artifac
 field-faithful chain `MainAirAcceptF ⟹ Satisfied2`, fed by K′(a) `ood_forces_mainAirAccept_field` + K′(b)
 `constraintPoly` — built alongside; the ℤ chain (AirChecksSatisfied/AirLegsDischarged/AlgoStarkSoundInstance)
 retired at cutover, not mutated in place. This is a faithfulness correction toward the deployed object.
+- ★★★ MOD-P REFACTOR SCOPED (codex investigation, gated + doc moved to docs/reference/DEBT-A-MODP-DENOTATION-SCOPE.md):
+  BENIGN-GAP CHECK = refactor REQUIRED (Rust canonicalizes cells, circuit/src/field.rs:14-17, but NO invariant
+  bounds ℤ residuals — the deployed 3-term affine gate still reaches p; I confirmed no %p/ZMod cast at envAt).
+  RIPPLE = ~220 files (spot-checked: 147 touch Satisfied2, 168 touch holdsAt/holdsVm) — 3 AIR-chain · 17 apex/
+  soundness · 179 descriptor/refinement · 14 non-vacuity · 7 core. RECOMMENDATION = A2 (additive field denotation
+  → cutover), required; first reviewable slice 7-12 files; full retirement 185-220. Riskiest = per-effect proofs
+  that derive ordered-ℤ conclusions from holdsAt. Acceptance = grep-zero old Satisfied2 on the StarkSound/apex
+  path + a differential (residual p in ℤ, 0 in BabyBear). ⚠ EMBER-GATED: the 220-file GO is foundational.
