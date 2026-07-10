@@ -164,6 +164,14 @@ tempfile = "3"
 # proves the node's installed Lean verify core (BRICK 8) is the accept/reject authority routing them —
 # same fips204 0.4.x the `dregg-pq` leaf carries, so the sig bytes are byte-identical to production.
 fips204 = "0.4"
+# `tests/mlkem_live_decaps.rs` generates a GENUINE ML-KEM-768 keypair + encapsulation with the crate and
+# proves the node's installed Lean decaps core (BRICK K6) recovers the SAME shared secret and is the
+# authority behind `HybridResponder::finish` — same ml-kem 0.2.3 the `dregg-pq` leaf carries, so the
+# dk/ct bytes are byte-identical to production.
+ml-kem = "0.2.3"
+# `rand_core::OsRng` (the getrandom-backed CSPRNG) for the ml-kem keygen/encaps in `mlkem_live_decaps.rs`
+# — the same rand_core 0.6 `CryptoRngCore` ml-kem / x25519-dalek consume in production.
+rand_core = { version = "0.6", features = ["getrandom"] }
 http-body-util = "0.1"
 x25519-dalek = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }

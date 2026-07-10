@@ -222,4 +222,81 @@ secret, exactly ML-KEM's implicit-reject semantics. -/
 theorem decaps_rejects_tampered :
     mlkemDecaps realDk.toList realCtTampered.toList ≠ realSs.toList := by native_decide
 
+/-! ## THE `@[export]` FFI ENTRY (Rust → Lean) — the REAL, FULL-BYTE ML-KEM-768 decapsulation over a byte wire.
+
+BRICK K6 — the ML-KEM analog of BRICK 8's `dregg_fips204_verify_real`. The deployed hybrid-KEM decaps
+(`dregg-pq/src/hybrid_kem.rs` `HybridResponder::finish`) currently recovers the ML-KEM shared secret by
+calling the `ml-kem` crate's `.decapsulate`. This export routes THAT call through the Lean-verified
+`mlkemDecaps` (the full FO pipeline proved to recover the REAL crate secret and implicit-reject tampers, above),
+so the `ml-kem` crate leaves the node's KEM-decaps TCB. `dregg-lean-ffi::shadow_mlkem_decaps_real` runs it
+natively; the transcript/KDF around the ML-KEM secret (X25519 combiner) is unchanged — only the `.decapsulate`
+call is replaced. -/
+
+/-- One lowercase/uppercase hex nibble → its `[0,16)` value; `none` on a non-hex char. -/
+def hexNibble? (c : Char) : Option UInt8 :=
+  let n := c.toNat
+  if '0'.toNat ≤ n ∧ n ≤ '9'.toNat then some (UInt8.ofNat (n - '0'.toNat))
+  else if 'a'.toNat ≤ n ∧ n ≤ 'f'.toNat then some (UInt8.ofNat (n - 'a'.toNat + 10))
+  else if 'A'.toNat ≤ n ∧ n ≤ 'F'.toNat then some (UInt8.ofNat (n - 'A'.toNat + 10))
+  else none
+
+/-- Decode a hex char list to bytes; `none` on an odd length or any non-hex char (fail-closed). -/
+def decodeHexChars : List Char → Option (List UInt8)
+  | [] => some []
+  | [_] => none
+  | hi :: lo :: rest => do
+    let h ← hexNibble? hi
+    let l ← hexNibble? lo
+    let rest' ← decodeHexChars rest
+    pure (UInt8.ofNat (h.toNat * 16 + l.toNat) :: rest')
+
+/-- One byte → two lowercase-hex chars. -/
+def toHexDigit (n : UInt8) : Char :=
+  let n := n.toNat
+  if n < 10 then Char.ofNat ('0'.toNat + n) else Char.ofNat ('a'.toNat + n - 10)
+
+/-- Encode bytes as a lowercase-hex string (`decodeHexChars` is its left inverse). -/
+def hexEncode (bs : List UInt8) : String :=
+  String.ofList (bs.foldr (fun b acc => toHexDigit (b / 16) :: toHexDigit (b % 16) :: acc) [])
+
+/-- The real byte wire `hex(dk) hex(ct)` the FFI reads. -/
+def realWireKem (dk ct : List UInt8) : String :=
+  hexEncode dk ++ " " ++ hexEncode ct
+
+/-- **FFI entry** (Rust→Lean) for the REAL, FULL-BYTE ML-KEM-768 DECAPS (BRICK K6): parse the two hex fields
+`hex(dk) hex(ct)`, run the Lean-verified `mlkemDecaps` over the decoded bytes, and return `hex(K)` — the
+recovered 32-byte shared secret (`H(m′)`-derived on a matching re-encryption, else the implicit-reject secret
+`J(z‖c)`; ML-KEM decaps never fails on a well-formed ciphertext, a tamper yields a DIFFERENT secret). This runs
+the FULL-DIMENSION FO decapsulation (not the `A=1,n=1` scalar toy) as native code — the security-critical
+recover of a REAL 2400-byte decapsulation key + 1088-byte ciphertext. Any malformed wire fails CLOSED (`"ERR"`),
+which the Rust caller treats as a decaps fault (fail-closed, the parties diverge). -/
+@[export dregg_mlkem_decaps_real]
+def mlkemDecapsRealFFI (input : String) : String :=
+  match input.splitOn " " with
+  | [dkH, ctH] =>
+    match decodeHexChars dkH.toList, decodeHexChars ctH.toList with
+    | some dk, some ct => hexEncode (mlkemDecaps dk ct)
+    | _, _ => "ERR"
+  | _ => "ERR"
+
+/-! ### Teeth — the byte-wire decaps is NON-VACUOUS: the REAL crate ciphertext recovers the REAL secret,
+a tamper recovers a DIFFERENT one. Drive the WHOLE wire path (hex encode → split → hex decode → `mlkemDecaps`
+→ hex encode) at build time with `native_decide` over the GENUINE `ml-kem` v0.2.3 crate vectors (from K3). -/
+
+/-- **THE KEYSTONE (byte-wire)**: the FFI, fed the REAL crate `dk`/`ct` as the hex wire, recovers `hex(realSs)`
+— the whole Rust→Lean marshalling path recovers the REAL 32-byte shared secret. -/
+theorem mlkemDecapsRealFFI_recovers_real_secret :
+    mlkemDecapsRealFFI (realWireKem realDk.toList realCt.toList) = hexEncode realSs.toList := by
+  native_decide
+
+/-- **Implicit reject (byte-wire)**: one flipped ciphertext byte on the wire ⇒ a DIFFERENT recovered secret. -/
+theorem mlkemDecapsRealFFI_rejects_tampered :
+    mlkemDecapsRealFFI (realWireKem realDk.toList realCtTampered.toList) ≠ hexEncode realSs.toList := by
+  native_decide
+
+-- A malformed wire fails CLOSED (interpreted `#guard`, fast): wrong field count, odd-length hex, non-hex.
+#guard mlkemDecapsRealFFI "zz zz" = "ERR"
+#guard mlkemDecapsRealFFI "00" = "ERR"
+#guard mlkemDecapsRealFFI "0 0" = "ERR"
+
 end Dregg2.Crypto.MlKemDecaps

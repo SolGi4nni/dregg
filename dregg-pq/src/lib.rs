@@ -35,7 +35,9 @@ pub mod hybrid_kem;
 mod mldsa;
 
 pub use hybrid_kem::{
-    install_lean_decaps_core, install_lean_encaps_core, ml_kem_decaps_core, ml_kem_encaps_core,
+    MlKemDecapsCoreInstall, install_lean_decaps_core, install_lean_encaps_core,
+    install_lean_kem_decaps_core_real, install_verified_mlkem_decaps_core, ml_kem_decaps_core,
+    ml_kem_encaps_core, mlkem_decaps_real_core_installed,
 };
 
 pub use mldsa::{

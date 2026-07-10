@@ -301,6 +301,36 @@ pub fn shadow_fips203_decaps(wire: &str) -> Result<String, String> {
     ffi::lean_fips203_decaps(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified REAL, FULL-BYTE ML-KEM-768 decaps core
+/// (`dregg_mlkem_decaps_real`, BRICK K6 — the C-ABI entry over `Dregg2.Crypto.MlKemDecaps.mlkemDecapsRealFFI`
+/// = the FULL-DIMENSION `mlkemDecaps` over the real 2400/1088-byte decapsulation key/ciphertext). When false,
+/// a caller must fall back to the `ml-kem` crate decaps. Distinct from [`lean_available`]: a stale archive can
+/// lack this export.
+pub fn mlkem_decaps_real_core_available() -> bool {
+    ffi::mlkem_decaps_real_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted REAL, FULL-BYTE ML-KEM-768 decaps core `@[export] dregg_mlkem_decaps_real`
+/// (the executable `Dregg2.Crypto.MlKemDecaps.mlkemDecapsRealFFI` over `mlkemDecaps` — the full FO pipeline:
+/// K-PKE decrypt, `G = SHA3-512` split, re-encryption, byte-exact `c' = c` implicit-reject check). This runs
+/// the SECURITY-CRITICAL decaps of a REAL ML-KEM-768 key + ciphertext as a Lean-verified object (leanc-native)
+/// — a tampered ciphertext implicit-rejects to a DIFFERENT secret, PROVED by `mlkemDecapsRealFFI_recovers_real_secret`
+/// / `mlkemDecapsRealFFI_rejects_tampered`.
+///
+/// Wire grammar the export reads:
+///   * in:  `"hex(dk) hex(ct)"` (two space-separated lowercase-hex fields over the real 2400-byte
+///     decapsulation key / 1088-byte ciphertext).
+///   * out: `hex(K)` — the recovered 32-byte shared secret as lowercase hex; `"ERR"` for a malformed wire
+///     (the fail-closed answer the Rust caller treats as a decaps fault).
+///
+/// `dregg-pq::HybridResponder::finish` routes its ML-KEM decaps through this entry (installed via
+/// `dregg_pq::install_lean_kem_decaps_core_real`), so the deployed decaps runs the verified Lean core over the
+/// real bytes rather than the trusted `ml-kem` primitive. Returns `Err` if the archive lacks the export.
+pub fn shadow_mlkem_decaps_real(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_mlkem_decaps_real(wire)
+}
+
 /// Whether the linked archive exports the extracted, Lean-verified GRAIN R3 whole-history verify core
 /// (`dregg_grain_r3_verify`, the C-ABI entry over `Dregg2.Grain.R3Verify.r3VerifyFFI` = the PROVED
 /// `r3VerifyCore`). When false, a caller (`grain-verify::r3_verify`) cannot render the Lean-proven R3
@@ -470,6 +500,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_fips203_decaps_present)]
         fn dregg_fips203_decaps_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_mlkem_decaps_real_present)]
+        fn dregg_mlkem_decaps_real_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -761,6 +797,38 @@ mod ffi {
         false
     }
 
+    /// ML-KEM-768-DECAPS-REAL extraction (BRICK K6) — run the VERIFIED Lean ML-KEM decaps core over the REAL,
+    /// FULL-BYTE decapsulation key/ciphertext (leanc-native). Input: `"hex(dk) hex(ct)"` (two space-separated
+    /// lowercase-hex fields over the real 2400/1088-byte dk/ct); output: `hex(K)` (the recovered 32-byte shared
+    /// secret) or `"ERR"` (the fail-closed answer for a malformed wire). This is the FULL-DIMENSION FO
+    /// `mlkemDecaps` (SHA3-512 `G` split / K-PKE decrypt / re-encryption / byte-exact implicit-reject check,
+    /// proved to recover a genuine crate secret and diverge on a tamper) — the object
+    /// `dregg-pq::HybridResponder::finish` routes through to take the `ml-kem` crate OUT of the decaps TCB.
+    #[cfg(dregg_mlkem_decaps_real_present)]
+    pub fn lean_mlkem_decaps_real(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_mlkem_decaps_real_str,
+            "dregg_mlkem_decaps_real_str",
+        )
+    }
+
+    #[cfg(not(dregg_mlkem_decaps_real_present))]
+    pub fn lean_mlkem_decaps_real(_wire: &str) -> Result<String, String> {
+        Err("dregg_mlkem_decaps_real not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-KEM-768 decaps core.
+    #[cfg(dregg_mlkem_decaps_real_present)]
+    pub fn mlkem_decaps_real_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_mlkem_decaps_real_present))]
+    pub fn mlkem_decaps_real_present() -> bool {
+        false
+    }
+
     /// GRAIN-R3 extraction — run the VERIFIED Lean whole-history R3-accept core (leanc-native).
     /// Input: `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints); output: `"1"`
     /// (accept) / `"0"` (reject, and the fail-closed answer for a malformed wire). This is the PROVED
@@ -918,6 +986,24 @@ mod ffi {
             // Malformed wires fail CLOSED.
             assert_eq!(lean_fips203_encaps("garbage").unwrap(), "ERR");
             assert_eq!(lean_fips203_decaps("garbage").unwrap(), "ERR");
+        }
+    }
+
+    #[cfg(all(test, dregg_mlkem_decaps_real_present))]
+    mod mlkem_decaps_real_extraction {
+        use super::*;
+        /// BRICK K6 smoke test: the REAL, full-byte ML-KEM-768 decaps export links and runs (leanc-native),
+        /// and a malformed byte wire fails CLOSED ("ERR"). The real-vector recover/diverge is exercised
+        /// end-to-end with a genuine `ml-kem` crate encaps → the deployed `hybrid_kem` decaps path in
+        /// `node`'s `mlkem_live_decaps` gate; here we only confirm the bridge is wired and fail-closed.
+        #[test]
+        fn verified_real_ml_kem_decaps_bridge_links_and_fails_closed() {
+            lean_init_once().expect("init the Lean runtime");
+            // Wrong field count fails closed (not exactly two space-separated fields).
+            assert_eq!(lean_mlkem_decaps_real("zz zz").unwrap(), "ERR");
+            assert_eq!(lean_mlkem_decaps_real("00").unwrap(), "ERR");
+            // Odd-length hex fails closed (decodeHexChars rejects an unpaired nibble).
+            assert_eq!(lean_mlkem_decaps_real("0 0").unwrap(), "ERR");
         }
     }
 

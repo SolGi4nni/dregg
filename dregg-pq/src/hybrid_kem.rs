@@ -119,6 +119,129 @@ pub fn ml_kem_decaps_core(wire: &str) -> Option<String> {
     core(wire)
 }
 
+/// A pluggable, Lean-VERIFIED **REAL, FULL-BYTE** ML-KEM-768 decaps backend (BRICK K6), installed by an
+/// integration layer. Where [`LeanKemCore`] above carries the `A=1,n=1` SCALAR decaps over a 6-integer toy
+/// wire, THIS core carries the FULL-DIMENSION ML-KEM-768 decapsulation over the actual `dk ‖ ct` bytes.
+///
+/// The extracted core is `Dregg2.Crypto.MlKemDecaps.mlkemDecapsRealFFI` over `mlkemDecaps` (the FO pipeline:
+/// K-PKE decrypt, `G = SHA3-512` split, full re-encryption, byte-exact `c' = c` implicit-reject over the real
+/// n=256 negacyclic ring / NTT / real 2400/1088-byte codec), `@[export]`ed as `dregg_mlkem_decaps_real` and
+/// compiled to leanc-native code. It is PROVED (`native_decide`) to RECOVER a genuine `ml-kem` v0.2.3 crate
+/// shared secret (`mlkemDecapsRealFFI_recovers_real_secret`) and to implicit-reject a one-byte tamper to a
+/// DIFFERENT secret (`mlkemDecapsRealFFI_rejects_tampered`). `dregg-lean-ffi::shadow_mlkem_decaps_real` runs
+/// it natively.
+///
+/// dregg-pq stays a LIGHT leaf (it never depends on the ~195 MB Lean archive): it takes a function pointer.
+/// An integration layer that CAN link the archive installs the native core via
+/// [`install_lean_kem_decaps_core_real`]; once installed, [`HybridResponder::finish`] takes the ML-KEM shared
+/// secret from the Lean-verified object over the real bytes — the `ml-kem` crate is NO LONGER the decaps
+/// authority (its `.decapsulate` is not called). The wire is `"hex(dk) hex(ct)"`; the reply is `hex(K)` (the
+/// recovered 32-byte secret) / `"ERR"` (malformed → fail closed).
+type LeanKemDecapsCoreReal = fn(wire: &str) -> Option<String>;
+static LEAN_KEM_DECAPS_CORE_REAL: OnceLock<LeanKemDecapsCoreReal> = OnceLock::new();
+
+/// Install the extracted, Lean-verified REAL, full-byte ML-KEM-768 decaps core (e.g.
+/// `|w| dregg_lean_ffi::shadow_mlkem_decaps_real(w).ok()`). Once installed, [`HybridResponder::finish`] routes
+/// the SECURITY-CRITICAL ML-KEM decaps through it — taking the `ml-kem` crate OUT of the decaps TCB. Returns
+/// `false` if one is already installed (once-per-process; the verified core is not hot-swappable).
+pub fn install_lean_kem_decaps_core_real(core: LeanKemDecapsCoreReal) -> bool {
+    LEAN_KEM_DECAPS_CORE_REAL.set(core).is_ok()
+}
+
+/// Whether a Lean-verified REAL ML-KEM decaps core has been installed (so [`HybridResponder::finish`] takes
+/// the ML-KEM shared secret from the Lean-verified object rather than the `ml-kem` crate's `.decapsulate`). A
+/// deployed, verified node installs one at startup.
+pub fn mlkem_decaps_real_core_installed() -> bool {
+    LEAN_KEM_DECAPS_CORE_REAL.get().is_some()
+}
+
+/// Outcome of installing the Lean-verified REAL ML-KEM decaps core as [`HybridResponder::finish`]'s authority
+/// (via [`install_verified_mlkem_decaps_core`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlKemDecapsCoreInstall {
+    /// The real core was installed by THIS call — the `ml-kem` crate is now out of the decaps TCB.
+    Installed,
+    /// A core was already installed this process (install is once-per-process) — crate still out of TCB.
+    AlreadyInstalled,
+    /// The linked Lean archive does not export the real decaps core; the `ml-kem`-crate fallback stays in
+    /// place (a valid FIPS-203 decaps, but NOT the Lean-verified authority).
+    ExportAbsent,
+}
+
+/// THE ONE install every deployed, archive-linked process calls to make the Lean-verified REAL, full-byte
+/// ML-KEM-768 decaps core ([`install_lean_kem_decaps_core_real`]) the shared-secret AUTHORITY behind
+/// [`HybridResponder::finish`] — taking the `ml-kem` crate OUT of that process's KEM-decaps TCB.
+///
+/// dregg-pq stays a LIGHT leaf: the archive-dependent symbols are INJECTED as `fn` pointers rather than
+/// depended on. Every host passes the SAME two `dregg-lean-ffi` symbols:
+///
+/// ```ignore
+/// dregg_pq::install_verified_mlkem_decaps_core(
+///     dregg_lean_ffi::mlkem_decaps_real_core_available,
+///     |w| dregg_lean_ffi::shadow_mlkem_decaps_real(w).ok(),
+/// )
+/// ```
+///
+/// Gated on `export_available()` (the `mlkem_decaps_real_core_available()` check): install ONLY when the
+/// linked archive actually EXPORTS the real core. A stale archive lacking it would make the installed core
+/// return `None` on every call and — because [`HybridResponder::finish`] fails CLOSED on a core fault — reject
+/// every ciphertext; so when the export is absent we return [`MlKemDecapsCoreInstall::ExportAbsent`] and keep
+/// the `ml-kem`-crate fallback (a valid FIPS-203 decaps) rather than bricking decaps. Idempotent and
+/// once-per-process.
+pub fn install_verified_mlkem_decaps_core(
+    export_available: fn() -> bool,
+    shadow: fn(wire: &str) -> Option<String>,
+) -> MlKemDecapsCoreInstall {
+    if !export_available() {
+        return MlKemDecapsCoreInstall::ExportAbsent;
+    }
+    if install_lean_kem_decaps_core_real(shadow) {
+        MlKemDecapsCoreInstall::Installed
+    } else {
+        MlKemDecapsCoreInstall::AlreadyInstalled
+    }
+}
+
+/// Marshal `(dk, ct)` into the byte wire the Lean real decaps core reads: `"hex(dk) hex(ct)"` (two
+/// space-separated lowercase-hex fields).
+fn real_decaps_wire(dk: &[u8], ct: &[u8]) -> String {
+    const HEX: &[u8; 16] = b"0123456789abcdef";
+    let mut s = String::with_capacity((dk.len() + ct.len()) * 2 + 1);
+    for (i, field) in [dk, ct].into_iter().enumerate() {
+        if i != 0 {
+            s.push(' ');
+        }
+        for &b in field {
+            s.push(HEX[(b >> 4) as usize] as char);
+            s.push(HEX[(b & 0x0f) as usize] as char);
+        }
+    }
+    s
+}
+
+/// Decode the Lean real decaps core's reply — exactly 64 lowercase-hex chars — into the 32-byte ML-KEM shared
+/// secret. `None` on any malformed reply (wrong length, non-hex, or `"ERR"`), which the caller treats as a
+/// fail-closed decaps fault.
+fn decode_ss_hex(reply: &str) -> Option<[u8; 32]> {
+    let bytes = reply.as_bytes();
+    if bytes.len() != 64 {
+        return None;
+    }
+    fn nibble(c: u8) -> Option<u8> {
+        match c {
+            b'0'..=b'9' => Some(c - b'0'),
+            b'a'..=b'f' => Some(c - b'a' + 10),
+            b'A'..=b'F' => Some(c - b'A' + 10),
+            _ => None,
+        }
+    }
+    let mut out = [0u8; 32];
+    for (i, chunk) in bytes.chunks_exact(2).enumerate() {
+        out[i] = (nibble(chunk[0])? << 4) | nibble(chunk[1])?;
+    }
+    Some(out)
+}
+
 type Ek = <MlKem768 as KemCore>::EncapsulationKey;
 type Dk = <MlKem768 as KemCore>::DecapsulationKey;
 
@@ -316,6 +439,20 @@ impl HybridResponder {
     /// key — identical to the initiator's when the handshake is faithful.
     ///
     /// Fails only if the ML-KEM ciphertext is malformed.
+    ///
+    /// # The ML-KEM shared secret comes from the Lean-verified core, not the crate
+    ///
+    /// When a Lean-verified REAL decaps core is installed ([`install_lean_kem_decaps_core_real`], done by any
+    /// process that can link `dregg-lean-ffi`), the ML-KEM half's shared secret is recovered by the extracted,
+    /// full-byte `MlKemDecaps.mlkemDecaps` (BRICK K6) over the actual `dk ‖ ct` bytes — running as leanc-native
+    /// code, PROVED to recover a genuine crate secret and implicit-reject tampers to a DIFFERENT secret. On
+    /// that path the `ml-kem` crate's `.decapsulate` is NOT called: the crate has left the decaps TCB. The
+    /// X25519 + transcript + HKDF combiner around the ML-KEM secret is unchanged.
+    ///
+    /// When NO verified core is installed (a caller that has not wired the Lean archive), this falls back to
+    /// the `ml-kem` crate primitive. `dregg-pq` is a light leaf and cannot itself link the ~195 MB Lean
+    /// archive, so the routing is an install-time seam rather than a direct call; a deployed, verified node
+    /// installs the real core at startup and thereby leaves the crate out of the KEM-decaps TCB.
     pub fn finish(&self, msg: &HybridInitiatorMessage) -> Result<[u8; 32], HybridError> {
         // Classical half: DH of our secret against the initiator's pk.
         let ss_x25519 = self
@@ -323,14 +460,28 @@ impl HybridResponder {
             .diffie_hellman(&PublicKey::from(msg.x25519_pk))
             .to_bytes();
 
-        // Post-quantum half: decapsulate the ciphertext with our dk.
+        // Post-quantum half: recover the ML-KEM shared secret. Length-gate the ciphertext first (a
+        // wrong-length ct is a malformed-wire fault on BOTH paths); `ct` is consumed by the crate fallback.
         let ct = Ciphertext::<MlKem768>::try_from(msg.mlkem_ct.as_slice())
             .map_err(|_| HybridError::BadCiphertext)?;
-        let ss_mlkem = shared_to_array(
-            self.mlkem_dk
-                .decapsulate(&ct)
-                .map_err(|_| HybridError::BadCiphertext)?,
-        );
+        let ss_mlkem = if let Some(core) = LEAN_KEM_DECAPS_CORE_REAL.get() {
+            // AUTHORITY: the Lean-verified real decaps core over the real bytes. The `ml-kem` crate's
+            // `.decapsulate` is NOT consulted on this path — it has left the KEM-decaps TCB. A `None` (archive
+            // fault) or malformed (`"ERR"` / non-32-byte) reply fails CLOSED as a bad ciphertext, so the node
+            // never proceeds with a wrong secret. A well-formed-but-tampered ct returns the implicit-reject
+            // secret (a valid 64-hex-char reply), so the parties diverge — ML-KEM's implicit-reject semantics.
+            let dk_bytes = self.mlkem_dk.as_bytes();
+            let wire = real_decaps_wire(dk_bytes.as_slice(), &msg.mlkem_ct);
+            let reply = core(&wire).ok_or(HybridError::BadCiphertext)?;
+            decode_ss_hex(&reply).ok_or(HybridError::BadCiphertext)?
+        } else {
+            // FALLBACK (no verified core installed): the `ml-kem` crate primitive.
+            shared_to_array(
+                self.mlkem_dk
+                    .decapsulate(&ct)
+                    .map_err(|_| HybridError::BadCiphertext)?,
+            )
+        };
 
         let t = transcript(
             &self.x25519_pk,
@@ -505,6 +656,65 @@ mod tests {
         assert_eq!(
             responder.finish(&msg).unwrap_err(),
             HybridError::BadCiphertext
+        );
+    }
+
+    /// BRICK K6 marshalling: the `dk ‖ ct` wire the Lean real decaps core reads is `"hex(dk) hex(ct)"`, and
+    /// its 64-hex-char reply decodes back to the 32-byte shared secret; a malformed reply (`"ERR"`, wrong
+    /// length, non-hex) fails closed to `None`. These are the pure marshallers `finish` uses on the
+    /// Lean-routed path; the end-to-end real-core install + recover is the running-binary gate
+    /// `node/tests/mlkem_live_decaps.rs` (which links the archive).
+    #[test]
+    fn real_decaps_wire_and_reply_roundtrip() {
+        // Wire is two space-separated lowercase-hex fields.
+        assert_eq!(
+            real_decaps_wire(&[0x00, 0xff, 0x10], &[0xab, 0x01]),
+            "00ff10 ab01"
+        );
+        assert_eq!(real_decaps_wire(&[], &[]), " ");
+
+        // A 32-byte secret round-trips through hex.
+        let ss = [
+            0x00u8, 0x11, 0x22, 0x33, 0x44, 0x55, 0x66, 0x77, 0x88, 0x99, 0xaa, 0xbb, 0xcc, 0xdd,
+            0xee, 0xff, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef, 0xfe, 0xdc, 0xba, 0x98,
+            0x76, 0x54, 0x32, 0x10,
+        ];
+        let hex: String = ss.iter().map(|b| format!("{b:02x}")).collect();
+        assert_eq!(decode_ss_hex(&hex), Some(ss));
+
+        // Fail-closed replies decode to None (the caller treats these as a bad-ciphertext fault).
+        assert_eq!(
+            decode_ss_hex("ERR"),
+            None,
+            "the malformed-wire sentinel fails closed"
+        );
+        assert_eq!(decode_ss_hex(""), None, "empty reply fails closed");
+        assert_eq!(
+            decode_ss_hex(&hex[..62]),
+            None,
+            "short (31-byte) reply fails closed"
+        );
+        assert_eq!(
+            decode_ss_hex(&format!("{}zz", &hex[..62])),
+            None,
+            "non-hex reply fails closed"
+        );
+    }
+
+    /// The shared install seam reports `ExportAbsent` (and does NOT install) when the archive lacks the real
+    /// decaps export — the gate that keeps the `ml-kem`-crate fallback rather than bricking decaps. (Kept
+    /// export-absent so it never touches the once-per-process `LEAN_KEM_DECAPS_CORE_REAL` cell that the
+    /// running-binary gate installs.)
+    #[test]
+    fn mlkem_install_seam_export_absent_keeps_fallback() {
+        assert_eq!(
+            install_verified_mlkem_decaps_core(|| false, |_| None),
+            MlKemDecapsCoreInstall::ExportAbsent,
+            "an absent export must NOT install a core (crate fallback stays)"
+        );
+        assert!(
+            !mlkem_decaps_real_core_installed(),
+            "no real KEM decaps core is installed by the export-absent path"
         );
     }
 }

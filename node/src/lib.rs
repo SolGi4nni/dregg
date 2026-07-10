@@ -964,6 +964,35 @@ async fn run_node(
         ),
     }
 
+    // ── ML-KEM DECAPS: install the Lean-verified REAL core as `HybridResponder::finish`'s AUTHORITY ──
+    // The hybrid session KEM (`dregg_pq::hybrid_kem`) recovers the ML-KEM-768 shared secret on the responder
+    // side by calling the `ml-kem` crate's `.decapsulate`. With a REAL core installed it instead recovers the
+    // secret from the extracted, full-byte `Dregg2.Crypto.MlKemDecaps.mlkemDecaps` (BRICK K6 — the FO pipeline
+    // proved to recover a genuine crate secret and implicit-reject tampers to a DIFFERENT secret) and NEVER
+    // consults the `ml-kem` crate, taking that crate OUT of the node's KEM-decaps TCB. The X25519 + transcript
+    // + HKDF combiner around the ML-KEM secret is unchanged — only the `.decapsulate` call is replaced.
+    //
+    // Gated on `mlkem_decaps_real_core_available()`: install ONLY when the linked archive actually EXPORTS
+    // `dregg_mlkem_decaps_real`. A stale archive lacking it would make `finish` fail CLOSED on every
+    // ciphertext, so when the export is absent we keep the `ml-kem`-crate fallback (a valid FIPS-203 decaps).
+    match install_mlkem_verified_decaps_core() {
+        MlKemDecapsCoreInstall::Installed => info!(
+            "ML-KEM decaps: verified Lean core installed — the extracted full-byte \
+             `MlKemDecaps.mlkemDecaps` is now the shared-secret authority behind `HybridResponder::finish`; \
+             the `ml-kem` crate is no longer the decaps authority (out of the node's KEM-decaps TCB)"
+        ),
+        MlKemDecapsCoreInstall::AlreadyInstalled => info!(
+            "ML-KEM decaps: a verified Lean core was already installed this process (install is \
+             once-per-process) — the `ml-kem` crate remains out of the KEM-decaps TCB"
+        ),
+        MlKemDecapsCoreInstall::ExportAbsent => warn!(
+            "ML-KEM decaps: the linked Lean archive does NOT export `dregg_mlkem_decaps_real` \
+             (`mlkem_decaps_real_core_available()` is false) — the node's ML-KEM decaps falls back to the \
+             `ml-kem` crate primitive (a valid FIPS-203 decaps, but NOT the Lean-verified authority). \
+             Rebuild against a HEAD-matching archive to route decaps through Lean."
+        ),
+    }
+
     // Initialize node state with configurable key file.
     let has_peers = !peers.is_empty();
     let node_state = match state::NodeState::new_with_key_file(&data_path, peers, key_file) {
@@ -2311,6 +2340,26 @@ pub fn install_mldsa_verified_sign_core() -> MlDsaSignCoreInstall {
     } else {
         MlDsaSignCoreInstall::AlreadyInstalled
     }
+}
+
+/// Outcome of installing the Lean-verified REAL ML-KEM decaps core as `dregg_pq::HybridResponder::finish`'s
+/// authority. Re-exported from `dregg-pq` (the single shared install object); node keeps the name for the
+/// running-binary gate `tests/mlkem_live_decaps.rs`.
+pub use dregg_pq::MlKemDecapsCoreInstall;
+
+/// Install the extracted, Lean-verified REAL, full-byte ML-KEM-768 decaps core
+/// (`Dregg2.Crypto.MlKemDecaps.mlkemDecaps`, BRICK K6) as the shared-secret AUTHORITY behind
+/// `dregg_pq::HybridResponder::finish` — taking the `ml-kem` crate OUT of the node's KEM-decaps TCB. Thin
+/// node-side wrapper over the SHARED `dregg_pq::install_verified_mlkem_decaps_core`: it injects the two
+/// `dregg-lean-ffi` archive symbols. Gated on `mlkem_decaps_real_core_available()` so a stale archive that
+/// lacks the export does not brick decaps (an absent core would make `finish` fail closed on every ciphertext).
+/// Idempotent and once-per-process. Exercised directly by `tests/mlkem_live_decaps.rs`, so the running-binary
+/// gate drives the EXACT production install.
+pub fn install_mlkem_verified_decaps_core() -> MlKemDecapsCoreInstall {
+    dregg_pq::install_verified_mlkem_decaps_core(
+        dregg_lean_ffi::mlkem_decaps_real_core_available,
+        |w| dregg_lean_ffi::shadow_mlkem_decaps_real(w).ok(),
+    )
 }
 
 /// Wait for a shutdown signal to trigger a graceful, checkpoint-then-exit stop.
