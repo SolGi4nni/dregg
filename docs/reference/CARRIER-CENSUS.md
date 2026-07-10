@@ -153,3 +153,18 @@ ShieldedTransfer = DEBT-A (STARK-verified); Notify/React/Promise = reactive "Tra
 reactive.rs, promise-hole-is-a-nullifier); GrantCapability/SpawnWithDelegation = distinct apply, no Argus program
 (possibly compositions). The finite-map refinement covers the Argus-modeled kernel (30 programs); these 6 are a
 named scope boundary. DEBT-B carrier result (RestHashIffFrame→Poseidon2SpongeCR) unaffected.
+
+## measured (2026-07-10): the reactive trio SPLITS — Promise/Notify are OFF-KERNEL, React is a nullifier-spend
+Read at HEAD (turn/src/executor/apply.rs):
+- **Promise (apply_promise:1315), Notify (apply_notify:1349)** mutate `self.reactive_registry.lock()` — an
+  EXECUTOR-side structure. `reactive_registry is NOT kernel state`: RecordKernelState (Lean) has no such field.
+  So they do NOT mutate the finite-map kernel — there is NO commuting square to prove. A precise SCOPE BOUNDARY
+  (the reactive registry is a separate subsystem), not a coverage gap.
+- **React (apply_react:1405)** spends a nullifier: records `pending_id` into the note_nullifiers set = the SAME
+  kernel mutation as NoteSpend (`nullifiers := nf :: k.nullifiers`, RecordKernel.lean:968). React's kernel effect
+  IS noteSpend → a square IS provable (in flight, FinReactSquare.lean).
+- **ShieldedTransfer** — kernel mutation is nullifier-spend + balance (noteSpend + transfer, both covered); the
+  STARK verification (verify_stark_side) is the DEBT-A part. Its KERNEL square is potentially reducible; the STARK
+  soundness is DEBT-A.
+So the finite-map effect ceiling: React closable (nullifier); Promise/Notify off-kernel (no square exists);
+ShieldedTransfer kernel-part reducible but STARK = DEBT-A. Nothing faked; each boundary is measured.
