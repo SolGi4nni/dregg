@@ -18,8 +18,24 @@ default; `--features live-brain` for a live model), then shows you the three thi
    (`verify_landed` runs the node's own `verify_receipt_chain` — a third party re-verifies offline).
 3. **The attestation** — the renter's exportable artifact (`attest`).
 
-This is the runnable spine of `docs/WALKTHROUGH.md §Grain`. Status: ⏳ (the night run drives it and
-captures the output to `scratchpad/r3-nightrun.log`).
+This is the runnable spine of `docs/WALKTHROUGH.md §Grain`. Status: **✅ verified this night** — it ran
+green end-to-end. What you'll see:
+
+```
+== the local-hosted agent grain, end-to-end (no host trust) ==
+[node ] built-in local node (in-process ledger + finalized receipt log)
+[rent ] grain `alice.agents.dregg` owned by `dga1_alice` (caps=fs, budget=100000)
+[drive] served drive complete (recorded brain — the honest default)
+        admitted=3 cap_refused=0 budget_refused=0 consumed=3
+[R0   ] tamper-evidence: chain re-witnessed, 3 actions
+[R2   ] receipts are views over committed kernel turns: 3 actions, 3 linked
+[LAND ] turns landed on the local node: finalized_len=3 manifest_len=3
+[attest] renter artifact: 4535 bytes of exportable, re-verifiable attestation
+== GREEN: a real local node committed the grain's turns; a renter re-verified
+   them (R0 + R2 + landed) trusting no host. ==
+```
+
+Poke at it: change the goals it drives, the budget, the caps — it's a real local instance, not a movie.
 
 ## The renter check (what the in-browser check runs)
 
