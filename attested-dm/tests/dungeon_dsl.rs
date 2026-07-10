@@ -45,19 +45,10 @@ fn play_lantern_fen_to_win() -> GameSession {
 #[test]
 fn authored_dungeon_wins_through_gamesession() {
     let game = play_lantern_fen_to_win();
-    assert_eq!(
-        game.status(),
-        GameStatus::Won,
-        "the authored dungeon is winnable"
-    );
+    assert_eq!(game.status(), GameStatus::Won, "the authored dungeon is winnable");
     // Every landed move is authentic, well-formed, injection-free, and on-chain.
-    game.verify()
-        .expect("the authored playthrough re-verifies as a hash chain");
-    assert_eq!(
-        game.world().ledger.len(),
-        12,
-        "twelve verified turns landed"
-    );
+    game.verify().expect("the authored playthrough re-verifies as a hash chain");
+    assert_eq!(game.world().ledger.len(), 12, "twelve verified turns landed");
 }
 
 #[test]
@@ -65,17 +56,11 @@ fn authored_win_needs_the_forced_order() {
     // The same rules bite an out-of-order crawler: no lantern -> the dark stair is barred.
     let world = parse_dungeon(LANTERN_FEN).unwrap();
     let mut game = GameSession::open(world);
-    assert!(matches!(
-        game.command("hero", "go north"),
-        PlayResult::Landed { .. }
-    ));
+    assert!(matches!(game.command("hero", "go north"), PlayResult::Landed { .. }));
     match game.command("hero", "go down") {
         PlayResult::Refused(reason) => {
             let msg = reason.to_string();
-            assert!(
-                msg.contains("barred") || msg.contains("locked"),
-                "got: {msg}"
-            );
+            assert!(msg.contains("barred") || msg.contains("locked"), "got: {msg}");
         }
         other => panic!("descending without the lantern must be refused, got {other:?}"),
     }
@@ -90,10 +75,7 @@ fn every_construct_round_trips() {
     // rooms + descriptions + items
     assert_eq!(w.rooms.len(), 5);
     let foyer = w.room("foyer").expect("foyer room");
-    assert!(
-        foyer.description.contains("dead braziers"),
-        "prose lines join into description"
-    );
+    assert!(foyer.description.contains("dead braziers"), "prose lines join into description");
     assert!(foyer.items.contains("lamp") && foyer.items.contains("primer"));
 
     // an item gate and a flag gate both parsed
@@ -108,22 +90,14 @@ fn every_construct_round_trips() {
     ));
 
     // use-rules (learn sources)
-    assert!(w
-        .use_rules
-        .iter()
-        .any(|u| u.item == "primer" && u.sets_flag.0 == "learned_mend"));
+    assert!(w.use_rules.iter().any(|u| u.item == "primer" && u.sets_flag.0 == "learned_mend"));
     assert_eq!(w.use_rules.len(), 3);
 
     // npc + dialogue (a conditional gift + a pure reveal)
     assert_eq!(w.npcs.len(), 1);
-    assert!(w.dialogue.iter().any(
-        |d| matches!(&d.grant, DialogueGrant::GivesItem(i) if i == "sigil")
-            && matches!(&d.requires, Some(Gate::NeedsItem(i)) if i == "bark_shield")
-    ));
-    assert!(w
-        .dialogue
-        .iter()
-        .any(|d| matches!(d.grant, DialogueGrant::Reveals)));
+    assert!(w.dialogue.iter().any(|d| matches!(&d.grant, DialogueGrant::GivesItem(i) if i == "sigil")
+        && matches!(&d.requires, Some(Gate::NeedsItem(i)) if i == "bark_shield")));
+    assert!(w.dialogue.iter().any(|d| matches!(d.grant, DialogueGrant::Reveals)));
 
     // HP combat with armor
     let wraith = w.combat.get("belfry").expect("combat in belfry");
@@ -135,18 +109,9 @@ fn every_construct_round_trips() {
 
     // all three spell effect kinds, each with a learn gate
     assert_eq!(w.spells.len(), 3);
-    assert!(w
-        .spell_rules
-        .iter()
-        .any(|r| matches!(&r.effect, SpellEffect::SetFlag(f, 1) if f == "span_mended")));
-    assert!(w
-        .spell_rules
-        .iter()
-        .any(|r| matches!(&r.effect, SpellEffect::Conjure(i) if i == "ember_blade")));
-    assert!(w
-        .spell_rules
-        .iter()
-        .any(|r| matches!(&r.effect, SpellEffect::Buff(f, 1) if f == "blessed")));
+    assert!(w.spell_rules.iter().any(|r| matches!(&r.effect, SpellEffect::SetFlag(f, 1) if f == "span_mended")));
+    assert!(w.spell_rules.iter().any(|r| matches!(&r.effect, SpellEffect::Conjure(i) if i == "ember_blade")));
+    assert!(w.spell_rules.iter().any(|r| matches!(&r.effect, SpellEffect::Buff(f, 1) if f == "blessed")));
     // a spell rule carries its target + fizzle
     let mend = w.spell_rules.iter().find(|r| r.spell == "mend").unwrap();
     assert_eq!(mend.target.as_deref(), Some("bridge"));
@@ -162,18 +127,12 @@ fn every_construct_round_trips() {
     assert_eq!(light.refuels[0].add, 6);
     assert_eq!(light.refuels[0].spent_flag, "spent_oil_flask");
     assert_eq!(light.stranded, Some(("stranded".to_string(), 1)));
-    assert!(
-        w.lose.iter().any(|l| l.flag == "stranded"),
-        "the strand wires a lose condition"
-    );
+    assert!(w.lose.iter().any(|l| l.flag == "stranded"), "the strand wires a lose condition");
 
     // objective + lose
     assert_eq!(w.objective.room, "shrine");
     assert_eq!(w.objective.holding, "relic");
-    assert!(w
-        .lose
-        .iter()
-        .any(|l| l.flag == "player_wounds" && l.at_least == 12));
+    assert!(w.lose.iter().any(|l| l.flag == "player_wounds" && l.at_least == 12));
     assert_eq!(w.player_max_hp, 12);
 }
 
@@ -195,38 +154,19 @@ fn assert_fires(src: &str, needle: &str) {
         "expected an error containing {needle:?}, got: {errs:?}"
     );
     // And parse_dungeon fails closed on it.
-    assert!(
-        parse_dungeon(src).is_err(),
-        "parse_dungeon must refuse this source"
-    );
+    assert!(parse_dungeon(src).is_err(), "parse_dungeon must refuse this source");
 }
 
 #[test]
 fn good_sources_have_zero_errors() {
     // Non-vacuity anchor: both shipped-good dungeons validate clean.
-    assert!(
-        errors(LANTERN_FEN).is_empty(),
-        "lantern_fen: {:?}",
-        errors(LANTERN_FEN)
-    );
-    assert!(
-        errors(EMBER_OBSERVATORY).is_empty(),
-        "ember: {:?}",
-        errors(EMBER_OBSERVATORY)
-    );
+    assert!(errors(LANTERN_FEN).is_empty(), "lantern_fen: {:?}", errors(LANTERN_FEN));
+    assert!(errors(EMBER_OBSERVATORY).is_empty(), "ember: {:?}", errors(EMBER_OBSERVATORY));
     // And the hand-written Rust dungeons validate clean too (the validator is honest).
-    assert!(validate(&attested_dm::sunken_vault())
-        .iter()
-        .all(|i| !i.is_error()));
-    assert!(validate(&attested_dm::starfall_spire())
-        .iter()
-        .all(|i| !i.is_error()));
-    assert!(validate(&attested_dm::deepdark_mine())
-        .iter()
-        .all(|i| !i.is_error()));
-    assert!(validate(&attested_dm::bramble_keep())
-        .iter()
-        .all(|i| !i.is_error()));
+    assert!(validate(&attested_dm::sunken_vault()).iter().all(|i| !i.is_error()));
+    assert!(validate(&attested_dm::starfall_spire()).iter().all(|i| !i.is_error()));
+    assert!(validate(&attested_dm::deepdark_mine()).iter().all(|i| !i.is_error()));
+    assert!(validate(&attested_dm::bramble_keep()).iter().all(|i| !i.is_error()));
 }
 
 const GOOD_BASE: &str = "\
@@ -286,28 +226,24 @@ room b \"B\"
 
 #[test]
 fn validator_actor_in_unknown_room() {
-    let npc =
-        format!("{GOOD_BASE}npc ghost \"Ghost\" in phantom_room\n  topic hi -> reveals \"boo\"\n");
+    let npc = format!("{GOOD_BASE}npc ghost \"Ghost\" in phantom_room\n  topic hi -> reveals \"boo\"\n");
     assert_fires(&npc, "npc `ghost` is placed in unknown room `phantom_room`");
 
     let combat = format!(
         "{GOOD_BASE}player_hp: 5\ncombat ogre in nowhere hp 3 attack 1\n  weapon prize damage 1\n  victory flag dead\n  victory \"x\"\n  hit \"y\"\n  flail \"z\"\n"
     );
-    assert_fires(
-        &combat,
-        "combat foe `ogre` is placed in unknown room `nowhere`",
-    );
+    assert_fires(&combat, "combat foe `ogre` is placed in unknown room `nowhere`");
 
-    let spell = format!("{GOOD_BASE}spell zap innate\n  in voidroom -> flag lit \"x\"\n");
+    let spell = format!(
+        "{GOOD_BASE}spell zap innate\n  in voidroom -> flag lit \"x\"\n"
+    );
     assert_fires(&spell, "spell-rule for `zap` names unknown room `voidroom`");
 }
 
 #[test]
 fn validator_spell_with_no_learn_source() {
     // Learned via a flag that nothing ever sets.
-    let src = format!(
-        "{GOOD_BASE}spell mend requires flag learned_mend\n  in a on bridge -> flag done \"x\"\n"
-    );
+    let src = format!("{GOOD_BASE}spell mend requires flag learned_mend\n  in a on bridge -> flag done \"x\"\n");
     assert_fires(&src, "no rule ever sets that flag");
 }
 
