@@ -592,3 +592,12 @@ relink()ed so world.verify_ledger() STILL PASSES (chain-valid) while verify_ledg
 (Err Effect seq 2). 90 lib + 19 dsl green; 5 games pass both tiers; example prints the forgery caught. HONEST:
 trust-MINIMIZED re-execution (assumption = the resolver is the rules), NOT a zk proof. Phase 1 of the trust story.
 ## NEXT: Phase 2 verifiable randomness — codex speccing dregg-dice (VRF+beacon), then build.
+
+## ✅ dregg-dice COMMITTED (verifiable randomness, Phase 2 first slice)
+17/17; unbiased mapping is a REAL chi-square (60k d6, chi2<20.5=p0.001, x%n fails), reject-free Lemire so
+draw_count binds into EventId (grinding tooth); RandomnessSource trait (pure source-free verifier); honest split
+(CommitReveal closes hatches #3/#6, NOT selective-abort #5 — needs the Hybrid VRF+beacon behind the trait).
+## FIRING: integrate dregg-dice into attested-dm — a provably-fair game mechanic bound into the chain, verify_replay
+extended to reconstruct+verify the draw stream (catches a forged ROLL). Connects the two new primitives.
+## NEXT FORKS (after): persistence · overworld · combat engine · the VRF/beacon backends · canonical state-root
+receipts · the first FOLDED inventory-conservation proof (design Phase 3). Multimodel: codex designs, I build+verify.
