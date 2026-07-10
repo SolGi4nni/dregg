@@ -442,6 +442,86 @@ impl CombatEnemy {
 /// condition for a combat dungeon reads this flag against [`GameWorld::player_max_hp`].
 pub const PLAYER_WOUNDS_FLAG: &str = "player_wounds";
 
+// ─────────────────────────────────────────────────────────────────────────────
+// SPELLS — a bounded MAGIC dimension. The AI narrates the incantation; the WORLD
+// resolves its bounded effect. Casting RIDES the closed `Use` channel (exactly as
+// talking to an NPC does): a known spell-WORD parses to a `Use(word, target)` and the
+// resolver routes it to spell resolution. Prose is not power, at the level of magic.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **The bounded effect a spell is permitted to have** when it is cast, learned, in the right
+/// context. This is the whole magical affordance: a spell can set a world flag (light a dark
+/// room, mark a stair mended, break a ward a downstream [`Gate`] reads), or conjure a
+/// **world-registered** item into the caster's hand. It can NEVER conjure an unregistered item
+/// (a `Conjure` is cap-gated exactly like a [`GameAction::Take`] or a
+/// [`DialogueGrant::GivesItem`]) and it can never open an ungated win: a spell composes with the
+/// gates and the caps, it does not bypass them. A jailbroken "I cast WISH and become god-king"
+/// names no [`Spell`] the world declared and touches nothing.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum SpellEffect {
+    /// Set a world flag (name, value) — the spell's mark on the world. A gated exit, a combat
+    /// gate, or the win objective reads it. This is how "light" opens a dark span (`lit = 1`),
+    /// how "mend" repairs a broken stair (`stair_mended = 1`), how "ward"/"unlock" breaks a seal.
+    SetFlag(String, i64),
+    /// Conjure a **world-registered** item into the caster's hand (the magical counterpart of a
+    /// grant). The item MUST be one the world registers (via [`GameWorld::all_items`]), so the
+    /// conjuration is cap-permitted — a spell cannot mint an item the world never placed. This is
+    /// how a bounded "flare" forges the one weapon a warded foe is vulnerable to.
+    Conjure(String),
+    /// A combat/precondition **buff flag** (name, value) — set a flag another mechanic reads (a
+    /// blessing a foe-gate checks). Mechanically a flag write like [`Self::SetFlag`]; a distinct
+    /// name so a world author can say *what the spell is for* at the call site.
+    Buff(String, i64),
+}
+
+/// **A spell WORD the world declares to exist**, and what it takes to have LEARNED it. The set of
+/// declared spells is the world's whole vocabulary of power: a cast whose word is NOT declared here
+/// is an *unknown incantation* (the jailbreak "I cast WISH") — it names no rule and the resolver
+/// never routes it to magic; it falls through the [`GameAction::Use`] path and is refused, touching
+/// nothing. A declared word you have not yet LEARNED is refused with [`GameRefusal::SpellNotLearned`]
+/// ("you do not know that word"); learning is world-state — read a spellbook item (a [`UseRule`]
+/// that sets the `learned` flag), or simply hold a grimoire — so `learned` is any [`Gate`].
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Spell {
+    /// The incantation word (e.g. `"light"`, `"mend"`, `"unlock"`, `"flare"`) — the first field of
+    /// the [`GameAction::Use`] a cast rides.
+    pub word: String,
+    /// The world-condition under which the caster has LEARNED this word — e.g.
+    /// `NeedsFlag("learned_light", 1)` set by reading its primer, or `NeedsItem("grimoire")`.
+    /// `None` means the word is innately known (rare). Until it holds, a cast is refused
+    /// ([`GameRefusal::SpellNotLearned`]) — no prose teaches an unlearned word.
+    pub learned: Option<Gate>,
+}
+
+/// **A CONTEXT in which a learned spell does its bounded thing.** When the caster speaks a learned
+/// `spell` (optionally aimed at `target`) in `room`, the resolver looks for the matching rule. If
+/// one is found and its `requires` (an optional extra precondition — a mana/charge flag, an aligned
+/// mechanism) is satisfied, the bounded `effect` lands as ONE verified turn with `narration`. If no
+/// rule matches here (the spell is cast in the WRONG place), or a matching rule's `requires` is
+/// unmet, the cast **fizzles**: a legal narration turn that changes NOTHING (the magical
+/// counterpart of an NPC withholding a grant). The AI's account of the spell "reshaping the tower"
+/// has no power; the [`SpellRule`] decides what the word does.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct SpellRule {
+    /// The room the spell has an effect in.
+    pub room: String,
+    /// The spell word this rule governs (its [`Spell::word`]).
+    pub spell: String,
+    /// The target the cast must be aimed at (e.g. `Some("stair")` for `mend`), or `None` if the
+    /// spell is cast bare (e.g. `light`).
+    pub target: Option<String>,
+    /// An optional extra precondition beyond having LEARNED the word — a mana/charge flag or a
+    /// world-state the spell needs (e.g. `NeedsFlag("orrery_aligned", 1)`). `None` = no extra cost.
+    /// Right place, unmet `requires` → a fizzle (`fizzle_narration`), not an effect.
+    pub requires: Option<Gate>,
+    /// The bounded thing the spell does when cast correctly.
+    pub effect: SpellEffect,
+    /// The world's account when the spell fires.
+    pub narration: String,
+    /// The world's account when a matching rule's `requires` is unmet (the cast fizzles here).
+    pub fizzle_narration: String,
+}
+
 /// **The win condition** — reach `room` while HOLDING `item`.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Objective {
@@ -480,6 +560,12 @@ pub struct GameWorld {
     pub npcs: Vec<Npc>,
     /// The bounded dialogue rules — what talking to an NPC can actually DO.
     pub dialogue: Vec<DialogueRule>,
+    /// The spell WORDS this world declares to exist, each with its LEARN condition. A cast whose
+    /// word is not in this vocabulary is an unknown incantation and touches nothing.
+    pub spells: Vec<Spell>,
+    /// The bounded spell CONTEXTS — what a learned spell does, where. Off these rules, a learned
+    /// cast fizzles (a legal narration turn with no effect).
+    pub spell_rules: Vec<SpellRule>,
     /// The player's maximum hit points — accumulated [`PLAYER_WOUNDS_FLAG`] `>=` this is death
     /// (wire it as a [`LoseCondition`] for a combat dungeon). Non-combat dungeons ignore it.
     pub player_max_hp: i64,
@@ -518,7 +604,38 @@ impl GameWorld {
                 items.insert(i.clone());
             }
         }
+        // A spell that conjures an item registers it too — so the conjuration is cap-permitted,
+        // while a spell can never mint an item the world never named (a `Conjure` of an
+        // unregistered item would be refused fail-closed by the cap gate).
+        for rule in &self.spell_rules {
+            if let SpellEffect::Conjure(i) = &rule.effect {
+                items.insert(i.clone());
+            }
+        }
         items
+    }
+
+    /// Whether `word` is a spell this world declares (its casting vocabulary). A word that is NOT
+    /// declared is an unknown incantation — the resolver never routes it to magic.
+    pub fn is_spell_word(&self, word: &str) -> bool {
+        self.spells.iter().any(|s| s.word == word)
+    }
+
+    /// The declared [`Spell`] for `word`, if any.
+    pub fn spell(&self, word: &str) -> Option<&Spell> {
+        self.spells.iter().find(|s| s.word == word)
+    }
+
+    /// The spell rule governing casting `spell` at `target` in `room`, if the world defines one.
+    pub fn spell_rule(
+        &self,
+        room: &str,
+        spell: &str,
+        target: &Option<String>,
+    ) -> Option<&SpellRule> {
+        self.spell_rules
+            .iter()
+            .find(|r| r.room == room && r.spell == spell && &r.target == target)
     }
 
     /// The NPCs standing in `room` right now.
@@ -618,6 +735,11 @@ pub enum GameRefusal {
         /// The topic they have no line for.
         topic: String,
     },
+    /// The caster spoke a DECLARED spell word they have not yet LEARNED — the word will not come
+    /// ("you do not know that word"). World unchanged, no receipt (anti-ghost). An UNDECLARED word
+    /// (the jailbreak "I cast WISH") is not a spell at all and refuses through the ordinary
+    /// [`GameAction::Use`] path instead — it touches nothing either way.
+    SpellNotLearned(String),
     /// The game is already over — no further moves resolve.
     GameOver(GameStatus),
 }
@@ -647,6 +769,12 @@ impl std::fmt::Display for GameRefusal {
                         "the {npc} only shakes their head at the mention of {topic}"
                     )
                 }
+            }
+            GameRefusal::SpellNotLearned(w) => {
+                write!(
+                    f,
+                    "you do not know the word '{w}' — no prose puts it on your tongue"
+                )
             }
             GameRefusal::GameOver(s) => write!(f, "the game is over ({s:?})"),
         }
@@ -764,6 +892,14 @@ pub fn resolve_action(map: &GameWorld, world: &WorldCell, action: &GameAction) -
                     };
                 }
             }
+            // SPELL PATH: if the word is a DECLARED spell, this Use is an incantation — the AI
+            // narrates the chant, but the world decides what (if anything) the word DOES. This
+            // branches BEFORE the item-holding check: a spell is a spoken word, not a held item.
+            // An UNDECLARED word (the jailbreak "I cast WISH") is NOT routed here — it falls
+            // through to the ordinary Use path below and refuses, touching nothing.
+            if map.is_spell_word(item) {
+                return resolve_spell(map, world, &here, item, target);
+            }
             if !world.inventory.contains(item) {
                 return Outcome::Refused(GameRefusal::NotHolding(item.clone()));
             }
@@ -851,6 +987,81 @@ fn resolve_dialogue(map: &GameWorld, world: &WorldCell, rule: &DialogueRule) -> 
     };
     Outcome::Legal(Resolution {
         narration: rule.granted_narration.clone(),
+        status: status_after(map, world, effect.as_ref()),
+        effect,
+    })
+}
+
+/// **Resolve an incantation** — the magic-level anti-forgery tooth. The AI narrates the chant; the
+/// world decides what the word does, in three bounded outcomes:
+///
+/// 1. **Not learned** — the caster has not met the [`Spell::learned`] condition (no spellbook read,
+///    no grimoire held): REFUSED with [`GameRefusal::SpellNotLearned`] — the word will not come,
+///    however grandly the AI narrates it. World unchanged, no receipt (anti-ghost).
+/// 2. **Learned, wrong context** — no [`SpellRule`] matches here (the spell is cast in the wrong
+///    place / at the wrong target), or a matching rule's `requires` is unmet: the cast **fizzles**
+///    — a legal narration turn that changes NOTHING (like an NPC who speaks but withholds a grant).
+/// 3. **Learned, right context** — a matching rule with its `requires` satisfied: the bounded
+///    [`SpellEffect`] lands as ONE verified, cap-gated, on-chain turn.
+///
+/// The effect is a plain [`WorldEffect`] (a flag write, or a cap-permitted item grant), so a spell
+/// composes with the caps + gates: it cannot conjure an unregistered item or open an ungated win.
+fn resolve_spell(
+    map: &GameWorld,
+    world: &WorldCell,
+    here: &str,
+    word: &str,
+    target: &Option<String>,
+) -> Outcome {
+    // The word is declared (the caller checked `is_spell_word`); confirm it is LEARNED.
+    let spell = match map.spell(word) {
+        Some(s) => s,
+        // Defensive: an undeclared word should never reach here (the caller routes only declared
+        // words), but if it does, it is simply not a spell — nothing happens.
+        None => {
+            return Outcome::Refused(GameRefusal::NothingHappens {
+                item: word.to_string(),
+                target: target.clone(),
+            })
+        }
+    };
+    let learned = spell.learned.as_ref().map_or(true, |g| g.satisfied(world));
+    if !learned {
+        // The word is real but not yet the caster's — no prose teaches it.
+        return Outcome::Refused(GameRefusal::SpellNotLearned(word.to_string()));
+    }
+    // Learned. Does a rule bind this word to THIS room + target?
+    let rule = match map.spell_rule(here, word, target) {
+        Some(r) => r,
+        // Cast in the wrong place / at the wrong thing — a fizzle (legal, but no effect).
+        None => {
+            return Outcome::Legal(Resolution {
+                narration: format!(
+                    "You speak the word '{word}', but it finds nothing here to work upon — the \
+                     magic gutters and fades."
+                ),
+                status: status_after(map, world, None),
+                effect: None,
+            })
+        }
+    };
+    // A matching rule, but its extra precondition (mana / alignment / state) is unmet → fizzle.
+    let requires_met = rule.requires.as_ref().map_or(true, |g| g.satisfied(world));
+    if !requires_met {
+        return Outcome::Legal(Resolution {
+            narration: rule.fizzle_narration.clone(),
+            status: status_after(map, world, None),
+            effect: None,
+        });
+    }
+    // Right word, right place, precondition met — the bounded effect lands as one turn.
+    let effect = Some(match &rule.effect {
+        SpellEffect::SetFlag(k, v) => WorldEffect::SetFlag(k.clone(), *v),
+        SpellEffect::Buff(k, v) => WorldEffect::SetFlag(k.clone(), *v),
+        SpellEffect::Conjure(item) => WorldEffect::GrantItem(item.clone()),
+    });
+    Outcome::Legal(Resolution {
+        narration: rule.narration.clone(),
         status: status_after(map, world, effect.as_ref()),
         effect,
     })
@@ -1080,6 +1291,26 @@ fn parse_command(words: &[&str]) -> Option<GameAction> {
             let on = words.iter().position(|w| *w == "on");
             let target = on.and_then(|i| words.get(i + 1)).map(|t| t.to_string());
             Some(GameAction::Use(item, target))
+        }
+        // CASTING rides the closed `Use` channel: "cast WORD" / "cast WORD on TARGET". The word
+        // is the spell; the world's SpellRule (not the parse) decides what it DOES. "cast light" →
+        // Use("light", None); "cast unlock on sky_door" → Use("unlock", Some("sky_door")).
+        "cast" | "chant" | "invoke" | "channel" | "intone" => {
+            let word = words.get(1)?.to_string();
+            let on = words
+                .iter()
+                .position(|w| matches!(*w, "on" | "at" | "upon" | "against"));
+            let target = on.and_then(|i| words.get(i + 1)).map(|t| t.to_string());
+            Some(GameAction::Use(word, target))
+        }
+        // LEARNING a spell = reading its book: a bare Use of the spellbook item, which the world's
+        // UseRule turns into the `learned_*` flag. "read candle_primer" → Use("candle_primer", None).
+        "read" | "recite" | "learn" | "peruse" => {
+            let item = words
+                .iter()
+                .skip(1)
+                .find(|w| **w != "the" && **w != "from")?;
+            Some(GameAction::Use(item.to_string(), None))
         }
         "look" | "examine" | "inspect" | "survey" => Some(GameAction::Examine),
         "attack" | "fight" | "strike" | "kill" => {
@@ -1453,6 +1684,8 @@ pub fn sunken_vault() -> GameWorld {
         combat: BTreeMap::new(),
         npcs: Vec::new(),
         dialogue: Vec::new(),
+        spells: Vec::new(),
+        spell_rules: Vec::new(),
         player_max_hp: 0,
         start: "shore".into(),
         objective: Objective {
@@ -1722,6 +1955,8 @@ pub fn bramble_keep() -> GameWorld {
         combat,
         npcs,
         dialogue,
+        spells: Vec::new(),
+        spell_rules: Vec::new(),
         player_max_hp: 10,
         start: "gatehouse".into(),
         objective: Objective {
@@ -1732,6 +1967,379 @@ pub fn bramble_keep() -> GameWorld {
             flag: PLAYER_WOUNDS_FLAG.into(),
             at_least: 10,
             description: "cut down by the Bramble Knight".into(),
+        }],
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE STARFALL SPIRE — the third complete adventure, exercising the bounded MAGIC
+// dimension: spells learned from books, cast to cross a dark span, mend a broken
+// stair, break a sky-seal, and conjure the one blade a void-thing dreads — a critical
+// path that is UNSOLVABLE without casting. The AI narrates the chant; the world
+// resolves what the word does.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **THE STARFALL SPIRE** — a complete, solvable fourteen-room climb up a collapsing wizard's
+/// tower, and the showcase for the bounded SPELL system. Distinct in theme from the drowned
+/// SUNKEN VAULT and the overgrown BRAMBLE KEEP: a crumbling astronomer's spire whose broken orrery
+/// caught a fallen star and began to eat itself. Every rung of the critical path is a SPELL, and
+/// the spells are load-bearing — the climb cannot be finished without casting them.
+///
+/// The magic model, kept honest at every step: a spell is a WORD the world declares
+/// ([`Spell`]); you cast it by *speaking it* over the closed [`GameAction::Use`] channel ("cast
+/// light"), and the world's [`SpellRule`] — never the AI's prose — decides what it does. A word you
+/// have not LEARNED will not come ([`GameRefusal::SpellNotLearned`]); a learned word cast in the
+/// wrong place fizzles (a narration turn, no effect); a learned word in the right place does its
+/// bounded thing (one cap-gated, on-chain turn). You learn a word by READING its book (a
+/// [`UseRule`] that sets `learned_*`). A jailbroken "I cast WISH and become god-king" names no
+/// declared spell and touches nothing.
+///
+/// The critical path, in forced order:
+///
+/// 1. in the **foyer**, take + **read the Candle Primer** (learn `light`), then **cast light** —
+///    silver mage-light opens the dark stair up to the gallery (a [`Gate::NeedsFlag`] `gallery_lit`);
+/// 2. in the **gallery**, take the **star chart** and the **Mending Folio**, read the folio (learn
+///    `mend`), then **cast mend on the stair** — the shattered span knits (`span_mended`), opening
+///    the way up to the landing;
+/// 3. on the **landing**, take + read the **Opening Codex** (learn `unlock`); step west to the
+///    **observatory** and **ask the Astronomer's Shade for the flame-word** — she gives the
+///    **Flare Grimoire** ONLY while you hold the star chart ([`DialogueRule`]); read it (learn `flare`);
+/// 4. up in the **orrery hall**, **use the star chart on the orrery** to align it (`orrery_aligned`),
+///    THEN **cast unlock on the sky-door** — the seal unwinds (`seal_broken`). Cast unlock before
+///    aligning and it FIZZLES (a matching rule whose `requires` is unmet); the world says: not yet;
+/// 5. on the **stairhead**, **cast flare** to conjure the **flare blade** (a world-registered,
+///    cap-permitted [`SpellEffect::Conjure`]), then **fight the Voidling** — an HP foe felled over
+///    three armed strikes. Bare-handed (no flare) it takes no wounds and cuts you down: the spell is
+///    the ONLY weapon that works (`voidling_felled` opens the way up);
+/// 6. take the **fallen star** in the ruined orrery and carry it up to the **spire crown** under
+///    open sky — reach it HOLDING the star to WIN.
+///
+/// Side content off the path: the **undercroft** and **pantry** (atmosphere + a trinket), the
+/// **belltower** whose thorn-locked **reliquary** opens to a SECOND context of `unlock` (a spell
+/// used off the critical path), and the **star well** below the observatory (lore).
+pub fn starfall_spire() -> GameWorld {
+    let rooms = vec![
+        Room::new(
+            "threshold",
+            "Spire Threshold",
+            "A cracked marble stair climbs into the ruined tower; a dry cistern gapes below.",
+        )
+        .exit("up", Exit::open("foyer"))
+        .exit("down", Exit::open("undercroft")),
+        Room::new(
+            "undercroft",
+            "Flooded Undercroft",
+            "A drowned store-room of broken astrolabes; a knob of tallow floats in the murk.",
+        )
+        .item("tallow")
+        .exit("up", Exit::open("threshold")),
+        Room::new(
+            "foyer",
+            "Candlewax Foyer",
+            "A round hall of dead candles. A slim book — the Candle Primer — lies open on a lectern. \
+             The stair up is swallowed in unnatural dark.",
+        )
+        .item("candle_primer")
+        .exit("down", Exit::open("threshold"))
+        .exit("east", Exit::open("pantry"))
+        // The stair up is pitch dark — impassable until the light-word kindles it.
+        .exit(
+            "up",
+            Exit::gated("gallery", Gate::NeedsFlag("gallery_lit".into(), 1)),
+        ),
+        Room::new(
+            "pantry",
+            "Ransacked Pantry",
+            "Toppled shelves and split sacks; a pinch of moon-salt glitters in the spill.",
+        )
+        .item("moon_salt")
+        .exit("west", Exit::open("foyer")),
+        Room::new(
+            "gallery",
+            "Portrait Gallery",
+            "Mage-light picks out rows of sooty portraits. A brass star chart is pinned to one wall, \
+             and the Mending Folio rests on a reading-stand. The stair up has collapsed to rubble.",
+        )
+        .item("star_chart")
+        .item("mending_folio")
+        .exit("down", Exit::open("foyer"))
+        // The shattered stair is impassable until the mend-word knits it.
+        .exit(
+            "up",
+            Exit::gated("landing", Gate::NeedsFlag("span_mended".into(), 1)),
+        ),
+        Room::new(
+            "landing",
+            "Cracked Landing",
+            "A wide landing under a leaning arch; the Opening Codex is chained to a reading-desk. \
+             Doors lead off to an observatory and a belltower; the orrery hall waits above.",
+        )
+        .item("opening_codex")
+        .exit("down", Exit::open("gallery"))
+        .exit("west", Exit::open("observatory"))
+        .exit("east", Exit::open("belltower"))
+        .exit("up", Exit::open("orrery_hall")),
+        Room::new(
+            "observatory",
+            "Ruined Observatory",
+            "A shattered dome open to the night. The Astronomer's Shade drifts by a cracked telescope, \
+             still charting stars that fell long ago.",
+        )
+        .exit("east", Exit::open("landing"))
+        .exit("down", Exit::open("star_well")),
+        Room::new(
+            "star_well",
+            "The Star Well",
+            "A deep shaft the old mages dropped plumb-lines down; a tarnished astrolabe hangs on a nail.",
+        )
+        .item("astrolabe")
+        .exit("up", Exit::open("observatory")),
+        Room::new(
+            "belltower",
+            "Silent Belltower",
+            "A cracked bell hangs still. A small alcove in the west wall is sealed by an old ward-lock.",
+        )
+        .exit("west", Exit::open("landing"))
+        // A side alcove sealed by a ward — opened by a SECOND context of the unlock-word (optional).
+        .exit(
+            "north",
+            Exit::gated("reliquary", Gate::NeedsFlag("reliquary_open".into(), 1)),
+        ),
+        Room::new(
+            "reliquary",
+            "Warded Reliquary",
+            "A cramped vault the ward kept shut for an age; a silver orrery-charm rests on velvet.",
+        )
+        .item("silver_orrery")
+        .exit("south", Exit::open("belltower")),
+        Room::new(
+            "orrery_hall",
+            "The Orrery Hall",
+            "A great brass orrery fills the room, its rings frozen mid-turn. Above it, a sky-door is \
+             bound shut by a shimmering seal.",
+        )
+        .exit("down", Exit::open("landing"))
+        // The sky-door's seal is broken only by the unlock-word — and only once the orrery is aligned.
+        .exit(
+            "up",
+            Exit::gated("stairhead", Gate::NeedsFlag("seal_broken".into(), 1)),
+        ),
+        Room::new(
+            "stairhead",
+            "Windswept Stairhead",
+            "A narrow stair open to the void beyond the seal — and across it coils a Voidling, a knot \
+             of starless dark that hates the light.",
+        )
+        .exit("down", Exit::open("orrery_hall"))
+        // Sealed until the Voidling is felled.
+        .exit(
+            "up",
+            Exit::gated("orrery", Gate::NeedsFlag("voidling_felled".into(), 1)),
+        ),
+        Room::new(
+            "orrery",
+            "The Broken Orrery",
+            "The tower's crown-works, wrenched apart around a socket where a fallen star still burns.",
+        )
+        .item("fallen_star")
+        .exit("down", Exit::open("stairhead"))
+        .exit("up", Exit::open("crown")),
+        Room::new(
+            "crown",
+            "The Spire Crown",
+            "The open summit under a wheeling sky — the star's empty cradle waits to be filled.",
+        )
+        .exit("down", Exit::open("orrery")),
+    ];
+
+    let mut room_map = BTreeMap::new();
+    for r in rooms {
+        room_map.insert(r.id.clone(), r);
+    }
+
+    // READING a spellbook is a bare `Use` of the book that sets its `learned_*` flag — this is how a
+    // spell is LEARNED (the Spell's `learned` gate reads the flag). And the orrery is aligned by
+    // using the star chart on it — the precondition the sky-door's unlock requires.
+    let use_rules = vec![
+        UseRule {
+            room: "foyer".into(),
+            item: "candle_primer".into(),
+            target: None,
+            sets_flag: ("learned_light".into(), 1),
+            narration: "You pore over the Candle Primer; the light-word settles onto your tongue.".into(),
+        },
+        UseRule {
+            room: "gallery".into(),
+            item: "mending_folio".into(),
+            target: None,
+            sets_flag: ("learned_mend".into(), 1),
+            narration: "The Mending Folio's diagrams resolve into sense; the mend-word is yours.".into(),
+        },
+        UseRule {
+            room: "landing".into(),
+            item: "opening_codex".into(),
+            target: None,
+            sets_flag: ("learned_unlock".into(), 1),
+            narration: "The Opening Codex yields its cipher; the unlock-word takes root in memory.".into(),
+        },
+        UseRule {
+            room: "observatory".into(),
+            item: "flare_grimoire".into(),
+            target: None,
+            sets_flag: ("learned_flare".into(), 1),
+            narration: "The Flare Grimoire's char-black pages breathe heat; the flame-word catches in you.".into(),
+        },
+        UseRule {
+            room: "orrery_hall".into(),
+            item: "star_chart".into(),
+            target: Some("orrery".into()),
+            sets_flag: ("orrery_aligned".into(), 1),
+            narration: "You turn the brass rings to match the star chart; the orrery locks into alignment with a deep chime.".into(),
+        },
+    ];
+
+    let npcs = vec![Npc::new(
+        "observatory",
+        "astronomer",
+        "Astronomer's Shade",
+        "a translucent star-keeper who trades in charts, not flattery",
+    )];
+
+    let dialogue = vec![
+        // WORLD-BOUNDED: the Shade gives the Flare Grimoire ONLY while you hold the star chart.
+        // No prose talks the flame-word out of her early — the DialogueRule decides.
+        DialogueRule {
+            room: "observatory".into(),
+            npc: "astronomer".into(),
+            topic: "flame".into(),
+            requires: Some(Gate::NeedsItem("star_chart".into())),
+            grant: DialogueGrant::GivesItem("flare_grimoire".into()),
+            granted_narration: "The Shade studies your star chart, nods once, and lifts a charred grimoire from the ash: 'The flame-word. You will need it above.'".into(),
+            withheld_narration: "The Shade turns away. 'Bring me the star chart from the gallery, and the flame-word is yours. Not one breath sooner.'".into(),
+        },
+        // Pure lore — the Shade tells you the spire's plight, but her words change nothing.
+        DialogueRule {
+            room: "observatory".into(),
+            npc: "astronomer".into(),
+            topic: "stars".into(),
+            requires: None,
+            grant: DialogueGrant::Reveals,
+            granted_narration: "'A star fell into the orrery, and the tower began to eat itself. Light your way up, mend what broke, break the sky-seal, and set the star back in its cradle — only then does the spire fall still.'".into(),
+            withheld_narration: String::new(),
+        },
+    ];
+
+    let spells = vec![
+        Spell {
+            word: "light".into(),
+            learned: Some(Gate::NeedsFlag("learned_light".into(), 1)),
+        },
+        Spell {
+            word: "mend".into(),
+            learned: Some(Gate::NeedsFlag("learned_mend".into(), 1)),
+        },
+        Spell {
+            word: "unlock".into(),
+            learned: Some(Gate::NeedsFlag("learned_unlock".into(), 1)),
+        },
+        Spell {
+            word: "flare".into(),
+            learned: Some(Gate::NeedsFlag("learned_flare".into(), 1)),
+        },
+    ];
+
+    let spell_rules = vec![
+        // light — cast in the foyer, kindles the dark stair up to the gallery.
+        SpellRule {
+            room: "foyer".into(),
+            spell: "light".into(),
+            target: None,
+            requires: None,
+            effect: SpellEffect::SetFlag("gallery_lit".into(), 1),
+            narration: "Silver mage-light blooms from your palm and pours up the stair; the gallery above brightens.".into(),
+            fizzle_narration: String::new(),
+        },
+        // mend — cast on the shattered stair in the gallery, knitting the span.
+        SpellRule {
+            room: "gallery".into(),
+            spell: "mend".into(),
+            target: Some("stair".into()),
+            requires: None,
+            effect: SpellEffect::SetFlag("span_mended".into(), 1),
+            narration: "The mend-word knits the shattered stair; stone flows back into stone and the span holds.".into(),
+            fizzle_narration: String::new(),
+        },
+        // unlock — breaks the sky-door's seal, but ONLY once the orrery is aligned (requires);
+        // cast before aligning, it fizzles.
+        SpellRule {
+            room: "orrery_hall".into(),
+            spell: "unlock".into(),
+            target: Some("sky_door".into()),
+            requires: Some(Gate::NeedsFlag("orrery_aligned".into(), 1)),
+            effect: SpellEffect::SetFlag("seal_broken".into(), 1),
+            narration: "The sky-door's seal unwinds at the word, thread by thread, and the way above opens.".into(),
+            fizzle_narration: "The unlock-word scrapes uselessly at the sky-seal — the orrery is not yet aligned to loose it.".into(),
+        },
+        // unlock — a SECOND context (off the critical path): opens the belltower's warded alcove.
+        SpellRule {
+            room: "belltower".into(),
+            spell: "unlock".into(),
+            target: Some("alcove".into()),
+            requires: None,
+            effect: SpellEffect::SetFlag("reliquary_open".into(), 1),
+            narration: "The unlock-word coaxes the alcove's old ward; it clicks, and the reliquary yawns open.".into(),
+            fizzle_narration: String::new(),
+        },
+        // flare — conjures the flare blade, the one weapon the Voidling dreads (cap-permitted).
+        SpellRule {
+            room: "stairhead".into(),
+            spell: "flare".into(),
+            target: None,
+            requires: None,
+            effect: SpellEffect::Conjure("flare_blade".into()),
+            narration: "You speak the flame-word and a blade of white fire kindles in your grip — the one thing a void-thing dreads.".into(),
+            fizzle_narration: String::new(),
+        },
+    ];
+
+    let mut combat = BTreeMap::new();
+    combat.insert(
+        "stairhead".to_string(),
+        CombatEnemy {
+            room: "stairhead".into(),
+            name: "voidling".into(),
+            hp: 9,
+            armed_by: "flare_blade".into(),
+            weapon_damage: 3,  // three flame-strikes fell it
+            unarmed_damage: 0, // bare hands (no flare) never wound the dark
+            attack: 3,         // each surviving round it rakes you for 3
+            armor: None,
+            victory_flag: ("voidling_felled".into(), 1),
+            victory_narration: "The flare blade sears through the knot of dark; the Voidling unravels into cold sparks and is gone.".into(),
+            hit_narration: "White fire bites the Voidling — it recoils, then lashes back with a tendril of starless cold.".into(),
+            flail_narration: "Your bare strike passes through the Voidling like smoke; its cold tendril opens a numbing wound across you.".into(),
+        },
+    );
+
+    GameWorld {
+        rooms: room_map,
+        use_rules,
+        hostiles: BTreeMap::new(),
+        combat,
+        npcs,
+        dialogue,
+        spells,
+        spell_rules,
+        player_max_hp: 10,
+        start: "threshold".into(),
+        objective: Objective {
+            room: "crown".into(),
+            holding: "fallen_star".into(),
+        },
+        lose: vec![LoseCondition {
+            flag: PLAYER_WOUNDS_FLAG.into(),
+            at_least: 10,
+            description: "cut down by the Voidling".into(),
         }],
     }
 }

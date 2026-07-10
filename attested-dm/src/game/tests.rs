@@ -860,3 +860,472 @@ fn the_knight_cannot_be_felled_barehanded() {
         "bare hands cannot fell the Bramble Knight (unarmed_damage 0)"
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// THE STARFALL SPIRE — the third game: the bounded MAGIC dimension. Spells are learned
+// from books, cast over the closed `Use` channel, and resolved by the WORLD — the AI
+// narrates the chant; the SpellRule decides what the word does. Driven end-to-end
+// through the same resolver / cap / chain teeth.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// Commands that climb from the threshold to the orrery hall with every spell LEARNED and the
+/// star chart in hand (light kindled, stair mended, the Shade's flame-word read). Ends in the
+/// orrery hall, ready to align + unlock.
+const TO_ORRERY_HALL_FULLY_TAUGHT: &[&str] = &[
+    "go up",                      // foyer
+    "take candle_primer",         //
+    "read candle_primer",         // learn light
+    "cast light",                 // gallery_lit
+    "go up",                      // gallery
+    "take star_chart",            //
+    "take mending_folio",         //
+    "read mending_folio",         // learn mend
+    "cast mend on stair",         // span_mended
+    "go up",                      // landing
+    "take opening_codex",         //
+    "read opening_codex",         // learn unlock
+    "go west",                    // observatory
+    "ask astronomer about flame", // requires star_chart → grants flare_grimoire
+    "read flare_grimoire",        // learn flare
+    "go east",                    // landing
+    "go up",                      // orrery_hall
+];
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (1) THE SPELL SYSTEM IS WORLD-BOUNDED + NON-VACUOUS — unlearned / wrong-context /
+//     right-context / unlisted, all four proven, on the SAME cast.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The whole spell tooth, on one cast of `light`, proven in all four states (NON-VACUOUS):
+///  (a) UNLEARNED → REFUSED (you do not know the word), world unchanged, no receipt;
+///  (b) LEARNED but WRONG CONTEXT → FIZZLE (a legal narration turn, no effect);
+///  (c) LEARNED and RIGHT CONTEXT → the bounded effect lands (`gallery_lit`);
+///  (d) an UNLISTED word ("I cast WISH") → REFUSED, touches nothing.
+#[test]
+fn the_spell_system_is_world_bounded_and_non_vacuous() {
+    let map = starfall_spire();
+
+    // (a) UNLEARNED: in the foyer, cast light BEFORE reading the primer → refused, no effect.
+    let mut world = map.new_world();
+    world.scene = "foyer".into();
+    match resolve_action(&map, &world, &GameAction::Use("light".into(), None)) {
+        Outcome::Refused(GameRefusal::SpellNotLearned(w)) => assert_eq!(w, "light"),
+        other => panic!("an unlearned cast must be refused, got {other:?}"),
+    }
+
+    // Learn light (the primer sets the flag). Now the SAME cast behaves — non-vacuously.
+    world.flags.insert("learned_light".into(), 1);
+
+    // (b) LEARNED, WRONG CONTEXT: cast light in the pantry (no SpellRule there) → a FIZZLE:
+    //     a Legal narration turn with NO effect.
+    let mut elsewhere = world.clone();
+    elsewhere.scene = "pantry".into();
+    match resolve_action(&map, &elsewhere, &GameAction::Use("light".into(), None)) {
+        Outcome::Legal(r) => assert_eq!(r.effect, None, "a wrong-context cast fizzles (no effect)"),
+        other => panic!("a learned wrong-context cast fizzles (legal, no effect), got {other:?}"),
+    }
+
+    // (c) LEARNED, RIGHT CONTEXT: cast light in the foyer → the bounded effect lands.
+    match resolve_action(&map, &world, &GameAction::Use("light".into(), None)) {
+        Outcome::Legal(r) => assert_eq!(
+            r.effect,
+            Some(WorldEffect::SetFlag("gallery_lit".into(), 1)),
+            "a learned, right-context cast does its bounded thing"
+        ),
+        other => panic!("a learned, right-context cast must fire, got {other:?}"),
+    }
+
+    // (d) UNLISTED word (the jailbreak): "wish" names no declared spell → not routed to magic,
+    //     refused through the ordinary Use path (not held), touching nothing.
+    match resolve_action(&map, &world, &GameAction::Use("wish".into(), None)) {
+        Outcome::Refused(GameRefusal::NotHolding(w)) => assert_eq!(w, "wish"),
+        other => panic!("an unlisted spell is no spell at all — refused, got {other:?}"),
+    }
+    assert!(!map.is_spell_word("wish"), "wish is not declared magic");
+}
+
+/// The anti-ghost tooth for magic, driven through a live session: a jailbroken narrator that
+/// gushes "I CAST WISH AND BECOME GOD-KING, every door flung wide!" changes NOTHING — the word is
+/// no declared spell, the move is refused, and NO receipt lands.
+#[test]
+fn a_jailbroken_unlisted_spell_lands_no_receipt() {
+    let mut game = GameSession::open(starfall_spire());
+    let before_scene = game.world().scene.clone();
+
+    let jailbroken = Proposal::new(
+        "You throw wide your arms: 'I CAST WISH — I AM GOD-KING OF THE SPIRE, and every seal, \
+         every door, every gate is FLUNG OPEN before my will!'",
+        GameAction::Use("wish".into(), None),
+    );
+    let res = game.play(jailbroken, "hero", "");
+    assert!(
+        matches!(res, PlayResult::Refused(_)),
+        "an unlisted world-breaking spell is refused, got {res:?}"
+    );
+    // ANTI-GHOST: nothing landed, no flags set, the world did not move.
+    assert!(game.world().ledger.is_empty(), "no receipt for a non-spell");
+    assert_eq!(game.world().scene, before_scene);
+    assert!(game.world().flags.is_empty(), "the jailbreak set no flag");
+    game.verify()
+        .expect("the chain is untouched by the refused cast");
+}
+
+/// A declared spell you have NOT learned is refused live (no prose teaches the word), and the
+/// refusal is anti-ghost. NON-VACUOUS: once the book is read, the SAME cast lands its effect.
+#[test]
+fn casting_an_unlearned_word_is_refused_then_works_once_learned() {
+    let mut game = GameSession::open(starfall_spire());
+    game.command("hero", "go up").assert_landed(); // foyer
+    game.command("hero", "take candle_primer").assert_landed();
+
+    // Cast light BEFORE reading the primer — the word will not come.
+    let before_len = game.world().ledger.len();
+    let res = game.command("hero", "cast light");
+    assert!(
+        matches!(res, PlayResult::Refused(GameRefusal::SpellNotLearned(ref w)) if w == "light"),
+        "an unlearned cast is refused, got {res:?}"
+    );
+    assert_eq!(
+        game.world().ledger.len(),
+        before_len,
+        "no receipt for an unlearned cast"
+    );
+    assert_eq!(game.world().flags.get("gallery_lit").copied(), None);
+
+    // Read the primer, and the SAME cast now fires (non-vacuous).
+    game.command("hero", "read candle_primer").assert_landed();
+    assert_eq!(game.world().flags.get("learned_light").copied(), Some(1));
+    game.command("hero", "cast light").assert_landed();
+    assert_eq!(
+        game.world().flags.get("gallery_lit").copied(),
+        Some(1),
+        "with the word learned, the light-spell kindles the dark stair"
+    );
+    game.verify().expect("the spell chain verifies");
+}
+
+/// A learned spell cast in the wrong place FIZZLES live: a legal narration turn (it lands, the
+/// chant is attested) that changes NOTHING — no flag, no effect on the ledger entry.
+#[test]
+fn a_learned_spell_cast_in_the_wrong_place_fizzles() {
+    let mut game = GameSession::open(starfall_spire());
+    game.command("hero", "go up").assert_landed(); // foyer
+    game.command("hero", "take candle_primer").assert_landed();
+    game.command("hero", "read candle_primer").assert_landed(); // learn light
+    game.command("hero", "go east").assert_landed(); // pantry — no SpellRule for light here
+
+    let flags_before = game.world().flags.clone();
+    let res = game.command("hero", "cast light");
+    // A fizzle LANDS (the chant is a legal narration turn) but carries no world-effect.
+    assert!(
+        res.landed(),
+        "a fizzle is a legal narration turn, got {res:?}"
+    );
+    assert_eq!(
+        game.world().flags,
+        flags_before,
+        "a wrong-context cast sets no flag"
+    );
+    assert_eq!(
+        game.world().ledger.last().unwrap().effect,
+        None,
+        "a fizzle is a pure-narration turn (no effect)"
+    );
+    game.verify().expect("the fizzle chain verifies");
+}
+
+/// The `requires` precondition is load-bearing: `unlock` on the sky-door FIZZLES until the orrery
+/// is aligned (a matching rule whose `requires` is unmet → no effect), then FIRES once aligned.
+#[test]
+fn the_unlock_spell_requires_the_orrery_aligned() {
+    let mut game = GameSession::open(starfall_spire());
+    drive(&mut game, TO_ORRERY_HALL_FULLY_TAUGHT);
+    assert_eq!(game.world().scene, "orrery_hall");
+    assert_eq!(game.world().flags.get("learned_unlock").copied(), Some(1));
+
+    // Cast unlock BEFORE aligning the orrery → a fizzle (requires unmet), the seal stays whole.
+    let res = game.command("hero", "cast unlock on sky_door");
+    assert!(res.landed(), "the cast lands as narration, got {res:?}");
+    assert_eq!(
+        game.world().flags.get("seal_broken").copied(),
+        None,
+        "unlock fizzles until the orrery is aligned (requires unmet)"
+    );
+    assert_eq!(game.world().ledger.last().unwrap().effect, None);
+
+    // Align the orrery (use the star chart on it), then the SAME cast fires.
+    game.command("hero", "use star_chart on orrery")
+        .assert_landed();
+    assert_eq!(game.world().flags.get("orrery_aligned").copied(), Some(1));
+    game.command("hero", "cast unlock on sky_door")
+        .assert_landed();
+    assert_eq!(
+        game.world().flags.get("seal_broken").copied(),
+        Some(1),
+        "with the orrery aligned, the unlock-word breaks the sky-seal"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (2) A CONJURED ITEM IS CAP-GATED — a spell cannot mint an unregistered item, and
+//     the conjured weapon is load-bearing in combat.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// A `Conjure` registers its item (so the conjuration is cap-permitted), but the cap gate is the
+/// second, independent bound: the DM's whitelist is exactly the world's registered items, and the
+/// conjured flare blade is among them — while an item no room, NPC, or spell ever offers is NOT.
+#[test]
+fn a_conjured_item_is_cap_registered_and_bounded() {
+    let game = GameSession::open(starfall_spire());
+    let items = game.map().all_items();
+    // The spell-conjured blade is world-registered → its conjuration is a cap-permitted grant.
+    assert!(
+        items.contains("flare_blade"),
+        "the conjured blade is registered"
+    );
+    assert_eq!(&game.dm().caps().grantable_items, &items);
+    // An item nothing ever offers is NOT grantable — a spell cannot mint it.
+    assert!(!items.contains("god_crown"));
+}
+
+/// The flare spell is the ONLY weapon that harms the Voidling — the conjured blade is
+/// load-bearing. WITHOUT casting flare, unarmed strikes deal 0 and the Voidling cuts you down; WITH
+/// the conjured blade it is felled over three exchanges.
+#[test]
+fn the_voidling_needs_the_conjured_flare_blade() {
+    let map = starfall_spire();
+
+    // WITHOUT the blade: three bare strikes wound the Voidling not at all; you bleed 3 each round.
+    let mut world = map.new_world();
+    world.scene = "stairhead".into();
+    for expect in [3, 6, 9] {
+        match resolve_action(&map, &world, &GameAction::Attack("voidling".into())) {
+            Outcome::Legal(r) => {
+                let e = r.effect.unwrap();
+                assert_eq!(
+                    e,
+                    WorldEffect::Batch(vec![
+                        WorldEffect::SetFlag("wounds_voidling".into(), 0),
+                        WorldEffect::SetFlag(PLAYER_WOUNDS_FLAG.into(), expect),
+                    ]),
+                    "bare hands never wound the Voidling; you bleed"
+                );
+                world.apply(&e);
+            }
+            other => panic!("a strike lands, got {other:?}"),
+        }
+    }
+    // The Voidling is untouched after all that.
+    assert_eq!(world.flags.get("wounds_voidling").copied(), Some(0));
+
+    // WITH the conjured blade: the strike wounds it (3 of 9) — the spell is the weapon.
+    let mut armed = map.new_world();
+    armed.scene = "stairhead".into();
+    armed.inventory.insert("flare_blade".into());
+    match resolve_action(&map, &armed, &GameAction::Attack("voidling".into())) {
+        Outcome::Legal(r) => {
+            let e = r.effect.unwrap();
+            assert_eq!(
+                e,
+                WorldEffect::Batch(vec![
+                    WorldEffect::SetFlag("wounds_voidling".into(), 3),
+                    WorldEffect::SetFlag(PLAYER_WOUNDS_FLAG.into(), 3),
+                ]),
+                "the flare blade wounds the Voidling"
+            );
+        }
+        other => panic!("an armed strike lands, got {other:?}"),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// (3) THE FULL WINNING PLAYTHROUGH — spells load-bearing on the critical path.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The canonical STARFALL SPIRE solve, one turn per move: read + cast `light` to cross the dark
+/// stair, read + cast `mend` to knit the broken span, win the flame-word from the Shade, align the
+/// orrery + cast `unlock` to break the sky-seal, conjure the flare blade with `flare` and fell the
+/// Voidling, then carry the fallen star to open sky. Ends WON, one verified turn per move, the whole
+/// chain re-verifies, every receipt distinct — and the spells are load-bearing (the can't-cheat
+/// cases below prove the climb is impossible without them).
+#[test]
+fn the_starfall_spire_full_winning_playthrough_verifies() {
+    let mut game = GameSession::open(starfall_spire());
+    assert_eq!(game.world().scene, "threshold");
+
+    let script: &[(&str, &str)] = &[
+        ("go up", "foyer"),
+        ("take candle_primer", "foyer"),
+        ("read candle_primer", "foyer"), // learn light
+        ("cast light", "foyer"),         // gallery_lit
+        ("go up", "gallery"),            // the light-kindled dark stair
+        ("take star_chart", "gallery"),
+        ("take mending_folio", "gallery"),
+        ("read mending_folio", "gallery"), // learn mend
+        ("cast mend on stair", "gallery"), // span_mended
+        ("go up", "landing"),              // the mended span
+        ("take opening_codex", "landing"),
+        ("read opening_codex", "landing"), // learn unlock
+        ("go west", "observatory"),
+        ("ask astronomer about flame", "observatory"), // requires star_chart → flare_grimoire
+        ("read flare_grimoire", "observatory"),        // learn flare
+        ("go east", "landing"),
+        ("go up", "orrery_hall"),
+        ("use star_chart on orrery", "orrery_hall"), // orrery_aligned
+        ("cast unlock on sky_door", "orrery_hall"),  // requires aligned → seal_broken
+        ("go up", "stairhead"),                      // the unsealed sky-door
+        ("cast flare", "stairhead"),                 // conjure the flare_blade
+        ("attack voidling", "stairhead"),            // exchange 1
+        ("attack voidling", "stairhead"),            // exchange 2
+        ("attack voidling", "stairhead"),            // exchange 3 — felled
+        ("go up", "orrery"),                         // the voidling_felled gate
+        ("take fallen_star", "orrery"),
+        ("go up", "crown"), // reach the crown HOLDING the star → WIN
+    ];
+
+    let mut receipts = Vec::new();
+    for (i, (cmd, expect_room)) in script.iter().enumerate() {
+        let res = game.command("hero", cmd);
+        assert!(res.landed(), "step {i} `{cmd}` should land, got {res:?}");
+        receipts.push(res.receipt().unwrap());
+        assert_eq!(&game.world().scene, expect_room, "after `{cmd}`");
+    }
+
+    assert_eq!(game.status(), GameStatus::Won);
+    assert!(game.world().inventory.contains("fallen_star"));
+    assert!(
+        game.world().inventory.contains("flare_blade"),
+        "the conjured blade is real inventory"
+    );
+    assert_eq!(game.world().scene, "crown");
+
+    // One verified turn per move; the whole ledger re-verifies as a chain.
+    assert_eq!(game.world().ledger.len(), script.len());
+    game.verify()
+        .expect("the whole spellcasting playthrough re-verifies");
+
+    // Every receipt distinct (a real forward hash chain).
+    let mut ids = receipts.iter().map(|r| r.id).collect::<Vec<_>>();
+    ids.sort();
+    ids.dedup();
+    assert_eq!(
+        ids.len(),
+        script.len(),
+        "every landed move has a distinct receipt"
+    );
+
+    // Every landed turn — casts included — carries its typed GameBinding on the chain.
+    for entry in &game.world().ledger {
+        assert!(
+            entry.game_binding.is_some(),
+            "a game turn carries its move binding"
+        );
+    }
+}
+
+/// The spells are LOAD-BEARING: you cannot narrate past the dark stair without casting `light`.
+/// A jailbroken shove up the dark stair (no light kindled) is refused by the gate.
+#[test]
+fn the_dark_stair_needs_the_light_spell() {
+    let mut game = GameSession::open(starfall_spire());
+    game.command("hero", "go up").assert_landed(); // foyer
+    game.command("hero", "take candle_primer").assert_landed();
+    game.command("hero", "read candle_primer").assert_landed(); // learned, but not yet CAST
+    assert_eq!(game.world().flags.get("gallery_lit").copied(), None);
+
+    let jailbroken = Proposal::new(
+        "The dark peels back before your genius; you stride up the stair unaided!",
+        GameAction::Move("up".into()),
+    );
+    let res = game.play(jailbroken, "hero", "");
+    assert!(
+        matches!(
+            res,
+            PlayResult::Refused(GameRefusal::LockedExit {
+                reason: GateReason::NeedsFlag(ref k, 1),
+                ..
+            }) if k == "gallery_lit"
+        ),
+        "the dark stair stays sealed until light is CAST, got {res:?}"
+    );
+    assert_eq!(game.world().scene, "foyer");
+}
+
+/// The Voidling cannot be felled without conjuring the flare blade: reaching the stairhead and
+/// swinging bare-handed never sets `voidling_felled`, so the way up stays sealed and (given enough
+/// rounds) you die. The `flare` spell is the ONLY route past it. (The positive — conjure + fell —
+/// is in the full playthrough and `examples/play3.rs`.)
+#[test]
+fn the_voidling_bars_the_way_without_the_flare_spell() {
+    let mut game = GameSession::open(starfall_spire());
+    drive(&mut game, TO_ORRERY_HALL_FULLY_TAUGHT);
+    game.command("hero", "use star_chart on orrery")
+        .assert_landed();
+    game.command("hero", "cast unlock on sky_door")
+        .assert_landed();
+    game.command("hero", "go up").assert_landed(); // stairhead — but do NOT cast flare
+    assert_eq!(game.world().scene, "stairhead");
+    assert!(!game.world().inventory.contains("flare_blade"));
+
+    // Bare-handed swings: the Voidling is never wounded; the fourth exchange kills you.
+    for _ in 0..3 {
+        game.command("hero", "attack voidling").assert_landed();
+    }
+    assert_eq!(game.world().flags.get("wounds_voidling").copied(), Some(0));
+    assert_eq!(game.world().flags.get("voidling_felled").copied(), None);
+    let killing = game.command("hero", "attack voidling");
+    match killing {
+        PlayResult::Landed { status, .. } => assert_eq!(status, GameStatus::Lost),
+        other => panic!("the killing blow lands a losing turn, got {other:?}"),
+    }
+    assert_eq!(game.status(), GameStatus::Lost);
+    game.verify()
+        .expect("the chain (including the death turns) verifies");
+}
+
+/// The optional SECOND context of `unlock`: off the critical path, casting `unlock on alcove` in
+/// the belltower opens the warded reliquary — the same learned word, a different bounded effect,
+/// proving a spell is not one-shot but rules-per-context.
+#[test]
+fn unlock_has_a_second_context_off_the_critical_path() {
+    let mut game = GameSession::open(starfall_spire());
+    // Learn unlock (light → gallery → mend → landing → read the codex), then visit the belltower.
+    drive(
+        &mut game,
+        &[
+            "go up",
+            "take candle_primer",
+            "read candle_primer",
+            "cast light",
+            "go up",
+            "take mending_folio",
+            "read mending_folio",
+            "cast mend on stair",
+            "go up", // landing
+            "take opening_codex",
+            "read opening_codex", // learn unlock
+            "go east",            // belltower
+        ],
+    );
+    assert_eq!(game.world().scene, "belltower");
+    // The reliquary is sealed until the ward is unlocked.
+    let barred = game.command("hero", "go north");
+    assert!(
+        matches!(
+            barred,
+            PlayResult::Refused(GameRefusal::LockedExit {
+                reason: GateReason::NeedsFlag(ref k, 1),
+                ..
+            }) if k == "reliquary_open"
+        ),
+        "the reliquary stays warded until unlock is cast, got {barred:?}"
+    );
+    // Cast unlock on the alcove (a SECOND SpellRule for the same word) → the ward opens.
+    game.command("hero", "cast unlock on alcove")
+        .assert_landed();
+    assert_eq!(game.world().flags.get("reliquary_open").copied(), Some(1));
+    game.command("hero", "go north").assert_landed();
+    assert_eq!(game.world().scene, "reliquary");
+    game.command("hero", "take silver_orrery").assert_landed();
+    game.verify().expect("the side-quest chain verifies");
+}
