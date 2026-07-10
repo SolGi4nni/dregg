@@ -207,3 +207,16 @@ to covered machinery (React/Promise ↔ noteSpend/noteCreate nullifier set; Gran
 UNVERIFIED. hpres is discharged for RecStmt-expressible effects ONLY. This is a real remaining DEBT-B gap, not a
 count quibble — the DEBT-B carrier result (RestHashIffFrame→Poseidon2SpongeCR) is unaffected.
 - ✅✅ REACT PROVED `52a0ffd97` → COMPLETE 33-EFFECT CLASSIFICATION: {square-proved: 30 RecStmt + Grant + Spawn + React · off-kernel: Promise/Notify (reactive_registry≠kernel) · DEBT-A STARK: ShieldedTransfer}. DEBT-B finite-map coverage COMPLETE at true scope; tree green 4539.
+
+## DEBT-A — in flight (StarkSound a THEOREM at BabyBear)
+Ground (scouted): `class StarkSound (hash)(R):Prop` (CircuitSoundness.lean:382), 0 instances; content =
+`verifyBatch accept ⟹ ∃ Satisfied2`. AIR→CircuitSound chain EXISTS modulo `FriProximity` (`circuit_sound_via_fri`,
+AirSoundness.lean:234). `fold_close_of_two_alpha`/`friProximity_discharge` are field-generic + PROVED
+(FriSoundness.lean, need only [Field][DecidableEq]) — the `ZMod 5` was the instantiation FIELD, not a limit.
+- ✅ DEBT-A brick 1 `d8d78e59e` — BabyBear (p=2013265921) proved a prime FIELD + DecidableEq + 2-adicity EXACTLY
+  27 (both-truth teeth); meets the FRI lemmas' typeclass requirements. FIELD-SWAP DE-RISKED: FRI-at-BabyBear is
+  instantiation, not a proof frontier.
+- ▶ brick 2: construct a BabyBear `FriSetup` (FriGeom σ/q/p/rep + RS codes C/C' + folding-completeness laws) at a
+  real 2^k coset — mirror the ZMod 5 demo (FriSoundness.lean:455) at the DEPLOYED field; instantiate
+  friProximity_discharge at it. brick 3: bind to deployed p3 FRI config + circuit_sound_via_fri → CircuitSound a
+  THEOREM. brick 4: AIR-chip faithfulness (ChipTableSoundN over Poseidon2BabyBearW16) → instance : StarkSound.
