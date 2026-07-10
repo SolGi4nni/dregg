@@ -6966,3 +6966,76 @@ a wide is expected — the compiler shrugs. heap_root was one of the 3461 that n
 Digest32<Kind> so HeapRoot/Nullifier can't be confused), migrate the SEMANTIC ones incrementally (many of the
 3461 are legit raw-byte crypto/serde, leave those). The roots are already done (retyped to Faithful8). This is
 the general hygiene that would prevent the whole class. NOT a tail-of-session sweep.
+
+## 2026-07-09 — AFTER THE RETRACTION: the debt gets a ledger, and the first real bricks
+The retraction (`21c75e5cb`) said what was false. This is what got built in its place. Whole tree
+`lake build Dregg2` **GREEN, 4530 jobs**, metatheory working tree clean.
+
+**Demolition + ground truth.** `3e0f1be60` nuked the caricatures: the `ZMod 5` "deployed effect-VM"
+(`EffectVmSemantics`), the toy `circuit_sound` at `|F|=5` (`CircuitSoundCompose`), the definitional cap-weld
+(`capMap c := c.rights` on a `Slot` we defined to carry `AuthReq`), and the `by decide` λ (`ParameterSecurity`).
+The tree builds green WITHOUT them — nothing real depended on them. Kept the genuine math (`AdvCalculus`,
+`LossyIdentification`, `DoubleSidedO2H`) with `deployedEstimate` → `illustrativeEstimate` + a NOT-SOURCED banner.
+NEW: **`docs/reference/METATHEORY-GROUND-TRUTH.md`** — where the real models live (the 45 `Argus/Effects/*`, the
+`turnDecodeChain_refines_turnSpec` apex, the three open carriers, the crypto floor), so the next attempt grounds
+instead of mirrors. Read it before modeling anything in Lean.
+
+**"Naming IS faking" (ember).** `class StarkSound : Prop` is assumed 38× and instanced 0× — "REALIZABLE, named,
+not faked" is prose, and `#assert_axioms` passes only because it never inspects typeclass hypotheses. That is the
+laundering mechanism. Corrected `memory/project-circuit-soundness-apex` (the apex is ASSUMED, not verified) and
+minted [[feedback-integrator-must-not-compress-scope]].
+
+**The ledger.** NEW: **`docs/reference/CARRIER-CENSUS.md`** (`c3d1a4ec8`) — every carrier-shaped Prop/class that
+appears as a hypothesis, classified with a grep line behind each verdict. The finding is NOT "it's all fake":
+FLOOR (9) legit · **hash-injectivity (~1200 uses) is PLUMBING not debt** (the `_of_poseidon2CR` reductions already
+exist) · ~37 genuinely realized · and exactly **two real debts** — **DEBT A `StarkSound`** (prove the
+Plonky3/FRI-over-BabyBear verifier) and **DEBT B `RestHashIffFrame` + the faithfulness family** (~250 uses).
+Also `Freshness.lean`: `no_replay`/`deployed_no_replay` proved PARAMETRIC over a `CommitSurface`, nonce
+monotonicity DERIVED from the real executor — with an honest banner that the concrete grounding still inherits
+`RestHashIffFrame`.
+
+**DEBT B — the finite-map data refinement** (`docs/reference/DEBT-B-FINITE-MAP-REFINEMENT.md`, `d81308d6d`).
+Root cause: `RecordKernelState` models per-cell state as TOTAL FUNCTIONS over an infinite `CellId` domain, which
+no `RH : … → ℤ` can injectively bind — so `RestHashIffFrame` is unsatisfiable and every whole-kernel binding is
+vacuous-in-application. The deployed Rust already uses sparse maps and already commits over SORTED-canonical
+leaves (`cap_root.rs::CanonicalCapTree`), so the fix is to make the Lean model faithful to the impl. Representation
+LOCKED by ember to a **sorted-nodup assoc list, NOT Mathlib `Finmap`** (a `Quotient` by permutation abstracts away
+the very sortedness the commitment relies on, forcing quotient gymnastics at the load-bearing hash step).
+- **R1** `6458e10d2` — `FinKernelState` + `SortedMap.ext` (canonical form) + **`denote_injective` UNCONDITIONAL**
+  (the default-collision handled by `CanonMap`'s bundled `Canonical` invariant — the sparse-BTreeMap discipline,
+  a data invariant, not a carrier) + the surjectivity honesty-gate (`hpres` explicit, `finStep` abstract).
+- **R2** `e365d1c2d` — `serializeFin_injective` + **`restHashIffFrame_fin` with residual `Poseidon2SpongeCR` ALONE**
+  + `restHashIffFrame_of_fin` (the real `StateCommit.RestHashIffFrame` biconditional, PROVED on the denote-image /
+  reachable subclass — honestly scoped). `rest_body_matches := Iff.rfl` is a drift-tripwire welding it to the real
+  carrier.
+- **R3-core** `e365d1c2d` — `finStep_denote` (the commuting square) against the REAL `recK*` semantics, for the
+  **5 `FullAction` primitives ONLY**; the lane's "REAL effect algebra" was corrected — the other ~28 deployed
+  effects are NOT covered.
+
+**DELTA-FUTURE** (`464692042`, `docs/reference/DELTA-FUTURE.md`) — the sharpest finding. An effects-as-data
+prototype measured a NO (the per-effect `by_cases` survives), but the *reason* is that the deployed Rust is
+**already delta-based** (`ledger.rs`: `validate_delta` → `Vec<(CellId, CellStateDelta)>` → `apply_cell_delta`)
+while our Lean `recTransfer` is a nested-`if`. So the residue is an artifact of the LESS faithful model. A
+delta-based Lean kernel would dissolve the whole per-effect cluster AND be more faithful — the twin of DEBT-B's
+finite-maps (state-faithful + step-faithful). **De-risk it (one-effect prototype) BEFORE grinding the tactic.**
+
+**The plan** (`eabd86b0d`): NEW **`GOAL-HONEST-VERIFICATION.md`** supersedes the retracted campaign (which now
+wears a RETRACTED banner; its ✅s are the record of what was claimed, not truth). Target trusted base =
+`{Poseidon2SpongeCR, lattice/DL floor, leanc}`. **`seL4-cited` DROPPED** — an informal cross-artifact cite is not
+a floor (no formal refinement from our Lean cap model to seL4's Isabelle proofs; l4v's guarantees are heavily
+caveated; ember worked on l4v in 2016 and confirmed it doesn't transfer). Capability soundness is CRYPTOGRAPHIC
+via `CapabilityChain` under DL∨MSIS.
+
+**A new species of the same disease** (`d458df4fa`): R2 went red because it projected
+`RecordKernelState.commitmentsRoot` — a field that only ever existed in the VK-epoch lane's UNCOMMITTED working
+tree. My "R2 closure-green" was green against transient sibling WIP. **Discipline: when another lane is mid-editing
+a shared struct, build against HEAD, not the working tree** — else "green" is green against something that may
+never be committed. Fixed surgically (2-root shape); the `Iff.rfl` tripwire now welds to the real carrier so any
+future drift breaks the build.
+
+**OPEN, honestly:** `FinKernelState` does not yet CARRY `nullifierRoot`/`revokedRoot` (`Fin 8 → ℤ`, finite —
+verbatim), so `denote` defaults them and R2's root-clauses are vacuous-on-the-image (`commitmentsRoot` dual still
+pending upstream). That convergence is item #1 in the DEBT-B remaining plan, before the delta de-risk.
+NEW FILES: `GOAL-HONEST-VERIFICATION.md` · `docs/reference/{METATHEORY-GROUND-TRUTH,CARRIER-CENSUS,
+DEBT-B-FINITE-MAP-REFINEMENT,DELTA-FUTURE}.md` · `metatheory/Dregg2/Circuit/{Freshness,FinKernelState,FinFrameHash,
+FinKernelStep,EffectsAsDataProto}.lean`.
