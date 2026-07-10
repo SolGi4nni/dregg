@@ -185,3 +185,24 @@ directions, and the second one matters more:
 permutation (`Poseidon2BabyBearW16.perm`, sorry-free) — prove `permWidth` / `chipHashIsLane0` (the v1 digest IS
 lane 0 of the genuine squeeze) / `chipTableFaithful : ChipTableSoundN` over the real poseidon2 chip table. THEN
 the 26 hypothesis-sites can be discharged. Non-vacuity ≠ deployed discharge.
+
+## ⚠⚠ DEBT-A AUDIT HEADLINE (2026-07-10) — the STARK core is un-deployed everywhere
+Full table: `docs/reference/DEBT-A-CARRIER-AUDIT.md`. I spot-verified the three load-bearing rows MYSELF:
+- **`StarkSound`'s "instance" is LAUNDERING.** `FriVerifierBridge` builds `StarkSound hash R where extract :=
+  carrier.extract …` from `[carrier : AlgoStarkSound …]` **taken as a hypothesis**, and `AlgoStarkSound` has
+  **ZERO instances**. It reads as a discharge; it is a relabel onto an assumed carrier that `#assert_axioms`
+  cannot see. (`feedback-no-named-carrier-laundering`: relabeling ≠ fixing.) StarkSound = ASSUMED.
+- **`FriExtract`'s sole realization is VACUOUS.** `wit_friExtract` (AggAirSound.lean:266) is over
+  `witVerify : WitProof → Bool := fun _ => true` (:256, ACCEPT-EVERYTHING) and `witCVS := fun _ _ => True` (:261).
+- **`ChipTableSoundN`: ZERO realizations at the deployed permutation** (all use `permOutZ = fun _ => replicate 0`
+  or `witnessPerm = fun _ => [K0,0,…]`); 139 hypothesis sites. Even `activeChipTbl_sound` uses `permOutZ`.
+- `FriProximity` is a NAME COLLISION: `AirSoundness.lean:219` (verifyLD ⟹ transition; ASSUMED-only) vs
+  `FriSoundness.lean:403` (`closeN S.C d f`; discharged but only at the ZMod 5 / Fin 4 / rate-1/2 toy).
+  **No bridge term exists** between them — yet `circuit_sound_via_fri` needs exactly that bridge.
+COUNTS: NON-VACUITY-ONLY 3 (ChipTableSoundN, FriExtract, FriProximity-FriSoundness) · ASSUMED 5 (StarkSound,
+AlgoStarkSound, FriLowDegreeSound, EngineSound, FriProximity-AirSoundness) · DISCHARGED-AT-DEPLOYED 3
+(ChipTableSound legacy 1-felt, RangeTableSound at deployed rangeRows, GuardDecodes2 at ~20 real effect specs —
+the AIR SUPPORT layer, genuinely good) · FLOOR 2 (Poseidon2RealizedSponge, QROMInjective).
+**WHAT DEBT-A MUST ACTUALLY PROVE:** ChipTableSoundN at the REAL Poseidon2BabyBearW16 perm · FRI proximity at the
+deployed BabyBear params · the FriProximity bridge · a real per-node FriExtract · then an ACTUAL
+`instance : StarkSound` that does not route through an assumed AlgoStarkSound.
