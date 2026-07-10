@@ -36,8 +36,27 @@ then open **http://127.0.0.1:8903/** — a real driver page (served same-origin 
   `400 … does not support tools`, and the brain correctly *fail-closes* rather than fabricate a tool-call
   (set `DREGG_AGENT_DEBUG=1` to see such provider errors; they're swallowed by design otherwise).
 
+- **Bring your own key** (`POST /act`) — ✅ **the good mode.** The model runs *in your tab* under *your*
+  API key (OpenRouter / local ollama / any custom OpenAI-compatible base). Each proposed tool-call is
+  POSTed one at a time to the grain, which cap-gates, meters, mints and receipts it — **the host never
+  sees your key.** Needs no host model at all. The model observes its own results (it can read back what
+  it wrote), and a refusal comes back with the gate's own words:
+  ```
+  fs_write → admitted:1  output:"wrote 76 bytes to …"
+  fs_read  → admitted:1  output:"read …/haiku.txt (76 bytes)\nreceipts do not lie / …"
+  http_get → admitted:0  cap_refused:1  outcome:"REFUSED — outside the cap bundle (http:example.com)"
+  ```
+  *The model proposes; the capabilities dispose.* (CORS: OpenRouter works from a browser; ollama needs
+  `OLLAMA_ORIGINS=*`; OpenAI/Anthropic block browser calls — use a local base or proxy.)
+
 The browser-friendly routing shim (`X-Dregg-Grain-Host` header / `?host=` query, since a browser can't
 set `Host`) is what makes this drivable from a page; auth is unchanged and a non-member still 404s.
+
+*Honest boundary:* the host still sees the **actions and their results** — it executes them and holds the
+workdir. It never sees your key, your model, or your conversation. An **autonomous** grain (one that runs
+while you sleep) must call a model *itself*, so it needs a credential on the host — the right answer
+there is an attenuated one (an OpenRouter credit-limited key today; a caveated capability spent against a
+broker, eventually). Not solved, not pretended.
 
 ## The CLI equivalent — a local grain, driven end-to-end, no host trust
 
