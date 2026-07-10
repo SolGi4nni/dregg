@@ -1335,6 +1335,30 @@ impl TurnExecutor {
             }
         }
 
+        // STAGE E / hole #139 — the ATTESTABLE revocation check. The channel check
+        // above reads the node-local, non-committed `revocation_channels` set (fast
+        // advisory path, kept for liveness). THIS check reads the COMMITTED registry
+        // `note_revoked`, which is deterministic from the finalized turns: a re-executor
+        // reproduces it, and a node that skips it commits a divergent state consensus
+        // rejects. Two domain-separated keys: `cred_nul(provenance)` = THIS exact
+        // capability instance (fine-grained, subtree-safe via the ancestor chain);
+        // `chan_nul(token)` = the channel it subscribes to (intentional batch revoke).
+        {
+            let revoked = self.note_revoked.lock().unwrap();
+            if revoked.contains(&cap.cred_nul())
+                || revoked.contains(&dregg_cell::derivation::chan_nul(token))
+            {
+                return Err((
+                    TurnError::BreadstuffRevoked {
+                        actor: *actor_cell_id,
+                        target: target_id,
+                        channel_id: *token,
+                    },
+                    path.to_vec(),
+                ));
+            }
+        }
+
         // Authorization passed — record the CONSUMED-capability witness
         // against the actor's pre-state c-list (cap Phase C).
         self.record_consumed_cap_witness(
@@ -1395,6 +1419,24 @@ impl TurnExecutor {
                     ));
                 }
             } else {
+                return Err((
+                    TurnError::BearerCapRevoked {
+                        target: proof.target,
+                        channel_id: *channel_id,
+                    },
+                    path.to_vec(),
+                ));
+            }
+            // STAGE E / hole #139 — the ATTESTABLE check for the bearer path: the
+            // channel's `chan_nul` in the COMMITTED `note_revoked` registry (not the
+            // node-local advisory set above). Deterministic ⇒ consensus-enforceable ⇒
+            // a light client verifying the committed root can trust the batch revoke.
+            if self
+                .note_revoked
+                .lock()
+                .unwrap()
+                .contains(&dregg_cell::derivation::chan_nul(channel_id))
+            {
                 return Err((
                     TurnError::BearerCapRevoked {
                         target: proof.target,
