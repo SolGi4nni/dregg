@@ -25,6 +25,12 @@ dregg-exec-lean = { path = "../exec-lean" }
 # The verified FINALITY GATE (`finality_gate.rs`) calls the Lean-exported `dregg_blocklace_finalize`
 # directly.
 dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+# dregg-pq: the ML-DSA-65 (FIPS 204) verify seam. dregg-pq is a light leaf that routes its
+# security-critical verify through an install-time function pointer; the node — which CAN link the
+# Lean archive via dregg-lean-ffi — installs the extracted, Lean-verified real verify core at startup
+# (`install_lean_verify_core_real`), taking the `fips204` crate OUT of the node's verify TCB. A direct
+# dep so the node can call the install; dregg-pq is already in the graph transitively.
+dregg-pq = { path = "../dregg-pq" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "biscuit", "rand-deps"] }
 dregg-persist = { path = "../persist" }
 dregg-federation = { path = "../federation" }
@@ -66,6 +72,12 @@ starbridge-compartment-workflow-mandate = { path = "../starbridge-apps/compartme
 starbridge-storage-gateway-mandate = { path = "../starbridge-apps/storage-gateway-mandate" }
 starbridge-privacy-voting = { path = "../starbridge-apps/privacy-voting" }
 starbridge-bounty-board = { path = "../starbridge-apps/bounty-board" }
+# The execution-lease app: the devnet demo-lease seed (DREGG_SEED_DEMO_LEASE=1
+# with --enable-faucet) opens a program-bearing, funded lease cell at boot so an
+# external provider (the operated DreggNet plane) can decode + fulfill a REAL
+# lease off this node's HTTP surface — the loop's mint, which no HTTP endpoint
+# can perform (program install is not a wire effect).
+starbridge-execution-lease = { path = "../starbridge-apps/execution-lease" }
 # The pg-dregg MIRROR core (pg-dregg/src/mirror.rs): MirrorBatch / CellRow / TurnRow /
 # CapRow / MemCell / RootChain. pg-dregg is a STANDALONE workspace whose DEFAULT feature
 # set is EMPTY (no pgrx, no postgres) — this path dep links ONLY its `lib` (the mirror's
@@ -148,6 +160,10 @@ pg-mirror-live = ["dep:tokio-postgres"]
 [dev-dependencies]
 tower = { version = "0.5", features = ["util"] }
 tempfile = "3"
+# `tests/mldsa_live_verify.rs` generates a GENUINE ML-DSA-65 keypair + signature with the crate and
+# proves the node's installed Lean verify core (BRICK 8) is the accept/reject authority routing them —
+# same fips204 0.4.x the `dregg-pq` leaf carries, so the sig bytes are byte-identical to production.
+fips204 = "0.4"
 http-body-util = "0.1"
 x25519-dalek = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }

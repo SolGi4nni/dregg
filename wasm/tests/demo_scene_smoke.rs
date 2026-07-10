@@ -7,28 +7,18 @@ use spween_dregg::{Driver, WorldCell, parse};
 #[test]
 fn the_commons_compiles_and_plays_a_branch() {
     let src = include_str!("../../demo/stories/the-commons.scene");
-    let scene =
-        parse(src, "the-commons.scene").expect("the-commons.scene must compile (spween syntax)");
+    let scene = parse(src, "the-commons.scene").expect("the-commons.scene must compile (spween syntax)");
     let scene: &'static _ = Box::leak(Box::new(scene));
     let world = WorldCell::deploy(scene, 7).expect("deploy the commons world");
     let mut d = Driver::start(world, scene).expect("start the playthrough");
 
-    assert_eq!(
-        d.current_passage().as_deref(),
-        Some("intro"),
-        "opens at intro"
-    );
+    assert_eq!(d.current_passage().as_deref(), Some("intro"), "opens at intro");
     let choices = d.choices();
-    assert!(
-        choices.len() >= 2,
-        "the intro offers the crowd >=2 branches to vote, got {}",
-        choices.len()
-    );
+    assert!(choices.len() >= 2, "the intro offers the crowd >=2 branches to vote, got {}", choices.len());
 
     // Drive the first branch (as a winning collective vote would) and confirm it advances.
     let before = d.current_passage();
-    d.advance(choices[0].index)
-        .expect("advance the winning branch");
+    d.advance(choices[0].index).expect("advance the winning branch");
     assert!(
         d.current_passage() != before || d.is_ended(),
         "advancing a branch changes the passage (or ends the story)"

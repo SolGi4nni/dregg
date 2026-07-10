@@ -898,6 +898,41 @@ async fn run_node(
         );
     }
 
+    // ── ML-DSA VERIFY: install the Lean-verified core as the accept/reject AUTHORITY ──
+    // `dregg_pq::ml_dsa_verify` is the security-critical ML-DSA-65 verify behind ~10 surfaces
+    // (token/revocation, lightclient, cell-crypto, wire, turn/authorize, captp, blocklace/pq). It is a
+    // LIGHT leaf that cannot itself link the 195 MB Lean archive, so it routes through an install-time
+    // function pointer: with a REAL core installed it computes the verdict from the extracted, full-byte
+    // `MlDsaVerifyReal.verifyCore` (BRICK 8 — proved to accept a genuine `fips204` signature and reject
+    // tampers) and NEVER consults the `fips204` crate, taking that crate OUT of the node's verify TCB.
+    // Nothing else installs it, so the live node had been falling through to the crate at every verify;
+    // this is the wiring that closes that gap — mirroring how the strand-admit / finality / tau-order
+    // verified cores are made authoritative above.
+    //
+    // Gated on `fips204_verify_real_core_available()` (inside `install_mldsa_verified_verify_core`):
+    // install ONLY when the linked archive actually EXPORTS `dregg_fips204_verify_real`. A stale archive
+    // lacking it would make the installed core return `None` on every call and — because `ml_dsa_verify`
+    // fails CLOSED on a core fault (see `dregg-pq/src/mldsa.rs`:
+    // `matches!(core(&wire).as_deref(), Some("1"))`) — reject every signature. So when the export is
+    // absent we keep the `fips204`-crate fallback (a valid FIPS-204 verify) rather than bricking verify.
+    match install_mldsa_verified_verify_core() {
+        MlDsaVerifyCoreInstall::Installed => info!(
+            "ML-DSA verify: verified Lean core installed — the extracted full-byte \
+             `MlDsaVerifyReal.verifyCore` is now the accept/reject authority; the `fips204` crate is no \
+             longer the verify authority (out of the node's verify TCB)"
+        ),
+        MlDsaVerifyCoreInstall::AlreadyInstalled => info!(
+            "ML-DSA verify: a verified Lean core was already installed this process (install is \
+             once-per-process) — the `fips204` crate remains out of the verify TCB"
+        ),
+        MlDsaVerifyCoreInstall::ExportAbsent => tracing::warn!(
+            "ML-DSA verify: the linked Lean archive does NOT export `dregg_fips204_verify_real` \
+             (`fips204_verify_real_core_available()` is false) — the node's ML-DSA verify falls back to \
+             the `fips204` crate primitive (a valid FIPS-204 verify, but NOT the Lean-verified \
+             authority). Rebuild against a HEAD-matching archive to route verify through Lean."
+        ),
+    }
+
     // Initialize node state with configurable key file.
     let has_peers = !peers.is_empty();
     let node_state = match state::NodeState::new_with_key_file(&data_path, peers, key_file) {
@@ -1097,6 +1132,52 @@ async fn run_node(
                 failed = stats.failed,
                 "starbridge devnet backfill seeding complete (default cell set)"
             );
+        }
+    }
+
+    // Demo execution-lease seed — the local-cloud loop's mint. An external
+    // provider decodes a lease off `GET /api/cell/{id}` only when the cell is
+    // program-bearing with the lease slots sealed (RENT/PERIOD/PROVIDER) and a
+    // funded balance — and program install is not a wire effect, so no HTTP
+    // client can create one. Dev-gated twice (`--enable-faucet` AND
+    // `DREGG_SEED_DEMO_LEASE=1`); idempotent (the lease cell id derives from the
+    // operator key + the native token domain, insert-if-absent on every boot).
+    // The balance IS the prepaid budget the provider meters against; rent 1 per
+    // 60-block period, open-ended, provider = the node's own operator cell.
+    if enable_faucet && std::env::var("DREGG_SEED_DEMO_LEASE").as_deref() == Ok("1") {
+        use starbridge_execution_lease as lease_app;
+        let mut s = node_state.write().await;
+        let operator_pubkey = s.cclerk.public_key().0;
+        let native = [0u8; 32];
+        let lease_id = dregg_cell::CellId::derive_raw(&operator_pubkey, &native);
+        if s.ledger.get(&lease_id).is_none() {
+            let operator_cell = dregg_cell::CellId::derive_raw(
+                &operator_pubkey,
+                blake3::hash(b"default").as_bytes(),
+            );
+            let mut cell = dregg_cell::Cell::with_balance(operator_pubkey, native, 10_000);
+            cell.program = lease_app::lease_cell_program();
+            let terms = lease_app::LeaseTerms::new(
+                operator_cell,
+                lease_id,
+                dregg_cell::CellId(native),
+                1,
+                60,
+                0,
+                0,
+            );
+            match lease_app::open_lease(&mut cell, &terms, lease_app::field_from_u64(0)) {
+                Ok(()) => match s.ledger.insert_cell(cell) {
+                    Ok(id) => info!(
+                        lease = %dregg_types::hex_encode(&id.0),
+                        provider = %dregg_types::hex_encode(&operator_cell.0),
+                        budget = 10_000,
+                        "seeded demo execution-lease (funded, operator-owned)"
+                    ),
+                    Err(e) => warn!(error = %e, "demo execution-lease insert failed"),
+                },
+                Err(e) => warn!(error = ?e, "demo execution-lease open refused"),
+            }
         }
     }
 
@@ -2138,6 +2219,35 @@ fn env_allow_unverified(val: Option<&str>) -> bool {
 /// node is never a silent default.
 fn marshal_only_must_refuse(lean_available: bool, allow_unverified: bool) -> bool {
     !lean_available && !allow_unverified
+}
+
+/// Outcome of installing the Lean-verified ML-DSA verify core as `dregg_pq::ml_dsa_verify`'s authority.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum MlDsaVerifyCoreInstall {
+    /// The real core was installed by THIS call — the `fips204` crate is now out of the verify TCB.
+    Installed,
+    /// A core was already installed this process (install is once-per-process) — crate still out of TCB.
+    AlreadyInstalled,
+    /// The linked Lean archive does not export `dregg_fips204_verify_real`; the crate fallback stays in
+    /// place (a valid FIPS-204 verify, but NOT Lean-authoritative).
+    ExportAbsent,
+}
+
+/// Install the extracted, Lean-verified REAL, full-byte ML-DSA verify core (`MlDsaVerifyReal.verifyCore`,
+/// BRICK 8) as the accept/reject AUTHORITY behind `dregg_pq::ml_dsa_verify` — taking the `fips204` crate
+/// OUT of the node's verify TCB. Gated on `fips204_verify_real_core_available()` so a stale archive that
+/// lacks the export does not brick verification (an absent core would make `ml_dsa_verify` fail closed on
+/// every call). Idempotent and once-per-process. Called from the node startup path AND exercised directly
+/// by `tests/mldsa_live_verify.rs`, so the running-binary gate drives the EXACT production install.
+pub fn install_mldsa_verified_verify_core() -> MlDsaVerifyCoreInstall {
+    if !dregg_lean_ffi::fips204_verify_real_core_available() {
+        return MlDsaVerifyCoreInstall::ExportAbsent;
+    }
+    if dregg_pq::install_lean_verify_core_real(|w| dregg_lean_ffi::shadow_fips204_verify_real(w).ok()) {
+        MlDsaVerifyCoreInstall::Installed
+    } else {
+        MlDsaVerifyCoreInstall::AlreadyInstalled
+    }
 }
 
 /// Wait for a shutdown signal to trigger a graceful, checkpoint-then-exit stop.
