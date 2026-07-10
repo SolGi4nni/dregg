@@ -99,7 +99,10 @@ fn verified_scalar_sign_core_runs_live_and_roundtrips() {
     let sig_wire = dregg_pq::ml_dsa_sign_core("5 1 3 7 40")
         .expect("sign core installed ⇒ Some(_)")
         .expect("honest sample ⇒ an accepted signature, not REJECT");
-    assert_eq!(sig_wire, "7 45 0", "the live Lean signCore emits the accepted signature wire");
+    assert_eq!(
+        sig_wire, "7 45 0",
+        "the live Lean signCore emits the accepted signature wire"
+    );
 
     // ROUND-TRIP through the extracted (scalar) verifyCore, ALSO run live via the Lean archive.
     let verify_wire = format!("3 7 {sig_wire}");
@@ -147,13 +150,15 @@ fn deployed_byte_sign_is_lean_produced_crate_leaves_tcb() {
     match install_mldsa_verified_verify_core() {
         MlDsaVerifyCoreInstall::Installed | MlDsaVerifyCoreInstall::AlreadyInstalled => {}
         MlDsaVerifyCoreInstall::ExportAbsent => {
-            panic!("BLOCKER: archive lacks `dregg_fips204_verify_real`; rebuild against a HEAD-matching archive.")
+            panic!(
+                "BLOCKER: archive lacks `dregg_fips204_verify_real`; rebuild against a HEAD-matching archive."
+            )
         }
     }
 
     let seed = [3u8; 32];
     let ctx: &[u8] = b"dregg-node-live-sign-ctx-v1";
-    let msg: &[u8] = b"a FRESH message the pinned KAT never covered — Lean signs it live";
+    let msg: &[u8] = b"a FRESH message the pinned KAT never covered - Lean signs it live";
 
     // The DEPLOYED byte-level signer, now routed through the extracted Lean `signCore`.
     let key = dregg_pq::MlDsaKey::from_ed25519_seed(&seed);
@@ -173,7 +178,10 @@ fn deployed_byte_sign_is_lean_produced_crate_leaves_tcb() {
     let wire = real_sign_wire(&sk_bytes, msg, ctx);
     let shadow = dregg_lean_ffi::shadow_fips204_sign_real(&wire)
         .expect("the linked archive exports the real sign core");
-    assert_ne!(shadow, "ERR", "the real sign core produced a signature (not a malformed-wire ERR)");
+    assert_ne!(
+        shadow, "ERR",
+        "the real sign core produced a signature (not a malformed-wire ERR)"
+    );
     assert_eq!(
         dep,
         decode_hex(&shadow),
@@ -195,7 +203,10 @@ fn deployed_byte_sign_is_lean_produced_crate_leaves_tcb() {
 
     // (3) DETERMINISTIC across calls (the hedged crate fallback would differ run-to-run).
     let dep2 = key.sign(ctx, msg);
-    assert_eq!(dep, dep2, "the installed Lean path is deterministic (rnd=0) — same seed/ctx/msg ⇒ same bytes");
+    assert_eq!(
+        dep, dep2,
+        "the installed Lean path is deterministic (rnd=0) — same seed/ctx/msg ⇒ same bytes"
+    );
 
     // (4a) ACCEPTED by the Lean-verified REAL verify core (which routes ml_dsa_verify through Lean).
     assert!(
