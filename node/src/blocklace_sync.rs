@@ -4085,12 +4085,20 @@ fn spawn_finality_executor(state: NodeState, handle: BlocklaceHandle) {
                         root,
                         height,
                     } => {
+                        // NOT stored: `PersistentStore::store_checkpoint` has zero
+                        // callers repo-wide, nothing ever constructs a
+                        // `Payload::Checkpoint` to propose, and `finalize_checkpoint`
+                        // is only reached from tests. So `/checkpoint/latest`
+                        // (`store.latest_checkpoint()`) 404s forever and every
+                        // finality gate built on it is inert. The old message claimed
+                        // "(stored)" — it stored nothing. See
+                        // docs/FINDING-checkpoint-pipeline-unwired.md.
                         debug!(
                             block_id = %block_id,
                             height = height,
-                            "finalized checkpoint block (stored)"
+                            "finalized checkpoint block observed (NOT stored — checkpoint pipeline is unwired)"
                         );
-                        let _ = (root, height); // Checkpoint storage handled elsewhere
+                        let _ = (root, height);
                     }
                 }
 

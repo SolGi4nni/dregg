@@ -1046,11 +1046,34 @@ pub fn wire_state_to_ledger(
         cell.state.set_nonce(nonce.max(0) as u64);
 
         // Any other named Int field maps to a `fields[]` slot.
+        //
+        // The wire projects each 32-byte field down to its low-8-byte u64 lane
+        // (`lean_shadow::field_to_i128` reads only `field[24..32]`); the high 24
+        // bytes NEVER cross the wire. Writing the lane back unconditionally
+        // therefore TRUNCATES any field holding a full-width value (a 32-byte
+        // cell id, a digest) on every producer turn that re-emits the cell — even
+        // a turn that never touched that field. A `GrantCapability{to: c}` re-emits
+        // `c` because its cap_root moved, yet performs no SetField: it silently
+        // shredded the execution-lease PROVIDER slot's 32-byte cell id to its low
+        // 8 bytes, on the executing node only (docs/FINDING-state-field-truncation.md).
+        //
+        // `cell` is a clone of the pre-state template, so `fields[idx]` still holds
+        // the intact 32 bytes. Install the produced lane ONLY when this turn actually
+        // moved it; otherwise keep the template's full-width field.
+        //
+        // RESIDUAL (unfixed, by design): a turn that genuinely SetFields a slot to a
+        // NEW full-width value still loses its high 24 bytes, because the wire cannot
+        // carry them. Closing that needs the wire field encoding widened from a u64
+        // `Int` to a 32-byte carrier — a wire-model change, not a local fix.
         if let WireValue::Record(fs) = value {
             for (k, x) in fs {
                 if let (Some(idx), WireValue::Int(i)) = (field_name_to_index(k), x) {
                     if idx < dregg_cell::state::STATE_SLOTS {
-                        let _ = cell.state.set_field(idx, i128_to_field(*i));
+                        let mut template_lane = [0u8; 8];
+                        template_lane.copy_from_slice(&cell.state.fields[idx][24..32]);
+                        if (*i as u64) != u64::from_be_bytes(template_lane) {
+                            let _ = cell.state.set_field(idx, i128_to_field(*i));
+                        }
                     }
                 }
             }
