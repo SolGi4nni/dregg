@@ -24,7 +24,7 @@ a **path patch** onto `../../plonky3-recursion`, pinned (in CI + dev) at the
 pushed `update-plonky3-rev` tip:
 
 ```
-rev 0b4da97a430cf47710a5b03ef998f6a8674761ad
+rev 993efecd724261fff3fd894c06cc2525b5532e28
 ```
 
 This rev is referenced in lockstep by: `wasm/Cargo.toml` (the `[patch]` comment),
@@ -33,7 +33,7 @@ This rev is referenced in lockstep by: `wasm/Cargo.toml` (the `[patch]` comment)
 
 ```sh
 git clone https://github.com/emberian/plonky3-recursion ../plonky3-recursion
-git -C ../plonky3-recursion checkout 0b4da97a430cf47710a5b03ef998f6a8674761ad
+git -C ../plonky3-recursion checkout 993efecd724261fff3fd894c06cc2525b5532e28
 cd wasm && RUSTFLAGS="-C link-arg=-zstack-size=33554432" \
   wasm-pack build . --target web --out-dir pkg --release
 ```

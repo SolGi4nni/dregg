@@ -56,7 +56,16 @@ a clean checkout. The three doors below each need only this repo and `cargo`.
 Everything here runs locally with no external service. Pick a door.
 
 **What you need:** this repo, a recent Rust toolchain (`cargo`); `wasm-pack` for
-the browser playground; Docker for the site bundle.
+the browser playground; Docker for the site bundle. Plus ONE sibling checkout —
+the workspace `[patch]`es the four `p3-*` recursion crates onto
+`../plonky3-recursion` (cargo forbids re-pointing a git source to a different
+rev of the same URL via `[patch]`, so the override is a path patch), and every
+`cargo` command fails at manifest load without it:
+
+```sh
+git clone https://github.com/emberian/plonky3-recursion ../plonky3-recursion
+git -C ../plonky3-recursion checkout 993efecd724261fff3fd894c06cc2525b5532e28
+```
 
 ### A. Run a node and watch it execute a verified turn
 

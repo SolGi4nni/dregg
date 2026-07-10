@@ -8,6 +8,26 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## NOW-STATE addition (2026-07-10, Fable — fresh-clone buildability + CI-green runbook, ember report "others can't build a fresh clone")
+
+**Fresh clones fail at manifest load** — the root `[patch]` points the four `p3-*` crates at a
+`../plonky3-recursion` sibling that a fresh clone doesn't have (same in wasm/, forge-ci-runner,
+sel4/dregg-firmament, deos-zed-full). DONE this session: fork determinism-fix `993efec` PUSHED
+(update-plonky3-rev tip; all older pins are ancestors, nothing orphaned); all three workflow
+sibling revs + docs/PUBLISHING.md aligned to `993efec` (were drifted 3-ways: 0b4da97 / be52a51);
+README "What you need" now states the sibling-clone prerequisite. Verified reachable on GitHub:
+emberian/{zed@adb9026,gpui-component@498321a,stylo@abc53ac,spween@afb5b1f,algebra#serde-integration,
+plonky3-recursion@be52a51+993efec}. CLOSURE (post-quiesce, whole-tree rebuild — the CI-green grind):
+1. decide the fork tip (commit-or-hold the sibling's dirty CanonicalShapeSpec WIP — breadstuffs
+   does NOT reference it, `993efec` suffices today); 2. bump the four root pins be52a51→993efec;
+3. DELETE the root TEMP `[patch]` block (+ forge-ci-runner + firmament + deos-zed-full + wasm path
+   patches if going pure-git everywhere); 4. regenerate locks: root, sdk-py (stale at d959ff10!),
+   discord-bot, dregg-tui, dregg-doc; 5. commit swarm-born path-dep dirs (`narrator/` is untracked
+   but dungeon-service path-deps it — fresh-clone breaker the moment it lands); 6. the gate: scratch
+   `git clone` + isolated CARGO_HOME + `cargo metadata`/`cargo fetch` on every workspace (root, wasm,
+   discord-bot, dregg-tui, dregg-doc, deos-homeserver — forgejo.ellis.link availability is a soft
+   risk — forge-ci-runner, sdk-py, firmament, deos-zed-full) before calling CI green.
+
 ## NOW-STATE addition (2026-07-09, Fable — community-comms gap, ember + community session)
 
 **dregg.net carries NONE of the cloud/forge/apps story.** The newest, most community-legible

@@ -14,7 +14,7 @@ name: Extension
 #                 prerequisite pages.yml has): the standalone `wasm/` workspace
 #                 carries a `[patch."https://github.com/emberian/plonky3-recursion"]`
 #                 -> `../../plonky3-recursion`. The fork is now PUSHED (rev
-#                 0b4da97), so this job reproduces the build on a hosted runner.
+#                 993efec), so this job reproduces the build on a hosted runner.
 #                 It stays off the push lane only to avoid spending a heavy wasm
 #                 build on every extension touch; trigger it by hand to refresh
 #                 the store artifacts (`gh workflow run Extension --ref main`).
@@ -106,7 +106,7 @@ jobs:
         # wasm/Cargo.toml's [patch] sibling + .github/workflows/pages.yml).
         run: |
           set -euo pipefail
-          REV=0b4da97a430cf47710a5b03ef998f6a8674761ad
+          REV=993efecd724261fff3fd894c06cc2525b5532e28
           if [ ! -d ../plonky3-recursion/.git ]; then
             git clone --no-checkout https://github.com/emberian/plonky3-recursion ../plonky3-recursion
             git -C ../plonky3-recursion fetch --depth 1 origin "$REV"

@@ -216,10 +216,14 @@ ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "
 # SAME URL, so the override is a path patch onto the sibling checkout:
 #   git clone https://github.com/emberian/plonky3-recursion ../../plonky3-recursion
 #   git -C ../../plonky3-recursion checkout be52a51b87c39e41ade632320697df983751471f
-# CI does exactly this (`.github/workflows/pages.yml` clones the sibling at that
-# rev); a dev clone does the same. NOTE: the local sibling may run AHEAD of the
-# push (e.g. the VK-determinism fix `993efec`) — a locally built pkg then embeds
-# a verifier no pushed rev reproduces; push the fork tip before shipping bits.
+# CI does exactly this (`.github/workflows/pages.yml`,`extension.yml`,
+# `publish-sdk-ts.yml` clone the sibling at rev `993efec` — the pushed
+# `update-plonky3-rev` tip carrying the VK-determinism fix); a dev clone does the
+# same (README "What you need"). The root pins above stay at the be52a51 ancestor
+# until the post-quiesce bump (root Cargo.toml [patch] block comment has the
+# runbook). NOTE: if the local sibling runs AHEAD of the push, a locally built
+# pkg embeds a verifier no pushed rev reproduces; push the fork tip before
+# shipping bits.
 [patch."https://github.com/emberian/plonky3-recursion"]
 p3-recursion = { path = "../../plonky3-recursion/recursion" }
 p3-circuit = { path = "../../plonky3-recursion/circuit" }
