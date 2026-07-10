@@ -136,4 +136,10 @@ the sibling lane settles — not mine to touch/stash.
   ⛔ `allocCell` BLOCKED precisely: its `bal` reset zeroes the whole `(newCell,·)` column across all assets — a
     predicate-erase, not a bounded Finset write. Fix = `filterErase`/`get_filterErase` on CanonMap. Blocks
     createCellStmt + createCellFromFactoryStmt.
-- ▶ IN FLIGHT: step 3 completion — (A) `filterErase` → unblock allocCell; (B) the remaining 30 programs' squares.
+- ✅ STEP 3A `80d4a2987` — `allocCell` UNBLOCKED. `SortedMap/CanonMap.filterErase` + `get_filterErase` (the
+  predicate-erase the `(newCell,·)` bal column needs) + `denote_filterErase_bal`; `denote_finAllocCell` is
+  **UNCONDITIONAL** (no side condition). `createCellStmt`/`createCellFromFactoryStmt` unblocked.
+  ⚠ FAITHFULNESS BUG CAUGHT: step 3's comment said allocCell resets `cell` to `.record []` (an `erase`). WRONG —
+  `(default : Value) = Value.int 0` (Exec/Value.lean:69), NOT the cell map's default `.record []`. It is an
+  `insertNZ` of a non-default value. Erasing would have made `denote_finAllocCell` FALSE. Measurement caught it.
+- ▶ IN FLIGHT: step 3B — FiniteDiff obligations + squares for the remaining ~28 deployed `*Stmt` programs.
