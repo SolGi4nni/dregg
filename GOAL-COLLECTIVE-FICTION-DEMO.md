@@ -567,3 +567,19 @@ Two lanes firing DISJOINT (attested-dm vs demo/); shared seam = the dungeon-serv
 verify the COMBINED on-disk state at harvest. Discipline unchanged: additive, no GameAction variant, keep
 dungeon-service + the 4 games + DSL green, verify by driving, teeth whole.
 Aside: @DreggNet is fielding a real prospect (@itplaysout) — drafted 3 reply options; "the GM can't lie" is the pick.
+
+## ✅ EXPANSION wave 1 committed + verified by driving
+- ENGINE: consumables + status effects + THE VENOMOUS DEEP (5th game). 86 lib + 19 dsl tests; play5 wins; the
+  over-heal ("prose swore INVINCIBLE — the world took exactly N") + spent-refused teeth hold. No GameAction variant
+  (rides Use); new WorldEffect::ConsumeItem; DSL status/consumable directives + validation.
+- FRONTEND: room-map SVG visualizer (/vault + /forge, barred edges live) + live-validating forge (/game/map +
+  /game/validate endpoints, gutter markers as you type). Driven: 10-room graph, clean/parse/validate lint w/ world
+  untouched, map renders, live gutter error. dungeon-service builds GREEN combined w/ the engine lane.
+- MULTIMODEL: codex authored docs/DESIGN-verifiable-game.md (I scoped+drove, ground-reviewed it) — honest
+  (verification LEVELS; STARK-assumption caveat) + ambitious (VRF+beacon randomness, re-exec light client → folded
+  inventory-conservation invariant). Fixed codex's broken MCP config (introspection localhost:3131 needs http://).
+  Roadmap: docs/GAME-ENGINE-ROADMAP.md.
+## NEXT (firing): verify_replay() — codex's one-day first step + Phase 0→1 of the trust story.
+Re-run resolve_action over each landed turn's bound action from genesis; reject a forged "valid chain, wrong
+effect" playthrough that chain-only verify() would pass. Split verification into levels (chain vs replay). The
+foundation randomness + folded proofs build on.
