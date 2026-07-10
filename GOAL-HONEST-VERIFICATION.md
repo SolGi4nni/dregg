@@ -240,3 +240,11 @@ AirSoundness.lean:234). `fold_close_of_two_alpha`/`friProximity_discharge` are f
   genuinely real) · FLOOR 2. Doc: docs/reference/DEBT-A-CARRIER-AUDIT.md.
   ⇒ DEBT-A MUST PROVE: ChipTableSoundN @ real perm · FRI proximity @ deployed params · the FriProximity bridge ·
   a real per-node FriExtract · an actual instance : StarkSound not routed through assumed AlgoStarkSound.
+- ✅ ShieldedTransfer `d2b7b2dea` — kernel part PROVED (shieldedTransferK_accepts/_balNeutral). ⚠ CORRECTED MY OWN
+  CENSUS: its kernel mutation is NULLIFIER-ONLY (no transparent balance move; amount is hidden Pedersen).
+  ⚠⚠ DEPLOYED SOUNDNESS GAP `e32564ce0`: apply.rs:1178 — "M2-a relies on the honest prover for it
+  (verify_value_link)". The leaf↔leg value-link is UNVERIFIED in the shipped system. Not a floor item.
+  `starkResidual_of_floor` named honestly as MODUS PONENS (reduction shape, no content).
+- ✅ reactive subsystem `515f635d9` — OFF-KERNEL is now a THEOREM (promise/notify_kernel_unchanged : k' = k), and
+  `no_double_react` PROVED by RIDING the committed nullifier gate (note_no_double_spend), not re-modeling it.
+  Unmodeled deployed behaviour named: resolve_condition temporal gate, expire block-height, cascading resolution.
