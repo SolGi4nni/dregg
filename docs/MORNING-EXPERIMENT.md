@@ -14,17 +14,27 @@ then open **http://127.0.0.1:8903/** — a real driver page (served same-origin 
 - **Rent** a confined grain (host/caps/budget) — ✅ works, no model.
 - **Verify** it (R0 / R2 / attestation — the renter check, "trust no host") — ✅ works, no model.
 - **Watch** the drive transcript stream live (SSE, each cap-gated step) — ✅ works.
-- **Drive** (give it a goal, watch it work) — needs the server run with `--features live-brain` + a model.
-  It's fully env-configurable (OpenAI-compatible), so **zero-key local drive via ollama**:
+- **Drive** (give it a goal, watch it work) — ✅ **VERIFIED end-to-end with a zero-key local model.**
   ```
-  ollama serve            # (in another shell; ollama pull gemma2 once)
-  DREGG_LLM_BASE=http://localhost:11434/v1 DREGG_LLM_MODEL=gemma2 DREGG_LLM_API_KEY=ollama \
+  ollama pull llama3.2:3b     # a TOOL-CAPABLE model (see the gotcha below)
+  DREGG_LLM_BASE=http://localhost:11434/v1 DREGG_LLM_MODEL=llama3.2:3b DREGG_LLM_API_KEY=ollama \
     cargo run -p agent-platform --features live-brain -- 127.0.0.1:8903
   ```
-  or point at your real provider: `DREGG_LLM_BASE=https://api.openai.com DREGG_LLM_MODEL=gpt-4o-mini
-  OPENAI_API_KEY=sk-…`. Without `--features live-brain` the Drive button shows a plain `503 no live brain`
-  (rent/verify/watch still work). *(Recipe is confirmed against `drive_live`'s env reads; I haven't
-  round-tripped a live ollama drive end-to-end — that's the one thing to try live.)*
+  Then in the page: rent a grain (caps `fs`), drive it with a goal like *"write a haiku about verified
+  computing into haiku.txt"*, tools `fs_write, fs_read, list_dir`. Observed live:
+  ```
+  drive  → {"admitted":1,"cap_refused":0,"budget_refused":0,"consumed":1}
+  verify → {"verified":true,"actions":1}          (R0 tamper-evidence)
+  ?r2    → {"rung":"r2","actions":1,"linked":1}   (the receipt IS a committed kernel turn)
+  attest → receipts:[{action:"fs_write:haiku.txt", cost:1, cell_root:[…]}]
+  ```
+  The model *proposed*, the capability gate *admitted*, the budget *metered*, the kernel *committed*, the
+  renter *verified* — trusting no host. Or point at any provider: `DREGG_LLM_BASE=https://api.openai.com/v1
+  DREGG_LLM_MODEL=gpt-4o-mini OPENAI_API_KEY=sk-…`.
+
+  **Gotcha:** the model must support **tool calling**. `gemma2:2b` does not — ollama returns
+  `400 … does not support tools`, and the brain correctly *fail-closes* rather than fabricate a tool-call
+  (set `DREGG_AGENT_DEBUG=1` to see such provider errors; they're swallowed by design otherwise).
 
 The browser-friendly routing shim (`X-Dregg-Grain-Host` header / `?host=` query, since a browser can't
 set `Host`) is what makes this drivable from a page; auth is unchanged and a non-member still 404s.
