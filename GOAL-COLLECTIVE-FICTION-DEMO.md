@@ -527,3 +527,15 @@ bot builds CLEAN once the author finishes converging. My worktree hand-patches (
 fine for the mechanical placeholder sites but the proving core is theirs to converge. Poll the shared tree; when
 it builds the bot green, cut over. THE ARCADE (https://grade-mill-suspended-paid.trycloudflare.com/hub, Haiku,
 live+public) is the presentation demo and needs NONE of this.
+
+## ══ CONSOLIDATION MODE (post-demo, ember: "slow down, harden, refactor") ══
+Demo completed successfully. Deploy poll STOPPED. Bot deploy = parked-not-urgent (auto-deployable once the
+rev-converge refactor lands revoked_root at cipherclerk.rs:5428; do NOT guess it). ember chose 3 hardening focuses:
+- ✅ DOCS consolidated → demo/README.md (clean, present-tense, stranger-legible; OPEN-ME kept as the detailed
+  walkthrough companion + pointed at it; stale gemma2→Bedrock-Haiku corrected).
+- 🔍 CODE-REVIEW SWARM running (report-only, verify-then-fix): narrator ledger (a6b7f04 — $20 cap bypass/leak/race),
+  the .dungeon DSL (a74d412 — parse fail-closed + validator false neg/pos), the attested-dm engine teeth (a1a115a
+  — world-disposes invariant, gates, anti-ghost, chain), and discord-bot/fiction.rs (aa510cb — the one piece NEVER
+  build-verified: would-it-compile + ballot/forge/db correctness).
+NEXT: harvest each review, verify findings by tracing the code (a finding is not a bug until traced), fix the real
+ones path-specific, re-run the tests. Then optionally: durable arcade, bot Bedrock-narrator swap, branch hygiene.
