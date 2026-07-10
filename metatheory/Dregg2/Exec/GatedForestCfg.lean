@@ -243,25 +243,25 @@ theorem transferForestG_commits : (execFullForestG fma0 transferForestG).isSome 
 /-- **`gatedActionInvG_nonvacuous`** — the non-vacuity witness the `@[load_bearing]` linter requires
 for `gatedActionInvG`: it is NEITHER everywhere-true NOR everywhere-false. It ACCEPTS the committed
 gated transfer at the production carriers (`mkAuth goodCred [trueCaveat]` over `.balanceA ⟨0,0,1,30⟩ 0`
-at `fma0` — credential-valid ∧ cap-authority ∧ caveats-discharged ∧ the full per-asset `fullActionInvA`,
-via `execFullAGated_attests`), and REFUTES the SAME node taken to its own pre-state (the `fullActionInvA`
-conjunct's ObsAdvance demands `length < length`, impossible). A vacuous accept-all relation could not
+at `fma0` — credential-valid ∧ cap-authority ∧ caveats-discharged ∧ not-revoked ∧ the full per-asset
+`fullActionInvA`, via `execFullAGated_attests`), and REFUTES the SAME node taken to its own pre-state (the
+`fullActionInvA` conjunct's ObsAdvance demands `length < length`, impossible). A vacuous accept-all relation could not
 carry the refuted half; a vacuous reject-all could not carry the accepted half. -/
 theorem gatedActionInvG_nonvacuous :
     (∃ s', execFullAGated fma0 (mkAuth goodCred [trueCaveat]) (.balanceA ⟨0, 0, 1, 30⟩ 0) = some s'
        ∧ gatedActionInvG fma0 (mkAuth goodCred [trueCaveat]) (.balanceA ⟨0, 0, 1, 30⟩ 0) s')
     ∧ ¬ gatedActionInvG fma0 (mkAuth goodCred [trueCaveat]) (.balanceA ⟨0, 0, 1, 30⟩ 0) fma0 := by
   refine ⟨?_, ?_⟩
-  · -- ACCEPTED: the gated transfer commits and attests all four conjuncts.
+  · -- ACCEPTED: the gated transfer commits and attests all five conjuncts.
     obtain ⟨s', hs'⟩ := Option.isSome_iff_exists.mp transferForestG_kernel_commits
     have hga : execFullAGated fma0 (mkAuth goodCred [trueCaveat]) (.balanceA ⟨0, 0, 1, 30⟩ 0) = some s' :=
       (execFullAGated_some_iff fma0 s' (mkAuth goodCred [trueCaveat]) (.balanceA ⟨0, 0, 1, 30⟩ 0)).mpr
         ⟨transferForestG_gateOK, hs'⟩
     exact ⟨s', hga, execFullAGated_attests fma0 s' (mkAuth goodCred [trueCaveat]) (.balanceA ⟨0, 0, 1, 30⟩ 0) hga⟩
-  · -- REFUTED: the 4th conjunct `fullActionInvA … fma0` violates ObsAdvance (`length < length`).
+  · -- REFUTED: the 5th conjunct `fullActionInvA … fma0` violates ObsAdvance (`length < length`).
     intro hinv
     unfold gatedActionInvG fullActionInvA at hinv
-    exact Nat.lt_irrefl _ hinv.2.2.2.2.2.1
+    exact Nat.lt_irrefl _ hinv.2.2.2.2.2.2.1
 
 /-- The erased log-bump action commits at `fma0` (authority-free emit on a live cell). -/
 theorem logBump_erase_commits : (execFullForestA fma0 (eraseG logBumpForestG)).isSome := by decide
