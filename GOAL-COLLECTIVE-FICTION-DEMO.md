@@ -514,3 +514,16 @@ Patched hbox WORKTREE ONLY (NOT the shared tree — the refactor author fixes th
   (there is NO UKey::Revocation; revocations live in the plain note_revoked set, so no ledger-delta + no umem touch —
   exactly the NoteCommitmentInserted marker family). Verified by reading UKey + journal.rs:524.
 Building; polling the log for EXIT=.
+
+## ⛔→⏳ BOT BUILD: the refactor is ACTIVELY CONVERGING — stop hand-patching, build on the author's fixes
+The blocker is NOT abandoned-broken — the tip is `2e835d1e2 rev-converge(fix1): thread CapabilityRef.provenance
+through downstream constructors`. The refactor author is threading provenance through the whole tree in real time.
+fix1 fixed the CapabilityRef constructors CORRECTLY (real provenance, not my [0u8;32] sentinels) but has NOT yet
+reached the ROTATION-WITNESS PROVING CORE: sdk/src/cipherclerk.rs:5428 `rw::produce` (= dregg_turn::rotation_witness
+::produce) gained a security-relevant provenance arg (6th arg now &[[u8;32]], + a 7th). More rev-converge fixes
+are coming. DECISION (disciplined): I will NOT hand-guess which provenance threads into a rotation witness — that
+would produce WRONG witnesses, violates never-guess-a-security-field, and gets thrown away when fix2 lands. The
+bot builds CLEAN once the author finishes converging. My worktree hand-patches (28 CapRef + finalize/umem) were
+fine for the mechanical placeholder sites but the proving core is theirs to converge. Poll the shared tree; when
+it builds the bot green, cut over. THE ARCADE (https://grade-mill-suspended-paid.trycloudflare.com/hub, Haiku,
+live+public) is the presentation demo and needs NONE of this.
