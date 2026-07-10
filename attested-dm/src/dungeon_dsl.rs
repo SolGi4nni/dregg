@@ -395,7 +395,7 @@ fn parse_flag_val(toks: &[Tok]) -> (i64, usize) {
         toks.first().and_then(Tok::word),
         toks.get(1).and_then(Tok::word),
     ) {
-        if (op == "=" || op == ">=") {
+        if op == "=" || op == ">=" {
             if let Ok(v) = n.parse::<i64>() {
                 return (v, 2);
             }
@@ -1133,21 +1133,24 @@ fn flag_kv(toks: &[Tok], i: usize, line: usize, what: &str) -> Result<(String, i
 
 fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> {
     let mut out: Vec<(Option<usize>, Issue)> = Vec::new();
-    let mut err = |line: Option<usize>, msg: String| {
-        out.push((
-            line,
-            Issue {
-                severity: Severity::Error,
-                message: msg,
-            },
-        ));
-    };
+    // Macros (not closures) so several emitters can coexist without overlapping `&mut out` borrows.
+    macro_rules! err {
+        ($line:expr, $msg:expr $(,)?) => {
+            out.push((
+                $line,
+                Issue {
+                    severity: Severity::Error,
+                    message: $msg,
+                },
+            ))
+        };
+    }
     let obtainable = world.all_items();
     let room_ids: BTreeSet<&String> = world.rooms.keys().collect();
 
     // Start room must exist.
     if !world.rooms.contains_key(&world.start) {
-        err(
+        err!(
             prov.map(|p| p.start_line),
             format!("start room `{}` does not exist", world.start),
         );
@@ -1159,7 +1162,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
             if !room_ids.contains(&exit.to_room) {
                 let line =
                     prov.and_then(|p| p.exit_line.get(&(room.id.clone(), dir.clone())).copied());
-                err(
+                err!(
                     line,
                     format!(
                         "exit `{dir}` in room `{}` leads to unknown room `{}`",
@@ -1172,7 +1175,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
                 if !obtainable.contains(item) {
                     let line = prov
                         .and_then(|p| p.exit_line.get(&(room.id.clone(), dir.clone())).copied());
-                    err(
+                    err!(
                         line,
                         format!(
                             "gate on exit `{dir}` (room `{}`) needs item `{item}`, which exists nowhere",
@@ -1186,14 +1189,14 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
 
     // Objective room + win item.
     if !world.rooms.contains_key(&world.objective.room) {
-        err(
+        err!(
             prov.map(|p| p.objective_line),
             format!("objective room `{}` does not exist", world.objective.room),
         );
     } else if reachable(world).contains(&world.objective.room) {
         // reachable — fine
     } else {
-        err(
+        err!(
             prov.map(|p| p.objective_line),
             format!(
                 "objective room `{}` is unreachable from start `{}`",
@@ -1202,7 +1205,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
         );
     }
     if !obtainable.contains(&world.objective.holding) {
-        err(
+        err!(
             prov.map(|p| p.objective_line),
             format!(
                 "objective requires holding `{}`, which is never placed in any room",
@@ -1214,7 +1217,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     // Actors in unknown rooms.
     for h in world.hostiles.values() {
         if !room_ids.contains(&h.room) {
-            err(
+            err!(
                 prov.and_then(|p| p.hostile_line.get(&h.room).copied()),
                 format!(
                     "hostile `{}` is placed in unknown room `{}`",
@@ -1225,7 +1228,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     }
     for c in world.combat.values() {
         if !room_ids.contains(&c.room) {
-            err(
+            err!(
                 prov.and_then(|p| p.combat_line.get(&c.room).copied()),
                 format!(
                     "combat foe `{}` is placed in unknown room `{}`",
@@ -1236,7 +1239,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     }
     for n in &world.npcs {
         if !room_ids.contains(&n.room) {
-            err(
+            err!(
                 prov.and_then(|p| p.npc_line.get(&n.id).copied()),
                 format!("npc `{}` is placed in unknown room `{}`", n.id, n.room),
             );
@@ -1244,7 +1247,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     }
     for (idx, r) in world.dialogue.iter().enumerate() {
         if !room_ids.contains(&r.room) {
-            err(
+            err!(
                 prov.and_then(|p| p.dialogue_line.get(idx).copied()),
                 format!(
                     "dialogue for npc `{}` names unknown room `{}`",
@@ -1256,7 +1259,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     for (idx, r) in world.spell_rules.iter().enumerate() {
         let line = prov.and_then(|p| p.spellrule_line.get(idx).copied());
         if !room_ids.contains(&r.room) {
-            err(
+            err!(
                 line,
                 format!(
                     "spell-rule for `{}` names unknown room `{}`",
@@ -1265,7 +1268,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
             );
         }
         if !world.is_spell_word(&r.spell) {
-            err(
+            err!(
                 line,
                 format!("spell-rule casts undeclared word `{}`", r.spell),
             );
@@ -1273,7 +1276,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     }
     for (idx, u) in world.use_rules.iter().enumerate() {
         if !room_ids.contains(&u.room) {
-            err(
+            err!(
                 prov.and_then(|p| p.use_line.get(idx).copied()),
                 format!("use-rule for `{}` names unknown room `{}`", u.item, u.room),
             );
@@ -1312,7 +1315,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
             None => {}
             Some(Gate::NeedsItem(item)) => {
                 if !obtainable.contains(item) {
-                    err(
+                    err!(
                         line,
                         format!(
                             "spell `{}` is learned by holding `{item}`, which is never placed",
@@ -1323,7 +1326,7 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
             }
             Some(Gate::NeedsFlag(flag, _)) => {
                 if !settable.contains(flag) {
-                    err(
+                    err!(
                         line,
                         format!(
                             "spell `{}` is learned via flag `{flag}`, but no rule ever sets that flag",
@@ -1336,59 +1339,60 @@ fn check(world: &GameWorld, prov: Option<&Prov>) -> Vec<(Option<usize>, Issue)> 
     }
 
     // Referenced-but-unobtainable items (weapons, armor, fuels, gate/dialogue requirements).
-    let mut ref_item = |item: &str, ctx: String| {
-        if !item.is_empty() && !obtainable.contains(item) {
-            out.push((
-                None,
-                Issue {
-                    severity: Severity::Error,
-                    message: format!(
-                        "item `{item}` is referenced ({ctx}) but never placed or obtainable"
-                    ),
-                },
-            ));
-        }
-    };
+    macro_rules! ref_item {
+        ($item:expr, $ctx:expr) => {{
+            let item: &str = $item;
+            if !item.is_empty() && !obtainable.contains(item) {
+                let ctx: String = $ctx;
+                out.push((
+                    None,
+                    Issue {
+                        severity: Severity::Error,
+                        message: format!(
+                            "item `{item}` is referenced ({ctx}) but never placed or obtainable"
+                        ),
+                    },
+                ));
+            }
+        }};
+    }
     for h in world.hostiles.values() {
-        ref_item(&h.defeated_by, format!("the weapon vs `{}`", h.name));
+        ref_item!(&h.defeated_by, format!("the weapon vs `{}`", h.name));
     }
     for c in world.combat.values() {
-        ref_item(&c.armed_by, format!("the weapon vs `{}`", c.name));
+        ref_item!(&c.armed_by, format!("the weapon vs `{}`", c.name));
         if let Some((armor, _)) = &c.armor {
-            ref_item(armor, format!("armor vs `{}`", c.name));
+            ref_item!(armor, format!("armor vs `{}`", c.name));
         }
     }
     for u in &world.use_rules {
-        ref_item(&u.item, format!("the item used in `{}`", u.room));
+        ref_item!(&u.item, format!("the item used in `{}`", u.room));
     }
     if let Some(light) = &world.light {
-        ref_item(&light.lamp, "the lamp".to_string());
+        ref_item!(&light.lamp, "the lamp".to_string());
         for rf in &light.refuels {
-            ref_item(&rf.fuel_item, "lamp fuel".to_string());
+            ref_item!(&rf.fuel_item, "lamp fuel".to_string());
         }
     }
     for r in &world.dialogue {
         if let Some(Gate::NeedsItem(item)) = &r.requires {
-            ref_item(item, format!("required to talk to `{}`", r.npc));
+            ref_item!(item, format!("required to talk to `{}`", r.npc));
         }
     }
 
     // ── Warnings (advisory, non-blocking). ──
-    let mut warn = |msg: String| {
-        out.push((
-            None,
-            Issue {
-                severity: Severity::Warning,
-                message: msg,
-            },
-        ));
-    };
     // Dialogue that addresses an npc not standing in its room.
     for r in &world.dialogue {
         if room_ids.contains(&r.room) && !world.npc_here(&r.room, &r.npc) {
-            warn(format!(
-                "dialogue topic `{}` addresses npc `{}`, who does not stand in room `{}`",
-                r.topic, r.npc, r.room
+            out.push((
+                None,
+                Issue {
+                    severity: Severity::Warning,
+                    message: format!(
+                        "dialogue topic `{}` addresses npc `{}`, who does not stand in room `{}`",
+                        r.topic, r.npc, r.room
+                    ),
+                },
             ));
         }
     }
