@@ -345,6 +345,42 @@ fn parse_command(map: &GameWorld, command: &str) -> Option<GameAction> {
                 .unwrap_or_default();
             Some(GameAction::talk(npc, topic))
         }
+        // Casting rides the closed `Use` channel: the spell WORD is spoken, not a held item, so it
+        // is passed as-is (NOT canonicalized) — the resolver routes a known spell word to the spell
+        // system and refuses an unknown one. "cast light" -> Use("light", None);
+        // "cast unlock on sky_door" -> Use("unlock", Some("sky_door")).
+        "cast" | "chant" | "invoke" | "intone" | "recite" => {
+            let rest: Vec<&str> = words
+                .iter()
+                .skip(1)
+                .cloned()
+                .filter(|w| !is_stopword(w))
+                .collect();
+            let conn = rest
+                .iter()
+                .position(|w| matches!(*w, "on" | "at" | "upon" | "onto" | "against"));
+            let (spell_side, target_side): (&[&str], &[&str]) = match conn {
+                Some(i) => (&rest[..i], &rest[i + 1..]),
+                None => (&rest[..], &[]),
+            };
+            let spell = spell_side.first().or_else(|| rest.first())?.to_string();
+            let target = pick_known(target_side, &vocab, |v, id| v.use_targets.contains(id))
+                .or_else(|| pick_known(&rest, &vocab, |v, id| v.use_targets.contains(id)))
+                .or_else(|| target_side.first().map(|w| w.to_string()));
+            Some(GameAction::Use(spell, target))
+        }
+        // Reading a grimoire is a `Use` of the book ITEM (it teaches its spell via a UseRule).
+        "read" | "peruse" => {
+            let rest: Vec<&str> = words
+                .iter()
+                .skip(1)
+                .cloned()
+                .filter(|w| !is_stopword(w))
+                .collect();
+            let item = pick_known(&rest, &vocab, |v, id| v.items.contains(id))
+                .or_else(|| rest.first().map(|w| canon_item(&[*w], &vocab)))?;
+            Some(GameAction::Use(item, None))
+        }
         _ => None,
     }
 }
