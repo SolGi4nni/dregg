@@ -1,9 +1,17 @@
 use serde::{Deserialize, Serialize};
 
+use crate::derivation::{cap_provenance, mint_provenance};
 use crate::facet::{EffectMask, FacetConstraint};
 use crate::id::CellId;
 use crate::permissions::AuthRequired;
 use crate::predicate::WitnessedPredicate;
+
+/// The `created_by_turn` fed to [`cap_provenance`] when a capability is minted
+/// OUTSIDE a turn context (the low-level, context-free `grant*` primitives).
+/// Real derivations pass the creating turn hash through the `*_provenanced`
+/// constructors so a revoke-then-regrant at the same slot yields a distinct
+/// provenance; a context-free grant is a root/mint and uses this sentinel.
+const NO_TURN_CONTEXT: [u8; 32] = [0u8; 32];
 
 /// A typed capability caveat — the unified "constraint on cap exercise"
 /// shape per PREDICATE-INVENTORY §3.5 + §7.6.
@@ -99,6 +107,50 @@ pub struct CapabilityRef {
     /// cap-root is the Phase-C/W2 follow-up (a VK bump).
     #[serde(default)]
     pub stored_epoch: Option<u64>,
+    /// The capability-instance **PROVENANCE** hash — this cap's derivation-node
+    /// identity ([`crate::derivation::cap_provenance`]), computed AT CREATION by
+    /// CHAINING the parent cap's provenance and the creating turn. It makes the
+    /// capability SELF-IDENTIFYING with no CDT lookup during turn execution, and
+    /// is the value the committed revoked-credential accumulator keys on as
+    /// [`crate::derivation::cred_nul`]`(provenance)` — the `ancestor_hash` the
+    /// non-revocation circuit queries.
+    ///
+    /// Collision-free across slot reuse: `derivation.rs:189-190` documents that a
+    /// revoked slot is re-granted (`(cell, slot)` is reused), so `(cell, slot)`
+    /// keying would make a regrant inherit the revoked identity and poison the
+    /// slot forever. Folding `parent_provenance` + `created_by_turn` in makes the
+    /// regrant a DISTINCT identity from the revoked instance.
+    ///
+    /// A `[0u8; 32]` value is the "legacy/unprovenanced" sentinel: `#[serde(default)]`
+    /// decodes a pre-provenance persisted cap to it (a fresh-genesis flip, per the
+    /// campaign's VK regen, avoids relying on legacy decode). Direct
+    /// (context-free) grants derive a deterministic mint-rooted provenance.
+    ///
+    /// LEAF NOTE: not yet part of the canonical cap leaf — the geometry lane must
+    /// add it so the committed cap-root binds each cap's provenance (see the lane
+    /// report). Until then the revocation gate consumes an un-committed provenance,
+    /// the same "read off committed state, not the wire" gap for the cap itself.
+    #[serde(default)]
+    pub provenance: [u8; 32],
+}
+
+impl CapabilityRef {
+    /// This capability's **credential-revocation nullifier** — the accumulator
+    /// key the revocation gate checks for non-membership. Equal to
+    /// [`crate::derivation::cred_nul`]`(&self.provenance)`; a revoke of THIS cap
+    /// inserts exactly this value into the committed revoked-credential set.
+    pub fn cred_nul(&self) -> [u8; 32] {
+        crate::derivation::cred_nul(&self.provenance)
+    }
+
+    /// The **channel-revocation nullifier** a subscribed capability presents for
+    /// the batch (channel-trip) non-revocation check. A convenience wrapper over
+    /// [`crate::derivation::chan_nul`] — the `channel_id` a cap subscribes to is
+    /// carried out-of-band (e.g. its [`crate::revocation_channel`] subscription),
+    /// not on `CapabilityRef` today.
+    pub fn chan_nul(channel_id: &[u8; 32]) -> [u8; 32] {
+        crate::derivation::chan_nul(channel_id)
+    }
 }
 
 /// An attenuated capability without a slot assignment.
@@ -130,6 +182,15 @@ pub struct AttenuatedCap {
     /// Attenuation PRESERVES freshness metadata — narrowing never refreshes.
     #[serde(default)]
     pub stored_epoch: Option<u64>,
+    /// The PARENT (source) cap's [`CapabilityRef::provenance`] — carried so
+    /// [`CapabilitySet::insert_attenuated`] can derive this attenuated cap's NEW,
+    /// CHAINED provenance once its slot is assigned in the target c-list. An
+    /// attenuated cap is a NEW derivation node (spec step 4), so it must NOT reuse
+    /// the parent's provenance; chaining it here binds the child to the parent so
+    /// revoking the parent's `cred_nul` also blocks the child via the ancestor
+    /// chain — closing "attenuate around a revocation".
+    #[serde(default)]
+    pub parent_provenance: [u8; 32],
 }
 
 /// Per-cell-state sub-root cache for the capability tree
@@ -297,6 +358,7 @@ impl CapabilitySet {
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        let provenance = cap_provenance(&target, slot, &mint_provenance(), &NO_TURN_CONTEXT);
         self.refs.push(CapabilityRef {
             target,
             slot,
@@ -305,6 +367,7 @@ impl CapabilitySet {
             expires_at: None,
             allowed_effects: None,
             stored_epoch: None,
+            provenance,
         });
         Some(slot)
     }
@@ -322,6 +385,7 @@ impl CapabilitySet {
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        let provenance = cap_provenance(&target, slot, &mint_provenance(), &NO_TURN_CONTEXT);
         self.refs.push(CapabilityRef {
             target,
             slot,
@@ -330,6 +394,7 @@ impl CapabilitySet {
             expires_at: Some(expires_at),
             allowed_effects: None,
             stored_epoch: None,
+            provenance,
         });
         Some(slot)
     }
@@ -349,6 +414,7 @@ impl CapabilitySet {
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        let provenance = cap_provenance(&target, slot, &mint_provenance(), &NO_TURN_CONTEXT);
         self.refs.push(CapabilityRef {
             target,
             slot,
@@ -357,6 +423,7 @@ impl CapabilitySet {
             expires_at,
             allowed_effects: None,
             stored_epoch: None,
+            provenance,
         });
         Some(slot)
     }
@@ -375,6 +442,12 @@ impl CapabilitySet {
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        // A grant is a NEW derivation node installed at a NEW slot: derive a fresh
+        // provenance CHAINING the source cap's provenance (its parent). Copying
+        // `cap.provenance` would leave the identity inconsistent with the new slot
+        // (provenance folds the slot in) AND would let the installed cap dodge a
+        // revoke of the source; chaining binds it to the source instead.
+        let provenance = cap_provenance(&cap.target, slot, &cap.provenance, &NO_TURN_CONTEXT);
         self.refs.push(CapabilityRef {
             target: cap.target,
             slot,
@@ -383,6 +456,7 @@ impl CapabilitySet {
             expires_at: cap.expires_at,
             allowed_effects: cap.allowed_effects,
             stored_epoch: cap.stored_epoch,
+            provenance,
         });
         Some(slot)
     }
@@ -402,6 +476,7 @@ impl CapabilitySet {
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        let provenance = cap_provenance(&target, slot, &mint_provenance(), &NO_TURN_CONTEXT);
         self.refs.push(CapabilityRef {
             target,
             slot,
@@ -410,6 +485,7 @@ impl CapabilitySet {
             expires_at: None,
             allowed_effects: None,
             stored_epoch: Some(stored_epoch),
+            provenance,
         });
         Some(slot)
     }
@@ -432,6 +508,7 @@ impl CapabilitySet {
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        let provenance = cap_provenance(&target, slot, &mint_provenance(), &NO_TURN_CONTEXT);
         self.refs.push(CapabilityRef {
             target,
             slot,
@@ -440,6 +517,51 @@ impl CapabilitySet {
             expires_at: None,
             allowed_effects: Some(effect_mask),
             stored_epoch: None,
+            provenance,
+        });
+        Some(slot)
+    }
+
+    /// Grant a capability with a FULLY-CHAINED provenance: the executor's
+    /// `GrantCapability` / `Introduce` / `SpawnWithDelegation` / `Unseal` arms
+    /// (which hold the parent cap's provenance and the creating turn hash) call
+    /// this so the installed cap's identity CHAINS the parent and is distinct
+    /// across a revoke-then-regrant of the same slot. For an originally-minted
+    /// (root) cap, pass [`mint_provenance`] as `parent_provenance`.
+    ///
+    /// This is the provenanced twin of [`Self::grant_full`]; the low-level
+    /// `grant*` primitives derive a context-free mint-rooted provenance instead
+    /// (turn = 0), which suffices for direct grants but does not survive slot
+    /// reuse.
+    ///
+    /// Returns the assigned slot number, or `None` if the slot counter would
+    /// overflow.
+    #[allow(clippy::too_many_arguments)]
+    pub fn grant_provenanced(
+        &mut self,
+        target: CellId,
+        permissions: AuthRequired,
+        breadstuff: Option<[u8; 32]>,
+        expires_at: Option<u64>,
+        allowed_effects: Option<EffectMask>,
+        stored_epoch: Option<u64>,
+        parent_provenance: [u8; 32],
+        created_by_turn: [u8; 32],
+    ) -> Option<u32> {
+        // INVALIDATE the cached cap-root: this method appends to the c-list.
+        self.invalidate_cap_root_cache();
+        let slot = self.next_slot;
+        self.next_slot = self.next_slot.checked_add(1)?;
+        let provenance = cap_provenance(&target, slot, &parent_provenance, &created_by_turn);
+        self.refs.push(CapabilityRef {
+            target,
+            slot,
+            permissions,
+            breadstuff,
+            expires_at,
+            allowed_effects,
+            stored_epoch,
+            provenance,
         });
         Some(slot)
     }
@@ -564,6 +686,9 @@ impl CapabilitySet {
             expires_at: existing.expires_at,
             allowed_effects: existing.allowed_effects,
             stored_epoch: existing.stored_epoch,
+            // The attenuated cap is a NEW derivation node: carry the PARENT's
+            // provenance so `insert_attenuated` chains a fresh provenance from it.
+            parent_provenance: existing.provenance,
         })
     }
 
@@ -600,6 +725,8 @@ impl CapabilitySet {
             expires_at: existing.expires_at,
             allowed_effects: Some(effect_mask),
             stored_epoch: existing.stored_epoch,
+            // NEW derivation node: chain the parent's provenance at insert time.
+            parent_provenance: existing.provenance,
         })
     }
 
@@ -671,6 +798,13 @@ impl CapabilitySet {
         cap.permissions = narrower;
         cap.allowed_effects = new_effects;
         cap.expires_at = new_expiry;
+        // `provenance` is DELIBERATELY unchanged: in-place attenuation preserves
+        // slot IDENTITY (it is the revoke+reissue-free narrowing primitive), so the
+        // narrowed cap keeps the SAME derivation-node identity. This is the correct
+        // revocation semantics — narrowing your own cap in place must NOT mint a
+        // fresh provenance that escapes a revoke of the original. (Delegation
+        // attenuation via `attenuate` + `insert_attenuated` DOES mint a new,
+        // chained provenance — a genuinely new node in another c-list.)
 
         // Commit to the narrowed cap so callers can update c-list audit
         // indices. This is the 32-byte encoding of the narrowed cap's openable
@@ -686,10 +820,28 @@ impl CapabilitySet {
     /// c-list assigns its own slot number rather than inheriting the parent's.
     /// Returns the assigned slot number, or `None` if the slot counter would overflow.
     pub fn insert_attenuated(&mut self, cap: AttenuatedCap) -> Option<u32> {
+        self.insert_attenuated_provenanced(cap, NO_TURN_CONTEXT)
+    }
+
+    /// Like [`Self::insert_attenuated`] but binds the creating turn hash into the
+    /// derived provenance. The executor's delegation/attenuation arms (which hold
+    /// `created_by_turn`) call this so a re-delegation after a revoke is a DISTINCT
+    /// provenance from the revoked instance — the slot-reuse collision-freedom the
+    /// context-free [`Self::insert_attenuated`] (turn = 0) cannot provide.
+    pub fn insert_attenuated_provenanced(
+        &mut self,
+        cap: AttenuatedCap,
+        created_by_turn: [u8; 32],
+    ) -> Option<u32> {
         // INVALIDATE the cached cap-root: this method appends to the c-list.
         self.invalidate_cap_root_cache();
         let slot = self.next_slot;
         self.next_slot = self.next_slot.checked_add(1)?;
+        // NEW derivation node: chain the parent's provenance (carried on the
+        // `AttenuatedCap`) with this slot + turn — never reuse the parent's, so an
+        // attenuated cap cannot dodge a revoke of the parent's `cred_nul`.
+        let provenance =
+            cap_provenance(&cap.target, slot, &cap.parent_provenance, &created_by_turn);
         self.refs.push(CapabilityRef {
             target: cap.target,
             slot,
@@ -698,6 +850,7 @@ impl CapabilitySet {
             expires_at: cap.expires_at,
             allowed_effects: cap.allowed_effects,
             stored_epoch: cap.stored_epoch,
+            provenance,
         });
         Some(slot)
     }

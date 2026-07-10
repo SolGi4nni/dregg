@@ -53,6 +53,97 @@ use serde::{Deserialize, Serialize};
 
 use crate::id::CellId;
 
+/// The domain-separated `parent_provenance` fed to [`cap_provenance`] for a
+/// ROOT/mint capability — one with no parent derivation node. Domain separation
+/// keeps it disjoint from any real node's provenance, so a mint can never
+/// collide with (or be forged as) a derived node.
+pub fn mint_provenance() -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dregg-cap-mint-root-v1");
+    *hasher.finalize().as_bytes()
+}
+
+/// The canonical capability-instance **PROVENANCE** hash — a capability's
+/// derivation-node identity. It is committed on the capability itself
+/// ([`crate::capability::CapabilityRef::provenance`]) and folded into the
+/// committed revoked-credential accumulator as [`cred_nul`]`(provenance)`; it is
+/// the `ancestor_hash` the non-revocation circuit queries.
+///
+/// `provenance = BLAKE3("dregg-cap-provenance-v1" ‖ target ‖ slot(le) ‖
+/// parent_provenance ‖ created_by_turn)`.
+///
+/// CHAINS the parent's *provenance* (not merely the parent's `(cell, slot)`
+/// edge): a child's identity transitively binds the parent's full instance
+/// identity, so a parent revoked-then-regranted at the SAME `(cell, slot)`
+/// yields a DIFFERENT `parent_provenance` and its old/new children never
+/// collide, and a descendant can be forced by the ancestor-chain non-revocation
+/// gate to carry a revoked ancestor's provenance. `created_by_turn` distinguishes
+/// a regrant of the same `(target, slot)` after a revoke (slots are reused —
+/// [`DerivationTree::record_derivation`] replaces a `(cell, slot)` node,
+/// `derivation.rs:189-190`) from the revoked instance.
+///
+/// # Why BLAKE3 (not the doc's aspirational Poseidon2)
+///
+/// The DEPLOYED non-revocation circuit (`dregg_circuit::dsl::revocation`) does
+/// NOT recompute this hash in-circuit — it queries a FOLDED field element
+/// (`fold_bytes32_to_bb(cred_nul(provenance))`) for non-membership against the
+/// committed revocation root. So the preimage hash need not be
+/// arithmetization-friendly; it only needs to agree byte-for-byte between the
+/// on-cap value and any off-chain CDT reconstruction. BLAKE3 is what every
+/// sibling CDT/receipt hash already uses, and provenance MUST equal
+/// [`DerivationNode::hash`] (self-identification with no CDT lookup), so keeping
+/// BLAKE3 unifies them; switching to Poseidon2 would fork the CDT's own hash from
+/// the on-cap provenance. The module doc's "Poseidon2(...)" (`derivation.rs:36`)
+/// describes the not-yet-built in-circuit provenance-CHAIN verifier, not the
+/// deployed non-membership reader.
+pub fn cap_provenance(
+    target: &CellId,
+    slot: u32,
+    parent_provenance: &[u8; 32],
+    created_by_turn: &[u8; 32],
+) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dregg-cap-provenance-v1");
+    hasher.update(target.as_bytes());
+    hasher.update(&slot.to_le_bytes());
+    hasher.update(parent_provenance);
+    hasher.update(created_by_turn);
+    *hasher.finalize().as_bytes()
+}
+
+/// The **credential-revocation nullifier** for a capability provenance hash — the
+/// key inserted into (and queried for non-membership against) the committed
+/// revoked-credential accumulator ([`crate::revoked_set::RevokedSet`]). Revoking
+/// one capability inserts exactly `cred_nul(provenance)`; descendants die because
+/// each capability's ancestor-chain non-revocation proof must include this
+/// provenance.
+///
+/// `cred_nul = BLAKE3("dregg-cred-revocation-v1" ‖ provenance)`.
+///
+/// Domain-separated from [`chan_nul`] so the two key-kinds share ONE accumulator
+/// with no collision (spec §3b): individual credential revoke vs. batch channel
+/// revoke.
+pub fn cred_nul(provenance: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dregg-cred-revocation-v1");
+    hasher.update(provenance);
+    *hasher.finalize().as_bytes()
+}
+
+/// The **channel-revocation nullifier** for a revocation channel id — a SINGLE
+/// accumulator insert that revokes every capability subscribed to the channel
+/// (the intentional O(1) batch revoke, spec §3b: a channel trip kills all
+/// subscribers at once). Domain-separated from [`cred_nul`] so both key-kinds
+/// coexist in ONE accumulator.
+///
+/// `chan_nul = BLAKE3("dregg-chan-revocation-v1" ‖ channel_id)`.
+pub fn chan_nul(channel_id: &[u8; 32]) -> [u8; 32] {
+    let mut hasher = blake3::Hasher::new();
+    hasher.update(b"dregg-chan-revocation-v1");
+    hasher.update(channel_id);
+    *hasher.finalize().as_bytes()
+}
+
 /// The type of derivation that produced a capability.
 ///
 /// Each variant corresponds to an effect in the turn executor that creates
@@ -80,6 +171,16 @@ pub struct DerivationEdge {
     pub source_slot: u32,
     /// How the derivation was performed.
     pub derivation_type: DerivationType,
+    /// The PROVENANCE hash of the source (parent) derivation node — the parent
+    /// capability's [`cap_provenance`]. Chained into the child node's provenance
+    /// (see [`DerivationNode::hash`]) so a child's identity transitively binds the
+    /// parent's full instance identity, NOT merely the parent's `(cell, slot)`.
+    /// This is what makes revoke-then-regrant at the same slot collision-free and
+    /// lets the ancestor-chain non-revocation gate catch descendants of a revoked
+    /// ancestor. `#[serde(default)]` decodes a legacy edge (pre-provenance) with
+    /// the mint marker's zero placeholder.
+    #[serde(default)]
+    pub parent_provenance: [u8; 32],
 }
 
 impl DerivationEdge {
@@ -90,6 +191,7 @@ impl DerivationEdge {
         hasher.update(self.source_cell.as_bytes());
         hasher.update(&self.source_slot.to_le_bytes());
         hasher.update(&[self.derivation_type_tag()]);
+        hasher.update(&self.parent_provenance);
         *hasher.finalize().as_bytes()
     }
 
@@ -124,24 +226,28 @@ pub struct DerivationNode {
 }
 
 impl DerivationNode {
-    /// Compute a BLAKE3 hash of this node for inclusion in Merkle structures.
+    /// This node's PROVENANCE hash — its capability-instance identity. Equal
+    /// BY CONSTRUCTION to the [`cap_provenance`] stored on the corresponding
+    /// [`crate::capability::CapabilityRef::provenance`], so an off-chain CDT
+    /// reconstruction derives the SAME `cred_nul` the executor committed (no
+    /// divergence between the on-cap value and the verifier-side value).
+    ///
+    /// CHAINS the parent's provenance (`edge.parent_provenance`) rather than the
+    /// parent's `(cell, slot)` edge descriptor — the collision-freedom fix. A
+    /// root/mint node (no parent) uses [`mint_provenance`]. `created_at` is NOT in
+    /// the preimage (it is CDT bookkeeping); `created_by_turn` is the per-instance
+    /// distinguisher that survives slot reuse.
     pub fn hash(&self) -> [u8; 32] {
-        let mut hasher = blake3::Hasher::new();
-        hasher.update(b"dregg-derivation-node-v1");
-        hasher.update(self.cell.as_bytes());
-        hasher.update(&self.slot.to_le_bytes());
-        match &self.parent {
-            Some(edge) => {
-                hasher.update(&[1u8]);
-                hasher.update(&edge.hash());
-            }
-            None => {
-                hasher.update(&[0u8]);
-            }
-        }
-        hasher.update(&self.created_at.to_le_bytes());
-        hasher.update(&self.created_by_turn);
-        *hasher.finalize().as_bytes()
+        let parent_provenance = match &self.parent {
+            Some(edge) => edge.parent_provenance,
+            None => mint_provenance(),
+        };
+        cap_provenance(
+            &self.cell,
+            self.slot,
+            &parent_provenance,
+            &self.created_by_turn,
+        )
     }
 
     /// The key that identifies this node in the tree: (cell, slot).
