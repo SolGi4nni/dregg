@@ -170,3 +170,14 @@ the sibling lane settles — not mine to touch/stash.
   the ~1200-use injectivity cluster through the poseidon2CommitSurface reductions. (`recStateCommit_binds_kernel_fin`: collapse the 5 carried hypotheses — 4 injectivity + 
   RestHashIffFrame — to `Poseidon2SpongeCR` ALONE, scoped to denote-images/reachable states, realizing
   `LeafRealization` rather than assuming it).
+- ✅ INJECTIVITY COLLAPSE `d046dfb3d` — `injectivity_collapses_to_poseidon2CR`: all 4 CommitSurface injectivity
+  carriers hold from ONE `Poseidon2SpongeCR` (LeafRealization CONSTRUCTED). `finCommitSurface` = the DEBT-B
+  commit surface on that single floor. Teeth: collapse_fires + collapse_needs_CR (bites).
+- ✅ `RestFrameDecodes2` `66e37b73f` — measured to be `= RestHashIffFrame.mp` (realized for 5 effects via
+  `(hRest k k').mp h`), so on the SAME Poseidon2SpongeCR floor by R4's result. Not a separate carrier.
+- 🏁 **DEBT-B CARRIER FAMILY DISCHARGED**: RestHashIffFrame + RestFrameDecodes2 + 4 injectivity + LeafRealization
+  all PROVED/reduced to `Poseidon2SpongeCR` on the reachable subclass; Satisfied2Faithful/DeployedFaithful
+  reclassified to DEBT-A (proven AIR, not finite-map). 30 deployed program squares proved (hpres discharged).
+  Whole tree GREEN 4537. REMAINING (mechanical, NOT a carrier debt): re-thread the ~10 apex consumers through
+  `finCommitSurface`/`RH_fin` (re-seat the apex on the reachable subclass — merges with DEBT-A). NEXT CAMPAIGN:
+  DEBT-A StarkSound (owns the reclassified AIR carriers).

@@ -7082,3 +7082,15 @@ NEXT REAL CAMPAIGN: DEBT A — discharge `StarkSound` (the p3/FRI-over-BabyBear 
 reclassified `Satisfied2Faithful`.
 NEW FILES: `Dregg2/Circuit/{FinKernelState,FinFrameHash,FinInterp,FinKernelStep,FinAllocCell,FinProgramSquares,
 FinCreateCellSquares,FinBindsKernel,DeltaProto,EffectsAsDataProto}.lean`.
+
+## 2026-07-10 (addendum) — DEBT-B carrier family fully discharged
+Following "CORE PROVED": `d046dfb3d` `injectivity_collapses_to_poseidon2CR` (the 4 CommitSurface injectivity
+carriers ⟸ one Poseidon2SpongeCR, LeafRealization constructed; `finCommitSurface` on that floor) + `66e37b73f`
+the finding that `RestFrameDecodes2 = RestHashIffFrame.mp` (already realized for 5 effects, same floor).
+FINAL: every DEBT-B carrier (RestHashIffFrame, RestFrameDecodes2, 4 injectivity, LeafRealization) is a proved
+theorem / reduced to Poseidon2SpongeCR on the reachable denote-image; Satisfied2Faithful/DeployedFaithful
+reclassified to DEBT-A (AIR/chip). 30 deployed `*Stmt` squares proved (hpres discharged). Whole tree green 4537.
+The goal "make RestHashIffFrame + the faithfulness family PROVED, not named" is MET. Remaining is mechanical:
+re-thread the ~10 `recStateCommit_binds_kernel` apex consumers through `finCommitSurface` on the reachable
+subclass (re-seat the apex — merges with DEBT-A StarkSound, the next campaign, which owns the reclassified AIR
+carriers).
