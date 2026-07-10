@@ -1944,9 +1944,244 @@ impl<B: GameBrain> GameSession<B> {
 
     /// Re-verify the whole session ledger as a hash chain (every landed move authentic +
     /// on-chain + un-forged). The one gate a stranger runs to trust the playthrough.
+    ///
+    /// This is the **integrity tier** (design's Layer 0): it proves the recorded history was not
+    /// altered after recording. It does NOT prove each recorded effect was the *rule-correct*
+    /// resolution of its bound action — a hash-valid chain can still carry an effect the resolver
+    /// would never have produced. Closing that is [`Self::verify_replay`].
     pub fn verify(&self) -> Result<(), crate::LedgerBreak> {
         self.world.verify_ledger(self.dm.config())
     }
+
+    /// **The RE-EXECUTION tier (design's Track A) — replay the game, do not merely inspect
+    /// hashes.** Reconstructs the genesis world ([`GameWorld::new_world`]) and, for every landed
+    /// turn in order, recovers the bound typed [`GameAction`] from its [`GameBinding`], re-runs the
+    /// SAME [`resolve_action`] against the from-genesis replay state, and checks the resolver's
+    /// effect equals the one the entry recorded. A rule-incorrect effect (a `Move` that recorded a
+    /// `GrantItem`, a bumped combat flag) is caught here even when [`Self::verify`] accepts the
+    /// chain — because integrity recomputes the receipt over the *recorded* effect, while replay
+    /// recomputes the *effect itself* from the action and the rules.
+    ///
+    /// This is the trust-minimized layer, NOT a succinct proof: the verifier runs the real
+    /// resolver over the whole history (an executable specification), so its trust assumption is
+    /// "the resolver is the rules," not "the prover is sound." It is deterministic — [`resolve_action`]
+    /// is a pure function of `(map, state, action)`; no clock, RNG, narration, or iteration order
+    /// leaks into an effect — so a rule-correct history reproduces every effect exactly.
+    ///
+    /// Returns the precise [`ReplayMismatch`] at the first offending `seq`, and does NOT advance
+    /// the replay past it (a forgery is not carried forward). See [`verify_ledger_replay`].
+    pub fn verify_replay(&self) -> Result<(), ReplayMismatch> {
+        verify_ledger_replay(&self.map, &self.world.ledger)
+    }
+
+    /// **Both independent verification claims, side by side — never merged into one boolean.** The
+    /// integrity claim ([`Self::verify`]: the history is untampered) and the replay claim
+    /// ([`Self::verify_replay`]: every recorded effect is the rule-correct resolution of its bound
+    /// action) are distinct guarantees, and the design insists they be *reported* distinctly. A
+    /// forged effect on a re-linked chain reads `chain: Ok, replay: Err` — legibly a rule break a
+    /// chain-only check misses, not a green light.
+    pub fn verify_report(&self) -> VerificationReport {
+        VerificationReport {
+            chain: self.verify(),
+            replay: self.verify_replay(),
+        }
+    }
+}
+
+/// **The two independent verification claims of a session, reported separately.** The design's
+/// verification tiers are not one overloaded boolean: `chain` is the integrity claim (the recorded
+/// history is untampered — a valid hash chain), `replay` is the re-execution claim (every recorded
+/// effect is the rule-correct resolution of its bound action). Keeping them apart is the honest
+/// shape: a chain can be internally consistent yet carry a rule-incorrect effect, and only the
+/// replay leg catches that.
+#[derive(Debug)]
+pub struct VerificationReport {
+    /// The integrity tier — [`GameSession::verify`] (hash-chain valid, attestations accepted).
+    pub chain: Result<(), crate::LedgerBreak>,
+    /// The re-execution tier — [`GameSession::verify_replay`] (the resolver reproduced every effect).
+    pub replay: Result<(), ReplayMismatch>,
+}
+
+impl VerificationReport {
+    /// Both claims hold: the history is untampered AND its transitions were replayed rule-correct.
+    pub fn both_ok(&self) -> bool {
+        self.chain.is_ok() && self.replay.is_ok()
+    }
+}
+
+/// **Why a from-genesis re-execution of a ledger diverged from the recorded history** — the
+/// precise rule break, named at the offending sequence number. A chain-valid (integrity-passing)
+/// ledger can still fail here: that is exactly the gap the re-execution tier closes.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum ReplayMismatch {
+    /// **The headline.** The resolver admitted the bound action but produced a *different* effect
+    /// than the entry recorded — a rule-incorrect transition (e.g. a `Move` whose entry recorded a
+    /// `GrantItem`, or a bumped flag). `expected` is what [`resolve_action`] yields; `recorded` is
+    /// what the ledger claims. A chain-only check misses this; replay catches it.
+    Effect {
+        /// The sequence number of the offending entry.
+        seq: u64,
+        /// The bound action the entry claims resolved this turn.
+        action: GameAction,
+        /// The effect the resolver actually yields for that action against the replay state.
+        expected: Option<WorldEffect>,
+        /// The effect the entry recorded (and committed into its receipt).
+        recorded: Option<WorldEffect>,
+    },
+    /// The resolver REFUSES the bound action against the replay state, yet the entry claims it
+    /// landed — an illegal move recorded as legal (the state it was supposedly resolved against
+    /// could never have admitted it).
+    Refused {
+        /// The sequence number of the offending entry.
+        seq: u64,
+        /// The bound action that no longer resolves as legal.
+        action: GameAction,
+        /// The resolver's legible refusal reason.
+        reason: GameRefusal,
+    },
+    /// The room the entry's binding claims it acted in does not match the replay state's current
+    /// room — the entry was resolved against a state the honest replay never reached here.
+    Room {
+        /// The sequence number of the offending entry.
+        seq: u64,
+        /// The room the binding recorded.
+        expected_room: String,
+        /// The room the replay is actually in at this point.
+        replay_room: String,
+    },
+    /// The entry carries no [`GameBinding`] — it is a free-narration turn, not a resolver-driven
+    /// game move, so it cannot be re-executed. A [`GameSession`] never lands such a turn; this is
+    /// a defensive fault for a ledger mixing game and non-game entries.
+    NonGameEntry {
+        /// The sequence number of the un-replayable entry.
+        seq: u64,
+    },
+}
+
+impl ReplayMismatch {
+    /// The sequence number of the entry at which replay diverged.
+    pub fn seq(&self) -> u64 {
+        match self {
+            ReplayMismatch::Effect { seq, .. }
+            | ReplayMismatch::Refused { seq, .. }
+            | ReplayMismatch::Room { seq, .. }
+            | ReplayMismatch::NonGameEntry { seq } => *seq,
+        }
+    }
+}
+
+impl std::fmt::Display for ReplayMismatch {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ReplayMismatch::Effect {
+                seq,
+                action,
+                expected,
+                recorded,
+            } => write!(
+                f,
+                "turn #{seq} ({}): the resolver yields effect {expected:?} but the entry recorded \
+                 {recorded:?} (a rule-incorrect transition)",
+                action.label()
+            ),
+            ReplayMismatch::Refused {
+                seq,
+                action,
+                reason,
+            } => write!(
+                f,
+                "turn #{seq} ({}): the resolver REFUSES this move on replay ({reason}), yet the \
+                 entry claims it landed",
+                action.label()
+            ),
+            ReplayMismatch::Room {
+                seq,
+                expected_room,
+                replay_room,
+            } => write!(
+                f,
+                "turn #{seq}: the binding claims room {expected_room} but the replay is in \
+                 {replay_room}"
+            ),
+            ReplayMismatch::NonGameEntry { seq } => write!(
+                f,
+                "turn #{seq}: carries no game binding — not a replayable game move"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ReplayMismatch {}
+
+/// **Re-execute a ledger from genesis and check every recorded effect against the resolver** — the
+/// re-execution light client (design Track A), as a free function over the static [`GameWorld`] map
+/// and a slice of [`crate::LedgerEntry`]. This is the semantic reference [`GameSession::verify_replay`]
+/// delegates to; it takes only the map + the ledger, so a stranger holding a serialized session (and
+/// the world it was played on) can re-run it without the live `GameSession`.
+///
+/// It reconstructs the genesis world ([`GameWorld::new_world`] — the same fresh cell a session opens
+/// with, light counter seeded), then for each entry in order:
+///
+/// 1. recovers the bound typed [`GameAction`] + room from the entry's [`GameBinding`] (an entry with
+///    no binding is a non-game turn — [`ReplayMismatch::NonGameEntry`]);
+/// 2. checks the replay's current room equals the binding's room ([`ReplayMismatch::Room`]);
+/// 3. re-runs [`resolve_action`] against the replay state and compares the resolver's effect to the
+///    entry's recorded effect — a divergence is [`ReplayMismatch::Effect`] (the headline), a refusal
+///    is [`ReplayMismatch::Refused`];
+/// 4. applies the (matching) effect via [`WorldCell::apply`] to advance — the SAME state-transition
+///    the live turn used, so replay and live never drift.
+///
+/// On the first fault it returns immediately and does NOT advance past the offending entry (a
+/// forgery is never carried forward into the replay state).
+pub fn verify_ledger_replay(
+    map: &GameWorld,
+    ledger: &[crate::LedgerEntry],
+) -> Result<(), ReplayMismatch> {
+    // GENESIS: a fresh world-cell exactly as a session opens with (start room + seeded light).
+    let mut replay = map.new_world();
+
+    for entry in ledger {
+        let seq = entry.seq;
+        let binding = match &entry.game_binding {
+            Some(b) => b,
+            None => return Err(ReplayMismatch::NonGameEntry { seq }),
+        };
+        // The entry must have been resolved against the room the replay is actually in now.
+        if replay.scene != binding.room {
+            return Err(ReplayMismatch::Room {
+                seq,
+                expected_room: binding.room.clone(),
+                replay_room: replay.scene.clone(),
+            });
+        }
+        // THE WORLD RE-DISPOSES: run the SAME resolver over the from-genesis replay state.
+        let resolved = match resolve_action(map, &replay, &binding.action) {
+            Outcome::Legal(r) => r,
+            Outcome::Refused(reason) => {
+                return Err(ReplayMismatch::Refused {
+                    seq,
+                    action: binding.action.clone(),
+                    reason,
+                })
+            }
+        };
+        // The load-bearing comparison: the resolver's effect must equal the recorded effect
+        // (canonical structural equality — `WorldEffect: PartialEq`). A rule-incorrect effect a
+        // hash-valid chain carries is caught HERE, and we do not advance past it.
+        if resolved.effect != entry.effect {
+            return Err(ReplayMismatch::Effect {
+                seq,
+                action: binding.action.clone(),
+                expected: resolved.effect,
+                recorded: entry.effect.clone(),
+            });
+        }
+        // Advance the replay by the SAME effect application the live turn used.
+        if let Some(effect) = &resolved.effect {
+            replay.apply(effect);
+        }
+    }
+    Ok(())
 }
 
 // ─────────────────────────────────────────────────────────────────────────────

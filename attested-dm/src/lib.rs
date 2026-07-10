@@ -65,11 +65,12 @@ pub use prompt_template::{
 
 pub mod game;
 pub use game::{
-    bramble_keep, deepdark_mine, starfall_spire, sunken_vault, venom_deep, CombatEnemy,
-    ConsumableEffect, ConsumableRule, DialogueGrant, DialogueRule, Exit, GameAction, GameBinding,
-    GameBrain, GameRefusal, GameSession, GameStatus, GameWorld, Gate, GateReason, Hostile,
-    LightRule, LoseCondition, Npc, Objective, Outcome, PlayResult, Proposal, RefuelRule,
-    Resolution, Room, ScriptedGm, Spell, SpellEffect, SpellRule, StatusKind, StatusRule, UseRule,
+    bramble_keep, deepdark_mine, resolve_action, starfall_spire, sunken_vault, venom_deep,
+    verify_ledger_replay, CombatEnemy, ConsumableEffect, ConsumableRule, DialogueGrant,
+    DialogueRule, Exit, GameAction, GameBinding, GameBrain, GameRefusal, GameSession, GameStatus,
+    GameWorld, Gate, GateReason, Hostile, LightRule, LoseCondition, Npc, Objective, Outcome,
+    PlayResult, Proposal, RefuelRule, ReplayMismatch, Resolution, Room, ScriptedGm, Spell,
+    SpellEffect, SpellRule, StatusKind, StatusRule, UseRule, VerificationReport,
     PLAYER_WOUNDS_FLAG,
 };
 // `PromptBinding` is defined below (it is tightly coupled to the chain-link hashing); re-exported
@@ -541,8 +542,11 @@ impl WorldCell {
     }
 
     /// Apply a cap-authorized world-effect to the world state. (Called only after
-    /// [`DmCaps::authorize`] admits it and the narration is attested.)
-    fn apply(&mut self, effect: &WorldEffect) {
+    /// [`DmCaps::authorize`] admits it and the narration is attested.) `pub(crate)` so the
+    /// re-execution verifier ([`game::verify_ledger_replay`]) can advance a from-genesis replay
+    /// state by the SAME effect application the live turn used — replay and live share one
+    /// state-transition function, no second implementation to drift.
+    pub(crate) fn apply(&mut self, effect: &WorldEffect) {
         match effect {
             WorldEffect::AdvanceScene(s) => self.scene = s.clone(),
             WorldEffect::SetFlag(k, v) => {

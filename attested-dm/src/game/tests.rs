@@ -2230,3 +2230,287 @@ fn venom_deep_venom_takes_you_without_the_antidote() {
         wounds(&game)
     );
 }
+
+// ═════════════════════════════════════════════════════════════════════════════
+// (N) THE RE-EXECUTION TIER — replay the game, do not merely inspect hashes.
+// The honest gap `verify()` leaves open: a hash-valid chain can carry an effect
+// the resolver would never produce. `verify_replay()` re-runs `resolve_action`
+// from genesis and catches exactly that. These tests are the non-vacuous proof.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// The canonical sunken_vault solve, as bare commands (rooms elided).
+const SUNKEN_SOLVE: &[&str] = &[
+    "go north",
+    "take lantern",
+    "go down",
+    "go down",
+    "take rusted_key",
+    "go north",
+    "use rusted_key on iron_door",
+    "go east",
+    "take sword",
+    "go north",
+    "attack warden",
+    "go east",
+    "take amulet",
+    "go up",
+];
+
+const BRAMBLE_SOLVE: &[&str] = &[
+    "take candle",
+    "go north",
+    "go down",
+    "take key",
+    "go up",
+    "use key on gate",
+    "go east",
+    "take nightshade",
+    "go west",
+    "go west",
+    "ask witch about sickle",
+    "go east",
+    "go north",
+    "go north",
+    "go north",
+    "attack knight",
+    "attack knight",
+    "go north",
+    "take sunheart",
+    "go up",
+];
+
+const STARFALL_SOLVE: &[&str] = &[
+    "go up",
+    "take candle_primer",
+    "read candle_primer",
+    "cast light",
+    "go up",
+    "take star_chart",
+    "take mending_folio",
+    "read mending_folio",
+    "cast mend on stair",
+    "go up",
+    "take opening_codex",
+    "read opening_codex",
+    "go west",
+    "ask astronomer about flame",
+    "read flare_grimoire",
+    "go east",
+    "go up",
+    "use star_chart on orrery",
+    "cast unlock on sky_door",
+    "go up",
+    "cast flare",
+    "attack voidling",
+    "attack voidling",
+    "attack voidling",
+    "go up",
+    "take fallen_star",
+    "go up",
+];
+
+/// Re-link a mutated ledger into an internally-consistent hash chain: recompute every entry's
+/// `seq`, `prev`, and `receipt` from its own (possibly forged) fields so `verify_ledger` still
+/// PASSES. This is what a forger who understands the chain would do — the chain-only check
+/// recomputes the receipt over the *recorded* effect, so a re-linked forgery is invisible to it.
+fn relink(ledger: &mut [crate::LedgerEntry]) {
+    let mut prev = crate::genesis_prev();
+    for (i, e) in ledger.iter_mut().enumerate() {
+        e.seq = i as u64;
+        e.prev = prev;
+        e.receipt = crate::chain_receipt_id(
+            e.seq,
+            &e.prev,
+            &e.narration,
+            &e.effect,
+            &e.prompt_binding,
+            &e.game_binding,
+            &e.attestation,
+        );
+        prev = e.receipt;
+    }
+}
+
+/// **THE HEADLINE — a forgery a chain-only check misses, replay catches.** Play a real winning
+/// sunken_vault, then hand-forge ONE entry so its recorded effect differs from what
+/// `resolve_action` yields for its bound action (a `Move` that records a `GrantItem("crown")`),
+/// and re-link the chain so the hash chain stays internally consistent. `verify()` (integrity)
+/// STILL PASSES the forged chain; `verify_replay()` (re-execution) rejects it at the exact seq.
+#[test]
+fn a_forged_effect_passes_chain_integrity_but_replay_catches_it() {
+    let mut game = GameSession::open(sunken_vault());
+    for cmd in SUNKEN_SOLVE {
+        game.command("hero", cmd).assert_landed();
+    }
+    assert_eq!(game.status(), GameStatus::Won);
+
+    // Honest: BOTH tiers pass before we forge anything.
+    let config = game.dm().config().clone();
+    let map = game.map().clone();
+    game.verify().expect("honest chain integrity");
+    game.verify_replay().expect("honest re-execution");
+
+    let mut world = game.into_world();
+
+    // FORGE entry #2 — the "go down" into the dark stair. Its honest effect is
+    // AdvanceScene("dark_stair"); rewrite it to claim the descent handed the player a crown.
+    // The bound action (Move("down")) is UNCHANGED, so the resolver still yields AdvanceScene —
+    // the recorded effect no longer matches what the rules produce.
+    const FORGED_SEQ: usize = 2;
+    assert_eq!(
+        world.ledger[FORGED_SEQ].effect,
+        Some(WorldEffect::AdvanceScene("dark_stair".into())),
+        "sanity: entry #2 is the honest descent"
+    );
+    world.ledger[FORGED_SEQ].effect = Some(WorldEffect::GrantItem("crown".into()));
+    // Re-link so the chain stays internally consistent (recompute receipts over the forged effect).
+    relink(&mut world.ledger);
+
+    // INTEGRITY STILL PASSES — the chain-only check recomputes the receipt over the recorded
+    // (forged) effect, so the re-linked forgery is invisible to it.
+    world
+        .verify_ledger(&config)
+        .expect("the re-linked forged chain still passes integrity — the gap replay closes");
+
+    // RE-EXECUTION CATCHES IT — re-running the resolver from genesis reproduces the real effect
+    // and finds it differs from the recorded one, at exactly the forged seq.
+    let err = crate::verify_ledger_replay(&map, &world.ledger)
+        .expect_err("replay must reject the rule-incorrect effect");
+    match err {
+        crate::ReplayMismatch::Effect {
+            seq,
+            ref expected,
+            ref recorded,
+            ..
+        } => {
+            assert_eq!(seq, FORGED_SEQ as u64, "caught at the forged seq");
+            assert_eq!(
+                expected,
+                &Some(WorldEffect::AdvanceScene("dark_stair".into())),
+                "the resolver's real effect"
+            );
+            assert_eq!(
+                recorded,
+                &Some(WorldEffect::GrantItem("crown".into())),
+                "the forged recorded effect"
+            );
+        }
+        other => panic!("expected an Effect mismatch, got {other:?}"),
+    }
+    assert_eq!(err.seq(), FORGED_SEQ as u64);
+}
+
+/// The same forgery through a bumped combat flag: forge the felling blow to record a *different*
+/// victory flag value. Chain integrity passes the re-linked chain; replay catches the divergence.
+#[test]
+fn a_bumped_flag_forgery_is_replay_caught_not_chain_caught() {
+    let mut game = GameSession::open(sunken_vault());
+    for cmd in SUNKEN_SOLVE {
+        game.command("hero", cmd).assert_landed();
+    }
+    let config = game.dm().config().clone();
+    let map = game.map().clone();
+    let mut world = game.into_world();
+
+    // Find the "attack warden" entry (its honest effect is SetFlag("warden_defeated", 1)).
+    let idx = world
+        .ledger
+        .iter()
+        .position(|e| {
+            matches!(&e.game_binding, Some(b) if b.action == GameAction::Attack("warden".into()))
+        })
+        .expect("the warden attack is on the ledger");
+    assert_eq!(
+        world.ledger[idx].effect,
+        Some(WorldEffect::SetFlag("warden_defeated".into(), 1)),
+    );
+    // Forge: claim the strike set the flag to 99 (an impossible resolution).
+    world.ledger[idx].effect = Some(WorldEffect::SetFlag("warden_defeated".into(), 99));
+    relink(&mut world.ledger);
+
+    world
+        .verify_ledger(&config)
+        .expect("integrity still passes the re-linked forged chain");
+    let err = crate::verify_ledger_replay(&map, &world.ledger)
+        .expect_err("replay catches the bumped flag");
+    assert_eq!(err.seq(), idx as u64);
+    assert!(matches!(err, crate::ReplayMismatch::Effect { .. }));
+}
+
+/// **HAPPY PATH — every committed game's full winning playthrough passes BOTH tiers.** The five
+/// bundled dungeons each reach the win, and both `verify()` (integrity) and `verify_replay()`
+/// (re-execution) accept the whole chain: the resolver reproduced every recorded effect exactly.
+#[test]
+fn every_game_full_playthrough_passes_both_verification_tiers() {
+    fn run(mut game: GameSession, script: &[&str], name: &str) {
+        for cmd in script {
+            let res = game.command("hero", cmd);
+            assert!(res.landed(), "[{name}] `{cmd}` should land, got {res:?}");
+        }
+        assert_eq!(game.status(), GameStatus::Won, "[{name}] reaches the win");
+        game.verify()
+            .unwrap_or_else(|e| panic!("[{name}] chain integrity failed: {e}"));
+        game.verify_replay()
+            .unwrap_or_else(|e| panic!("[{name}] re-execution failed: {e}"));
+        let report = game.verify_report();
+        assert!(
+            report.both_ok(),
+            "[{name}] both tiers pass: chain={:?} replay={:?}",
+            report.chain,
+            report.replay
+        );
+    }
+
+    run(
+        GameSession::open(sunken_vault()),
+        SUNKEN_SOLVE,
+        "sunken_vault",
+    );
+    run(
+        GameSession::open(bramble_keep()),
+        BRAMBLE_SOLVE,
+        "bramble_keep",
+    );
+    run(
+        GameSession::open(starfall_spire()),
+        STARFALL_SOLVE,
+        "starfall_spire",
+    );
+    run(
+        GameSession::open(deepdark_mine()),
+        DEEPDARK_SOLVE,
+        "deepdark_mine",
+    );
+    run(
+        GameSession::open(venom_deep()),
+        VENOM_DEEP_WIN,
+        "venom_deep",
+    );
+}
+
+/// `verify_report()` reports the two claims SEPARATELY — never merged into one boolean. On a
+/// forged chain it reads `chain: Ok` (integrity) / `replay: Err` (re-execution): legibly a rule
+/// break a chain-only check misses, not a green light.
+#[test]
+fn verify_report_keeps_the_two_claims_legible() {
+    let mut game = GameSession::open(sunken_vault());
+    for cmd in SUNKEN_SOLVE {
+        game.command("hero", cmd).assert_landed();
+    }
+    // Honest: both legs Ok.
+    let honest = game.verify_report();
+    assert!(honest.chain.is_ok() && honest.replay.is_ok());
+    assert!(honest.both_ok());
+
+    // A game session cannot forge its own ledger in place, so exercise the split via the free fn:
+    // an honest chain integrity result beside a forged replay result stays two distinct claims.
+    let map = game.map().clone();
+    let config = game.dm().config().clone();
+    let mut world = game.into_world();
+    world.ledger[0].effect = Some(WorldEffect::GrantItem("crown".into()));
+    relink(&mut world.ledger);
+    let chain = world.verify_ledger(&config);
+    let replay = crate::verify_ledger_replay(&map, &world.ledger);
+    assert!(chain.is_ok(), "integrity accepts the re-linked chain");
+    assert!(replay.is_err(), "re-execution rejects the forged effect");
+}
