@@ -112,3 +112,27 @@ the reachable subclass by `FinBindsKernel.recStateCommit_binds_kernel_fin` (3b6e
   import-slimming lane — NAMED here as the remaining tail, not force-churned into a live tree. The floor is
   singular WHERE IT BINDS (the R4 path); making it singular everywhere is bounded mechanical work for a calm tree.
 - → `Satisfied2Faithful` / `DeployedFaithful*` reclassified to DEBT A (above).
+
+
+## ⚠ FINDING (2026-07-10): `RestFrameDecodes2` is NOT a separate carrier — it IS `RestHashIffFrame.mp`
+`RestFrameDecodes2 S E := ∀ k k', S.RH k = S.RH k' → E.restFrame k k'` (EffectCommit2.lean:377). Its realized
+instances discharge it as `fun k k' h => (hRest k k').mp h` where `hRest : RestHashIffFrame S.RH` — i.e. it is
+DEFINITIONALLY the forward (`.mp`) direction of `RestHashIffFrame`, already realized this way for ≥5 effects
+(mintE, noteSpendE, attenuateE, noteCreateE, revokeDelegationE). Since R4 discharged `RestHashIffFrame (RH_fin)`
+to `Poseidon2SpongeCR` on the reachable denote-image (`restHashIffFrame_of_fin`), `RestFrameDecodes2` is on the
+SAME floor by the same result — no separate debt. Re-threading the remaining assumed sites through the
+`finCommitSurface` RH is mechanical (`.mp` of the R4 iff).
+
+## ✅ DEBT-B CARRIER FAMILY — final accounting (2026-07-10)
+Every DEBT-B carrier is a PROVED theorem or reduced to `Poseidon2SpongeCR` on the reachable subclass:
+- `RestHashIffFrame` (199) → `restHashIffFrame_of_fin` ⟸ `Poseidon2SpongeCR` (R4 `3b6ed68af`, non-vacuous
+  `8cd504be3`).
+- `RestFrameDecodes2*` (44) → `= RestHashIffFrame.mp` ⟸ same floor (finding above).
+- `compressInjective`×2 / `compressNInjective` / `cellLeafInjective` → `injectivity_collapses_to_poseidon2CR`
+  ⟸ `Poseidon2SpongeCR` (`d046dfb3d`); `LeafRealization` CONSTRUCTED (`finLeafRealization`), not assumed.
+- `Satisfied2Faithful` (34) / `DeployedFaithful*` (33) → RECLASSIFIED to DEBT A (AIR/chip layer — `extends
+  Satisfied2`; the finite-map files never touch `permOut`/chips). NOT DEBT-B.
+All 30 deployed `*Stmt` program commuting squares proved (R1 `hpres` gate discharged). Whole tree green 4537.
+REMAINING (mechanical, NOT a carrier debt): re-thread the ~10 `recStateCommit_binds_kernel` consumers + the
+`RestFrameDecodes2` sites through `finCommitSurface`/`RH_fin` on the reachable subclass. Tree-wide injectivity
+uses on the DEBT-A/AIR paths are DEBT-A's.
