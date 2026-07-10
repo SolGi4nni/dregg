@@ -48,5 +48,12 @@ getrandom = { workspace = true }
 postcard = { version = "1", features = ["use-std"] }
 proptest = { workspace = true }
 
+[dev-dependencies]
+# GUARD A (`tests/verify_routing_guard.rs`): parse `cargo metadata` JSON to enforce that every workspace
+# binary reaching the ML-DSA verify stack either routes the Lean-verified core or is on the reviewed
+# DELEGATES_VERIFY allowlist. serde_json is already in the workspace lock (no new fetch); a dev-dep so the
+# guard rides the normal `cargo test -p dregg-tests` gate.
+serde_json = "1"
+
 [lints]
 workspace = true
