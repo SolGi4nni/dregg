@@ -11,23 +11,38 @@
 //! element consumes: render the current passage, list condition-gated choices, `advance`
 //! one verified turn, and `verify` the whole chain by replay.
 //!
-//! ## ⚠ PLATFORM NOTE — this rides the NATIVE executor, not (yet) wasm32
+//! ## PLATFORM NOTE — this is in the shipped wasm32 bundle
 //!
 //! [`StoryWorld`] wraps `spween-dregg`'s real [`Driver`], whose turns are admitted by
-//! [`dregg_app_framework::EmbeddedExecutor`]. That executor lives in `dregg-app-framework`,
-//! whose dependency set is UNCONDITIONALLY non-wasm32 (`axum 0.8` + `tokio` `full` +
-//! `reqwest` + `tower-http`) — the SAME crate the wasm `Cargo.toml` already documents it
-//! must not pull. So this module and its `spween-dregg` dependency are gated
-//! `cfg(not(target_arch = "wasm32"))`: the binding, its `#[wasm_bindgen]` surface, and its
-//! host-target test are real and exercised, but the story path is NOT in the shipped wasm
-//! bundle until `spween-dregg` grows a wasm-safe executor route that does not ride
-//! `dregg-app-framework` (a change to `spween-dregg`, out of this lane's scope). The
-//! `#[wasm_bindgen]` attributes are kept so that flip is one gate away — mirroring the
-//! project's "one flip from live" manifest philosophy.
+//! `dregg-app-framework`'s [`EmbeddedExecutor`]. That executor rides the framework's
+//! **wasm-clean CORE**: `spween-dregg` depends on `dregg-app-framework` with
+//! `default-features = false`, dropping the `server` feature (axum/tokio-full/reqwest/
+//! tower-http, non-wasm32). So this whole module — the single-player [`Driver`] surface
+//! AND the collective vote surface below — compiles to wasm32 exactly the way
+//! [`DocCollabWorld`](crate::bindings_doc::DocCollabWorld) does, with no target gate: it
+//! is in the shipped wasm bundle and in the native `cargo test`.
+//!
+//! ## THE COLLECTIVE SURFACE — the crowd co-authors a verifiable CYOA in the tab
+//!
+//! Beyond single-player [`Self::advance`], `StoryWorld` exposes the **per-branch vote
+//! flow** (the killer mode): the audience opens a poll over the current passage's
+//! available choices ([`Self::open_branch_poll`]), casts one ballot each
+//! ([`Self::cast_vote`]), and the winning branch fires as ONE verified turn
+//! ([`Self::close_branch_poll`]) — the same one-turn advance path single-player uses. The
+//! branch decision is certified by the REAL federation-grade
+//! [`CollectiveChoiceEngine`](spween_dregg::CollectiveChoiceEngine) (privacy-voting
+//! `WriteOnce` ballots + `Monotonic` tallies + the polis `AffineLe` quorum gate), now
+//! wasm-clean — so the crowd-vote that picks a story branch is the *same engine that
+//! governs a federation*. The engine gates eligibility to a declared electorate, so the
+//! browser configures the eligible crowd roster once ([`Self::set_electorate`]) before
+//! opening a branch poll.
 
 use wasm_bindgen::prelude::*;
 
-use spween_dregg::{Driver, Playthrough, Scene, WorldCell, parse, verify};
+use spween_dregg::{
+    CollectiveChoiceEngine, Driver, Scene, VoteEngine, VoteError, VoteOption, WorldCell, parse,
+    verify,
+};
 
 /// The deterministic deploy seed. `spween-dregg` derives the world-cell identity from the
 /// scene id + seed, so a fixed seed makes a playthrough re-verify against a freshly
@@ -54,6 +69,31 @@ pub struct StoryWorld {
     scene: &'static Scene,
     /// The stock-runtime driver over the world-cell; each `advance` is a verified turn.
     driver: Driver<'static>,
+    /// **The eligible crowd roster** for collective (vote-driven) branching. The real
+    /// [`CollectiveChoiceEngine`] gates eligibility to a declared electorate (holding a
+    /// ballot cap *is* eligibility), so the tab configures who may vote once
+    /// ([`Self::set_electorate`]) before opening a branch poll. Empty until configured —
+    /// an unconfigured collective poll admits no ballots (fail-closed).
+    electorate: Vec<String>,
+    /// The currently-open branch poll, if any. Holds the live real vote engine over the
+    /// current passage's available choices plus the option→spween-choice-index map.
+    /// `None` between rounds (single-player `advance` still works regardless).
+    poll: Option<BranchPoll>,
+    /// The number of branch polls opened so far (the round counter surfaced to the crowd).
+    round: usize,
+}
+
+/// One open collective branch poll: the live real vote engine plus the ballot options it
+/// was opened over. Each option carries the spween `choice_index` the winner resolves to
+/// (`Driver::advance`'s argument) — the option position is the ballot slot; the
+/// `choice_index` is the story edge.
+struct BranchPoll {
+    /// The live federation-grade engine (privacy-voting ballots + monotone tallies +
+    /// quorum `AffineLe`). Each [`StoryWorld::cast_vote`] is a real ballot turn on it; the
+    /// winner is certified by its quorum gate at [`StoryWorld::close_branch_poll`].
+    engine: CollectiveChoiceEngine,
+    /// The ballot options (available choices only), in ballot order.
+    options: Vec<VoteOption>,
 }
 
 #[wasm_bindgen]
@@ -78,7 +118,13 @@ impl StoryWorld {
         let world = WorldCell::deploy(scene, STORY_SEED).map_err(|e| e.to_string())?;
         let driver = Driver::start(world, scene).map_err(|e| e.to_string())?;
 
-        Ok(StoryWorld { scene, driver })
+        Ok(StoryWorld {
+            scene,
+            driver,
+            electorate: Vec::new(),
+            poll: None,
+            round: 0,
+        })
     }
 
     /// The current passage name (empty once the scene has ended).
@@ -194,17 +240,227 @@ impl StoryWorld {
     }
 }
 
-// ── PHASE 2 (stub — do NOT build here) ────────────────────────────────────────────────
+/// The quorum threshold for a branch poll: `1`, so the crowd resolves by **plurality** —
+/// any single ballot lets the poll resolve, and the winner is the argmax of the tally
+/// (the [`CollectiveChoiceEngine`]'s `AffineLe` gate certifies once `Σ TALLY ≥ 1`). A
+/// poll with ZERO ballots is below quorum and does not resolve (fail-closed: nothing
+/// advances).
+const BRANCH_QUORUM_M: u64 = 1;
+
+// ── THE COLLECTIVE SURFACE — the crowd co-authors the story, per branch ────────────────
 //
-// The COLLECTIVE mode: the crowd co-authors the story. `spween-dregg`'s `run_collective`
-// drives a `CollectiveRound` over the real cap-bounded `VoteEngine` — the audience polls
-// each branch, the winning branch fires as a turn. A later lane wires this to `<dregg-poll>`:
-//
-//   pub fn open_branch_poll(&mut self) -> String   // JSON of the branch options to poll
-//   pub fn close_branch_poll(&mut self) -> String  // tally the ballots, advance the winner
-//
-// over `spween_dregg::{run_collective, CollectiveRound, Ballot, PollContext}`. Left as a
-// comment: this lane ships single-player verifiable CYOA only.
+// A second `#[wasm_bindgen] impl` block (the single-player surface above is untouched):
+// open a poll over the current passage's available choices, the audience casts one ballot
+// each on the REAL federation-grade `CollectiveChoiceEngine`, and the winning branch fires
+// as ONE verified turn — the same `Driver::advance` path single-player uses.
+#[wasm_bindgen]
+impl StoryWorld {
+    /// **Configure the eligible crowd roster** for collective branching — a
+    /// comma-separated list of voter ids (whitespace trimmed, empties dropped). The real
+    /// [`CollectiveChoiceEngine`] gates eligibility to this declared electorate: only a
+    /// listed voter can hold a ballot cap, so a poll opened after this admits exactly
+    /// these voters' ballots. Re-calling replaces the roster (it takes effect on the NEXT
+    /// [`Self::open_branch_poll`]; the current poll keeps the electorate it opened with).
+    #[wasm_bindgen(js_name = setElectorate)]
+    pub fn set_electorate(&mut self, voters_csv: String) {
+        self.electorate = voters_csv
+            .split(',')
+            .map(str::trim)
+            .filter(|v| !v.is_empty())
+            .map(str::to_string)
+            .collect();
+    }
+
+    /// The configured electorate as JSON `[voterId]` (the eligible crowd roster).
+    #[wasm_bindgen(js_name = electorateJson)]
+    pub fn electorate_json(&self) -> String {
+        serde_json::json!(self.electorate).to_string()
+    }
+
+    /// **OPEN A BRANCH POLL over the current passage's AVAILABLE choices.** Returns JSON
+    /// `{ passage, round, options: [{ choiceIndex, label }] }`. FAIL-CLOSED: if the scene
+    /// has ended or the current passage offers no available choice, returns `{ error }`
+    /// and opens nothing (the crowd cannot vote on a branch that does not exist). Only
+    /// AVAILABLE choices (the runtime's gate already enforced) go on the ballot, mapped to
+    /// [`VoteOption`]s; the option→`choice_index` map is held for the close. Opening
+    /// REPLACES any prior open poll (a fresh round).
+    #[wasm_bindgen(js_name = openBranchPoll)]
+    pub fn open_branch_poll(&mut self) -> String {
+        use serde_json::json;
+
+        if self.driver.is_ended() {
+            return json!({ "error": "the scene has ended — no branch to vote on" }).to_string();
+        }
+        let Some(passage) = self.driver.current_passage() else {
+            return json!({ "error": "no current passage to poll" }).to_string();
+        };
+        // Only AVAILABLE choices go on the ballot (the runtime's gate is authoritative);
+        // an unavailable/gated choice is never a votable option (fail-closed at the ballot).
+        let options: Vec<VoteOption> = self
+            .driver
+            .choices()
+            .into_iter()
+            .filter(|c| c.available)
+            .map(|c| VoteOption {
+                choice_index: c.index,
+                label: c.text.clone(),
+            })
+            .collect();
+        if options.is_empty() {
+            return json!({ "error": "no available choices at this passage to poll" }).to_string();
+        }
+
+        // Construct the REAL engine over the configured electorate and open the poll (a
+        // real `OPEN` turn on the collective_choice substrate).
+        let roster: Vec<&str> = self.electorate.iter().map(String::as_str).collect();
+        let mut engine = CollectiveChoiceEngine::new(&roster, BRANCH_QUORUM_M);
+        if let Err(e) = engine.open_poll(&options) {
+            return json!({ "error": format!("open poll refused: {e}") }).to_string();
+        }
+
+        self.round += 1;
+        let round = self.round;
+        let rows: Vec<serde_json::Value> = options
+            .iter()
+            .map(|o| json!({ "choiceIndex": o.choice_index, "label": o.label }))
+            .collect();
+        self.poll = Some(BranchPoll { engine, options });
+        json!({ "passage": passage, "round": round, "options": rows }).to_string()
+    }
+
+    /// **CAST ONE BALLOT** — `voter` picks ballot option `option_index` (a real
+    /// `cast_vote` turn on the collective_choice engine). Returns JSON
+    /// `{ ok, tally: [{ label, count }], error? }`. ONE vote per voter: a second ballot
+    /// from the same voter hits the ballot's consumed nullifier and is refused
+    /// (`{ ok: false, error }`), the tally unchanged. FAIL-CLOSED: no open poll, an
+    /// out-of-range option, or a voter outside the configured electorate all return
+    /// `{ ok: false, error }` and nothing counts.
+    #[wasm_bindgen(js_name = castVote)]
+    pub fn cast_vote(&mut self, voter: String, option_index: usize) -> String {
+        use serde_json::json;
+
+        let Some(poll) = self.poll.as_mut() else {
+            return json!({ "ok": false, "tally": [], "error": "no branch poll is open" })
+                .to_string();
+        };
+        match poll.engine.cast(&voter, option_index) {
+            Ok(()) => json!({
+                "ok": true,
+                "tally": tally_rows(&poll.options, &poll.engine.tally()),
+            })
+            .to_string(),
+            Err(e) => json!({
+                "ok": false,
+                "tally": tally_rows(&poll.options, &poll.engine.tally()),
+                "error": vote_error_message(&e),
+            })
+            .to_string(),
+        }
+    }
+
+    /// The current branch tally as JSON `[{ label, count }]` (in ballot-option order).
+    /// Empty when no poll is open.
+    #[wasm_bindgen(js_name = branchTally)]
+    pub fn branch_tally(&self) -> String {
+        match self.poll.as_ref() {
+            Some(poll) => {
+                serde_json::json!(tally_rows(&poll.options, &poll.engine.tally())).to_string()
+            }
+            None => "[]".to_string(),
+        }
+    }
+
+    /// **CLOSE THE POLL and ADVANCE the story along the winning branch — as ONE verified
+    /// turn.** Resolves the winner off the (monotone) tally through the engine's quorum
+    /// `AffineLe` gate, maps the winning ballot option to its spween `choice_index`, and
+    /// fires it via [`Driver::advance`] — the exact one-cap-gated-turn path single-player
+    /// uses. Returns JSON `{ ok, winningChoice, winningLabel, tally, passage,
+    /// receiptCount, commitmentHex, error? }` — `winningChoice` is the spween choice index,
+    /// `passage` the new passage, and `receiptCount`/`commitmentHex` the grown audit tape.
+    ///
+    /// FAIL-CLOSED: with no open poll, or no ballots cast (below quorum), the poll does not
+    /// resolve — returns `{ ok: false, error }`, NOTHING advances, and (for the no-ballots
+    /// case) the poll stays OPEN so the crowd can keep voting. A resolved winner that the
+    /// executor then refuses also returns `{ ok: false, error }` with nothing committed.
+    #[wasm_bindgen(js_name = closeBranchPoll)]
+    pub fn close_branch_poll(&mut self) -> String {
+        use serde_json::json;
+
+        let Some(poll) = self.poll.as_mut() else {
+            return json!({ "ok": false, "error": "no branch poll is open" }).to_string();
+        };
+
+        // Resolve the winner through the real quorum gate. Below quorum (no ballots) the
+        // gate refuses the RESOLVED turn — nothing advances, the poll stays open.
+        let tally_now = tally_rows(&poll.options, &poll.engine.tally());
+        let winning_option = match poll.engine.resolve() {
+            Ok(opt) => opt,
+            Err(e) => {
+                return json!({
+                    "ok": false,
+                    "tally": tally_now,
+                    "error": vote_error_message(&e),
+                })
+                .to_string();
+            }
+        };
+        let winning_choice = poll.options[winning_option].choice_index;
+        let winning_label = poll.options[winning_option].label.clone();
+
+        // Fire the winning branch as ONE verified turn (the same path single-player uses).
+        let advance = self.driver.advance(winning_choice);
+        // The round resolved: consume the poll regardless (a resolved poll is terminal).
+        self.poll = None;
+        match advance {
+            Ok(_step) => json!({
+                "ok": true,
+                "winningChoice": winning_choice,
+                "winningLabel": winning_label,
+                "tally": tally_now,
+                "passage": self.current_passage(),
+                "receiptCount": self.receipt_count(),
+                "commitmentHex": self.commitment_hex(),
+            })
+            .to_string(),
+            Err(e) => json!({
+                "ok": false,
+                "winningChoice": winning_choice,
+                "winningLabel": winning_label,
+                "tally": tally_now,
+                "passage": self.current_passage(),
+                "receiptCount": self.receipt_count(),
+                "commitmentHex": self.commitment_hex(),
+                "error": e.to_string(),
+            })
+            .to_string(),
+        }
+    }
+
+    /// Whether a collective branch poll is currently open.
+    #[wasm_bindgen(js_name = hasOpenPoll)]
+    pub fn has_open_poll(&self) -> bool {
+        self.poll.is_some()
+    }
+}
+
+/// A tally as `[{ label, count }]` rows (ballot-option order) — the JSON both `castVote`
+/// and `branchTally` surface. `tally` is one count per option (as `VoteEngine::tally`
+/// returns); a short/absent tally reads as zero counts.
+fn tally_rows(options: &[VoteOption], tally: &[u64]) -> serde_json::Value {
+    use serde_json::json;
+    let rows: Vec<serde_json::Value> = options
+        .iter()
+        .enumerate()
+        .map(|(i, o)| json!({ "label": o.label, "count": tally.get(i).copied().unwrap_or(0) }))
+        .collect();
+    json!(rows)
+}
+
+/// A human-readable reason for a [`VoteError`] — the `error` string the collective surface
+/// returns (double-vote, bad option, ineligible voter, no poll, below-quorum, …).
+fn vote_error_message(e: &VoteError) -> String {
+    e.to_string()
+}
 
 #[cfg(all(test, not(target_arch = "wasm32")))]
 mod tests {
@@ -337,6 +593,7 @@ The stranger leans close and whispers of an artifact.
     /// hash-chain linkage the un-retconnable check rests on.
     #[test]
     fn tampered_receipt_fails_verification() {
+        use spween_dregg::Playthrough;
         let mut story = StoryWorld::new(TAVERN.to_string()).expect("compile");
         let _ = story.advance(1); // intro -> bold
         let _ = story.advance(0); // bold  -> conversation
@@ -353,5 +610,190 @@ The stranger leans close and whispers of an artifact.
             verify(fresh, story.scene, &tampered).is_err(),
             "a tampered receipt chain is refused"
         );
+    }
+
+    /// A 3-passage story with a real branch at `intro`: TWO available (ungated) choices,
+    /// each leading to an ending. The collective surface polls that branch.
+    const CROSSROADS: &str = r#"---
+id: crossroads
+title: The Crossroads
+weight: 10
+---
+
+=== intro
+
+You reach a fork in the road at dusk.
+
+* [Take the left path]
+  -> left
+
+* [Take the right path]
+  -> right
+
+=== left
+
+A quiet meadow opens before you. The road ends here.
+
+* [Rest]
+  -> END
+
+=== right
+
+A dark forest looms ahead.
+
+* [Rest]
+  -> END
+"#;
+
+    /// THE COLLECTIVE LOOP (the killer mode): the crowd co-authors the branch. Configure
+    /// the electorate → open a branch poll (2 options) → cast three ballots (2 for option
+    /// 0, 1 for option 1; a double-vote by the same voter is REFUSED) → the tally shows
+    /// [2, 1] → close the poll: the winning branch fires as ONE verified turn (the story
+    /// advances, the receipt tape grows), and the whole playthrough replays true. Then the
+    /// two fail-closed teeth: closing with no votes / no open poll advances NOTHING.
+    #[test]
+    fn collective_vote_drives_a_branch_as_one_verified_turn() {
+        let mut story = StoryWorld::new(CROSSROADS.to_string()).expect("crossroads compiles");
+
+        // Genesis committed; we are at the branching passage with two open choices.
+        assert_eq!(story.current_passage(), "intro");
+        assert_eq!(story.receipt_count(), 1, "genesis turn committed");
+
+        // FAIL-CLOSED: closing before anything is open advances nothing.
+        let no_poll: serde_json::Value =
+            serde_json::from_str(&story.close_branch_poll()).expect("JSON");
+        assert_eq!(no_poll["ok"], serde_json::json!(false), "no open poll");
+        assert_eq!(story.receipt_count(), 1, "nothing advanced");
+
+        // The eligible crowd (the real engine gates eligibility to this roster).
+        story.set_electorate("alice, bob, carol".to_string());
+
+        // OPEN the branch poll: two available choices → two ballot options.
+        let opened: serde_json::Value =
+            serde_json::from_str(&story.open_branch_poll()).expect("JSON");
+        assert!(opened.get("error").is_none(), "poll opened");
+        assert_eq!(opened["passage"], serde_json::json!("intro"));
+        assert_eq!(opened["round"], serde_json::json!(1));
+        let options = opened["options"].as_array().expect("options array");
+        assert_eq!(options.len(), 2, "two available choices → two options");
+        assert!(story.has_open_poll());
+        // The spween choice index each ballot option resolves to.
+        let opt0_choice = options[0]["choiceIndex"].as_u64().unwrap() as usize;
+
+        // CAST three ballots: alice+bob → option 0, carol → option 1.
+        for (voter, opt) in [("alice", 0usize), ("bob", 0), ("carol", 1)] {
+            let cast: serde_json::Value =
+                serde_json::from_str(&story.cast_vote(voter.to_string(), opt)).expect("JSON");
+            assert_eq!(cast["ok"], serde_json::json!(true), "{voter} voted");
+        }
+
+        // ONE VOTE PER VOTER: alice's second ballot is REFUSED, the tally unchanged.
+        let dbl: serde_json::Value =
+            serde_json::from_str(&story.cast_vote("alice".to_string(), 1)).expect("JSON");
+        assert_eq!(dbl["ok"], serde_json::json!(false), "double-vote refused");
+        assert!(dbl.get("error").is_some(), "the refusal carries a why");
+
+        // A voter OUTSIDE the electorate is refused (real eligibility gate).
+        let stranger: serde_json::Value =
+            serde_json::from_str(&story.cast_vote("mallory".to_string(), 0)).expect("JSON");
+        assert_eq!(
+            stranger["ok"],
+            serde_json::json!(false),
+            "ineligible voter refused"
+        );
+
+        // The tally is [2, 1].
+        let tally: serde_json::Value = serde_json::from_str(&story.branch_tally()).expect("JSON");
+        let tally = tally.as_array().expect("tally array");
+        assert_eq!(
+            tally[0]["count"],
+            serde_json::json!(2),
+            "option 0 = 2 votes"
+        );
+        assert_eq!(tally[1]["count"], serde_json::json!(1), "option 1 = 1 vote");
+
+        // CLOSE: option 0 (argmax) wins; the branch fires as one verified turn.
+        let closed: serde_json::Value =
+            serde_json::from_str(&story.close_branch_poll()).expect("JSON");
+        assert_eq!(closed["ok"], serde_json::json!(true), "the branch resolved");
+        assert_eq!(
+            closed["winningChoice"].as_u64().unwrap() as usize,
+            opt0_choice,
+            "the winner is option 0's spween choice_index"
+        );
+        assert_eq!(
+            closed["passage"],
+            serde_json::json!("left"),
+            "advanced to left"
+        );
+        assert_eq!(story.current_passage(), "left");
+        assert_eq!(
+            closed["receiptCount"],
+            serde_json::json!(2),
+            "one advance = one receipt"
+        );
+        assert_eq!(
+            story.receipt_count(),
+            2,
+            "the winning branch committed a real turn"
+        );
+        assert!(!story.has_open_poll(), "the poll is consumed on close");
+
+        // THE STRANGER CHECK: the collectively-authored playthrough replays true.
+        assert!(
+            story.verify(),
+            "the collectively-driven playthrough re-verifies"
+        );
+
+        // FAIL-CLOSED (no votes): open a fresh poll at `left`, close with zero ballots →
+        // below quorum, nothing advances, the poll stays open.
+        let opened2: serde_json::Value =
+            serde_json::from_str(&story.open_branch_poll()).expect("JSON");
+        assert!(
+            opened2.get("error").is_none(),
+            "second poll opened at `left`"
+        );
+        let empty_close: serde_json::Value =
+            serde_json::from_str(&story.close_branch_poll()).expect("JSON");
+        assert_eq!(
+            empty_close["ok"],
+            serde_json::json!(false),
+            "no votes → no resolve"
+        );
+        assert_eq!(
+            story.current_passage(),
+            "left",
+            "still at left; nothing advanced"
+        );
+        assert_eq!(
+            story.receipt_count(),
+            2,
+            "no turn committed on an empty poll"
+        );
+        assert!(
+            story.has_open_poll(),
+            "an unresolved (no-vote) poll stays open"
+        );
+    }
+
+    /// FAIL-CLOSED at an ENDED scene: no branch poll can open once the story is over.
+    #[test]
+    fn no_branch_poll_on_an_ended_scene() {
+        let mut story = StoryWorld::new(CROSSROADS.to_string()).expect("compile");
+        story.set_electorate("alice,bob,carol".to_string());
+
+        // Drive to the end single-player: intro -> left -> END.
+        assert_eq!(story.driver.advance(0).map(|_| ()).is_ok(), true);
+        assert_eq!(story.current_passage(), "left");
+        let _ = story.driver.advance(0); // left -> END
+        assert!(story.is_ended(), "the scene ended");
+
+        let ended: serde_json::Value =
+            serde_json::from_str(&story.open_branch_poll()).expect("JSON");
+        assert!(
+            ended.get("error").is_some(),
+            "no poll opens on an ended scene"
+        );
+        assert!(!story.has_open_poll(), "nothing opened");
     }
 }
