@@ -730,6 +730,7 @@ import Dregg2.Circuit.FinReactSquare
 import Dregg2.Exec.ReactiveRegistry
 import Dregg2.Circuit.BabyBearFriField
 import Dregg2.Circuit.BabyBearFriSetup
+import Dregg2.Circuit.BabyBearFriDeployed
 import Dregg2.Circuit.ShieldedTransferStark
 import Dregg2.Circuit.Satisfied2FaithfulDeployed
 import Dregg2.Circuit.AirChecksSatisfied
