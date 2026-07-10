@@ -299,3 +299,20 @@ must yield a WITNESS. Wrong direction. **So modeling verifyBatch does NOT finish
 amount of FRI-at-BabyBear work. The true blocker is knowledge extraction — a different mathematical object from
 FRI soundness (needs an in-circuit⟹native extractor + `oracle_binding`/HashCR pinning). Worth knowing BEFORE
 spending weeks on the FRI side expecting it to close.
+
+## ⚠ CORRECTION (2026-07-10): FriExtract blocks the RECURSIVE apex, NOT single-batch AlgoStarkSound
+I published (`77d4b27cc`) that "AlgoStarkSound.extract contains FriExtract, so modeling verifyBatch does NOT
+finish DEBT-A." **That was wrong, and it was my amplification of a lane's conflation.** Reading the actual
+statement (`FriVerifierBridge.lean:79`): `AlgoStarkSound.extract : verifyAlgo … = true → ∃ minit mfin maddrs t,
+Satisfied2 hash (R pi.effect) … t ∧ tracePublishedCommit t = pi.toPublished`. It produces a satisfying **VmTrace**
+— the classic STARK soundness argument (FRI proximity ⟹ a low-degree codeword; Merkle binding ⟹ the opened trace
+IS that codeword; AIR ⟹ it satisfies the constraints). **No `FriExtract`.**
+`FriExtract` (AggAirSound.lean:25-30, its own words) is "the in-circuit RECURSION-verifier subcircuit's soundness,
+the standard SNARK-of-a-fixed-verifier obligation" — it yields a verifying CHILD PROOF. It appears ONLY in
+recursion/aggregation files; `CircuitSoundness.lean` references it **zero** times.
+⇒ **CORRECTED PICTURE:** single-batch `AlgoStarkSound` IS reachable from the bricks: #1 ChipTableSoundN @ real
+perm ✅ · #2 FRI proximity @ deployed rate ◐ · #6 arity-2^k @ deployed 8-to-1 ✅ · #3 the bridge (in flight) ·
+AIR soundness (`d569bf31e`, partial) · Merkle binding (REAL, `merkleVerify := decide (merkleRecompute … = root)`,
+on the accept path). Then `StarkSound = AlgoStarkSound + DeployedRefines`, and `DeployedRefines` reduces to
+`DeployedMatchesModel` — a KAT-dischargeable Rust↔Lean correspondence with the harness already built.
+`FriExtract` is a SEPARATE campaign: the recursive/aggregated apex (proof composition).

@@ -120,8 +120,15 @@ taken as a hypothesis here; and `DeployedRefines` is likewise **never proved**, 
 `carrier.extract ∘ href` — modus ponens over TWO assumptions. The decomposition SHAPE is good
 (algorithm-soundness ⟂ deployment-refinement, the same shape as DEBT-B's `denote`), but it currently REPLACES
 ONE assumed carrier (`StarkSound`) WITH TWO. Discharging it means: FRI-proximity @ BabyBear + AIR soundness +
-ChipTableSoundN @ the real perm + a real `FriExtract` ⟹ `AlgoStarkSound`; and proving `DeployedRefines`
+ChipTableSoundN @ the real perm + Merkle binding ⟹ `AlgoStarkSound`; and proving `DeployedRefines`
 (`verifyBatch` refines `verifyAlgo`). See `docs/reference/DEBT-A-STARKSOUND-TARGET.md`.
+⚠ CORRECTION (2026-07-10): an earlier revision of this comment listed `FriExtract` in the `AlgoStarkSound` chain.
+That was WRONG. `AlgoStarkSound.extract` produces a satisfying **VmTrace** from `verifyAlgo` acceptance — the
+classic STARK soundness argument (proximity ⟹ a low-degree codeword; Merkle binding ⟹ the opened trace IS it;
+AIR ⟹ it satisfies the constraints). `FriExtract` (AggAirSound) is a different obligation: the in-circuit
+RECURSION-verifier subcircuit's soundness (SNARK-of-a-fixed-verifier), producing a verifying CHILD PROOF. It
+blocks the RECURSIVE/AGGREGATED apex, NOT single-batch `AlgoStarkSound`. `CircuitSoundness.lean` references
+`FriExtract` zero times.
 
 The single-transition soundness apex (`CircuitSoundness.lightclient_unfoolable`),
 re-stated to rest on the bridge instead of an assumed `[StarkSound]`: from the FRI
