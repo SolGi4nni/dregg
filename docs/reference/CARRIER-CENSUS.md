@@ -339,3 +339,22 @@ per-proof) · #3 FriProximity bridge ✅ (3 explicit hyps) · #4 FriExtract = RE
 #5 DeployedRefines ⟶ DeployedMatchesModel (KAT, harness exists) · #6 arity-2^k ✅ (deployed 8-to-1) ·
 **#7 NEW: LogUp bus soundness (unmodeled)** · #8 table-assembly emptiness (`t.tf .memory = [] ∧ .mapOps = []`,
 irreducible, never AIR-forced). AIR half: 6/8 premises discharged at deployed transferV3.
+
+## ⚠⚠ DEBT-A #2 SHARPENED (2026-07-10): our FRI proximity runs in the QUERY-EVERYTHING regime, not the deployed sample
+`FriSoundness.friProximity_discharge (Q : Finset κ) (hcover : disagree f' (Fold S.geom α f) ⊆ Q) …
+: FriProximity S 0 f` — the query set `Q` must COVER the disagreement set, and then the oracle is EXACTLY a
+codeword (`d = 0`). Every BabyBear instantiation passes **`Finset.univ`** (`BabyBearFriSetup.lean:158`,
+`BabyBearFriDeployed.lean:200`, via `Finset.subset_univ _`): **query every point.**
+The deployed FRI samples `PROD_FRI_NUM_QUERIES = 38` points (`plonky3_prover.rs:99`) and obtains PROBABILISTIC
+δ-closeness. The tree is honest at the definition (`query_sound_of_cover`: "if the sampled set covers the
+disagreement set"), but **the probabilistic step — a random 38-subset covers a large disagreement set with high
+probability — is NOT modeled**, and that step is precisely where FRI's soundness ERROR comes from.
+CONSEQUENCES, stated plainly:
+- The `d = 0` exactness in every through-line (incl. `deployedArity_circuit_sound`) is an artifact of `Q = univ`.
+- Because `d = 0`, the arity constant `n²·d = 64d` is INVISIBLE — so obligation #6 (arity-2^k, PROVED) is not
+  exercised by any current through-line.
+- "FRI proximity at the deployed field + rate + arity" is TRUE and is real work, but it does NOT yet model the
+  deployed SAMPLING that makes FRI a succinct argument. #2 is therefore more open than "rate ✓" suggested.
+- The missing piece is the standard FRI soundness-error bound at `num_queries = 38`, `log_blowup = 3`
+  (rate 1/8): the probability that 38 uniform queries miss a δ-far disagreement set. That is the quantitative
+  step no lane has taken, and it is the honest content of "the FRI verifier is sound at the deployed params."
