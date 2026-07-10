@@ -270,3 +270,19 @@ LEFTOVER, BLOCKED (not part of the attested-AI-MUD demo — a parked wasm fix fr
   07-10 — real module gains _real fns, stub lags). It is THEIR active uncommitted work (dregg-lean-ffi modified),
   so NOT mine to fix (would collide). Verify + commit the idempotency fix the moment their refactor lands + the
   wasm build is green.
+
+## ⚑⚑ EXPANDED GOAL (stop-hook, ~04:10): elaborate the MUD/fiction/AI engines AS MUCH AS POSSIBLE until 10am + build a COMPLETE GAME
+The attested-AI-MUD TECH is done. Now: make the engines DEEP + ship a real playable game.
+ENGINE STATE (grounded): attested-dm is SHALLOW (WorldEffect = AdvanceScene/SetFlag/GrantItem; WorldCell = one
+scene string + flags + inventory). spween-dregg is a RICH CYOA engine (passages/gated-choices/effects/state/
+endings + collective voting). first-room = the MUD room primitive.
+PLAN:
+1. ELABORATE attested-dm into a DUNGEON-CRAWLER engine: a room GRAPH (rooms w/ gated exits), MoveTo (gated by
+   item/flag requirements — the AI proposes, the caps+world enforce: can't pass a locked door without the key),
+   UseItem, objectives, win/lose conditions. Keep prose-is-not-power + slot-confinement + the real chain intact.
+2. BUILD A COMPLETE GAME on it — a hand-authored dungeon (rooms/items/gates/a goal/an ending), the AI DM (real
+   gemma2) narrating, the capabilities enforcing (you cannot cheat the DM into the win). Verify by DRIVING a full
+   playthrough to the win.
+3. Collective mode (a crowd plays the party) + a real browser GAME UI.
+4. Elaborate further as time allows: NPCs, combat, more rooms, a richer spween adventure, MUD multiplayer.
+- done-log: (below)
