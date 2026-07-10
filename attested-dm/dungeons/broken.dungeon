@@ -1,0 +1,15 @@
+# A DELIBERATELY BROKEN dungeon — every line of this is a trap the loader must catch.
+# `parse_dungeon` refuses it fail-closed; `validate` reports the dangling exit (and more).
+
+name: The Broken Hold
+start: gate
+objective: reach vault holding crown
+
+room gate "The Gate"
+  A plain stone gate.
+  # This exit points at a room that does not exist — a dangling target.
+  exit north -> antechamer
+
+room vault "The Vault"
+  An empty vault; the crown was never placed here.
+  exit south -> gate

@@ -1,0 +1,81 @@
+# THE EMBER OBSERVATORY
+#
+# A coverage sampler: this one authored file exercises EVERY construct the DSL supports —
+# both gate kinds (item + flag), a use-rule, an NPC with a conditional gift AND a pure-lore
+# reveal, HP combat with armor, all three spell effects (flag / conjure / buff) with learn
+# sources, and the full LIGHT dimension (a dark room, a single-use refuel, a stranded lose).
+# It parses to a first-class GameWorld and validates with zero errors.
+
+name: The Ember Observatory
+start: foyer
+objective: reach shrine holding relic
+lose: player_wounds >= 12 -> "unmade by the wraith"
+player_hp: 12
+
+room foyer "The Ashlit Foyer"
+  A round entrance-hall of dead braziers. A miner's lamp and a flask of oil hang by the
+  cellar stair, and three slim books rest on a lectern: a primer, a grimoire, a hymnal.
+  items: lamp, oil_flask, primer, grimoire, hymnal
+  exit down -> cellar
+  exit up -> hall
+
+room cellar "The Lightless Cellar"
+  A flooded undercroft, black as pitch; a slab of bark-shield leans against the wall.
+  items: bark_shield
+  exit up -> foyer
+
+room hall "The Reading Hall"
+  A long gallery of lecterns. North, a stone bridge lies shattered across a star-well.
+  exit down -> foyer
+  # The shattered bridge is impassable until the mend-word knits it.
+  exit up -> belfry requires flag span_mended
+
+room belfry "The Silent Belfry"
+  A cracked bell hangs still above a coil of starless dark — a wraith, waiting.
+  exit down -> hall
+  exit up -> shrine requires flag wraith_felled
+
+room shrine "The Ember Shrine"
+  A domed sanctum around a socket of cold fire, where the Ember-Relic waits to be lifted.
+  items: relic
+  exit down -> belfry
+
+# Reading each book LEARNS its word (a bare use that sets the learn flag the Spell reads).
+use primer in hall -> flag learned_mend "The primer's diagrams resolve; the mend-word settles on your tongue."
+use grimoire in hall -> flag learned_forge "The grimoire's char-black pages breathe heat; the forge-word catches."
+use hymnal in hall -> flag learned_bless "The hymnal's plainchant steadies you; the blessing-word takes root."
+
+# A curator who trades a warding sigil for proof you can survive the dark, and freely tells lore.
+npc curator "The Ash Curator" in hall
+  about "a soot-grey archivist who hoards words and warnings alike"
+  topic sigil requires item bark_shield -> gives sigil "Seeing the bark-shield on your arm, the curator relents and hands you a warding sigil." else "'Come back when you are armored against the dark below.'"
+  topic tale -> reveals "'A star fell into the observatory and the wraith crawled out of the hole it left. Mend the bridge, forge a blade of the star's own fire, and unmake it.'"
+
+# mend (flag effect) — knits the shattered bridge north of the hall.
+spell mend requires flag learned_mend
+  in hall on bridge -> flag span_mended "The mend-word knits the shattered span; stone flows back into stone." fizzle "The word finds no broken thing here to work upon."
+
+# forge (conjure effect) — kindles the one blade the wraith dreads (cap-permitted).
+spell forge requires flag learned_forge
+  in belfry -> conjure ember_blade "You speak the forge-word and a blade of white star-fire kindles in your grip."
+
+# bless (buff effect) — a warmth against the dark; a flag another mechanic could read.
+spell bless requires flag learned_bless
+  in shrine -> buff blessed "The blessing-word settles over you like warm ash."
+
+# HP combat: the wraith falls to several strikes of the ember_blade; the bark_shield blunts it.
+combat wraith in belfry hp 9 attack 4
+  weapon ember_blade damage 3
+  unarmed 0
+  armor bark_shield 1
+  victory flag wraith_felled
+  victory "The star-fire blade sears through the knot of dark; the wraith unravels into cold sparks."
+  hit "White fire bites the wraith — it recoils, then lashes back with a tendril of starless cold."
+  flail "Your bare strike passes through the wraith like smoke; its cold tendril opens a numbing wound."
+
+# LIGHT: the lamp burns one oil per step; the cellar is pitch dark; one flask refuels it; run
+# the oil out stepping into the dark and it strands you.
+light lamp oil 8
+  dark: cellar
+  refuel oil_flask +6 "You unstopper the flask and fill the lamp; the flame steadies and burns bright." spent "The flask is dry — you drained it already."
+  stranded stranded -> "the dark of the cellar keeps you when the lamp gutters out"

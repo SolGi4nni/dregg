@@ -74,6 +74,12 @@ pub use game::{
 // `PromptBinding` is defined below (it is tightly coupled to the chain-link hashing); re-exported
 // here in the same neighbourhood as the other prompt-template surface for discoverability.
 
+// THE DUNGEON AUTHORING FORMAT — a readable text DSL + a fail-closed loader that turns a
+// `.dungeon` file into a real `GameWorld`, so a dungeon can be authored (and validated) without
+// writing Rust. Purely additive: the four hand-written adventures above are untouched.
+pub mod dungeon_dsl;
+pub use dungeon_dsl::{parse_dungeon, parse_world, validate, DungeonError, Issue, Severity};
+
 use dregg_node_target::{NodeTarget, SubmittedTurn};
 use dregg_zkoracle_prove::{
     build_anthropic_fixture, prove_zkoracle, verify_zkoracle, AnthropicConfig, FixtureNotary,
