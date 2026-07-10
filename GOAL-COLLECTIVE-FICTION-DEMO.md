@@ -130,3 +130,25 @@ tried to emit, `grant("crown")`; (3) `refused: overcap`, receipts + commitment U
 Sharpest panel: prose claiming the crown with a `null` effect → narration lands, crown STILL NOT HELD.
 Non-vacuous: `grant("lantern")` (grantable) → ALLOWED, held, receipted.
 Both lanes retargeted. No "un-jailbreakable" copy anywhere; attestation described honestly (authentic = fixture).
+
+
+## ⚠ THIRD CATCH (self, applying the lesson): the ledger is NOT a chain either
+Before letting the demo print "un-retconnable / a stranger replays the chain", I read `verify_ledger`: it is a
+PER-ENTRY loop over a `Vec`; `LedgerEntry` has no prev-link and `seq` is never checked vs index. So TRUNCATE /
+REORDER / SPLICE-a-fabricated-entry are UNCAUGHT (authentic leg is a fixture, so a plausible forged entry is
+producible). Only in-place single-entry mutation is caught. The humble spween-dregg story world has REAL
+`verify_chain_linkage`; the "on-chain attested DM" ledger is weaker than the toy CYOA's. I was one step from
+printing "✓ nothing was rewritten" over a truncatable log.
+→ LANE a8f18ed8023452127: make it a real hash-chain (prev-linked receipt ids, seq bound to position, head
+  commitment, adversarial truncate/reorder/splice tests). Both demo lanes told: ship NO un-retconnable/chain-
+  verified claim today; label the receipt rail "receipt log"; leave a hook for the honest badge when the chain lands.
+
+## HONEST TALLY of tonight's fiction work (names vs proofs)
+- REAL + load-bearing: PROSE IS NOT POWER (DmCaps::authorize refuses the over-cap WorldEffect) · ANTI-GHOST
+  (refused turn leaves no receipt, tested) · the typed effect channel (model output → closed WorldEffect enum →
+  cap gate) · well-formed leg (real JSON CFG parse cert) · collective-vote demo (real quorum engine, RUNS).
+- NAMES retracted: "un-jailbreakable" (a `{{` substring filter, no metasyntax to guard) · "authentic → a real
+  model" (fixture unless tlsn-live) · "un-retconnable ledger" (per-entry Vec, not chained — fix in flight).
+- THE THESIS worth the whole evening (ember's): natural language has no metasyntax, so injection is not a lexical
+  problem; give the model ONE typed, capability-gated channel to the world. Prose is not power. The ledger is the
+  truth — SO MAKE THE LEDGER ACTUALLY TRUE (the chain lane).
