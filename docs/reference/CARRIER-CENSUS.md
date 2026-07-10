@@ -405,3 +405,19 @@ THE FORK (foundational, EMBER-GATED — comparable to verifyBatch A/B, bigger):
       ℤ model's validity to that audited class with an explicit "deployed gates are overflow-safe" lemma.
 Not launching either unilaterally — this is the deployed AIR's semantic foundation. K′(a)'s field companion
 (`ood_forces_mainAirAccept_field`, `MainAirAcceptF`) is the (A)-direction beachhead already built.
+
+## ⚠⚠⚠ SEVERITY SETTLED (2026-07-10, gate audit): deployed LINEAR gates bite — the ℤ denotation is UNFAITHFUL, (A) required
+The Satisfied2-over-ℤ mismatch is NOT confined to hypothetical compound-mul gates. The DEPLOYED
+`accumulator-nonrev-emit-v2` descriptor has LINEAR copy-constraint gates, e.g. `1·var12 + (−1)·var32 + 1·var0`
+(= `col12 − col32 + col0 = 0`). A 3-term linear gate bites with NO multiplication: the field-valid assignment
+`col12 = p−1, col32 = 0, col0 = 1` (all canonical in [0,p)) satisfies it mod p, but its ℤ residual is
+`(p−1) − 0 + 1 = p ≠ 0`. So `holdsAt`/`Satisfied2` over ℤ REJECT a field-valid assignment — a SOLUTION-SET
+argument (no reachability assumption): the ℤ denotation's solution set is strictly ⊊ the field constraint's, for
+an ACTUAL deployed gate. SAFE gates remain the difference-product range gate (`gSlotRange`, satisfaction ⟹ a
+factor is exactly 0). CONSEQUENCE: the committed ℤ AIR chain (`MainAirAccept`/`airAccept_forces_satisfied2`,
+brick 5) is VACUOUS-IN-APPLICATION for such traces (the same pattern as DEBT-B's AccountsWF), and the field
+version (K′(a) `MainAirAcceptF`) is the non-vacuous faithful one. ⇒ FORK RESOLVES TO (A): move the descriptor-IR
+denotation (`holdsVm`/`holdsAt`/`arithResidual`/`Satisfied2`) to BabyBear/mod-p. (B) narrowing is NOT viable —
+even affine deployed gates bite. Scope of (A) is the open question (Satisfied2 is used tree-wide); codex has the
+(A) beachhead (`MainAirAcceptF`, `ood_forces_mainAirAccept_field`). EMBER-GATED: greenlight + scope the
+holdsAt/Satisfied2 → mod-p refactor.
