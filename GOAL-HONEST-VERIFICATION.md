@@ -155,6 +155,16 @@ the sibling lane settles — not mine to touch/stash.
   (the `none` arm writes back `k.cell newCell`, possibly `.record []`). So `finFactoryCell` is a `dite` —
   identity when absent. A uniform `finSetCell` would have been UNSOUND. Negative tooth
   `factoryCellWrite_can_be_default` proves it. Whole tree GREEN 4534.
-- ▶ IN FLIGHT: step 4 R4 (`recStateCommit_binds_kernel_fin`: collapse the 5 carried hypotheses — 4 injectivity + 
+- ✅ STEP 4 R4 `3b6ed68af` — `recStateCommit_binds_kernel_fin[_canon]`: on the reachable denote-image subclass,
+  ALL FIVE carried hypotheses (4 injectivity + RestHashIffFrame) DISCHARGED to **`Poseidon2SpongeCR` ALONE**.
+  `LeafRealization` CONSTRUCTED (CH_fin + finLeafRealization), not assumed — the census's un-realized carrier
+  realized. Instantiable `_canon` form uses a SATISFIABLE sparse-map invariant; non-vacuity proved at finInit.
+  ⚠ FINDING (`78d933d92`): `AccountsWF (denote f)` is UNSATISFIABLE because FinKernelState.cell defaults to
+  `.record []` while the kernel default is `Value.int 0` — so the target-shape theorem is proved-but-vacuous.
+- ▶ IN FLIGHT: the default-alignment fix (cell default `.record []` → `Value.int 0`), re-checking R1/R2/steps in
+  ONE motion incl. flipping finAllocCell's `insertNZ`→`erase`; then AccountsWF becomes satisfiable and `_canon`
+  retires.
+- ▶ THEN: drop RestFrameDecodes2*/DeployedFaithful*/Satisfied2Faithful where the squares discharge them; route
+  the ~1200-use injectivity cluster through the poseidon2CommitSurface reductions. (`recStateCommit_binds_kernel_fin`: collapse the 5 carried hypotheses — 4 injectivity + 
   RestHashIffFrame — to `Poseidon2SpongeCR` ALONE, scoped to denote-images/reachable states, realizing
   `LeafRealization` rather than assuming it).
