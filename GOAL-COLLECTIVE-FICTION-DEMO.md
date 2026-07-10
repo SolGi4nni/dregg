@@ -419,3 +419,29 @@ LOCKED exit refused with no receipt, forge parse/validate fail-closed, voter id 
 test remains outstanding and must be named as such.
 NEXT WAVE: `/story` — a channel co-authors a spween CYOA (The Commons / The Drowned Library) by branch vote, with
 the real CollectiveChoiceEngine quorum (the one The Commons actually uses); receipts + /verify in-channel.
+
+## ⚑⚑ NARRATOR → AWS BEDROCK, with a HARD $20 ceiling (ember, ~11:20)
+Replace the local ollama narrator with hosted Bedrock Nova. Two reasons: hbox (the bot's new home) has NO ollama,
+and a hosted narrator removes the deploy dependency entirely.
+GROUND TRUTH (verified live, do not re-derive):
+- Model id MUST be the INFERENCE-PROFILE form: **`us.amazon.nova-2-lite-v1:0`**. The bare `amazon.nova-2-lite-v1:0`
+  errors "Invocation of model ID … with on-demand throughput isn't supported. Retry with an inference profile."
+- Region us-east-1. AWS profiles present: `commonquant-ember`, `halcyox-ember` (cv's "onquant-ember" was a
+  truncated match). Verified a real Converse call narrates + returns `usage:{inputTokens,outputTokens,totalTokens}`.
+- REAL prices (AWS Pricing API, us-east-1, 2026-07-10): Nova Lite **input $0.00006/1K**, **output $0.00024/1K**
+  (use these CONSERVATIVE higher rows; cheaper tiers exist). A narration turn ≈ 61 in + 43 out ≈ **$0.000014**.
+  So $20 ≈ **1.4 MILLION narration turns** — the cap is not about affordability, it is about a runaway loop or a
+  price change never being able to bite. Which is why it must be HARD.
+- AWS Budgets are notification-only and lag hours → useless as a ceiling. Enforce at OUR invocation layer.
+LANE aa8847c80a56c4c65: a new `narrator/` crate (`dregg-narrator`) — a persisted, concurrency-safe, FAIL-CLOSED
+BudgetLedger (pre-flight RESERVATION refuses BEFORE any network call; post-flight TRUE-UP from real usage; atomic
+write under a file lock; a CORRUPT ledger refuses rather than silently resetting to $0 — that would be a trivial
+budget bypass; a MISSING one starts at zero) + a Narrator with three backends (Bedrock Converse incl. tool-calling
+`toolConfig`, Ollama, Scripted) whose `kind()` NEVER claims a model that did not narrate (`scripted(budget-
+exhausted)` when the ceiling bites). Then swap demo/dungeon-service onto it. Live smoke test behind DREGG_NARRATOR_LIVE=1.
+
+## ✓ FUSION ALREADY WORKS (found by driving): a crowd plays a world someone just wrote
+`POST /game/author` (my hand-authored CLOCKWORK ORCHARD, over HTTP) → ok, room "The Orchard Gate" → `/party/options`
+immediately offers it as a ballot (`go north` / `take oilcan` / `look`), votes tally. /party and /game/author share
+the SAME GameSession, so the collective mode plays authored worlds for free. (Only my close-response parser was
+wrong; endpoint fine.) Verify + surface it in the UI + a driven test.
