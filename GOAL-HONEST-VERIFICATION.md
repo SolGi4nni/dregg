@@ -99,4 +99,11 @@ the sibling lane settles — not mine to touch/stash.
 ## Done-log (newest last)
 - (start) plan written; supersedes the retracted verified-system campaign.
 - ✅ census `c3d1a4ec8` · DEBT-B R1 `6458e10d2` · R2+R3-core `e365d1c2d` · DELTA-FUTURE `464692042`.
-- ▶ NEXT: the delta de-risk (one-effect prototype) — decides delta-refactor vs bridge+tactic for the cluster.
+- ✅ STEP 1 ROOT CONVERGENCE `ca51d3fde` — FinKernelState carries nullifierRoot/revokedRoot (Fin 8 → ℤ, finite,
+  verbatim); denote transports them; serializeRestFin BINDS them (List.ofFn + List.ofFn_injective) so
+  serializeFin_injective stays TRUE; the 15→17 conjunct extensions landed; restHashIffFrame_fin residual STILL
+  Poseidon2SpongeCR alone. Teeth: denote_carries_nullifierRoot (fires) + serializeFin_separates_nullifierRoot
+  (bites — false before). THE VACUITY IS GONE. Whole tree GREEN 4530.
+  (Also: FinFrameHash needed `import Mathlib.Logic.Equiv.Finset` — a concurrent import-slimming lane trimmed
+  the Mathlib.Tactic umbrella from Crypto/Primitives.lean. Diagnosed by controlled test; not the roots.)
+- ▶ NEXT: STEP 2 the delta de-risk (one-effect prototype) — decides delta-refactor vs bridge+tactic.
