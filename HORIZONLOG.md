@@ -7094,3 +7094,19 @@ The goal "make RestHashIffFrame + the faithfulness family PROVED, not named" is 
 re-thread the ~10 `recStateCommit_binds_kernel` apex consumers through `finCommitSurface` on the reachable
 subclass (re-seat the apex — merges with DEBT-A StarkSound, the next campaign, which owns the reclassified AIR
 carriers).
+
+## 2026-07-10 (addendum 2) — effect coverage 32/33; the finite-map scope boundary is now exact
+Stop-hook-forced audit closed the effect-coverage overclaim honestly, then closed what was closable:
+- GrantCapability (→ introduce's setCaps-grant) + SpawnWithDelegation (→ allocCell⨾setDelegate⨾setDelegations)
+  squares PROVED (017aa70f6). Effect coverage now **32 of 33** deployed Effect variants.
+- The last 1 + the reactive trio are genuinely OUTSIDE the finite-map interp scope, named not faked:
+  ShieldedTransfer = STARK-verified (DEBT-A); Notify/React/Promise = reactive "Track-2" subsystem
+  (turn/src/reactive.rs; a promise-hole IS a nullifier, React spends it). No Argus RecStmt program, by design.
+- Honest boundary on SpawnWithDelegation: models the delegations c-list (authority content); the deployed
+  delegation_epoch/timestamp stamp is the tree's DOCUMENTED kernel-vs-runtime divergence (RefreshDelegation.lean:77),
+  outside the kernel model — named.
+FINAL DEBT-B SCOPE: carrier discharge complete (RestHashIffFrame + RestFrameDecodes2 + 4 injectivity + Leaf
+Realization → Poseidon2SpongeCR on the reachable subclass; injectivity collapse routed through the apex binding);
+32/33 deployed effects' commuting squares proved (hpres discharged for those); whole tree green 4538. Remaining is
+DEBT-A (StarkSound + ShieldedTransfer + the AIR carriers Satisfied2Faithful/DeployedFaithful) and the reactive
+subsystem — distinct campaigns, correctly out of DEBT-B.
