@@ -1,0 +1,105 @@
+---
+id: the_commons
+title: Founding the Commons
+weight: 10
+---
+
+=== intro
+
+A hundred of you arrive at the river's bend, carts empty, the
+old country behind you. Night is falling. Before anything else,
+the assembly must decide where to lay the first stone.
+
+The vote is yours — all of you, together.
+
+* [Build on the high bluff, safe from floods]
+  ~ site = bluff
+  -> bluff
+
+* [Build by the water, close to the mill and the fish]
+  ~ site = river
+  -> river
+
+* [Split the difference — homes on the slope between]
+  ~ site = slope
+  -> slope
+
+=== bluff
+
+Wind-scoured but dry. From up here you can see every road in.
+By spring the walls are up and no flood will ever touch you —
+though the climb to the water is long, and it makes you few.
+
+Winter comes hard. A wagon of grain arrives at the gate, and
+its driver asks the price of shelter.
+
+* [Open the gates — a commons turns no one away]
+  ~ creed = open
+  -> reckoning
+
+* [Charge for the night — the stores are thin]
+  ~ creed = toll
+  -> reckoning
+
+=== river
+
+The water gives freely — fish, reeds, the mill's slow turning.
+The commons grows fat and loud and generous, and everyone who
+drifts downstream stays a while.
+
+Then the thaw. The river rises brown over the doorsills.
+
+* [Rebuild together, higher, and share the loss]
+  ~ creed = open
+  -> reckoning
+
+* [Let each house fend for its own]
+  ~ creed = toll
+  -> reckoning
+
+=== slope
+
+A compromise, and like most compromises it asks more of everyone.
+The climb is shorter, the flood-line closer; the assembly meets
+twice as often just to settle who owes what to whom.
+
+Strangely, it works — the arguing IS the government.
+
+* [Write the arguments down, so the record outlives you]
+  ~ creed = open
+  -> reckoning
+
+* [Trust the elders to remember]
+  ~ creed = toll
+  -> reckoning
+
+=== reckoning
+
+Ten years on, a child of the commons asks how it all began.
+The answer depends on what you chose, and who you chose to be.
+
+* [Tell them the truth, and let them vote on what comes next]
+  -> ending_open
+
+* [Tell them the founders knew best]
+  -> ending_closed
+
+=== ending_open
+
+You tell them everything — the floods, the tolls, the long cold
+argument that never quite ended. "We wrote it all down," you say,
+"so no one could pretend it happened differently. Now it's yours
+to decide." The child nods, and calls the assembly to order.
+
+A commons is not a place. It is a chain of decisions no one can
+quietly rewrite. THE END.
+
+=== ending_closed
+
+You smooth the story into something cleaner than it was. The child
+believes it. So does their child. By the third generation no one
+remembers the vote at the river's bend, only that the founders were
+wise, and that it is not their place to ask.
+
+The commons stands. Whether it is still a commons, no one is left
+to say. THE END.
