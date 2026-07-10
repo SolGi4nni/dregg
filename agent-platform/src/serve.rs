@@ -136,14 +136,22 @@ impl AgentPlatform {
         operator: Option<&str>,
         req: &ServeRequest,
     ) -> HttpResponse {
-        // The browser driver page, served same-origin so its `fetch`/`EventSource`
-        // calls reach this very server with no CORS. Host-independent + public (a
-        // page, like the marketing site); the API routes below still gate on the
-        // verified subject. Placed before the shim + auth so `/` is never a grain
-        // route (grains expose no `/`).
+        // The browser pages, served same-origin so their `fetch`/`EventSource` calls
+        // reach this very server with no CORS. Host-independent + public (a page, like
+        // the marketing site); the API routes below still gate on the verified subject.
+        // Placed before the shim + auth so these are never grain routes (grains expose
+        // no `/`). `GET /` is the HUMAN demo (`play.html` — the story front door);
+        // `GET /dev` is the developer console (`index.html` — the raw API).
         if req.method == HttpMethod::Get {
             let p = req.target.split('?').next().unwrap_or(&req.target);
-            if matches!(p, "/" | "/grain" | "/grain/" | "/index.html") {
+            if matches!(p, "/" | "/grain" | "/grain/" | "/play" | "/play.html") {
+                return HttpResponse {
+                    status: 200,
+                    content_type: "text/html; charset=utf-8".to_string(),
+                    body: PLAY_PAGE.as_bytes().to_vec(),
+                };
+            }
+            if matches!(p, "/dev" | "/dev/" | "/console" | "/index.html") {
                 return HttpResponse {
                     status: 200,
                     content_type: "text/html; charset=utf-8".to_string(),
@@ -663,10 +671,16 @@ fn parse_hex32(s: &str) -> Result<[u8; 32], String> {
     Ok(out)
 }
 
-/// The self-contained browser driver page, served same-origin at `GET /`. Editing
+/// The self-contained developer console, served same-origin at `GET /dev`. Editing
 /// `site/grain/index.html` reshapes it; it is compiled in so a deployed bin needs no
 /// sidecar files.
 const GRAIN_PAGE: &str = include_str!("../../site/grain/index.html");
+
+/// The self-contained HUMAN demo page — the story front door served at `GET /`. Same
+/// live API as the console (auto-rents behind the scenes, drives via BYOK `/act`,
+/// verifies), but story-driven for a non-developer. Editing `site/grain/play.html`
+/// reshapes it; compiled in so a deployed bin needs no sidecar files.
+const PLAY_PAGE: &str = include_str!("../../site/grain/play.html");
 
 /// **The browser-friendly routing shim.** A browser cannot set the HTTP `Host`
 /// header from `fetch`/`EventSource`, and `EventSource` cannot set request headers at
@@ -988,17 +1002,29 @@ mod tests {
             "the header subject wins over the query subject"
         );
 
-        // ── GET / serves the driver page (host-independent, public) ──────────────
+        // ── GET / serves the HUMAN demo (play.html); GET /dev serves the console ──
         let page = call(
             &platform,
             &wd,
             req_hdrs(HttpMethod::Get, BROWSER_HOST, "/", &[], ""),
         );
-        assert_eq!(page.status, 200, "the driver page is served at /");
+        assert_eq!(page.status, 200, "the human demo is served at /");
         assert!(page.content_type.starts_with("text/html"), "html page");
         assert!(
-            page.body_str().contains("Drive a grain"),
-            "the driver page body"
+            page.body_str().contains("can't escape"),
+            "the human demo (play.html) body is served at /"
+        );
+        // The developer console moved to /dev (host-independent, public).
+        let dev = call(
+            &platform,
+            &wd,
+            req_hdrs(HttpMethod::Get, BROWSER_HOST, "/dev", &[], ""),
+        );
+        assert_eq!(dev.status, 200, "the developer console is served at /dev");
+        assert!(dev.content_type.starts_with("text/html"), "html page");
+        assert!(
+            dev.body_str().contains("Drive a grain"),
+            "the developer console (index.html) body is served at /dev"
         );
     }
 

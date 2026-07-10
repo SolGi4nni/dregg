@@ -1,0 +1,515 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Boss an AI around a box it can't escape — the dregg sandbox</title>
+  <meta name="description" content="Give an AI agent a job. Watch it work inside a sandbox it can't escape — the box allows what you permitted and blocks the rest. Then check its work: even the computer that ran it can't fake the record.">
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%230a0f0d'/%3E%3Ctext x='16' y='23' font-size='18' text-anchor='middle'%3E%F0%9F%A4%96%3C/text%3E%3C/svg%3E">
+  <link rel="stylesheet" href="../assets/style.css">
+  <style>
+    /* ── green tokens (mirror site/assets/style.css) so the page stands alone when
+          served same-origin by the agent-platform bin ─────────────────────────── */
+    :root {
+      --chalk: #f5f0e8;
+      --canopy: #0d1310; --loam: #141b17; --void: #0a0f0d;
+      --bg: var(--canopy); --bg-raised: var(--loam); --bg-inset: var(--void);
+      --fg-dim: #ccc3b2; --fg-muted: #8f8674;
+      --moss: #5b8a5a; --fern: #7aab6f; --lantern: #c49245;
+      --accent: var(--moss); --accent-bright: var(--fern);
+      --accent-soft: rgba(91,138,90,0.12);
+      --warm: var(--lantern); --warm-soft: rgba(196,146,69,0.12);
+      --danger: #d1755f; --danger-soft: rgba(209,117,95,0.12);
+      --line: rgba(228,221,208,0.09); --line-strong: rgba(228,221,208,0.16);
+      --font-display: 'Iowan Old Style','Palatino Linotype',Palatino,Georgia,serif;
+      --font-mono: 'SF Mono','Cascadia Code','JetBrains Mono',ui-monospace,Menlo,monospace;
+      --font-body: system-ui,-apple-system,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;
+      --s1:4px; --s2:8px; --s3:12px; --s4:16px; --s5:24px; --s6:32px; --s7:48px; --s8:72px;
+      --r1:3px; --r2:6px; --r3:10px; --r4:16px; --r5:22px;
+      --ease: cubic-bezier(0.25,0.46,0.45,0.94); --dur: 200ms;
+    }
+    * { box-sizing: border-box; }
+    body {
+      margin: 0; background: radial-gradient(120% 80% at 50% -10%, #10201a 0%, var(--bg) 55%) no-repeat;
+      background-attachment: fixed;
+      color: var(--fg-dim); font-family: var(--font-body); line-height: 1.55;
+      -webkit-font-smoothing: antialiased;
+    }
+    .wrap { max-width: 760px; margin: 0 auto; padding: var(--s7) var(--s5) var(--s8); }
+    a { color: var(--accent-bright); text-decoration: none; }
+    a:hover { color: var(--warm); }
+    code, .mono { font-family: var(--font-mono); }
+    code { color: var(--accent-bright); background: var(--accent-soft); padding: 1px 6px; border-radius: var(--r1); font-size: 0.9em; }
+
+    /* ── hero ─────────────────────────────────────────────────────────────── */
+    .hero { text-align: center; margin-bottom: var(--s7); }
+    .hero .bot { font-size: clamp(2.4rem, 9vw, 3.4rem); line-height: 1; margin-bottom: var(--s3); }
+    h1 { font-family: var(--font-display); color: var(--chalk); font-weight: 600;
+      font-size: clamp(1.7rem, 5.5vw, 2.7rem); line-height: 1.12; margin: 0 auto var(--s4); max-width: 16ch; }
+    h1 .hl { color: var(--accent-bright); }
+    .hero .sub { font-size: clamp(1rem, 2.6vw, 1.15rem); color: var(--fg-dim); max-width: 46ch;
+      margin: 0 auto var(--s3); }
+    .hero .fine { font-size: 0.9rem; color: var(--fg-muted); max-width: 50ch; margin: 0 auto; }
+
+    /* ── step cards ───────────────────────────────────────────────────────── */
+    .card { border: 1px solid var(--line); background: var(--bg-raised);
+      border-radius: var(--r4); padding: var(--s5) var(--s5); margin-bottom: var(--s5);
+      box-shadow: 0 1px 0 rgba(255,255,255,0.02) inset; }
+    .card h2 { font-family: var(--font-display); color: var(--chalk); font-size: 1.3rem;
+      margin: 0 0 var(--s2); font-weight: 600; display: flex; align-items: baseline; gap: var(--s3); }
+    .card h2 .step { font-family: var(--font-mono); font-size: 0.72rem; letter-spacing: 0.1em;
+      text-transform: uppercase; color: var(--accent); background: var(--accent-soft);
+      border: 1px solid var(--accent); border-radius: 999px; padding: 3px 11px; flex: none; }
+    .card p.hint { color: var(--fg-muted); font-size: 0.92rem; margin: 0 0 var(--s4); }
+
+    label.field-label { display: block; font-size: 0.82rem; color: var(--accent-bright);
+      margin-bottom: var(--s2); font-weight: 600; }
+    input[type=text], input[type=password], textarea {
+      width: 100%; background: var(--bg-inset); color: var(--chalk);
+      border: 1px solid var(--line-strong); border-radius: var(--r2);
+      padding: var(--s3) var(--s3); font-family: var(--font-body); font-size: 1rem;
+    }
+    input:focus, textarea:focus { outline: none; border-color: var(--accent); box-shadow: 0 0 0 3px var(--accent-soft); }
+    textarea { resize: vertical; min-height: 76px; line-height: 1.5; }
+    .taskrow { display: flex; gap: var(--s3); margin-top: var(--s3); align-items: stretch; flex-wrap: wrap; }
+    .taskrow textarea { flex: 1 1 320px; min-height: 60px; }
+
+    .why { font-size: 0.86rem; color: var(--fg-muted); margin-top: var(--s3); }
+    .why summary { cursor: pointer; color: var(--accent-bright); font-weight: 600; }
+    .why summary:hover { color: var(--warm); }
+    .why[open] summary { margin-bottom: var(--s2); }
+    .safety { display: flex; align-items: flex-start; gap: var(--s2); font-size: 0.9rem;
+      color: var(--accent-bright); background: var(--accent-soft); border: 1px solid var(--accent);
+      border-radius: var(--r2); padding: var(--s3); margin-top: var(--s3); }
+    .safety b { color: var(--chalk); }
+
+    /* ── chips ────────────────────────────────────────────────────────────── */
+    .chips { display: flex; flex-wrap: wrap; gap: var(--s2); margin-top: var(--s4); }
+    .chip { font-family: var(--font-body); font-size: 0.92rem; cursor: pointer;
+      background: var(--bg-inset); color: var(--fg-dim); border: 1px solid var(--line-strong);
+      border-radius: 999px; padding: var(--s2) var(--s4); transition: all var(--dur) var(--ease); }
+    .chip:hover { border-color: var(--accent); color: var(--chalk); transform: translateY(-1px); }
+
+    /* ── buttons ──────────────────────────────────────────────────────────── */
+    .btn { font-family: var(--font-body); font-weight: 600; font-size: 1.05rem; cursor: pointer;
+      background: var(--accent); color: var(--void); border: 1px solid var(--accent);
+      border-radius: var(--r3); padding: var(--s3) var(--s6); transition: all var(--dur) var(--ease);
+      display: inline-flex; align-items: center; gap: var(--s2); }
+    .btn:hover:not(:disabled) { background: var(--accent-bright); border-color: var(--accent-bright); transform: translateY(-2px);
+      box-shadow: 0 6px 20px rgba(91,138,90,0.28); }
+    .btn:disabled { opacity: 0.5; cursor: default; }
+    .btn.big { width: 100%; justify-content: center; margin-top: var(--s5); font-size: 1.15rem; padding: var(--s4); }
+    .btn.ghost { background: transparent; color: var(--fg-dim); border-color: var(--line-strong); font-size: 1rem; }
+    .btn.ghost:hover:not(:disabled) { color: var(--chalk); border-color: var(--accent); background: transparent; box-shadow: none; }
+
+    /* ── the live run ─────────────────────────────────────────────────────── */
+    #run-card { display: none; }
+    .runhead { display: flex; align-items: center; justify-content: space-between; gap: var(--s3);
+      flex-wrap: wrap; margin-bottom: var(--s4); }
+    .runhead .task { color: var(--chalk); font-size: 1.05rem; }
+    .budget { font-family: var(--font-mono); font-size: 0.82rem; color: var(--fg-muted);
+      background: var(--bg-inset); border: 1px solid var(--line); border-radius: 999px; padding: 4px 12px; white-space: nowrap; }
+    .budget b { color: var(--accent-bright); font-weight: 400; }
+
+    .steps { display: flex; flex-direction: column; gap: var(--s3); }
+    .line { border: 1px solid var(--line); border-left: 4px solid var(--line-strong);
+      border-radius: var(--r3); background: var(--bg-inset); padding: var(--s3) var(--s4);
+      font-size: 1rem; animation: rise var(--dur) var(--ease); }
+    @keyframes rise { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+    .line .big { color: var(--chalk); }
+    .line .note { color: var(--fg-muted); font-size: 0.88rem; margin-top: 3px; }
+    .line strong { color: var(--chalk); font-weight: 600; }
+    .line.propose { border-left-color: var(--warm); }
+    .line.allow { border-left-color: var(--accent-bright); }
+    .line.allow strong { color: var(--accent-bright); }
+    .line.block { border-left-color: var(--danger); background: var(--danger-soft); }
+    .line.block strong { color: var(--danger); }
+    .line.think { border-left-color: var(--line-strong); color: var(--fg-muted); font-style: italic; }
+    .line.err { border-left-color: var(--danger); }
+    .filepeek { font-family: var(--font-mono); font-size: 0.85rem; color: var(--fg-dim);
+      background: var(--bg-raised); border: 1px solid var(--line); border-radius: var(--r2);
+      padding: var(--s2) var(--s3); margin-top: var(--s2); white-space: pre-wrap; word-break: break-word; }
+    .run-status { color: var(--fg-muted); font-size: 0.92rem; margin-top: var(--s4); text-align: center; }
+
+    /* ── the payoff / verify ──────────────────────────────────────────────── */
+    #verify-card { display: none; }
+    .verdict { text-align: center; padding: var(--s3) 0 var(--s2); }
+    .verdict .mark { font-size: 2.4rem; }
+    .verdict .headline { font-family: var(--font-display); color: var(--chalk); font-size: 1.35rem;
+      margin: var(--s2) 0; }
+    .verdict .body { color: var(--fg-dim); font-size: 1rem; max-width: 48ch; margin: 0 auto; }
+    .verdict .body b { color: var(--accent-bright); }
+    .verdict.fail .headline { color: var(--warm); }
+    .nerd { margin-top: var(--s4); font-size: 0.85rem; }
+    .nerd summary { cursor: pointer; color: var(--fg-muted); }
+    .nerd summary:hover { color: var(--accent-bright); }
+    .nerd pre { background: var(--bg-inset); border: 1px solid var(--line); border-radius: var(--r2);
+      padding: var(--s3); overflow-x: auto; font-size: 0.78rem; color: var(--fg-dim); margin-top: var(--s2);
+      font-family: var(--font-mono); }
+
+    .footer { margin-top: var(--s8); text-align: center; color: var(--fg-muted); font-size: 0.9rem;
+      border-top: 1px solid var(--line); padding-top: var(--s5); display: flex; gap: var(--s5);
+      justify-content: center; flex-wrap: wrap; }
+  </style>
+</head>
+<body>
+<div class="wrap">
+
+  <!-- ── HERO ──────────────────────────────────────────────────────────── -->
+  <header class="hero">
+    <div class="bot">🤖🔒</div>
+    <h1>Boss an AI around a box it <span class="hl">can't escape</span></h1>
+    <p class="sub">Give an AI agent a job. Watch it work in a sealed sandbox — then check its
+      work, and <b>no one can lie to you</b> about what it did.</p>
+    <p class="fine">The agent runs inside a rented sandbox with a fixed budget and a short list of
+      things it's allowed to touch. It can <em>propose</em> anything. The box only lets through what
+      you permitted.</p>
+  </header>
+
+  <!-- ── STEP 1 · KEY ──────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2><span class="step">Step 1</span>Bring a key for the AI</h2>
+    <p class="hint">The thinking happens at an AI provider. Paste an
+      <a href="https://openrouter.ai/keys" target="_blank" rel="noopener">OpenRouter key</a> — the
+      free tier works fine.</p>
+    <label class="field-label" for="key">Your OpenRouter key</label>
+    <input type="password" id="key" placeholder="sk-or-v1-…  (paste here)">
+    <div class="safety">
+      <span>🔐</span>
+      <span><b>It stays in your browser.</b> Your key is sent only to OpenRouter to do the thinking —
+        <b>never to the sandbox</b>. The sandbox only ever sees the single action the AI wants to take.</span>
+    </div>
+    <details class="why">
+      <summary>Why do I need this?</summary>
+      <p>The AI's "brain" is a language model, and running it costs a little money — so it runs under
+        <em>your</em> account, not ours. That's also what keeps your key private: it never leaves this
+        page except to talk to the model provider. A free OpenRouter key is plenty for this demo.</p>
+    </details>
+  </section>
+
+  <!-- ── STEP 2 · TASK ─────────────────────────────────────────────────── -->
+  <section class="card">
+    <h2><span class="step">Step 2</span>Tell your agent what to do</h2>
+    <p class="hint">Type a job, or tap an example. The sandbox is allowed to work with files in its
+      own scratch folder — nothing else.</p>
+    <div class="taskrow">
+      <textarea id="task" placeholder="e.g. Write me a haiku about grains, then read it back to me.">Write me a haiku about grains, then read it back to me.</textarea>
+    </div>
+    <div class="chips" id="chips"></div>
+    <button class="btn big" id="run" onclick="run()">▶  Put the agent to work</button>
+  </section>
+
+  <!-- ── THE LIVE RUN ──────────────────────────────────────────────────── -->
+  <section class="card" id="run-card">
+    <div class="runhead">
+      <div class="task" id="run-task"></div>
+      <div class="budget" id="budget">budget: <b>0</b> of 100,000 spent</div>
+    </div>
+    <div class="steps" id="steps"></div>
+    <div class="run-status" id="run-status"></div>
+  </section>
+
+  <!-- ── THE PAYOFF ────────────────────────────────────────────────────── -->
+  <section class="card" id="verify-card">
+    <h2><span class="step">Step 3</span>Check the agent's work</h2>
+    <p class="hint">You don't have to take the sandbox's word for it. Re-derive the record yourself —
+      the sandbox can't have faked a single step.</p>
+    <button class="btn" id="verify" onclick="verify()">✓  Check the agent's work</button>
+    <div id="verify-out"></div>
+  </section>
+
+  <div class="footer">
+    <a href="/dev">▸ developer console</a>
+    <a href="https://github.com/emberian/dregg" target="_blank" rel="noopener">▸ how this works</a>
+  </div>
+</div>
+
+<script>
+  const el = (id) => document.getElementById(id);
+  const esc = (s) => String(s).replace(/[&<>]/g, (c) => ({'&':'&amp;','<':'&lt;','>':'&gt;'}[c]));
+
+  // ── same-origin base (served by the bin at GET /); file:// falls back to the bin
+  const BASE = (location.origin && location.origin.startsWith('http'))
+    ? location.origin.replace(/\/+$/, '') : 'http://127.0.0.1:8903';
+  const CONTROL = 'control.localhost';
+  const BUDGET = 100000;
+
+  // A fresh, private identity + sandbox for this session. The person never sees any
+  // of this — renting is auto-provisioned behind the scenes on their first run.
+  const rnd = Math.random().toString(36).slice(2, 10);
+  const SUBJECT = 'dga1_play_' + rnd;
+  const GRAIN = 'play-' + rnd + '.grain';
+  let rented = false;
+  let spent = 0;
+
+  // ── plain-language translation of the machine's tool names ──────────────
+  const VERB = {
+    fs_write:  { verb: 'write a file',          icon: '📝' },
+    fs_read:   { verb: 'read a file',           icon: '📖' },
+    list_dir:  { verb: 'list the files',        icon: '📂' },
+    mkdir:     { verb: 'make a folder',         icon: '📁' },
+    http_get:  { verb: 'reach out to the internet', icon: '🌐' },
+    shell:     { verb: 'run a shell command',   icon: '⌨️' },
+  };
+  // Human reason a forbidden tool is blocked (why the box said no).
+  const BLOCK_REASON = {
+    http_get: 'reach the internet',
+    shell:    'run commands on the computer',
+  };
+  function proposeText(tool, args) {
+    const v = VERB[tool] || { verb: tool, icon: '🤖' };
+    let what = `<strong>${esc(v.verb)}</strong>`;
+    if ((tool === 'fs_write' || tool === 'fs_read' || tool === 'list_dir' || tool === 'mkdir') && args.path)
+      what += ` called <code>${esc(args.path)}</code>`;
+    else if (tool === 'http_get' && args.url) what += ` at <code>${esc(String(args.url).slice(0,60))}</code>`;
+    else if (tool === 'shell' && args.cmd) what += `: <code>${esc(String(args.cmd).slice(0,60))}</code>`;
+    return `${v.icon} The agent wants to ${what}…`;
+  }
+
+  // ── the tools we let the AI reach for. The fs ones are permitted by the sandbox;
+  //    http_get + shell are advertised too so the AI CAN try them — and the sandbox
+  //    will refuse them (the delightful "it can't escape" moment).
+  const TOOLS = [
+    { type:'function', function:{ name:'fs_write', description:'Write a text file in the sandbox scratch folder.',
+      parameters:{ type:'object', properties:{ path:{type:'string'}, content:{type:'string'} }, required:['path','content'] } } },
+    { type:'function', function:{ name:'fs_read', description:'Read back a file you wrote in the sandbox scratch folder.',
+      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
+    { type:'function', function:{ name:'list_dir', description:'List the files in the sandbox scratch folder.',
+      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
+    { type:'function', function:{ name:'mkdir', description:'Make a folder in the sandbox scratch folder.',
+      parameters:{ type:'object', properties:{ path:{type:'string'} }, required:['path'] } } },
+    { type:'function', function:{ name:'http_get', description:'Fetch a web page over the internet.',
+      parameters:{ type:'object', properties:{ url:{type:'string'} }, required:['url'] } } },
+    { type:'function', function:{ name:'shell', description:'Run a shell command on the host computer.',
+      parameters:{ type:'object', properties:{ cmd:{type:'string'} }, required:['cmd'] } } },
+  ];
+
+  // ── example chips (the last two are secretly forbidden — the block is a surprise)
+  const CHIPS = [
+    { label: '✍️  Write a haiku and read it back', task: 'Write me a haiku about grains, then read it back to me.' },
+    { label: '📝  Make a to-do list file',          task: 'Make a to-do list file called todo.txt with three things I should do today.' },
+    { label: '🌐  Look something up online',        task: 'Fetch the page at https://example.com and tell me what it says.' },
+    { label: '⌨️  Check the system time',           task: 'Run the shell command `date` and tell me the current time.' },
+  ];
+  (function chips() {
+    const box = el('chips');
+    CHIPS.forEach(c => {
+      const b = document.createElement('button');
+      b.className = 'chip'; b.textContent = c.label;
+      b.onclick = () => { el('task').value = c.task; el('task').focus(); };
+      box.appendChild(b);
+    });
+  })();
+
+  // ── talk to the platform ─────────────────────────────────────────────────
+  async function api(path, { method='GET', grainHost, body } = {}) {
+    const headers = { 'X-Dregg-Subject': SUBJECT };
+    if (grainHost) headers['X-Dregg-Grain-Host'] = grainHost;
+    if (body !== undefined) headers['Content-Type'] = 'application/json';
+    const res = await fetch(BASE + path, { method, headers,
+      body: body !== undefined ? JSON.stringify(body) : undefined });
+    let data; const text = await res.text();
+    try { data = JSON.parse(text); } catch { data = { raw: text }; }
+    return { status: res.status, data, bytes: text.length };
+  }
+
+  // Auto-provision the sandbox on first run — the person never sees a rent form.
+  async function ensureGrain() {
+    if (rented) return true;
+    const r = await api('/rent', { method:'POST', grainHost: CONTROL, body: {
+      host: GRAIN, caps: 'fs', budget: BUDGET, rent_per_period: 100, period: 50 } });
+    if (r.status === 200) { rented = true; return true; }
+    return false;
+  }
+
+  // ── talk to the AI provider (OpenRouter). The ONE place the key travels — and it
+  //    goes to the provider, never to the sandbox. ──────────────────────────
+  async function think(key, messages) {
+    const res = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', 'Authorization': 'Bearer ' + key },
+      body: JSON.stringify({ model: 'meta-llama/llama-3.2-3b-instruct', messages, tools: TOOLS, tool_choice: 'auto' }),
+    });
+    if (!res.ok) throw new Error(`${res.status} ${(await res.text()).slice(0, 200)}`);
+    return res.json();
+  }
+
+  function addLine(cls, big, note) {
+    const div = document.createElement('div');
+    div.className = 'line ' + cls;
+    div.innerHTML = `<div class="big">${big}</div>` + (note ? `<div class="note">${note}</div>` : '');
+    el('steps').appendChild(div);
+    div.scrollIntoView({ behavior: 'smooth', block: 'nearest' });
+    return div;
+  }
+  function setBudget() {
+    el('budget').innerHTML = `budget: <b>${spent.toLocaleString()}</b> of ${BUDGET.toLocaleString()} spent`;
+  }
+
+  const MAX_STEPS = 8;
+
+  async function run() {
+    const key = el('key').value.trim();
+    if (!key) { el('key').focus(); el('key').style.borderColor = 'var(--danger)'; return; }
+    el('key').style.borderColor = '';
+    const task = el('task').value.trim();
+    if (!task) { el('task').focus(); return; }
+
+    // reveal + reset the run panel; hide any prior verdict
+    el('run').disabled = true;
+    el('run-card').style.display = 'block';
+    el('verify-card').style.display = 'none';
+    el('verify-out').innerHTML = '';
+    el('run-task').textContent = task;
+    el('steps').innerHTML = '';
+    spent = 0; setBudget();
+    el('run-status').textContent = 'Setting up a private sandbox…';
+    el('run-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+
+    if (!(await ensureGrain())) {
+      el('run-status').textContent = '';
+      addLine('err', '⚠️ Could not reach the sandbox server.',
+        `Is <span class="mono">agent-platform</span> running at <code>${esc(BASE)}</code>?`);
+      el('run').disabled = false; return;
+    }
+    el('run-status').textContent = 'The agent is thinking…';
+
+    const messages = [
+      { role: 'system', content: 'You are an AI agent working inside a sealed sandbox. Use ONLY the provided tools to accomplish the user\'s task, one tool call at a time. Some tools may be refused by the sandbox — that is expected; do not retry a refused tool, just adapt or stop. When the task is done, reply with a short friendly summary and stop calling tools.' },
+      { role: 'user', content: task },
+    ];
+
+    let didWork = false;
+    for (let step = 0; step < MAX_STEPS; step++) {
+      let completion;
+      try { completion = await think(key, messages); }
+      catch (e) {
+        el('run-status').textContent = '';
+        addLine('err', '⚠️ The AI provider returned an error.',
+          `${esc(e.message)} — check your key is a valid OpenRouter key with free credit.`);
+        break;
+      }
+      const msg = completion.choices && completion.choices[0] && completion.choices[0].message;
+      if (!msg) { addLine('err', '⚠️ The AI returned nothing.'); break; }
+      messages.push(msg);
+      const calls = msg.tool_calls || [];
+
+      if (!calls.length) {
+        el('run-status').textContent = '';
+        if (msg.content) addLine('think', '💬 ' + esc(msg.content));
+        break;
+      }
+
+      const call = calls[0];
+      let args = {}; try { args = JSON.parse(call.function.arguments || '{}'); } catch {}
+      const tool = call.function.name;
+
+      addLine('propose', proposeText(tool, args));
+      el('run-status').textContent = 'The sandbox is checking that request…';
+
+      let r;
+      try { r = await api('/act', { method:'POST', grainHost: GRAIN, body: { tool, args, goal: task } }); }
+      catch (e) { addLine('err', '⚠️ Lost contact with the sandbox.', esc(e.message)); break; }
+
+      const d = r.data || {};
+      let toolResult;
+      if (r.status === 200 && d.admitted > 0) {
+        didWork = true;
+        if (typeof d.receipt?.consumed_after === 'number') { spent = d.receipt.consumed_after; setBudget(); }
+        const out = d.output != null ? String(d.output) : '';
+        const isRead = tool === 'fs_read';
+        const bytesNote = out ? (isRead ? '' : ` <em>(${out.length} characters)</em>`) : '';
+        const line = addLine('allow', `✅ <strong>Allowed</strong> — the sandbox let it through.${bytesNote}`);
+        if (out && isRead) {
+          const peek = document.createElement('div');
+          peek.className = 'filepeek'; peek.textContent = out.slice(0, 600);
+          line.appendChild(peek);
+        }
+        toolResult = `Done. The action succeeded.` + (out ? `\nResult: ${out}` : '');
+      } else if (r.status === 200) {
+        const why = BLOCK_REASON[tool] || 'do that';
+        addLine('block',
+          `⛔ <strong>Blocked</strong> — you never gave it permission to <strong>${esc(why)}</strong>.`,
+          `The agent proposes; the sandbox disposes. Nothing happened.`);
+        toolResult = `REFUSED by the sandbox: you are not permitted to ${why}. This did NOT run. Do not retry it — accomplish the task another way, or stop and summarize.`;
+      } else if (r.status === 402) {
+        addLine('block', '⛔ <strong>Out of budget</strong> — the sandbox stopped spending.'); break;
+      } else {
+        addLine('err', `⚠️ The sandbox returned an error (${r.status}).`, esc(d.error || '')); break;
+      }
+      messages.push({ role: 'tool', tool_call_id: call.id, content: toolResult });
+      el('run-status').textContent = 'The agent is thinking…';
+
+      if (step === MAX_STEPS - 1) el('run-status').textContent = 'Reached the step limit for this demo.';
+    }
+
+    el('run').disabled = false;
+    el('run-status').textContent = didWork
+      ? "The agent finished. Now check its work below — you don't have to trust anyone."
+      : (el('run-status').textContent || 'The agent stopped.');
+    if (didWork) {
+      el('verify-card').style.display = 'block';
+      el('verify-card').scrollIntoView({ behavior: 'smooth', block: 'start' });
+    }
+  }
+
+  // ── STEP 3 · the payoff, in plain terms ──────────────────────────────────
+  async function verify() {
+    el('verify').disabled = true;
+    el('verify-out').innerHTML = '<p class="run-status">Re-deriving the record yourself…</p>';
+    let r0, r2, att;
+    try {
+      [r0, r2, att] = await Promise.all([
+        api('/verify', { grainHost: GRAIN }),
+        api('/verify?r2', { grainHost: GRAIN }),
+        api('/attest', { grainHost: GRAIN }),
+      ]);
+    } catch (e) {
+      el('verify-out').innerHTML = `<p class="run-status">Couldn't reach the sandbox: ${esc(e.message)}</p>`;
+      el('verify').disabled = false; return;
+    }
+
+    const tamperOk = r0.status === 200;          // R0 — the record is tamper-evident
+    const realSteps = r2.status === 200;         // R2 — each step is a real committed action
+    const n = (r0.data && r0.data.actions) != null ? r0.data.actions
+            : (r2.data && r2.data.actions) != null ? r2.data.actions : '—';
+
+    let html;
+    if (tamperOk && realSteps) {
+      html = `<div class="verdict">
+        <div class="mark">✅</div>
+        <div class="headline">Confirmed.</div>
+        <div class="body">The agent took <b>${esc(n)}</b> action${n === 1 ? '' : 's'} — exactly the ones you
+          saw above, nothing hidden, nothing faked. You just verified this yourself, and
+          <b>the computer running the agent couldn't have lied to you</b> even if it wanted to.</div>
+      </div>`;
+    } else if (tamperOk) {
+      html = `<div class="verdict fail">
+        <div class="mark">🟡</div>
+        <div class="headline">Record is intact.</div>
+        <div class="body">The list of <b>${esc(n)}</b> action${n === 1 ? '' : 's'} is tamper-evident — it can't
+          be quietly edited. (The stronger cryptographic seal wasn't produced for this run.)</div>
+      </div>`;
+    } else {
+      html = `<div class="verdict fail">
+        <div class="mark">🟡</div>
+        <div class="headline">Nothing to confirm yet.</div>
+        <div class="body">Run the agent first, then come back and check its work.</div>
+      </div>`;
+    }
+
+    html += `<details class="nerd"><summary>For the curious — the raw verdict</summary><pre>${esc(
+      'GET /verify      → ' + r0.status + '  ' + JSON.stringify(r0.data) + '\n' +
+      'GET /verify?r2   → ' + r2.status + '  ' + JSON.stringify(r2.data) + '\n' +
+      'GET /attest      → ' + att.status + '  (' + att.bytes + ' bytes — the signed record you can keep)'
+    )}</pre>
+      <p style="color:var(--fg-muted);margin-top:8px">Plain <code>/verify</code> proves the record can't
+      be tampered with; <code>/verify?r2</code> proves each receipt is a real, committed step — not a
+      story the host made up.</p></details>`;
+
+    el('verify-out').innerHTML = html;
+    el('verify').disabled = false;
+  }
+</script>
+</body>
+</html>
