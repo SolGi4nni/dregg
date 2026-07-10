@@ -293,7 +293,7 @@ fn wide_burn_transfer_shape_proves_verifies_and_executor_anchors() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -370,7 +370,7 @@ fn wide_set_field_dyn_dynamic_overflow_proves_and_verifies() {
     let after_cell = producer_cell(balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -457,7 +457,7 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
     let after_cell = producer_cell(before_balance + value as i64, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -532,7 +532,7 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
     let after_cell = producer_cell(before_balance + value as i64, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -604,7 +604,7 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
     let after_cell = producer_cell(before_balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -674,7 +674,7 @@ fn birth_witnesses() -> (
     let after_cell = producer_cell(before_balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
     let before_w = rw::produce(
         &before_cell,

@@ -254,16 +254,16 @@ fn mint_wire_commit(
     let before_w = rw::produce(
         &before_cell,
         &ctx_ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
         &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
         &ctx_ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
         &Default::default(),
     );

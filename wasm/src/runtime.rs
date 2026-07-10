@@ -719,7 +719,7 @@ impl DreggRuntime {
         let before_cell = synthetic_producer_cell(init_balance as i64, 0);
         let after_cell = synthetic_producer_cell(after_balance, 0);
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
         let leg = dregg_turn::rotation_witness::mint_rotated_participant_leg(

@@ -108,7 +108,7 @@ fn rotated_umem_welded_transfer_proves_and_bites() {
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -180,8 +180,8 @@ fn rotated_umem_welded_non_cohort_refuses() {
     let before_w = rw::produce(
         &before_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &[],
         &Default::default(),
     );

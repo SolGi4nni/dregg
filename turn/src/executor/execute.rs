@@ -1073,7 +1073,12 @@ impl TurnExecutor {
                 // Rollback: replay journal in reverse to restore ledger.
                 // Also removes any obligation/escrow/nullifier insertions from
                 // the executor's in-memory maps (prevents phantom record attacks).
-                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                );
                 // Remove temporarily-injected sovereign cells on rollback.
                 for cell_id in &sovereign_cell_ids {
                     ledger.remove(cell_id);
@@ -1098,7 +1103,12 @@ impl TurnExecutor {
 
         // Check total cost against fee.
         if computrons_used > turn.fee {
-            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+            );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
             }
@@ -1120,7 +1130,12 @@ impl TurnExecutor {
         // equal sum of created values. This is checked independently of the cell
         // balance excess (notes are a separate value domain).
         if let Err(error) = self.check_note_conservation(turn) {
-            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+            );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
             }
@@ -1141,7 +1156,12 @@ impl TurnExecutor {
 
         // Check excess conservation law: must be zero at turn end.
         if excess != 0 {
-            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+            );
             for cell_id in &sovereign_cell_ids {
                 ledger.remove(cell_id);
             }
@@ -1163,7 +1183,12 @@ impl TurnExecutor {
         // =====================================================================
         for cell_id in &sovereign_cell_ids {
             let Some(cell) = ledger.get(cell_id) else {
-                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);
                 }
@@ -1188,7 +1213,12 @@ impl TurnExecutor {
                 .get(cell_id)
                 .expect("validated sovereign witness must still be present");
             if actual_new_commitment != witness.new_commitment {
-                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                );
                 for injected_id in &sovereign_cell_ids {
                     ledger.remove(injected_id);
                 }

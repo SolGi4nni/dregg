@@ -263,6 +263,7 @@ pub fn rotation_witness_for_self_sovereign(
         receipt_hashes,
         effects,
         &dregg_turn::rotation_witness::empty_nullifier_root_8(),
+        &dregg_turn::rotation_witness::empty_commitments_root_8(),
     )
 }
 
@@ -283,6 +284,7 @@ pub fn rotation_witness_for_self_sovereign_with_root(
     receipt_hashes: &[[u8; 32]],
     effects: &[dregg_turn::Effect],
     nullifier_root: &dregg_circuit::Faithful8,
+    commitments_root: &dregg_circuit::Faithful8,
 ) -> Option<dregg_sdk::RotationTurnWitness> {
     rotation_witness_for_self_sovereign_impl(
         pre_balance,
@@ -292,6 +294,7 @@ pub fn rotation_witness_for_self_sovereign_with_root(
         receipt_hashes,
         effects,
         nullifier_root,
+        commitments_root,
     )
 }
 
@@ -321,6 +324,7 @@ pub fn rotation_witness_for_capability(
         receipt_hashes,
         effects,
         &dregg_turn::rotation_witness::empty_nullifier_root_8(),
+        &dregg_turn::rotation_witness::empty_commitments_root_8(),
     )
 }
 
@@ -337,6 +341,7 @@ pub fn rotation_witness_for_capability_with_root(
     receipt_hashes: &[[u8; 32]],
     effects: &[dregg_turn::Effect],
     nullifier_root: &dregg_circuit::Faithful8,
+    commitments_root: &dregg_circuit::Faithful8,
 ) -> Option<dregg_sdk::RotationTurnWitness> {
     rotation_witness_for_capability_turn(
         pre_balance,
@@ -347,6 +352,7 @@ pub fn rotation_witness_for_capability_with_root(
         receipt_hashes,
         effects,
         nullifier_root,
+        commitments_root,
     )
 }
 
@@ -408,6 +414,7 @@ fn rotation_witness_for_cap_less_turn(
         // nullifier set via `prove_and_verify_finalized_turn_freshness`'s `before_nullifiers` +
         // `wide_commit_anchors`; the base producer carries the native empty frontier default here.
         &dregg_turn::rotation_witness::empty_nullifier_root_8(),
+        &dregg_turn::rotation_witness::empty_commitments_root_8(),
     )
 }
 
@@ -420,6 +427,7 @@ fn rotation_witness_for_self_sovereign_impl(
     receipt_hashes: &[[u8; 32]],
     effects: &[dregg_turn::Effect],
     nullifier_root: &dregg_circuit::Faithful8,
+    commitments_root: &dregg_circuit::Faithful8,
 ) -> Option<dregg_sdk::RotationTurnWitness> {
     use dregg_turn::rotation_witness as rw;
 
@@ -451,7 +459,6 @@ fn rotation_witness_for_self_sovereign_impl(
     // frontier: the committed `nullifier_root` rides both the before and after block unchanged. Its
     // value is the caller-threaded frontier (`rotation_witness_for_self_sovereign_with_root` passes
     // the executor's live `note_nullifiers.root8()`; the bare entry passes the native empty root).
-    let commitments_root = [0u8; 32];
 
     // COHORT GATE (PATH-PRESERVE §1/§4 Shape-1 cutover): the rotated effect-vm prover
     // (`prove_effect_vm_rotated_ir2_with_caveat`) proves exactly ONE cohort descriptor per call and
@@ -493,7 +500,7 @@ fn rotation_witness_for_self_sovereign_impl(
         before_cell,
         &ctx_ledger,
         nullifier_root,
-        &commitments_root,
+        commitments_root,
         receipt_hashes,
         &dregg_cell::commitment::RotationCarrierMaterial::default(),
     );
@@ -501,7 +508,7 @@ fn rotation_witness_for_self_sovereign_impl(
         after_cell,
         &ctx_ledger,
         nullifier_root,
-        &commitments_root,
+        commitments_root,
         receipt_hashes,
         &after_material,
     );
@@ -551,6 +558,7 @@ fn rotation_witness_for_capability_turn(
     receipt_hashes: &[[u8; 32]],
     effects: &[dregg_turn::Effect],
     nullifier_root: &dregg_circuit::Faithful8,
+    commitments_root: &dregg_circuit::Faithful8,
 ) -> Option<dregg_sdk::RotationTurnWitness> {
     use dregg_turn::rotation_witness as rw;
 
@@ -588,7 +596,6 @@ fn rotation_witness_for_capability_turn(
     // keeps the freshness tooth). The committed `nullifier_root` is the caller-threaded frontier
     // (the executor's live `note_nullifiers.root8()` via `rotation_witness_for_capability_with_root`,
     // or the native empty root via the bare entry), unchanged across the before/after block.
-    let commitments_root = [0u8; 32];
 
     // COHORT GATE (PATH-PRESERVE §1/§4 Shape-1 cutover — identical to the self-sovereign builder):
     // `prove_full_turn` routes EVERY rotation witness through the N-leg chain (`prove_cohort_run_chain`),
@@ -636,7 +643,7 @@ fn rotation_witness_for_capability_turn(
         before_cell,
         &ctx_ledger,
         nullifier_root,
-        &commitments_root,
+        commitments_root,
         receipt_hashes,
         &dregg_cell::commitment::RotationCarrierMaterial::default(),
     );
@@ -644,7 +651,7 @@ fn rotation_witness_for_capability_turn(
         after_cell,
         &ctx_ledger,
         nullifier_root,
-        &commitments_root,
+        commitments_root,
         receipt_hashes,
         &after_material,
     );

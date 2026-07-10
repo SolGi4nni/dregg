@@ -157,7 +157,7 @@ fn setfield_lead_with_foreign_transfer_tail_is_unsat() {
     ledger.insert_cell(after_cell.clone()).unwrap();
     let before_cell = producer_cell(before_balance, 0);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -256,7 +256,7 @@ fn mint_lead_with_foreign_transfer_tail_is_unsat() {
     ledger.insert_cell(after_cell.clone()).unwrap();
     let before_cell = producer_cell(before_balance, 0);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -340,7 +340,7 @@ fn honest_homogeneous_setfield_still_proves_and_verifies() {
     ledger.insert_cell(after_cell.clone()).unwrap();
     let before_cell = producer_cell(before_balance, 0);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32]];
     let before_w = rw::produce(
         &before_cell,

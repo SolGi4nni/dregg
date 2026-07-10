@@ -29,6 +29,7 @@ pub mod blueprint;
 pub mod capability;
 pub mod cell;
 pub mod commitment;
+pub mod commitment_set;
 pub mod custom_effect;
 pub mod delegation;
 pub mod derivation;
@@ -95,6 +96,7 @@ pub use commitment::{
     compute_canonical_capability_root_wide, compute_canonical_state_commitment, digest8_to_bytes32,
     felt_to_bytes32,
 };
+pub use commitment_set::CommitmentSet;
 pub use custom_effect::{
     CustomEffectError, CustomEffectRegistry, CustomEffectVerifier, StubCustomEffectVerifier,
 };

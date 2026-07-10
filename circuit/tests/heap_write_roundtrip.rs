@@ -141,7 +141,7 @@ fn honest_heap_write() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>, Vec<Vec<HeapLeaf>>
     let after_cell = producer_cell(100 + value_full as i64, 6);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
     let before_w = rw::produce(
         &before_cell,

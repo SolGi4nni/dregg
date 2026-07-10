@@ -8,8 +8,8 @@
 use std::sync::Mutex;
 
 use dregg_cell::{
-    CapabilityRef, CellId, CellProgram, DelegatedRef, Ledger, NoteCommitment, Nullifier,
-    Permissions, VerificationKey,
+    CapabilityRef, CellId, CellProgram, CommitmentSet, DelegatedRef, Ledger, NoteCommitment,
+    Nullifier, Permissions, VerificationKey,
     lifecycle::CellLifecycle,
     nullifier_set::NullifierSet,
     permissions::AuthRequired,
@@ -91,6 +91,12 @@ pub(crate) enum JournalEntry {
     /// `note_nullifiers` set. On rollback this nullifier must be REMOVED so
     /// a failed turn doesn't permanently burn the note.
     NoteNullifierInserted { nullifier: Nullifier },
+    /// A note-create commitment was inserted into the executor's production
+    /// `note_commitments` set. On rollback this commitment must be REMOVED so a
+    /// failed turn does not leave a phantom commitment in the accumulator (which
+    /// would diverge the committed `commitments_root` from what an honest
+    /// re-executor reproduces). The CREATE-side dual of `NoteNullifierInserted`.
+    NoteCommitmentInserted { commitment: NoteCommitment },
     /// A cell's lifecycle state was changed (Seal, Unseal, Destroy, Archive).
     /// Records the old lifecycle so rollback can restore it.
     SetLifecycle {
@@ -196,7 +202,8 @@ impl LedgerJournal {
                 JournalEntry::NoteSpend
                 | JournalEntry::NoteCreate
                 | JournalEntry::BridgedNullifierInserted { .. }
-                | JournalEntry::NoteNullifierInserted { .. } => continue,
+                | JournalEntry::NoteNullifierInserted { .. }
+                | JournalEntry::NoteCommitmentInserted { .. } => continue,
             };
             if !out.contains(&cell) {
                 out.push(cell);
@@ -346,6 +353,15 @@ impl LedgerJournal {
             .push(JournalEntry::NoteNullifierInserted { nullifier });
     }
 
+    /// Record that a note-create commitment was inserted into the executor's
+    /// production `note_commitments` set. On rollback, this commitment will be
+    /// removed so a failed turn doesn't leave a phantom commitment in the
+    /// accumulator.
+    pub fn record_note_commitment_inserted(&mut self, commitment: NoteCommitment) {
+        self.entries
+            .push(JournalEntry::NoteCommitmentInserted { commitment });
+    }
+
     /// Record a cell-lifecycle change (Seal/Unseal/Destroy/Archive).
     pub fn record_set_lifecycle(&mut self, cell: CellId, old_lifecycle: CellLifecycle) {
         self.entries.push(JournalEntry::SetLifecycle {
@@ -383,6 +399,7 @@ impl LedgerJournal {
         ledger: &mut Ledger,
         bridged_nullifiers: &Mutex<BridgedNullifierSet>,
         note_nullifiers: &Mutex<NullifierSet>,
+        note_commitments: &Mutex<CommitmentSet>,
     ) {
         for entry in self.entries.into_iter().rev() {
             match entry {
@@ -479,6 +496,9 @@ impl LedgerJournal {
                 }
                 JournalEntry::NoteNullifierInserted { nullifier } => {
                     note_nullifiers.lock().unwrap().remove(&nullifier);
+                }
+                JournalEntry::NoteCommitmentInserted { commitment } => {
+                    note_commitments.lock().unwrap().remove(&commitment);
                 }
                 JournalEntry::SetLifecycle {
                     cell,

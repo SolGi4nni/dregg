@@ -164,7 +164,7 @@ fn mint_rotated_leg(
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nr = nullifier_root();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let rl = receipt_log();
     let before_w = rw::produce(before_cell, &ledger, &nr, &commitments_root, &rl);
     let after_w = rw::produce(after_cell, &ledger, &nr, &commitments_root, &rl);
@@ -269,7 +269,7 @@ fn two_leg_heterogeneous_chain_verifies_with_adjacency() {
     // The turn-level witnesses: ONE before (the turn context, reused for leg-0's
     // before AND after blocks — the interior seam), and the real final after.
     let nr = nullifier_root();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let rl = receipt_log();
     // The turn-context ledger snapshot is the actor's final-cell ledger (the
     // cells_root shape `produce` reads); both witnesses read the SAME ledger so

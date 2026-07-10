@@ -175,16 +175,16 @@ fn record_pin_fixture(
     let before_w = rw::produce(
         &before,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &[],
         &Default::default(),
     );
     let after_w = rw::produce(
         &after,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &[],
         &Default::default(),
     );
@@ -484,16 +484,16 @@ fn matrix_forbidden_plain_cap_is_wire_rejected() {
     let before_w = rw::produce(
         &before,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &[],
         &Default::default(),
     );
     let after_w = rw::produce(
         &after,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &[],
         &Default::default(),
     );

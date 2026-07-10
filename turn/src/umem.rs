@@ -1658,8 +1658,15 @@ fn touches_of_entry(e: &JournalEntry) -> Vec<Touch> {
         JournalEntry::BridgedNullifierInserted { nullifier } => {
             vec![Touch::At(UKey::BridgedNullifier(*nullifier), Some(None))]
         }
-        // Markers / receipt-surface entries: no state cell.
-        JournalEntry::NoteSpend | JournalEntry::NoteCreate => vec![],
+        // Markers / receipt-surface entries: no state cell. `NoteCommitmentInserted`
+        // is a no-touch marker for now: the commitments accumulator is committed via
+        // the rotated `commitments_root` group, but is not yet a umem-projected domain
+        // (`project_executor_state` does not walk `note_commitments`), so emitting a
+        // touch here would break the agreement square. A NAMED SEAM, like the heap
+        // domain's staged wiring — the CREATE-side dual of `UKey::NoteNullifier`.
+        JournalEntry::NoteSpend
+        | JournalEntry::NoteCreate
+        | JournalEntry::NoteCommitmentInserted { .. } => vec![],
         JournalEntry::EventEmitted { .. } => vec![],
     }
 }

@@ -128,7 +128,7 @@ fn wide_supply_mint_proves_and_verifies() {
     let after_cell = producer_cell(before_balance + value as i64, 6);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -203,7 +203,7 @@ fn wide_heap_write_proves_and_verifies() {
     let after_cell = producer_cell(100 + value_full as i64, 6);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -292,7 +292,7 @@ fn wide_transfer_cap_open_tb_proves_and_verifies() {
     let after_cell = producer_cell(before_balance - 1_000, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
     let before_w = rw::produce(
         &before_cell,

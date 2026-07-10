@@ -71,6 +71,10 @@ pub struct PositionedNote {
 pub enum NoteError {
     /// Attempted to spend a note that has already been spent (double-spend).
     DoubleSpend { nullifier: Nullifier },
+    /// Attempted to create a note whose commitment is already present (the
+    /// create-side dual of `DoubleSpend` — the commitments accumulator is
+    /// grow-only, so a duplicate commitment is rejected).
+    DuplicateCommitment { commitment: NoteCommitment },
     /// Conservation law violated: inputs do not equal outputs for an asset type.
     ConservationViolation {
         asset_type: u64,
@@ -87,6 +91,13 @@ impl core::fmt::Display for NoteError {
                     f,
                     "double-spend: nullifier {:?} already revealed",
                     &nullifier.0[..4]
+                )
+            }
+            NoteError::DuplicateCommitment { commitment } => {
+                write!(
+                    f,
+                    "duplicate commitment: {:?} already created",
+                    &commitment.0[..4]
                 )
             }
             NoteError::ConservationViolation {

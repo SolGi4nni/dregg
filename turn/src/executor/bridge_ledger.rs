@@ -310,7 +310,12 @@ impl TurnExecutor {
         //     insufficient escrow is refused, and its nullifier is rolled back so a
         //     later escrow can still let it mint.
         if new_live > locked {
-            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+            );
             return Err(BridgeMintError::InsufficientLocked {
                 live,
                 locked,
@@ -324,7 +329,12 @@ impl TurnExecutor {
             let cell = match ledger.get_mut(&req.ledger_cell) {
                 Some(c) => c,
                 None => {
-                    journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                    journal.rollback(
+                        ledger,
+                        &self.bridged_nullifiers,
+                        &self.note_nullifiers,
+                        &self.note_commitments,
+                    );
                     return Err(BridgeMintError::LedgerCellNotFound(req.ledger_cell));
                 }
             };
@@ -347,7 +357,12 @@ impl TurnExecutor {
             0,
             req.amount,
         ) {
-            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+            );
             return Err(BridgeMintError::MintFailed(e.to_string()));
         }
 
@@ -417,7 +432,12 @@ impl TurnExecutor {
             let cell = match ledger.get_mut(&req.ledger_cell) {
                 Some(c) => c,
                 None => {
-                    journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                    journal.rollback(
+                        ledger,
+                        &self.bridged_nullifiers,
+                        &self.note_nullifiers,
+                        &self.note_commitments,
+                    );
                     return Err(BridgeMintError::LedgerCellNotFound(req.ledger_cell));
                 }
             };

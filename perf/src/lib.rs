@@ -161,7 +161,7 @@ pub fn rotated_transfer_turn(balance: u64, amount: u64) -> RotatedTurn {
     }];
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_hashes: Vec<[u8; 32]> = Vec::new();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -458,7 +458,7 @@ pub fn v9_context() -> dregg_cell::commitment::V9RotationContext {
     dregg_cell::commitment::V9RotationContext {
         cells_root: BabyBear::new(0),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        commitments_root: [0u8; 32],
+        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
         iroot: BabyBear::new(0),
         // Generic turn: no factory child-vk / hatchery contract-hash material
         // (the Default zero-fills the v12 carrier octets, limbs 88..103).

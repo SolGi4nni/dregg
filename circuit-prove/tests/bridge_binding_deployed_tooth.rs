@@ -163,16 +163,16 @@ fn mint_bridge_leg(
     let before_w = rw::produce(
         &before_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
         &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
         &Default::default(),
     );
@@ -233,16 +233,16 @@ fn mint_plain_transfer_leg(before_balance: i64, amount: u64, nonce: u64) -> Rota
     let before_w = rw::produce(
         &before_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
         &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &receipt_log,
         &Default::default(),
     );

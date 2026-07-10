@@ -86,7 +86,7 @@ fn create_cell_proves_on_deployed_wide_path() {
     let (before_cell, after_cell) = sovereign_issuer_cells(balance, b"ledger-create-cell-domain");
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -185,7 +185,7 @@ fn prove_through_deployed(
     let balance: i64 = 100_000;
     let (before_cell, after_cell) = sovereign_issuer_cells(balance, domain);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ledger = Ledger::new();
     let _ = ledger.insert_cell(before_cell.clone());
@@ -537,7 +537,7 @@ fn probe_wide(
     use dregg_sdk::AgentCipherclerk;
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let block_height: u64 = 100;
     let caveat = dregg_circuit::effect_vm::trace_rotated::empty_caveat_manifest();
 

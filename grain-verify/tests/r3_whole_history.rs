@@ -61,7 +61,7 @@ fn make_turn(balance: u64, nonce: u32, amount: u64) -> (FinalizedTurn, BabyBear,
     let before_cell = producer_cell(balance as i64, nonce as u64);
     let after_cell = producer_cell((balance as i64) - (amount as i64), nonce as u64);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
     let leg = mint_rotated_participant_leg(
         &state,

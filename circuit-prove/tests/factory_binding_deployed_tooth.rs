@@ -187,7 +187,7 @@ fn mint_factory_leg(
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).expect("ledger seed");
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
     let before_w = rw::produce(
         &before_cell,

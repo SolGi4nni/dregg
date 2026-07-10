@@ -132,7 +132,7 @@ fn build_honest_small() -> (Honest, BabyBear) {
     let before_cell = producer_cell(before, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -228,16 +228,16 @@ fn build_honest_large() -> Honest {
     let before_w = rw::produce(
         &before_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &vec![[3u8; 32]],
         &Default::default(),
     );
     let after_w = rw::produce(
         &after_cell,
         &ledger,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &vec![[3u8; 32]],
         &Default::default(),
     );

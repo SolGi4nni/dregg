@@ -184,7 +184,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -455,7 +455,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
     let before_w = rw::produce(
@@ -580,7 +580,7 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     let after_cell = producer_cell(before_balance + value as i64, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
 
     let before_w = rw::produce(
@@ -821,7 +821,7 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     let after_cell = producer_cell(before_balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
     let before_w = rw::produce(
         &before_cell,
@@ -970,7 +970,7 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
     use dregg_circuit::heap_root::HeapLeaf;
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[7u8; 32]];
 
     let before_cell = producer_cell(40_000, 0);
@@ -1156,7 +1156,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         let after_cell = producer_cell(before_balance, 6); // nonce TICKED 5 → 6
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[9u8; 32]];
 
         let before_w = rw::produce(
@@ -1276,7 +1276,7 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
         let after_cell = producer_cell(before_balance + value, 6); // credit + nonce TICK
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
 
         let before_w = rw::produce(
@@ -1425,7 +1425,7 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
     let after_cell = producer_cell(before_balance + value, 6); // credit + nonce TICK
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
 
     let before_w = rw::produce(
@@ -1577,7 +1577,7 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // A residue-free baseline cell (default permissions / no VK) and a turn context.
     let plain = producer_cell(100_000, 0);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let iroot = BabyBear::new(0x1234);
     let cells_root = BabyBear::new(0x5678);
     let ctx = V9RotationContext {
@@ -1668,16 +1668,29 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     //    note-commitments set: a turn that grew the commitments set publishes a DIFFERENT OLD/NEW
     //    commit than one that did not. The differential's Lean twin is
     //    `RotatedCommitDifferential.rotatedCommit_binds_commitments_root`. --
+    // A note-commitment the kernel inserted: the FAITHFUL 8-felt commitments-accumulator root over
+    // one created note (the native `CanonicalHeapTree8` — the SAME encoding the noteCreate grow-gate
+    // opens against). It rides the 8-felt `commitments_root` group (limb 27 lane-0 ‖ completion lanes
+    // 74..=80), so a note-add moves ALL 8 of those lanes (and ONLY those).
+    let grown_root = dregg_circuit::heap_root::CanonicalHeapTree8::new(
+        vec![dregg_circuit::heap_root::HeapLeaf {
+            addr: dregg_circuit::field::BabyBear::new(9),
+            value: dregg_circuit::field::BabyBear::new(1),
+        }],
+        dregg_circuit::heap_root::HEAP_TREE_DEPTH,
+    )
+    .root8();
     let ctx_grown = V9RotationContext {
-        commitments_root: [9u8; 32], // a note commitment the kernel inserted
+        commitments_root: grown_root,
         ..ctx
     };
     let pre_grown = compute_rotated_pre_limbs(&plain, &ctx_grown);
+    let commitments_lanes = [27usize, 74, 75, 76, 77, 78, 79, 80];
     for i in 0..V9_NUM_PRE_LIMBS {
-        if i == 27 {
+        if commitments_lanes.contains(&i) {
             assert_ne!(
                 pre[i], pre_grown[i],
-                "index 27 (commitments_root) MUST move on a note add"
+                "commitments_root lane at limb {i} MUST move on a note add"
             );
         } else {
             assert_eq!(
@@ -1927,7 +1940,7 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let after_cell = producer_cell_with_field(before_balance - amount as i64, 1, 0, field0_bytes);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -2090,7 +2103,7 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
     after_cell.seal([9u8; 32], 0).expect("Live cell must seal");
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
     let before_w = rw::produce(
@@ -2251,7 +2264,7 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     let after_cell = producer_cell(before_balance - amount as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -2465,7 +2478,7 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
         }
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
         let before_w = rw::produce(
@@ -2696,7 +2709,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
     let after_cell = producer_cell(before_balance + value as i64, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[11u8; 32]];
 
     let before_w = rw::produce(
@@ -2834,7 +2847,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     let after_cell = producer_cell(before_balance - amount as i64 - fee as i64, 0);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
 
     let before_w = rw::produce(
@@ -3031,7 +3044,7 @@ fn wide_transfer_proves_verifies_and_the_high_position_collision_tooth_bites() {
     let mut ledger = Ledger::new();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
     let before_w = rw::produce(
         &before_cell,

@@ -78,7 +78,7 @@ fn setup(balance: u64) -> (Cell, CellId, V9RotationContext, [u8; 32]) {
     let ctx = V9RotationContext {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        commitments_root: [0u8; 32],
+        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
         iroot: rw::iroot(&[]),
         material: Default::default(),
     };
@@ -318,7 +318,7 @@ fn setup_bare(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     let ctx = V9RotationContext {
         cells_root: rw::cells_root(&ctx_ledger),
         nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-        commitments_root: [0u8; 32],
+        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
         iroot: rw::iroot(&[]),
         material: Default::default(),
     };

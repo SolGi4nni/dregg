@@ -215,6 +215,7 @@ impl TurnExecutor {
             ),
             Effect::NoteCreate {
                 commitment,
+                value,
                 value_commitment,
                 range_proof,
                 ..
@@ -222,6 +223,7 @@ impl TurnExecutor {
                 path,
                 journal,
                 commitment,
+                *value,
                 value_commitment.as_ref(),
                 range_proof.as_deref(),
             ),
@@ -1551,6 +1553,12 @@ impl TurnExecutor {
         path: &[usize],
         journal: &mut LedgerJournal,
         commitment: &NoteCommitment,
+        // The created note's value — the SAME `u64` the circuit noteCreate row
+        // publishes as `NOTE_VALUE_LO`/`NOTE_VALUE_HI` and the grow-gate folds into
+        // the commitments-accumulator leaf. Recorded in `note_commitments` so
+        // `CommitmentSet::root8` (the committed `commitments_root`) is cross-turn
+        // continuous with the circuit.
+        value: u64,
         // BUG #115: previously dropped via `..`; now validated at apply time.
         // If `value_commitment` is present, `range_proof` must also be present
         // and must verify against the commitment. This is defense-in-depth:
@@ -1641,6 +1649,32 @@ impl TurnExecutor {
                 })?;
             }
         }
+
+        // GROW the production commitments accumulator: record the created note's
+        // (commitment, value) in `note_commitments` with duplicate rejection (a note
+        // commitment cannot be created twice — the CREATE-side dual of the NoteSpend
+        // double-spend gate). Journaled so a turn that fails after this insert rolls
+        // it back (no phantom commitment survives into the committed root).
+        {
+            let mut set = self.note_commitments.lock().unwrap();
+            if set.contains(commitment) {
+                return Err((
+                    TurnError::InvalidEffect {
+                        reason: "duplicate commitment: already in note_commitments set".into(),
+                    },
+                    path.to_vec(),
+                ));
+            }
+            set.insert(*commitment, value).map_err(|e| {
+                (
+                    TurnError::InvalidEffect {
+                        reason: format!("NoteCreate commitment insert failed: {e:?}"),
+                    },
+                    path.to_vec(),
+                )
+            })?;
+        }
+        journal.record_note_commitment_inserted(*commitment);
 
         // Record for the note layer to process after turn commits.
         journal.record_note_create(*commitment);

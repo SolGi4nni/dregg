@@ -35,7 +35,7 @@ fn setup_sovereign_cell(balance: u64) -> (AgentCipherclerk, CellId, Ledger) {
     // `cells_root` over this cell, the empty nullifier root, and an `iroot` MMR over the
     // (empty) receipt chain. The executor verifier reads this back as OLD_COMMIT (PI 34).
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(cell.clone());
     let cells_root = dregg_turn::rotation_witness::cells_root(&ctx_ledger);

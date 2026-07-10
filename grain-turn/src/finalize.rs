@@ -85,7 +85,7 @@ pub fn finalize_grain_turn(record: &GrainTurnRecord) -> Result<Vec<FinalizedTurn
     // The turn-invariant leg context. A grain SetField turn spends no note (empty nullifier
     // frontier), holds no note commitments, and binds its iroot to the real turn hash.
     let nullifier_root = empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log = vec![record.turn_hash];
 
     // (2) Seed the EffectVM pre-state from the REAL pre-cell (balance/nonce/fields/cap

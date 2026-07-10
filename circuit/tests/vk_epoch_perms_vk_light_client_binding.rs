@@ -185,7 +185,7 @@ fn setpermissions_forced_on_wire_rejects_forged_perms_anchor_disabled() {
     after_cell.permissions = new_perms.clone();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
     let before_w = rw::produce(
@@ -368,7 +368,7 @@ fn setvk_forced_on_wire_rejects_forged_vk_anchor_disabled() {
     after_cell.verification_key = new_vk.clone();
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32]];
 
     let before_w = rw::produce(

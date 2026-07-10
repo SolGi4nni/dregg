@@ -42,8 +42,8 @@ use std::sync::Mutex;
 use tracing::info;
 
 use dregg_cell::{
-    AuthRequired, Cell, CellId, CellStateDelta, FIELD_ZERO, FieldElement, Ledger, LedgerDelta,
-    RevocationChannelSet,
+    AuthRequired, Cell, CellId, CellStateDelta, CommitmentSet, FIELD_ZERO, FieldElement, Ledger,
+    LedgerDelta, RevocationChannelSet,
     note::NoteError,
     nullifier_set::NullifierSet,
     preconditions::EvalContext,
@@ -769,6 +769,17 @@ pub struct TurnExecutor {
     /// *local* spends. Together they form the permanent ledger gate that
     /// `Checkpoint::nullifier_set_root` commits to.
     pub note_nullifiers: Mutex<NullifierSet>,
+    /// Production note-CREATE commitment set: tracks every commitment published by a
+    /// successful `Effect::NoteCreate` in this federation. Append-only (GROW-ONLY)
+    /// with duplicate-commitment rejection (`CommitmentSet::insert` errors on
+    /// re-insert). Rolled back via `JournalEntry::NoteCommitmentInserted` if the turn
+    /// fails after the insert.
+    ///
+    /// The CREATE-side dual of `note_nullifiers`: its `root8` is committed FAITHFULLY
+    /// into the rotated state's `commitments_root` group (limb 27 lane-0 ‖ completion
+    /// lanes 74..=80), so the published commitment binds the grown shielded-note set
+    /// the noteCreate grow-gate opens against.
+    pub note_commitments: Mutex<CommitmentSet>,
     /// REACTIVE registry (Track 2): the executor's promise-hole store. An
     /// `Effect::Promise`/`Effect::Notify` deposits a kernel-backed pending entry
     /// (the standing commitment / wake) here; an `Effect::React` discharges it.
@@ -1049,6 +1060,7 @@ impl TurnExecutor {
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
+            note_commitments: Mutex::new(CommitmentSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
@@ -1112,6 +1124,7 @@ impl TurnExecutor {
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
+            note_commitments: Mutex::new(CommitmentSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,
@@ -1157,6 +1170,7 @@ impl TurnExecutor {
             local_federation_id: [0u8; 32],
             bridged_nullifiers: Mutex::new(BridgedNullifierSet::new()),
             note_nullifiers: Mutex::new(NullifierSet::new()),
+            note_commitments: Mutex::new(CommitmentSet::new()),
             reactive_registry: Mutex::new(crate::pending::PendingTurnRegistry::new()),
             trusted_destination_keys: Vec::new(),
             proposer_cell: None,

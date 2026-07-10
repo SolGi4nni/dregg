@@ -596,7 +596,8 @@ impl TurnExecutor {
                 | JournalEntry::NoteCreate
                 | JournalEntry::EventEmitted { .. }
                 | JournalEntry::BridgedNullifierInserted { .. }
-                | JournalEntry::NoteNullifierInserted { .. } => {}
+                | JournalEntry::NoteNullifierInserted { .. }
+                | JournalEntry::NoteCommitmentInserted { .. } => {}
                 // Lifecycle / capability narrowing: rollback-only — no
                 // separate LedgerDelta field today. On commit the cell's
                 // CellLifecycle / CapabilityRef change is read off the

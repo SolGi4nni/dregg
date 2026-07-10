@@ -749,10 +749,14 @@ pub struct V9RotationContext {
     /// default is `dregg_turn::rotation_witness::empty_nullifier_root_8` (=
     /// `dregg_circuit::heap_root::empty_heap_root_8`).
     pub nullifier_root: dregg_circuit::Faithful8,
-    /// The committed note-COMMITMENTS-set root (limb 27 — the `commitments_root` flag-day limb).
-    /// The shielded note-commitment set's accumulator root the noteCreate grow-gate opens against
-    /// (`EffectVmEmitRotationV3.commitmentsInsertOp`). A turn-level set root, like `nullifier_root`.
-    pub commitments_root: [u8; 32],
+    /// The committed FAITHFUL 8-felt note-COMMITMENTS-accumulator root (limb 27 lane-0 ‖ completion
+    /// lanes 74..=80). The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 accumulator
+    /// root the noteCreate grow-gate opens against (`EffectVmEmitRotationV3.commitmentsInsertOp`,
+    /// `commitmentsRootGroupCol`), sourced from `dregg_cell::commitment_set::CommitmentSet::root8`
+    /// (the live (commitment, value) map). A turn-level set root, like `nullifier_root`. The
+    /// empty-accumulator default is `dregg_turn::rotation_witness::empty_commitments_root_8` (=
+    /// `dregg_circuit::heap_root::empty_heap_root_8`).
+    pub commitments_root: dregg_circuit::Faithful8,
     /// The receipt-index MMR root, absorbed LAST.
     pub iroot: dregg_circuit::field::BabyBear,
     /// The v12 per-effect CARRIER MATERIAL for the child-vk / contract-hash octets (limbs 88..103).
@@ -1026,7 +1030,6 @@ pub fn compute_rotated_pre_limbs(
 ) -> Vec<dregg_circuit::field::BabyBear> {
     use dregg_circuit::effect_vm::split_u64;
     use dregg_circuit::field::BabyBear;
-    use dregg_circuit::poseidon2::hash_bytes;
 
     let mut pre = vec![BabyBear::ZERO; V9_NUM_PRE_LIMBS];
     // limb 0: cells_root (turn-level).
@@ -1089,8 +1092,16 @@ pub fn compute_rotated_pre_limbs(
     // `hash_bytes(&ctx.nullifier_root)`. Byte-identical to `rotation_witness::produce`.
     ctx.nullifier_root
         .write_lanes(&mut pre, [26, 67, 68, 69, 70, 71, 72, 73]);
-    // limb 27: commitments_root (the noteCreate shielded-set root — the flag-day new limb).
-    pre[27] = hash_bytes(&ctx.commitments_root);
+    // limb 27: commitments_root lane-0 (welded) ‖ extras 74..=80: the SEVEN commitments-root
+    // completion felts. THE FAITHFUL 8-FELT COMMITMENTS ROOT — the native `CanonicalHeapTree8`
+    // node8 (arity-16) sorted-Poseidon2 accumulator root the circuit's 8-felt `commitments_root`
+    // column GROUP carries (lane 0 = limb 27, lanes 1..7 = limbs 74..80, matching
+    // `trace_rotated.rs::commitments_group_col`). The in-circuit noteCreate grow-gate FORCES the
+    // AFTER group to the `commitmentsInsertOp` native insert, so a ~31-bit collision at lane-0
+    // differing in any completion felt is UNSAT. This REPLACES the lossy 1-felt
+    // `hash_bytes(&ctx.commitments_root)`. Byte-identical to `rotation_witness::produce`.
+    ctx.commitments_root
+        .write_lanes(&mut pre, [27, 74, 75, 76, 77, 78, 79, 80]);
     // limb 28: heap_root lane-0 (welded) ‖ extras 58..=64: the SEVEN heap-root completion felts
     // (Phase H-HEAP-8). The faithful native-`heap_node8` (arity-16) 8-felt sorted-Merkle root over the
     // cell's heap map — the circuit's 8-felt `heap_root` column GROUP carries lane 0 = limb 28, lanes
@@ -1461,7 +1472,7 @@ mod tests {
         let mk_ctx = |nr: dregg_circuit::Faithful8| V9RotationContext {
             cells_root: BabyBear::ZERO,
             nullifier_root: nr,
-            commitments_root: [0u8; 32],
+            commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
             iroot: BabyBear::ZERO,
             material: RotationCarrierMaterial::default(),
         };
@@ -1510,6 +1521,69 @@ mod tests {
             committed(&limbs_a),
             committed(&limbs_b),
             "different nullifier sets MUST commit different roots (else a double-spend finalizes cross-node)"
+        );
+    }
+
+    /// VK-EPOCH RUST GHOST MIRROR (commitments dual) — the commitments accumulator root is committed
+    /// FAITHFULLY across all 8 rotated lanes ([27, 74..80]), not squeezed to the old lossy 1-felt, and
+    /// it DISTINGUISHES different commitment frontiers. The CREATE-side dual of the nullifier tooth:
+    /// two nodes with different created-commitment sets commit DIFFERENT state roots, so the published
+    /// commitment binds the grown shielded-note set an honest re-executor reproduces.
+    #[test]
+    fn commitments_root_faithful_8felt_and_cross_node_distinguishing() {
+        let cell = Cell::new(test_key(7), test_token(11));
+        let mk_ctx = |cr: dregg_circuit::Faithful8| V9RotationContext {
+            cells_root: BabyBear::ZERO,
+            nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            commitments_root: cr,
+            iroot: BabyBear::ZERO,
+            material: RotationCarrierMaterial::default(),
+        };
+
+        // Two DIFFERENT commitment frontiers (different created note commitments).
+        let mut set_a = crate::CommitmentSet::new();
+        set_a
+            .insert(crate::note::NoteCommitment(test_key(3)), 100)
+            .unwrap();
+        let mut set_b = crate::CommitmentSet::new();
+        set_b
+            .insert(crate::note::NoteCommitment(test_key(9)), 200)
+            .unwrap();
+        let root_a = set_a.root8();
+        let root_b = set_b.root8();
+
+        let limbs_a = compute_rotated_pre_limbs(&cell, &mk_ctx(root_a));
+        let limbs_b = compute_rotated_pre_limbs(&cell, &mk_ctx(root_b));
+
+        // (a) WRITE CORRECTNESS: committed limbs [27, 74..80] ARE the root's 8 lanes.
+        let ra = root_a.limbs();
+        assert_eq!(limbs_a[27], ra[0], "limb 27 must be root lane 0");
+        for i in 0..7 {
+            assert_eq!(
+                limbs_a[74 + i],
+                ra[1 + i],
+                "completion limb {} must be root lane {}",
+                74 + i,
+                1 + i
+            );
+        }
+
+        // (b) NON-VACUOUS: the completion lanes are NOT all zero (the old bug filled only lane 0).
+        assert!(
+            ra[1..8].iter().any(|&x| x != BabyBear::ZERO),
+            "faithful completion lanes 74..80 must be non-zero for a non-empty frontier"
+        );
+
+        // (c) CROSS-NODE DISTINGUISHING: different frontiers -> different committed roots.
+        let committed = |l: &[BabyBear]| -> Vec<BabyBear> {
+            std::iter::once(l[27])
+                .chain(l[74..81].iter().copied())
+                .collect()
+        };
+        assert_ne!(
+            committed(&limbs_a),
+            committed(&limbs_b),
+            "different commitment sets MUST commit different roots (the created-note-set binding)"
         );
     }
 
@@ -2201,7 +2275,7 @@ mod tests {
         V9RotationContext {
             cells_root: BabyBear::new(cells_root),
             nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
-            commitments_root: [0u8; 32],
+            commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
             iroot: BabyBear::new(iroot),
             material: Default::default(),
         }
@@ -2223,11 +2297,11 @@ mod tests {
         assert_eq!(pre[0], BabyBear::new(11));
         let (lo, _hi) = dregg_circuit::effect_vm::split_u64(100_000u64);
         assert_eq!(pre[1], lo, "r0 ↔ balance_lo weld");
-        // limb 27 is the commitments_root (the flag-day new shielded-set root).
+        // limb 27 is the commitments_root lane 0 (the flag-day faithful-8-felt shielded-set root).
         assert_eq!(
             pre[27],
-            dregg_circuit::poseidon2::hash_bytes(&[0u8; 32]),
-            "commitments_root rides limb 27"
+            dregg_circuit::heap_root::empty_heap_root_8().limbs()[0],
+            "commitments_root lane 0 rides limb 27"
         );
         // limb 32 is the lifecycle_disc (a Live cell's disc is 0).
         assert_eq!(
@@ -2310,7 +2384,11 @@ mod tests {
         let cell = Cell::with_balance(test_key(7), test_token(0), 100_000);
         let ctx0 = v9_ctx(11, 22);
         let mut ctx1 = ctx0;
-        ctx1.commitments_root = [9u8; 32];
+        // A non-empty commitments accumulator root — the faithful 8-felt root over one created note.
+        let mut set = crate::CommitmentSet::new();
+        set.insert(crate::note::NoteCommitment(test_key(9)), 200)
+            .unwrap();
+        ctx1.commitments_root = set.root8();
         assert_ne!(
             compute_canonical_state_commitment_v9_felt(&cell, &ctx0),
             compute_canonical_state_commitment_v9_felt(&cell, &ctx1),

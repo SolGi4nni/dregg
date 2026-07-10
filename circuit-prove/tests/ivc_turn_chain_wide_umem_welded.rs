@@ -92,8 +92,8 @@ fn make_wide_welded_turn(
         &effects,
         &before_cell,
         &after_cell,
-        &[0u8; 32],
-        &[0u8; 32],
+        &dregg_circuit::heap_root::empty_heap_root_8(),
+        &dregg_circuit::heap_root::empty_heap_root_8(),
         &[[1u8; 32], [2u8; 32]],
         None,
     )

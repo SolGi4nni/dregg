@@ -167,7 +167,7 @@ fn assert_birth_forced_on_wire(effect: Effect, name: &str, key_col: usize, label
     let after_cell = producer_cell(before_balance, 1);
     ledger.insert_cell(after_cell.clone()).unwrap();
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_log: Vec<[u8; 32]> = vec![[5u8; 32]];
     let before_w = rw::produce(
         &before_cell,

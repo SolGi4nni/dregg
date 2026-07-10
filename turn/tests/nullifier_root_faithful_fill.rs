@@ -46,7 +46,7 @@ fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
         &cell,
         &ledger,
         &nf_root,
-        &[0u8; 32],
+        &dregg_turn::rotation_witness::empty_commitments_root_8(),
         &receipts,
         &Default::default(),
     );
@@ -54,7 +54,7 @@ fn nullifier_root_fills_all_8_lanes_and_twins_agree() {
     let ctx = V9RotationContext {
         cells_root: cells_root(&ledger),
         nullifier_root: nf_root,
-        commitments_root: [0u8; 32],
+        commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
         iroot: iroot(&receipts),
         material: Default::default(),
     };
@@ -98,7 +98,7 @@ fn non_spend_turn_commits_native_empty_not_zero_bytes() {
         &cell,
         &ledger,
         &empty,
-        &[0u8; 32],
+        &dregg_turn::rotation_witness::empty_commitments_root_8(),
         &[[1u8; 32]],
         &Default::default(),
     );
@@ -143,7 +143,7 @@ fn different_nullifier_sets_yield_different_committed_roots() {
             &cell,
             &ledger,
             root,
-            &[0u8; 32],
+            &dregg_turn::rotation_witness::empty_commitments_root_8(),
             &receipts,
             &Default::default(),
         );

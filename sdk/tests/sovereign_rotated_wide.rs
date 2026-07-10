@@ -69,7 +69,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
     // The turn-context the rotated commitment absorbs (single-cell ledger, empty maps, empty
     // receipt-chain iroot) — the SAME context the sovereign producer supplies.
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -185,7 +185,7 @@ fn wide_sovereign_pipeline_proves_and_anchored_verify_accepts() {
 fn wide_sovereign_forged_anchor_is_rejected() {
     let (before_cell, after_cell) = sovereign_transfer_cells(100_000, 100);
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
     let before_w = rw::produce(
@@ -318,7 +318,7 @@ fn wide_sovereign_refusal_proves_and_anchored_verify_accepts() {
 
     // The turn-context (single-cell ledger, empty maps, empty receipt iroot) — the producer's context.
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_hashes: Vec<[u8; 32]> = vec![];
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());
@@ -528,7 +528,7 @@ fn flagday_transfer_witness(
     }];
 
     let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-    let commitments_root = [0u8; 32];
+    let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let receipt_hashes: Vec<[u8; 32]> = Vec::new();
     let mut ctx_ledger = Ledger::new();
     let _ = ctx_ledger.insert_cell(before_cell.clone());

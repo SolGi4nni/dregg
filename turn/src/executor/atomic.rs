@@ -1267,7 +1267,12 @@ impl TurnExecutor {
             let target_cell = match ledger.get(&action.target) {
                 Some(c) => c.clone(),
                 None => {
-                    journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                    journal.rollback(
+                        ledger,
+                        &self.bridged_nullifiers,
+                        &self.note_nullifiers,
+                        &self.note_commitments,
+                    );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
                         reason: format!("hosted action #{} target cell not found", idx),
@@ -1285,7 +1290,12 @@ impl TurnExecutor {
                 &path,
                 mixed_turn.nonce,
             ) {
-                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                );
                 return Err(AtomicTurnError::HostedAuthorizationFailed {
                     cell: action.target,
                     reason: format!("{err}"),
@@ -1294,7 +1304,12 @@ impl TurnExecutor {
 
             // 3. Preconditions.
             if let Err((err, _)) = self.check_preconditions(action, &target_cell, &path) {
-                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                );
                 return Err(AtomicTurnError::HostedApplyFailed {
                     cell: action.target,
                     reason: format!("{err}"),
@@ -1375,7 +1390,12 @@ impl TurnExecutor {
                     &mixed_turn.agent,
                     &mut journal,
                 ) {
-                    journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                    journal.rollback(
+                        ledger,
+                        &self.bridged_nullifiers,
+                        &self.note_nullifiers,
+                        &self.note_commitments,
+                    );
                     return Err(AtomicTurnError::HostedApplyFailed {
                         cell: action.target,
                         reason: format!("{err}"),
@@ -1423,7 +1443,12 @@ impl TurnExecutor {
         }
         if let Err(e) = Self::check_per_asset_conservation_by_asset(&conservation_entries, &[]) {
             // Roll back ALL hosted mutations before returning.
-            journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+            journal.rollback(
+                ledger,
+                &self.bridged_nullifiers,
+                &self.note_nullifiers,
+                &self.note_commitments,
+            );
             return Err(e);
         }
 
@@ -1439,7 +1464,12 @@ impl TurnExecutor {
             // THE EPOCH §5: ordinary debit (refuses below zero) instead of a
             // raw subtraction that could underflow.
             if !agent.state.debit_balance(mixed_turn.fee) {
-                journal.rollback(ledger, &self.bridged_nullifiers, &self.note_nullifiers);
+                journal.rollback(
+                    ledger,
+                    &self.bridged_nullifiers,
+                    &self.note_nullifiers,
+                    &self.note_commitments,
+                );
                 return Err(AtomicTurnError::ProofFailed {
                     cell: mixed_turn.agent,
                     reason: format!(

@@ -6364,7 +6364,7 @@ mod tests {
         let mut ledger = dregg_cell::Ledger::new();
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
         let before_w = rw::produce(
             &before_cell,
@@ -6516,7 +6516,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &[[3u8; 32], [4u8; 32]],
             &Default::default(),
         );
@@ -6524,7 +6524,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &[[3u8; 32], [4u8; 32]],
             &Default::default(),
         );
@@ -6837,7 +6837,7 @@ mod tests {
         let mut ledger = dregg_cell::Ledger::new();
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
         let before_w = rw::produce(
             &before_cell,
@@ -7109,7 +7109,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7117,7 +7117,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7339,7 +7339,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7347,7 +7347,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7571,7 +7571,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7579,7 +7579,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7763,7 +7763,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7771,7 +7771,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7901,7 +7901,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -7909,7 +7909,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8100,7 +8100,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8108,7 +8108,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8349,7 +8349,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8357,7 +8357,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8648,7 +8648,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8656,7 +8656,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8856,7 +8856,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -8864,7 +8864,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -9159,7 +9159,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -9167,7 +9167,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -9805,7 +9805,7 @@ mod tests {
             &before_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -9813,7 +9813,7 @@ mod tests {
             &after_cell,
             &ledger,
             &dregg_circuit::heap_root::empty_heap_root_8(),
-            &[0u8; 32],
+            &dregg_circuit::heap_root::empty_heap_root_8(),
             &receipt_log,
             &Default::default(),
         );
@@ -9910,7 +9910,7 @@ mod tests {
         let mut ledger = dregg_cell::Ledger::new();
         ledger.insert_cell(after_cell.clone()).unwrap();
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_log: Vec<[u8; 32]> = vec![[3u8; 32], [4u8; 32]];
         let before_w = rw::produce(
             &before_cell,
@@ -10762,7 +10762,7 @@ mod tests {
                     &dregg_cell::Cell::with_balance([0xE0; 32], [0u8; 32], 1234),
                     &dregg_cell::Ledger::new(),
                     &dregg_circuit::heap_root::empty_heap_root_8(),
-                    &[0u8; 32],
+                    &dregg_circuit::heap_root::empty_heap_root_8(),
                     &[[0x11u8; 32]],
                     &Default::default(),
                 ),
@@ -10770,7 +10770,7 @@ mod tests {
                     &dregg_cell::Cell::with_balance([0xE0; 32], [0u8; 32], 1234),
                     &dregg_cell::Ledger::new(),
                     &dregg_circuit::heap_root::empty_heap_root_8(),
-                    &[0u8; 32],
+                    &dregg_circuit::heap_root::empty_heap_root_8(),
                     &[[0x11u8; 32]],
                     &Default::default(),
                 ),
@@ -10805,7 +10805,7 @@ mod tests {
         let mut ctx_ledger = dregg_cell::Ledger::new();
         let _ = ctx_ledger.insert_cell(before_cell.clone());
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let before_w = rw::produce(
             before_cell,
             &ctx_ledger,

@@ -5396,7 +5396,7 @@ impl AgentCipherclerk {
         //    its own receipt chain. The before/after blocks share this turn-invariant
         //    context (the receipt log does not change mid-proof).
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_hashes: Vec<[u8; 32]> = self
             .receipt_chain
             .iter()
@@ -6037,7 +6037,7 @@ impl AgentCipherclerk {
         );
 
         let nullifier_root = dregg_circuit::heap_root::empty_heap_root_8();
-        let commitments_root = [0u8; 32];
+        let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
         let receipt_hashes: Vec<[u8; 32]> = self
             .receipt_chain
             .iter()
