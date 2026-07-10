@@ -55,7 +55,41 @@ use std::sync::{Arc, RwLock};
 
 use dregg_agent::agent::GrainTurnMinter;
 use dregg_cell::program::field_from_u64;
-use dregg_sdk::{AgentCipherclerk, AgentRuntime, CellId, Effect, SdkError, ToolGateway, ToolGrant};
+use dregg_sdk::{
+    AgentCipherclerk, AgentRuntime, CALLS_MADE_SLOT, CellId, Effect, SdkError, ToolGateway,
+    ToolGrant,
+};
+
+#[cfg(feature = "prover")]
+mod finalize;
+#[cfg(feature = "prover")]
+pub use finalize::{finalize_grain_turn, finalize_session};
+
+/// **A captured grain turn — the R3-adapter input.** Everything
+/// [`finalize_grain_turn`](crate::finalize_grain_turn) needs to mint the rotated
+/// wide-anchored EffectVM leg(s) for a turn `ToolGatewayMinter` committed, so it
+/// becomes the `FinalizedTurn`(s) the whole-history fold folds. Captured on EVERY
+/// [`mint_turn`](GrainTurnMinter::mint_turn) (cheap — two `Cell` clones + the effect
+/// list), independent of whether the `prover` R3 leg is ever minted.
+///
+/// The `effects` are the FULL committed set the executor applied to the worker cell:
+/// the gateway's `calls_made` `SetField` PREPENDED to the tool's witness work — the
+/// same order [`ToolGateway::invoke`] built, so the EffectVM projection reproduces the
+/// committed transition (there is no per-call charge on the grain grant, so no charge
+/// `Transfer` rides).
+#[derive(Clone, Debug)]
+pub struct GrainTurnRecord {
+    /// The committed turn hash — the R2 link (the manifest entry).
+    pub turn_hash: [u8; 32],
+    /// The grain worker cell BEFORE the executor committed this turn (its pre-state:
+    /// balance / nonce / fields / cap root — the leg's genesis old-root).
+    pub before_cell: dregg_cell::Cell,
+    /// The grain worker cell AFTER the committed turn (its post-state — the executor's
+    /// on-ledger head for this turn).
+    pub after_cell: dregg_cell::Cell,
+    /// The FULL effect list the executor applied (gateway `calls_made` SetField ‖ work).
+    pub effects: Vec<Effect>,
+}
 
 /// Slot on the grain turn-cell that witnesses the session meter's post-draw
 /// `consumed` total (written on the metered turn). Distinct from
@@ -146,6 +180,9 @@ pub struct ToolGatewayMinter {
     /// turns are unattested (the slot stays at its zero default). Set with
     /// [`bind_attestation`](Self::bind_attestation).
     pending_attestation: Option<[u8; 32]>,
+    /// The per-turn R3-adapter records (pre-cell, effects, post-cell) captured on every
+    /// committed turn — the input `finalize_session` folds into `FinalizedTurn`s.
+    records: Vec<GrainTurnRecord>,
 }
 
 impl ToolGatewayMinter {
@@ -171,6 +208,7 @@ impl ToolGatewayMinter {
             now: 0,
             minted: Vec::new(),
             pending_attestation: None,
+            records: Vec::new(),
         })
     }
 
@@ -218,6 +256,22 @@ impl ToolGatewayMinter {
     pub fn committed_turns(&self) -> &[[u8; 32]] {
         &self.minted
     }
+
+    /// The per-turn R3-adapter records captured for this session, in commit order —
+    /// the input [`finalize_session`](crate::finalize_session) folds into the
+    /// `FinalizedTurn` chain (available whether or not the `prover` leg is minted;
+    /// the capture itself is on the commit path).
+    pub fn records(&self) -> &[GrainTurnRecord] {
+        &self.records
+    }
+
+    /// Clone the CURRENT committed grain worker cell straight off the real ledger
+    /// (a genuine `Cell` snapshot, not a mirror) — the pre/post state the R3 leg
+    /// binds. `None` if the cell is absent (never, after admission).
+    fn snapshot_worker_cell(&self) -> Option<dregg_cell::Cell> {
+        let ledger = self.runtime.ledger().lock().ok()?;
+        ledger.get(&self.gateway.worker_cell()).cloned()
+    }
 }
 
 impl GrainTurnMinter for ToolGatewayMinter {
@@ -263,6 +317,19 @@ impl GrainTurnMinter for ToolGatewayMinter {
                 value: commitment,
             });
         }
+        // R3-ADAPTER CAPTURE (pre-state). Snapshot the worker cell BEFORE the commit and
+        // reconstruct the FULL effect set the executor will apply — the gateway prepends
+        // `SetField { calls_made : c → c+1 }` to `work` (`ToolGateway::invoke`), so the
+        // captured list mirrors the committed transition the R3 rotated leg re-proves.
+        let before_cell = self.snapshot_worker_cell();
+        let mut committed_effects = Vec::with_capacity(work.len() + 1);
+        committed_effects.push(Effect::SetField {
+            cell,
+            index: CALLS_MADE_SLOT as usize,
+            value: field_from_u64((self.gateway.calls_made() + 1) as u64),
+        });
+        committed_effects.extend(work.iter().cloned());
+
         // The genuine executor turn. `Err` = the executor refused host-side (its
         // `calls_made` caveat over-rate, or an insolvent turn) — the agent run loop
         // treats it as a refused action (no draw, no receipt).
@@ -272,6 +339,18 @@ impl GrainTurnMinter for ToolGatewayMinter {
             .map_err(|e| e.to_string())?;
         let turn_hash = receipt.receipt.turn_hash;
         self.minted.push(turn_hash);
+
+        // R3-ADAPTER CAPTURE (post-state). Record the committed turn only if both
+        // snapshots exist (they always do after admission) — a missing snapshot is not
+        // fatal to the R2 turn, so it degrades to "not R3-finalizable", never a panic.
+        if let (Some(before_cell), Some(after_cell)) = (before_cell, self.snapshot_worker_cell()) {
+            self.records.push(GrainTurnRecord {
+                turn_hash,
+                before_cell,
+                after_cell,
+                effects: committed_effects,
+            });
+        }
         Ok(turn_hash)
     }
 }

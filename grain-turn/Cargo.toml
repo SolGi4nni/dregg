@@ -13,16 +13,44 @@ description = "The R2 kernel-turn weld (THE-GRAIN.md face #1): the REAL GrainTur
 name = "grain_turn"
 path = "src/lib.rs"
 
+[features]
+# The R3 ADAPTER (heavy, opt-in — mirrors `dregg-turn`'s own `prover` gate). Enables
+# `finalize_grain_turn` / `finalize_session`: minting the rotated wide-anchored EffectVM
+# leg(s) for a committed grain turn so each becomes a `FinalizedTurn` the whole-history
+# fold (grain-verify::r3_verify) can fold. Pulls the STARK prover; the default grain-turn
+# (the R2 minter) stays lean — no circuit/prover link on the commit path.
+prover = ["dep:dregg-turn", "dep:dregg-circuit", "dep:dregg-circuit-prove", "dregg-turn/prover"]
+
 [dependencies]
 # The std-only agent runtime + the GrainTurnMinter seam we implement.
 dregg-agent = { path = "../dregg-agent" }
 # The verified executor + the proven ToolGateway (delegAdmit mandate: the
-# calls_made FieldLte/Monotonic caveat is the host-side meter).
+# calls_made FieldLte/Monotonic caveat is the host-side meter). Also carries the
+# EffectVM marshaller (`convert_effects_to_vm`) + `split_into_cohort_runs` +
+# `RotationTurnWitness` the R3 adapter uses (all non-prover-gated).
 dregg-sdk = { path = "../sdk" }
 # The grain turn-cell's field-slot helpers (field_from_u64) + Effect/CellId types.
 dregg-cell = { path = "../cell" }
 # The action commit witnessed at ACTION_SLOT (same crypto tier dregg-agent uses).
 blake3 = "1"
+
+# The R3 adapter's proving deps — OPTIONAL, only under `prover`. `dregg-turn` carries
+# the rotated-leg mint recipe (`mint_rotated_participant_leg`); `dregg-circuit` the
+# EffectVM `CellState`/`Effect`; `dregg-circuit-prove` the `FinalizedTurn` shape.
+dregg-turn = { path = "../turn", optional = true }
+dregg-circuit = { path = "../circuit", optional = true }
+dregg-circuit-prove = { path = "../circuit-prove", optional = true }
+
+[dev-dependencies]
+# The R3 accept gate the adapter feeds: the end-to-end test drives a tiny grain session,
+# `finalize_session`s it, and hands the `Vec<FinalizedTurn>` to `grain_verify::r3_verify`
+# (the Lean-proven decision). Consuming grain-verify here keeps it a pure CONSUMER — the
+# producer (this crate's `finalize_grain_turn`) is the minter-side half.
+grain-verify = { path = "../grain-verify" }
+# The test's core-availability gate (`grain_r3_verify_core_available`) + the tamper case's
+# leg-PI surgery (`dregg-circuit`/`dregg-circuit-prove` are already `prover` deps).
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
+
 # NOTE: breadstuffs (the core) depends on a downstream operated layer ZERO times.
 # The R2 verifier (grain-verify) lives in a downstream verifier crate
 # the cross-repo end-to-end test lives there too. See docs/GRAIN-VERIFY-HOME.md.
