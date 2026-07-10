@@ -32,6 +32,10 @@ same stance as `Poseidon2Binding`'s `LeafRealization.encodeLeaf_inj`), NEVER a `
 -/
 import Dregg2.Circuit.FinKernelState
 import Dregg2.Circuit.Poseidon2Binding
+-- `Encodable (Finset _)` (used by `zcode f.accounts`) previously arrived TRANSITIVELY via the
+-- `Mathlib.Tactic` umbrella; that umbrella was trimmed 2026-07-10 (see Crypto/Primitives.lean,
+-- docs/LEAN-SEED-SIZE.md). Declared directly here.
+import Mathlib.Logic.Equiv.Finset
 import Mathlib.Tactic.DeriveEncodable
 
 namespace Dregg2.Circuit.FinFrameHash
@@ -123,7 +127,11 @@ def serializeRestFin (f : FinKernelState) : List ℤ :=
   , zcode f.delegations.toMap.entries
   , zcode f.delegationEpoch.toMap.entries
   , zcode f.delegationEpochAt.toMap.entries
-  , zcode f.heaps.toMap.entries ]
+  , zcode f.heaps.toMap.entries
+  -- The two accumulator roots (`Fin 8 → ℤ`, a FINITE domain) serialize as their 8-felt `List.ofFn`.
+  -- Binding them is what makes the root-clauses of `RestHashIffFrame` NON-vacuous.
+  , zcode (List.ofFn f.nullifierRoot)
+  , zcode (List.ofFn f.revokedRoot) ]
 
 /-- **`serializeFin f`** — the canonical serialization of the WHOLE finite kernel state: the `cell`
 code, then the 15 non-`cell` codes. Fixed-length (16 entries), so position is the field tag and
@@ -165,12 +173,13 @@ theorem restAgree_of_serializeRestFin {f f' : FinKernelState}
       ∧ f.slotCaveats = f'.slotCaveats ∧ f.factories = f'.factories ∧ f.lifecycle = f'.lifecycle
       ∧ f.deathCert = f'.deathCert ∧ f.delegate = f'.delegate ∧ f.delegations = f'.delegations
       ∧ f.delegationEpoch = f'.delegationEpoch ∧ f.delegationEpochAt = f'.delegationEpochAt
-      ∧ f.heaps = f'.heaps := by
+      ∧ f.heaps = f'.heaps ∧ f.nullifierRoot = f'.nullifierRoot
+      ∧ f.revokedRoot = f'.revokedRoot := by
   simp only [serializeRestFin, List.cons.injEq, and_true] at h
   obtain ⟨hAcc, hCaps, hNul, hRev, hCom, hBal, hSlot, hFac, hLife, hDeath, hDel, hDels, hEp, hEpat,
-    hHeaps⟩ := h
+    hHeaps, hNRoot, hRRoot⟩ := h
   refine ⟨zcode_inj hAcc, ?_, zcode_inj hNul, zcode_inj hRev, zcode_inj hCom, ?_, ?_, zcode_inj hFac,
-    ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+    ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · exact CanonMap.eq_of_entries (zcode_inj hCaps)
   · exact bal_eq_of_balData (zcode_inj hBal)
   · exact CanonMap.eq_of_entries (zcode_inj hSlot)
@@ -181,6 +190,8 @@ theorem restAgree_of_serializeRestFin {f f' : FinKernelState}
   · exact CanonMap.eq_of_entries (zcode_inj hEp)
   · exact CanonMap.eq_of_entries (zcode_inj hEpat)
   · exact CanonMap.eq_of_entries (zcode_inj hHeaps)
+  · exact List.ofFn_injective (zcode_inj hNRoot)
+  · exact List.ofFn_injective (zcode_inj hRRoot)
 
 /-- **`serializeFin_injective` — PROVED.** Equal whole-state serializations force equal
 `FinKernelState`s: the `cell` code fixes `cell` (`cell_eq_of_cellData`), the 15 rest codes fix the
@@ -191,12 +202,12 @@ theorem serializeFin_injective {f f' : FinKernelState} (h : serializeFin f = ser
   obtain ⟨hcell, hrest⟩ := h
   have hc : f.cell = f'.cell := cell_eq_of_cellData (zcode_inj hcell)
   obtain ⟨hAcc, hCaps, hNul, hRev, hCom, hBal, hSlot, hFac, hLife, hDeath, hDel, hDels, hEp, hEpat,
-    hHeaps⟩ := restAgree_of_serializeRestFin hrest
+    hHeaps, hNRoot, hRRoot⟩ := restAgree_of_serializeRestFin hrest
   ext1 <;>
     first
       | exact hAcc | exact hc | exact hCaps | exact hNul | exact hRev | exact hCom | exact hBal
       | exact hSlot | exact hFac | exact hLife | exact hDeath | exact hDel | exact hDels
-      | exact hEp | exact hEpat | exact hHeaps
+      | exact hEp | exact hEpat | exact hHeaps | exact hNRoot | exact hRRoot
 
 /-! ## §5 — `frameHashFin` + the HEADLINE `restHashIffFrame_fin` (residual `Poseidon2SpongeCR`). -/
 
@@ -254,11 +265,12 @@ theorem restBody_iff_restAgree (f f' : FinKernelState) :
           ∧ f'.slotCaveats = f.slotCaveats ∧ f'.factories = f.factories ∧ f'.lifecycle = f.lifecycle
           ∧ f'.deathCert = f.deathCert ∧ f'.delegate = f.delegate ∧ f'.delegations = f.delegations
           ∧ f'.delegationEpoch = f.delegationEpoch ∧ f'.delegationEpochAt = f.delegationEpochAt
-          ∧ f'.heaps = f.heaps) := by
+          ∧ f'.heaps = f.heaps ∧ f'.nullifierRoot = f.nullifierRoot
+          ∧ f'.revokedRoot = f.revokedRoot) := by
   constructor
   · rintro ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSlot, hFac, hLife, hDeath, hDel, hDels, hEp, hEpat,
-      hHeaps, _, _⟩
-    refine ⟨hAcc, ?_, hNul, hRev, hCom, ?_, ?_, hFac, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+      hHeaps, hNRoot, hRRoot⟩
+    refine ⟨hAcc, ?_, hNul, hRev, hCom, ?_, ?_, hFac, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hNRoot, hRRoot⟩
     · exact CanonMap.ext (fun l => congrFun hCaps l)
     · exact CanonMap.ext (fun key => by obtain ⟨c, a⟩ := key; exact congrFun (congrFun hBal c) a)
     · exact CanonMap.ext (fun c => congrFun hSlot c)
@@ -270,8 +282,8 @@ theorem restBody_iff_restAgree (f f' : FinKernelState) :
     · exact CanonMap.ext (fun c => congrFun hEpat c)
     · exact CanonMap.ext (fun c => congrFun hHeaps c)
   · rintro ⟨hAcc, hCaps, hNul, hRev, hCom, hBal, hSlot, hFac, hLife, hDeath, hDel, hDels, hEp, hEpat,
-      hHeaps⟩
-    refine ⟨hAcc, ?_, ?_, hNul, hRev, hCom, ?_, hFac, ?_, ?_, ?_, ?_, ?_, ?_, ?_, rfl, rfl⟩
+      hHeaps, hNRoot, hRRoot⟩
+    refine ⟨hAcc, ?_, ?_, hNul, hRev, hCom, ?_, hFac, ?_, ?_, ?_, ?_, ?_, ?_, ?_, hNRoot, hRRoot⟩
     · simp only [denote]; rw [hCaps]
     · simp only [denote]; rw [hBal]
     · simp only [denote]; rw [hSlot]
@@ -290,12 +302,13 @@ theorem serializeRestFin_of_restAgree {f f' : FinKernelState}
       ∧ f'.slotCaveats = f.slotCaveats ∧ f'.factories = f.factories ∧ f'.lifecycle = f.lifecycle
       ∧ f'.deathCert = f.deathCert ∧ f'.delegate = f.delegate ∧ f'.delegations = f.delegations
       ∧ f'.delegationEpoch = f.delegationEpoch ∧ f'.delegationEpochAt = f.delegationEpochAt
-      ∧ f'.heaps = f.heaps) :
+      ∧ f'.heaps = f.heaps ∧ f'.nullifierRoot = f.nullifierRoot
+      ∧ f'.revokedRoot = f.revokedRoot) :
     serializeRestFin f = serializeRestFin f' := by
   obtain ⟨hAcc, hCaps, hNul, hRev, hCom, hBal, hSlot, hFac, hLife, hDeath, hDel, hDels, hEp, hEpat,
-    hHeaps⟩ := h
+    hHeaps, hNRoot, hRRoot⟩ := h
   simp only [serializeRestFin, balData, hAcc, hCaps, hNul, hRev, hCom, hBal, hSlot, hFac, hLife,
-    hDeath, hDel, hDels, hEp, hEpat, hHeaps]
+    hDeath, hDel, hDels, hEp, hEpat, hHeaps, hNRoot, hRRoot]
 
 /-- Flip the orientation of the 15-field rest-agreement conjunction. -/
 private theorem restAgree_symm {f f' : FinKernelState}
@@ -304,16 +317,18 @@ private theorem restAgree_symm {f f' : FinKernelState}
       ∧ f.slotCaveats = f'.slotCaveats ∧ f.factories = f'.factories ∧ f.lifecycle = f'.lifecycle
       ∧ f.deathCert = f'.deathCert ∧ f.delegate = f'.delegate ∧ f.delegations = f'.delegations
       ∧ f.delegationEpoch = f'.delegationEpoch ∧ f.delegationEpochAt = f'.delegationEpochAt
-      ∧ f.heaps = f'.heaps) :
+      ∧ f.heaps = f'.heaps ∧ f.nullifierRoot = f'.nullifierRoot
+      ∧ f.revokedRoot = f'.revokedRoot) :
     f'.accounts = f.accounts ∧ f'.caps = f.caps ∧ f'.nullifiers = f.nullifiers
       ∧ f'.revoked = f.revoked ∧ f'.commitments = f.commitments ∧ f'.bal = f.bal
       ∧ f'.slotCaveats = f.slotCaveats ∧ f'.factories = f.factories ∧ f'.lifecycle = f.lifecycle
       ∧ f'.deathCert = f.deathCert ∧ f'.delegate = f.delegate ∧ f'.delegations = f.delegations
       ∧ f'.delegationEpoch = f.delegationEpoch ∧ f'.delegationEpochAt = f.delegationEpochAt
-      ∧ f'.heaps = f.heaps := by
-  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15⟩ := h
+      ∧ f'.heaps = f.heaps ∧ f'.nullifierRoot = f.nullifierRoot
+      ∧ f'.revokedRoot = f.revokedRoot := by
+  obtain ⟨h1, h2, h3, h4, h5, h6, h7, h8, h9, h10, h11, h12, h13, h14, h15, h16, h17⟩ := h
   exact ⟨h1.symm, h2.symm, h3.symm, h4.symm, h5.symm, h6.symm, h7.symm, h8.symm, h9.symm, h10.symm,
-    h11.symm, h12.symm, h13.symm, h14.symm, h15.symm⟩
+    h11.symm, h12.symm, h13.symm, h14.symm, h15.symm, h16.symm, h17.symm⟩
 
 /-- **`restHashIffFrame_of_fin` — THE DISCHARGE-LIFT (honest scope: the DENOTE IMAGE).** For any two
 reachable (`denote`-image) `RecordKernelState`s, `RH_fin sponge` satisfies the exact
@@ -413,5 +428,29 @@ theorem collapsing_not_CR : ¬ Poseidon2SpongeCR (fun _ : List ℤ => (0 : ℤ))
   exact absurd this (by decide)
 
 end Teeth
+
+/-! ## §7 — TEETH: the accumulator roots are genuinely BOUND (the point of root convergence).
+
+Before `FinKernelState` carried the roots, `denote` left them at `RecordKernelState`'s empty-tree
+default, so `restHashIffFrame_of_fin`'s root clauses read `default = default` — TRUE but VACUOUS.
+These two teeth show the clauses now have content: `denote` transports a non-default root, and the
+canonical serialization (hence `frameHashFin`) SEPARATES states that differ only in a root. -/
+
+/-- A state whose `nullifierRoot` is non-default (7 in limb 0). -/
+def rootedInit : FinKernelState :=
+  { finInit with nullifierRoot := fun i => if i = 0 then (7 : ℤ) else 0 }
+
+/-- **TOOTH (fires).** `denote` TRANSPORTS the root — it is no longer defaulted. -/
+theorem denote_carries_nullifierRoot : (denote rootedInit).nullifierRoot 0 = 7 := rfl
+
+/-- **TOOTH (bites).** Two states differing ONLY in `nullifierRoot` have DIFFERENT canonical
+serializations — so the frame hash binds the root. Were the root still unserialized, these two
+serializations would be equal and this theorem false. -/
+theorem serializeFin_separates_nullifierRoot :
+    serializeFin rootedInit ≠ serializeFin finInit := by
+  intro h
+  have hEq := serializeFin_injective h
+  have h0 := congrFun (congrArg FinKernelState.nullifierRoot hEq) 0
+  simp [rootedInit, finInit] at h0
 
 end Dregg2.Circuit.FinFrameHash

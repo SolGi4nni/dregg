@@ -315,6 +315,13 @@ abbrev BalKey : Type := CellId ×ₗ AssetId
   delegationEpochAt : CanonMap CellId Nat 0
   /-- Per-cell heap leaf list; default `[]`. -/
   heaps : CanonMap CellId (List (ℤ × ℤ)) []
+  /-- **The VK-epoch nullifier accumulator root** (`RecordKernel.lean:433`). `Fin 8 → ℤ` is a FINITE
+  domain (8 felts), so it is carried VERBATIM — no map refinement. Carrying it is what makes
+  `denote`'s root non-default, i.e. what makes `FinFrameHash`'s root-clauses NON-vacuous. -/
+  nullifierRoot : Fin 8 → ℤ := fun _ => 0
+  /-- **The revoked-credential-nullifier accumulator root** (`RecordKernel.lean:442`). Finite, verbatim.
+  (`commitmentsRoot` does NOT exist at HEAD — the dual never landed. Do not add it.) -/
+  revokedRoot : Fin 8 → ℤ := fun _ => 0
 
 /-! ## §4 — `denote`: the refinement `FinKernelState → RecordKernelState` (field-wise lookup-with-default). -/
 
@@ -338,6 +345,8 @@ def denote (f : FinKernelState) : RecordKernelState where
   delegationEpoch := fun c => f.delegationEpoch.get c
   delegationEpochAt := fun c => f.delegationEpochAt.get c
   heaps := fun c => f.heaps.get c
+  nullifierRoot := f.nullifierRoot
+  revokedRoot := f.revokedRoot
 
 /-! ## §5 — `denote_injective`: THE LOAD-BEARING PROPERTY (hashing the finite state binds it, no loss). -/
 
@@ -383,6 +392,8 @@ theorem denote_injective {f f' : FinKernelState} (h : denote f = denote f') : f 
   · exact CanonMap.ext hep
   · exact CanonMap.ext hepat
   · exact CanonMap.ext hheaps
+  · exact congrArg RecordKernelState.nullifierRoot h
+  · exact congrArg RecordKernelState.revokedRoot h
 
 /-! ## §6 — the initial state + `denote_finInit`. -/
 
