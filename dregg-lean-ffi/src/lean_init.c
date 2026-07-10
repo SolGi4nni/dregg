@@ -229,6 +229,20 @@ extern lean_object *initialize_Dregg2_Dregg2_Crypto_MlKemDecaps(uint8_t builtin)
 extern lean_object *dregg_mlkem_decaps_real(lean_object *input);
 #endif
 
+/* BRICK K5 — the REAL, FULL-BYTE ML-KEM-768 ENCAPS export (the ENCAPS mirror of K6)
+ * (`Dregg2.Crypto.MlKemEncaps.mlkemEncapsRealFFI`): decodes the wire `"hex(ek) hex(m)"`, runs the
+ * FULL-DIMENSION Lean-verified `mlkemEncaps` (the deterministic FIPS 203 Alg 16 FO encaps: `H(ek)` SHA3-256 /
+ * `G(m ‖ H(ek))` SHA3-512 split / K-PKE.Encrypt over the real 1184-byte ek — NOT the `A=1,n=1` scalar toy) and
+ * returns `"hex(ct) hex(K)"` (the 1088-byte ciphertext + the 32-byte shared secret) or `"ERR"` on a malformed
+ * wire. This is the object that takes the `ml-kem` crate OUT of the deployed KEM-ENCAPS TCB. Its OWN module
+ * `Dregg2.Crypto.MlKemEncaps` (imports `MlKemDecaps` for `kpkeEncrypt`), so it needs its OWN initializer
+ * `initialize_Dregg2_Dregg2_Crypto_MlKemEncaps` (run below). GATED on DREGG_MLKEM_ENCAPS_REAL (build.rs probes
+ * + defines it when the symbol is present). */
+#ifdef DREGG_MLKEM_ENCAPS_REAL
+extern lean_object *initialize_Dregg2_Dregg2_Crypto_MlKemEncaps(uint8_t builtin);
+extern lean_object *dregg_mlkem_encaps_real(lean_object *input);
+#endif
+
 /* THE brick-8 SIGN analog — the REAL, FULL-BYTE ML-DSA-65 SIGN export
  * (`Dregg2.Crypto.MlDsaSignReal.signRealFFI`): decodes the wire `"hex(sk) hex(msg) hex(ctx)"`, runs the
  * FULL-DIMENSION Lean-verified `signCore` (skDecode / ExpandMask / NTT / SampleInBall / ExpandA / MakeHint /
@@ -401,6 +415,19 @@ int dregg_ffi_init(void) {
         return 1;
     }
     lean_dec_ref(kdres);
+#endif
+#ifdef DREGG_MLKEM_ENCAPS_REAL
+    /* BRICK K5 — the REAL, FULL-BYTE ML-KEM-768 encaps-core module (`Dregg2.Crypto.MlKemEncaps`) is OUTSIDE
+     * the FFI closure and is its OWN module (imports `MlKemDecaps`), so initialize it explicitly so
+     * `dregg_mlkem_encaps_real` is callable. Its dependency closure (Crypto.Keccak / MlKemRing / MlKemSample /
+     * MlKemCodec / MlKemDecaps) is re-entrant-safe under Lean's init guards (shared with the decaps module). */
+    lean_object *keres = initialize_Dregg2_Dregg2_Crypto_MlKemEncaps(1);
+    if (!lean_io_result_is_ok(keres)) {
+        lean_io_result_show_error(keres);
+        lean_dec_ref(keres);
+        return 1;
+    }
+    lean_dec_ref(keres);
 #endif
 #ifdef DREGG_FIPS204_SIGN_REAL
     /* THE brick-8 SIGN analog — the REAL, FULL-BYTE ML-DSA-65 sign-core module
@@ -597,6 +624,30 @@ size_t dregg_mlkem_decaps_real_str(const char *in_utf8, char *out, size_t out_ca
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_mlkem_decaps_real(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_MLKEM_ENCAPS_REAL
+/* dregg_mlkem_encaps_real_str — the C string bridge over the VERIFIED Lean `String -> String` REAL,
+ * FULL-BYTE ML-KEM-768 encaps export (`Dregg2.Crypto.MlKemEncaps.mlkemEncapsRealFFI`, BRICK K5). Input:
+ * `"hex(ek) hex(m)"` (two space-separated lowercase-hex fields over the real 1184-byte ek / 32-byte message).
+ * Output: `"hex(ct) hex(K)"` (the 1088-byte ciphertext + 32-byte shared secret as lowercase hex) or `"ERR"`
+ * (the fail-closed answer for any malformed wire). Runs the FULL-DIMENSION `mlkemEncaps` (proved BYTE-EXACT vs
+ * the crate's `EncapsulateDeterministic` by `encaps_matches_crate`) — the object that takes the `ml-kem` crate
+ * OUT of the deployed KEM-ENCAPS TCB. Same return contract as the bridges above. */
+size_t dregg_mlkem_encaps_real_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_mlkem_encaps_real(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

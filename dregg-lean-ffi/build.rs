@@ -266,6 +266,14 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // emitted and the splice picks up the export. This is the object `dregg-pq::HybridResponder::finish`
         // routes through to take the `ml-kem` crate OUT of the deployed KEM-decaps TCB.
         "Dregg2.Crypto.MlKemDecaps",
+        // ML-KEM-768-ENCAPS-REAL extraction (BRICK K5 — the ENCAPS mirror of K6): the verified REAL, FULL-BYTE
+        // ML-KEM-768 encaps core (`@[export] dregg_mlkem_encaps_real` over `mlkemEncaps` — the deterministic
+        // FIPS 203 Alg 16 FO encaps: `H(ek)` / `G(m ‖ H(ek))` split / K-PKE.Encrypt over the real 1184/1088-byte
+        // ek/ct, proved byte-exact vs the crate's `EncapsulateDeterministic`), OUTSIDE the FFI closure — build it
+        // so its `.c` IR is emitted and the splice picks up the export. This is the object
+        // `dregg-pq::hybrid_kem::initiate` routes through to take the `ml-kem` crate OUT of the deployed
+        // KEM-encaps TCB. Its OWN module `Dregg2.Crypto.MlKemEncaps` (imports `MlKemDecaps` for `kpkeEncrypt`).
+        "Dregg2.Crypto.MlKemEncaps",
         // FIPS-204-SIGN-REAL extraction (the brick-8 SIGN analog): the verified REAL, FULL-BYTE ML-DSA-65
         // sign core (`@[export] dregg_fips204_sign_real` over `signCore` — the deterministic (`rnd = 0`)
         // Fiat–Shamir-with-aborts signer: skDecode / ExpandMask / NTT / SampleInBall / MakeHint / rejection
@@ -1363,6 +1371,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_fips203_encaps_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_fips203_decaps_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_decaps_real_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_encaps_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
@@ -1782,6 +1791,18 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_mlkem_decaps_real_present");
     }
 
+    // ML-KEM-768-ENCAPS-REAL extraction (BRICK K5 — the ENCAPS mirror of K6): probe the spliced archive for
+    // the `@[export] dregg_mlkem_encaps_real` symbol — the FULL-BYTE, full-dimension ML-KEM-768 encaps
+    // (`Dregg2.Crypto.MlKemEncaps.mlkemEncapsRealFFI` over `mlkemEncaps`, the deterministic FIPS 203 Alg 16 FO
+    // encaps over the real 1184/1088-byte ek/ct, not the `A=1,n=1` scalar toy). Its module is
+    // `Dregg2.Crypto.MlKemEncaps` (its OWN module, a separate initializer from `MlKemDecaps`/`Fips203Kem`).
+    // Present ⇒ gate the Rust `extern "C"` block, the C shim string bridge, and the module define/init. This is
+    // the export `dregg-pq::hybrid_kem::initiate` routes through to take the `ml-kem` crate OUT of the encaps TCB.
+    let mlkem_encaps_real_present = archive_exports(&build_archive, "dregg_mlkem_encaps_real");
+    if mlkem_encaps_real_present {
+        println!("cargo:rustc-cfg=dregg_mlkem_encaps_real_present");
+    }
+
     // GRAIN R3 whole-history verify extraction: probe the spliced archive for the
     // `@[export] dregg_grain_r3_verify` symbol (the extracted, Lean-verified R3-accept decision over
     // the whole-chain STARK verified-status + the R1 head binding). Present ⇒ gate the Rust
@@ -1870,6 +1891,11 @@ fn main() {
     // share their module's init).
     if mlkem_decaps_real_present {
         shim.define("DREGG_MLKEM_DECAPS_REAL", None);
+    }
+    // ML-KEM-768-ENCAPS-REAL (BRICK K5): its own module `Dregg2.Crypto.MlKemEncaps`, so DREGG_MLKEM_ENCAPS_REAL
+    // gates BOTH the per-export extern+bridge AND the module initializer (like the K6 decaps core).
+    if mlkem_encaps_real_present {
+        shim.define("DREGG_MLKEM_ENCAPS_REAL", None);
     }
     if grain_r3_verify_present {
         shim.define("DREGG_GRAIN_R3_VERIFY", None);

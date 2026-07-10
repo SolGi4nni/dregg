@@ -361,6 +361,35 @@ pub fn shadow_mlkem_decaps_real(wire: &str) -> Result<String, String> {
     ffi::lean_mlkem_decaps_real(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified REAL, FULL-BYTE ML-KEM-768 encaps core
+/// (`dregg_mlkem_encaps_real`, BRICK K5 — the C-ABI entry over `Dregg2.Crypto.MlKemEncaps.mlkemEncapsRealFFI`
+/// = the FULL-DIMENSION `mlkemEncaps` over the real 1184/1088-byte encapsulation key/ciphertext). When false,
+/// a caller must fall back to the `ml-kem` crate encaps. Distinct from [`lean_available`]: a stale archive can
+/// lack this export.
+pub fn mlkem_encaps_real_core_available() -> bool {
+    ffi::mlkem_encaps_real_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted REAL, FULL-BYTE ML-KEM-768 encaps core `@[export] dregg_mlkem_encaps_real`
+/// (the executable `Dregg2.Crypto.MlKemEncaps.mlkemEncapsRealFFI` over `mlkemEncaps` — the deterministic FIPS
+/// 203 Alg 16 FO encaps: `H(ek)` SHA3-256, `G(m ‖ H(ek))` SHA3-512 split, K-PKE.Encrypt). This runs the
+/// KEM-ENCAPS as a Lean-verified object (leanc-native), PROVED BYTE-EXACT vs the `ml-kem` crate's
+/// `EncapsulateDeterministic` by `encaps_matches_crate`.
+///
+/// Wire grammar the export reads:
+///   * in:  `"hex(ek) hex(m)"` (two space-separated lowercase-hex fields over the real 1184-byte
+///     encapsulation key / 32-byte message).
+///   * out: `"hex(ct) hex(K)"` — the 1088-byte ciphertext + 32-byte shared secret as lowercase hex; `"ERR"`
+///     for a malformed wire (the fail-closed answer the Rust caller treats as an encaps fault).
+///
+/// `dregg-pq::hybrid_kem::initiate` routes its ML-KEM encaps through this entry (installed via
+/// `dregg_pq::install_lean_kem_encaps_core_real`), so the deployed encaps runs the verified Lean core over the
+/// real bytes rather than the trusted `ml-kem` primitive. Returns `Err` if the archive lacks the export.
+pub fn shadow_mlkem_encaps_real(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_mlkem_encaps_real(wire)
+}
+
 /// Whether the linked archive exports the extracted, Lean-verified GRAIN R3 whole-history verify core
 /// (`dregg_grain_r3_verify`, the C-ABI entry over `Dregg2.Grain.R3Verify.r3VerifyFFI` = the PROVED
 /// `r3VerifyCore`). When false, a caller (`grain-verify::r3_verify`) cannot render the Lean-proven R3
@@ -542,6 +571,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_mlkem_decaps_real_present)]
         fn dregg_mlkem_decaps_real_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_mlkem_encaps_real_present)]
+        fn dregg_mlkem_encaps_real_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -897,6 +932,38 @@ mod ffi {
         false
     }
 
+    /// ML-KEM-768-ENCAPS-REAL extraction (BRICK K5) — run the VERIFIED Lean ML-KEM encaps core over the REAL,
+    /// FULL-BYTE encapsulation key + message (leanc-native). Input: `"hex(ek) hex(m)"` (two space-separated
+    /// lowercase-hex fields over the real 1184-byte ek / 32-byte m); output: `"hex(ct) hex(K)"` (the 1088-byte
+    /// ciphertext + 32-byte shared secret) or `"ERR"` (the fail-closed answer for a malformed wire). This is the
+    /// FULL-DIMENSION deterministic FO `mlkemEncaps` (`H(ek)` / `G(m ‖ H(ek))` split / K-PKE.Encrypt, proved
+    /// byte-exact vs the crate's `EncapsulateDeterministic`) — the object `dregg-pq::hybrid_kem::initiate` routes
+    /// through to take the `ml-kem` crate OUT of the encaps TCB.
+    #[cfg(dregg_mlkem_encaps_real_present)]
+    pub fn lean_mlkem_encaps_real(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_mlkem_encaps_real_str,
+            "dregg_mlkem_encaps_real_str",
+        )
+    }
+
+    #[cfg(not(dregg_mlkem_encaps_real_present))]
+    pub fn lean_mlkem_encaps_real(_wire: &str) -> Result<String, String> {
+        Err("dregg_mlkem_encaps_real not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-KEM-768 encaps core.
+    #[cfg(dregg_mlkem_encaps_real_present)]
+    pub fn mlkem_encaps_real_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_mlkem_encaps_real_present))]
+    pub fn mlkem_encaps_real_present() -> bool {
+        false
+    }
+
     /// GRAIN-R3 extraction — run the VERIFIED Lean whole-history R3-accept core (leanc-native).
     /// Input: `"aggregateVerified aggregateHead anchoredHead"` (three decimal ints); output: `"1"`
     /// (accept) / `"0"` (reject, and the fail-closed answer for a malformed wire). This is the PROVED
@@ -1094,6 +1161,24 @@ mod ffi {
         }
     }
 
+    #[cfg(all(test, dregg_mlkem_encaps_real_present))]
+    mod mlkem_encaps_real_extraction {
+        use super::*;
+        /// BRICK K5 smoke test: the REAL, full-byte ML-KEM-768 encaps export links and runs (leanc-native),
+        /// and a malformed byte wire fails CLOSED ("ERR"). The real-vector byte-exact encaps + the full
+        /// Lean-routed handshake is exercised end-to-end in `node`'s `mlkem_live_encaps` gate; here we only
+        /// confirm the bridge is wired and fail-closed.
+        #[test]
+        fn verified_real_ml_kem_encaps_bridge_links_and_fails_closed() {
+            lean_init_once().expect("init the Lean runtime");
+            // Wrong field count fails closed (not exactly two space-separated fields).
+            assert_eq!(lean_mlkem_encaps_real("zz zz").unwrap(), "ERR");
+            assert_eq!(lean_mlkem_encaps_real("00").unwrap(), "ERR");
+            // Odd-length hex fails closed (decodeHexChars rejects an unpaired nibble).
+            assert_eq!(lean_mlkem_encaps_real("0 0").unwrap(), "ERR");
+        }
+    }
+
     #[cfg(all(test, dregg_storage_content_root_present))]
     mod storage_extraction {
         use super::*;
@@ -1185,6 +1270,16 @@ mod ffi {
     }
 
     pub fn lean_mlkem_decaps_real(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted REAL, full-byte ML-KEM encaps
+    /// core. Unlinked stub: the archive is absent, so the real core is never present.
+    pub fn mlkem_encaps_real_present() -> bool {
+        false
+    }
+
+    pub fn lean_mlkem_encaps_real(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 
