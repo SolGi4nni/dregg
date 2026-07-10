@@ -1,0 +1,23 @@
+# hbox home for the dregg discord bot — built + run on hbox (x86_64, 24c/123GB, OURS),
+# NOT on the tiny arm64 graviton. Placed at ~/.config/systemd/user/ (user unit) or
+# /etc/systemd/system/ (system unit; set User=hbox). Reads the token from an env file.
+[Unit]
+Description=Dregg Discord Bot (hbox)
+After=network-online.target
+Wants=network-online.target
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# EnvironmentFile carries DISCORD_TOKEN + DISCORD_APP_ID (from ./discord-values) and,
+# for live Claude Haiku narration, AWS_PROFILE + DREGG_NARRATOR_LEDGER. Placed by ember.
+EnvironmentFile=%h/.config/dregg/discord-bot.env
+Environment=RUST_LOG=info
+WorkingDirectory=%h/dev/bot-deploy/discord-bot
+ExecStart=%h/dev/bot-deploy-target/release/dregg-discord-bot
+Restart=always
+RestartSec=5
+
+[Install]
+WantedBy=default.target
