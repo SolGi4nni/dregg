@@ -732,6 +732,7 @@ import Dregg2.Circuit.BabyBearFriField
 import Dregg2.Circuit.BabyBearFriSetup
 import Dregg2.Circuit.BabyBearFriDeployed
 import Dregg2.Circuit.FriExtractReal
+import Dregg2.Circuit.DeployedRefinesProof
 import Dregg2.Circuit.ShieldedTransferStark
 import Dregg2.Circuit.Satisfied2FaithfulDeployed
 import Dregg2.Circuit.AirChecksSatisfied
