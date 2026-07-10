@@ -32,10 +32,14 @@
 //!
 //! * **The resolver** gates every move by the world's rules (you cannot narrate through a
 //!   locked door, take an absent item, or win without the amulet).
-//! * **[`crate::DmCaps`]** still gates grants: the DM can only propose `GrantItem` for an
-//!   item on its whitelist, so it cannot mint an item the world never placed. The engine's
-//!   takeable items are exactly the DM's grantable set — the resolver only ever proposes a
-//!   grant for an item actually present, and the cap is the second, independent bound.
+//! * **[`crate::DmCaps`]** is a fail-closed grant whitelist: a `GrantItem` for an item not on
+//!   it is refused, so nothing can mint an item the world never named. Honest precision: inside a
+//!   [`GameSession`] the whitelist is *derived* from the world's own item set
+//!   ([`GameWorld::all_items`] = room items ∪ dialogue grants ∪ conjures), so every grant the
+//!   resolver can emit is always on it — the cap cannot fire *independently* here; the true bound
+//!   on grants is the resolver. The cap becomes independently load-bearing on the lower-level
+//!   [`DungeonMaster::narrate_move`] API, where a caller supplies the item and an off-list one is
+//!   refused. Within a session it is a correct backstop, not a second independent tooth.
 
 use std::collections::{BTreeMap, BTreeSet};
 
