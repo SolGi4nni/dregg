@@ -726,6 +726,7 @@ import Dregg2.Circuit.FinCreateCellSquares
 import Dregg2.Circuit.FinGrantSpawnSquares
 import Dregg2.Circuit.FinReactSquare
 import Dregg2.Circuit.BabyBearFriField
+import Dregg2.Circuit.BabyBearFriSetup
 import Dregg2.Circuit.FinBindsKernel
 import Dregg2.Circuit.FinInjectivityCollapse
 import Dregg2.Circuit.FinFrameHash     -- THE APEX BACKBONE: lightclient_unfoolable (verifyBatch accept ⟹ ∃ genuine kernel transition) over the v3-registry circuit. StateDecode = the FAITHFUL published-commitment→kernel decode (faithfulness PROVED via recStateCommit_binds_kernel — NO admissibility/frame assumed; cross-step frame DERIVED by stateDecodeChain_frame_continuous). descriptorRefines = the per-effect rung. CARRIED obligations (named, not laundered): StarkSound (audited p3 batch-STARK verify⟹∃Satisfied2 witness — the FRI extraction; minimal honest interface DEFINED here: verifyBatch/vkOfRegistry/VerifyKey), Poseidon2SpongeCR + the CommitSurface CR set, and the per-effect descriptorRefines family. #assert_axioms-clean on every theorem.
