@@ -258,3 +258,22 @@ vk-epoch canonical-flip (1dce9523c) hasn't reached heap_root/fields_root — it'
 The [u8;32] type on cell.state.heap_root let the narrow value persist silently (a typed Digest8 wouldn't compile).
 FIX = the flip reaching heap_root: retype cell.state.heap_root → Digest8, set from compute_canonical_heap_root_8.
 Ember's on-disk-format call; diverges toward the proof. NOT a doc-lane fix (the off-chain commitment is structurally lane-0).
+
+## AUDIT RESULT (read-only) — the off-chain lane-0 hole is SYSTEMATIC across the map-roots
+Per-root verdict (verified, file:line in the audit):
+- heap_root, fields_root, cap_root: ALL THREE share the hole — off-chain hash_cell_state_into/compute_canonical_
+  state_commitment absorbs a lane-0 [u8;32] (one ~31-bit felt); the wide _8 twin EXISTS (compute_canonical_
+  {heap,fields,capability}_root_8 → Faithful8); the wide is bound ONLY in-circuit (rotated limbs 28‖58..64,
+  36‖65,66,19..23, 25‖51..57, GENTIAN-welded). → the widening MUST cover cap_root too (extended the running
+  agent; revoked_root rides cap_root as a tombstone, auto-covered).
+- the 8 system_roots (incl. cell-level nullifier/commit side-tables): ALREADY WIDE off-chain — committed as a
+  full 256-bit blake3 digest (system_roots_digest). NO fix needed.
+- turn-level cells_root / nullifier_root / commitments_root: NOT in the off-chain per-cell commitment at all
+  (only the rotated in-circuit v9). No off-chain hole. ADJACENT (UNVERIFIED, do NOT assert): the audit noted
+  the V9 rotation path binds these as single un-welded felts with no _8 twin — BUT the vk-epoch flip (1dce9523c)
+  added a Digest8 nullifierRoot to RecordKernelState + RH absorbs it, so the turn-level shielded-set width
+  depends on WHICH path is canonical (V9 rotation vs the new RecordKernelState/RH). A SEPARATE check, vk-epoch
+  domain — NOT claiming it's weak without verifying.
+BOTTOM LINE: off-chain widening = heap_root + fields_root + cap_root (systematic "we widened in-circuit but the
+Rust off-chain ghost never got flipped"). Exactly ember's "we widened so much, how did this slip" — the [u8;32]
+scalar type let all three keep the lane-0 default silently.
