@@ -50,3 +50,30 @@ replays. VERIFY BY DRIVING, not fixtures-pass. Bar: the artifact RUNS end-to-end
   driving, both committed, discoverable (▶▶ banner). The dreggic collectivity web is real in a browser tab.
 - ONLY PENDING: the wasm idempotency fix (on disk), blocked on another terminal's dregg-sdk refactor. Wakeup armed
   to re-check + verify+commit when unblocked. Does NOT affect the demo.
+
+
+## ⚑⚑ THE TRUE AMBITION (ember, 07-10) — I built the STAGE and mistook it for the PLAY
+`cv` + memory spelunk: the fiction engine is NOT pre-scripted CYOA + branch voting (that is the collective-
+voting SUBSTRATE — a good start). The soul is **`attested-dm`: a provably-honest, UN-JAILBREAKABLE AI
+dungeon-master.** A confined + attested LLM narrates an on-chain world; every narration is a receipted attested
+turn on a WorldCell carrying a ZkOracleAttestation proving it is AUTHENTIC (a real model, not forged),
+WELL-FORMED, and INJECTION-FREE. THE KILLER PROPERTY: a player's prompt-injection is reflected into the DM's
+narration and caught by the injection-free leg → the turn CANNOT be attested → REFUSED, and the world advances
+not at all (anti-ghost). The DM narrates freely but acts only within DmCaps (it cannot grant an unearned crown).
+VERIFIED RUNNING (cargo test -p attested-dm, unblocked by the dregg-sdk churn): a_player_prompt_injection_is_
+refused · injection_refusal_is_the_injection_free_leg_NOT_A_HEURISTIC (the verified dregg-dfa derivative matcher)
+· an_injection_smuggled_into_a_forged_attestation_is_rejected_at_verify · a_swapped_narration_over_a_real_
+attestation_is_rejected · a_tampered_session_is_rejected · a_fabricated_receipt_is_rejected · the_dm_cannot_
+grant_an_unearned_item · a_benign_player_message_that_merely_mentions_rules_is_NOT_refused (non-vacuous).
+Plus: `first-room` = the MUD room primitive (a room is a cell, an inhabitant is a cell, acting is a turn);
+`branch-stitch-multiplayer` = players fork the world, diverge privately, stitch back through a settlement-sound
+gate (clash refused, never last-writer-wins); `tussle`/`gallery` = sealed commit-reveal for simultaneous/hidden
+choices (blind voting).
+API: `narrate_turn(&self, world: &mut WorldCell, player: &PlayerMessage) -> Result<Receipt, DmError>`;
+`DmError::{Injection, OverCap}`; `WorldCell::new(scene)`; `DmCaps::{narrator, pure_narrator}.authorize(effect)`.
+attest_narration attests a GIVEN narration (no live model needed to demo the tooth); attest_narration_live
+(MPC-TLS 2PC) is the CROWN, opt-in behind `tlsn-live`.
+
+## NEXT THRUST: the un-jailbreakable AI dungeon-master, playable
+Build the demo where **you play a living world narrated by an AI, and when you try to jailbreak it, it provably
+refuses.** DM runs native (unblocked); browser is the play surface; the killer moment lands in a tab.
