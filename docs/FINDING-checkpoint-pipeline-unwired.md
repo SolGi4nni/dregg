@@ -50,21 +50,33 @@ receipt-index root field to bind to.
 - The anchor, as designed, is theatre with respect to the receipt log even once
   wired: it does not bind the receipt-index MMR root to consensus finality.
 
-## What "make it real" requires (not a targeted diff)
+## DON'T wire this pipeline — a live quorum already exists elsewhere (scholar study, 2026-07-10)
 
-1. Add `receipt_index_root: [u8; 32]` to `dregg_federation::Checkpoint` and include
-   it in `content_hash` / the checkpoint vote message so the qc actually attests it.
-2. Populate it from `s.receipt_index.root()` at checkpoint-build time.
-3. Wire the production path: propose `Payload::Checkpoint` at interval boundaries;
-   call `finalize_checkpoint` + `store.store_checkpoint` in the
-   `FinalizedBlock::Checkpoint` arm (currently the no-op).
-4. Surface the field on `/checkpoint/latest` (`api.rs` `checkpoint_to_response`)
-   and change `verify_anchor` to compare `cp.receipt_index_root` to
-   `anchor.mmr_root` instead of returning the config constant.
+A follow-up scholar study found that resurrecting the qc-bearing `Checkpoint`
+pipeline is the WRONG investment for a federation-wide read. **A live BFT quorum
+already exists and is wired** — not on `Checkpoint`, but on
+`StoredAttestedRoot.finalization_quorum` (`persist/src/federation.rs:130`), which
+accumulates ≥threshold committee finalization-vote signatures over
+`canonical_ledger_root(&s.ledger)` (bound into the vote at
+`blocklace_sync.rs:4131`), populated live by `backfill_finalization_quorums`
+(`:4241`) and verifiable by `verify_finalization_quorum` (`federation.rs:213`).
 
-Only after (1)+(4) does the anchor bind the receipt log to finality — and note it
-would still bind *each node's own* receipt root (per-node chains legitimately
-differ), so it hardens `CheckpointBound` for one node's chain but does not make the
-receipt read federation-wide. A genuinely federation-wide lease read is the
-separate ledger-state-inclusion-proof design (see
-`~/dev/DreggNet/docs/FEDERATION-WIDE-READ.md`).
+So the thing a federation-wide read fundamentally needs — a quorum-certified
+`ledger_state_root` — is already produced. The dead `Checkpoint` would, if wired,
+carry the *same* `ledger_state_root`. Therefore:
+
+- The **receipt-anchor** path (add `receipt_index_root` to `Checkpoint`, wire
+  production, have verify_anchor read it) is NOT federation-wide even done right —
+  the receipt index is a per-node side log (the live 4/1/1 length divergence), so
+  it only qc-anchors *one node's own* chain. Skip it.
+- The **ledger-state inclusion** path (`~/dev/DreggNet/docs/FEDERATION-WIDE-READ.md`
+  Option B) is federation-wide and rides the ALREADY-LIVE attested-root quorum. It
+  needs a `GET /api/cell/{id}/proof` endpoint (B-flat: full leaf set + recompute the
+  flat `canonical_ledger_root` — note it is FLAT, not a Merkle tree, so no O(log n)
+  opening today) and a consumer that checks `finalization_quorum ≥ threshold` (or
+  cross-checks f+1 nodes) + no-rollback. ~2-3 days, and **it does NOT depend on
+  wiring this Checkpoint pipeline.**
+
+Wire the qc-bearing `Checkpoint` pipeline only if pruning / fast-bootstrap
+independently needs it — not for the lease read. The log-honesty fix above stands
+regardless (the arm must not claim it stored something).

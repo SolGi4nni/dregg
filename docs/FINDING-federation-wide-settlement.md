@@ -30,20 +30,43 @@ turn must be authorizable. A plain operator-signed Transfer can only move value
 from an **operator-owned** cell, which is **per-node**. Federation-wide lease +
 operator Transfer are mutually exclusive.
 
-## The correct design
+## The correct design (CORRECTED 2026-07-10 by a scholar study — the first draft was wrong)
 
-Rent is not the operator's value to move by fiat — it is the lease paying its
-obligation, which the lease cell's PROGRAM (`starbridge-apps/execution-lease`
-`lease_cell_program`) exists to enforce. The app already provides the mechanism:
-the `pay` / `advance` discharge operations (`advance_effects`, the metered
-discharge), which the executor re-enforces against the lease invariants and which
-operate on the lease **without** requiring the caller to own it. Routing DreggNet's
-metered settlement through the lease program's discharge (instead of a plain
-Transfer) is what lets a federation-wide lease's rent settle on every replica.
+**Retraction:** the original draft claimed the exec-lease `pay`/`advance` discharge
+"operates on the lease WITHOUT requiring the caller to own it." That is **not
+supported by the executor.** `pay_rent` (`execution-lease/src/lib.rs:604`) emits
+exactly ONE `Effect::Transfer { from: lease, .. }` under `method == symbol("pay")`
+— byte-for-byte the same effect kind `submit_transfer` already sends. The executor
+authorizes it against the **lease cell's `Send` permission**
+(`turn/src/executor/authorize.rs:2230`, `apply.rs:499`), verifying an Ed25519
+signature against the *lease's* key. The `lease_cell_program` is a **post-transition
+constraint checker, not an authorizer** — `TransitionGuard::Always`, invariants
+WriteOnce(RENT/PERIOD/PROVIDER) + Monotonic(STEP/LAPSED/PERIODS_PAID)
+(`lib.rs:287`); it runs *in addition to*, never *in place of*, the `Send` check, and
+`method == "pay"` is invisible to it. So a `method:"pay"` swap is authorization-
+equivalent to the plain transfer.
 
-That is a real integration step (DreggNet's `NodeApiSettlement` would submit a
-lease-discharge turn, and the thin `/api/turns/submit` vocabulary would need to
-carry it), not a drive-by.
+The ACTUAL path to a federation-wide, replica-applicable settlement is three real
+steps (none an API-vocabulary change — the thin `/api/turns/submit` already
+expresses everything):
+
+1. **Federation-wide lease** — derive the lease key from `federation_id` (mirror the
+   provider derivation). ~1h, but breaks the operator-signed transfer, so it cannot
+   land alone.
+2. **Seed the lease `Send = AuthRequired::None`** AND **add a balance-bounding
+   program invariant** so a permissionless transfer can move only ONE period's rent,
+   on-schedule, tied to `PERIODS_PAID`. Without the bound, a `Send=None` lease is a
+   **drain vuln** — any caller empties the whole balance in one turn (the invariants
+   constrain no balance). `BoundDelta` is the natural fit but is currently
+   `BoundDeltaNotWired` (`cell/src/program/eval.rs:1297`), so this is a new
+   executor-enforced "metered outflow" constraint WITH Lean/kernel parity — the
+   ~3-5 day risk center.
+3. **Provider side** — `NodeApiSettlement::submit_and_read` calls a `submit_lease_pay`
+   (same body shape, `method:"pay"`); reconcile DreggNet's `decompose_charges` period
+   numbering with the lease obligation's on-schedule `period_index`. ~1-2 days.
+
+Total ~1 week; step 2 is the crux (kernel-parity constraint work). Do NOT ship a
+bare `method:"pay"` swap — it achieves nothing and, with `Send=None`, is a drain.
 
 ## Current state (chosen for tonight)
 

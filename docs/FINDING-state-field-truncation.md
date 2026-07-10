@@ -77,3 +77,29 @@ metered rent is paid to. It now validates that the slot names an existing cell
 and falls back to the node's operator cell (which is node-local, so the
 settlement is not federation-replicable). Restoring a federation-wide rent
 beneficiary depends on this being fixed.
+
+## The residual — scholar verdict 2026-07-10: DON'T widen the wire
+
+The acute fix (skip fields the turn did not move) covers the operated need: a
+32-byte id pinned at seed time SURVIVES an unrelated turn. The residual is only a
+turn that genuinely `SetField`s a slot to a NEW full-width value — which nothing in
+the operated trace does.
+
+A scholar study established the load-bearing fact: a cell-state `fields[]` slot is
+**definitionally a u64 lane** in this model — the kernel encodes it via
+`field_from_u64` (bytes[24..32]), the Lean `setField` effect value is `Int`
+(`metatheory/Dregg2/Exec/Effect.lean:98`), and every capacity gate evaluates over
+that lane. The Lean *Value* model CAN hold 32 bytes (`Value.dig : Nat`, unbounded,
+and the wire grammar `{"dig":"<64hex>"}` carries all 256 bits) — but the SetField
+lane is scalar end-to-end, so closing the residual means widening the verified
+kernel's `setField` (weeks, HIGH risk) — and it is **soundness-moot** anyway until
+the v13 faithful-fields epoch retires the `Faithful8::from_lossy_31bit_DANGER`
+fields[0..7] folds (`circuit/src/faithful8.rs:42`); today even Rust's committed
+fields root is a ~31-bit Horner fold.
+
+**Verdict:** the acute fix is the right stopping point. Close the residual by
+relocating 32-byte identities OUT of raw scalar slots — a full cell id belongs in a
+`Ty.digest`-typed field / committed digest side-table (`field_limbs8`-encoded,
+`circuit/src/effect_vm/helpers.rs:122`), not `PROVIDER_SLOT`. That is the real
+design correction, and any true wire+kernel widening should be sequenced WITH the
+v13 epoch, not ahead of it.
