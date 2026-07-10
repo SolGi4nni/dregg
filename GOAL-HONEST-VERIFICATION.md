@@ -220,3 +220,14 @@ AirSoundness.lean:234). `fold_close_of_two_alpha`/`friProximity_discharge` are f
   real 2^k coset — mirror the ZMod 5 demo (FriSoundness.lean:455) at the DEPLOYED field; instantiate
   friProximity_discharge at it. brick 3: bind to deployed p3 FRI config + circuit_sound_via_fri → CircuitSound a
   THEOREM. brick 4: AIR-chip faithfulness (ChipTableSoundN over Poseidon2BabyBearW16) → instance : StarkSound.
+- ✅ DEBT-A brick 2 `1d017a2a6` — `babyBearFriSetup : FriSetup BabyBear (Fin 4) (Fin 2)` over the DEPLOYED FIELD
+  (real primitive 4th root i=1728404513, i²=-1); FriGeom + RS codes + folding laws PROVED;
+  `friProximity_discharge` and `fold_close_of_two_alpha` INSTANTIATED (applied, verified by reading the proof
+  terms). ⚠ |L|=4, NOT the deployed 2²⁷ domain — brick 3 binds the deployed domain size/rate/queries.
+- ⚠ AUDIT FINDING `810d0dc65` — `Satisfied2Faithful`'s four "realizations" use `permOutZ = fun _ => replicate 0`
+  (the CONSTANT-ZERO perm, FloorsNonVacuous.lean:108), which also forces `hash = 0`. They are NON-VACUITY
+  witnesses, NOT a deployed discharge. 26 sites still assume it. The census's `realized=0` was wrong in count and
+  right in spirit.
+- ▶ brick 4 (in flight): realize `Satisfied2Faithful` at the REAL `Poseidon2BabyBearW16.perm` (deployed, KAT-
+  validated bit-exact) — permWidth / chipHashIsLane0 / ChipTableSoundN over the genuine chip. If the deployed
+  hash is NOT lane 0 of the real perm, that FALSE obligation is the finding.
