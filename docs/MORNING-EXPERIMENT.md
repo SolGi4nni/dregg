@@ -5,7 +5,22 @@ Each command below carries an honest status — ✅ verified this run, ⏳ verif
 this file when the night run confirms), ⚠ known heavy/slow. Nothing here is aspirational; where a rung
 isn't fully closed it says so.*
 
-## The one to run first — a local grain, driven end-to-end, no host trust
+## ▶▶ Drive a grain IN THE BROWSER (the interactive front door)
+
+```
+cargo run -p agent-platform -- 127.0.0.1:8903
+```
+then open **http://127.0.0.1:8903/** — a real driver page (served same-origin by the bin):
+- **Rent** a confined grain (host/caps/budget) — ✅ works, no model.
+- **Verify** it (R0 / R2 / attestation — the renter check, "trust no host") — ✅ works, no model.
+- **Watch** the drive transcript stream live (SSE, each cap-gated step) — ✅ works.
+- **Drive** (give it a goal, watch it work) — needs the server run with `--features live-brain` + a model
+  (shows a plain `503 no live brain` otherwise). Wiring a zero-key local model is the next step.
+
+The browser-friendly routing shim (`X-Dregg-Grain-Host` header / `?host=` query, since a browser can't
+set `Host`) is what makes this drivable from a page; auth is unchanged and a non-member still 404s.
+
+## The CLI equivalent — a local grain, driven end-to-end, no host trust
 
 ```
 cargo run -p agent-platform --example grain_local_e2e
