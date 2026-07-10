@@ -1,0 +1,223 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>The Attested Dungeon — the model proposes, the capabilities dispose</title>
+  <style>
+    :root {
+      --parchment: #f2ecdd;
+      --parchment-2: #e9e1cd;
+      --card: #fbf8f0;
+      --ink: #1d1a2e;
+      --ink-soft: #4a4560;
+      --ink-faint: #7d768f;
+      --rule: #d8cfb8;
+      --violet: #6b5ce0;
+      --violet-deep: #4a3aa8;
+      --teal: #2b7f7a;
+      --green: #3f8f57;
+      --amber: #bd7b2c;
+      --red: #b02a37;
+      --red-soft: #fbeaea;
+      --red-line: #f0c9c9;
+      --shadow: 24px 30px 60px -30px rgba(29, 26, 46, .35);
+      --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+      --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+      --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; }
+    body {
+      font-family: var(--sans); color: var(--ink);
+      background: radial-gradient(120% 80% at 50% -10%, #f7f2e6 0%, var(--parchment) 45%, var(--parchment-2) 100%);
+      min-height: 100vh; line-height: 1.5; -webkit-font-smoothing: antialiased;
+    }
+    .page { max-width: 48rem; margin: 0 auto; padding: 4.5rem 1.5rem 6rem; }
+
+    .eyebrow { font-size: .72rem; letter-spacing: .22em; text-transform: uppercase; color: var(--violet-deep); font-weight: 600; margin: 0 0 1rem; }
+    h1.title { font-family: var(--serif); font-weight: 600; font-size: clamp(2.2rem, 5.6vw, 3.4rem); line-height: 1.04; letter-spacing: -.01em; margin: 0; text-wrap: balance; color: var(--ink); }
+    h1.title .amp { color: var(--violet); font-style: italic; }
+    .lede { font-family: var(--serif); font-size: 1.18rem; color: var(--ink-soft); margin: 1.1rem 0 0; max-width: 36rem; text-wrap: pretty; }
+    .lede b { color: var(--ink); font-weight: 600; }
+    .rule { height: 1px; background: linear-gradient(90deg, var(--rule), transparent); margin: 2.2rem 0; border: 0; }
+
+    .narrator { margin: 1rem 0 0; font-size: .84rem; color: var(--ink-soft); padding: .55rem .85rem; border-radius: 9px; background: rgba(255,255,255,.55); border: 1px dashed var(--rule); }
+    .narrator.model { border-style: solid; border-color: #cfc6ee; background: #f3f0ff; color: var(--violet-deep); }
+    .narrator code { font-family: var(--mono); font-size: .8rem; }
+
+    /* ── the scene ── */
+    .scene-frame { margin: 1.4rem 0 0; padding: 1.3rem 1.4rem; border-radius: 14px; background: var(--card); border: 1px solid var(--rule); box-shadow: var(--shadow); position: relative; }
+    .scene-frame::before { content: "the scene"; position: absolute; top: -.62rem; left: 1.2rem; font-size: .62rem; letter-spacing: .18em; text-transform: uppercase; font-weight: 600; color: var(--ink-faint); background: var(--card); padding: 0 .5rem; }
+    #scene { font-family: var(--serif); font-size: 1.22rem; color: var(--ink); margin: .1rem 0 0; }
+
+    /* ── the ledger row: receipt rail + inventory, side by side ── */
+    .ledger-row { display: grid; grid-template-columns: 1fr 1fr; gap: 1rem; margin: 1.3rem 0 0; }
+    @media (max-width: 34rem) { .ledger-row { grid-template-columns: 1fr; } }
+    .panel { padding: .9rem 1rem; border-radius: 12px; background: rgba(255,255,255,.6); border: 1px solid var(--rule); }
+    .panel h3 { margin: 0 0 .55rem; font-size: .64rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; }
+    .chain-links { display: flex; flex-wrap: wrap; align-items: center; gap: .12rem; font-size: 1rem; color: var(--green); line-height: 1; min-height: 1.1rem; }
+    .chain-links .link { color: var(--green); }
+    .chain-links .link.empty { color: var(--ink-faint); font-size: .8rem; }
+    .chain-links .rope { color: var(--rule); }
+    .chain-meta { margin-top: .55rem; font-size: .78rem; color: var(--ink-faint); font-variant-numeric: tabular-nums; }
+    .chain-meta code { font-family: var(--mono); color: var(--ink-soft); font-size: .72rem; }
+    .chain-meta b { color: var(--ink); }
+
+    #inventory { list-style: none; margin: 0; padding: 0; display: grid; gap: .3rem; }
+    #inventory li { display: flex; justify-content: space-between; align-items: baseline; font-size: .86rem; padding: .18rem .1rem; border-bottom: 1px dotted var(--rule); }
+    #inventory li:last-child { border-bottom: 0; }
+    #inventory .item { color: var(--ink-soft); }
+    #inventory .state { font-family: var(--mono); font-size: .72rem; letter-spacing: .04em; }
+    #inventory .held .item { color: var(--ink); font-weight: 600; }
+    #inventory .held .state { color: var(--green); }
+    #inventory .not-held .state { color: var(--ink-faint); }
+    #inventory .crown .item { font-variant-caps: small-caps; letter-spacing: .02em; }
+    #inventory .crown.not-held .state { color: var(--amber); }
+    .flags-line { margin-top: .55rem; font-size: .74rem; color: var(--ink-faint); font-family: var(--mono); }
+
+    .verify { margin: 1rem 0 0; padding: .8rem 1.1rem; border-radius: 11px; font-size: .92rem; font-weight: 600; border: 1px solid transparent; }
+    .verify.ok { background: #e7f4ea; border-color: #bfe2c7; color: var(--green); }
+    .verify.bad { background: var(--red-soft); border-color: var(--red-line); color: var(--red); }
+
+    /* ── THE KILLER CONTRAST — three panels: SAID · TRIED · DID ── */
+    .contrast { margin: 1.4rem 0 0; max-height: 0; overflow: hidden; opacity: 0; transition: max-height .4s ease, opacity .3s ease, margin .3s ease; }
+    .contrast.show { max-height: 80rem; opacity: 1; }
+    .c-headline { font-family: var(--serif); font-size: 1.35rem; line-height: 1.2; color: var(--ink); text-wrap: balance; margin: 0 0 .9rem; }
+    .c-cols { display: grid; grid-template-columns: 1fr 1fr 1fr; gap: .8rem; }
+    @media (max-width: 42rem) { .c-cols { grid-template-columns: 1fr; } }
+    .c-col { padding: 1rem 1.05rem; border-radius: 13px; }
+    .c-col.said { background: #fbf3e6; border: 1px solid #ecd9b6; }
+    .c-col.tried { background: #eef0fb; border: 1px solid #cfd4f0; }
+    .c-col.did { background: #e7f4ea; border: 1px solid #bfe2c7; }
+    .contrast.prose .c-col.did { background: #f3f0ff; border-color: #d3caf0; }
+    .c-cap { font-size: .66rem; letter-spacing: .08em; font-weight: 700; text-transform: uppercase; margin: 0 0 .55rem; color: var(--ink-faint); }
+    .c-prose { font-family: var(--serif); font-size: 1rem; color: var(--ink); font-style: italic; }
+    .c-effect { font-size: .9rem; color: var(--ink); }
+    .c-effect code { font-family: var(--mono); font-size: .82rem; color: var(--violet-deep); }
+    .c-effect.none code { color: var(--ink-faint); }
+    .c-verdict { font-size: .95rem; font-weight: 600; color: var(--red); margin-bottom: .5rem; }
+    .c-verdict.ok { color: var(--green); }
+    .c-fact { font-size: .88rem; color: var(--ink); margin-bottom: .45rem; }
+    .c-fact code { font-family: var(--mono); font-size: .74rem; color: var(--ink-soft); }
+    .c-fact.crownstate b { color: var(--amber); }
+    .c-fact.crownstate.bad b { color: var(--red); }
+    .c-tag2 { margin-top: .6rem; font-size: .78rem; color: var(--ink-soft); font-style: italic; }
+
+    /* ── the affordances ── */
+    .controls { margin: 1.6rem 0 0; display: flex; gap: .5rem; flex-wrap: wrap; align-items: stretch; }
+    .action-row { display: flex; gap: .5rem; width: 100%; }
+    #actionInput { flex: 1; font: inherit; font-size: .95rem; padding: .6rem .85rem; border-radius: 10px; border: 1px solid var(--rule); background: #fff; color: var(--ink); }
+    #actionInput:focus-visible { outline: 2px solid var(--violet); outline-offset: 1px; }
+    button.ctrl { font: inherit; font-size: .86rem; padding: .55rem 1rem; border-radius: 10px; border: 1px solid var(--violet); background: #fff; color: var(--violet-deep); cursor: pointer; transition: background .15s, color .15s; white-space: nowrap; }
+    button.ctrl:hover { background: var(--violet); color: #fff; }
+    button.ctrl:focus-visible { outline: 2px solid var(--violet-deep); outline-offset: 2px; }
+    button.ctrl:disabled { opacity: .55; cursor: default; }
+    button.ctrl.jailbreak { border-color: var(--red); color: var(--red); font-weight: 600; }
+    button.ctrl.jailbreak:hover { background: var(--red); color: #fff; }
+    button.ctrl.grant { border-color: var(--teal); color: var(--teal); }
+    button.ctrl.grant:hover { background: var(--teal); color: #fff; }
+    .afford-note { margin-top: .55rem; font-size: .78rem; color: var(--ink-faint); width: 100%; }
+
+    /* ── the prose log ── */
+    .log-frame { margin: 1.8rem 0 0; }
+    .log-frame h3 { font-size: .64rem; letter-spacing: .16em; text-transform: uppercase; color: var(--ink-faint); font-weight: 700; margin: 0 0 .6rem; }
+    #log { max-height: 24rem; overflow-y: auto; display: grid; gap: .8rem; }
+    #log .empty { color: var(--ink-faint); font-family: var(--serif); font-style: italic; }
+    .entry { padding: .8rem .95rem; border-radius: 11px; background: var(--card); border: 1px solid var(--rule); }
+    .entry .said { font-size: .82rem; color: var(--ink-faint); }
+    .entry .said span { color: var(--ink-soft); }
+    .entry .dm { font-family: var(--serif); font-size: 1.02rem; color: var(--ink); margin-top: .35rem; }
+    .entry .landed { margin-top: .45rem; font-size: .78rem; color: var(--green); font-weight: 600; }
+    .entry.refused { background: var(--red-soft); border-color: var(--red-line); }
+    .entry.refused .dm.complied { color: var(--ink); font-style: italic; }
+    .entry.refused .verdict { margin-top: .45rem; font-size: .84rem; color: var(--red); font-weight: 600; }
+    .entry.refused .noreceipt { font-weight: 400; color: var(--ink-faint); }
+
+    .legend { margin: 2.6rem 0 0; padding: 1.3rem 1.5rem; border-radius: 12px; background: rgba(255,255,255,.5); border: 1px solid var(--rule); font-size: .86rem; color: var(--ink-soft); }
+    .legend h2 { font-family: var(--serif); font-size: 1.05rem; margin: 0 0 .7rem; color: var(--ink); font-weight: 600; }
+    .legend ul { margin: 0; padding-left: 1.1rem; display: grid; gap: .45rem; }
+    .legend b { color: var(--ink); font-weight: 600; }
+    .legend .tag { font-family: var(--mono); font-size: .78rem; color: var(--violet-deep); }
+    .legend .foot { margin-top: .8rem; font-size: .8rem; color: var(--ink-faint); }
+    footer { margin-top: 2.2rem; font-size: .76rem; color: var(--ink-faint); }
+  </style>
+</head>
+<body>
+  <main class="page">
+    <p class="eyebrow">An attested world · the model proposes, the capabilities dispose</p>
+    <h1 class="title">The Attested Dungeon</h1>
+    <p class="lede">
+      A living world narrated by an AI. The narration is only <b>prose</b> — the world
+      changes only through a world-effect that passes the dungeon-master's caps in the
+      verified executor. So when you jailbreak the model, it may gush that you hold the
+      crown, and it buys nothing: <span class="amp">a jailbroken model produces words, not power.</span>
+    </p>
+
+    <div id="narratorKind" class="narrator">…</div>
+
+    <hr class="rule" />
+
+    <section class="scene-frame" aria-label="the scene">
+      <p id="scene">…</p>
+    </section>
+
+    <div class="ledger-row">
+      <div class="panel">
+        <h3>receipt log — what actually landed</h3>
+        <div id="chainLinks" class="chain-links"></div>
+        <div id="chainMeta" class="chain-meta"></div>
+      </div>
+      <div class="panel">
+        <h3>inventory &amp; flags — what you actually hold</h3>
+        <ul id="inventory"></ul>
+        <div id="flags" class="flags-line"></div>
+      </div>
+    </div>
+
+    <div id="verifyBadge" class="verify" role="status"></div>
+    <!-- HOOK: when the prev-linked tamper-evident hash-chain lands, an honest
+         "✓ chain verified" badge + a "tamper the ledger → caught" panel slot in here. -->
+    <div id="chainHook" hidden></div>
+
+    <div id="contrast" class="contrast" role="status" aria-live="polite"></div>
+
+    <div class="controls">
+      <div class="action-row">
+        <input id="actionInput" type="text" placeholder="what do you do?" autocomplete="off" aria-label="what do you do?" />
+        <button id="sendBtn" class="ctrl" type="button">act</button>
+      </div>
+      <button id="jailbreakBtn" class="ctrl jailbreak" type="button">🔓 Jailbreak the DM — demand the Crown of Eternity</button>
+      <button id="proseBtn" class="ctrl jailbreak" type="button">👑 Make the DM narrate you wearing the crown</button>
+      <button id="lanternBtn" class="ctrl grant" type="button">🏮 ask the DM for a lantern</button>
+      <div class="afford-note">
+        <b>Jailbreak</b> sends a real semantic prompt-injection as your move — the model may comply and
+        even try to emit <code>grant("crown")</code>, but the capability gate refuses it: the
+        <b>Crown of Eternity</b> never lands. <b>Narrate you wearing the crown</b> makes the model claim
+        it in pure prose (no effect at all) — the narration lands, the crown still does not. The
+        <b>lantern</b> is on the DM's mandate, so <b>that</b> grant really lands — the gate is not a blanket no.
+      </div>
+    </div>
+
+    <section class="log-frame">
+      <h3>the tale so far</h3>
+      <div id="log"></div>
+    </section>
+
+    <aside class="legend">
+      <h2>What is actually real here</h2>
+      <ul>
+        <li>The DM narrates freely, but every world-effect it proposes is cap-checked by <span class="tag">DmCaps::authorize</span> in the verified executor. Granting the <b>crown</b> is not an action on its mandate — it is refused fail-closed, and <b>no receipt lands</b> (the anti-ghost tooth: a refused turn advances nothing).</li>
+        <li>A benign action, or a grant the DM <b>is</b> permitted (a lantern), lands as one <span class="tag">receipted turn</span> on the receipt log — a turn lands, and the item shows <b>HELD</b>.</li>
+        <li><b>The truth is the ledger, not the story.</b> The model may claim the crown in the richest prose; the inventory shows <b>Crown of Eternity — NOT HELD</b>, because no capability ever granted it.</li>
+        <li>The jailbreak is a plain natural-language instruction — no trick, and no metasyntax to filter. A jailbroken model obeying it in prose changes nothing, because the prose is not the power.</li>
+      </ul>
+      <p class="foot">Honest scope: the model's narration is scripted in this demo, and the attestation's "authentic" leg is a fixture — what is load-bearing here is <b>the typed effect channel, the capability gate, and the receipt log</b>. Today the log re-verifies each entry individually; a prev-linked tamper-evident hash-chain (catching truncation / reordering / splicing) is being wired, and this page will show it when it lands.</p>
+    </aside>
+
+    <footer>The Attested Dungeon · attested-dm · the model proposes, the capabilities dispose · self-contained.</footer>
+  </main>
+
+  <script src="dungeon.js"></script>
+</body>
+</html>

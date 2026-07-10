@@ -1,0 +1,43 @@
+# dungeon-service — the ATTESTED DUNGEON-MASTER, playable over HTTP.
+#
+# A tiny native HTTP service over ONE `attested_dm::WorldCell` + an `AttestedDm`
+# (`DungeonMaster`) with a realistic `DmCaps` (a narrator with a small grantable-item
+# set — so an "unearned crown" is provably ungrantable). The browser lane consumes:
+#
+#   POST /narrate {"player":"<msg>"} -> {ok, narration?, refused?, reason?,
+#                                        receiptCount, commitmentHex, narratorKind}
+#   GET  /world   -> {scene, receiptCount, commitmentHex, log:[...]}
+#   GET  /verify  -> {verified: bool}  (replay/re-verify the attested receipt chain)
+#
+# THE NARRATOR is honest: if ollama (`http://127.0.0.1:11434`, `gemma2:2b`) is
+# reachable, a REAL model narrates and `narratorKind: "model:gemma2:2b"`; otherwise
+# the deterministic `RecordedDm` and `narratorKind: "scripted:RecordedDm"`. Either
+# way the ATTESTATION and the un-jailbreakable tooth are REAL — the model's prose is
+# the DM's framing; the player's raw text is reflected VERBATIM into the narration so
+# a `{{` prompt-injection still reaches `attest_narration`'s injection-free leg.
+#
+# A workspace MEMBER of the breadstuffs root (registered in `members`); it path-deps
+# on `attested-dm` + `http-serve` (both members), so the root `[patch]`/`[workspace]`
+# tables apply and nothing here re-declares them.
+
+[package]
+name = "dungeon-service"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "The attested, un-jailbreakable AI dungeon-master, playable over HTTP: every narration is a receipted verifiable turn (authentic ∧ well-formed ∧ injection-free), a player prompt-injection is refused by the injection-free leg, and an over-cap grant (the unearned crown) is refused fail-closed."
+
+[[bin]]
+name = "dungeon-service"
+path = "src/main.rs"
+
+[dependencies]
+# THE DM — the provably-honest, un-jailbreakable narrator + world-cell + caps.
+attested-dm = { path = "../../attested-dm" }
+# The tiny server-independent HTTP/1.1 serve loop the handler binds to.
+http-serve = { path = "../../http-serve" }
+# JSON for the request/response bodies + the ollama client.
+serde_json = { workspace = true }
+# The running commitment over the receipt chain (the on-ledger fingerprint).
+blake3 = "1"
