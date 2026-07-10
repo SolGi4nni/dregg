@@ -168,3 +168,20 @@ Read at HEAD (turn/src/executor/apply.rs):
   soundness is DEBT-A.
 So the finite-map effect ceiling: React closable (nullifier); Promise/Notify off-kernel (no square exists);
 ShieldedTransfer kernel-part reducible but STARK = DEBT-A. Nothing faked; each boundary is measured.
+
+## ⚠ AUDIT FINDING (2026-07-10, DEBT-A brick-4 scout): Satisfied2Faithful's "realizations" are at a TOY permutation
+The census recorded `Satisfied2Faithful` as assumed=32 / realized=0. BOTH numbers need correcting, in opposite
+directions, and the second one matters more:
+- There ARE four constructed terms (`satisfied2Faithful_transferV3/_active/_inhabited/_satisfiedVm`) and
+  `genuineChipTbl_sound : ChipTableSoundN permOutZ genuineChipTbl` is PROVED, no carrier hypothesis, axiom-clean.
+- **BUT `permOutZ : List ℤ → List ℤ := fun _ => List.replicate CHIP_OUT_LANES 0` (FloorsNonVacuous.lean:108) is
+  the CONSTANT-ZERO function** — NOT the deployed `Poseidon2BabyBearW16` permutation. With `permOut = zeros`,
+  `chipHashIsLane0 : hash ins = (permOut ins).headD 0` forces `hash = 0` as well. Both levers are trivial.
+- So those terms are **NON-VACUITY witnesses** (the Prop is inhabited — which is exactly what `FloorsNonVacuous`
+  honestly claims and is genuinely valuable), NOT a discharge of `Satisfied2Faithful` for the DEPLOYED chip.
+  Reading them as "Satisfied2Faithful is realized" would be the `ZMod 5 ≠ BabyBear` mistake one layer over.
+- 26 sites still take `Satisfied2Faithful` as a HYPOTHESIS.
+**DEBT-A brick 4 (scoped precisely):** realize `Satisfied2Faithful` with `permOut :=` the REAL deployed
+permutation (`Poseidon2BabyBearW16.perm`, sorry-free) — prove `permWidth` / `chipHashIsLane0` (the v1 digest IS
+lane 0 of the genuine squeeze) / `chipTableFaithful : ChipTableSoundN` over the real poseidon2 chip table. THEN
+the 26 hypothesis-sites can be discharged. Non-vacuity ≠ deployed discharge.
