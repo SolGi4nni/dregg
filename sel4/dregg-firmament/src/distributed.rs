@@ -181,7 +181,12 @@ impl DistributedBacking {
             expires_at: None,
             allowed_effects: None,
             stored_epoch: None,
-            provenance: parent_provenance,
+            provenance: dregg_cell::derivation::cap_provenance(
+                &target,
+                0,
+                &parent_provenance,
+                &[0u8; 32],
+            ),
         };
         let action = Action {
             target: granter,

@@ -219,8 +219,13 @@ impl Mandate {
                 stored_epoch: None,
                 // The executor recomputes the cap's provenance at grant time (chaining the
                 // parent cap's provenance + the creating turn; see `finalize.rs`), so the
-                // unprovenanced `[0u8; 32]` sentinel here is rewritten on install — same as `slot`.
-                provenance: [0u8; 32],
+                // value here is a mint-rooted placeholder rewritten on install — same as `slot`.
+                provenance: dregg_cell::derivation::cap_provenance(
+                    &self.target,
+                    0,
+                    &dregg_cell::derivation::mint_provenance(),
+                    &[0u8; 32],
+                ),
             },
         }
     }

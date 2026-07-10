@@ -880,6 +880,12 @@ fn ledger_delta_capability_grant_and_revoke() {
         expires_at: None,
         allowed_effects: None,
         stored_epoch: None,
+        provenance: crate::derivation::cap_provenance(
+            &target,
+            0,
+            &crate::derivation::mint_provenance(),
+            &[0u8; 32],
+        ),
     };
     let delta = LedgerDelta {
         created: Vec::new(),
