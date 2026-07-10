@@ -398,3 +398,24 @@ editing game.rs + recompiling. Absurd for a fiction engine. So:
 - done: THE .dungeon DSL committed + verified by driving — parse_dungeon (fail-closed, line-numbered) + validate (dangling exits, unreachable objective via graph search, unplaced win/gate item, npc/combat/spell in unknown room, spell w/ no learn source). play_authored: THE LANTERN OF THE FEN, a dungeon existing ONLY AS TEXT, WINS through the real engine (12 verified turns). 75 tests — I wrote the 4 DSL tests the lane skipped, incl the non-vacuity baseline (good source -> ZERO errors) and the mutation test (break a CLEAN source-s exit -> caught by name).
 - FIRING: the capstone — /forge, a live DUNGEON authoring page (write a world, hit Play, gemma2 narrates it, the chain remembers it).
 - done: DOGFOODED the DSL — I hand-authored THE CLOCKWORK ORCHARD (5 rooms, gated greenhouse, a Keeper who trades the winding-key only for a fallen brass apple) straight from the grammar doc. Parsed first try, validated clean, plays its critical path to a WIN, chain verifies; + a non-vacuity test (no apple -> no key -> greenhouse stays shut). 77 tests. A dungeon is now a file a person can write.
+
+## ⚑⚑⚑ DISCORD INTEGRATION (ember: "can we make sure this is all integrated fluidly with ./discord-bot ??????")
+The bot is REAL + substantial (serenity 0.12, sqlx, its OWN cargo workspace with path-deps into the root; custodial
+cipherclerks, presence attestation, receipts, /verify, a buttoned /start tour). Two facts make this the right home:
+1. `attested-dm` is a root workspace member — the bot can depend on the engine DIRECTLY (`path = "../attested-dm"`).
+2. **`cipherclerk::derive(bot_secret, discord_user_id, federation_id)`** — every Discord user ALREADY has a
+   deterministic Ed25519 dregg identity (seed = BLAKE3(bot_secret ‖ discord_user_id)). So a button-click ballot can
+   be attributed to a REAL derived identity. The collective dungeon stops being a simulated crowd.
+LANE a816c5e310b271ecc (discord-bot/ only, additive): `/dungeon list|start|close|verify|forge` — a per-channel
+GameSession; the room + gemma2's narration in an embed; the candidate actions as BUTTONS (custom_id
+`fiction:vote:<round>:<opt>`); one WRITE-ONCE ballot per user per round, voter id = their cipherclerk-derived
+public key; live tally by message edit; close → plurality winner resolves through the real engine → LANDED (a
+verified turn + receipt) or REFUSED ("the crowd decided, the world disposed — room unchanged, no receipt");
+`/dungeon verify` re-verifies the chain in-channel; `/dungeon forge` takes a pasted .dungeon → parse (line-pinned,
+fail-closed) → validate (all issues) → play a world someone wrote five minutes ago.
+HONEST BAR: a live Discord cannot be driven without a token — the gate is `cargo build`/`check` green in the bot's
+workspace PLUS real tests over a REAL GameSession (write-once ballots, plurality, deterministic tie-break, a voted
+LOCKED exit refused with no receipt, forge parse/validate fail-closed, voter id == derived pubkey). A live smoke
+test remains outstanding and must be named as such.
+NEXT WAVE: `/story` — a channel co-authors a spween CYOA (The Commons / The Drowned Library) by branch vote, with
+the real CollectiveChoiceEngine quorum (the one The Commons actually uses); receipts + /verify in-channel.
