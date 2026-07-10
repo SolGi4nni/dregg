@@ -173,6 +173,18 @@ impl SurfaceBacking {
         surface: CellId,
         narrower: Rights,
     ) -> Result<(), ResolveError> {
+        // Chain the shared window handle onto the granter's HELD surface cap: the
+        // executor's grant arm (`grant_ref`) folds this `provenance` in as the
+        // installed cap's PARENT, so revoking the granter's window cap transitively
+        // dims every clipped view it handed out (the seL4 MDB subtree teardown).
+        // Fall back to a mint-rooted parent only if no held surface cap exists (the
+        // executor's attenuation gate then rejects the widening grant).
+        let parent_provenance = self
+            .ledger
+            .get(&granter)
+            .and_then(|c| c.capabilities.lookup_by_target(&surface))
+            .map(|held| held.provenance)
+            .unwrap_or_else(dregg_cell::derivation::mint_provenance);
         let cap = CapabilityRef {
             target: surface,
             slot: 0, // rewritten by the executor on grant
@@ -181,6 +193,7 @@ impl SurfaceBacking {
             expires_at: None,
             allowed_effects: None,
             stored_epoch: None,
+            provenance: parent_provenance,
         };
         self.run_grant_turn(
             granter,

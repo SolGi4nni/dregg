@@ -160,6 +160,19 @@ impl DistributedBacking {
         // as `ReceiptChainMismatch`). Threading it lets a cell delegate MORE THAN
         // ONCE through one backing without a spurious replay rejection.
         let previous_receipt_hash = self.executor.get_last_receipt_hash(&granter);
+        // Chain the delegated cap onto the granter's HELD cap over `target`: the
+        // executor's grant arm (`grant_ref`) folds this `provenance` in as the
+        // installed cap's PARENT (`cap_provenance(target, new_slot, parent, …)`),
+        // so the child's revocation-nullifier transitively binds the ancestor —
+        // a revoke of the granter's held cap kills this delegation too (the seL4
+        // MDB subtree teardown). Fall back to a mint-rooted parent only if the
+        // granter holds no such cap (the executor's attenuation gate then rejects).
+        let parent_provenance = self
+            .ledger
+            .get(&granter)
+            .and_then(|c| c.capabilities.lookup_by_target(&target))
+            .map(|held| held.provenance)
+            .unwrap_or_else(dregg_cell::derivation::mint_provenance);
         let cap = CapabilityRef {
             target,
             slot: 0, // rewritten by the executor on grant
@@ -168,6 +181,7 @@ impl DistributedBacking {
             expires_at: None,
             allowed_effects: None,
             stored_epoch: None,
+            provenance: parent_provenance,
         };
         let action = Action {
             target: granter,
