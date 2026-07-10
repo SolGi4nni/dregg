@@ -326,3 +326,24 @@ on the accept path). Then `StarkSound = AlgoStarkSound + DeployedRefines`, and `
 - ⚠⚠ #7 NEW: **LogUp bus soundness is UNMODELED** (`Lookup.lean`: "that lives in the Rust AIR, not in this
   semantics"); no `logupCumSum` soundness theorem exists. Next real blocker; PROVABLE (Haböck + Schwartz–Zippel).
   In flight: a077860d494fcca5b.
+- ✅ DEBT-A #2 FRI sampled-query soundness `da3a8fcd4` — `accept_prob_le : δ-far → |accepting|/|ι|^k ≤ (1−δ)^k`;
+  deployed k=38, δ=7/16 (unique-decoding, NOT Johnson/BCIKS20), error < 2⁻³¹. Lane checked the SHIPPED sampler
+  (fri/verifier.rs:266 — independent, WITH replacement) → the model is FAITHFUL, corrected my prose. Closes the
+  Q=univ finding; `arity_constant_bites` makes #6's 64d load-bearing (d>0). Residual: union-bound→transcript-
+  measure wiring.
+- ✅ DEBT-A #7 LogUp bus soundness `da3a8fcd4` — Haböck log-derivative: forged lookup ⇒ busNum ≠ 0 ⇒ balances only
+  on exceptionalSet card < |A|+|B|; BabyBear error (|A|+|B|)/2013265921. The obligation the retracted "lives in the
+  Rust AIR" comment (`47e244c38`) hid. Residual: REDUCES hbus, doesn't discharge — the deployed bus COLUMN LAYOUT
+  is unmodeled; single-occurrence case only.
+
+## DEBT-A state (2026-07-10 noon) — the crypto-math is largely proved; the remainder is WIRING + an architecture call
+PROVED: #1 ChipTableSoundN @ real perm (serves Satisfied2Faithful) · #2 FRI query soundness · #3 FriProximity
+bridge · #6 arity-2^k @ deployed 8-to-1 · #7 LogUp bus soundness. AIR half: 6/8 premises @ transferV3.
+REMAINING, and NONE is a research open — they are composition + a decision:
+- WIRING (mechanical, real): union-bound→transcript measure (#2); bus column layout (#7); hplumb (Merkle→HashCR)
+  + hcode_sat (#3); thread these into one `instance : AlgoStarkSound`.
+- ⚠ ARCHITECTURE DECISION (ember-gated): `verifyBatch` is `opaque` (CircuitSoundness:353). To get `StarkSound` as a
+  THEOREM, either (A) DEFINE `verifyBatch := verifyBatchModel` and carry `DeployedMatchesModel` as a KAT
+  correspondence (harness EXISTS: dregg-lean-ffi + goldens; import-cycle + 25/42-file ripple), or (B) keep it
+  opaque and name `StarkSound` as an explicit floor/TCB item. This is a design choice, not a proof.
+- SEPARATE CAMPAIGN: #4 FriExtract (the recursive/aggregated apex — a knowledge-extraction obligation, not FRI).
