@@ -75,6 +75,10 @@ pub enum NoteError {
     /// create-side dual of `DoubleSpend` — the commitments accumulator is
     /// grow-only, so a duplicate commitment is rejected).
     DuplicateCommitment { commitment: NoteCommitment },
+    /// Attempted to revoke a credential nullifier that is already recorded in the
+    /// grow-only revoked-credential accumulator (the revocation-side dual of
+    /// `DoubleSpend`/`DuplicateCommitment` — a credential cannot be revoked twice).
+    AlreadyRevoked { credential_nullifier: [u8; 32] },
     /// Conservation law violated: inputs do not equal outputs for an asset type.
     ConservationViolation {
         asset_type: u64,
@@ -98,6 +102,15 @@ impl core::fmt::Display for NoteError {
                     f,
                     "duplicate commitment: {:?} already created",
                     &commitment.0[..4]
+                )
+            }
+            NoteError::AlreadyRevoked {
+                credential_nullifier,
+            } => {
+                write!(
+                    f,
+                    "already revoked: credential nullifier {:?} already recorded",
+                    &credential_nullifier[..4]
                 )
             }
             NoteError::ConservationViolation {

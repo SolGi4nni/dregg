@@ -57,6 +57,7 @@ pub mod predicate;
 pub mod prepaid_lease;
 pub mod program;
 pub mod revocation_channel;
+pub mod revoked_set;
 pub mod ring_closure;
 pub mod state;
 /// γ.2 unilateral binding (1-arity sibling) — plain data type used by
@@ -173,6 +174,7 @@ pub use program::{
 pub use revocation_channel::{
     ChannelId, RevocationChannel, RevocationChannelError, RevocationChannelSet,
 };
+pub use revoked_set::RevokedSet;
 pub use ring_closure::{
     ClosureProofKind, RingClosureAttestation, RingClosureError, RingLegPi,
     canonical_silver_commitment,
