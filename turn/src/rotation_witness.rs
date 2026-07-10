@@ -61,10 +61,11 @@ pub const NUM_REGISTERS: usize = 24;
 
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
 /// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
-/// perms_digest · vk_digest · mode · fields_root). Matches Lean `preLimbsAt_length = 37` at R = 24,
-/// after the WAVE-3 mode/fields-root flag-day widening (NUM_PRE_LIMBS 35→37 — the committed mode byte +
-/// fields_root digest sub-limbs, the NEW LAST pre-iroot limbs).
-pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 5 + 75 + 57; // v13: 112 + 57 = 169 (+56 fields[0..7] completion lanes 112..=167 + 1 pad limb 168 — the faithful fields-octet grow)
+/// perms_digest · vk_digest · mode · fields_root · revoked_root). Matches Lean
+/// `preLimbsAt_length = 38` at R = 24, after the REVOKED-ROOT flag-day widening of the base region
+/// (37→38): `revoked_root` is the new base limb 37 (right after `fields_root` at 36), so every limb
+/// index ≥ 37 shifts +1 (completion 38..=88, carrier 89..=112, fields 113..=168, pad 169).
+pub const NUM_PRE_LIMBS: usize = 1 + NUM_REGISTERS + 4 + 3 + 6 + 75 + 57; // 170 (base widened 37→38: revoked_root = limb 37; v13 fields octet completion 113..=168 + 1 pad limb 169)
 
 /// The collection id under which a present-cell existence leaf is keyed in the cells tree.
 const CELLS_COLLECTION: u32 = 0;
@@ -266,6 +267,19 @@ pub fn empty_commitments_root_8() -> dregg_circuit::Faithful8 {
     dregg_circuit::heap_root::empty_heap_root_8()
 }
 
+/// The faithful 8-felt root of the EMPTY credential-revocation accumulator — the native
+/// `CanonicalHeapTree8` empty root (only the MIN/MAX sentinels). THE value a producer passes for
+/// `revoked_root` when no live accumulator root is threaded (a turn that revokes nothing — the
+/// common case; the registry is grow-only and starts empty). Byte-identical to a fresh
+/// `dregg_cell::revoked_set::RevokedSet::root8` (both fold the same empty `CanonicalHeapTree8`), so
+/// the empty default and a live-advanced root ride the SAME lanes. This empty default is the
+/// canonical "nothing revoked" root a light client verifies against — it is COMMITTED (not
+/// wire-supplied), so a node cannot substitute a stale root to hide a revocation (hole #139).
+#[inline]
+pub fn empty_revoked_root_8() -> dregg_circuit::Faithful8 {
+    dregg_circuit::heap_root::empty_heap_root_8()
+}
+
 /// **THE `cells_root` PRODUCER** — the turn-level boundary view over the present cells.
 ///
 /// The sorted-Poseidon2 root over one existence leaf per present cell (`value = 1`,
@@ -362,6 +376,7 @@ pub fn produce(
     ledger: &Ledger,
     nullifier_root: &dregg_circuit::Faithful8,
     commitments_root: &dregg_circuit::Faithful8,
+    revoked_root: &dregg_circuit::Faithful8,
     receipt_hashes: &[[u8; 32]],
     material: &dregg_cell::commitment::RotationCarrierMaterial,
 ) -> RotationWitness {
@@ -381,7 +396,9 @@ pub fn produce(
     // value8 weld FORCES the written slot's 8 lanes to the declared params; the completion freezes
     // pin every non-written field's 7 lanes on a value turn (the fields GENTIAN law).
     for i in 0..8 {
-        let base = 112 + 7 * i;
+        // REVOKED-ROOT flag-day: the fields[0..7] completion octet shifted 112..=167 → 113..=168
+        // (every limb index ≥ 37 shifted +1 for the new base `revoked_root` limb 37).
+        let base = 113 + 7 * i;
         dregg_circuit::Faithful8::from_field_limbs8(&cell.state.fields[i]).write_lanes(
             &mut pre_limbs,
             [
@@ -412,7 +429,7 @@ pub fn produce(
     // it), so the `cap_root ↔ cap_root` weld holds lane-for-lane by construction. Byte-identical
     // to `commitment::compute_rotated_pre_limbs`.
     dregg_cell::commitment::compute_canonical_capability_root_8(&cell.capabilities)
-        .write_lanes(&mut pre_limbs, [25, 51, 52, 53, 54, 55, 56, 57]);
+        .write_lanes(&mut pre_limbs, [25, 52, 53, 54, 55, 56, 57, 58]);
     // limb 26: nullifier_root lane-0 (welded) ‖ extras 67..=73: the SEVEN nullifier-root completion
     // felts. THE FAITHFUL 8-FELT NULLIFIER ROOT — the native `CanonicalHeapTree8` node8 (arity-16)
     // sorted-Poseidon2 accumulator root the circuit's 8-felt `nullifier_root` column GROUP carries
@@ -420,7 +437,7 @@ pub fn produce(
     // twin's `V9RotationContext.nullifier_root` carries, so limbs [26,67..73] are byte-identical to
     // `commitment::compute_rotated_pre_limbs`. This REPLACES the lossy 1-felt `root_felt(nullifier_root)`
     // — the degraded-felt gate is satisfied for nullifier_root (the nullifier GENTIAN law).
-    nullifier_root.write_lanes(&mut pre_limbs, [26, 67, 68, 69, 70, 71, 72, 73]);
+    nullifier_root.write_lanes(&mut pre_limbs, [26, 68, 69, 70, 71, 72, 73, 74]);
     // limb 27: commitments_root lane-0 (welded) ‖ extras 74..=80: the SEVEN commitments-root
     // completion felts. THE FAITHFUL 8-FELT COMMITMENTS ROOT — the native `CanonicalHeapTree8` node8
     // (arity-16) sorted-Poseidon2 accumulator root the circuit's 8-felt `commitments_root` column
@@ -428,7 +445,7 @@ pub fn produce(
     // `Faithful8` the cell twin's `V9RotationContext.commitments_root` carries, so limbs [27,74..80]
     // are byte-identical to `commitment::compute_rotated_pre_limbs`. This REPLACES the lossy 1-felt
     // `root_felt(commitments_root)`.
-    commitments_root.write_lanes(&mut pre_limbs, [27, 74, 75, 76, 77, 78, 79, 80]);
+    commitments_root.write_lanes(&mut pre_limbs, [27, 75, 76, 77, 78, 79, 80, 81]);
     // limb 28: heap_root lane-0 (welded) ‖ extras 58..=64: the SEVEN heap-root completion felts
     // (Phase H-HEAP-8). The faithful native-`heap_node8` (arity-16) 8-felt sorted-Merkle root over
     // the cell's heap map — cell and circuit fold through the SAME impl (`compute_canonical_heap_root_8`),
@@ -436,7 +453,7 @@ pub fn produce(
     // guards it). Byte-identical to `commitment::compute_rotated_pre_limbs`. This REPLACES the lossy
     // 1-felt `root_felt(&cell.state.heap_root)` — the degraded-felt gate is satisfied for heap_root.
     dregg_cell::state::compute_canonical_heap_root_8(&cell.state.heap_map)
-        .write_lanes(&mut pre_limbs, [28, 58, 59, 60, 61, 62, 63, 64]);
+        .write_lanes(&mut pre_limbs, [28, 59, 60, 61, 62, 63, 64, 65]);
     // limbs 29,30,31: lifecycle (opaque felt), epoch, committed_height.
     pre_limbs[29] = lifecycle_felt(&cell.lifecycle);
     pre_limbs[30] = epoch_felt(cell.state.delegation_epoch());
@@ -449,9 +466,9 @@ pub fn produce(
     // v10 weld lands the seven completion felts at extras 37..=43 (perms) / 44..=50 (vk).
     // v10 perms/vk faithful 8-felt completion (byte-identical to `commitment::compute_rotated_pre_limbs`).
     dregg_cell::commitment::perms_digest_8(&cell.permissions)
-        .write_lanes(&mut pre_limbs, [33, 37, 38, 39, 40, 41, 42, 43]);
+        .write_lanes(&mut pre_limbs, [33, 38, 39, 40, 41, 42, 43, 44]);
     dregg_cell::commitment::vk_digest_8(&cell.verification_key)
-        .write_lanes(&mut pre_limbs, [34, 44, 45, 46, 47, 48, 49, 50]);
+        .write_lanes(&mut pre_limbs, [34, 45, 46, 47, 48, 49, 50, 51]);
     // limbs 35,36: mode, fields_root (the WAVE-3 flag-day committed authority sub-limbs — the
     // makeSovereign mode CONSTANT-force limb and the setFieldDyn / refusal fields-root weld limb, the
     // NEW LAST pre-iroot limbs).
@@ -464,11 +481,21 @@ pub fn produce(
     // `commitment::compute_rotated_pre_limbs`. This REPLACES the lossy 1-felt
     // `fields_root_felt(&cell.state.fields_root)` — the degraded-felt gate is satisfied for fields_root.
     dregg_cell::state::compute_canonical_fields_root_8(&cell.state.fields_map)
-        .write_lanes(&mut pre_limbs, [36, 65, 66, 19, 20, 21, 22, 23]);
+        .write_lanes(&mut pre_limbs, [36, 66, 67, 19, 20, 21, 22, 23]);
+    // limb 37: revoked_root lane-0 (the NEW base limb, REVOKED-ROOT flag-day) ‖ extras 82..=88: the
+    // SEVEN revoked-root completion felts. THE FAITHFUL 8-FELT CREDENTIAL-REVOCATION ROOT the circuit's
+    // 8-felt `revoked_root` column GROUP carries (lane 0 = limb 37, lanes 1..7 = limbs 82..88 — the
+    // shifted-free completion slots the base widen opened). The producer feeds the SAME `Faithful8` the
+    // cell twin's `V9RotationContext.revoked_root` carries, so limbs [37,82..88] are byte-identical to
+    // `commitment::compute_rotated_pre_limbs`. The credential-revocation NON-membership gate opens
+    // against this COMMITTED root (not a wire-supplied one — hole #139).
+    revoked_root.write_lanes(&mut pre_limbs, [37, 82, 83, 84, 85, 86, 87, 88]);
 
-    // v12 CARRIER-MATERIAL octets (limbs 88..=111) — the SAT foundation. Byte-identical to the
-    // cell-side twin `commitment::compute_rotated_pre_limbs`; the trace generator (`fill_block`)
-    // carries them by copy. Absent material → ZERO (the vector is ZERO-initialised).
+    // v12 CARRIER-MATERIAL octets (limbs 89..=112 after the REVOKED-ROOT +1 shift) — the SAT
+    // foundation. Byte-identical to the cell-side twin `commitment::compute_rotated_pre_limbs`; the
+    // octet base constants (`B_CHILD_VK_OCTET` etc.) are the circuit-side source of truth, so this
+    // fill picks up the shift symbolically once the circuit lane bumps them (88→89, 96→97, 104→105).
+    // The trace generator (`fill_block`) carries them by copy. Absent material → ZERO.
     use dregg_circuit::effect_vm::trace_rotated::{
         B_CHILD_VK_OCTET, B_CONTRACT_HASH_OCTET, B_PUBKEY_OCTET,
     };
@@ -574,6 +601,10 @@ pub fn mint_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -584,6 +615,10 @@ pub fn mint_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -748,6 +783,10 @@ pub fn mint_custom_wide_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -758,6 +797,10 @@ pub fn mint_custom_wide_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -820,6 +863,10 @@ pub fn mint_welded_umem_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -830,6 +877,10 @@ pub fn mint_welded_umem_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -908,6 +959,10 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -918,6 +973,10 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -993,6 +1052,10 @@ pub fn mint_welded_wide_umem_cap_write_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -1003,6 +1066,10 @@ pub fn mint_welded_wide_umem_cap_write_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -1083,6 +1150,10 @@ pub fn mint_welded_wide_umem_multidomain_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -1093,6 +1164,10 @@ pub fn mint_welded_wide_umem_multidomain_rotated_participant_leg(
         &ledger,
         nullifier_root,
         commitments_root,
+        // REVOKED-ROOT: these proving-recipe wrappers commit the EMPTY revocation accumulator
+        // (no live revoked root flows through a mint recipe today); stage E/G threads a live root
+        // by promoting this to a wrapper param when a revoke-carrying turn needs it.
+        &empty_revoked_root_8(),
         receipt_log,
         // recipe path: no effective_vk / contract_hash in hand (the faithful capture is at the
         // executor's `effective_vk` / hatchery site) — ZERO carrier material.
@@ -1283,11 +1358,12 @@ mod tests {
     #[test]
     fn pre_limb_count_is_112_at_r24() {
         // 1 cells_root + 24 registers + 4 (cap/nullifier/commitments/heap) + 3 (lifecycle/epoch/
-        // committed_height) + 5 (disc + perms + vk + mode + fields_root, the WAVE-2/3 flag-days)
-        // + 51 accumulator-8-felt completion limbs (37..87, v10+v11 lanes 1..7)
-        // + 24 v12 carrier-material octets (88..111: child_vk8·contract_hash8·pubkey8, ZERO until gate-welded)
-        // + 56 v13 fields[0..7] completion lanes (112..167) + 1 pad limb (168).
-        assert_eq!(NUM_PRE_LIMBS, 169);
+        // committed_height) + 6 (disc + perms + vk + mode + fields_root + revoked_root, the
+        // WAVE-2/3 + REVOKED-ROOT flag-days; revoked_root = base limb 37)
+        // + 51 accumulator-8-felt completion limbs (38..88, lanes 1..7, incl. revoked 82..88)
+        // + 24 v12 carrier-material octets (89..112: child_vk8·contract_hash8·pubkey8, ZERO until gate-welded)
+        // + 56 v13 fields[0..7] completion lanes (113..168) + 1 pad limb (169).
+        assert_eq!(NUM_PRE_LIMBS, 170);
     }
 
     /// THE iroot NON-OMISSION TOOTH (Lean `mroot_injective`): tamper / truncate / extend /
@@ -1567,6 +1643,7 @@ mod tests {
             cells_root: cells_root(&ledger),
             nullifier_root: empty_nullifier_root_8(),
             commitments_root: empty_commitments_root_8(),
+            revoked_root: empty_revoked_root_8(),
             iroot: BabyBear::new(7),
             material: Default::default(),
         };

@@ -528,6 +528,23 @@ pub fn cap_ref_to_leaf(cap: &crate::capability::CapabilityRef) -> dregg_circuit:
         mask_hi,
         expiry: cap_root::encode_expiry(cap.expires_at),
         breadstuff: cap_root::encode_breadstuff(cap.breadstuff.as_ref()),
+        // REVOKED-ROOT campaign — the cap-leaf PROVENANCE binding (item 5; the exact change
+        // `capability.rs`'s `provenance` doc calls for: "the geometry lane must add it so the
+        // committed cap-root binds each cap's provenance"). Dependency (a) IS met:
+        // `CapabilityRef.provenance: [u8; 32]` already exists (the rust-identity lane landed it;
+        // `[0u8; 32]` is the legacy/unprovenanced sentinel). The ONE remaining dependency is
+        // circuit-side (b): an 8th `CapLeaf.provenance: BabyBear` field + its absorb in
+        // `CapLeaf::digest()` (arity 7 → 8). The felt fold reuses the EXISTING
+        // `cap_root::fold_bytes32` (no new encode fn needed; the `[0;32]` sentinel folds to a fixed
+        // felt). STAGED (commented) rather than live because adding the 8th field to this literal
+        // while `CapLeaf` still has 7 fields would break `dregg-cell` — and the whole shared tree —
+        // for the concurrent swarm. Uncomment IN LOCKSTEP with the circuit `CapLeaf`/`digest()`
+        // widening; it is a cap-leaf shape change → root value moves → VK regen (Stage F), and the
+        // A2/GENTIAN differential must be re-pinned so cell and circuit agree byte-identically.
+        // Binding provenance makes the committed `cap_root` record each cap's `credNul` identity —
+        // the SAME provenance the revoked accumulator keys on (`cred_nul(provenance)`) and the SAME
+        // `ancestor_hash` the non-revocation circuit queries.
+        // provenance: cap_root::fold_bytes32(&cap.provenance),
     }
 }
 
@@ -728,9 +745,11 @@ pub fn canonical_to_babybear_pi(canonical: &[u8; 32]) -> [u32; 8] {
 pub const V9_NUM_REGISTERS: usize = 24;
 /// The number of pre-iroot absorption limbs (cells_root · r0..r23 · cap_root · nullifier_root ·
 /// commitments_root · heap_root · lifecycle · epoch · committed_height · lifecycle_disc ·
-/// perms_digest · vk_digest · mode · fields_root). Lean `preLimbsAt_length = 37` at R = 24, after
-/// the WAVE-3 mode/fields-root flag-day widening (35→37).
-pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3 + 5 + 75 + 57; // 169 (v13: +56 fields[0..7] completion lanes 112..=167 + 1 pad limb 168 — the faithful fields-octet grow)
+/// perms_digest · vk_digest · mode · fields_root · revoked_root). Lean `preLimbsAt_length = 38` at
+/// R = 24, after the REVOKED-ROOT flag-day widening of the base region (37→38): `revoked_root` is
+/// the new base limb 37 (right after `fields_root` at 36), so every limb index ≥ 37 shifts +1 —
+/// completion 38..=88, carrier 89..=112, fields[0..7] completion 113..=168, pad 169.
+pub const V9_NUM_PRE_LIMBS: usize = 1 + V9_NUM_REGISTERS + 4 + 3 + 6 + 75 + 57; // 170 (base widened 37→38: revoked_root = limb 37; v13 fields octet completion 113..=168 + 1 pad limb 169)
 
 /// The turn-level context the rotated commitment absorbs that is NOT cell-local: the
 /// boundary `cells_root` (the sorted-Poseidon2 root over present cells), the cell's committed
@@ -757,6 +776,16 @@ pub struct V9RotationContext {
     /// empty-accumulator default is `dregg_turn::rotation_witness::empty_commitments_root_8` (=
     /// `dregg_circuit::heap_root::empty_heap_root_8`).
     pub commitments_root: dregg_circuit::Faithful8,
+    /// The committed FAITHFUL 8-felt CREDENTIAL-REVOCATION-accumulator root (base limb 37 lane-0 ‖
+    /// completion lanes 82..=88 — the REVOKED-ROOT flag-day widened the base region 37→38 to seat it
+    /// right after `fields_root`). The native `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2
+    /// accumulator root the credential-revocation gate opens a NON-membership witness against (a
+    /// revoked `credNul` admits no witness ⇒ the fail-closed gate refuses; hole #3 / #139). Keyed by
+    /// the domain-separated capability provenance hash (`credNul`) and channel id (`chanNul`), value =
+    /// `revocation_height`. Sourced from `dregg_cell::revoked_set::RevokedSet::root8` (the live
+    /// `(credNul, height)` map); the empty-accumulator default is
+    /// `dregg_turn::rotation_witness::empty_revoked_root_8` (= `dregg_circuit::heap_root::empty_heap_root_8`).
+    pub revoked_root: dregg_circuit::Faithful8,
     /// The receipt-index MMR root, absorbed LAST.
     pub iroot: dregg_circuit::field::BabyBear,
     /// The v12 per-effect CARRIER MATERIAL for the child-vk / contract-hash octets (limbs 88..103).
@@ -1049,7 +1078,9 @@ pub fn compute_rotated_pre_limbs(
     // to the declared params; the completion freezes pin every non-written field's 7 lanes on a
     // value turn (the fields GENTIAN law). Byte-identical to the `rotation_witness` producer fill.
     for i in 0..8 {
-        let base = 112 + 7 * i;
+        // REVOKED-ROOT flag-day: the fields[0..7] completion octet shifted 112..=167 → 113..=168
+        // (every limb index ≥ 37 shifted +1 for the new base `revoked_root` limb 37).
+        let base = 113 + 7 * i;
         dregg_circuit::Faithful8::from_field_limbs8(&cell.state.fields[i]).write_lanes(
             &mut pre,
             [
@@ -1082,7 +1113,7 @@ pub fn compute_rotated_pre_limbs(
     // ~31-bit collision at lane-0 differing in any completion felt is UNSAT (the GENTIAN law,
     // ledgerless). Byte-identical to `rotation_witness`'s producer fill.
     compute_canonical_capability_root_8(&cell.capabilities)
-        .write_lanes(&mut pre, [25, 51, 52, 53, 54, 55, 56, 57]);
+        .write_lanes(&mut pre, [25, 52, 53, 54, 55, 56, 57, 58]);
     // limb 26: nullifier_root lane-0 (welded) ‖ extras 67..=73: the SEVEN nullifier-root completion
     // felts. THE FAITHFUL 8-FELT NULLIFIER ROOT — the native `CanonicalHeapTree8` node8 (arity-16)
     // sorted-Poseidon2 accumulator root the circuit's 8-felt `nullifier_root` column GROUP carries
@@ -1091,7 +1122,7 @@ pub fn compute_rotated_pre_limbs(
     // completion felt is UNSAT (the nullifier GENTIAN law). This REPLACES the lossy 1-felt
     // `hash_bytes(&ctx.nullifier_root)`. Byte-identical to `rotation_witness::produce`.
     ctx.nullifier_root
-        .write_lanes(&mut pre, [26, 67, 68, 69, 70, 71, 72, 73]);
+        .write_lanes(&mut pre, [26, 68, 69, 70, 71, 72, 73, 74]);
     // limb 27: commitments_root lane-0 (welded) ‖ extras 74..=80: the SEVEN commitments-root
     // completion felts. THE FAITHFUL 8-FELT COMMITMENTS ROOT — the native `CanonicalHeapTree8`
     // node8 (arity-16) sorted-Poseidon2 accumulator root the circuit's 8-felt `commitments_root`
@@ -1101,7 +1132,7 @@ pub fn compute_rotated_pre_limbs(
     // differing in any completion felt is UNSAT. This REPLACES the lossy 1-felt
     // `hash_bytes(&ctx.commitments_root)`. Byte-identical to `rotation_witness::produce`.
     ctx.commitments_root
-        .write_lanes(&mut pre, [27, 74, 75, 76, 77, 78, 79, 80]);
+        .write_lanes(&mut pre, [27, 75, 76, 77, 78, 79, 80, 81]);
     // limb 28: heap_root lane-0 (welded) ‖ extras 58..=64: the SEVEN heap-root completion felts
     // (Phase H-HEAP-8). The faithful native-`heap_node8` (arity-16) 8-felt sorted-Merkle root over the
     // cell's heap map — the circuit's 8-felt `heap_root` column GROUP carries lane 0 = limb 28, lanes
@@ -1110,7 +1141,7 @@ pub fn compute_rotated_pre_limbs(
     // heap GENTIAN law). This REPLACES the lossy 1-felt `hash_bytes(&cell.state.heap_root)`.
     // Byte-identical to `rotation_witness::compute_rotated_pre_limbs`.
     crate::state::compute_canonical_heap_root_8(&cell.state.heap_map)
-        .write_lanes(&mut pre, [28, 58, 59, 60, 61, 62, 63, 64]);
+        .write_lanes(&mut pre, [28, 59, 60, 61, 62, 63, 64, 65]);
     // limbs 29,30,31: lifecycle (opaque felt), epoch, committed_height.
     pre[29] = v9_lifecycle_felt(&cell.lifecycle);
     pre[30] = BabyBear::new((cell.state.delegation_epoch() & 0x7FFF_FFFF) as u32);
@@ -1125,8 +1156,8 @@ pub fn compute_rotated_pre_limbs(
     // The 8-wide permsVKWeldGate forces EACH to its declared param, so a ~31-bit collision at limb-0
     // that differs in any completion felt is UNSAT (GENTIAN law). Byte-identical to
     // `rotation_witness`'s producer fill.
-    perms_digest_8(&cell.permissions).write_lanes(&mut pre, [33, 37, 38, 39, 40, 41, 42, 43]);
-    vk_digest_8(&cell.verification_key).write_lanes(&mut pre, [34, 44, 45, 46, 47, 48, 49, 50]);
+    perms_digest_8(&cell.permissions).write_lanes(&mut pre, [33, 38, 39, 40, 41, 42, 43, 44]);
+    vk_digest_8(&cell.verification_key).write_lanes(&mut pre, [34, 45, 46, 47, 48, 49, 50, 51]);
     // limbs 35,36: mode, fields_root (the WAVE-3 flag-day committed authority sub-limbs — the
     // makeSovereign mode CONSTANT-force limb and the setFieldDyn / refusal fields-root weld limb, the
     // NEW LAST pre-iroot limbs). Byte-identical to `rotation_witness::{mode_felt,fields_root_felt}`.
@@ -1140,9 +1171,23 @@ pub fn compute_rotated_pre_limbs(
     // `fields_root_felt(&cell.state.fields_root)`. Byte-identical to
     // `rotation_witness::compute_rotated_pre_limbs`.
     crate::state::compute_canonical_fields_root_8(&cell.state.fields_map)
-        .write_lanes(&mut pre, [36, 65, 66, 19, 20, 21, 22, 23]);
+        .write_lanes(&mut pre, [36, 66, 67, 19, 20, 21, 22, 23]);
+    // limb 37: revoked_root lane-0 (the NEW base limb, REVOKED-ROOT flag-day) ‖ extras 82..=88: the
+    // SEVEN revoked-root completion felts. THE FAITHFUL 8-FELT CREDENTIAL-REVOCATION ROOT — the native
+    // `CanonicalHeapTree8` node8 (arity-16) sorted-Poseidon2 accumulator root the circuit's 8-felt
+    // `revoked_root` column GROUP carries (lane 0 = limb 37, lanes 1..7 = limbs 82..88; the shifted-free
+    // completion slots the base widen opened). The in-circuit credential-revocation NON-membership gate
+    // opens against this COMMITTED root (not a wire-supplied one — hole #139), so a node cannot claim
+    // an empty/stale revocation set: a light client verifies the revocation was honoured from the
+    // commitment alone. Sourced from `V9RotationContext.revoked_root` (the live `RevokedSet::root8`).
+    // Byte-identical to `rotation_witness::produce`.
+    ctx.revoked_root
+        .write_lanes(&mut pre, [37, 82, 83, 84, 85, 86, 87, 88]);
 
-    // v12 CARRIER-MATERIAL octets (limbs 88..=111) — the SAT foundation for the four octet carriers.
+    // v12 CARRIER-MATERIAL octets (limbs 89..=112 after the REVOKED-ROOT +1 shift) — the SAT
+    // foundation for the four octet carriers. The octet base constants (`B_CHILD_VK_OCTET` etc.)
+    // are the circuit-side source of truth, so this fill picks up the shift symbolically once the
+    // circuit lane bumps them (88→89, 96→97, 104→105).
     // Byte-identical to the producer twin `dregg_turn::rotation_witness::produce`; the trace generator
     // (`fill_block`) carries them by copy. Absent material → ZERO (the vector is ZERO-initialised).
     use dregg_circuit::effect_vm::trace_rotated::{
@@ -1473,6 +1518,7 @@ mod tests {
             cells_root: BabyBear::ZERO,
             nullifier_root: nr,
             commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
             iroot: BabyBear::ZERO,
             material: RotationCarrierMaterial::default(),
         };
@@ -1492,15 +1538,16 @@ mod tests {
         let limbs_a = compute_rotated_pre_limbs(&cell, &mk_ctx(root_a));
         let limbs_b = compute_rotated_pre_limbs(&cell, &mk_ctx(root_b));
 
-        // (a) WRITE CORRECTNESS: committed limbs [26, 67..73] ARE the root's 8 lanes.
+        // (a) WRITE CORRECTNESS: committed limbs [26, 68..74] ARE the root's 8 lanes (REVOKED-ROOT
+        // flag-day shifted the nullifier completion lanes 67..73 → 68..74).
         let ra = root_a.limbs();
         assert_eq!(limbs_a[26], ra[0], "limb 26 must be root lane 0");
         for i in 0..7 {
             assert_eq!(
-                limbs_a[67 + i],
+                limbs_a[68 + i],
                 ra[1 + i],
                 "completion limb {} must be root lane {}",
-                67 + i,
+                68 + i,
                 1 + i
             );
         }
@@ -1508,13 +1555,13 @@ mod tests {
         // (b) NON-VACUOUS: the completion lanes are NOT all zero (the old bug filled only lane 0).
         assert!(
             ra[1..8].iter().any(|&x| x != BabyBear::ZERO),
-            "faithful completion lanes 67..73 must be non-zero for a non-empty frontier"
+            "faithful completion lanes 68..74 must be non-zero for a non-empty frontier"
         );
 
         // (c) CROSS-NODE ANTI-REPLAY: different frontiers -> different committed roots.
         let committed = |l: &[BabyBear]| -> Vec<BabyBear> {
             std::iter::once(l[26])
-                .chain(l[67..74].iter().copied())
+                .chain(l[68..75].iter().copied())
                 .collect()
         };
         assert_ne!(
@@ -1536,6 +1583,7 @@ mod tests {
             cells_root: BabyBear::ZERO,
             nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
             commitments_root: cr,
+            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
             iroot: BabyBear::ZERO,
             material: RotationCarrierMaterial::default(),
         };
@@ -1555,15 +1603,16 @@ mod tests {
         let limbs_a = compute_rotated_pre_limbs(&cell, &mk_ctx(root_a));
         let limbs_b = compute_rotated_pre_limbs(&cell, &mk_ctx(root_b));
 
-        // (a) WRITE CORRECTNESS: committed limbs [27, 74..80] ARE the root's 8 lanes.
+        // (a) WRITE CORRECTNESS: committed limbs [27, 75..81] ARE the root's 8 lanes (REVOKED-ROOT
+        // flag-day shifted the commitments completion lanes 74..80 → 75..81).
         let ra = root_a.limbs();
         assert_eq!(limbs_a[27], ra[0], "limb 27 must be root lane 0");
         for i in 0..7 {
             assert_eq!(
-                limbs_a[74 + i],
+                limbs_a[75 + i],
                 ra[1 + i],
                 "completion limb {} must be root lane {}",
-                74 + i,
+                75 + i,
                 1 + i
             );
         }
@@ -1571,13 +1620,13 @@ mod tests {
         // (b) NON-VACUOUS: the completion lanes are NOT all zero (the old bug filled only lane 0).
         assert!(
             ra[1..8].iter().any(|&x| x != BabyBear::ZERO),
-            "faithful completion lanes 74..80 must be non-zero for a non-empty frontier"
+            "faithful completion lanes 75..81 must be non-zero for a non-empty frontier"
         );
 
         // (c) CROSS-NODE DISTINGUISHING: different frontiers -> different committed roots.
         let committed = |l: &[BabyBear]| -> Vec<BabyBear> {
             std::iter::once(l[27])
-                .chain(l[74..81].iter().copied())
+                .chain(l[75..82].iter().copied())
                 .collect()
         };
         assert_ne!(
@@ -2276,6 +2325,7 @@ mod tests {
             cells_root: BabyBear::new(cells_root),
             nullifier_root: dregg_circuit::heap_root::empty_heap_root_8(),
             commitments_root: dregg_circuit::heap_root::empty_heap_root_8(),
+            revoked_root: dregg_circuit::heap_root::empty_heap_root_8(),
             iroot: BabyBear::new(iroot),
             material: Default::default(),
         }
@@ -2290,8 +2340,8 @@ mod tests {
         assert_eq!(pre.len(), V9_NUM_PRE_LIMBS);
         assert_eq!(
             pre.len(),
-            169,
-            "37 base/WAVE-2/3 + 51 faithful-8-felt completion limbs (37..87, v10+v11) + 24 v12 carrier-material octets (88..111) + 56 v13 fields[0..7] completion lanes (112..167) + 1 pad (168)"
+            170,
+            "38 base (incl. revoked_root limb 37) + 51 faithful-8-felt completion limbs (38..88) + 24 v12 carrier-material octets (89..112) + 56 v13 fields[0..7] completion lanes (113..168) + 1 pad (169)"
         );
         // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
         assert_eq!(pre[0], BabyBear::new(11));
@@ -2323,10 +2373,11 @@ mod tests {
         // limbs 35,36 are the WAVE-3 mode / fields_root sub-limbs.
         assert_eq!(pre[35], mode_felt(&cell.mode), "mode rides limb 35");
         // The FAITHFUL 8-felt fields root (Phase H-FIELDS-8): lane 0 at limb 36, completion lanes 1..7 at
-        // the NON-contiguous limbs 65,66,19,20,21,22,23 (`EffectVmEmitRotationV3.fieldsRootGroupCol`).
+        // the NON-contiguous limbs 66,67,19,20,21,22,23 (REVOKED-ROOT flag-day shifted 65,66 → 66,67;
+        // the base-region 19..23 tail is unshifted, < 37) (`EffectVmEmitRotationV3.fieldsRootGroupCol`).
         let fields8 = crate::state::compute_canonical_fields_root_8(&cell.state.fields_map);
         assert_eq!(pre[36], fields8[0], "fields_root lane 0 rides limb 36");
-        let fields_lanes = [65usize, 66, 19, 20, 21, 22, 23];
+        let fields_lanes = [66usize, 67, 19, 20, 21, 22, 23];
         for i in 0..7 {
             assert_eq!(
                 pre[fields_lanes[i]],
@@ -2336,8 +2387,9 @@ mod tests {
                 fields_lanes[i]
             );
         }
-        // The FAITHFUL 8-felt cap root: lane 0 at limb 25, completion lanes 1..7 at limbs 51..57
-        // (`EffectVmEmitRotationV3.capRootGroupCol`). Lane 0 == the historical scalar cap-root felt.
+        // The FAITHFUL 8-felt cap root: lane 0 at limb 25, completion lanes 1..7 at limbs 52..58
+        // (REVOKED-ROOT flag-day shifted 51..57 → 52..58) (`EffectVmEmitRotationV3.capRootGroupCol`).
+        // Lane 0 == the historical scalar cap-root felt.
         let cap8 = compute_canonical_capability_root_8(&cell.capabilities);
         assert_eq!(pre[25], cap8[0], "cap_root lane 0 rides limb 25");
         assert_eq!(
@@ -2347,11 +2399,29 @@ mod tests {
         );
         for i in 0..7 {
             assert_eq!(
-                pre[51 + i],
+                pre[52 + i],
                 cap8[1 + i],
                 "cap_root completion lane {} rides limb {}",
                 i + 1,
-                51 + i
+                52 + i
+            );
+        }
+        // The FAITHFUL 8-felt revoked root (REVOKED-ROOT flag-day): lane 0 at the NEW base limb 37,
+        // completion lanes 1..7 at limbs 82..88 (the shifted-free completion slots). Empty accumulator
+        // here → equals the empty heap root's 8 lanes.
+        let revoked8 = dregg_circuit::heap_root::empty_heap_root_8();
+        assert_eq!(
+            pre[37],
+            revoked8.limbs()[0],
+            "revoked_root lane 0 rides limb 37"
+        );
+        for i in 0..7 {
+            assert_eq!(
+                pre[82 + i],
+                revoked8.limbs()[1 + i],
+                "revoked_root completion lane {} rides limb {}",
+                i + 1,
+                82 + i
             );
         }
     }
