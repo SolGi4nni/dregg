@@ -383,3 +383,25 @@ over BabyBear — its constraints ARE field constraints; raw-ℤ was the artifac
 field-faithful chain `MainAirAcceptF ⟹ Satisfied2`, fed by K′(a) `ood_forces_mainAirAccept_field` + K′(b)
 `constraintPoly` — built alongside; the ℤ chain (AirChecksSatisfied/AirLegsDischarged/AlgoStarkSoundInstance)
 retired at cutover, not mutated in place. This is a faithfulness correction toward the deployed object.
+
+## ⚠⚠⚠ DEBT-A DEEP FINDING (2026-07-10): the deployed descriptor denotation Satisfied2/holdsAt is over ℤ — unsound IN GENERAL
+Drilling the K′(a) finding one level DOWN: `VmRowEnv.loc` is ℤ-valued; `WindowConstraint.holdsAt := w.body.eval
+env = 0` and `VmConstraint2.holdsAt`/`Satisfied2.rowConstraints` are all over ℤ (`DescriptorIR2.lean:372/589/608`).
+So `Satisfied2` — the CORE deployed descriptor denotation, the target of `StarkSound.extract` and used tree-wide —
+is over ℤ, and by K′(a) (`e5820e030`) is provably UNSOUND IN GENERAL: an honest field trace with a compound gate
+whose ℤ eval hits exactly `p` (via an `add` of two columns) fails `Satisfied2`-ℤ though the deployed field verifier
+accepts it.
+SEVERITY IS GATE-STRUCTURE-DEPENDENT (careful scope, not alarmist):
+- SAFE: the deployed range-check gate (`EffectVmEmitV2.lean:1344`, a degree-8 `∏ slotMinus k` = product of
+  DIFFERENCES) does NOT bite — satisfaction means one factor is EXACTLY 0 (operands canonical in [0,p) ⟹ ≡0 ⟹ =0),
+  zeroing the ℤ product. Difference-products are safe.
+- BITES: any deployed gate with an `add` of two column VARIABLES that can sum to exactly `p` before a `mul`. K′(a)'s
+  counterexample (`(col₀+col₁)*col₂` at `(p−1,1,1)`) is that shape. Whether a DEPLOYED gate has it needs a per-gate
+  audit of every `.gate`/`.windowGate` body across the real descriptors.
+THE FORK (foundational, EMBER-GATED — comparable to verifyBatch A/B, bigger):
+  (A) Move the descriptor-IR semantics (`VmRowEnv`, `holdsVm`, `holdsAt`, `Satisfied2`) to BabyBear/mod-p — the
+      FAITHFUL model (the deployed prover is over BabyBear). Correct, but ripples through EVERYTHING using Satisfied2.
+  (B) Audit that every deployed gate is difference-product/degree-1-safe (no add-then-mul overflow), and NARROW the
+      ℤ model's validity to that audited class with an explicit "deployed gates are overflow-safe" lemma.
+Not launching either unilaterally — this is the deployed AIR's semantic foundation. K′(a)'s field companion
+(`ood_forces_mainAirAccept_field`, `MainAirAcceptF`) is the (A)-direction beachhead already built.
