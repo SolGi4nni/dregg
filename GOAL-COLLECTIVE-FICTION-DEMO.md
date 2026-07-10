@@ -173,3 +173,30 @@ honest ("scripted" on stand-in, "model:gemma2:2b" on the real service). The Comm
 HOLDING the commit: the earned demo is the page against the REAL service + gemma2 (the stand-in shows a scripted
 DM). Harvest the service lane (a18375169811f20e3) + chain lane (a8f18ed8023452127), integrate, DRIVE against real
 gemma2 (capture the model's real jailbroken prose vs the ledger), commit the coherent whole.
+
+
+## ⚑ INPUT-INTEGRITY / ZKHANDLEBARS (ember: the important half I dismissed) — the real attested AI MUD
+I over-corrected: the `{{` guard is NOT a toy — its metasyntax IS the DM's prompt TEMPLATE. An attested DM's
+prompt is `render(template, {world, player})`; the player goes in a SLOT; a `{{`-free player field cannot escape
+its slot to rewrite the template's system-prompt / world-rules. THE GAP: attested-dm's `messages_body(field)`
+wraps the raw field — there is NO template, so the (real, Lean-verified) `{{` guard currently protects nothing.
+Build the template ⟹ the guard becomes load-bearing. FOUNDATION EXISTS: `Dregg2/Crypto/ZkOracle.lean`
+(`injectionTemplate = .* {{ .*` over the VERIFIED PredRE derivative matcher w/ real complement `neg`) + the whole
+`Dregg2/Crypto/Deriv/` library. THE PRIZE (zkhandlebars): attest `hash(template) ‖ world ‖ player` + prove
+slot-confinement, so a verifier confirms the model saw exactly the legit template with a slot-confined player —
+the player provably cannot jailbreak the SYSTEM (rules). Composes with the OUTPUT cap-gate (prose is not power).
+BOTH halves = the true attested AI MUD.
+
+LANES (disjoint after a collision fix):
+- LEAN zkhandlebars theorem (a28e7cbec9cc56e69) — NEW metatheory/Dregg2/Crypto/ZkHandlebars.lean: slot_confinement
+  (a `{{`-free binding adds ZERO control tokens to render(T)), non-vacuous both polarities, corollary tying to
+  injectionTemplate, axiom-clean. DISJOINT (new file). LOAD-BEARING — audit hardest.
+- LEDGER CHAIN (a8f18ed8023452127) — attested-dm/src/lib.rs (LedgerEntry prev-link + adversarial tests).
+- DM SERVICE (a18375169811f20e3) — demo/dungeon-service/ (real gemma2, typed channel + cap gate).
+- ⏸ KILLED to avoid clobber: the Rust template-render/attestation-binding/service-wiring lane (touched
+  attested-dm/lib.rs LedgerEntry AND demo/dungeon-service/ — collides with the chain + service lanes). RE-FIRE it
+  AFTER chain + service land + are committed (on the settled tree), then the demo's INPUT-side "slot-escape
+  refused" panel. Then integrate the dungeon page vs the real service + gemma2.
+
+SEQUENCE: chain → service → Lean-theorem (harvest+commit each) → THEN Rust template-render (re-fire) → integrate
+page vs real gemma2 → the full demo (input-integrity + output-cap-gate + real chain, all earned).
