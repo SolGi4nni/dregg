@@ -227,3 +227,9 @@ lantern → **refused** (*"…it needs the lantern"*), the room **unchanged**, t
 A most-recent run: **14/14 winning moves landed → status WON**, receipt rail `0 → 14`,
 `/game/verify == true`; the forced dark stair **refused** with the room unchanged and no
 receipt.
+
+## ▶ The front door — all the games on one page
+```
+node demo/serve.mjs   # then open http://127.0.0.1:8787/hub
+```
+Lists all four games (Sunken Vault · Attested Dungeon · Commons · Drowned Library). The AI games (`/vault`, `/dungeon`) also need the game service: `cargo run -p dungeon-service` (ollama + gemma2:2b up) + `DM_PORT=7878 node demo/serve.mjs`.

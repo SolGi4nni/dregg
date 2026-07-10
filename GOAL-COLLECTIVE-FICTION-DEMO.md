@@ -309,3 +309,6 @@ Plus the ATTESTED DUNGEON prose-is-not-power demo (real gemma2, /dungeon).
   library playthrough re-run, anything through app-framework. Re-check + land when their refactor clears.
 - done-log: SUNKEN VAULT dungeon-crawler engine + game COMMITTED (41 tests, driven win); The Drowned Library
   collective game COMMITTED; vault browser game FIRING.
+- done: THE SUNKEN VAULT BROWSER GAME committed + verified by driving (full WIN vs real gemma2, receipt rail 0->14, forced-stair REFUSED room-unchanged — the AI narrates, the world resolves). + a GAME HUB front door (/hub) listing all 4 games, verified (all routes 200).
+- running: richer-RPG lane (a240c1c538fc8b6ad) — NPCs w/ bounded dialogue + combat depth + a SECOND bigger dungeon game (additive to attested-dm; vault demo must keep building).
+- blocked (another terminal dregg-lean-ffi mlkem stub, still 9 files modified): idempotency fix + drowned-library re-verify. NOT touching their files.
