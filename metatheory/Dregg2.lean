@@ -740,6 +740,7 @@ import Dregg2.Circuit.FriQuerySoundness
 import Dregg2.Circuit.AlgoStarkSoundInstance
 import Dregg2.Circuit.OodQuotientConsistency
 import Dregg2.Circuit.TraceColumnInterp
+import Dregg2.Circuit.FieldIntegerLift
 import Dregg2.Circuit.FriExtractReal
 import Dregg2.Circuit.DeployedRefinesProof
 import Dregg2.Circuit.ShieldedTransferStark
