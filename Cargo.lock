@@ -6400,6 +6400,7 @@ dependencies = [
  "hyper-util",
  "k256",
  "serde",
+ "serde-big-array",
  "serde_json",
  "sha2 0.10.9",
  "tlsn",
@@ -6445,6 +6446,7 @@ dependencies = [
  "serde_json",
  "spween",
  "spween-dregg",
+ "starbridge-v2",
 ]
 
 [[package]]
@@ -16664,6 +16666,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "serde-big-array"
+version = "0.5.1"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "11fc7cc2c76d73e0f27ee52abbd64eec84d46f370c88371120433196934e4b7f"
+dependencies = [
+ "serde",
+]
+
+[[package]]
 name = "serde-encoded-bytes"
 version = "0.2.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -22041,6 +22052,16 @@ dependencies = [
  "memoffset 0.9.1",
  "tempfile",
  "windows-sys 0.61.2",
+]
+
+[[package]]
+name = "ugc-dregg"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dungeon-on-dregg",
+ "procgen-dregg",
+ "spween-dregg",
 ]
 
 [[package]]
