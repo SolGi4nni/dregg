@@ -28,10 +28,22 @@ two boundary PI pins and the C4 chip carrier — NOT a restatement of a single g
 | `headSelectorsBoolean`       | C8                       | each head substitution selector is boolean           |
 | `eqSideConditions`           | C12                      | an active `eq` check forces its two terms equal      |
 | `memberofSideConditions`     | C14                      | an active `memberof` check forces its terms equal    |
-| `gteHonestDiff`              | C16                      | an active `gte` carries the honest diff `a − b`      |
+| `gteHonestDiff`              | C16                      | an active `gte` carries the honest diff `a − b` (mod `p`) |
 | `gteSignBitZero`             | C19                      | an active `gte`'s 30-bit diff has a zeroed sign bit  |
-| `ltHonestDiff`               | C21                      | an active `lt` carries the honest strict diff        |
+| `ltHonestDiff`               | C21                      | an active `lt` carries the honest strict diff (mod `p`) |
 | `ltSignBitZero`              | C24                      | an active `lt`'s 30-bit diff has a zeroed sign bit   |
+
+## The field denotation (mod-`p`, `p = 2013265921` the BabyBear prime)
+
+`VmConstraint.holdsVm` asserts its gate bodies vanish `≡ 0 [ZMOD p]` (the DEPLOYED field constraint),
+not `= 0` over ℤ. The ℤ conclusions of `DerivationStepValid` are recovered from the DEPLOYED
+range-check canonicality (`0 ≤ cell < p`) of the touched cells, carried as the EXPLICIT hypothesis
+`DerivationCanon` (§3.5) — inhabited concretely by `witTrace_canon`, so the envelope is non-vacuous.
+The two comparator honest-diff teeth (`gteHonestDiff`/`ltHonestDiff`) are stated as the mod-`p`
+congruence they ARE in the field: the diff cell is a field value whose ℤ reading is the job of the
+30-bit decomposition (C17/C18) — a canonical `DIFF` with `A − B < 0` genuinely wraps, so an ℤ `=`
+would be UNPROVABLE (and false) under the field denotation. No tooth is dropped: congruence + the
+boolean bits + the zeroed sign bit is exactly the deployed comparator argument.
 
 §4's `derivation_sat_imp_valid` (SAT_IMPLIES_SEM, the load-bearing soundness direction) composes these
 teeth on the boundary/active row `0` of any accepting trace: the row is FIRST (`isFirst`, so the C6 /
@@ -65,6 +77,7 @@ below (its `tf .poseidon2` carries the genuine `chipRow`). No crypto axiom is co
 NAMED hypothesis `ChipTableSound hash (t.tf .poseidon2)`, never as an axiom. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.DerivationEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.DecideSatisfied2
 
 namespace Dregg2.Circuit.Emit.DerivationRefine
@@ -73,6 +86,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit
   (VmConstraint VmRowEnv holdsVm_piFirst_true holdsVm_gate_false)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff pPrimeInt)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.DecideSatisfied2
   (decideConstraint2 decideRowConstraints2 decideLookup_iff decideWindow_iff)
@@ -81,6 +95,25 @@ open Dregg2.Circuit.Emit.DerivationEmit
 
 set_option autoImplicit false
 set_option maxRecDepth 8000
+
+/-! ## §0 — Field-denotation glue (mod-`p`, `p` the BabyBear prime). -/
+
+/-- The deployed range-check invariant on a stored field cell: it is the canonical residue. -/
+def Canon (x : ℤ) : Prop := 0 ≤ x ∧ x < 2013265921
+
+instance (x : ℤ) : Decidable (Canon x) := inferInstanceAs (Decidable (_ ∧ _))
+
+/-- Two canonical field cells congruent mod `p` are EQUAL over ℤ (the residue determines the
+canonical cell — the field-faithful recovery of a genuine equality). -/
+theorem eq_of_modEq_canon {a b : ℤ} (ha : Canon a) (hb : Canon b) (h : a ≡ b [ZMOD 2013265921]) :
+    a = b := by
+  obtain ⟨k, hk⟩ := h.dvd
+  obtain ⟨ha0, ha1⟩ := ha
+  obtain ⟨hb0, hb1⟩ := hb
+  omega
+
+/-- `0` is a canonical field cell. -/
+theorem canon_zero : Canon 0 := ⟨le_refl 0, by norm_num⟩
 
 /-! ## §1 — The authored functional spec: the GENUINE Datalog derivation-step relation. -/
 
@@ -122,15 +155,20 @@ structure DerivationStepValid (hash : List ℤ → ℤ) (env : VmRowEnv) : Prop 
   memberofSideConditions : ∀ i, i < MAX_MEMBEROF_CHECKS →
     env.loc (memberofCheckActive i) = 1 →
       env.loc (memberofCheckTermA i) = env.loc (memberofCheckTermB i)
-  /-- C16: an active GTE comparator carries the honest difference `term_a − term_b`. -/
+  /-- C16: an active GTE comparator carries the honest difference `term_a − term_b` AS A FIELD
+  VALUE (`≡ [ZMOD p]` — the deployed gate is a field constraint; the ℤ reading of the diff cell is
+  the 30-bit decomposition's job, C17/C18). -/
   gteHonestDiff : env.loc GTE_CHECK_ACTIVE = 1 →
-    env.loc GTE_CHECK_DIFF = env.loc GTE_CHECK_TERM_A - env.loc GTE_CHECK_TERM_B
+    env.loc GTE_CHECK_DIFF
+      ≡ env.loc GTE_CHECK_TERM_A - env.loc GTE_CHECK_TERM_B [ZMOD 2013265921]
   /-- C19: an active GTE comparator's 30-bit difference has a zeroed sign bit (the in-range top bit). -/
   gteSignBitZero : env.loc GTE_CHECK_ACTIVE = 1 →
     env.loc (gteDiffBit (GTE_DIFF_BITS - 1)) = 0
-  /-- C21: an active LT comparator carries the honest strict difference `term_b − term_a − 1`. -/
+  /-- C21: an active LT comparator carries the honest strict difference `term_b − term_a − 1` AS A
+  FIELD VALUE (`≡ [ZMOD p]`, same reading as C16). -/
   ltHonestDiff : env.loc LT_CHECK_ACTIVE = 1 →
-    env.loc LT_CHECK_DIFF = env.loc LT_CHECK_TERM_B - env.loc LT_CHECK_TERM_A - 1
+    env.loc LT_CHECK_DIFF
+      ≡ env.loc LT_CHECK_TERM_B - env.loc LT_CHECK_TERM_A - 1 [ZMOD 2013265921]
   /-- C24: an active LT comparator's 30-bit difference has a zeroed sign bit. -/
   ltSignBitZero : env.loc LT_CHECK_ACTIVE = 1 →
     env.loc (ltDiffBit (GTE_DIFF_BITS - 1)) = 0
@@ -151,12 +189,12 @@ theorem c4tuple_eq : c4FactSiteTuple = chipLookupTuple c4Ins DERIVED_HASH c4Lane
 section Extract
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
 
-/-- **Any base-gate constraint forces its body to vanish on the active row 0** (`isLast = false`, from
-`hlen`). -/
+/-- **Any base-gate constraint forces its body to vanish mod `p` on the active row 0**
+(`isLast = false`, from `hlen`). -/
 theorem der_gate0 (hlen : 2 ≤ t.rows.length)
     (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t)
     {g : EmittedExpr} (hg : VmConstraint2.base (.gate g) ∈ derivationDesc.constraints) :
-    g.eval (envAt t 0).loc = 0 := by
+    g.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   have hpos : 0 < t.rows.length := by omega
   have hrc := hsat.rowConstraints 0 hpos _ hg
   have hlf : ((0 : Nat) + 1 == t.rows.length) = false := by
@@ -164,11 +202,12 @@ theorem der_gate0 (hlen : 2 ≤ t.rows.length)
     simpa using this
   simpa only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlf] using hrc
 
-/-- **A first-row PI pin fires on row 0.** -/
+/-- **A first-row PI pin fires on row 0** (the field-faithful congruence; the ℤ reading lives in
+the bridge under the `DerivationCanon` envelope). -/
 theorem der_pi0 (hlen : 2 ≤ t.rows.length)
     (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t)
     {col k : Nat} (hb : VmConstraint2.base (.piBinding .first col k) ∈ derivationDesc.constraints) :
-    (envAt t 0).loc col = t.pub k := by
+    (envAt t 0).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have hpos : 0 < t.rows.length := by omega
   have hrc := hsat.rowConstraints 0 hpos _ hb
   have := (holdsVm_piFirst_true (envAt t 0) (0 + 1 == t.rows.length) col k).mp
@@ -221,13 +260,62 @@ theorem lift_bd {x} (hx : x ∈ boundaries) : x ∈ derivationDesc.constraints :
   show x ∈ derivationConstraints
   simp only [derivationConstraints, List.append_assoc, List.mem_append]; tauto
 
-/-- Boolean extraction from a `binBody` gate: `col·(col−1) = 0 → col ∈ {0,1}`. -/
-theorem bin_of_gate {a : Assignment} {col : Nat} (h : (binBody col).eval a = 0) :
+/-- Boolean extraction from a `binBody` gate under the field denotation: a CANONICAL cell whose
+booleanity gate vanishes mod `p` IS `0` or `1` over ℤ — primality splits `p ∣ col·(col−1)`, and
+canonicality collapses each factor. -/
+theorem bin_of_gate {a : Assignment} {col : Nat}
+    (h : (binBody col).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a col)) :
     a col = 0 ∨ a col = 1 := by
   simp only [binBody, EmittedExpr.eval] at h
-  rcases mul_eq_zero.mp h with h0 | h1
-  · exact Or.inl h0
-  · exact Or.inr (by linarith)
+  have hd : (2013265921 : ℤ) ∣ a col * (a col + (-1)) := Int.modEq_zero_iff_dvd.mp h
+  obtain ⟨hc0, hc1⟩ := hc
+  rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+  · obtain ⟨k, hk⟩ := hx; left; omega
+  · obtain ⟨k, hk⟩ := hx; right; omega
+
+/-! ## §3.5 — The deployed range-check canonicality envelope.
+
+The field denotation pins gates/pins only `≡ [ZMOD p]`; the ℤ conclusions of `DerivationStepValid`
+need the DEPLOYED range-check invariant (`0 ≤ cell < p`) on the touched cells. It is carried as the
+EXPLICIT hypothesis `DerivationCanon` — inhabited concretely by `witTrace_canon` (§5), so the
+envelope is NON-VACUOUS, never an unsatisfiable antecedent. -/
+
+/-- **The derivation canonicality envelope**: the row-0 cells whose mod-`p` constraints the bridge
+lifts to ℤ equalities, plus the three bound public inputs. -/
+structure DerivationCanon (t : VmTrace) : Prop where
+  /-- The derived-hash column (pinned to `pi[1]`). -/
+  derivedHash : Canon ((envAt t 0).loc DERIVED_HASH)
+  /-- The published conclusion `pi[1]`. -/
+  pubConclusion : Canon (t.pub 1)
+  /-- Body atom 0's fact-hash column (pinned to `pi[5]`). -/
+  bodyHash0 : Canon ((envAt t 0).loc (bodyHash 0))
+  /-- The exported membership-leaf PI `pi[5]`. -/
+  pubLeaf : Canon (t.pub 5)
+  /-- The body-root column (pinned to `pi[0]`). -/
+  bodyRootStart : Canon ((envAt t 0).loc BODY_ROOT_START)
+  /-- The committed pre-state root `pi[0]`. -/
+  pubRoot : Canon (t.pub 0)
+  /-- Every body-membership flag cell. -/
+  bodyFlags : ∀ i, i < MAX_BODY_ATOMS → Canon ((envAt t 0).loc (bodyFlag i))
+  /-- Every per-atom body-root cell. -/
+  bodyRoots : ∀ i, i < MAX_BODY_ATOMS → Canon ((envAt t 0).loc (bodyRoot i))
+  /-- Every head `is_var` flag cell. -/
+  headIsVars : ∀ j, j < MAX_HEAD_TERMS → Canon ((envAt t 0).loc (headIsVar j))
+  /-- Every head substitution selector cell. -/
+  headSels : ∀ j, j < MAX_HEAD_TERMS → ∀ v, v < MAX_SUB_VARS →
+    Canon ((envAt t 0).loc (headSelVar j v))
+  /-- Every `eq` side-condition term-A cell. -/
+  eqTermsA : ∀ i, i < MAX_EQUAL_CHECKS → Canon ((envAt t 0).loc (eqCheckTermA i))
+  /-- Every `eq` side-condition term-B cell. -/
+  eqTermsB : ∀ i, i < MAX_EQUAL_CHECKS → Canon ((envAt t 0).loc (eqCheckTermB i))
+  /-- Every `memberof` side-condition term-A cell. -/
+  memberofTermsA : ∀ i, i < MAX_MEMBEROF_CHECKS → Canon ((envAt t 0).loc (memberofCheckTermA i))
+  /-- Every `memberof` side-condition term-B cell. -/
+  memberofTermsB : ∀ i, i < MAX_MEMBEROF_CHECKS → Canon ((envAt t 0).loc (memberofCheckTermB i))
+  /-- The GTE comparator's sign-bit cell. -/
+  gteSignBit : Canon ((envAt t 0).loc (gteDiffBit (GTE_DIFF_BITS - 1)))
+  /-- The LT comparator's sign-bit cell. -/
+  ltSignBit : Canon ((envAt t 0).loc (ltDiffBit (GTE_DIFF_BITS - 1)))
 
 /-! ## §4 — THE WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM). -/
 
@@ -235,27 +323,32 @@ theorem bin_of_gate {a : Assignment} {col : Nat} (h : (binBody col).eval a = 0) 
 
 A trace `t` that SATISFIES the emitted `derivationDesc` (via the deployed acceptance predicate
 `Satisfied2`), against a SOUND Poseidon2 chip table (the NAMED carrier
-`ChipTableSound hash (t.tf .poseidon2)`), and padded to height `≥ 2` (so row `0` is an active transition
-row), witnesses the GENUINE Datalog derivation-step relation `DerivationStepValid` on its boundary row
+`ChipTableSound hash (t.tf .poseidon2)`), padded to height `≥ 2` (so row `0` is an active transition
+row), and whose touched row-0 cells satisfy the deployed range-check canonicality (`DerivationCanon`),
+witnesses the GENUINE Datalog derivation-step relation `DerivationStepValid` on its boundary row
 `0`. Composed from the fourteen per-gate teeth + the chip carrier (`chip_lookup_sound`); no crypto axiom
 is consumed. -/
 theorem derivation_sat_imp_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} {t : VmTrace}
     (hSound : ChipTableSound hash (t.tf .poseidon2))
     (hlen : 2 ≤ t.rows.length)
-    (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t) :
+    (hsat : Satisfied2 hash derivationDesc minit mfin maddrs t)
+    (hcanon : DerivationCanon t) :
     DerivationStepValid hash (envAt t 0) := by
   have hpos : 0 < t.rows.length := by omega
   set e := envAt t 0 with he
-  -- C6 : derived-hash column is published pi[1].
+  -- C6 : derived-hash column is published pi[1] (mod-p pin, lifted by canonicality of both cells).
   have hpin1 : e.loc DERIVED_HASH = t.pub 1 :=
-    der_pi0 hlen hsat (lift_c6 (by simp [c6, pin]))
+    eq_of_modEq_canon hcanon.derivedHash hcanon.pubConclusion
+      (der_pi0 hlen hsat (lift_c6 (by simp [c6, pin])))
   -- C6b : body atom 0's fact hash column is the exported membership-leaf PI pi[5].
   have hpin5 : e.loc (bodyHash 0) = t.pub 5 :=
-    der_pi0 hlen hsat (lift_c6b (by simp [c6b, pin]))
+    eq_of_modEq_canon hcanon.bodyHash0 hcanon.pubLeaf
+      (der_pi0 hlen hsat (lift_c6b (by simp [c6b, pin])))
   -- boundary : body-root column is committed pi[0].
   have hpin0 : e.loc BODY_ROOT_START = t.pub 0 :=
-    der_pi0 hlen hsat (lift_bd (by simp [boundaries, pin]))
+    eq_of_modEq_canon hcanon.bodyRootStart hcanon.pubRoot
+      (der_pi0 hlen hsat (lift_bd (by simp [boundaries, pin])))
   -- C4 : the chip lookup on row 0 forces derived-hash = hash of the seven absorbed inputs.
   have hlk := hsat.rowConstraints 0 hpos c4Lookup (lift_c4 (by simp [c4]))
   have hmem : (chipLookupTuple c4Ins DERIVED_HASH c4LaneCols).map (·.eval e.loc)
@@ -292,64 +385,77 @@ theorem derivation_sat_imp_valid {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
   · exact hpin1
   · exact hpin5
   · exact hpin0
-  · -- C1 : flags boolean
+  · -- C1 : flags boolean (mod-p booleanity gate + canonicality)
     intro i hi
-    exact bin_of_gate (der_gate0 hlen hsat (lift_c1 (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩)))
+    exact bin_of_gate
+      (der_gate0 hlen hsat (lift_c1 (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩)))
+      (hcanon.bodyFlags i hi)
   · -- C5 ∘ boundary : active body root = committed pi[0]
     intro i hi hact
     have hg := der_gate0 hlen hsat
       (lift_c5 (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩))
     simp only [EmittedExpr.eval, subE] at hg
-    -- hg : e.loc (bodyFlag i) * (e.loc (bodyRoot i) + (-1) * e.loc BODY_ROOT_START) = 0
+    -- hg : e.loc (bodyFlag i) * (e.loc (bodyRoot i) + (-1) * e.loc BODY_ROOT_START) ≡ 0 [ZMOD p]
     rw [hact, one_mul] at hg
-    have : e.loc (bodyRoot i) = e.loc BODY_ROOT_START := by linarith
+    have : e.loc (bodyRoot i) = e.loc BODY_ROOT_START :=
+      eq_of_modEq_canon (hcanon.bodyRoots i hi) hcanon.bodyRootStart
+        ((gate_modEq_iff (by ring)).mp hg)
     rw [this]; exact hpin0
   · -- C7 : head is_var boolean
     intro t' ht'
-    exact bin_of_gate (der_gate0 hlen hsat (lift_c7 (List.mem_map.mpr ⟨t', List.mem_range.mpr ht', rfl⟩)))
+    exact bin_of_gate
+      (der_gate0 hlen hsat (lift_c7 (List.mem_map.mpr ⟨t', List.mem_range.mpr ht', rfl⟩)))
+      (hcanon.headIsVars t' ht')
   · -- C8 : head selectors boolean
     intro t' v ht' hv
-    refine bin_of_gate (der_gate0 hlen hsat (lift_c8 ?_))
+    refine bin_of_gate (der_gate0 hlen hsat (lift_c8 ?_)) (hcanon.headSels t' ht' v hv)
     exact List.mem_flatMap.mpr ⟨t', List.mem_range.mpr ht',
       List.mem_map.mpr ⟨v, List.mem_range.mpr hv, rfl⟩⟩
-  · -- C12 : active eq → a = b
+  · -- C12 : active eq → a = b (mod-p gate, lifted by canonicality of both terms)
     intro i hi hact
     have hg := der_gate0 hlen hsat (lift_c12 (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩))
     simp only [EmittedExpr.eval, subE] at hg
     rw [hact, one_mul] at hg
-    linarith
+    exact eq_of_modEq_canon (hcanon.eqTermsA i hi) (hcanon.eqTermsB i hi)
+      ((gate_modEq_iff (by ring)).mp hg)
   · -- C14 : active memberof → a = b
     intro i hi hact
     have hg := der_gate0 hlen hsat (lift_c14 (List.mem_map.mpr ⟨i, List.mem_range.mpr hi, rfl⟩))
     simp only [EmittedExpr.eval, subE] at hg
     rw [hact, one_mul] at hg
-    linarith
-  · -- C16 : active gte → diff = a − b.  The gate body reduces (definitionally) to the honest form.
+    exact eq_of_modEq_canon (hcanon.memberofTermsA i hi) (hcanon.memberofTermsB i hi)
+      ((gate_modEq_iff (by ring)).mp hg)
+  · -- C16 : active gte → diff ≡ a − b [ZMOD p].  The gate body reduces (definitionally) to the
+    -- honest form; the congruence IS the field-faithful conclusion.
     intro hact
     have hg := der_gate0 hlen hsat (lift_c16 (List.Mem.head _))
     have hg' : e.loc GTE_CHECK_ACTIVE *
-        (e.loc GTE_CHECK_DIFF + (-1) * e.loc GTE_CHECK_TERM_A + e.loc GTE_CHECK_TERM_B) = 0 := hg
+        (e.loc GTE_CHECK_DIFF + (-1) * e.loc GTE_CHECK_TERM_A + e.loc GTE_CHECK_TERM_B)
+          ≡ 0 [ZMOD 2013265921] := hg
     rw [hact, one_mul] at hg'
-    linarith
-  · -- C19 : active gte → sign bit 0
+    exact (gate_modEq_iff (by ring)).mp hg'
+  · -- C19 : active gte → sign bit 0 (mod-p gate + canonicality of the bit cell)
     intro hact
     have hg := der_gate0 hlen hsat (lift_c19 (List.Mem.head _))
-    have hg' : e.loc GTE_CHECK_ACTIVE * e.loc (gteDiffBit (GTE_DIFF_BITS - 1)) = 0 := hg
+    have hg' : e.loc GTE_CHECK_ACTIVE * e.loc (gteDiffBit (GTE_DIFF_BITS - 1))
+        ≡ 0 [ZMOD 2013265921] := hg
     rw [hact, one_mul] at hg'
-    exact hg'
-  · -- C21 : active lt → diff = b − a − 1.  Same definitional reduction.
+    exact eq_of_modEq_canon hcanon.gteSignBit canon_zero hg'
+  · -- C21 : active lt → diff ≡ b − a − 1 [ZMOD p].  Same definitional reduction.
     intro hact
     have hg := der_gate0 hlen hsat (lift_c21 (List.Mem.head _))
     have hg' : e.loc LT_CHECK_ACTIVE *
-        (e.loc LT_CHECK_DIFF + (-1) * e.loc LT_CHECK_TERM_B + e.loc LT_CHECK_TERM_A + 1) = 0 := hg
+        (e.loc LT_CHECK_DIFF + (-1) * e.loc LT_CHECK_TERM_B + e.loc LT_CHECK_TERM_A + 1)
+          ≡ 0 [ZMOD 2013265921] := hg
     rw [hact, one_mul] at hg'
-    linarith
+    exact (gate_modEq_iff (by ring)).mp hg'
   · -- C24 : active lt → sign bit 0
     intro hact
     have hg := der_gate0 hlen hsat (lift_c24 (List.Mem.head _))
-    have hg' : e.loc LT_CHECK_ACTIVE * e.loc (ltDiffBit (GTE_DIFF_BITS - 1)) = 0 := hg
+    have hg' : e.loc LT_CHECK_ACTIVE * e.loc (ltDiffBit (GTE_DIFF_BITS - 1))
+        ≡ 0 [ZMOD 2013265921] := hg
     rw [hact, one_mul] at hg'
-    exact hg'
+    exact eq_of_modEq_canon hcanon.ltSignBit canon_zero hg'
 
 /-! ## §5 — Non-vacuity (the anti-scar).
 
@@ -455,12 +561,33 @@ theorem witTf_chipSound : ChipTableSound (fun _ => (0 : ℤ)) (witTrace.tf Table
     simp [chipLookupTuple, chipRow, map_eval_padToE, EmittedExpr.eval, List.map_map,
       Function.comp_def, List.length_map, hwd]
 
+/-- **`witTrace_canon` — the canonicality envelope is genuinely INHABITED** on the concrete witness:
+every touched row-0 cell and bound PI is `0` or `1`, a canonical field value (`< p`). So the bridge
+does NOT rest on a vacuous range-check hypothesis. -/
+theorem witTrace_canon : DerivationCanon witTrace :=
+  { derivedHash := by decide
+    pubConclusion := by decide
+    bodyHash0 := by decide
+    pubLeaf := by decide
+    bodyRootStart := by decide
+    pubRoot := by decide
+    bodyFlags := by decide
+    bodyRoots := by decide
+    headIsVars := by decide
+    headSels := by decide
+    eqTermsA := by decide
+    eqTermsB := by decide
+    memberofTermsA := by decide
+    memberofTermsB := by decide
+    gteSignBit := by decide
+    ltSignBit := by decide }
+
 /-- **`witTrace_valid` — the bridge FIRES on the concrete witness (end-to-end non-vacuity).** Feeding
-`witTrace` (satisfying, chip-sound, height 2) through `derivation_sat_imp_valid` recovers the FULL
-genuine relation `DerivationStepValid` on row 0 — a real accepting trace maps to the real semantic
-conclusion, the crown `publishedConclusionIsHeadFact` included. -/
+`witTrace` (satisfying, chip-sound, height 2, canonical) through `derivation_sat_imp_valid` recovers
+the FULL genuine relation `DerivationStepValid` on row 0 — a real accepting trace maps to the real
+semantic conclusion, the crown `publishedConclusionIsHeadFact` included. -/
 theorem witTrace_valid : DerivationStepValid (fun _ => (0 : ℤ)) (envAt witTrace 0) :=
-  derivation_sat_imp_valid witTf_chipSound (by decide) witTrace_satisfies
+  derivation_sat_imp_valid witTf_chipSound (by decide) witTrace_satisfies witTrace_canon
 
 /-- The rejecting trace: the SAME rows but an EMPTY chip table, so the C4 lookup has no matching row. -/
 def witTraceBad : VmTrace := { rows := [wa, wa], pub := fun _ => 0, tf := fun _ => [] }
@@ -521,6 +648,7 @@ theorem sem_fails : ¬ DerivationStepValid (fun _ => (0 : ℤ)) badEnv := by
 
 #assert_axioms derivation_sat_imp_valid
 #assert_axioms witTrace_satisfies
+#assert_axioms witTrace_canon
 #assert_axioms witTf_chipSound
 #assert_axioms witTrace_valid
 #assert_axioms witTrace_not_satisfies

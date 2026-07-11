@@ -37,6 +37,16 @@ bridge end-to-end. `concrete_fail_chain` / `concrete_fail_root` / `concrete_fail
 CONCRETE traces that FAIL `Satisfied2` because a constraint BITES. `witness_spec_closed` /
 `witness_spec_false` show the SPEC itself separates (TRUE and FALSE) — never a `True`/`P → P` stub.
 
+## The field denotation (mod-`p`, `p = 2013265921` the BabyBear prime)
+
+`VmConstraint.holdsVm` / `WindowConstraint.holdsAt` pin gates and PI bindings only `≡ 0 [ZMOD p]`
+(the DEPLOYED field constraint), not `= 0` over ℤ. The membership fold RE-HASHES the intermediate
+spine digests, so a mod-`p` congruence cannot thread through the abstract `hash`: the genuine ℤ
+equalities are recovered from the DEPLOYED range-check canonicality (`0 ≤ cell < p`) of the touched
+cells, carried as the EXPLICIT hypotheses `BlindedCanon` (depth-2) / `G4Canon` (depth-general) —
+inhabited concretely by `concrete_canon` / `gConcrete_canon`, so the envelopes are NON-VACUOUS. The
+security conclusions `BlindedMembers` / `Blinded4aryMembers` are preserved VERBATIM.
+
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. The sole cryptographic carrier is the
 NAMED chip soundness `ChipTableSound hash (t.tf .poseidon2)`, never an axiom. NEW file; imports
@@ -61,9 +71,13 @@ open Dregg2.Circuit.Emit.BlindedMembershipEmit
    LEAF SIB0A SIB0B SIB0C PARENT0 CUR1 SIB1A SIB1B SIB1C PARENT1 BLINDING BLINDED_LEAF
    LEVEL0_LANES LEVEL1_LANES BLIND_LANES ROOT_PI BLINDED_LEAF_PI)
 open Dregg2.Circuit.Emit.MerkleMembershipRefine
-  (merkleFold2 MerkleMembers2 MembersUnderRoot4 foldNode4 merkleMembers2_as_fold)
+  (merkleFold2 MerkleMembers2 MembersUnderRoot4 foldNode4 merkleMembers2_as_fold
+   Canon eq_of_modEq_canon)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff pPrimeInt)
 
 set_option autoImplicit false
+
+instance (x : ℤ) : Decidable (Canon x) := inferInstanceAs (Decidable (_ ∧ _))
 
 /-! ## §1 — the functional spec (trace-independent; blinding tooth + membership fold). -/
 
@@ -119,26 +133,41 @@ theorem lookupChip2 {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
     [.var i0, .var i1] digestCol lanes (by show (2 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
-/-- A declared `.gate` body vanishes on any ACTIVE (non-last) row — the `when_transition` arm. -/
+/-- A declared `.gate` body vanishes mod `p` on any ACTIVE (non-last) row — the `when_transition`
+arm (the field-faithful reading; the ℤ lift lives in the bridge under the canonicality envelope). -/
 theorem activeGateZero {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (j : Nat) (hj : j < t.rows.length) (hlast : (j + 1 == t.rows.length) = false)
     (body : EmittedExpr)
     (hmem : VmConstraint2.base (.gate body) ∈ blindedMembershipDesc.constraints) :
-    body.eval (envAt t j).loc = 0 := by
+    body.eval (envAt t j).loc ≡ 0 [ZMOD 2013265921] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlast] at h
   exact h
 
-/-- A declared first-row PI binding pins `loc[col] = pub[k]` on row 0. -/
+/-- A declared first-row PI binding pins `loc[col] ≡ pub[k] [ZMOD p]` on row 0. -/
 theorem firstPi {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length) (col k : Nat)
     (hmem : VmConstraint2.base (.piBinding VmRow.first col k) ∈ blindedMembershipDesc.constraints) :
-    (envAt t 0).loc col = t.pub k := by
+    (envAt t 0).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have h := hsat.rowConstraints 0 hlen _ hmem
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
   exact h (by decide)
+
+/-! ## §2.5 — the deployed range-check canonicality envelope (depth-2). -/
+
+/-- **The depth-2 canonicality envelope**: the stored cells the bridge's mod-`p` constraints must
+lift to genuine ℤ equalities — the level-tie pair (`CUR1`/`PARENT0`, re-hashed into level 1), the
+root cell / root PI, and the blinded-leaf cell / blinded-leaf PI. Deployed range-check invariants
+(`0 ≤ · < p`); `concrete_canon` discharges it, so the envelope is non-vacuous. -/
+structure BlindedCanon (t : VmTrace) : Prop where
+  cur1          : Canon ((envAt t 0).loc CUR1)
+  parent0       : Canon ((envAt t 0).loc PARENT0)
+  parent1       : Canon ((envAt t 0).loc PARENT1)
+  root          : Canon (t.pub ROOT_PI)
+  blindedLeaf   : Canon ((envAt t 0).loc BLINDED_LEAF)
+  blindedLeafPi : Canon (t.pub BLINDED_LEAF_PI)
 
 /-! ## §3 — the whole-descriptor refinement (SAT_IMPLIES_SEM). -/
 
@@ -154,7 +183,8 @@ theorem blindedMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hc : BlindedCanon t) :
     BlindedMembers hash
       (t.pub BLINDED_LEAF_PI)
       ((envAt t 0).loc LEAF) ((envAt t 0).loc BLINDING)
@@ -165,9 +195,11 @@ theorem blindedMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
   have hlast : (0 + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; omega
   refine ⟨?_, ?_⟩
-  · -- the blinding tooth: blinded_leaf PI = hash [leaf_hash, blinding].
+  · -- the blinding tooth: blinded_leaf PI = hash [leaf_hash, blinding]. The pin is mod-p; both the
+    -- blinded-leaf cell and the PI are canonical, so it lifts to the genuine ℤ equality.
     have hbleaf : (envAt t 0).loc BLINDED_LEAF = t.pub BLINDED_LEAF_PI :=
-      firstPi hsat hlen0 BLINDED_LEAF BLINDED_LEAF_PI (by bm_mem)
+      eq_of_modEq_canon hc.blindedLeaf hc.blindedLeafPi
+        (firstPi hsat hlen0 BLINDED_LEAF BLINDED_LEAF_PI (by bm_mem))
     have hblind : (envAt t 0).loc BLINDED_LEAF
         = hash [(envAt t 0).loc LEAF, (envAt t 0).loc BLINDING] :=
       lookupChip2 hsat hChip 0 hlen0 LEAF BLINDING BLINDED_LEAF BLIND_LANES (by bm_mem)
@@ -181,11 +213,15 @@ theorem blindedMembership_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {m
         = hash [(envAt t 0).loc CUR1, (envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B,
                 (envAt t 0).loc SIB1C] :=
       lookupChip4 hsat hChip 0 hlen0 CUR1 SIB1A SIB1B SIB1C PARENT1 LEVEL1_LANES (by bm_mem)
+    -- chain continuity: CUR1 = PARENT0. The gate binds mod p; both cells are canonical, so this
+    -- lifts to a genuine ℤ equality (load-bearing: CUR1 is RE-HASHED into the level-1 digest,
+    -- where a mod-p congruence cannot thread).
     have hcont : (envAt t 0).loc CUR1 = (envAt t 0).loc PARENT0 :=
-      (continuity_body_zero_iff (envAt t 0).loc).mp
-        (activeGateZero hsat 0 hlen0 hlast contBody (by bm_mem))
+      eq_of_modEq_canon hc.cur1 hc.parent0
+        ((gate_modEq_iff (by simp only [contBody, EmittedExpr.eval]; ring)).mp
+          (activeGateZero hsat 0 hlen0 hlast contBody (by bm_mem)))
     have hroot : (envAt t 0).loc PARENT1 = t.pub ROOT_PI :=
-      firstPi hsat hlen0 PARENT1 ROOT_PI (by bm_mem)
+      eq_of_modEq_canon hc.parent1 hc.root (firstPi hsat hlen0 PARENT1 ROOT_PI (by bm_mem))
     unfold MerkleMembers2 merkleFold2
     rw [← hroot, hp1, hcont, hp0]
 
@@ -197,11 +233,12 @@ theorem blindedMembership_exists_hidden {hash : List ℤ → ℤ} {t : VmTrace} 
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hlen : 1 < t.rows.length)
     (hsat : Satisfied2 hash blindedMembershipDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hc : BlindedCanon t) :
     ∃ (leaf_hash blinding : ℤ) (steps : List (ℤ × ℤ × ℤ)),
       t.pub BLINDED_LEAF_PI = hash [leaf_hash, blinding]
         ∧ MembersUnderRoot4 hash leaf_hash (t.pub ROOT_PI) steps := by
-  obtain ⟨hblind, hmem⟩ := blindedMembership_sat_refines hlen hsat hChip
+  obtain ⟨hblind, hmem⟩ := blindedMembership_sat_refines hlen hsat hChip hc
   refine ⟨(envAt t 0).loc LEAF, (envAt t 0).loc BLINDING,
     [((envAt t 0).loc SIB0A, (envAt t 0).loc SIB0B, (envAt t 0).loc SIB0C),
      ((envAt t 0).loc SIB1A, (envAt t 0).loc SIB1B, (envAt t 0).loc SIB1C)], hblind, ?_⟩
@@ -210,45 +247,46 @@ theorem blindedMembership_exists_hidden {hash : List ℤ → ℤ} {t : VmTrace} 
 /-! ## §4 — non-vacuity of the SPEC (the target is TRUE and FALSE, never a stub). -/
 
 /-- A concrete little-endian digit hash — order-sensitive, injective enough to distinguish levels
-and arities. -/
-private def cHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 100 + x) 0
+and arities. Base 10 (not 100) keeps every digest CANONICAL (`< p`), so the `BlindedCanon` envelope
+is inhabited — a genuine field-valued hash, as the deployed Poseidon2 is. -/
+private def cHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 10 + x) 0
 
-/-- **Witness TRUE — the spec is INHABITED.** Leaf `1` (siblings `2,3,4`) folds to parent `1020304`,
-which with siblings `5,6,7` folds to root `1020304050607`; blinded with factor `8` gives
-`cHash [1,8] = 108`. A concrete, nontrivial identity — not a stub. -/
-theorem witness_spec_closed : BlindedMembers cHash 108 1 8 2 3 4 5 6 7 1020304050607 := by
+/-- **Witness TRUE — the spec is INHABITED.** Leaf `1` (siblings `2,3,4`) folds to parent `1234`,
+which with siblings `5,6,7` folds to root `1234567`; blinded with factor `8` gives
+`cHash [1,8] = 18`. A concrete, nontrivial identity — not a stub. -/
+theorem witness_spec_closed : BlindedMembers cHash 18 1 8 2 3 4 5 6 7 1234567 := by
   unfold BlindedMembers MerkleMembers2 merkleFold2 cHash; decide
 
 /-- **Witness FALSE — the spec CONSTRAINS.** The very same member/blinding with the WRONG published
 `blinded_leaf` is NOT accepted: the blinding tooth must equal `hash [leaf, blinding]`. -/
-theorem witness_spec_false_blind : ¬ BlindedMembers cHash 999 1 8 2 3 4 5 6 7 1020304050607 := by
+theorem witness_spec_false_blind : ¬ BlindedMembers cHash 999 1 8 2 3 4 5 6 7 1234567 := by
   unfold BlindedMembers MerkleMembers2 merkleFold2 cHash; decide
 
 /-- **Witness FALSE — the membership half CONSTRAINS.** The right blinded leaf but the WRONG root is
 rejected: `leaf_hash` must fold to the committed root. -/
-theorem witness_spec_false_root : ¬ BlindedMembers cHash 108 1 8 2 3 4 5 6 7 999 := by
+theorem witness_spec_false_root : ¬ BlindedMembers cHash 18 1 8 2 3 4 5 6 7 999 := by
   unfold BlindedMembers MerkleMembers2 merkleFold2 cHash; decide
 
 /-! ## §5 — THE ANTI-SCAR: a CONCRETE trace that genuinely SATISFIES the descriptor, plus three that
 FAIL it (each constraint BITES). -/
 
-/-- The single logical row: member leaf `1`, level-0 siblings `2,3,4`, parent `1020304`; chained
-`CUR1 = 1020304`, level-1 siblings `5,6,7`, root `1020304050607`; blinding `8`, blinded leaf
-`cHash [1,8] = 108`. -/
+/-- The single logical row: member leaf `1`, level-0 siblings `2,3,4`, parent `1234`; chained
+`CUR1 = 1234`, level-1 siblings `5,6,7`, root `1234567`; blinding `8`, blinded leaf
+`cHash [1,8] = 18`. -/
 private def cRow : Assignment := fun c =>
   if c = LEAF then 1 else if c = SIB0A then 2 else if c = SIB0B then 3 else if c = SIB0C then 4
-  else if c = PARENT0 then 1020304
-  else if c = CUR1 then 1020304 else if c = SIB1A then 5 else if c = SIB1B then 6
-  else if c = SIB1C then 7 else if c = PARENT1 then 1020304050607
-  else if c = BLINDING then 8 else if c = BLINDED_LEAF then 108 else 0
+  else if c = PARENT0 then 1234
+  else if c = CUR1 then 1234 else if c = SIB1A then 5 else if c = SIB1B then 6
+  else if c = SIB1C then 7 else if c = PARENT1 then 1234567
+  else if c = BLINDING then 8 else if c = BLINDED_LEAF then 18 else 0
 
 private def cPub : Assignment := fun k =>
-  if k = BLINDED_LEAF_PI then 108 else if k = ROOT_PI then 1020304050607 else 0
+  if k = BLINDED_LEAF_PI then 18 else if k = ROOT_PI then 1234567 else 0
 
 /-- The chip table: the two genuine 4-ary `child → parent` rows and the arity-2 blinding row. -/
 private def cTbl : List (List ℤ) :=
   [chipRow cHash [1, 2, 3, 4] (List.replicate 7 0),
-   chipRow cHash [1020304, 5, 6, 7] (List.replicate 7 0),
+   chipRow cHash [1234, 5, 6, 7] (List.replicate 7 0),
    chipRow cHash [1, 8] (List.replicate 7 0)]
 
 /-- The concrete two-row satisfying trace (padded height ≥ 2 makes row 0 a genuine transition row). -/
@@ -263,7 +301,7 @@ theorem concrete_chipSound : ChipTableSound cHash (cTrace.tf .poseidon2) := by
   simp only [cTrace, cTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with h | h | h
   · exact ⟨[1, 2, 3, 4], List.replicate 7 0, by decide, by decide, h⟩
-  · exact ⟨[1020304, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[1234, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
   · exact ⟨[1, 8], List.replicate 7 0, by decide, by decide, h⟩
 
 /-- **The `Satisfied2` HYPOTHESIS IS INHABITED.** The concrete trace genuinely satisfies the whole
@@ -295,6 +333,13 @@ theorem concrete_sat :
   · rw [hmemlog]; rfl
   · rw [hmaplog]; rfl
 
+/-- **The canonicality envelope is genuinely INHABITED** for the concrete trace — the level-tie
+cells (`CUR1`/`PARENT0 = 1234`), the root cell / PI (`1234567`) and the blinded-leaf cell / PI
+(`18`) are all small canonical field values (`< p`). So `blindedMembership_sat_refines` does NOT
+rest on a vacuous range-check hypothesis. -/
+theorem concrete_canon : BlindedCanon cTrace :=
+  ⟨by decide, by decide, by decide, by decide, by decide, by decide⟩
+
 /-- **The bridge fires end-to-end on the concrete inhabited witness** (SAT ⟹ SEM, non-vacuously). -/
 theorem witness_spec : BlindedMembers cHash
     (cTrace.pub BLINDED_LEAF_PI)
@@ -302,7 +347,7 @@ theorem witness_spec : BlindedMembers cHash
     ((envAt cTrace 0).loc SIB0A) ((envAt cTrace 0).loc SIB0B) ((envAt cTrace 0).loc SIB0C)
     ((envAt cTrace 0).loc SIB1A) ((envAt cTrace 0).loc SIB1B) ((envAt cTrace 0).loc SIB1C)
     (cTrace.pub ROOT_PI) :=
-  blindedMembership_sat_refines (by decide) concrete_sat concrete_chipSound
+  blindedMembership_sat_refines (by decide) concrete_sat concrete_chipSound concrete_canon
 
 /-- The fired witness IS the closed-form true instance. -/
 theorem witness_spec_is_closed :
@@ -312,9 +357,9 @@ theorem witness_spec_is_closed :
       ((envAt cTrace 0).loc SIB0A) ((envAt cTrace 0).loc SIB0B) ((envAt cTrace 0).loc SIB0C)
       ((envAt cTrace 0).loc SIB1A) ((envAt cTrace 0).loc SIB1B) ((envAt cTrace 0).loc SIB1C)
       (cTrace.pub ROOT_PI))
-    ↔ BlindedMembers cHash 108 1 8 2 3 4 5 6 7 1020304050607 := Iff.rfl
+    ↔ BlindedMembers cHash 18 1 8 2 3 4 5 6 7 1234567 := Iff.rfl
 
-/-- A trace with a BROKEN path: `CUR1 = 0 ≠ 1020304 = PARENT0`. -/
+/-- A trace with a BROKEN path: `CUR1 = 0 ≠ 1234 = PARENT0`. -/
 private def cRowBadChain : Assignment := fun c => if c = CUR1 then 0 else cRow c
 private def cTraceBadChain : VmTrace := { cTrace with rows := [cRowBadChain, cRowBadChain] }
 
@@ -327,7 +372,7 @@ theorem concrete_fail_chain :
   have h0 := activeGateZero h 0 (by decide) hlast contBody hmem
   revert h0; decide
 
-/-- A trace with a WRONG top digest: `PARENT1 = 0 ≠ 1020304050607 = root PI`. -/
+/-- A trace with a WRONG top digest: `PARENT1 = 0 ≠ 1234567 = root PI`. -/
 private def cRowBadRoot : Assignment := fun c => if c = PARENT1 then 0 else cRow c
 private def cTraceBadRoot : VmTrace := { cTrace with rows := [cRowBadRoot, cRowBadRoot] }
 
@@ -340,7 +385,7 @@ theorem concrete_fail_root :
   have h0 := firstPi h (by decide) PARENT1 ROOT_PI hmem
   revert h0; decide
 
-/-- A trace with a WRONG published blinded leaf: `BLINDED_LEAF = 0 ≠ 108 = blinded-leaf PI`. -/
+/-- A trace with a WRONG published blinded leaf: `BLINDED_LEAF = 0 ≠ 18 = blinded-leaf PI`. -/
 private def cRowBadBlind : Assignment := fun c => if c = BLINDED_LEAF then 0 else cRow c
 private def cTraceBadBlind : VmTrace := { cTrace with rows := [cRowBadBlind, cRowBadBlind] }
 
@@ -357,8 +402,8 @@ theorem concrete_fail_blind :
 
 #guard decide (cTrace.rows.length = 2)
 -- the fold + blind genuinely recompose (order-sensitive digit hash):
-#guard foldNode4 cHash 1 [(2, 3, 4), (5, 6, 7)] == 1020304050607
-#guard cHash [1, 8] == 108
+#guard foldNode4 cHash 1 [(2, 3, 4), (5, 6, 7)] == 1234567
+#guard cHash [1, 8] == 18
 
 #assert_axioms lookupChip4
 #assert_axioms lookupChip2
@@ -366,6 +411,7 @@ theorem concrete_fail_blind :
 #assert_axioms blindedMembership_exists_hidden
 #assert_axioms concrete_chipSound
 #assert_axioms concrete_sat
+#assert_axioms concrete_canon
 #assert_axioms witness_spec
 #assert_axioms concrete_fail_chain
 #assert_axioms concrete_fail_root
@@ -383,12 +429,13 @@ trace); depth-8 is an instance. -/
 section General
 
 open Dregg2.Circuit.DescriptorIR2
-  (WindowConstraint envAt)
+  (WindowConstraint WindowExpr envAt)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv)
 open Dregg2.Circuit.Emit.BlindedMembershipEmit
   (blindedMembership4aryDesc gConstraints gPerRowGates gLastRowBoundaries gPerRowBodies
    gParentLookup gBlindLookup gContinuity gBlindedLeafPin gRootPin gContWindow gCont_zero_iff
    gArrangeList gChildren_arranged bitBinaryBody child0Body child1Body child2Body child3Body
+   ev ek eadd emul eneg esub eoneMinus indL0 indL1 indL2 indL3
    gCUR gSIB0 gSIB1 gSIB2 gB0 gB1 gC0 gC1 gC2 gC3 gPAR gBLINDING gBLINDED_LEAF
    gPATH_LANES gBLIND_LANES gPI_BLINDED_LEAF gPI_ROOT)
 
@@ -422,6 +469,129 @@ def gStepsOf (t : VmTrace) (n : Nat) : List (ℤ × ℤ × ℤ × ℤ × ℤ) :=
     ((envAt t j).loc gSIB0, (envAt t j).loc gSIB1, (envAt t j).loc gSIB2,
      (envAt t j).loc gB0, (envAt t j).loc gB1))
 
+/-! ### The depth-general canonicality envelope (the deployed range-check invariant, per row). -/
+
+/-- The canonical-cell invariant on one row's fold-relevant columns: the running hash, the three
+siblings, the two position bits, the four arranged children, and the parent digest. -/
+structure GRowCanon (a : Dregg2.Circuit.Assignment) : Prop where
+  cur  : Canon (a gCUR)
+  sib0 : Canon (a gSIB0)
+  sib1 : Canon (a gSIB1)
+  sib2 : Canon (a gSIB2)
+  b0   : Canon (a gB0)
+  b1   : Canon (a gB1)
+  c0   : Canon (a gC0)
+  c1   : Canon (a gC1)
+  c2   : Canon (a gC2)
+  c3   : Canon (a gC3)
+  par  : Canon (a gPAR)
+
+/-- **The depth-general canonicality envelope**: every row's fold columns are canonical, plus the
+row-0 blinded-leaf cell and the two bound public inputs. Inhabited concretely by `gConcrete_canon`,
+so it is a real, dischargeable hypothesis — never vacuous. -/
+structure G4Canon (t : VmTrace) : Prop where
+  rows          : ∀ j, j < t.rows.length → GRowCanon (envAt t j).loc
+  blindedLeaf   : Canon ((envAt t 0).loc gBLINDED_LEAF)
+  blindedLeafPi : Canon (t.pub gPI_BLINDED_LEAF)
+  root          : Canon (t.pub gPI_ROOT)
+
+/-- A canonical bit cell whose bit-binary gate vanishes mod `p` IS `0` or `1` over ℤ: primality
+splits `p ∣ bit·(bit−1)`, canonicality collapses each factor. -/
+theorem gBit_cases {a : Dregg2.Circuit.Assignment} {bit : Nat}
+    (h : (bitBinaryBody bit).eval a ≡ 0 [ZMOD 2013265921]) (hc : Canon (a bit)) :
+    a bit = 0 ∨ a bit = 1 := by
+  simp only [bitBinaryBody, ev, ek, eadd, emul, eneg, EmittedExpr.eval] at h
+  have hd : (2013265921 : ℤ) ∣ a bit * a bit + (-1) * a bit := Int.modEq_zero_iff_dvd.mp h
+  have hd' : (2013265921 : ℤ) ∣ a bit * (a bit + (-1)) := by
+    have hsh : a bit * (a bit + (-1)) = a bit * a bit + (-1) * a bit := by ring
+    rw [hsh]; exact hd
+  obtain ⟨hc0, hc1⟩ := hc
+  rcases pPrimeInt.dvd_mul.mp hd' with hx | hx
+  · obtain ⟨k, hk⟩ := hx; left; omega
+  · obtain ⟨k, hk⟩ := hx; right; omega
+
+/-- **The mod-`p` arrangement tooth** — the field-denotation twin of `gChildren_arranged`: on a
+CANONICAL row whose two bit-binary gates and four child-selection gates vanish mod `p`, the four
+child columns ARE (over ℤ) the positional arrangement of the running hash and siblings. Load-bearing:
+the children are RE-HASHED by the parent chip lookup, where a congruence cannot thread. -/
+theorem gChildren_arranged_canon {a : Dregg2.Circuit.Assignment}
+    (hb0 : (bitBinaryBody gB0).eval a ≡ 0 [ZMOD 2013265921])
+    (hb1 : (bitBinaryBody gB1).eval a ≡ 0 [ZMOD 2013265921])
+    (h0 : child0Body.eval a ≡ 0 [ZMOD 2013265921])
+    (h1 : child1Body.eval a ≡ 0 [ZMOD 2013265921])
+    (h2 : child2Body.eval a ≡ 0 [ZMOD 2013265921])
+    (h3 : child3Body.eval a ≡ 0 [ZMOD 2013265921])
+    (hc : GRowCanon a) :
+    [a gC0, a gC1, a gC2, a gC3]
+      = gArrangeList (a gCUR) (a gSIB0) (a gSIB1) (a gSIB2) (a gB0) (a gB1) := by
+  have e0 : a gB0 = 0 ∨ a gB0 = 1 := gBit_cases hb0 hc.b0
+  have e1 : a gB1 = 0 ∨ a gB1 = 1 := gBit_cases hb1 hc.b1
+  rcases e0 with hb0v | hb0v <;> rcases e1 with hb1v | hb1v
+  · -- position 0 : [cur, s0, s1, s2]
+    have hr : gArrangeList (a gCUR) (a gSIB0) (a gSIB1) (a gSIB2) (a gB0) (a gB1)
+        = [a gCUR, a gSIB0, a gSIB1, a gSIB2] := by simp [gArrangeList, hb0v, hb1v]
+    have k0 : a gC0 = a gCUR := eq_of_modEq_canon hc.c0 hc.cur ((gate_modEq_iff (by
+      simp only [child0Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h0)
+    have k1 : a gC1 = a gSIB0 := eq_of_modEq_canon hc.c1 hc.sib0 ((gate_modEq_iff (by
+      simp only [child1Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h1)
+    have k2 : a gC2 = a gSIB1 := eq_of_modEq_canon hc.c2 hc.sib1 ((gate_modEq_iff (by
+      simp only [child2Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h2)
+    have k3 : a gC3 = a gSIB2 := eq_of_modEq_canon hc.c3 hc.sib2 ((gate_modEq_iff (by
+      simp only [child3Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h3)
+    rw [hr, k0, k1, k2, k3]
+  · -- position 2 (b0=0, b1=1) : [s0, s1, cur, s2]
+    have hr : gArrangeList (a gCUR) (a gSIB0) (a gSIB1) (a gSIB2) (a gB0) (a gB1)
+        = [a gSIB0, a gSIB1, a gCUR, a gSIB2] := by simp [gArrangeList, hb0v, hb1v]
+    have k0 : a gC0 = a gSIB0 := eq_of_modEq_canon hc.c0 hc.sib0 ((gate_modEq_iff (by
+      simp only [child0Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h0)
+    have k1 : a gC1 = a gSIB1 := eq_of_modEq_canon hc.c1 hc.sib1 ((gate_modEq_iff (by
+      simp only [child1Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h1)
+    have k2 : a gC2 = a gCUR := eq_of_modEq_canon hc.c2 hc.cur ((gate_modEq_iff (by
+      simp only [child2Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h2)
+    have k3 : a gC3 = a gSIB2 := eq_of_modEq_canon hc.c3 hc.sib2 ((gate_modEq_iff (by
+      simp only [child3Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h3)
+    rw [hr, k0, k1, k2, k3]
+  · -- position 1 (b0=1, b1=0) : [s0, cur, s1, s2]
+    have hr : gArrangeList (a gCUR) (a gSIB0) (a gSIB1) (a gSIB2) (a gB0) (a gB1)
+        = [a gSIB0, a gCUR, a gSIB1, a gSIB2] := by simp [gArrangeList, hb0v, hb1v]
+    have k0 : a gC0 = a gSIB0 := eq_of_modEq_canon hc.c0 hc.sib0 ((gate_modEq_iff (by
+      simp only [child0Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h0)
+    have k1 : a gC1 = a gCUR := eq_of_modEq_canon hc.c1 hc.cur ((gate_modEq_iff (by
+      simp only [child1Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h1)
+    have k2 : a gC2 = a gSIB1 := eq_of_modEq_canon hc.c2 hc.sib1 ((gate_modEq_iff (by
+      simp only [child2Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h2)
+    have k3 : a gC3 = a gSIB2 := eq_of_modEq_canon hc.c3 hc.sib2 ((gate_modEq_iff (by
+      simp only [child3Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h3)
+    rw [hr, k0, k1, k2, k3]
+  · -- position 3 (b0=1, b1=1) : [s0, s1, s2, cur]
+    have hr : gArrangeList (a gCUR) (a gSIB0) (a gSIB1) (a gSIB2) (a gB0) (a gB1)
+        = [a gSIB0, a gSIB1, a gSIB2, a gCUR] := by simp [gArrangeList, hb0v, hb1v]
+    have k0 : a gC0 = a gSIB0 := eq_of_modEq_canon hc.c0 hc.sib0 ((gate_modEq_iff (by
+      simp only [child0Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h0)
+    have k1 : a gC1 = a gSIB1 := eq_of_modEq_canon hc.c1 hc.sib1 ((gate_modEq_iff (by
+      simp only [child1Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h1)
+    have k2 : a gC2 = a gSIB2 := eq_of_modEq_canon hc.c2 hc.sib2 ((gate_modEq_iff (by
+      simp only [child2Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h2)
+    have k3 : a gC3 = a gCUR := eq_of_modEq_canon hc.c3 hc.cur ((gate_modEq_iff (by
+      simp only [child3Body, indL0, indL1, indL2, indL3, ev, ek, eadd, emul, eneg, esub,
+        eoneMinus, EmittedExpr.eval]; rw [hb0v, hb1v]; ring)).mp h3)
+    rw [hr, k0, k1, k2, k3]
+
 /-! ### Membership tactic + universal row extractions. -/
 
 local macro "g_mem" : tactic =>
@@ -432,12 +602,12 @@ local macro "g_mem" : tactic =>
 variable {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
   {depth : Nat}
 
-/-- Every per-row body (bit-binary ×2, child-selection ×4) vanishes on EVERY row: on non-last rows
-via the transition `.gate`, on the last row via the re-lowered `.boundary .last`. -/
+/-- Every per-row body (bit-binary ×2, child-selection ×4) vanishes mod `p` on EVERY row: on
+non-last rows via the transition `.gate`, on the last row via the re-lowered `.boundary .last`. -/
 theorem gPerRowBodyZero
     (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
     (b : EmittedExpr) (hb : b ∈ gPerRowBodies) (j : Nat) (hj : j < t.rows.length) :
-    b.eval (envAt t j).loc = 0 := by
+    b.eval (envAt t j).loc ≡ 0 [ZMOD 2013265921] := by
   by_cases hlast : (j + 1 == t.rows.length) = true
   · have hmem : VmConstraint2.base (.boundary VmRow.last b)
         ∈ (blindedMembership4aryDesc depth).constraints := by
@@ -457,18 +627,19 @@ theorem gPerRowBodyZero
     simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hf] at h
     exact h
 
-/-- On any row, the four child columns are the positional arrangement of the running hash + siblings
-(the six per-row gates + the arrangement reduction). -/
+/-- On any CANONICAL row, the four child columns are the positional arrangement of the running
+hash + siblings (the six per-row mod-`p` gates + canonicality, through the arrangement tooth). -/
 theorem gArrangeAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
-    (j : Nat) (hj : j < t.rows.length) :
+    (hcanon : G4Canon t) (j : Nat) (hj : j < t.rows.length) :
     [(envAt t j).loc gC0, (envAt t j).loc gC1, (envAt t j).loc gC2, (envAt t j).loc gC3]
       = gArrangeList ((envAt t j).loc gCUR) ((envAt t j).loc gSIB0) ((envAt t j).loc gSIB1)
           ((envAt t j).loc gSIB2) ((envAt t j).loc gB0) ((envAt t j).loc gB1) := by
   have hz := fun b hb => gPerRowBodyZero hsat b hb j hj
-  exact gChildren_arranged _
+  exact gChildren_arranged_canon
     (hz _ (by simp [gPerRowBodies])) (hz _ (by simp [gPerRowBodies]))
     (hz _ (by simp [gPerRowBodies])) (hz _ (by simp [gPerRowBodies]))
     (hz _ (by simp [gPerRowBodies])) (hz _ (by simp [gPerRowBodies]))
+    (hcanon.rows j hj)
 
 /-- The arity-4 parent chip binds `gPAR` to `hash` of the four child columns, on any row. -/
 theorem gParentAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
@@ -497,31 +668,39 @@ theorem gBlindAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit
     (by show (2 : Nat) ≤ CHIP_RATE; decide) h
   simpa [EmittedExpr.eval] using hs
 
-/-- The continuity window gate ties `next.cur = this.par` on every non-last row. -/
+/-- The continuity window gate ties `next.cur = this.par` on every non-last row — the mod-`p`
+window lifted by canonicality of both cells (load-bearing: `cur` is re-hashed at the next level). -/
 theorem gContAt (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
+    (hcanon : G4Canon t)
     (j : Nat) (hj : j < t.rows.length) (hnl : (j + 1 == t.rows.length) = false) :
     (envAt t (j + 1)).loc gCUR = (envAt t j).loc gPAR := by
   have hmem : gContinuity ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
   have h := hsat.rowConstraints j hj _ hmem
   simp only [gContinuity, VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true] at h
-  have hz : gContWindow.eval (envAt t j) = 0 := h hnl
-  have hkey := (gCont_zero_iff (envAt t j)).mp hz
+  have hz : gContWindow.eval (envAt t j) ≡ 0 [ZMOD 2013265921] := h hnl
+  have hkey : (envAt t j).nxt gCUR ≡ (envAt t j).loc gPAR [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [gContWindow, WindowExpr.eval]; ring)).mp hz
+  have hne : j + 1 ≠ t.rows.length := by
+    intro hcontra; rw [hcontra] at hnl; simp at hnl
+  have hj1 : j + 1 < t.rows.length := by omega
   have heq : (envAt t (j + 1)).loc gCUR = (envAt t j).nxt gCUR := rfl
-  rw [heq]; exact hkey
+  have hcn : Canon ((envAt t j).nxt gCUR) := heq ▸ (hcanon.rows (j + 1) hj1).cur
+  rw [heq]
+  exact eq_of_modEq_canon hcn (hcanon.rows j hj).par hkey
 
-/-- The row-0 blinded-leaf pin: `loc gBLINDED_LEAF = pub gPI_BLINDED_LEAF`. -/
+/-- The row-0 blinded-leaf pin: `loc gBLINDED_LEAF ≡ pub gPI_BLINDED_LEAF [ZMOD p]`. -/
 theorem gBlindedLeafPi (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
     (hlen : 0 < t.rows.length) :
-    (envAt t 0).loc gBLINDED_LEAF = t.pub gPI_BLINDED_LEAF := by
+    (envAt t 0).loc gBLINDED_LEAF ≡ t.pub gPI_BLINDED_LEAF [ZMOD 2013265921] := by
   have hmem : gBlindedLeafPin ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
   have h := hsat.rowConstraints 0 hlen _ hmem
   simp only [gBlindedLeafPin, VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
   exact h (by decide)
 
-/-- The last-row root pin: `loc gPAR = pub gPI_ROOT`. -/
+/-- The last-row root pin: `loc gPAR ≡ pub gPI_ROOT [ZMOD p]`. -/
 theorem gRootPi (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
     (hlen : 0 < t.rows.length) :
-    (envAt t (t.rows.length - 1)).loc gPAR = t.pub gPI_ROOT := by
+    (envAt t (t.rows.length - 1)).loc gPAR ≡ t.pub gPI_ROOT [ZMOD 2013265921] := by
   have hmem : gRootPin ∈ (blindedMembership4aryDesc depth).constraints := by g_mem
   have hj : t.rows.length - 1 < t.rows.length := by omega
   have h := hsat.rowConstraints (t.rows.length - 1) hj _ hmem
@@ -536,7 +715,7 @@ theorem gRootPi (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit 
 row's parent digest. The load-bearing cross-row induction: base = the level-0 parent; step chains via
 the continuity gate (`cur_{j+1} = par_j`) and the arrangement + parent chip at level `j+1`. -/
 theorem gFoldsTo (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2)) (hcanon : G4Canon t) :
     ∀ j, j < t.rows.length →
       gFoldPos hash ((envAt t 0).loc gCUR) (gStepsOf t (j + 1)) = (envAt t j).loc gPAR := by
   intro j
@@ -549,14 +728,14 @@ theorem gFoldsTo (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit
             ((envAt t 0).loc gB1)) := by
       simp only [gStepsOf, List.range_one, List.map_cons, List.map_nil, gFoldPos,
         List.foldl_cons, List.foldl_nil, gStep]
-    rw [key, ← gArrangeAt hsat 0 hj0, ← gParentAt hsat hChip 0 hj0]
+    rw [key, ← gArrangeAt hsat hcanon 0 hj0, ← gParentAt hsat hChip 0 hj0]
   | succ j ih =>
     intro hj
     have hjS : j < t.rows.length := by omega
     have hnl : (j + 1 == t.rows.length) = false := by
       simp only [beq_eq_false_iff_ne]; omega
     have hjplus : j + 1 < t.rows.length := hj
-    have hcont : (envAt t (j + 1)).loc gCUR = (envAt t j).loc gPAR := gContAt hsat j hjS hnl
+    have hcont : (envAt t (j + 1)).loc gCUR = (envAt t j).loc gPAR := gContAt hsat hcanon j hjS hnl
     -- gStepsOf t (j+2) = gStepsOf t (j+1) ++ [step_{j+1}]
     have hsteps : gStepsOf t (j + 2)
         = gStepsOf t (j + 1)
@@ -571,7 +750,7 @@ theorem gFoldsTo (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit
             ((envAt t (j + 1)).loc gB0) ((envAt t (j + 1)).loc gB1)) := by
       rw [show j + 1 + 1 = j + 2 from rfl, hsteps, gFoldPos_concat, ih hjS]
       simp only [gStep]
-    rw [key, ← hcont, ← gArrangeAt hsat (j + 1) hjplus, ← gParentAt hsat hChip (j + 1) hjplus]
+    rw [key, ← hcont, ← gArrangeAt hsat hcanon (j + 1) hjplus, ← gParentAt hsat hChip (j + 1) hjplus]
 
 /-- **`blinded4ary_sat_refines` — THE WHOLE-DESCRIPTOR BRIDGE (SAT ⟹ SEM), depth-general.**
 A trace SATISFYING `blindedMembership4aryDesc depth`, against the NAMED Poseidon2 chip carrier, binds
@@ -583,55 +762,63 @@ column, so the published `blinded_leaf` commits to exactly the member proven und
 theorem blinded4ary_sat_refines
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash (blindedMembership4aryDesc depth) minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hcanon : G4Canon t) :
     Blinded4aryMembers hash
       (t.pub gPI_BLINDED_LEAF) ((envAt t 0).loc gCUR) ((envAt t 0).loc gBLINDING)
       (t.pub gPI_ROOT) (gStepsOf t t.rows.length) := by
   refine ⟨?_, ?_⟩
-  · -- the blind tooth: blinded_leaf PI = hash [cur_0, blinding_0].
-    rw [← gBlindedLeafPi hsat hlen]
+  · -- the blind tooth: blinded_leaf PI = hash [cur_0, blinding_0] (mod-p pin lifted by
+    -- canonicality of the blinded-leaf cell and PI).
+    have hpin : (envAt t 0).loc gBLINDED_LEAF = t.pub gPI_BLINDED_LEAF :=
+      eq_of_modEq_canon hcanon.blindedLeaf hcanon.blindedLeafPi (gBlindedLeafPi hsat hlen)
+    rw [← hpin]
     exact gBlindAt hsat hChip 0 hlen
-  · -- the membership fold: cur_0 folds to the last parent = root PI.
+  · -- the membership fold: cur_0 folds to the last parent = root PI (mod-p pin lifted by
+    -- canonicality of the last-row parent digest and the root PI).
     have hj : t.rows.length - 1 < t.rows.length := by omega
-    have hfold := gFoldsTo hsat hChip (t.rows.length - 1) hj
+    have hfold := gFoldsTo hsat hChip hcanon (t.rows.length - 1) hj
     rw [Nat.sub_add_cancel hlen] at hfold
     rw [hfold]
-    exact gRootPi hsat hlen
+    exact eq_of_modEq_canon (hcanon.rows (t.rows.length - 1) hj).par hcanon.root
+      (gRootPi hsat hlen)
 
 /-! ### Non-vacuity: a CONCRETE depth-2 (2-row) general-position accepting trace fires the bridge. -/
 
-/-- An order-sensitive digit hash (order- and arity-sensitive, so it separates levels/positions). -/
-private def gHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 100 + x) 0
+/-- An order-sensitive digit hash (order- and arity-sensitive, so it separates levels/positions).
+Base 10 (not 100) keeps every digest CANONICAL (`< p`), so the `G4Canon` envelope is inhabited —
+a genuine field-valued hash, as the deployed Poseidon2 is. -/
+private def gHash : List ℤ → ℤ := fun xs => xs.foldl (fun acc x => acc * 10 + x) 0
 
 /-- **Row 0** — a MIXED-position level (position 1: `b0=1,b1=0`, so children `[s0, cur, s1, s2] =
-[2,1,3,4]`, parent `gHash [2,1,3,4] = 2010304`). Member `leaf = 1`, siblings `2,3,4`; blinding `8`,
-blinded leaf `gHash [1,8] = 108`. -/
+[2,1,3,4]`, parent `gHash [2,1,3,4] = 2134`). Member `leaf = 1`, siblings `2,3,4`; blinding `8`,
+blinded leaf `gHash [1,8] = 18`. -/
 private def gRow0 : Assignment := fun c =>
   if c = gCUR then 1 else if c = gSIB0 then 2 else if c = gSIB1 then 3 else if c = gSIB2 then 4
   else if c = gB0 then 1 else if c = gB1 then 0
   else if c = gC0 then 2 else if c = gC1 then 1 else if c = gC2 then 3 else if c = gC3 then 4
-  else if c = gPAR then 2010304
-  else if c = gBLINDING then 8 else if c = gBLINDED_LEAF then 108 else 0
+  else if c = gPAR then 2134
+  else if c = gBLINDING then 8 else if c = gBLINDED_LEAF then 18 else 0
 
-/-- **Row 1 (the last row)** — position 0 (leftmost): running hash `cur = 2010304` (= row-0 parent, the
-continuity chain), siblings `5,6,7`, children `[2010304,5,6,7]`, parent (root)
-`gHash [2010304,5,6,7] = 2010304050607`. Blinding `8`, blinded leaf `gHash [2010304,8] = 201030408`. -/
+/-- **Row 1 (the last row)** — position 0 (leftmost): running hash `cur = 2134` (= row-0 parent, the
+continuity chain), siblings `5,6,7`, children `[2134,5,6,7]`, parent (root)
+`gHash [2134,5,6,7] = 2134567`. Blinding `8`, blinded leaf `gHash [2134,8] = 21348`. -/
 private def gRow1 : Assignment := fun c =>
-  if c = gCUR then 2010304 else if c = gSIB0 then 5 else if c = gSIB1 then 6 else if c = gSIB2 then 7
+  if c = gCUR then 2134 else if c = gSIB0 then 5 else if c = gSIB1 then 6 else if c = gSIB2 then 7
   else if c = gB0 then 0 else if c = gB1 then 0
-  else if c = gC0 then 2010304 else if c = gC1 then 5 else if c = gC2 then 6 else if c = gC3 then 7
-  else if c = gPAR then 2010304050607
-  else if c = gBLINDING then 8 else if c = gBLINDED_LEAF then 201030408 else 0
+  else if c = gC0 then 2134 else if c = gC1 then 5 else if c = gC2 then 6 else if c = gC3 then 7
+  else if c = gPAR then 2134567
+  else if c = gBLINDING then 8 else if c = gBLINDED_LEAF then 21348 else 0
 
 private def gPub : Assignment := fun k =>
-  if k = gPI_BLINDED_LEAF then 108 else if k = gPI_ROOT then 2010304050607 else 0
+  if k = gPI_BLINDED_LEAF then 18 else if k = gPI_ROOT then 2134567 else 0
 
 /-- The chip table: the two genuine `child → parent` arity-4 rows and the two arity-2 blinding rows. -/
 private def gTbl : List (List ℤ) :=
   [chipRow gHash [2, 1, 3, 4] (List.replicate 7 0),
-   chipRow gHash [2010304, 5, 6, 7] (List.replicate 7 0),
+   chipRow gHash [2134, 5, 6, 7] (List.replicate 7 0),
    chipRow gHash [1, 8] (List.replicate 7 0),
-   chipRow gHash [2010304, 8] (List.replicate 7 0)]
+   chipRow gHash [2134, 8] (List.replicate 7 0)]
 
 private def gTrace : VmTrace :=
   { rows := [gRow0, gRow1], pub := gPub
@@ -643,9 +830,9 @@ theorem gConcrete_chipSound : ChipTableSound gHash (gTrace.tf .poseidon2) := by
   simp only [gTrace, gTbl, List.mem_cons, List.not_mem_nil, or_false] at hr
   rcases hr with h | h | h | h
   · exact ⟨[2, 1, 3, 4], List.replicate 7 0, by decide, by decide, h⟩
-  · exact ⟨[2010304, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[2134, 5, 6, 7], List.replicate 7 0, by decide, by decide, h⟩
   · exact ⟨[1, 8], List.replicate 7 0, by decide, by decide, h⟩
-  · exact ⟨[2010304, 8], List.replicate 7 0, by decide, by decide, h⟩
+  · exact ⟨[2134, 8], List.replicate 7 0, by decide, by decide, h⟩
 
 /-- **The `Satisfied2` hypothesis is INHABITED at depth 2 (2 rows, GENERAL position).** Every
 constraint holds on both rows: the two arity-4 parent lookups and two arity-2 blinding lookups land in
@@ -676,34 +863,46 @@ theorem gConcrete_sat :
   · rw [hmemlog]; rfl
   · rw [hmaplog]; rfl
 
+/-- **The canonicality envelope is genuinely INHABITED at depth 2**: every fold cell on both rows
+(`≤ 2134567`) and the two PIs are canonical field values (`< p`). So `blinded4ary_sat_refines`
+does NOT rest on a vacuous range-check hypothesis. -/
+theorem gConcrete_canon : G4Canon gTrace := by
+  refine ⟨?_, by decide, by decide, by decide⟩
+  intro j hj
+  have h2 : j < 2 := hj
+  interval_cases j <;>
+    exact ⟨by decide, by decide, by decide, by decide, by decide, by decide, by decide,
+           by decide, by decide, by decide, by decide⟩
+
 /-- **The bridge FIRES end-to-end on the concrete inhabited depth-2 general-position witness** (SAT ⟹
 SEM, non-vacuously): all hypotheses hold, and the whole blinded-membership relation is DERIVED. -/
 theorem gWitness_spec :
     Blinded4aryMembers gHash (gTrace.pub gPI_BLINDED_LEAF) ((envAt gTrace 0).loc gCUR)
       ((envAt gTrace 0).loc gBLINDING) (gTrace.pub gPI_ROOT) (gStepsOf gTrace gTrace.rows.length) :=
-  blinded4ary_sat_refines (by decide) gConcrete_sat gConcrete_chipSound
+  blinded4ary_sat_refines (by decide) gConcrete_sat gConcrete_chipSound gConcrete_canon
 
-/-- The fired witness IS the closed-form true instance (blind tooth `108 = gHash [1,8]`, and `1`
-folds through position 1 then position 0 to `2010304050607`). -/
+/-- The fired witness IS the closed-form true instance (blind tooth `18 = gHash [1,8]`, and `1`
+folds through position 1 then position 0 to `2134567`). -/
 theorem gWitness_spec_closed :
-    Blinded4aryMembers gHash 108 1 8 2010304050607 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
+    Blinded4aryMembers gHash 18 1 8 2134567 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
   unfold Blinded4aryMembers gFoldPos gStep gArrangeList gHash; decide
 
 /-- **Witness FALSE — the spec CONSTRAINS.** The same member/blinding with the WRONG blinded leaf is
 rejected. -/
 theorem gWitness_spec_false_blind :
-    ¬ Blinded4aryMembers gHash 999 1 8 2010304050607 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
+    ¬ Blinded4aryMembers gHash 999 1 8 2134567 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
   unfold Blinded4aryMembers gFoldPos gStep gArrangeList gHash; decide
 
 /-- **Witness FALSE — the membership half CONSTRAINS.** The right blinded leaf but the WRONG root is
 rejected: the positional fold must reach the committed root. -/
 theorem gWitness_spec_false_root :
-    ¬ Blinded4aryMembers gHash 108 1 8 999 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
+    ¬ Blinded4aryMembers gHash 18 1 8 999 [(2, 3, 4, 1, 0), (5, 6, 7, 0, 0)] := by
   unfold Blinded4aryMembers gFoldPos gStep gArrangeList gHash; decide
 
 #assert_axioms gFoldsTo
 #assert_axioms blinded4ary_sat_refines
 #assert_axioms gConcrete_sat
+#assert_axioms gConcrete_canon
 #assert_axioms gWitness_spec
 #assert_axioms gBlindAt
 #assert_axioms gArrangeAt
