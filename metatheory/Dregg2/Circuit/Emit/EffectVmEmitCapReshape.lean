@@ -543,12 +543,17 @@ transition row, which any real ≥2-row trace carries; the final row is the wrap
 
 /-- **`capReshape_nonAmp_in_circuit` — THE IN-CIRCUIT NON-AMP TOOTH.** A satisfying witness FORCES, on a
 transition row (`isLast = false`), for every bit `i < MASK_BITS`, the granted bit ≤ the held bit
-(`gᵢ = 0 ∨ hᵢ = 1`) — i.e. `granted ⊑ held` bitwise, per bit. The light client reads ONLY the proof;
-this is the in-circuit non-amplification it now sees, not an executor-trusted side-check. -/
+(`gᵢ = 0 ∨ hᵢ = 1`) — i.e. `granted ⊑ held` bitwise, per bit. The gate body vanishes mod the BabyBear
+prime `p`, so the exact-`ℤ` conclusion needs CANONICALITY of the two bit cells (`0 ≤ cell < p` — what
+the deployed range check supplies), then primality of `p` splits the product residual. The light client
+reads ONLY the proof; this is the in-circuit non-amplification it now sees, not an executor-trusted
+side-check. -/
 theorem capReshape_nonAmp_in_circuit (hash : List ℤ → ℤ) (env : VmRowEnv) (isFirst isLast : Bool)
     (hlast : isLast = false)
     (hsat : satisfiedVm hash capReshapeVmDescriptor env isFirst isLast)
-    (i : Nat) (hi : i < MASK_BITS) :
+    (i : Nat) (hi : i < MASK_BITS)
+    (hgc : 0 ≤ env.loc (col.grantedBit i) ∧ env.loc (col.grantedBit i) < 2013265921)
+    (hhc : 0 ≤ env.loc (col.heldBit i) ∧ env.loc (col.heldBit i) < 2013265921) :
     env.loc (col.grantedBit i) = 0 ∨ env.loc (col.heldBit i) = 1 := by
   obtain ⟨hcon, _, _⟩ := hsat
   -- the submask gate for bit `i` is a member of the constraint list.
@@ -561,22 +566,35 @@ theorem capReshape_nonAmp_in_circuit (hash : List ℤ → ℤ) (env : VmRowEnv) 
     unfold nonAmpGates
     exact List.mem_append_left _ (List.mem_append_right _ hsm)
   have hg := hcon _ hmem
-  -- the gate body `gᵢ·(1 − hᵢ) = 0` forces `gᵢ = 0 ∨ hᵢ = 1` (on the transition row).
+  -- the gate body `gᵢ·(1 − hᵢ) ≡ 0 [ZMOD p]` + primality + canonicality force `gᵢ = 0 ∨ hᵢ = 1`
+  -- (on the transition row): `p ∣ gᵢ·(1−hᵢ)` splits, and each factor's only in-range multiple of `p`
+  -- pins the exact value.
   subst hlast
   simp only [VmConstraint.holdsVm, gSubmaskBit, eSub, eCol, EmittedExpr.eval] at hg
-  rcases mul_eq_zero.mp hg with h0 | h1
-  · exact Or.inl h0
-  · exact Or.inr (by linarith)
+  have hp : Prime (2013265921 : ℤ) := by
+    exact_mod_cast Nat.prime_iff_prime_int.mp Dregg2.Circuit.BabyBearFriField.babyBearP_prime
+  rw [Int.modEq_zero_iff_dvd] at hg
+  rcases hp.dvd_mul.mp hg with h0 | h1
+  · -- `p ∣ gᵢ` with `0 ≤ gᵢ < p` forces `gᵢ = 0`.
+    obtain ⟨k, hk⟩ := h0
+    exact Or.inl (by omega)
+  · -- `p ∣ (1 − hᵢ)` with `0 ≤ hᵢ < p` forces `hᵢ = 1`.
+    obtain ⟨k, hk⟩ := h1
+    exact Or.inr (by omega)
 
 /-- **`capReshape_production_in_circuit` — THE IN-CIRCUIT PRODUCTION-AUTHORITY TOOTH.** A satisfying
-witness on the active (first) row FORCES: the held `target` param equals the minted-asset PI (the opened
-issuer cap targets the asset) AND the control bit is set (`h₆ = 1`, the mint right). So a verifying proof
-genuinely means the producer OPENED a held issuer cap for the asset — production gated on held authority,
+witness on the active (first) row FORCES: the held `target` param is CONGRUENT mod the BabyBear prime
+to the minted-asset PI (the field-faithful PI binding — the AIR compares felts, so the pin is
+`≡ [ZMOD p]`) AND the control bit is set exactly (`h₆ = 1`, the mint right — the exact value needs
+CANONICALITY `0 ≤ h₆ < p`, what the deployed range check supplies). So a verifying proof genuinely
+means the producer OPENED a held issuer cap for the asset — production gated on held authority,
 in-circuit. -/
 theorem capReshape_production_in_circuit (hash : List ℤ → ℤ) (env : VmRowEnv) (isLast : Bool)
     (hlast : isLast = false)
-    (hsat : satisfiedVm hash capReshapeVmDescriptor env true isLast) :
-    env.loc (prmCol col.TARGET) = env.pub PI_ASSET
+    (hsat : satisfiedVm hash capReshapeVmDescriptor env true isLast)
+    (hhc : 0 ≤ env.loc (col.heldBit CONTROL_BIT_POS)
+           ∧ env.loc (col.heldBit CONTROL_BIT_POS) < 2013265921) :
+    (env.loc (prmCol col.TARGET) ≡ env.pub PI_ASSET [ZMOD 2013265921])
     ∧ env.loc (col.heldBit CONTROL_BIT_POS) = 1 := by
   obtain ⟨hcon, _, _⟩ := hsat
   have hmemPI : VmConstraint.piBinding .first (prmCol col.TARGET) PI_ASSET
@@ -596,7 +614,10 @@ theorem capReshape_production_in_circuit (hash : List ℤ → ℤ) (env : VmRowE
   subst hlast
   simp only [VmConstraint.holdsVm, true_implies] at hPI
   simp only [VmConstraint.holdsVm, eSub, eCol, EmittedExpr.eval] at hCtl
-  exact ⟨hPI, by linarith⟩
+  -- `h₆ − 1 ≡ 0 [ZMOD p]` + canonicality `0 ≤ h₆ < p` pin `h₆ = 1` exactly.
+  rw [Int.modEq_zero_iff_dvd] at hCtl
+  obtain ⟨k, hk⟩ := hCtl
+  exact ⟨hPI, by omega⟩
 
 /-- **`capReshape_rejects_amplify` — the anti-amplify rejection (witness FALSE).** A row where the
 granted bit `i` is SET (`= 1`) but the held bit `i` is CLEAR (`= 0`) — an amplifying grant on bit `i` —
@@ -608,7 +629,9 @@ theorem capReshape_rejects_amplify (hash : List ℤ → ℤ) (env : VmRowEnv) (i
     (hg : env.loc (col.grantedBit i) = 1) (hh : env.loc (col.heldBit i) = 0) :
     ¬ satisfiedVm hash capReshapeVmDescriptor env isFirst isLast := by
   intro hsat
-  rcases capReshape_nonAmp_in_circuit hash env isFirst isLast hlast hsat i hi with h0 | h1
+  -- the literal bit values 1/0 are canonical (`0 ≤ · < p`) by inspection.
+  rcases capReshape_nonAmp_in_circuit hash env isFirst isLast hlast hsat i hi
+      (by rw [hg]; norm_num) (by rw [hh]; norm_num) with h0 | h1
   · rw [hg] at h0; exact absurd h0 (by norm_num)
   · rw [hh] at h1; exact absurd h1 (by norm_num)
 
@@ -621,7 +644,8 @@ theorem capReshape_rejects_no_control (hash : List ℤ → ℤ) (env : VmRowEnv)
     (hh : env.loc (col.heldBit CONTROL_BIT_POS) = 0) :
     ¬ satisfiedVm hash capReshapeVmDescriptor env true isLast := by
   intro hsat
-  have := (capReshape_production_in_circuit hash env isLast hlast hsat).2
+  -- the literal control-bit value 0 is canonical (`0 ≤ 0 < p`) by inspection.
+  have := (capReshape_production_in_circuit hash env isLast hlast hsat (by rw [hh]; norm_num)).2
   rw [hh] at this
   exact absurd this (by norm_num)
 
@@ -731,7 +755,9 @@ this binds the very rights the recomputed `cap_root` commits. The light client r
 delegation now carries in-circuit non-amplification, not an executor-trusted side-check. -/
 theorem capDeleg_nonAmp_in_circuit (env : VmRowEnv)
     (hcon : ∀ c ∈ capDelegNonAmpGates, c.holdsVm env false false)
-    (i : Nat) (hi : i < MASK_BITS) :
+    (i : Nat) (hi : i < MASK_BITS)
+    (hgc : 0 ≤ env.loc (dcol.grantedBit i) ∧ env.loc (dcol.grantedBit i) < 2013265921)
+    (hhc : 0 ≤ env.loc (dcol.heldBit i) ∧ env.loc (dcol.heldBit i) < 2013265921) :
     env.loc (dcol.grantedBit i) = 0 ∨ env.loc (dcol.heldBit i) = 1 := by
   have hsm : VmConstraint.gate (gDelegSubmaskBit i) ∈
       (List.range MASK_BITS).map (fun j => VmConstraint.gate (gDelegSubmaskBit j)) :=
@@ -740,10 +766,17 @@ theorem capDeleg_nonAmp_in_circuit (env : VmRowEnv)
     unfold capDelegNonAmpGates
     exact List.mem_append_left _ (List.mem_append_right _ hsm)
   have hg := hcon _ hmem
+  -- `gᵢ·(1 − hᵢ) ≡ 0 [ZMOD p]` + primality + canonicality (`0 ≤ cell < p`, the deployed range
+  -- check) force `gᵢ = 0 ∨ hᵢ = 1` exactly.
   simp only [VmConstraint.holdsVm, gDelegSubmaskBit, eSub, eCol, EmittedExpr.eval] at hg
-  rcases mul_eq_zero.mp hg with h0 | h1
-  · exact Or.inl h0
-  · exact Or.inr (by linarith)
+  have hp : Prime (2013265921 : ℤ) := by
+    exact_mod_cast Nat.prime_iff_prime_int.mp Dregg2.Circuit.BabyBearFriField.babyBearP_prime
+  rw [Int.modEq_zero_iff_dvd] at hg
+  rcases hp.dvd_mul.mp hg with h0 | h1
+  · obtain ⟨k, hk⟩ := h0
+    exact Or.inl (by omega)
+  · obtain ⟨k, hk⟩ := h1
+    exact Or.inr (by omega)
 
 /-- **`capDeleg_rejects_amplify` — the cap-graph anti-amplify rejection (witness FALSE).** A delegation
 row where granted bit `i` is SET (`= 1`) but held bit `i` is CLEAR (`= 0`) — an amplifying grant on bit
@@ -755,7 +788,9 @@ theorem capDeleg_rejects_amplify (env : VmRowEnv)
     (hg : env.loc (dcol.grantedBit i) = 1) (hh : env.loc (dcol.heldBit i) = 0) :
     ¬ (∀ c ∈ capDelegNonAmpGates, c.holdsVm env false false) := by
   intro hcon
-  rcases capDeleg_nonAmp_in_circuit env hcon i hi with h0 | h1
+  -- the literal bit values 1/0 are canonical (`0 ≤ · < p`) by inspection.
+  rcases capDeleg_nonAmp_in_circuit env hcon i hi
+      (by rw [hg]; norm_num) (by rw [hh]; norm_num) with h0 | h1
   · rw [hg] at h0; exact absurd h0 (by norm_num)
   · rw [hh] at h1; exact absurd h1 (by norm_num)
 
@@ -883,7 +918,9 @@ theorem goodDelegRow_admits (i : Nat) (hi : i < MASK_BITS) :
     (VmConstraint.gate (gDelegSubmaskBit i)).holdsVm goodDelegRow false false := by
   simp only [MASK_BITS] at hi
   simp only [VmConstraint.holdsVm, gDelegSubmaskBit, eSub, eCol, EmittedExpr.eval]
-  -- `granted_i · (1 − held_i) = 0`: granted is 0 except bit 0 (where held bit 0 = 1).
+  -- `granted_i · (1 − held_i) = 0` in ℤ (granted is 0 except bit 0, where held bit 0 = 1), so the
+  -- residual is `≡ 0 [ZMOD p]` as `p ∣ 0`.
+  rw [Int.modEq_zero_iff_dvd]
   interval_cases i <;>
     simp only [dcol.grantedBit, dcol.heldBit, dcol.GRANTED_BIT_BASE, dcol.HELD_BIT_BASE,
       col.GRANTED_BIT_BASE, col.HELD_BIT_BASE, auxCol, AUX_BASE, STATE_AFTER_BASE, PARAM_BASE,

@@ -48,7 +48,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
-   transferHashSites boundaryLast_pins)
+   transferHashSites boundaryLast_pins
+   gate_modEq_iff eqToModEq not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -98,14 +99,18 @@ def exerciseVmDescriptor : EffectVmDescriptor :=
 /-! ## §3 — the ROW INTENT: state-block passthrough + nonce TICK (runtime-faithful). -/
 
 /-- **`ExerciseRowIntent env`** — every economic state-block column UNCHANGED EXCEPT the nonce, which
-TICKS by 1 (on a non-NoOp row `s_noop = 0`). The hold-gate / log / inner fold are out-of-row. -/
+TICKS by 1 (on a non-NoOp row `s_noop = 0`). FIELD-FAITHFUL: each clause is a congruence mod
+`p = 2013265921` (the BabyBear prime), because the deployed circuit enforces the freeze/tick IN THE
+FIELD. The hold-gate / log / inner fold are out-of-row. -/
 def ExerciseRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
-  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)
-  ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
-  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+  env.loc (saCol state.BALANCE_LO) ≡ env.loc (sbCol state.BALANCE_LO) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.NONCE)
+      ≡ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.CAP_ROOT) ≡ env.loc (sbCol state.CAP_ROOT) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+      ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921])
 
 /-! ## §4 — FAITHFULNESS: the emitted per-row gates ⟺ the runtime-reconciled intent. -/
 
@@ -126,24 +131,32 @@ theorem exerciseVm_faithful (env : VmRowEnv) :
       exact Or.inr ⟨i, hi, rfl⟩
     simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonce, gCapPass, gResPass,
       eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
-    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
-      by linarith [hRes], ?_⟩
-    intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+    · exact (gate_modEq_iff (by ring)).mp hLo
+    · exact (gate_modEq_iff (by ring)).mp hHi
+    · exact (gate_modEq_iff (by ring)).mp hNon
+    · exact (gate_modEq_iff (by ring)).mp hCap
+    · exact (gate_modEq_iff (by ring)).mp hRes
+    · intro i hi
+      have hfi := hFld i hi
+      simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at hfi
+      exact (gate_modEq_iff (by ring)).mp hfi
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hLo
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hHi
     · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-      rw [hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+      exact (gate_modEq_iff (by ring)).mpr hNon
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hCap
+    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hRes
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      exact (gate_modEq_iff (by ring)).mpr (hFld i hi)
 
 /-! ## §5 — ANTI-GHOST. -/
 
@@ -152,28 +165,46 @@ theorem exerciseVm_rejects_wrong_output (env : VmRowEnv) (hwrong : ¬ ExerciseRo
   fun h => hwrong ((exerciseVm_faithful env).mp h)
 
 /-- **Anti-ghost (balance moved).** A row whose post-`bal_lo` ≠ pre-`bal_lo` fails the freeze gate — a
-hold step cannot silently move value. -/
+hold step cannot silently move value. FIELD-FAITHFUL: the tooth rejects a field-`≢` output, so it
+needs the DEPLOYED range-check canonicality — both balance limbs lie in `[0, p)` (`ranges` on
+`saCol BALANCE_LO`; the pre-limb is the previous row's ranged after-limb), so `p` cannot divide the
+nonzero residual (no wrap-around forgery). -/
 theorem exerciseVm_rejects_moved_balance (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.BALANCE_LO)
+      ∧ env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hcanonOld : 0 ≤ env.loc (sbCol state.BALANCE_LO)
+      ∧ env.loc (sbCol state.BALANCE_LO) < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
     ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonOld hwrong
 
 /-- **Anti-ghost (cap-root tamper).** A row whose post-`cap_root` ≠ pre-`cap_root` fails the freeze gate
-— no forged authority change rides a hold step. -/
+— no forged authority change rides a hold step. FIELD-FAITHFUL: needs the deployed canonicality of the
+two cap-root digest columns (`0 ≤ · < p` — the digest IS a reduced field element), so a `≠` pair cannot
+be congruent mod `p`. -/
 theorem exerciseVm_rejects_wrong_capRoot (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.CAP_ROOT)
+      ∧ env.loc (saCol state.CAP_ROOT) < 2013265921)
+    (hcanonOld : 0 ≤ env.loc (sbCol state.CAP_ROOT)
+      ∧ env.loc (sbCol state.CAP_ROOT) < 2013265921)
     (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (sbCol state.CAP_ROOT)) :
     ¬ (VmConstraint.gate gCapPass).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonOld hwrong
 
 /-- **Anti-ghost (nonce tamper).** A row whose nonce does NOT tick by 1 fails the reconciled `gNonce`
-tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. -/
+tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. FIELD-FAITHFUL: needs
+the deployed canonicality — the after-nonce lies in `[0, p)` and the ticked pre-nonce lies in `[0, p)`
+(nonces are far below the modulus), so a wrong nonce cannot pass by wrap-around. -/
 theorem exerciseVm_rejects_nonce_freeze (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.NONCE) ∧ env.loc (saCol state.NONCE) < 2013265921)
+    (hcanonTick : 0 ≤ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)
+      ∧ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP) < 2013265921)
     (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)) :
     ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonTick hwrong
 
 /-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
@@ -210,14 +241,15 @@ def RowEncodesExercise (env : VmRowEnv) (pre post : CellState) : Prop :=
   ∧ env.pub pi.NEW_COMMIT = post.commit
 
 /-- **`ExerciseCellSpec pre post`** — the per-cell FULL-state exercise-hold row spec: economic block
-FROZEN; the nonce TICKS by 1. (The hold-gate + log + inner fold are off-row.) -/
+FROZEN; the nonce TICKS by 1. FIELD-FAITHFUL: each clause is a mod-`p` congruence (the circuit pins
+field values). (The hold-gate + log + inner fold are off-row.) -/
 def ExerciseCellSpec (pre post : CellState) : Prop :=
-  post.balLo = pre.balLo
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce + 1
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.capRoot = pre.capRoot
-  ∧ post.reserved = pre.reserved
+  post.balLo ≡ pre.balLo [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce + 1 [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.capRoot ≡ pre.capRoot [ZMOD 2013265921]
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
     (hnoop : env.loc sel.NOOP = 0)
@@ -229,7 +261,10 @@ theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [← hsaLo, ← hsbLo]; exact hbal
   · rw [← hsaHi, ← hsbHi]; exact hbhi
-  · rw [← hsaN, ← hsbN, hnon, hnoop]; ring
+  · rw [← hsaN, ← hsbN]
+    have h := hnon
+    rw [hnoop, sub_zero] at h
+    exact h
   · intro i
     have := hfld i.val i.isLt
     rw [← hsaF i, ← hsbF i]; exact this
@@ -243,7 +278,7 @@ theorem exerciseDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     (henc : RowEncodesExercise env pre post)
     (hgatesat : satisfiedVm hash exerciseVmDescriptor env true false)
     (hsat : satisfiedVm hash exerciseVmDescriptor env true true) :
-    ExerciseCellSpec pre post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+    ExerciseCellSpec pre post ∧ post.commit ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   obtain ⟨hcs, _⟩ := hsat
   obtain ⟨hcsT, _⟩ := hgatesat
   have hgates' : ∀ c ∈ exerciseRowGates, c.holdsVm env false false := by
@@ -281,12 +316,20 @@ theorem exerciseDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash exerciseVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash exerciseVmDescriptor e₂ true true)
+    -- FIELD-FAITHFUL bridge: the published commitment is a CANONICAL field element (Poseidon2's
+    -- output lives in `[0, p)`). The circuit pins `state_commit ≡ NEW_COMMIT [ZMOD p]`; canonicality
+    -- of the two digest columns lifts that field congruence to the ℤ equality collision-resistance
+    -- needs. This is an honest side condition (the deployed digest IS reduced), NOT a weakening.
+    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
+      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
+      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
   have hs₁ : siteHoldsAll hash e₁ exerciseHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ exerciseHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash exerciseVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
+      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
     intro e hsat
     obtain ⟨hcs, _⟩ := hsat
     have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
@@ -302,8 +345,18 @@ theorem exerciseDescriptor_commit_binds_state (hash : List ℤ → ℤ)
         · simp only [VmConstraint.holdsVm] at hh ⊢
           exact hh
     exact (boundaryLast_pins e hlast).1
+  -- each row's published state_commit is ≡ its NEW_COMMIT (mod p); the pubs are equal
+  have hmod : e₁.loc (saCol state.STATE_COMMIT) ≡ e₂.loc (saCol state.STATE_COMMIT)
+      [ZMOD 2013265921] := by
+    have h2 : e₁.pub pi.NEW_COMMIT ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
+      rw [hpub]; exact (hc e₂ hsat₂).symm
+    exact (hc e₁ hsat₁).trans h2
+  -- canonicality of the two digest columns lifts the mod-p congruence to an ℤ equality
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
+    have hdvd := Int.modEq_iff_dvd.mp hmod
+    obtain ⟨l₁, u₁⟩ := hcanon₁
+    obtain ⟨l₂, u₂⟩ := hcanon₂
+    omega
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — `balProj`/`capRootProj` to universe-A's `ExerciseHoldSpec` (kernel freeze). -/
@@ -342,8 +395,9 @@ theorem unify_exercise_via_exec (D : Caps → ℤ)
     ((exerciseStepA_iff_holdSpec s s' actor target).mp h)
 
 /-- **`descriptor_agrees_with_executor_exercise`** — a satisfying run of the runnable descriptor encoding
-any cell agrees with the executor's post-state on the FROZEN balance dimension (`balLo`); the nonce-tick
-is the runtime cell-bookkeeping leg (off universe-A state). -/
+any cell agrees with the executor's post-state on the FROZEN balance dimension (`balLo`), AS A FIELD
+VALUE (mod `p` — the circuit pins field elements); the nonce-tick is the runtime cell-bookkeeping leg
+(off universe-A state). -/
 theorem descriptor_agrees_with_executor_exercise
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hnoop : env.loc sel.NOOP = 0)
     (s s' : RecChainedState) (actor target c : CellId) (pre post : CellState)
@@ -352,13 +406,14 @@ theorem descriptor_agrees_with_executor_exercise
     (hgatesat : satisfiedVm hash exerciseVmDescriptor env true false)
     (hsat : satisfiedVm hash exerciseVmDescriptor env true true)
     (hspec : ExerciseHoldSpec s actor target s') :
-    post.balLo = balProj s'.kernel c := by
+    post.balLo ≡ balProj s'.kernel c [ZMOD 2013265921] := by
   obtain ⟨hcirc, _⟩ := exerciseDescriptor_full_sound hash env pre post hnoop henc hgatesat hsat
   obtain ⟨hcLo, _, _, _, _, _⟩ := hcirc
   obtain ⟨heBal, _⟩ := unify_exercise (fun _ => 0) s actor target s' c hspec
   obtain ⟨hsbLo, _⟩ := henc
-  -- post.balLo = pre.balLo (circuit freeze) = sb balance (encoding) = balProj s = balProj s' (exec)
-  rw [hcLo, ← hsbLo, hpreBal, heBal]
+  -- post.balLo ≡ pre.balLo (circuit freeze) = sb balance (encoding) = balProj s = balProj s' (exec)
+  rw [heBal, ← hpreBal, hsbLo]
+  exact hcLo
 
 /-! ## §10 — NON-VACUITY. -/
 
@@ -384,14 +439,16 @@ theorem goodExRow_noop : goodExRow.loc sel.NOOP = 0 := by
 theorem goodExRow_realizes_intent : ExerciseRowIntent goodExRow := by
   unfold ExerciseRowIntent
   have hnoop : goodExRow.loc sel.NOOP = 0 := goodExRow_noop
-  refine ⟨rfl, rfl, ?_, rfl, rfl, ?_⟩
-  · rw [hnoop]
-    show goodExRow.loc (saCol state.NONCE) = goodExRow.loc (sbCol state.NONCE) + (1 - 0)
+  refine ⟨eqToModEq rfl, eqToModEq rfl, ?_, eqToModEq rfl, eqToModEq rfl, ?_⟩
+  · rw [hnoop, sub_zero]
+    refine eqToModEq ?_
+    show goodExRow.loc (saCol state.NONCE) = goodExRow.loc (sbCol state.NONCE) + 1
     simp only [goodExRow, SEL_EXERCISE, sbCol, saCol, STATE_BEFORE_BASE,
       STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
       state.NONCE]
     norm_num
   · intro i hi
+    refine eqToModEq ?_
     show goodExRow.loc (saCol (state.FIELD_BASE + i)) = goodExRow.loc (sbCol (state.FIELD_BASE + i))
     simp only [goodExRow, SEL_EXERCISE, sbCol, saCol, STATE_BEFORE_BASE,
       STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
@@ -417,11 +474,11 @@ def badExRow : VmRowEnv where
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badExRow`'s post-`bal_lo` is forged, so
 `gBalLoFreeze` REJECTS it. -/
 theorem badExRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badExRow false false := by
-  apply exerciseVm_rejects_moved_balance
-  simp only [badExRow, goodExRow, sbCol, saCol, SEL_EXERCISE, STATE_BEFORE_BASE,
-    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE]
-  norm_num
+  -- post-`bal_lo = 999`; pre-`bal_lo = 100`; both canonical in `[0, p)`.
+  apply exerciseVm_rejects_moved_balance <;>
+    simp only [badExRow, goodExRow, sbCol, saCol, SEL_EXERCISE, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE] <;> norm_num
 
 /-- A FROZEN-NONCE exercise row: `goodExRow` with the post-nonce held at `5`. -/
 def staleNonceExRow : VmRowEnv where
@@ -433,11 +490,11 @@ def staleNonceExRow : VmRowEnv where
 reconciled `gNonce` tick gate. -/
 theorem staleNonceExRow_rejected :
     ¬ (VmConstraint.gate gNonce).holdsVm staleNonceExRow false false := by
-  apply exerciseVm_rejects_nonce_freeze
-  simp only [staleNonceExRow, goodExRow, sel.NOOP, sbCol, saCol, SEL_EXERCISE,
-    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
-    state.BALANCE_LO, state.NONCE]
-  norm_num
+  -- post-nonce `5`; ticked pre-nonce `5 + (1 − 0) = 6`; both canonical in `[0, p)`.
+  apply exerciseVm_rejects_nonce_freeze <;>
+    simp only [staleNonceExRow, goodExRow, sel.NOOP, sbCol, saCol, SEL_EXERCISE,
+      STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+      state.BALANCE_LO, state.NONCE] <;> norm_num
 
 /-! ## §11 — Axiom-hygiene tripwires. -/
 
