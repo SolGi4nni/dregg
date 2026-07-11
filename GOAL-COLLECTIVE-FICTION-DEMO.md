@@ -826,3 +826,15 @@ the Bedrock MPC-TLS carrier is reusable dregg-wide.
 COOK-DOWN BOARD: #1 full-fold (Lane-D-gated, evolving — tracked) · #2 multi-cell (running a2748e7) · #3 hosted-notary
 ✅ · #4 E->B wire (queued behind multi-cell) · #5 custody keys (queued) · #6 real confined brain (queued) · #7
 maxTokens ✅ · #8 StarkSound (terminal floor, stays). Target: everything real except #8.
+
+## ═══ COOK-DOWN COMPLETE (2026-07-11): everything real + driven except the terminal floor ═══
+- ✅ #4 E→B + #6 real brain + #5 custody keys COMMITTED (dungeon-on-dregg, 37/37 offline + LIVE brain driven by me):
+  a confined LIVE Bedrock LLM proposes a LEGAL command (closed channel — can't free-text a mutation), its narration
+  is attested via the real hosted-notary Bedrock carrier (verify_bedrock_presentation, separate pinned notary) +
+  binds into the real receipt, the world resolves the Command (hp 50->50, gold 0 — prose not power). Custody: real
+  ed25519 signed ballots (forged/impostor/tampered REJECTED); the signed-quorum still fires a real world turn.
+COOK-DOWN BOARD — FINAL: #2 multi-cell ✅ · #3 hosted-notary ✅ · #4 E→B ✅ · #5 custody ✅ · #6 real-brain ✅ · #7
+maxTokens ✅ | REMAINING (as intended): #1 full-fold->verify_history (Lane-D-gated — the LEAF is proven; the fold
+completes when Lane D's limb geometry stabilizes — NOT our gap) · #8 StarkSound/FRI (the terminal crypto floor every
+recursive-STARK chain carries — honestly meant to stay). Nothing left to be honest about but the one thing there
+should be.
