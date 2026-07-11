@@ -406,3 +406,16 @@ builds, whole-tree green at phase end.
   core✓ → Transfer✓ → Wave A {TransferSound, CapRoot, EscrowRoot} (in flight) → Wave B ~20 dependent effects →
   Wave C variants (*Runnable/*FullState/*Wide/*Refine/*Rung2). Gate each: teeth kept, canonicality real, 0 sorry,
   heap-safe. Lanes must REPORT blockers, never spawn watchers (one Mint watcher was killed).
+
+### Phase 0 fan-out — accurate topology (2026-07-11): 74 Emit files, 9 layers
+7 green (core/Transfer/TransferSound/CapRoot/EscrowRoot/Mint/IncrementNonce). 67 remaining, topo-ordered:
+L1(23, frontier now): BilateralAgg Bridge BundleFold Burn CapReshape CellDestroy CellSeal CrossSide EmitEvent
+  Exercise HeapRoot IvcStateTransition PipelinedSend RecordRoot Refusal SetField SetPermissions SetVK TransferUnify
+  UMemCohort/Multi UMemWeldWide FullStateRunnable · L2(19): AttenuateA BridgeMint NoteSpend NoteCreate CellUnseal
+  +variants · L3(8): Delegate DelegateAtten Introduce NoteSpendCompose RefreshDelegation RevokeCapability
+  RevokeDelegation IvcRung2 · L4(7): CreateCell CreateCellFromFactory MakeSovereign ReceiptArchive Spawn V2 · L5-9:
+  FullState/Wide variants + Rotation chain (RotationV3 is the big one).
+~half are negative-teeth (real canonicality work, opus+full gate); the rest hash-site/mechanical (ride free like
+CapRoot, fable+quick gate). Batch ~5/wave, gate each, commit green, advance the frontier. Lanes report blockers
+(RevokeDelegation blocked cleanly — mis-batched as frontier, it's L3). Then the intent-mod-p consumers in the
+refinement layer (RotatedKernelRefinement etc.) + AirChecksSatisfied/arithResidual, then whole-tree green.
