@@ -387,3 +387,22 @@ retired at cutover, not mutated in place. This is a faithfulness correction towa
   → cutover), required; first reviewable slice 7-12 files; full retirement 185-220. Riskiest = per-effect proofs
   that derive ordered-ℤ conclusions from holdsAt. Acceptance = grep-zero old Satisfied2 on the StarkSound/apex
   path + a differential (residual p in ℤ, 0 in BabyBear). ⚠ EMBER-GATED: the 220-file GO is foundational.
+
+## ★ CAMPAIGN: REAL all-effects STARK assurance (plan approved 2026-07-11; ~/.claude/plans/let-s-plan-it-out-glimmering-bubble.md)
+Ground-truth mapped (3 Explore passes): STARK layer is fake (opaque verifyBatch, toy VM disconnected from VmTrace,
+ℤ denotation, 1-effect faithfulness, 0 real StarkSound instances); kernel-refinement (DEBT-B) is genuinely
+all-effects. Phases: 0 field denotation → 1A land FRI on real VmTrace → 1B model verifyBatch (Model+differential,
+ember-chosen) → 2 all-effects breadth → 3 apex. Execution: opus+fable Agent lanes grind (codex tapped out), I gate
+every file by type; heap-safe (NO decide/Fintype over ZMod p — a 144GB process was killed); shared tree, targeted
+builds, whole-tree green at phase end.
+### Phase 0 (mod-p denotation) — IN PROGRESS, dependency-ordered fan-out
+- The fix: holdsVm/holdsAt constraint `= 0` (ℤ) → `≡ 0 [ZMOD 2013265921]` (Int.ModEq, the DEPLOYED field). Values
+  stay canonical ℤ in [0,p) (range checks provide the ℤ-order canonicality); retargeting Assignment→ZMod p would
+  LOSE the order — wrong. Negative teeth gain explicit `0 ≤ cell < p` canonicality (real deployed invariant),
+  proving ¬(p∣residual) via babyBearP_prime + omega. Intent predicates (TransferRowIntent…) become mod-p
+  congruences — MORE faithful (deployed computes over the field), ripples to refinement consumers.
+- ✅ core `31afaaac1` (EffectVmEmit + DescriptorIR2) · ✅ Transfer `db063eb4e` (intents→mod-p, 3 teeth kept).
+- The 29 per-effect Emit files are a DAG (EffectVmEmitTransferSound is the hub, ~20 import it). Topo order:
+  core✓ → Transfer✓ → Wave A {TransferSound, CapRoot, EscrowRoot} (in flight) → Wave B ~20 dependent effects →
+  Wave C variants (*Runnable/*FullState/*Wide/*Refine/*Rung2). Gate each: teeth kept, canonicality real, 0 sorry,
+  heap-safe. Lanes must REPORT blockers, never spawn watchers (one Mint watcher was killed).
