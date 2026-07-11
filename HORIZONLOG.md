@@ -7272,3 +7272,24 @@ replay-across-tokenIds, settlement genesis front-run) + 1 doc packing error. Res
   is sound on the root alone (expose_claim re-exposes the claim) — integrator to pin.
 - **substrate.rs propose() ignores submit_proposal bool** · same-BlockId different-proposal bait-and-switch
   shape (inherited parity with the in-memory face, not introduced) · closure: reject duplicate BlockId.
+
+## interchain-adapters design (2026-07-11, Fable — docs/deos/INTERCHAIN-ADAPTERS-DESIGN.md)
+
+Two-agent research (2026 standards landscape + dregg-primitive map) synthesized. Thesis: dregg is the
+proof-carrying VERIFICATION BACKEND for any interop standard; model the INTERACTION in Lean (the §8
+CryptoPortal foreign-finality hypothesis ALREADY EXISTS in bridgeinboundmint.lean) rather than
+reimplement foreign chains. Recommended build order (named lanes):
+- **Lean InterchainAdapter** · a structure over foreignFinal/inclusion/TrustRung instantiating
+  SettlePred+BindsLiveAuthority (metatheory/Metatheory/SettlementSoundness.lean) + the §8 portal shape;
+  rung variants = existing LockProofTrust/SnarkSystem/Verdict/FinalizedAttestation · model-only, no
+  foreign chain reimplemented.
+- **Hyperlane DreggProofISM.sol** (Optics-lineage flagship) · 2-fn ISM, verify() calls DreggSettlement
+  25-lane check, AND message-id anti-replay, CCIP_READ moduleType routing · THE NOMAD LAW gate: prove
+  verify() reverts on zero/default input ($190M vacuity bug). Default-path zk-ISM slot is UNCLAIMED.
+- **LayerZero DreggDVN adapter** · fastest live demo; on-chain DVN verifying the same proof, permissionless
+  required-DVN registration; shares the verifier contract.
+- **ETH sync-committee inbound light client** · easiest unbuilt full-client win (no BLS12-381 in-tree);
+  lifts ETH/Base off RPC-trust; routes mint through bridge_mint_against_lock; Solana stake-rotation template.
+- **IBC 08-wasm client** (later) · CosmWasm ICS-02 pinning dregg's vkey; needs fork-choice/misbehaviour
+  (validity ≠ canonicity) story. IBC Eureka's SP1ICS07Tendermint.sol is our exact shape.
+One crypto core (the gnark wrap + DreggSettlement), many standard-shaped adapters. Natural ultracode wave.
