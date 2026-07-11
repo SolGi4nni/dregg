@@ -630,3 +630,11 @@ MSIS-reduction test is NON-VACUOUS (two accepting transcripts on one commitment 
 ASSURED uniqueness->MSIS (proved Lean leg, now exhibited in code); ASSUMED pseudorandomness from MLWE; ONE-TIME (Set
 I). Multimodel: codex authored (late ship), audit-lane completed (+MSIS test), I verified the math. NEXT: wire dice/
 ServerVrf -> pqvrf + rebuild Hybrid/timeout PQ scaffolding from the parked patch.
+
+## ✅ Save/load persistence COMMITTED (resumable, self-verifying)
+GameSession::save()/load(); load VERIFIES fail-closed (version -> map fingerprint -> verify_ledger CHAIN ->
+verify_ledger_replay RE-EXEC -> saved-state==replay-state -> status recomputed). 3 tampered-save tests each caught by
+a DIFFERENT tier (tampered flag->WorldMismatch, tampered ledger->ChainBroken, re-linked forged loot->ReplayMismatch);
+round-trip resumes to a BYTE-IDENTICAL win. 96+19+6 green; verified by reading load's sequence. A save = untrusted input.
+## FIRING wave 2: wire dice/ ServerVrf -> pqvrf LB-VRF (the real PQ VRF into the randomness path; hatch #4 closed with
+a post-quantum primitive). Frontend/UX lane (a709da8) still running (demo/).
