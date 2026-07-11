@@ -41,10 +41,14 @@ genuinely false (disclosed, degenerate empty-family only). Tree can run on ONE q
 Materialize the fixed-fork-index finite-shadow ↔ real-infinite-RO-adversary bridge (`ProbForger` in
 `HermineTSUF`); generalize the hybrid combiner off its shared-challenge assumption. The deepest remaining math.
 
-## Seam 4 — trust-shrink + gaps: PARTIAL
-`MlKemDelta.lean` — δ decryption-failure: union bound PROVED (`Pr[fail]≤768·τ`), constant closes; per-coeff
-tail `PerCoeffHoeffdingTail` REDUCED to named Mathlib lemmas (`HasSubgaussianMGF` Hoeffding), needs the
-MeasureTheory+independence wiring. `native_decide`-shrink (toward kernel) + `[StarkSound]` discharge: not started.
+## Seam 4 — trust-shrink + gaps: PARTIAL (with a key honest finding)
+`MlKemDelta.lean` — δ decryption-failure: union bound PROVED (`Pr[fail]≤768·τ`), the counting-measure↔`winProb`
+bridge (`winProb_eq_measureReal`) + Hoeffding's inequality (`winProb_abs_subgaussian_le`) WIRED, genuine CBD(η=2)
+instantiation. **KEY FINDING (proven in Lean, `hoeffding_budget_exceeds_2800`): δ does NOT close via Hoeffding** —
+the sub-Gaussian proxy dominates the variance (measured `47684 ≫ 2800`, 16× over; `Δv` alone `104²=10816`). The
+correct closure needs a **variance-based Bernstein/sub-gamma** concentration (uncertain if Mathlib ships it) OR the
+exact Kyber convolution δ — NOT Hoeffding. That is the precise named residual. `native_decide`-shrink (toward
+kernel) + `[StarkSound]` discharge: not started.
 
 ## Seam 5 — deployment integrity: NOT STARTED
 Fail-CLOSED install (currently fail-open to the crate); route/allowlist the 23 FFI-free leaf binaries; wire
