@@ -51,8 +51,11 @@ arithmetic family has no hash sites / ranges / map ops, so no Poseidon2 CR enter
 read-only.
 -/
 import Dregg2.Circuit.Emit.EffectActionBindingEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
 namespace Dregg2.Circuit.Emit.EffectActionBindingRefine
+
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eqToModEq gate_modEq_iff not_modEq_zero_of_canon pPrimeInt)
 
 open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -71,9 +74,11 @@ set_option autoImplicit false
 /-! ## §1 — The authored functional spec. -/
 
 /-- A row BINDS the published tuple: every one of the `P` public-input columns equals the published
-input. The identity-layout face of "this row carries exactly the effect's typed parameters". -/
+input, AS FIELD ELEMENTS (`≡ [ZMOD p]`, `p` the BabyBear prime — the deployed constraint is a field
+equality, and two canonical field cells are equal iff congruent mod `p`). The identity-layout face of
+"this row carries exactly the effect's typed parameters". -/
 def EffectRowBinds (row pub : Assignment) (P : Nat) : Prop :=
-  ∀ c, c < P → row c = pub c
+  ∀ c, c < P → row c ≡ pub c [ZMOD 2013265921]
 
 /-- **`EffectActionBinds t P`** — THE whole-trace binding relation the effect-action AIR computes:
 every row of the trace binds the published `P`-column parameter tuple (anti-stash / anti-malleability
@@ -86,36 +91,41 @@ COMBINED two-limb subtraction `new_balance + amount = old_balance` (`balance := 
 boolean borrow, and the disclosed `was_burn` flag. Derived over ℤ from the two per-limb gates — the
 algebraic identity needs no range lookup (faithful to the hand AIR, which range-checks off-AIR). -/
 def BurnSemantics (env : VmRowEnv) : Prop :=
-  (env.loc B_NEW_LO + TWO_POW_32 * env.loc B_NEW_HI)
-      + (env.loc B_AMT_LO + TWO_POW_32 * env.loc B_AMT_HI)
-    = env.loc B_OLD_LO + TWO_POW_32 * env.loc B_OLD_HI
-  ∧ (env.loc B_BORROW = 0 ∨ env.loc B_BORROW = 1)
-  ∧ env.loc B_WASBURN_LO = 1
-  ∧ env.loc B_WASBURN_HI = 0
+  ((env.loc B_NEW_LO + TWO_POW_32 * env.loc B_NEW_HI)
+      + (env.loc B_AMT_LO + TWO_POW_32 * env.loc B_AMT_HI))
+    ≡ env.loc B_OLD_LO + TWO_POW_32 * env.loc B_OLD_HI [ZMOD 2013265921]
+  ∧ (env.loc B_BORROW ≡ 0 [ZMOD 2013265921] ∨ env.loc B_BORROW ≡ 1 [ZMOD 2013265921])
+  ∧ env.loc B_WASBURN_LO ≡ 1 [ZMOD 2013265921]
+  ∧ env.loc B_WASBURN_HI ≡ 0 [ZMOD 2013265921]
 
 /-! ## §2 — The per-constraint reductions (the STABLE surface to the three gate forms). -/
 
 /-- A PI pin's per-row denotation IS its first-row PI equality (`pi_index == col`). -/
 theorem piGate_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) (c : Nat) :
-    (piGate c).holdsAt hash tf env isFirst isLast ↔ (isFirst = true → env.loc c = env.pub c) :=
+    (piGate c).holdsAt hash tf env isFirst isLast
+      ↔ (isFirst = true → env.loc c ≡ env.pub c [ZMOD 2013265921]) :=
   Iff.rfl
 
-/-- A continuity gate's per-row denotation IS "off the last row, this column chains" — via the
-Rung-0 tooth `cont_zero_iff`. -/
+/-- A continuity gate's per-row denotation IS "off the last row, this column chains, mod `p`" — the
+`window_gate` asserts `nxt c - loc c ≡ 0 [ZMOD p]`, i.e. the two field cells agree. -/
 theorem contGate_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) (c : Nat) :
-    (contGate c).holdsAt hash tf env isFirst isLast ↔ (isLast = false → env.nxt c = env.loc c) := by
+    (contGate c).holdsAt hash tf env isFirst isLast
+      ↔ (isLast = false → env.nxt c ≡ env.loc c [ZMOD 2013265921]) := by
+  simp only [contGate, VmConstraint2.holdsAt, WindowConstraint.holdsAt, if_true]
   constructor
-  · intro h hl; exact (cont_zero_iff env c).mp (h hl)
-  · intro h hl; exact (cont_zero_iff env c).mpr (h hl)
+  · intro h hl
+    exact (gate_modEq_iff (by simp only [contWindowBody, WindowExpr.eval]; ring)).mp (h hl)
+  · intro h hl
+    exact (gate_modEq_iff (by simp only [contWindowBody, WindowExpr.eval]; ring)).mpr (h hl)
 
-/-- A Burn algebraic gate's per-row denotation IS "off the last row, this poly vanishes" — the
-deployed `when_transition()` arm binds it on every active row. -/
+/-- A Burn algebraic gate's per-row denotation IS "off the last row, this poly vanishes mod `p`" — the
+deployed `when_transition()` arm binds it on every active row as a field equality. -/
 theorem baseGate_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst isLast : Bool) (body : EmittedExpr) :
     (VmConstraint2.base (VmConstraint.gate body)).holdsAt hash tf env isFirst isLast
-      ↔ (isLast = false → body.eval env.loc = 0) := by
+      ↔ (isLast = false → body.eval env.loc ≡ 0 [ZMOD 2013265921]) := by
   cases isLast <;> simp [VmConstraint2.holdsAt, VmConstraint.holdsVm]
 
 /-! ## §3 — Membership of the two binding families in the descriptors. -/
@@ -184,7 +194,7 @@ theorem binds_of_gates (P : Nat) (d : EffectVmDescriptor2)
     intro hi c hc
     have hk := ih (by omega) c hc
     have hs := step k hi c hc
-    rw [hs, hk]
+    exact hs.trans hk
 
 /-- **`effectActionDesc_satisfied2_binds` — the generic pure-binding soundness bridge.** A trace that
 satisfies the whole `effectActionDesc name fc ac` binds the published `fc*8+ac*2`-column parameter
@@ -214,7 +224,7 @@ theorem burn_active_gate
     (h : Satisfied2 hash burnDesc minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (body : EmittedExpr) (hb : VmConstraint2.base (VmConstraint.gate body) ∈ burnGates) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := h.rowConstraints i hi _ (burnGate_mem body hb)
   rw [baseGate_holdsAt] at hrow
   have hlast : (i + 1 == t.rows.length) = false := by rw [beq_eq_false_iff_ne]; exact hnotlast
@@ -230,20 +240,40 @@ theorem burn_satisfied2_conserves
     (h : Satisfied2 hash burnDesc minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
     BurnSemantics (envAt t i) := by
-  have hlo := (cLo_zero_iff (envAt t i).loc).mp
-    (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cLoBody (by simp [burnGates]))
-  have hhi := (cHi_zero_iff (envAt t i).loc).mp
-    (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cHiBody (by simp [burnGates]))
-  have hbor := (cBorrowBool_zero_iff (envAt t i).loc).mp
-    (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cBorrowBoolBody (by simp [burnGates]))
-  have hwb := (cWasBurnLo_zero_iff (envAt t i).loc).mp
-    (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cWasBurnLoBody (by simp [burnGates]))
-  have hwh : (envAt t i).loc B_WASBURN_HI = 0 := by
+  -- each active Burn gate vanishes mod p; translate each to its field-level relation.
+  have hlo : (envAt t i).loc B_NEW_LO + (envAt t i).loc B_AMT_LO
+      ≡ (envAt t i).loc B_OLD_LO + TWO_POW_32 * (envAt t i).loc B_BORROW [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [cLoBody, EmittedExpr.eval, TWO_POW_32]; ring)).mp
+      (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cLoBody (by simp [burnGates]))
+  have hhi : (envAt t i).loc B_NEW_HI + (envAt t i).loc B_AMT_HI + (envAt t i).loc B_BORROW
+      ≡ (envAt t i).loc B_OLD_HI [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [cHiBody, EmittedExpr.eval]; ring)).mp
+      (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cHiBody (by simp [burnGates]))
+  -- borrow is a field bit: `borrow·(borrow-1) ≡ 0`, `p` prime ⟹ `borrow ≡ 0 ∨ borrow ≡ 1`.
+  have hbor : (envAt t i).loc B_BORROW ≡ 0 [ZMOD 2013265921]
+      ∨ (envAt t i).loc B_BORROW ≡ 1 [ZMOD 2013265921] := by
+    have hb0 := burn_active_gate hash minit mfin maddrs t h i hi hnotlast cBorrowBoolBody
+      (by simp [burnGates])
+    have hkey : cBorrowBoolBody.eval (envAt t i).loc
+        = (envAt t i).loc B_BORROW * ((envAt t i).loc B_BORROW - 1) := by
+      simp only [cBorrowBoolBody, EmittedExpr.eval]; ring
+    rw [hkey, Int.modEq_zero_iff_dvd] at hb0
+    rcases pPrimeInt.dvd_mul.mp hb0 with hd | hd
+    · exact Or.inl (by rw [Int.modEq_zero_iff_dvd]; exact hd)
+    · exact Or.inr (by rw [Int.modEq_iff_dvd]; obtain ⟨k, hk⟩ := hd; exact ⟨-k, by omega⟩)
+  have hwb : (envAt t i).loc B_WASBURN_LO ≡ 1 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [cWasBurnLoBody, EmittedExpr.eval]; ring)).mp
+      (burn_active_gate hash minit mfin maddrs t h i hi hnotlast cWasBurnLoBody (by simp [burnGates]))
+  have hwh : (envAt t i).loc B_WASBURN_HI ≡ 0 [ZMOD 2013265921] := by
     have := burn_active_gate hash minit mfin maddrs t h i hi hnotlast cWasBurnHiBody (by simp [burnGates])
     simpa [cWasBurnHiBody, EmittedExpr.eval] using this
   refine ⟨?_, hbor, hwb, hwh⟩
-  -- combine the two per-limb gates into the u64 balance identity (over ℤ, via omega).
-  simp only [TWO_POW_32] at hlo hhi ⊢
+  -- combine the two per-limb congruences into the u64 balance identity, mod p (via the dvd witness).
+  rw [Int.modEq_iff_dvd] at hlo hhi ⊢
+  obtain ⟨k1, hk1⟩ := hlo
+  obtain ⟨k2, hk2⟩ := hhi
+  refine ⟨k1 + TWO_POW_32 * k2, ?_⟩
+  simp only [TWO_POW_32] at hk1 hk2 ⊢
   omega
 
 /-! ## §6 — Completeness (SEM ⟹ SAT) for the pure-binding schema, and the full IFF. -/
@@ -282,7 +312,7 @@ theorem revoke_binds_satisfied2 (t : VmTrace)
       have hk := hbind i (by omega) c' hcw
       have hk1 := hbind (i + 1) hi1 c' hcw
       simp only [envAt]
-      rw [hk1, hk]
+      exact hk1.trans hk.symm
     · obtain ⟨c', hc', rfl⟩ := List.mem_map.mp hpi
       rw [piGate_holdsAt]
       intro hfirst
@@ -345,7 +375,11 @@ theorem brokenBound_rejects :
   have hpin := h.rowConstraints 0 (by decide) _ (piGate_mem_revoke 0 (by decide))
   rw [piGate_holdsAt] at hpin
   have hbad := hpin rfl
-  simp [envAt, brokenBoundTrace, brokenBoundRow, demoPub] at hbad
+  -- field-faithful reject: `999 ≢ 0 [ZMOD p]` because `0 < 999 < p` so `p ∤ 999`.
+  have hl : (envAt brokenBoundTrace 0).loc 0 = 999 := rfl
+  have hp : (envAt brokenBoundTrace 0).pub 0 = 0 := rfl
+  rw [Int.modEq_iff_dvd, hl, hp] at hbad
+  omega
 
 /-- A padding row (row 1) carrying a DIFFERENT limb 0 (`999`) than row 0 (`0`). -/
 def brokenPadRow : Assignment := fun c => if c = 0 then 999 else (c : ℤ)
@@ -360,7 +394,11 @@ theorem brokenPad_rejects :
   have hgate := h.rowConstraints 0 (by decide) _ (contGate_mem_revoke 0 (by decide))
   rw [contGate_holdsAt] at hgate
   have hbad := hgate (by decide)
-  simp [envAt, brokenPadTrace, brokenPadRow, demoPub] at hbad
+  -- field-faithful reject: `999 ≢ 0 [ZMOD p]` (the stashed padding limb differs by `< p`).
+  have hn : (envAt brokenPadTrace 0).nxt 0 = 999 := rfl
+  have hl : (envAt brokenPadTrace 0).loc 0 = 0 := rfl
+  rw [Int.modEq_iff_dvd, hn, hl] at hbad
+  omega
 
 /-! ## §8 — Non-vacuity (Burn arithmetic): a CONCRETE burn-valid witness + a failing one. -/
 
@@ -412,15 +450,15 @@ theorem burnTrace_satisfied2 :
       rcases List.mem_append.mp hc with hcp | hburn
       · rcases List.mem_append.mp hcp with hcont | hpi
         · obtain ⟨c', _, rfl⟩ := List.mem_map.mp hcont
-          rw [contGate_holdsAt]; intro _; simp [envAt, burnTrace]
+          rw [contGate_holdsAt]; intro _; apply eqToModEq; simp [envAt, burnTrace]
         · obtain ⟨c', _, rfl⟩ := List.mem_map.mp hpi
-          rw [piGate_holdsAt]; intro _; simp [envAt, burnTrace]
+          rw [piGate_holdsAt]; intro _; apply eqToModEq; simp [envAt, burnTrace]
       · fin_cases hburn
-        · rw [baseGate_holdsAt]; intro _; exact cLo_burnRow
-        · rw [baseGate_holdsAt]; intro _; exact cHi_burnRow
-        · rw [baseGate_holdsAt]; intro _; exact cBorrowBool_burnRow
-        · rw [baseGate_holdsAt]; intro _; exact cWasBurnLo_burnRow
-        · rw [baseGate_holdsAt]; intro _; exact cWasBurnHi_burnRow
+        · rw [baseGate_holdsAt]; intro _; exact eqToModEq cLo_burnRow
+        · rw [baseGate_holdsAt]; intro _; exact eqToModEq cHi_burnRow
+        · rw [baseGate_holdsAt]; intro _; exact eqToModEq cBorrowBool_burnRow
+        · rw [baseGate_holdsAt]; intro _; exact eqToModEq cWasBurnLo_burnRow
+        · rw [baseGate_holdsAt]; intro _; exact eqToModEq cWasBurnHi_burnRow
     · -- row 1: last row — every gate is vacuous (its guard is false).
       rcases List.mem_append.mp hc with hcp | hburn
       · rcases List.mem_append.mp hcp with hcont | hpi
@@ -459,10 +497,10 @@ theorem badBurn_rejects :
   intro h
   have hbad := burn_active_gate (fun _ => 0) (fun _ => 0) (fun _ => (0, 0)) [] badBurnTrace h
     0 (by decide) (by decide) cLoBody (by simp [burnGates])
-  rw [cLo_zero_iff] at hbad
-  simp only [envAt, badBurnTrace, badBurnRow, B_NEW_LO, B_AMT_LO, B_OLD_LO, B_BORROW, TWO_POW_32,
-    List.getD_cons_zero] at hbad
-  norm_num at hbad
+  -- field-faithful reject: the low-limb residual is `601 + 400 − 1000 = 1`, and `p ∤ 1`.
+  have hv : cLoBody.eval (envAt badBurnTrace 0).loc = 1 := rfl
+  rw [Int.modEq_iff_dvd, hv] at hbad
+  omega
 
 /-! ### Shape pins. -/
 

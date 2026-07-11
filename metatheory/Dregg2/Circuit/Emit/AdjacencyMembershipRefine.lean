@@ -49,6 +49,7 @@ as the NAMED hypothesis `ChipTableSound hash (tf .poseidon2)` (the chip AIR's ow
 never as an axiom. NEW file; all imports read-only.
 -/
 import Dregg2.Circuit.Emit.AdjacencyMembershipEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
 namespace Dregg2.Circuit.Emit.AdjacencyMembershipRefine
 
@@ -60,8 +61,41 @@ open Dregg2.Circuit.DescriptorIR2
    WindowConstraint WindowExpr ChipTableSound chip_lookup_sound chipLookupTuple CHIP_RATE
    memLog mapLog)
 open Dregg2.Circuit.Emit.AdjacencyMembershipEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eqToModEq gate_modEq_iff pPrimeInt)
 
 set_option autoImplicit false
+
+/-! ## §0 — Field-denotation glue (mod-`p`, `p` the BabyBear prime).
+
+`holdsVm` / `WindowConstraint.holdsAt` now assert their bodies vanish `≡ 0 [ZMOD p]` (the DEPLOYED
+field constraint), not `= 0` over ℤ. For a Merkle FOLD the intermediate spine digests are hashed
+again, so the field reduction is LOAD-BEARING: mod-`p` congruence cannot thread through the abstract
+`hash`. We recover the genuine ℤ equalities the fold needs from the DEPLOYED range-check
+canonicality (`0 ≤ cell < p`, carried as `Canon`) of the stored spine columns — a canonical field
+cell is determined by its residue. -/
+
+/-- The deployed range-check invariant on a stored field cell: it is the canonical residue. -/
+def Canon (x : ℤ) : Prop := 0 ≤ x ∧ x < 2013265921
+
+/-- Two canonical field cells that are congruent mod `p` are EQUAL over ℤ (the residue determines the
+canonical cell — the field-faithful recovery of a genuine equality). -/
+theorem eq_of_modEq_canon {a b : ℤ} (ha : Canon a) (hb : Canon b) (h : a ≡ b [ZMOD 2013265921]) :
+    a = b := by
+  rw [Int.modEq_iff_dvd] at h
+  obtain ⟨k, hk⟩ := h
+  obtain ⟨ha0, ha1⟩ := ha
+  obtain ⟨hb0, hb1⟩ := hb
+  omega
+
+/-- A boolean gate `x·(x-1) ≡ 0 [ZMOD p]` on a CANONICAL cell forces `x ∈ {0,1}` genuinely
+(`p` prime ⟹ `p ∣ x ∨ p ∣ (x-1)`; canonicality collapses each to `0`/`1`). -/
+theorem bit_of_modEq_canon {x : ℤ} (hc : Canon x) (h : x * (x - 1) ≡ 0 [ZMOD 2013265921]) :
+    x = 0 ∨ x = 1 := by
+  rw [Int.modEq_zero_iff_dvd] at h
+  obtain ⟨hc0, hc1⟩ := hc
+  rcases pPrimeInt.dvd_mul.mp h with hd | hd
+  · left; obtain ⟨k, hk⟩ := hd; omega
+  · right; obtain ⟨k, hk⟩ := hd; omega
 
 /-! ## §1 — the functional spec (trace-independent; the twin of `membership_adjacency_air.rs::walk`). -/
 
@@ -104,28 +138,34 @@ over one row; the load-bearing crypto (`par = hash [left, right]`) is supplied b
 through the named chip carrier. -/
 theorem combine_of_gates (hash : List ℤ → ℤ) (a : Assignment)
     (cur sib dir left right par : Nat)
-    (hdir : (dirBinaryBody dir).eval a = 0)
-    (hleft : (leftOrderBody cur sib dir left).eval a = 0)
-    (hright : (rightOrderBody cur sib dir right).eval a = 0)
+    (hcDir : Canon (a dir)) (hcCur : Canon (a cur)) (hcSib : Canon (a sib))
+    (hcLeft : Canon (a left)) (hcRight : Canon (a right))
+    (hdir : (dirBinaryBody dir).eval a ≡ 0 [ZMOD 2013265921])
+    (hleft : (leftOrderBody cur sib dir left).eval a ≡ 0 [ZMOD 2013265921])
+    (hright : (rightOrderBody cur sib dir right).eval a ≡ 0 [ZMOD 2013265921])
     (hpar : a par = hash [a left, a right]) :
     a par = combine hash (a dir) (a cur) (a sib) := by
+  -- the direction bit is genuinely `0`/`1` (field bit + canonicality).
   have hbin : a dir = 0 ∨ a dir = 1 := by
     have key : (dirBinaryBody dir).eval a = a dir * (a dir - 1) := by
       simp only [dirBinaryBody, negE, EmittedExpr.eval]; ring
     rw [key] at hdir
-    rcases mul_eq_zero.mp hdir with h | h
-    · exact Or.inl h
-    · exact Or.inr (by linarith)
-  have hleftEq : a left = a cur + a dir * a sib - a dir * a cur := by
-    simp only [leftOrderBody, negE, EmittedExpr.eval] at hleft; linarith
-  have hrightEq : a right = a sib + a dir * a cur - a dir * a sib := by
-    simp only [rightOrderBody, negE, EmittedExpr.eval] at hright; linarith
+    exact bit_of_modEq_canon hcDir hdir
+  -- the ordering gates give the child columns mod `p`; canonicality lifts to genuine equalities.
+  have hleftC : a left ≡ a cur + a dir * a sib - a dir * a cur [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [leftOrderBody, negE, EmittedExpr.eval]; ring)).mp hleft
+  have hrightC : a right ≡ a sib + a dir * a cur - a dir * a sib [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [rightOrderBody, negE, EmittedExpr.eval]; ring)).mp hright
   rcases hbin with hd | hd
-  · have hl : a left = a cur := by rw [hd] at hleftEq; linarith
-    have hr : a right = a sib := by rw [hd] at hrightEq; linarith
+  · have hl : a left = a cur :=
+      eq_of_modEq_canon hcLeft hcCur (by have := hleftC; rw [hd] at this; simpa using this)
+    have hr : a right = a sib :=
+      eq_of_modEq_canon hcRight hcSib (by have := hrightC; rw [hd] at this; simpa using this)
     rw [hpar, hl, hr]; unfold combine; rw [if_neg (by rw [hd]; decide)]
-  · have hl : a left = a sib := by rw [hd] at hleftEq; linarith
-    have hr : a right = a cur := by rw [hd] at hrightEq; linarith
+  · have hl : a left = a sib :=
+      eq_of_modEq_canon hcLeft hcSib (by have := hleftC; rw [hd] at this; simpa using this)
+    have hr : a right = a cur :=
+      eq_of_modEq_canon hcRight hcCur (by have := hrightC; rw [hd] at this; simpa using this)
     rw [hpar, hl, hr]; unfold combine; rw [if_pos hd]
 
 /-! ## §3 — extracting the row facts from `Satisfied2` (the descriptor's own constraints). -/
@@ -146,22 +186,23 @@ theorem activeGateZero {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → 
     (j : Nat) (hj : j < t.rows.length) (hlast : (j + 1 == t.rows.length) = false)
     (body : EmittedExpr)
     (hmem : VmConstraint2.base (.gate body) ∈ adjacencyDesc.constraints) :
-    body.eval (envAt t j).loc = 0 := by
+    body.eval (envAt t j).loc ≡ 0 [ZMOD 2013265921] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlast] at h
   exact h
 
-/-- A declared transition `copyWindow hi lo` copies `next[hi] = local[lo]` on any active row. -/
+/-- A declared transition `copyWindow hi lo` copies `next[hi] ≡ local[lo] [ZMOD p]` on any active
+row. -/
 theorem activeCopyZero {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (j : Nat) (hj : j < t.rows.length) (hlast : (j + 1 == t.rows.length) = false)
     (hi lo : Nat)
     (hmem : VmConstraint2.windowGate (copyWindow hi lo) ∈ adjacencyDesc.constraints) :
-    (envAt t j).nxt hi = (envAt t j).loc lo := by
+    (envAt t j).nxt hi ≡ (envAt t j).loc lo [ZMOD 2013265921] := by
   have h := hsat.rowConstraints j hj _ hmem
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, copyWindow, hlast,
     WindowExpr.eval, ite_true, true_implies] at h
-  linarith [h]
+  exact (gate_modEq_iff (by ring)).mp h
 
 /-- A declared chip lookup, against the NAMED sound chip table, forces `par = hash [left, right]`
 on ANY row (the lookup is not gated). This is where the Poseidon2 CR carrier enters. -/
@@ -183,7 +224,7 @@ theorem firstPi {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {m
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length) (col k : Nat)
     (hmem : VmConstraint2.base (.piBinding VmRow.first col k) ∈ adjacencyDesc.constraints) :
-    (envAt t 0).loc col = t.pub k := by
+    (envAt t 0).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have h := hsat.rowConstraints 0 hlen _ hmem
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at h
   exact h (by decide)
@@ -193,7 +234,7 @@ theorem lastPi {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mf
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length) (col k : Nat)
     (hmem : VmConstraint2.base (.piBinding VmRow.last col k) ∈ adjacencyDesc.constraints) :
-    (envAt t (t.rows.length - 1)).loc col = t.pub k := by
+    (envAt t (t.rows.length - 1)).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have hLlt : t.rows.length - 1 < t.rows.length := by omega
   have hlast : (t.rows.length - 1 + 1 == t.rows.length) = true := by
     have : t.rows.length - 1 + 1 = t.rows.length := by omega
@@ -207,7 +248,7 @@ theorem lastBoundaryZero {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ �
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length) (body : EmittedExpr)
     (hmem : VmConstraint2.base (.boundary VmRow.last body) ∈ adjacencyDesc.constraints) :
-    body.eval (envAt t (t.rows.length - 1)).loc = 0 := by
+    body.eval (envAt t (t.rows.length - 1)).loc ≡ 0 [ZMOD 2013265921] := by
   have hLlt : t.rows.length - 1 < t.rows.length := by omega
   have hlast : (t.rows.length - 1 + 1 == t.rows.length) = true := by
     have : t.rows.length - 1 + 1 = t.rows.length := by omega
@@ -242,13 +283,24 @@ theorem fold_generic (hash : List ℤ → ℤ) (t : VmTrace) (cur dir sib : Nat)
       simp [pathSteps, List.range_succ]
     rw [hexpand, foldNode_concat, ih hn, hstep n hlt]
 
+/-- **The deployed range-check envelope for one path.** Every stored spine column of the path is a
+canonical field cell (`0 ≤ · < p`, the deployed range check) on every row. This is what lets the
+mod-`p` continuity / ordering constraints be lifted to the genuine ℤ equalities the hash fold needs
+(the intermediate digests are re-hashed, so mod-`p` congruence cannot thread through `hash`). -/
+def PathCanon (t : VmTrace) (cur sib dir left right par : Nat) : Prop :=
+  ∀ j, j < t.rows.length →
+    Canon ((envAt t j).loc cur) ∧ Canon ((envAt t j).loc sib) ∧ Canon ((envAt t j).loc dir)
+    ∧ Canon ((envAt t j).loc left) ∧ Canon ((envAt t j).loc right) ∧ Canon ((envAt t j).loc par)
+
 /-- The per-active-level step for ANY path block `(cur, sib, dir, left, right, par)` welded to its
-chip lookup lanes — chain continuity (`cur[j+1] = par[j]`) composed with the combine core. The
-`mem*` hypotheses are the six constraint-membership facts (discharged by `adj_mem` at the call). -/
+chip lookup lanes — chain continuity (`cur[j+1] = par[j]`, recovered from the mod-`p` window gate via
+canonicality) composed with the combine core. The `mem*` hypotheses are the six constraint-membership
+facts (discharged by `adj_mem` at the call). -/
 theorem step_of_sat {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (cur sib dir left right par : Nat) (lanes : List Nat)
+    (hcanon : PathCanon t cur sib dir left right par)
     (memDir : VmConstraint2.base (.gate (dirBinaryBody dir)) ∈ adjacencyDesc.constraints)
     (memLeft : VmConstraint2.base (.gate (leftOrderBody cur sib dir left))
                  ∈ adjacencyDesc.constraints)
@@ -265,10 +317,14 @@ theorem step_of_sat {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
   have hj : j < t.rows.length := by omega
   have hlast : (j + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; omega
+  obtain ⟨hcCur, hcSib, hcDir, hcLeft, hcRight, hcPar⟩ := hcanon j hj
+  have hcCurNext := (hcanon (j + 1) hj1).1
   have hchain : (envAt t (j + 1)).loc cur = (envAt t j).loc par := by
     have hc := activeCopyZero hsat j hj hlast cur par memChain
-    rw [← envAt_nxt_loc]; exact hc
+    rw [envAt_nxt_loc] at hc
+    exact eq_of_modEq_canon hcCurNext hcPar hc
   have hcombine := combine_of_gates hash (envAt t j).loc cur sib dir left right par
+    hcDir hcCur hcSib hcLeft hcRight
     (activeGateZero hsat j hj hlast _ memDir)
     (activeGateZero hsat j hj hlast _ memLeft)
     (activeGateZero hsat j hj hlast _ memRight)
@@ -276,6 +332,27 @@ theorem step_of_sat {hash : List ℤ → ℤ} {t : VmTrace} {minit : ℤ → ℤ
   rw [hchain]; exact hcombine
 
 /-! ## §5 — the whole-descriptor refinement (SAT_IMPLIES_SEM), and the named residual. -/
+
+/-- **The deployed range-check envelope for the WHOLE adjacency descriptor.** Bundles the per-path
+canonicality of both spine paths, the canonicality of the published leaf/root inputs, and the
+canonicality of the last-row index cells + their in-circuit reconstructions. Each field is a
+DEPLOYED range-check invariant (`0 ≤ · < p`); together they lift every mod-`p` field constraint the
+descriptor asserts to the genuine ℤ equalities the Merkle fold + index reconstruction need. The
+concrete witness (`concrete_canon`) discharges it, so the envelope is non-vacuous. -/
+structure AdjacencyCanon (t : VmTrace) : Prop where
+  pathL : PathCanon t L_CUR L_SIB L_DIR L_LEFT L_RIGHT L_PAR
+  pathU : PathCanon t U_CUR U_SIB U_DIR U_LEFT U_RIGHT U_PAR
+  leafLo : Canon (t.pub PI_LEAF_LOWER)
+  leafHi : Canon (t.pub PI_LEAF_UPPER)
+  root : Canon (t.pub PI_ROOT)
+  idxUp : Canon (t.pub PI_IDX_UPPER)
+  idxLoSucc : Canon (t.pub PI_IDX_LOWER + 1)
+  idxOutL : Canon ((envAt t (t.rows.length - 1)).loc L_IDX_OUT)
+  idxOutU : Canon ((envAt t (t.rows.length - 1)).loc U_IDX_OUT)
+  reconL : Canon ((envAt t (t.rows.length - 1)).loc L_IDX_IN
+    + (envAt t (t.rows.length - 1)).loc L_DIR * (envAt t (t.rows.length - 1)).loc POW)
+  reconU : Canon ((envAt t (t.rows.length - 1)).loc U_IDX_IN
+    + (envAt t (t.rows.length - 1)).loc U_DIR * (envAt t (t.rows.length - 1)).loc POW)
 
 /-- The proven fragment: a satisfying trace is an authentic two-path Merkle transcript of adjacent
 leaves, up to (and excluding) the single top-level combine the IR-v2 `.gate` mapping drops. -/
@@ -317,42 +394,59 @@ theorem adjacency_sat_refines {hash : List ℤ → ℤ} {t : VmTrace} {minit : �
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
-    (hChip : ChipTableSound hash (t.tf .poseidon2)) :
+    (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hc : AdjacencyCanon t) :
     AdjacencyAuthFragment hash t := by
   have hLlt : t.rows.length - 1 < t.rows.length := by omega
   -- the two authentic folds (to the top spine node), leaf pinned to its PI.
   have hstepL := step_of_sat hsat hChip L_CUR L_SIB L_DIR L_LEFT L_RIGHT L_PAR L_PAR_LANES
-    (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem)
+    hc.pathL (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem)
   have hstepU := step_of_sat hsat hChip U_CUR U_SIB U_DIR U_LEFT U_RIGHT U_PAR U_PAR_LANES
-    (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem)
+    hc.pathU (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem) (by adj_mem)
   have hfoldL := fold_generic hash t L_CUR L_DIR L_SIB hstepL _ hLlt
   have hfoldU := fold_generic hash t U_CUR U_DIR U_SIB hstepU _ hLlt
-  have hleafL := firstPi hsat hlen L_CUR PI_LEAF_LOWER (by adj_mem)
-  have hleafU := firstPi hsat hlen U_CUR PI_LEAF_UPPER (by adj_mem)
+  -- the leaf pins, lifted to genuine ℤ equalities by canonicality (leaf cell + published input).
+  have hleafL : (envAt t 0).loc L_CUR = t.pub PI_LEAF_LOWER :=
+    eq_of_modEq_canon ((hc.pathL 0 hlen).1) hc.leafLo (firstPi hsat hlen L_CUR PI_LEAF_LOWER (by adj_mem))
+  have hleafU : (envAt t 0).loc U_CUR = t.pub PI_LEAF_UPPER :=
+    eq_of_modEq_canon ((hc.pathU 0 hlen).1) hc.leafHi (firstPi hsat hlen U_CUR PI_LEAF_UPPER (by adj_mem))
   rw [hleafL] at hfoldL
   rw [hleafU] at hfoldU
-  -- the boundary pins.
-  have hrootL := lastPi hsat hlen L_PAR PI_ROOT (by adj_mem)
-  have hrootU := lastPi hsat hlen U_PAR PI_ROOT (by adj_mem)
+  -- the boundary pins, lifted to genuine ℤ equalities by canonicality.
+  have hrootL : (envAt t (t.rows.length - 1)).loc L_PAR = t.pub PI_ROOT :=
+    eq_of_modEq_canon ((hc.pathL _ hLlt).2.2.2.2.2) hc.root (lastPi hsat hlen L_PAR PI_ROOT (by adj_mem))
+  have hrootU : (envAt t (t.rows.length - 1)).loc U_PAR = t.pub PI_ROOT :=
+    eq_of_modEq_canon ((hc.pathU _ hLlt).2.2.2.2.2) hc.root (lastPi hsat hlen U_PAR PI_ROOT (by adj_mem))
   have hidxL := lastPi hsat hlen L_IDX_OUT PI_IDX_LOWER (by adj_mem)
   have hidxU := lastPi hsat hlen U_IDX_OUT PI_IDX_UPPER (by adj_mem)
   -- root is a genuine hash of the last-row (left,right) pair (the lookup fires on every row).
   have hhashL := lookupChip hsat hChip _ hLlt L_LEFT L_RIGHT L_PAR L_PAR_LANES (by adj_mem)
   have hhashU := lookupChip hsat hChip _ hLlt U_LEFT U_RIGHT U_PAR U_PAR_LANES (by adj_mem)
-  -- consecutiveness: the last-row catch tooth + the two index pins.
+  -- consecutiveness: the last-row catch tooth (mod p) + the two index pins, lifted by canonicality.
   have hcons0 := lastBoundaryZero hsat hlen consecutiveBody (by adj_mem)
-  have hcons := (consecutive_body_zero_iff (envAt t (t.rows.length - 1)).loc).mp hcons0
-  -- index reconstruction: the last-row `adjLastIdxFix` boundaries bind `idx_out` to `idx_in+dir*pow`.
+  have hconsC : (envAt t (t.rows.length - 1)).loc U_IDX_OUT
+      ≡ (envAt t (t.rows.length - 1)).loc L_IDX_OUT + 1 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [consecutiveBody, negE, EmittedExpr.eval]; ring)).mp hcons0
+  have hcons : t.pub PI_IDX_UPPER = t.pub PI_IDX_LOWER + 1 :=
+    eq_of_modEq_canon hc.idxUp hc.idxLoSucc
+      ((hidxU.symm.trans hconsC).trans (hidxL.add_right 1))
+  -- index reconstruction: the last-row `adjLastIdxFix` boundaries bind `idx_out ≡ idx_in+dir*pow`,
+  -- lifted to genuine ℤ by canonicality of the published index and its reconstruction.
   have hidxReconL0 := lastBoundaryZero hsat hlen (idxStepBody L_DIR L_IDX_IN L_IDX_OUT) (by adj_mem)
-  have hidxReconL :=
-    (idx_step_body_zero_iff (envAt t (t.rows.length - 1)).loc L_DIR L_IDX_IN L_IDX_OUT).mp hidxReconL0
+  have hidxReconL : (envAt t (t.rows.length - 1)).loc L_IDX_OUT
+      = (envAt t (t.rows.length - 1)).loc L_IDX_IN
+        + (envAt t (t.rows.length - 1)).loc L_DIR * (envAt t (t.rows.length - 1)).loc POW :=
+    eq_of_modEq_canon hc.idxOutL hc.reconL
+      ((gate_modEq_iff (by simp only [idxStepBody, negE, EmittedExpr.eval]; ring)).mp hidxReconL0)
   have hidxReconU0 := lastBoundaryZero hsat hlen (idxStepBody U_DIR U_IDX_IN U_IDX_OUT) (by adj_mem)
-  have hidxReconU :=
-    (idx_step_body_zero_iff (envAt t (t.rows.length - 1)).loc U_DIR U_IDX_IN U_IDX_OUT).mp hidxReconU0
-  refine ⟨⟨_, hfoldL⟩, ⟨_, hfoldU⟩, hrootL, hrootU, ?_, ?_, ?_, hidxReconL, hidxReconU⟩
+  have hidxReconU : (envAt t (t.rows.length - 1)).loc U_IDX_OUT
+      = (envAt t (t.rows.length - 1)).loc U_IDX_IN
+        + (envAt t (t.rows.length - 1)).loc U_DIR * (envAt t (t.rows.length - 1)).loc POW :=
+    eq_of_modEq_canon hc.idxOutU hc.reconU
+      ((gate_modEq_iff (by simp only [idxStepBody, negE, EmittedExpr.eval]; ring)).mp hidxReconU0)
+  refine ⟨⟨_, hfoldL⟩, ⟨_, hfoldU⟩, hrootL, hrootU, ?_, ?_, hcons, hidxReconL, hidxReconU⟩
   · rw [hrootL] at hhashL; exact hhashL
   · rw [hrootU] at hhashU; exact hhashU
-  · rw [← hidxU, ← hidxL]; exact hcons
 
 /-- **The named residual (`TopLevelOrdered`).** The single fact `Satisfied2` does NOT force: on the
 LAST trace row, each path's `par` is the authentic dir-ordered combine of its `(cur, sib)`. This is
@@ -377,10 +471,11 @@ theorem adjacency_full_bridge {hash : List ℤ → ℤ} {t : VmTrace} {minit : �
     (hlen : 0 < t.rows.length)
     (hsat : Satisfied2 hash adjacencyDesc minit mfin maddrs t)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
+    (hc : AdjacencyCanon t)
     (htop : TopLevelOrdered hash t) :
     AdjacentLeavesUnderRoot hash (t.pub PI_LEAF_LOWER) (t.pub PI_LEAF_UPPER)
       (t.pub PI_ROOT) (t.pub PI_IDX_LOWER) (t.pub PI_IDX_UPPER) := by
-  have frag := adjacency_sat_refines hlen hsat hChip
+  have frag := adjacency_sat_refines hlen hsat hChip hc
   obtain ⟨stepsL, hfoldL⟩ := frag.foldLower
   obtain ⟨stepsU, hfoldU⟩ := frag.foldUpper
   obtain ⟨htopL, htopU⟩ := htop
@@ -478,7 +573,7 @@ theorem concrete_sat :
       pathBlock, List.cons_append, List.nil_append] at hc
     fin_cases hc <;>
       simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, WindowConstraint.holdsAt,
-        copyWindow, Lookup.holdsAt, hF, hL] <;>
+        copyWindow, Lookup.holdsAt, Int.ModEq, hF, hL] <;>
       decide
   · intro i _; trivial
   · intro i _ r hr; simp [adjacencyDesc] at hr
@@ -489,10 +584,35 @@ theorem concrete_sat :
   · rw [hmemlog]; rfl
   · rw [hmaplog]; rfl
 
-/-- The bridge genuinely APPLIES to the concrete inhabited instance: all three hypotheses
-(`Satisfied2`, `ChipTableSound`, `0 < length`) are jointly satisfied. -/
+/-- **The canonicality envelope is genuinely INHABITED** for the concrete trace — every stored spine
+column, published input, and index reconstruction is a small canonical field value. So
+`adjacency_sat_refines` does NOT rest on a vacuous range-check hypothesis. -/
+theorem concrete_canon : AdjacencyCanon cTrace := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · intro j hj
+    have hj0 : j = 0 := by have : cTrace.rows.length = 1 := rfl; omega
+    subst hj0
+    exact ⟨⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
+           ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩
+  · intro j hj
+    have hj0 : j = 0 := by have : cTrace.rows.length = 1 := rfl; omega
+    subst hj0
+    exact ⟨⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
+           ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+  · exact ⟨by decide, by decide⟩
+
+/-- The bridge genuinely APPLIES to the concrete inhabited instance: all FOUR hypotheses
+(`Satisfied2`, `ChipTableSound`, `0 < length`, the canonicality envelope) are jointly satisfied. -/
 example : AdjacencyAuthFragment cHash cTrace :=
-  adjacency_sat_refines (by decide) concrete_sat concrete_chipSound
+  adjacency_sat_refines (by decide) concrete_sat concrete_chipSound concrete_canon
 
 /-- The FAILING trace: identical, but `U_IDX_OUT = 2` breaks the internalized consecutiveness catch
 tooth (`2 - 0 - 1 = 1 ≠ 0`). -/
@@ -507,11 +627,12 @@ theorem concrete_fail :
   intro h
   have hmem : VmConstraint2.base (.boundary VmRow.last consecutiveBody)
       ∈ adjacencyDesc.constraints := by adj_mem
-  have h0 := h.rowConstraints 0 (by decide) _ hmem
-  simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm,
-    show (0 + 1 == cTraceBad.rows.length) = true from rfl] at h0
-  revert h0
-  decide
+  -- the last-row consecutiveness boundary forces its body `≡ 0 [ZMOD p]`; on the bad row the body is
+  -- `2 − 0 − 1 = 1`, and `p ∤ 1`, so no satisfying assignment exists.
+  have h0 := lastBoundaryZero h (by decide) consecutiveBody hmem
+  rw [Int.modEq_zero_iff_dvd,
+    show consecutiveBody.eval (envAt cTraceBad (cTraceBad.rows.length - 1)).loc = 1 from rfl] at h0
+  omega
 
 /-! ## §7 — axiom hygiene. -/
 
