@@ -87,6 +87,7 @@ pub mod mud;
 /// non-grindable `ServerVrf`/`Hybrid` sources are a named `dregg-dice` follow-up.
 pub mod dice_combat;
 
+pub mod combat;
 /// RPG CHARACTER PROGRESSION on the real substrate. XP, LEVEL and CLASS are real
 /// character-cell state; a level-up is a real turn the executor GATES on earned XP
 /// (`FieldGte(xp, threshold(L))`) so you cannot level without the XP, and a class
@@ -94,6 +95,8 @@ pub mod dice_combat;
 /// kernel, not the game code. See [`progression`] for the cell model + the driven
 /// earned/premature/class-gate teeth.
 pub mod progression;
+pub mod skills;
+pub mod spells;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};
