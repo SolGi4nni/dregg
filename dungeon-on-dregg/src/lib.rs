@@ -43,6 +43,12 @@ use std::sync::Arc;
 use dregg_app_framework::{
     CellProgram, Effect, StateConstraint, TransitionCase, TransitionGuard, field_from_u64, symbol,
 };
+
+/// Phase B — the un-jailbreakable AI narrator, landed on the real turn substrate. A
+/// brain proposes a typed [`narrator::Command`] + a narration; the world resolves the
+/// Command on the real executor (prose is not power) and the narration binds into the
+/// real [`TurnReceipt`] via an `EmitEvent` (not a parallel ledger).
+pub mod narrator;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};

@@ -43,6 +43,13 @@ dregg-app-framework = { path = "../app-framework", default-features = false }
 # `dregg-cell` spween-dregg already builds on; the `StateConstraint` type is the very
 # same re-exported type, so an augmented case is byte-identical to a compiled one.
 dregg-cell = { path = "../cell" }
+# The zkOracle capstone (Phase B: the un-jailbreakable narrator). We CONSUME its
+# real 3-leg attestation + verifier (`prove_zkoracle`/`verify_zkoracle`): the
+# injection-free leg refuses a `{{`-bearing narration BEFORE it can bind into a
+# turn, and its content commitment rides the real `TurnReceipt` via `EmitEvent`.
+# The default authentic leg is a fixture notary — that provenance level is Phase E
+# (Bedrock MPC-TLS), NOT this phase; our job is BINDING whatever attestation exists.
+dregg-zkoracle-prove = { path = "../zkoracle-prove", default-features = false }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.
