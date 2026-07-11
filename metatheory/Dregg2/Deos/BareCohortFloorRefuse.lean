@@ -71,6 +71,29 @@ open Dregg2.Deos.CarrierBoundFloorGadget
 
 set_option autoImplicit false
 
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
+
+/-- Field-faithful lift: two CANONICAL (`0 ≤ · < p`) integers congruent mod `p` are EQUAL. -/
+private theorem canonEq {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (hap : a < 2013265921) (hb0 : 0 ≤ b) (hbp : b < 2013265921) : a = b := by
+  unfold Int.ModEq at h
+  rwa [Int.emod_eq_of_lt ha0 hap, Int.emod_eq_of_lt hb0 hbp] at h
+
+/-- The felt-domain escrow decode is a boolean value. -/
+private theorem escrowBitZ_mem (l : List ℤ) : escrowBitZ l = 0 ∨ escrowBitZ l = 1 := by
+  unfold escrowBitZ; split <;> simp
+
+/-- The OR-fold congruence lifts to the exact boolean-OR under canonicality of the output and
+booleanity of the running OR and the next bit. -/
+private theorem orFoldLift {oNext o b : ℤ}
+    (hmod : oNext ≡ o + b - o * b [ZMOD 2013265921])
+    (hoN : 0 ≤ oNext ∧ oNext < 2013265921)
+    (ho : o = 0 ∨ o = 1) (hb : b = 0 ∨ b = 1) :
+    oNext = o + b - o * b := by
+  have hrhs : 0 ≤ o + b - o * b ∧ o + b - o * b < 2013265921 := by
+    rcases ho with h | h <;> rcases hb with h' | h' <;> rw [h, h'] <;> norm_num
+  exact canonEq hmod hoN.1 hoN.2 hrhs.1 hrhs.2
+
 /-! ## §1 — the REFUSE gate. -/
 
 /-- **`floorZeroRefuseGate`** — `floorCol == 0` on every (non-last) row. Welded onto every BARE cohort
@@ -134,7 +157,7 @@ theorem bare_gate_holds (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ (gentianBareRefuseDescriptor d).constraints)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g hg
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -147,6 +170,7 @@ theorem bit_decodes_bare (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptor d) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (k : Nat)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (hdefmem : isZeroDefGate (cavTagCol k) (bitCol k) (invCol k) ∈ carrierGates)
     (hforcemem : isZeroForceGate (cavTagCol k) (bitCol k) ∈ carrierGates) :
     (envAt t i).loc (bitCol k) = escrowBitZ [(envAt t i).loc (cavTagCol k)] := by
@@ -155,7 +179,9 @@ theorem bit_decodes_bare (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
   have hforce := bare_gate_holds hash d hsat i hi hnl
     (isZeroForceGate (cavTagCol k) (bitCol k)) (carrierGate_mem_bare d _ hforcemem) _ rfl
   simp only [EmittedExpr.eval] at hdef hforce
-  have hb := isZero_from_gates hdef hforce
+  have htagB : (0 : ℤ) ≤ tagEscrowZ ∧ tagEscrowZ < 2013265921 := by decide
+  have hb := isZero_from_gates hdef hforce (hcanon i (bitCol k))
+    (by have h := hcanon i (cavTagCol k); omega) (by have h := hcanon i (cavTagCol k); omega)
   rw [hb]
   unfold escrowBitZ
   simp only [List.mem_cons, List.not_mem_nil, or_false]
@@ -171,13 +197,14 @@ caveat-bound type-tag columns — NO crypto floor. -/
 theorem floor_decodes_bare (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptor d) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921) :
     (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = escrowBitZ (manifestTags (gadgetManifest (envAt t i).loc)) := by
-  have hb0 := bit_decodes_bare hash d hsat i hi hnl 0 (by simp [carrierGates]) (by simp [carrierGates])
-  have hb1 := bit_decodes_bare hash d hsat i hi hnl 1 (by simp [carrierGates]) (by simp [carrierGates])
-  have hb2 := bit_decodes_bare hash d hsat i hi hnl 2 (by simp [carrierGates]) (by simp [carrierGates])
-  have hb3 := bit_decodes_bare hash d hsat i hi hnl 3 (by simp [carrierGates]) (by simp [carrierGates])
+  have hb0 := bit_decodes_bare hash d hsat i hi hnl 0 hcanon (by simp [carrierGates]) (by simp [carrierGates])
+  have hb1 := bit_decodes_bare hash d hsat i hi hnl 1 hcanon (by simp [carrierGates]) (by simp [carrierGates])
+  have hb2 := bit_decodes_bare hash d hsat i hi hnl 2 hcanon (by simp [carrierGates]) (by simp [carrierGates])
+  have hb3 := bit_decodes_bare hash d hsat i hi hnl 3 hcanon (by simp [carrierGates]) (by simp [carrierGates])
   have hseed := bare_gate_holds hash d hsat i hi hnl
     (orSeedGate (orCol 0) (bitCol 0)) (carrierGate_mem_bare d _ (by simp [carrierGates])) _ rfl
   have hf1 := bare_gate_holds hash d hsat i hi hnl
@@ -191,18 +218,36 @@ theorem floor_decodes_bare (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (carrierGate_mem_bare d _ (by simp [carrierGates])) _ rfl
   simp only [EmittedExpr.eval] at hseed hf1 hf2 hf3
   have ho0 : (envAt t i).loc (orCol 0) = escrowBitZ [(envAt t i).loc (cavTagCol 0)] := by
-    rw [show (envAt t i).loc (orCol 0) = (envAt t i).loc (bitCol 0) by linarith [hseed]]; exact hb0
+    rw [show (envAt t i).loc (orCol 0) = (envAt t i).loc (bitCol 0) from
+      canonEq ((gate_modEq_iff (by ring)).mp hseed) (hcanon i _).1 (hcanon i _).2
+        (hcanon i _).1 (hcanon i _).2]
+    exact hb0
+  have hm1 : (envAt t i).loc (orCol 1)
+      ≡ (envAt t i).loc (orCol 0) + (envAt t i).loc (bitCol 1)
+        - (envAt t i).loc (orCol 0) * (envAt t i).loc (bitCol 1) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf1
   have ho1 : (envAt t i).loc (orCol 1)
       = escrowBitZ ([(envAt t i).loc (cavTagCol 0)] ++ [(envAt t i).loc (cavTagCol 1)]) :=
-    orStep ho0 hb1 (by linarith [hf1])
+    orStep ho0 hb1 (orFoldLift hm1 (hcanon i _)
+      (by rw [ho0]; exact escrowBitZ_mem _) (by rw [hb1]; exact escrowBitZ_mem _))
+  have hm2 : (envAt t i).loc (orCol 2)
+      ≡ (envAt t i).loc (orCol 1) + (envAt t i).loc (bitCol 2)
+        - (envAt t i).loc (orCol 1) * (envAt t i).loc (bitCol 2) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf2
   have ho2 : (envAt t i).loc (orCol 2)
       = escrowBitZ ([(envAt t i).loc (cavTagCol 0), (envAt t i).loc (cavTagCol 1)]
           ++ [(envAt t i).loc (cavTagCol 2)]) :=
-    orStep ho1 hb2 (by linarith [hf2])
+    orStep ho1 hb2 (orFoldLift hm2 (hcanon i _)
+      (by rw [ho1]; exact escrowBitZ_mem _) (by rw [hb2]; exact escrowBitZ_mem _))
+  have hm3 : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
+      ≡ (envAt t i).loc (orCol 2) + (envAt t i).loc (bitCol 3)
+        - (envAt t i).loc (orCol 2) * (envAt t i).loc (bitCol 3) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf3
   have ho3 : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = escrowBitZ ([(envAt t i).loc (cavTagCol 0), (envAt t i).loc (cavTagCol 1),
           (envAt t i).loc (cavTagCol 2)] ++ [(envAt t i).loc (cavTagCol 3)]) :=
-    orStep ho2 hb3 (by linarith [hf3])
+    orStep ho2 hb3 (orFoldLift hm3 (hcanon i _)
+      (by rw [ho2]; exact escrowBitZ_mem _) (by rw [hb3]; exact escrowBitZ_mem _))
   rw [ho3, manifestTags_gadget]
   simp only [List.cons_append, List.nil_append]
 
@@ -221,6 +266,7 @@ theorem declared_escrow_unsat_under_bare (hash : List ℤ → ℤ) (hCR : Poseid
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptor d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : tagEscrowZ ∈ manifestTags committedManifest) :
@@ -230,7 +276,7 @@ theorem declared_escrow_unsat_under_bare (hash : List ℤ → ℤ) (hCR : Poseid
   have hrowreq : tagEscrowZ ∈ manifestTags (gadgetManifest (envAt t 0).loc) := by
     rw [hmeq]; exact hreq
   -- the decode lights the floor column from the bound type tags on the settle (row-0) row.
-  have hdec := floor_decodes_bare hash d hsat 0 hi hnl
+  have hdec := floor_decodes_bare hash d hsat 0 hi hnl hcanon
   have hfloor : (envAt t 0).loc GENTIAN_FLOOR_ESCROW_COL = 1 := by
     rw [hdec]; unfold escrowBitZ; rw [if_pos hrowreq]
   -- the REFUSE gate demands the floor column be 0 — contradiction.
@@ -250,9 +296,10 @@ theorem non_declared_floor_zero (hash : List ℤ → ℤ) (d : EffectVmDescripto
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptor d) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (hno : tagEscrowZ ∉ manifestTags (gadgetManifest (envAt t i).loc)) :
     (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = 0 := by
-  rw [floor_decodes_bare hash d hsat i hi hnl]; unfold escrowBitZ; rw [if_neg hno]
+  rw [floor_decodes_bare hash d hsat i hi hnl hcanon]; unfold escrowBitZ; rw [if_neg hno]
 
 /-! ## §8 — NON-VACUITY TEETH (`#guard`): both polarities BITE. -/
 
@@ -307,6 +354,10 @@ open Dregg2.Deos.ConstraintBinding (tagSettleEscrow tagDischargeObligation tagVa
 /-- The felt-domain decode of a floor for an ARBITRARY capacity tag `T`. -/
 def tagBitZ (tag : ℤ) (floor : List ℤ) : ℤ := if tag ∈ floor then 1 else 0
 
+/-- The tag-parametric decode is a boolean value. -/
+private theorem tagBitZ_mem (tag : ℤ) (l : List ℤ) : tagBitZ tag l = 0 ∨ tagBitZ tag l = 1 := by
+  unfold tagBitZ; split <;> simp
+
 /-- (def_k, tag-parametric) is-zero defining gate `b_k + (tag_k − T)·inv_k − 1 == 0`. -/
 def isZeroDefGateT (tag : ℤ) (tagCol boolCol invC : Nat) : VmConstraint2 :=
   .base (.gate (.add (.add (.var boolCol)
@@ -359,7 +410,7 @@ theorem bare_gate_holdsT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDesc
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ (gentianBareRefuseDescriptorT tag d).constraints)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g hg
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -380,6 +431,8 @@ theorem bit_decodesT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDescript
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptorT tag d) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (k : Nat)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921)
     (hdefmem : isZeroDefGateT tag (cavTagCol k) (bitCol k) (invCol k) ∈ decodeGatesT tag)
     (hforcemem : isZeroForceGateT tag (cavTagCol k) (bitCol k) ∈ decodeGatesT tag) :
     (envAt t i).loc (bitCol k) = tagBitZ tag [(envAt t i).loc (cavTagCol k)] := by
@@ -388,7 +441,8 @@ theorem bit_decodesT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDescript
   have hforce := bare_gate_holdsT hash tag d hsat i hi hnl
     (isZeroForceGateT tag (cavTagCol k) (bitCol k)) (decodeGateT_mem tag d _ hforcemem) _ rfl
   simp only [EmittedExpr.eval] at hdef hforce
-  have hb := isZero_from_gates hdef hforce
+  have hb := isZero_from_gates hdef hforce (hcanon i (bitCol k))
+    (by have h := hcanon i (cavTagCol k); omega) (by have h := hcanon i (cavTagCol k); omega)
   rw [hb]
   unfold tagBitZ
   simp only [List.mem_cons, List.not_mem_nil, or_false]
@@ -401,13 +455,15 @@ the row's four caveat-manifest type tags against tag `T`. -/
 theorem floor_decodesT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDescriptor2)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptorT tag d) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921) :
     (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = tagBitZ tag (manifestTags (gadgetManifest (envAt t i).loc)) := by
-  have hb0 := bit_decodesT hash tag d hsat i hi hnl 0 (by simp [decodeGatesT]) (by simp [decodeGatesT])
-  have hb1 := bit_decodesT hash tag d hsat i hi hnl 1 (by simp [decodeGatesT]) (by simp [decodeGatesT])
-  have hb2 := bit_decodesT hash tag d hsat i hi hnl 2 (by simp [decodeGatesT]) (by simp [decodeGatesT])
-  have hb3 := bit_decodesT hash tag d hsat i hi hnl 3 (by simp [decodeGatesT]) (by simp [decodeGatesT])
+  have hb0 := bit_decodesT hash tag d hsat i hi hnl 0 hcanon htag (by simp [decodeGatesT]) (by simp [decodeGatesT])
+  have hb1 := bit_decodesT hash tag d hsat i hi hnl 1 hcanon htag (by simp [decodeGatesT]) (by simp [decodeGatesT])
+  have hb2 := bit_decodesT hash tag d hsat i hi hnl 2 hcanon htag (by simp [decodeGatesT]) (by simp [decodeGatesT])
+  have hb3 := bit_decodesT hash tag d hsat i hi hnl 3 hcanon htag (by simp [decodeGatesT]) (by simp [decodeGatesT])
   have hseed := bare_gate_holdsT hash tag d hsat i hi hnl
     (orSeedGate (orCol 0) (bitCol 0)) (decodeGateT_mem tag d _ (by simp [decodeGatesT])) _ rfl
   have hf1 := bare_gate_holdsT hash tag d hsat i hi hnl
@@ -419,18 +475,36 @@ theorem floor_decodesT (hash : List ℤ → ℤ) (tag : ℤ) (d : EffectVmDescri
     (decodeGateT_mem tag d _ (by simp [decodeGatesT])) _ rfl
   simp only [EmittedExpr.eval] at hseed hf1 hf2 hf3
   have ho0 : (envAt t i).loc (orCol 0) = tagBitZ tag [(envAt t i).loc (cavTagCol 0)] := by
-    rw [show (envAt t i).loc (orCol 0) = (envAt t i).loc (bitCol 0) by linarith [hseed]]; exact hb0
+    rw [show (envAt t i).loc (orCol 0) = (envAt t i).loc (bitCol 0) from
+      canonEq ((gate_modEq_iff (by ring)).mp hseed) (hcanon i _).1 (hcanon i _).2
+        (hcanon i _).1 (hcanon i _).2]
+    exact hb0
+  have hm1 : (envAt t i).loc (orCol 1)
+      ≡ (envAt t i).loc (orCol 0) + (envAt t i).loc (bitCol 1)
+        - (envAt t i).loc (orCol 0) * (envAt t i).loc (bitCol 1) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf1
   have ho1 : (envAt t i).loc (orCol 1)
       = tagBitZ tag ([(envAt t i).loc (cavTagCol 0)] ++ [(envAt t i).loc (cavTagCol 1)]) :=
-    orStepT ho0 hb1 (by linarith [hf1])
+    orStepT ho0 hb1 (orFoldLift hm1 (hcanon i _)
+      (by rw [ho0]; exact tagBitZ_mem _ _) (by rw [hb1]; exact tagBitZ_mem _ _))
+  have hm2 : (envAt t i).loc (orCol 2)
+      ≡ (envAt t i).loc (orCol 1) + (envAt t i).loc (bitCol 2)
+        - (envAt t i).loc (orCol 1) * (envAt t i).loc (bitCol 2) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf2
   have ho2 : (envAt t i).loc (orCol 2)
       = tagBitZ tag ([(envAt t i).loc (cavTagCol 0), (envAt t i).loc (cavTagCol 1)]
           ++ [(envAt t i).loc (cavTagCol 2)]) :=
-    orStepT ho1 hb2 (by linarith [hf2])
+    orStepT ho1 hb2 (orFoldLift hm2 (hcanon i _)
+      (by rw [ho1]; exact tagBitZ_mem _ _) (by rw [hb2]; exact tagBitZ_mem _ _))
+  have hm3 : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
+      ≡ (envAt t i).loc (orCol 2) + (envAt t i).loc (bitCol 3)
+        - (envAt t i).loc (orCol 2) * (envAt t i).loc (bitCol 3) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf3
   have ho3 : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = tagBitZ tag ([(envAt t i).loc (cavTagCol 0), (envAt t i).loc (cavTagCol 1),
           (envAt t i).loc (cavTagCol 2)] ++ [(envAt t i).loc (cavTagCol 3)]) :=
-    orStepT ho2 hb3 (by linarith [hf3])
+    orStepT ho2 hb3 (orFoldLift hm3 (hcanon i _)
+      (by rw [ho2]; exact tagBitZ_mem _ _) (by rw [hb3]; exact tagBitZ_mem _ _))
   rw [ho3, manifestTags_gadget]
   simp only [List.cons_append, List.nil_append]
 
@@ -444,13 +518,15 @@ theorem declared_tag_unsat_under_bare (hash : List ℤ → ℤ) (hCR : Poseidon2
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptorT tag d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : tag ∈ manifestTags committedManifest) :
     False := by
   have hmeq : gadgetManifest (envAt t 0).loc = committedManifest := caveatCommit_binds hash hCR hbind
   have hrowreq : tag ∈ manifestTags (gadgetManifest (envAt t 0).loc) := by rw [hmeq]; exact hreq
-  have hdec := floor_decodesT hash tag d hsat 0 hi hnl
+  have hdec := floor_decodesT hash tag d hsat 0 hi hnl hcanon htag
   have hfloor : (envAt t 0).loc GENTIAN_FLOOR_ESCROW_COL = 1 := by
     rw [hdec]; unfold tagBitZ; rw [if_pos hrowreq]
   have hrefuse := bare_gate_holdsT hash tag d hsat 0 hi hnl
@@ -467,22 +543,24 @@ theorem declared_discharge_unsat_under_bare (hash : List ℤ → ℤ) (hCR : Pos
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptorT (tagDischargeObligation : ℤ) d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : (tagDischargeObligation : ℤ) ∈ manifestTags committedManifest) :
     False :=
-  declared_tag_unsat_under_bare hash hCR _ d hsat hi hnl committedManifest hbind hreq
+  declared_tag_unsat_under_bare hash hCR _ d hsat hi hnl hcanon (by decide) committedManifest hbind hreq
 
 theorem declared_vault_unsat_under_bare (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
     (d : EffectVmDescriptor2)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianBareRefuseDescriptorT (tagVaultDeposit : ℤ) d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : (tagVaultDeposit : ℤ) ∈ manifestTags committedManifest) :
     False :=
-  declared_tag_unsat_under_bare hash hCR _ d hsat hi hnl committedManifest hbind hreq
+  declared_tag_unsat_under_bare hash hCR _ d hsat hi hnl hcanon (by decide) committedManifest hbind hreq
 
 section CapWitnesses
 private def gateValT (g : VmConstraint2) (loc : Nat → ℤ) : ℤ :=

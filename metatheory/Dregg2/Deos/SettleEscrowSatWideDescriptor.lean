@@ -82,6 +82,7 @@ open Dregg2.Deos.SealedEscrow (stEmpty stDeposited stConsumed)
 open Dregg2.Deos.SettleEscrowSatDescriptor
   (ESCROW_SEL_COL beforeFieldCol afterFieldCol settleEscrowSatGate settleEscrowSatGates
    settleEscrowV1Base)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 
 set_option autoImplicit false
 
@@ -144,7 +145,7 @@ theorem welded_gate_holds_wide (hash : List ℤ → ℤ) (legA legB : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g (settleGateWide_mem legA legB g hg)
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -159,19 +160,19 @@ theorem settleEscrowWide_forces_settle_gate (hash : List ℤ → ℤ) (legA legB
     (hsat : Satisfied2 hash (settleEscrowSatVmDescriptor2R24Wide legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc ESCROW_SEL_COL = 1) :
-    (envAt t i).loc (beforeFieldCol legA) = stDeposited ∧
-    (envAt t i).loc (beforeFieldCol legB) = stDeposited ∧
-    (envAt t i).loc (afterFieldCol legA)  = stConsumed ∧
-    (envAt t i).loc (afterFieldCol legB)  = stConsumed := by
+    (envAt t i).loc (beforeFieldCol legA) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (beforeFieldCol legB) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legA)  ≡ stConsumed [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legB)  ≡ stConsumed [ZMOD 2013265921] := by
   have force : ∀ (col : Nat) (val : ℤ),
       settleEscrowSatGate ESCROW_SEL_COL col val ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB →
-      (envAt t i).loc col = val := by
+      (envAt t i).loc col ≡ val [ZMOD 2013265921] := by
     intro col val hmem
     have h0 := welded_gate_holds_wide hash legA legB hsat i hi hnl
       (settleEscrowSatGate ESCROW_SEL_COL col val) hmem
       (.mul (.var ESCROW_SEL_COL) (.add (.var col) (.const (-val)))) rfl
     simp only [EmittedExpr.eval, hsel, one_mul] at h0
-    omega
+    exact (gate_modEq_iff (by ring)).mp h0
   refine ⟨?_, ?_, ?_, ?_⟩
   · exact force (beforeFieldCol legA) stDeposited (by simp [settleEscrowSatGates])
   · exact force (beforeFieldCol legB) stDeposited (by simp [settleEscrowSatGates])
@@ -189,6 +190,7 @@ theorem partial_settle_unsat_wide (hash : List ℤ → ℤ) (legA legB : Nat)
     False := by
   have h := (settleEscrowWide_forces_settle_gate hash legA legB hsat i hi hnl hsel).2.2.2
   rw [hpartial] at h
+  simp only [stDeposited, stConsumed] at h
   exact absurd h (by decide)
 
 /-- **THE NO-PHANTOM TOOTH (WIDE).** A settle whose leg A was never `Deposited` in the rotated BEFORE
@@ -202,6 +204,7 @@ theorem phantom_settle_unsat_wide (hash : List ℤ → ℤ) (legA legB : Nat)
     False := by
   have h := (settleEscrowWide_forces_settle_gate hash legA legB hsat i hi hnl hsel).1
   rw [hphantom] at h
+  simp only [stEmpty, stDeposited] at h
   exact absurd h (by decide)
 
 /-! ## §4 — THE GRADUATION KEYSTONE: the satisfaction-gate field columns ARE absorbed into the wide

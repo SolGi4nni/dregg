@@ -77,8 +77,15 @@ open Dregg2.Deos.InAirAuthorityDigestSelector
   (GENTIAN_WIT_DIGEST_COL GENTIAN_FLOOR_ESCROW_COL gentianAuthDigestCol gentianGates
    gentianSelectorDescriptor gentianRecomputeBindGate gentianSelectorForceGate
    weldedGate_mem_gentian)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt gate_modEq_iff)
 
 set_option autoImplicit false
+
+/-- Field-faithful lift: two CANONICAL (`0 ≤ · < p`) integers congruent mod `p` are EQUAL. -/
+private theorem canonEq {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (hap : a < 2013265921) (hb0 : 0 ≤ b) (hbp : b < 2013265921) : a = b := by
+  unfold Int.ModEq at h
+  rwa [Int.emod_eq_of_lt ha0 hap, Int.emod_eq_of_lt hb0 hbp] at h
 
 /-! ## §1 — the OPTION-B floor representation columns (fixed-arity = 2 ≤ CHIP_RATE).
 
@@ -208,7 +215,7 @@ theorem gadget_gate_holds (hash : List ℤ → ℤ) (legA legB : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ (gentianGadgetDescriptor legA legB).constraints)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g hg
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -247,21 +254,32 @@ theorem recompute_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
 /-- **The per-slot is-zero gadget is sound** (over the integral domain ℤ): the defining gate +
 forcing gate force `b = 1` iff the slot felt is the escrow tag. -/
 theorem isZero_from_gates {d b inv : ℤ}
-    (hdef : b + d * inv + (-1) = 0) (hforce : d * b = 0) :
+    (hdef : b + d * inv + (-1) ≡ 0 [ZMOD 2013265921])
+    (hforce : d * b ≡ 0 [ZMOD 2013265921])
+    (hbc : 0 ≤ b ∧ b < 2013265921)
+    (hdlo : -2013265921 < d) (hdhi : d < 2013265921) :
     b = if d = 0 then 1 else 0 := by
   by_cases hd : d = 0
-  · subst hd; simp only [zero_mul] at hdef; rw [if_pos rfl]; omega
+  · subst hd
+    rw [if_pos rfl]
+    -- `b + 0·inv − 1 ≡ 0 [ZMOD p]` collapses to `b ≡ 1`; `b` canonical ⟹ `b = 1`.
+    simp only [zero_mul, add_zero] at hdef
+    exact canonEq ((gate_modEq_iff (by ring)).mp hdef) hbc.1 hbc.2 (by norm_num) (by norm_num)
   · rw [if_neg hd]
-    rcases mul_eq_zero.mp hforce with h | h
-    · exact absurd h hd
-    · exact h
+    -- `d` is nonzero and bounded in `(−p, p)`, so `p ∤ d`; `p ∣ d·b` and `p` prime ⟹ `p ∣ b` ⟹
+    -- `b ≡ 0`; `b` canonical ⟹ `b = 0`.
+    have hdd : ¬ (2013265921 : ℤ) ∣ d := by rintro ⟨k, hk⟩; omega
+    rw [Int.modEq_zero_iff_dvd] at hforce
+    have hb0 : (2013265921 : ℤ) ∣ b := (pPrimeInt.dvd_mul.mp hforce).resolve_left hdd
+    exact canonEq ((Int.modEq_zero_iff_dvd).mpr hb0) hbc.1 hbc.2 (by norm_num) (by norm_num)
 
 /-- **`hdecode` DISCHARGED.** Under the decode gates, the floor column equals the felt-domain escrow
 decode of the witnessed floor: `floorCol = escrowBitZ [F0, F1]`. Proven arithmetic — NO crypto floor. -/
 theorem decode_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianGadgetDescriptor legA legB) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921) :
     (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = escrowBitZ [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] := by
   have hdef0 := gadget_gate_holds hash legA legB hsat i hi hnl
@@ -284,12 +302,25 @@ theorem decode_discharged (hash : List ℤ → ℤ) (legA legB : Nat)
     decodeOrGate (decodeGate_mem_gadget legA legB _ (by simp [decodeGates])) _ rfl
   simp only [isZeroDefGate, isZeroForceGate, decodeOrGate, EmittedExpr.eval]
     at hdef0 hforce0 hdef1 hforce1 hor
-  -- the two slot bits (the is-zero gadget is sound over ℤ).
-  have hb0 := isZero_from_gates hdef0 hforce0
-  have hb1 := isZero_from_gates hdef1 hforce1
+  -- the two slot bits (the is-zero gadget is sound over the prime field, under canonicality).
+  have htagB : (0 : ℤ) ≤ tagEscrowZ ∧ tagEscrowZ < 2013265921 := by decide
+  have hb0 := isZero_from_gates hdef0 hforce0 (hcanon B0_COL)
+    (by have h := hcanon FLOOR0_COL; omega) (by have h := hcanon FLOOR0_COL; omega)
+  have hb1 := isZero_from_gates hdef1 hforce1 (hcanon B1_COL)
+    (by have h := hcanon FLOOR1_COL; omega) (by have h := hcanon FLOOR1_COL; omega)
+  have hb0r : (envAt t i).loc B0_COL = 0 ∨ (envAt t i).loc B0_COL = 1 := by rw [hb0]; split <;> simp
+  have hb1r : (envAt t i).loc B1_COL = 0 ∨ (envAt t i).loc B1_COL = 1 := by rw [hb1]; split <;> simp
+  -- the OR-fold gate is `floor − (b0 + b1 − b0·b1) ≡ 0 [ZMOD p]`; both sides are canonical (the RHS
+  -- is a boolean OR of two bits), so it lifts to the exact ℤ equality.
   have hore : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = (envAt t i).loc B0_COL + (envAt t i).loc B1_COL
-        - (envAt t i).loc B0_COL * (envAt t i).loc B1_COL := by linarith [hor]
+        - (envAt t i).loc B0_COL * (envAt t i).loc B1_COL := by
+    have hrhs : 0 ≤ (envAt t i).loc B0_COL + (envAt t i).loc B1_COL
+          - (envAt t i).loc B0_COL * (envAt t i).loc B1_COL
+        ∧ (envAt t i).loc B0_COL + (envAt t i).loc B1_COL
+          - (envAt t i).loc B0_COL * (envAt t i).loc B1_COL < 2013265921 := by
+      rcases hb0r with h | h <;> rcases hb1r with h' | h' <;> rw [h, h'] <;> norm_num
+    exact canonEq ((gate_modEq_iff (by ring)).mp hor) (hcanon _).1 (hcanon _).2 hrhs.1 hrhs.2
   -- decode the OR over the two slots.
   unfold escrowBitZ
   simp only [List.mem_cons, List.mem_singleton, List.not_mem_nil, or_false]
@@ -330,18 +361,19 @@ theorem gentian_selector_forced_discharged (hash : List ℤ → ℤ) (legA legB 
     (committedFloor : List ℤ)
     (hreq : tagEscrowZ ∈ committedFloor)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor) :
     (envAt t i).loc ESCROW_SEL_COL = 1 := by
   -- DISCHARGE hrecompute: the chip lookup forces the witnessed-digest column to the felt-floor digest.
   have hwit := recompute_discharged hash legA legB hsat hChip i hi
-  -- the recompute-bind gate ties the witnessed digest to the committed limb.
+  -- the recompute-bind gate ties the witnessed digest to the committed limb (field-faithfully).
   have hbind : (envAt t i).loc GENTIAN_WIT_DIGEST_COL = (envAt t i).loc gentianAuthDigestCol := by
     have h := gadget_gate_holds hash legA legB hsat i hi hnl
       (gentianRecomputeBindGate GENTIAN_WIT_DIGEST_COL gentianAuthDigestCol)
       (gentianGate_mem_gadget legA legB _ (by simp [gentianGates]))
       _ rfl
     simp only [gentianRecomputeBindGate, EmittedExpr.eval] at h
-    omega
+    exact canonEq ((gate_modEq_iff (by ring)).mp h) (hcanon _).1 (hcanon _).2 (hcanon _).1 (hcanon _).2
   -- ⟹ the witnessed floor digest equals the committed floor digest.
   have hdig : hash [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] = hash committedFloor := by
     rw [← hwit, hbind, hcommitLimb]
@@ -352,16 +384,16 @@ theorem gentian_selector_forced_discharged (hash : List ℤ → ℤ) (legA legB 
   have hwitreq : tagEscrowZ ∈ [(envAt t i).loc FLOOR0_COL, (envAt t i).loc FLOOR1_COL] := by
     rw [hfloor]; exact hreq
   -- DISCHARGE hdecode: the decode gates force floorCol = escrowBitZ floor = 1.
-  have hdec := decode_discharged hash legA legB hsat i hi hnl
+  have hdec := decode_discharged hash legA legB hsat i hi hnl hcanon
   have hfloorOne : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = 1 := by
     rw [hdec]; unfold escrowBitZ; rw [if_pos hwitreq]
-  -- the selector-force gate forces sel = 1.
+  -- the selector-force gate forces sel = 1 (field-faithfully, under selector canonicality).
   have hsel := gadget_gate_holds hash legA legB hsat i hi hnl
     (gentianSelectorForceGate GENTIAN_FLOOR_ESCROW_COL ESCROW_SEL_COL)
     (gentianGate_mem_gadget legA legB _ (by simp [gentianGates]))
     _ rfl
   simp only [gentianSelectorForceGate, EmittedExpr.eval, hfloorOne, one_mul] at hsel
-  omega
+  exact canonEq ((gate_modEq_iff (by ring)).mp hsel) (hcanon _).1 (hcanon _).2 (by norm_num) (by norm_num)
 
 /-! ## §11 — THE DISCHARGED SETTLE-FORCING + the teeth. -/
 
@@ -376,22 +408,23 @@ theorem gentian_settle_forced_discharged (hash : List ℤ → ℤ) (legA legB : 
     (committedFloor : List ℤ)
     (hreq : tagEscrowZ ∈ committedFloor)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor) :
-    (envAt t i).loc (beforeFieldCol legA) = stDeposited ∧
-    (envAt t i).loc (beforeFieldCol legB) = stDeposited ∧
-    (envAt t i).loc (afterFieldCol legA)  = stConsumed ∧
-    (envAt t i).loc (afterFieldCol legB)  = stConsumed := by
+    (envAt t i).loc (beforeFieldCol legA) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (beforeFieldCol legB) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legA)  ≡ stConsumed [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legB)  ≡ stConsumed [ZMOD 2013265921] := by
   have hsel := gentian_selector_forced_discharged hash legA legB hsat hChip hCR committedFloor hreq
-    i hi hnl hcommitLimb
+    i hi hnl hcanon hcommitLimb
   have force : ∀ (col : Nat) (val : ℤ),
       settleEscrowSatGate ESCROW_SEL_COL col val ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB →
-      (envAt t i).loc col = val := by
+      (envAt t i).loc col ≡ val [ZMOD 2013265921] := by
     intro col val hmem
     have h0 := gadget_gate_holds hash legA legB hsat i hi hnl
       (settleEscrowSatGate ESCROW_SEL_COL col val) (weldedGate_mem_gadget legA legB _ hmem)
       (.mul (.var ESCROW_SEL_COL) (.add (.var col) (.const (-val)))) rfl
     simp only [EmittedExpr.eval, hsel, one_mul] at h0
-    omega
+    exact (gate_modEq_iff (by ring)).mp h0
   refine ⟨?_, ?_, ?_, ?_⟩
   · exact force (beforeFieldCol legA) stDeposited (by simp [settleEscrowSatGates])
   · exact force (beforeFieldCol legB) stDeposited (by simp [settleEscrowSatGates])
@@ -406,12 +439,14 @@ theorem gentian_partial_unsat_discharged (hash : List ℤ → ℤ) (legA legB : 
     (hChip : ChipTableSound hash (t.tf .poseidon2)) (hCR : FloorDigestBinds hash)
     (committedFloor : List ℤ) (hreq : tagEscrowZ ∈ committedFloor)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor)
     (hpartial : (envAt t i).loc (afterFieldCol legB) = stDeposited) :
     False := by
   have h := (gentian_settle_forced_discharged hash legA legB hsat hChip hCR committedFloor hreq
-    i hi hnl hcommitLimb).2.2.2
+    i hi hnl hcanon hcommitLimb).2.2.2
   rw [hpartial] at h
+  simp only [stDeposited, stConsumed] at h
   exact absurd h (by decide)
 
 /-- **THE NO-PHANTOM TOOTH (discharged).** A phantom settle on a declared-escrow cell cannot satisfy
@@ -422,12 +457,14 @@ theorem gentian_phantom_unsat_discharged (hash : List ℤ → ℤ) (legA legB : 
     (hChip : ChipTableSound hash (t.tf .poseidon2)) (hCR : FloorDigestBinds hash)
     (committedFloor : List ℤ) (hreq : tagEscrowZ ∈ committedFloor)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = hash committedFloor)
     (hphantom : (envAt t i).loc (beforeFieldCol legA) = stEmpty) :
     False := by
   have h := (gentian_settle_forced_discharged hash legA legB hsat hChip hCR committedFloor hreq
-    i hi hnl hcommitLimb).1
+    i hi hnl hcanon hcommitLimb).1
   rw [hphantom] at h
+  simp only [stEmpty, stDeposited] at h
   exact absurd h (by decide)
 
 /-! ## §12 — NON-VACUITY TEETH (`#guard`): the decode + the recompute lookup are real and BITE. -/

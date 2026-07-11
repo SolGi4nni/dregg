@@ -85,8 +85,30 @@ open Dregg2.Deos.InAirAuthorityDigestSelector
   (GENTIAN_FLOOR_ESCROW_COL)
 open Dregg2.Deos.InAirAuthorityDigestGadget
   (tagEscrowZ escrowBitZ isZeroDefGate isZeroForceGate isZero_from_gates)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 
 set_option autoImplicit false
+
+/-- Field-faithful lift: two CANONICAL (`0 ≤ · < p`) integers congruent mod `p` are EQUAL. -/
+private theorem canonEq {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (hap : a < 2013265921) (hb0 : 0 ≤ b) (hbp : b < 2013265921) : a = b := by
+  unfold Int.ModEq at h
+  rwa [Int.emod_eq_of_lt ha0 hap, Int.emod_eq_of_lt hb0 hbp] at h
+
+/-- The felt-domain escrow decode is a boolean value. -/
+private theorem escrowBitZ_mem (l : List ℤ) : escrowBitZ l = 0 ∨ escrowBitZ l = 1 := by
+  unfold escrowBitZ; split <;> simp
+
+/-- The OR-fold congruence lifts to the exact ℤ boolean-OR equality when the running OR and the next
+bit are boolean and the output column is canonical. -/
+private theorem orFoldLift {oNext o b : ℤ}
+    (hmod : oNext ≡ o + b - o * b [ZMOD 2013265921])
+    (hoN : 0 ≤ oNext ∧ oNext < 2013265921)
+    (ho : o = 0 ∨ o = 1) (hb : b = 0 ∨ b = 1) :
+    oNext = o + b - o * b := by
+  have hrhs : 0 ≤ o + b - o * b ∧ o + b - o * b < 2013265921 := by
+    rcases ho with h | h <;> rcases hb with h' | h' <;> rw [h, h'] <;> norm_num
+  exact canonEq hmod hoN.1 hoN.2 hrhs.1 hrhs.2
 
 /-! ## §1 — the caveat-manifest columns + the decode-aux columns (free headroom, value-only).
 
@@ -227,7 +249,7 @@ theorem carrier_gate_holds (hash : List ℤ → ℤ) (legA legB : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ (gentianCarrierDescriptor legA legB).constraints)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g hg
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -242,7 +264,7 @@ theorem carrier_boundary_first_holds (hash : List ℤ → ℤ) (legA legB : Nat)
     (hi : 0 < t.rows.length)
     (g : VmConstraint2) (hg : g ∈ (gentianCarrierDescriptor legA legB).constraints)
     (body : EmittedExpr) (hbody : g = .base (.boundary .first body)) :
-    body.eval (envAt t 0).loc = 0 := by
+    body.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints 0 hi g hg
   rw [hbody] at hrow
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hrow
@@ -255,18 +277,21 @@ theorem caveat_uniform_step (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) (k : Nat)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (hkmem : caveatUniformGate (cavTagCol k) ∈ (gentianCarrierDescriptor legA legB).constraints) :
     (envAt t (i + 1)).loc (cavTagCol k) = (envAt t i).loc (cavTagCol k) := by
   have hrow := hsat.rowConstraints i hi _ hkmem
   -- `.windowGate w` ⇒ `WindowConstraint.holdsAt env isLast`; `onTransition = true` ⇒ the body need
-  -- only vanish off the last row (`isLast = false`, here `hnl`).
+  -- only vanish off the last row (`isLast = false`, here `hnl`) — now field-faithfully mod `p`.
   simp only [VmConstraint2.holdsAt, caveatUniformGate, WindowConstraint.holdsAt] at hrow
   have hbody := hrow hnl
   simp only [WindowExpr.eval] at hbody
   -- `(envAt t i).nxt c` is definitionally `(envAt t (i+1)).loc c`.
   have hnxt : (envAt t i).nxt (cavTagCol k) = (envAt t (i + 1)).loc (cavTagCol k) := rfl
   rw [hnxt] at hbody
-  omega
+  -- both adjacent tag cells are canonical, so `nxt ≡ loc [ZMOD p]` lifts to the exact equality.
+  exact canonEq ((gate_modEq_iff (by ring)).mp hbody) (hcanon (i + 1) _).1 (hcanon (i + 1) _).2
+    (hcanon i _).1 (hcanon i _).2
 
 /-- **THE CAVEAT-UNIFORMITY (whole trace).** Every row's caveat type-tag column equals the settle
 (row-0) row's — the uniformity gates fold the per-step equality across the trace. -/
@@ -274,6 +299,7 @@ theorem caveat_uniform_const (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (k : Nat)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (hkmem : caveatUniformGate (cavTagCol k) ∈ (gentianCarrierDescriptor legA legB).constraints)
     (j : Nat) (hj : j < t.rows.length) :
     (envAt t j).loc (cavTagCol k) = (envAt t 0).loc (cavTagCol k) := by
@@ -284,7 +310,7 @@ theorem caveat_uniform_const (hash : List ℤ → ℤ) (legA legB : Nat)
     have hnl : (n + 1 == t.rows.length) = false := by
       have : n + 1 ≠ t.rows.length := by omega
       simpa using this
-    have hstep := caveat_uniform_step hash legA legB hsat n hn hnl k hkmem
+    have hstep := caveat_uniform_step hash legA legB hsat n hn hnl k hcanon hkmem
     rw [hstep]; exact ih hn
 
 /-- **THE DECODE READS THE COMMITTED (LAST-ROW) TAGS.** With the uniformity gates, the settle-row
@@ -295,9 +321,10 @@ theorem decode_reads_committed_tags (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (k : Nat) (hlen : 0 < t.rows.length)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (hkmem : caveatUniformGate (cavTagCol k) ∈ (gentianCarrierDescriptor legA legB).constraints) :
     (envAt t 0).loc (cavTagCol k) = (envAt t (t.rows.length - 1)).loc (cavTagCol k) := by
-  have h := caveat_uniform_const hash legA legB hsat k hkmem (t.rows.length - 1) (by omega)
+  have h := caveat_uniform_const hash legA legB hsat k hcanon hkmem (t.rows.length - 1) (by omega)
   exact h.symm
 
 /-! ## §6 — the per-slot bit is the escrow decode of its tag column. -/
@@ -308,6 +335,7 @@ theorem bit_decodes (hash : List ℤ → ℤ) (legA legB : Nat)
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (k : Nat)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (hdefmem : isZeroDefGate (cavTagCol k) (bitCol k) (invCol k) ∈ carrierGates)
     (hforcemem : isZeroForceGate (cavTagCol k) (bitCol k) ∈ carrierGates) :
     (envAt t i).loc (bitCol k) = escrowBitZ [(envAt t i).loc (cavTagCol k)] := by
@@ -316,7 +344,9 @@ theorem bit_decodes (hash : List ℤ → ℤ) (legA legB : Nat)
   have hforce := carrier_gate_holds hash legA legB hsat i hi hnl
     (isZeroForceGate (cavTagCol k) (bitCol k)) (carrierGate_mem legA legB _ hforcemem) _ rfl
   simp only [EmittedExpr.eval] at hdef hforce
-  have hb := isZero_from_gates hdef hforce
+  have htagB : (0 : ℤ) ≤ tagEscrowZ ∧ tagEscrowZ < 2013265921 := by decide
+  have hb := isZero_from_gates hdef hforce (hcanon i (bitCol k))
+    (by have h := hcanon i (cavTagCol k); omega) (by have h := hcanon i (cavTagCol k); omega)
   rw [hb]
   unfold escrowBitZ
   simp only [List.mem_cons, List.not_mem_nil, or_false]
@@ -346,14 +376,15 @@ arithmetic over the caveat-bound type-tag columns — NO crypto floor, NO recomp
 theorem floor_decodes (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921) :
     (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = escrowBitZ (manifestTags (gadgetManifest (envAt t i).loc)) := by
   -- the four per-slot bits.
-  have hb0 := bit_decodes hash legA legB hsat i hi hnl 0 (by simp [carrierGates]) (by simp [carrierGates])
-  have hb1 := bit_decodes hash legA legB hsat i hi hnl 1 (by simp [carrierGates]) (by simp [carrierGates])
-  have hb2 := bit_decodes hash legA legB hsat i hi hnl 2 (by simp [carrierGates]) (by simp [carrierGates])
-  have hb3 := bit_decodes hash legA legB hsat i hi hnl 3 (by simp [carrierGates]) (by simp [carrierGates])
+  have hb0 := bit_decodes hash legA legB hsat i hi hnl 0 hcanon (by simp [carrierGates]) (by simp [carrierGates])
+  have hb1 := bit_decodes hash legA legB hsat i hi hnl 1 hcanon (by simp [carrierGates]) (by simp [carrierGates])
+  have hb2 := bit_decodes hash legA legB hsat i hi hnl 2 hcanon (by simp [carrierGates]) (by simp [carrierGates])
+  have hb3 := bit_decodes hash legA legB hsat i hi hnl 3 hcanon (by simp [carrierGates]) (by simp [carrierGates])
   -- the OR seed + the three folds, as raw gate equalities.
   have hseed := carrier_gate_holds hash legA legB hsat i hi hnl
     (orSeedGate (orCol 0) (bitCol 0)) (carrierGate_mem legA legB _ (by simp [carrierGates])) _ rfl
@@ -367,21 +398,39 @@ theorem floor_decodes (hash : List ℤ → ℤ) (legA legB : Nat)
     (orFoldGate GENTIAN_FLOOR_ESCROW_COL (orCol 2) (bitCol 3))
     (carrierGate_mem legA legB _ (by simp [carrierGates])) _ rfl
   simp only [EmittedExpr.eval] at hseed hf1 hf2 hf3
-  -- O0 = b0 = escrowBitZ [tag0].
+  -- O0 = b0 = escrowBitZ [tag0] (the seed congruence lifts under canonicality).
   have ho0 : (envAt t i).loc (orCol 0) = escrowBitZ [(envAt t i).loc (cavTagCol 0)] := by
-    rw [show (envAt t i).loc (orCol 0) = (envAt t i).loc (bitCol 0) by linarith [hseed]]; exact hb0
-  -- step through the folds.
+    rw [show (envAt t i).loc (orCol 0) = (envAt t i).loc (bitCol 0) from
+      canonEq ((gate_modEq_iff (by ring)).mp hseed) (hcanon i _).1 (hcanon i _).2
+        (hcanon i _).1 (hcanon i _).2]
+    exact hb0
+  -- step through the folds; each OR-fold congruence lifts to the exact boolean-OR under canonicality.
+  have hm1 : (envAt t i).loc (orCol 1)
+      ≡ (envAt t i).loc (orCol 0) + (envAt t i).loc (bitCol 1)
+        - (envAt t i).loc (orCol 0) * (envAt t i).loc (bitCol 1) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf1
   have ho1 : (envAt t i).loc (orCol 1)
       = escrowBitZ ([(envAt t i).loc (cavTagCol 0)] ++ [(envAt t i).loc (cavTagCol 1)]) :=
-    orStep ho0 hb1 (by linarith [hf1])
+    orStep ho0 hb1 (orFoldLift hm1 (hcanon i _)
+      (by rw [ho0]; exact escrowBitZ_mem _) (by rw [hb1]; exact escrowBitZ_mem _))
+  have hm2 : (envAt t i).loc (orCol 2)
+      ≡ (envAt t i).loc (orCol 1) + (envAt t i).loc (bitCol 2)
+        - (envAt t i).loc (orCol 1) * (envAt t i).loc (bitCol 2) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf2
   have ho2 : (envAt t i).loc (orCol 2)
       = escrowBitZ ([(envAt t i).loc (cavTagCol 0), (envAt t i).loc (cavTagCol 1)]
           ++ [(envAt t i).loc (cavTagCol 2)]) :=
-    orStep ho1 hb2 (by linarith [hf2])
+    orStep ho1 hb2 (orFoldLift hm2 (hcanon i _)
+      (by rw [ho1]; exact escrowBitZ_mem _) (by rw [hb2]; exact escrowBitZ_mem _))
+  have hm3 : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
+      ≡ (envAt t i).loc (orCol 2) + (envAt t i).loc (bitCol 3)
+        - (envAt t i).loc (orCol 2) * (envAt t i).loc (bitCol 3) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf3
   have ho3 : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL
       = escrowBitZ ([(envAt t i).loc (cavTagCol 0), (envAt t i).loc (cavTagCol 1),
           (envAt t i).loc (cavTagCol 2)] ++ [(envAt t i).loc (cavTagCol 3)]) :=
-    orStep ho2 hb3 (by linarith [hf3])
+    orStep ho2 hb3 (orFoldLift hm3 (hcanon i _)
+      (by rw [ho2]; exact escrowBitZ_mem _) (by rw [hb3]; exact escrowBitZ_mem _))
   rw [ho3, manifestTags_gadget]
   simp only [List.cons_append, List.nil_append]
 
@@ -404,6 +453,7 @@ theorem gentian_selector_forced_carrier (hash : List ℤ → ℤ) (hCR : Poseido
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : tagEscrowZ ∈ manifestTags committedManifest) :
@@ -413,16 +463,16 @@ theorem gentian_selector_forced_carrier (hash : List ℤ → ℤ) (hCR : Poseido
   have hrowreq : tagEscrowZ ∈ manifestTags (gadgetManifest (envAt t 0).loc) := by
     rw [hmeq]; exact hreq
   -- the decode lights the floor column from the bound type tags, on the SETTLE (row-0) row.
-  have hdec := floor_decodes hash legA legB hsat 0 hi hnl
+  have hdec := floor_decodes hash legA legB hsat 0 hi hnl hcanon
   have hfloor : (envAt t 0).loc GENTIAN_FLOOR_ESCROW_COL = 1 := by
     rw [hdec]; unfold escrowBitZ; rw [if_pos hrowreq]
-  -- the FIRST-ROW selector-force gate forces sel = 1 on the settle row.
+  -- the FIRST-ROW selector-force gate forces sel = 1 on the settle row (field-faithfully).
   have hsel := carrier_boundary_first_holds hash legA legB hsat hi
     (selectorForceFirstGate GENTIAN_FLOOR_ESCROW_COL ESCROW_SEL_COL)
     (carrierGate_mem legA legB _ (by simp [carrierGates]))
     (.mul (.var GENTIAN_FLOOR_ESCROW_COL) (.add (.var ESCROW_SEL_COL) (.const (-1)))) rfl
   simp only [EmittedExpr.eval, hfloor, one_mul] at hsel
-  omega
+  exact canonEq ((gate_modEq_iff (by ring)).mp hsel) (hcanon 0 _).1 (hcanon 0 _).2 (by norm_num) (by norm_num)
 
 /-! ## §10 — THE SETTLE-FORCING + the teeth. -/
 
@@ -434,24 +484,25 @@ theorem gentian_settle_forced_carrier (hash : List ℤ → ℤ) (hCR : Poseidon2
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : tagEscrowZ ∈ manifestTags committedManifest) :
-    (envAt t 0).loc (beforeFieldCol legA) = stDeposited ∧
-    (envAt t 0).loc (beforeFieldCol legB) = stDeposited ∧
-    (envAt t 0).loc (afterFieldCol legA)  = stConsumed ∧
-    (envAt t 0).loc (afterFieldCol legB)  = stConsumed := by
-  have hsel := gentian_selector_forced_carrier hash hCR legA legB hsat hi hnl committedManifest
+    (envAt t 0).loc (beforeFieldCol legA) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t 0).loc (beforeFieldCol legB) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t 0).loc (afterFieldCol legA)  ≡ stConsumed [ZMOD 2013265921] ∧
+    (envAt t 0).loc (afterFieldCol legB)  ≡ stConsumed [ZMOD 2013265921] := by
+  have hsel := gentian_selector_forced_carrier hash hCR legA legB hsat hi hnl hcanon committedManifest
     hbind hreq
   have force : ∀ (col : Nat) (val : ℤ),
       settleEscrowSatGate ESCROW_SEL_COL col val ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB →
-      (envAt t 0).loc col = val := by
+      (envAt t 0).loc col ≡ val [ZMOD 2013265921] := by
     intro col val hmem
     have h0 := carrier_gate_holds hash legA legB hsat 0 hi hnl
       (settleEscrowSatGate ESCROW_SEL_COL col val) (weldedGate_mem_carrier legA legB _ hmem)
       (.mul (.var ESCROW_SEL_COL) (.add (.var col) (.const (-val)))) rfl
     simp only [EmittedExpr.eval, hsel, one_mul] at h0
-    omega
+    exact (gate_modEq_iff (by ring)).mp h0
   refine ⟨?_, ?_, ?_, ?_⟩
   · exact force (beforeFieldCol legA) stDeposited (by simp [settleEscrowSatGates])
   · exact force (beforeFieldCol legB) stDeposited (by simp [settleEscrowSatGates])
@@ -481,14 +532,16 @@ theorem gentian_partial_unsat_carrier (hash : List ℤ → ℤ) (hCR : Poseidon2
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : tagEscrowZ ∈ manifestTags committedManifest)
     (hpartial : (envAt t 0).loc (afterFieldCol legB) = stDeposited) :
     False := by
-  have h := (gentian_settle_forced_carrier hash hCR legA legB hsat hi hnl committedManifest
+  have h := (gentian_settle_forced_carrier hash hCR legA legB hsat hi hnl hcanon committedManifest
     hbind hreq).2.2.2
   rw [hpartial] at h
+  simp only [stDeposited, stConsumed] at h
   exact absurd h (by decide)
 
 /-- **THE NO-PHANTOM TOOTH (carrier).** A phantom settle on a declared-escrow cell cannot satisfy the
@@ -498,14 +551,16 @@ theorem gentian_phantom_unsat_carrier (hash : List ℤ → ℤ) (hCR : Poseidon2
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianCarrierDescriptor legA legB) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (gadgetManifest (envAt t 0).loc) = caveatCommit hash committedManifest)
     (hreq : tagEscrowZ ∈ manifestTags committedManifest)
     (hphantom : (envAt t 0).loc (beforeFieldCol legA) = stEmpty) :
     False := by
-  have h := (gentian_settle_forced_carrier hash hCR legA legB hsat hi hnl committedManifest
+  have h := (gentian_settle_forced_carrier hash hCR legA legB hsat hi hnl hcanon committedManifest
     hbind hreq).1
   rw [hphantom] at h
+  simp only [stEmpty, stDeposited] at h
   exact absurd h (by decide)
 
 /-! ## §11 — NON-VACUITY TEETH (`#guard`): the carrier decode + the binding BITE, both polarities. -/

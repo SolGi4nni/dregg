@@ -63,6 +63,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (rotateV3)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Deos.SettleEscrowSatDescriptor
   (settleEscrowV1Base beforeFieldCol afterFieldCol)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt gate_modEq_iff)
 
 set_option autoImplicit false
 
@@ -225,15 +226,23 @@ theorem dueAssembly_mem (cur tot due : Nat) :
 
 /-! ## §4 — THE REFINEMENT RUNG: a satisfying trace FORCES the discharge discipline. -/
 
-/-- A welded gate's body vanishes on a satisfying NON-LAST row (the escrow `welded_gate_holds`
-pattern, verbatim through the stable `holdsVm` interface). -/
+/-- Field-faithful lift: two CANONICAL (`0 ≤ · < p`, the deployed range-check invariant) integers
+that are congruent mod `p` are EQUAL. The upgrade from the field gate's `≡ [ZMOD p]` to the ℤ
+equalities the discharge discipline states. -/
+private theorem canonEq {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (hap : a < 2013265921) (hb0 : 0 ≤ b) (hbp : b < 2013265921) : a = b := by
+  unfold Int.ModEq at h
+  rwa [Int.emod_eq_of_lt ha0 hap, Int.emod_eq_of_lt hb0 hbp] at h
+
+/-- A welded gate's body vanishes mod `p` on a satisfying NON-LAST row (the escrow
+`welded_gate_holds` pattern, verbatim through the stable `holdsVm` interface — now field-faithful). -/
 theorem discharge_gate_holds (hash : List ℤ → ℤ) (cur tot due : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (dischargeSatVmDescriptor2R24 cur tot due) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ dischargeSatGates cur tot due)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g (dischargeGate_mem cur tot due g hg)
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -244,14 +253,18 @@ theorem bit_boolean (hash : List ℤ → ℤ) (cur tot due : Nat)
     (hsat : Satisfied2 hash (dischargeSatVmDescriptor2R24 cur tot due) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1)
-    (b : Nat) (hmem : selBoolGate b ∈ dischargeSatGates cur tot due) :
+    (b : Nat) (hcb : 0 ≤ (envAt t i).loc b ∧ (envAt t i).loc b < 2013265921)
+    (hmem : selBoolGate b ∈ dischargeSatGates cur tot due) :
     (envAt t i).loc b = 0 ∨ (envAt t i).loc b = 1 := by
   have h := discharge_gate_holds hash cur tot due hsat i hi hnl (selBoolGate b) hmem
     (.mul (.var DISCHARGE_SEL_COL) (.mul (.var b) (.add (.var b) (.const (-1))))) rfl
   simp only [EmittedExpr.eval, hsel, one_mul] at h
-  rcases mul_eq_zero.mp h with h | h
-  · exact Or.inl h
-  · right; omega
+  -- `h : b · (b − 1) ≡ 0 [ZMOD p]`; with `p` prime and `b` canonical, `b` is exactly 0 or 1.
+  rw [Int.modEq_zero_iff_dvd] at h
+  obtain ⟨hb0, hbp⟩ := hcb
+  rcases (pPrimeInt.dvd_mul.mp h) with hd | hd
+  · left;  obtain ⟨k, hk⟩ := hd; omega
+  · right; obtain ⟨k, hk⟩ := hd; omega
 
 /-- A boolean-bit sum is in `[0, 2^n)` (the range-check payoff, by induction on the width). -/
 theorem bitSum_nonneg_lt (loc : Nat → ℤ) (bit : Nat → Nat) :
@@ -277,13 +290,20 @@ theorem assembly_pins (hash : List ℤ → ℤ) (cur tot due : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1)
     (vcol : Nat) (bit : Nat → Nat)
+    (hcv : 0 ≤ (envAt t i).loc vcol ∧ (envAt t i).loc vcol < 2013265921)
+    (hbits : ∀ j, j < DUE_BITS → (envAt t i).loc (bit j) = 0 ∨ (envAt t i).loc (bit j) = 1)
     (hmem : selAssemblyGate (.var vcol) bit DUE_BITS ∈ dischargeSatGates cur tot due) :
     (envAt t i).loc vcol = (bitSum bit DUE_BITS).eval (envAt t i).loc := by
   have h := discharge_gate_holds hash cur tot due hsat i hi hnl _ hmem
     (.mul (.var DISCHARGE_SEL_COL)
       (.add (.var vcol) (.mul (.const (-1)) (bitSum bit DUE_BITS)))) rfl
   simp only [EmittedExpr.eval, hsel, one_mul] at h
-  omega
+  -- `h : vcol − Σ 2^i bit_i ≡ 0 [ZMOD p]`; the assembled sum is in `[0, 2^28) ⊂ [0, p)` and `vcol`
+  -- is canonical, so the congruence lifts to the exact ℤ equality.
+  have hrange := bitSum_nonneg_lt (envAt t i).loc bit DUE_BITS hbits
+  have hsp : (bitSum bit DUE_BITS).eval (envAt t i).loc < 2013265921 :=
+    lt_of_lt_of_le hrange.2 (by norm_num [DUE_BITS])
+  exact canonEq ((gate_modEq_iff (by ring)).mp h) hcv.1 hcv.2 hrange.1 hsp
 
 /-- **THE REFINEMENT KEYSTONE.** On a satisfying trace, a NON-LAST row whose discharge selector is
 `1` FORCES the discharge discipline over the rotated field columns the wide commit absorbs (the
@@ -295,7 +315,12 @@ theorem dischargeSatV3_forces (hash : List ℤ → ℤ) (cur tot due : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (dischargeSatVmDescriptor2R24 cur tot due) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
-    (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1) :
+    (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
+    (hcurMove :
+      (envAt t i).loc (beforeFieldCol cur) + (envAt t i).loc PERIOD_COL < 2013265921)
+    (htotMove :
+      (envAt t i).loc (beforeFieldCol tot) + (envAt t i).loc AMOUNT_COL < 2013265921) :
     (envAt t i).loc (afterFieldCol cur)
         = (envAt t i).loc (beforeFieldCol cur) + (envAt t i).loc PERIOD_COL
     ∧ (envAt t i).loc (afterFieldCol tot)
@@ -303,39 +328,64 @@ theorem dischargeSatV3_forces (hash : List ℤ → ℤ) (cur tot due : Nat)
     ∧ (envAt t i).loc (beforeFieldCol due) ≤ (envAt t i).loc CLOCK_COL
     ∧ 0 ≤ (envAt t i).loc (beforeFieldCol due)
     ∧ (envAt t i).loc (beforeFieldCol due) < 2 ^ DUE_BITS := by
-  -- (1) cursor advance.
+  -- (1) cursor advance: the field gate gives `after ≡ before + period [ZMOD p]`; canonicality of
+  -- `after` and no-wrap of the sum lift it to the exact ℤ advance.
   have hcur := discharge_gate_holds hash cur tot due hsat i hi hnl _ (cursorGate_mem cur tot due)
     (.mul (.var DISCHARGE_SEL_COL)
       (.add (.add (.var (afterFieldCol cur)) (.mul (.const (-1)) (.var (beforeFieldCol cur))))
         (.mul (.const (-1)) (.var PERIOD_COL)))) rfl
   simp only [EmittedExpr.eval, hsel, one_mul] at hcur
+  have e1 : (envAt t i).loc (afterFieldCol cur)
+      = (envAt t i).loc (beforeFieldCol cur) + (envAt t i).loc PERIOD_COL :=
+    canonEq ((gate_modEq_iff (by ring)).mp hcur) (hcanon _).1 (hcanon _).2
+      (by have := (hcanon (beforeFieldCol cur)).1; have := (hcanon PERIOD_COL).1; omega) hcurMove
   -- (2) total advance.
   have htot := discharge_gate_holds hash cur tot due hsat i hi hnl _ (totalGate_mem cur tot due)
     (.mul (.var DISCHARGE_SEL_COL)
       (.add (.add (.var (afterFieldCol tot)) (.mul (.const (-1)) (.var (beforeFieldCol tot))))
         (.mul (.const (-1)) (.var AMOUNT_COL)))) rfl
   simp only [EmittedExpr.eval, hsel, one_mul] at htot
-  -- (3a) the due-ness link.
+  have e2 : (envAt t i).loc (afterFieldCol tot)
+      = (envAt t i).loc (beforeFieldCol tot) + (envAt t i).loc AMOUNT_COL :=
+    canonEq ((gate_modEq_iff (by ring)).mp htot) (hcanon _).1 (hcanon _).2
+      (by have := (hcanon (beforeFieldCol tot)).1; have := (hcanon AMOUNT_COL).1; omega) htotMove
+  -- (3a) the due-ness link (still a congruence for now).
   have hlink := discharge_gate_holds hash cur tot due hsat i hi hnl _ (dueLinkGate_mem cur tot due)
     (.mul (.var DISCHARGE_SEL_COL)
       (.add (.add (.var CLOCK_COL) (.mul (.const (-1)) (.var (beforeFieldCol due))))
         (.mul (.const (-1)) (.var DUE_DIFF_COL)))) rfl
   simp only [EmittedExpr.eval, hsel, one_mul] at hlink
-  -- (3b) DUE_DIFF ∈ [0, 2^28).
+  have hlinkMod : (envAt t i).loc CLOCK_COL
+      ≡ (envAt t i).loc (beforeFieldCol due) + (envAt t i).loc DUE_DIFF_COL [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hlink
+  -- (3b) DUE_DIFF ∈ [0, 2^28) — the range check upgraded to an exact ℤ pin.
   have hdiffBits : ∀ j, j < DUE_BITS →
       (envAt t i).loc (diffBitCol j) = 0 ∨ (envAt t i).loc (diffBitCol j) = 1 :=
-    fun j hj => bit_boolean hash cur tot due hsat i hi hnl hsel _ (diffBool_mem cur tot due j hj)
+    fun j hj => bit_boolean hash cur tot due hsat i hi hnl hsel _ (hcanon _)
+      (diffBool_mem cur tot due j hj)
   have hdiffPin := assembly_pins hash cur tot due hsat i hi hnl hsel DUE_DIFF_COL diffBitCol
-    (diffAssembly_mem cur tot due)
+    (hcanon _) hdiffBits (diffAssembly_mem cur tot due)
   have hdiffRange := bitSum_nonneg_lt (envAt t i).loc diffBitCol DUE_BITS hdiffBits
-  -- (3c) before[due] ∈ [0, 2^28).
+  -- (3c) before[due] ∈ [0, 2^28) — the wrap-to-small dodge closed.
   have hdueBits : ∀ j, j < DUE_BITS →
       (envAt t i).loc (dueBitCol j) = 0 ∨ (envAt t i).loc (dueBitCol j) = 1 :=
-    fun j hj => bit_boolean hash cur tot due hsat i hi hnl hsel _ (dueBool_mem cur tot due j hj)
+    fun j hj => bit_boolean hash cur tot due hsat i hi hnl hsel _ (hcanon _)
+      (dueBool_mem cur tot due j hj)
   have hduePin := assembly_pins hash cur tot due hsat i hi hnl hsel (beforeFieldCol due) dueBitCol
-    (dueAssembly_mem cur tot due)
+    (hcanon _) hdueBits (dueAssembly_mem cur tot due)
   have hdueRange := bitSum_nonneg_lt (envAt t i).loc dueBitCol DUE_BITS hdueBits
-  refine ⟨by omega, by omega, by omega, by omega, by omega⟩
+  -- both range-checked blocks live in `[0, 2^28)`, so their sum is well below `p`: the due-link
+  -- congruence lifts to the exact ℤ identity `clock = before[due] + DUE_DIFF`.
+  have hb28 : (2 : ℤ) ^ DUE_BITS ≤ 268435456 := by norm_num [DUE_BITS]
+  have hsumLt : (envAt t i).loc (beforeFieldCol due) + (envAt t i).loc DUE_DIFF_COL < 2013265921 := by
+    omega
+  have hclockEq : (envAt t i).loc CLOCK_COL
+      = (envAt t i).loc (beforeFieldCol due) + (envAt t i).loc DUE_DIFF_COL :=
+    canonEq hlinkMod (hcanon _).1 (hcanon _).2 (by omega) hsumLt
+  refine ⟨e1, e2, ?_, ?_, ?_⟩
+  · omega
+  · omega
+  · omega
 
 /-! ## §5 — THE TEETH (in-AIR): the three forgeries are UNSAT. -/
 
@@ -347,9 +397,12 @@ theorem early_discharge_unsat (hash : List ℤ → ℤ) (cur tot due : Nat)
     (hsat : Satisfied2 hash (dischargeSatVmDescriptor2R24 cur tot due) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
+    (hcurMove : (envAt t i).loc (beforeFieldCol cur) + (envAt t i).loc PERIOD_COL < 2013265921)
+    (htotMove : (envAt t i).loc (beforeFieldCol tot) + (envAt t i).loc AMOUNT_COL < 2013265921)
     (hearly : (envAt t i).loc CLOCK_COL < (envAt t i).loc (beforeFieldCol due)) :
     False := by
-  have h := (dischargeSatV3_forces hash cur tot due hsat i hi hnl hsel).2.2.1
+  have h := (dischargeSatV3_forces hash cur tot due hsat i hi hnl hsel hcanon hcurMove htotMove).2.2.1
   omega
 
 /-- **THE NO-REPLAY TOOTH.** A discharge leaving the one-shot cursor where it was (no `+period`
@@ -359,10 +412,13 @@ theorem cursor_not_advanced_unsat (hash : List ℤ → ℤ) (cur tot due : Nat)
     (hsat : Satisfied2 hash (dischargeSatVmDescriptor2R24 cur tot due) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
+    (hcurMove : (envAt t i).loc (beforeFieldCol cur) + (envAt t i).loc PERIOD_COL < 2013265921)
+    (htotMove : (envAt t i).loc (beforeFieldCol tot) + (envAt t i).loc AMOUNT_COL < 2013265921)
     (hstuck : (envAt t i).loc (afterFieldCol cur) = (envAt t i).loc (beforeFieldCol cur))
     (hperiod : (envAt t i).loc PERIOD_COL ≠ 0) :
     False := by
-  have h := (dischargeSatV3_forces hash cur tot due hsat i hi hnl hsel).1
+  have h := (dischargeSatV3_forces hash cur tot due hsat i hi hnl hsel hcanon hcurMove htotMove).1
   omega
 
 /-- **THE NO-WRONG-AMOUNT TOOTH.** A discharge advancing the total by anything other than the
@@ -372,10 +428,13 @@ theorem wrong_amount_unsat (hash : List ℤ → ℤ) (cur tot due : Nat)
     (hsat : Satisfied2 hash (dischargeSatVmDescriptor2R24 cur tot due) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc DISCHARGE_SEL_COL = 1)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
+    (hcurMove : (envAt t i).loc (beforeFieldCol cur) + (envAt t i).loc PERIOD_COL < 2013265921)
+    (htotMove : (envAt t i).loc (beforeFieldCol tot) + (envAt t i).loc AMOUNT_COL < 2013265921)
     (hwrong : (envAt t i).loc (afterFieldCol tot)
         ≠ (envAt t i).loc (beforeFieldCol tot) + (envAt t i).loc AMOUNT_COL) :
     False := by
-  have h := (dischargeSatV3_forces hash cur tot due hsat i hi hnl hsel).2.1
+  have h := (dischargeSatV3_forces hash cur tot due hsat i hi hnl hsel hcanon hcurMove htotMove).2.1
   omega
 
 /-! ## §6 — NON-VACUITY TEETH (`#guard`): the gate bodies BITE on concrete rows. -/

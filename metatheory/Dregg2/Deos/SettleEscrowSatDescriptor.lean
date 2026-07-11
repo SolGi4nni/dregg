@@ -166,11 +166,11 @@ theorem welded_gate_holds (hash : List ℤ → ℤ) (legA legB : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g (settleGate_mem legA legB g hg)
   rw [hbody] at hrow
   -- `holdsAt` for a `.base (.gate body)` is `holdsVm env (i==0) (i+1==len) (.gate body)`;
-  -- on a non-last row this reduces to `body.eval loc = 0`.
+  -- on a non-last row this reduces (field-faithfully) to `body.eval loc ≡ 0 [ZMOD p]`.
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
 
 /-- **THE REFINEMENT KEYSTONE.** On a satisfying trace, a NON-LAST row whose escrow selector is `1`
@@ -182,22 +182,23 @@ theorem settleEscrowSatV3_forces_settle_gate (hash : List ℤ → ℤ) (legA leg
     (hsat : Satisfied2 hash (settleEscrowSatVmDescriptor2R24 legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc ESCROW_SEL_COL = 1) :
-    (envAt t i).loc (beforeFieldCol legA) = stDeposited ∧
-    (envAt t i).loc (beforeFieldCol legB) = stDeposited ∧
-    (envAt t i).loc (afterFieldCol legA)  = stConsumed ∧
-    (envAt t i).loc (afterFieldCol legB)  = stConsumed := by
-  -- Each welded gate body `sel · (col − const)` vanishes; `sel = 1` collapses it to `col = const`.
+    (envAt t i).loc (beforeFieldCol legA) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (beforeFieldCol legB) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legA)  ≡ stConsumed [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legB)  ≡ stConsumed [ZMOD 2013265921] := by
+  -- Each welded gate body `sel · (col − const)` vanishes mod `p`; `sel = 1` collapses it to
+  -- the field-faithful equality `col ≡ const [ZMOD p]`.
   have force : ∀ (col : Nat) (val : ℤ),
       settleEscrowSatGate ESCROW_SEL_COL col val ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB →
-      (envAt t i).loc col = val := by
+      (envAt t i).loc col ≡ val [ZMOD 2013265921] := by
     intro col val hmem
     have h0 := welded_gate_holds hash legA legB hsat i hi hnl
       (settleEscrowSatGate ESCROW_SEL_COL col val) hmem
       (.mul (.var ESCROW_SEL_COL) (.add (.var col) (.const (-val)))) rfl
-    -- `EmittedExpr.eval`: `sel * (col + (-val)) = 0`, and `sel = 1`.
+    -- `EmittedExpr.eval`: `sel * (col + (-val)) ≡ 0 [ZMOD p]`, and `sel = 1`.
     simp only [EmittedExpr.eval, hsel, one_mul] at h0
-    -- `col + (-val) = 0  ⟹  col = val`.
-    omega
+    -- `col + (-val) ≡ 0  ⟺  col ≡ val  [ZMOD p]`.
+    exact (gate_modEq_iff (by ring)).mp h0
   refine ⟨?_, ?_, ?_, ?_⟩
   · exact force (beforeFieldCol legA) stDeposited (by simp [settleEscrowSatGates])
   · exact force (beforeFieldCol legB) stDeposited (by simp [settleEscrowSatGates])
@@ -216,6 +217,9 @@ theorem partial_settle_unsat (hash : List ℤ → ℤ) (legA legB : Nat)
     False := by
   have h := (settleEscrowSatV3_forces_settle_gate hash legA legB hsat i hi hnl hsel).2.2.2
   rw [hpartial] at h
+  -- `h : stDeposited ≡ stConsumed [ZMOD p]`, i.e. `1 ≡ 2` — impossible: both are canonical and
+  -- distinct, so `p ∤ (1 − 2)`.
+  simp only [stDeposited, stConsumed] at h
   exact absurd h (by decide)
 
 /-- **THE NO-PHANTOM TOOTH (in-AIR).** A settle whose leg A was never `Deposited` in the rotated
@@ -231,6 +235,9 @@ theorem phantom_settle_unsat (hash : List ℤ → ℤ) (legA legB : Nat)
     False := by
   have h := (settleEscrowSatV3_forces_settle_gate hash legA legB hsat i hi hnl hsel).1
   rw [hphantom] at h
+  -- `h : stEmpty ≡ stDeposited [ZMOD p]`, i.e. `0 ≡ 1` — impossible: both are canonical and
+  -- distinct, so `p ∤ (0 − 1)`.
+  simp only [stEmpty, stDeposited] at h
   exact absurd h (by decide)
 
 /-! ## §6 — NON-VACUITY TEETH (`#guard`): the gate bodies BITE on concrete rows.

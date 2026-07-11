@@ -46,6 +46,28 @@ open Dregg2.Deos.ConstraintBinding (tagSettleEscrow tagDischargeObligation tagVa
 
 set_option autoImplicit false
 
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
+
+/-- Field-faithful lift: two CANONICAL (`0 ≤ · < p`) integers congruent mod `p` are EQUAL. -/
+private theorem canonEq {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (hap : a < 2013265921) (hb0 : 0 ≤ b) (hbp : b < 2013265921) : a = b := by
+  unfold Int.ModEq at h
+  rwa [Int.emod_eq_of_lt ha0 hap, Int.emod_eq_of_lt hb0 hbp] at h
+
+/-- The tag-parametric decode is a boolean value. -/
+private theorem tagBitZ_mem (tag : ℤ) (l : List ℤ) : tagBitZ tag l = 0 ∨ tagBitZ tag l = 1 := by
+  unfold tagBitZ; split <;> simp
+
+/-- The OR-fold congruence lifts to the exact boolean-OR under canonicality and booleanity. -/
+private theorem orFoldLift {oNext o b : ℤ}
+    (hmod : oNext ≡ o + b - o * b [ZMOD 2013265921])
+    (hoN : 0 ≤ oNext ∧ oNext < 2013265921)
+    (ho : o = 0 ∨ o = 1) (hb : b = 0 ∨ b = 1) :
+    oNext = o + b - o * b := by
+  have hrhs : 0 ≤ o + b - o * b ∧ o + b - o * b < 2013265921 := by
+    rcases ho with h | h <;> rcases hb with h' | h' <;> rw [h, h'] <;> norm_num
+  exact canonEq hmod hoN.1 hoN.2 hrhs.1 hrhs.2
+
 /-! ## §1 — the column-parametric decode/refuse block. -/
 
 /-- Read a caveat manifest off a row at parametric columns: count at `cc`, the four 7-felt entries at
@@ -96,7 +118,7 @@ theorem gate_holds_of_mem (hash : List ℤ → ℤ) (D : EffectVmDescriptor2)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ D.constraints)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g hg
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -111,6 +133,8 @@ theorem bit_decodes_at (hash : List ℤ → ℤ) (tag : ℤ) (eb bc ic oc : Nat 
     (hsat : Satisfied2 hash D minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (k : Nat)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921)
     (hdefmem : isZeroDefGateT tag (eb k) (bc k) (ic k) ∈ decodeGatesAt tag eb bc ic oc fc)
     (hforcemem : isZeroForceGateT tag (eb k) (bc k) ∈ decodeGatesAt tag eb bc ic oc fc) :
     (envAt t i).loc (bc k) = tagBitZ tag [(envAt t i).loc (eb k)] := by
@@ -119,7 +143,8 @@ theorem bit_decodes_at (hash : List ℤ → ℤ) (tag : ℤ) (eb bc ic oc : Nat 
   have hforce := gate_holds_of_mem hash D hsat i hi hnl
     (isZeroForceGateT tag (eb k) (bc k)) (hmem _ hforcemem) _ rfl
   simp only [EmittedExpr.eval] at hdef hforce
-  have hb := isZero_from_gates hdef hforce
+  have hb := isZero_from_gates hdef hforce (hcanon i (bc k))
+    (by have h := hcanon i (eb k); omega) (by have h := hcanon i (eb k); omega)
   rw [hb]
   unfold tagBitZ
   simp only [List.mem_cons, List.not_mem_nil, or_false]
@@ -134,16 +159,18 @@ theorem floor_decodes_at (hash : List ℤ → ℤ) (tag : ℤ) (eb bc ic oc : Na
     (hmem : ∀ g ∈ decodeGatesAt tag eb bc ic oc fc, g ∈ D.constraints)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash D minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921) :
     (envAt t i).loc fc
       = tagBitZ tag (manifestTags (manifestOf 0 eb (envAt t i).loc)) := by
-  have hb0 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 0
+  have hb0 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 0 hcanon htag
     (by simp [decodeGatesAt]) (by simp [decodeGatesAt])
-  have hb1 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 1
+  have hb1 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 1 hcanon htag
     (by simp [decodeGatesAt]) (by simp [decodeGatesAt])
-  have hb2 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 2
+  have hb2 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 2 hcanon htag
     (by simp [decodeGatesAt]) (by simp [decodeGatesAt])
-  have hb3 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 3
+  have hb3 := bit_decodes_at hash tag eb bc ic oc fc D hmem hsat i hi hnl 3 hcanon htag
     (by simp [decodeGatesAt]) (by simp [decodeGatesAt])
   have hseed := gate_holds_of_mem hash D hsat i hi hnl
     (orSeedGate (oc 0) (bc 0)) (hmem _ (by simp [decodeGatesAt])) _ rfl
@@ -155,18 +182,36 @@ theorem floor_decodes_at (hash : List ℤ → ℤ) (tag : ℤ) (eb bc ic oc : Na
     (orFoldGate fc (oc 2) (bc 3)) (hmem _ (by simp [decodeGatesAt])) _ rfl
   simp only [EmittedExpr.eval] at hseed hf1 hf2 hf3
   have ho0 : (envAt t i).loc (oc 0) = tagBitZ tag [(envAt t i).loc (eb 0)] := by
-    rw [show (envAt t i).loc (oc 0) = (envAt t i).loc (bc 0) by linarith [hseed]]; exact hb0
+    rw [show (envAt t i).loc (oc 0) = (envAt t i).loc (bc 0) from
+      canonEq ((gate_modEq_iff (by ring)).mp hseed) (hcanon i _).1 (hcanon i _).2
+        (hcanon i _).1 (hcanon i _).2]
+    exact hb0
+  have hm1 : (envAt t i).loc (oc 1)
+      ≡ (envAt t i).loc (oc 0) + (envAt t i).loc (bc 1)
+        - (envAt t i).loc (oc 0) * (envAt t i).loc (bc 1) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf1
   have ho1 : (envAt t i).loc (oc 1)
       = tagBitZ tag ([(envAt t i).loc (eb 0)] ++ [(envAt t i).loc (eb 1)]) :=
-    orStepT ho0 hb1 (by linarith [hf1])
+    orStepT ho0 hb1 (orFoldLift hm1 (hcanon i _)
+      (by rw [ho0]; exact tagBitZ_mem _ _) (by rw [hb1]; exact tagBitZ_mem _ _))
+  have hm2 : (envAt t i).loc (oc 2)
+      ≡ (envAt t i).loc (oc 1) + (envAt t i).loc (bc 2)
+        - (envAt t i).loc (oc 1) * (envAt t i).loc (bc 2) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf2
   have ho2 : (envAt t i).loc (oc 2)
       = tagBitZ tag ([(envAt t i).loc (eb 0), (envAt t i).loc (eb 1)]
           ++ [(envAt t i).loc (eb 2)]) :=
-    orStepT ho1 hb2 (by linarith [hf2])
+    orStepT ho1 hb2 (orFoldLift hm2 (hcanon i _)
+      (by rw [ho1]; exact tagBitZ_mem _ _) (by rw [hb2]; exact tagBitZ_mem _ _))
+  have hm3 : (envAt t i).loc fc
+      ≡ (envAt t i).loc (oc 2) + (envAt t i).loc (bc 3)
+        - (envAt t i).loc (oc 2) * (envAt t i).loc (bc 3) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by ring)).mp hf3
   have ho3 : (envAt t i).loc fc
       = tagBitZ tag ([(envAt t i).loc (eb 0), (envAt t i).loc (eb 1),
           (envAt t i).loc (eb 2)] ++ [(envAt t i).loc (eb 3)]) :=
-    orStepT ho2 hb3 (by linarith [hf3])
+    orStepT ho2 hb3 (orFoldLift hm3 (hcanon i _)
+      (by rw [ho2]; exact tagBitZ_mem _ _) (by rw [hb3]; exact tagBitZ_mem _ _))
   rw [ho3, manifestTags_of]
   simp only [List.cons_append, List.nil_append]
 
@@ -189,6 +234,8 @@ theorem declared_tag_unsat_at (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash D minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (manifestOf cc eb (envAt t 0).loc)
       = caveatCommit hash committedManifest)
@@ -196,7 +243,7 @@ theorem declared_tag_unsat_at (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR
     False := by
   have hmeq : manifestOf cc eb (envAt t 0).loc = committedManifest := caveatCommit_binds hash hCR hbind
   have hrowreq : tag ∈ manifestTags (manifestOf cc eb (envAt t 0).loc) := by rw [hmeq]; exact hreq
-  have hdec := floor_decodes_at hash tag eb bc ic oc fc D hmemDecode hsat 0 hi hnl
+  have hdec := floor_decodes_at hash tag eb bc ic oc fc D hmemDecode hsat 0 hi hnl hcanon htag
   -- `manifestTags` ignores `cc`; align the decode's `manifestOf 0` tags with the bound `manifestOf cc`.
   have htags : manifestTags (manifestOf 0 eb (envAt t 0).loc)
       = manifestTags (manifestOf cc eb (envAt t 0).loc) := by rw [manifestTags_of, manifestTags_of]
@@ -299,6 +346,8 @@ theorem declared_capacity_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseid
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianDeployedBareRefuse d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (manifestOf ccDep ebDep (envAt t 0).loc)
       = caveatCommit hash committedManifest)
@@ -307,7 +356,7 @@ theorem declared_capacity_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseid
   refine declared_tag_unsat_at hash hCR tag ccDep ebDep (bcDep d.traceWidth b) (icDep d.traceWidth b)
     (ocDep d.traceWidth b) (fcDep d.traceWidth b)
     (gentianDeployedBareRefuse d) (fun g hg => block_mem_deployed d g ?_)
-    (block_mem_deployed d _ ?_) hsat hi hnl committedManifest hbind hreq
+    (block_mem_deployed d _ ?_) hsat hi hnl hcanon htag committedManifest hbind hreq
   · -- decode gate membership: route into the matching block via `hblock`.
     rcases hblock with h | h | h
     · exact Or.inl (h ▸ decode_mem_block d.traceWidth tag b g hg)
@@ -325,12 +374,14 @@ theorem declared_escrow_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseidon
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianDeployedBareRefuse d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (manifestOf ccDep ebDep (envAt t 0).loc)
       = caveatCommit hash committedManifest)
     (hreq : (tagSettleEscrow : ℤ) ∈ manifestTags committedManifest) :
     False :=
-  declared_capacity_unsat_deployed hash hCR _ 0 d (Or.inl rfl) hsat hi hnl committedManifest hbind hreq
+  declared_capacity_unsat_deployed hash hCR _ 0 d (Or.inl rfl) hsat hi hnl hcanon (by decide)
+    committedManifest hbind hreq
 
 /-- Discharge (block 1) is UNSAT under the deployed bare member when the committed manifest declares it. -/
 theorem declared_discharge_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
@@ -338,13 +389,14 @@ theorem declared_discharge_unsat_deployed (hash : List ℤ → ℤ) (hCR : Posei
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianDeployedBareRefuse d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (manifestOf ccDep ebDep (envAt t 0).loc)
       = caveatCommit hash committedManifest)
     (hreq : (tagDischargeObligation : ℤ) ∈ manifestTags committedManifest) :
     False :=
-  declared_capacity_unsat_deployed hash hCR _ 1 d (Or.inr (Or.inl rfl)) hsat hi hnl committedManifest
-    hbind hreq
+  declared_capacity_unsat_deployed hash hCR _ 1 d (Or.inr (Or.inl rfl)) hsat hi hnl hcanon (by decide)
+    committedManifest hbind hreq
 
 /-- Vault (block 2) is UNSAT under the deployed bare member when the committed manifest declares it. -/
 theorem declared_vault_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
@@ -352,13 +404,14 @@ theorem declared_vault_unsat_deployed (hash : List ℤ → ℤ) (hCR : Poseidon2
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianDeployedBareRefuse d) minit mfin maddrs t)
     (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
     (committedManifest : RotCaveatManifest)
     (hbind : caveatCommit hash (manifestOf ccDep ebDep (envAt t 0).loc)
       = caveatCommit hash committedManifest)
     (hreq : (tagVaultDeposit : ℤ) ∈ manifestTags committedManifest) :
     False :=
-  declared_capacity_unsat_deployed hash hCR _ 2 d (Or.inr (Or.inr rfl)) hsat hi hnl committedManifest
-    hbind hreq
+  declared_capacity_unsat_deployed hash hCR _ 2 d (Or.inr (Or.inr rfl)) hsat hi hnl hcanon (by decide)
+    committedManifest hbind hreq
 
 /-! ## §5b — THE PEEL: `Satisfied2 (gentianDeployedBareRefuse d) ⟹ Satisfied2 d`.
 

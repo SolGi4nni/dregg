@@ -68,6 +68,7 @@ open Dregg2.Deos.SettleEscrowSatDescriptor
    settleEscrowV1Base)
 open Dregg2.Deos.SettleEscrowSatWideDescriptor
   (settleEscrowSatVmDescriptor2R24Wide settleGateWide_mem settleEscrowWide_forces_settle_gate)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 
 set_option autoImplicit false
 
@@ -175,16 +176,23 @@ theorem gentian_auth_digest_absorbed :
 
 /-! ## §5 — the generic gate-forcing helper (the `Satisfied2.rowConstraints` reduction). -/
 
-/-- A GENTIAN-descriptor gate's body vanishes on a satisfying NON-LAST row. Generic over any
+/-- Field-faithful lift: two CANONICAL (`0 ≤ · < p`, the deployed range-check invariant) integers
+that are congruent mod `p` are EQUAL. -/
+private theorem canonEq {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (hap : a < 2013265921) (hb0 : 0 ≤ b) (hbp : b < 2013265921) : a = b := by
+  unfold Int.ModEq at h
+  rwa [Int.emod_eq_of_lt ha0 hap, Int.emod_eq_of_lt hb0 hbp] at h
+
+/-- A GENTIAN-descriptor gate's body vanishes mod `p` on a satisfying NON-LAST row. Generic over any
 `.base (.gate body)` constraint of the descriptor; the SAME reduction
-`SettleEscrowSatWideDescriptor.welded_gate_holds_wide` uses. -/
+`SettleEscrowSatWideDescriptor.welded_gate_holds_wide` uses (now field-faithful). -/
 theorem gentian_gate_holds (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (g : VmConstraint2) (hg : g ∈ (gentianSelectorDescriptor legA legB).constraints)
     (body : EmittedExpr) (hbody : g = .base (.gate body)) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi g hg
   rw [hbody] at hrow
   simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, hnl] using hrow
@@ -196,14 +204,20 @@ satisfying non-last row, `witDigestCol = authDigestCol`. -/
 theorem recompute_binds (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcWit : 0 ≤ (envAt t i).loc GENTIAN_WIT_DIGEST_COL
+      ∧ (envAt t i).loc GENTIAN_WIT_DIGEST_COL < 2013265921)
+    (hcAuth : 0 ≤ (envAt t i).loc gentianAuthDigestCol
+      ∧ (envAt t i).loc gentianAuthDigestCol < 2013265921) :
     (envAt t i).loc GENTIAN_WIT_DIGEST_COL = (envAt t i).loc gentianAuthDigestCol := by
   have h := gentian_gate_holds hash legA legB hsat i hi hnl
     (gentianRecomputeBindGate GENTIAN_WIT_DIGEST_COL gentianAuthDigestCol)
     (gentianGate_mem legA legB _ (by simp [gentianGates]))
     (.add (.var GENTIAN_WIT_DIGEST_COL) (.mul (.const (-1)) (.var gentianAuthDigestCol))) rfl
   simp only [EmittedExpr.eval] at h
-  omega
+  -- the recompute-bind gate is `wit − auth ≡ 0 [ZMOD p]`; both limbs are canonical digest cells,
+  -- so the congruence lifts to the exact ℤ equality the CR floor consumes.
+  exact canonEq ((gate_modEq_iff (by ring)).mp h) hcWit.1 hcWit.2 hcAuth.1 hcAuth.2
 
 /-! ## §7 — HALF B (the forced floor bit forces the selector ON). -/
 
@@ -213,14 +227,17 @@ theorem floor_forces_selector (hash : List ℤ → ℤ) (legA legB : Nat)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
-    (hfloor : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = 1) :
+    (hfloor : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = 1)
+    (hcSel : 0 ≤ (envAt t i).loc ESCROW_SEL_COL ∧ (envAt t i).loc ESCROW_SEL_COL < 2013265921) :
     (envAt t i).loc ESCROW_SEL_COL = 1 := by
   have h := gentian_gate_holds hash legA legB hsat i hi hnl
     (gentianSelectorForceGate GENTIAN_FLOOR_ESCROW_COL ESCROW_SEL_COL)
     (gentianGate_mem legA legB _ (by simp [gentianGates]))
     (.mul (.var GENTIAN_FLOOR_ESCROW_COL) (.add (.var ESCROW_SEL_COL) (.const (-1)))) rfl
   simp only [EmittedExpr.eval, hfloor, one_mul] at h
-  omega
+  -- with the floor bit `1` the gate is `sel − 1 ≡ 0 [ZMOD p]`; `sel` is a canonical selector cell,
+  -- so it is forced exactly to `1`.
+  exact canonEq ((gate_modEq_iff (by ring)).mp h) hcSel.1 hcSel.2 (by norm_num) (by norm_num)
 
 /-! ## §8 — THE GENTIAN SELECTOR-FORCING KEYSTONE.
 
@@ -249,12 +266,13 @@ theorem gentian_selector_forced {Decl : Type}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = authDigest committed)
     (hrecompute : (envAt t i).loc GENTIAN_WIT_DIGEST_COL = authDigest witnessed)
     (hdecode : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = escrowBit (requiredTags witnessed)) :
     (envAt t i).loc ESCROW_SEL_COL = 1 := by
   -- HALF A: the recompute-bind gate ties the recompute output to the committed limb.
-  have hbind := recompute_binds hash legA legB hsat i hi hnl
+  have hbind := recompute_binds hash legA legB hsat i hi hnl (hcanon _) (hcanon _)
   -- ⟹ the witnessed digest equals the committed digest.
   have hdigeq : authDigest witnessed = authDigest committed := by
     rw [← hrecompute, hbind, hcommitLimb]
@@ -265,7 +283,7 @@ theorem gentian_selector_forced {Decl : Type}
   have hfloor : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = 1 := by
     rw [hdecode]; exact escrowBit_eq_one_of_mem hwitreq
   -- HALF B: the forced floor bit forces the selector ON.
-  exact floor_forces_selector hash legA legB hsat i hi hnl hfloor
+  exact floor_forces_selector hash legA legB hsat i hi hnl hfloor (hcanon _)
 
 /-! ## §9 — THE COMPOSED GATE-FORCING (the `hverifier`-free discharge).
 
@@ -287,26 +305,28 @@ theorem gentian_settle_forced {Decl : Type}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = authDigest committed)
     (hrecompute : (envAt t i).loc GENTIAN_WIT_DIGEST_COL = authDigest witnessed)
     (hdecode : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = escrowBit (requiredTags witnessed)) :
-    (envAt t i).loc (beforeFieldCol legA) = stDeposited ∧
-    (envAt t i).loc (beforeFieldCol legB) = stDeposited ∧
-    (envAt t i).loc (afterFieldCol legA)  = stConsumed ∧
-    (envAt t i).loc (afterFieldCol legB)  = stConsumed := by
+    (envAt t i).loc (beforeFieldCol legA) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (beforeFieldCol legB) ≡ stDeposited [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legA)  ≡ stConsumed [ZMOD 2013265921] ∧
+    (envAt t i).loc (afterFieldCol legB)  ≡ stConsumed [ZMOD 2013265921] := by
   -- The selector is forced ON by the in-AIR gadget.
   have hsel := gentian_selector_forced authDigest requiredTags hbinds committed witnessed hreq
-    hash legA legB hsat i hi hnl hcommitLimb hrecompute hdecode
-  -- The WIDE-welded gates (members of the gentian descriptor) then force the four conjuncts.
+    hash legA legB hsat i hi hnl hcanon hcommitLimb hrecompute hdecode
+  -- The WIDE-welded gates (members of the gentian descriptor) then force the four conjuncts
+  -- (field-faithfully, as mod-`p` congruences over the committed field columns).
   have force : ∀ (col : Nat) (val : ℤ),
       settleEscrowSatGate ESCROW_SEL_COL col val ∈ settleEscrowSatGates ESCROW_SEL_COL legA legB →
-      (envAt t i).loc col = val := by
+      (envAt t i).loc col ≡ val [ZMOD 2013265921] := by
     intro col val hmem
     have h0 := gentian_gate_holds hash legA legB hsat i hi hnl
       (settleEscrowSatGate ESCROW_SEL_COL col val) (weldedGate_mem_gentian legA legB _ hmem)
       (.mul (.var ESCROW_SEL_COL) (.add (.var col) (.const (-val)))) rfl
     simp only [EmittedExpr.eval, hsel, one_mul] at h0
-    omega
+    exact (gate_modEq_iff (by ring)).mp h0
   refine ⟨?_, ?_, ?_, ?_⟩
   · exact force (beforeFieldCol legA) stDeposited (by simp [settleEscrowSatGates])
   · exact force (beforeFieldCol legB) stDeposited (by simp [settleEscrowSatGates])
@@ -330,14 +350,16 @@ theorem gentian_partial_unsat {Decl : Type}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = authDigest committed)
     (hrecompute : (envAt t i).loc GENTIAN_WIT_DIGEST_COL = authDigest witnessed)
     (hdecode : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = escrowBit (requiredTags witnessed))
     (hpartial : (envAt t i).loc (afterFieldCol legB) = stDeposited) :
     False := by
   have h := (gentian_settle_forced authDigest requiredTags hbinds committed witnessed hreq
-    hash legA legB hsat i hi hnl hcommitLimb hrecompute hdecode).2.2.2
+    hash legA legB hsat i hi hnl hcanon hcommitLimb hrecompute hdecode).2.2.2
   rw [hpartial] at h
+  simp only [stDeposited, stConsumed] at h
   exact absurd h (by decide)
 
 /-- **THE NO-PHANTOM TOOTH (gentian).** A phantom settle (leg A never `Deposited` before) on a
@@ -351,14 +373,16 @@ theorem gentian_phantom_unsat {Decl : Type}
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash (gentianSelectorDescriptor legA legB) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
     (hcommitLimb : (envAt t i).loc gentianAuthDigestCol = authDigest committed)
     (hrecompute : (envAt t i).loc GENTIAN_WIT_DIGEST_COL = authDigest witnessed)
     (hdecode : (envAt t i).loc GENTIAN_FLOOR_ESCROW_COL = escrowBit (requiredTags witnessed))
     (hphantom : (envAt t i).loc (beforeFieldCol legA) = stEmpty) :
     False := by
   have h := (gentian_settle_forced authDigest requiredTags hbinds committed witnessed hreq
-    hash legA legB hsat i hi hnl hcommitLimb hrecompute hdecode).1
+    hash legA legB hsat i hi hnl hcanon hcommitLimb hrecompute hdecode).1
   rw [hphantom] at h
+  simp only [stEmpty, stDeposited] at h
   exact absurd h (by decide)
 
 /-! ## §11 — NON-VACUITY TEETH (`#guard`): the decode + the gates BITE, both polarities. -/
