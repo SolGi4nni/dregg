@@ -852,3 +852,15 @@ should be.
   a REAL dungeon-on-dregg turn + reproduced on replay + ONE assembled played-to-win universe, zero attested-dm.
 The adversarial audit EARNED ITS KEEP: it caught the misfire + confirmed the honest Lane-D block — exactly the
 skeptic-catches-residual-LARP discipline.
+
+## Ultracode grind result (2026-07-11): 3 honest gaps CLOSED, driven by me
+- ✅ ASSEMBLED UNIVERSE + DICE (dungeon-on-dregg, re-fired real): a dregg-dice roll bound into a real turn (EmitEvent,
+  damage IS the roll; a lethal blow refused by FieldGte; forged roll AND forged damage caught on replay); ONE universe
+  played START->WIN (cross-cell gate -> 4 dice blows -> narration -> WIN, 9 chaining turns). 43/43. Closes "slices not
+  a game" + "randomness unwired". Honest: O(N) replay; Deterministic source (non-grindable VRF/Hybrid a named wire-in).
+- ✅ DURABLE NOTARY (zkoracle) + ✅ LIGHTCLIENT TRIPWIRE (game-turn-slice) committed earlier this pass.
+HONEST GAPS REMAINING after the grind: (a) LIGHT-CLIENT crown — Lane-D-blocked (2 circuit constants WIDE_NUM_CARRIERS
+57->60 + WIDE_COMMIT_CARRIER 56->59) + a deployed-VK anchor (ours). (b) DEPLOYED/RUNNING for real users — no author has
+compiled a universe, no player via discord (the stakeholder surfaces — the biggest remaining value). (c) brain channel-
+confined not JAILED (deos-hermes unwired). (d) multi-cell finality host-recomputed not cross-node. (e) the assembled
+universe defaults to the Deterministic (grindable) dice source not the non-grindable VRF/Hybrid.
