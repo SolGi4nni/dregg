@@ -54,9 +54,13 @@ correct closure needs a **variance-based Bernstein/sub-gamma** concentration (un
 exact Kyber convolution δ — NOT Hoeffding. That is the precise named residual. `native_decide`-shrink (toward
 kernel) + `[StarkSound]` discharge: not started.
 
-## Seam 5 — deployment integrity: NOT STARTED
-Fail-CLOSED install (currently fail-open to the crate); route/allowlist the 23 FFI-free leaf binaries; wire
-the Crypto chain into a CI target; land on `main`; run ONE whole-tree gauntlet (never done — OOM/lock).
+## Seam 5 — deployment integrity: PARTIAL (crypto-subtree gauntlet GREEN)
+**Crypto-subtree gauntlet PASSED on hbox (8524 jobs, exit 0)** — all linking modules (VerifyCoreEqSpec,
+SignCoreSpec, DecapsCoreSpec, EncapsCoreSpec, FloorBridge, MlKemDelta, UcSignatureQuant, HybridThresholdQuant,
+ProtocolSoundnessQuant + all deps) compose TOGETHER, not just piecewise. Remaining: fail-CLOSED install
+(currently fail-open to the crate); route/allowlist the 23 FFI-free leaf binaries; wire the Crypto chain into
+a CI target (it's outside default `lake build`); the FULL whole-tree gauntlet on `main` (crypto-subtree done,
+whole-tree churn/OOM-blocked); land on `main`.
 
 ## Prior campaign (context)
 The PQ-TCB deployment is DONE + live-proven: ML-DSA verify+sign, ML-KEM decaps+encaps all route through the
