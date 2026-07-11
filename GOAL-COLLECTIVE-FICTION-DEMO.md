@@ -614,3 +614,10 @@ receipts · the first FOLDED inventory-conservation proof (design Phase 3). Mult
   reconstructs the draw + catches a forged roll; 96 lib + 19 dsl + dungeon-service green). Honest CommitReveal slice.
 - FIRING (reliable lane, pqvrf/ — codex flaked 3x, dropped for shipping): high-assurance LB-VRF bound to the Lean's
   proved uniqueness->MSIS leg. Then wire dice/ ServerVrf -> pqvrf/ + rebuild the Hybrid/timeout PQ scaffolding.
+
+## ══ ALL-NIGHT GOAL: dreggic-collectivity-web as good as possible (registered in GOALS-INDEX.md) ══
+Wave 1 firing (3 disjoint lanes): FRONTEND/UX polish [demo/, a709da8 — cohesive nav + mobile + collective-vote UX
++ a11y + share] · SAVE/LOAD PERSISTENCE [attested-dm, a9f2b73 — serialize+resume a GameSession, verify-on-load,
+tampered-save refused] · LB-VRF [pqvrf/, abdff09 — high-assurance lattice VRF bound to the proved Lean uniqueness->
+MSIS leg]. Serialization: engine lanes single-file on game.rs; demo/pqvrf/docs parallelize. Wave 2 queued:
+quorum-certified /party · combat engine · overworld · wire dice/ ServerVrf->pqvrf + rebuild Hybrid/timeout PQ.
