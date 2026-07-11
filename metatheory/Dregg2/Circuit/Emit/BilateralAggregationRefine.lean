@@ -27,6 +27,17 @@ No separate whole-trace semantic MODEL existed for this family (the census `lean
 files themselves); so we AUTHOR the functional spec `BundleAggregated t` (§2) and prove
 `Satisfied2 … → BundleAggregated t` (SAT_IMPLIES_SEM) in `bilateralAgg_refines` (§5).
 
+## Field-faithful denotation
+
+`VmConstraint.holdsVm`/`WindowConstraint.holdsAt` pin every gate only `≡ 0 [ZMOD p]`
+(`p = 2013265921`, BabyBear) — the DEPLOYED field constraint, not a ℤ toy. The bridge therefore
+threads the EXPLICIT canonicality envelope `AggTraceCanon` (§2.5: every cell/PI a canonical
+representative in `[0, p)`, plus last-row booleanity of the two contribution columns — the one row
+where the AIR's own boolean gates are vacuous) and a bundle-size bound `|rows| < p`. Under it the
+crown is recovered EXACTLY over ℤ (`running_sum_canon` — the strengthened induction
+`cum j = prefixSum j ≤ j + 1 < p`, so no wrap-around forgery of the agent count is possible); the
+envelope is inhabited concretely by `witTrace_canon` (§6), so it is not vacuous.
+
 ## Non-vacuity
 
 `witTrace` (§6): a concrete 2-row bundle `cell0 (non-agent, consistent) · cell1 (the agent cell)`
@@ -53,6 +64,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
    holdsVm_piFirst_true holdsVm_piLast_true)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmitBilateralAgg
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt gate_modEq_iff)
 
 set_option autoImplicit false
 set_option linter.unusedSimpArgs false
@@ -79,6 +91,51 @@ theorem running_sum (len : Nat) (cumf contribf : Nat → ℤ)
       have hn : n < len := by omega
       simp only [prefixSum]
       rw [hstep n hlt, ih hn]
+
+/-- Prefix sums of BOOLEAN contributions are bounded: `0 ≤ prefixSum f j ≤ j + 1`. The size half of
+the field-faithful crown recovery — a boolean-fed cumulative cannot reach the modulus on a bundle
+shorter than `p`. -/
+theorem prefixSum_bool_bounds (contribf : Nat → ℤ) :
+    ∀ j, (∀ m, m ≤ j → contribf m = 0 ∨ contribf m = 1) →
+      0 ≤ prefixSum contribf j ∧ prefixSum contribf j ≤ (j : ℤ) + 1 := by
+  intro j
+  induction j with
+  | zero =>
+      intro h
+      rcases h 0 (Nat.le_refl 0) with h0 | h0 <;> simp only [prefixSum, h0] <;> norm_num
+  | succ n ih =>
+      intro h
+      have ihn := ih (fun m hm => h m (Nat.le_succ_of_le hm))
+      rcases h (n + 1) (Nat.le_refl _) with h1 | h1 <;>
+        simp only [prefixSum, h1] <;> push_cast <;> omega
+
+/-- **The FIELD-FAITHFUL running-sum determination.** The deployed AIR pins the seed/step only
+`≡ [ZMOD p]`; with the cumulative column CANONICAL (`0 ≤ · < p`, the range-check invariant),
+BOOLEAN contributions, and a bundle SHORTER than `p`, the mod-`p` recurrence still determines the
+exact ℤ prefix sum — the strengthened induction carries `cumf j = prefixSum j ≤ j + 1 < p`, so each
+congruence collapses to an equality and no wrap-around forgery of the count is possible. -/
+theorem running_sum_canon (len : Nat) (hlen : (len : ℤ) < 2013265921)
+    (cumf contribf : Nat → ℤ)
+    (hcanon : ∀ j, 0 ≤ cumf j ∧ cumf j < 2013265921)
+    (hbool : ∀ j, j < len → contribf j = 0 ∨ contribf j = 1)
+    (hseed : cumf 0 ≡ contribf 0 [ZMOD 2013265921])
+    (hstep : ∀ i, i + 1 < len → cumf (i + 1) ≡ cumf i + contribf (i + 1) [ZMOD 2013265921]) :
+    ∀ j, j < len → cumf j = prefixSum contribf j := by
+  intro j
+  induction j with
+  | zero =>
+      intro hj
+      obtain ⟨k, hk⟩ := hseed.dvd
+      have hc := hcanon 0
+      rcases hbool 0 hj with h0 | h0 <;> simp only [prefixSum] <;> omega
+  | succ n ih =>
+      intro hj
+      have hn : n < len := by omega
+      have ihn := ih hn
+      obtain ⟨k, hk⟩ := (hstep n hj).dvd
+      have hc := hcanon (n + 1)
+      have hps := prefixSum_bool_bounds contribf n (fun m hm => hbool m (by omega))
+      rcases hbool (n + 1) hj with h1 | h1 <;> simp only [prefixSum] <;> omega
 
 /-! ## §1 — Row accessors (the `loc` environment of each trace row). -/
 
@@ -136,6 +193,41 @@ structure BundleAggregated (t : VmTrace) : Prop where
   exactlyOneAgent : prefixSum (isAgentAt t) (t.rows.length - 1) = 1
   publishedCount : t.pub OuterPi.N_CELLS = prefixSum (consistentAt t) (t.rows.length - 1)
 
+/-! ## §2.5 — The canonicality envelope (the deployed range-check invariant, explicit).
+
+The field-faithful denotation pins gates only `≡ 0 [ZMOD p]`; the ℤ reading is honest exactly
+because deployed traces carry canonical representatives. Booleanity of the two CG-4 contribution
+columns is DERIVED from the descriptor's own boolean gates on every non-last row
+(`isAgent_cases`/`consistent_cases` in §4); only the LAST row — where a `.gate` is vacuous under
+the transition-zerofier lowering — needs it as an envelope hypothesis. -/
+
+/-- Two canonical representatives congruent mod `p` are EQUAL (`p ∣ residual` with
+`residual ∈ (−p, p)` collapses to `0`). -/
+theorem eq_of_modEq_of_canon {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (ha1 : a < 2013265921) (hb0 : 0 ≤ b) (hb1 : b < 2013265921) : a = b := by
+  obtain ⟨k, hk⟩ := h.dvd
+  omega
+
+/-- A canonical cell whose booleanity gate vanishes mod `p` IS `0` or `1` over ℤ: primality splits
+`p ∣ x·(x−1)`, and canonicality collapses each factor. -/
+theorem bool_of_boolGate {x : ℤ} (h : x * (x + (-1)) ≡ 0 [ZMOD 2013265921])
+    (h0 : 0 ≤ x) (h1 : x < 2013265921) : x = 0 ∨ x = 1 := by
+  have hd : (2013265921 : ℤ) ∣ x * (x + (-1)) := Int.modEq_zero_iff_dvd.mp h
+  rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+  · obtain ⟨k, hk⟩ := hx; left; omega
+  · obtain ⟨k, hk⟩ := hx; right; omega
+
+/-- **The aggregation canonicality envelope**: every trace cell and public input is a canonical
+BabyBear representative (`0 ≤ · < p`), and the two CG-4 contribution columns are boolean on the
+LAST row (the one row where the AIR's boolean gates are vacuous). Inhabited by `witTrace_canon`. -/
+structure AggTraceCanon (t : VmTrace) : Prop where
+  cells : ∀ i c, 0 ≤ rowAt t i c ∧ rowAt t i c < 2013265921
+  pubs : ∀ k, 0 ≤ t.pub k ∧ t.pub k < 2013265921
+  lastAgentBool :
+    isAgentAt t (t.rows.length - 1) = 0 ∨ isAgentAt t (t.rows.length - 1) = 1
+  lastConsistentBool :
+    consistentAt t (t.rows.length - 1) = 0 ∨ consistentAt t (t.rows.length - 1) = 1
+
 /-! ## §3 — The consumed constraints are genuinely present in the descriptor. -/
 
 theorem mem_firstCumSeed : firstCumSeed ∈ bilateralAggDescriptor.constraints := by
@@ -153,6 +245,16 @@ theorem mem_lastCumIsOne : lastCumIsOne ∈ bilateralAggDescriptor.constraints :
 theorem mem_lastNEqPi : lastNEqPi ∈ bilateralAggDescriptor.constraints := by
   show lastNEqPi ∈ aggConstraints; unfold aggConstraints
   exact List.mem_append_right _ (by simp [List.mem_cons])
+
+theorem mem_boolIsAgent : boolGate (Agg.schCol Sched.IS_AGENT_CELL)
+    ∈ bilateralAggDescriptor.constraints := by
+  show boolGate _ ∈ aggConstraints; unfold aggConstraints
+  exact List.mem_append_left _ (List.mem_append_right _ (by simp [List.mem_cons]))
+
+theorem mem_boolConsistent : boolGate Agg.CONSISTENT_INDICATOR_COL
+    ∈ bilateralAggDescriptor.constraints := by
+  show boolGate _ ∈ aggConstraints; unfold aggConstraints
+  exact List.mem_append_left _ (List.mem_append_right _ (by simp [List.mem_cons]))
 
 theorem mem_cumAgentTransition : cumAgentTransition ∈ bilateralAggDescriptor.constraints := by
   show cumAgentTransition ∈ aggConstraints; unfold aggConstraints
@@ -222,40 +324,41 @@ section Extract
 
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
 
-/-- **A base-gate constraint forces its body to vanish on a NON-LAST row** (a `.gate` is vacuous on
-the last row — the transition-zerofier lowering). -/
+/-- **A base-gate constraint forces its body to vanish mod `p` on a NON-LAST row** (a `.gate` is
+vacuous on the last row — the transition-zerofier lowering; the field-faithful denotation pins
+only the congruence, the ℤ readings live under `AggTraceCanon`). -/
 theorem gate_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) {i : Nat}
     (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
     {g : EmittedExpr} (hg : VmConstraint2.base (.gate g) ∈ bilateralAggDescriptor.constraints) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints i hi _ hg
   have hlf : (i + 1 == t.rows.length) = false := by simpa using hnl
   simpa only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlf] using hrc
 
-/-- **An `onTransition` window constraint forces its body to vanish on a NON-LAST row.** -/
+/-- **An `onTransition` window constraint forces its body to vanish mod `p` on a NON-LAST row.** -/
 theorem window_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) {i : Nat}
     (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
     {w : WindowConstraint} (hw : VmConstraint2.windowGate w ∈ bilateralAggDescriptor.constraints)
     (honT : w.onTransition = true) :
-    w.body.eval (envAt t i) = 0 := by
+    w.body.eval (envAt t i) ≡ 0 [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints i hi _ hw
   have hlf : (i + 1 == t.rows.length) = false := by simpa using hnl
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, honT, if_true] at hrc
   exact hrc hlf
 
-/-- **A first-row PI binding fires on the first row.** -/
+/-- **A first-row PI binding fires on the first row** (mod `p` — the field-faithful pin). -/
 theorem piFirst_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) {col k : Nat}
     (hb : VmConstraint2.base (.piBinding .first col k) ∈ bilateralAggDescriptor.constraints) :
-    (envAt t 0).loc col = t.pub k := by
+    (envAt t 0).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints 0 hpos _ hb
   exact (holdsVm_piFirst_true (envAt t 0) (0 + 1 == t.rows.length) col k).mp hrc
 
-/-- **A last-row PI binding fires on the last row.** -/
+/-- **A last-row PI binding fires on the last row** (mod `p` — the field-faithful pin). -/
 theorem piLast_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) {col k : Nat}
     (hb : VmConstraint2.base (.piBinding .last col k) ∈ bilateralAggDescriptor.constraints) :
-    (envAt t (t.rows.length - 1)).loc col = t.pub k := by
+    (envAt t (t.rows.length - 1)).loc col ≡ t.pub k [ZMOD 2013265921] := by
   have hlt : t.rows.length - 1 < t.rows.length := Nat.sub_lt hpos Nat.one_pos
   have hrc := hsat.rowConstraints (t.rows.length - 1) hlt _ hb
   have hlast_true : (t.rows.length - 1 + 1 == t.rows.length) = true := by
@@ -263,19 +366,19 @@ theorem piLast_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin 
   rw [hlast_true] at hrc
   exact (holdsVm_piLast_true (envAt t (t.rows.length - 1)) (t.rows.length - 1 == 0) col k).mp hrc
 
-/-- **A first-row boundary forces its body to vanish on the first row.** -/
+/-- **A first-row boundary forces its body to vanish mod `p` on the first row.** -/
 theorem boundaryFirst_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) {b : EmittedExpr}
     (hb : VmConstraint2.base (.boundary .first b) ∈ bilateralAggDescriptor.constraints) :
-    b.eval (envAt t 0).loc = 0 := by
+    b.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints 0 hpos _ hb
   exact (holdsVm_boundaryFirst_true (envAt t 0) (0 + 1 == t.rows.length) b).mp hrc
 
-/-- **A last-row boundary forces its body to vanish on the last row.** -/
+/-- **A last-row boundary forces its body to vanish mod `p` on the last row.** -/
 theorem boundaryLast_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length) {b : EmittedExpr}
     (hb : VmConstraint2.base (.boundary .last b) ∈ bilateralAggDescriptor.constraints) :
-    b.eval (envAt t (t.rows.length - 1)).loc = 0 := by
+    b.eval (envAt t (t.rows.length - 1)).loc ≡ 0 [ZMOD 2013265921] := by
   have hlt : t.rows.length - 1 < t.rows.length := Nat.sub_lt hpos Nat.one_pos
   have hrc := hsat.rowConstraints (t.rows.length - 1) hlt _ hb
   have hlast_true : (t.rows.length - 1 + 1 == t.rows.length) = true := by
@@ -283,50 +386,107 @@ theorem boundaryLast_forces (hsat : Satisfied2 hash bilateralAggDescriptor minit
   rw [hlast_true] at hrc
   exact (holdsVm_boundaryLast_true (envAt t (t.rows.length - 1)) (t.rows.length - 1 == 0) b).mp hrc
 
-/-- Row-0 seed: `cum = is_agent`. -/
-theorem seed_cum (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
-    (hpos : 0 < t.rows.length) : cumAt t 0 = isAgentAt t 0 := by
+/-- Canonicality reading of a PI pin: a cell congruent to a public input IS it (both canonical). -/
+theorem cellPub_eq (hcanon : AggTraceCanon t) {i col k : Nat}
+    (h : (envAt t i).loc col ≡ t.pub k [ZMOD 2013265921]) : rowAt t i col = t.pub k :=
+  eq_of_modEq_of_canon h (hcanon.cells i col).1 (hcanon.cells i col).2
+    (hcanon.pubs k).1 (hcanon.pubs k).2
+
+/-- Canonicality reading of a cell-equality gate: two congruent canonical cells are EQUAL. -/
+theorem cellCell_eq (hcanon : AggTraceCanon t) {i a b : Nat}
+    (h : (envAt t i).loc a ≡ (envAt t i).loc b [ZMOD 2013265921]) : rowAt t i a = rowAt t i b :=
+  eq_of_modEq_of_canon h (hcanon.cells i a).1 (hcanon.cells i a).2
+    (hcanon.cells i b).1 (hcanon.cells i b).2
+
+/-- Row-0 seed (mod `p`): `cum ≡ is_agent`. -/
+theorem seed_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
+    (hpos : 0 < t.rows.length) : cumAt t 0 ≡ isAgentAt t 0 [ZMOD 2013265921] := by
   have h := boundaryFirst_forces hsat hpos mem_firstCumSeed
-  simp only [firstCumSeed, EmittedExpr.eval, cumAt, isAgentAt, rowAt] at h ⊢
-  omega
+  simp only [firstCumSeed, EmittedExpr.eval] at h
+  simp only [cumAt, isAgentAt, rowAt]
+  exact (gate_modEq_iff (by ring)).mp h
 
-/-- Row-0 seed: `n = consistent`. -/
-theorem seed_n (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
-    (hpos : 0 < t.rows.length) : nActiveAt t 0 = consistentAt t 0 := by
+/-- Row-0 seed (mod `p`): `n ≡ consistent`. -/
+theorem seed_n_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
+    (hpos : 0 < t.rows.length) : nActiveAt t 0 ≡ consistentAt t 0 [ZMOD 2013265921] := by
   have h := boundaryFirst_forces hsat hpos mem_firstNSeed
-  simp only [firstNSeed, EmittedExpr.eval, nActiveAt, consistentAt, rowAt] at h ⊢
-  omega
+  simp only [firstNSeed, EmittedExpr.eval] at h
+  simp only [nActiveAt, consistentAt, rowAt]
+  exact (gate_modEq_iff (by ring)).mp h
 
-/-- Transition: `cum (i+1) = cum i + is_agent (i+1)` (the `is_agent` cumulative recurrence). -/
-theorem step_cum (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) (i : Nat)
-    (hii : i + 1 < t.rows.length) : cumAt t (i + 1) = cumAt t i + isAgentAt t (i + 1) := by
+/-- Transition (mod `p`): `cum (i+1) ≡ cum i + is_agent (i+1)` (the cumulative recurrence). -/
+theorem step_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) (i : Nat)
+    (hii : i + 1 < t.rows.length) :
+    cumAt t (i + 1) ≡ cumAt t i + isAgentAt t (i + 1) [ZMOD 2013265921] := by
   have hi : i < t.rows.length := by omega
   have hnl : i + 1 ≠ t.rows.length := by omega
   have h := window_forces hsat hi hnl mem_cumAgentTransition rfl
-  simp only [cumAgentTransition, WindowExpr.eval, cumAt, isAgentAt, rowAt, envAt] at h ⊢
-  omega
+  simp only [cumAgentTransition, WindowExpr.eval, envAt] at h
+  simp only [cumAt, isAgentAt, rowAt, envAt]
+  exact (gate_modEq_iff (by ring)).mp h
 
-/-- Transition: `n (i+1) = n i + consistent (i+1)` (the active-cell recurrence). -/
-theorem step_n (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) (i : Nat)
-    (hii : i + 1 < t.rows.length) : nActiveAt t (i + 1) = nActiveAt t i + consistentAt t (i + 1) := by
+/-- Transition (mod `p`): `n (i+1) ≡ n i + consistent (i+1)` (the active-cell recurrence). -/
+theorem step_n_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) (i : Nat)
+    (hii : i + 1 < t.rows.length) :
+    nActiveAt t (i + 1) ≡ nActiveAt t i + consistentAt t (i + 1) [ZMOD 2013265921] := by
   have hi : i < t.rows.length := by omega
   have hnl : i + 1 ≠ t.rows.length := by omega
   have h := window_forces hsat hi hnl mem_cumActiveTransition rfl
-  simp only [cumActiveTransition, WindowExpr.eval, nActiveAt, consistentAt, rowAt, envAt] at h ⊢
-  omega
+  simp only [cumActiveTransition, WindowExpr.eval, envAt] at h
+  simp only [nActiveAt, consistentAt, rowAt, envAt]
+  exact (gate_modEq_iff (by ring)).mp h
 
-/-- Last-row boundary: `cum = 1` (exactly one agent cell across the bundle). -/
-theorem last_cum (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
-    (hpos : 0 < t.rows.length) : cumAt t (t.rows.length - 1) = 1 := by
+/-- Last-row boundary (mod `p`): `cum ≡ 1`. -/
+theorem last_cum_modEq (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
+    (hpos : 0 < t.rows.length) : cumAt t (t.rows.length - 1) ≡ 1 [ZMOD 2013265921] := by
   have h := boundaryLast_forces hsat hpos mem_lastCumIsOne
-  simp only [lastCumIsOne, EmittedExpr.eval, cumAt, rowAt] at h ⊢
-  omega
+  simp only [lastCumIsOne, EmittedExpr.eval] at h
+  simp only [cumAt, rowAt]
+  exact (gate_modEq_iff (by ring)).mp h
 
-/-- Last-row binding: `n = pi[N_CELLS]` (the published active-cell count). -/
+/-- Last-row boundary over ℤ: `cum = 1` — exactly one agent cell (canonical cell, `1 < p`). -/
+theorem last_cum (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
+    (hpos : 0 < t.rows.length) (hcanon : AggTraceCanon t) :
+    cumAt t (t.rows.length - 1) = 1 :=
+  eq_of_modEq_of_canon (last_cum_modEq hsat hpos)
+    (hcanon.cells (t.rows.length - 1) Agg.IS_AGENT_CUMULATIVE_COL).1
+    (hcanon.cells (t.rows.length - 1) Agg.IS_AGENT_CUMULATIVE_COL).2
+    (by norm_num) (by norm_num)
+
+/-- Last-row binding over ℤ: `n = pi[N_CELLS]` (both canonical). -/
 theorem last_n (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
-    (hpos : 0 < t.rows.length) : nActiveAt t (t.rows.length - 1) = t.pub OuterPi.N_CELLS := by
-  have h := piLast_forces hsat hpos mem_lastNEqPi
-  simpa only [nActiveAt, rowAt] using h
+    (hpos : 0 < t.rows.length) (hcanon : AggTraceCanon t) :
+    nActiveAt t (t.rows.length - 1) = t.pub OuterPi.N_CELLS :=
+  cellPub_eq hcanon (piLast_forces hsat hpos mem_lastNEqPi)
+
+/-- **Booleanity of the `is_agent` column on EVERY row**: derived from the descriptor's own boolean
+gate (+ primality + canonicality) on non-last rows; the envelope's last-row hypothesis elsewhere. -/
+theorem isAgent_cases (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
+    (hcanon : AggTraceCanon t) :
+    ∀ j, j < t.rows.length → isAgentAt t j = 0 ∨ isAgentAt t j = 1 := by
+  intro j hj
+  by_cases hnl : j + 1 = t.rows.length
+  · have hje : j = t.rows.length - 1 := by omega
+    rw [hje]; exact hcanon.lastAgentBool
+  · have h := gate_forces hsat hj hnl mem_boolIsAgent
+    simp only [boolGate, EmittedExpr.eval] at h
+    exact bool_of_boolGate h
+      (hcanon.cells j (Agg.schCol Sched.IS_AGENT_CELL)).1
+      (hcanon.cells j (Agg.schCol Sched.IS_AGENT_CELL)).2
+
+/-- **Booleanity of the `consistent` column on EVERY row** (same derivation). -/
+theorem consistent_cases (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
+    (hcanon : AggTraceCanon t) :
+    ∀ j, j < t.rows.length → consistentAt t j = 0 ∨ consistentAt t j = 1 := by
+  intro j hj
+  by_cases hnl : j + 1 = t.rows.length
+  · have hje : j = t.rows.length - 1 := by omega
+    rw [hje]; exact hcanon.lastConsistentBool
+  · have h := gate_forces hsat hj hnl mem_boolConsistent
+    simp only [boolGate, EmittedExpr.eval] at h
+    exact bool_of_boolGate h
+      (hcanon.cells j Agg.CONSISTENT_INDICATOR_COL).1
+      (hcanon.cells j Agg.CONSISTENT_INDICATOR_COL).2
 
 /-! ## §5 — THE WHOLE-DESCRIPTOR BRIDGE (SAT_IMPLIES_SEM). -/
 
@@ -336,11 +496,14 @@ A non-empty trace that SATISFIES the emitted `bilateralAggDescriptor` (via the d
 predicate `Satisfied2`) IS a genuine bilateral-bundle aggregation `BundleAggregated t`: the bundle's
 first and last cell carry the published turn identity, every non-final cell replays its schedule,
 there is EXACTLY ONE agent cell across the bundle, and the published `n_cells` counts the consistent
-cells. The two cumulative facts are threaded from the row-0 seeds to the last-row boundaries by
-`running_sum` — the genuine aggregation content, not a per-gate restatement. No crypto carrier is
-consumed. -/
+cells. FIELD-FAITHFUL: the descriptor pins only `≡ [ZMOD p]`, so the bridge carries the explicit
+canonicality envelope `AggTraceCanon` and the bundle-size bound `|rows| < p`; the two cumulative
+facts are threaded from the row-0 seeds to the last-row boundaries by `running_sum_canon` (booleanity
+of the contributions derived from the descriptor's own gates on non-last rows) — the genuine
+aggregation content, EXACT over ℤ, no wrap-around forgery. No crypto carrier is consumed. -/
 theorem bilateralAgg_refines
-    (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) (hne : t.rows ≠ []) :
+    (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t) (hne : t.rows ≠ [])
+    (hcanon : AggTraceCanon t) (hsize : (t.rows.length : ℤ) < 2013265921) :
     BundleAggregated t := by
   have hpos : 0 < t.rows.length := List.length_pos_of_ne_nil hne
   refine
@@ -357,34 +520,42 @@ theorem bilateralAgg_refines
       replayRoots := fun i hii k hk => ?_
       exactlyOneAgent := ?_
       publishedCount := ?_ }
-  · simpa only [rowAt] using piFirst_forces hsat hpos (mem_A (mem_turn_hash .first i hi))
-  · simpa only [rowAt] using piFirst_forces hsat hpos (mem_A (mem_turn_effects .first i hi))
-  · simpa only [rowAt] using piFirst_forces hsat hpos (mem_A (mem_turn_nonce .first))
-  · simpa only [rowAt] using piFirst_forces hsat hpos (mem_A (mem_turn_prev .first i hi))
-  · simpa only [rowAt] using piLast_forces hsat hpos (mem_B (mem_turn_hash .last i hi))
-  · simpa only [rowAt] using piLast_forces hsat hpos (mem_B (mem_turn_effects .last i hi))
-  · simpa only [rowAt] using piLast_forces hsat hpos (mem_B (mem_turn_nonce .last))
-  · simpa only [rowAt] using piLast_forces hsat hpos (mem_B (mem_turn_prev .last i hi))
+  · exact cellPub_eq hcanon (piFirst_forces hsat hpos (mem_A (mem_turn_hash .first i hi)))
+  · exact cellPub_eq hcanon (piFirst_forces hsat hpos (mem_A (mem_turn_effects .first i hi)))
+  · exact cellPub_eq hcanon (piFirst_forces hsat hpos (mem_A (mem_turn_nonce .first)))
+  · exact cellPub_eq hcanon (piFirst_forces hsat hpos (mem_A (mem_turn_prev .first i hi)))
+  · exact cellPub_eq hcanon (piLast_forces hsat hpos (mem_B (mem_turn_hash .last i hi)))
+  · exact cellPub_eq hcanon (piLast_forces hsat hpos (mem_B (mem_turn_effects .last i hi)))
+  · exact cellPub_eq hcanon (piLast_forces hsat hpos (mem_B (mem_turn_nonce .last)))
+  · exact cellPub_eq hcanon (piLast_forces hsat hpos (mem_B (mem_turn_prev .last i hi)))
   · -- replayCounts on a non-final cell
     have hi : i < t.rows.length := by omega
     have hnl : i + 1 ≠ t.rows.length := by omega
     have h := gate_forces hsat hi hnl (mem_scheduleReplay_counts k hk)
-    simp only [cg3Eq, colEqCol, EmittedExpr.eval, rowAt] at h ⊢
-    omega
+    simp only [cg3Eq, colEqCol, EmittedExpr.eval] at h
+    exact cellCell_eq hcanon ((gate_modEq_iff (by ring)).mp h)
   · -- replayRoots on a non-final cell
     have hi : i < t.rows.length := by omega
     have hnl : i + 1 ≠ t.rows.length := by omega
     have h := gate_forces hsat hi hnl (mem_scheduleReplay_roots k hk)
-    simp only [cg3Eq, colEqCol, EmittedExpr.eval, rowAt] at h ⊢
-    omega
-  · -- exactlyOneAgent: cum(last) = prefixSum is_agent, and cum(last) = 1
-    have key := running_sum t.rows.length (cumAt t) (isAgentAt t) (seed_cum hsat hpos)
-      (fun i hii => step_cum hsat i hii) (t.rows.length - 1) (by omega)
-    rw [← key]; exact last_cum hsat hpos
+    simp only [cg3Eq, colEqCol, EmittedExpr.eval] at h
+    exact cellCell_eq hcanon ((gate_modEq_iff (by ring)).mp h)
+  · -- exactlyOneAgent: cum(last) = prefixSum is_agent (field recurrence + envelope), cum(last) = 1
+    have key := running_sum_canon t.rows.length hsize (cumAt t) (isAgentAt t)
+      (fun j => hcanon.cells j Agg.IS_AGENT_CUMULATIVE_COL)
+      (isAgent_cases hsat hcanon)
+      (seed_cum_modEq hsat hpos)
+      (fun i hii => step_cum_modEq hsat i hii)
+      (t.rows.length - 1) (by omega)
+    rw [← key]; exact last_cum hsat hpos hcanon
   · -- publishedCount: n(last) = prefixSum consistent, and n(last) = pi[N_CELLS]
-    have key := running_sum t.rows.length (nActiveAt t) (consistentAt t) (seed_n hsat hpos)
-      (fun i hii => step_n hsat i hii) (t.rows.length - 1) (by omega)
-    rw [← key]; exact (last_n hsat hpos).symm
+    have key := running_sum_canon t.rows.length hsize (nActiveAt t) (consistentAt t)
+      (fun j => hcanon.cells j Agg.N_CELLS_ACTIVE_COL)
+      (consistent_cases hsat hcanon)
+      (seed_n_modEq hsat hpos)
+      (fun i hii => step_n_modEq hsat i hii)
+      (t.rows.length - 1) (by omega)
+    rw [← key]; exact (last_n hsat hpos hcanon).symm
 
 end Extract
 
@@ -439,10 +610,45 @@ theorem witTrace_satisfies :
   memTableFaithful := by rw [memLog_agg]; rfl
   mapTableFaithful := by rw [mapLog_agg]; rfl
 
+/-- Every cell of `wr0` is a canonical BabyBear representative. -/
+theorem wr0_canon (c : Nat) : 0 ≤ wr0 c ∧ wr0 c < 2013265921 := by
+  unfold wr0; split_ifs <;> norm_num
+
+/-- Every cell of `wr1` is a canonical BabyBear representative. -/
+theorem wr1_canon (c : Nat) : 0 ≤ wr1 c ∧ wr1 c < 2013265921 := by
+  unfold wr1; split_ifs <;> norm_num
+
+/-- The zero row is canonical. -/
+theorem zeroAsg_canon (c : Nat) : 0 ≤ zeroAsg c ∧ zeroAsg c < 2013265921 := by
+  unfold zeroAsg; norm_num
+
+/-- Row lookup on the 2-row witness: `wr0`, `wr1`, or the off-end zero row. -/
+theorem witTrace_rowAt (i : Nat) :
+    rowAt witTrace i = wr0 ∨ rowAt witTrace i = wr1 ∨ rowAt witTrace i = zeroAsg := by
+  match i with
+  | 0 => exact Or.inl rfl
+  | 1 => exact Or.inr (Or.inl rfl)
+  | _ + 2 => exact Or.inr (Or.inr rfl)
+
+/-- **The witness INHABITS the canonicality envelope** — every cell / public input is canonical and
+the last row's contribution columns are boolean, so `AggTraceCanon` is a real, concretely-satisfiable
+hypothesis, not a vacuous guard. -/
+theorem witTrace_canon : AggTraceCanon witTrace where
+  cells := by
+    intro i c
+    rcases witTrace_rowAt i with h | h | h <;> rw [h]
+    exacts [wr0_canon c, wr1_canon c, zeroAsg_canon c]
+  pubs := by
+    intro k
+    show 0 ≤ wpub k ∧ wpub k < 2013265921
+    unfold wpub; split_ifs <;> norm_num
+  lastAgentBool := by right; decide
+  lastConsistentBool := by right; decide
+
 /-- **The bridge FIRES on the witness** (the SAT hypothesis is genuinely inhabited): the concrete
 2-cell bundle is a `BundleAggregated`. -/
 theorem witness_aggregated : BundleAggregated witTrace :=
-  bilateralAgg_refines witTrace_satisfies (by decide)
+  bilateralAgg_refines witTrace_satisfies (by decide) witTrace_canon (by decide)
 
 /-- The recovered aggregation is CONCRETE and non-trivial: exactly ONE agent cell
 (`is_agent 0 + is_agent 1 = 0 + 1 = 1`), and the published count is `2` = the two consistent cells
@@ -460,11 +666,16 @@ def badTrace : VmTrace := { rows := [zeroAsg], pub := zeroAsg, tf := fun _ => []
 
 /-- **A WRONG bundle PROVABLY fails the hypothesis** (the constraint bites — the Satisfied2 accept-set
 does NOT contain this trace): the single-agent boundary `lastCumIsOne` forces the last-row cumulative
-to `1`, but `badTrace` carries `0`, so no `Satisfied2` witness exists. -/
+`≡ 1 [ZMOD p]`, but `badTrace` carries `0` and `p ∤ 1` — the FIELD gate itself rejects, with no
+canonicality needed. -/
 theorem badTrace_not_satisfied :
     ¬ Satisfied2 hash0 bilateralAggDescriptor (fun _ => 0) (fun _ => (0, 0)) [] badTrace := by
   intro h
-  exact absurd (last_cum h (by decide)) (by decide)
+  have hm := last_cum_modEq h (by decide)
+  have h0 : cumAt badTrace (badTrace.rows.length - 1) = 0 := rfl
+  rw [h0] at hm
+  obtain ⟨k, hk⟩ := hm.dvd
+  omega
 
 /-! ## §7 — Axiom tripwires. -/
 

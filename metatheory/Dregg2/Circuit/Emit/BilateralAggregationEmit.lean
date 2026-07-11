@@ -20,9 +20,12 @@ embeds (`circuit-prove/tests/bilateral_aggregation_emit_gate.rs`, `GOLDEN_JSON`)
 `agg_rejects_count_mismatch`: a row whose carried bilateral `counts[0]` (`Sched.COUNTS_BASE`)
 disagrees with the prover-populated `expected_counts[0]` (`Agg.EXPECTED_COUNTS_BASE`) column CANNOT
 satisfy the descriptor on a transition row — the schedule replay is REAL, not decorative. This is
-the in-descriptor face of the gate test's schedule-mismatch mutation canary. Both directions are
-witnessed (`cg3_body_zero_iff` — the gate body is zero IFF the columns agree; TRUE when equal,
-FALSE when not), so the tooth is genuinely non-vacuous. It is a DIFFERENT constraint family from
+the in-descriptor face of the gate test's schedule-mismatch mutation canary. FIELD-FAITHFUL: the
+descriptor denotation is `≡ 0 [ZMOD p]` (`p = 2013265921`, BabyBear), so the tooth carries the
+DEPLOYED range-check canonicality (`0 ≤ cell < p` on both columns) — under it a disagreement
+cannot wrap around the modulus. Both directions are witnessed (`cg3_body_zero_iff` over ℤ and
+`cg3_body_modEq_zero_iff` over the field — the gate body vanishes IFF the columns agree; TRUE when
+equal, FALSE when not), so the tooth is genuinely non-vacuous. It is a DIFFERENT constraint family from
 the existing `agg_rejects_turn_mismatch` (CG-2 identity) / `agg_rejects_bad_agent_count` (CG-4
 boundary) teeth — the schedule-replay leg those two do not cover.
 
@@ -41,6 +44,7 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.Emit.EffectVmEmit (VmConstraint VmRowEnv VmRow)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmitBilateralAgg
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff not_modEq_zero_of_canon)
 
 set_option autoImplicit false
 
@@ -69,6 +73,13 @@ theorem cg3_body_zero_iff (asg : Assignment) (a b : Nat) :
   simp only [cg3Body, EmittedExpr.eval]
   constructor <;> intro h <;> omega
 
+/-- FIELD-FAITHFUL face: the replay gate vanishes mod `p` EXACTLY when the two columns are
+congruent mod `p` — the deployed field constraint says exactly "the columns agree in the field". -/
+theorem cg3_body_modEq_zero_iff (asg : Assignment) (a b : Nat) :
+    ((cg3Body a b).eval asg ≡ 0 [ZMOD 2013265921]) ↔ (asg a ≡ asg b [ZMOD 2013265921]) := by
+  simp only [cg3Body, EmittedExpr.eval]
+  exact gate_modEq_iff (by ring)
+
 -- Non-vacuity witnesses: the replay gate ACCEPTS agreeing columns, REJECTS disagreeing ones.
 #guard decide ((cg3Body 13 49).eval (fun i => if i = 13 ∨ i = 49 then 5 else 0) = 0)
 #guard decide (¬ ((cg3Body 13 49).eval (fun i => if i = 13 then 5 else 0) = 0))
@@ -79,9 +90,15 @@ def aggWindowHolds (env : VmRowEnv) (isFirst isLast : Bool) : Prop :=
     c.holdsAt (fun _ => 0) (fun _ => []) env isFirst isLast
 
 /-- **CG-3 tooth.** A TRANSITION row whose carried `counts[0]` disagrees with the prover-populated
-`expected_counts[0]` column cannot satisfy the descriptor — the schedule replay binds them. -/
+`expected_counts[0]` column cannot satisfy the descriptor — the schedule replay binds them.
+FIELD-FAITHFUL: needs the deployed range-check canonicality on both columns (`0 ≤ cell < p`), so a
+mismatch cannot pass the field gate by wrap-around (`p ∤ residual`). -/
 theorem agg_rejects_count_mismatch
     (env : VmRowEnv)
+    (hcanonSch : 0 ≤ env.loc (Agg.schCol Sched.COUNTS_BASE)
+      ∧ env.loc (Agg.schCol Sched.COUNTS_BASE) < 2013265921)
+    (hcanonExp : 0 ≤ env.loc Agg.EXPECTED_COUNTS_BASE
+      ∧ env.loc Agg.EXPECTED_COUNTS_BASE < 2013265921)
     (hdis : env.loc (Agg.schCol Sched.COUNTS_BASE) ≠ env.loc Agg.EXPECTED_COUNTS_BASE) :
     ¬ aggWindowHolds env false false := by
   intro h
@@ -101,8 +118,7 @@ theorem agg_rejects_count_mismatch
     exact List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ hin))
   have hc := h _ hmem
   simp only [cg3Eq, colEqCol, VmConstraint2.holdsAt, VmConstraint.holdsVm, EmittedExpr.eval] at hc
-  apply hdis
-  omega
+  exact not_modEq_zero_of_canon (by ring) hcanonSch hcanonExp hdis hc
 
 #assert_axioms cg3_body_zero_iff
 

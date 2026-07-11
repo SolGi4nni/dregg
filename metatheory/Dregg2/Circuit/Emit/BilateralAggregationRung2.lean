@@ -5,8 +5,9 @@ no-double-spend obligation for the emitted BILATERAL-AGGREGATION descriptor
 
 ## What Rung 1 left (`BilateralAggregationRefine.lean`)
 
-RUNG 1 proved the whole-descriptor bridge `bilateralAgg_refines : Satisfied2 ∧ nonempty ⟹
-BundleAggregated t`, whose crown (CG-4) is the accounting invariant
+RUNG 1 proved the whole-descriptor bridge `bilateralAgg_refines : Satisfied2 ∧ nonempty ∧
+AggTraceCanon ∧ |rows| < p ⟹ BundleAggregated t` (FIELD-FAITHFUL: the descriptor pins gates only
+`≡ 0 [ZMOD p]`, so the bridge threads the explicit canonicality envelope), whose crown (CG-4) is
 
   * `exactlyOneAgent : prefixSum (isAgentAt t) (last) = 1`   ("exactly one agent cell")
   * `publishedCount  : pub[N_CELLS] = prefixSum (consistentAt t) (last)`.
@@ -17,9 +18,12 @@ cell across the bundle may claim the acting-agent seat (`multi_cell_cross_fed_bi
 exploitable — because the `is_agent ∈ {0,1}` boolean is a `.base (.gate _)`, DIVIDED BY THE
 TRANSITION ZEROFIER, so it is VACUOUS on the last cell (`holdsVm_gate_true`). A prover may therefore
 seat TWO genuine agents (`is_agent = 1` on two cells) and absorb the excess in a PHANTOM last cell
-carrying `is_agent = -1` (non-boolean, unconstrained): the cumulative still lands at `1`, the trace
-`Satisfied2`s, and `exactlyOneAgent` is satisfied by a genuine double-spend. `§4 cheatTrace` /
-`cheat_double_spend` exhibit exactly this — the anchor below is LOAD-BEARING, not laundered.
+carrying the CANONICAL anti-agent `is_agent = p − 1 ≡ −1` (a perfectly canonical field element that
+escapes the vacuous last-row gate): the cumulative still lands at `1` in the FIELD, the trace
+`Satisfied2`s, and the mod-`p` crown is satisfied by a genuine double-spend. `§4 cheatTrace` /
+`cheat_double_spend` exhibit exactly this — the anchor below is LOAD-BEARING, not laundered. It is
+also WHY Rung 1's envelope must carry last-row booleanity (`AggTraceCanon.lastAgentBool`): without
+it even the ℤ crown `∑ = 1` is forgeable through the `p − 1` wrap.
 
 ## The residual and its carrier (why this is RUNG2_PARTIAL, not a crypto discharge)
 
@@ -33,8 +37,10 @@ hypothesis
 
   `LastCellAgentBoolean t := isAgentAt t (last) = 0 ∨ isAgentAt t (last) = 1`
 
-— what the EMIT-FIX supplies, NOT a Lean axiom and NOT a crypto primitive. Under it (all non-last
-cells are already boolean, forced by the gate off the last row), the genuine
+— what the EMIT-FIX supplies, NOT a Lean axiom and NOT a crypto primitive. Under the field-faithful
+denotation this carrier rides INSIDE Rung 1's envelope (`AggTraceCanon.lastAgentBool` — the ℤ crown
+itself needs it, see the forgery). Under it (all non-last cells are already boolean, forced by the
+gate off the last row + primality + canonicality), the genuine
 
   `UniqueAgent t` — a cell carries the flag `1`, and it is UNIQUE (no two distinct agent cells)
 
@@ -184,54 +190,60 @@ structure UniqueAgent (t : VmTrace) : Prop where
 section Discharge
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
 
-/-- **The `is_agent` flag is genuinely boolean on every NON-LAST cell** — read off the boolean gate,
-which the transition-zerofier lowering enforces exactly off the last row. -/
+/-- **The `is_agent` flag is genuinely boolean on every NON-LAST cell** — read off the boolean gate
+(which the transition-zerofier lowering enforces exactly off the last row), FIELD-FAITHFULLY:
+the gate pins only `x·(x−1) ≡ 0 [ZMOD p]`, so primality splits the product and the cell's
+canonicality (`0 ≤ · < p`) collapses each factor. -/
 theorem isAgent_bool_nonlast
     (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
-    {i : Nat} (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length) :
+    {i : Nat} (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
+    (hc : 0 ≤ isAgentAt t i ∧ isAgentAt t i < 2013265921) :
     isAgentAt t i = 0 ∨ isAgentAt t i = 1 := by
   have hmem : VmConstraint2.base (VmConstraint.gate
       (EmittedExpr.mul (.var (Agg.schCol Sched.IS_AGENT_CELL))
         (.add (.var (Agg.schCol Sched.IS_AGENT_CELL)) (.const (-1)))))
       ∈ bilateralAggDescriptor.constraints := mem_boolGate_isAgent
   have h := gate_forces hsat hi hnl hmem
-  have h' : isAgentAt t i * (isAgentAt t i + (-1)) = 0 := by
-    simpa only [EmittedExpr.eval, isAgentAt, rowAt] using h
-  rcases mul_eq_zero.mp h' with h0 | h1
-  · exact Or.inl h0
-  · exact Or.inr (by linarith)
+  simp only [EmittedExpr.eval] at h
+  exact bool_of_boolGate h hc.1 hc.2
 
-/-- **Every cell is boolean, given the last-cell residual carrier.** Non-last cells from the gate;
-the last cell from `LastCellAgentBoolean` (the carrier the emit-fix supplies). -/
+/-- **Every cell is boolean, given canonicality + the last-cell residual carrier.** Non-last cells
+from the gate (+ primality + canonicality); the last cell from `LastCellAgentBoolean` (the carrier
+the emit-fix supplies — threaded here EXPLICITLY even though the envelope also carries it, to keep
+the residual named). -/
 theorem all_isAgent_bool
     (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hpos : 0 < t.rows.length)
+    (hcanon : AggTraceCanon t)
     (hlastBool : isAgentAt t (t.rows.length - 1) = 0 ∨ isAgentAt t (t.rows.length - 1) = 1) :
     ∀ i, i < t.rows.length → isAgentAt t i = 0 ∨ isAgentAt t i = 1 := by
   intro i hi
   by_cases hlast : i = t.rows.length - 1
   · rw [hlast]; exact hlastBool
   · exact isAgent_bool_nonlast hsat hi (by omega)
+      (hcanon.cells i (Agg.schCol Sched.IS_AGENT_CELL))
 
 /-- **`bilateralAgg_rung2` — the terminal-cell no-double-spend obligation is DISCHARGED under the
 named `LastCellAgentBoolean` carrier.**
 
-A trace that `Satisfied2`s the emitted `bilateralAggDescriptor`, is non-empty, and whose LAST cell's
-`is_agent` flag is boolean (`hlastBool` — the AIR-completeness residual the transition-zerofier
-lowering drops, supplied by the named emit-fix; NOT a crypto carrier, this family is crypto-free)
+A trace that `Satisfied2`s the emitted `bilateralAggDescriptor`, is non-empty, is canonical with a
+sub-`p` bundle (`AggTraceCanon`/`hsize` — the deployed range-check invariant, whose
+`lastAgentBool` clause IS the `LastCellAgentBoolean` residual the transition-zerofier lowering
+drops, supplied by the named emit-fix; NOT a crypto carrier, this family is crypto-free)
 carries EXACTLY ONE agent cell across the whole bundle (`UniqueAgent t`): every cell is boolean (gate
-off the last row + the carrier on it), and a prefix sum of `{0,1}`-valued flags landing at `1`
-(the Rung-1 crown) forces a UNIQUE `1`. No two federations can both claim the agent seat. -/
++ primality + canonicality off the last row, the carrier on it), and a prefix sum of `{0,1}`-valued
+flags landing at `1` (the Rung-1 crown) forces a UNIQUE `1`. No two federations can both claim the
+agent seat. -/
 theorem bilateralAgg_rung2
     (hsat : Satisfied2 hash bilateralAggDescriptor minit mfin maddrs t)
     (hne : t.rows ≠ [])
-    (hlastBool : isAgentAt t (t.rows.length - 1) = 0 ∨ isAgentAt t (t.rows.length - 1) = 1) :
+    (hcanon : AggTraceCanon t) (hsize : (t.rows.length : ℤ) < 2013265921) :
     UniqueAgent t := by
   have hpos : 0 < t.rows.length := List.length_pos_of_ne_nil hne
   have hsum : prefixSum (isAgentAt t) (t.rows.length - 1) = 1 :=
-    (bilateralAgg_refines hsat hne).exactlyOneAgent
+    (bilateralAgg_refines hsat hne hcanon hsize).exactlyOneAgent
   have hbool : ∀ i, i < t.rows.length → isAgentAt t i = 0 ∨ isAgentAt t i = 1 :=
-    all_isAgent_bool hsat hpos hlastBool
+    all_isAgent_bool hsat hpos hcanon hcanon.lastAgentBool
   have hnn : ∀ k, k ≤ t.rows.length - 1 → 0 ≤ isAgentAt t k := by
     intro k hk
     have hk' : k < t.rows.length := by omega
@@ -273,10 +285,14 @@ def hash0 : List ℤ → ℤ := fun _ => 0
 /-! ## §4 — THE FORGERY (load-bearing anchor): `Satisfied2` alone does NOT force `UniqueAgent`.
 
 A 3-cell bundle with TWO genuine agent cells (cells 0 and 1, `is_agent = 1`) and a PHANTOM last cell
-carrying `is_agent = -1` (non-boolean — the last-row boolean gate is vacuous). It PROVABLY
-`Satisfied2`s, and its Rung-1 crown `∑ is_agent = 1 + 1 + (-1) = 1` holds, yet TWO federations seat the
-agent: a genuine cross-federation double-spend. So the last-cell-boolean carrier is genuinely
-load-bearing — the conclusion is impossible from `Satisfied2` + the Rung-1 crown alone. -/
+carrying the CANONICAL anti-agent `is_agent = p − 1 = 2013265920 ≡ −1 [ZMOD p]` (a perfectly
+canonical field element, non-boolean — the last-row boolean gate is vacuous). It PROVABLY
+`Satisfied2`s under the FIELD denotation (the cumulative window `1 → 2 → 1` wraps through the
+modulus: `2 + (p−1) ≡ 1`), its field crown `∑ is_agent ≡ 1 [ZMOD p]` holds (the ℤ sum is `p + 1`),
+yet TWO federations seat the agent: a genuine cross-federation double-spend. The cheat's cells and
+PIs are ALL canonical — the ONLY envelope clause it fails is `lastAgentBool`. So the last-cell
+boolean carrier is genuinely load-bearing — the conclusion is impossible from `Satisfied2` + cell
+canonicality alone. -/
 
 /-- Cheat cell 0: a GENUINE agent cell (`is_agent=1`, `cum=1`, `consistent=1`, `n=1`). -/
 def cwr0 : Assignment :=
@@ -284,17 +300,19 @@ def cwr0 : Assignment :=
 /-- Cheat cell 1: a SECOND genuine agent cell (`is_agent=1`, `cum=2`, `consistent=1`, `n=2`). -/
 def cwr1 : Assignment :=
   fun j => if j = 48 then 1 else if j = 84 then 2 else if j = 85 then 1 else if j = 86 then 2 else 0
-/-- Cheat cell 2 (the LAST cell): the PHANTOM anti-agent `is_agent = -1` (non-boolean, escapes the
-vacuous last-row gate), `cum=1`, `consistent=1`, `n=3`. -/
+/-- Cheat cell 2 (the LAST cell): the PHANTOM canonical anti-agent `is_agent = p − 1 ≡ −1`
+(non-boolean, escapes the vacuous last-row gate), `cum=1`, `consistent=1`, `n=3`. -/
 def cwr2 : Assignment :=
-  fun j => if j = 48 then -1 else if j = 84 then 1 else if j = 85 then 1 else if j = 86 then 3 else 0
+  fun j => if j = 48 then 2013265920 else if j = 84 then 1 else if j = 85 then 1
+    else if j = 86 then 3 else 0
 /-- Public inputs pinning the forged `pi[N_CELLS] = 3`. -/
 def cpub : Assignment := fun j => if j = 21 then 3 else 0
 /-- The cheating 3-cell bundle: two genuine agents + a phantom last cell. -/
 def cheatTrace : VmTrace := { rows := [cwr0, cwr1, cwr2], pub := cpub, tf := fun _ => [] }
 
-/-- **The cheat PROVABLY `Satisfied2`s.** The two boolean gates / padding / CG-3 replay are vacuous
-on the phantom last row; the cumulative windows thread `1 → 2 → 1`; the boundaries pin `cum = 1` and
+/-- **The cheat PROVABLY `Satisfied2`s** (under the DEPLOYED field denotation). The two boolean
+gates / padding / CG-3 replay are vacuous on the phantom last row; the cumulative windows thread
+`1 → 2 → 1` THROUGH THE MODULUS (`2 + (p−1) ≡ 1 [ZMOD p]`); the boundaries pin `cum = 1` and
 `n = pi[N_CELLS] = 3`; CG-2 turn-id agrees (all `0`). -/
 theorem cheatTrace_satisfies :
     Satisfied2 hash0 bilateralAggDescriptor (fun _ => 0) (fun _ => (0, 0)) [] cheatTrace where
@@ -320,21 +338,42 @@ theorem cheatTrace_satisfies :
   memTableFaithful := by rw [memLog_agg]; rfl
   mapTableFaithful := by rw [mapLog_agg]; rfl
 
-/-- The cheat is a genuine `BundleAggregated` (the Rung-1 crown fires on it). -/
-theorem cheat_aggregated : BundleAggregated cheatTrace :=
-  bilateralAgg_refines cheatTrace_satisfies (by decide)
+/-- **Every cheat cell and PI is CANONICAL** — the forgery is NOT excluded by the range-check half
+of the envelope; the ONLY clause it fails is the last-row booleanity. -/
+theorem cheat_cells_canon :
+    (∀ i c, 0 ≤ rowAt cheatTrace i c ∧ rowAt cheatTrace i c < 2013265921)
+    ∧ (∀ k, 0 ≤ cheatTrace.pub k ∧ cheatTrace.pub k < 2013265921) := by
+  constructor
+  · intro i c
+    have hrow : rowAt cheatTrace i = cwr0 ∨ rowAt cheatTrace i = cwr1
+        ∨ rowAt cheatTrace i = cwr2 ∨ rowAt cheatTrace i = zeroAsg := by
+      match i with
+      | 0 => exact Or.inl rfl
+      | 1 => exact Or.inr (Or.inl rfl)
+      | 2 => exact Or.inr (Or.inr (Or.inl rfl))
+      | _ + 3 => exact Or.inr (Or.inr (Or.inr rfl))
+    rcases hrow with h | h | h | h <;> rw [h]
+    · unfold cwr0; split_ifs <;> norm_num
+    · unfold cwr1; split_ifs <;> norm_num
+    · unfold cwr2; split_ifs <;> norm_num
+    · unfold zeroAsg; norm_num
+  · intro k
+    show 0 ≤ cpub k ∧ cpub k < 2013265921
+    unfold cpub; split_ifs <;> norm_num
 
-/-- **THE FORGERY.** Cells 0 and 1 are BOTH genuine agents (`is_agent = 1`), the Rung-1 crown
-`∑ is_agent = 1` holds, yet `UniqueAgent cheatTrace` is FALSE — so `Satisfied2` + the Rung-1 crown do
-NOT imply the genuine no-double-spend property. The `LastCellAgentBoolean` carrier of
-`bilateralAgg_rung2` is genuinely load-bearing (the cheat's last cell carries `is_agent = -1`, failing
-it), not laundered. -/
+/-- **THE FORGERY.** Cells 0 and 1 are BOTH genuine agents (`is_agent = 1`), the FIELD crown
+`∑ is_agent ≡ 1 [ZMOD p]` holds (the ℤ sum is `p + 1` — the wrap is the exploit), yet
+`UniqueAgent cheatTrace` is FALSE — so `Satisfied2` + cell canonicality do NOT imply the genuine
+no-double-spend property. The `LastCellAgentBoolean` carrier (= `AggTraceCanon.lastAgentBool`) of
+`bilateralAgg_rung2` is genuinely load-bearing (the cheat's last cell carries the canonical
+non-boolean `p − 1`, failing exactly it), not laundered. -/
 theorem cheat_double_spend :
     isAgentAt cheatTrace 0 = 1 ∧ isAgentAt cheatTrace 1 = 1
-    ∧ prefixSum (isAgentAt cheatTrace) (cheatTrace.rows.length - 1) = 1
-    ∧ isAgentAt cheatTrace (cheatTrace.rows.length - 1) = -1
+    ∧ (prefixSum (isAgentAt cheatTrace) (cheatTrace.rows.length - 1) ≡ 1 [ZMOD 2013265921])
+    ∧ prefixSum (isAgentAt cheatTrace) (cheatTrace.rows.length - 1) = 2013265922
+    ∧ isAgentAt cheatTrace (cheatTrace.rows.length - 1) = 2013265920
     ∧ ¬ UniqueAgent cheatTrace := by
-  refine ⟨by decide, by decide, cheat_aggregated.exactlyOneAgent, by decide, ?_⟩
+  refine ⟨by decide, by decide, by decide, by decide, by decide, ?_⟩
   intro hu
   have h01 : (0 : Nat) = 1 :=
     hu.unique_agent 0 1 (by decide) (by decide) (by decide) (by decide)
@@ -353,9 +392,10 @@ theorem witness_lastBool :
   Or.inr (by decide)
 
 /-- **THE RUNG-2 DISCHARGE FIRES on the genuine witness.** Feeding the concrete satisfying `witTrace`
-and its met carrier to `bilateralAgg_rung2` recovers `UniqueAgent witTrace`. -/
+and its met envelope (Rung 1's `witTrace_canon`, which carries the boolean-last-cell residual) to
+`bilateralAgg_rung2` recovers `UniqueAgent witTrace`. -/
 theorem witness_rung2_fires : UniqueAgent witTrace :=
-  bilateralAgg_rung2 witTrace_satisfies (by decide) witness_lastBool
+  bilateralAgg_rung2 witTrace_satisfies (by decide) witTrace_canon (by decide)
 
 /-- The recovered unique agent is cell 1 (the genuine agent cell), and it is the ONLY one — a real
 "exactly one agent" conclusion, not vacuous. -/
