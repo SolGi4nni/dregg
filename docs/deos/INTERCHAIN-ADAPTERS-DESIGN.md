@@ -14,6 +14,14 @@ of its own state transitions (`WholeChainProof`, verified by
 the **verification backend**: the thing that answers "did E happen" by *proof*
 rather than by committee vote or optimistic assumption.
 
+**Participation is proof-of-holdings, not a wrap.** Before the standards survey, the
+governing rule for *who participates*: a `$DREGG` holder votes / carries governance
+weight by PROVING they hold it over their own account — custody intact, nothing locked
+or wrapped (`docs/deos/PROOF-OF-HOLDINGS.md`, built + Lean-verified). The lock/mirror
+adapters below are the EXCEPTION: they import *spendable value* or post a *slashable
+bond*, never a prerequisite for weight. Every adapter that follows is a
+value/state-movement rail; none of them is the door to participation.
+
 Rather than reimplement Tendermint / GRANDPA / Ethereum consensus inside our own
 formal proofs, we **model the interaction**: an `InterchainAdapter` names, for
 each standard, (1) what dregg checks in-circuit or on-chain, and (2) what it
@@ -262,3 +270,5 @@ lose on the gas axis for the general many-messages case.)
   build one).
 - Not a new bridge token or wrapped-asset custody model (assets stay in the
   shielded pool; see LAYERZERO-CONCEPT-MAP.md — no bridge wallet to vote/settle).
+  Governance weight comes from proof-of-holdings over the holder's own account
+  (`docs/deos/PROOF-OF-HOLDINGS.md`), never from an escrow.

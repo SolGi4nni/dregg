@@ -96,19 +96,41 @@ primitive.
   `CollectiveChoiceEngine` (tally +1, duplicate refused). Missing: library glue binding passkey
   identities into electorates/credentials; `webauth-core`'s HTTP login half is unported.
 
-## 5. The missing spine
+## 5. The spine — primitive BUILT (2026-07-11), three welds remain
 
-**Nothing anywhere derives voting eligibility or weight from token holdings on any chain.** Every
-engine is one-voter-one-vote (+ delegation) over a static enumerated `[u8;32]` electorate. The
-"$DREGG holder on Solana/Base participates in dregg governance without moving custody" goal needs
-one new primitive and three welds:
+**UPDATE (2026-07-11): the primitive is now BUILT and Lean-verified.** The rest of this
+section's framing ("nothing derives weight from holdings") described the state *before* the
+proof-of-holdings primitive landed. It now exists, non-custodially, and closes item 1 below; the
+three welds (2–4) remain. Primary design note: `docs/deos/PROOF-OF-HOLDINGS.md`.
+
+The historical gap: every engine was one-voter-one-vote (+ delegation) over a static enumerated
+`[u8;32]` electorate, and nothing derived weight from token holdings. The "$DREGG holder on
+Solana/Base participates in dregg governance without moving custody" goal needed one new primitive
+and three welds:
 
 1. **Proof-of-holding → eligibility/weight** (the primitive): prove "an account I control held ≥ W
-   $DREGG at snapshot S on chain C" into a `VoterId` binding. Inbound proof sources, by
-   feasibility: dregg's own shielded pool (notes already committed in-protocol — cheapest, private
-   by construction); Solana via the existing consensus-verified path; EVM via the future
-   sync-committee client. The CredentialGate presentation shape (ring + predicate + nullifier) is
-   the right envelope — upgrade its issuer from federation-attested to chain-proven.
+   $DREGG at snapshot S on chain C" into a `VoterId` binding. **BUILT + Lean-verified,
+   non-custodially** (2026-07-11):
+   - `bridge/src/solana_holdings.rs` — `ProvenHolding`, `prove_holding_consensus` (reads the
+     holder's OWN SPL token account, verifies a stake-weighted ≥2/3 super-majority + 16-ary
+     accounts-hash inclusion under a finalized bank hash → `LockProofTrust::ConsensusVerified`),
+     the owner-program forgery refusal (`NotSplTokenProgram`), and `is_consensus_proven` fail-closed
+     (a `StructureOnly` RPC echo grants nothing). Tested both polarities by default in
+     `bridge/tests/solana_holdings.rs`.
+   - `dregg-governance/src/holding_weight.rs` — `grant_weight` (the ed25519 owner→voter binding,
+     snapshot slot, per-`(poll, token_account)` no-double-count nullifier), the decision routed
+     through the verified Lean core via FFI (Lean-first, no Rust fallback for the verdict).
+   - `metatheory/Dregg2/Bridge/ProofOfHoldings.lean` — `grantWeightCore_eq_grantsWeight` (the
+     `@[export]`ed core realizes the spec) and `weight_backed_and_noncustodial` (granted weight is
+     backed AND custody is definitionally preserved), axiom-clean.
+
+   Custody never moves: no vault, no lock, no wrapped token. The lock/mirror path
+   (`docs/deos/TOKEN-MIRROR-BRIDGE.md`) is retained as the *exception* — value-import / slashable
+   bond — not the way you participate. The CredentialGate presentation shape (ring + predicate +
+   nullifier) remains the right envelope for the *EVM* holdings source (item 4); its issuer would
+   upgrade from federation-attested to chain-proven the same way. Residuals on the built primitive:
+   the live-feed wire-format adapter, the in-circuit fold (`SOLANA-SUCCINCT-WRAPPER.md`), and the
+   FFI splice (wired-but-staged) — see `PROOF-OF-HOLDINGS.md`.
 2. **One engine** (weld): reconcile the two `VoteEngine`s (collective-choice's executor-backed one
    is the keeper; `dregg-governance`'s constitution/auto-enact face plugs onto it) and wire to the
    node so participation is networked, not in-process.

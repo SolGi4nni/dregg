@@ -1,5 +1,15 @@
 # Token Mirror Bridge — mirroring a Solana/pump.fun SPL token into dregg's value layer
 
+> **Locking is the EXCEPTION, not how you participate.** This bridge exists to *import
+> spendable value* into dregg's value layer (or to post a *slashable bond*) — the cases
+> where an escrow genuinely prevents a double-spend, so surrendering custody into a vault
+> is the point. It is the WRONG mechanism for *participation*. To vote or to carry
+> governance weight, you do NOT lock: you PROVE you hold `$DREGG` over your own account,
+> keep custody, and vote by proof. That is the front door —
+> `docs/deos/PROOF-OF-HOLDINGS.md` (primitive built + Lean-verified). Reach for this
+> mirror only when you actually need the tokens to become spendable *inside* dregg or to
+> back a bond; never to acquire weight.
+
 ## What this is
 
 A **mirror** brings an external token (`$DREGG`, an SPL token launched on
@@ -37,8 +47,8 @@ chains; the mirror brings another chain's *value* into dregg.
 ### Mirror (Solana → dregg)
 
 1. A holder locks `N` $DREGG into a lock vault on Solana (an SPL program /
-   token account the bridge controls; the Solana-side program is *named, not
-   built here* — see the honest-gap section).
+   token account the bridge controls; the Solana-side program is now built —
+   `solana-lock/` (`dregg-solana-lock`) — see the honest-gap section).
 2. The oracle / validator-set observes the lock and produces a **threshold
    attestation** over the canonical lock payload
    `(lock_id, spl_mint, amount, dregg_recipient, epoch)`.
@@ -163,7 +173,11 @@ flows through the one verified value rail.
   accounts inclusion, PoH tick-chain linking — reaching
   `LockProofTrust::ConsensusVerified` (`bridge/src/solana_trustless.rs`,
   `bridge/src/solana_consensus.rs`; design `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`).
-- **Not built (named gaps):** the Solana-side lock-vault SPL program; the
+- **Now built (was a named gap):** the Solana-side lock-vault SPL program —
+  `solana-lock/` (`dregg-solana-lock`: `processor.rs`, `state.rs`, `instruction.rs`,
+  `attestation.rs`, `record.rs`, with `tests/lock_flow.rs` / `tests/unlock_flow.rs`).
+  Earlier drafts of this doc listed it as named-not-built; it is a real program now.
+- **Not built (named gaps):** the
   mainnet **wire-format adapter layer** for the trustless path (real vote
   `Transaction` parsing, `EpochStakeTable` sourcing/rotation, exact
   accounts-hash preimage, PoH anchor policy); the inbound zk-proof-of-lock
