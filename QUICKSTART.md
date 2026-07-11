@@ -42,6 +42,7 @@ below are the same steps by hand. Full detail: `docs/LEAN-SEED-ARTIFACT.md` and
 ```sh
 # 1. elan + the pinned Lean toolchain on PATH (installs in minutes; NO mathlib compile):
 curl https://elan.lean-lang.org/elan-init.sh -sSf | sh    # then re-open your shell
+# (Linux/Ubuntu: the gpui link also needs the xkbcommon X11 dev symlink: apt install libxkbcommon-x11-dev)
 # 2. fetch the prebuilt Lean seed for your platform (minutes, not the hours-long bootstrap):
 ./scripts/fetch-lean-seed.sh
 # 3. build the node, FAILING LOUD if it would silently degrade to marshal-only:

@@ -669,7 +669,7 @@ fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out
     let roots = discover_ir_roots(meta);
     let index = build_cfile_index(&roots);
 
-    for pass in 0..16 {
+    for pass in 0..64 {
         let undefined = undefined_initializers(archive);
         if undefined.is_empty() {
             return;
@@ -732,7 +732,7 @@ fn complete_initializer_closure(meta: &Path, sysroot: &Path, archive: &Path, out
         );
     }
     println!(
-        "cargo:warning=dregg-lean-ffi: closure completion hit the 16-pass bound — archive may \
+        "cargo:warning=dregg-lean-ffi: closure completion hit the 64-pass bound — archive may \
          still have undefined initializers. Consider re-seeding the closure."
     );
 }
