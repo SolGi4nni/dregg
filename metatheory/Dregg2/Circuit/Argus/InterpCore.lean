@@ -108,11 +108,11 @@ constructor, so a dropped arm is a missing lemma. -/
 `decide (body.eval loc = 0)`. Total (the eval is total, the equality is decidable). This is the
 reference for the Rust `tb.assert_zero(body.eval_expr(local))`. -/
 def decideGateBody (env : VmRowEnv) (body : EmittedExpr) : Bool :=
-  decide (body.eval env.loc = 0)
+  decide (body.eval env.loc ≡ 0 [ZMOD 2013265921])
 
-/-- The gate-body decision is correct: `= true` iff the body vanishes. -/
+/-- The gate-body decision is correct: `= true` iff the body vanishes mod p. -/
 @[simp] theorem decideGateBody_iff (env : VmRowEnv) (body : EmittedExpr) :
-    decideGateBody env body = true ↔ body.eval env.loc = 0 := by
+    decideGateBody env body = true ↔ body.eval env.loc ≡ 0 [ZMOD 2013265921] := by
   simp only [decideGateBody, decide_eq_true_eq]
 
 /-! ## §2 — Deciding ONE constraint (case-complete over all four `VmConstraint` constructors).
@@ -127,12 +127,12 @@ body is decided by `!flag || decide P`. -/
 denotation `c.holdsVm env isFirst isLast`. CASE-COMPLETE: an arm for every `VmConstraint`
 constructor, with the boundary/PI arms split on the row tag exactly as `holdsVm` does. -/
 def decideConstraint (env : VmRowEnv) (isFirst isLast : Bool) : VmConstraint → Bool
-  | .gate body          => isLast || decide (body.eval env.loc = 0)
-  | .transition hi lo   => isLast || decide (env.nxt (sbCol hi) = env.loc (saCol lo))
-  | .boundary .first b  => !isFirst || decide (b.eval env.loc = 0)
-  | .boundary .last  b  => !isLast  || decide (b.eval env.loc = 0)
-  | .piBinding .first col k => !isFirst || decide (env.loc col = env.pub k)
-  | .piBinding .last  col k => !isLast  || decide (env.loc col = env.pub k)
+  | .gate body          => isLast || decide (body.eval env.loc ≡ 0 [ZMOD 2013265921])
+  | .transition hi lo   => isLast || decide (env.nxt (sbCol hi) ≡ env.loc (saCol lo) [ZMOD 2013265921])
+  | .boundary .first b  => !isFirst || decide (b.eval env.loc ≡ 0 [ZMOD 2013265921])
+  | .boundary .last  b  => !isLast  || decide (b.eval env.loc ≡ 0 [ZMOD 2013265921])
+  | .piBinding .first col k => !isFirst || decide (env.loc col ≡ env.pub k [ZMOD 2013265921])
+  | .piBinding .last  col k => !isLast  || decide (env.loc col ≡ env.pub k [ZMOD 2013265921])
 
 /-! ### Per-constructor reduction lemmas — the EXHAUSTIVENESS pins.
 
@@ -197,15 +197,18 @@ theorem decideConstraint_iff (env : VmRowEnv) (iF iL : Bool) (c : VmConstraint) 
 no-missing-arm witness, stated as a definitional equality per arm). A constructor with no arm could
 not appear on the left, so this lemma's six conjuncts pin case-completeness mechanically. -/
 theorem decideConstraint_total (env : VmRowEnv) (iF iL : Bool) :
-    (∀ body, decideConstraint env iF iL (.gate body) = (iL || decide (body.eval env.loc = 0)))
+    (∀ body, decideConstraint env iF iL (.gate body)
+        = (iL || decide (body.eval env.loc ≡ 0 [ZMOD 2013265921])))
     ∧ (∀ hi lo, decideConstraint env iF iL (.transition hi lo)
-        = (iL || decide (env.nxt (sbCol hi) = env.loc (saCol lo))))
-    ∧ (∀ b, decideConstraint env iF iL (.boundary .first b) = (!iF || decide (b.eval env.loc = 0)))
-    ∧ (∀ b, decideConstraint env iF iL (.boundary .last b)  = (!iL || decide (b.eval env.loc = 0)))
+        = (iL || decide (env.nxt (sbCol hi) ≡ env.loc (saCol lo) [ZMOD 2013265921])))
+    ∧ (∀ b, decideConstraint env iF iL (.boundary .first b)
+        = (!iF || decide (b.eval env.loc ≡ 0 [ZMOD 2013265921])))
+    ∧ (∀ b, decideConstraint env iF iL (.boundary .last b)
+        = (!iL || decide (b.eval env.loc ≡ 0 [ZMOD 2013265921])))
     ∧ (∀ col k, decideConstraint env iF iL (.piBinding .first col k)
-        = (!iF || decide (env.loc col = env.pub k)))
+        = (!iF || decide (env.loc col ≡ env.pub k [ZMOD 2013265921])))
     ∧ (∀ col k, decideConstraint env iF iL (.piBinding .last col k)
-        = (!iL || decide (env.loc col = env.pub k))) :=
+        = (!iL || decide (env.loc col ≡ env.pub k [ZMOD 2013265921]))) :=
   ⟨fun _ => rfl, fun _ _ => rfl, fun _ => rfl, fun _ => rfl, fun _ _ => rfl, fun _ _ => rfl⟩
 
 /-! ## §3 — Deciding the constraint LIST (the `∀ c ∈ constraints, …` conjunct).
@@ -343,12 +346,12 @@ theorem decideConstraints_decides_all_arms (env : VmRowEnv) (iF iL : Bool)
     (cs : List VmConstraint) :
     decideConstraints env iF iL cs = true
       ↔ ∀ c ∈ cs, (match c with
-          | .gate body          => iL = false → body.eval env.loc = 0
-          | .transition hi lo   => iL = false → env.nxt (sbCol hi) = env.loc (saCol lo)
-          | .boundary .first b  => iF = true → b.eval env.loc = 0
-          | .boundary .last  b  => iL = true → b.eval env.loc = 0
-          | .piBinding .first col k => iF = true → env.loc col = env.pub k
-          | .piBinding .last  col k => iL = true → env.loc col = env.pub k) := by
+          | .gate body          => iL = false → body.eval env.loc ≡ 0 [ZMOD 2013265921]
+          | .transition hi lo   => iL = false → env.nxt (sbCol hi) ≡ env.loc (saCol lo) [ZMOD 2013265921]
+          | .boundary .first b  => iF = true → b.eval env.loc ≡ 0 [ZMOD 2013265921]
+          | .boundary .last  b  => iL = true → b.eval env.loc ≡ 0 [ZMOD 2013265921]
+          | .piBinding .first col k => iF = true → env.loc col ≡ env.pub k [ZMOD 2013265921]
+          | .piBinding .last  col k => iL = true → env.loc col ≡ env.pub k [ZMOD 2013265921]) := by
   rw [decideConstraints_iff]
   constructor
   · intro h c hc
@@ -404,6 +407,7 @@ so it binds on every row but the last; the rejection tooth fires exactly on the 
 Together with `_accepts`, this proves `decideVm` is NON-vacuous: it separates satisfying from
 violating environments. -/
 theorem decideVm_selectorOnly_rejects (hash : List ℤ → ℤ) (s : Nat) (env : VmRowEnv)
+    (hs : 0 ≤ env.loc s ∧ env.loc s < 2013265921)
     (hpad : env.loc sel.NOOP = 0) (hwrong : env.loc s ≠ 1) :
     decideVm hash (selectorOnlyDescriptor s) env true false = false := by
   by_contra h
@@ -412,7 +416,7 @@ theorem decideVm_selectorOnly_rejects (hash : List ℤ → ℤ) (s : Nat) (env :
   have : (selectorGate s).holdsVm env true false := by
     apply hcons
     simp [selectorOnlyDescriptor]
-  exact selectorGate_rejects_wrong_selector s env true false rfl hpad hwrong this
+  exact selectorGate_rejects_wrong_selector s env true false rfl hs hpad hwrong this
 
 #assert_axioms decideVm_selectorOnly_accepts
 #assert_axioms decideVm_selectorOnly_rejects
@@ -441,19 +445,30 @@ boundary-only descriptor. -/
 theorem decideVm_boundaryOnly_accepts (hash : List ℤ → ℤ) (i j : Nat) (env : VmRowEnv)
     (iL : Bool) (h : env.loc i = env.loc j) :
     decideVm hash (boundaryOnlyDescriptor i j) env true iL = true := by
-  have hb : (EmittedExpr.add (.var i) (.mul (.const (-1)) (.var j))).eval env.loc = 0 := by
-    simp only [evalExpr_add, evalExpr_mul, evalExpr_var, evalExpr_const]
-    omega
   simp [decideVm, decideConstraints, decideConstraint, boundaryOnlyDescriptor,
-    decideSites, decideSitesGo, decideRanges, hb]
+    decideSites, decideSitesGo, decideRanges]
+  -- ⊢ env.loc i + -env.loc j ≡ 0 [ZMOD 2013265921]
+  rw [Int.modEq_zero_iff_dvd]
+  exact ⟨0, by omega⟩
 
-/-- **Boundary non-vacuity (reject).** On a first row whose cells DISAGREE, `decideVm` REJECTS
-the boundary-only descriptor — the boundary arm separates environments. -/
+/-- **Boundary non-vacuity (reject).** On a first row whose CANONICAL cells DISAGREE, `decideVm`
+REJECTS the boundary-only descriptor — the boundary arm separates environments. The canonicality
+hypotheses (`loc i`, `loc j` ∈ `[0, p)`) are FAITHFUL to the field denotation: distinctness must be
+witnessed in the canonical residue window, since `≡ 0 [ZMOD p]` would otherwise be satisfiable by a
+nonzero multiple of `p` (the deployed range-checks supply exactly this canonicality). -/
 theorem decideVm_boundaryOnly_rejects (hash : List ℤ → ℤ) (i j : Nat) (env : VmRowEnv)
-    (iL : Bool) (h : env.loc i ≠ env.loc j) :
+    (iL : Bool)
+    (hi : 0 ≤ env.loc i ∧ env.loc i < 2013265921)
+    (hj : 0 ≤ env.loc j ∧ env.loc j < 2013265921)
+    (h : env.loc i ≠ env.loc j) :
     decideVm hash (boundaryOnlyDescriptor i j) env true iL = false := by
   simp [decideVm, decideConstraints, decideConstraint, boundaryOnlyDescriptor,
     decideSites, decideSitesGo, decideRanges]
+  -- ⊢ ¬ env.loc i + -env.loc j ≡ 0 [ZMOD 2013265921]
+  rw [Int.modEq_zero_iff_dvd]
+  rintro ⟨k, hk⟩
+  obtain ⟨hi0, hi1⟩ := hi
+  obtain ⟨hj0, hj1⟩ := hj
   omega
 
 /-- **Boundary guard vacuity (off-row).** Off the first row (`isFirst = false`) the boundary
