@@ -60,6 +60,13 @@ collective-choice = { path = "../collective-choice" }
 # deterministic demo public key). The custody-key binding is the named production
 # gap; the quorum / ballots / tally are real.
 blake3 = "1"
+# The real turn crate — for the `WitnessBlob`/`WitnessKind` carrier the MULTI-CELL
+# module attaches to a gated turn (the Merkle-open witness of item-A's finalized
+# state, referenced by the peer-cell `ObservedFieldEquals` at `proof_witness_index`).
+# `dregg-app-framework` re-exports `Action`/`Turn` but NOT the witness-blob carrier,
+# so the cross-cell driver reaches for it here. Same `dregg-turn` the framework and
+# executor are built on.
+dregg-turn = { path = "../turn" }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

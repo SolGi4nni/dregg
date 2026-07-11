@@ -57,6 +57,19 @@ pub mod narrator;
 /// decides, the world resolves. Prose/vote is not power: a quorum-certified but ILLEGAL
 /// Command is a real executor refusal (the crowd cannot vote past the `CellProgram` gate).
 pub mod collective;
+
+/// The MULTI-CELL frontier — a universe as a GRAPH of real cells (rooms/items as
+/// SEPARATE cells) with a **real executor-enforced CROSS-CELL gate**. Where the
+/// single-cell keep (this file) named its ceiling — a tooth cannot read ANOTHER
+/// cell's state — [`multicell`] closes it with the real substrate primitive:
+/// [`StateConstraint::ObservedFieldEquals`](dregg_app_framework::StateConstraint)
+/// on room-B's cell, reading item-A's finalized owner slot on item-A's OWN cell,
+/// admitted by the executor's [`FinalizedRootAuthority`](dregg_cell::predicate::FinalizedRootAuthority)
+/// (built from the committed ledger) plus the driver attaching the Merkle-open
+/// witness of item-A's finalized state. "Room B opens because item A was taken on
+/// another cell" becomes a kernel predicate the [`EmbeddedExecutor`](dregg_app_framework::EmbeddedExecutor)
+/// re-checks across cells — NOT a host `if`.
+pub mod multicell;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};
