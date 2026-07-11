@@ -22,6 +22,8 @@ See `docs/LINKING-SEAMS-PROGRESS.md` for the seam-by-seam status and the named r
 import Dregg2.Crypto.VerifyCoreEqSpec
 import Dregg2.Crypto.VerifyCoreEqSpecW
 import Dregg2.Crypto.CodecRoundTrip
+import Dregg2.Crypto.MlDsaHintCodec
+import Dregg2.Crypto.MlDsaSigCodecClosed
 import Dregg2.Crypto.SignCoreSpec
 import Dregg2.Crypto.DecapsCoreSpec
 import Dregg2.Crypto.EncapsCoreSpec
