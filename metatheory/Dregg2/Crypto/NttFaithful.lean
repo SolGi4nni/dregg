@@ -41,21 +41,25 @@ product for ALL poly pairs, not just the one `native_decide` sample `MlDsaRing.n
   for any element with `ζ²⁵⁶ = −1` (geometric telescope + `orderOf`; Mathlib ships no DFT lemma, built from
   primitives), axiom-clean; `zeta_root_witness` pins that `ζ = 1753` satisfies the hypothesis.
 
-## RUNG 2 — the butterfly WALL (engine BUILT; outer-loop peel + CT invariant CLOSED, forward direction)
+## RUNG 2 — the butterfly WALL (engine BUILT; forward AND inverse CT invariants CLOSED)
 
-The FORWARD half is discharged: `nttEvalsAtRoots_canonical` (below) proves the 8-stage butterfly network
-computes evaluation at the negacyclic roots for every canonical (size-256) poly, via the CT stage-invariant
-induction `stage_inv`. On top of it, **`NttMulHom` is now CLOSED** (`nttMulHom_proven`): the negacyclic-convolution
-ring-hom, via the `schoolbookMul`-loop coefficient characterization (`schoolbookMul_getElem`, PART 1g) + the
-eval-at-a-root multiplicativity `eval256_schoolbook`. The SINGLE remaining residual is the `intt` interpolation
-induction (`NttLeftInverse`), to which `RingRepFaithful` is now reduced (`ringRepFaithful_of_leftInverse`).
+Both halves are discharged. FORWARD: `nttEvalsAtRoots_canonical` proves the 8-stage butterfly network computes
+evaluation at the negacyclic roots for every canonical (size-256) poly, via the CT stage-invariant induction
+`stage_inv`; **`NttMulHom` is CLOSED** (`nttMulHom_proven`) on top of it. INVERSE: **`NttLeftInverse` is CLOSED**
+(`nttLeftInverse_proven`) via the Gentleman–Sande mirror `inttStage_inv` collapsed by `omega_orthogonality`; so
+**`RingRepFaithful` is CLOSED** (`ringRepFaithful_proven` = `ringRepFaithful_of_leftInverse nttLeftInverse_proven`)
+— the whole ∀ NTT-faithfulness bridge behind `verifyCore = spec`, no `native_decide` in any ∀-body.
 
-⚠ **The `∀`-over-all-Poly props are FALSE as literally stated** (`NttEvalsAtRoots` / `NttMulHom` /
-`NttLeftInverse` / `VerifyCoreSpec.RingRepFaithful`): a non-256-length input makes the imperative `Array.set!`
-butterflies no-op out of bounds and keep the wrong length (`ntt #[5]` stays length 1, so `(ntt #[5])[1]! = 0 ≠
-eval256 #[5] (evalRoot 1)`). The theorems here carry the `a.size = 256` guard — the operationally-correct form,
-since the deployed pipeline only feeds decoded size-256 coefficient arrays. `ζ²⁵⁶ = −1` is discharged by plain
-`decide` (NOT `native_decide`), so every keystone is axiom-clean without the `ofReduceBool` residual.
+⚠ **The `∀`-over-all-Poly props are FALSE as literally stated; the theorems carry the operationally-correct
+guards.** Two guards, both matching the deployed pipeline (decoded size-256 arrays of canonical `[0,q)` reps):
+* `a.size = 256` — a non-256 input makes the `Array.set!` butterflies no-op out of bounds and keep the wrong
+  length (`ntt #[5]` stays length 1, so `(ntt #[5])[1]! = 0 ≠ eval256 #[5] (evalRoot 1)`).
+* `∀ p, c[p]! < q` (on `NttLeftInverse` only) — `ntt` reduces mod `q` internally (stage 0 touches all 256
+  slots), so `intt (ntt c)` is ALWAYS reduced; a non-reduced `c` (e.g. `c[0]=q+5`) round-trips to the reduced
+  `5 ≠ q+5` (a `native_decide`-checkable falsifier). This guard is exactly `schoolbookMul_lt` at the reduction
+  call site, so `RingRepFaithful` (unguarded on reduced-ness, true because both sides reduce) still follows.
+`ζ²⁵⁶ = −1` and the `brv`/involution congruences are discharged by plain `decide` (NOT `native_decide`), so
+every keystone is axiom-clean (⊆ {propext, Classical.choice, Quot.sound}) without the `ofReduceBool` residual.
 
 With rung 3 (orthogonality)
 proven, both `NttLeftInverse` and `NttMulHom` reduce to a SINGLE identification: that the 8-stage Cooley–Tukey
@@ -85,9 +89,15 @@ map "evaluate at the negacyclic roots `ζ^{2·brv(m)+1}`" — stated as the prop
   to `nttEvalsAtRoots_canonical`. Axiom-clean.
 
 `NttMulHom` is CLOSED (`nttMulHom_proven`, PART 1g + RUNG-2 step 3): eval-is-a-ring-hom + `evalRoot²⁵⁶ = −1`
-(`evalRoot_pow256`) atop the `schoolbookMul`-loop coefficient characterization. The remaining residual is
-`NttLeftInverse` = eval∘interp collapsed by `omega_orthogonality` (brv bijective) — the `intt` interpolation
-induction (the Gentleman–Sande mirror of `stage_inv`). `RingRepFaithful` is reduced to exactly this one leg.
+(`evalRoot_pow256`) atop the `schoolbookMul`-loop coefficient characterization.
+
+`NttLeftInverse` is CLOSED (`nttLeftInverse_proven`, INVERSE steps 1–5): the `intt` Gentleman–Sande network is
+peeled (`intt = inttScale ∘ inttUpto`) and characterized by the stage-invariant induction `inttStage_inv` — the
+mirror of `stage_inv` on the GS butterfly (`gsFold_spec`/`cast_gsSweep`), with the closed-form reciprocal-root
+kernel `irt X = (evalRoot X)⁻¹` and the butterfly congruences `irt_stage_lo`/`irt_stage_hi` (mod-512 `decide`).
+At `n=8` it gives `(intt v)[i] = nInv·Σ_u v[u]·irt(u)^i`; for `v = ntt c` the double sum swaps and the inner
+`Σ_u (evalRoot u)^j·irt(u)^i` collapses to `256·[i=j]` (`interp_orth`, `brv8`-reindexed `omega_orthogonality`),
+leaving `nInv·256·c[i] = c[i]`. `RingRepFaithful` = `ringRepFaithful_of_leftInverse nttLeftInverse_proven`.
 -/
 import Dregg2.Crypto.VerifyCoreSpec
 import Mathlib.Data.ZMod.Basic
@@ -309,9 +319,9 @@ theorem zeta_root_witness : (zeta : ZMod q)^256 = -1 := by native_decide
 
 /-! ## PART 1e — RUNG 2 (the WALL): the butterfly network realizes evaluation-at-the-roots.
 
-RUNGS 0/1/3 are the algebra. What remains — the SINGLE open frontier for both `NttLeftInverse` and
-`NttMulHom` — is the identification of the 8-stage Cooley–Tukey `Id.run do` butterfly schedule with the
-abstract linear map "evaluate at the 256 negacyclic roots `ζ^{2·brv(m)+1}`". These roots are exactly the
+RUNGS 0/1/3 are the algebra. The crux both `NttLeftInverse` and `NttMulHom` rested on — now DISCHARGED for
+both directions below — is the identification of the 8-stage Cooley–Tukey `Id.run do` butterfly schedule with
+the abstract linear map "evaluate at the 256 negacyclic roots `ζ^{2·brv(m)+1}`". These roots are exactly the
 factorization points of `X²⁵⁶+1 = ∏_{m<256}(X − ζ^{2·brv(m)+1})` over `ℤ_q` (each is a 512th root since
 `(ζ^{odd})²⁵⁶ = (ζ²⁵⁶)^{odd} = (−1)^{odd} = −1`). Given these two props:
 
@@ -928,8 +938,8 @@ What remains to discharge `NttEvalsAtRoots` is the stage-invariant induction ove
   over `u < 256` is `eval256 w (evalRoot m)`, i.e. `NttEvalsAtRoots`.
 
 That nested block-disjoint stage-invariant induction (with the `brv8` exponent identities and the even/odd
-`Finset` reindex) is the single named sub-step still open; the peel, the butterfly engine, the twiddle-field
-cast, and the orthogonality all rest under it, BUILT. -/
+`Finset` reindex) is `stage_inv`, CLOSED below (and mirrored for the inverse by `inttStage_inv`); the peel, the
+butterfly engine, the twiddle-field cast, and the orthogonality all rest under it, BUILT. -/
 
 /-- The 256 negacyclic evaluation points `ζ^{2·brv(m)+1}` (the roots of `X²⁵⁶+1` over `ℤ_q`). -/
 def evalRoot (m : Nat) : ZMod q := (zeta : ZMod q)^(2 * brv8 m + 1)
@@ -937,15 +947,17 @@ def evalRoot (m : Nat) : ZMod q := (zeta : ZMod q)^(2 * brv8 m + 1)
 /-- Evaluation of the degree-<256 poly `a` at `x ∈ ℤ_q`: `Σ_{k<256} a_k · xᵏ`. -/
 def eval256 (a : Poly) (x : ZMod q) : ZMod q := ∑ k ∈ range 256, (a[k]! : ZMod q) * x^k
 
-/-- **OPEN (rung 2, forward).** The forward butterfly network computes evaluation at the negacyclic roots:
-`(ntt a)_m = eval256 a (ζ^{2·brv(m)+1})`. The precise loop-index identification behind `NttMulHom` and the
-forward half of `NttLeftInverse`. -/
+/-- The forward butterfly network computes evaluation at the negacyclic roots: `(ntt a)_m = eval256 a
+(ζ^{2·brv(m)+1})`. **CLOSED** at the operationally-correct size-256 guard by `nttEvalsAtRoots_canonical`; this
+unguarded `∀ (a : Poly)` statement of it is retained only as the abstract signature (it is false for non-256
+`a`). The loop-index identification behind `NttMulHom` and the forward half of `NttLeftInverse`. -/
 def NttEvalsAtRoots : Prop :=
   ∀ (a : Poly) (m : Nat), m < 256 → ((ntt a)[m]! : ZMod q) = eval256 a (evalRoot m)
 
-/-- **OPEN (rung 2, inverse).** The inverse butterfly network interpolates: `(intt v)_k = 256⁻¹ · Σ_{m<256}
-v_m · (root_m)⁻ᵏ`. The inverse half of `NttLeftInverse`. Together with `NttEvalsAtRoots` and
-`omega_orthogonality`, these two props discharge `NttLeftInverse`. -/
+/-- The inverse butterfly network interpolates: `(intt v)_k = 256⁻¹ · Σ_{m<256} v_m · (root_m)⁻ᵏ`. The inverse
+half of `NttLeftInverse`. **Superseded**: `NttLeftInverse` is closed below via `inttStage_inv`/`intt_interp`
+(the size-256 + reduced form of this interpolation, `irt m = (evalRoot m)⁻¹`) + `interp_orth`, not through this
+unguarded prop; it is kept only as the abstract statement of what `intt` computes. -/
 def InttInterpolates : Prop :=
   ∀ (v : Poly) (k : Nat), k < 256 →
     ((intt v)[k]! : ZMod q) = (256 : ZMod q)⁻¹ * ∑ m ∈ range 256, (v[m]! : ZMod q) * (evalRoot m)⁻¹^k
@@ -1570,9 +1582,10 @@ theorem nttMulHom_guarded (a b : Poly) (ha : a.size = 256) (hb : b.size = 256) :
 /-- `NttMulHom` (the guarded `Prop`) is discharged. -/
 theorem nttMulHom_proven : NttMulHom := fun a b ha hb => nttMulHom_guarded a b ha hb
 
-/-- **`RingRepFaithful` reduced to the SINGLE `NttLeftInverse` residual.** With `NttMulHom` closed, the whole
-NTT-faithfulness bridge behind `verifyCore = spec` now rests on exactly one open leg: `intt ∘ ntt = id` on
-canonical polys (the `intt` interpolation induction, mirror of `stage_inv`). -/
+/-- **`RingRepFaithful` reduced to the `NttLeftInverse` residual** (now itself CLOSED, `nttLeftInverse_proven`,
+so `ringRepFaithful_proven` below discharges the whole bridge). With `NttMulHom` closed, the NTT-faithfulness
+bridge behind `verifyCore = spec` rested on exactly this one leg: `intt ∘ ntt = id` on canonical reduced polys
+(the `intt` interpolation induction `inttStage_inv`, mirror of `stage_inv`). -/
 theorem ringRepFaithful_of_leftInverse (hInv : NttLeftInverse) :
     Dregg2.Crypto.VerifyCoreSpec.RingRepFaithful :=
   ringRepFaithful_of hInv nttMulHom_proven
