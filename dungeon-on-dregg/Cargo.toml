@@ -50,6 +50,16 @@ dregg-cell = { path = "../cell" }
 # The default authentic leg is a fixture notary — that provenance level is Phase E
 # (Bedrock MPC-TLS), NOT this phase; our job is BINDING whatever attestation exists.
 dregg-zkoracle-prove = { path = "../zkoracle-prove", default-features = false }
+# THE COLLECTIVE (Phase C). The REAL quorum-certified voting engine: `WriteOnce`
+# ballots + `Monotonic` tally + the polis `AffineLe` quorum gate, every ballot /
+# tally / resolve a real cap-bounded turn on its own `EmbeddedExecutor`. We CONSUME
+# it (open_poll/issue_ballot/cast/resolve) to let a crowd quorum-certify the winning
+# `Command`, which then fires a REAL WorldCell turn on the game executor.
+collective-choice = { path = "../collective-choice" }
+# Demo seat identities: each seated voter's electorate key is `blake3(name)` (a
+# deterministic demo public key). The custody-key binding is the named production
+# gap; the quorum / ballots / tally are real.
+blake3 = "1"
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

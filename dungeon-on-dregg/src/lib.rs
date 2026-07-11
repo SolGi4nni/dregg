@@ -49,6 +49,14 @@ use dregg_app_framework::{
 /// Command on the real executor (prose is not power) and the narration binds into the
 /// real [`TurnReceipt`] via an `EmitEvent` (not a parallel ledger).
 pub mod narrator;
+
+/// Phase C — the COLLECTIVE landed on the real substrate. A crowd quorum-certifies a
+/// winning [`narrator::Command`] through the REAL [`collective_choice`] engine (WriteOnce
+/// ballots + Monotonic tally + the polis `AffineLe` quorum gate), and that certified
+/// winner fires a REAL [`spween_dregg::WorldCell`] turn on the game executor — the crowd
+/// decides, the world resolves. Prose/vote is not power: a quorum-certified but ILLEGAL
+/// Command is a real executor refusal (the crowd cannot vote past the `CellProgram` gate).
+pub mod collective;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};
