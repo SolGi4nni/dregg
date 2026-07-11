@@ -511,6 +511,324 @@ interface IDreggSettlement {
 }
 
 // ============================================================================
+// V2: the 25-lane public-input encoding (the live wide WholeChainProof claim)
+// ============================================================================
+//
+// The v1 types above encode the PRE-WIDENING 4-scalar model (single-word roots,
+// 104-byte tail). The live `WholeChainProof` claim is **25 BabyBear lanes**:
+// `genesis_root[0..8] ++ final_root[0..8] ++ num_turns ++ chain_digest[0..8]`
+// (`SEG_ANCHOR_WIDTH = 8`, `SEG_DIGEST_WIDTH = 8` in
+// `dregg_circuit_prove::ivc_turn_chain`; see
+// `docs/FINDING-chain-participation-census.md` §1). The V2 path below encodes
+// that statement for the EVM. STAGED-ADDITIVE: v1 stays untouched and in use.
+
+/// The BabyBear prime `p = 2^31 - 2^27 + 1 = 0x7800_0001`. Every one of the 25
+/// V2 public-input lanes must be a CANONICAL residue, i.e. strictly less than
+/// this — the Groth16 wrap circuit binds canonical lanes, so a non-canonical
+/// lane is refused at the bridge seam (fail-closed), never silently reduced.
+pub const BABYBEAR_MODULUS: u32 = 2_013_265_921;
+
+/// Number of public-input lanes in the V2 statement:
+/// `genesis_root(8) + final_root(8) + num_turns(1) + chain_digest(8)`.
+pub const ETH_PI_LANES_V2: usize = 25;
+
+/// Byte length of the V2 calldata tail: each of the 25 lanes is ABI-encoded as
+/// a full 32-byte big-endian word (Solidity static encoding of
+/// `uint32[8],uint32[8],uint32,uint32[8]`), so `25 * 32 = 800` bytes.
+pub const ETH_PI_TAIL_BYTES_V2: usize = ETH_PI_LANES_V2 * 32;
+
+/// The 25-lane public inputs a dregg settlement binds on Ethereum — the live
+/// wide `WholeChainProofBytes` claim (8-felt anchors + 8-felt digest), each
+/// lane a canonical BabyBear residue carried as `u32`.
+///
+/// Construct via [`EthPublicInputsV2::new`] /
+/// [`EthPublicInputsV2::from_whole_chain_bytes`] (both fail-closed on any
+/// non-canonical lane or an out-of-`u32`-range `num_turns`); the fields are
+/// read-only from outside this module so a value of this type is always
+/// canonical by construction.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+#[serde(try_from = "EthPublicInputsV2Wire", into = "EthPublicInputsV2Wire")]
+pub struct EthPublicInputsV2 {
+    /// The 8-felt genesis state anchor (canonical BabyBear lanes).
+    genesis_root: [u32; 8],
+    /// The 8-felt final state anchor (canonical BabyBear lanes).
+    final_root: [u32; 8],
+    /// Number of finalized turns folded (one canonical BabyBear lane — the
+    /// in-circuit claim is `BabyBear::new(num_turns as u32)`, so the bridge
+    /// pins `num_turns < p`).
+    num_turns: u32,
+    /// The 8-felt Poseidon2 ordered-history digest (canonical BabyBear lanes).
+    chain_digest: [u32; 8],
+}
+
+/// The UNVALIDATED serde mirror of [`EthPublicInputsV2`]. Deserialization is
+/// routed through `TryFrom` so wire bytes carrying a non-canonical lane are
+/// REFUSED at decode — serde cannot construct a non-canonical
+/// `EthPublicInputsV2` around the fail-closed constructor.
+#[derive(Clone, Serialize, Deserialize)]
+struct EthPublicInputsV2Wire {
+    genesis_root: [u32; 8],
+    final_root: [u32; 8],
+    num_turns: u32,
+    chain_digest: [u32; 8],
+}
+
+impl TryFrom<EthPublicInputsV2Wire> for EthPublicInputsV2 {
+    type Error = EthBridgeError;
+    fn try_from(w: EthPublicInputsV2Wire) -> Result<Self, Self::Error> {
+        EthPublicInputsV2::new(
+            w.genesis_root,
+            w.final_root,
+            u64::from(w.num_turns),
+            w.chain_digest,
+        )
+    }
+}
+
+impl From<EthPublicInputsV2> for EthPublicInputsV2Wire {
+    fn from(p: EthPublicInputsV2) -> Self {
+        Self {
+            genesis_root: p.genesis_root,
+            final_root: p.final_root,
+            num_turns: p.num_turns,
+            chain_digest: p.chain_digest,
+        }
+    }
+}
+
+/// Reject any lane `>= p` (fail-closed canonicality gate for the V2 statement).
+fn check_canonical_lanes(name: &str, lanes: &[u32]) -> Result<(), EthBridgeError> {
+    for (i, &lane) in lanes.iter().enumerate() {
+        if lane >= BABYBEAR_MODULUS {
+            return Err(EthBridgeError::InvalidProof {
+                reason: format!(
+                    "{name} lane {i} = {lane} is not a canonical BabyBear residue \
+                     (must be < {BABYBEAR_MODULUS})"
+                ),
+            });
+        }
+    }
+    Ok(())
+}
+
+impl EthPublicInputsV2 {
+    /// Fail-closed constructor from the four `WholeChainProofBytes`-shaped
+    /// fields. `num_turns` is the envelope's `u64`; it must fit `u32` AND be a
+    /// canonical BabyBear residue (it rides as one lane of the 25-lane claim).
+    /// Every root/digest lane must be canonical (`< p`). Any violation errors —
+    /// nothing is reduced or truncated.
+    pub fn new(
+        genesis_root: [u32; 8],
+        final_root: [u32; 8],
+        num_turns: u64,
+        chain_digest: [u32; 8],
+    ) -> Result<Self, EthBridgeError> {
+        let num_turns_u32 = u32::try_from(num_turns).map_err(|_| EthBridgeError::InvalidProof {
+            reason: format!("num_turns {num_turns} does not fit u32"),
+        })?;
+        check_canonical_lanes("genesis_root", &genesis_root)?;
+        check_canonical_lanes("final_root", &final_root)?;
+        check_canonical_lanes("num_turns", &[num_turns_u32])?;
+        check_canonical_lanes("chain_digest", &chain_digest)?;
+        Ok(Self {
+            genesis_root,
+            final_root,
+            num_turns: num_turns_u32,
+            chain_digest,
+        })
+    }
+
+    /// Fail-closed constructor from the real wire envelope
+    /// ([`dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes`], v3):
+    /// takes exactly its four public fields. Same validation as [`Self::new`].
+    pub fn from_whole_chain_bytes(
+        src: &dregg_circuit_prove::ivc_turn_chain::WholeChainProofBytes,
+    ) -> Result<Self, EthBridgeError> {
+        Self::new(
+            src.genesis_root,
+            src.final_root,
+            src.num_turns,
+            src.chain_digest,
+        )
+    }
+
+    /// The 8-felt genesis anchor lanes.
+    pub fn genesis_root(&self) -> [u32; 8] {
+        self.genesis_root
+    }
+
+    /// The 8-felt final anchor lanes.
+    pub fn final_root(&self) -> [u32; 8] {
+        self.final_root
+    }
+
+    /// The turn count (canonical BabyBear lane).
+    pub fn num_turns(&self) -> u32 {
+        self.num_turns
+    }
+
+    /// The 8-felt chain-digest lanes.
+    pub fn chain_digest(&self) -> [u32; 8] {
+        self.chain_digest
+    }
+
+    /// The 25 lanes in the PINNED public-input order the Groth16 wrap circuit
+    /// and the Solidity verifier both bind:
+    /// `genesis_root[0..8] ++ final_root[0..8] ++ num_turns ++ chain_digest[0..8]`.
+    pub fn lanes(&self) -> [u32; ETH_PI_LANES_V2] {
+        let mut out = [0u32; ETH_PI_LANES_V2];
+        out[0..8].copy_from_slice(&self.genesis_root);
+        out[8..16].copy_from_slice(&self.final_root);
+        out[16] = self.num_turns;
+        out[17..25].copy_from_slice(&self.chain_digest);
+        out
+    }
+
+    /// The V2 public-input calldata tail: the 25 lanes in the pinned order,
+    /// EACH ABI-encoded as a full 32-byte big-endian word (matching the
+    /// Solidity static encoding of `uint32[8],uint32[8],uint32,uint32[8]`) —
+    /// [`ETH_PI_TAIL_BYTES_V2`] = 800 bytes total.
+    pub fn to_calldata_v2(&self) -> Vec<u8> {
+        let mut out = Vec::with_capacity(ETH_PI_TAIL_BYTES_V2);
+        for lane in self.lanes() {
+            let mut word = [0u8; 32];
+            word[28..32].copy_from_slice(&lane.to_be_bytes());
+            out.extend_from_slice(&word);
+        }
+        out
+    }
+
+    /// Inverse of [`Self::to_calldata_v2`]: decode a `settle` calldata tail
+    /// back into the typed 25-lane publics. Fail-closed on:
+    /// - wrong length (exactly [`ETH_PI_TAIL_BYTES_V2`] = 800 bytes),
+    /// - any nonzero byte in a word's 28-byte padding (a value `>= 2^32` is
+    ///   not a `uint32` — refused, never truncated),
+    /// - any non-canonical lane (re-validated through [`Self::new`]).
+    pub fn from_tail_v2(tail: &[u8]) -> Result<Self, EthBridgeError> {
+        if tail.len() != ETH_PI_TAIL_BYTES_V2 {
+            return Err(EthBridgeError::Internal {
+                reason: format!(
+                    "v2 public-input tail must be {ETH_PI_TAIL_BYTES_V2} bytes \
+                     (25 x 32), got {}",
+                    tail.len()
+                ),
+            });
+        }
+        let mut lanes = [0u32; ETH_PI_LANES_V2];
+        for (i, word) in tail.chunks_exact(32).enumerate() {
+            if word[0..28].iter().any(|&b| b != 0) {
+                return Err(EthBridgeError::Internal {
+                    reason: format!(
+                        "v2 public-input word {i} has nonzero high-padding bytes \
+                         (not a uint32)"
+                    ),
+                });
+            }
+            let mut le = [0u8; 4];
+            le.copy_from_slice(&word[28..32]);
+            lanes[i] = u32::from_be_bytes(le);
+        }
+        let mut genesis_root = [0u32; 8];
+        genesis_root.copy_from_slice(&lanes[0..8]);
+        let mut final_root = [0u32; 8];
+        final_root.copy_from_slice(&lanes[8..16]);
+        let num_turns = lanes[16];
+        let mut chain_digest = [0u32; 8];
+        chain_digest.copy_from_slice(&lanes[17..25]);
+        // Re-validate canonicality through the fail-closed constructor.
+        Self::new(genesis_root, final_root, u64::from(num_turns), chain_digest)
+    }
+
+    /// The [`EthBridgeState`] key for the genesis anchor:
+    /// [`root8_bridge_key`] over `genesis_root`.
+    pub fn genesis_bridge_key(&self) -> [u8; 32] {
+        root8_bridge_key(&self.genesis_root)
+    }
+
+    /// The [`EthBridgeState`] key for the final anchor:
+    /// [`root8_bridge_key`] over `final_root`.
+    pub fn final_bridge_key(&self) -> [u8; 32] {
+        root8_bridge_key(&self.final_root)
+    }
+}
+
+/// Collapse an 8-lane root to the `bytes32` the settlement state machine keys
+/// on, so the EXISTING [`EthBridgeState`] continuity/monotone-height logic is
+/// reused unchanged for V2 (no `EthBridgeStateV2`).
+///
+/// PINNED PACKING: `keccak256` over exactly 32 bytes = the 8 lanes as
+/// big-endian `uint32`, lane 0 first. In Solidity this is
+/// `keccak256(abi.encodePacked(l0, l1, ..., l7))` on the eight SEPARATE `uint32`
+/// arguments (each packs to 4 bytes) — exactly what `DreggSettlement.packLanes`
+/// computes. NOTE: `abi.encodePacked(root)` on a `uint32[8] root` does NOT match:
+/// Solidity pads every ARRAY element to 32 bytes (a 256-byte pre-image). Build
+/// the key from the unpacked lanes, never the array form.
+pub fn root8_bridge_key(lanes: &[u32; 8]) -> [u8; 32] {
+    use sha3::{Digest, Keccak256};
+    let mut packed = [0u8; 32];
+    for (i, lane) in lanes.iter().enumerate() {
+        packed[i * 4..i * 4 + 4].copy_from_slice(&lane.to_be_bytes());
+    }
+    let mut h = Keccak256::new();
+    h.update(packed);
+    h.finalize().into()
+}
+
+/// The V2 Solidity verifier ABI: `settle` takes the Groth16 proof points + the
+/// 25-lane public inputs in the pinned order/shape
+/// (`uint32[8] genesisRoot, uint32[8] finalRoot, uint32 numTurns,
+/// uint32[8] chainDigest`). The v1 [`solidity_verifier_interface`] is kept
+/// untouched (STAGED-ADDITIVE).
+pub fn solidity_verifier_interface_v2() -> &'static str {
+    r#"// SPDX-License-Identifier: MIT
+pragma solidity ^0.8.20;
+
+/// dregg whole-chain settlement verifier — V2 (the 25-lane wide claim).
+/// Verifies a Groth16(BN254) proof that wraps the dregg recursive STARK
+/// attesting "all finalized turns executed and the 8-felt state anchor
+/// advanced from genesisRoot to finalRoot", then advances the on-chain
+/// proven root key. Every lane MUST be a canonical BabyBear residue
+/// (< 2013265921); the contract reverts otherwise.
+interface IDreggSettlementV2 {
+    /// Current proven dregg root key: keccak256 over the 8 lanes as big-endian
+    /// uint32 (32-byte pre-image), i.e. abi.encodePacked(l0,...,l7) on the
+    /// SEPARATE uint32 args — NOT abi.encodePacked(root) on the array (which
+    /// pads each element to 32 bytes). See DreggSettlement.packLanes.
+    function provenRootKey() external view returns (bytes32);
+
+    /// Current proven height (monotone).
+    function provenHeight() external view returns (uint64);
+
+    /// keccak256 of the Groth16 verifying key this contract checks against.
+    function verifyingKeyHash() external view returns (bytes32);
+
+    /// Submit a settlement.
+    /// @param a,b,c       Groth16 proof points (BN254): a in G1, b in G2, c in G1.
+    /// @param genesisRoot 8-lane genesis anchor; its packed keccak must equal
+    ///                    the current provenRootKey (continuity).
+    /// @param finalRoot   8-lane final anchor; its packed keccak becomes the
+    ///                    proven root key on success.
+    /// @param numTurns    Number of finalized turns folded (canonical BabyBear).
+    /// @param chainDigest 8-lane Poseidon2 digest over the ordered (old,new)
+    ///                    root pairs.
+    /// Reverts if the pairing check fails, any lane >= 2013265921, or the
+    /// genesisRoot key mismatches the proven root key.
+    function settle(
+        uint256[2] calldata a,
+        uint256[2][2] calldata b,
+        uint256[2] calldata c,
+        uint32[8] calldata genesisRoot,
+        uint32[8] calldata finalRoot,
+        uint32 numTurns,
+        uint32[8] calldata chainDigest
+    ) external;
+
+    event SettledV2(bytes32 indexed oldRootKey, bytes32 indexed newRootKey, uint64 height);
+}
+"#
+}
+
+// ============================================================================
 // Tests
 // ============================================================================
 
