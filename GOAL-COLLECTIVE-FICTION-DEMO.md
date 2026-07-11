@@ -660,3 +660,12 @@ abilities+targeting, verified rolls via dregg-dice, existing CombatEnemy as triv
 - COMBAT lane DIED (API connection drop mid-write, 5-line partial); reverted; RE-ISSUING against clean attested-dm.
 Orchestration lesson: do NOT run a lane that extends a shared type (dice EvidenceKind) concurrently with its
 attested-dm consumers — it broke attested-dm+dungeon-service mid-flight; fixed by adding the match arm myself.
+
+## ✅ Combat engine COMMITTED (first slice): initiative + abilities + targeting, verifiable rolls
+111 lib + 19 dsl + 6 savegame. Closed Encounter machine (all substate = world flags -> state_root -> replay
+reproduces the fight); rolls consume indexed dregg-dice draws; forged-combat-outcome caught by replay (non-vacuous:
+forges positive Sentinel HP->0, integrity passes, replay catches ReplayMismatch::Effect). Additive — existing
+CombatEnemy/Attack + 5 games untouched. examples/combat.rs (Arena Gauntlet) initiative load-bearing.
+## FIRING: OVERWORLD (attested-dm overworld layer + demo/ region-map hub — connect the games into a navigable world
+with travel + completion tracking via savegame). Writing the .dungeon DSL REFERENCE myself (docs/, disjoint).
+Deferred: real threshold drand-BLS beacon (#2, crypto-purity follow-up); collective co-authoring; game.rs module-split.
