@@ -638,3 +638,13 @@ a DIFFERENT tier (tampered flag->WorldMismatch, tampered ledger->ChainBroken, re
 round-trip resumes to a BYTE-IDENTICAL win. 96+19+6 green; verified by reading load's sequence. A save = untrusted input.
 ## FIRING wave 2: wire dice/ ServerVrf -> pqvrf LB-VRF (the real PQ VRF into the randomness path; hatch #4 closed with
 a post-quantum primitive). Frontend/UX lane (a709da8) still running (demo/).
+
+## ✅✅ Wave 2 COMMITTED: LB-VRF wired into randomness (hatch #4 PQ-closed) + frontend/UX polish
+- ServerVrf seed() gates on pqvrf::verify (READ-verified); 25 dice + 100 lib + 19 dsl + 6 savegame; forged LB-VRF
+  proof/output rejected, one-time enforced, attested-dm replay catches a forged LB-VRF draw; combined dungeon-service green.
+- Frontend: cohesive nav+theming across 7 pages, mobile 360px (run-mobile no-overflow), collective-vote UX alive,
+  a11y, share; all drivers pass; honest labels intact.
+## FIRING wave 3 (3 disjoint lanes): QUORUM /party [demo/+collective-choice — upgrade the majority tally to the real
+CollectiveChoiceEngine, the collective honest-scope gap] · HYBRID VRF+beacon+timeout [dice/, from parked patch adapted
+to LB-VRF — closes hatches #1/#2/#5, the randomness moat] · COMBAT ENGINE minimal slice [attested-dm — initiative+
+abilities+targeting, verified rolls via dregg-dice, existing CombatEnemy as trivial case].
