@@ -811,6 +811,10 @@ interface IDreggSettlementV2 {
     /// @param numTurns    Number of finalized turns folded (canonical BabyBear).
     /// @param chainDigest 8-lane Poseidon2 digest over the ordered (old,new)
     ///                    root pairs.
+    /// @param outboundMessageRoot keccak Merkle root over the span's outbound
+    ///                    cross-chain messages, recorded for adapter inclusion
+    ///                    checks (0 = none). NOT a proof public input —
+    ///                    operator-attested pending proof-binding.
     /// Reverts if the pairing check fails, any lane >= 2013265921, or the
     /// genesisRoot key mismatches the proven root key.
     function settle(
@@ -820,7 +824,8 @@ interface IDreggSettlementV2 {
         uint32[8] calldata genesisRoot,
         uint32[8] calldata finalRoot,
         uint32 numTurns,
-        uint32[8] calldata chainDigest
+        uint32[8] calldata chainDigest,
+        bytes32 outboundMessageRoot
     ) external;
 
     event SettledV2(bytes32 indexed oldRootKey, bytes32 indexed newRootKey, uint64 height);

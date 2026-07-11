@@ -24,6 +24,9 @@ dregg-circuit = { path = "../circuit" }
 # depend on bridge.
 dregg-circuit-prove = { path = "../circuit-prove" }
 dregg-turn = { path = "../turn" }
+# The real FinalizedAttestation (committee-quorum trust rung) for interchain_adapter.
+# No cycle: dregg-lightclient does not depend on dregg-bridge.
+dregg-lightclient = { path = "../lightclient" }
 dregg-types = { path = "../types" }
 # The committed mirror-ledger nullifier (`solana_mirror`/`stripe_mirror` derive a
 # consume-once `dregg_cell::Nullifier` for the concurrency-safe double-mint gate).

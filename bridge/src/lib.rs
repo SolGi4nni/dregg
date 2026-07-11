@@ -116,6 +116,12 @@ pub mod action_binding;
 
 pub mod verifier;
 
+/// ONE `InterchainAdapter` trait unifying the four per-chain trust dials
+/// (`LockProofTrust` / `SnarkSystem` / `Verdict` / `FinalizedAttestation`) behind
+/// a single fail-closed `TrustRung` that feeds the committed
+/// `TurnExecutor::bridge_mint_against_lock` gate.
+pub mod interchain_adapter;
+
 #[cfg(test)]
 mod tests;
 
@@ -130,6 +136,9 @@ pub use ethereum_relayer::{
     BlockTag, DEPOSIT_EVENT_SIGNATURE, ETH_DEPOSIT_NULLIFIER_DOMAIN, EthBridgeConfig, EthJsonRpc,
     EthLog, EthProof, EthReceipt, EthRelayer, EthRelayerError, EthRpc, EthStorageSlot,
     ObservedDeposit, deposit_event_topic0, encode_amount_word, eth_deposit_nullifier,
+};
+pub use interchain_adapter::{
+    AdapterError, ChainAttestation, DialAdapter, InterchainAdapter, TrustDial, TrustRung,
 };
 pub use midnight_gateway::{
     AcceptedEnvelope, BridgeGateway, ClaimFraud, ClaimVerdict, GatewayError, Verdict, Watchtower,

@@ -29,6 +29,24 @@ contract DreggSettlement is IDreggSettlement {
     /// (the Nomad-law default), so `isProvenRoot(0)` is always false.
     mapping(bytes32 => bool) private _provenRoots;
 
+    /// Every OUTBOUND MESSAGE ROOT recorded alongside a settlement: a keccak
+    /// Merkle root over the cross-chain messages/events finalized in that span —
+    /// an EVM-friendly (keccak) commitment DISTINCT from the dregg STATE root
+    /// (`packLanes`, a keccak of 8 Poseidon/BabyBear lanes, under which no EVM
+    /// contract can cheaply prove message inclusion). Interchain adapters
+    /// (Hyperlane ISM, LayerZero DVN) verify a message's inclusion under one of
+    /// these, gated by `isProvenMessageRoot`.
+    ///
+    /// NAMED RESIDUAL (honest scope, not laundered): the `settle` proof does NOT
+    /// yet BIND `outboundMessageRoot` to the actual outbound messages — it is
+    /// OPERATOR-ATTESTED at settle time (recorded only when a valid settlement
+    /// proof lands, but the 25-lane proof does not constrain its contents).
+    /// Making the message→root leg proof-carrying is a dregg-circuit obligation
+    /// (expose the message root as a 26th proof public input, or fold it into
+    /// `chainDigest` as a keccak-reconstructible commitment). `bytes32(0)` is
+    /// never recorded.
+    mapping(bytes32 => bool) private _provenMessageRoots;
+
     constructor(
         IGroth16Verifier25 verifier_,
         bytes32 verifyingKeyHash_,
@@ -71,6 +89,14 @@ contract DreggSettlement is IDreggSettlement {
     /// verifiers gate message acceptance on this.
     function isProvenRoot(bytes32 root) external view returns (bool) {
         return _provenRoots[root];
+    }
+
+    /// True iff `messageRoot` was recorded by a settlement (any historical span).
+    /// `isProvenMessageRoot(0)` is always false (the Nomad-law default). Adapters
+    /// gate message-inclusion on this. See `_provenMessageRoots` for the
+    /// operator-attested-vs-proof-bound residual.
+    function isProvenMessageRoot(bytes32 messageRoot) external view returns (bool) {
+        return _provenMessageRoots[messageRoot];
     }
 
     function provenRoot() external view returns (bytes32) {
@@ -125,8 +151,13 @@ contract DreggSettlement is IDreggSettlement {
         uint32[8] calldata genesisRoot,
         uint32[8] calldata finalRoot,
         uint32 numTurns,
-        uint32[8] calldata chainDigest
+        uint32[8] calldata chainDigest,
+        bytes32 outboundMessageRoot
     ) external {
+        // `outboundMessageRoot` is NOT one of the 25 proof public inputs: it is
+        // recorded (operator-attested, see `_provenMessageRoots`) so adapters can
+        // verify message inclusion. Proof-binding it is the named residual.
+
         // 1. Every lane canonical BabyBear, and assemble the 25-lane vector
         //    in the pinned order: genesis[0..8) ++ final[8..16) ++
         //    numTurns[16] ++ chainDigest[17..25).
@@ -170,6 +201,9 @@ contract DreggSettlement is IDreggSettlement {
         _provenLanes = finalRoot;
         _provenHeight += numTurns;
         _provenRoots[packLanes(finalRoot)] = true;
+        if (outboundMessageRoot != bytes32(0)) {
+            _provenMessageRoots[outboundMessageRoot] = true;
+        }
 
         emit Settled(packedOld, packLanes(finalRoot), _provenHeight);
         emit SettledLanes(genesisRoot, finalRoot, numTurns, chainDigest);

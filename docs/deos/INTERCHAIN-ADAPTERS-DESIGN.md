@@ -37,12 +37,12 @@ Ordered from strongest to weakest; the adapter tags each integration with its ru
    *dregg fit:* build the light client; this is the bar. Solana Tower-BFT already
    real in Rust (off-circuit); ETH sync-committee is the easiest unbuilt win.
 2. **Optimistic + fraud proof** — assume valid, allow a bonded challenge within a
-   window; 1 honest watcher suffices. Family: **Optics (Celo) → Nomad →
-   Hyperlane** optimistic ISM, Across intents.
+   window; 1 honest watcher suffices. Family: **Optics/Nomad → Hyperlane**
+   optimistic modules, Across intents.
    *dregg fit:* ALREADY BUILT for Midnight (`Watchtower::examine`); dregg's STARK
    is the objective fraud-proof evidence, turning 2/3-committee trust into 1-of-N.
    This is the *strongest available* posture for any chain we can't yet
-   light-client, and it is exactly the design ember worked on at Celo.
+   light-client.
 3. **Threshold / committee attestation** — an M-of-N set signs "E happened."
    Trust = honest majority of a permissioned set. Family: LayerZero DVNs,
    Wormhole guardians, Axelar validators, CCIP DON.
@@ -63,7 +63,7 @@ proof-carrying system:
 
 | Standard | Default trust | The verifier seam | Permissionless? | dregg fit |
 |---|---|---|---|---|
-| **Hyperlane ISM** (ex-Celo/Optics team) | per-app modular (multisig default) | `IInterchainSecurityModule.verify(metadata, message)` — 2 fns, `verify` is non-view (stateful: verify one epoch proof, cheap lookups after) | **YES** — per-recipient opt-in, no governance; `CCIP_READ` moduleType routes arbitrary proof metadata w/ zero relayer changes; `POLYMER=12` enum precedent | **FLAGSHIP.** `DreggProofISM.verify` = dregg settlement proof attests the message. The default-path zk-ISM slot is UNCLAIMED. Directly continues the Optics work. |
+| **Hyperlane ISM** | per-app modular (multisig default) | `IInterchainSecurityModule.verify(metadata, message)` — 2 fns, `verify` is non-view (stateful: verify one epoch proof, cheap lookups after) | **YES** — per-recipient opt-in, no governance; `CCIP_READ` moduleType routes arbitrary proof metadata w/ zero relayer changes; `POLYMER=12` enum precedent | **FLAGSHIP.** `DreggProofISM.verify` = a dregg settlement attests the message. The default-path zk-ISM slot is UNCLAIMED. |
 | **LayerZero DVN** | X-of-Y-of-N committee | on-chain DVN adapter verifies your proof → `ReceiveUln302.verify(header, payloadHash, confirmations)` | **YES** — 77 DVN providers live; Polyhedra/Lagrange already do the zk-adapter pattern | **FASTEST DEMO.** dregg as a *required* DVN = conjunctive AND factor. Distribution (OApps configuring us) is the real work. |
 | **IBC 08-wasm client** | Tendermint light client (cryptographic) | a CosmWasm `ClientState`/`ConsensusState` impl of ICS-02 (`verifyClientMessage`, `verifyMembership`, `checkForMisbehaviour`) | governance store per-counterparty (sanctioned, not open) | **DEEPEST.** `ClientState` pins dregg's circuit vkey; `VerifyClientMessage` runs `verify_history`. IBC Eureka already ships `SP1ICS07Tendermint.sol` (Tendermint-in-SP1 → Groth16) — our exact shape. CAVEAT: must solve fork-choice (validity ≠ canonicity) + reciprocal client hosting. |
 | **OIF / ERC-7683 intents** | optimistic (Across) / agnostic | conforming `IInputOracle`/`hasAttested` proof verifier; the new (2026-05) `Witness` variable role is a first-class proof slot | **YES** — OIF default settlement is *already Hyperlane ISM-based* | dregg as the "the fill happened" settlement oracle; replaces the optimistic window with a validity proof. |
@@ -99,11 +99,10 @@ single most important property of the outbound integrations.
 The high-value integration points are standards that expose a **bring-your-own-
 verifier** seam, because dregg plugs in without anyone's permission:
 
-- **Hyperlane ISM** (the Celo/Optics lineage) — a contract implementing the
-  `InterchainSecurityModule` interface decides whether to accept a message. dregg
-  provides a `DreggProofISM`: accept iff a dregg settlement proof attests the
-  message. This is the flagship — it directly continues ember's Optics work and is
-  optimistic-or-proof at our choosing.
+- **Hyperlane ISM** — a contract implementing the `InterchainSecurityModule`
+  interface decides whether to accept a message. dregg provides a `DreggProofISM`:
+  accept iff a dregg settlement attests the message. This is the flagship — a
+  two-function contract, per-recipient, with the default-path zk-ISM slot unclaimed.
 - **LayerZero permissionless DVN** — register dregg as a DVN in an app's X-of-Y-of-N
   stack; dregg's vote is proof-backed.
 - **Axelar Interchain Amplifier** — register a custom verifier for a new chain
@@ -176,9 +175,9 @@ Grounded in "permissionless seam × shipped precedent × continues existing dreg
    `bridgeinboundmint` shape, with the four in-tree tiers
    (`LockProofTrust`/`SnarkSystem`/`Verdict`/`FinalizedAttestation`) as its rung
    variants. This is model-work, no foreign chain reimplemented — exactly ember's ask.
-2. **Hyperlane `DreggProofISM.sol`** (the Optics-lineage flagship) — a
-   two-function ISM whose `verify()` calls `DreggSettlement`'s 25-lane Groth16
-   check, AND-ed with a message-id check via an Aggregation ISM (anti-replay).
+2. **Hyperlane `DreggProofISM.sol`** (the flagship) — a two-function ISM whose
+   `verify()` gates on a `DreggSettlement`-recorded message root + Merkle
+   inclusion, AND-ed with a message-id check via an Aggregation ISM (anti-replay).
    THE NOMAD LAW is a hard gate: a test proving `verify` reverts on the
    zero/default input. Routed via `CCIP_READ` moduleType so no relayer change is
    needed. Outbound (dregg is the prover).
@@ -198,6 +197,49 @@ Each outbound lane (2, 3, 5-outbound) rests on the SAME wrap prover
 (`docs/deos/ETH-NATIVE-WRAP.md`) and the SAME `DreggSettlement` verifier — one
 crypto core, many standard-shaped adapters. Each inbound lane routes through the
 one committed consume-once mint gate.
+
+## From day 0 (in code now) vs. roadmap-before-mainnet
+
+**In the tree today (this session), green + tested:**
+- dregg's own recursive-STARK finality + light client (`lightclient::verify_history`).
+- EVM settlement contract at the real 25-lane proof shape (`DreggSettlement`), with
+  a historical proven-root + outbound-message-root registry.
+- A Hyperlane ISM (`DreggProofISM`) and a LayerZero DVN (`DreggDVN`) — both
+  Nomad-law-gated, verifying message inclusion under a recorded message root.
+- The Lean `InterchainAdapter` (foreign finality as a hypothesis; credit-soundness
+  + conservation composed from the existing settlement/mint theorems, axiom-clean,
+  non-vacuous) and the Rust `InterchainAdapter` trait unifying the four trust dials
+  into the committed consume-once mint gate.
+- The optimistic + 1-of-N watchtower bridge (Midnight, `Watchtower::examine`) and a
+  real Solana Tower-BFT consensus verifier (Rust); a Stripe DECO/zkTLS inbound proof.
+
+**Roadmap before mainnet:**
+- The gnark wrap prover (STARK→Groth16) that makes the settlement verifier actually
+  run on EVM (`docs/deos/ETH-NATIVE-WRAP.md`).
+- **Proof-binding the outbound message root** — the one honest residual below.
+- ETH sync-committee inbound light client (needs BLS12-381 aggregate verify).
+- IBC 08-wasm client (deeper; needs the fork-choice/misbehaviour story).
+
+## The one honest residual: proof-binding the message root
+
+The adapters verify a message's inclusion under a keccak Merkle **outbound message
+root** that `DreggSettlement.settle` records. Today that root is
+**operator-attested** — recorded only when a valid 25-lane settlement proof lands,
+but the proof does not yet *constrain its contents*. So the proven-STATE half is
+by-proof; the message→root leg is settler-attested until we bind it.
+
+Keccak is deliberate and boundary-only: it is the native ~30-gas EVM hash, versus
+~50-100× for dregg's Poseidon2/BLAKE3 on-chain. This tree is a small purpose-built
+commitment over just the span's outbound cross-chain messages — NOT dregg's
+note/state tree rehashed — so it neither duplicates the dual-commitment
+architecture nor imposes bulk rehashing.
+
+Making the leg fully proof-carrying is a hash-family **decision** (ember-gated):
+(a) keccak message root bound in-circuit (cheap EVM verify, expensive
+keccak-in-STARK); (b) a Poseidon2 message root (cheap in-circuit, heavier EVM
+inclusion — the gnark wrap already has Poseidon2-w16 gadgets); (c) fold per-message
+inclusion into the wrap and expose the message commitment (no EVM rehash, heavier
+proving). Pick when the wrap prover lands.
 
 ## Non-goals
 

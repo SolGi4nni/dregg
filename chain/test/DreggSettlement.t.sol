@@ -104,10 +104,20 @@ contract DreggSettlementTest is Test {
         uint32 n,
         uint32[8] memory d
     ) internal {
+        callSettleMsg(g, f, n, d, bytes32(0));
+    }
+
+    function callSettleMsg(
+        uint32[8] memory g,
+        uint32[8] memory f,
+        uint32 n,
+        uint32[8] memory d,
+        bytes32 msgRoot
+    ) internal {
         uint256[2] memory a = [uint256(1), uint256(2)];
         uint256[2][2] memory b = [[uint256(3), uint256(4)], [uint256(5), uint256(6)]];
         uint256[2] memory c = [uint256(7), uint256(8)];
-        settlement.settle(a, b, c, g, f, n, d);
+        settlement.settle(a, b, c, g, f, n, d, msgRoot);
     }
 
     function assertLanesEq(uint32[8] memory got, uint32[8] memory want) internal pure {
@@ -187,6 +197,20 @@ contract DreggSettlementTest is Test {
         assertTrue(settlement.isProvenRoot(settlement.packLanes(f2)));
         assertTrue(settlement.isProvenRoot(settlement.packLanes(mkLanes(1))));
         assertFalse(settlement.isProvenRoot(settlement.packLanes(mkLanes(9))));
+    }
+
+    function test_MessageRootRegistry_RecordedAndNomadLaw() public {
+        bytes32 msgRoot = keccak256("outbound-span-1");
+        assertFalse(settlement.isProvenMessageRoot(msgRoot));
+        assertFalse(settlement.isProvenMessageRoot(bytes32(0))); // THE NOMAD LAW
+
+        uint32[8] memory f1 = mkLanes(2);
+        callSettleMsg(mkLanes(1), f1, 10, mkLanes(3), msgRoot);
+        assertTrue(settlement.isProvenMessageRoot(msgRoot));
+        // A settle recording no message root leaves zero un-proven.
+        callSettleMsg(f1, mkLanes(4), 5, mkLanes(5), bytes32(0));
+        assertFalse(settlement.isProvenMessageRoot(bytes32(0)));
+        assertFalse(settlement.isProvenMessageRoot(keccak256("never-recorded")));
     }
 
     function test_Reject_NonCanonicalGenesisAtConstruction() public {
@@ -271,7 +295,7 @@ contract DreggSettlementTest is Test {
         uint256[2][2] memory b = [[uint256(3), uint256(4)], [uint256(5), uint256(6)]];
         uint256[2] memory c = [uint256(7), uint256(8)];
         vm.expectRevert(bytes("verifier: boom"));
-        s.settle(a, b, c, mkLanes(1), mkLanes(2), 1, mkLanes(3));
+        s.settle(a, b, c, mkLanes(1), mkLanes(2), 1, mkLanes(3), bytes32(0));
     }
 
     // ------------------------------------------------------------------

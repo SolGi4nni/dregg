@@ -7283,9 +7283,9 @@ reimplement foreign chains. Recommended build order (named lanes):
   SettlePred+BindsLiveAuthority (metatheory/Metatheory/SettlementSoundness.lean) + the §8 portal shape;
   rung variants = existing LockProofTrust/SnarkSystem/Verdict/FinalizedAttestation · model-only, no
   foreign chain reimplemented.
-- **Hyperlane DreggProofISM.sol** (Optics-lineage flagship) · 2-fn ISM, verify() calls DreggSettlement
-  25-lane check, AND message-id anti-replay, CCIP_READ moduleType routing · THE NOMAD LAW gate: prove
-  verify() reverts on zero/default input ($190M vacuity bug). Default-path zk-ISM slot is UNCLAIMED.
+- **Hyperlane DreggProofISM.sol** (flagship) · 2-fn ISM, verify() gates on DreggSettlement message-root
+  registry + Merkle inclusion, AND message-id anti-replay, CCIP_READ moduleType routing · THE NOMAD LAW
+  gate: verify() reverts on zero/default input ($190M vacuity bug). Default-path zk-ISM slot is UNCLAIMED.
 - **LayerZero DreggDVN adapter** · fastest live demo; on-chain DVN verifying the same proof, permissionless
   required-DVN registration; shares the verifier contract.
 - **ETH sync-committee inbound light client** · easiest unbuilt full-client win (no BLS12-381 in-tree);
@@ -7293,3 +7293,20 @@ reimplement foreign chains. Recommended build order (named lanes):
 - **IBC 08-wasm client** (later) · CosmWasm ICS-02 pinning dregg's vkey; needs fork-choice/misbehaviour
   (validity ≠ canonicity) story. IBC Eureka's SP1ICS07Tendermint.sol is our exact shape.
 One crypto core (the gnark wrap + DreggSettlement), many standard-shaped adapters. Natural ultracode wave.
+
+## interchain-adapters WAVE 2 landed (2026-07-11, Fable — 4 lanes + audit, integrator-fixed)
+
+All 4 lanes green post-audit; Nomad-law holds across every one, zero vacuity. Integrator fixes:
+- Solidity MAJOR (both adapters): a dregg proven root is packLanes(state lanes)=keccak(8 Poseidon/BabyBear
+  felts), NOT a keccak Merkle root over messages — so the inclusion gate was inert. FIXED: DreggSettlement
+  now records an OUTBOUND MESSAGE ROOT per span (isProvenMessageRoot); both adapters verify inclusion under
+  THAT (real multi-leaf keccak tree, real recorded root, real proof). 85 forge tests green.
+- NAMED RESIDUAL: the message root is OPERATOR-ATTESTED (recorded on valid settle) but not yet proof-bound.
+  Making it proof-carrying = hash-family DECISION (ember-gated): keccak-in-circuit vs Poseidon2 message root
+  vs fold-inclusion-into-wrap. Pick when the gnark wrap lands. keccak is boundary-only (native EVM hash),
+  NOT dregg's dual-commitment rehashed.
+- Rust: landed the one-line dregg-lightclient dep (no cycle); documented the committee-quorum PROVENANCE
+  assumption (FinalizedAttestation only from verify_finalized_history) and the destination_federation
+  caller-responsibility. Followups: wire relayers to build ChainAttestation + check destination_federation;
+  drive the real bridge_mint_against_lock gate end-to-end in one test.
+- Celo/Optics lineage claim REMOVED everywhere (ember not deeply involved with that team).

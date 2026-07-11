@@ -89,6 +89,12 @@ interface IDreggSettlement {
     /// message proven under a since-superseded root still verifies.
     function isProvenRoot(bytes32 root) external view returns (bool);
 
+    /// True iff `messageRoot` was recorded by a settlement (any historical span).
+    /// `isProvenMessageRoot(0)` is always false. Adapters gate message inclusion
+    /// on this. The message→root binding is operator-attested pending a
+    /// proof-binding circuit change (a named residual, not a hole).
+    function isProvenMessageRoot(bytes32 messageRoot) external view returns (bool);
+
     /// Current proven dregg state root, as keccak256 of the tightly packed
     /// 8 big-endian uint32 lanes (for indexing / event correlation).
     /// bytes32(0) until the first settle.
@@ -131,6 +137,11 @@ interface IDreggSettlement {
     /// @param numTurns    Number of finalized turns folded (must be >= 1).
     /// @param chainDigest The 8 digest lanes committing to the ordered
     ///                    (old, new) root pairs.
+    /// @param outboundMessageRoot A keccak Merkle root over the cross-chain
+    ///                    messages finalized in this span, recorded for adapter
+    ///                    inclusion checks (0 to record none). NOT a proof public
+    ///                    input — operator-attested pending proof-binding (see
+    ///                    `isProvenMessageRoot`).
     /// Reverts on any non-canonical lane, broken continuity, zero turns, or
     /// a failed pairing check.
     function settle(
@@ -140,6 +151,7 @@ interface IDreggSettlement {
         uint32[8] calldata genesisRoot,
         uint32[8] calldata finalRoot,
         uint32 numTurns,
-        uint32[8] calldata chainDigest
+        uint32[8] calldata chainDigest,
+        bytes32 outboundMessageRoot
     ) external;
 }
