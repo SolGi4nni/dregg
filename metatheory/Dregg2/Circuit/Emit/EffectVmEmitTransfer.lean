@@ -811,8 +811,12 @@ def cAM1 : Nat := AVAIL_BASE + 5
 /-- The two borrow bits (`cBRW1` = the final borrow; `= 0` ⟺ `before ≥ amount`). -/
 def cBRW0 : Nat := AVAIL_BASE + 6
 def cBRW1 : Nat := AVAIL_BASE + 7
-/-- The widened trace width. -/
-def AVAIL_WIDTH : Nat := AVAIL_BASE + 8
+/-- The two CREDIT-SIDE carry bits (`cCRY1` = the final carry; `= 0` ⟺ `before + amount` did NOT
+overflow the 30-bit after limb, i.e. NO field wrap on the credit `new = old + amount`). -/
+def cCRY0 : Nat := AVAIL_BASE + 8
+def cCRY1 : Nat := AVAIL_BASE + 9
+/-- The widened trace width (borrow chain + credit carry chain witness columns). -/
+def AVAIL_WIDTH : Nat := AVAIL_BASE + 10
 
 /-- Operand assembly: `before.bal_lo = bef0 + 2^15·bef1` (pins the 30-bit operand to its 15-bit limbs). -/
 def gAsmBefore : EmittedExpr :=
@@ -842,11 +846,47 @@ def gBorrow1 : EmittedExpr :=
 amount` — AVAILABILITY, enforced in-circuit. -/
 def gNoBorrow : EmittedExpr := .mul (ePrm param.DIRECTION) (.var cBRW1)
 
-/-- The availability-weld gates (assembly + borrow chain). Appended to the transfer descriptor. -/
+/-! ### The CREDIT-SIDE carry chain (GAP #4 credit twin — the OVERFLOW-WRAP close, verdict A).
+
+The borrow chain above is `direction`-gated to the DEBIT (`dir = 1`). On a CREDIT row (`dir = 0`) the
+debit gate `gBalLo` forces only `new_bal_lo ≡ old_bal_lo + amount [ZMOD p]`, and `gBalHi` is a
+passthrough — so a credit whose `old + amount ≥ p` WRAPS: witness `old = amount = 1006632961` (both
+`< 2^30`) gives `old + amount = 2013265922 ≡ 1 [ZMOD p]`, and `after = 1 < 2^30` PASSES the after-range
+— a credit that DESTROYS ~2·10^9 of value (a downward conservation break). Cross-cell conservation
+(`CrossCellConservation`) does NOT catch it: it accumulates the mod-`p` NET_DELTA the wrapped credit
+publishes, i.e. the small wrapped value, so transfer must SELF-ENFORCE. The FIX mirrors the debit
+borrow chain: a `(1 − dir)`-gated 15-bit-limb ADDITION `before + amount = after` with a NO-FINAL-CARRY
+gate, so on a credit row `after = before + amount` over ℤ with `after < 2^30 < p` — no wrap. -/
+
+/-- The credit selector expression `1 − dir` (`= 1` on a credit row, `0` on a debit row). -/
+def eCreditSel : EmittedExpr := .add (.const 1) (.mul (.const (-1)) (ePrm param.DIRECTION))
+/-- Credit carry-bit booleanity: `cc0·(cc0 − 1)`. -/
+def gCry0Bool : EmittedExpr := .mul (.var cCRY0) (.add (.var cCRY0) (.const (-1)))
+/-- Credit carry-bit booleanity: `cc1·(cc1 − 1)`. -/
+def gCry1Bool : EmittedExpr := .mul (.var cCRY1) (.add (.var cCRY1) (.const (-1)))
+/-- Credit carry, limb 0 (`(1−dir)`-gated): `(1−dir)·(bef0 + am0 − cc0·2^15 − aft0)`. On a credit row
+this forces `bef0 + am0 = aft0 + cc0·2^15` — the low-limb carry addition (twin of `gBorrow0`). -/
+def gCarry0 : EmittedExpr :=
+  .mul eCreditSel
+    (eSub (.add (.var cBEF0) (.var cAM0)) (.add (.var cAFT0) (.mul (.const 32768) (.var cCRY0))))
+/-- Credit carry, limb 1 (`(1−dir)`-gated): `(1−dir)·(bef1 + am1 + cc0 − cc1·2^15 − aft1)`. -/
+def gCarry1 : EmittedExpr :=
+  .mul eCreditSel
+    (eSub (.add (.add (.var cBEF1) (.var cAM1)) (.var cCRY0))
+      (.add (.var cAFT1) (.mul (.const 32768) (.var cCRY1))))
+/-- The NO-FINAL-CARRY gate (`(1−dir)`-gated): `(1−dir)·cc1`. On a credit row `cc1 = 0`, i.e. `before +
+amount = after < 2^30 < p` — NO OVERFLOW WRAP, enforced in-circuit. -/
+def gNoCarry : EmittedExpr := .mul eCreditSel (.var cCRY1)
+
+/-- The availability-weld gates (assembly + debit borrow chain + credit carry chain). Appended to the
+transfer descriptor. The borrow gates are `dir`-gated (bite on the debit); the carry gates are
+`(1−dir)`-gated (bite on the credit) — together they close BOTH wrap directions. -/
 def transferAvailGates : List VmConstraint :=
   [ .gate gAsmBefore, .gate gAsmAfter, .gate gAsmAmount
   , .gate gBrw0Bool, .gate gBrw1Bool
-  , .gate gBorrow0, .gate gBorrow1, .gate gNoBorrow ]
+  , .gate gBorrow0, .gate gBorrow1, .gate gNoBorrow
+  , .gate gCry0Bool, .gate gCry1Bool
+  , .gate gCarry0, .gate gCarry1, .gate gNoCarry ]
 
 /-- The availability-weld range checks: the operand + amount 15-bit limbs (bounds every operand to
 `[0, 2^30) ⊂ [0, p)` and, crucially, RANGES `amount`, closing the unranged-amount hole). -/
@@ -855,7 +895,10 @@ def transferAvailRanges : List VmRange :=
 
 /-- **`transferVmDescriptorAvail`** — the HARDENED transfer descriptor: the bare `transferVmDescriptor`
 PLUS the availability-weld gates and the amount/operand limb range checks, trace widened to carry the
-witness columns. Closes DEPLOYED SOUNDNESS GAP #4 (in-circuit availability; no `hcanonMove`). STAGED. -/
+witness columns. Closes DEPLOYED SOUNDNESS GAP #4 in BOTH directions — the `dir`-gated borrow chain
+DERIVES debit availability (`before ≥ amount`, no underflow wrap; `transferAvail_derives_availability`)
+and the `(1−dir)`-gated carry chain DERIVES credit no-overflow (`after = before + amount < 2^30 < p`, no
+overflow wrap; `transferAvail_credit_no_overflow`) — with no `hcanonMove`. STAGED. -/
 def transferVmDescriptorAvail : EffectVmDescriptor :=
   { transferVmDescriptor with
     name        := transferVmAirName ++ "-avail"
@@ -964,6 +1007,84 @@ theorem transferAvail_forgery_unsat (hash : List ℤ → ℤ) (env : VmRowEnv)
   have h := (transferAvail_derives_availability hash env hcanon hsat hdir).1
   rw [hbefore, hamount] at h; omega
 
+/-- **SOUNDNESS — CREDIT NO-OVERFLOW DERIVED IN-CIRCUIT (GAP #4 credit twin CLOSED).** On a CREDIT row
+(`direction = 0`) a trace satisfying the hardened descriptor FORCES the exact ℤ move `after = before +
+amount` — with NO field wrap. The `(1−dir)`-gated carry chain + the 15-bit limb range checks make the
+addition exact over ℤ, and the after-limb range check bounds `after < 2^30`, so `before + amount =
+after < 2^30 < p` — the overflow wrap (`before + amount ≥ p`) is STRUCTURALLY impossible. Same single
+hypothesis as the debit twin: the DEPLOYED canonicality invariant `0 ≤ loc c < p`. -/
+theorem transferAvail_credit_no_overflow (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferVmDescriptorAvail env true false)
+    (hdir : env.loc (prmCol param.DIRECTION) = 0) :
+    env.loc (saCol state.BALANCE_LO)
+      = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.AMOUNT) := by
+  obtain ⟨hcs, _hsites, hrs⟩ := hsat
+  -- range facts (each limb in [0, 2^15))
+  have hb0 := hrs _ (availRange_mem ⟨cBEF0, 15⟩ (by simp [transferAvailRanges]))
+  have hb1 := hrs _ (availRange_mem ⟨cBEF1, 15⟩ (by simp [transferAvailRanges]))
+  have ha0 := hrs _ (availRange_mem ⟨cAFT0, 15⟩ (by simp [transferAvailRanges]))
+  have ha1 := hrs _ (availRange_mem ⟨cAFT1, 15⟩ (by simp [transferAvailRanges]))
+  have hm0 := hrs _ (availRange_mem ⟨cAM0, 15⟩ (by simp [transferAvailRanges]))
+  have hm1 := hrs _ (availRange_mem ⟨cAM1, 15⟩ (by simp [transferAvailRanges]))
+  simp only [VmRange.holds] at hb0 hb1 ha0 ha1 hm0 hm1
+  norm_num at hb0 hb1 ha0 ha1 hm0 hm1
+  -- gate facts (bodies vanish mod p on the active row)
+  have gAsmB := hcs _ (availGate_mem (.gate gAsmBefore) (by simp [transferAvailGates]))
+  have gAsmA := hcs _ (availGate_mem (.gate gAsmAfter) (by simp [transferAvailGates]))
+  have gAsmM := hcs _ (availGate_mem (.gate gAsmAmount) (by simp [transferAvailGates]))
+  have gK0 := hcs _ (availGate_mem (.gate gCry0Bool) (by simp [transferAvailGates]))
+  have gK1 := hcs _ (availGate_mem (.gate gCry1Bool) (by simp [transferAvailGates]))
+  have gCar0 := hcs _ (availGate_mem (.gate gCarry0) (by simp [transferAvailGates]))
+  have gCar1 := hcs _ (availGate_mem (.gate gCarry1) (by simp [transferAvailGates]))
+  have gNoC := hcs _ (availGate_mem (.gate gNoCarry) (by simp [transferAvailGates]))
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gCry0Bool, gCry1Bool,
+    gCarry0, gCarry1, gNoCarry, eCreditSel, eSA, eSB, ePrm, eSub,
+    EmittedExpr.eval] at gAsmB gAsmA gAsmM gK0 gK1 gCar0 gCar1 gNoC
+  rw [hdir] at gCar0 gCar1 gNoC
+  simp only [mul_zero, add_zero, one_mul] at gCar0 gCar1 gNoC
+  -- carry bits are boolean (mod-p booleanity + canonicality + p prime)
+  have cry0Bool : 0 ≤ env.loc cCRY0 ∧ env.loc cCRY0 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gK0
+    obtain ⟨z0, zp⟩ := hcanon cCRY0
+    rcases pPrimeInt.dvd_mul.mp gK0 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have cry1Bool : 0 ≤ env.loc cCRY1 ∧ env.loc cCRY1 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gK1
+    obtain ⟨z0, zp⟩ := hcanon cCRY1
+    rcases pPrimeInt.dvd_mul.mp gK1 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  -- operand assemblies lift to exact ℤ (canonical operand, limb sum < 2^30 < p)
+  have eBef : env.loc (sbCol state.BALANCE_LO) = env.loc cBEF0 + 32768 * env.loc cBEF1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmB) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eAft : env.loc (saCol state.BALANCE_LO) = env.loc cAFT0 + 32768 * env.loc cAFT1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmA) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eAmt : env.loc (prmCol param.AMOUNT) = env.loc cAM0 + 32768 * env.loc cAM1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmM) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  -- the carry addition is exact over ℤ (each residual confined to (−p, p) by the 15-bit ranges)
+  have e0 := availBounded gCar0 (by omega) (by omega)
+  have e1 := availBounded gCar1 (by omega) (by omega)
+  have eCC : env.loc cCRY1 = 0 := availBounded gNoC (by omega) (by omega)
+  -- exact move: purely linear now (no residual congruences left)
+  rw [eBef, eAft, eAmt]; omega
+
+/-- **THE CREDIT FORGERY IS UNSAT (GAP #4 credit witness).** The over-mint/value-destruction credit
+forgery (`before = amount = 1006632961`, both `< 2^30`, `direction = 0`) CANNOT satisfy the hardened
+descriptor: the derived exact move forces `after = before + amount = 2013265922`, but the after limb is
+range-canonical (`< p = 2013265921`) — contradiction. The credit overflow-wrap is closed in-circuit. -/
+theorem transferAvail_credit_forgery_unsat (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferVmDescriptorAvail env true false)
+    (hbefore : env.loc (sbCol state.BALANCE_LO) = 1006632961)
+    (hamount : env.loc (prmCol param.AMOUNT) = 1006632961)
+    (hdir : env.loc (prmCol param.DIRECTION) = 0) : False := by
+  have h := transferAvail_credit_no_overflow hash env hcanon hsat hdir
+  rw [hbefore, hamount] at h
+  have hc := (hcanon (saCol state.BALANCE_LO)).2
+  omega
+
 /-! ### LIVENESS: an honest debit (`goodRow` + its limb witnesses) satisfies the weld. -/
 
 /-- `goodRow` (debit of 30 from bal_lo 100 → 70) extended with the availability-weld witness columns:
@@ -989,6 +1110,37 @@ theorem goodAvailRow_ranges_hold (r : VmRange) (hr : r ∈ transferAvailRanges) 
     r.holds goodAvailRow := by
   fin_cases hr <;> exact ⟨by decide, by decide⟩
 
+/-- An honest CREDIT row (`direction = 0`, credit of 30 into bal_lo `100 → 130`) extended with the
+availability-weld witness columns: `before = 100` limbs `(100, 0)`, `after = 130` limbs `(130, 0)`,
+`amount = 30` limbs `(30, 0)`, no borrows AND no carries (`100 + 30 = 130`, no overflow). -/
+def goodCreditRow : VmRowEnv where
+  loc := fun v =>
+    if v = sel.TRANSFER then 1
+    else if v = sbCol state.BALANCE_LO then 100
+    else if v = saCol state.BALANCE_LO then 130
+    else if v = sbCol state.NONCE then 5
+    else if v = saCol state.NONCE then 6
+    else if v = prmCol param.AMOUNT then 30
+    else if v = cBEF0 then 100 else if v = cAFT0 then 130 else if v = cAM0 then 30
+    else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
+
+/-- **LIVENESS (credit).** Every availability-weld gate holds on the honest `goodCreditRow` — no valid
+CREDIT is rejected by the new carry gates (the carry chain closes with zero carries: `100 + 30 = 130`;
+the borrow gates are `dir`-gated off, `dir = 0`). -/
+theorem goodCreditRow_gates_hold (c : VmConstraint) (hc : c ∈ transferAvailGates) :
+    c.holdsVm goodCreditRow false false := by
+  have hb : ∃ b, c = .gate b ∧ b.eval goodCreditRow.loc = 0 := by
+    fin_cases hc <;> exact ⟨_, rfl, by decide⟩
+  obtain ⟨b, rfl, hval⟩ := hb
+  rw [holdsVm_gate_false, hval]
+
+/-- **LIVENESS (credit ranges).** The honest credit limb witnesses satisfy the 15-bit range checks. -/
+theorem goodCreditRow_ranges_hold (r : VmRange) (hr : r ∈ transferAvailRanges) :
+    r.holds goodCreditRow := by
+  fin_cases hr <;> exact ⟨by decide, by decide⟩
+
 /-! ## §12 — Axiom-hygiene pins (the honesty tripwire). -/
 
 #guard transferVmDescriptor.constraints.length == 14 + 14 + 4 + 3 + 1  -- gates+transitions+4first+3last+selectorGate
@@ -1003,16 +1155,22 @@ theorem goodAvailRow_ranges_hold (r : VmRange) (hr : r ∈ transferAvailRanges) 
 #assert_axioms transferFeeVm_faithful
 #assert_axioms transferFeeVm_rejects_wrong_fee
 
--- The availability weld (GAP #4): the hardened descriptor adds 8 gates + 6 ranges and 8 witness cols.
-#guard transferVmDescriptorAvail.constraints.length == (14 + 14 + 4 + 3 + 1) + 8
+-- The availability weld (GAP #4): the hardened descriptor adds 13 gates (8 borrow + 5 carry) + 6
+-- ranges and 10 witness cols (2 operand limbs ×3, 2 borrow bits, 2 credit-carry bits).
+#guard transferVmDescriptorAvail.constraints.length == (14 + 14 + 4 + 3 + 1) + 13
 #guard transferVmDescriptorAvail.ranges.length == 2 + 6
-#guard transferVmDescriptorAvail.traceWidth == 196
--- LIVENESS witness (kernel-evaluated): every weld gate body is 0 on the honest debit row.
+#guard transferVmDescriptorAvail.traceWidth == 198
+-- LIVENESS witness (kernel-evaluated): every weld gate body is 0 on the honest debit AND credit rows.
 #guard transferAvailGates.all (fun c => match c with | .gate b => b.eval goodAvailRow.loc == 0 | _ => true)
+#guard transferAvailGates.all (fun c => match c with | .gate b => b.eval goodCreditRow.loc == 0 | _ => true)
 #assert_axioms transferAvail_derives_availability
 #assert_axioms transferAvail_forgery_unsat
+#assert_axioms transferAvail_credit_no_overflow
+#assert_axioms transferAvail_credit_forgery_unsat
 #assert_axioms goodAvailRow_gates_hold
 #assert_axioms goodAvailRow_ranges_hold
+#assert_axioms goodCreditRow_gates_hold
+#assert_axioms goodCreditRow_ranges_hold
 
 #assert_axioms transferRowGates_holds_iff
 #assert_axioms transferVm_faithful

@@ -57,8 +57,12 @@ pub const AM1: usize = AVAIL_BASE + 5;
 /// The two borrow bits (`BRW1` = the final borrow; `0` ⟺ `before ≥ amount`).
 pub const BRW0: usize = AVAIL_BASE + 6;
 pub const BRW1: usize = AVAIL_BASE + 7;
-/// The widened trace width the hardened descriptor declares.
-pub const AVAIL_WIDTH: usize = AVAIL_BASE + 8;
+/// The two CREDIT-side carry bits (`CRY1` = the final carry; `0` ⟺ `before + amount` did NOT overflow
+/// the 30-bit after limb — NO field wrap on the credit `new = old + amount`).
+pub const CRY0: usize = AVAIL_BASE + 8;
+pub const CRY1: usize = AVAIL_BASE + 9;
+/// The widened trace width the hardened descriptor declares (borrow chain + credit carry chain).
+pub const AVAIL_WIDTH: usize = AVAIL_BASE + 10;
 
 /// Absolute before/after `bal_lo` + `amount`/`direction` columns the assembly + borrow gates read.
 const BEFORE_BAL_LO: usize = STATE_BEFORE_BASE + state::BALANCE_LO;
@@ -92,6 +96,10 @@ fn gate(body: LeanExpr) -> VmConstraint {
 /// `direction · body` — the debit-only selector-gate (mirror of the Lean `.mul (ePrm DIRECTION) …`).
 fn dir_gate(body: LeanExpr) -> VmConstraint {
     gate(mul(var(DIRECTION_COL), body))
+}
+/// `(1 − direction) · body` — the credit-only selector-gate (mirror of the Lean `.mul eCreditSel …`).
+fn credit_gate(body: LeanExpr) -> VmConstraint {
+    gate(mul(sub(k(1), var(DIRECTION_COL)), body))
 }
 
 /// Operand assembly gate: `operand = lo + 2^15·hi` (Lean `gAsmBefore`/`gAsmAfter`/`gAsmAmount`).
@@ -128,6 +136,24 @@ pub fn transfer_avail_gates() -> Vec<VmConstraint> {
         )),
         // no final borrow: dir·bb1  (⟹ before ≥ amount)
         dir_gate(var(BRW1)),
+        // --- CREDIT carry chain (dir = 0): `before + amount = after`, no overflow wrap ---
+        bool_gate(CRY0),
+        bool_gate(CRY1),
+        // limb 0: (1−dir)·(bef0 + am0 − cry0·2^15 − aft0)
+        credit_gate(sub(
+            sub(add(var(BEF0), var(AM0)), mul(k(TWO15), var(CRY0))),
+            var(AFT0),
+        )),
+        // limb 1: (1−dir)·(bef1 + am1 + cry0 − cry1·2^15 − aft1)
+        credit_gate(sub(
+            sub(
+                add(add(var(BEF1), var(AM1)), var(CRY0)),
+                mul(k(TWO15), var(CRY1)),
+            ),
+            var(AFT1),
+        )),
+        // no final carry: (1−dir)·cry1  (⟹ before + amount = after < 2^30, no wrap)
+        credit_gate(var(CRY1)),
     ]
 }
 
@@ -150,15 +176,20 @@ pub fn transfer_avail_ranges() -> Vec<RangeSpec> {
 /// row (`direction = 1`, honest `before ≥ amount`) the borrow chain closes with `bb1 = 0`; on a CREDIT
 /// row the borrow gates are inert (the gate factor `direction = 0`), so the borrow bits are written `0`.
 ///
-/// Returns the eight `(column, value)` writes (limbs + borrow bits) for the caller to lay into the
-/// trace. Panics if an operand exceeds the 30-bit window (a debit whose limbs do not fit fails closed —
-/// there is no range witness for it, matching the descriptor's UNSAT).
+/// On a CREDIT row (`direction = 0`) the carry chain of `before + amount` is filled instead (the borrow
+/// gates are `direction`-gated off); its NO-FINAL-CARRY bit `CRY1 = 0` witnesses `before + amount =
+/// after < 2^30` (no field overflow wrap). On a DEBIT row the carry bits are written `0` (their gates
+/// are `(1−direction)`-gated off).
+///
+/// Returns the ten `(column, value)` writes (limbs + borrow bits + carry bits) for the caller to lay
+/// into the trace. Panics if an operand exceeds the 30-bit window, if a debit under-borrows, or if a
+/// credit overflows (`before + amount ≥ 2^30`) — each fails closed, matching the descriptor's UNSAT.
 pub fn fill_transfer_avail_aux(
     before_bal_lo: u32,
     after_bal_lo: u32,
     amount: u32,
     direction: u32,
-) -> [(usize, u32); 8] {
+) -> [(usize, u32); 10] {
     assert!(
         before_bal_lo < (1u32 << 30),
         "before.bal_lo exceeds the 30-bit operand window"
@@ -192,6 +223,25 @@ pub fn fill_transfer_avail_aux(
         (0, 0)
     };
 
+    // The two-limb carry bits of `before + amount` (only load-bearing on a credit; on a debit the
+    // gates are `(1−direction)`-gated off, so we write the honest 0/0).
+    let (cry0, cry1) = if direction == 0 {
+        assert!(
+            (before_bal_lo as u64) + (amount as u64) < (1u64 << 30),
+            "credit no-overflow: pre-balance {before_bal_lo} + amount {amount} ≥ 2^30 — UNSAT (would field-wrap)"
+        );
+        let c0 = if bef0 + am0 >= (1u32 << 15) { 1u32 } else { 0 };
+        // limb-1 addend includes the incoming carry c0
+        let c1 = if bef1 + am1 + c0 >= (1u32 << 15) {
+            1u32
+        } else {
+            0
+        };
+        (c0, c1)
+    } else {
+        (0, 0)
+    };
+
     [
         (BEF0, bef0),
         (BEF1, bef1),
@@ -201,6 +251,8 @@ pub fn fill_transfer_avail_aux(
         (AM1, am1),
         (BRW0, brw0),
         (BRW1, brw1),
+        (CRY0, cry0),
+        (CRY1, cry1),
     ]
 }
 
@@ -236,9 +288,34 @@ mod tests {
     }
 
     #[test]
+    fn honest_credit_closes_with_no_final_carry() {
+        // before=100, after=130, amount=30, credit (dir=0) — cry1 must be 0 (100 + 30 = 130 < 2^30).
+        let w = fill_transfer_avail_aux(100, 130, 30, 0);
+        assert_eq!(w[8], (CRY0, 0));
+        assert_eq!(w[9], (CRY1, 0));
+    }
+
+    #[test]
+    fn honest_credit_with_limb_carry() {
+        // before=32767 (limbs (32767,0)), amount=1 (limbs (1,0)), after=32768 (limbs (0,1)).
+        // low limb carries: 32767+1 = 32768 ≥ 2^15 ⟹ cry0=1; high limb 0+0+1 < 2^15 ⟹ cry1=0.
+        let w = fill_transfer_avail_aux(32767, 32768, 1, 0);
+        assert_eq!(w[8], (CRY0, 1));
+        assert_eq!(w[9], (CRY1, 0));
+    }
+
+    #[test]
+    #[should_panic(expected = "credit no-overflow")]
+    fn over_credit_forgery_is_unfillable() {
+        // The GAP #4 CREDIT forgery witness: before=amount=1006632961 (both < 2^30), sum = 2013265922
+        // ≥ p wraps to 1 mod p — no carry witness exists (before+amount ≥ 2^30).
+        let _ = fill_transfer_avail_aux(1006632961, 1, 1006632961, 0);
+    }
+
+    #[test]
     fn gate_and_range_counts_match_lean() {
-        assert_eq!(transfer_avail_gates().len(), 8);
+        assert_eq!(transfer_avail_gates().len(), 13);
         assert_eq!(transfer_avail_ranges().len(), 6);
-        assert_eq!(AVAIL_WIDTH, 196);
+        assert_eq!(AVAIL_WIDTH, 198);
     }
 }
