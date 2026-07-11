@@ -330,8 +330,8 @@ theorem rotationProbeV2_publishes (permOut : List ℤ → List ℤ) (hash : List
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hf : Satisfied2Faithful permOut hash rotationProbeVmDescriptor2 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 = t.rows.length) :
-    (envAt t i).loc STATE_COMMIT = (envAt t i).pub PUB_COMMIT
-    ∧ (envAt t i).loc COMMITTED_HEIGHT = (envAt t i).pub PUB_HEIGHT := by
+    (envAt t i).loc STATE_COMMIT ≡ (envAt t i).pub PUB_COMMIT [ZMOD 2013265921]
+    ∧ (envAt t i).loc COMMITTED_HEIGHT ≡ (envAt t i).pub PUB_HEIGHT [ZMOD 2013265921] := by
   have h := satisfied2Faithful_satisfiedVm permOut hash rotationProbeVmDescriptor
     minit mfin maddrs t (by decide) hf i hi
   have h1 := h.1 (.piBinding .last STATE_COMMIT PUB_COMMIT)
@@ -341,11 +341,22 @@ theorem rotationProbeV2_publishes (permOut : List ℤ → List ℤ) (hash : List
   simp only [VmConstraint.holdsVm] at h1 h2
   exact ⟨h1 (by simp [hlast]), h2 (by simp [hlast])⟩
 
+/-- **Canonical congruent ⟹ equal.** Two field-canonical (`0 ≤ · < p`, the deployed range-check
+invariant) integers congruent mod `p` are EQUAL over ℤ. The POSITIVE-direction dual of
+`not_modEq_zero_of_canon`: it lifts the mod-`p` commit/PI pins back to ℤ equalities so the CR floor
+(`wireCommit_binds`, which needs a genuine hash-output equality) can fire. -/
+theorem canon_eq_of_modEq {a b : ℤ}
+    (ha : 0 ≤ a ∧ a < 2013265921) (hb : 0 ≤ b ∧ b < 2013265921)
+    (h : a ≡ b [ZMOD 2013265921]) : a = b := by
+  rwa [Int.ModEq, Int.emod_eq_of_lt ha.1 ha.2, Int.emod_eq_of_lt hb.1 hb.2] at h
+
 /-- **THE END-TO-END STAGED KEYSTONE.** Two `Satisfied2` probe witnesses publishing the SAME
 commit agree on the WHOLE rotated block (every register incl. `r8..r15`, every map root incl.
 `heap_root`, lifecycle/epoch/height), the receipt-index root, AND the published height — the
 anti-ghost + `committed_height_not_prover_chosen` closure, in wire form, under the ONE CR
-floor. -/
+floor. The published commit/height pins are field congruences (`≡ [ZMOD p]`), so the lift to the
+ℤ block equality rides the deployed range-check CANONICALITY of the digest column (`STATE_COMMIT`)
+and the published-height PI slot — canonical + congruent ⟹ ℤ-equal (`canon_eq_of_modEq`). -/
 theorem rotationProbe_commit_binds_published (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
@@ -354,6 +365,10 @@ theorem rotationProbe_commit_binds_published (permOut : List ℤ → List ℤ) (
     (hf' : Satisfied2Faithful permOut hash rotationProbeVmDescriptor2 minit' mfin' maddrs' t')
     (i j : Nat) (hi : i < t.rows.length) (hj : j < t'.rows.length)
     (hlast : i + 1 = t.rows.length) (hlast' : j + 1 = t'.rows.length)
+    (hcCanon : 0 ≤ (envAt t i).loc STATE_COMMIT ∧ (envAt t i).loc STATE_COMMIT < 2013265921)
+    (hcCanon' : 0 ≤ (envAt t' j).loc STATE_COMMIT ∧ (envAt t' j).loc STATE_COMMIT < 2013265921)
+    (hhCanon : 0 ≤ (envAt t i).pub PUB_HEIGHT ∧ (envAt t i).pub PUB_HEIGHT < 2013265921)
+    (hhCanon' : 0 ≤ (envAt t' j).pub PUB_HEIGHT ∧ (envAt t' j).pub PUB_HEIGHT < 2013265921)
     (hpub : (envAt t i).pub PUB_COMMIT = (envAt t' j).pub PUB_COMMIT) :
     blockLimbs (envAt t i).loc = blockLimbs (envAt t' j).loc
     ∧ (envAt t i).loc IROOT = (envAt t' j).loc IROOT
@@ -364,13 +379,30 @@ theorem rotationProbe_commit_binds_published (permOut : List ℤ → List ℤ) (
     hf' j hj hlast'
   have hp := rotationProbeV2_pins_commit permOut hash minit mfin maddrs t hf i hi
   have hp' := rotationProbeV2_pins_commit permOut hash minit' mfin' maddrs' t' hf' j hj
+  -- Lift the two commit pins to a genuine ℤ equality of the digest columns via canonicality:
+  --   loc STATE_COMMIT(i) ≡ pub PUB_COMMIT(i) = pub PUB_COMMIT(j) ≡ loc STATE_COMMIT(j).
+  have hcCong : (envAt t i).loc STATE_COMMIT ≡ (envAt t' j).loc STATE_COMMIT [ZMOD 2013265921] :=
+    calc (envAt t i).loc STATE_COMMIT
+        ≡ (envAt t i).pub PUB_COMMIT [ZMOD 2013265921] := hc
+      _ = (envAt t' j).pub PUB_COMMIT := hpub
+      _ ≡ (envAt t' j).loc STATE_COMMIT [ZMOD 2013265921] := hc'.symm
+  have hcEq : (envAt t i).loc STATE_COMMIT = (envAt t' j).loc STATE_COMMIT :=
+    canon_eq_of_modEq hcCanon hcCanon' hcCong
   have hwire : wireCommit hash (blockLimbs (envAt t i).loc) ((envAt t i).loc IROOT)
       = wireCommit hash (blockLimbs (envAt t' j).loc) ((envAt t' j).loc IROOT) := by
-    rw [← hp, ← hp', hc, hc', hpub]
+    rw [← hp, ← hp', hcEq]
   obtain ⟨hblk, hir⟩ := wireCommit_binds hash hCR hwire
   refine ⟨hblk, hir, ?_⟩
-  rw [← hh, ← hh']
-  exact congrArg RotatedLimbs.committedHeight hblk
+  -- The published heights agree: pub(i) ≡ loc COMMITTED_HEIGHT(i) = loc COMMITTED_HEIGHT(j) ≡ pub(j),
+  -- lifted to ℤ by the PI-slot canonicality (`committed_height_not_prover_chosen`, in field form).
+  have hHtEq : (envAt t i).loc COMMITTED_HEIGHT = (envAt t' j).loc COMMITTED_HEIGHT :=
+    congrArg RotatedLimbs.committedHeight hblk
+  have hHtCong : (envAt t i).pub PUB_HEIGHT ≡ (envAt t' j).pub PUB_HEIGHT [ZMOD 2013265921] :=
+    calc (envAt t i).pub PUB_HEIGHT
+        ≡ (envAt t i).loc COMMITTED_HEIGHT [ZMOD 2013265921] := hh.symm
+      _ = (envAt t' j).loc COMMITTED_HEIGHT := hHtEq
+      _ ≡ (envAt t' j).pub PUB_HEIGHT [ZMOD 2013265921] := hh'
+  exact canon_eq_of_modEq hhCanon hhCanon' hHtCong
 
 #assert_axioms rotationProbeV2_pins_commit
 #assert_axioms rotationProbeV2_publishes
