@@ -29,7 +29,10 @@ free: a multi-row prover can publish a genuine hash of a chain that DID NOT cont
 
 `ivc_multi_refines_chain` — against the SAME named carrier `ChipTableSound` (per-row Poseidon2 hash
 genuineness) PLUS the two omitted gates supplied as explicit hypotheses `IvcContinuity` /
-`IvcStepIncrement`, a satisfying trace of ANY length genuinely computes the IVC accumulator:
+`IvcStepIncrement`, under the boundary canonicality envelope `IvcTraceCanon` (the deployed
+range-check invariant Rung 1 threads — boundary pins now hold only `≡ 0 [ZMOD p]`, and reading an ℤ
+equality back off a mod-`p` pin needs both sides canonical in `[0, p)`), a satisfying trace of ANY
+length genuinely computes the IVC accumulator:
 `pi[accumulated_hash] = ivcChain hash pi[seed] 1 (rootsOf t)` and `pi[step_count] = length`. This is
 the genuine multi-step no-forgery, strictly generalising Rung 1's single-row base case.
 
@@ -40,9 +43,10 @@ transition. Named precisely, its padding-safety obligation intact.
 
 ## Non-vacuity + load-bearing anchor (the anti-scar proofs)
 
-* `ivc_multi_fires` — a CONCRETE honest 2-row run over an abstract injective `hash` meets EVERY
-  hypothesis (Satisfied2, ChipTableSound, both gates non-vacuously at `i = 0`) and the discharged
-  conclusion FIRES with the genuine nested value `hash [TAG, hash [TAG, 100, 7, 1], 9, 2]`.
+* `ivc_multi_fires` — a CONCRETE honest 2-row run over an abstract range-canonical `hash` (outputs
+  in `[0, p)`, the chip's range-check invariant) meets EVERY hypothesis (Satisfied2, ChipTableSound,
+  `IvcTraceCanon`, both gates non-vacuously at `i = 0`) and the discharged conclusion FIRES with the
+  genuine nested value `hash [TAG, hash [TAG, 100, 7, 1], 9, 2]`.
 * `ivc_continuity_is_load_bearing` — a CONCRETE 2-row CHEAT (row 1's `old_hash` set to `hash [TAG,
   200, 7, 1] ≠ new_hash₀`) PROVABLY `Satisfied2`s AND rides a SOUND chip table, yet
   `pi[accumulated_hash] ≠ ivcChain hash pi[seed] 1 (rootsOf t)`. So Rung 1's hypotheses
@@ -190,7 +194,9 @@ theorem newhash_is_chain (hash : List ℤ → ℤ) :
 /-- **`ivc_multi_refines_chain` — the genuine multi-step IVC no-forgery.** A trace `t` of ANY length
 that `Satisfied2`s the emitted descriptor, rides a SOUND Poseidon2 chip table (`hSound` — the named
 `ChipTableSound` carrier), and additionally meets the two omitted transition gates `IvcContinuity` /
-`IvcStepIncrement`, has its published `accumulated_hash` (`pi[3]`) EQUAL to the genuine IVC fold
+`IvcStepIncrement`, and rides the boundary canonicality envelope `IvcTraceCanon` (the deployed
+range-check invariant — the mod-`p` boundary pins collapse to ℤ equalities only on canonical
+representatives), has its published `accumulated_hash` (`pi[3]`) EQUAL to the genuine IVC fold
 `ivcChain hash pi[seed] 1 (rootsOf t)`, and its published `step_count` (`pi[2]`) equal to the row
 count. The published output cannot be a forged accumulation of a chain that did not thread the seed. -/
 theorem ivc_multi_refines_chain (hash : List ℤ → ℤ) (t : VmTrace)
@@ -198,6 +204,7 @@ theorem ivc_multi_refines_chain (hash : List ℤ → ℤ) (t : VmTrace)
     (hne : t.rows ≠ [])
     (hSound : ChipTableSound hash (t.tf .poseidon2))
     (hsat : Satisfied2 hash ivcStateTransitionDescriptor minit mfin maddrs t)
+    (hcanon : IvcTraceCanon t)
     (hcont : IvcContinuity t)
     (hstepinc : IvcStepIncrement t) :
     t.pub Ivc.PI_ACC_HASH
@@ -222,7 +229,7 @@ theorem ivc_multi_refines_chain (hash : List ℤ → ℤ) (t : VmTrace)
     induction i with
     | zero =>
       intro hi
-      have h := ivc_first_step_one hash t minit mfin maddrs hsat hi
+      have h := ivc_first_step_one hash t minit mfin maddrs hsat hi (hcanon.1 0 hi).1
       rw [envAt_loc hi] at h
       simpa using h
     | succ k ih =>
@@ -233,12 +240,13 @@ theorem ivc_multi_refines_chain (hash : List ℤ → ℤ) (t : VmTrace)
       rw [hinc, ih hkl]; push_cast; ring
   have hseed : ∀ (hn : 0 < t.rows.length),
       (t.rows[0]'hn) Ivc.OLD_HASH_COL = t.pub Ivc.PI_INITIAL_HASH := fun hn => by
-    have h := ivc_first_seed_bind hash t minit mfin maddrs hsat hn
+    have h := ivc_first_seed_bind hash t minit mfin maddrs hsat hn (hcanon.1 0 hn).2.1 hcanon.2.1
     rwa [envAt_loc hn] at h
   -- (b) the list-recursion heart: last new_hash IS the genuine ivcChain
   have hchain := newhash_is_chain hash t.rows (t.pub Ivc.PI_INITIAL_HASH) 1 hrow hcont' hstep hseed hne
   -- (c) the last new_hash is pinned to the published accumulated_hash (B/last boundary)
   have hpub := ivc_last_newhash_bind hash t minit mfin maddrs hsat hpos
+    (hcanon.1 (t.rows.length - 1) hlt).2.2 hcanon.2.2.2
   rw [envAt_loc hlt] at hpub
   have hgl : (t.rows.getLast hne) Ivc.NEW_HASH_COL = (t.rows[t.rows.length - 1]'hlt) Ivc.NEW_HASH_COL := by
     rw [List.getLast_eq_getElem hne]
@@ -246,6 +254,7 @@ theorem ivc_multi_refines_chain (hash : List ℤ → ℤ) (t : VmTrace)
   · rw [← hpub, ← hgl, hchain]; rfl
   · -- step_count = length: last step = 1 + (length-1) = length
     have hsc := ivc_last_step_bind hash t minit mfin maddrs hsat hpos
+      (hcanon.1 (t.rows.length - 1) hlt).1 hcanon.2.2.1
     rw [envAt_loc hlt] at hsc
     have hslast := hstep (t.rows.length - 1) hlt
     rw [← hsc, hslast]
@@ -263,7 +272,7 @@ theorem ivc_multi_fires_demo :
         = ivcChain hash0 (demoTrace.pub Ivc.PI_INITIAL_HASH) 1 (rootsOf demoTrace)
       ∧ demoTrace.pub Ivc.PI_STEP_COUNT = (demoTrace.rows.length : ℤ) :=
   ivc_multi_refines_chain hash0 demoTrace (fun _ => 0) (fun _ => (0, 0)) []
-    (by simp [demoTrace]) demo_chip_sound ivc_demo_accepts
+    (by simp [demoTrace]) demo_chip_sound ivc_demo_accepts demoTrace_canon
     (by intro i hi; simp only [demoTrace, List.length_cons, List.length_nil] at hi; omega)
     (by intro i hi; simp only [demoTrace, List.length_cons, List.length_nil] at hi; omega)
 
@@ -439,16 +448,37 @@ theorem honTrace_stepinc : IvcStepIncrement (honTrace hash) := by
   subst hi0
   simp [honTrace, envAt, honRow1, wRow0, rowOf, Ivc.STEP_COL]
 
+/-- **The honest 2-row trace is CANONICAL**, given the hash outputs land in `[0, p)` (the deployed
+Poseidon2 chip writes canonical BabyBear representatives — `hcanonHash` names exactly that
+range-check invariant; it is NOT free for an arbitrary `hash`): every boundary-pinned cell (`step ∈
+{1, 2}`, `old_hash ∈ {100, hash …}`, both `new_hash`es) and every bound PI (`100`, `2`, the
+published fold) is a representative in `[0, p)`. -/
+theorem honTrace_canon (hcanonHash : ∀ l, 0 ≤ hash l ∧ hash l < 2013265921) :
+    IvcTraceCanon (honTrace hash) := by
+  refine ⟨?_, by norm_num [honTrace, honPub, rowOf, Ivc.PI_INITIAL_HASH],
+    by norm_num [honTrace, honPub, rowOf, Ivc.PI_STEP_COUNT],
+    hcanonHash [IVC_DOMAIN_TAG, hash [IVC_DOMAIN_TAG, 100, 7, 1], 9, 2]⟩
+  intro i hi
+  simp only [honTrace, List.length_cons, List.length_nil, Nat.reduceAdd] at hi
+  interval_cases i <;>
+    refine ⟨?_, ?_, ?_⟩ <;>
+    simp only [honTrace, envAt, wRow0, honRow1, rowOf, List.getD_cons_zero, List.getD_cons_succ,
+      Ivc.STEP_COL, Ivc.OLD_HASH_COL, Ivc.NEW_HASH_COL] <;>
+    first
+      | exact hcanonHash _
+      | norm_num
+
 /-- **THE RUNG-2 DISCHARGE FIRES on the genuine 2-row witness (the non-vacuity TRUE half).** Every
-hypothesis of `ivc_multi_refines_chain` is met — Satisfied2, a SOUND chip table, and BOTH omitted
-gates non-vacuously — so the published `accumulated_hash` IS the genuine 2-step fold. -/
-theorem ivc_multi_fires :
+hypothesis of `ivc_multi_refines_chain` is met — Satisfied2, a SOUND chip table, the canonicality
+envelope (from the hash's `[0, p)` range), and BOTH omitted gates non-vacuously — so the published
+`accumulated_hash` IS the genuine 2-step fold. -/
+theorem ivc_multi_fires (hcanonHash : ∀ l, 0 ≤ hash l ∧ hash l < 2013265921) :
     (honTrace hash).pub Ivc.PI_ACC_HASH
         = ivcChain hash ((honTrace hash).pub Ivc.PI_INITIAL_HASH) 1 (rootsOf (honTrace hash))
       ∧ (honTrace hash).pub Ivc.PI_STEP_COUNT = ((honTrace hash).rows.length : ℤ) :=
   ivc_multi_refines_chain hash (honTrace hash) (fun _ => 0) (fun _ => (0, 0)) []
     (by simp [honTrace]) (honTf_sound hash) (honTrace_satisfied2 hash)
-    (honTrace_continuity hash) (honTrace_stepinc hash)
+    (honTrace_canon hash hcanonHash) (honTrace_continuity hash) (honTrace_stepinc hash)
 
 /-- The fired value is the genuine NESTED 2-step fold `hash [TAG, hash [TAG, 100, 7, 1], 9, 2]` over
 the read roots `[7, 9]` — a real computation, not a collapsed constant. -/
