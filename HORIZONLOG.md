@@ -7253,3 +7253,22 @@ contracts + foundry + gnark seed + host flows, fail-closed until the wrap prover
   inclusion, folded per BRIDGE-ARCHITECTURE-SOUNDNESS G1 constraints (committed consume-once mint gate).
 - **Midnight mirror hash placeholder** · TODO(mirror-hash) BLAKE3 stands in for Midnight's Poseidon ·
   closure: wire the real BLS-field Poseidon (midnight_inclusion.rs:884-894).
+
+## chain-participation WAVE 1 LANDED (2026-07-11, Fable — ultracode, 6 lanes + weld + audit)
+
+Commits: 53efc5503 (sol), b997f9cef (bridge v2), ee9f9d887 (gnark+witness+weld), 35af20966 (vote-engine).
+All lanes green post adversarial-audit; 2 audit findings were REAL and fixed before commit (mint
+replay-across-tokenIds, settlement genesis front-run) + 1 doc packing error. Residual audit minors
+(followups, not blockers):
+- **Settlement provenRoot self-mirror** · packLanes tested only against itself; no cross-language KAT ·
+  closure: a golden known-answer vector shared by root8_bridge_key (Rust) and packLanes (Solidity).
+- **IGroth16Verifier25 vs real gnark output** · gnark-solidity-verifier emits uint256[8] proof + revert,
+  not verifyProof(...)->bool · closure: an adapter shim at milestone 4 (fails closed, doc seam only).
+- **Interface accessor/event name drift** · provenRoot vs provenRootKey, Settled vs SettledV2 between the
+  .sol and the Rust reference string · closure: reconcile names when the gnark verifier lands.
+- **gnark circuit teeth 1-2 are TODO** · Circuit.Define constrains only lane-canonicality + segment
+  equality; VK-pin + FRI verify not built · MUST NOT wire this circuit to settlement until done (milestone 2-3).
+- **witness exporter omits binding_proof** · exports root_proof only; milestone-3 question whether the wrap
+  is sound on the root alone (expose_claim re-exposes the claim) — integrator to pin.
+- **substrate.rs propose() ignores submit_proposal bool** · same-BlockId different-proposal bait-and-switch
+  shape (inherited parity with the in-memory face, not introduced) · closure: reject duplicate BlockId.
