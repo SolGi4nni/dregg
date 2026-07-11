@@ -28,9 +28,13 @@ ring computations = the spec, for-all, riding the Kyber NTT via the `toRqKem` br
 
 **ALL FOUR PQ DIRECTIONS' RING CORES = SPEC** (verify+sign+decaps+encaps), each on its own from-scratch
 NTT-correctness proof. BOTH the complete (ML-DSA) and incomplete (ML-KEM) NTT are proven — Mathlib ships neither.
-**Residuals (named, non-core):** codec byte-level plumbing (the `Id.run do`→`foldl` unfolds + honest-key
-reparametrizations `Â=NTT(A)` etc. + compress/decompress rounding `μ=Δ·m`); the abstract `MlDsaParams`
-module-map instance; KATs → full NIST ACVP. These are bookkeeping on the closed ring identities, not gaps.
+**BYTE-LEVEL `=spec` now closed for KEM both directions**: `DecapsCoreSpec.kpkeDecrypt_eq_spec` +
+`EncapsCoreSpec.kpkeEncrypt_eq_spec` — the literal `Id.run do` byte executables = the FIPS 203 K-PKE
+predicates, for-all (do-block unfold via the opaque-`f` route + honest-key reindex + the proven ring cores).
+Verify is the full biconditional (`verifyCore_eq_spec`); sign is ring-faithful + `sign_produces_spec_valid`.
+**Residuals (named, non-core):** the FO wrappers (`G`/`J`-KDF, Keccak generic slots), compress/decompress
+rounding `μ=Δ·m` (rides `MlKemCorrect`), sign's full symbolic rejection loop (byte-exact-pinned partial def),
+the byte round-trip bookkeeping; the abstract `MlDsaParams` module-map; KATs → full NIST ACVP.
 
 ## Seam 2 — quantitative ↔ Boolean: DONE
 `FloorBridge.lean` — `MSISHardQuant→MSISHard` (+DL/HashCR) via the advantage-1 argument; migration template
