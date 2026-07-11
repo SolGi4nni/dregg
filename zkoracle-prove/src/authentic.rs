@@ -133,7 +133,7 @@ impl EndpointConfig {
 }
 
 /// The notary's verifying key — models `tlsn_core::signing::VerifyingKey { alg, data }`.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct TlsnVerifyingKey {
     /// The signature algorithm identifier (modeled: `"ed25519"`).
     pub alg: String,
@@ -148,7 +148,7 @@ pub struct TlsnVerifyingKey {
 /// `x-api-key` value (fill `X`, not authenticated). The response direction discloses the
 /// full messages JSON body — the public evidence the well-formed (CFG) and injection-free
 /// legs run over.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct EndpointPresentation {
     /// The notary's verifying key (a verifier pins its own anchor).
     pub verifying_key: TlsnVerifyingKey,
@@ -163,6 +163,7 @@ pub struct EndpointPresentation {
     /// authenticated messages JSON body.
     pub recv: Vec<u8>,
     /// The notary's ed25519 signature over [`Self::canonical_signing_bytes`].
+    #[serde(with = "serde_big_array::BigArray")]
     pub notary_sig: [u8; 64],
 }
 

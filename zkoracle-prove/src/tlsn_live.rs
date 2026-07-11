@@ -49,7 +49,7 @@ use tlsn::{
         Attestation, AttestationConfig, CryptoProvider,
         presentation::{Presentation, PresentationOutput},
         request::{Request as AttestationRequest, RequestConfig},
-        signing::Secp256k1Signer,
+        signing::{Secp256k1Signer, VerifyingKey},
     },
     config::{
         prove::ProveConfig, prover::ProverConfig, tls::TlsClientConfig,
@@ -544,6 +544,302 @@ pub fn run_local_roundtrip_blocking(exchange: &LiveExchange) -> Result<LiveRound
         presentation_bytes,
         pinned_server: SERVER_DOMAIN.to_string(),
     })
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE REAL-HOST PATH — genuine MPC-TLS 2PC against LIVE api.coinbase.com:443.
+//
+// The SAME machinery as the fixture path above, with FOUR swaps (mirroring the proven
+// `tlsn_bedrock` real-host adaptation):
+//   1. the prover connects to a REAL `TcpStream` to `api.coinbase.com:443`, not a
+//      `tokio::io::duplex` to an in-process test server;
+//   2. the root store is the Mozilla/webpki set (`RootCertStore::mozilla()`), so Coinbase's
+//      GENUINE cert chain verifies and the SNI/name pins `api.coinbase.com`
+//      (`COINBASE_SERVER_NAME`) instead of the fixture `test-server.io` (`SERVER_DOMAIN`);
+//   3. the notary is a SEPARATE hosted party (`notary_server::spawn_hosted_notary`, Mozilla
+//      roots), reached only by socket address — the prover never holds its key;
+//   4. the request is `GET /v2/prices/{asset}/spot` with NO secret header (a public,
+//      read-only endpoint), so selective disclosure reveals EVERY request header + the whole
+//      response body.
+// Verification uses `ServerCertVerifier::mozilla()` and PINS the separate notary's key.
+// ─────────────────────────────────────────────────────────────────────────────
+
+use crate::endpoints::price::COINBASE_SERVER_NAME;
+
+/// A completed real roundtrip against live `api.coinbase.com`: the verified response, the raw
+/// `tlsn` `Presentation` bytes, and the SEPARATE notary's pin (socket + pinned verifying key)
+/// the attestation binds to.
+#[derive(Clone, Debug)]
+pub struct CoinbaseRoundtrip {
+    /// The verified, extracted response (the spot-price JSON body + session identity/time).
+    pub verified: VerifiedResponse,
+    /// The bincode-serialized real `tlsn` `Presentation`.
+    pub presentation_bytes: Vec<u8>,
+    /// The pinned host (`api.coinbase.com`).
+    pub pinned_server: String,
+    /// The separate hosted notary's pin — the verifying key a verifier pins out-of-band.
+    pub notary_pin: crate::notary_server::NotaryPin,
+}
+
+/// **Run the REAL MPC-TLS 2PC prover against live `api.coinbase.com`**, connecting to a
+/// SEPARATE hosted notary at `notary_addr` over a real TCP socket, and produce a signed `tlsn`
+/// presentation of the `GET /v2/prices/{asset}/spot` session.
+async fn prove_coinbase_presentation(
+    asset: &str,
+    notary_addr: std::net::SocketAddr,
+) -> Result<Vec<u8>> {
+    // Prover ↔ SEPARATE notary over a real socket (not an in-process duplex).
+    let prover_notary_socket = tokio::net::TcpStream::connect(notary_addr)
+        .await
+        .with_context(|| format!("connect to separate notary at {notary_addr}"))?;
+    let session = Session::new(prover_notary_socket.compat());
+    let (driver, mut handle) = session.split();
+    let driver_task = tokio::spawn(driver);
+
+    let prover = handle
+        .new_prover(ProverConfig::builder().build()?)?
+        .commit(
+            MpcTlsConfig::builder()
+                .max_sent_data(MAX_SENT_DATA)
+                .max_recv_data(MAX_RECV_DATA)
+                .build()?,
+        )
+        .await?;
+
+    // The ONLY networking change vs the fixture path: a REAL TCP socket to Coinbase, with the
+    // Mozilla roots + the pinned Coinbase SNI.
+    let server_socket = tokio::net::TcpStream::connect((COINBASE_SERVER_NAME, 443u16))
+        .await
+        .with_context(|| format!("TCP connect to {COINBASE_SERVER_NAME}:443"))?;
+    let (tls_connection, prover) = prover.connect(
+        TlsClientConfig::builder()
+            .server_name(ServerName::Dns(COINBASE_SERVER_NAME.try_into()?))
+            .root_store(RootCertStore::mozilla())
+            .build()?,
+        server_socket.compat(),
+    )?;
+    let tls_connection = TokioIo::new(tls_connection.compat());
+    let prover_task = tokio::spawn(prover.into_future());
+
+    let (mut request_sender, connection) =
+        hyper::client::conn::http1::handshake(tls_connection).await?;
+    tokio::spawn(connection);
+
+    // GET /v2/prices/{asset}/spot — a public read-only quote (no auth, empty body). A
+    // `User-Agent` is sent because Coinbase's edge rejects UA-less requests.
+    let path = format!("/v2/prices/{asset}/spot");
+    let request = Request::builder()
+        .uri(path.as_str())
+        .method("GET")
+        .header("Host", COINBASE_SERVER_NAME)
+        .header("User-Agent", "dregg-oracle/0.1")
+        .header("Accept", "application/json")
+        .header("Accept-Encoding", "identity")
+        .header("Connection", "close")
+        .body(Full::<Bytes>::new(Bytes::new()))?;
+    let response = request_sender.send_request(request).await?;
+    let status = response.status();
+    // Drain the body so the transcript is complete before proving.
+    let _ = response.into_body().collect().await?;
+    if status != StatusCode::OK {
+        return Err(anyhow!("coinbase returned {status}"));
+    }
+
+    let mut prover = prover_task.await??;
+
+    let transcript = HttpTranscript::parse(prover.transcript())?;
+    let mut commit_builder = TranscriptCommitConfig::builder(prover.transcript());
+    DefaultHttpCommitter::default().commit_transcript(&mut commit_builder, &transcript)?;
+    let transcript_commit = commit_builder.build()?;
+
+    let mut req_cfg_builder = RequestConfig::builder();
+    req_cfg_builder.transcript_commit(transcript_commit);
+    let request_config = req_cfg_builder.build()?;
+
+    let mut prove_builder = ProveConfig::builder(prover.transcript());
+    if let Some(config) = request_config.transcript_commit() {
+        prove_builder.transcript_commit(config.clone());
+    }
+    let disclosure_config = prove_builder.build()?;
+
+    let ProverOutput {
+        transcript_commitments,
+        transcript_secrets,
+        ..
+    } = prover.prove(&disclosure_config).await?;
+
+    let prover_transcript = prover.transcript().clone();
+    let tls_transcript = prover.tls_transcript().clone();
+    prover.close().await?;
+
+    let mut att_req_builder = AttestationRequest::builder(&request_config);
+    att_req_builder
+        .server_name(ServerName::Dns(COINBASE_SERVER_NAME.try_into()?))
+        .handshake_data(HandshakeData {
+            certs: tls_transcript
+                .server_cert_chain()
+                .context("server cert chain present")?
+                .to_vec(),
+            sig: tls_transcript
+                .server_signature()
+                .context("server signature present")?
+                .clone(),
+            binding: tls_transcript.certificate_binding().clone(),
+        })
+        .transcript(prover_transcript)
+        .transcript_commitments(transcript_secrets, transcript_commitments);
+    let (att_request, secrets) = att_req_builder.build(&CryptoProvider::default())?;
+
+    handle.close();
+    let mut socket = driver_task.await??;
+    socket.write_all(&bincode::serialize(&att_request)?).await?;
+    socket.close().await?;
+    let mut attestation_bytes = Vec::new();
+    socket.read_to_end(&mut attestation_bytes).await?;
+    let attestation: Attestation = bincode::deserialize(&attestation_bytes)?;
+    att_request.validate(&attestation, &CryptoProvider::default())?;
+
+    // Public read-only endpoint: NO secret to hide — reveal the request structure, the target,
+    // and EVERY header, plus the whole response body (the disclosed price evidence).
+    let http = HttpTranscript::parse(secrets.transcript())?;
+    let mut builder = secrets.transcript_proof_builder();
+    let req = &http.requests[0];
+    builder.reveal_sent(req.without_data())?;
+    builder.reveal_sent(&req.request.target)?;
+    for header in &req.headers {
+        builder.reveal_sent(header)?;
+    }
+    let resp = &http.responses[0];
+    builder.reveal_recv(resp)?;
+    let transcript_proof = builder.build()?;
+
+    let provider = CryptoProvider::default();
+    let mut pres_builder = attestation.presentation_builder(&provider);
+    pres_builder
+        .identity_proof(secrets.identity_proof())
+        .transcript_proof(transcript_proof);
+    let presentation: Presentation = pres_builder.build()?;
+    Ok(bincode::serialize(&presentation)?)
+}
+
+/// **Verify a real Coinbase presentation** against the Mozilla roots, PIN the separate
+/// notary's verifying key (reject any attestation not signed by the trusted notary), pin the
+/// `api.coinbase.com` host, and extract the authenticated spot-price response body. Runs the
+/// real `presentation.verify()` — a tampered/forged presentation fails here in genuine `tlsn`
+/// crypto. (Same shape as `tlsn_bedrock::verify_bedrock_presentation`, host swapped.)
+pub fn verify_coinbase_presentation(
+    presentation_bytes: &[u8],
+    expected_host: &str,
+    expected_notary_key: &VerifyingKey,
+) -> Result<VerifiedResponse> {
+    let presentation: Presentation =
+        bincode::deserialize(presentation_bytes).context("presentation does not deserialize")?;
+
+    // PIN THE NOTARY: the embedded verifying key must be exactly the notary we trust.
+    let presented_key = presentation.verifying_key().clone();
+    if &presented_key != expected_notary_key {
+        return Err(anyhow!(
+            "notary pin: presentation signed by an untrusted notary key"
+        ));
+    }
+
+    let crypto_provider = CryptoProvider {
+        cert: ServerCertVerifier::mozilla(),
+        ..Default::default()
+    };
+
+    let PresentationOutput {
+        server_name,
+        connection_info,
+        transcript,
+        attestation,
+        ..
+    } = presentation
+        .verify(&crypto_provider)
+        .map_err(|e| anyhow!("presentation.verify() refused: {e}"))?;
+
+    // Defense in depth: after verify(), re-confirm the signature-checked key is the pin.
+    if attestation.body.verifying_key() != expected_notary_key {
+        return Err(anyhow!(
+            "notary pin: verified attestation key does not match the pinned notary key"
+        ));
+    }
+
+    let server_name = server_name.context("presentation did not authenticate a server name")?;
+    let ServerName::Dns(server_dns) = server_name;
+    let server_name = server_dns.as_str().to_string();
+    if server_name != expected_host {
+        return Err(anyhow!(
+            "server pin: got {server_name:?}, expected {expected_host:?}"
+        ));
+    }
+
+    let mut partial = transcript.context("presentation revealed no transcript")?;
+    partial.set_unauthed(b'X');
+    let sent_redacted = partial.sent_unsafe().to_vec();
+    let recv_redacted = partial.received_unsafe().to_vec();
+
+    let body_start =
+        find_subslice(&recv_redacted, b"\r\n\r\n").context("no header/body separator")? + 4;
+    let response_body = recv_redacted[body_start..].to_vec();
+
+    Ok(VerifiedResponse {
+        response_body,
+        server_name,
+        connection_time: connection_info.time,
+        sent_redacted,
+    })
+}
+
+/// The full REAL Coinbase MPC-TLS roundtrip against a SEPARATE hosted notary that owns
+/// `notary_key`: spawn the notary as a distinct party on a real localhost socket (the prover
+/// reaches it only by address and never learns its key), run the 2PC prover against
+/// `api.coinbase.com`, then verify under the notary's PINNED public key and extract the body.
+async fn run_coinbase_roundtrip_inner(
+    asset: &str,
+    notary_key: k256::ecdsa::SigningKey,
+) -> Result<CoinbaseRoundtrip> {
+    let notary = crate::notary_server::spawn_hosted_notary(notary_key, 1).await?;
+    let pin = notary.pin().clone();
+    let presentation_bytes = prove_coinbase_presentation(asset, pin.addr).await?;
+    notary.join().await?;
+    let verified = verify_coinbase_presentation(
+        &presentation_bytes,
+        COINBASE_SERVER_NAME,
+        &pin.verifying_key,
+    )?;
+    Ok(CoinbaseRoundtrip {
+        verified,
+        presentation_bytes,
+        pinned_server: COINBASE_SERVER_NAME.to_string(),
+        notary_pin: pin,
+    })
+}
+
+/// **Run the full REAL Coinbase MPC-TLS roundtrip** (EPHEMERAL notary key — a fresh key each
+/// run). Blocking: stands up its own multi-thread runtime. Requires live network. For a stable,
+/// re-pinnable notary anchor use [`run_coinbase_roundtrip_with_durable_notary`].
+pub fn run_coinbase_roundtrip_blocking(asset: &str) -> Result<CoinbaseRoundtrip> {
+    let notary_key = crate::notary_server::generate_notary_key()?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(run_coinbase_roundtrip_inner(asset, notary_key))
+}
+
+/// **Run the roundtrip against a DURABLE hosted notary** whose signing key is persisted at
+/// `key_path` ([`crate::notary_server::load_or_generate_notary_key`]): provisioned once, reused
+/// every subsequent run, so [`CoinbaseRoundtrip::notary_pin`]'s verifying key is stable and a
+/// verifier can pin it ONCE, out-of-band.
+pub fn run_coinbase_roundtrip_with_durable_notary(
+    asset: &str,
+    key_path: &std::path::Path,
+) -> Result<CoinbaseRoundtrip> {
+    let notary_key = crate::notary_server::load_or_generate_notary_key(key_path)?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .build()?;
+    rt.block_on(run_coinbase_roundtrip_inner(asset, notary_key))
 }
 
 fn find_subslice(haystack: &[u8], needle: &[u8]) -> Option<usize> {

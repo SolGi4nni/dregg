@@ -601,7 +601,7 @@ fn parse_tree(body: &[u8]) -> Result<Tree, CfgError> {
 /// This is `CfgCompact.lean`'s `Replay` certificate: `compact_sound` there proves an
 /// accepted replay implies `input ∈ g.language`, and `compact_to_chain` rebuilds the
 /// existing `CfgAccepts` chain object — [`expand_compact`] is that theorem's Rust twin.
-#[derive(Clone, Debug, PartialEq, Eq)]
+#[derive(Clone, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct CompactCert {
     /// The leftmost derivation's rule indices into [`json_grammar`] (16 rules → u8).
     pub rules: Vec<u8>,

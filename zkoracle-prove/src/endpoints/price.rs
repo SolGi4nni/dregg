@@ -248,6 +248,137 @@ fn split_asset(asset: &str) -> Option<(String, String)> {
     Some((base.to_string(), currency.to_string()))
 }
 
+/// **PRODUCE a Coinbase spot attestation from a LIVE MPC-TLS session** against the real
+/// `api.coinbase.com` (feature `tlsn-live`).
+///
+/// Runs the genuine 2PC roundtrip ([`crate::tlsn_live::run_coinbase_roundtrip_blocking`]) — a
+/// real TLS session with `api.coinbase.com`, its cert chain verified against the Mozilla roots
+/// by a SEPARATE hosted notary — issuing `GET /v2/prices/{asset}/spot`, then binds the
+/// authenticated body into a [`ZkOracleAttestation`] whose:
+///
+/// - **leg 1 (authentic)** is the REAL `tlsn` `Presentation` carried in
+///   [`ZkOracleAttestation::tlsn_presentation`] — verified trustlessly by
+///   [`verify_coinbase_live`] via the real `presentation.verify()`;
+/// - **legs 2–4** (well-formed JSON CFG certificate, empty injection field, cross-leg content
+///   commitment) are over that SAME authenticated body.
+///
+/// The modeled `presentation` carrier is an UNSIGNED envelope ([`EndpointPresentation`] with a
+/// zero `notary_sig`): the live path never checks it (the real authentication is the `tlsn`
+/// presentation), but it carries the authenticated request line so the asset is recoverable
+/// from `presentation.sent`. A verifier MUST use [`verify_coinbase_live`], NOT the modeled
+/// [`verify_coinbase_spot`], on a live attestation.
+///
+/// Returns the portable attestation + the notary's `tlsn` verifying key: because the ephemeral
+/// notary mints a fresh key per run, that key is the out-of-band trust anchor the honest prover
+/// PUBLISHES alongside the proof so a third party can pin it.
+#[cfg(feature = "tlsn-live")]
+pub fn prove_coinbase_live(
+    asset: &str,
+) -> Result<
+    (
+        ZkOracleAttestation,
+        tlsn::attestation::signing::VerifyingKey,
+    ),
+    crate::attestation::ZkOracleError,
+> {
+    use crate::attestation::{FieldSpan, ZkOracleError, content_commitment};
+    use crate::authentic::TlsnVerifyingKey;
+    use crate::cfg::prove_cfg_compact;
+
+    // The REAL MPC-TLS roundtrip: local separate notary + prover pointed at
+    // api.coinbase.com:443, GET /v2/prices/{asset}/spot, selective disclosure, Presentation.
+    let rt = crate::tlsn_live::run_coinbase_roundtrip_blocking(asset)
+        .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
+
+    let body = rt.verified.response_body.clone();
+
+    // Leg 2 — well-formed JSON CFG certificate over the AUTHENTICATED body.
+    let cfg_cert = prove_cfg_compact(&body).map_err(ZkOracleError::NotWellFormed)?;
+
+    // The cross-leg weld + the (vacuous) injection leg: a read-only quote has no user field.
+    let content_commit = content_commitment(&body);
+    let field_span = FieldSpan { offset: 0, len: 0 };
+
+    // The unsigned modeled carrier — carries the authenticated request line (for asset
+    // recovery) + a reconstructed response envelope; the REAL authentication is
+    // `tlsn_presentation`.
+    let recv = {
+        let mut v = b"HTTP/1.1 200 OK\r\ncontent-type: application/json\r\n\r\n".to_vec();
+        v.extend_from_slice(&body);
+        v
+    };
+    let presentation = EndpointPresentation {
+        verifying_key: TlsnVerifyingKey {
+            alg: rt.notary_pin.verifying_key.alg.to_string(),
+            data: rt.notary_pin.verifying_key.data.clone(),
+        },
+        server_name: rt.verified.server_name.clone(),
+        connection_time: rt.verified.connection_time,
+        sent: rt.verified.sent_redacted.clone(),
+        recv,
+        notary_sig: [0u8; 64],
+    };
+
+    let att = ZkOracleAttestation {
+        presentation,
+        cfg_cert,
+        field_span,
+        content_commit,
+        zk_injection: None,
+        tlsn_presentation: Some(rt.presentation_bytes),
+    };
+    Ok((att, rt.notary_pin.verifying_key))
+}
+
+/// **VERIFY a LIVE Coinbase spot attestation** (feature `tlsn-live`) → the [`AttestedPrice`].
+///
+/// Leg 1 is authenticated by the REAL `tlsn` `presentation.verify()` against the genuine
+/// `api.coinbase.com` cert chain (Mozilla roots), pinning both the host
+/// ([`COINBASE_SERVER_NAME`]) and `expected_notary_key` (the separate notary's published key);
+/// legs 2–4 run over the SAME authenticated body. Parses the asset from the authenticated
+/// request target and the amount from the authenticated body, cross-checking the response
+/// `base-currency` equals the requested asset.
+#[cfg(feature = "tlsn-live")]
+pub fn verify_coinbase_live(
+    att: &ZkOracleAttestation,
+    expected_notary_key: &tlsn::attestation::signing::VerifyingKey,
+) -> Result<AttestedPrice, PriceError> {
+    let verified = crate::attestation::verify_zkoracle_live_host(
+        att,
+        COINBASE_SERVER_NAME,
+        expected_notary_key,
+    )
+    .map_err(PriceError::NotVerified)?;
+
+    let target = request_target(&att.presentation.sent)
+        .ok_or_else(|| PriceError::BadRequestTarget { got: String::new() })?;
+    let asset = parse_spot_target(&target).ok_or_else(|| PriceError::BadRequestTarget {
+        got: target.clone(),
+    })?;
+
+    let parsed: SpotResponse =
+        serde_json::from_slice(&verified.session.response_body).map_err(|e| {
+            PriceError::BadSchema {
+                reason: e.to_string(),
+            }
+        })?;
+
+    let response_asset = format!("{}-{}", parsed.data.base, parsed.data.currency);
+    if response_asset != asset {
+        return Err(PriceError::AssetMismatch {
+            requested: asset,
+            got: response_asset,
+        });
+    }
+
+    Ok(AttestedPrice {
+        asset,
+        amount: parsed.data.amount,
+        time: verified.session.connection_time,
+        attestation: att.clone(),
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

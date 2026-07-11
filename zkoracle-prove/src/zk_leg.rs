@@ -244,7 +244,7 @@ fn build_injection_trace(field: &[u8]) -> Option<(Vec<Vec<BabyBear>>, Vec<BabyBe
 
 /// A descriptor-carried injection-leg proof: the run of the pinned injection DFA over the
 /// field, bound by the descriptor's Poseidon2 running hash.
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ZkInjectionProof {
     /// The serde-encoded `Ir2BatchProof<DreggStarkConfig>` — the plonky3 descriptor proof over the
     /// `injectionRoutingDesc` trace. (`BatchProof` is not itself `Clone`/`Debug`; the leg carries

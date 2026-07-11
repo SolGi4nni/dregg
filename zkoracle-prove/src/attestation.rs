@@ -51,7 +51,7 @@ pub fn content_commitment(response_body: &[u8]) -> BabyBear {
 /// A committed byte range within the authenticated response body — the location the
 /// injection-checked field is extracted FROM (so the field is a committed substring of the
 /// authenticated bytes, not a free-standing input).
-#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+#[derive(Clone, Copy, Debug, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub struct FieldSpan {
     /// The start offset of the field within the authenticated response body.
     pub offset: usize,
@@ -69,7 +69,7 @@ impl FieldSpan {
 
 /// A full zkOracle attestation — the three legs' evidence bundled, all bound to ONE
 /// authenticated response by the shared [`content_commitment`].
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, serde::Serialize, serde::Deserialize)]
 pub struct ZkOracleAttestation {
     /// **Authentic leg** — the verified tlsn/MPC-TLS presentation of the Anthropic
     /// `POST /v1/messages` session (x-api-key redacted).
@@ -211,6 +211,34 @@ pub fn verify_zkoracle_live(
     if !vr.api_key_hidden() {
         return Err(ZkOracleError::NotAuthentic(AuthenticError::ApiKeyDisclosed));
     }
+    let session = AuthenticSession {
+        server_name: vr.server_name,
+        connection_time: vr.connection_time,
+        response_body: vr.response_body,
+    };
+    verify_legs_over_session(att, session)
+}
+
+/// **VERIFY a zkOracle attestation with the LIVE authentic leg against a REAL host**
+/// (feature `tlsn-live`). Like [`verify_zkoracle_live`] but leg 1 authenticates the real `tlsn`
+/// presentation against the host's GENUINE cert chain (Mozilla/webpki roots) and PINS the
+/// separate hosted notary's verifying key
+/// ([`crate::tlsn_live::verify_coinbase_presentation`]) — the trust anchor a verifier holds
+/// out-of-band. The authenticated body drives the SAME cross-leg weld + well-formed + injection
+/// legs. A tampered/forged presentation, a wrong host, or a wrong/unpinned notary is refused
+/// ([`ZkOracleError::NotAuthenticLive`]).
+#[cfg(feature = "tlsn-live")]
+pub fn verify_zkoracle_live_host(
+    att: &ZkOracleAttestation,
+    expected_server: &str,
+    expected_notary_key: &tlsn::attestation::signing::VerifyingKey,
+) -> Result<VerifiedZkOracle, ZkOracleError> {
+    let bytes = att.tlsn_presentation.as_ref().ok_or_else(|| {
+        ZkOracleError::NotAuthenticLive("attestation carries no tlsn presentation".to_string())
+    })?;
+    let vr =
+        crate::tlsn_live::verify_coinbase_presentation(bytes, expected_server, expected_notary_key)
+            .map_err(|e| ZkOracleError::NotAuthenticLive(e.to_string()))?;
     let session = AuthenticSession {
         server_name: vr.server_name,
         connection_time: vr.connection_time,
