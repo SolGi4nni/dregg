@@ -1140,6 +1140,229 @@ impl ObservedLock {
 }
 
 // ===========================================================================
+// The consensus-evidence source seam (the geyser feed) + the production loop
+// ===========================================================================
+
+/// **The consensus-evidence feed seam (the geyser seam).** Given a lock the
+/// relayer already observed over plain RPC, yield the Solana Tower-BFT
+/// [`ConsensusEvidence`] for its finalized slot — the stake-weighted vote set +
+/// bank-hash components a plain JSON-RPC endpoint does NOT expose.
+///
+/// The relayer reads the finalized ACCOUNT itself (`getProgramAccounts` /
+/// `getAccountInfo` over the [`SolanaRpc`] connection), so the account bytes are
+/// ground truth it derives on its own. But a plain RPC cannot hand it the
+/// stake-weighted votes or the bank-hash preimage a light client needs to reach
+/// [`LockProofTrust::ConsensusVerified`]. That evidence comes from a **snapshot /
+/// geyser vote feed**. This trait is exactly that boundary.
+///
+/// # The production impl is NOT built here (the named live residual)
+///
+/// The mainnet source is a **live geyser / snapshot vote feed** — a Yellowstone
+/// gRPC geyser plugin streaming vote transactions, or a validator snapshot's
+/// vote-account + Tower state — that parses real vote `Transaction`s into
+/// [`ValidatorVote`]s and assembles the [`BankHashComponents`]. That wire-format
+/// ingestion is the honest remaining adapter layer named in
+/// `docs/deos/TRUSTLESS-SOLANA-BRIDGE.md`; it is deliberately NOT reproduced in
+/// this module. [`MockConsensusFeed`] is the in-memory test double.
+///
+/// # The source is UNTRUSTED input, not a trust root
+///
+/// Whatever this source yields is cross-checked against the REAL finalized account
+/// the relayer read itself: [`SolanaRelayer::observe_lock_at_consensus`] rebuilds
+/// the inclusion over the on-chain bytes and [`verify_lock_proof_consensus`] then
+/// binds `bank_components.accounts_hash == inclusion.accounts_hash`, re-counts the
+/// stake-weighted Ed25519 super-majority against `stake_table`, and enforces the
+/// escrow-to-bridge-vault binding. Evidence inconsistent with the on-chain account,
+/// or short of the 2/3 threshold, is REFUSED — the feed cannot fabricate a mint.
+pub trait ConsensusEvidenceSource {
+    /// The consensus evidence for `lock`'s finalized slot, or `None` when the feed
+    /// has no evidence for it yet. A `None` leaves the lock at
+    /// [`LockProofTrust::StructureOnly`] — it surfaces as a mint request the
+    /// committed mint refuses with `TrustTooLow`, never a mint.
+    fn evidence_for(&self, lock: &ObservedLock) -> Option<ConsensusEvidence>;
+}
+
+/// One lock's outcome from [`SolanaRelayer::scan_to_mint_requests`] — the
+/// observation→mint-request loop's per-account result.
+#[derive(Clone, Debug)]
+pub enum LoopEntry {
+    /// The loop built a committed-mint request through the unified
+    /// [`InterchainAdapter`] trust-dial path. Inspect
+    /// [`dregg_turn::BridgeMintRequest::consensus_verified`] (or use
+    /// [`LoopEntry::mint_ready`]): a lock the [`ConsensusEvidenceSource`] verified
+    /// to [`LockProofTrust::ConsensusVerified`] carries `true` (mint-ready); a
+    /// [`LockProofTrust::StructureOnly`] lock (no evidence from the feed) carries
+    /// `false`, and the committed [`TurnExecutor::bridge_mint_against_lock`](dregg_turn::TurnExecutor::bridge_mint_against_lock)
+    /// refuses it with `TrustTooLow` — the loop does NOT mint it.
+    Request(dregg_turn::BridgeMintRequest),
+    /// The adapter refused BEFORE building a request: the binding was addressed to
+    /// another federation ([`AdapterWiringError::WrongDestinationFederation`]), it
+    /// did not describe the observed lock ([`AdapterWiringError::BindingMismatch`]),
+    /// or the Nomad-law reject ([`AdapterWiringError::Adapter`]).
+    Refused(AdapterWiringError),
+    /// The scan/observe itself refused this account (not the bridge vault, no lock
+    /// record, un-finalized, or — on the consensus upgrade — evidence inconsistent
+    /// with the real account / below the 2/3 super-majority).
+    Observe(RelayerError),
+    /// No [`PortableActionBinding`] was available for the observed lock, so there
+    /// was nothing to route through the adapter. (A lock with no relayed binding
+    /// carries no `destination_federation` and cannot be credited anywhere.)
+    NoBinding,
+}
+
+impl LoopEntry {
+    /// The request when the loop produced one — regardless of trust. A
+    /// `StructureOnly` request (`consensus_verified = false`) is included here; use
+    /// [`Self::mint_ready`] for only the mint-ready ones.
+    pub fn request(&self) -> Option<&dregg_turn::BridgeMintRequest> {
+        match self {
+            LoopEntry::Request(r) => Some(r),
+            _ => None,
+        }
+    }
+
+    /// The request when the loop produced one AND it reached the trust the
+    /// committed mint requires (`consensus_verified`) — i.e. ready to feed to
+    /// [`TurnExecutor::bridge_mint_against_lock`](dregg_turn::TurnExecutor::bridge_mint_against_lock).
+    /// A `StructureOnly` request returns `None` here (it is NOT mint-ready).
+    pub fn mint_ready(&self) -> Option<&dregg_turn::BridgeMintRequest> {
+        match self {
+            LoopEntry::Request(r) if r.consensus_verified => Some(r),
+            _ => None,
+        }
+    }
+}
+
+impl<R: SolanaRpc> SolanaRelayer<R> {
+    /// **The production observation→mint-request loop.** Scan the lock program for
+    /// finalized locks, and for each one drive the full trust-dial path to a
+    /// committed-mint request:
+    ///
+    /// 1. [`Self::scan_program_locks`] — `getProgramAccounts` over the lock program,
+    ///    each account verified to [`LockProofTrust::StructureOnly`] over the REAL
+    ///    finalized bytes (escrow-to-bridge-vault binding enforced). Non-bridge
+    ///    accounts surface as [`LoopEntry::Observe`].
+    /// 2. For each observed lock, look up its [`PortableActionBinding`] via
+    ///    `bindings` (the relayed cross-chain message carrying the
+    ///    `destination_federation`); a lock with none is [`LoopEntry::NoBinding`].
+    /// 3. Ask the [`ConsensusEvidenceSource`] (the geyser feed) for the lock's
+    ///    [`ConsensusEvidence`]. When present, RE-OBSERVE the same vault account at
+    ///    consensus ([`Self::observe_lock_at_consensus`]) so the evidence is
+    ///    cross-checked against the real on-chain account and the stake-weighted 2/3
+    ///    super-majority is genuinely counted against `stake_table` — reaching
+    ///    [`LockProofTrust::ConsensusVerified`], or a typed [`LoopEntry::Observe`]
+    ///    refusal. When absent, the lock stays `StructureOnly`.
+    /// 4. Route the (possibly upgraded) observation through the unified
+    ///    [`ObservedLock::to_bridge_mint_request_via_adapter`]: the
+    ///    destination-federation check + the observed-lock consistency check run,
+    ///    then `consensus_verified` is set SOLELY from the lock's trust dial (never a
+    ///    caller bool). A wrong-federation binding is [`LoopEntry::Refused`].
+    ///
+    /// The loop **does not mint** — it produces the committed-mint requests the
+    /// caller feeds to [`TurnExecutor::bridge_mint_against_lock`](dregg_turn::TurnExecutor::bridge_mint_against_lock)
+    /// (after the independent escrow leg). A `StructureOnly` lock still surfaces as a
+    /// [`LoopEntry::Request`], but with `consensus_verified = false`, so the
+    /// committed mint refuses it with `TrustTooLow`; only [`LoopEntry::mint_ready`]
+    /// requests move supply. `actor` holds the mirror mint-cap and `ledger_cell` is
+    /// the committed mirror-ledger cell.
+    ///
+    /// `stake_table` is the epoch's tracked stake distribution the consensus verify
+    /// counts against (the evidence's `epoch` must match it, else the upgrade is a
+    /// typed `WrongEpoch` refusal). A whole-cluster sweep passes the epoch's table.
+    pub fn scan_to_mint_requests<S, B>(
+        &self,
+        source: &S,
+        bindings: B,
+        stake_table: &EpochStakeTable,
+        require_poh: bool,
+        this_federation: [u8; 32],
+        actor: CellId,
+        ledger_cell: CellId,
+    ) -> Result<Vec<LoopEntry>, RpcError>
+    where
+        S: ConsensusEvidenceSource,
+        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+    {
+        let scanned = self.scan_program_locks()?;
+        let mut out = Vec::with_capacity(scanned.len());
+        for result in scanned {
+            out.push(self.process_scanned_lock(
+                result,
+                source,
+                &bindings,
+                stake_table,
+                require_poh,
+                this_federation,
+                actor,
+                ledger_cell,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// One iteration of [`Self::scan_to_mint_requests`] over a single scanned
+    /// account result (extracted so the loop body reads as the pipeline above).
+    #[allow(clippy::too_many_arguments)]
+    fn process_scanned_lock<S, B>(
+        &self,
+        scanned: Result<ObservedLock, RelayerError>,
+        source: &S,
+        bindings: &B,
+        stake_table: &EpochStakeTable,
+        require_poh: bool,
+        this_federation: [u8; 32],
+        actor: CellId,
+        ledger_cell: CellId,
+    ) -> LoopEntry
+    where
+        S: ConsensusEvidenceSource,
+        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+    {
+        // (1) the scan already ran the finalized + escrow-to-bridge-vault verify.
+        let structure_only = match scanned {
+            Ok(o) => o,
+            Err(e) => return LoopEntry::Observe(e),
+        };
+
+        // (2) the relayed cross-chain binding (destination_federation + the
+        //     nullifier/amount the adapter consistency-checks). No binding ⟹ nothing
+        //     to route.
+        let binding = match bindings(&structure_only) {
+            Some(b) => b,
+            None => return LoopEntry::NoBinding,
+        };
+
+        // (3) ask the geyser feed for consensus evidence. Present ⟹ RE-OBSERVE the
+        //     same vault account at consensus so the evidence is cross-checked
+        //     against the real on-chain account + the 2/3 super-majority is genuinely
+        //     counted; absent ⟹ the lock stays StructureOnly (cannot mint).
+        let observed = match source.evidence_for(&structure_only) {
+            Some(evidence) => {
+                let pubkey = structure_only.proof.inclusion.vault_account;
+                match self.observe_lock_at_consensus(&pubkey, evidence, stake_table, require_poh) {
+                    Ok(consensus_verified) => consensus_verified,
+                    Err(e) => return LoopEntry::Observe(e),
+                }
+            }
+            None => structure_only,
+        };
+
+        // (4) drive the UNIFIED adapter trust-dial path: destination-federation
+        //     check + observed-lock consistency, then consensus_verified straight
+        //     from the trust dial.
+        match observed.to_bridge_mint_request_via_adapter(
+            binding,
+            this_federation,
+            actor,
+            ledger_cell,
+        ) {
+            Ok(req) => LoopEntry::Request(req),
+            Err(e) => LoopEntry::Refused(e),
+        }
+    }
+}
+
+// ===========================================================================
 // In-memory test double (the replacement for the dev-only feed stand-in)
 // ===========================================================================
 
@@ -1260,6 +1483,44 @@ impl SolanaRpc for MockSolanaRpc {
             push_owned(&self.confirmed_only);
         }
         Ok(out)
+    }
+}
+
+/// An in-memory [`ConsensusEvidenceSource`] for tests and the dev relayer harness
+/// — the honest stand-in for the live geyser / snapshot vote feed. It holds
+/// pre-assembled [`ConsensusEvidence`] keyed by the lock's `lock_id`, so the
+/// production loop can be exercised end-to-end (a lock WITH evidence upgrades to
+/// `ConsensusVerified`; a lock WITHOUT stays `StructureOnly`) without a network.
+/// It fabricates NOTHING the real verify would not re-check: whatever evidence it
+/// yields is still cross-checked against the on-chain account + the stake table by
+/// [`verify_lock_proof_consensus`], so a mock that supplied bogus evidence would be
+/// refused exactly as a lying geyser feed would.
+#[cfg(any(test, feature = "test-utils"))]
+#[derive(Clone, Debug, Default)]
+pub struct MockConsensusFeed {
+    by_lock_id: std::collections::BTreeMap<[u8; 32], ConsensusEvidence>,
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl MockConsensusFeed {
+    /// An empty feed — every lock stays `StructureOnly` (models a geyser feed that
+    /// has not yet delivered any vote set).
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    /// Register the consensus evidence the feed will return for the lock whose id
+    /// is `lock_id`.
+    pub fn insert(&mut self, lock_id: [u8; 32], evidence: ConsensusEvidence) -> &mut Self {
+        self.by_lock_id.insert(lock_id, evidence);
+        self
+    }
+}
+
+#[cfg(any(test, feature = "test-utils"))]
+impl ConsensusEvidenceSource for MockConsensusFeed {
+    fn evidence_for(&self, lock: &ObservedLock) -> Option<ConsensusEvidence> {
+        self.by_lock_id.get(&lock.lock_id).cloned()
     }
 }
 
