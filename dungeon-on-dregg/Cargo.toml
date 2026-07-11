@@ -56,9 +56,16 @@ dregg-zkoracle-prove = { path = "../zkoracle-prove", default-features = false }
 # it (open_poll/issue_ballot/cast/resolve) to let a crowd quorum-certify the winning
 # `Command`, which then fires a REAL WorldCell turn on the game executor.
 collective-choice = { path = "../collective-choice" }
-# Demo seat identities: each seated voter's electorate key is `blake3(name)` (a
-# deterministic demo public key). The custody-key binding is the named production
-# gap; the quorum / ballots / tally are real.
+# Seat CUSTODY identity: each seated voter is bound to a REAL ed25519 signing
+# keypair (`dregg_types::SigningKey`/`PublicKey`/`Signature` — the SAME classical
+# signature the executor authorizes turns with via `Authorization::Signature`).
+# The seat's public key IS its electorate identity; it SIGNS its ballot, and the
+# round verifies that signature before the ballot is admitted as a real turn.
+dregg-types = { path = "../types" }
+# The demo custody keyring derives each seat's real ed25519 SECRET seed
+# deterministically from its name (`blake3::derive_key`) so the example/tests are
+# reproducible; the public key is the genuine verifying key, and only the secret
+# holder can produce an admissible ballot signature.
 blake3 = "1"
 # The real turn crate — for the `WitnessBlob`/`WitnessKind` carrier the MULTI-CELL
 # module attaches to a gated turn (the Merkle-open witness of item-A's finalized
@@ -67,6 +74,20 @@ blake3 = "1"
 # so the cross-cell driver reaches for it here. Same `dregg-turn` the framework and
 # executor are built on.
 dregg-turn = { path = "../turn" }
+# The REAL confined Bedrock brain (gap #6) reads the assistant text out of the attested
+# Bedrock Converse response and builds the confined Converse request body — JSON, only on
+# the live path. Optional: pulled in ONLY by the `tlsn-live` feature (the default offline
+# build never links it, keeping the scripted-brain path light).
+serde_json = { workspace = true, optional = true }
+
+[features]
+# The REAL attested brain path (Phase E→B): links `dregg-zkoracle-prove`'s heavy MPC-TLS
+# backend so `BedrockBrain` can make a genuine live Bedrock call and
+# `narrate_turn_bedrock_attested` can authenticate the narration's provenance with a REAL
+# `presentation.verify()` under the hosted pinned notary. OFF by default — the offline
+# scripted-brain tests + the confined-channel parser stay green and light without it. The
+# live test (`tests/bedrock_brain_live.rs`) is `#[ignore]`d (real network + paid call).
+tlsn-live = ["dregg-zkoracle-prove/tlsn-live", "dep:serde_json"]
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

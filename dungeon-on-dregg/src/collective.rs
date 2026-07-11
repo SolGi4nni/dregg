@@ -37,17 +37,42 @@
 //!   REFUSES it ([`CollectiveError::World`]). Nothing commits (anti-ghost). The crowd
 //!   cannot vote past the executor's teeth.
 //!
+//! ## Seat identity is a REAL custody signing key — a ballot is authenticated by a signature
+//!
+//! Each seat is bound to a real ed25519 CUSTODY keypair ([`Custodian`]) — the SAME
+//! classical signature the executor authorizes turns with (`Authorization::Signature`,
+//! [`dregg_types::sign`]/[`dregg_types::verify`]). The seat's PUBLIC key is its electorate
+//! identity (registered on the round via [`Seat`]); the SECRET stays with the seat. A
+//! ballot is a real ballot only if it carries a [`SignedBallot`] — the seat's signature
+//! over the canonical ballot message (domain ‖ poll ‖ voter-pk ‖ option). [`cast`] verifies
+//! that signature against the registered public key BEFORE any turn is issued:
+//!
+//! * a **missing / wrong-key / forged** signature is [`CollectiveError::BadSignature`] —
+//!   nothing is issued or cast (the board does not move);
+//! * a signature **re-pointed** at a different option/poll fails to verify (the message
+//!   binds both) — likewise refused;
+//! * a **valid signature by a non-seated key** still holds no ballot cap and is refused
+//!   [`VoteError::Ineligible`] by the real engine (a valid signature is not a seat).
+//!
+//! [`cast`]: CollectiveRound::cast
+//!
 //! ## Honest scope
 //!
-//! The quorum, the WriteOnce ballots, the Monotonic tally, and the light-client
-//! recomputation are all REAL verified turns. Identity is **demo-grade**: each seat's
-//! electorate key is [`seat_pk`] = `blake3(name)`, a deterministic demo public key. A
-//! production deployment binds each seat to a real CUSTODY signing key — that binding is
-//! the named production gap; the quorum-certified tally itself is genuine.
+//! The quorum, the WriteOnce ballots, the Monotonic tally, the light-client recomputation,
+//! AND the seat identities are now all REAL: each ballot is authenticated by a genuine
+//! ed25519 signature over the seat's registered custody public key. What remains for full
+//! production identity is **key distribution / registration** (how a seat's real custody
+//! public key is enrolled into the electorate out-of-band and attested) and **key
+//! rotation / revocation** (retiring a compromised custody key). The demo keyring
+//! ([`demo_custodians`]) derives each seat's real secret DETERMINISTICALLY from its name so
+//! the example/tests reproduce stable identities; a production seat generates its secret in
+//! its own custody ([`Custodian::generate`]) and never derives it from public data. The
+//! signing-and-verification itself — the thing that makes a ballot authentic — is genuine.
 //!
 //! [`TurnReceipt`]: dregg_app_framework::TurnReceipt
 //! [`Command`]: crate::narrator::Command
 //! [`WorldCell`]: spween_dregg::WorldCell
+//! [`VoteError::Ineligible`]: collective_choice::VoteError::Ineligible
 
 use std::collections::BTreeMap;
 
@@ -55,6 +80,7 @@ use collective_choice::{
     BallotCap, CollectiveChoice, Decision, PollId, PollSpec, Tally, TurnReceipt, VoteEngine,
     VoteError,
 };
+use dregg_types::{PublicKey, Signature, SigningKey};
 use spween::Scene;
 use spween_dregg::{WorldCell, WorldError};
 
@@ -76,11 +102,144 @@ pub const QUORUM: u64 = 3;
 /// commit under (a fixed demo federation id).
 pub const FEDERATION: [u8; 32] = [0xC0; 32];
 
-/// A seat's deterministic electorate public key — `blake3(name)`, a stable demo identity.
-/// **The custody-key binding is the named production gap** (see the module doc); this is a
-/// demo key, not a custody-held signing key.
-pub fn seat_pk(name: &str) -> [u8; 32] {
-    *blake3::hash(name.as_bytes()).as_bytes()
+/// The domain tag prefixing every ballot signature — binds a signature to THIS scheme +
+/// version so a signature minted in another context never verifies as a ballot here.
+const BALLOT_DOMAIN: &[u8] = b"dungeon-on-dregg/collective/ballot-v1";
+
+/// The `blake3::derive_key` context for the DEMO custody secret seeds (see
+/// [`Custodian::demo`]) — a domain separator so a demo seat's derived secret is unique to
+/// this keyring.
+const CUSTODY_DERIVE_CONTEXT: &str = "dungeon-on-dregg collective custody seat v1";
+
+/// The canonical ballot message a seat signs with its custody key: `domain ‖ poll-cell id
+/// ‖ voter pk ‖ option`. Binding the poll id stops a cross-poll replay of a signature;
+/// binding the option stops re-pointing a signature at a different choice.
+fn ballot_message(poll: PollId, voter_pk: &PublicKey, option: usize) -> Vec<u8> {
+    let mut m = Vec::with_capacity(BALLOT_DOMAIN.len() + 32 + 32 + 8);
+    m.extend_from_slice(BALLOT_DOMAIN);
+    m.extend_from_slice(poll.0.as_bytes());
+    m.extend_from_slice(&voter_pk.0);
+    m.extend_from_slice(&(option as u64).to_be_bytes());
+    m
+}
+
+/// A seat's **custody keypair** — the real ed25519 signing key that authenticates its
+/// ballots (the SAME classical scheme the executor authorizes turns with). Its PUBLIC key
+/// is the seat's electorate identity (registered on the round as a [`Seat`]); the SECRET
+/// stays with the seat. A ballot is a real ballot only if signed by this key: a
+/// forged/wrong-key/tampered signature is refused ([`CollectiveError::BadSignature`]).
+pub struct Custodian {
+    name: String,
+    key: SigningKey,
+    pk: PublicKey,
+}
+
+impl Custodian {
+    /// A **fresh random** custody keypair for `name` — the production path: the secret is
+    /// generated in the seat's own custody and never derived from public data.
+    pub fn generate(name: impl Into<String>) -> Custodian {
+        let (key, pk) = dregg_types::generate_keypair();
+        Custodian {
+            name: name.into(),
+            key,
+            pk,
+        }
+    }
+
+    /// A **deterministic demo** custody keypair for `name`: the ed25519 SECRET seed is
+    /// `blake3::derive_key(CUSTODY_DERIVE_CONTEXT, name)`, a genuine keypair whose secret
+    /// only this derivation reproduces (so the example/tests are stable). NOT a production
+    /// custody key — a real seat generates its secret in its own device ([`generate`]).
+    ///
+    /// [`generate`]: Custodian::generate
+    pub fn demo(name: impl Into<String>) -> Custodian {
+        let name = name.into();
+        let seed = blake3::derive_key(CUSTODY_DERIVE_CONTEXT, name.as_bytes());
+        let key = SigningKey::from_bytes(&seed);
+        let pk = key.public_key();
+        Custodian { name, key, pk }
+    }
+
+    /// The seat's human name.
+    pub fn name(&self) -> &str {
+        &self.name
+    }
+
+    /// The seat's custody PUBLIC key — its electorate identity.
+    pub fn public_key(&self) -> PublicKey {
+        self.pk
+    }
+
+    /// The seat's registered public identity (name + public key), for enrolling into a
+    /// round's electorate. The secret is NOT included.
+    pub fn seat(&self) -> Seat {
+        Seat {
+            name: self.name.clone(),
+            pk: self.pk,
+        }
+    }
+
+    /// **Sign a ballot** for `option` in `poll` with this seat's custody key. The signature
+    /// covers the canonical [`ballot_message`] (domain ‖ poll ‖ voter-pk ‖ option), so it
+    /// authenticates WHO votes and WHAT for, and cannot be replayed into a different poll or
+    /// re-pointed at another option. The returned [`SignedBallot`] is what [`cast`] admits.
+    ///
+    /// [`cast`]: CollectiveRound::cast
+    pub fn sign_ballot(&self, poll: PollId, option: usize) -> SignedBallot {
+        let msg = ballot_message(poll, &self.pk, option);
+        let signature = dregg_types::sign(&self.key, &msg);
+        SignedBallot {
+            voter_pk: self.pk,
+            option,
+            signature,
+        }
+    }
+
+    /// Sign an arbitrary `message` with this seat's custody secret (a raw ed25519 signature).
+    /// Used to construct adversarial ballots in tests (e.g. an impostor signing a message
+    /// stamped with another seat's public key) — the signature is genuine, but by the WRONG
+    /// key, so it never verifies against the claimed seat.
+    pub fn sign_raw(&self, message: &[u8]) -> Signature {
+        dregg_types::sign(&self.key, message)
+    }
+}
+
+/// A seat's **registered public identity** in a round: its human name + the ed25519 PUBLIC
+/// key it signs ballots with. Only the public key is held by the round (the round never
+/// sees a secret); it is the electorate entry the engine checks ballots against.
+#[derive(Clone, Debug)]
+pub struct Seat {
+    /// The seat's human name (a display label).
+    pub name: String,
+    /// The seat's custody public key — its electorate identity.
+    pub pk: PublicKey,
+}
+
+/// A **signature-authenticated ballot** — the payload [`CollectiveRound::cast`] admits: the
+/// voter's public key, the chosen option, and the seat's ed25519 signature over the
+/// canonical ballot message. The round admits it ONLY if the signature verifies against the
+/// registered public key (and that key is seated).
+#[derive(Clone, Debug)]
+pub struct SignedBallot {
+    /// The seat's custody public key (must be a registered electorate member).
+    pub voter_pk: PublicKey,
+    /// The option this ballot votes for.
+    pub option: usize,
+    /// The seat's ed25519 signature over the canonical ballot message.
+    pub signature: Signature,
+}
+
+/// The demo seated roster's **custodians** — name + real ed25519 custody keypair, derived
+/// deterministically ([`Custodian::demo`]) so the example/tests reproduce stable
+/// identities. Their PUBLIC keys are the [`CollectiveRound::open`] electorate.
+pub fn demo_custodians() -> Vec<Custodian> {
+    ROSTER.iter().map(|n| Custodian::demo(*n)).collect()
+}
+
+/// The demo roster as registered public [`Seat`]s (public keys only) — the electorate
+/// [`CollectiveRound::open`] enrolls.
+pub fn demo_roster() -> Vec<Seat> {
+    demo_custodians().iter().map(|c| c.seat()).collect()
 }
 
 /// One candidate the crowd may vote for: a human [`label`](Proposal::label) and the typed
@@ -137,6 +296,10 @@ pub enum CollectiveError {
     /// The backing vote engine refused (ineligible voter, double vote, bad spec, …) — a
     /// real [`VoteError`] from the [`collective_choice`] executor.
     Vote(VoteError),
+    /// The ballot's signature did not verify against the claimed seat public key — a
+    /// missing, wrong-key, forged, or tampered (option/poll re-pointed) signature. Nothing
+    /// is issued or cast; the board does not move (checked BEFORE any turn).
+    BadSignature,
     /// The round has not reached quorum: the `AffineLe` gate refused the decision-turn, so
     /// no winner is certified and NO world turn fires (the world is unchanged).
     BelowQuorum,
@@ -150,6 +313,10 @@ impl std::fmt::Display for CollectiveError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
             CollectiveError::Vote(e) => write!(f, "the vote engine refused: {e}"),
+            CollectiveError::BadSignature => write!(
+                f,
+                "the ballot signature did not verify against the seat's registered custody key"
+            ),
             CollectiveError::BelowQuorum => {
                 write!(
                     f,
@@ -182,10 +349,12 @@ pub struct CollectiveRound {
     question: String,
     /// Index-aligned with the poll's options.
     proposals: Vec<Proposal>,
-    roster: Vec<String>,
+    /// The registered electorate — each seat's name + custody PUBLIC key.
+    electorate: Vec<Seat>,
     quorum: u64,
-    /// Per-seat issued ballot caps (idempotent: a seat has exactly one ballot per round).
-    ballots: BTreeMap<String, BallotCap>,
+    /// Per-seat issued ballot caps keyed by custody public key (idempotent: a seat has
+    /// exactly one ballot per round).
+    ballots: BTreeMap<[u8; 32], BallotCap>,
 }
 
 impl CollectiveRound {
@@ -196,26 +365,28 @@ impl CollectiveRound {
         question: impl Into<String>,
         proposals: Vec<Proposal>,
     ) -> Result<CollectiveRound, CollectiveError> {
-        Self::open_with(question, proposals, ROSTER, QUORUM, FEDERATION)
+        Self::open_with(question, proposals, &demo_roster(), QUORUM, FEDERATION)
     }
 
-    /// Open a round over an explicit `roster` (seat names), `quorum` `M`, and `federation`.
-    /// Stands up a fresh [`CollectiveChoice`] engine and opens a real poll whose options are
-    /// the `proposals` and whose electorate is the roster's [`seat_pk`]s.
+    /// Open a round over an explicit `electorate` (registered [`Seat`]s — name + custody
+    /// public key), `quorum` `M`, and `federation`. Stands up a fresh [`CollectiveChoice`]
+    /// engine and opens a real poll whose options are the `proposals` and whose electorate
+    /// is the seats' custody PUBLIC keys — a ballot is admitted only if signed by the
+    /// matching custody key (see [`cast`](Self::cast)).
     pub fn open_with(
         question: impl Into<String>,
         proposals: Vec<Proposal>,
-        roster: &[&str],
+        electorate: &[Seat],
         quorum: u64,
         federation: [u8; 32],
     ) -> Result<CollectiveRound, CollectiveError> {
         let question = question.into();
         let mut engine = CollectiveChoice::new(federation);
-        let electorate: Vec<[u8; 32]> = roster.iter().map(|n| seat_pk(n)).collect();
+        let electorate_pks: Vec<[u8; 32]> = electorate.iter().map(|s| s.pk.0).collect();
         let spec = PollSpec {
             question: question.clone(),
             options: proposals.iter().map(|p| p.label.clone()).collect(),
-            electorate,
+            electorate: electorate_pks,
             quorum_m: quorum,
         };
         let poll = engine.open_poll(spec)?;
@@ -224,10 +395,15 @@ impl CollectiveRound {
             poll,
             question,
             proposals,
-            roster: roster.iter().map(|s| s.to_string()).collect(),
+            electorate: electorate.to_vec(),
             quorum,
             ballots: BTreeMap::new(),
         })
+    }
+
+    /// The open poll's id (a seat needs it to sign a ballot — [`Custodian::sign_ballot`]).
+    pub fn poll(&self) -> PollId {
+        self.poll
     }
 
     /// The poll question.
@@ -245,22 +421,42 @@ impl CollectiveRound {
         self.quorum
     }
 
-    /// **Cast one seat's ballot for `option`** — a REAL cap-bounded turn on the vote
-    /// engine. Mints (idempotently) the seat's factory-born ballot cell and casts, so:
-    /// a seat NOT on the roster holds no cap and is refused [`VoteError::Ineligible`]; a
+    /// **Cast one seat's signature-authenticated ballot** — a REAL cap-bounded turn on the
+    /// vote engine, admitted ONLY if the ballot carries a valid custody signature.
+    ///
+    /// The signature is checked FIRST, before any turn is issued or cast: a missing /
+    /// wrong-key / forged / re-pointed signature is [`CollectiveError::BadSignature`] and
+    /// nothing commits (the board does not move). A signature that verifies but whose key is
+    /// NOT a seated electorate member holds no ballot cap and is refused
+    /// [`VoteError::Ineligible`] by the real engine (a valid signature is not a seat). A
     /// SECOND cast by the same seat is refused [`VoteError::DoubleVote`] (the ballot's
     /// `WriteOnce(VOTE)` + the engine nullifier). Returns the real ballot [`TurnReceipt`].
-    pub fn cast(&mut self, seat: &str, option: usize) -> Result<TurnReceipt, CollectiveError> {
-        // Eligibility is the real engine's gate: a non-roster seat holds no ballot cap.
-        let cap = match self.ballots.get(seat) {
+    ///
+    /// [`VoteError::Ineligible`]: collective_choice::VoteError::Ineligible
+    /// [`VoteError::DoubleVote`]: collective_choice::VoteError::DoubleVote
+    pub fn cast(&mut self, ballot: &SignedBallot) -> Result<TurnReceipt, CollectiveError> {
+        // Depth (0): the CUSTODY signature. The seat authenticates its ballot with a real
+        // ed25519 signature over (domain ‖ poll ‖ voter-pk ‖ option). A signature that does
+        // not verify against the CLAIMED public key is refused before anything is issued or
+        // cast — nothing commits. This is the identity tooth: a name is not a vote.
+        let msg = ballot_message(self.poll, &ballot.voter_pk, ballot.option);
+        if !dregg_types::verify(&ballot.voter_pk, &msg, &ballot.signature) {
+            return Err(CollectiveError::BadSignature);
+        }
+
+        // Eligibility is the real engine's gate, keyed by the seat's custody PUBLIC key: a
+        // key not in the registered electorate holds no ballot cap (Ineligible), even with a
+        // perfectly valid signature over its own key.
+        let voter = ballot.voter_pk.0;
+        let cap = match self.ballots.get(&voter) {
             Some(cap) => cap.clone(),
             None => {
-                let cap = self.engine.issue_ballot(self.poll, seat_pk(seat))?;
-                self.ballots.insert(seat.to_string(), cap.clone());
+                let cap = self.engine.issue_ballot(self.poll, voter)?;
+                self.ballots.insert(voter, cap.clone());
                 cap
             }
         };
-        let receipt = self.engine.cast(self.poll, &cap, option)?;
+        let receipt = self.engine.cast(self.poll, &cap, ballot.option)?;
         Ok(receipt)
     }
 
@@ -329,9 +525,14 @@ impl CollectiveRound {
         })
     }
 
-    /// The seated roster (seat names).
-    pub fn roster(&self) -> &[String] {
-        &self.roster
+    /// The registered electorate — each seat's name + custody public key.
+    pub fn electorate(&self) -> &[Seat] {
+        &self.electorate
+    }
+
+    /// The seated roster's names (display labels).
+    pub fn roster(&self) -> Vec<&str> {
+        self.electorate.iter().map(|s| s.name.as_str()).collect()
     }
 }
 
@@ -340,8 +541,10 @@ mod collective_tests {
     //! The collective, DRIVEN on both real substrates: a quorum-certified vote fires a
     //! real `WorldCell` turn; a sub-quorum round does NOT move the world; a quorum-
     //! certified ILLEGAL command is a real game-executor refusal (the crowd cannot vote
-    //! past the `CellProgram`); a duplicate / non-seated ballot is refused by the real
-    //! vote engine.
+    //! past the `CellProgram`); a duplicate ballot is refused by the real vote engine. AND
+    //! identity is a REAL custody signature: a correctly-signed ballot is admitted; a
+    //! forged / wrong-key / tampered signature is refused (BadSignature, nothing commits); a
+    //! valid signature by a NON-seated key is still Ineligible.
     use super::*;
     use crate::narrator::Command;
     use crate::{
@@ -349,6 +552,13 @@ mod collective_tests {
         deploy, deploy_keep, keep_scene, scene as salt_scene,
     };
     use spween_dregg::Value;
+
+    /// The seat's deterministic demo CUSTODY keypair — reproduces the same keypair the
+    /// round registered (both go through [`Custodian::demo`]), so a seat can sign a ballot
+    /// the round will admit.
+    fn seat(name: &str) -> Custodian {
+        Custodian::demo(name)
+    }
 
     /// The standard keep round: the crowd decides whether to trade blows with the
     /// gate-warden or press past. Option 0 = trade-blows, option 1 = press-on.
@@ -375,13 +585,25 @@ mod collective_tests {
         world.seed_var("hp", Value::Int(50)); // the gate-warden fight begins at 50 HP.
 
         // Three seats vote trade-blows (option 0), one votes press-on (option 1): quorum
-        // (M=3) is met, and trade-blows is the argmax winner.
+        // (M=3) is met, and trade-blows is the argmax winner. Each ballot is a REAL custody
+        // signature by the seat's registered key — admitted as a genuine ballot turn.
+        let poll = round.poll();
+        let r0 = round
+            .cast(&seat("Bramwen").sign_ballot(poll, KP_TRADE_BLOWS))
+            .expect("Bramwen's signed ballot is admitted");
+        assert_ne!(
+            r0.turn_hash, [0u8; 32],
+            "a correctly-signed ballot commits a genuine turn"
+        );
         round
-            .cast("Bramwen", KP_TRADE_BLOWS)
-            .expect("Bramwen votes");
-        round.cast("Corvin", KP_TRADE_BLOWS).expect("Corvin votes");
-        round.cast("Della", KP_PRESS_ON).expect("Della votes");
-        round.cast("Ferro", KP_TRADE_BLOWS).expect("Ferro votes");
+            .cast(&seat("Corvin").sign_ballot(poll, KP_TRADE_BLOWS))
+            .expect("Corvin's signed ballot is admitted");
+        round
+            .cast(&seat("Della").sign_ballot(poll, KP_PRESS_ON))
+            .expect("Della's signed ballot is admitted");
+        round
+            .cast(&seat("Ferro").sign_ballot(poll, KP_TRADE_BLOWS))
+            .expect("Ferro's signed ballot is admitted");
 
         // The tally is a monotone verified board; the light client recomputes it identically.
         let tally = round.tally().expect("tally");
@@ -425,11 +647,14 @@ mod collective_tests {
         let mut world = deploy_keep(31);
         world.seed_var("hp", Value::Int(50));
 
-        // Two votes — below the M=3 quorum.
+        // Two signed votes — below the M=3 quorum.
+        let poll = round.poll();
         round
-            .cast("Bramwen", KP_TRADE_BLOWS)
+            .cast(&seat("Bramwen").sign_ballot(poll, KP_TRADE_BLOWS))
             .expect("Bramwen votes");
-        round.cast("Corvin", KP_TRADE_BLOWS).expect("Corvin votes");
+        round
+            .cast(&seat("Corvin").sign_ballot(poll, KP_TRADE_BLOWS))
+            .expect("Corvin votes");
         assert_eq!(round.tally().expect("tally").total, 2, "two ballots cast");
 
         // resolve is refused by the quorum gate (yields None).
@@ -479,10 +704,11 @@ mod collective_tests {
             ],
         )
         .expect("the round opens");
-        for seat in ["Bramwen", "Corvin", "Della"] {
+        let poll = round.poll();
+        for name in ["Bramwen", "Corvin", "Della"] {
             round
-                .cast(seat, 0)
-                .unwrap_or_else(|e| panic!("{seat} votes: {e}"));
+                .cast(&seat(name).sign_ballot(poll, 0))
+                .unwrap_or_else(|e| panic!("{name} votes: {e}"));
         }
         assert_eq!(round.tally().expect("tally").per_option, vec![3, 0]);
 
@@ -512,16 +738,18 @@ mod collective_tests {
         );
     }
 
-    /// **A duplicate ballot is refused by the real engine.** A seat's SECOND cast is a real
-    /// `VoteError::DoubleVote` (the ballot's `WriteOnce(VOTE)` + the engine nullifier); the
-    /// board does not move.
+    /// **A duplicate ballot is refused by the real engine.** A seat's SECOND (correctly
+    /// signed) cast is a real `VoteError::DoubleVote` (the ballot's `WriteOnce(VOTE)` + the
+    /// engine nullifier); the board does not move.
     #[test]
     fn duplicate_ballot_is_refused_by_the_real_engine() {
         let mut round = keep_round();
+        let poll = round.poll();
+        let wisp = seat("Wisp");
         round
-            .cast("Wisp", KP_TRADE_BLOWS)
+            .cast(&wisp.sign_ballot(poll, KP_TRADE_BLOWS))
             .expect("Wisp's first vote commits");
-        match round.cast("Wisp", KP_PRESS_ON) {
+        match round.cast(&wisp.sign_ballot(poll, KP_PRESS_ON)) {
             Err(CollectiveError::Vote(VoteError::DoubleVote)) => {}
             other => panic!("a second ballot by the same seat must be refused, got {other:?}"),
         }
@@ -532,13 +760,28 @@ mod collective_tests {
         );
     }
 
-    /// **A non-seated ballot is refused by the real engine.** A voter outside the roster
-    /// holds no ballot cap — `issue_ballot` refuses `VoteError::Ineligible`.
+    /// **A valid signature by a NON-seated key is still refused.** "Mallory" holds a real
+    /// ed25519 custody key and signs a perfectly valid ballot for her OWN public key — the
+    /// signature verifies, but her key is not in the registered electorate, so the engine
+    /// refuses `VoteError::Ineligible`. A valid signature is not a seat.
     #[test]
-    fn non_seated_ballot_is_refused_by_the_real_engine() {
+    fn non_seated_valid_signature_is_refused_as_ineligible() {
         let mut round = keep_round();
-        // "Mallory" is not on the ROSTER — she holds no eligibility cap.
-        match round.cast("Mallory", KP_TRADE_BLOWS) {
+        let poll = round.poll();
+        // Mallory is NOT on the ROSTER — her key was never enrolled in the electorate.
+        let mallory = Custodian::generate("Mallory");
+        let ballot = mallory.sign_ballot(poll, KP_TRADE_BLOWS);
+        // Her signature IS valid over her own key (the identity tooth passes)...
+        assert!(
+            dregg_types::verify(
+                &ballot.voter_pk,
+                &ballot_message(poll, &ballot.voter_pk, ballot.option),
+                &ballot.signature
+            ),
+            "Mallory's signature is genuinely valid over her own key"
+        );
+        // ...but she holds no ballot cap: the engine refuses her as ineligible.
+        match round.cast(&ballot) {
             Err(CollectiveError::Vote(VoteError::Ineligible)) => {}
             other => panic!("a non-seated voter must be refused as ineligible, got {other:?}"),
         }
@@ -547,5 +790,74 @@ mod collective_tests {
             0,
             "no ballot cast by the ineligible voter"
         );
+    }
+
+    /// **A FORGED signature is rejected — non-vacuous.** A ballot claims a seated seat's
+    /// public key but carries a garbage 64-byte signature. `cast` verifies the signature
+    /// FIRST and refuses `BadSignature`; nothing is issued or cast (the board stays empty).
+    #[test]
+    fn forged_signature_is_rejected() {
+        let mut round = keep_round();
+        let poll = round.poll();
+        let bramwen_pk = seat("Bramwen").public_key();
+        // A forged ballot: Bramwen's real public key, but a signature nobody produced.
+        let forged = SignedBallot {
+            voter_pk: bramwen_pk,
+            option: KP_TRADE_BLOWS,
+            signature: Signature([0x7u8; 64]),
+        };
+        match round.cast(&forged) {
+            Err(CollectiveError::BadSignature) => {}
+            other => panic!("a forged signature must be rejected as BadSignature, got {other:?}"),
+        }
+        assert_eq!(
+            round.tally().expect("tally").total,
+            0,
+            "anti-ghost: nothing committed on the forged ballot"
+        );
+    }
+
+    /// **A WRONG-KEY signature is rejected — non-vacuous.** An attacker (Mallory) signs a
+    /// ballot but stamps it with a SEATED seat's public key (Bramwen). The signature is a
+    /// genuine ed25519 signature — by the WRONG key — so it does not verify against Bramwen's
+    /// registered key: `BadSignature`, nothing commits. A signature is who signed it, not
+    /// whose name is on it.
+    #[test]
+    fn wrong_key_signature_is_rejected() {
+        let mut round = keep_round();
+        let poll = round.poll();
+        let bramwen_pk = seat("Bramwen").public_key();
+        let mallory = Custodian::generate("Mallory");
+        // Mallory signs the message FOR Bramwen's pk, then claims to be Bramwen.
+        let msg = ballot_message(poll, &bramwen_pk, KP_TRADE_BLOWS);
+        let impostor = SignedBallot {
+            voter_pk: bramwen_pk,
+            option: KP_TRADE_BLOWS,
+            signature: mallory.sign_raw(&msg),
+        };
+        match round.cast(&impostor) {
+            Err(CollectiveError::BadSignature) => {}
+            other => panic!("a wrong-key signature must be rejected, got {other:?}"),
+        }
+        assert_eq!(round.tally().expect("tally").total, 0, "nothing committed");
+    }
+
+    /// **A TAMPERED (re-pointed) signature is rejected — non-vacuous, proving the option is
+    /// bound.** Bramwen signs a ballot for option 0 (trade-blows), but the ballot is mutated
+    /// to option 1 (press-on) before casting. The signature covers option 0's message, so it
+    /// does not verify against option 1: `BadSignature`. A signed ballot cannot be
+    /// re-pointed at a different choice.
+    #[test]
+    fn tampered_option_signature_is_rejected() {
+        let mut round = keep_round();
+        let poll = round.poll();
+        let mut ballot = seat("Bramwen").sign_ballot(poll, KP_TRADE_BLOWS);
+        // Re-point the ballot at a different option — the signature no longer matches.
+        ballot.option = KP_PRESS_ON;
+        match round.cast(&ballot) {
+            Err(CollectiveError::BadSignature) => {}
+            other => panic!("a re-pointed option must be rejected, got {other:?}"),
+        }
+        assert_eq!(round.tally().expect("tally").total, 0, "nothing committed");
     }
 }

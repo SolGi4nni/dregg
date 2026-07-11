@@ -5042,6 +5042,7 @@ dependencies = [
  "dregg-circuit-prove",
  "dregg-commit",
  "dregg-dsl-runtime",
+ "dregg-lightclient",
  "dregg-macaroon",
  "dregg-payable",
  "dregg-token",
@@ -6436,7 +6437,9 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-turn",
+ "dregg-types",
  "dregg-zkoracle-prove",
+ "serde_json",
  "spween",
  "spween-dregg",
 ]

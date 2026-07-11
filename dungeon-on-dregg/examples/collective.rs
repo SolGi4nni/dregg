@@ -1,5 +1,9 @@
 //! DRIVE the COLLECTIVE on the REAL substrate and PRINT the proof:
-//!   * a crowd's ballots are real cap-bounded turns on the real `collective_choice`
+//!   * each seat is bound to a REAL ed25519 CUSTODY keypair (the same classical signature
+//!     the executor authorizes turns with); a ballot is authenticated by that signature,
+//!     not by a name — a correctly-signed ballot is admitted, a FORGED/wrong-key signature
+//!     is REJECTED (`BadSignature`, nothing commits);
+//!   * a crowd's signed ballots are real cap-bounded turns on the real `collective_choice`
 //!     engine (WriteOnce ballots + Monotonic tally + the polis `AffineLe` quorum gate);
 //!   * the quorum-certified winner FIRES a real `WorldCell` turn on the game executor —
 //!     the crowd decides, the world resolves the decided `Command` (receipt printed);
@@ -9,7 +13,9 @@
 //!
 //! Run:  cargo run -p dungeon-on-dregg --example collective
 
-use dungeon_on_dregg::collective::{CollectiveRound, Proposal, QUORUM, ROSTER, seat_pk};
+use dungeon_on_dregg::collective::{
+    CollectiveRound, Custodian, Proposal, QUORUM, SignedBallot, demo_custodians,
+};
 use dungeon_on_dregg::narrator::Command;
 use dungeon_on_dregg::{
     CH_DESCEND, CH_LEAVE_LANTERN, KP_PRESS_ON, KP_TRADE_BLOWS, ROOM_ANTECHAMBER, ROOM_SHORE,
@@ -17,24 +23,32 @@ use dungeon_on_dregg::{
 };
 use spween_dregg::Value;
 
-fn hx(b: &[u8; 32]) -> String {
-    b.iter()
-        .take(8)
-        .map(|x| format!("{x:02x}"))
-        .collect::<String>()
+fn hx8(b: &[u8]) -> String {
+    b.iter().take(8).map(|x| format!("{x:02x}")).collect()
 }
 
 fn main() {
     println!(
-        "=== THE COLLECTIVE — a crowd's quorum-certified vote fires a REAL WorldCell turn ===\n"
+        "=== THE COLLECTIVE — seats hold REAL custody keys; a SIGNED ballot fires a WorldCell turn ===\n"
     );
-    println!("roster (5 seats, demo identities blake3(name)); quorum M = {QUORUM} (majority):");
-    for name in ROSTER {
-        println!("  {name:<9} pk=blake3(name)={}…", hx(&seat_pk(name)));
-    }
-    println!("  (identity is DEMO-grade; the custody-key binding is the named production gap)\n");
 
-    // ── LEGAL: a quorum-certified vote fires a real world turn ──────────────────────
+    // Each seat is bound to a real ed25519 custody keypair (the demo keyring derives the
+    // secret deterministically from the name so this run is reproducible; a production seat
+    // generates its own). The PUBLIC key is the seat's electorate identity.
+    let custodians = demo_custodians();
+    println!("roster (5 seats, REAL ed25519 custody keys); quorum M = {QUORUM} (majority):");
+    for c in &custodians {
+        println!(
+            "  {:<9} custody pk (ed25519) = {}…",
+            c.name(),
+            hx8(c.public_key().as_bytes())
+        );
+    }
+    println!("  (a ballot is authenticated by the seat's SIGNATURE over its pk — not by a name)\n");
+
+    let seat = |name: &str| Custodian::demo(name);
+
+    // ── LEGAL: a quorum-certified vote of SIGNED ballots fires a real world turn ─────────
     println!("--- ROUND 1 — the gate-warden bars the way (crowd decides, world resolves) ---");
     let s = keep_scene();
     let mut world = deploy_keep(30);
@@ -52,20 +66,24 @@ fn main() {
         println!("  option {i}: {}", p.label);
     }
 
-    // The crowd casts real ballots (each a cap-bounded WriteOnce turn on the vote engine).
+    // Each seat SIGNS its ballot with its custody key; the round admits it only if the
+    // signature verifies against the registered public key.
+    let poll = round.poll();
     let ballots = [
         ("Bramwen", KP_TRADE_BLOWS),
         ("Corvin", KP_TRADE_BLOWS),
         ("Della", KP_PRESS_ON),
         ("Ferro", KP_TRADE_BLOWS),
     ];
-    for (seat, opt) in ballots {
+    for (name, opt) in ballots {
+        let signed = seat(name).sign_ballot(poll, opt);
         let r = round
-            .cast(seat, opt)
-            .unwrap_or_else(|e| panic!("{seat} votes: {e}"));
+            .cast(&signed)
+            .unwrap_or_else(|e| panic!("{name} votes: {e}"));
         println!(
-            "  BALLOT {seat:<9} -> option {opt}   (real turn={}…)",
-            hx(&r.turn_hash)
+            "  BALLOT {name:<9} -> option {opt}   sig={}…  (real turn={}…)",
+            hx8(&signed.signature.0),
+            hx8(&r.turn_hash)
         );
     }
     let tally = round.tally().expect("tally");
@@ -91,16 +109,59 @@ fn main() {
     println!("REAL WORLD RECEIPT (the game executor committed the decided command):");
     println!(
         "  turn={}…  pre={}…  post={}…",
-        hx(&cert.receipt.turn_hash),
-        hx(&cert.receipt.pre_state_hash),
-        hx(&cert.receipt.post_state_hash)
+        hx8(&cert.receipt.turn_hash),
+        hx8(&cert.receipt.pre_state_hash),
+        hx8(&cert.receipt.post_state_hash)
     );
     println!(
         "  the world resolved trade-blows: hp is now {} (50 -> 30, a real state transition)\n",
         world.read_var("hp")
     );
 
-    // ── SUB-QUORUM: the world does not move ─────────────────────────────────────────
+    // ── FORGED: a wrong signature is REJECTED (identity is a signature, not a name) ──────
+    println!("--- IDENTITY TOOTH — a FORGED ballot for a seated seat is rejected ---");
+    let mut round_forge = CollectiveRound::open(
+        "The gate-warden bars the way — what does the party do?",
+        vec![
+            Proposal::new("Trade blows with the gate-warden", Command::trade_blows()),
+            Proposal::new("Press past into the plundered hall", Command::press_on()),
+        ],
+    )
+    .expect("round opens");
+    let bramwen_pk = seat("Bramwen").public_key();
+    // (1) A garbage signature stamped with Bramwen's real public key.
+    let forged = SignedBallot {
+        voter_pk: bramwen_pk,
+        option: KP_TRADE_BLOWS,
+        signature: dregg_types::Signature([0x7u8; 64]),
+    };
+    println!(
+        "  forged ballot: claims Bramwen's pk {}…, garbage sig {}…",
+        hx8(bramwen_pk.as_bytes()),
+        hx8(&forged.signature.0)
+    );
+    match round_forge.cast(&forged) {
+        Err(e) => println!("  REJECTED: {e}"),
+        Ok(_) => println!("  !! a forged ballot was admitted (BUG)"),
+    }
+    // (2) An IMPOSTOR: Mallory produces a GENUINE ed25519 signature — by the WRONG key —
+    // and stamps Bramwen's public key on it. It does not verify against Bramwen's key.
+    let mallory = Custodian::generate("Mallory");
+    let impostor = SignedBallot {
+        voter_pk: bramwen_pk,
+        option: KP_TRADE_BLOWS,
+        signature: mallory.sign_raw(bramwen_pk.as_bytes()),
+    };
+    match round_forge.cast(&impostor) {
+        Err(e) => println!("  IMPOSTOR (Mallory signs as Bramwen) REJECTED: {e}"),
+        Ok(_) => println!("  !! an impostor ballot was admitted (BUG)"),
+    }
+    println!(
+        "  anti-ghost: tally total still {} — no forged/impostor ballot moved the board\n",
+        round_forge.tally().expect("tally").total
+    );
+
+    // ── SUB-QUORUM: the world does not move ─────────────────────────────────────────────
     println!("--- ROUND 2 — sub-quorum: only 2 of 5 seats vote (below M={QUORUM}) ---");
     let mut world2 = deploy_keep(31);
     world2.seed_var("hp", Value::Int(50));
@@ -112,10 +173,13 @@ fn main() {
         ],
     )
     .expect("round opens");
+    let poll2 = round2.poll();
     round2
-        .cast("Bramwen", KP_TRADE_BLOWS)
+        .cast(&seat("Bramwen").sign_ballot(poll2, KP_TRADE_BLOWS))
         .expect("Bramwen votes");
-    round2.cast("Corvin", KP_TRADE_BLOWS).expect("Corvin votes");
+    round2
+        .cast(&seat("Corvin").sign_ballot(poll2, KP_TRADE_BLOWS))
+        .expect("Corvin votes");
     println!(
         "tally total = {} (below quorum)",
         round2.tally().expect("tally").total
@@ -129,7 +193,7 @@ fn main() {
         world2.read_var("hp")
     );
 
-    // ── ILLEGAL: quorum-certified but the executor refuses ──────────────────────────
+    // ── ILLEGAL: quorum-certified but the executor refuses ──────────────────────────────
     println!("--- ROUND 3 — the crowd votes to descend an UNLIT stair (illegal) ---");
     let ss = salt_scene();
     let world3 = deploy(32);
@@ -149,10 +213,11 @@ fn main() {
         ],
     )
     .expect("round opens");
-    for seat in ["Bramwen", "Corvin", "Della"] {
+    let poll3 = round3.poll();
+    for name in ["Bramwen", "Corvin", "Della"] {
         round3
-            .cast(seat, 0)
-            .unwrap_or_else(|e| panic!("{seat} votes: {e}"));
+            .cast(&seat(name).sign_ballot(poll3, 0))
+            .unwrap_or_else(|e| panic!("{name} votes: {e}"));
     }
     println!(
         "  tally: {:?} — the crowd reached quorum for DESCEND",
@@ -171,7 +236,9 @@ fn main() {
         world3.read_var("has_lantern")
     );
 
-    println!("=== the crowd DECIDES (real quorum-certified vote); the world RESOLVES the ===");
-    println!("=== decided Command on the real executor. Sub-quorum doesn't move the world; ===");
-    println!("=== a voted-for illegal Command is a real executor refusal. Vote is not power. ===");
+    println!("=== seats hold REAL custody keys: a ballot is authenticated by a SIGNATURE, ===");
+    println!("=== not a name (forged/impostor rejected). The crowd DECIDES (real quorum-  ===");
+    println!("=== certified vote of signed ballots); the world RESOLVES the decided Command ===");
+    println!("=== on the real executor. Sub-quorum doesn't move the world; a voted-for     ===");
+    println!("=== illegal Command is a real executor refusal. Vote is not power.           ===");
 }
