@@ -790,7 +790,7 @@ theorem transferV2_pins_intent (permOut : List ℤ → List ℤ) (hash : List �
     (hf : Satisfied2Faithful permOut hash transferVmDescriptor2 minit mfin maddrs t) :
     EffectVmEmitTransfer.TransferRowIntent (envAt t 0)
     ∧ (envAt t (t.rows.length - 1)).loc (saCol state.STATE_COMMIT)
-        = (envAt t (t.rows.length - 1)).pub pi.NEW_COMMIT := by
+        ≡ (envAt t (t.rows.length - 1)).pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   -- Row 0: active transition row (`isLast = false`, since `0 + 1 < length`). Gates ⟹ intent.
   have h0 := satisfied2Faithful_satisfiedVm permOut hash EffectVmEmitTransfer.transferVmDescriptor
     minit mfin maddrs t (by decide) hf 0 (by omega)
@@ -852,7 +852,7 @@ theorem burnV2_full_sound (permOut : List ℤ → List ℤ) (hash : List ℤ →
     (hf : Satisfied2Faithful permOut hash burnVmDescriptor2 minit mfin maddrs t) :
     EffectVmEmitBurn.CellBurnSpec pre amt post
     ∧ (envAt t (t.rows.length - 1)).loc (saCol state.STATE_COMMIT)
-        = (envAt t (t.rows.length - 1)).pub pi.NEW_COMMIT := by
+        ≡ (envAt t (t.rows.length - 1)).pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   -- Row 0: active transition row (`isLast = false`). Gates ⟹ `CellBurnSpec`.
   have h0 := satisfied2Faithful_satisfiedVm permOut hash EffectVmEmitBurn.burnVmDescriptor
     minit mfin maddrs t (by decide) hf 0 (by omega)
@@ -901,7 +901,7 @@ theorem mintV2_full_sound (permOut : List ℤ → List ℤ) (hash : List ℤ →
     (hf : Satisfied2Faithful permOut hash mintVmDescriptor2 minit mfin maddrs t) :
     EffectVmEmitMint.CellMintSpec pre amt post
     ∧ (envAt t (t.rows.length - 1)).loc (saCol state.STATE_COMMIT)
-        = (envAt t (t.rows.length - 1)).pub pi.NEW_COMMIT := by
+        ≡ (envAt t (t.rows.length - 1)).pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   have h0 := satisfied2Faithful_satisfiedVm permOut hash EffectVmEmitMint.mintVmDescriptor
     minit mfin maddrs t (by decide) hf 0 (by omega)
   have hf0 : ((0 : Nat) + 1 == t.rows.length) = false := by
@@ -1344,43 +1344,40 @@ def gSlotRange : EmittedExpr :=
   .mul (.mul (.mul (slotMinus 0) (slotMinus 1)) (.mul (slotMinus 2) (slotMinus 3)))
        (.mul (.mul (slotMinus 4) (slotMinus 5)) (.mul (slotMinus 6) (slotMinus 7)))
 
-/-- The slot-range gate's denotation: the slot column carries a natural `< 8`. -/
-theorem gSlotRange_holds_iff (env : VmRowEnv) (isFirst : Bool) :
+/-- The slot-range gate's denotation, FIELD-FAITHFUL. The gate body is now `∏_{j<8}(slot - j) ≡ 0
+[ZMOD p]` (`VmConstraint.holdsVm` pins the degree-8 product only mod `p`). Under the DEPLOYED
+range-check canonicality of the slot column (`0 ≤ slot < p`, the same invariant the negative teeth
+consume), a prime `p` dividing the product divides exactly one factor `slot - j`, and canonicality
+collapses `p ∣ (slot - j)` to the EXACT integer `slot = j`. So the conclusion keeps its teeth — the
+dynamic memory index is a genuine natural `< 8`, not merely `≡` a residue that could escape the field
+block by a multiple of `p`. -/
+theorem gSlotRange_holds_iff (env : VmRowEnv) (isFirst : Bool)
+    (hcanon : 0 ≤ env.loc (prmCol SLOT) ∧ env.loc (prmCol SLOT) < 2013265921) :
     (VmConstraint.gate gSlotRange).holdsVm env isFirst false ↔
       ∃ j : Nat, j < 8 ∧ env.loc (prmCol SLOT) = (j : ℤ) := by
+  obtain ⟨hlo, hhi⟩ := hcanon
   simp only [VmConstraint.holdsVm, gSlotRange, slotMinus, eSlot, EmittedExpr.eval]
   constructor
   · intro h
-    have hx : env.loc (prmCol SLOT) = 0 ∨ env.loc (prmCol SLOT) = 1
-        ∨ env.loc (prmCol SLOT) = 2 ∨ env.loc (prmCol SLOT) = 3
-        ∨ env.loc (prmCol SLOT) = 4 ∨ env.loc (prmCol SLOT) = 5
-        ∨ env.loc (prmCol SLOT) = 6 ∨ env.loc (prmCol SLOT) = 7 := by
-      rcases mul_eq_zero.mp h with h | h
-      · rcases mul_eq_zero.mp h with h | h
-        · rcases mul_eq_zero.mp h with h | h
-          · exact Or.inl (by linarith)
-          · exact Or.inr (Or.inl (by linarith))
-        · rcases mul_eq_zero.mp h with h | h
-          · exact Or.inr (Or.inr (Or.inl (by linarith)))
-          · exact Or.inr (Or.inr (Or.inr (Or.inl (by linarith))))
-      · rcases mul_eq_zero.mp h with h | h
-        · rcases mul_eq_zero.mp h with h | h
-          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inl (by linarith)))))
-          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl (by linarith))))))
-        · rcases mul_eq_zero.mp h with h | h
-          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inl (by linarith)))))))
-          · exact Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (Or.inr (by linarith)))))))
-    rcases hx with h | h | h | h | h | h | h | h
-    · exact ⟨0, by norm_num, by simpa using h⟩
-    · exact ⟨1, by norm_num, by simpa using h⟩
-    · exact ⟨2, by norm_num, by simpa using h⟩
-    · exact ⟨3, by norm_num, by simpa using h⟩
-    · exact ⟨4, by norm_num, by simpa using h⟩
-    · exact ⟨5, by norm_num, by simpa using h⟩
-    · exact ⟨6, by norm_num, by simpa using h⟩
-    · exact ⟨7, by norm_num, by simpa using h⟩
+    rw [Int.modEq_zero_iff_dvd] at h
+    rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+    · rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+      · rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+        · obtain ⟨k, hk⟩ := h; exact ⟨0, by norm_num, by omega⟩
+        · obtain ⟨k, hk⟩ := h; exact ⟨1, by norm_num, by omega⟩
+      · rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+        · obtain ⟨k, hk⟩ := h; exact ⟨2, by norm_num, by omega⟩
+        · obtain ⟨k, hk⟩ := h; exact ⟨3, by norm_num, by omega⟩
+    · rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+      · rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+        · obtain ⟨k, hk⟩ := h; exact ⟨4, by norm_num, by omega⟩
+        · obtain ⟨k, hk⟩ := h; exact ⟨5, by norm_num, by omega⟩
+      · rcases EffectVmEmitTransfer.pPrimeInt.dvd_mul.mp h with h | h
+        · obtain ⟨k, hk⟩ := h; exact ⟨6, by norm_num, by omega⟩
+        · obtain ⟨k, hk⟩ := h; exact ⟨7, by norm_num, by omega⟩
   · rintro ⟨j, hj, hs⟩
-    interval_cases j <;> rw [hs] <;> norm_num
+    rw [Int.modEq_zero_iff_dvd, hs]
+    interval_cases j <;> norm_num
 
 /-- The DYNAMIC field write: a memory-table write at address `param[SLOT]`. -/
 def fieldWriteOp : MemOp :=
@@ -1458,14 +1455,15 @@ any real trace is a transition row. -/
 theorem setFieldDyn_slot_bounded (hash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash setFieldDynVmDescriptor2 minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
+    (hcanon : 0 ≤ (envAt t i).loc (prmCol SLOT) ∧ (envAt t i).loc (prmCol SLOT) < 2013265921) :
     ∃ j : Nat, j < 8 ∧ (envAt t i).loc (prmCol SLOT) = (j : ℤ) := by
   have hmem : VmConstraint2.base (.gate gSlotRange) ∈ setFieldDynVmDescriptor2.constraints := by
     simp [setFieldDynVmDescriptor2]
   have h := hsat.rowConstraints i hi _ hmem
   have hf : (i + 1 == t.rows.length) = false := by simp only [beq_eq_false_iff_ne]; exact hnl
   rw [hf] at h
-  exact (gSlotRange_holds_iff (envAt t i) (i == 0)).mp h
+  exact (gSlotRange_holds_iff (envAt t i) (i == 0) hcanon).mp h
 
 /-! ## §9 — The v2 registry + wire/shape tripwires. -/
 
