@@ -1,0 +1,30 @@
+# Standalone workspace: keeps the blst / BLS12-381 native dependency tree out of
+# the main dregg workspace (like `chain/` and `solana-lock/`). This crate is an
+# INBOUND foreign-chain verifier — it verifies *Ethereum* Altair sync-committee
+# signatures over beacon headers. It is NOT part of dregg's own soundness TCB, so
+# a standard audited BLS library (blst, the implementation every ETH consensus
+# client uses) is the correct and safe choice here.
+#
+# Build / test standalone:  cd eth-lightclient && cargo test && cargo build
+[workspace]
+
+[package]
+name = "eth-lightclient"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Inbound Ethereum Altair sync-committee light-client verify core: BLS12-381 verification of beacon block headers + SSZ committee-rotation Merkle-branch verify"
+
+[dependencies]
+# blst 0.3.16 — supranational's BLS12-381 library, the reference implementation
+# used by Lighthouse, Teku, Prysm, Nimbus, Lodestar. Its `min_pk` variant is
+# exactly ETH2's scheme (G1 public keys, G2 signatures) and it implements the
+# ciphersuite `BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_` correctly (the DST is
+# passed explicitly; see `DST` in src/lib.rs). Version PINNED.
+blst = "=0.3.16"
+# SHA-256 for SSZ hash_tree_root / merkleization. Pinned minor.
+sha2 = "0.10"
+
+[dev-dependencies]
+# hex decoding of the real ethereum/bls12-381-tests KAT hex strings.
+hex = "0.4"
