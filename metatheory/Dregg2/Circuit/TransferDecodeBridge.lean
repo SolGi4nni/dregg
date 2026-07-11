@@ -151,6 +151,11 @@ structure TransferEncodeResidual (hash : List ℤ → ℤ)
   -- the admissibility guard (the cap-tree/authority + the side guards — NOT ledger-committed).
   guardAuth : authorizedB pre.kernel.caps tr = true
   guardNonNeg : 0 ≤ tr.amt
+  -- ⚠⚠ AVAILABILITY — a NAMED residual leg (NOT ledger-committed, NOT circuit-forced): the mod-p balance
+  -- gate + 30-bit range check do NOT enforce `amt ≤ bal` (wrap-class gap, RotatedKernelRefinement §3), so
+  -- availability joins `guardAuth`/`guardNonNeg` as an explicit residual the assembly threads — exposing
+  -- the real dependency, pending the EMBER-GATED denotation fix. Not faked as circuit-forced.
+  guardAvail : tr.amt ≤ pre.kernel.bal tr.src a
   guardDistinct : tr.src ≠ tr.dst
   guardLiveSrc : tr.src ∈ pre.kernel.accounts
   guardLiveDst : tr.dst ∈ pre.kernel.accounts
@@ -234,6 +239,8 @@ def transfer_decodeBridge (hash : List ℤ → ℤ) (S : CommitSurface)
   -- the non-ledger residual.
   guardAuth := res.guardAuth
   guardNonNeg := res.guardNonNeg
+  -- availability rides the residual's NAMED leg (NOT circuit-forced under mod-p).
+  guardAvail := res.guardAvail
   guardDistinct := res.guardDistinct
   guardLiveSrc := res.guardLiveSrc
   guardLiveDst := res.guardLiveDst
@@ -311,10 +318,13 @@ boundary limb NOT equal to the genuine ledger entry is refused downstream by
 a surface seam that mis-reads the ledger cannot ride a satisfying witness — the discharged part has
 teeth. We record the direct contradiction here. -/
 
-/-- **`decodeBridge_rejects_wrong_readout` — the discharged ledger part has teeth.** If the surface seam
-claims a post ledger at `(src, a)` that is NOT the genuine debit `pre.bal src a − amt`, then NO
-satisfying witness realizes the assembled decode: the circuit forces the debit limb, contradicting the
-seam. The discharged ledger field is pinned by the witness, not freely asserted. -/
+/-- **`decodeBridge_rejects_wrong_readout` — the discharged ledger part has teeth (mod-p).** If the
+surface seam claims a post ledger at `(src, a)` that is NOT the genuine debit `pre.bal src a − amt`
+**mod `p`**, then NO satisfying witness realizes the assembled decode: the circuit forces the debit limb
+as a BabyBear field congruence, contradicting the seam. The discharged ledger field is pinned by the
+witness, not freely asserted. (MOD-p CORRECTION, DEBT-A migration: the parent conservation tooth
+`descriptorRefines_rejects_wrong_amount` is now a mod-`p` congruence — see RotatedKernelRefinement §4 —
+so the faithful "wrong readout" is one differing from the debit by a non-multiple of `p`.) -/
 theorem decodeBridge_rejects_wrong_readout (hash : List ℤ → ℤ) (S : CommitSurface)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
@@ -324,7 +334,7 @@ theorem decodeBridge_rejects_wrong_readout (hash : List ℤ → ℤ) (S : Commit
     (res : TransferEncodeResidual hash minit mfin maddrs t pre post tr a)
     (rdo : LedgerSurfaceReadout S pre post tr a
             res.srcPre.balLo res.srcPost.balLo res.dstPre.balLo res.dstPost.balLo)
-    (hwrong : post.kernel.bal tr.src a ≠ pre.kernel.bal tr.src a - tr.amt) :
+    (hwrong : ¬ (post.kernel.bal tr.src a ≡ pre.kernel.bal tr.src a - tr.amt [ZMOD 2013265921])) :
     False :=
   descriptorRefines_rejects_wrong_amount hash hside hsat pre post tr a
     (transfer_decodeBridge hash S pre post tr a pc hdec res rdo) hwrong

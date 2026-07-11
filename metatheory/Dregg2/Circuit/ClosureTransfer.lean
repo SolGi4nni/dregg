@@ -206,7 +206,12 @@ def rotatedEncodes_of_floors (hash : List ℤ → ℤ) (S : CommitSurface)
     (rd : TransferTraceReadout hash minit mfin maddrs t pre post tr a)
     (rdo : LedgerSurfaceReadout S pre post tr a
             rd.srcPre.balLo rd.srcPost.balLo rd.dstPre.balLo rd.dstPost.balLo)
-    (htoyAuth : authorizedB pre.kernel.caps tr = true) :
+    (htoyAuth : authorizedB pre.kernel.caps tr = true)
+    -- ⚠⚠ AVAILABILITY — an EXPLICIT residual hypothesis (NOT read off the trace). The mod-p balance gate
+    -- + 30-bit range check do NOT force `amt ≤ bal` (wrap-class gap, RotatedKernelRefinement §3), so the
+    -- soundness assembly correctly REQUIRES availability as a named residual, threaded here beside the
+    -- authority `htoyAuth` — exposing the real dependency, not laundering a circuit-forced proof.
+    (havail : tr.amt ≤ pre.kernel.bal tr.src a) :
     rotatedEncodes hash minit mfin maddrs t pre post tr a where
   di := rd.di
   ci := rd.ci
@@ -237,6 +242,8 @@ def rotatedEncodes_of_floors (hash : List ℤ → ℤ) (S : CommitSurface)
   -- the authority: cap-open-forced (projected to the toy gate the rung field expects).
   guardAuth := htoyAuth
   guardNonNeg := rd.guardNonNeg
+  -- availability rides the explicit residual hypothesis (NOT circuit-forced under mod-p).
+  guardAvail := havail
   guardDistinct := rd.guardDistinct
   guardLiveSrc := rd.guardLiveSrc
   guardLiveDst := rd.guardLiveDst
@@ -337,7 +344,16 @@ theorem closedLogExtract_transfer_closed
         (readout minit mfin maddrs t pre post hsat).1)
     (toyAuthOf : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
       (pre post : RecChainedState) (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
-      Dregg2.Exec.authorizedB pre.kernel.caps (readout minit mfin maddrs t pre post hsat).1 = true) :
+      Dregg2.Exec.authorizedB pre.kernel.caps (readout minit mfin maddrs t pre post hsat).1 = true)
+    -- ⚠⚠ AVAILABILITY — the NAMED per-witness residual the mod-p migration exposed (NOT circuit-forced;
+    -- wrap-class gap, RotatedKernelRefinement §3). Threaded per-witness beside `toyAuthOf`: the closure
+    -- now correctly DEPENDS on availability as an explicit assumption pending the EMBER-GATED denotation
+    -- fix (amount range-check / borrow bit / wider field), not a laundered circuit-forced proof.
+    (availOf : ∀ (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+      (pre post : RecChainedState) (hsat : Satisfied2 hash transferV3 minit mfin maddrs t),
+      (readout minit mfin maddrs t pre post hsat).1.amt
+        ≤ pre.kernel.bal (readout minit mfin maddrs t pre post hsat).1.src
+            (readout minit mfin maddrs t pre post hsat).2.1) :
     ClosedLogExtract
       (S_live CH RH cmb compress compressN hCmb hCompress hCompressN hLeaf hRest) LH hash Rfix 0 := by
   intro _hCR minit mfin maddrs t pc pubLogPre pubLogPost pre post hsat hdecLog
@@ -363,6 +379,7 @@ theorem closedLogExtract_transfer_closed
     rotatedEncodes_of_floors hash _ pre post r.1 r.2.1 r.2.2
       (ledger minit mfin maddrs t pre post hsat')
       (toyAuthOf minit mfin maddrs t pre post hsat')
+      (availOf minit mfin maddrs t pre post hsat')
   -- feed the §B closed-with-log transfer rung; the receipt-prepend is the `hpub` floor.
   exact transfer_closedLog hash r.2.2.hside hsat' pre post r.1 r.2.1 pc pubLogPre pubLogPost hdecLog
     (hpub minit mfin maddrs t pubLogPost pre post hsat') (fun _ => henc)

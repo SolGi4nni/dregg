@@ -300,6 +300,10 @@ def transfer_rotatedEncodes_construct (hash : List ℤ → ℤ)
   -- the guards come from the spec's `admitGuardA` (`hspec.1`).
   guardAuth     := hspec.1.1
   guardNonNeg   := hspec.1.2.1
+  -- availability (`amt ≤ bal src a`) is the spec's genuine third `admitGuardA` conjunct: completeness
+  -- assumes a REAL kernel-valid transfer, which HAS availability. (Soundness, where availability is no
+  -- longer circuit-forced under mod-p, carries it as a NAMED residual — see RotatedKernelRefinement §3.)
+  guardAvail    := hspec.1.2.2.1
   guardDistinct := hspec.1.2.2.2.1
   guardLiveSrc  := hspec.1.2.2.2.2.1
   guardLiveDst  := hspec.1.2.2.2.2.2.1
