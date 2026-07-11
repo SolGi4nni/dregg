@@ -448,6 +448,41 @@ pub fn shadow_holding_grant_weight(wire: &str) -> Result<String, String> {
     ffi::lean_holding_grant_weight(wire)
 }
 
+/// Whether the linked archive exports the extracted, Lean-verified INTERCHAIN reached-consensus
+/// verdict core (`dregg_interchain_reached_consensus`, the C-ABI entry over
+/// `Dregg2.Bridge.InterchainAdapterDecision.reachedConsensusFFI` = the PROVED `reachedConsensusWire`
+/// over `reachedConsensusCore`). When false, a caller (`dregg-bridge::interchain_adapter`'s
+/// `TrustRung::reached_consensus`) cannot render the Lean-proven trust verdict and MUST fail closed
+/// (`consensus_verified = false`). Distinct from [`lean_available`]: a stale archive can lack this
+/// export.
+pub fn interchain_reached_consensus_core_available() -> bool {
+    ffi::interchain_reached_consensus_present() && lean_init_once().is_ok()
+}
+
+/// Run the VERIFIED, extracted INTERCHAIN reached-consensus verdict core
+/// `@[export] dregg_interchain_reached_consensus` (the executable
+/// `Dregg2.Bridge.InterchainAdapterDecision.reachedConsensusWire`, PROVED to realize the
+/// `reachesConsensusSpec` fail-closed spec by `reachedConsensusCore_correct` +
+/// `reachedConsensusWire_realizes_core`). This runs the fail-closed bridge TRUST verdict as a
+/// Lean-verified object (leanc-native): the `rpc` rung, an unresolved/fraud watchtower, a no-quorum
+/// committee, and any unknown tag all yield `"0"` (refused — the Nomad-law default); a cryptographic
+/// proof, a resolved-valid watchtower, and a quorum committee yield `"1"` (reached).
+///
+/// Wire grammar the export reads:
+///   * in:  `"tag payload"` (two decimal ints — the rung selector `tag ∈ {0,1,2,3}` = proof /
+///     watchtower / committee / rpc, and the watchtower/committee resolution bit `payload`).
+///   * out: `"1"` (reached consensus) · `"0"` (refused; also the fail-closed answer for an unknown
+///     tag or a malformed wire).
+///
+/// `dregg-bridge::interchain_adapter`'s `TrustRung::reached_consensus` marshals the rung onto the wire
+/// and routes the verdict through THIS entry — the DECISION is the Lean-proven object, Rust is the
+/// thin marshaller (the per-chain dial→rung `From`-conversions stay fast-Rust). Returns `Err` if the
+/// archive lacks the export (the caller fails closed).
+pub fn shadow_interchain_reached_consensus(wire: &str) -> Result<String, String> {
+    ensure_lean_init()?;
+    ffi::lean_interchain_reached_consensus(wire)
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -619,6 +654,12 @@ mod ffi {
         ) -> usize;
         #[cfg(dregg_holding_grant_weight_present)]
         fn dregg_holding_grant_weight_str(
+            in_utf8: *const c_char,
+            out: *mut c_char,
+            out_cap: usize,
+        ) -> usize;
+        #[cfg(dregg_interchain_reached_consensus_present)]
+        fn dregg_interchain_reached_consensus_str(
             in_utf8: *const c_char,
             out: *mut c_char,
             out_cap: usize,
@@ -1064,6 +1105,41 @@ mod ffi {
         false
     }
 
+    /// INTERCHAIN reached-consensus extraction — run the VERIFIED Lean bridge-trust verdict core
+    /// (leanc-native). Input: `"tag payload"` (two decimal ints — the rung selector + the
+    /// watchtower/committee resolution bit); output: `"1"` (reached consensus) / `"0"` (refused;
+    /// also the fail-closed answer for an unknown tag or a malformed wire). This is the PROVED
+    /// `Dregg2.Bridge.InterchainAdapterDecision.reachedConsensusWire` (over `reachedConsensusCore`,
+    /// realizing the `reachesConsensusSpec` fail-closed spec) — the object
+    /// `dregg-bridge::interchain_adapter`'s `TrustRung::reached_consensus` routes its verdict through.
+    #[cfg(dregg_interchain_reached_consensus_present)]
+    pub fn lean_interchain_reached_consensus(wire: &str) -> Result<String, String> {
+        lean_string_bridge(
+            wire,
+            dregg_interchain_reached_consensus_str,
+            "dregg_interchain_reached_consensus_str",
+        )
+    }
+
+    #[cfg(not(dregg_interchain_reached_consensus_present))]
+    pub fn lean_interchain_reached_consensus(_wire: &str) -> Result<String, String> {
+        Err(
+            "dregg_interchain_reached_consensus not exported by the linked archive (rebuild to enable)"
+                .into(),
+        )
+    }
+
+    /// `true` iff the linked archive carries the extracted INTERCHAIN reached-consensus verdict core.
+    #[cfg(dregg_interchain_reached_consensus_present)]
+    pub fn interchain_reached_consensus_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_interchain_reached_consensus_present))]
+    pub fn interchain_reached_consensus_present() -> bool {
+        false
+    }
+
     #[cfg(all(test, dregg_fips204_verify_present))]
     mod fips204_verify_extraction {
         use super::*;
@@ -1402,6 +1478,14 @@ mod ffi {
     }
 
     pub fn lean_holding_grant_weight(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn interchain_reached_consensus_present() -> bool {
+        false
+    }
+
+    pub fn lean_interchain_reached_consensus(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }

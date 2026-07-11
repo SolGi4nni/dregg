@@ -32,6 +32,12 @@ dregg-types = { path = "../types" }
 # consume-once `dregg_cell::Nullifier` for the concurrency-safe double-mint gate).
 dregg-cell = { path = "../cell" }
 dregg-dsl-runtime = { path = "../dregg-dsl-runtime" }
+# The verified Lean bridge-trust verdict core: `TrustRung::reached_consensus` routes its
+# consensus_verified decision through `dregg_interchain_reached_consensus`
+# (Dregg2.Bridge.InterchainAdapterDecision), so the DECISION is a proven Lean object, not a Rust
+# match. No cycle: dregg-lean-ffi depends only on {dregg-circuit, blake3, proptest}, none of which
+# depend on dregg-bridge. (Mirrors how the holdings lane added it to dregg-governance.)
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 dregg-macaroon = { path = "../macaroon" }
 blake3 = "1"

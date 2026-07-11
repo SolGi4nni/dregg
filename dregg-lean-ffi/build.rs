@@ -295,6 +295,14 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // weight verdict through it. (Its IR lands under `.lake/build/ir/Metatheory/`; see the
         // splice-scope seam note at the `holding_grant_weight_present` probe below.)
         "Dregg2.Bridge.ProofOfHoldings",
+        // INTERCHAIN reached-consensus verdict extraction: the verified bridge-trust DECISION
+        // (`@[export] dregg_interchain_reached_consensus` over `reachedConsensusWire`/`reachedConsensusCore`,
+        // proved to realize the `reachesConsensusSpec` fail-closed spec by `reachedConsensusCore_correct` +
+        // `reachedConsensusWire_realizes_core`), so its `.c` IR is emitted for the splice. The Rust
+        // `dregg-bridge::interchain_adapter`'s `TrustRung::reached_consensus` routes its verdict through it.
+        // It lives under `Dregg2/` so its IR emits under `.lake/build/ir/Dregg2/` and the
+        // `build_dregg2_archive` splice (which walks `Dregg2/**/*.c`) picks up the export.
+        "Dregg2.Bridge.InterchainAdapterDecision",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1381,6 +1389,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_mlkem_encaps_real_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_holding_grant_weight_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1839,6 +1848,21 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_holding_grant_weight_present");
     }
 
+    // INTERCHAIN reached-consensus verdict extraction: probe the spliced archive for the
+    // `@[export] dregg_interchain_reached_consensus` symbol (the extracted, Lean-verified bridge-trust
+    // decision — `proof`/resolved-watchtower/quorum-committee reach, `rpc`/fraud/no-quorum/unknown-tag
+    // refuse, proved to realize `reachesConsensusSpec`). Present ⇒ gate the Rust `extern "C"` block,
+    // the C shim string bridge, and (self-contained core — like R3/holding) NO module initializer.
+    // `dregg-bridge::interchain_adapter`'s `TrustRung::reached_consensus` marshals the rung wire through
+    // this to run the LEAN-PROVEN trust verdict. `reachedConsensusFFI` lives under `Dregg2/`
+    // (`Dregg2.Bridge.InterchainAdapterDecision`), so its IR emits under `.lake/build/ir/Dregg2/` and the
+    // `build_dregg2_archive` splice picks up the symbol like every other exported decision.
+    let interchain_reached_consensus_present =
+        archive_exports(&build_archive, "dregg_interchain_reached_consensus");
+    if interchain_reached_consensus_present {
+        println!("cargo:rustc-cfg=dregg_interchain_reached_consensus_present");
+    }
+
     let mut shim = cc::Build::new();
     shim.file("src/lean_init.c").include(&lean_include);
     // The SINGLE-THREADED / libuv-thread-free init (docs/EMBEDDABLE-LEAN-RUNTIME.md).
@@ -1928,6 +1952,9 @@ fn main() {
     }
     if holding_grant_weight_present {
         shim.define("DREGG_HOLDING_GRANT_WEIGHT", None);
+    }
+    if interchain_reached_consensus_present {
+        shim.define("DREGG_INTERCHAIN_REACHED_CONSENSUS", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

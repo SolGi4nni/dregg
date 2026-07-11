@@ -297,6 +297,29 @@ extern lean_object *dregg_grain_r3_verify(lean_object *input);
 extern lean_object *dregg_holding_grant_weight(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` VERIFIED INTERCHAIN reached-consensus verdict core
+ * (`Dregg2.Bridge.InterchainAdapterDecision.reachedConsensusFFI`): decodes the wire `"tag payload"`
+ * (two decimal ints — the rung selector `tag ∈ {0,1,2,3}` = proof/watchtower/committee/rpc, and the
+ * watchtower/committee resolution bit `payload`), runs the PROVED `reachedConsensusWire` (over
+ * `reachedConsensusCore`: `proof` / resolved-valid watchtower / quorum committee reach; `rpc`, a
+ * fraud/unresolved watchtower, a no-quorum committee, and any UNKNOWN tag all refuse — the Nomad-law
+ * default) and returns `"1"` (reached consensus) / `"0"` (refused; also the fail-closed answer for a
+ * malformed wire). This is the bridge TRUST verdict as leanc-native code, proved to realize the
+ * `reachesConsensusSpec` fail-closed spec (`reachedConsensusCore_correct` +
+ * `reachedConsensusWire_realizes_core`); `dregg-bridge::interchain_adapter`'s
+ * `TrustRung::reached_consensus` marshals the rung and routes the verdict through it. GATED on
+ * DREGG_INTERCHAIN_REACHED_CONSENSUS (build.rs probes + defines it). NOTE: like R3's / holding's
+ * export it needs NO module initializer — its generated C hoists the string literals into STATIC CONST
+ * `lean_string_object`s and its closure into a LAZY `lean_once_cell`, so
+ * `dregg_interchain_reached_consensus` is self-contained. We therefore deliberately do NOT reference
+ * `initialize_Dregg2_Dregg2_Bridge_InterchainAdapterDecision`: that initializer chains into the
+ * `Dregg2.Tactics` (Mathlib-tactic) import closure's init symbols the leanc-native archive does not
+ * carry; leaving it unreferenced lets `-dead_strip` drop the proof closure — the pure verdict core
+ * links and runs on the always-initialized Init runtime. */
+#ifdef DREGG_INTERCHAIN_REACHED_CONSENSUS
+extern lean_object *dregg_interchain_reached_consensus(lean_object *input);
+#endif
+
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
  * `lean_dec_ref`, `lean_box`, and `lean_string_cstr` are `static inline` in the header (no
@@ -616,6 +639,31 @@ size_t dregg_holding_grant_weight_str(const char *in_utf8, char *out, size_t out
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_holding_grant_weight(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_INTERCHAIN_REACHED_CONSENSUS
+/* dregg_interchain_reached_consensus_str — the C string bridge over the VERIFIED Lean
+ * `String -> String` INTERCHAIN reached-consensus verdict-core export
+ * (`Dregg2.Bridge.InterchainAdapterDecision.reachedConsensusFFI`). Input: `"tag payload"` (two decimal
+ * ints — the rung selector + the watchtower/committee resolution bit). Output: `"1"` (reached
+ * consensus) / `"0"` (refused / fail-closed). Runs the PROVED `reachedConsensusWire` — the bridge-trust
+ * decision, proved to realize the `reachesConsensusSpec` fail-closed spec (the `rpc`/fraud/no-quorum/
+ * unknown-tag rungs refuse; proof/resolved-watchtower/quorum-committee reach). Same return contract as
+ * the bridges above. */
+size_t dregg_interchain_reached_consensus_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_interchain_reached_consensus(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
