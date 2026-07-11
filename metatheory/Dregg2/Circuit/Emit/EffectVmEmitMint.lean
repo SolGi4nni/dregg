@@ -67,6 +67,33 @@ open Dregg2.Circuit.Spec.SupplyCreation
 set_option linter.unusedVariables false
 set_option autoImplicit false
 
+/-! ## §0½ — Field-faithful (`Int.ModEq` mod the BabyBear prime `p = 2013265921`) lift helpers.
+
+`VmConstraint.holdsVm` now asserts the gate residual is `≡ 0 [ZMOD p]` (the DEPLOYED field), not `= 0`
+over ℤ. These three mechanical helpers move between a gate residual `r ≡ 0` and the equivalent
+column relation `a ≡ b` (with `r = a - b`, discharged by `ring`), and lift an honest ℤ equality into
+the field. No canonicality is needed for the POSITIVE direction: a field-valid canonical trace can
+have ℤ residual `= p ≠ 0`, so the row intent/spec are stated mod `p` — that IS the faithful claim.
+(The NEGATIVE teeth keep their ℤ inequalities and carry EXPLICIT canonicality to reject in the field.) -/
+
+/-- An honest ℤ equality lifts into the field. -/
+private theorem eq_lift {a b : ℤ} (h : a = b) : a ≡ b [ZMOD 2013265921] := by rw [h]
+
+/-- A gate residual `r ≡ 0` (with `r = a - b`) IS the column relation `a ≡ b` in the field. -/
+private theorem intent_of_res {r a b : ℤ} (hr : r = a - b) (h : r ≡ 0 [ZMOD 2013265921]) :
+    a ≡ b [ZMOD 2013265921] := by
+  rw [Int.modEq_zero_iff_dvd] at h
+  rw [hr] at h
+  rw [Int.modEq_iff_dvd]
+  omega
+
+/-- Conversely, the field column relation `a ≡ b` forces the gate residual `r ≡ 0` (with `r = a - b`). -/
+private theorem gate_of_res {r a b : ℤ} (hr : r = a - b) (h : a ≡ b [ZMOD 2013265921]) :
+    r ≡ 0 [ZMOD 2013265921] := by
+  rw [Int.modEq_iff_dvd] at h
+  rw [hr, Int.modEq_zero_iff_dvd]
+  omega
+
 /-! ## §0 — Selector + value column for the BridgeMint effect row.
 
 RECONCILED WITH THE RUNTIME (`circuit/src/effect_vm/{trace,air}.rs`, the cutover model-found seam).
@@ -135,12 +162,14 @@ nonce TICKS (`after = before + 1`, the runtime `new_state.nonce += 1`), the rest
 (Like burn — its economic twin — the runtime ticks the on-trace sequence nonce on every non-NoOp row;
 the executor's frozen ledger nonce is reconciled at the §7 connector.) -/
 def MintRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO)
-  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
-  ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
-  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+  env.loc (saCol state.BALANCE_LO)
+      ≡ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.NONCE) ≡ env.loc (sbCol state.NONCE) + 1 [ZMOD 2013265921]
+  ∧ env.loc (saCol state.CAP_ROOT) ≡ env.loc (sbCol state.CAP_ROOT) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+      ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921])
 
 /-- The row is a BridgeMint row: `s_bridge_mint = 1`, `s_noop = 0`. The `s_noop = 0` clause is what
 the nonce-tick gate factors on (a BridgeMint row is non-NoOp, so the nonce ticks). -/
@@ -169,43 +198,73 @@ theorem mintVm_faithful (env : VmRowEnv) (hrow : IsMintRow env) :
     simp only [VmConstraint.holdsVm, gBalLoCredit, gBalHiFix, gNonce, gCapFix, gResFix,
       eSA, eSB, ePrm, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
     rw [hsN] at hNon
-    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
-      by linarith [hRes], ?_⟩
+    refine ⟨intent_of_res (by ring) hLo, intent_of_res (by ring) hHi, intent_of_res (by ring) hNon,
+      intent_of_res (by ring) hCap, intent_of_res (by ring) hRes, ?_⟩
     intro i hi
     have := hFld i hi
     simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    exact intent_of_res (by ring) this
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
     · simp only [VmConstraint.holdsVm, gBalLoCredit, eSA, eSB, ePrm, eSub, EmittedExpr.eval]
-      rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+      exact gate_of_res (by ring) hLo
+    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact gate_of_res (by ring) hHi
     · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-      rw [hsN, hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+      rw [hsN]; exact gate_of_res (by ring) hNon
+    · simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact gate_of_res (by ring) hCap
+    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact gate_of_res (by ring) hRes
     · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      exact gate_of_res (by ring) (hFld i hi)
 
 /-- **Anti-ghost (balance tamper).** A BridgeMint row whose post-`bal_lo` is NOT `old + value_lo`
-(`param1`) fails the `gBalLoCredit` gate (UNSAT). -/
+(`param1`) fails the `gBalLoCredit` gate (UNSAT). Under the field-faithful denotation the gate residual
+is checked mod `p = 2013265921`, so an ℤ-tampered post-balance is rejected ONLY when it cannot alias the
+credit through a field wrap. We carry the EXPLICIT canonicality the deployed range-checks supply — the
+post-limb `bal_lo` and the (non-overflowing) credit `old + value_lo` both live in `[0, p)` (`Mint`'s
+descriptor DOES carry `⟨saCol BALANCE_LO, 30⟩`, discharged downstream; the row-level tooth takes them as
+NAMED hypotheses). With no wrap the residual is pinned to `0`, so `p ∣ residual → residual = 0`,
+contradicting the tamper (`omega`; the residual is linear, so no primality is needed — unlike the
+product-shaped `selectorGate_rejects_wrong_selector`). The tooth is KEPT, not dropped. -/
 theorem mintVm_rejects_wrong_balance (env : VmRowEnv)
+    (hcaLo : 0 ≤ env.loc (saCol state.BALANCE_LO))
+    (hcaLo' : env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hcSum : 0 ≤ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO))
+    (hcSum' : env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO) < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO)
       ≠ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol VALUE_LO)) :
     ¬ (VmConstraint.gate gBalLoCredit).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoCredit, eSA, eSB, ePrm, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith [h]
+  intro h
+  rw [Int.modEq_zero_iff_dvd] at h
+  obtain ⟨k, hk⟩ := h
+  apply hwrong
+  omega
 
 /-- **Anti-ghost (wrong nonce delta).** On a BridgeMint row a forged nonce delta
 (`after_nonce ≠ before_nonce + 1` — e.g. the passthrough the FREEZE descriptor wrongly accepted)
-fails the tick gate (`gNonce`) and is UNSAT. -/
+fails the tick gate (`gNonce`) and is UNSAT. Field-faithful: the tick residual is checked mod `p`, so
+we carry the EXPLICIT canonicality (post-nonce and the ticked pre-nonce both in `[0, p)`, the deployed
+sequence-counter range) that pins the residual to `0` under `p ∣ residual`, contradicting the forged
+delta (`omega`, linear residual — no primality). -/
 theorem mintVm_rejects_wrong_nonce_delta (env : VmRowEnv) (hrow : IsMintRow env)
+    (hcaN : 0 ≤ env.loc (saCol state.NONCE))
+    (hcaN' : env.loc (saCol state.NONCE) < 2013265921)
+    (hcbN : 0 ≤ env.loc (sbCol state.NONCE) + 1)
+    (hcbN' : env.loc (sbCol state.NONCE) + 1 < 2013265921)
     (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + 1) :
     ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-  rw [hrow.2]; intro h; apply hwrong; linarith [h]
+  rw [hrow.2]
+  intro h
+  rw [Int.modEq_zero_iff_dvd] at h
+  obtain ⟨k, hk⟩ := h
+  apply hwrong
+  omega
 
 /-! ## §5 — `CellMintSpec` + `RowEncodes` → structured per-cell soundness. -/
 
@@ -214,12 +273,12 @@ theorem mintVm_rejects_wrong_nonce_delta (env : VmRowEnv) (hrow : IsMintRow env)
 `new_state.nonce += 1`), the whole rest of the block frozen. Like burn, the runtime row ticks the
 sequence nonce; the executor's frozen ledger nonce is the §7 connector's reconcile. -/
 def CellMintSpec (pre : CellState) (amt : ℤ) (post : CellState) : Prop :=
-  post.balLo = pre.balLo + amt
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce + 1
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.capRoot = pre.capRoot
-  ∧ post.reserved = pre.reserved
+  post.balLo ≡ pre.balLo + amt [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce + 1 [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.capRoot ≡ pre.capRoot [ZMOD 2013265921]
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 def RowEncodes (env : VmRowEnv) (pre : CellState) (amt : ℤ) (post : CellState) : Prop :=
   env.loc (sbCol state.BALANCE_LO) = pre.balLo
@@ -247,12 +306,10 @@ theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState) (amt : ℤ)
           hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
   obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · have : post.balLo = pre.balLo + env.loc (prmCol VALUE_LO) := by
-      rw [← hsaLo, ← hsbLo]; exact hbal
-    rw [this, hpAmt]
+  · rw [← hpAmt, ← hsaLo, ← hsbLo]; exact hbal
   · rw [← hsaHi, ← hsbHi]; exact hbhi
   · rw [← hsaN, ← hsbN]; exact hnon
-  · intro i; have := hfld i.val i.isLt; rw [← hsaF i, ← hsbF i]; exact this
+  · intro i; rw [← hsaF i, ← hsbF i]; exact hfld i.val i.isLt
   · rw [← hsaCap, ← hsbCap]; exact hcap
   · rw [← hsaRes, ← hsbRes]; exact hres
 
@@ -279,7 +336,7 @@ theorem mintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hr
     (henc : RowEncodes env pre amt post)
     (hgatesat : satisfiedVm hash mintVmDescriptor env true false)
     (hsat : satisfiedVm hash mintVmDescriptor env true true) :
-    CellMintSpec pre amt post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+    CellMintSpec pre amt post ∧ post.commit ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   obtain ⟨hcs, _hsites⟩ := hsat
   obtain ⟨hcsT, _⟩ := hgatesat
   have hgates : ∀ c ∈ mintRowGates, c.holdsVm env true false := by
@@ -343,12 +400,12 @@ per-entry image is the nonce-FREEZE variant. We unify against THAT and name the 
 /-- The executor's genuine per-entry image: `CellMintSpec` with the nonce-TICK replaced by
 nonce-FREEZE. Every other clause (balLo credit, balHi/fields/capRoot/reserved freeze) is identical. -/
 def CellMintSpecFrozenNonce (pre : CellState) (amt : ℤ) (post : CellState) : Prop :=
-  post.balLo = pre.balLo + amt
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce          -- FROZEN (executor ledger image) — the row spec demands `+ 1`
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.capRoot = pre.capRoot
-  ∧ post.reserved = pre.reserved
+  post.balLo ≡ pre.balLo + amt [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce [ZMOD 2013265921]   -- FROZEN (executor ledger image) — the row spec demands `+ 1`
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.capRoot ≡ pre.capRoot [ZMOD 2013265921]
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 /-- **`unify_mint` — THE UNIFICATION (the recipient leg, frozen-nonce variant).** A committed
 universe-A mint (`MintASpec`, W1: the issuer-move), projected onto the RECIPIENT's `(cell, a)` entry
@@ -359,10 +416,13 @@ what makes the sum exact — is `unify_mint_well` below. -/
 theorem unify_mint (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (hspec : MintASpec s actor cell a amt s') :
     CellMintSpecFrozenNonce (cellProjA s.kernel cell a) amt (cellProjA s'.kernel cell a) := by
-  refine ⟨?_, rfl, rfl, fun _ => rfl, rfl, rfl⟩
-  show s'.kernel.bal cell a = s.kernel.bal cell a + amt
-  rw [hspec.2.1]
-  exact (recTransferBal_mint_correct s.kernel.bal cell a amt hspec.1.2.2.2.2.1).2.1
+  refine ⟨?_, Int.ModEq.refl _, Int.ModEq.refl _, fun _ => Int.ModEq.refl _,
+    Int.ModEq.refl _, Int.ModEq.refl _⟩
+  show s'.kernel.bal cell a ≡ s.kernel.bal cell a + amt [ZMOD 2013265921]
+  have heq : s'.kernel.bal cell a = s.kernel.bal cell a + amt := by
+    rw [hspec.2.1]
+    exact (recTransferBal_mint_correct s.kernel.bal cell a amt hspec.1.2.2.2.2.1).2.1
+  rw [heq]
 
 /-- **`unify_mint_well` — THE WELL LEG (W1).** The SAME committed mint, projected onto the ISSUER's
 well `(a, a)`, satisfies the frozen-nonce spec with the NEGATED amount: the well falls by exactly
@@ -371,11 +431,14 @@ are the two rows of ONE issuer-move — their sum is the exact-conservation cont
 theorem unify_mint_well (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
     (hspec : MintASpec s actor cell a amt s') :
     CellMintSpecFrozenNonce (cellProjA s.kernel a a) (-amt) (cellProjA s'.kernel a a) := by
-  refine ⟨?_, rfl, rfl, fun _ => rfl, rfl, rfl⟩
-  show s'.kernel.bal a a = s.kernel.bal a a + (-amt)
-  rw [hspec.2.1]
-  have := (recTransferBal_mint_correct s.kernel.bal cell a amt hspec.1.2.2.2.2.1).1
-  omega
+  refine ⟨?_, Int.ModEq.refl _, Int.ModEq.refl _, fun _ => Int.ModEq.refl _,
+    Int.ModEq.refl _, Int.ModEq.refl _⟩
+  show s'.kernel.bal a a ≡ s.kernel.bal a a + (-amt) [ZMOD 2013265921]
+  have heq : s'.kernel.bal a a = s.kernel.bal a a + (-amt) := by
+    rw [hspec.2.1]
+    have := (recTransferBal_mint_correct s.kernel.bal cell a amt hspec.1.2.2.2.2.1).1
+    omega
+  rw [heq]
 
 /-- **`unify_mint_exec` — same, against the executor.** -/
 theorem unify_mint_exec (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (amt : ℤ)
@@ -396,7 +459,7 @@ pinned to exactly the nonce column (the EffectVM-row nonce being a runtime seque
 universe-A ledger nonce), exactly as burn reports it. -/
 theorem exec_nonce_is_frozen_not_ticked (s s' : RecChainedState) (actor cell : CellId) (a : AssetId)
     (amt : ℤ) (h : recCMintAsset s actor cell a amt = some s') :
-    (cellProjA s'.kernel cell a).nonce = (cellProjA s.kernel cell a).nonce :=
+    (cellProjA s'.kernel cell a).nonce ≡ (cellProjA s.kernel cell a).nonce [ZMOD 2013265921] :=
   (unify_mint_exec s s' actor cell a amt h).2.2.1
 
 /-- **`descriptor_agrees_with_executor` — per-cell circuit⟺executor agreement (modulo the nonce-tick
@@ -411,21 +474,21 @@ theorem descriptor_agrees_with_executor
     (hgatesat : satisfiedVm hash mintVmDescriptor env true false)
     (hsat : satisfiedVm hash mintVmDescriptor env true true)
     (hexec : recCMintAsset s actor cell a amt = some s') :
-    post.balLo = (cellProjA s'.kernel cell a).balLo
-    ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
-    ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
-    ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
-    ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
+    post.balLo ≡ (cellProjA s'.kernel cell a).balLo [ZMOD 2013265921]
+    ∧ post.balHi ≡ (cellProjA s'.kernel cell a).balHi [ZMOD 2013265921]
+    ∧ (∀ i, post.fields i ≡ (cellProjA s'.kernel cell a).fields i [ZMOD 2013265921])
+    ∧ post.capRoot ≡ (cellProjA s'.kernel cell a).capRoot [ZMOD 2013265921]
+    ∧ post.reserved ≡ (cellProjA s'.kernel cell a).reserved [ZMOD 2013265921] := by
   obtain ⟨hcirc, _⟩ :=
     mintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post amt henc hgatesat hsat
   obtain ⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩ := hcirc
   obtain ⟨heLo, heHi, _heN, heF, heCap, heRes⟩ := unify_mint_exec s s' actor cell a amt hexec
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
-  · rw [hcLo, heLo]
-  · rw [hcHi, heHi]
-  · intro i; rw [hcF i, heF i]
-  · rw [hcCap, heCap]
-  · rw [hcRes, heRes]
+  · exact hcLo.trans heLo.symm
+  · exact hcHi.trans heHi.symm
+  · intro i; exact (hcF i).trans (heF i).symm
+  · exact hcCap.trans heCap.symm
+  · exact hcRes.trans heRes.symm
 
 /-! ## §8 — NON-VACUITY. -/
 
@@ -454,25 +517,39 @@ theorem goodMintRow_isMintRow : IsMintRow goodMintRow := by
 /-- **NON-VACUITY (witness TRUE).** `goodMintRow` REALIZES the mint intent: `bal_lo 100 → 130 =
 100 + 30` (`value_lo` at `param1`), nonce ticks `5 → 6`, frame frozen. -/
 theorem goodMintRow_realizes_intent : MintRowIntent goodMintRow := by
-  unfold MintRowIntent goodMintRow
-  simp only [sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE,
-    NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI, state.NONCE,
-    state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, VALUE_LO]
-  refine ⟨by norm_num, rfl, by norm_num, rfl, rfl, ?_⟩
-  intro i hi
-  have e1 : (76 + (3 + i) = 40) = False := by simp; omega
-  have e2 : (76 + (3 + i) = 54) = False := by simp; omega
-  have e3 : (76 + (3 + i) = 76) = False := by simp
-  have e4 : (76 + (3 + i) = 56) = False := by simp; omega
-  have e5 : (76 + (3 + i) = 78) = False := by simp; omega
-  have e6 : (76 + (3 + i) = 69) = False := by simp; omega
-  have f1 : (54 + (3 + i) = 40) = False := by simp; omega
-  have f2 : (54 + (3 + i) = 54) = False := by simp
-  have f3 : (54 + (3 + i) = 76) = False := by simp; omega
-  have f4 : (54 + (3 + i) = 56) = False := by simp; omega
-  have f5 : (54 + (3 + i) = 78) = False := by simp; omega
-  have f6 : (54 + (3 + i) = 69) = False := by simp; omega
-  simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
+  unfold MintRowIntent
+  refine ⟨eq_lift ?_, eq_lift ?_, eq_lift ?_, eq_lift ?_, eq_lift ?_, ?_⟩
+  · norm_num [goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, VALUE_LO]
+  · norm_num [goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI,
+      state.NONCE, VALUE_LO]
+  · norm_num [goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, VALUE_LO]
+  · norm_num [goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE,
+      state.CAP_ROOT, VALUE_LO]
+  · norm_num [goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE,
+      state.RESERVED, VALUE_LO]
+  · intro i hi
+    refine eq_lift ?_
+    simp only [goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE, STATE_AFTER_BASE,
+      PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI,
+      state.NONCE, state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, VALUE_LO]
+    have e1 : (76 + (3 + i) = 40) = False := by simp; omega
+    have e2 : (76 + (3 + i) = 54) = False := by simp; omega
+    have e3 : (76 + (3 + i) = 76) = False := by simp
+    have e4 : (76 + (3 + i) = 56) = False := by simp; omega
+    have e5 : (76 + (3 + i) = 78) = False := by simp; omega
+    have e6 : (76 + (3 + i) = 69) = False := by simp; omega
+    have f1 : (54 + (3 + i) = 40) = False := by simp; omega
+    have f2 : (54 + (3 + i) = 54) = False := by simp
+    have f3 : (54 + (3 + i) = 76) = False := by simp; omega
+    have f4 : (54 + (3 + i) = 56) = False := by simp; omega
+    have f5 : (54 + (3 + i) = 78) = False := by simp; omega
+    have f6 : (54 + (3 + i) = 69) = False := by simp; omega
+    simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
 
 /-- A FORGED mint row: `goodMintRow` with post-`bal_lo` tampered to `999 ≠ 130`. -/
 def badMintRow : VmRowEnv where
@@ -483,11 +560,10 @@ def badMintRow : VmRowEnv where
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badMintRow`'s post-`bal_lo` is NOT the
 credit, so `gBalLoCredit` REJECTS it. -/
 theorem badMintRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badMintRow false false := by
-  apply mintVm_rejects_wrong_balance
-  simp only [badMintRow, goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE,
-    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE, VALUE_LO]
-  norm_num
+  apply mintVm_rejects_wrong_balance <;>
+    norm_num [badMintRow, goodMintRow, sbCol, saCol, prmCol, selM.MINT, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, VALUE_LO]
 
 /-! ## §8½ — THE CLASS-A CAPSTONE (per-cell, the transfer bar exactly).
 
@@ -519,12 +595,12 @@ theorem mintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow :
     (hsat : satisfiedVm hash mintVmDescriptor env true true)
     (hexec : recCMintAsset s actor cell a amt = some s') :
     CellMintSpec (cellProjA s.kernel cell a) amt post
-    ∧ post.commit = env.pub pi.NEW_COMMIT
-    ∧ post.balLo = (cellProjA s'.kernel cell a).balLo
-    ∧ post.balHi = (cellProjA s'.kernel cell a).balHi
-    ∧ (∀ i, post.fields i = (cellProjA s'.kernel cell a).fields i)
-    ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
-    ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
+    ∧ post.commit ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921]
+    ∧ post.balLo ≡ (cellProjA s'.kernel cell a).balLo [ZMOD 2013265921]
+    ∧ post.balHi ≡ (cellProjA s'.kernel cell a).balHi [ZMOD 2013265921]
+    ∧ (∀ i, post.fields i ≡ (cellProjA s'.kernel cell a).fields i [ZMOD 2013265921])
+    ∧ post.capRoot ≡ (cellProjA s'.kernel cell a).capRoot [ZMOD 2013265921]
+    ∧ post.reserved ≡ (cellProjA s'.kernel cell a).reserved [ZMOD 2013265921] := by
   obtain ⟨hspec, hcommit⟩ :=
     mintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post amt henc hgatesat hsat
   obtain ⟨hLo, hHi, hF, hCap, hRes⟩ :=

@@ -30,6 +30,15 @@ the runtime row's `state.NONCE` is the per-cell sequence bookkeeping that ticks 
 runtime convention, exactly as every other graduated frozen-frame effect), distinct from the universe-A
 cell-record `nonce` field write (off-row).
 
+## The mod-p denotation (DEBT-A Phase 0)
+
+`VmConstraint.holdsVm` asserts `≡ 0 [ZMOD 2013265921]` (the deployed BabyBear field), NOT `= 0`
+over ℤ. The ℤ-stated row intent is read back through the EXPLICIT canonicality envelope
+`IncNonceRowCanon` — every state-block cell a canonical representative in `[0, p)`, a boolean
+NOOP selector, and an in-field nonce tick (the deployed range-check invariant, carried as named
+hypotheses). Negative teeth prove `¬ (p ∣ residual)` under the same envelope
+(`selectorGate_rejects_wrong_selector`'s shape); no tooth is dropped or weakened.
+
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. Poseidon2 CR = NAMED hypothesis.
@@ -47,7 +56,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
-   transferHashSites boundaryLast_pins)
+   transferHashSites)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -108,10 +117,32 @@ def IncNonceRowIntent (env : VmRowEnv) : Prop :=
   ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
   ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
 
-/-! ## §4 — FAITHFULNESS. -/
+/-- **`IncNonceRowCanon env`** — the row's EXPLICIT canonicality envelope (the deployed
+range-check / field-representative invariant, carried as named hypotheses): every state-block
+cell of both windows is a canonical BabyBear representative in `[0, p)`; the NOOP selector is
+boolean (GROUP-1 selector validity); and the pre-nonce tick stays in-field
+(`nonce_before + 1 < p` — the per-cell sequence counter is far below `p`). Under the mod-p
+`holdsVm` denotation these are exactly the hypotheses that let the ℤ-stated row intent be read
+back off the field-checked gates (a `≡ 0 [ZMOD p]` residual strictly inside `(-p, p)` is `0`). -/
+def IncNonceRowCanon (env : VmRowEnv) : Prop :=
+  (∀ off, off < STATE_SIZE →
+      (0 ≤ env.loc (sbCol off) ∧ env.loc (sbCol off) < 2013265921)
+      ∧ (0 ≤ env.loc (saCol off) ∧ env.loc (saCol off) < 2013265921))
+  ∧ (env.loc sel.NOOP = 0 ∨ env.loc sel.NOOP = 1)
+  ∧ env.loc (sbCol state.NONCE) + 1 < 2013265921
 
-theorem incNonceVm_faithful (env : VmRowEnv) :
+/-! ## §4 — FAITHFULNESS (mod-p, under the explicit canonicality envelope). -/
+
+theorem incNonceVm_faithful (env : VmRowEnv) (hcanon : IncNonceRowCanon env) :
     (∀ c ∈ incNonceRowGates, c.holdsVm env false false) ↔ IncNonceRowIntent env := by
+  obtain ⟨hcells, hnoopB, hovf⟩ := hcanon
+  have hnoop01 : 0 ≤ env.loc sel.NOOP ∧ env.loc sel.NOOP ≤ 1 := by
+    rcases hnoopB with h | h <;> rw [h] <;> norm_num
+  have hbLo := hcells state.BALANCE_LO (by norm_num [state.BALANCE_LO, STATE_SIZE])
+  have hbHi := hcells state.BALANCE_HI (by norm_num [state.BALANCE_HI, STATE_SIZE])
+  have hbN := hcells state.NONCE (by norm_num [state.NONCE, STATE_SIZE])
+  have hbCap := hcells state.CAP_ROOT (by norm_num [state.CAP_ROOT, STATE_SIZE])
+  have hbRes := hcells state.RESERVED (by norm_num [state.RESERVED, STATE_SIZE])
   unfold incNonceRowGates gFieldPassAll IncNonceRowIntent
   constructor
   · intro h
@@ -127,46 +158,69 @@ theorem incNonceVm_faithful (env : VmRowEnv) :
       exact Or.inr ⟨i, hi, rfl⟩
     simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonce, gCapPass, gResPass,
       eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
-    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
-      by linarith [hRes], ?_⟩
+    rw [Int.modEq_zero_iff_dvd] at hLo hHi hNon hCap hRes
+    refine ⟨by omega, by omega, by omega, by omega, by omega, ?_⟩
     intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hFi := hFld i hi
+    have hbF := hcells (state.FIELD_BASE + i) (by simp only [state.FIELD_BASE, STATE_SIZE]; omega)
+    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at hFi
+    rw [Int.modEq_zero_iff_dvd] at hFi
+    omega
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
     · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-      rw [hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      rw [Int.modEq_zero_iff_dvd]
+      have := hFld i hi
+      omega
 
-/-! ## §5 — ANTI-GHOST. -/
+/-! ## §5 — ANTI-GHOST (the teeth carry the explicit canonicality; none dropped). -/
 
-theorem incNonceVm_rejects_wrong_output (env : VmRowEnv) (hwrong : ¬ IncNonceRowIntent env) :
+theorem incNonceVm_rejects_wrong_output (env : VmRowEnv) (hcanon : IncNonceRowCanon env)
+    (hwrong : ¬ IncNonceRowIntent env) :
     ¬ (∀ c ∈ incNonceRowGates, c.holdsVm env false false) :=
-  fun h => hwrong ((incNonceVm_faithful env).mp h)
+  fun h => hwrong ((incNonceVm_faithful env hcanon).mp h)
 
 /-- **Anti-ghost (balance moved).** A row whose post-`bal_lo` ≠ pre-`bal_lo` fails the freeze gate — a
-nonce bump cannot silently move value. -/
+nonce bump cannot silently move value. Both cells canonical in `[0, p)` (the deployed range-check
+invariant), so the moved-balance residual is nonzero strictly inside `(-p, p)`: `¬ (p ∣ residual)`. -/
 theorem incNonceVm_rejects_moved_balance (env : VmRowEnv)
+    (hsa : 0 ≤ env.loc (saCol state.BALANCE_LO) ∧ env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hsb : 0 ≤ env.loc (sbCol state.BALANCE_LO) ∧ env.loc (sbCol state.BALANCE_LO) < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
     ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  rw [Int.modEq_zero_iff_dvd]
+  intro h
+  exact hwrong (by omega)
 
 /-- **Anti-ghost (nonce tamper).** A row whose nonce does NOT tick by 1 fails the reconciled `gNonce`
-tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. -/
+tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. Canonicality: both
+nonce cells canonical, the tick in-field (`nonce_before + 1 < p`), the NOOP selector boolean — the
+tampered residual lies strictly inside `(-p, p)` and is nonzero: `¬ (p ∣ residual)`. -/
 theorem incNonceVm_rejects_nonce_freeze (env : VmRowEnv)
+    (hsa : 0 ≤ env.loc (saCol state.NONCE) ∧ env.loc (saCol state.NONCE) < 2013265921)
+    (hsb : 0 ≤ env.loc (sbCol state.NONCE) ∧ env.loc (sbCol state.NONCE) + 1 < 2013265921)
+    (hnoopB : env.loc sel.NOOP = 0 ∨ env.loc sel.NOOP = 1)
     (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)) :
     ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  rw [Int.modEq_zero_iff_dvd]
+  intro h
+  have hnoop01 : 0 ≤ env.loc sel.NOOP ∧ env.loc sel.NOOP ≤ 1 := by
+    rcases hnoopB with h' | h' <;> rw [h'] <;> norm_num
+  exact hwrong (by omega)
 
 /-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
@@ -232,6 +286,8 @@ theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
 
 theorem incNonceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     (pre post : CellState) (hnoop : env.loc sel.NOOP = 0)
+    (hcanon : IncNonceRowCanon env)
+    (hpubc : 0 ≤ env.pub pi.NEW_COMMIT ∧ env.pub pi.NEW_COMMIT < 2013265921)
     (henc : RowEncodesIncNonce env pre post)
     (hgatesat : satisfiedVm hash incrementNonceVmDescriptor env true false)
     (hsat : satisfiedVm hash incrementNonceVmDescriptor env true true) :
@@ -250,7 +306,7 @@ theorem incNonceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
       simpa only [VmConstraint.holdsVm] using this
-  have hint := (incNonceVm_faithful env).mp hgates'
+  have hint := (incNonceVm_faithful env hcanon).mp hgates'
   refine ⟨intent_to_cellSpec env pre post hnoop henc hint, ?_⟩
   have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
     intro c hc
@@ -264,38 +320,46 @@ theorem incNonceDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     rcases hc with rfl | rfl | rfl <;>
       · simp only [VmConstraint.holdsVm] at hh ⊢
         exact hh
-  have hpin := (boundaryLast_pins env hlast).1
+  -- The NEW_COMMIT pin, read directly off the last-row piBinding (mod-p), lifted to ℤ equality
+  -- by canonicality of the commit cell + the public input.
+  have hmod : env.loc (saCol state.STATE_COMMIT) ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
+    have hh := hlast (.piBinding .last (saCol state.STATE_COMMIT) pi.NEW_COMMIT)
+      (by simp [boundaryLastPins])
+    simpa [VmConstraint.holdsVm] using hh
+  have hdvd := Int.ModEq.dvd hmod
+  have hcell := (hcanon.1 state.STATE_COMMIT (by norm_num [state.STATE_COMMIT, STATE_SIZE])).2
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
-  rw [← hsaC]; exact hpin
+  rw [← hsaC]
+  omega
 
 theorem incNonceDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash)
     (e₁ e₂ : VmRowEnv)
+    (hc₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT) ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hc₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT) ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hsat₁ : satisfiedVm hash incrementNonceVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash incrementNonceVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
   have hs₁ : siteHoldsAll hash e₁ incNonceHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ incNonceHashSites := hsat₂.2.1
-  have hc : ∀ (e : VmRowEnv), satisfiedVm hash incrementNonceVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
+  -- Each satisfying env pins its commit cell to PI[NEW_COMMIT] mod p; the shared PI value then
+  -- chains the two commit cells (both canonical) into ℤ equality — no PI canonicality needed.
+  have hcm : ∀ (e : VmRowEnv), satisfiedVm hash incrementNonceVmDescriptor e true true →
+      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
     intro e hsat
     obtain ⟨hcs, _⟩ := hsat
-    have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
-      intro c hc
-      have hmem : c ∈ incrementNonceVmDescriptor.constraints := by
-        unfold incrementNonceVmDescriptor
-        simp only [List.mem_append]
-        exact Or.inl (Or.inr hc)
-      have hh := hcs c hmem
-      unfold boundaryLastPins at hc
-      simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
-      rcases hc with rfl | rfl | rfl <;>
-        · simp only [VmConstraint.holdsVm] at hh ⊢
-          exact hh
-    exact (boundaryLast_pins e hlast).1
-  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
+    have hmem : (VmConstraint.piBinding .last (saCol state.STATE_COMMIT) pi.NEW_COMMIT)
+        ∈ incrementNonceVmDescriptor.constraints := by
+      unfold incrementNonceVmDescriptor
+      simp only [List.mem_append]
+      exact Or.inl (Or.inr (by simp [boundaryLastPins]))
+    simpa [VmConstraint.holdsVm] using hcs _ hmem
+  have h₁ := hcm e₁ hsat₁
+  have h₂ := hcm e₂ hsat₂
+  rw [hpub] at h₁
+  have hdvd := Int.ModEq.dvd (h₁.trans h₂.symm)
+  have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by omega
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — `cellProjN` to universe-A's `IncrementNonceSpec` (conserved-balance freeze). -/
@@ -334,6 +398,8 @@ the bumped cell agrees with the executor's post-state on the FROZEN balance dime
 runtime nonce-tick is the per-cell sequence bookkeeping leg (off the universe-A cell-record nonce). -/
 theorem descriptor_agrees_with_executor_incNonce
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hnoop : env.loc sel.NOOP = 0)
+    (hcanon : IncNonceRowCanon env)
+    (hpubc : 0 ≤ env.pub pi.NEW_COMMIT ∧ env.pub pi.NEW_COMMIT < 2013265921)
     (s s' : RecChainedState) (actor cell : CellId) (n : Int) (pre post : CellState)
     (hpre : pre = cellProjN s.kernel cell)
     (henc : RowEncodesIncNonce env pre post)
@@ -341,7 +407,8 @@ theorem descriptor_agrees_with_executor_incNonce
     (hsat : satisfiedVm hash incrementNonceVmDescriptor env true true)
     (hspec : IncrementNonceSpec s actor cell n s') :
     post.balLo = (cellProjN s'.kernel cell).balLo := by
-  obtain ⟨hcirc, _⟩ := incNonceDescriptor_full_sound hash env pre post hnoop henc hgatesat hsat
+  obtain ⟨hcirc, _⟩ :=
+    incNonceDescriptor_full_sound hash env pre post hnoop hcanon hpubc henc hgatesat hsat
   obtain ⟨hcLo, _, _, _, _, _⟩ := hcirc
   have heLo := incNonce_balance_frozen s s' actor cell n hspec
   subst hpre
@@ -391,6 +458,8 @@ FROZEN, the nonce TICKS by 1) from the descriptor; (b) the post-state published 
 advances, NOT a soundness gap. This is the transfer class-A capstone shape (`*_full_sound` +
 `*_commit_binds_state` + `unify_*_exec`), per cell. -/
 theorem incNonceDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hnoop : env.loc sel.NOOP = 0)
+    (hcanon : IncNonceRowCanon env)
+    (hpubc : 0 ≤ env.pub pi.NEW_COMMIT ∧ env.pub pi.NEW_COMMIT < 2013265921)
     (s s' : RecChainedState) (actor cell : CellId) (n : Int) (post : CellState)
     (henc : RowEncodesIncNonce env (cellProjN s.kernel cell) post)
     (hgatesat : satisfiedVm hash incrementNonceVmDescriptor env true false)
@@ -404,7 +473,8 @@ theorem incNonceDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hn
     ∧ post.capRoot = (cellProjN s'.kernel cell).capRoot
     ∧ post.reserved = (cellProjN s'.kernel cell).reserved := by
   obtain ⟨hcirc, hcommit⟩ :=
-    incNonceDescriptor_full_sound hash env (cellProjN s.kernel cell) post hnoop henc hgatesat hsat
+    incNonceDescriptor_full_sound hash env (cellProjN s.kernel cell) post hnoop hcanon hpubc
+      henc hgatesat hsat
   obtain ⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩ := hcirc
   obtain ⟨heLo, heHi, heF, heCap, heRes⟩ := unify_incNonce_exec s s' actor cell n hexec
   refine ⟨⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩, hcommit, ?_, ?_, ?_, ?_, ?_⟩
@@ -462,6 +532,22 @@ theorem goodIncNonceRow_realizes_intent : IncNonceRowIntent goodIncNonceRow := b
     have f5 : (54 + (3 + i) = 76 + 2) = False := eq_false (by omega)
     simp only [e1, e2, e3, e4, e5, f1, f2, f3, f4, f5, if_false]
 
+/-- **NON-VACUITY (canonicality witness).** The honest row satisfies the explicit canonicality
+envelope — the mod-p hypotheses are jointly satisfiable, not a vacuous guard. -/
+theorem goodIncNonceRow_canonical : IncNonceRowCanon goodIncNonceRow := by
+  refine ⟨?_, Or.inl goodIncNonceRow_noop, ?_⟩
+  · intro off hoff
+    have hall : ∀ v, 0 ≤ goodIncNonceRow.loc v ∧ goodIncNonceRow.loc v < 2013265921 := by
+      intro v
+      simp only [goodIncNonceRow]
+      split_ifs <;> norm_num
+    exact ⟨hall _, hall _⟩
+  · show goodIncNonceRow.loc (sbCol state.NONCE) + 1 < 2013265921
+    simp only [goodIncNonceRow, SEL_INCREMENT_NONCE, sbCol, saCol, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE]
+    norm_num
+
 /-- A FORGED increment-nonce row: `goodIncNonceRow` with the post-`bal_lo` minted to `999`. -/
 def badIncNonceRow : VmRowEnv where
   loc := fun v => if v = saCol state.BALANCE_LO then 999 else goodIncNonceRow.loc v
@@ -471,11 +557,11 @@ def badIncNonceRow : VmRowEnv where
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badIncNonceRow`'s post-`bal_lo` is forged, so
 `gBalLoFreeze` REJECTS it. -/
 theorem badIncNonceRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badIncNonceRow false false := by
-  apply incNonceVm_rejects_moved_balance
-  simp only [badIncNonceRow, goodIncNonceRow, sbCol, saCol, SEL_INCREMENT_NONCE, STATE_BEFORE_BASE,
-    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE]
-  norm_num
+  apply incNonceVm_rejects_moved_balance <;>
+    · simp only [badIncNonceRow, goodIncNonceRow, sbCol, saCol, SEL_INCREMENT_NONCE,
+        STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+        state.BALANCE_LO, state.NONCE]
+      norm_num
 
 /-- A FROZEN-NONCE increment-nonce row: `goodIncNonceRow` with the post-nonce held at `5`. -/
 def staleNonceIncNonceRow : VmRowEnv where
@@ -488,10 +574,23 @@ reconciled `gNonce` tick gate. -/
 theorem staleNonceIncNonceRow_rejected :
     ¬ (VmConstraint.gate gNonce).holdsVm staleNonceIncNonceRow false false := by
   apply incNonceVm_rejects_nonce_freeze
-  simp only [staleNonceIncNonceRow, goodIncNonceRow, sel.NOOP, sbCol, saCol, SEL_INCREMENT_NONCE,
-    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
-    state.BALANCE_LO, state.NONCE]
-  norm_num
+  · simp only [staleNonceIncNonceRow, goodIncNonceRow, sbCol, saCol,
+      SEL_INCREMENT_NONCE, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS,
+      STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE]
+    norm_num
+  · simp only [staleNonceIncNonceRow, goodIncNonceRow, sbCol, saCol,
+      SEL_INCREMENT_NONCE, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS,
+      STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE]
+    norm_num
+  · left
+    simp only [staleNonceIncNonceRow, goodIncNonceRow, sel.NOOP, sbCol, saCol,
+      SEL_INCREMENT_NONCE, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS,
+      STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE]
+    norm_num
+  · simp only [staleNonceIncNonceRow, goodIncNonceRow, sel.NOOP, sbCol, saCol,
+      SEL_INCREMENT_NONCE, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS,
+      STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE]
+    norm_num
 
 /-! ## §11 — Axiom-hygiene tripwires. -/
 
@@ -512,6 +611,7 @@ theorem staleNonceIncNonceRow_rejected :
 #assert_axioms unify_incNonce_exec
 #assert_axioms incNonceDescriptor_classA
 #assert_axioms goodIncNonceRow_realizes_intent
+#assert_axioms goodIncNonceRow_canonical
 #assert_axioms badIncNonceRow_rejected
 #assert_axioms staleNonceIncNonceRow_rejected
 
