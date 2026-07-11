@@ -648,3 +648,15 @@ a post-quantum primitive). Frontend/UX lane (a709da8) still running (demo/).
 CollectiveChoiceEngine, the collective honest-scope gap] · HYBRID VRF+beacon+timeout [dice/, from parked patch adapted
 to LB-VRF — closes hatches #1/#2/#5, the randomness moat] · COMBAT ENGINE minimal slice [attested-dm — initiative+
 abilities+targeting, verified rolls via dregg-dice, existing CombatEnemy as trivial case].
+
+## ✅✅✅ Wave 3 (recovered): randomness moat CLOSED + collective quorum teeth
+- HYBRID randomness COMMITTED (dice/ + attested-dm arms): LB-VRF + genesis Merkle key-chain (#1) + schedule-bound
+  hash-chain beacon (#2) + timeout-no-reroll (#5); 34 dice + 100+19+6 attested-dm. Junk-in-ignored-VRF=>same-seed,
+  wrong-epoch=>EpochKeyMismatch verified. Remaining: real threshold drand-BLS for #2. attested-dm verify_seed +
+  encode_evidence Hybrid arms (I wired them after the Hybrid lane flagged the match sites; combat had freed game.rs).
+- QUORUM /party COMMITTED (demo/): real collective_choice engine — WriteOnce ballots + Monotonic tally + AffineLe
+  quorum gate; below-quorum refused (world doesnt move), at-quorum a verifiable cert + light-client recompute; world-
+  resolves teeth intact. run-party drives it; honest gap = demo identities (production adds custody keys). Docs updated.
+- COMBAT lane DIED (API connection drop mid-write, 5-line partial); reverted; RE-ISSUING against clean attested-dm.
+Orchestration lesson: do NOT run a lane that extends a shared type (dice EvidenceKind) concurrently with its
+attested-dm consumers — it broke attested-dm+dungeon-service mid-flight; fixed by adding the match arm myself.
