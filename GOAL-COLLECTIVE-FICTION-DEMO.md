@@ -601,3 +601,16 @@ draw_count binds into EventId (grinding tooth); RandomnessSource trait (pure sou
 extended to reconstruct+verify the draw stream (catches a forged ROLL). Connects the two new primitives.
 ## NEXT FORKS (after): persistence · overworld · combat engine · the VRF/beacon backends · canonical state-root
 receipts · the first FOLDED inventory-conservation proof (design Phase 3). Multimodel: codex designs, I build+verify.
+
+## ✅ Randomness-in-engine COMMITTED + the PQ-VRF correction
+- ember caught it: the Lean ALREADY models a PQ-VRF (metatheory/Dregg2/Crypto/VRF.lean — LB-VRF lattice/MLWE +
+  XM-VRF hash; the PROVED leg is LB-VRF uniqueness->Module-SIS, pk=A.s = HermineMSIS shape). BeaconSpace.lean is the
+  CONSENSUS beacon (honest-leader liveness), NOT an external dice-beacon.
+- MY ERROR: I defaulted the VRF lane to classical RFC-9381 ECVRF (ristretto/vrf-r255) — Shor-breakable, wrong for
+  dregg PQ posture (the prompt-defaults-carry-project-values trap again). PARKED to /tmp/vrf-backend-classical.patch
+  (its Hybrid seed-mix + timeout-no-reroll + HashChainBeacon scaffolding is construction-agnostic + reusable), NOT
+  committed. dice/ restored clean (CommitReveal).
+- COMMITTED: the randomness-integration (provably-fair loot chest; draw bound into the chain; verify_replay
+  reconstructs the draw + catches a forged roll; 96 lib + 19 dsl + dungeon-service green). Honest CommitReveal slice.
+- FIRING (reliable lane, pqvrf/ — codex flaked 3x, dropped for shipping): high-assurance LB-VRF bound to the Lean's
+  proved uniqueness->MSIS leg. Then wire dice/ ServerVrf -> pqvrf/ + rebuild the Hybrid/timeout PQ scaffolding.
