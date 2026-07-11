@@ -452,3 +452,23 @@ STAGED (not live VK), fix = CARRY_BITS 16→15 in both twins + VK/fixture regen 
 staged VK epoch). Doc: docs/reference/VAULT-CARRY-WRAP-INVESTIGATION.md (verdict A, verified by hand).
 REMAINING to close Phase 0: the OpenEmit/Argus families (in flight) + a whole-tree green pass to catch stragglers +
 the AIR chain (AirChecksSatisfied/arithResidual — the Phase-0→Phase-1 boundary). Then Phases 1A/1B/2/3.
+
+### ★★★ HEADLINE: the migration found TWO live deployed soundness gaps + a wrap-CLASS (2026-07-11)
+The mod-p field-faithfulness migration surfaced TWO confirmed (verdict A) soundness gaps in the DEPLOYED circuit,
+both of the same CLASS (a gate reconstructs a value ≥ p; mod-p alone doesn't pin the ℤ value; adversary picks a
+p-shifted decomposition):
+1. VAULT carry-wrap (`27feb4754`, `VAULT-CARRY-WRAP-INVESTIGATION.md`) — 16-bit product carries reach 2^31 > p ⟹
+   forge a share-inflating settlement past the no-dilution gate. STAGED (not live VK). Fix: CARRY_BITS 16→15.
+2. CAP-OPEN mask-recon (`5cfa7e5d7`, `MASK-RECON-WRAP-INVESTIGATION.md`) — 32-bit mask recomposition, 2p < 2^32 ⟹
+   CAPABILITY-AUTHORIZATION FORGERY: a cap granting nothing authorizes a transfer (decompose 2p into the free-
+   witness mask bits). Fix: range-check mask_lo/mask_hi < 2^16 + per-16-bit-limb reconstruction.
+Both EMBER-GATED (deployed circuit changes). WRAP-CLASS audit: these 2 are the only live instances found so far
+(CapReshape 8-bit safe; RotationWide Poseidon2-absorb safe) — but the CLASS is now a known audit axis for the rest
+of Phase 0 + a candidate for a systematic sweep of the whole deployed circuit.
+⚠ GATE LESSON (my error, corrected): I first committed CapOpenEmit green treating `reconExact` as a "canonicality
+envelope" — it actually ASSUMES the wire's ℤ-exactness (laundering the gap). Corrected: relabeled as an explicit
+DEPLOYED-GAP assumption. LESSON: when gating an envelope, check WHERE its exactness comes from (deployed wire =
+real invariant; hypothesis = assumed gap) — an explicit hypothesis is only honest if NAMED as a gap, not dressed
+as a canonicality. This is the anti-toy discipline applied to my own integration.
+THE POINT PROVEN: a "verified" circuit modeled over ℤ silently believes conservation/authorization the real field
+circuit does NOT enforce. Field-faithfulness makes those gaps unignorable. Two are now found + verified.
