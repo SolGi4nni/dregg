@@ -77,7 +77,9 @@ open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
   (VmConstraint2 EffectVmDescriptor2 ChipTableSound ChipTableSoundN Satisfied2 VmTrace envAt)
 open Dregg2.Circuit.DeployedCapOpen (CapOpenCols leafOf MASK_BITS capPermOut groupVal)
-open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols CAP_OPEN_SPAN effCapOpenV3 effCapOpenV3_authorizes)
+open Dregg2.Circuit.Emit.CapOpenEmit
+  (capOpenCols CAP_OPEN_SPAN effCapOpenV3 effCapOpenV3_authorizes CapOpenRowCanon)
+open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
 open Dregg2.Circuit.DeployedCapTree (CapLeaf CapHashScheme Cap8Scheme)
 open Dregg2.Circuit.DeployedCapTree.CapHashScheme (DeployedFaithfulEff tierOfTag)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (DeployedFaithfulEff8)
@@ -212,18 +214,21 @@ theorem effCapOpenV3TB_to_base (base : EffectVmDescriptor2) (name : String) (n :
 /-! ## §4 — `effCapOpenV3TB_publishes`: the FIRST row pins src/actor/dst to the three new PIs. -/
 
 /-- **`effCapOpenV3TB_publishes`** — on the FIRST row of a `Satisfied2` witness of `effCapOpenV3TB`, the
-cap-open `src` column equals `PI[piCount]`, the new `actor` column `PI[piCount+1]`, the new `dst` column
-`PI[piCount+2]` (`piCount` = the cap-open base's PI count). The three turn-identity `.piBinding .first`
-pins are FORCED — on the SAME active row the membership binding gates bite (in any ≥2-row trace). -/
+cap-open `src` column is pinned to `PI[piCount]`, the new `actor` column to `PI[piCount+1]`, the new `dst`
+column to `PI[piCount+2]` (`piCount` = the cap-open base's PI count) — `≡ [ZMOD p]`, the field-faithful
+pin the deployed AIR forces (the ℤ equality follows under cell canonicality, at the consumer). The three
+turn-identity `.piBinding .first` pins are FORCED — on the SAME active row the membership binding gates
+bite (in any ≥2-row trace). -/
 theorem effCapOpenV3TB_publishes (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hfirst : (i == 0) = true) :
-    (envAt t i).loc (capOpenCols base.traceWidth).src = (envAt t i).pub (effCapOpenV3 base name n).piCount
-    ∧ (envAt t i).loc (capOpenActorCol base.traceWidth)
-        = (envAt t i).pub ((effCapOpenV3 base name n).piCount + 1)
-    ∧ (envAt t i).loc (capOpenDstCol base.traceWidth)
-        = (envAt t i).pub ((effCapOpenV3 base name n).piCount + 2) := by
+    ((envAt t i).loc (capOpenCols base.traceWidth).src
+        ≡ (envAt t i).pub (effCapOpenV3 base name n).piCount [ZMOD 2013265921])
+    ∧ ((envAt t i).loc (capOpenActorCol base.traceWidth)
+        ≡ (envAt t i).pub ((effCapOpenV3 base name n).piCount + 1) [ZMOD 2013265921])
+    ∧ ((envAt t i).loc (capOpenDstCol base.traceWidth)
+        ≡ (envAt t i).pub ((effCapOpenV3 base name n).piCount + 2) [ZMOD 2013265921]) := by
   have hrow := hsat.rowConstraints i hi
   set pc := (effCapOpenV3 base name n).piCount with hpc
   have hmem : ∀ c ∈ turnIdentityPins base.traceWidth pc, c ∈ (effCapOpenV3TB base name n).constraints :=
@@ -264,11 +269,16 @@ theorem effCapOpenV3TB_hsrc (base : EffectVmDescriptor2) (name : String) (n : Na
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hfirst : (i == 0) = true)
-    (src actor dst : Label) (hanchor : TurnIdentityAnchored base name n t i src actor dst) :
+    (src actor dst : Label) (hanchor : TurnIdentityAnchored base name n t i src actor dst)
+    -- the src cell is field-canonical + the turn's src label is a canonical field element: lifts the
+    -- mod-`p` pin congruence to the ℤ equality the membership keystone consumes.
+    (hcellSrc : 0 ≤ (envAt t i).loc (capOpenCols base.traceWidth).src
+      ∧ (envAt t i).loc (capOpenCols base.traceWidth).src < 2013265921)
+    (hsrcLt : (src : ℤ) < 2013265921) :
     (envAt t i).loc (capOpenCols base.traceWidth).src = (src : ℤ) := by
   obtain ⟨hpubSrc, _, _⟩ := effCapOpenV3TB_publishes base name n hash minit mfin maddrs t hsat i hi hfirst
   obtain ⟨hanSrc, _, _⟩ := hanchor
-  rw [hpubSrc, hanSrc]
+  exact canon_eq_of_modEq hcellSrc ⟨Int.natCast_nonneg _, hsrcLt⟩ (by rw [← hanSrc]; exact hpubSrc)
 
 /-- **`effCapOpenV3TB_authorizes` — the AUTHORITY leg, the turn-identity weld and the cap-open membership
 co-located on the FIRST (active) row.**
@@ -289,11 +299,16 @@ theorem effCapOpenV3TB_authorizes (base : EffectVmDescriptor2) (name : String) (
     -- the FIRST row carries BOTH the membership gates (non-last) AND the turn-identity pin (first);
     -- `hlen` is the genuine ≥2-row shape of a real cap-open trace (depth-16 open + its wrap row).
     (hlen : 2 ≤ t.rows.length)
+    -- the field-faithful canonicality envelope on the first row (cells canonical + effect-bit range +
+    -- ℤ-exact mask recomposition) — what lifts the mod-`p` gates to the ℤ-level `SatisfiedEff`.
+    (hcanon : CapOpenRowCanon (capOpenCols base.traceWidth) (envAt t 0) n)
     (caps : FacetCaps) (leafAt : Label → Label → CapLeaf)
     (hfaith : DeployedFaithfulEff8 S8 vkOfTag provided (1 <<< n) caps
       (groupVal (envAt t 0) (capOpenCols base.traceWidth).capRoot) leafAt)
     (actor src dst : Label) (amt : ℤ)
     (hanchor : TurnIdentityAnchored base name n t 0 src actor dst)
+    -- the turn's src label is a canonical field element (the deployed label range).
+    (hsrcLt : (src : ℤ) < 2013265921)
     (hedge : leafOf (capOpenCols base.traceWidth) (envAt t 0) = leafAt actor src)
     (htier : (tierOfTag vkOfTag (leafAt actor src).auth_tag).isSatisfiedBy provided = true) :
     authorizedFacetEffB caps provided (1 <<< n)
@@ -306,9 +321,10 @@ theorem effCapOpenV3TB_authorizes (base : EffectVmDescriptor2) (name : String) (
   -- active row the membership opens, so no cross-row transport is needed.
   have hsrc : (envAt t 0).loc (capOpenCols base.traceWidth).src = (src : ℤ) :=
     effCapOpenV3TB_hsrc base name n hash minit mfin maddrs t hsat 0 hi rfl src actor dst hanchor
+      (hcanon.cells _) hsrcLt
   -- the membership on the FIRST (active) row FORCES authority for the PUBLISHED `src`.
   exact effCapOpenV3_authorizes base name n hn S8 hash vkOfTag provided minit mfin maddrs t hChip hbase
-    0 hi hiNotLast caps leafAt hfaith actor src dst amt hsrc hedge htier
+    0 hi hiNotLast hcanon caps leafAt hfaith actor src dst amt hsrc hedge htier
 
 /-! ## §6 — the NEGATIVE tooth: a mismatched turn-identity PI ⟹ the pin is UNSATISFIABLE.
 
@@ -319,17 +335,23 @@ turn-identity pin — the appended `.piBinding .first` REJECTS it. Composed with
 published turn-src does not match the committed cap-open source is rejected. -/
 
 /-- **`effCapOpenV3TB_rejects_mismatched_src` (the turn-identity TOOTH).** If the cap-open `src` column on
-the first row differs from the published `PI[piCount]`, NO `Satisfied2` witness of `effCapOpenV3TB` has that
-row's columns/PI — the pin forces `src = PI[piCount]`, so a mismatch is contradictory. With the verifier's
-anchor (`PI[piCount] = turn.src`), a forged `src ≠ turn.src` is UNSAT. -/
+the first row differs from the published `PI[piCount]` — both CANONICAL field values (`0 ≤ · < p`, the
+deployed range invariant; the mod-`p` pin cannot see a wrap between canonical representatives) — NO
+`Satisfied2` witness of `effCapOpenV3TB` has that row's columns/PI: the pin forces `src ≡ PI[piCount]`,
+which collapses to equality in `(−p, p)`, contradicting the mismatch. With the verifier's anchor
+(`PI[piCount] = turn.src`), a forged `src ≠ turn.src` is UNSAT. -/
 theorem effCapOpenV3TB_rejects_mismatched_src (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (i : Nat) (hi : i < t.rows.length) (hfirst : (i == 0) = true)
+    (hcellSrc : 0 ≤ (envAt t i).loc (capOpenCols base.traceWidth).src
+      ∧ (envAt t i).loc (capOpenCols base.traceWidth).src < 2013265921)
+    (hcellPub : 0 ≤ (envAt t i).pub (effCapOpenV3 base name n).piCount
+      ∧ (envAt t i).pub (effCapOpenV3 base name n).piCount < 2013265921)
     (hbad : (envAt t i).loc (capOpenCols base.traceWidth).src ≠ (envAt t i).pub (effCapOpenV3 base name n).piCount) :
     ¬ Satisfied2 hash (effCapOpenV3TB base name n) minit mfin maddrs t := by
   intro hsat
   obtain ⟨hpubSrc, _, _⟩ := effCapOpenV3TB_publishes base name n hash minit mfin maddrs t hsat i hi hfirst
-  exact hbad hpubSrc
+  exact hbad (canon_eq_of_modEq hcellSrc hcellPub hpubSrc)
 
 /-! ## §7 — Axiom hygiene. -/
 

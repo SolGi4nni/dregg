@@ -51,9 +51,11 @@ open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.DeployedCapTree (CapLeaf Cap8Scheme Digest8)
 open Dregg2.Circuit.DeployedCapTree.Cap8Scheme (MembersAt8)
 open Dregg2.Circuit.DeployedCapOpen
-  (CapOpenCols leafOf groupVal capPermOut SatisfiedEff capOpenEff_membership)
+  (CapOpenCols leafOf groupVal capPermOut SatisfiedEff capOpenEff_membership
+   MembershipCore membershipCore_opens)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (capOpenCols eqGate eqGate_eval effCapOpenV3 effCapOpenV3_satisfiedEff
+   effCapOpenV3_membershipCore diffGate_exact
    beforeCapRootWelds effCapRemoveV3)
 open Dregg2.Circuit.SortedTreeNonMembership
   (SpineCommits keysOf GapOpen keyOf nonMembership_sound)
@@ -209,14 +211,16 @@ theorem effCapRemoveV3_strips_to_capOpen (base : EffectVmDescriptor2) (name : St
       memTableFaithful := by have := h.memTableFaithful; rwa [hmemLog] at this
       mapTableFaithful := by have := h.mapTableFaithful; rwa [hmapLog] at this }
 
-/-- Any BEFORE-weld `.base (.gate g)` constraint forces `g.eval = 0` on an active (non-last) row. -/
+/-- Any BEFORE-weld `.base (.gate g)` constraint forces `g.eval ≡ 0 [ZMOD p]` on an active (non-last)
+row — the field-faithful gate consequence (the ℤ equality follows under cell canonicality, at the
+consumer). -/
 theorem effCapRemoveV3_gate_forces (base : EffectVmDescriptor2) (name : String) (n : Nat)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (g : EmittedExpr) (hin : VmConstraint2.base (.gate g) ∈ beforeCapRootWelds base.traceWidth) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi
   have hlastf : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hnotlast
@@ -234,16 +238,20 @@ theorem effCapRemoveV3_forces_beforeMembership (S8 : Cap8Scheme)
     (t : VmTrace)
     (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    -- the deployed cell canonicality (`0 ≤ · < p`): lifts the mod-`p` membership gates + welds to
+    -- their ℤ form (the Merkle fold and `MembersAt8` are ℤ-level).
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     MembersAt8 S8 (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k))
       (leafOf (capOpenCols base.traceWidth) (envAt t i)) := by
   set e := envAt t i with he
   set w := base.traceWidth with hw
-  -- strip to the reused cap-open read, rebuild `SatisfiedEff`, read off the 8-felt membership.
+  -- strip to the reused cap-open read, rebuild the membership CORE, read off the 8-felt membership.
   have hopenSat := effCapRemoveV3_strips_to_capOpen base name n hash minit mfin maddrs t hsat
-  have hSatEff := effCapOpenV3_satisfiedEff base name n hash minit mfin maddrs t hopenSat i hi hnotlast
+  have hCore : MembershipCore hash t.tf (capOpenCols w) e :=
+    effCapOpenV3_membershipCore base name n hash minit mfin maddrs t hopenSat i hi hnotlast hcells
   have hmem0 : MembersAt8 S8 (groupVal e (capOpenCols w).capRoot) (leafOf (capOpenCols w) e) :=
-    capOpenEff_membership S8 hash t.tf (capOpenCols w) e n hChip hSatEff
+    membershipCore_opens S8 hash t.tf (capOpenCols w) e hChip hCore
   -- weld: the read capRoot group IS the committed BEFORE cap-root group.
   have hroot : groupVal e (capOpenCols w).capRoot
       = (fun k => e.loc (capRootGroupCol EFFECT_VM_WIDTH k)) := by
@@ -251,9 +259,13 @@ theorem effCapRemoveV3_forces_beforeMembership (S8 : Cap8Scheme)
     have hin : VmConstraint2.base (.gate (eqGate ((capOpenCols w).capRoot k)
         (capRootGroupCol EFFECT_VM_WIDTH k))) ∈ beforeCapRootWelds w :=
       List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
-    have := (eqGate_eval _ _ e).mp
-      (effCapRemoveV3_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin)
-    simpa [groupVal] using this
+    have hmod := effCapRemoveV3_gate_forces base name n hash minit mfin maddrs t hsat i hi hnotlast _ hin
+    -- the eqGate residual collapses in `(−p, p)` under canonicality.
+    unfold Dregg2.Circuit.Emit.CapOpenEmit.eqGate at hmod
+    simp only [EmittedExpr.eval] at hmod
+    have := diffGate_exact (hcells _) (hcells _) hmod
+    simp only [groupVal]
+    linarith
   rw [hroot] at hmem0
   exact hmem0
 
@@ -272,6 +284,7 @@ theorem effCapRemoveV3_forces_write8 (S8 : Cap8Scheme)
     (hChip : ChipTableSoundN (capPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effCapRemoveV3 base name n) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (spine : List ℤ)
     (hbefore : SpineCommits S8 (fun k => (envAt t i).loc (capRootGroupCol EFFECT_VM_WIDTH k)) spine)
     (g : GapOpen S8 (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k))
@@ -285,7 +298,7 @@ theorem effCapRemoveV3_forces_write8 (S8 : Cap8Scheme)
         (leafOf (capOpenCols base.traceWidth) (envAt t i))
         (fun k => (envAt t i).loc (capRootGroupCol (EFFECT_VM_WIDTH + 239) k)) := by
   have hbeforeMem := effCapRemoveV3_forces_beforeMembership S8 base name n hash minit mfin maddrs t
-    hChip hsat i hi hnotlast
+    hChip hsat i hi hnotlast hcells
   exact capRemove_writesTo8 S8 _ _ (leafOf (capOpenCols base.traceWidth) (envAt t i)) spine
     hbefore hbeforeMem g hcov hafter
 
