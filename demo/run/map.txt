@@ -1,6 +1,6 @@
 THE ROOM MAP + LIVE VALIDATION — the play + forge surfaces, driven
-driven run · attested-dm /game/map + /game/validate · narratorKind: model:us.anthropic.claude-haiku-4-5-20251001-v1:0
-served at http://127.0.0.1:52573/vault  and  http://127.0.0.1:52573/forge
+driven run · attested-dm /game/map + /game/validate · narratorKind: model:gemma2:2b
+served at http://127.0.0.1:56210/vault  and  http://127.0.0.1:56210/forge
 ============================================================================
 
 A room-map visualizer (inline SVG, no libs) draws the dungeon's room graph on both the play

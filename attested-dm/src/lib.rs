@@ -91,6 +91,18 @@ pub use dungeon_dsl::{parse_dungeon, parse_world, validate, DungeonError, Issue,
 pub mod savegame;
 pub use savegame::{LoadError, SaveGame, SavedEntry, SAVEGAME_FORMAT_VERSION};
 
+// THE OVERWORLD — the connective layer ABOVE the individual dungeons: a `Region` of named
+// `Location`s (each one bundled game) joined by travel `Edge`s, some GATED on completing a
+// prerequisite. A `RegionProgress` records which locations are cleared, and completion is credited
+// ONLY through the verification-gated `record_completion` (a genuinely `Won` + `verify()`ed +
+// `verify_replay()`ed session) — so travel across the map cannot be forged. Purely additive: every
+// existing game plays and verifies unchanged. See `src/overworld.rs`.
+pub mod overworld;
+pub use overworld::{
+    drowned_marches, game_ctor, CompletionError, Edge, Location, Region, RegionFlaw,
+    RegionProgress, TravelError,
+};
+
 use dregg_dice::{EvidenceKind, RandomnessEvidence, RandomnessRequest};
 use dregg_node_target::{NodeTarget, SubmittedTurn};
 use dregg_zkoracle_prove::{

@@ -1,6 +1,6 @@
 THE ATTESTED DUNGEONS — game selection over HTTP · the AI narrates, the world resolves
-driven run · attested-dm /game contract · narratorKind: model:us.anthropic.claude-haiku-4-5-20251001-v1:0 (a REAL local model)
-served at http://127.0.0.1:52309/vault
+driven run · attested-dm /game contract · narratorKind: model:gemma2:2b (a REAL local model)
+served at http://127.0.0.1:56163/vault
 ==============================================================================
 
 A · THE REGISTRY  (GET /game/list)
@@ -23,15 +23,15 @@ B · THE SUNKEN VAULT  (reset world=sunken-vault; a couple of landing moves)
 ------------------------------------------------------------------------------
 
   » go north   (into the salt antechamber)
-    haiku: The archway groans under your weight as you step through, a chill wind whipping salt spray into your face. The sound of waves crashing against the cliff is almost deafening.
+    gemma2: The archway groans under your weight as you step through, a chill wind whipping salt spray into your face. The sound of waves crashing against the cliff is almost deafening.
     world : LANDED → room antechamber · receipt rail #1 · world sunken-vault
 
   » take lantern   (a light against the dark)
-    haiku: The lantern's glow, weak and flickering, illuminates a single salt crystal embedded in the wall. It hums faintly as you reach for it, its surface rippling with an unseen energy.
+    gemma2: The lantern's glow, weak and flickering, illuminates a single salt crystal embedded in the wall. It hums faintly as you reach for it, its surface rippling with an unseen energy.
     world : LANDED → room antechamber · receipt rail #2 · world sunken-vault
 
   » go down   (down the now-lit stair)
-    haiku: The lantern's light flickers as you descend, casting dancing shadows on the salt-encrusted walls. The air grows thick and heavy, smelling of brine and decay.
+    gemma2: The lantern's light flickers as you descend, casting dancing shadows on the salt-encrusted walls. The air grows thick and heavy, smelling of brine and decay.
     world : LANDED → room dark_stair · receipt rail #3 · world sunken-vault
 
 ------------------------------------------------------------------------------
@@ -39,31 +39,31 @@ C · BRAMBLE KEEP  (reset world=bramble-keep; the world-bounded witch trade)
 ------------------------------------------------------------------------------
 
   » take candle   (a light for the crypt)
-    haiku: The stub of candle flickers, its flame barely a whisper against the encroaching darkness. A single thorny vine snags at your fingers as you reach for it, its prickles drawing blood.
+    gemma2: The stub of candle flickers, its flame barely a whisper against the encroaching darkness. A single thorny vine snags at your fingers as you reach for it, its prickles drawing blood.
     world : LANDED → room gatehouse · receipt rail #1 · carrying [candle]
 
   » go north   (into the overgrown courtyard)
-    haiku: The air hangs thick and heavy, smelling of damp earth and decaying wood. A single, skeletal branch from a bramble reaches out towards you, its thorns sharp as knives.
+    gemma2: The air hangs thick and heavy, smelling of damp earth and decaying wood. A single, skeletal branch from a bramble reaches out towards you, its thorns sharp as knives.
     world : LANDED → room courtyard · receipt rail #2 · carrying [candle]
 
   » go east   (to the poisoned garden)
-    haiku: The courtyard's cracked stone floor is slick with moss and dew, a tangle of thorny vines clinging to the crumbling walls. The iron gate groans as you approach it, its rusted hinges protesting your touch.
+    gemma2: The courtyard's cracked stone floor is slick with moss and dew, a tangle of thorny vines clinging to the crumbling walls. The iron gate groans as you approach it, its rusted hinges protesting your touch.
     world : LANDED → room garden · receipt rail #3 · carrying [candle]
 
   » take nightshade   (the witch's price)
-    haiku: The candle's flame flickers, casting dancing shadows on the thorny walls as you reach out to pluck a bloom from the poisoned garden. The air hangs heavy with the scent of decay and sweet poison.
+    gemma2: The candle's flame flickers, casting dancing shadows on the thorny walls as you reach out to pluck a bloom from the poisoned garden. The air hangs heavy with the scent of decay and sweet poison.
     world : LANDED → room garden · receipt rail #4 · carrying [candle, nightshade]
 
   » go west   (back to the courtyard)
-    haiku: The air hangs thick and heavy, smelling of rot and decay. A single, skeletal tree stands sentinel in the center of the garden, its branches clawing at the sky like grasping claws.
+    gemma2: The air hangs thick and heavy, smelling of rot and decay. A single, skeletal tree stands sentinel in the center of the garden, its branches clawing at the sky like grasping claws.
     world : LANDED → room courtyard · receipt rail #5 · carrying [candle, nightshade]
 
   » go west   (to the Hedge-Witch's hut)
-    haiku: The courtyard's stone floor is slick with moss and dew, a symphony of green against the rusted iron gate. A low hum vibrates through the air as you approach the west wall, where thorny vines cling to ancient stones like grasping claws.
+    gemma2: The courtyard's stone floor is slick with moss and dew, a symphony of green against the rusted iron gate. A low hum vibrates through the air as you approach the west wall, where thorny vines cling to ancient stones like grasping claws.
     world : LANDED → room witch_hut · receipt rail #6 · carrying [candle, nightshade]
 
   » ask witch about sickle   (the world-bounded trade)
-    haiku: The Witch's eyes, like chipped emeralds, gleam as you approach. She gestures with a gnarled finger towards a pile of dried herbs and roots, their scent sharp and earthy.
+    gemma2: The Witch's eyes, like chipped emeralds, gleam as you approach. She gestures with a gnarled finger towards a pile of dried herbs and roots, their scent sharp and earthy.
     world : LANDED → room witch_hut · receipt rail #7 · carrying [candle, nightshade, sickle]
 
   RESULT: the Hedge-Witch parted with the silver sickle ONLY because the nightshade was in

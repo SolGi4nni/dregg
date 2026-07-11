@@ -83,6 +83,11 @@ export async function buildForge() {
   return bundle("forge.ts");
 }
 
+/** Bundle THE OVERWORLD (the region map — the dungeons as one navigable region over /game/region). */
+export async function buildRegion() {
+  return bundle("region.ts");
+}
+
 // ── The DM service ────────────────────────────────────────────────────────────
 // By default the dungeon page is served against an in-memory STAND-IN (narratorKind
 // "scripted") so `node demo/serve.mjs` is instantly playable. Set `DM_URL` (the parallel
@@ -133,11 +138,13 @@ export async function makeServer(port = 0, opts = {}) {
   const vaultJs = await buildVault();
   const partyJs = await buildParty();
   const forgeJs = await buildForge();
+  const regionJs = await buildRegion();
   const index = await readFile(path.join(__dirname, "index.html"), "utf8");
   const dungeon = await readFile(path.join(__dirname, "dungeon.html"), "utf8");
   const vault = await readFile(path.join(__dirname, "vault.html"), "utf8");
   const party = await readFile(path.join(__dirname, "party.html"), "utf8");
   const hub = await readFile(path.join(__dirname, "hub.html"), "utf8");
+  const region = await readFile(path.join(__dirname, "region.html"), "utf8");
   const author = await readFile(path.join(__dirname, "author.html"), "utf8");
   const forge = await readFile(path.join(__dirname, "forge.html"), "utf8");
   const scene = await readFile(path.join(__dirname, "stories", "the-commons.scene"), "utf8");
@@ -222,6 +229,10 @@ export async function makeServer(port = 0, opts = {}) {
       if (url === "/vault" || url === "/vault.html") return send(res, vault, MIME[".html"]);
       if (url === "/hub" || url === "/games") return send(res, hub, MIME[".html"]);
       if (url === "/vault.js") return send(res, vaultJs, MIME[".js"]);
+
+      // ── The Overworld (the region map — the dungeons as one navigable region) ──
+      if (url === "/region" || url === "/region.html" || url === "/overworld") return send(res, region, MIME[".html"]);
+      if (url === "/region.js") return send(res, regionJs, MIME[".js"]);
 
       // ── The Collective Dungeon (the crowd steers one party by vote) ──
       if (url === "/party" || url === "/party.html") return send(res, party, MIME[".html"]);

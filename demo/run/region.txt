@@ -1,0 +1,55 @@
+THE OVERWORLD — the bundled dungeons as one navigable region · travel is verified-completion-gated
+driven run · attested-dm /game/region contract · served at http://127.0.0.1:56116/region
+================================================================================
+
+REGION: The Drowned Marches — Five sunken dungeons joined into one world — clear the tidewater vault to open the way inland, and earn your path down to the venom deep.
+
+A · THE MAP, FRESH  (GET /game/region)
+--------------------------------------------------------------------------------
+  cleared: 0/5
+  • tidewater   The Tidewater Vault    [you-are-here]  (sunken-vault)
+  • thornmarch  The Thornmarch Keep    [open]  (bramble-keep)
+  • starfall    The Starfall Spire     [sealed]  (starfall-spire)
+  • deepdark    The Deepdark Mine      [sealed]  (deepdark-mine)
+  • venomdeep   The Venomous Deep      [sealed]  (venom-deep)
+  roads:
+    tidewater   -> thornmarch  open  
+    tidewater   -> starfall    BARRED gate=tidewater  (clear The Tidewater Vault first)
+    thornmarch  -> deepdark    BARRED gate=thornmarch  (clear The Thornmarch Keep first)
+    starfall    -> venomdeep   BARRED gate=starfall  (clear The Starfall Spire first)
+    deepdark    -> venomdeep   BARRED gate=deepdark  (clear The Deepdark Mine first)
+    thornmarch  -> tidewater   open  
+    starfall    -> tidewater   open  
+    deepdark    -> thornmarch  open  
+    venomdeep   -> starfall    open  
+    venomdeep   -> deepdark    open  
+
+--------------------------------------------------------------------------------
+B · WIN THE TIDEWATER VAULT  (reset world=sunken-vault; the honest solve over /game/act)
+--------------------------------------------------------------------------------
+  » go north                     → room antechamber · playing
+  » take lantern                 → room antechamber · playing
+  » go down                      → room dark_stair · playing
+  » go down                      → room cistern · playing
+  » take rusted_key              → room cistern · playing
+  » go north                     → room vestry · playing
+  » use rusted_key on iron_door  → room vestry · playing
+  » go east                      → room armory · playing
+  » take sword                   → room armory · playing
+  » go north                     → room warden_hall · playing
+  » attack warden                → room warden_hall · playing
+  » go east                      → room treasury · playing
+  » take amulet                  → room treasury · playing
+  » go up                        → room sunken_gate · won
+
+--------------------------------------------------------------------------------
+C · THE GATE OPENS  (GET /game/region — credited only on the verified Won chain)
+--------------------------------------------------------------------------------
+  cleared: 1/5
+  tidewater : CLEARED ✓
+  road tidewater -> starfall : OPEN — the gate lifted
+  starfall spire : now reachable
+
+================================================================================
+Five dungeons, one world. Each independently verified; each cleared ONLY on a re-verified Won
+chain. The map opens as you honestly clear it. The ledger is the truth.

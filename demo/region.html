@@ -1,0 +1,201 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>the overworld — one region, five dungeons</title>
+<script src="/theme.js"></script>
+<style>
+  :root {
+    --parchment: #ece6d6; --parchment-2: #e0d8c2; --card: #f7f2e7;
+    --ink: #1b1728; --ink-soft: #453f57; --ink-faint: #766f86; --rule: #cfc5ac;
+    --violet: #6b5ce0; --violet-deep: #43349c; --teal: #2b7f7a; --green: #3f8f57;
+    --amber: #b06e1f; --gold: #a9812f; --red: #a8262f;
+    --shadow: 24px 34px 66px -34px rgba(20, 16, 34, .5);
+    --serif: "Iowan Old Style", "Palatino Linotype", Palatino, "Book Antiqua", Georgia, serif;
+    --sans: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    --mono: ui-monospace, "SF Mono", "JetBrains Mono", Menlo, monospace;
+  }
+  @media (prefers-color-scheme: dark) {
+    :root {
+      --parchment: #14110d; --parchment-2: #100d0a; --card: #1c1813;
+      --ink: #e8e0cf; --ink-soft: #b8ae97; --ink-faint: #8f836b; --rule: #37301f;
+      --violet: #b493e6; --violet-deep: #c9b3f0; --teal: #4fb3ac; --green: #6fc98a;
+      --amber: #d8b45a; --gold: #d8b45a; --red: #e0736f;
+      --shadow: 24px 30px 60px -30px rgba(0,0,0,.6);
+    }
+  }
+  :root[data-theme="dark"] {
+    --parchment: #14110d; --parchment-2: #100d0a; --card: #1c1813;
+    --ink: #e8e0cf; --ink-soft: #b8ae97; --ink-faint: #8f836b; --rule: #37301f;
+    --violet: #b493e6; --violet-deep: #c9b3f0; --teal: #4fb3ac; --green: #6fc98a;
+    --amber: #d8b45a; --gold: #d8b45a; --red: #e0736f;
+    --shadow: 24px 30px 60px -30px rgba(0,0,0,.6);
+  }
+  :root[data-theme="light"] {
+    --parchment: #ece6d6; --parchment-2: #e0d8c2; --card: #f7f2e7;
+    --ink: #1b1728; --ink-soft: #453f57; --ink-faint: #766f86; --rule: #cfc5ac;
+    --violet: #6b5ce0; --violet-deep: #43349c; --teal: #2b7f7a; --green: #3f8f57;
+    --amber: #b06e1f; --gold: #a9812f; --red: #a8262f;
+    --shadow: 24px 34px 66px -34px rgba(20, 16, 34, .5);
+  }
+  * { box-sizing: border-box; }
+  html, body { margin: 0; }
+  body {
+    background: radial-gradient(120% 80% at 50% -10%, color-mix(in srgb, var(--parchment) 88%, #fff 12%) 0%, var(--parchment) 45%, var(--parchment-2) 100%);
+    color: var(--ink); min-height: 100vh; font: 17px/1.6 var(--serif);
+  }
+
+  /* ══ shared site chrome ══ */
+  .site-nav { position: sticky; top: 0; z-index: 100; display: flex; align-items: center; gap: .55rem;
+    padding: .4rem clamp(.8rem, 3vw, 1.5rem); font-family: var(--sans);
+    background: color-mix(in srgb, var(--card) 86%, transparent);
+    -webkit-backdrop-filter: saturate(1.4) blur(9px); backdrop-filter: saturate(1.4) blur(9px);
+    border-bottom: 1px solid var(--rule); }
+  .site-nav .brand { display: inline-flex; align-items: center; gap: .4rem; white-space: nowrap;
+    font-weight: 700; font-size: .92rem; color: var(--ink); text-decoration: none;
+    padding: .4rem .4rem; border-radius: 9px; min-height: 44px; }
+  .site-nav .brand .diamond { color: var(--violet); font-size: 1.05rem; line-height: 1; }
+  .site-nav .brand:hover { color: var(--violet-deep); }
+  .site-nav .nav-here { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+    font-size: .75rem; letter-spacing: .03em; color: var(--ink-faint); }
+  .site-nav .nav-here .sep { opacity: .5; margin: 0 .45rem; }
+  .site-nav .nav-actions { margin-left: auto; display: flex; align-items: center; gap: .4rem; }
+  .site-nav .nav-btn { font: inherit; font-family: var(--sans); font-size: .8rem; line-height: 1; cursor: pointer;
+    display: inline-flex; align-items: center; justify-content: center; gap: .35rem;
+    min-height: 44px; min-width: 44px; padding: .4rem .7rem; border-radius: 10px;
+    border: 1px solid var(--rule); background: color-mix(in srgb, var(--card) 60%, transparent);
+    color: var(--ink-soft); transition: background .14s, color .14s, border-color .14s; }
+  .site-nav .nav-btn:hover { border-color: var(--violet); color: var(--violet-deep); }
+  .site-nav .nav-btn:focus-visible, .site-nav .brand:focus-visible { outline: 2px solid var(--violet-deep); outline-offset: 2px; }
+  @media (max-width: 26rem) { .site-nav .nav-here { display: none; } .site-nav .nav-btn .lbl { display: none; } .site-nav .nav-btn { padding: .4rem .55rem; } }
+  @media (prefers-reduced-motion: reduce) { *, *::before, *::after { animation-duration: .001ms !important; transition-duration: .001ms !important; scroll-behavior: auto !important; } }
+  img, svg { max-width: 100%; }
+
+  .wrap { max-width: 940px; margin: 0 auto; padding: 2.4rem clamp(1rem, 4vw, 1.5rem) 5rem; }
+  header { text-align: center; margin-bottom: 1.4rem; }
+  .eyebrow { font-family: var(--sans); font-size: .72rem; letter-spacing: .22em; text-transform: uppercase; color: var(--violet-deep); font-weight: 600; margin: 0 0 .9rem; }
+  h1 { font-family: var(--serif); font-size: clamp(1.9rem, 6vw, 3rem); margin: 0 0 .3rem; letter-spacing: -.01em; }
+  .sub { color: var(--ink-faint); font-style: italic; font-size: 1.08rem; }
+  .thesis { border-left: 3px solid var(--violet); padding: .5rem 0 .5rem 1.1rem; margin: 1.4rem auto;
+    max-width: 700px; color: var(--ink-soft); font-size: 1rem; text-align: left; }
+  .thesis b { color: var(--violet-deep); }
+
+  .panel { background: var(--card); border: 1px solid var(--rule); border-radius: 14px;
+    padding: 1.2rem 1.3rem; box-shadow: var(--shadow); margin-top: 1.4rem; }
+  .panel-head { display: flex; align-items: baseline; justify-content: space-between; gap: .8rem; flex-wrap: wrap; margin-bottom: .3rem; }
+  .panel-head h2 { font-family: var(--serif); margin: 0; font-size: 1.35rem; }
+  .panel-head .region-blurb { color: var(--ink-faint); font-size: .9rem; font-style: italic; margin: .1rem 0 0; }
+  .btn { font: inherit; font-family: var(--sans); font-size: .82rem; cursor: pointer; min-height: 40px; padding: .35rem .8rem;
+    border-radius: 10px; border: 1px solid var(--rule); background: color-mix(in srgb, var(--card) 60%, transparent);
+    color: var(--ink-soft); }
+  .btn:hover { border-color: var(--violet); color: var(--violet-deep); }
+
+  /* progress */
+  #progress { margin: .2rem 0 1rem; font-family: var(--sans); }
+  .prog-head { font-size: .95rem; color: var(--ink-soft); margin-bottom: .35rem; }
+  .prog-head b { color: var(--violet-deep); font-size: 1.05rem; }
+  .prog-track { height: 8px; border-radius: 999px; background: color-mix(in srgb, var(--ink-faint) 22%, transparent); overflow: hidden; }
+  .prog-fill { height: 100%; background: linear-gradient(90deg, var(--violet), var(--teal)); border-radius: 999px; transition: width .3s ease; }
+  .prog-note { font-size: .74rem; color: var(--ink-faint); margin-top: .45rem; font-style: italic; }
+
+  /* the region-map (echoes roommap.ts styling) */
+  .rm-legend { display: flex; flex-wrap: wrap; gap: .4rem .9rem; margin: 0 0 .7rem; font-size: .72rem; color: var(--ink-faint); align-items: center; font-family: var(--sans); }
+  .rm-key { display: inline-flex; align-items: center; gap: .32rem; }
+  .rm-swatch { width: 11px; height: 11px; border-radius: 3px; display: inline-block; border: 1px solid var(--rule); box-sizing: border-box; }
+  .rg-key-cleared .rm-swatch { background: var(--green); border-color: var(--green); }
+  .rg-key-current .rm-swatch { background: var(--violet); border-color: var(--violet); }
+  .rg-key-available .rm-swatch { background: var(--card); border-color: var(--ink-faint); }
+  .rg-key-sealed .rm-swatch { background: transparent; border-color: var(--ink-faint); border-style: dashed; }
+  .rm-key-locked .rm-swatch { background: transparent; border-color: var(--red); border-style: dashed; }
+  .rm-scroll { overflow-x: auto; overflow-y: hidden; }
+  .regionmap-svg { max-width: 100%; height: auto; display: block; }
+  .rm-empty { color: var(--ink-faint); font-family: var(--serif); font-style: italic; font-size: .9rem; padding: .6rem .2rem; }
+  .rm-empty code { font-family: var(--mono); font-style: normal; background: color-mix(in srgb, var(--ink-faint) 16%, transparent); padding: .1rem .35rem; border-radius: 4px; font-size: .82em; }
+
+  .rm-edge { stroke: var(--ink-faint); stroke-width: 1.8; opacity: .55; fill: none; }
+  .rm-edge.locked { stroke: var(--red); stroke-width: 1.9; stroke-dasharray: 4 3; opacity: .9; }
+  .rg-ahead { fill: var(--ink-faint); opacity: .7; }
+  .rg-ahead.locked { fill: var(--red); opacity: 1; }
+
+  .rg-link { cursor: pointer; text-decoration: none; }
+  .rg-node rect { fill: var(--card); stroke: var(--rule); stroke-width: 1.5; transition: fill .15s, stroke .15s; }
+  .rg-node .rg-label { font-family: var(--sans); font-size: 13px; font-weight: 700; fill: var(--ink); pointer-events: none; }
+  .rg-node .rg-mark { font-family: var(--sans); font-size: 10px; font-weight: 600; letter-spacing: .04em; text-transform: uppercase; fill: var(--ink-faint); pointer-events: none; }
+  .rg-node.sealed rect { fill: transparent; stroke: var(--ink-faint); stroke-dasharray: 4 3; opacity: .82; }
+  .rg-node.sealed .rg-label { fill: var(--ink-faint); }
+  .rg-node.available rect { fill: var(--card); stroke: var(--ink-faint); stroke-width: 1.8; }
+  .rg-node.cleared rect { fill: color-mix(in srgb, var(--green) 20%, var(--card)); stroke: var(--green); stroke-width: 2; }
+  .rg-node.cleared .rg-mark { fill: var(--green); }
+  .rg-node.current rect { fill: color-mix(in srgb, var(--violet) 20%, var(--card)); stroke: var(--violet); stroke-width: 2.6; }
+  .rg-node.current .rg-label { fill: var(--violet-deep); }
+  .rg-node.current .rg-mark { fill: var(--violet-deep); }
+  .rg-node.current.cleared rect { fill: color-mix(in srgb, var(--green) 22%, var(--card)); stroke: var(--violet); }
+  .rg-link:hover .rg-node rect { stroke: var(--violet); }
+  .rg-link:focus-visible .rg-node rect { stroke: var(--violet-deep); stroke-width: 3; }
+  .rg-you-dot { fill: var(--violet); }
+
+  .scope { margin-top: 1.4rem; color: var(--ink-soft); font-size: .95rem; }
+  .scope h3 { font-family: var(--sans); font-size: .74rem; letter-spacing: .12em; text-transform: uppercase; color: var(--gold); margin: 0 0 .5rem; }
+  .scope ul { margin: 0; padding-left: 1.1rem; }
+  .scope li { margin: .3rem 0; }
+  .scope b { color: var(--violet-deep); }
+  footer { text-align: center; color: var(--ink-faint); margin-top: 2.4rem; font-size: .86rem; font-style: italic; }
+  footer code { font-family: var(--mono); font-style: normal; background: color-mix(in srgb, var(--ink-faint) 16%, transparent); padding: .1rem .35rem; border-radius: 4px; font-size: .82em; }
+</style>
+</head>
+<body>
+  <nav class="site-nav" aria-label="Site navigation">
+    <a class="brand" href="/hub"><span class="diamond" aria-hidden="true">◈</span><span>verifiable fiction</span></a>
+    <span class="nav-here" aria-hidden="true"><span class="sep">/</span>the overworld</span>
+    <div class="nav-actions">
+      <a class="nav-btn" href="/vault"><span aria-hidden="true">⚔</span><span class="lbl">Play a dungeon</span></a>
+      <button class="nav-btn theme-toggle" type="button" data-theme-toggle aria-label="Switch color theme">🌓</button>
+    </div>
+  </nav>
+
+  <div class="wrap">
+    <header>
+      <p class="eyebrow">the connective layer</p>
+      <h1 id="region-name">The Overworld</h1>
+      <div class="sub">one region · many dungeons · the map opens as you honestly clear it</div>
+    </header>
+
+    <div class="thesis">
+      The bundled adventures are not separate games — they are <b>locations</b> in one region joined by
+      travel roads. A road into a deeper dungeon is <b>sealed</b> until you clear its prerequisite, and a
+      location is only marked cleared when the service has re-verified a genuinely <b>won</b> chain for it.
+      You cannot narrate, forge, or half-finish your way across the map: <b>travel is verified-completion-gated</b>.
+    </div>
+
+    <div class="panel">
+      <div class="panel-head">
+        <div>
+          <h2>The region map</h2>
+          <p class="region-blurb" id="region-blurb">…</p>
+        </div>
+        <button class="btn" id="refresh" type="button">↻ Refresh</button>
+      </div>
+      <div id="progress"></div>
+      <div id="map"><div class="rm-empty">mapping the region…</div></div>
+    </div>
+
+    <div class="scope">
+      <h3>What's real, and what's a first slice</h3>
+      <ul>
+        <li><b>Real:</b> each dungeon stays independently verifiable — the same chain check every game ships. A location clears <b>only</b> on a re-verified <code>Won</code> chain (a forged, tampered, or unfinished session is refused), and a gated road opens only once its prerequisite is cleared.</li>
+        <li><b>First slice:</b> progress is single-player and server-memory (it reflects the live game session). A fuller overworld persists progress <b>per identity</b> and folds each cleared dungeon's verified head into a region-level commitment.</li>
+        <li>The four registered dungeons open from the map; <b>the venomous deep</b> is wired into the region model but not yet in the play picker.</li>
+      </ul>
+    </div>
+
+    <footer>
+      <p>Play the dungeons live: run <code>cargo run -p dungeon-service</code>, then <code>DM_PORT=7878 node demo/serve.mjs</code> and open <code>/region</code>.
+        Clear the tidewater vault and watch the road to the spire open.</p>
+      <p>the walls stay where the story-master set them.</p>
+    </footer>
+  </div>
+
+  <script src="/region.js"></script>
+</body>
+</html>

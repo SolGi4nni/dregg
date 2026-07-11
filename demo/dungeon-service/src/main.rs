@@ -487,6 +487,9 @@ fn route(
         //    the world resolves). A registry of games (The Sunken Vault, Bramble Keep) selectable
         //    at /game/reset. Additive to the /narrate demo above.
         (HttpMethod::Get, "/game/list") => game_api::handle_list(),
+        // ── THE OVERWORLD — the bundled dungeons as one navigable region (locations + travel edges,
+        //    some completion-gated) + the current verified progress. Read-only, additive. ──
+        (HttpMethod::Get, "/game/region") => game_api::handle_region(game),
         (HttpMethod::Get, "/game/state") => game_api::handle_state(game),
         // ── THE ROOM MAP — the current world as a room graph `[{id,name,exits:[{to,locked}]}]`
         //    (read-only; for the play + forge map visualizers). ──

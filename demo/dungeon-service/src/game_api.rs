@@ -1015,6 +1015,123 @@ pub fn handle_verify(gs: &Mutex<GameState>) -> WebResponse {
     WebResponse::json(resp.to_string().into_bytes())
 }
 
+// ─────────────────────────────────────────────────────────────────────────────
+// THE OVERWORLD LANE — GET /game/region. The connective layer: the bundled dungeons as
+// LOCATIONS in one navigable REGION (attested_dm::drowned_marches), joined by travel edges,
+// some GATED on completing a prerequisite. Additive + read-only over the SAME GameSession: it
+// mounts nothing and resolves no move. Progress is single-player, server-memory (a process
+// global that survives resets), credited ONLY through the verification-gated record_completion —
+// so a location clears here exactly when the CURRENT session is a genuinely Won + verified run of
+// that location's game. HONEST SCOPE: a fuller overworld persists progress per identity and folds
+// each cleared head into a region commitment; this first slice reflects the live session.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The concrete region (built once).
+fn region() -> &'static attested_dm::Region {
+    static R: std::sync::OnceLock<attested_dm::Region> = std::sync::OnceLock::new();
+    R.get_or_init(attested_dm::drowned_marches)
+}
+
+/// The single-player, server-memory region progress. A process global (NOT part of `GameState`) so
+/// it survives `/game/reset` — clearing the vault then resetting to the spire keeps the vault
+/// cleared. Credited only by [`attested_dm::RegionProgress::record_completion`].
+fn region_progress() -> &'static Mutex<attested_dm::RegionProgress> {
+    static P: std::sync::OnceLock<Mutex<attested_dm::RegionProgress>> = std::sync::OnceLock::new();
+    P.get_or_init(|| Mutex::new(attested_dm::RegionProgress::new(region())))
+}
+
+/// `GET /game/region` — the region graph + the current (verified) progress, for the overworld map.
+///
+/// Read-through crediting: if the CURRENT session is a genuinely Won + `verify()`ed +
+/// `verify_replay()`ed run of a region location's game, that location is credited (idempotent) into
+/// the server-memory progress before the graph is serialized. So fetching this after a real win
+/// shows the node cleared and its gated roads OPEN — travel here is verified-completion-gated, not
+/// merely UI-gated. Additive: it resolves no move and mounts no world.
+pub fn handle_region(gs: &Mutex<GameState>) -> WebResponse {
+    let g = gs.lock().unwrap();
+    let region = region();
+    let mut prog = region_progress().lock().unwrap();
+
+    // Credit the current session if it is a verified win of one of the region's games. A refusal
+    // (unfinished / wrong / tampered) simply leaves progress unchanged — never minted.
+    let session_loc: Option<String> = region
+        .locations
+        .iter()
+        .find(|l| l.game_id == g.world_id)
+        .map(|l| l.id.clone());
+    if let Some(loc_id) = &session_loc {
+        if let Ok(next) = prog.record_completion(region, loc_id, &g.session) {
+            *prog = next;
+        }
+    }
+
+    // The "you are here" node: the current session's region location (if it plays a region game),
+    // else the region start. A render-only progress cursor at that node drives the road highlighting.
+    let current = session_loc.clone().unwrap_or_else(|| region.start.clone());
+    let mut view = prog.clone();
+    view.location = current.clone();
+    let available = view.available_destinations(region);
+
+    let locations: Vec<Value> = region
+        .locations
+        .iter()
+        .map(|l| {
+            json!({
+                "id": l.id,
+                "name": l.name,
+                "blurb": l.blurb,
+                "gameId": l.game_id,
+                // Whether the /vault dungeon picker can open this game (the four registered ones);
+                // venom-deep is wired into the region but not yet in the picker (honest first slice).
+                "registered": find_game(&l.game_id).is_some(),
+                "completed": prog.is_completed(&l.id),
+                "current": l.id == current,
+                "isCurrentSession": Some(&l.id) == session_loc.as_ref(),
+                "available": available.contains(&l.id),
+            })
+        })
+        .collect();
+
+    let edges: Vec<Value> = region
+        .edges
+        .iter()
+        .map(|e| {
+            let open = prog.edge_open(e);
+            let reason = match (&e.gate, open) {
+                (Some(prereq), false) => {
+                    let name = region
+                        .location(prereq)
+                        .map(|l| l.name.clone())
+                        .unwrap_or_else(|| prereq.clone());
+                    json!(format!("clear {name} first"))
+                }
+                _ => Value::Null,
+            };
+            json!({
+                "from": e.from,
+                "to": e.to,
+                "gate": e.gate,
+                "open": open,
+                "locked": !open,
+                "gateReason": reason,
+            })
+        })
+        .collect();
+
+    let resp = json!({
+        "region": { "id": region.id, "name": region.name, "blurb": region.blurb },
+        "start": region.start,
+        "current": current,
+        "clearedCount": prog.cleared_count(),
+        "total": region.locations.len(),
+        "locations": locations,
+        "edges": edges,
+        "progress": { "location": prog.location, "completed": prog.completed.iter().cloned().collect::<Vec<_>>() },
+        "note": "single-player, server-memory progress \u{2014} a location clears only on a genuinely Won + verified session for its game; travel is verified-completion-gated. A fuller overworld persists progress per identity.",
+    });
+    WebResponse::json(resp.to_string().into_bytes())
+}
+
 /// `GET /game/list` — the registry of playable dungeons `[{id, name, blurb, objective}]`.
 pub fn handle_list() -> WebResponse {
     let arr: Vec<Value> = games()
