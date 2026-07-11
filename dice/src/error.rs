@@ -51,6 +51,33 @@ pub enum VerifyError {
     /// this input) fails here, its uniqueness reducing to Module-SIS.
     #[error("LB-VRF proof failed verification (forged output/proof under the committed key)")]
     VrfProofInvalid,
+
+    /// The evidence's VRF key-chain root and beacon parameters do not reproduce the
+    /// request's `game_binding`. The key-chain or beacon was not the one committed
+    /// at genesis (escape hatches #1/#2): a swapped key-chain root, beacon, or
+    /// schedule is rejected.
+    #[error(
+        "genesis binding mismatch: VRF key-chain root / beacon params were not bound at genesis"
+    )]
+    GenesisBindingMismatch,
+
+    /// The hybrid evidence's epoch public key is not the key committed at leaf
+    /// `seq` of the genesis key-chain root — the Merkle membership proof does not
+    /// verify. The server tried to evaluate under a key from a different (or fresh)
+    /// epoch than the one this transition's `seq` binds (escape hatch #1).
+    #[error("epoch key mismatch: the eval key is not the genesis-committed key for this seq")]
+    EpochKeyMismatch,
+
+    /// The beacon round in the evidence is not the schedule-derived round for this
+    /// event's `seq`. The server cannot pick a favourable already-published round
+    /// (escape hatch #2, schedule layer).
+    #[error("beacon round mismatch: round is not the one the schedule binds to this seq")]
+    BeaconRoundMismatch,
+
+    /// The beacon output does not verify against the pinned beacon parameters for
+    /// its round (e.g. it does not chain to the genesis-pinned hash-chain anchor).
+    #[error("beacon output failed verification against the pinned beacon parameters")]
+    BeaconVerifyFailed,
 }
 
 /// A draw was requested outside the bounds fixed by the request.

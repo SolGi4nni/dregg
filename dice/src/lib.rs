@@ -14,8 +14,10 @@
 //! - [`RandomnessSource`] — a pluggable source: a producer ([`RandomnessSource::evidence`])
 //!   and a pure verifier ([`RandomnessSource::seed`]) that re-derives the seed and
 //!   checks the evidence. Implemented: [`CommitReveal`], [`Deterministic`],
-//!   [`MockBeacon`], and the real post-quantum [`ServerVrf`] (the one-time `pqvrf`
-//!   LB-VRF). Designed-but-stubbed (beacon + genesis key-chain required): [`Hybrid`].
+//!   [`MockBeacon`], the real post-quantum [`ServerVrf`] (the one-time `pqvrf`
+//!   LB-VRF), and [`Hybrid`] — a **genesis-committed LB-VRF key-chain** + a real
+//!   verified **schedule-bound hash-chain beacon** ([`HashChainBeacon`]) with
+//!   **timeout finalization**.
 //! - [`DrawStream`] — an indexed XOF draw stream from a verified [`Seed`], with an
 //!   **unbiased, reject-free** bounded mapping ([`DrawStream::draw_bounded`]).
 //! - [`RandomnessRequest`] / [`RandomnessEvidence`] — serde-serializable
@@ -51,36 +53,52 @@
 //!   This is the lattice replacement for the rejected classical ECVRF. The key is
 //!   one-time (Set I); each event uses its own committed key epoch. Output
 //!   pseudorandomness rests on MLWE (assumed).
-//! - [`Hybrid`] (delayed beacon + genesis-committed LB-VRF key-chain) is the
-//!   recommended endpoint that closes unilateral reroll on *both* sides. It still
-//!   requires the beacon + key-chain backend and is stubbed here.
+//! - [`Hybrid`] (genesis-committed LB-VRF key-chain + delayed schedule-bound
+//!   beacon + timeout finalization) is the recommended endpoint that closes
+//!   unilateral reroll on *both* sides. The [`Beacon`] behind it is pluggable; the
+//!   shipped, testable model is [`HashChainBeacon`], a forward-secure hash chain
+//!   whose future rounds are unpredictable at commit (preimage resistance) and
+//!   whose anchor is genesis-pinned. It is honestly *not* a threshold construction
+//!   — it trusts a single operator. A real threshold **drand-BLS** beacon
+//!   ([`BeaconKind::Drand`]) is the production path; its round verification is a BLS
+//!   pairing check against the pinned group key, and wiring the live drand group
+//!   key + round fetch is the one remaining gap for escape hatch #2 (the verifier
+//!   fails closed on the `Drand` variant — see [`verify_beacon_round`]).
 //!
 //! ### The six non-grindability escape hatches, honestly
 //!
-//! The design names six things that make randomness non-grindable. This slice,
-//! with the [`CommitReveal`]/[`Deterministic`] sources, closes some and leaves
-//! others to the VRF/beacon backend:
+//! The design names six things that make randomness non-grindable. With the
+//! [`Hybrid`] source (genesis-committed LB-VRF key-chain + delayed beacon + timeout
+//! finalization):
 //!
-//! | # | Escape hatch | Status in this slice |
+//! | # | Escape hatch | Status |
 //! |---|---|---|
-//! | 1 | Server key bound at genesis | **Follow-up** — [`ServerVrf`] uses a per-event committed key; a genesis-committed key-chain (epoch = seq) is the [`Hybrid`] |
-//! | 2 | Beacon round from a fixed schedule | **Needs beacon** — [`MockBeacon`] is unverified |
+//! | 1 | Server key bound at genesis | **Closed by [`Hybrid`]** — a Merkle root over per-epoch LB-VRF public keys is pinned into `game_binding` ([`Hybrid::genesis_binding`]); epoch = `seq`, and the verifier checks the eval key's membership at leaf `seq` ([`verify_epoch_membership`]). A per-turn key swap fails. ([`ServerVrf`] alone uses the simpler per-event committed key.) |
+//! | 2 | Beacon round from a fixed schedule | **Closed at the schedule layer** — the round is a deterministic function of `seq` ([`BeaconSchedule::expected_round`]), so no favourable-round picking; **beacon-signature caveat:** the shipped [`HashChainBeacon`] verifies rounds against a genesis-pinned anchor, but a real threshold **drand-BLS** beacon is the remaining gap |
 //! | 3 | Player action bound before the beacon deadline | **Closed** — `action_hash` is bound into the `EventId` before the seed exists |
-//! | 4 | VRF one-output-per-input | **Closed by [`ServerVrf`]** — the LB-VRF output is the *unique* value for `(key, input)`; a forged output/proof fails `pqvrf::verify` (uniqueness reduces to Module-SIS) |
-//! | 5 | Timeout finalization so withholding can't reroll | **Open** — the last-revealer abort; needs timeout receipts |
+//! | 4 | VRF one-output-per-input | **Closed by [`ServerVrf`]/[`Hybrid`]** — the LB-VRF output is the *unique* value for `(key, input)`; a forged output/proof fails `pqvrf::verify` (uniqueness reduces to Module-SIS) |
+//! | 5 | Timeout finalization so withholding can't reroll | **Closed by [`Hybrid`]** — past the deadline anyone finalizes from the beacon alone with a recorded `ServerMissed` fault; the seed is determined, not chooseable, so selective abort yields no reroll and no alternative outcome |
 //! | 6 | `event_kind` + `draw_count` bound before the seed exists | **Closed** — both are in the `EventId`; the transcript commitment enforces them |
 //!
-//! So the honest summary: **CommitReveal closes hatches 3 and 6** and prevents
-//! unilateral *choice*; **[`ServerVrf`] additionally closes hatch 4** — the output
-//! is not *chosen* by the server but is the LB-VRF's unique value for the committed
-//! key and the event id, and a forgery is caught by `pqvrf::verify`. Hatches 1, 2,
-//! and 5 — a genesis-committed key-chain, a real verified beacon, and
-//! timeout-no-reroll — remain the delayed-beacon + key-chain [`Hybrid`] follow-up.
+//! Honest summary: **[`CommitReveal`] closes 3 and 6** and prevents unilateral
+//! *choice* but leaves selective abort open. **[`ServerVrf`] closes 4.**
+//! **[`Hybrid`] additionally closes 1 and 5** outright and closes **2** at the
+//! schedule layer, with the one honest caveat that the shipped beacon is a
+//! forward-secure hash chain (single operator), not a threshold drand-BLS beacon —
+//! that wiring is the remaining production gap. Pseudorandomness of the LB-VRF
+//! output rests on MLWE (assumed).
 //!
 //! ## Follow-ups (out of scope here)
 //!
-//! - The [`Hybrid`] delayed-beacon seed with a genesis-committed LB-VRF key-chain
-//!   (epoch = seq) and timeout receipts — closing hatches 1, 2, and 5.
+//! - `attested-dm` wiring of the [`Hybrid`] source into the transition-receipt
+//!   verifier (its `EvidenceKind::Hybrid` dispatch arm) — a parallel lane.
+//! - A real **drand-BLS** [`Beacon`] impl for [`BeaconKind::Drand`] (a BLS pairing
+//!   check against the live drand group public key, plus round fetch) — the one
+//!   remaining gap for escape hatch #2.
+//! - Enforcing the reveal-deadline-before-beacon-maturity ordering at the receipt
+//!   layer (this crate encodes the round as a future, schedule-bound round and
+//!   records the `ServerMissed` fault; the wall-clock deadline is a receipt-layer
+//!   obligation).
 
 mod util;
 
@@ -94,10 +112,12 @@ pub use draw::{DOMAIN_DRAW, DOMAIN_TRANSCRIPT, DrawStream, Seed};
 pub use error::{DrawError, VerifyError};
 pub use event::{DOMAIN_EVENT_ID, EventId};
 pub use request::{
-    DERIVATION_VERSION, DOMAIN_REQUEST_COMMITMENT, EvidenceKind, RandomnessEvidence,
-    RandomnessRequest,
+    BeaconEvidence, BeaconKind, BeaconParams, BeaconSchedule, DERIVATION_VERSION,
+    DOMAIN_REQUEST_COMMITMENT, EvidenceKind, Finalization, RandomnessEvidence, RandomnessRequest,
 };
 pub use source::{
-    CommitReveal, DOMAIN_COMMIT, DOMAIN_LB_VRF_KEY_COMMITMENT, DOMAIN_SEED, Deterministic, Hybrid,
-    MockBeacon, RandomnessSource, ServerVrf, VrfEvalError,
+    Beacon, CommitReveal, DOMAIN_BEACON_CHAIN, DOMAIN_COMMIT, DOMAIN_HYBRID_GENESIS,
+    DOMAIN_HYBRID_MIX, DOMAIN_KEYCHAIN_LEAF, DOMAIN_KEYCHAIN_NODE, DOMAIN_LB_VRF_KEY_COMMITMENT,
+    DOMAIN_SEED, Deterministic, FinalizeMode, HashChainBeacon, Hybrid, KeyChain, MockBeacon,
+    RandomnessSource, ServerVrf, VrfEvalError, verify_beacon_round, verify_epoch_membership,
 };

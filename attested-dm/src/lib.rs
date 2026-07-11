@@ -416,6 +416,15 @@ fn encode_evidence(h: &mut blake3::Hasher, ev: &RandomnessEvidence) {
             h.update(&(proof.len() as u64).to_le_bytes());
             h.update(proof);
         }
+        EvidenceKind::Hybrid { .. } => {
+            // The hybrid variant nests beacon params, an epoch (Merkle) proof, and the LB-VRF
+            // opening. Bind its full canonical serialization so ANY tampered field changes the
+            // receipt (tag-separated from the other variants; EvidenceKind is Serialize).
+            h.update(&[4u8]);
+            let bytes = serde_json::to_vec(&ev.source).expect("EvidenceKind is Serialize");
+            h.update(&(bytes.len() as u64).to_le_bytes());
+            h.update(&bytes);
+        }
     }
     h.update(&ev.draw_transcript_commitment);
 }

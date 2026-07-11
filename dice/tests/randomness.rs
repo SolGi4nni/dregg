@@ -8,9 +8,10 @@
 //! below.
 
 use dregg_dice::{
-    CommitReveal, Deterministic, DrawError, DrawStream, EventId, EvidenceKind, Hybrid, MockBeacon,
-    RandomnessEvidence, RandomnessRequest, RandomnessSource, Seed, ServerVrf, VerifyError,
-    VrfEvalError,
+    Beacon, BeaconKind, BeaconParams, BeaconSchedule, CommitReveal, Deterministic, DrawError,
+    DrawStream, EventId, EvidenceKind, Finalization, FinalizeMode, HashChainBeacon, Hybrid,
+    KeyChain, MockBeacon, RandomnessEvidence, RandomnessRequest, RandomnessSource, Seed, ServerVrf,
+    VerifyError, VrfEvalError, verify_beacon_round, verify_epoch_membership,
 };
 
 fn sample_request(draw_count: u32) -> RandomnessRequest {
@@ -348,23 +349,442 @@ fn mock_beacon_round_trip() {
     );
 }
 
-#[test]
-fn hybrid_stub_fails_closed() {
-    // The Hybrid (delayed beacon + genesis key-chain) remains a documented follow-up.
-    let req = sample_request(1);
-    let dummy = RandomnessEvidence {
-        derivation_version: dregg_dice::DERIVATION_VERSION,
-        source: EvidenceKind::LbVrf {
-            public_key: vec![1, 2, 3],
-            output: vec![0; 128],
-            proof: vec![0; 16],
+// ── Hybrid: genesis LB-VRF key-chain ∧ delayed schedule-bound beacon, with
+//    timeout finalization. Small epoch/chain to keep the lattice keygen fast. ──
+
+/// Small key-chain so `epoch = seq` keygen stays fast in tests.
+const NUM_EPOCHS: usize = 8;
+
+/// A hybrid request at a small `seq` (so the key-chain need only cover a few
+/// epochs) with the beacon schedule's round comfortably inside the chain.
+fn hybrid_base_request(draw_count: u32) -> RandomnessRequest {
+    let mut req = sample_request(draw_count);
+    req.seq = 5; // epoch = 5 < NUM_EPOCHS; round = base(5) + 5*stride(1) = 10
+    req
+}
+
+/// A hash-chain beacon over `chain_root`, schedule `round = 5 + seq*1`.
+fn make_beacon(chain_root: [u8; 32]) -> HashChainBeacon {
+    HashChainBeacon::new(
+        chain_root,
+        200,
+        b"hashchain/test".to_vec(),
+        BeaconSchedule {
+            base_round: 5,
+            stride: 1,
         },
-        draw_transcript_commitment: [0; 32],
+    )
+}
+
+/// A request whose `game_binding` pins the key-chain root + beacon params at genesis.
+fn hybrid_request(kc_root: &[u8; 32], params: &BeaconParams, draw_count: u32) -> RandomnessRequest {
+    let mut req = hybrid_base_request(draw_count);
+    req.game_binding = Hybrid::genesis_binding(kc_root, params);
+    req
+}
+
+#[test]
+fn hybrid_round_trip_provided() {
+    let kc = KeyChain::from_master_seed(&[0xA1; 32], NUM_EPOCHS);
+    let beacon = make_beacon([0x02; 32]);
+    let params = beacon.params();
+    let req = hybrid_request(&kc.root(), &params, 3);
+
+    let hybrid = Hybrid::new(kc, Box::new(beacon));
+    let ev = hybrid.evidence(&req);
+
+    match &ev.source {
+        EvidenceKind::Hybrid {
+            finalization,
+            vrf_output,
+            vrf_proof,
+            epoch_proof,
+            beacon,
+            ..
+        } => {
+            assert_eq!(*finalization, Finalization::ServerProvided);
+            assert!(!vrf_output.is_empty() && !vrf_proof.is_empty());
+            assert_eq!(epoch_proof.len(), 3, "Merkle depth log2(8) = 3");
+            // The round is schedule-bound: base(5) + seq(5)*stride(1) = 10.
+            assert_eq!(beacon.round, 10);
+        }
+        other => panic!("expected Hybrid evidence, got {other:?}"),
+    }
+
+    let seed = Hybrid::seed(&req, &ev).expect("honest hybrid evidence verifies");
+    assert_eq!(
+        DrawStream::new(seed, req.draw_count).transcript_commitment(),
+        ev.draw_transcript_commitment
+    );
+}
+
+#[test]
+fn hybrid_seed_depends_on_both_vrf_and_beacon() {
+    // Baseline: key-chain A, beacon X.
+    let kc_a = KeyChain::from_master_seed(&[0x10; 32], NUM_EPOCHS);
+    let beacon_x = make_beacon([0x20; 32]);
+    let req_ax = hybrid_request(&kc_a.root(), &beacon_x.params(), 1);
+    let seed_ax = Hybrid::seed(
+        &req_ax,
+        &Hybrid::new(kc_a, Box::new(beacon_x)).evidence(&req_ax),
+    )
+    .expect("verifies");
+
+    // Change ONLY the beacon (different chain root ⇒ different round output).
+    let kc_a2 = KeyChain::from_master_seed(&[0x10; 32], NUM_EPOCHS);
+    let beacon_y = make_beacon([0x21; 32]);
+    let req_ay = hybrid_request(&kc_a2.root(), &beacon_y.params(), 1);
+    let seed_ay = Hybrid::seed(
+        &req_ay,
+        &Hybrid::new(kc_a2, Box::new(beacon_y)).evidence(&req_ay),
+    )
+    .expect("verifies");
+    assert_ne!(
+        seed_ax.as_bytes(),
+        seed_ay.as_bytes(),
+        "changing the beacon must change the hybrid seed"
+    );
+
+    // Change ONLY the VRF key-chain (different master ⇒ different epoch key/output).
+    let kc_b = KeyChain::from_master_seed(&[0x11; 32], NUM_EPOCHS);
+    let beacon_x2 = make_beacon([0x20; 32]);
+    let req_bx = hybrid_request(&kc_b.root(), &beacon_x2.params(), 1);
+    let seed_bx = Hybrid::seed(
+        &req_bx,
+        &Hybrid::new(kc_b, Box::new(beacon_x2)).evidence(&req_bx),
+    )
+    .expect("verifies");
+    assert_ne!(
+        seed_ax.as_bytes(),
+        seed_bx.as_bytes(),
+        "changing the VRF key-chain must change the hybrid seed"
+    );
+
+    // And, holding the event fixed, the VRF half genuinely contributes to the mix:
+    // a beacon-only (ServerMissed) finalization of the SAME request differs from the
+    // ServerProvided seed (which additionally folds the VRF output).
+    let kc_c = KeyChain::from_master_seed(&[0x10; 32], NUM_EPOCHS);
+    let beacon_z = make_beacon([0x20; 32]);
+    let req = hybrid_request(&kc_c.root(), &beacon_z.params(), 1);
+    let provided =
+        Hybrid::seed(&req, &Hybrid::new(kc_c, Box::new(beacon_z)).evidence(&req)).unwrap();
+    let kc_c2 = KeyChain::from_master_seed(&[0x10; 32], NUM_EPOCHS);
+    let beacon_z2 = make_beacon([0x20; 32]);
+    let missed = Hybrid::seed(
+        &req,
+        &Hybrid::new(kc_c2, Box::new(beacon_z2))
+            .with_mode(FinalizeMode::SimulateServerMissed)
+            .evidence(&req),
+    )
+    .unwrap();
+    assert_ne!(
+        provided.as_bytes(),
+        missed.as_bytes(),
+        "same request, same beacon: provided (VRF-folded) ≠ beacon-only → the VRF half is load-bearing"
+    );
+}
+
+#[test]
+fn hybrid_wrong_beacon_round_is_rejected() {
+    // Hatch #2 (schedule layer): the server cannot substitute a favourable,
+    // already-published round — even one whose output chain-verifies.
+    let kc = KeyChain::from_master_seed(&[0x30; 32], NUM_EPOCHS);
+    let beacon = make_beacon([0x31; 32]);
+    let params = beacon.params();
+    let req = hybrid_request(&kc.root(), &params, 1);
+    let mut ev = Hybrid::new(kc, Box::new(beacon)).evidence(&req);
+
+    // Reschedule to round+1 and supply the CORRECT chain output for that other round
+    // (so verify_beacon_round would pass) — the schedule binding still rejects it.
+    let honest = make_beacon([0x31; 32]);
+    if let EvidenceKind::Hybrid { beacon, .. } = &mut ev.source {
+        let bad_round = beacon.round + 1;
+        beacon.round = bad_round;
+        beacon.output = honest.round_output(bad_round);
+        // params/anchor unchanged ⇒ genesis binding still matches.
+    }
+    assert_eq!(
+        Hybrid::seed(&req, &ev),
+        Err(VerifyError::BeaconRoundMismatch),
+        "a rescheduled beacon round must be rejected even if it chain-verifies"
+    );
+}
+
+#[test]
+fn hybrid_wrong_epoch_key_is_rejected() {
+    // Hatch #1: the eval key is the genesis-committed key for THIS transition's
+    // epoch (= seq). A server that evaluates a DIFFERENT epoch's key (hoping for a
+    // favourable output) fails the Merkle membership check at leaf `seq`.
+    let kc = KeyChain::from_master_seed(&[0x40; 32], NUM_EPOCHS);
+    let beacon = make_beacon([0x41; 32]);
+    let params = beacon.params();
+    let req = hybrid_request(&kc.root(), &params, 1); // seq = 5
+
+    // Read a DIFFERENT epoch's (epoch 2) committed key + proof from an identical
+    // (deterministic) key-chain, then move the chain into the producer.
+    let kc_read = KeyChain::from_master_seed(&[0x40; 32], NUM_EPOCHS);
+    let wrong_pk = kc_read.public_key_bytes(2);
+    let wrong_proof = kc_read.epoch_proof(2);
+
+    let mut ev = Hybrid::new(kc, Box::new(beacon)).evidence(&req);
+    // Substitute epoch-2's key + membership path while the request still binds seq=5.
+    if let EvidenceKind::Hybrid {
+        vrf_public_key,
+        epoch_proof,
+        ..
+    } = &mut ev.source
+    {
+        *vrf_public_key = wrong_pk;
+        *epoch_proof = wrong_proof;
+    }
+    assert_eq!(
+        Hybrid::seed(&req, &ev),
+        Err(VerifyError::EpochKeyMismatch),
+        "a key from the wrong epoch must be rejected by the genesis key-chain membership"
+    );
+}
+
+#[test]
+fn hybrid_swapped_keychain_root_fails_genesis_binding() {
+    // Hatch #1 (genesis layer): a server that commits a fresh, favourable key-chain
+    // root at turn time fails, because the request's game_binding pins the original.
+    let kc = KeyChain::from_master_seed(&[0x50; 32], NUM_EPOCHS);
+    let beacon = make_beacon([0x51; 32]);
+    let params = beacon.params();
+    let req = hybrid_request(&kc.root(), &params, 1); // binds kc's root
+
+    // The attacker builds a whole different key-chain and produces valid evidence
+    // under it (its own root in the evidence) — but the genesis binding rejects it.
+    let attacker_kc = KeyChain::from_master_seed(&[0x99; 32], NUM_EPOCHS);
+    let attacker_beacon = make_beacon([0x51; 32]);
+    let ev = Hybrid::new(attacker_kc, Box::new(attacker_beacon)).evidence(&req);
+    assert_eq!(
+        Hybrid::seed(&req, &ev),
+        Err(VerifyError::GenesisBindingMismatch),
+        "a per-turn key-chain-root swap must be rejected by the genesis binding"
+    );
+}
+
+#[test]
+fn hybrid_forged_vrf_proof_is_rejected() {
+    let kc = KeyChain::from_master_seed(&[0x60; 32], NUM_EPOCHS);
+    let beacon = make_beacon([0x61; 32]);
+    let params = beacon.params();
+    let req = hybrid_request(&kc.root(), &params, 1);
+    let mut ev = Hybrid::new(kc, Box::new(beacon)).evidence(&req);
+    assert!(
+        Hybrid::seed(&req, &ev).is_ok(),
+        "honest hybrid evidence verifies first"
+    );
+
+    if let EvidenceKind::Hybrid { vrf_proof, .. } = &mut ev.source {
+        vrf_proof[100] ^= 0x01; // flip a byte in the LB-VRF response region
+    }
+    let r = Hybrid::seed(&req, &ev);
+    assert!(
+        matches!(
+            r,
+            Err(VerifyError::VrfProofInvalid) | Err(VerifyError::MalformedVrfEvidence(_))
+        ),
+        "a forged hybrid LB-VRF proof must be rejected, got {r:?}"
+    );
+}
+
+#[test]
+fn hybrid_timeout_finalizes_without_reroll() {
+    // THE ANTI-ABORT PROPERTY (hatch #5). The server withholds its LB-VRF proof past
+    // the deadline. Anyone finalizes from the beacon alone (ServerMissed). The
+    // outcome is DETERMINED — not chooseable — and there is NO reroll.
+    let kc = KeyChain::from_master_seed(&[0x70; 32], NUM_EPOCHS);
+    let beacon = make_beacon([0x71; 32]);
+    let params = beacon.params();
+    let req = hybrid_request(&kc.root(), &params, 2);
+
+    // A would-be finalizer produces the timeout evidence (no VRF proof).
+    let missed_ev = Hybrid::new(kc, Box::new(beacon))
+        .with_mode(FinalizeMode::SimulateServerMissed)
+        .evidence(&req);
+    match &missed_ev.source {
+        EvidenceKind::Hybrid {
+            finalization,
+            vrf_output,
+            vrf_proof,
+            epoch_proof,
+            ..
+        } => {
+            assert_eq!(
+                *finalization,
+                Finalization::ServerMissed,
+                "fault is recorded"
+            );
+            assert!(vrf_output.is_empty(), "no VRF output on the timeout path");
+            assert!(vrf_proof.is_empty(), "no VRF proof on the timeout path");
+            assert!(epoch_proof.is_empty(), "no epoch proof on the timeout path");
+        }
+        other => panic!("expected Hybrid evidence, got {other:?}"),
+    }
+
+    // It STILL finalizes to a determined seed.
+    let missed_seed = Hybrid::seed(&req, &missed_ev).expect("timeout path finalizes");
+
+    // NO REROLL / NO ALTERNATIVE: the missed seed is a pure function of the beacon
+    // round output + event id. A withholding server cannot bias it — stuffing
+    // arbitrary junk into the (ignored) VRF fields yields the SAME finalized seed.
+    let mut junk_ev = missed_ev.clone();
+    if let EvidenceKind::Hybrid {
+        vrf_public_key,
+        vrf_output,
+        vrf_proof,
+        epoch_proof,
+        ..
+    } = &mut junk_ev.source
+    {
+        *vrf_public_key = vec![0xaa; 4096];
+        *vrf_output = vec![0xbb; 128];
+        *vrf_proof = vec![0xcc; 9472];
+        *epoch_proof = vec![[0xdd; 32]; 3];
+    }
+    let junk_seed = Hybrid::seed(&req, &junk_ev).expect("timeout path still finalizes");
+    assert_eq!(
+        missed_seed.as_bytes(),
+        junk_seed.as_bytes(),
+        "the server-missed outcome is fixed — no reroll, no alternative"
+    );
+
+    // Independent finalizers agree (deterministic in public data).
+    let kc2 = KeyChain::from_master_seed(&[0x70; 32], NUM_EPOCHS);
+    let beacon2 = make_beacon([0x71; 32]);
+    let req2 = hybrid_request(&kc2.root(), &beacon2.params(), 2);
+    assert_eq!(req.game_binding, req2.game_binding);
+    let missed_seed2 = Hybrid::seed(
+        &req2,
+        &Hybrid::new(kc2, Box::new(beacon2))
+            .with_mode(FinalizeMode::SimulateServerMissed)
+            .evidence(&req2),
+    )
+    .expect("timeout path finalizes");
+    assert_eq!(
+        missed_seed.as_bytes(),
+        missed_seed2.as_bytes(),
+        "any finalizer computes the same server-missed seed"
+    );
+
+    // The provided outcome (had the server acted) is a distinct determined seed:
+    // the paths are marker-separated and the server, withholding before the beacon
+    // matured, chose neither — both are functions of the unpredictable beacon.
+    let kc3 = KeyChain::from_master_seed(&[0x70; 32], NUM_EPOCHS);
+    let beacon3 = make_beacon([0x71; 32]);
+    let req3 = hybrid_request(&kc3.root(), &beacon3.params(), 2);
+    let provided_seed =
+        Hybrid::seed(&req3, &Hybrid::new(kc3, Box::new(beacon3)).evidence(&req3)).unwrap();
+    assert_ne!(
+        missed_seed.as_bytes(),
+        provided_seed.as_bytes(),
+        "provided vs missed are distinct determined outcomes (marker-separated)"
+    );
+}
+
+// ── HashChainBeacon + verify_beacon_round: forward-secure, pure verification. ──
+
+#[test]
+fn hash_chain_beacon_round_verifies_and_rejects_wrong_output() {
+    let schedule = BeaconSchedule {
+        base_round: 10,
+        stride: 1,
     };
-    assert!(matches!(
-        Hybrid::seed(&req, &dummy),
-        Err(VerifyError::BackendUnavailable(_))
-    ));
+    let beacon = HashChainBeacon::new(
+        [0x01; 32],
+        100,
+        b"hashchain/test".to_vec(),
+        schedule.clone(),
+    );
+    let params = beacon.params();
+
+    let round = schedule.expected_round(5); // 15
+    let output = beacon.round_output(round);
+    verify_beacon_round(&params, round, &output).expect("an honest round verifies");
+
+    // A wrong output (does not chain to the anchor) is rejected.
+    let mut bad = output;
+    bad[0] ^= 0x01;
+    assert_eq!(
+        verify_beacon_round(&params, round, &bad),
+        Err(VerifyError::BeaconVerifyFailed),
+        "a wrong beacon output must be rejected"
+    );
+    // The right output at the WRONG round is rejected (H^round no longer hits anchor).
+    assert_eq!(
+        verify_beacon_round(&params, round + 1, &output),
+        Err(VerifyError::BeaconVerifyFailed)
+    );
+    // Round 0 and past the chain length are rejected.
+    assert_eq!(
+        verify_beacon_round(&params, 0, &output),
+        Err(VerifyError::BeaconVerifyFailed)
+    );
+    assert_eq!(
+        verify_beacon_round(&params, 101, &output),
+        Err(VerifyError::BeaconVerifyFailed)
+    );
+}
+
+#[test]
+fn drand_beacon_verification_is_the_remaining_gap() {
+    // HONEST GAP: the shipped beacon is a hash chain (single operator). A real
+    // threshold drand-BLS beacon's round verification (a BLS pairing check vs the
+    // pinned group key) is not wired — the `Drand` variant fails closed. This
+    // documents hatch #2's remaining production work.
+    let params = BeaconParams {
+        beacon_id: b"drand/quicknet".to_vec(),
+        kind: BeaconKind::Drand {
+            group_public_key: vec![0u8; 48],
+            scheme: "bls-unchained-g1-rfc9380".to_string(),
+        },
+        schedule: BeaconSchedule {
+            base_round: 1,
+            stride: 1,
+        },
+    };
+    assert!(
+        matches!(
+            verify_beacon_round(&params, 1, &[0u8; 32]),
+            Err(VerifyError::BackendUnavailable(_))
+        ),
+        "real drand-BLS verification is the remaining gap for hatch #2"
+    );
+}
+
+#[test]
+fn keychain_membership_verifies_and_rejects_wrong_epoch() {
+    // The genesis key-chain (hatch #1) at the membership layer: the committed leaf
+    // for an epoch verifies, and presenting it at a different epoch index fails.
+    let kc = KeyChain::from_master_seed(&[0x80; 32], NUM_EPOCHS);
+    let root = kc.root();
+
+    let pk3 = kc.public_key_bytes(3);
+    let proof3 = kc.epoch_proof(3);
+    assert!(
+        verify_epoch_membership(&root, 3, &pk3, &proof3),
+        "the committed epoch-3 key verifies at leaf 3"
+    );
+    // Epoch-3's key presented at leaf 4 (wrong epoch) is rejected.
+    assert!(
+        !verify_epoch_membership(&root, 4, &pk3, &proof3),
+        "the epoch-3 key must not verify as epoch 4"
+    );
+    // A tampered public key is rejected at its own leaf.
+    let mut pk3_bad = pk3.clone();
+    pk3_bad[0] ^= 0x01;
+    assert!(
+        !verify_epoch_membership(&root, 3, &pk3_bad, &proof3),
+        "a tampered epoch key is rejected"
+    );
+    // A different chain's root does not accept this key.
+    let other = KeyChain::from_master_seed(&[0x81; 32], NUM_EPOCHS);
+    assert!(
+        !verify_epoch_membership(&other.root(), 3, &pk3, &proof3),
+        "membership is against the genesis-committed root"
+    );
 }
 
 // ── ServerVrf: the REAL post-quantum LB-VRF source (pqvrf, Set I). ──

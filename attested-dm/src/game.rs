@@ -44,7 +44,7 @@
 use std::collections::{BTreeMap, BTreeSet};
 
 use dregg_dice::{
-    CommitReveal, Deterministic, DrawStream, EvidenceKind, MockBeacon, RandomnessEvidence,
+    CommitReveal, Deterministic, DrawStream, EvidenceKind, Hybrid, MockBeacon, RandomnessEvidence,
     RandomnessRequest, RandomnessSource, Seed, ServerVrf, VerifyError,
 };
 
@@ -2625,6 +2625,7 @@ pub fn verify_seed(
         EvidenceKind::CommitReveal { .. } => CommitReveal::seed(request, evidence),
         EvidenceKind::Beacon { .. } => MockBeacon::seed(request, evidence),
         EvidenceKind::LbVrf { .. } => ServerVrf::seed(request, evidence),
+        EvidenceKind::Hybrid { .. } => Hybrid::seed(request, evidence),
     }
 }
 

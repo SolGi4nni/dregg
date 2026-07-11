@@ -63,13 +63,107 @@ impl RandomnessRequest {
     }
 }
 
+/// A public-randomness beacon's genesis-pinned parameters.
+///
+/// These are committed **before** any draw (folded into
+/// [`RandomnessRequest::game_binding`] via
+/// [`Hybrid::genesis_binding`](crate::Hybrid::genesis_binding)), so the server
+/// cannot swap in a different beacon, a favourable chain, or a favourable
+/// schedule after the fact. The pure verifier re-derives the genesis binding from
+/// these and rejects a mismatch.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeaconParams {
+    /// Beacon identity (e.g. `b"hashchain/test"` or `b"drand/quicknet"`).
+    pub beacon_id: Vec<u8>,
+    /// How a round's output is verified.
+    pub kind: BeaconKind,
+    /// How the round used for an event is derived from its sequence number.
+    pub schedule: BeaconSchedule,
+}
+
+/// How a beacon round's output is verified.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum BeaconKind {
+    /// A forward-secure hash-chain beacon (the shipped, testable model).
+    ///
+    /// `anchor = H^length(root)` is published at genesis. Round `R` reveals
+    /// `H^(length-R)(root)`; a verifier checks `H^R(output) == anchor`. Preimage
+    /// resistance makes a future round's output unpredictable at commit time, and
+    /// the anchor is genesis-pinned. This is **not** a threshold-BLS beacon — it
+    /// trusts a single operator not to precompute the chain against a target
+    /// outcome; a real [`Drand`](BeaconKind::Drand) beacon is the production path.
+    HashChain {
+        /// `H^length(root)` — pinned at genesis.
+        anchor: [u8; 32],
+        /// Chain length; legal rounds are `1..=length`.
+        length: u64,
+    },
+    /// A drand-style threshold-BLS beacon. Shape only: verifying a round is a BLS
+    /// pairing check of the round signature against the pinned group public key
+    /// under drand's ciphersuite. Wiring the live drand group key + round fetch is
+    /// the remaining gap for escape hatch #2; the verifier fails closed here.
+    Drand {
+        /// The drand chain's group public key (BLS12-381).
+        group_public_key: Vec<u8>,
+        /// The drand ciphersuite / scheme identifier.
+        scheme: String,
+    },
+}
+
+/// How the beacon round for an event is derived from its sequence number.
+///
+/// The round is a deterministic function of the receipt `seq`, so the server
+/// cannot pick a favourable already-published round (escape hatch #2, schedule
+/// layer): `round = base_round + seq * stride`.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeaconSchedule {
+    /// Round used for `seq == 0`.
+    pub base_round: u64,
+    /// Rounds advanced per unit of `seq`.
+    pub stride: u64,
+}
+
+impl BeaconSchedule {
+    /// The beacon round bound to `seq`.
+    pub fn expected_round(&self, seq: u64) -> u64 {
+        self.base_round
+            .saturating_add(seq.saturating_mul(self.stride))
+    }
+}
+
+/// The beacon opening recorded in hybrid evidence: which params, which round, and
+/// the claimed round output.
+#[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub struct BeaconEvidence {
+    /// The genesis-pinned beacon parameters (re-checked against `game_binding`).
+    pub params: BeaconParams,
+    /// The schedule-bound round this event draws from.
+    pub round: u64,
+    /// The beacon's output for `round`.
+    pub output: [u8; 32],
+}
+
+/// Which side of the hybrid finalization produced this evidence.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum Finalization {
+    /// The normal path: the server published its LB-VRF proof; the seed mixes the
+    /// VRF output with the beacon output.
+    ServerProvided,
+    /// The timeout path: the server withheld its LB-VRF proof past the deadline, so
+    /// anyone finalized from the beacon alone. The seed is determined (no reroll)
+    /// and the server-missed fault is recorded here for all to see.
+    ServerMissed,
+}
+
 /// Source-specific evidence needed to re-derive and check a seed.
 ///
 /// Each variant carries exactly what its verifier needs. This slice fully
 /// implements [`Deterministic`](EvidenceKind::Deterministic),
 /// [`CommitReveal`](EvidenceKind::CommitReveal), a mock
-/// [`Beacon`](EvidenceKind::Beacon), and the real post-quantum
-/// [`LbVrf`](EvidenceKind::LbVrf) (backed by the `pqvrf` LB-VRF).
+/// [`Beacon`](EvidenceKind::Beacon), the real post-quantum
+/// [`LbVrf`](EvidenceKind::LbVrf) (backed by the `pqvrf` LB-VRF), and the
+/// [`Hybrid`](EvidenceKind::Hybrid) endpoint (genesis-committed LB-VRF key-chain +
+/// delayed schedule-bound beacon, with a timeout-finalization marker).
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum EvidenceKind {
     /// A test/offline deterministic source keyed on a caller-supplied context.
@@ -112,6 +206,35 @@ pub enum EvidenceKind {
         output: Vec<u8>,
         /// The LB-VRF proof `(z, c)` (canonical LE bytes), re-checked by `pqvrf::verify`.
         proof: Vec<u8>,
+    },
+    /// The hybrid endpoint: a **genesis-committed LB-VRF key-chain** mixed with a
+    /// **delayed, schedule-bound public beacon**, with a timeout-finalization marker.
+    ///
+    /// Normal path (`ServerProvided`): the seed mixes the epoch's LB-VRF output over
+    /// the event id with the schedule-bound beacon round output. The epoch key
+    /// (epoch = `seq`) is proven to be the one committed in the genesis key-chain
+    /// root (`epoch_proof`), so a per-turn key swap is rejected (hatch #1). Timeout
+    /// path (`ServerMissed`): the VRF fields are ignored and the seed is determined
+    /// by the beacon alone — a withheld proof yields no reroll and the fault is
+    /// visible (hatch #5).
+    Hybrid {
+        /// Which finalization produced this evidence.
+        finalization: Finalization,
+        /// The genesis-committed LB-VRF key-chain Merkle root (pinned in
+        /// `game_binding` together with the beacon params).
+        key_chain_root: [u8; 32],
+        /// The epoch (`= seq`) LB-VRF public key (canonical LE bytes; empty on the
+        /// `ServerMissed` path, where it is ignored).
+        vrf_public_key: Vec<u8>,
+        /// The epoch LB-VRF output (canonical LE bytes; empty on `ServerMissed`).
+        vrf_output: Vec<u8>,
+        /// The epoch LB-VRF proof (canonical LE bytes; empty on `ServerMissed`).
+        vrf_proof: Vec<u8>,
+        /// Merkle membership path proving `vrf_public_key` is the key committed at
+        /// leaf `seq` of `key_chain_root` (empty on `ServerMissed`).
+        epoch_proof: Vec<[u8; 32]>,
+        /// The delayed-beacon opening.
+        beacon: BeaconEvidence,
     },
 }
 
