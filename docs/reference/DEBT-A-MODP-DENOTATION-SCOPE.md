@@ -283,3 +283,34 @@ MEASURED (grep-heuristic, needs empirical confirmation):
 the def change, targeted-build DescriptorIR2 + AirChecksSatisfied + one descriptor file, count actual breakage.
 If confirmed, this is TRACTABLE, not a slog. If the constructors do NOT auto-survive (brittle `= 0` usage), the
 scope is bigger — the build will say.
+
+## ⊕⊕⊕ PART IV RECONCILIATION (2026-07-11): the authors KNEW the ℤ→field gap — but only closed HALF of it
+`Dregg2/Exec/CircuitEmit.lean:848` PART IV: the authors explicitly address the `ℤ → BabyBear` gap and claim "the
+Lean circuit is sound over ℤ (no overflow)", closed via RANGE CHECKS (`RangeSpec`/`rangeCheck`, `2^k ≤ p`, k=30).
+This addresses SINGLE-VALUE WRAPPING (a balance near p reducing to a small value — value-forging). BUT it does NOT
+close the MULTI-TERM ADDITIVE RESIDUAL case, VERIFIED arithmetically: since `p < 2^31 = 2·2^30`, two range-checked
+(< 2^30) values can SUM to exactly p. The deployed accumulator gate `var12 − var32 + var0` at
+`(1073741823, 0, 939524098)` — ALL < 2^30 — is field-satisfied (≡ 0 mod p) but has ℤ residual = p ≠ 0. So
+`holdsVm`-over-ℤ REJECTS a field-valid range-checked assignment.
+⇒ The authors' "sound over ℤ" is correct for value-forging (range checks work) but INCORRECT for the residual
+denotation. The mod-p `holdsVm`/`holdsAt` fix COMPLETES PART IV's partial field-soundness: range checks keep
+VALUES canonical; mod-p makes the RESIDUAL field-faithful. Both needed. The finding survives the authors' defense.
+
+## ✅ SLICE-1 CALIBRATION (empirical, 2026-07-11): tractable per-file, but IN-PLACE is red-until-big-bang
+Made the mod-p def change (`holdsVm`/`WindowConstraint.holdsAt`: `= 0` → `≡ 0 [ZMOD 2013265921]`) + the 6 reduction
+lemmas. Codex migrated `EffectVmEmit.lean` (the def-heavy file) to GREEN (I gated: 0 sorries, real proofs, my own
+build 1512 jobs). PER-FILE COST (the def file, likely the WORST case): **6 repairs = 4 mechanical (reduction/`rfl`)
++ 1 real re-proof (`selectorGate_holds_iff`, prime-divides-product + canonicality + omega) + 1 OVER-STRONG TOOTH**.
+- ★ REAL FINDING: `selectorGate_rejects_wrong_selector` was FALSE mod p (a spurious selector `sel[s] = p+1` has
+  residual `-p ≡ 0`, so the ℤ tooth over-accepted... over-REJECTED). Repaired HONESTLY with an EXPLICIT canonicality
+  hypothesis `0 ≤ env.loc s < p` (the REAL deployed invariant — BabyBear cells are canonical), NOT dropped/weakened.
+- ★ NICE CONNECTION: the canonicality hypotheses the mod-p teeth need are EXACTLY what PART IV's range checks emit.
+  So the fix is coherent: mod-p residual + PART IV canonicality = full field faithfulness.
+STRATEGY PROBLEM the calibration exposed: the IN-PLACE (type-transparent) change makes HEAD RED for ~137 downstream
+unfolders until ALL are migrated (a big-bang). On the shared LOCAL tree with sibling agent lanes, a multi-hour
+red-HEAD window is a clobber hazard. Options: (i) IN-PLACE big-bang in a coordinated window (siblings quiet →
+low-risk NOW); (ii) ADDITIVE-A2 (HEAD always green, but re-point the ~987 opaque users too — MORE work); (iii) a
+dedicated local branch for the migration, merge when green (Lean stays local per memory, so a branch is clean).
+CALIBRATED TOTAL: ~137 unfolder files × (mostly mechanical + occasional canonicality-conditioning) — real but
+bounded; NOT the 987 opaque users (free under type-transparency). Reverted the scout to restore green pending the
+go/no-go; the calibration is captured here.
