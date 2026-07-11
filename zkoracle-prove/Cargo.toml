@@ -19,6 +19,10 @@ dregg-circuit = { path = "../circuit" }
 # curve/lib deco-prove's notary carrier uses).
 ed25519-dalek = { version = "2", features = ["std"] }
 sha2 = { workspace = true }
+# SigV4 (the Bedrock auth leg) — hand-rolled HMAC-SHA256 over the workspace hmac (0.12), NOT
+# the aws-sigv4 crate whose transitive hmac ^0.13 conflicts with lockstitch (see
+# narrator/Cargo.toml). Phase-E model-provenance spike.
+hmac = { workspace = true }
 serde = { version = "1", features = ["derive"] }
 # Typed extraction of the disclosed response fields (the per-endpoint response SCHEMA) —
 # the authenticated body is already proven well-formed JSON by the CFG leg; serde_json
@@ -33,7 +37,7 @@ serde_json = { workspace = true }
 # (an optional heavy backend, NOT a runtime toggle). With the feature OFF nothing here
 # is compiled: the default zkoracle-prove build = the modeled authentic adapter + the
 # CFG parse-cert core + the injection matcher, fully green and tested.
-tlsn = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true }
+tlsn = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true, features = ["mozilla-certs"] }
 tlsn-formats = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true }
 tlsn-server-fixture-certs = { git = "https://github.com/tlsnotary/tlsn", rev = "47aee45b53e06648c1b2ad3689b367b8c923fdec", optional = true }
 tokio = { version = "1.38", features = ["rt", "rt-multi-thread", "macros", "sync", "io-util", "net", "time"], optional = true }

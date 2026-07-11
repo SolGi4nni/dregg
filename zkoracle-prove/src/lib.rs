@@ -39,17 +39,20 @@ pub mod authentic;
 pub mod cfg;
 pub mod endpoints;
 pub mod injection;
+pub mod sigv4;
+#[cfg(feature = "tlsn-live")]
+pub mod tlsn_bedrock;
 #[cfg(feature = "tlsn-live")]
 pub mod tlsn_live;
 pub mod zk_leg;
 
+/// The live authentic-leg verifier (real `presentation.verify()`), gated with its backend.
+#[cfg(feature = "tlsn-live")]
+pub use attestation::verify_zkoracle_live;
 pub use attestation::{
     ProveError, VerifiedZkOracle, ZkOracleAttestation, ZkOracleError, prove_zkoracle,
     prove_zkoracle_with_stark, verify_zkoracle,
 };
-/// The live authentic-leg verifier (real `presentation.verify()`), gated with its backend.
-#[cfg(feature = "tlsn-live")]
-pub use attestation::verify_zkoracle_live;
 pub use authentic::{
     AnthropicConfig, AnthropicPresentation, AuthenticError, AuthenticSession, EndpointConfig,
     EndpointPresentation, EndpointSpec, FixtureNotary, SecretHeader, TlsnVerifyingKey,

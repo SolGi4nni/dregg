@@ -154,7 +154,10 @@ impl core::fmt::Display for ZkOracleError {
                 write!(f, "STARK injection leg refused: {e:?}")
             }
             ZkOracleError::NotAuthenticLive(msg) => {
-                write!(f, "live authentic leg refused (real tlsn presentation): {msg}")
+                write!(
+                    f,
+                    "live authentic leg refused (real tlsn presentation): {msg}"
+                )
             }
         }
     }

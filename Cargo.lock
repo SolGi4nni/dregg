@@ -6391,6 +6391,7 @@ dependencies = [
  "ed25519-dalek",
  "futures",
  "futures-rustls",
+ "hmac 0.12.1",
  "http-body-util",
  "hyper 1.10.1",
  "hyper-util",
@@ -6432,6 +6433,7 @@ version = "0.1.0"
 dependencies = [
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-zkoracle-prove",
  "spween",
  "spween-dregg",
 ]
