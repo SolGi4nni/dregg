@@ -1,0 +1,35 @@
+[package]
+name = "dregg-pay"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Payment backend for accepting $DREGG (SPL token on Solana) for real-AI dungeon runs — the \"B\" (custodial HD-deposit) model: per-user SLIP-0010 deposit addresses, a watcher, a per-user run-credits ledger, and a sweeper. The reusable foundation the discord-bot + demo services consume. DEVNET/MOCK by default; mainnet is an operator-config flip."
+
+[dependencies]
+# The REAL watcher core: the SPL token-account decode + the consensus-verified
+# balance read live in the bridge crate's `solana_holdings` (reused verbatim, not
+# reimplemented). No cycle: bridge does not depend on dregg-pay.
+dregg-bridge = { path = "../bridge" }
+# SLIP-0010 ed25519 hardened derivation = HMAC-SHA512; the derived key is a real
+# ed25519 keypair whose public key IS the Solana deposit address.
+hmac = { workspace = true }
+sha2 = { workspace = true }
+ed25519-dalek = { version = "2", features = ["std"] }
+# base58 encode/decode for Solana pubkeys (mint / treasury / deposit addresses).
+bs58 = "0.5"
+# Stable per-user derivation index + payment references.
+blake3 = "1"
+# The HD seed is secret custody material — wipe it on drop.
+zeroize = { workspace = true }
+
+[dev-dependencies]
+# Verify the derived deposit key produces real, verifiable ed25519 signatures
+# (the sweeper custody proof) without any funds or network.
+ed25519-dalek = { version = "2", features = ["std"] }
+
+[lints]
+workspace = true
