@@ -888,3 +888,19 @@ completions ranked ONLY if they re-verify to a win; a cheat rejected] · PERSIST
 — many player-cells in one shared multi-cell world, contested grabs = real conflicts]. NEXT: skill-checks, presentation.
 Crown (verify_history) still Lane-D-gated. Honest gaps still open: the crown, cross-node finality, the LLM jail, VRF-
 as-default-source.
+
+## ═══ REVENUE RAIL: $DREGG payments for real-AI runs (2026-07-11) ═══
+Direction (ember): "$DREGG buys the SERVICE (real-AI compute), never features." Model B = per-user HD-derived Solana
+deposit addresses (industry-standard; ember comfortable w/ key mgmt done thoughtfully). C (PDA program) SKIPPED as a
+detour — the real trust-minimized endgame is protocol-native settlement, not a Solana program. SAFETY: devnet/mock
+first, driven; mainnet (treasury J2pW9…, $DREGG mint XkeTXo…pump on Solana) is OPERATOR CONFIG flipped on ember's go;
+the seed lives in ember's secured sweeper; platform stays watch-only; nothing hardcoded/committed.
+FIRING (foundation-first): dregg-pay crate [aae94b8] — DepositAddressProvider (B HD-derive, pluggable to C) + Watcher
+(reuse bridge/solana_holdings SPL decode + consensus verify; mock/devnet for tests) + per-user CreditLedger (reuse
+Charge/Payable) + Sweeper (the custody point = the seed). NEXT (consume dregg-pay's real interface): discord-bot
+payment commands (/buy-credits, /balance) + the /dungeon credit GATE + swap the bot's ollama-gemma narration -> real
+Bedrock (dregg-narrator) with a PER-USER cap (replacing the single global $20); + the MPC-TLS attestation handed back
+("you paid for real Claude, here's the proof"). Later improvement: migrate the bot's /dungeon from attested-dm (LARP)
+to the real dungeon-on-dregg engine.
+## Widths wave 2 status: UGC leaderboard ✅ committed (8/8). MUD ✅ 57/57 ON DISK but re-verify BLOCKED by a concurrent-
+## lane FFI break (lean_holding_grant_weight — not mine) — HELD; commit when the tree clears + I re-drive it.
