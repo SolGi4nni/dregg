@@ -43,16 +43,19 @@ produced). The draw is bound into the receipt and reconstructed at Level 1.
 Trust rises with the source — stated honestly per source:
 - **CommitReveal (shipped):** neither party can *choose* the outcome, and the draw is fully
   reconstructible. It does **not** prevent selective abort (a last revealer withholding).
-- **LB-VRF (`pqvrf/`, shipped, wiring in progress):** a **post-quantum** lattice VRF (Esgin et al.
+- **LB-VRF (`pqvrf/`, shipped + wired into the engine):** a **post-quantum** lattice VRF (Esgin et al.
   FC 2021, Set I) whose **uniqueness reduces to Module-SIS** — and that reduction is *proved in the
   Lean* (`Dregg2/Crypto/VRF.lean`, `lattice_vrf_unique_under_msis`) and *exhibited in the crate's
   MSIS-extraction test*. So the server cannot produce a second output. `pk = A·s`, `v = ⟨b,s⟩`
-  pinned by the secret. **Assumes** pseudorandomness from MLWE (the Lean's undischarged obligation);
-  **is one-time** per key (Set I — rotation for more).
-- **Hybrid VRF + delayed beacon (designed; scaffolding parked):** adds timeout finalization so
-  withholding buys no reroll. **Open gap:** a real drand-BLS beacon (the shipped test beacon is a
-  forward-secure hash chain; the consensus `BeaconSpace` in the Lean is honest-leader liveness, a
-  different object).
+  pinned by the secret; a forged proof is rejected on replay via `pqvrf::verify`. **Assumes**
+  pseudorandomness from MLWE (the Lean's undischarged obligation); **is one-time** per key.
+- **Hybrid VRF + beacon + timeout (shipped):** mixes the LB-VRF output with a **real threshold
+  drand-BLS beacon** (quicknet, interop-tested against a published League-of-Entropy round), and adds
+  **timeout finalization** so a withholding server gets no reroll (junk in the ignored VRF fields
+  yields the *same* seed). This closes the grinding hatches: genesis-committed key-chain (#1),
+  schedule-bound + BLS-verified beacon (#2), one-output-per-input (#4), timeout-no-reroll (#5).
+  **Remaining:** an HTTP round-fetch client (verification is done; only the network fetch is a client
+  concern) and MLWE-assumed pseudorandomness.
 
 ## Level 3 — Succinct proof (frontier, not built)
 Fold the critical resolver invariants **in-circuit** via dregg's `circuit`/`circuit-prove` machinery
