@@ -80,6 +80,14 @@ pub mod multicell;
 /// forged roll is caught). Reproducible offline via the `Deterministic` source; the
 /// non-grindable `ServerVrf`/`Hybrid` sources are a named `dregg-dice` follow-up.
 pub mod dice_combat;
+
+/// RPG CHARACTER PROGRESSION on the real substrate. XP, LEVEL and CLASS are real
+/// character-cell state; a level-up is a real turn the executor GATES on earned XP
+/// (`FieldGte(xp, threshold(L))`) so you cannot level without the XP, and a class
+/// ability is admitted only in-class (`FieldEquals(class, .)`) — the referee is the
+/// kernel, not the game code. See [`progression`] for the cell model + the driven
+/// earned/premature/class-gate teeth.
+pub mod progression;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};
