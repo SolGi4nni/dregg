@@ -419,3 +419,16 @@ L1(23, frontier now): BilateralAgg Bridge BundleFold Burn CapReshape CellDestroy
 CapRoot, fable+quick gate). Batch ~5/wave, gate each, commit green, advance the frontier. Lanes report blockers
 (RevokeDelegation blocked cleanly — mis-batched as frontier, it's L3). Then the intent-mod-p consumers in the
 refinement layer (RotatedKernelRefinement etc.) + AirChecksSatisfied/arithResidual, then whole-tree green.
+
+### ⚠ SCOPE CORRECTION (2026-07-11): the Emit family is ~162 files, not 74
+My earlier topo counted only `EffectVmEmit*`-prefixed files (74). The real `Dregg2/Circuit/Emit/` dir has ~162
+.lean files, including a `*OpenEmit`/accumulator/carrier family (CapOpenEmit=9 holdsVm refs, HeapOpenEmit,
+FieldsOpenEmit, AccumulatorInsertEmit, CarrierComposed=6, CapOpenTurnPins) that ALSO needs mod-p migration. So
+Phase-0's Emit surface is ~2× estimated. Mitigations: (a) the migration pattern is fully mechanized (mod-p intent +
+canonicality envelope for teeth; mechanical thread for wrappers; hash-site files ride free); (b) ~⅓-½ ride free;
+(c) per-file type-gate stays for SECURITY files, lighter batch-gate for hash-site/mechanical. Progress so far: ~56
+EffectVmEmit* files green (Layers 1-5) with every security keystone (double-spend, capability non-amplification
+end-to-end, memory-index-exact, anti-ghost rotation binding) verified conclusion-verbatim-intact. Remaining:
+RotationV3 (keystone, in flight) + RotationV3Refused/Wide + the OpenEmit family + any other EffectVm* stragglers,
+then the refinement-layer ripple + AirChecksSatisfied/arithResidual, then whole-tree green. This is a multi-hour
+grind — expected for making a fake-verified system real.
