@@ -715,6 +715,14 @@ pub use membership_verifier::{
     ThresholdSigVerifier, register_threshold_sig_verifier, threshold_sig_proof_bytes,
 };
 
+/// The OWNER-SIGNED ENVELOPE keystone: an `Authorization::Custom` verifier that
+/// gates a host-keyed worker cell's authority-widening actions on the OWNER key
+/// (`RenterAnchor.pubkey`), not the host-held cell key.
+pub mod owner_envelope;
+pub use owner_envelope::{
+    OwnerEnvelopeSigVerifier, owner_envelope_vk, register_owner_envelope_verifier,
+};
+
 /// The turn executor: applies turns to a ledger atomically.
 mod effect_vm_bridge;
 pub use effect_vm_bridge::convert_turn_effects_to_vm;

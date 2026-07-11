@@ -162,6 +162,48 @@ impl Permissions {
         }
     }
 
+    /// **Owner-gated worker permissions — the OWNER-SIGNED ENVELOPE keystone.**
+    ///
+    /// For a host-keyed worker grain cell (its OWN ed25519 key is the host's, so
+    /// `AuthRequired::Signature` gates are host-satisfiable), this routes the
+    /// authority-WIDENING actions — `set_permissions`, `delegate`, and
+    /// `set_verification_key` — to `AuthRequired::Custom { vk_hash }`, where
+    /// `owner_vk_hash` is derived from the renter/owner key
+    /// (`dregg_turn::executor::owner_envelope::owner_envelope_vk`, itself
+    /// `RenterAnchor.pubkey`). Only a turn carrying an owner ed25519 signature
+    /// (verified by the registered `OwnerEnvelopeSigVerifier`) can mutate the
+    /// worker's c-list or relax its gates — the host, lacking the owner key,
+    /// cannot self-grant a broader cap through the executor.
+    ///
+    /// The host still DRIVES the grain: `set_state` (scratch/metered slots),
+    /// `send`, and `increment_nonce` stay at `AuthRequired::Signature` (its
+    /// legitimate job, constrained elsewhere by the mandate program). The gate is
+    /// self-protecting — changing `set_permissions` here itself requires the owner
+    /// key — so once stamped at rent (owner active) the host cannot un-stamp it
+    /// through the executor.
+    ///
+    /// All three widening slots carry the SAME `owner_vk_hash` on purpose: the
+    /// executor's `verify_custom_authorization` pins the FIRST `Custom` slot it
+    /// finds, so a single owner vk keeps the pin unambiguous.
+    pub fn enveloped_worker(owner_vk_hash: [u8; 32]) -> Self {
+        Permissions {
+            send: AuthRequired::Signature,
+            receive: AuthRequired::None,
+            set_state: AuthRequired::Signature,
+            set_permissions: AuthRequired::Custom {
+                vk_hash: owner_vk_hash,
+            },
+            set_verification_key: AuthRequired::Custom {
+                vk_hash: owner_vk_hash,
+            },
+            increment_nonce: AuthRequired::Signature,
+            delegate: AuthRequired::Custom {
+                vk_hash: owner_vk_hash,
+            },
+            access: AuthRequired::None,
+        }
+    }
+
     /// Check if a specific action is authorized given a provided auth kind.
     pub fn check(&self, action: Action, auth: &AuthKind) -> bool {
         let required = self.for_action(action);
