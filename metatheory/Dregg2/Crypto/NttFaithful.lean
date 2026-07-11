@@ -1953,6 +1953,106 @@ theorem sum_range_split_half {M} [AddCommMonoid M] (f : Nat → M) (m : Nat) :
     ∑ U ∈ range (2*m), f U = (∑ u ∈ range m, f u) + ∑ u ∈ range m, f (m + u) := by
   rw [two_mul, Finset.sum_range_add]
 
+/-! ### INVERSE step 3 — one full GS stage, positionwise (`inttBlock_char`, mirror of `block_char`).
+
+Each stage-`s` block `blk` (twiddle counter `c0−blk−1`, down) rewrites its segment `[blk·2L, blk·2L+2L)`
+(`L = 1<<<s`) into low `a[p]+a[p+L]` and high `z·(a[p−L]−a[p])` (`z = −ζ^{brv(c0−blk−1)}`), the blocks
+disjoint. Proved by induction on block count on `gsSweep_getElem`. -/
+set_option maxHeartbeats 1000000 in
+theorem inttBlock_char (s : Nat) (hs : s ≤ 7) (a_in : Poly) (hsz : a_in.size = 256) (c0 : Nat) :
+    ∀ nb, nb ≤ 2^(7-s) →
+      ((List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1.size = 256) ∧
+      (∀ p, nb * (2*(1<<<s)) ≤ p → p < 256 →
+          (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]! = a_in[p]!) ∧
+      (∀ blk, blk < nb → ∀ p, blk*(2*(1<<<s)) ≤ p → p < blk*(2*(1<<<s))+(1<<<s) →
+          (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]!
+            = addQ a_in[p]! a_in[p+(1<<<s)]!) ∧
+      (∀ blk, blk < nb → ∀ p, blk*(2*(1<<<s))+(1<<<s) ≤ p → p < blk*(2*(1<<<s))+(2*(1<<<s)) →
+          (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]!
+            = mulModQ (subQ 0 (zetaTwiddle (c0-blk-1))) (subQ a_in[p-(1<<<s)]! a_in[p]!)) := by
+  set len := 1 <<< s with hlendef
+  have hlen1 : 1 ≤ len := by rw [hlendef, one_shl]; exact Nat.one_le_two_pow
+  set L := 2 * len with hLdef
+  have hLtot : 2^(7-s) * L = 256 := by
+    rw [hLdef, hlendef, one_shl]
+    have hp : 2^(7-s) * 2^s = 2^7 := by rw [← pow_add]; congr 1; omega
+    calc 2^(7-s) * (2*2^s) = 2*(2^(7-s)*2^s) := by ring
+      _ = 2*2^7 := by rw [hp]
+      _ = 256 := by norm_num
+  have hmono : ∀ i j : Nat, i ≤ j → i * L ≤ j * L := fun i j h => Nat.mul_le_mul_right _ h
+  intro nb
+  induction nb with
+  | zero =>
+    intro _; refine ⟨by simpa using hsz, ?_, ?_, ?_⟩
+    · intro p _ _; simp
+    · intro blk hblk; omega
+    · intro blk hblk; omega
+  | succ nb ih =>
+    intro hnb
+    have hnb' : nb ≤ 2^(7-s) := by omega
+    obtain ⟨ihsz, ihun, ihlo, ihhi⟩ := ih hnb'
+    have hcnt : (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).2 = c0 - nb := by
+      rw [foldl_inttBlockFn_snd]; simp
+    set A := (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1 with hAdef
+    have hstart : nb * 2 * len = nb * L := by rw [hLdef]; ring
+    have hAeq : (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 (nb+1) 1)).1
+        = gsSweep (subQ 0 (zetaTwiddle (c0-nb-1))) (nb * L) len A := by
+      rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+      have hbf1 : (inttBlockFn s (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)) nb).1
+          = gsSweep (subQ 0 (zetaTwiddle ((List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).2 - 1)))
+              (nb * 2 * len) len (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1 := rfl
+      rw [hbf1, hcnt, ← hAdef, hstart]
+    set z := subQ 0 (zetaTwiddle (c0-nb-1)) with hzdef
+    have hnbL : nb * L + L ≤ 256 := by
+      have h1 := hmono (nb+1) (2^(7-s)) (by omega)
+      have h2 : (nb+1) * L = nb * L + L := by ring
+      rw [hLtot] at h1; omega
+    have hbound : nb * L + 2 * len ≤ 256 := by rw [← hLdef]; exact hnbL
+    obtain ⟨hlo, hhi, hunt⟩ := gsSweep_getElem z (nb*L) len hlen1 A (by rw [hAdef]; exact ihsz) hbound
+    have hApsize : (List.foldl (inttBlockFn s) (a_in, c0) (List.range' 0 (nb+1) 1)).1.size = 256 := by
+      rw [hAeq]; exact gsSweep_size z (nb*L) len hlen1 A (by rw [hAdef]; exact ihsz)
+    refine ⟨hApsize, ?_, ?_, ?_⟩
+    · intro p hp1 hp2
+      rw [hAeq]
+      have hpge : nb * L + 2 * len ≤ p := by
+        have hh : (nb+1) * L = nb * L + L := by ring
+        rw [← hLdef]; omega
+      rw [hunt p (Or.inr hpge), hAdef]
+      exact ihun p (by omega) hp2
+    · intro blk hblk p hp1 hp2
+      rw [hAeq]
+      rcases Nat.lt_or_ge blk nb with hlt | hge
+      · have hpltnbL : p < nb * L := by
+          have h1 : (blk+1) * L ≤ nb * L := hmono (blk+1) nb (by omega)
+          have h3 : (blk+1)*L = blk*L + L := by ring
+          omega
+        rw [hunt p (Or.inl hpltnbL), hAdef]
+        exact ihlo blk hlt p hp1 hp2
+      · have hblkeq : blk = nb := by omega
+        subst hblkeq
+        rw [hlo p hp1 hp2]
+        have hAp : A[p]! = a_in[p]! := by rw [hAdef]; exact ihun p hp1 (by omega)
+        have hAplen : A[p+len]! = a_in[p+len]! := by
+          rw [hAdef]; exact ihun (p+len) (by omega) (by omega)
+        rw [hAp, hAplen]
+    · intro blk hblk p hp1 hp2
+      rw [hAeq]
+      rcases Nat.lt_or_ge blk nb with hlt | hge
+      · have hpltnbL : p < nb * L := by
+          have h1 : (blk+1) * L ≤ nb * L := hmono (blk+1) nb (by omega)
+          have h3 : (blk+1)*L = blk*L + L := by ring
+          omega
+        rw [hunt p (Or.inl hpltnbL), hAdef]
+        exact ihhi blk hlt p hp1 hp2
+      · have hblkeq : blk = nb := by omega
+        rw [hblkeq]
+        have hp2' : p < nb * L + 2 * len := by rw [hblkeq] at hp2; rw [← hLdef]; omega
+        rw [hhi p (by rw [hblkeq] at hp1; omega) hp2']
+        have hAplen : A[p-len]! = a_in[p-len]! := by
+          rw [hAdef]; exact ihun (p-len) (by rw [hblkeq] at hp1; omega) (by omega)
+        have hAp : A[p]! = a_in[p]! := by rw [hAdef]; exact ihun p (by rw [hblkeq] at hp1; omega) (by omega)
+        rw [hAplen, hAp]
+
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
 deliberately NOT gated here — it is the accepted computational residual, isolated from the ∀-theorems. -/
