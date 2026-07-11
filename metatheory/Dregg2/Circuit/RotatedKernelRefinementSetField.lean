@@ -124,13 +124,14 @@ theorem rotated_row_cellSpec (slot : Fin 8) (hash : List ℤ → ℤ)
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash (setFieldV3 slot) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcanon : SetFieldRowCanon (envAt t i))
     (pre post : CellState)
     (hrow : IsSetFieldRow (envAt t i))
     (henc : RowEncodesSF slot (envAt t i) pre post) :
     CellSetFieldSpec slot pre ((envAt t i).loc (prmCol VALUE)) post := by
   have hgates := rotated_row_gates slot hash hside hsat i hi hnotlast
   have hint : SetFieldRowIntent slot (envAt t i) :=
-    (setFieldVm_faithful slot (envAt t i) hrow).mp hgates
+    (setFieldVm_faithful slot (envAt t i) hrow hcanon).mp hgates
   exact intent_to_cellSpec slot (envAt t i) pre post henc hint
 
 /-! ## §2 — `rotatedEncodesSF`: the witness active-row ⟷ kernel state decode.
@@ -167,6 +168,17 @@ structure rotatedEncodesSF (slot : Fin 8) (hash : List ℤ → ℤ)
   cellPost : CellState
   hwiRow : IsSetFieldRow (envAt t wi)
   hwiEnc : RowEncodesSF slot (envAt t wi) cellPre cellPost
+  -- the designated active row's EXPLICIT canonicality envelope (`SetFieldRowCanon`) — the deployed
+  -- range-check / field-representative invariant carried EXACTLY as the migrated source module
+  -- (`EffectVmEmitSetField`) carries its `hcanon` hypothesis: every state-block cell of both windows a
+  -- canonical BabyBear representative in `[0, p)`, the written-value param column `param1` canonical, and
+  -- the pre-nonce tick in-field (`nonce_before + 1 < p`). Under the mod-p `holdsVm` denotation this is
+  -- what lets the `≡ 0 [ZMOD p]` write-gate residual — strictly inside `(−p, p)` because both the field
+  -- column and `param1` are canonical — be read back as the EXACT ℤ write `fields[slot]_after = param1`.
+  -- Only the two balance limbs are range-checked by this descriptor (`saCol BALANCE_LO/HI`, 30 bits), so
+  -- the rest of the envelope is NOT circuit-forced; it is a NAMED decode residual, not laundered —
+  -- exactly transfer's honest relocation of the non-forced `guardAvail` leg.
+  hwiCanon : SetFieldRowCanon (envAt t wi)
   -- the written value: the active row's `param1` IS the kernel write value `v`.
   hwval : (envAt t wi).loc (prmCol VALUE) = v
   -- the kernel cell-map move (the WHOLE-MAP residual; its written-slot value is circuit-forced).
@@ -197,13 +209,18 @@ structure rotatedEncodesSF (slot : Fin 8) (hash : List ℤ → ℤ)
 
 /-! ## §3 — the apex obligation: the circuit FORCES the written value.
 
-The selector-gated write gate `gFieldWrite slot` pins `fields[slot]_after = param1` on the active
-row; the decode reads `param1 = v` and `cellPost.fields slot = post.fields ⟨…⟩`. So the WRITTEN slot
-value is forced by the running circuit — not taken from the decode. -/
+The selector-gated write gate `gFieldWrite slot` pins `fields[slot]_after ≡ param1 [ZMOD p]` on the
+active row (the deployed mod-p `holdsVm` denotation); the decode reads `param1 = v` and
+`cellPost.fields slot = post.fields ⟨…⟩`. Under the active row's canonicality envelope (the NAMED
+`rotatedEncodesSF.hwiCanon` residual: the written field column and `param1` both canonical in `[0, p)`)
+the mod-p congruence is read back as the EXACT ℤ write. So the WRITTEN slot value is forced by the
+running circuit — not taken from the decode. -/
 
 /-- **`setField_value_forced` — the written slot value is CIRCUIT-FORCED.** On the decoded active row
-the gated write gate forces `cellPost.fields slot = param1 = v`. So the moved field content is pinned
-by the running circuit; a decode claiming a different written value is UNSAT (the §4 tooth). -/
+the gated write gate forces `cellPost.fields slot ≡ param1 [ZMOD p]`; under the named canonicality
+residual (`hwiCanon`) this recovers the exact ℤ write `cellPost.fields slot = param1 = v`. So the moved
+field content is pinned by the running circuit; a decode claiming a different written value is UNSAT
+(the §4 tooth). -/
 theorem setField_value_forced (slot : Fin 8) (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
@@ -213,8 +230,8 @@ theorem setField_value_forced (slot : Fin 8) (hash : List ℤ → ℤ)
     henc.cellPost.fields slot = v := by
   -- the per-cell spec forces the written slot to the row's `param1`.
   have hspec : CellSetFieldSpec slot henc.cellPre ((envAt t henc.wi).loc (prmCol VALUE)) henc.cellPost :=
-    rotated_row_cellSpec slot hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.cellPre
-      henc.cellPost henc.hwiRow henc.hwiEnc
+    rotated_row_cellSpec slot hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.hwiCanon
+      henc.cellPre henc.cellPost henc.hwiRow henc.hwiEnc
   -- `CellSetFieldSpec`'s first conjunct: `post.fields slot = param1`; read `param1 = v`.
   rw [hspec.1, henc.hwval]
 
@@ -297,8 +314,8 @@ theorem descriptorRefines_rejects_moved_bystander (slot : Fin 8) (hash : List �
     (hwrong : henc.cellPost.fields j ≠ henc.cellPre.fields j) :
     False := by
   have hspec : CellSetFieldSpec slot henc.cellPre ((envAt t henc.wi).loc (prmCol VALUE)) henc.cellPost :=
-    rotated_row_cellSpec slot hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.cellPre
-      henc.cellPost henc.hwiRow henc.hwiEnc
+    rotated_row_cellSpec slot hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.hwiCanon
+      henc.cellPre henc.cellPost henc.hwiRow henc.hwiEnc
   exact hwrong (hspec.2.2.2.2.2.2 j hj)
 
 /-! ## §6 — Axiom-hygiene tripwires. -/
