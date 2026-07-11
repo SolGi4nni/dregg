@@ -460,3 +460,28 @@ state. FIX = `CARRY_BITS 16→15` in BOTH twins (vault_weld.rs:76 + VaultSatDesc
 (`vault-sat-v3-staged.json`) / producer aux-fill / drift-gate FP pin. This touches deployed circuit logic + the
 staged VK epoch ⟹ EMBER-GATED. The mod-p migration EARNED this: the field-faithful denotation refused to prove a
 conservation the ℤ model had silently faked, exposing a real staged vulnerability. This is the campaign working.
+
+## ⚠⚠⚠ SECOND DEPLOYED SOUNDNESS GAP — MASK-RECON-WRAP VERDICT (A) CONFIRMED (2026-07-11): capability-auth forgery
+Doc: `docs/reference/MASK-RECON-WRAP-INVESTIGATION.md`. The mod-p migration's SECOND live gap, same CLASS as the
+vault (reconstruct-a-value-≥-p, mod-p doesn't pin the ℤ value). This one is arguably WORSE — a CAPABILITY-
+AUTHORIZATION FORGERY:
+- `DeployedCapOpen.lean:335` `maskReconGate` = `(mask_lo + mask_hi·65536) − Σ_{i<32} bitᵢ·2ⁱ ≡ 0 mod p`, deployed as
+  a generic mod-p gate. `2p = 0xF0000002 < 2^32`, so a committed mask `M < p` has a p-shifted 32-bit boolean
+  decomposition (`M+p`, `M+2p`) that ALSO vanishes mod p, with DIFFERENT bits.
+- DEPLOYED: `trace_rotated.rs:2882` fills the 32 mask bits as FREE witness columns; `mask_lo/mask_hi` are NOT
+  range-checked `< 2^16` (only Merkle-pinned via leafLookup→rootPin). So the adversary CONTROLS the decomposition.
+- EXPLOIT: a cap with empty mask `M=0` (grants nothing), opened for `n=1` (EFFECT_TRANSFER): set the bit columns to
+  the boolean decomposition of `2p = 0xF0000002` (bits boolean ✓, `0−2p ≡ 0 mod p` ✓, `bit₁=1` ✓) →
+  `authorizedFacetEffB … (1<<1) = true`. A cap granting nothing authorizes a transfer. Generalizes to any effect n.
+- ⚠ MY GATE ERROR (corrected): I initially committed CapOpenEmit green calling `CapOpenRowCanon.reconExact` a
+  "canonicality envelope" — but it ASSUMES the exactness the wire doesn't enforce (laundering the gap, the sin the
+  vault lane refused). RELABELED in-file (`CapOpenEmit.lean:162`) as an explicit ⚠ DEPLOYED-GAP assumption: the
+  `_authorizes` keystones are CONDITIONAL on an UNFIXED deployed gap and do NOT prove capability authorization until
+  the fix lands. Green stands only because the assumption is now NAMED as a gap, not dressed as a real invariant.
+- FIX (unlike vault's narrow 16→15, narrowing is UNAVAILABLE — `EFFECT_ALL = 0xFFFFFFFF ≥ p` is legit): range-check
+  `mask_lo, mask_hi < 2^16` + reconstruct PER 16-bit limb (each sum `< 2^16 < p`, unique) ⟹ reconExact DERIVED.
+  EMBER-GATED (deployed circuit change).
+WRAP-CLASS AUDIT (from the investigation): 2 live verdict-A instances — vault carry (16-bit) + this maskRecon
+(32-bit). CapReshape gMaskRecon (MASK_BITS=8, <256<p) SAFE by width. RotationWide limbs = Poseidon2 chip absorbs
+(equality-bound) SAFE. CapOpenRowCanon is the ONLY migrated RowCanon laundering a wrap. No 3rd live instance found —
+but the CLASS is now a known audit axis for the rest of Phase 0 + the deployed circuit.

@@ -159,8 +159,16 @@ structure CapOpenRowCanon (c : CapOpenCols) (env : VmRowEnv) (n : Nat) : Prop wh
   cells : ∀ col : Nat, 0 ≤ env.loc col ∧ env.loc col < 2013265921
   /-- the effect-bit constant `1 <<< n` is a canonical field element (`n = 31` would alias). -/
   effLt : ((1 <<< n : Nat) : ℤ) < 2013265921
-  /-- the 32-bit mask recomposition holds EXACTLY over ℤ, not merely mod `p` (the honest-prover
-  invariant; the named wrap residual of the deployed gate). -/
+  /-- ⚠⚠ DEPLOYED SOUNDNESS GAP — ASSUMED, NOT ENFORCED (see `docs/reference/MASK-RECON-WRAP-INVESTIGATION.md`,
+  verdict A). The 32-bit mask recomposition is required to hold EXACTLY over ℤ, not merely mod `p`. An HONEST prover
+  satisfies it, but a MALICIOUS prover can VIOLATE it: since `2p = 0xF0000002 < 2^32`, an adversary can commit the
+  boolean decomposition of `M + 2p` (valid bits, `≡ 0 mod p`) instead of `M` — and the deployed cap-open circuit
+  (`trace_rotated.rs:2882`) fills the mask bits as FREE witness columns with NO range-check on `mask_lo/mask_hi`.
+  So this is a live capability-authorization FORGERY residual (a cap granting nothing can authorize a transfer),
+  NOT a genuine deployed canonicality. The `_authorizes` keystones that consume it are therefore conditional on an
+  UNFIXED deployed gap — they do NOT prove capability authorization until the fix lands (range-check `mask_lo/mask_hi
+  < 2^16`, reconstruct per 16-bit limb so each sum `< 2^16 < p` ⟹ `reconExact` becomes DERIVED, not assumed).
+  EMBER-GATED (deployed circuit change). -/
   reconExact : (maskReconGate c).eval env.loc = 0
 
 /-- The envelope is NON-VACUOUS: the all-zero row satisfies it at the transfer bit (`n = 1`). -/
