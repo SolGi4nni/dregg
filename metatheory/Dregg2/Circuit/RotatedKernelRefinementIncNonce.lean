@@ -116,18 +116,25 @@ theorem rotated_row_gates (hash : List ℤ → ℤ)
 From a `Satisfied2 hash incNonceV3` witness (+ the table side conditions) and the decode of row `i` to
 `(pre, post)` through `RowEncodesIncNonce`, on an ACTIVE incrementNonce row (`IsIncNonceRow`, giving
 `s_noop = 0`) the value block satisfies `CellIncNonceSpec`: the nonce TICKS by 1, every economic
-column frozen. This is the LIVE circuit's per-cell content. -/
+column frozen. This is the LIVE circuit's per-cell content.
+
+The mod-p migration (DEBT-A) added the explicit canonicality argument `hcanon : IncNonceRowCanon`
+(the deployed range-check / field-representative invariant) that `incNonceVm_faithful` now requires:
+the nonce-gate residual holds `≡ 0 [ZMOD p]`, and canonicality (nonce cells in `[0, p)`, the tick
+in-field) reads it back as the EXACT ℤ tick `= +1`. Threaded here, sourced at the apex from the
+decode's `hCanon` residual. -/
 theorem rotated_row_cellSpec (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     {permOut : List ℤ → List ℤ} (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash incNonceV3 minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcanon : IncNonceRowCanon (envAt t i))
     (pre post : CellState)
     (hrow : IsIncNonceRow (envAt t i))
     (henc : RowEncodesIncNonce (envAt t i) pre post) :
     CellIncNonceSpec pre post := by
   have hgates := rotated_row_gates hash hside hsat i hi hnotlast
-  have hint : IncNonceRowIntent (envAt t i) := (incNonceVm_faithful (envAt t i)).mp hgates
+  have hint : IncNonceRowIntent (envAt t i) := (incNonceVm_faithful (envAt t i) hcanon).mp hgates
   exact intent_to_cellSpec (envAt t i) pre post hrow.2 henc hint
 
 /-! ## §2 — `rotatedEncodesIncNonce`: the witness active-row ⟷ kernel state decode.
@@ -137,6 +144,9 @@ theorem rotated_row_cellSpec (hash : List ℤ → ℤ)
 carries the residual the per-cell circuit cannot witness:
 
   * `wi` + its `RowEncodesIncNonce` decode + `IsIncNonceRow` — the circuit ROW this state encodes;
+  * `hCanon` — the row's `IncNonceRowCanon` envelope (the mod-p migration's named canonicality residual:
+    every state cell canonical in `[0, p)`, NOOP boolean, the nonce tick in-field), carried exactly as
+    the source module carries its `hcanon` — it recovers the exact ℤ tick from the `≡ [ZMOD p]` gate;
   * `cellPre`/`cellPost` — the decoded per-cell before/after `CellState`s;
   * `hnVal` — the kernel write value `n` IS the circuit-forced tick `cellPre.nonce + 1` (the increment
     semantics tied to the running circuit, exactly as setField's `hwval : param1 = v`);
@@ -164,6 +174,14 @@ structure rotatedEncodesIncNonce (hash : List ℤ → ℤ)
   cellPost : CellState
   hwiRow : IsIncNonceRow (envAt t wi)
   hwiEnc : RowEncodesIncNonce (envAt t wi) cellPre cellPost
+  -- the designated active row's EXPLICIT canonicality envelope (`IncNonceRowCanon`) — the deployed
+  -- range-check / field-representative invariant carried EXACTLY as the migrated source module
+  -- (`EffectVmEmitIncrementNonce`) carries its `hcanon` hypothesis: every state-block cell of both
+  -- windows a canonical BabyBear representative in `[0, p)`, a boolean NOOP selector, and the pre-nonce
+  -- tick in-field (`nonce_before + 1 < p`). Under the mod-p `holdsVm` denotation this is what lets the
+  -- `≡ 0 [ZMOD p]` nonce-gate residual — strictly inside `(−p, p)` because the sequence counter is far
+  -- below `p` — be read back as the EXACT ℤ tick `= +1`. A NAMED decode residual, not laundered.
+  hCanon : IncNonceRowCanon (envAt t wi)
   -- the kernel write value IS the circuit-forced tick (the increment semantics tied to the circuit).
   hnVal : n = cellPre.nonce + 1
   -- the kernel cell-map bump (the WHOLE-MAP residual; its written-cell nonce value is circuit-forced).
@@ -212,8 +230,8 @@ theorem incNonce_nonce_forced (hash : List ℤ → ℤ)
     (henc : rotatedEncodesIncNonce hash minit mfin maddrs t pre post actor cell n) :
     henc.cellPost.nonce = henc.cellPre.nonce + 1 := by
   have hspec : CellIncNonceSpec henc.cellPre henc.cellPost :=
-    rotated_row_cellSpec hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.cellPre henc.cellPost
-      henc.hwiRow henc.hwiEnc
+    rotated_row_cellSpec hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.hCanon
+      henc.cellPre henc.cellPost henc.hwiRow henc.hwiEnc
   exact hspec.2.2.1
 
 /-! ## §4 — THE REFINEMENT: satisfying the live incrementNonce descriptor FORCES the kernel step.
@@ -290,8 +308,8 @@ theorem descriptorRefines_rejects_moved_balance (hash : List ℤ → ℤ)
     (hwrong : henc.cellPost.balLo ≠ henc.cellPre.balLo) :
     False := by
   have hspec : CellIncNonceSpec henc.cellPre henc.cellPost :=
-    rotated_row_cellSpec hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.cellPre henc.cellPost
-      henc.hwiRow henc.hwiEnc
+    rotated_row_cellSpec hash hside hsat henc.wi henc.hwi henc.hwiNotLast henc.hCanon
+      henc.cellPre henc.cellPost henc.hwiRow henc.hwiEnc
   exact hwrong hspec.1
 
 /-! ## §6 — Axiom-hygiene tripwires. -/
