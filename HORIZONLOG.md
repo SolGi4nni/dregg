@@ -7322,3 +7322,11 @@ the correct placeholder until then. Recorded in INTERCHAIN-ADAPTERS-DESIGN.md.
 
 Grinding: the gnark wrap continues — DuplexChallenger-w16 Fiat-Shamir challenger gadget (fixture-validated
 against transcript_w16.json), the load-bearing soundness piece before the FRI query-verify teeth.
+
+## gnark wrap: challenger landed; PoW-grinding is next (2026-07-11, Fable)
+
+DuplexChallenger-w16 Fiat-Shamir gadget GREEN (chain/gnark/challenger.go, 39 tests, fixture-validated vs
+fork rev 82cfad7). NEXT (confirmed load-bearing, not optional): the PoW-grinding verify — ir2_leaf_wrap_config
+has 16 query-PoW bits contributing to the 130-bit soundness (6*19+16), so sample_uniform_bits + check_witness
+must be built before the FRI query teeth. Then: FRI low-degree-test + query-verify + per-table quotient/logup =
+the bulk of the wrap. Challenger residual cited in commit.
