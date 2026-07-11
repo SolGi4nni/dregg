@@ -225,8 +225,8 @@ theorem goodArchive_realizes :
   · show (if (1 : Fin 8) = 1 then (1 : ℤ) else 0) = 1
     rw [if_pos rfl]
   · intro i hi
-    show (if i = 1 then (1 : ℤ) else 0) = 0
-    rw [if_neg hi]
+    show (if i = 1 then (1 : ℤ) else 0) ≡ 0 [ZMOD 2013265921]
+    exact EffectVmEmitTransfer.eqToModEq (if_neg hi)
 
 /-- **`archive_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
 `field[1]` is NOT the constant `1` (a forged `999`) FAILS the full clause — non-vacuity from BOTH sides. -/

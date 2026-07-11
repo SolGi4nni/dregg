@@ -69,14 +69,15 @@ def RowEncodesMakeSov (env : VmRowEnv) (post : CellState) : Prop :=
   ∧ env.loc (saCol state.RESERVED) = post.reserved
 
 /-- **`ZeroBlockSpec post`** — the per-cell FULL-state dropped-block spec: every economic-data column of
-`post` is ZERO (the readable record dropped behind the sovereign commitment). -/
+`post` is ZERO as a field value (mod-`p` congruent to `0`; canonical `[0, p)` cells make this exact) —
+the readable record dropped behind the sovereign commitment. -/
 def ZeroBlockSpec (post : CellState) : Prop :=
-  post.balLo = 0
-  ∧ post.balHi = 0
-  ∧ post.nonce = 0
-  ∧ (∀ i : Fin 8, post.fields i = 0)
-  ∧ post.capRoot = 0
-  ∧ post.reserved = 0
+  post.balLo ≡ 0 [ZMOD 2013265921]
+  ∧ post.balHi ≡ 0 [ZMOD 2013265921]
+  ∧ post.nonce ≡ 0 [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ 0 [ZMOD 2013265921])
+  ∧ post.capRoot ≡ 0 [ZMOD 2013265921]
+  ∧ post.reserved ≡ 0 [ZMOD 2013265921]
 
 theorem intent_to_zeroSpec (env : VmRowEnv) (post : CellState)
     (henc : RowEncodesMakeSov env post) (hint : DroppedBlockIntent env) :
@@ -197,7 +198,8 @@ theorem makeSov_clause_not_trivial :
     ¬ MakeSovFullClause makeSovPreRoots makeSovPre { makeSovPost with balLo := 999 } makeSovPreRoots := by
   rintro ⟨⟨hbal, _, _, _, _, _⟩, _⟩
   simp only [makeSovPost] at hbal
-  norm_num at hbal
+  unfold Int.ModEq at hbal
+  omega
 
 theorem makeSov_clause_rejects_root_drop :
     ¬ MakeSovFullClause makeSovPreRoots makeSovPre makeSovPost
