@@ -728,3 +728,11 @@ The night's work is COMPLETE: a verifiable collective arcade, 208 tests green, d
 green (with scripted narrator). Remaining HORIZONLOG closures (Hybrid-as-SessionRandomness-mode, DSL combat/loot
 authorability, custody keys, zk frontier) are medium-risk engine/DESIGN work — they deserve ember's input at a real
 hour, not autonomous dawn commits. Holding here; the loop resumes when ember returns. A beautiful, honest state.
+
+## ✅ Driver-hardening (morning ~07:50): narrate-heavy run-*.mjs default to DREGG_NARRATOR=scripted
+6 drivers (run-forge/coauthor/games/map/party/vault) now spawn the service with a scripted-narrator default
+(deterministic, offline, no hosted-Bedrock hang, no $20-ledger spend; operator-overridable). Verified: run-games +
+run-party pass BARE now (previously run-games timed out on the hosted narrator, misread as a browser crash). The
+verification harness is now robust — no external env needed.
+## ══ HOLD (morning) ══ Platform complete + audited (208 green) + drivers hardened + docs current. Remaining
+HORIZONLOG closures are medium-risk engine/DESIGN work for ember. Holding; loop resumes when ember returns.
