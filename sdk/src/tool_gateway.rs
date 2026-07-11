@@ -610,6 +610,58 @@ impl ToolGateway {
         })
     }
 
+    /// Admit a worker AND stamp the OWNER-SIGNED ENVELOPE (upgrade-safety keystone, made
+    /// live at spawn). The worker's authority-widening slots — `set_permissions`,
+    /// `delegate`, `set_verification_key` — are gated to `owner_vk_hash`
+    /// (= `dregg_turn::executor::owner_envelope::owner_envelope_vk(&owner_pubkey)`, pinned to
+    /// `RenterAnchor.pubkey`). The worker is host-keyed (fresh cipherclerk), so
+    /// `AuthRequired::Signature` slots (e.g. `set_state`, advancing `calls_made`) stay
+    /// host-satisfiable — but a provider running standard node software CANNOT craft a
+    /// `Delegate`/`SetPermissions` turn that WIDENS its own authority over the worker through
+    /// the executor, because it lacks the owner key (fail-closed even with no verifier
+    /// registered). The direct-Ledger-mutation adversary is caught separately by the owner's
+    /// checkpoint countersignature (R1) at passive verify.
+    pub fn admit_enveloped(
+        runtime: &AgentRuntime,
+        parent_token: &HeldToken,
+        grant: ToolGrant,
+        owner_vk_hash: [u8; 32],
+    ) -> Result<Self, SdkError> {
+        let worker = runtime.spawn_sub_agent_scoped(
+            &Attenuation::default(),
+            parent_token,
+            &[grant.tool_method.as_str()],
+        )?;
+        let worker_cell = worker.cell_id();
+
+        let consumer_asset = {
+            let mut ledger = runtime.ledger().lock().unwrap();
+            ledger
+                .update_with(&worker_cell, |cell| {
+                    cell.program = mandate_program(grant.rate_limit);
+                    cell.permissions = dregg_cell::Permissions::enveloped_worker(owner_vk_hash);
+                })
+                .map_err(|e| SdkError::Rejected(format!("install enveloped mandate: {e}")))?;
+            ledger
+                .get(&worker_cell)
+                .map(|c| *c.token_id())
+                .unwrap_or([0u8; 32])
+        };
+
+        Ok(ToolGateway {
+            grant,
+            charge: None,
+            spent: 0,
+            consumer_asset,
+            worker,
+            worker_cell,
+            calls_made: 0,
+            inbox: VecDeque::new(),
+            pending: PendingTurnRegistry::new(),
+            results: std::collections::HashMap::new(),
+        })
+    }
+
     /// **Fund the consumer's spend account from a REAL funded source.**
     ///
     /// The gateway's worker cell IS the consumer's spend account — the cell the

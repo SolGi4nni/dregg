@@ -212,6 +212,36 @@ impl ToolGatewayMinter {
         })
     }
 
+    /// Like [`ToolGatewayMinter::open`], but stamps the OWNER-SIGNED ENVELOPE on the grain
+    /// worker cell. `owner_vk_hash` = `dregg_turn::executor::owner_envelope::owner_envelope_vk`
+    /// over the renter/owner pubkey (`RenterAnchor.pubkey`, held by `AgentPlatform::rent`).
+    /// The host, lacking the owner key, cannot escalate its authority over the grain through
+    /// the executor. See [`crate::ToolGatewayMinter::open`] for the rest of the lifecycle.
+    pub fn open_enveloped(
+        domain: &str,
+        budget: i64,
+        owner_vk_hash: [u8; 32],
+    ) -> Result<ToolGatewayMinter, SdkError> {
+        let mut cclerk = AgentCipherclerk::new();
+        let root = cclerk.mint_token(&[0x6au8; 32], domain);
+        let runtime = AgentRuntime::new(Arc::new(RwLock::new(cclerk)), domain);
+        let grant = ToolGrant {
+            tool_id: GRAIN_TOOL_ID,
+            rate_limit: budget.max(0),
+            deadline: GRAIN_DEADLINE,
+            tool_method: GRAIN_TOOL_METHOD.to_string(),
+        };
+        let gateway = ToolGateway::admit_enveloped(&runtime, &root, grant, owner_vk_hash)?;
+        Ok(ToolGatewayMinter {
+            runtime,
+            gateway,
+            now: 0,
+            minted: Vec::new(),
+            pending_attestation: None,
+            records: Vec::new(),
+        })
+    }
+
     /// **Bind a zkOracle attestation commitment onto this minter's turns.** Every turn
     /// minted after this call witnesses `commitment` at [`ATTESTATION_SLOT`] — the
     /// on-ledger turn now commits to "this action was driven by an attested brain."
@@ -243,6 +273,17 @@ impl ToolGatewayMinter {
     /// The grain turn-cell id (the mandate cell carrying `calls_made`).
     pub fn grain_cell(&self) -> CellId {
         self.gateway.worker_cell()
+    }
+
+    /// The grain worker cell's current [`Permissions`](dregg_cell::Permissions) — for
+    /// verifying the owner-signed envelope stamp ([`Self::open_enveloped`]).
+    pub fn worker_permissions(&self) -> Option<dregg_cell::Permissions> {
+        self.runtime
+            .ledger()
+            .lock()
+            .ok()?
+            .get(&self.grain_cell())
+            .map(|c| c.permissions.clone())
     }
 
     /// The number of grain turns committed so far (the on-ledger `calls_made`).
@@ -352,5 +393,38 @@ impl GrainTurnMinter for ToolGatewayMinter {
             });
         }
         Ok(turn_hash)
+    }
+}
+
+#[cfg(test)]
+mod envelope_stamp_tests {
+    use super::*;
+    use dregg_cell::AuthRequired;
+
+    #[test]
+    fn open_enveloped_stamps_owner_gated_authority() {
+        let owner_vk = [0x42u8; 32];
+        let m = ToolGatewayMinter::open_enveloped("env-test", 10, owner_vk)
+            .expect("admit enveloped grain");
+        let perms = m.worker_permissions().expect("worker permissions");
+        // Authority-WIDENING is owner-gated: the host, lacking the owner key, cannot craft a
+        // Delegate/SetPermissions/SetVerificationKey turn through the executor.
+        assert!(
+            matches!(perms.set_permissions, AuthRequired::Custom { vk_hash } if vk_hash == owner_vk)
+        );
+        assert!(matches!(perms.delegate, AuthRequired::Custom { vk_hash } if vk_hash == owner_vk));
+        assert!(
+            matches!(perms.set_verification_key, AuthRequired::Custom { vk_hash } if vk_hash == owner_vk)
+        );
+        // set_state stays Signature — the host still advances calls_made; only escalation is locked.
+        assert!(matches!(perms.set_state, AuthRequired::Signature));
+
+        // Contrast: a plain (non-enveloped) worker is NOT owner-gated.
+        let plain = ToolGatewayMinter::open("plain", 10).expect("admit plain grain");
+        let pp = plain.worker_permissions().expect("plain perms");
+        assert!(
+            !matches!(pp.delegate, AuthRequired::Custom { .. }),
+            "plain worker delegate must not be owner-Custom-gated"
+        );
     }
 }
