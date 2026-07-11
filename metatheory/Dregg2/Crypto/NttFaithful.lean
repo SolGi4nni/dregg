@@ -2323,6 +2323,143 @@ of the textbook reduction are now proven for-all (no `native_decide` in any `∀
 theorem ringRepFaithful_proven : Dregg2.Crypto.VerifyCoreSpec.RingRepFaithful :=
   ringRepFaithful_of_leftInverse nttLeftInverse_proven
 
+/-! ## PART 1h — `intt`-LINEARITY: the inverse transform commutes with `+`/`−` (leg 1 of the matmul bridge).
+
+`intt` is a composition of Gentleman–Sande butterfly sweeps (each ℤ_q-linear, `cast_gsSweep`) and a final
+`nInv`-scaling (`cast_inttScale`) — so it is a ℤ_q-linear map, hence ADDITIVE. Rather than re-run the
+butterfly induction, this is read straight off the CLOSED-FORM interpolation identity `intt_interp`
+(`(intt v)[i] = nInv·Σ_u v[u]·irt(u)^i`), which is manifestly linear in the coefficient vector `v`. On
+reduced size-256 inputs (the deployed case — every `intt` argument in `verifyCore` is an `addPoly`/`subPoly`
+of `pointwiseMul`s, all coeffs `< q`) the array identity follows by reduced-range injectivity, exactly as
+`nttLeftInverse_proven`. These are the additive twins of the `stage_inv`/`inttStage_inv` root-bookkeeping —
+pure linearity, no root data. -/
+
+/-- Out-of-range `getElem!` on a `Poly` is the `0` default. -/
+theorem getElem!_ge (a : Poly) (p : Nat) (hp : a.size ≤ p) : a[p]! = 0 := by
+  simp only [Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?,
+    Array.getElem?_eq_none hp, Option.getD_none]
+  rfl
+
+/-- `addPoly` preserves the 256-coefficient length. -/
+theorem addPoly_size (a b : Poly) : (addPoly a b).size = 256 := by
+  unfold addPoly
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp,
+    map_pure, List.forIn_pure_yield_eq_foldl]
+  generalize List.range' 0 [:256].size 1 = L
+  suffices h : ∀ (init : Poly), init.size = 256 →
+      (List.foldl (fun r i => Array.set! r i (addQ a[i]! b[i]!)) init L).size = 256 by
+    exact h zeroPoly (by simp [zeroPoly])
+  intro init hinit
+  induction L generalizing init with
+  | nil => simpa using hinit
+  | cons hd tl ih => simp only [List.foldl_cons]; exact ih _ (by simp [hinit])
+
+/-- `subPoly` preserves the 256-coefficient length. -/
+theorem subPoly_size (a b : Poly) : (subPoly a b).size = 256 := by
+  unfold subPoly
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp,
+    map_pure, List.forIn_pure_yield_eq_foldl]
+  generalize List.range' 0 [:256].size 1 = L
+  suffices h : ∀ (init : Poly), init.size = 256 →
+      (List.foldl (fun r i => Array.set! r i (subQ a[i]! b[i]!)) init L).size = 256 by
+    exact h zeroPoly (by simp [zeroPoly])
+  intro init hinit
+  induction L generalizing init with
+  | nil => simpa using hinit
+  | cons hd tl ih => simp only [List.foldl_cons]; exact ih _ (by simp [hinit])
+
+/-- `addPoly` output is reduced (`< q`) at every slot — the `<256` slots hold `addQ` values, the rest `0`. -/
+theorem addPoly_lt (a b : Poly) : ∀ (p : Nat), (addPoly a b)[p]! < q := by
+  intro p
+  by_cases hp : p < 256
+  · rw [addPoly_getElem a b p hp]; exact addQ_lt _ _
+  · rw [getElem!_ge _ p (by rw [addPoly_size]; omega)]; unfold q; omega
+
+/-- `subPoly` output is reduced (`< q`) at every slot. -/
+theorem subPoly_lt (a b : Poly) : ∀ (p : Nat), (subPoly a b)[p]! < q := by
+  intro p
+  by_cases hp : p < 256
+  · rw [subPoly_getElem a b p hp]; exact subQ_lt _ _
+  · rw [getElem!_ge _ p (by rw [subPoly_size]; omega)]; unfold q; omega
+
+/-- `pointwiseMul` output is reduced (`< q`) at every slot. -/
+theorem pointwiseMul_lt (a b : Poly) : ∀ (p : Nat), (pointwiseMul a b)[p]! < q := by
+  intro p
+  by_cases hp : p < 256
+  · rw [pointwiseMul_getElem a b p hp]; exact mulModQ_lt _ _
+  · rw [getElem!_ge _ p (by rw [pointwiseMul_size]; omega)]; unfold q; omega
+
+/-- `zeroPoly` is reduced (`< q`) at every slot. -/
+theorem zeroPoly_lt : ∀ (p : Nat), zeroPoly[p]! < q := by
+  intro p; rw [zeroPoly_get]; unfold q; omega
+
+/-- `intt` preserves the 256-coefficient length (reduced size-256 input). -/
+theorem intt_size (v : Poly) (hv : v.size = 256) (hvlt : ∀ (p : Nat), v[p]! < q) :
+    (intt v).size = 256 := by
+  have h8sz : (inttUpto 8 v).1.size = 256 := (inttStage_inv v hv hvlt 8 (by omega)).1
+  rw [intt_eq_scale_stages, inttStages_eq]; exact inttScale_size _ h8sz
+
+/-- `intt` output is reduced (`< q`) at every slot — the final `mulModQ nInv` scaling reduces everything. -/
+theorem intt_lt (v : Poly) (hv : v.size = 256) (hvlt : ∀ (p : Nat), v[p]! < q) :
+    ∀ (p : Nat), (intt v)[p]! < q := by
+  intro p
+  by_cases hp : p < 256
+  · have h8sz : (inttUpto 8 v).1.size = 256 := (inttStage_inv v hv hvlt 8 (by omega)).1
+    rw [intt_eq_scale_stages, inttStages_eq, inttScale_getElem _ h8sz p hp]; exact mulModQ_lt _ _
+  · rw [getElem!_ge _ p (by rw [intt_size v hv hvlt]; omega)]; unfold q; omega
+
+/-- **`intt` is ADDITIVE** — `intt (addPoly u v) = addPoly (intt u) (intt v)`, for reduced size-256 `u, v`.
+Read off the closed-form `intt_interp` (linear in the coefficient vector) + `cast_addPoly`, lifted to the
+`Array` by reduced-range injectivity. Leg 1 of the `verifyCore`-matmul-IS-the-`R_q`-matvec bridge. -/
+theorem intt_add (u v : Poly) (hu : u.size = 256) (hv : v.size = 256)
+    (hult : ∀ (p : Nat), u[p]! < q) (hvlt : ∀ (p : Nat), v[p]! < q) :
+    intt (addPoly u v) = addPoly (intt u) (intt v) := by
+  have hsz : (addPoly u v).size = 256 := addPoly_size u v
+  have hlt : ∀ (p : Nat), (addPoly u v)[p]! < q := addPoly_lt u v
+  apply Array.ext
+  · rw [intt_size (addPoly u v) hsz hlt, addPoly_size]
+  · intro i h1 _
+    have hi : i < 256 := by rw [intt_size (addPoly u v) hsz hlt] at h1; exact h1
+    rw [(getElem!_pos (intt (addPoly u v)) i (by rw [intt_size (addPoly u v) hsz hlt]; exact hi)).symm,
+        (getElem!_pos (addPoly (intt u) (intt v)) i (by rw [addPoly_size]; exact hi)).symm]
+    apply natCast_inj_of_lt _ _ (intt_lt (addPoly u v) hsz hlt i) (addPoly_lt (intt u) (intt v) i)
+    have hsum : (∑ p ∈ range 256, ((addPoly u v)[p]! : ZMod q) * (irt p)^i)
+        = (∑ p ∈ range 256, (u[p]! : ZMod q) * (irt p)^i)
+          + (∑ p ∈ range 256, (v[p]! : ZMod q) * (irt p)^i) := by
+      rw [← Finset.sum_add_distrib]
+      refine Finset.sum_congr rfl (fun p hp => ?_)
+      rw [cast_addPoly u v p (mem_range.mp hp)]; ring
+    rw [cast_addPoly (intt u) (intt v) i hi, intt_interp u hu hult i hi, intt_interp v hv hvlt i hi,
+        intt_interp (addPoly u v) hsz hlt i hi, hsum, mul_add]
+
+/-- **`intt` is SUBTRACTIVE** — `intt (subPoly u v) = subPoly (intt u) (intt v)`, for reduced size-256 `u, v`.
+The `−` twin of `intt_add`. -/
+theorem intt_sub (u v : Poly) (hu : u.size = 256) (hv : v.size = 256)
+    (hult : ∀ (p : Nat), u[p]! < q) (hvlt : ∀ (p : Nat), v[p]! < q) :
+    intt (subPoly u v) = subPoly (intt u) (intt v) := by
+  have hsz : (subPoly u v).size = 256 := subPoly_size u v
+  have hlt : ∀ (p : Nat), (subPoly u v)[p]! < q := subPoly_lt u v
+  apply Array.ext
+  · rw [intt_size (subPoly u v) hsz hlt, subPoly_size]
+  · intro i h1 _
+    have hi : i < 256 := by rw [intt_size (subPoly u v) hsz hlt] at h1; exact h1
+    rw [(getElem!_pos (intt (subPoly u v)) i (by rw [intt_size (subPoly u v) hsz hlt]; exact hi)).symm,
+        (getElem!_pos (subPoly (intt u) (intt v)) i (by rw [subPoly_size]; exact hi)).symm]
+    apply natCast_inj_of_lt _ _ (intt_lt (subPoly u v) hsz hlt i)
+      (subPoly_lt (intt u) (intt v) i)
+    have hsum : (∑ p ∈ range 256, ((subPoly u v)[p]! : ZMod q) * (irt p)^i)
+        = (∑ p ∈ range 256, (u[p]! : ZMod q) * (irt p)^i)
+          - (∑ p ∈ range 256, (v[p]! : ZMod q) * (irt p)^i) := by
+      rw [← Finset.sum_sub_distrib]
+      refine Finset.sum_congr rfl (fun p hp => ?_)
+      rw [cast_subPoly u v p (mem_range.mp hp) (by have := hvlt p; omega)]; ring
+    rw [cast_subPoly (intt u) (intt v) i hi (by have := intt_lt v hv hvlt i; omega),
+        intt_interp u hu hult i hi, intt_interp v hv hvlt i hi,
+        intt_interp (subPoly u v) hsz hlt i hi, hsum, mul_sub]
+
+#assert_axioms intt_add
+#assert_axioms intt_sub
+
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
 deliberately NOT gated here — it is the accepted computational residual, isolated from the ∀-theorems. -/

@@ -29,7 +29,8 @@ namespace Dregg2.Crypto.VerifyCoreEqSpec
 
 open Dregg2.Crypto.MlDsaRing (Poly q zeroPoly ntt intt pointwiseMul addPoly subPoly schoolbookMul cJ
   schoolbookMul_getElem schoolbookMul_size schoolbookMul_lt ringRepFaithful_proven
-  cast_addPoly cast_subPoly)
+  cast_addPoly cast_subPoly intt_add intt_sub intt_size intt_lt intt_interp addPoly_size addPoly_lt
+  subPoly_size subPoly_lt pointwiseMul_size pointwiseMul_lt zeroPoly_lt zeroPoly_cast)
 open Polynomial Finset
 
 set_option maxRecDepth 8000
@@ -180,41 +181,142 @@ law would be vacuous. It is NOT: `root²⁵⁶ = −1 ≠ 1` (char `q ≠ 2`), t
 theorem Rq_dim_256 : Dregg2.Crypto.Fips204CorrectReal.pb.dim = 256 :=
   Dregg2.Crypto.Fips204CorrectReal.realDim
 
+/-! ## LEG 1+2 — `intt`-linearity carried to `R_q`, and the per-row matmul-IS-the-`R_q`-matvec.
+
+`NttFaithful.intt_add`/`intt_sub` (leg 1) prove `intt` is ℤ_q-additive on reduced size-256 inputs. Composed
+with `toRq_add`/`toRq_sub` they carry to `R_q`; and folded over the `for j` accumulator + closed with
+`toRq_nttMul` on each product they give leg 2 — verifyCore's per-row inner value IS the spec's `R_q`-module
+matrix–vector argument `(A·z − c·s)_i`. -/
+
+/-- `toRq` of an all-`ℤ_q`-zero-coefficient array is `0`. -/
+theorem toRq_eq_zero_of_coeffs (a : Poly) (h : ∀ i : Nat, i < 256 → (a[i]! : ZMod q) = 0) :
+    toRq a = 0 := by
+  unfold toRq
+  refine Finset.sum_eq_zero (fun i hi => ?_)
+  rw [show cf (a[i]!) = (0 : ZMod q) from h i (mem_range.mp hi), map_zero, zero_mul]
+
+/-- `intt` of the zero polynomial maps to `0` in `R_q` (the `intt_interp` sum vanishes coefficientwise). -/
+theorem toRq_intt_zero : toRq (intt zeroPoly) = 0 := by
+  refine toRq_eq_zero_of_coeffs _ (fun i hi => ?_)
+  rw [intt_interp zeroPoly (by simp [zeroPoly]) zeroPoly_lt i hi,
+      Finset.sum_eq_zero (fun u _ => by rw [zeroPoly_cast, zero_mul]), mul_zero]
+
+/-- **`toRq` carries `intt`-additivity to `R_q`.** `toRq (intt (addPoly u v)) = toRq (intt u) + toRq (intt v)`
+on reduced size-256 `u, v` — leg 1 composed with `toRq_add`. -/
+theorem toRq_intt_add (u v : Poly) (hu : u.size = 256) (hv : v.size = 256)
+    (hult : ∀ (p : Nat), u[p]! < q) (hvlt : ∀ (p : Nat), v[p]! < q) :
+    toRq (intt (addPoly u v)) = toRq (intt u) + toRq (intt v) := by
+  rw [intt_add u v hu hv hult hvlt, toRq_add]
+
+/-- **`toRq` carries `intt`-subtractivity to `R_q`.** `toRq (intt (subPoly u v)) = toRq (intt u) −
+toRq (intt v)` on reduced size-256 `u, v`. -/
+theorem toRq_intt_sub (u v : Poly) (hu : u.size = 256) (hv : v.size = 256)
+    (hult : ∀ (p : Nat), u[p]! < q) (hvlt : ∀ (p : Nat), v[p]! < q) :
+    toRq (intt (subPoly u v)) = toRq (intt u) - toRq (intt v) := by
+  rw [intt_sub u v hu hv hult hvlt, toRq_sub _ _ (fun i _ => le_of_lt (intt_lt v hv hvlt i))]
+
+/-- The verifyCore per-row `for j` accumulator (fold of `addPoly az (Â_ij ⊙ ẑ_j)`) keeps size 256. -/
+theorem addFold_size (terms : List (Poly × Poly)) :
+    ∀ (acc : Poly), acc.size = 256 →
+      (List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) acc terms).size = 256 := by
+  induction terms with
+  | nil => intro acc h; simpa using h
+  | cons t ts ih => intro acc _; simp only [List.foldl_cons]; exact ih _ (addPoly_size _ _)
+
+/-- The verifyCore per-row accumulator stays reduced (`< q`). -/
+theorem addFold_lt (terms : List (Poly × Poly)) :
+    ∀ (acc : Poly), (∀ (p : Nat), acc[p]! < q) →
+      ∀ (p : Nat),
+        (List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) acc terms)[p]! < q := by
+  induction terms with
+  | nil => intro acc h; simpa using h
+  | cons t ts ih => intro acc _; simp only [List.foldl_cons]; exact ih _ (addPoly_lt _ _)
+
+/-- **`intt` distributes over the `for j` `addPoly`-fold, in `R_q`.** Folding `addPoly az (Â_ij ⊙ ẑ_j)` and
+applying `intt`, then `toRq`, equals `toRq (intt acc)` plus the `R_q`-sum `Σ_j toRq A_ij · toRq z_j` (each
+NTT-domain product collapsed by `toRq_nttMul`). The reusable fold-linearity engine for leg 2. -/
+theorem toRq_intt_addFold : ∀ (terms : List (Poly × Poly)),
+    (∀ t ∈ terms, t.1.size = 256 ∧ t.2.size = 256) →
+    ∀ (acc : Poly), acc.size = 256 → (∀ (p : Nat), acc[p]! < q) →
+      toRq (intt (List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) acc terms))
+        = toRq (intt acc) + (terms.map (fun t => toRq t.1 * toRq t.2)).sum := by
+  intro terms
+  induction terms with
+  | nil => intro _ acc _ _; simp
+  | cons t ts ih =>
+    intro hterm acc hacc hacclt
+    have ht := hterm t (by simp)
+    have hpwsz : (pointwiseMul (ntt t.1) (ntt t.2)).size = 256 := pointwiseMul_size _ _
+    have hpwlt : ∀ (p : Nat), (pointwiseMul (ntt t.1) (ntt t.2))[p]! < q := pointwiseMul_lt _ _
+    have hacc'sz : (addPoly acc (pointwiseMul (ntt t.1) (ntt t.2))).size = 256 := addPoly_size _ _
+    have hacc'lt : ∀ (p : Nat), (addPoly acc (pointwiseMul (ntt t.1) (ntt t.2)))[p]! < q :=
+      addPoly_lt _ _
+    have hstep : List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) acc (t :: ts)
+        = List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2)))
+            (addPoly acc (pointwiseMul (ntt t.1) (ntt t.2))) ts := by
+      simp only [List.foldl_cons]
+    rw [hstep, ih (fun t' ht' => hterm t' (List.mem_cons_of_mem _ ht'))
+          (addPoly acc (pointwiseMul (ntt t.1) (ntt t.2))) hacc'sz hacc'lt,
+        toRq_intt_add acc (pointwiseMul (ntt t.1) (ntt t.2)) hacc hpwsz hacclt hpwlt,
+        toRq_nttMul t.1 t.2 ht.1 ht.2, List.map_cons, List.sum_cons]
+    ring
+
+/-- **LEG 2 — the per-row matmul IS the `R_q` matrix–vector argument.** verifyCore's per-row inner value
+`w_i = intt(Σ_j Â_ij ⊙ ẑ_j − ĉ ⊙ ŝ_i)` maps under `toRq` to the FIPS 204 spec's `(A·z − c·s)_i` over
+`R_q = ℤ_q[X]/(X²⁵⁶+1)`, where `Â_ij = ntt A_ij`, `ẑ_j = ntt z_j`, `ĉ = ntt c`, `ŝ_i = ntt s_i` (`s_i =
+2^d·t1_i`). The `for j` accumulator distributes via `toRq_intt_addFold`, the subtracted `ĉ⊙ŝ_i` term via
+`toRq_intt_sub`, and each NTT-domain product collapses to the `R_q` product via `toRq_nttMul`. This is the
+mathematically-meaningful ALGEBRA path to the spec matmul: verifyCore's fast NTT matmul computes exactly the
+`R_q`-module matrix–vector product the FIPS 204 acceptance predicate quantifies over, for all inputs. -/
+theorem toRq_intt_matmul_row (terms : List (Poly × Poly)) (c s : Poly)
+    (hterm : ∀ t ∈ terms, t.1.size = 256 ∧ t.2.size = 256) (hc : c.size = 256) (hs : s.size = 256) :
+    toRq (intt (subPoly
+        (List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) zeroPoly terms)
+        (pointwiseMul (ntt c) (ntt s))))
+      = (terms.map (fun t => toRq t.1 * toRq t.2)).sum - toRq c * toRq s := by
+  have hazsz : (List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) zeroPoly terms).size
+      = 256 := addFold_size terms zeroPoly (by simp [zeroPoly])
+  have hazlt : ∀ (p : Nat),
+      (List.foldl (fun az t => addPoly az (pointwiseMul (ntt t.1) (ntt t.2))) zeroPoly terms)[p]! < q :=
+    addFold_lt terms zeroPoly zeroPoly_lt
+  have hct1sz : (pointwiseMul (ntt c) (ntt s)).size = 256 := pointwiseMul_size _ _
+  have hct1lt : ∀ (p : Nat), (pointwiseMul (ntt c) (ntt s))[p]! < q := pointwiseMul_lt _ _
+  rw [toRq_intt_sub _ _ hazsz hct1sz hazlt hct1lt,
+      toRq_intt_addFold terms hterm zeroPoly (by simp [zeroPoly]) zeroPoly_lt,
+      toRq_intt_zero, zero_add, toRq_nttMul c s hc hs]
+
+#assert_axioms intt_add
+#assert_axioms toRq_intt_add
+#assert_axioms toRq_intt_sub
+#assert_axioms toRq_intt_addFold
+#assert_axioms toRq_intt_matmul_row
+
 /-! ## HONEST FRONTIER — what `verifyCore_eq_spec` still needs (NAMED, not laundered).
 
-With the coeff↔`R_q` bridge CLOSED (`toRq_schoolbookMul`/`toRq_nttMul`, above) and
+With the coeff↔`R_q` bridge CLOSED (`toRq_schoolbookMul`/`toRq_nttMul`) AND the `intt`-linearity matmul bridge
+CLOSED (leg 1 `NttFaithful.intt_add`/`intt_sub`; leg 2 `toRq_intt_matmul_row` — verifyCore's per-row fast NTT
+matmul IS the spec's `R_q` matrix–vector product `(A·z − c·s)_i`, for all inputs) plus
 `VerifyCoreSpec.verifyCore_split` (verifyCore's verdict = the two FIPS 204 Alg-8 conditions), the full
-`verifyCore pk M ctx sig = true ↔ verifyB (pkDecode/sigDecode)` identification reduces to exactly THREE
-remaining `∀`-bridges. None is a hardness carrier; each is a concrete imperative-loop / codec fact:
+`verifyCore pk M ctx sig = true ↔ verifyB (pkDecode/sigDecode)` identification reduces to exactly TWO remaining
+`∀`-bridges. Neither is a hardness carrier:
 
 1. **`DecodeSemantics`** (`VerifyCoreSpec.DecodeSemantics`, still open) — the codec `decode∘encode = id` over
-   the FIPS 204 bit-(un)packing (`pkEncode`/`sigEncode` ↔ `pkDecode`/`sigDecode`). The mathematical core is
-   the mixed-radix round-trip `unpackBits (packBits coeffs c) 0 count c = coeffs` (a positional-numeral
-   `Nat`-arithmetic proof through the four `Id.run do` accumulate/emit/read/extract loops), the
-   `zCoeffFromField`/`zFieldFromCoeff` sign-map inverse, and the `hintEncode`/`hintDecode` inverse on valid
-   hints. Heavy but hardness-free; the exact remaining lemma is the `unpackBits∘packBits` mixed-radix identity.
+   the FIPS 204 bit-(un)packing (`MlDsaCodec.pkEncode`/`sigEncode` ↔ `pkDecode`/`sigDecode`). The exact
+   remaining mathematical core is the mixed-radix round-trip
+   `MlDsaCodec.unpackBits (MlDsaCodec.packBits coeffs cbits) 0 256 cbits = coeffs`
+   (a positional-numeral `Nat`-arithmetic proof through the `Id.run do` accumulate/emit and read/extract
+   loops of `packBits`/`unpackBits` — reachable with the same `foldSet`/`Array.set!` engine used for the NTT
+   loops), together with the `MlDsaCodec.zCoeffFromField`/`zFieldFromCoeff` sign-map inverse and the
+   `hintEncode`/`hintDecode` inverse on valid hints. Heavy codec grind, hardness-free; NOT closed here.
 
-2. **`InttLinearMatmul`** (below) — verifyCore's per-row accumulator `intt(Σ_j Â[i,j]⊙ntt(z_j) − ĉ⊙ntt(2^d·t1_i))`
-   equals `Σ_j toRq(Â-source_ij)·toRq(z_j) − toRq(c)·toRq(2^d·t1_i)` over `R_q` (the spec's `(A·z − c·t1·2^d)_i`).
-   The single-product step is CLOSED (`toRq_nttMul`); what remains is `intt`-ADDITIVITY (`intt (addPoly u v) =
-   addPoly (intt u) (intt v)` and the `subPoly` mirror — a butterfly-linearity induction over the
-   Gentleman–Sande network, the additive twin of `NttFaithful.stage_inv`) plus the `for j` `addPoly`-fold
-   characterization (the reusable `foldSet`-style engine). Both are hardness-free imperative-loop lemmas.
-
-3. **The GENERIC instantiation** — `verifyB`'s abstract `hash`/`challenge`/`round`/`zBoundB` chosen as the
+2. **The GENERIC instantiation** — `verifyB`'s abstract `hash`/`challenge`/`round`/`zBoundB` chosen as the
    concrete SHAKE256-framing / `sampleInBall` / `useHint`(=`Decompose`)-rounding / `infNormZ`-gate. Per
    `VerifyCoreSpec`'s classification this is a legitimate INTERPRETATION (the CR/rejection SPECS live on the
    `HashSig`/`FoQrom` floor), not a soundness gap — but wiring it needs the `w1Encode`/`useHint` per-row
-   identification, riding bridge (2).
+   identification, riding the now-closed matmul bridge (leg 2).
 
-`verifyCore_eq_spec` is the composition `verifyCore_split ∘ (2) ∘ (1) ∘ (3)`; it is NOT closed here. This file
-closes the flagged coeff↔`R_q` bridge (the NTT-multiply-computes-the-ring-product leg) and names the residual
-legs precisely. -/
-
-/-- **RESIDUAL (per-row matmul over `R_q`).** GIVEN `intt`-additivity, verifyCore's per-row inner value maps
-under `toRq` to the spec's `R_q`-module matrix–vector argument `(A·z − c·t1·2^d)_i`. The single-product core
-(`toRq_nttMul`) is CLOSED; this names the remaining `intt`-linearity + `addPoly`-fold leg. -/
-def InttLinearMatmul : Prop :=
-  (∀ u v : Poly, u.size = 256 → v.size = 256 → intt (addPoly u v) = addPoly (intt u) (intt v))
+`verifyCore_eq_spec` is the composition `verifyCore_split ∘ leg2 ∘ DecodeSemantics ∘ instantiation`; the
+ALGEBRA legs (1+2) are CLOSED here, leaving `DecodeSemantics` (the codec round-trip, exact lemma named above)
+and the hash/challenge instantiation as the remaining wiring. -/
 
 end Dregg2.Crypto.VerifyCoreEqSpec
