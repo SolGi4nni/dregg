@@ -55,12 +55,23 @@ descriptor, per `GarbledEvalEmit`), so no Poseidon2 chip lookup / CR carrier ent
 * `garbled_forged_not_satisfied2` — a CONCRETE trace `tBad` whose forged output label breaks the
   lane-0 decryption gate on an active row, so `Satisfied2` is REFUTED: the constraint bites.
 
+## The field-faithful denotation (mod-p) and the canonicality envelope
+
+`VmConstraint.holdsVm` / `WindowConstraint.holdsAt` pin gate bodies only `≡ 0 [ZMOD p]`
+(`p = 2013265921`, BabyBear). The Yao decryption clause is HONESTLY a congruence
+(`output ≡ table_entry − hash_out [ZMOD p]`): labels are full field elements, so the field
+subtraction genuinely wraps when `table_entry < hash_out` — the ℤ equality is FALSE there, and the
+congruence IS the deployed one-time-pad. The booleanity / exclusivity / chaining / commitment
+conclusions are read back over ℤ through the EXPLICIT range-check envelope `GarbledTraceCanon`
+(§4.5), inhabited concretely by `t₀_canon`.
+
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound} (Classical enters only via `by_cases`
 on padding / chain flags). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.GarbledEvalEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
 namespace Dregg2.Circuit.Emit.GarbledEvalRefine
 
@@ -73,6 +84,7 @@ open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt WindowConstraint WindowExpr
    zeroAsg memLog mapLog memOpsOf mapOpsOf)
 open Dregg2.Circuit.Emit.GarbledEvalEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt gate_modEq_iff eqToModEq)
 open Dregg2.Crypto
 
 set_option autoImplicit false
@@ -81,10 +93,14 @@ set_option autoImplicit false
 
 /-- **`GateDecrypts env`** — the row correctly decrypts every output label, OR it is a padding row.
 Non-padding ⇒ each of the 8 output-label felts is recovered by one-time-pad decryption
-`output(j) = table_entry(j) − hash_out(j)` (the AIR realization of Yao's per-gate decryption). -/
+`output(j) ≡ table_entry(j) − hash_out(j) [ZMOD p]` (the AIR realization of Yao's per-gate
+decryption). HONESTLY a congruence: labels are full field elements, so the field subtraction
+wraps when `table_entry < hash_out` — the mod-`p` congruence IS the deployed one-time-pad. -/
 def GateDecrypts (env : VmRowEnv) : Prop :=
   env.loc IS_PADDING = 1 ∨
-    ∀ j, j < 8 → env.loc (OUTPUT j) = env.loc (TABLE_ENTRY j) - env.loc (HASH_OUT j)
+    ∀ j, j < 8 →
+      env.loc (OUTPUT j)
+        ≡ env.loc (TABLE_ENTRY j) - env.loc (HASH_OUT j) [ZMOD 2013265921]
 
 /-- **`GateWellFormed env`** — the six selectors are boolean, and a non-padding row selects EXACTLY
 one of the four gate types (`is_and + is_or + is_xor + is_not = 1`). -/
@@ -223,52 +239,98 @@ theorem outHashPin_mem (j : Nat) (hj : j < 4) :
 
 /-! ## §4 — Extracting one forced constraint from `Satisfied2` on an ACTIVE (non-last) row. -/
 
-/-- A declared base-gate body vanishes on an active row of a satisfying trace. -/
+/-- A declared base-gate body vanishes mod `p` on an active row of a satisfying trace. -/
 theorem gate_forces
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (h : Satisfied2 hash garbledEvalDesc minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length)
     (body : EmittedExpr)
     (hmem : VmConstraint2.base (.gate body) ∈ garbledEvalDesc.constraints) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := h.rowConstraints i hi _ hmem
   have hlf : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hlast
   rw [hlf] at hrow
   simpa [VmConstraint2.holdsAt] using hrow
 
-/-- A declared wire-chaining window body vanishes on an active row of a satisfying trace. -/
+/-- A declared wire-chaining window body vanishes mod `p` on an active row of a satisfying trace. -/
 theorem window_forces
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (h : Satisfied2 hash garbledEvalDesc minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length)
     (j : Nat) (hj : j < 8) :
-    (chainBody j).eval (envAt t i) = 0 := by
+    (chainBody j).eval (envAt t i) ≡ 0 [ZMOD 2013265921] := by
   have hrow := h.rowConstraints i hi _ (chainGate_mem j hj)
   have hlf : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hlast
   rw [hlf] at hrow
   simpa [VmConstraint2.holdsAt, WindowConstraint.holdsAt] using hrow
 
-/-- A declared first-row PI binding holds on the first row of a satisfying trace. -/
+/-- A declared first-row PI binding pins the column to the public input mod `p`. -/
 theorem pi_forces
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (h : Satisfied2 hash garbledEvalDesc minit mfin maddrs t)
     (h0 : 0 < t.rows.length) (col k : Nat)
     (hmem : VmConstraint2.base (.piBinding VmRow.first col k) ∈ garbledEvalDesc.constraints) :
-    (envAt t 0).loc col = (envAt t 0).pub k := by
+    (envAt t 0).loc col ≡ (envAt t 0).pub k [ZMOD 2013265921] := by
   have hrow := h.rowConstraints 0 h0 _ hmem
   simpa [VmConstraint2.holdsAt] using hrow
 
-/-- A declared first-row boundary body vanishes on the first row of a satisfying trace. -/
+/-- A declared first-row boundary body vanishes mod `p` on the first row of a satisfying trace. -/
 theorem boundary_forces
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (h : Satisfied2 hash garbledEvalDesc minit mfin maddrs t)
     (h0 : 0 < t.rows.length) (b : EmittedExpr)
     (hmem : VmConstraint2.base (.boundary VmRow.first b) ∈ garbledEvalDesc.constraints) :
-    b.eval (envAt t 0).loc = 0 := by
+    b.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := h.rowConstraints 0 h0 _ hmem
   simpa [VmConstraint2.holdsAt] using hrow
+
+/-! ## §4.5 — the canonicality envelope: reading the ℤ conclusions back off the mod-`p` congruences.
+
+The deployed AIR constrains cells only as BabyBear field elements; the range-check invariant is
+carried as the EXPLICIT hypothesis `GarbledTraceCanon` — inhabited concretely by `t₀_canon` (§6),
+so the envelope is not vacuous. The decryption clause needs NO envelope (it is honestly a
+congruence); the envelope covers the flags (whose booleanity must be EXACT), the chained label
+lanes, and the committed/bound first-row columns. -/
+
+/-- Canonical-representative predicate: the deployed range-check invariant `0 ≤ x < p`. -/
+def CanonCell (x : ℤ) : Prop := 0 ≤ x ∧ x < 2013265921
+
+/-- Two canonical representatives congruent mod `p` are EQUAL. -/
+theorem eq_of_modEq_of_canon {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha : CanonCell a) (hb : CanonCell b) : a = b := by
+  obtain ⟨ha0, ha1⟩ := ha; obtain ⟨hb0, hb1⟩ := hb
+  obtain ⟨k, hk⟩ := h.dvd
+  omega
+
+/-- A canonical cell whose booleanity gate vanishes mod `p` IS `0` or `1` over ℤ: primality splits
+`p ∣ x·(x−1)`, and canonicality collapses each factor. -/
+theorem bin_cases {x : ℤ} (h : x * (x + -1) ≡ 0 [ZMOD 2013265921]) (hc : CanonCell x) :
+    x = 0 ∨ x = 1 := by
+  obtain ⟨h0, h1⟩ := hc
+  have hd : (2013265921 : ℤ) ∣ x * (x + -1) := Int.modEq_zero_iff_dvd.mp h
+  rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+  · obtain ⟨k, hk⟩ := hx; left; omega
+  · obtain ⟨k, hk⟩ := hx; right; omega
+
+/-- **The garbled-evaluation canonicality envelope**: the six selector flags and the chained label
+lanes (`LEFT`/`OUTPUT`) canonical on every row; the first row's committed/bound columns and the
+eight bound public inputs canonical. (`TABLE_ENTRY`/`HASH_OUT` are NOT here — the decryption
+clause is a congruence and needs no range fact.) -/
+structure GarbledTraceCanon (t : VmTrace) : Prop where
+  selAnd : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc IS_AND)
+  selOr : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc IS_OR)
+  selXor : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc IS_XOR)
+  selNot : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc IS_NOT)
+  chainFlag : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc CHAIN_FLAG)
+  padding : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc IS_PADDING)
+  left : ∀ i, i < t.rows.length → ∀ j, j < 8 → CanonCell ((envAt t i).loc (LEFT j))
+  output : ∀ i, i < t.rows.length → ∀ j, j < 8 → CanonCell ((envAt t i).loc (OUTPUT j))
+  commit : ∀ j, j < 4 → CanonCell ((envAt t 0).loc (CIRCUIT_COMMITMENT + j))
+  ohash : ∀ j, j < 4 → CanonCell ((envAt t 0).loc (OUTPUT_LABEL_HASH + j))
+  gid : CanonCell ((envAt t 0).loc GATE_INDEX_DELTA)
+  pubs : ∀ k, k < 8 → CanonCell (t.pub k)
 
 /-! ## §5 — THE WHOLE-DESCRIPTOR BRIDGE (SAT ⟹ SEM). -/
 
@@ -280,10 +342,12 @@ The descriptor is therefore a proven functional refinement of `GarbledEvalRun`, 
 blob. -/
 theorem satisfied2_implies_garbledEvalRun
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hcanon : GarbledTraceCanon t)
     (h : Satisfied2 hash garbledEvalDesc minit mfin maddrs t) :
     GarbledEvalRun t := by
   constructor
-  · -- decrypts
+  · -- decrypts: prime-split the gated product; the non-padding factor is killed EXACTLY (the flag
+    -- is canonical), leaving the one-time-pad congruence.
     intro i hact
     have hi : i < t.rows.length := by omega
     have hlast : i + 1 ≠ t.rows.length := by omega
@@ -291,35 +355,71 @@ theorem satisfied2_implies_garbledEvalRun
     · exact Or.inl hp
     · refine Or.inr (fun j hj => ?_)
       have hg := gate_forces hash minit mfin maddrs t h i hi hlast (decBody j) (decGate_mem j hj)
-      rcases (decryption_body_zero_iff j (envAt t i).loc).mp hg with hpad | heq
-      · exact absurd hpad hp
-      · exact heq
-  · -- wellFormed
+      have hd := Int.modEq_zero_iff_dvd.mp hg
+      rw [show (decBody j).eval (envAt t i).loc
+          = (1 - (envAt t i).loc IS_PADDING)
+            * ((envAt t i).loc (OUTPUT j)
+                - ((envAt t i).loc (TABLE_ENTRY j) - (envAt t i).loc (HASH_OUT j))) from by
+        simp only [decBody, notPadding, EmittedExpr.eval]; ring] at hd
+      rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+      · obtain ⟨hp0, hp1⟩ := hcanon.padding i hi
+        obtain ⟨k, hk⟩ := hx
+        exact absurd (show (envAt t i).loc IS_PADDING = 1 by omega) hp
+      · exact (gate_modEq_iff rfl).mp (Int.modEq_zero_iff_dvd.mpr hx)
+  · -- wellFormed: booleanity via prime split + canonicality; exclusivity then collapses over ℤ
+    -- (the selector sum is confined to [0,4] ⊂ [0,p)).
     intro i hact
     have hi : i < t.rows.length := by omega
     have hlast : i + 1 ≠ t.rows.length := by omega
-    refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
-    · exact (bin_body_zero_iff IS_AND _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_AND)
-          (selGate_mem _ (by simp [selectorBinaryGates])))
-    · exact (bin_body_zero_iff IS_OR _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_OR)
-          (selGate_mem _ (by simp [selectorBinaryGates])))
-    · exact (bin_body_zero_iff IS_XOR _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_XOR)
-          (selGate_mem _ (by simp [selectorBinaryGates])))
-    · exact (bin_body_zero_iff IS_NOT _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_NOT)
-          (selGate_mem _ (by simp [selectorBinaryGates])))
-    · exact (bin_body_zero_iff CHAIN_FLAG _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast (binBody CHAIN_FLAG)
-          (selGate_mem _ (by simp [selectorBinaryGates])))
-    · exact (bin_body_zero_iff IS_PADDING _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_PADDING)
-          (selGate_mem _ (by simp [selectorBinaryGates])))
-    · exact (excl_body_zero_iff _).mp
-        (gate_forces hash minit mfin maddrs t h i hi hlast exclusivityBody excl_mem)
-  · -- chains
+    have hAnd := bin_cases (by
+      simpa only [binBody, EmittedExpr.eval] using
+        gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_AND)
+          (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selAnd i hi)
+    have hOr := bin_cases (by
+      simpa only [binBody, EmittedExpr.eval] using
+        gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_OR)
+          (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selOr i hi)
+    have hXor := bin_cases (by
+      simpa only [binBody, EmittedExpr.eval] using
+        gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_XOR)
+          (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selXor i hi)
+    have hNot := bin_cases (by
+      simpa only [binBody, EmittedExpr.eval] using
+        gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_NOT)
+          (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.selNot i hi)
+    have hChain := bin_cases (by
+      simpa only [binBody, EmittedExpr.eval] using
+        gate_forces hash minit mfin maddrs t h i hi hlast (binBody CHAIN_FLAG)
+          (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.chainFlag i hi)
+    have hPad := bin_cases (by
+      simpa only [binBody, EmittedExpr.eval] using
+        gate_forces hash minit mfin maddrs t h i hi hlast (binBody IS_PADDING)
+          (selGate_mem _ (by simp [selectorBinaryGates]))) (hcanon.padding i hi)
+    refine ⟨hAnd, hOr, hXor, hNot, hChain, hPad, ?_⟩
+    have hg := gate_forces hash minit mfin maddrs t h i hi hlast exclusivityBody excl_mem
+    have hd := Int.modEq_zero_iff_dvd.mp hg
+    rw [show exclusivityBody.eval (envAt t i).loc
+        = (1 - (envAt t i).loc IS_PADDING)
+          * ((envAt t i).loc IS_AND + (envAt t i).loc IS_OR + (envAt t i).loc IS_XOR
+              + (envAt t i).loc IS_NOT - 1) from by
+      simp only [exclusivityBody, notPadding, EmittedExpr.eval]; ring] at hd
+    have b1 : 0 ≤ (envAt t i).loc IS_AND ∧ (envAt t i).loc IS_AND ≤ 1 := by
+      rcases hAnd with h' | h' <;> omega
+    have b2 : 0 ≤ (envAt t i).loc IS_OR ∧ (envAt t i).loc IS_OR ≤ 1 := by
+      rcases hOr with h' | h' <;> omega
+    have b3 : 0 ≤ (envAt t i).loc IS_XOR ∧ (envAt t i).loc IS_XOR ≤ 1 := by
+      rcases hXor with h' | h' <;> omega
+    have b4 : 0 ≤ (envAt t i).loc IS_NOT ∧ (envAt t i).loc IS_NOT ≤ 1 := by
+      rcases hNot with h' | h' <;> omega
+    rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+    · obtain ⟨k, hk⟩ := hx
+      rcases hPad with hp | hp
+      · exfalso; omega
+      · exact Or.inl hp
+    · obtain ⟨k, hk⟩ := hx
+      exact Or.inr (by omega)
+  · -- chains: prime-split the gated product; the flag factor is killed EXACTLY, and both chained
+    -- label cells are canonical, so the threading equality holds over ℤ.
     intro i hact
     have hi : i < t.rows.length := by omega
     have hlast : i + 1 ≠ t.rows.length := by omega
@@ -327,18 +427,40 @@ theorem satisfied2_implies_garbledEvalRun
     · exact Or.inl hcf
     · refine Or.inr (fun j hj => ?_)
       have hw := window_forces hash minit mfin maddrs t h i hi hlast j hj
-      rcases (chain_body_zero_iff j (envAt t i)).mp hw with h0 | heq
-      · exact absurd h0 hcf
-      · exact heq
-  · -- committed
+      have hd := Int.modEq_zero_iff_dvd.mp hw
+      rw [show (chainBody j).eval (envAt t i)
+          = (envAt t i).loc CHAIN_FLAG
+            * ((envAt t i).nxt (LEFT j) - (envAt t i).loc (OUTPUT j)) from by
+        simp only [chainBody, WindowExpr.eval]; ring] at hd
+      rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+      · obtain ⟨hc0, hc1⟩ := hcanon.chainFlag i hi
+        obtain ⟨k, hk⟩ := hx
+        exact absurd (show (envAt t i).loc CHAIN_FLAG = 0 by omega) hcf
+      · exact eq_of_modEq_of_canon
+          ((gate_modEq_iff rfl).mp (Int.modEq_zero_iff_dvd.mpr hx))
+          (hcanon.left (i + 1) (by omega) j hj) (hcanon.output i hi j hj)
+  · -- committed: mod-p pins collapsed by canonicality of both sides.
     intro h0
-    exact ⟨fun j hj => pi_forces hash minit mfin maddrs t h h0 (CIRCUIT_COMMITMENT + j) j
-              (commitPin_mem j hj),
-           fun j hj => pi_forces hash minit mfin maddrs t h h0 (OUTPUT_LABEL_HASH + j) (4 + j)
-              (outHashPin_mem j hj)⟩
-  · -- gateInit
+    have hc1 : ∀ j, j < 4 → (envAt t 0).loc (CIRCUIT_COMMITMENT + j) = (envAt t 0).pub j := by
+      intro j hj
+      exact eq_of_modEq_of_canon
+        (pi_forces hash minit mfin maddrs t h h0 (CIRCUIT_COMMITMENT + j) j
+          (commitPin_mem j hj)) (hcanon.commit j hj)
+        (hcanon.pubs j (Nat.lt_of_lt_of_le hj (by norm_num)))
+    have hc2 : ∀ j, j < 4 →
+        (envAt t 0).loc (OUTPUT_LABEL_HASH + j) = (envAt t 0).pub (4 + j) := by
+      intro j hj
+      exact eq_of_modEq_of_canon
+        (pi_forces hash minit mfin maddrs t h h0 (OUTPUT_LABEL_HASH + j) (4 + j)
+          (outHashPin_mem j hj)) (hcanon.ohash j hj)
+        (hcanon.pubs (4 + j) (Nat.lt_of_lt_of_le (Nat.add_lt_add_left hj 4) (by norm_num)))
+    exact ⟨hc1, hc2⟩
+  · -- gateInit: mod-p boundary collapsed by canonicality.
     intro h0
-    exact boundary_forces hash minit mfin maddrs t h h0 (.var GATE_INDEX_DELTA) bnd_mem
+    have hb := boundary_forces hash minit mfin maddrs t h h0 (.var GATE_INDEX_DELTA) bnd_mem
+    have hb' : (envAt t 0).loc GATE_INDEX_DELTA ≡ 0 [ZMOD 2013265921] := by
+      simpa only [EmittedExpr.eval] using hb
+    exact eq_of_modEq_of_canon hb' hcanon.gid ⟨by norm_num, by norm_num⟩
 
 #assert_axioms satisfied2_implies_garbledEvalRun
 
@@ -421,27 +543,28 @@ theorem exclBody_honest : exclusivityBody.eval honestRow0 = 0 := by
   simp only [exclusivityBody, notPadding, EmittedExpr.eval, honestRow0_and, honestRow0_or,
     honestRow0_xor, honestRow0_not, honestRow0_padding]; ring
 
-/-- A base gate holds on the honest FIRST row (active) iff its body vanishes on `honestRow0`. -/
+/-- A base gate holds on the honest FIRST row (active) from a body-vanishing fact (the ℤ zero is
+lifted to the field congruence — the POSITIVE direction is mechanical). -/
 theorem honest_gate_holds (hash : List ℤ → ℤ) (body : EmittedExpr)
     (h : body.eval honestRow0 = 0) :
     (VmConstraint2.base (.gate body)).holdsAt hash t₀.tf (envAt t₀ 0) (0 == 0)
-      (0 + 1 == t₀.rows.length) := h
+      (0 + 1 == t₀.rows.length) := eqToModEq h
 
 /-- A first-row PI binding holds on the honest first row from a column equation. -/
 theorem honest_pi_holds (hash : List ℤ → ℤ) (col k : Nat) (h : honestRow0 col = honestPub k) :
     (VmConstraint2.base (.piBinding VmRow.first col k)).holdsAt hash t₀.tf (envAt t₀ 0) (0 == 0)
-      (0 + 1 == t₀.rows.length) := fun _ => h
+      (0 + 1 == t₀.rows.length) := fun _ => eqToModEq h
 
 /-- The first-row boundary holds on the honest first row from a body-vanishing fact. -/
 theorem honest_boundary_holds (hash : List ℤ → ℤ) (b : EmittedExpr) (h : b.eval honestRow0 = 0) :
     (VmConstraint2.base (.boundary VmRow.first b)).holdsAt hash t₀.tf (envAt t₀ 0) (0 == 0)
-      (0 + 1 == t₀.rows.length) := fun _ => h
+      (0 + 1 == t₀.rows.length) := fun _ => eqToModEq h
 
 /-- A wire-chaining window gate holds on the honest first row from a body-vanishing fact. -/
 theorem honest_chain_holds (hash : List ℤ → ℤ) (j : Nat)
     (h : (chainBody j).eval (envAt t₀ 0) = 0) :
     (VmConstraint2.windowGate ⟨chainBody j, true⟩).holdsAt hash t₀.tf (envAt t₀ 0) (0 == 0)
-      (0 + 1 == t₀.rows.length) := fun _ => h
+      (0 + 1 == t₀.rows.length) := fun _ => eqToModEq h
 
 theorem honest_memOpsOf_nil : memOpsOf garbledEvalDesc = [] := by
   simp [memOpsOf, garbledEvalDesc, garbledCoreConstraints, garbledLastRowFix, commitmentPins,
@@ -565,17 +688,23 @@ theorem garbled_honest_satisfied2 (hash : List ℤ → ℤ) :
         refine List.forall_mem_append.mpr ⟨List.forall_mem_append.mpr ⟨?_, ?_⟩, ?_⟩
         · intro c hc; simp only [List.mem_map, List.mem_range] at hc
           obtain ⟨j, hj, rfl⟩ := hc
-          exact fun _ => by rw [envAt1_loc]; exact decBody_honest j hj
+          exact fun _ => by rw [envAt1_loc]; exact eqToModEq (decBody_honest j hj)
         · intro c hc; simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
           rcases hc with rfl | rfl | rfl | rfl | rfl | rfl
-          · exact fun _ => by rw [envAt1_loc]; exact binBody_honest _ (Or.inr honestRow0_and)
-          · exact fun _ => by rw [envAt1_loc]; exact binBody_honest _ (Or.inl honestRow0_or)
-          · exact fun _ => by rw [envAt1_loc]; exact binBody_honest _ (Or.inl honestRow0_xor)
-          · exact fun _ => by rw [envAt1_loc]; exact binBody_honest _ (Or.inl honestRow0_not)
-          · exact fun _ => by rw [envAt1_loc]; exact binBody_honest _ (Or.inr honestRow0_chain)
-          · exact fun _ => by rw [envAt1_loc]; exact binBody_honest _ (Or.inl honestRow0_padding)
+          · exact fun _ => by
+              rw [envAt1_loc]; exact eqToModEq (binBody_honest _ (Or.inr honestRow0_and))
+          · exact fun _ => by
+              rw [envAt1_loc]; exact eqToModEq (binBody_honest _ (Or.inl honestRow0_or))
+          · exact fun _ => by
+              rw [envAt1_loc]; exact eqToModEq (binBody_honest _ (Or.inl honestRow0_xor))
+          · exact fun _ => by
+              rw [envAt1_loc]; exact eqToModEq (binBody_honest _ (Or.inl honestRow0_not))
+          · exact fun _ => by
+              rw [envAt1_loc]; exact eqToModEq (binBody_honest _ (Or.inr honestRow0_chain))
+          · exact fun _ => by
+              rw [envAt1_loc]; exact eqToModEq (binBody_honest _ (Or.inl honestRow0_padding))
         · intro c hc; simp only [List.mem_singleton] at hc; subst hc
-          exact fun _ => by rw [envAt1_loc]; exact exclBody_honest
+          exact fun _ => by rw [envAt1_loc]; exact eqToModEq exclBody_honest
   · -- rowHashes (hashSites = [])
     intro i _; exact True.intro
   · -- rowRanges (ranges = [])
@@ -600,10 +729,37 @@ theorem garbled_honest_decrypts_nonvacuous :
   simp only [envAt0_loc, honestRow0_output j hj, honestRow0_table j hj, honestRow0_hash j hj,
     sub_zero]
 
+/-- **The honest witness inhabits the canonicality envelope** — every enveloped cell of both rows
+is `0`/`1` and the bound columns/public inputs are the small values `100..107`, all canonical. -/
+theorem t₀_canon : GarbledTraceCanon t₀ := by
+  have hlen : t₀.rows.length = 2 := rfl
+  have hrow : ∀ i, i < t₀.rows.length → (envAt t₀ i).loc = honestRow0 := by
+    intro i hi
+    rw [hlen] at hi
+    interval_cases i <;> rfl
+  have hsel : ∀ c : Nat, (0 ≤ honestRow0 c ∧ honestRow0 c < 2013265921) →
+      ∀ i, i < t₀.rows.length → CanonCell ((envAt t₀ i).loc c) := by
+    intro c hc i hi
+    rw [hrow i hi]; exact hc
+  refine ⟨hsel _ ⟨by decide, by decide⟩, hsel _ ⟨by decide, by decide⟩,
+    hsel _ ⟨by decide, by decide⟩, hsel _ ⟨by decide, by decide⟩,
+    hsel _ ⟨by decide, by decide⟩, hsel _ ⟨by decide, by decide⟩,
+    ?_, ?_, ?_, ?_, ⟨by decide, by decide⟩, ?_⟩
+  · intro i hi j hj
+    interval_cases j <;> exact hsel _ ⟨by decide, by decide⟩ i hi
+  · intro i hi j hj
+    interval_cases j <;> exact hsel _ ⟨by decide, by decide⟩ i hi
+  · intro j hj
+    interval_cases j <;> exact ⟨by decide, by decide⟩
+  · intro j hj
+    interval_cases j <;> exact ⟨by decide, by decide⟩
+  · intro k hk
+    interval_cases k <;> exact ⟨by decide, by decide⟩
+
 /-- The honest trace is a genuine `GarbledEvalRun` — the bridge fired on a real satisfying witness. -/
 theorem garbled_honest_run : GarbledEvalRun t₀ :=
   satisfied2_implies_garbledEvalRun (fun _ => 0) (fun _ => 0) (fun _ => (0, 0)) [] t₀
-    (garbled_honest_satisfied2 (fun _ => 0))
+    t₀_canon (garbled_honest_satisfied2 (fun _ => 0))
 
 /-! ## §7 — Non-vacuity, part B: a CONCRETE trace the descriptor REJECTS (the constraint bites). -/
 
@@ -631,8 +787,10 @@ theorem garbled_forged_not_satisfied2
     simp only [decBody, notPadding, EmittedExpr.eval, forgedRow0, OUTPUT, TABLE_ENTRY, HASH_OUT,
       IS_PADDING]
     norm_num
-  rw [hg] at hval
-  exact absurd hval (by decide)
+  -- The forged lane's gate residual is `5`, and `p ∤ 5` — the field gate bites.
+  rw [hval] at hg
+  obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp hg
+  omega
 
 #assert_axioms garbled_honest_satisfied2
 #assert_axioms garbled_forged_not_satisfied2

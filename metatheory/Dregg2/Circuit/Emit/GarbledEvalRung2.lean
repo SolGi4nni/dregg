@@ -27,7 +27,9 @@ decryption gate collapses to the GENUINE one-time-pad decryption
     output(j) = table_entry(j) − gh [left‖right‖gate_index] j  =  HonestOutput gh (row) j,
 
 the UNIQUE output label a genuine evaluator recovers — no forged output can be exposed
-(`garbled_rung2_no_output_forgery`). This mirrors the DFA `Rung 2` posture: there the deployed chip-AIR
+(`garbled_rung2_no_output_forgery`, the field congruence; `garbled_rung2_output_unique`, the unique
+canonical representative over ℤ under the range-check envelope `GarbledTraceCanon`). This mirrors
+the DFA `Rung 2` posture: there the deployed chip-AIR
 supplies `ChipTableSound` and the running-hash binding discharges the terminal-step residual; here the
 deployed garbler + verifier-wrapper supplies `GarblingHashBound` (Poseidon2 preimage/collision
 resistance is what makes it sound — forging `hash_out` to a chosen value is a Poseidon2 preimage
@@ -72,6 +74,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Circuit.DescriptorIR2 (Satisfied2 VmTrace envAt)
 open Dregg2.Circuit.Emit.GarbledEvalEmit
 open Dregg2.Circuit.Emit.GarbledEvalRefine
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (eqToModEq)
 
 set_option autoImplicit false
 
@@ -106,26 +109,52 @@ def GarblingHashBound (gh : List ℤ → Nat → ℤ) (t : VmTrace) : Prop :=
 /-- **`garbled_rung2_no_output_forgery` — THE DISCHARGE.** A trace `t` that `Satisfied2`s the emitted
 garbled-evaluation descriptor and rides the NAMED garbling-hash carrier `GarblingHashBound gh` exposes,
 on every active non-padding row and output lane `j`, EXACTLY the genuine one-time-pad decryption
-`HonestOutput gh (row) j = table_entry(j) − gh [inputs] j`. The free-`hash_out` residual RUNG 1 left is
-discharged: no forged output label can appear — the exposed label is the UNIQUE one a faithful
-evaluator recovers under the genuine garbling hash. -/
+`HonestOutput gh (row) j = table_entry(j) − gh [inputs] j` — as the field congruence
+`output(j) ≡ HonestOutput gh (row) j [ZMOD p]` (honestly so: `HonestOutput` is an ℤ subtraction that
+can be negative, and the deployed pad is the FIELD subtraction). The free-`hash_out` residual RUNG 1
+left is discharged; combined with the exposed label's canonicality, the label is the UNIQUE one a
+faithful evaluator recovers (`garbled_rung2_output_unique`). -/
 theorem garbled_rung2_no_output_forgery
     (gh : List ℤ → Nat → ℤ)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hcanon : GarbledTraceCanon t)
     (hsat : Satisfied2 hash garbledEvalDesc minit mfin maddrs t)
     (hgh : GarblingHashBound gh t) :
     ∀ i, i + 1 < t.rows.length → (envAt t i).loc IS_PADDING = 0 →
-      ∀ j, j < 8 → (envAt t i).loc (OUTPUT j) = HonestOutput gh (envAt t i).loc j := by
+      ∀ j, j < 8 →
+        (envAt t i).loc (OUTPUT j) ≡ HonestOutput gh (envAt t i).loc j [ZMOD 2013265921] := by
   intro i hact hnp j hj
-  have hrun := satisfied2_implies_garbledEvalRun hash minit mfin maddrs t hsat
+  have hrun := satisfied2_implies_garbledEvalRun hash minit mfin maddrs t hcanon hsat
   rcases hrun.decrypts i hact with hpad | heq
   · rw [hnp] at hpad; exact absurd hpad (by decide)
   · have h2 := hgh i hact hnp j hj
     show (envAt t i).loc (OUTPUT j)
-        = (envAt t i).loc (TABLE_ENTRY j) - gh (GateInputs (envAt t i).loc) j
+        ≡ (envAt t i).loc (TABLE_ENTRY j) - gh (GateInputs (envAt t i).loc) j [ZMOD 2013265921]
     rw [← h2]; exact heq j hj
 
+/-- **`garbled_rung2_output_unique` — the no-forgery CROWN over ℤ.** Under the same hypotheses, the
+exposed output label is the UNIQUE canonical field element congruent to the genuine one-time-pad
+decryption: any candidate label `y` that is canonical and decrypts correctly mod `p` IS the exposed
+one. A forger cannot expose a different label — the range-checked representative of
+`HonestOutput gh (row) j` is pinned exactly. -/
+theorem garbled_rung2_output_unique
+    (gh : List ℤ → Nat → ℤ)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hcanon : GarbledTraceCanon t)
+    (hsat : Satisfied2 hash garbledEvalDesc minit mfin maddrs t)
+    (hgh : GarblingHashBound gh t) :
+    ∀ i, i + 1 < t.rows.length → (envAt t i).loc IS_PADDING = 0 →
+      ∀ j, j < 8 → ∀ y : ℤ, CanonCell y →
+        y ≡ HonestOutput gh (envAt t i).loc j [ZMOD 2013265921] →
+        (envAt t i).loc (OUTPUT j) = y := by
+  intro i hact hnp j hj y hy hyc
+  exact eq_of_modEq_of_canon
+    ((garbled_rung2_no_output_forgery gh hash minit mfin maddrs t hcanon hsat hgh
+        i hact hnp j hj).trans hyc.symm)
+    (hcanon.output i (by omega) j hj) hy
+
 #assert_axioms garbled_rung2_no_output_forgery
+#assert_axioms garbled_rung2_output_unique
 
 /-! ## §3 — Non-vacuity, TRUE half: the discharge FIRES on RUNG 1's honest witness `t₀`. -/
 
@@ -148,12 +177,20 @@ conclusion is achievably true — not vacuous. -/
 theorem garbled_honest_fires :
     (envAt t₀ 0).loc (OUTPUT 0) = 0 ∧
     (envAt t₀ 0).loc (OUTPUT 0) = HonestOutput (fun _ _ => (0 : ℤ)) (envAt t₀ 0).loc 0 := by
-  refine ⟨?_, ?_⟩
-  · rw [envAt0_loc]; exact honestRow0_output 0 (by decide)
-  · exact garbled_rung2_no_output_forgery (fun _ _ => (0 : ℤ)) (fun _ => 0) (fun _ => 0)
-      (fun _ => (0, 0)) [] t₀ (garbled_honest_satisfied2 (fun _ => 0)) garbled_honest_hashBound
-      0 (by rw [show t₀.rows.length = 2 from rfl]; decide)
-      (by rw [envAt0_loc]; exact honestRow0_padding) 0 (by decide)
+  have h1 : (envAt t₀ 0).loc (OUTPUT 0) = 0 := by
+    rw [envAt0_loc]; exact honestRow0_output 0 (by decide)
+  have h2 : HonestOutput (fun _ _ => (0 : ℤ)) (envAt t₀ 0).loc 0 = 0 := by
+    show (envAt t₀ 0).loc (TABLE_ENTRY 0) - 0 = 0
+    rw [envAt0_loc, honestRow0_table 0 (by decide)]; ring
+  have hcong := garbled_rung2_no_output_forgery (fun _ _ => (0 : ℤ)) (fun _ => 0) (fun _ => 0)
+    (fun _ => (0, 0)) [] t₀ t₀_canon (garbled_honest_satisfied2 (fun _ => 0))
+    garbled_honest_hashBound
+    0 (by rw [show t₀.rows.length = 2 from rfl]; decide)
+    (by rw [envAt0_loc]; exact honestRow0_padding) 0 (by decide)
+  -- collapse the fired congruence with both sides canonical (they are both the small value 0)
+  refine ⟨h1, eq_of_modEq_of_canon hcong ?_ ?_⟩
+  · rw [h1]; exact ⟨by norm_num, by norm_num⟩
+  · rw [h2]; exact ⟨by norm_num, by norm_num⟩
 
 /-! ## §4 — Non-vacuity, FALSE half: the carrier is LOAD-BEARING (and a real filter). -/
 
@@ -171,13 +208,15 @@ theorem garbled_cheat_not_hashBound : ¬ GarblingHashBound (fun _ _ => (1 : ℤ)
 cannot force the no-forgery conclusion: the SAME honest trace `t₀` is provably `Satisfied2`, yet under
 a DIFFERENT genuine garbling hash (`gh = fun _ _ => 1`) it does NOT satisfy the conclusion — it exposes
 `output(0) = 0` while the honest decryption is `table_entry(0) − 1 = −1`. So a hypothetical
-`Satisfied2 ⟹ output = HonestOutput` (dropping the carrier) is REFUTED: `GarblingHashBound` is
-genuinely load-bearing, and the RUNG-2 theorem is not a `P → P` / unsatisfiable-hypothesis vacuity. -/
+`Satisfied2 ⟹ output ≡ HonestOutput [ZMOD p]` (dropping the carrier) is REFUTED — `0 ≢ −1 [ZMOD p]`
+(`p ∤ 1`): `GarblingHashBound` is genuinely load-bearing, and the RUNG-2 theorem is not a `P → P` /
+unsatisfiable-hypothesis vacuity. -/
 theorem garbled_satisfied2_alone_insufficient :
     Satisfied2 (fun _ => 0) garbledEvalDesc (fun _ => 0) (fun _ => (0, 0)) [] t₀ ∧
     ¬ (∀ i, i + 1 < t₀.rows.length → (envAt t₀ i).loc IS_PADDING = 0 →
         ∀ j, j < 8 →
-          (envAt t₀ i).loc (OUTPUT j) = HonestOutput (fun _ _ => (1 : ℤ)) (envAt t₀ i).loc j) := by
+          (envAt t₀ i).loc (OUTPUT j)
+            ≡ HonestOutput (fun _ _ => (1 : ℤ)) (envAt t₀ i).loc j [ZMOD 2013265921]) := by
   refine ⟨garbled_honest_satisfied2 (fun _ => 0), fun hconc => ?_⟩
   have h0 := hconc 0 (by rw [show t₀.rows.length = 2 from rfl]; decide)
     (by rw [envAt0_loc]; exact honestRow0_padding) 0 (by decide)
@@ -186,7 +225,9 @@ theorem garbled_satisfied2_alone_insufficient :
     show honestRow0 (TABLE_ENTRY 0) - 1 = -1
     rw [honestRow0_table 0 (by decide)]; decide
   rw [hval] at h0
-  exact absurd h0 (by decide)
+  -- h0 : 0 ≡ −1 [ZMOD p], i.e. p ∣ −1 — impossible.
+  obtain ⟨k, hk⟩ := h0.dvd
+  omega
 
 #assert_axioms garbled_honest_hashBound
 #assert_axioms garbled_honest_fires
@@ -265,11 +306,11 @@ theorem garbled_forge_was_satisfied2_core :
     · -- commitmentPins: FIRE on the first row
       intro c hc; simp only [commitmentPins, List.mem_map, List.mem_range] at hc
       obtain ⟨j, hj, rfl⟩ := hc
-      exact fun _ => forgeRow_commit j hj
+      exact fun _ => eqToModEq (forgeRow_commit j hj)
     · -- outputHashPins: FIRE
       intro c hc; simp only [outputHashPins, List.mem_map, List.mem_range] at hc
       obtain ⟨j, hj, rfl⟩ := hc
-      exact fun _ => forgeRow_ohash j hj
+      exact fun _ => eqToModEq (forgeRow_ohash j hj)
     · -- decryptionGates: VACUOUS (transition `.gate`, this row is last)
       intro c hc; simp only [decryptionGates, List.mem_map, List.mem_range] at hc
       obtain ⟨j, _, rfl⟩ := hc; exact True.intro

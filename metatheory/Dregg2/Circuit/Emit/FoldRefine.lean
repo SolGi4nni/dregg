@@ -49,12 +49,23 @@ NAMED, realizable hypothesis (the deployed Poseidon2 chip AIR's own faithfulness
 * `badTrace_not_satisfied2` — a CONCRETE trace whose last row carries `ROW_TYPE = 2` is REJECTED by
   `Satisfied2` (the summary-boundary constraint bites), so the accept-set genuinely separates.
 
+## The field-faithful denotation (mod-p) and the canonicality envelope
+
+`VmConstraint.holdsVm` / `WindowConstraint.holdsAt` pin gate bodies only `≡ 0 [ZMOD p]`
+(`p = 2013265921`, BabyBear) — the DEPLOYED field constraint, not an ℤ equality. Reading the ℤ
+conclusions of `FoldStepValid` back off the congruences needs the deployed range-check invariant
+carried as the EXPLICIT hypothesis `FoldTraceCanon` (§1.5): the eight semantic fold columns
+canonical in `[0, p)` on every row, and the five bound public inputs canonical. Non-vacuous:
+`satTrace_canon` / `goodTrace_canon` inhabit the envelope concretely. The hash-site lookup
+(`factCommitmentGenuine`) is UNAFFECTED — `Lookup.holdsAt` is table membership, an ℤ equality.
+
 ## Axiom hygiene
 
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}; Poseidon2 CR enters ONLY through the named
 `ChipTableSound` carrier (as a hypothesis, via `chip_lookup_sound`). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.FoldEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.DecideSatisfied2
 
 namespace Dregg2.Circuit.Emit.FoldRefine
@@ -69,6 +80,7 @@ open Dregg2.Circuit.DescriptorIR2
    Satisfied2 envAt ChipTableSound chip_lookup_sound chipLookupTuple chipRow siteLaneCols
    CHIP_RATE CHIP_OUT_LANES)
 open Dregg2.Circuit.Emit.FoldEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (pPrimeInt gate_modEq_iff)
 open Dregg2.Crypto
 
 set_option autoImplicit false
@@ -117,6 +129,53 @@ structure FoldStepValid (hash : List ℤ → ℤ) (t : VmTrace) : Prop where
   transitionHashPublished :
     (envAt t (t.rows.length - 1)).loc MEMBERSHIP_ROOT = t.pub PI_TRANSITION_HASH
 
+/-! ## §1.5 — the canonicality envelope: reading the ℤ spec back off the mod-`p` congruences.
+
+The deployed AIR constrains cells only as BabyBear field elements; the range-check invariant (every
+semantic cell and bound public input a canonical representative in `[0, p)`) is what makes the ℤ
+reading honest. Carried as the EXPLICIT hypothesis `FoldTraceCanon` — inhabited concretely by
+`satTrace_canon` / `goodTrace_canon` (§3/§4), so the envelope is not vacuous. -/
+
+/-- Canonical-representative predicate: the deployed range-check invariant `0 ≤ x < p`. -/
+def CanonCell (x : ℤ) : Prop := 0 ≤ x ∧ x < 2013265921
+
+/-- Two canonical representatives congruent mod `p` are EQUAL (`p ∣ residual` with
+`residual ∈ (−p, p)` collapses to `0`). -/
+theorem eq_of_modEq_of_canon {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha : CanonCell a) (hb : CanonCell b) : a = b := by
+  obtain ⟨ha0, ha1⟩ := ha; obtain ⟨hb0, hb1⟩ := hb
+  obtain ⟨k, hk⟩ := h.dvd
+  omega
+
+/-- A canonical cell whose booleanity gate vanishes mod `p` IS `0` or `1` over ℤ: primality splits
+`p ∣ x·(x−1)`, and canonicality collapses each factor. -/
+theorem binary_modEq_cases {x : ℤ} (h : x * (x + -1) ≡ 0 [ZMOD 2013265921])
+    (hc : CanonCell x) : x = 0 ∨ x = 1 := by
+  obtain ⟨h0, h1⟩ := hc
+  have hd : (2013265921 : ℤ) ∣ x * (x + -1) := Int.modEq_zero_iff_dvd.mp h
+  rcases pPrimeInt.dvd_mul.mp hd with hx | hx
+  · obtain ⟨k, hk⟩ := hx; left; omega
+  · obtain ⟨k, hk⟩ := hx; right; omega
+
+/-- **The fold canonicality envelope.** The eight semantic fold columns are canonical on every row,
+and the five bound public inputs are canonical — the deployed range-check invariant, threaded
+through the whole-descriptor bridge. (`FACT_HASH` and the fact/lane columns are NOT here: the
+fact-hash clause rides the lookup, an exact table-membership equality.) -/
+structure FoldTraceCanon (t : VmTrace) : Prop where
+  rowType : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc ROW_TYPE)
+  membershipRoot : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc MEMBERSHIP_ROOT)
+  oldRoot : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc OLD_ROOT)
+  newRoot : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc NEW_ROOT)
+  hashValid : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc HASH_VALID)
+  removalCount : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc REMOVAL_COUNT)
+  removalCountPlusOne : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc REMOVAL_COUNT_PLUS_ONE)
+  checkCount : ∀ i, i < t.rows.length → CanonCell ((envAt t i).loc CHECK_COUNT)
+  pubOldRoot : CanonCell (t.pub PI_OLD_ROOT)
+  pubNewRoot : CanonCell (t.pub PI_NEW_ROOT)
+  pubRemovalCount : CanonCell (t.pub PI_REMOVAL_COUNT)
+  pubCheckCount : CanonCell (t.pub PI_CHECK_COUNT)
+  pubTransitionHash : CanonCell (t.pub PI_TRANSITION_HASH)
+
 /-! ## §2 — THE BRIDGE: the whole-descriptor `Satisfied2` refines `FoldStepValid` (SAT_IMPLIES_SEM). -/
 
 /-- **`foldDesc_satisfied2_refines_foldStepValid` — THE WHOLE-DESCRIPTOR FUNCTIONAL-REFINEMENT BRIDGE.**
@@ -129,6 +188,7 @@ theorem foldDesc_satisfied2_refines_foldStepValid
     (t : VmTrace)
     (hChip : ChipTableSound hash (t.tf .poseidon2))
     (hlen : 0 < t.rows.length)
+    (hcanon : FoldTraceCanon t)
     (h : Satisfied2 hash foldDesc minit mfin maddrs t) :
     FoldStepValid hash t := by
   have hrow := h.rowConstraints
@@ -139,7 +199,8 @@ theorem foldDesc_satisfied2_refines_foldStepValid
     { rowTypeBinary := ?_, removalsCertified := ?_, oldRootIsPublicInput := ?_,
       newRootIsPublicInput := ?_, summaryRowIsSummary := ?_, removalCountPublished := ?_,
       checkCountPublished := ?_, transitionHashPublished := ?_ }
-  · -- rowTypeBinary: last row via the boundary (= 1), non-last via the binary gate (∈ {0,1}).
+  · -- rowTypeBinary: last row via the boundary (≡ 1 mod p, collapsed by canonicality), non-last
+    -- via the binary gate (mod-p booleanity + primality + canonicality ⇒ ∈ {0,1} over ℤ).
     intro i hi
     by_cases hlast : i + 1 = t.rows.length
     · have hb := hrow i hi (VmConstraint2.base (.boundary .last lastSummaryBody))
@@ -147,15 +208,17 @@ theorem foldDesc_satisfied2_refines_foldStepValid
       simp only [VmConstraint2.holdsAt] at hb
       rw [show (i + 1 == t.rows.length) = true from by rw [hlast]; simp,
           holdsVm_boundaryLast_true] at hb
-      simp only [lastSummaryBody, EmittedExpr.eval] at hb
-      right; omega
+      have hb' := (gate_modEq_iff (a := (envAt t i).loc ROW_TYPE) (b := 1)
+        (by simp only [lastSummaryBody, EmittedExpr.eval]; ring)).mp hb
+      exact Or.inr (eq_of_modEq_of_canon hb' (hcanon.rowType i hi) ⟨by norm_num, by norm_num⟩)
     · have hlf : (i + 1 == t.rows.length) = false := by
         simp only [beq_eq_false_iff_ne]; exact hlast
       have hg := hrow i hi (VmConstraint2.base (.gate (binaryBody ROW_TYPE)))
         (by simp [foldDesc, foldConstraints])
       simp only [VmConstraint2.holdsAt] at hg
       rw [holdsVm_gate_of_notLast _ _ _ _ hlf] at hg
-      exact (binary_body_zero_iff ROW_TYPE (envAt t i).loc).mp hg
+      simp only [binaryBody, EmittedExpr.eval] at hg
+      exact binary_modEq_cases hg (hcanon.rowType i hi)
   · -- removalsCertified.
     intro i hi hrt0
     -- A removal row is not the last row (the last row is the summary row, ROW_TYPE = 1).
@@ -166,31 +229,33 @@ theorem foldDesc_satisfied2_refines_foldStepValid
       simp only [VmConstraint2.holdsAt] at hb
       rw [show (i + 1 == t.rows.length) = true from by rw [heq]; simp,
           holdsVm_boundaryLast_true] at hb
-      simp only [lastSummaryBody, EmittedExpr.eval] at hb
+      simp only [lastSummaryBody, EmittedExpr.eval, hrt0] at hb
+      obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp hb
       omega
     have hlf : (i + 1 == t.rows.length) = false := by
       simp only [beq_eq_false_iff_ne]; exact hnotlast
     refine
       { membershipAgainstOldRoot := ?_, hashValid := ?_, factCommitmentGenuine := ?_,
         removalCountAdvances := ?_ }
-    · -- membership_root_matches gate ⇒ MEMBERSHIP_ROOT = OLD_ROOT on a removal row.
+    · -- membership_root_matches gate ⇒ MEMBERSHIP_ROOT ≡ OLD_ROOT mod p on a removal row
+      -- (`ROW_TYPE = 0` kills the summary factor), collapsed to ℤ by canonicality.
       have hg := hrow i hi (VmConstraint2.base (.gate mrmBody))
         (by simp [foldDesc, foldConstraints])
       simp only [VmConstraint2.holdsAt] at hg
       rw [holdsVm_gate_of_notLast _ _ _ _ hlf] at hg
-      rcases (mrm_body_zero_iff (envAt t i).loc).mp hg with h1 | h1
-      · omega
-      · exact h1
-    · -- removal_hash_required gate ⇒ HASH_VALID = 1 on a removal row.
+      have hg' := (gate_modEq_iff (a := (envAt t i).loc MEMBERSHIP_ROOT)
+        (b := (envAt t i).loc OLD_ROOT)
+        (by simp only [mrmBody, EmittedExpr.eval, hrt0]; ring)).mp hg
+      exact eq_of_modEq_of_canon hg' (hcanon.membershipRoot i hi) (hcanon.oldRoot i hi)
+    · -- removal_hash_required gate ⇒ HASH_VALID ≡ 1 mod p on a removal row, collapsed by
+      -- canonicality.
       have hg := hrow i hi (VmConstraint2.base (.gate removalHashBody))
         (by simp [foldDesc, foldConstraints])
       simp only [VmConstraint2.holdsAt] at hg
       rw [holdsVm_gate_of_notLast _ _ _ _ hlf] at hg
-      simp only [removalHashBody, EmittedExpr.eval] at hg
-      rw [mul_eq_zero] at hg
-      rcases hg with h1 | h1
-      · exfalso; rw [hrt0] at h1; omega
-      · omega
+      have hg' := (gate_modEq_iff (a := (1 : ℤ)) (b := (envAt t i).loc HASH_VALID)
+        (by simp only [removalHashBody, EmittedExpr.eval, hrt0]; ring)).mp hg
+      exact (eq_of_modEq_of_canon hg' ⟨by norm_num, by norm_num⟩ (hcanon.hashValid i hi)).symm
     · -- the arity-7 fact-hash chip lookup ⇒ FACT_HASH is the genuine Poseidon2 fact commitment.
       have hlk := hrow i hi factHashLookup (by simp [foldDesc, foldConstraints])
       simp only [factHashLookup, VmConstraint2.holdsAt, Lookup.holdsAt] at hlk
@@ -199,55 +264,62 @@ theorem foldDesc_satisfied2_refines_foldStepValid
          .const 0, .const 64207, .const 1] FACT_HASH (siteLaneCols FACT_LANE_BASE)
         (by decide) hlk
       simpa [EmittedExpr.eval] using hkey
-    · -- removal_count_increment window ⇒ the counter advances by one on a removal row.
+    · -- removal_count_increment window ⇒ the counter advances by one on a removal row
+      -- (mod p from the window, collapsed by canonicality of both counter cells; the `nxt`
+      -- cell is row `i+1`'s REMOVAL_COUNT, in range because a removal row is non-last).
       have hw := hrow i hi (VmConstraint2.windowGate ⟨removalIncrBody, true⟩)
         (by simp [foldDesc, foldConstraints])
       simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hw
-      have hz : removalIncrBody.eval (envAt t i) = 0 := hw hlf
-      rcases (removal_incr_body_zero_iff (envAt t i)).mp hz with h1 | h1
-      · omega
-      · exact h1
-  · -- oldRootIsPublicInput: first-row PI pin.
+      have hz := hw hlf
+      have hg' := (gate_modEq_iff (a := (envAt t i).nxt REMOVAL_COUNT)
+        (b := (envAt t i).loc REMOVAL_COUNT_PLUS_ONE)
+        (by simp only [removalIncrBody, Dregg2.Circuit.DescriptorIR2.WindowExpr.eval, hrt0]
+            ring)).mp hz
+      have hi1 : i + 1 < t.rows.length := by omega
+      exact eq_of_modEq_of_canon hg' (hcanon.removalCount (i + 1) hi1)
+        (hcanon.removalCountPlusOne i hi)
+  · -- oldRootIsPublicInput: first-row PI pin (mod p, collapsed by canonicality of both sides).
     have hp := hrow 0 hlen (VmConstraint2.base (.piBinding .first OLD_ROOT PI_OLD_ROOT))
       (by simp [foldDesc, foldConstraints])
     simp only [VmConstraint2.holdsAt] at hp
     rw [show ((0 : Nat) == 0) = true from rfl, holdsVm_piFirst_true] at hp
-    exact hp
-  · -- newRootIsPublicInput: first-row PI pin.
+    exact eq_of_modEq_of_canon hp (hcanon.oldRoot 0 hlen) hcanon.pubOldRoot
+  · -- newRootIsPublicInput: first-row PI pin (mod p, collapsed by canonicality of both sides).
     have hp := hrow 0 hlen (VmConstraint2.base (.piBinding .first NEW_ROOT PI_NEW_ROOT))
       (by simp [foldDesc, foldConstraints])
     simp only [VmConstraint2.holdsAt] at hp
     rw [show ((0 : Nat) == 0) = true from rfl, holdsVm_piFirst_true] at hp
-    exact hp
-  · -- summaryRowIsSummary: last-row boundary ⇒ ROW_TYPE = 1.
+    exact eq_of_modEq_of_canon hp (hcanon.newRoot 0 hlen) hcanon.pubNewRoot
+  · -- summaryRowIsSummary: last-row boundary ⇒ ROW_TYPE ≡ 1 mod p, collapsed by canonicality.
     have hb := hrow (t.rows.length - 1) hLlt
       (VmConstraint2.base (.boundary .last lastSummaryBody))
       (by simp [foldDesc, foldConstraints])
     simp only [VmConstraint2.holdsAt] at hb
     rw [hLb, holdsVm_boundaryLast_true] at hb
-    simp only [lastSummaryBody, EmittedExpr.eval] at hb
-    omega
-  · -- removalCountPublished: last-row PI binding.
+    have hb' := (gate_modEq_iff (a := (envAt t (t.rows.length - 1)).loc ROW_TYPE) (b := 1)
+      (by simp only [lastSummaryBody, EmittedExpr.eval]; ring)).mp hb
+    exact eq_of_modEq_of_canon hb' (hcanon.rowType _ hLlt) ⟨by norm_num, by norm_num⟩
+  · -- removalCountPublished: last-row PI binding (mod p, collapsed by canonicality).
     have hp := hrow (t.rows.length - 1) hLlt
       (VmConstraint2.base (.piBinding .last REMOVAL_COUNT PI_REMOVAL_COUNT))
       (by simp [foldDesc, foldConstraints])
     simp only [VmConstraint2.holdsAt] at hp
     rw [hLb, holdsVm_piLast_true] at hp
-    exact hp
-  · -- checkCountPublished: last-row PI binding.
+    exact eq_of_modEq_of_canon hp (hcanon.removalCount _ hLlt) hcanon.pubRemovalCount
+  · -- checkCountPublished: last-row PI binding (mod p, collapsed by canonicality).
     have hp := hrow (t.rows.length - 1) hLlt
       (VmConstraint2.base (.piBinding .last CHECK_COUNT PI_CHECK_COUNT))
       (by simp [foldDesc, foldConstraints])
     simp only [VmConstraint2.holdsAt] at hp
     rw [hLb, holdsVm_piLast_true] at hp
-    exact hp
-  · -- transitionHashPublished: last-row PI binding.
+    exact eq_of_modEq_of_canon hp (hcanon.checkCount _ hLlt) hcanon.pubCheckCount
+  · -- transitionHashPublished: last-row PI binding (mod p, collapsed by canonicality).
     have hp := hrow (t.rows.length - 1) hLlt
       (VmConstraint2.base (.piBinding .last MEMBERSHIP_ROOT PI_TRANSITION_HASH))
       (by simp [foldDesc, foldConstraints])
     simp only [VmConstraint2.holdsAt] at hp
     rw [hLb, holdsVm_piLast_true] at hp
-    exact hp
+    exact eq_of_modEq_of_canon hp (hcanon.membershipRoot _ hLlt) hcanon.pubTransitionHash
 
 /-! ## §3 — Non-vacuity: a CONCRETE satisfying witness (`Satisfied2` inhabited) and a CONCRETE failing
 one (`Satisfied2` bites). -/
@@ -363,12 +435,39 @@ theorem satTrace_satisfied2 (hash : List ℤ → ℤ) :
   · rfl
   · rfl
 
+/-- Every non-`FACT_HASH` cell of the satisfying summary row is `0` or `1` — canonical. -/
+theorem satRow_canon (hash : List ℤ → ℤ) {c : Nat} (hc : c ≠ FACT_HASH) :
+    CanonCell (satRow hash c) := by
+  unfold CanonCell satRow
+  rw [if_neg hc]
+  split <;> norm_num
+
+/-- **The satisfying witness inhabits the canonicality envelope** — every enveloped cell is `0` or
+`1` and every bound public input is `0`, all canonical representatives. The bridge's range-check
+hypothesis is concretely satisfiable, not a vacuous guard. -/
+theorem satTrace_canon (hash : List ℤ → ℤ) : FoldTraceCanon (satTrace hash) := by
+  have hcell : ∀ (c : Nat), c ≠ FACT_HASH → ∀ i, i < (satTrace hash).rows.length →
+      CanonCell ((envAt (satTrace hash) i).loc c) := by
+    intro c hc i hi
+    have hi0 : i = 0 := by
+      have h1 : (satTrace hash).rows.length = 1 := rfl
+      omega
+    subst hi0
+    exact satRow_canon hash hc
+  have hpub : ∀ k : Nat, CanonCell ((satTrace hash).pub k) := fun k =>
+    ⟨by norm_num [satTrace], by norm_num [satTrace]⟩
+  exact ⟨hcell ROW_TYPE (by decide), hcell MEMBERSHIP_ROOT (by decide),
+    hcell OLD_ROOT (by decide), hcell NEW_ROOT (by decide), hcell HASH_VALID (by decide),
+    hcell REMOVAL_COUNT (by decide), hcell REMOVAL_COUNT_PLUS_ONE (by decide),
+    hcell CHECK_COUNT (by decide), hpub _, hpub _, hpub _, hpub _, hpub _⟩
+
 /-- **Non-vacuity (bridge capstone).** The bridge applied to the concrete satisfying witness yields the
 functional spec — the conclusion is reached from genuinely-satisfiable hypotheses. -/
 theorem satTrace_foldStepValid (hash : List ℤ → ℤ) :
     FoldStepValid hash (satTrace hash) :=
   foldDesc_satisfied2_refines_foldStepValid hash (fun _ => 0) (fun _ => (0, 0)) []
-    (satTrace hash) (satTrace_chipSound hash) (by simp [satTrace]) (satTrace_satisfied2 hash)
+    (satTrace hash) (satTrace_chipSound hash) (by simp [satTrace]) (satTrace_canon hash)
+    (satTrace_satisfied2 hash)
 
 /-- The failing witness: a single row whose `ROW_TYPE = 2` (neither removal nor summary). -/
 def badRow : Assignment := fun i => if i = ROW_TYPE then 2 else 0
@@ -425,9 +524,11 @@ theorem badRemoval_not_satisfied2 (hash : List ℤ → ℤ) :
   simp only [VmConstraint2.holdsAt] at hc
   rw [holdsVm_gate_of_notLast _ _ _ _
         (show ((0 : Nat) + 1 == badRemovalTrace.rows.length) = false from rfl)] at hc
-  rcases (mrm_body_zero_iff (envAt badRemovalTrace 0).loc).mp hc with h1 | h1
-  · exact absurd h1 (by decide)
-  · exact absurd h1 (by decide)
+  -- The removal row's gate residual is `(1−0)·(5−0) = 5`, and `p ∤ 5` — the field gate bites.
+  have he : mrmBody.eval (envAt badRemovalTrace 0).loc = 5 := by decide
+  rw [he] at hc
+  obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp hc
+  omega
 
 /-- The concrete Poseidon2 permutation the ACCEPTING 2-row witness pins its digests to (the bridge
 itself is proven for an ABSTRACT `hash`; here a concrete `hash = 0` makes the digest columns numeric). -/
@@ -524,11 +625,22 @@ theorem goodTrace_satisfied :
   memTableFaithful := by rw [goodTrace_memLog]; rfl
   mapTableFaithful := by rw [goodTrace_mapLog]; rfl
 
+/-- **The removal+summary witness inhabits the canonicality envelope** — every enveloped cell of
+both rows and all five bound public inputs are small canonical field values (`≤ 300`). -/
+theorem goodTrace_canon : FoldTraceCanon goodTrace := by
+  refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_,
+    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩, ⟨by decide, by decide⟩,
+    ⟨by decide, by decide⟩, ⟨by decide, by decide⟩⟩ <;>
+  · intro i hi
+    have h2 : goodTrace.rows.length = 2 := rfl
+    rw [h2] at hi
+    interval_cases i <;> exact ⟨by decide, by decide⟩
+
 /-- **The bridge applied to the real removal witness.** `goodTrace_foldStepValid` is a concrete
 `FoldStepValid` reached from the genuinely-satisfiable accepting witness. -/
 theorem goodTrace_foldStepValid : FoldStepValid concreteFoldHash goodTrace :=
   foldDesc_satisfied2_refines_foldStepValid concreteFoldHash (fun _ => 0) (fun _ => (0, 0)) []
-    goodTrace goodTrace_chipSound (by decide) goodTrace_satisfied
+    goodTrace goodTrace_chipSound (by decide) goodTrace_canon goodTrace_satisfied
 
 /-- The load-bearing `removalsCertified` clause FIRES on the real removal row 0 of the accepting
 witness — the `RemovalCertified` structure is genuinely inhabited THROUGH the bridge, not vacuously. -/

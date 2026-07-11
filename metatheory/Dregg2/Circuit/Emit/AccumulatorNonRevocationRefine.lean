@@ -54,11 +54,22 @@ FAILS `Satisfied2` — the `check` gate bites. `member_not_certified` shows the 
 two-sided: a genuine member (`h = alpha`, `acc = 0`) is NOT certified. So the bridge hypothesis is
 inhabited-and-constraining, and the conclusion is a real predicate, not a tautology.
 
+## The field-faithful denotation (mod-p)
+
+`VmConstraint.holdsVm` / `WindowConstraint.holdsAt` pin gate bodies only `≡ 0 [ZMOD p]`
+(`p = 2013265921`, BabyBear). The extension-field identities are HONESTLY lane-wise congruences
+(`ExtModEq`): the AIR's ext-mul convolutions are FIELD products, whose ℤ values wrap constantly for
+real field elements — the ℤ identity is genuinely false there, and the mod-`p` congruence IS the
+deployed `BabyBear^4` arithmetic. `NonMemberCertified` therefore decomposes the accumulator up to
+`ExtModEq`, and the nonzero-remainder tooth is `¬ ExtModEq v ezero` (the remainder is a UNIT in the
+field, hence not ≡ 0 — `unit_not_modEq_ezero`, no primality needed). All rejection teeth are kept.
+
 ## Axiom hygiene
 `#assert_axioms` ⊆ {propext, Classical.choice, Quot.sound}. No Poseidon2 carrier enters (this AIR uses no
 chip). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
 namespace Dregg2.Circuit.Emit.AccumulatorNonRevocationRefine
 
@@ -69,6 +80,7 @@ open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 WindowConstraint WindowExpr Satisfied2 VmTrace envAt
    memLog mapLog memOpsOf mapOpsOf memCheck_nil)
 open Dregg2.Circuit.Emit.AccumulatorNonRevocationEmit
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff eqToModEq)
 
 set_option autoImplicit false
 
@@ -120,14 +132,75 @@ theorem unit_ne_ezero (v vinv : Ext) (huv : emul v vinv = eone) : v ≠ ezero :=
   rw [hz, emul_ezero_left] at huv
   exact eone_ne_ezero huv.symm
 
+/-! ### the field-faithful (mod-`p`) congruence on `Ext` — the deployed `BabyBear^4` equality. -/
+
+/-- Lane-wise congruence mod the BabyBear prime — equality of the two `Ext` values AS field
+elements. This is the relation the deployed AIR's gates actually pin. -/
+def ExtModEq (a b : Ext) : Prop :=
+  a.c0 ≡ b.c0 [ZMOD 2013265921] ∧ a.c1 ≡ b.c1 [ZMOD 2013265921]
+    ∧ a.c2 ≡ b.c2 [ZMOD 2013265921] ∧ a.c3 ≡ b.c3 [ZMOD 2013265921]
+
+theorem ExtModEq.refl (a : Ext) : ExtModEq a a :=
+  ⟨Int.ModEq.refl _, Int.ModEq.refl _, Int.ModEq.refl _, Int.ModEq.refl _⟩
+
+theorem ExtModEq.symm {a b : Ext} (h : ExtModEq a b) : ExtModEq b a :=
+  ⟨h.1.symm, h.2.1.symm, h.2.2.1.symm, h.2.2.2.symm⟩
+
+theorem ExtModEq.trans {a b c : Ext} (h1 : ExtModEq a b) (h2 : ExtModEq b c) : ExtModEq a c :=
+  ⟨h1.1.trans h2.1, h1.2.1.trans h2.2.1, h1.2.2.1.trans h2.2.2.1, h1.2.2.2.trans h2.2.2.2⟩
+
+theorem eadd_congr {a a' b b' : Ext} (ha : ExtModEq a a') (hb : ExtModEq b b') :
+    ExtModEq (eadd a b) (eadd a' b') :=
+  ⟨ha.1.add hb.1, ha.2.1.add hb.2.1, ha.2.2.1.add hb.2.2.1, ha.2.2.2.add hb.2.2.2⟩
+
+theorem esub_congr {a a' b b' : Ext} (ha : ExtModEq a a') (hb : ExtModEq b b') :
+    ExtModEq (esub a b) (esub a' b') :=
+  ⟨ha.1.sub hb.1, ha.2.1.sub hb.2.1, ha.2.2.1.sub hb.2.2.1, ha.2.2.2.sub hb.2.2.2⟩
+
+/-- `⊗` respects the congruence lane-wise (each convolution lane is a ℤ-polynomial in the limbs). -/
+theorem emul_congr {a a' b b' : Ext} (ha : ExtModEq a a') (hb : ExtModEq b b') :
+    ExtModEq (emul a b) (emul a' b') := by
+  obtain ⟨ha0, ha1, ha2, ha3⟩ := ha
+  obtain ⟨hb0, hb1, hb2, hb3⟩ := hb
+  refine ⟨?_, ?_, ?_, ?_⟩ <;> simp only [emul]
+  · exact (ha0.mul hb0).add (Int.ModEq.mul_left 11
+      (((ha1.mul hb3).add (ha2.mul hb2)).add (ha3.mul hb1)))
+  · exact ((ha0.mul hb1).add (ha1.mul hb0)).add (Int.ModEq.mul_left 11
+      ((ha2.mul hb3).add (ha3.mul hb2)))
+  · exact (((ha0.mul hb2).add (ha1.mul hb1)).add (ha2.mul hb0)).add (Int.ModEq.mul_left 11
+      (ha3.mul hb3))
+  · exact (((ha0.mul hb3).add (ha1.mul hb2)).add (ha2.mul hb1)).add (ha3.mul hb0)
+
+/-- **A field unit is not ≡ 0**: if `v ⊗ v_inv ≡ 1 [ExtModEq]` then `v ≢ 0`. The mod-`p` twin of
+`unit_ne_ezero` — where the circuit's `check` gate becomes the genuine "remainder does not vanish
+IN THE FIELD" content. Needs no primality: `v ≡ 0` forces every product lane `≡ 0`, contradicting
+lane 0 of `eone` (`p ∤ 1`). -/
+theorem unit_not_modEq_ezero (v vinv : Ext) (huv : ExtModEq (emul v vinv) eone) :
+    ¬ ExtModEq v ezero := by
+  rintro ⟨h0, h1, h2, h3⟩
+  simp only [ezero] at h0 h1 h2 h3
+  have hz : (emul v vinv).c0 ≡ 0 [ZMOD 2013265921] := by
+    have hsh : (emul v vinv).c0
+        = v.c0 * vinv.c0 + 11 * (v.c1 * vinv.c3 + v.c2 * vinv.c2 + v.c3 * vinv.c1) := rfl
+    rw [hsh]
+    have := (h0.mul_right vinv.c0).add (Int.ModEq.mul_left 11
+      (((h1.mul_right vinv.c3).add (h2.mul_right vinv.c2)).add (h3.mul_right vinv.c1)))
+    simpa using this
+  have hone := hz.symm.trans huv.1
+  simp only [eone] at hone
+  -- hone : 0 ≡ 1 [ZMOD p], i.e. p ∣ 1 — impossible.
+  obtain ⟨k, hk⟩ := hone.dvd
+  omega
+
 /-! ## §2 — the semantic relation this circuit computes: witnessed polynomial-division non-membership. -/
 
 /-- **`NonMemberCertified alpha acc h`** — the FUNCTIONAL SPEC. `h` is certified NOT in the revocation set
-committed by `acc = P(alpha)`: the accumulator decomposes as `w ⊗ (alpha ⊖ h) ⊕ v` with a NONZERO
-remainder `v` (`= P(h) = ∏(h − h_j) ≠ 0 ⟺ h ∉ {h_j}`). The quotient `w` and remainder `v` are the
-prover's witnesses. -/
+committed by `acc = P(alpha)`: the accumulator decomposes as `w ⊗ (alpha ⊖ h) ⊕ v` — AS FIELD ELEMENTS
+(`ExtModEq`, the deployed `BabyBear^4` equality) — with a remainder `v` that is NONZERO IN THE FIELD
+(`¬ ExtModEq v ezero`; `v = P(h) = ∏(h − h_j) ≠ 0 ⟺ h ∉ {h_j}`). The quotient `w` and remainder `v` are
+the prover's witnesses. -/
 def NonMemberCertified (alpha acc h : Ext) : Prop :=
-  ∃ w v : Ext, acc = eadd (emul w (esub alpha h)) v ∧ v ≠ ezero
+  ∃ w v : Ext, ExtModEq acc (eadd (emul w (esub alpha h)) v) ∧ ¬ ExtModEq v ezero
 
 /-- **The relation is genuinely two-sided (a member is NOT certified).** If `h = alpha` (so `alpha ⊖ h =
 0`) and `acc = 0` (the accumulator vanishes at the challenge — `alpha` IS a root, i.e. a member), then NO
@@ -138,12 +211,14 @@ theorem member_not_certified (alpha : Ext) : ¬ NonMemberCertified alpha ezero a
   have hsub : esub alpha alpha = ezero := by
     simp only [esub, ezero, Ext.mk.injEq]; refine ⟨?_, ?_, ?_, ?_⟩ <;> ring
   rw [hsub, emul_ezero_right] at hacc
+  -- hacc : ExtModEq ezero (eadd ezero v), and eadd ezero v = v — so v ≡ 0, contradiction.
   apply hv
-  obtain ⟨v0, v1, v2, v3⟩ := v
-  simp only [eadd, ezero, Ext.mk.injEq] at hacc
-  obtain ⟨p0, p1, p2, p3⟩ := hacc
-  simp only [ezero, Ext.mk.injEq]
-  omega
+  have hadd : eadd ezero v = v := by
+    cases v
+    simp only [eadd, ezero, Ext.mk.injEq]
+    refine ⟨?_, ?_, ?_, ?_⟩ <;> ring
+  rw [hadd] at hacc
+  exact hacc.symm
 
 /-! ## §3 — membership of each declared gate/pin/constancy in the descriptor (the append navigation). -/
 
@@ -242,115 +317,112 @@ variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × 
 variable (h : Satisfied2 hash accumulatorNonRevDesc minit mfin maddrs t)
 include h
 
-/-- Any declared `.base (.gate body)` forces `body.eval = 0` on an active (non-last) row. -/
+/-- Any declared `.base (.gate body)` forces `body.eval ≡ 0 [ZMOD p]` on an active (non-last) row. -/
 theorem gate_of_active (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length)
     (body : EmittedExpr)
     (hmem : VmConstraint2.base (.gate body) ∈ accumulatorNonRevDesc.constraints) :
-    body.eval (envAt t i).loc = 0 := by
+    body.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hb := h.rowConstraints i hi _ hmem
   have hfalse : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hlast
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hfalse] at hb
   exact hb
 
-/-- Any declared row-first `.piBinding col pin` forces `loc col = pub pin` on row 0. -/
+/-- Any declared row-first `.piBinding col pin` pins `loc col ≡ pub pin [ZMOD p]` on row 0. -/
 theorem pin_first (col pin : Nat) (hi0 : 0 < t.rows.length)
     (hmem : VmConstraint2.base (.piBinding VmRow.first col pin) ∈ accumulatorNonRevDesc.constraints) :
-    (envAt t 0).loc col = t.pub pin := by
+    (envAt t 0).loc col ≡ t.pub pin [ZMOD 2013265921] := by
   have hb := h.rowConstraints 0 hi0 _ hmem
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm] at hb
   exact hb (by decide)
 
-/-- A constancy `.windowGate` on `col` forces `nxt col = loc col` on an active row. -/
+/-- A constancy `.windowGate` on `col` forces `nxt col ≡ loc col [ZMOD p]` on an active row. -/
 theorem windowConst_active (j : Nat) (hj : j < t.rows.length) (hjl : j + 1 ≠ t.rows.length)
     (c : Nat) (hmem : VmConstraint2.windowGate ⟨constBody c, true⟩ ∈ accumulatorNonRevDesc.constraints) :
-    (envAt t j).nxt c = (envAt t j).loc c := by
+    (envAt t j).nxt c ≡ (envAt t j).loc c [ZMOD 2013265921] := by
   have hb := h.rowConstraints j hj _ hmem
   have hfalse : (j + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hjl
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt] at hb
-  have heval := hb hfalse
-  simp only [constBody, WindowExpr.eval] at heval
-  linarith [heval]
+  exact (gate_modEq_iff (a := (envAt t j).nxt c) (b := (envAt t j).loc c)
+    (by simp only [constBody, WindowExpr.eval]; ring)).mp (hb hfalse)
 
 /-! ### The six column equations extracted from the whole descriptor on one active row. -/
 
 theorem col_diff (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    col4 (envAt t i).loc DIFF
-      = esub (col4 (envAt t i).loc ALPHA_AUX) (col4 (envAt t i).loc HASH) := by
+    ExtModEq (col4 (envAt t i).loc DIFF)
+      (esub (col4 (envAt t i).loc ALPHA_AUX) (col4 (envAt t i).loc HASH)) := by
   have g0 := gate_of_active h i hi hlast _ (mem_c1 0 (by decide))
   have g1 := gate_of_active h i hi hlast _ (mem_c1 1 (by decide))
   have g2 := gate_of_active h i hi hlast _ (mem_c1 2 (by decide))
   have g3 := gate_of_active h i hi hlast _ (mem_c1 3 (by decide))
-  simp only [c1Body, coeffVar, EmittedExpr.eval] at g0 g1 g2 g3
-  simp only [col4, esub, Ext.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_⟩
-  · linear_combination g0
-  · linear_combination g1
-  · linear_combination g2
-  · linear_combination g3
+  · exact (gate_modEq_iff (by simp only [c1Body, coeffVar, EmittedExpr.eval, col4, esub]; ring)).mp g0
+  · exact (gate_modEq_iff (by simp only [c1Body, coeffVar, EmittedExpr.eval, col4, esub]; ring)).mp g1
+  · exact (gate_modEq_iff (by simp only [c1Body, coeffVar, EmittedExpr.eval, col4, esub]; ring)).mp g2
+  · exact (gate_modEq_iff (by simp only [c1Body, coeffVar, EmittedExpr.eval, col4, esub]; ring)).mp g3
 
 theorem col_prod (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    col4 (envAt t i).loc PRODUCT
-      = emul (col4 (envAt t i).loc QUOTIENT) (col4 (envAt t i).loc DIFF) := by
+    ExtModEq (col4 (envAt t i).loc PRODUCT)
+      (emul (col4 (envAt t i).loc QUOTIENT) (col4 (envAt t i).loc DIFF)) := by
   have g0 := gate_of_active h i hi hlast _ (mem_c2 0 (by decide))
   have g1 := gate_of_active h i hi hlast _ (mem_c2 1 (by decide))
   have g2 := gate_of_active h i hi hlast _ (mem_c2 2 (by decide))
   have g3 := gate_of_active h i hi hlast _ (mem_c2 3 (by decide))
-  simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W] at g0 g1 g2 g3
-  simp only [col4, emul, Ext.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_⟩
-  · linear_combination g0
-  · linear_combination g1
-  · linear_combination g2
-  · linear_combination g3
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g0
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g1
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g2
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g3
 
 theorem col_sum (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    col4 (envAt t i).loc SUM
-      = eadd (col4 (envAt t i).loc PRODUCT) (col4 (envAt t i).loc REMAINDER) := by
+    ExtModEq (col4 (envAt t i).loc SUM)
+      (eadd (col4 (envAt t i).loc PRODUCT) (col4 (envAt t i).loc REMAINDER)) := by
   have g0 := gate_of_active h i hi hlast _ (mem_c3 0 (by decide))
   have g1 := gate_of_active h i hi hlast _ (mem_c3 1 (by decide))
   have g2 := gate_of_active h i hi hlast _ (mem_c3 2 (by decide))
   have g3 := gate_of_active h i hi hlast _ (mem_c3 3 (by decide))
-  simp only [c3Body, coeffVar, EmittedExpr.eval] at g0 g1 g2 g3
-  simp only [col4, eadd, Ext.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_⟩
-  · linear_combination g0
-  · linear_combination g1
-  · linear_combination g2
-  · linear_combination g3
+  · exact (gate_modEq_iff (by simp only [c3Body, coeffVar, EmittedExpr.eval, col4, eadd]; ring)).mp g0
+  · exact (gate_modEq_iff (by simp only [c3Body, coeffVar, EmittedExpr.eval, col4, eadd]; ring)).mp g1
+  · exact (gate_modEq_iff (by simp only [c3Body, coeffVar, EmittedExpr.eval, col4, eadd]; ring)).mp g2
+  · exact (gate_modEq_iff (by simp only [c3Body, coeffVar, EmittedExpr.eval, col4, eadd]; ring)).mp g3
 
 theorem col_accEq (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    col4 (envAt t i).loc SUM = col4 (envAt t i).loc ACC_AUX := by
+    ExtModEq (col4 (envAt t i).loc SUM) (col4 (envAt t i).loc ACC_AUX) := by
   have g0 := gate_of_active h i hi hlast _ (mem_sumAcc 0 (by decide))
   have g1 := gate_of_active h i hi hlast _ (mem_sumAcc 1 (by decide))
   have g2 := gate_of_active h i hi hlast _ (mem_sumAcc 2 (by decide))
   have g3 := gate_of_active h i hi hlast _ (mem_sumAcc 3 (by decide))
-  simp only [sumAccBody, coeffVar, EmittedExpr.eval] at g0 g1 g2 g3
-  simp only [col4, Ext.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_⟩
-  · linear_combination g0
-  · linear_combination g1
-  · linear_combination g2
-  · linear_combination g3
+  · exact (gate_modEq_iff (by simp only [sumAccBody, coeffVar, EmittedExpr.eval, col4]; ring)).mp g0
+  · exact (gate_modEq_iff (by simp only [sumAccBody, coeffVar, EmittedExpr.eval, col4]; ring)).mp g1
+  · exact (gate_modEq_iff (by simp only [sumAccBody, coeffVar, EmittedExpr.eval, col4]; ring)).mp g2
+  · exact (gate_modEq_iff (by simp only [sumAccBody, coeffVar, EmittedExpr.eval, col4]; ring)).mp g3
 
 theorem col_check (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    col4 (envAt t i).loc CHECK
-      = emul (col4 (envAt t i).loc REMAINDER) (col4 (envAt t i).loc V_INV) := by
+    ExtModEq (col4 (envAt t i).loc CHECK)
+      (emul (col4 (envAt t i).loc REMAINDER) (col4 (envAt t i).loc V_INV)) := by
   have g0 := gate_of_active h i hi hlast _ (mem_c4 0 (by decide))
   have g1 := gate_of_active h i hi hlast _ (mem_c4 1 (by decide))
   have g2 := gate_of_active h i hi hlast _ (mem_c4 2 (by decide))
   have g3 := gate_of_active h i hi hlast _ (mem_c4 3 (by decide))
-  simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W] at g0 g1 g2 g3
-  simp only [col4, emul, Ext.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_⟩
-  · linear_combination g0
-  · linear_combination g1
-  · linear_combination g2
-  · linear_combination g3
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g0
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g1
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g2
+  · exact (gate_modEq_iff
+      (by simp only [extMulLane, coeffVar, coeffMul, EmittedExpr.eval, W, col4, emul]; ring)).mp g3
 
 theorem col_check1 (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    col4 (envAt t i).loc CHECK = eone := by
+    ExtModEq (col4 (envAt t i).loc CHECK) eone := by
   have g0 := gate_of_active h i hi hlast _ (mem_checkOne 0 (by decide))
   have g1 := gate_of_active h i hi hlast _ (mem_checkOne 1 (by decide))
   have g2 := gate_of_active h i hi hlast _ (mem_checkOne 2 (by decide))
@@ -359,13 +431,11 @@ theorem col_check1 (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.
   rw [show checkOneBody 1 = coeffVar 1 (CHECK + 1) from rfl] at g1
   rw [show checkOneBody 2 = coeffVar 1 (CHECK + 2) from rfl] at g2
   rw [show checkOneBody 3 = coeffVar 1 (CHECK + 3) from rfl] at g3
-  simp only [coeffVar, EmittedExpr.eval] at g0 g1 g2 g3
-  simp only [col4, eone, Ext.mk.injEq]
   refine ⟨?_, ?_, ?_, ?_⟩
-  · linear_combination g0
-  · linear_combination g1
-  · linear_combination g2
-  · linear_combination g3
+  · exact (gate_modEq_iff (by simp only [coeffVar, EmittedExpr.eval, col4, eone]; ring)).mp g0
+  · exact (gate_modEq_iff (by simp only [coeffVar, EmittedExpr.eval, col4, eone]; ring)).mp g1
+  · exact (gate_modEq_iff (by simp only [coeffVar, EmittedExpr.eval, col4, eone]; ring)).mp g2
+  · exact (gate_modEq_iff (by simp only [coeffVar, EmittedExpr.eval, col4, eone]; ring)).mp g3
 
 /-- **THE CORE REFINEMENT (SAT ⟹ SEM), on the row-local aux accumulator/challenge.** On any active row,
 the ancestor `(col4 loc HASH)` is `NonMemberCertified` against the row's `(col4 loc ACC_AUX)` /
@@ -375,13 +445,17 @@ theorem sat_implies_nonmember_aux (i : Nat) (hi : i < t.rows.length) (hlast : i 
     NonMemberCertified (col4 (envAt t i).loc ALPHA_AUX) (col4 (envAt t i).loc ACC_AUX)
       (col4 (envAt t i).loc HASH) := by
   refine ⟨col4 (envAt t i).loc QUOTIENT, col4 (envAt t i).loc REMAINDER, ?_, ?_⟩
-  · rw [← col_diff h i hi hlast, ← col_prod h i hi hlast, ← col_sum h i hi hlast]
-    exact (col_accEq h i hi hlast).symm
+  · -- acc ≡ sum ≡ prod ⊕ rem ≡ (quot ⊗ diff) ⊕ rem ≡ (quot ⊗ (alpha ⊖ h)) ⊕ rem, chained
+    -- through the ExtModEq congruences of the ring ops.
+    exact (col_accEq h i hi hlast).symm.trans
+      ((col_sum h i hi hlast).trans
+        (eadd_congr
+          ((col_prod h i hi hlast).trans
+            (emul_congr (ExtModEq.refl _) (col_diff h i hi hlast)))
+          (ExtModEq.refl _)))
   · have hchk := col_check h i hi hlast
     have hchk1 := col_check1 h i hi hlast
-    have hu : emul (col4 (envAt t i).loc REMAINDER) (col4 (envAt t i).loc V_INV) = eone := by
-      rw [← hchk]; exact hchk1
-    exact unit_ne_ezero _ _ hu
+    exact unit_not_modEq_ezero _ _ (hchk.symm.trans hchk1)
 
 /-! ### The PI-transfer: row-0 pin + constancy chain ⟹ aux equals the TRUE public inputs on every row. -/
 
@@ -389,10 +463,11 @@ theorem sat_implies_nonmember_aux (i : Nat) (hi : i < t.rows.length) (hlast : i 
 by the transition `.windowGate`s — the emit file's soundness strengthening, made whole-trace here). -/
 theorem getD_const (c : Nat)
     (hc : VmConstraint2.windowGate ⟨constBody c, true⟩ ∈ accumulatorNonRevDesc.constraints) :
-    ∀ i, i < t.rows.length → t.rows.getD i (fun _ => 0) c = t.rows.getD 0 (fun _ => 0) c := by
+    ∀ i, i < t.rows.length →
+      t.rows.getD i (fun _ => 0) c ≡ t.rows.getD 0 (fun _ => 0) c [ZMOD 2013265921] := by
   intro i
   induction i with
-  | zero => intro _; rfl
+  | zero => intro _; exact Int.ModEq.refl _
   | succ k ih =>
     intro hk1
     have hk : k < t.rows.length := by omega
@@ -401,60 +476,62 @@ theorem getD_const (c : Nat)
     have e1 : (envAt t k).nxt c = t.rows.getD (k + 1) (fun _ => 0) c := rfl
     have e2 : (envAt t k).loc c = t.rows.getD k (fun _ => 0) c := rfl
     rw [e1, e2] at step
-    rw [step]; exact ih hk
+    exact step.trans (ih hk)
 
-/-- `alpha_aux` on any active row IS the public `alpha` limb (row-0 pin + constancy). -/
+/-- `alpha_aux` on any active row IS the public `alpha` limb mod `p` (row-0 pin + constancy). -/
 theorem aux_pub_alpha (i : Nat) (hi : i < t.rows.length) (k : Nat) (hk : k < 4) :
-    (envAt t i).loc (ALPHA_AUX + k) = t.pub (PI_ALPHA + k) := by
+    (envAt t i).loc (ALPHA_AUX + k) ≡ t.pub (PI_ALPHA + k) [ZMOD 2013265921] := by
   have hlen0 : 0 < t.rows.length := by omega
   have hchain := getD_const h (ALPHA_AUX + k) (mem_alphaConst k hk) i hi
   have hpin := pin_first h (ALPHA_AUX + k) (PI_ALPHA + k) hlen0 (mem_alphaPins k hk)
-  calc (envAt t i).loc (ALPHA_AUX + k)
-      = t.rows.getD i (fun _ => 0) (ALPHA_AUX + k) := rfl
-    _ = t.rows.getD 0 (fun _ => 0) (ALPHA_AUX + k) := hchain
-    _ = (envAt t 0).loc (ALPHA_AUX + k) := rfl
-    _ = t.pub (PI_ALPHA + k) := hpin
+  exact hchain.trans hpin
 
-/-- `acc_aux` on any active row IS the public `Acc` limb (row-0 pin + constancy). -/
+/-- `acc_aux` on any active row IS the public `Acc` limb mod `p` (row-0 pin + constancy). -/
 theorem aux_pub_acc (i : Nat) (hi : i < t.rows.length) (k : Nat) (hk : k < 4) :
-    (envAt t i).loc (ACC_AUX + k) = t.pub (PI_ACC + k) := by
+    (envAt t i).loc (ACC_AUX + k) ≡ t.pub (PI_ACC + k) [ZMOD 2013265921] := by
   have hlen0 : 0 < t.rows.length := by omega
   have hchain := getD_const h (ACC_AUX + k) (mem_accConst k hk) i hi
   have hpin := pin_first h (ACC_AUX + k) (PI_ACC + k) hlen0 (mem_accPins k hk)
-  calc (envAt t i).loc (ACC_AUX + k)
-      = t.rows.getD i (fun _ => 0) (ACC_AUX + k) := rfl
-    _ = t.rows.getD 0 (fun _ => 0) (ACC_AUX + k) := hchain
-    _ = (envAt t 0).loc (ACC_AUX + k) := rfl
-    _ = t.pub (PI_ACC + k) := hpin
+  exact hchain.trans hpin
 
 theorem pub_alpha (i : Nat) (hi : i < t.rows.length) :
-    col4 (envAt t i).loc ALPHA_AUX = col4 t.pub PI_ALPHA := by
-  simp only [col4, Ext.mk.injEq]; refine ⟨?_, ?_, ?_, ?_⟩
-  · exact aux_pub_alpha h i hi 0 (by decide)
-  · exact aux_pub_alpha h i hi 1 (by decide)
-  · exact aux_pub_alpha h i hi 2 (by decide)
-  · exact aux_pub_alpha h i hi 3 (by decide)
+    ExtModEq (col4 (envAt t i).loc ALPHA_AUX) (col4 t.pub PI_ALPHA) :=
+  ⟨aux_pub_alpha h i hi 0 (by decide), aux_pub_alpha h i hi 1 (by decide),
+   aux_pub_alpha h i hi 2 (by decide), aux_pub_alpha h i hi 3 (by decide)⟩
 
 theorem pub_acc (i : Nat) (hi : i < t.rows.length) :
-    col4 (envAt t i).loc ACC_AUX = col4 t.pub PI_ACC := by
-  simp only [col4, Ext.mk.injEq]; refine ⟨?_, ?_, ?_, ?_⟩
-  · exact aux_pub_acc h i hi 0 (by decide)
-  · exact aux_pub_acc h i hi 1 (by decide)
-  · exact aux_pub_acc h i hi 2 (by decide)
-  · exact aux_pub_acc h i hi 3 (by decide)
+    ExtModEq (col4 (envAt t i).loc ACC_AUX) (col4 t.pub PI_ACC) :=
+  ⟨aux_pub_acc h i hi 0 (by decide), aux_pub_acc h i hi 1 (by decide),
+   aux_pub_acc h i hi 2 (by decide), aux_pub_acc h i hi 3 (by decide)⟩
+
+end Bridge
+
+/-- `NonMemberCertified` respects the field congruence in its accumulator/challenge slots (the ring
+ops are `ExtModEq` congruences), so the row-local certificate transfers to congruent public values. -/
+theorem nonmember_congr {alpha alpha' acc acc' hsh : Ext}
+    (ha : ExtModEq alpha alpha') (hc : ExtModEq acc acc')
+    (hn : NonMemberCertified alpha acc hsh) : NonMemberCertified alpha' acc' hsh := by
+  obtain ⟨w, v, heq, hv⟩ := hn
+  exact ⟨w, v,
+    hc.symm.trans (heq.trans (eadd_congr
+      (emul_congr (ExtModEq.refl _) (esub_congr ha (ExtModEq.refl _))) (ExtModEq.refl _))), hv⟩
+
+section Bridge2
+
+variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+variable (h : Satisfied2 hash accumulatorNonRevDesc minit mfin maddrs t)
+include h
 
 /-- **THE WHOLE-DESCRIPTOR BRIDGE (SAT ⟹ SEM, tied to the PUBLIC inputs).** For EVERY active (non-last)
 row of a `Satisfied2` trace, the ancestor `(col4 loc HASH)` is genuinely `NonMemberCertified` against the
 PUBLIC accumulator `(col4 pub PI_ACC)` and challenge `(col4 pub PI_ALPHA)` — the functional-correctness
 statement of the non-revocation AIR. Accept ⟹ the ancestor is really absent from the committed revocation
-set (with a nonzero remainder witness). -/
+set (with a remainder witness that is nonzero IN THE FIELD). -/
 theorem sat_implies_nonmember_public (i : Nat) (hi : i < t.rows.length) (hlast : i + 1 ≠ t.rows.length) :
-    NonMemberCertified (col4 t.pub PI_ALPHA) (col4 t.pub PI_ACC) (col4 (envAt t i).loc HASH) := by
-  have hbase := sat_implies_nonmember_aux h i hi hlast
-  rw [pub_alpha h i hi, pub_acc h i hi] at hbase
-  exact hbase
+    NonMemberCertified (col4 t.pub PI_ALPHA) (col4 t.pub PI_ACC) (col4 (envAt t i).loc HASH) :=
+  nonmember_congr (pub_alpha h i hi) (pub_acc h i hi) (sat_implies_nonmember_aux h i hi hlast)
 
-end Bridge
+end Bridge2
 
 #check @gate_of_active
 #check @sat_implies_nonmember_public
@@ -552,7 +629,11 @@ theorem badTrace_rejected (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin 
   have hg := gate_of_active hsat 0 (by decide) (by decide) _ (mem_checkOne 0 (by decide))
   rw [show checkOneBody 0 = .add (coeffVar 1 (CHECK + 0)) (.const (-1)) from rfl] at hg
   simp only [coeffVar, EmittedExpr.eval] at hg
-  exact absurd hg (by decide)
+  -- the residual is `0 − 1 = −1`, and `p ∤ −1` — the field gate bites.
+  have hval : (1 : ℤ) * (envAt badTrace 0).loc (CHECK + 0) + -1 = -1 := by decide
+  rw [hval] at hg
+  obtain ⟨k, hk⟩ := Int.modEq_zero_iff_dvd.mp hg
+  omega
 
 /-! ## §6 — axiom hygiene. -/
 
