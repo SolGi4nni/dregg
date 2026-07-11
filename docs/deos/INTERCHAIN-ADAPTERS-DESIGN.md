@@ -234,12 +234,26 @@ commitment over just the span's outbound cross-chain messages — NOT dregg's
 note/state tree rehashed — so it neither duplicates the dual-commitment
 architecture nor imposes bulk rehashing.
 
-Making the leg fully proof-carrying is a hash-family **decision** (ember-gated):
-(a) keccak message root bound in-circuit (cheap EVM verify, expensive
-keccak-in-STARK); (b) a Poseidon2 message root (cheap in-circuit, heavier EVM
-inclusion — the gnark wrap already has Poseidon2-w16 gadgets); (c) fold per-message
-inclusion into the wrap and expose the message commitment (no EVM rehash, heavier
-proving). Pick when the wrap prover lands.
+Making the leg fully proof-carrying is a hash-family choice, and it **resolves to
+a standard answer** rather than an open decision. The tradeoff is pure
+cost-placement: keccak is cheap on the EVM (~30-gas opcode) but expensive inside a
+proof; Poseidon2 is cheap inside the proof but expensive on the EVM. Gas is the
+*recurring* cost (paid by every verifier, forever); prover time is the *one-time*
+cost (paid once per settlement by the operator). So optimize for gas:
+
+**DECISION: a keccak message root, computed inside the gnark BN254 wrap** (NOT the
+BabyBear STARK — keccak in a 31-bit field is brutal; in the BN254 wrap it is a
+bounded one-time cost), exposed as a wrap public input. This is exactly the
+SP1/RISC0 pattern for EVM-friendly output. The EVM then does cheap keccak
+inclusion, which is what the adapters already implement.
+
+Crucially this is **not a separate gate** — it folds into the gnark-wrap
+milestone. The operator-attested `outboundMessageRoot` registry we shipped is the
+correct placeholder: when the wrap lands, it populates that registry with a
+proof-bound keccak root instead of an attested one, and nothing else in the
+adapters changes. (Alternatives — a Poseidon2 message root, or folding per-message
+inclusion into the wrap and exposing the commitment directly — stay on record but
+lose on the gas axis for the general many-messages case.)
 
 ## Non-goals
 

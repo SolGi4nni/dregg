@@ -7310,3 +7310,15 @@ All 4 lanes green post-audit; Nomad-law holds across every one, zero vacuity. In
   caller-responsibility. Followups: wire relayers to build ChainAttestation + check destination_federation;
   drive the real bridge_mint_against_lock gate end-to-end in one test.
 - Celo/Optics lineage claim REMOVED everywhere (ember not deeply involved with that team).
+
+## keystone resolved: message-root binding = keccak-at-the-wrap (2026-07-11, Fable)
+
+The message-root proof-binding "decision" DISSOLVED: it's a pure cost-placement question (keccak = cheap
+EVM / expensive circuit; Poseidon2 = cheap circuit / expensive EVM), and gas is the recurring cost while
+prover time is one-time — so optimize for gas. DECISION: keccak message root computed in the gnark BN254
+wrap (not the BabyBear STARK), exposed as a wrap public input — the SP1/RISC0 EVM-output pattern. NOT a
+separate gate: folds into the gnark-wrap milestone; the operator-attested outboundMessageRoot registry is
+the correct placeholder until then. Recorded in INTERCHAIN-ADAPTERS-DESIGN.md.
+
+Grinding: the gnark wrap continues — DuplexChallenger-w16 Fiat-Shamir challenger gadget (fixture-validated
+against transcript_w16.json), the load-bearing soundness piece before the FRI query-verify teeth.
