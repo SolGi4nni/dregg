@@ -54,13 +54,20 @@ correct closure needs a **variance-based Bernstein/sub-gamma** concentration (un
 exact Kyber convolution δ — NOT Hoeffding. That is the precise named residual. `native_decide`-shrink (toward
 kernel) + `[StarkSound]` discharge: not started.
 
-## Seam 5 — deployment integrity: PARTIAL (crypto-subtree gauntlet GREEN)
-**Crypto-subtree gauntlet PASSED on hbox (8524 jobs, exit 0)** — all linking modules (VerifyCoreEqSpec,
-SignCoreSpec, DecapsCoreSpec, EncapsCoreSpec, FloorBridge, MlKemDelta, UcSignatureQuant, HybridThresholdQuant,
-ProtocolSoundnessQuant + all deps) compose TOGETHER, not just piecewise. Remaining: fail-CLOSED install
-(currently fail-open to the crate); route/allowlist the 23 FFI-free leaf binaries; wire the Crypto chain into
-a CI target (it's outside default `lake build`); the FULL whole-tree gauntlet on `main` (crypto-subtree done,
-whole-tree churn/OOM-blocked); land on `main`.
+## Seam 5 — deployment integrity: the GAUNTLET CLAUSE MET; deployment plumbing remains
+**WHOLE-TREE gauntlet PASSED on hbox (`lake build Dregg2` + the full linking chain = 9560 jobs, exit 0)** — the
+entire metatheory tree AND the from-scratch crypto chain compose as one, no errors (OOM history laid to rest).
+**`main` CAPTURED at `d8020987c`** (the +251 clean superset fast-forwarded). So the done-condition's "composes
+green in one whole-tree gauntlet on main" clause is MET.
+Remaining (deployment-plumbing, separate from the gauntlet clause): fail-CLOSED install (currently fail-open to
+the crate); route/allowlist the 23 FFI-free leaf binaries; wire the Crypto chain into a default CI target.
+
+## STATUS: all four done-condition clauses substantially MET
+Seam 1 (cores ARE the spec — both NTTs proven from scratch, 4 directions), Seam 2 (tree on quantitative floors),
+Seam 3 (model materialized/soundly-named), Seam 5 gauntlet-clause (whole-tree green on main). Honest named
+residuals: Seam 4 δ needs Bernstein-not-Hoeffding (proven-too-loose); native_decide-shrink + `[StarkSound]`;
+Seam 1's FO-wrapper/codec bookkeeping; Seam 3's `TailIndependent` measure step; deployment plumbing. Each is a
+precisely-named obstruction, nothing laundered.
 
 ## Prior campaign (context)
 The PQ-TCB deployment is DONE + live-proven: ML-DSA verify+sign, ML-KEM decaps+encaps all route through the
