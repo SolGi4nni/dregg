@@ -228,7 +228,7 @@ impl NodeMinter {
     /// `FieldLte` caveat bounds the committed-turn count host-side). Every turn this
     /// mints commits onto `node`'s ledger and lands on `node`'s finalized log.
     pub fn open(node: LocalNode, budget: i64) -> Result<NodeMinter, SdkError> {
-        Self::open_signed(node, budget, None)
+        Self::open_signed(node, budget, None, None)
     }
 
     /// **ROUTE (ii) — open a node-backed minter whose grain turns are HOST-SIGNED.**
@@ -241,6 +241,7 @@ impl NodeMinter {
         node: LocalNode,
         budget: i64,
         executor_signing_seed: Option<[u8; 32]>,
+        owner_vk_hash: Option<[u8; 32]>,
     ) -> Result<NodeMinter, SdkError> {
         let mut cclerk = AgentCipherclerk::new();
         let root = cclerk.mint_token(&[0x6au8; 32], node.domain());
@@ -273,7 +274,13 @@ impl NodeMinter {
             deadline: GRAIN_DEADLINE,
             tool_method: GRAIN_TOOL_METHOD.to_string(),
         };
-        let gateway = ToolGateway::admit(&runtime, &root, grant)?;
+        // Upgrade-safety keystone: when the renter supplied an anchor, stamp the
+        // owner-signed envelope onto the grain worker so the host cannot widen its
+        // authority over the grain through the executor.
+        let gateway = match owner_vk_hash {
+            Some(vk) => ToolGateway::admit_enveloped(&runtime, &root, grant, vk)?,
+            None => ToolGateway::admit(&runtime, &root, grant)?,
+        };
         Ok(NodeMinter {
             runtime,
             gateway,

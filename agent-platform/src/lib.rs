@@ -845,10 +845,18 @@ impl AgentPlatform {
             // ROUTE (ii): open the minter under the platform's HOST executor signing
             // seed (when set), so every grain turn this node mints is host-signed and
             // forge-admissible. `None` keeps grain receipts unsigned (byte-unchanged).
+            // Upgrade-safety: an anchored (owner-provided RenterAnchor) grain is
+            // enveloped — its authority-widening slots gate to the owner key, so the
+            // host cannot escalate over the grain through the executor.
+            let owner_vk_hash = tenant
+                .anchor
+                .as_ref()
+                .map(|a| dregg_turn::executor::owner_envelope::owner_envelope_vk(&a.pubkey));
             let node_minter = node::NodeMinter::open_signed(
                 localnode.clone(),
                 tenant.budget,
                 self.executor_signing_seed,
+                owner_vk_hash,
             )
             .map_err(|e| AgentPlatformError::Session(format!("open node minter: {e}")))?;
             tenant.node = Some(localnode);
