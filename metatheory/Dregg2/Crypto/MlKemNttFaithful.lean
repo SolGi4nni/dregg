@@ -37,22 +37,28 @@ factors, pointwise = scalar product).
   pointwiseNtt (ntt a) (ntt b)` for all canonical `a, b`, for-all, no `native_decide`. Combined with the textbook
   reduction (`mlkem_faithful_of`), the whole gate follows from the SINGLE remaining residual.
 
-## THE REMAINING RUNG (named precisely, mirroring the ML-DSA `inttStage_inv` leg)
+## RUNG 6 (inverse) — `NttLeftInverse` CLOSED (`nttLeftInverse_proven`, PART 6)
 
 `NttLeftInverse := ∀ c, c.size = 256 → (∀ p, c[p]! < q) → intt (ntt c) = c` — the Gentleman–Sande inverse
-inverts the incomplete transform. In the ML-DSA proof this is `nttLeftInverse_proven` (the `intt` interpolation
-induction `inttStage_inv` collapsed by `interp_orth`, ~500 lines). The ML-KEM analog is the same structure over
-the 128-pair (quadratic-quotient) leaves rather than 256 scalar leaves; it is left as the named residual. It is
-non-vacuous: `nttLeftInverse_sample` witnesses `intt (ntt sampleA) = sampleA` (the existing gate, restated —
-NOT inside any `∀`). The final theorem `mlkem_ntt_ring_faithful` is proven MODULO `NttLeftInverse`
-(`mlkem_faithful_of hInv`), with `NttMulHom` fully closed.
+inverts the incomplete transform. **CLOSED** (`nttLeftInverse_proven`), mirroring the ML-DSA `nttLeftInverse_proven`
+over the 128 PAIR (quadratic-quotient) leaves rather than 256 scalar leaves. The Kyber `intt` is peeled
+`intt = kInttScale ∘ kInttStages` (7 GS stages `len = 2,…,128`, twiddle `ζ^{brv7 k}` down `127…1`, `128⁻¹` scale)
+and characterized by the pair-indexed GS stage invariant `kInttStage_inv`: after `n` stages, slot `g·2^{n+1}+2i+r`
+holds `Σ_{u<2ⁿ} v[g·2^{n+1}+2u+r]·kirt(g·2ⁿ+u)^i` (a pair-index `r∈{0,1}` rides through, since every butterfly
+connects same-parity slots). The closed-form kernel is `kirt X = (evalRoot X)⁻¹`; the GS butterfly identities
+`irt_stage_lo7`/`irt_stage_hi7` pin `kirt(·)^{2ⁿ}` to `∓ζ^{brv7 k}` via the mod-256 congruences `brv_stage_lo7`/
+`brv_stage_hi7` (plain `decide`; the Kyber flipped-GS-sign + positive-twiddle convention gives LOW child `−z`,
+HIGH child `+z`). At `n=7`: `(intt v)[2i+r] = 128⁻¹·Σ_{u<128} v[2u+r]·kirt(u)^i`; for `v = ntt c` the sums swap
+and the inner `Σ_u (evalRoot u)^j·kirt(u)^i` collapses to `128·[i=j]` (`interp_orth7`, `brv7`-reindexed 128-point
+orthogonality `zeta_sq_orthogonality`), leaving `128⁻¹·128·c[2i+r] = c[2i+r]`. The FINAL theorem
+`mlkem_ntt_ring_faithful` = `mlkem_faithful_of nttLeftInverse_proven` (both residuals proven for-all).
 
 ## NON-FAKE
 
-Every forward keystone is `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); the `ζ`-order and
-`brv7` congruences are plain `decide` (kernel reduction, NOT `native_decide`), so no `ofReduceBool` residual in
-any `∀`-body. The guards (`a.size = 256`, reducedness) match the deployed pipeline exactly, as in the ML-DSA
-proof; the existing concrete `native_decide` sample is untouched (non-vacuity).
+Every keystone (forward AND inverse) is `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}); the
+`ζ`-order, `brv7` congruences, and `brv7` involution are plain `decide` (kernel reduction, NOT `native_decide`),
+so no `ofReduceBool` residual in any `∀`-body. The guards (`a.size = 256`, reducedness) match the deployed
+pipeline exactly, as in the ML-DSA proof; the existing concrete `native_decide` sample is untouched (non-vacuity).
 -/
 import Dregg2.Crypto.MlKemRing
 import Dregg2.Tactics
@@ -1521,6 +1527,749 @@ theorem mlkem_faithful_of (hInv : NttLeftInverse) :
   rw [← nttMulHom_proven a b ha hb]
   exact hInv (schoolbookMul a b) (schoolbookMul_size a b) (schoolbookMul_lt a b)
 
+/-! ## PART 6 — THE INVERSE: `NttLeftInverse` CLOSED via the Gentleman–Sande interpolation induction.
+
+Mirror of the ML-DSA `nttLeftInverse_proven`, over the 128 PAIR leaves (quadratic quotients) instead of 256
+scalar leaves. The incomplete Kyber `intt` is 7 GS stages (`len = 2,4,…,128`, twiddle counter `k` down `127…1`)
++ a final `128⁻¹` scaling. Because every butterfly connects same-parity slots (`len` always even), the even
+subarray `v[2u]` and the odd subarray `v[2u+1]` undergo INDEPENDENT 128-point GS inverse transforms sharing the
+`ζ^{brv7 k}` twiddles; a pair-index `r ∈ {0,1}` rides through the whole induction.
+
+Key sign difference from the ML-DSA GS: the Kyber `intt` high write is `z·(a[j+len] − a[j])` (not `z·(a[j] −
+a[j+len])`) with a POSITIVE twiddle `z = ζ^{brv7 k}` (not `−ζ^{…}`); the two facts cancel so the closed-form
+kernel `kirt X = (evalRoot X)⁻¹` gets the same `±(inverse twiddle)` butterfly identities — pinned by the
+mod-256 (order of `ζ`) congruences `irt_stage_lo7`/`irt_stage_hi7` (the KEM analogs of `irt_stage_lo/hi`). -/
+
+/-! ### INVERSE step 0 — the GS butterfly-sweep primitive (mirror of `bfSweep`, GS variant, Kyber sign). -/
+
+/-- The Kyber GS butterfly step (desugared inner-loop body of `intt`): low slot `j ← b[j] + b[j+len]`, high
+slot `j+len ← z·(b[j+len] − b[j])`. Both reads see the ORIGINAL `b` (the low write hits `j`, not `j+len`). -/
+def kgsStepC (z len : Nat) (b : Poly) (j : Nat) : Poly :=
+  (b.set! j (addQ b[j]! b[j + len]!)).set! (j + len) (mulModQ z (subQ b[j + len]! b[j]!))
+
+theorem kgsStepC_size (z len : Nat) (b : Poly) (j : Nat) :
+    (kgsStepC z len b j).size = b.size := by
+  unfold kgsStepC; rw [size_set!, size_set!]
+
+/-- **THE GS BUTTERFLY-SWEEP PRIMITIVE** (mirror of `bfFold_spec`, GS variant): low half `↦ a[p] + a[p+len]`,
+high half `↦ z·(a[p] − a[p−len])`, rest fixed — each read of the ORIGINAL array `a0`. -/
+theorem kgsFold_spec (z len : Nat) (hlen : 1 ≤ len) (a0 : Poly) :
+    ∀ (m s : Nat) (b : Poly),
+      b.size = 256 → s + m + len ≤ 256 → m ≤ len →
+      (∀ p, s ≤ p → p < s + m → b[p]! = a0[p]!) →
+      (∀ p, s + len ≤ p → p < s + m + len → b[p]! = a0[p]!) →
+      (List.foldl (kgsStepC z len) b (List.range' s m)).size = 256 ∧
+      (∀ p, s ≤ p → p < s + m →
+        (List.foldl (kgsStepC z len) b (List.range' s m))[p]! = addQ a0[p]! a0[p+len]!) ∧
+      (∀ p, s + len ≤ p → p < s + m + len →
+        (List.foldl (kgsStepC z len) b (List.range' s m))[p]! = mulModQ z (subQ a0[p]! a0[p-len]!)) ∧
+      (∀ p, (p < s ∨ s + m ≤ p) → (p < s + len ∨ s + m + len ≤ p) →
+        (List.foldl (kgsStepC z len) b (List.range' s m))[p]! = b[p]!) := by
+  intro m
+  induction m with
+  | zero =>
+    intro s b hsz _ _ _ _
+    refine ⟨by simpa using hsz, ?_, ?_, ?_⟩
+    · intro p h1 h2; omega
+    · intro p h1 h2; omega
+    · intro p _ _; simp
+  | succ m' ih =>
+    intro s b hsz hbound hmlen hagLo hagHi
+    have hbs : b[s]! = a0[s]! := hagLo s (by omega) (by omega)
+    have hbsl : b[s+len]! = a0[s+len]! := hagHi (s+len) (by omega) (by omega)
+    have hs256 : s < b.size := by rw [hsz]; omega
+    have hsl256 : s + len < b.size := by rw [hsz]; omega
+    set b1 := kgsStepC z len b s with hb1def
+    have hb1size : b1.size = 256 := by rw [hb1def, kgsStepC_size]; exact hsz
+    have hb1_s : b1[s]! = addQ a0[s]! a0[s+len]! := by
+      rw [hb1def]; unfold kgsStepC
+      rw [getElem!_set!_ne _ (s+len) s _ (by omega),
+          getElem!_set!_self _ s _ hs256, hbs, hbsl]
+    have hb1_sl : b1[s+len]! = mulModQ z (subQ a0[s+len]! a0[s]!) := by
+      rw [hb1def]; unfold kgsStepC
+      rw [getElem!_set!_self _ (s+len) _ (by rw [size_set!]; exact hsl256), hbs, hbsl]
+    have hb1_other : ∀ p, p ≠ s → p ≠ s + len → b1[p]! = b[p]! := by
+      intro p hps hpsl
+      rw [hb1def]; unfold kgsStepC
+      rw [getElem!_set!_ne _ (s+len) p _ (by omega), getElem!_set!_ne _ s p _ (by omega)]
+    have hrange : List.range' s (m'+1) = s :: List.range' (s+1) m' := by
+      rw [List.range'_succ]
+    have hagLo1 : ∀ p, s+1 ≤ p → p < s+1+m' → b1[p]! = a0[p]! := by
+      intro p h1 h2
+      rw [hb1_other p (by omega) (by omega)]
+      exact hagLo p (by omega) (by omega)
+    have hagHi1 : ∀ p, s+1+len ≤ p → p < s+1+m'+len → b1[p]! = a0[p]! := by
+      intro p h1 h2
+      rw [hb1_other p (by omega) (by omega)]
+      exact hagHi p (by omega) (by omega)
+    obtain ⟨ihsz, ihlo, ihhi, ihun⟩ :=
+      ih (s+1) b1 hb1size (by omega) (by omega) hagLo1 hagHi1
+    rw [hrange, List.foldl_cons, ← hb1def]
+    refine ⟨ihsz, ?_, ?_, ?_⟩
+    · intro p h1 h2
+      by_cases hp : p = s
+      · subst hp
+        rw [ihun p (by omega) (by omega), hb1_s]
+      · rw [ihlo p (by omega) (by omega)]
+    · intro p h1 h2
+      by_cases hp : p = s + len
+      · subst hp
+        rw [ihun (s+len) (by omega) (by omega), hb1_sl, Nat.add_sub_cancel]
+      · rw [ihhi p (by omega) (by omega)]
+    · intro p hlo hhi
+      rw [ihun p (by omega) (by omega)]
+      exact hb1_other p (by omega) (by omega)
+
+/-- One full Kyber GS sweep over `[start, start+len)` — a VERBATIM copy of `intt`'s innermost `for j` loop. -/
+def kgsSweep (z start len : Nat) (a0 : Poly) : Poly := Id.run do
+  let mut a := a0
+  for j in [start : start + len] do
+    let t := a[j]!
+    a := a.set! j (addQ t a[j + len]!)
+    a := a.set! (j + len) (mulModQ z (subQ a[j + len]! t))
+  return a
+
+theorem kgsSweep_eq_foldl (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) :
+    kgsSweep z start len a0 = List.foldl (kgsStepC z len) a0 (List.range' start len) := by
+  unfold kgsSweep
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure]
+  have hsize : [start:start+len].size = len := by
+    simp only [Std.Legacy.Range.size]; omega
+  rw [hsize]
+  refine foldl_ext _ _ ?_ _ _
+  intro b j
+  have hrw : (b.set! j (addQ b[j]! b[j + len]!))[j + len]! = b[j + len]! :=
+    getElem!_set!_ne _ j (j + len) _ (by omega)
+  unfold kgsStepC
+  rw [hrw]
+
+theorem kgsSweep_getElem (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly)
+    (hsz : a0.size = 256) (hbound : start + 2 * len ≤ 256) :
+    (∀ p, start ≤ p → p < start + len →
+      (kgsSweep z start len a0)[p]! = addQ a0[p]! a0[p+len]!) ∧
+    (∀ p, start + len ≤ p → p < start + 2 * len →
+      (kgsSweep z start len a0)[p]! = mulModQ z (subQ a0[p]! a0[p-len]!)) ∧
+    (∀ p, (p < start ∨ start + 2 * len ≤ p) →
+      (kgsSweep z start len a0)[p]! = a0[p]!) := by
+  rw [kgsSweep_eq_foldl z start len hlen a0]
+  obtain ⟨_, hlo, hhi, hun⟩ :=
+    kgsFold_spec z len hlen a0 len start a0 hsz (by omega) (le_refl _)
+      (fun p _ _ => rfl) (fun p _ _ => rfl)
+  refine ⟨?_, ?_, ?_⟩
+  · intro p h1 h2; exact hlo p h1 (by omega)
+  · intro p h1 h2; exact hhi p (by omega) (by omega)
+  · intro p h; apply hun p <;> omega
+
+theorem kgsStepC_lt (z len : Nat) (b : Poly) (j : Nat) (hb : ∀ (p:Nat), b[p]! < q) :
+    ∀ (p:Nat), (kgsStepC z len b j)[p]! < q := by
+  unfold kgsStepC
+  exact set!_lt _ _ _ (set!_lt _ _ _ hb (addQ_lt _ _)) (mulModQ_lt _ _)
+
+theorem foldl_kgsStepC_lt (z len : Nat) :
+    ∀ (L : List Nat) (b : Poly), (∀ (p:Nat), b[p]!<q) →
+      ∀ (p:Nat), (List.foldl (kgsStepC z len) b L)[p]! < q := by
+  intro L; induction L with
+  | nil => intro b hb p; simpa using hb p
+  | cons hd tl ih => intro b hb; exact ih _ (kgsStepC_lt z len b hd hb)
+
+theorem kgsSweep_lt (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) (h : ∀ (p:Nat), a0[p]!<q) :
+    ∀ (p:Nat), (kgsSweep z start len a0)[p]! < q := by
+  rw [kgsSweep_eq_foldl z start len hlen a0]; exact foldl_kgsStepC_lt z len _ a0 h
+
+theorem kgsSweep_size (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) (h : a0.size = 256) :
+    (kgsSweep z start len a0).size = 256 := by
+  rw [kgsSweep_eq_foldl z start len hlen a0]
+  suffices hgen : ∀ (L : List Nat) (b : Poly), b.size = 256 →
+      (List.foldl (kgsStepC z len) b L).size = 256 by exact hgen _ a0 h
+  intro L
+  induction L with
+  | nil => intro b hb; simpa using hb
+  | cons hd tl ih => intro b hb; simp only [List.foldl_cons]; exact ih _ (by rw [kgsStepC_size]; exact hb)
+
+/-! ### INVERSE step 1 — peel `intt` into the 7-stage GS fold + the `nInv = 128⁻¹` scaling loop. -/
+
+/-- `intt`'s 7 GS stages with the inner `for j` written as `kgsSweep` — defeq to `intt` sans the scaling loop. -/
+def kInttStages (w : Poly) : Poly := Id.run do
+  let mut a := w
+  let mut i := 127
+  for s in [0:7] do
+    let len := 2 <<< s
+    let nblk := 128 / len
+    for blk in [0:nblk] do
+      let start := blk * 2 * len
+      let z := zetaTwiddle i
+      i := i - 1
+      a := kgsSweep z start len a
+  return a
+
+/-- The final `nInv = 128⁻¹` scaling loop of `intt`, on its own. -/
+def kInttScale (a0 : Poly) : Poly := Id.run do
+  let mut a := a0
+  for j in [0:256] do
+    a := a.set! j (mulModQ nInv a[j]!)
+  return a
+
+/-- `intt = kInttScale ∘ kInttStages` (the two sequential loops of `intt`, split). -/
+theorem intt_eq_scale_stages (w : Poly) : intt w = kInttScale (kInttStages w) := by
+  unfold intt kInttScale kInttStages kgsSweep; rfl
+
+/-- One GS stage-`s` block: `kgsSweep (ζ^{brv7 k})` over block `blk`, threading `k` DOWN by one (use-then-
+decrement, so block `blk` uses the counter value `st2.2` directly). -/
+def kInttBlockFn (s : Nat) (st2 : Poly × Nat) (blk : Nat) : Poly × Nat :=
+  (kgsSweep (zetaTwiddle st2.2) (blk * 2 * (2 <<< s)) (2 <<< s) st2.1, st2.2 - 1)
+
+def kInttStageStep (s : Nat) (st : Poly × Nat) : Poly × Nat :=
+  List.foldl (kInttBlockFn s) st (List.range' 0 (128 / (2 <<< s)) 1)
+
+/-- The inverse NTT stages as an explicit ordered `kgsSweep` fold; state `(a, k)` threads array + down-counter
+(initial `k = 127`). -/
+def kInttUpto (n : Nat) (w : Poly) : Poly × Nat :=
+  List.foldl (fun st s => kInttStageStep s st) (w, 127) (List.range' 0 n 1)
+
+set_option maxHeartbeats 800000 in
+set_option maxRecDepth 8000 in
+theorem kInttStages_eq (w : Poly) : kInttStages w = (kInttUpto 7 w).1 := by
+  unfold kInttStages kInttUpto kInttStageStep kInttBlockFn
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, Std.Legacy.Range.size, Nat.sub_zero, Nat.add_sub_cancel,
+    Nat.div_one]
+  refine Eq.trans ?_ (congrArg Prod.fst (foldl_ext_mem _ _ _ (fun st s _ => rfl) (w, 127)))
+  rfl
+
+theorem kInttUpto_succ (n : Nat) (w : Poly) : kInttUpto (n+1) w = kInttStageStep n (kInttUpto n w) := by
+  unfold kInttUpto
+  rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+
+theorem foldl_kInttBlockFn_snd (s : Nat) (l : List Nat) (st : Poly × Nat) :
+    (List.foldl (kInttBlockFn s) st l).2 = st.2 - l.length := by
+  induction l generalizing st with
+  | nil => simp
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [ih]; simp [kInttBlockFn]; omega
+
+/-! ### INVERSE step 1b — the scaling loop is entrywise `nInv·a0[p]`. -/
+
+theorem kInttScale_fold (a0 : Poly) (hsz0 : a0.size = 256) :
+    ∀ (n : Nat), n ≤ 256 →
+      (List.foldl (fun r i => r.set! i (mulModQ nInv r[i]!)) a0 (List.range' 0 n 1)).size = 256 ∧
+      (∀ p, p < n →
+        (List.foldl (fun r i => r.set! i (mulModQ nInv r[i]!)) a0 (List.range' 0 n 1))[p]!
+          = mulModQ nInv a0[p]!) ∧
+      (∀ p, n ≤ p →
+        (List.foldl (fun r i => r.set! i (mulModQ nInv r[i]!)) a0 (List.range' 0 n 1))[p]! = a0[p]!) := by
+  intro n
+  induction n with
+  | zero =>
+    intro _; refine ⟨by simpa using hsz0, ?_, ?_⟩
+    · intro p hp; omega
+    · intro p _; simp
+  | succ n ih =>
+    intro hn
+    obtain ⟨ihsz, ihlo, ihun⟩ := ih (by omega)
+    rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+    set A := List.foldl (fun r i => r.set! i (mulModQ nInv r[i]!)) a0 (List.range' 0 n 1) with hAdef
+    have hAn : A[n]! = a0[n]! := ihun n (le_refl _)
+    refine ⟨?_, ?_, ?_⟩
+    · rw [size_set!]; exact ihsz
+    · intro p hp
+      by_cases hpn : p = n
+      · subst hpn
+        rw [getElem!_set!_self A p _ (by rw [ihsz]; omega), hAn]
+      · rw [getElem!_set!_ne A n p _ (by omega)]; exact ihlo p (by omega)
+    · intro p hp
+      rw [getElem!_set!_ne A n p _ (by omega)]; exact ihun p (by omega)
+
+theorem kInttScale_getElem (a0 : Poly) (hsz0 : a0.size = 256) (p : Nat) (hp : p < 256) :
+    (kInttScale a0)[p]! = mulModQ nInv a0[p]! := by
+  unfold kInttScale
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_sub_cancel, Nat.div_one]
+  exact (kInttScale_fold a0 hsz0 256 (le_refl _)).2.1 p hp
+
+theorem cast_kInttScale (a0 : Poly) (hsz0 : a0.size = 256) (p : Nat) (hp : p < 256) :
+    ((kInttScale a0)[p]! : ZMod q) = (nInv : ZMod q) * (a0[p]! : ZMod q) := by
+  rw [kInttScale_getElem a0 hsz0 p hp, cast_mulModQ]
+
+theorem kInttScale_size (a0 : Poly) (hsz0 : a0.size = 256) : (kInttScale a0).size = 256 := by
+  unfold kInttScale
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_sub_cancel, Nat.div_one]
+  exact (kInttScale_fold a0 hsz0 256 (le_refl _)).1
+
+/-! ### INVERSE step 2 — the reciprocal pair-root `kirt` and the two GS butterfly exponent identities.
+
+`kirt X = (evalRoot X)⁻¹`, the reciprocal of the quadratic-quotient root `γ_X = ζ^{2·brv7(X)+1}`. After `n` GS
+stages, slot `g·2^{n+1}+2i+r` holds `Σ_{u<2ⁿ} v[g·2^{n+1}+2u+r]·kirt(g·2ⁿ+u)^i`; the butterfly step needs
+`kirt(·)^{2ⁿ}` to be the block's inverse twiddle `±ζ^{brv7 k}` — a `ζ`-exponent congruence mod 256 (order of
+`ζ`), discharged by `decide` per stage. The Kyber positive-twiddle + flipped-GS-sign convention makes the LOW
+child give `−z` and the HIGH child `+z` (verified: both congruences below hold for every `n ≤ 6`). -/
+
+theorem two_shl (s : Nat) : (2 : Nat) <<< s = 2 ^ (s+1) := by
+  rw [Nat.shiftLeft_eq, pow_succ]; ring
+
+theorem kinb_nblk (s : Nat) (hs : s ≤ 6) : 128 / (2 <<< s) = 2 ^ (6 - s) := by
+  rw [two_shl, show (128:Nat) = 2^7 from rfl, Nat.pow_div (by omega) (by norm_num)]
+  congr 1; omega
+
+/-- `ζ^E` depends only on `E mod 256` (`ζ` has order 256 in ML-KEM). -/
+theorem zeta_pow_mod256 (E : Nat) : (zeta : ZMod q) ^ E = (zeta : ZMod q) ^ (E % 256) := by
+  conv_lhs => rw [← Nat.div_add_mod E 256]
+  rw [pow_add, pow_mul]
+  have h256 : (zeta : ZMod q) ^ 256 = 1 := by
+    have h : (zeta : ZMod q) ^ 256 = ((zeta : ZMod q) ^ 128) ^ 2 := by rw [← pow_mul]
+    rw [h, zeta_pow_neg_one]; ring
+  rw [h256, one_pow, one_mul]
+
+theorem zeta_pow_eq_neg_one256 (E : Nat) (h : E % 256 = 128) : (zeta : ZMod q) ^ E = -1 := by
+  rw [zeta_pow_mod256, h, zeta_pow_neg_one]
+
+theorem zeta_pow_eq_one256 (E : Nat) (h : E % 256 = 0) : (zeta : ZMod q) ^ E = 1 := by
+  rw [zeta_pow_mod256, h, pow_zero]
+
+/-- `powModQ` lands in the reduced range `[0, q)`. -/
+theorem powModQ_lt (base e : Nat) : powModQ base e < q := by
+  rw [powModQ_eq_fold]
+  suffices h : ∀ (L : List Nat) (st : Nat × Nat × Nat), st.2.2 < q →
+      (List.foldl pstep st L).2.2 < q by exact h _ _ (by show (1:Nat) < q; unfold q; omega)
+  intro L; induction L with
+  | nil => intro st h; simpa using h
+  | cons hd tl ih =>
+    intro st h; apply ih
+    unfold pstep
+    by_cases hp : (st.2.1 % 2 == 1) = true
+    · simp only [hp, if_true]; exact mulModQ_lt _ _
+    · simp only [Bool.not_eq_true] at hp; simp only [hp]; exact h
+
+theorem zetaTwiddle_lt (k : Nat) : zetaTwiddle k < q := by unfold zetaTwiddle; exact powModQ_lt _ _
+
+set_option maxRecDepth 10000 in
+/-- LOW-child congruence (`% 256 = 128`, so `kirt(low)^{2ⁿ} = −z`). Validated by `decide` per stage. -/
+theorem brv_stage_lo7 (n : Nat) (hn : n ≤ 6) :
+    ∀ g, g < 2^(6-n) → ∀ u, u < 2^n →
+      (2^n * (2 * brv7 (g*2^(n+1)+u) + 1) + brv7 (2^(7-n)-1-g)) % 256 = 128 := by
+  simp only [brv7_eq_fold]; interval_cases n <;> decide
+
+set_option maxRecDepth 10000 in
+/-- HIGH-child congruence (`% 256 = 0`, so `kirt(high)^{2ⁿ} = +z`). Validated by `decide` per stage. -/
+theorem brv_stage_hi7 (n : Nat) (hn : n ≤ 6) :
+    ∀ g, g < 2^(6-n) → ∀ u, u < 2^n →
+      (2^n * (2 * brv7 (g*2^(n+1)+2^n+u) + 1) + brv7 (2^(7-n)-1-g)) % 256 = 0 := by
+  simp only [brv7_eq_fold]; interval_cases n <;> decide
+
+/-- The reciprocal quadratic-quotient root: `kirt X = (evalRoot X)⁻¹`. -/
+def kirt (X : Nat) : ZMod q := (evalRoot X)⁻¹
+
+/-- **Butterfly identity LO** — `kirt(g·2^{n+1}+u)^{2ⁿ}` is `−` the stage-`n` block-`g` twiddle `ζ^{brv7 k}`. -/
+theorem irt_stage_lo7 (n g u : Nat) (hn : n ≤ 6) (hg : g < 2^(6-n)) (hu : u < 2^n) :
+    (kirt (g*2^(n+1)+u))^(2^n) = -((zetaTwiddle (2^(7-n)-1-g) : Nat) : ZMod q) := by
+  rw [cast_zetaTwiddle]
+  unfold kirt
+  rw [inv_pow]
+  apply inv_eq_of_mul_eq_one_left
+  unfold evalRoot
+  rw [neg_mul, ← pow_mul, ← pow_add,
+      show brv7 (2^(7-n)-1-g) + (2*brv7 (g*2^(n+1)+u)+1)*2^n
+         = 2^n*(2*brv7 (g*2^(n+1)+u)+1) + brv7 (2^(7-n)-1-g) from by ring,
+      zeta_pow_eq_neg_one256 _ (brv_stage_lo7 n hn g hg u hu)]
+  ring
+
+/-- **Butterfly identity HI** — `kirt(g·2^{n+1}+2ⁿ+u)^{2ⁿ}` is `+` the block twiddle. -/
+theorem irt_stage_hi7 (n g u : Nat) (hn : n ≤ 6) (hg : g < 2^(6-n)) (hu : u < 2^n) :
+    (kirt (g*2^(n+1)+2^n+u))^(2^n) = ((zetaTwiddle (2^(7-n)-1-g) : Nat) : ZMod q) := by
+  rw [cast_zetaTwiddle]
+  unfold kirt
+  rw [inv_pow]
+  apply inv_eq_of_mul_eq_one_left
+  unfold evalRoot
+  rw [← pow_mul, ← pow_add,
+      show brv7 (2^(7-n)-1-g) + (2*brv7 (g*2^(n+1)+2^n+u)+1)*2^n
+         = 2^n*(2*brv7 (g*2^(n+1)+2^n+u)+1) + brv7 (2^(7-n)-1-g) from by ring,
+      zeta_pow_eq_one256 _ (brv_stage_hi7 n hn g hg u hu)]
+
+/-- Split a `range (2m)` sum into its low and high halves. -/
+theorem sum_range_split_half {M} [AddCommMonoid M] (f : Nat → M) (m : Nat) :
+    ∑ U ∈ range (2*m), f U = (∑ u ∈ range m, f u) + ∑ u ∈ range m, f (m + u) := by
+  rw [two_mul, Finset.sum_range_add]
+
+/-- Split a `range (2^(n+1))` sum into its `2ⁿ`-low and `2ⁿ`-high halves. -/
+theorem sum_range_split_pow {M} [AddCommMonoid M] (f : Nat → M) (n : Nat) :
+    ∑ U ∈ range (2^(n+1)), f U = (∑ u ∈ range (2^n), f u) + ∑ u ∈ range (2^n), f (2^n + u) := by
+  rw [show (2:Nat)^(n+1) = 2^n + 2^n from by rw [pow_succ]; ring, Finset.sum_range_add]
+
+/-! ### INVERSE step 3 — one full GS stage, positionwise (`kInttBlock_char`, mirror of `block_char`). -/
+set_option maxHeartbeats 1000000 in
+theorem kInttBlock_char (s : Nat) (hs : s ≤ 6) (a_in : Poly) (hsz : a_in.size = 256) (c0 : Nat) :
+    ∀ nb, nb ≤ 2^(6-s) →
+      ((List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1.size = 256) ∧
+      (∀ p, nb * (2*(2<<<s)) ≤ p → p < 256 →
+          (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]! = a_in[p]!) ∧
+      (∀ blk, blk < nb → ∀ p, blk*(2*(2<<<s)) ≤ p → p < blk*(2*(2<<<s))+(2<<<s) →
+          (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]!
+            = addQ a_in[p]! a_in[p+(2<<<s)]!) ∧
+      (∀ blk, blk < nb → ∀ p, blk*(2*(2<<<s))+(2<<<s) ≤ p → p < blk*(2*(2<<<s))+(2*(2<<<s)) →
+          (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1[p]!
+            = mulModQ (zetaTwiddle (c0-blk)) (subQ a_in[p]! a_in[p-(2<<<s)]!)) := by
+  set len := 2 <<< s with hlendef
+  have hlen1 : 1 ≤ len := by rw [hlendef, two_shl]; exact Nat.one_le_two_pow
+  set L := 2 * len with hLdef
+  have hLtot : 2^(6-s) * L = 256 := by
+    rw [hLdef, hlendef, two_shl]
+    have hp : 2^(6-s) * 2^(s+1) = 2^7 := by rw [← pow_add]; congr 1; omega
+    calc 2^(6-s) * (2*2^(s+1)) = 2*(2^(6-s)*2^(s+1)) := by ring
+      _ = 2*2^7 := by rw [hp]
+      _ = 256 := by norm_num
+  have hmono : ∀ i j : Nat, i ≤ j → i * L ≤ j * L := fun i j h => Nat.mul_le_mul_right _ h
+  intro nb
+  induction nb with
+  | zero =>
+    intro _; refine ⟨by simpa using hsz, ?_, ?_, ?_⟩
+    · intro p _ _; simp
+    · intro blk hblk; omega
+    · intro blk hblk; omega
+  | succ nb ih =>
+    intro hnb
+    have hnb' : nb ≤ 2^(6-s) := by omega
+    obtain ⟨ihsz, ihun, ihlo, ihhi⟩ := ih hnb'
+    have hcnt : (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).2 = c0 - nb := by
+      rw [foldl_kInttBlockFn_snd]; simp
+    set A := (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1 with hAdef
+    have hstart : nb * 2 * len = nb * L := by rw [hLdef]; ring
+    have hAeq : (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 (nb+1) 1)).1
+        = kgsSweep (zetaTwiddle (c0-nb)) (nb * L) len A := by
+      rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+      have hbf1 : (kInttBlockFn s (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)) nb).1
+          = kgsSweep (zetaTwiddle ((List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).2))
+              (nb * 2 * len) len (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 nb 1)).1 := rfl
+      rw [hbf1, hcnt, ← hAdef, hstart]
+    set z := zetaTwiddle (c0-nb) with hzdef
+    have hnbL : nb * L + L ≤ 256 := by
+      have h1 := hmono (nb+1) (2^(6-s)) (by omega)
+      have h2 : (nb+1) * L = nb * L + L := by ring
+      rw [hLtot] at h1; omega
+    have hbound : nb * L + 2 * len ≤ 256 := by rw [← hLdef]; exact hnbL
+    obtain ⟨hlo, hhi, hunt⟩ := kgsSweep_getElem z (nb*L) len hlen1 A (by rw [hAdef]; exact ihsz) hbound
+    have hApsize : (List.foldl (kInttBlockFn s) (a_in, c0) (List.range' 0 (nb+1) 1)).1.size = 256 := by
+      rw [hAeq]; exact kgsSweep_size z (nb*L) len hlen1 A (by rw [hAdef]; exact ihsz)
+    refine ⟨hApsize, ?_, ?_, ?_⟩
+    · intro p hp1 hp2
+      rw [hAeq]
+      have hpge : nb * L + 2 * len ≤ p := by
+        have hh : (nb+1) * L = nb * L + L := by ring
+        rw [← hLdef]; omega
+      rw [hunt p (Or.inr hpge), hAdef]
+      exact ihun p (by omega) hp2
+    · intro blk hblk p hp1 hp2
+      rw [hAeq]
+      rcases Nat.lt_or_ge blk nb with hlt | hge
+      · have hpltnbL : p < nb * L := by
+          have h1 : (blk+1) * L ≤ nb * L := hmono (blk+1) nb (by omega)
+          have h3 : (blk+1)*L = blk*L + L := by ring
+          omega
+        rw [hunt p (Or.inl hpltnbL), hAdef]
+        exact ihlo blk hlt p hp1 hp2
+      · have hblkeq : blk = nb := by omega
+        subst hblkeq
+        rw [hlo p hp1 hp2]
+        have hAp : A[p]! = a_in[p]! := by rw [hAdef]; exact ihun p hp1 (by omega)
+        have hAplen : A[p+len]! = a_in[p+len]! := by
+          rw [hAdef]; exact ihun (p+len) (by omega) (by omega)
+        rw [hAp, hAplen]
+    · intro blk hblk p hp1 hp2
+      rw [hAeq]
+      rcases Nat.lt_or_ge blk nb with hlt | hge
+      · have hpltnbL : p < nb * L := by
+          have h1 : (blk+1) * L ≤ nb * L := hmono (blk+1) nb (by omega)
+          have h3 : (blk+1)*L = blk*L + L := by ring
+          omega
+        rw [hunt p (Or.inl hpltnbL), hAdef]
+        exact ihhi blk hlt p hp1 hp2
+      · have hblkeq : blk = nb := by omega
+        rw [hblkeq]
+        have hp2' : p < nb * L + 2 * len := by rw [hblkeq] at hp2; rw [← hLdef]; omega
+        rw [hhi p (by rw [hblkeq] at hp1; omega) hp2']
+        have hAplen : A[p-len]! = a_in[p-len]! := by
+          rw [hAdef]; exact ihun (p-len) (by rw [hblkeq] at hp1; omega) (by omega)
+        have hAp : A[p]! = a_in[p]! := by rw [hAdef]; exact ihun p (by rw [hblkeq] at hp1; omega) (by omega)
+        rw [hAplen, hAp]
+
+theorem foldl_kInttBlockFn_lt (s : Nat) (_hs : s ≤ 6) :
+    ∀ (L : List Nat) (st : Poly × Nat), (∀ (p:Nat), st.1[p]!<q) →
+      ∀ (p:Nat), (List.foldl (kInttBlockFn s) st L).1[p]! < q := by
+  intro L; induction L with
+  | nil => intro st hst p; simpa using hst p
+  | cons hd tl ih =>
+    intro st hst
+    exact ih (kInttBlockFn s st hd) (fun p => by
+      unfold kInttBlockFn
+      exact kgsSweep_lt _ _ _ (by rw [two_shl]; exact Nat.one_le_two_pow) st.1 hst p)
+
+set_option maxHeartbeats 4000000 in
+/-! ### INVERSE step 4 — THE GS STAGE INVARIANT (mirror of `stage_inv`, over PAIR leaves).
+
+After `n` GS stages, array slot `g·2^{n+1}+2i+r` holds `Σ_{u<2ⁿ} v[g·2^{n+1}+2u+r]·kirt(g·2ⁿ+u)^i` — the
+`ℤ_q` interpolation of the `g`-th contiguous PAIR-block of `v` (even part `r=0`, odd part `r=1`) at the
+reciprocal roots. The pair-index `r` rides through untouched (the GS butterfly connects same-parity slots). -/
+theorem kInttStage_inv (v : Poly) (hv : v.size = 256) (hvlt : ∀ (p:Nat), v[p]! < q) :
+    ∀ n, n ≤ 7 →
+      (kInttUpto n v).1.size = 256 ∧
+      (kInttUpto n v).2 = 2^(7-n) - 1 ∧
+      (∀ (p:Nat), (kInttUpto n v).1[p]! < q) ∧
+      ∀ g i r, g < 2^(7-n) → i < 2^n → r < 2 →
+        ((kInttUpto n v).1[g * 2^(n+1) + 2*i + r]! : ZMod q)
+          = ∑ u ∈ range (2^n), (v[g*2^(n+1)+2*u+r]! : ZMod q) * (kirt (g*2^n+u))^i := by
+  intro n
+  induction n with
+  | zero =>
+    intro _
+    refine ⟨by simpa [kInttUpto] using hv, by simp [kInttUpto], by simpa [kInttUpto] using hvlt, ?_⟩
+    intro g i r hg hi hr
+    have hi0 : i = 0 := by omega
+    subst hi0
+    simp only [kInttUpto, List.range'_zero, List.foldl_nil, pow_zero, Nat.add_zero,
+      range_one, Finset.sum_singleton, Nat.zero_add, mul_one, Nat.mul_zero]
+  | succ n ih =>
+    intro hn1
+    have hn6 : n ≤ 6 := by omega
+    obtain ⟨ihsz, ihcnt, ihlt, ihform⟩ := ih (by omega)
+    have h2L : (2:Nat)^(n+1) = 2*2^n := by rw [pow_succ]; ring
+    have h7 : (2:Nat)^(7-n) = 2*2^(6-n) := by rw [← pow_succ']; congr 1; omega
+    have hstage : kInttUpto (n+1) v
+        = List.foldl (kInttBlockFn n) ((kInttUpto n v).1, (kInttUpto n v).2) (List.range' 0 (2^(6-n)) 1) := by
+      rw [kInttUpto_succ]; unfold kInttStageStep; rw [kinb_nblk n hn6]
+    set a_in := (kInttUpto n v).1 with haindef
+    obtain ⟨bsz, bun, blo, bhi⟩ :=
+      kInttBlock_char n hn6 a_in ihsz (kInttUpto n v).2 (2^(6-n)) (le_refl _)
+    simp only [two_shl] at blo bhi bun
+    refine ⟨?_, ?_, ?_, ?_⟩
+    · rw [hstage]; exact bsz
+    · rw [hstage, foldl_kInttBlockFn_snd]
+      have hlen : (List.range' 0 (2^(6-n)) 1).length = 2^(6-n) := by simp
+      show (kInttUpto n v).2 - _ = _
+      rw [hlen, ihcnt, show (7-(n+1)) = 6-n from by omega, h7]; omega
+    · intro p; rw [hstage]
+      exact foldl_kInttBlockFn_lt n hn6 _ ((kInttUpto n v).1, (kInttUpto n v).2) (fun p => ihlt p) p
+    · intro g i r hg hi hr
+      rw [show (7-(n+1)) = 6-n from by omega] at hg
+      rw [hstage]
+      have hg2 : 2*g < 2^(7-n) := by rw [h7]; omega
+      have hg2' : 2*g+1 < 2^(7-n) := by rw [h7]; omega
+      -- IH for the two child PAIR-segments (2g low, 2g+1 high), same pair-index r.
+      -- Canonical forms: segment `g*(2*2^(n+1))`, kirt index `g*2^(n+1)+…` (matching irt_stage_lo7/hi7).
+      have e2g : ∀ i', i' < 2^n →
+          ((a_in[g*(2*2^(n+1))+2*i'+r]! : ZMod q)
+            = ∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+u))^i') := by
+        intro i' hi'
+        have hh := ihform (2*g) i' r hg2 hi' hr
+        rw [show (2*g)*2^(n+1) = g*(2*2^(n+1)) from by ring,
+            show (2*g)*2^n = g*2^(n+1) from by ring] at hh
+        exact hh
+      have e2g1 : ∀ i', i' < 2^n →
+          ((a_in[g*(2*2^(n+1))+2^(n+1)+2*i'+r]! : ZMod q)
+            = ∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2^(n+1)+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+2^n+u))^i') := by
+        intro i' hi'
+        have hh := ihform (2*g+1) i' r hg2' hi' hr
+        rw [show (2*g+1)*2^(n+1) = g*(2*2^(n+1))+2^(n+1) from by rw [h2L]; ring,
+            show (2*g+1)*2^n = g*2^(n+1)+2^n from by ring] at hh
+        exact hh
+      -- normalize the level-(n+1) target: segment `g*2^(n+1+1)` → `g*(2*2^(n+1))`, then split range 2^(n+1)
+      rw [show g*2^(n+1+1) = g*(2*2^(n+1)) from by rw [pow_succ]; ring]
+      rw [sum_range_split_pow (fun U => (v[g*(2*2^(n+1))+2*U+r]! : ZMod q) * (kirt (g*2^(n+1)+U))^i) n]
+      have hnorm : (∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2*(2^n+u)+r]! : ZMod q) * (kirt (g*2^(n+1)+(2^n+u)))^i)
+            = ∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2^(n+1)+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+2^n+u))^i := by
+        apply Finset.sum_congr rfl; intro u _
+        rw [show g*(2*2^(n+1))+2*(2^n+u)+r = g*(2*2^(n+1))+2^(n+1)+2*u+r from by rw [h2L]; ring,
+            show g*2^(n+1)+(2^n+u) = g*2^(n+1)+2^n+u from by ring]
+      rw [hnorm]
+      rcases Nat.lt_or_ge i (2^n) with hilo | hihi
+      · -- LOW half: i < 2^n, no twiddle — just the additive butterfly
+        rw [blo g hg (g*(2*2^(n+1))+2*i+r) (by omega) (by omega), cast_addQ,
+            e2g i hilo, show g*(2*2^(n+1))+2*i+r+2^(n+1) = g*(2*2^(n+1))+2^(n+1)+2*i+r from by ring, e2g1 i hilo]
+      · -- HIGH half: i = 2^n + i', slot index 2^{n+1}+2i'+r
+        set i' := i - 2^n with hi'def
+        have hi' : i' < 2^n := by omega
+        have hieq : i = 2^n + i' := by omega
+        have hslot : g*(2*2^(n+1))+2*i+r = g*(2*2^(n+1))+2^(n+1)+2*i'+r := by rw [hieq, h2L]; ring
+        rw [hslot, bhi g hg (g*(2*2^(n+1))+2^(n+1)+2*i'+r) (by omega) (by rw [h2L]; omega),
+            show (kInttUpto n v).2 - g = 2^(7-n)-1-g from by rw [ihcnt],
+            show g*(2*2^(n+1))+2^(n+1)+2*i'+r-2^(n+1) = g*(2*2^(n+1))+2*i'+r from by omega,
+            cast_mulModQ,
+            cast_subQ (a_in[g*(2*2^(n+1))+2^(n+1)+2*i'+r]!) (a_in[g*(2*2^(n+1))+2*i'+r]!)
+              (by have := ihlt (g*(2*2^(n+1))+2*i'+r); omega),
+            e2g1 i' hi', e2g i' hi']
+        -- both target sums now carry exponent i = 2^n + i'; collapse via irt_stage_lo7/hi7
+        rw [hieq]
+        have hSlo : (∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+u))^(2^n+i'))
+            = -((zetaTwiddle (2^(7-n)-1-g) : Nat) : ZMod q)
+              * ∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+u))^i' := by
+          rw [Finset.mul_sum]; apply Finset.sum_congr rfl; intro u humem
+          have hult : u < 2^n := mem_range.mp humem
+          rw [pow_add (kirt (g*2^(n+1)+u)) (2^n) i', irt_stage_lo7 n g u hn6 hg hult]; ring
+        have hShi : (∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2^(n+1)+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+2^n+u))^(2^n+i'))
+            = ((zetaTwiddle (2^(7-n)-1-g) : Nat) : ZMod q)
+              * ∑ u ∈ range (2^n), (v[g*(2*2^(n+1))+2^(n+1)+2*u+r]! : ZMod q) * (kirt (g*2^(n+1)+2^n+u))^i' := by
+          rw [Finset.mul_sum]; apply Finset.sum_congr rfl; intro u humem
+          have hult : u < 2^n := mem_range.mp humem
+          rw [pow_add (kirt (g*2^(n+1)+2^n+u)) (2^n) i', irt_stage_hi7 n g u hn6 hg hult]; ring
+        rw [hSlo, hShi]; ring
+
+/-! ### INVERSE step 5 — the 128-point interpolation collapse (`intt ∘ ntt = id`, reduced size-256).
+
+At `n = 7` the stage invariant gives `(kInttUpto 7 v).1[2i+r] = Σ_{u<128} v[2u+r]·kirt(u)^i`; the `128⁻¹` scaling
+yields `(intt v)[2i+r] = 128⁻¹·Σ_u v[2u+r]·kirt(u)^i`. For `v = ntt c` (so `v[2u+r] = Σ_j c[2j+r]·(evalRoot u)^j`
+by `ntt_even`/`ntt_odd`), swapping the sums and collapsing `Σ_u (evalRoot u)^j·kirt(u)^i = 128·[i=j]`
+(`interp_orth7`, `brv7`-reindexed `zeta_sq_orthogonality`) leaves `128⁻¹·128·c[2i+r] = c[2i+r]`. -/
+
+/-- The 128-point orthogonality: `ω = ζ²` is a primitive 128th root, so `Σ_{m<128} (ω^d)^m = 128·[128 ∣ d]`. -/
+theorem zeta_sq_orthogonality (d : Nat) :
+    ∑ m ∈ range 128, (((zeta : ZMod q)^2)^d)^m = if 128 ∣ d then (128 : ZMod q) else 0 := by
+  set ζ : ZMod q := (zeta : ZMod q) with hζ
+  have hord : orderOf ζ = 256 := orderOf_zeta zeta_pow_neg_one
+  by_cases hd : 128 ∣ d
+  · have hω1 : (ζ^2)^d = 1 := by
+      have hdvd : (256:ℕ) ∣ 2*d := by omega
+      have : ζ^(2*d) = 1 := (orderOf_dvd_iff_pow_eq_one).mp (by rw [hord]; exact hdvd)
+      rw [← this]; ring
+    simp [hω1, hd]
+  · have hN : ((ζ^2)^d)^128 = 1 := by
+      have h : ((ζ^2)^d)^128 = ζ^(256 * d) := by rw [← pow_mul, ← pow_mul]; congr 1; ring
+      rw [h, pow_mul, ← hord, pow_orderOf_eq_one, one_pow]
+    have hw : (ζ^2)^d ≠ 1 := by
+      intro hcon
+      have hz1 : ζ^(2*d) = 1 := by rw [← hcon, ← pow_mul]
+      have hdvd : (256:ℕ) ∣ 2*d := by rw [← hord]; exact orderOf_dvd_of_pow_eq_one hz1
+      exact hd (by omega)
+    rw [if_neg hd]; exact powSum_zero ((ζ^2)^d) 128 hN hw
+
+theorem evalRoot_pow256 (u : Nat) : (evalRoot u)^256 = 1 := by
+  have h : (evalRoot u)^256 = ((evalRoot u)^128)^2 := by rw [← pow_mul]
+  rw [h, evalRoot_pow128]; ring
+
+/-- `kirt u = (evalRoot u)^255` (the reciprocal as a positive power, `evalRoot u` a 256th root). -/
+theorem kirt_eq_pow (u : Nat) : kirt u = (evalRoot u)^255 := by
+  unfold kirt
+  apply inv_eq_of_mul_eq_one_left
+  rw [← pow_succ]; exact evalRoot_pow256 u
+
+set_option maxRecDepth 10000 in
+/-- `brv7` is an involution on `[0,128)` — the reindexing bijection for the orthogonality sum. -/
+theorem brv7_invol : ∀ k, k < 128 → brv7 (brv7 k) = k := by
+  simp only [brv7_eq_fold]; decide
+
+/-- Reindex a `range 128` sum along `brv7` (a bijection, by `brv7_invol` + `brv7_lt`). -/
+theorem sum_brv7 (h : Nat → ZMod q) : ∑ u ∈ range 128, h (brv7 u) = ∑ m ∈ range 128, h m := by
+  refine Finset.sum_nbij' (fun u => brv7 u) (fun m => brv7 m) ?_ ?_ ?_ ?_ ?_
+  · intro a _; simp only [mem_range]; exact brv7_lt a
+  · intro b _; simp only [mem_range]; exact brv7_lt b
+  · intro a ha; simp only [mem_range] at ha; exact brv7_invol a ha
+  · intro b hb; simp only [mem_range] at hb; exact brv7_invol b hb
+  · intro a _; rfl
+
+/-- **THE INTERPOLATION ORTHOGONALITY** — `Σ_{u<128} (evalRoot u)^j · kirt(u)^i = 128·[i=j]` in `ℤ_q`. -/
+theorem interp_orth7 (i j : Nat) (hi : i < 128) (hj : j < 128) :
+    ∑ u ∈ range 128, (evalRoot u)^j * (kirt u)^i = if i = j then (128 : ZMod q) else 0 := by
+  simp only [kirt_eq_pow]
+  have hterm : ∀ u, (evalRoot u)^j * ((evalRoot u)^255)^i
+      = (zeta:ZMod q)^(j+255*i) * (((zeta:ZMod q)^2)^(j+255*i))^(brv7 u) := by
+    intro u
+    rw [← pow_mul, ← pow_add]
+    unfold evalRoot
+    rw [← pow_mul, ← pow_mul, ← pow_mul, ← pow_add]
+    congr 1; ring
+  rw [Finset.sum_congr rfl (fun u _ => hterm u), ← Finset.mul_sum,
+      sum_brv7 (fun m => (((zeta:ZMod q)^2)^(j+255*i))^m),
+      zeta_sq_orthogonality (j+255*i)]
+  by_cases hij : i = j
+  · subst hij
+    rw [if_pos rfl, if_pos (by omega : (128:Nat) ∣ (i+255*i))]
+    have hz : (zeta:ZMod q)^(i+255*i) = 1 := by
+      rw [show i+255*i = 256*i from by ring, pow_mul,
+          show (zeta:ZMod q)^256 = 1 from by
+            rw [show (256:Nat) = 128*2 from rfl, pow_mul, zeta_pow_neg_one]; ring, one_pow]
+    rw [hz, one_mul]
+  · rw [if_neg hij, if_neg (by omega : ¬ (128:Nat) ∣ (j+255*i)), mul_zero]
+
+/-- **`intt` interpolates (pair form)** — `(intt v)[2i+r] = 128⁻¹·Σ_{u<128} v[2u+r]·kirt(u)^i` in `ℤ_q`. -/
+theorem intt_interp_kem (v : Poly) (hv : v.size = 256) (hvlt : ∀ (p:Nat), v[p]! < q)
+    (i r : Nat) (hi : i < 128) (hr : r < 2) :
+    ((intt v)[2*i+r]! : ZMod q)
+      = (nInv : ZMod q) * ∑ u ∈ range 128, (v[2*u+r]! : ZMod q) * (kirt u)^i := by
+  have hsz7 : (kInttUpto 7 v).1.size = 256 := (kInttStage_inv v hv hvlt 7 (by omega)).1
+  obtain ⟨_, _, _, hform⟩ := kInttStage_inv v hv hvlt 7 (by omega)
+  have h := hform 0 i r (by norm_num) (by rw [show (2:Nat)^7 = 128 from by norm_num]; exact hi) hr
+  simp only [Nat.zero_mul, Nat.zero_add, show (2:Nat)^7 = 128 from by norm_num] at h
+  rw [intt_eq_scale_stages, kInttStages_eq, cast_kInttScale _ hsz7 (2*i+r) (by omega), h]
+
+/-- `nInv · 128 = 1` in `ℤ_q` (`nInv = 128⁻¹`, since `nInv·128 = 127·q + 1`). -/
+theorem nInv_mul_128 : (nInv : ZMod q) * (128 : ZMod q) = 1 := by
+  have h1 : (nInv : ZMod q) * (128 : ZMod q) = ((nInv * 128 : Nat) : ZMod q) := by push_cast; ring
+  rw [h1, show (nInv * 128 : Nat) = 127 * q + 1 from by unfold nInv q; norm_num]
+  push_cast; rw [ZMod.natCast_self]; ring
+
+/-- `(ntt c)[2u+r]` is the `r`-parity half-eval `Σ_{j<128} c[2j+r]·(evalRoot u)^j` (`ntt_even`/`ntt_odd`). -/
+theorem ntt_pair (c : Poly) (hc : c.size = 256) (u : Nat) (hu : u < 128) (r : Nat) (hr : r < 2) :
+    ((ntt c)[2*u+r]! : ZMod q) = ∑ j ∈ range 128, (c[2*j+r]! : ZMod q) * (evalRoot u)^j := by
+  interval_cases r
+  · rw [show 2*u+0 = 2*u from rfl, ntt_even c hc u hu, evEven]
+    apply Finset.sum_congr rfl; intro j _; rw [show 2*j+0 = 2*j from rfl]
+  · rw [ntt_odd c hc u hu, evOdd]
+
+set_option maxRecDepth 8000 in
+/-- **NttLeftInverse — CLOSED (size-256 + reduced).** `intt (ntt c) = c` for every canonical reduced poly.
+Entrywise on each pair `2i+r`: `(intt (ntt c))[2i+r] = 128⁻¹·Σ_u (ntt c)[2u+r]·kirt(u)^i
+= 128⁻¹·Σ_j c[2j+r]·(Σ_u (evalRoot u)^j·kirt(u)^i) = 128⁻¹·Σ_j c[2j+r]·128·[i=j] = 128⁻¹·128·c[2i+r] = c[2i+r]`
+in `ℤ_q`, lifted to the `Array` by reduced-range injectivity. No `native_decide` in the `∀`. -/
+theorem nttLeftInverse_proven : NttLeftInverse := by
+  intro c hc hclt
+  have hnsz : (ntt c).size = 256 := ntt_size c hc
+  have hnlt : ∀ (p:Nat), (ntt c)[p]! < q := ntt_lt c hclt
+  have h7sz : (kInttUpto 7 (ntt c)).1.size = 256 := (kInttStage_inv (ntt c) hnsz hnlt 7 (by omega)).1
+  have hisz : (intt (ntt c)).size = 256 := by
+    rw [intt_eq_scale_stages, kInttStages_eq]; exact kInttScale_size _ h7sz
+  have hentry : ∀ i r, i < 128 → r < 2 → (intt (ntt c))[2*i+r]! = c[2*i+r]! := by
+    intro i r hi hr
+    have hX : (intt (ntt c))[2*i+r]! < q := by
+      rw [intt_eq_scale_stages, kInttStages_eq, kInttScale_getElem _ h7sz (2*i+r) (by omega)]
+      exact mulModQ_lt _ _
+    apply natCast_inj_of_lt _ _ hX (hclt (2*i+r))
+    rw [intt_interp_kem (ntt c) hnsz hnlt i r hi hr]
+    have hswap : (∑ u ∈ range 128, ((ntt c)[2*u+r]! : ZMod q) * (kirt u)^i) = (c[2*i+r]! : ZMod q) * 128 := by
+      have step1 : ∀ u ∈ range 128, ((ntt c)[2*u+r]! : ZMod q) * (kirt u)^i
+          = ∑ j ∈ range 128, (c[2*j+r]! : ZMod q) * ((evalRoot u)^j * (kirt u)^i) := by
+        intro u hu
+        rw [ntt_pair c hc u (mem_range.mp hu) r hr, Finset.sum_mul]
+        apply Finset.sum_congr rfl; intro j _; ring
+      rw [Finset.sum_congr rfl step1, Finset.sum_comm,
+          Finset.sum_congr rfl (fun j hj => by
+            rw [← Finset.mul_sum, interp_orth7 i j hi (mem_range.mp hj)]),
+          Finset.sum_eq_single i (fun j _ hji => by rw [if_neg (Ne.symm hji), mul_zero])
+            (fun h => absurd (mem_range.mpr hi) h), if_pos rfl]
+    rw [hswap, show (nInv : ZMod q) * ((c[2*i+r]! : ZMod q) * 128)
+          = ((nInv : ZMod q) * 128) * (c[2*i+r]! : ZMod q) from by ring, nInv_mul_128, one_mul]
+  apply Array.ext
+  · rw [hisz, hc]
+  · intro m h1 _
+    have hm : m < 256 := by rw [hisz] at h1; exact h1
+    rw [(getElem!_pos (intt (ntt c)) m (by rw [hisz]; exact hm)).symm,
+        (getElem!_pos c m (by rw [hc]; exact hm)).symm]
+    rcases Nat.even_or_odd m with ⟨i, hme⟩ | ⟨i, hmo⟩
+    · have hme' : m = 2*i := by omega
+      subst hme'
+      have := hentry i 0 (by omega) (by omega)
+      rwa [show 2*i+0 = 2*i from rfl] at this
+    · subst hmo
+      exact hentry i 1 (by omega) (by omega)
+
+/-- **THE ML-KEM NTT CORRECTNESS THEOREM** — the incomplete-NTT multiply computes the negacyclic ring product
+for ALL canonical size-256 poly pairs, `∀`-quantified, no `native_decide` in any `∀`-body. Both residuals of the
+textbook reduction are now proven: the forward `NttMulHom` (`ntt` a quadratic-quotient ring hom) and the inverse
+`NttLeftInverse` (`intt ∘ ntt = id` on canonical reduced polys, via the 128-point GS interpolation induction). -/
+theorem mlkem_ntt_ring_faithful :
+    ∀ a b : Poly, a.size = 256 → b.size = 256 →
+      intt (pointwiseNtt (ntt a) (ntt b)) = schoolbookMul a b :=
+  mlkem_faithful_of nttLeftInverse_proven
+
 /-! ## NON-VACUITY — both residuals HOLD on the wraparound sample (`native_decide` witnesses, NOT in any ∀). -/
 
 theorem nttLeftInverse_sample : intt (ntt sampleA) = sampleA := by native_decide
@@ -1577,5 +2326,26 @@ above (`nttLeftInverse_sample`, `nttMulHom_sample`) are concrete non-vacuity sam
 #assert_axioms nttMulHom_guarded
 #assert_axioms nttMulHom_proven
 #assert_axioms mlkem_faithful_of
+-- INVERSE keystones — the `decide`-only `brv7`/`ζ`-order legs keep these ⊆ {propext, Classical.choice, Quot.sound}
+#assert_axioms kgsFold_spec
+#assert_axioms kgsSweep_getElem
+#assert_axioms intt_eq_scale_stages
+#assert_axioms kInttStages_eq
+#assert_axioms cast_kInttScale
+#assert_axioms zeta_pow_mod256
+#assert_axioms brv_stage_lo7
+#assert_axioms brv_stage_hi7
+#assert_axioms irt_stage_lo7
+#assert_axioms irt_stage_hi7
+#assert_axioms kInttBlock_char
+#assert_axioms kInttStage_inv
+#assert_axioms zeta_sq_orthogonality
+#assert_axioms brv7_invol
+#assert_axioms interp_orth7
+#assert_axioms intt_interp_kem
+#assert_axioms nInv_mul_128
+#assert_axioms ntt_pair
+#assert_axioms nttLeftInverse_proven
+#assert_axioms mlkem_ntt_ring_faithful
 
 end Dregg2.Crypto.MlKemRing
