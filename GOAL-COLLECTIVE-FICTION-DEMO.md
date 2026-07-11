@@ -716,3 +716,15 @@ The platform is COMPLETE, audited (208 green), consolidated, honest — a beauti
 (Hybrid-as-usable-SessionRandomness-mode, DSL combat/loot authorability, custody keys, zk frontier) touch shared
 engine files / are bigger — better on a fresh machine at a saner hour than forced at 5am on a strained box. Loop
 idles long; resumes for a genuine next wave when ember returns or the hour/machine are fresh. Good night's work done.
+
+## ✅ run-games RESOLVED (dawn ~06:40) — venom-deep FULLY driver-verified; the crash was narrator latency
+Correction to the venom-deep commit note: the run-games failure was NOT the browser/env — it was the HOSTED Bedrock
+narrator HANGING (slow calls / $20 ledger at 6am) making the long play-through time out. With DREGG_NARRATOR=scripted
+run-games PASSES CLEAN end-to-end (both games selectable, the world-bounded witch trade holds, venom-deep in the
+picker/list). Machine is healthy (67GiB, no strays). LESSON: run the narrate-heavy drivers with DREGG_NARRATOR=scripted
+for deterministic offline runs (the co-authoring lane did; my bare runs hit the hosted-narrator hang).
+## ══ DAWN HOLD (final for the night) ══
+The night's work is COMPLETE: a verifiable collective arcade, 208 tests green, docs+HORIZONLOG current, every driver
+green (with scripted narrator). Remaining HORIZONLOG closures (Hybrid-as-SessionRandomness-mode, DSL combat/loot
+authorability, custody keys, zk frontier) are medium-risk engine/DESIGN work — they deserve ember's input at a real
+hour, not autonomous dawn commits. Holding here; the loop resumes when ember returns. A beautiful, honest state.
