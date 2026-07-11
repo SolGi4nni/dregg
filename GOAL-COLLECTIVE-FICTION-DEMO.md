@@ -919,3 +919,18 @@ to the real dungeon-on-dregg engine.
   quorum play, real-Bedrock, real receipts · LEADERBOARDS = the no-cheat boards · DAILY = the procgen daily · CREDITS
   = /buy-credits + the attestation "you paid for real Claude"). Ties EVERY width into one living server.
   Then: migrate the bot's /dungeon from attested-dm (LARP) to the real dungeon-on-dregg engine.
+
+## ═══ COURSE-CORRECTION (2026-07-11): engine-first + game-depth, not just payments/plumbing ═══
+Two honest ember checks, both right:
+- Q1 THE BOT RUNS THE LARP ENGINE: /dungeon (fiction.rs) still uses attested-dm, NOT the real dungeon-on-dregg. No
+  revenue on the LARP. => the engine migration (bot /dungeon -> real dungeon-on-dregg) is now the #1 BOT LANE (fires
+  when the payment lane clears the shared bot files), NOT a deferral.
+- Q2 DRIFTED TO PAYMENTS/PLUMBING: real game features shipped in the widths (progression/procgen/dice-combat/MUD/UGC)
+  but the DEEP game (tactical combat, skill checks, spells, richer content) is thin. REBALANCING to build game depth.
+FIRING NOW (game depth in dungeon-on-dregg — DISJOINT from the bot, deepens the real engine right before the bot
+migrates onto it): TACTICAL COMBAT engine [a18eb92 — multi-combatant, initiative, abilities, status, verifiable dice
+bound into real turns, executor-enforced] + SKILL CHECKS + CLASS SPELLS [a039718 — d20-vs-DC off stats+dice, class-
+gated/mana-gated spells]. (Both append their own lib.rs mod line; main loop reconciles.) In parallel with the payment
+lane (the bot). WHEN THE PAYMENT LANE LANDS: verify+commit it, then the bot swarm — ENGINE MIGRATION (first-class) +
+gallery->UGC + Midjourney orchestration (wire dormant discord_caps) + dead-code sweep. Balanced: substance (real
+engine + game depth) + surface (bot platform) + economy (payments).
