@@ -97,8 +97,8 @@ fn rotated_json_for(effect: &Effect) -> (&'static str, &'static str) {
 /// The fixed turn-level context every producer witness in these tests shares
 /// (the `cells_root` / `iroot` source). A single nullifier-root + receipt-log,
 /// matching the flip test.
-fn nullifier_root() -> [u8; 32] {
-    [0u8; 32]
+fn nullifier_root() -> dregg_circuit::Faithful8 {
+    rw::empty_nullifier_root_8()
 }
 fn receipt_log() -> Vec<[u8; 32]> {
     vec![[1u8; 32], [2u8; 32]]
@@ -166,8 +166,24 @@ fn mint_rotated_leg(
     let nr = nullifier_root();
     let commitments_root = dregg_circuit::heap_root::empty_heap_root_8();
     let rl = receipt_log();
-    let before_w = rw::produce(before_cell, &ledger, &nr, &commitments_root, &rl);
-    let after_w = rw::produce(after_cell, &ledger, &nr, &commitments_root, &rl);
+    let before_w = rw::produce(
+        before_cell,
+        &ledger,
+        &nr,
+        &commitments_root,
+        &rw::empty_revoked_root_8(),
+        &rl,
+        &dregg_cell::commitment::RotationCarrierMaterial::default(),
+    );
+    let after_w = rw::produce(
+        after_cell,
+        &ledger,
+        &nr,
+        &commitments_root,
+        &rw::empty_revoked_root_8(),
+        &rl,
+        &dregg_cell::commitment::RotationCarrierMaterial::default(),
+    );
     mint_rotated_leg_with_witnesses(initial_state, effect, &before_w, &after_w)
 }
 
@@ -278,8 +294,24 @@ fn two_leg_heterogeneous_chain_verifies_with_adjacency() {
     let mut ledger = Ledger::new();
     ledger.insert_cell(final_cell.clone()).unwrap();
     let before_cell = producer_cell(bal0, 0);
-    let before_w = rw::produce(&before_cell, &ledger, &nr, &commitments_root, &rl);
-    let after_w = rw::produce(&final_cell, &ledger, &nr, &commitments_root, &rl);
+    let before_w = rw::produce(
+        &before_cell,
+        &ledger,
+        &nr,
+        &commitments_root,
+        &rw::empty_revoked_root_8(),
+        &rl,
+        &dregg_cell::commitment::RotationCarrierMaterial::default(),
+    );
+    let after_w = rw::produce(
+        &final_cell,
+        &ledger,
+        &nr,
+        &commitments_root,
+        &rw::empty_revoked_root_8(),
+        &rl,
+        &dregg_cell::commitment::RotationCarrierMaterial::default(),
+    );
 
     // leg 0: Transfer, s0→s1. Interior after-block uses `before_w` (turn context).
     let (leg0, old0, new0) = mint_rotated_leg_with_witnesses(&s0, transfer, &before_w, &before_w);
