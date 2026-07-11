@@ -337,6 +337,13 @@ pub enum SyrupError {
         /// Byte offset of the offending member.
         at: usize,
     },
+    /// A value was nested more deeply than the decoder's supported limit.
+    NestingTooDeep {
+        /// Maximum supported nesting depth.
+        max: usize,
+        /// Byte offset of the value that exceeded the limit.
+        at: usize,
+    },
     /// Decoding consumed a complete value but left trailing bytes (only
     /// raised by [`Value::decode`], which requires the whole input).
     TrailingBytes {
@@ -380,6 +387,12 @@ impl fmt::Display for SyrupError {
                 write!(
                     f,
                     "non-canonical set (member out of order / duplicate) at offset {at}"
+                )
+            }
+            SyrupError::NestingTooDeep { max, at } => {
+                write!(
+                    f,
+                    "Syrup nesting exceeds maximum depth {max} at offset {at}"
                 )
             }
             SyrupError::TrailingBytes { remaining } => {
@@ -532,6 +545,9 @@ struct Decoder<'a> {
     pos: usize,
 }
 
+/// Maximum number of nested Syrup container levels accepted by the decoder.
+pub const MAX_DECODE_DEPTH: usize = 256;
+
 impl<'a> Decoder<'a> {
     fn new(buf: &'a [u8]) -> Self {
         Decoder { buf, pos: 0 }
@@ -570,6 +586,16 @@ impl<'a> Decoder<'a> {
 
     /// Decode one value, dispatching on the leading tag.
     fn value(&mut self) -> Result<Value, SyrupError> {
+        self.value_at_depth(0)
+    }
+
+    fn value_at_depth(&mut self, depth: usize) -> Result<Value, SyrupError> {
+        if depth > MAX_DECODE_DEPTH {
+            return Err(SyrupError::NestingTooDeep {
+                max: MAX_DECODE_DEPTH,
+                at: self.pos,
+            });
+        }
         let tag = self
             .peek()
             .ok_or(SyrupError::UnexpectedEof { wanted: "value" })?;
@@ -583,10 +609,10 @@ impl<'a> Decoder<'a> {
                 Ok(Value::Bool(false))
             }
             b'D' => self.float(),
-            b'[' => self.list(),
-            b'{' => self.dict(),
-            b'#' => self.set(),
-            b'<' => self.record(),
+            b'[' => self.list(depth),
+            b'{' => self.dict(depth),
+            b'#' => self.set(depth),
+            b'<' => self.record(depth),
             // A leading ASCII digit begins an integer OR a length-prefixed
             // bytestring/string/symbol; the terminator byte disambiguates.
             b'0'..=b'9' => self.number_led(),
@@ -676,7 +702,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// Decode a `[` … `]` list.
-    fn list(&mut self) -> Result<Value, SyrupError> {
+    fn list(&mut self, depth: usize) -> Result<Value, SyrupError> {
         self.pos += 1; // consume '['
         let mut items = Vec::new();
         loop {
@@ -685,7 +711,7 @@ impl<'a> Decoder<'a> {
                     self.pos += 1;
                     return Ok(Value::List(items));
                 }
-                Some(_) => items.push(self.value()?),
+                Some(_) => items.push(self.value_at_depth(depth + 1)?),
                 None => {
                     return Err(SyrupError::UnexpectedEof {
                         wanted: "list item or ']'",
@@ -696,7 +722,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// Decode a `{` … `}` dictionary, enforcing strictly-ascending keys.
-    fn dict(&mut self) -> Result<Value, SyrupError> {
+    fn dict(&mut self, depth: usize) -> Result<Value, SyrupError> {
         self.pos += 1; // consume '{'
         let mut entries: BTreeMap<Vec<u8>, (Value, Value)> = BTreeMap::new();
         let mut prev_key: Option<Vec<u8>> = None;
@@ -708,7 +734,7 @@ impl<'a> Decoder<'a> {
                 }
                 Some(_) => {
                     let key_at = self.pos;
-                    let key = self.value()?;
+                    let key = self.value_at_depth(depth + 1)?;
                     let key_enc = key.encode();
                     // Canonical: keys strictly ascending by encoded bytes.
                     if let Some(prev) = &prev_key
@@ -716,7 +742,7 @@ impl<'a> Decoder<'a> {
                     {
                         return Err(SyrupError::NonCanonicalDict { at: key_at });
                     }
-                    let value = self.value()?;
+                    let value = self.value_at_depth(depth + 1)?;
                     prev_key = Some(key_enc.clone());
                     entries.insert(key_enc, (key, value));
                 }
@@ -730,7 +756,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// Decode a `#` … `$` set, enforcing strictly-ascending members.
-    fn set(&mut self) -> Result<Value, SyrupError> {
+    fn set(&mut self, depth: usize) -> Result<Value, SyrupError> {
         self.pos += 1; // consume '#'
         let mut members: BTreeMap<Vec<u8>, Value> = BTreeMap::new();
         let mut prev: Option<Vec<u8>> = None;
@@ -742,7 +768,7 @@ impl<'a> Decoder<'a> {
                 }
                 Some(_) => {
                     let at = self.pos;
-                    let m = self.value()?;
+                    let m = self.value_at_depth(depth + 1)?;
                     let enc = m.encode();
                     if let Some(p) = &prev
                         && enc <= *p
@@ -762,7 +788,7 @@ impl<'a> Decoder<'a> {
     }
 
     /// Decode a `<` label field… `>` record.
-    fn record(&mut self) -> Result<Value, SyrupError> {
+    fn record(&mut self, depth: usize) -> Result<Value, SyrupError> {
         self.pos += 1; // consume '<'
         // A record must have at least a label.
         if self.peek() == Some(b'>') {
@@ -770,7 +796,7 @@ impl<'a> Decoder<'a> {
                 wanted: "record label",
             });
         }
-        let label = Box::new(self.value()?);
+        let label = Box::new(self.value_at_depth(depth + 1)?);
         let mut fields = Vec::new();
         loop {
             match self.peek() {
@@ -778,7 +804,7 @@ impl<'a> Decoder<'a> {
                     self.pos += 1;
                     return Ok(Value::Record { label, fields });
                 }
-                Some(_) => fields.push(self.value()?),
+                Some(_) => fields.push(self.value_at_depth(depth + 1)?),
                 None => {
                     return Err(SyrupError::UnexpectedEof {
                         wanted: "record field or '>'",
@@ -1274,6 +1300,26 @@ mod tests {
             Value::decode(b"tXXX").unwrap_err(),
             SyrupError::TrailingBytes { remaining: 3 }
         ));
+    }
+
+    #[test]
+    fn decoder_enforces_nesting_limit() {
+        let mut wire = vec![b'['; MAX_DECODE_DEPTH + 1];
+        wire.push(b't');
+        wire.extend(std::iter::repeat_n(b']', MAX_DECODE_DEPTH + 1));
+
+        assert!(matches!(
+            Value::decode(&wire),
+            Err(SyrupError::NestingTooDeep {
+                max: MAX_DECODE_DEPTH,
+                ..
+            })
+        ));
+
+        let mut at_limit = vec![b'['; MAX_DECODE_DEPTH];
+        at_limit.push(b't');
+        at_limit.extend(std::iter::repeat_n(b']', MAX_DECODE_DEPTH));
+        assert!(Value::decode(&at_limit).is_ok());
     }
 
     #[test]
