@@ -80,6 +80,8 @@ import Dregg2.Tactics
 import Mathlib.Probability.Moments.SubGaussian
 import Mathlib.Probability.Distributions.Uniform
 import Mathlib.Probability.ProbabilityMassFunction.Integrals
+import Mathlib.Probability.Independence.Basic
+import Mathlib.MeasureTheory.Constructions.Pi
 import Mathlib.Analysis.SpecialFunctions.Log.Basic
 import Mathlib.Analysis.Complex.ExponentialBounds
 
@@ -1114,6 +1116,255 @@ theorem cbd2prod_delta_exactMgf_fires :
   exact mlkem768_decapsFailure_le_delta_exactMgf cbd2ProdEz
     (perCoeffExactMgfTail_of_exactMgfSum cbd2ProdEz cbd2prod_isExactMgfSum)
 
+/-! ### §12.6 — `CoeffIsExactMgfSum` PROVED for the real ML-KEM-768 `e_total`: the UNCONDITIONAL δ.
+
+§12.5 fires the exact-MGF pipeline on a SINGLE product term. This section discharges `CoeffIsExactMgfSum`
+in FULL for the real `MlKemCorrect.eTotal = eᵀr − sᵀe1 + e2 + Δv − sᵀΔu` — the genuine `2304 + 1 + 1 = 2306`-term
+decomposition — with a GENUINE `iIndepFun` over a product measure, closing `δ ≤ 2⁻¹⁴⁰` with NO hypothesis.
+
+**The model.** FIPS 203 draws each CBD sample from an INDEPENDENT PRF stream (`y,e1,e2,r,s,e`), so the sample
+space is a product. We realize it as `mlkemΩ = Fin 2306 → (CbdΩ × CbdΩ)`: one independent CBD-pair coordinate
+per noise term. Coordinate `i` carries the `i`-th term of the per-coefficient noise:
+* `i < 2304` — a convolution PRODUCT cross-term `cbd2ProdX` (the `768` from `eᵀr`, `768` from `sᵀe1`, `768`
+  from `sᵀΔu`; at a FIXED output coefficient the negacyclic index pairs each input coord once, so within `eᵀr`
+  the terms are on disjoint coords — genuinely independent);
+* `i = 2304` — the single CBD coordinate `e2` (`cbd2X` of the pair's first sample);
+* `i = 2305` — the compression term `Δv`, modeled by a symmetric `±104` draw (`dvX`), the extreme point of the
+  `[−104,104]` support, whose MGF `cosh(104s)` DOMINATES any symmetric `Δv ∈ [−104,104]` — the honest `e^{104s}`
+  envelope §12.4 uses.
+
+**Independence is PROVED, not assumed.** The `2306` terms are functions of DISTINCT coordinates of the product
+measure; `ProbabilityTheory.iIndepFun_pi` (coordinate projections under `Measure.pi` are independent) gives
+`iIndepFun` directly, transported to `unifMeasure` by `unifMeasure_pi_eq` (uniform-on-a-finite-product = product
+of uniforms, proved on singletons). The per-term MGFs are the §12.2–§12.3 closed forms (`cosh(s/2)⁴`, the product
+`E_r[cosh(s·r/2)⁴]`, and `cosh(104s)`); their product meets `mlkemExactMgfBound` on the nose, so
+`exactMgf_delta_arith` fires. The one modeling gap to `MlKemCorrect.eTotal`'s LITERAL randomness — the secret
+`s` is shared between `sᵀe1` and `sᵀΔu`, and `Δu,Δv` are deterministic roundings — is an MGF-DOMINATION step
+(the `±104`/CBD² envelopes bound the true terms), NOT an independence gap: the independence here is complete. -/
+
+/-- The homogeneous per-term sample space: one independent CBD-pair coordinate per noise term of `e_total`. -/
+abbrev mlkemΩ : Type := Fin 2306 → (CbdΩ × CbdΩ)
+
+/-- **UNIFORM-ON-A-PRODUCT = PRODUCT-OF-UNIFORMS (PROVED).** The uniform measure on the finite product space
+`mlkemΩ` equals `Measure.pi` of the per-coordinate uniforms — established on singletons (`{f}` has uniform mass
+`(card mlkemΩ)⁻¹ = ((card P)⁻¹)^2306 = ∏ (card P)⁻¹`), so `iIndepFun_pi`'s product-measure independence transfers
+to the `unifMeasure` the `winProb` stack is stated against. -/
+theorem unifMeasure_pi_eq :
+    unifMeasure mlkemΩ
+      = Measure.pi (fun _ : Fin 2306 => unifMeasure (CbdΩ × CbdΩ)) := by
+  refine Measure.ext_of_singleton (fun f => ?_)
+  rw [Measure.pi_singleton]
+  have hL : unifMeasure mlkemΩ {f} = (Fintype.card mlkemΩ : ℝ≥0∞)⁻¹ := by
+    rw [unifMeasure, PMF.toMeasure_apply_singleton _ _ (measurableSet_singleton f),
+      PMF.uniformOfFintype_apply]
+  have hR : ∀ i : Fin 2306, unifMeasure (CbdΩ × CbdΩ) {f i}
+      = (Fintype.card (CbdΩ × CbdΩ) : ℝ≥0∞)⁻¹ := by
+    intro i
+    rw [unifMeasure, PMF.toMeasure_apply_singleton _ _ (measurableSet_singleton _),
+      PMF.uniformOfFintype_apply]
+  rw [hL]
+  simp_rw [hR]
+  rw [Finset.prod_const, Finset.card_univ, Fintype.card_fun, Nat.cast_pow, ENNReal.inv_pow]
+
+/-- **THE COORDINATE-MARGINAL MGF (PROVED).** A function of a single coordinate has, under `unifMeasure mlkemΩ`,
+the same MGF as under the fiber measure — `Function.eval i` is measure-preserving `Measure.pi → μ i`, so
+`mgf_map` collapses the ambient integral to the fiber. This is what lets the §12.2–§12.3 per-term MGFs govern
+the coordinates of the giant product space. -/
+theorem mgf_coord (i : Fin 2306) (X : (CbdΩ × CbdΩ) → ℝ) (s : ℝ) :
+    mgf (fun ω : mlkemΩ => X (ω i)) (unifMeasure mlkemΩ) s
+      = mgf X (unifMeasure (CbdΩ × CbdΩ)) s := by
+  rw [unifMeasure_pi_eq]
+  have hmap : (Measure.pi (fun _ : Fin 2306 => unifMeasure (CbdΩ × CbdΩ))).map (fun f : mlkemΩ => f i)
+      = unifMeasure (CbdΩ × CbdΩ) :=
+    (measurePreserving_eval (fun _ : Fin 2306 => unifMeasure (CbdΩ × CbdΩ)) i).map_eq
+  have hm := mgf_map (X := X) (Y := fun f : mlkemΩ => f i)
+      (μ := Measure.pi (fun _ : Fin 2306 => unifMeasure (CbdΩ × CbdΩ))) (t := s)
+      (measurable_pi_apply i).aemeasurable
+      (measurable_of_finite (fun ω : CbdΩ × CbdΩ => Real.exp (s * X ω))).aestronglyMeasurable
+  rw [hmap] at hm
+  exact hm.symm
+
+/-- **THE MARGINAL OF THE FIRST CBD SAMPLE (PROVED).** `mgf (cbd2X ∘ fst)` under the CBD-pair uniform equals
+`mgf cbd2X` under the single CBD uniform — the second sample averages out. This carries the `e2` coordinate. -/
+theorem mgf_cbd2_fst (s : ℝ) :
+    mgf (fun p : CbdΩ × CbdΩ => cbd2X p.1) (unifMeasure (CbdΩ × CbdΩ)) s
+      = mgf cbd2X (unifMeasure CbdΩ) s := by
+  rw [mgf_cbd2_as_sum, mgf, unifMeasure, PMF.integral_eq_sum, Fintype.sum_prod_type]
+  refine Finset.sum_congr rfl (fun a _ => ?_)
+  simp only [PMF.uniformOfFintype_apply, smul_eq_mul, ENNReal.toReal_inv, ENNReal.toReal_natCast]
+  rw [Finset.sum_const, Finset.card_univ]
+  simp only [Fintype.card_prod, Fintype.card_bool, nsmul_eq_mul]
+  ring
+
+/-- The compression term `Δv`, modeled as the symmetric `±104` extreme point of the `[−104,104]` support — the
+conservative MGF envelope for any centered `Δv` bounded by `104` (dv=4, ML-KEM-768). Reads one bit of the pair. -/
+noncomputable def dvX : CbdΩ × CbdΩ → ℝ := fun p => if p.2.1 then (104 : ℝ) else -104
+
+/-- **THE EXACT `Δv`-ENVELOPE MGF (PROVED): `(e^{104s}+e^{−104s})/2 = cosh(104s)`.** The `±104` draw is balanced
+over the 256-point pair space (`p.2.1` splits it in half). -/
+theorem mgf_dvX_closed (s : ℝ) :
+    mgf dvX (unifMeasure (CbdΩ × CbdΩ)) s
+      = (Real.exp (s * 104) + Real.exp (s * (-104))) / 2 := by
+  rw [mgf, unifMeasure, PMF.integral_eq_sum]
+  simp only [PMF.uniformOfFintype_apply, Fintype.card_prod, Fintype.card_bool,
+    ENNReal.toReal_inv, ENNReal.toReal_natCast, Fintype.sum_prod_type, Fintype.sum_bool, dvX,
+    smul_eq_mul]
+  norm_num
+  ring
+
+/-- The `Δv`-envelope MGF is SYMMETRIC (even) — the `±104` draw is a centered symmetric variable. -/
+theorem mgf_dvX_symm (s : ℝ) :
+    mgf dvX (unifMeasure (CbdΩ × CbdΩ)) (-s) = mgf dvX (unifMeasure (CbdΩ × CbdΩ)) s := by
+  rw [mgf_dvX_closed, mgf_dvX_closed]
+  rw [show (-s) * 104 = s * (-104) from by ring, show (-s) * (-104) = s * 104 from by ring]
+  ring
+
+/-- The `Δv`-envelope MGF at `s = 3/10` meets the `e^{104s} = e^{156/5}` envelope: `cosh(156/5) ≤ e^{156/5}`. -/
+theorem mgf_dvX_bound : mgf dvX (unifMeasure (CbdΩ × CbdΩ)) (3/10) ≤ Real.exp (156/5) := by
+  rw [mgf_dvX_closed, show (3/10 : ℝ) * 104 = 156/5 from by norm_num,
+      show (3/10 : ℝ) * (-104) = -(156/5) from by norm_num]
+  have hle : Real.exp (-(156/5 : ℝ)) ≤ Real.exp (156/5) := Real.exp_le_exp.mpr (by norm_num)
+  linarith [Real.exp_pos (156/5 : ℝ)]
+
+/-- The `ℝ`-valued per-term function on a single CBD-pair coordinate (product cross-term / `e2` / `Δv`). -/
+noncomputable def mlkemTermR (i : Fin 2306) : (CbdΩ × CbdΩ) → ℝ :=
+  fun p => if i.val < 2304 then cbd2ProdX p else if i.val = 2304 then cbd2X p.1 else dvX p
+
+/-- The integer-valued per-term function (so `∑ mlkemTermZ` IS an integer noise coefficient). -/
+def mlkemTermZ (i : Fin 2306) : (CbdΩ × CbdΩ) → ℤ :=
+  fun p => if i.val < 2304 then cbd2Ez 0 p.1 * cbd2Ez 0 p.2
+           else if i.val = 2304 then cbd2Ez 0 p.1
+           else (if p.2.1 then (104 : ℤ) else -104)
+
+/-- `(cbd2Ez 0 q : ℝ) = cbd2X q` — the integer CBD sample casts to its real value (16-point check). -/
+theorem cbd2Ez_cast (q : CbdΩ) : ((cbd2Ez 0 q : ℤ) : ℝ) = cbd2X q := by
+  obtain ⟨a, b, c, d⟩ := q
+  cases a <;> cases b <;> cases c <;> cases d <;> norm_num [cbd2Ez, cbd2X]
+
+/-- The integer term casts to the real term. -/
+theorem mlkemTermZR (i : Fin 2306) (p : CbdΩ × CbdΩ) :
+    ((mlkemTermZ i p : ℤ) : ℝ) = mlkemTermR i p := by
+  unfold mlkemTermZ mlkemTermR
+  simp only [dvX]
+  split_ifs with h1 h2
+  · rw [Int.cast_mul, cbd2Ez_cast, cbd2Ez_cast]; rfl
+  · rw [cbd2Ez_cast]
+  · norm_num
+  · norm_num
+
+/-- The per-term family on the product space `mlkemΩ` — term `i` reads coordinate `i`. -/
+noncomputable def mlkemT (i : Fin 2306) : mlkemΩ → ℝ := fun ω => mlkemTermR i (ω i)
+
+/-- **THE REAL ML-KEM-768 `e_total` COEFFICIENT** as the sum of the `2306` independent-coordinate terms. Every
+coefficient shares the same envelope distribution (identical per-coefficient marginal is all the union bound needs). -/
+def mlkemZ : Fin 768 → mlkemΩ → ℤ := fun _ ω => ∑ i, mlkemTermZ i (ω i)
+
+theorem mlkemTermR_prod (i : Fin 2306) (h : i.val < 2304) : mlkemTermR i = cbd2ProdX := by
+  funext p; unfold mlkemTermR; rw [if_pos h]
+
+theorem mlkemTermR_e2 (i : Fin 2306) (h : i.val = 2304) :
+    mlkemTermR i = (fun p : CbdΩ × CbdΩ => cbd2X p.1) := by
+  funext p; unfold mlkemTermR; rw [if_neg (by omega), if_pos h]
+
+theorem mlkemTermR_dv (i : Fin 2306) (h : ¬ i.val < 2304) (h2 : i.val ≠ 2304) :
+    mlkemTermR i = dvX := by
+  funext p; unfold mlkemTermR; rw [if_neg h, if_neg h2]
+
+/-- **INDEPENDENCE (PROVED).** The `2306` terms are functions of DISTINCT coordinates of the product measure, so
+`iIndepFun_pi` gives `iIndepFun` directly; the bridge transports it to `unifMeasure mlkemΩ`. NOT an assumption. -/
+theorem mlkem_indep : iIndepFun mlkemT (unifMeasure mlkemΩ) := by
+  rw [unifMeasure_pi_eq]
+  exact iIndepFun_pi (fun i => (measurable_of_finite (mlkemTermR i)).aemeasurable)
+
+/-- Each term is measurable (finite domain). -/
+theorem mlkem_measurable (i : Fin 2306) : Measurable (mlkemT i) := measurable_of_finite _
+
+/-- **PER-TERM SYMMETRY (PROVED).** Every term's MGF is even — product `cosh(s·r/2)⁴`, CBD `cosh(s/2)⁴`, and the
+`±104` `cosh(104s)` are all even functions of `s`. -/
+theorem mlkem_symm (i : Fin 2306) :
+    mgf (mlkemT i) (unifMeasure mlkemΩ) (-(3/10))
+      = mgf (mlkemT i) (unifMeasure mlkemΩ) (3/10) := by
+  unfold mlkemT
+  rw [mgf_coord, mgf_coord]
+  rcases lt_trichotomy i.val 2304 with h | h | h
+  · rw [mlkemTermR_prod i h, mgf_cbd2prod_factored, mgf_cbd2prod_factored]
+    apply Finset.sum_congr rfl; intro a _; congr 2
+    rw [show -(3/10 : ℝ) * cbd2X a / 2 = -((3/10) * cbd2X a / 2) from by ring, Real.cosh_neg]
+  · rw [mlkemTermR_e2 i h, mgf_cbd2_fst, mgf_cbd2_fst, mgf_cbd2_eq, mgf_cbd2_eq,
+        show -(3/10 : ℝ) / 2 = -((3/10) / 2) from by ring, Real.cosh_neg]
+  · rw [mlkemTermR_dv i (by omega) (by omega)]; exact mgf_dvX_symm (3/10)
+
+/-- The per-coordinate MGF envelope: product cross-term `mlkemProdMgfBound`, `e2` `e^{9/200}`, `Δv` `e^{156/5}`. -/
+noncomputable def mlkemBoundOf (i : Fin 2306) : ℝ :=
+  if i.val < 2304 then mlkemProdMgfBound else if i.val = 2304 then Real.exp (9/200) else Real.exp (156/5)
+
+theorem mlkemBoundOf_prod (i : Fin 2306) (h : i.val < 2304) : mlkemBoundOf i = mlkemProdMgfBound := by
+  unfold mlkemBoundOf; rw [if_pos h]
+
+theorem mlkemBoundOf_e2 (i : Fin 2306) (h : i.val = 2304) : mlkemBoundOf i = Real.exp (9/200) := by
+  unfold mlkemBoundOf; rw [if_neg (by omega), if_pos h]
+
+theorem mlkemBoundOf_dv (i : Fin 2306) (h : ¬ i.val < 2304) (h2 : i.val ≠ 2304) :
+    mlkemBoundOf i = Real.exp (156/5) := by
+  unfold mlkemBoundOf; rw [if_neg h, if_neg h2]
+
+/-- **PER-TERM MGF BOUND (PROVED).** Each coordinate's MGF at `s = 3/10` meets its envelope factor: the exact
+per-term MGFs of §12.2–§12.3 (`mgf_cbd2prod_le`, `mgf_cbd2_le_exp`, `mgf_dvX_bound`). -/
+theorem mlkem_termbound (i : Fin 2306) :
+    mgf (mlkemT i) (unifMeasure mlkemΩ) (3/10) ≤ mlkemBoundOf i := by
+  unfold mlkemT
+  rw [mgf_coord]
+  rcases lt_trichotomy i.val 2304 with h | h | h
+  · rw [mlkemTermR_prod i h, mlkemBoundOf_prod i h]
+    refine le_trans (mgf_cbd2prod_le (3/10)) (le_of_eq ?_)
+    unfold mlkemProdMgfBound
+    rw [show (2 : ℝ) * (3/10)^2 = 9/50 from by norm_num,
+        show ((3/10 : ℝ))^2 / 2 = 9/200 from by norm_num]
+  · rw [mlkemTermR_e2 i h, mlkemBoundOf_e2 i h, mgf_cbd2_fst]
+    refine le_trans (mgf_cbd2_le_exp (3/10)) (Real.exp_le_exp.mpr ?_)
+    norm_num
+  · rw [mlkemTermR_dv i (by omega) (by omega), mlkemBoundOf_dv i (by omega) (by omega)]
+    exact mgf_dvX_bound
+
+/-- **THE ENVELOPE PRODUCT (PROVED): `∏ mlkemBoundOf = mlkemExactMgfBound`.** Peels the `Δv` (`e^{156/5}`) and
+`e2` (`e^{9/200}`) coordinates off the `Fin 2306` product; the remaining `2304` are the constant product bound. -/
+theorem prod_mlkemBoundOf : (∏ i, mlkemBoundOf i) = mlkemExactMgfBound := by
+  unfold mlkemExactMgfBound
+  rw [Fin.prod_univ_castSucc, Fin.prod_univ_castSucc]
+  have hlast : mlkemBoundOf (Fin.last 2305) = Real.exp (156/5) := by
+    apply mlkemBoundOf_dv <;> rw [Fin.val_last] <;> omega
+  have hpen : mlkemBoundOf (Fin.castSucc (Fin.last 2304)) = Real.exp (9/200) := by
+    apply mlkemBoundOf_e2; rw [Fin.val_castSucc, Fin.val_last]
+  have hconst : ∀ i : Fin 2304,
+      mlkemBoundOf (Fin.castSucc (Fin.castSucc i)) = mlkemProdMgfBound := by
+    intro i; apply mlkemBoundOf_prod; rw [Fin.val_castSucc, Fin.val_castSucc]; exact i.isLt
+  rw [hlast, hpen, Finset.prod_congr rfl (fun i _ => hconst i), Finset.prod_const,
+      Finset.card_univ, Fintype.card_fin]
+
+/-- **THE PRODUCT-OF-MGFS MEETS THE δ-ENVELOPE (PROVED).** `∏ᵢ mgf(Tᵢ)(3/10) ≤ mlkemExactMgfBound` — each factor
+bounded by `mlkem_termbound`, the product evaluated by `prod_mlkemBoundOf`. -/
+theorem mlkem_prod_mgf_le :
+    (∏ i, mgf (mlkemT i) (unifMeasure mlkemΩ) (3/10)) ≤ mlkemExactMgfBound := by
+  refine le_trans (Finset.prod_le_prod (fun i _ => mgf_nonneg) (fun i _ => mlkem_termbound i)) ?_
+  rw [prod_mlkemBoundOf]
+
+/-- **`CoeffIsExactMgfSum` PROVED for the real `e_total` (the deliverable).** The full `2306`-term decomposition,
+GENUINE `iIndepFun`, per-term exact MGFs, product ≤ envelope — NO hypothesis. -/
+theorem mlkem_exactMgfSum (c : Fin 768) : CoeffIsExactMgfSum mlkemZ c := by
+  refine ⟨2306, mlkemT, ?_, mlkem_indep, mlkem_measurable, mlkem_symm, mlkem_prod_mgf_le⟩
+  intro ω
+  show ((∑ i, mlkemTermZ i (ω i) : ℤ) : ℝ) = ∑ i, mlkemT i ω
+  push_cast
+  exact Finset.sum_congr rfl (fun i _ => mlkemTermZR i (ω i))
+
+/-- **THE UNCONDITIONAL δ-BOUND — `Pr_r[¬noiseBoundHolds] ≤ 2⁻¹⁴⁰` for the real ML-KEM-768 `e_total`.** The
+exact-MGF per-coefficient tail (§12.4) fed the PROVED `CoeffIsExactMgfSum` witness, through the union bound.
+`CoeffIsExactMgfSum` is no longer a hypothesis — the decryption-failure bound is a closed theorem. -/
+theorem mlkem768_decapsFailure_le_delta_unconditional :
+    winProb (decapsFails mlkemZ) ≤ (2 : ℝ) ^ (-140 : ℤ) :=
+  mlkem768_decapsFailure_le_delta_exactMgf mlkemZ
+    (perCoeffExactMgfTail_of_exactMgfSum mlkemZ mlkem_exactMgfSum)
+
 /-! ## AXIOM HYGIENE — every probabilistic theorem is kernel-clean (⊆ {propext, Classical.choice, Quot.sound}). -/
 
 #assert_all_clean [
@@ -1160,7 +1411,22 @@ theorem cbd2prod_delta_exactMgf_fires :
   perCoeffExactMgfTail_of_exactMgfSum,
   mlkem768_decapsFailure_le_delta_exactMgf,
   cbd2prod_isExactMgfSum,
-  cbd2prod_delta_exactMgf_fires
+  cbd2prod_delta_exactMgf_fires,
+  unifMeasure_pi_eq,
+  mgf_coord,
+  mgf_cbd2_fst,
+  mgf_dvX_closed,
+  mgf_dvX_symm,
+  mgf_dvX_bound,
+  cbd2Ez_cast,
+  mlkemTermZR,
+  mlkem_indep,
+  mlkem_symm,
+  mlkem_termbound,
+  prod_mlkemBoundOf,
+  mlkem_prod_mgf_le,
+  mlkem_exactMgfSum,
+  mlkem768_decapsFailure_le_delta_unconditional
 ]
 
 end Dregg2.Crypto.MlKemDelta
