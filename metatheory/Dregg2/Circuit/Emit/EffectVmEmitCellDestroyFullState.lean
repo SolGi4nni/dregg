@@ -30,7 +30,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gFieldPassAll)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
 open Dregg2.Circuit.Emit.EffectVmEmitCellDestroy
   (SEL_CELLDESTROY cellDestroyRowGates cellDestroyVmDescriptor RowEncodesDestroy CellDestroyCellSpec
-   cellDestroyVm_faithful intent_to_cellSpec)
+   CellDestroyRowCanon cellDestroyVm_faithful intent_to_cellSpec)
 open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
   (baseAbsorbedCols RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds wide_rejects_root_tamper
    wideHashSites)
@@ -58,7 +58,8 @@ def IsCellDestroyRow (env : VmRowEnv) : Prop :=
 /-! ## §2 — the GATE-ONLY per-cell soundness (no hash-site hypothesis). -/
 
 theorem cellDestroyGates_give_cellSpec (env : VmRowEnv) (pre post : CellState)
-    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesDestroy env pre post)
+    (hnoop : env.loc sel.NOOP = 0) (hcanon : CellDestroyRowCanon env)
+    (henc : RowEncodesDestroy env pre post)
     (hgates : ∀ c ∈ cellDestroyVmDescriptor.constraints, c.holdsVm env true false) :
     CellDestroyCellSpec pre post := by
   have hrowgates : ∀ c ∈ cellDestroyRowGates, c.holdsVm env false false := by
@@ -73,7 +74,7 @@ theorem cellDestroyGates_give_cellSpec (env : VmRowEnv) (pre post : CellState)
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
       simpa only [VmConstraint.holdsVm] using hh
-  exact intent_to_cellSpec env pre post hnoop henc ((cellDestroyVm_faithful env).mp hrowgates)
+  exact intent_to_cellSpec env pre post hnoop henc ((cellDestroyVm_faithful env hcanon).mp hrowgates)
 
 /-! ## §3 — the FULL declarative clause + the `RunnableFullStateSpec` instance. -/
 
@@ -83,14 +84,14 @@ def CellDestroyFullClause (preRoots : SysRoots) (pre post : CellState) (postRoot
 def cellDestroyRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellState where
   descriptor    := cellDestroyVmDescriptorWide
   usesWideSites := rfl
-  isRow         := IsCellDestroyRow
+  isRow         := fun env => IsCellDestroyRow env ∧ CellDestroyRowCanon env
   decodeAfter   := fun env pre post postRoots =>
     RowEncodesDestroy env pre post ∧ postRoots = preRoots
   fullClause    := CellDestroyFullClause preRoots
   decodeFull    := by
     intro env pre post postRoots hrow hdec hgates
     obtain ⟨henc, hroots⟩ := hdec
-    exact ⟨cellDestroyGates_give_cellSpec env pre post hrow.2 henc
+    exact ⟨cellDestroyGates_give_cellSpec env pre post hrow.1.2 hrow.2 henc
             (cellDestroyWide_constraints_eq ▸ hgates), hroots⟩
 
 /-! ## §4 — THE DELIVERABLE: `cellDestroy_runnable_full_sound`. -/
@@ -100,12 +101,12 @@ RUNNABLE cellDestroy descriptor, decoded by `RowEncodesDestroy` with the frozen-
 FULL 17-field post-state: the per-cell block (`CellDestroyCellSpec`) AND all 8 side-table roots FROZEN. -/
 theorem cellDestroy_runnable_full_sound (hash : List ℤ → ℤ) (preRoots : SysRoots)
     (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
-    (hrow : IsCellDestroyRow env)
+    (hrow : IsCellDestroyRow env) (hcanon : CellDestroyRowCanon env)
     (henc : RowEncodesDestroy env pre post) (hroots : postRoots = preRoots)
     (hsat : satisfiedVm hash cellDestroyVmDescriptorWide env true false) :
     CellDestroyCellSpec pre post ∧ postRoots = preRoots :=
-  runnable_full_sound (cellDestroyRunnableSpec preRoots) hash env pre post postRoots hrow
-    ⟨henc, hroots⟩ hsat
+  runnable_full_sound (cellDestroyRunnableSpec preRoots) hash env pre post postRoots
+    ⟨hrow, hcanon⟩ ⟨henc, hroots⟩ hsat
 
 /-! ## §5 — THE ANTI-GHOST. -/
 

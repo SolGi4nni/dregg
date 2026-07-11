@@ -142,11 +142,34 @@ def BridgeMintRowIntent (env : VmRowEnv) : Prop :=
 def IsBridgeMintRow (env : VmRowEnv) : Prop :=
   env.loc selBM.BRIDGE_MINT = 1 ∧ env.loc sel.NOOP = 0
 
-/-! ## §4 — FAITHFULNESS. -/
+/-- **`BridgeMintRowCanon env`** — the row's EXPLICIT canonicality envelope (the deployed
+range-check / field-representative invariant, carried as named hypotheses): every state-block cell
+of both windows is a canonical BabyBear representative in `[0, p)`; the CREDIT stays in-field
+(`0 ≤ value` and `bal_lo_before + value < p` — the 30-bit `ranges` wires keep the credit far below
+the modulus); and the pre-nonce tick stays in-field (`nonce_before + 1 < p`). Under the mod-p
+`holdsVm` denotation these are exactly the hypotheses that let the ℤ-stated row intent be read back
+off the field-checked gates (a `≡ 0 [ZMOD p]` residual strictly inside `(-p, p)` is `0`). -/
+def BridgeMintRowCanon (env : VmRowEnv) : Prop :=
+  (∀ off, off < STATE_SIZE →
+      (0 ≤ env.loc (sbCol off) ∧ env.loc (sbCol off) < 2013265921)
+      ∧ (0 ≤ env.loc (saCol off) ∧ env.loc (saCol off) < 2013265921))
+  ∧ (0 ≤ env.loc (prmCol param.BRIDGE_MINT_VALUE_LO)
+      ∧ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.BRIDGE_MINT_VALUE_LO)
+          < 2013265921)
+  ∧ env.loc (sbCol state.NONCE) + 1 < 2013265921
 
-theorem bridgeMintVm_faithful (env : VmRowEnv) (hrow : IsBridgeMintRow env) :
+/-! ## §4 — FAITHFULNESS (mod-p, under the explicit canonicality envelope). -/
+
+theorem bridgeMintVm_faithful (env : VmRowEnv) (hrow : IsBridgeMintRow env)
+    (hcanon : BridgeMintRowCanon env) :
     (∀ c ∈ bridgeMintRowGates, c.holdsVm env false false) ↔ BridgeMintRowIntent env := by
   obtain ⟨_hsBM, hsN⟩ := hrow
+  obtain ⟨hcells, hcredit, hovf⟩ := hcanon
+  have hbLo := hcells state.BALANCE_LO (by norm_num [state.BALANCE_LO, STATE_SIZE])
+  have hbHi := hcells state.BALANCE_HI (by norm_num [state.BALANCE_HI, STATE_SIZE])
+  have hbN := hcells state.NONCE (by norm_num [state.NONCE, STATE_SIZE])
+  have hbCap := hcells state.CAP_ROOT (by norm_num [state.CAP_ROOT, STATE_SIZE])
+  have hbRes := hcells state.RESERVED (by norm_num [state.RESERVED, STATE_SIZE])
   unfold bridgeMintRowGates gFieldFixAll BridgeMintRowIntent
   constructor
   · intro h
@@ -161,32 +184,50 @@ theorem bridgeMintVm_faithful (env : VmRowEnv) (hrow : IsBridgeMintRow env) :
     simp only [VmConstraint.holdsVm, gBalLoCredit, gBalHiFix, gNonceTick, gNonce, gCapFix, gResFix,
       ePrmMintValue, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
     rw [hsN] at hNon
-    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
-      by linarith [hRes], ?_⟩
+    rw [Int.modEq_zero_iff_dvd] at hLo hHi hNon hCap hRes
+    refine ⟨by omega, by omega, by omega, by omega, by omega, ?_⟩
     intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hFi := hFld i hi
+    have hbF := hcells (state.FIELD_BASE + i) (by simp only [state.FIELD_BASE, STATE_SIZE]; omega)
+    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at hFi
+    rw [Int.modEq_zero_iff_dvd] at hFi
+    omega
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
     · simp only [VmConstraint.holdsVm, gBalLoCredit, ePrmMintValue, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
     · simp only [VmConstraint.holdsVm, gNonceTick, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-      rw [hsN, hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+      rw [hsN, Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gCapFix, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
     · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      rw [Int.modEq_zero_iff_dvd]
+      have := hFld i hi
+      omega
 
+/-- **Anti-ghost (wrong credit).** FIELD-FAITHFUL: the tooth rejects a field-`≢` output, so it needs
+the DEPLOYED range-check canonicality — the after-balance (a `ranges` wire) and the intended credited
+balance (`bal_lo_before + value`) both lie in `[0, p)`. Under canonicality a WRONG `bal_lo` differs
+from the intended credit by less than `p`, so `p` cannot divide the residual: `¬ (p ∣ residual)`. -/
 theorem bridgeMintVm_rejects_wrong_balance (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.BALANCE_LO)
+      ∧ env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hcanonCredit : 0 ≤ env.loc (sbCol state.BALANCE_LO)
+        + env.loc (prmCol param.BRIDGE_MINT_VALUE_LO)
+      ∧ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.BRIDGE_MINT_VALUE_LO)
+          < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO)
       ≠ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.BRIDGE_MINT_VALUE_LO)) :
     ¬ (VmConstraint.gate gBalLoCredit).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoCredit, ePrmMintValue, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith [h]
+  exact Dregg2.Circuit.Emit.EffectVmEmitTransfer.not_modEq_zero_of_canon (by ring)
+    hcanonNew hcanonCredit hwrong
 
 /-! ## §5 — `CellBridgeMintSpec` + `RowEncodes` → structured per-cell soundness. -/
 
@@ -245,6 +286,8 @@ theorem bridgeMintRowGates_flag_indep (env : VmRowEnv) (b1 : Bool)
     simpa only [VmConstraint.holdsVm] using this
 
 theorem bridgeMintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeMintRow env)
+    (hcanon : BridgeMintRowCanon env)
+    (hpubc : 0 ≤ env.pub pi.NEW_COMMIT ∧ env.pub pi.NEW_COMMIT < 2013265921)
     (pre post : CellState) (value : ℤ)
     (henc : RowEncodes env pre value post)
     (hgatesat : satisfiedVm hash bridgeMintVmDescriptor env true false)
@@ -257,7 +300,7 @@ theorem bridgeMintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEn
     unfold bridgeMintVmDescriptor; simp only [List.mem_append]
     exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
   have hgates' := bridgeMintRowGates_flag_indep env true hgates
-  have hint := (bridgeMintVm_faithful env hrow).mp hgates'
+  have hint := (bridgeMintVm_faithful env hrow hcanon).mp hgates'
   refine ⟨intent_to_cellSpec env pre post value henc hint, ?_⟩
   have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm env false true := by
     intro c hc
@@ -268,8 +311,13 @@ theorem bridgeMintDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEn
     simp only [List.mem_cons, List.not_mem_nil, or_false] at hc
     rcases hc with rfl | rfl | rfl <;>
       · simp only [VmConstraint.holdsVm] at hh ⊢; exact hh
+  -- The NEW_COMMIT pin (mod-p) lifted to ℤ equality by canonicality of the commit cell + the PI.
+  have hmod := (boundaryLast_pins env hlast).1
+  have hdvd := Int.ModEq.dvd hmod
+  have hcell := (hcanon.1 state.STATE_COMMIT (by norm_num [state.STATE_COMMIT, STATE_SIZE])).2
   obtain ⟨_, _, _, _, _, _, _, _, _, _, _, _, _, _, hsaC, _, _⟩ := henc
-  rw [← hsaC]; exact (boundaryLast_pins env hlast).1
+  rw [← hsaC]
+  omega
 
 /-! ## §6 — ANTI-GHOST COMMITMENT TOOTH (reused from the transfer keystone). -/
 
@@ -348,6 +396,8 @@ EVERY conserved/frame clause (credit + frozen frame). The ONE divergence is the 
 the runtime counter; arm freezes the ledger entry — `exec_nonce_is_frozen_not_ticked`), reported. -/
 theorem descriptor_agrees_with_executor
     (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeMintRow env)
+    (hcanon : BridgeMintRowCanon env)
+    (hpubc : 0 ≤ env.pub pi.NEW_COMMIT ∧ env.pub pi.NEW_COMMIT < 2013265921)
     (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (value : ℤ) (post : CellState)
     (henc : RowEncodes env (cellProjA s.kernel cell a) value post)
     (hgatesat : satisfiedVm hash bridgeMintVmDescriptor env true false)
@@ -359,7 +409,8 @@ theorem descriptor_agrees_with_executor
     ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
     ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
   obtain ⟨hcirc, _⟩ :=
-    bridgeMintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post value henc hgatesat hsat
+    bridgeMintDescriptor_full_sound hash env hrow hcanon hpubc (cellProjA s.kernel cell a) post value
+      henc hgatesat hsat
   obtain ⟨hcLo, hcHi, _hcN, hcF, hcCap, hcRes⟩ := hcirc
   obtain ⟨heLo, heHi, _heN, heF, heCap, heRes⟩ := unify_bridgeMint_exec s s' actor cell a value hexec
   refine ⟨?_, ?_, ?_, ?_, ?_⟩
@@ -411,6 +462,26 @@ theorem goodBridgeMintRow_realizes_intent : BridgeMintRowIntent goodBridgeMintRo
   have f6 : (54 + (3 + i) = 69) = False := by simp; omega
   simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
 
+/-- **NON-VACUITY (canonicality witness).** The honest row satisfies the explicit canonicality
+envelope — the mod-p hypotheses are jointly satisfiable, not a vacuous guard. -/
+theorem goodBridgeMintRow_canonical : BridgeMintRowCanon goodBridgeMintRow := by
+  have hall : ∀ v, 0 ≤ goodBridgeMintRow.loc v ∧ goodBridgeMintRow.loc v < 2013265921 := by
+    intro v
+    simp only [goodBridgeMintRow]
+    split_ifs <;> norm_num
+  refine ⟨fun off _ => ⟨hall _, hall _⟩, ⟨(hall _).1, ?_⟩, ?_⟩
+  · show goodBridgeMintRow.loc (sbCol state.BALANCE_LO)
+      + goodBridgeMintRow.loc (prmCol param.BRIDGE_MINT_VALUE_LO) < 2013265921
+    simp only [goodBridgeMintRow, sbCol, saCol, prmCol, selBM.BRIDGE_MINT, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, param.BRIDGE_MINT_VALUE_LO]
+    norm_num
+  · show goodBridgeMintRow.loc (sbCol state.NONCE) + 1 < 2013265921
+    simp only [goodBridgeMintRow, sbCol, saCol, prmCol, selBM.BRIDGE_MINT, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, param.BRIDGE_MINT_VALUE_LO]
+    norm_num
+
 def badBridgeMintRow : VmRowEnv where
   loc := fun v => if v = saCol state.BALANCE_LO then 999 else goodBridgeMintRow.loc v
   nxt := goodBridgeMintRow.nxt
@@ -418,11 +489,11 @@ def badBridgeMintRow : VmRowEnv where
 
 theorem badBridgeMintRow_rejected :
     ¬ (VmConstraint.gate gBalLoCredit).holdsVm badBridgeMintRow false false := by
-  apply bridgeMintVm_rejects_wrong_balance
-  simp only [badBridgeMintRow, goodBridgeMintRow, sbCol, saCol, prmCol, selBM.BRIDGE_MINT,
-    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
-    state.BALANCE_LO, state.NONCE, param.BRIDGE_MINT_VALUE_LO]
-  norm_num
+  apply bridgeMintVm_rejects_wrong_balance <;>
+    · simp only [badBridgeMintRow, goodBridgeMintRow, sbCol, saCol, prmCol, selBM.BRIDGE_MINT,
+        STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+        state.BALANCE_LO, state.NONCE, param.BRIDGE_MINT_VALUE_LO]
+      norm_num
 
 /-! ## §8½ — THE CLASS-A CAPSTONE (per-cell, the transfer bar).
 
@@ -444,6 +515,8 @@ on a bridge-mint row, for the credited `(cell, asset)` entry of a committed `exe
 `value`, frame frozen), the published commit, AND agreement with the executor's per-cell post-state on the
 bal/frame clauses. -/
 theorem bridgeMintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : IsBridgeMintRow env)
+    (hcanon : BridgeMintRowCanon env)
+    (hpubc : 0 ≤ env.pub pi.NEW_COMMIT ∧ env.pub pi.NEW_COMMIT < 2013265921)
     (s s' : RecChainedState) (actor cell : CellId) (a : AssetId) (value : ℤ) (post : CellState)
     (henc : RowEncodes env (cellProjA s.kernel cell a) value post)
     (hgatesat : satisfiedVm hash bridgeMintVmDescriptor env true false)
@@ -457,9 +530,11 @@ theorem bridgeMintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (
     ∧ post.capRoot = (cellProjA s'.kernel cell a).capRoot
     ∧ post.reserved = (cellProjA s'.kernel cell a).reserved := by
   obtain ⟨hspec, hcommit⟩ :=
-    bridgeMintDescriptor_full_sound hash env hrow (cellProjA s.kernel cell a) post value henc hgatesat hsat
+    bridgeMintDescriptor_full_sound hash env hrow hcanon hpubc (cellProjA s.kernel cell a) post value
+      henc hgatesat hsat
   obtain ⟨hLo, hHi, hF, hCap, hRes⟩ :=
-    descriptor_agrees_with_executor hash env hrow s s' actor cell a value post henc hgatesat hsat hexec
+    descriptor_agrees_with_executor hash env hrow hcanon hpubc s s' actor cell a value post henc
+      hgatesat hsat hexec
   exact ⟨hspec, hcommit, hLo, hHi, hF, hCap, hRes⟩
 
 /-! ## §9 — Axiom-hygiene tripwires. -/
@@ -482,6 +557,7 @@ theorem bridgeMintDescriptor_classA (hash : List ℤ → ℤ) (env : VmRowEnv) (
 #assert_axioms descriptor_agrees_with_executor
 #assert_axioms goodBridgeMintRow_isRow
 #assert_axioms goodBridgeMintRow_realizes_intent
+#assert_axioms goodBridgeMintRow_canonical
 #assert_axioms badBridgeMintRow_rejected
 
 /-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the MAGNESIUM breadth): bind ALL 17 fields.
@@ -527,7 +603,8 @@ The per-row gates of the bridgeMint descriptor, on a bridge-mint row decoded by 
 `CellBridgeMintSpec`. The body of `bridgeMintDescriptor_full_sound` with the hash-site layer DROPPED — it
 factors through `bridgeMintVm_faithful` + `intent_to_cellSpec`, NEITHER of which reads the sites. -/
 theorem bridgeMintGates_give_cellSpec (env : VmRowEnv) (pre post : CellState) (value : ℤ)
-    (hrow : IsBridgeMintRow env) (henc : RowEncodes env pre value post)
+    (hrow : IsBridgeMintRow env) (hcanon : BridgeMintRowCanon env)
+    (henc : RowEncodes env pre value post)
     (hgates : ∀ c ∈ bridgeMintVmDescriptor.constraints, c.holdsVm env true false) :
     CellBridgeMintSpec pre value post := by
   have hrowgates : ∀ c ∈ bridgeMintRowGates, c.holdsVm env true false := by
@@ -537,7 +614,8 @@ theorem bridgeMintGates_give_cellSpec (env : VmRowEnv) (pre post : CellState) (v
     simp only [List.mem_append]
     exact Or.inl (Or.inl (Or.inl (Or.inl hc)))
   have hrowgates' := bridgeMintRowGates_flag_indep env true hrowgates
-  exact intent_to_cellSpec env pre post value henc ((bridgeMintVm_faithful env hrow).mp hrowgates')
+  exact intent_to_cellSpec env pre post value henc
+    ((bridgeMintVm_faithful env hrow hcanon).mp hrowgates')
 
 /-- **`BridgeMintFullClause`** — the full declarative post-state for bridgeMint over `(pre, post,
 postRoots)`: the per-cell `CellBridgeMintSpec` (`balLo` CREDITED by `value`, frame frozen, nonce ticked)
@@ -556,7 +634,7 @@ def bridgeMintRunnableSpec (hash : List ℤ → ℤ) (value : ℤ) (preRoots : S
     RunnableFullStateSpec CellState where
   descriptor    := bridgeMintVmDescriptorWide
   usesWideSites := rfl
-  isRow         := IsBridgeMintRow
+  isRow         := fun env => IsBridgeMintRow env ∧ BridgeMintRowCanon env
   decodeAfter   := fun env pre post postRoots =>
     RowEncodes env pre value post ∧ postRoots = preRoots
       ∧ env.loc sysRootsDigestCol = systemRootsDigest hash postRoots
@@ -564,7 +642,7 @@ def bridgeMintRunnableSpec (hash : List ℤ → ℤ) (value : ℤ) (preRoots : S
   decodeFull    := by
     intro env pre post postRoots hrow hdec hgates
     obtain ⟨henc, hroots, _hcar⟩ := hdec
-    exact ⟨bridgeMintGates_give_cellSpec env pre post value hrow henc
+    exact ⟨bridgeMintGates_give_cellSpec env pre post value hrow.1 hrow.2 henc
             (bridgeMintWide_constraints_eq ▸ hgates), hroots⟩
 
 /-- **`bridgeMint_runnable_full_sound` — THE FULL-STATE ON RUNNABLE crown (bridgeMint).** A row satisfying
@@ -573,13 +651,13 @@ the per-cell CREDIT/freeze/tick AND the whole (frozen) `system_roots` sub-block.
 the generic `runnable_full_sound`; the per-effect obligation was only the thin decode. -/
 theorem bridgeMint_runnable_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     (pre post : CellState) (value : ℤ) (postRoots preRoots : SysRoots)
-    (hrow : IsBridgeMintRow env)
+    (hrow : IsBridgeMintRow env) (hcanon : BridgeMintRowCanon env)
     (henc : RowEncodes env pre value post) (hroots : postRoots = preRoots)
     (hcar : env.loc sysRootsDigestCol = systemRootsDigest hash postRoots)
     (hsat : satisfiedVm hash bridgeMintVmDescriptorWide env true false) :
     BridgeMintFullClause value preRoots pre post postRoots :=
   runnable_full_sound (bridgeMintRunnableSpec hash value preRoots) hash env pre post postRoots
-    hrow ⟨henc, hroots, hcar⟩ hsat
+    ⟨hrow, hcanon⟩ ⟨henc, hroots, hcar⟩ hsat
 
 /-- **`bridgeMint_wide_rejects_state_tamper` — per-cell-block anti-ghost on the RUNNABLE descriptor.** -/
 theorem bridgeMint_wide_rejects_state_tamper (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)

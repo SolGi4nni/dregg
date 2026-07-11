@@ -33,7 +33,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gFieldPassAll)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
 open Dregg2.Circuit.Emit.EffectVmEmitCellSeal
   (SEL_CELLSEAL cellSealRowGates cellSealVmDescriptor RowEncodesSeal CellSealCellSpec
-   cellSealVm_faithful intent_to_cellSpec)
+   CellSealRowCanon cellSealVm_faithful intent_to_cellSpec)
 open Dregg2.Circuit.Emit.EffectVmFullStateRunnable
   (baseAbsorbedCols RunnableFullStateSpec runnable_full_sound runnable_full_commit_binds wide_rejects_root_tamper
    wideHashSites)
@@ -66,7 +66,8 @@ def IsCellSealRow (env : VmRowEnv) : Prop :=
 /-- **`cellSealGates_give_cellSpec`** — the per-row gates of the cellSeal descriptor, on a row decoded by
 `RowEncodesSeal` with `s_noop = 0`, force `CellSealCellSpec`. Flag-free (all gates are `.gate`). -/
 theorem cellSealGates_give_cellSpec (env : VmRowEnv) (pre post : CellState)
-    (hnoop : env.loc sel.NOOP = 0) (henc : RowEncodesSeal env pre post)
+    (hnoop : env.loc sel.NOOP = 0) (hcanon : CellSealRowCanon env)
+    (henc : RowEncodesSeal env pre post)
     (hgates : ∀ c ∈ cellSealVmDescriptor.constraints, c.holdsVm env true false) :
     CellSealCellSpec pre post := by
   have hrowgates : ∀ c ∈ cellSealRowGates, c.holdsVm env false false := by
@@ -81,7 +82,7 @@ theorem cellSealGates_give_cellSpec (env : VmRowEnv) (pre post : CellState)
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩ <;>
       simpa only [VmConstraint.holdsVm] using hh
-  exact intent_to_cellSpec env pre post hnoop henc ((cellSealVm_faithful env).mp hrowgates)
+  exact intent_to_cellSpec env pre post hnoop henc ((cellSealVm_faithful env hcanon).mp hrowgates)
 
 /-! ## §3 — the FULL declarative clause + the `RunnableFullStateSpec` instance. -/
 
@@ -95,14 +96,14 @@ def CellSealFullClause (preRoots : SysRoots) (pre post : CellState) (postRoots :
 def cellSealRunnableSpec (preRoots : SysRoots) : RunnableFullStateSpec CellState where
   descriptor    := cellSealVmDescriptorWide
   usesWideSites := rfl
-  isRow         := IsCellSealRow
+  isRow         := fun env => IsCellSealRow env ∧ CellSealRowCanon env
   decodeAfter   := fun env pre post postRoots =>
     RowEncodesSeal env pre post ∧ postRoots = preRoots
   fullClause    := CellSealFullClause preRoots
   decodeFull    := by
     intro env pre post postRoots hrow hdec hgates
     obtain ⟨henc, hroots⟩ := hdec
-    exact ⟨cellSealGates_give_cellSpec env pre post hrow.2 henc
+    exact ⟨cellSealGates_give_cellSpec env pre post hrow.1.2 hrow.2 henc
             (cellSealWide_constraints_eq ▸ hgates), hroots⟩
 
 /-! ## §4 — THE DELIVERABLE: `cellSeal_runnable_full_sound`. -/
@@ -112,12 +113,12 @@ RUNNABLE cellSeal descriptor, decoded by `RowEncodesSeal` with the frozen-roots 
 17-field post-state: the per-cell block (`CellSealCellSpec`) AND all 8 side-table roots FROZEN. -/
 theorem cellSeal_runnable_full_sound (hash : List ℤ → ℤ) (preRoots : SysRoots)
     (env : VmRowEnv) (pre post : CellState) (postRoots : SysRoots)
-    (hrow : IsCellSealRow env)
+    (hrow : IsCellSealRow env) (hcanon : CellSealRowCanon env)
     (henc : RowEncodesSeal env pre post) (hroots : postRoots = preRoots)
     (hsat : satisfiedVm hash cellSealVmDescriptorWide env true false) :
     CellSealCellSpec pre post ∧ postRoots = preRoots :=
-  runnable_full_sound (cellSealRunnableSpec preRoots) hash env pre post postRoots hrow
-    ⟨henc, hroots⟩ hsat
+  runnable_full_sound (cellSealRunnableSpec preRoots) hash env pre post postRoots
+    ⟨hrow, hcanon⟩ ⟨henc, hroots⟩ hsat
 
 /-! ## §5 — THE ANTI-GHOST: tamper ANY of the 17 fields ⇒ UNSAT (incl. any side-table root). -/
 
