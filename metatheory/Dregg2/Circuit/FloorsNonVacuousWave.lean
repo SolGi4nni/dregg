@@ -112,6 +112,7 @@ def cellSeal_readout :
     have hcol : (afterDiscCol cellSealVmDescriptor.traceWidth = SEL_CELLSEAL) = False := by decide
     simp only [cellSealRow0, hcol, if_false, cellSealPost, cellSealPre]
     rfl
+  discCanon := by decide
   frameOther := fun _ _ => rfl
   guard := by
     constructor

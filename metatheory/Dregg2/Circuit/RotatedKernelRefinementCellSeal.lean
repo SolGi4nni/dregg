@@ -83,6 +83,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
    rotateV3WithLifecyclePayloadGate rotateV3WithLifecyclePayloadGate_forces_disc
    afterLifecycleCol declaredLifecyclePayloadCol rotateV3WithLifecyclePayloadGate_forces)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
+open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
 open Dregg2.Exec
 open Dregg2.Exec.TurnExecutorFull
 
@@ -388,6 +389,14 @@ structure CellSealTraceReadout (hash : List ℤ → ℤ)
   discLimbDecodes :
     (envAt t row).loc (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellSeal.cellSealVmDescriptor.traceWidth)
       = ((post.kernel.lifecycle cell : Nat) : ℤ)
+  -- **the disc-limb CANONICALITY residual (DEBT-A mod-p).** The deployed disc gate now pins the committed
+  -- AFTER disc limb only as a FIELD congruence (`≡ discSealed [ZMOD p]`), so recovering the EXACT
+  -- discriminant needs the limb canonical in `[0, p)`. The deployed trace-fill emits the `u8` discriminant
+  -- of `post.lifecycle[cell]` into that limb, so it lands in `[0, 256) ⊆ [0, p)`; but the deployed range
+  -- table only range-checks the BALANCE limbs (`RotTableSide.range = rangeRows BAL_LIMB_BITS`), NOT the disc
+  -- limb — so this range invariant is carried NAMED here, exactly as IncNonce carries its `hCanon` envelope.
+  -- It is what lets `canon_eq_of_modEq` lift the `≡ [ZMOD p]` disc-gate residual back to the ℤ equality.
+  discCanon : ((post.kernel.lifecycle cell : Nat) : ℤ) < 2013265921
   -- the off-`cell` lifecycle entries are FROZEN (the WHOLE-MAP residual the per-cell limb cannot carry).
   frameOther : ∀ c, c ≠ cell → post.kernel.lifecycle c = pre.kernel.lifecycle c
   -- the admissibility guard (self-authority + is-Live; the off-row guard).
@@ -452,12 +461,18 @@ theorem cellSeal_forced (hash : List ℤ → ℤ)
   -- the DEPLOYED disc gate (survives the payload-gate layer) FORCES the committed AFTER disc limb to
   -- `discSealed` (`rotateV3WithLifecyclePayloadGate_forces_disc`).
   have hlimb : (envAt t rd.row).loc
-      (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellSeal.cellSealVmDescriptor.traceWidth) = discSealed :=
+      (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellSeal.cellSealVmDescriptor.traceWidth)
+      ≡ discSealed [ZMOD 2013265921] :=
     rotateV3WithLifecyclePayloadGate_forces_disc _ _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl
       rd.hsel hv1
-  -- the limb IS the post discriminant (the realizable seam): `(post.lifecycle cell : ℤ) = discSealed = 1`.
-  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcSealed : Nat) : ℤ) := by
-    rw [← rd.discLimbDecodes, hlimb]; rfl
+  -- the limb IS the post discriminant felt (the realizable seam). The DEBT-A mod-p disc gate is a FIELD
+  -- congruence (`≡ discSealed [ZMOD p]`, `discSealed = 1 = lcSealed`); recover the EXACT discriminant from it
+  -- via `canon_eq_of_modEq` — both sides canonical in `[0, p)` (`rd.discCanon` for the limb-decoded post disc).
+  have hcong : ((post.kernel.lifecycle cell : Nat) : ℤ) ≡ ((lcSealed : Nat) : ℤ) [ZMOD 2013265921] := by
+    have hds : ((lcSealed : Nat) : ℤ) = discSealed := rfl
+    rw [hds, ← rd.discLimbDecodes]; exact hlimb
+  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcSealed : Nat) : ℤ) :=
+    canon_eq_of_modEq ⟨Int.natCast_nonneg _, rd.discCanon⟩ (by decide) hcong
   exact_mod_cast hcast
 
 /-- **`cellSeal_forced_map` — the post lifecycle MAP is `sealLifecycleMap` (Class A, whole map).** From the
@@ -512,7 +527,8 @@ theorem cellSeal_sat_rejects_unsealed (hash : List ℤ → ℤ)
   hwrong (cellSeal_forced hash hside hsat pre post actor cell rd)
 
 /-- **`cellSeal_payload_limb_forced` — THE STAGE-C PAYLOAD CLOSE consumed at the apex.** A satisfying
-DEPLOYED `cellSealV3` witness FORCES the committed AFTER lifecycle limb (`B_LIFECYCLE = 29`) EQUAL to the
+DEPLOYED `cellSealV3` witness FORCES the committed AFTER lifecycle limb (`B_LIFECYCLE = 29`) FIELD-CONGRUENT
+(`≡ [ZMOD p]`, the DEBT-A mod-p denotation — the faithful form of the deployed field-equality gate) to the
 in-circuit declared payload-hash column (`declaredLifecyclePayloadCol = prmCol 3`), which the deployed
 trace fills with — and the light client recomputes as — the FELT-DOMAIN `lifecycle_felt(disc, reason_hash,
 sealed_at)`. So the opaque sealing PAYLOAD is no longer producer-free for a ledgerless client: a cellSeal
@@ -529,7 +545,7 @@ theorem cellSeal_payload_limb_forced (hash : List ℤ → ℤ)
     (rd : CellSealTraceReadout hash minit mfin maddrs t pre post actor cell) :
     (envAt t rd.row).loc
         (afterLifecycleCol Dregg2.Circuit.Emit.EffectVmEmitCellSeal.cellSealVmDescriptor.traceWidth)
-      = (envAt t rd.row).loc declaredLifecyclePayloadCol := by
+      ≡ (envAt t rd.row).loc declaredLifecyclePayloadCol [ZMOD 2013265921] := by
   have hv1 : satisfiedVm hash
       (rotateV3WithLifecyclePayloadGate Dregg2.Circuit.Emit.EffectVmEmitCellSeal.SEL_CELLSEAL (some discLive)
         discSealed Dregg2.Circuit.Emit.EffectVmEmitCellSeal.cellSealVmDescriptor)
