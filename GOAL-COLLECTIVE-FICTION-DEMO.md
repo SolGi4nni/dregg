@@ -753,3 +753,20 @@ EXECUTING (2 disjoint de-risk slices firing): D-crown slice [adc0b7c, circuit-pr
 CellProgram→fold→verify_history accepts + forgery rejected]; Phase-A slice [a271263, dungeon-on-dregg — a move is a
 real TurnReceipt, illegal = real executor refusal]. E-provenance (real MPC-TLS to live api.anthropic.com + pinned
 notary) needs ember's operational input (real key + notary deploy) — flagged, not fired autonomously.
+
+## Rebuild progress — Phase A committed + D-crown de-risked (2026-07-11)
+- ✅ Phase-A slice COMMITTED (dungeon-on-dregg): a dungeon move is a REAL TurnReceipt on the real executor, illegal =
+  real WorldError::Refused (field[3] < min, anti-ghost), gate = a real StateConstraint::FieldGte, replay catches a
+  retcon. 4/4 driven, re-verified by me.
+- ✅ D-crown de-risk COMMITTED (game-turn-slice): the LEAF boundary is REAL + I drove it — a game CellProgram →
+  prove_custom_leaf_with_commitment (real IR-v2 batch STARK) → foldable leaf whose in-circuit commitment byte-matches
+  the host; a forged combat conservation has NO satisfying leaf. teeth_lowering_table DRIVEN.
+  BOUNDARIES (grounded, driven): (1) NO StateConstraint→ConstraintExpr bridge — cellprogram_to_descriptor2 takes the
+  CIRCUIT CellProgram, not the executor one; that compiler is the real substance. (2) ordering teeth (FieldGte/
+  FieldLte/Monotonic) don't lower as atoms (no DSL inequality; Lookup refused) → need bit-decomposition range gadgets.
+  (3) COVERAGE (declared) vs SATISFACTION (in-AIR, staged for escrow/vault only). (4) full fold→verify_history GATED
+  on UPSTREAM Lane-D revoked-root limb migration (NUM_PRE_LIMBS 169→170, ACTIVELY in-flight in the working tree —
+  trace_rotated.rs modified to 170 now) — imminent, then it's wiring. NOT mine to fix.
+- FIRING: Phase-A scale [a6495e1 — combat/loot/resource as real executor teeth + name the multi-cell/cross-cell
+  ceiling]; Phase-D lowering [a2eebb7 — the StateConstraint→ConstraintExpr compiler + bit-decomposition range gadgets,
+  leaf-level (full fold upstream-gated)]. Next: E-Bedrock MPC-TLS spike; track Lane-D's limb migration to unblock the fold.
