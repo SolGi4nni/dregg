@@ -43,10 +43,12 @@ product for ALL poly pairs, not just the one `native_decide` sample `MlDsaRing.n
 
 ## RUNG 2 — the butterfly WALL (engine BUILT; outer-loop peel + CT invariant CLOSED, forward direction)
 
-The FORWARD half is now discharged: `nttEvalsAtRoots_canonical` (below) proves the 8-stage butterfly network
+The FORWARD half is discharged: `nttEvalsAtRoots_canonical` (below) proves the 8-stage butterfly network
 computes evaluation at the negacyclic roots for every canonical (size-256) poly, via the CT stage-invariant
-induction `stage_inv`. The two named residuals are now `NttMulHom` (the negacyclic-convolution ring-hom, needing
-a separate `schoolbookMul`-loop coefficient characterization) and the `intt` interpolation induction.
+induction `stage_inv`. On top of it, **`NttMulHom` is now CLOSED** (`nttMulHom_proven`): the negacyclic-convolution
+ring-hom, via the `schoolbookMul`-loop coefficient characterization (`schoolbookMul_getElem`, PART 1g) + the
+eval-at-a-root multiplicativity `eval256_schoolbook`. The SINGLE remaining residual is the `intt` interpolation
+induction (`NttLeftInverse`), to which `RingRepFaithful` is now reduced (`ringRepFaithful_of_leftInverse`).
 
 ⚠ **The `∀`-over-all-Poly props are FALSE as literally stated** (`NttEvalsAtRoots` / `NttMulHom` /
 `NttLeftInverse` / `VerifyCoreSpec.RingRepFaithful`): a non-256-length input makes the imperative `Array.set!`
@@ -82,9 +84,10 @@ map "evaluate at the negacyclic roots `ζ^{2·brv(m)+1}`" — stated as the prop
   recurrence (`rootAt_closed`). At `len = 1` (`s=8`) it collapses (`rootAt_final : rootAt 8 m = ζ^{2·brv8(m)+1}`)
   to `nttEvalsAtRoots_canonical`. Axiom-clean.
 
-The two residuals: `NttLeftInverse` = eval∘interp collapsed by `omega_orthogonality`
-(brv bijective) — the second (`intt`) interpolation induction; and `NttMulHom` = eval-is-a-ring-hom +
-`evalRoot²⁵⁶ = −1` (`evalRoot_pow256`, proven below) atop a `schoolbookMul`-loop coefficient characterization.
+`NttMulHom` is CLOSED (`nttMulHom_proven`, PART 1g + RUNG-2 step 3): eval-is-a-ring-hom + `evalRoot²⁵⁶ = −1`
+(`evalRoot_pow256`) atop the `schoolbookMul`-loop coefficient characterization. The remaining residual is
+`NttLeftInverse` = eval∘interp collapsed by `omega_orthogonality` (brv bijective) — the `intt` interpolation
+induction (the Gentleman–Sande mirror of `stage_inv`). `RingRepFaithful` is reduced to exactly this one leg.
 -/
 import Dregg2.Crypto.VerifyCoreSpec
 import Mathlib.Data.ZMod.Basic
@@ -506,6 +509,239 @@ theorem cast_bfSweep (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly)
   · intro p h1 h2
     rw [hhi p h1 h2, cast_subQ _ _ (by have := mulModQ_lt z a0[p]!; omega), cast_mulModQ]
 
+/-! ## PART 1g — the SCHOOLBOOK (negacyclic) product coefficient formula, from the imperative double loop.
+
+`schoolbookMul` is a nested `Id.run do` double loop with array-DEPENDENT accumulating writes
+(`c[k] ← c[k] ± a[i]·b[j]`); its full-evaluation defeq is a measured >2 min kernel timeout. Instead the inner
+`for j` sweep is abstracted into `rowSweep` (so each reduction handles ONE loop level, mirroring
+`ntt`/`nttCleanDo`), then the two loops are peeled to explicit `List.foldl`s and characterized entrywise by
+an ADDITIVE accumulator (`rowAccum`/`outerAccum`, over the honest field via the RUNG-0 casts): output slot `m`
+carries `∑_{i+j=m} a_i·b_j − ∑_{i+j=m+256} a_i·b_j` in `ℤ_q` (`schoolbookMul_getElem`), the negacyclic
+convolution. `schoolbookMul_size`/`schoolbookMul_lt` fall out of the same folds. No `native_decide`. -/
+
+/-- `addQ` lands in the reduced range `[0, q)`. -/
+theorem addQ_lt (a b : Nat) : addQ a b < q := by unfold addQ; exact Nat.mod_lt _ (by unfold q; omega)
+/-- `subQ` lands in the reduced range `[0, q)`. -/
+theorem subQ_lt (a b : Nat) : subQ a b < q := by unfold subQ; exact Nat.mod_lt _ (by unfold q; omega)
+
+/-- After a `set!`, every slot holds either the written value or the original — the reusable teeth for the
+`< q` reduced-range invariants below (covers the out-of-bounds no-op branch too). -/
+theorem set!_val_cases (b : Poly) (i v p : Nat) :
+    (b.set! i v)[p]! = v ∨ (b.set! i v)[p]! = b[p]! := by
+  by_cases h : i = p
+  · subst h
+    by_cases hib : i < b.size
+    · exact Or.inl (getElem!_set!_self _ _ _ hib)
+    · right
+      simp [Array.set!_eq_setIfInBounds, hib]
+  · exact Or.inr (getElem!_set!_ne _ _ _ _ h)
+
+/-- A `set!` with a reduced value preserves the "all entries `< q`" invariant. -/
+theorem set!_lt (b : Poly) (i v : Nat) (hb : ∀ (p : Nat), b[p]! < q) (hv : v < q) :
+    ∀ (p : Nat), (b.set! i v)[p]! < q := by
+  intro p; rcases set!_val_cases b i v p with hh | hh
+  · rw [hh]; exact hv
+  · rw [hh]; exact hb p
+
+/-- `schoolbookMul`'s inner `for j` sweep, as its own definition (so the outer/inner reductions each stay
+one-loop-deep, avoiding the double-loop defeq wall). A VERBATIM copy of that inner loop. -/
+def rowSweep (a b : Poly) (i : Nat) (c0 : Poly) : Poly := Id.run do
+  let mut c := c0
+  for j in [0:256] do
+    let prod := mulModQ a[i]! b[j]!
+    let k := i + j
+    if k < 256 then c := c.set! k (addQ c[k]! prod)
+    else c := c.set! (k - 256) (subQ c[k - 256]! prod)
+  return c
+
+/-- `schoolbookMul` with the inner sweep abstracted as `rowSweep` — definitionally equal to `schoolbookMul`
+(`rowSweep` IS that inner loop), the intermediate that keeps the inner term opaque during the outer peel. -/
+def schoolbookCleanDo (a b : Poly) : Poly := Id.run do
+  let mut c := zeroPoly
+  for i in [0:256] do
+    c := rowSweep a b i c
+  return c
+
+/-- One inner-sweep butterfly step (the `range' 0 256 1` fold function `rowSweep` reduces to). -/
+def RowStep (a b : Poly) (i : Nat) (c : Poly) (j : Nat) : Poly :=
+  if i + j < 256 then c.set! (i+j) (addQ c[i+j]! (mulModQ a[i]! b[j]!))
+  else c.set! (i+j-256) (subQ c[i+j-256]! (mulModQ a[i]! b[j]!))
+
+/-- Signed `ℤ_q` contribution of coefficient pair `(i,j)` to output slot `m`: `+a_i·b_j` if `i+j = m` (no
+wrap), `−a_i·b_j` if `i+j = m+256` (the `X²⁵⁶ = −1` negacyclic wrap), else `0`. -/
+def cJ (a b : Poly) (i j m : Nat) : ZMod q :=
+  if i + j = m then ((a[i]! : Nat) : ZMod q) * ((b[j]! : Nat) : ZMod q)
+  else if i + j = m + 256 then -(((a[i]! : Nat) : ZMod q) * ((b[j]! : Nat) : ZMod q))
+  else 0
+
+set_option maxHeartbeats 1000000 in
+set_option maxRecDepth 8000 in
+/-- Inner-loop abstraction: `schoolbookMul = schoolbookCleanDo` (rfl-clean; inner opaque). -/
+theorem sbk_clean (a b : Poly) : schoolbookMul a b = schoolbookCleanDo a b := by
+  unfold schoolbookMul schoolbookCleanDo rowSweep; rfl
+
+set_option maxHeartbeats 1000000 in
+set_option maxRecDepth 8000 in
+/-- Inner peel: the `rowSweep` `for j` loop is the explicit `RowStep` fold. -/
+theorem rowSweep_fold (a b : Poly) (i : Nat) (c0 : Poly) :
+    rowSweep a b i c0 = List.foldl (RowStep a b i) c0 (List.range' 0 256 1) := by
+  unfold rowSweep RowStep
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    ← apply_ite, List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_sub_cancel, Nat.div_one]
+  rfl
+
+set_option maxHeartbeats 1000000 in
+set_option maxRecDepth 8000 in
+/-- Generic outer-loop peel with the per-row step `f` kept OPAQUE — so `simp` reduces the `forIn` to a `foldl`
+WITHOUT unfolding the inner `Id.run` sweep (which would trigger the 256×256 double-loop defeq wall). -/
+theorem forIn_zeroPoly_fold (f : Nat → Poly → Poly) :
+    (Id.run do
+      let mut c := zeroPoly
+      for i in [0:256] do
+        c := f i c
+      return c)
+      = List.foldl (fun c i => f i c) zeroPoly (List.range' 0 256 1) := by
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_sub_cancel, Nat.div_one]
+  rfl
+
+/-- Outer peel: the `schoolbookCleanDo` `for i` loop is the explicit `rowSweep` fold (via the opaque-`f`
+generic lemma, so the inner sweep is never evaluated by the kernel). -/
+theorem sbk_outer (a b : Poly) :
+    schoolbookCleanDo a b
+      = List.foldl (fun c i => rowSweep a b i c) zeroPoly (List.range' 0 256 1) :=
+  forIn_zeroPoly_fold (fun i c => rowSweep a b i c)
+
+set_option maxRecDepth 8000 in
+/-- **Row accumulator.** After folding one row's `RowStep`s over `[0, nj)`, slot `m`'s `ℤ_q` value is the
+input plus `∑_{j<nj} cJ(i,j,m)` — the additive characterization of the array-dependent accumulating writes. -/
+theorem rowAccum (a b : Poly) (i : Nat) (hi : i < 256) :
+    ∀ (nj : Nat) (c : Poly), c.size = 256 →
+      (List.foldl (RowStep a b i) c (List.range' 0 nj 1)).size = 256 ∧
+      ∀ m, m < 256 →
+        (((List.foldl (RowStep a b i) c (List.range' 0 nj 1))[m]! : Nat) : ZMod q)
+          = ((c[m]! : Nat) : ZMod q) + ∑ j ∈ range nj, cJ a b i j m := by
+  intro nj
+  induction nj with
+  | zero =>
+    intro c hc; refine ⟨by simpa using hc, ?_⟩
+    intro m hm
+    simp only [List.range'_zero, List.foldl_nil, Finset.range_zero, Finset.sum_empty, add_zero]
+  | succ nj ih =>
+    intro c hc
+    rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+    obtain ⟨ihsz, ihval⟩ := ih c hc
+    set A := List.foldl (RowStep a b i) c (List.range' 0 nj 1) with hAdef
+    have hstep : (RowStep a b i A nj).size = 256 := by
+      unfold RowStep; by_cases hk : i + nj < 256
+      · rw [if_pos hk, size_set!]; exact ihsz
+      · rw [if_neg hk, size_set!]; exact ihsz
+    refine ⟨hstep, ?_⟩
+    intro m hm
+    rw [Finset.sum_range_succ]
+    unfold RowStep
+    by_cases hk : i + nj < 256
+    · rw [if_pos hk]
+      by_cases hm2 : m = i + nj
+      · subst hm2
+        rw [getElem!_set!_self A (i+nj) _ (by rw [ihsz]; omega), cast_addQ, cast_mulModQ, ihval (i+nj) hm]
+        have hcj : cJ a b i nj (i+nj) = ((a[i]! : Nat) : ZMod q) * ((b[nj]! : Nat) : ZMod q) := by
+          unfold cJ; rw [if_pos rfl]
+        rw [hcj]; ring
+      · rw [getElem!_set!_ne A (i+nj) m _ (by omega), ihval m hm]
+        have hcj : cJ a b i nj m = 0 := by unfold cJ; rw [if_neg (by omega), if_neg (by omega)]
+        rw [hcj, add_zero]
+    · rw [if_neg hk]
+      by_cases hm2 : m = i + nj - 256
+      · subst hm2
+        rw [getElem!_set!_self A (i+nj-256) _ (by rw [ihsz]; omega),
+            cast_subQ _ _ (by have := mulModQ_lt a[i]! b[nj]!; omega), cast_mulModQ, ihval _ hm]
+        have hcj : cJ a b i nj (i+nj-256) = -(((a[i]! : Nat) : ZMod q) * ((b[nj]! : Nat) : ZMod q)) := by
+          unfold cJ; rw [if_neg (by omega), if_pos (by omega)]
+        rw [hcj]; ring
+      · rw [getElem!_set!_ne A (i+nj-256) m _ (by omega), ihval m hm]
+        have hcj : cJ a b i nj m = 0 := by unfold cJ; rw [if_neg (by omega), if_neg (by omega)]
+        rw [hcj, add_zero]
+
+theorem zeroPoly_get (m : Nat) : zeroPoly[m]! = 0 := by
+  rw [zeroPoly, Array.getElem!_eq_getD, Array.getD_eq_getD_getElem?, Array.getElem?_replicate]
+  split <;> rfl
+
+theorem zeroPoly_cast (m : Nat) : ((zeroPoly[m]! : Nat) : ZMod q) = 0 := by
+  rw [zeroPoly_get]; simp
+
+set_option maxRecDepth 8000 in
+/-- **Outer accumulator.** Summing the per-row contributions across all rows `i < ni`: slot `m` carries
+`∑_{i<ni} ∑_{j<256} cJ(i,j,m)`. -/
+theorem outerAccum (a b : Poly) :
+    ∀ (ni : Nat), ni ≤ 256 → ∀ (c : Poly), c.size = 256 →
+      (List.foldl (fun c i => rowSweep a b i c) c (List.range' 0 ni 1)).size = 256 ∧
+      ∀ m, m < 256 →
+        (((List.foldl (fun c i => rowSweep a b i c) c (List.range' 0 ni 1))[m]! : Nat) : ZMod q)
+          = ((c[m]! : Nat) : ZMod q) + ∑ i ∈ range ni, ∑ j ∈ range 256, cJ a b i j m := by
+  intro ni
+  induction ni with
+  | zero => intro _ c hc; refine ⟨by simpa using hc, ?_⟩; intro m hm; simp
+  | succ ni ih =>
+    intro hni c hc
+    rw [List.range'_1_concat, List.foldl_concat, Nat.zero_add]
+    obtain ⟨ihsz, ihval⟩ := ih (by omega) c hc
+    set A := List.foldl (fun c i => rowSweep a b i c) c (List.range' 0 ni 1) with hAdef
+    obtain ⟨rssz, rsval⟩ := rowAccum a b ni (by omega) 256 A ihsz
+    refine ⟨?_, ?_⟩
+    · show (rowSweep a b ni A).size = 256
+      rw [rowSweep_fold]; exact rssz
+    · intro m hm
+      rw [Finset.sum_range_succ]
+      show (((rowSweep a b ni A)[m]! : Nat) : ZMod q) = _
+      rw [rowSweep_fold, rsval m hm, ihval m hm]; ring
+
+/-- **THE NEGACYCLIC COEFFICIENT FORMULA** (`ℤ_q`, from the imperative double loop). For a size-256 slot `m`,
+`(schoolbookMul a b)_m = ∑_{i+j=m} a_i·b_j − ∑_{i+j=m+256} a_i·b_j` — the `X²⁵⁶+1` negacyclic convolution,
+proven from the actual accumulating writes (not `rfl`/`native_decide`). Axiom-clean. -/
+theorem schoolbookMul_getElem (a b : Poly) (m : Nat) (hm : m < 256) :
+    (((schoolbookMul a b)[m]! : Nat) : ZMod q)
+      = ∑ i ∈ range 256, ∑ j ∈ range 256, cJ a b i j m := by
+  rw [sbk_clean, sbk_outer]
+  obtain ⟨_, hval⟩ := outerAccum a b 256 (le_refl _) zeroPoly (by simp [zeroPoly])
+  rw [hval m hm, zeroPoly_cast, zero_add]
+
+/-- The negacyclic product preserves the 256-coefficient length. -/
+theorem schoolbookMul_size (a b : Poly) : (schoolbookMul a b).size = 256 := by
+  rw [sbk_clean, sbk_outer]
+  exact (outerAccum a b 256 (le_refl _) zeroPoly (by simp [zeroPoly])).1
+
+theorem RowStep_lt (a b : Poly) (i : Nat) (c : Poly) (j : Nat) (hc : ∀ (p:Nat), c[p]!<q) :
+    ∀ (p:Nat), (RowStep a b i c j)[p]! < q := by
+  unfold RowStep; split
+  · exact set!_lt _ _ _ hc (addQ_lt _ _)
+  · exact set!_lt _ _ _ hc (subQ_lt _ _)
+
+theorem foldl_RowStep_lt (a b : Poly) (i : Nat) :
+    ∀ (L : List Nat) (c : Poly), (∀ (p:Nat), c[p]!<q) →
+      ∀ (p:Nat), (List.foldl (RowStep a b i) c L)[p]!<q := by
+  intro L; induction L with
+  | nil => intro c hc p; simpa using hc p
+  | cons hd tl ih => intro c hc; exact ih _ (RowStep_lt a b i c hd hc)
+
+theorem rowSweep_lt (a b : Poly) (i : Nat) (c : Poly) (hc : ∀ (p:Nat), c[p]!<q) :
+    ∀ (p:Nat), (rowSweep a b i c)[p]!<q := by
+  rw [rowSweep_fold]; exact foldl_RowStep_lt a b i _ c hc
+
+theorem foldl_outer_lt (a b : Poly) :
+    ∀ (L : List Nat) (c : Poly), (∀ (p:Nat), c[p]!<q) →
+      ∀ (p:Nat), (List.foldl (fun c i => rowSweep a b i c) c L)[p]!<q := by
+  intro L; induction L with
+  | nil => intro c hc p; simpa using hc p
+  | cons hd tl ih => intro c hc; exact ih _ (rowSweep_lt a b hd c hc)
+
+/-- Every coefficient of the negacyclic product is reduced (`< q`) — the writes are all `addQ`/`subQ`. -/
+theorem schoolbookMul_lt (a b : Poly) : ∀ (p:Nat), (schoolbookMul a b)[p]!<q := by
+  rw [sbk_clean, sbk_outer]
+  exact foldl_outer_lt a b _ zeroPoly (fun p => by rw [zeroPoly_get p]; unfold q; omega)
+
 /-! ### RUNG 2, step 1 — THE OUTER-LOOP PEEL (`ntt = nttFold`), BUILT.
 
 The two OUTER loops of `ntt` (`for s in [0:8]`, `for blk in [0:nblk]`, threading the mutable pair `(a, k)`)
@@ -716,21 +952,31 @@ def InttInterpolates : Prop :=
 
 /-! ## PART 2 — the residual, decomposed into two standard NTT-correctness facts. -/
 
-/-- **Residual A — the inverse transform is a genuine left inverse.** `intt ∘ ntt = id` on all polys. -/
-def NttLeftInverse : Prop := ∀ c : Poly, intt (ntt c) = c
+/-- **Residual A — the inverse transform is a genuine left inverse** (size-256-guarded). `intt ∘ ntt = id`
+on canonical polys. The `∀`-over-all-`Poly` form is FALSE (a non-256 input keeps the wrong `Array` length);
+the guard is the operationally-correct statement (the deployed pipeline feeds only decoded size-256 arrays).
+This is the SINGLE remaining residual behind `RingRepFaithful` — the `intt` (Gentleman–Sande) interpolation
+induction, the mirror of `stage_inv` collapsed by `omega_orthogonality`. -/
+def NttLeftInverse : Prop := ∀ c : Poly, c.size = 256 → intt (ntt c) = c
 
 /-- **Residual B — `ntt` is a ring homomorphism** from the negacyclic ring `(Poly, schoolbookMul)` to the
-pointwise-product ring `(Poly, pointwiseMul)`: `ntt (a·b) = ntt a ⊙ ntt b`. -/
-def NttMulHom : Prop := ∀ a b : Poly, ntt (schoolbookMul a b) = pointwiseMul (ntt a) (ntt b)
+pointwise-product ring `(Poly, pointwiseMul)`: `ntt (a·b) = ntt a ⊙ ntt b` (size-256-guarded). **CLOSED**
+below (`nttMulHom_proven`): the forward butterfly network computes eval-at-the-roots (`nttEvalsAtRoots_canonical`),
+eval-at-a-negacyclic-root is multiplicative (`eval256_schoolbook`, collapsing the `∑_{i+j=m}−∑_{i+j=m+256}`
+convolution under `evalRoot^256 = −1`), and the pointwise ring is coordinatewise `ℤ_q` (`cast_pointwiseMul`). -/
+def NttMulHom : Prop := ∀ a b : Poly, a.size = 256 → b.size = 256 →
+  ntt (schoolbookMul a b) = pointwiseMul (ntt a) (ntt b)
 
 /-- **THE REDUCTION (axiom-clean).** `RingRepFaithful` — the ∀ NTT-faithfulness residual behind
 `verifyCore = spec` — follows from the two standard NTT-correctness facts above. Textbook: a transform-based
 multiply is correct exactly when the transform inverts and diagonalizes the convolution. Proof:
-`intt(ntt a ⊙ ntt b) = intt(ntt(a·b)) = a·b`. This does NOT prove `RingRepFaithful`; it reduces it to
-`NttLeftInverse` and `NttMulHom` (the open butterfly=DFT frontier — see the module header). -/
+`intt(ntt a ⊙ ntt b) = intt(ntt(a·b)) = a·b`, guards threaded via `schoolbookMul_size`. With `NttMulHom` now
+CLOSED (`nttMulHom_proven`), `ringRepFaithful_of_leftInverse` below reduces `RingRepFaithful` to the SINGLE
+`NttLeftInverse` residual. -/
 theorem ringRepFaithful_of (hInv : NttLeftInverse) (hHom : NttMulHom) : RingRepFaithful := by
-  intro a b
-  rw [← hHom, hInv]
+  intro a b ha hb
+  rw [← hHom a b ha hb]
+  exact hInv (schoolbookMul a b) (schoolbookMul_size a b)
 
 /-! ## PART 3 — NON-VACUITY: both residuals HOLD on a wraparound-exercising sample.
 
@@ -1163,6 +1409,168 @@ theorem nttEvalsAtRoots_canonical (a : Poly) (ha : a.size = 256) (m : Nat) (hm :
   rw [ntt_eq_fold, nttFold_eq, h, rootAt_final m hm]
   rfl
 
+/-! ### RUNG 2, step 3 — `NttMulHom` CLOSED: eval-at-a-negacyclic-root is multiplicative, so `ntt` is a
+genuine ring homomorphism (size-256-guarded).
+
+The forward transform sends coefficients to evaluations at the negacyclic roots (`nttEvalsAtRoots_canonical`).
+For a root `r` with `r²⁵⁶ = −1` (every `evalRoot m`, by `evalRoot_pow256`), evaluation is MULTIPLICATIVE on the
+negacyclic ring: the convolution `∑_{i+j=m} − ∑_{i+j=m+256}` (`schoolbookMul_getElem`) collapses — each pair
+`(i,j)` contributes `a_i·b_j·r^{i+j}` whether it lands below 256 (direct) or wraps (`r^{i+j} = −r^{i+j−256}`
+cancels the sign), giving `eval(a·b, r) = eval(a,r)·eval(b,r)`. Since the pointwise ring is coordinatewise `ℤ_q`
+(`cast_pointwiseMul`), both sides of `NttMulHom` agree at every slot in `ℤ_q`; a reduced-range (`< q`)
+injectivity argument lifts that to the `Array`-level equality. No `native_decide`. -/
+
+/-- Eval-at-a-fixed-root of one coefficient pair's contribution: `∑_m cJ(i,j,m)·r^m = a_i·b_j·r^{i+j}` — the
+single nonzero term, with the negacyclic wrap absorbed by `r²⁵⁶ = −1`. -/
+theorem inner_eval (a b : Poly) (r : ZMod q) (hr : r^256 = -1) (i j : Nat)
+    (hi : i < 256) (hj : j < 256) :
+    ∑ m ∈ range 256, cJ a b i j m * r^m
+      = ((a[i]! : Nat) : ZMod q) * ((b[j]! : Nat) : ZMod q) * r^(i+j) := by
+  by_cases hk : i + j < 256
+  · rw [Finset.sum_eq_single (i+j)]
+    · have : cJ a b i j (i+j) = ((a[i]! : Nat) : ZMod q) * ((b[j]! : Nat) : ZMod q) := by
+        unfold cJ; rw [if_pos rfl]
+      rw [this]
+    · intro m hmem hm
+      have hmlt : m < 256 := mem_range.mp hmem
+      have : cJ a b i j m = 0 := by unfold cJ; rw [if_neg (by omega), if_neg (by omega)]
+      rw [this, zero_mul]
+    · intro hmem; exact absurd (mem_range.mpr hk) hmem
+  · have hge : 256 ≤ i + j := by omega
+    set m0 := i + j - 256 with hm0
+    have hm0lt : m0 < 256 := by omega
+    rw [Finset.sum_eq_single m0]
+    · have hcj : cJ a b i j m0 = -(((a[i]! : Nat) : ZMod q) * ((b[j]! : Nat) : ZMod q)) := by
+        unfold cJ; rw [if_neg (by omega), if_pos (by omega)]
+      rw [hcj]
+      have hrij : r^(i+j) = -(r^m0) := by
+        have : i + j = m0 + 256 := by omega
+        rw [this, pow_add, hr]; ring
+      rw [hrij]; ring
+    · intro m hmem hm
+      have hmlt : m < 256 := mem_range.mp hmem
+      have : cJ a b i j m = 0 := by unfold cJ; rw [if_neg (by omega), if_neg (by omega)]
+      rw [this, zero_mul]
+    · intro hmem; exact absurd (mem_range.mpr hm0lt) hmem
+
+/-- **Eval-at-a-negacyclic-root is a ring homomorphism.** For `r²⁵⁶ = −1`,
+`eval256 (schoolbookMul a b) r = eval256 a r · eval256 b r`. The diagonalization heart of `NttMulHom`. -/
+theorem eval256_schoolbook (a b : Poly) (r : ZMod q) (hr : r^256 = -1) :
+    eval256 (schoolbookMul a b) r = eval256 a r * eval256 b r := by
+  have claim2 : eval256 a r * eval256 b r
+      = ∑ i ∈ range 256, ∑ j ∈ range 256,
+          ((a[i]! : Nat) : ZMod q) * ((b[j]! : Nat) : ZMod q) * r^(i+j) := by
+    unfold eval256
+    rw [Finset.sum_mul_sum]
+    apply Finset.sum_congr rfl; intro i _
+    apply Finset.sum_congr rfl; intro j _
+    rw [pow_add]; ring
+  rw [claim2]
+  unfold eval256
+  rw [Finset.sum_congr rfl (fun m hm => by
+    rw [schoolbookMul_getElem a b m (mem_range.mp hm)])]
+  rw [Finset.sum_congr rfl (fun m _ => by
+    rw [Finset.sum_mul, Finset.sum_congr rfl (fun i _ => Finset.sum_mul _ _ _)])]
+  rw [Finset.sum_comm]
+  apply Finset.sum_congr rfl; intro i hi
+  rw [Finset.sum_comm]
+  apply Finset.sum_congr rfl; intro j hj
+  exact inner_eval a b r hr i j (mem_range.mp hi) (mem_range.mp hj)
+
+/-! Reduced-range (`< q`) invariant for `ntt`'s output — every butterfly write is `addQ`/`subQ`/`mulModQ`, so
+the transform threads "all entries `< q`" from a reduced input. Needed to lift the `ℤ_q`-level agreement of the
+two `NttMulHom` sides to a `Nat`-`Array` equality (via `Nat`-cast injectivity on `[0, q)`). -/
+
+theorem bfStepC_lt (z len : Nat) (b : Poly) (j : Nat) (hb : ∀ (p:Nat), b[p]! < q) :
+    ∀ (p:Nat), (bfStepC z len b j)[p]! < q := by
+  unfold bfStepC
+  exact set!_lt _ _ _ (set!_lt _ _ _ hb (subQ_lt _ _)) (addQ_lt _ _)
+
+theorem foldl_bfStepC_lt (z len : Nat) :
+    ∀ (L : List Nat) (b : Poly), (∀ (p:Nat), b[p]!<q) →
+      ∀ (p:Nat), (List.foldl (bfStepC z len) b L)[p]! < q := by
+  intro L; induction L with
+  | nil => intro b hb p; simpa using hb p
+  | cons hd tl ih => intro b hb; exact ih _ (bfStepC_lt z len b hd hb)
+
+theorem bfSweep_lt (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) (h : ∀ (p:Nat), a0[p]!<q) :
+    ∀ (p:Nat), (bfSweep z start len a0)[p]! < q := by
+  rw [bfSweep_eq_foldl z start len hlen a0]; exact foldl_bfStepC_lt z len _ a0 h
+
+theorem foldl_blockFn_lt (s : Nat) (hs : s ≤ 7) :
+    ∀ (L : List Nat) (st : Poly × Nat), (∀ (p:Nat), st.1[p]!<q) →
+      ∀ (p:Nat), (List.foldl (blockFn s) st L).1[p]! < q := by
+  intro L; induction L with
+  | nil => intro st hst p; simpa using hst p
+  | cons hd tl ih =>
+    intro st hst
+    exact ih (blockFn s st hd) (fun p => by
+      unfold blockFn; exact bfSweep_lt _ _ _ (len_pos s hs) st.1 hst p)
+
+theorem stageStep_lt (s : Nat) (hs : s ≤ 7) (st : Poly × Nat) (hst : ∀ (p:Nat), st.1[p]!<q) :
+    ∀ (p:Nat), (stageStep s st).1[p]! < q := by
+  unfold stageStep; exact foldl_blockFn_lt s hs _ st hst
+
+theorem nttUpto_lt (w : Poly) (hw : ∀ (p:Nat), w[p]!<q) :
+    ∀ n, n ≤ 8 → ∀ (p:Nat), (nttUpto n w).1[p]! < q := by
+  intro n
+  induction n with
+  | zero => intro _ p; simpa [nttUpto] using hw p
+  | succ n ih =>
+    intro hn p
+    rw [nttUpto_succ]
+    exact stageStep_lt n (by omega) (nttUpto n w) (fun p => ih (by omega) p) p
+
+/-- Every coefficient of `ntt w` is reduced (`< q`) when the input is. -/
+theorem ntt_lt (w : Poly) (hw : ∀ (p:Nat), w[p]!<q) : ∀ (p:Nat), (ntt w)[p]! < q := by
+  intro p; rw [ntt_eq_fold, nttFold_eq]; exact nttUpto_lt w hw 8 (by omega) p
+
+/-- `ntt` preserves the 256-coefficient length (a corollary of `stage_inv`). -/
+theorem ntt_size (w : Poly) (hw : w.size = 256) : (ntt w).size = 256 := by
+  rw [ntt_eq_fold, nttFold_eq]; exact (stage_inv w hw 8 (by omega)).1
+
+/-- `Nat`-cast into `ℤ_q` is injective on the reduced range `[0, q)`. -/
+theorem natCast_inj_of_lt (x y : Nat) (hx : x < q) (hy : y < q)
+    (h : ((x:Nat):ZMod q) = ((y:Nat):ZMod q)) : x = y := by
+  rw [← ZMod.val_natCast_of_lt hx, ← ZMod.val_natCast_of_lt hy, h]
+
+/-- Entrywise `NttMulHom`: `(ntt (a·b))_m = (ntt a ⊙ ntt b)_m` at every canonical slot, via the `ℤ_q`
+diagonalization + reduced-range injectivity. -/
+theorem nttMul_entry (a b : Poly) (ha : a.size = 256) (hb : b.size = 256) (m : Nat) (hm : m < 256) :
+    (ntt (schoolbookMul a b))[m]! = (pointwiseMul (ntt a) (ntt b))[m]! := by
+  have hsab : (schoolbookMul a b).size = 256 := schoolbookMul_size a b
+  have hX : (ntt (schoolbookMul a b))[m]! < q := ntt_lt _ (schoolbookMul_lt a b) m
+  have hY : (pointwiseMul (ntt a) (ntt b))[m]! < q := by
+    rw [pointwiseMul_getElem _ _ m hm]; exact mulModQ_lt _ _
+  apply natCast_inj_of_lt _ _ hX hY
+  rw [nttEvalsAtRoots_canonical (schoolbookMul a b) hsab m hm,
+      eval256_schoolbook a b (evalRoot m) (evalRoot_pow256 m),
+      cast_pointwiseMul (ntt a) (ntt b) m hm,
+      nttEvalsAtRoots_canonical a ha m hm, nttEvalsAtRoots_canonical b hb m hm]
+
+/-- **`NttMulHom` CLOSED (size-256-guarded).** `ntt (schoolbookMul a b) = pointwiseMul (ntt a) (ntt b)` for all
+canonical `a, b` — the NTT is a proven ring homomorphism from the negacyclic ring to the pointwise-product ring,
+for-all, no `native_decide`. -/
+theorem nttMulHom_guarded (a b : Poly) (ha : a.size = 256) (hb : b.size = 256) :
+    ntt (schoolbookMul a b) = pointwiseMul (ntt a) (ntt b) := by
+  have hsab : (schoolbookMul a b).size = 256 := schoolbookMul_size a b
+  apply Array.ext
+  · rw [ntt_size _ hsab, pointwiseMul_size]
+  · intro m h1 _
+    have hm : m < 256 := by rw [ntt_size _ hsab] at h1; exact h1
+    rw [(getElem!_pos (ntt (schoolbookMul a b)) m (by rw [ntt_size _ hsab]; exact hm)).symm,
+        (getElem!_pos (pointwiseMul (ntt a) (ntt b)) m (by rw [pointwiseMul_size]; exact hm)).symm]
+    exact nttMul_entry a b ha hb m hm
+
+/-- `NttMulHom` (the guarded `Prop`) is discharged. -/
+theorem nttMulHom_proven : NttMulHom := fun a b ha hb => nttMulHom_guarded a b ha hb
+
+/-- **`RingRepFaithful` reduced to the SINGLE `NttLeftInverse` residual.** With `NttMulHom` closed, the whole
+NTT-faithfulness bridge behind `verifyCore = spec` now rests on exactly one open leg: `intt ∘ ntt = id` on
+canonical polys (the `intt` interpolation induction, mirror of `stage_inv`). -/
+theorem ringRepFaithful_of_leftInverse (hInv : NttLeftInverse) :
+    Dregg2.Crypto.VerifyCoreSpec.RingRepFaithful :=
+  ringRepFaithful_of hInv nttMulHom_proven
 
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
@@ -1187,5 +1595,14 @@ deliberately NOT gated here — it is the accepted computational residual, isola
 #assert_axioms block_char
 #assert_axioms stage_inv
 #assert_axioms nttEvalsAtRoots_canonical
+#assert_axioms schoolbookMul_getElem
+#assert_axioms schoolbookMul_size
+#assert_axioms schoolbookMul_lt
+#assert_axioms eval256_schoolbook
+#assert_axioms ntt_lt
+#assert_axioms nttMulHom_guarded
+#assert_axioms nttMulHom_proven
+#assert_axioms ringRepFaithful_of
+#assert_axioms ringRepFaithful_of_leftInverse
 
 end Dregg2.Crypto.MlDsaRing

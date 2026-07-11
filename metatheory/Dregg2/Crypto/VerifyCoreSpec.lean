@@ -166,7 +166,8 @@ ALL poly pairs. Today only `MlDsaRing.ntt_computes_negacyclic_mul` (one `native_
 this is the ∀-lift, a real NTT-correctness proof liftable from Mathlib's DFT/roots-of-unity machinery. It is
 exactly what turns verifyCore's `intt(Σ Â⊙ntt(z) − ĉ⊙ntt(2^d·t1))` into the spec's `A·z − c·t1·2^d`. -/
 def RingRepFaithful : Prop :=
-  ∀ a b : Poly, intt (pointwiseMul (ntt a) (ntt b)) = schoolbookMul a b
+  ∀ a b : Poly, a.size = 256 → b.size = 256 →
+    intt (pointwiseMul (ntt a) (ntt b)) = schoolbookMul a b
 
 /-- **RESIDUAL (decode semantics).** `pkDecode`/`sigDecode` recover the STRUCTURED values the spec
 quantifies over. `MlDsaCodec.pk_roundtrip`/`sig_roundtrip` give `decode∘encode = id` on the KAT bytes only
