@@ -178,16 +178,27 @@ the light client reads off the proof; it is FORCED, extracted directly from the 
 `attenuateGenuineNonAmp_in_circuit`. -/
 
 /-- **`attenuate_nonAmp_forced` — the in-circuit non-amplification (FORCED).** A witness satisfying the
-genuine-non-amp descriptor's per-row constraints FORCES, for every mask bit `i`, `grantedBit i = 0 ∨
-heldBit i = 1` — i.e. `granted ⊑ held` on the bound `rights` felt. Since the granted bits reconstruct
-the `rights` the recompute binds into `cap_root`, a verifying proof genuinely means the attenuation did
-NOT amplify. -/
+genuine-non-amp descriptor's per-row constraints, WITH the two bound bit cells CANONICAL (`0 ≤ bit < p`,
+the BabyBear prime `p = 2013265921` — what the deployed range check supplies), FORCES for every mask bit
+`i`, `grantedBit i = 0 ∨ heldBit i = 1` — i.e. `granted ⊑ held` on the bound `rights` felt.
+
+The gate the descriptor carries is the mod-`p` submask AND-gate `grantedᵢ·(1 − heldᵢ) ≡ 0 [ZMOD p]`. Over
+`ZMod p` a boolean gate pins each bit to `{0,1}` only up to `≡ [ZMOD p]`; the EXACT-`ℤ` conclusion needs
+canonicality, so `hgc`/`hhc` (the range facts `0 ≤ granted/heldᵢ < p`) are threaded in — the same
+preconditions the sibling keystones (`capReshape_nonAmp_in_circuit`, `capDeleg_nonAmp_in_circuit`) carry.
+With them, primality of `p` splits `p ∣ grantedᵢ·(1 − heldᵢ)` into `grantedᵢ = 0 ∨ heldᵢ = 1` exactly —
+the faithful mod-`p` non-amplification. Since the granted bits reconstruct the `rights` the recompute
+binds into `cap_root`, a verifying proof genuinely means the attenuation did NOT amplify. -/
 theorem attenuate_nonAmp_forced (env : VmRowEnv)
     (hcon : ∀ c ∈ attenuateVmDescriptorGenuineNonAmp.constraints, c.holdsVm env false false)
-    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS) :
+    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS)
+    (hgc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) < 2013265921)
+    (hhc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) < 2013265921) :
     env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) = 0
     ∨ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) = 1 :=
-  attenuateGenuineNonAmp_in_circuit env hcon i hi
+  attenuateGenuineNonAmp_in_circuit env hcon i hi hgc hhc
 
 /-! ## §3 — the per-cell GENUINE post-state is FORCED (recompute + frame freeze).
 
