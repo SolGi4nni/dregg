@@ -21,14 +21,18 @@
 //! wall is NOT present. The non-streaming `converse` endpoint returns a single JSON body (not
 //! SSE), so disclosure reads it exactly as the local path does.
 //!
-//! **Honest spike caveat:** the notary here runs IN-PROCESS (a real 2PC party that co-derives the
-//! session keys and sees no plaintext — still a genuine MPC-TLS attestation of the Bedrock
-//! session). Production provenance additionally needs the notary hosted as a SEPARATE party
-//! (a deploy step, not a crypto gap): the Bedrock session itself is 100% real here.
+//! **Separate hosted notary (Phase-E gap closed).** The notary is now a SEPARATE party
+//! ([`crate::notary_server`]): it runs as a distinct tokio task on a real TCP socket, owns a
+//! signing key the prover never sees, and the prover reaches it only by address. A verifier
+//! trusts an attestation iff its embedded verifying key equals the notary's **pinned** public
+//! key ([`verify_bedrock_presentation`] enforces this — a wrong/unpinned notary is rejected),
+//! so a dishonest prover can no longer sign its own attestation. The residual is pure infra:
+//! hosting that notary at a real internet address and distributing its key out-of-band.
 
 #![cfg(feature = "tlsn-live")]
 
 use std::future::IntoFuture;
+use std::net::SocketAddr;
 
 use anyhow::{Context, Result, anyhow};
 use futures::io::{AsyncReadExt as _, AsyncWriteExt as _};
@@ -41,30 +45,35 @@ use tokio_util::compat::{FuturesAsyncReadCompatExt, TokioAsyncReadCompatExt};
 use tlsn::{
     Session,
     attestation::{
-        Attestation, AttestationConfig, CryptoProvider,
+        Attestation, CryptoProvider,
         presentation::{Presentation, PresentationOutput},
         request::{Request as AttestationRequest, RequestConfig},
-        signing::Secp256k1Signer,
+        signing::VerifyingKey,
     },
     config::{
         prove::ProveConfig, prover::ProverConfig, tls::TlsClientConfig,
-        tls_commit::mpc::MpcTlsConfig, verifier::VerifierConfig,
+        tls_commit::mpc::MpcTlsConfig,
     },
-    connection::{CertBinding, ConnectionInfo, HandshakeData, ServerName, TranscriptLength},
+    connection::{HandshakeData, ServerName},
     prover::ProverOutput,
-    transcript::{ContentType, TranscriptCommitConfig},
-    verifier::{ServerCertVerifier, VerifierCommitStart, VerifierOutput},
+    transcript::TranscriptCommitConfig,
+    verifier::ServerCertVerifier,
     webpki::RootCertStore,
 };
 use tlsn_formats::http::{DefaultHttpCommitter, HttpCommit, HttpTranscript};
 
+use crate::notary_server::{HostedNotary, NotaryPin, generate_notary_key, spawn_hosted_notary};
 use crate::sigv4::{AwsCredentials, SignRequest, sign};
 use crate::tlsn_live::VerifiedResponse;
 
-// The 2PC preprocesses these bounds. A short (maxTokens-capped) Claude completion + Amazon's
-// response headers fit well under 32 KiB; the request is a small signed POST.
+// The 2PC preprocesses these bounds; cost (OT/garbling volume, memory, wall-clock) scales
+// ~linearly with them. The request is a small signed POST, so `MAX_SENT_DATA` stays at 4 KiB.
+// `MAX_RECV_DATA` is raised to 64 KiB (from the earlier 32 KiB) so a FULL-LENGTH narration
+// (512–1024 output tokens ≈ a few KiB of body + Amazon's response headers) fits with generous
+// headroom — the tradeoff is ~2× the preprocessing of the old bound, still tractable for the
+// ignored live test.
 const MAX_SENT_DATA: usize = 1 << 12;
-const MAX_RECV_DATA: usize = 1 << 15;
+const MAX_RECV_DATA: usize = 1 << 16;
 
 /// A live Bedrock `converse` exchange to attest. The model id, region, and prompt are the app's;
 /// the credential is the secret hidden by selective disclosure.
@@ -97,102 +106,31 @@ impl BedrockExchange {
     }
 }
 
-/// A completed real roundtrip against live Bedrock: the verified response + the raw presentation.
+/// A completed real roundtrip against live Bedrock: the verified response + the raw
+/// presentation + the SEPARATE notary's pin (address + pinned verifying key) it was attested
+/// under.
 #[derive(Clone, Debug)]
 pub struct BedrockRoundtrip {
     pub verified: VerifiedResponse,
     pub presentation_bytes: Vec<u8>,
     pub pinned_server: String,
+    /// The separate hosted notary's pin (socket + pinned public key) this attestation binds to.
+    pub notary_pin: NotaryPin,
+    /// Architectural marker: the notary ran as a SEPARATE party over a socket (never in-process).
+    pub separate_notary: bool,
 }
 
-/// The in-process notary — a real tlsn verifier running the MPC-TLS commitment protocol and
-/// signing a secp256k1 `Attestation`. Verifies the server cert against the Mozilla roots (so it
-/// binds an attestation to the REAL Amazon-authenticated session). Identical in spirit to
-/// [`crate::tlsn_live`]'s notary, but with the webpki root store.
-async fn notary<S>(socket: S) -> Result<()>
-where
-    S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Send + Sync + Unpin + 'static,
-{
-    let session = Session::new(socket.compat());
-    let (driver, mut handle) = session.split();
-    let driver_task = tokio::spawn(driver);
-
-    let verifier_config = VerifierConfig::builder()
-        .root_store(RootCertStore::mozilla())
-        .build()?;
-
-    let verifier = match handle.new_verifier(verifier_config)?.commit().await? {
-        VerifierCommitStart::Mpc(verifier) => verifier.accept().await?.run().await?,
-        VerifierCommitStart::Proxy(verifier) => {
-            verifier.reject(Some("expecting MPC-TLS")).await?;
-            return Err(anyhow!("notary rejected non-MPC configuration"));
-        }
-    };
-
-    let (
-        VerifierOutput {
-            transcript_commitments,
-            ..
-        },
-        verifier,
-    ) = verifier.verify().await?.accept().await?;
-
-    let tls_transcript = verifier.tls_transcript().clone();
-    verifier.close().await?;
-
-    let sent_len: usize = tls_transcript
-        .sent()
-        .iter()
-        .filter_map(|r| (r.typ == ContentType::ApplicationData).then_some(r.ciphertext.len()))
-        .sum();
-    let recv_len: usize = tls_transcript
-        .recv()
-        .iter()
-        .filter_map(|r| (r.typ == ContentType::ApplicationData).then_some(r.ciphertext.len()))
-        .sum();
-
-    handle.close();
-    let mut socket = driver_task.await??;
-
-    let mut request_bytes = Vec::new();
-    socket.read_to_end(&mut request_bytes).await?;
-    let request: AttestationRequest = bincode::deserialize(&request_bytes)?;
-
-    let signing_key = k256::ecdsa::SigningKey::from_bytes(&[1u8; 32].into())?;
-    let signer = Box::new(Secp256k1Signer::new(&signing_key.to_bytes())?);
-    let mut provider = CryptoProvider::default();
-    provider.signer.set_signer(signer);
-
-    let mut att_config_builder = AttestationConfig::builder();
-    att_config_builder.supported_signature_algs(Vec::from_iter(provider.signer.supported_algs()));
-    let att_config = att_config_builder.build()?;
-
-    let CertBinding::V1_2(binding) = tls_transcript.certificate_binding() else {
-        return Err(anyhow!("unsupported cert binding version"));
-    };
-    let mut builder = Attestation::builder(&att_config).accept_request(request)?;
-    builder
-        .connection_info(ConnectionInfo {
-            time: tls_transcript.time(),
-            version: tls_transcript.version(),
-            transcript_length: TranscriptLength {
-                sent: sent_len as u32,
-                received: recv_len as u32,
-            },
-        })
-        .server_ephemeral_key(binding.server_ephemeral_key.clone())
-        .transcript_commitments(transcript_commitments);
-
-    let attestation = builder.build(&provider)?;
-    socket.write_all(&bincode::serialize(&attestation)?).await?;
-    socket.close().await?;
-    Ok(())
-}
-
-/// **Run the REAL MPC-TLS 2PC prover against live Bedrock** and produce a signed presentation.
-async fn prove_bedrock_presentation(ex: &BedrockExchange) -> Result<Vec<u8>> {
-    let (notary_socket, prover_notary_socket) = tokio::io::duplex(1 << 24);
-    let notary_task = tokio::spawn(notary(notary_socket));
+/// **Run the REAL MPC-TLS 2PC prover against live Bedrock**, connecting to a SEPARATE hosted
+/// notary at `notary_addr` (over a real TCP socket — the prover never holds the notary's key),
+/// and produce a signed presentation.
+async fn prove_bedrock_presentation(
+    ex: &BedrockExchange,
+    notary_addr: SocketAddr,
+) -> Result<Vec<u8>> {
+    // Connect to the SEPARATE notary party over a real socket (not an in-process duplex).
+    let prover_notary_socket = tokio::net::TcpStream::connect(notary_addr)
+        .await
+        .with_context(|| format!("connect to separate notary at {notary_addr}"))?;
 
     let session = Session::new(prover_notary_socket.compat());
     let (driver, mut handle) = session.split();
@@ -343,19 +281,37 @@ async fn prove_bedrock_presentation(ex: &BedrockExchange) -> Result<Vec<u8>> {
     let presentation: Presentation = pres_builder.build()?;
     let bytes = bincode::serialize(&presentation)?;
 
-    notary_task.await??;
     Ok(bytes)
 }
 
-/// Verify a real Bedrock presentation against the Mozilla roots and pin the Bedrock host,
-/// extracting the authenticated response body (Claude's genuine completion) with the SigV4
-/// `authorization` value redacted to `X`.
+/// Verify a real Bedrock presentation against the Mozilla roots, **pin the SEPARATE notary's
+/// verifying key** (reject any attestation not signed by the trusted notary), pin the Bedrock
+/// host, and extract the authenticated response body (Claude's genuine completion) with the
+/// SigV4 `authorization` value redacted to `X`.
+///
+/// `expected_notary_key` is the out-of-band trust anchor: `presentation.verify()` only checks
+/// the attestation's signature is self-consistent with its *embedded* key, so THIS function is
+/// where the notary is actually trusted — a wrong/unpinned notary key is refused before the
+/// body is believed.
 pub fn verify_bedrock_presentation(
     presentation_bytes: &[u8],
     expected_host: &str,
+    expected_notary_key: &VerifyingKey,
 ) -> Result<VerifiedResponse> {
     let presentation: Presentation =
         bincode::deserialize(presentation_bytes).context("presentation does not deserialize")?;
+
+    // PIN THE NOTARY: the embedded verifying key must be exactly the notary we trust.
+    let presented_key = presentation.verifying_key().clone();
+    if &presented_key != expected_notary_key {
+        return Err(anyhow!(
+            "notary pin: presentation signed by an untrusted notary key (got alg={} len={}, expected alg={} len={})",
+            presented_key.alg,
+            presented_key.data.len(),
+            expected_notary_key.alg,
+            expected_notary_key.data.len(),
+        ));
+    }
 
     let crypto_provider = CryptoProvider {
         cert: ServerCertVerifier::mozilla(),
@@ -366,10 +322,18 @@ pub fn verify_bedrock_presentation(
         server_name,
         connection_info,
         transcript,
+        attestation,
         ..
     } = presentation
         .verify(&crypto_provider)
         .map_err(|e| anyhow!("presentation.verify() refused: {e}"))?;
+
+    // Defense in depth: after verify(), re-confirm the (now signature-checked) key is the pin.
+    if attestation.body.verifying_key() != expected_notary_key {
+        return Err(anyhow!(
+            "notary pin: verified attestation key does not match the pinned notary key"
+        ));
+    }
 
     let server_name = server_name.context("no authenticated server name")?;
     let ServerName::Dns(dns) = server_name;
@@ -400,18 +364,39 @@ pub fn verify_bedrock_presentation(
     })
 }
 
-/// **Run the full REAL Bedrock MPC-TLS roundtrip**, then verify + extract the disclosed body.
+/// **Run the full REAL Bedrock MPC-TLS roundtrip against a SEPARATE hosted notary**, then
+/// verify (pinning the notary's key + the Bedrock host) and extract the disclosed body.
 /// Blocking: stands up its own multi-thread runtime. Requires live network + AWS creds.
+///
+/// The notary is spawned as a distinct party on a real localhost socket, owning a fresh
+/// OS-random signing key the prover never sees; the returned [`BedrockRoundtrip::notary_pin`]
+/// carries the pinned public key the attestation was verified under.
 pub fn run_bedrock_roundtrip_blocking(ex: &BedrockExchange) -> Result<BedrockRoundtrip> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
         .build()?;
-    let presentation_bytes = rt.block_on(prove_bedrock_presentation(ex))?;
-    let verified = verify_bedrock_presentation(&presentation_bytes, &ex.host)?;
-    Ok(BedrockRoundtrip {
-        verified,
-        presentation_bytes,
-        pinned_server: ex.host.clone(),
+    rt.block_on(async {
+        // Stand up the SEPARATE notary party: it owns a fresh key; we only learn its address
+        // and its public (pinned) key.
+        let notary_key = generate_notary_key()?;
+        let notary: HostedNotary = spawn_hosted_notary(notary_key, 1).await?;
+        let pin = notary.pin().clone();
+
+        // The prover reaches the notary ONLY by address.
+        let presentation_bytes = prove_bedrock_presentation(ex, pin.addr).await?;
+        notary.join().await?;
+
+        // Verify under the PINNED notary key (a wrong key would be rejected).
+        let verified =
+            verify_bedrock_presentation(&presentation_bytes, &ex.host, &pin.verifying_key)?;
+
+        Ok(BedrockRoundtrip {
+            verified,
+            presentation_bytes,
+            pinned_server: ex.host.clone(),
+            notary_pin: pin,
+            separate_notary: true,
+        })
     })
 }
 

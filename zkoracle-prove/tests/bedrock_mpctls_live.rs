@@ -16,9 +16,11 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use dregg_zkoracle_prove::notary_server::{generate_notary_key, verifying_key_of};
 use dregg_zkoracle_prove::sigv4::AwsCredentials;
 use dregg_zkoracle_prove::tlsn_bedrock::{
     BedrockExchange, authorization_hidden, run_bedrock_roundtrip_blocking,
+    verify_bedrock_presentation,
 };
 
 fn amz_date(unix: u64) -> String {
@@ -86,5 +88,111 @@ fn bedrock_mpctls_attests_real_claude_output() {
     assert!(
         disclosed.contains("\"output\"") || disclosed.contains("\"message\""),
         "the disclosed body is a genuine Bedrock converse response"
+    );
+}
+
+/// Parse `usage.outputTokens` out of a Bedrock `converse` response body.
+fn output_tokens(body: &[u8]) -> Option<u64> {
+    let v: serde_json::Value = serde_json::from_slice(body).ok()?;
+    v.get("usage")?.get("outputTokens")?.as_u64()
+}
+
+/// **The Phase-E gap closed, DRIVEN.** The prover runs a REAL Bedrock MPC-TLS session against a
+/// SEPARATE notary party (a distinct task on a real localhost socket, owning a key the prover
+/// never sees). The presentation verifies ONLY under the notary's PINNED verifying key — a
+/// wrong key is rejected (non-vacuous) — and the disclosed body is a FULL-LENGTH (>64-token)
+/// genuine Claude completion with the SigV4 credential hidden.
+#[test]
+#[ignore = "live: real network + paid Bedrock call + heavy MPC-TLS 2PC against a separate notary"]
+fn bedrock_attested_by_separate_pinned_notary() {
+    let creds = AwsCredentials {
+        access_key_id: std::env::var("AWS_ACCESS_KEY_ID").expect("AWS_ACCESS_KEY_ID"),
+        secret_access_key: std::env::var("AWS_SECRET_ACCESS_KEY").expect("AWS_SECRET_ACCESS_KEY"),
+    };
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .unwrap()
+        .as_secs();
+
+    let host = "bedrock-runtime.us-east-1.amazonaws.com".to_string();
+    // A FULL-LENGTH narration: maxTokens far above the old 64-token cap. Fits the raised
+    // MAX_RECV_DATA (64 KiB) with headroom.
+    let body = r#"{"messages":[{"role":"user","content":[{"text":"I raise the lantern and wade deeper into the drowned vault. Narrate the next four rooms I discover in rich, vivid detail — the water, the ruined shrines, what glints beneath the surface, and the thing that stirs in the dark."}]}],"system":[{"text":"You are the dungeon master of a drowned dark-fantasy vault. Narrate immersively."}],"inferenceConfig":{"maxTokens":768}}"#;
+
+    let ex = BedrockExchange {
+        host: host.clone(),
+        region: "us-east-1".to_string(),
+        model_id: "us.anthropic.claude-haiku-4-5-20251001-v1:0".to_string(),
+        request_body: body.to_string(),
+        creds,
+        amz_date: amz_date(now),
+    };
+
+    // Runs the prover against a SEPARATE hosted notary party; verifies under its PINNED key.
+    let rt = run_bedrock_roundtrip_blocking(&ex)
+        .expect("real Bedrock MPC-TLS roundtrip via a separate pinned notary");
+
+    let disclosed = String::from_utf8_lossy(&rt.verified.response_body);
+    let tokens = output_tokens(&rt.verified.response_body);
+
+    eprintln!("── PHASE-E: SEPARATE PINNED NOTARY ATTESTS LIVE BEDROCK ─────────");
+    eprintln!("separate-notary : {}", rt.separate_notary);
+    eprintln!("notary socket   : {}", rt.notary_pin.addr);
+    eprintln!("pinned-key (fp) : {}", rt.notary_pin.key_fingerprint());
+    eprintln!("pinned server   : {}", rt.verified.server_name);
+    eprintln!("session time    : {}", rt.verified.connection_time);
+    eprintln!(
+        "auth hidden     : {}",
+        authorization_hidden(&rt.verified.sent_redacted)
+    );
+    eprintln!("presentation    : {} bytes", rt.presentation_bytes.len());
+    eprintln!("output tokens   : {tokens:?}");
+    eprintln!("── DISCLOSED BODY (Claude's genuine in-session output) ──────────");
+    eprintln!("{disclosed}");
+    eprintln!("────────────────────────────────────────────────────────────────");
+
+    // 1. The notary is a SEPARATE party.
+    assert!(rt.separate_notary, "notary must be a separate hosted party");
+
+    // 2. The presentation verifies under the PINNED notary key.
+    let ok =
+        verify_bedrock_presentation(&rt.presentation_bytes, &host, &rt.notary_pin.verifying_key);
+    assert!(
+        ok.is_ok(),
+        "presentation must verify under the PINNED notary key: {ok:?}"
+    );
+
+    // 3. A WRONG notary key is REJECTED (non-vacuous pin — an independent key must fail).
+    let wrong_key =
+        verifying_key_of(&generate_notary_key().expect("wrong key")).expect("wrong verifying key");
+    assert_ne!(
+        wrong_key, rt.notary_pin.verifying_key,
+        "the wrong key must differ from the pin"
+    );
+    let rejected = verify_bedrock_presentation(&rt.presentation_bytes, &host, &wrong_key);
+    assert!(
+        rejected.is_err(),
+        "a presentation signed by the trusted notary must be REJECTED under a wrong/unpinned key"
+    );
+    eprintln!(
+        "wrong-key rejected: true  (err = {})",
+        rejected.unwrap_err()
+    );
+
+    // 4. Server pinned to Bedrock; SigV4 credential hidden.
+    assert_eq!(rt.verified.server_name, host, "server pinned to Bedrock");
+    assert!(
+        authorization_hidden(&rt.verified.sent_redacted),
+        "the SigV4 Authorization credential must be hidden by selective disclosure"
+    );
+
+    // 5. A genuine converse response, and a FULL-LENGTH (>64-token) completion.
+    assert!(
+        disclosed.contains("\"output\"") || disclosed.contains("\"message\""),
+        "the disclosed body is a genuine Bedrock converse response"
+    );
+    assert!(
+        tokens.map(|t| t > 64).unwrap_or(false),
+        "a full-length completion (>64 output tokens) must be attested; got {tokens:?}"
     );
 }

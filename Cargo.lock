@@ -6435,6 +6435,7 @@ dependencies = [
  "collective-choice",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-turn",
  "dregg-zkoracle-prove",
  "spween",
  "spween-dregg",

@@ -39,6 +39,8 @@ pub mod authentic;
 pub mod cfg;
 pub mod endpoints;
 pub mod injection;
+#[cfg(feature = "tlsn-live")]
+pub mod notary_server;
 pub mod sigv4;
 #[cfg(feature = "tlsn-live")]
 pub mod tlsn_bedrock;
