@@ -1,0 +1,11 @@
+{
+  "description": "Fiat-Shamir transcript fixture: the EXACT challenger the dregg Rust verifier uses (p3_challenger::DuplexChallenger<BabyBear, Poseidon2BabyBear<16>, WIDTH=16, RATE=8> over Plonky3 default_babybear_poseidon2_16). Protocol: (1) fresh challenger, sponge_state = [0; 16]; (2) observe the byte values 0..16 as field elements, in order - each observe buffers one input, and when 8 are buffered a duplexing fires: the 8 buffered inputs OVERWRITE state[0..8] (capacity state[8..16] untouched), the Poseidon2 width-16 permutation is applied, and the output buffer becomes state[0..8]; 16 observes = exactly two permutations; (3) sample 8 base-field challenges - each sample POPS FROM THE END of the output buffer, so challenges[i] = final_sponge_state[7 - i]; no third permutation fires. All values are canonical decimal residues below the modulus.",
+  "field": "BabyBear",
+  "modulus": "2013265921",
+  "permutation": "Poseidon2 width-16 (Plonky3 default_babybear_poseidon2_16, workspace-pinned rev 82cfad73cd734d37a0d51953094f970c531817ec)",
+  "width": 16,
+  "rate": 8,
+  "absorbed": ["0", "1", "2", "3", "4", "5", "6", "7", "8", "9", "10", "11", "12", "13", "14", "15"],
+  "challenges": ["1917944385", "1028837269", "546488453", "341748543", "764831861", "1787535874", "260560799", "568621648"],
+  "final_sponge_state": ["568621648", "260560799", "1787535874", "764831861", "341748543", "546488453", "1028837269", "1917944385", "1836749878", "1198623836", "409568987", "886816356", "1288726660", "89235538", "1517922321", "1200779162"]
+}

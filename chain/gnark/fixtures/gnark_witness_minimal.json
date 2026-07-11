@@ -1,0 +1,14 @@
+{
+  "version": 1,
+  "envelope_version": 3,
+  "vk_anchor_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "claimed_vk_fingerprint_hex": "5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a5a",
+  "publics": {
+    "genesis_root": [1000, 1001, 1002, 1003, 1004, 1005, 1006, 1007],
+    "final_root": [2000, 2001, 2002, 2003, 2004, 2005, 2006, 2007],
+    "num_turns": 4242,
+    "chain_digest": [3000, 3001, 3002, 3003, 3004, 3005, 3006, 3007]
+  },
+  "public_input_vector": ["1000", "1001", "1002", "1003", "1004", "1005", "1006", "1007", "2000", "2001", "2002", "2003", "2004", "2005", "2006", "2007", "4242", "3000", "3001", "3002", "3003", "3004", "3005", "3006", "3007"],
+  "root_proof_hex": "abababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababababab"
+}

@@ -27,6 +27,8 @@ pub mod deco_leaf_adapter;
 pub mod dsl_leaf_adapter;
 pub mod effect_vm_p3_air;
 pub mod factory_leaf_adapter;
+pub mod gnark_witness_export;
+pub use gnark_witness_export::export_gnark_witness_json;
 pub mod hatchery_leaf_adapter;
 pub mod ivc_turn_chain;
 pub mod joint_turn_aggregation;

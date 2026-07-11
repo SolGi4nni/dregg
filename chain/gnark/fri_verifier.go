@@ -1,4 +1,4 @@
-// Package friverifier is the SKELETON of dregg's native Ethereum wrap circuit.
+// Package friverifier is dregg's native Ethereum wrap circuit.
 //
 // It defines, as a gnark frontend.Circuit over BN254, the three teeth of
 //
@@ -10,30 +10,37 @@
 // resulting Groth16/BN254 proof is checked by IDreggSettlement.settle for
 // ~250-300k gas. See docs/deos/ETH-NATIVE-WRAP.md.
 //
-// STATUS: interface spec. The gadget bodies are the load-bearing work
-// (docs/deos/ETH-NATIVE-WRAP.md §4) and are intentionally unimplemented here.
+// STATUS: gadget layer landed (babybear.go, babybear_ext.go,
+// poseidon2_w16.go) + the pinned public-input contract and tooth 3 wired
+// below. Teeth 1-2 (VK pin, the batch-STARK/FRI verification itself) are the
+// remaining milestone-2 work.
 package friverifier
 
 import "github.com/consensys/gnark/frontend"
 
-// BabyBear is the prime p = 2^31 - 2^27 + 1 = 2013265921. Each BabyBear element
-// embeds losslessly into one BN254 scalar variable (31 << 254); the only
-// in-circuit cost is keeping values canonical (reduce mod p), a few range-checks
-// + a conditional subtract — the cheap "small modulus in a big field" regime.
-const BabyBearP = uint64(2013265921)
+// DigestWidth is the number of BabyBear lanes in each root/digest of the
+// pinned 25-lane public-input contract (see Publics).
+const DigestWidth = 8
 
-// SegDigestWidth mirrors circuit-prove/src/ivc_turn_chain.rs:249 (SEG_DIGEST_WIDTH).
-const SegDigestWidth = 4
+// NumPublicInputs is the pinned public-input lane count:
+// genesis_root[8] ++ final_root[8] ++ num_turns ++ chain_digest[8] = 25.
+const NumPublicInputs = 3*DigestWidth + 1
 
-// Publics are the four WholeChainProof public inputs
-// (circuit-prove/src/ivc_turn_chain.rs:1296-1304), each a BabyBear element
-// carried as a BN254 variable and exposed as a Groth16 public input. They match
-// EthPublicInputs (bridge/src/ethereum.rs:260) word-for-word.
+// Publics are the wrap circuit's Groth16 public inputs, in the EXACT pinned
+// 25-lane order shared with the Solidity side:
+//
+//	genesis_root[0..8] ++ final_root[0..8] ++ num_turns ++ chain_digest[0..8]
+//
+// Every lane is a canonical BabyBear residue (strictly < 0x78000001 =
+// 2013265921); Define enforces this fail-closed. The Solidity ABI shape is
+// (uint32[8] genesisRoot, uint32[8] finalRoot, uint32 numTurns,
+// uint32[8] chainDigest). gnark exposes public inputs in struct field order,
+// which matches the pinned order below.
 type Publics struct {
-	GenesisRoot frontend.Variable                  `gnark:",public"`
-	FinalRoot   frontend.Variable                  `gnark:",public"`
-	NumTurns    frontend.Variable                  `gnark:",public"`
-	ChainDigest [SegDigestWidth]frontend.Variable  `gnark:",public"`
+	GenesisRoot [DigestWidth]frontend.Variable `gnark:",public"`
+	FinalRoot   [DigestWidth]frontend.Variable `gnark:",public"`
+	NumTurns    frontend.Variable              `gnark:",public"`
+	ChainDigest [DigestWidth]frontend.Variable `gnark:",public"`
 }
 
 // RootProofWitness is the flat field-element view of a
@@ -56,14 +63,14 @@ type RootProofWitness struct {
 	QueryOpenings []frontend.Variable
 	// FRI final polynomial coefficients.
 	FriFinalPoly []frontend.Variable
-	// The expose_claim table's exposed segment [first_old, last_new, count,
-	// acc_0..acc_3] (tooth 3 compares this to Publics).
-	ExposedSegment [3 + SegDigestWidth]frontend.Variable
+	// The expose_claim table's exposed segment, in the pinned 25-lane order
+	// (tooth 3 compares this to Publics lane by lane).
+	ExposedSegment [NumPublicInputs]frontend.Variable
 	// (… trace/quotient openings, logup bus values, NPO Poseidon2 rows, etc.)
 }
 
 // Circuit is the native wrap statement: "this root proof verifies AND exposes
-// exactly these four public inputs."
+// exactly these public inputs."
 type Circuit struct {
 	Publics
 	Root RootProofWitness
@@ -74,39 +81,56 @@ type Circuit struct {
 // per-instance check reduces to structural equality and the blake3 fingerprint
 // stays out of band — see ETH-NATIVE-WRAP.md §4.
 func (c *Circuit) Define(api frontend.API) error {
-	// --- gadgets (the load-bearing work; ETH-NATIVE-WRAP.md §4) ---
-	//   bbReduce(api, x)            canonicalize a product mod BabyBearP
-	//   bbMul/bbAdd/bbSub           BabyBear field ops
-	//   extMul (deg-4)              BinomialExtensionField<BabyBear,4>
-	//   poseidon2W16 / poseidon2W24 the fork permutations (fixed RC + MDS consts)
-	//   challenger                  DuplexChallenger<Poseidon2-w16> — MUST squeeze
-	//                               byte-identical betas/indices/alpha as Rust
-	//                               (transcript fidelity = soundness; validate
-	//                               against a fixture FIRST)
-	//   merklePath                  Poseidon2 Merkle-path check
-	//
+	bb := NewBBApi(api)
+
+	// Fail-closed lane hygiene: every public input is a canonical BabyBear
+	// residue (< 2013265921). A lane holding p, or anything in [p, 2^31), or
+	// any larger BN254 value, is rejected here.
+	for i := 0; i < DigestWidth; i++ {
+		bb.AssertIsCanonical(c.GenesisRoot[i])
+		bb.AssertIsCanonical(c.FinalRoot[i])
+		bb.AssertIsCanonical(c.ChainDigest[i])
+	}
+	bb.AssertIsCanonical(c.NumTurns)
+
 	// TOOTH 1 — VK pin. recursion_vk_fingerprint (plonky3_recursion_impl.rs:646).
 	//   Bake the trusted RecursionVk shape as a constant; assert the witness's
 	//   structural fields match it. (No in-circuit blake3.)
+	//   TODO(milestone 2): implement once the witness exporter fixes the layout.
 	//
 	// TOOTH 2 — the root. verify_recursive_batch_proof_with_config under
 	//   ir2_leaf_wrap_config → verify_all_tables (plonky3_recursion_impl.rs:732):
-	//     a. rebuild the Fiat-Shamir transcript; squeeze alpha, the FRI betas,
-	//        and the 19 query indices;
+	//     a. rebuild the Fiat-Shamir transcript (DuplexChallenger over
+	//        Poseidon2W16 below); squeeze alpha, the FRI betas, and the 19
+	//        query indices — MUST be byte-identical to the Rust challenger
+	//        (transcript fidelity = soundness; validate against a fixture
+	//        FIRST);
 	//     b. for each of the 19 queries: Poseidon2 Merkle-path openings for
 	//        trace/quotient/FRI layers, the per-table constraint+quotient
-	//        evaluation, the logup interaction-bus check, and the NPO tables
-	//        (Poseidon2-w16/w24, recompose, expose_claim);
-	//     c. FRI low-degree test: per-layer folding consistency + final-poly check.
+	//        evaluation (BBExt arithmetic), the logup interaction-bus check,
+	//        and the NPO tables (Poseidon2-w16/w24, recompose, expose_claim);
+	//     c. FRI low-degree test: per-layer folding consistency + final-poly
+	//        check.
+	//   TODO(milestone 2): the gadgets exist (BBApi.Add/Sub/Mul, BBApi.ExtMul,
+	//   BBApi.Poseidon2W16); this is the multi-week assembly.
 	//
-	// TOOTH 3 — the segment tooth (ivc_turn_chain.rs:2887-2905).
-	//   api.AssertIsEqual(c.Root.ExposedSegment[0], c.GenesisRoot)
-	//   api.AssertIsEqual(c.Root.ExposedSegment[1], c.FinalRoot)
-	//   api.AssertIsEqual(c.Root.ExposedSegment[2], c.NumTurns)
-	//   for i := 0; i < SegDigestWidth; i++ {
-	//       api.AssertIsEqual(c.Root.ExposedSegment[3+i], c.ChainDigest[i])
-	//   }
-	_ = api
+	// TOOTH 3 — the segment tooth (ivc_turn_chain.rs:2887-2905): the proof's
+	// exposed segment IS the public-input vector, lane for lane, in the pinned
+	// 25-lane order.
+	k := 0
+	for i := 0; i < DigestWidth; i++ {
+		api.AssertIsEqual(c.Root.ExposedSegment[k], c.GenesisRoot[i])
+		k++
+	}
+	for i := 0; i < DigestWidth; i++ {
+		api.AssertIsEqual(c.Root.ExposedSegment[k], c.FinalRoot[i])
+		k++
+	}
+	api.AssertIsEqual(c.Root.ExposedSegment[k], c.NumTurns)
+	k++
+	for i := 0; i < DigestWidth; i++ {
+		api.AssertIsEqual(c.Root.ExposedSegment[k], c.ChainDigest[i])
+		k++
+	}
 	return nil
 }
-</content>
