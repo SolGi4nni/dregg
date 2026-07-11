@@ -838,3 +838,17 @@ maxTokens ✅ | REMAINING (as intended): #1 full-fold->verify_history (Lane-D-ga
 completes when Lane D's limb geometry stabilizes — NOT our gap) · #8 StarkSound/FRI (the terminal crypto floor every
 recursive-STARK chain carries — honestly meant to stay). Nothing left to be honest about but the one thing there
 should be.
+
+## Ultracode cook-down workflow (2026-07-11) — 3 workstreams, adversarially audited
+- ✅ DURABLE NOTARY committed (zkoracle-prove): notary key PERSISTED (a durable trust root); verified BY ME —
+  hermetic same-key-across-loads + LIVE bedrock_attested_under_durable_pinned_notary (real Claude "your lantern's
+  flame gutters", pin==anchor, wrong key rejected). Residual (infra): a published stable key; default path still ephemeral.
+- ✅ LIGHTCLIENT HONEST TRIPWIRE committed (game-turn-slice): the skeptic CONFIRMED not-closed — verify_history does
+  NOT verify a game playthrough; genuinely blocked on Lane D's wide-carrier constant migration (WIDE_NUM_CARRIERS
+  57->60, WIDE_COMMIT_CARRIER 56->59 in circuit/). A DRIVEN tripwire names the exact invariant + goes green when Lane
+  D lands. Leaf still proves; VK self-anchored (not deployed). Crown = real-for-a-leaf, Lane-D-blocked-for-a-playthrough.
+- ⚠ ASSEMBLED-UNIVERSE MISFIRED (the skeptic CAUGHT it): the impl evaluated attested-dm (the LARP) instead of building
+  in dungeon-on-dregg (left untouched) — falsely audited "closed". RE-FIRING properly [a46f8ce]: dregg-dice bound into
+  a REAL dungeon-on-dregg turn + reproduced on replay + ONE assembled played-to-win universe, zero attested-dm.
+The adversarial audit EARNED ITS KEEP: it caught the misfire + confirmed the honest Lane-D block — exactly the
+skeptic-catches-residual-LARP discipline.
