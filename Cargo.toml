@@ -51,7 +51,7 @@ default-members = ["macaroon", "secrets", "token", "tokenizer", "hints", "commit
 # path-depends on it (the compact-PQ `HermineHybridQC`), and a path dep into a
 # nested-workspace dir inside this tree needs the explicit exclude so Cargo does
 # not see "multiple workspace roots" — same reason as deos-zed-full / dregg-tui.
-exclude = ["chain", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "deos-zed-full", "dregg-doc", "discord-bot", "dregg-tui", "deos-homeserver", "forge-ci-runner", "crypto-hermine", "constraint-lowering"]
+exclude = ["chain", "solana-lock", "wasm", "sdk-py", "pg-dregg", "sel4/dregg-firmament", "deos-zed-full", "dregg-doc", "discord-bot", "dregg-tui", "deos-homeserver", "forge-ci-runner", "crypto-hermine", "constraint-lowering"]
 
 [workspace.package]
 version = "0.1.0"

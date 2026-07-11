@@ -1,0 +1,32 @@
+# Standalone workspace: keeps the Solana / SBF dependency tree out of the main
+# dregg workspace (like `chain/`). Build native:  cd solana-lock && cargo test
+# Build the on-chain program:  cd solana-lock && cargo build-sbf
+[workspace]
+
+[package]
+name = "dregg-solana-lock"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Solana-side lock vault for the dregg token mirror ($DREGG SPL → dregg shielded value layer)"
+
+[lib]
+crate-type = ["cdylib", "lib"]
+
+[features]
+# Default builds the on-chain entrypoint. Depending crates that provide their own
+# entrypoint (or a test harness) opt out with `no-entrypoint`.
+no-entrypoint = []
+
+[dependencies]
+solana-program = "2.2"
+spl-token = { version = "6", features = ["no-entrypoint"] }
+
+[dev-dependencies]
+solana-program-test = "2.2"
+solana-sdk = "2.2"
+spl-token = { version = "6", features = ["no-entrypoint"] }
+tokio = { version = "1", features = ["macros", "rt-multi-thread"] }
+
+[profile.release]
+overflow-checks = true
