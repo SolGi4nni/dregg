@@ -952,12 +952,17 @@ def InttInterpolates : Prop :=
 
 /-! ## PART 2 — the residual, decomposed into two standard NTT-correctness facts. -/
 
-/-- **Residual A — the inverse transform is a genuine left inverse** (size-256-guarded). `intt ∘ ntt = id`
-on canonical polys. The `∀`-over-all-`Poly` form is FALSE (a non-256 input keeps the wrong `Array` length);
-the guard is the operationally-correct statement (the deployed pipeline feeds only decoded size-256 arrays).
+/-- **Residual A — the inverse transform is a genuine left inverse** (size-256- AND reduced-guarded).
+`intt ∘ ntt = id` on canonical polys. TWO guards, both operationally-correct (the deployed ML-DSA pipeline
+feeds only decoded size-256 arrays of canonical `[0,q)` coefficients):
+* `c.size = 256` — a non-256 input keeps the wrong `Array` length (the butterflies no-op out of bounds);
+* `∀ p, c[p]! < q` — `ntt` reduces every coefficient mod `q` internally (stage 0 touches all 256 slots), so
+  `intt (ntt c)` is ALWAYS reduced; for a non-reduced `c` (e.g. `c[0] = q+5`) the round-trip returns the
+  reduced `5 ≠ q+5`, so the unguarded form is literally FALSE (`native_decide`-checkable falsifier). The
+  reduced guard is exactly what the ring product `schoolbookMul a b` supplies (`schoolbookMul_lt`).
 This is the SINGLE remaining residual behind `RingRepFaithful` — the `intt` (Gentleman–Sande) interpolation
-induction, the mirror of `stage_inv` collapsed by `omega_orthogonality`. -/
-def NttLeftInverse : Prop := ∀ c : Poly, c.size = 256 → intt (ntt c) = c
+induction, the mirror of `stage_inv` collapsed by `omega_orthogonality`. **CLOSED** (`nttLeftInverse_proven`). -/
+def NttLeftInverse : Prop := ∀ c : Poly, c.size = 256 → (∀ (p : Nat), c[p]! < q) → intt (ntt c) = c
 
 /-- **Residual B — `ntt` is a ring homomorphism** from the negacyclic ring `(Poly, schoolbookMul)` to the
 pointwise-product ring `(Poly, pointwiseMul)`: `ntt (a·b) = ntt a ⊙ ntt b` (size-256-guarded). **CLOSED**
@@ -976,7 +981,7 @@ CLOSED (`nttMulHom_proven`), `ringRepFaithful_of_leftInverse` below reduces `Rin
 theorem ringRepFaithful_of (hInv : NttLeftInverse) (hHom : NttMulHom) : RingRepFaithful := by
   intro a b ha hb
   rw [← hHom a b ha hb]
-  exact hInv (schoolbookMul a b) (schoolbookMul_size a b)
+  exact hInv (schoolbookMul a b) (schoolbookMul_size a b) (schoolbookMul_lt a b)
 
 /-! ## PART 3 — NON-VACUITY: both residuals HOLD on a wraparound-exercising sample.
 
@@ -2178,6 +2183,133 @@ theorem inttStage_inv (v : Poly) (hv : v.size = 256) (hvlt : ∀ (p:Nat), v[p]! 
           ring
         rw [hSlo, hShi]; ring
 
+/-! ### INVERSE step 5 — the interpolation collapse (`intt ∘ ntt = id`, reduced size-256).
+
+At `n = 8` the stage invariant gives `(inttUpto 8 v).1[i] = Σ_{u<256} v[u]·irt(u)^i`; the `nInv` scaling yields
+`(intt v)[i] = nInv·Σ_u v[u]·irt(u)^i`. For `v = ntt c` (so `v[u] = eval256 c (evalRoot u)`), swapping the
+sums and collapsing `Σ_u (evalRoot u)^j·irt(u)^i = 256·[i=j]` via the brv-reindexed `omega_orthogonality`
+leaves `nInv·256·c[i] = c[i]`. -/
+
+set_option maxRecDepth 10000 in
+/-- Bit-reversal is an involution on `[0,256)` — the reindexing bijection for the orthogonality sum. -/
+theorem brv8_invol : ∀ k, k < 256 → brv8 (brv8 k) = k := by
+  simp only [brv8_eq_fold]; decide
+
+/-- Reindex a `range 256` sum along `brv8` (a bijection, by `brv8_invol` + `brv8_lt`). -/
+theorem sum_brv8 (h : Nat → ZMod q) : ∑ u ∈ range 256, h (brv8 u) = ∑ m ∈ range 256, h m := by
+  refine Finset.sum_nbij' (fun u => brv8 u) (fun m => brv8 m) ?_ ?_ ?_ ?_ ?_
+  · intro a _; simp only [mem_range]; exact brv8_lt a
+  · intro b _; simp only [mem_range]; exact brv8_lt b
+  · intro a ha; simp only [mem_range] at ha; exact brv8_invol a ha
+  · intro b hb; simp only [mem_range] at hb; exact brv8_invol b hb
+  · intro a _; rfl
+
+theorem evalRoot_pow512 (u : Nat) : (evalRoot u)^512 = 1 := by
+  have h : (evalRoot u)^512 = ((evalRoot u)^256)^2 := by rw [← pow_mul]
+  rw [h, evalRoot_pow256]; ring
+
+/-- `irt u = (evalRoot u)^511` (the reciprocal as a positive power, `evalRoot u` a 512th root). -/
+theorem irt_eq_pow (u : Nat) : irt u = (evalRoot u)^511 := by
+  unfold irt
+  apply inv_eq_of_mul_eq_one_left
+  rw [← pow_succ]; exact evalRoot_pow512 u
+
+/-- **THE INTERPOLATION ORTHOGONALITY** — `Σ_{u<256} (evalRoot u)^j · irt(u)^i = 256·[i=j]` in `ℤ_q`. The
+reciprocal-root sum diagonalizes: `brv8`-reindexed to `omega_orthogonality`, nonzero only when `256 ∣ j−i`,
+i.e. `i = j` (both `< 256`), where `ζ^{512i} = 1` leaves `256`. -/
+theorem interp_orth (i j : Nat) (hi : i < 256) (hj : j < 256) :
+    ∑ u ∈ range 256, (evalRoot u)^j * (irt u)^i = if i = j then (256 : ZMod q) else 0 := by
+  simp only [irt_eq_pow]
+  have hterm : ∀ u, (evalRoot u)^j * ((evalRoot u)^511)^i
+      = (zeta:ZMod q)^(j+511*i) * (((zeta:ZMod q)^2)^(j+511*i))^(brv8 u) := by
+    intro u
+    rw [← pow_mul, ← pow_add]
+    unfold evalRoot
+    rw [← pow_mul, ← pow_mul, ← pow_mul, ← pow_add]
+    congr 1; ring
+  rw [Finset.sum_congr rfl (fun u _ => hterm u), ← Finset.mul_sum,
+      sum_brv8 (fun m => (((zeta:ZMod q)^2)^(j+511*i))^m),
+      omega_orthogonality zeta_pow_neg_one (j+511*i)]
+  by_cases hij : i = j
+  · subst hij
+    rw [if_pos rfl, if_pos (by omega : (256:Nat) ∣ (i+511*i))]
+    have hz512 : (zeta:ZMod q)^(i+511*i) = 1 := by
+      rw [show i+511*i = 512*i from by ring, pow_mul,
+          show (zeta:ZMod q)^512 = 1 from by
+            rw [show (512:Nat) = 256*2 from rfl, pow_mul, zeta_pow_neg_one]; ring, one_pow]
+    rw [hz512, one_mul]
+  · rw [if_neg hij, if_neg (by omega : ¬ (256:Nat) ∣ (j+511*i)), mul_zero]
+
+/-- **`intt` interpolates** — `(intt v)[i] = nInv·Σ_{u<256} v[u]·irt(u)^i` in `ℤ_q` (reduced size-256 `v`). -/
+theorem intt_interp (v : Poly) (hv : v.size = 256) (hvlt : ∀ (p:Nat), v[p]! < q) (i : Nat) (hi : i < 256) :
+    ((intt v)[i]! : ZMod q) = (nInv : ZMod q) * ∑ u ∈ range 256, (v[u]! : ZMod q) * (irt u)^i := by
+  have hsz8 : (inttUpto 8 v).1.size = 256 := (inttStage_inv v hv hvlt 8 (by omega)).1
+  obtain ⟨_, _, _, hform⟩ := inttStage_inv v hv hvlt 8 (by omega)
+  have h := hform 0 i (by norm_num) (by rw [show (2:Nat)^8 = 256 from by norm_num]; exact hi)
+  simp only [Nat.zero_mul, Nat.zero_add, show (2:Nat)^8 = 256 from by norm_num] at h
+  rw [intt_eq_scale_stages, inttStages_eq, cast_inttScale _ hsz8 i hi, h]
+
+/-- `nInv · 256 = 1` in `ℤ_q` (`nInv = 256⁻¹`, since `nInv·256 = 255·q + 1`). -/
+theorem nInv_mul_256 : (nInv : ZMod q) * (256 : ZMod q) = 1 := by
+  have h1 : (nInv : ZMod q) * (256 : ZMod q) = ((nInv * 256 : Nat) : ZMod q) := by push_cast; ring
+  rw [h1, show (nInv * 256 : Nat) = 255 * q + 1 from by unfold nInv q; norm_num]
+  push_cast; rw [ZMod.natCast_self]; ring
+
+/-- `inttScale` preserves the 256-coefficient length. -/
+theorem inttScale_size (a0 : Poly) (hsz0 : a0.size = 256) : (inttScale a0).size = 256 := by
+  unfold inttScale
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_sub_cancel, Nat.div_one]
+  exact (inttScale_fold a0 hsz0 256 (le_refl _)).1
+
+set_option maxRecDepth 8000 in
+/-- **NttLeftInverse — CLOSED (size-256 + reduced).** `intt (ntt c) = c` for every canonical reduced poly.
+Entrywise: `(intt (ntt c))[i] = nInv·Σ_u (ntt c)[u]·irt(u)^i = nInv·Σ_j c[j]·(Σ_u (evalRoot u)^j·irt(u)^i)
+= nInv·Σ_j c[j]·256·[i=j] = nInv·256·c[i] = c[i]` in `ℤ_q`, lifted to the `Array` by reduced-range
+injectivity. No `native_decide` in the `∀`. -/
+theorem nttLeftInverse_proven : NttLeftInverse := by
+  intro c hc hclt
+  have hnsz : (ntt c).size = 256 := ntt_size c hc
+  have hnlt : ∀ (p:Nat), (ntt c)[p]! < q := ntt_lt c hclt
+  have h8sz : (inttUpto 8 (ntt c)).1.size = 256 := (inttStage_inv (ntt c) hnsz hnlt 8 (by omega)).1
+  have hisz : (intt (ntt c)).size = 256 := by
+    rw [intt_eq_scale_stages, inttStages_eq]; exact inttScale_size _ h8sz
+  have hentry : ∀ i, i < 256 → (intt (ntt c))[i]! = c[i]! := by
+    intro i hi
+    have hX : (intt (ntt c))[i]! < q := by
+      rw [intt_eq_scale_stages, inttStages_eq, inttScale_getElem _ h8sz i hi]; exact mulModQ_lt _ _
+    apply natCast_inj_of_lt _ _ hX (hclt i)
+    rw [intt_interp (ntt c) hnsz hnlt i hi]
+    have hswap : (∑ u ∈ range 256, ((ntt c)[u]! : ZMod q) * (irt u)^i) = (c[i]! : ZMod q) * 256 := by
+      have step1 : ∀ u ∈ range 256, ((ntt c)[u]! : ZMod q) * (irt u)^i
+          = ∑ j ∈ range 256, (c[j]! : ZMod q) * ((evalRoot u)^j * (irt u)^i) := by
+        intro u hu
+        rw [nttEvalsAtRoots_canonical c hc u (mem_range.mp hu)]
+        unfold eval256
+        rw [Finset.sum_mul]
+        apply Finset.sum_congr rfl; intro j _; ring
+      rw [Finset.sum_congr rfl step1, Finset.sum_comm,
+          Finset.sum_congr rfl (fun j hj => by
+            rw [← Finset.mul_sum, interp_orth i j hi (mem_range.mp hj)]),
+          Finset.sum_eq_single i (fun j _ hji => by rw [if_neg (Ne.symm hji), mul_zero])
+            (fun h => absurd (mem_range.mpr hi) h), if_pos rfl]
+    rw [hswap, show (nInv : ZMod q) * ((c[i]! : ZMod q) * 256)
+          = ((nInv : ZMod q) * 256) * (c[i]! : ZMod q) from by ring, nInv_mul_256, one_mul]
+  apply Array.ext
+  · rw [hisz, hc]
+  · intro i h1 _
+    have hi : i < 256 := by rw [hisz] at h1; exact h1
+    rw [(getElem!_pos (intt (ntt c)) i (by rw [hisz]; exact hi)).symm,
+        (getElem!_pos c i (by rw [hc]; exact hi)).symm]
+    exact hentry i hi
+
+/-- **`RingRepFaithful` CLOSED — the ∀ NTT-faithfulness bridge behind `verifyCore = spec`.** Both residuals
+of the textbook reduction are now proven for-all (no `native_decide` in any `∀`-body): the forward `NttMulHom`
+(`ntt` is a ring hom) and the inverse `NttLeftInverse` (`intt ∘ ntt = id` on canonical reduced polys). -/
+theorem ringRepFaithful_proven : Dregg2.Crypto.VerifyCoreSpec.RingRepFaithful :=
+  ringRepFaithful_of_leftInverse nttLeftInverse_proven
+
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
 deliberately NOT gated here — it is the accepted computational residual, isolated from the ∀-theorems. -/
@@ -2210,5 +2342,20 @@ deliberately NOT gated here — it is the accepted computational residual, isola
 #assert_axioms nttMulHom_proven
 #assert_axioms ringRepFaithful_of
 #assert_axioms ringRepFaithful_of_leftInverse
+-- INVERSE keystones (the `intt` interpolation mirror): the `decide`-based brv congruences stay axiom-clean
+-- (kernel reduction, NOT `native_decide`/`ofReduceBool`), so the whole `intt ∘ ntt = id` leg is clean.
+#assert_axioms gsFold_spec
+#assert_axioms cast_gsSweep
+#assert_axioms inttBlock_char
+#assert_axioms brv_stage_lo
+#assert_axioms brv_stage_hi
+#assert_axioms irt_stage_lo
+#assert_axioms irt_stage_hi
+#assert_axioms inttStage_inv
+#assert_axioms brv8_invol
+#assert_axioms interp_orth
+#assert_axioms intt_interp
+#assert_axioms nttLeftInverse_proven
+#assert_axioms ringRepFaithful_proven
 
 end Dregg2.Crypto.MlDsaRing
