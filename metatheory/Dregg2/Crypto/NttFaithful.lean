@@ -1857,6 +1857,102 @@ theorem cast_inttScale (a0 : Poly) (hsz0 : a0.size = 256) (p : Nat) (hp : p < 25
     ((inttScale a0)[p]! : ZMod q) = (nInv : ZMod q) * (a0[p]! : ZMod q) := by
   rw [inttScale_getElem a0 hsz0 p hp, cast_mulModQ]
 
+/-! ### INVERSE step 2 — the inverse root `irt` and the two butterfly exponent identities.
+
+The closed-form inverse kernel: after `n` GS stages, array slot `g·2ⁿ+i` holds `Σ_{u<2ⁿ} v[g·2ⁿ+u]·irt(g·2ⁿ+u)^i`
+where `irt X = (evalRoot X)⁻¹` (the reciprocal negacyclic root). The reindex recurrences (child low/high →
+parent) are trivial, but the butterfly step needs `irt(X)^{2ⁿ}` to be the (block-dependent) inverse twiddle
+`−ζ^{brv(k)}` — a pure `ζ`-exponent congruence mod 512, discharged by `decide` per stage. -/
+
+theorem one_shl (s : Nat) : (1 : Nat) <<< s = 2 ^ s := by
+  rw [Nat.shiftLeft_eq, one_mul]
+
+theorem inb_nblk (s : Nat) (hs : s ≤ 7) : 128 / (1 <<< s) = 2 ^ (7 - s) := by
+  rw [one_shl, show (128:Nat) = 2^7 from rfl, Nat.pow_div hs (by norm_num)]
+
+/-- `ζ^E` depends only on `E mod 512` (`ζ` has order 512). -/
+theorem zeta_pow_mod (E : Nat) : (zeta : ZMod q) ^ E = (zeta : ZMod q) ^ (E % 512) := by
+  conv_lhs => rw [← Nat.div_add_mod E 512]
+  rw [pow_add, pow_mul]
+  have h512 : (zeta : ZMod q) ^ 512 = 1 := by
+    have h : (zeta : ZMod q) ^ 512 = ((zeta : ZMod q) ^ 256) ^ 2 := by rw [← pow_mul]
+    rw [h, zeta_pow_neg_one]; ring
+  rw [h512, one_pow, one_mul]
+
+theorem zeta_pow_eq_neg_one (E : Nat) (h : E % 512 = 256) : (zeta : ZMod q) ^ E = -1 := by
+  rw [zeta_pow_mod, h, zeta_pow_neg_one]
+
+theorem zeta_pow_eq_one (E : Nat) (h : E % 512 = 0) : (zeta : ZMod q) ^ E = 1 := by
+  rw [zeta_pow_mod, h, pow_zero]
+
+/-- `powModQ` lands in the reduced range `[0, q)` (`result` starts `1`, each update is a `mulModQ < q`). -/
+theorem powModQ_lt (base e : Nat) : powModQ base e < q := by
+  rw [powModQ_eq_fold]
+  suffices h : ∀ (L : List Nat) (st : Nat × Nat × Nat), st.2.2 < q →
+      (List.foldl pstep st L).2.2 < q by exact h _ _ (by show (1:Nat) < q; unfold q; omega)
+  intro L; induction L with
+  | nil => intro st h; simpa using h
+  | cons hd tl ih =>
+    intro st h; apply ih
+    unfold pstep
+    by_cases hp : (st.2.1 % 2 == 1) = true
+    · simp only [hp, if_true]; exact mulModQ_lt _ _
+    · simp only [Bool.not_eq_true] at hp; simp only [hp, if_false]; exact h
+
+theorem zetaTwiddle_lt (k : Nat) : zetaTwiddle k < q := by unfold zetaTwiddle; exact powModQ_lt _ _
+
+set_option maxRecDepth 10000 in
+/-- The two brv exponent congruences pinning `irt(·)^{2ⁿ}` to `±(inverse twiddle)` (validated by `decide`
+per stage; the `u`-dependent low bits vanish mod 512 after the `2ⁿ` scaling). -/
+theorem brv_stage_lo (n : Nat) (hn : n ≤ 7) :
+    ∀ blk, blk < 2^(7-n) → ∀ u, u < 2^n →
+      (2^n * (2 * brv8 (blk*2^(n+1)+u) + 1) + brv8 (2^(8-n)-1-blk)) % 512 = 256 := by
+  simp only [brv8_eq_fold]; interval_cases n <;> decide
+
+set_option maxRecDepth 10000 in
+theorem brv_stage_hi (n : Nat) (hn : n ≤ 7) :
+    ∀ blk, blk < 2^(7-n) → ∀ u, u < 2^n →
+      (2^n * (2 * brv8 (blk*2^(n+1)+2^n+u) + 1) + brv8 (2^(8-n)-1-blk)) % 512 = 0 := by
+  simp only [brv8_eq_fold]; interval_cases n <;> decide
+
+/-- The reciprocal negacyclic root: `irt X = (evalRoot X)⁻¹`. -/
+def irt (X : Nat) : ZMod q := (evalRoot X)⁻¹
+
+/-- **Butterfly identity LO** — `irt(blk·2^{n+1}+u)^{2ⁿ}` is the stage-`n` block-`blk` inverse twiddle
+`−ζ^{brv(2^{8−n}−1−blk)} = (subQ 0 (zetaTwiddle …))` in `ℤ_q` (independent of `u`). -/
+theorem irt_stage_lo (n blk u : Nat) (hn : n ≤ 7) (hblk : blk < 2^(7-n)) (hu : u < 2^n) :
+    (irt (blk*2^(n+1)+u))^(2^n) = ((subQ 0 (zetaTwiddle (2^(8-n)-1-blk)) : Nat) : ZMod q) := by
+  rw [cast_subQ _ _ (by have := zetaTwiddle_lt (2^(8-n)-1-blk); omega), cast_zetaTwiddle, Nat.cast_zero,
+      zero_sub]
+  unfold irt
+  rw [inv_pow]
+  apply inv_eq_of_mul_eq_one_left
+  unfold evalRoot
+  rw [neg_mul, ← pow_mul, ← pow_add,
+      show brv8 (2^(8-n)-1-blk) + (2*brv8 (blk*2^(n+1)+u)+1)*2^n
+         = 2^n*(2*brv8 (blk*2^(n+1)+u)+1) + brv8 (2^(8-n)-1-blk) from by ring,
+      zeta_pow_eq_neg_one _ (brv_stage_lo n hn blk hblk u hu)]
+  ring
+
+/-- **Butterfly identity HI** — `irt(blk·2^{n+1}+2ⁿ+u)^{2ⁿ}` is `−` the LO twiddle. -/
+theorem irt_stage_hi (n blk u : Nat) (hn : n ≤ 7) (hblk : blk < 2^(7-n)) (hu : u < 2^n) :
+    (irt (blk*2^(n+1)+2^n+u))^(2^n) = -((subQ 0 (zetaTwiddle (2^(8-n)-1-blk)) : Nat) : ZMod q) := by
+  rw [cast_subQ _ _ (by have := zetaTwiddle_lt (2^(8-n)-1-blk); omega), cast_zetaTwiddle, Nat.cast_zero,
+      zero_sub, neg_neg]
+  unfold irt
+  rw [inv_pow]
+  apply inv_eq_of_mul_eq_one_left
+  unfold evalRoot
+  rw [← pow_mul, ← pow_add,
+      show brv8 (2^(8-n)-1-blk) + (2*brv8 (blk*2^(n+1)+2^n+u)+1)*2^n
+         = 2^n*(2*brv8 (blk*2^(n+1)+2^n+u)+1) + brv8 (2^(8-n)-1-blk) from by ring,
+      zeta_pow_eq_one _ (brv_stage_hi n hn blk hblk u hu)]
+
+/-- Split a `range (2m)` sum into its low and high halves. -/
+theorem sum_range_split_half {M} [AddCommMonoid M] (f : Nat → M) (m : Nat) :
+    ∑ U ∈ range (2*m), f U = (∑ u ∈ range m, f u) + ∑ u ∈ range m, f (m + u) := by
+  rw [two_mul, Finset.sum_range_add]
+
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
 deliberately NOT gated here — it is the accepted computational residual, isolated from the ∀-theorems. -/
