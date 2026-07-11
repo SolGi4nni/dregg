@@ -48,6 +48,7 @@ degree-256 extension (`Rq_kem_dim_256`), and `decaps_recovers_spec` fires on the
 import Dregg2.Crypto.MlKemNttFaithful
 import Dregg2.Crypto.MlKemDecaps
 import Dregg2.Crypto.MlKemCorrect
+import Dregg2.Crypto.MlKemIndCca
 import Mathlib
 
 namespace Dregg2.Crypto.DecapsCoreSpec
@@ -587,5 +588,84 @@ theorem decaps_recovers_spec :
         (Dregg2.Crypto.MlKemCodec.realCt).toList
       = (Dregg2.Crypto.MlKemCodec.realSs).toList :=
   MlKemDecaps.decaps_recovers_real_secret
+
+/-! ## FO-WRAPPER INSTANTIATION — the executable `mlkemDecaps` IS `MlKemIndCca.foDecaps` at the CONCRETE
+Keccak floor (`G = SHA3-512`, `H`-key = its `take 32`, `J = SHAKE-256`).
+
+`MlKemIndCca.foDecaps` is the ABSTRACT Fujisaki–Okamoto decapsulation over a generic PKE with GENERIC hash
+slots `G : Msg → Coins`, `H : Msg → SS`, and an implicit-reject secret. This section CLOSES the FO composition
+into the executable: it exhibits the concrete PKE (`kpkePKE`: K-PKE encrypt/decrypt) and the concrete hash
+INSTANTIATIONS the FIPS 203 Algorithm 17 executable calls (`G(m′‖h) = SHA3-512`, split 32+32 into the reject-
+free key `K′ = G(m′‖h).take 32` and the re-encryption coins `r′ = G(m′‖h).drop 32`; the implicit-reject
+secret `J(z‖c) = SHAKE-256`), and proves `MlKemDecaps.mlkemDecaps dk c` EQUALS `foDecaps` at that
+instantiation — a definitional identity on the Keccak floor (`sha3_512`/`shake256` are the concrete `def`s
+`Keccak.lean` KAT-pins), NOT a hardness carrier. The generic FO slots ARE the executable's hash calls; the
+re-encryption check + implicit-reject branch structure of `foDecaps` IS `mlkemDecaps`'s `if c′ = c`.
+
+Composing with `MlKemIndCca.fo_decaps_rejects` (the abstract FO reject lemma) then gives the byte-level
+implicit-reject law directly on `mlkemDecaps` (a re-encryption mismatch ⇒ `mlkemDecaps = J(z‖c)`), and with
+`MlKemIndCca.fo_decaps_of_honest` the honest-recovery law under `kpkePKE.Correct` (the K-PKE decrypt-correctness
+residual — `MlKemCorrect.decryptCorrect_conditional` under the noise bound). -/
+
+/-- The concrete ML-KEM K-PKE as an abstract `MlKemIndCca.PKE`: a decapsulation key `dk` is the secret key
+(its embedded `ek` — `(dkDecode dk).2.1` — is the public key), `enc = kpkeEncrypt`, `dec` runs `kpkeDecrypt`
+over the `dk_pke` prefix `dk[0 : 1152]`. -/
+def kpkePKE : MlKemIndCca.PKE (List UInt8) (List UInt8) (List UInt8) (List UInt8) (List UInt8) where
+  pkOf sk := (Dregg2.Crypto.MlKemCodec.dkDecode sk).2.1
+  enc pk m r := MlKemDecaps.kpkeEncrypt pk m r
+  dec sk c := kpkeDecrypt ((sk.toArray.extract 0 (paramK * polyBytes dCoeff)).toList) c
+
+/-- **`mlkemDecaps` IS `foDecaps` at the concrete Keccak instantiation.** The FIPS 203 Algorithm 17 executable
+`MlKemDecaps.mlkemDecaps dk c` equals the abstract FO decapsulation `MlKemIndCca.foDecaps` on `kpkePKE`, with
+the generic hash slots INSTANTIATED to the concrete `Keccak.lean` functions: `G` (re-encryption coins) =
+`SHA3-512(m′‖h).drop 32`, `H` (the FO key) = `SHA3-512(m′‖h).take 32`, and the implicit-reject secret =
+`SHAKE-256(z‖c)`. `h = (dkDecode dk).2.2.1 = H(ek)`, `z = (dkDecode dk).2.2.2` are read from the decapsulation
+key. This closes the FO composition into the byte-level decaps: the abstract slots ARE the executable's calls,
+and the `if c′ = c` re-encryption check IS `foDecaps`'s. Definitional on the Keccak floor — no hardness. -/
+theorem mlkemDecaps_eq_foDecaps (dk c : List UInt8) :
+    MlKemDecaps.mlkemDecaps dk c
+      = MlKemIndCca.foDecaps kpkePKE
+          (fun m => (MlKemDecaps.sha3_512 (m ++ (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.1)).drop 32)
+          (fun m => (MlKemDecaps.sha3_512 (m ++ (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.1)).take 32)
+          (Dregg2.Crypto.Keccak.shake256 ((Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.2 ++ c) 32)
+          dk c := by
+  unfold MlKemDecaps.mlkemDecaps MlKemIndCca.foDecaps kpkePKE
+  rcases hdk : Dregg2.Crypto.MlKemCodec.dkDecode dk with ⟨s, ek, hek, z⟩
+  simp only [hdk, Id.run, beq_iff_eq]
+  split <;> rfl
+
+#assert_axioms mlkemDecaps_eq_foDecaps
+
+/-- **The byte-level implicit-reject law, derived from the abstract FO.** If the FO re-encryption `c′ =
+kpkeEncrypt ek m′ r′` does NOT match `c` (`m′ = kpkeDecrypt (dk_pke) c`, `r′ = G(m′‖h).drop 32`), then
+`mlkemDecaps dk c` returns the implicit-reject secret `SHAKE-256(z‖c)` — ML-KEM's implicit reject, now a
+COROLLARY of `MlKemIndCca.fo_decaps_rejects` on the concrete instantiation, not a re-proof. -/
+theorem mlkemDecaps_reject (dk c : List UInt8)
+    (hbad : MlKemDecaps.kpkeEncrypt (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.1
+        (kpkeDecrypt ((dk.toArray.extract 0 (paramK * polyBytes dCoeff)).toList) c)
+        ((MlKemDecaps.sha3_512
+            ((kpkeDecrypt ((dk.toArray.extract 0 (paramK * polyBytes dCoeff)).toList) c)
+              ++ (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.1)).drop 32) ≠ c) :
+    MlKemDecaps.mlkemDecaps dk c
+      = Dregg2.Crypto.Keccak.shake256 ((Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.2 ++ c) 32 := by
+  rw [mlkemDecaps_eq_foDecaps dk c]
+  exact MlKemIndCca.fo_decaps_rejects kpkePKE _ _ _ dk c hbad
+
+/-- **The honest-recovery law, under K-PKE decrypt-correctness.** If `kpkePKE` is a correct PKE (the FIPS 203
+K-PKE decrypt-correctness residual, `MlKemCorrect.decryptCorrect_conditional` under the noise bound) then an
+honestly-encapsulated ciphertext `c = Enc(ek, m; G(m))` decapsulates to the FO key `H(m) = SHA3-512(m‖h).take
+32` — the KEM analog of `fo_decaps_of_honest`, now on the byte-level `mlkemDecaps` at the concrete Keccak
+instantiation. The `Correct` hypothesis is the ONE remaining decrypt-correctness residual (named, not
+laundered). -/
+theorem mlkemDecaps_of_honest (dk m : List UInt8) (hc : kpkePKE.Correct) :
+    MlKemDecaps.mlkemDecaps dk
+        (MlKemDecaps.kpkeEncrypt (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.1 m
+          ((MlKemDecaps.sha3_512 (m ++ (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.1)).drop 32))
+      = (MlKemDecaps.sha3_512 (m ++ (Dregg2.Crypto.MlKemCodec.dkDecode dk).2.2.1)).take 32 := by
+  rw [mlkemDecaps_eq_foDecaps dk _]
+  exact MlKemIndCca.fo_decaps_of_honest kpkePKE hc _ _ _ dk m
+
+#assert_axioms mlkemDecaps_reject
+#assert_axioms mlkemDecaps_of_honest
 
 end Dregg2.Crypto.DecapsCoreSpec

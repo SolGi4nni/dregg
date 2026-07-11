@@ -23,6 +23,7 @@ import Dregg2.Crypto.VerifyCoreEqSpec
 import Dregg2.Crypto.SignCoreSpec
 import Dregg2.Crypto.DecapsCoreSpec
 import Dregg2.Crypto.EncapsCoreSpec
+import Dregg2.Crypto.MlKemCodecSpec
 import Dregg2.Crypto.FloorBridge
 import Dregg2.Crypto.MlKemDelta
 import Dregg2.Crypto.ModelBridge
