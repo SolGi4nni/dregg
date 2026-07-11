@@ -1,5 +1,16 @@
 # ETH Native Wrap: a fast native-circuit proof bridge (retiring the SP1 path)
 
+> ⚠ **CORRECTION (2026-07-11) — see `WRAP-NATIVE-HASH-DECISION.md`.** This doc's
+> efficiency premise (proving cost ∝ constraint count ≈ the verifier's field ops,
+> implying seconds) is INCOMPLETE: it planned the gnark circuit around **BabyBear**
+> Poseidon2 gadgets, which are EMULATED in BN254 at a **measured 16,837 R1CS per
+> Merkle compress** — so a FRI verifier's ~1,000+ hashes would be ~20–70M
+> constraints (GPU-class minutes, no better than SP1). The fix is the RISC0/SP1
+> standard: a **BN254-native-hash outer "shrink" layer** so the gnark verifier
+> hashes natively (**187 R1CS/compress, a 90–145× cut** → ~1–6M total). The IVC,
+> the Groth16 EVM verifier, and the FRI-verify *structure* below all stay; the
+> **hash + challenger** gadgets switch to native BN254. Read the decision doc first.
+
 A modern replacement for dregg's legacy SP1 RISC-V-zkVM Ethereum bridge. The goal
 is unchanged — settle a dregg whole-history proof on Ethereum by **proof**, one
 ~250–300k-gas Groth16 check — but the *wrap prover* is rebuilt as a **native

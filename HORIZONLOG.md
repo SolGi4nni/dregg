@@ -7432,3 +7432,22 @@ receipt) + a CAIP-2 dregg network exposing $DREGG/shielded assets — same speak
 as the Hyperlane ISM / LayerZero DVN. DO NOT adopt its model or pull focus from the real frontier. CoinVoyage =
 closed trusted-aggregator (AMMs/CCTP/ChangeNow + webhooks), the model dregg replaces; at most a payment frontend,
 never an integration. Full memo: docs/deos/X402-ASSESSMENT.md.
+
+## WRAP EFFICIENCY: must hash BN254-native, not emulate BabyBear (2026-07-11, Fable — scholar panel)
+
+ember asked "are we sure the wrap is as efficient as possible?" — CAUGHT A ~10x ARCHITECTURE MISTAKE. A 3-agent
+cryptoarchitect panel + red-teaming synthesis (MEASURED, production-anchored, high confidence): our chain/gnark
+wrap is on the EXPENSIVE emulated path. Emulated BabyBear Poseidon2 = 16,837 R1CS/perm (w16) / 27,213 (w24),
+MEASURED in our own gnark. A FRI verifier is hash-dominated (~1000-3000 perms) => ~20-70M constraints =>
+GPU-class minutes, NO BETTER than the SP1 path we're replacing. FIX (RISC0 identity_p254 / SP1 shrink pattern):
+add ONE BN254-native-hash outer "shrink" recursion layer that re-commits the apex FRI Merkle tree with
+Poseidon2Bn254 + a MultiField32Challenger; the gnark verifier then hashes NATIVELY = 187 R1CS/compress
+(measured) => 90-145x cut => ~1-6M total (RISC0's real native wrap = 5.68M). dregg's pinned Plonky3 checkout
+82cfad7 ALREADY ships Poseidon2Bn254<3> + MultiField32Challenger + the field-generic recursion verifier — this
+is INSTANTIATION, not new crypto. KEEP: the IVC, the Groth16 EVM verifier, the FRI-verify STRUCTURE (VerifyFri/
+grinding/fold), babybear.go (quotient eval). REDO: chain/gnark poseidon2_w16/w24 + challenger Merkle hashing →
+native BN254; regenerate transcript fixtures. Prior gnark gadget work NOT wasted (structure carries; hash swaps).
+VALIDATE FIRST (don't rip out gadgets yet): (1) count real perms at ir2_leaf_wrap_config; (2) build a minimal
+native-hash FRI verify in gnark + measure ~1-6M. Then: Rust shrink layer (DreggOuterConfig), Rust<->gnark
+transcript differential, gnark v0.11→v0.15 (native poseidon2 std) or hand-roll, SRS/ceremony for the new circuit.
+Full decision: docs/deos/WRAP-NATIVE-HASH-DECISION.md; ETH-NATIVE-WRAP.md corrected.
