@@ -91,7 +91,8 @@ namespace Dregg2.Circuit.Emit.EffectVmEmitAttenuateA
 open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
-  (eSB eSA ePrm eSub eSelNoop site0 site1 transitionAll boundaryFirstPins)
+  (eSB eSA ePrm eSub eSelNoop site0 site1 transitionAll boundaryFirstPins
+   gate_modEq_iff not_modEq_zero_of_canon eqToModEq)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -208,12 +209,13 @@ to the cap-DIGEST column) + the 16-field freeze (projected to the row's frozen c
 /-- **`AttenRowIntent env`** — the intended cap-graph move on the row `env.loc`: post `cap_root` is the
 post-cap-digest param, frame frozen. -/
 def AttenRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.CAP_ROOT) = env.loc (prmCol paramA.CAP_DIGEST_NEW)
-  ∧ env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
-  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE)
-  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+  env.loc (saCol state.CAP_ROOT) ≡ env.loc (prmCol paramA.CAP_DIGEST_NEW) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_LO) ≡ env.loc (sbCol state.BALANCE_LO) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.NONCE) ≡ env.loc (sbCol state.NONCE) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+      ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921])
 
 /-- The row is an `attenuateA` row: `s_attenuate = 1`, `s_noop = 0`. -/
 def IsAttenRow (env : VmRowEnv) : Prop :=
@@ -241,28 +243,29 @@ theorem attenuateRowGates_holds_iff (env : VmRowEnv) :
       exact Or.inr ⟨i, hi, rfl⟩
     simp only [VmConstraint.holdsVm, gCapMove, gBalLoFix, gBalHiFix, gNonceFix, gResFix,
       eSA, eSB, eCapDigestNew, eSub, EmittedExpr.eval] at hCap hLo hHi hNon hRes
-    refine ⟨by linarith [hCap], by linarith [hLo], by linarith [hHi], by linarith [hNon],
-      by linarith [hRes], ?_⟩
+    refine ⟨(gate_modEq_iff (by ring)).mp hCap, (gate_modEq_iff (by ring)).mp hLo,
+      (gate_modEq_iff (by ring)).mp hHi, (gate_modEq_iff (by ring)).mp hNon,
+      (gate_modEq_iff (by ring)).mp hRes, ?_⟩
     intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hfi := hFld i hi
+    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at hfi
+    exact (gate_modEq_iff (by ring)).mp hfi
   · rintro ⟨hCap, hLo, hHi, hNon, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
     · simp only [VmConstraint.holdsVm, gCapMove, eSA, eCapDigestNew, eSub, EmittedExpr.eval]
-      rw [hCap]; ring
+      exact (gate_modEq_iff (by ring)).mpr hCap
     · simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hLo]; ring
+      exact (gate_modEq_iff (by ring)).mpr hLo
     · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hHi]; ring
+      exact (gate_modEq_iff (by ring)).mpr hHi
     · simp only [VmConstraint.holdsVm, gNonceFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hNon]; ring
+      exact (gate_modEq_iff (by ring)).mpr hNon
     · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hRes]; ring
+      exact (gate_modEq_iff (by ring)).mpr hRes
     · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      exact (gate_modEq_iff (by ring)).mpr (hFld i hi)
 
 /-- **`attenuateVm_faithful` — THE deliverable.** On an `attenuateA` row, the emitted descriptor's
 per-row gates hold IFF the cap-graph intent holds. -/
@@ -275,12 +278,14 @@ theorem attenuateVm_faithful (env : VmRowEnv) :
 /-- **Anti-ghost (cap-root tamper).** A row whose post-`cap_root` is NOT the supplied post-cap-digest
 fails the `gCapMove` gate (UNSAT). -/
 theorem attenuateVm_rejects_wrong_capRoot (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.CAP_ROOT)
+      ∧ env.loc (saCol state.CAP_ROOT) < 2013265921)
+    (hcanonDig : 0 ≤ env.loc (prmCol paramA.CAP_DIGEST_NEW)
+      ∧ env.loc (prmCol paramA.CAP_DIGEST_NEW) < 2013265921)
     (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (prmCol paramA.CAP_DIGEST_NEW)) :
     ¬ (VmConstraint.gate gCapMove).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gCapMove, eSA, eCapDigestNew, eSub, EmittedExpr.eval]
-  intro h
-  apply hwrong
-  linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonDig hwrong
 
 /-- **Anti-ghost (general).** A row whose post-state is NOT the intent move does NOT satisfy the per-row
 gates. -/
@@ -315,12 +320,12 @@ def CapRowEncodes (env : VmRowEnv) (pre post : CellState) (capDigestNew : ℤ) :
 new cap-digest, every other field frozen. This is the per-cell projection of universe-A's `AttenuateSpec`
 (`caps` whole-function move ⟹ cap-DIGEST column move; 16-field freeze ⟹ frame freeze). -/
 def CapCellSpec (pre post : CellState) (capDigestNew : ℤ) : Prop :=
-  post.capRoot = capDigestNew
-  ∧ post.balLo = pre.balLo
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.reserved = pre.reserved
+  post.capRoot ≡ capDigestNew [ZMOD 2013265921]
+  ∧ post.balLo ≡ pre.balLo [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 /-- Under `CapRowEncodes`, `AttenRowIntent` IS the structured per-cell `CapCellSpec`. -/
 theorem intent_to_capCellSpec (env : VmRowEnv) (pre post : CellState) (capDigestNew : ℤ)
@@ -459,51 +464,63 @@ theorem capGoodRow_isAttenRow : IsAttenRow capGoodRow := by
 /-- **NON-VACUITY (witness TRUE).** `capGoodRow` REALIZES the cap-graph intent: post `cap_root = 77` =
 the param digest, balance/nonce/reserved/fields frozen at `0`. -/
 theorem capGoodRow_realizes_intent : AttenRowIntent capGoodRow := by
-  unfold AttenRowIntent capGoodRow
-  -- the named cap columns vs the frozen-frame else-0 columns are distinct; discharge by simp+omega.
-  refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · -- both `saCol CAP_ROOT` (col 87) and `prmCol CAP_DIGEST_NEW` (col 56) read 77, via distinct branches.
-    have hsa : capGoodRow.loc (saCol state.CAP_ROOT) = 77 := by
-      show (if saCol state.CAP_ROOT = selA.ATTENUATE then (1:ℤ)
-        else if saCol state.CAP_ROOT = sbCol state.CAP_ROOT then 11
-        else if saCol state.CAP_ROOT = saCol state.CAP_ROOT then 77
-        else if saCol state.CAP_ROOT = prmCol paramA.CAP_DIGEST_NEW then 77 else 0) = 77
-      rw [if_neg (by simp only [saCol, selA.ATTENUATE, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE,
-        NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT]; omega),
-        if_neg (by simp only [saCol, sbCol, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE,
-          NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT]; omega), if_pos rfl]
-    have hprm : capGoodRow.loc (prmCol paramA.CAP_DIGEST_NEW) = 77 := by
-      show (if prmCol paramA.CAP_DIGEST_NEW = selA.ATTENUATE then (1:ℤ)
-        else if prmCol paramA.CAP_DIGEST_NEW = sbCol state.CAP_ROOT then 11
-        else if prmCol paramA.CAP_DIGEST_NEW = saCol state.CAP_ROOT then 77
-        else if prmCol paramA.CAP_DIGEST_NEW = prmCol paramA.CAP_DIGEST_NEW then 77 else 0) = 77
-      rw [if_neg (by simp only [prmCol, selA.ATTENUATE, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS,
-        STATE_SIZE, paramA.CAP_DIGEST_NEW]; omega),
-        if_neg (by simp only [prmCol, sbCol, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE,
-          state.CAP_ROOT, paramA.CAP_DIGEST_NEW]; omega),
-        if_neg (by simp only [prmCol, saCol, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
-          NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramA.CAP_DIGEST_NEW]; omega),
-        if_pos rfl]
-    show capGoodRow.loc (saCol state.CAP_ROOT) = capGoodRow.loc (prmCol paramA.CAP_DIGEST_NEW)
-    rw [hsa, hprm]
-  all_goals
-    simp only [saCol, sbCol, prmCol, selA.ATTENUATE, STATE_AFTER_BASE, STATE_BEFORE_BASE, PARAM_BASE,
-      NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, state.BALANCE_LO, state.BALANCE_HI,
-      state.NONCE, state.RESERVED, state.FIELD_BASE, paramA.CAP_DIGEST_NEW]
-  · norm_num
-  · norm_num
-  · norm_num
-  · norm_num
-  · intro i hi
-    have e1 : ¬ (76 + (3 + i) = 2) := by omega
-    have e2 : ¬ (76 + (3 + i) = 65) := by omega
-    have e3 : ¬ (76 + (3 + i) = 87) := by omega
-    have e4 : ¬ (76 + (3 + i) = 70) := by omega
-    have f1 : ¬ (54 + (3 + i) = 2) := by omega
-    have f2 : ¬ (54 + (3 + i) = 65) := by omega
-    have f3 : ¬ (54 + (3 + i) = 87) := by omega
-    have f4 : ¬ (54 + (3 + i) = 70) := by omega
-    simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg f1, if_neg f2, if_neg f3, if_neg f4]
+  -- prove the ℤ-equality skeleton (the named cap columns vs frozen else-0 columns are distinct),
+  -- then lift each conjunct to the field-faithful `≡ [ZMOD p]` move via `eqToModEq`.
+  have hZ : capGoodRow.loc (saCol state.CAP_ROOT) = capGoodRow.loc (prmCol paramA.CAP_DIGEST_NEW)
+      ∧ capGoodRow.loc (saCol state.BALANCE_LO) = capGoodRow.loc (sbCol state.BALANCE_LO)
+      ∧ capGoodRow.loc (saCol state.BALANCE_HI) = capGoodRow.loc (sbCol state.BALANCE_HI)
+      ∧ capGoodRow.loc (saCol state.NONCE) = capGoodRow.loc (sbCol state.NONCE)
+      ∧ capGoodRow.loc (saCol state.RESERVED) = capGoodRow.loc (sbCol state.RESERVED)
+      ∧ (∀ i, i < 8 → capGoodRow.loc (saCol (state.FIELD_BASE + i))
+            = capGoodRow.loc (sbCol (state.FIELD_BASE + i))) := by
+   unfold capGoodRow
+   -- the named cap columns vs the frozen-frame else-0 columns are distinct; discharge by simp+omega.
+   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
+   · -- both `saCol CAP_ROOT` (col 87) and `prmCol CAP_DIGEST_NEW` (col 56) read 77, via distinct branches.
+     have hsa : capGoodRow.loc (saCol state.CAP_ROOT) = 77 := by
+       show (if saCol state.CAP_ROOT = selA.ATTENUATE then (1:ℤ)
+         else if saCol state.CAP_ROOT = sbCol state.CAP_ROOT then 11
+         else if saCol state.CAP_ROOT = saCol state.CAP_ROOT then 77
+         else if saCol state.CAP_ROOT = prmCol paramA.CAP_DIGEST_NEW then 77 else 0) = 77
+       rw [if_neg (by simp only [saCol, selA.ATTENUATE, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE,
+         NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT]; omega),
+         if_neg (by simp only [saCol, sbCol, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE,
+           NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT]; omega), if_pos rfl]
+     have hprm : capGoodRow.loc (prmCol paramA.CAP_DIGEST_NEW) = 77 := by
+       show (if prmCol paramA.CAP_DIGEST_NEW = selA.ATTENUATE then (1:ℤ)
+         else if prmCol paramA.CAP_DIGEST_NEW = sbCol state.CAP_ROOT then 11
+         else if prmCol paramA.CAP_DIGEST_NEW = saCol state.CAP_ROOT then 77
+         else if prmCol paramA.CAP_DIGEST_NEW = prmCol paramA.CAP_DIGEST_NEW then 77 else 0) = 77
+       rw [if_neg (by simp only [prmCol, selA.ATTENUATE, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS,
+         STATE_SIZE, paramA.CAP_DIGEST_NEW]; omega),
+         if_neg (by simp only [prmCol, sbCol, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE,
+           state.CAP_ROOT, paramA.CAP_DIGEST_NEW]; omega),
+         if_neg (by simp only [prmCol, saCol, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE,
+           NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramA.CAP_DIGEST_NEW]; omega),
+         if_pos rfl]
+     show capGoodRow.loc (saCol state.CAP_ROOT) = capGoodRow.loc (prmCol paramA.CAP_DIGEST_NEW)
+     rw [hsa, hprm]
+   all_goals
+     simp only [saCol, sbCol, prmCol, selA.ATTENUATE, STATE_AFTER_BASE, STATE_BEFORE_BASE, PARAM_BASE,
+       NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, state.BALANCE_LO, state.BALANCE_HI,
+       state.NONCE, state.RESERVED, state.FIELD_BASE, paramA.CAP_DIGEST_NEW]
+   · norm_num
+   · norm_num
+   · norm_num
+   · norm_num
+   · intro i hi
+     have e1 : ¬ (76 + (3 + i) = 2) := by omega
+     have e2 : ¬ (76 + (3 + i) = 65) := by omega
+     have e3 : ¬ (76 + (3 + i) = 87) := by omega
+     have e4 : ¬ (76 + (3 + i) = 70) := by omega
+     have f1 : ¬ (54 + (3 + i) = 2) := by omega
+     have f2 : ¬ (54 + (3 + i) = 65) := by omega
+     have f3 : ¬ (54 + (3 + i) = 87) := by omega
+     have f4 : ¬ (54 + (3 + i) = 70) := by omega
+     simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg f1, if_neg f2, if_neg f3, if_neg f4]
+  obtain ⟨g1, g2, g3, g4, g5, g6⟩ := hZ
+  exact ⟨eqToModEq g1, eqToModEq g2, eqToModEq g3, eqToModEq g4, eqToModEq g5,
+    fun i hi => eqToModEq (g6 i hi)⟩
 
 /-- A forged `attenuateA` row: `capGoodRow` with the post-`cap_root` tampered to `999 ≠ 77`. -/
 def capBadRow : VmRowEnv where
@@ -514,7 +531,6 @@ def capBadRow : VmRowEnv where
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `capBadRow`'s post-`cap_root` is NOT the
 param digest, so the `gCapMove` gate REJECTS it — a concrete UNSAT. -/
 theorem capBadRow_rejected : ¬ (VmConstraint.gate gCapMove).holdsVm capBadRow false false := by
-  apply attenuateVm_rejects_wrong_capRoot
   -- the post-cap-root column is forged to 999; the param digest column is 77.
   have hsa : capBadRow.loc (saCol state.CAP_ROOT) = 999 := by
     show (if saCol state.CAP_ROOT = saCol state.CAP_ROOT then (999:ℤ)
@@ -534,7 +550,12 @@ theorem capBadRow_rejected : ¬ (VmConstraint.gate gCapMove).holdsVm capBadRow f
       else if prmCol paramA.CAP_DIGEST_NEW = prmCol paramA.CAP_DIGEST_NEW then 77 else 0) = 77
     norm_num [prmCol, saCol, sbCol, selA.ATTENUATE, STATE_AFTER_BASE, STATE_BEFORE_BASE, PARAM_BASE,
       NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.CAP_ROOT, paramA.CAP_DIGEST_NEW]
-  rw [hsa, hprm]; norm_num
+  -- FIELD-FAITHFUL: the forged `999` and the digest `77` are both canonical (`0 ≤ · < p`), so the
+  -- residual `999 − 77` cannot vanish mod `p` — the gate is UNSAT (no wrap-around forgery).
+  apply attenuateVm_rejects_wrong_capRoot capBadRow
+  · rw [hsa]; norm_num
+  · rw [hprm]; norm_num
+  · rw [hsa, hprm]; norm_num
 
 /-! ## §G — THE GENUINE CLASS-A DESCRIPTOR — `cap_root` RECOMPUTED in-row (the opaque-digest KILL).
 
@@ -669,21 +690,22 @@ def CapCellSpecGenuine (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : Ce
           (edgeLeafOf hash (env.loc (prmCol HOLDER)) (env.loc (prmCol TARGET))
             (env.loc (prmCol RIGHTS)) (env.loc (prmCol OP)))
           pre.capRoot
-  ∧ post.balLo = pre.balLo
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.reserved = pre.reserved
+  ∧ post.balLo ≡ pre.balLo [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 /-- The genuine frame-freeze gates hold IFF the frame is frozen (no `cap_root` clause — the move is in the
 recompute). -/
 theorem attenuateGenuineRowGates_holds_iff (env : VmRowEnv) :
     (∀ c ∈ attenuateGenuineRowGates, c.holdsVm env false false) ↔
-      ( env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
-      ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-      ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE)
-      ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-      ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i))) ) := by
+      ( env.loc (saCol state.BALANCE_LO) ≡ env.loc (sbCol state.BALANCE_LO) [ZMOD 2013265921]
+      ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+      ∧ env.loc (saCol state.NONCE) ≡ env.loc (sbCol state.NONCE) [ZMOD 2013265921]
+      ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+      ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+          ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921]) ) := by
   unfold attenuateGenuineRowGates gFieldFixAll
   constructor
   · intro h
@@ -698,21 +720,26 @@ theorem attenuateGenuineRowGates_holds_iff (env : VmRowEnv) :
       exact Or.inr ⟨i, hi, rfl⟩
     simp only [VmConstraint.holdsVm, gBalLoFix, gBalHiFix, gNonceFix, gResFix,
       eSA, eSB, eSub, EmittedExpr.eval] at hLo hHi hNon hRes
-    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hRes], ?_⟩
+    refine ⟨(gate_modEq_iff (by ring)).mp hLo, (gate_modEq_iff (by ring)).mp hHi,
+      (gate_modEq_iff (by ring)).mp hNon, (gate_modEq_iff (by ring)).mp hRes, ?_⟩
     intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hfi := hFld i hi
+    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at hfi
+    exact (gate_modEq_iff (by ring)).mp hfi
   · rintro ⟨hLo, hHi, hNon, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
-    · simp only [VmConstraint.holdsVm, gNonceFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hNon]; ring
-    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+    · simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hLo
+    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hHi
+    · simp only [VmConstraint.holdsVm, gNonceFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hNon
+    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hRes
     · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      exact (gate_modEq_iff (by ring)).mpr (hFld i hi)
 
 /-- **`attenuateGenuine_sound` — THE CLASS-A THEOREM.** Satisfying the genuine descriptor's frame-freeze
 gates AND the cap-root recompute (under the abstract sponge `hash`), with the row decoded by
@@ -840,10 +867,14 @@ binds into `cap_root` — a verifying proof now genuinely means the delegation d
 from the shared `capDeleg_nonAmp_in_circuit` (the non-amp gates are a sub-list of the descriptor's). -/
 theorem attenuateGenuineNonAmp_in_circuit (env : VmRowEnv)
     (hcon : ∀ c ∈ attenuateVmDescriptorGenuineNonAmp.constraints, c.holdsVm env false false)
-    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS) :
+    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS)
+    (hgc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) < 2013265921)
+    (hhc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) < 2013265921) :
     env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) = 0
     ∨ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) = 1 := by
-  apply capDeleg_nonAmp_in_circuit env _ i hi
+  apply capDeleg_nonAmp_in_circuit env _ i hi hgc hhc
   intro c hc
   apply hcon
   show c ∈ (attenuateVmDescriptorGenuine.constraints ++ capDelegNonAmpGates)
