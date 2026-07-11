@@ -86,6 +86,7 @@
 pub mod apply;
 pub mod diagnose;
 pub mod facet;
+pub mod gate;
 pub mod lower;
 pub mod refine;
 pub mod schema;
