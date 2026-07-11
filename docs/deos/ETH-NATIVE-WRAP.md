@@ -13,6 +13,17 @@ RISC-V emulation layer. Grounded in the proving stack at HEAD.
 
 ## 0. The artifact and the verifier we must wrap
 
+> **CORRECTION (2026-07-11, census `docs/FINDING-chain-participation-census.md`):** the
+> public-input shape below is stale. Post-v11 the claim is **25 BabyBear lanes**:
+> `genesis_root: [BabyBear; 8]`, `final_root: [BabyBear; 8]`, `num_turns` (1),
+> `chain_digest: [BabyBear; 8]` (`SEG_ANCHOR_WIDTH = 8` at `ivc_turn_chain.rs:267`,
+> `SEG_DIGEST_WIDTH = 8` at `:254`, host tooth `:2807-2811`, wire envelope v3).
+> The gnark circuit's public-input vector, `EthPublicInputs`, and the
+> `IDreggSettlement.settle` ABI must all target the 25-lane statement — the
+> single-`bytes32`-per-root shapes in `bridge/src/ethereum.rs` and
+> `chain/contracts/IDreggSettlement.sol` are pre-widening and must be regenerated
+> with the wrap (milestone 1/4).
+
 The finality artifact is `WholeChainProof` (`circuit-prove/src/ivc_turn_chain.rs:1286`):
 a single recursive **batch-STARK** over **BabyBear** (`p = 2^31 − 2^27 + 1`),
 degree-4 extension, **Poseidon2** (width-16 challenger/hash + width-24 for the
@@ -20,6 +31,7 @@ isolated segment-digest sponge), **FRI**. Its four public inputs
 (`:1296–1304`) are `genesis_root: BabyBear`, `final_root: BabyBear`,
 `chain_digest: [BabyBear; 4]` (`SEG_DIGEST_WIDTH = 4`, `:249`), `num_turns: usize`
 — all BabyBear (31-bit), which embed losslessly into any larger scalar field.
+*(Stale — see the correction banner above.)*
 
 The verifier the wrap circuit must reproduce is
 `verify_turn_chain_recursive_from_parts` (`ivc_turn_chain.rs:2845`), three teeth:

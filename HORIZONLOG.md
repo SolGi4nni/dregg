@@ -7223,3 +7223,33 @@ contracts + foundry + gnark seed + host flows, fail-closed until the wrap prover
   (TOKEN-MIRROR-BRIDGE) · closure lanes: TRUSTLESS-SOLANA-BRIDGE / SOLANA-SUCCINCT-WRAPPER.
 - **LayerZero concept map published** · `docs/deos/LAYERZERO-CONCEPT-MAP.md` — community-facing "dregg
   already does this by proof, here are the honest committee rows."
+
+## chain-participation census follow-ups (2026-07-11, Fable — docs/FINDING-chain-participation-census.md)
+
+- **25-lane publics through the whole EVM seam** · IDreggSettlement ABI + EthPublicInputs (104-byte
+  tail) + vault abi.decode are all pre-v11 single-word shapes; three mutually incompatible encodings ·
+  closure: regenerate with gnark milestones 1/4 targeting the 25-lane statement (ETH-NATIVE-WRAP §0
+  correction banner added).
+- **Fail-open verifier staticcall** · both contracts accept any proof if the verifier address is
+  codeless; mocks normalize it · closure: typed interface + code-existence check + a no-code negative test.
+- **DreggVault hardening** · decorative keccak O(n) tree (withdraw DISCARDS proofRoot), no solvency
+  accounting, no fee/relayer, no reentrancy guard · closure: incremental Poseidon2 tree wired into the
+  verify path + per-asset solvency + fee/relayer fields, with the milestone-4 verifier swap.
+- **CredentialGate governance teeth** · permanent single admin, bare-counter votes, global nullifier
+  contradicting per-tokenId spec (tests bake it in) · closure: governed root management + proposal
+  lifecycle + scoped nullifiers.
+- **Proof-of-holding → eligibility/weight (THE missing spine)** · nothing derives vote weight from
+  holdings on any chain; electorates are static enumerated sets · closure: holding-proof primitive
+  (shielded pool first, then Solana consensus-verified path, then EVM), CredentialGate presentation
+  envelope upgraded from federation-attested to chain-proven.
+- **Reconcile the two VoteEngines + node wiring** · dregg-governance (constitution auto-enact) vs
+  collective-choice (executor-backed) explicitly unreconciled; both in-process only · closure: one
+  canonical engine (collective-choice substrate + governance face), networked participation.
+- **Passkey→electorate library glue** · PasskeyCustody (PRF-wrapped mnemonic → hybrid SignedTurn) and
+  the extension-less passkey-vote demo are real; binding is demo-page glue · closure: a library binding
+  passkey identities into electorates/credentials; port webauth-core's login half.
+- **ETH sync-committee light client** · easiest inbound chain, nothing built (no BLS12-381 aggregate
+  verify in-tree); Base listener trusts 2 confirmations · closure: Helios-style sync-committee + MPT
+  inclusion, folded per BRIDGE-ARCHITECTURE-SOUNDNESS G1 constraints (committed consume-once mint gate).
+- **Midnight mirror hash placeholder** · TODO(mirror-hash) BLAKE3 stands in for Midnight's Poseidon ·
+  closure: wire the real BLS-field Poseidon (midnight_inclusion.rs:884-894).
