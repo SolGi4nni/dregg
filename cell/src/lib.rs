@@ -51,6 +51,7 @@ pub mod migration;
 pub mod note;
 pub mod nullifier_set;
 pub mod obligation_standing;
+pub mod oracle_attest;
 pub mod permissions;
 pub mod preconditions;
 pub mod predicate;
