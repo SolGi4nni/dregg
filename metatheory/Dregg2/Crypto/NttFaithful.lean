@@ -1572,6 +1572,182 @@ theorem ringRepFaithful_of_leftInverse (hInv : NttLeftInverse) :
     Dregg2.Crypto.VerifyCoreSpec.RingRepFaithful :=
   ringRepFaithful_of hInv nttMulHom_proven
 
+/-! ## RUNG 2 (INVERSE) — the Gentleman–Sande butterfly engine + the `intt` interpolation induction.
+
+The mirror of the forward butterfly stack (`bfSweep`/`bfFold_spec`/`cast_bfSweep`) for the inverse `intt`'s
+Gentleman–Sande inner loop: `a[j] ← a[j] + a[j+len]`, `a[j+len] ← z·(a[j] − a[j+len])`, with `z = −ζ^{brv(k)}`,
+`k` counting DOWN from 255. Both reads see the ORIGINAL entry (the low write to slot `j` does not touch
+`j+len`), so — like `bfStepC` — the sweep is entrywise the 2×2 GS map over the honest field. -/
+
+/-- The GS butterfly step (matches the desugared inner-loop body of `intt`): low slot `j ← b[j] + b[j+len]`,
+high slot `j+len ← z·(b[j] − b[j+len])`. Both reads are of the ORIGINAL `b` (the low write hits `j`, not
+`j+len`). -/
+def gsStepC (z len : Nat) (b : Poly) (j : Nat) : Poly :=
+  (b.set! j (addQ b[j]! b[j + len]!)).set! (j + len) (mulModQ z (subQ b[j]! b[j + len]!))
+
+theorem gsStepC_size (z len : Nat) (b : Poly) (j : Nat) :
+    (gsStepC z len b j).size = b.size := by
+  unfold gsStepC; rw [size_set!, size_set!]
+
+/-- **THE GS BUTTERFLY-SWEEP PRIMITIVE** (mirror of `bfFold_spec`). Folding the GS step over `range' s m`
+sets the low half to `a[p] + a[p+len]`, the high half to `z·(a[p−len] − a[p])`, and leaves everything else
+fixed — each read seeing the ORIGINAL array `a0`. -/
+theorem gsFold_spec (z len : Nat) (hlen : 1 ≤ len) (a0 : Poly) :
+    ∀ (m s : Nat) (b : Poly),
+      b.size = 256 → s + m + len ≤ 256 → m ≤ len →
+      (∀ p, s ≤ p → p < s + m → b[p]! = a0[p]!) →
+      (∀ p, s + len ≤ p → p < s + m + len → b[p]! = a0[p]!) →
+      (List.foldl (gsStepC z len) b (List.range' s m)).size = 256 ∧
+      (∀ p, s ≤ p → p < s + m →
+        (List.foldl (gsStepC z len) b (List.range' s m))[p]! = addQ a0[p]! a0[p+len]!) ∧
+      (∀ p, s + len ≤ p → p < s + m + len →
+        (List.foldl (gsStepC z len) b (List.range' s m))[p]! = mulModQ z (subQ a0[p-len]! a0[p]!)) ∧
+      (∀ p, (p < s ∨ s + m ≤ p) → (p < s + len ∨ s + m + len ≤ p) →
+        (List.foldl (gsStepC z len) b (List.range' s m))[p]! = b[p]!) := by
+  intro m
+  induction m with
+  | zero =>
+    intro s b hsz _ _ _ _
+    refine ⟨by simpa using hsz, ?_, ?_, ?_⟩
+    · intro p h1 h2; omega
+    · intro p h1 h2; omega
+    · intro p _ _; simp
+  | succ m' ih =>
+    intro s b hsz hbound hmlen hagLo hagHi
+    have hbs : b[s]! = a0[s]! := hagLo s (by omega) (by omega)
+    have hbsl : b[s+len]! = a0[s+len]! := hagHi (s+len) (by omega) (by omega)
+    have hs256 : s < b.size := by rw [hsz]; omega
+    have hsl256 : s + len < b.size := by rw [hsz]; omega
+    set b1 := gsStepC z len b s with hb1def
+    have hb1size : b1.size = 256 := by rw [hb1def, gsStepC_size]; exact hsz
+    have hb1_s : b1[s]! = addQ a0[s]! a0[s+len]! := by
+      rw [hb1def]; unfold gsStepC
+      rw [getElem!_set!_ne _ (s+len) s _ (by omega),
+          getElem!_set!_self _ s _ hs256, hbs, hbsl]
+    have hb1_sl : b1[s+len]! = mulModQ z (subQ a0[s]! a0[s+len]!) := by
+      rw [hb1def]; unfold gsStepC
+      rw [getElem!_set!_self _ (s+len) _ (by rw [size_set!]; exact hsl256), hbs, hbsl]
+    have hb1_other : ∀ p, p ≠ s → p ≠ s + len → b1[p]! = b[p]! := by
+      intro p hps hpsl
+      rw [hb1def]; unfold gsStepC
+      rw [getElem!_set!_ne _ (s+len) p _ (by omega), getElem!_set!_ne _ s p _ (by omega)]
+    have hrange : List.range' s (m'+1) = s :: List.range' (s+1) m' := by
+      rw [List.range'_succ]
+    have hagLo1 : ∀ p, s+1 ≤ p → p < s+1+m' → b1[p]! = a0[p]! := by
+      intro p h1 h2
+      rw [hb1_other p (by omega) (by omega)]
+      exact hagLo p (by omega) (by omega)
+    have hagHi1 : ∀ p, s+1+len ≤ p → p < s+1+m'+len → b1[p]! = a0[p]! := by
+      intro p h1 h2
+      rw [hb1_other p (by omega) (by omega)]
+      exact hagHi p (by omega) (by omega)
+    obtain ⟨ihsz, ihlo, ihhi, ihun⟩ :=
+      ih (s+1) b1 hb1size (by omega) (by omega) hagLo1 hagHi1
+    rw [hrange, List.foldl_cons, ← hb1def]
+    refine ⟨ihsz, ?_, ?_, ?_⟩
+    · intro p h1 h2
+      by_cases hp : p = s
+      · subst hp
+        rw [ihun p (by omega) (by omega), hb1_s]
+      · rw [ihlo p (by omega) (by omega)]
+    · intro p h1 h2
+      by_cases hp : p = s + len
+      · subst hp
+        rw [ihun (s+len) (by omega) (by omega), hb1_sl, Nat.add_sub_cancel]
+      · rw [ihhi p (by omega) (by omega)]
+    · intro p hlo hhi
+      rw [ihun p (by omega) (by omega)]
+      exact hb1_other p (by omega) (by omega)
+
+/-- One full GS butterfly sweep over `[start, start+len)` — a VERBATIM copy of `intt`'s innermost `for j`
+loop (twiddle `z = −ζ^{brv(k)}`). -/
+def gsSweep (z start len : Nat) (a0 : Poly) : Poly := Id.run do
+  let mut a := a0
+  for j in [start : start + len] do
+    let t := a[j]!
+    a := a.set! j (addQ t a[j + len]!)
+    a := a.set! (j + len) (mulModQ z (subQ t a[j + len]!))
+  return a
+
+/-- The imperative GS sweep is exactly the `gsStepC` fold (needs `len ≥ 1` to drop the post-`set!` read). -/
+theorem gsSweep_eq_foldl (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) :
+    gsSweep z start len a0 = List.foldl (gsStepC z len) a0 (List.range' start len) := by
+  unfold gsSweep
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure]
+  have hsize : [start:start+len].size = len := by
+    simp only [Std.Legacy.Range.size]; omega
+  rw [hsize]
+  refine foldl_ext _ _ ?_ _ _
+  intro b j
+  have hrw : (b.set! j (addQ b[j]! b[j + len]!))[j + len]! = b[j + len]! :=
+    getElem!_set!_ne _ j (j + len) _ (by omega)
+  unfold gsStepC
+  rw [hrw]
+
+/-- **Full GS-sweep entrywise characterization** (`gsFold_spec` at `m = len`). -/
+theorem gsSweep_getElem (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly)
+    (hsz : a0.size = 256) (hbound : start + 2 * len ≤ 256) :
+    (∀ p, start ≤ p → p < start + len →
+      (gsSweep z start len a0)[p]! = addQ a0[p]! a0[p+len]!) ∧
+    (∀ p, start + len ≤ p → p < start + 2 * len →
+      (gsSweep z start len a0)[p]! = mulModQ z (subQ a0[p-len]! a0[p]!)) ∧
+    (∀ p, (p < start ∨ start + 2 * len ≤ p) →
+      (gsSweep z start len a0)[p]! = a0[p]!) := by
+  rw [gsSweep_eq_foldl z start len hlen a0]
+  obtain ⟨_, hlo, hhi, hun⟩ :=
+    gsFold_spec z len hlen a0 len start a0 hsz (by omega) (le_refl _)
+      (fun p _ _ => rfl) (fun p _ _ => rfl)
+  refine ⟨?_, ?_, ?_⟩
+  · intro p h1 h2; exact hlo p h1 (by omega)
+  · intro p h1 h2; exact hhi p (by omega) (by omega)
+  · intro p h; apply hun p <;> omega
+
+/-- **The GS butterfly is the 2×2 ℤ_q-linear map** — low half `↦ a[p] + a[p+len]`, high half
+`↦ z·(a[p−len] − a[p])`, rest fixed (lifted into `ZMod q` via the RUNG-0 casts). Needs the reduced-range
+input hypothesis for the `subQ` cast (the subtrahend `a0[p]!` is a bare coefficient, not a `mulModQ`). -/
+theorem cast_gsSweep (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly)
+    (hsz : a0.size = 256) (hbound : start + 2 * len ≤ 256) (hlt : ∀ (p : Nat), a0[p]! < q) :
+    (∀ p, start ≤ p → p < start + len →
+      ((gsSweep z start len a0)[p]! : ZMod q)
+        = (a0[p]! : ZMod q) + (a0[p+len]! : ZMod q)) ∧
+    (∀ p, start + len ≤ p → p < start + 2 * len →
+      ((gsSweep z start len a0)[p]! : ZMod q)
+        = (z : ZMod q) * ((a0[p-len]! : ZMod q) - (a0[p]! : ZMod q))) := by
+  obtain ⟨hlo, hhi, _⟩ := gsSweep_getElem z start len hlen a0 hsz hbound
+  constructor
+  · intro p h1 h2
+    rw [hlo p h1 h2, cast_addQ]
+  · intro p h1 h2
+    rw [hhi p h1 h2, cast_mulModQ, cast_subQ _ _ (by have := hlt p; omega)]
+
+/-- The GS step preserves the reduced range (writes are `addQ`/`mulModQ`). -/
+theorem gsStepC_lt (z len : Nat) (b : Poly) (j : Nat) (hb : ∀ (p:Nat), b[p]! < q) :
+    ∀ (p:Nat), (gsStepC z len b j)[p]! < q := by
+  unfold gsStepC
+  exact set!_lt _ _ _ (set!_lt _ _ _ hb (addQ_lt _ _)) (mulModQ_lt _ _)
+
+theorem foldl_gsStepC_lt (z len : Nat) :
+    ∀ (L : List Nat) (b : Poly), (∀ (p:Nat), b[p]!<q) →
+      ∀ (p:Nat), (List.foldl (gsStepC z len) b L)[p]! < q := by
+  intro L; induction L with
+  | nil => intro b hb p; simpa using hb p
+  | cons hd tl ih => intro b hb; exact ih _ (gsStepC_lt z len b hd hb)
+
+theorem gsSweep_lt (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) (h : ∀ (p:Nat), a0[p]!<q) :
+    ∀ (p:Nat), (gsSweep z start len a0)[p]! < q := by
+  rw [gsSweep_eq_foldl z start len hlen a0]; exact foldl_gsStepC_lt z len _ a0 h
+
+theorem gsSweep_size (z start len : Nat) (hlen : 1 ≤ len) (a0 : Poly) (h : a0.size = 256) :
+    (gsSweep z start len a0).size = 256 := by
+  rw [gsSweep_eq_foldl z start len hlen a0]
+  suffices hgen : ∀ (L : List Nat) (b : Poly), b.size = 256 →
+      (List.foldl (gsStepC z len) b L).size = 256 by exact hgen _ a0 h
+  intro L
+  induction L with
+  | nil => intro b hb; simpa using hb
+  | cons hd tl ih => intro b hb; simp only [List.foldl_cons]; exact ih _ (by rw [gsStepC_size]; exact hb)
+
 /-! ## Axiom gate on the new keystones (⊆ {propext, Classical.choice, Quot.sound}).
 Every rung climbed is checked clean; `zeta_root_witness`'s `ofReduceBool` (the concrete ζ=1753 pin) is
 deliberately NOT gated here — it is the accepted computational residual, isolated from the ∀-theorems. -/
