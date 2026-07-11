@@ -70,7 +70,8 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA ePrm eSub eSelNoop gNonce gBalHi gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
-   transferHashSites transferHash_binds boundaryLast_pins)
+   transferHashSites transferHash_binds boundaryLast_pins
+   eqToModEq gate_modEq_iff not_modEq_zero_of_canon)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound
   (CellState absorbedCols commitOf commit_eq_commitOf absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
@@ -144,12 +145,13 @@ pool), the runtime nonce TICKS by one, and balHi/cap/reserved/8 fields are FROZE
 insert + no-double-spend gate are out-of-row (the §IR flags). -/
 def NoteSpendRowIntent (env : VmRowEnv) : Prop :=
   env.loc (saCol state.BALANCE_LO)
-      = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO)
-  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
-  ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
-  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+      ≡ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.NONCE) ≡ env.loc (sbCol state.NONCE) + 1 [ZMOD 2013265921]
+  ∧ env.loc (saCol state.CAP_ROOT) ≡ env.loc (sbCol state.CAP_ROOT) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+      ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921])
 
 /-! ## §4 — FAITHFULNESS: the emitted per-row gates ⟺ the credit/tick intent. -/
 
@@ -176,31 +178,32 @@ theorem noteSpendVm_faithful (env : VmRowEnv) (hrow : IsNoteSpendRow env) :
       ePrmNoteValue, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
     rw [hsN] at hNon
     refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-    · linarith [hLo]
-    · linarith [hHi]
-    · linarith [hNon]
-    · linarith [hCap]
-    · linarith [hRes]
+    · exact (gate_modEq_iff (by ring)).mp hLo
+    · exact (gate_modEq_iff (by ring)).mp hHi
+    · exact (gate_modEq_iff (by ring)).mp hNon
+    · exact (gate_modEq_iff (by ring)).mp hCap
+    · exact (gate_modEq_iff (by ring)).mp hRes
     · intro i hi
-      have := hFld i hi
-      simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
-      linarith
+      have hfi := hFld i hi
+      simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at hfi
+      exact (gate_modEq_iff (by ring)).mp hfi
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
     · simp only [VmConstraint.holdsVm, gBalLoCredit, ePrmNoteValue, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hLo]; ring
+      exact (gate_modEq_iff (by ring)).mpr hLo
     · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hHi]; ring
+      exact (gate_modEq_iff (by ring)).mpr hHi
     · simp only [VmConstraint.holdsVm, gNonceTick, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-      rw [hsN, hNon]; ring
+      rw [hsN]
+      exact (gate_modEq_iff (by ring)).mpr hNon
     · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hCap]; ring
+      exact (gate_modEq_iff (by ring)).mpr hCap
     · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hRes]; ring
+      exact (gate_modEq_iff (by ring)).mpr hRes
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      exact (gate_modEq_iff (by ring)).mpr (hFld i hi)
 
 /-! ## §5 — ANTI-GHOST: a row whose post-`bal_lo` is NOT the credit on a noteSpend is rejected. -/
 
@@ -214,13 +217,15 @@ theorem noteSpendVm_rejects_wrong_output (env : VmRowEnv) (hrow : IsNoteSpendRow
 /-- **Anti-ghost (balance tamper).** A noteSpend row whose post-`bal_lo` is NOT the credit
 `old + value` has no satisfying gate set — `gBalLoCredit` rejects it (UNSAT). -/
 theorem noteSpendVm_rejects_balance_mint (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.BALANCE_LO)
+      ∧ env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hcanonMove : 0 ≤ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO)
+      ∧ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO) < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO)
       ≠ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.NOTE_VALUE_LO)) :
     ¬ (VmConstraint.gate gBalLoCredit).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoCredit, ePrmNoteValue, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h
-  apply hwrong
-  linarith [h]
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonMove hwrong
 
 /-! ## §6 — The structured per-cell spec (REUSING `CellState`): the FROZEN cell. -/
 
@@ -250,12 +255,12 @@ transparent `balLo` is CREDITED by `value`, balHi/8-fields/cap/reserved frozen, 
 is the EffectVM-row projection of the validated runtime hand-AIR's note-spend transition. See §9 for the
 universe-A divergence (balance-NEUTRAL convention). -/
 def CellSpendSpec (pre : CellState) (value : ℤ) (post : CellState) : Prop :=
-  post.balLo = pre.balLo + value
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce + 1
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.capRoot = pre.capRoot
-  ∧ post.reserved = pre.reserved
+  post.balLo ≡ pre.balLo + value [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce + 1 [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.capRoot ≡ pre.capRoot [ZMOD 2013265921]
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 /-- Decode lemma: under `RowEncodesSpend`, `NoteSpendRowIntent` IS the structured `CellSpendSpec`. -/
 theorem intent_to_cellSpendSpec (env : VmRowEnv) (pre post : CellState) (value : ℤ)
@@ -265,9 +270,8 @@ theorem intent_to_cellSpendSpec (env : VmRowEnv) (pre post : CellState) (value :
           hsaLo, hsaHi, hsaN, hsaF, hsaCap, hsaRes, hsaC, hOld, hNew⟩ := henc
   obtain ⟨hbal, hbhi, hnon, hcap, hres, hfld⟩ := hint
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · have : post.balLo = pre.balLo + env.loc (prmCol param.NOTE_VALUE_LO) := by
-      rw [← hsaLo, ← hsbLo]; exact hbal
-    rw [this, hpVal]
+  · show post.balLo ≡ pre.balLo + value [ZMOD 2013265921]
+    rw [← hsaLo, ← hsbLo, ← hpVal]; exact hbal
   · rw [← hsaHi, ← hsbHi]; exact hbhi
   · rw [← hsaN, ← hsbN]; exact hnon
   · intro i
@@ -286,7 +290,7 @@ theorem noteSpendDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv
     (henc : RowEncodesSpend env pre value post)
     (hgatesat : satisfiedVm hash noteSpendVmDescriptor env true false)
     (hsat : satisfiedVm hash noteSpendVmDescriptor env true true) :
-    CellSpendSpec pre value post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+    CellSpendSpec pre value post ∧ post.commit ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   obtain ⟨hcs, _⟩ := hsat
   obtain ⟨hcsT, _⟩ := hgatesat
   have hgates' : ∀ c ∈ noteSpendRowGates, c.holdsVm env false false := by
@@ -328,12 +332,18 @@ theorem noteSpendDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : 
     (e₁ e₂ : VmRowEnv)
     (hsat₁ : satisfiedVm hash noteSpendVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash noteSpendVmDescriptor e₂ true true)
+    -- FIELD-FAITHFUL bridge: the published digest columns are CANONICAL field elements (Poseidon2's
+    -- output lives in `[0, p)`), lifting the mod-p commit pin to the ℤ collision-resistance needs.
+    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
+      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
+      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
   have hs₁ : siteHoldsAll hash e₁ transferHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ transferHashSites := hsat₂.2.1
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash noteSpendVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
+      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
     intro e hsat
     obtain ⟨hcs, _⟩ := hsat
     have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
@@ -349,8 +359,16 @@ theorem noteSpendDescriptor_commit_binds_state (hash : List ℤ → ℤ) (hCR : 
         · simp only [VmConstraint.holdsVm] at hh ⊢
           exact hh
     exact (boundaryLast_pins e hlast).1
+  have hmod : e₁.loc (saCol state.STATE_COMMIT) ≡ e₂.loc (saCol state.STATE_COMMIT)
+      [ZMOD 2013265921] := by
+    have h2 : e₁.pub pi.NEW_COMMIT ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
+      rw [hpub]; exact (hc e₂ hsat₂).symm
+    exact (hc e₁ hsat₁).trans h2
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
+    have hdvd := Int.modEq_iff_dvd.mp hmod
+    obtain ⟨l₁, u₁⟩ := hcanon₁
+    obtain ⟨l₂, u₂⟩ := hcanon₂
+    omega
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — CONNECTOR to universe-A: `CellSpendSpec` IS `NoteSpendSpec`'s per-cell frame image.
@@ -413,14 +431,20 @@ theorem runtime_credit_vs_univA_neutral_divergence
     (hgatesat : satisfiedVm hash noteSpendVmDescriptor env true false)
     (hsat : satisfiedVm hash noteSpendVmDescriptor env true true)
     (hspec : NoteSpendSpec st nf actor spendProof st')
-    (hagree : post.balLo = (cellProjSpend st'.kernel.bal c asset).balLo) :
+    (hagree : post.balLo = (cellProjSpend st'.kernel.bal c asset).balLo)
+    -- the consumed note's value is a CANONICAL field element (`[0, p)`), lifting the field-level
+    -- `value ≡ 0` the two conventions force to the ℤ `value = 0` the divergence names.
+    (hvalCanon : 0 ≤ value ∧ value < 2013265921) :
     value = 0 := by
   obtain ⟨hcirc, _⟩ :=
     noteSpendDescriptor_full_sound hash env hrow (cellProjSpend st.kernel.bal c asset) post value henc hgatesat hsat
-  have hcredit : post.balLo = (cellProjSpend st.kernel.bal c asset).balLo + value := hcirc.1
+  have hcredit : post.balLo ≡ (cellProjSpend st.kernel.bal c asset).balLo + value [ZMOD 2013265921] :=
+    hcirc.1
   have hneutral := univA_spend_is_balance_neutral st st' nf actor c asset spendProof hspec
   rw [hagree, hneutral] at hcredit
-  linarith
+  have hdvd := Int.modEq_iff_dvd.mp hcredit
+  obtain ⟨lo, hi⟩ := hvalCanon
+  omega
 
 /-! ## §11 — THE SET-INSERT + NO-DOUBLE-SPEND legs the per-row circuit does NOT enforce (honest).
 
@@ -490,7 +514,8 @@ theorem goodSpendRow_realizes_intent : NoteSpendRowIntent goodSpendRow := by
   simp only [sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE,
     NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.BALANCE_HI, state.NONCE,
     state.CAP_ROOT, state.RESERVED, state.FIELD_BASE, param.NOTE_VALUE_LO]
-  refine ⟨by norm_num, rfl, by norm_num, rfl, rfl, ?_⟩
+  refine ⟨eqToModEq (by norm_num), eqToModEq rfl, eqToModEq (by norm_num), eqToModEq rfl,
+    eqToModEq rfl, ?_⟩
   intro i hi
   have e1 : (76 + (3 + i) = 4) = False := by simp; omega
   have e2 : (76 + (3 + i) = 54) = False := by simp; omega
@@ -505,6 +530,7 @@ theorem goodSpendRow_realizes_intent : NoteSpendRowIntent goodSpendRow := by
   have f5 : (54 + (3 + i) = 78) = False := by simp; omega
   have f6 : (54 + (3 + i) = 69) = False := by simp; omega
   simp only [e1, e2, e3, e4, e5, e6, f1, f2, f3, f4, f5, f6, if_false]
+  exact eqToModEq rfl
 
 /-- A FORGED noteSpend row: `goodSpendRow` with the post-`bal_lo` set to `999` (NOT the credit `130`). -/
 def badSpendRow : VmRowEnv where
@@ -516,10 +542,18 @@ def badSpendRow : VmRowEnv where
 `130`, so `gBalLoCredit` REJECTS it — a concrete UNSAT (the credit has teeth). -/
 theorem badSpendRow_rejected : ¬ (VmConstraint.gate gBalLoCredit).holdsVm badSpendRow false false := by
   apply noteSpendVm_rejects_balance_mint
-  simp only [badSpendRow, goodSpendRow, sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE,
-    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE, param.NOTE_VALUE_LO]
-  norm_num
+  · simp only [badSpendRow, goodSpendRow, sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, param.NOTE_VALUE_LO]
+    norm_num
+  · simp only [badSpendRow, goodSpendRow, sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, param.NOTE_VALUE_LO]
+    norm_num
+  · simp only [badSpendRow, goodSpendRow, sbCol, saCol, prmCol, SEL_NOTE_SPEND, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE, param.NOTE_VALUE_LO]
+    norm_num
 
 /-! ## §A — STAGE-3 AMPLIFICATION: bind the `nullifiers` side-table ROOT into the descriptor.
 
@@ -605,25 +639,30 @@ theorem noteSpendRootHash_binds (hash : List ℤ → ℤ) (env : VmRowEnv)
 digest ADVANCES by the `param2` accumulator step (`sa_digest = sb_digest + step`). This is the per-row
 projection of the membership update `nullifiers := nf :: nullifiers` onto its committed digest. -/
 def NoteSpendRootIntent (env : VmRowEnv) : Prop :=
-  env.loc SYS_DIG_AFTER = env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)
+  env.loc SYS_DIG_AFTER
+    ≡ env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM) [ZMOD 2013265921]
 
 /-- **`noteSpendRoot_gate_faithful`.** The root-update gate holds IFF the digest advances by the
-accumulator step — the gate pins EXACTLY the `nullifiers`-root update. -/
+accumulator step (mod `p`) — the gate pins EXACTLY the `nullifiers`-root update. -/
 theorem noteSpendRoot_gate_faithful (env : VmRowEnv) :
     (VmConstraint.gate gNullifierRootUpdate).holdsVm env false false ↔ NoteSpendRootIntent env := by
   simp only [VmConstraint.holdsVm, gNullifierRootUpdate, ePrmNullifierStep, eSub, EmittedExpr.eval,
     NoteSpendRootIntent]
-  constructor
-  · intro h; linarith
-  · intro h; rw [h]; ring
+  exact gate_modEq_iff (by ring)
 
 /-- **Anti-ghost (root tamper).** A row whose after-digest is NOT the advanced accumulator
 (`sb_digest + step`) is rejected by `gNullifierRootUpdate` — a dropped/forged `nullifiers` update is
-UNSAT (an attacker omitting `nf` to enable a later double-spend MOVES the digest, breaking the gate). -/
+UNSAT (an attacker omitting `nf` to enable a later double-spend MOVES the digest, breaking the gate).
+FIELD-FAITHFUL: the after-digest carrier and the advanced accumulator both lie in `[0, p)` (the
+deployed range check), so a wrong digest cannot pass the field gate by wrap-around. -/
 theorem noteSpendRoot_rejects_wrong_root (env : VmRowEnv)
+    (hcanonAfter : 0 ≤ env.loc SYS_DIG_AFTER ∧ env.loc SYS_DIG_AFTER < 2013265921)
+    (hcanonStep : 0 ≤ env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)
+      ∧ env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM) < 2013265921)
     (hwrong : env.loc SYS_DIG_AFTER ≠ env.loc SYS_DIG_BEFORE + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)) :
     ¬ (VmConstraint.gate gNullifierRootUpdate).holdsVm env false false := by
-  intro h; exact hwrong ((noteSpendRoot_gate_faithful env).mp h)
+  simp only [VmConstraint.holdsVm, gNullifierRootUpdate, ePrmNullifierStep, eSub, EmittedExpr.eval]
+  exact not_modEq_zero_of_canon (by ring) hcanonAfter hcanonStep hwrong
 
 /-! ## §D — the AMPLIFIED descriptor + the side-table-root anti-ghost tooth (connected to `SystemRoots`). -/
 
@@ -715,7 +754,7 @@ theorem noteSpendFull_sound (hash : List ℤ → ℤ) (env : VmRowEnv) (hrow : I
     (hsat : satisfiedVm hash noteSpendVmDescriptorFull env true true) :
     CellSpendSpec pre value post
       ∧ NoteSpendRootIntent env
-      ∧ post.commit = env.pub pi.NEW_COMMIT := by
+      ∧ post.commit ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   obtain ⟨hcs, hsites, _⟩ := hsat
   obtain ⟨hcsT, _⟩ := hgatesat
   have hfreeze := noteSpendFull_forces_freeze env hrow true hcsT
@@ -802,9 +841,18 @@ def badNullRow : VmRowEnv where
 advance, so `gNullifierRootUpdate` REJECTS it — the bound root has teeth. -/
 theorem badNullRow_rejected : ¬ (VmConstraint.gate gNullifierRootUpdate).holdsVm badNullRow false false := by
   apply noteSpendRoot_rejects_wrong_root
-  simp only [badNullRow, goodNullRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol, NULLIFIER_ROOT_STEP_PARAM,
-    aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE]
-  norm_num
+  · simp only [badNullRow, goodNullRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol,
+      NULLIFIER_ROOT_STEP_PARAM, aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE,
+      NUM_EFFECTS, STATE_SIZE]
+    norm_num
+  · simp only [badNullRow, goodNullRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol,
+      NULLIFIER_ROOT_STEP_PARAM, aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE,
+      NUM_EFFECTS, STATE_SIZE]
+    norm_num
+  · simp only [badNullRow, goodNullRow, SYS_DIG_BEFORE, SYS_DIG_AFTER, prmCol,
+      NULLIFIER_ROOT_STEP_PARAM, aux_off_sys.SYSTEM_ROOTS_DIGEST, PARAM_BASE, STATE_BEFORE_BASE,
+      NUM_EFFECTS, STATE_SIZE]
+    norm_num
 
 /-! ## §W — FULL-STATE ON THE RUNNABLE DESCRIPTOR (the magnesium breadth — the GENERIC crown).
 
@@ -852,17 +900,15 @@ def gNullifierRootUpdateWide : EmittedExpr :=
 `sysRootsDigestCol` ADVANCES by the `param2` step over `sysRootsDigestColBefore`. -/
 def NoteSpendRootIntentWide (env : VmRowEnv) : Prop :=
   env.loc sysRootsDigestCol
-    = env.loc sysRootsDigestColBefore + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM)
+    ≡ env.loc sysRootsDigestColBefore + env.loc (prmCol NULLIFIER_ROOT_STEP_PARAM) [ZMOD 2013265921]
 
 /-- **`gNullifierRootUpdateWide_faithful`.** The wide root-update gate holds IFF the dedicated-carrier
-digest advances by the accumulator step. -/
+digest advances by the accumulator step (mod `p`). -/
 theorem gNullifierRootUpdateWide_faithful (env : VmRowEnv) :
     (VmConstraint.gate gNullifierRootUpdateWide).holdsVm env false false ↔ NoteSpendRootIntentWide env := by
   simp only [VmConstraint.holdsVm, gNullifierRootUpdateWide, ePrmNullifierStep, eSub, EmittedExpr.eval,
     NoteSpendRootIntentWide]
-  constructor
-  · intro h; linarith
-  · intro h; rw [h]; ring
+  exact gate_modEq_iff (by ring)
 
 /-! ### §W.2 — the WIDE descriptor (dedicated carrier + `wideHashSites`). -/
 
@@ -927,7 +973,7 @@ def NoteSpendFullClause (hash : List ℤ → ℤ) (value : ℤ) (preRoots postRo
   CellSpendSpec pre value post
   ∧ pr = postRoots
   ∧ Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
-      = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step
+      ≡ Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step [ZMOD 2013265921]
   ∧ (∀ i : Fin N_SYSTEM_ROOTS, i.val ≠ Dregg2.Exec.SystemRoots.systemRoot.NULLIFIER → postRoots i = preRoots i)
 
 /-- **`NoteSpendDecode hash value preRoots postRoots step env pre post pr`** — the structured row decode:
@@ -964,7 +1010,7 @@ def noteSpendRunnableSpec (hash : List ℤ → ℤ) (value : ℤ) (preRoots post
     have hcell := intent_to_cellSpendSpec env pre post value henc hcredit
     have hrootW := noteSpendWide_forces_root env true hgates
     have hadvance : Dregg2.Exec.SystemRoots.systemRootsDigest hash postRoots
-        = Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step := by
+        ≡ Dregg2.Exec.SystemRoots.systemRootsDigest hash preRoots + step [ZMOD 2013265921] := by
       have := hrootW
       unfold NoteSpendRootIntentWide at this
       rw [hdigA, hdigB, hstep] at this
@@ -1054,10 +1100,11 @@ theorem noteSpend_fullClause_inhabited (hash : List ℤ → ℤ) :
       (Dregg2.Exec.SystemRoots.systemRootsDigest hash wPostRootsS
         - Dregg2.Exec.SystemRoots.systemRootsDigest hash wPreRootsS)
       wPreS wPostS wPostRootsS := by
-  refine ⟨?_, rfl, by ring, ?_⟩
+  refine ⟨?_, rfl, eqToModEq (by ring), ?_⟩
   · -- CellSpendSpec wPreS 30 wPostS: balLo = 100 + 30 = 130, balHi frozen, nonce+1, frame frozen.
-    refine ⟨by norm_num [wPreS, wPostS], rfl, by norm_num [wPreS, wPostS], ?_, rfl, rfl⟩
-    intro i; rfl
+    refine ⟨eqToModEq (by norm_num [wPreS, wPostS]), eqToModEq (by norm_num [wPreS, wPostS]),
+      eqToModEq (by norm_num [wPreS, wPostS]), ?_, eqToModEq rfl, eqToModEq rfl⟩
+    intro i; exact eqToModEq rfl
   · -- every NON-NULLIFIER root is frozen at 0.
     intro i hi
     simp only [wPostRootsS, wPreRootsS, Dregg2.Exec.SystemRoots.emptySystemRoots]
@@ -1074,9 +1121,10 @@ theorem noteSpend_fullClause_refutable (hash : List ℤ → ℤ) :
           - Dregg2.Exec.SystemRoots.systemRootsDigest hash wPreRootsS)
         wPreS { wPostS with balLo := 999 } wPostRootsS := by
   rintro ⟨⟨hbal, _⟩, _⟩
-  -- hbal : (999) = wPreS.balLo + 30 = 130
-  simp only [wPreS] at hbal
-  norm_num at hbal
+  -- hbal : (999) ≡ wPreS.balLo + 30 = 130 [ZMOD p] — false, both canonical and distinct
+  have hdvd := Int.modEq_iff_dvd.mp hbal
+  simp only [wPreS] at hdvd
+  omega
 
 /-! ### §W.6 — RECONCILIATION pins (the wide descriptor's shape). -/
 
