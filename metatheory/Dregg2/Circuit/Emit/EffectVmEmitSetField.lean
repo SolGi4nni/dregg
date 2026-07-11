@@ -173,6 +173,20 @@ def SetFieldRowIntent (slot : Fin 8) (env : VmRowEnv) : Prop :=
   ∧ (∀ i < 8, i ≠ slot.val →
       env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
 
+/-- **`SetFieldRowCanon env`** — the row's EXPLICIT canonicality envelope (the deployed range-check /
+field-representative invariant, carried as named hypotheses): every state-block cell of both windows
+is a canonical BabyBear representative in `[0, p)`; the written-value param column `param1` is a
+canonical representative; and the pre-nonce tick stays in-field (`nonce_before + 1 < p` — the per-cell
+sequence counter is far below `p`). Under the mod-p `holdsVm` denotation these are exactly the
+hypotheses that let the ℤ-stated row intent be read back off the field-checked gates (a
+`≡ 0 [ZMOD p]` residual strictly inside `(-p, p)` is `0`). -/
+def SetFieldRowCanon (env : VmRowEnv) : Prop :=
+  (∀ off, off < STATE_SIZE →
+      (0 ≤ env.loc (sbCol off) ∧ env.loc (sbCol off) < 2013265921)
+      ∧ (0 ≤ env.loc (saCol off) ∧ env.loc (saCol off) < 2013265921))
+  ∧ (0 ≤ env.loc (prmCol VALUE) ∧ env.loc (prmCol VALUE) < 2013265921)
+  ∧ env.loc (sbCol state.NONCE) + 1 < 2013265921
+
 /-! ## §4 — FAITHFULNESS: on an active setField row the emitted gates ⟺ the field-write intent.
 
 The `IsSetFieldRow` premise (`s_set_field = 1`, `s_noop = 0`) is the runtime's active-row condition:
@@ -180,9 +194,18 @@ every runtime setField AIR constraint is `s_setfield · (…)`, so the descripto
 EXACTLY on the active row. With it the gated write gate becomes `field_after = param1` and the tick
 gate becomes `after_nonce = before_nonce + 1`. -/
 
-theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env) :
+theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
+    (hcanon : SetFieldRowCanon env) :
     (∀ c ∈ setFieldRowGates slot, c.holdsVm env false false) ↔ SetFieldRowIntent slot env := by
   obtain ⟨hsel, hnoop⟩ := hrow
+  obtain ⟨hcells, hval, hovf⟩ := hcanon
+  have hbLo := hcells state.BALANCE_LO (by norm_num [state.BALANCE_LO, STATE_SIZE])
+  have hbHi := hcells state.BALANCE_HI (by norm_num [state.BALANCE_HI, STATE_SIZE])
+  have hbN := hcells state.NONCE (by norm_num [state.NONCE, STATE_SIZE])
+  have hbCap := hcells state.CAP_ROOT (by norm_num [state.CAP_ROOT, STATE_SIZE])
+  have hbRes := hcells state.RESERVED (by norm_num [state.RESERVED, STATE_SIZE])
+  have hbF := hcells (state.FIELD_BASE + slot.val)
+    (by have := slot.isLt; simp only [state.FIELD_BASE, STATE_SIZE]; omega)
   unfold setFieldRowGates gOtherFieldsAll SetFieldRowIntent
   constructor
   · intro h
@@ -203,26 +226,33 @@ theorem setFieldVm_faithful (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRo
       gResPass, eSA, eSB, ePrm, eSub, EmittedExpr.eval] at hWr hLo hHi hNon hCap hRes
     rw [hsel] at hWr
     rw [hnoop] at hNon
-    refine ⟨by linarith [hWr], by linarith [hLo], by linarith [hHi], by linarith [hNon],
-      by linarith [hCap], by linarith [hRes], ?_⟩
+    rw [Int.modEq_zero_iff_dvd] at hWr hLo hHi hNon hCap hRes
+    refine ⟨by omega, by omega, by omega, by omega, by omega, by omega, ?_⟩
     intro i hi hne
-    have := hFld i hi hne
-    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hFi := hFld i hi hne
+    have hbFi := hcells (state.FIELD_BASE + i) (by simp only [state.FIELD_BASE, STATE_SIZE]; omega)
+    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at hFi
+    rw [Int.modEq_zero_iff_dvd] at hFi
+    omega
   · rintro ⟨hWr, hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_filter, List.mem_range, decide_eq_true_eq] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl) | ⟨i, ⟨hi, hne⟩, rfl⟩
     · simp only [VmConstraint.holdsVm, gFieldWrite, eSA, ePrm, eSub, EmittedExpr.eval]
-      rw [hsel, hWr]; ring
-    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+      rw [Int.modEq_zero_iff_dvd, hsel]; omega
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
     · simp only [VmConstraint.holdsVm, gNonce, eSelNoop, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hnoop, hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+      rw [Int.modEq_zero_iff_dvd, hnoop]; omega
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
+    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]
+      rw [Int.modEq_zero_iff_dvd]; omega
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi hne]; ring
+      have := hFld i hi hne
+      rw [Int.modEq_zero_iff_dvd]; omega
 
 /-! ## §5 — ANTI-GHOST (gate level): a wrong write / wrong nonce delta / moved bystander is rejected.
 
@@ -233,35 +263,45 @@ row the gates degenerate — the runtime binds the transition only on the active
 freeze gate needs no premise (it degenerates to `after = before` regardless). -/
 
 theorem setFieldVm_rejects_wrong_output (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
-    (hwrong : ¬ SetFieldRowIntent slot env) :
+    (hcanon : SetFieldRowCanon env) (hwrong : ¬ SetFieldRowIntent slot env) :
     ¬ (∀ c ∈ setFieldRowGates slot, c.holdsVm env false false) :=
-  fun h => hwrong ((setFieldVm_faithful slot env hrow).mp h)
+  fun h => hwrong ((setFieldVm_faithful slot env hrow hcanon).mp h)
 
 /-- **Anti-ghost (wrong written value).** On an active setField row a row whose
 `fields[slot]_after ≠ param1` fails the SELECTOR-GATED write gate — the written slot cannot carry
 anything but the bound NEW_VALUE. (The `s_set_field = 1` factor is what makes the gate bite; off the
 active row it vanishes, exactly as the runtime gates the write by `s_setfield`.) -/
 theorem setFieldVm_rejects_wrong_value (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
+    (hsa : 0 ≤ env.loc (saCol (state.FIELD_BASE + slot.val))
+      ∧ env.loc (saCol (state.FIELD_BASE + slot.val)) < 2013265921)
+    (hval : 0 ≤ env.loc (prmCol VALUE) ∧ env.loc (prmCol VALUE) < 2013265921)
     (hwrong : env.loc (saCol (state.FIELD_BASE + slot.val)) ≠ env.loc (prmCol VALUE)) :
     ¬ (VmConstraint.gate (gFieldWrite slot)).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gFieldWrite, eSA, ePrm, eSub, EmittedExpr.eval]
-  rw [hrow.1]; intro h; apply hwrong; linarith
+  rw [hrow.1, Int.modEq_zero_iff_dvd]
+  intro h; exact hwrong (by omega)
 
 /-- **Anti-ghost (wrong nonce delta).** On an active setField row a row whose nonce delta is NOT the
 tick (`after_nonce ≠ before_nonce + 1`) fails the tick gate (`gNonce`) — a forged passthrough
 (`after = before`, the value the FREEZE descriptor wrongly accepted) is now UNSAT. -/
 theorem setFieldVm_rejects_wrong_nonce_delta (slot : Fin 8) (env : VmRowEnv) (hrow : IsSetFieldRow env)
+    (hsa : 0 ≤ env.loc (saCol state.NONCE) ∧ env.loc (saCol state.NONCE) < 2013265921)
+    (hsb : 0 ≤ env.loc (sbCol state.NONCE) ∧ env.loc (sbCol state.NONCE) + 1 < 2013265921)
     (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + 1) :
     ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gNonce, eSelNoop, eSA, eSB, eSub, EmittedExpr.eval]
-  rw [hrow.2]; intro h; apply hwrong; linarith
+  rw [hrow.2, Int.modEq_zero_iff_dvd]
+  intro h; exact hwrong (by omega)
 
 /-- **Anti-ghost (balance moved).** A field write that silently moves `bal_lo` fails the freeze gate. -/
 theorem setFieldVm_rejects_moved_balance (slot : Fin 8) (env : VmRowEnv)
+    (hsa : 0 ≤ env.loc (saCol state.BALANCE_LO) ∧ env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hsb : 0 ≤ env.loc (sbCol state.BALANCE_LO) ∧ env.loc (sbCol state.BALANCE_LO) < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
     ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  rw [Int.modEq_zero_iff_dvd]
+  intro h; exact hwrong (by omega)
 
 /-! ## §6 — the commitment binding (the WHOLE after-block, incl. the written field, is bound).
 
@@ -333,7 +373,7 @@ theorem intent_to_cellSpec (slot : Fin 8) (env : VmRowEnv) (pre post : CellState
 /-! ## §8 — the full descriptor soundness + the commitment binding. -/
 
 theorem setFieldDescriptor_full_sound (slot : Fin 8) (hash : List ℤ → ℤ) (env : VmRowEnv)
-    (pre post : CellState) (hrow : IsSetFieldRow env)
+    (pre post : CellState) (hrow : IsSetFieldRow env) (hcanon : SetFieldRowCanon env)
     (henc : RowEncodesSF slot env pre post)
     (hgatesat : satisfiedVm hash (setFieldVmDescriptor slot) env true false) :
     CellSetFieldSpec slot pre (env.loc (prmCol VALUE)) post := by
@@ -350,7 +390,7 @@ theorem setFieldDescriptor_full_sound (slot : Fin 8) (hash : List ℤ → ℤ) (
       List.mem_filter, List.mem_range, decide_eq_true_eq] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl | rfl) | ⟨i, _, rfl⟩ <;>
       simpa only [VmConstraint.holdsVm] using hh
-  exact intent_to_cellSpec slot env pre post henc ((setFieldVm_faithful slot env hrow).mp hgates)
+  exact intent_to_cellSpec slot env pre post henc ((setFieldVm_faithful slot env hrow hcanon).mp hgates)
 
 theorem setFieldDescriptor_commit_binds_state (slot : Fin 8) (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash) (e₁ e₂ : VmRowEnv)
@@ -441,7 +481,7 @@ legs (`setField_guard_is_offrow` / `setField_log_is_offrow`). This is the transf
 shape, per cell. -/
 theorem setFieldDescriptor_classA (slot : Fin 8) (hash : List ℤ → ℤ) (env : VmRowEnv)
     (s s' : RecChainedState) (actor cell : CellId) (v : Int) (post : CellState)
-    (hrow : IsSetFieldRow env)
+    (hrow : IsSetFieldRow env) (hcanon : SetFieldRowCanon env)
     (henc : RowEncodesSF slot env (cellProjF s.kernel cell slot) post)
     (hval : env.loc (prmCol VALUE) = v)
     (hgatesat : satisfiedVm hash (setFieldVmDescriptor slot) env true false)
@@ -449,7 +489,7 @@ theorem setFieldDescriptor_classA (slot : Fin 8) (hash : List ℤ → ℤ) (env 
     CellSetFieldSpec slot (cellProjF s.kernel cell slot) v post
     ∧ post.fields slot = (cellProjF s'.kernel cell slot).fields slot
     ∧ post.balLo = (cellProjF s'.kernel cell slot).balLo := by
-  have hspec := setFieldDescriptor_full_sound slot hash env (cellProjF s.kernel cell slot) post hrow henc hgatesat
+  have hspec := setFieldDescriptor_full_sound slot hash env (cellProjF s.kernel cell slot) post hrow hcanon henc hgatesat
   rw [hval] at hspec
   obtain ⟨heVal, heBal⟩ := unify_setField_exec s s' actor cell slot v hexec
   refine ⟨hspec, ?_, ?_⟩
@@ -556,6 +596,20 @@ theorem goodSFRow_realizes_intent : SetFieldRowIntent 0 goodSFRow := by
     have b6 : (57 + i = 78) = False := eq_false (by omega)
     simp only [a0, a1, a2, a3, a4, a5, a6, b0, b1, b2, b3, b4, b5, b6, if_false]
 
+/-- **NON-VACUITY (canonicality witness).** The honest row satisfies the explicit canonicality
+envelope — every cell in `[0, p)`, `param1` canonical, the pre-nonce tick in-field — so the mod-p
+hypotheses are jointly satisfiable, not a vacuous guard. -/
+theorem goodSFRow_canonical : SetFieldRowCanon goodSFRow := by
+  have hall : ∀ v, 0 ≤ goodSFRow.loc v ∧ goodSFRow.loc v < 2013265921 := by
+    intro v
+    simp only [goodSFRow]
+    split_ifs <;> norm_num
+  refine ⟨?_, hall _, ?_⟩
+  · intro off _; exact ⟨hall _, hall _⟩
+  · have hsbN : sbCol state.NONCE = 56 := by decide
+    have h56 : goodSFRow.loc 56 = 5 := by decide
+    rw [hsbN, h56]; norm_num
+
 /-- A FORGED setField row: `goodSFRow` with the written `fields[0]` (col 79) overwritten to
 `999 ≠ VALUE`. -/
 def badSFRow : VmRowEnv where
@@ -578,12 +632,20 @@ theorem badSFRow_isRow : IsSetFieldRow badSFRow := by
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badSFRow`'s written `fields[0]` is forged
 (`999 ≠ 7`), so the SELECTOR-GATED write gate (on the active row) REJECTS it. -/
 theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSFRow false false := by
-  apply setFieldVm_rejects_wrong_value 0 badSFRow badSFRow_isRow
   have hF0 : saCol (state.FIELD_BASE + (0 : Fin 8).val) = 79 := by decide
   have hV  : prmCol VALUE = 69 := by decide
-  rw [hF0, hV]
-  show badSFRow.loc 79 ≠ badSFRow.loc 69
-  decide
+  apply setFieldVm_rejects_wrong_value 0 badSFRow badSFRow_isRow
+  · rw [hF0]
+    show 0 ≤ badSFRow.loc 79 ∧ badSFRow.loc 79 < 2013265921
+    have h79 : badSFRow.loc 79 = 999 := by decide
+    rw [h79]; norm_num
+  · rw [hV]
+    show 0 ≤ badSFRow.loc 69 ∧ badSFRow.loc 69 < 2013265921
+    have h69 : badSFRow.loc 69 = 7 := by decide
+    rw [h69]; norm_num
+  · rw [hF0, hV]
+    show badSFRow.loc 79 ≠ badSFRow.loc 69
+    decide
 
 /-! ## §11 — Axiom-hygiene tripwires + layout pins. -/
 
@@ -611,6 +673,7 @@ theorem badSFRow_rejected : ¬ (VmConstraint.gate (gFieldWrite 0)).holdsVm badSF
 #assert_axioms setFieldDescriptor_classA
 #assert_axioms goodSFRow_isRow
 #assert_axioms goodSFRow_realizes_intent
+#assert_axioms goodSFRow_canonical
 #assert_axioms badSFRow_isRow
 #assert_axioms badSFRow_rejected
 
