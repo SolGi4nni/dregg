@@ -32,19 +32,22 @@ first-row) the Rust adapter documents.
    binary / polynomial / gated / inverted-gated / squared / conditional-nonzero / at-least-one all
    ride the single `base (.gate _)` carrier, so faithfulness is the `holdsVm .gate` reduction.
 2. `encodeTransition_holdsAt_iff` — CLOSED: the `windowGate` carrier is the cross-row equality.
-3. `encodePiBinding_narrows` — the every-row→first-row narrowing is SOUND one way (`sorry`-labelled
-   on the converse gap — it is a genuine narrowing, not an equivalence; the follow-up is a per-row
-   PI gate in the IR-v2 main AIR, exactly as the Rust adapter's module note says).
-4. `cell_to_descriptor_faithful` — the descriptor-level packaging (`sorry`-labelled: the full
-   `Satisfied2` row-quantification over a mixed constraint list — mechanical but long).
+3. `encodePiBinding_narrows` — the every-row→first-row narrowing is SOUND one way; the converse
+   gap is a GENUINE narrowing (witnessed non-vacuous by `encodePiBinding_not_complete`), not an
+   equivalence — the follow-up is a per-row PI gate in the IR-v2 main AIR, exactly as the Rust
+   adapter's module note says.
+4. `cell_to_descriptor_faithful` — CLOSED: the descriptor-level row×constraint re-quantification
+   of the per-row core.
+
+All denotations are the field-faithful mod-p residues (`≡ 0 [ZMOD 2013265921]`) — the DSL evaluator
+computes over BabyBear, so this IS the cell semantics, not an envelope.
 
 (The former item 5, `engineBinding_over_faithful_encoding`, was a `True := trivial` placeholder for
 the now-deleted vacuous `CustomApex.lightclient_unfoolable_custom`; it is RETIRED. The deployed custom
 binding is real-as-deployed via the FOLD — `CustomBindingFromFold.custom_binding_from_fold` — not a row
 carrier. This file supplies only the faithful-encoding leg; the binding leg is the fold.)
 
-NO new axioms; `sorry` only on the labelled arms above. Import-clean. NOT added to `Dregg2.lean`
-(the main loop wires imports).
+NO new axioms; sorry-free. Import-clean. NOT added to `Dregg2.lean` (the main loop wires imports).
 -/
 
 import Dregg2.Circuit.DescriptorIR2
@@ -110,9 +113,11 @@ def gateBody : CellLocal → EmittedExpr
 /-- A pure-local cell constraint encodes to a single per-row main gate. -/
 def encodeLocal (c : CellLocal) : VmConstraint2 := .base (.gate (gateBody c))
 
-/-- The `CellProgram`'s own per-row semantics for a pure-local gate: the body vanishes on the row.
-This is exactly what the DSL evaluator enforces for these algebraic kinds. -/
-def CellLocalHolds (env : VmRowEnv) (c : CellLocal) : Prop := (gateBody c).eval env.loc = 0
+/-- The `CellProgram`'s own per-row semantics for a pure-local gate: the body vanishes on the row
+IN THE FIELD — the DSL evaluator computes over BabyBear, so the faithful denotation is
+`≡ 0 [ZMOD p]` (`p = 2013265921`), matching the deployed `holdsVm .gate` residue exactly. -/
+def CellLocalHolds (env : VmRowEnv) (c : CellLocal) : Prop :=
+  (gateBody c).eval env.loc ≡ 0 [ZMOD 2013265921]
 
 /-! ## §3 — Faithfulness of the pure-local encoding (the CLOSED algebraic core). -/
 
@@ -149,19 +154,21 @@ window bases, so it cannot carry a generic column pair; `windowGate` can). -/
 theorem encodeTransition_holdsAt_iff (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
     (isFirst : Bool) (next locCol : Nat) :
     (encodeTransition next locCol).holdsAt hash tf env isFirst false
-      ↔ env.nxt next = env.loc locCol := by
-  simp [encodeTransition, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval]
+      ↔ env.nxt next ≡ env.loc locCol [ZMOD 2013265921] := by
+  simp [encodeTransition, VmConstraint2.holdsAt, WindowConstraint.holdsAt, WindowExpr.eval,
+    Int.ModEq]
   omega
 
-/-! ## §5 — The `PiBinding` NARROWING (sound one way — labelled). -/
+/-! ## §5 — The `PiBinding` NARROWING (sound one way; the gap witnessed non-vacuous). -/
 
 /-- The Rust `PiBinding{col,pi}` lowering: a FIRST-row-guarded `base .piBinding`. The `CellProgram`
 semantics is EVERY row (`loc[col] = pi[idx]` on all rows); the IR-v2 carrier binds only the first
 row — a documented narrowing. -/
 def encodePiBinding (col piIndex : Nat) : VmConstraint2 := .base (.piBinding .first col piIndex)
 
-/-- The `CellProgram`'s every-row PI gate. -/
-def CellPiEveryRow (env : VmRowEnv) (col piIndex : Nat) : Prop := env.loc col = env.pub piIndex
+/-- The `CellProgram`'s every-row PI gate (field congruence — the DSL evaluator is BabyBear). -/
+def CellPiEveryRow (env : VmRowEnv) (col piIndex : Nat) : Prop :=
+  env.loc col ≡ env.pub piIndex [ZMOD 2013265921]
 
 /-- **The narrowing is SOUND (every-row ⟹ first-row).** A trace satisfying the `CellProgram`'s
 every-row PI binding also satisfies the encoded first-row binding. The CONVERSE is the genuine gap
@@ -175,15 +182,19 @@ theorem encodePiBinding_narrows (hash : List ℤ → ℤ) (tf : TraceFamily) (en
   exact hEvery
 
 /-- The narrowing GAP, stated honestly: a first-row binding does NOT imply the every-row binding on
-an interior row. (The witness is any trace agreeing on the first row but differing on a later one;
-left as the documented `sorry` — the IR-v2 per-row PI gate closes it.) -/
+an interior row. Witnessed: a row satisfying the binding (all-zero) and a row violating it
+(`loc = 1`, `pub = 0` — not congruent mod p). The IR-v2 per-row PI gate is what would close the
+narrowing itself. -/
 theorem encodePiBinding_not_complete :
     ∃ (env₀ env₁ : VmRowEnv) (col piIndex : Nat),
       env₀.loc col = env₀.pub piIndex ∧
       ¬ CellPiEveryRow env₁ col piIndex := by
-  sorry -- LABELLED: the genuine every-row→first-row narrowing; closed by a per-row IR-v2 PI gate.
+  refine ⟨⟨fun _ => 0, fun _ => 0, fun _ => 0⟩, ⟨fun _ => 1, fun _ => 0, fun _ => 0⟩, 0, 0,
+    rfl, ?_⟩
+  simp only [CellPiEveryRow, Int.ModEq]
+  omega
 
-/-! ## §6 — Descriptor-level faithfulness + the `EngineBinding` bridge (labelled). -/
+/-! ## §6 — Descriptor-level faithfulness (CLOSED). -/
 
 /-- A custom leaf's pure-local constraint program (the subset this spike proves; hash/lookup/
 table-function kinds are REFUSED by the Rust adapter, not encoded). -/
@@ -194,18 +205,22 @@ def encodeProgram (p : CellProgramLocal) : List VmConstraint2 := p.map encodeLoc
 
 /-- **Descriptor-level faithful encoding.** A multi-row trace satisfies every encoded gate on every
 active row iff it satisfies every cell gate on every active row. The per-row equivalence is
-`encodeLocal_list_holdsAt_iff`; the row-quantified packaging over the trace is mechanical.
-
-LABELLED `sorry`: the full `Satisfied2`-shaped quantification (including the wrap-row `isLast` arm,
-where the deployed `.gate` is vacuously `True` on the last row — so the encoded descriptor is, if
-anything, WEAKER on the wrap row, never stronger; faithfulness on the active rows is the load-bearing
-direction and is closed above). -/
+`encodeLocal_holdsAt_iff`; this is its row×constraint re-quantification over the trace. (The
+wrap-row `isLast` arm is not quantified: the deployed `.gate` is vacuously `True` on the last row —
+so the encoded descriptor is, if anything, WEAKER on the wrap row, never stronger; faithfulness on
+the active rows is the load-bearing direction.) -/
 theorem cell_to_descriptor_faithful (hash : List ℤ → ℤ) (tf : TraceFamily)
     (envs : List VmRowEnv) (isFirst : Bool) (p : CellProgramLocal) :
     (∀ env ∈ envs, ∀ c ∈ encodeProgram p,
         c.holdsAt hash tf env isFirst false)
       ↔ (∀ env ∈ envs, ∀ c ∈ p, CellLocalHolds env c) := by
-  sorry -- LABELLED: mechanical row×constraint re-quantification over `encodeLocal_list_holdsAt_iff`.
+  constructor
+  · intro h env henv c hc
+    exact (encodeLocal_holdsAt_iff hash tf env isFirst c).1
+      (h env henv (encodeLocal c) (List.mem_map_of_mem hc))
+  · intro h env henv c hc
+    obtain ⟨c', hc', rfl⟩ := List.mem_map.mp hc
+    exact (encodeLocal_holdsAt_iff hash tf env isFirst c').2 (h env henv c' hc')
 
 -- (Retired: `engineBinding_over_faithful_encoding` was a `True := trivial` placeholder whose only
 -- role was to name the encoding's part in the now-deleted vacuous `CustomApex.lightclient_unfoolable

@@ -237,9 +237,12 @@ def cccWindowHolds (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
 
 /-- **The non-conservation tooth.** A LAST row whose running `balance` is not 0 cannot satisfy the
 descriptor — exactly the boundary that detects a turn whose per-cell signed deltas (plus declared
-supply) do NOT sum to zero. This is the in-circuit `Σδ = 0` the off-AIR pairing could not force. -/
+supply) do NOT sum to zero. The boundary gate is a field residue (`≡ 0 [ZMOD p]`), so the tooth
+carries the balance cell's canonicality envelope (`0 ≤ · < p`, the deployed range-check invariant)
+to bite over ℤ. -/
 theorem ccc_rejects_unbalanced
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
+    (hcanon : 0 ≤ env.loc Ccc.BALANCE_COL ∧ env.loc Ccc.BALANCE_COL < 2013265921)
     (hbad : env.loc Ccc.BALANCE_COL ≠ 0) :
     ¬ cccWindowHolds hash tf env false true := by
   intro h
@@ -248,13 +251,18 @@ theorem ccc_rejects_unbalanced
     simp [cccConstraints]
   have hc := h _ hmem
   simp only [lastBalanceZero, VmConstraint2.holdsAt, VmConstraint.holdsVm, EmittedExpr.eval] at hc
-  exact hbad (hc trivial)
+  have hz := hc trivial
+  simp only [Int.ModEq] at hz
+  omega
 
 /-- **The per-asset partition tooth.** A LAST row whose `asset` disagrees with the published
 `pi[asset]` cannot satisfy the descriptor — a delta of a DIFFERENT asset cannot be smuggled into
-this asset's conservation sum to fake cancellation. -/
+this asset's conservation sum to fake cancellation. The PI pin is a field congruence, so the tooth
+carries the two cells' canonicality envelopes to bite over ℤ. -/
 theorem ccc_rejects_wrong_asset
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
+    (hcanonA : 0 ≤ env.loc Ccc.ASSET_COL ∧ env.loc Ccc.ASSET_COL < 2013265921)
+    (hcanonPi : 0 ≤ env.pub Ccc.PI_ASSET ∧ env.pub Ccc.PI_ASSET < 2013265921)
     (hbad : env.loc Ccc.ASSET_COL ≠ env.pub Ccc.PI_ASSET) :
     ¬ cccWindowHolds hash tf env false true := by
   intro h
@@ -263,7 +271,9 @@ theorem ccc_rejects_wrong_asset
     simp [cccConstraints]
   have hc := h _ hmem
   simp only [assetPinLast, VmConstraint2.holdsAt, VmConstraint.holdsVm] at hc
-  exact hbad (hc trivial)
+  have hz := hc trivial
+  simp only [Int.ModEq] at hz
+  omega
 
 /-- **The real-magnitude tooth (inherited rib).** Under the per-cell layer's `magInRange` premise
 (discharged at the per-cell rotated proof, which range-checks `NET_DELTA_MAG < 2^30`), `mag` lies in
@@ -297,24 +307,35 @@ theorem ccc_forged_mint_unsat
     twoCellBalance (-10) 10 = 0 ∧ ¬ cccWindowHolds hash tf env false true := by
   refine ⟨by norm_num [twoCellBalance], ?_⟩
   apply ccc_rejects_unbalanced hash tf env
+    (by rw [hforged]; norm_num [twoCellBalance])
   rw [hforged]
   norm_num [twoCellBalance]
 
 /-! ### §5.2 — The general conservation bridge (to `Dregg2.Spec.Conservation`).
 
-The boundary `balance[last] = 0` IS the abstract `conservedInDomain`'s `deltas.sum = 0`, with the
-domain instantiated at the issuer-cell asset. We exhibit the bridge: a satisfying last row's balance
-(the prefix sum of the row deltas) is `0`, which is exactly `Σδ = 0`. -/
+The boundary pins the CELL `balance[last] = 0` (canonical representative), and the prefix-sum
+transition is a FIELD recurrence — so what the AIR forces is `Σδ ≡ 0 [ZMOD p]`, with `balance[last]`
+the canonical residue of the running sum.
 
-/-- A satisfying LAST row has `balance = 0` — read straight off the boundary constraint. This is the
-in-circuit witness of `Dregg2.Spec.Conservation.conservedInDomain Domain.balance` for this asset:
-the realized `Σδ = 0`. -/
+⚠ WRAP-RESIDUAL (named, NOT laundered): the running prefix sum of signed deltas (`|δ| < 2^30` each)
+is reconstructed mod `p`; over enough contributing rows the ℤ-sum can reach a NONZERO multiple of
+`p` while every intermediate cell stays canonical — mod-`p` does not pin the ℤ value of the SUM.
+The ℤ-level `Σδ = 0` (the abstract `conservedInDomain` bridge) additionally needs the turn-size
+envelope `N·2^30 < p` (≈ N < 2^31 contributing rows per asset), which the deployed aggregation
+must enforce (a row-count bound), or a multi-limb balance. Until that bound is wired, the theorems
+below state exactly the cell-level facts the AIR forces. -/
+
+/-- A satisfying LAST row with a canonical balance cell has `balance = 0` — read straight off the
+boundary constraint. This is the in-circuit witness of
+`Dregg2.Spec.Conservation.conservedInDomain Domain.balance` for this asset: the realized cell-level
+`Σδ = 0` (see the §5.2 wrap-residual note for the ℤ-sum caveat). -/
 theorem ccc_last_balance_zero
     (hash : List ℤ → ℤ) (tf : TraceFamily) (env : VmRowEnv)
+    (hcanon : 0 ≤ env.loc Ccc.BALANCE_COL ∧ env.loc Ccc.BALANCE_COL < 2013265921)
     (h : cccWindowHolds hash tf env false true) :
     env.loc Ccc.BALANCE_COL = 0 := by
   by_contra hbad
-  exact ccc_rejects_unbalanced hash tf env hbad h
+  exact ccc_rejects_unbalanced hash tf env hcanon hbad h
 
 #assert_axioms ccc_rejects_unbalanced
 #assert_axioms ccc_rejects_wrong_asset

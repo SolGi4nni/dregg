@@ -319,6 +319,9 @@ structure AttenuateWriteAnchor (S8 : Cap8Scheme)
   hactive : (envAt tr row).loc sel.ATTENUATE_CAPABILITY = 1
   -- the active cap-write row is not the trailing/padding row (the gates bind under `when_transition`).
   hnotlast : row + 1 ≠ tr.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant): the mod-p gate
+  -- residues pin ℤ-exact welds only inside this envelope.
+  hcells : ∀ col : Nat, 0 ≤ (envAt tr row).loc col ∧ (envAt tr row).loc col < 2013265921
   -- attenuate is the IN-PLACE update-at-key on the ROTATED cap-root limb: the decode's sorted-tree roots
   -- anchor to the FAITHFUL 8-felt BEFORE/AFTER cap-root blocks (`beforeCapRootCols`/`afterCapRootCols`,
   -- the full ~124-bit committed root), NOT the v1-state CAP_ROOT cols (which FREEZE pass-through).
@@ -345,7 +348,7 @@ theorem attenuate_descriptorRefines_sat (S8 : Cap8Scheme)
   refine ⟨attenuate_descriptorRefines_exact S8 pre post actor idx keep henc, ?_⟩
   rw [anc.oldAnchored, anc.newAnchored]
   exact effCapOpenWriteV3_forces_write8 S8 attenuateV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast
+    anc.row anc.hrow anc.hnotlast anc.hcells
 
 /-- **CLASS-A TOOTH (attenuate) — a forged wrong post-root is UNSAT.** Mutation: dropping `keepWriteOp`
 from `attenuateV3` removes the forced `writesTo`, so this conclusion can no longer be drawn. -/
@@ -720,6 +723,8 @@ structure DelegateWriteAnchor (S8 : Cap8Scheme)
   -- the WitnessDecodes seam: the decode's sorted-tree roots ARE the committed cap-root limbs.
   -- the active cap-write row is not the trailing/padding row (the gates bind under `when_transition`).
   hnotlast : row + 1 ≠ tr.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant).
+  hcells : ∀ col : Nat, 0 ≤ (envAt tr row).loc col ∧ (envAt tr row).loc col < 2013265921
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = beforeCapRootCols (envAt tr row)
@@ -759,7 +764,7 @@ theorem delegate_forces_committed_write (S8 : Cap8Scheme)
       henc.newRoot := by
   rw [anc.oldAnchored, anc.newAnchored]
   refine effCapInsertV3_forces_write8 S8 delegateV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast henc.spine ?_ anc.gap anc.gapCov ?_
+    anc.row anc.hrow anc.hnotlast anc.hcells henc.spine ?_ anc.gap anc.gapCov ?_
   · have h := henc.hold; rw [anc.oldAnchored] at h; exact h
   · have h := henc.hnew; rw [anc.newAnchored, ← anc.leafKeyAnchored] at h; exact h
 
@@ -802,7 +807,7 @@ theorem grantCap_descriptorRefines_sat (S8 : Cap8Scheme)
   refine ⟨delegate_descriptorRefines S8 pre post del rec t henc, ?_⟩
   rw [anc.oldAnchored, anc.newAnchored]
   refine effCapInsertV3_forces_write8 S8 grantCapWriteV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast henc.spine ?_ anc.gap anc.gapCov ?_
+    anc.row anc.hrow anc.hnotlast anc.hcells henc.spine ?_ anc.gap anc.gapCov ?_
   · have h := henc.hold; rw [anc.oldAnchored] at h; exact h
   · have h := henc.hnew; rw [anc.newAnchored, ← anc.leafKeyAnchored] at h; exact h
 
@@ -817,6 +822,8 @@ structure DelegateAttenWriteAnchor (S8 : Cap8Scheme)
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.GRANT_CAP = 1
   -- the active cap-write row is not the trailing/padding row (the gates bind under `when_transition`).
   hnotlast : row + 1 ≠ tr.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant).
+  hcells : ∀ col : Nat, 0 ≤ (envAt tr row).loc col ∧ (envAt tr row).loc col < 2013265921
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = beforeCapRootCols (envAt tr row)
@@ -864,7 +871,7 @@ theorem delegateAtten_descriptorRefines_sat (S8 : Cap8Scheme)
   refine ⟨delegateAtten_descriptorRefines S8 pre post del rec t keep henc, ?_, hnonamp⟩
   rw [anc.oldAnchored, anc.newAnchored]
   refine effCapInsertV3_forces_write8 S8 delegateAttenV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast henc.spine ?_ anc.gap anc.gapCov ?_
+    anc.row anc.hrow anc.hnotlast anc.hcells henc.spine ?_ anc.gap anc.gapCov ?_
   · have h := henc.hold; rw [anc.oldAnchored] at h; exact h
   · have h := henc.hnew; rw [anc.newAnchored, ← anc.leafKeyAnchored] at h; exact h
 
@@ -893,6 +900,8 @@ structure IntroduceWriteAnchor (S8 : Cap8Scheme)
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.INTRODUCE = 1
   -- the active cap-write row is not the trailing/padding row (the gates bind under `when_transition`).
   hnotlast : row + 1 ≠ tr.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant).
+  hcells : ∀ col : Nat, 0 ≤ (envAt tr row).loc col ∧ (envAt tr row).loc col < 2013265921
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = beforeCapRootCols (envAt tr row)
@@ -927,7 +936,7 @@ theorem introduce_descriptorRefines_sat (S8 : Cap8Scheme)
   refine ⟨delegate_descriptorRefines S8 pre post del rec t henc, ?_⟩
   rw [anc.oldAnchored, anc.newAnchored]
   refine effCapInsertV3_forces_write8 S8 introduceWriteV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast henc.spine ?_ anc.gap anc.gapCov ?_
+    anc.row anc.hrow anc.hnotlast anc.hcells henc.spine ?_ anc.gap anc.gapCov ?_
   · have h := henc.hold; rw [anc.oldAnchored] at h; exact h
   · have h := henc.hnew; rw [anc.newAnchored, ← anc.leafKeyAnchored] at h; exact h
 
@@ -943,6 +952,8 @@ structure RevokeDelegationWriteAnchor (S8 : Cap8Scheme)
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REVOKE_DELEGATION = 1
   -- the active cap-write row is not the trailing/padding row (the gates bind under `when_transition`).
   hnotlast : row + 1 ≠ tr.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant).
+  hcells : ∀ col : Nat, 0 ≤ (envAt tr row).loc col ∧ (envAt tr row).loc col < 2013265921
   -- the cap-root advance now lives on the ROTATED before/after limbs (note-spend-shaped — the
   -- v1-state continuity collision dodged); the decode's sorted-tree roots ARE those committed limbs.
   oldAnchored : henc.oldRoot = beforeCapRootCols (envAt tr row)
@@ -986,7 +997,7 @@ theorem revokeDelegation_descriptorRefines_sat (S8 : Cap8Scheme)
   refine ⟨revoke_descriptorRefines S8 pre post holder t henc, ?_⟩
   rw [anc.oldAnchored, anc.newAnchored]
   refine effCapRemoveV3_forces_write8 S8 revokeDelegationWriteV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast henc.spine ?_ anc.gap anc.gapCov ?_
+    anc.row anc.hrow anc.hnotlast anc.hcells henc.spine ?_ anc.gap anc.gapCov ?_
   · have h := henc.hold; rw [anc.oldAnchored] at h; exact h
   · have h := henc.hnew; rw [anc.newAnchored, ← anc.leafKeyAnchored] at h; exact h
 
@@ -1238,6 +1249,8 @@ structure RefreshDelegationWriteAnchor (S8 : Cap8Scheme)
   hactive : (envAt tr row).loc Dregg2.Circuit.Emit.EffectVmEmit.sel.REFRESH_DELEGATION = 1
   -- the active cap-write row is not the trailing/padding row (the gates bind under `when_transition`).
   hnotlast : row + 1 ≠ tr.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant).
+  hcells : ∀ col : Nat, 0 ≤ (envAt tr row).loc col ∧ (envAt tr row).loc col < 2013265921
   -- the WitnessDecodes seam: the decode's DELEG sorted-tree roots ARE the committed rotated deleg-root
   -- 8-felt block (the rotated cap-root limb 25 carries the DELEG accumulator on a refresh row; refresh
   -- freezes caps, so the cap-root 8-felt block faithfully carries the DELEG accumulator).
@@ -1266,7 +1279,7 @@ theorem refreshDelegation_descriptorRefines_sat (S8 : Cap8Scheme)
   refine ⟨refreshDelegation_descriptorRefines S8 pre post actor child henc, ?_⟩
   rw [anc.oldAnchored, anc.newAnchored]
   exact effCapOpenWriteV3_forces_write8 S8 refreshDelegationWriteV3 name n hash mi mf ma tr hChip hsat
-    anc.row anc.hrow anc.hnotlast
+    anc.row anc.hrow anc.hnotlast anc.hcells
 
 /-- **CLASS-A TOOTH (refreshDelegation) — a forged wrong post-deleg-root is UNSAT.** Mutation: dropping
 the after-spine welds from `effCapOpenWriteV3` removes the forced `writesTo8`, so this conclusion
@@ -1418,6 +1431,8 @@ structure RevokeCapabilityWriteAnchor (S8 : Cap8Scheme) (hash : List ℤ → ℤ
     Type where
   -- the active cap-write row is not the trailing/padding row (the welds bind under `when_transition`).
   hnotlast : rd.row + 1 ≠ t.rows.length
+  -- the active row's cells are field-canonical (the deployed range-check invariant).
+  hcells : ∀ col : Nat, 0 ≤ (envAt t rd.row).loc col ∧ (envAt t rd.row).loc col < 2013265921
   spine : List ℤ
   hold : SpineCommits S8 (beforeCapRootCols (envAt t rd.row)) spine
   gap : GapOpen S8 (afterCapRootCols (envAt t rd.row))
@@ -1447,7 +1462,7 @@ theorem revokeCapability_forced_sat (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
     post.kernel.caps = removeEdgeCaps pre.kernel.caps holder target :=
   rd.capsMoveDecodes
     (effCapRemoveV3_forces_write8 S8 revokeCapabilityV3 name n hash minit mfin maddrs t hChip hsat
-      rd.row rd.hrow anc.hnotlast anc.spine anc.hold anc.gap anc.gapCov anc.hnew)
+      rd.row rd.hrow anc.hnotlast anc.hcells anc.spine anc.hold anc.gap anc.gapCov anc.hnew)
 
 /-- **`revokeCapability_descriptorRefines_sat` — THE CLASS-A REFINEMENT for revokeCapability (remove
 FORCED).** The `removeEdgeCaps` move is forced from the DEPLOYED keystone wrap's `Satisfied2`
@@ -1570,14 +1585,15 @@ theorem heapWrite_forces_write8_sat (S8 : Heap8Scheme)
     (hash : List ℤ → ℤ) (mi : ℤ → ℤ) (mf : ℤ → ℤ × Nat) (ma : List ℤ) (tr : VmTrace)
     (hChip : ChipTableSoundN (heapPermOut S8) (tr.tf .poseidon2))
     (hsat : Satisfied2 hash (effHeapWriteV3 base name) mi mf ma tr)
-    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length) :
+    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.heapWritesTo8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeHeapRootCols (envAt tr i))
       ((envAt tr i).loc Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.HEAP_ADDR)
       ((envAt tr i).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE))
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterHeapRootCols (envAt tr i)) :=
   Dregg2.Circuit.Emit.HeapOpenEmit.effHeapWriteV3_forces_write8
-    S8 base name hash mi mf ma tr hChip hsat i hi hnotlast
+    S8 base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
 
 /-- **CLASS-A HEAP TOOTH — the post-root pins the post-leaf (the 8-felt GENTIAN, NOT lane-0).** Along the
 FIXED sibling path the forced `heapWritesTo8` fixes, the after heap-root determines the after leaf digest
@@ -1617,14 +1633,15 @@ theorem refusalWrite_forces_write8_sat (S8 : Fields8Scheme)
     (hash : List ℤ → ℤ) (mi : ℤ → ℤ) (mf : ℤ → ℤ × Nat) (ma : List ℤ) (tr : VmTrace)
     (hChip : ChipTableSoundN (fieldsPermOut S8) (tr.tf .poseidon2))
     (hsat : Satisfied2 hash (effFieldsWriteV3 base name) mi mf ma tr)
-    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length) :
+    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.fieldsWritesTo8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols (envAt tr i))
       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalAuditKeyFelt
       ((envAt tr i).loc Dregg2.Circuit.Emit.EffectVmEmitRotationV3.REFUSAL_AUDIT_FELT_COL)
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.afterFieldsRootCols (envAt tr i)) :=
   Dregg2.Circuit.Emit.FieldsOpenEmit.effFieldsWriteV3_forces_write8
-    S8 base name hash mi mf ma tr hChip hsat i hi hnotlast
+    S8 base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
 
 /-- **CLASS-A FIELDS TOOTH — the post-root pins the post-leaf (the 8-felt GENTIAN, NOT lane-0).** Along the
 FIXED sibling path the forced `fieldsWritesTo8` fixes, the after fields-root determines the after leaf digest
@@ -1669,7 +1686,8 @@ theorem nullifierWrite_forces_write8_sat (S8 : Heap8Scheme)
     (hsat : Satisfied2 hash (effAccumWriteV3 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.nullifierRootGroupCol
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NULLIFIER_PARAM_COL
               (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO) base name) mi mf ma tr)
-    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length) :
+    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.heapWritesTo8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeNullifierRootCols (envAt tr i))
       ((envAt tr i).loc Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NULLIFIER_PARAM_COL)
@@ -1679,7 +1697,7 @@ theorem nullifierWrite_forces_write8_sat (S8 : Heap8Scheme)
     S8 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.nullifierRootGroupCol
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NULLIFIER_PARAM_COL
     (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
-    base name hash mi mf ma tr hChip hsat i hi hnotlast
+    base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
 
 /-- **`commitmentsWrite_forces_write8_sat` — THE COMMITMENTS-ACCUMULATOR 8-FELT DELIVERABLE (assurance).**
 FORCES `heapWritesTo8` over the committed BEFORE/AFTER commitments-root groups (limb 27 ‖ completion limbs
@@ -1691,7 +1709,8 @@ theorem commitmentsWrite_forces_write8_sat (S8 : Heap8Scheme)
     (hsat : Satisfied2 hash (effAccumWriteV3 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.commitmentsRootGroupCol
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL
               (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.param.NOTE_VALUE_LO) base name) mi mf ma tr)
-    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length) :
+    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.heapWritesTo8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCommitmentsRootCols (envAt tr i))
       ((envAt tr i).loc Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL)
@@ -1701,7 +1720,7 @@ theorem commitmentsWrite_forces_write8_sat (S8 : Heap8Scheme)
     S8 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.commitmentsRootGroupCol
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL
     (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
-    base name hash mi mf ma tr hChip hsat i hi hnotlast
+    base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
 
 /-- **`cellsWrite_forces_write8_sat` — THE CELLS/ACCOUNTS-ACCUMULATOR 8-FELT DELIVERABLE (assurance).**
 FORCES `heapWritesTo8` over the committed BEFORE/AFTER cells-root groups (limb 0 ‖ completion limbs 81..87)
@@ -1714,7 +1733,8 @@ theorem cellsWrite_forces_write8_sat (S8 : Heap8Scheme)
     (hsat : Satisfied2 hash (effAccumWriteV3 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellsRootGroupCol
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL base name) mi mf ma tr)
-    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length) :
+    (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.heapWritesTo8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCellsRootCols (envAt tr i))
       ((envAt tr i).loc Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL)
@@ -1724,7 +1744,7 @@ theorem cellsWrite_forces_write8_sat (S8 : Heap8Scheme)
     S8 Dregg2.Circuit.Emit.EffectVmEmitRotationV3.cellsRootGroupCol
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
-    base name hash mi mf ma tr hChip hsat i hi hnotlast
+    base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
 
 /-! ## §J′ — the INSERT-shaped accumulator trio (THE CORRECT-shaped genuine close). The update-shaped §J
 trio above FORCES `heapWritesTo8` (update-at-key) — but the three accumulators are sorted-tree FRESH-KEY
@@ -1754,6 +1774,7 @@ theorem nullifierInsert_forces_write8_sat (S8 : Heap8Scheme)
               (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
               (some Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.SEL_NOTE_SPEND) base name) mi mf ma tr)
     (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921)
     (hselActive : (envAt tr i).loc Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.SEL_NOTE_SPEND = 1)
     (spine : List ℤ)
     (hbefore : SpineCommits8 S8
@@ -1775,7 +1796,7 @@ theorem nullifierInsert_forces_write8_sat (S8 : Heap8Scheme)
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NULLIFIER_PARAM_COL
     (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
     (some Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.SEL_NOTE_SPEND)
-    base name hash mi mf ma tr hChip hsat i hi hnotlast
+    base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
     (fun s hs => Option.some_inj.mp hs ▸ hselActive)
     spine hbefore g hcov hafter
 
@@ -1790,6 +1811,7 @@ theorem commitmentsInsert_forces_write8_sat (S8 : Heap8Scheme)
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL
               (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.param.NOTE_VALUE_LO) none base name) mi mf ma tr)
     (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921)
     (spine : List ℤ)
     (hbefore : SpineCommits8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCommitmentsRootCols (envAt tr i)) spine)
@@ -1810,7 +1832,7 @@ theorem commitmentsInsert_forces_write8_sat (S8 : Heap8Scheme)
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.COMMITMENT_KEY_PARAM_COL
     (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
     none
-    base name hash mi mf ma tr hChip hsat i hi hnotlast
+    base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
     (fun s hs => by simp at hs)
     spine hbefore g hcov hafter
 
@@ -1825,6 +1847,7 @@ theorem cellsInsert_forces_write8_sat (S8 : Heap8Scheme)
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
               Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL none base name) mi mf ma tr)
     (i : Nat) (hi : i < tr.rows.length) (hnotlast : i + 1 ≠ tr.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt tr i).loc col ∧ (envAt tr i).loc col < 2013265921)
     (spine : List ℤ)
     (hbefore : SpineCommits8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeCellsRootCols (envAt tr i)) spine)
@@ -1845,7 +1868,7 @@ theorem cellsInsert_forces_write8_sat (S8 : Heap8Scheme)
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.NEW_CELL_KEY_PARAM_COL
     none
-    base name hash mi mf ma tr hChip hsat i hi hnotlast
+    base name hash mi mf ma tr hChip hsat i hi hnotlast hcells
     (fun s hs => by simp at hs)
     spine hbefore g hcov hafter
 

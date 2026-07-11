@@ -100,12 +100,13 @@ theorem withMembershipAuthRoot_forces (S8 : Fields8Scheme)
     (hChip : ChipTableSoundN (fieldsPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (withMembershipAuthRoot base name idxCol rootTeethCol)
       minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     fieldsReadAt8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols (envAt t i))
       ((envAt t i).loc idxCol) ((envAt t i).loc rootTeethCol) :=
   effFieldsReadOpenV3_forces_read8 S8 base name idxCol rootTeethCol hash minit mfin maddrs t
-    hChip hsat i hi hnotlast
+    hChip hsat i hi hnotlast hcells
 
 /-- **TOOTH — `withMembershipAuthRoot_rejects_injected_root`.** The membership analog of
 `MembershipBackingAttack.deployed_admits_injected_root`, now REFUTED under the root edge: if NO path
@@ -117,12 +118,13 @@ theorem withMembershipAuthRoot_rejects_injected_root (S8 : Fields8Scheme)
     (t : VmTrace)
     (hChip : ChipTableSoundN (fieldsPermOut S8) (t.tf .poseidon2))
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hnon : ¬ fieldsReadAt8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols (envAt t i))
       ((envAt t i).loc idxCol) ((envAt t i).loc rootTeethCol)) :
     ¬ Satisfied2 hash (withMembershipAuthRoot base name idxCol rootTeethCol) minit mfin maddrs t :=
   effFieldsReadOpenV3_rejects_nonmember S8 base name idxCol rootTeethCol hash minit mfin maddrs t
-    hChip i hi hnotlast hnon
+    hChip i hi hnotlast hcells hnon
 
 #assert_axioms withMembershipAuthRoot_forces
 #assert_axioms withMembershipAuthRoot_rejects_injected_root
