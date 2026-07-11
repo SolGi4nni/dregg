@@ -63,6 +63,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
    rotateV3WithPermsVKGate rotateV3WithPermsVKGate_forces
    satisfied2_of_withRecordPin8Headroom2 satisfied2_of_withPermsVK8Weld)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
+open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
 open Dregg2.Exec.TurnExecutorFull
@@ -307,6 +308,14 @@ structure SetPermsTraceReadout (hash : List ℤ → ℤ)
   limbDecodes : (envAt t row).loc (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
       = fieldOf permsField (post.kernel.cell cell)
   paramDecodes : (envAt t row).loc declaredParamCol = p
+  -- **weld-limb CANONICALITY residuals (DEBT-A mod-p).** The perms weld now equates the AFTER-perms limb
+  -- and the declared-param limb only as a FIELD congruence (`≡ [ZMOD p]`); recovering the ℤ equality of the
+  -- two written slot felts needs BOTH limbs canonical in `[0, p)`. The deployed field keeps both in `[0, p)`;
+  -- neither weld limb is range-checked (only the balance limbs are), so canonicality is carried NAMED here.
+  afterCanon : 0 ≤ (envAt t row).loc (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
+      ∧ (envAt t row).loc (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth) < 2013265921
+  paramCanon : 0 ≤ (envAt t row).loc declaredParamCol
+      ∧ (envAt t row).loc declaredParamCol < 2013265921
   -- the structural residual: the post map is SOME perms-write (off-slot/off-cell the limb cannot certify).
   cellStructResidual : post.kernel.cell
       = setPermsCellMap pre.kernel cell (fieldOf permsField (post.kernel.cell cell))
@@ -350,10 +359,15 @@ theorem setPermissions_forced_sat (hash : List ℤ → ℤ)
   have hlastf : (rd.row + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
   rw [hlastf] at hv1
+  -- the weld now equates the two limbs ≡ [ZMOD p] (DEBT-A); recover the ℤ equality via limb canonicality.
+  have hweldCong : (envAt t rd.row).loc
+      (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
+      ≡ (envAt t rd.row).loc declaredParamCol [ZMOD 2013265921] :=
+    rotateV3WithPermsVKGate_forces _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
   have hweld : (envAt t rd.row).loc
       (afterPermsCol EffectVmEmitSetPermissions.setPermsVmDescriptor.traceWidth)
       = (envAt t rd.row).loc declaredParamCol :=
-    rotateV3WithPermsVKGate_forces _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
+    canon_eq_of_modEq rd.afterCanon rd.paramCanon hweldCong
   rw [rd.limbDecodes, rd.paramDecodes] at hweld
   exact hweld
 
@@ -405,6 +419,12 @@ structure SetVKTraceReadout (hash : List ℤ → ℤ)
   limbDecodes : (envAt t row).loc (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
       = fieldOf vkField (post.kernel.cell cell)
   paramDecodes : (envAt t row).loc declaredParamCol = vk
+  -- weld-limb CANONICALITY residuals (DEBT-A mod-p; both written slot felts kept in `[0, p)`, neither weld
+  -- limb range-checked) — lift the weld's `≡ [ZMOD p]` limb congruence back to the ℤ slot equality.
+  afterCanon : 0 ≤ (envAt t row).loc (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
+      ∧ (envAt t row).loc (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth) < 2013265921
+  paramCanon : 0 ≤ (envAt t row).loc declaredParamCol
+      ∧ (envAt t row).loc declaredParamCol < 2013265921
   cellStructResidual : post.kernel.cell
       = setVKCellMap pre.kernel cell (fieldOf vkField (post.kernel.cell cell))
   guard : setVKGuard pre actor cell
@@ -447,10 +467,15 @@ theorem setVK_forced_sat (hash : List ℤ → ℤ)
   have hlastf : (rd.row + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
   rw [hlastf] at hv1
+  -- the weld now equates the two limbs ≡ [ZMOD p] (DEBT-A); recover the ℤ equality via limb canonicality.
+  have hweldCong : (envAt t rd.row).loc
+      (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
+      ≡ (envAt t rd.row).loc declaredParamCol [ZMOD 2013265921] :=
+    rotateV3WithPermsVKGate_forces _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
   have hweld : (envAt t rd.row).loc
       (afterVKCol EffectVmEmitSetVK.setVKVmDescriptor.traceWidth)
       = (envAt t rd.row).loc declaredParamCol :=
-    rotateV3WithPermsVKGate_forces _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
+    canon_eq_of_modEq rd.afterCanon rd.paramCanon hweldCong
   rw [rd.limbDecodes, rd.paramDecodes] at hweld
   exact hweld
 

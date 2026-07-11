@@ -45,6 +45,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
   (setProgramV3 AFTER_BLOCK_OFF B_RECORD_DIGEST rotateV3WithRecordPin rotateV3
    rotateV3WithRecordPin_pins)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
+open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
 open Dregg2.Exec.TurnExecutorFull
@@ -81,6 +82,17 @@ structure SetProgramTraceReadout (compressN : List ℤ → ℤ) (hash : List ℤ
   piAnchored :
     (envAt t lastRow).pub (rotateV3 setVKface).piCount
       = listDigest auditLeaf compressN [prog]
+  -- **record-pin CANONICALITY residuals (DEBT-A mod-p).** The record pin now binds the committed AFTER
+  -- record-digest limb only as a FIELD congruence to the published PI (`≡ [ZMOD p]`); recovering the ℤ
+  -- equality of the two `listDigest` values needs BOTH sides canonical in `[0, p)`. The digest columns are
+  -- NOT range-checked, so canonicality is carried NAMED here (`rotateV3WithRecordPin_rejects_wrong_post`'s
+  -- `hcanonLimb`/`hcanonPI` shape).
+  recordLimbCanon :
+    0 ≤ (envAt t lastRow).loc (setVKface.traceWidth + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
+      ∧ (envAt t lastRow).loc (setVKface.traceWidth + AFTER_BLOCK_OFF + B_RECORD_DIGEST) < 2013265921
+  piCanon :
+    0 ≤ (envAt t lastRow).pub (rotateV3 setVKface).piCount
+      ∧ (envAt t lastRow).pub (rotateV3 setVKface).piCount < 2013265921
   -- the WHOLE `cell`-map move (the residual the per-slot committed root cannot certify).
   cellMapMove : post.kernel.cell = setProgramCellMap pre.kernel cell prog
   guard : setProgramGuard pre actor cell
@@ -128,8 +140,13 @@ theorem setProgram_forced (compressN : List ℤ → ℤ)
   have hlastt : (rd.lastRow + 1 == t.rows.length) = true := by
     simp only [beq_iff_eq]; exact rd.hlastRowIsLast
   rw [hlastt] at hv1
-  have hpin := rotateV3WithRecordPin_pins B_RECORD_DIGEST hash setVKface
+  -- the record pin now binds the AFTER limb ≡ PI (DEBT-A mod-p); recover the ℤ digest equality via the
+  -- record-limb/PI canonicality residuals.
+  have hpinCong := rotateV3WithRecordPin_pins B_RECORD_DIGEST hash setVKface
     (envAt t rd.lastRow) (rd.lastRow == 0) hv1
+  have hpin : (envAt t rd.lastRow).loc (setVKface.traceWidth + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
+      = (envAt t rd.lastRow).pub (rotateV3 setVKface).piCount :=
+    canon_eq_of_modEq rd.recordLimbCanon rd.piCanon hpinCong
   rw [rd.recordLimbDecodes, rd.piAnchored] at hpin
   -- post program-slot root = digest of `[prog]` ⟹ (binds) the slot value is `prog`.
   unfold auditSlotRoot at hpin

@@ -99,6 +99,7 @@ def cellUnseal_readout :
     have hcol : (afterDiscCol cellUnsealVmDescriptor.traceWidth = SEL_CELLUNSEAL) = False := by decide
     simp only [cellUnsealRow0, hcol, if_false, cellUnsealPost, cellUnsealPre]
     rfl
+  discCanon := by decide
   frameOther := fun _ _ => rfl
   guard := by constructor <;> decide
   logAdv := rfl
@@ -163,12 +164,15 @@ def cellDestroy_readout :
     have hcol : (afterDiscCol cellDestroyVmDescriptor.traceWidth = SEL_CELLDESTROY) = False := by decide
     simp only [cellDestroyRow0, hcol, if_false, cellDestroyPost, cellDestroyPre]
     rfl
+  discCanon := by decide
   lcFrameOther := fun _ _ => rfl
   lastRow := 1
   hlastRow := by rw [readoutTrace_rows_len]; omega
   hlastRowIsLast := by rw [readoutTrace_rows_len]
   recordLimbDecodes := by rw [readoutTrace_loc1]; rfl
   piAnchored := by rw [readoutTrace_pub]; rfl
+  recordLimbCanon := by rw [readoutTrace_loc1]; exact ⟨by decide, by decide⟩
+  piCanon := by rw [readoutTrace_pub]; exact ⟨by decide, by decide⟩
   dcFrameOther := fun _ _ => rfl
   guard := by constructor <;> decide
   logAdv := rfl
@@ -234,6 +238,8 @@ def refusal_readout :
   hsel := by rw [readoutTrace_loc0]; simp [refusalRow0]
   recordLimbDecodes := by rw [readoutTrace_loc1]; rfl
   piAnchored := by rw [readoutTrace_pub]; rfl
+  recordLimbCanon := by rw [readoutTrace_loc1]; exact ⟨by decide, by decide⟩
+  piCanon := by rw [readoutTrace_pub]; exact ⟨by decide, by decide⟩
   cellMapMoveDecodes := fun _ => rfl
   guard := by refine ⟨by decide, ?_, by decide⟩; decide
   logAdv := rfl
@@ -299,6 +305,7 @@ def receiptArchive_readout :
         = False := by decide
     simp only [receiptArchiveRow0, hcol, if_false, receiptArchivePost, receiptArchivePre]
     rfl
+  discCanon := by decide
   frameOther := fun _ _ => rfl
   guard := by refine ⟨by decide, ?_, by decide⟩; decide
   logAdv := rfl

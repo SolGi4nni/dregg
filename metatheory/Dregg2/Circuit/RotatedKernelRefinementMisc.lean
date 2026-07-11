@@ -66,6 +66,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
    satisfied2_of_withRecordPin8Headroom2)
 open Dregg2.Circuit.DescriptorIR2 (VmConstraint2)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
+open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState (fieldOf)
 open Dregg2.Exec.TurnExecutorFull
@@ -440,16 +441,20 @@ theorem makeSovereign_forced_sat (hash : List ℤ → ℤ)
   have hlastf : (rd.row + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
   rw [hlastf] at hv1
+  -- the DEBT-A mode gate now pins the committed AFTER mode limb only as a FIELD congruence
+  -- (`≡ modeSovereign [ZMOD p]`). The realizable seam identifies that limb with the {0,1}-valued rebind
+  -- indicator, so the congruence is `indicator ≡ 1 [ZMOD p]`. On the forgery branch (indicator `= 0`) this
+  -- is `0 ≡ 1 [ZMOD p]`, which is FALSE — no canonicality residual needed: the indicator is self-canonical.
   have hlimb : (envAt t rd.row).loc
-      (afterModeCol EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor.traceWidth) = modeSovereign :=
+      (afterModeCol EffectVmEmitMakeSovereign.makeSovereignRuntimeVmDescriptor.traceWidth)
+      ≡ modeSovereign [ZMOD 2013265921] :=
     makeSovereignV3_forces_sovereign hash (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
-  -- the limb IS the rebind indicator (the realizable seam); forced `= modeSovereign = 1` ⇒ indicator `= 1`.
-  have hind : (if post.kernel.cell = sovereignRebind pre.kernel.cell cell then (1 : ℤ) else 0)
-      = modeSovereign := by rw [← rd.modeLimbDecodes, hlimb]
   by_contra hne
+  have hind : (if post.kernel.cell = sovereignRebind pre.kernel.cell cell then (1 : ℤ) else 0)
+      ≡ modeSovereign [ZMOD 2013265921] := by rw [← rd.modeLimbDecodes]; exact hlimb
   rw [if_neg hne] at hind
   simp only [modeSovereign] at hind
-  exact absurd hind (by norm_num)
+  exact absurd hind (by decide)
 
 /-- **`makeSovereign_descriptorRefines_sat` — THE CLASS-A CIRCUIT→KERNEL REFINEMENT for makeSovereign.** A
 satisfying DEPLOYED `makeSovereignV3` witness (with the chip/range table side) plus the realizable
@@ -548,6 +553,15 @@ structure SetFieldDynTraceReadout (hash : List ℤ → ℤ)
       = fieldOf f (post.kernel.cell cell)
   -- the declared-param column IS the written value `v` (verifier-anchored to the declared post value).
   paramDecodes : (envAt t row).loc declaredFieldsRootCol = v
+  -- **weld-limb CANONICALITY residuals (DEBT-A mod-p).** The fields-root weld now equates the AFTER
+  -- `fields_root` limb and the declared-param limb only as a FIELD congruence (`≡ [ZMOD p]`); recovering the
+  -- ℤ equality of the two written slot felts needs BOTH limbs canonical in `[0, p)`. The deployed field
+  -- keeps both in `[0, p)`; neither weld limb is range-checked (only the balance limbs are), so canonicality
+  -- is carried NAMED here (`rotateV3WithRecordPin_rejects_wrong_post`'s `hcanonLimb`/`hcanonPI` shape).
+  afterCanon : 0 ≤ (envAt t row).loc (afterFieldsRootCol setFieldDynV1Face.traceWidth)
+      ∧ (envAt t row).loc (afterFieldsRootCol setFieldDynV1Face.traceWidth) < 2013265921
+  paramCanon : 0 ≤ (envAt t row).loc declaredFieldsRootCol
+      ∧ (envAt t row).loc declaredFieldsRootCol < 2013265921
   -- the WHOLE `cell`-map move (the residual the per-slot limb cannot certify).
   cellMapMove : post.kernel.cell = setFieldCellMap pre.kernel.cell cell f v
   guard : SetFieldGuard pre actor cell f v
@@ -592,10 +606,13 @@ theorem setFieldDyn_forced_sat (hash : List ℤ → ℤ)
   have hlastf : (rd.row + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact rd.hrowNotLast
   rw [hlastf] at hgate
-  -- the weld FORCES the committed AFTER `fields_root` limb EQUAL to the declared-param column.
+  -- the weld now equates the two limbs ≡ [ZMOD p] (DEBT-A); recover the ℤ equality via limb canonicality.
+  have hweldCong : (envAt t rd.row).loc (afterFieldsRootCol setFieldDynV1Face.traceWidth)
+      ≡ (envAt t rd.row).loc declaredFieldsRootCol [ZMOD 2013265921] :=
+    permsVKWeldGate_forces (envAt t rd.row) (rd.row == 0) false rfl _ _ _ rd.hsel hgate
   have hweld : (envAt t rd.row).loc (afterFieldsRootCol setFieldDynV1Face.traceWidth)
       = (envAt t rd.row).loc declaredFieldsRootCol :=
-    permsVKWeldGate_forces (envAt t rd.row) (rd.row == 0) false rfl _ _ _ rd.hsel hgate
+    canon_eq_of_modEq rd.afterCanon rd.paramCanon hweldCong
   -- the realizable seam: limb = `fieldOf f (post.cell cell)`, param = `v`; so the write IS `v`.
   rw [rd.fieldsLimbDecodes, rd.paramDecodes] at hweld
   exact hweld

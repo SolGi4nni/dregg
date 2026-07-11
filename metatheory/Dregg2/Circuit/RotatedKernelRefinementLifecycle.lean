@@ -70,6 +70,7 @@ open Dregg2.Circuit.Emit.EffectVmEmitRotationV3
    rotateV3WithLifecyclePayloadGate rotateV3WithLifecyclePayloadGate_forces_disc
    graduable_rotateV3WithDiscGate graduable_rotateV3WithRecordPin)
 open Dregg2.Circuit.RotatedKernelRefinement (RotTableSide)
+open Dregg2.Circuit.Emit.EffectVmEmitRotation (canon_eq_of_modEq)
 open Dregg2.Exec
 open Dregg2.Exec.EffectsState
 open Dregg2.Exec.TurnExecutorFull
@@ -575,6 +576,13 @@ structure CellUnsealTraceReadout (hash : List ℤ → ℤ)
     (envAt t row).loc
       (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellUnseal.cellUnsealVmDescriptor.traceWidth)
       = ((post.kernel.lifecycle cell : Nat) : ℤ)
+  -- **the disc-limb CANONICALITY residual (DEBT-A mod-p).** The deployed disc gate now pins the committed
+  -- AFTER disc limb only as a FIELD congruence (`≡ discLive [ZMOD p]`); the deployed trace-fill emits the
+  -- `u8` discriminant of `post.lifecycle[cell]` into that limb, landing in `[0, 256) ⊆ [0, p)`, but the
+  -- range table checks only the BALANCE limbs — so the disc-limb canonicality is carried NAMED here (exactly
+  -- cellSeal's `discCanon`). It lifts the `≡ [ZMOD p]` gate residual back to the ℤ equality via
+  -- `canon_eq_of_modEq`.
+  discCanon : ((post.kernel.lifecycle cell : Nat) : ℤ) < 2013265921
   frameOther : ∀ c, c ≠ cell → post.kernel.lifecycle c = pre.kernel.lifecycle c
   guard : CellUnsealGuard pre actor cell
   logAdv : post.log = cellLifecycleReceipt actor cell :: pre.log
@@ -626,10 +634,15 @@ theorem cellUnseal_forced (hash : List ℤ → ℤ)
   rw [hlastf] at hv1
   have hlimb : (envAt t rd.row).loc
       (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellUnseal.cellUnsealVmDescriptor.traceWidth)
-        = discLive :=
+        ≡ discLive [ZMOD 2013265921] :=
     rotateV3WithDiscGate_forces_after _ _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl rd.hsel hv1
-  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcLive : Nat) : ℤ) := by
-    rw [← rd.discLimbDecodes, hlimb]; rfl
+  -- the limb IS the post discriminant felt (the realizable seam); the DEBT-A gate is a `≡ [ZMOD p]`
+  -- congruence (`discLive = 0 = lcLive`), recovered to the EXACT discriminant via `canon_eq_of_modEq`.
+  have hcong : ((post.kernel.lifecycle cell : Nat) : ℤ) ≡ ((lcLive : Nat) : ℤ) [ZMOD 2013265921] := by
+    have hds : ((lcLive : Nat) : ℤ) = discLive := rfl
+    rw [hds, ← rd.discLimbDecodes]; exact hlimb
+  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcLive : Nat) : ℤ) :=
+    canon_eq_of_modEq ⟨Int.natCast_nonneg _, rd.discCanon⟩ (by decide) hcong
   exact_mod_cast hcast
 
 /-- **`cellUnseal_forced_map` — the post lifecycle MAP is `unsealLifecycleMap` (Class A, whole map).** -/
@@ -700,6 +713,9 @@ structure CellDestroyTraceReadout (compressN : List FieldElem → FieldElem) (ha
     (envAt t row).loc
       (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth)
       = ((post.kernel.lifecycle cell : Nat) : ℤ)
+  -- disc-limb canonicality residual (DEBT-A mod-p; the `u8` discriminant lands in `[0, 256) ⊆ [0, p)`),
+  -- lifting the disc gate's `≡ discDestroyed [ZMOD p]` back to the ℤ discriminant equality.
+  discCanon : ((post.kernel.lifecycle cell : Nat) : ℤ) < 2013265921
   lcFrameOther : ∀ c, c ≠ cell → post.kernel.lifecycle c = pre.kernel.lifecycle c
   -- DEATH-CERT leg: the LAST row pins the committed AFTER record limb (B_LIFECYCLE) to the published PI,
   -- the realizable seam ties that limb to the post death-cert root and the anchored PI to `certHash`'s root.
@@ -716,6 +732,22 @@ structure CellDestroyTraceReadout (compressN : List FieldElem → FieldElem) (ha
       = deathCertRoot compressN
           { pre.kernel with deathCert := fun c => if c = cell then certHash else pre.kernel.deathCert c }
           cell
+  -- **record-pin CANONICALITY residuals (DEBT-A mod-p).** The record pin now binds the committed AFTER
+  -- death-cert limb only as a FIELD congruence to the published PI (`≡ [ZMOD p]`); recovering the ℤ
+  -- equality of the two digest values needs BOTH the committed limb and the published PI canonical in
+  -- `[0, p)`. Both are `listDigest`/Poseidon-CR outputs the deployed field emits in `[0, p)`; the digest
+  -- columns are NOT range-checked (only the balance limbs are), so canonicality is carried NAMED here —
+  -- exactly `rotateV3WithRecordPin_rejects_wrong_post`'s `hcanonLimb`/`hcanonPI`.
+  recordLimbCanon :
+    0 ≤ (envAt t lastRow).loc (Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth
+      + AFTER_BLOCK_OFF + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_LIFECYCLE)
+      ∧ (envAt t lastRow).loc (Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth
+      + AFTER_BLOCK_OFF + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_LIFECYCLE) < 2013265921
+  piCanon :
+    0 ≤ (envAt t lastRow).pub
+      (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor).piCount
+      ∧ (envAt t lastRow).pub
+      (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor).piCount < 2013265921
   dcFrameOther : ∀ c, c ≠ cell → post.kernel.deathCert c = pre.kernel.deathCert c
   guard : CellDestroyGuard pre actor cell
   logAdv : post.log = cellLifecycleReceipt actor cell :: pre.log
@@ -761,11 +793,14 @@ theorem cellDestroy_lc_forced (compressN : List FieldElem → FieldElem) (hash :
   rw [hlastf] at hv1
   have hlimb : (envAt t rd.row).loc
       (afterDiscCol Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth)
-        = discDestroyed :=
+        ≡ discDestroyed [ZMOD 2013265921] :=
     rotateV3WithLifecyclePayloadGate_forces_disc _ _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl
       rd.hsel hv1
-  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcDestroyed : Nat) : ℤ) := by
-    rw [← rd.discLimbDecodes, hlimb]; rfl
+  have hcong : ((post.kernel.lifecycle cell : Nat) : ℤ) ≡ ((lcDestroyed : Nat) : ℤ) [ZMOD 2013265921] := by
+    have hds : ((lcDestroyed : Nat) : ℤ) = discDestroyed := rfl
+    rw [hds, ← rd.discLimbDecodes]; exact hlimb
+  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcDestroyed : Nat) : ℤ) :=
+    canon_eq_of_modEq ⟨Int.natCast_nonneg _, rd.discCanon⟩ (by decide) hcong
   exact_mod_cast hcast
 
 /-- **The record pin survives inside the DISC gate.** `cellDestroyV3`'s underlying descriptor is
@@ -780,7 +815,8 @@ theorem cellDestroyDiscGate_pins_record (hash : List ℤ → ℤ) (env : VmRowEn
       env isFirst true) :
     env.loc (Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth
         + AFTER_BLOCK_OFF + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_LIFECYCLE)
-      = env.pub (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor).piCount := by
+      ≡ env.pub (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor).piCount
+        [ZMOD 2013265921] := by
   have hmem : (VmConstraint.piBinding .last
       (Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth + AFTER_BLOCK_OFF
         + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_LIFECYCLE)
@@ -821,8 +857,15 @@ theorem cellDestroy_dc_forced (compressN : List FieldElem → FieldElem)
   have hlastt : (rd.lastRow + 1 == t.rows.length) = true := by
     simp only [beq_iff_eq]; exact rd.hlastRowIsLast
   rw [hlastt] at hv1
-  -- the deployed record pin (inside the disc gate) forces the committed AFTER record limb = the PI.
-  have hpin := cellDestroyDiscGate_pins_record hash (envAt t rd.lastRow) (rd.lastRow == 0) hv1
+  -- the deployed record pin (inside the disc gate) forces the committed AFTER record limb ≡ the PI
+  -- (DEBT-A mod-p); recover the ℤ digest equality via the record-limb/PI canonicality residuals.
+  have hpinCong := cellDestroyDiscGate_pins_record hash (envAt t rd.lastRow) (rd.lastRow == 0) hv1
+  have hpin : (envAt t rd.lastRow).loc
+      (Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor.traceWidth
+        + AFTER_BLOCK_OFF + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_LIFECYCLE)
+      = (envAt t rd.lastRow).pub
+        (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitCellDestroy.cellDestroyVmDescriptor).piCount :=
+    canon_eq_of_modEq rd.recordLimbCanon rd.piCanon hpinCong
   -- chain the two realizable decodes: post death-cert root = PI = `certHash`-bind root ⟹ entry pinned.
   rw [rd.recordLimbDecodes, rd.piAnchored] at hpin
   have hval := deathCertRoot_binds compressN hN post.kernel
@@ -918,6 +961,21 @@ structure RefusalTraceReadout (compressN : List FieldElem → FieldElem) (hash :
     (envAt t lastRow).pub
       (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor).piCount
       = listDigest auditLeaf compressN [(1 : Int)]
+  -- **record-pin CANONICALITY residuals (DEBT-A mod-p).** The record pin now binds the committed AFTER
+  -- record-digest limb only as a FIELD congruence to the published PI (`≡ [ZMOD p]`); recovering the ℤ
+  -- equality of the two `listDigest` values needs BOTH sides canonical in `[0, p)`. The digest columns are
+  -- NOT range-checked, so canonicality is carried NAMED here (`rotateV3WithRecordPin_rejects_wrong_post`'s
+  -- `hcanonLimb`/`hcanonPI` shape).
+  recordLimbCanon :
+    0 ≤ (envAt t lastRow).loc (Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
+      + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
+      ∧ (envAt t lastRow).loc (Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
+      + AFTER_BLOCK_OFF + B_RECORD_DIGEST) < 2013265921
+  piCanon :
+    0 ≤ (envAt t lastRow).pub
+      (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor).piCount
+      ∧ (envAt t lastRow).pub
+      (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor).piCount < 2013265921
   -- the WHOLE `cell`-map move (the residual the per-slot committed root cannot certify), GATED on
   -- the live descriptor's FORCED audit-slot write: the deployed `refusalFieldsWriteOp` `.write` map-op
   -- on limb 36 (the AFTER `fields_root` IS the genuine sorted write of the audit slot) is what realizes
@@ -977,9 +1035,17 @@ theorem refusal_forced (compressN : List FieldElem → FieldElem)
   have hlastt : (rd.lastRow + 1 == t.rows.length) = true := by
     simp only [beq_iff_eq]; exact rd.hlastRowIsLast
   rw [hlastt] at hv1
-  have hpin := rotateV3WithRecordPin_pins B_RECORD_DIGEST hash
+  -- the record pin now binds the AFTER limb ≡ PI (DEBT-A mod-p); recover the ℤ digest equality via the
+  -- record-limb/PI canonicality residuals.
+  have hpinCong := rotateV3WithRecordPin_pins B_RECORD_DIGEST hash
     Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor (envAt t rd.lastRow)
     (rd.lastRow == 0) hv1
+  have hpin : (envAt t rd.lastRow).loc
+      (Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor.traceWidth
+        + AFTER_BLOCK_OFF + B_RECORD_DIGEST)
+      = (envAt t rd.lastRow).pub
+        (rotateV3 Dregg2.Circuit.Emit.EffectVmEmitRefusal.refusalVmDescriptor).piCount :=
+    canon_eq_of_modEq rd.recordLimbCanon rd.piCanon hpinCong
   rw [rd.recordLimbDecodes, rd.piAnchored] at hpin
   -- post audit-slot root = digest of `[1]` ⟹ (binds) the slot value is `1`.
   unfold auditSlotRoot at hpin
@@ -1071,6 +1137,9 @@ structure ReceiptArchiveTraceReadout (hash : List ℤ → ℤ)
       (afterDiscCol
         Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor.traceWidth)
       = ((post.kernel.lifecycle cell : Nat) : ℤ)
+  -- disc-limb canonicality residual (DEBT-A mod-p; the `u8` discriminant lands in `[0, 256) ⊆ [0, p)`),
+  -- lifting the disc gate's `≡ discArchived [ZMOD p]` back to the ℤ discriminant equality.
+  discCanon : ((post.kernel.lifecycle cell : Nat) : ℤ) < 2013265921
   frameOther : ∀ c, c ≠ cell → post.kernel.lifecycle c = pre.kernel.lifecycle c
   guard : auditGuard pre actor cell
   logAdv : post.log = { actor := actor, src := cell, dst := cell, amt := 0 } :: pre.log
@@ -1122,11 +1191,14 @@ theorem receiptArchive_forced (hash : List ℤ → ℤ)
   have hlimb : (envAt t rd.row).loc
       (afterDiscCol
         Dregg2.Circuit.Emit.EffectVmEmitReceiptArchive.receiptArchiveActorVmDescriptor.traceWidth)
-        = discArchived :=
+        ≡ discArchived [ZMOD 2013265921] :=
     rotateV3WithLifecyclePayloadGate_forces_disc _ _ _ hash _ (envAt t rd.row) (rd.row == 0) false rfl
       rd.hsel hv1
-  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcArchived : Nat) : ℤ) := by
-    rw [← rd.discLimbDecodes, hlimb]; rfl
+  have hcong : ((post.kernel.lifecycle cell : Nat) : ℤ) ≡ ((lcArchived : Nat) : ℤ) [ZMOD 2013265921] := by
+    have hds : ((lcArchived : Nat) : ℤ) = discArchived := rfl
+    rw [hds, ← rd.discLimbDecodes]; exact hlimb
+  have hcast : ((post.kernel.lifecycle cell : Nat) : ℤ) = ((lcArchived : Nat) : ℤ) :=
+    canon_eq_of_modEq ⟨Int.natCast_nonneg _, rd.discCanon⟩ (by decide) hcong
   exact_mod_cast hcast
 
 /-- **`receiptArchive_forced_map` — the post lifecycle MAP is `archiveLifecycleMap` (Class A, whole

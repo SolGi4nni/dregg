@@ -104,6 +104,14 @@ def setPerms_readout :
     rw [readoutTrace_loc0]
     have hcol : (declaredParamCol = SEL_SET_PERMS) = False := by decide
     simp only [permsRow0, hcol, if_false]
+  afterCanon := by
+    rw [readoutTrace_loc0]
+    have hcol : (afterPermsCol setPermsVmDescriptor.traceWidth = SEL_SET_PERMS) = False := by decide
+    simp only [permsRow0, hcol, if_false]; exact ⟨by decide, by decide⟩
+  paramCanon := by
+    rw [readoutTrace_loc0]
+    have hcol : (declaredParamCol = SEL_SET_PERMS) = False := by decide
+    simp only [permsRow0, hcol, if_false]; exact ⟨by decide, by decide⟩
   cellStructResidual := by rw [permsPost_slot]; rfl
   guard := by refine ⟨by decide, ?_, by decide⟩; decide
   logAdv := rfl
@@ -172,6 +180,14 @@ def setVK_readout :
     rw [readoutTrace_loc0]
     have hcol : (declaredParamCol = SEL_SET_VK) = False := by decide
     simp only [vkRow0, hcol, if_false]
+  afterCanon := by
+    rw [readoutTrace_loc0]
+    have hcol : (afterVKCol setVKVmDescriptor.traceWidth = SEL_SET_VK) = False := by decide
+    simp only [vkRow0, hcol, if_false]; exact ⟨by decide, by decide⟩
+  paramCanon := by
+    rw [readoutTrace_loc0]
+    have hcol : (declaredParamCol = SEL_SET_VK) = False := by decide
+    simp only [vkRow0, hcol, if_false]; exact ⟨by decide, by decide⟩
   cellStructResidual := by rw [vkPost_slot]; rfl
   guard := by refine ⟨by decide, ?_, by decide⟩; decide
   logAdv := rfl
@@ -234,6 +250,8 @@ def setProgram_readout :
   hlastRowIsLast := by rw [readoutTrace_rows_len]
   recordLimbDecodes := by rw [readoutTrace_loc1]; rfl
   piAnchored := by rw [readoutTrace_pub]; rfl
+  recordLimbCanon := by rw [readoutTrace_loc1]; exact ⟨by decide, by decide⟩
+  piCanon := by rw [readoutTrace_pub]; exact ⟨by decide, by decide⟩
   cellMapMove := rfl
   guard := by refine ⟨by decide, ?_, by decide⟩; decide
   logAdv := rfl

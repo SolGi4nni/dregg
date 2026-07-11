@@ -160,6 +160,14 @@ def setField_readout :
     rw [readoutTrace_loc0]
     have hcol : (declaredFieldsRootCol = SEL_SET_FIELD) = False := by decide
     simp only [setFieldRow0, hcol, if_false]
+  afterCanon := by
+    rw [readoutTrace_loc0]
+    have hcol : (afterFieldsRootCol setFieldDynV1Face.traceWidth = SEL_SET_FIELD) = False := by decide
+    simp only [setFieldRow0, hcol, if_false]; exact ⟨by decide, by decide⟩
+  paramCanon := by
+    rw [readoutTrace_loc0]
+    have hcol : (declaredFieldsRootCol = SEL_SET_FIELD) = False := by decide
+    simp only [setFieldRow0, hcol, if_false]; exact ⟨by decide, by decide⟩
   cellMapMove := rfl
   guard := by refine ⟨by decide, by decide, by decide, by decide⟩
   logAdv := rfl
