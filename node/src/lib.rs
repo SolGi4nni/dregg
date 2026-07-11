@@ -1931,6 +1931,15 @@ async fn run_relay(
     let operator_key = if data_path.join("node.key").exists() {
         let key_bytes = std::fs::read(data_path.join("node.key"))
             .expect("failed to read node.key for relay operator identity");
+        if key_bytes.len() != 32 {
+            error!(
+                "node.key in {} is malformed: expected 32 bytes, found {}. \
+                 Re-run `dregg-node init`.",
+                data_path.display(),
+                key_bytes.len()
+            );
+            std::process::exit(1);
+        }
         let mut key = [0u8; 32];
         key.copy_from_slice(&key_bytes[..32]);
         key
