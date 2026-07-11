@@ -2,8 +2,9 @@
 # Dregg2.Circuit.Emit.CarrierOctetGates — the v12 PER-CARRIER GATE KEYSTONES (big-bang parallel lane).
 
 The three reusable in-AIR gate families the four v12-walled carriers need, written against the
-announced v12 geometry (NUM_PRE_LIMBS 88→112, B_SPAN 119→151, the three zeroed octets
-child_vk8@88..95 · contract_hash8@96..103 · pubkey8@104..111 — `docs/deos/V12-GEOMETRY-EPOCH-PLAN.md`),
+announced v12 geometry (NUM_PRE_LIMBS 88→112, B_SPAN 119→151, the three zeroed octets — now
+child_vk8@89..96 · contract_hash8@97..104 · pubkey8@105..112 after the REVOKED-ROOT +1 shift —
+`docs/deos/V12-GEOMETRY-EPOCH-PLAN.md`),
 BUILT AGAINST monolith checkpoint `85170b24c` (STEP 1b — all Emit consumers green at B_SPAN = 151).
 
   1. **THE OCTET-EQUALITY GATE** (`octetTeethGates` / `withOctetTeeth`) — the perms/VK-weld shape
@@ -61,10 +62,10 @@ BUILT AGAINST monolith checkpoint `85170b24c` (STEP 1b — all Emit consumers gr
 
 ## Offsets — ALL derived from the canonical constants (never literals)
 
-`B_CARRIER_OCTETS := B_IROOT − 24` (the three octets are the LAST 24 pre-iroot limbs);
+`B_CARRIER_OCTETS := 89` (deployed literal — Rust `trace_rotated.rs::B_CHILD_VK_OCTET`);
 `B_CHILD_VK8 / B_CONTRACT_HASH8 / B_PUBKEY8 := B_CARRIER_OCTETS + 0/8/16`;
 `BEFORE_BLOCK_BASE := EFFECT_VM_WIDTH`; `AFTER_BLOCK_BASE := EFFECT_VM_WIDTH + B_SPAN`.
-`#guard`s pin them to the announced 88/96/104 and tie `AFTER_BLOCK_OFF == B_SPAN`.
+`#guard`s pin them to the deployed 89/97/105 and tie `AFTER_BLOCK_OFF == B_SPAN`.
 
 ## Scope (the big-bang contract)
 
@@ -97,7 +98,7 @@ open Dregg2.Circuit.DeployedCapTree (Digest8)
 open Dregg2.Circuit.DeployedFieldsTree (Fields8Scheme)
 open Dregg2.Circuit.DeployedFieldsTree.Fields8Scheme (fieldsLeafDigest8 recomposeUp8)
 open Dregg2.Circuit.CapMerkleGeneric (StepG)
-open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols eqGate eqGate_eval CAP_OPEN_SPAN)
+open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols eqGate eqGate_eval diffGate_exact CAP_OPEN_SPAN)
 open Dregg2.Circuit.Emit.FieldsOpenEmit
   (fieldsOpenConstraints effFieldsOpenV3 effFieldsOpenV3_core fieldsOpen_recompose8
    FieldsMembershipCore fieldsPermOut fieldsLeafPairOf beforeRootWeldsF)
@@ -106,10 +107,12 @@ set_option autoImplicit false
 
 /-! ## §0 — the v12 octet geometry, derived from the canonical constants. -/
 
-/-- The base of the three v12 carrier-material octets: the LAST 24 pre-iroot limbs
-(LITERAL 88 since v13: the fields[0..7] completion lanes 112..167 + pad 168 ride PAST the
-carrier octets, so the octet base no longer tracks `B_IROOT`). -/
-def B_CARRIER_OCTETS : Nat := 88
+/-- The base of the three v12 carrier-material octets (LITERAL 89 since the REVOKED-ROOT
+flag-day's +1 shift — Rust `trace_rotated.rs::B_CHILD_VK_OCTET = 89`; was 88 in v13. The
+fields[0..7] completion lanes 113..=168, the circuit-only cells_root completion 169..=175 and
+the two pads 176..=177 ride PAST the carrier octets, so the octet base no longer tracks
+`B_IROOT`). -/
+def B_CARRIER_OCTETS : Nat := 89
 
 /-- The factory `child_vk8` octet base (in-block limb offset; M1 of the v12 plan). The
 hatchery-invariant carrier RIDES this same octet (`invariant_digest === child_vk`). -/
@@ -129,15 +132,18 @@ def BEFORE_BLOCK_BASE : Nat := EFFECT_VM_WIDTH
 def AFTER_BLOCK_BASE : Nat :=
   EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN
 
--- Self-test pins: the derived offsets equal the announced v12 layout, and the monolith's
--- AFTER-block offset is exactly B_SPAN (so `AFTER_BLOCK_BASE` matches every group-col reader).
-#guard B_CARRIER_OCTETS == 88
-#guard B_CHILD_VK8 == 88
-#guard B_CONTRACT_HASH8 == 96
-#guard B_PUBKEY8 == 104
--- v13: the fields completion lanes (112..167) + pad (168) ride between the carrier octets and
--- the iroot, so the octets end 57 limbs BEFORE it (104 + 8 + 56 + 1 = 169 = B_IROOT).
-#guard B_PUBKEY8 + 8 + 56 + 1 == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
+-- Self-test pins: the derived offsets equal the DEPLOYED layout (Rust `trace_rotated.rs`:
+-- `B_CHILD_VK_OCTET = 89` · `B_CONTRACT_HASH_OCTET = 97` · `B_PUBKEY_OCTET = 105`, the
+-- REVOKED-ROOT +1 shift), and the monolith's AFTER-block offset is exactly B_SPAN (so
+-- `AFTER_BLOCK_BASE` matches every group-col reader).
+#guard B_CARRIER_OCTETS == 89
+#guard B_CHILD_VK8 == 89
+#guard B_CONTRACT_HASH8 == 97
+#guard B_PUBKEY8 == 105
+-- REVOKED-ROOT geometry: the fields completion lanes (113..=168, 56 limbs) + the circuit-only
+-- cells_root completion (169..=175, 7 limbs) + the two pads (176..=177) ride between the carrier
+-- octets and the iroot, so the octets end 65 limbs BEFORE it (105 + 8 + 56 + 7 + 2 = 178 = B_IROOT).
+#guard B_PUBKEY8 + 8 + 56 + 7 + 2 == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_IROOT
 #guard Dregg2.Circuit.Emit.EffectVmEmitRotationV3.AFTER_BLOCK_OFF
     == Dregg2.Circuit.Emit.EffectVmEmitRotationV3.B_SPAN
 #guard AFTER_BLOCK_BASE == EFFECT_VM_WIDTH + Dregg2.Circuit.Emit.EffectVmEmitRotationV3.AFTER_BLOCK_OFF
@@ -185,13 +191,16 @@ theorem withOctetTeeth_mem (base : EffectVmDescriptor2) (blockBase octetBase tee
 /-- **The generalized forcing** — any descriptor CONTAINING the octet-teeth gates forces, on every
 active (non-last) row of a `Satisfied2` witness, every published tooth column EQUAL to its
 committed octet limb. Stated over a `⊆`-hypothesis so single-block, both-block, and composed
-descriptors all consume it. TRACE-FORCED (from `Satisfied2.rowConstraints`, never `henc`). -/
+descriptors all consume it. TRACE-FORCED (from `Satisfied2.rowConstraints`, never `henc`).
+Field-faithful: the gates arrive `≡ 0 [ZMOD p]` (`holdsVm`); the ℤ equalities are recovered
+through cell canonicality (the difference lies in `(−p, p)` and collapses). -/
 theorem octetTeethGates_force (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (blockBase octetBase teethPiLo : Nat)
     (hsub : ∀ c ∈ octetTeethGates blockBase octetBase teethPiLo, c ∈ d.constraints)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash d minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ k : Fin 8, (envAt t i).loc (teethPiLo + k.val)
       = octetVals (envAt t i) blockBase octetBase k := by
   intro k
@@ -203,18 +212,25 @@ theorem octetTeethGates_force (hash : List ℤ → ℤ) (d : EffectVmDescriptor2
     List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
   have h := hsat.rowConstraints i hi _ (hsub _ hin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
-  exact (eqGate_eval _ _ (envAt t i)).mp (by simpa using h)
+  have h' : (eqGate (teethPiLo + k.val) (octetGroupCol blockBase octetBase k)).eval
+      (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+  unfold eqGate at h'
+  simp only [EmittedExpr.eval] at h'
+  have := diffGate_exact (hcells _) (hcells _) h'
+  show (envAt t i).loc (teethPiLo + k.val) = (envAt t i).loc (octetGroupCol blockBase octetBase k)
+  linarith
 
 /-- **`withOctetTeeth_forces`** — the single-block instantiation of the generalized forcing. -/
 theorem withOctetTeeth_forces (hash : List ℤ → ℤ) (base : EffectVmDescriptor2)
     (blockBase octetBase teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (withOctetTeeth base blockBase octetBase teethPiLo) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ k : Fin 8, (envAt t i).loc (teethPiLo + k.val)
       = octetVals (envAt t i) blockBase octetBase k :=
   octetTeethGates_force hash _ blockBase octetBase teethPiLo
-    (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hsat i hi hnotlast
+    (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hsat i hi hnotlast hcells
 
 /-- **TOOTH — `withOctetTeeth_rejects_forged`.** A row whose published tooth diverges from the
 committed octet limb (a forged `child_vk` / `contract_hash` exposure) does NOT satisfy the welded
@@ -222,13 +238,14 @@ descriptor — UNSAT for a ledgerless client, no trusted post-cell. -/
 theorem withOctetTeeth_rejects_forged (hash : List ℤ → ℤ) (base : EffectVmDescriptor2)
     (blockBase octetBase teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) (k : Fin 8)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) (k : Fin 8)
     (hforged : (envAt t i).loc (teethPiLo + k.val)
       ≠ octetVals (envAt t i) blockBase octetBase k) :
     ¬ Satisfied2 hash (withOctetTeeth base blockBase octetBase teethPiLo) minit mfin maddrs t :=
   fun hsat => hforged
     (withOctetTeeth_forces hash base blockBase octetBase teethPiLo minit mfin maddrs t hsat
-      i hi hnotlast k)
+      i hi hnotlast hcells k)
 
 /-- **`withOctetTeethBoth`** — the BOTH-blocks weld: the same teeth pinned to the octet in the
 BEFORE **and** AFTER blocks (transitively forcing before == after octet continuity through the
@@ -244,7 +261,8 @@ theorem withOctetTeethBoth_forces (hash : List ℤ → ℤ) (base : EffectVmDesc
     (octetBase teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (withOctetTeethBoth base octetBase teethPiLo) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ k : Fin 8,
       (envAt t i).loc (teethPiLo + k.val) = octetVals (envAt t i) BEFORE_BLOCK_BASE octetBase k
       ∧ (envAt t i).loc (teethPiLo + k.val) = octetVals (envAt t i) AFTER_BLOCK_BASE octetBase k := by
@@ -255,9 +273,9 @@ theorem withOctetTeethBoth_forces (hash : List ℤ → ℤ) (base : EffectVmDesc
         show _ ∈ (withOctetTeeth base BEFORE_BLOCK_BASE octetBase teethPiLo).constraints
           ++ octetTeethGates AFTER_BLOCK_BASE octetBase teethPiLo
         exact List.mem_append_left _ (List.mem_append_right _ hc))
-      minit mfin maddrs t hsat i hi hnotlast k
+      minit mfin maddrs t hsat i hi hnotlast hcells k
   · exact octetTeethGates_force hash _ AFTER_BLOCK_BASE octetBase teethPiLo
-      (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hsat i hi hnotlast k
+      (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hsat i hi hnotlast hcells k
 
 /-! ### §1a — the carrier instantiations.
 
@@ -280,11 +298,12 @@ theorem withFactoryChildVkTeeth_forces (hash : List ℤ → ℤ) (base : EffectV
     (teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (withFactoryChildVkTeeth base teethPiLo) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ k : Fin 8, (envAt t i).loc (teethPiLo + k.val)
       = octetVals (envAt t i) AFTER_BLOCK_BASE B_CHILD_VK8 k :=
   withOctetTeeth_forces hash base AFTER_BLOCK_BASE B_CHILD_VK8 teethPiLo
-    minit mfin maddrs t hsat i hi hnotlast
+    minit mfin maddrs t hsat i hi hnotlast hcells
 
 /-- Hatchery-contract: the `contract_hash8` octet-teeth weld (AFTER block — the attested
 contract of the hatchery-mint row). -/
@@ -298,11 +317,12 @@ theorem withHatcheryContractTeeth_forces (hash : List ℤ → ℤ) (base : Effec
     (teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hsat : Satisfied2 hash (withHatcheryContractTeeth base teethPiLo) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ k : Fin 8, (envAt t i).loc (teethPiLo + k.val)
       = octetVals (envAt t i) AFTER_BLOCK_BASE B_CONTRACT_HASH8 k :=
   withOctetTeeth_forces hash base AFTER_BLOCK_BASE B_CONTRACT_HASH8 teethPiLo
-    minit mfin maddrs t hsat i hi hnotlast
+    minit mfin maddrs t hsat i hi hnotlast hcells
 
 #assert_axioms octetTeethGates_force
 #assert_axioms withOctetTeeth_forces
@@ -413,7 +433,8 @@ theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ �
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSoundN (permOutOf A) (t.tf .poseidon2))
     (hsat : Satisfied2 hash d minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t i).loc (teethPiLo + q.val)
       = keyCommitSpec A (octetVals (envAt t i) blockBase octetBase) q := by
   intro q
@@ -452,7 +473,12 @@ theorem keyCommitConstraints_force (A : List ℤ → Digest8) (hash : List ℤ �
     exact List.mem_map.mpr ⟨q, List.mem_finRange q, rfl⟩
   have hw := hsat.rowConstraints i hi _ (hsub _ hwin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at hw
-  have hweld := (eqGate_eval _ _ e).mp (by simpa using hw)
+  have hw' : (eqGate (teethPiLo + q.val) (keyCommitDigestCol dgBase q 0)).eval e.loc
+      ≡ 0 [ZMOD 2013265921] := by simpa using hw
+  unfold eqGate at hw'
+  simp only [EmittedExpr.eval] at hw'
+  have hdiff := diffGate_exact (hcells _) (hcells _) hw'
+  have hweld : e.loc (teethPiLo + q.val) = e.loc (keyCommitDigestCol dgBase q 0) := by linarith
   rw [hweld, hlane0]
 
 /-- **`withSovereignKeyCommit_forces` — THE SOVEREIGN KEYSTONE.** A `Satisfied2` of the welded
@@ -464,11 +490,12 @@ theorem withSovereignKeyCommit_forces (A : List ℤ → Digest8) (hash : List �
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSoundN (permOutOf A) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (withSovereignKeyCommit base teethPiLo) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     ∀ q : Fin 4, (envAt t i).loc (teethPiLo + q.val)
       = keyCommitSpec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q :=
   keyCommitConstraints_force A hash _ BEFORE_BLOCK_BASE B_PUBKEY8 base.traceWidth teethPiLo
-    (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hChip hsat i hi hnotlast
+    (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hChip hsat i hi hnotlast hcells
 
 /-- **TOOTH — `withSovereignKeyCommit_rejects_forged`.** A row whose published KEY_COMMIT tooth is
 NOT the compress of the committed pubkey octet (a forged sovereign key) is UNSAT. -/
@@ -476,13 +503,14 @@ theorem withSovereignKeyCommit_rejects_forged (A : List ℤ → Digest8) (hash :
     (base : EffectVmDescriptor2) (teethPiLo : Nat)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSoundN (permOutOf A) (t.tf .poseidon2))
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) (q : Fin 4)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) (q : Fin 4)
     (hforged : (envAt t i).loc (teethPiLo + q.val)
       ≠ keyCommitSpec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) q) :
     ¬ Satisfied2 hash (withSovereignKeyCommit base teethPiLo) minit mfin maddrs t :=
   fun hsat => hforged
     (withSovereignKeyCommit_forces A hash base teethPiLo minit mfin maddrs t hChip hsat
-      i hi hnotlast q)
+      i hi hnotlast hcells q)
 
 /-- **THE PEEL — `Satisfied2 (withSovereignKeyCommit base teethPiLo) ⟹ Satisfied2 base`.** The
 key-commit compose only APPENDS constraints (4 chip lookups + 4 teeth-weld gates) and widens
@@ -594,7 +622,8 @@ theorem pubkeyCompressConstraints_force (A : List ℤ → Digest8) (hash : List 
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSoundN (permOutOf A) (t.tf .poseidon2))
     (hsat : Satisfied2 hash d minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     (envAt t i).loc leafTeethCol
       = pubkeyCompress1Spec A (octetVals (envAt t i) blockBase octetBase) := by
   set e := envAt t i with he
@@ -627,7 +656,12 @@ theorem pubkeyCompressConstraints_force (A : List ℤ → Digest8) (hash : List 
     simp [pubkeyCompressConstraints]
   have hw := hsat.rowConstraints i hi _ (hsub _ hwin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at hw
-  have hweld := (eqGate_eval _ _ e).mp (by simpa using hw)
+  have hw' : (eqGate leafTeethCol (pubkeyCompressDigestCol dgBase 0)).eval e.loc
+      ≡ 0 [ZMOD 2013265921] := by simpa using hw
+  unfold eqGate at hw'
+  simp only [EmittedExpr.eval] at hw'
+  have hdiff := diffGate_exact (hcells _) (hcells _) hw'
+  have hweld : e.loc leafTeethCol = e.loc (pubkeyCompressDigestCol dgBase 0) := by linarith
   rw [hweld, hlane0]
 
 /-- **`withMembershipPubkeyCompress_forces` — THE MEMBERSHIP-SENDER KEYSTONE.** A `Satisfied2` of
@@ -639,12 +673,13 @@ theorem withMembershipPubkeyCompress_forces (A : List ℤ → Digest8) (hash : L
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSoundN (permOutOf A) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (withMembershipPubkeyCompress base leafTeethCol) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     (envAt t i).loc leafTeethCol
       = pubkeyCompress1Spec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8) :=
   pubkeyCompressConstraints_force A hash _ BEFORE_BLOCK_BASE B_PUBKEY8 base.traceWidth
     leafTeethCol (fun _ hc => List.mem_append_right _ hc) minit mfin maddrs t hChip hsat
-    i hi hnotlast
+    i hi hnotlast hcells
 
 /-- **TOOTH — `withMembershipPubkeyCompress_rejects_forged`.** -/
 theorem withMembershipPubkeyCompress_rejects_forged (A : List ℤ → Digest8) (hash : List ℤ → ℤ)
@@ -652,12 +687,13 @@ theorem withMembershipPubkeyCompress_rejects_forged (A : List ℤ → Digest8) (
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hChip : ChipTableSoundN (permOutOf A) (t.tf .poseidon2))
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hforged : (envAt t i).loc leafTeethCol
       ≠ pubkeyCompress1Spec A (octetVals (envAt t i) BEFORE_BLOCK_BASE B_PUBKEY8)) :
     ¬ Satisfied2 hash (withMembershipPubkeyCompress base leafTeethCol) minit mfin maddrs t :=
   fun hsat => hforged
     (withMembershipPubkeyCompress_forces A hash base leafTeethCol minit mfin maddrs t hChip hsat
-      i hi hnotlast)
+      i hi hnotlast hcells)
 
 #assert_axioms keyCommitConstraints_force
 #assert_axioms withSovereignKeyCommit_forces
@@ -760,7 +796,8 @@ theorem effFieldsReadOpenV3_strips_to_fieldsOpen (hash : List ℤ → ℤ)
       memTableFaithful := by have := h.memTableFaithful; rwa [hmemLog] at this
       mapTableFaithful := by have := h.mapTableFaithful; rwa [hmapLog] at this }
 
-/-- Any read-open weld gate forces `eval = 0` on an active (non-last) row. -/
+/-- Any read-open weld gate forces `eval ≡ 0 [ZMOD p]` on an active (non-last) row — the
+field-faithful consequence (`holdsVm` binds under `when_transition`, reduced by `hlastf`). -/
 theorem fieldsReadOpen_gate_forces (base : EffectVmDescriptor2) (name : String)
     (idxCol rootTeethCol : Nat) (hash : List ℤ → ℤ)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
@@ -770,13 +807,33 @@ theorem fieldsReadOpen_gate_forces (base : EffectVmDescriptor2) (name : String)
     (g : EmittedExpr)
     (hin : VmConstraint2.base (.gate g)
       ∈ fieldsReadOpenWelds base.traceWidth idxCol rootTeethCol) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hlastf : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hnotlast
   have h := hsat.rowConstraints i hi _
     (effFieldsReadOpenV3_weldMem base name idxCol rootTeethCol _ hin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
   simpa using h
+
+/-- A read-open COLUMN weld (`eqGate a b`) forces the ℤ equality `loc a = loc b` on an active row,
+under cell canonicality: the mod-`p` congruence's residual lies in `(−p, p)` and collapses. -/
+theorem fieldsReadOpen_eqGate_forces (base : EffectVmDescriptor2) (name : String)
+    (idxCol rootTeethCol : Nat) (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hsat : Satisfied2 hash (effFieldsReadOpenV3 base name idxCol rootTeethCol)
+      minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (a b : Nat)
+    (hin : VmConstraint2.base (.gate (eqGate a b))
+      ∈ fieldsReadOpenWelds base.traceWidth idxCol rootTeethCol) :
+    (envAt t i).loc a = (envAt t i).loc b := by
+  have h := fieldsReadOpen_gate_forces base name idxCol rootTeethCol hash minit mfin maddrs t
+    hsat i hi hnotlast _ hin
+  unfold eqGate at h
+  simp only [EmittedExpr.eval] at h
+  have := diffGate_exact (hcells a) (hcells b) h
+  linarith
 
 /-- **`effFieldsReadOpenV3_forces_read8` — THE MEMBERSHIP-ROOT KEYSTONE.** A `Satisfied2` of the
 read-open descriptor TRACE-FORCES: the published root-teeth felt IS the fields-map value at the
@@ -790,7 +847,8 @@ theorem effFieldsReadOpenV3_forces_read8 (S8 : Fields8Scheme)
     (hChip : ChipTableSoundN (fieldsPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effFieldsReadOpenV3 base name idxCol rootTeethCol)
       minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     fieldsReadAt8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols (envAt t i))
       ((envAt t i).loc idxCol) ((envAt t i).loc rootTeethCol) := by
@@ -799,7 +857,7 @@ theorem effFieldsReadOpenV3_forces_read8 (S8 : Fields8Scheme)
   have hstrip := effFieldsReadOpenV3_strips_to_fieldsOpen hash base name idxCol rootTeethCol
     minit mfin maddrs t hsat
   have hcore : FieldsMembershipCore t.tf (capOpenCols base.traceWidth) e :=
-    effFieldsOpenV3_core base name hash minit mfin maddrs t hstrip i hi hnotlast
+    effFieldsOpenV3_core base name hash minit mfin maddrs t hstrip i hi hnotlast hcells
   have hrec := fieldsOpen_recompose8 S8 t.tf (capOpenCols base.traceWidth) e hChip hcore
   -- weld: the appendix root group IS the committed BEFORE fields-root block.
   have hroot : groupVal e (capOpenCols base.traceWidth).capRoot
@@ -810,9 +868,8 @@ theorem effFieldsReadOpenV3_forces_read8 (S8 : Fields8Scheme)
         ∈ fieldsReadOpenWelds base.traceWidth idxCol rootTeethCol := by
       refine List.mem_append_left _ ?_
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
-    have := (eqGate_eval _ _ e).mp
-      (fieldsReadOpen_gate_forces base name idxCol rootTeethCol hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    have := fieldsReadOpen_eqGate_forces base name idxCol rootTeethCol hash minit mfin maddrs t
+      hsat i hi hnotlast hcells _ _ hin
     simpa [groupVal, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols] using this
   -- weld: the read leaf's addr is the declared set_root_index column.
   have hidx : e.loc ((capOpenCols base.traceWidth).leaf 0) = e.loc idxCol := by
@@ -820,9 +877,8 @@ theorem effFieldsReadOpenV3_forces_read8 (S8 : Fields8Scheme)
         ∈ fieldsReadOpenWelds base.traceWidth idxCol rootTeethCol := by
       refine List.mem_append_right _ ?_
       simp
-    exact (eqGate_eval _ _ e).mp
-      (fieldsReadOpen_gate_forces base name idxCol rootTeethCol hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    exact fieldsReadOpen_eqGate_forces base name idxCol rootTeethCol hash minit mfin maddrs t
+      hsat i hi hnotlast hcells _ _ hin
   -- weld: the read leaf's value is the published root-teeth column.
   have hval : e.loc ((capOpenCols base.traceWidth).leaf 1) = e.loc rootTeethCol := by
     have hin : VmConstraint2.base (.gate (eqGate ((capOpenCols base.traceWidth).leaf 1)
@@ -830,9 +886,8 @@ theorem effFieldsReadOpenV3_forces_read8 (S8 : Fields8Scheme)
         ∈ fieldsReadOpenWelds base.traceWidth idxCol rootTeethCol := by
       refine List.mem_append_right _ ?_
       simp
-    exact (eqGate_eval _ _ e).mp
-      (fieldsReadOpen_gate_forces base name idxCol rootTeethCol hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    exact fieldsReadOpen_eqGate_forces base name idxCol rootTeethCol hash minit mfin maddrs t
+      hsat i hi hnotlast hcells _ _ hin
   -- assemble the read.
   have hpair : fieldsLeafPairOf (capOpenCols base.traceWidth) e
       = (e.loc idxCol, e.loc rootTeethCol) := by
@@ -849,13 +904,14 @@ theorem effFieldsReadOpenV3_rejects_nonmember (S8 : Fields8Scheme)
     (t : VmTrace)
     (hChip : ChipTableSoundN (fieldsPermOut S8) (t.tf .poseidon2))
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hnon : ¬ fieldsReadAt8 S8
       (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols (envAt t i))
       ((envAt t i).loc idxCol) ((envAt t i).loc rootTeethCol)) :
     ¬ Satisfied2 hash (effFieldsReadOpenV3 base name idxCol rootTeethCol) minit mfin maddrs t :=
   fun hsat => hnon
     (effFieldsReadOpenV3_forces_read8 S8 base name idxCol rootTeethCol hash minit mfin maddrs t
-      hChip hsat i hi hnotlast)
+      hChip hsat i hi hnotlast hcells)
 
 #assert_axioms effFieldsReadOpenV3_strips_to_fieldsOpen
 #assert_axioms fieldsReadOpen_gate_forces

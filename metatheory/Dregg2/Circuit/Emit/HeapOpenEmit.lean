@@ -43,6 +43,7 @@ open Dregg2.Circuit.DeployedHeapTree.Heap8Scheme (heapLeafDigest8 heapNodeOf8 re
 open Dregg2.Circuit.CapMerkleGeneric (StepG recomposeG)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (capOpenCols nodeLookups dirBoolGates rootPinGates eqGate eqGate_eval
+   boolGate_exact diffGate_exact
    CAP_OPEN_SPAN AFTER_SPINE_SPAN AFTER_SPINE_BASE)
 open Dregg2.Circuit.Emit.EffectVmEmit (prmCol)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace envAt)
@@ -285,12 +286,15 @@ theorem effHeapOpenV3_constraints_mem (base : EffectVmDescriptor2) (name : Strin
 
 /-- **`effHeapOpenV3_core`** — a `Satisfied2` of the heap-open descriptor rebuilds `HeapMembershipCore`
 on every active (non-last) row (the appendix constraints read no base column). The heap twin of
-`effCapOpenV3_satisfiedEff`'s `core` block. -/
+`effCapOpenV3_satisfiedEff`'s `core` block. Field-faithful: the lookups lift untouched; the gates arrive
+`≡ 0 [ZMOD p]` (`holdsVm`) and lift to their ℤ form through cell canonicality — primality (`dirBool`) /
+the `(−p, p)` residual collapse (`rootPinned`). -/
 theorem effHeapOpenV3_core (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effHeapOpenV3 base name) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     HeapMembershipCore t.tf (capOpenCols base.traceWidth) (envAt t i) := by
   have hrow := hsat.rowConstraints i hi
   have hmem := effHeapOpenV3_constraints_mem base name
@@ -316,7 +320,12 @@ theorem effHeapOpenV3_core (base : EffectVmDescriptor2) (name : String)
       refine List.mem_append_left _ (List.mem_append_right _ ?_)
       exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (dirBoolGate (capOpenCols base.traceWidth) lvl).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold dirBoolGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact boolGate_exact (hcells _) h'
   · intro k
     have hin : VmConstraint2.base (.gate (rootPinGate (capOpenCols base.traceWidth) k))
         ∈ heapOpenConstraints base.traceWidth := by
@@ -324,7 +333,12 @@ theorem effHeapOpenV3_core (base : EffectVmDescriptor2) (name : String)
       refine List.mem_append_right _ ?_
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (rootPinGate (capOpenCols base.traceWidth) k).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold rootPinGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact diffGate_exact (hcells _) (hcells _) h'
 
 /-! ## §4 — the AFTER-spine appendix + the trace-FORCED `effHeapWriteV3_forces_write8` (§12 twin). -/
 
@@ -502,12 +516,14 @@ theorem effHeapWriteV3_satisfied2_strips_to_base (hash : List ℤ → ℤ) (base
     (effHeapWriteV3_strips_to_heapOpen hash base name minit mfin maddrs t h)
 
 /-- **`effHeapWriteV3_afterCore`** — the AFTER-spine `HeapMembershipCore`, derived from `Satisfied2` of the
-write descriptor. The `dirBool` is reused from the read (the SHARED dir column). -/
+write descriptor. The `dirBool` is reused from the read (the SHARED dir column). Field-faithful: the
+root-pin gates arrive `≡ 0 [ZMOD p]` and collapse to ℤ through cell canonicality (`(−p, p)` residual). -/
 theorem effHeapWriteV3_afterCore (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effHeapWriteV3 base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hdir : ∀ lvl < DEPTH,
       (dirBoolGate (capOpenCols base.traceWidth) lvl).eval (envAt t i).loc = 0) :
     HeapMembershipCore t.tf (afterSpineColsH base.traceWidth) (envAt t i) := by
@@ -540,16 +556,22 @@ theorem effHeapWriteV3_afterCore (base : EffectVmDescriptor2) (name : String)
         (List.mem_append_right _ ?_)))
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (rootPinGate (afterSpineColsH base.traceWidth) k).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold rootPinGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact diffGate_exact (hcells _) (hcells _) h'
 
-/-- Any after-spine `.base (.gate g)` constraint forces `g.eval = 0` on an active (non-last) row. -/
+/-- Any after-spine `.base (.gate g)` constraint forces `g.eval ≡ 0 [ZMOD p]` on an active (non-last)
+row — the field-faithful consequence (`holdsVm` binds under `when_transition`, reduced by `hlastf`). -/
 theorem afterSpineH_gate_forces (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effHeapWriteV3 base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (g : EmittedExpr) (hin : VmConstraint2.base (.gate g) ∈ afterSpineConstraintsH base.traceWidth) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi
   have hmem := effHeapWriteV3_afterMem base name
   have hlastf : (i + 1 == t.rows.length) = false := by
@@ -557,6 +579,22 @@ theorem afterSpineH_gate_forces (base : EffectVmDescriptor2) (name : String)
   have h := hrow _ (hmem _ hin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
   simpa using h
+
+/-- An after-spine COLUMN weld (`eqGate a b`) forces the ℤ equality `loc a = loc b` on an active row,
+under cell canonicality: the mod-`p` congruence's residual lies in `(−p, p)` and collapses. -/
+theorem afterSpineH_eqGate_forces (base : EffectVmDescriptor2) (name : String)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hsat : Satisfied2 hash (effHeapWriteV3 base name) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (a b : Nat) (hin : VmConstraint2.base (.gate (eqGate a b)) ∈ afterSpineConstraintsH base.traceWidth) :
+    (envAt t i).loc a = (envAt t i).loc b := by
+  have h := afterSpineH_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin
+  unfold eqGate at h
+  simp only [EmittedExpr.eval] at h
+  have := diffGate_exact (hcells a) (hcells b) h
+  linarith
 
 /-- **`effHeapWriteV3_forces_write8` — THE STEP-A DELIVERABLE.** A `Satisfied2` of the write descriptor
 TRACE-FORCES the faithful 8-felt heap-write over the FULL committed BEFORE/AFTER heap-root blocks: the read
@@ -569,7 +607,8 @@ theorem effHeapWriteV3_forces_write8 (S8 : Heap8Scheme)
     (t : VmTrace)
     (hChip : ChipTableSoundN (heapPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effHeapWriteV3 base name) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.heapWritesTo8 S8
         (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeHeapRootCols (envAt t i))
         ((envAt t i).loc Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.HEAP_ADDR)
@@ -579,10 +618,10 @@ theorem effHeapWriteV3_forces_write8 (S8 : Heap8Scheme)
   -- the BEFORE membership core (the heap-open read) + its dirBool.
   have hbeforeSat := effHeapWriteV3_strips_to_heapOpen hash base name minit mfin maddrs t hsat
   have hbeforeCore : HeapMembershipCore t.tf (capOpenCols base.traceWidth) e :=
-    effHeapOpenV3_core base name hash minit mfin maddrs t hbeforeSat i hi hnotlast
+    effHeapOpenV3_core base name hash minit mfin maddrs t hbeforeSat i hi hnotlast hcells
   -- the AFTER membership core (reusing the read's dirBool over the SHARED dir column).
   have hafterCore : HeapMembershipCore t.tf (afterSpineColsH base.traceWidth) e :=
-    effHeapWriteV3_afterCore base name hash minit mfin maddrs t hsat i hi hnotlast
+    effHeapWriteV3_afterCore base name hash minit mfin maddrs t hsat i hi hnotlast hcells
       hbeforeCore.dirBool
   -- weld: after leaf 0 (addr) = read leaf 0.
   have hslot : e.loc ((afterSpineColsH base.traceWidth).leaf 0)
@@ -592,8 +631,8 @@ theorem effHeapWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       simp [afterLeafWeldsH]
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineH_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    exact afterSpineH_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      _ _ hin
   -- weld: after leaf 1 (value) = param[VALUE].
   have hvalw : e.loc ((afterSpineColsH base.traceWidth).leaf 1)
       = e.loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.hp.VALUE) := by
@@ -603,8 +642,8 @@ theorem effHeapWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       simp [afterLeafWeldsH]
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineH_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    exact afterSpineH_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      _ _ hin
   -- key bind: read leaf 0 = HEAP_ADDR.
   have hkeyb : e.loc ((capOpenCols base.traceWidth).leaf 0)
       = e.loc Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.HEAP_ADDR := by
@@ -613,8 +652,8 @@ theorem effHeapWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_right _ ?_
       simp
-    have := afterSpineH_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin
-    exact (eqGate_eval _ _ e).mp this
+    exact afterSpineH_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      ((capOpenCols base.traceWidth).leaf 0) Dregg2.Circuit.Emit.EffectVmEmitHeapRoot.HEAP_ADDR hin
   -- before-block heap-root weld: the read's appendix capRoot group IS the committed BEFORE block.
   have hbroot : groupVal e (capOpenCols base.traceWidth).capRoot
       = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeHeapRootCols e := by
@@ -625,8 +664,8 @@ theorem effHeapWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_right _ ?_)
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
-    have := (eqGate_eval _ _ e).mp
-      (afterSpineH_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    have := afterSpineH_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      _ _ hin
     simpa [groupVal, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeHeapRootCols] using this
   -- assemble the §11 keystone over the two cores along the SHARED path.
   have hkey : (heapLeafPairOf (afterSpineColsH base.traceWidth) e).1

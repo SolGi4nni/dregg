@@ -49,7 +49,7 @@ open Dregg2.Circuit.DeployedCapOpen (CapOpenCols DEPTH groupVal)
 open Dregg2.Circuit.DeployedCapTree (Digest8)
 open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
 open Dregg2.Circuit.DeployedHeapTree.Heap8Scheme (MembersAt8)
-open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols eqGate eqGate_eval)
+open Dregg2.Circuit.Emit.CapOpenEmit (capOpenCols eqGate eqGate_eval diffGate_exact)
 open Dregg2.Circuit.Emit.HeapOpenEmit
   (heapLeafPairOf heapPermOut HeapMembershipCore heapOpen_recompose8
    effHeapOpenV3 effHeapOpenV3_core)
@@ -187,20 +187,31 @@ def bindGateI (sel : Option Nat) (a col : Nat) : EmittedExpr :=
 
 /-- The selector-gated bind forces `a = col` on any row where the gate holds AND (when gated) the
 selector is `1`. Ungated (`none`): unconditional. Gated (`some s`): needs `env s = 1` (the active
-firing row). -/
+firing row). Field-faithful: the gate arrives `≡ 0 [ZMOD p]` (`holdsVm`); the ℤ equality is recovered
+through cell canonicality (the difference lies in `(−p, p)` and collapses). -/
 theorem bindGateI_forces (sel : Option Nat) (a col : Nat) (env : VmRowEnv)
-    (h : (bindGateI sel a col).eval env.loc = 0)
+    (ha : 0 ≤ env.loc a ∧ env.loc a < 2013265921)
+    (hcol : 0 ≤ env.loc col ∧ env.loc col < 2013265921)
+    (h : (bindGateI sel a col).eval env.loc ≡ 0 [ZMOD 2013265921])
     (hsel : ∀ s, sel = some s → env.loc s = 1) :
     env.loc a = env.loc col := by
   cases sel with
-  | none => exact (eqGate_eval a col env).mp (by simpa [bindGateI] using h)
+  | none =>
+    have hg : (eqGate a col).eval env.loc ≡ 0 [ZMOD 2013265921] := by simpa [bindGateI] using h
+    unfold eqGate at hg
+    simp only [EmittedExpr.eval] at hg
+    have := diffGate_exact ha hcol hg
+    linarith
   | some s =>
     have hs : env.loc s = 1 := hsel s rfl
-    have hg : (eqGate a col).eval env.loc = 0 := by
-      have : env.loc s * (eqGate a col).eval env.loc = 0 := by
+    have hg : (eqGate a col).eval env.loc ≡ 0 [ZMOD 2013265921] := by
+      have hmul : env.loc s * (eqGate a col).eval env.loc ≡ 0 [ZMOD 2013265921] := by
         simpa [bindGateI, EmittedExpr.eval] using h
-      rw [hs, one_mul] at this; exact this
-    exact (eqGate_eval a col env).mp hg
+      rw [hs, one_mul] at hmul; exact hmul
+    unfold eqGate at hg
+    simp only [EmittedExpr.eval] at hg
+    have := diffGate_exact ha hcol hg
+    linarith
 
 /-- The key-bind gate: the read leaf's `addr` (leaf 0) equals the accumulator's published KEY column,
 selector-gated by `sel`. -/
@@ -282,7 +293,9 @@ theorem effAccumInsertV3_strips_to_open (groupCol : Nat → Fin 8 → Nat) (keyC
       memTableFaithful := by have := h.memTableFaithful; rwa [hmemLog] at this
       mapTableFaithful := by have := h.mapTableFaithful; rwa [hmapLog] at this }
 
-/-- Any insert-appendix `.base (.gate g)` constraint forces `g.eval = 0` on an active (non-last) row. -/
+/-- Any insert-appendix `.base (.gate g)` constraint forces `g.eval ≡ 0 [ZMOD p]` on an active
+(non-last) row — the field-faithful consequence (`holdsVm` binds under `when_transition`, reduced by
+`hlastf`). -/
 theorem accumInsertI_gate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol valueCol : Nat)
     (sel : Option Nat) (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
@@ -292,13 +305,33 @@ theorem accumInsertI_gate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol valu
     (g : EmittedExpr)
     (hin : VmConstraint2.base (.gate g)
              ∈ accumInsertConstraints groupCol keyCol valueCol sel base.traceWidth) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi
   have hlastf : (i + 1 == t.rows.length) = false := by
     simp only [beq_eq_false_iff_ne]; exact hnotlast
   have h := hrow _ (effAccumInsertV3_appMem groupCol keyCol valueCol sel base name _ hin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
   simpa using h
+
+/-- An insert-appendix COLUMN weld (`eqGate a b`) forces the ℤ equality `loc a = loc b` on an active
+row, under cell canonicality: the mod-`p` congruence's residual lies in `(−p, p)` and collapses. -/
+theorem accumInsertI_eqGate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol valueCol : Nat)
+    (sel : Option Nat) (base : EffectVmDescriptor2) (name : String)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hsat : Satisfied2 hash (effAccumInsertV3 groupCol keyCol valueCol sel base name) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (a b : Nat)
+    (hin : VmConstraint2.base (.gate (eqGate a b))
+             ∈ accumInsertConstraints groupCol keyCol valueCol sel base.traceWidth) :
+    (envAt t i).loc a = (envAt t i).loc b := by
+  have h := accumInsertI_gate_forces groupCol keyCol valueCol sel base name hash minit mfin maddrs t
+    hsat i hi hnotlast _ hin
+  unfold eqGate at h
+  simp only [EmittedExpr.eval] at h
+  have := diffGate_exact (hcells a) (hcells b) h
+  linarith
 
 /-- **`effAccumInsertV3_forces_afterMembership`** — THE STEP-B DELIVERABLE: a `Satisfied2` of the insert
 descriptor TRACE-FORCES `MembersAt8 afterRoot (key, value)` over the FULL committed AFTER accumulator
@@ -312,6 +345,7 @@ theorem effAccumInsertV3_forces_afterMembership (S8 : Heap8Scheme)
     (hChip : ChipTableSoundN (heapPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effAccumInsertV3 groupCol keyCol valueCol sel base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hsel : ∀ s, sel = some s → (envAt t i).loc s = 1) :
     MembersAt8 S8 (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k))
       ((envAt t i).loc keyCol, (envAt t i).loc valueCol) := by
@@ -321,7 +355,7 @@ theorem effAccumInsertV3_forces_afterMembership (S8 : Heap8Scheme)
   have hopenSat := effAccumInsertV3_strips_to_open groupCol keyCol valueCol sel
     hash base name minit mfin maddrs t hsat
   have hcore : HeapMembershipCore t.tf (capOpenCols w) e :=
-    effHeapOpenV3_core base name hash minit mfin maddrs t hopenSat i hi hnotlast
+    effHeapOpenV3_core base name hash minit mfin maddrs t hopenSat i hi hnotlast hcells
   have hrec := heapOpen_recompose8 S8 t.tf (capOpenCols w) e hChip hcore
   have hmem0 : MembersAt8 S8 (groupVal e (capOpenCols w).capRoot) (heapLeafPairOf (capOpenCols w) e) :=
     ⟨_, hrec⟩
@@ -334,23 +368,22 @@ theorem effAccumInsertV3_forces_afterMembership (S8 : Heap8Scheme)
         ∈ accumInsertConstraints groupCol keyCol valueCol sel w := by
       refine List.mem_append_left _ ?_
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
-    have := (eqGate_eval _ _ e).mp
-      (accumInsertI_gate_forces groupCol keyCol valueCol sel base name hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    have := accumInsertI_eqGate_forces groupCol keyCol valueCol sel base name hash minit mfin maddrs t
+      hsat i hi hnotlast hcells _ _ hin
     simpa [groupVal] using this
   -- key/value binds: the read leaf's (addr, value) is (keyCol, valueCol), selector-gated (`hsel`).
   have hkeyb : e.loc ((capOpenCols w).leaf 0) = e.loc keyCol := by
     have hin : VmConstraint2.base (.gate (keyBindGateI sel keyCol w))
         ∈ accumInsertConstraints groupCol keyCol valueCol sel w := by
       refine List.mem_append_right _ ?_; simp
-    exact bindGateI_forces sel ((capOpenCols w).leaf 0) keyCol e
+    exact bindGateI_forces sel ((capOpenCols w).leaf 0) keyCol e (hcells _) (hcells _)
       (accumInsertI_gate_forces groupCol keyCol valueCol sel base name hash minit mfin maddrs t hsat
         i hi hnotlast _ hin) hsel
   have hvalb : e.loc ((capOpenCols w).leaf 1) = e.loc valueCol := by
     have hin : VmConstraint2.base (.gate (valueBindGateI sel valueCol w))
         ∈ accumInsertConstraints groupCol keyCol valueCol sel w := by
       refine List.mem_append_right _ ?_; simp
-    exact bindGateI_forces sel ((capOpenCols w).leaf 1) valueCol e
+    exact bindGateI_forces sel ((capOpenCols w).leaf 1) valueCol e (hcells _) (hcells _)
       (accumInsertI_gate_forces groupCol keyCol valueCol sel base name hash minit mfin maddrs t hsat
         i hi hnotlast _ hin) hsel
   have hpair : heapLeafPairOf (capOpenCols w) e = (e.loc keyCol, e.loc valueCol) := by
@@ -374,6 +407,7 @@ theorem effAccumInsertV3_forces_write8 (S8 : Heap8Scheme)
     (hChip : ChipTableSoundN (heapPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effAccumInsertV3 groupCol keyCol valueCol sel base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hsel : ∀ s, sel = some s → (envAt t i).loc s = 1)
     (spine : List ℤ)
     (hbefore : SpineCommits8 S8 (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k)) spine)
@@ -387,7 +421,7 @@ theorem effAccumInsertV3_forces_write8 (S8 : Heap8Scheme)
         ((envAt t i).loc valueCol)
         (fun k => (envAt t i).loc (groupCol (EFFECT_VM_WIDTH + 239) k)) := by
   have hafterMem := effAccumInsertV3_forces_afterMembership S8 groupCol keyCol valueCol sel
-    base name hash minit mfin maddrs t hChip hsat i hi hnotlast hsel
+    base name hash minit mfin maddrs t hChip hsat i hi hnotlast hcells hsel
   exact accumInsert_writesTo8 S8 _ _ _ _ spine hbefore g hcov hafterMem hafter
 
 #assert_axioms effAccumInsertV3_forces_afterMembership

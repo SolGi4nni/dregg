@@ -55,6 +55,7 @@ open Dregg2.Circuit.DeployedHeapTree (Heap8Scheme)
 open Dregg2.Circuit.CapMerkleGeneric (StepG)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (capOpenCols nodeLookups dirBoolGates rootPinGates eqGate eqGate_eval
+   diffGate_exact
    CAP_OPEN_SPAN AFTER_SPINE_SPAN AFTER_SPINE_BASE)
 open Dregg2.Circuit.Emit.HeapOpenEmit
   (heapLeafLookup heapLeafPairOf heapPermOut HeapMembershipCore heapOpen_writesTo8
@@ -192,13 +193,15 @@ theorem effAccumWriteV3_satisfied2_strips_to_base (groupCol : Nat → Fin 8 → 
     (effAccumWriteV3_strips_to_accumOpen groupCol keyCol valueCol hash base name minit mfin maddrs t h)
 
 /-- **`effAccumWriteV3_afterCore`** — the AFTER-spine `HeapMembershipCore`, derived from `Satisfied2` of the
-write descriptor. The `dirBool` is reused from the read (the SHARED dir column). -/
+write descriptor. The `dirBool` is reused from the read (the SHARED dir column). Field-faithful: the
+root-pin gates arrive `≡ 0 [ZMOD p]` and collapse to ℤ through cell canonicality (`(−p, p)` residual). -/
 theorem effAccumWriteV3_afterCore (groupCol : Nat → Fin 8 → Nat) (keyCol valueCol : Nat)
     (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effAccumWriteV3 groupCol keyCol valueCol base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hdir : ∀ lvl < DEPTH,
       (dirBoolGate (capOpenCols base.traceWidth) lvl).eval (envAt t i).loc = 0) :
     HeapMembershipCore t.tf (afterSpineColsA groupCol base.traceWidth) (envAt t i) := by
@@ -231,9 +234,15 @@ theorem effAccumWriteV3_afterCore (groupCol : Nat → Fin 8 → Nat) (keyCol val
         (List.mem_append_right _ ?_)))
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (rootPinGate (afterSpineColsA groupCol base.traceWidth) k).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold rootPinGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact diffGate_exact (hcells _) (hcells _) h'
 
-/-- Any after-spine `.base (.gate g)` constraint forces `g.eval = 0` on an active (non-last) row. -/
+/-- Any after-spine `.base (.gate g)` constraint forces `g.eval ≡ 0 [ZMOD p]` on an active (non-last)
+row — the field-faithful consequence (`holdsVm` binds under `when_transition`, reduced by `hlastf`). -/
 theorem afterSpineA_gate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol valueCol : Nat)
     (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
@@ -243,7 +252,7 @@ theorem afterSpineA_gate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol value
     (g : EmittedExpr)
     (hin : VmConstraint2.base (.gate g)
              ∈ afterSpineConstraintsA groupCol keyCol valueCol base.traceWidth) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi
   have hmem := effAccumWriteV3_afterMem groupCol keyCol valueCol base name
   have hlastf : (i + 1 == t.rows.length) = false := by
@@ -251,6 +260,26 @@ theorem afterSpineA_gate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol value
   have h := hrow _ (hmem _ hin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
   simpa using h
+
+/-- An after-spine COLUMN weld (`eqGate a b`) forces the ℤ equality `loc a = loc b` on an active row,
+under cell canonicality: the mod-`p` congruence's residual lies in `(−p, p)` and collapses. -/
+theorem afterSpineA_eqGate_forces (groupCol : Nat → Fin 8 → Nat) (keyCol valueCol : Nat)
+    (base : EffectVmDescriptor2) (name : String)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hsat : Satisfied2 hash (effAccumWriteV3 groupCol keyCol valueCol base name) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (a b : Nat)
+    (hin : VmConstraint2.base (.gate (eqGate a b))
+             ∈ afterSpineConstraintsA groupCol keyCol valueCol base.traceWidth) :
+    (envAt t i).loc a = (envAt t i).loc b := by
+  have h := afterSpineA_gate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
+    i hi hnotlast _ hin
+  unfold eqGate at h
+  simp only [EmittedExpr.eval] at h
+  have := diffGate_exact (hcells a) (hcells b) h
+  linarith
 
 /-- **`accumOpen_writesTo8` — THE STEP-A KEYSTONE (per accumulator family, via the shared spine).** Two
 `HeapMembershipCore` witnesses sharing the sibling path (before = old leaf against the BEFORE accumulator
@@ -286,7 +315,8 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
     (t : VmTrace)
     (hChip : ChipTableSoundN (heapPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effAccumWriteV3 groupCol keyCol valueCol base name) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.heapWritesTo8 S8
         (fun k => (envAt t i).loc (groupCol EFFECT_VM_WIDTH k))
         ((envAt t i).loc keyCol)
@@ -297,11 +327,11 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
   have hbeforeSat := effAccumWriteV3_strips_to_accumOpen groupCol keyCol valueCol
     hash base name minit mfin maddrs t hsat
   have hbeforeCore : HeapMembershipCore t.tf (capOpenCols base.traceWidth) e :=
-    effHeapOpenV3_core base name hash minit mfin maddrs t hbeforeSat i hi hnotlast
+    effHeapOpenV3_core base name hash minit mfin maddrs t hbeforeSat i hi hnotlast hcells
   -- the AFTER membership core (reusing the read's dirBool over the SHARED dir column).
   have hafterCore : HeapMembershipCore t.tf (afterSpineColsA groupCol base.traceWidth) e :=
     effAccumWriteV3_afterCore groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
-      i hi hnotlast hbeforeCore.dirBool
+      i hi hnotlast hcells hbeforeCore.dirBool
   -- weld: after leaf 0 (key) = read leaf 0.
   have hslot : e.loc ((afterSpineColsA groupCol base.traceWidth).leaf 0)
       = e.loc ((capOpenCols base.traceWidth).leaf 0) := by
@@ -311,9 +341,8 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       simp [afterLeafWeldsA, afterSpineColsA]
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineA_gate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    exact afterSpineA_eqGate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
+      i hi hnotlast hcells _ _ hin
   -- weld: after leaf 1 (value) = valueCol.
   have hvalw : e.loc ((afterSpineColsA groupCol base.traceWidth).leaf 1) = e.loc valueCol := by
     have hin : VmConstraint2.base (.gate (eqGate ((afterSpineColsA groupCol base.traceWidth).leaf 1)
@@ -321,9 +350,8 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       simp [afterLeafWeldsA, afterSpineColsA]
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineA_gate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    exact afterSpineA_eqGate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
+      i hi hnotlast hcells _ _ hin
   -- key bind: read leaf 0 = keyCol.
   have hkeyb : e.loc ((capOpenCols base.traceWidth).leaf 0) = e.loc keyCol := by
     have hin : VmConstraint2.base (.gate (keyBindGateA keyCol base.traceWidth))
@@ -331,9 +359,8 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_right _ ?_
       simp
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineA_gate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    exact afterSpineA_eqGate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
+      i hi hnotlast hcells ((capOpenCols base.traceWidth).leaf 0) keyCol hin
   -- before-block accumulator-root weld: the read's appendix capRoot group IS the committed BEFORE block.
   have hbroot : groupVal e (capOpenCols base.traceWidth).capRoot
       = (fun k => e.loc (groupCol EFFECT_VM_WIDTH k)) := by
@@ -344,9 +371,8 @@ theorem effAccumWriteV3_forces_write8 (S8 : Heap8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_right _ ?_)
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
-    have := (eqGate_eval _ _ e).mp
-      (afterSpineA_gate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
-        i hi hnotlast _ hin)
+    have := afterSpineA_eqGate_forces groupCol keyCol valueCol base name hash minit mfin maddrs t hsat
+      i hi hnotlast hcells _ _ hin
     simpa [groupVal] using this
   -- assemble the shared §11 keystone over the two cores along the SHARED path.
   have hkey : (heapLeafPairOf (afterSpineColsA groupCol base.traceWidth) e).1

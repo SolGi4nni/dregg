@@ -44,6 +44,7 @@ open Dregg2.Circuit.DeployedFieldsTree.Fields8Scheme (fieldsLeafDigest8 fieldsNo
 open Dregg2.Circuit.CapMerkleGeneric (StepG recomposeG)
 open Dregg2.Circuit.Emit.CapOpenEmit
   (capOpenCols nodeLookups dirBoolGates rootPinGates eqGate eqGate_eval
+   boolGate_exact diffGate_exact
    CAP_OPEN_SPAN AFTER_SPINE_SPAN AFTER_SPINE_BASE)
 open Dregg2.Circuit.DescriptorIR2 (VmTrace envAt)
 
@@ -270,12 +271,16 @@ theorem effFieldsOpenV3_constraints_mem (base : EffectVmDescriptor2) (name : Str
   List.mem_append_right _ hc
 
 /-- **`effFieldsOpenV3_core`** — a `Satisfied2` of the fields-open descriptor rebuilds
-`FieldsMembershipCore` on every active (non-last) row. The fields twin of `effHeapOpenV3_core`. -/
+`FieldsMembershipCore` on every active (non-last) row. The fields twin of `effHeapOpenV3_core`.
+Field-faithful: the lookups lift untouched; the gates arrive `≡ 0 [ZMOD p]` (`holdsVm`) and lift to
+their ℤ form through cell canonicality — primality (`dirBool`) / the `(−p, p)` residual collapse
+(`rootPinned`). -/
 theorem effFieldsOpenV3_core (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effFieldsOpenV3 base name) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     FieldsMembershipCore t.tf (capOpenCols base.traceWidth) (envAt t i) := by
   have hrow := hsat.rowConstraints i hi
   have hmem := effFieldsOpenV3_constraints_mem base name
@@ -301,7 +306,12 @@ theorem effFieldsOpenV3_core (base : EffectVmDescriptor2) (name : String)
       refine List.mem_append_left _ (List.mem_append_right _ ?_)
       exact List.mem_map.mpr ⟨lvl, List.mem_range.mpr hlvl, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (dirBoolGate (capOpenCols base.traceWidth) lvl).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold dirBoolGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact boolGate_exact (hcells _) h'
   · intro k
     have hin : VmConstraint2.base (.gate (rootPinGate (capOpenCols base.traceWidth) k))
         ∈ fieldsOpenConstraints base.traceWidth := by
@@ -309,7 +319,12 @@ theorem effFieldsOpenV3_core (base : EffectVmDescriptor2) (name : String)
       refine List.mem_append_right _ ?_
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (rootPinGate (capOpenCols base.traceWidth) k).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold rootPinGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact diffGate_exact (hcells _) (hcells _) h'
 
 /-! ## §4 — the AFTER-spine appendix + the trace-FORCED `effFieldsWriteV3_forces_write8` (§12 twin). -/
 
@@ -389,11 +404,11 @@ theorem effFieldsWriteV3_strips_to_fieldsOpen (hash : List ℤ → ℤ) (base : 
   have hmapOps : Dregg2.Circuit.DescriptorIR2.mapOpsOf (effFieldsWriteV3 base name)
       = Dregg2.Circuit.DescriptorIR2.mapOpsOf (effFieldsOpenV3 base name) := by
     simp [Dregg2.Circuit.DescriptorIR2.mapOpsOf, effFieldsWriteV3, afterSpineConstraintsF,
-      afterLeafWeldsF, beforeRootWeldsF, List.filterMap_append, List.filterMap_map, List.filterMap_cons]
+      afterLeafWeldsF, beforeRootWeldsF, List.filterMap_append, List.filterMap_map]
   have hmemOps : Dregg2.Circuit.DescriptorIR2.memOpsOf (effFieldsWriteV3 base name)
       = Dregg2.Circuit.DescriptorIR2.memOpsOf (effFieldsOpenV3 base name) := by
     simp [Dregg2.Circuit.DescriptorIR2.memOpsOf, effFieldsWriteV3, afterSpineConstraintsF,
-      afterLeafWeldsF, beforeRootWeldsF, List.filterMap_append, List.filterMap_map, List.filterMap_cons]
+      afterLeafWeldsF, beforeRootWeldsF, List.filterMap_append, List.filterMap_map]
   have hmemLog : Dregg2.Circuit.DescriptorIR2.memLog (effFieldsWriteV3 base name) t
       = Dregg2.Circuit.DescriptorIR2.memLog (effFieldsOpenV3 base name) t := by
     simp [Dregg2.Circuit.DescriptorIR2.memLog, hmemOps]
@@ -470,12 +485,14 @@ theorem effFieldsWriteV3_satisfied2_strips_to_base (hash : List ℤ → ℤ) (ba
     (effFieldsWriteV3_strips_to_fieldsOpen hash base name minit mfin maddrs t h)
 
 /-- **`effFieldsWriteV3_afterCore`** — the AFTER-spine `FieldsMembershipCore`, derived from `Satisfied2` of
-the write descriptor. The `dirBool` is reused from the read (the SHARED dir column). -/
+the write descriptor. The `dirBool` is reused from the read (the SHARED dir column). Field-faithful: the
+root-pin gates arrive `≡ 0 [ZMOD p]` and collapse to ℤ through cell canonicality (`(−p, p)` residual). -/
 theorem effFieldsWriteV3_afterCore (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effFieldsWriteV3 base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
     (hdir : ∀ lvl < DEPTH,
       (dirBoolGate (capOpenCols base.traceWidth) lvl).eval (envAt t i).loc = 0) :
     FieldsMembershipCore t.tf (afterSpineColsF base.traceWidth) (envAt t i) := by
@@ -508,16 +525,22 @@ theorem effFieldsWriteV3_afterCore (base : EffectVmDescriptor2) (name : String)
         (List.mem_append_right _ ?_)))
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
     have h := hrow _ (hmem _ hin)
-    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h; simpa using h
+    simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
+    have h' : (rootPinGate (afterSpineColsF base.traceWidth) k).eval
+        (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by simpa using h
+    unfold rootPinGate at h' ⊢
+    simp only [EmittedExpr.eval] at h' ⊢
+    exact diffGate_exact (hcells _) (hcells _) h'
 
-/-- Any after-spine `.base (.gate g)` constraint forces `g.eval = 0` on an active (non-last) row. -/
+/-- Any after-spine `.base (.gate g)` constraint forces `g.eval ≡ 0 [ZMOD p]` on an active (non-last)
+row — the field-faithful consequence (`holdsVm` binds under `when_transition`, reduced by `hlastf`). -/
 theorem afterSpineF_gate_forces (base : EffectVmDescriptor2) (name : String)
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
     (t : VmTrace)
     (hsat : Satisfied2 hash (effFieldsWriteV3 base name) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
     (g : EmittedExpr) (hin : VmConstraint2.base (.gate g) ∈ afterSpineConstraintsF base.traceWidth) :
-    g.eval (envAt t i).loc = 0 := by
+    g.eval (envAt t i).loc ≡ 0 [ZMOD 2013265921] := by
   have hrow := hsat.rowConstraints i hi
   have hmem := effFieldsWriteV3_afterMem base name
   have hlastf : (i + 1 == t.rows.length) = false := by
@@ -525,6 +548,22 @@ theorem afterSpineF_gate_forces (base : EffectVmDescriptor2) (name : String)
   have h := hrow _ (hmem _ hin)
   simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm, hlastf] at h
   simpa using h
+
+/-- An after-spine COLUMN weld (`eqGate a b`) forces the ℤ equality `loc a = loc b` on an active row,
+under cell canonicality: the mod-`p` congruence's residual lies in `(−p, p)` and collapses. -/
+theorem afterSpineF_eqGate_forces (base : EffectVmDescriptor2) (name : String)
+    (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ)
+    (t : VmTrace)
+    (hsat : Satisfied2 hash (effFieldsWriteV3 base name) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921)
+    (a b : Nat) (hin : VmConstraint2.base (.gate (eqGate a b)) ∈ afterSpineConstraintsF base.traceWidth) :
+    (envAt t i).loc a = (envAt t i).loc b := by
+  have h := afterSpineF_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin
+  unfold eqGate at h
+  simp only [EmittedExpr.eval] at h
+  have := diffGate_exact (hcells a) (hcells b) h
+  linarith
 
 /-- **`effFieldsWriteV3_forces_write8` — THE STEP-A DELIVERABLE.** A `Satisfied2` of the write descriptor
 TRACE-FORCES the faithful 8-felt fields-write over the FULL committed BEFORE/AFTER fields-root blocks: the
@@ -537,7 +576,8 @@ theorem effFieldsWriteV3_forces_write8 (S8 : Fields8Scheme)
     (t : VmTrace)
     (hChip : ChipTableSoundN (fieldsPermOut S8) (t.tf .poseidon2))
     (hsat : Satisfied2 hash (effFieldsWriteV3 base name) minit mfin maddrs t)
-    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnotlast : i + 1 ≠ t.rows.length)
+    (hcells : ∀ col : Nat, 0 ≤ (envAt t i).loc col ∧ (envAt t i).loc col < 2013265921) :
     Dregg2.Circuit.Emit.EffectVmEmitRotationV3.fieldsWritesTo8 S8
         (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols (envAt t i))
         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalAuditKeyFelt
@@ -546,9 +586,9 @@ theorem effFieldsWriteV3_forces_write8 (S8 : Fields8Scheme)
   set e := envAt t i with he
   have hbeforeSat := effFieldsWriteV3_strips_to_fieldsOpen hash base name minit mfin maddrs t hsat
   have hbeforeCore : FieldsMembershipCore t.tf (capOpenCols base.traceWidth) e :=
-    effFieldsOpenV3_core base name hash minit mfin maddrs t hbeforeSat i hi hnotlast
+    effFieldsOpenV3_core base name hash minit mfin maddrs t hbeforeSat i hi hnotlast hcells
   have hafterCore : FieldsMembershipCore t.tf (afterSpineColsF base.traceWidth) e :=
-    effFieldsWriteV3_afterCore base name hash minit mfin maddrs t hsat i hi hnotlast
+    effFieldsWriteV3_afterCore base name hash minit mfin maddrs t hsat i hi hnotlast hcells
       hbeforeCore.dirBool
   -- weld: after leaf 0 (addr) = read leaf 0.
   have hslot : e.loc ((afterSpineColsF base.traceWidth).leaf 0)
@@ -558,8 +598,8 @@ theorem effFieldsWriteV3_forces_write8 (S8 : Fields8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       simp [afterLeafWeldsF]
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineF_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    exact afterSpineF_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      _ _ hin
   -- weld: after leaf 1 (value) = REFUSAL_AUDIT_FELT_COL.
   have hvalw : e.loc ((afterSpineColsF base.traceWidth).leaf 1)
       = e.loc Dregg2.Circuit.Emit.EffectVmEmitRotationV3.REFUSAL_AUDIT_FELT_COL := by
@@ -569,8 +609,8 @@ theorem effFieldsWriteV3_forces_write8 (S8 : Fields8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_left _ (List.mem_append_right _ ?_))
       simp [afterLeafWeldsF]
-    exact (eqGate_eval _ _ e).mp
-      (afterSpineF_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    exact afterSpineF_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      _ _ hin
   -- key bind: read leaf 0 = refusalAuditKeyFelt (const).
   have hkeyb : e.loc ((capOpenCols base.traceWidth).leaf 0)
       = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalAuditKeyFelt := by
@@ -579,8 +619,16 @@ theorem effFieldsWriteV3_forces_write8 (S8 : Fields8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_right _ ?_
       simp
-    have := afterSpineF_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin
-    exact (constEqGate_eval _ _ e).mp this
+    have h := afterSpineF_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin
+    -- the CONSTANT `refusalAuditKeyFelt = 529176517` is a canonical field element, so the
+    -- constant-pin residual lies in `(−p, p)` and collapses to the ℤ equality.
+    have hz : (keyBindGateF base.traceWidth).eval e.loc = 0 := by
+      unfold keyBindGateF constEqGate at h ⊢
+      simp only [EmittedExpr.eval] at h ⊢
+      exact diffGate_exact (hcells _)
+        ⟨by norm_num [Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalAuditKeyFelt],
+         by norm_num [Dregg2.Circuit.Emit.EffectVmEmitRotationV3.refusalAuditKeyFelt]⟩ h
+    exact (constEqGate_eval _ _ e).mp hz
   -- before-block fields-root weld: the read's appendix capRoot group IS the committed BEFORE block.
   have hbroot : groupVal e (capOpenCols base.traceWidth).capRoot
       = Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols e := by
@@ -591,8 +639,8 @@ theorem effFieldsWriteV3_forces_write8 (S8 : Fields8Scheme)
       refine List.mem_cons_of_mem _ ?_
       refine List.mem_append_left _ (List.mem_append_right _ ?_)
       exact List.mem_map.mpr ⟨k, List.mem_finRange k, rfl⟩
-    have := (eqGate_eval _ _ e).mp
-      (afterSpineF_gate_forces base name hash minit mfin maddrs t hsat i hi hnotlast _ hin)
+    have := afterSpineF_eqGate_forces base name hash minit mfin maddrs t hsat i hi hnotlast hcells
+      _ _ hin
     simpa [groupVal, Dregg2.Circuit.Emit.EffectVmEmitRotationV3.beforeFieldsRootCols] using this
   -- assemble the §11 keystone over the two cores along the SHARED path.
   have hkey : (fieldsLeafPairOf (afterSpineColsF base.traceWidth) e).1
