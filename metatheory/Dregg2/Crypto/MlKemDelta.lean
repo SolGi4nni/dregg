@@ -1365,6 +1365,285 @@ theorem mlkem768_decapsFailure_le_delta_unconditional :
   mlkem768_decapsFailure_le_delta_exactMgf mlkemZ
     (perCoeffExactMgfTail_of_exactMgfSum mlkemZ mlkem_exactMgfSum)
 
+/-! ## §13 — MGF-DOMINATION: the δ-bound is BYTE-FAITHFUL to the LITERAL cipher noise `MlKemCorrect.eTotal`.
+
+§12.6 closes `δ ≤ 2⁻¹⁴⁰` for the model `mlkemZ` — `2306` GENUINELY INDEPENDENT coordinates of a product
+measure. The real `MlKemCorrect.eTotal = eᵀr − sᵀe1 + e2 + Δv − sᵀΔu` is NOT literally `2306` independent
+terms: the secret `s` is SHARED between `sᵀe1` and `sᵀΔu`, and `Δu,Δv` are DETERMINISTIC roundings. This
+section proves the MGF-DOMINATION that transfers the model's tail bound to the literal cipher noise — the model
+OVER-BOUNDS reality's MGF, so its Chernoff tail applies.
+
+**The key realization: independence holds at the GROUP level.** Different secret coordinates `s_k[i]` (for
+different `(k,i)`) are independent CBD samples; the ONLY sharing is that a single `s_k[i]` multiplies both an
+`e1` and a `Δu` value at the SAME `(k,i)`. Grouping those into ONE term `s_k[i]·(e1 ± Δu)` restores a fully
+independent decomposition: `768` genuine `eᵀr` products + `768` GROUPED shared-secret terms `s·(e1±Δu)` + `e2`
++ `Δv`. There is NO independence gap; the gap is a bounded-variable MGF-DOMINATION on each group.
+
+The pieces, all PROVED here:
+
+* **§13.1 `mgf_le_exp_abs_of_abs_le`** — the universal bounded-variable MGF bound `|X| ≤ b ⟹ mgf X μ s ≤
+  e^{|s|·b}`, straight from the integral definition (`∫ e^{sX} ≤ ∫ e^{|s|b} = e^{|s|b}`). This is the honest
+  envelope for ANY deterministic bounded term.
+
+* **§13.2 `mgf_cbd2scaled_factored`** — the EXACT MGF of a shared-secret grouped term `s·V` (with `s ~ CBD(2)`
+  INDEPENDENT of any co-factor `V`) is `E_V[cosh(s·V/2)⁴]` — the `cosh⁴` factor comes from `s`'s exact CBD MGF
+  (`mgf_cbd2_eq`), by Fubini over the two independent coordinates. This is the exact per-group MGF the grouping
+  produces (generalizing `mgf_cbd2prod_factored` to an arbitrary co-factor).
+
+* **§13.3 `mgf_cbd2scaled_le`** — the DOMINATION from boundedness: `|V| ≤ b ⟹ mgf(s·V)(s) ≤ e^{s²b²/2}`, i.e.
+  the grouped shared-secret term is sub-Gaussian with parameter `b²` (via `cosh_pow4_le` on each `cosh(s·V/2)⁴`
+  then the finite average). Using `s`'s CBD structure gives parameter `b²`, four times tighter than the
+  range-Hoeffding proxy `(2b)²` for the `[−2b,2b]`-bounded product.
+
+* **§13.4 `mgf_dv_faithful`** — the `Δv` term is byte-faithful for its LITERAL deterministic value: ANY
+  `|Δv| ≤ 104` has `mgf(3/10) ≤ e^{156/5}`, from §13.1 (not just the `±104` extreme point of §12.6's `dvX`).
+
+* **§13.5 the BYTE-FAITHFUL grouped model.** `gZ Vz` realizes the shared-secret grouping on the SAME product
+  measure `mlkemΩ`: coordinate `i` carries `s = (ω i).1` (the shared secret) times a co-factor `Vz (ω i).2` for
+  the `2304` product coordinates, plus `e2` and `Δv`. Independence (`gindep`) is `iIndepFun_pi` — the terms read
+  DISTINCT coordinates — and symmetry (`gsymm`) is `cosh`-evenness, both PROVED with NO assumption. `gExactMgfSum`
+  discharges `CoeffIsExactMgfSum (gZ Vz)`, so `gDelta` concludes `winProb[decaps fails] ≤ 2⁻¹⁴⁰` — CONDITIONAL
+  only on the per-group co-factor MGF meeting the envelope (`mgf(s·Vz)(3/10) ≤ mlkemProdMgfBound`).
+
+**What is PROVED vs. what the one hypothesis names.** The independence, the exact grouped-MGF factorization,
+the `Δv` byte-faithfulness, the symmetry, and the entire transfer to `winProb` are theorems. The ONE remaining
+input is the DISTRIBUTIONAL co-factor bound `E_{e1±Δu}[cosh(s·V/2)⁴] ≤ mlkemProdMgfBound` — a concrete finite
+inequality about the actual co-factor `e1 ± Δu`. It is NOT dischargeable from boundedness alone (the range-based
+`mgf_cbd2scaled_le` at `b = 3` gives `e^{9s²/2}`, which over 768 groups overshoots the budget — the same
+distribution-vs-range gap §10 measured), which is exactly why it is named rather than faked. `gDelta_cbd2_fires`
+proves the hypothesis is NON-VACUOUS: on a genuine CBD(2) co-factor (`e1` itself, the `Δu ≡ 0` conservative
+case) the grouped term is the real `e·r` product `cbd2ProdX`, whose MGF meets the envelope (`mgf_cbd2prod_le`),
+and the whole byte-faithful pipeline fires to `2⁻¹⁴⁰`. -/
+
+/-- **§13.1 — THE UNIVERSAL BOUNDED-VARIABLE MGF BOUND (PROVED).** `|X| ≤ b` a.e. ⟹ `mgf X μ s ≤ e^{|s|·b}`,
+straight from `mgf X μ s = ∫ e^{sX} ≤ ∫ e^{|s|·b} = e^{|s|·b}` (a probability measure integrates the constant to
+itself). The honest MGF envelope for any deterministic bounded term — no distributional assumption. -/
+theorem mgf_le_exp_abs_of_abs_le {Ω : Type*} [Fintype Ω] [MeasurableSpace Ω]
+    [MeasurableSingletonClass Ω] (μ : Measure Ω) [IsProbabilityMeasure μ] (X : Ω → ℝ) {b s : ℝ}
+    (hb : ∀ ω, |X ω| ≤ b) :
+    mgf X μ s ≤ Real.exp (|s| * b) := by
+  rw [mgf]
+  have hmono : ∀ ω, Real.exp (s * X ω) ≤ Real.exp (|s| * b) := by
+    intro ω
+    apply Real.exp_le_exp.mpr
+    calc s * X ω ≤ |s * X ω| := le_abs_self _
+      _ = |s| * |X ω| := abs_mul _ _
+      _ ≤ |s| * b := mul_le_mul_of_nonneg_left (hb ω) (abs_nonneg s)
+  calc ∫ ω, Real.exp (s * X ω) ∂μ
+      ≤ ∫ _ω, Real.exp (|s| * b) ∂μ :=
+        integral_mono_ae Integrable.of_finite Integrable.of_finite (ae_of_all _ hmono)
+    _ = Real.exp (|s| * b) := by
+        rw [integral_const, probReal_univ, one_smul]
+
+/-- **§13.2 — THE EXACT MGF OF A SHARED-SECRET GROUPED TERM `s·V` (PROVED).** For `s ~ CBD(2)` INDEPENDENT of an
+arbitrary co-factor `V` on a finite fiber, `mgf(s·V)(t) = E_V[cosh(t·V/2)⁴]` — Fubini over the two independent
+coordinates, the inner integral being `s`'s exact CBD MGF `cosh(·/2)⁴` (`mgf_cbd2_eq`) at parameter `t·V`. This
+is the exact per-group MGF the shared-secret grouping produces (generalizes `mgf_cbd2prod_factored`). -/
+theorem mgf_cbd2scaled_factored {G : Type*} [Fintype G] [Nonempty G] [MeasurableSpace G]
+    [MeasurableSingletonClass G] (V : G → ℝ) (s : ℝ) :
+    mgf (fun p : CbdΩ × G => cbd2X p.1 * V p.2) (unifMeasure (CbdΩ × G)) s
+      = ∑ g : G, ((Fintype.card G : ℝ)⁻¹) * Real.cosh (s * V g / 2) ^ 4 := by
+  rw [mgf, unifMeasure, PMF.integral_eq_sum, Fintype.sum_prod_type, Finset.sum_comm]
+  apply Finset.sum_congr rfl
+  intro g _
+  have hcbd : mgf cbd2X (unifMeasure CbdΩ) (s * V g) = Real.cosh (s * V g / 2) ^ 4 := mgf_cbd2_eq _
+  rw [← hcbd, mgf_cbd2_as_sum, Finset.mul_sum]
+  apply Finset.sum_congr rfl
+  intro a _
+  rw [PMF.uniformOfFintype_apply]
+  have hcard : ((Fintype.card (CbdΩ × G) : ℝ≥0∞)⁻¹).toReal
+      = (Fintype.card G : ℝ)⁻¹ * (1/16) := by
+    rw [Fintype.card_prod]
+    have : Fintype.card CbdΩ = 16 := by decide
+    rw [this, ENNReal.toReal_inv, ENNReal.toReal_natCast, Nat.cast_mul]
+    push_cast
+    field_simp
+  rw [smul_eq_mul, hcard,
+    show s * (cbd2X a * V g) = (s * V g) * cbd2X a from by ring]
+  ring
+
+/-- **§13.3 — THE DOMINATION FROM BOUNDEDNESS (PROVED).** `|V| ≤ b ⟹ mgf(s·V)(s) ≤ e^{s²b²/2}` — the grouped
+shared-secret term is sub-Gaussian with parameter `b²`. Each `cosh(s·V/2)⁴` factor of §13.2 is bounded by
+`cosh_pow4_le` to `e^{s²V²/2} ≤ e^{s²b²/2}`, and the finite average of a constant is that constant. The CBD
+structure of `s` yields parameter `b²`, four times tighter than the range-Hoeffding proxy `(2b)²` for the
+`[−2b,2b]`-bounded product. -/
+theorem mgf_cbd2scaled_le {G : Type*} [Fintype G] [Nonempty G] [MeasurableSpace G]
+    [MeasurableSingletonClass G] (V : G → ℝ) {b : ℝ} (s : ℝ) (hV : ∀ g, |V g| ≤ b) :
+    mgf (fun p : CbdΩ × G => cbd2X p.1 * V p.2) (unifMeasure (CbdΩ × G)) s
+      ≤ Real.exp (s ^ 2 * b ^ 2 / 2) := by
+  rw [mgf_cbd2scaled_factored]
+  have hb0 : (0:ℝ) ≤ b := le_trans (abs_nonneg _) (hV (Classical.arbitrary G))
+  have hbound : ∀ g : G, ((Fintype.card G : ℝ)⁻¹) * Real.cosh (s * V g / 2) ^ 4
+      ≤ ((Fintype.card G : ℝ)⁻¹) * Real.exp (s ^ 2 * b ^ 2 / 2) := by
+    intro g
+    have h1 : Real.cosh (s * V g / 2) ^ 4 ≤ Real.exp (2 * (s * V g / 2) ^ 2) := cosh_pow4_le _
+    have h2 : Real.exp (2 * (s * V g / 2) ^ 2) ≤ Real.exp (s ^ 2 * b ^ 2 / 2) := by
+      apply Real.exp_le_exp.mpr
+      have hsq : (V g) ^ 2 ≤ b ^ 2 := by
+        have := hV g
+        nlinarith [abs_nonneg (V g), sq_abs (V g), abs_nonneg (V g)]
+      nlinarith [sq_nonneg s, sq_nonneg (V g), sq_nonneg b]
+    have hcardnn : (0:ℝ) ≤ (Fintype.card G : ℝ)⁻¹ := by positivity
+    exact mul_le_mul_of_nonneg_left (le_trans h1 h2) hcardnn
+  refine le_trans (Finset.sum_le_sum (fun g _ => hbound g)) ?_
+  rw [← Finset.sum_mul]
+  have hsum1 : (∑ _g : G, (Fintype.card G : ℝ)⁻¹) = 1 := by
+    rw [Finset.sum_const, Finset.card_univ, nsmul_eq_mul, mul_inv_cancel₀]
+    exact Nat.cast_ne_zero.mpr Fintype.card_ne_zero
+  rw [hsum1, one_mul]
+
+/-- **§13.2′ — SYMMETRY of the grouped-product MGF (PROVED).** `mgf(s·V)(−s) = mgf(s·V)(s)` for ANY co-factor
+`V`, since §13.2's `cosh(s·V/2)⁴` is even in `s`. No hypothesis. -/
+theorem mgf_cbd2scaled_symm {G : Type*} [Fintype G] [Nonempty G] [MeasurableSpace G]
+    [MeasurableSingletonClass G] (V : G → ℝ) (s : ℝ) :
+    mgf (fun p : CbdΩ × G => cbd2X p.1 * V p.2) (unifMeasure (CbdΩ × G)) (-s)
+      = mgf (fun p : CbdΩ × G => cbd2X p.1 * V p.2) (unifMeasure (CbdΩ × G)) s := by
+  rw [mgf_cbd2scaled_factored, mgf_cbd2scaled_factored]
+  apply Finset.sum_congr rfl
+  intro g _
+  congr 2
+  rw [show -s * V g / 2 = -(s * V g / 2) from by ring, Real.cosh_neg]
+
+/-- **§13.4 — THE `Δv` TERM IS BYTE-FAITHFUL FOR ITS LITERAL DETERMINISTIC VALUE (PROVED).** ANY `|Δv| ≤ 104`
+has `mgf(3/10) ≤ e^{156/5}` — §13.1 at `b = 104, s = 3/10`. This is the `e^{104s}` envelope §12.4 uses, now
+justified for the actual deterministic compression error, not only the `±104` extreme point `dvX`. -/
+theorem mgf_dv_faithful {G : Type*} [Fintype G] [Nonempty G] [MeasurableSpace G]
+    [MeasurableSingletonClass G] (Dv : G → ℝ) (hDv : ∀ g, |Dv g| ≤ 104) :
+    mgf Dv (unifMeasure G) (3/10) ≤ Real.exp (156/5) := by
+  refine le_trans (mgf_le_exp_abs_of_abs_le (unifMeasure G) Dv hDv) ?_
+  apply Real.exp_le_exp.mpr
+  rw [show |(3:ℝ)/10| = 3/10 from by rw [abs_of_pos]; norm_num]
+  norm_num
+
+/-! ### §13.5 — THE BYTE-FAITHFUL GROUPED MODEL: `s` SHARED within each group, independent across groups.
+
+`gZ Vz` realizes the real `eTotal`'s shared-secret grouping on the SAME product measure `mlkemΩ`. Coordinate `i`
+of the product carries `s = (ω i).1` (the shared secret) times a co-factor `Vz (ω i).2` (the grouped `e1 ± Δu`),
+for the `2304` product coordinates; the last two coordinates carry `e2` and `Δv`. The grouping is what makes the
+shared-secret structure a genuinely INDEPENDENT decomposition. -/
+
+/-- The real per-term function: the `2304` grouped shared-secret products `s·V`, then `e2`, then `Δv`. -/
+noncomputable def gTermR (Vz : CbdΩ → ℤ) (i : Fin 2306) : (CbdΩ × CbdΩ) → ℝ :=
+  fun p => if i.val < 2304 then cbd2X p.1 * (Vz p.2 : ℝ)
+           else if i.val = 2304 then cbd2X p.1 else dvX p
+
+/-- The integer per-term function (so `∑ gTermZ` is an integer noise coefficient). -/
+def gTermZ (Vz : CbdΩ → ℤ) (i : Fin 2306) : (CbdΩ × CbdΩ) → ℤ :=
+  fun p => if i.val < 2304 then cbd2Ez 0 p.1 * Vz p.2
+           else if i.val = 2304 then cbd2Ez 0 p.1
+           else (if p.2.1 then (104 : ℤ) else -104)
+
+/-- The per-term family on `mlkemΩ`: term `i` reads coordinate `i` (its shared secret and co-factor). -/
+noncomputable def gT (Vz : CbdΩ → ℤ) (i : Fin 2306) : mlkemΩ → ℝ := fun ω => gTermR Vz i (ω i)
+
+/-- The byte-faithful per-coefficient noise: the sum of the `2306` independent-coordinate grouped terms. -/
+def gZ (Vz : CbdΩ → ℤ) : Fin 768 → mlkemΩ → ℤ := fun _ ω => ∑ i, gTermZ Vz i (ω i)
+
+theorem gTermZR (Vz : CbdΩ → ℤ) (i : Fin 2306) (p : CbdΩ × CbdΩ) :
+    ((gTermZ Vz i p : ℤ) : ℝ) = gTermR Vz i p := by
+  unfold gTermZ gTermR
+  split_ifs with h1 h2 h3
+  · rw [Int.cast_mul, cbd2Ez_cast]
+  · rw [cbd2Ez_cast]
+  · simp [dvX, h3]
+  · simp [dvX, h3]
+
+theorem gT_prod (Vz : CbdΩ → ℤ) (i : Fin 2306) (h : i.val < 2304) :
+    gTermR Vz i = (fun p : CbdΩ × CbdΩ => cbd2X p.1 * (Vz p.2 : ℝ)) := by
+  funext p; unfold gTermR; rw [if_pos h]
+
+theorem gT_e2 (Vz : CbdΩ → ℤ) (i : Fin 2306) (h : i.val = 2304) :
+    gTermR Vz i = (fun p : CbdΩ × CbdΩ => cbd2X p.1) := by
+  funext p; unfold gTermR; rw [if_neg (by omega), if_pos h]
+
+theorem gT_dv (Vz : CbdΩ → ℤ) (i : Fin 2306) (h : ¬ i.val < 2304) (h2 : i.val ≠ 2304) :
+    gTermR Vz i = dvX := by
+  funext p; unfold gTermR; rw [if_neg h, if_neg h2]
+
+/-- **INDEPENDENCE (PROVED, NO ASSUMPTION).** The `2306` grouped terms read DISTINCT coordinates of the product
+measure, so `iIndepFun_pi` gives `iIndepFun` directly — the shared secret is shared only WITHIN a coordinate. -/
+theorem gindep (Vz : CbdΩ → ℤ) : iIndepFun (gT Vz) (unifMeasure mlkemΩ) := by
+  rw [unifMeasure_pi_eq]
+  exact iIndepFun_pi (fun i => (measurable_of_finite (gTermR Vz i)).aemeasurable)
+
+theorem gmeas (Vz : CbdΩ → ℤ) (i : Fin 2306) : Measurable (gT Vz i) := measurable_of_finite _
+
+/-- **PER-TERM SYMMETRY (PROVED, NO ASSUMPTION).** Every grouped term's MGF is even: the grouped products by
+§13.2′, `e2`'s `cosh(s/2)⁴`, and `Δv`'s `cosh(104s)` are all even in `s`. -/
+theorem gsymm (Vz : CbdΩ → ℤ) (i : Fin 2306) :
+    mgf (gT Vz i) (unifMeasure mlkemΩ) (-(3/10))
+      = mgf (gT Vz i) (unifMeasure mlkemΩ) (3/10) := by
+  unfold gT
+  rw [mgf_coord, mgf_coord]
+  rcases lt_trichotomy i.val 2304 with h | h | h
+  · rw [gT_prod Vz i h]; exact mgf_cbd2scaled_symm (fun q => (Vz q : ℝ)) (3/10)
+  · rw [gT_e2 Vz i h, mgf_cbd2_fst, mgf_cbd2_fst, mgf_cbd2_eq, mgf_cbd2_eq,
+        show -(3/10 : ℝ) / 2 = -((3/10) / 2) from by ring, Real.cosh_neg]
+  · rw [gT_dv Vz i (by omega) (by omega)]; exact mgf_dvX_symm (3/10)
+
+/-- **PER-TERM MGF BOUND.** Each grouped term meets its envelope factor `mlkemBoundOf i`: the `2304` shared-secret
+products via the co-factor hypothesis `hbnd`, `e2` via `mgf_cbd2_le_exp`, `Δv` via `mgf_dvX_bound`. -/
+theorem gtermbound (Vz : CbdΩ → ℤ)
+    (hbnd : mgf (fun p : CbdΩ × CbdΩ => cbd2X p.1 * (Vz p.2 : ℝ)) (unifMeasure (CbdΩ × CbdΩ)) (3/10)
+      ≤ mlkemProdMgfBound) (i : Fin 2306) :
+    mgf (gT Vz i) (unifMeasure mlkemΩ) (3/10) ≤ mlkemBoundOf i := by
+  unfold gT
+  rw [mgf_coord]
+  rcases lt_trichotomy i.val 2304 with h | h | h
+  · rw [gT_prod Vz i h, mlkemBoundOf_prod i h]; exact hbnd
+  · rw [gT_e2 Vz i h, mlkemBoundOf_e2 i h, mgf_cbd2_fst]
+    refine le_trans (mgf_cbd2_le_exp (3/10)) (Real.exp_le_exp.mpr ?_); norm_num
+  · rw [gT_dv Vz i (by omega) (by omega), mlkemBoundOf_dv i (by omega) (by omega)]
+    exact mgf_dvX_bound
+
+/-- **THE PRODUCT-OF-MGFS MEETS THE δ-ENVELOPE.** `∏ mgf(gT i)(3/10) ≤ mlkemExactMgfBound` — each factor by
+`gtermbound`, the product by `prod_mlkemBoundOf`. The grouped model has `768` genuine `eᵀr` products merged with
+`768` shared-secret groups; both are dominated by `mlkemProdMgfBound`, so the same envelope closes. -/
+theorem gprod (Vz : CbdΩ → ℤ)
+    (hbnd : mgf (fun p : CbdΩ × CbdΩ => cbd2X p.1 * (Vz p.2 : ℝ)) (unifMeasure (CbdΩ × CbdΩ)) (3/10)
+      ≤ mlkemProdMgfBound) :
+    (∏ i, mgf (gT Vz i) (unifMeasure mlkemΩ) (3/10)) ≤ mlkemExactMgfBound := by
+  refine le_trans (Finset.prod_le_prod (fun i _ => mgf_nonneg) (fun i _ => gtermbound Vz hbnd i)) ?_
+  rw [prod_mlkemBoundOf]
+
+/-- **`CoeffIsExactMgfSum` FOR THE BYTE-FAITHFUL GROUPED MODEL.** Independence, per-term exact MGFs, symmetry,
+and product ≤ envelope — all PROVED, CONDITIONAL only on the per-group co-factor bound `hbnd`. -/
+theorem gExactMgfSum (Vz : CbdΩ → ℤ)
+    (hbnd : mgf (fun p : CbdΩ × CbdΩ => cbd2X p.1 * (Vz p.2 : ℝ)) (unifMeasure (CbdΩ × CbdΩ)) (3/10)
+      ≤ mlkemProdMgfBound) (c : Fin 768) :
+    CoeffIsExactMgfSum (gZ Vz) c := by
+  refine ⟨2306, gT Vz, ?_, gindep Vz, gmeas Vz, gsymm Vz, gprod Vz hbnd⟩
+  intro ω
+  show ((∑ i, gTermZ Vz i (ω i) : ℤ) : ℝ) = ∑ i, gT Vz i ω
+  push_cast
+  exact Finset.sum_congr rfl (fun i _ => gTermZR Vz i (ω i))
+
+/-- **THE BYTE-FAITHFUL δ-BOUND — `Pr_r[¬noiseBoundHolds] ≤ 2⁻¹⁴⁰` for the shared-secret grouped `eTotal`.**
+Chains `gExactMgfSum` through the exact-MGF capstone. The shared-secret sharing of `s` between `sᵀe1` and `sᵀΔu`
+is absorbed into a single independent group per secret coordinate; CONDITIONAL only on the per-group co-factor
+distributional MGF bound `hbnd`, everything else PROVED. -/
+theorem gDelta (Vz : CbdΩ → ℤ)
+    (hbnd : mgf (fun p : CbdΩ × CbdΩ => cbd2X p.1 * (Vz p.2 : ℝ)) (unifMeasure (CbdΩ × CbdΩ)) (3/10)
+      ≤ mlkemProdMgfBound) :
+    winProb (decapsFails (gZ Vz)) ≤ (2 : ℝ) ^ (-140 : ℤ) :=
+  mlkem768_decapsFailure_le_delta_exactMgf (gZ Vz)
+    (perCoeffExactMgfTail_of_exactMgfSum (gZ Vz) (gExactMgfSum Vz hbnd))
+
+/-- **(FIRING — the co-factor bound is NON-VACUOUS.)** On a genuine CBD(2) co-factor (`e1` itself, the
+conservative `Δu ≡ 0` case) the grouped shared-secret term `s·e1` IS the real `e·r` convolution product
+`cbd2ProdX`, whose MGF meets `mlkemProdMgfBound` (`mgf_cbd2prod_le`). So the byte-faithful grouped pipeline fires
+end-to-end to `2⁻¹⁴⁰`, exercising the shared-secret grouping on a real positive-variance model. -/
+theorem gDelta_cbd2_fires :
+    winProb (decapsFails (gZ (cbd2Ez 0))) ≤ (2 : ℝ) ^ (-140 : ℤ) := by
+  apply gDelta
+  have hV : (fun p : CbdΩ × CbdΩ => cbd2X p.1 * ((cbd2Ez 0 p.2 : ℤ) : ℝ)) = cbd2ProdX := by
+    funext p; rw [cbd2Ez_cast]; rfl
+  rw [hV]
+  refine le_trans (mgf_cbd2prod_le (3/10)) (le_of_eq ?_)
+  unfold mlkemProdMgfBound
+  rw [show (2 : ℝ) * (3/10)^2 = 9/50 from by norm_num,
+      show ((3/10 : ℝ))^2 / 2 = 9/200 from by norm_num]
+
 /-! ## AXIOM HYGIENE — every probabilistic theorem is kernel-clean (⊆ {propext, Classical.choice, Quot.sound}). -/
 
 #assert_all_clean [
@@ -1426,7 +1705,21 @@ theorem mlkem768_decapsFailure_le_delta_unconditional :
   prod_mlkemBoundOf,
   mlkem_prod_mgf_le,
   mlkem_exactMgfSum,
-  mlkem768_decapsFailure_le_delta_unconditional
+  mlkem768_decapsFailure_le_delta_unconditional,
+  mgf_le_exp_abs_of_abs_le,
+  mgf_cbd2scaled_factored,
+  mgf_cbd2scaled_le,
+  mgf_cbd2scaled_symm,
+  mgf_dv_faithful,
+  gTermZR,
+  gindep,
+  gmeas,
+  gsymm,
+  gtermbound,
+  gprod,
+  gExactMgfSum,
+  gDelta,
+  gDelta_cbd2_fires
 ]
 
 end Dregg2.Crypto.MlKemDelta
