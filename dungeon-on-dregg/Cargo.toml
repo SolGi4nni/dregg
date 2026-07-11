@@ -1,0 +1,42 @@
+# `dungeon-on-dregg` — a dungeon crawl hosted on the REAL dregg substrate.
+#
+# The Phase-A de-risk vertical slice of the collective-fiction rebuild
+# (plan: ok-yeah-wanna-binary-tide.md). It proves — by DRIVING, not naming —
+# that a dungeon move is a real cap-bounded turn on the real `EmbeddedExecutor`
+# (a real `TurnReceipt`, not a blake3 LARP ledger), that an illegal move (walking
+# a gated exit without the required item) is a REAL executor refusal
+# (`WorldError::Refused`) that commits nothing, and that the dungeon's rules are
+# executor-enforced `CellProgram` / `StateConstraint` teeth — NOT app bookkeeping.
+#
+# It CONSUMES the real foundation (`spween-dregg`'s `WorldCell`/`Driver`/`verify`
+# + the scene->`CellProgram` compiler) and extends it by composition only. It does
+# NOT touch `attested-dm/` (the LARP being replaced).
+#
+# A breadstuffs workspace member; builds via the warm default `target/`:
+#   cargo test    -p dungeon-on-dregg
+#   cargo run     -p dungeon-on-dregg --example descend
+[package]
+name = "dungeon-on-dregg"
+version = "0.1.0"
+edition = "2024"
+description = "A 3-room dungeon (rooms/item/gated-exit) hosted on spween-dregg's real WorldCell: a move is a real cap-bounded TurnReceipt, an illegal move is a real executor refusal, the gate is an executor-enforced CellProgram StateConstraint. Phase-A de-risk slice."
+
+[dependencies]
+# THE FOUNDATION — the real cell/turn substrate for interactive fiction: the
+# `WorldCell` binding (a move is ONE cap-bounded turn the real `EmbeddedExecutor`
+# admits IFF the installed gate passes), the stock-runtime `Driver` (a playthrough
+# is a real `TurnReceipt` chain), the scene->`CellProgram` compiler, and the
+# replay verifier. We EXTEND this by composition; we never fork its src.
+spween-dregg = { path = "../spween-dregg" }
+# The narrative DSL spween-dregg is built on — needed to name a `Choice`/
+# `PassageContent` when driving a move directly at the executor (`apply_choice`).
+# Same git rev spween-dregg pins.
+spween = { git = "https://github.com/emberian/spween", rev = "afb5b1fce8c9dd3b787e197bddf105adca20e08a" }
+# The real framework types — `CellProgram`, `StateConstraint`, `TransitionCase`,
+# `TransitionGuard` (re-exports of the `dregg-cell`/`dregg-turn` types) — so the
+# demo can INTROSPECT the installed program and print the actual `FieldGte` gate
+# tooth: proof the rule is an executor-enforced kernel predicate, not app code.
+dregg-app-framework = { path = "../app-framework", default-features = false }
+
+# A workspace MEMBER of the breadstuffs root (registered in `members`). The root
+# `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

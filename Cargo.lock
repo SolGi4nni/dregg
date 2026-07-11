@@ -5568,6 +5568,7 @@ name = "dregg-governance"
 version = "0.1.0"
 dependencies = [
  "blake3",
+ "collective-choice",
  "dregg-blocklace",
 ]
 
@@ -6424,6 +6425,15 @@ name = "dunce"
 version = "1.0.5"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "92773504d58c093f6de2459af4af33faa518c13451eb8f2b5698ed3d36e7c813"
+
+[[package]]
+name = "dungeon-on-dregg"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "spween",
+ "spween-dregg",
+]
 
 [[package]]
 name = "dungeon-service"
@@ -7499,6 +7509,17 @@ dependencies = [
  "memchr",
  "pin-project-lite",
  "slab",
+]
+
+[[package]]
+name = "game-turn-slice"
+version = "0.1.0"
+dependencies = [
+ "dregg-cell",
+ "dregg-circuit",
+ "dregg-circuit-prove",
+ "dregg-lightclient",
+ "dregg-turn",
 ]
 
 [[package]]
