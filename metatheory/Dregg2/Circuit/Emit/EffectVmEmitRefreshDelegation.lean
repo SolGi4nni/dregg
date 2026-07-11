@@ -72,7 +72,7 @@ open Dregg2.Circuit
 open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gNonce gCapPass site0 site1 site2 site3 transitionAll boundaryFirstPins
-   boundaryLastPins transferHashSites)
+   boundaryLastPins transferHashSites gate_modEq_iff not_modEq_zero_of_canon eqToModEq)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -166,12 +166,13 @@ def IsRefreshRow (env : VmRowEnv) : Prop :=
 nonce TICKS by one: the SUPPORTED content of a refresh row at the EffectVM-row layer (the hand-AIR
 passthrough+tick convention). Its touched field, `delegations`, rides the `DELEG` system-root (§7). -/
 def RefreshRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
-  ∧ env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
-  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + 1
-  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+  env.loc (saCol state.CAP_ROOT) ≡ env.loc (sbCol state.CAP_ROOT) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_LO) ≡ env.loc (sbCol state.BALANCE_LO) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.NONCE) ≡ env.loc (sbCol state.NONCE) + 1 [ZMOD 2013265921]
+  ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+      ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921])
 
 /-- **`refreshVm_faithful`** — on a refresh row, the emitted passthrough+tick gates all hold IFF
 `RefreshRowIntent` holds. The gate bodies are the running prover's passthrough/nonce-tick polynomials. -/
@@ -194,33 +195,45 @@ theorem refreshVm_faithful (env : VmRowEnv) (hrow : IsRefreshRow env) :
     simp only [VmConstraint.holdsVm, gCapPass, gBalLoFix, gBalHiFix, gNonceTick, gNonce, gResFix,
       eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hCap hLo hHi hNon hRes
     rw [hsN] at hNon
-    refine ⟨by linarith [hCap], by linarith [hLo], by linarith [hHi], by linarith [hNon],
-      by linarith [hRes], ?_⟩
+    refine ⟨(gate_modEq_iff (by ring)).mp hCap, (gate_modEq_iff (by ring)).mp hLo,
+      (gate_modEq_iff (by ring)).mp hHi, (gate_modEq_iff (by ring)).mp hNon,
+      (gate_modEq_iff (by ring)).mp hRes, ?_⟩
     intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hfi := hFld i hi
+    simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval] at hfi
+    exact (gate_modEq_iff (by ring)).mp hfi
   · rintro ⟨hCap, hLo, hHi, hNon, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hCap
+    · simp only [VmConstraint.holdsVm, gBalLoFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hLo
+    · simp only [VmConstraint.holdsVm, gBalHiFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hHi
     · simp only [VmConstraint.holdsVm, gNonceTick, gNonce, eSA, eSB, eSub, eSelNoop,
-        EmittedExpr.eval]; rw [hsN, hNon]; ring
-    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
-    · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]; rw [hFld i hi]; ring
+        EmittedExpr.eval]
+      rw [hsN]
+      exact (gate_modEq_iff (by ring)).mpr hNon
+    · simp only [VmConstraint.holdsVm, gResFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hRes
+    · simp only [VmConstraint.holdsVm, gFieldFix, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr (hFld i hi)
 
 /-! ## §4 — ANTI-GHOST: a row that moves ANY frozen EffectVM column (or fails the tick) fails. -/
 
 /-- **Anti-ghost (cap_root tamper).** A refresh row whose post-`cap_root` ≠ pre-`cap_root` fails the
 `gCapPass` gate (UNSAT) — refresh must leave `cap_root` (the `caps` digest) frozen. -/
 theorem refreshVm_rejects_moved_capRoot (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.CAP_ROOT)
+      ∧ env.loc (saCol state.CAP_ROOT) < 2013265921)
+    (hcanonPre : 0 ≤ env.loc (sbCol state.CAP_ROOT)
+      ∧ env.loc (sbCol state.CAP_ROOT) < 2013265921)
     (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (sbCol state.CAP_ROOT)) :
     ¬ (VmConstraint.gate gCapPass).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonPre hwrong
 
 /-- **Anti-ghost (general).** A row (on a refresh selector) that is NOT a passthrough+tick does not
 satisfy the per-row gates. -/
@@ -249,12 +262,12 @@ def RefreshRowEncodes (env : VmRowEnv) (pre post : CellState) : Prop :=
 /-- The per-cell refresh spec: the WHOLE EffectVM post-state equals the pre-state (every column frozen,
 including `cap_root`) EXCEPT the runtime nonce, which TICKS by one (the per-cell sequence counter). -/
 def RefreshCellSpec (pre post : CellState) : Prop :=
-  post.capRoot = pre.capRoot
-  ∧ post.balLo = pre.balLo
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce + 1
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.reserved = pre.reserved
+  post.capRoot ≡ pre.capRoot [ZMOD 2013265921]
+  ∧ post.balLo ≡ pre.balLo [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce + 1 [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 /-- Under `RefreshRowEncodes`, `RefreshRowIntent` IS the structured per-cell `RefreshCellSpec`. -/
 theorem intent_to_refreshCellSpec (env : VmRowEnv) (pre post : CellState)
@@ -454,17 +467,23 @@ theorem refreshGoodRow_realizes_intent : RefreshRowIntent refreshGoodRow := by
   have hr_sa : saCol state.RESERVED = 89 := rfl
   have hr_sb : sbCol state.RESERVED = 67 := rfl
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
-  · show refreshGoodRow.loc (saCol state.CAP_ROOT) = refreshGoodRow.loc (sbCol state.CAP_ROOT)
+  · refine eqToModEq ?_
+    show refreshGoodRow.loc (saCol state.CAP_ROOT) = refreshGoodRow.loc (sbCol state.CAP_ROOT)
     rw [hcr_sa, hcr_sb, goodRow_loc_eval, goodRow_loc_eval]; decide
-  · show refreshGoodRow.loc (saCol state.BALANCE_LO) = refreshGoodRow.loc (sbCol state.BALANCE_LO)
+  · refine eqToModEq ?_
+    show refreshGoodRow.loc (saCol state.BALANCE_LO) = refreshGoodRow.loc (sbCol state.BALANCE_LO)
     rw [hbl_sa, hbl_sb, goodRow_loc_eval, goodRow_loc_eval]; decide
-  · show refreshGoodRow.loc (saCol state.BALANCE_HI) = refreshGoodRow.loc (sbCol state.BALANCE_HI)
+  · refine eqToModEq ?_
+    show refreshGoodRow.loc (saCol state.BALANCE_HI) = refreshGoodRow.loc (sbCol state.BALANCE_HI)
     rw [hbh_sa, hbh_sb, goodRow_loc_eval, goodRow_loc_eval]; decide
-  · show refreshGoodRow.loc (saCol state.NONCE) = refreshGoodRow.loc (sbCol state.NONCE) + 1
+  · refine eqToModEq ?_
+    show refreshGoodRow.loc (saCol state.NONCE) = refreshGoodRow.loc (sbCol state.NONCE) + 1
     rw [hn_sa, hn_sb, goodRow_loc_eval, goodRow_loc_eval]; decide
-  · show refreshGoodRow.loc (saCol state.RESERVED) = refreshGoodRow.loc (sbCol state.RESERVED)
+  · refine eqToModEq ?_
+    show refreshGoodRow.loc (saCol state.RESERVED) = refreshGoodRow.loc (sbCol state.RESERVED)
     rw [hr_sa, hr_sb, goodRow_loc_eval, goodRow_loc_eval]; decide
   · intro i hi
+    refine eqToModEq ?_
     -- field columns: saCol(FIELD_BASE+i) ∈ [79,86], sbCol(FIELD_BASE+i) ∈ [57,64]; both miss every
     -- populated branch (3/65/87/56/78), so both read 0.
     have hsa : saCol (state.FIELD_BASE + i) = 79 + i := by
@@ -497,7 +516,6 @@ def refreshBadRow : VmRowEnv where
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `refreshBadRow`'s post-`cap_root` is MOVED, so
 the `gCapPass` freeze gate REJECTS it — a concrete UNSAT. -/
 theorem refreshBadRow_rejected : ¬ (VmConstraint.gate gCapPass).holdsVm refreshBadRow false false := by
-  apply refreshVm_rejects_moved_capRoot
   -- Column constants, reduced once: saCol CAP_ROOT = 87, sbCol CAP_ROOT = 65.
   have hsacol : saCol state.CAP_ROOT = 87 := by
     simp only [saCol, STATE_AFTER_BASE, PARAM_BASE, STATE_BEFORE_BASE, NUM_EFFECTS, STATE_SIZE,
@@ -512,7 +530,8 @@ theorem refreshBadRow_rejected : ¬ (VmConstraint.gate gCapPass).holdsVm refresh
     show (if sbCol state.CAP_ROOT = saCol state.CAP_ROOT then (999:ℤ)
       else refreshGoodRow.loc (sbCol state.CAP_ROOT)) = 9
     rw [hsacol, hsbcol, if_neg (by decide), goodRow_loc_eval]; decide
-  rw [hsa, hsb]; norm_num
+  -- The post-`cap_root` (999) and pre-`cap_root` (9) are both canonical in [0, p), and differ.
+  apply refreshVm_rejects_moved_capRoot <;> simp only [hsa, hsb] <;> norm_num
 
 /-! ## §11 — NON-VACUITY (DELEG root): the system-root binding is load-bearing (witness TRUE + FALSE). -/
 
@@ -620,10 +639,14 @@ def refreshVmDescriptorGenuineNonAmp : EffectVmDescriptor := attenuateVmDescript
 a re-issue, `granted = held`). Inherited from the shared in-circuit tooth. -/
 theorem refreshNonAmp_in_circuit (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
     (hcon : ∀ c ∈ refreshVmDescriptorGenuineNonAmp.constraints, c.holdsVm env false false)
-    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS) :
+    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS)
+    (hgc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) < 2013265921)
+    (hhc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) < 2013265921) :
     env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) = 0
     ∨ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) = 1 :=
-  attenuateGenuineNonAmp_in_circuit env hcon i hi
+  attenuateGenuineNonAmp_in_circuit env hcon i hi hgc hhc
 
 /-- **`refreshNonAmp_rejects_amplify`** — a malformed `refresh` that WIDENS rights beyond held (granted
 bit set, held bit clear) does NOT satisfy the descriptor. Inherited from the shared rejection. -/
@@ -810,8 +833,11 @@ theorem refreshWide_realizes :
       { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
         commit := 0 }
       { balLo := 0, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 9, reserved := 0,
-        commit := 0 } :=
-  ⟨rfl, rfl, rfl, rfl, fun _ => rfl, rfl⟩
+        commit := 0 } := by
+  refine ⟨Int.ModEq.refl _, Int.ModEq.refl _, Int.ModEq.refl _, ?_, fun _ => Int.ModEq.refl _,
+    Int.ModEq.refl _⟩
+  show (6 : ℤ) ≡ (5 : ℤ) + 1 [ZMOD 2013265921]
+  exact Int.modEq_iff_dvd.mpr (by norm_num)
 
 /-- **`refreshWide_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
 nonce did NOT tick FAILS `RefreshCellSpec` — the clause is not vacuously true. -/
@@ -822,7 +848,9 @@ theorem refreshWide_clause_not_trivial :
         { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
           commit := 0 } := by
   rintro ⟨_, _, _, hnon, _⟩
-  exact absurd hnon (by decide)
+  have hno : ¬ ((5 : ℤ) ≡ (5 : ℤ) + 1 [ZMOD 2013265921]) := by
+    rw [Int.modEq_iff_dvd]; norm_num
+  exact hno hnon
 
 #assert_axioms refreshWide_constraints_eq
 #assert_axioms refresh_runnable_full_sound

@@ -48,7 +48,7 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.Emit.EffectVmEmitTransfer
   (eSB eSA eSub eSelNoop gBalHi gNonce gCapPass gResPass gFieldPass gFieldPassAll
    transitionAll boundaryFirstPins boundaryLastPins
-   transferHashSites boundaryLast_pins)
+   transferHashSites boundaryLast_pins gate_modEq_iff not_modEq_zero_of_canon eqToModEq)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState absorbedCols absorbed_determined_by_commit)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
@@ -105,12 +105,14 @@ def revokeVmDescriptor : EffectVmDescriptor :=
 /-- **`RevokeRowIntent env`** — every economic state-block column UNCHANGED (incl. `cap_root`) EXCEPT the
 nonce, which TICKS by 1 (on a non-NoOp row `s_noop = 0`). The cap-table edge removal is out-of-row. -/
 def RevokeRowIntent (env : VmRowEnv) : Prop :=
-  env.loc (saCol state.BALANCE_LO) = env.loc (sbCol state.BALANCE_LO)
-  ∧ env.loc (saCol state.BALANCE_HI) = env.loc (sbCol state.BALANCE_HI)
-  ∧ env.loc (saCol state.NONCE) = env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)
-  ∧ env.loc (saCol state.CAP_ROOT) = env.loc (sbCol state.CAP_ROOT)
-  ∧ env.loc (saCol state.RESERVED) = env.loc (sbCol state.RESERVED)
-  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i)) = env.loc (sbCol (state.FIELD_BASE + i)))
+  env.loc (saCol state.BALANCE_LO) ≡ env.loc (sbCol state.BALANCE_LO) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.BALANCE_HI) ≡ env.loc (sbCol state.BALANCE_HI) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.NONCE)
+      ≡ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.CAP_ROOT) ≡ env.loc (sbCol state.CAP_ROOT) [ZMOD 2013265921]
+  ∧ env.loc (saCol state.RESERVED) ≡ env.loc (sbCol state.RESERVED) [ZMOD 2013265921]
+  ∧ (∀ i < 8, env.loc (saCol (state.FIELD_BASE + i))
+      ≡ env.loc (sbCol (state.FIELD_BASE + i)) [ZMOD 2013265921])
 
 /-! ## §4 — FAITHFULNESS. -/
 
@@ -131,24 +133,29 @@ theorem revokeVm_faithful (env : VmRowEnv) :
       exact Or.inr ⟨i, hi, rfl⟩
     simp only [VmConstraint.holdsVm, gBalLoFreeze, gBalHi, gNonce, gCapPass, gResPass,
       eSA, eSB, eSub, eSelNoop, EmittedExpr.eval] at hLo hHi hNon hCap hRes
-    refine ⟨by linarith [hLo], by linarith [hHi], by linarith [hNon], by linarith [hCap],
-      by linarith [hRes], ?_⟩
+    refine ⟨(gate_modEq_iff (by ring)).mp hLo, (gate_modEq_iff (by ring)).mp hHi,
+      (gate_modEq_iff (by ring)).mp hNon, (gate_modEq_iff (by ring)).mp hCap,
+      (gate_modEq_iff (by ring)).mp hRes, ?_⟩
     intro i hi
-    have := hFld i hi
-    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at this
-    linarith
+    have hfi := hFld i hi
+    simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval] at hfi
+    exact (gate_modEq_iff (by ring)).mp hfi
   · rintro ⟨hLo, hHi, hNon, hCap, hRes, hFld⟩ c hc
     simp only [List.mem_append, List.mem_cons, List.not_mem_nil, or_false, List.mem_map,
       List.mem_range] at hc
     rcases hc with (rfl | rfl | rfl | rfl | rfl) | ⟨i, hi, rfl⟩
-    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]; rw [hLo]; ring
-    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]; rw [hHi]; ring
+    · simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hLo
+    · simp only [VmConstraint.holdsVm, gBalHi, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hHi
     · simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-      rw [hNon]; ring
-    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hCap]; ring
-    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]; rw [hRes]; ring
+      exact (gate_modEq_iff (by ring)).mpr hNon
+    · simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hCap
+    · simp only [VmConstraint.holdsVm, gResPass, eSA, eSB, eSub, EmittedExpr.eval]
+      exact (gate_modEq_iff (by ring)).mpr hRes
     · simp only [VmConstraint.holdsVm, gFieldPass, eSA, eSB, eSub, EmittedExpr.eval]
-      rw [hFld i hi]; ring
+      exact (gate_modEq_iff (by ring)).mpr (hFld i hi)
 
 /-! ## §5 — ANTI-GHOST. -/
 
@@ -156,28 +163,46 @@ theorem revokeVm_rejects_wrong_output (env : VmRowEnv) (hwrong : ¬ RevokeRowInt
     ¬ (∀ c ∈ revokeRowGates, c.holdsVm env false false) :=
   fun h => hwrong ((revokeVm_faithful env).mp h)
 
-/-- **Anti-ghost (balance moved).** A row whose post-`bal_lo` ≠ pre-`bal_lo` fails the freeze gate. -/
+/-- **Anti-ghost (balance moved).** A row whose post-`bal_lo` ≠ pre-`bal_lo` fails the freeze gate.
+FIELD-FAITHFUL: the tooth rejects a field-`≢` output, so it carries the DEPLOYED range-check
+canonicality (`0 ≤ · < p`, the two balance-limb wires); under it a moved balance differs from the
+frozen value by less than `p`, so the field gate cannot pass by wrap-around. -/
 theorem revokeVm_rejects_moved_balance (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.BALANCE_LO)
+      ∧ env.loc (saCol state.BALANCE_LO) < 2013265921)
+    (hcanonPre : 0 ≤ env.loc (sbCol state.BALANCE_LO)
+      ∧ env.loc (sbCol state.BALANCE_LO) < 2013265921)
     (hwrong : env.loc (saCol state.BALANCE_LO) ≠ env.loc (sbCol state.BALANCE_LO)) :
     ¬ (VmConstraint.gate gBalLoFreeze).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gBalLoFreeze, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonPre hwrong
 
 /-- **Anti-ghost (cap-root tamper on row).** A row whose post-`cap_root` ≠ pre-`cap_root` fails the freeze
-gate — the runtime row freezes `cap_root` (the move rides effects_hash); no on-row cap move is allowed. -/
+gate — the runtime row freezes `cap_root` (the move rides effects_hash); no on-row cap move is allowed.
+FIELD-FAITHFUL: carries the deployed `cap_root`-limb canonicality so a moved cap-root cannot pass by
+field wrap-around. -/
 theorem revokeVm_rejects_moved_capRoot (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.CAP_ROOT)
+      ∧ env.loc (saCol state.CAP_ROOT) < 2013265921)
+    (hcanonPre : 0 ≤ env.loc (sbCol state.CAP_ROOT)
+      ∧ env.loc (sbCol state.CAP_ROOT) < 2013265921)
     (hwrong : env.loc (saCol state.CAP_ROOT) ≠ env.loc (sbCol state.CAP_ROOT)) :
     ¬ (VmConstraint.gate gCapPass).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gCapPass, eSA, eSB, eSub, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonPre hwrong
 
 /-- **Anti-ghost (nonce tamper).** A row whose nonce does NOT tick by 1 fails the reconciled `gNonce`
-tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. -/
+tick gate — a frozen-nonce trace (the pre-v2 convention) is now correctly UNSAT. FIELD-FAITHFUL: carries
+the deployed canonicality (the after-nonce and the ticked pre-nonce both in `[0, p)`, nonces far below the
+modulus), so a wrong nonce differs from the tick by less than `p` and cannot pass by wrap-around. -/
 theorem revokeVm_rejects_nonce_freeze (env : VmRowEnv)
+    (hcanonNew : 0 ≤ env.loc (saCol state.NONCE) ∧ env.loc (saCol state.NONCE) < 2013265921)
+    (hcanonTick : 0 ≤ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)
+      ∧ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP) < 2013265921)
     (hwrong : env.loc (saCol state.NONCE) ≠ env.loc (sbCol state.NONCE) + (1 - env.loc sel.NOOP)) :
     ¬ (VmConstraint.gate gNonce).holdsVm env false false := by
   simp only [VmConstraint.holdsVm, gNonce, eSA, eSB, eSub, eSelNoop, EmittedExpr.eval]
-  intro h; apply hwrong; linarith
+  exact not_modEq_zero_of_canon (by ring) hcanonNew hcanonTick hwrong
 
 /-! ## §6 — the commitment binding (REUSED; hash sites identical to transfer's). -/
 
@@ -213,12 +238,12 @@ def RowEncodesRevoke (env : VmRowEnv) (pre post : CellState) : Prop :=
 /-- **`RevokeCellSpec pre post`** — the per-cell FULL-state revoke row spec: economic block (incl.
 `capRoot`) FROZEN; the nonce TICKS by 1. (The cap-table edge removal is off-row.) -/
 def RevokeCellSpec (pre post : CellState) : Prop :=
-  post.balLo = pre.balLo
-  ∧ post.balHi = pre.balHi
-  ∧ post.nonce = pre.nonce + 1
-  ∧ (∀ i : Fin 8, post.fields i = pre.fields i)
-  ∧ post.capRoot = pre.capRoot
-  ∧ post.reserved = pre.reserved
+  post.balLo ≡ pre.balLo [ZMOD 2013265921]
+  ∧ post.balHi ≡ pre.balHi [ZMOD 2013265921]
+  ∧ post.nonce ≡ pre.nonce + 1 [ZMOD 2013265921]
+  ∧ (∀ i : Fin 8, post.fields i ≡ pre.fields i [ZMOD 2013265921])
+  ∧ post.capRoot ≡ pre.capRoot [ZMOD 2013265921]
+  ∧ post.reserved ≡ pre.reserved [ZMOD 2013265921]
 
 theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
     (hnoop : env.loc sel.NOOP = 0)
@@ -230,7 +255,8 @@ theorem intent_to_cellSpec (env : VmRowEnv) (pre post : CellState)
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_⟩
   · rw [← hsaLo, ← hsbLo]; exact hbal
   · rw [← hsaHi, ← hsbHi]; exact hbhi
-  · rw [← hsaN, ← hsbN, hnon, hnoop]; ring
+  · rw [← hsaN, ← hsbN]
+    have h := hnon; rw [hnoop] at h; simpa using h
   · intro i
     have := hfld i.val i.isLt
     rw [← hsaF i, ← hsbF i]; exact this
@@ -244,7 +270,7 @@ theorem revokeDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
     (henc : RowEncodesRevoke env pre post)
     (hgatesat : satisfiedVm hash revokeVmDescriptor env true false)
     (hsat : satisfiedVm hash revokeVmDescriptor env true true) :
-    RevokeCellSpec pre post ∧ post.commit = env.pub pi.NEW_COMMIT := by
+    RevokeCellSpec pre post ∧ post.commit ≡ env.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
   obtain ⟨hcs, _⟩ := hsat
   obtain ⟨hcsT, _⟩ := hgatesat
   have hgates' : ∀ c ∈ revokeRowGates, c.holdsVm env false false := by
@@ -280,14 +306,19 @@ theorem revokeDescriptor_full_sound (hash : List ℤ → ℤ) (env : VmRowEnv)
 theorem revokeDescriptor_commit_binds_state (hash : List ℤ → ℤ)
     (hCR : Poseidon2SpongeCR hash)
     (e₁ e₂ : VmRowEnv)
+    (hcanon₁ : 0 ≤ e₁.loc (saCol state.STATE_COMMIT)
+      ∧ e₁.loc (saCol state.STATE_COMMIT) < 2013265921)
+    (hcanon₂ : 0 ≤ e₂.loc (saCol state.STATE_COMMIT)
+      ∧ e₂.loc (saCol state.STATE_COMMIT) < 2013265921)
     (hsat₁ : satisfiedVm hash revokeVmDescriptor e₁ true true)
     (hsat₂ : satisfiedVm hash revokeVmDescriptor e₂ true true)
     (hpub : e₁.pub pi.NEW_COMMIT = e₂.pub pi.NEW_COMMIT) :
     absorbedCols e₁ = absorbedCols e₂ := by
   have hs₁ : siteHoldsAll hash e₁ revokeHashSites := hsat₁.2.1
   have hs₂ : siteHoldsAll hash e₂ revokeHashSites := hsat₂.2.1
+  -- The last-row PI pin fires mod-p (the deployed field constraint).
   have hc : ∀ (e : VmRowEnv), satisfiedVm hash revokeVmDescriptor e true true →
-      e.loc (saCol state.STATE_COMMIT) = e.pub pi.NEW_COMMIT := by
+      e.loc (saCol state.STATE_COMMIT) ≡ e.pub pi.NEW_COMMIT [ZMOD 2013265921] := by
     intro e hsat
     obtain ⟨hcs, _⟩ := hsat
     have hlast : ∀ c ∈ boundaryLastPins, c.holdsVm e false true := by
@@ -303,8 +334,17 @@ theorem revokeDescriptor_commit_binds_state (hash : List ℤ → ℤ)
         · simp only [VmConstraint.holdsVm] at hh ⊢
           exact hh
     exact (boundaryLast_pins e hlast).1
+  -- Lift the two mod-p pins to a ℤ equality of the STATE_COMMIT columns via digest-column canonicality
+  -- (the deployed range check on the commitment limb — both e₁/e₂ commits live in `[0, p)`).
+  have hmod : e₁.loc (saCol state.STATE_COMMIT)
+      ≡ e₂.loc (saCol state.STATE_COMMIT) [ZMOD 2013265921] := by
+    have h1 := hc e₁ hsat₁
+    have h2 := hc e₂ hsat₂
+    rw [hpub] at h1
+    exact h1.trans h2.symm
   have hcommit : e₁.loc (saCol state.STATE_COMMIT) = e₂.loc (saCol state.STATE_COMMIT) := by
-    rw [hc e₁ hsat₁, hc e₂ hsat₂, hpub]
+    obtain ⟨k, hk⟩ := Int.modEq_iff_dvd.mp hmod
+    omega
   exact absorbed_determined_by_commit hash hCR e₁ e₂ hs₁ hs₂ hcommit
 
 /-! ## §9 — THE CONNECTOR — the cap-table edge removal (OFF-ROW), via `revokeDelegationA_full_sound`.
@@ -364,14 +404,16 @@ theorem goodRevokeRow_noop : goodRevokeRow.loc sel.NOOP = 0 := by
 theorem goodRevokeRow_realizes_intent : RevokeRowIntent goodRevokeRow := by
   unfold RevokeRowIntent
   have hnoop : goodRevokeRow.loc sel.NOOP = 0 := goodRevokeRow_noop
-  refine ⟨rfl, rfl, ?_, rfl, rfl, ?_⟩
-  · rw [hnoop]
+  refine ⟨eqToModEq rfl, eqToModEq rfl, ?_, eqToModEq rfl, eqToModEq rfl, ?_⟩
+  · refine eqToModEq ?_
+    rw [hnoop]
     show goodRevokeRow.loc (saCol state.NONCE) = goodRevokeRow.loc (sbCol state.NONCE) + (1 - 0)
     simp only [goodRevokeRow, SEL_REVOKE_DELEGATION, sbCol, saCol, STATE_BEFORE_BASE,
       STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
       state.NONCE]
     norm_num
   · intro i hi
+    refine eqToModEq ?_
     show goodRevokeRow.loc (saCol (state.FIELD_BASE + i)) = goodRevokeRow.loc (sbCol (state.FIELD_BASE + i))
     simp only [goodRevokeRow, SEL_REVOKE_DELEGATION, sbCol, saCol, STATE_BEFORE_BASE,
       STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
@@ -397,11 +439,10 @@ def badRevokeRow : VmRowEnv where
 /-- **NON-VACUITY (witness FALSE / concrete anti-ghost).** `badRevokeRow`'s post-`bal_lo` is forged, so
 `gBalLoFreeze` REJECTS it. -/
 theorem badRevokeRow_rejected : ¬ (VmConstraint.gate gBalLoFreeze).holdsVm badRevokeRow false false := by
-  apply revokeVm_rejects_moved_balance
-  simp only [badRevokeRow, goodRevokeRow, sbCol, saCol, SEL_REVOKE_DELEGATION, STATE_BEFORE_BASE,
-    STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
-    state.NONCE]
-  norm_num
+  apply revokeVm_rejects_moved_balance <;>
+    simp only [badRevokeRow, goodRevokeRow, sbCol, saCol, SEL_REVOKE_DELEGATION, STATE_BEFORE_BASE,
+      STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO,
+      state.NONCE] <;> norm_num
 
 /-- A FROZEN-NONCE revoke row: `goodRevokeRow` with the post-nonce held at `5`. -/
 def staleNonceRevokeRow : VmRowEnv where
@@ -413,11 +454,10 @@ def staleNonceRevokeRow : VmRowEnv where
 reconciled `gNonce` tick gate. -/
 theorem staleNonceRevokeRow_rejected :
     ¬ (VmConstraint.gate gNonce).holdsVm staleNonceRevokeRow false false := by
-  apply revokeVm_rejects_nonce_freeze
-  simp only [staleNonceRevokeRow, goodRevokeRow, sel.NOOP, sbCol, saCol, SEL_REVOKE_DELEGATION,
-    STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
-    state.BALANCE_LO, state.NONCE]
-  norm_num
+  apply revokeVm_rejects_nonce_freeze <;>
+    simp only [staleNonceRevokeRow, goodRevokeRow, sel.NOOP, sbCol, saCol, SEL_REVOKE_DELEGATION,
+      STATE_BEFORE_BASE, STATE_AFTER_BASE, PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS,
+      state.BALANCE_LO, state.NONCE] <;> norm_num
 
 
 /-! ## §G — THE GENUINE CLASS-A `revoke` — `cap_root` RECOMPUTED in-row (inherits the shared primitive).
@@ -497,10 +537,14 @@ def revokeVmDescriptorGenuineNonAmp : EffectVmDescriptor := attenuateVmDescripto
 conservative no-amplify guard). Inherited from the shared in-circuit tooth. -/
 theorem revokeNonAmp_in_circuit (env : Dregg2.Circuit.Emit.EffectVmEmit.VmRowEnv)
     (hcon : ∀ c ∈ revokeVmDescriptorGenuineNonAmp.constraints, c.holdsVm env false false)
-    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS) :
+    (i : Nat) (hi : i < Dregg2.Circuit.Emit.EffectVmEmitCapReshape.MASK_BITS)
+    (hgc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) < 2013265921)
+    (hhc : 0 ≤ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i)
+      ∧ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) < 2013265921) :
     env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.grantedBit i) = 0
     ∨ env.loc (Dregg2.Circuit.Emit.EffectVmEmitCapReshape.dcol.heldBit i) = 1 :=
-  attenuateGenuineNonAmp_in_circuit env hcon i hi
+  attenuateGenuineNonAmp_in_circuit env hcon i hi hgc hhc
 
 /-- **`revokeNonAmp_rejects_amplify`** — a malformed `revoke` that claims to confer a right beyond held
 (granted bit set, held bit clear) does NOT satisfy the descriptor. Inherited from the shared rejection. -/
@@ -650,8 +694,11 @@ theorem revokeWide_realizes :
       { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
         commit := 0 }
       { balLo := 0, balHi := 0, nonce := 6, fields := fun _ => 0, capRoot := 9, reserved := 0,
-        commit := 0 } :=
-  ⟨rfl, rfl, rfl, fun _ => rfl, rfl, rfl⟩
+        commit := 0 } := by
+  refine ⟨Int.ModEq.refl _, Int.ModEq.refl _, ?_, fun _ => Int.ModEq.refl _, Int.ModEq.refl _,
+    Int.ModEq.refl _⟩
+  show (6 : ℤ) ≡ (5 : ℤ) + 1 [ZMOD 2013265921]
+  exact Int.modEq_iff_dvd.mpr (by norm_num)
 
 /-- **`revokeWide_clause_not_trivial` — the clause is REFUTABLE (witness FALSE).** A post-state whose
 nonce did NOT tick FAILS `RevokeCellSpec` — the clause is not vacuously true. -/
@@ -662,7 +709,9 @@ theorem revokeWide_clause_not_trivial :
         { balLo := 0, balHi := 0, nonce := 5, fields := fun _ => 0, capRoot := 9, reserved := 0,
           commit := 0 } := by
   rintro ⟨_, _, hnon, _⟩
-  exact absurd hnon (by decide)
+  have hno : ¬ ((5 : ℤ) ≡ (5 : ℤ) + 1 [ZMOD 2013265921]) := by
+    rw [Int.modEq_iff_dvd]; norm_num
+  exact hno hnon
 
 /-- **`revoke_DELEG_epoch_residual` — the precise boundary, as a checked theorem (kernel CLOSED;
 circuit-binding scoped).** Two facts, both PROVED:
