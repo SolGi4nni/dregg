@@ -68,6 +68,7 @@ use std::collections::{BTreeMap, BTreeSet, HashSet};
 
 pub mod community;
 pub mod governance;
+pub mod holding_weight;
 pub mod reactor;
 pub mod substrate;
 

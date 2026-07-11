@@ -27,4 +27,12 @@ dregg-blocklace = { path = "../blocklace" }
 # light-client derivation face.
 collective-choice = { path = "../collective-choice" }
 
+# The NON-CUSTODIAL proof-of-holdings type (`ProvenHolding` / `is_consensus_proven`),
+# so a consensus-proven Solana $DREGG balance can grant governance weight WITHOUT the
+# holder locking anything. No cycle: dregg-bridge does not depend on dregg-governance.
+dregg-bridge = { path = "../bridge" }
+
+# The holder wallet ↔ VoterId binding is an ed25519 signature by the Solana owner key.
+ed25519-dalek = "2"
+
 blake3 = "1"
