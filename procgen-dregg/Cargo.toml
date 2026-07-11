@@ -1,0 +1,51 @@
+# procgen-dregg — provably-fair procedural dungeon generation.
+#
+# A dungeon generated from a COMMITTED verifiable seed: the same seed yields the
+# same dungeon, provably. The pipeline is
+#
+#   committed seed  ->  dregg-dice RandomnessRequest  ->  verified DrawStream
+#                   ->  a deterministic dungeon graph  ->  a VALID `.dungeon` source
+#
+# The randomness is the real `dregg-dice` reject-free, unbiased, indexed draw
+# stream (never `rand`): the seed is verified through the source's pure verifier
+# (producer + verifier agree), and every draw is bound by the transcript
+# commitment. So a verifier who holds the committed seed re-derives the exact
+# same draws and re-generates the byte-identical dungeon.
+#
+# CONSUMES, reimplementing nothing:
+#   * dregg-dice — the DrawStream / Seed / RandomnessSource verifiable-randomness
+#     machinery (Deterministic source: reproducible offline generation).
+#   * attested-dm — `parse_dungeon` / `validate` (a DEV dependency): the generated
+#     `.dungeon` text parses + validates through the real attested-dm DSL, proving
+#     the emitted world is a first-class, playable, sound dungeon.
+#
+# A workspace MEMBER (registered in the root `members`). The root `[workspace]` +
+# `[patch]` tables apply; no standalone workspace here.
+
+[package]
+name = "procgen-dregg"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+
+description = "Provably-fair procedural dungeon generation from a committed verifiable dregg-dice seed."
+
+[lints]
+workspace = true
+
+[dependencies]
+# The verifiable-randomness engine: a committed seed -> verified Seed -> the
+# unbiased, reject-free, indexed DrawStream. This is the ONLY randomness source;
+# no `rand`.
+dregg-dice = { path = "../dice" }
+# Domain-separated hashing for the daily-seed derivation (same blake3 1.x already
+# resolved workspace-wide, the same hash dregg-dice uses internally).
+blake3 = "1"
+
+[dev-dependencies]
+# The real attested-dm DSL parser + validator. Dev-only: the generator emits
+# `.dungeon` TEXT; the tests + example prove that text parses and validates as a
+# first-class attested dungeon through the shipped engine.
+attested-dm = { path = "../attested-dm" }

@@ -14664,6 +14664,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "procgen-dregg"
+version = "0.1.0"
+dependencies = [
+ "attested-dm",
+ "blake3",
+ "dregg-dice",
+]
+
+[[package]]
 name = "profiling"
 version = "1.0.18"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -15378,6 +15387,18 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "fc7e264f9ec4f3d112e8e2f214e8e7cb5cf3b83278f3570b7e00bfe13d3bd8ff"
 dependencies = [
  "tokio",
+]
+
+[[package]]
+name = "real-dungeon-service"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dungeon-on-dregg",
+ "http-serve",
+ "serde_json",
+ "spween",
+ "spween-dregg",
 ]
 
 [[package]]
