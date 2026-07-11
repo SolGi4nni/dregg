@@ -82,6 +82,18 @@ dregg-dice = { path = "../dice" }
 # so the cross-cell driver reaches for it here. Same `dregg-turn` the framework and
 # executor are built on.
 dregg-turn = { path = "../turn" }
+# THE MULTI-PLAYER SHARED-WORLD substrate (the `mud` module). `starbridge_v2::world::World`
+# is the real MULTI-ACTOR ledger: each player is its OWN cell/identity, `World::turn(agent,
+# effects)` builds a turn attributed to that player, and `commit_turn` admits it IFF the
+# player holds a cap to every touched cell (an ungranted target is a real `CapabilityNotHeld`
+# executor refusal) — one ledger, many actors. Its `branch_stitch_session::BranchStitchSession`
+# forks the shared world into concurrent divergent player-timelines and STITCHES them under
+# the settlement-sound gate: disjoint edits merge clean, and two players grabbing the ONE item
+# is a real `#`-conflict withheld fail-closed. This is the exact substrate the `mud-dregg`
+# multiplayer precedent rides; the single-driver `EmbeddedExecutor` (this crate's `multicell`
+# sibling) is one serial writer and cannot host distinct concurrent player identities. Same
+# `embedded-executor` core, gpui-free.
+starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
 # The REAL confined Bedrock brain (gap #6) reads the assistant text out of the attested
 # Bedrock Converse response and builds the confined Converse request body — JSON, only on
 # the live path. Optional: pulled in ONLY by the `tlsn-live` feature (the default offline

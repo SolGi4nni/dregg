@@ -71,6 +71,12 @@ pub mod collective;
 /// re-checks across cells — NOT a host `if`.
 pub mod multicell;
 
+/// THE MULTI-PLAYER SHARED WORLD — several PLAYER cells inhabit ONE living world, each
+/// acting via real cap-bounded turns. Closes the concurrency-&-authority half of the
+/// single-cell ceiling this crate named, on the real multi-actor substrate
+/// ([`starbridge_v2::world::World`]). See the module docs for the full model.
+pub mod mud;
+
 /// VERIFIABLE RANDOMNESS landed on a real turn. The single-cell keep's combat uses a
 /// FIXED damage rule (the compiler's `FieldGte(hp, 1)` tooth); [`dice_combat`] wires a
 /// real [`dregg_dice::DrawStream`] roll into a combat blow — the damage is a real draw

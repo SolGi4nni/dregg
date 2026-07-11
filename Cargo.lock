@@ -5572,6 +5572,7 @@ dependencies = [
  "collective-choice",
  "dregg-blocklace",
  "dregg-bridge",
+ "dregg-lean-ffi",
  "ed25519-dalek",
 ]
 
@@ -5824,6 +5825,19 @@ dependencies = [
  "hex",
  "serde",
  "serde_json",
+]
+
+[[package]]
+name = "dregg-pay"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "bs58",
+ "dregg-bridge",
+ "ed25519-dalek",
+ "hmac 0.12.1",
+ "sha2 0.10.9",
+ "zeroize",
 ]
 
 [[package]]
