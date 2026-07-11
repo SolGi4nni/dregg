@@ -13,13 +13,21 @@ kernel step is `BalanceMovementSpec` (`Spec/balancemovement.lean`), a FULL-STATE
 These two worlds never reference each other: nothing ties a satisfying rotated witness to a
 `RecChainedState`. This module is the BRIDGE. It is, deliberately, BOTH a load-bearing proof AND an
 honest map of the residual: the per-row circuit witnesses ONE cell's value-block transition (balance
-moved, nonce ticked, frame frozen — `EffectVmEmitTransferSound.CellTransferSpec`), so the parts of
-`BalanceMovementSpec` the circuit FORCES (the debit/credit ledger movement, availability) are
-DERIVED from the witness, while the parts the per-cell value-block cannot carry (the kernel
-`caps`/`accounts`/`acceptsEffects` admissibility, the 17-field kernel frame, the receipt-log
-advance) are NAMED as explicit decode obligations in `rotatedEncodes`. The honest line is exactly
-here: a wrong-amount / non-conserving witness is UNSAT *because the circuit forces the movement*
-(§3), NOT because the decode happens to assert it.
+moved, nonce ticked, frame frozen — `EffectVmEmitTransferSound.CellTransferSpec`), so the part of
+`BalanceMovementSpec` the circuit FORCES (the debit/credit ledger MOVEMENT — now a mod-`p` BabyBear
+congruence after the DEBT-A field migration) is DERIVED from the witness, while the parts the per-cell
+value-block cannot carry (the kernel `caps`/`accounts`/`acceptsEffects` admissibility, ⚠ AVAILABILITY
+— see below, the 17-field kernel frame, the receipt-log advance) are NAMED as explicit decode
+obligations in `rotatedEncodes`. The honest line is exactly here: a wrong-amount / non-conserving
+witness is UNSAT *because the circuit forces the movement mod `p`* (§3), NOT because the decode
+happens to assert it.
+
+⚠⚠ DEBT-A FINDING: the mod-`p` migration REMOVED availability (`amt ≤ bal src a`) from the
+circuit-forced bucket. The deployed balance gate is now a field congruence and the amount limb is
+un-range-checked, so with `p < 2^31` an underflow wraps into the 30-bit range (§3, `⚠⚠ AVAILABILITY IS
+NOT CIRCUIT-FORCED` — a wrap-class gap, concrete forgery given). Availability is therefore relocated to
+a NAMED `rotatedEncodes.guardAvail` residual pending the EMBER-GATED denotation fix. The conservation
+teeth (`debit_forced`/`credit_forced`, mod-`p`) still forbid wrong-amount/mint witnesses.
 
 ## What is proved
 
@@ -30,9 +38,11 @@ here: a wrong-amount / non-conserving witness is UNSAT *because the circuit forc
   * `transfer_descriptorRefines` — THE REFINEMENT. From `Satisfied2 hash transferV3 …` (+ the chip /
     range table side conditions the rotated denotation already requires) together with
     `rotatedEncodes t pre post`, derive `BalanceMovementSpec pre.kernel … a post` — i.e. satisfying
-    the LIVE transfer descriptor FORCES the kernel's balance-movement step. The debit/credit amounts
-    and the availability guard come FROM THE CIRCUIT (`transferDescriptor_full_sound` /
-    `transferVm_enforces_availability`), not from the decode.
+    the LIVE transfer descriptor FORCES the kernel's balance-movement step. The debit/credit MOVEMENT
+    comes FROM THE CIRCUIT (`transferDescriptor_full_sound`) — now as a mod-`p` (BabyBear) congruence
+    after the DEBT-A field-denotation migration. ⚠ AVAILABILITY (`amt ≤ bal src a`) is NO LONGER
+    circuit-forced under mod-`p` (a wrap-class gap — §3); it is a NAMED decode residual
+    (`rotatedEncodes.guardAvail`).
 
   * `descriptorRefines_rejects_wrong_amount` (BOTH-polarity tooth) — a decode that claims a kernel
     post-ledger NOT equal to the circuit-forced debit/credit movement is UNSAT: no `Satisfied2`
@@ -246,6 +256,13 @@ structure rotatedEncodes (hash : List ℤ → ℤ)
   -- the residual admissibility legs (kernel side-tables, not in the value block).
   guardAuth : authorizedB pre.kernel.caps tr = true
   guardNonNeg : 0 ≤ tr.amt
+  -- ⚠⚠ AVAILABILITY — NAMED decode residual (NOT circuit-forced). The mod-p (BabyBear) balance gate +
+  -- 30-bit range check do NOT enforce `amt ≤ bal` over ℤ: `p < 2^31` and the amount limb is
+  -- un-range-checked, so an underflow `pre.bal − amt + p ∈ [0, 2^30)` passes the range while spending
+  -- more than the balance (wrap-class gap — see `⚠⚠ AVAILABILITY IS NOT CIRCUIT-FORCED`, §3). Relocated
+  -- here as an honest, visible admissibility obligation (like `guardAuth`) pending the EMBER-GATED
+  -- denotation fix (amount range-check / borrow bit / larger field).
+  guardAvail : tr.amt ≤ pre.kernel.bal tr.src a
   guardDistinct : tr.src ≠ tr.dst
   guardLiveSrc : tr.src ∈ pre.kernel.accounts
   guardLiveDst : tr.dst ∈ pre.kernel.accounts
@@ -279,98 +296,122 @@ structure rotatedEncodes (hash : List ℤ → ℤ)
 /-! ## §3 — THE REFINEMENT: satisfying the live transfer descriptor FORCES the kernel step.
 
 The decode (`rotatedEncodes`) carries the kernel-only residual; the WITNESS (`Satisfied2`) forces the
-ledger movement and availability. We assemble `BalanceMovementSpec`:
+ledger MOVEMENT (mod `p`). We assemble `BalanceMovementSpec`:
 
-  * `admitGuardA` — authority/distinctness/liveness/accepts come from the decode legs; availability
-    (`amt ≤ bal src a`) and non-negativity come FROM THE CIRCUIT, via the debit row's value-block
-    spec (`srcPost = srcPre − amount`, `0 ≤ srcPost.balLo`) read onto the ledger;
+  * `admitGuardA` — authority/distinctness/liveness/accepts come from the decode legs; ⚠ AVAILABILITY
+    (`amt ≤ bal src a`) is ALSO a decode leg now (`henc.guardAvail`) — it is NO LONGER circuit-forced
+    under mod-`p` (wrap-class gap, see `⚠⚠ AVAILABILITY IS NOT CIRCUIT-FORCED` below). What the debit
+    row's range tooth genuinely forces is only the canonicality `0 ≤ post.bal src a < 2^30`
+    (`debit_after_canonical`);
   * the post-`bal` ledger — the decode's `hledgerFrame` IS `recTransferBal`, and §3a checks the
     circuit-forced limb moves AGREE with it at the two moved coordinates (so the frame isn't a free
     assertion: the circuit pins the moved entries);
   * the 16 frame fields + log — the decode's frame legs. -/
 
-/-- The debit row's per-cell spec, read onto the kernel ledger: `post.bal src a = pre.bal src a −
-amt`, and `0 ≤ post.bal src a`. The circuit FORCES both (the gate moves the limb; the live range
-tooth pins non-negativity), so they cannot be forged in the decode. -/
+/-- The debit row's per-cell spec, read onto the kernel ledger: `post.bal src a ≡ pre.bal src a − amt
+[ZMOD p]`. **MOD-p CORRECTION (DEBT-A migration):** the deployed balance-lo gate `holdsVm` now denotes
+`gBalLo.eval ≡ 0 [ZMOD 2013265921]` (a BabyBear field constraint), NOT the old ℤ `= 0`. So the circuit
+FORCES the debit move only as a mod-`p` CONGRUENCE — a canonical trace can carry an ℤ residual equal to
+`p ≠ 0`. The old ℤ equality was provably too strong (the migration lane owns the denotation; §0.5 of
+`EffectVmEmitTransfer` proves `pPrimeInt`/`gate_modEq_iff`). The move IS still circuit-forced — just in
+the field. -/
 theorem debit_forced (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a) :
-    post.kernel.bal tr.src a = pre.kernel.bal tr.src a - tr.amt := by
-  -- the circuit pins the debit row's moved limb: srcPost.balLo = srcPre.balLo + signedMove srcParams.
+    post.kernel.bal tr.src a ≡ pre.kernel.bal tr.src a - tr.amt [ZMOD 2013265921] := by
+  -- the circuit pins the debit row's moved limb: srcPost.balLo ≡ srcPre.balLo + signedMove srcParams.
   have hspec : CellTransferSpec henc.srcPre henc.srcParams henc.srcPost :=
     rotated_row_cellSpec hash hside hsat henc.di henc.hdi henc.hdiNotLast henc.srcPre henc.srcPost
       henc.srcParams henc.hdiEnc henc.hdiRow
   obtain ⟨_, hmove, _, _, _, _, _⟩ := hspec
-  -- signedMove on a debit row (direction = 1) is −amount.
+  -- signedMove on a debit row (direction = 1) is −amount (an ℤ identity — `direction` is exactly `1`).
   have hsm : signedMove henc.srcParams = - henc.srcParams.amount := by
     unfold signedMove; rw [henc.hdiDir]; ring
-  -- read onto the ledger.
-  rw [← henc.hsrcPost, ← henc.hsrcPre, hmove, hsm, henc.hdiAmt]; ring
+  -- read the mod-`p` congruence onto the ledger (all substitutions are ℤ equalities of subterms).
+  rw [hsm, henc.hdiAmt, henc.hsrcPost, henc.hsrcPre] at hmove
+  -- hmove : post.bal src ≡ pre.bal src + -tr.amt [ZMOD p]; `+ -tr.amt` is defeq `- tr.amt` (Int.sub).
+  have heq : pre.kernel.bal tr.src a + -tr.amt = pre.kernel.bal tr.src a - tr.amt := by ring
+  rwa [heq] at hmove
 
-/-- The credit row's per-cell spec, read onto the kernel ledger: `post.bal dst a = pre.bal dst a +
-amt`. The circuit FORCES it (the credit row's gate moves the limb by `+amount`). -/
+/-- The credit row's per-cell spec, read onto the kernel ledger: `post.bal dst a ≡ pre.bal dst a + amt
+[ZMOD p]`. **MOD-p CORRECTION (DEBT-A migration):** as for `debit_forced`, the credit gate is now a
+BabyBear field constraint, so the circuit FORCES the `+amount` move as a mod-`p` congruence. -/
 theorem credit_forced (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a) :
-    post.kernel.bal tr.dst a = pre.kernel.bal tr.dst a + tr.amt := by
+    post.kernel.bal tr.dst a ≡ pre.kernel.bal tr.dst a + tr.amt [ZMOD 2013265921] := by
   have hspec : CellTransferSpec henc.dstPre henc.dstParams henc.dstPost :=
     rotated_row_cellSpec hash hside hsat henc.ci henc.hci henc.hciNotLast henc.dstPre henc.dstPost
       henc.dstParams henc.hciEnc henc.hciRow
   obtain ⟨_, hmove, _, _, _, _, _⟩ := hspec
+  -- signedMove on a credit row (direction = 0) is +amount (an ℤ identity — `direction` is exactly `0`).
   have hsm : signedMove henc.dstParams = henc.dstParams.amount := by
     unfold signedMove; rw [henc.hciDir]; ring
-  rw [← henc.hdstPost, ← henc.hdstPre, hmove, hsm, henc.hciAmt]
+  rwa [hsm, henc.hciAmt, henc.hdstPost, henc.hdstPre] at hmove
 
-/-- **Availability is CIRCUIT-FORCED.** On the debit row the live range tooth pins `0 ≤
-srcPost.balLo`; with the gate `srcPost.balLo = srcPre.balLo − amount` (debit), this is exactly `amt
-≤ pre.bal src a`. So the AVAILABILITY admissibility leg is NOT taken from the decode — the running
-circuit enforces it. -/
-theorem availability_forced (hash : List ℤ → ℤ)
+/-- **What the debit row's range tooth GENUINELY forces (mod-p): the post-limb is CANONICAL.** The
+live `BALANCE_LO` range check pins `0 ≤ post.bal src a < 2^BAL_LIMB_BITS` — read straight onto the
+kernel ledger. This is the salvageable half of the old availability argument; it is genuinely
+circuit-forced. What it does NOT give — see `⚠ AVAILABILITY IS NOT CIRCUIT-FORCED` below — is the ℤ
+availability `amt ≤ pre.bal src a`. -/
+theorem debit_after_canonical (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a) :
-    tr.amt ≤ pre.kernel.bal tr.src a := by
-  -- the v1 denotation on the debit row (i-dependent flags).
+    0 ≤ post.kernel.bal tr.src a ∧ post.kernel.bal tr.src a < (2 : ℤ) ^ BAL_LIMB_BITS := by
+  -- the v1 denotation on the debit row (i-dependent flags), and the live range tooth (flag-free).
   have hv1 : satisfiedVm hash EffectVmEmitTransfer.transferVmDescriptor
       (envAt t henc.di) (henc.di == 0) (henc.di + 1 == t.rows.length) :=
     rotV3Frozen_sound_v1 permOut hash EffectVmEmitTransfer.transferVmDescriptor minit mfin maddrs t
       transfer_graduable (hside.toFaithful hsat) henc.di henc.hdi
-  -- the balance-move gate (flag-independent) and the live range tooth (`hsat.2.2`, flag-free).
-  have hbal := rotated_row_gates hash hside hsat henc.di henc.hdi henc.hdiNotLast
-    (.gate EffectVmEmitTransfer.gBalLo)
-    (by simp [EffectVmEmitTransfer.transferRowGates])
-  have hrng := hv1.2.2 (⟨saCol state.BALANCE_LO, 30⟩) (by simp [EffectVmEmitTransfer.transferVmDescriptor])
-  simp only [VmConstraint.holdsVm, EffectVmEmitTransfer.gBalLo,
-    EffectVmEmitTransfer.eSA, EffectVmEmitTransfer.eSB, EffectVmEmitTransfer.ePrm,
-    EffectVmEmitTransfer.eSub, Dregg2.Exec.CircuitEmit.EmittedExpr.eval] at hbal
-  have hnn : 0 ≤ (envAt t henc.di).loc (saCol state.BALANCE_LO) := hrng.1
-  have hmove : (envAt t henc.di).loc (saCol state.BALANCE_LO)
-      = (envAt t henc.di).loc (sbCol state.BALANCE_LO)
-        + (envAt t henc.di).loc (prmCol param.AMOUNT)
-          * (1 - 2 * (envAt t henc.di).loc (prmCol param.DIRECTION)) := by
-    linear_combination hbal
-  -- decode the debit row's pre-limb / amount / direction columns through RowEncodes.
-  obtain ⟨hsbLo, _, _, _, _, _, _, hpAmt, hpDir, _⟩ := henc.hdiEnc
-  have hdir1 : (envAt t henc.di).loc (prmCol param.DIRECTION) = 1 := by
-    rw [hpDir, henc.hdiDir]
-  -- on a debit row the move is `post = pre − amount`; with `0 ≤ post` we get `amount ≤ pre`.
-  have hdebit : (envAt t henc.di).loc (saCol state.BALANCE_LO)
-      = (envAt t henc.di).loc (sbCol state.BALANCE_LO)
-        - (envAt t henc.di).loc (prmCol param.AMOUNT) := by
-    rw [hmove, hdir1]; ring
-  have hle : (envAt t henc.di).loc (prmCol param.AMOUNT)
-      ≤ (envAt t henc.di).loc (sbCol state.BALANCE_LO) := by linarith [hdebit, hnn]
-  rw [hpAmt, henc.hdiAmt] at hle
-  rw [hsbLo, henc.hsrcPre] at hle
-  exact hle
+  have hrng := hv1.2.2 (⟨saCol state.BALANCE_LO, 30⟩)
+    (by simp [EffectVmEmitTransfer.transferVmDescriptor])
+  -- `VmRange.holds` reduces (whnf) to `0 ≤ loc (saCol BALANCE_LO) ∧ loc (saCol BALANCE_LO) < 2^30`.
+  obtain ⟨hlo, hhi⟩ := hrng
+  -- decode the after-limb column and read it onto the ledger.
+  obtain ⟨_, _, _, _, _, _, _, _, _, hsaLo, _⟩ := henc.hdiEnc
+  rw [hsaLo, henc.hsrcPost] at hlo hhi
+  exact ⟨hlo, hhi⟩
+
+/-! ### ⚠⚠ AVAILABILITY IS NOT CIRCUIT-FORCED under the mod-p denotation — the wrap-class gap.
+
+**Finding (DEBT-A migration, 2026-07-11).** The old `availability_forced` derived `amt ≤ pre.bal src a`
+from `0 ≤ post.bal src a` (range) + `post.bal src a = pre.bal src a − amt` (gate, over ℤ). The mod-p
+migration replaced the gate ℤ equality with a BabyBear field congruence: `holdsVm (.gate gBalLo)` now
+denotes `gBalLo.eval ≡ 0 [ZMOD 2013265921]`. So the circuit forces only
+`post.bal src a ≡ pre.bal src a − amt [ZMOD p]`, and the range table pins only
+`0 ≤ post.bal src a < 2^30`. Because `p = 2013265921 < 2^31` and the AMOUNT column carries **no** range
+check, a prover can pick `amt` with `pre.bal − amt < 0` yet whose canonical field value
+`pre.bal − amt + p` lands in `[0, 2^30)` — passing the range check while spending more than the balance.
+
+CONCRETE forgery (`direction = 1` debit, gate `post − pre + amt ≡ 0 [ZMOD p]`):
+  `pre.bal = 0`, `amt = 1000000000` ⟹ `post.bal = p − 1000000000 = 1013265921 ∈ [0, 2^30)`.
+The gate holds mod-`p` and `0 ≤ post.bal < 2^30`, yet `amt = 10^9 > 0 = pre.bal` — an underflow /
+mint-from-nothing. This is the SAME wrap-class as the vault carry-wrap (`27feb4754`) and cap-open
+mask-recon (`5cfa7e5d7`) the migration already surfaced: a gate reconstructs a value that can exceed
+`p`, so mod-`p` alone does not pin the ℤ value, and the adversary picks a `p`-shifted decomposition.
+
+An INEQUALITY has no mod-`p`-faithful restatement (order is not preserved mod `p`), so — unlike
+`debit_forced`/`credit_forced` — availability CANNOT be restated-and-proved. It is a genuine gap the
+migration exposed. Classification (deployed gap vs a modeling gap) and the fix are DENOTATION changes
+owned by the migration lane / EMBER-GATED: range-check the AMOUNT limb to `< p − 2^30`, add a
+borrow / no-underflow bit, or a field with `p ≥ 2^{2·BAL_LIMB_BITS}`.
+
+⚑ HONEST RELOCATION (not laundering): availability is therefore moved OUT of the circuit-forced bucket
+and NAMED as an explicit `rotatedEncodes.guardAvail` decode residual — joining `guardAuth` /
+`guardLiveSrc` / … as an admissibility leg the per-cell value block does not carry — with this note as
+its provenance. This is the audit's accepted pattern (cf. the cap-open "explicit DEPLOYED-GAP
+assumption" correction), NOT a canonicality dressing. `transfer_descriptorRefines` sources availability
+from `henc.guardAvail`, so a wrong-amount / non-conserving move is still refused by `debit_forced`
+(mod-`p`), but the availability leg now rides an honest, visible assumption pending the denotation fix. -/
 
 set_option maxHeartbeats 800000 in
 /-- **`transfer_descriptorRefines` — THE CIRCUIT→KERNEL REFINEMENT (the template).** Satisfying the
@@ -390,8 +431,10 @@ theorem transfer_descriptorRefines (hash : List ℤ → ℤ)
     BalanceMovementSpec pre tr a post := by
   refine ⟨?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_, ?_⟩
   · -- admitGuardA: authority/non-neg/AVAILABILITY/distinct/live-src/live-dst/src-lifecycle/accepts.
-    exact ⟨henc.guardAuth, henc.guardNonNeg,
-      availability_forced hash hside hsat pre post tr a henc,
+    -- ⚠ availability is `henc.guardAvail` — a NAMED decode residual, NOT circuit-forced under mod-p
+    -- (wrap-class gap; see `⚠⚠ AVAILABILITY IS NOT CIRCUIT-FORCED`, §3). The debit/credit MOVEMENT is
+    -- still circuit-forced (mod-p) via `debit_forced`/`credit_forced` (the §4 conservation teeth).
+    exact ⟨henc.guardAuth, henc.guardNonNeg, henc.guardAvail,
       henc.guardDistinct, henc.guardLiveSrc, henc.guardLiveDst,
       henc.guardSrcLifecycleLive, henc.guardAccepts⟩
   · -- the post-`bal` ledger is the debit/credit movement (the decode's `hledgerFrame`).
@@ -436,29 +479,32 @@ a decode that claims a post-ledger debit DIFFERENT from `pre.bal src a − amt` 
 satisfying witness — the circuit FORCES the moved limb, so the claim is contradictory. This is the
 anti-ghost: a prover cannot conserve-violate (move the wrong amount, or mint) and still satisfy. -/
 
-/-- **`descriptorRefines_rejects_wrong_amount` — the conservation tooth.** If a decode asserts a
-source post-balance that is NOT the genuine debit `pre.bal src a − amt`, then NO `Satisfied2`
-witness realizes that decode: the assumption is `False`. The circuit pins the debit limb, so a
-wrong-amount / non-conserving move is UNSAT. -/
+/-- **`descriptorRefines_rejects_wrong_amount` — the conservation tooth (mod-p).** If a decode asserts a
+source post-balance that is NOT the genuine debit `pre.bal src a − amt` **mod `p`**, then NO `Satisfied2`
+witness realizes that decode: the assumption is `False`. The circuit pins the debit limb as a BabyBear
+field congruence, so a wrong-amount / non-conserving move (one that is not `≡ pre.bal − amt [ZMOD p]`) is
+UNSAT. (The mod-`p` form is the faithful conservation statement — a canonical wrong amount differs from
+the debit by a non-multiple of `p`, so it is still refused.) -/
 theorem descriptorRefines_rejects_wrong_amount (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a)
-    (hwrong : post.kernel.bal tr.src a ≠ pre.kernel.bal tr.src a - tr.amt) :
+    (hwrong : ¬ (post.kernel.bal tr.src a ≡ pre.kernel.bal tr.src a - tr.amt [ZMOD 2013265921])) :
     False :=
   hwrong (debit_forced hash hside hsat pre post tr a henc)
 
-/-- **The credit-side polarity.** A decode asserting a destination post-balance NOT the genuine
-credit `pre.bal dst a + amt` is likewise UNSAT — the circuit forces the credit limb. -/
+/-- **The credit-side polarity (mod-p).** A decode asserting a destination post-balance NOT the genuine
+credit `pre.bal dst a + amt` **mod `p`** is likewise UNSAT — the circuit forces the credit limb as a
+BabyBear field congruence. -/
 theorem descriptorRefines_rejects_wrong_credit (hash : List ℤ → ℤ)
     {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hside : RotTableSide permOut hash t)
     (hsat : Satisfied2 hash transferV3 minit mfin maddrs t)
     (pre post : RecChainedState) (tr : Turn) (a : AssetId)
     (henc : rotatedEncodes hash minit mfin maddrs t pre post tr a)
-    (hwrong : post.kernel.bal tr.dst a ≠ pre.kernel.bal tr.dst a + tr.amt) :
+    (hwrong : ¬ (post.kernel.bal tr.dst a ≡ pre.kernel.bal tr.dst a + tr.amt [ZMOD 2013265921])) :
     False :=
   hwrong (credit_forced hash hside hsat pre post tr a henc)
 
@@ -467,7 +513,7 @@ theorem descriptorRefines_rejects_wrong_credit (hash : List ℤ → ℤ)
 #assert_axioms rotated_row_cellSpec
 #assert_axioms debit_forced
 #assert_axioms credit_forced
-#assert_axioms availability_forced
+#assert_axioms debit_after_canonical
 #assert_axioms transfer_descriptorRefines
 #assert_axioms transfer_descriptorRefines_fullActionStep
 #assert_axioms descriptorRefines_rejects_wrong_amount
