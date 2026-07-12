@@ -7654,3 +7654,16 @@ shifted-radix-2^31 leaf layout, and a chain/gnark port to match it is in flight 
 valid shrink proof). REMAINING for end-to-end: the apex-verifier AIR under DreggOuterConfig + a producible real
 apex (BLOCKED on the rotated-proof pipeline, another lane's). git-hygiene: poseidon2_bn254*.go (untracked since
 session start) now committed so chain/gnark builds clean.
+
+## WRAP: the two sides FULLY agree — gnark leaf-hash ported to the Rust MMCS (2026-07-12)
+The last cross-side seam closed. gnark friMerkleLeafHashNative was an unshifted STAND-IN; now the exact port of
+the Rust MMCS leaf hash (MultiField32PaddingFreeSponge over Poseidon2Bn254: shifted radix-2^31, digit+1, 8
+limbs/slot, digest=state[0]), cited from the fork (sponge.rs hash_iter, helpers.rs reduce_packed_shifted,
+mmcs.rs leaf digest). REAL CROSS-SIDE KAT (verified myself, non-vacuous): pinned digests computed by the REAL
+Rust hasher (fork's actual MultiField32PaddingFreeSponge + MerkleTreeMmcs at the pinned rev, RC3 spliced from
+dregg_outer_config.rs, gold-KAT-asserted), incl. a genuine MerkleTreeMmcs::commit root — matched by gnark's ref
+AND gadget. So gnark == the Rust MMCS's own digests, not self-consistency. Shift canary proves the +1 encoding
+is load-bearing. A mismatch would have made gnark REJECT every valid shrink proof. The wrap's two sides now agree
+on permutation + challenger + compress + LEAF HASH. Native VerifyFriNative still 1,018,263 R1CS (40.2x/51x).
+NOTE: circuit-prove is now QUIET (no src mods, no commits 3h) and the carrier flag-day LANDED (trace_rotated now
+documents 59 carriers — the old 59!=56 panic's mismatch is fixed), so a real apex may be producible → end-to-end.
