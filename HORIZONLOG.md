@@ -21,6 +21,14 @@ the ONE big-bang regen with the vault weld). Same pattern then owed to BURN (for
 `RotatedKernelRefinementMintBurn.rotatedEncodesBurn.guardAvail`; the burn weld mirrors
 `transferVmDescriptorAvail` per `EffectVmEmitBurn.lean:623`, its wide-graduation discharge is now a
 clone of `RotatedKernelRefinementAvail`) and to the fee'd transfer (`transferFeeVmDescriptor`).
+FEE MEMBER CLOSED (2026-07-12, fee lane): `transferFeeVmDescriptorAvail` (§11.8, MID-linked chains —
+the §11.7 chain reused blind would force `fee = 0`), `rotV3FrozenFeeWide_sound_v1`,
+`transferFeeV3AvailWire`, `RotatedKernelRefinementFeeAvail` (feeWire_{fee,amount}_forgery_unsat),
+Rust `transfer_fee_avail_weld.rs` + pad-16 producer (`generate_rotated_effect_vm_trace_with_fee_avail`),
+emission retargeted. Fee residuals riding the SAME regen: the live fee route (cipherclerk /
+proof_verify) derives the pad from the registry name at the flip and calls the `_with_fee_avail`
+producer; `effect_vm_rotation_flip.rs` fee-test width pins reconcile then (same as the transfer/burn
+sibling pins).
 
 ## NOW-STATE addition (2026-07-10, Fable — fresh-clone buildability + CI-green runbook, ember report "others can't build a fresh clone")
 
