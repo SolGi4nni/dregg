@@ -161,3 +161,15 @@ exactly; challenger/compress agree). gnark native VerifyFri already committed+me
 KAT-AGREE (perm/challenger/compress). One seam: gnark leaf-hash port to the Rust shifted-radix MMCS layout —
 IN FLIGHT. End-to-end real-apex verify still awaits the apex-verifier AIR + a producible apex (blocked pipeline).
 Achievable wrap pieces = DONE/near-done; the blocked piece is the real-apex plumbing.
+
+## ⚑ WRAP CAPSTONE IN FLIGHT (07-12 ~8:25am)
+- gnark LEAF-HASH PORT committed: the wrap's two sides now FULLY agree (permutation gold-KAT + challenger
+  pack/split + compress + LEAF HASH). Real cross-side KAT (gnark == the Rust MMCS's OWN digests, incl. a genuine
+  MerkleTreeMmcs::commit root; shift canary proves +1 encoding load-bearing). Verified myself, non-vacuous.
+- circuit-prove is now QUIET (no src mods, no commits 3h) and the CARRIER FLAG-DAY LANDED (trace_rotated documents
+  59 carriers — the old 59!=56 panic mismatch is FIXED). So a REAL APEX may be producible → end-to-end wrap reachable.
+- LAUNCHED the CAPSTONE: apex-verifier AIR under DreggOuterConfig (the field-generic recursion verifier instantiated
+  BN254-native) — the piece that SHRINKS a real apex into a BN254-native STARK that gnark's VerifyFriNative verifies.
+  Adaptive: goes end-to-end if a real apex is producible; else validates the shrink mechanism on a synthetic inner proof.
+- Probing the real-apex production myself in parallel (the deployed_tooth tests are #[ignore]'d; running --ignored).
+NEXT: if the apex proves → shrink it BN254-native → (stretch) export its FRI data to gnark = THE WRAP END-TO-END.
