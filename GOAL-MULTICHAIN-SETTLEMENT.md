@@ -194,3 +194,8 @@ joint_turn_recursive.rs +15. A commitment-VALUE change would shift VKs → break
 reds the umbrella" hazard). NOT COMMITTING until: (a) the REAL shrink test passes (--ignored, running now — the
 headline), AND (b) a REGRESSION check: the deployed custom-leaf teeth + recursion_vk_determinism still pass with the
 modified adapter. Verify BOTH myself before any commit. (Sequenced — both heavy circuit-prove, one build lock.)
+
+## ⚑⚑⚑ WRAP CONFIRMED (07-12 ~9:20am): REAL apex shrunk BN254-native + verified (Rust side, 1333s).
+apex fold 258s/399KB → shrink prove 1076s → shrink proof 263KB → verify 68ms. The wrap works end-to-end (Rust).
+Shrink prove ~18min = red-team cost (2^15-row shrink tables) → optimization target, not blocker. FINAL: gnark
+VerifyFriNative verifies the exported real shrink proof = wrap FULLY end-to-end. Launched.

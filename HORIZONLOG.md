@@ -7692,3 +7692,38 @@ unchanged post-cutover. apex_shrink is independent of that flag-day. NEXT: confi
 gnark end-to-end (export shrink FRI data → VerifyFriNative) is the final wrap increment; fold-P0 chain poles run
 once the sibling flag-day cuts over. LESSON: circuit-prove has frequent overlapping flag-days — my "quiet" reads
 kept being wrong; commit-and-move-forward on the shared WIP branch (per ember) rather than agonize over tangling.
+
+## ⚑⚑⚑ WRAP CAPSTONE: a REAL apex SHRUNK BN254-native — VERIFIED (2026-07-12)
+The apex-verifier AIR under DreggOuterConfig is BUILT and a REAL dregg apex is SHRUNK through it.
+`circuit-prove/src/apex_shrink.rs` + `tests/apex_shrink_bn254_tooth.rs`: fold a real 2-turn rotated chain
+(`prove_turn_chain_recursive`) -> apex `BatchStarkProof<DreggRecursionConfig>` (BabyBear Poseidon2-W16), verify it,
+then prove the apex-verifier circuit UNDER DreggOuterConfig -> a BN254-native SHRINK PROOF, verified Rust-side.
+MEASURED (release, --ignored, 1 passed): apex fold 241s / 398,849 B; shrink prove 1141.8s / 263,361 B;
+shrink verify 68ms; ext_degree 4; degree_bits [9,9,15,14,15]; 5 instances + 2 non-primitive tables.
+BN254-native CANARY (non-vacuous): every main+quotient commitment root is ONE native BN254 element >31 bits;
+tamper on opened_values -> REJECT (accept is real).
+KEY DESIGN: NOT a FriRecursionConfig impl on DreggOuterConfig — a CONFIG SPLIT. The verifier circuit is built at
+the INNER config (its FriRecursionConfig describes the proof being verified in-circuit at the ir2 knobs: 19 queries,
+blowup 6, 16 query-PoW), and only the table commit + FRI + transcript are proven under DreggOuterConfig. Sound
+because both share Val=BabyBear / Challenge=EF4; only the PCS/challenger (hash field) swap. Re-plays
+prove_next_layer's 5 steps with the config swapped at the field-compatible seam
+(build_next_layer_circuit inner / get_airs_and_degrees_with_prep + ProverData::from_airs_and_degrees + prove_all_tables outer).
+REMAINING (named, not faked): the gnark fixture export — serialize the shrink proof's FRI data (commit roots,
+betas, final poly, PoW witness, per-query openings + transcript prefix) into a chain/gnark test so VerifyFriNative
+verifies a REAL shrink proof end-to-end. Nothing design-blocked: the two sides already KAT-agree on permutation,
+challenger pack/split, compression, and the MMCS leaf hash. That export is THE last increment to close the wrap.
+SIDE: forward-fixed the 8-felt custom-commit flag-day's compile breakage (read_exposed_pi_commitment now reads the
+full PROOF_BIND_COMMIT_WIDTH; joint_turn_recursive standin claims the 4-limb prefix mid-flight) so the crate + lib
+tests compile. `cargo test -p dregg-circuit-prove` lib outer-config suite: 4/4 green.
+
+## ⚑⚑⚑ WRAP CONFIRMED END-TO-END (Rust side) — a REAL apex shrunk BN254-native (2026-07-12 ~9:20am)
+apex_shrink_bn254_tooth::real_apex_shrinks_bn254_native_and_verifies PASSED (verified myself, 1333s total):
+a REAL ir2_leaf_wrap apex (folded from a real 2-turn chain, 258s, 399KB) → proven under the apex-verifier AIR
+under DreggOuterConfig (BN254-native hash) → SHRINK PROOF (263KB) → VERIFIED (68ms). NOT synthetic. The
+BN254-native-hash wrap re-architecture WORKS end-to-end on the Rust side with a real apex — the whole premise
+(188M emulated infeasible → native feasible) is now DEMONSTRATED, not just measured.
+MEASURED: shrink prove = 1076s (~18min) — the BN254-native prover cost the decision doc's red-team flagged;
+shrink degree_bits [9,9,15,14,15] (2^15-row tables) show the shrink trace is NOT tiny → ~18min prove is real,
+feasible (off-chain, one-time, enables the cheap on-chain Groth16 verify) but an OPTIMIZATION TARGET, not
+RISC0/SP1 "seconds". FINAL INCREMENT: export the shrink proof's FRI data → gnark VerifyFriNative verifies a REAL
+dregg apex's shrink proof = the wrap FULLY end-to-end (real apex → BN254 shrink → gnark verify). Launching.
