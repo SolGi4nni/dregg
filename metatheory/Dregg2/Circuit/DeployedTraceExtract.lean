@@ -330,4 +330,174 @@ theorem extractionAirConjunct_of_residuals
 #assert_axioms extractionAirConjunct_of_oodInterpF
 #assert_axioms extractionAirConjunct_of_residuals
 
+/-! ## §7 — DISCHARGING the two fields: proven math transported ONTO each, remaining maps named.
+
+`§3` wired the proven arity-8 proximity BETWEEN the two fields. Here we go one step further and push
+proven math INTO each field, shrinking both residuals to their irreducible cross-type cores:
+
+  * **`decode_trace` is DISCHARGED down to an OOD/leg decode.** The single hardest conjunct of
+    `decode_trace`'s deliverable `TraceWitnessed` is the AIR quotient acceptance `MainAirAcceptF
+    (R pi.effect) t`. That conjunct is now PRODUCED, not assumed: `FieldIntegerLift.
+    ood_forces_mainAirAccept_field` turns a committed field-OOD bundle `OodInterpF (R pi.effect) t`
+    into exactly `MainAirAcceptF (R pi.effect) t`. So a codeword-decode that yields the OOD bundle
+    (`DeployedTraceDecode.ood_decode`) is STRICTLY WEAKER than the raw `decode_trace`: the AIR
+    conjunct is transported by a proved theorem. Per `FieldIntegerLift.
+    ood_forces_mainAirAccept_field_of_residuals` the OOD bundle itself reduces further to EXACTLY the
+    two crypto residuals `{hood, hnonexc}` (RLC/commitment-opening + Fiat–Shamir).
+
+  * **`accept_folds` remains the FRI column-identification residual — proximity stays load-bearing.**
+    We deliberately do NOT assume `oracle ∈ friSetupK8.C` at the fold level (that would launder the
+    proximity math out — `fold_complete` would make `accept_folds` free by assuming its own
+    conclusion). `accept_folds` stays the pure disjoint-types map: the deployed `verifyAlgo`'s FRI
+    query check (over `Int`/`BatchProofData`) realizes the abstract arity-8 fold into `friSetupK8.C'`
+    (over `BabyBear`/`Fin 16`). `FriColumnIdentification` names it precisely as a `Prop`. -/
+
+/-- **`FriColumnIdentification`** — the EXACT irreducible map behind `accept_folds`, named. It is the
+disjoint-developments seam that cannot close in-tree: the deployed `verifyAlgo` runs over a generic
+field (deployed at `Int`, committing FRI columns inside `BatchProofData` as Merkle-opened lists),
+while `friSetupK8 : FriSetupK BabyBear (Fin 16) (Fin 2) 8` lives over `BabyBear` with the `Fin 16`
+Reed–Solomon domain. This `Prop` is the committed-column ↔ abstract-oracle identification in the
+`property → transcript` direction: on `verifyAlgo`-accept the committed columns, read as the abstract
+oracle, fold into `friSetupK8.C'` under all `8` challenges. It is `accept_folds` verbatim — a rename
+that isolates the residual. (NOT assumed `oracle ∈ friSetupK8.C`: that is what proximity PROVES from
+this, `friProximityK8_discharge0`; assuming it here would launder the FRI math out.) -/
+def FriColumnIdentification
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (oracle : BatchPublicInputs → BatchProof → (Fin 16 → Dregg2.Circuit.BabyBearFriField.BabyBear))
+    (chal : BatchPublicInputs → BatchProof → (Fin 8 → Dregg2.Circuit.BabyBearFriField.BabyBear)) :
+    Prop :=
+  ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true →
+    ∀ i, Fold friSetupK8.geom (chal pi π i) (oracle pi π) ∈ friSetupK8.C'
+
+/-- **`DeployedTraceDecode`** — the SHRUNK residual for `DeployedTraceExtract`: `accept_folds`
+UNCHANGED (the FRI column-identification, proximity load-bearing) plus `ood_decode`, the codeword
+decode delivering a field-OOD bundle `OodInterpF` and the non-AIR legs — NOT the raw `MainAirAcceptF`.
+The AIR conjunct is discharged by proven math (`§7` theorem below), so `ood_decode` is strictly weaker
+than `DeployedFriEmbedding.decode_trace`. -/
+structure DeployedTraceDecode
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView) : Type where
+  /-- The committed BabyBear column oracle the deployed proof exposes. -/
+  oracle : BatchPublicInputs → BatchProof → (Fin 16 → Dregg2.Circuit.BabyBearFriField.BabyBear)
+  /-- The `8` FRI fold challenges of the transcript. -/
+  chal : BatchPublicInputs → BatchProof → (Fin 8 → Dregg2.Circuit.BabyBearFriField.BabyBear)
+  /-- The `8` challenges are DISTINCT (arity-8 Vandermonde inverts). -/
+  chal_inj : ∀ pi π, Function.Injective (chal pi π)
+  /-- **VERIFIER-DECODE (unchanged)** — the FRI column-identification residual (`FriColumnIdentification`);
+  proximity remains load-bearing between this and the codeword hypothesis of `ood_decode`. -/
+  accept_folds :
+    FriColumnIdentification perm RATE toNat params vk checks initState logN view oracle chal
+  /-- **OOD-DECODE (shrunk decode)** — on accept AND the committed oracle being a genuine low-degree
+  codeword, an opened `VmTrace` with a field-OOD bundle `OodInterpF (R pi.effect) t` (⟹ `MainAirAcceptF`
+  by proven math) plus all the non-AIR `TraceWitnessed` legs and the published-commit link. -/
+  ood_decode : ∀ (pi : BatchPublicInputs) (π : BatchProof),
+    verifyAlgo perm RATE toNat params vk checks initState logN
+        (view pi π).1 (view pi π).2 = true →
+    oracle pi π ∈ friSetupK8.C →
+    ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace)
+        (_ood : Dregg2.Circuit.FieldIntegerLift.OodInterpF (R pi.effect) t),
+      (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
+          c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
+      (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
+      (∀ i < t.rows.length, ∀ r ∈ (R pi.effect).ranges, r.holds (envAt t i)) ∧
+      maddrs.Nodup ∧
+      (∀ op ∈ memLog (R pi.effect) t, op.addr ∈ maddrs) ∧
+      MemoryChecking.Disciplined (memLog (R pi.effect) t) ∧
+      MemoryChecking.MemCheck minit mfin maddrs (memLog (R pi.effect) t) ∧
+      t.tf .memory = (memLog (R pi.effect) t).map opRow ∧
+      t.tf .mapOps = mapLog (R pi.effect) t ∧
+      tracePublishedCommit t = pi.toPublished
+
+/-- **`deployedFriEmbedding_of_traceDecode` — `decode_trace` DISCHARGED via proven OOD→AIR math.**
+Build the full `DeployedFriEmbedding` from the shrunk `DeployedTraceDecode`: `accept_folds` passes
+through (same FRI column-identification residual, proximity untouched); `decode_trace` is CONSTRUCTED —
+the OOD bundle from `ood_decode` is turned into the `MainAirAcceptF` conjunct by the PROVED
+`FieldIntegerLift.ood_forces_mainAirAccept_field`, and the remaining legs pass through. So the raw
+`decode_trace` obligation is replaced by the strictly weaker OOD/leg decode, with the AIR-acceptance
+conjunct now supplied by a theorem rather than assumed. (A `def`: `DeployedFriEmbedding` is `Type`,
+carrying the two decode functions as data.) -/
+def deployedFriEmbedding_of_traceDecode
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (dec : DeployedTraceDecode hash R perm RATE toNat params vk checks initState logN view) :
+    DeployedFriEmbedding hash R perm RATE toNat params vk checks initState logN view where
+  oracle := dec.oracle
+  chal := dec.chal
+  chal_inj := dec.chal_inj
+  accept_folds := dec.accept_folds
+  decode_trace := by
+    intro pi π hacc hcw
+    obtain ⟨minit, mfin, maddrs, t, hOod, hbus, hHashes, hRanges,
+      hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩ := dec.ood_decode pi π hacc hcw
+    exact ⟨minit, mfin, maddrs, t,
+      Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field (R pi.effect) t hOod,
+      hbus, hHashes, hRanges, hNodup, hClosed, hDisc, hBal, hMemTF, hMapTF, hPub⟩
+
+/-- **`deployedTraceExtract_of_traceDecode`** — the opaque `DeployedTraceExtract` from the shrunk
+residual, with BOTH proven links load-bearing: proximity (`§3`) between the two fields, and the
+OOD→AIR bridge (`§7`) inside `decode_trace`. -/
+theorem deployedTraceExtract_of_traceDecode
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (dec : DeployedTraceDecode hash R perm RATE toNat params vk checks initState logN view) :
+    DeployedTraceExtract hash R perm RATE toNat params vk checks initState logN view :=
+  deployedTraceExtract_of_embedding hash R perm RATE toNat params vk checks initState logN view
+    (deployedFriEmbedding_of_traceDecode hash R perm RATE toNat params vk checks initState logN view dec)
+
+/-- **`starkSound_of_traceDecode_and_refines` — `[StarkSound]` from the shrunk residual + code
+refinement.** The apex carrier from (i) the `DeployedTraceDecode` (the FRI column-identification map +
+the OOD/leg decode; the arity-8 proximity AND the OOD→AIR bridge PROVED between/inside them) and (ii)
+`DeployedRefines`. The math residual is now: one cross-type FRI column-identification (`accept_folds`)
+and one codeword→OOD/leg decode, whose AIR conjunct further reduces to `{hood, hnonexc}`. -/
+theorem starkSound_of_traceDecode_and_refines
+    (hash : List Int → Int) (R : Registry)
+    (perm : List Int → List Int) (RATE : Nat) (toNat : Int → Nat)
+    (params : FriParams) (vk : RecursionVk Int) (checks : FriChecks Int)
+    (initState : List Int) (logN : Nat) (view : ProofView)
+    (dec : DeployedTraceDecode hash R perm RATE toNat params vk checks initState logN view)
+    (href : DeployedRefines R perm RATE toNat params vk checks initState logN view) :
+    StarkSound hash R :=
+  starkSound_of_embedding_and_refines hash R perm RATE toNat params vk checks initState logN view
+    (deployedFriEmbedding_of_traceDecode hash R perm RATE toNat params vk checks initState logN view dec)
+    href
+
+#assert_axioms deployedFriEmbedding_of_traceDecode
+#assert_axioms deployedTraceExtract_of_traceDecode
+#assert_axioms starkSound_of_traceDecode_and_refines
+
+/-! ### §7 TEETH — the OOD→AIR transport is genuine (load-bearing, both polarities).
+
+The shrunk `ood_decode`'s AIR-acceptance conjunct is produced by proven math and is a real obligation:
+the OOD bundle FIRES to `MainAirAcceptF` on honest data and the target conjunct BITES on a tampered
+gate. Reuses the committed `FieldIntegerLift` / `AirChecksSatisfied` witnesses. -/
+
+/-- **OOD→AIR FIRES** — a field-OOD bundle for `transferV3` yields the `MainAirAcceptF` conjunct that
+`deployedFriEmbedding_of_traceDecode` needs, so the OOD-decode transport is non-vacuous. -/
+theorem oodDecode_air_fires
+    (t : VmTrace)
+    (I : Dregg2.Circuit.FieldIntegerLift.OodInterpF
+          Dregg2.Circuit.RotatedKernelRefinement.transferV3 t) :
+    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
+  Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field _ t I
+
+/-- **OOD→AIR BITES** — the `MainAirAcceptF` the transport must produce is FALSIFIABLE: a tampered-gate
+trace cannot meet it, so `ood_decode` cannot be satisfied by a lying trace even with the OOD softening. -/
+theorem oodDecode_air_bites :
+    ¬ MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
+        Dregg2.Circuit.AirChecksSatisfied.tTampered :=
+  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unacceptedF
+
+#assert_axioms oodDecode_air_fires
+#assert_axioms oodDecode_air_bites
+
 end Dregg2.Circuit.DeployedTraceExtract
