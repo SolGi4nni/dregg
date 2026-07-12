@@ -175,6 +175,36 @@ impl<S: CreditStore> CreditLedger<S> {
         }
     }
 
+    /// Credit a PRE-COMPUTED number of runs from an observed payment — **idempotent
+    /// by [`PaymentReceived::reference`]**. This is the DUAL-ASSET entry: the caller
+    /// prices the payment with
+    /// [`runs_for_payment`](crate::pricing::runs_for_payment) (USDC flat, `$DREGG` at
+    /// the discounted oracle rate) and hands the resulting `runs` here, so a run
+    /// credited from either asset is uniform at the ledger. `runs == 0` (a sub-run
+    /// payment) marks the reference processed and returns
+    /// [`CreditOutcome::BelowOneRun`] — no double-processing on a later re-observe.
+    pub fn credit_runs(&self, payment: &PaymentReceived, runs: u64) -> CreditOutcome {
+        if self.store.is_processed(&payment.reference) {
+            return CreditOutcome::AlreadyCredited;
+        }
+        self.store.mark_processed(&payment.reference);
+        if runs == 0 {
+            return CreditOutcome::BelowOneRun {
+                amount: payment.amount,
+            };
+        }
+        let new_balance = self.store.balance(&payment.user) + runs;
+        self.store.set_balance(&payment.user, new_balance);
+        CreditOutcome::Credited {
+            runs,
+            // In the price-fed path the whole payment is consumed into `runs`; the
+            // sub-run remainder is captured by the flooring in `runs_for_payment`.
+            amount: payment.amount,
+            remainder: 0,
+            new_balance,
+        }
+    }
+
     /// Spend one run-credit. Fails with [`DebitError::InsufficientCredits`] if the
     /// user has none. Returns the balance remaining after the spend.
     pub fn debit(&self, user: &UserId) -> Result<u64, DebitError> {
@@ -202,9 +232,39 @@ mod tests {
         PaymentReceived {
             user: UserId::from(user),
             deposit_address: DepositAddress([0u8; 32]),
+            asset: crate::config::Asset::Dregg,
             amount,
             reference: PaymentRef(reference.to_string()),
         }
+    }
+
+    #[test]
+    fn credit_runs_is_idempotent_and_uniform() {
+        let ledger = CreditLedger::new(InMemoryStore::new(), 1);
+        let carol = UserId::from("carol");
+        // A USDC-priced payment worth 7 runs (computed upstream).
+        let out = ledger.credit_runs(&payment("carol", 700_000, "usdc-tx1"), 7);
+        assert!(matches!(
+            out,
+            CreditOutcome::Credited {
+                runs: 7,
+                new_balance: 7,
+                ..
+            }
+        ));
+        assert_eq!(ledger.balance(&carol), 7);
+        // Re-observe the same reference ⇒ no double-credit.
+        assert_eq!(
+            ledger.credit_runs(&payment("carol", 700_000, "usdc-tx1"), 7),
+            CreditOutcome::AlreadyCredited
+        );
+        assert_eq!(ledger.balance(&carol), 7);
+        // A sub-run payment marks processed and credits nothing.
+        assert_eq!(
+            ledger.credit_runs(&payment("carol", 1, "dust"), 0),
+            CreditOutcome::BelowOneRun { amount: 1 }
+        );
+        assert_eq!(ledger.balance(&carol), 7);
     }
 
     #[test]

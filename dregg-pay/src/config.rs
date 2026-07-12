@@ -90,6 +90,36 @@ impl Network {
     }
 }
 
+/// Which asset a payment was made in. The system is DUAL-ASSET:
+///
+/// * [`Asset::Usdc`] is the **FUEL** — a real-AI run costs real USD (inference on
+///   Bedrock etc.), drawn from the treasury's USDC balance. A USDC payment lands in
+///   the fuel tank.
+/// * [`Asset::Dregg`] is the **PILE** — `$DREGG` ACCUMULATES (an illiquid holding).
+///   A `$DREGG`-paid run still consumes inference (USD out of the fuel tank) but only
+///   adds `$DREGG` to the pile; the operator later converts the pile to fuel behind
+///   the signer (the deferred swap / OTC path).
+///
+/// Both credit runs; they differ only in how the run is priced (flat USDC vs a
+/// price-fed discounted `$DREGG` rate) and which treasury balance they fill.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Hash, PartialOrd, Ord)]
+pub enum Asset {
+    /// `$DREGG` — the accumulating pile. Priced via a Jupiter `$DREGG`/USDC quote at
+    /// a holder discount.
+    Dregg,
+    /// USDC — the fuel. Priced at the flat USD-per-run.
+    Usdc,
+}
+
+impl std::fmt::Display for Asset {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        f.write_str(match self {
+            Asset::Dregg => "$DREGG",
+            Asset::Usdc => "USDC",
+        })
+    }
+}
+
 /// The HD seed — secret custody material. Held in a [`Zeroizing`] buffer so it is
 /// wiped from memory on drop. In tests this is a throwaway constant; in production
 /// it is loaded from the operator's secret store (env / KMS / HSM). This seed is
@@ -135,6 +165,10 @@ pub struct PayConfig {
     /// The `$DREGG` SPL mint (32-byte pubkey). Operator config. In tests: a mock
     /// mint. In prod: the real mainnet mint from the environment.
     pub mint: [u8; 32],
+    /// The USDC SPL mint (32-byte pubkey) — the second accepted asset (the FUEL).
+    /// Operator config, same safety law as [`PayConfig::mint`]: never a compiled-in
+    /// mainnet value, supplied from the environment in prod and a mock in tests.
+    pub usdc_mint: [u8; 32],
     /// The treasury address swept deposits are sent to. Operator config.
     pub treasury: DepositAddress,
     /// The HD seed the per-user deposit keys are derived from. Secret custody
@@ -150,25 +184,98 @@ pub struct PayConfig {
     pub network: Network,
     /// The SPL Token program id — defaults to [`SPL_TOKEN_PROGRAM_ID`].
     pub spl_token_program: [u8; 32],
+
+    // ── dual-asset pricing (ember's economics; all config, no mainnet secret) ──
+    /// The USD price of one run (default `$0.10`). ~10× the ~`$0.01` Bedrock
+    /// inference cost — funds compute + the treasury while staying cheap. A USDC
+    /// payment is priced flat at this; a `$DREGG` payment is priced at this MINUS
+    /// [`PayConfig::dregg_discount_bps`], fed by the live `$DREGG`/USDC oracle.
+    pub price_usd_per_run: f64,
+    /// The holder discount on `$DREGG`-paid runs, in basis points (default `2000` =
+    /// 20%). A `$DREGG` run costs `price_usd_per_run × (1 − bps/10000)`-worth of
+    /// `$DREGG` (≈ `$0.08` at the defaults) — stable in real terms, rewards holders.
+    pub dregg_discount_bps: u32,
+    /// The OTC discount, in basis points (default `1000` = 10%). A user bringing
+    /// USDC buys `$DREGG` out of the pile at `oracle_price × (1 − bps/10000)` (10%
+    /// off), a friendly over-the-counter fill.
+    pub otc_discount_bps: u32,
+    /// USDC token decimals (default `6`, the canonical USDC decimals). Used to
+    /// convert atomic USDC ↔ USD.
+    pub usdc_decimals: u8,
+    /// `$DREGG` token decimals (default `6`). Used to convert atomic `$DREGG` ↔ whole
+    /// `$DREGG` for the oracle-fed USD valuation.
+    pub dregg_decimals: u8,
 }
+
+/// Default USD price of one run (`$0.10`) — ~10× the ~`$0.01` Bedrock cost.
+pub const DEFAULT_PRICE_USD_PER_RUN: f64 = 0.10;
+/// Default holder discount on `$DREGG`-paid runs (20%).
+pub const DEFAULT_DREGG_DISCOUNT_BPS: u32 = 2000;
+/// Default OTC discount (10%).
+pub const DEFAULT_OTC_DISCOUNT_BPS: u32 = 1000;
+/// Canonical USDC decimals.
+pub const DEFAULT_USDC_DECIMALS: u8 = 6;
+/// Default `$DREGG` decimals.
+pub const DEFAULT_DREGG_DECIMALS: u8 = 6;
 
 impl PayConfig {
     /// A devnet/mock config for driven tests — a THROWAWAY seed and a MOCK mint,
-    /// never a real mainnet value. `price_per_run` in atomic `$DREGG` units.
+    /// never a real mainnet value. `price_per_run` in atomic `$DREGG` units. The
+    /// dual-asset fields take ember's default economics (`$0.10`/run, 20% `$DREGG`
+    /// discount, 10% OTC) and a distinct MOCK `usdc_mint`; set
+    /// [`PayConfig::usdc_mint`] / the discount fields directly for other scenarios.
     pub fn devnet_mock(
         seed: impl Into<Vec<u8>>,
         mint: [u8; 32],
         treasury: DepositAddress,
         price_per_run: u64,
     ) -> Self {
+        // A mock USDC mint distinct from the $DREGG mock mint (so asset routing is
+        // observable in tests). NEVER a real mainnet value.
+        let mut usdc_mint = mint;
+        usdc_mint[0] ^= 0xFF;
         PayConfig {
             mint,
+            usdc_mint,
             treasury,
             seed: Seed::new(seed),
             price_per_run,
             rpc_endpoint: "https://api.devnet.solana.com".to_string(),
             network: Network::Devnet,
             spl_token_program: SPL_TOKEN_PROGRAM_ID,
+            price_usd_per_run: DEFAULT_PRICE_USD_PER_RUN,
+            dregg_discount_bps: DEFAULT_DREGG_DISCOUNT_BPS,
+            otc_discount_bps: DEFAULT_OTC_DISCOUNT_BPS,
+            usdc_decimals: DEFAULT_USDC_DECIMALS,
+            dregg_decimals: DEFAULT_DREGG_DECIMALS,
+        }
+    }
+
+    /// The SPL mint for a given asset.
+    pub fn mint_for(&self, asset: Asset) -> [u8; 32] {
+        match asset {
+            Asset::Dregg => self.mint,
+            Asset::Usdc => self.usdc_mint,
+        }
+    }
+
+    /// Which [`Asset`] a mint corresponds to, or `None` if it matches neither
+    /// configured mint (fail closed — an unknown mint is never credited).
+    pub fn asset_for_mint(&self, mint: &[u8; 32]) -> Option<Asset> {
+        if *mint == self.mint {
+            Some(Asset::Dregg)
+        } else if *mint == self.usdc_mint {
+            Some(Asset::Usdc)
+        } else {
+            None
+        }
+    }
+
+    /// The token decimals for an asset.
+    pub fn decimals_for(&self, asset: Asset) -> u8 {
+        match asset {
+            Asset::Dregg => self.dregg_decimals,
+            Asset::Usdc => self.usdc_decimals,
         }
     }
 
@@ -181,6 +288,7 @@ impl PayConfig {
     pub fn from_env() -> Result<Self, ConfigError> {
         let get = |k: &str| std::env::var(k).map_err(|_| ConfigError::MissingEnv(k.to_string()));
         let mint = parse_pubkey_base58(&get("DREGG_PAY_MINT")?)?;
+        let usdc_mint = parse_pubkey_base58(&get("DREGG_PAY_USDC_MINT")?)?;
         let treasury = DepositAddress::from_base58(&get("DREGG_PAY_TREASURY")?)?;
         let seed_raw = get("DREGG_PAY_SEED")?;
         let seed_bytes = parse_seed(&seed_raw)?;
@@ -193,14 +301,52 @@ impl PayConfig {
             Ok("mainnet") => Network::Mainnet,
             _ => Network::Devnet,
         };
+        // Dual-asset economics: env-overridable, ember's defaults otherwise. These
+        // are economic parameters, not mainnet secrets, so a default is safe.
+        let parse_f64 = |k: &str, d: f64| -> Result<f64, ConfigError> {
+            match std::env::var(k) {
+                Ok(v) => v
+                    .parse::<f64>()
+                    .map_err(|_| ConfigError::BadValue(k.to_string())),
+                Err(_) => Ok(d),
+            }
+        };
+        let parse_u32 = |k: &str, d: u32| -> Result<u32, ConfigError> {
+            match std::env::var(k) {
+                Ok(v) => v
+                    .parse::<u32>()
+                    .map_err(|_| ConfigError::BadValue(k.to_string())),
+                Err(_) => Ok(d),
+            }
+        };
+        let parse_u8 = |k: &str, d: u8| -> Result<u8, ConfigError> {
+            match std::env::var(k) {
+                Ok(v) => v
+                    .parse::<u8>()
+                    .map_err(|_| ConfigError::BadValue(k.to_string())),
+                Err(_) => Ok(d),
+            }
+        };
+        let price_usd_per_run = parse_f64("DREGG_PAY_PRICE_USD", DEFAULT_PRICE_USD_PER_RUN)?;
+        let dregg_discount_bps =
+            parse_u32("DREGG_PAY_DREGG_DISCOUNT_BPS", DEFAULT_DREGG_DISCOUNT_BPS)?;
+        let otc_discount_bps = parse_u32("DREGG_PAY_OTC_DISCOUNT_BPS", DEFAULT_OTC_DISCOUNT_BPS)?;
+        let usdc_decimals = parse_u8("DREGG_PAY_USDC_DECIMALS", DEFAULT_USDC_DECIMALS)?;
+        let dregg_decimals = parse_u8("DREGG_PAY_DREGG_DECIMALS", DEFAULT_DREGG_DECIMALS)?;
         Ok(PayConfig {
             mint,
+            usdc_mint,
             treasury,
             seed: Seed::new(seed_bytes),
             price_per_run,
             rpc_endpoint,
             network,
             spl_token_program: SPL_TOKEN_PROGRAM_ID,
+            price_usd_per_run,
+            dregg_discount_bps,
+            otc_discount_bps,
+            usdc_decimals,
+            dregg_decimals,
         })
     }
 }
@@ -209,9 +355,13 @@ impl std::fmt::Debug for PayConfig {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         f.debug_struct("PayConfig")
             .field("mint", &bs58::encode(self.mint).into_string())
+            .field("usdc_mint", &bs58::encode(self.usdc_mint).into_string())
             .field("treasury", &self.treasury)
             .field("seed", &self.seed)
             .field("price_per_run", &self.price_per_run)
+            .field("price_usd_per_run", &self.price_usd_per_run)
+            .field("dregg_discount_bps", &self.dregg_discount_bps)
+            .field("otc_discount_bps", &self.otc_discount_bps)
             .field("rpc_endpoint", &self.rpc_endpoint)
             .field("network", &self.network)
             .finish()

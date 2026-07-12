@@ -26,7 +26,7 @@ use dregg_bridge::solana_holdings::{
     prove_holding_consensus,
 };
 
-use crate::config::{DepositAddress, PayConfig, UserId};
+use crate::config::{Asset, DepositAddress, PayConfig, UserId};
 
 /// A unique reference for an observed payment — the idempotency key the
 /// [`CreditLedger`](crate::ledger::CreditLedger) dedups on. For the real watcher
@@ -41,14 +41,18 @@ impl std::fmt::Display for PaymentRef {
     }
 }
 
-/// An inbound `$DREGG` payment attributed to a user.
+/// An inbound payment attributed to a user, in one of the two accepted assets.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct PaymentReceived {
     /// The user the payment is attributed to (owner of the deposit address).
     pub user: UserId,
     /// The deposit address the payment landed on.
     pub deposit_address: DepositAddress,
-    /// The amount received, in atomic `$DREGG` units.
+    /// Which asset the payment was in ([`Asset::Dregg`] the pile, [`Asset::Usdc`] the
+    /// fuel) — determines both how the run is priced and which treasury balance it
+    /// fills.
+    pub asset: Asset,
+    /// The amount received, in atomic units of [`PaymentReceived::asset`].
     pub amount: u64,
     /// The idempotency key — crediting this reference twice never double-credits.
     pub reference: PaymentRef,
@@ -143,14 +147,24 @@ impl MockChain {
 /// balance per address, so re-polling without a new payment returns nothing.
 pub struct MockWatcher {
     chain: MockChain,
+    asset: Asset,
     last_seen: Mutex<HashMap<[u8; 32], u64>>,
 }
 
 impl MockWatcher {
-    /// A watcher over the given chain.
+    /// A watcher over the given chain, tagging observed payments as [`Asset::Dregg`]
+    /// (the default single-asset path). Use [`MockWatcher::for_asset`] to watch the
+    /// USDC deposit stream.
     pub fn new(chain: MockChain) -> Self {
+        Self::for_asset(chain, Asset::Dregg)
+    }
+
+    /// A watcher over the given chain tagging observed payments as `asset` — run one
+    /// per accepted mint (one for `$DREGG`, one for USDC) to cover both assets.
+    pub fn for_asset(chain: MockChain, asset: Asset) -> Self {
         MockWatcher {
             chain,
+            asset,
             last_seen: Mutex::new(HashMap::new()),
         }
     }
@@ -158,6 +172,11 @@ impl MockWatcher {
     /// The chain this watcher observes.
     pub fn chain(&self) -> &MockChain {
         &self.chain
+    }
+
+    /// The asset this watcher tags payments with.
+    pub fn asset(&self) -> Asset {
+        self.asset
     }
 }
 
@@ -181,6 +200,7 @@ impl Watcher for MockWatcher {
         Ok(vec![PaymentReceived {
             user: user.clone(),
             deposit_address: *address,
+            asset: self.asset,
             amount: delta,
             reference,
         }])
@@ -224,16 +244,26 @@ pub trait AccountFetcher {
 pub struct SolanaWatcher<F: AccountFetcher> {
     fetcher: F,
     mint: [u8; 32],
+    asset: Asset,
     spl_token_program: [u8; 32],
     last_seen: Mutex<HashMap<[u8; 32], u64>>,
 }
 
 impl<F: AccountFetcher> SolanaWatcher<F> {
-    /// Build from a [`PayConfig`] + an RPC fetcher.
+    /// Build from a [`PayConfig`] + an RPC fetcher, watching the `$DREGG` mint (the
+    /// default). Use [`SolanaWatcher::for_asset`] to watch USDC (its mint + tag).
     pub fn new(config: &PayConfig, fetcher: F) -> Self {
+        Self::for_asset(config, fetcher, Asset::Dregg)
+    }
+
+    /// Build a watcher for a specific `asset` — it watches that asset's mint
+    /// ([`PayConfig::mint_for`]) and tags observed payments with it. Run one per
+    /// accepted asset for the dual-asset stream.
+    pub fn for_asset(config: &PayConfig, fetcher: F, asset: Asset) -> Self {
         SolanaWatcher {
             fetcher,
-            mint: config.mint,
+            mint: config.mint_for(asset),
+            asset,
             spl_token_program: config.spl_token_program,
             last_seen: Mutex::new(HashMap::new()),
         }
@@ -301,6 +331,7 @@ impl<F: AccountFetcher> Watcher for SolanaWatcher<F> {
         Ok(vec![PaymentReceived {
             user: user.clone(),
             deposit_address: *address,
+            asset: self.asset,
             amount: delta,
             reference,
         }])
