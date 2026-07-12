@@ -239,3 +239,16 @@ shrink is now ~1.6min BEFORE any GPU. gnark verify 1.0M→1.5M R1CS (trivial, <<
 verified a real apex in the sweep = validated end-to-end. (blowup 4 panicked — config edge, deferred.)
 So the wrap prover: apex fold ~4-6min + shrink ~1.6min. Next perf tiers: wgpu BabyBear GPU (NTT PoC running,
 measuring %-peak-bandwidth for ember's max-perf question) + AIR-trace reduction (re-issue). Committed.
+
+## ⚑ APPLE-SILICON PROVER ARCHITECTURE (07-12, ember's call): ALL-METAL backend, not wgpu+Metal hybrid
+Decision: ONE backend per platform behind the Plonky3 trait seams (TwoAdicSubgroupDft + hasher) — NO cross-runtime
+interop. Apple Silicon = an ALL-METAL backend (every kernel NTT+Poseidon2+Merkle+eval in MSL, one Metal runtime,
+native ulong everywhere — simpler + native-perf across the board). AMD hbox/NVIDIA = wgpu(Vulkan)/Futhark(HIP/CUDA).
+wgpu's role was (1) portability proof + (2) baseline to beat; Apple PRODUCTION goes all-Metal (drops the wgpu-for-
+Poseidon2 hedge). M4 available for testing → parameterize tuning knobs (tile/threadgroup/radix/occupancy), auto-tune
+or per-uarch table → "well-optimized across the Apple Silicon family since M2" (M2/M3/M4 differ in cores/bandwidth/
+SIMD). Payoff = fully-GPU-resident BabyBear prover on any Apple Silicon Mac = CLIENT-SIDE proving (dregg's soul).
+RUNNING: native Metal NTT lane (kernel #1 of the all-Metal backend — native ulong + threadgroup tiling + SIMD-group,
+targeting 50-70% bandwidth vs wgpu's ~20%); gnark-verify-real-shrink (waiting in the build-lock line — LEAVE IT).
+NEXT (autonomy, ember pre-approved): after the NTT number → full all-Metal backend (Poseidon2+Merkle) + auto-tune
+knobs from the start (M4-measured not assumed). Is the M4 ssh-reachable? (ember Q pending — run the probe on both).
