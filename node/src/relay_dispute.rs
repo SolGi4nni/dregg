@@ -52,13 +52,17 @@
 //!     plan rather than submitting a signed turn. Promotion = give `RelayState`
 //!     the operator's clerk + the real relay `CellId`, then call
 //!     [`build_slash_turn`] and submit through the operator's turn pipeline.
-//!   * **Intake still on the deprecated relay-service route.** The live
-//!     `POST /relay/dispute` handler hangs off [`crate::relay_service`], the
-//!     legacy in-process HTTP surface. The custody-sound intake belongs on the
-//!     cell-program relay (the
-//!     [`dregg_storage_templates::relay_operator`] executor-enforced slash
-//!     transition), NOT this deprecated route; promotion moves the intake there
-//!     so the slash rides the executor's turn pipeline, not a mirror mutation.
+//!   * **Cell-program intake now exists; this route is mirror-only.** The
+//!     dispute intake on the cell-program path is
+//!     [`crate::relay_slash_intake::intake_dispute`]: on a conviction it
+//!     produces a signed Turn invoking the relay-operator CELL's `slash`
+//!     method (the [`dregg_storage_templates::relay_operator`]
+//!     executor-enforced transition) with the conserving payout composed in,
+//!     and it is tested end-to-end against an executor with the cell program
+//!     installed. The legacy `POST /relay/dispute` below remains the
+//!     deprecated in-process view (it mutates the MIRROR only); wiring the
+//!     intake turn into the node's live turn-submission pipeline is the
+//!     remaining seam.
 //!   * **The refund witness.** The in-process service has no per-message refund
 //!     record queryable by `content_hash`, so [`handle_dispute`] passes
 //!     `refund_recorded = false` to
@@ -498,13 +502,13 @@ pub async fn handle_dispute(
 // Field codec (big-endian trailing-8, matching relay_service + the templates)
 // =============================================================================
 
-fn u64_to_field(value: u64) -> [u8; 32] {
+pub(crate) fn u64_to_field(value: u64) -> [u8; 32] {
     let mut f = [0u8; 32];
     f[24..32].copy_from_slice(&value.to_be_bytes());
     f
 }
 
-fn u64_from_field(field: [u8; 32]) -> u64 {
+pub(crate) fn u64_from_field(field: [u8; 32]) -> u64 {
     let mut b = [0u8; 8];
     b.copy_from_slice(&field[24..32]);
     u64::from_be_bytes(b)

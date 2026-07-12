@@ -66,6 +66,7 @@ pub mod pg_mirror;
 pub mod prove_pool;
 pub mod relay_dispute;
 pub mod relay_service;
+pub mod relay_slash_intake;
 pub mod routing_table;
 pub mod self_cell;
 #[cfg(feature = "deos-host")]
