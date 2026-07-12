@@ -901,6 +901,14 @@ impl WitnessedPredicateVerifier for PedersenBulletproofVerifier {
 ///   BlindedSet acceptable.
 /// - `PedersenEquality` → [`PedersenBulletproofVerifier`] (real Bulletproof
 ///   opening proof over `dregg_cell_crypto::value_commitment`; needs no host context).
+/// - `Custom { tee_predicate_vk }` / `Custom { oracle_predicate_vk }` → the
+///   cell-side attestation-fact verifiers
+///   (`TeeWitnessedPredicateVerifier::new` / `OracleWitnessedPredicateVerifier::new`),
+///   so an attestation fact is executor-DISPATCHED rather than dying as
+///   `KindNotRegistered`. Both are FAIL-CLOSED: they reject every proof until
+///   the host injects the real vendor / zkTLS crypto (`with_verifier`) and
+///   re-registers under the same vk — the hardware-root cert-chain / zkTLS
+///   trust-anchor crypto stays host-side, never in cell/turn.
 ///
 /// Kinds that need host-trusted context remain fail-closed here and are wired by
 /// [`registry_with_real_verifiers_full`]: `Dfa` (needs a [`ProgramRegistry`]),
@@ -916,9 +924,11 @@ impl WitnessedPredicateVerifier for PedersenBulletproofVerifier {
 /// (else a prover could lower the threshold); [`registry_with_real_verifiers_full`]
 /// installs it given a [`BridgePredicatePolicyAuthority`].
 pub fn registry_with_real_verifiers() -> WitnessedPredicateRegistry {
+    use dregg_cell::oracle_attest::{OracleWitnessedPredicateVerifier, oracle_predicate_vk};
     use dregg_cell::predicate::{
         CredentialSetMembershipVerifier, SortedNeighborNonMembershipVerifier,
     };
+    use dregg_cell::tee_attest::{TeeWitnessedPredicateVerifier, tee_predicate_vk};
 
     let adjacency: Arc<dyn NeighborAdjacencyVerifier> = Arc::new(CircuitNeighborAdjacencyVerifier);
 
@@ -932,6 +942,23 @@ pub fn registry_with_real_verifiers() -> WitnessedPredicateRegistry {
     )));
     // PedersenEquality needs no host context — wire its real verifier here too.
     r.register_builtin(Arc::new(PedersenBulletproofVerifier));
+    // Attestation facts (`Custom { vk_hash }`): install the cell-side
+    // FAIL-CLOSED TEE + zkTLS-oracle verifiers so the executor DISPATCHES a
+    // `Custom { tee/oracle vk }` fact to them (instead of rejecting it as
+    // `KindNotRegistered` before the fact's own verify logic can run). Both
+    // reject every proof until a host injects the real crypto
+    // (`TeeWitnessedPredicateVerifier::with_verifier` /
+    // `OracleWitnessedPredicateVerifier::with_verifier`, re-registered under
+    // the same vk) — the vendor cert-chain / zkTLS trust-anchor crypto stays
+    // host-side, never in cell/turn.
+    r.register_custom(
+        tee_predicate_vk(),
+        Arc::new(TeeWitnessedPredicateVerifier::new()),
+    );
+    r.register_custom(
+        oracle_predicate_vk(),
+        Arc::new(OracleWitnessedPredicateVerifier::new()),
+    );
     r
 }
 
@@ -1768,6 +1795,41 @@ mod tests {
     /// The production registry under test.
     fn reg() -> WitnessedPredicateRegistry {
         registry_with_real_verifiers()
+    }
+
+    /// The executor-default registry DISPATCHES attestation facts: a
+    /// `Custom { tee/oracle vk }` predicate resolves to the cell-side verifier
+    /// (not `KindNotRegistered`), and — with no host crypto injected — that
+    /// verifier REJECTS every proof (fail-closed, never fail-open).
+    #[test]
+    fn attestation_fact_vks_resolve_and_fail_closed() {
+        use dregg_cell::oracle_attest::oracle_predicate_vk;
+        use dregg_cell::tee_attest::tee_predicate_vk;
+
+        let reg = reg();
+
+        // The two attestation vks are distinct custom keys.
+        assert_ne!(tee_predicate_vk(), oracle_predicate_vk());
+
+        for (vk, name) in [
+            (tee_predicate_vk(), "tee-attestation"),
+            (oracle_predicate_vk(), "oracle-webfact"),
+        ] {
+            let v = reg
+                .get(WitnessedPredicateKind::Custom { vk_hash: vk })
+                .unwrap_or_else(|| {
+                    panic!("{name} vk did not resolve in registry_with_real_verifiers")
+                });
+            assert_eq!(v.name(), name);
+            // Fail-closed until a host injects the real crypto: any proof rejects.
+            let err = v
+                .verify(&[0u8; 32], &PredicateInput::Slot(&[0u8; 32]), &[1u8; 8])
+                .unwrap_err();
+            assert!(
+                matches!(err, WitnessedPredicateError::Rejected { .. }),
+                "{name} must reject (fail-closed) with no injected crypto, got {err:?}"
+            );
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────
