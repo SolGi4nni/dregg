@@ -536,17 +536,22 @@ mod tests {
         ));
     }
 
-    /// End-to-end test: create a NoteSpendingWitness from a real Poseidon2 tree
-    /// proof and generate a STARK proof that verifies.
+    /// End-to-end test: real note -> real tree -> real membership proof -> real
+    /// STARK verification.
     ///
-    /// This is THE critical test: real note -> real tree -> real proof -> real STARK verification.
+    /// stark-kill (f04b2dd1e) deleted the legacy hand `NoteSpendingAir` prover
+    /// (`prove_note_spend`/`verify_note_spend`, the hash_4_to_1-compatible spend
+    /// STARK) this regression rode. The tree-compatibility tooth survives on the
+    /// Plonky3 Merkle membership prover, which uses the SAME 4-ary
+    /// position-ordered Poseidon2 node convention as this persistent tree; the
+    /// nullifier/commitment binding lives on the DSL descriptor path
+    /// (`dregg_circuit::dsl::note_spending`, hash_fact tree convention — NOT
+    /// this tree's), so it is not asserted here.
     #[test]
-    #[allow(deprecated)]
-    fn end_to_end_note_spending_stark_from_real_tree() {
-        // The persistent tree uses hash_4_to_1 for internal nodes, so this
-        // real-tree regression belongs on the compatible legacy spend AIR.
-        use dregg_circuit::note_spending_air::{
-            NoteSpendingWitness, prove_note_spend, verify_note_spend,
+    fn end_to_end_membership_stark_from_real_tree() {
+        use dregg_circuit::note_spending_air::NoteSpendingWitness;
+        use dregg_circuit::plonky3_prover::{
+            generate_sound_merkle_trace, prove_plonky3, verify_plonky3,
         };
         use dregg_circuit::poseidon2::hash_many;
 
@@ -589,7 +594,8 @@ mod tests {
             tree_root, commitment, &proof
         ));
 
-        // Step 5: Build NoteSpendingWitness from the real proof
+        // Step 5: The spend-witness root recomputation still speaks this tree's
+        // hash_4_to_1 convention — pin that compatibility.
         let witness = NoteSpendingWitness::from_real_proof(
             owner,
             value,
@@ -597,58 +603,38 @@ mod tests {
             creation_nonce,
             randomness,
             spending_key,
-            proof.siblings,
-            proof.positions,
+            proof.siblings.clone(),
+            proof.positions.clone(),
         );
-
-        // Step 6: Verify the witness computes the same root as our tree
         assert_eq!(
             witness.merkle_root(),
             tree_root,
             "Witness merkle_root must match tree root"
         );
 
-        // Step 7: Generate a STARK proof
-        let nullifier = witness.nullifier();
-        let stark_proof = prove_note_spend(&witness);
-
-        // Step 8: Verify the STARK proof (now includes value + asset_type)
-        let result = verify_note_spend(
-            nullifier,
-            tree_root,
-            witness.value,
-            witness.asset_type,
-            &stark_proof,
-        );
-        assert!(
-            result.is_ok(),
-            "End-to-end STARK proof verification failed: {:?}",
-            result.err()
+        // Step 6: Build the sound Merkle trace from the REAL tree proof. Its
+        // public inputs must bind exactly this tree's leaf and root — this is
+        // the convention-compatibility tooth (position-ordered 4-ary Poseidon2).
+        let (trace, public_inputs) =
+            generate_sound_merkle_trace(commitment, &proof.siblings, &proof.positions);
+        assert_eq!(
+            public_inputs,
+            vec![commitment, tree_root],
+            "sound Merkle trace must bind the real tree's leaf and root"
         );
 
-        // Step 9: Verify that wrong nullifier/root fails
-        let wrong_nullifier = BabyBear::new(0xBAD);
+        // Step 7: Generate and verify a REAL STARK proof of membership.
+        let stark_proof = prove_plonky3(&trace, &public_inputs);
+        verify_plonky3(&stark_proof, &public_inputs)
+            .expect("end-to-end STARK proof verification failed");
+
+        // Step 8: Wrong leaf / wrong root must be rejected.
         assert!(
-            verify_note_spend(
-                wrong_nullifier,
-                tree_root,
-                witness.value,
-                witness.asset_type,
-                &stark_proof
-            )
-            .is_err(),
-            "Should reject wrong nullifier"
+            verify_plonky3(&stark_proof, &[BabyBear::new(0xBAD), tree_root]).is_err(),
+            "Should reject wrong leaf"
         );
-        let wrong_root = BabyBear::new(0xBAD);
         assert!(
-            verify_note_spend(
-                nullifier,
-                wrong_root,
-                witness.value,
-                witness.asset_type,
-                &stark_proof
-            )
-            .is_err(),
+            verify_plonky3(&stark_proof, &[commitment, BabyBear::new(0xBAD)]).is_err(),
             "Should reject wrong root"
         );
     }
