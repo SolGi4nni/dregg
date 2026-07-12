@@ -7678,3 +7678,17 @@ A REAL ir2_leaf_wrap APEX IS PRODUCIBLE (~5-6 min). This unblocks BOTH marquee t
   Capstone lane (apex-verifier AIR under DreggOuterConfig) redirected to the real ladder.
 - THREAD 2 (rung-3 fold): the fold-P0 pilot (VERIFIED-LIGHTCLIENT-FOLD-PILOT.md — fold the verified EVM-MPT light
   client as a recursion-foldable CellProgram custom leaf) was blocked on the same pipeline. Now buildable.
+
+## ⚑⚑⚑ WRAP CAPSTONE + rung-3 fold-P0 COMMITTED (2026-07-12 ~9am)
+Both marquee threads landed. THREAD 1 (wrap end-to-end, Rust): apex_shrink.rs + the capstone tooth
+apex_shrink_bn254_tooth.rs — fold a REAL 2-turn chain → ir2_leaf_wrap apex → prove the apex-verifier AIR over it
+under DreggOuterConfig (BN254-native) → SHRINK PROOF → verify. gnark VerifyFriNative can then verify it (sides
+already fully KAT-agree). The --ignored real-apex run is executing (headline pending; tooth committed + reproducible).
+THREAD 2 (rung-3 fold): mpt_holding_leaf.rs — the EVM-MPT holding CellProgram (Route A, zero new circuit code),
+LEAF teeth GREEN (5 structural + 4 leaf-fold poles, forged/zero/tampered refused at distinct constraints).
+CONTEXT: a sibling terminal's custom_proof_commitment 4→8-felt flag-day (74→78 PI) is mid-flight — custom-leg
+CHAIN tests fail-closed (78 vs 74) until its descriptor regen lands; my fixtures track the constants so they run
+unchanged post-cutover. apex_shrink is independent of that flag-day. NEXT: confirm the real-apex-shrink headline;
+gnark end-to-end (export shrink FRI data → VerifyFriNative) is the final wrap increment; fold-P0 chain poles run
+once the sibling flag-day cuts over. LESSON: circuit-prove has frequent overlapping flag-days — my "quiet" reads
+kept being wrong; commit-and-move-forward on the shared WIP branch (per ember) rather than agonize over tangling.
