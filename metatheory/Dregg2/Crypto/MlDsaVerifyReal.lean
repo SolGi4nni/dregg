@@ -196,8 +196,10 @@ brick: if the assembly (μ framing, centered `Decompose`, `w1Encode` width, `2^d
 it would NOT close on the real signature. -/
 
 /-- Sanity: the pinned bytes are exactly the ML-DSA-65 lengths. -/
+-- `.size` of the literal byte arrays reduces in the kernel → `decide` closes it with NO
+-- `Lean.ofReduceBool`/`trustCompiler` (`maxRecDepth` clears the array-literal traversal).
 theorem gen_lengths : genPk.size = 1952 ∧ genSig.size = 3309 ∧ genSigTampered.size = 3309 := by
-  native_decide
+  set_option maxRecDepth 20000 in decide
 
 /-- **THE KEYSTONE**: Lean ACCEPTS the genuine `fips204` crate signature — `verifyCore` recomputes `c̃'` from
 `Â·z − c·t1·2^d` under the full FIPS 204 assembly and it matches the crate's `c̃`, with `‖z‖∞ < γ₁−β`. The

@@ -185,11 +185,15 @@ def sampleA : Poly := setC (setC (setC zeroPoly 0 1) 1 2) 255 7
 /-- A second concrete test poly with high-degree terms: `b = 4 + 5·X¹⁰⁰ + 6·X²⁰⁰`. -/
 def sampleB : Poly := setC (setC (setC zeroPoly 0 4) 100 5) 200 6
 
-/-- **Reduction sanity**: `(q−1)·(q−1) ≡ 1 (mod q)`. -/
-theorem mul_mod_q_sanity : mulModQ (q - 1) (q - 1) = 1 := by native_decide
+/-- **Reduction sanity**: `(q−1)·(q−1) ≡ 1 (mod q)`. Kernel `decide` (no loop; pure `Nat` `*`/`%`),
+so this carries NO `Lean.ofReduceBool`/`trustCompiler` — axiom set ⊆ {propext, Classical.choice, Quot.sound}. -/
+theorem mul_mod_q_sanity : mulModQ (q - 1) (q - 1) = 1 := by decide
 
 /-- **`ζ` is a primitive 512th root**: `ζ²⁵⁶ ≡ −1 (mod q)`. The property that makes the negacyclic NTT
-well-defined; if `ζ = 1753` or `q` were wrong this fails. -/
+well-defined; if `ζ = 1753` or `q` were wrong this fails.
+`native_decide` (genuine limit): `powModQ` is a `for _ in [0:32]` loop; `Std.Range.forIn` uses well-founded
+recursion that does NOT reduce under the kernel, so `decide` gets stuck. (The field-cast form `ζ^256 = -1` in
+`ZMod q` — `NttFaithful.zeta_root_witness` — IS kernel-`decide`-clean.) -/
 theorem zeta_primitive_512th_root : powModQ zeta 256 = q - 1 := by native_decide
 
 /-- **Round-trip**: `intt (ntt a) = a` on a concrete nonzero poly. The inverse transform is a true inverse

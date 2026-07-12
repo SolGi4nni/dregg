@@ -312,10 +312,13 @@ theorem omega_orthogonality (hz : (zeta : ZMod q)^256 = -1) (d : Nat) :
     rw [if_neg hd]; exact powSum_zero ((ζ^2)^d) 256 hN hw
 
 /-- **Non-vacuity of the orthogonality hypothesis.** `ζ = 1753` genuinely IS a primitive 512th root mod `q`
-(`ζ²⁵⁶ = −1`). This is a CLOSED computation (not a `∀`-body): it carries `native_decide`'s `ofReduceBool`
-residual — the SAME trusted base `MlDsaRing.zeta_primitive_512th_root` already declares — and is the pin that
-makes `omega_orthogonality` non-vacuous at the deployed constant. -/
-theorem zeta_root_witness : (zeta : ZMod q)^256 = -1 := by native_decide
+(`ζ²⁵⁶ = −1`). This is a CLOSED computation (not a `∀`-body). Here `^` in `ZMod q` reduces as `Monoid.npow`
+(256 structural iterations of `Fin.mul`), so kernel `decide` closes it — this witness carries NO
+`Lean.ofReduceBool`/`trustCompiler`, axiom set ⊆ {propext, Classical.choice, Quot.sound}. (`maxRecDepth`
+must clear the 256-deep `npow` recursion.) It is the pin that makes `omega_orthogonality` non-vacuous at the
+deployed constant. -/
+theorem zeta_root_witness : (zeta : ZMod q)^256 = -1 := by
+  set_option maxRecDepth 4000 in decide
 
 /-! ## PART 1e — RUNG 2 (the WALL): the butterfly network realizes evaluation-at-the-roots.
 

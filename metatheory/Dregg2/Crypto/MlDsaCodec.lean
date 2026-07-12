@@ -294,8 +294,11 @@ def realPkDecoded : (List UInt8 × Array Poly) := pkDecode realPk.toList
 /-- Decoded signature of the real crate bytes. -/
 def realSigDecoded : (List UInt8 × Array Poly × Array Poly) := sigDecode realSig.toList
 
-/-- Sanity: the pinned bytes are exactly the ML-DSA-65 lengths. -/
-theorem real_lengths : realPk.size = pkLen ∧ realSig.size = sigLen := by native_decide
+/-- Sanity: the pinned bytes are exactly the ML-DSA-65 lengths.
+`.size` of the literal byte arrays reduces in the kernel, so `decide` closes it with NO
+`Lean.ofReduceBool`/`trustCompiler` (`maxRecDepth` clears the array-literal traversal). -/
+theorem real_lengths : realPk.size = pkLen ∧ realSig.size = sigLen := by
+  set_option maxRecDepth 20000 in decide
 
 /-- **PK round-trip**: `pkEncode (pkDecode realPk) = realPk` — exact, 1952 → decode → encode → 1952, 0 diff.
 The load-bearing gate for the public-key codec on REAL crate bytes. -/

@@ -123,19 +123,21 @@ theorem compress1_recover_zmod (mbit w : ZMod qLit) (hmbit : mbit = 0 ∨ mbit =
   rw [hq] at ht
   linarith [ht]
 
-/-! ### The threshold is EXACT (tightness ⇒ the `< 832` bound is load-bearing, not vacuous). -/
+/-! ### The threshold is EXACT (tightness ⇒ the `< 832` bound is load-bearing, not vacuous).
+`compress` is pure `Nat` `*`/`/`/`%` (no loop), so these close with kernel `decide` — NO
+`Lean.ofReduceBool`/`trustCompiler` in their axiom sets. -/
 
 /-- `m_bit = 1, e = 0`: a set bit at the ideal center decodes to `1`. -/
-example : MlKemCodec.compress 1 1665 = 1 := by native_decide
+example : MlKemCodec.compress 1 1665 = 1 := by decide
 /-- `m_bit = 0, e = 500`: a cleared bit within the window decodes to `0`. -/
-example : MlKemCodec.compress 1 500 = 0 := by native_decide
+example : MlKemCodec.compress 1 500 = 0 := by decide
 /-- `m_bit = 1, e = 831` (the extreme in-window positive error): still decodes to `1`. -/
-example : MlKemCodec.compress 1 (1665 + 831) = 1 := by native_decide
+example : MlKemCodec.compress 1 (1665 + 831) = 1 := by decide
 
 /-- **Tightness**: at `m_bit = 1, e = 832` (`r = 2497`) — just OUTSIDE the window — `Compress₁` decodes to `0`,
 NOT `1`. So the `< 832` threshold is exact: widening it to `⌈q/4⌉ = 833` would make `compress1_recover` FALSE.
 The bound is load-bearing (true within, false at the boundary). -/
-theorem compress1_tight : MlKemCodec.compress 1 (1665 + 832) = 0 := by native_decide
+theorem compress1_tight : MlKemCodec.compress 1 (1665 + 832) = 0 := by decide
 
 /-! ## PART 2 — the algebraic encrypt/decrypt cancellation over an abstract `[CommRing R]`.
 

@@ -554,7 +554,9 @@ theorem witDkPke_hkey :
 `v − Σ_{i<3} toRqKem sampleA · toRqKem uᵢ`, a genuine non-degenerate `R_q` product (`toRqKem sampleA ≠ 0`), not
 `v − 0`. The honest-key and size hypotheses discharge by concrete codec computation (`witDkPke_hkey`; the
 `ctDecode realCt` polys are size 256). -/
-theorem sampleA_size : sampleA.size = 256 := by native_decide
+-- `sampleA` is `setC`-built over `Array.replicate 256 0` (size-preserving); `.size` reduces in the
+-- kernel, so `decide` closes it with NO `Lean.ofReduceBool`/`trustCompiler`.
+theorem sampleA_size : sampleA.size = 256 := by decide
 
 theorem realCt_u_size :
     ∀ i, i < paramK → ((ctDecode (Dregg2.Crypto.MlKemCodec.realCt).toList).1[i]!).size = 256 := by
