@@ -118,6 +118,13 @@
       <span class="detail-label">Action</span>
       <span class="detail-value" id="action">--</span>
     </div>
+    <!-- The FULL 32-byte federation domain the turn was signed under, all 64
+         lowercase hex chars (dregg-action-sig-v2 binds it into every action
+         signature; a truncated display could hide a hostile domain). -->
+    <div class="detail-row" id="federationRow" style="display:none;">
+      <span class="detail-label">Federation domain</span>
+      <span class="detail-value" id="federationDomain" style="font-family:'Courier New',monospace;"></span>
+    </div>
     <div class="detail-row" id="specRow">
       <span class="detail-label">Spec</span>
       <span class="detail-value" id="spec">--</span>

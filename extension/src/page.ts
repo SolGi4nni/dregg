@@ -13,6 +13,10 @@ import type {
   ReceiptWitnessArtifacts,
   StealthMetaAddress,
 } from "./types";
+import {
+  SIGN_TURN_V3_FEDERATION_DOMAIN_CAPABILITY,
+  validateFederationDomain,
+} from "./federation-domain";
 
 // Retrieve the session nonce from the script tag's data attribute.
 const currentScript = document.currentScript || document.querySelector("script[data-dregg-nonce]");
@@ -195,9 +199,17 @@ export interface DreggAPI {
    * starbridge-apps' turn-builders produce raw bytes; use this instead of
    * `signTurn` when the turn is already serialized.
    *
-   * Note: requires the wasm `sign_turn_v3` export (stub until it lands).
+   * `federationId` (optional) is the exact 32-byte federation domain the v3
+   * action signing message binds against (`dregg-action-sig-v2` prevents
+   * cross-federation replay). It is validated here — exact type, exactly 32
+   * bytes, every element an integer 0..=255 — before anything is dispatched,
+   * and again in the background before signing. OMITTING it keeps the
+   * backward-compatible all-zero devnet/sim genesis domain; existing
+   * one-argument callers are unchanged. Owner-lifecycle callers (DreggCloud
+   * Workbench) pass the nonzero House-derived domain and gate on
+   * `dregg.capabilities.signTurnV3FederationDomain`.
    */
-  signTurnV3(turnBytes: Uint8Array): Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
+  signTurnV3(turnBytes: Uint8Array, federationId?: Uint8Array): Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
   /** List locally persisted signed submissions waiting for node acceptance. */
   listOutbox(): Promise<OutboxEntry[]>;
   /** Retry pending outbox submissions against the configured node. */
@@ -229,6 +241,17 @@ export interface DreggAPI {
   on(event: DreggEvent, callback: (payload: unknown) => void): void;
   off(event: DreggEvent, callback: (payload: unknown) => void): void;
   // NOTE: extended events above enable Phase 1 passive debugger (see §6).
+  /**
+   * Frozen capability advertisements. A capability string appears here ONLY
+   * once its complete page → content → background → WASM path is installed
+   * and tested (premature advertisement would make a caller like DreggCloud
+   * hand a nonzero owner-lifecycle domain to a bridge that silently signs
+   * under zero). `signTurnV3FederationDomain` advertises the exact-32-byte
+   * optional `federationId` argument of `signTurnV3`.
+   */
+  readonly capabilities: {
+    readonly signTurnV3FederationDomain: typeof SIGN_TURN_V3_FEDERATION_DOMAIN_CAPABILITY;
+  };
 }
 
 const dregg: DreggAPI = {
@@ -365,8 +388,20 @@ const dregg: DreggAPI = {
     return sendMessage("dregg:voteOnProposal", { proposalId, approve }) as Promise<{ accepted: boolean; proposalId: string; queued?: boolean; error?: string }>;
   },
 
-  signTurnV3(turnBytes) {
-    return sendMessage("dregg:signTurnV3", { turnBytes: Array.from(turnBytes) }) as Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
+  signTurnV3(turnBytes, federationId) {
+    const payload: Record<string, unknown> = { turnBytes: Array.from(turnBytes) };
+    if (federationId !== undefined) {
+      // Exact checks (type, 32-byte length, integer 0..=255 elements) BEFORE
+      // anything is dispatched; the background revalidates independently.
+      // The validated COPY is serialized, so mutating the caller's array
+      // after this call cannot change what is sent.
+      const validated = validateFederationDomain(federationId);
+      if (!validated.ok) {
+        return Promise.reject(new TypeError(`dregg.signTurnV3: ${validated.error}`));
+      }
+      payload.federationId = Array.from(validated.bytes);
+    }
+    return sendMessage("dregg:signTurnV3", payload) as Promise<{ turnId?: string; submitted: boolean; queued?: boolean; outboxId?: string; error?: string }>;
   },
 
   listOutbox() {
@@ -408,6 +443,14 @@ const dregg: DreggAPI = {
   off(event, callback) {
     removeListener(event, callback);
   },
+
+  // Frozen sub-object: `Object.freeze(dregg)` below is shallow, so the
+  // advertisement itself must be sealed against tampering by page scripts.
+  // Advertised only because the complete page → content → background → WASM
+  // federation-domain path ships in the same change (see DreggAPI docs).
+  capabilities: Object.freeze({
+    signTurnV3FederationDomain: SIGN_TURN_V3_FEDERATION_DOMAIN_CAPABILITY,
+  }),
 };
 
 Object.defineProperty(window, "dregg", {

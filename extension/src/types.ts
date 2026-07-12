@@ -654,6 +654,12 @@ export interface DreggWasm {
    * Sign a pre-built postcard-encoded Turn via the canonical v3 path
    * (`AgentCipherclerk::sign_action`). Replaces every Unchecked action's
    * authorization with a real Ed25519 signature; re-encodes to postcard bytes.
+   *
+   * `federationId` is the exact 32-byte federation domain the signing message
+   * binds against (`dregg-action-sig-v2` — prevents cross-federation replay).
+   * All-zeros is the legacy devnet/sim genesis domain; owner-lifecycle flows
+   * pass the nonzero House-derived domain through `dregg.signTurnV3`'s
+   * optional second argument.
    */
   sign_turn_v3(
     turnBytes: Uint8Array,

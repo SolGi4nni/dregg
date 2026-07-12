@@ -3,7 +3,7 @@
 import * as esbuild from 'esbuild';
 
 await esbuild.build({
-  entryPoints: ['src/explain.ts', 'src/sse.ts', 'src/onboarding.ts', 'src/login.ts'],
+  entryPoints: ['src/explain.ts', 'src/sse.ts', 'src/onboarding.ts', 'src/login.ts', 'src/federation-domain.ts'],
   outdir: 'test/.build',
   format: 'esm',
   bundle: true,

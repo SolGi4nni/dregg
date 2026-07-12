@@ -175,7 +175,7 @@ export class DreggEmbed extends DreggElement {
 
 /** Register the composition custom elements (idempotent). */
 export function registerCompositionElements(): void {
-  if (typeof customElements === "undefined") return;
+  if (typeof customElements === "undefined" || customElements === null) return; // null in Chromium isolated worlds
   if (!customElements.get("dregg-embed")) customElements.define("dregg-embed", DreggEmbed);
   if (!customElements.get("dregg-transclude")) customElements.define("dregg-transclude", DreggTransclude);
 }

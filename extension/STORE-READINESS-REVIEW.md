@@ -106,12 +106,35 @@ Evidence the build is healthy: `./build.sh` exits 0; `npm run typecheck` clean;
   the CLI/SDK, golden-vector pinned across three suites (`test/derivation.test.mjs`).
 
 ### Signing flow — STRONG (authorization-first, no blind-signing)
-- `signTurnV3` (`background.ts:2641`) decodes the turn, renders a **faithful
-  reading** via `explain.ts` (effect-by-effect prose, word-for-word parity with
-  `sdk/src/explain.rs`), binds it to the canonical `[turn <hash>]` the node
-  verifies, and shows it in a **nonce-bound confirmation popup**
-  (`showTurnConfirmation`, `background.ts:1925`). The signature is released
-  **only** on explicit accept.
+- `signTurnV3` (`background.ts`, `signTurnV3()`) decodes the turn, renders a
+  **faithful reading** via `explain.ts` (effect-by-effect prose, word-for-word
+  parity with `sdk/src/explain.rs`), binds it to the canonical `[turn <hash>]`
+  the node verifies, and shows it in a **nonce-bound confirmation popup**
+  (`showTurnConfirmation`). The signature is released **only** on explicit
+  accept.
+- **Federation-domain bridge** (2026-07: OWNER-LIFECYCLE-BROWSER-SEAM). The
+  page API is now `signTurnV3(turnBytes, federationId?)`: the optional second
+  argument carries an exact 32-byte federation domain into the wasm
+  `sign_turn_v3` signing message (`dregg-action-sig-v2` — cross-federation
+  replay prevention). Validated TWICE through the one shared validator
+  (`src/federation-domain.ts`; page bridge + background revalidation; exact
+  type / length-32 / integer 0..=255 elements; typed rejection BEFORE any
+  signing). Only ABSENCE defaults to the legacy all-zero genesis domain. The
+  confirmation popup renders the **full 64-char lowercase hex** of the domain
+  that was signed; the popup's accept echoes turn id + domain and the
+  background **refuses a substituted echo** as a decline; outbox metadata
+  retains the selected domain so a retry cannot silently fall back to zero.
+  Advertised — only now that the complete page → content → background → WASM
+  path is installed and tested — as the frozen
+  `window.dregg.capabilities.signTurnV3FederationDomain =
+  "dregg-sign-turn-v3-federation-domain/v1"`. Coverage:
+  `test/federation-domain.test.mjs` (validator),
+  `tests/passkey-sign/run.mjs` (independent Ed25519 verification of wasm
+  signatures under domains 00/7f/80/ff — verify under the signed domain, FAIL
+  under zero and one-byte-different domains), and
+  `tests/e2e/sign-turn-v3-domain.spec.ts` (capability advertisement, popup
+  display, substitution refusal, outbox metadata, one-argument backward
+  compatibility).
 - Unrecognized effects/authorizations render as explicit `UNKNOWN` and set
   `hasUnknown`, which the popup surfaces as a "signing blind — reject unless
   certain" warning (`confirm-intent.html:134`, `explain.ts:29-31`). It never
@@ -335,3 +358,39 @@ exfiltration, real authorization-first signing) is genuinely passed — that is
 the hard part and it is done well. But ship is blocked on **MF-1 (silent
 data-loss)**, **MF-2 (icons)**, and **MF-3 (privacy policy)**. Fix those three,
 decide on MED-1/2/3/4, and it's a credible, honest upload.
+
+---
+
+## UPDATE (2026-07-12) — federation-domain bridge + popup-path fixes
+
+Alongside the `signTurnV3(turnBytes, federationId?)` federation-domain bridge
+(see the Signing-flow section above), three latent defects in the popup
+decision path — exposed by the new full-bridge e2e — were fixed:
+
+- **Popup sender misclassification (broke every accept flow on current
+  Chromium).** Extension pages opened via `chrome.windows.create` now message
+  with `sender.tab` SET, so `isContentScript()` / `validatePopupSender()`
+  classified the extension's own popups as page-context content scripts and
+  dropped their decisions. Classification now keys on the browser-set,
+  unforgeable `sender.url` (`chrome-extension://<own-id>/…`), which a content
+  script can never carry. Same security posture, correct on both old and new
+  Chromium.
+- **Async decision listeners swallowed unrelated responses.** Two
+  `chrome.runtime.onMessage` decision listeners were `async`; under Chromium's
+  promise-based onMessage support their returned Promise claims the response
+  channel for EVERY message, delivering `null` (their undefined resolution)
+  before the real router responds — e.g. to `dregg:getPendingDecision`, which
+  blanked every popup. Both are synchronous now (async work moved inside).
+- **Grant-vs-close race.** The popup sends its decision and immediately
+  `window.close()`es; the `windows.onRemoved` handler could resolve a DENY
+  while the accept's storage write was still in flight (the allowlist entry
+  was written, but the caller saw "denied"). A synchronous `decided` flag now
+  keeps the close handler from overriding a received decision
+  (origin-permission + provision flows).
+- Also: the custom-element registration guards (`dregg-poll` / `dregg-embed`
+  / `dregg-doc` / `dregg-story`) checked `typeof customElements ===
+  "undefined"`, but current Chromium sets `customElements` to **null** in
+  content-script isolated worlds — the guard threw and killed the whole
+  content script before `page.js` injection (no `window.dregg` at all). The
+  guards now handle null; the element upgrades are unavailable in isolated
+  worlds on such Chromium versions, and the page bridge is unaffected.

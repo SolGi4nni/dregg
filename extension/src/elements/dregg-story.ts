@@ -538,6 +538,6 @@ function exposeRootForTest(el: Element, root: ShadowRoot): void {
 
 /** Register the `<dregg-story>` custom element (idempotent). Call from the content script. */
 export function registerStoryElement(): void {
-  if (typeof customElements === "undefined") return;
+  if (typeof customElements === "undefined" || customElements === null) return; // null in Chromium isolated worlds
   if (!customElements.get("dregg-story")) customElements.define("dregg-story", DreggStory);
 }

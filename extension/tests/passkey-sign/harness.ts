@@ -226,6 +226,72 @@ function lcp(a: Uint8Array, b: Uint8Array): number {
       const b = fromB64(bB64);
       return { lcp: lcp(a, b), aLen: a.length, bLen: b.length };
     },
+
+    // ── signTurnV3 federation-domain bridge (OWNER-LIFECYCLE-BROWSER-SEAM) ──
+
+    /** Ground-truth oracle for the node-side JS blake3 reimplementation. */
+    blake3Hex(s: string) {
+      return wasm.blake3_hash(s);
+    },
+
+    /**
+     * Build a real Turn whose actions carry `Authorization::Unchecked` — the
+     * shape dapp turn-builders hand `dregg.signTurnV3`. (The cipherclerk
+     * builder pre-signs its action, and `sign_turn_v3` leaves non-Unchecked
+     * authorizations intact, so the domain path only engages on Unchecked.)
+     * Returns b64 of the round-trippable JSON encoding.
+     */
+    buildUncheckedTurn(mnemonic: string) {
+      const kp = wasm.derive_keypair_from_mnemonic(mnemonic, "", "dregg/0");
+      const sk: Uint8Array = kp.secret_key;
+      const built = wasm.cipherclerk_make_action_turn(
+        JSON.stringify({
+          sender_privkey: Array.from(sk),
+          method: "propose_routes",
+          memo_json: JSON.stringify({ routes: [] }),
+        }),
+      );
+      // Round-trip through the signer once to obtain the JSON encoding, then
+      // strip every authorization back to Unchecked.
+      const signed = wasm.sign_turn_v3(new Uint8Array(built.turn_bytes), sk, new Uint8Array(32));
+      sk.fill(0);
+      const turn = JSON.parse(new TextDecoder().decode(new Uint8Array(signed.turn_bytes_json)));
+      for (const root of turn.call_forest.roots) root.action.authorization = "Unchecked";
+      return b64(new TextEncoder().encode(JSON.stringify(turn)));
+    },
+
+    /**
+     * Drive the REAL 3-argument wasm export exactly as background.ts does:
+     * sign `turnB64` under `domainB64` (32 bytes). Returns the signed turn's
+     * JSON (b64), canonical turn id, and signer pubkey for node-side
+     * independent Ed25519 verification.
+     */
+    signTurnV3WithDomain(mnemonic: string, turnB64: string, domainB64: string) {
+      const seed = deriveSeedBytes(mnemonic);
+      const signed = wasm.sign_turn_v3(fromB64(turnB64), seed, fromB64(domainB64));
+      seed.fill(0);
+      return {
+        turnId: signed.turn_id as string,
+        signerPubkey: signed.signer_pubkey as string,
+        turnJsonB64: b64(new Uint8Array(signed.turn_bytes_json)),
+      };
+    },
+
+    /**
+     * Probe the wasm-level typed rejection for a wrong-length domain: the
+     * export must throw BEFORE signing anything. Returns the error message.
+     */
+    signTurnV3BadDomain(mnemonic: string, turnB64: string, domainLen: number) {
+      const seed = deriveSeedBytes(mnemonic);
+      try {
+        wasm.sign_turn_v3(fromB64(turnB64), seed, new Uint8Array(domainLen));
+        return { threw: false, error: null };
+      } catch (e: any) {
+        return { threw: true, error: String((e && e.message) || e) };
+      } finally {
+        seed.fill(0);
+      }
+    },
   };
 
   window.__READY = true;

@@ -13,6 +13,7 @@ import { defaultNodeUrl, defaultNodeWssUrl } from "./endpoints";
 import { CustodyWasm } from "./custody";
 import { ChromeCustodyStore } from "./passkey";
 import { resolveCustody } from "./custody-resolve";
+import { validateFederationDomain, ZERO_FEDERATION_DOMAIN_HEX } from "./federation-domain";
 import {
   PollEngine,
   CellEngine,
@@ -364,8 +365,11 @@ function consumePendingDecision(nonce: string): PendingDecision | null {
 /**
  * Validate that the inbound message came from the popup we opened with this nonce.
  * Returns true iff:
- *   - sender is an extension page (url starts with the extension prefix)
- *   - sender is NOT a content script (sender.tab is undefined for popup windows)
+ *   - sender is an extension page (url starts with the extension prefix;
+ *     sender.url is browser-set and unforgeable, so a content script — whose
+ *     sender.url is the web page's — can never pass; note current Chromium
+ *     sets sender.tab even for chrome.windows.create popups, so tab presence
+ *     is NOT a usable popup/content-script discriminator)
  *   - the message's `nonce` field matches a registered pending decision
  *   - the popup's path matches the registered popupPath for that nonce
  *
@@ -381,7 +385,6 @@ function validatePopupSender(
   expectedNonce: string,
   expectedPopupPath: string,
 ): boolean {
-  if (sender?.tab != null) return false;
   if (!sender?.url) return false;
   if (!isExtensionPageUrl(sender.url)) return false;
   const path = sender.url.slice(extensionPrefix.length).split(/[?#]/)[0];
@@ -2176,24 +2179,34 @@ async function provisionToken(tokenData: Record<string, unknown>, _senderTabId?:
       height: 480,
       focused: true,
     }, (win) => {
-      const listener = async (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<void> => {
+      // MUST be synchronous (not async): see the origin-permission decision
+      // listener — an async listener's returned Promise claims the response
+      // channel for EVERY message under Chromium's promise-based onMessage.
+      // Same close-race guard as the origin-permission popup: a valid
+      // decision marks `decided` synchronously so the popup's window.close()
+      // cannot resolve a decline while the accept's state write is in flight.
+      let decided = false;
+      const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
         if (message.type !== "dregg:provisionDecision") return;
         // P0-1: validate the sender is the provision popup we opened.
         if (!validatePopupSender(message, sender, nonce, "provision.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
+        decided = true;
         if (message.accepted) {
-          const cc = await loadState();
-          const token: CapabilityToken = {
-            id: `tok_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
-            actions: (tokenData.actions as string[]) || [],
-            resource: (tokenData.resource as string) || "*",
-            expiry: (tokenData.expiry as number) || null,
-            issuer: (tokenData.issuer as string) || null,
-            provisioned: Date.now(),
-          };
-          cc.tokens.push(token);
-          await saveState();
-          resolve({ accepted: true, tokenId: token.id });
+          void (async (): Promise<void> => {
+            const cc = await loadState();
+            const token: CapabilityToken = {
+              id: `tok_${Date.now()}_${Math.random().toString(36).slice(2, 8)}`,
+              actions: (tokenData.actions as string[]) || [],
+              resource: (tokenData.resource as string) || "*",
+              expiry: (tokenData.expiry as number) || null,
+              issuer: (tokenData.issuer as string) || null,
+              provisioned: Date.now(),
+            };
+            cc.tokens.push(token);
+            await saveState();
+            resolve({ accepted: true, tokenId: token.id });
+          })().catch(() => resolve({ accepted: false }));
         } else {
           resolve({ accepted: false });
         }
@@ -2204,8 +2217,10 @@ async function provisionToken(tokenData: Record<string, unknown>, _senderTabId?:
           if (closedId === win.id) {
             chrome.windows.onRemoved.removeListener(onClose);
             chrome.runtime.onMessage.removeListener(listener);
-            consumePendingDecision(nonce);
-            resolve({ accepted: false });
+            if (!decided) {
+              consumePendingDecision(nonce);
+              resolve({ accepted: false });
+            }
           }
         });
       }
@@ -2270,7 +2285,15 @@ function showTurnConfirmation(input: {
   turnId: string;
   origin?: string;
   hasUnknown: boolean;
+  /**
+   * Full lowercase hex (64 chars) of the 32-byte federation domain the turn
+   * was SIGNED under. Optional for legacy internal flows (poll/doc/story
+   * engines), which sign under the all-zero genesis domain; absent defaults
+   * to that zero-domain hex so the popup always states what was signed.
+   */
+  federationDomainHex?: string;
 }): Promise<boolean> {
+  const federationDomainHex = input.federationDomainHex ?? ZERO_FEDERATION_DOMAIN_HEX;
   return new Promise((resolve) => {
     const nonce = registerPendingDecision("confirm-intent.html", {
       action: "signTurn",
@@ -2278,6 +2301,7 @@ function showTurnConfirmation(input: {
       turnId: input.turnId,
       hasUnknown: input.hasUnknown,
       origin: input.origin || "unknown",
+      federationDomainHex,
     });
     const popupUrl = chrome.runtime.getURL("confirm-intent.html") + "#nonce=" + nonce;
 
@@ -2285,14 +2309,27 @@ function showTurnConfirmation(input: {
       url: popupUrl,
       type: "popup",
       width: 460,
-      height: 520,
+      height: 560,
       focused: true,
     }, (win) => {
       const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
         if (message.type !== "dregg:intentConfirmation") return;
         if (!validatePopupSender(message, sender, nonce, "confirm-intent.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
-        resolve(message.confirmed === true);
+        if (message.confirmed !== true) {
+          resolve(false);
+          return;
+        }
+        // The ACCEPT decision must bind what the popup DISPLAYED: the popup
+        // echoes the turn id and federation domain it rendered, and both must
+        // equal what this flow signed. Any post-confirmation substitution
+        // (or a stale/forged accept that omits or alters the echo) is
+        // REFUSED — treated as a decline, never as consent.
+        if (message.turnId !== input.turnId || message.federationDomainHex !== federationDomainHex) {
+          resolve(false);
+          return;
+        }
+        resolve(true);
       };
       chrome.runtime.onMessage.addListener(listener);
       if (win?.id) {
@@ -2980,10 +3017,41 @@ async function submitJsonTurn(spec: {
  * (`/api/turns/submit-signed`, durable-outbox-backed). The result carries the
  * node's receipt fields (turn hash / proof status / witness count) — the
  * Receipt is the result noun.
+ *
+ * `federationIdInput` is the OPTIONAL federation domain from the page bridge
+ * (`number[]` after the nonce-bound message; see federation-domain.ts). It is
+ * revalidated here with the same exact checks the page ran — never trust the
+ * page-side validation alone — and rejected BEFORE any signing. When absent,
+ * the legacy all-zero devnet/sim genesis domain applies (backward compatible
+ * one-argument callers). The signed domain travels with the flow: it is shown
+ * in full (64 lowercase hex chars) in the confirmation popup, bound into the
+ * popup decision, and retained in outbox metadata so a retry can never
+ * silently fall back to zero.
  */
-async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignTurnResult> {
+async function signTurnV3(
+  turnBytes: Uint8Array,
+  origin?: string,
+  federationIdInput?: unknown,
+): Promise<SignTurnResult> {
   requireWasm("signTurnV3");
   const w = wasm!;
+
+  // Decode + revalidate the optional domain BEFORE touching key material or
+  // signing anything. Only ABSENCE defaults to the all-zero genesis domain.
+  let federationId: Uint8Array;
+  let federationDomainHex: string;
+  if (federationIdInput === undefined || federationIdInput === null) {
+    federationId = new Uint8Array(32); // legacy zero domain (devnet/sim genesis)
+    federationDomainHex = ZERO_FEDERATION_DOMAIN_HEX;
+  } else {
+    const validated = validateFederationDomain(federationIdInput);
+    if (!validated.ok) {
+      return { error: `signTurnV3: ${validated.error}`, submitted: false };
+    }
+    federationId = validated.bytes;
+    federationDomainHex = validated.hex;
+  }
+
   const cc = await loadState();
   if (cc.locked) return { error: "Cipherclerk is locked", submitted: false };
   if (cc.needsPassphraseSetup) {
@@ -2993,8 +3061,6 @@ async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignT
 
   let signed: { turn_id: string; turn_bytes: Uint8Array; turn_bytes_json: Uint8Array; signer_pubkey: string };
   try {
-    // federation_id = all-zeros (devnet/sim genesis). 32 bytes.
-    const federationId = new Uint8Array(32);
     signed = w.sign_turn_v3(turnBytes, new Uint8Array(cc.secretKey), federationId);
   } catch (e: unknown) {
     const err = e as Error;
@@ -3021,6 +3087,9 @@ async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignT
     turnId: signed.turn_id,
     origin,
     hasUnknown,
+    // The domain that WAS signed (the flow signs before confirm, so
+    // display-consistency is the property): full 64 lowercase hex chars.
+    federationDomainHex,
   });
   if (!confirmed) {
     return { error: "User declined to sign this turn", submitted: false };
@@ -3034,7 +3103,11 @@ async function signTurnV3(turnBytes: Uint8Array, origin?: string): Promise<SignT
     secretKey: cc.secretKey,
     publicKey: cc.publicKey,
     label: "sign turn (v3)",
-    metadata: { action: "signTurnV3" },
+    // Retain the SELECTED domain: a queued retry re-POSTs the stored signed
+    // envelope (the domain is baked into its action signatures), and the
+    // metadata records which domain that is — a retry can never silently
+    // fall back to zero.
+    metadata: { action: "signTurnV3", federationDomainHex },
   });
   if (submit.submitted) {
     const d = submit.data ?? {};
@@ -3189,7 +3262,13 @@ function isExtensionPopup(sender: chrome.runtime.MessageSender): boolean {
 }
 
 function isContentScript(sender: chrome.runtime.MessageSender): boolean {
-  return sender?.tab != null;
+  // A content script's sender.url is the WEB page's URL (the browser sets it;
+  // pages cannot forge it) — never this extension's chrome-extension:// URL.
+  // Checking sender.tab alone misclassifies our own popups: on current
+  // Chromium, extension pages opened via chrome.windows.create message with
+  // sender.tab SET, which used to make the router drop every popup decision
+  // as "page context".
+  return sender?.tab != null && !isExtensionPageUrl(sender?.url || "");
 }
 
 // ---------------------------------------------------------------------------
@@ -3208,14 +3287,26 @@ function handleOriginPermissionRequest(origin: string, method: string): Promise<
       height: 320,
       focused: true,
     }, (win) => {
-      const listener = async (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): Promise<void> => {
+      // MUST be synchronous: an async onMessage listener returns a Promise
+      // for EVERY message, and Chromium's promise-based onMessage support
+      // treats that as claiming the response channel — its undefined
+      // resolution is delivered (as null) before the real router responds,
+      // breaking unrelated messages like dregg:getPendingDecision.
+      // Set synchronously on a valid decision so the popup's immediate
+      // window.close() (whose onRemoved fires while the allowlist write is
+      // still in flight) cannot race a decline over a real grant.
+      let decided = false;
+      const listener = (message: Record<string, unknown>, sender: chrome.runtime.MessageSender): void => {
         if (message.type !== "dregg:originPermissionDecision") return;
         // P0-1: validate the sender is the origin-permission popup.
         if (!validatePopupSender(message, sender, nonce, "origin-permission.html")) return;
         chrome.runtime.onMessage.removeListener(listener);
+        decided = true;
         if (message.granted) {
-          await addOriginToAllowlist(origin, method);
-          resolve({ granted: true });
+          void addOriginToAllowlist(origin, method).then(
+            () => resolve({ granted: true }),
+            () => resolve({ granted: false }),
+          );
         } else {
           resolve({ granted: false });
         }
@@ -3226,8 +3317,10 @@ function handleOriginPermissionRequest(origin: string, method: string): Promise<
           if (closedId === win.id) {
             chrome.windows.onRemoved.removeListener(onClose);
             chrome.runtime.onMessage.removeListener(listener);
-            consumePendingDecision(nonce);
-            resolve({ granted: false });
+            if (!decided) {
+              consumePendingDecision(nonce);
+              resolve({ granted: false });
+            }
           }
         });
       }
@@ -4405,7 +4498,9 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
     case "dregg:signTurnV3": {
       const turnBytes = new Uint8Array(message.turnBytes as number[]);
       const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
-      const result = await signTurnV3(turnBytes, origin);
+      // Optional federation domain — handed through RAW; signTurnV3 itself
+      // revalidates with exact checks (absence = legacy zero domain).
+      const result = await signTurnV3(turnBytes, origin, message.federationId);
       resetLockTimer();
       return { id: message.id, result };
     }

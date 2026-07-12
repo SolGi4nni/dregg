@@ -523,6 +523,6 @@ function exposeRootForTest(el: Element, root: ShadowRoot): void {
 
 /** Register the `<dregg-doc>` custom element (idempotent). Call from the content script. */
 export function registerDocElement(): void {
-  if (typeof customElements === "undefined") return;
+  if (typeof customElements === "undefined" || customElements === null) return; // null in Chromium isolated worlds
   if (!customElements.get("dregg-doc")) customElements.define("dregg-doc", DreggDoc);
 }

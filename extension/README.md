@@ -15,14 +15,30 @@ to the node's receipt stream so you can see what committed.
   (seed `00..3f` → pubkey `335840a9…8b9a`) is pinned in three places —
   `sdk/src/profiles.rs`, `cli/src/commands/id.rs`, and this extension's
   `test/derivation.test.mjs` — so any drift fails all three test suites.
-- **Authorization-first signing** — `signTurnV3(turnBytes)` never signs blind.
-  The clerk decodes the turn and renders a faithful reading of every action
-  and effect (`src/explain.ts`, the same human terms `sdk/src/explain.rs`
-  uses, e.g. "transfer 5 computrons from cell … to cell …"), bound to the
-  canonical `[turn <hash>]` — the `Turn::hash` the node verifies and the
-  receipt commits. The reading is shown in a nonce-bound confirmation popup;
-  only explicit acceptance releases the signature. Effects the clerk cannot
-  read are surfaced as UNKNOWN with a do-not-sign-blind warning, never elided.
+- **Authorization-first signing** — `signTurnV3(turnBytes, federationId?)`
+  never signs blind. The clerk decodes the turn and renders a faithful reading
+  of every action and effect (`src/explain.ts`, the same human terms
+  `sdk/src/explain.rs` uses, e.g. "transfer 5 computrons from cell … to cell
+  …"), bound to the canonical `[turn <hash>]` — the `Turn::hash` the node
+  verifies and the receipt commits. The reading is shown in a nonce-bound
+  confirmation popup; only explicit acceptance releases the signature. Effects
+  the clerk cannot read are surfaced as UNKNOWN with a do-not-sign-blind
+  warning, never elided.
+- **Federation-domain binding** — the optional second `signTurnV3` argument is
+  the exact 32-byte federation domain the v3 action signing message binds
+  against (`dregg-action-sig-v2` domain separation; prevents cross-federation
+  replay). It is validated twice (page bridge + background, exact type /
+  32-byte length / integer 0..=255 elements — `src/federation-domain.ts`)
+  before anything is signed; omission keeps the backward-compatible all-zero
+  devnet/sim genesis domain. The confirmation popup shows the FULL 64-char
+  lowercase hex of the domain that was signed, the nonce-bound decision echoes
+  it back (a substituted domain is refused as a decline), and a queued
+  submission retains it in outbox metadata so a retry can never silently fall
+  back to zero. Advertised as
+  `window.dregg.capabilities.signTurnV3FederationDomain ===
+  "dregg-sign-turn-v3-federation-domain/v1"` (frozen) — the capability
+  DreggCloud requires before handing a nonzero owner-lifecycle domain to a
+  browser provider (see DreggCloud `docs/OWNER-LIFECYCLE-BROWSER-SEAM.md`).
 - **Receipt as the result noun** — the signed turn travels as the node's
   `SignedTurn` envelope (postcard bytes, `POST /api/turns/submit-signed`,
   with a durable offline outbox + retry/backoff), and the result carries the
@@ -60,9 +76,11 @@ Page Context               Content Script            Background SW
 +-----------------+        +----------------+        +--------------------+
 | window.dregg    |        |                |        | Profiles (named    |
 |   .authorize()  | =====>  | nonce-scoped   | =====>  |  Ed25519 keys)     |
-|   .signTurnV3() |         | CustomEvent    |         | explain + confirm  |
-|   .isConnected()| <=====  | bridge +       | <=====  | capability tokens  |
-|   .on(...)      |         | origin allowlist|        | datalog / ZK (WASM)|
+|   .signTurnV3(  |         | CustomEvent    |         | explain + confirm  |
+|     turnBytes,  |         | bridge +       |         |  (+ full 64-hex    |
+|     federationId?)| <===== | origin allowlist| <=====  |  federation domain)|
+|   .capabilities |         |                |        | capability tokens  |
+|   .on(...)      |         |                |        | datalog / ZK (WASM)|
 +-----------------+         +----------------+         | SSE receipt stream |
    src/page.ts              src/content.ts             | node WS + outbox   |
                                                        +--------------------+
@@ -148,6 +166,16 @@ const connected = await window.dregg.isConnected();
 // reading of the turn and must accept before the signature is released.
 const res = await window.dregg.signTurnV3(turnBytes);
 // { turnId, submitted, receipt: { turnHash, proofStatus, witnessCount } }
+
+// Owner-lifecycle (nonzero federation domain): gate on the capability, then
+// pass the exact 32-byte domain. Exactly 32 bytes, integers 0..=255 — any
+// other value rejects with a TypeError BEFORE any popup or signing. Omitting
+// the argument keeps the legacy all-zero devnet/sim genesis domain. The
+// confirmation popup shows all 64 lowercase hex chars of the domain signed.
+if (window.dregg.capabilities.signTurnV3FederationDomain ===
+    "dregg-sign-turn-v3-federation-domain/v1") {
+  const res2 = await window.dregg.signTurnV3(turnBytes, federationId /* Uint8Array(32) */);
+}
 
 // Authorize an action against held capability tokens.
 const auth = await window.dregg.authorize({

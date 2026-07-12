@@ -273,7 +273,7 @@ function escapeHtml(s: string): string {
 
 /** Register the custom element (idempotent). Call from the content script. */
 export function registerDreggElements(): void {
-  if (typeof customElements === "undefined") return;
+  if (typeof customElements === "undefined" || customElements === null) return; // null in Chromium isolated worlds
   if (!customElements.get("dregg-poll")) {
     customElements.define("dregg-poll", DreggPoll);
   }

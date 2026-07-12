@@ -7,7 +7,11 @@ export default defineConfig({
   retries: 0,
   workers: 1, // Extensions require serial execution (single browser context)
   use: {
-    headless: false, // Extensions require headed mode
+    // Headless by default: the fixtures launch the FULL Chromium binary
+    // (channel 'chromium', new headless), which supports MV3 extensions —
+    // the headless-shell binary behind plain `headless: true` does not.
+    // Set HEADED=1 for visible windows while debugging.
+    headless: !process.env.HEADED,
   },
   projects: [{
     name: 'chromium',

@@ -10,15 +10,25 @@ export type ExtensionFixtures = {
 
 export const test = base.extend<ExtensionFixtures>({
   // Launch a persistent context with the extension loaded.
+  //
+  // HEADLESS: Playwright's default `headless: true` uses the headless-shell
+  // binary, which does NOT support extensions (the source of the old
+  // "extensions require headed mode" rule). The FULL Chromium binary
+  // (`channel: 'chromium'`) in new-headless mode loads MV3 extensions fine —
+  // service worker, content scripts, and chrome.windows.create popups all
+  // work — with no window flashing and a faster launch. Set HEADED=1 to
+  // debug with visible windows.
   context: async ({}, use) => {
     const pathToExtension = path.resolve(__dirname, '..', '..');
     const context = await chromium.launchPersistentContext('', {
-      headless: false,
+      channel: 'chromium',
+      headless: !process.env.HEADED,
       args: [
         `--disable-extensions-except=${pathToExtension}`,
         `--load-extension=${pathToExtension}`,
         '--no-first-run',
-        '--disable-gpu',
+        // NOTE: no --disable-gpu — in new-headless it forces software GL,
+        // which multiplied per-test time ~4x on macOS.
       ],
     });
     await use(context);

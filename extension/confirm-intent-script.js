@@ -20,6 +20,13 @@ const rejectBtn = document.getElementById('rejectBtn');
 
 let initialized = false;
 
+// What this popup DISPLAYED, captured once at render time. The decision
+// message echoes these so the background can refuse any accept whose
+// displayed turn/domain differ from what it signed (post-confirmation
+// substitution is treated as a decline).
+let displayedTurnId = null;
+let displayedFederationDomainHex = null;
+
 async function init() {
   if (!NONCE) {
     actionEl.textContent = 'Error: no nonce — cannot display intent.';
@@ -53,6 +60,19 @@ async function init() {
           const warningEl = document.getElementById('unknownWarning');
           if (warningEl) warningEl.style.display = 'block';
         }
+        // Show the FULL federation domain the turn was signed under — all 64
+        // lowercase hex characters, never truncated. Captured for the
+        // decision echo below.
+        displayedTurnId = typeof p.turnId === 'string' ? p.turnId : null;
+        if (typeof p.federationDomainHex === 'string') {
+          displayedFederationDomainHex = p.federationDomainHex;
+          const federationRow = document.getElementById('federationRow');
+          const federationEl = document.getElementById('federationDomain');
+          if (federationRow && federationEl) {
+            federationEl.textContent = p.federationDomainHex;
+            federationRow.style.display = 'flex';
+          }
+        }
         const specRow = document.getElementById('specRow');
         const optionsRow = document.getElementById('optionsRow');
         if (specRow) specRow.style.display = 'none';
@@ -74,11 +94,17 @@ async function init() {
 
 function sendDecision(confirmed) {
   if (!NONCE) return;
-  chrome.runtime.sendMessage({
+  const message = {
     type: 'dregg:intentConfirmation',
     nonce: NONCE,
     confirmed,
-  });
+  };
+  // Turn-signing decisions bind what was DISPLAYED: echo the turn id and
+  // federation domain rendered above so the background refuses an accept for
+  // anything other than exactly what the user saw.
+  if (displayedTurnId !== null) message.turnId = displayedTurnId;
+  if (displayedFederationDomainHex !== null) message.federationDomainHex = displayedFederationDomainHex;
+  chrome.runtime.sendMessage(message);
 }
 
 acceptBtn.addEventListener('click', () => {
