@@ -217,20 +217,20 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
 // read src at u*W + w — so CONCURRENT workgroups read ADJACENT addresses.
 const K_FUSED1: &str = r#"
 var<workgroup> tile: array<u32, $TILE>;
-@compute @workgroup_size(256)
+@compute @workgroup_size($WGSZ)
 fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: vec3<u32>) {
     let lid = l.x;
     let off = wg.y * $NN;
     let w = wg.x;
     for (var k = 0u; k < $TPT; k++) {
-        let u = lid + k * 256u;
+        let u = lid + k * $WGSZ;
         tile[reverseBits(u) >> (32u - $EE)] = src[off + u * $WW + w];
     }
     workgroupBarrier();
     for (var s = 1u; s <= $EE; s++) {
         let half = 1u << (s - 1u);
         for (var k = 0u; k < $HBT; k++) {
-            let bf = lid + k * 256u;
+            let bf = lid + k * $WGSZ;
             let j = bf & (half - 1u);
             let i1 = ((bf >> (s - 1u)) << s) + j;
             let i2 = i1 + half;
@@ -244,32 +244,36 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
     let ga = reverseBits(w) >> (32u - ($LOGN - $EE));
     let base = off + ga * $TILE;
     for (var k = 0u; k < $TPT; k++) {
-        let sl = lid + k * 256u;
+        let sl = lid + k * $WGSZ;
         data[base + sl] = tile[sl];
     }
 }
 "#;
 
-// Fused pass 2: stages E+1..logn (F of them). A tile is 2^C low ("coalescing")
-// bits x 2^F butterfly bits at offset E; loads are contiguous runs of 2^C u32.
-// F = logn - E exactly, so the workgroup id supplies bits [C..E).
+// Fused mid/final pass: F DIT stages at bit offset B (stages B+1..B+F of the
+// global DIT). A tile is 2^C low ("coalescing") bits x 2^F butterfly bits at
+// offset B; global accesses are contiguous runs of 2^C u32. The workgroup id
+// supplies the fixed bits: WLW = B-C low ones (bits [C..B)) and the rest above
+// B+F ($BF = B+F).
 const K_FUSED2: &str = r#"
 var<workgroup> tile: array<u32, $TILE>;
-@compute @workgroup_size(256)
+@compute @workgroup_size($WGSZ)
 fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: vec3<u32>) {
     let lid = l.x;
     let off = wg.y * $NN;
-    let base = off + (wg.x << $CC);
+    let wlo = wg.x & ((1u << $WLW) - 1u);
+    let whi = wg.x >> $WLW;
+    let base = off + (wlo << $CC) + (whi << $BF);
     for (var k = 0u; k < $TPT; k++) {
-        let sl = lid + k * 256u;
+        let sl = lid + k * $WGSZ;
         let q = sl >> $CC;
         let lo = sl & ((1u << $CC) - 1u);
-        tile[sl] = data[base + lo + (q << $EE)];
+        tile[sl] = data[base + lo + (q << $BB)];
     }
     workgroupBarrier();
     for (var t = 1u; t <= $FF; t++) {
         for (var k = 0u; k < $HBT; k++) {
-            let bf = lid + k * 256u;
+            let bf = lid + k * $WGSZ;
             let qb = bf >> $CC;
             let lo = bf & ((1u << $CC) - 1u);
             let jq = qb & ((1u << (t - 1u)) - 1u);
@@ -277,8 +281,8 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
             let q2 = q1 + (1u << (t - 1u));
             let i1 = (q1 << $CC) + lo;
             let i2 = (q2 << $CC) + lo;
-            let j = (wg.x << $CC) + lo + (jq << $EE);
-            let tt = mmul(tile[i2], tw[j << ($LOGN - $EE - t)]);
+            let j = (wlo << $CC) + lo + (jq << $BB);
+            let tt = mmul(tile[i2], tw[j << ($LOGN - $BB - t)]);
             let u2 = tile[i1];
             tile[i1] = addp(u2, tt);
             tile[i2] = subp(u2, tt);
@@ -286,13 +290,106 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
         workgroupBarrier();
     }
     for (var k = 0u; k < $TPT; k++) {
-        let sl = lid + k * 256u;
+        let sl = lid + k * $WGSZ;
         let q = sl >> $CC;
         let lo = sl & ((1u << $CC) - 1u);
-        data[base + lo + (q << $EE)] = tile[sl];
+        data[base + lo + (q << $BB)] = tile[sl];
     }
 }
 "#;
+
+// 2D-tiled first pass: a workgroup handles BQ = 2^LB ADJACENT columns of the
+// (2^E1 rows x W columns) strided view — i.e. stages [bitrev]+1..E1 of the
+// global DIT for BQ output blocks at once. Global reads are runs of BQ u32
+// (adjacent columns), global writes are BQ fully-contiguous 2^E1-element
+// blocks: no 4-byte-granule scatter anywhere. Equivalent to the four-step
+// column-NTT pass; twiddles are the global stage twiddles tw[j << (LOGN-s)].
+const K_FUSED1B: &str = r#"
+var<workgroup> tile: array<u32, $TILE>;
+@compute @workgroup_size($WGSZ)
+fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: vec3<u32>) {
+    let lid = l.x;
+    let off = wg.y * $NN;
+    let c0 = wg.x << $LB;
+    // load BQ adjacent columns; fold the row bit-reversal into the shared write
+    for (var k = 0u; k < $TPT; k++) {
+        let slot = lid + k * $WGSZ;
+        let u = slot >> $LB;
+        let b = slot & ((1u << $LB) - 1u);
+        tile[((reverseBits(u) >> (32u - $E1)) << $LB) + b] = src[off + u * $WW + c0 + b];
+    }
+    workgroupBarrier();
+    for (var s = 1u; s <= $E1; s++) {
+        let half = 1u << (s - 1u);
+        for (var k = 0u; k < $HBT; k++) {
+            let sb = lid + k * $WGSZ;
+            let b = sb & ((1u << $LB) - 1u);
+            let bf = sb >> $LB;
+            let j = bf & (half - 1u);
+            let i1 = ((((bf >> (s - 1u)) << s) + j) << $LB) + b;
+            let i2 = i1 + (half << $LB);
+            let t = mmul(tile[i2], tw[j << ($LOGN - s)]);
+            let u2 = tile[i1];
+            tile[i1] = addp(u2, t);
+            tile[i2] = subp(u2, t);
+        }
+        workgroupBarrier();
+    }
+    // store: column c goes to the contiguous output block g = rev(c)
+    for (var b2 = 0u; b2 < (1u << $LB); b2++) {
+        let g = reverseBits(c0 + b2) >> (32u - ($LOGN - $E1));
+        let obase = off + (g << $E1);
+        for (var k = 0u; k < ($TILE >> $LB) / $WGSZ; k++) {
+            let u = lid + k * $WGSZ;
+            data[obase + u] = tile[(u << $LB) + b2];
+        }
+    }
+}
+"#;
+
+/// Register-tier radix-2^R kernel: R DIT stages (stages L+1..L+R of the global
+/// DIT, L = low bit position) computed entirely in registers, fully unrolled —
+/// no workgroup memory, no barriers. Each thread owns the closed 2^R-element
+/// butterfly group {base + v<<L}. This is the shape native CUDA/Metal NTTs
+/// use for their stage groups.
+fn radix_kernel(n: u32, logn: u32, l: u32, r: u32, wgsz: u32) -> String {
+    let m = 1u32 << r;
+    let mut s = String::new();
+    s.push_str(&format!(
+        "@compute @workgroup_size({wgsz})\nfn main(@builtin(global_invocation_id) gid: vec3<u32>) {{\n    let t = gid.x;\n    let off = gid.y * {n}u;\n"
+    ));
+    if l == 0 {
+        s.push_str(&format!(
+            "    let tlow = 0u;\n    let base = off + (t << {r}u);\n"
+        ));
+    } else {
+        s.push_str(&format!(
+            "    let tlow = t & {}u;\n    let base = off + ((t >> {l}u) << {}u) + tlow;\n",
+            (1u32 << l) - 1,
+            l + r
+        ));
+    }
+    for v in 0..m {
+        s.push_str(&format!("    var r{v} = data[base + {}u];\n", v << l));
+    }
+    for st in 0..r {
+        let lowmask = (1u32 << st) - 1;
+        for p in 0..(m >> 1) {
+            let v0 = ((p & !lowmask) << 1) | (p & lowmask);
+            let v1 = v0 | (1 << st);
+            let jlit = (p & lowmask) << l;
+            let sh = logn - l - st - 1;
+            s.push_str(&format!(
+                "    {{ let tt = mmul(r{v1}, tw[({jlit}u + tlow) << {sh}u]); let uu = r{v0}; r{v0} = addp(uu, tt); r{v1} = subp(uu, tt); }}\n"
+            ));
+        }
+    }
+    for v in 0..m {
+        s.push_str(&format!("    data[base + {}u] = r{v};\n", v << l));
+    }
+    s.push_str("}\n");
+    s
+}
 
 fn subst(template: &str, pairs: &[(&str, u32)]) -> String {
     let mut s = template.to_string();
@@ -450,19 +547,33 @@ impl Gpu {
     }
 
     fn pipeline(&self, wgsl: &str, label: &str) -> wgpu::ComputePipeline {
-        let module = self
-            .device
-            .create_shader_module(wgpu::ShaderModuleDescriptor {
-                label: Some(label),
-                source: wgpu::ShaderSource::Wgsl(wgsl.into()),
-            });
+        // Trusted module: skip naga's per-access bounds checks (probe kernels
+        // are index-audited; parity vs p3 still validates every run). Bounds
+        // checks are a real, measurable part of the wgpu-vs-native question.
+        let module = unsafe {
+            self.device.create_shader_module_trusted(
+                wgpu::ShaderModuleDescriptor {
+                    label: Some(label),
+                    source: wgpu::ShaderSource::Wgsl(wgsl.into()),
+                },
+                wgpu::ShaderRuntimeChecks::unchecked(),
+            )
+        };
         self.device
             .create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
                 label: Some(label),
                 layout: Some(&self.pipe_layout),
                 module: &module,
                 entry_point: Some("main"),
-                compilation_options: Default::default(),
+                // CRITICAL (measured): the default WebGPU-mandated zero-init of
+                // workgroup memory is emitted by naga/MSL as THREAD 0 SERIALLY
+                // zeroing the whole tile (`if (all(lid==0)) tile = {};`) — a
+                // 13-40x slowdown for 16-32 KiB tiles. Safe to disable here:
+                // every tile slot is written before it is read.
+                compilation_options: wgpu::PipelineCompilationOptions {
+                    zero_initialize_workgroup_memory: false,
+                    ..Default::default()
+                },
                 cache: None,
             })
     }
@@ -572,7 +683,7 @@ fn main() {
     );
 
     // 3. NTT shapes.
-    let shapes: &[(u32, usize)] = &[(15, 64), (18, 16), (21, 1), (21, 8)];
+    let shapes: &[(u32, usize)] = &[(15, 64), (15, 256), (18, 16), (21, 1), (21, 8)];
     let mut results: Vec<ShapeResult> = Vec::new();
 
     for &(logn, ncols) in shapes {
@@ -716,10 +827,10 @@ fn main() {
             report_plan("multipass", t, ntotal, passes, ceiling, &mut best);
         }
 
-        // --- fused plans, E in {11,12,13} ---
-        for e in [11u32, 12, 13] {
+        // --- fused plans: (E, workgroup size) sweep ---
+        for (e, wgsz) in [(11u32, 256u32), (12, 256), (13, 256)] {
             let tile = 1u32 << e;
-            if tile * 4 > max_wg_storage || e >= logn || logn > 2 * e {
+            if tile * 4 > max_wg_storage || e >= logn || logn > 2 * e || tile / 2 < wgsz {
                 continue;
             }
             let f = logn - e;
@@ -733,8 +844,9 @@ fn main() {
                         K_FUSED1,
                         &[
                             ("$TILE", tile),
-                            ("$TPT", tile / 256),
-                            ("$HBT", tile / 512),
+                            ("$TPT", tile / wgsz),
+                            ("$HBT", tile / 2 / wgsz),
+                            ("$WGSZ", wgsz),
                             ("$NN", n as u32),
                             ("$LOGN", logn),
                             ("$EE", e),
@@ -742,7 +854,7 @@ fn main() {
                         ],
                     )
                 ),
-                &format!("fused1_e{e}"),
+                &format!("fused1_e{e}_w{wgsz}"),
             );
             let p2 = gpu.pipeline(
                 &format!(
@@ -752,28 +864,31 @@ fn main() {
                         K_FUSED2,
                         &[
                             ("$TILE", tile),
-                            ("$TPT", tile / 256),
-                            ("$HBT", tile / 512),
+                            ("$TPT", tile / wgsz),
+                            ("$HBT", tile / 2 / wgsz),
+                            ("$WGSZ", wgsz),
                             ("$NN", n as u32),
                             ("$LOGN", logn),
-                            ("$EE", e),
+                            ("$BB", e),
                             ("$FF", f),
                             ("$CC", c),
+                            ("$WLW", e - c),
+                            ("$BF", e + f),
                         ],
                     )
                 ),
-                &format!("fused2_e{e}"),
+                &format!("fused2_e{e}_w{wgsz}"),
             );
             let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> = vec![
                 (&p1, (wgroups, ncols as u32)),
                 (&p2, (wgroups, ncols as u32)),
             ];
             gpu.time_plan(&plan, 1, 0);
-            parity_all &= check_parity(&format!("fused E={e}"));
+            parity_all &= check_parity(&format!("fused E={e} wg={wgsz}"));
             let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
             let t = gpu.time_plan(&plan, iters, 3);
             report_plan(
-                &format!("fused E={e} (F={f},C={c})"),
+                &format!("fused E={e} wg={wgsz} (F={f},C={c})"),
                 t,
                 ntotal,
                 2,
@@ -793,6 +908,266 @@ fn main() {
                 bytes1 / t2 / 1e9,
                 bytes1 / t2 / ceiling * 100.0
             );
+        }
+
+        // --- fused 2D plans: coalesced pass1 (BQ adjacent columns per
+        // workgroup) + generalized mid passes with C-bit run coalescing.
+        // Descriptor: (E1, LB, [(b, F, C), ...]) with E1 + sum(F) == logn.
+        let plans2d: &[(u32, u32, &[(u32, u32, u32)])] = match logn {
+            15 => &[
+                (10, 3, &[(10, 5, 7)]),
+                (9, 4, &[(9, 6, 6)]),
+                (8, 4, &[(8, 7, 5)]),
+                (8, 3, &[(8, 7, 4)]),
+            ],
+            18 => &[
+                (10, 3, &[(10, 8, 5)]),
+                (9, 4, &[(9, 9, 4)]),
+                (8, 4, &[(8, 5, 7), (13, 5, 7)]),
+            ],
+            21 => &[
+                (10, 3, &[(10, 6, 7), (16, 5, 8)]),
+                (9, 4, &[(9, 7, 6), (16, 5, 8)]),
+                (9, 3, &[(9, 6, 6), (15, 6, 6)]),
+                (8, 4, &[(8, 7, 5), (15, 6, 6)]),
+                (8, 3, &[(8, 7, 4), (15, 6, 5)]),
+                (11, 2, &[(11, 10, 3)]),
+            ],
+            _ => &[],
+        };
+        for &(e1, lb, mids) in plans2d {
+            let wgsz = 256u32;
+            let tile1 = 1u32 << (e1 + lb);
+            if tile1 * 4 > max_wg_storage || (1u32 << e1) < wgsz {
+                continue;
+            }
+            // structural sanity: contiguous stage coverage
+            assert_eq!(e1 + mids.iter().map(|m| m.1).sum::<u32>(), logn);
+            let mut b_expect = e1;
+            for m in mids {
+                assert_eq!(m.0, b_expect);
+                b_expect += m.1;
+            }
+            let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
+            pipes.push((
+                gpu.pipeline(
+                    &format!(
+                        "{}{}",
+                        PRELUDE,
+                        subst(
+                            K_FUSED1B,
+                            &[
+                                ("$TILE", tile1),
+                                ("$TPT", tile1 / wgsz),
+                                ("$HBT", tile1 / 2 / wgsz),
+                                ("$WGSZ", wgsz),
+                                ("$NN", n as u32),
+                                ("$LOGN", logn),
+                                ("$E1", e1),
+                                ("$LB", lb),
+                                ("$WW", (n as u32) >> e1),
+                            ],
+                        )
+                    ),
+                    &format!("fused1b_e{e1}_b{lb}"),
+                ),
+                ((n as u32) >> (e1 + lb), ncols as u32),
+            ));
+            for &(b, ff, cc) in mids {
+                let tilem = 1u32 << (cc + ff);
+                assert!(tilem * 4 <= max_wg_storage && b >= cc && tilem / 2 >= wgsz);
+                pipes.push((
+                    gpu.pipeline(
+                        &format!(
+                            "{}{}",
+                            PRELUDE,
+                            subst(
+                                K_FUSED2,
+                                &[
+                                    ("$TILE", tilem),
+                                    ("$TPT", tilem / wgsz),
+                                    ("$HBT", tilem / 2 / wgsz),
+                                    ("$WGSZ", wgsz),
+                                    ("$NN", n as u32),
+                                    ("$LOGN", logn),
+                                    ("$BB", b),
+                                    ("$FF", ff),
+                                    ("$CC", cc),
+                                    ("$WLW", b - cc),
+                                    ("$BF", b + ff),
+                                ],
+                            )
+                        ),
+                        &format!("fused2g_b{b}_f{ff}_c{cc}"),
+                    ),
+                    ((n as u32) >> (cc + ff), ncols as u32),
+                ));
+            }
+            let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
+                pipes.iter().map(|(p, d)| (p, *d)).collect();
+            let label = format!("fused2d E1={e1} B={} {:?}", 1 << lb, mids);
+            gpu.time_plan(&plan, 1, 0);
+            parity_all &= check_parity(&label);
+            let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
+            let t = gpu.time_plan(&plan, iters, 3);
+            report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
+            // per-pass attribution
+            let bytes1 = ntotal as f64 * 8.0;
+            let mut attribution = String::new();
+            for (i, (p, d)) in pipes.iter().enumerate() {
+                let tp = gpu.time_plan(&[(p, *d)], iters, 3);
+                attribution.push_str(&format!(
+                    "pass{} {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                    i + 1,
+                    tp * 1e3,
+                    bytes1 / tp / 1e9,
+                    bytes1 / tp / ceiling * 100.0
+                ));
+            }
+            println!("    {attribution}");
+        }
+
+        // --- register-tier radix-2^R plans: bitrev pass + logn/R global
+        // roundtrips of R fully-unrolled register stages. No workgroup memory,
+        // no barriers — occupancy limited only by registers.
+        for rr in [4u32, 5] {
+            let wgsz = 256u32;
+            let rsh = 32 - logn;
+            let p_bitrev = gpu.pipeline(
+                &format!(
+                    "{}{}",
+                    PRELUDE,
+                    subst(K_BITREV, &[("$NN", n as u32), ("$RSH", rsh)])
+                ),
+                "bitrev",
+            );
+            let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
+            let mut l = 0u32;
+            while l < logn {
+                let r = rr.min(logn - l);
+                let threads = (n as u32) >> r;
+                pipes.push((
+                    gpu.pipeline(
+                        &format!("{}{}", PRELUDE, radix_kernel(n as u32, logn, l, r, wgsz)),
+                        &format!("radix_l{l}_r{r}"),
+                    ),
+                    (threads.div_ceil(wgsz), ncols as u32),
+                ));
+                l += r;
+            }
+            let mut plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
+                vec![(&p_bitrev, ((n as u32).div_ceil(wgsz), ncols as u32))];
+            plan.extend(pipes.iter().map(|(p, d)| (p, *d)));
+            let label = format!("regradix R={rr} ({} passes)", plan.len());
+            gpu.time_plan(&plan, 1, 0);
+            parity_all &= check_parity(&label);
+            let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
+            let t = gpu.time_plan(&plan, iters, 3);
+            report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
+            // per-pass attribution (bitrev first)
+            let bytes1 = ntotal as f64 * 8.0;
+            let tb = gpu.time_plan(
+                &[(&p_bitrev, ((n as u32).div_ceil(wgsz), ncols as u32))],
+                iters,
+                3,
+            );
+            let mut attribution = format!(
+                "bitrev {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                tb * 1e3,
+                bytes1 / tb / 1e9,
+                bytes1 / tb / ceiling * 100.0
+            );
+            for (p, d) in pipes.iter() {
+                let tp = gpu.time_plan(&[(p, *d)], iters, 3);
+                attribution.push_str(&format!(
+                    "radix {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                    tp * 1e3,
+                    bytes1 / tp / 1e9,
+                    bytes1 / tp / ceiling * 100.0
+                ));
+            }
+            println!("    {attribution}");
+        }
+
+        // --- hybrid plans: fused2d pass1 (folds bitrev + E1 stages, small
+        // coalesced tile) followed by register-radix chunks. No standalone
+        // bitrev roundtrip, no occupancy-killing 32 KiB tiles.
+        let hybrids: &[(u32, u32, &[u32])] = match logn {
+            15 => &[(8, 3, &[4, 3]), (9, 3, &[3, 3]), (8, 4, &[4, 3])],
+            18 => &[(8, 3, &[5, 5]), (8, 3, &[4, 3, 3]), (10, 3, &[4, 4])],
+            21 => &[
+                (8, 3, &[5, 4, 4]),
+                (8, 3, &[4, 4, 5]),
+                (9, 3, &[4, 4, 4]),
+                (10, 3, &[4, 4, 3]),
+                (8, 4, &[5, 4, 4]),
+            ],
+            _ => &[],
+        };
+        for &(e1, lb, chunks) in hybrids {
+            let wgsz = 256u32;
+            let tile1 = 1u32 << (e1 + lb);
+            if tile1 * 4 > max_wg_storage || (1u32 << e1) < wgsz {
+                continue;
+            }
+            assert_eq!(e1 + chunks.iter().sum::<u32>(), logn);
+            let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
+            pipes.push((
+                gpu.pipeline(
+                    &format!(
+                        "{}{}",
+                        PRELUDE,
+                        subst(
+                            K_FUSED1B,
+                            &[
+                                ("$TILE", tile1),
+                                ("$TPT", tile1 / wgsz),
+                                ("$HBT", tile1 / 2 / wgsz),
+                                ("$WGSZ", wgsz),
+                                ("$NN", n as u32),
+                                ("$LOGN", logn),
+                                ("$E1", e1),
+                                ("$LB", lb),
+                                ("$WW", (n as u32) >> e1),
+                            ],
+                        )
+                    ),
+                    &format!("hyb1b_e{e1}_b{lb}"),
+                ),
+                ((n as u32) >> (e1 + lb), ncols as u32),
+            ));
+            let mut l = e1;
+            for &r in chunks {
+                pipes.push((
+                    gpu.pipeline(
+                        &format!("{}{}", PRELUDE, radix_kernel(n as u32, logn, l, r, wgsz)),
+                        &format!("hybrad_l{l}_r{r}"),
+                    ),
+                    (((n as u32) >> r).div_ceil(wgsz), ncols as u32),
+                ));
+                l += r;
+            }
+            let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
+                pipes.iter().map(|(p, d)| (p, *d)).collect();
+            let label = format!("hybrid E1={e1} B={} +radix{:?}", 1 << lb, chunks);
+            gpu.time_plan(&plan, 1, 0);
+            parity_all &= check_parity(&label);
+            let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
+            let t = gpu.time_plan(&plan, iters, 3);
+            report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
+            let bytes1 = ntotal as f64 * 8.0;
+            let mut attribution = String::new();
+            for (i, (p, d)) in pipes.iter().enumerate() {
+                let tp = gpu.time_plan(&[(p, *d)], iters, 3);
+                attribution.push_str(&format!(
+                    "pass{} {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                    i + 1,
+                    tp * 1e3,
+                    bytes1 / tp / 1e9,
+                    bytes1 / tp / ceiling * 100.0
+                ));
+            }
+            println!("    {attribution}");
         }
 
         if !parity_all {

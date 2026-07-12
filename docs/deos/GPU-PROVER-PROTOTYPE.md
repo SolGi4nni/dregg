@@ -61,7 +61,7 @@ GPU only if, post-rebalance, the shrink is still the binding cost.**
 | box | GPU | probe result |
 |---|---|---|
 | dev laptop | Apple M2 Max (Metal) | wgpu probe below ran on it |
-| hbox (forge, gauntlet primary) | **AMD Radeon RX 6700 XT** (Navi 22) + Intel iGPU | `nvidia-smi: command not found`; `lspci` shows Navi 22 |
+| hbox (forge, gauntlet primary) | **AMD Radeon RX 6750 XT** (Navi 22) + Intel iGPU | `lspci` shows Navi 22; the RADV adapter string (§10) says **6750 XT** — the 18 Gbps GDDR6 bin, 432 GB/s spec (not 6700 XT/384). Measured §10. |
 | persvati (forge secondary) | **AMD Radeon 880M/890M iGPU** (Strix) | `nvidia-smi` fails (CUDA userspace libs installed, no NVIDIA hw/driver) |
 | NVIDIA/CUDA | none owned | cloud rental only |
 
@@ -69,10 +69,12 @@ GPU only if, post-rebalance, the shrink is still the binding cost.**
 is a plan to rent hardware. The GPUs we *do* own are AMD (hbox) and Apple
 Silicon — exactly the two platforms CUDA-first ecosystems serve worst.
 
-Caveat for hbox specifically: RX 6700 XT is `gfx1031`, which is **not in
+Caveat for hbox specifically: RX 6700/6750 XT is `gfx1031`, which is **not in
 AMD's official ROCm support matrix** (the community workaround is
 `HSA_OVERRIDE_GFX_VERSION=10.3.0`). A Vulkan-based path needs no ROCm at all —
-a real point in wgpu's favor on hbox.
+a real point in wgpu's favor on hbox. **§10 confirms this empirically: the
+stock Debian Vulkan loader + Mesa RADV that were already on the box ran both
+probes bit-exact with zero installs.**
 
 ## 3. The options, honestly
 
@@ -259,6 +261,10 @@ streams row-chunks.
   Gate: if wgpu measures >2-3× off references (RISC0-Metal-class throughput on
   Mac; Futhark-HIP spot-check on hbox), escalate that kernel down the ladder
   wgpu → Futhark(HIP)/native Metal → raw CUDA, kernel by kernel.
+  **→ The forward-NTT half of P2 is MEASURED — see §9. The gate did not fire:
+  wgpu beat the RISC0-Metal reference architecture on this machine; no native
+  escalation needed for the NTT.** (Remaining P2 tail: inverse/coset wiring
+  behind `GpuDft` + the in-prover run.)
 - **P3 — the shrink (BN254) decision, post-rebalance:** first land the
   HORIZONLOG lever #1 blowup rebalance (config-only, 18 min → est. 1–3 min,
   compounds with everything here). Only if the rebalanced shrink still binds:
@@ -304,3 +310,136 @@ accelerator. One kernel suite, both halves of the thesis.
   gaps (cited). **Not validated:** any NTT/Poseidon2/Merkle GPU kernel,
   ICICLE CUDA numbers on our shapes, Futhark or HIP builds on hbox — all
   marked unmeasured above.
+
+## 9. MEASURED: WGSL BabyBear NTT vs peak memory bandwidth (P2 probe, 2026-07-12)
+
+Probe: `circuit-prove/sketches/wgpu-babybear-ntt/` (standalone crate, own
+`[workspace]` opt-out; `cargo run --release` runs everything below). This is
+the empirical answer to "does portable wgpu leave too much on the table on the
+*memory-bound* kernel" — the microprobe in §4 only settled the compute-bound
+one.
+
+Method, in the order the probe enforces it:
+
+1. **Convention lock + parity.** A host radix-2 DIT reference is checked
+   against pinned p3 `Radix2DitParallel::dft` (natural-order evaluations,
+   `w = two_adic_generator(logn)`), then every GPU plan below is checked
+   value-exact against `dft_batch` on every shape, every run (72 parity
+   checks/run, all green; data stays in Montgomery form on the GPU end-to-end,
+   exactly p3's in-memory representation, so a real integration passes
+   `&[BabyBear]` as `&[u32]` with zero conversion).
+2. **The denominator is measured, not assumed.** A trivial copy kernel over a
+   64 MiB working set measures achievable bandwidth: **354-397 GB/s across
+   runs = 88-99% of the 400 GB/s M2 Max spec**
+   ([Apple newsroom](https://www.apple.com/newsroom/2023/01/apple-unveils-m2-pro-and-m2-max-next-generation-chips-for-next-level-workflows/)).
+   First result: *wgpu saturates Apple DRAM* — the abstraction costs nothing
+   on pure streaming. (%-of-ceiling below is vs the same-run copy number; the
+   dev machine is shared, so cross-run absolute times vary ~±10%, and two
+   shapes small enough to sit in the M2's system-level cache show >100%
+   "effective bandwidth" — flagged where it happens.)
+3. **NTT plans, all parity-gated:** (a) `multipass` — bitrev pass + one global
+   dispatch per stage (logn+1 memory roundtrips; this is architecturally the
+   RISC0-shipped-Metal algorithm, see below); (b) shared-memory fused tiles
+   (2 roundtrips); (c) 2D-tiled four-step-style passes (coalesced runs both
+   directions); (d) register-tier radix-2^R (R fully-unrolled stages per
+   roundtrip, no workgroup memory); (e) hybrids of (c)+(d).
+
+### The numbers (quiet-run best per shape; effective GB/s = roundtrips x 8 B/elem / time)
+
+| shape | best plan (passes) | time | Melem/s | eff GB/s | % of measured ceiling | vs p3 1-thread | vs p3 12-core rayon |
+|---|---|---|---|---|---|---|---|
+| 2^15 x 64 cols (8 MiB) | fused2d+radix hybrid (3) | **0.194 ms** | 10 833 | 260 | **73%** | 28x | 9.8x |
+| 2^15 x 256 cols (32 MiB, DRAM-scale interpolate shape) | fused2d 2-pass | **0.637 ms** | 13 172 | 211 | **60%** | 33x | 8.1x |
+| 2^18 x 16 (16 MiB) | hybrid (3) | 0.465 ms | 9 028 | 217 | 61% | 34x | 8.8x |
+| 2^21 x 1 (8 MiB) | hybrid (4) | 0.276-0.312 ms | 6 700-7 600 | 215-243 | 61-67% | 228x | 35-44x |
+| 2^21 x 8 (64 MiB, DRAM-honest LDE shape) | fused2d 3-pass / hybrid (4) | **2.32-2.54 ms** | 6 600-7 240 | 174-211 | **48-60%** | 47x | 10-14x |
+
+CPU baseline detail (this machine, pinned p3, same natural-order output): e.g.
+2^21x8: 120.5 ms single-thread, 19-35 ms full rayon (12 cores, run-dependent);
+2^15x256: 21.1 ms / 5.2 ms. The GPU column is the same math, bit-exact.
+
+Reading the efficiency column honestly: an NTT is not a copy — it must
+traverse the data logn times unless stages are fused, and fusion is bounded by
+the 32 KiB threadgroup memory (a *hardware* limit that binds native Metal
+identically). Per-roundtrip, the probe's plain streaming stage kernel runs at
+**268-292 GB/s effective = 76-81% of the measured ceiling** at DRAM scale;
+whole-NTT effective bandwidth lands at **60-73% of ceiling** on every
+production-relevant shape (48-60% on the single worst one). The residual gap
+to ~100% is pass-count x per-pass-efficiency engineering (see "next lever"
+below), not a wgpu tax.
+
+### The two toolchain taxes found (both real, both removed via wgpu API)
+
+These are the transferable findings — each one *looks* like "portable shader
+abstractions are slow" until named:
+
+1. **naga zero-initializes workgroup memory with thread 0 alone.** The
+   WebGPU-mandated zero-init is emitted on Metal as
+   `if (all(local_invocation_id == 0)) { tile = {}; }` — one lane serially
+   writing the whole 16-32 KiB tile per workgroup launch. Measured: a
+   **13-40x cliff** on any kernel with >8 KiB of workgroup memory
+   (4 GB/s-class throughput). Fix: 
+   `PipelineCompilationOptions::zero_initialize_workgroup_memory = false`
+   (sound whenever every tile slot is written before read — true for all
+   kernels here). Workgroup-size sweeps do NOT fix it (measured 256/512/1024
+   identical) — if you hit a shared-memory cliff under wgpu/Metal, check this
+   first.
+2. **Default bounds checks cost ~2x on shared-memory kernels.** Switching to
+   `create_shader_module_trusted(.., ShaderRuntimeChecks::unchecked())`
+   (unsafe, index-audited kernels, parity still verifies every run) roughly
+   halved the fused/tiled plans (e.g. 2^21x8 3-pass: 5.02 ms → 2.32 ms) and
+   was worth ~15-25% even on the streaming kernels.
+
+Also measured: 32 KiB tiles throttle occupancy (per-pass 70→106→141 GB/s for
+32→16→8 KiB tiles pre-fix) — an Apple hardware property, not a wgpu one;
+plans here therefore prefer 8-16 KiB tiles + register-tier radix passes.
+
+### The native reference point (RISC0), pinned down
+
+RISC0's shipped production Metal prover NTT
+(`risc0-sys 5.0.0-rc.1: kernels/zkp/metal/ntt.metal`, driven by
+`risc0-zkp/src/hal/metal.rs::batch_evaluate_ntt`) is **a separate
+`multi_bit_reverse` pass plus one `multi_ntt_fwd_step` dispatch per stage** —
+i.e. exactly the probe's `multipass` baseline architecture (theirs computes
+twiddles by per-thread exponentiation; ours reads a table). No published
+Apple-Silicon NTT throughput number was found (their benchmarks page ships a
+generate-it-yourself harness only), so the honest comparison is: running that
+same per-stage architecture *through wgpu* on this machine costs 11.0 ms on
+2^21x8 at 76-81%-of-ceiling streaming — native-class per pass — and the
+probe's fused/hybrid plans then beat the *architecture itself* by **4.3-4.7x**
+(2.32-2.54 ms). Portable wgpu is not trailing the shipped native reference
+here; it is ahead of it. (One genuinely useful trick in their HAL: for
+blowup-expanded inputs the stage loop *starts at `1+expand_bits`* — the
+zero-pad structure makes the first log2(blowup) stages trivial. At our blowup
+64 that skips 6 of 21 stages of the real LDE — free extra headroom for the
+`coset_lde_batch` integration, on top of everything measured here.)
+
+### Subgroup ops
+
+Available and requested (`Features::SUBGROUP` reported true on wgpu 24/Metal,
+subgroup sizes 4..64) but **not used by the measured kernels — unmeasured
+upside.** The next lever is the classic two-tier design (register radix-2^4/5
++ subgroup-shuffle exchange instead of threadgroup memory), which would cut
+the 2^21 plans from 3-4 roundtrips toward 2 without the tile-occupancy cost;
+WGSL has `subgroupShuffleXor` for exactly this. Estimated remaining headroom
+from there: ~1.5-2x on the 64 MiB shape — and it is reachable *through wgpu*,
+not a native-only capability.
+
+### Verdict (the answer to "will wgpu hit max hardware perf?")
+
+- On this kernel class the portable path is **not** the bottleneck: wgpu
+  saturates DRAM on copy (88-99% of spec), streams butterfly passes at
+  76-81% of the measured ceiling, lands whole-NTT at **60-73% of ceiling on
+  the production shapes** (13.2 Gelem/s on the 2^15x256 shrink shape;
+  0.64 ms), is **8-14x** the 12-core rayon p3 CPU NTT and **28-47x**
+  single-thread, and **outruns the shipped native-Metal reference
+  architecture by >4x** on identical hardware.
+- **Recommendation: stay portable — do NOT open a native-Metal NTT seam.**
+  The two big losses found were wgpu *defaults* (workgroup zero-init codegen,
+  bounds checks), both already opted out in the probe and priced into the
+  numbers above; the remaining gap is pass-structure engineering (subgroup
+  two-tier, LDE stage-skip) that the same WGSL source can reach. A hand-tuned
+  native kernel would face the same 32 KiB threadgroup memory and the same
+  DRAM; its plausible edge is the ~1.5-2x that the subgroup lever also
+  reaches. Revisit only if, after the `GpuDft` integration (P2 tail), the
+  in-prover LDE measures far off the 60-73%-of-ceiling band established here.
