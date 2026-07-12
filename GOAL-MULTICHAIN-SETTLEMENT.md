@@ -173,3 +173,12 @@ Achievable wrap pieces = DONE/near-done; the blocked piece is the real-apex plum
   Adaptive: goes end-to-end if a real apex is producible; else validates the shrink mechanism on a synthetic inner proof.
 - Probing the real-apex production myself in parallel (the deployed_tooth tests are #[ignore]'d; running --ignored).
 NEXT: if the apex proves → shrink it BN254-native → (stretch) export its FRI data to gnark = THE WRAP END-TO-END.
+
+## ⚑⚑ APEX PIPELINE FIXED (07-12 ~8:33am) — wrap end-to-end reachable
+Verified myself: the #[ignore]d real-apex tests PASS (2/2, 344s, no panic) — the carrier flag-day fixed the
+59!=56 mismatch. A real ir2_leaf_wrap apex IS producible (~5-6min). Capstone lane (apex-verifier AIR under
+DreggOuterConfig) redirected to the REAL ladder: real apex → BN254-native shrink → (stretch) gnark VerifyFriNative.
+THREAD 2 (rung-3 fold-P0) also unblocked (same pipeline) — QUEUED after the capstone (both are heavy circuit-prove
+lanes; two concurrent cargo test -p dregg-circuit-prove thrash the build lock, so SEQUENCE not parallelize).
+NEXT: harvest capstone (verify "real apex shrunk" myself — strong claim); then launch fold-P0; then the gnark
+end-to-end fixture (gnark verifies a real dregg apex's shrink proof) if the capstone leaves it as the increment.
