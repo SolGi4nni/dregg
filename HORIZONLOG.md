@@ -7486,3 +7486,19 @@ Design nuance: the light clients are STANDALONE crates (heavy deps alloy/tenderm
 so the governance layer should consume a MINIMAL ProvenForeignHolding {chain, holder, asset, amount, snapshot,
 trust} that each edge produces — not depend on the light-client crates directly. Other followups: ETH
 committee-rotation dual-depth (post-Electra), Base finality source (OP-stack), Cosmos bisection/skipping path.
+
+## VERIFIED light-client rules LANDED — Tendermint/ETH/MPT (2026-07-11, ultracode Fable panel)
+
+First bricks of the verified-chains beachhead. Each chain light-client verification = a proven Lean predicate
+(rules over crypto-as-verified-leaf): no-forgery + fail-closed + NON-VACUOUS, composing InterchainAdapter
+(toAdapter DISCHARGES foreignFinal). Foundation VerifiedLightClient.lean makes the 3 theorems MANDATORY FIELDS
+(instance can't exist without discharging them — Nomad-law structural) + crypto soundness as VISIBLE fields
+(auditor sees each chain's crypto assumption, no laundering). All 3 audits PASS (not vacuous/laundered/toy);
+verified myself lake env lean exit 0, only Lean-core axioms, no sorry. Tendermint discriminator rejects 8
+forgeries (2/3 boundary, wrong validator set, chain-id, times, empty). KEY FINDING (foundation refinement
+owed): CryptoLeaf.hashCR is FULL INJECTIVITY = pigeonhole-unsatisfiable for a real compressing hash — weaken
+to COMPUTATIONAL collision-resistance (reuse PQ hash-CR floor). PROVEN = rules layer; ASSUMED = named crypto
+leaves. NOT a verified chain — verified light-client RULES over verified-crypto leaves (the honest beachhead);
+the Lean specs ARE the seed chain-finality models. Fold-path doc maps the DECO-proven custom-leaf route (rung
+3); the AIR is the heavy next tier. Files: metatheory/Dregg2/Bridge/{VerifiedLightClient,LightClient{Tendermint,
+Eth,Mpt}}.lean + docs/deos/VERIFIED-LIGHTCLIENT-FOLD-PATH.md. Synthesis agent starved on session usage limit.
