@@ -112,27 +112,42 @@ func VerifyFriQuery(
 			api.AssertIsEqual(digest[i], commitRoots[r][i])
 		}
 
-		// Fold with beta (verifier.rs:458 fold_row). inv(s) is the bit-selected
-		// product of inverse generator constants; inv(2s) = (1/2)*inv(s).
-		invS := frontend.Variable(1)
-		for j := 0; j < lfh; j++ {
-			factor := api.Select(indexBits[r+1+j], twoAdicGenInvGadget[2+j], 1)
-			invS = bb.Mul(invS, factor)
-		}
-		halfInvS := bb.MulConst(bbInv2, invS) // (1/2)*inv(s)
-		sum := bb.ExtAdd(e0, e1)
-		diff := bb.ExtSub(e0, e1)
-		betaTerm := bb.ExtMul(betas[r], diff)
-		folded = bb.ExtAdd(
-			bb.ExtMulBase(frontend.Variable(bbInv2), sum),
-			bb.ExtMulBase(halfInvS, betaTerm),
-		)
+		// Fold with beta (verifier.rs:458 fold_row).
+		folded = friFoldRowArity2(bb, e0, e1, betas[r], indexBits[r+1:r+1+lfh])
 	}
 
 	// Final-polynomial check (verifier.rs:311-324): for the log_final_poly_len=0
 	// scope the final domain has size 1 (x = g^0 = 1), so the Horner evaluation
 	// collapses to the single constant coefficient.
 	bb.ExtAssertIsEqual(folded, finalEval)
+}
+
+// friFoldRowArity2 folds one reconstructed arity-2 sibling group with beta —
+// the fork's fold_row (fri/src/two_adic_pcs.rs:109) closed form
+//
+//	folded = (e0 + e1)/2 + beta*(e0 - e1) * inv(2s)
+//
+// where parentBits are the query-index bits ABOVE this round (indexBits[r+1..]),
+// so inv(s) is the bit-selected product of inverse generator constants and
+// inv(2s) = (1/2)*inv(s) — no runtime field inversion. This is the SINGLE fold
+// code path shared by the emulated verifier (VerifyFriQuery) and the native-hash
+// verifier (VerifyFriQueryNative, fri_verify_native.go): the fold is BabyBear
+// field arithmetic, untouched by the hash swap.
+func friFoldRowArity2(bb *BBApi, e0, e1, beta BBExt, parentBits []frontend.Variable) BBExt {
+	api := bb.api
+	invS := frontend.Variable(1)
+	for j := range parentBits {
+		factor := api.Select(parentBits[j], twoAdicGenInvGadget[2+j], 1)
+		invS = bb.Mul(invS, factor)
+	}
+	halfInvS := bb.MulConst(bbInv2, invS) // (1/2)*inv(s)
+	sum := bb.ExtAdd(e0, e1)
+	diff := bb.ExtSub(e0, e1)
+	betaTerm := bb.ExtMul(beta, diff)
+	return bb.ExtAdd(
+		bb.ExtMulBase(frontend.Variable(bbInv2), sum),
+		bb.ExtMulBase(halfInvS, betaTerm),
+	)
 }
 
 // friMerkleLeafHash hashes a commit-phase leaf row of two extension evals into
