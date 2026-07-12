@@ -1044,3 +1044,19 @@ require_pq=ON — was rejected as classical-only before). So BLOCKER #1 (the liv
 require_pq prereqs: #2 invert the authorization_hash_domain_separation invariant suite (auth-affects-hash -> auth-verified-
 separately); #3 the mid-flight dregg-turn/circuit compile break (the shared branch's VK/descriptor-regen work — another
 lane's). 2 of 3 prereqs to go before content-addressing.
+
+## require_pq #2+#3: STOP — the real prereq is HYBRIDIZE-ALL-PRODUCERS, not a flag flip (2026-07-12, corrected inventory)
+A require_pq #2+#3 readiness lane CORRECTED the earlier narrow framing. Prereq #1 (fffcd36dc) hybridized ONLY the
+AgentRuntime producer — the collective-fiction/bot route. But the tree has MANY OTHER LIVE CLASSICAL producers still
+emitting Authorization::Signature (spot-confirmed by grep): node MCP handlers (node/src/mcp/proof.rs build_signed_forest,
+2×, called by handlers_apps/handlers_delegate), node HTTP API (node/src/api.rs, 2×), app-framework SignedAuthorizer
+(app-framework/src/authorizer.rs, 4×, public via lib.rs:147), intent trustless settlement (intent/src/trustless.rs seals
+the RingSettlement plan classically), + (per the lane, not exact-grep-matched here, likely indirect sign_bytes): dregg-
+sdk-net (remote/client/mailbox), wasm runtime, sdk-py, starbridge-v2 session; and sdk::sign_action_classical remains a
+callable public path. So HYBRID-EVERYWHERE (roadmap step b) is NOT met. Content-addressing Action::hash() is gated on
+require_pq ON *everywhere* (else it strips the sole anti-PQ-downgrade binding for any require_pq=off executor) — so with
+live classical producers present, steps 2-5 (invert invariant -> content-address -> bind turn_hash) MUST NOT land: they
+would either break node MCP/API/SDKs/intent under require_pq=ON, or silently delete the anti-downgrade guarantee. THE
+REAL PREREQUISITE: migrate EVERY producer above to hybrid (route sign_bytes/classical Signature construction through
+sign_action_hybrid), re-run the enumeration to zero live classical producers, THEN invert-invariant + content-address.
+A multi-crate rollout. Discipline held a FIFTH time — drove the enumeration, found hybrid-everywhere false, STOPPED.
