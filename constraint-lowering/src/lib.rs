@@ -283,6 +283,18 @@ pub struct MultiLimbAux {
 /// `a_i − c_i − borrow_in + 2^limb_bits·borrow_out − r_i = 0`; then **`A ≥ C` iff the
 /// final borrow is 0** (enforced by a `== 0` constraint on the MSB borrow). This is the
 /// full-`u64` completion of [`emit_ge`]: a `< 2^31` domain is just the one-limb case.
+///
+/// ## Soundness (against a malicious prover, not just honest-fill)
+/// The borrow chain is FORCED, not chosen. At each limb, constraint (1)
+/// `a_i − c_i − b_in + base·b_out − r_i = 0`, plus `r_i ∈ [0, base)` (the range-check)
+/// and `b_out ∈ {0,1}` (Binary), admit EXACTLY ONE `b_out`: writing the integer
+/// `t = a_i − c_i − b_in ∈ [−base, base)`, `b_out = 0` needs `r_i = t` (in range only if
+/// `t ≥ 0`) and `b_out = 1` needs `r_i = t + base` (in range only if `t < 0`). A
+/// field-wrapped `r_i` (e.g. `t < 0` taken with `b_out = 0`, giving `r_i ≡ t + p ≈ p`)
+/// is far outside `[0, base)`, so the range-check rejects it. Hence every `(r_i, b_out)`
+/// is the honest borrow, the final borrow is 1 **iff** `A < C`, and the `== 0`
+/// constraint on it rejects `A < C` — a prover cannot fake it (exercised by
+/// `multilimb_cheat_fake_final_borrow_rejected`).
 pub fn emit_ge_multilimb_ops(
     a_limbs: &[usize],
     c: &[Operand],
@@ -612,5 +624,115 @@ mod tests {
         let mut bad = row_for(200, 50, &aux2);
         fill_honest(&mut bad, &aux2, 150);
         assert!(!accepts(&cs2, &bad), "200 ≤ 50 must reject");
+    }
+
+    // ── adversarial soundness: a MALICIOUS prover, not just honest-fill ──────────
+
+    #[test]
+    fn ge_cheat_tampered_bit_rejected() {
+        // Honest diff (200−50 = 150) but ONE decomposition bit flipped. The flipped bit is still a
+        // valid bit (Binary passes), but Σ2^i·bit now ≠ diff, so the reconstruction rejects.
+        let mut al = ColAlloc::new(2);
+        let (cs, aux) = emit_ge(0, 1, 8, &mut al);
+        let mut row = row_for(200, 50, &aux);
+        fill_honest(&mut row, &aux, 150);
+        row[aux.bits[0]] = bb(1); // 150 is even → bit0 was 0; flipping it makes Σbits = 151 ≠ 150
+        assert!(
+            !accepts(&cs, &row),
+            "a flipped decomposition bit must reject at reconstruction"
+        );
+    }
+
+    #[test]
+    fn multilimb_cheat_fake_final_borrow_rejected() {
+        // THE adversarial soundness case. A = 100 (limbs 100,0) < C = 300 (limbs 44,1). A malicious
+        // prover fakes the FINAL borrow = 0 (claiming A ≥ C). Constraint (1) on the top limb then
+        // FORCES r1 = a1 − c1 − b_in = 0 − 1 − 0 = −1 ≡ p−1, which is NOT in [0, 2^8) — so the
+        // range-check on r1 rejects. A faked borrow cannot survive: exactly one b_out keeps r in
+        // range, so the borrow chain is forced, not the prover's to choose.
+        let mut al = ColAlloc::new(4);
+        let (cs, aux) = emit_ge_multilimb(&[0, 1], &[2, 3], 8, &mut al);
+        let maxcol = aux
+            .results
+            .iter()
+            .chain(aux.borrows.iter())
+            .chain(aux.result_bits.iter().flatten())
+            .copied()
+            .max()
+            .unwrap()
+            .max(3)
+            + 1;
+        let mut row = vec![BabyBear::ZERO; maxcol];
+        row[0] = bb(100);
+        row[1] = bb(0);
+        row[2] = bb(44);
+        row[3] = bb(1);
+        // limb 0 honest: r0 = 100 − 44 − 0 = 56, b_out0 = 0.
+        row[aux.results[0]] = bb(56);
+        for (j, &bc) in aux.result_bits[0].iter().enumerate() {
+            row[bc] = bb((56u32 >> j) & 1);
+        }
+        row[aux.borrows[0]] = bb(0);
+        // limb 1 CHEAT: fake b_out1 = 0 → constraint (1) forces r1 = 0 − 1 − 0 = p−1 (out of range).
+        row[aux.borrows[1]] = bb(0);
+        row[aux.results[1]] = bb(0) - bb(1); // p−1
+        for &bc in &aux.result_bits[1] {
+            row[bc] = BabyBear::ZERO;
+        }
+        assert!(
+            !accepts(&cs, &row),
+            "faked final borrow (A<C claimed A≥C) must reject via the r1 range-check"
+        );
+    }
+
+    // ── real-u64-scale + edge coverage ──────────────────────────────────────────
+
+    #[test]
+    fn multilimb_u64_full_borrow_propagation() {
+        // 2^48 (limbs [0,0,0,1]) ≥ 1 (limbs [1,0,0,0]) at 4×16-bit — a borrow propagates through
+        // ALL four limbs, exercising the full-u64 chain.
+        let mut al = ColAlloc::new(8);
+        let (cs, aux) = emit_ge_multilimb(&[0, 1, 2, 3], &[4, 5, 6, 7], 16, &mut al);
+        let row = build_ml_row(&[0, 0, 0, 1], &[1, 0, 0, 0], &aux, 16);
+        assert!(
+            accepts(&cs, &row),
+            "2^48 ≥ 1 (borrow through 4 limbs) must accept"
+        );
+        let mut al2 = ColAlloc::new(8);
+        let (cs2, aux2) = emit_ge_multilimb(&[0, 1, 2, 3], &[4, 5, 6, 7], 16, &mut al2);
+        let row2 = build_ml_row(&[1, 0, 0, 0], &[0, 0, 0, 1], &aux2, 16);
+        assert!(!accepts(&cs2, &row2), "1 ≥ 2^48 must reject");
+    }
+
+    #[test]
+    fn multilimb_n1_agrees_with_single() {
+        // A one-limb multi-limb comparison must agree with the single-limb gadget.
+        let mut al = ColAlloc::new(2);
+        let (cs, aux) = emit_ge_multilimb(&[0], &[1], 8, &mut al);
+        assert!(
+            accepts(&cs, &build_ml_row(&[200], &[50], &aux, 8)),
+            "1-limb 200 ≥ 50 accepts"
+        );
+        let mut al2 = ColAlloc::new(2);
+        let (cs2, aux2) = emit_ge_multilimb(&[0], &[1], 8, &mut al2);
+        assert!(
+            !accepts(&cs2, &build_ml_row(&[50], &[200], &aux2, 8)),
+            "1-limb 50 ≥ 200 rejects"
+        );
+    }
+
+    #[test]
+    fn bits_one_minimal_domain() {
+        // The minimal domain: single-bit (0/1) values.
+        let mut al = ColAlloc::new(2);
+        let (cs, aux) = emit_ge(0, 1, 1, &mut al);
+        let mut ok = row_for(1, 0, &aux);
+        fill_honest(&mut ok, &aux, 1);
+        assert!(accepts(&cs, &ok), "1 ≥ 0 (bits=1) accepts");
+        let mut al2 = ColAlloc::new(2);
+        let (cs2, aux2) = emit_ge(0, 1, 1, &mut al2);
+        let mut bad = row_for(0, 1, &aux2);
+        fill_honest(&mut bad, &aux2, 1); // best cheat: claim diff = 1
+        assert!(!accepts(&cs2, &bad), "0 ≥ 1 (bits=1) rejects");
     }
 }
