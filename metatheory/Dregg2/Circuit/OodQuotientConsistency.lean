@@ -127,6 +127,59 @@ theorem ood_forces_row_vanish (Cp Zp qp : Polynomial F) (pts : List F)
   intro x hx
   rw [hCq, eval_mul, hZ x hx, zero_mul]
 
+/-! ## §1½ — The RLC constraint-batching split (the SECOND Schwartz–Zippel step, in the challenge α).
+
+`verifyAlgo` does NOT check each constraint's OOD identity separately. It batches all `n` declared
+constraints into ONE combined identity via a Fiat–Shamir batching challenge `α`, delivering the single
+combined equation `∑ᵢ Rᵢ(ζ)·αⁱ = 0`, where `Rᵢ(ζ) = Cᵢ(ζ) − Z_H(ζ)·qᵢ(ζ)` is the `i`-th per-constraint
+residual at the OOD point ζ. But `OodInterpZ.hood` / `OodInterpF.hood` need the PER-constraint identity
+`Rᵢ(ζ) = 0`. Splitting the batch is a SECOND Schwartz–Zippel argument — now in `α` — on the batching
+polynomial `P(α) = ∑ᵢ Rᵢ(ζ)·αⁱ` (degree `< n`, whose coefficients ARE the per-constraint
+residuals-at-ζ): if `P(α) = 0` at a non-exceptional `α`, then `P ≡ 0`, so every coefficient `Rᵢ(ζ)`
+vanishes. It reuses the SAME `nonexceptional_eval_zero_forces_zero` keystone as `ood_consistency`, one
+level up. This closes the third and last of the three named residuals in this file's seam. -/
+
+/-- The **batching polynomial** `P(α) = ∑_{i<n} rᵢ·αⁱ` — coefficients are the per-constraint residuals. -/
+noncomputable def rlcResidualPoly (n : ℕ) (r : ℕ → F) : Polynomial F :=
+  ∑ i ∈ Finset.range n, C (r i) * X ^ i
+
+omit [IsDomain F] [DecidableEq F] in
+/-- The `j`-th coefficient of the batching polynomial is exactly the `j`-th residual (`j < n`). -/
+theorem rlcResidualPoly_coeff (n : ℕ) (r : ℕ → F) (j : ℕ) (hj : j < n) :
+    (rlcResidualPoly n r).coeff j = r j := by
+  simp only [rlcResidualPoly, finsetSum_coeff, coeff_C_mul, coeff_X_pow, mul_ite, mul_one, mul_zero]
+  rw [Finset.sum_ite_eq (Finset.range n) j r, if_pos (Finset.mem_range.mpr hj)]
+
+omit [IsDomain F] [DecidableEq F] in
+/-- Evaluating the batching polynomial at `α` recovers the combined RLC value `∑ᵢ rᵢ·αⁱ`. -/
+theorem rlcResidualPoly_eval (n : ℕ) (r : ℕ → F) (α : F) :
+    (rlcResidualPoly n r).eval α = ∑ i ∈ Finset.range n, r i * α ^ i := by
+  simp [rlcResidualPoly, eval_finsetSum, eval_mul, eval_C, eval_pow, eval_X]
+
+/-- **The RLC split (polynomial form).** If the batching polynomial vanishes at a non-exceptional `α`,
+every residual `r j` is zero. This is `nonexceptional_eval_zero_forces_zero` read off coefficientwise. -/
+theorem rlc_batch_split (n : ℕ) (r : ℕ → F) (α : F)
+    (hval : (rlcResidualPoly n r).eval α = 0)
+    (hnonexc : α ∉ exceptionalSet (rlcResidualPoly n r)) :
+    ∀ j < n, r j = 0 := by
+  have hP : rlcResidualPoly n r = 0 :=
+    nonexceptional_eval_zero_forces_zero _ α hval hnonexc
+  intro j hj
+  have h := rlcResidualPoly_coeff n r j hj
+  rw [hP, coeff_zero] at h
+  exact h.symm
+
+/-- **K′(c) — the constraint-batching split, from the combined identity `verifyAlgo` delivers.**
+Given the single combined OOD equation `∑ᵢ Rᵢ(ζ)·αⁱ = 0` (the RLC-batched `constraintEval` the
+verifier checks) and a non-exceptional batching challenge `α`, EVERY per-constraint residual `Rᵢ(ζ)`
+vanishes. This is the exact bridge from `verifyAlgo`'s combined, RLC-batched identity to the
+per-constraint `hood` premise the OOD landing consumes — the last named residual of the seam, modeled. -/
+theorem rlc_batch_split_of_combined (n : ℕ) (R : ℕ → F) (α : F)
+    (hcombined : ∑ i ∈ Finset.range n, R i * α ^ i = 0)
+    (hnonexc : α ∉ exceptionalSet (rlcResidualPoly n R)) :
+    ∀ i < n, R i = 0 :=
+  rlc_batch_split n R α (by rw [rlcResidualPoly_eval]; exact hcombined) hnonexc
+
 /-! ## §2 — The DEPLOYED-verifier half: acceptance FORCES the OOD identity (per opened table).
 
 This is the exact contrapositive of the committed `FriVerifier.verifyAlgo_full_rejects_tampered_quotient`
@@ -288,12 +341,40 @@ theorem ood_forces_mainAirAccept_fires :
     , hood := by intro c _; rw [eval_zero]; ring
     , hnonexc := by intro c _; simp [exceptionalSet] }
 
+/-! ### Teeth for the RLC batching split (both truth-values load-bearing). -/
+
+/-- A residual vector `[1, -1]` — a genuine per-constraint mismatch, NOT all zero. -/
+def rlcEscapeR : ℕ → ℤ := fun i => if i = 0 then 1 else -1
+
+/-- FIRE (non-vacuous run): the all-zero residual vector, combined-vanishing at any α, splits back to
+all-zero through the REAL `rlc_batch_split_of_combined`. The landing is not vacuous. -/
+theorem rlc_batch_split_fires : ∀ i < 3, (fun _ => (0 : ℤ)) i = 0 :=
+  rlc_batch_split_of_combined 3 (fun _ => 0) 7
+    (by simp)
+    (by simp [exceptionalSet, rlcResidualPoly])
+
+/-- EXCEPTIONAL ESCAPE (proves `hnonexc` is load-bearing for the SPLIT too): at the EXCEPTIONAL
+batching challenge `α = 1` — a root of the batching polynomial `1 − X` — the mismatched residual
+vector `[1, -1]` batches to `1·1 + (-1)·1 = 0`, yet `R 0 = 1 ≠ 0`. Without demanding α non-exceptional,
+`rlc_batch_split_of_combined` would be FALSE: the batching challenge is genuinely load-bearing, exactly
+like the OOD point ζ in `ood_exceptional_escape`. -/
+theorem rlc_batch_exceptional_escape :
+    (∑ i ∈ Finset.range 2, rlcEscapeR i * (1 : ℤ) ^ i = 0) ∧ rlcEscapeR 0 ≠ 0 := by
+  refine ⟨?_, by decide⟩
+  simp [Finset.sum_range_succ, rlcEscapeR]
+
 end Teeth
 
 #assert_axioms exceptionalSet_card_le
 #assert_axioms nonexceptional_eval_zero_forces_zero
 #assert_axioms ood_consistency
 #assert_axioms ood_forces_row_vanish
+#assert_axioms rlcResidualPoly_coeff
+#assert_axioms rlcResidualPoly_eval
+#assert_axioms rlc_batch_split
+#assert_axioms rlc_batch_split_of_combined
+#assert_axioms rlc_batch_split_fires
+#assert_axioms rlc_batch_exceptional_escape
 #assert_axioms verifyAlgo_accept_forces_table_identity
 #assert_axioms ood_forces_mainAirAccept
 #assert_axioms babybear_ood_soundness_error
