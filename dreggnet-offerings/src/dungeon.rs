@@ -21,16 +21,20 @@
 use deos_view::{MenuItem, ViewNode};
 use dregg_app_framework::TurnReceipt;
 use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
-use spween_dregg::{
-    Playthrough, StepReceipt, WorldCell, WorldError, value_to_u64, verify_by_replay,
-};
+use spween_dregg::{StepReceipt, WorldCell, WorldError, value_to_u64, verify, verify_by_replay};
 
 use dungeon_on_dregg::{deploy_keep, keep_scene};
 
 use crate::{
-    Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
-    VerifyReport,
+    Action, CollectiveDecision, DreggIdentity, Offering, OfferingError, Outcome, RecordVerify,
+    RunCost, SessionConfig, Surface, VerifyReport,
 };
+
+/// Re-export of the substrate **playthrough** — the public, transmissible session record the
+/// [`RecordVerify`] tamper-verify seam exports and re-checks. Re-exported here so a frontend can
+/// name the record type (and forge a copy in a tamper test) without depending on `spween-dregg`
+/// directly.
+pub use spween_dregg::{Playthrough, VerifyBreak};
 
 /// The affordance verb every dungeon move fires — a choice on the current room's ballot. The
 /// action's `arg` is the scene choice index within the current passage.
@@ -62,8 +66,13 @@ pub struct DungeonSession {
     genesis_state: Vec<u64>,
     /// The committed choice-steps, in order — each a real landed turn.
     steps: Vec<StepReceipt>,
-    /// Who drove each committed step (parallel to `steps`) — session-level attribution.
+    /// Who drove each committed step (parallel to `steps`) — session-level attribution. For a
+    /// collective turn this is the decision's *carrier* (the mover of record).
     actors: Vec<DreggIdentity>,
+    /// The collective decision behind each committed step (parallel to `steps`): `None` for a
+    /// single-actor [`Offering::advance`], `Some` for an [`Offering::advance_collective`] crowd
+    /// turn — the recorded electorate + carrier + tally, the crowd decision made first-class.
+    collectives: Vec<Option<CollectiveDecision>>,
 }
 
 impl DungeonSession {
@@ -117,9 +126,17 @@ impl DungeonSession {
         }
     }
 
-    /// The actor who drove step `n` (0-based over committed steps), if recorded.
+    /// The actor who drove step `n` (0-based over committed steps), if recorded. For a collective
+    /// step this is the decision's carrier (the mover of record).
     pub fn actor_of_step(&self, n: usize) -> Option<&DreggIdentity> {
         self.actors.get(n)
+    }
+
+    /// The [`CollectiveDecision`] behind step `n` (0-based over committed steps), if the step was
+    /// a crowd turn ([`Offering::advance_collective`]). `None` for a single-actor step or an
+    /// absent index — the recorded electorate + carrier + tally, the crowd decision first-class.
+    pub fn collective_of_step(&self, n: usize) -> Option<&CollectiveDecision> {
+        self.collectives.get(n).and_then(|c| c.as_ref())
     }
 
     /// A compact one-line projection of the party's committed state (for the surface).
@@ -237,6 +254,7 @@ impl Offering for DungeonOffering {
             genesis_state,
             steps: Vec::new(),
             actors: Vec::new(),
+            collectives: Vec::new(),
         })
     }
 
@@ -286,12 +304,41 @@ impl Offering for DungeonOffering {
                 };
                 session.steps.push(step);
                 session.actors.push(actor);
+                // Keep the collective log parallel to `steps`; `advance` is single-actor, so no
+                // crowd decision by default. `advance_collective` fills this slot after us.
+                session.collectives.push(None);
                 let ended = session.world.read_passage().is_none();
                 Outcome::Landed { receipt, ended }
             }
             Err(WorldError::Refused(why)) => Outcome::Refused(why),
             Err(e) => Outcome::Refused(e.to_string()),
         }
+    }
+
+    /// **Record a first-class crowd turn** (the collective analogue of `advance`). Resolves the
+    /// winning [`Action`] as ONE real cap-bounded turn attributed to the decision's `carrier`
+    /// (via [`advance`](Self::advance) — the substrate still admits exactly one typed move), then,
+    /// *iff it landed*, persists the whole [`CollectiveDecision`] (electorate + tally + carrier)
+    /// beside the committed step. So the receipt says "the PARTY (these voters) decided X, carried
+    /// by Y" with the real electorate — closing the gap where the /dungeon frontend attributed the
+    /// crowd turn to a nameless `party_actor()` constant. A refused move records nothing (the
+    /// anti-ghost tooth: no step, no decision).
+    fn advance_collective(
+        &self,
+        session: &mut DungeonSession,
+        input: Action,
+        decision: CollectiveDecision,
+    ) -> Outcome {
+        let carrier = decision.carrier.clone();
+        let out = self.advance(session, input, carrier);
+        if out.landed() {
+            // `advance` just pushed a `None` collective slot for this landed step; fill it with
+            // the crowd decision (electorate + tally), making the crowd turn first-class.
+            if let Some(slot) = session.collectives.last_mut() {
+                *slot = Some(decision);
+            }
+        }
+        out
     }
 
     /// **Re-verify the whole receipt chain by REPLAY** — re-drives a fresh identically-seeded
@@ -374,6 +421,36 @@ impl Offering for DungeonOffering {
     /// narrator (which the frontend debits + runs). The substrate turn itself is always free.
     fn price(&self, _input: &Action) -> RunCost {
         RunCost::credits(self.narration_credits)
+    }
+}
+
+/// **The frontend-facing tamper-verify seam for the dungeon.** A frontend holds a session
+/// (opaquely) and its exported [`Playthrough`]; it can serialize/transmit the record and might
+/// receive a **forged** copy back. [`verify_record`](RecordVerify::verify_record) re-checks any
+/// such record against the session's authentic world identity (the private `seed`/`scene`) using
+/// the FULL substrate verifier ([`verify`] — both teeth: chain-linkage + replay), so a frontend
+/// can express "a forged record fails" without reaching substrate internals. Strictly stronger
+/// than [`Offering::verify`] (which runs replay only): a spliced/relinked receipt that replay
+/// alone might miss is still caught by the linkage tooth.
+impl RecordVerify for DungeonOffering {
+    type Session = DungeonSession;
+    type Record = Playthrough;
+
+    /// Export the session's authentic playthrough (genesis + committed steps) — the public record
+    /// a frontend transmits / persists / re-checks. No private world identity leaves the offering.
+    fn export_record(&self, session: &DungeonSession) -> Playthrough {
+        session.playthrough()
+    }
+
+    /// Re-verify a (possibly forged) `record` against the session's authentic world identity —
+    /// re-deploy a fresh identically-seeded Keep and run BOTH verification teeth over the record.
+    /// A legal record re-verifies; a forged / reordered / ineligible / spliced one fails.
+    fn verify_record(&self, session: &DungeonSession, record: &Playthrough) -> VerifyReport {
+        let turns = record.receipts().len();
+        match verify(deploy_keep(session.seed), &session.scene, record) {
+            Ok(()) => VerifyReport::ok(turns),
+            Err(b) => VerifyReport::broken(turns, b.to_string()),
+        }
     }
 }
 

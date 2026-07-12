@@ -236,6 +236,116 @@ impl DreggIdentity {
     }
 }
 
+/// **A single option's vote count** in a [`Tally`] — how many of the electorate picked the
+/// affordance carrying `arg`. `arg` is exactly an [`Action::arg`] (the choice index), so a tally
+/// row lines up with the ballot options a frontend rendered.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct VoteCount {
+    /// The [`Action::arg`] this count is for (the choice index the option carries).
+    pub arg: i64,
+    /// How many voters picked it.
+    pub votes: u32,
+}
+
+impl VoteCount {
+    /// `votes` votes for the option carrying `arg`.
+    pub fn new(arg: i64, votes: u32) -> Self {
+        VoteCount { arg, votes }
+    }
+}
+
+/// **The crowd's ballot outcome** — the per-option vote distribution and the winning `arg` that
+/// was carried onto the substrate. A [`CollectiveDecision`] pairs this with the electorate + the
+/// carrier, so an offering records "the party split THIS way, option X won" as first-class receipt
+/// metadata beside the single world-signed turn (the substrate still admits exactly one typed
+/// [`Action`]; the tally is the provenance of *which* one the crowd picked).
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct Tally {
+    /// The per-option vote counts (the ballot distribution).
+    pub counts: Vec<VoteCount>,
+    /// The winning option's [`Action::arg`] — the choice actually carried onto the substrate.
+    pub winner: i64,
+}
+
+impl Tally {
+    /// A tally with an explicitly-named winner (the frontend already resolved the ballot).
+    pub fn new(counts: Vec<VoteCount>, winner: i64) -> Self {
+        Tally { counts, winner }
+    }
+
+    /// A **plurality** tally: the option with the most votes wins; a tie breaks to the
+    /// first-listed option (the ballot's own order). `None` if there are no counts — the natural
+    /// constructor for a crowd ballot the frontend hands over.
+    pub fn plurality(counts: Vec<VoteCount>) -> Option<Self> {
+        let mut best: Option<&VoteCount> = None;
+        for c in &counts {
+            // strictly-greater keeps the FIRST maximum on a tie (stable to ballot order)
+            if best.map_or(true, |b| c.votes > b.votes) {
+                best = Some(c);
+            }
+        }
+        let winner = best?.arg;
+        Some(Tally { counts, winner })
+    }
+
+    /// Total votes cast across all options.
+    pub fn total_votes(&self) -> u32 {
+        self.counts.iter().map(|c| c.votes).sum()
+    }
+
+    /// Votes for the winning option (`0` if the winner is not among the counts).
+    pub fn winning_votes(&self) -> u32 {
+        self.counts
+            .iter()
+            .find(|c| c.arg == self.winner)
+            .map(|c| c.votes)
+            .unwrap_or(0)
+    }
+}
+
+/// **A first-class collective decision** — the crowd turn the single-actor
+/// [`advance`](Offering::advance) cannot express. Where `advance` attributes ONE `actor`, a
+/// plurality/quorum turn has an *electorate* (everyone who voted), a *carrier* (the identity the
+/// winning move is attributed to — the mover of record), and a [`Tally`] (how the crowd split).
+/// An offering records all three beside the one world-signed substrate turn, so the receipt says
+/// **"the PARTY (these voters) decided X, carried by Y"** rather than a nameless `party` constant
+/// — closing the gap the /dungeon refactor flagged, where `party_actor()` erased who carried the
+/// decision. Optional: [`advance`](Offering::advance) still records a single actor; a collective
+/// turn is [`advance_collective`](Offering::advance_collective), whose default resolves the move
+/// as `advance` attributed to the `carrier`.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct CollectiveDecision {
+    /// Everyone who took part in the ballot (the crowd of record).
+    pub electorate: Vec<DreggIdentity>,
+    /// The identity the winning move is attributed to — the mover of record. The default
+    /// [`advance_collective`](Offering::advance_collective) resolves the turn as this actor, so
+    /// the single-actor `actor_of_step` and the collective record agree on who carried it.
+    pub carrier: DreggIdentity,
+    /// How the crowd split, and which option won (carried onto the substrate).
+    pub tally: Tally,
+}
+
+impl CollectiveDecision {
+    /// A collective decision over `electorate`, carried by `carrier`, with outcome `tally`.
+    pub fn new(electorate: Vec<DreggIdentity>, carrier: DreggIdentity, tally: Tally) -> Self {
+        CollectiveDecision {
+            electorate,
+            carrier,
+            tally,
+        }
+    }
+
+    /// How many identities took part in the decision.
+    pub fn electorate_size(&self) -> usize {
+        self.electorate.len()
+    }
+
+    /// Whether `who` was part of the electorate that made this decision.
+    pub fn voted(&self, who: &DreggIdentity) -> bool {
+        self.electorate.contains(who)
+    }
+}
+
 /// A session's identity within a [`Frontend`] — the surface slot a session is presented in (a
 /// Discord channel/thread id, a Telegram chat id, a web session token). Opaque to the core.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -274,6 +384,26 @@ pub trait Offering {
     /// ([`Outcome::Refused`]) that commits nothing (anti-ghost).
     fn advance(&self, session: &mut Self::Session, input: Action, actor: DreggIdentity) -> Outcome;
 
+    /// **Advance by one real turn carrying a first-class [`CollectiveDecision`]** — the
+    /// plurality/crowd analogue of [`advance`](Offering::advance). Where `advance` attributes a
+    /// turn to ONE actor, this carries the whole electorate + the [`Tally`] + the carrier, so the
+    /// offering records "the PARTY decided X, carried by Y" rather than a nameless constant.
+    ///
+    /// **Default relationship (optional, non-breaking):** resolves the move on the substrate
+    /// exactly as [`advance`](Offering::advance) attributed to the decision's `carrier` — the
+    /// single-actor path is the floor, so every offering gets a working `advance_collective` for
+    /// free and the two stay in agreement on the mover. An offering that wants a *receipt* of the
+    /// crowd decision (persist the electorate + tally beside the committed turn) overrides this
+    /// (see [`dungeon::DungeonOffering`]); a refused move records nothing either way (anti-ghost).
+    fn advance_collective(
+        &self,
+        session: &mut Self::Session,
+        input: Action,
+        decision: CollectiveDecision,
+    ) -> Outcome {
+        self.advance(session, input, decision.carrier)
+    }
+
     /// Re-verify the session's committed chain (by replay / the offering's own proof).
     fn verify(&self, session: &Self::Session) -> VerifyReport;
 
@@ -283,6 +413,37 @@ pub trait Offering {
 
     /// What a paid action costs (run-credits). The free tier is [`RunCost::free`].
     fn price(&self, input: &Action) -> RunCost;
+}
+
+/// **The frontend-facing tamper-verify seam.** An [`Offering`]'s [`verify`](Offering::verify)
+/// re-checks a session the offering *itself* holds — but a frontend often holds only a
+/// *transmitted* record (a serialized playthrough) that may have been **forged in transit**, and
+/// cannot reach the offering's private world identity (the dungeon's `seed`/`scene`) to check it.
+/// Before this seam the tamper tooth (forged-choice-fails-replay) was reachable only *inside* the
+/// offering crate, so a frontend could not express "a forged record fails". This trait is that
+/// seam: export a session's authentic record, and re-verify a (possibly forged) record against the
+/// offering's own world identity — the frontend never touches substrate internals, yet a
+/// forged/reordered/ineligible record fails while a legal one passes (non-vacuous).
+///
+/// It is **additive** to [`Offering`] — a separate extension trait, so no existing `Offering` impl
+/// changes — and reusable by any record-backed offering. [`dungeon::DungeonOffering`] implements it
+/// over the substrate playthrough (full replay + chain-linkage re-verification).
+pub trait RecordVerify {
+    /// The offering's live session — the authoritative world identity lives here, privately (the
+    /// frontend holds it opaquely and passes it to bind a record to its authentic identity).
+    type Session;
+    /// The **public, transmissible** record a frontend holds — what it serializes, sends over a
+    /// wire, and might receive tampered. For the dungeon this is the substrate playthrough.
+    type Record;
+
+    /// Export the session's authentic record — what a frontend transmits / persists / re-checks.
+    fn export_record(&self, session: &Self::Session) -> Self::Record;
+
+    /// **Re-verify a (possibly forged) `record`** against this offering's authentic world identity
+    /// (bound through `session`, whose internals stay private to the offering). Returns a
+    /// [`VerifyReport`]: a legal record re-verifies; a forged / reordered / ineligible / spliced
+    /// one fails. The frontend-side tamper check, expressible without substrate internals.
+    fn verify_record(&self, session: &Self::Session, record: &Self::Record) -> VerifyReport;
 }
 
 /// **A frontend** — an affordance-renderer over the ONE offering core. Discord is #0 (built);

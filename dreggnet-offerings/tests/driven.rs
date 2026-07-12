@@ -10,10 +10,11 @@
 //! - a [`MockFrontend`] presents the surface + collects an [`Action`] round-trip, which the
 //!   core then resolves on the substrate as one real turn.
 
-use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, TURN_CHOOSE};
+use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, Playthrough, TURN_CHOOSE};
 use dreggnet_offerings::mock::{MockEvent, MockFrontend};
 use dreggnet_offerings::{
-    Action, DreggIdentity, Frontend, Offering, Outcome, RunCost, SessionConfig, SessionId,
+    Action, CollectiveDecision, DreggIdentity, Frontend, Offering, Outcome, RecordVerify, RunCost,
+    SessionConfig, SessionId, Tally, VoteCount,
 };
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_PRESS_ON, KP_TRADE_BLOWS};
 
@@ -210,6 +211,164 @@ fn render_is_a_deos_surface_and_a_frontend_round_trips_an_action() {
     fe.present(&sid, &off.render(&s), &off.actions(&s));
     fe.teardown(&sid);
     assert!(!fe.is_open(&sid), "teardown archives the session surface");
+}
+
+/// **A first-class collective turn.** A crowd ballots the gatehall (three voters, a plurality for
+/// press-on), the winning move is carried onto the substrate as ONE real turn attributed to the
+/// carrier — and the whole [`CollectiveDecision`] (electorate + carrier + tally) is recorded
+/// beside it, first-class, not erased into a nameless `party` constant. The committed turn still
+/// re-verifies by replay (a real receipt, not metadata theatre).
+#[test]
+fn advance_collective_records_the_electorate_carrier_and_tally() {
+    let off = DungeonOffering::new();
+    let mut s = off.open(SessionConfig::with_seed(9)).expect("open");
+    assert_eq!(s.current_passage_name().as_deref(), Some("gatehall"));
+
+    let alice = DreggIdentity("alice".to_string());
+    let bob = DreggIdentity("bob".to_string());
+    let carol = DreggIdentity("carol".to_string());
+
+    // The crowd's ballot: two for press-on, one for trade-blows → press-on wins the plurality.
+    let tally = Tally::plurality(vec![
+        VoteCount::new(KP_PRESS_ON as i64, 2),
+        VoteCount::new(KP_TRADE_BLOWS as i64, 1),
+    ])
+    .expect("a non-empty ballot has a winner");
+    assert_eq!(
+        tally.winner, KP_PRESS_ON as i64,
+        "press-on wins the plurality"
+    );
+
+    // Bob carried the decision (proposed it / broke a tie — the frontend's call).
+    let decision = CollectiveDecision::new(
+        vec![alice.clone(), bob.clone(), carol.clone()],
+        bob.clone(),
+        tally,
+    );
+
+    // The winning option is carried onto the substrate as ONE real cap-bounded turn.
+    let out = off.advance_collective(
+        &mut s,
+        Action::new("press on", TURN_CHOOSE, KP_PRESS_ON as i64, true),
+        decision,
+    );
+    match out {
+        Outcome::Landed { ended, .. } => assert!(!ended, "pressing on does not end the Keep"),
+        other => panic!("the carried collective move must land a real receipt, got {other:?}"),
+    }
+    assert_eq!(
+        s.receipts_len(),
+        2,
+        "exactly one real verified turn committed"
+    );
+    assert_eq!(
+        s.current_passage_name().as_deref(),
+        Some("hall"),
+        "the world advanced"
+    );
+
+    // The crowd decision is recorded FIRST-CLASS beside the single world-signed turn.
+    let rec = s
+        .collective_of_step(0)
+        .expect("the crowd decision is recorded beside the committed turn");
+    assert_eq!(rec.electorate_size(), 3, "the whole electorate is recorded");
+    assert!(
+        rec.voted(&alice) && rec.voted(&bob) && rec.voted(&carol),
+        "every voter is in the recorded electorate"
+    );
+    assert_eq!(
+        rec.carrier, bob,
+        "the CARRIER (who carried the decision) is named — not a nameless `party` constant"
+    );
+    assert_eq!(rec.tally.winner, KP_PRESS_ON as i64);
+    assert_eq!(
+        rec.tally.winning_votes(),
+        2,
+        "the winning tally is recorded"
+    );
+    assert_eq!(rec.tally.total_votes(), 3, "the whole ballot is recorded");
+
+    // The default relationship holds: the carrier is also the attributed single-actor mover.
+    assert_eq!(
+        s.actor_of_step(0),
+        Some(&bob),
+        "carrier == the attributed mover of record"
+    );
+
+    // A plain single-actor advance records NO collective decision (the two stay distinct).
+    assert!(
+        off.advance(
+            &mut s,
+            Action::new("claim red", TURN_CHOOSE, KP_CLAIM_RED as i64, true),
+            alice.clone(),
+        )
+        .landed()
+    );
+    assert!(
+        s.collective_of_step(1).is_none(),
+        "a single-actor advance records no crowd decision"
+    );
+
+    // And the committed collective turn re-verifies by replay — a real receipt, not theatre.
+    assert!(
+        off.verify(&s).verified,
+        "the collective turn re-verifies by replay"
+    );
+}
+
+/// **The frontend-facing tamper-verify seam** ([`RecordVerify`]). A frontend exports the public
+/// [`Playthrough`], and re-verifies a (possibly forged) transmitted record against the offering's
+/// authentic world identity WITHOUT touching substrate internals (the private seed/scene). It is
+/// non-vacuous: the authentic record passes, a forged one (a swapped committed choice) fails —
+/// the tamper tooth the discord-bot lost to the private seed/scene, now expressible frontend-side.
+#[test]
+fn the_tamper_verify_seam_catches_a_forged_transmitted_record() {
+    let off = DungeonOffering::new();
+    let mut s = off.open(SessionConfig::with_seed(9)).expect("open");
+    let actor = DreggIdentity("party".to_string());
+
+    // Play a legal two-step line (press on → claim the crown for the Red Hand).
+    assert!(
+        off.advance(
+            &mut s,
+            Action::new("press on", TURN_CHOOSE, KP_PRESS_ON as i64, true),
+            actor.clone(),
+        )
+        .landed()
+    );
+    assert!(
+        off.advance(
+            &mut s,
+            Action::new("claim red", TURN_CHOOSE, KP_CLAIM_RED as i64, true),
+            actor,
+        )
+        .landed()
+    );
+
+    // A FRONTEND-facing export: the public, transmissible record. No private seed/scene reached.
+    let authentic: Playthrough = off.export_record(&s);
+    let good = off.verify_record(&s, &authentic);
+    assert!(
+        good.verified,
+        "the authentic transmitted record re-verifies: {}",
+        good.detail
+    );
+    assert_eq!(good.turns, 3, "genesis + two committed steps");
+
+    // Forge the transmitted record: swap the first committed choice (press-on 1 → trade-blows 0).
+    // The frontend never reaches the private seed/scene — it only mutates the public record it
+    // holds, then asks the seam to re-check.
+    let mut forged = authentic.clone();
+    forged.steps[0].choice_index = KP_TRADE_BLOWS as usize;
+    let bad = off.verify_record(&s, &forged);
+    assert!(
+        !bad.verified,
+        "a forged transmitted record must FAIL the frontend-facing tamper check"
+    );
+    assert_ne!(
+        forged.steps[0].choice_index, KP_PRESS_ON as usize,
+        "the forgery really changed the record"
+    );
 }
 
 /// A frontend refuses to collect an affordance it never presented (an event the surface did not
