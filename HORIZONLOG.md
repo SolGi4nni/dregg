@@ -7792,3 +7792,38 @@ work is simple 32-bit kernels. PATH: a wgpu/WGSL BabyBear kernel suite (NTT + Po
 fast Apple Silicon BabyBear proving = CLIENT-SIDE proving (prove your own turn/holding on your Mac) = dregg's
 non-custodial soul. SEQUENCING: config-only blowup rebalance (18min→est 1-3min, sweep running) FIRST; then the
 wgpu NTT kernel (dominant LDE cost) as the first end-to-end GPU increment.
+
+## 2026-07-12 — WIDE-transfer availability wrap-forgery CLOSED (the wide member of the GAP #4 full closure)
+The WIDE registry's two transfer routes retargeted to the §11.7 borrow-weld face and the
+availability discharge carried to the exact wire objects. Lean:
+`Emit/AvailWideMembers.lean` (NEW) — transferV3MembershipAvailWide (crown transferVmDescriptor2R24
+wide host: membership teeth REBUILT over v3OfFrozenWide transferVmDescriptorAvail; teeth PIs 50..51
+UNCHANGED, cols 2617..2618, width 2619; rc via withDfaRcPinsAt at the avail carrier) +
+transferCapOpenTBAvailWide (= wideAppend transferCapOpenEffV3TBAvail at bb 198, width 2948) +
+transferAvailWideRefused (refuse at cavBaseOf AVAIL_WIDTH = 676; the fixed-base
+gentianWideBareRefuse would decode the wrong columns) + KEYSTONE wideEmbedded_sound_v1 (the
+membership-parametric fusion of rotV3FrozenWide_sound_v1 — survives wideAppend's legacy-pin
+retirement via the pin-filtered embed + decidable hclean) + publishes_teeth mirror + the three
+refuse dodges re-closed on the refused member. `EffectVmEmitUMemWeldWide` — crown/tb hosts
+retargeted, satisfied2_of_weldUMemIntoWide (THE WELD PEEL: one row-locally-True umemOp + 2 tables,
+nothing else — availability survives the weld), weldedTransferAvailWide/-TB defs + no-narrowing
+guards. `RotatedKernelRefinementAvailWide.lean` (NEW) — availability_and_exact_move_forced_
+{weldedWide,weldedTB,refusedWide} over the UNCHANGED rotatedEncodesAvail decode +
+transfer_descriptorRefinesAvail_weldedWide (full BalanceMovementSpec, guardAvail from the WITNESS)
++ overdebit/audit-forgery UNSAT teeth. Probes: EmitWideRegistryProbe (crown row =
+transferAvailWideRefused; position-45 TB = the avail member) + EmitWideUMemWeldRegistryProbe
+(weldRefusedFirst refuses the transfer key at the avail caveat base) — fresh emits validated: 57/57
+rows, both transfer keys carry the `dregg-effectvm-transfer-v1-avail` pad key. Rust (dormant until
+regen — every committed name is bare ⇒ pad 0 byte-identical): append_wide_carriers_avail (carrier
+bases at the shifted host width, limbs re-absorbed at BEFORE/AFTER_BASE + pad) +
+generate_rotated_transfer_shape_wide_avail + the wide dispatcher's transfer arm keyed by
+avail_pad_for_descriptor_name(&desc.name) + the SDK wide TB lift at CAP_OPEN_TB_WIDTH + avail_pad.
+REMAINING (named): ① the WIDE burn twin (burnVmDescriptor2R24's wide crown host still rides the
+bare burn face — same-class close, burnVmDescriptorAvail + wideEmbedded_sound_v1 are ready);
+② the WIDE cap-open EFF twin (transferCapOpenEffVmDescriptor2R24, wide position 42) + the WIDE
+fee'd-transfer twin (transferFeeVmDescriptor2R24 — its §11.8 `-v1-fee-avail` face EXISTS and the
+narrow key is flipped; the wide crown row still rides the bare fee face) — same wrap class,
+wideEmbedded_sound_v1 is ready for both; ③ regen checklist: the Rust
+membership fold tooth's teeth COLUMNS move 2607→2617 (PIs unchanged) and v3RegistryWide /
+EmitWideTransferProbe (the old wide-roundtrip slice) still emit the bare transfer at index 0;
+④ ember-gated wide/welded TSV+FP regen unchanged (this lane emits + proves, it does not flip).

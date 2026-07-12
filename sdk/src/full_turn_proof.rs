@@ -2862,9 +2862,8 @@ fn build_effect_vm_cap_open_leg(
     use dregg_circuit::effect_vm::trace_rotated::{
         CAP_OPEN_TB_WIDTH, CapOpenWitness, RotatedBlockWitness, append_wide_carriers,
         append_wide_carriers_cap_open, cap_open_tb_dpis, empty_caveat_manifest,
-        generate_rotated_cap_write_base, generate_rotated_effect_vm_trace,
-        patch_attenuate_base_for_cap_open, transfer_caveat_manifest, widen_to_cap_open,
-        widen_to_cap_open_tb,
+        generate_rotated_cap_write_base, patch_attenuate_base_for_cap_open,
+        transfer_caveat_manifest, widen_to_cap_open_avail, widen_to_cap_open_tb_avail,
     };
 
     // cap-WRITE light-client axis: when this effect-kind HAS a write-bearing wrapper AND the node
@@ -2963,6 +2962,16 @@ fn build_effect_vm_cap_open_leg(
     let desc = parse_vm_descriptor2(json).map_err(|e| {
         SdkError::InvalidWitness(format!("cap-open descriptor parse ({effective_key}): {e}"))
     })?;
+    // THE AVAILABILITY PAD (GAP #4, cap-open member): a hardened `…-v1-avail` cap-open member
+    // (the transfer eff/TB keys post-regen) widens its v1 face by the avail witness columns, so
+    // the rotated appendix, cap-open appendix, and TB columns all shift by the pad. Derived from
+    // the RESOLVED descriptor's name — zero for every bare member (byte-identical legacy path).
+    // The WIDE twins ride the SAME pad (their avail flip landed: the wide TB lift below appends
+    // the carriers at `CAP_OPEN_TB_WIDTH + avail_pad`, matching the retargeted
+    // `transferCapOpenTBVmDescriptor2R24` wide row = `wideAppend transferCapOpenEffV3TBAvail` —
+    // the narrow and wide registries regen together, so the two names agree on the pad).
+    let avail_pad =
+        dregg_circuit::effect_vm::trace_rotated::avail_pad_for_descriptor_name(&desc.name);
 
     let bridge = |w: &dregg_turn::rotation_witness::RotationWitness| {
         RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot)
@@ -3012,11 +3021,21 @@ fn build_effect_vm_cap_open_leg(
                 })?;
         (trace, pis, heaps)
     } else {
+        // The DESCRIPTOR-driven avail generator: at pad 0 byte-identical to
+        // `generate_rotated_effect_vm_trace`; at a nonzero pad it fills the availability witness
+        // limbs/borrow bits per row and lays the rotated appendix at the shifted bases.
         let (trace, pis) =
-            generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, &caveat)
-                .map_err(|e| {
-                    SdkError::InvalidWitness(format!("cap-open base trace ({}): {e}", route.key))
-                })?;
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_avail(
+                avail_pad,
+                initial_state,
+                effects,
+                &before,
+                &after,
+                &caveat,
+            )
+            .map_err(|e| {
+                SdkError::InvalidWitness(format!("cap-open base trace ({}): {e}", route.key))
+            })?;
         (trace, pis, Vec::new())
     };
 
@@ -3130,20 +3149,27 @@ fn build_effect_vm_cap_open_leg(
             Some(id) => (id.actor, id.dst),
             None => (src, src),
         };
-        widen_to_cap_open_tb(&mut trace, &cap_open, actor, dst).map_err(|e| {
+        widen_to_cap_open_tb_avail(&mut trace, &cap_open, actor, dst, avail_pad).map_err(|e| {
             SdkError::InvalidWitness(format!("cap-open TB widen ({}): {e}", route.key))
         })?;
         let tb_pis = cap_open_tb_dpis(&dpis, src, actor, dst);
         if go_wide {
             // THE WIDE TB LIFT: append the two 13×8 BEFORE/AFTER wide carriers PAST the cap-open-TB host
-            // (`append_wide_carriers` at `CAP_OPEN_TB_WIDTH`, geometry-identical to
+            // (`append_wide_carriers_avail` at `CAP_OPEN_TB_WIDTH + avail_pad` — the hardened
+            // `…-v1-avail` TB member's host width and rotated limb bases ride the availability pad;
+            // 0 for the bare member = geometry-identical to
             // `generate_rotated_transfer_cap_open_tb_wide`) + the 16 wide commit PIs. The cap-membership
             // host columns AND the two turn-identity columns are CARRIED UNCHANGED; the carriers re-absorb
             // the SAME limbs into the 8-felt commit, so the leg publishes the full ~124-bit before/after
             // anchor at its LAST 16 PIs (the wide anchor `verify_full_turn_bound` binds) WHILE preserving
             // the #225 turn-identity pins at PI 38/39/40. Closes the ~31-bit waist for the cap-gated
             // (cross-vat / self) Transfer route — the route the deployed node cap path proves.
-            append_wide_carriers(&mut trace, tb_pis, CAP_OPEN_TB_WIDTH)
+            dregg_circuit::effect_vm::trace_rotated::append_wide_carriers_avail(
+                &mut trace,
+                tb_pis,
+                CAP_OPEN_TB_WIDTH + avail_pad,
+                avail_pad,
+            )
         } else {
             tb_pis
         }
@@ -3230,7 +3256,7 @@ fn build_effect_vm_cap_open_leg(
             spliced_open.cap_root, iw.new_root,
             "the spliced witness recomposes the rebuilt AFTER root"
         );
-        widen_to_cap_open(&mut trace, &spliced_open).map_err(|e| {
+        widen_to_cap_open_avail(&mut trace, &spliced_open, avail_pad).map_err(|e| {
             SdkError::InvalidWitness(format!("cap insert widen ({effective_key}): {e}"))
         })?;
         // The submask legs (delegateAtten): KEEP (col 73) = the conferred mask, HELD (col 72) = the
@@ -3272,7 +3298,7 @@ fn build_effect_vm_cap_open_leg(
             dpis
         }
     } else {
-        widen_to_cap_open(&mut trace, &cap_open).map_err(|e| {
+        widen_to_cap_open_avail(&mut trace, &cap_open, avail_pad).map_err(|e| {
             SdkError::InvalidWitness(format!("cap-open widen ({}): {e}", route.key))
         })?;
         if remove_after_spine {

@@ -37,6 +37,7 @@ import Dregg2.Circuit.Emit.HeapOpenEmit
 import Dregg2.Circuit.Emit.FieldsOpenEmit
 import Dregg2.Circuit.Emit.AccumulatorInsertEmit
 import Dregg2.Circuit.Emit.CarrierComposed
+import Dregg2.Circuit.Emit.AvailWideMembers
 import Dregg2.Circuit.RotatedKernelRefinementExercise
 
 namespace Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
@@ -134,11 +135,11 @@ routed to one bound NO cohort descriptor on the wire. Built at the SAME wide geo
 `EmitWideRegistryProbe` emits them (the byte-identical wide host = the bare wide member), so the Rust
 `weld_umem_into_wide_descriptor` of the bare member byte-matches the welded twin. -/
 def liveOnlyWideHosts : List (String × EffectVmDescriptor2) :=
-  let tbBB := Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor.traceWidth
-  let tbHost := Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB
-    Dregg2.Circuit.Emit.CapOpenEmit.transferV3
-    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff-tb" Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER
-  let tbWide := Dregg2.Circuit.Emit.EffectVmEmitRotationWide.wideAppend tbHost tbBB (tbBB + 239)
+  -- transferCapOpenTB: RETARGETED to the AVAIL base (the wide-transfer availability
+  -- wrap-forgery closure) — `effCapOpenV3TB (v3OfFrozenWide transferVmDescriptorAvail) …`
+  -- wide-appended at the AVAIL face base 198, so the TB route carries the §11.7 borrow gates
+  -- + 15-bit teeth (`AvailWideMembers.tbAvailWide_row_v1` forces the hardened v1 denotation).
+  let tbWide := Dregg2.Circuit.Emit.AvailWideMembers.transferCapOpenTBAvailWide
   -- heapWrite: the AFTER-SPINE membership-forcing heap-write host (`effHeapWriteV3 heapWriteV3 …`),
   -- EXACTLY the bare `EmitWideRegistryProbe` position-46 host — the Class-A splice base widened by the
   -- heap-open READ appendix + the AFTER-spine membership appendix, so the deployed descriptor's
@@ -243,8 +244,13 @@ def crownWideHosts : List (String × EffectVmDescriptor2) :=
     -- past the carriers) and the makeSovereign crown host the KEY_COMMIT-gated member (teeth PIs
     -- 58..61 + the chip gate's digest appendix at the wide end) — the umem weld appends its 7
     -- columns PAST each (at the teeth/appendix end), additive as everywhere.
+    -- AVAILABILITY RETARGET (the wide-transfer wrap-forgery closure): the transfer crown host is
+    -- the membership-teeth member REBUILT over the §11.7 borrow-weld face
+    -- (`AvailWideMembers.transferV3MembershipAvailWide` — teeth PIs 50..51 unchanged, rc pins at
+    -- the avail-shifted carrier), so the welded twin carries the availability forcing
+    -- (`membershipAvailWide_row_v1` + `transferAvail_derives_availability_row`).
     else if e.1 == "transferVmDescriptor2R24" then
-      (e.1, Dregg2.Circuit.Emit.CarrierComposed.transferV3MembershipWide)
+      (e.1, Dregg2.Circuit.Emit.AvailWideMembers.transferV3MembershipAvailWide)
     else if e.1 == "makeSovereignVmDescriptor2R24" then
       (e.1, Dregg2.Circuit.Emit.CarrierComposed.makeSovereignV3DeployedWide)
     else e)
@@ -301,5 +307,105 @@ is pinned; these `#guard`s pin the SHAPE the bytes realize). -/
 #guard weldedWideRegistry.all (fun e =>
   e.2.tables.any (fun t => t.id = TableId.custom UMEM_TID) ∧
   e.2.tables.any (fun t => t.id = TableId.custom 2 ∧ t.name == "umem_boundary"))
+
+/-! ## THE WELD PEEL — `weldUMemIntoWide` PRESERVES the host's whole AIR (availability included).
+
+The weld appends exactly ONE `.umemOp` constraint (row-locally `True` — its global leg lives in
+`Satisfied2U`) and the two umem table declarations, and bumps the main arity/width. It appends NO
+gate, NO lookup, NO range, NO hash site, NO mem-op, NO map-op — so `Satisfied2` of the welded
+member restricts to `Satisfied2` of the host verbatim. This is the availability-preservation
+keystone for the wide-avail transfer twins: the §11.7 borrow gates (which live in the host's
+constraint list, and in particular never touch `BALANCE_LO` columns the weld could shadow — the
+weld's 7 columns are FRESH, past the host width) survive the weld untouched, so
+`AvailWideMembers.membershipAvailWide_row_v1` / `tbAvailWide_row_v1` fire on a welded witness
+through this peel. -/
+
+theorem weldUMemIntoWide_constraints (d : EffectVmDescriptor2) (dom : Domain) :
+    (weldUMemIntoWide d dom).constraints
+      = d.constraints ++
+        [ .umemOp
+            { guard := .var (d.traceWidth + 6)
+            , domain := dom
+            , key := .var d.traceWidth
+            , present := .var (d.traceWidth + 1)
+            , value := .var (d.traceWidth + 2)
+            , prevPresent := .var (d.traceWidth + 3)
+            , prevValue := .var (d.traceWidth + 4)
+            , prevSerial := .var (d.traceWidth + 5)
+            , kind := Dregg2.Crypto.MemoryChecking.Kind.write } ] := rfl
+
+/-- The weld appends no `.memOp`: the gathered mem-ops are the host's. -/
+theorem memOpsOf_weldUMemIntoWide (d : EffectVmDescriptor2) (dom : Domain) :
+    memOpsOf (weldUMemIntoWide d dom) = memOpsOf d := by
+  show ((weldUMemIntoWide d dom).constraints).filterMap _ = _
+  rw [weldUMemIntoWide_constraints, List.filterMap_append]
+  simp [memOpsOf]
+
+/-- The weld appends no `.mapOp`: the gathered map-ops are the host's. -/
+theorem mapOpsOf_weldUMemIntoWide (d : EffectVmDescriptor2) (dom : Domain) :
+    mapOpsOf (weldUMemIntoWide d dom) = mapOpsOf d := by
+  show ((weldUMemIntoWide d dom).constraints).filterMap _ = _
+  rw [weldUMemIntoWide_constraints, List.filterMap_append]
+  simp [mapOpsOf]
+
+/-- **THE WELD PEEL** — `Satisfied2 (weldUMemIntoWide d dom) ⟹ Satisfied2 d`: every AIR fact of
+the host (the availability borrow chain included) survives the umem weld. -/
+theorem satisfied2_of_weldUMemIntoWide (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (dom : Domain)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash (weldUMemIntoWide d dom) minit mfin maddrs t) :
+    Satisfied2 hash d minit mfin maddrs t := by
+  have hmem : memLog (weldUMemIntoWide d dom) t = memLog d t := by
+    simp [memLog, memOpsOf_weldUMemIntoWide]
+  have hmap : mapLog (weldUMemIntoWide d dom) t = mapLog d t := by
+    simp [mapLog, mapOpsOf_weldUMemIntoWide]
+  exact
+    { rowConstraints := fun i hi c hc => h.rowConstraints i hi c (by
+        rw [weldUMemIntoWide_constraints]; exact List.mem_append_left _ hc)
+    , rowHashes := h.rowHashes
+    , rowRanges := h.rowRanges
+    , memAddrsNodup := h.memAddrsNodup
+    , memClosed := fun op hop => h.memClosed op (by rw [hmem]; exact hop)
+    , memDisciplined := by rw [← hmem]; exact h.memDisciplined
+    , memBalanced := by rw [← hmem]; exact h.memBalanced
+    , memTableFaithful := by rw [← hmem]; exact h.memTableFaithful
+    , mapTableFaithful := by rw [← hmap]; exact h.mapTableFaithful }
+
+#assert_axioms memOpsOf_weldUMemIntoWide
+#assert_axioms mapOpsOf_weldUMemIntoWide
+#assert_axioms satisfied2_of_weldUMemIntoWide
+
+/-! ## The named WELDED wide-avail transfer members (the exact wire objects the welded registry
+emits for the two transfer keys post-retarget — the refinement discharge
+`RotatedKernelRefinementAvailWide` is stated over THESE). -/
+
+/-- The WELDED avail crown transfer as EMITTED (refuse-first at the avail caveat base, then the
+heap-domain umem weld — the runtime producer's composition for the bare-cohort transfer key). -/
+def weldedTransferAvailWide : EffectVmDescriptor2 :=
+  weldUMemIntoWide Dregg2.Circuit.Emit.AvailWideMembers.transferAvailWideRefused Domain.heap
+
+/-- The WELDED avail TB transfer (live-only tail — not a bare cohort route, so umem-only). -/
+def weldedTransferCapOpenTBAvailWide : EffectVmDescriptor2 :=
+  weldUMemIntoWide Dregg2.Circuit.Emit.AvailWideMembers.transferCapOpenTBAvailWide Domain.heap
+
+-- The welded twins carry the weld marker, the +7 no-narrowing geometry, and the avail name key
+-- (the Rust `avail_pad_for_descriptor_name` prefix survives every wrapper).
+#guard weldedTransferAvailWide.name.endsWith wideUMemWeldSuffix
+#guard weldedTransferAvailWide.name.startsWith "dregg-effectvm-transfer-v1-avail"
+#guard weldedTransferAvailWide.traceWidth
+  == Dregg2.Circuit.Emit.AvailWideMembers.transferAvailWideRefused.traceWidth + 7
+#guard weldedTransferAvailWide.piCount
+  == Dregg2.Circuit.Emit.AvailWideMembers.transferAvailWideRefused.piCount
+#guard weldedTransferCapOpenTBAvailWide.name.endsWith wideUMemWeldSuffix
+#guard weldedTransferCapOpenTBAvailWide.name.startsWith "dregg-effectvm-transfer-v1-avail"
+#guard weldedTransferCapOpenTBAvailWide.traceWidth
+  == Dregg2.Circuit.Emit.AvailWideMembers.transferCapOpenTBAvailWide.traceWidth + 7
+#guard weldedTransferCapOpenTBAvailWide.piCount
+  == Dregg2.Circuit.Emit.AvailWideMembers.transferCapOpenTBAvailWide.piCount
+-- The welded registry's transfer entries are the avail twins (the retarget landed member-for-member).
+#guard (weldedWideRegistry.filter (·.1 == "transferVmDescriptor2R24")).all
+  (fun e => e.2.name.startsWith "dregg-effectvm-transfer-v1-avail")
+#guard (weldedWideRegistry.filter (·.1 == "transferCapOpenTBVmDescriptor2R24")).all
+  (fun e => e.2.name.startsWith "dregg-effectvm-transfer-v1-avail")
 
 end Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide

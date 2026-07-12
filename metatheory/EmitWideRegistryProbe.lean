@@ -35,6 +35,7 @@ import Dregg2.Circuit.Emit.HeapOpenEmit
 import Dregg2.Circuit.Emit.FieldsOpenEmit
 import Dregg2.Circuit.Emit.AccumulatorInsertEmit
 import Dregg2.Circuit.Emit.CarrierComposed
+import Dregg2.Circuit.Emit.AvailWideMembers
 import Dregg2.Circuit.RotatedKernelRefinementExercise
 -- THE GENTIAN DEPLOYED-DEFAULT FLIP: the capacity-floor refuse, lifted to ride the WIDE bare cohort
 -- (aux blocks PAST the wide member width — past the two 13×8 wide carriers). Welded onto exactly the
@@ -144,23 +145,25 @@ def main : IO Unit := do
       let msWide := Dregg2.Circuit.Emit.CarrierComposed.makeSovereignV3DeployedWide
       IO.println s!"{key}\t{(weldWide key msWide).name}\t{emitVmJson2 (weldWide key msWide)}"
     else if key == "transferVmDescriptor2R24" then
-      -- The DEPLOYED wide membership-teeth transfer (`CarrierComposed.transferV3MembershipWide`):
-      -- rc + the 2 `(sender_leaf, authorized_root)` claim pins (50..51 = `MEMBERSHIP_CLAIM_PI_LO`,
-      -- teeth cols 1771..1772 PAST the carriers) AHEAD of the anchors (52..67); width 1773.
-      -- piCount 66 → 68. PI-EXPOSURE leg only (the FOLD edge binds — CarrierComposed §5).
-      let trWide := Dregg2.Circuit.Emit.CarrierComposed.transferV3MembershipWide
-      IO.println s!"{key}\t{(weldWide key trWide).name}\t{emitVmJson2 (weldWide key trWide)}"
+      -- AVAILABILITY RETARGET (the wide-transfer wrap-forgery closure): the wide membership-teeth
+      -- transfer REBUILT over the §11.7 borrow-weld face (`AvailWideMembers.
+      -- transferV3MembershipAvailWide` — teeth PIs 50..51 UNCHANGED, rc pins at the avail-shifted
+      -- carrier, teeth cols 2617..2618 past the avail carriers; width 2619, piCount 68). The
+      -- capacity-floor refuse rides the AVAIL caveat base (`cavBaseOf AVAIL_WIDTH = 676` — the
+      -- fixed-base `gentianWideBareRefuse` would decode the WRONG columns on the widened face),
+      -- i.e. the committed row is `AvailWideMembers.transferAvailWideRefused`, whose availability
+      -- discharge + refuse teeth are proven (`RotatedKernelRefinementAvailWide`,
+      -- `declared_*_unsat_availWideRefused`). PI-EXPOSURE leg only (the FOLD edge binds).
+      let trWide := Dregg2.Circuit.Emit.AvailWideMembers.transferAvailWideRefused
+      IO.println s!"{key}\t{trWide.name}\t{emitVmJson2 trWide}"
     else
       IO.println s!"{key}\t{(weldWide key d).name}\t{emitVmJson2 (weldWide key d)}"
-  -- position 45: `transferCapOpenTB` made 8-felt-wide. The host is the SAME `effCapOpenV3TB transferV3
-  -- … EFF_TRANSFER` the live `EmitRotationV3.lean` emits (the +2 turn-identity columns / +3 PI pins);
-  -- the BEFORE limbs are laid by `rotateV3 transferV3` at the transfer FACE width, so `bb =
-  -- transferVmDescriptor.traceWidth` (the SAME base as `transferCapOpenEff`, position 42).
-  let tbBB := Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptor.traceWidth
-  let tbHost := Dregg2.Circuit.Emit.CapOpenTurnPins.effCapOpenV3TB
-    Dregg2.Circuit.Emit.CapOpenEmit.transferV3
-    "dregg-effectvm-transfer-v1-rot24-v3-capopen-eff-tb" Dregg2.Circuit.Emit.CapOpenEmit.EFF_TRANSFER
-  let tbWide := wideAppend tbHost tbBB (tbBB + 239)
+  -- position 45: `transferCapOpenTB` made 8-felt-wide, RETARGETED to the AVAIL base (the
+  -- wide-transfer wrap-forgery closure): `effCapOpenV3TB (v3OfFrozenWide transferVmDescriptorAvail)
+  -- … EFF_TRANSFER` (+2 turn-identity columns / +3 PI pins, all parametric in the base), wide-appended
+  -- at the AVAIL face base (`bb = AVAIL_WIDTH = 198` — rotateV3 lays the rotated limbs at the
+  -- hardened FACE width). `AvailWideMembers.tbAvailWide_row_v1` forces the hardened v1 denotation.
+  let tbWide := Dregg2.Circuit.Emit.AvailWideMembers.transferCapOpenTBAvailWide
   IO.println s!"transferCapOpenTBVmDescriptor2R24\t{tbWide.name}\t{emitVmJson2 tbWide}"
   -- position 46: `heapWrite` (the after-spine membership-forcing heap-write descriptor, OPTION I) made
   -- 8-felt-wide — EXACTLY as cap deploys `effCapOpenWriteV3`. The host is `effHeapWriteV3 heapWriteV3

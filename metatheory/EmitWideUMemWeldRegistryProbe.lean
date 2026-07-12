@@ -52,9 +52,20 @@ def bareCohortKeys : List String :=
 
 /-- Weld the WIDE capacity-floor refuse onto a wide host IFF its key is a bare cohort route, then weld
 the umem leg PAST it. A non-cohort key (cap-open / write / supplyMint / satisfaction) rides the umem
-leg alone. Mirrors `EmitWideRegistryProbe.weldWide` (same refuse) composed with `weldUMemIntoWide`. -/
+leg alone. Mirrors `EmitWideRegistryProbe.weldWide` (same refuse) composed with `weldUMemIntoWide`.
+AVAILABILITY RETARGET: the transfer key's host is the AVAIL crown member
+(`transferV3MembershipAvailWide`), whose caveat region rides the AVAIL-shifted base — its refuse is
+`gentianDeployedBareRefuseAt (cavBaseOf AVAIL_WIDTH)` (the fixed-base `gentianWideBareRefuse` would
+decode the WRONG columns), so its welded row is exactly the proven
+`EffectVmEmitUMemWeldWide.weldedTransferAvailWide`. -/
 def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDescriptor2 :=
-  let refused := if bareCohortKeys.contains e.1 then gentianWideBareRefuse e.2 else e.2
+  let refused :=
+    if e.1 == "transferVmDescriptor2R24" then
+      Dregg2.Circuit.Emit.AvailWireMembers.gentianDeployedBareRefuseAt
+        (Dregg2.Circuit.Emit.AvailWireMembers.cavBaseOf
+          Dregg2.Circuit.Emit.EffectVmEmitTransfer.AVAIL_WIDTH) e.2
+    else if bareCohortKeys.contains e.1 then gentianWideBareRefuse e.2
+    else e.2
   (e.1, weldUMemIntoWide refused (wideKeyUMemDomain e.1))
 
 /-- The refuse-first welded registry: the 45 crown members refuse-then-umem, the 9 §10 write-tail +
