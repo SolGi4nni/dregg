@@ -81,6 +81,23 @@ pub use tree::{
     ViewNode, MAX_MOUNT_DEPTH, MAX_MOUNT_NODES,
 };
 
+// ── THE INTEGRATION SEAM (feature `integration`, folded into `native`): the ONE gate +
+//    the surface→card bridge — the only place that names BOTH the Lean-mirrored
+//    membrane/reactive surface (`starbridge-web-surface`) AND the reflective faces
+//    (`deos-reflect`) without a cargo cycle (see Cargo.toml). gpui-FREE + deos-js-FREE. ──
+/// [`gate`] — an actuation node's `enabled` from the FULL 4-conjunct gate
+/// (`is_attenuation ∧ disclosure ∧ transition ∧ window`), NOT `is_attenuation` alone.
+#[cfg(feature = "integration")]
+pub mod gate;
+/// [`lower`] — the surface→card bridge: `deos_reflect::Presentation → ViewNode`, one
+/// lossless path to "liberate any surface into a card".
+#[cfg(feature = "integration")]
+pub mod lower;
+#[cfg(feature = "integration")]
+pub use gate::{gate_actuation_nodes, reactive_membrane_enabled, ReactiveSurfaceGate};
+#[cfg(feature = "integration")]
+pub use lower::{presentation_to_view, presentations_to_view};
+
 // ── THE CAP-SCOPE (feature `cap`): the REAL, cap-scoped console read surface — a `Catalog`
 //    source trait bound to our cells + the dregg-auth caveat-chain subject gate (a resource
 //    is shown iff its owner-cap subject == the viewer). PURE (gpui-free + deos-js-free): only

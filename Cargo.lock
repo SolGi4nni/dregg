@@ -4501,6 +4501,7 @@ version = "0.1.0"
 dependencies = [
  "anyhow",
  "deos-js",
+ "deos-reflect",
  "dregg-auth",
  "dregg-cell",
  "dregg-types",
@@ -4512,6 +4513,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serenity",
+ "starbridge-web-surface",
 ]
 
 [[package]]
@@ -6560,6 +6562,20 @@ dependencies = [
  "dregg-sdk",
  "dreggnet-offerings",
  "zeroize",
+]
+
+[[package]]
+name = "dreggnet-market"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "deos-view",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-intent",
+ "dregg-types",
+ "dreggnet-offerings",
+ "starbridge-sealed-auction",
 ]
 
 [[package]]

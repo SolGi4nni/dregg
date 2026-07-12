@@ -72,6 +72,21 @@ dregg-cell = { path = "../cell", optional = true }
 # re-render hook.)
 dregg-types = { path = "../types", optional = true }
 
+# ── THE INTEGRATION SEAM (feature `integration`): the ONE gate + the surface→card
+#    bridge. `deos-view` is the ONLY crate that can name BOTH the Lean-mirrored
+#    membrane/reactive surface (`starbridge-web-surface`) AND the reflective faces
+#    (`deos-reflect`) without a cargo cycle — `deos-js` path-deps BOTH of these AND
+#    `deos-view` path-deps `deos-js`, so the reverse edges (starbridge→deos-view /
+#    deos-reflect→deos-view) would cycle; the forward edges here do not (neither
+#    starbridge nor deos-reflect reaches back to deos-view). Both are ALREADY in the
+#    `native` graph transitively (via deos-js), so naming them directly under
+#    `integration` adds NO new weight; `web`/`cap` never pull them (the tiny bake
+#    stays tiny). starbridge carries the `Viewer`/`ReactiveAffordance`/`project_membrane`
+#    the FOUR-CONJUNCT gate reads; deos-reflect carries the `Presentation` faces the
+#    bridge lowers to `ViewNode`.
+starbridge-web-surface = { path = "../starbridge-web-surface", optional = true }
+deos-reflect = { path = "../deos-reflect", optional = true }
+
 # THE GPUI STACK — pinned to the SAME emberian/zed rev gpui-component@498321a4 pins
 # internally (`adb9026524`), so cargo resolves ONE gpui instance across this crate +
 # gpui-component. This is LOAD-BEARING: a different rev here makes `gpui-component`'s
@@ -144,7 +159,16 @@ native = [
     "dep:gpui_wgpu",
     "dep:gpui-component",
     "dep:image",
+    "integration",
 ]
+# integration — the ONE gate (`gate.rs`, the 4-conjunct `is_attenuation ∧ disclosure ∧
+# transition ∧ window` enabled bit over `ViewNode` actuation nodes) + the surface→card
+# bridge (`lower.rs`, `deos_reflect::Presentation → ViewNode`). gpui-FREE + deos-js-FREE
+# (only the Lean-mirrored `starbridge-web-surface` + the reflective `deos-reflect`, both
+# already in the `native` graph), so it rides the DEFAULT (`native`) build AND compiles
+# standalone: `cargo test -p deos-view --no-default-features --features integration` (no
+# gpui, no SpiderMonkey). The tiny `web` bake never pulls it.
+integration = ["dep:starbridge-web-surface", "dep:deos-reflect", "dep:dregg-cell", "dep:dregg-types"]
 # web — `ViewNode` → an HTML/DOM string (gpui-free, deos-js-free): only serde.
 web = []
 # cap — the dregg-auth-backed capability scope (`catalog` module): a `Catalog` source trait
