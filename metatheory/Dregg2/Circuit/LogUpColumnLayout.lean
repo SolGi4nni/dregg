@@ -468,10 +468,10 @@ def toyT : VmTrace := { rows := [fun _ => 3], pub := fun _ => 5, tf := toyTf }
 def toyTforged : VmTrace := { rows := [fun _ => 5], pub := fun _ => 5, tf := toyTf }
 
 /-- The toy fingerprint: a singleton tuple rides as its (embedded) value. -/
-def fp0 : List ℤ → BabyBear := fun tup => ((tup.headD 0 : ℤ) : BabyBear)
+noncomputable def fp0 : List ℤ → BabyBear := fun tup => ((tup.headD 0 : ℤ) : BabyBear)
 
 /-- The scalar embedding for the challenge column. -/
-def embed0 : ℤ → BabyBear := fun z => (z : BabyBear)
+noncomputable def embed0 : ℤ → BabyBear := fun z => (z : BabyBear)
 
 /-- The multiplicity column: row `[3]` looked up once, the rest zero. -/
 def toyMult : List ℕ := [0, 0, 0, 1]
@@ -482,6 +482,12 @@ theorem fp0_singleton (z : ℤ) : fp0 [z] = (z : BabyBear) := rfl
 /-- The extracted challenge computes to `5` (the designated public slot). -/
 theorem toy_challenge : logupChallenge embed0 toyD toyT = (5 : BabyBear) := by
   show ((5 : ℤ) : BabyBear) = (5 : BabyBear); norm_num
+
+/-- `(5+3 : BabyBear) ≠ 0` structurally (field noncomputable for build hygiene → no `decide`). -/
+private theorem toy_pole_ne_zero : (5 : BabyBear) + 3 ≠ 0 := by
+  have h : (5 : BabyBear) + 3 = ((8 : ℕ) : BabyBear) := by push_cast; ring
+  rw [h, Ne, CharP.cast_eq_zero_iff BabyBear Dregg2.Circuit.BabyBearFriField.babyBearP 8]
+  norm_num [Dregg2.Circuit.BabyBearFriField.babyBearP]
 
 /-- The extracted A side computes to the genuine looked-up fingerprint. -/
 theorem toy_logupA : logupA fp0 toyD toyT .range = [(3 : BabyBear)] := by
@@ -507,10 +513,10 @@ are concrete finite checks. -/
 theorem toy_busModelOk : BusModelOk fp0 embed0 toyD toyT .range toyMult where
   polesA := by
     rw [toy_logupA]; intro a ha
-    rw [List.mem_singleton] at ha; subst ha; rw [toy_challenge]; decide
+    rw [List.mem_singleton] at ha; subst ha; rw [toy_challenge]; exact toy_pole_ne_zero
   polesB := by
     rw [toy_logupB]; intro b hb
-    rw [List.mem_singleton] at hb; subst hb; rw [toy_challenge]; decide
+    rw [List.mem_singleton] at hb; subst hb; rw [toy_challenge]; exact toy_pole_ne_zero
   balanced := by
     unfold busBalance
     refine logup_complete _ ?_

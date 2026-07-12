@@ -36,12 +36,15 @@ instance instFactBabyBearPrime : Fact (Nat.Prime babyBearP) := ⟨babyBearP_prim
 /-- **BabyBear** as a Lean field: `ZMod p` for the prime `p`. -/
 abbrev BabyBear := ZMod babyBearP
 
-/-- BabyBear is a `Field` — the first typeclass `fold_close_of_two_alpha` requires — and it is
-COMPUTABLE: `ZMod p` for prime `p` has a computable inverse (extended-Euclid `ZMod.inv`), so
-`inferInstance` is computable. The former `noncomputable` annotation was SPURIOUS and poisoned
-`decide`/`#eval`/`native_decide` on every downstream `def` touching BabyBear (ember caught it
-2026-07-11); computable ⇒ concrete circuit evaluation works. -/
-instance : Field BabyBear := inferInstance
+/-- BabyBear is a `Field` — the first typeclass `fold_close_of_two_alpha` requires.
+NOTE (2026-07-12): `ZMod p` (prime) IS computable in principle (inverse via extended-Euclid), and a
+plain `instance : Field BabyBear := inferInstance` typechecks WITHOUT `noncomputable`. BUT making it
+globally computable forces Lean to CODE-GENERATE the entire BabyBear-valued def tree (the huge
+descriptors / constraint lists / RotationV3+apex chain) on every build — measured 55GB+ per `lake
+build` (ember killed several). So it is kept `noncomputable` for BUILD HYGIENE, not because the field
+is intrinsically noncomputable. For concrete circuit EVALUATION (KATs, the wrap analyzer on real
+values), use a TARGETED computable instance/copy on the small witness — never globally. -/
+noncomputable instance : Field BabyBear := inferInstance
 
 /-- BabyBear has `DecidableEq` — the second typeclass the FRI lemmas require. -/
 instance : DecidableEq BabyBear := inferInstance
