@@ -18,3 +18,8 @@ sha2 = "0.10"
 
 [dev-dependencies]
 hex = "0.4"
+# Self-signed test PKI (ARK->ASK->VCEK) for the SNP cert-chain test. Default features
+# (crypto/pem/ring) supply ECDSA P-384 keygen + PEM export; the p384 `pem` default feature
+# (already enabled) supplies PKCS#8 decode so the VCEK signer can be reconstructed from the
+# rcgen keypair to body-sign the synthetic report.
+rcgen = "0.14"

@@ -50,6 +50,9 @@ enum Cmd {
         /// url: dotted path to the field to report, e.g. data.priceUsd
         #[arg(long)]
         field: Option<String>,
+        /// npm/wikipedia: the package name or page title for a preset endpoint.
+        #[arg(long)]
+        name: Option<String>,
         /// Where to write the portable proof.
         #[arg(long, default_value = "proof.json")]
         out: PathBuf,
@@ -66,6 +69,10 @@ enum EndpointArg {
     Coinbase,
     Github,
     Url,
+    /// npm registry: prove the latest published version of a package.
+    Npm,
+    /// Wikipedia REST summary: prove a field of a page summary.
+    Wikipedia,
 }
 
 fn main() -> Result<()> {
@@ -78,8 +85,9 @@ fn main() -> Result<()> {
             sha,
             url,
             field,
+            name,
             out,
-        } => run_prove(endpoint, asset, repo, sha, url, field, out),
+        } => run_prove(endpoint, asset, repo, sha, url, field, name, out),
         Cmd::Verify { proof } => run_verify(proof),
     }
 }
@@ -91,6 +99,7 @@ fn run_prove(
     sha: Option<String>,
     url: Option<String>,
     field: Option<String>,
+    name: Option<String>,
     out: PathBuf,
 ) -> Result<()> {
     let endpoint = match endpoint {
@@ -130,6 +139,27 @@ fn run_prove(
             };
             Endpoint::Url { host, path, field }
         }
+        EndpointArg::Npm => {
+            let name = name.context("--name <package> is required for --endpoint npm")?;
+            // registry.npmjs.org/<pkg>/latest is a plain public JSON GET; the
+            // preset just wires up the existing Url path with a default field.
+            let field = field.unwrap_or_else(|| "version".to_string());
+            Endpoint::Url {
+                host: "registry.npmjs.org".to_string(),
+                path: format!("/{name}/latest"),
+                field,
+            }
+        }
+        EndpointArg::Wikipedia => {
+            let name = name.context("--name <title> is required for --endpoint wikipedia")?;
+            // REST v1 page-summary is a plain public JSON GET.
+            let field = field.unwrap_or_else(|| "title".to_string());
+            Endpoint::Url {
+                host: "en.wikipedia.org".to_string(),
+                path: format!("/api/rest_v1/page/summary/{name}"),
+                field,
+            }
+        }
     };
 
     eprintln!(
@@ -157,6 +187,10 @@ fn run_verify(proof: PathBuf) -> Result<()> {
             println!("  server pinned {}", att.server_pinned);
             println!("  carrier      {}", att.carrier);
             println!("  session time {} (unix)", att.time);
+            println!("  legs passed  {}", att.legs.len());
+            for leg in &att.legs {
+                println!("    \u{2713} {:<14} {}", leg.name, leg.detail);
+            }
             println!("  tool         {}", env.tool);
             println!("  note         {}", att.trust_note);
             Ok(())

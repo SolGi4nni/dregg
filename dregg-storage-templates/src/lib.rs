@@ -76,6 +76,7 @@
 #![forbid(unsafe_code)]
 
 pub mod blinded_queue;
+pub mod bonded_operator;
 pub mod cap_inbox;
 pub mod programmable_queue;
 pub mod pubsub_topic;

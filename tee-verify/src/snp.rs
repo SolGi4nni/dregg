@@ -235,6 +235,49 @@ pub struct SnpTrust {
     pub ask_der: Vec<u8>,
 }
 
+/// Decode a single PEM `CERTIFICATE` block to its DER bytes. Only the first block is
+/// read; a non-`CERTIFICATE` label is an error (fail-closed on malformed input).
+fn pem_cert_to_der(pem: &str, what: &str) -> Result<Vec<u8>, String> {
+    let (_, block) = x509_parser::pem::parse_x509_pem(pem.as_bytes())
+        .map_err(|e| format!("{what} PEM parse: {e}"))?;
+    if block.label != "CERTIFICATE" {
+        return Err(format!(
+            "{what} PEM label is {:?}, expected CERTIFICATE",
+            block.label
+        ));
+    }
+    Ok(block.contents)
+}
+
+/// The AMD **Key Distribution Service (KDS)** endpoint that serves the ASK+ARK PEM chain
+/// for a SEV product line (`"Milan"`, `"Genoa"`, …). A GET returns the ASK (SEV
+/// intermediate) followed by the self-signed ARK (SEV root), both PEM `CERTIFICATE`
+/// blocks. Fetch this once per chip family, split the two blocks, and pin them via
+/// [`SnpTrust::from_pem`]. The matching per-chip **VCEK** is fetched from
+/// `https://kdsintf.amd.com/vcek/v1/{product}/{hwid}?blSPL=..&teeSPL=..&snpSPL=..&ucodeSPL=..`
+/// and rides appended to each report (`report(1184) ‖ vcek_der`). No fetch happens here —
+/// this only names the source URL so an operator (or a fetch tool outside the TCB) can
+/// retrieve the roots and install them.
+pub fn amd_kds_cert_chain_url(product: &str) -> String {
+    format!("https://kdsintf.amd.com/vcek/v1/{product}/cert_chain")
+}
+
+impl SnpTrust {
+    /// Build pinned roots from operator-provided PEM: the self-signed AMD **ARK** (SEV
+    /// root) and the **ASK** (SEV intermediate). Each argument must contain a single PEM
+    /// `CERTIFICATE` block; the DER is extracted and stored for chain verification.
+    ///
+    /// The real certificates come from the AMD KDS — see [`amd_kds_cert_chain_url`]. The
+    /// `cert_chain` endpoint returns ASK then ARK; split the two blocks and pass the ARK
+    /// block as `ark_pem` and the ASK block as `ask_pem`.
+    pub fn from_pem(ark_pem: &str, ask_pem: &str) -> Result<SnpTrust, String> {
+        Ok(SnpTrust {
+            ark_der: pem_cert_to_der(ark_pem, "ARK")?,
+            ask_der: pem_cert_to_der(ask_pem, "ASK")?,
+        })
+    }
+}
+
 /// Verify VCEK ← ASK ← pinned-ARK and return the VCEK's P-384 public key.
 ///
 /// Structured like [`crate::verify_cert_chain`]: each link's signature is checked
@@ -297,6 +340,17 @@ impl SnpVerifier {
             trust: Some(SnpTrust { ark_der, ask_der }),
             min_tcb: TcbVersion::default(),
         }
+    }
+
+    /// Install the pinned AMD roots from **PEM** (operator-friendly): the self-signed ARK
+    /// PEM + the ASK PEM. Convenience over [`SnpVerifier::with_pinned_roots`]; see
+    /// [`SnpTrust::from_pem`] and [`amd_kds_cert_chain_url`] for the real cert source.
+    /// Still fail-closed — a malformed PEM is an `Err`, never a silent accept.
+    pub fn with_pinned_roots_pem(ark_pem: &str, ask_pem: &str) -> Result<SnpVerifier, String> {
+        Ok(SnpVerifier {
+            trust: Some(SnpTrust::from_pem(ark_pem, ask_pem)?),
+            min_tcb: TcbVersion::default(),
+        })
     }
 
     /// Pin a minimum `REPORTED_TCB`; reports below it get `tcb_ok = false`.
@@ -486,6 +540,178 @@ mod tests {
         assert!(
             err.contains("VCEK") || err.contains("ARK"),
             "unexpected: {err}"
+        );
+    }
+
+    // --- Self-signed test PKI: ARK -> ASK -> VCEK, all ECDSA-P384/SHA-384 ---
+    //
+    // Proves the cert-chain + body-signature logic end-to-end with NO AMD network fetch:
+    // we forge a three-level P-384 PKI locally, sign a synthetic report with the VCEK
+    // private key, and drive the full pipeline. Real AMD ARK/ASK sign RSA-4096 PSS; this
+    // exercises the chain *structure* plus the ECDSA-P384 body verify (the real crypto
+    // path either way) and the fail-closed rejection of a bad chain.
+    use p384::pkcs8::DecodePrivateKey;
+    use p384::SecretKey;
+    use rcgen::{
+        BasicConstraints, CertificateParams, DnType, IsCa, Issuer, KeyPair, KeyUsagePurpose,
+        PKCS_ECDSA_P384_SHA384,
+    };
+
+    struct TestPki {
+        ark_der: Vec<u8>,
+        ask_der: Vec<u8>,
+        vcek_der: Vec<u8>,
+        ark_pem: String,
+        ask_pem: String,
+        vcek_signer: SigningKey,
+    }
+
+    fn gen_key() -> KeyPair {
+        KeyPair::generate_for(&PKCS_ECDSA_P384_SHA384).expect("p384 keygen")
+    }
+
+    fn ca_params(cn: &str) -> CertificateParams {
+        let mut p = CertificateParams::new(Vec::<String>::new()).expect("params");
+        p.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
+        p.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
+        p.distinguished_name.push(DnType::CommonName, cn);
+        p
+    }
+
+    /// VCEK private key as a p384 `SigningKey`, parsed from rcgen's PKCS#8 export so the
+    /// body signature verifies under the very key embedded in the VCEK certificate.
+    fn signer_from(kp: &KeyPair) -> SigningKey {
+        let secret = SecretKey::from_pkcs8_der(&kp.serialize_der()).expect("pkcs8 -> p384");
+        SigningKey::from(secret)
+    }
+
+    fn build_pki() -> TestPki {
+        let ark_key = gen_key();
+        let ark_params = ca_params("ARK-test");
+        let ark_cert = ark_params.self_signed(&ark_key).expect("ARK self-sign");
+
+        let ask_key = gen_key();
+        let ask_params = ca_params("ASK-test");
+        let ark_issuer = Issuer::from_params(&ark_params, &ark_key);
+        let ask_cert = ask_params
+            .signed_by(&ask_key, &ark_issuer)
+            .expect("ASK<-ARK");
+
+        let vcek_key = gen_key();
+        let mut vcek_params = CertificateParams::new(Vec::<String>::new()).expect("params");
+        vcek_params
+            .distinguished_name
+            .push(DnType::CommonName, "VCEK-test");
+        let ask_issuer = Issuer::from_params(&ask_params, &ask_key);
+        let vcek_cert = vcek_params
+            .signed_by(&vcek_key, &ask_issuer)
+            .expect("VCEK<-ASK");
+
+        TestPki {
+            ark_der: ark_cert.der().to_vec(),
+            ask_der: ask_cert.der().to_vec(),
+            vcek_der: vcek_cert.der().to_vec(),
+            ark_pem: ark_cert.pem(),
+            ask_pem: ask_cert.pem(),
+            vcek_signer: signer_from(&vcek_key),
+        }
+    }
+
+    /// A synthetic report body-signed by the given VCEK signer.
+    fn signed_report(signer: &SigningKey) -> Vec<u8> {
+        let mut bytes = synthetic_report();
+        let rep = SnpReport::parse(&bytes).unwrap();
+        let sig: Signature = signer.sign(rep.signed_body());
+        embed_signature(&mut bytes, &sig);
+        bytes
+    }
+
+    #[test]
+    fn self_signed_pki_chain_verifies_and_body_signature_accepts() {
+        let pki = build_pki();
+        let trust = SnpTrust {
+            ark_der: pki.ark_der.clone(),
+            ask_der: pki.ask_der.clone(),
+        };
+        // VCEK <- ASK <- pinned ARK returns the VCEK public key...
+        let vk = verify_snp_cert_chain(&pki.vcek_der, &trust).expect("valid chain");
+        // ...which matches the signer embedded in the VCEK certificate.
+        assert_eq!(&vk, pki.vcek_signer.verifying_key());
+        // And a body signature made with the VCEK private key verifies under it.
+        let bytes = signed_report(&pki.vcek_signer);
+        let rep = SnpReport::parse(&bytes).unwrap();
+        verify_snp_signature(&rep, &vk).expect("body signature");
+    }
+
+    #[test]
+    fn end_to_end_verify_report_with_pinned_pki() {
+        let pki = build_pki();
+        let mut proof = signed_report(&pki.vcek_signer);
+        proof.extend_from_slice(&pki.vcek_der); // report(1184) || vcek_der
+        let v = SnpVerifier::with_pinned_roots(pki.ark_der.clone(), pki.ask_der.clone());
+        let claims = v
+            .verify_report(TeeQuoteKind::SevSnp, &proof)
+            .expect("full pipeline accepts");
+        assert_eq!(claims.report_data[0], 0x00);
+        assert_eq!(claims.report_data[31], 0x1F);
+    }
+
+    #[test]
+    fn with_pinned_roots_pem_accepts_full_chain() {
+        let pki = build_pki();
+        let mut proof = signed_report(&pki.vcek_signer);
+        proof.extend_from_slice(&pki.vcek_der);
+        let v =
+            SnpVerifier::with_pinned_roots_pem(&pki.ark_pem, &pki.ask_pem).expect("PEM roots load");
+        v.verify_report(TeeQuoteKind::SevSnp, &proof)
+            .expect("pipeline via PEM roots accepts");
+    }
+
+    #[test]
+    fn from_pem_roundtrips_der_and_verifies() {
+        let pki = build_pki();
+        let trust = SnpTrust::from_pem(&pki.ark_pem, &pki.ask_pem).expect("from_pem");
+        assert_eq!(trust.ark_der, pki.ark_der);
+        assert_eq!(trust.ask_der, pki.ask_der);
+        let vk = verify_snp_cert_chain(&pki.vcek_der, &trust).expect("chain via PEM roots");
+        assert_eq!(&vk, pki.vcek_signer.verifying_key());
+    }
+
+    #[test]
+    fn from_pem_rejects_non_certificate_label() {
+        assert!(SnpTrust::from_pem("not a pem", "also not").is_err());
+    }
+
+    #[test]
+    fn wrong_ark_rejects_chain() {
+        let pki = build_pki();
+        // Pin a DIFFERENT (untrusted) ARK — the ASK<-ARK link must fail closed.
+        let other = build_pki();
+        let trust = SnpTrust {
+            ark_der: other.ark_der,
+            ask_der: pki.ask_der.clone(),
+        };
+        assert!(verify_snp_cert_chain(&pki.vcek_der, &trust).is_err());
+    }
+
+    #[test]
+    fn tampered_vcek_rejects_chain() {
+        let pki = build_pki();
+        let trust = SnpTrust {
+            ark_der: pki.ark_der.clone(),
+            ask_der: pki.ask_der.clone(),
+        };
+        let mut bad = pki.vcek_der.clone();
+        let n = bad.len();
+        bad[n - 1] ^= 0xFF; // corrupt the VCEK signature tail
+        assert!(verify_snp_cert_chain(&bad, &trust).is_err());
+    }
+
+    #[test]
+    fn amd_kds_url_names_the_real_source() {
+        assert_eq!(
+            amd_kds_cert_chain_url("Milan"),
+            "https://kdsintf.amd.com/vcek/v1/Milan/cert_chain"
         );
     }
 }
