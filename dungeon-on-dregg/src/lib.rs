@@ -896,3 +896,488 @@ mod keep_tests {
         verify(deploy_keep(16), &s, &play).expect("the honest keep playthrough re-verifies");
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A SECOND UNIVERSE — "The Sunken Vault": an ITEM / INVENTORY system, executor-refereed
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The Keep proved four rules-as-teeth on ONE scene. The Vault is a SECOND committed
+// world, deployed the SAME real way (compile → augment → birth cell → install the
+// `CellProgram`), whose deepening is an **inventory**: items a player picks up and uses,
+// each pickup/use a real cap-bounded turn the verified executor REFUSES when illegal.
+// Nothing here is app bookkeeping — every rule is a `StateConstraint` the
+// [`EmbeddedExecutor`](dregg_app_framework::EmbeddedExecutor) re-checks on the turn's
+// post-state, identical enforcement to the Keep.
+//
+// | item             | pickup tooth (augmented)      | use tooth                                  |
+// |------------------|-------------------------------|--------------------------------------------|
+// | coral key        | `WriteOnce { key_owner }`     | `FieldGte(key_owner, 1)` on the grate move |
+// | healing draught  | `WriteOnce { draughts_held }` | `FieldLteField(draughts_drunk ≤ held)`     |
+//
+// Plus the Keep's HP-floor combat (a compiler-emitted `FieldGte(hp, 1)` on the
+// eel-warden blow), so the draught's heal is load-bearing. Each tooth is
+// executor-enforced and NON-VACUOUS — it BITES on the illegal move:
+//   * **grab-a-taken-item** — the coral key is a CONTESTED relic: the first crew to
+//     claim it (`key_owner` 0→1) holds it, and a RIVAL claim (1→2) fails `WriteOnce`.
+//     (A boolean `WriteOnce` admits an idempotent `1→1` no-op — "you already hold it" —
+//     so a genuinely-biting pickup refusal is the rival-claim / first-grabber shape,
+//     a nonzero→different-nonzero write, exactly what `WriteOnce` refuses.)
+//   * **use-without-holding (a gate item)** — slipping the grate with `key_owner == 0`
+//     fails the `FieldGte(key_owner, 1)` the compiler lifts from `{ key_owner >= 1 }`
+//     (the grate move does not touch `key_owner`, so the threshold stays 1 — a real
+//     bite, not the vacuous `>= 0` a same-var decrement would collapse to). The coral
+//     key is therefore BOTH loot (WriteOnce) AND a key that gates a door (FieldGte) —
+//     one inventory item carrying two distinct executor teeth.
+//   * **use-without-holding (a consumable)** — drinking with `draughts_held == 0`, or
+//     over-drinking past what you hold, fails the cross-slot `FieldLteField` budget
+//     (drunk 0→1 with held 0 ⇒ 1 ≤ 0 is false ⇒ refused; drunk 1→2 with held 1 likewise).
+//
+// The Vault reuses the SAME augmentation machinery as the Keep ([`keep_slot`],
+// [`augment_case`]) and the SAME real substrate — it is a fully additive world.
+
+/// The second dungeon — "The Sunken Vault" — in the spween DSL. Three rooms: a drowned
+/// `wreck` (the inventory: a coral key + a healing draught to pick up), a flooded
+/// `gallery` (an eel-warden to fight, a draught to drink, a key-gated grate), and the
+/// `vault` (the hoard). The inventory RULES lower to real executor teeth (see
+/// [`vault_compiled`]).
+pub const VAULT: &str = r#"---
+id: sunken-vault
+title: The Sunken Vault
+weight: 1
+---
+
+=== wreck
+
+~ hp = 40
+
+A drowned wreck slumps in the current. A coral key glints in the silt — both the Gull
+and Kraken wrecking-crews reach for it, and only the first hand to close on it holds it.
+A healing draught bobs sealed in a bubble of air. A flooded gallery yawns north.
+
+* [Claim the coral key for the Gull crew]
+  ~ key_owner = 1
+  -> wreck
+
+* [Claim the coral key for the Kraken crew]
+  ~ key_owner = 2
+  -> wreck
+
+* [Pocket the healing draught]
+  ~ draughts_held = 1
+  -> wreck
+
+* [Swim north into the gallery]
+  -> gallery
+
+=== gallery
+
+An eel-warden coils before a barnacled grate. Its bite is quick and cold, and the grate
+beyond will not shift for a hand without the coral key.
+
+* [Trade a blow with the eel-warden] { hp >= 16 }
+  ~ hp -= 15
+  -> gallery
+
+* [Drink the healing draught]
+  ~ draughts_drunk += 1
+  ~ hp += 25
+  -> gallery
+
+* [Slip through the barnacled grate] { key_owner >= 1 }
+  -> vault
+
+* [Retreat to the wreck]
+  -> wreck
+
+=== vault
+
+The vault floods with pale green light. A drowned hoard heaps the silt floor.
+
+* [Seize the drowned hoard]
+  ~ gold += 750
+  -> END
+"#;
+
+// ── Vault room / choice coordinates (the driver + verifier speak in these) ───────
+
+/// The drowned wreck: the inventory room (pick up the coral key + the draught).
+pub const ROOM_WRECK: &str = "wreck";
+/// The flooded gallery: the eel-warden fight, the draught, the key-gated grate.
+pub const ROOM_GALLERY: &str = "gallery";
+/// The flooded vault (terminal): the drowned hoard.
+pub const ROOM_VAULT: &str = "vault";
+
+/// `wreck`: claim the contested coral key for the Gull crew (`key_owner = 1`) — a
+/// WRITE-ONCE, first-grabber-wins pickup.
+pub const VLT_CLAIM_GULL: usize = 0;
+/// `wreck`: claim the contested coral key for the Kraken crew (`key_owner = 2`) —
+/// refused if the Gull crew already holds it (`WriteOnce`).
+pub const VLT_CLAIM_KRAKEN: usize = 1;
+/// `wreck`: pocket the healing draught (`draughts_held = 1`) — a WRITE-ONCE pickup.
+pub const VLT_TAKE_DRAUGHT: usize = 2;
+/// `wreck`: swim north into the gallery (ungated).
+pub const VLT_SWIM: usize = 3;
+/// `gallery`: trade a blow with the eel-warden — costs 15 HP, gated so a killing blow
+/// is refused (`FieldGte(hp, 1)`).
+pub const VLT_TRADE_BLOW: usize = 0;
+/// `gallery`: drink the healing draught (`draughts_drunk += 1`, `hp += 25`) — refused
+/// unless a draught is held (`FieldLteField(draughts_drunk ≤ draughts_held)`).
+pub const VLT_DRINK: usize = 1;
+/// `gallery`: slip through the grate into the vault — refused without the coral key
+/// (`FieldGte(key_owner, 1)`).
+pub const VLT_GRATE: usize = 2;
+/// `gallery`: retreat back to the wreck (ungated).
+pub const VLT_RETREAT: usize = 3;
+/// `vault`: seize the hoard (ends the dungeon).
+pub const VLT_SEIZE: usize = 0;
+
+/// Parse the Sunken Vault scene.
+pub fn vault_scene() -> Scene {
+    parse(VAULT, "sunken-vault.scene").expect("the vault scene parses")
+}
+
+/// **Compile the Vault AND augment its program with the inventory teeth.** The combat
+/// HP-floor (`FieldGte(hp, 1)`) and the key gate (`FieldGte(has_key, 1)`) are already
+/// compiler-emitted from the scene conditions; this adds the two shapes the v0 compiler
+/// does not emit — the `WriteOnce` on each pickup slot and the `FieldLteField` draught
+/// budget — as real `CellProgram` cases the executor re-checks move-for-move.
+pub fn vault_compiled() -> CompiledStory {
+    let mut story = compile_scene(&vault_scene()).expect("the vault compiles");
+
+    let key_owner = keep_slot(&story, "key_owner");
+    let held = keep_slot(&story, "draughts_held");
+    let drunk = keep_slot(&story, "draughts_drunk");
+
+    // The coral key is a CONTESTED, first-grabber-wins relic: its owner slot is
+    // WRITE-ONCE, so whichever crew claims it first (0→banner) holds it, and a RIVAL
+    // claim (banner→other banner) is refused — the grab-a-taken-item tooth. (A boolean
+    // WriteOnce admits an idempotent same-value re-write; the contested-owner shape is
+    // the one that genuinely BITES a second claimant.)
+    let write_once_key = || vec![StateConstraint::WriteOnce { index: key_owner }];
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_WRECK, VLT_CLAIM_GULL),
+        write_once_key(),
+    );
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_WRECK, VLT_CLAIM_KRAKEN),
+        write_once_key(),
+    );
+    // The draught pickup is WRITE-ONCE too (defensive: the held-count cannot be
+    // re-written to a different value). Its genuinely-biting tooth is the CONSUME
+    // budget below, not this idempotent pickup.
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_WRECK, VLT_TAKE_DRAUGHT),
+        vec![StateConstraint::WriteOnce { index: held }],
+    );
+
+    // Consuming the draught is bounded by what you HOLD: `draughts_drunk` may never
+    // exceed `draughts_held` (a CROSS-SLOT post-state bound). Drinking with none held
+    // (0→1 > 0) or over-drinking (1→2 > 1) is refused — use-without-holding, on a
+    // consumable. The same tooth-shape as the Keep's mana budget, on inventory.
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_GALLERY, VLT_DRINK),
+        vec![StateConstraint::FieldLteField {
+            left_index: drunk,
+            right_index: held,
+        }],
+    );
+
+    story
+}
+
+/// Deploy the augmented Vault as a real world-cell (the inventory teeth installed as
+/// executor predicates). Deterministic in `seed` (re-deploy reproduces identity + hashes).
+pub fn deploy_vault(seed: u8) -> WorldCell {
+    WorldCell::deploy_compiled(Arc::new(vault_compiled()), seed).expect("the vault deploys")
+}
+
+#[cfg(test)]
+mod vault_tests {
+    //! The Sunken Vault's inventory, each mechanic DRIVEN on the real `WorldCell`: a
+    //! legal pickup/use commits a real `TurnReceipt`; an illegal one (grab-a-taken-item,
+    //! use-without-holding) is a REAL executor refusal that commits NOTHING (anti-ghost).
+    use super::*;
+    use spween_dregg::{
+        Driver, StepPos, Value, VerifyBreak, WorldError, verify, verify_by_replay,
+        verify_chain_linkage,
+    };
+
+    /// The inventory rules are REAL kernel predicates: introspect the installed program
+    /// and confirm the grate gate is `FieldGte(has_key, 1)`, each pickup carries a
+    /// `WriteOnce`, and the drink carries the cross-slot `FieldLteField` budget.
+    #[test]
+    fn vault_teeth_are_real_kernel_predicates() {
+        let story = vault_compiled();
+        let key_owner = keep_slot(&story, "key_owner");
+        let held = keep_slot(&story, "draughts_held");
+        let drunk = keep_slot(&story, "draughts_drunk");
+        let hp = keep_slot(&story, "hp");
+
+        // The grate gate lowered fully to an executor FieldGte on the key-owner slot.
+        let m_grate = choice_method(ROOM_GALLERY, VLT_GRATE);
+        assert_eq!(
+            story.fully_gated.get(&m_grate),
+            Some(&true),
+            "the grate gate is fully executor-enforced"
+        );
+        let grate = case_constraints(&story, &m_grate);
+        assert!(
+            grate.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldGte { index, value }
+                    if *index == key_owner && *value == field_from_u64(1)
+            )),
+            "grate gate is FieldGte(key_owner, 1); got {grate:?}"
+        );
+
+        // The combat blow lifted to a real FieldGte(hp, 1) — a killing blow is refused.
+        let blow = case_constraints(&story, &choice_method(ROOM_GALLERY, VLT_TRADE_BLOW));
+        assert!(
+            blow.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldGte { index, value }
+                    if *index == hp && *value == field_from_u64(1)
+            )),
+            "blow gate is FieldGte(hp, 1); got {blow:?}"
+        );
+
+        // Both rival key-claim cases carry a WriteOnce on the contested owner slot.
+        for m in [
+            choice_method(ROOM_WRECK, VLT_CLAIM_GULL),
+            choice_method(ROOM_WRECK, VLT_CLAIM_KRAKEN),
+        ] {
+            let claim = case_constraints(&story, &m);
+            assert!(
+                claim.iter().any(
+                    |c| matches!(c, StateConstraint::WriteOnce { index } if *index == key_owner)
+                ),
+                "claim `{m}` is WriteOnce(key_owner); got {claim:?}"
+            );
+        }
+        let take_draught = case_constraints(&story, &choice_method(ROOM_WRECK, VLT_TAKE_DRAUGHT));
+        assert!(
+            take_draught
+                .iter()
+                .any(|c| matches!(c, StateConstraint::WriteOnce { index } if *index == held)),
+            "take-draught is WriteOnce(draughts_held); got {take_draught:?}"
+        );
+
+        // The drink is bounded by the cross-slot draught budget.
+        let drink = case_constraints(&story, &choice_method(ROOM_GALLERY, VLT_DRINK));
+        assert!(
+            drink.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldLteField { left_index, right_index }
+                    if *left_index == drunk && *right_index == held
+            )),
+            "drink is FieldLteField(draughts_drunk ≤ draughts_held); got {drink:?}"
+        );
+    }
+
+    /// ITEM PICKUP (grab-a-taken-item, first-grabber-wins) — DRIVEN. The Gull crew
+    /// claims the contested coral key (a real `WriteOnce` transition 0→1); the Kraken
+    /// crew's rival claim (1→2) is a REAL executor refusal — the item is already taken.
+    #[test]
+    fn coral_key_first_grabber_wins() {
+        let s = vault_scene();
+        let world = deploy_vault(21);
+
+        let claim_gull = choice_at(&s, ROOM_WRECK, VLT_CLAIM_GULL);
+        let claim_kraken = choice_at(&s, ROOM_WRECK, VLT_CLAIM_KRAKEN);
+
+        let r = world
+            .apply_choice(ROOM_WRECK, VLT_CLAIM_GULL, &claim_gull)
+            .expect("the first claim of the coral key (0 → Gull) commits");
+        assert_eq!(
+            world.read_var("key_owner"),
+            1,
+            "the Gull crew holds the key"
+        );
+        assert_ne!(r.turn_hash, [0u8; 32]);
+
+        // A rival claim (key_owner 1→2): WriteOnce refuses — the key is already taken.
+        let refused = world.apply_choice(ROOM_WRECK, VLT_CLAIM_KRAKEN, &claim_kraken);
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "grabbing a taken item is refused (WriteOnce), got {refused:?}"
+        );
+        assert_eq!(
+            world.read_var("key_owner"),
+            1,
+            "anti-ghost: the key still belongs to the Gull crew"
+        );
+    }
+
+    /// ITEM USE — a gate item (use-without-holding) — DRIVEN. Without the coral key the
+    /// grate will not open (a REAL `FieldGte` refusal); after prising the key, the SAME
+    /// move commits and carries the player through into the vault.
+    #[test]
+    fn grate_use_without_key_refused_then_with_key_commits() {
+        let s = vault_scene();
+        let world = deploy_vault(22);
+
+        // Swim to the gallery WITHOUT claiming the key.
+        let swim = choice_at(&s, ROOM_WRECK, VLT_SWIM);
+        world
+            .apply_choice(ROOM_WRECK, VLT_SWIM, &swim)
+            .expect("swimming north is ungated and commits");
+        assert_eq!(world.read_var("key_owner"), 0, "no key held");
+
+        // Slip the grate with key_owner == 0: FieldGte(key_owner, 1) refuses.
+        let grate = choice_at(&s, ROOM_GALLERY, VLT_GRATE);
+        let refused = world.apply_choice(ROOM_GALLERY, VLT_GRATE, &grate);
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "using the grate without the key is refused (FieldGte), got {refused:?}"
+        );
+        assert_eq!(
+            world.read_passage(),
+            Some(1),
+            "anti-ghost: still in the gallery, the grate did not open"
+        );
+
+        // Retreat, claim the key, and try the grate again — now it opens.
+        let retreat = choice_at(&s, ROOM_GALLERY, VLT_RETREAT);
+        world
+            .apply_choice(ROOM_GALLERY, VLT_RETREAT, &retreat)
+            .expect("retreat to the wreck commits");
+        let claim = choice_at(&s, ROOM_WRECK, VLT_CLAIM_GULL);
+        world
+            .apply_choice(ROOM_WRECK, VLT_CLAIM_GULL, &claim)
+            .expect("claim the coral key");
+        world
+            .apply_choice(ROOM_WRECK, VLT_SWIM, &swim)
+            .expect("swim back to the gallery");
+        assert_eq!(world.read_var("key_owner"), 1, "the key is now held");
+
+        let r = world
+            .apply_choice(ROOM_GALLERY, VLT_GRATE, &grate)
+            .expect("with the key, the grate opens and commits");
+        assert_eq!(world.read_passage(), Some(2), "now in the vault");
+        assert_ne!(r.turn_hash, [0u8; 32]);
+    }
+
+    /// ITEM USE — a consumable (use-without-holding / over-use) — DRIVEN. Drinking with
+    /// no draught held is a REAL executor refusal; after pocketing one draught the first
+    /// drink commits (heals 25 HP), and a SECOND drink over-spends the single held
+    /// draught and is refused — the cross-slot `FieldLteField` budget bites.
+    #[test]
+    fn healing_draught_consume_requires_holding() {
+        let s = vault_scene();
+        let mut world = deploy_vault(23);
+        world.seed_var("hp", Value::Int(40));
+
+        let drink = choice_at(&s, ROOM_GALLERY, VLT_DRINK);
+
+        // Drink with draughts_held == 0: drunk 0→1 > held 0 ⇒ FieldLteField refuses.
+        let refused = world.apply_choice(ROOM_GALLERY, VLT_DRINK, &drink);
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "drinking with no draught held is refused (FieldLteField), got {refused:?}"
+        );
+        assert_eq!(
+            world.read_var("draughts_drunk"),
+            0,
+            "anti-ghost: nothing drunk"
+        );
+        assert_eq!(world.read_var("hp"), 40, "anti-ghost: no phantom heal");
+
+        // Pocket a draught, then the first drink commits and heals.
+        let take = choice_at(&s, ROOM_WRECK, VLT_TAKE_DRAUGHT);
+        world
+            .apply_choice(ROOM_WRECK, VLT_TAKE_DRAUGHT, &take)
+            .expect("pocket the healing draught");
+        assert_eq!(world.read_var("draughts_held"), 1);
+
+        let r = world
+            .apply_choice(ROOM_GALLERY, VLT_DRINK, &drink)
+            .expect("a held draught drinks (0→1 ≤ 1) and commits");
+        assert_eq!(world.read_var("draughts_drunk"), 1);
+        assert_eq!(world.read_var("hp"), 65, "the draught healed 25 HP");
+        assert_ne!(r.turn_hash, [0u8; 32]);
+
+        // A second drink over-spends the single held draught (1→2 > 1): refused.
+        let over = world.apply_choice(ROOM_GALLERY, VLT_DRINK, &drink);
+        assert!(
+            matches!(over, Err(WorldError::Refused(_))),
+            "over-drinking past what you hold is refused (FieldLteField), got {over:?}"
+        );
+        assert_eq!(
+            world.read_var("draughts_drunk"),
+            1,
+            "anti-ghost: no will spent on the refused over-drink"
+        );
+        assert_eq!(world.read_var("hp"), 65, "anti-ghost: no phantom heal");
+    }
+
+    /// A full LEGAL Vault playthrough over the stock runtime — pick up BOTH items, fight,
+    /// drink, key through the grate, seize the hoard — commits a real receipt chain
+    /// (through all inventory teeth) and re-verifies by replay against a fresh,
+    /// identically-seeded, identically-augmented Vault.
+    #[test]
+    fn full_vault_playthrough_reverifies() {
+        let s = vault_scene();
+        let mut driver = Driver::start(deploy_vault(24), &s).expect("start the vault");
+
+        driver.advance(VLT_CLAIM_GULL).expect("claim the coral key"); // key_owner 0→1 (WriteOnce)
+        driver
+            .advance(VLT_TAKE_DRAUGHT)
+            .expect("pocket the draught"); // held 0→1 (WriteOnce)
+        driver.advance(VLT_SWIM).expect("swim to the gallery");
+        driver.advance(VLT_TRADE_BLOW).expect("trade a blow"); // hp 40→25 (FieldGte)
+        driver.advance(VLT_DRINK).expect("drink the draught"); // drunk 0→1 ≤ 1 (FieldLteField), hp 25→50
+        driver.advance(VLT_GRATE).expect("slip the grate"); // key_owner ≥ 1 (FieldGte)
+        driver.advance(VLT_SEIZE).expect("seize the hoard");
+        assert!(driver.is_ended(), "the vault is cleared");
+        assert_eq!(driver.world().read_var("gold"), 750);
+        assert_eq!(driver.world().read_var("hp"), 50);
+        assert_eq!(driver.world().read_var("key_owner"), 1);
+        assert_eq!(driver.world().read_var("draughts_held"), 1);
+        assert_eq!(driver.world().read_var("draughts_drunk"), 1);
+
+        let play = driver.playthrough();
+        assert_eq!(play.receipts().len(), 8, "genesis + 7 moves");
+        verify_chain_linkage(&play).expect("the vault receipt chain links");
+        verify(deploy_vault(24), &s, &play).expect("the honest vault playthrough re-verifies");
+    }
+
+    /// A retconned Vault playthrough FAILS replay: forge the record to SKIP claiming the
+    /// key (swim first), and the later key-gated grate is refused on replay — or the
+    /// reproduced passage order diverges. Either way the forged record cannot pass.
+    #[test]
+    fn retconned_vault_playthrough_fails() {
+        let s = vault_scene();
+        let mut driver = Driver::start(deploy_vault(25), &s).expect("start the vault");
+        driver.advance(VLT_CLAIM_GULL).expect("claim the coral key");
+        driver.advance(VLT_SWIM).expect("swim to the gallery");
+        driver
+            .advance(VLT_GRATE)
+            .expect("slip the grate with the key");
+        driver.advance(VLT_SEIZE).expect("seize the hoard");
+
+        let play = driver.playthrough();
+        // Sanity: the honest record verifies.
+        verify(deploy_vault(25), &s, &play).expect("the honest record re-verifies");
+
+        // Forge step 0: don't take the key, swim instead. Replay diverges — the grate is
+        // now unkeyed (RefusedOnReplay) or the passage order breaks first.
+        let mut forged = play.clone();
+        forged.steps[0].choice_index = VLT_SWIM;
+        let out = verify_by_replay(deploy_vault(25), &s, &forged);
+        assert!(
+            matches!(
+                out,
+                Err(VerifyBreak::RefusedOnReplay { .. })
+                    | Err(VerifyBreak::PassageOutOfOrder { .. })
+                    | Err(VerifyBreak::StateMismatch {
+                        step: StepPos::Step(_)
+                    })
+            ),
+            "a retconned key-skip fails replay, got {out:?}"
+        );
+    }
+}
