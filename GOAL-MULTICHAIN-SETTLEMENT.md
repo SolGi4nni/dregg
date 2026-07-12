@@ -33,7 +33,11 @@ verified-chain) · NEVER touch trace_rotated.rs / files another terminal edits �
 foreign crypto · HORIZONLOG every follow-up · measure before believing a lever · disjoint waves.
 
 ## Current thrust
-Wave 1: (A) gnark MultiField challenger [wrap] · (scout) rung-3 fold grounding · workspace dep-check.
+Wave 1 LAUNCHED (Fable): gnark-multifield [wrap] · eth-edge (EVM U256>u128 refuse + post-Electra
+rotation) · cosmos-edge (bank decode + bisection) · gov-narrow-tag (u128→u64 fail-closed +
+multi-network ChainId) — each adversarially audited. + rung-3 fold-pilot grounding scout.
+Deferred: workspace consolidation (root Cargo.toml churned by other terminals — do when quiet;
+edge conversions use minimal-primitive-fields at the crate edge, so they DON'T need it).
 
 ## Next 3 moves
 1. Launch gnark MultiField challenger (Fable) + rung-3 fold-pilot grounding scout (Fable).
@@ -41,7 +45,18 @@ Wave 1: (A) gnark MultiField challenger [wrap] · (scout) rung-3 fold grounding 
    decides the cross-chain edge-conversion shape.
 3. Launch cross-chain edge lanes (shaped by #2) + widen-sockets.
 
+## ⚠ Collision map (checked 07-12)
+circuit-prove/ is ACTIVELY churned by stark-kill/vk-epoch (ivc_turn_chain.rs uncommitted-modified now;
+many test files mid-edit). So BOTH the rung-3 fold-P0 build AND the Rust shrink-layer config
+(DreggOuterConfig lives in circuit-prove/plonky3_recursion_impl.rs) are collision-BLOCKED there — defer
+until quiet or coordinate. CLEAN-AND-MINE: chain/gnark, eth-lightclient, cosmos-lightclient,
+dregg-governance, dregg-deploy, docs/. Drive the wrap via chain/gnark (the gnark verifier side); the
+Rust shrink layer waits on circuit-prove going quiet.
+
 ## Done-log
-- (init 07-12) lane adopted. Already committed this session: native-hash gnark gadgets (~61×),
-  verified-LC rules CR-floored (Tendermint/ETH/MPT), cross-chain gov spine, deploy-gate supply-bit
-  policies. Baseline green.
+- (init 07-12) lane adopted. Baseline green: native-hash gnark gadgets (~61×), verified-LC rules
+  CR-floored, cross-chain gov spine, deploy-gate policies.
+- 07-12 rung-3 fold-pilot PLAN committed (VERIFIED-LIGHTCLIENT-FOLD-PILOT.md): EVM-MPT/keccak cheapest;
+  folds through deployed CarrierWitness::Custom (verified citations). Build DEFERRED (circuit-prove churn).
+- 07-12 Wave 1 launched (4 Fable lanes + audits): gnark-multifield, eth-edge, cosmos-edge, gov-narrow-tag.
+  Waiting on completion.
