@@ -17,7 +17,7 @@
 //!   │                                  └→ slot 1: disputeGameFactory == DGF         [3]
 //!   ├─(L1 acct proof)→ DGF.storage_hash ─→ slot keccak(UUID‖103): GameId            [4]
 //!   │                     where UUID = keccak(abi.encode(type, rootClaim, extraData))
-//!   ├─(L1 acct proof)→ game.storage_hash (+code_hash pin) ─→ slot 0:                [5,6]
+//!   ├─(L1 acct proof)→ game.storage_hash (+CWIA code-hash recompute) ─→ slot 0:     [5,6]
 //!   │                     status==DEFENDER_WINS ∧ resolvedAt≠0 ∧ respected@creation
 //!   │                     ∧ createdAt > retirementTs
 //!   ├─ l1_time > resolvedAt + max(asr_delay, policy_delay)                          [8]
@@ -43,9 +43,20 @@
 //!   5-day window. The cryptographic floor is **TEE-or-ZK soundness + challenger
 //!   liveness for single-proof games** — named primitive trust, same class as
 //!   BLS/keccak elsewhere in this crate.
-//! * **Game/ASR code semantics** are inherited via the Link-5 `code_hash` pin (a
-//!   literal fixture constant in increment 1 — full CWIA proxy-bytecode
-//!   recomputation is Residual R3), the same way [`crate::base`] inherits
+//! * **Game/ASR code semantics** are inherited via the Link-5 `code_hash` pin —
+//!   RECOMPUTED, not a fixture constant (Residual R3 closed): the proven game
+//!   account's `code_hash` must equal `keccak256` of the Solady CWIA proxy
+//!   runtime rebuilt from the PINNED AggregateVerifier implementation address +
+//!   the game's creation immutable args (`creator ‖ rootClaim ‖ l1Head ‖
+//!   extraData`, see [`cwia_proxy_code_hash`]). A look-alike contract with the
+//!   same slot-0 layout but different bytecode — or a game cloned from a
+//!   different implementation — is refused. What remains pinned as constants:
+//!   the impl ADDRESS ([`BASE_AGGREGATE_VERIFIER_IMPL`]) and the CWIA template
+//!   bytes — both change only on an OP-stack contracts upgrade (the correct
+//!   failure mode is fail-closed + explicit re-pin). The impl account's own
+//!   bytecode at that address is not separately proven; post-Cancun an
+//!   account's code is immutable (`SELFDESTRUCT` only in the creating tx), so
+//!   the address IS the semantics, the same way [`crate::base`] inherits
 //!   `L2OutputOracle` semantics from its address.
 //! * **Governance keys**: the guardian can blacklist/retire/rotate and the
 //!   ProxyAdmin can swap implementations. Fail-closed here (pins refuse after an
@@ -72,7 +83,7 @@ use crate::evm::{
     ProvenErc20Holding,
 };
 use crate::finality::FinalizedExecution;
-use alloy_primitives::{keccak256, U256};
+use alloy_primitives::{hex, keccak256, U256};
 
 /// Declared slot of `mapping(Hash => GameId) _disputeGames` in the canonical
 /// contracts-bedrock `DisputeGameFactory` (slot **103**; `gameImpls` 101,
@@ -109,6 +120,102 @@ pub const GAME_STATUS_DEFENDER_WINS: u8 = 2;
 /// Base mainnet's live respected game type: **621** (`AggregateVerifier` v0.1.0,
 /// the dual-attestation TEE/ZK validity game — live-read 2026-07-12).
 pub const BASE_AGGREGATE_VERIFIER_GAME_TYPE: u32 = 621;
+
+/// Base mainnet's live game-type-621 implementation — `DGF.gameImpls(621)` =
+/// **`AggregateVerifier` v0.1.0** at `0x1bd8db5139Ba7aC9277684650c15e6E341761919`
+/// (live-read 2026-07-12; docs/deos/BASE-FAULT-PROOF-ANCHOR.md §0). This is the
+/// DELEGATECALL target baked into every type-621 game proxy's CWIA runtime
+/// bytecode — the semantics pin Link 5 recomputes the code hash against.
+/// Changes only on an OP-stack/Base contracts upgrade (re-pin explicitly).
+pub const BASE_AGGREGATE_VERIFIER_IMPL: [u8; 20] = hex!("1bd8db5139ba7ac9277684650c15e6e341761919");
+
+// ---------------------------------------------------------------------------
+// The Solady CWIA proxy runtime template — Residual R3's closure.
+//
+// The DisputeGameFactory creates every game as a Clones-With-Immutable-Args
+// proxy: contracts-bedrock `DisputeGameFactory.create` calls Solady
+// `LibClone.cloneDeterministic(impl, abi.encodePacked(msg.sender, _rootClaim,
+// parentHash, _extraData), uuid)` where `parentHash = blockhash(block.number-1)`
+// (ethereum-optimism/optimism `packages/contracts-bedrock/src/dispute/
+// DisputeGameFactory.sol`, `create()`; the salt only affects the CREATE2
+// address, never the runtime bytes). The deployed RUNTIME bytecode is Solady
+// LibClone's documented "RUNTIME (98 bytes + extraLength)" CWIA layout —
+// byte-identical across Solady v0.0.123 → v0.0.200, the range contracts-bedrock
+// has vendored (`src/utils/LibClone.sol`, the `ReceiveETH(uint256)`-logging
+// clone-with-immutable-args section):
+//
+//   36 602c 57                        calldatasize-nonzero? jump to 0x2c
+//   34 3d 52 7f <topic32>  59 3d a1   empty call: LOG1 ReceiveETH(callvalue)
+//   00 5b                             STOP; JUMPDEST(0x2c)
+//   36 3d 3d 37 3d 3d 3d 3d           copy calldata
+//   61 <extraLength:2> 80             PUSH2 extraLength = argLen + 2
+//   60 62 36 39 36 01 3d              CODECOPY args after calldata (0x62 = 98)
+//   73 <impl:20> 5a f4                DELEGATECALL the implementation
+//   3d 3d 93 80 3e 6060 57 fd 5b f3   bubble returndata
+//   ‖ immutable args ‖ extraLength(2 bytes, big-endian)
+//
+// Everything below was additionally byte-matched against the LIVE fixture
+// game's `eth_getCode` (0x15F3…3626, fetched 2026-07-12): template ‖ impl ‖
+// creator ‖ rootClaim ‖ l1Head ‖ extraData ‖ 0x030a, whose keccak256 is exactly
+// the account-proof-proven code hash. That KAT (tests/base_fault_proof.rs
+// `kat_cwia_code_hash_reconstructs`) is what pins this layout.
+// ---------------------------------------------------------------------------
+
+/// CWIA runtime bytes 0..8: dispatch + the start of the ReceiveETH log.
+const CWIA_RUNTIME_0_8: [u8; 8] = hex!("36602c57343d527f");
+/// CWIA runtime bytes 8..40: the `ReceiveETH(uint256)` event topic
+/// (`keccak256("ReceiveETH(uint256)")`), PUSH32 immediate.
+const CWIA_RECEIVE_ETH_TOPIC: [u8; 32] =
+    hex!("9e4ac34f21c619cefc926c8bd93b54bf5a39c7ab2127a895af1cc0691d7e3dff");
+/// CWIA runtime bytes 40..54: log + calldata copy, ending in the PUSH2 opcode
+/// whose immediate is `extraLength` (bytes 54..56).
+const CWIA_RUNTIME_40_54: [u8; 14] = hex!("593da1005b363d3d373d3d3d3d61");
+/// CWIA runtime bytes 56..65: args CODECOPY (offset 0x62 = 98 = template size),
+/// ending in the PUSH20 opcode whose immediate is the impl address (65..85).
+const CWIA_RUNTIME_56_65: [u8; 9] = hex!("806062363936013d73");
+/// CWIA runtime bytes 85..98: DELEGATECALL + returndata bubbling.
+const CWIA_RUNTIME_85_98: [u8; 13] = hex!("5af43d3d93803e606057fd5bf3");
+
+/// Recompute the runtime `code_hash` of a Solady CWIA proxy cloned from
+/// `impl_addr` with `immutable_args`: `keccak256(template(extraLength, impl) ‖
+/// immutable_args ‖ extraLength_be16)` where `extraLength = len(args) + 2`.
+/// Returns `None` when the args cannot fit the 2-byte length field (no such
+/// proxy can exist on chain — EIP-170 caps runtime code well below that
+/// anyway); the caller must refuse, never truncate.
+pub fn cwia_proxy_code_hash(impl_addr: &[u8; 20], immutable_args: &[u8]) -> Option<[u8; 32]> {
+    let extra_length = u16::try_from(immutable_args.len().checked_add(2)?).ok()?;
+    let mut code = Vec::with_capacity(98 + immutable_args.len() + 2);
+    code.extend_from_slice(&CWIA_RUNTIME_0_8);
+    code.extend_from_slice(&CWIA_RECEIVE_ETH_TOPIC);
+    code.extend_from_slice(&CWIA_RUNTIME_40_54);
+    code.extend_from_slice(&extra_length.to_be_bytes());
+    code.extend_from_slice(&CWIA_RUNTIME_56_65);
+    code.extend_from_slice(impl_addr);
+    code.extend_from_slice(&CWIA_RUNTIME_85_98);
+    code.extend_from_slice(immutable_args);
+    code.extend_from_slice(&extra_length.to_be_bytes());
+    debug_assert_eq!(code.len(), 98 + immutable_args.len() + 2);
+    Some(keccak256(code).0)
+}
+
+/// Pack a dispute game's CWIA immutable args exactly as
+/// `DisputeGameFactory.create` does: `abi.encodePacked(msg.sender, _rootClaim,
+/// parentHash, _extraData)` — `creator(20) ‖ rootClaim(32) ‖ l1Head(32) ‖
+/// extraData`. (`l1Head` is the game's name for the factory's
+/// `blockhash(block.number - 1)`.)
+pub fn fault_dispute_game_immutable_args(
+    creator: &[u8; 20],
+    root_claim: &[u8; 32],
+    l1_head: &[u8; 32],
+    extra_data: &[u8],
+) -> Vec<u8> {
+    let mut args = Vec::with_capacity(84 + extra_data.len());
+    args.extend_from_slice(creator);
+    args.extend_from_slice(root_claim);
+    args.extend_from_slice(l1_head);
+    args.extend_from_slice(extra_data);
+    args
+}
 
 /// Why a fault-proof anchor observation was refused. One variant per trust-chain
 /// link; a refusal NEVER yields an output root or a holding (fail closed).
@@ -163,12 +270,17 @@ pub enum FaultProofAnchorError {
     /// The L1 account proof does not open the game proxy account under the
     /// finalized L1 state root.
     GameAccountProofInvalid,
-    /// The game account's `code_hash` is not the pinned one — the proxy bytecode
-    /// (CWIA immutable args + delegate target) defines the game's SEMANTICS; an
-    /// unknown code hash means unknown semantics. Refused (Residual R3: increment
-    /// 1 pins a literal hash; full CWIA recomputation would re-bind the claim
-    /// from the bytecode itself).
+    /// The game account's proven `code_hash` does not RECOMPUTE as the Solady
+    /// CWIA proxy of the pinned AggregateVerifier implementation with this
+    /// game's immutable args (`creator ‖ rootClaim ‖ l1Head ‖ extraData`) — the
+    /// proxy bytecode defines the game's SEMANTICS, and the recomputation
+    /// re-binds the claim from the bytecode itself (Residual R3 closed). A
+    /// look-alike contract with the same slot-0 layout, a clone of a different
+    /// impl, or a lied-about creator/l1Head all land here. Refused.
     GameCodeHashMismatch { got: [u8; 32], expected: [u8; 32] },
+    /// The claimed CWIA immutable args cannot fit the proxy's 2-byte length
+    /// field — no such clone can exist on chain. Refused, never truncated.
+    CwiaImmutableArgsTooLong { len: usize },
     /// The storage proof does not open game slot 0 to the required resolution
     /// word: `createdAt ‖ resolvedAt ‖ DEFENDER_WINS ‖ initialized=1 ‖
     /// wasRespectedGameTypeWhenCreated=1`. A `CHALLENGER_WINS`/`IN_PROGRESS`
@@ -248,7 +360,11 @@ impl core::fmt::Display for FaultProofAnchorError {
             ),
             Self::GameCodeHashMismatch { .. } => write!(
                 f,
-                "game proxy code hash is not the pinned one — unknown bytecode means unknown game semantics"
+                "game proxy code hash does not recompute as the CWIA clone of the pinned implementation with this game's immutable args — unknown bytecode means unknown game semantics"
+            ),
+            Self::CwiaImmutableArgsTooLong { len } => write!(
+                f,
+                "claimed CWIA immutable args ({len} bytes) cannot fit the proxy's 2-byte length field — no such clone exists on chain"
             ),
             Self::GameResolutionSlotProofInvalid => write!(
                 f,
@@ -397,11 +513,14 @@ pub struct FaultProofAnchorParams {
     /// = 621 on live Base). Proven equal to the ASR's CURRENT `respectedGameType`
     /// (slot 6) and to the game's own type (GameId word).
     pub expected_game_type: u32,
-    /// The pinned `code_hash` of the game PROXY account (the Solady CWIA clone
-    /// whose bytecode bakes in the immutable args and the AggregateVerifier
-    /// delegate target). Increment 1 pins the literal hash; recomputing the CWIA
-    /// bytecode from (impl, args) is Residual R3.
-    pub game_code_hash: [u8; 32],
+    /// The pinned game IMPLEMENTATION address the proxy must delegate to
+    /// ([`BASE_AGGREGATE_VERIFIER_IMPL`] = `gameImpls[621]` on live Base). The
+    /// game account's proven `code_hash` must recompute as
+    /// [`cwia_proxy_code_hash`] of THIS address + the game's immutable args —
+    /// a proxy of any other implementation (or non-CWIA bytecode entirely) is
+    /// refused. Changes only on an OP-stack contracts upgrade: fail-closed
+    /// until explicitly re-pinned.
+    pub game_impl_address: [u8; 20],
     /// The ASR-impl `DISPUTE_GAME_FINALITY_DELAY_SECONDS` immutable — what the
     /// CHAIN enforces after `resolvedAt`. **0 on live Base** (live-read fact).
     pub dispute_game_finality_delay: u64,
@@ -451,6 +570,13 @@ pub struct FaultProofAnchor {
     /// The claimed `GameStatus` (must be [`GAME_STATUS_DEFENDER_WINS`]; bound by
     /// the slot-0 word — lying about a `CHALLENGER_WINS` game fails the proof).
     pub game_status: u8,
+    /// The game's creator (`msg.sender` of `DGF.create`) — CWIA immutable arg 0.
+    /// Bound by the code-hash recomputation: a wrong creator changes the
+    /// reconstructed proxy bytecode, so the proven `code_hash` cannot match.
+    pub game_creator: [u8; 20],
+    /// The game's `l1Head` (the factory's `blockhash(block.number - 1)` at
+    /// creation) — CWIA immutable arg 2, bound the same way as `game_creator`.
+    pub game_l1_head: [u8; 32],
     /// Game proxy account fields from `eth_getProof` (binds storage_hash AND
     /// code_hash — the semantics pin).
     pub game_account: AccountClaim,
@@ -570,7 +696,12 @@ pub fn verify_l1_fault_proof_output_root(
     .map_err(|_| FaultProofAnchorError::GameIdSlotProofInvalid)?;
 
     // --- Link 5: game account proof (binds storage_hash AND code_hash), then
-    //     the semantics pin. ---
+    //     the semantics pin (Residual R3, closed): the proven code_hash must
+    //     RECOMPUTE as the Solady CWIA clone of the pinned implementation with
+    //     THIS game's immutable args. rootClaim/extraData are already
+    //     UUID-bound by Link 4; creator/l1Head are bound HERE — any lie changes
+    //     the reconstructed bytecode, and a look-alike contract (same slot-0
+    //     layout, different code) cannot produce the hash at all. ---
     verify_evm_account_proof(
         l1_state_root,
         anchor.game_address,
@@ -578,10 +709,20 @@ pub fn verify_l1_fault_proof_output_root(
         &anchor.game_account_proof,
     )
     .map_err(|_| FaultProofAnchorError::GameAccountProofInvalid)?;
-    if anchor.game_account.code_hash != params.game_code_hash {
+    let immutable_args = fault_dispute_game_immutable_args(
+        &anchor.game_creator,
+        &anchor.root_claim,
+        &anchor.game_l1_head,
+        &anchor.extra_data,
+    );
+    let expected_code_hash = cwia_proxy_code_hash(&params.game_impl_address, &immutable_args)
+        .ok_or(FaultProofAnchorError::CwiaImmutableArgsTooLong {
+            len: immutable_args.len(),
+        })?;
+    if anchor.game_account.code_hash != expected_code_hash {
         return Err(FaultProofAnchorError::GameCodeHashMismatch {
             got: anchor.game_account.code_hash,
-            expected: params.game_code_hash,
+            expected: expected_code_hash,
         });
     }
 

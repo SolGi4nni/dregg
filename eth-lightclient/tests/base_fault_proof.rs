@@ -25,8 +25,12 @@
 //! IN_PROGRESS / CHALLENGER_WINS (both honest-claim and lying-claim forms),
 //! resolvedAt == 0, a retired game, a BLACKLISTED game (present where exclusion
 //! is required — synthetic world), the airgap not yet elapsed (strict-boundary
-//! checked), a rootClaim whose v0 preimage does not recompute, tampered proofs at
-//! every link, a wrong pinned code hash, and the measured alloy-trie 0.9.5
+//! checked), a rootClaim whose v0 preimage does not recompute, tampered proofs
+//! at every link, the R3 code-hash teeth (a swapped implementation address, a
+//! lied-about creator/l1Head, and a LOOK-ALIKE game contract whose code hash is
+//! not the CWIA clone of the pinned AggregateVerifier impl — synthetic world;
+//! the accept-side KAT proves the CWIA reconstruction reproduces the live
+//! game's REAL code hash byte-exactly), and the measured alloy-trie 0.9.5
 //! exclusion hole: a TRUNCATED inclusion-proof prefix passed off as an absence
 //! proof must refuse.
 
@@ -37,11 +41,13 @@ use eth_lightclient::base::{
     compute_op_output_root_v0, BaseProofError, L2StateCommitment, OUTPUT_ROOT_VERSION_V0,
 };
 use eth_lightclient::base_fault_proof::{
-    blacklist_mapping_slot, dispute_games_mapping_slot, game_uuid, pack_asr_respected_word,
-    pack_game_id, pack_game_resolution_word, parse_extra_data_l2_block_number, unpack_game_id,
+    blacklist_mapping_slot, cwia_proxy_code_hash, dispute_games_mapping_slot,
+    fault_dispute_game_immutable_args, game_uuid, pack_asr_respected_word, pack_game_id,
+    pack_game_resolution_word, parse_extra_data_l2_block_number, unpack_game_id,
     verify_base_fault_proof_erc20_holding, verify_l1_fault_proof_output_root, FaultProofAnchor,
     FaultProofAnchorError, FaultProofAnchorParams, BASE_AGGREGATE_VERIFIER_GAME_TYPE,
-    GAME_STATUS_CHALLENGER_WINS, GAME_STATUS_DEFENDER_WINS, GAME_STATUS_IN_PROGRESS,
+    BASE_AGGREGATE_VERIFIER_IMPL, GAME_STATUS_CHALLENGER_WINS, GAME_STATUS_DEFENDER_WINS,
+    GAME_STATUS_IN_PROGRESS,
 };
 use eth_lightclient::evm::{
     verify_evm_storage_slot_absent, AccountClaim, Erc20ProofError, HoldingTrust, Uint256,
@@ -99,7 +105,7 @@ fn params() -> FaultProofAnchorParams {
         asr_address: h20(fx::ASR_ADDRESS),
         dgf_address: h20(fx::DGF_ADDRESS),
         expected_game_type: BASE_AGGREGATE_VERIFIER_GAME_TYPE,
-        game_code_hash: h32(fx::GAME_CODE_HASH),
+        game_impl_address: BASE_AGGREGATE_VERIFIER_IMPL,
         dispute_game_finality_delay: 0, // live-read fact: the ASR airgap is ZERO
         policy_finality_delay: POLICY_DELAY_ACCEPT,
     }
@@ -134,6 +140,8 @@ fn anchor() -> FaultProofAnchor {
         game_created_at: fx::GAME_CREATED_AT,
         game_resolved_at: fx::GAME_RESOLVED_AT,
         game_status: GAME_STATUS_DEFENDER_WINS,
+        game_creator: h20(fx::GAME_CREATOR),
+        game_l1_head: h32(fx::GAME_L1_HEAD),
         game_account: AccountClaim {
             nonce: fx::GAME_NONCE,
             balance: u256(fx::GAME_BALANCE_HEX),
@@ -263,6 +271,58 @@ fn kat_asr_slot6_packing() {
     assert_eq!(
         pack_asr_respected_word(fx::RETIREMENT_TIMESTAMP, fx::RESPECTED_GAME_TYPE),
         Uint256::from_be_bytes(h32(fx::ASR_SLOT6_WORD))
+    );
+}
+
+/// EXTERNAL KAT — Residual R3's closure bar: the CWIA reconstruction
+/// (Solady LibClone 98-byte runtime template ‖ AggregateVerifier impl ‖
+/// creator ‖ rootClaim ‖ l1Head ‖ extraData ‖ length suffix) reproduces the
+/// live game's REAL code hash — the one the L1 account proof binds. This pins
+/// the template bytes AND the immutable-arg packing against real mainnet data.
+#[test]
+fn kat_cwia_code_hash_reconstructs() {
+    assert_eq!(
+        BASE_AGGREGATE_VERIFIER_IMPL,
+        h20(fx::AGGREGATE_VERIFIER_IMPL)
+    );
+    let args = fault_dispute_game_immutable_args(
+        &h20(fx::GAME_CREATOR),
+        &h32(fx::ROOT_CLAIM),
+        &h32(fx::GAME_L1_HEAD),
+        &hex::decode(fx::EXTRA_DATA).unwrap(),
+    );
+    assert_eq!(
+        args.len(),
+        84 + 692,
+        "creator ‖ rootClaim ‖ l1Head ‖ extraData"
+    );
+    assert_eq!(
+        cwia_proxy_code_hash(&BASE_AGGREGATE_VERIFIER_IMPL, &args),
+        Some(h32(fx::GAME_CODE_HASH)),
+        "the CWIA reconstruction must reproduce the live game's real code hash"
+    );
+    // Not vacuous: any flipped byte — impl, creator, rootClaim, l1Head,
+    // extraData — moves the hash.
+    let mut impl_addr = BASE_AGGREGATE_VERIFIER_IMPL;
+    impl_addr[19] ^= 0x01;
+    assert_ne!(
+        cwia_proxy_code_hash(&impl_addr, &args),
+        Some(h32(fx::GAME_CODE_HASH))
+    );
+    for tamper_at in [0usize, 20, 52, 84, args.len() - 1] {
+        let mut bad = args.clone();
+        bad[tamper_at] ^= 0x01;
+        assert_ne!(
+            cwia_proxy_code_hash(&BASE_AGGREGATE_VERIFIER_IMPL, &bad),
+            Some(h32(fx::GAME_CODE_HASH)),
+            "tampered arg byte {tamper_at} must move the code hash"
+        );
+    }
+    // Args that cannot fit the 2-byte length field refuse (no such clone can
+    // exist on chain) — None, never a truncated encoding.
+    assert_eq!(
+        cwia_proxy_code_hash(&BASE_AGGREGATE_VERIFIER_IMPL, &vec![0u8; 0xFFFF]),
+        None
     );
 }
 
@@ -742,14 +802,50 @@ fn tampered_game_slot0_proof_rejects() {
     );
 }
 
-/// An unknown game bytecode (a different clone / an upgraded impl we have not
-/// re-pinned) refuses — unknown code hash means unknown game semantics.
+/// THE R3 TOOTH — impl swapped: a verifier pinned to a DIFFERENT implementation
+/// (as after an un-revalidated OP upgrade, or an attacker's look-alike impl)
+/// must refuse the real game: the reconstructed CWIA bytecode differs, so the
+/// PROVEN code hash cannot match. Equivalently: a game cloned from any impl
+/// other than the pinned AggregateVerifier is refused at R3.
 #[test]
-fn wrong_game_code_hash_rejects() {
+fn wrong_impl_address_rejects_at_code_hash() {
     let mut p = params();
-    p.game_code_hash[0] ^= 0x01;
+    p.game_impl_address[19] ^= 0x01;
+    let got = run_anchor(&l1_finalized(), &p, &anchor());
+    match got {
+        Err(FaultProofAnchorError::GameCodeHashMismatch { got, expected }) => {
+            assert_eq!(
+                got,
+                h32(fx::GAME_CODE_HASH),
+                "the proven hash is the real one"
+            );
+            assert_ne!(
+                expected,
+                h32(fx::GAME_CODE_HASH),
+                "the reconstruction moved"
+            );
+        }
+        other => panic!("impl swap must land at GameCodeHashMismatch, got {other:?}"),
+    }
+}
+
+/// THE R3 TOOTH — tampered immutable args: a lied-about creator or l1Head
+/// changes the reconstructed proxy bytecode; the proven code hash refuses.
+/// (rootClaim/extraData tampering is caught EARLIER by the Link-4 UUID binding
+/// — see `tampered_extra_data_rejects` / `forged_root_claim_rejects…` — so the
+/// claim content is double-bound: UUID first, bytecode second.)
+#[test]
+fn tampered_cwia_creator_or_l1head_rejects() {
+    let mut a = anchor();
+    a.game_creator[0] ^= 0x01;
     assert!(matches!(
-        run_anchor(&l1_finalized(), &p, &anchor()),
+        run_anchor(&l1_finalized(), &params(), &a),
+        Err(FaultProofAnchorError::GameCodeHashMismatch { .. })
+    ));
+    let mut a = anchor();
+    a.game_l1_head[31] ^= 0x01;
+    assert!(matches!(
+        run_anchor(&l1_finalized(), &params(), &a),
         Err(FaultProofAnchorError::GameCodeHashMismatch { .. })
     ));
 }
@@ -882,14 +978,21 @@ mod synthetic {
     /// A synthetic L1 world that mirrors the real fixture EXCEPT for the
     /// requested hostility: `blacklisted` plants the game in the ASR blacklist;
     /// `chain_status`/`chain_respected_flag` control the game's REAL slot-0
-    /// word. The DGF storage (GameId binding) and game-storage layout reuse the
-    /// real fixture where unchanged.
+    /// word; `game_code_hash` is the code hash the WORLD's account trie carries
+    /// for the game (a look-alike contract = a different hash, honestly
+    /// proven). The DGF storage (GameId binding) and game-storage layout reuse
+    /// the real fixture where unchanged.
     struct World {
         state_root: [u8; 32],
         anchor: FaultProofAnchor,
     }
 
-    fn build_world(blacklisted: bool, chain_status: u8, chain_respected_flag: bool) -> World {
+    fn build_world_with_code_hash(
+        blacklisted: bool,
+        chain_status: u8,
+        chain_respected_flag: bool,
+        game_code_hash: [u8; 32],
+    ) -> World {
         // --- ASR storage trie: slot 6 + slot 1 (+ blacklist entry if hostile).
         let slot6_val = rlp_u256(pack_asr_respected_word(
             fx::RETIREMENT_TIMESTAMP,
@@ -933,7 +1036,7 @@ mod synthetic {
             nonce: fx::GAME_NONCE,
             balance: u256(fx::GAME_BALANCE_HEX),
             storage_hash: game_storage_root,
-            code_hash: h32(fx::GAME_CODE_HASH),
+            code_hash: game_code_hash,
         };
         let (state_root, account_proofs) = build_account_trie(&[
             (h20(fx::ASR_ADDRESS), rlp_account(&asr_acct)),
@@ -955,6 +1058,8 @@ mod synthetic {
             game_created_at: fx::GAME_CREATED_AT,
             game_resolved_at: fx::GAME_RESOLVED_AT,
             game_status: GAME_STATUS_DEFENDER_WINS, // the CLAIM (may be a lie)
+            game_creator: h20(fx::GAME_CREATOR),
+            game_l1_head: h32(fx::GAME_L1_HEAD),
             game_account: game_acct,
             game_account_proof: account_proofs[2].clone(),
             game_slot0_proof: game_storage_proofs[0].clone(),
@@ -996,6 +1101,16 @@ mod synthetic {
         (root.0, proofs)
     }
 
+    /// The common case: the world's game carries the REAL CWIA code hash.
+    fn build_world(blacklisted: bool, chain_status: u8, chain_respected_flag: bool) -> World {
+        build_world_with_code_hash(
+            blacklisted,
+            chain_status,
+            chain_respected_flag,
+            h32(fx::GAME_CODE_HASH),
+        )
+    }
+
     fn l1_at(state_root: [u8; 32]) -> FinalizedExecution {
         FinalizedExecution::new_unchecked(
             0,
@@ -1019,6 +1134,30 @@ mod synthetic {
                 .expect("benign synthetic world must verify");
         assert_eq!(committed.output_root, h32(fx::ROOT_CLAIM));
         assert_eq!(committed.l2_block_number, fx::L2_BLOCK_NUMBER);
+    }
+
+    /// THE LOOK-ALIKE GATE (R3): a world identical to the benign one except the
+    /// game account is a DIFFERENT contract — same slot-0 layout, same
+    /// DEFENDER_WINS word, valid account proof, but its code hash is not the
+    /// CWIA clone of the pinned AggregateVerifier impl (here: keccak of a
+    /// minimal non-CWIA runtime). Every other link passes; R3 must refuse —
+    /// this is the attack the recomputed pin exists to stop.
+    #[test]
+    fn look_alike_game_code_rejects() {
+        let look_alike_code_hash = keccak256(hex::decode("6000600055").unwrap()).0;
+        let w = build_world_with_code_hash(
+            false,
+            GAME_STATUS_DEFENDER_WINS,
+            true,
+            look_alike_code_hash,
+        );
+        assert_eq!(
+            verify_l1_fault_proof_output_root(&l1_at(w.state_root), &super::params(), &w.anchor),
+            Err(FaultProofAnchorError::GameCodeHashMismatch {
+                got: look_alike_code_hash,
+                expected: h32(fx::GAME_CODE_HASH),
+            })
+        );
     }
 
     /// THE BLACKLIST GATE: identical world, except the guardian blacklisted the

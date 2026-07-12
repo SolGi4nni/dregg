@@ -37,9 +37,24 @@ pub const GAME_NONCE: u64 = 1;
 pub const GAME_BALANCE_HEX: &str = "0";
 pub const GAME_STORAGE_HASH: &str =
     "4828855fe17e861eac208baa377c66f9269d7c8a92e07d4b333c9019e982f444";
-/// The CWIA proxy code hash — the Link-5 pin (literal fixture constant;
-/// full CWIA recomputation is Residual R3 in the plan).
+/// The CWIA proxy code hash — the RAW live account codeHash from `eth_getProof`
+/// (also bound by GAME_ACCOUNT_PROOF). KAT target for the Link-5 CWIA
+/// reconstruction (Residual R3 CLOSED): `cwia_proxy_code_hash(
+/// AGGREGATE_VERIFIER_IMPL, GAME_CREATOR ‖ ROOT_CLAIM ‖ GAME_L1_HEAD ‖
+/// EXTRA_DATA)` must reproduce it. The three constants below were extracted
+/// from the live game's `eth_getCode` (fetched 2026-07-12), whose 876 bytes
+/// keccak to exactly this hash and byte-match the Solady CWIA runtime template.
 pub const GAME_CODE_HASH: &str = "c0ce0379bca68c7da5c3287b94d2e188dac85ecbb2c28ceeef335cec5eb269d1";
+/// `DGF.gameImpls(621)` — the AggregateVerifier v0.1.0 implementation the CWIA
+/// proxy delegatecalls, embedded verbatim in the live proxy's runtime bytecode
+/// (also live-read via `eth_call` in docs/deos/BASE-FAULT-PROOF-ANCHOR.md §0).
+pub const AGGREGATE_VERIFIER_IMPL: &str = "1bd8db5139ba7ac9277684650c15e6e341761919";
+/// CWIA immutable arg 0: the game creator (`msg.sender` of `DGF.create`),
+/// extracted from the live proxy bytecode (args offset 0..20).
+pub const GAME_CREATOR: &str = "c1366fabe614d42d367a1ece61821238a1d31cf5";
+/// CWIA immutable arg 2: `l1Head` = the factory's `blockhash(block.number - 1)`
+/// at creation, extracted from the live proxy bytecode (args offset 52..84).
+pub const GAME_L1_HEAD: &str = "610054deafbf8e81b99d213316a4fe9dbffb6cdc7c2d8d3f1c027ad22e454026";
 pub const GAME_TYPE: u32 = 621;
 pub const GAME_CREATED_AT: u64 = 1783404035;
 pub const GAME_RESOLVED_AT: u64 = 1783836047;

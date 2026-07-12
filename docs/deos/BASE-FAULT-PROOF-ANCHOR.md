@@ -142,9 +142,19 @@ delegate target (the AggregateVerifier impl, carrying `TEE_IMAGE_HASH`,
 `ZK_*`, `CONFIG_HASH`, `ANCHOR_STATE_REGISTRY`, the finalization delays) defines
 the game's semantics. Pinning `code_hash` against a recomputed CWIA proxy
 bytecode (impl address + args) gives a second, independent binding of
-rootClaim/extraData AND pins the semantics version. Minimum bar for increment 1:
-pin `code_hash` against a fixture constant; full CWIA recomputation is
-increment 2 (Residual R3).
+rootClaim/extraData AND pins the semantics version.
+
+**Residual R3: CLOSED (2026-07-12).** `cwia_proxy_code_hash(BASE_AGGREGATE_VERIFIER_IMPL,
+creator ‖ rootClaim ‖ l1Head ‖ extraData)` reconstructs the Solady LibClone CWIA runtime
+bytecode and reproduces the live game's real code hash **byte-exactly** (KAT
+`kat_cwia_code_hash_reconstructs` against the L1-account-proof-bound value); Link 5 now
+refuses unless the proven `code_hash` recomputes from the pinned impl + this game's args, so
+a look-alike contract with the same slot-0/DEFENDER_WINS layout but non-CWIA bytecode is
+REFUSED (`synthetic::look_alike_game_code_rejects`). Remaining (lower): the impl address +
+CWIA template bytes are documented constants — they change only on an OP-stack upgrade
+(fail-closed → explicit re-pin); the impl's own bytecode is not separately account-proven
+(immutable post-Cancun, so the address IS the semantics pin — same class as the oracle-address
+trust). See `eth-lightclient/src/base_fault_proof.rs`.
 
 ### Link 6 — game resolution state (game slot 0)
 One storage proof of game **slot 0** =
