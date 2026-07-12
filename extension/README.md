@@ -155,7 +155,12 @@ crate changes.
 - `bip39_english.txt` — BIP39 wordlist for the recovery-phrase fallback path.
 - `test/` — `node --test` unit tests (explain prose parity, SSE parser, the
   golden derivation vector).
-- `tests/` — Playwright e2e tests (load the unpacked extension in Chromium).
+- `tests/` — Playwright e2e tests (`npm run test:e2e`): the unpacked
+  extension in HEADLESS full Chromium (`channel: 'chromium'` — the
+  headless-shell binary cannot load extensions), one worker-scoped
+  browser + one real onboarding for the whole suite, and a per-test
+  pristine-wallet state reset (`tests/fixtures/extension.ts`). Full
+  suite ~45s; set `HEADED=1` to debug with visible windows.
 
 ## Page API (selected)
 

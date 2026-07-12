@@ -126,8 +126,7 @@ async function readSignResult(page: Page): Promise<any> {
 }
 
 test.describe('capability advertisement', () => {
-  test('window.dregg.capabilities advertises the federation-domain bridge, frozen', async ({ context, popup }) => {
-    void popup; // ensure onboarded/unlocked wallet + MockNode config
+  test('window.dregg.capabilities advertises the federation-domain bridge, frozen', async ({ context }) => {
     const page = await openDappPage(context);
     const caps = await page.evaluate(() => {
       const d = (window as any).dregg;
@@ -148,8 +147,7 @@ test.describe('capability advertisement', () => {
 });
 
 test.describe('page-level typed rejection (before any popup or signing)', () => {
-  test('invalid domains reject in the page; no permission/confirmation popup opens', async ({ context, popup }) => {
-    void popup;
+  test('invalid domains reject in the page; no permission/confirmation popup opens', async ({ context }) => {
     const page = await openDappPage(context);
     const popupsSeen: string[] = [];
     context.on('page', (p) => popupsSeen.push(p.url()));
@@ -188,8 +186,7 @@ test.describe('page-level typed rejection (before any popup or signing)', () => 
 });
 
 test.describe('federation domain through the full bridge', () => {
-  test('nonzero domain: popup shows all 64 lowercase hex chars; accept submits', async ({ context, popup }) => {
-    void popup;
+  test('nonzero domain: popup shows all 64 lowercase hex chars; accept submits', async ({ context }) => {
     const page = await openDappPage(context);
     const domain = new Array(32).fill(0).map((_, i) => (i * 7 + 3) % 256);
     const domainHex = domain.map((b) => b.toString(16).padStart(2, '0')).join('');
@@ -210,8 +207,7 @@ test.describe('federation domain through the full bridge', () => {
     await page.close();
   });
 
-  test('one-argument call stays backward-compatible: signs and displays the zero domain', async ({ context, popup }) => {
-    void popup;
+  test('one-argument call stays backward-compatible: signs and displays the zero domain', async ({ context }) => {
     const page = await openDappPage(context);
     await startSignTurnV3(context, page, null);
     const confirm = await waitForPopup(context, 'confirm-intent.html');
@@ -223,8 +219,7 @@ test.describe('federation domain through the full bridge', () => {
     await page.close();
   });
 
-  test('nonce-bound decision refuses a substituted domain echo', async ({ context, popup }) => {
-    void popup;
+  test('nonce-bound decision refuses a substituted domain echo', async ({ context }) => {
     const page = await openDappPage(context);
     const domain = new Array(32).fill(0xab);
 

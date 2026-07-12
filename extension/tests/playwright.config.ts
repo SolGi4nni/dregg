@@ -3,7 +3,10 @@ import path from 'path';
 
 export default defineConfig({
   testDir: './e2e',
-  timeout: 30000,
+  // Per-test cost is sub-second-to-few-seconds since the worker-scoped
+  // fixtures (one browser + one onboarding per worker); 15s is generous and
+  // halves the time a genuinely broken test burns before failing.
+  timeout: 15000,
   retries: 0,
   workers: 1, // Extensions require serial execution (single browser context)
   use: {

@@ -16,6 +16,7 @@
     "test:netlayer": "node --test tests/netlayer/run.mjs",
     "test:passkey": "node --test tests/passkey/run.mjs",
     "test:passkey-sign": "node --test tests/passkey-sign/run.mjs",
+    "test:e2e": "cd tests && playwright test",
     "clean": "rm -rf dist test/.build"
   },
   "devDependencies": {

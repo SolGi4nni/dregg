@@ -1,24 +1,58 @@
 import { test as base, chromium, type BrowserContext, type Page } from '@playwright/test';
 import path from 'path';
 
+/**
+ * Extension e2e fixtures — WORKER-SCOPED browser, per-test state reset.
+ *
+ * The old fixtures launched a fresh persistent context and re-ran the full
+ * settings + onboarding flow for EVERY test (~3-4s of pure setup × ~70 tests,
+ * serial). Now:
+ *
+ *   - `context` / `extensionId` are worker-scoped: ONE headless Chromium with
+ *     the extension loaded serves every spec file in the worker.
+ *   - `workerWallet` (worker-scoped) configures the MockNode endpoint and runs
+ *     REAL onboarding exactly once, then captures a pristine snapshot of
+ *     chrome.storage.local (encrypted wallet + node config).
+ *   - `resetState` (auto, per test) restores that snapshot, drops live refs
+ *     through the real popup-only API, and lock/unlock-cycles the clerk so the
+ *     background's in-memory state (decrypted wallet, auth log, tokens) is
+ *     rebuilt from the pristine snapshot. Every test starts from the same
+ *     freshly-onboarded, unlocked, empty-allowlist world — without paying for
+ *     a browser launch or an onboarding flow.
+ *
+ * HEADLESS: Playwright's default `headless: true` uses the headless-shell
+ * binary, which does NOT support extensions (the source of the old
+ * "extensions require headed mode" rule). The FULL Chromium binary
+ * (`channel: 'chromium'`) in new-headless mode loads MV3 extensions fine —
+ * service worker, content scripts, and chrome.windows.create popups all
+ * work — with no window flashing. Do NOT pass --disable-gpu: in new headless
+ * it forces software GL, which multiplied per-test time ~4x on macOS.
+ * Set HEADED=1 to debug with visible windows.
+ */
+
 export type ExtensionFixtures = {
   context: BrowserContext;
-  extensionId: string;
   popup: Page;
   backgroundPage: { url: string };
+  /** Auto fixture: pristine wallet + empty volatile state before every test. */
+  resetState: void;
 };
 
-export const test = base.extend<ExtensionFixtures>({
-  // Launch a persistent context with the extension loaded.
-  //
-  // HEADLESS: Playwright's default `headless: true` uses the headless-shell
-  // binary, which does NOT support extensions (the source of the old
-  // "extensions require headed mode" rule). The FULL Chromium binary
-  // (`channel: 'chromium'`) in new-headless mode loads MV3 extensions fine —
-  // service worker, content scripts, and chrome.windows.create popups all
-  // work — with no window flashing and a faster launch. Set HEADED=1 to
-  // debug with visible windows.
-  context: async ({}, use) => {
+export type ExtensionWorkerFixtures = {
+  /** Worker-scoped persistent context (the builtin `context` name is
+   *  test-scoped in Playwright and cannot be redefined at worker scope;
+   *  the test-scoped `context` below passes this through). */
+  extContext: BrowserContext;
+  extensionId: string;
+  workerWallet: { janitor: Page; snapshot: Record<string, unknown> };
+};
+
+/** The passphrase the e2e onboarding sets (and unlockPopup re-types). */
+export const E2E_PASSPHRASE = 'e2e-passphrase';
+
+export const test = base.extend<ExtensionFixtures, ExtensionWorkerFixtures>({
+  // ONE persistent context with the extension loaded, per worker.
+  extContext: [async ({}, use) => {
     const pathToExtension = path.resolve(__dirname, '..', '..');
     const context = await chromium.launchPersistentContext('', {
       channel: 'chromium',
@@ -27,33 +61,33 @@ export const test = base.extend<ExtensionFixtures>({
         `--disable-extensions-except=${pathToExtension}`,
         `--load-extension=${pathToExtension}`,
         '--no-first-run',
-        // NOTE: no --disable-gpu — in new-headless it forces software GL,
-        // which multiplied per-test time ~4x on macOS.
       ],
     });
     await use(context);
     await context.close();
+  }, { scope: 'worker' }],
+
+  // Every test's `context` is the worker's shared persistent context.
+  context: async ({ extContext }, use) => {
+    await use(extContext);
   },
 
   // Extract the extension ID from the service worker URL.
-  extensionId: async ({ context }, use) => {
-    let [background] = context.serviceWorkers();
+  extensionId: [async ({ extContext }, use) => {
+    let [background] = extContext.serviceWorkers();
     if (!background) {
-      background = await context.waitForEvent('serviceworker');
+      background = await extContext.waitForEvent('serviceworker');
     }
     const extensionId = background.url().split('/')[2];
     await use(extensionId);
-  },
+  }, { scope: 'worker' }],
 
-  // Open the popup page directly by navigating to its chrome-extension:// URL.
-  // Before handing the popup to the test, point the extension's node config
-  // at the hermetic MockNode (localhost:8420) so tests never depend on (or
-  // vacuously "pass" against) the public devnet gateway. This drives the real
-  // settings page UI: chrome.runtime.sendMessage initiated from a Playwright
-  // evaluate() hangs in extension pages, but the page script's own handler
-  // for a (trusted) click works.
-  popup: async ({ context, extensionId }, use) => {
-    const settings = await context.newPage();
+  // One-time (per worker): point the extension at the hermetic MockNode via
+  // the real settings UI, run REAL first-run onboarding via the real popup
+  // UI, snapshot the resulting storage, and keep a "janitor" extension page
+  // open for per-test resets (extension pages can call popup-only messages).
+  workerWallet: [async ({ extContext, extensionId }, use) => {
+    const settings = await extContext.newPage();
     settings.on('dialog', (d) => void d.accept()); // host-change confirm
     await settings.goto(`chrome-extension://${extensionId}/settings.html`);
     await settings.waitForLoadState('domcontentloaded');
@@ -66,14 +100,62 @@ export const test = base.extend<ExtensionFixtures>({
       /saved/i.test(document.getElementById('statusMsg')?.textContent || ''));
     await settings.close();
 
-    const popupUrl = `chrome-extension://${extensionId}/popup.html`;
+    const popupPage = await extContext.newPage();
+    await popupPage.goto(`chrome-extension://${extensionId}/popup.html`);
+    await popupPage.waitForLoadState('domcontentloaded');
+    await ensureOnboarded(popupPage);
+    await popupPage.close();
+
+    // Janitor page: any extension page qualifies as a popup-only sender.
+    const janitor = await extContext.newPage();
+    await janitor.goto(`chrome-extension://${extensionId}/settings.html`);
+    await janitor.waitForLoadState('domcontentloaded');
+    const snapshot = await janitor.evaluate(async () =>
+      await chrome.storage.local.get(null) as Record<string, unknown>);
+
+    await use({ janitor, snapshot });
+    await janitor.close();
+  }, { scope: 'worker' }],
+
+  // Per-test reset (auto): every test starts freshly-onboarded + unlocked,
+  // with an empty allowlist/outbox/log and no live refs. Order matters:
+  // everything that WRITES storage happens BEFORE the snapshot restore —
+  // `dregg:lock` persists the dirty in-memory wallet (incl. the auth log)
+  // and dropLiveRef persists the live-ref map — and `dregg:unlock` comes
+  // LAST because it rebuilds the background's entire in-memory state from
+  // the (now pristine) encrypted envelope in storage.
+  resetState: [async ({ workerWallet }, use) => {
+    const { janitor, snapshot } = workerWallet;
+    await janitor.evaluate(async (snap) => {
+      const send = (msg: Record<string, unknown>): Promise<Record<string, unknown> | undefined> =>
+        chrome.runtime.sendMessage({ id: 'e2e-reset', ...msg });
+      const refsResp = (await send({ type: 'dregg:getLiveRefs' })) as
+        { result?: Array<{ refId: string }> | { refs?: Array<{ refId: string }> } } | undefined;
+      const refs = Array.isArray(refsResp?.result)
+        ? refsResp.result
+        : ((refsResp?.result as { refs?: Array<{ refId: string }> })?.refs ?? []);
+      for (const r of refs) {
+        await send({ type: 'dregg:dropLiveRef', refId: r.refId });
+      }
+      await send({ type: 'dregg:lock' });
+      await chrome.storage.local.clear();
+      await chrome.storage.local.set(snap);
+      const unlocked = (await send({ type: 'dregg:unlock', passphrase: 'e2e-passphrase' })) as
+        { result?: { success?: boolean } } | undefined;
+      if (unlocked?.result?.success !== true) {
+        throw new Error(`e2e resetState: unlock failed: ${JSON.stringify(unlocked)}`);
+      }
+    }, snapshot);
+    await use();
+  }, { auto: true }],
+
+  // A fresh popup page per test (the worker-scoped reset guarantees it opens
+  // onto an onboarded, unlocked wallet).
+  popup: async ({ context, extensionId, resetState }, use) => {
+    void resetState;
     const page = await context.newPage();
-    await page.goto(popupUrl);
+    await page.goto(`chrome-extension://${extensionId}/popup.html`);
     await page.waitForLoadState('domcontentloaded');
-    // A fresh install now starts UNINITIALIZED (no auto-created wallet — MF-1).
-    // Run the real onboarding flow once so the wallet exists + is unlocked for
-    // the test. Idempotent: skips if a wallet already exists.
-    await ensureOnboarded(page);
     await use(page);
     await page.close();
   },
@@ -90,9 +172,6 @@ export const test = base.extend<ExtensionFixtures>({
 
 export { expect } from '@playwright/test';
 
-/** The passphrase the e2e onboarding sets (and unlockPopup re-types). */
-export const E2E_PASSPHRASE = 'e2e-passphrase';
-
 /**
  * Run first-run onboarding through the real popup UI if the wallet is
  * uninitialized: set a passphrase, read the displayed recovery phrase, confirm
@@ -100,9 +179,18 @@ export const E2E_PASSPHRASE = 'e2e-passphrase';
  * immediately if a wallet already exists (onboarding section hidden).
  */
 export async function ensureOnboarded(popup: Page): Promise<void> {
+  // Wait for the initial refresh() to decide state: it un-hides exactly one
+  // of onboarding (uninitialized), the passphrase section (locked), or the
+  // backup button (unlocked). Deterministic — no fixed sleep.
+  await popup.waitForFunction(() => {
+    const ob = document.getElementById('onboardingSection');
+    const pass = document.getElementById('passphraseSection');
+    const backup = document.getElementById('backupBtn');
+    return (ob && !ob.classList.contains('hidden')) ||
+      (pass && !pass.classList.contains('hidden')) ||
+      (backup && backup.style.display === 'block');
+  }, null, { timeout: 10000 });
   const onboarding = popup.locator('#onboardingSection');
-  // Let the initial refresh() decide visibility.
-  await popup.waitForTimeout(300);
   if (!(await onboarding.isVisible())) return;
 
   await popup.fill('#onbPass', E2E_PASSPHRASE);
@@ -122,15 +210,15 @@ export async function ensureOnboarded(popup: Page): Promise<void> {
 }
 
 /**
- * Unlock the cipherclerk through the popup's real unlock flow. After onboarding
- * the wallet is already unlocked, so this no-ops unless a test locked it.
+ * Unlock the cipherclerk through the popup's real unlock flow. The reset
+ * fixture leaves the wallet unlocked, so this no-ops unless a test locked it.
  */
 export async function unlockPopup(popup: Page): Promise<void> {
   await ensureOnboarded(popup);
   const lockBtn = popup.locator('#lockBtn');
   // The button's static HTML text is "Lock Cipherclerk"; the initial
-  // refresh() flips it to "Unlock Cipherclerk" for the locked-at-rest clerk.
-  // Wait for that refresh to land before deciding (the passphrase section is
+  // refresh() flips it to "Unlock Cipherclerk" for a locked clerk. Wait for
+  // that refresh to land before deciding (the passphrase section is
   // unhidden in the same render).
   await popup.locator('#passphraseSection:not(.hidden), #backupBtn[style*="block"]')
     .first().waitFor({ state: 'attached', timeout: 5000 });
