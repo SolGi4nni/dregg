@@ -1012,3 +1012,26 @@ forged-choice refusal + linkage) is sound; the turn_hash non-determinism is the 
 hash-binding while require_pq is off. NAMED PREREQUISITE for option 2: the require_pq rollout (hybrid-everywhere) — a
 separate effort. Discipline held: the lane drove the flip, found it unsafe, and STOPPED rather than shipping a broken
 core change.
+
+## require_pq / content-address: PRECISE prerequisite roadmap (2026-07-12, from the conservative lane's full readiness report)
+READY (good): the collective-fiction signing surface IS hybrid-ready — SDK AgentCipherclerk::sign_action defaults to
+sign_action_hybrid (real ML-DSA half); app-framework delegates + self-tests HybridSignature emission; all collective-
+fiction crates + the bot route through AppCipherclerk. Empirically: with require_pq forced ON, cargo test -p spween-
+dregg passed 9/9 on persvati (the executor path stays green under PQ). Full-mode compute_signing_message is already
+content-only (unaffected by content-addressing).
+BLOCKERS (why global require_pq + content-addressing can't land cleanly yet):
+ 1. A LIVE CLASSICAL PRODUCER: sdk/src/runtime.rs::sign_action_for_runtime (the AgentRuntime path — "the ONLY way an
+    action leaves the runtime") emits classical Authorization::Signature. Global require_pq=ON rejects every
+    AgentRuntime turn. Prereq: migrate the runtime signer to hybrid.
+ 2. AN ACTIVELY-ENFORCED SECURITY INVARIANT contradicts content-addressing: protocol-tests/src/invariants/
+    authorization_hash_domain_separation.rs (200 cases/property) + tests/src/authorization_variants.rs assert that auth
+    tampering CHANGES Action::hash(). Content-addressing removes exactly that. Prereq: deliberately rewrite that suite
+    from "auth-affects-hash" to "auth-does-NOT-affect-hash-but-is-verified-separately" (the Mina property).
+ 3. THE GLOBAL COUPLING: Action::hash()->forest_hash->turn_hash; anti-downgrade rests on action.hash() binding the PQ
+    half for any require_pq=off executor (node/api too). Safe only with require_pq ON EVERYWHERE — which needs #1.
+ (Also: cargo test -p dregg-turn does not currently COMPILE due to UNRELATED in-flight circuit work in
+ membership_verifier.rs — the named hard gate is blocked independent of PQ.)
+ROADMAP to option 2 (the correct Mina end-state): (a) unblock the dregg-turn/circuit tree; (b) hybridize the
+AgentRuntime runtime signer; (c) invert the authorization_hash_domain_separation invariant suite; THEN enable require_pq
+globally + content-address Action::hash() + bind the turn_hash in verify_by_replay. A real, sequenced migration — not a
+flag flip. B remains correct until then.
