@@ -78,6 +78,16 @@ Rust shrink layer waits on circuit-prove going quiet.
   (TRIPLE-verified: OP spec + kona KAT + LIVE Base-mainnet recompute of output 12086) → L2 ERC-20 MPT. REAL-EXTERNAL
   fixture (public-node captured). 86 crate tests green. RESIDUAL named loudly: live Base uses FAULT PROOFS
   (FaultDisputeGame), not the L2OutputOracle model — not implemented. WAVE 2 DONE (secp256k1 + Base).
-- 07-12 circuit-prove STILL churned (carrier-geometry flag-day 178-limb/60-carrier commit 30min ago, 9 files
-  uncommitted) → shrink-layer + rung-3 fold-P0 STAY deferred. Wrap gnark-side also best waits (transcript layout
-  the shrink layer will fix). Wave 3 = clean-and-mine: Cosmos bech32 binding + Base-fault-proof grounding scout.
+- 07-12 Wave 3: Cosmos secp256k1/bech32 binding COMMITTED — THE BINDING TRILOGY IS COMPLETE
+  (Solana Ed25519 · EVM secp256k1-addr · Cosmos secp256k1-addr). Any holder on all 3 families binds→votes
+  non-custodially. ripemd160(sha256(pubkey)) derivation KAT-pinned + verified myself; low-S 2 layers; Ed25519/EVM
+  byte-unchanged. Honest: dregg-specific sign-doc, NOT ADR-036 wallet-native (named follow-up). Base-fault-proof
+  grounding scout running (docs).
+
+## ⚑ STATUS (07-12): THREAD 3 (cross-chain completion) DONE.
+Edges(Sol/EVM/Cosmos)✓ · from_foreign_fields wire✓ · multi-network ChainId✓ · u128→u64 narrow✓ · binding
+trilogy✓ · Base finality(L2OutputOracle)✓ · Cosmos bisection✓ · Electra rotation✓.
+BLOCKED (circuit-prove churn — stark-kill's carrier flag-day): thread 1 (wrap shrink-layer) + thread 2 (rung-3
+fold-P0). These are the marquee remaining value; pick up the moment circuit-prove goes quiet.
+UNBLOCKED refinements left (lower wow/effort): Base fault-proof anchor (scout→build), Base finalization-window,
+real e2e LightClientUpdate→holding chain, ADR-036 Cosmos framing.
