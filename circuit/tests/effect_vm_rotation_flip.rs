@@ -45,8 +45,9 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::effect_vm::columns::{PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, state};
 use dregg_circuit::effect_vm::trace_rotated::{
     AFTER_BASE, B_COMMITTED_HEIGHT, B_IROOT, B_STATE_COMMIT, BEFORE_BASE, C_CAVEAT_COMMIT,
-    CAVEAT_BASE, GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, empty_caveat_manifest,
-    generate_rotated_effect_vm_trace, generate_rotated_refusal_trace_with_fields_tree,
+    CAVEAT_BASE, GRAD_ROT_WIDTH, ROT_WIDTH, RotatedBlockWitness, avail_pad_for_descriptor_name,
+    empty_caveat_manifest, generate_rotated_effect_vm_trace,
+    generate_rotated_effect_vm_trace_avail, generate_rotated_refusal_trace_with_fields_tree,
     rotated_descriptor_name_for_effect, transfer_caveat_manifest,
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
@@ -73,14 +74,17 @@ fn rotated_json(key: &str) -> &'static str {
 /// The committed rotated trace width for a descriptor. A gentian flag-day refuse-welded (bare
 /// cohort, `-gentian-deployed-bare-refuse`) member extends PAST the graduated width to cover the
 /// three floor-refuse aux blocks — exactly `floor_col(last)+1`; every other rotated member is
-/// exactly `GRAD_ROT_WIDTH`. (The flag-day grew the deployed descriptors but left these test width
-/// pins at the pre-weld value.)
+/// exactly `GRAD_ROT_WIDTH`. An AVAILABILITY-hardened member (`…-v1-avail` / `…-v1-fee-avail`:
+/// transfer +10, burn +8, fee'd transfer +16) additionally shifts its WHOLE rotated appendix by
+/// the avail pad — the weld witness columns ride `[V1_WIDTH, V1_WIDTH + pad)` and every base past
+/// them moves up — so the committed width carries the pad on top of either shape.
 fn expected_rot_width(desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2) -> usize {
     use dregg_circuit::effect_vm::bare_floor_refuse_weld as refuse;
+    let pad = avail_pad_for_descriptor_name(&desc.name);
     if desc.name.ends_with(refuse::REFUSE_WELD_SUFFIX) {
-        refuse::floor_col(refuse::CAPACITY_TAGS.len() - 1) + 1
+        refuse::floor_col(refuse::CAPACITY_TAGS.len() - 1) + 1 + pad
     } else {
-        GRAD_ROT_WIDTH
+        GRAD_ROT_WIDTH + pad
     }
 }
 
@@ -167,6 +171,12 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
         desc.public_input_count, 50,
         "42 v1 PIs + 4 appended + 4 dsl rc"
     );
+    // The deployed transfer member is AVAILABILITY-HARDENED (`…-v1-avail`, pad 10): the weld
+    // witness rides `[V1_WIDTH, V1_WIDTH + pad)` and every rotated base shifts by the pad.
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let before_base = BEFORE_BASE + pad;
+    let after_base = AFTER_BASE + pad;
+    let caveat_base = CAVEAT_BASE + pad;
 
     // -- a real transfer: the validated v1 reference witness (transfer-out). --
     let before_balance: i64 = 100_000;
@@ -208,15 +218,20 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
 
     // -- (G1) THE LIVE GENERATOR drives the rotated trace + PIs (NOT hand-built). --
     let caveat = transfer_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+        pad,
         &st,
         &effects,
         &bridge(&before_w),
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce a 315-col trace + 46 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+    .expect("live rotated generator must produce the avail-hardened rotated trace + 50 PIs");
+    assert_eq!(
+        trace[0].len(),
+        ROT_WIDTH + pad,
+        "avail-shifted rotated trace"
+    );
     assert_eq!(dpis.len(), 50);
 
     // -- (2) THE cell≡circuit ROTATED DIFFERENTIAL: producer limbs == the generated trace's
@@ -270,18 +285,18 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     ] {
         assert_eq!(
             after_w.pre_limbs[idx],
-            last[AFTER_BASE + idx],
+            last[after_base + idx],
             "differential: producer {label} limb == trace after-block limb"
         );
         assert_eq!(
             before_w.pre_limbs[idx],
-            r0[BEFORE_BASE + idx],
+            r0[before_base + idx],
             "differential: producer {label} limb == trace before-block limb"
         );
     }
     assert_eq!(
         after_w.iroot,
-        last[AFTER_BASE + B_IROOT],
+        last[after_base + B_IROOT],
         "differential: producer iroot == trace after-block iroot carrier"
     );
 
@@ -289,7 +304,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     // EQUALS the row-0 before-block STATE_COMMIT carrier the LIVE generator wrote.
     assert_eq!(
         before_w.state_commit,
-        r0[BEFORE_BASE + B_STATE_COMMIT],
+        r0[before_base + B_STATE_COMMIT],
         "differential: producer wire_commit(before) == row-0 trace STATE_COMMIT carrier"
     );
 
@@ -309,7 +324,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     let cell_v9 = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx);
     assert_eq!(
         cell_v9,
-        r0[BEFORE_BASE + B_STATE_COMMIT],
+        r0[before_base + B_STATE_COMMIT],
         "G3 LIVE: cell v9 rotated commitment == circuit row-0 STATE_COMMIT"
     );
     // and the cell's v9 agrees with the producer's wire_commit (two independent paths to the
@@ -322,22 +337,22 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     // -- the four appended PIs were already read by the generator; pin them for clarity. --
     assert_eq!(
         dpis[42],
-        r0[BEFORE_BASE + B_STATE_COMMIT],
+        r0[before_base + B_STATE_COMMIT],
         "PI 42 = rotated OLD commit"
     );
     assert_eq!(
         dpis[43],
-        last[AFTER_BASE + B_STATE_COMMIT],
+        last[after_base + B_STATE_COMMIT],
         "PI 43 = rotated NEW commit"
     );
     assert_eq!(
         dpis[44],
-        last[AFTER_BASE + B_COMMITTED_HEIGHT],
+        last[after_base + B_COMMITTED_HEIGHT],
         "PI 44 = committed height"
     );
     assert_eq!(
         dpis[45],
-        last[CAVEAT_BASE + C_CAVEAT_COMMIT],
+        last[caveat_base + C_CAVEAT_COMMIT],
         "PI 45 = caveat commit"
     );
 
@@ -371,7 +386,7 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     {
         let mut t = trace.clone();
         for row in t.iter_mut() {
-            row[BEFORE_BASE + 27] = row[BEFORE_BASE + 27] + BabyBear::ONE;
+            row[before_base + 27] = row[before_base + 27] + BabyBear::ONE;
         }
         assert!(refused(&t, &dpis), "tampered heap_root limb must refuse");
     }
@@ -379,15 +394,30 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
     {
         let mut t = trace.clone();
         for row in t.iter_mut() {
-            row[AFTER_BASE + B_IROOT] = row[AFTER_BASE + B_IROOT] + BabyBear::ONE;
+            row[after_base + B_IROOT] = row[after_base + B_IROOT] + BabyBear::ONE;
         }
         assert!(refused(&t, &dpis), "tampered iroot must refuse");
+    }
+    // THE FIELDS-OCTET MUTATION TOOTH (the 178-limb geometry's v13 grow): corrupt ONE absorbed
+    // fields-octet completion lane (AFTER block, limb 113 = `fields[0]` lane 1) in the witness.
+    // The lane rides the AFTER absorption chain (the chained `wireCommitR` chip sites) AND the
+    // value-cohort continuity freeze (`fieldsCompletionFreezes`), so the constraint system must
+    // REFUSE — the fix is sound, not merely satisfiable.
+    {
+        let mut t = trace.clone();
+        for row in t.iter_mut() {
+            row[after_base + 113] = row[after_base + 113] + BabyBear::ONE;
+        }
+        assert!(
+            refused(&t, &dpis),
+            "a corrupted AFTER fields-octet absorption lane (limb 113) must refuse"
+        );
     }
     // tampered heap-key caveat (entry 1, key offset within the manifest).
     {
         let mut t = trace.clone();
         for row in t.iter_mut() {
-            row[CAVEAT_BASE + 8 + 2] = row[CAVEAT_BASE + 8 + 2] + BabyBear::ONE;
+            row[caveat_base + 8 + 2] = row[caveat_base + 8 + 2] + BabyBear::ONE;
         }
         assert!(refused(&t, &dpis), "tampered heap caveat key must refuse");
     }
@@ -446,6 +476,10 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         "graduated rotated width 608"
     );
     assert_eq!(desc.public_input_count, 50);
+    // The deployed burn member is AVAILABILITY-HARDENED (`…-v1-avail`, pad 8 — debit-only, no
+    // credit-carry chain): every rotated base shifts by the pad.
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let before_base = BEFORE_BASE + pad;
 
     // A real burn turn: a 30-unit balance debit (no destination credit).
     let before_balance: i64 = 80_000;
@@ -482,7 +516,8 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
 
     // The burn carries no in-circuit caveat operand → the EMPTY manifest (cohort default).
     let caveat = empty_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+        pad,
         &st,
         &effects,
         &RotatedBlockWitness::new(before_w.pre_limbs.clone(), before_w.iroot).unwrap(),
@@ -490,7 +525,7 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
         &caveat,
     )
     .expect("live rotated generator must produce a burn trace");
-    assert_eq!(trace[0].len(), ROT_WIDTH);
+    assert_eq!(trace[0].len(), ROT_WIDTH + pad);
 
     // The cell v9 (now binding FULL authority state via r23) == the circuit STATE_COMMIT.
     let v9_ctx = V9RotationContext {
@@ -504,13 +539,13 @@ fn rotated_burn_cohort_member_proves_verifies_with_authority_commitment() {
     let cell_v9 = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx);
     assert_eq!(
         cell_v9,
-        trace[0][BEFORE_BASE + B_STATE_COMMIT],
+        trace[0][before_base + B_STATE_COMMIT],
         "G4 burn: cell v9 (full-authority) == circuit row-0 STATE_COMMIT"
     );
     // r23 (the authority digest limb, pre_limbs index 24) is genuinely carried on the wire.
     assert_eq!(
         before_w.pre_limbs[24],
-        trace[0][BEFORE_BASE + 24],
+        trace[0][before_base + 24],
         "G4 burn: the r23 authority-digest limb rides the rotated trace"
     );
 
@@ -650,14 +685,8 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     use dregg_circuit::heap_root::HeapLeaf;
     // A non-empty BEFORE nullifier set (distinct from the spent nullifier `0xBEEF`).
     let before_nullifiers = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0x1111),
-            value: BabyBear::new(1),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0x2222),
-            value: BabyBear::new(1),
-        },
+        HeapLeaf::entry(BabyBear::new(0x1111), BabyBear::new(1)),
+        HeapLeaf::entry(BabyBear::new(0x2222), BabyBear::new(1)),
     ];
     let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
         &st,
@@ -729,10 +758,11 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     //    `.absent` bracketing witness, so the wiring REFUSES it before proving — the in-circuit
     //    no-double-spend gate bites. --
     {
-        let spent = vec![HeapLeaf {
-            addr: r0[PARAM_BASE + param::NULLIFIER], // the spent nullifier is ALREADY present
-            value: BabyBear::new(1),
-        }];
+        // the spent nullifier is ALREADY present
+        let spent = vec![HeapLeaf::entry(
+            r0[PARAM_BASE + param::NULLIFIER],
+            BabyBear::new(1),
+        )];
         let double = generate_rotated_note_spend_trace_with_nullifier_tree(
             &st,
             &effects,
@@ -855,14 +885,8 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
 
     // A non-empty BEFORE accounts set (distinct from the new-cell key `0xCE11`).
     let before_accounts = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0xAA01),
-            value: BabyBear::new(0xAA01),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0xAA02),
-            value: BabyBear::new(0xAA02),
-        },
+        HeapLeaf::entry(BabyBear::new(0xAA01), BabyBear::new(0xAA01)),
+        HeapLeaf::entry(BabyBear::new(0xAA02), BabyBear::new(0xAA02)),
     ];
     let (trace, dpis, map_heaps) = generate_rotated_create_cell_trace_with_accounts_tree(
         &st,
@@ -995,14 +1019,8 @@ fn rotated_carrier_octets_carry_real_child_vk_and_contract_hash_three_way() {
         child_vk_derived: BabyBear::new(0xCE11),
     };
     let before_accounts = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0xAA01),
-            value: BabyBear::new(0xAA01),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0xAA02),
-            value: BabyBear::new(0xAA02),
-        },
+        HeapLeaf::entry(BabyBear::new(0xAA01), BabyBear::new(0xAA01)),
+        HeapLeaf::entry(BabyBear::new(0xAA02), BabyBear::new(0xAA02)),
     ];
 
     // A closure asserting one octet is threaded byte-identically by all three producers, and is the
@@ -1698,10 +1716,10 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // opens against). It rides the 8-felt `commitments_root` group (limb 27 lane-0 ‖ completion lanes
     // 74..=80), so a note-add moves ALL 8 of those lanes (and ONLY those).
     let grown_root = dregg_circuit::heap_root::CanonicalHeapTree8::new(
-        vec![dregg_circuit::heap_root::HeapLeaf {
-            addr: dregg_circuit::field::BabyBear::new(9),
-            value: dregg_circuit::field::BabyBear::new(1),
-        }],
+        vec![dregg_circuit::heap_root::HeapLeaf::entry(
+            dregg_circuit::field::BabyBear::new(9),
+            dregg_circuit::field::BabyBear::new(1),
+        )],
         dregg_circuit::heap_root::HEAP_TREE_DEPTH,
     )
     .root8();
@@ -1932,6 +1950,10 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
 fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let desc =
         parse_vm_descriptor2(rotated_transfer_json()).expect("rotated transfer descriptor parses");
+    // Avail-hardened transfer member: every rotated base shifts by the weld pad (10).
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let before_base = BEFORE_BASE + pad;
+    let after_base = AFTER_BASE + pad;
 
     let before_balance: i64 = 100_000;
     let amount: u64 = 50;
@@ -1990,14 +2012,15 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     );
 
     let caveat = transfer_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+        pad,
         &st,
         &effects,
         &bridge(&before_w),
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce the field-bearing trace + 46 PIs");
+    .expect("live rotated generator must produce the field-bearing trace + 50 PIs");
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
 
@@ -2033,12 +2056,12 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let cell_v9_before = compute_canonical_state_commitment_v9_felt(&before_cell, &v9_ctx_before);
     assert_eq!(
         cell_v9_before,
-        r0[BEFORE_BASE + B_STATE_COMMIT],
+        r0[before_base + B_STATE_COMMIT],
         "§4.2: field-bearing cell v9(before) == circuit row-0 STATE_COMMIT (OLD_COMMIT agree)"
     );
     assert_eq!(
         dpis[42],
-        r0[BEFORE_BASE + B_STATE_COMMIT],
+        r0[before_base + B_STATE_COMMIT],
         "PI[42] (rotated OLD_COMMIT) == row-0 STATE_COMMIT on the field-bearing cell"
     );
     assert_eq!(
@@ -2060,12 +2083,12 @@ fn rotated_non_synthetic_field_bearing_cell_old_new_commit_agree() {
     let cell_v9_after = compute_canonical_state_commitment_v9_felt(&after_cell, &v9_ctx_after);
     assert_eq!(
         cell_v9_after,
-        last[AFTER_BASE + B_STATE_COMMIT],
+        last[after_base + B_STATE_COMMIT],
         "§4.2: field-bearing cell v9(after) == circuit last-row STATE_COMMIT (NEW_COMMIT agree)"
     );
     assert_eq!(
         dpis[43],
-        last[AFTER_BASE + B_STATE_COMMIT],
+        last[after_base + B_STATE_COMMIT],
         "PI[35] (rotated NEW_COMMIT) == last-row STATE_COMMIT on the field-bearing cell"
     );
 
@@ -2282,6 +2305,10 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
         desc.public_input_count, 50,
         "value descriptor keeps the 46-PI shape"
     );
+    // Avail-hardened transfer member: every rotated base shifts by the weld pad (10).
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let before_base = BEFORE_BASE + pad;
+    let after_base = AFTER_BASE + pad;
 
     // -- a real value (transfer-out) turn; the authority half is UNCHANGED (a value move). --
     let before_balance: i64 = 100_000;
@@ -2320,15 +2347,20 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     );
 
     let caveat = transfer_caveat_manifest();
-    let (trace, dpis) = generate_rotated_effect_vm_trace(
+    let (trace, dpis) = generate_rotated_effect_vm_trace_avail(
+        pad,
         &st,
         &effects,
         &bridge(&before_w),
         &bridge(&after_w),
         &caveat,
     )
-    .expect("live rotated generator must produce the frozen transfer trace + 46 PIs");
-    assert_eq!(trace[0].len(), ROT_WIDTH, "315-col rotated trace");
+    .expect("live rotated generator must produce the frozen transfer trace + 50 PIs");
+    assert_eq!(
+        trace[0].len(),
+        ROT_WIDTH + pad,
+        "avail-shifted rotated trace"
+    );
 
     // THE FREEZE HOLDS HONESTLY: on a value move the kernel leaves the WHOLE authority residue
     // unchanged, so the producer's AFTER-r23 limb EQUALS the BEFORE-r23 limb — the column-equality
@@ -2341,13 +2373,13 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
         "a value move leaves the producer's r23 authority residue UNCHANGED (anti-vacuity)"
     );
     assert_eq!(
-        r0[BEFORE_BASE + B_RECORD_DIGEST],
-        last[AFTER_BASE + B_RECORD_DIGEST],
+        r0[before_base + B_RECORD_DIGEST],
+        last[after_base + B_RECORD_DIGEST],
         "the honest frozen trace carries AFTER-r23 == BEFORE-r23 (the weld is satisfied)"
     );
     assert_eq!(
-        r0[BEFORE_BASE + B_LIFECYCLE],
-        last[AFTER_BASE + B_LIFECYCLE],
+        r0[before_base + B_LIFECYCLE],
+        last[after_base + B_LIFECYCLE],
         "the honest frozen trace carries AFTER-lifecycle == BEFORE-lifecycle"
     );
 
@@ -2378,8 +2410,8 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     {
         let mut t = trace.clone();
         let last_row = t.len() - 1;
-        t[last_row][AFTER_BASE + B_RECORD_DIGEST] =
-            t[last_row][AFTER_BASE + B_RECORD_DIGEST] + BabyBear::ONE;
+        t[last_row][after_base + B_RECORD_DIGEST] =
+            t[last_row][after_base + B_RECORD_DIGEST] + BabyBear::ONE;
         assert!(
             refused(&t, &dpis),
             "DRIFTING the AFTER-r23 authority residue (forged authority half) on a value move MUST \
@@ -2391,8 +2423,8 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     {
         let mut t = trace.clone();
         let last_row = t.len() - 1;
-        t[last_row][AFTER_BASE + B_LIFECYCLE] =
-            t[last_row][AFTER_BASE + B_LIFECYCLE] + BabyBear::ONE;
+        t[last_row][after_base + B_LIFECYCLE] =
+            t[last_row][after_base + B_LIFECYCLE] + BabyBear::ONE;
         assert!(
             refused(&t, &dpis),
             "DRIFTING the AFTER lifecycle limb on a value move MUST be UNSAT (the lifecycle weld)"
@@ -2776,14 +2808,8 @@ fn note_create_pins_commitments_and_refuses_tamper() {
     //    inserted note commitment `cm`. The live `commitmentsInsertOp .insert` op pins the after-root
     //    to the GENUINE sorted insert, so the published commitment binds the grown set. --
     let before_commitments = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0x111),
-            value: BabyBear::new(1),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0x222),
-            value: BabyBear::new(1),
-        },
+        HeapLeaf::entry(BabyBear::new(0x111), BabyBear::new(1)),
+        HeapLeaf::entry(BabyBear::new(0x222), BabyBear::new(1)),
     ];
     let (trace, dpis, map_heaps) = generate_rotated_note_create_trace_with_commitments_tree(
         &st,
@@ -2857,7 +2883,7 @@ fn note_create_pins_commitments_and_refuses_tamper() {
 ///   3. a proof whose published fee PI is forged (≠ the debited column) is UNSAT.
 #[test]
 fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
-    use dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_with_fee;
+    use dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_with_fee_avail;
 
     let desc = parse_vm_descriptor2(rotated_json("transferFeeVmDescriptor2R24"))
         .expect("rotated fee'd transfer descriptor parses");
@@ -2870,6 +2896,10 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         desc.public_input_count, 51,
         "fee'd transfer: 38 rotated PIs + the appended fee PI (slot 38)"
     );
+    // The deployed fee member is AVAILABILITY-HARDENED (`…-v1-fee-avail`, pad 16): every rotated
+    // base shifts by the pad.
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    let after_base = AFTER_BASE + pad;
 
     let before_balance: i64 = 100_000;
     let amount: u64 = 50;
@@ -2909,7 +2939,8 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     );
     let caveat = transfer_caveat_manifest();
 
-    let (trace, dpis) = generate_rotated_effect_vm_trace_with_fee(
+    let (trace, dpis) = generate_rotated_effect_vm_trace_with_fee_avail(
+        pad,
         &st,
         &effects,
         &bridge(&before_w),
@@ -2917,7 +2948,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
         &caveat,
         fee,
     )
-    .expect("fee'd rotated generator produces a 315-col trace + 47 PIs");
+    .expect("fee'd rotated generator produces the avail-shifted trace + 51 PIs");
     assert_eq!(dpis.len(), 51, "51 PIs (46 rotated + the fee + 4 dsl rc)");
     assert_eq!(
         dpis[46],
@@ -2948,7 +2979,7 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     // And NEW_COMMIT (PI 43) is the trace's last-row after-block STATE_COMMIT carrier (post-fee).
     assert_eq!(
         dpis[43],
-        trace[trace.len() - 1][AFTER_BASE + B_STATE_COMMIT],
+        trace[trace.len() - 1][after_base + B_STATE_COMMIT],
         "NEW_COMMIT binds the post-fee after-block STATE_COMMIT carrier"
     );
 

@@ -266,7 +266,7 @@ fn differential_real_cell_authority_residue_flows() {
 /// reconstructs a CONCRETE such collision (found by a birthday search over a free folded field,
 /// `fields[8]`; the two salts are pinned so the tooth is deterministic):
 ///
-///   * locked-down salt 13664 vs wide-open salt 348206 → SAME old 1-felt digest (454814429).
+///   * locked-down salt 57684 vs wide-open salt 1393 → SAME old 1-felt digest (re-mined at the 178-limb geometry).
 ///
 /// At the NEW faithful 8-felt `compute_authority_digest_8` (`bytes32_to_8_limbs(blake3(residue))`,
 /// ~124 bits) the two are DISTINCT. So the value that the rotated commit absorbs (all 8 limbs, WELDED
@@ -297,8 +297,8 @@ fn gentian_weld_31bit_authority_collision_separated_at_8_felt() {
         c
     }
 
-    let locked = make(false, 13664);
-    let open = make(true, 348206);
+    let locked = make(false, 57684);
+    let open = make(true, 1393);
 
     // The cells are GENUINELY different authority states (locked-down vs wide-open send permission).
     assert_eq!(locked.permissions.send, AuthRequired::Impossible);
@@ -347,8 +347,8 @@ fn gentian_weld_31bit_authority_collision_separated_at_8_felt() {
 /// DIFFERENT state that collides at limb-0 (~30-bit), and the single-limb anchor could not tell.
 ///
 /// This reconstructs a CONCRETE such pair (found by birthday search over the free folded field
-/// `fields[8]`, salts pinned for determinism): a LOCKED-DOWN cell (salt 2409) and a WIDE-OPEN cell
-/// (salt 199912) whose `compute_authority_digest_8[0]` are EQUAL but whose 7 HEADROOM limbs DIFFER.
+/// `fields[8]`, salts pinned for determinism): a LOCKED-DOWN cell (salt 173207) and a WIDE-OPEN cell
+/// (salt 1272) whose `compute_authority_digest_8[0]` are EQUAL but whose 7 HEADROOM limbs DIFFER.
 ///
 ///   * single limb-0 pin (old): `digest8[0]` equal ⟹ the anchor cannot distinguish ⟹ forge survives.
 ///   * 8-felt record-pin8 (new): the verifier anchors all 8; the 7 headroom anchors disagree ⟹ a
@@ -376,8 +376,8 @@ fn gentian_mover_weld_headroom_anchors_bite_where_limb0_is_blind() {
         c
     }
 
-    let locked = make(false, 2409);
-    let open = make(true, 199912);
+    let locked = make(false, 173207);
+    let open = make(true, 1272);
 
     // Genuinely-different authority states (locked-down vs wide-open).
     assert_ne!(
@@ -405,4 +405,74 @@ fn gentian_mover_weld_headroom_anchors_bite_where_limb0_is_blind() {
          limb-0-colliding locked / wide-open movers the single pin could not (the GENTIAN close for \
          movers — forged mover authority UNSAT at 8-felt)"
     );
+}
+
+/// **THE SALT MINER (run manually after any authority-digest geometry change).** The two GENTIAN
+/// collision teeth above pin CONCRETE birthday-mined salts; any change to
+/// `authority_residue_bytes` / the digest geometry (e.g. the 172→178-limb fields-octet grow)
+/// invalidates them. Re-mine with
+/// `cargo test -p dregg-circuit --test effect_vm_commit_lean_differential zz_mine --release -- --ignored --nocapture`
+/// and re-pin the printed salts in the two tests above.
+#[test]
+#[ignore = "salt miner — run manually to refresh the pinned collision salts"]
+fn zz_mine_gentian_collision_salts() {
+    use dregg_cell::Cell;
+    use dregg_cell::commitment::{authority_residue_bytes, compute_authority_digest_8};
+    use dregg_cell::permissions::AuthRequired;
+    use dregg_circuit::poseidon2::hash_bytes;
+    use std::collections::HashMap;
+
+    fn make(open: bool, salt: u32) -> Cell {
+        let mut c = Cell::new([7u8; 32], [11u8; 32]);
+        if open {
+            c.permissions.send = AuthRequired::None;
+            c.permissions.set_permissions = AuthRequired::None;
+            c.permissions.set_state = AuthRequired::None;
+        } else {
+            c.permissions.send = AuthRequired::Impossible;
+            c.permissions.set_permissions = AuthRequired::Impossible;
+            c.permissions.set_state = AuthRequired::Impossible;
+        }
+        c.state.fields[8][0..4].copy_from_slice(&salt.to_le_bytes());
+        c
+    }
+
+    // Generic birthday search: table the locked side, stream the open side.
+    let mine = |digest: &dyn Fn(&Cell) -> u32, label: &str| -> (u32, u32) {
+        const TABLE: u32 = 1 << 19;
+        let mut locked_by_digest: HashMap<u32, u32> = HashMap::with_capacity(TABLE as usize);
+        for salt in 0..TABLE {
+            locked_by_digest.insert(digest(&make(false, salt)), salt);
+        }
+        for open_salt in 0..u32::MAX {
+            if let Some(&locked_salt) = locked_by_digest.get(&digest(&make(true, open_salt))) {
+                eprintln!("{label}: locked salt {locked_salt} / open salt {open_salt}");
+                return (locked_salt, open_salt);
+            }
+        }
+        panic!("{label}: no collision found (should be unreachable)");
+    };
+
+    // Tooth 1: the OLD 1-felt digest (`hash_bytes` over the residue) collides.
+    let (l1, o1) = mine(
+        &|c| hash_bytes(&authority_residue_bytes(c)).as_u32(),
+        "gentian_weld_31bit_authority_collision_separated_at_8_felt",
+    );
+    // Tooth 2: the faithful digest's LIMB-0 collides (headroom limbs must then differ — verify).
+    let (l2, o2) = mine(
+        &|c| compute_authority_digest_8(c)[0].as_u32(),
+        "gentian_mover_weld_headroom_anchors_bite_where_limb0_is_blind",
+    );
+    let (dl, dp) = (
+        compute_authority_digest_8(&make(false, l2)),
+        compute_authority_digest_8(&make(true, o2)),
+    );
+    assert_ne!(&dl[1..], &dp[1..], "headroom limbs must differ for tooth 2");
+    // Tooth 1 sanity: the 8-felt digest separates the pair.
+    assert_ne!(
+        compute_authority_digest_8(&make(false, l1)),
+        compute_authority_digest_8(&make(true, o1)),
+        "the 8-felt digest must separate tooth 1's colliding pair"
+    );
+    eprintln!("PIN THESE: tooth1 locked {l1} open {o1} | tooth2 locked {l2} open {o2}");
 }

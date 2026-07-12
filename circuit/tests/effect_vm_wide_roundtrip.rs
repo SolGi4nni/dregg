@@ -484,14 +484,8 @@ fn wide_note_spend_grow_gate_proves_verifies_and_executor_anchors() {
     );
 
     let before_nullifiers = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0x1111),
-            value: BabyBear::new(1),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0x2222),
-            value: BabyBear::new(1),
-        },
+        HeapLeaf::entry(BabyBear::new(0x1111), BabyBear::new(1)),
+        HeapLeaf::entry(BabyBear::new(0x2222), BabyBear::new(1)),
     ];
     let (trace, dpis, map_heaps) = generate_rotated_note_spend_wide(
         &st,
@@ -561,14 +555,8 @@ fn wide_note_create_grow_gate_proves_verifies_and_executor_anchors() {
     );
 
     let before_commitments = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0x111),
-            value: BabyBear::new(1),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0x222),
-            value: BabyBear::new(1),
-        },
+        HeapLeaf::entry(BabyBear::new(0x111), BabyBear::new(1)),
+        HeapLeaf::entry(BabyBear::new(0x222), BabyBear::new(1)),
     ];
     let (trace, dpis, map_heaps) = generate_rotated_note_create_wide(
         &st,
@@ -635,14 +623,8 @@ fn wide_create_cell_grow_gate_proves_verifies_and_executor_anchors() {
     );
 
     let before_accounts = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0xAA01),
-            value: BabyBear::new(0xAA01),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0xAA02),
-            value: BabyBear::new(0xAA02),
-        },
+        HeapLeaf::entry(BabyBear::new(0xAA01), BabyBear::new(0xAA01)),
+        HeapLeaf::entry(BabyBear::new(0xAA02), BabyBear::new(0xAA02)),
     ];
     let (trace, dpis, map_heaps) = generate_rotated_create_cell_wide(
         &st,
@@ -706,14 +688,8 @@ fn birth_witnesses() -> (
         &Default::default(),
     );
     let before_accounts = vec![
-        HeapLeaf {
-            addr: BabyBear::new(0xAA01),
-            value: BabyBear::new(0xAA01),
-        },
-        HeapLeaf {
-            addr: BabyBear::new(0xAA02),
-            value: BabyBear::new(0xAA02),
-        },
+        HeapLeaf::entry(BabyBear::new(0xAA01), BabyBear::new(0xAA01)),
+        HeapLeaf::entry(BabyBear::new(0xAA02), BabyBear::new(0xAA02)),
     ];
     (st, ledger, before_w, after_w, before_accounts)
 }
