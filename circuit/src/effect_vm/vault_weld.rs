@@ -132,8 +132,20 @@ pub const BB3: usize = V + 31;
 /// is-nonzero inverse witnesses for `d` and `m`.
 pub const D_INV: usize = V + 32;
 pub const M_INV: usize = V + 33;
+/// `after[assets]` limbs (lo, hi) — the SIGN-GATE decomposition (`before + Δassets = after`).
+pub const AA0: usize = V + 34;
+pub const AA1: usize = V + 35;
+/// `after[shares]` limbs (lo, hi) — the SIGN-GATE decomposition (`before + Δshares = after`).
+pub const AS0: usize = V + 36;
+pub const AS1: usize = V + 37;
+/// Asset delta-addition carry bits (`0` ⟺ no final carry ⟺ deposit direction `before ≤ after`).
+pub const DCAR0: usize = V + 38;
+pub const DCAR1: usize = V + 39;
+/// Share delta-addition carry bits.
+pub const MCAR0: usize = V + 40;
+pub const MCAR1: usize = V + 41;
 /// First bit-decomposition column.
-const BIT_BASE: usize = V + 34;
+const BIT_BASE: usize = V + 42;
 
 /// The ordered range-checked columns and their bit widths. The producer fill + the gate generator
 /// walk this list in lockstep so bit blocks are assigned deterministically.
@@ -169,6 +181,10 @@ fn range_specs() -> Vec<(usize, usize)> {
         (W1, l),
         (W2, l),
         (W3, l),
+        (AA0, l),
+        (AA1, l),
+        (AS0, l),
+        (AS1, l),
     ]
 }
 
@@ -326,6 +342,51 @@ pub fn borrow_compare_gates(
     g
 }
 
+/// **THE SIGN (NO-BORROW) GATES (selector-gated).** The deposit-direction weld. For each of assets
+/// and shares, decompose `after` into two 15-bit limbs and pin `before + Δ = after` through a 15-bit
+/// ADD carry chain with NO final carry:
+///
+///  * `after = A0 + 2^15·A1`               (after-assembly, `after` canonical)
+///  * `Blo + Δlo = A0 + 2^15·car0`          (low-limb add, `car0` boolean)
+///  * `Bhi + Δhi + car0 = A1 + 2^15·car1`   (high-limb add, `car1` boolean)
+///  * `car1 = 0`                            (NO FINAL CARRY ⟹ `before + Δ < 2^30`, so `before ≤ after`)
+///
+/// Since `Δ ∈ [0, 2^30)` (limbs range-checked) and the chain is exact over ℤ, `after = before + Δ ≥
+/// before`. This closes the WITHDRAWAL-as-deposit wrap band: a field-wrapped negative `after − before`
+/// (whose mod-`p` residue re-enters `[0, 2^30)` and the old delta gate accepted) now forces a final
+/// carry (`car1 = 1`) or a limb mismatch ⟹ UNSAT (fail-closed). The deposit direction is DERIVED,
+/// not assumed.
+///
+/// `bo/co` are the operand-before limbs (`TA*`/`SA*`), `dm` the delta limbs (`D*`/`M*`), `af` the
+/// after-field column, `aa` the after limbs, `car` the two carry bits.
+fn sign_add_gates(
+    bo: [usize; 2],
+    dm: [usize; 2],
+    af: usize,
+    aa: [usize; 2],
+    car: [usize; 2],
+) -> Vec<VmConstraint2> {
+    vec![
+        // after = A0 + 2^15·A1.
+        sel_gate(sub(var(af), add(var(aa[0]), mul(k(TWO15), var(aa[1]))))),
+        // low-limb add: Blo + Δlo − A0 − 2^15·car0 = 0.
+        sel_gate(sub(
+            sub(add(var(bo[0]), var(dm[0])), var(aa[0])),
+            mul(k(TWO15), var(car[0])),
+        )),
+        // high-limb add: Bhi + Δhi + car0 − A1 − 2^15·car1 = 0.
+        sel_gate(sub(
+            sub(add(add(var(bo[1]), var(dm[1])), var(car[0])), var(aa[1])),
+            mul(k(TWO15), var(car[1])),
+        )),
+        // no final carry.
+        sel_gate(var(car[1])),
+        // carry bits boolean.
+        sel_gate(mul(var(car[0]), add(var(car[0]), k(-1)))),
+        sel_gate(mul(var(car[1]), add(var(car[1]), k(-1)))),
+    ]
+}
+
 /// The per-list range-check gates: for each `(col, nbits)`, `nbits` selector-gated boolean gates plus
 /// a selector-gated assembly `sel · (col − Σ 2^i bit_i) == 0`. Bit blocks are assigned in list order
 /// from `BIT_BASE`.
@@ -382,6 +443,23 @@ pub fn vault_satisfaction_gates(asset_slot: usize, share_slot: usize) -> Vec<VmC
     // strict positivity (is-nonzero): d·d_inv = 1, m·m_inv = 1.
     g.push(sel_gate(sub(mul(d_expr, var(D_INV)), k(1))));
     g.push(sel_gate(sub(mul(m_expr, var(M_INV)), k(1))));
+
+    // SIGN (no-borrow) gates: after = before + Δ with no final carry ⟹ before ≤ after (deposit
+    // direction DERIVED). Closes the withdrawal-as-deposit wrap band.
+    g.extend(sign_add_gates(
+        [TA0, TA1],
+        [D0, D1],
+        aa,
+        [AA0, AA1],
+        [DCAR0, DCAR1],
+    ));
+    g.extend(sign_add_gates(
+        [SA0, SA1],
+        [M0, M1],
+        as_,
+        [AS0, AS1],
+        [MCAR0, MCAR1],
+    ));
 
     // products: P = Ta·m, Q = Sa·d.
     g.extend(product_gates(
@@ -586,6 +664,27 @@ pub fn fill_vault_aux_row(
         borrow = bo as i64;
     }
 
+    // SIGN gates: after-limb decomposition + the before+Δ = after ADD carry chain (no final carry on
+    // an honest deposit). On a WITHDRAWAL the field-wrapped negative delta makes the after-limb
+    // reconstruction disagree with the carry chain (or forces a final carry) ⟹ a REFUSING witness.
+    let after_a = aa.as_u32() as u64;
+    let after_s = ash.as_u32() as u64;
+    put(row, AA0, AA1, after_a);
+    put(row, AS0, AS1, after_s);
+    // carry-out bits of the two-limb (before + delta) addition.
+    let fill_carry = |row: &mut [BabyBear], c0: usize, c1: usize, before: u64, delta: u64| {
+        let b0 = before & MASK15;
+        let b1 = (before >> LIMB_BITS) & MASK15;
+        let d0 = delta & MASK15;
+        let d1 = (delta >> LIMB_BITS) & MASK15;
+        let car0 = (b0 + d0) >> LIMB_BITS;
+        let car1 = (b1 + d1 + car0) >> LIMB_BITS;
+        row[c0] = BabyBear::new(car0 as u32);
+        row[c1] = BabyBear::new(car1 as u32);
+    };
+    fill_carry(row, DCAR0, DCAR1, ta, d);
+    fill_carry(row, MCAR0, MCAR1, sa, m);
+
     // Range-check bit blocks (list order, low bits of each column's canonical value).
     let mut base = BIT_BASE;
     for (col, nbits) in range_specs() {
@@ -712,6 +811,7 @@ mod tests {
         cols.extend([P0, P1, P2, P3, PCA, PCB, PCC, PT1]);
         cols.extend([Q0, Q1, Q2, Q3, QCA, QCB, QCC, QT1]);
         cols.extend([W0, W1, W2, W3, BB0, BB1, BB2, BB3, D_INV, M_INV]);
+        cols.extend([AA0, AA1, AS0, AS1, DCAR0, DCAR1, MCAR0, MCAR1]);
         let total_bits: usize = range_specs().iter().map(|(_, n)| *n).sum();
         cols.extend(BIT_BASE..BIT_BASE + total_bits);
         let n = cols.len();
@@ -817,6 +917,29 @@ mod tests {
         assert!(
             all_zero_settle(&gates, &row),
             "the fair-mint equality boundary must satisfy (≤ is non-strict)"
+        );
+    }
+
+    #[test]
+    fn withdrawal_as_deposit_is_unsat() {
+        // The re-audit residual: a vault-DRAINING withdrawal masquerading as a deposit. before[assets]
+        // = 1_000_000_000, after[assets] = 0 → true Δ = −10^9; its field residue (p − 10^9) had a
+        // valid limb decomposition under the OLD delta gate, so the circuit read it as a ~1.01e9
+        // deposit. The sign-gate ADD chain forces `after = before + Δ`, which the wrapped delta cannot
+        // satisfy (the after-limb reconstruction is 0 while the carry chain wants ~1e9) ⟹ some gate
+        // body is NON-zero (fail-closed).
+        let gates = vault_gates(ASSET, SHARE);
+        let row = make_row(
+            [TAG_VAULT as u32, 17, 0, 0],
+            1,
+            /*before_assets*/ 1_000_000_000,
+            /*after_assets*/ 0,
+            /*before_shares*/ 4,
+            /*after_shares*/ 24,
+        );
+        assert!(
+            !all_zero_settle(&gates, &row),
+            "a withdrawal draining the vault cannot masquerade as a deposit (sign gate bites)"
         );
     }
 

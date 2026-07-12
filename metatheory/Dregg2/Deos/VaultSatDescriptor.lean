@@ -145,6 +145,22 @@ private theorem liftBorrowN {R q p bbp bb w : ℤ} (h : R ≡ 0 [ZMOD 2013265921
 private theorem liftBit {R b : ℤ} (h : R ≡ 0 [ZMOD 2013265921]) (hR : R = b)
     (hb : 0 ≤ b ∧ b ≤ 1) : R = 0 := by refine modEqZeroBounded h ?_ ?_ <;> · subst hR; omega
 
+/-- **THE SIGN-GATE CARRY LIFT (low limb).** The delta-addition carry residual `a + b − s − 2^15·c`
+(operand limb + delta limb − sum limb − 2^15·carry-bit) is a sum of `[0, 2^15)` limbs and a boolean
+carry, so `|R| < 2^16 < p` and the mod-`p` gate lifts to the exact-ℤ limb identity. -/
+private theorem liftCarry0 {R a b s c : ℤ} (h : R ≡ 0 [ZMOD 2013265921])
+    (hR : R = a + b - s - 32768 * c)
+    (ha : 0 ≤ a ∧ a < 32768) (hb : 0 ≤ b ∧ b < 32768) (hs : 0 ≤ s ∧ s < 32768)
+    (hc : 0 ≤ c ∧ c ≤ 1) : R = 0 := by refine modEqZeroBounded h ?_ ?_ <;> · subst hR; omega
+
+/-- **THE SIGN-GATE CARRY LIFT (high limb).** As `liftCarry0` with the incoming carry `cin` folded in
+(`a + b + cin − s − 2^15·c`), still `|R| < 2^16 < p`. -/
+private theorem liftCarry1 {R a b cin s c : ℤ} (h : R ≡ 0 [ZMOD 2013265921])
+    (hR : R = a + b + cin - s - 32768 * c)
+    (ha : 0 ≤ a ∧ a < 32768) (hb : 0 ≤ b ∧ b < 32768) (hcin : 0 ≤ cin ∧ cin ≤ 1)
+    (hs : 0 ≤ s ∧ s < 32768) (hc : 0 ≤ c ∧ c ≤ 1) : R = 0 := by
+  refine modEqZeroBounded h ?_ ?_ <;> · subst hR; omega
+
 /-- Operand-assembly lift: a CANONICAL field value congruent to a two-limb `[0, 2^30)` sum equals it
 over ℤ. -/
 private theorem liftCanonAssembly {v a b : ℤ} (h : v ≡ a + 32768 * b [ZMOD 2013265921])
@@ -209,8 +225,22 @@ def BB2 : Nat := V + 30
 def BB3 : Nat := V + 31
 def D_INV : Nat := V + 32
 def M_INV : Nat := V + 33
+/-- `after[assets]` limbs (lo, hi) — the SIGN-GATE decomposition. Rust `AA0`/`AA1`. -/
+def AA0 : Nat := V + 34
+def AA1 : Nat := V + 35
+/-- `after[shares]` limbs (lo, hi) — the SIGN-GATE decomposition. Rust `AS0`/`AS1`. -/
+def AS0 : Nat := V + 36
+def AS1 : Nat := V + 37
+/-- The asset delta-addition carry bits (`before + Δassets = after`, no final carry). Rust
+`DCAR0`/`DCAR1`. -/
+def DCAR0 : Nat := V + 38
+def DCAR1 : Nat := V + 39
+/-- The share delta-addition carry bits (`before + Δshares = after`, no final carry). Rust
+`MCAR0`/`MCAR1`. -/
+def MCAR0 : Nat := V + 40
+def MCAR1 : Nat := V + 41
 /-- First bit-decomposition column. Rust `BIT_BASE`. -/
-def BIT_BASE : Nat := V + 34
+def BIT_BASE : Nat := V + 42
 
 /-- The ordered range-checked columns and their bit widths — the Rust `range_specs` list, in
 lockstep with the producer fill (bit blocks assigned in list order from `BIT_BASE`). -/
@@ -221,7 +251,8 @@ def rangeSpecs : List (Nat × Nat) :=
    (PCA, LIMB_BITS), (PCB, CARRY_BITS), (PCC, CARRY_BITS), (PT1, LIMB_BITS),
    (Q0, LIMB_BITS), (Q1, LIMB_BITS), (Q2, LIMB_BITS), (Q3, LIMB_BITS),
    (QCA, LIMB_BITS), (QCB, CARRY_BITS), (QCC, CARRY_BITS), (QT1, LIMB_BITS),
-   (W0, LIMB_BITS), (W1, LIMB_BITS), (W2, LIMB_BITS), (W3, LIMB_BITS)]
+   (W0, LIMB_BITS), (W1, LIMB_BITS), (W2, LIMB_BITS), (W3, LIMB_BITS),
+   (AA0, LIMB_BITS), (AA1, LIMB_BITS), (AS0, LIMB_BITS), (AS1, LIMB_BITS)]
 
 /-! ## §2 — the gate bodies (byte-for-byte the Rust builders' expression trees). -/
 
@@ -274,6 +305,36 @@ def borrowCompareGates : List VmConstraint2 :=
   , selBoolGate BB3
   , selGate (.var BB3) ]
 
+/-- **THE SIGN (NO-BORROW) GATES** — the deposit-direction weld (Rust `sign_gates`). For each of
+assets and shares, decompose `after` into two 15-bit limbs and pin `before + Δ = after` through a
+15-bit ADD carry chain with NO final carry:
+
+  * `after = A0 + 2^15·A1`                       (after-assembly, `after` canonical)
+  * `Blo + Δlo = A0 + 2^15·car0`                 (low-limb add, `car0` boolean)
+  * `Bhi + Δhi + car0 = A1 + 2^15·car1`          (high-limb add, `car1` boolean)
+  * `car1 = 0`                                    (NO FINAL CARRY ⟹ `before + Δ < 2^30`)
+
+Since `Δ = Δlo + 2^15·Δhi ∈ [0, 2^30)` (its limbs are range-checked) and the chain is exact over ℤ,
+`after = before + Δ ≥ before` — the DEPOSIT direction is DERIVED, killing the withdrawal-as-deposit
+wrap band (a large negative `after − before` whose mod-`p` residue re-enters `[0, 2^30)`). -/
+def signGates (asset share : Nat) : List VmConstraint2 :=
+  -- assets: after = before + Δassets, no final carry.
+  [ selGate (sub (.var (afterFieldCol asset)) (.add (.var AA0) (.mul (.const TWO15) (.var AA1))))
+  , selGate (sub (sub (.add (.var TA0) (.var D0)) (.var AA0)) (.mul (.const TWO15) (.var DCAR0)))
+  , selGate (sub (sub (.add (.add (.var TA1) (.var D1)) (.var DCAR0)) (.var AA1))
+      (.mul (.const TWO15) (.var DCAR1)))
+  , selGate (.var DCAR1)
+  , selBoolGate DCAR0
+  , selBoolGate DCAR1
+  -- shares: after = before + Δshares, no final carry.
+  , selGate (sub (.var (afterFieldCol share)) (.add (.var AS0) (.mul (.const TWO15) (.var AS1))))
+  , selGate (sub (sub (.add (.var SA0) (.var M0)) (.var AS0)) (.mul (.const TWO15) (.var MCAR0)))
+  , selGate (sub (sub (.add (.add (.var SA1) (.var M1)) (.var MCAR0)) (.var AS1))
+      (.mul (.const TWO15) (.var MCAR1)))
+  , selGate (.var MCAR1)
+  , selBoolGate MCAR0
+  , selBoolGate MCAR1 ]
+
 /-- The per-spec range-check gates: `n` booleanity gates then the assembly
 `sel · (col − Σ 2^i bit_i)`, bit blocks assigned in list order from `base` (the Rust `range_gates`
 fold). -/
@@ -297,6 +358,7 @@ def vaultSatGates (asset share : Nat) : List VmConstraint2 :=
   , selGate (sub (dExpr asset) (.add (.var D0) (.mul (.const TWO15) (.var D1))))
   , selGate (sub (.mul (dExpr asset) (.var D_INV)) (.const 1))
   , selGate (sub (.mul (mExpr share) (.var M_INV)) (.const 1)) ]
+    ++ signGates asset share
     ++ productGates TA0 TA1 M0 M1 P0 P1 P2 P3 PCA PCB PCC PT1
     ++ productGates SA0 SA1 D0 D1 Q0 Q1 Q2 Q3 QCA QCB QCC QT1
     ++ borrowCompareGates
@@ -428,11 +490,7 @@ theorem vaultSatV3_forces (hash : List ℤ → ℤ) (asset share : Nat)
     (hsat : Satisfied2 hash (vaultSatVmDescriptor2R24 asset share) minit mfin maddrs t)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc VAULT_SEL_COL = 1)
-    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hAssetDep :
-      (envAt t i).loc (beforeFieldCol asset) ≤ (envAt t i).loc (afterFieldCol asset))
-    (hShareDep :
-      (envAt t i).loc (beforeFieldCol share) ≤ (envAt t i).loc (afterFieldCol share)) :
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921) :
     (envAt t i).loc (afterFieldCol asset) - (envAt t i).loc (beforeFieldCol asset) ≠ 0
     ∧ (envAt t i).loc (afterFieldCol share) - (envAt t i).loc (beforeFieldCol share) ≠ 0
     ∧ 0 ≤ (envAt t i).loc (afterFieldCol asset) - (envAt t i).loc (beforeFieldCol asset)
@@ -486,9 +544,13 @@ theorem vaultSatV3_forces (hash : List ℤ → ℤ) (asset share : Nat)
   have hW1 := hranges W1 LIMB_BITS (by simp [rangeSpecs])
   have hW2 := hranges W2 LIMB_BITS (by simp [rangeSpecs])
   have hW3 := hranges W3 LIMB_BITS (by simp [rangeSpecs])
+  have hAA0 := hranges AA0 LIMB_BITS (by simp [rangeSpecs])
+  have hAA1 := hranges AA1 LIMB_BITS (by simp [rangeSpecs])
+  have hAS0 := hranges AS0 LIMB_BITS (by simp [rangeSpecs])
+  have hAS1 := hranges AS1 LIMB_BITS (by simp [rangeSpecs])
   rw [show (2 : Int) ^ LIMB_BITS = 32768 by norm_num [LIMB_BITS]]
     at hTA0 hTA1 hSA0 hSA1 hM0 hM1 hD0 hD1 hP0 hP1 hP2 hP3 hPCA hPT1
-       hQ0 hQ1 hQ2 hQ3 hQCA hQT1 hW0 hW1 hW2 hW3
+       hQ0 hQ1 hQ2 hQ3 hQCA hQT1 hW0 hW1 hW2 hW3 hAA0 hAA1 hAS0 hAS1
   rw [show (2 : Int) ^ CARRY_BITS = 32768 by norm_num [CARRY_BITS]] at hPCB hPCC hQCB hQCC
   -- the borrow bits are genuinely boolean (mod-`p` booleanity + canonicality + `p` prime).
   have bbBool : ∀ b : Nat, selBoolGate b ∈ vaultSatGates asset share →
@@ -505,6 +567,11 @@ theorem vaultSatV3_forces (hash : List ℤ → ℤ) (asset share : Nat)
   have hBB1 := bbBool BB1 (by simp [vaultSatGates, borrowCompareGates])
   have hBB2 := bbBool BB2 (by simp [vaultSatGates, borrowCompareGates])
   have hBB3 := bbBool BB3 (by simp [vaultSatGates, borrowCompareGates])
+  -- the sign-gate carry bits are boolean (same booleanity gadget as the borrow bits).
+  have hDCAR0 := bbBool DCAR0 (by simp [vaultSatGates, signGates])
+  have hDCAR1 := bbBool DCAR1 (by simp [vaultSatGates, signGates])
+  have hMCAR0 := bbBool MCAR0 (by simp [vaultSatGates, signGates])
+  have hMCAR1 := bbBool MCAR1 (by simp [vaultSatGates, signGates])
   -- the four operand assemblies.
   have hTa := van (sub (.var (beforeFieldCol asset))
     (.add (.var TA0) (.mul (.const TWO15) (.var TA1)))) (by simp [vaultSatGates])
@@ -557,6 +624,43 @@ theorem vaultSatV3_forces (hash : List ℤ → ℤ) (asset share : Nat)
   have eSa : (envAt t i).loc (beforeFieldCol share)
       = (envAt t i).loc SA0 + 32768 * (envAt t i).loc SA1 :=
     liftCanonAssembly ((gate_modEq_iff (by ring)).mp hSa) hcBsf hSA0 hSA1
+  -- SIGN WELDS: the no-borrow ADD chain `before + Δ = after` (no final carry) DERIVES the deposit
+  -- direction `before ≤ after` — no `hAssetDep`/`hShareDep` assumption. This kills the
+  -- withdrawal-as-deposit wrap band: a large negative `after − before` whose mod-`p` residue would
+  -- re-enter `[0, 2^30)` cannot satisfy the chain (its `after` reconstruction would carry out).
+  have hAAasm := van (sub (.var (afterFieldCol asset))
+    (.add (.var AA0) (.mul (.const TWO15) (.var AA1)))) (by simp [vaultSatGates, signGates])
+  have hAc0 := van (sub (sub (.add (.var TA0) (.var D0)) (.var AA0))
+    (.mul (.const TWO15) (.var DCAR0))) (by simp [vaultSatGates, signGates])
+  have hAc1 := van (sub (sub (.add (.add (.var TA1) (.var D1)) (.var DCAR0)) (.var AA1))
+    (.mul (.const TWO15) (.var DCAR1))) (by simp [vaultSatGates, signGates])
+  have hAnc := van (.var DCAR1) (by simp [vaultSatGates, signGates])
+  have hSAasm := van (sub (.var (afterFieldCol share))
+    (.add (.var AS0) (.mul (.const TWO15) (.var AS1)))) (by simp [vaultSatGates, signGates])
+  have hMc0 := van (sub (sub (.add (.var SA0) (.var M0)) (.var AS0))
+    (.mul (.const TWO15) (.var MCAR0))) (by simp [vaultSatGates, signGates])
+  have hMc1 := van (sub (sub (.add (.add (.var SA1) (.var M1)) (.var MCAR0)) (.var AS1))
+    (.mul (.const TWO15) (.var MCAR1))) (by simp [vaultSatGates, signGates])
+  have hMnc := van (.var MCAR1) (by simp [vaultSatGates, signGates])
+  simp only [sub, neg, TWO15, EmittedExpr.eval] at hAAasm hAc0 hAc1 hAnc hSAasm hMc0 hMc1 hMnc
+  have eAA : (envAt t i).loc (afterFieldCol asset)
+      = (envAt t i).loc AA0 + 32768 * (envAt t i).loc AA1 :=
+    liftCanonAssembly ((gate_modEq_iff (by ring)).mp hAAasm) hcAaf hAA0 hAA1
+  have eASf : (envAt t i).loc (afterFieldCol share)
+      = (envAt t i).loc AS0 + 32768 * (envAt t i).loc AS1 :=
+    liftCanonAssembly ((gate_modEq_iff (by ring)).mp hSAasm) hcAsf hAS0 hAS1
+  have ec0A := liftCarry0 hAc0 (by ring) hTA0 hD0 hAA0 hDCAR0
+  have ec1A := liftCarry1 hAc1 (by ring) hTA1 hD1 hDCAR0 hAA1 hDCAR1
+  have ec0M := liftCarry0 hMc0 (by ring) hSA0 hM0 hAS0 hMCAR0
+  have ec1M := liftCarry1 hMc1 (by ring) hSA1 hM1 hMCAR0 hAS1 hMCAR1
+  have encA : (envAt t i).loc DCAR1 = 0 := liftBit hAnc (by ring) hDCAR1
+  have encM : (envAt t i).loc MCAR1 = 0 := liftBit hMnc (by ring) hMCAR1
+  -- deposit direction DERIVED (linear over the exact carry chain + limb ranges).
+  have hAssetDep : (envAt t i).loc (beforeFieldCol asset)
+      ≤ (envAt t i).loc (afterFieldCol asset) := by omega
+  have hShareDep : (envAt t i).loc (beforeFieldCol share)
+      ≤ (envAt t i).loc (afterFieldCol share) := by omega
+  clear hAAasm hAc0 hAc1 hAnc hSAasm hMc0 hMc1 hMnc
   -- DELTA WELDS: the deposit direction (`before ≤ after`) makes the raw ℤ delta canonical `[0, p)`,
   -- and the limb reconstruction is `< 2^30 < p`, so the mod-`p` congruence lifts to the exact delta.
   have em : (envAt t i).loc (afterFieldCol share) - (envAt t i).loc (beforeFieldCol share)
@@ -640,13 +744,9 @@ theorem vault_zero_mint_unsat (hash : List ℤ → ℤ) (asset share : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc VAULT_SEL_COL = 1)
     (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hAssetDep :
-      (envAt t i).loc (beforeFieldCol asset) ≤ (envAt t i).loc (afterFieldCol asset))
-    (hShareDep :
-      (envAt t i).loc (beforeFieldCol share) ≤ (envAt t i).loc (afterFieldCol share))
     (hzero : (envAt t i).loc (afterFieldCol share) = (envAt t i).loc (beforeFieldCol share)) :
     False := by
-  have h := (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon hAssetDep hShareDep).2.1
+  have h := (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon).2.1
   omega
 
 /-- **THE NO-DEPOSIT TOOTH.** A "deposit" that does not advance total assets CANNOT satisfy the
@@ -657,13 +757,9 @@ theorem vault_no_deposit_unsat (hash : List ℤ → ℤ) (asset share : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc VAULT_SEL_COL = 1)
     (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hAssetDep :
-      (envAt t i).loc (beforeFieldCol asset) ≤ (envAt t i).loc (afterFieldCol asset))
-    (hShareDep :
-      (envAt t i).loc (beforeFieldCol share) ≤ (envAt t i).loc (afterFieldCol share))
     (hnodep : (envAt t i).loc (afterFieldCol asset) = (envAt t i).loc (beforeFieldCol asset)) :
     False := by
-  have h := (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon hAssetDep hShareDep).1
+  have h := (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon).1
   omega
 
 /-- **THE DILUTION (OVER-MINT) TOOTH.** A deposit minting shares past the fair ratio
@@ -674,17 +770,31 @@ theorem vault_dilution_unsat (hash : List ℤ → ℤ) (asset share : Nat)
     (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
     (hsel : (envAt t i).loc VAULT_SEL_COL = 1)
     (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
-    (hAssetDep :
-      (envAt t i).loc (beforeFieldCol asset) ≤ (envAt t i).loc (afterFieldCol asset))
-    (hShareDep :
-      (envAt t i).loc (beforeFieldCol share) ≤ (envAt t i).loc (afterFieldCol share))
     (hdilute : (envAt t i).loc (beforeFieldCol share)
         * ((envAt t i).loc (afterFieldCol asset) - (envAt t i).loc (beforeFieldCol asset))
       < (envAt t i).loc (beforeFieldCol asset)
         * ((envAt t i).loc (afterFieldCol share) - (envAt t i).loc (beforeFieldCol share))) :
     False := by
   have h :=
-    (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon hAssetDep hShareDep).2.2.2.2.2.2
+    (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon).2.2.2.2.2.2
+  omega
+
+/-- **THE WITHDRAWAL-AS-DEPOSIT TOOTH (the re-audit residual, CLOSED).** A vault-draining WITHDRAWAL
+masquerading as a deposit — `before[assets] = 10^9`, `after[assets] = 0`, so the true `Δassets = −10^9`
+whose mod-`p` residue `1013265921 < 2^30` had a valid limb decomposition under the old delta gate —
+CANNOT satisfy the welded descriptor. The sign-gate ADD chain DERIVES `before ≤ after`, so the forged
+positive-delta band is UNSAT; no `hAssetDep` assumption is available to launder it. -/
+theorem vault_withdrawal_forgery_unsat (hash : List ℤ → ℤ) (asset share : Nat)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash (vaultSatVmDescriptor2R24 asset share) minit mfin maddrs t)
+    (i : Nat) (hi : i < t.rows.length) (hnl : (i + 1 == t.rows.length) = false)
+    (hsel : (envAt t i).loc VAULT_SEL_COL = 1)
+    (hcanon : ∀ c, 0 ≤ (envAt t i).loc c ∧ (envAt t i).loc c < 2013265921)
+    (hbefore : (envAt t i).loc (beforeFieldCol asset) = 1000000000)
+    (hafter : (envAt t i).loc (afterFieldCol asset) = 0) :
+    False := by
+  have h := (vaultSatV3_forces hash asset share hsat i hi hnl hsel hcanon).2.2.1
+  rw [hbefore, hafter] at h
   omega
 
 /-! ## §6 — NON-VACUITY TEETH (`#guard`): the gate bodies BITE on concrete rows.
@@ -721,6 +831,9 @@ private def coreAssigns (sel ba aa bs asv dInv mInv : Int) : List (Nat × Int) :
    (P0, p), (Q0, q),
    (W0, q - p + bb * 32768), (W1, 32767 * bb), (W2, 32767 * bb), (W3, 32767 * bb),
    (BB0, bb), (BB1, bb), (BB2, bb), (BB3, bb),
+   -- SIGN-GATE witnesses: after-limbs (single-limb, so hi = 0) + zero carries (before + Δ = after
+   -- fits one limb for these unit-delta rows).
+   (AA0, aa), (AS0, asv),
    (D_INV, dInv), (M_INV, mInv)]
 
 /-- The range-check bit blocks for the core assignment (list order from `BIT_BASE`, exactly the
@@ -752,12 +865,13 @@ private def vaultLoc (sel ba aa bs asv dInv mInv : Int) : Nat → Int :=
 #guard (vaultSatGates 0 1).all (fun g => gateVal g (vaultLoc 0 5 6 3 4 1 1) == 0)
 -- The descriptor publishes 47 PIs (the rotated 46 + the appended selector slot).
 #guard (vaultSatVmDescriptor2R24 0 1).piCount == 47
--- Gate count: 6 core + 8 product + 9 borrow + one bool-per-bit + one assembly-per-spec.
-#guard (vaultSatGates 0 1).length == 6 + 8 + 9 + TOTAL_RANGE_BITS + rangeSpecs.length
--- The bit budget: 24 15-bit limbs + 4 16-bit carries.
-#guard TOTAL_RANGE_BITS == 24 * LIMB_BITS + 4 * CARRY_BITS
--- The width derivation through the canonical constants.
-#guard (vaultSatVmDescriptor2R24 0 1).traceWidth == GRAD_ROT_WIDTH + 16 + 34 + TOTAL_RANGE_BITS
+-- Gate count: 6 core + 12 sign (no-borrow) + 8 product + 9 borrow + one bool-per-bit + one
+-- assembly-per-spec.
+#guard (vaultSatGates 0 1).length == 6 + 12 + 8 + 9 + TOTAL_RANGE_BITS + rangeSpecs.length
+-- The bit budget: 28 15-bit limbs (24 product/compare + 4 sign after-limbs) + 4 15-bit carries.
+#guard TOTAL_RANGE_BITS == 28 * LIMB_BITS + 4 * CARRY_BITS
+-- The width derivation through the canonical constants (34 aux + 8 sign-gate aux = 42).
+#guard (vaultSatVmDescriptor2R24 0 1).traceWidth == GRAD_ROT_WIDTH + 16 + 42 + TOTAL_RANGE_BITS
 #guard V == GRAD_ROT_WIDTH + 16
 
 end Witnesses
@@ -772,7 +886,8 @@ end Witnesses
   vaultSatV3_forces,
   vault_zero_mint_unsat,
   vault_no_deposit_unsat,
-  vault_dilution_unsat
+  vault_dilution_unsat,
+  vault_withdrawal_forgery_unsat
 ]
 
 end Dregg2.Deos.VaultSatDescriptor
