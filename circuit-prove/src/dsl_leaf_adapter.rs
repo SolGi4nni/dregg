@@ -163,7 +163,7 @@ pub fn dsl_leaf_unmapped_kinds(program: &CellProgram) -> Result<(), String> {
 mod tests {
     use super::*;
     use crate::custom_leaf_adapter::read_exposed_pi_commitment;
-    use crate::custom_proof_bind::{custom_proof_pi_commitment, prove_custom_program};
+    use crate::custom_proof_bind::custom_proof_pi_commitment;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::dsl::circuit::{
         CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
@@ -294,22 +294,16 @@ mod tests {
         let output = prove_dsl_leaf_with_commitment(&program, &w, rows, &pis, &config)
             .expect("the honest algebraic DSL/Dfa transition must fold as a leaf");
 
-        // The leaf's IN-CIRCUIT-exposed commitment is byte-identical to the host derivation over the
-        // DSL public inputs, which equals the off-AIR engine's column value for the same sub-proof.
+        // The leaf's IN-CIRCUIT-exposed commitment is byte-identical to the host derivation over
+        // the DSL public inputs. (The former off-AIR `prove_custom_program` cross-check died with
+        // the hand STARK engine (stark-kill); `custom_proof_pi_commitment` IS the deployed
+        // commitment derivation the effect-VM Custom row binds.)
         let exposed = read_exposed_pi_commitment(&output)
             .expect("the DSL leaf exposes a 4-felt PI-commitment claim");
         let host = custom_proof_pi_commitment(&pis);
         assert_eq!(
             exposed, host,
             "the DSL leaf's in-circuit commitment byte-matches the host"
-        );
-
-        let bound = prove_custom_program(&program, &w, rows, &pis)
-            .expect("the off-AIR engine mints the same sub-proof");
-        assert_eq!(
-            bound.proof_commitment(),
-            host,
-            "the off-AIR DslCircuitDfaVerifier commitment == the DSL leaf's bound PI-commitment"
         );
     }
 

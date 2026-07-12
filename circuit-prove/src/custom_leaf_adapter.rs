@@ -133,8 +133,10 @@
 //! [`incircuit_custom_pi_commitment`] is the FAITHFUL in-circuit reconstruction of
 //! [`custom_proof_pi_commitment`]: a width-16 BabyBear Poseidon2 (KAT-locked to
 //! `default_babybear_poseidon2_16`, the SAME permutation [`WideHash::from_poseidon2`]'s
-//! `Poseidon2State` runs) driven as the host's ADDITIVE rate-4 sponge — the absorbed chunk in
-//! ext limb 0 (base lanes 0..4), the BLAKE3 domain seed + input length in limb 1 (lanes 4,5), the
+//! `Poseidon2State` runs) driven as the host's ADDITIVE rate-4 sponge — each four-PI chunk
+//! packed into ext limb 0 (base lanes 0..4; chunks past the first are ADDED into the returned
+//! rate and chained with `new_start = false`, capacity off-bus), the BLAKE3 domain seed + input
+//! length in limb 1 (lanes 4,5) as the INITIAL rate state only, the
 //! zero capacity tail in limbs 2,3. The host commitment is `to_felts()[0..4]` = the rate AFTER
 //! the last absorb permutation, so only the absorb phase is reconstructed. The domain seed enters
 //! as a compile-time `Const` (no in-circuit BLAKE3); `domain_seed_matches_widehash` pins it.
@@ -1103,8 +1105,15 @@ fn ext_from_base_coeffs(coeffs: [u32; 4]) -> RecursionChallenge {
 /// 0..4 of the output = the 4 coefficients of output limb 0.
 ///
 /// For `inputs.len() <= 4` (the common custom case, incl. the demo's 2 PIs) this is exactly ONE
-/// permutation. The `> 4`-PI multi-chunk additive sponge is the named residual (it would chain
-/// permutations through the shared challenger op).
+/// permutation (the original shape, byte-identical). Longer inputs chain further permutations
+/// through the SAME bus-balanced sponge-step primitive with `new_start = false`, mirroring the
+/// host's `for chunk in inputs.chunks(4) { state[i] += chunk[i]; permute() }` schedule exactly:
+/// each later four-PI chunk is packed into one ext limb and ADDED into returned rate limb 0
+/// (base lanes 0..4), returned rate limb 1 (base lanes 4..8 — the domain/len lanes, which the
+/// host never re-touches during absorb) passes through unchanged, and the capacity (lanes
+/// 8..16) stays chained OFF the bus (the AIR inherits the previous perm row's capacity output).
+/// The host has NO padding block, NO length re-absorb, and NO squeeze permute, so neither
+/// exists here; the total input length is bound once, in the initial lane-5 constant.
 fn incircuit_custom_pi_commitment(
     cb: &mut CircuitBuilder<RecursionChallenge>,
     pi_targets: &[Target],
@@ -1117,26 +1126,30 @@ fn incircuit_custom_pi_commitment(
     if pi_targets.is_empty() {
         return Ok([zero, zero, zero, zero]);
     }
-    if pi_targets.len() > 4 {
-        return Err(format!(
-            "in-circuit custom-PI commitment supports <=4 PIs in this spike (got {}); the \
-             multi-chunk additive sponge over the shared challenger op is the named residual",
-            pi_targets.len()
-        ));
-    }
 
-    // limb 0 = base lanes 0..4 = the absorbed chunk (absent lanes 0, the host's untouched rate).
-    // The PI targets are bus-present (created by the verified inner proof), so recomposing them is
-    // bus-balanced; the constant pads/domain/len must NOT go through recompose (a const consumed as
-    // an ALU operand has no bus creator — the WitnessChecks mismatch this avoids), so limb 1 and the
-    // capacity tail are built as DIRECT ext constants (the same way the segment sponge feeds its tag).
-    let rate0: Vec<Target> = (0..4)
-        .map(|lane| pi_targets.get(lane).copied().unwrap_or(zero))
-        .collect();
-    let limb0 = cb
-        .recompose_base_coeffs_to_ext_via_alu::<P3BabyBear>(&rate0)
-        .map_err(|e| format!("recompose rate limb failed: {e:?}"))?;
-    // limb 1 = base lanes 4..8 = [domain, len, 0, 0] — a single compile-time ext constant.
+    // Pack one four-PI chunk into a single ext limb: coefficients = the chunk, zero-padded (the
+    // host's partial final chunk adds nothing into the absent lanes — adding the zero pad is the
+    // same value). The PI targets are bus-present (created by the verified inner proof), so
+    // recomposing them is bus-balanced; the constant pads/domain/len must NOT go through recompose
+    // (a const consumed as an ALU operand has no bus creator — the WitnessChecks mismatch this
+    // avoids), so limb 1 and the capacity tail are built as DIRECT ext constants (the same way the
+    // segment sponge feeds its tag).
+    let pack =
+        |cb: &mut CircuitBuilder<RecursionChallenge>, chunk: &[Target]| -> Result<Target, String> {
+            let lanes: Vec<Target> = (0..4)
+                .map(|lane| chunk.get(lane).copied().unwrap_or(zero))
+                .collect();
+            cb.recompose_base_coeffs_to_ext_via_alu::<P3BabyBear>(&lanes)
+                .map_err(|e| format!("recompose rate limb failed: {e:?}"))
+        };
+
+    let mut chunks = pi_targets.chunks(4);
+    let first_chunk = chunks.next().expect("pi_targets is non-empty");
+
+    // limb 0 = base lanes 0..4 = the first absorbed chunk (added into the host's untouched zero rate).
+    let limb0 = pack(cb, first_chunk)?;
+    // limb 1 = base lanes 4..8 = [domain, total_input_len, 0, 0] — a single compile-time ext
+    // constant, the INITIAL rate state only (the host writes lanes 4,5 once, before any permute).
     let dom = custom_pi_domain_seed();
     let len = pi_targets.len() as u32;
     let limb1 = cb.define_const(ext_from_base_coeffs([dom, len, 0, 0]));
@@ -1147,18 +1160,37 @@ fn incircuit_custom_pi_commitment(
     // rate ext-limbs (base lanes 0..8), capacity_seed = the two capacity ext-limbs (base lanes
     // 8..16). On `new_start` these are exactly the 16-lane pre-permutation state of the host
     // `WideHash::from_poseidon2`, and the perm is the SAME width-16 BabyBear permutation.
-    let out = cb
+    let mut rate = cb
         .add_poseidon2_perm_sponge_step(config, true, &[limb0, limb1], &[zero_limb, zero_limb])
         .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
 
-    // Commitment = base lanes 0..4 = the 4 coefficients of the first output rate limb.
+    // Remaining chunks: the host adds each chunk into lanes 0..4 of the PERMUTED state and
+    // permutes again, never re-touching lanes 4..8 (they carry the previous permutation output
+    // forward). So: add the packed chunk into returned rate limb 0, pass returned rate limb 1
+    // through unchanged, and chain the capacity off-bus (`new_start = false` — the capacity seed
+    // argument is ignored on chained steps).
+    for chunk in chunks {
+        let packed = pack(cb, chunk)?;
+        let rate0 = cb.add(rate[0], packed);
+        rate = cb
+            .add_poseidon2_perm_sponge_step(
+                config,
+                false,
+                &[rate0, rate[1]],
+                &[zero_limb, zero_limb],
+            )
+            .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
+    }
+
+    // Commitment = base lanes 0..4 = the 4 coefficients of the first output rate limb AFTER the
+    // last absorb permutation (strictly before the host's squeeze permute).
     // Route the decompose's per-coefficient base values onto the `WitnessChecks` bus via the
     // `recompose/coeff` table (enabled by the coeff-forced backend), so `expose_claim`'s per-coeff
     // RECEIVE has a matching creator — without this the four exposed consecutive base lanes have no
     // bus provenance and the global lookup is imbalanced (one unmatched RECEIVE).
     cb.set_recompose_coeff_ctl_for_decompose_links(true);
     let coeffs = cb
-        .decompose_ext_to_base_coeffs::<P3BabyBear>(out[0])
+        .decompose_ext_to_base_coeffs::<P3BabyBear>(rate[0])
         .map_err(|e| format!("decompose output rate limb failed: {e:?}"))?;
     Ok([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
 }
@@ -1269,7 +1301,7 @@ pub fn read_exposed_pi_commitment(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::custom_proof_bind::{custom_proof_pi_commitment, prove_custom_program};
+    use crate::custom_proof_bind::custom_proof_pi_commitment;
     use crate::ivc_turn_chain::ir2_leaf_wrap_config;
     use dregg_circuit::dsl::circuit::{
         CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
@@ -1378,20 +1410,13 @@ mod tests {
 
         // Folds: the leaf wrap returns a RecursionOutput (its in-circuit FRI verify +
         // WitnessChecks bus balanced; a non-folding leaf would have errored here).
+        // (The former off-AIR `prove_custom_program` cross-check died with the hand
+        // STARK engine (stark-kill); the claim the per-turn fold binds —
+        // `custom_proof_pi_commitment(pis)` — is pinned against the IN-CIRCUIT
+        // derivation by `incircuit_commitment_byte_matches_host` and the multichunk
+        // commitment tests below.)
         let _output = prove_custom_leaf(&program, &w, rows, &pis, &config)
             .expect("the honest custom program must prove as a foldable leaf");
-
-        // The claim the per-turn fold binds = custom_proof_pi_commitment(pis). It MUST
-        // equal the off-AIR engine's column value for the SAME sub-proof: both engines
-        // bind the identical PI-commitment, so the foldable leaf and the deployed
-        // `proof_bind` column agree on what was proven.
-        let bound = prove_custom_program(&program, &w, rows, &pis)
-            .expect("off-AIR engine mints the same sub-proof");
-        assert_eq!(
-            bound.proof_commitment(),
-            custom_proof_pi_commitment(&pis),
-            "the off-AIR engine's commitment column == the leaf's bound PI-commitment"
-        );
     }
 
     /// THE NEGATIVE POLE: a FORGED witness (conservation violated: new = old + amt + 1)
@@ -1825,6 +1850,246 @@ mod tests {
             Err(_) => {}
             Ok(Err(_)) => {}
             Ok(Ok(_)) => panic!("a forbidden table edge minted a foldable leaf — soundness OPEN"),
+        }
+    }
+
+    // ========================================================================
+    // The MULTI-CHUNK in-circuit PI commitment (upstream blocker #1: chain all
+    // 32 custom-leaf public inputs).
+    //
+    // Host/in-circuit equality is checked by EXECUTING the real gadget circuit
+    // (CircuitRunner witness generation over the same enabled Poseidon2/recompose
+    // ops the leaf wrap proves) — no FRI, so the whole length ladder is cheap.
+    // The host side is the untouched `custom_proof_pi_commitment`
+    // (`WideHash::from_poseidon2` over `Poseidon2State`, a fully independent
+    // implementation), so the two paths share NO code: agreement pins the absorb
+    // schedule (chunking, domain/len lanes, capacity chaining, no padding block,
+    // no squeeze permute) byte-for-byte. The genuine end-to-end pole (the gadget
+    // proving inside the leaf wrap and exposing through `expose_claim`) is the
+    // 32-PI leaf test below.
+    // ========================================================================
+
+    use p3_baby_bear::default_babybear_poseidon2_16;
+    use p3_circuit::ops::{generate_poseidon2_trace, generate_recompose_trace};
+    use p3_poseidon2_circuit_air::BabyBearD4Width16;
+
+    /// Execute (not prove) the in-circuit commitment gadget over `pis` and return
+    /// the four base-field commitment lanes it computes.
+    fn eval_incircuit_commitment(pis: &[BabyBear]) -> ProofBindCommitment {
+        let mut cb: CircuitBuilder<RecursionChallenge> = CircuitBuilder::new();
+        cb.enable_poseidon2_perm::<BabyBearD4Width16, _>(
+            generate_poseidon2_trace::<RecursionChallenge, BabyBearD4Width16>,
+            default_babybear_poseidon2_16(),
+        );
+        cb.enable_recompose::<P3BabyBear>(
+            generate_recompose_trace::<P3BabyBear, RecursionChallenge>,
+        );
+
+        let ins: Vec<Target> = pis.iter().map(|_| cb.alloc_public_input("pi")).collect();
+        let commit =
+            incircuit_custom_pi_commitment(&mut cb, &ins).expect("commitment gadget builds");
+        for (i, t) in commit.iter().enumerate() {
+            cb.tag(*t, format!("commit{i}"))
+                .expect("commitment lane tags");
+        }
+        let circuit = cb.build().expect("gadget circuit builds");
+        let mut runner = circuit.runner();
+        let pubs: Vec<RecursionChallenge> = pis
+            .iter()
+            .map(|&x| RecursionChallenge::from(P3BabyBear::from_u64(x.as_u32() as u64)))
+            .collect();
+        runner.set_public_inputs(&pubs).expect("public inputs set");
+        let traces = runner.run().expect("gadget circuit executes");
+        core::array::from_fn(|i| {
+            let v = traces
+                .probe(&format!("commit{i}"))
+                .expect("commitment lane is tagged");
+            let coeffs =
+                <RecursionChallenge as BasedVectorSpace<P3BabyBear>>::as_basis_coefficients_slice(
+                    v,
+                );
+            assert!(
+                coeffs[1..].iter().all(|&c| c == P3BabyBear::ZERO),
+                "a decomposed commitment lane is base-embedded (coeff 0 only)"
+            );
+            BabyBear::new(coeffs[0].as_canonical_u32())
+        })
+    }
+
+    /// Host/in-circuit equality across the whole chunk-count ladder: empty (zero
+    /// permutations), one partial chunk, one exact chunk, chunk+1, two exact chunks,
+    /// eight chunks with and without a partial tail, and sixteen chunks.
+    #[test]
+    fn multichunk_incircuit_commitment_matches_host() {
+        for &len in &[0usize, 1, 4, 5, 8, 31, 32, 64] {
+            let pis: Vec<BabyBear> = (0..len as u32)
+                .map(|i| BabyBear::new(1 + 977 * i))
+                .collect();
+            let got = eval_incircuit_commitment(&pis);
+            let host = custom_proof_pi_commitment(&pis);
+            assert_eq!(
+                got, host,
+                "host/in-circuit commitment mismatch at input length {len}"
+            );
+        }
+    }
+
+    /// Every PI position feeds the commitment (mutating PI 0 / 4 / 31 of a 32-PI
+    /// input changes it, and the changed value still matches ITS host derivation),
+    /// and the declared length is bound (31 inputs vs the same 31 zero-padded to 32
+    /// do not collide — the lane-5 length tag differs).
+    #[test]
+    fn multichunk_commitment_binds_positions_and_length() {
+        let base: Vec<BabyBear> = (0..32u32).map(|i| BabyBear::new(5 + 131 * i)).collect();
+        let base_commit = eval_incircuit_commitment(&base);
+        assert_eq!(base_commit, custom_proof_pi_commitment(&base));
+
+        for &k in &[0usize, 4, 31] {
+            let mut mutated = base.clone();
+            mutated[k] += BabyBear::ONE;
+            let got = eval_incircuit_commitment(&mutated);
+            assert_eq!(
+                got,
+                custom_proof_pi_commitment(&mutated),
+                "the mutated input still matches its own host derivation (PI {k})"
+            );
+            assert_ne!(
+                got, base_commit,
+                "mutating PI {k} must change the commitment"
+            );
+        }
+
+        let short: Vec<BabyBear> = base[..31].to_vec();
+        let mut padded = short.clone();
+        padded.push(BabyBear::ZERO);
+        let short_c = eval_incircuit_commitment(&short);
+        let padded_c = eval_incircuit_commitment(&padded);
+        assert_eq!(short_c, custom_proof_pi_commitment(&short));
+        assert_eq!(padded_c, custom_proof_pi_commitment(&padded));
+        assert_ne!(
+            short_c, padded_c,
+            "zero-padding must not collide: the declared length binds"
+        );
+    }
+
+    /// A 32-column, 32-PI program: every column is pinned to its OWN public input on
+    /// the first row (32 INDEPENDENTLY bound PIs — no PI is derived from another),
+    /// plus a cross-row constraint keeping column 0 constant so the program has a
+    /// real transition too.
+    fn wide_pi_program(n: usize) -> CellProgram {
+        let columns = (0..n)
+            .map(|i| ColumnDef {
+                name: format!("c{i}"),
+                index: i,
+                kind: ColumnKind::Value,
+            })
+            .collect();
+        let boundaries = (0..n)
+            .map(|i| BoundaryDef::PiBinding {
+                row: BoundaryRow::First,
+                col: i,
+                pi_index: i,
+            })
+            .collect();
+        let descriptor = CircuitDescriptor {
+            name: format!("dregg-custom-widepi-{n}-v1"),
+            trace_width: n,
+            max_degree: 2,
+            columns,
+            constraints: vec![ConstraintExpr::Transition {
+                next_col: 0,
+                local_col: 0,
+            }],
+            boundaries,
+            public_input_count: n,
+            lookup_tables: vec![],
+        };
+        CellProgram::new(descriptor, 1)
+    }
+
+    /// Honest witness for [`wide_pi_program`]: column `i` constant at PI `i`.
+    fn wide_pi_witness(n: usize) -> (HashMap<String, Vec<BabyBear>>, usize, Vec<BabyBear>) {
+        let rows = 4;
+        let pis: Vec<BabyBear> = (0..n as u32)
+            .map(|i| BabyBear::new(101 + 313 * i))
+            .collect();
+        let mut w = HashMap::new();
+        for (i, &v) in pis.iter().enumerate() {
+            w.insert(format!("c{i}"), vec![v; rows]);
+        }
+        (w, rows, pis)
+    }
+
+    /// THE POSITIVE POLE (multi-chunk): a genuine 32-PI custom leaf proves through
+    /// the full leaf wrap AND its in-circuit-exposed commitment equals the host
+    /// [`custom_proof_pi_commitment`] over all 32 PIs — the 8-permutation chained
+    /// absorb survives the WitnessChecks bus and the `expose_claim` weld. The
+    /// first-chunk-only commitment differs, so the chain is real, not a truncation.
+    #[test]
+    fn thirtytwo_pi_leaf_proves_and_exposes_multichunk_commitment() {
+        let program = wide_pi_program(32);
+        let (w, rows, pis) = wide_pi_witness(32);
+        let config = ir2_leaf_wrap_config();
+
+        let output = prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
+            .expect("the honest 32-PI custom program must prove as a commitment-exposing leaf");
+
+        let exposed = read_exposed_pi_commitment(&output)
+            .expect("the 32-PI leaf exposes a 4-felt commitment claim");
+        assert_eq!(
+            exposed,
+            custom_proof_pi_commitment(&pis),
+            "the exposed commitment must byte-match the host over ALL 32 PIs"
+        );
+        assert_ne!(
+            exposed,
+            custom_proof_pi_commitment(&pis[..4]),
+            "the multi-chunk absorb is real: the commitment is not the first chunk's alone"
+        );
+    }
+
+    /// THE NEGATIVE POLE (stale witness): mutating PI 31 while leaving the witness
+    /// stale violates that column's first-row `PiBinding` — the leaf REFUSES, so no
+    /// commitment over the mutated PIs is ever exposed.
+    #[test]
+    fn thirtytwo_pi_leaf_refuses_stale_pi_mutation() {
+        let program = wide_pi_program(32);
+        let (w, rows, mut pis) = wide_pi_witness(32);
+        pis[31] += BabyBear::ONE;
+        let config = ir2_leaf_wrap_config();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
+        }));
+        match result {
+            Err(_) => {}     // debug constraint builder panicked — rejected
+            Ok(Err(_)) => {} // inner self-verify errored — rejected
+            Ok(Ok(_)) => {
+                panic!("a mutated PI with a stale witness minted a leaf — soundness OPEN")
+            }
+        }
+    }
+
+    /// THE NEGATIVE POLE (declared length): passing 31 PIs against a 32-PI
+    /// descriptor is REFUSED outright (`public_inputs.len()` must equal the
+    /// descriptor's `public_input_count`), so a shortened input can never reach a
+    /// shorter-length commitment.
+    #[test]
+    fn thirtytwo_pi_leaf_refuses_declared_length_mismatch() {
+        let program = wide_pi_program(32);
+        let (w, rows, pis) = wide_pi_witness(32);
+        let short = pis[..31].to_vec();
+        let config = ir2_leaf_wrap_config();
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_custom_leaf_with_commitment(&program, &w, rows, &short, &config)
+        }));
+        match result {
+            Err(_) => {}
+            Ok(Err(_)) => {}
+            Ok(Ok(_)) => {
+                panic!("a declared-length mismatch minted a leaf — the length is not bound")
+            }
         }
     }
 }
