@@ -7838,3 +7838,34 @@ RUN was blocked by a sibling GAP#4 flag-day inconsistency (circuit/descriptors/r
 chain onto the capstone's already-foldable chain (apex_shrink_bn254_tooth) to demonstrate the FRI-core gnark verify on a
 REAL apex without the sibling block; the transfer-chain fixture runs unchanged once the sibling regenerates that .tsv.
 GPU epoch: wgpu native-class on M2(88%)+AMD(wins wide); native-Metal-finish + AMD-RDNA2-tune + gnark-retarget lanes running.
+
+## WIDE-BURN availability wrap-forgery CLOSED — the LAST wrap-class member (2026-07-12)
+The `burnVmDescriptor2R24` wide crown host (and its umem-welded twin) still rode the BARE burn
+face, so a wide/welded burn proof carried NO borrow gates and the underflow-wrap
+WELL-SUPPLY-INFLATION mint-from-nothing (forgery 2 of docs/FINDING-modp-wrap-forgery-audit.md —
+strictly worse than the transfer twin: burn's ledger frame credits the well `(a,a)` by the forged
+amount) stayed open on the wide leg after the bare (aa282f8c0), cap-open, fee (3c79e6798), and
+wide-transfer (98c148699) closes. Retargeted + discharged end to end; with this the wrap class is
+closed MEMBER-FOR-MEMBER. Lean (#assert_axioms-clean, additive): `AvailWideMembers` §7 —
+burnV3AvailWide (the crown host rebuilt over v3OfFrozenWide burnVmDescriptorAvail; burn carries NO
+membership teeth, so the retarget is rc-pins-at-the-avail-carrier + wideAppend only — 66 PIs
+UNCHANGED, width 2607→2615, +8 burn avail pad) + burnAvailWideRefused (refuse at cavBaseOf 196 =
+674) + burnAvailWide_row_v1 (via the existing keystone wideEmbedded_sound_v1: decidable hclean +
+the pin-filtered face embed) + the three capacity dodges re-closed on the refused member
+(declared_{escrow,discharge,vault}_unsat_burnAvailWideRefused — the settle-as-BURN dodge does not
+regress). `EffectVmEmitUMemWeldWide` — crown burn host retargeted (name-stable key) +
+weldedBurnAvailWide + no-narrowing guards (welded = refused + 7 cols, piCount fixed, heap domain).
+`RotatedKernelRefinementMintBurnAvailWide.lean` (NEW) — wideBurn_availability_and_exact_move_forced
+(+_refused) over the UNCHANGED descriptor-independent rotatedEncodesBurnAvail decode (amt ≤
+pre.bal cell a AND the EXACT ℤ debit; burn is debit-only — no direction premise) +
+burn_descriptorRefinesAvail_weldedWide (full BurnSpec, guardAvail from the WITNESS). TEETH:
+weldedBurnWide_rejects_overburn + weldedBurnWide_audit_forgery_unsat (pre.bal=1, amt=1006632961 —
+the exact audit witness, UNSAT) + refused twins. Probes: EmitWideRegistryProbe (burn crown row =
+burnAvailWideRefused) + EmitWideUMemWeldRegistryProbe (weldRefusedFirst refuses the burn key at
+cavBaseOf 196). Rust: NO code change needed — the wide fill is name-driven and burn-aware since
+aa282f8c0 (BURN_AVAIL_PAD 8, fill_avail_aux_row Burn arm, the generic
+generate_rotated_transfer_shape_wide_avail dispatcher arm; dormant until regen — the committed
+wide names are bare ⇒ pad 0 byte-identical today). REMAINING (unchanged, ember-gated): the
+wide/welded TSV+FP regen mints the retargeted bytes (regen checklist as in the wide-transfer
+entry; the gnark fixture lane un-blocks on the same regen); the WIDE cap-open-EFF + fee twins
+ride their own entries.

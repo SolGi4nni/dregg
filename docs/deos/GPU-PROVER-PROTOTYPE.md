@@ -484,12 +484,14 @@ for this kernel than Apple through Metal.
 
 ### Copy-bandwidth ceiling
 
-`copy ceiling (64 MiB read+write): vec4 334.5 GB/s, u32x4 329.6 GB/s ->
-ceiling 334.5 GB/s` (334.5-335.2 across two runs) = **~78% of the 432 GB/s
-spec**. The copy working set (64 MiB src + 64 MiB dst = 128 MiB) exceeds the
-96 MB Infinity Cache, so this is a DRAM-honest denominator — though less of
-the spec than the M2 reaches (88-99%), typical for GDDR6 streaming vs Apple's
-LPDDR5 fabric.
+`copy ceiling (256 MiB read+write): vec4 304.4 GB/s, u32x4 314.3 GB/s ->
+ceiling 314.3 GB/s` (314-315 across the tuning runs) = **~73% of the 432 GB/s
+spec**. The working set is now a 256 MiB buffer (src+dst = 512 MiB of traffic,
+each thread streaming 8 u32) — well past the 96 MB Infinity Cache, so this is a
+harder DRAM-honest denominator than the earlier 64 MiB copy (334 GB/s) and the
+%-of-ceiling figures below are correspondingly stricter. Still less of the spec
+than the M2 reaches (88-99%), typical for GDDR6 streaming vs Apple's LPDDR5
+fabric.
 
 **The Infinity Cache is loudly visible everywhere the working set fits**, and
 %-of-ceiling readings above 100% below are exactly that, not measurement
@@ -499,39 +501,86 @@ effective (270% of ceiling)**. On this card the NTT's logn roundtrips are
 served by a 96 MB SRAM tier whenever the table is ≤~64 MiB — a structural
 gift to exactly this kernel class that the M2 does not have at these sizes.
 
-### NTT (same 72 parity checks — all green, both runs)
+### NTT — RDNA2-tuned (300 parity checks/run, all green; `% ceil` vs the measured 314 GB/s)
 
-Best plan per shape (run 2, quiet box; `% ceil` vs the measured 334.5 GB/s):
+The first AMD run (run 2) showed the tall shapes collapsing to 22-23% of
+ceiling. The tuning run below (run 4) fixes it — see the diagnosis after the
+table. Best plan per shape:
 
-| shape | best plan (passes) | time | Melem/s | eff GB/s | % ceil | vs hbox p3 1-thread | vs hbox p3 rayon |
-|---|---|---|---|---|---|---|---|
-| 2^15 x 64 (8 MiB) | hybrid E1=8 B=8 +radix[4,3] (3) | **0.142 ms** | **14 818** | 355.6 | **106%** | 258x | 17.4x |
-| 2^15 x 256 (32 MiB) | hybrid E1=8 B=8 +radix[4,3] (3) | **0.483 ms** | **17 360** | 416.6 | **125%** | 141x | 17.9x |
-| 2^18 x 16 (16 MiB) | fused2d E1=9 B=16 (2) | 0.413 ms | 10 166 | 162.7 | 49% | 134x | 14.0x |
-| 2^21 x 1 (8 MiB) | fused2d E1=11 B=4 (2) | 0.430 ms | 4 880 | 78.1 | 23% | 240x | 33.8x |
-| 2^21 x 8 (64 MiB) | fused2d E1=11 B=4 (2) | 3.666 ms | 4 577 | 73.2 | 22% | 77x | 11.0x |
+| shape | best plan (passes) | time | Melem/s | eff GB/s | % ceil | run-2 % ceil | vs p3 1-thr | vs p3 rayon |
+|---|---|---|---|---|---|---|---|---|
+| 2^15 x 64 (8 MiB) | hybrid E1=9 B=8 +radix[3,3] (3) | **0.140 ms** | 15 016 | 360.4 | **115%** | 106% | 154x | 32x |
+| 2^15 x 256 (32 MiB) | hybrid E1=8 B=8 +radix[4,3] (3) | **0.485 ms** | 17 311 | 415.5 | **132%** | 125% | 144x | 16.4x |
+| 2^18 x 16 (16 MiB) | hybrid E1=8 B=8 +radix[5,5] **+tw2m** (3) | **0.340 ms** | 12 331 | 295.9 | **94%** | 49% | 161x | 14.3x |
+| 2^21 x 1 (8 MiB) | hybrid E1=8 B=8 +radix[5,4,4] **+tw2m** (4) | **0.216 ms** | 9 720 | 311.0 | **99%** | 23% | 418x | 34x |
+| 2^21 x 8 (64 MiB) | hybrid E1=8 B=16 +radix[5,4,4] **+tw2m** (4) | **1.664 ms** | 10 083 | 322.7 | **103%** | 22% | 165x | 25x |
+| 2^21 x 32 (256 MiB, closest to real LDE) | hybrid E1=8 B=8 +radix[4,4,5] **+tw2m** (4) | **9.151 ms** | 7 334 | 234.7 | **75%** | (n/a) | 94x | 15.3x |
 
-### AMD vs M2 Max, same binary, same day
+The tall shapes went from **22-23% → 99-103% of ceiling** (a 2.0-2.2x wall-clock
+speedup); 2^18x16 from 49% → 94%. The new 2^21x32 shape (256 MiB, spilled well
+past the Infinity Cache — the honest large-LDE regime) lands at 75% of ceiling.
+Wide/batch shapes are unchanged (the tune added variants, it did not disturb
+the M2-class winners: the auto-tune still picks the plain `+radix` hybrid there
+because the split below is not worth its extra multiply when twiddles are
+already cache-hot).
+
+### The collapse was the TWIDDLE gather, not the data-tile stride
+
+Run 2's per-pass log showed one pass per tall-shape plan stuck at 14-37 GB/s
+(4-12% of ceiling) while sibling passes in the same dispatch ran 158-900 GB/s.
+The first hypothesis (large-stride *data*-array access defeating GDDR6 line
+granularity) was **wrong**. The `+tw2` / `+tw2m` fix touches *only the twiddle
+accessor* — every data load/store is byte-identical — and it lifts the
+collapsing pass from **37 → 290-360 GB/s** (e.g. 2^21x1 pass2: 43→290 GB/s;
+2^21x32 pass2: 37→325 GB/s). So the bottleneck was the twiddle-table read.
+
+*Why:* a register-radix stage at bit offset `L` reads twiddle index
+`(base + tlow) << (logn−L−stage−1)`. On a tall shape the shift is ≥12, so
+adjacent lanes' twiddle indices differ by ≥2^12 — every lane in a wavefront
+touches a **distinct 128 B line across the full n/2-entry (4 MiB at 2^21)
+twiddle table**. That is ~32x request amplification; RDNA2's cache/channel
+hardware collapses under it exactly as the log showed. The *data* reads in
+those passes were already register-closed and coalesced.
+
+*The fix (`+tw2`), bit-exact:* factor the twiddle as
+`w^i = w^((i>>S)<<S) · w^(i mod 2^S)` and read it as a **Montgomery product of
+two small tables** — `TW(i) = mmul(tw_hi[i>>S], tw_lo[i & (2^S−1)])`, with
+`S = logn/2`. `tw_lo` is the head of the existing table (2^S ≈ 1-2 K entries),
+`tw_hi` a compact appendix ((n/2)>>S ≈ 1-2 K entries). Both fit in a few KB and
+stay cache-resident, so the per-lane scatter is gone. Because the mont product
+of two Montgomery forms *is* the Montgomery form of the product, every one of
+the 300 parity checks stays bit-exact vs Plonky3. `+tw2m` ("mixed") is the
+auto-tune winner: **direct** twiddles in pass 1 (its shifts are small, so its
+reads are already near-wave-uniform and the split would only add a dependent
+load), **split** twiddles in the strided later passes.
+
+### Did the 64 KB LDS (2x the M2's 32 KB) let RDNA2 pull ahead? No.
+
+The probe sweeps 64 KB-tile plans (E1+LB = 14, e.g. `E1=11 B=8`) that cannot
+fit on the M2. They **lose** on every shape: a 2^11-row strided pass-1 load is
+itself non-coalesced (collapses to 49-108 GB/s) and the 64 KB tile depresses
+occupancy. Every winner above uses a **small 2-4 KB coalesced tile + a
+register-radix tail** — the same recipe that wins on the M2 — plus the twiddle
+split. The extra LDS is not the lever here; the twiddle-gather fix is.
+
+### AMD vs M2 Max, same binary
 
 - **Compute-bound mul: AMD wins ~2x** (198 vs 105.8 Gmul/s).
-- **Wide/batch NTT shapes: AMD wins ~1.3x absolute** — 17.4 vs 13.2 Gelem/s
-  on the 2^15x256 interpolate shape (0.48 vs 0.64 ms), riding the Infinity
-  Cache above the DRAM roofline. GPU-vs-rayon leverage is also larger on hbox
-  (~17-18x vs ~8x) because hbox's CPU is weaker than the M2's.
-- **Tall 2^21 shapes: AMD loses ~0.65-0.72x** (4.6-4.9 vs 6.6-7.6 Gelem/s).
-  The per-pass profile names the culprit precisely: every plan's
-  *large-stride* tile pass collapses to **14-19 GB/s (4-6% of ceiling)** on
-  RDNA2 (e.g. fused2d pass2), while the same plan's coalesced passes run
-  158-904 GB/s in the same dispatch sequence. That is a memory-access-pattern
-  penalty — strided 4 B element access defeating GDDR6/IC line granularity —
-  i.e. a *tunable kernel-shape problem* (wider per-thread vectorized loads,
-  column-batched tiles), not a Vulkan/wgpu/RADV tax. Note the real LDE shape
-  is 2^21 rows x O(450) *columns* (§5): column batching converts the tall
-  shape toward the wide regime where AMD already leads, and the RISC0
-  stage-skip trick (§9) removes 6 of 21 stages on top.
-- The zero-init and bounds-check fixes from §9 carry over unchanged (same
-  binary); subgroup ops are available on RADV (sizes 32..64) for the same
-  unmeasured two-tier upside.
+- **Wide/batch NTT: AMD wins ~1.3x absolute** (17.3 vs 13.2 Gelem/s on
+  2^15x256), riding the Infinity Cache above the DRAM roofline.
+- **Tall 2^21 NTT: AMD now MATCHES or beats the M2** after the twiddle fix —
+  9.7-10.1 Gelem/s at 2^21x{1,8} (was 4.6-4.9 pre-fix, i.e. the ~0.65x deficit
+  is closed and inverted to a lead). The real LDE shape is 2^21 x O(450)
+  *columns* (§5); the 2^21x32 measurement (75% of ceiling, IC-spilled) is the
+  honest large-batch point, and the RISC0 stage-skip trick (§9) removes 6 of 21
+  stages on top.
+- The zero-init and bounds-check fixes from §9 carry over unchanged; subgroup
+  ops are available on RADV (sizes 32..64) for the same unmeasured upside.
+
+Probe changes for this tune (all in the standalone crate, not committed to the
+hbox tree): a `TW()` twiddle accessor with direct/split/mixed modes swept as a
+plan dimension; a 256 MiB working buffer + 2^21x32 shape; 64 KB-LDS plan
+variants; a wider copy-ceiling kernel. Every added variant is parity-gated.
 
 ### Verdict: is wgpu/Vulkan the hbox production path?
 
@@ -544,8 +593,10 @@ Vulkan compute and the ROCm/HIP escalation (§3.4) — comes back clearly:
 - bit-exact p3 parity on every kernel, every shape, every run;
 - compute-bound throughput ~2x the M2 Max;
 - NTT at-or-above the DRAM roofline on batch shapes (the Infinity Cache is a
-  real accelerant for this exact kernel), with the one deficit (tall-shape
-  strided pass) named, bounded (~1.4x vs M2), and addressable in WGSL.
+  real accelerant for this exact kernel), and the run-2 tall-shape deficit is
+  **closed in WGSL** — the collapsing pass was a twiddle-table scatter, fixed
+  by a bit-exact split-twiddle accessor that lifts tall shapes from 22-23% to
+  99-103% of ceiling (2^21x1/x8 now beat the M2, 2^21x32 at 75%).
 
 The HIP escalation path stays closed unless the `GpuDft` integration measures
 far off this band on real LDE shapes. gfx1031's absence from the ROCm support

@@ -182,6 +182,10 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     data[i + $STRIDE] = src[i + $STRIDE];
     data[i + 2u * $STRIDE] = src[i + 2u * $STRIDE];
     data[i + 3u * $STRIDE] = src[i + 3u * $STRIDE];
+    data[i + 4u * $STRIDE] = src[i + 4u * $STRIDE];
+    data[i + 5u * $STRIDE] = src[i + 5u * $STRIDE];
+    data[i + 6u * $STRIDE] = src[i + 6u * $STRIDE];
+    data[i + 7u * $STRIDE] = src[i + 7u * $STRIDE];
 }
 "#;
 
@@ -204,7 +208,7 @@ fn main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let j = bf & ($HALF - 1u);
     let i1 = off + ((bf >> ($SS - 1u)) << $SS) + j;
     let i2 = i1 + $HALF;
-    let t = mmul(data[i2], tw[j << $TSH]);
+    let t = mmul(data[i2], TW(j << $TSH));
     let u = data[i1];
     data[i1] = addp(u, t);
     data[i2] = subp(u, t);
@@ -234,7 +238,7 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
             let j = bf & (half - 1u);
             let i1 = ((bf >> (s - 1u)) << s) + j;
             let i2 = i1 + half;
-            let t = mmul(tile[i2], tw[j << ($LOGN - s)]);
+            let t = mmul(tile[i2], TW(j << ($LOGN - s)));
             let u2 = tile[i1];
             tile[i1] = addp(u2, t);
             tile[i2] = subp(u2, t);
@@ -282,7 +286,7 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
             let i1 = (q1 << $CC) + lo;
             let i2 = (q2 << $CC) + lo;
             let j = (wlo << $CC) + lo + (jq << $BB);
-            let tt = mmul(tile[i2], tw[j << ($LOGN - $BB - t)]);
+            let tt = mmul(tile[i2], TW(j << ($LOGN - $BB - t)));
             let u2 = tile[i1];
             tile[i1] = addp(u2, tt);
             tile[i2] = subp(u2, tt);
@@ -328,7 +332,7 @@ fn main(@builtin(local_invocation_id) l: vec3<u32>, @builtin(workgroup_id) wg: v
             let j = bf & (half - 1u);
             let i1 = ((((bf >> (s - 1u)) << s) + j) << $LB) + b;
             let i2 = i1 + (half << $LB);
-            let t = mmul(tile[i2], tw[j << ($LOGN - s)]);
+            let t = mmul(tile[i2], TW(j << ($LOGN - s)));
             let u2 = tile[i1];
             tile[i1] = addp(u2, t);
             tile[i2] = subp(u2, t);
@@ -380,7 +384,7 @@ fn radix_kernel(n: u32, logn: u32, l: u32, r: u32, wgsz: u32) -> String {
             let jlit = (p & lowmask) << l;
             let sh = logn - l - st - 1;
             s.push_str(&format!(
-                "    {{ let tt = mmul(r{v1}, tw[({jlit}u + tlow) << {sh}u]); let uu = r{v0}; r{v0} = addp(uu, tt); r{v1} = subp(uu, tt); }}\n"
+                "    {{ let tt = mmul(r{v1}, TW(({jlit}u + tlow) << {sh}u)); let uu = r{v0}; r{v0} = addp(uu, tt); r{v1} = subp(uu, tt); }}\n"
             ));
         }
     }
@@ -399,6 +403,26 @@ fn subst(template: &str, pairs: &[(&str, u32)]) -> String {
     s
 }
 
+/// Twiddle accessor definition. Direct: TW(i) = tw[i] — byte-identical to the
+/// original kernels. Split ("tw2"): TW(i) = mmul(tw_hi[i>>S], tw_lo[i&(2^S-1)])
+/// = mont(w^(hi<<S)) *M mont(w^lo) = mont(w^i) EXACTLY (Montgomery product of
+/// Montgomery forms), so parity is bit-identical. The point: stages whose
+/// twiddle index is `j << big_shift` gather one distinct 128B line PER LANE
+/// across the full n/2-entry table (4 MiB at n=2^21) — a 32x request
+/// amplification that collapses RDNA2 to 14-19 GB/s. The split confines all
+/// twiddle reads to two ~4 KiB cache-resident tables (lo = head of the main
+/// table; hi = compact appendix at element offset n/2).
+fn tw_def(split: bool, thi_off: u32, s: u32) -> String {
+    if split {
+        format!(
+            "fn TW(i: u32) -> u32 {{ return mmul(tw[{thi_off}u + (i >> {s}u)], tw[i & {}u]); }}\n",
+            (1u32 << s) - 1
+        )
+    } else {
+        "fn TW(i: u32) -> u32 { return tw[i]; }\n".to_string()
+    }
+}
+
 // ---------- GPU harness ----------
 
 struct Gpu {
@@ -412,7 +436,7 @@ struct Gpu {
     buf_read: wgpu::Buffer,
 }
 
-const BUF_U32S: usize = 1 << 24; // 64 MiB working set
+const BUF_U32S: usize = 1 << 26; // 256 MiB working set (holds 2^21 x 32 — bigger than a 96 MB Infinity Cache)
 
 impl Gpu {
     fn new() -> Self {
@@ -506,7 +530,7 @@ impl Gpu {
         });
         let buf_tw = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tw"),
-            size: 4 << 20, // n/2 twiddles at n=2^21 -> 4 MiB
+            size: 5 << 20, // n/2 twiddles at n=2^21 (4 MiB) + compact tw_hi appendix
             usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
             mapped_at_creation: false,
         });
@@ -666,7 +690,7 @@ fn main() {
     let nvec4 = (BUF_U32S / 4) as u32;
     let stride_v4 = nvec4 / 4;
     let copy_v4 = gpu.pipeline(&subst(COPY_V4, &[("$STRIDE", stride_v4)]), "copy_v4");
-    let stride_u = (BUF_U32S / 4) as u32;
+    let stride_u = (BUF_U32S / 8) as u32;
     let copy_u = gpu.pipeline(&subst(COPY_U32, &[("$STRIDE", stride_u)]), "copy_u32");
     let bytes_copy = (BUF_U32S * 8) as f64; // read + write
     let t_v4 = gpu.time_plan(&[(&copy_v4, (stride_v4 / 256, 1))], 30, 5);
@@ -683,7 +707,7 @@ fn main() {
     );
 
     // 3. NTT shapes.
-    let shapes: &[(u32, usize)] = &[(15, 64), (15, 256), (18, 16), (21, 1), (21, 8)];
+    let shapes: &[(u32, usize)] = &[(15, 64), (15, 256), (18, 16), (21, 1), (21, 8), (21, 32)];
     let mut results: Vec<ShapeResult> = Vec::new();
 
     for &(logn, ncols) in shapes {
@@ -701,16 +725,42 @@ fn main() {
         gpu.queue
             .write_buffer(&gpu.buf_src, 0, bytemuck::cast_slice(&all_mont[..ntotal]));
 
-        // twiddles: mont(w^t), t < n/2
+        // twiddles: mont(w^t), t < n/2; plus a compact tw_hi appendix at
+        // element offset n/2: tw_hi[k] = tw[k << TWS] (for the split TW).
+        // tw_lo IS the head of the main table (tw[i & (2^TWS - 1)]).
         let w = BabyBear::two_adic_generator(logn as usize).as_canonical_u32() as u64;
-        let mut twv = Vec::with_capacity(n / 2);
+        let mut twv = Vec::with_capacity(n / 2 + (n / 2 >> (logn / 2)));
         let mut acc = 1u64;
         for _ in 0..n / 2 {
             twv.push(to_mont(acc as u32));
             acc = mulmod(acc, w);
         }
+        let tws = logn / 2; // split point: lo table 2^TWS entries, hi table (n/2)>>TWS
+        let thi_off = (n / 2) as u32;
+        for k in 0..(n / 2) >> tws {
+            twv.push(twv[k << tws]);
+        }
         gpu.queue
             .write_buffer(&gpu.buf_tw, 0, bytemuck::cast_slice(&twv));
+        let twd_direct = tw_def(false, 0, 0);
+        let twd_split = tw_def(true, thi_off, tws);
+        let twd_for = |tw2: bool| -> &str {
+            if tw2 {
+                &twd_split
+            } else {
+                &twd_direct
+            }
+        };
+        // tw modes: 0 = direct everywhere, 1 = split everywhere, 2 = MIXED —
+        // direct in pass1 (its twiddle reads are already near-wave-uniform;
+        // the split only adds a dependent-load chain there) and split in the
+        // strided later passes (where the direct per-lane gather collapses).
+        const TW_MODES: [u32; 3] = [0, 1, 2];
+        let tw_suffix = |mode: u32| match mode {
+            1 => " +tw2",
+            2 => " +tw2m",
+            _ => "",
+        };
 
         // p3 expected (also the full-rayon CPU baseline timing target)
         let mat_vals: Vec<BabyBear> = (0..ntotal)
@@ -799,8 +849,9 @@ fn main() {
             let mut stage_pipes = Vec::new();
             for s in 1..=logn {
                 let wgsl = format!(
-                    "{}{}",
+                    "{}{}{}",
                     PRELUDE,
+                    twd_direct,
                     subst(
                         K_STAGE,
                         &[
@@ -838,8 +889,9 @@ fn main() {
             let wgroups = 1u32 << (logn - e);
             let p1 = gpu.pipeline(
                 &format!(
-                    "{}{}",
+                    "{}{}{}",
                     PRELUDE,
+                    twd_direct,
                     subst(
                         K_FUSED1,
                         &[
@@ -858,8 +910,9 @@ fn main() {
             );
             let p2 = gpu.pipeline(
                 &format!(
-                    "{}{}",
+                    "{}{}{}",
                     PRELUDE,
+                    twd_direct,
                     subst(
                         K_FUSED2,
                         &[
@@ -919,11 +972,13 @@ fn main() {
                 (9, 4, &[(9, 6, 6)]),
                 (8, 4, &[(8, 7, 5)]),
                 (8, 3, &[(8, 7, 4)]),
+                (11, 3, &[(11, 4, 10)]), // 64 KiB LDS tiles (skipped where LDS < 64 KiB)
             ],
             18 => &[
                 (10, 3, &[(10, 8, 5)]),
                 (9, 4, &[(9, 9, 4)]),
                 (8, 4, &[(8, 5, 7), (13, 5, 7)]),
+                (11, 3, &[(11, 7, 7)]), // 64 KiB LDS, 2 passes
             ],
             21 => &[
                 (10, 3, &[(10, 6, 7), (16, 5, 8)]),
@@ -932,242 +987,301 @@ fn main() {
                 (8, 4, &[(8, 7, 5), (15, 6, 6)]),
                 (8, 3, &[(8, 7, 4), (15, 6, 5)]),
                 (11, 2, &[(11, 10, 3)]),
+                (11, 3, &[(11, 10, 4)]), // 64 KiB LDS both passes — 2-pass 2^21
+                (10, 4, &[(10, 11, 3)]), // 64 KiB mid — 2-pass alt
+                (9, 5, &[(9, 6, 8), (15, 6, 8)]), // every global access a 128B+ run
+                (11, 3, &[(11, 5, 8), (16, 5, 8)]), // 64 KiB pass1 + two wide-run mids
             ],
             _ => &[],
         };
         for &(e1, lb, mids) in plans2d {
-            let wgsz = 256u32;
-            let tile1 = 1u32 << (e1 + lb);
-            if tile1 * 4 > max_wg_storage || (1u32 << e1) < wgsz {
-                continue;
-            }
-            // structural sanity: contiguous stage coverage
-            assert_eq!(e1 + mids.iter().map(|m| m.1).sum::<u32>(), logn);
-            let mut b_expect = e1;
-            for m in mids {
-                assert_eq!(m.0, b_expect);
-                b_expect += m.1;
-            }
-            let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
-            pipes.push((
-                gpu.pipeline(
-                    &format!(
-                        "{}{}",
-                        PRELUDE,
-                        subst(
-                            K_FUSED1B,
-                            &[
-                                ("$TILE", tile1),
-                                ("$TPT", tile1 / wgsz),
-                                ("$HBT", tile1 / 2 / wgsz),
-                                ("$WGSZ", wgsz),
-                                ("$NN", n as u32),
-                                ("$LOGN", logn),
-                                ("$E1", e1),
-                                ("$LB", lb),
-                                ("$WW", (n as u32) >> e1),
-                            ],
-                        )
-                    ),
-                    &format!("fused1b_e{e1}_b{lb}"),
-                ),
-                ((n as u32) >> (e1 + lb), ncols as u32),
-            ));
-            for &(b, ff, cc) in mids {
-                let tilem = 1u32 << (cc + ff);
-                assert!(tilem * 4 <= max_wg_storage && b >= cc && tilem / 2 >= wgsz);
+            for mode in TW_MODES {
+                let (tw_p1, tw_rest) = (mode == 1, mode >= 1);
+                let wgsz = 256u32;
+                let tile1 = 1u32 << (e1 + lb);
+                if tile1 * 4 > max_wg_storage || (1u32 << e1) < wgsz {
+                    continue;
+                }
+                if mids.iter().any(|&(b, ff, cc)| {
+                    let tilem = 1u32 << (cc + ff);
+                    tilem * 4 > max_wg_storage || b < cc || tilem / 2 < wgsz
+                }) {
+                    continue;
+                }
+                // structural sanity: contiguous stage coverage
+                assert_eq!(e1 + mids.iter().map(|m| m.1).sum::<u32>(), logn);
+                let mut b_expect = e1;
+                for m in mids {
+                    assert_eq!(m.0, b_expect);
+                    b_expect += m.1;
+                }
+                let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
                 pipes.push((
                     gpu.pipeline(
                         &format!(
-                            "{}{}",
+                            "{}{}{}",
                             PRELUDE,
+                            twd_for(tw_p1),
                             subst(
-                                K_FUSED2,
+                                K_FUSED1B,
                                 &[
-                                    ("$TILE", tilem),
-                                    ("$TPT", tilem / wgsz),
-                                    ("$HBT", tilem / 2 / wgsz),
+                                    ("$TILE", tile1),
+                                    ("$TPT", tile1 / wgsz),
+                                    ("$HBT", tile1 / 2 / wgsz),
                                     ("$WGSZ", wgsz),
                                     ("$NN", n as u32),
                                     ("$LOGN", logn),
-                                    ("$BB", b),
-                                    ("$FF", ff),
-                                    ("$CC", cc),
-                                    ("$WLW", b - cc),
-                                    ("$BF", b + ff),
+                                    ("$E1", e1),
+                                    ("$LB", lb),
+                                    ("$WW", (n as u32) >> e1),
                                 ],
                             )
                         ),
-                        &format!("fused2g_b{b}_f{ff}_c{cc}"),
+                        &format!("fused1b_e{e1}_b{lb}"),
                     ),
-                    ((n as u32) >> (cc + ff), ncols as u32),
+                    ((n as u32) >> (e1 + lb), ncols as u32),
                 ));
+                for &(b, ff, cc) in mids {
+                    let tilem = 1u32 << (cc + ff);
+                    pipes.push((
+                        gpu.pipeline(
+                            &format!(
+                                "{}{}{}",
+                                PRELUDE,
+                                twd_for(tw_rest),
+                                subst(
+                                    K_FUSED2,
+                                    &[
+                                        ("$TILE", tilem),
+                                        ("$TPT", tilem / wgsz),
+                                        ("$HBT", tilem / 2 / wgsz),
+                                        ("$WGSZ", wgsz),
+                                        ("$NN", n as u32),
+                                        ("$LOGN", logn),
+                                        ("$BB", b),
+                                        ("$FF", ff),
+                                        ("$CC", cc),
+                                        ("$WLW", b - cc),
+                                        ("$BF", b + ff),
+                                    ],
+                                )
+                            ),
+                            &format!("fused2g_b{b}_f{ff}_c{cc}"),
+                        ),
+                        ((n as u32) >> (cc + ff), ncols as u32),
+                    ));
+                }
+                let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
+                    pipes.iter().map(|(p, d)| (p, *d)).collect();
+                let label = format!(
+                    "fused2d E1={e1} B={} {:?}{}",
+                    1 << lb,
+                    mids,
+                    tw_suffix(mode)
+                );
+                gpu.time_plan(&plan, 1, 0);
+                parity_all &= check_parity(&label);
+                let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
+                let t = gpu.time_plan(&plan, iters, 3);
+                report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
+                // per-pass attribution
+                let bytes1 = ntotal as f64 * 8.0;
+                let mut attribution = String::new();
+                for (i, (p, d)) in pipes.iter().enumerate() {
+                    let tp = gpu.time_plan(&[(p, *d)], iters, 3);
+                    attribution.push_str(&format!(
+                        "pass{} {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                        i + 1,
+                        tp * 1e3,
+                        bytes1 / tp / 1e9,
+                        bytes1 / tp / ceiling * 100.0
+                    ));
+                }
+                println!("    {attribution}");
             }
-            let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
-                pipes.iter().map(|(p, d)| (p, *d)).collect();
-            let label = format!("fused2d E1={e1} B={} {:?}", 1 << lb, mids);
-            gpu.time_plan(&plan, 1, 0);
-            parity_all &= check_parity(&label);
-            let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
-            let t = gpu.time_plan(&plan, iters, 3);
-            report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
-            // per-pass attribution
-            let bytes1 = ntotal as f64 * 8.0;
-            let mut attribution = String::new();
-            for (i, (p, d)) in pipes.iter().enumerate() {
-                let tp = gpu.time_plan(&[(p, *d)], iters, 3);
-                attribution.push_str(&format!(
-                    "pass{} {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
-                    i + 1,
-                    tp * 1e3,
-                    bytes1 / tp / 1e9,
-                    bytes1 / tp / ceiling * 100.0
-                ));
-            }
-            println!("    {attribution}");
         }
 
         // --- register-tier radix-2^R plans: bitrev pass + logn/R global
         // roundtrips of R fully-unrolled register stages. No workgroup memory,
         // no barriers — occupancy limited only by registers.
         for rr in [4u32, 5] {
-            let wgsz = 256u32;
-            let rsh = 32 - logn;
-            let p_bitrev = gpu.pipeline(
-                &format!(
-                    "{}{}",
-                    PRELUDE,
-                    subst(K_BITREV, &[("$NN", n as u32), ("$RSH", rsh)])
-                ),
-                "bitrev",
-            );
-            let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
-            let mut l = 0u32;
-            while l < logn {
-                let r = rr.min(logn - l);
-                let threads = (n as u32) >> r;
-                pipes.push((
-                    gpu.pipeline(
-                        &format!("{}{}", PRELUDE, radix_kernel(n as u32, logn, l, r, wgsz)),
-                        &format!("radix_l{l}_r{r}"),
+            for tw2 in [false, true] {
+                let wgsz = 256u32;
+                let rsh = 32 - logn;
+                let p_bitrev = gpu.pipeline(
+                    &format!(
+                        "{}{}",
+                        PRELUDE,
+                        subst(K_BITREV, &[("$NN", n as u32), ("$RSH", rsh)])
                     ),
-                    (threads.div_ceil(wgsz), ncols as u32),
-                ));
-                l += r;
+                    "bitrev",
+                );
+                let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
+                let mut l = 0u32;
+                while l < logn {
+                    let r = rr.min(logn - l);
+                    let threads = (n as u32) >> r;
+                    pipes.push((
+                        gpu.pipeline(
+                            &format!(
+                                "{}{}{}",
+                                PRELUDE,
+                                twd_for(tw2),
+                                radix_kernel(n as u32, logn, l, r, wgsz)
+                            ),
+                            &format!("radix_l{l}_r{r}"),
+                        ),
+                        (threads.div_ceil(wgsz), ncols as u32),
+                    ));
+                    l += r;
+                }
+                let mut plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
+                    vec![(&p_bitrev, ((n as u32).div_ceil(wgsz), ncols as u32))];
+                plan.extend(pipes.iter().map(|(p, d)| (p, *d)));
+                let label = format!(
+                    "regradix R={rr} ({} passes){}",
+                    plan.len(),
+                    if tw2 { " +tw2" } else { "" }
+                );
+                gpu.time_plan(&plan, 1, 0);
+                parity_all &= check_parity(&label);
+                let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
+                let t = gpu.time_plan(&plan, iters, 3);
+                report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
+                // per-pass attribution (bitrev first)
+                let bytes1 = ntotal as f64 * 8.0;
+                let tb = gpu.time_plan(
+                    &[(&p_bitrev, ((n as u32).div_ceil(wgsz), ncols as u32))],
+                    iters,
+                    3,
+                );
+                let mut attribution = format!(
+                    "bitrev {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                    tb * 1e3,
+                    bytes1 / tb / 1e9,
+                    bytes1 / tb / ceiling * 100.0
+                );
+                for (p, d) in pipes.iter() {
+                    let tp = gpu.time_plan(&[(p, *d)], iters, 3);
+                    attribution.push_str(&format!(
+                        "radix {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                        tp * 1e3,
+                        bytes1 / tp / 1e9,
+                        bytes1 / tp / ceiling * 100.0
+                    ));
+                }
+                println!("    {attribution}");
             }
-            let mut plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
-                vec![(&p_bitrev, ((n as u32).div_ceil(wgsz), ncols as u32))];
-            plan.extend(pipes.iter().map(|(p, d)| (p, *d)));
-            let label = format!("regradix R={rr} ({} passes)", plan.len());
-            gpu.time_plan(&plan, 1, 0);
-            parity_all &= check_parity(&label);
-            let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
-            let t = gpu.time_plan(&plan, iters, 3);
-            report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
-            // per-pass attribution (bitrev first)
-            let bytes1 = ntotal as f64 * 8.0;
-            let tb = gpu.time_plan(
-                &[(&p_bitrev, ((n as u32).div_ceil(wgsz), ncols as u32))],
-                iters,
-                3,
-            );
-            let mut attribution = format!(
-                "bitrev {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
-                tb * 1e3,
-                bytes1 / tb / 1e9,
-                bytes1 / tb / ceiling * 100.0
-            );
-            for (p, d) in pipes.iter() {
-                let tp = gpu.time_plan(&[(p, *d)], iters, 3);
-                attribution.push_str(&format!(
-                    "radix {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
-                    tp * 1e3,
-                    bytes1 / tp / 1e9,
-                    bytes1 / tp / ceiling * 100.0
-                ));
-            }
-            println!("    {attribution}");
         }
 
         // --- hybrid plans: fused2d pass1 (folds bitrev + E1 stages, small
         // coalesced tile) followed by register-radix chunks. No standalone
         // bitrev roundtrip, no occupancy-killing 32 KiB tiles.
         let hybrids: &[(u32, u32, &[u32])] = match logn {
-            15 => &[(8, 3, &[4, 3]), (9, 3, &[3, 3]), (8, 4, &[4, 3])],
-            18 => &[(8, 3, &[5, 5]), (8, 3, &[4, 3, 3]), (10, 3, &[4, 4])],
+            15 => &[
+                (8, 3, &[4, 3]),
+                (9, 3, &[3, 3]),
+                (8, 4, &[4, 3]),
+                (11, 3, &[4]), // 64 KiB pass1 tile, single radix tail
+            ],
+            18 => &[
+                (8, 3, &[5, 5]),
+                (8, 3, &[4, 3, 3]),
+                (10, 3, &[4, 4]),
+                (11, 3, &[4, 3]), // 64 KiB pass1 tile
+                (12, 2, &[3, 3]),
+            ],
             21 => &[
                 (8, 3, &[5, 4, 4]),
                 (8, 3, &[4, 4, 5]),
                 (9, 3, &[4, 4, 4]),
                 (10, 3, &[4, 4, 3]),
                 (8, 4, &[5, 4, 4]),
+                (11, 3, &[5, 5]), // 64 KiB pass1 tile
+                (11, 3, &[4, 3, 3]),
+                (12, 2, &[5, 4]),
+                (9, 5, &[4, 4, 4]), // 128B-run pass1 loads
             ],
             _ => &[],
         };
         for &(e1, lb, chunks) in hybrids {
-            let wgsz = 256u32;
-            let tile1 = 1u32 << (e1 + lb);
-            if tile1 * 4 > max_wg_storage || (1u32 << e1) < wgsz {
-                continue;
-            }
-            assert_eq!(e1 + chunks.iter().sum::<u32>(), logn);
-            let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
-            pipes.push((
-                gpu.pipeline(
-                    &format!(
-                        "{}{}",
-                        PRELUDE,
-                        subst(
-                            K_FUSED1B,
-                            &[
-                                ("$TILE", tile1),
-                                ("$TPT", tile1 / wgsz),
-                                ("$HBT", tile1 / 2 / wgsz),
-                                ("$WGSZ", wgsz),
-                                ("$NN", n as u32),
-                                ("$LOGN", logn),
-                                ("$E1", e1),
-                                ("$LB", lb),
-                                ("$WW", (n as u32) >> e1),
-                            ],
-                        )
-                    ),
-                    &format!("hyb1b_e{e1}_b{lb}"),
-                ),
-                ((n as u32) >> (e1 + lb), ncols as u32),
-            ));
-            let mut l = e1;
-            for &r in chunks {
+            for mode in TW_MODES {
+                let (tw_p1, tw_rest) = (mode == 1, mode >= 1);
+                let wgsz = 256u32;
+                let tile1 = 1u32 << (e1 + lb);
+                if tile1 * 4 > max_wg_storage || (1u32 << e1) < wgsz {
+                    continue;
+                }
+                assert_eq!(e1 + chunks.iter().sum::<u32>(), logn);
+                let mut pipes: Vec<(wgpu::ComputePipeline, (u32, u32))> = Vec::new();
                 pipes.push((
                     gpu.pipeline(
-                        &format!("{}{}", PRELUDE, radix_kernel(n as u32, logn, l, r, wgsz)),
-                        &format!("hybrad_l{l}_r{r}"),
+                        &format!(
+                            "{}{}{}",
+                            PRELUDE,
+                            twd_for(tw_p1),
+                            subst(
+                                K_FUSED1B,
+                                &[
+                                    ("$TILE", tile1),
+                                    ("$TPT", tile1 / wgsz),
+                                    ("$HBT", tile1 / 2 / wgsz),
+                                    ("$WGSZ", wgsz),
+                                    ("$NN", n as u32),
+                                    ("$LOGN", logn),
+                                    ("$E1", e1),
+                                    ("$LB", lb),
+                                    ("$WW", (n as u32) >> e1),
+                                ],
+                            )
+                        ),
+                        &format!("hyb1b_e{e1}_b{lb}"),
                     ),
-                    (((n as u32) >> r).div_ceil(wgsz), ncols as u32),
+                    ((n as u32) >> (e1 + lb), ncols as u32),
                 ));
-                l += r;
+                let mut l = e1;
+                for &r in chunks {
+                    pipes.push((
+                        gpu.pipeline(
+                            &format!(
+                                "{}{}{}",
+                                PRELUDE,
+                                twd_for(tw_rest),
+                                radix_kernel(n as u32, logn, l, r, wgsz)
+                            ),
+                            &format!("hybrad_l{l}_r{r}"),
+                        ),
+                        (((n as u32) >> r).div_ceil(wgsz), ncols as u32),
+                    ));
+                    l += r;
+                }
+                let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
+                    pipes.iter().map(|(p, d)| (p, *d)).collect();
+                let label = format!(
+                    "hybrid E1={e1} B={} +radix{:?}{}",
+                    1 << lb,
+                    chunks,
+                    tw_suffix(mode)
+                );
+                gpu.time_plan(&plan, 1, 0);
+                parity_all &= check_parity(&label);
+                let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
+                let t = gpu.time_plan(&plan, iters, 3);
+                report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
+                let bytes1 = ntotal as f64 * 8.0;
+                let mut attribution = String::new();
+                for (i, (p, d)) in pipes.iter().enumerate() {
+                    let tp = gpu.time_plan(&[(p, *d)], iters, 3);
+                    attribution.push_str(&format!(
+                        "pass{} {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
+                        i + 1,
+                        tp * 1e3,
+                        bytes1 / tp / 1e9,
+                        bytes1 / tp / ceiling * 100.0
+                    ));
+                }
+                println!("    {attribution}");
             }
-            let plan: Vec<(&wgpu::ComputePipeline, (u32, u32))> =
-                pipes.iter().map(|(p, d)| (p, *d)).collect();
-            let label = format!("hybrid E1={e1} B={} +radix{:?}", 1 << lb, chunks);
-            gpu.time_plan(&plan, 1, 0);
-            parity_all &= check_parity(&label);
-            let iters = ((1 << 26) / ntotal as u32).clamp(8, 256);
-            let t = gpu.time_plan(&plan, iters, 3);
-            report_plan(&label, t, ntotal, plan.len() as u32, ceiling, &mut best);
-            let bytes1 = ntotal as f64 * 8.0;
-            let mut attribution = String::new();
-            for (i, (p, d)) in pipes.iter().enumerate() {
-                let tp = gpu.time_plan(&[(p, *d)], iters, 3);
-                attribution.push_str(&format!(
-                    "pass{} {:.3} ms ({:.0} GB/s, {:.0}% ceil)  ",
-                    i + 1,
-                    tp * 1e3,
-                    bytes1 / tp / 1e9,
-                    bytes1 / tp / ceiling * 100.0
-                ));
-            }
-            println!("    {attribution}");
         }
 
         if !parity_all {

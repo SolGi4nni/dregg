@@ -64,6 +64,14 @@ def weldRefusedFirst (e : String × EffectVmDescriptor2) : String × EffectVmDes
       Dregg2.Circuit.Emit.AvailWireMembers.gentianDeployedBareRefuseAt
         (Dregg2.Circuit.Emit.AvailWireMembers.cavBaseOf
           Dregg2.Circuit.Emit.EffectVmEmitTransfer.AVAIL_WIDTH) e.2
+    -- AVAILABILITY RETARGET, the WIDE-BURN twin: the burn key's host is the burn AVAIL crown
+    -- member (`burnV3AvailWide`), whose caveat region rides the burn-AVAIL-shifted base — its
+    -- refuse is `gentianDeployedBareRefuseAt (cavBaseOf 196)`, so its welded row is exactly the
+    -- proven `EffectVmEmitUMemWeldWide.weldedBurnAvailWide`.
+    else if e.1 == "burnVmDescriptor2R24" then
+      Dregg2.Circuit.Emit.AvailWireMembers.gentianDeployedBareRefuseAt
+        (Dregg2.Circuit.Emit.AvailWireMembers.cavBaseOf
+          Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH) e.2
     else if bareCohortKeys.contains e.1 then gentianWideBareRefuse e.2
     else e.2
   (e.1, weldUMemIntoWide refused (wideKeyUMemDomain e.1))

@@ -27,7 +27,10 @@ builds the two wide-transfer AVAIL members the emission retargets to:
     limbs at the FACE width, 198 on the hardened face).
 
 The fee'd transfer has NO avail face (`transferFeeVmDescriptor` is a separate seam) and is not a
-`liveOnlyWideHosts` member — out of scope here, named in HORIZONLOG with the wide-burn twin.
+`liveOnlyWideHosts` member — out of scope here, named in HORIZONLOG. §7 closes the WIDE-BURN twin
+(`burnV3AvailWide` / `burnAvailWideRefused` — the `burnVmDescriptor2R24` crown host rebuilt over
+the §8¾ borrow-weld face `burnVmDescriptorAvail`; burn carries NO membership teeth, so the
+retarget is rc-pins + `wideAppend` only and the PI count is UNCHANGED at 66).
 
 ## THE COLLAPSE KEYSTONE (`wideEmbedded_sound_v1`)
 
@@ -474,5 +477,241 @@ theorem declared_vault_unsat_availWideRefused (hash : List ℤ → ℤ)
 #assert_axioms declared_escrow_unsat_availWideRefused
 #assert_axioms declared_discharge_unsat_availWideRefused
 #assert_axioms declared_vault_unsat_availWideRefused
+
+/-! ## §7 — THE WIDE-BURN TWIN (the LAST wrap-class member): the `burnVmDescriptor2R24` wide
+crown host rebuilt over the §8¾ borrow-weld face.
+
+The bare wide burn (`v3RegistryCapOpenWide`'s cohort entry: `wideAppend (withDfaRcPins burnV3)
+188 427`) carries NO borrow gates, so the burn underflow-wrap — the WELL-SUPPLY-INFLATION
+mint-from-nothing (`docs/FINDING-modp-wrap-forgery-audit.md`, forgery 2), STRICTLY WORSE than
+the transfer twin (the ledger frame credits the well `(a,a)` by the forged amount) — stayed open
+on the wide/welded leg after the bare + narrow-wire closes. The retarget mirrors the transfer §2
+member-for-member, MINUS the membership teeth (burn's crown host is the plain cohort wide
+member): the hardened face `v3OfFrozenWide burnVmDescriptorAvail`, rc pins at the avail-shifted
+carrier (`withDfaRcPinsAt 196`), `wideAppend` at the burn AVAIL face base — PI count UNCHANGED at
+66, width 2607 → 2615 (+8 avail pad; burn is debit-only, no credit-carry twin). -/
+
+/-- The hardened rotated graduated burn face — the SAME term as
+`RotatedKernelRefinementMintBurnAvail.burnV3Avail` (`v3OfFrozenWide burnVmDescriptorAvail`),
+restated here so the emission layer does not import the refinement tower. -/
+def burnAvailV3W : EffectVmDescriptor2 :=
+  v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
+
+/-- The burn AVAIL wide BEFORE base: `rotateV3` lays the rotated limbs at the hardened FACE
+width (`EffectVmEmitBurn.AVAIL_WIDTH = 196` — the bare 188 shifted by the 8-column burn avail
+pad). -/
+def BU_AVAIL_BB : Nat := Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH
+
+#guard BU_AVAIL_BB == Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.traceWidth
+#guard BU_AVAIL_BB == 196
+#guard burnAvailV3W.piCount == 46
+#guard burnAvailV3W.traceWidth == 1655
+#guard graduableWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
+-- the Rust avail-pad key survives every wrapper (all append-only on the name)
+#guard burnAvailV3W.name.startsWith "dregg-effectvm-burn-v1-avail"
+
+/-- **`burnV3AvailWide`** — the burn crown wide host post-retarget (the `burnVmDescriptor2R24`
+wide-registry host): the plain cohort wide member rebuilt over the hardened availability face,
+rc pins at the AVAIL-shifted caveat rc carrier, wide-appended at the burn AVAIL face base.
+Geometry mirror of the bare wide burn at the avail pad (+8 everywhere; 66 PIs UNCHANGED — burn
+carries no membership teeth). -/
+def burnV3AvailWide : EffectVmDescriptor2 :=
+  wideAppend (withDfaRcPinsAt BU_AVAIL_BB burnAvailV3W) BU_AVAIL_BB (BU_AVAIL_BB + 239)
+
+/-- **`burnAvailWideRefused`** — the crown burn member as EMITTED under the bare-cohort
+capacity-floor refuse, at the burn-AVAIL-shifted caveat base (`cavBaseOf 196 = 674`; aux blocks
+past the member's OWN width, above the wide carriers). This is the exact
+`WIDE_REGISTRY_STAGED_TSV` row object for the burn key post-retarget, and the host the
+umem-welded twin welds (refuse-first, the runtime producer's composition). -/
+def burnAvailWideRefused : EffectVmDescriptor2 :=
+  gentianDeployedBareRefuseAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide
+
+-- Geometry pins: the avail crown mirrors the bare wide burn (+8 pad): 66 PIs (46 + 4 rc + 16
+-- wide anchors), width 2615; the refused crown +45 aux columns.
+#guard burnV3AvailWide.piCount == 66
+#guard burnV3AvailWide.traceWidth == 2615
+#guard burnV3AvailWide.name == "dregg-effectvm-burn-v1-avail-rot24-v3-staged"
+#guard burnAvailWideRefused.piCount == 66
+#guard burnAvailWideRefused.traceWidth == 2615 + 45
+#guard burnAvailWideRefused.name
+  == "dregg-effectvm-burn-v1-avail-rot24-v3-staged-gentian-deployed-bare-refuse"
+-- The bare wide burn twin for reference: SAME 66-PI layout, avail-shifted columns.
+#guard (Dregg2.Circuit.Emit.CapOpenEmit.v3RegistryCapOpenWide.lookup
+    "burnVmDescriptor2R24").any
+  (fun d => d.piCount == 66 && d.traceWidth + 8 == burnV3AvailWide.traceWidth)
+
+/-! ### §7.1 — the pin-cleanliness + membership embed (the `wideEmbedded_sound_v1` premises). -/
+
+/-- No hardened-burn-face v1 constraint is a retired legacy commit pin: every face piBinding
+column rides the v1 face (`< 196`), far below the rotated commit carriers
+(`BU_AVAIL_BB + B_STATE_COMMIT` / `BU_AVAIL_BB + 239 + B_STATE_COMMIT`). Decidable — the face is
+concrete. -/
+theorem burnAvail_no_legacy_pins :
+    Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.constraints.all
+      (fun c => !isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) (VmConstraint2.base c))
+      = true := by decide
+
+theorem burnAvail_clean :
+    ∀ c ∈ Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail.constraints,
+      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) (VmConstraint2.base c) = false := by
+  intro c hc
+  have h := List.all_eq_true.mp burnAvail_no_legacy_pins c hc
+  simpa using h
+
+/-- Face-host constraint membership in the burn avail wide member: the rc pins only APPEND, and
+`wideAppend` keeps every non-pin host constraint (`wideAppend_mem_of_host`). -/
+theorem availHost_mem_burnAvailWide :
+    ∀ c ∈ burnAvailV3W.constraints,
+      isLegacyCommitPin1 BU_AVAIL_BB (BU_AVAIL_BB + 239) c = false →
+      c ∈ burnV3AvailWide.constraints := by
+  intro c hc hnp
+  refine wideAppend_mem_of_host _ BU_AVAIL_BB (BU_AVAIL_BB + 239) c ?_ hnp
+  rw [withDfaRcPinsAt_constraints]
+  exact List.mem_append_left _ hc
+
+/-! ### §7.2 — the per-member v1 collapse: the hardened burn face's FULL row denotation returns
+from a wide-faithful witness of the retargeted member (the borrow-weld gates + 15-bit teeth the
+availability keystone `burnAvail_derives_availability_row` consumes). -/
+
+/-- The burn crown avail wide member forces the hardened burn face's v1 denotation on every
+row. -/
+theorem burnAvailWide_row_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hf : Satisfied2FaithfulWide permOut hash burnV3AvailWide minit mfin maddrs t) :
+    ∀ i, i < t.rows.length →
+      satisfiedVm hash Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
+        (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
+  wideEmbedded_sound_v1 permOut hash
+    Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail burnV3AvailWide
+    BU_AVAIL_BB (BU_AVAIL_BB + 239) minit mfin maddrs t (by decide) burnAvail_clean
+    availHost_mem_burnAvailWide hf
+
+#assert_axioms burnAvail_clean
+#assert_axioms availHost_mem_burnAvailWide
+#assert_axioms burnAvailWide_row_v1
+
+/-! ### §7.3 — the capacity-floor refuse teeth, re-closed on the REFUSED burn avail wide member
+(the settle-as-BURN dodge does not regress through the retarget). -/
+
+/-- A member of ANY of the three refuse blocks is a constraint of the refused burn member. -/
+theorem blockAt_mem_burnRefusedWide (g : VmConstraint2)
+    (hg : g ∈ blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth
+        (tagSettleEscrow : ℤ) 0
+      ∨ g ∈ blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth
+        (tagDischargeObligation : ℤ) 1
+      ∨ g ∈ blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth
+        (tagVaultDeposit : ℤ) 2) :
+    g ∈ burnAvailWideRefused.constraints := by
+  show g ∈ (gentianDeployedBareRefuseAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide).constraints
+  unfold Dregg2.Circuit.Emit.AvailWireMembers.gentianDeployedBareRefuseAt
+    Dregg2.Circuit.Emit.AvailWireMembers.deployedRefuseGatesAt
+  refine List.mem_append_right _ ?_
+  simp only [List.mem_append]
+  tauto
+
+/-- **THE THREE DODGES, CLOSED ON THE REFUSED BURN AVAIL WIDE MEMBER.** For a cell whose
+committed manifest declares capacity tag `T` at block `b` (escrow 0 / discharge 1 / vault 2), a
+satisfying witness of `burnAvailWideRefused` is FALSE — the burn mirror of
+`declared_capacity_unsat_availWideRefused`. -/
+theorem declared_capacity_unsat_burnAvailWideRefused (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash) (tag : ℤ) (b : Nat)
+    (hblock : blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth tag b
+        = blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth
+            (tagSettleEscrow : ℤ) 0
+      ∨ blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth tag b
+        = blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth
+            (tagDischargeObligation : ℤ) 1
+      ∨ blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth tag b
+        = blockGatesAt (cavBaseOf BU_AVAIL_BB) burnV3AvailWide.traceWidth
+            (tagVaultDeposit : ℤ) 2)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash burnAvailWideRefused minit mfin maddrs t)
+    (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (htag : 0 ≤ tag ∧ tag < 2013265921)
+    (committedManifest : RotCaveatManifest)
+    (hbind : caveatCommit hash
+        (manifestOf (cavBaseOf BU_AVAIL_BB) (ebAt (cavBaseOf BU_AVAIL_BB)) (envAt t 0).loc)
+      = caveatCommit hash committedManifest)
+    (hreq : tag ∈ manifestTags committedManifest) :
+    False := by
+  refine declared_tag_unsat_at hash hCR tag (cavBaseOf BU_AVAIL_BB)
+    (ebAt (cavBaseOf BU_AVAIL_BB))
+    (bcAt burnV3AvailWide.traceWidth b)
+    (icAt burnV3AvailWide.traceWidth b)
+    (ocAt burnV3AvailWide.traceWidth b)
+    (fcAt burnV3AvailWide.traceWidth b)
+    burnAvailWideRefused
+    (fun g hg => blockAt_mem_burnRefusedWide g ?_)
+    (blockAt_mem_burnRefusedWide _ ?_)
+    hsat hi hnl hcanon htag committedManifest hbind hreq
+  · rcases hblock with h | h | h
+    · exact Or.inl (h ▸ decodeAt_mem_blockAt (cavBaseOf BU_AVAIL_BB)
+        burnV3AvailWide.traceWidth tag b g hg)
+    · exact Or.inr (Or.inl (h ▸ decodeAt_mem_blockAt (cavBaseOf BU_AVAIL_BB)
+        burnV3AvailWide.traceWidth tag b g hg))
+    · exact Or.inr (Or.inr (h ▸ decodeAt_mem_blockAt (cavBaseOf BU_AVAIL_BB)
+        burnV3AvailWide.traceWidth tag b g hg))
+  · rcases hblock with h | h | h
+    · exact Or.inl (h ▸ refuseAt_mem_blockAt (cavBaseOf BU_AVAIL_BB)
+        burnV3AvailWide.traceWidth tag b)
+    · exact Or.inr (Or.inl (h ▸ refuseAt_mem_blockAt (cavBaseOf BU_AVAIL_BB)
+        burnV3AvailWide.traceWidth tag b))
+    · exact Or.inr (Or.inr (h ▸ refuseAt_mem_blockAt (cavBaseOf BU_AVAIL_BB)
+        burnV3AvailWide.traceWidth tag b))
+
+/-- Escrow (block 0) is UNSAT under the refused burn avail wide member when declared. -/
+theorem declared_escrow_unsat_burnAvailWideRefused (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash burnAvailWideRefused minit mfin maddrs t)
+    (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (committedManifest : RotCaveatManifest)
+    (hbind : caveatCommit hash
+        (manifestOf (cavBaseOf BU_AVAIL_BB) (ebAt (cavBaseOf BU_AVAIL_BB)) (envAt t 0).loc)
+      = caveatCommit hash committedManifest)
+    (hreq : (tagSettleEscrow : ℤ) ∈ manifestTags committedManifest) :
+    False :=
+  declared_capacity_unsat_burnAvailWideRefused hash hCR _ 0 (Or.inl rfl) hsat hi hnl hcanon
+    (by decide) committedManifest hbind hreq
+
+/-- Discharge (block 1) is UNSAT under the refused burn avail wide member when declared. -/
+theorem declared_discharge_unsat_burnAvailWideRefused (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash burnAvailWideRefused minit mfin maddrs t)
+    (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (committedManifest : RotCaveatManifest)
+    (hbind : caveatCommit hash
+        (manifestOf (cavBaseOf BU_AVAIL_BB) (ebAt (cavBaseOf BU_AVAIL_BB)) (envAt t 0).loc)
+      = caveatCommit hash committedManifest)
+    (hreq : (tagDischargeObligation : ℤ) ∈ manifestTags committedManifest) :
+    False :=
+  declared_capacity_unsat_burnAvailWideRefused hash hCR _ 1 (Or.inr (Or.inl rfl)) hsat hi hnl
+    hcanon (by decide) committedManifest hbind hreq
+
+/-- Vault (block 2) is UNSAT under the refused burn avail wide member when declared. -/
+theorem declared_vault_unsat_burnAvailWideRefused (hash : List ℤ → ℤ)
+    (hCR : Poseidon2SpongeCR hash)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hsat : Satisfied2 hash burnAvailWideRefused minit mfin maddrs t)
+    (hi : 0 < t.rows.length) (hnl : (0 + 1 == t.rows.length) = false)
+    (hcanon : ∀ r c, 0 ≤ (envAt t r).loc c ∧ (envAt t r).loc c < 2013265921)
+    (committedManifest : RotCaveatManifest)
+    (hbind : caveatCommit hash
+        (manifestOf (cavBaseOf BU_AVAIL_BB) (ebAt (cavBaseOf BU_AVAIL_BB)) (envAt t 0).loc)
+      = caveatCommit hash committedManifest)
+    (hreq : (tagVaultDeposit : ℤ) ∈ manifestTags committedManifest) :
+    False :=
+  declared_capacity_unsat_burnAvailWideRefused hash hCR _ 2 (Or.inr (Or.inr rfl)) hsat hi hnl
+    hcanon (by decide) committedManifest hbind hreq
+
+#assert_axioms blockAt_mem_burnRefusedWide
+#assert_axioms declared_capacity_unsat_burnAvailWideRefused
+#assert_axioms declared_escrow_unsat_burnAvailWideRefused
+#assert_axioms declared_discharge_unsat_burnAvailWideRefused
+#assert_axioms declared_vault_unsat_burnAvailWideRefused
 
 end Dregg2.Circuit.Emit.AvailWideMembers

@@ -156,6 +156,18 @@ def main : IO Unit := do
       -- `declared_*_unsat_availWideRefused`). PI-EXPOSURE leg only (the FOLD edge binds).
       let trWide := Dregg2.Circuit.Emit.AvailWideMembers.transferAvailWideRefused
       IO.println s!"{key}\t{trWide.name}\t{emitVmJson2 trWide}"
+    else if key == "burnVmDescriptor2R24" then
+      -- AVAILABILITY RETARGET, the WIDE-BURN twin (the LAST wrap-class member): the crown burn
+      -- host rebuilt over the §8¾ borrow-weld face (`AvailWideMembers.burnV3AvailWide` — 66 PIs
+      -- UNCHANGED, burn carries no membership teeth; rc pins at the burn-avail-shifted carrier;
+      -- width 2607 → 2615). The capacity-floor refuse rides the burn AVAIL caveat base
+      -- (`cavBaseOf 196 = 674` — the fixed-base `gentianWideBareRefuse` would decode the WRONG
+      -- columns on the widened face), i.e. the committed row is
+      -- `AvailWideMembers.burnAvailWideRefused`, whose availability discharge + refuse teeth are
+      -- proven (`RotatedKernelRefinementMintBurnAvailWide`,
+      -- `declared_*_unsat_burnAvailWideRefused`).
+      let buWide := Dregg2.Circuit.Emit.AvailWideMembers.burnAvailWideRefused
+      IO.println s!"{key}\t{buWide.name}\t{emitVmJson2 buWide}"
     else
       IO.println s!"{key}\t{(weldWide key d).name}\t{emitVmJson2 (weldWide key d)}"
   -- position 45: `transferCapOpenTB` made 8-felt-wide, RETARGETED to the AVAIL base (the

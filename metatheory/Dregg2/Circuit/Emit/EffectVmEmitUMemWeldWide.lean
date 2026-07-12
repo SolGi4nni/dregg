@@ -251,6 +251,14 @@ def crownWideHosts : List (String × EffectVmDescriptor2) :=
     -- (`membershipAvailWide_row_v1` + `transferAvail_derives_availability_row`).
     else if e.1 == "transferVmDescriptor2R24" then
       (e.1, Dregg2.Circuit.Emit.AvailWideMembers.transferV3MembershipAvailWide)
+    -- AVAILABILITY RETARGET, the WIDE-BURN twin (the LAST wrap-class member): the burn crown
+    -- host is the plain cohort wide member REBUILT over the §8¾ borrow-weld face
+    -- (`AvailWideMembers.burnV3AvailWide` — 66 PIs UNCHANGED, rc pins at the burn-avail-shifted
+    -- carrier, width 2607 → 2615), so the welded twin carries the availability forcing
+    -- (`burnAvailWide_row_v1` + `burnAvail_derives_availability_row` — the well-supply-inflation
+    -- forgery UNSAT on the welded leg).
+    else if e.1 == "burnVmDescriptor2R24" then
+      (e.1, Dregg2.Circuit.Emit.AvailWideMembers.burnV3AvailWide)
     else if e.1 == "makeSovereignVmDescriptor2R24" then
       (e.1, Dregg2.Circuit.Emit.CarrierComposed.makeSovereignV3DeployedWide)
     else e)
@@ -407,5 +415,28 @@ def weldedTransferCapOpenTBAvailWide : EffectVmDescriptor2 :=
   (fun e => e.2.name.startsWith "dregg-effectvm-transfer-v1-avail")
 #guard (weldedWideRegistry.filter (·.1 == "transferCapOpenTBVmDescriptor2R24")).all
   (fun e => e.2.name.startsWith "dregg-effectvm-transfer-v1-avail")
+
+/-! ## The named WELDED wide-avail BURN member (the exact wire object the welded registry emits
+for the burn key post-retarget — the refinement discharge
+`RotatedKernelRefinementMintBurnAvailWide` is stated over THIS). -/
+
+/-- The WELDED avail crown burn as EMITTED (refuse-first at the burn-avail caveat base, then the
+heap-domain umem weld — the runtime producer's composition for the bare-cohort burn key; burn
+moves `Balance`, so `wideKeyUMemDomain "burnVmDescriptor2R24" = heap`). -/
+def weldedBurnAvailWide : EffectVmDescriptor2 :=
+  weldUMemIntoWide Dregg2.Circuit.Emit.AvailWideMembers.burnAvailWideRefused Domain.heap
+
+-- The welded burn twin carries the weld marker, the +7 no-narrowing geometry, and the avail name
+-- key (the Rust `avail_pad_for_descriptor_name` prefix survives every wrapper).
+#guard weldedBurnAvailWide.name.endsWith wideUMemWeldSuffix
+#guard weldedBurnAvailWide.name.startsWith "dregg-effectvm-burn-v1-avail"
+#guard weldedBurnAvailWide.traceWidth
+  == Dregg2.Circuit.Emit.AvailWideMembers.burnAvailWideRefused.traceWidth + 7
+#guard weldedBurnAvailWide.piCount
+  == Dregg2.Circuit.Emit.AvailWideMembers.burnAvailWideRefused.piCount
+#guard wideKeyUMemDomain "burnVmDescriptor2R24" = Domain.heap
+-- The welded registry's burn entry is the avail twin (the retarget landed name-stable).
+#guard (weldedWideRegistry.filter (·.1 == "burnVmDescriptor2R24")).all
+  (fun e => e.2.name.startsWith "dregg-effectvm-burn-v1-avail")
 
 end Dregg2.Circuit.Emit.EffectVmEmitUMemWeldWide
