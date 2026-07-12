@@ -36,16 +36,6 @@ use serenity::all::{
 use tokio::sync::RwLock;
 use tracing::{debug, info, warn};
 
-// The per-session channel/thread lifecycle that DRIVES this engine.
-//
-// NOTE FOR THE MAIN LOOP: this `#[path]` declaration is a placeholder so the
-// module compiles (and its tests run) without touching `main.rs`, which the main
-// loop owns. When `main.rs` gains `pub mod orchestration;`, DELETE these two lines
-// — `orchestration.rs` uses only absolute `crate::…` paths, so it needs no edit to
-// move from `crate::discord_caps::orchestration` to `crate::orchestration`.
-#[path = "orchestration.rs"]
-pub mod orchestration;
-
 // =============================================================================
 // Discord capabilities (dregg → Discord direction)
 // =============================================================================
