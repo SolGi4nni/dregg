@@ -42,7 +42,7 @@
 //! column-space `LeanExpr`s; `Lookup`/`MemOp`/`MapOp`/`UMemOp`/`WindowGate` are column-space
 //! too), so the shift is total. A descriptor carrying a `ProofBind` constraint (the custom
 //! leg's recursion-argument row) is REFUSED — the custom carrier's claim slots (IR2 PI
-//! 46..49) are already deployed and never ride this twin.
+//! 46..53, the 8-felt flag-day exposure) are already deployed and never ride this twin.
 
 use dregg_circuit::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
 use dregg_circuit::field::BabyBear;

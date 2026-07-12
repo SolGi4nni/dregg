@@ -2084,39 +2084,65 @@ def refreshDelegationWriteV3 : EffectVmDescriptor2 :=
 def setFieldDynV3 : EffectVmDescriptor2 :=
   v3OfWith setFieldDynV1Face [.memOp fieldWriteOp, .memOp fieldReadbackOp]
 
-/-- **The VK-epoch PI exposure for the rotated Custom member.** Eight `.piBinding .first`
-constraints publishing the `proofBind` op's bound columns as PUBLIC INPUTS of the descriptor:
-the four `custom_proof_commitment` limbs (`prmCol (CUSTOM_COMMIT + k)` = cols 72..75) at IR2 PI
-slots `46..49` (the first slots past the four rotated commit pins, `rotateV3` produces
-`piCount = 46`), and the four low `custom_program_vk_hash` limbs (`prmCol (CUSTOM_VK + k)` =
-cols 68..71) at slots `50..53`, all pinned on the FIRST (the lead Custom) row — the row the
-`generate_rotated_custom_wide` generator lays the bound `(vk, commit)` on. Exposing these
-columns as PIs is THE change that lets the per-turn FOLD connect the custom sub-proof leaf's
-4-felt PI-commitment to the descriptor: the binding (a verifying sub-proof of `E` whose PI
-commitment EQUALS this column) is enforced at the FOLD via these PIs + the custom-leaf recursion
-(`StarkSoundCustom` / `EngineBinding`, the Lean model in `CustomApex`, axiom-clean), NOT by a
-row-local in-AIR gate — so the per-row `proofBind` denotation stays `True` like `memOp`/`umemOp`
+/-- **The custom COMMIT-TEETH column base** (the proof-bind flag-day rotation, 4 → 8 commitment
+felts): the four member-local columns carrying `custom_proof_commitment` limbs 4..8 (the genuine
+SECOND SQUEEZE BLOCK of the 8-felt `WideHash` commitment), appended at the END of the custom
+member's graduated host width — the custom twin of the membership/sovereign teeth
+(`CarrierComposed.withMembershipTeethPinsAt`), placed IN the host so the generic wraps
+(`withDfaRcPins`, the gentian refuse weld, `wideAppend`) land past them with zero special-casing.
+Rust twin: `trace_rotated::CUSTOM_COMMIT_TEETH_BASE` (`#guard`-pinned to 1619 below). -/
+def CUSTOM_COMMIT_TEETH_COL : Nat :=
+  (v3OfWith customV1Face [.proofBind customProofBind]).traceWidth
+
+/-- **The VK-epoch PI exposure for the rotated Custom member — the PROOF-BIND FLAG-DAY ROTATION
+(4 → 8 commitment felts, ~62-bit → ~124-bit birthday).** Twelve `.piBinding .first` constraints
+publishing the `proofBind` op's bound binding as PUBLIC INPUTS of the descriptor:
+the four LOW `custom_proof_commitment` limbs (`prmCol (CUSTOM_COMMIT + k)` = cols 72..75) at IR2
+PI slots `46..49` (the first slots past the four rotated commit pins, `rotateV3` produces
+`piCount = 46`), the four HIGH commitment limbs — the second squeeze block, on the member-local
+COMMIT-TEETH columns (`CUSTOM_COMMIT_TEETH_COL + k`) — at slots `50..53`, and the four low
+`custom_program_vk_hash` limbs (`prmCol (CUSTOM_VK + k)` = cols 68..71) at slots `54..57`, all
+pinned on the FIRST (the lead Custom) row — the row the `generate_rotated_custom_wide` generator
+lays the bound `(vk, commit)` on. Exposing these columns as PIs is THE change that lets the
+per-turn FOLD connect the custom sub-proof leaf's 8-felt PI-commitment to the descriptor: the
+binding (a verifying sub-proof of `E` whose PI commitment EQUALS these columns) is enforced at
+the FOLD via these PIs + the custom-leaf recursion (`StarkSoundCustom` / `EngineBinding`, the
+Lean model in `CustomApex`, axiom-clean), NOT by a row-local in-AIR gate — so the per-row
+`proofBind` denotation stays `True` like `memOp`/`umemOp`
 (`DescriptorIR2.VmConstraint2.holdsAt`). The full 8-felt `vk_hash` is carried by the wide host
 PI (`pi.rs::CUSTOM_PROOFS_BASE`) / the turn hash; the descriptor exposes only the four vk-hash
-limbs that exist as trace columns (`columns.rs::CUSTOM_VK_HASH_BASE = 4 elements`). -/
+limbs that exist as trace columns (`columns.rs::CUSTOM_VK_HASH_BASE = 4 elements`). A legacy
+4-felt (eight-pin) custom artifact is refused at the Rust versioned boundary
+(`effect_vm_descriptors::require_custom_commit_teeth_v2`), never silently widened. -/
 def customPiExposure : List VmConstraint2 :=
   (List.range 4).map (fun k =>
     .base (.piBinding .first (prmCol (CUSTOM_COMMIT + k)) (46 + k)))
   ++ (List.range 4).map (fun k =>
-    .base (.piBinding .first (prmCol (CUSTOM_VK + k)) (50 + k)))
+    .base (.piBinding .first (CUSTOM_COMMIT_TEETH_COL + k) (50 + k)))
+  ++ (List.range 4).map (fun k =>
+    .base (.piBinding .first (prmCol (CUSTOM_VK + k)) (54 + k)))
 
 /-- The rotated CUSTOM (sel 8) WITH the recursive-proof-binding leg: the runtime passthrough face
 lifted through `rotateV3`, carrying the `proofBind` op (`customProofBind`) that ties the row's
 `custom_proof_commitment` to a verifying external sub-proof — the accumulator constraint the
-per-row IR gained — PLUS (the VK epoch) the eight `customPiExposure` PI bindings that publish the
-bound `(commit, vk)` columns so the per-turn FOLD can connect the custom sub-proof leaf. The
-`proofBind` row gate stays `True`; the binding is enforced at the fold (see `customPiExposure`).
+per-row IR gained — PLUS (the VK epoch + the proof-bind flag day) the FOUR COMMIT-TEETH columns
+(the 8-felt commitment's second squeeze block, appended at the end of the host) and the twelve
+`customPiExposure` PI bindings that publish the bound `(commit, vk)` so the per-turn FOLD can
+connect the custom sub-proof leaf. The `proofBind` row gate stays `True`; the binding is
+enforced at the fold (see `customPiExposure`).
 This is THE last rotation-cohort member: with it the HONEST RESIDUE is EMPTY. -/
 def customV3 : EffectVmDescriptor2 :=
   let d := v3OfWith customV1Face [.proofBind customProofBind]
   { d with
-    piCount     := d.piCount + 8
+    traceWidth  := d.traceWidth + 4
+    piCount     := d.piCount + 12
     constraints := d.constraints ++ customPiExposure }
+
+-- The commit-teeth base is the PRE-TEETH graduated host width — byte-pinned to the Rust twin
+-- (`trace_rotated::CUSTOM_COMMIT_TEETH_BASE = CUSTOM_HOST_WIDTH = 1619`) and to the widened
+-- member geometry (host 1623 = 1619 + 4).
+#guard CUSTOM_COMMIT_TEETH_COL == 1619
+#guard customV3.traceWidth == CUSTOM_COMMIT_TEETH_COL + 4
 
 /-! ### The note-spend nullifier PI weld (the C4 last-flip-gate close).
 
@@ -5532,11 +5558,12 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
   w.piCount == b.piCount + 4 && w.traceWidth == b.traceWidth
     && w.tables.length == b.tables.length && w.hashSites.length == b.hashSites.length
 -- The deployed transfer publishes rc at slots 46..49 (piCount 46 → 50); the STEP-3 factory
--- (piCount 63) at 63..66; the custom exposure member (piCount 54) at 54..57; the bridge-mint
--- felt mint-hash member (piCount 47 — the mint-hash pin at 46) at 47..50.
+-- (piCount 63) at 63..66; the custom exposure member (piCount 58 — the proof-bind flag day's
+-- twelve exposure pins at 46..57) at 58..61; the bridge-mint felt mint-hash member (piCount 47 —
+-- the mint-hash pin at 46) at 47..50.
 #guard (v3Registry.lookup "transferVmDescriptor2R24").any (·.piCount == 50)
 #guard (v3Registry.lookup "factoryVmDescriptor2R24").any (·.piCount == 67)
-#guard (v3Registry.lookup "customVmDescriptor2R24").any (·.piCount == 58)
+#guard (v3Registry.lookup "customVmDescriptor2R24").any (·.piCount == 62)
 #guard (v3Registry.lookup "mintVmDescriptor2R24").any (·.piCount == 51)
 
 #guard v3Registry.length == 36
@@ -5547,11 +5574,13 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 #guard v3Registry.all fun (_, d) => !d.name.isEmpty && !d.constraints.isEmpty && d.traceWidth != 0
 -- Phase B-GATE: each graduated registry descriptor's width is the rotated base PLUS `7·n_sites`
 -- lane columns (n_sites varies by v1 face), so the width is `≥ base` and the surplus is a
--- multiple of 7 (`CHIP_OUT_LANES - 1`). Concrete per-descriptor widths are pinned by the
--- emit goldens + the Rust registry fingerprints.
-#guard v3Registry.all fun (_, d) =>
+-- multiple of 7 (`CHIP_OUT_LANES - 1`) — EXCEPT the custom member, whose surplus additionally
+-- carries the 4 COMMIT-TEETH columns (the proof-bind flag-day rotation; `CUSTOM_COMMIT_TEETH_COL`).
+-- Concrete per-descriptor widths are pinned by the emit goldens + the Rust registry fingerprints.
+#guard v3Registry.all fun (k, d) =>
+  let teeth := if k == "customVmDescriptor2R24" then 4 else 0
   EFFECT_VM_WIDTH + APPENDIX_SPAN ≤ d.traceWidth
-    && (d.traceWidth - (EFFECT_VM_WIDTH + APPENDIX_SPAN)) % (CHIP_OUT_LANES - 1) == 0
+    && (d.traceWidth - (EFFECT_VM_WIDTH + APPENDIX_SPAN) - teeth) % (CHIP_OUT_LANES - 1) == 0
 #guard v3Registry.all fun (_, d) => d.tables.length == 5
 #guard v3Registry.all fun (_, d) => d.hashSites.length == 0 && d.ranges.length == 0
 -- The rotated transfer: the v1 graduation's constraints + 24 welds + 4 pins + 130 chip sites (v13).
@@ -5613,10 +5642,11 @@ def v3Registry : List (String × EffectVmDescriptor2) :=
 -- spawn keeps EXACTLY its 2 cells-tree grow-gate map-ops (limb 0); the 2 cap-tree map-ops (limb 25)
 -- are DROPPED (the INSERT-shaped after-spine deploy — the cap handoff rides `effCapInsertV3`).
 #guard (mapOpsOf spawnWriteV3).length == 2
--- The rotated Custom carries EXACTLY its one proof-binding op + the eight `customPiExposure`
+-- The rotated Custom carries EXACTLY its one proof-binding op + the twelve `customPiExposure`
 -- PI pins past the rotated passthrough base (no mem/map ops — the recursive-proof binding is
--- Custom's only NEWLY-EXPRESSIBLE leg; the eight pins publish its bound (commit, vk) columns).
-#guard customV3.constraints.length == (v3Of customV1Face).constraints.length + 1 + 8
+-- Custom's only NEWLY-EXPRESSIBLE leg; the twelve pins publish its bound 8-felt commitment —
+-- both squeeze blocks, the proof-bind flag day — plus the four low vk-hash limbs).
+#guard customV3.constraints.length == (v3Of customV1Face).constraints.length + 1 + 12
 #guard (proofBindsOf customV3).length == 1
 #guard (memOpsOf customV3).length == 0
 #guard (mapOpsOf customV3).length == 0

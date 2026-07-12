@@ -3,7 +3,7 @@
 //! This is the integration tooth for the deployed custom-effect fold-wire (the close of the one
 //! REAL deployed light-client vacuity). It builds a REAL 2-turn chain whose FIRST turn is an
 //! `Effect::Custom` turn carrying a `customVmDescriptor2R24` wide leg (publishing its claimed
-//! `custom_proof_commitment` at IR2 PI 46..49) PLUS the prover-side `CustomWitnessBundle` (the
+//! 8-felt `custom_proof_commitment` at IR2 PI 46..53 — the proof-bind flag-day rotation) PLUS the prover-side `CustomWitnessBundle` (the
 //! re-provable `CellProgram` + trace witness + PIs), folds it through the DEPLOYED chain prover
 //! (`prove_turn_chain_recursive` → `prove_chain_core_rotated`), and verifies the whole-chain
 //! artifact through the light-client verifier (`verify_turn_chain_recursive`).
@@ -159,14 +159,14 @@ fn custom_pis() -> Vec<BabyBear> {
     vec![BabyBear::new(10), BabyBear::new(15)]
 }
 
-/// Mint a REAL `customVmDescriptor2R24` wide leg whose claimed `custom_proof_commitment` (IR2 PI
-/// 46..49) is `commit`. Custom bumps nonce by 1, balance unchanged: `before=(b,nonce)`,
+/// Mint a REAL `customVmDescriptor2R24` wide leg whose claimed 8-felt `custom_proof_commitment`
+/// (IR2 PI 46..53 — limbs 0..4 from the param cols, limbs 4..8 from the commit teeth) is `commit`. Custom bumps nonce by 1, balance unchanged: `before=(b,nonce)`,
 /// `after=(b,nonce+1)`. Optionally attach the prover-side `bundle` (the deployed custom-binding
 /// thread the chain prover reads).
 fn mint_custom_leg(
     balance: i64,
     nonce: u64,
-    commit: [BabyBear; 4],
+    commit: [BabyBear; 8],
     bundle: Option<CustomWitnessBundle>,
 ) -> RotatedParticipantLeg {
     let st = CellState::new(balance as u64, nonce as u32);
@@ -214,15 +214,16 @@ fn mint_custom_leg(
     )
     .expect("custom wide dispatch");
     assert!(
-        dpis.len() >= 50,
-        "custom leg PI vector must carry the commitment slice at 46..49 (got {})",
+        dpis.len() >= 54,
+        "custom leg PI vector must carry the 8-felt commitment slice at 46..53 (got {})",
         dpis.len()
     );
-    // The leg PUBLISHES the claimed commitment at PI 46..49 (== the effect's proof_commitment).
+    // The leg PUBLISHES the claimed 8-felt commitment at PI 46..53 (== the effect's
+    // proof_commitment — both squeeze blocks, the flag-day rotation).
     assert_eq!(
-        &dpis[46..50],
+        &dpis[46..54],
         &commit[..],
-        "custom leg must publish the claimed commitment at PI 46..49"
+        "custom leg must publish the claimed 8-felt commitment at PI 46..53"
     );
 
     let config = ir2_leaf_wrap_config();
@@ -259,6 +260,10 @@ fn plain_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
         BabyBear::new(2),
         BabyBear::new(3),
         BabyBear::new(4),
+        BabyBear::new(5),
+        BabyBear::new(6),
+        BabyBear::new(7),
+        BabyBear::new(8),
     ];
     let leg = mint_custom_leg(balance, nonce, commit, None);
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
@@ -276,7 +281,7 @@ fn honest_bundle() -> CustomWitnessBundle {
 
 /// Build the 2-turn chain. Turn 0 is the bundled custom turn whose claimed commitment is `commit`;
 /// turn 1 is a plain custom turn linking off turn 0's post-state `(b, nonce+1)`.
-fn build_chain(commit: [BabyBear; 4]) -> Vec<FinalizedTurn> {
+fn build_chain(commit: [BabyBear; 8]) -> Vec<FinalizedTurn> {
     let balance = 1000i64;
     let t0_leg = mint_custom_leg(balance, 0, commit, Some(honest_bundle()));
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));

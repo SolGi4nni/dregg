@@ -5,8 +5,10 @@
 //! `RotatedParticipantLeg::with_custom_witness` directly (a test-only setter), this builds the leg
 //! through the PRODUCTION recipe:
 //!
-//!   1. `prove_custom_program` mints the genuine `BoundCustomProof` (now RETAINING the re-provable
-//!      trace witness, prover-side) — the same call the turn-build path makes;
+//!   1. the genuine `BoundCustomProof` is built RETAINING the re-provable trace witness,
+//!      prover-side (the direct-construction form that survived stark-kill — the hand
+//!      `prove_custom_program` STARK engine is deleted; the fold path RE-PROVES the leaf from the
+//!      retained witness, so the off-AIR bytes are not load-bearing here);
 //!   2. `CustomWitnessBundle::from_bound_custom_proof` projects that retained witness into the bundle
 //!      (the RETENTION SEAM) — `None`-fail-closed if the proof came off the wire;
 //!   3. `dregg_turn::rotation_witness::mint_custom_wide_rotated_participant_leg` drives `produce`
@@ -28,7 +30,7 @@ use dregg_circuit::dsl::circuit::{
 };
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
-use dregg_circuit_prove::custom_proof_bind::{BoundCustomProof, prove_custom_program};
+use dregg_circuit_prove::custom_proof_bind::BoundCustomProof;
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, prove_turn_chain_recursive, verify_turn_chain_recursive,
 };
@@ -136,13 +138,23 @@ fn custom_pis() -> Vec<BabyBear> {
     vec![BabyBear::new(10), BabyBear::new(15)]
 }
 
-/// Mint the genuine `BoundCustomProof` exactly as the turn-build path does — this RETAINS the
-/// re-provable witness (the field the deployed fold needs).
+/// Build the genuine `BoundCustomProof` exactly as the turn-build path does — RETAINING the
+/// re-provable witness (the field the deployed fold needs). The hand-STARK
+/// `prove_custom_program` died with stark-kill; the surviving production form constructs the
+/// bound proof directly over the retained witness (the fold RE-PROVES the sub-proof as a
+/// recursion leaf from `witness_values`/`num_rows`, so `proof_bytes` is not load-bearing on
+/// this path — the wire projection is exercised by `wide_completeness_ledger`).
 fn honest_bound() -> BoundCustomProof {
     let program = demo_program();
     let (w, rows) = honest_witness();
     let pis = custom_pis();
-    prove_custom_program(&program, &w, rows, &pis).expect("honest custom sub-proof proves")
+    BoundCustomProof {
+        program,
+        proof_bytes: Vec::new(),
+        public_inputs: pis,
+        witness_values: Some(w),
+        num_rows: Some(rows),
+    }
 }
 
 /// Mint the PRODUCTION custom-wide leg (the `customVmDescriptor2R24` wide leg + the attached
@@ -151,7 +163,7 @@ fn honest_bound() -> BoundCustomProof {
 fn mint_production_custom_leg(
     balance: i64,
     nonce: u64,
-    commit: [BabyBear; 4],
+    commit: [BabyBear; 8],
     bound: &BoundCustomProof,
 ) -> dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg {
     let st = CellState::new(balance as u64, nonce as u32);
@@ -191,6 +203,10 @@ fn plain_custom_turn(balance: i64, nonce: u64, bound: &BoundCustomProof) -> Fina
             BabyBear::new(2),
             BabyBear::new(3),
             BabyBear::new(4),
+            BabyBear::new(5),
+            BabyBear::new(6),
+            BabyBear::new(7),
+            BabyBear::new(8),
         ],
     }];
     // Re-use the production NARROW recipe for a non-bundled custom turn? The narrow recipe rejects
@@ -216,7 +232,7 @@ fn plain_custom_turn(balance: i64, nonce: u64, bound: &BoundCustomProof) -> Fina
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
 }
 
-fn build_chain(commit: [BabyBear; 4]) -> Vec<FinalizedTurn> {
+fn build_chain(commit: [BabyBear; 8]) -> Vec<FinalizedTurn> {
     let balance = 1000i64;
     let bound = honest_bound();
     let t0_leg = mint_production_custom_leg(balance, 0, commit, &bound);

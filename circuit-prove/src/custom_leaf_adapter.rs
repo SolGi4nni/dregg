@@ -163,7 +163,7 @@
 //! ## The connect-into-the-fold step — DEPLOYED (the binding is REAL for a pure light client)
 //!
 //! The exposed claim is connected to the effect-vm leg's published `custom_proof_commitment` (IR2
-//! PI slots 46..49) IN THE DEPLOYED CHAIN PROVER. For a custom turn,
+//! PI slots 46..53 — the 8-felt flag-day exposure) IN THE DEPLOYED CHAIN PROVER. For a custom turn,
 //! [`crate::ivc_turn_chain::prove_chain_core_rotated`] mints a DUAL-EXPOSE leg leaf
 //! ([`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose`] — its single `expose_claim` carries
 //! the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed commitment in lanes
@@ -1092,9 +1092,12 @@ fn ext_from_base_coeffs(coeffs: [u32; 4]) -> RecursionChallenge {
 /// challenger runs, KAT-locked to `default_babybear_poseidon2_16`), driven as an ADDITIVE
 /// rate-4 sponge with the BLAKE3 domain seed in capacity lane 4 and the input length in lane 5.
 ///
-/// The host commitment is `WideHash::to_felts()[0..4]`, which is the state rate (lanes 0..4)
-/// AFTER the last ABSORB permutation — strictly BEFORE the squeeze permute. So only the absorb
-/// phase is reconstructed here; the 4 returned targets are exactly the host's first 4 felts.
+/// The host commitment is the FULL `WideHash::to_felts()` (8 felts, flag-day rotation from 4):
+/// felts 0..4 are the state rate (lanes 0..4) AFTER the last ABSORB permutation, and felts 4..8
+/// are the GENUINE SECOND SQUEEZE BLOCK — the rate lanes after ONE MORE permutation of the same
+/// full 16-lane state (`state.permute()` between the host's two squeeze reads). Both phases are
+/// reconstructed here; the 8 returned targets are exactly the host's 8 felts — never duplication
+/// or zero padding.
 ///
 /// The width-16 base permutation is reached through the ENABLED ext-packed `BABY_BEAR_D4_W16`
 /// challenger op (the recursion stack registers only the D=4 width-16/24 ops; the D=1 base op the
@@ -1112,30 +1115,61 @@ fn ext_from_base_coeffs(coeffs: [u32; 4]) -> RecursionChallenge {
 /// (base lanes 0..4), returned rate limb 1 (base lanes 4..8 — the domain/len lanes, which the
 /// host never re-touches during absorb) passes through unchanged, and the capacity (lanes
 /// 8..16) stays chained OFF the bus (the AIR inherits the previous perm row's capacity output).
-/// The host has NO padding block, NO length re-absorb, and NO squeeze permute, so neither
-/// exists here; the total input length is bound once, in the initial lane-5 constant.
+/// The host has NO padding block and NO length re-absorb, so neither exists here; the total
+/// input length is bound once, in the initial lane-5 constant. The host DOES have exactly one
+/// squeeze permute (between the two squeeze blocks), mirrored by the final chained sponge step
+/// below: the rate limbs pass through UNCHANGED (nothing absorbed) and the capacity chains
+/// off-bus — byte-identical to the host's `state.permute()` over the full post-absorb state.
 fn incircuit_custom_pi_commitment(
     cb: &mut CircuitBuilder<RecursionChallenge>,
     pi_targets: &[Target],
-) -> Result<[Target; 4], String> {
+) -> Result<[Target; 8], String> {
     let config = Poseidon2Config::BABY_BEAR_D4_W16;
     let zero = embed_base_const(cb, 0);
 
-    // Host: `for chunk in inputs.chunks(4) { state[i] += chunk[i]; permute() }`. Empty input ⇒ no
-    // permute ⇒ commitment is the untouched zero rate.
-    if pi_targets.is_empty() {
-        return Ok([zero, zero, zero, zero]);
-    }
+    // limb 1 = base lanes 4..8 = [domain, total_input_len, 0, 0] — a single compile-time ext
+    // constant, the INITIAL rate state only (the host writes lanes 4,5 once, before any permute).
+    let dom = custom_pi_domain_seed();
+    let len = pi_targets.len() as u32;
+    let limb1 = cb.define_const(ext_from_base_coeffs([dom, len, 0, 0]));
+    // limbs 2,3 = base lanes 8..16 = the host's zero capacity tail (and the all-zero rate limb 0
+    // for the empty-input squeeze).
+    let zero_limb = cb.define_const(RecursionChallenge::ZERO);
 
-    // Pack one four-PI chunk into a single ext limb: coefficients = the chunk, zero-padded (the
-    // host's partial final chunk adds nothing into the absent lanes — adding the zero pad is the
-    // same value). The PI targets are bus-present (created by the verified inner proof), so
-    // recomposing them is bus-balanced; the constant pads/domain/len must NOT go through recompose
-    // (a const consumed as an ALU operand has no bus creator — the WitnessChecks mismatch this
-    // avoids), so limb 1 and the capacity tail are built as DIRECT ext constants (the same way the
-    // segment sponge feeds its tag).
-    let pack =
-        |cb: &mut CircuitBuilder<RecursionChallenge>, chunk: &[Target]| -> Result<Target, String> {
+    // Route every decompose's per-coefficient base values onto the `WitnessChecks` bus via the
+    // `recompose/coeff` table (enabled by the coeff-forced backend), so `expose_claim`'s per-coeff
+    // RECEIVE has a matching creator — without this the exposed consecutive base lanes have no
+    // bus provenance and the global lookup is imbalanced (unmatched RECEIVEs). Builder flag: it
+    // affects only decompose links, all of which are created below.
+    cb.set_recompose_coeff_ctl_for_decompose_links(true);
+
+    // ---- Squeeze block 1 (felts 0..4) + the squeeze permute (the host's `state.permute()`
+    // between its two squeeze reads). Both branches end with `squeeze_rate` = the rate limbs
+    // AFTER the squeeze permute, whose limb 0 is squeeze block 2.
+    let (block1, squeeze_rate): ([Target; 4], Vec<Target>) = if pi_targets.is_empty() {
+        // Host: zero chunks ⇒ NO absorb permute. Squeeze block 1 is the UNTOUCHED zero rate
+        // (felts 0..4 == 0), and the squeeze permute is then the FIRST permutation — a
+        // new-start step over the exact seeded initial state [0,0,0,0, dom, len=0, 0..0].
+        let rate = cb
+            .add_poseidon2_perm_sponge_step(
+                config,
+                true,
+                &[zero_limb, limb1],
+                &[zero_limb, zero_limb],
+            )
+            .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
+        ([zero, zero, zero, zero], rate)
+    } else {
+        // Pack one four-PI chunk into a single ext limb: coefficients = the chunk, zero-padded
+        // (the host's partial final chunk adds nothing into the absent lanes — adding the zero
+        // pad is the same value). The PI targets are bus-present (created by the verified inner
+        // proof), so recomposing them is bus-balanced; the constant pads/domain/len must NOT go
+        // through recompose (a const consumed as an ALU operand has no bus creator — the
+        // WitnessChecks mismatch this avoids), so limb 1 and the capacity tail are DIRECT ext
+        // constants (the same way the segment sponge feeds its tag).
+        let pack = |cb: &mut CircuitBuilder<RecursionChallenge>,
+                    chunk: &[Target]|
+         -> Result<Target, String> {
             let lanes: Vec<Target> = (0..4)
                 .map(|lane| chunk.get(lane).copied().unwrap_or(zero))
                 .collect();
@@ -1143,65 +1177,77 @@ fn incircuit_custom_pi_commitment(
                 .map_err(|e| format!("recompose rate limb failed: {e:?}"))
         };
 
-    let mut chunks = pi_targets.chunks(4);
-    let first_chunk = chunks.next().expect("pi_targets is non-empty");
+        let mut chunks = pi_targets.chunks(4);
+        let first_chunk = chunks.next().expect("pi_targets is non-empty");
 
-    // limb 0 = base lanes 0..4 = the first absorbed chunk (added into the host's untouched zero rate).
-    let limb0 = pack(cb, first_chunk)?;
-    // limb 1 = base lanes 4..8 = [domain, total_input_len, 0, 0] — a single compile-time ext
-    // constant, the INITIAL rate state only (the host writes lanes 4,5 once, before any permute).
-    let dom = custom_pi_domain_seed();
-    let len = pi_targets.len() as u32;
-    let limb1 = cb.define_const(ext_from_base_coeffs([dom, len, 0, 0]));
-    // limbs 2,3 = base lanes 8..16 = the host's zero capacity tail.
-    let zero_limb = cb.define_const(RecursionChallenge::ZERO);
+        // limb 0 = base lanes 0..4 = the first absorbed chunk (added into the host's untouched
+        // zero rate).
+        let limb0 = pack(cb, first_chunk)?;
 
-    // The BUS-BALANCED sponge primitive (the same one the segment digest uses): rate_in = the two
-    // rate ext-limbs (base lanes 0..8), capacity_seed = the two capacity ext-limbs (base lanes
-    // 8..16). On `new_start` these are exactly the 16-lane pre-permutation state of the host
-    // `WideHash::from_poseidon2`, and the perm is the SAME width-16 BabyBear permutation.
-    let mut rate = cb
-        .add_poseidon2_perm_sponge_step(config, true, &[limb0, limb1], &[zero_limb, zero_limb])
-        .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
+        // The BUS-BALANCED sponge primitive (the same one the segment digest uses): rate_in = the
+        // two rate ext-limbs (base lanes 0..8), capacity_seed = the two capacity ext-limbs (base
+        // lanes 8..16). On `new_start` these are exactly the 16-lane pre-permutation state of the
+        // host `WideHash::from_poseidon2`, and the perm is the SAME width-16 BabyBear permutation.
+        let mut rate = cb
+            .add_poseidon2_perm_sponge_step(config, true, &[limb0, limb1], &[zero_limb, zero_limb])
+            .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
 
-    // Remaining chunks: the host adds each chunk into lanes 0..4 of the PERMUTED state and
-    // permutes again, never re-touching lanes 4..8 (they carry the previous permutation output
-    // forward). So: add the packed chunk into returned rate limb 0, pass returned rate limb 1
-    // through unchanged, and chain the capacity off-bus (`new_start = false` — the capacity seed
-    // argument is ignored on chained steps).
-    for chunk in chunks {
-        let packed = pack(cb, chunk)?;
-        let rate0 = cb.add(rate[0], packed);
-        rate = cb
+        // Remaining chunks: the host adds each chunk into lanes 0..4 of the PERMUTED state and
+        // permutes again, never re-touching lanes 4..8 (they carry the previous permutation
+        // output forward). So: add the packed chunk into returned rate limb 0, pass returned rate
+        // limb 1 through unchanged, and chain the capacity off-bus (`new_start = false` — the
+        // capacity seed argument is ignored on chained steps).
+        for chunk in chunks {
+            let packed = pack(cb, chunk)?;
+            let rate0 = cb.add(rate[0], packed);
+            rate = cb
+                .add_poseidon2_perm_sponge_step(
+                    config,
+                    false,
+                    &[rate0, rate[1]],
+                    &[zero_limb, zero_limb],
+                )
+                .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
+        }
+
+        // Squeeze block 1 = base lanes 0..4 = the 4 coefficients of the first output rate limb
+        // AFTER the last absorb permutation (strictly before the host's squeeze permute).
+        let coeffs = cb
+            .decompose_ext_to_base_coeffs::<P3BabyBear>(rate[0])
+            .map_err(|e| format!("decompose output rate limb failed: {e:?}"))?;
+
+        // THE SQUEEZE PERMUTE (host `WideHash::from_poseidon2`'s single `state.permute()` between
+        // the two squeeze reads): one more chained sponge step with the rate limbs passed through
+        // UNCHANGED — nothing is absorbed — and the capacity inherited off-bus. This is the
+        // GENUINE second squeeze block's permutation, not duplication or padding.
+        let rate2 = cb
             .add_poseidon2_perm_sponge_step(
                 config,
                 false,
-                &[rate0, rate[1]],
+                &[rate[0], rate[1]],
                 &[zero_limb, zero_limb],
             )
-            .map_err(|e| format!("width-16 sponge step failed: {e:?}"))?;
-    }
+            .map_err(|e| format!("width-16 squeeze-permute sponge step failed: {e:?}"))?;
+        ([coeffs[0], coeffs[1], coeffs[2], coeffs[3]], rate2)
+    };
 
-    // Commitment = base lanes 0..4 = the 4 coefficients of the first output rate limb AFTER the
-    // last absorb permutation (strictly before the host's squeeze permute).
-    // Route the decompose's per-coefficient base values onto the `WitnessChecks` bus via the
-    // `recompose/coeff` table (enabled by the coeff-forced backend), so `expose_claim`'s per-coeff
-    // RECEIVE has a matching creator — without this the four exposed consecutive base lanes have no
-    // bus provenance and the global lookup is imbalanced (one unmatched RECEIVE).
-    cb.set_recompose_coeff_ctl_for_decompose_links(true);
-    let coeffs = cb
-        .decompose_ext_to_base_coeffs::<P3BabyBear>(rate[0])
-        .map_err(|e| format!("decompose output rate limb failed: {e:?}"))?;
-    Ok([coeffs[0], coeffs[1], coeffs[2], coeffs[3]])
+    // ---- Squeeze block 2 (felts 4..8) = base lanes 0..4 AFTER the squeeze permute.
+    let coeffs2 = cb
+        .decompose_ext_to_base_coeffs::<P3BabyBear>(squeeze_rate[0])
+        .map_err(|e| format!("decompose second squeeze rate limb failed: {e:?}"))?;
+    Ok([
+        block1[0], block1[1], block1[2], block1[3], coeffs2[0], coeffs2[1], coeffs2[2], coeffs2[3],
+    ])
 }
 
 /// Prove a `CellProgram` transition as a recursion-foldable leaf (as [`prove_custom_leaf`]) AND
 /// expose the custom sub-proof's PI-commitment as an IN-CIRCUIT-computed public CLAIM.
 ///
-/// The returned [`RecursionOutput`] carries one `expose_claim` table whose 4 public values are
+/// The returned [`RecursionOutput`] carries one `expose_claim` table whose 8 public values are
 /// the in-circuit [`incircuit_custom_pi_commitment`] over the leaf's BOUND descriptor PIs — equal,
 /// byte-for-byte, to the deployed [`custom_proof_pi_commitment`] the off-AIR engine writes into
-/// the Custom row's `custom_proof_commitment` column. Because the absorb reads the leaf's REAL
+/// the Custom row's `custom_proof_commitment` columns (flag-day rotation: 8 felts, both squeeze
+/// blocks). Because the absorb reads the leaf's REAL
 /// (in-circuit-bound) PI targets, a prover cannot expose a commitment that disagrees with the PIs
 /// the leaf actually proves: the claim is welded to the execution, witnessable by a pure light
 /// client folding the tree.
@@ -1252,7 +1298,7 @@ pub fn prove_custom_leaf_with_commitment(
     let backend = create_recursion_backend_with_coeff_lookups();
 
     // The expose hook: instance 0 (main) carries the descriptor PIs (== `public_inputs`, in order).
-    // Compute the in-circuit PI-commitment over them and expose the 4 felts as a public claim.
+    // Compute the in-circuit PI-commitment over them and expose the 8 felts as a public claim.
     let num_pi = public_inputs.len();
     let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
         let main = apt
@@ -1278,11 +1324,16 @@ pub fn prove_custom_leaf_with_commitment(
     .map_err(|e| format!("custom-leaf commitment leaf-wrap failed: {e:?}"))
 }
 
-/// Read the 4-felt commitment a [`prove_custom_leaf_with_commitment`] leaf exposes through its
-/// `expose_claim` table. Returns `None` if the proof carries no exposed claim.
+/// Read the full 8-felt [`ProofBindCommitment`] a
+/// [`prove_custom_leaf_with_commitment`] leaf exposes through its
+/// `expose_claim` table. Returns `None` if the proof carries no exposed claim
+/// or exposes fewer than the full commitment width (a truncated/old 4-felt
+/// artifact is refused here, matching `require_custom_commit_teeth_v2`'s
+/// never-silently-widen rule).
 pub fn read_exposed_pi_commitment(
     output: &RecursionOutput<DreggRecursionConfig>,
 ) -> Option<ProofBindCommitment> {
+    use crate::custom_proof_bind::PROOF_BIND_COMMIT_WIDTH;
     let claims: Vec<BabyBear> = output
         .0
         .non_primitives
@@ -1292,10 +1343,10 @@ pub fn read_exposed_pi_commitment(
         .iter()
         .map(|&v| BabyBear::new(v.as_canonical_u32()))
         .collect();
-    if claims.len() < 4 {
+    if claims.len() < PROOF_BIND_COMMIT_WIDTH {
         return None;
     }
-    Some([claims[0], claims[1], claims[2], claims[3]])
+    Some(core::array::from_fn(|k| claims[k]))
 }
 
 #[cfg(test)]
@@ -1496,8 +1547,11 @@ mod tests {
         let output = prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
             .expect("the honest custom program must prove as a commitment-exposing leaf");
 
+        // FLAG-DAY (proof-bind blocker #2): the exposed claim is the FULL 8-felt commitment —
+        // the retired 4-felt expected values are gone; both sides re-derive the 8-felt
+        // `WideHash` squeeze (first block byte-identical to the old KAT, second block new).
         let exposed = read_exposed_pi_commitment(&output)
-            .expect("the leaf exposes a 4-felt PI-commitment claim");
+            .expect("the leaf exposes the full 8-felt PI-commitment claim");
         let host = custom_proof_pi_commitment(&pis);
         assert_eq!(
             exposed, host,
@@ -1855,7 +1909,12 @@ mod tests {
 
     // ========================================================================
     // The MULTI-CHUNK in-circuit PI commitment (upstream blocker #1: chain all
-    // 32 custom-leaf public inputs).
+    // 32 custom-leaf public inputs) — ROTATED to the 8-felt commitment
+    // (upstream blocker #2 flag day): every equality below is over BOTH squeeze
+    // blocks, so the ladder pins the absorb schedule AND the genuine second
+    // squeeze permutation. The old 4-felt expected values changed by
+    // construction (they are re-derived from the NEW 8-felt host derivation,
+    // never kept stale).
     //
     // Host/in-circuit equality is checked by EXECUTING the real gadget circuit
     // (CircuitRunner witness generation over the same enabled Poseidon2/recompose
@@ -2035,7 +2094,7 @@ mod tests {
             .expect("the honest 32-PI custom program must prove as a commitment-exposing leaf");
 
         let exposed = read_exposed_pi_commitment(&output)
-            .expect("the 32-PI leaf exposes a 4-felt commitment claim");
+            .expect("the 32-PI leaf exposes the full 8-felt commitment claim");
         assert_eq!(
             exposed,
             custom_proof_pi_commitment(&pis),

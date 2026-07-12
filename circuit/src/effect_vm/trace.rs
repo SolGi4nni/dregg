@@ -776,7 +776,11 @@ pub fn generate_effect_vm_trace_ext(
                 for i in 0..4 {
                     row[PARAM_BASE + param::CUSTOM_VK_HASH_BASE + i] = program_vk_hash[i];
                 }
-                // Write proof commitment into params[4..8].
+                // Write proof-commitment limbs 0..4 into params[4..8] (the param
+                // union has exactly 8 slots). The full 8-felt commitment (flag-day
+                // rotation) is bound through PI[CUSTOM_PROOFS_BASE + 8..16]; on the
+                // rotated wide member limbs 4..8 additionally ride the member-local
+                // commit-teeth columns (`trace_rotated::CUSTOM_COMMIT_TEETH_BASE`).
                 for i in 0..4 {
                     row[PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + i] = proof_commitment[i];
                 }
@@ -1462,11 +1466,11 @@ pub fn generate_effect_vm_trace_ext(
     // per-asset Σδ=0 WITHOUT a ledger lookup. Zero sentinel = the native asset.
     public_inputs[pi::v3::ASSET_CLASS] = context.asset_class;
 
-    // ---- Custom proof entries (PI layout v3: 8 vk + 4 commit per entry) ----
+    // ---- Custom proof entries (PI layout v3 + proof-bind rotation: 8 vk + 8 commit) ----
     for (i, (vk_hash, proof_commit)) in custom_entries.iter().enumerate() {
         let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
         public_inputs[base..base + 8].copy_from_slice(&vk_hash[..]);
-        public_inputs[base + 8..base + 12].copy_from_slice(&proof_commit[..]);
+        public_inputs[base + 8..base + 16].copy_from_slice(&proof_commit[..]);
     }
 
     assert_eq!(public_inputs.len(), pi_len);
@@ -1542,7 +1546,7 @@ pub fn extract_slot_caveat_manifest(public_inputs: &[BabyBear]) -> Vec<SlotCavea
 
 pub fn extract_custom_proof_commitments(
     public_inputs: &[BabyBear],
-) -> Vec<([BabyBear; 8], [BabyBear; 4])> {
+) -> Vec<([BabyBear; 8], [BabyBear; 8])> {
     if public_inputs.len() < pi::BASE_COUNT {
         return Vec::new();
     }
@@ -1553,23 +1557,11 @@ pub fn extract_custom_proof_commitments(
         if base + pi::CUSTOM_ENTRY_SIZE > public_inputs.len() {
             break;
         }
-        // PI layout v2: 8 vk_hash felts + 4 proof_commit felts per entry.
-        let vk_hash = [
-            public_inputs[base],
-            public_inputs[base + 1],
-            public_inputs[base + 2],
-            public_inputs[base + 3],
-            public_inputs[base + 4],
-            public_inputs[base + 5],
-            public_inputs[base + 6],
-            public_inputs[base + 7],
-        ];
-        let proof_commit = [
-            public_inputs[base + 8],
-            public_inputs[base + 9],
-            public_inputs[base + 10],
-            public_inputs[base + 11],
-        ];
+        // Proof-bind flag-day rotation: 8 vk_hash felts + 8 proof_commit felts
+        // per entry (`CUSTOM_ENTRY_SIZE == 16`). A legacy 12-felt entry vector
+        // fails the length guard above (PI length mismatch) — never mis-sliced.
+        let vk_hash = core::array::from_fn(|j| public_inputs[base + j]);
+        let proof_commit = core::array::from_fn(|j| public_inputs[base + 8 + j]);
         result.push((vk_hash, proof_commit));
     }
     result

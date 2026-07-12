@@ -747,7 +747,7 @@ pub(crate) fn sender_membership_teeth(before_cell: &Cell) -> (BabyBear, BabyBear
 /// actor `Cell`s, routing through the WIDE custom mint
 /// ([`RotatedParticipantLeg::mint_custom_wide_from_block_witnesses`](dregg_circuit_prove::joint_turn_aggregation::RotatedParticipantLeg::mint_custom_wide_from_block_witnesses))
 /// — the `customVmDescriptor2R24` leg that publishes the claimed `custom_proof_commitment` at PI
-/// 46..49 — and ATTACHING the prover-side re-provable [`CustomWitnessBundle`](dregg_circuit_prove::joint_turn_aggregation::CustomWitnessBundle).
+/// 46..53 (the 8-felt flag-day exposure) — and ATTACHING the prover-side re-provable [`CustomWitnessBundle`](dregg_circuit_prove::joint_turn_aggregation::CustomWitnessBundle).
 ///
 /// This is the path that makes the custom binding REAL-FOLDED in production: the chain prover folds
 /// the attached witness's sub-proof leaf into the recursion tree a PURE LIGHT CLIENT verifies, so a

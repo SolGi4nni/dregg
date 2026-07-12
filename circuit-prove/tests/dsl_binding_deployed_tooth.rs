@@ -389,10 +389,13 @@ fn rc_slot_derivation_is_registry_grounded() {
 #[ignore = "SLOW: real deployed dsl-binding recursion fold (~minutes); run with --ignored"]
 fn deployed_dfa_turn_honest_accepts() {
     let rc = dfa_route_commitment(&dfa_wire_pis());
+    // The proof-bind flag day widened `custom_proof_pi_commitment` to the full 8-felt squeeze;
+    // the deployed 4-felt rc carrier stays byte-identical to its FIRST squeeze block (the
+    // connect's two sides: the leg's 4 rc lanes vs the sub-proof leaf's commitment lanes 0..4).
     assert_eq!(
         rc[..],
-        custom_proof_pi_commitment(&dfa_wire_pis())[..],
-        "the rc derivation is the custom proof-bind commitment (the connect's two sides)"
+        custom_proof_pi_commitment(&dfa_wire_pis())[..4],
+        "the rc derivation is the first squeeze block of the custom proof-bind commitment"
     );
     let turns = build_chain(rc);
 

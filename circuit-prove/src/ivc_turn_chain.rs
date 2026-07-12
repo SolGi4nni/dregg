@@ -1273,7 +1273,7 @@ pub fn prove_descriptor_leaf_rotated_with_config(
 /// same for an arbitrary PI slice.
 ///
 /// The deployed effect-VM custom leg (`customVmDescriptor2R24`) publishes its
-/// `custom_proof_commitment` at IR2 PI slots 46..49 (the Lean `customPiExposure`); calling this
+/// `custom_proof_commitment` at IR2 PI slots 46..53 (the Lean `customPiExposure`, 8-felt); calling this
 /// with `pi_lo = 46, len = 4` surfaces that claimed commitment as a 4-felt expose_claim the
 /// per-turn fold ties to the custom sub-proof leaf's genuine in-circuit commitment (see
 /// [`crate::joint_turn_recursive::prove_custom_binding_node`]).
@@ -1522,9 +1522,9 @@ pub fn prove_descriptor_leaf_dual_expose(
 /// CONSTRAINT (the implementer of the deployed factory/hatchery descriptor must honor): on a WIDE
 /// descriptor the segment anchors are sourced from the LAST `2*SEG_ANCHOR_WIDTH` PIs
 /// (`n - 2*SEG_ANCHOR_WIDTH`), so the teeth tail-PIs MUST sit at a FIXED low offset (ahead of the
-/// wide rotated-commit anchors), exactly as the custom commitment sits at 46..49 ahead of them —
-/// never appended past `n - 2*SEG_ANCHOR_WIDTH`, or the wide-anchor sourcing would read the teeth
-/// as the rotated commits.
+/// wide rotated-commit anchors), exactly as the 8-felt custom commitment sits at 46..53 ahead of
+/// them — never appended past `n - 2*SEG_ANCHOR_WIDTH`, or the wide-anchor sourcing would read
+/// the teeth as the rotated commits.
 pub fn prove_descriptor_leaf_dual_expose_at(
     desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
     proof: &Ir2BatchProof<DreggRecursionConfig>,
@@ -3088,8 +3088,9 @@ fn prove_chain_core_rotated(
     //
     // CUSTOM-BINDING DEPLOYED WIRE (the ONE deployed carrier arm): a turn whose leg carries a
     // `CarrierWitness::Custom` bundle (a `Custom`-effect turn, `customVmDescriptor2R24`) does NOT
-    // get the plain segment leaf. Instead it gets a DUAL-EXPOSE leaf (segment ++ claimed
-    // `custom_proof_commitment` PI 46..49) folded against the RE-PROVEN custom sub-proof leaf
+    // get the plain segment leaf. Instead it gets a DUAL-EXPOSE leaf (segment ++ claimed 8-felt
+    // `custom_proof_commitment` PI 46..53 — the proof-bind flag-day rotation; a legacy 4-felt
+    // leg is version-refused at admission) folded against the RE-PROVEN custom sub-proof leaf
     // through `prove_custom_binding_node_segmented` — the binding `connect`s the leg's claimed
     // commitment to the sub-proof's genuine in-circuit commitment IN the recursion tree (so a
     // forged claim with no backing sub-proof is UNSAT) and re-exposes the SAME segment, so the
@@ -3109,6 +3110,20 @@ fn prove_chain_core_rotated(
         let leg = &t.participant.rotated;
         let wrapped = match &leg.carrier_witness {
             Some(CarrierWitness::Custom(bundle)) => {
+                // THE PROOF-BIND COMMITMENT VERSION BOUNDARY (flag-day v2, blocker #2): a leg
+                // whose descriptor publishes the RETIRED 4-felt custom commitment exposure is
+                // refused HERE with the TYPED `CustomCommitVersionError::RetiredV1` — old custom
+                // artifacts cannot re-enter at the upgraded ~124-bit assurance rung, and are
+                // never silently widened or zero-padded. The detector is structural (the leg's
+                // own exposure pins), the exact custom twin of the wide-carrier geometry
+                // boundary in `admit_welded_leg`.
+                dregg_circuit::effect_vm_descriptors::require_custom_commit_teeth_v2(
+                    &leg.descriptor,
+                )
+                .map_err(|e| TurnChainError::TurnProofInvalid {
+                    index: i,
+                    reason: format!("custom proof-bind commitment version boundary: {e}"),
+                })?;
                 let dual = prove_descriptor_leaf_dual_expose(
                     &leg.descriptor,
                     &leg.proof,

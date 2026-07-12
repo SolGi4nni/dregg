@@ -821,7 +821,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "81b54548fd57d4c93e5f9cf0f8d452a4d4998f20d7a62550064ab7b96a1cdd97";
+    "531fa532c360ce1c75f9319eb159158afa1f33289649ddee512ae20627b72bf9";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1205,7 +1205,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "65023ac79f06091acce8eb4045a8c0043ad8e5eeb7f25967257c84a80e24a6ae";
+    "f77eb1764d47a76d3f2a86aca08c7cbe6ecbd3380236b8574f26ed0aca9cad5f";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1231,7 +1231,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "5297f30480c92f6a15829838b0af1ee383aa383a4b007f41eb6baeee6fca5599";
+    "042edaf515630c72f61dbe0af7bffd6a686a614f18f83f9570802ddef4de8be8";
 
 // ============================================================================
 // THE WIDE-CARRIER GEOMETRY VERSION BOUNDARY (the flag-day rotation, v2).
@@ -2345,7 +2345,13 @@ mod tests {
                 // `CapOpenEmit.AFTER_SPINE_SPAN = 15 + 8·DEPTH = 143` (after-leaf + after-leaf-digest
                 // + DEPTH·8 after-node), forcing the faithful 8-felt cap-WRITE (`*_forces_write8`).
                 let after_spine_span = 15 + 8 * 16; // AFTER_SPINE_SPAN = 143
-                let rot_base = V1_WIDTH + APPENDIX_SPAN;
+                // THE AVAILABILITY-WELD PAD (GAP #4, cap-open member): a hardened `…-v1-avail`
+                // transfer cap-open member widens its v1 FACE by the avail witness columns, so its
+                // rotated base — and hence the graduated width the cap-open appendix anchors at —
+                // shifts by the pad. Zero for every bare member.
+                let cap_avail_pad =
+                    crate::effect_vm::trace_rotated::avail_pad_for_descriptor_name(name);
+                let rot_base = V1_WIDTH + APPENDIX_SPAN + cap_avail_pad;
                 let appendix = cap_span + extra_cols;
                 // The rotated base graduates by `7·n_rot_sites` wire-commit lane cols (still 7-felt;
                 // only the CAP DIGEST groups went 8-felt). So the width is
@@ -3247,5 +3253,144 @@ mod tests {
             RotCaveatEntry::from_felts(&zero).expect("zero entry decodes"),
             RotCaveatEntry::zero()
         );
+    }
+
+    /// **THE CUSTOM PROOF-BIND COMMITMENT VERSION BOUNDARY (flag-day v2, blocker #2).**
+    ///
+    /// A LEGACY 4-felt custom artifact — the retired eight-pin exposure (commit limbs 0..4 at
+    /// cols `PARAM_BASE+4..8` → PI 46..49, then the VK block DIRECTLY after at 50..53, NO commit
+    /// teeth) — is REFUSED by the versioned route with the TYPED
+    /// `CustomCommitVersionError::RetiredV1`, never silently widened or zero-padded. The live v2
+    /// twelve-pin layout classifies `Ok(2)`; a pin-less descriptor and a garbled layout fail
+    /// closed with their own typed variants. Also: the COMMITTED registry members (narrow + wide)
+    /// classify as live v2.
+    #[test]
+    fn custom_commit_version_boundary_refuses_legacy_four_felt() {
+        use crate::descriptor_ir2::{EffectVmDescriptor2, VmConstraint2};
+        use crate::effect_vm::columns::{PARAM_BASE, param};
+        use crate::effect_vm::trace_rotated::CUSTOM_COMMIT_TEETH_BASE;
+        use crate::lean_descriptor_air::{VmConstraint, VmRow};
+
+        let pin = |col: usize, pi_index: usize| {
+            VmConstraint2::Base(VmConstraint::PiBinding {
+                row: VmRow::First,
+                col,
+                pi_index,
+            })
+        };
+        let mk =
+            |name: &str, constraints: Vec<VmConstraint2>, pi_count: usize| EffectVmDescriptor2 {
+                name: name.to_string(),
+                trace_width: CUSTOM_COMMIT_TEETH_BASE + 4,
+                public_input_count: pi_count,
+                tables: vec![],
+                constraints,
+                hash_sites: vec![],
+                ranges: vec![],
+            };
+
+        // The RETIRED v1 exposure: commit limbs 0..4 at 46..49, VK block directly after.
+        let mut legacy_pins = Vec::new();
+        for k in 0..4 {
+            legacy_pins.push(pin(
+                PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k,
+                46 + k,
+            ));
+        }
+        for k in 0..4 {
+            legacy_pins.push(pin(PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k, 50 + k));
+        }
+        let legacy = mk("custom-legacy-4felt", legacy_pins, 54);
+        assert_eq!(
+            custom_commit_version(&legacy),
+            Err(CustomCommitVersionError::RetiredV1 {
+                name: "custom-legacy-4felt".to_string(),
+                commit_pi_lo: 46,
+            }),
+            "a legacy 4-felt custom artifact MUST be version-refused (typed), never widened"
+        );
+        assert!(require_custom_commit_teeth_v2(&legacy).is_err());
+        // The typed refusal names the retirement explicitly.
+        let msg = require_custom_commit_teeth_v2(&legacy)
+            .unwrap_err()
+            .to_string();
+        assert!(
+            msg.contains("RETIRED") && msg.contains("version-refused"),
+            "the refusal must name the version retirement: {msg}"
+        );
+
+        // The LIVE v2 exposure: commit limbs 0..4, commit teeth 4..8, then the VK block.
+        let mut v2_pins = Vec::new();
+        for k in 0..4 {
+            v2_pins.push(pin(
+                PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k,
+                46 + k,
+            ));
+        }
+        for k in 0..4 {
+            v2_pins.push(pin(CUSTOM_COMMIT_TEETH_BASE + k, 50 + k));
+        }
+        for k in 0..4 {
+            v2_pins.push(pin(PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k, 54 + k));
+        }
+        let live = mk("custom-live-8felt", v2_pins, 58);
+        assert_eq!(custom_commit_version(&live), Ok(CUSTOM_COMMIT_VERSION));
+
+        // No commit pin at all: not a custom-exposure member — fail closed.
+        let none = mk("no-commit-pins", vec![pin(0, 3)], 10);
+        assert!(matches!(
+            custom_commit_version(&none),
+            Err(CustomCommitVersionError::MissingCommitPins { .. })
+        ));
+
+        // Garbled: commit limbs 0..4 present but the following slots pin neither the VK block
+        // nor teeth (a param column that is not the VK block) — fail closed as UnknownLayout.
+        let mut garbled_pins = Vec::new();
+        for k in 0..4 {
+            garbled_pins.push(pin(
+                PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k,
+                46 + k,
+            ));
+        }
+        for k in 0..4 {
+            garbled_pins.push(pin(PARAM_BASE + 2, 50 + k)); // a bogus mid-block pin
+        }
+        let garbled = mk("custom-garbled", garbled_pins, 54);
+        assert!(matches!(
+            custom_commit_version(&garbled),
+            Err(CustomCommitVersionError::UnknownLayout { .. })
+        ));
+
+        // The COMMITTED members classify as live v2 — narrow (v3rot registry) and wide.
+        let narrow_json = V3_STAGED_REGISTRY_TSV
+            .lines()
+            .find_map(|line| {
+                let mut it = line.splitn(4, '\t');
+                let _tag = it.next()?;
+                if it.next() == Some("customVmDescriptor2R24") {
+                    let _name = it.next();
+                    it.next()
+                } else {
+                    None
+                }
+            })
+            .expect("custom member IS in the v3 staged registry");
+        let narrow = parse_vm_descriptor2(narrow_json).expect("narrow custom parses");
+        assert_eq!(custom_commit_version(&narrow), Ok(CUSTOM_COMMIT_VERSION));
+
+        let wide_json = WIDE_REGISTRY_STAGED_TSV
+            .lines()
+            .find_map(|line| {
+                let mut it = line.splitn(3, '\t');
+                if it.next() == Some("customVmDescriptor2R24") {
+                    let _name = it.next();
+                    it.next()
+                } else {
+                    None
+                }
+            })
+            .expect("custom member IS in the wide staged registry");
+        let wide = parse_vm_descriptor2(wide_json).expect("wide custom parses");
+        assert_eq!(custom_commit_version(&wide), Ok(CUSTOM_COMMIT_VERSION));
     }
 }

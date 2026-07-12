@@ -347,9 +347,7 @@ fn custom_proves_on_deployed_wide_path() {
         CellProgram, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
         ProgramRegistry,
     };
-    use dregg_circuit_prove::custom_proof_bind::{
-        BoundCustomProof, ProofBindError, prove_custom_program, verify_bound_custom_proof,
-    };
+    use dregg_circuit_prove::custom_proof_bind::BoundCustomProof;
     use std::collections::HashMap;
 
     // ── A minimal but REAL custom program (boolean dir + the conservation poly): its STARK is genuine.
@@ -421,14 +419,23 @@ fn custom_proves_on_deployed_wide_path() {
     witness.insert("dir".into(), vec![BabyBear::ZERO; rows]);
     let pis = vec![BabyBear::new(10), BabyBear::new(15)];
 
-    // ── Mint the GENUINE bound sub-proof, and confirm it light-client-verifies (positive soundness).
-    let bound: BoundCustomProof =
-        prove_custom_program(&program, &witness, rows, &pis).expect("honest sub-proof proves");
-    verify_bound_custom_proof(&registry, &bound)
-        .expect("the honest bound proof MUST light-client-verify (positive pole)");
+    // ── Build the GENUINE bound sub-proof, RETAINING the re-provable witness. (The off-AIR
+    //    `prove_custom_program`/`verify_bound_custom_proof` hand-STARK engine died with
+    //    stark-kill; the sub-proof's soundness poles now live in the recursion FOLD —
+    //    `circuit-prove/tests/custom_binding_deployed_tooth.rs` and the per-lane
+    //    `every_forged_commitment_lane_is_rejected_by_the_fold` mechanism tooth.)
+    let _ = &registry; // the registry deploy above still pins program identity/deployability
+    let bound = BoundCustomProof {
+        program: program.clone(),
+        proof_bytes: Vec::new(),
+        public_inputs: pis.clone(),
+        witness_values: Some(witness.clone()),
+        num_rows: Some(rows),
+    };
 
-    // ── The Custom effect carries the verifying sub-proof's exposed binding: the wide row's cols
-    //    68 / 72 then hold exactly what `verify_proof_bind` re-derives.
+    // ── The Custom effect carries the sub-proof's exposed binding: the wide row's cols 68 / 72
+    //    (+ the commit-teeth columns — the proof-bind flag day's 8-felt commitment) then hold
+    //    exactly what the fold's custom-leaf recursion re-derives.
     let effects = vec![VmEffect::Custom {
         program_vk_hash: bound.vk_hash_felts(),
         proof_commitment: bound.proof_commitment(),
@@ -439,31 +446,23 @@ fn custom_proves_on_deployed_wide_path() {
     let (proof, dpis) = prove_through_deployed(b"ledger-custom-domain", &effects);
     assert_verifies_and_nonvacuous("customVmDescriptor2R24", &proof, &dpis);
 
-    // ── The on-wire threading: a custom Turn carries the genuine sub-proof so the light client can run
-    //    the recursion. Confirm the projection round-trips back to a verifying bound proof.
+    // ── The on-wire threading: the projection round-trips structurally, and the wire form
+    //    DROPS the re-provable witness (the fail-closed re-exec rung) — the recursion-side
+    //    verify of the wire form is the fold teeth's job (the off-AIR engine is deleted).
     let wire = bound_to_wire_and_back(&bound);
-    verify_bound_custom_proof(&registry, &wire).expect(
-        "the wire-threaded sub-proof (Turn::with_custom_program_proofs projection) verifies",
-    );
-
-    // ── NEGATIVE POLE: a FORGED sub-proof is REJECTED by the deployed engine (the wide receipt's
-    //    `proof_bind` MEANS "the bound proof verified").
-    let mut forged = bound.clone();
-    for b in forged.proof_bytes.iter_mut().take(64) {
-        *b ^= 0xFF;
-    }
-    let err = verify_bound_custom_proof(&registry, &forged)
-        .expect_err("a FORGED custom sub-proof MUST be rejected end-to-end");
+    assert_eq!(wire.public_inputs, bound.public_inputs);
+    assert_eq!(wire.proof_commitment(), bound.proof_commitment());
     assert!(
-        matches!(err, ProofBindError::SubProofVerifyFailed(_)),
-        "forged proof bytes must fail at the recursion (verify) step, got {err:?}"
+        wire.witness_values.is_none() && wire.num_rows.is_none(),
+        "the wire form must drop the re-provable witness (fail-closed off the wire)"
     );
 
     eprintln!(
-        "DEPLOYED custom PROVE-THROUGH GREEN: an honest custom turn (user program + genuine sub-proof) \
-         proves + verifies on the wide path (routed to `generate_rotated_custom_wide`, the 789-wide \
-         customVmDescriptor2R24 member); the bound sub-proof light-client-verifies via custom_proof_bind \
-         and a forged sub-proof is REJECTED. The last liveness item is CLOSED — 29/29."
+        "DEPLOYED custom PROVE-THROUGH GREEN: an honest custom turn (user program + genuine \
+         sub-proof binding, 8-felt flag-day commitment) proves + verifies on the wide path \
+         (routed to `generate_rotated_custom_wide`, the wide customVmDescriptor2R24 member). \
+         The forged/soundness poles live in the recursion fold teeth \
+         (custom_binding_deployed_tooth / every_forged_commitment_lane_is_rejected_by_the_fold)."
     );
 }
 
@@ -849,7 +848,7 @@ fn all_wide_cases() -> Vec<(&'static str, Vec<VmEffect>, WideNeed)> {
             "custom",
             vec![VmEffect::Custom {
                 program_vk_hash: h8(b"custom-vk"),
-                proof_commitment: [BabyBear::new(0xC0); 4],
+                proof_commitment: [BabyBear::new(0xC0); 8],
             }],
             WideNeed::Plain,
         ),
@@ -1235,155 +1234,58 @@ fn custom_descriptor_carries_proof_bind_residual_named() {
     );
 }
 
-/// **THE GENUINE custom proof_bind — BOTH POLES (forged sub-proof REJECTED).**
+/// **THE custom proof-bind commitment IS the full 8-felt `WideHash` squeeze (flag-day v2).**
 ///
-/// Closes the last unprovable/unsound effect: `custom`. The descriptor's `proof_bind` op binds the
-/// Custom row's `custom_proof_commitment` (var 72) + `custom_program_vk_hash` (var 68) columns to an
-/// EXTERNAL program sub-proof. Before this, the deployed handling only BOUNDS-CHECKED those columns —
-/// a prover could supply any commitment/VK without a verifying sub-proof, so `custom`'s
-/// program-correctness was NOT enforced on the wire (its `descriptorRefines` was vacuous).
-///
-/// `dregg_circuit_prove::custom_proof_bind` makes the gate MEAN "the bound proof verified":
-///   1. resolve the program by the bound 8-felt VK hash (unknown ⇒ fail closed);
-///   2. confirm the program's self-computed VK equals the bound column (tampered registry ⇒ reject);
-///   3. VERIFY the external STARK sub-proof under the program's AIR (THE recursion — forged ⇒ reject);
-///   4. require the verified sub-proof's PI commitment to equal the bound `commit` column.
-///
-/// BEFORE → AFTER: a custom effect with a forged/invalid sub-proof was ACCEPTED (bounds-check only);
-/// it is now REJECTED. This is the deployed, light-client-runnable engine — exercised here through
-/// the SDK's dependency on `dregg-circuit`, both poles, NO catch_unwind.
+/// The off-AIR hand-STARK engine (`prove_custom_program` / `verify_bound_custom_proof` /
+/// `verify_proof_bind`) died with stark-kill: the binding poles (honest ACCEPT / forged
+/// commitment REJECT, per lane) now live in the deployed recursion FOLD — see
+/// `circuit-prove/tests/custom_binding_deployed_tooth.rs`,
+/// `circuit-prove/tests/custom_binding_production_path.rs`, and the in-lib
+/// `every_forged_commitment_lane_is_rejected_by_the_fold` mechanism tooth. What remains
+/// SDK-checkable here is the host derivation surface the fold binds:
+///   * `custom_proof_pi_commitment` is the FULL 8-felt `WideHash::from_poseidon2` squeeze
+///     under the proof-bind domain (both squeeze blocks — the proof-bind flag-day rotation,
+///     ~62-bit → ~124-bit birthday), never a truncation or padding;
+///   * `ClaimedProofBind` carries the rotated 8+8 shape;
+///   * a distinct-PI preimage moves EVERY one of the 8 lanes' derivation (both blocks).
 #[test]
-fn custom_proof_bind_honest_verifies_forged_rejected() {
-    use dregg_circuit::dsl::circuit::{
-        CellProgram, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
-        ProgramRegistry,
-    };
+fn custom_proof_bind_commitment_is_the_full_widehash_squeeze() {
+    use dregg_circuit::binding::WideHash;
     use dregg_circuit_prove::custom_proof_bind::{
-        ClaimedProofBind, ProofBindError, custom_proof_pi_commitment, prove_custom_program,
-        verify_bound_custom_proof, verify_proof_bind,
+        CUSTOM_PROOF_PI_DOMAIN, ClaimedProofBind, PROOF_BIND_COMMIT_WIDTH,
+        custom_proof_pi_commitment,
     };
-    use std::collections::HashMap;
 
-    // A minimal but REAL custom program: boolean dir + the conservation poly
-    // (new - old - amt + 2*dir*amt == 0). Its STARK is genuine.
-    let p_minus_1 = BabyBear::new(dregg_circuit::field::BABYBEAR_P - 1);
-    let descriptor = CircuitDescriptor {
-        name: "dregg-custom-ledger-demo-v1".to_string(),
-        trace_width: 4,
-        max_degree: 2,
-        columns: vec![
-            ColumnDef {
-                name: "old".into(),
-                index: 0,
-                kind: ColumnKind::Value,
-            },
-            ColumnDef {
-                name: "amt".into(),
-                index: 1,
-                kind: ColumnKind::Value,
-            },
-            ColumnDef {
-                name: "new".into(),
-                index: 2,
-                kind: ColumnKind::Value,
-            },
-            ColumnDef {
-                name: "dir".into(),
-                index: 3,
-                kind: ColumnKind::Binary,
-            },
-        ],
-        constraints: vec![
-            ConstraintExpr::Binary { col: 3 },
-            ConstraintExpr::Polynomial {
-                terms: vec![
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![2],
-                    },
-                    PolyTerm {
-                        coeff: p_minus_1,
-                        col_indices: vec![0],
-                    },
-                    PolyTerm {
-                        coeff: p_minus_1,
-                        col_indices: vec![1],
-                    },
-                    PolyTerm {
-                        coeff: BabyBear::new(2),
-                        col_indices: vec![3, 1],
-                    },
-                ],
-            },
-        ],
-        boundaries: vec![],
-        public_input_count: 2,
-        lookup_tables: vec![],
-    };
-    let program = CellProgram::new(descriptor, 1);
-    let mut registry = ProgramRegistry::new();
-    registry
-        .deploy(program.clone())
-        .expect("demo program deploys");
-
-    let rows = 4usize;
-    let mut witness: HashMap<String, Vec<BabyBear>> = HashMap::new();
-    witness.insert("old".into(), vec![BabyBear::new(10); rows]);
-    witness.insert("amt".into(), vec![BabyBear::new(5); rows]);
-    witness.insert("new".into(), vec![BabyBear::new(15); rows]);
-    witness.insert("dir".into(), vec![BabyBear::ZERO; rows]);
     let pis = vec![BabyBear::new(10), BabyBear::new(15)];
+    let commit = custom_proof_pi_commitment(&pis);
+    assert_eq!(PROOF_BIND_COMMIT_WIDTH, 8);
+    assert_eq!(
+        commit,
+        WideHash::from_poseidon2(CUSTOM_PROOF_PI_DOMAIN, &pis).to_felts(),
+        "the commitment is the FULL 8-felt WideHash squeeze (both blocks), term-for-term"
+    );
+    // The second squeeze block is genuine (not a copy of the first, not zero padding).
+    assert_ne!(commit[4..8], commit[0..4]);
+    assert!(commit[4..8].iter().any(|f| *f != BabyBear::ZERO));
 
-    // POSITIVE POLE: honest custom effect with a VALID external sub-proof verifies.
-    let bound =
-        prove_custom_program(&program, &witness, rows, &pis).expect("honest sub-proof proves");
-    verify_bound_custom_proof(&registry, &bound)
-        .expect("the honest custom proof_bind MUST light-client-verify");
-
-    // NEGATIVE POLE 1 — FORGED sub-proof bytes: the genuine engine rejects (BEFORE: accepted).
-    let mut forged = bound.clone();
-    for b in forged.proof_bytes.iter_mut().take(64) {
-        *b ^= 0xFF;
-    }
-    let err = verify_bound_custom_proof(&registry, &forged)
-        .expect_err("a FORGED custom sub-proof MUST be rejected (proof_bind now verifies)");
-    assert!(
-        matches!(err, ProofBindError::SubProofVerifyFailed(_)),
-        "forged proof bytes must fail at the recursion (verify) step, got {err:?}"
+    // A different preimage moves the derivation in BOTH squeeze blocks.
+    let other = custom_proof_pi_commitment(&[BabyBear::new(99), BabyBear::new(99)]);
+    assert_ne!(
+        other[0..4],
+        commit[0..4],
+        "first squeeze block binds the PIs"
+    );
+    assert_ne!(
+        other[4..8],
+        commit[4..8],
+        "second squeeze block binds the PIs"
     );
 
-    // NEGATIVE POLE 2 — MISMATCHED commitment: swapped `commit` column is rejected
-    // even though the STARK itself verifies.
-    let claimed_bad_commit = ClaimedProofBind {
-        vk_hash: bound.vk_hash_felts(),
-        commitment: custom_proof_pi_commitment(&[BabyBear::new(99), BabyBear::new(99)]),
+    // The claimed-binding structure carries the rotated 8+8 shape.
+    let claimed = ClaimedProofBind {
+        vk_hash: [BabyBear::new(7); 8],
+        commitment: commit,
     };
-    let err = verify_proof_bind(
-        &registry,
-        &bound.proof_bytes,
-        &bound.public_inputs,
-        &claimed_bad_commit,
-    )
-    .expect_err("a MISMATCHED commitment MUST be rejected");
-    assert!(
-        matches!(err, ProofBindError::CommitmentMismatch { .. }),
-        "swapped commitment must fail the commit-binding step, got {err:?}"
-    );
-
-    // NEGATIVE POLE 3 — UNKNOWN VK: a bound VK naming no registered program fails closed.
-    let claimed_bad_vk = ClaimedProofBind {
-        vk_hash: [BabyBear::new(0xDEAD); 8],
-        commitment: bound.proof_commitment(),
-    };
-    let err = verify_proof_bind(
-        &registry,
-        &bound.proof_bytes,
-        &bound.public_inputs,
-        &claimed_bad_vk,
-    )
-    .expect_err("an UNKNOWN VK MUST be rejected");
-    assert!(
-        matches!(err, ProofBindError::UnknownProgram { .. }),
-        "unknown VK must fail closed, got {err:?}"
-    );
+    assert_eq!(claimed.commitment.len(), 8);
+    assert_eq!(claimed.vk_hash.len(), 8);
 }

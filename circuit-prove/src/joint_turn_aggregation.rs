@@ -1202,15 +1202,21 @@ impl RotatedParticipantLeg {
                 None,
                 None,
                 None,
-                // Custom lead — the committed custom row carries no membership-teeth tail.
+                // Custom lead — the committed custom row carries no membership-teeth tail
+                // (its COMMIT teeth are laid by `generate_rotated_custom_wide` itself).
                 None,
             )
             .map_err(|e| format!("mint_custom_wide: wide custom dispatch failed: {e}"))?;
 
+        // THE PROOF-BIND COMMITMENT VERSION BOUNDARY (flag-day v2): refuse minting against a
+        // registry descriptor still carrying the RETIRED 4-felt exposure (typed, never widened).
+        dregg_circuit::effect_vm_descriptors::require_custom_commit_teeth_v2(&desc)
+            .map_err(|e| format!("mint_custom_wide: commitment version boundary: {e}"))?;
+
         if dpis.len() < commit_pi_hi {
             return Err(format!(
-                "mint_custom_wide: custom leg PI vector must carry the commitment slice at \
-                 {CUSTOM_COMMIT_PI_LO}..{commit_pi_hi} (got {})",
+                "mint_custom_wide: custom leg PI vector must carry the 8-felt commitment slice \
+                 at {CUSTOM_COMMIT_PI_LO}..{commit_pi_hi} (got {})",
                 dpis.len()
             ));
         }

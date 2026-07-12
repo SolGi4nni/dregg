@@ -66,7 +66,7 @@
 //! The fold-bind needs a DEPLOYED leg leaf that RE-EXPOSES the Dfa predicate's published commitment at
 //! a known PI slot range, so [`prove_dsl_binding_node_segmented`] can `connect` it to this sub-proof
 //! leaf's genuine in-circuit commitment (exactly as the custom path connects the effect-vm leg's PI
-//! slots 46..49 — `customPiExposure` / `customVmDescriptor2R24`). The Dfa predicate is a PRECONDITION
+//! slots 46..53 — the 8-felt `customPiExposure` / `customVmDescriptor2R24`). The Dfa predicate is a PRECONDITION
 //! CAVEAT, not an effect — and the named big-bang emit LANDED: every deployed cohort member is wrapped
 //! through Lean `withDfaRcPins`, publishing the caveat-region 4-felt DFA route-commitment carrier
 //! (`trace_rotated::C_DFA_RC_OFF`, filled from `RotatedCaveatManifest::dfa_rc` =
@@ -89,7 +89,7 @@ use p3_recursion::RecursionOutput;
 
 use crate::custom_leaf_adapter::{cellprogram_to_descriptor2, prove_custom_leaf_with_commitment};
 use crate::joint_turn_aggregation::JointAggError;
-use crate::joint_turn_recursive::prove_custom_binding_node_segmented;
+use crate::joint_turn_recursive::prove_claim_binding_node_segmented;
 use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 
 /// Prove a `Witnessed { Dfa }` predicate's `CellProgram` transition as a recursion-foldable IR-v2
@@ -104,8 +104,10 @@ use crate::plonky3_recursion_impl::recursive::DreggRecursionConfig;
 /// [`crate::custom_proof_bind::custom_proof_pi_commitment`].
 ///
 /// `config` must be [`crate::ivc_turn_chain::ir2_leaf_wrap_config`]. The returned
-/// [`RecursionOutput`]'s `expose_claim` is the 4-felt PI-commitment — IDENTICAL in shape to a custom
-/// sub-proof leaf's — so [`prove_dsl_binding_node_segmented`] folds it like any custom leaf.
+/// [`RecursionOutput`]'s `expose_claim` is the 8-felt PI-commitment (the shared exposure widened
+/// by the proof-bind flag day) — IDENTICAL in shape to a custom sub-proof leaf's — and
+/// [`prove_dsl_binding_node_segmented`] binds its FIRST 4 lanes (the first squeeze block ==
+/// the deployed 4-felt `dfa_rc` carrier) like any custom leaf.
 ///
 /// Returns `Err` for a DSL program whose descriptor uses a constraint kind
 /// [`cellprogram_to_descriptor2`] refuses (the Poseidon2 / `TableFunction` / `Lookup` carriers —
@@ -124,27 +126,30 @@ pub fn prove_dsl_leaf_with_commitment(
     prove_custom_leaf_with_commitment(program, witness_values, num_rows, public_inputs, config)
 }
 
-/// **The DSL/Dfa binding node — a REUSE of [`prove_custom_binding_node_segmented`].**
+/// **The DSL/Dfa binding node — a REUSE of the segment-preserving binding node at the
+/// DEPLOYED rc width ([`prove_claim_binding_node_segmented`] with `claim_len = DFA_RC_LEN = 4`).**
 ///
-/// Because [`prove_dsl_leaf_with_commitment`] exposes the SAME 4-felt PI-commitment shape a custom
-/// sub-proof leaf exposes (both call
-/// [`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`]), the segment-preserving custom
-/// binding node folds a DSL leaf with zero change: it `connect`s the deployed Dfa leg leaf's CLAIMED
-/// commitment lanes (dual-expose lanes `[SEG_WIDTH ..)`) to this DSL sub-proof leaf's genuine
-/// in-circuit commitment lanes `[0 .. CUSTOM_COMMIT_LEN)`, and RE-EXPOSES the segment so the node
-/// folds into `aggregate_tree` like any per-turn segment leaf. A leg that claims a route-commitment no
-/// verifying DSL sub-proof backs is UNSAT (the `connect` is a conflict ⇒ no root), so a pure light
-/// client never receives a verifying artifact for a forged Dfa-gated turn.
+/// The DSL sub-proof leaf ([`prove_dsl_leaf_with_commitment`]) exposes the SAME 8-felt
+/// PI-commitment a custom sub-proof leaf exposes (both call
+/// [`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`]; the proof-bind flag day
+/// widened that shared exposure to the full `WideHash` squeeze). The deployed Dfa leg surface is
+/// UNCHANGED by that flag day: the caveat-region `dfa_rc` carrier is 4 felts (`DFA_RC_LEN`), and
+/// `dfa_route_commitment` is byte-identical to the FIRST squeeze block — i.e. lanes `[0..4)` of
+/// the sub-proof leaf's 8-felt exposed commitment. So this node `connect`s the leg's 4 CLAIMED
+/// rc lanes (dual-expose lanes `[SEG_WIDTH .. SEG_WIDTH+4)`) to the sub-proof's commitment
+/// lanes `[0..4)`, and RE-EXPOSES the segment so the node folds into `aggregate_tree` like any
+/// per-turn segment leaf. A leg that claims a route-commitment no verifying DSL sub-proof backs
+/// is UNSAT (the `connect` is a conflict ⇒ no root), so a pure light client never receives a
+/// verifying artifact for a forged Dfa-gated turn.
 ///
-/// This is a thin DSL-named delegator (the commitment shape is identical, so no bespoke node is
-/// needed — the task's "reuse if same shape" branch). `config` must be
-/// [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
+/// `config` must be [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
 pub fn prove_dsl_binding_node_segmented(
     dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
     dsl_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
-    prove_custom_binding_node_segmented(dual_expose_leg_leaf, dsl_subproof_leaf, config)
+    use dregg_circuit::effect_vm::trace_rotated::DFA_RC_LEN;
+    prove_claim_binding_node_segmented(dual_expose_leg_leaf, dsl_subproof_leaf, config, DFA_RC_LEN)
 }
 
 /// Report the constraint kinds in `program` that [`cellprogram_to_descriptor2`] cannot map to the
@@ -299,7 +304,7 @@ mod tests {
         // the hand STARK engine (stark-kill); `custom_proof_pi_commitment` IS the deployed
         // commitment derivation the effect-VM Custom row binds.)
         let exposed = read_exposed_pi_commitment(&output)
-            .expect("the DSL leaf exposes a 4-felt PI-commitment claim");
+            .expect("the DSL leaf exposes the full 8-felt PI-commitment claim");
         let host = custom_proof_pi_commitment(&pis);
         assert_eq!(
             exposed, host,

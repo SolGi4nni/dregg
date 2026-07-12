@@ -128,7 +128,7 @@ fn check_all_14_effect_types() -> Result<(), String> {
         },
         Effect::Custom {
             program_vk_hash: [BabyBear::new(1); 8],
-            proof_commitment: [BabyBear::new(2); 4],
+            proof_commitment: [BabyBear::new(2); 8],
         },
         Effect::MakeSovereign,
         Effect::CreateCellFromFactory {
@@ -289,11 +289,16 @@ fn check_custom_dispatch() -> Result<(), String> {
         BabyBear::new(0),
         BabyBear::new(0),
     ];
+    // 8-felt proof-bind commitment (flag-day rotation: both squeeze blocks).
     let proof_commitment = [
         BabyBear::new(55),
         BabyBear::new(66),
         BabyBear::new(77),
         BabyBear::new(88),
+        BabyBear::new(99),
+        BabyBear::new(111),
+        BabyBear::new(122),
+        BabyBear::new(133),
     ];
 
     let effects = vec![

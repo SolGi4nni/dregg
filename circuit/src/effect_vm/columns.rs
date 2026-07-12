@@ -472,8 +472,11 @@ pub mod rotation {
 ///   param2 = value_hi
 ///
 /// Custom (CellProgram dispatch):
-///   param0..param3 = custom_program_vk_hash (4 BabyBear elements identifying the program)
-///   param4..param7 = custom_proof_commitment (4 BabyBear elements = hash of external proof)
+///   param0..param3 = custom_program_vk_hash (low 4 of the 8-felt program identity)
+///   param4..param7 = custom_proof_commitment limbs 0..4 (of the 8-felt proof-bind
+///                    commitment — flag-day rotation; limbs 4..8 ride the rotated
+///                    member's commit-teeth columns, `trace_rotated::CUSTOM_COMMIT_TEETH_BASE`,
+///                    and the full 8 felts are bound through the PI layer)
 pub mod param {
     pub const AMOUNT: usize = 0;
     pub const DIRECTION: usize = 1;
@@ -505,7 +508,9 @@ pub mod param {
     // Custom cell program dispatch params.
     /// VK hash identifying the custom program (4 elements = 4*30 = 120 bits).
     pub const CUSTOM_VK_HASH_BASE: usize = 0;
-    /// Custom proof commitment (hash of the external proof, 4 elements).
+    /// Custom proof commitment limbs 0..4 (the param union carries only the low
+    /// half of the 8-felt rotated commitment; limbs 4..8 ride the commit-teeth
+    /// columns past the member host width — see `trace_rotated::CUSTOM_COMMIT_TEETH_BASE`).
     pub const CUSTOM_PROOF_COMMIT_BASE: usize = 4;
     // Burn params (near-miss aliasing closure, #100 follow-up).
     /// Hash of the target cell whose balance is reduced.

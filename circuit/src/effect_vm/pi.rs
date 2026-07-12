@@ -303,8 +303,9 @@ pub const CREATE_ESCROW_AMOUNT_LIMBS_LEN: usize = 4;
 
 // ---- Custom proof commitments ----
 /// For each custom effect i (0..custom_count):
-///   PI[CUSTOM_PROOFS_BASE + i*12 + 0..8]  = custom_program_vk_hash (8 elements, full 32B)
-///   PI[CUSTOM_PROOFS_BASE + i*12 + 8..12] = custom_proof_commitment (4 elements)
+///   PI[CUSTOM_PROOFS_BASE + i*16 + 0..8]  = custom_program_vk_hash (8 elements, full 32B)
+///   PI[CUSTOM_PROOFS_BASE + i*16 + 8..16] = custom_proof_commitment (8 elements —
+///                                           flag-day rotation from 4; ~124-bit birthday)
 ///
 /// **PI layout v3** (`VK_PI_LAYOUT_VERSION == 3`): the frozen v2 prefix
 /// (`BASE_COUNT = 201` felts) is followed by the 3-slot v3 tail
@@ -789,9 +790,13 @@ pub const NOTECREATE_COMMITMENT: usize = NOTESPEND_NULLIFIER + 1; // 199
 pub const BURN_TARGET_PI: usize = NOTECREATE_COMMITMENT + 1; // 200
 
 pub const BASE_COUNT: usize = BURN_TARGET_PI + 1; // 201
-/// Elements per custom effect entry in PI (8 vk_hash + 4 proof_commit).
-/// Was 8 in PI layout v1; widened to 12 in v2 (`VK_PI_LAYOUT_VERSION == 2`).
-pub const CUSTOM_ENTRY_SIZE: usize = 12;
+/// Elements per custom effect entry in PI (8 vk_hash + 8 proof_commit).
+/// Was 8 in PI layout v1; widened to 12 in v2 (`VK_PI_LAYOUT_VERSION == 2`);
+/// widened to 16 in the proof-bind flag-day rotation (blocker #2: the
+/// `custom_proof_commitment` grew 4 → 8 felts, ~62-bit → ~124-bit birthday).
+/// Old 12-felt entries are NOT verifier-compatible (the PI length differs);
+/// the verifier rejects on PI length mismatch — no silent widening.
+pub const CUSTOM_ENTRY_SIZE: usize = 16;
 
 // ---- Hard cap on declared max_custom_effects ----
 /// Hard ceiling: a cell declaring more than this is refused at registration

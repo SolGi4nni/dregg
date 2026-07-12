@@ -39,7 +39,8 @@
 //!   32-byte [`CellProgram::vk_hash`] mapped through
 //!   [`dregg_circuit::effect_vm::bytes32_to_8_limbs`]. The verifier looks the
 //!   program up by this hash; an unknown program fails closed.
-//! * `custom_proof_commitment` (4 felts, EffectVM PI `... + 8..12`; column 72)
+//! * `custom_proof_commitment` (8 felts, EffectVM PI `... + 8..16`; limbs 0..4
+//!   at column 72, limbs 4..8 on the member-local commit-teeth columns)
 //!   — [`custom_proof_pi_commitment`] of the sub-proof's public inputs. The
 //!   verifier recomputes it from the verified sub-proof's PI and requires
 //!   equality; a swapped or fabricated commitment fails closed.
@@ -58,33 +59,39 @@ use dregg_circuit::field::BabyBear;
 /// confused with (or replayed as) any other binding hash.
 pub const CUSTOM_PROOF_PI_DOMAIN: &str = "dregg-custom-proof-bind-pi-v1";
 
-/// The EffectVM `custom_proof_commitment` column is a DEPLOYED 4-felt descriptor
-/// column (`customVmDescriptor2R24`, vars 68..72). It is its OWN binding surface,
-/// distinct from the action/presentation binding, and is NOT widened to 8 here:
-/// doing so is VK-affecting in the effect-VM AIR (re-emit the descriptor, shift
-/// the column layout, re-pin the FP, touch the Lean descriptor). At 4 felts it
-/// carries ~62-bit birthday collision resistance — the SAME class of exposure the
-/// action binding had, and a forged sub-proof's public inputs are adversary-
-/// chosen, so it IS collision-relevant. This 4-felt column is the precise
-/// remaining surface to rotate in a dedicated effect-VM descriptor pass.
-pub type ProofBindCommitment = [BabyBear; 4];
+/// The number of BabyBear felts in a [`ProofBindCommitment`] — the FULL 8-felt
+/// `WideHash` squeeze (~124-bit birthday collision resistance, the same class as
+/// the action/presentation bindings and the wide state anchors).
+pub const PROOF_BIND_COMMIT_WIDTH: usize = 8;
+
+/// **FLAG-DAY ROTATION (proof-bridge upstream blocker #2): 4 felts → 8 felts.**
+///
+/// The EffectVM `custom_proof_commitment` binding surface was a DEPLOYED 4-felt
+/// descriptor column (`customVmDescriptor2R24`, vars 72..76) carrying only
+/// ~62-bit birthday collision resistance — collision-relevant, because a forged
+/// sub-proof's public inputs are adversary-chosen. It is now the full 8-felt
+/// [`WideHash`] class (~124-bit birthday, matching the 128-bit FRI soundness):
+/// the first 4 limbs keep their column home (cols 72..76), the second squeeze
+/// block's 4 limbs ride the member-local commit-teeth columns past the wide
+/// carriers, and all 8 are published as descriptor PIs the per-turn fold binds.
+/// Old 4-felt custom artifacts are REFUSED at the versioned admission boundary
+/// (`require_custom_commit_teeth_v2`) — never silently widened or zero-padded.
+pub type ProofBindCommitment = [BabyBear; PROOF_BIND_COMMIT_WIDTH];
 
 /// The canonical commitment to a custom sub-proof's public inputs — the value
-/// that lands in the Custom row's `custom_proof_commitment` column.
+/// that lands in the Custom row's `custom_proof_commitment` columns + PIs.
 ///
 /// Prover and verifier MUST agree on this derivation: the prover writes it into
-/// the EffectVM Custom row + PI, and [`verify_proof_bind`] recomputes it from the
+/// the EffectVM Custom row + PI, and the light-client fold recomputes it from the
 /// verified sub-proof's public inputs and requires equality.
 ///
-/// Derived as the first 4 felts of the canonical [`WideHash::from_poseidon2`]
-/// squeeze under [`CUSTOM_PROOF_PI_DOMAIN`]. Because the first squeeze block of
-/// `from_poseidon2` is independent of the (newer) second block, these 4 felts are
-/// byte-identical to the pre-8-felt-`WideHash` value — the deployed descriptor FP
-/// is unchanged. See [`ProofBindCommitment`] for why this stays at 4 felts.
+/// Derived as the FULL 8-felt canonical [`WideHash::from_poseidon2`] squeeze under
+/// [`CUSTOM_PROOF_PI_DOMAIN`] — both squeeze blocks (rate-4 block, permute,
+/// rate-4 block again). The first 4 felts are byte-identical to the retired
+/// 4-felt commitment (the first squeeze block is independent of the second);
+/// felts 4..8 are the genuine second squeeze block, NOT duplication or padding.
 pub fn custom_proof_pi_commitment(public_inputs: &[BabyBear]) -> ProofBindCommitment {
-    let wide = WideHash::from_poseidon2(CUSTOM_PROOF_PI_DOMAIN, public_inputs);
-    let felts = wide.to_felts();
-    [felts[0], felts[1], felts[2], felts[3]]
+    WideHash::from_poseidon2(CUSTOM_PROOF_PI_DOMAIN, public_inputs).to_felts()
 }
 
 /// A custom effect's external program proof, fully witnessed: the program it
@@ -123,7 +130,8 @@ impl BoundCustomProof {
         bytes32_to_8_limbs(&self.program.vk_hash)
     }
 
-    /// The 4-felt `custom_proof_commitment` column value this proof binds.
+    /// The 8-felt `custom_proof_commitment` value this proof binds (flag-day
+    /// rotation: was 4 felts / ~62-bit birthday; now the full `WideHash` class).
     pub fn proof_commitment(&self) -> ProofBindCommitment {
         custom_proof_pi_commitment(&self.public_inputs)
     }
@@ -137,7 +145,8 @@ impl BoundCustomProof {
 pub struct ClaimedProofBind {
     /// The Custom row's `custom_program_vk_hash` column (8 felts, var 68).
     pub vk_hash: [BabyBear; 8],
-    /// The Custom row's `custom_proof_commitment` column (4 felts, var 72).
+    /// The Custom row's `custom_proof_commitment` (8 felts: limbs 0..4 at var 72,
+    /// limbs 4..8 on the commit-teeth columns).
     pub commitment: ProofBindCommitment,
 }
 

@@ -296,8 +296,16 @@ pub enum Effect {
         /// distinct handlers. Pre-v2 callers zero-padded the upper 16 bytes,
         /// silently allowing such collisions to alias.
         program_vk_hash: [BabyBear; 8],
-        /// Hash of the external custom program proof (4 BabyBear elements).
-        proof_commitment: [BabyBear; 4],
+        /// Commitment to the external custom program proof's public inputs.
+        ///
+        /// **FLAG-DAY ROTATION (proof-bridge blocker #2): 4 → 8 felts.** The full
+        /// 8-felt `WideHash` squeeze (~124-bit birthday collision resistance,
+        /// `custom_proof_pi_commitment`) — limbs 0..4 ride the Custom row's param
+        /// columns (cols 72..76), limbs 4..8 the member-local commit-teeth
+        /// columns; all 8 are published as descriptor PIs the per-turn fold
+        /// binds. Old 4-felt artifacts are refused at the versioned admission
+        /// boundary, never silently widened.
+        proof_commitment: [BabyBear; 8],
     },
     /// MakeSovereign: transition cell mode from managed (0) to sovereign (1).
     /// State constraint: mode_flag changes from 0 to 1. Balance/fields preserved.

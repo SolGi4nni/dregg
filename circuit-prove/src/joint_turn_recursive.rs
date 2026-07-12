@@ -99,11 +99,15 @@ const D: usize = 4;
 
 /// IR2 PI slot the deployed `customVmDescriptor2R24` publishes its `custom_proof_commitment` at
 /// (the Lean `customPiExposure`; see `effect_vm/trace_rotated.rs::generate_rotated_custom_wide` —
-/// the four `custom_proof_commitment` limbs land at IR2 PI 46..49, the four low
-/// `custom_program_vk_hash` limbs at 50..53).
+/// the PROOF-BIND FLAG-DAY ROTATION lays the eight `custom_proof_commitment` limbs at IR2 PI
+/// 46..53 (limbs 0..4 from cols 72..75, limbs 4..8 from the commit-teeth columns), and the four
+/// low `custom_program_vk_hash` limbs at 54..57).
 pub const CUSTOM_COMMIT_PI_LO: usize = 46;
-/// Width of the `custom_proof_commitment` claim (4 felts).
-pub const CUSTOM_COMMIT_LEN: usize = 4;
+/// Width of the `custom_proof_commitment` claim — the FULL 8-felt `WideHash` class
+/// (~124-bit birthday; flag-day rotation from the retired 4-felt / ~62-bit shape).
+/// Old 4-felt custom artifacts are refused at the versioned admission boundary
+/// (`dregg_circuit::effect_vm_descriptors::require_custom_commit_teeth_v2`).
+pub const CUSTOM_COMMIT_LEN: usize = 8;
 
 fn to_p3(v: BabyBear) -> P3BabyBear {
     P3BabyBear::from_u64(v.0 as u64)
@@ -446,7 +450,7 @@ pub fn verify_joint_turn_recursive(
 // ============================================================================
 //
 // A `Custom` effect's effect-vm leg publishes a CLAIMED `custom_proof_commitment` at IR2 PI
-// slots 46..49 (`customVmDescriptor2R24` / Lean `customPiExposure`). On its own that is an
+// slots 46..53 (`customVmDescriptor2R24` / Lean `customPiExposure`). On its own that is an
 // UNBACKED claim: the in-AIR `proof_bind` op is a declaration, so a re-executing validator runs
 // `CellProgram::verify_transition` OFF-AIR but a PURE LIGHT CLIENT (folding only the recursion
 // tree) never witnesses the sub-proof. The fold-wire binds it IN the deployed tree.
@@ -454,7 +458,7 @@ pub fn verify_joint_turn_recursive(
 // For a custom turn the deployed chain prover (`prove_chain_core_rotated`) aggregates TWO leaves:
 //   * the effect-vm leg leaf as a DUAL-EXPOSE leaf
 //     ([`crate::ivc_turn_chain::prove_descriptor_leaf_dual_expose`]) — ONE `expose_claim` carrying
-//     the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed 4-felt commitment (PI 46..49)
+//     the chain SEGMENT in lanes `[0 .. SEG_WIDTH)` AND the claimed 8-felt commitment (PI 46..53)
 //     in lanes `[SEG_WIDTH ..)`; the inner PIs are otherwise consumed into the primitive `Public`
 //     table and never reach a combine hook, so the re-expose is mandatory;
 //   * the custom SUB-PROOF leaf, exposing its GENUINE in-circuit-computed PI-commitment
@@ -475,7 +479,7 @@ pub fn verify_joint_turn_recursive(
 // over a stand-in leg; the deployed path uses the segment-preserving variant.
 
 /// Aggregate a custom turn's effect-vm leg leaf (which must RE-EXPOSE its claimed 4-felt
-/// `custom_proof_commitment` at PI 46..49 via
+/// `custom_proof_commitment` at PI 46..53 via
 /// [`crate::ivc_turn_chain::prove_descriptor_leaf_with_pi_slice_expose`]) WITH the custom
 /// sub-proof leaf (which exposes its genuine commitment via
 /// [`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`]), CONNECTING the two 4-felt
@@ -513,7 +517,7 @@ pub fn prove_custom_binding_node(
         JointAggError::AggregationProofInvalid {
             reason: "effect-vm custom leg leaf carries no re-exposed commitment (expose_claim) \
                      table — it must be wrapped via prove_descriptor_leaf_with_pi_slice_expose \
-                     (pi_lo=46, len=4)"
+                     (pi_lo=CUSTOM_COMMIT_PI_LO, len=CUSTOM_COMMIT_LEN=8)"
                 .to_string(),
         }
     })?;
@@ -542,7 +546,7 @@ pub fn prove_custom_binding_node(
             .expect("custom sub-proof's exposed commitment instance present");
         debug_assert!(ev.len() >= CUSTOM_COMMIT_LEN && cs.len() >= CUSTOM_COMMIT_LEN);
 
-        // THE BINDING TOOTH, IN-CIRCUIT: the effect-vm leg's CLAIMED commitment (PI 46..49,
+        // THE BINDING TOOTH, IN-CIRCUIT: the effect-vm leg's CLAIMED commitment (PI 46..53,
         // re-exposed) must equal the custom sub-proof's GENUINE in-circuit commitment, lane by
         // lane. A forged claim with no backing sub-proof is a conflict here ⇒ UNSAT ⇒ no root.
         for k in 0..CUSTOM_COMMIT_LEN {
@@ -593,6 +597,28 @@ pub fn prove_custom_binding_node_segmented(
     custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
     config: &DreggRecursionConfig,
 ) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
+    prove_claim_binding_node_segmented(
+        dual_expose_leg_leaf,
+        custom_subproof_leaf,
+        config,
+        CUSTOM_COMMIT_LEN,
+    )
+}
+
+/// **THE CLAIM-LEN-PARAMETRIC SEGMENT-PRESERVING BINDING NODE** —
+/// [`prove_custom_binding_node_segmented`] with the connected claim width made explicit.
+/// The CUSTOM carrier binds the full 8-felt rotated `custom_proof_commitment`
+/// (`claim_len = CUSTOM_COMMIT_LEN = 8`); the DSL/Dfa carrier binds the deployed 4-felt
+/// `dfa_rc` route-commitment lanes (`claim_len = DFA_RC_LEN = 4` — the rc carrier is its own
+/// deployed surface, NOT rotated by the proof-bind flag day; its lanes equal the FIRST squeeze
+/// block, i.e. lanes `[0..4)` of the sub-proof leaf's 8-felt exposed commitment, so connecting
+/// the first `claim_len` sub-proof lanes is exactly the host byte-identity).
+pub fn prove_claim_binding_node_segmented(
+    dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
+    custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    config: &DreggRecursionConfig,
+    claim_len: usize,
+) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
     use crate::ivc_turn_chain::{SEG_WIDTH, expose_claim_instance_index};
     use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
     use p3_circuit::CircuitBuilder;
@@ -631,14 +657,14 @@ pub fn prove_custom_binding_node_segmented(
             .get(cs_idx)
             .expect("custom sub-proof's exposed commitment instance present");
         debug_assert!(
-            ev.len() >= SEG_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= CUSTOM_COMMIT_LEN,
+            ev.len() >= SEG_WIDTH + claim_len && cs.len() >= claim_len,
             "dual-expose claim must carry segment ++ commitment; custom leaf carries commitment"
         );
         // THE BINDING TOOTH, IN-CIRCUIT: the leg's CLAIMED commitment (dual-expose lanes
-        // [SEG_WIDTH .. SEG_WIDTH+CUSTOM_COMMIT_LEN)) must equal the custom sub-proof's GENUINE
-        // in-circuit commitment, lane by lane. A forged claim with no backing sub-proof is a
-        // conflict here ⇒ UNSAT ⇒ no root.
-        for k in 0..CUSTOM_COMMIT_LEN {
+        // [SEG_WIDTH .. SEG_WIDTH+claim_len)) must equal the sub-proof's GENUINE in-circuit
+        // commitment, lane by lane. A forged claim with no backing sub-proof is a conflict
+        // here ⇒ UNSAT ⇒ no root.
+        for k in 0..claim_len {
             cb.connect(ev[SEG_WIDTH + k], cs[k]);
         }
         // RE-EXPOSE ONLY THE SEGMENT (lanes [0 .. SEG_WIDTH)) as the parent claim, so this node
@@ -985,9 +1011,9 @@ pub fn prove_sovereign_binding_node_segmented(
 //
 // These exercise the binding MECHANISM directly: the REAL custom sub-proof leaf
 // (`prove_custom_leaf_with_commitment`, the custom-leaf adapter) folded against an
-// effect-vm leg leaf that PUBLISHES a claimed `custom_proof_commitment` at IR2 PI 46..49 — the
-// exact slot semantics the deployed `customVmDescriptor2R24` `customPiExposure` uses (four
-// `PiBinding .first` pins). The leg leaf here is a minimal PiBinding-only IR2 descriptor STANDING
+// effect-vm leg leaf that PUBLISHES a claimed 8-felt `custom_proof_commitment` at IR2 PI 46..53 —
+// the exact slot semantics the deployed `customVmDescriptor2R24` `customPiExposure` uses (eight
+// commit `PiBinding .first` pins; the proof-bind flag-day rotation). The leg leaf here is a minimal PiBinding-only IR2 descriptor STANDING
 // IN for the 789-wide deployed trace at the SAME exposure surface. This proves the fold-wire + the
 // tooth bite over the deployed slot + the real custom leaf via the single-claim
 // `prove_custom_binding_node`. The DEPLOYED path (the 789-wide leg + the retained custom witness +
@@ -1085,15 +1111,16 @@ mod custom_fold_wire_tests {
         (w, rows)
     }
 
-    /// Build an effect-vm leg leaf that PUBLISHES `claim` at IR2 PI 46..49 (the deployed
-    /// `customVmDescriptor2R24` slot semantics — four `PiBinding .first` pins) and re-exposes it
-    /// for the fold. A minimal stand-in for the 789-wide deployed trace at the SAME surface.
+    /// Build an effect-vm leg leaf that PUBLISHES the 8-felt `claim` at IR2 PI 46..53 (the
+    /// deployed `customVmDescriptor2R24` slot semantics after the proof-bind flag-day rotation —
+    /// eight `PiBinding .first` commit pins) and re-exposes it for the fold. A minimal stand-in
+    /// for the wide deployed trace at the SAME exposure surface.
     fn effectvm_leg_leaf(
-        claim: [BabyBear; 4],
+        claim: crate::custom_proof_bind::ProofBindCommitment,
         config: &DreggRecursionConfig,
     ) -> RecursionOutput<DreggRecursionConfig> {
-        let pi_count = 50; // slots 0..49 — 46..49 carry the claimed commitment.
-        let constraints: Vec<VmConstraint2> = (0..4)
+        let pi_count = CUSTOM_COMMIT_PI_LO + CUSTOM_COMMIT_LEN; // 54: slots 46..53 carry the claim.
+        let constraints: Vec<VmConstraint2> = (0..CUSTOM_COMMIT_LEN)
             .map(|k| {
                 VmConstraint2::Base(VmConstraint::PiBinding {
                     row: VmRow::First,
@@ -1104,7 +1131,7 @@ mod custom_fold_wire_tests {
             .collect();
         let desc = EffectVmDescriptor2 {
             name: "customVmDescriptor2R24-pi46-standin".to_string(),
-            trace_width: 4,
+            trace_width: CUSTOM_COMMIT_LEN,
             public_input_count: pi_count,
             tables: vec![],
             constraints,
@@ -1112,11 +1139,9 @@ mod custom_fold_wire_tests {
             ranges: vec![],
         };
         let rows = 4;
-        let trace: Vec<Vec<BabyBear>> = (0..rows)
-            .map(|_| vec![claim[0], claim[1], claim[2], claim[3]])
-            .collect();
+        let trace: Vec<Vec<BabyBear>> = (0..rows).map(|_| claim.to_vec()).collect();
         let mut pis = vec![BabyBear::ZERO; pi_count];
-        for k in 0..4 {
+        for k in 0..CUSTOM_COMMIT_LEN {
             pis[CUSTOM_COMMIT_PI_LO + k] = claim[k];
         }
         let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
@@ -1137,7 +1162,7 @@ mod custom_fold_wire_tests {
             CUSTOM_COMMIT_PI_LO,
             CUSTOM_COMMIT_LEN,
         )
-        .expect("effect-vm leg leaf re-exposes PI 46..49 as a 4-felt claim")
+        .expect("effect-vm leg leaf re-exposes PI 46..53 as the 8-felt claim")
     }
 
     /// THE POSITIVE POLE: an HONEST custom turn — the effect-vm leg's claimed commitment EQUALS
@@ -1153,6 +1178,8 @@ mod custom_fold_wire_tests {
 
         let custom_leaf = prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
             .expect("the custom sub-proof leaf proves");
+        // FLAG-DAY COMPLETE (8-felt commit): the leg claims the FULL 8-felt commitment at
+        // PI 46..53 — both squeeze blocks, all eight lanes bound by the node's `connect`.
         let ev_leaf = effectvm_leg_leaf(real, &config); // claims the REAL commitment
 
         let node = prove_custom_binding_node(&ev_leaf, &custom_leaf, &config)
@@ -1183,7 +1210,7 @@ mod custom_fold_wire_tests {
         // A claim NO verifying sub-proof of these PIs backs (lane 0 perturbed by +1 mod p).
         let mut forged = real;
         forged[0] = BabyBear::new((real[0].0 + 1) % BABYBEAR_P);
-        assert_ne!(forged, real);
+        assert_ne!(forged[0], real[0]);
 
         let custom_leaf = prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
             .expect("the custom sub-proof leaf proves");
@@ -1200,6 +1227,44 @@ mod custom_fold_wire_tests {
             Ok(Ok(_)) => panic!(
                 "a FORGED custom_proof_commitment minted a verifying fold node — the binding is OPEN"
             ),
+        }
+    }
+
+    /// THE PER-LANE TOOTH (flag-day spec: mutations targeted at EACH of the eight lanes make
+    /// the custom binding node unsatisfiable). For every lane k ∈ 0..8 — the four FIRST-squeeze
+    /// lanes AND the four SECOND-squeeze lanes the rotation added — a leg claiming the real
+    /// commitment with ONLY lane k perturbed has no satisfying fold partner: the per-lane
+    /// `connect` to the sub-proof's genuine in-circuit commitment is a conflict ⇒ UNSAT ⇒ no
+    /// root. This is what makes the second squeeze block LOAD-BEARING (a node that bound only
+    /// the first four lanes would accept the k ∈ 4..8 forgeries).
+    #[test]
+    fn every_forged_commitment_lane_is_rejected_by_the_fold() {
+        let config = ir2_leaf_wrap_config();
+        let program = demo_program();
+        let (w, rows) = honest_witness();
+        let pis: Vec<BabyBear> = vec![BabyBear::new(10), BabyBear::new(15)];
+        let real = custom_proof_pi_commitment(&pis);
+
+        // ONE genuine sub-proof leaf, reused against every forged leg.
+        let custom_leaf = prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
+            .expect("the custom sub-proof leaf proves");
+
+        for k in 0..CUSTOM_COMMIT_LEN {
+            let mut forged = real;
+            forged[k] = BabyBear::new((real[k].0 + 1) % BABYBEAR_P);
+            assert_ne!(forged[k], real[k]);
+            let ev_leaf = effectvm_leg_leaf(forged, &config);
+            let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                prove_custom_binding_node(&ev_leaf, &custom_leaf, &config)
+            }));
+            match result {
+                Err(_) => {}
+                Ok(Err(_)) => {}
+                Ok(Ok(_)) => panic!(
+                    "a commitment forged ONLY in lane {k} minted a verifying fold node — \
+                     that lane is NOT bound"
+                ),
+            }
         }
     }
 }

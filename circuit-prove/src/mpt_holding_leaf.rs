@@ -25,7 +25,7 @@
 //! the First-row pins + the chip-recomputed Poseidon2 chain make a mismatch UNSAT
 //! AT THE LEAF. The leaf's 13-PI tuple is committed by the in-circuit multi-chunk
 //! PI sponge (`prove_custom_leaf_with_commitment`) and `connect`ed to the leg's
-//! published `custom_proof_commitment` (IR2 PI 46..49) inside the recursion tree
+//! published `custom_proof_commitment` (IR2 PI 46..53, the 8-felt flag-day exposure) inside the recursion tree
 //! a PURE LIGHT CLIENT folds (`ivc_turn_chain::prove_chain_core_rotated`, the
 //! `CarrierWitness::Custom` arm).
 //!

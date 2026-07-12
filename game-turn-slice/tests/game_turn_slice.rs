@@ -450,12 +450,12 @@ fn honest_bundle() -> CustomWitnessBundle {
 }
 
 /// Mint a REAL `customVmDescriptor2R24` wide leg whose claimed `custom_proof_commitment`
-/// (IR2 PI 46..49) is `commit`; Custom bumps nonce by 1, balance unchanged. Optionally
+/// (IR2 PI 46..53, the 8-felt flag-day shape) is `commit`; Custom bumps nonce by 1, balance unchanged. Optionally
 /// attach the prover-side `bundle` the deployed chain prover re-proves + binds.
 fn mint_custom_leg(
     balance: i64,
     nonce: u64,
-    commit: [BabyBear; 4],
+    commit: [BabyBear; 8],
     bundle: Option<CustomWitnessBundle>,
 ) -> RotatedParticipantLeg {
     let st = CellState::new(balance as u64, nonce as u32);
@@ -503,13 +503,13 @@ fn mint_custom_leg(
     )
     .expect("custom wide dispatch");
     assert!(
-        dpis.len() >= 50,
-        "custom leg PI vector must carry the commitment slice at 46..49"
+        dpis.len() >= 54,
+        "custom leg PI vector must carry the 8-felt commitment slice at 46..53"
     );
     assert_eq!(
-        &dpis[46..50],
+        &dpis[46..54],
         &commit[..],
-        "custom leg must publish the claimed commitment at PI 46..49"
+        "custom leg must publish the claimed 8-felt commitment at PI 46..53"
     );
 
     let config = ir2_leaf_wrap_config();
@@ -543,6 +543,10 @@ fn plain_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
         BabyBear::new(2),
         BabyBear::new(3),
         BabyBear::new(4),
+        BabyBear::new(5),
+        BabyBear::new(6),
+        BabyBear::new(7),
+        BabyBear::new(8),
     ];
     let leg = mint_custom_leg(balance, nonce, commit, None);
     FinalizedTurn::new(DescriptorParticipant::rotated(leg))
@@ -550,7 +554,7 @@ fn plain_custom_turn(balance: i64, nonce: u64) -> FinalizedTurn {
 
 /// Build the K=2 chain: turn 0 is the bundled combat turn claiming `commit`; turn 1 is a
 /// plain custom turn linking off turn 0's post-state `(b, nonce+1)`.
-fn build_chain(commit: [BabyBear; 4]) -> Vec<FinalizedTurn> {
+fn build_chain(commit: [BabyBear; 8]) -> Vec<FinalizedTurn> {
     let balance = 1000i64;
     let t0_leg = mint_custom_leg(balance, 0, commit, Some(honest_bundle()));
     let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
