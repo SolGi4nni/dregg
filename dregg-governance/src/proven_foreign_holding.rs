@@ -132,11 +132,15 @@ impl ChainId {
 /// | `asset`    | SPL mint pubkey     | 20-byte token addr, padded   | denom commitment (hash)    |
 /// | `snapshot` | slot                | block number                 | height                     |
 ///
-/// `holder` doubles as the key the owner→voter [`OwnerBinding`](crate::holding_weight::OwnerBinding)
-/// signature is verified against, so for weight-granting it must be (or embed) an
-/// Ed25519 public key the holder controls. (A native secp256k1 EVM-address binding is a
-/// named follow-up; until then an EVM holder registers an Ed25519 binding key as their
-/// 32-byte `holder` identity at the eth edge.)
+/// `holder` doubles as the identity the owner→voter binding is verified against:
+/// an Ed25519 [`OwnerBinding`](crate::holding_weight::OwnerBinding) verifies `holder`
+/// as an Ed25519 pubkey (Solana natively; a non-EVM holder may register an Ed25519
+/// binding key as their 32-byte `holder` at the edge), and for an EVM-family holding
+/// the left-zero-padded 20-byte address binds NATIVELY with the wallet's own
+/// secp256k1 key via [`EvmOwnerBinding`](crate::holding_weight::EvmOwnerBinding)
+/// (EIP-191 `personal_sign` + public-key recovery — see
+/// [`verify_evm_binding`](crate::holding_weight::verify_evm_binding)). A Cosmos
+/// secp256k1 (bech32/Amino) address binding remains the named follow-up.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ProvenForeignHolding {
     /// The chain the holding was proven on (scopes the nullifier).

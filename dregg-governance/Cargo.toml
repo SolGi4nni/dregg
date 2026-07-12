@@ -43,4 +43,13 @@ dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # The holder wallet ↔ VoterId binding is an ed25519 signature by the Solana owner key.
 ed25519-dalek = "2"
 
+# The EVM (secp256k1) owner→voter binding: ECDSA public-key RECOVERY over the
+# EIP-191 personal_sign prehash, so an EVM-address holder binds non-custodially with
+# the SAME wallet key that controls the holding. k256 is the maintained RustCrypto
+# secp256k1 (the `ecdsa` feature carries `VerifyingKey::recover_from_prehash` +
+# `RecoveryId`); sha3 provides keccak256 for the EIP-191 frame and the
+# pubkey→address derivation. Never hand-rolled.
+k256 = { version = "0.13", default-features = false, features = ["ecdsa", "std"] }
+sha3 = "0.10"
+
 blake3 = "1"

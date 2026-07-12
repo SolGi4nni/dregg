@@ -65,6 +65,16 @@
 //! count; a holder legitimately holds on both), while re-presenting one network's
 //! holding twice is refused.
 //!
+//! The owner→voter binding is likewise per-family: a Solana holder binds with the
+//! Ed25519 [`OwnerBinding`] (unchanged), while an EVM-family holder — whose `holder`
+//! is a left-zero-padded 20-byte address, NOT an Ed25519 key — binds natively with
+//! their own secp256k1 wallet key via [`EvmOwnerBinding`] (EIP-191 `personal_sign` +
+//! ECDSA public-key recovery). [`grant_foreign_weight`] accepts either form through
+//! the [`HolderBinding`] dispatch, which ties each form to the holding's chain/holder
+//! SHAPE (Solana stays Ed25519-only; an EVM signature can never bind a Solana
+//! holding). A Cosmos secp256k1 (bech32/Amino) binding is the remaining named
+//! follow-up in this family story.
+//!
 //! The ballot domain is `u64` ([`VoteBlock::weight`](crate::VoteBlock::weight)) while a foreign grant is `u128`
 //! (EVM-scale): [`foreign_grant_and_cast`](HoldingWeightRegistry::foreign_grant_and_cast)
 //! narrows through [`narrow_ballot_weight`] — FAIL-CLOSED, a weight above `u64::MAX` is
@@ -122,6 +132,231 @@ pub fn verify_binding(owner: &[u8; 32], binding: &OwnerBinding) -> bool {
     let sig = Signature::from_bytes(&binding.sig);
     let msg = binding_message(owner, &binding.voter);
     vk.verify_strict(&msg, &sig).is_ok()
+}
+
+// ─── The EVM (secp256k1) owner→voter binding ────────────────────────────────────
+//
+// An EVM holder's `ProvenForeignHolding::holder` is NOT an Ed25519 key — it is the
+// 20-byte keccak address, left-zero-padded to 32 bytes ([0..12] = 0, [12..32] =
+// address). The Ed25519 [`verify_binding`] can never accept it (the holder cannot
+// produce an Ed25519 signature under those bytes), so without this path an EVM
+// holder could not bind at all. This is the native secp256k1 binding named as the
+// follow-up in [`proven_foreign_holding`](crate::proven_foreign_holding): the holder
+// signs with the SAME secp256k1 wallet key that controls the holding, via the
+// standard EIP-191 `personal_sign` flow every EVM wallet already exposes.
+
+/// Domain separator for the **EVM** owner→voter binding — the secp256k1 sibling of
+/// [`BIND_DOMAIN`], versioned independently. (Exactly 32 ASCII bytes.)
+pub const EVM_BIND_DOMAIN: &[u8] = b"dregg-holding-weight-bind-evm-v1";
+
+/// The exact **inner** message an EVM holder signs (via EIP-191 `personal_sign`) to
+/// authorize `voter`:
+///
+/// ```text
+/// EVM_BIND_DOMAIN(32) ‖ address(20) ‖ voter(32)      — 84 bytes total
+/// ```
+///
+/// where `address` is the holder's raw 20-byte EVM address. As with
+/// [`binding_message`], the message commits to the target [`VoterId`] (no replay to
+/// another voter) and to the signing address itself, but deliberately NOT to a poll
+/// or holding — the binding is a durable owner→voter link; per-poll uniqueness is
+/// the nullifier's job. The wallet then signs the EIP-191 framing of these bytes —
+/// see [`eip191_message_hash`] for the exact prehash.
+pub fn evm_binding_message(address: &[u8; 20], voter: &VoterId) -> Vec<u8> {
+    let mut m = Vec::with_capacity(EVM_BIND_DOMAIN.len() + 20 + 32);
+    m.extend_from_slice(EVM_BIND_DOMAIN);
+    m.extend_from_slice(address);
+    m.extend_from_slice(voter);
+    m
+}
+
+/// The EIP-191 `personal_sign` prehash of `msg` — the 32 bytes an EVM wallet
+/// actually signs:
+///
+/// ```text
+/// keccak256( 0x19 ‖ "Ethereum Signed Message:\n" ‖ ascii_decimal(len(msg)) ‖ msg )
+/// ```
+///
+/// For the 84-byte [`evm_binding_message`] the frame is therefore
+/// `"\x19Ethereum Signed Message:\n84" ‖ msg`. Using the standard framing (rather
+/// than a bare keccak) means any stock wallet's `personal_sign` produces a valid
+/// binding, and — because of the `\x19` lead byte — the signed bytes can never be a
+/// valid RLP transaction, so a binding signature can never be replayed as a spend.
+pub fn eip191_message_hash(msg: &[u8]) -> [u8; 32] {
+    use sha3::{Digest, Keccak256};
+    let mut h = Keccak256::new();
+    h.update(b"\x19Ethereum Signed Message:\n");
+    h.update(msg.len().to_string().as_bytes());
+    h.update(msg);
+    h.finalize().into()
+}
+
+/// The canonical EVM address of a secp256k1 public key:
+/// `keccak256(uncompressed_pubkey[1..65])[12..32]` — the last 20 bytes of the keccak
+/// of the 64-byte (x ‖ y) point, dropping the SEC1 `0x04` prefix.
+pub fn evm_address_of_pubkey(vk: &k256::ecdsa::VerifyingKey) -> [u8; 20] {
+    use sha3::{Digest, Keccak256};
+    let point = vk.to_encoded_point(false);
+    let bytes = point.as_bytes(); // 0x04 ‖ x(32) ‖ y(32)
+    debug_assert_eq!(bytes.len(), 65, "uncompressed SEC1 point");
+    let digest = Keccak256::digest(&bytes[1..]);
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&digest[12..]);
+    addr
+}
+
+/// Extract the 20-byte EVM address from a 32-byte `holder` field, FAIL-CLOSED: only
+/// a correctly left-zero-padded holder (`holder[0..12] == 0`) is an EVM address per
+/// the [`ProvenForeignHolding`] convention. Anything else (e.g. an Ed25519 pubkey
+/// registered as the holder identity) is `None` — the EVM binding path refuses it
+/// rather than treating 20 arbitrary bytes as an address.
+pub fn evm_address_of_holder(holder: &[u8; 32]) -> Option<[u8; 20]> {
+    if holder[0..12] != [0u8; 12] {
+        return None;
+    }
+    let mut addr = [0u8; 20];
+    addr.copy_from_slice(&holder[12..32]);
+    Some(addr)
+}
+
+/// An EVM holder's authorization of a dregg [`VoterId`]: a 65-byte secp256k1 ECDSA
+/// signature, made by the wallet key whose address IS the holding's `holder`, over
+/// the EIP-191 prehash of [`evm_binding_message`]`(address, voter)`. Non-custodial:
+/// it is a `personal_sign`, not a transaction.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct EvmOwnerBinding {
+    /// The dregg voter identity the owner authorizes to carry this weight.
+    pub voter: VoterId,
+    /// The 65-byte signature in the wallet wire layout `r(32) ‖ s(32) ‖ v(1)`.
+    /// `v` is the recovery id, accepted as `0`/`1` or the Ethereum-conventional
+    /// `27`/`28` (normalized by subtracting 27). Any other `v` — including `2`/`3`,
+    /// the astronomically-unlikely reduced-x forms no wallet emits — is refused.
+    /// `s` must be in the low half of the order (BIP-62 low-S, the same rule
+    /// Ethereum enforces since EIP-2); a high-S signature is refused as malleable.
+    pub sig: [u8; 65],
+}
+
+/// Verify that `binding` is a genuine authorization, by the secp256k1 key whose EVM
+/// address is embedded in `holder`, of `binding.voter`. FAIL-CLOSED `false` when:
+///
+/// - `holder` is not a left-zero-padded EVM address (`holder[0..12] != 0`);
+/// - `r`/`s` do not parse as nonzero in-range scalars;
+/// - `s` is in the high half of the order (the malleable twin — rejected so a third
+///   party cannot mint a "different" binding from an observed one);
+/// - `v` is not `0`/`1`/`27`/`28`;
+/// - public-key recovery fails, or the recovered key does not re-verify;
+/// - the recovered key's address differs from the holder address (the wrong signer,
+///   or a signature over a different voter — the prehash commits to `binding.voter`,
+///   so a replay for another voter recovers a DIFFERENT key ≠ holder).
+///
+/// The prehash is [`eip191_message_hash`]`(`[`evm_binding_message`]`(address, binding.voter))`
+/// — recomputed here from the claimed holder and voter, never taken from the prover.
+pub fn verify_evm_binding(holder: &[u8; 32], binding: &EvmOwnerBinding) -> bool {
+    use k256::ecdsa::{RecoveryId, Signature as EvmSignature, VerifyingKey as EvmVerifyingKey};
+
+    // FAIL CLOSED: only a genuinely padded EVM address may take this path.
+    let Some(address) = evm_address_of_holder(holder) else {
+        return false;
+    };
+    let Ok(sig) = EvmSignature::from_slice(&binding.sig[..64]) else {
+        return false; // r or s zero / out of range
+    };
+    // Reject the malleable high-S twin (normalize_s returns Some IFF s was high).
+    if sig.normalize_s().is_some() {
+        return false;
+    }
+    // v: wallet-conventional 27/28 or raw 0/1. NOTHING else — in particular not the
+    // reduced-x recovery ids 2/3 (r ≥ order - never produced by real wallets; the
+    // strict set keeps the accepted encoding canonical).
+    let v = binding.sig[64];
+    let recid_byte = match v {
+        0 | 1 => v,
+        27 | 28 => v - 27,
+        _ => return false,
+    };
+    let Some(recid) = RecoveryId::from_byte(recid_byte) else {
+        return false;
+    };
+    // Recompute the prehash from the CLAIMED (holder, voter) — the commitment to the
+    // voter lives here: a signature minted for voter A, presented with voter B,
+    // hashes to a different prehash and recovers a key whose address ≠ holder.
+    let prehash = eip191_message_hash(&evm_binding_message(&address, &binding.voter));
+    // recover_from_prehash re-verifies the signature under the recovered key before
+    // returning it (ecdsa 0.16 `recovery.rs`), so a passing recovery IS a verify.
+    let Ok(recovered) = EvmVerifyingKey::recover_from_prehash(&prehash, &sig, recid) else {
+        return false;
+    };
+    evm_address_of_pubkey(&recovered) == address
+}
+
+/// The ONE owner→voter authorization interface the chain-agnostic grant path
+/// dispatches on: each binding form knows which holdings it may vouch for
+/// ([`verifies_for`](Self::verifies_for)) — the dispatch is by the holding's
+/// chain/holder SHAPE, never by prover-chosen flags.
+///
+/// - [`OwnerBinding`] (Ed25519): verifies against `holder` as an Ed25519 pubkey on
+///   ANY chain — Solana natively, and the documented interim convention where a
+///   non-Solana holder registers an Ed25519 binding key as their 32-byte holder
+///   identity at the light-client edge. This is EXACTLY the pre-existing
+///   [`verify_binding`] semantics, unchanged.
+/// - [`EvmOwnerBinding`] (secp256k1): verifies ONLY for a holding on an EVM-family
+///   chain ([`ChainId::Evm`]) whose `holder` is a left-zero-padded EVM address. A
+///   Solana or Cosmos holding presented with an EVM binding is refused outright —
+///   Solana stays Ed25519-only.
+pub trait HolderBinding {
+    /// The dregg voter this binding authorizes.
+    fn voter(&self) -> VoterId;
+    /// Is this a genuine authorization by `holding.holder` for a holding of
+    /// `holding`'s chain shape? FAIL-CLOSED on any mismatch.
+    fn verifies_for(&self, holding: &ProvenForeignHolding) -> bool;
+}
+
+impl HolderBinding for OwnerBinding {
+    fn voter(&self) -> VoterId {
+        self.voter
+    }
+    fn verifies_for(&self, holding: &ProvenForeignHolding) -> bool {
+        verify_binding(&holding.holder, self)
+    }
+}
+
+impl HolderBinding for EvmOwnerBinding {
+    fn voter(&self) -> VoterId {
+        self.voter
+    }
+    fn verifies_for(&self, holding: &ProvenForeignHolding) -> bool {
+        // Chain-shape dispatch: secp256k1 address recovery vouches ONLY for an
+        // EVM-family holding. A Solana/Cosmos holder can never be bound by an EVM
+        // signature (fail closed), even if its holder bytes happen to look padded.
+        matches!(holding.chain, ChainId::Evm(_)) && verify_evm_binding(&holding.holder, self)
+    }
+}
+
+/// A runtime-tagged either-form binding, for callers (relayers, wire decoders) that
+/// carry both shapes through one channel. Dispatches to the underlying form's
+/// [`HolderBinding`] impl — the tag grants no authority; verification still runs
+/// against the holding's chain/holder shape.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum VoterBinding {
+    /// An Ed25519 [`OwnerBinding`] (Solana native; interim registered-key path).
+    Ed25519(OwnerBinding),
+    /// A secp256k1 [`EvmOwnerBinding`] (EVM-family address holders).
+    Evm(EvmOwnerBinding),
+}
+
+impl HolderBinding for VoterBinding {
+    fn voter(&self) -> VoterId {
+        match self {
+            VoterBinding::Ed25519(b) => b.voter(),
+            VoterBinding::Evm(b) => b.voter(),
+        }
+    }
+    fn verifies_for(&self, holding: &ProvenForeignHolding) -> bool {
+        match self {
+            VoterBinding::Ed25519(b) => b.verifies_for(holding),
+            VoterBinding::Evm(b) => b.verifies_for(holding),
+        }
+    }
 }
 
 /// The weight granted to a [`VoterId`] from one proven holding, as of the proven
@@ -284,8 +519,12 @@ pub fn grant_weight(
 /// 1. `consensus_proven` must be `true` — a structure-only RPC echo from any chain is
 ///    [`GrantError::NotConsensusProven`] and grants ZERO (the Nomad-law analog), before
 ///    its signature is even examined;
-/// 2. `binding` must be a genuine Ed25519 authorization by `holding.holder` of
-///    `binding.voter` (else [`GrantError::UnboundOwner`]);
+/// 2. `binding` must be a genuine authorization by `holding.holder` of
+///    `binding.voter()` (else [`GrantError::UnboundOwner`]) — EITHER form of
+///    [`HolderBinding`]: an Ed25519 [`OwnerBinding`] (Solana native — the pre-existing
+///    path, unchanged), or a secp256k1 [`EvmOwnerBinding`] which is accepted ONLY for
+///    an EVM-family holding with a zero-padded EVM-address holder (chain-shape
+///    dispatch; a Solana holding can never be bound by an EVM signature);
 /// 3. the proven amount must be positive (else [`GrantError::ZeroAmount`]);
 /// 4. the weight VERDICT is rendered by the LEAN-PROVEN `grantWeightCore` over the wire
 ///    — never a Rust `if`-chain; a missing core is [`GrantError::LeanCoreUnavailable`],
@@ -294,15 +533,15 @@ pub fn grant_weight(
 /// Performs NO dedup — the stateless core. Use
 /// [`HoldingWeightRegistry::grant_foreign_into_poll`] for the per-poll snapshot pin and
 /// the per-`(poll, chain+holder+asset)` nullifier.
-pub fn grant_foreign_weight(
+pub fn grant_foreign_weight<B: HolderBinding>(
     holding: &ProvenForeignHolding,
-    binding: &OwnerBinding,
+    binding: &B,
 ) -> Result<ForeignWeightGrant, GrantError> {
     // PRE-CHECKS (fast Rust) — establish the facts the verified decision reads.
     if !holding.is_consensus_proven() {
         return Err(GrantError::NotConsensusProven);
     }
-    if !verify_binding(&holding.holder, binding) {
+    if !binding.verifies_for(holding) {
         return Err(GrantError::UnboundOwner);
     }
     if holding.amount == 0 {
@@ -329,7 +568,7 @@ pub fn grant_foreign_weight(
     }
 
     Ok(ForeignWeightGrant {
-        voter: binding.voter,
+        voter: binding.voter(),
         weight,
         chain: holding.chain,
         snapshot: holding.snapshot,
@@ -446,11 +685,11 @@ impl HoldingWeightRegistry {
     ///
     /// A holding refused for any [`GrantError`] leaves the nullifier set unchanged, so
     /// a genuinely-later valid proof of the same holding can still be counted.
-    pub fn grant_foreign_into_poll(
+    pub fn grant_foreign_into_poll<B: HolderBinding>(
         &mut self,
         poll: PollId,
         holding: &ProvenForeignHolding,
-        binding: &OwnerBinding,
+        binding: &B,
     ) -> Result<ForeignWeightGrant, GrantError> {
         let grant = self.check_foreign_grant(poll, holding, binding)?;
         self.spent.insert((poll, grant.nullifier));
@@ -464,11 +703,11 @@ impl HoldingWeightRegistry {
     /// [`foreign_grant_and_cast`](Self::foreign_grant_and_cast) defers the consume until
     /// the engine has accepted the ballot, so a poll-not-open (or weight-overflow)
     /// failure leaves the nullifier available for a later valid attempt.
-    fn check_foreign_grant(
+    fn check_foreign_grant<B: HolderBinding>(
         &self,
         poll: PollId,
         holding: &ProvenForeignHolding,
-        binding: &OwnerBinding,
+        binding: &B,
     ) -> Result<ForeignWeightGrant, GrantError> {
         let snapshot = self
             .chain_snapshot_of(poll, holding.chain)
@@ -504,13 +743,13 @@ impl HoldingWeightRegistry {
     /// after the engine accepts a ballot box, so [`GrantError::PollNotOpen`] does not
     /// burn it; and the engine's own one-vote-per-voter rule still applies on top
     /// ([`CastOutcome::RefusedDoubleVote`]).
-    pub fn foreign_grant_and_cast(
+    pub fn foreign_grant_and_cast<B: HolderBinding>(
         &mut self,
         engine: &mut CollectiveChoice,
         poll: PollId,
         choice: OptionId,
         holding: &ProvenForeignHolding,
-        binding: &OwnerBinding,
+        binding: &B,
     ) -> Result<CastOutcome, GrantError> {
         // Verify WITHOUT consuming the nullifier first — a downstream refusal
         // (overflow, poll-not-open) must not permanently burn this holding's slot.
@@ -1414,6 +1653,336 @@ mod tests {
                 holding_slot: 17_000_000,
                 poll_snapshot: 21_000_000
             }),
+        );
+    }
+
+    // ─── The EVM (secp256k1) owner→voter binding ─────────────────────────────────
+
+    use k256::ecdsa::{
+        RecoveryId, Signature as EvmSignature, SigningKey as EvmSigningKey,
+        VerifyingKey as EvmVerifyingKey,
+    };
+
+    /// A deterministic secp256k1 wallet key from a seed byte.
+    fn evm_key(seed: u8) -> EvmSigningKey {
+        EvmSigningKey::from_slice(&[seed; 32]).expect("a nonzero seed is a valid scalar")
+    }
+
+    fn evm_addr(key: &EvmSigningKey) -> [u8; 20] {
+        evm_address_of_pubkey(key.verifying_key())
+    }
+
+    /// The ProvenForeignHolding holder convention for EVM: 12 zero bytes ‖ address.
+    fn padded_holder(address: [u8; 20]) -> [u8; 32] {
+        let mut h = [0u8; 32];
+        h[12..].copy_from_slice(&address);
+        h
+    }
+
+    /// A GENUINE EVM binding: the wallet key REALLY signs (RFC-6979 ECDSA, low-S)
+    /// the EIP-191 prehash of the binding message for its own address, and the
+    /// signature is packed wallet-style as r ‖ s ‖ v with v ∈ {27, 28}.
+    fn evm_bind(key: &EvmSigningKey, voter: VoterId) -> EvmOwnerBinding {
+        let prehash = eip191_message_hash(&evm_binding_message(&evm_addr(key), &voter));
+        let (sig, recid) = key.sign_prehash_recoverable(&prehash).expect("signs");
+        let mut bytes = [0u8; 65];
+        bytes[..64].copy_from_slice(&sig.to_bytes());
+        bytes[64] = recid.to_byte() + 27; // the Ethereum wallet convention
+        EvmOwnerBinding { voter, sig: bytes }
+    }
+
+    #[test]
+    fn evm_binding_message_and_prehash_are_the_documented_bytes() {
+        use sha3::{Digest, Keccak256};
+        assert_eq!(EVM_BIND_DOMAIN, b"dregg-holding-weight-bind-evm-v1");
+        assert_eq!(EVM_BIND_DOMAIN.len(), 32);
+        let addr = [0xABu8; 20];
+        let voter: VoterId = [0xCDu8; 32];
+        let msg = evm_binding_message(&addr, &voter);
+        // domain(32) ‖ address(20) ‖ voter(32) — byte for byte.
+        assert_eq!(msg.len(), 84);
+        assert_eq!(&msg[..32], EVM_BIND_DOMAIN);
+        assert_eq!(&msg[32..52], &addr);
+        assert_eq!(&msg[52..84], &voter);
+        // EIP-191: keccak256(0x19 ‖ "Ethereum Signed Message:\n" ‖ "84" ‖ msg).
+        let mut framed = Vec::new();
+        framed.extend_from_slice(b"\x19Ethereum Signed Message:\n84");
+        framed.extend_from_slice(&msg);
+        let expect: [u8; 32] = Keccak256::digest(&framed).into();
+        assert_eq!(eip191_message_hash(&msg), expect);
+    }
+
+    #[test]
+    fn a_genuine_evm_signature_by_the_addresss_key_binds() {
+        // ACCEPT polarity, default-run (no Lean core needed): the address's own key
+        // signing the EIP-191 binding message verifies...
+        let key = evm_key(0x11);
+        let voter: VoterId = [0x21u8; 32];
+        let holder = padded_holder(evm_addr(&key));
+        let binding = evm_bind(&key, voter);
+        assert!(
+            verify_evm_binding(&holder, &binding),
+            "the holder's own wallet key must bind"
+        );
+        // ...and both wallet-style v (27/28) and raw recovery-id (0/1) encodings work.
+        let mut raw_v = binding.clone();
+        raw_v.sig[64] -= 27;
+        assert!(verify_evm_binding(&holder, &raw_v));
+
+        // The binding stage of grant_foreign_weight PASSES for it: on a zero-amount
+        // holding the error is ZeroAmount — i.e. the check fell through the binding
+        // gate and hit the next one (this pins the positive binding polarity into the
+        // grant path without needing the Lean verdict core).
+        let empty = foreign(ChainId::ETHEREUM, holder, [0x0Au8; 32], 0, 7);
+        assert_eq!(
+            grant_foreign_weight(&empty, &binding),
+            Err(GrantError::ZeroAmount),
+            "a genuine EVM binding must clear the UnboundOwner gate"
+        );
+    }
+
+    #[test]
+    fn evm_holding_grants_weight_via_the_native_secp256k1_binding() {
+        if !lean_verdict_core_or_skip() {
+            return;
+        }
+        // End-to-end ACCEPT: an EVM-address holder — NO Ed25519 key anywhere — binds
+        // their proven Base holding to a dregg voter and the weight lands.
+        let key = evm_key(0x12);
+        let voter: VoterId = [0x22u8; 32];
+        let holder = padded_holder(evm_addr(&key));
+        let binding = evm_bind(&key, voter);
+        let poll = PollId([0x90u8; 32]);
+        let mut reg = HoldingWeightRegistry::new();
+        reg.open_chain_snapshot(poll, ChainId::BASE, 17_500_000);
+        let h = foreign(ChainId::BASE, holder, [0x0Bu8; 32], 1_234, 17_500_000);
+
+        let grant = reg.grant_foreign_into_poll(poll, &h, &binding).unwrap();
+        assert_eq!(grant.voter, voter);
+        assert_eq!(grant.weight, 1_234);
+        assert_eq!(grant.chain, ChainId::BASE);
+        // The nullifier fired — the same holding cannot count twice, whichever
+        // binding form presents it.
+        assert_eq!(
+            reg.grant_foreign_into_poll(poll, &h, &binding),
+            Err(GrantError::AlreadyCounted),
+        );
+        // And the runtime-tagged VoterBinding wrapper reaches the same verdict.
+        let poll2 = PollId([0x91u8; 32]);
+        reg.open_chain_snapshot(poll2, ChainId::BASE, 17_500_000);
+        let wrapped = VoterBinding::Evm(binding);
+        assert_eq!(
+            reg.grant_foreign_into_poll(poll2, &h, &wrapped)
+                .unwrap()
+                .weight,
+            1_234,
+        );
+    }
+
+    #[test]
+    fn an_evm_signature_by_a_different_key_is_refused() {
+        // REJECT polarity: the attacker signs the EXACT binding message for the
+        // victim's address — recovery yields the ATTACKER's key, whose address is not
+        // the holder's, so the binding is refused.
+        let victim = evm_key(0x13);
+        let attacker = evm_key(0x66);
+        let voter: VoterId = [0x23u8; 32];
+        let victim_addr = evm_addr(&victim);
+        let holder = padded_holder(victim_addr);
+
+        let prehash = eip191_message_hash(&evm_binding_message(&victim_addr, &voter));
+        let (sig, recid) = attacker.sign_prehash_recoverable(&prehash).unwrap();
+        let mut bytes = [0u8; 65];
+        bytes[..64].copy_from_slice(&sig.to_bytes());
+        bytes[64] = recid.to_byte() + 27;
+        let forged = EvmOwnerBinding { voter, sig: bytes };
+
+        assert!(
+            !verify_evm_binding(&holder, &forged),
+            "a signature by any key other than the address's must be refused"
+        );
+        let h = foreign(ChainId::ETHEREUM, holder, [0x0Cu8; 32], 900, 5);
+        assert_eq!(
+            grant_foreign_weight(&h, &forged),
+            Err(GrantError::UnboundOwner),
+        );
+    }
+
+    #[test]
+    fn an_evm_binding_replayed_for_a_different_voter_is_refused() {
+        // REJECT polarity: the message commits to the voter. A signature the owner
+        // genuinely made for voter A, re-presented claiming voter B, recomputes to a
+        // DIFFERENT prehash — recovery then yields some other key ≠ holder.
+        let key = evm_key(0x14);
+        let voter_a: VoterId = [0xA1u8; 32];
+        let voter_b: VoterId = [0xB1u8; 32];
+        let holder = padded_holder(evm_addr(&key));
+        let genuine = evm_bind(&key, voter_a);
+        assert!(verify_evm_binding(&holder, &genuine), "control: A binds");
+        let replayed = EvmOwnerBinding {
+            voter: voter_b,
+            sig: genuine.sig,
+        };
+        assert!(
+            !verify_evm_binding(&holder, &replayed),
+            "a binding for voter A must not authorize voter B"
+        );
+        let h = foreign(ChainId::ETHEREUM, holder, [0x0Du8; 32], 900, 5);
+        assert_eq!(
+            grant_foreign_weight(&h, &replayed),
+            Err(GrantError::UnboundOwner),
+        );
+    }
+
+    #[test]
+    fn a_non_evm_padded_holder_is_refused() {
+        // REJECT polarity, fail-closed on SHAPE: holder[0..12] must be zero. Even a
+        // GENUINE signature by the key whose address sits in holder[12..32] is refused
+        // when the padding bytes are nonzero — those bytes are not an EVM address per
+        // the convention, and treating them as one would let a 32-byte identity of
+        // some other scheme be "bound" via its low 20 bytes.
+        let key = evm_key(0x15);
+        let voter: VoterId = [0x25u8; 32];
+        let mut holder = padded_holder(evm_addr(&key));
+        holder[0] = 1; // corrupt the padding
+        assert_eq!(evm_address_of_holder(&holder), None);
+        let binding = evm_bind(&key, voter);
+        assert!(
+            !verify_evm_binding(&holder, &binding),
+            "a holder with nonzero padding is NOT an EVM address — refuse"
+        );
+        let h = foreign(ChainId::ETHEREUM, holder, [0x0Eu8; 32], 900, 5);
+        assert_eq!(
+            grant_foreign_weight(&h, &binding),
+            Err(GrantError::UnboundOwner),
+        );
+    }
+
+    #[test]
+    fn a_malleable_high_s_signature_is_refused() {
+        // REJECT polarity: the (r, -s, v^1) twin of a valid signature. This twin
+        // WOULD recover to the very same address — we demonstrate that below — so the
+        // low-S rule is the ONLY thing standing between one observed binding and a
+        // second, distinct-bytes "binding" mintable by any third party.
+        let key = evm_key(0x16);
+        let voter: VoterId = [0x26u8; 32];
+        let addr = evm_addr(&key);
+        let holder = padded_holder(addr);
+        let genuine = evm_bind(&key, voter);
+        assert!(
+            verify_evm_binding(&holder, &genuine),
+            "control: genuine binds"
+        );
+
+        let sig = EvmSignature::from_slice(&genuine.sig[..64]).unwrap();
+        let high = EvmSignature::from_scalars(sig.r().to_bytes(), (-*sig.s()).to_bytes())
+            .expect("the negated-s twin is a well-formed signature");
+        assert!(
+            high.normalize_s().is_some(),
+            "the twin really is high-S (k256 signing emits low-S, so -s is high)"
+        );
+        let flipped_v = if genuine.sig[64] == 27 { 28 } else { 27 };
+
+        // The adversarial heart: the twin carries the SAME mathematical authorization
+        // — normalizing its s back to the low half (and flipping the parity back)
+        // recovers the very same address. So without a low-S rule an observer of one
+        // binding could mint a second, distinct-bytes binding for it. The rule is
+        // enforced at TWO layers here: our explicit normalize_s refusal in
+        // verify_evm_binding, and k256's own verify (which recover_from_prehash calls)
+        // refusing any high-S signature outright (k256-0.13 src/ecdsa.rs:203) — the
+        // twin does not even recover on this stack.
+        let prehash = eip191_message_hash(&evm_binding_message(&addr, &voter));
+        let renormalized = high.normalize_s().unwrap();
+        let recovered = EvmVerifyingKey::recover_from_prehash(
+            &prehash,
+            &renormalized,
+            RecoveryId::from_byte((flipped_v - 27) ^ 1).unwrap(),
+        )
+        .expect("the twin's low-S normalization recovers");
+        assert_eq!(
+            evm_address_of_pubkey(&recovered),
+            addr,
+            "the twin encodes the SAME authorization under different bytes"
+        );
+        assert!(
+            EvmVerifyingKey::recover_from_prehash(
+                &prehash,
+                &high,
+                RecoveryId::from_byte(flipped_v - 27).unwrap(),
+            )
+            .is_err(),
+            "k256 itself refuses to recover from a high-S signature (defense in depth)"
+        );
+
+        let mut forged_sig = [0u8; 65];
+        forged_sig[..64].copy_from_slice(&high.to_bytes());
+        forged_sig[64] = flipped_v;
+        let forged = EvmOwnerBinding {
+            voter,
+            sig: forged_sig,
+        };
+        assert!(
+            !verify_evm_binding(&holder, &forged),
+            "the malleable high-S twin must be refused"
+        );
+        let h = foreign(ChainId::ETHEREUM, holder, [0x0Fu8; 32], 900, 5);
+        assert_eq!(
+            grant_foreign_weight(&h, &forged),
+            Err(GrantError::UnboundOwner),
+        );
+    }
+
+    #[test]
+    fn an_out_of_range_v_is_refused() {
+        // REJECT polarity: only v ∈ {0, 1, 27, 28}. The reduced-x ids (2/3, 29/30)
+        // and arbitrary bytes are refused outright — the accepted v set stays tight.
+        // (v = 0/1 and 27/28 are two encodings of the same recovery id; nothing in
+        // the grant path keys on the binding's bytes, so that duality is harmless.)
+        let key = evm_key(0x17);
+        let voter: VoterId = [0x27u8; 32];
+        let holder = padded_holder(evm_addr(&key));
+        let genuine = evm_bind(&key, voter);
+        for bad_v in [2u8, 3, 4, 26, 29, 30, 31, 0xFF] {
+            let mut tampered = genuine.clone();
+            tampered.sig[64] = bad_v;
+            assert!(
+                !verify_evm_binding(&holder, &tampered),
+                "v = {bad_v} must be refused"
+            );
+        }
+    }
+
+    #[test]
+    fn an_evm_binding_never_binds_a_solana_or_cosmos_holding() {
+        // REJECT polarity, chain-shape dispatch: even a cryptographically-valid EVM
+        // binding whose address matches the holder bytes is refused when the holding
+        // is not EVM-family — Solana stays Ed25519-only, and the interim Cosmos
+        // registered-Ed25519 convention is not silently widened.
+        let key = evm_key(0x18);
+        let voter: VoterId = [0x28u8; 32];
+        let holder = padded_holder(evm_addr(&key));
+        let binding = evm_bind(&key, voter);
+        // Control: the same (holder, binding) pair IS valid signature-wise.
+        assert!(verify_evm_binding(&holder, &binding));
+        for chain in [ChainId::Solana, ChainId::cosmos("cosmoshub-4")] {
+            let h = foreign(chain, holder, [0x1Au8; 32], 900, 5);
+            assert_eq!(
+                grant_foreign_weight(&h, &binding),
+                Err(GrantError::UnboundOwner),
+                "{chain:?}: an EVM signature must not bind a non-EVM holding",
+            );
+        }
+        // And the inverse pairing through the tagged wrapper: an Ed25519 binding on a
+        // Solana holding still binds (the pre-existing path, untouched), while the
+        // SAME wallet's Ed25519 binding wrapped as Evm is nonsense and refused.
+        let ed = owner_key(0x19);
+        let ed_holder = ed.verifying_key().to_bytes();
+        let ed_binding = bind(&ed, voter);
+        let solana = foreign(ChainId::Solana, ed_holder, [0x1Bu8; 32], 0, 5);
+        assert_eq!(
+            grant_foreign_weight(&solana, &VoterBinding::Ed25519(ed_binding)),
+            Err(GrantError::ZeroAmount),
+            "Ed25519 on Solana clears the binding gate exactly as before"
         );
     }
 }
