@@ -127,6 +127,12 @@ structure IncNonceTraceProver (hash : List ℤ → ℤ)
   cellPost : CellState
   hwiRow : Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce.IsIncNonceRow (envAt t wi)
   hwiEnc : Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce.RowEncodesIncNonce (envAt t wi) cellPre cellPost
+  /-- the active row's EXPLICIT canonicality envelope (`IncNonceRowCanon`) — the deployed range-check /
+  field-representative invariant the honest prover's active nonce-tick row carries (every state-block
+  cell canonical in `[0, p)`, boolean NOOP selector, the pre-nonce tick in-field). A trace-row residual
+  of the honest witness, exactly like `hwiRow`/`hwiEnc`; under the mod-p `holdsVm` denotation it lets the
+  `≡ 0 [ZMOD p]` nonce-gate residual read back as the EXACT ℤ tick `= +1`. NAMED, not laundered. -/
+  hCanon : Dregg2.Circuit.Emit.EffectVmEmitIncrementNonce.IncNonceRowCanon (envAt t wi)
   hnVal : n = cellPre.nonce + 1
 
 /-- **`incrementNonce_rotatedEncodesIncNonce_construct` — CONSTRUCT the incrementNonce decode from the
@@ -147,6 +153,8 @@ def incrementNonce_rotatedEncodesIncNonce_construct (hash : List ℤ → ℤ)
   cellPost := prover.cellPost
   hwiRow := prover.hwiRow
   hwiEnc := prover.hwiEnc
+  -- the active row's canonicality envelope IS the honest prover's deployed range-check residual.
+  hCanon := prover.hCanon
   hnVal := prover.hnVal
   -- the whole-map bump IS the spec's `cell = incNonceCellMap …` clause.
   hcellMove := hspec.2.1
