@@ -61,6 +61,20 @@ into a **frontend-agnostic `dreggnet-offerings` crate**; the discord-bot becomes
 WeChat/web are more `Frontend` impls. `dregg-pay` (payments), the verifiable substrate (WorldCell/receipts), and the
 collective are shared across all of them. Doing this NOW (while there is one frontend) is cheap; later it is a rewrite.
 
+**REUSE the deos surface — do NOT reinvent `Surface`/`Action`.** The frontend-agnostic surface layer ALREADY EXISTS
+and the bot already renders it: `deos-view` = a `ViewNode` (a moldable view of a cell); `starbridge-web-surface::
+affordance` = a cell's **cap-gated affordances** (`AffordanceIntent`/`EffectSummary`), each firing a real dregg turn.
+The bot's `/deos` (a cell's affordance surface → cap-gated buttons) and `/card` (a `deos_view` ViewNode → interactive
+buttons that fire real turns + re-render, `deos_surface.rs`) are exactly this. So map the abstractions onto it, don't
+duplicate: an offering's **`Surface` is a deos `ViewNode`/affordance surface**; its **`Action`s are cap-gated
+affordances**; a **`Frontend` is an affordance-renderer** (Discord is built — `deos_surface.rs`; Telegram/WeChat are
+more affordance-renderers mapping the same affordances onto inline keyboards / OA-menus / a Mini-Program). The **web
+frontend is `deos-js` + `web-cells`** (the existing web cell rendering). The dungeon's ballot buttons are just one
+affordance shape. EVERYTHING — offerings AND plain deos cells (dregg-doc, the cockpit, a tally card, a grain view) —
+flows through this ONE cap-gated, verifiable, moldable surface, on every frontend. That is the unification: the
+offering/session layer sits *above* the deos affordance surface; the frontends are *renderers of affordances*; the
+executor is the sole referee on all of them.
+
 ## Offerings
 - **#0 dungeon** — `RealSession` over `dungeon_on_dregg` WorldCell + the narrator + ballots. **Built + being migrated
   into `/dungeon` now.**
