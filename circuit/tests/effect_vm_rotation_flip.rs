@@ -1642,9 +1642,14 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
     // The pre-limb vectors differ at the FAITHFUL 8-FELT AUTHORITY DIGEST (H1): limb 24 (limb-0) AND
     // the 7 headroom limbs 12..=18 (limb-1..7 of `compute_authority_digest_8`), which all fold the
     // permissions — plus the perms-digest sub-limbs: index 33 (WAVE-2 limb-0) AND the v10
-    // faithful-8-felt completion limbs 37..=43 (permsHash[1..7]). Every OTHER named limb
+    // faithful-8-felt completion limbs 38..=44 (permsHash[1..7]). Every OTHER named limb
     // (cells_root, balance/nonce/fields, cap_root, nullifier/heap roots, lifecycle/epoch/height/disc,
-    // vk, mode, fields-root) is identical, since only `permissions.send` changed.
+    // vk, mode, fields-root, revoked_root) is identical, since only `permissions.send` changed.
+    //
+    // REVOKED-ROOT FLAG-DAY (NUM_PRE_LIMBS 169→178): the base region widened 37→38 to seat
+    // `revoked_root` at limb 37, shifting every index ≥37 by +1 — so the perms completion group
+    // moved 37..=43 → 38..=44. Limb 37 is now `revoked_root`, which correctly does NOT move on a
+    // permissions flip (it falls through to the unchanged-limb branch below).
     let pre_locked = compute_rotated_pre_limbs(&locked, &ctx);
     let authority_limbs = [24usize, 12, 13, 14, 15, 16, 17, 18];
     for i in 0..V9_NUM_PRE_LIMBS {
@@ -1653,11 +1658,11 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
                 pre[i], pre_locked[i],
                 "authority-digest limb {i} (one of the faithful 8 felts) MUST move on a perms flip"
             );
-        } else if i == 33 || (37..=43).contains(&i) {
+        } else if i == 33 || (38..=44).contains(&i) {
             assert_ne!(
                 pre[i], pre_locked[i],
                 "perms-digest limb {i} (limb-0 at 33 + the v10 faithful-8-felt perms completion \
-                 limbs 37..=43, carrying permsHash[1..7]) MUST move on a perms flip"
+                 limbs 38..=44, carrying permsHash[1..7]) MUST move on a perms flip"
             );
         } else {
             assert_eq!(
@@ -1705,7 +1710,9 @@ fn rotated_published_commit_lean_differential_and_permission_flip_moves_it() {
         ..ctx
     };
     let pre_grown = compute_rotated_pre_limbs(&plain, &ctx_grown);
-    let commitments_lanes = [27usize, 74, 75, 76, 77, 78, 79, 80];
+    // REVOKED-ROOT FLAG-DAY (NUM_PRE_LIMBS 169→178): lane 0 stays at limb 27 (<37, unshifted), but the
+    // seven faithful-8-felt completion lanes shifted +1 with everything ≥37 → 74..=80 became 75..=81.
+    let commitments_lanes = [27usize, 75, 76, 77, 78, 79, 80, 81];
     for i in 0..V9_NUM_PRE_LIMBS {
         if commitments_lanes.contains(&i) {
             assert_ne!(

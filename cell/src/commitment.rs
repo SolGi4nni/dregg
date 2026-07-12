@@ -2345,8 +2345,12 @@ mod tests {
         assert_eq!(pre.len(), V9_NUM_PRE_LIMBS);
         assert_eq!(
             pre.len(),
-            170,
-            "38 base (incl. revoked_root limb 37) + 51 faithful-8-felt completion limbs (38..88) + 24 v12 carrier-material octets (89..112) + 56 v13 fields[0..7] completion lanes (113..168) + 1 pad (169)"
+            178,
+            "38 base (incl. revoked_root limb 37) + 51 faithful-8-felt completion limbs (38..88) \
+             + 24 v12 carrier-material octets (89..112) + 56 v13 fields[0..7] completion lanes \
+             (113..168) + 7 circuit-only cells_root completion lanes (169..175, relocated off \
+             revoked's 82..88) + 2 pads (176..177) = 178, giving a clean 58x3 wire-commit body \
+             (limbs 4..177 = 174 = 58*3, no leftover chunk for the wide chip to refuse)"
         );
         // cells_root rides limb 0; the welded r0 (balance_lo) is non-zero for a funded cell.
         assert_eq!(pre[0], BabyBear::new(11));

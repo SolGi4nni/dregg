@@ -474,7 +474,7 @@ def split_bilateral(stdout: str, written):
 # `EmitCrossCellConservation.lean`). The emitter prints the BARE descriptor JSON (no
 # `key\tname\tjson` TSV — `IO.println (emitVmJson2 crossCellConservationDescriptor)`), so the
 # split routes its stdout verbatim into the single checked-in file.
-CROSS_CELL_CONSERVATION_FILE = "dregg-cross-cell-conservation-v1.json"
+CROSS_CELL_CONSERVATION_FILE = "dregg-cross-cell-conservation-v2.json"
 
 
 # ADDITIVE / STAGED: the umem-form per-effect cohort registries (`EmitUMemCohort.lean` /
@@ -507,7 +507,7 @@ def split_cross_cell_conservation(stdout: str, written):
     (no TSV prefix), so its stdout is the descriptor JSON + one trailing newline — exactly
     the checked-in file's bytes. Route the stdout VERBATIM (the trailing `\\n` from
     `IO.println` is part of the checked-in artifact; do NOT strip it)."""
-    if not stdout.startswith('{"name":"dregg-cross-cell-conservation-v1"'):
+    if not stdout.startswith('{"name":"dregg-cross-cell-conservation-v2"'):
         sys.exit(
             f"emit_descriptors: cross-cell-conservation emitter produced unexpected output: {stdout[:80]!r}"
         )

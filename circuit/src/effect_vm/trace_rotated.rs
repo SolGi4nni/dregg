@@ -4962,31 +4962,49 @@ pub fn generate_rotated_set_field_dyn_wide(
 /// V1Face host as setFieldDyn (the carriers ride the identical 8-felt blocks);
 /// the trace SHAPE differs (a Custom row, no Blum-memory boundary), but the wide
 /// geometry is `append_wide_carriers` at 581.
-pub const CUSTOM_HOST_WIDTH: usize = GRAD_ROT_WIDTH - 28; // 1647 − 4·7 sites = 1619 (wide 2579 − WIDE_CARRIER_APPENDIX)
+pub const CUSTOM_HOST_WIDTH: usize = GRAD_ROT_WIDTH - 28; // 1647 − 4·7 sites = 1619
 
-/// **THE WIDE custom trace generator (`customVmDescriptor2R24`, 789-wide / 70 PI).**
+/// **THE CUSTOM COMMIT-TEETH COLUMNS (proof-bind flag-day rotation, 4 → 8 felts).**
+/// The Custom row's param union carries only 4 commitment slots (cols 72..76 =
+/// limbs 0..4 of the 8-felt `custom_proof_pi_commitment`); the SECOND SQUEEZE
+/// BLOCK's limbs 4..8 ride these four member-local teeth columns appended at the
+/// END of the custom host (Lean `EffectVmEmitRotationV3.CUSTOM_COMMIT_TEETH_COL`,
+/// the custom twin of the membership/sovereign teeth). Filled uniformly on every
+/// row (the `.piBinding .first` pins read row 0; a uniform fill keeps padding
+/// rows consistent), published at IR2 PI 50..53.
+pub const CUSTOM_COMMIT_TEETH_BASE: usize = CUSTOM_HOST_WIDTH; // 1619..1623
+/// The number of commit-teeth columns (commitment limbs 4..8).
+pub const CUSTOM_COMMIT_TEETH_LEN: usize = 4;
+/// The custom member's host width INCLUDING the commit teeth — the base the wide
+/// carrier appendix is appended at (wide trace = 1623 + 960 = 2583; the deployed
+/// wide member additionally carries the gentian bare-refuse block past that).
+pub const CUSTOM_HOST_WIDTH_TEETH: usize = CUSTOM_HOST_WIDTH + CUSTOM_COMMIT_TEETH_LEN; // 1623
+
+/// **THE WIDE custom trace generator (`customVmDescriptor2R24`, host 1623 incl the
+/// commit teeth / 62 base PIs + 16 wide anchors = 78).**
 ///
-/// Lay the 789-wide custom row for a [`Effect::Custom`] lead. The descriptor's
-/// `proof_bind` op names two row columns, and (the VK epoch) eight `.piBinding`
-/// pins PUBLISH them as the descriptor's own public inputs (Lean
-/// `EffectVmEmitRotationV3.customPiExposure`):
+/// Lay the wide custom row for a [`Effect::Custom`] lead. The descriptor's
+/// `proof_bind` op names two row columns, and (the VK epoch + the proof-bind
+/// flag-day rotation) TWELVE `.piBinding` pins PUBLISH the full binding as the
+/// descriptor's own public inputs (Lean `EffectVmEmitRotationV3.customPiExposure`):
+///   * col 72 (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`) ← the sub-proof's 8-felt PI
+///     commitment, limbs 0..4 (cols 72..76 — IR2 PI slots 46..49);
+///   * cols 1619..1623 ([`CUSTOM_COMMIT_TEETH_BASE`]) ← commitment limbs 4..8 (the
+///     genuine second squeeze block — IR2 PI slots 50..53);
 ///   * col 68 (`PARAM_BASE + CUSTOM_VK_HASH_BASE`) ← the program VK handle (the
 ///     v1 builder writes `program_vk_hash[0..4]` into cols 68..72; the full 8-felt
 ///     VK binds through the wide-host PI (`pi::CUSTOM_PROOFS_BASE`) / turn-hash
 ///     layer, so the descriptor exposes the four vk-hash limbs that exist as
-///     columns — IR2 PI slots 50..53);
-///   * col 72 (`PARAM_BASE + CUSTOM_PROOF_COMMIT_BASE`) ← the sub-proof's PI
-///     commitment (the four `proof_commitment` limbs land in cols 72..76 — IR2 PI
-///     slots 46..49).
+///     columns — IR2 PI slots 54..57).
 ///
 /// The `Effect::Custom`'s `(program_vk_hash, proof_commitment)` MUST be the
 /// genuine values a verifying [`crate::custom_proof_bind::BoundCustomProof`]
 /// exposes — `bound.vk_hash_felts()` / `bound.proof_commitment()` — so the row
 /// the deployed prover mints carries exactly the binding the SDK-reachable
 /// `verify_proof_bind` engine (the light client's recursion) re-derives from the
-/// verified STARK. The binding is enforced at the per-turn FOLD: the eight pins
+/// verified STARK. The binding is enforced at the per-turn FOLD: the twelve pins
 /// publish the bound columns as PIs the fold connects to the custom sub-proof
-/// leaf's 4-felt PI-commitment (the recursion / `EngineBinding` carrier), so the
+/// leaf's 8-felt PI-commitment (the recursion / `EngineBinding` carrier), so the
 /// in-AIR `proof_bind` op is intentionally a declaration (like `mem_op`/`umem_op`,
 /// whose content rides the offline argument, not a row-local poly). This
 /// generator's job is to lay a SAT trace whose bound columns hold that binding
@@ -5019,36 +5037,59 @@ pub fn generate_rotated_custom_wide(
             ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
-    // VK epoch: PUBLISH the `proof_bind` op's bound columns as the descriptor's own public inputs
-    // (Lean `EffectVmEmitRotationV3.customPiExposure`, eight `.piBinding .first` pins at IR2 PI
-    // slots 46..53). The first (lead Custom) row carries the bound `(commit, vk)`: the four
-    // `custom_proof_commitment` limbs (cols 72..75) at slots 46..49, then the four low
-    // `custom_program_vk_hash` limbs (cols 68..71) at slots 50..53. Exposing them is what lets the
-    // per-turn FOLD connect the custom sub-proof leaf's 4-felt PI-commitment to this descriptor;
-    // the in-AIR `proof_bind` op stays a declaration (the binding is at the fold, not a row gate).
+    // THE COMMIT TEETH (proof-bind flag-day rotation): lay the 8-felt commitment's SECOND
+    // SQUEEZE BLOCK (limbs 4..8, straight from the lead `Effect::Custom.proof_commitment`)
+    // into the four member-local teeth columns at the end of the host, on EVERY row (the
+    // `.piBinding .first` pins read row 0; a uniform fill keeps padding rows consistent).
+    let commit_hi: [BabyBear; CUSTOM_COMMIT_TEETH_LEN] = match effects.first() {
+        Some(Effect::Custom {
+            proof_commitment, ..
+        }) => core::array::from_fn(|k| proof_commitment[4 + k]),
+        _ => unreachable!("guarded above: the lead effect is Effect::Custom"),
+    };
+    for row in trace.iter_mut() {
+        if row.len() < CUSTOM_HOST_WIDTH_TEETH {
+            row.resize(CUSTOM_HOST_WIDTH_TEETH, BabyBear::ZERO);
+        }
+        for k in 0..CUSTOM_COMMIT_TEETH_LEN {
+            row[CUSTOM_COMMIT_TEETH_BASE + k] = commit_hi[k];
+        }
+    }
+    // VK epoch + proof-bind rotation: PUBLISH the `proof_bind` op's bound columns as the
+    // descriptor's own public inputs (Lean `EffectVmEmitRotationV3.customPiExposure`, TWELVE
+    // `.piBinding .first` pins at IR2 PI slots 46..57). The first (lead Custom) row carries the
+    // bound `(commit, vk)`: the four low `custom_proof_commitment` limbs (cols 72..75) at slots
+    // 46..49, the four HIGH commitment limbs (the commit-teeth cols 1619..1623) at slots 50..53,
+    // then the four low `custom_program_vk_hash` limbs (cols 68..71) at slots 54..57. Exposing
+    // them is what lets the per-turn FOLD connect the custom sub-proof leaf's 8-felt
+    // PI-commitment to this descriptor; the in-AIR `proof_bind` op stays a declaration (the
+    // binding is at the fold, not a row gate).
     let mut base_pis = base_pis;
     {
         use super::columns::{PARAM_BASE, param};
         let r0 = &trace[0];
         // The dsl rc tail rides LAST on the wrapped member (`withDfaRcPins customV3`: exposure at
-        // 46..53, rc at 54..57) — the base generator appended rc at 46..49, so lift it off, lay
-        // the 8 exposure PIs, then re-append it.
+        // 46..57, rc at 58..61) — the base generator appended rc at 46..49, so lift it off, lay
+        // the 12 exposure PIs, then re-append it.
         let rc_tail: Vec<BabyBear> = base_pis.split_off(base_pis.len() - DFA_RC_LEN);
         for k in 0..4 {
             base_pis.push(r0[PARAM_BASE + param::CUSTOM_PROOF_COMMIT_BASE + k]); // PI 46..49
         }
-        for k in 0..4 {
-            base_pis.push(r0[PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k]); // PI 50..53
+        for k in 0..CUSTOM_COMMIT_TEETH_LEN {
+            base_pis.push(r0[CUSTOM_COMMIT_TEETH_BASE + k]); // PI 50..53 (commit limbs 4..8)
         }
-        base_pis.extend_from_slice(&rc_tail); // PI 54..57: the dsl rc tail
+        for k in 0..4 {
+            base_pis.push(r0[PARAM_BASE + param::CUSTOM_VK_HASH_BASE + k]); // PI 54..57
+        }
+        base_pis.extend_from_slice(&rc_tail); // PI 58..61: the dsl rc tail
     }
-    debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 8 + DFA_RC_LEN); // 46 base + 8 custom + 4 rc = 58
-    let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH);
+    debug_assert_eq!(base_pis.len(), ROT_PI_COUNT + 12 + DFA_RC_LEN); // 46 base + 12 custom + 4 rc = 62
+    let dpis = append_wide_carriers(&mut trace, base_pis, CUSTOM_HOST_WIDTH_TEETH);
     debug_assert_eq!(
         trace[0].len(),
-        CUSTOM_HOST_WIDTH + 2 * WIDE_NUM_CARRIERS * 8
+        CUSTOM_HOST_WIDTH_TEETH + 2 * WIDE_NUM_CARRIERS * 8
     );
-    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8 + DFA_RC_LEN + 16); // 58 + 16 wide = 74
+    debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 12 + DFA_RC_LEN + 16); // 62 + 16 wide = 78
     Ok((trace, dpis))
 }
 
