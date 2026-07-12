@@ -59,6 +59,8 @@ pub mod metrics;
 mod node_integrator_e2e;
 // The operator onboarding dance (gen-validator-key / join / add-validator) — the
 // slick, reusable path for folding a node + validator into a federation.
+#[cfg(test)]
+mod market_loop;
 pub mod operator_join;
 pub mod pg_mirror;
 pub mod prove_pool;
