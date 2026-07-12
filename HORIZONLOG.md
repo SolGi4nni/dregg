@@ -7604,3 +7604,11 @@ blacklist-bypass; compensated with a strict-termination re-walk (both gates requ
 airgap clock). Trust delta honest (policy_delay = caller knob not protocol guarantee; TEE-or-ZK validity floor).
 Live-Base proof-of-holdings now real (not just the legacy L2OutputOracle). Followup: upstream the alloy-trie fix;
 CWIA code-hash recomputation (currently a fixture constant).
+
+## Real e2e ETH light-client validated on mainnet (2026-07-12, multichain lane)
+eth-lightclient/tests/end_to_end.rs: a single test chains a GENUINE sync-committee-signed mainnet update all the
+way to a proven holding, every link REAL-EXTERNAL live data — verify_sync_aggregate (real BLS, real 512-key
+period-1800 committee, 397/512) → verify_finalized_update (real Electra depth-7 finality + execution branch) →
+verify_erc20_holding_finalized (real WETH eth_getProof) → ConsensusProven. 8 reject tests on real data (fail-closed
+at the BLS gate). Weak-subjectivity anchor (period-1799 committee source) named honestly. 142 crate tests. The
+whole ETH light client (underpinning Ethereum + Base holdings) is now empirically validated end-to-end.
