@@ -1035,3 +1035,12 @@ ROADMAP to option 2 (the correct Mina end-state): (a) unblock the dregg-turn/cir
 AgentRuntime runtime signer; (c) invert the authorization_hash_domain_separation invariant suite; THEN enable require_pq
 globally + content-address Action::hash() + bind the turn_hash in verify_by_replay. A real, sequenced migration — not a
 flag flip. B remains correct until then.
+
+## require_pq prereq #1: ALREADY DONE (2026-07-12)
+sdk/src/runtime.rs::sign_action_for_runtime already routes through sign_action_hybrid (committed fffcd36dc, ancestor of
+HEAD) — the AgentRuntime "only way an action leaves the runtime" is HYBRID, not classical. Driven green on persvati:
+runtime_signer_emits_verifiable_hybrid_authorization + runtime_turn_accepted_under_require_pq_on (the turn COMMITS under
+require_pq=ON — was rejected as classical-only before). So BLOCKER #1 (the live classical producer) is REMOVED. Remaining
+require_pq prereqs: #2 invert the authorization_hash_domain_separation invariant suite (auth-affects-hash -> auth-verified-
+separately); #3 the mid-flight dregg-turn/circuit compile break (the shared branch's VK/descriptor-regen work — another
+lane's). 2 of 3 prereqs to go before content-addressing.
