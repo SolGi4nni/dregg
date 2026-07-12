@@ -104,7 +104,11 @@ Op-note: use `git commit -F` for messages containing quotes (hit a nested-double
 - 07-12 Real e2e ETH validation COMMITTED: GOLD result — every link real-external live mainnet data (real BLS over
   the real 512-key committee 397/512 → real Electra finality/execution branch → real WETH eth_getProof →
   ConsensusProven). 8 reject tests on real data. 142 crate tests. The ETH light client (underpins ETH+Base) is now
-  empirically validated end-to-end. NO forced busywork after this — pacing on the wrap-unblock.
+  empirically validated end-to-end.
+- 07-12 ~3:40am: circuit-prove STILL churned (9 uncommitted; vk-epoch availability-weld commit aa282f8c0 35min ago;
+  stark-kill carrier flag-day). Wrap/fold stay blocked. Doing directed genuine progress: CWIA code-hash hardening
+  for the Base fault-proof anchor (reconstruct the game proxy code-hash from the AggregateVerifier impl + immutable
+  args vs the fixture constant; KAT bar = reproduce the LIVE game code-hash, else honest residual). Fable running.
 
 ## ⚑ PLATEAU NOTE (07-12 ~3am): unblocked multichain work is COMPREHENSIVELY done.
 Thread 3 + all its refinements shipped (edges, wire, multi-network, narrowing, binding TRILOGY, Base legacy +
