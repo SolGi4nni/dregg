@@ -7667,3 +7667,14 @@ is load-bearing. A mismatch would have made gnark REJECT every valid shrink proo
 on permutation + challenger + compress + LEAF HASH. Native VerifyFriNative still 1,018,263 R1CS (40.2x/51x).
 NOTE: circuit-prove is now QUIET (no src mods, no commits 3h) and the carrier flag-day LANDED (trace_rotated now
 documents 59 carriers — the old 59!=56 panic's mismatch is fixed), so a real apex may be producible → end-to-end.
+
+## ⚑⚑ APEX PIPELINE FIXED — both marquee threads UNBLOCKED (2026-07-12 ~8:30am)
+VERIFIED MYSELF: `cargo test -p dregg-circuit-prove --test membership_binding_deployed_tooth -- --ignored` →
+**2 passed, 0 failed, 344.28s**, NO PANIC. The generate_rotated_effect_vm_trace carrier 59!=56 panic that blocked
+everything all night is GONE — the carrier flag-day landed (trace_rotated documents 59 carriers). (These apex tests
+are #[ignore]d — a plain `cargo test` reports "0 passed; 2 ignored" and misleads; must pass `-- --ignored`.)
+A REAL ir2_leaf_wrap APEX IS PRODUCIBLE (~5-6 min). This unblocks BOTH marquee threads:
+- THREAD 1 (wrap): real apex → BN254-native shrink (DreggOuterConfig) → gnark VerifyFriNative = the wrap END-TO-END.
+  Capstone lane (apex-verifier AIR under DreggOuterConfig) redirected to the real ladder.
+- THREAD 2 (rung-3 fold): the fold-P0 pilot (VERIFIED-LIGHTCLIENT-FOLD-PILOT.md — fold the verified EVM-MPT light
+  client as a recursion-foldable CellProgram custom leaf) was blocked on the same pipeline. Now buildable.
