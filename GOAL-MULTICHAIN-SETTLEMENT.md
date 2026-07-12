@@ -70,5 +70,9 @@ Rust shrink layer waits on circuit-prove going quiet.
   Audit pattern held: caught the mutation-hole in my own first seal; fixed before final commit.
 - 07-12 CROSS-CHAIN WIRE done: ProvenForeignHolding::from_foreign_fields(chain, chain_tag,...) pairs the standalone
   edges' fields with the full ChainId, fail-closed on family-tag mismatch; cross-crate tags pinned. Thread-3 core DONE.
-- 07-12 Wave 2 launched (Fable): Base OP-stack finality (eth-lightclient) + secp256k1 EVM-address owner binding
-  (dregg-governance) — disjoint. Waiting on both.
+- 07-12 Wave 2: secp256k1 EVM-address owner binding COMMITTED (dregg-governance) — EVM holders now bind→vote
+  (EvmOwnerBinding + HolderBinding trait; Ed25519/Solana path byte-unchanged; low-S + address-recovery verified
+  myself; k256+sha3). EVM-family voting works end-to-end. Residual: Cosmos bech32/secp256k1 binding.
+- 07-12 Base OP-stack finality: Fable hit the session-limit ONE STEP from done (lib src/base.rs compiles;
+  test fixture missing the L2Outputs length-proof fields). Limit reset → RESUMED the agent to finish the
+  fixture + tests. NOT committed (partial; do not commit broken). Waiting.
