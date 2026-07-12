@@ -25,6 +25,18 @@ blst = "=0.3.16"
 # SHA-256 for SSZ hash_tree_root / merkleization. Pinned minor.
 sha2 = "0.10"
 
+# --- EVM proof-of-holdings (EIP-1186) : maintained Merkle-Patricia-Trie + RLP ---
+# alloy-trie is the Alloy/Reth Merkle-Patricia-Trie implementation; its
+# `proof::verify_proof(root, key, expected_value, nodes)` is exactly the audited
+# EIP-1186 verifier every Rust ETH client uses. We do NOT hand-roll the Patricia trie.
+# alloy-primitives supplies keccak256/U256/B256/Bytes; alloy-rlp the account/value RLP.
+# Pinned so the trie/RLP semantics are reproducible.
+# `ethereum` feature exposes `TrieAccount` (the RLP [nonce,balance,storageRoot,codeHash]
+# account leaf) used to reconstruct the account-proof terminal value.
+alloy-trie = { version = "=0.9.5", features = ["ethereum"] }
+alloy-primitives = "=1.3.0"
+alloy-rlp = "=0.3.12"
+
 [dev-dependencies]
 # hex decoding of the real ethereum/bls12-381-tests KAT hex strings.
 hex = "0.4"

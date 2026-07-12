@@ -69,6 +69,51 @@ pub fn htr_bytes48(pk: &[u8; 48]) -> [u8; 32] {
     hash_pair(&c0, &c1)
 }
 
+/// hash_tree_root of a `Bytes20` (e.g. an `ExecutionAddress` / fee recipient):
+/// the 20 bytes right-padded to a single 32-byte chunk.
+#[inline]
+pub fn htr_bytes20(b: &[u8; 20]) -> [u8; 32] {
+    let mut c = [0u8; 32];
+    c[..20].copy_from_slice(b);
+    c
+}
+
+/// hash_tree_root of a `Vector[byte, 256]` (the execution payload `logs_bloom`):
+/// pack the 256 bytes into eight 32-byte chunks and merkleize them (8 is already a
+/// power of two, so no padding).
+pub fn htr_logs_bloom(bloom: &[u8; 256]) -> [u8; 32] {
+    let chunks: Vec<[u8; 32]> = (0..8)
+        .map(|i| {
+            let mut c = [0u8; 32];
+            c.copy_from_slice(&bloom[i * 32..i * 32 + 32]);
+            c
+        })
+        .collect();
+    merkleize(chunks)
+}
+
+/// `mix_in_length(root, length)` (ssz/merkle-proofs.md): `hash(root || length_le_u256)`.
+/// Used to finalize the hash_tree_root of a variable-length SSZ `List`.
+pub fn mix_in_length(root: &[u8; 32], length: usize) -> [u8; 32] {
+    let mut len_chunk = [0u8; 32];
+    len_chunk[..8].copy_from_slice(&(length as u64).to_le_bytes());
+    hash_pair(root, &len_chunk)
+}
+
+/// hash_tree_root of a `List[byte, N]` whose byte limit `N <= 32`, i.e. it packs
+/// into at most ONE 32-byte chunk (the execution payload `extra_data`, `N = 32`):
+/// pack the bytes into a single right-padded chunk (or the zero chunk if empty),
+/// then `mix_in_length` with the actual byte length. Fail-closed on over-limit input.
+pub fn htr_bytelist_le32(data: &[u8]) -> [u8; 32] {
+    debug_assert!(data.len() <= 32, "extra_data exceeds 32-byte SSZ limit");
+    let mut chunk = [0u8; 32];
+    let n = data.len().min(32);
+    chunk[..n].copy_from_slice(&data[..n]);
+    // limit = ceil(32/32) = 1 chunk, so the single (possibly zero) chunk IS the
+    // merkle root of the packed vector; mix in the true length.
+    mix_in_length(&chunk, data.len())
+}
+
 /// SSZ `is_valid_merkle_branch` (phase0/beacon-chain.md).
 ///
 /// `index` is the SUBTREE index (0-based leaf position within the depth-`branch.len()`

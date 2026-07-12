@@ -32,6 +32,10 @@
 
 pub mod ssz;
 
+pub mod evm;
+pub mod execution;
+pub mod finality;
+
 use blst::min_pk::{AggregatePublicKey, PublicKey, Signature};
 use blst::BLST_ERROR;
 
@@ -75,6 +79,12 @@ pub enum Error {
     BadSignature,
     /// The committee-rotation Merkle branch did not reconstruct the state root.
     BadMerkleBranch,
+    /// The finality branch did not reconstruct the attested state root (the finalized
+    /// header is not proven final).
+    BadFinalityBranch,
+    /// The execution branch did not reconstruct the beacon body root (the execution
+    /// payload header — and its state root — is not proven under the finalized header).
+    BadExecutionBranch,
     /// A Merkle branch of the wrong depth was supplied.
     WrongBranchLength { got: usize, expected: usize },
 }
