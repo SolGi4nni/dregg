@@ -586,3 +586,29 @@ key to a real sorted gap of the PRE-root + a sorted-splice post-root constraint.
 makes sortedness an in-circuit INDUCTIVE invariant ⟹ discharges CanonicalHeapTree for all 7 mapOp effects (one shared
 lane). Then MapReconcileFamily's CanonicalHeapExtract reduces into {Poseidon2, FRI-LDT}, closing kernelConfigSound's
 one genuine assumption. STAGED like the wrap-class fixes (rides the VK epoch flip).
+
+### ★ GAP #5 CLOSURE VERDICT (2026-07-12): a per-row gate CANNOT fix it — IMT-MIGRATION is the sound closure (ember-gated)
+The fix lane REFUSED to ship a laundering gate and returned a hard architectural verdict (`CANONICAL-HEAP-TREE-
+INVESTIGATION.md`): the specified per-row sorted-splice is NOT faithfully forceable in the DEPLOYED representation.
+- ROOT CAUSE: the deployed heap is a COMPACTED SORTED ARRAY (CanonicalHeapTree::new sorts + places contiguously,
+  heap_root.rs:162/179; insert = FULL REBUILD, :399/823 "INSERT that shifts positions"). Splicing k shifts every
+  real leaf after the insertion point — O(n) of 2^16. A fixed-width single-row AIR opens only O(depth) paths, so it
+  CANNOT prove the O(n) shift happened.
+- A LOCAL after-splice gate does NOT close the double-spend (proven): the strongest O(depth) local gate (open
+  pre-neighbors lo<k<hi + post-positions consecutive) rejects the SPECIFIC §3 witness but the adversary commits a
+  DIFFERENT non-sorted after (fold[MIN,20,25,30,15,MAX] — pos-4 15 out of order, UNOPENED, 30<15 never checked; the
+  covering sibling is a free prover digest). Local gate = laundering (models-as-global what's forced only locally).
+- ★ SOUND CLOSURE = INDEXED MERKLE TREE (IMT) migration: leaf hash[addr,value,nextAddr]. Absence = ONE low-leaf
+  opening low.addr < k < low.nextAddr (POINTER bracket — no physical adjacency, so MapAbsent's pathPos adjacency
+  retires); insert = update low-leaf nextAddr→k + APPEND (k,value,oldNext) at a free slot — TWO O(depth) paths, NO
+  shift; sorted-preservation is a LOCAL per-row check. Chained from empty-IMT genesis ⟹ sorted(pre)⟹sorted(post)
+  IN-CIRCUIT ⟹ CanonicalHeapTree discharges into {Poseidon2SpongeCR, FRI-LDT}. Standard Aztec construction; the
+  combinatorial half already proven (SortedTreeNonMembership.sortedInsert_sorted:301, update_sound:338). Aligns with
+  the existing sorted-Merkle-accumulator direction (project-vk-epoch-nullifier-flip / NULLIFIER-ACCUMULATOR-
+  UNIFICATION) — IMT is its natural form.
+- SCOPE: all 7 mapOp effects + descriptor_ir2.rs (:2721 MapOps, :2854 MapAbsent) + heap_root.rs + trace_rotated.rs
+  (:1415/1516) + MapOpsColumnLayout.lean — a VK-REGEN + staged-artifact cutover. EMBER-GATED (a real accumulator
+  redesign, not a per-row patch).
+STATUS: gap #5 stays OPEN + CLASSIFIED (verdict B maintained-invariant assumption with a precise IMT closure), NOT
+faked shut. kernelConfigSound's CanonicalHeapExtract remains a genuine assumption until the IMT migration. The other
+4 wrap gaps had local gate fixes; this one needs the rep change — a deeper, correctly-scoped finding.
