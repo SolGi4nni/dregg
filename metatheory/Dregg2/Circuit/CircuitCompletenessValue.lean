@@ -392,6 +392,11 @@ structure SetFieldTraceProver (slot : Fin 8) (hash : List ℤ → ℤ)
   cellPost : CellState
   hwiRow : Dregg2.Circuit.Emit.EffectVmEmitSetField.IsSetFieldRow (envAt t wi)
   hwiEnc : Dregg2.Circuit.Emit.EffectVmEmitSetField.RowEncodesSF slot (envAt t wi) cellPre cellPost
+  /-- the active row's EXPLICIT canonicality envelope — the deployed range-check / field-representative
+  invariant every honest prover trace-row carries (state-block cells + `param1` canonical in `[0, p)`,
+  the pre-nonce tick in-field). A property of the CIRCUIT ROW, not of the kernel spec, so it enters the
+  prover floor (the dual of the soundness `hwiCanon` residual on `rotatedEncodesSF`). -/
+  hwiCanon : Dregg2.Circuit.Emit.EffectVmEmitSetField.SetFieldRowCanon (envAt t wi)
   hwval : (envAt t wi).loc (prmCol VALUE) = v
 
 /-- **`setField_rotatedEncodesSF_construct` — CONSTRUCT the setField decode from the spec.** From
@@ -412,6 +417,8 @@ def setField_rotatedEncodesSF_construct (slot : Fin 8) (hash : List ℤ → ℤ)
   cellPost := prover.cellPost
   hwiRow := prover.hwiRow
   hwiEnc := prover.hwiEnc
+  -- the row-canonicality envelope comes from the prover floor (a property of the honest trace row).
+  hwiCanon := prover.hwiCanon
   hwval := prover.hwval
   -- §RESERVED-SLOT: `SetFieldSpec` now leads with `reservedField = false` (`hspec.1`), so the guard
   -- is `hspec.2.1` and every component below gains one `.2` (the whole-map move IS the spec's `cell =
