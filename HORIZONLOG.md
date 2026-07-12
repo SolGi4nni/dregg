@@ -7727,3 +7727,20 @@ shrink degree_bits [9,9,15,14,15] (2^15-row tables) show the shrink trace is NOT
 feasible (off-chain, one-time, enables the cheap on-chain Groth16 verify) but an OPTIMIZATION TARGET, not
 RISC0/SP1 "seconds". FINAL INCREMENT: export the shrink proof's FRI data → gnark VerifyFriNative verifies a REAL
 dregg apex's shrink proof = the wrap FULLY end-to-end (real apex → BN254 shrink → gnark verify). Launching.
+
+## Shrink-prover optimization plan (2026-07-12, ember asked "GPU or other optimizations?")
+The ~18min shrink prove ran on the LAPTOP (12 cores), CPU-only Plonky3, shrink at log_blowup 6 (blowup 64). Ranked:
+1. BLOWUP REBALANCE (the big algorithmic win, config-only via create_outer_config_with_fri): native-hash made
+   per-query gnark cheap (~243 R1CS/hash), so the "high-blowup/few-queries" tuning is now BACKWARDS — the shrink
+   prove is LDE(blowup-64)-dominated. Lower blowup + more queries (hold 130-bit) shrinks the LDE ~4-16× → prove
+   plausibly 18min→~1-3min, cost = bigger-but-cheap gnark verify (~1M→~3M R1CS, Groth16-feasible). SWEEP LAUNCHED
+   (measure prove-time AND gnark-constraints per blowup → sweet spot).
+2. RUN ON THE FORGE not the laptop (12→32-64 cores; Plonky3 rayon-parallel; ~3-5× free).
+3. GPU via ICICLE (Ingonyama CUDA): wire into Plonky3's NTT + Poseidon2-BN254 + Merkle traits = 10-100× on the hot
+   loops — the "deploy a GPU prover" answer. Real work, well-trodden. (RISC0/SP1 GPU provers prove their own zkVMs,
+   not reusable directly; same primitives via ICICLE.)
+4. SHRINK THE APEX-VERIFIER AIR TRACE (2^15-row tables per degree_bits [9,9,15,14,15]): the decision doc's 3 levers
+   (fewer apex queries via higher apex blowup, cut the apex w24 452-col table, GKR-batch) — compounds with #1.
+5. FRONTIER: folding recursion (Nova/HyperNova) — no FRI-per-step; big migration, long horizon.
+Note: the shrink prove is a ONE-TIME OFF-CHAIN cost (produces the proof → Groth16 → EVM), so even 18min is
+deployable; faster = throughput/cost. #1+#2 are immediate; #3 is the ceiling-raiser.

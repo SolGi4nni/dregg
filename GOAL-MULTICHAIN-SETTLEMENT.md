@@ -199,3 +199,9 @@ modified adapter. Verify BOTH myself before any commit. (Sequenced — both heav
 apex fold 258s/399KB → shrink prove 1076s → shrink proof 263KB → verify 68ms. The wrap works end-to-end (Rust).
 Shrink prove ~18min = red-team cost (2^15-row shrink tables) → optimization target, not blocker. FINAL: gnark
 VerifyFriNative verifies the exported real shrink proof = wrap FULLY end-to-end. Launched.
+
+## ⚑ Perf lane (07-12): shrink-prover optimization (ember asked). Ranked: (1) blowup rebalance [SWEEP LAUNCHED —
+config-only, the measurement inverted the optimal: native-hash made queries cheap so lower-blowup/more-queries is
+now faster prove], (2) forge not laptop (free ~3-5×), (3) GPU/ICICLE (10-100× on NTT+Poseidon2+Merkle — the deploy-
+a-GPU answer), (4) shrink the apex-verifier AIR trace (decision doc's 3 levers), (5) folding-recursion frontier.
+Two lanes running: gnark-verifies-real-shrink-proof (final wrap increment) + the blowup sweep.
