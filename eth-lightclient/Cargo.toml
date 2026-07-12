@@ -40,3 +40,9 @@ alloy-rlp = "=0.3.12"
 [dev-dependencies]
 # hex decoding of the real ethereum/bls12-381-tests KAT hex strings.
 hex = "0.4"
+# Same pinned trie/RLP stack as the lib, used by the ADVERSARIAL tests to
+# SYNTHESIZE hostile tries (a blacklist entry that IS present, truncated
+# exclusion proofs) -- integration tests do not see the lib's dependencies.
+alloy-trie = { version = "=0.9.5", features = ["ethereum"] }
+alloy-primitives = "=1.3.0"
+alloy-rlp = "=0.3.12"

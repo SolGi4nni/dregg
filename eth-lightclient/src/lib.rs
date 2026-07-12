@@ -33,6 +33,7 @@
 pub mod ssz;
 
 pub mod base;
+pub mod base_fault_proof;
 pub mod evm;
 pub mod execution;
 pub mod finality;

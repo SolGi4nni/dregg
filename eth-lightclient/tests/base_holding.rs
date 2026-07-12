@@ -60,6 +60,7 @@ fn l1_finalized() -> FinalizedExecution {
         fx::L1_BLOCK_NUMBER,
         h32(fx::L1_BLOCK_HASH),
         h32(fx::L1_STATE_ROOT),
+        0, // execution timestamp: not exercised by the legacy-oracle composition
     )
 }
 
@@ -405,6 +406,7 @@ fn wrong_l1_state_root_rejects() {
         fx::L1_BLOCK_NUMBER,
         h32(fx::L1_BLOCK_HASH),
         sr,
+        0,
     );
     let r = run(
         &l1,

@@ -64,6 +64,7 @@ fn finalized_at_fixture_root() -> FinalizedExecution {
         weth::BLOCK_NUMBER,
         [0u8; 32],
         h32(weth::STATE_ROOT),
+        0,
     )
 }
 
@@ -199,7 +200,7 @@ fn finalized_path_wrong_root_rejects() {
     let mut root = h32(weth::STATE_ROOT);
     root[0] ^= 0x01;
     let finalized =
-        FinalizedExecution::new_unchecked(0, [0u8; 32], weth::BLOCK_NUMBER, [0u8; 32], root);
+        FinalizedExecution::new_unchecked(0, [0u8; 32], weth::BLOCK_NUMBER, [0u8; 32], root, 0);
     let r = verify_erc20_holding_finalized(
         &finalized,
         &nodes(weth::ACCOUNT_PROOF),

@@ -218,6 +218,180 @@ pub fn verify_evm_storage_slot(
     .map_err(|_| MptProofInvalid)
 }
 
+/// **The EIP-1186 storage-slot EXCLUSION proof open** — verify that `slot_key` is
+/// **absent** from the storage trie rooted at `storage_hash`, i.e. the slot's value
+/// is zero. In the EVM storage MPT a zero-valued slot is not stored at all, so
+/// `eth_getProof` answers a zero slot with an exclusion proof: a node path showing
+/// the trie does NOT contain `keccak256(slot_key)`. This is the twin of
+/// [`verify_evm_storage_slot`] with expected value `None` — needed where a verifier
+/// must prove a NEGATIVE (e.g. the Base fault-proof anchor's "this game is NOT
+/// blacklisted", [`crate::base_fault_proof`]).
+///
+/// ## Two gates, both must accept (defense in depth)
+///
+/// 1. alloy-trie's `verify_proof` with expected value `None` — the audited
+///    baseline (node linkage, RLP decoding, path walking).
+/// 2. `walk_storage_exclusion` (private) — a STRICT-TERMINATION re-walk over the same
+///    alloy node decoders. This exists because alloy-trie 0.9.5's `None` verify
+///    accepts a **truncated prefix of a valid inclusion proof** as an exclusion
+///    proof (measured; pinned by an adversarial test): its post-walk check
+///    collapses a pending hash-continuation and an actual absence-terminal into
+///    the same `None`. For a blacklist gate that hole is a forgery vector — an
+///    attacker whose game IS blacklisted could truncate the inclusion proof of
+///    the blacklist entry and "prove" absence. The re-walk refuses any proof
+///    that exhausts while a hash child on the key path is still pending: UNKNOWN
+///    is not ABSENT.
+///
+/// Fail-closed: a proof for a PRESENT key refuses, a truncated/tampered/trailing
+/// proof refuses, and an empty proof is accepted only for the canonical EMPTY
+/// trie root.
+pub fn verify_evm_storage_slot_absent(
+    storage_hash: [u8; 32],
+    slot_key: [u8; 32],
+    storage_proof: &[Vec<u8>],
+) -> Result<(), MptProofInvalid> {
+    let storage_key = Nibbles::unpack(keccak256(slot_key));
+    let storage_proof_bytes: Vec<alloy_primitives::Bytes> = storage_proof
+        .iter()
+        .map(|n| alloy_primitives::Bytes::copy_from_slice(n))
+        .collect();
+    // Gate 1: the audited baseline exclusion verify.
+    verify_proof(storage_hash.into(), storage_key, None, &storage_proof_bytes)
+        .map_err(|_| MptProofInvalid)?;
+    // Gate 2: the strict-termination re-walk (refuses truncation).
+    walk_storage_exclusion(storage_hash, &storage_key, &storage_proof_bytes)
+}
+
+/// The strict-termination MPT exclusion walk (gate 2 of
+/// [`verify_evm_storage_slot_absent`] — see there for WHY it exists). Re-walks
+/// the proof from `storage_hash` along `key` using alloy-trie's own node
+/// decoders (`TrieNode`/`RlpNode` — no hand-rolled RLP or hashing) and accepts
+/// ONLY a proof whose final node is a genuine absence terminal for the key:
+///
+/// * a **branch with no child** at the key's next nibble,
+/// * an **extension whose segment diverges** from the key, or
+/// * a **leaf whose full path differs** from the key.
+///
+/// Everything else refuses: a leaf AT the key (present, not absent), a proof
+/// that exhausts while a hash child on the key path is pending (truncation —
+/// the subtree that would hold the key was never opened), trailing nodes after
+/// the terminal, a node that does not hash-link to its parent, or undecodable
+/// bytes. In-place (< 32-byte) children are descended within the same proof
+/// entry, exactly as alloy's verifier does.
+fn walk_storage_exclusion(
+    storage_hash: [u8; 32],
+    key: &Nibbles,
+    proof: &[alloy_primitives::Bytes],
+) -> Result<(), MptProofInvalid> {
+    use alloy_rlp::Decodable as _;
+    use alloy_trie::nodes::{RlpNode, TrieNode, CHILD_INDEX_RANGE};
+    use alloy_trie::EMPTY_ROOT_HASH;
+
+    // Empty proof (or the lone RLP empty-string marker): absence holds only for
+    // the canonical empty trie root.
+    if proof.is_empty() || (proof.len() == 1 && proof[0].as_ref() == [alloy_rlp::EMPTY_STRING_CODE])
+    {
+        return if alloy_primitives::B256::from(storage_hash) == EMPTY_ROOT_HASH {
+            Ok(())
+        } else {
+            Err(MptProofInvalid)
+        };
+    }
+
+    let mut walked = Nibbles::new(); // the key prefix consumed so far (on-path)
+    let mut expected = RlpNode::word_rlp(&storage_hash.into());
+    let mut nodes = proof.iter().peekable();
+
+    while let Some(node_bytes) = nodes.next() {
+        // Hash linkage: this node must be the one its parent committed to.
+        if RlpNode::from_rlp(node_bytes).as_slice() != expected.as_slice() {
+            return Err(MptProofInvalid);
+        }
+        let mut node = TrieNode::decode(&mut &node_bytes[..]).map_err(|_| MptProofInvalid)?;
+        // Descend through in-place children without consuming proof entries.
+        loop {
+            match node {
+                TrieNode::EmptyRoot => return Err(MptProofInvalid),
+                TrieNode::Leaf(leaf) => {
+                    // A leaf is always terminal — trailing nodes are malformed.
+                    if nodes.peek().is_some() {
+                        return Err(MptProofInvalid);
+                    }
+                    let mut full = walked;
+                    full.extend(&leaf.key);
+                    return if full == *key {
+                        // The key IS present — not an exclusion.
+                        Err(MptProofInvalid)
+                    } else {
+                        // A hash-linked leaf occupying the key's position with a
+                        // DIFFERENT path: genuine absence.
+                        Ok(())
+                    };
+                }
+                TrieNode::Extension(ext) => {
+                    let on_path = walked.len() + ext.key.len() <= key.len()
+                        && key.slice(walked.len()..walked.len() + ext.key.len()) == ext.key;
+                    if !on_path {
+                        // Divergence at a hash-linked extension: the trie has no
+                        // continuation along our key here — genuine absence, and
+                        // it must be the terminal node.
+                        return if nodes.peek().is_some() {
+                            Err(MptProofInvalid)
+                        } else {
+                            Ok(())
+                        };
+                    }
+                    walked.extend(&ext.key);
+                    if ext.child.is_hash() {
+                        expected = ext.child;
+                        break; // continue with the next proof node
+                    }
+                    node = TrieNode::decode(&mut &ext.child[..]).map_err(|_| MptProofInvalid)?;
+                }
+                TrieNode::Branch(branch) => {
+                    // Fixed-width keccak256 keys never terminate AT a branch.
+                    let Some(next) = key.get(walked.len()) else {
+                        return Err(MptProofInvalid);
+                    };
+                    if !branch.state_mask.is_bit_set(next) {
+                        // No child at our nibble: genuine absence — terminal.
+                        return if nodes.peek().is_some() {
+                            Err(MptProofInvalid)
+                        } else {
+                            Ok(())
+                        };
+                    }
+                    // Locate `next`'s entry in the packed child stack (same
+                    // iteration alloy's verifier uses).
+                    let mut stack_ptr = branch.as_ref().first_child_index();
+                    for index in CHILD_INDEX_RANGE {
+                        if index == next {
+                            break;
+                        }
+                        if branch.state_mask.is_bit_set(index) {
+                            stack_ptr += 1;
+                        }
+                    }
+                    let child = branch
+                        .stack
+                        .get(stack_ptr)
+                        .cloned()
+                        .ok_or(MptProofInvalid)?;
+                    walked.push(next);
+                    if child.is_hash() {
+                        expected = child;
+                        break; // continue with the next proof node
+                    }
+                    node = TrieNode::decode(&mut &child[..]).map_err(|_| MptProofInvalid)?;
+                }
+            }
+        }
+    }
+    // Proof exhausted while a hash child on the key path was still pending: the
+    // subtree that would contain the key was never opened. UNKNOWN ≠ ABSENT.
+    Err(MptProofInvalid)
+}
+
 /// **Prove a holder's ERC-20 balance against a caller-supplied state root —
 /// non-custodially.** Mints a [`HoldingTrust::StructureOnly`] holding: the MPT chain is
 /// fully verified, but THIS function has no evidence the `state_root` itself is

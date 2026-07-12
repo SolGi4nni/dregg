@@ -88,6 +88,7 @@ pub struct FinalizedExecution {
     execution_block_number: u64,
     execution_block_hash: [u8; 32],
     execution_state_root: [u8; 32],
+    execution_timestamp: u64,
 }
 
 impl FinalizedExecution {
@@ -102,6 +103,7 @@ impl FinalizedExecution {
         execution_block_number: u64,
         execution_block_hash: [u8; 32],
         execution_state_root: [u8; 32],
+        execution_timestamp: u64,
     ) -> Self {
         FinalizedExecution {
             finalized_slot,
@@ -109,6 +111,7 @@ impl FinalizedExecution {
             execution_block_number,
             execution_block_hash,
             execution_state_root,
+            execution_timestamp,
         }
     }
 
@@ -131,6 +134,14 @@ impl FinalizedExecution {
     /// The finalized EVM world-state MPT root — the anchor for proof-of-holdings.
     pub fn execution_state_root(&self) -> [u8; 32] {
         self.execution_state_root
+    }
+    /// The finalized execution block's TIMESTAMP (`ExecutionPayloadHeader.timestamp`,
+    /// proven under the execution branch like the state root). This is the
+    /// consensus-verified clock the Base fault-proof airgap predicate compares
+    /// `resolvedAt` against ([`crate::base_fault_proof`]) — a caller-supplied wall
+    /// clock would be forgeable.
+    pub fn execution_timestamp(&self) -> u64 {
+        self.execution_timestamp
     }
 }
 
@@ -220,5 +231,6 @@ pub fn verify_finalized_update(
         execution_block_number: update.finalized_header.execution.block_number,
         execution_block_hash: update.finalized_header.execution.block_hash,
         execution_state_root,
+        execution_timestamp: update.finalized_header.execution.timestamp,
     })
 }

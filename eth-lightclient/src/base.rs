@@ -42,16 +42,16 @@
 //! shrinks the length WITHOUT zeroing element storage — a deleted (disputed)
 //! output must not remain provable.
 //!
-//! **Named residual (NOT verified here):** Base mainnet migrated to **fault
-//! proofs** — the live anchor is a resolved `FaultDisputeGame` created by the
-//! `DisputeGameFactory` (0x43edB88C4B80fDD2AdFF2412A7BebF9dF42cB40e on L1) with the
-//! `AnchorStateRegistry` tracking the latest resolved anchor. Verifying THAT model
-//! needs the dispute-game resolution semantics (game status, respected game type,
-//! retirement/blacklist checks), not just a slot read; this module does not claim
-//! it. The `l2Outputs` model verified here is exact for pre-fault-proof OP-stack
-//! chains and for any chain still running an `L2OutputOracle`; on post-fault-proof
-//! Base the composition below is trustless GIVEN an output root committed under the
-//! honest-oracle model. See the module tests for the polarity evidence.
+//! **Scope:** the `l2Outputs` model verified here is exact for pre-fault-proof
+//! OP-stack chains and for any chain still running an `L2OutputOracle`. Base
+//! mainnet migrated to **fault proofs** — the live anchor is a resolved dispute
+//! game created by the `DisputeGameFactory`
+//! (0x43edB88C4B80fDD2AdFF2412A7BebF9dF42cB40e on L1) with the
+//! `AnchorStateRegistry` tracking the latest resolved anchor; verifying THAT model
+//! (game status, respected game type, retirement/blacklist exclusion, the airgap)
+//! is [`crate::base_fault_proof`], which reuses this module's output-root binding
+//! ([`verify_op_output_root`]) and `L1CommittedOutput` shape. Use THIS module for
+//! legacy-oracle chains and the fault-proof module for live Base.
 //!
 //! ## Chain identity at the governance edge
 //!
