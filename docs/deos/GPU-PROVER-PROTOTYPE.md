@@ -601,3 +601,92 @@ Vulkan compute and the ROCm/HIP escalation (§3.4) — comes back clearly:
 The HIP escalation path stays closed unless the `GpuDft` integration measures
 far off this band on real LDE shapes. gfx1031's absence from the ROCm support
 matrix is now irrelevant to the plan.
+
+## 11. MEASURED: Poseidon2-BabyBear + Merkle commit — native Metal vs wgpu, M2 Max (2026-07-12)
+
+Probe: `circuit-prove/sketches/poseidon2-merkle-bench/` (standalone crate, own
+`[workspace]` opt-out; `cargo run --release` runs everything below). This was
+the DECISIVE remaining measurement for the native-vs-portable question: the NTT
+(§9/§10) is bandwidth-bound and came back a tie, but Poseidon2 is
+**compute-bound** — 655 Montgomery muls + 1,309 modular add/subs per width-16
+permutation against 128 B of I/O — and the shrink prover is **hash-dominated**
+(WRAP-NATIVE-HASH-DECISION.md: ~11,000 w16 perms dominate the wrap's cost
+structure; the Rust-side shrink prove is Merkle-commit-heavy the same way). The
+hypothesis: the native ~3x ALU advantage on Montgomery mul (mulhi microprobe:
+320 Gmul/s native vs 60-106 for the WGSL 16-bit split, §2/§4) translates into a
+real ~2-3x here, which would justify a native-Metal seam for the hash side.
+
+**It does not translate. Measured: native wins only ~1.2x on the permutation
+and ~1.22-1.38x on the whole Merkle commit.**
+
+What was measured (both backends bit-exact against pinned p3 82cfad7 before
+any timing; interleaved A/B, best-of-5, two independent runs quoted as ranges):
+
+- **The exact production permutation**: `Poseidon2BabyBear<16>` —
+  x^7 S-box (`BABYBEAR_S_BOX_DEGREE = 7`, baby-bear/src/poseidon1.rs:38 — note:
+  degree 7, not the x^5 sometimes assumed), RF=8, RP=13, MDSMat4 mds-light
+  external layer, `1 + Diag(V)` internal layer; round constants extracted from
+  the p3 arrays at runtime in Montgomery form. Both backends execute the
+  IDENTICAL generated straight-line body (assignments over predeclared u32
+  vars are the same source text in MSL and WGSL); only the mmul/addp prelude
+  differs — native `mulhi` (4 hardware muls) vs the WGSL 16-bit-split
+  emulation. Parity: the pinned KAT
+  (baby-bear/src/poseidon2.rs `test_default_babybear_poseidon2_width_16`) +
+  4,096 random states + 256 sixteen-chained states, bit-exact on both.
+- **The exact MMCS commit pattern**: leaf = `PaddingFreeSponge<Perm,16,8,8>`,
+  compress = `TruncatedPermutation<Perm,2,8,16>` — the pair the prover
+  instantiates at `circuit-prove/src/plonky3_recursion_impl.rs:70-78` — built
+  as a full binary tree to the root, one w16 perm per node. Roots verified
+  bit-exact against the real p3 hasher/compressor at every measured size.
+
+| measurement | native Metal | wgpu/WGSL | ratio |
+|---|---|---|---|
+| perm, CHAIN=1 (2^20 states, with I/O) | 2.97-3.31 ms = 317-354 Mperm/s | 3.59-4.26 ms = 246-292 Mperm/s | **1.21-1.29x** |
+| perm, CHAIN=16 (ALU-bound, I/O amortized) | 246-331 Mperm/s = 161-217 Gmul-equiv/s | 206-276 Mperm/s = 135-181 Gmul-equiv/s | **1.19-1.20x** |
+| Merkle 2^18 leaves (0.5M hashes) | 2.28-2.41 ms | 3.13-3.15 ms | 1.30-1.38x |
+| Merkle 2^19 | 3.65-3.94 ms | 4.83-5.19 ms | 1.31-1.33x |
+| Merkle 2^20 | 6.86-7.04 ms | 8.91-8.94 ms | 1.27-1.30x |
+| Merkle 2^21 (4.2M hashes) | **13.8 ms** = ~304 Mhash/s | **16.9-17.2 ms** = ~244-249 Mhash/s | **1.22-1.24x** |
+
+CPU reference (rayon over the scalar p3 perm, this machine): 2^21 tree =
+1.0-1.2 s ≈ 3.5-4.2 Mhash/s — the GPU offload itself is worth **~60-85x**
+over scalar-CPU hashing; the API choice within the GPU is worth ~1.25x.
+
+### Why the 3x ALU advantage collapses (and it is NOT memory)
+
+This is genuinely compute-bound — I/O runs at 2-45 GB/s against the ~400 GB/s
+ceiling, and the tree sizes don't change the ratio much — so the NTT's excuse
+(math hides behind DRAM) does not apply. Two things eat the gap instead:
+
+1. **Instruction mix.** A permutation is 655 mmuls *plus* 1,309 modular
+   add/subs (+ selects/halves), and the adds run at identical rate on both
+   backends. Even a 3x mul tax is Amdahl-capped well below 2x end-to-end.
+2. **The dependent-chain microprobe overstated the in-context split-mul tax.**
+   In situ, wgpu sustains 135-191 Gmul-equiv/s — far above its own 60-106
+   Gmul/s microprobe band — because the ~9-mul 16-bit-split DAG has internal
+   ILP that a mixed instruction stream schedules well; the microprobe's
+   serially-dependent chain was its worst case. Native meanwhile lands at
+   161-217 Gmul-equiv/s, *below* its 320 pure-mul microprobe, diluted by the
+   same add traffic. The effective in-situ mul tax is ~1.2x, not 3-5x.
+
+### Verdict: the NTT's "stay portable" is CONFIRMED on the compute-bound kernel too
+
+The premise "if native wins ~2-3x on the hash-dominated prover's dominant
+kernel, the NTT verdict was wrong" is now settled by measurement: native's
+best case on the dominant kernel is **~1.25x** (1.19-1.38x across every shape
+and both runs) — the same order as this shared machine's run-to-run variance
+band on the NTT (±10-15%). Whole-prover impact of a native seam, using the
+hash:NTT:other split: with hashing a fraction H of GPU prove time, the seam
+buys 1/(H/1.27 + (1-H)) — **1.12x at H=0.5, 1.17x at H=0.7, capped at 1.27x
+even if the prove were pure hashing.** The NTT term is already a measured tie
+(§10), so nothing else recovers the gap.
+
+**Recommendation unchanged and now fully grounded: ONE portable wgpu backend,
+no native-Metal seam — for both kernel classes.** The hash-dominated shrink
+prover's real win is the offload itself (~300 Mhash/s ≈ a 2^21-leaf MMCS
+commit in 14-17 ms, vs ~1 s on CPU); at these rates the 25 BabyBear lanes'
+commit phases stop being the wall either way, and a permanent per-platform
+seam is not worth ≤1.27x on one term. If a future Apple-GPU generation ships
+a wider integer multiplier (or WGSL gains native mulhi — tracked upstream as
+`u32`-widening proposals), re-run this probe: it is parity-gated and takes
+~30 s.

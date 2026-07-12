@@ -1,0 +1,30 @@
+[package]
+name = "poseidon2-merkle-bench"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone probe crate — deliberately NOT a workspace member (empty [workspace]
+# opts out of the breadstuffs root workspace). Run with `cargo run --release`
+# from this directory.
+#
+# THE DECISIVE HEAD-TO-HEAD for the native-vs-portable GPU backend question:
+# Poseidon2-BabyBear-w16 permutation + Merkle commit (the MMCS pattern the
+# shrink prover is dominated by), native Metal (MSL) vs wgpu/WGSL, both
+# bit-exact against pinned Plonky3 82cfad7, measured interleaved A/B on the
+# M2 Max. Unlike the NTT (bandwidth-bound — sibling probes metal-babybear-ntt
+# / wgpu-babybear-ntt measured a tie), hashing is COMPUTE-BOUND, where the
+# native mulhi vs WGSL 16-bit-split ALU gap (~3x on the mul microprobe) could
+# actually translate. Results in docs/deos/GPU-PROVER-PROTOTYPE.md §11.
+[workspace]
+
+[dependencies]
+metal = "0.33"
+objc = "0.2"
+wgpu = "24"
+pollster = "0.4"
+bytemuck = "1"
+rand = "0.8"
+rayon = "1"
+p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
