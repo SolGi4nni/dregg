@@ -36,8 +36,12 @@ instance instFactBabyBearPrime : Fact (Nat.Prime babyBearP) := ⟨babyBearP_prim
 /-- **BabyBear** as a Lean field: `ZMod p` for the prime `p`. -/
 abbrev BabyBear := ZMod babyBearP
 
-/-- BabyBear is a `Field` — the first typeclass `fold_close_of_two_alpha` requires. -/
-noncomputable instance : Field BabyBear := inferInstance
+/-- BabyBear is a `Field` — the first typeclass `fold_close_of_two_alpha` requires — and it is
+COMPUTABLE: `ZMod p` for prime `p` has a computable inverse (extended-Euclid `ZMod.inv`), so
+`inferInstance` is computable. The former `noncomputable` annotation was SPURIOUS and poisoned
+`decide`/`#eval`/`native_decide` on every downstream `def` touching BabyBear (ember caught it
+2026-07-11); computable ⇒ concrete circuit evaluation works. -/
+instance : Field BabyBear := inferInstance
 
 /-- BabyBear has `DecidableEq` — the second typeclass the FRI lemmas require. -/
 instance : DecidableEq BabyBear := inferInstance
