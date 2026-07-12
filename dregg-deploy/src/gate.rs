@@ -52,7 +52,10 @@
 //! holder. Those pass the structural checks and are caught here.
 
 use dregg_cell::permissions::AuthRequired;
-use dregg_cell::{CapabilityRef, EFFECT_MINT, EffectMask, is_effect_permitted};
+use dregg_cell::{
+    CapabilityRef, EFFECT_BRIDGE_OPS, EFFECT_MINT, EFFECT_SET_PERMISSIONS, EFFECT_SET_PROGRAM,
+    EFFECT_SET_VERIFICATION_KEY, EffectMask, is_effect_permitted,
+};
 use dregg_turn::CallForest;
 use dregg_turn::action::Effect;
 use dregg_types::CellId;
@@ -276,10 +279,12 @@ impl GatePolicy {
     }
 
     /// A representative **fair-launch** policy for the microsite: no live
-    /// un-renounced mint authority (mint must be renounced or held by a declared
-    /// governance holder), reliance on the structural non-amplification check,
-    /// and a requirement that the pooled-asset withdraw/transfer cap be
-    /// attenuated to a permitted operator set.
+    /// un-renounced supply-affecting authority — mint (direct supply), upgrade
+    /// (SET_VERIFICATION_KEY / SET_PROGRAM → upgrade-then-mint), and bridge ops
+    /// (EFFECT_BRIDGE_OPS → cross-federation mint) must each be renounced or
+    /// held by a declared governance holder — plus reliance on the structural
+    /// non-amplification check, and a requirement that the pooled-asset
+    /// withdraw/transfer cap be attenuated to a permitted operator set.
     pub fn fair_launch(
         governance_holders: Vec<String>,
         pool: &str,
@@ -288,7 +293,13 @@ impl GatePolicy {
         GatePolicy {
             as_ring: false,
             predicates: vec![
-                Predicate::NoLiveMintAuthority { governance_holders },
+                Predicate::NoLiveMintAuthority {
+                    governance_holders: governance_holders.clone(),
+                },
+                Predicate::NoLiveUpgradeAuthority {
+                    governance_holders: governance_holders.clone(),
+                },
+                Predicate::NoLiveBridgeOps { governance_holders },
                 Predicate::NoUndisclosedAmplifyingGrant,
                 Predicate::RequireDangerousCapAttenuation {
                     label: "pooled-asset withdraw".to_string(),
@@ -341,6 +352,49 @@ pub enum Predicate {
         /// Cell names permitted to hold a LIVE (exercisable) mint authority
         /// (e.g. a time-locked governance multisig). Empty = the strict
         /// fair-launch reading: mint must be renounced, full stop.
+        governance_holders: Vec<String>,
+    },
+
+    /// **NoLiveUpgradeAuthority** — refuse the **upgrade-then-mint** rug.
+    ///
+    /// A mint check alone is bypassable by a live upgrade key: rewrite the
+    /// cell's verification key (`dregg_cell::EFFECT_SET_VERIFICATION_KEY`, bit
+    /// `1 << 8` — accept forged receipts) or its program
+    /// (`dregg_cell::EFFECT_SET_PROGRAM`, bit `1 << 24` — swap in a program
+    /// that mints), *then* mint. So a live upgrade authority is
+    /// supply-affecting even though it never names `EFFECT_MINT`.
+    ///
+    /// REFUSAL CONDITION: a lowered `Effect::GrantCapability { to, cap, .. }`
+    /// whose `cap` permits `EFFECT_SET_VERIFICATION_KEY` **or**
+    /// `EFFECT_SET_PROGRAM` — determined by the real
+    /// `dregg_cell::is_effect_permitted` over the combined mask, so an
+    /// **unrestricted** cap (`allowed_effects == None`) counts — is REFUSED
+    /// **unless** it is renounced (`cap.permissions ==
+    /// AuthRequired::Impossible`, or the recipient is the burn `CellId([0;
+    /// 32])`) or the recipient resolves to a name in `governance_holders`.
+    NoLiveUpgradeAuthority {
+        /// Cell names permitted to hold a LIVE upgrade authority (e.g. a
+        /// time-locked governance multisig). Empty = strict: upgrade authority
+        /// must be renounced, full stop.
+        governance_holders: Vec<String>,
+    },
+
+    /// **NoLiveBridgeOps** — refuse the **cross-federation mint** rug.
+    ///
+    /// `dregg_cell::EFFECT_BRIDGE_OPS` (bit `1 << 12`) is the cross-federation
+    /// transfer plumbing: a live bridge-ops key can conjure inbound value from
+    /// a foreign federation the local supply checks never see — minting by
+    /// import. Supply-affecting, so it gets the same live/renounced/governance
+    /// trichotomy as mint.
+    ///
+    /// REFUSAL CONDITION: a lowered `Effect::GrantCapability { to, cap, .. }`
+    /// whose `cap` permits `EFFECT_BRIDGE_OPS` (via the real
+    /// `is_effect_permitted`; an unrestricted `None` cap counts) is REFUSED
+    /// **unless** renounced (permissions `Impossible` or burn recipient) or
+    /// held by a name in `governance_holders`.
+    NoLiveBridgeOps {
+        /// Cell names permitted to hold a LIVE bridge-ops authority. Empty =
+        /// strict: bridge ops must be renounced, full stop.
         governance_holders: Vec<String>,
     },
 
@@ -401,6 +455,8 @@ impl Predicate {
     pub fn name(&self) -> &'static str {
         match self {
             Predicate::NoLiveMintAuthority { .. } => "NoLiveMintAuthority",
+            Predicate::NoLiveUpgradeAuthority { .. } => "NoLiveUpgradeAuthority",
+            Predicate::NoLiveBridgeOps { .. } => "NoLiveBridgeOps",
             Predicate::NoUndisclosedAmplifyingGrant => "NoUndisclosedAmplifyingGrant",
             Predicate::RequireDangerousCapAttenuation { .. } => "RequireDangerousCapAttenuation",
         }
@@ -412,6 +468,12 @@ impl Predicate {
         match self {
             Predicate::NoLiveMintAuthority { governance_holders } => {
                 check_no_live_mint(ctx.lowered, governance_holders)
+            }
+            Predicate::NoLiveUpgradeAuthority { governance_holders } => {
+                check_no_live_upgrade(ctx.lowered, governance_holders)
+            }
+            Predicate::NoLiveBridgeOps { governance_holders } => {
+                check_no_live_bridge_ops(ctx.lowered, governance_holders)
             }
             Predicate::NoUndisclosedAmplifyingGrant => check_relies_on_structural_a(ctx.verdict),
             Predicate::RequireDangerousCapAttenuation {
@@ -460,15 +522,27 @@ fn resolve_names(lowered: &Lowered, names: &[String]) -> std::collections::BTree
         .collect()
 }
 
-fn check_no_live_mint(
+/// The shared engine behind the `NoLive*` supply family: refuse the first
+/// lowered grant whose cap permits any bit of `dangerous_bits` (via the real
+/// `is_effect_permitted`, so an UNRESTRICTED `None` cap counts) unless it is
+/// **renounced** (`permissions == Impossible`, permanently un-exercisable, or
+/// sent to the burn `CellId([0; 32])` — no live holder) or held by a declared
+/// **governance** name. `rug` names the authority + the rug it enables in the
+/// finding.
+fn check_no_live_grant(
     lowered: &Lowered,
     governance_holders: &[String],
+    predicate: &'static str,
+    dangerous_bits: EffectMask,
+    rug: &str,
 ) -> Result<(), PolicyFinding> {
     let gov = resolve_names(lowered, governance_holders);
     for (from, to, cap) in grant_edges(&lowered.forest) {
-        // Does this cap permit minting? `is_effect_permitted(None, _) == true`,
-        // so an UNRESTRICTED cap counts as mint-capable (it can mint).
-        if !is_effect_permitted(cap.allowed_effects, EFFECT_MINT) {
+        // Does this cap permit the dangerous authority?
+        // `is_effect_permitted(None, _) == true`, so an UNRESTRICTED cap counts
+        // (it can exercise every effect, including this one); `Some(m)` is an
+        // any-overlap test against the combined bits.
+        if !is_effect_permitted(cap.allowed_effects, dangerous_bits) {
             continue;
         }
         // Renounced: permanently un-exercisable, or sent to the burn address.
@@ -480,20 +554,19 @@ fn check_no_live_mint(
         if gov.contains(to) {
             continue;
         }
-        // A live mint key held by a non-governance, non-renounced cell — the rug.
+        // A live dangerous key held by a non-governance, non-renounced cell —
+        // the rug.
         return Err(PolicyFinding {
-            predicate: "NoLiveMintAuthority".to_string(),
+            predicate: predicate.to_string(),
             locus: format!(
                 "grant {} → {}",
                 lowered.label_cell(from),
                 lowered.label_cell(to)
             ),
             message: format!(
-                "grant confers LIVE mint authority to `{}`: the cap facet {} permits \
-                 Effect::Mint (dregg_cell::EFFECT_MINT, bit 1<<26 — the cap-gated supply \
-                 entry), yet it is NOT renounced (permissions != Impossible and recipient \
-                 is not the burn address) and `{}` is not a declared governance holder. \
-                 This is the un-renounced-mint rug.",
+                "grant confers LIVE {rug} to `{}` (cap facet {}), yet it is NOT renounced \
+                 (permissions != Impossible and recipient is not the burn address) and \
+                 `{}` is not a declared governance holder.",
                 lowered.label_cell(to),
                 describe_allowed_effects(cap.allowed_effects),
                 lowered.label_cell(to),
@@ -501,6 +574,53 @@ fn check_no_live_mint(
         });
     }
     Ok(())
+}
+
+fn check_no_live_mint(
+    lowered: &Lowered,
+    governance_holders: &[String],
+) -> Result<(), PolicyFinding> {
+    check_no_live_grant(
+        lowered,
+        governance_holders,
+        "NoLiveMintAuthority",
+        EFFECT_MINT,
+        "mint authority — Effect::Mint (dregg_cell::EFFECT_MINT, bit 1<<26, the cap-gated \
+         supply entry); the un-renounced-mint rug",
+    )
+}
+
+fn check_no_live_upgrade(
+    lowered: &Lowered,
+    governance_holders: &[String],
+) -> Result<(), PolicyFinding> {
+    check_no_live_grant(
+        lowered,
+        governance_holders,
+        "NoLiveUpgradeAuthority",
+        EFFECT_SET_VERIFICATION_KEY | EFFECT_SET_PROGRAM | EFFECT_SET_PERMISSIONS,
+        "upgrade authority — Effect::SetVerificationKey (EFFECT_SET_VERIFICATION_KEY, \
+         bit 1<<8), Effect::SetProgram (EFFECT_SET_PROGRAM, bit 1<<24), or \
+         Effect::SetPermissions (EFFECT_SET_PERMISSIONS, bit 1<<7 — the executor gates \
+         SetProgram/SetVerificationKey on the cell's permissions, so a live SetPermissions \
+         can re-open those gates): rewrite the verifier/program/permissions, then mint; \
+         the upgrade-then-mint rug",
+    )
+}
+
+fn check_no_live_bridge_ops(
+    lowered: &Lowered,
+    governance_holders: &[String],
+) -> Result<(), PolicyFinding> {
+    check_no_live_grant(
+        lowered,
+        governance_holders,
+        "NoLiveBridgeOps",
+        EFFECT_BRIDGE_OPS,
+        "bridge-ops authority — Effect::BridgeOps (dregg_cell::EFFECT_BRIDGE_OPS, bit \
+         1<<12, the cross-federation transfer plumbing): mint by importing value the \
+         local supply checks never see; the cross-federation-mint rug",
+    )
 }
 
 fn check_relies_on_structural_a(verdict: &DeployVerdict) -> Result<(), PolicyFinding> {
@@ -603,6 +723,36 @@ mod tests {
     use super::*;
 
     const MINT_BIT: u32 = 1 << 26; // dregg_cell::EFFECT_MINT
+    const SET_VK_BIT: u32 = 1 << 8; // dregg_cell::EFFECT_SET_VERIFICATION_KEY
+    const BRIDGE_OPS_BIT: u32 = 1 << 12; // dregg_cell::EFFECT_BRIDGE_OPS
+    const SET_PROGRAM_BIT: u32 = 1 << 24; // dregg_cell::EFFECT_SET_PROGRAM
+    const SET_PERMISSIONS_BIT: u32 = 1 << 7; // dregg_cell::EFFECT_SET_PERMISSIONS
+
+    /// A minimal issuer→operator spec with ONE live (signature-gated) grant
+    /// carrying exactly `bits` as its facet — the raw material for the NoLive*
+    /// discriminator tests.
+    fn live_grant_spec(bits: u32) -> String {
+        format!(
+            r#"
+[federation]
+id = "auto"
+[[factory]]
+ref = "f"
+[[cell]]
+name = "issuer"
+factory = "f"
+[[cell]]
+name = "operator"
+factory = "f"
+[[grant]]
+from = "issuer"
+to   = "operator"
+permissions = "signature"
+target = "issuer"
+allowed_effects = {bits}
+"#
+        )
+    }
 
     /// A CLEAN tier-1 spec: an issuer mints only into a governance holder, and
     /// the pooled-asset transfer cap is attenuated to a permitted operator. It
@@ -868,6 +1018,245 @@ target = "issuer"
         assert!(
             strict.evaluate(dl).is_refuse(),
             "an unrestricted live grant confers mint authority and must be refused"
+        );
+    }
+
+    // ── (d′) NoLiveUpgradeAuthority: SET_PROGRAM / SET_VK bite AND the
+    //    renounced / governance variants permit (the upgrade-then-mint rug) ──
+    #[test]
+    fn no_live_upgrade_authority_bites_and_permits() {
+        let strict = DeployGate::new(GatePolicy {
+            as_ring: false,
+            predicates: vec![Predicate::NoLiveUpgradeAuthority {
+                governance_holders: vec![],
+            }],
+        });
+
+        // BITE: a live SET_PROGRAM grant to an operator — swap the program,
+        // then mint.
+        let set_program_rug = live_grant_spec(SET_PROGRAM_BIT);
+        let decision = strict.evaluate(&set_program_rug);
+        let GateDecision::Refuse {
+            reason: RefuseReason::Policy(finding),
+        } = &decision
+        else {
+            panic!("a live SET_PROGRAM grant must be refused by policy; got: {decision:?}");
+        };
+        assert_eq!(finding.predicate, "NoLiveUpgradeAuthority");
+        assert!(
+            finding.message.contains("upgrade"),
+            "the finding names the upgrade authority: {finding}"
+        );
+
+        // BITE: a live SET_VERIFICATION_KEY grant — accept forged receipts,
+        // then mint. Same predicate, other bit.
+        let set_vk_rug = live_grant_spec(SET_VK_BIT);
+        let decision = strict.evaluate(&set_vk_rug);
+        let GateDecision::Refuse {
+            reason: RefuseReason::Policy(finding),
+        } = &decision
+        else {
+            panic!(
+                "a live SET_VERIFICATION_KEY grant must be refused by policy; got: {decision:?}"
+            );
+        };
+        assert_eq!(finding.predicate, "NoLiveUpgradeAuthority");
+
+        // BITE: a live SET_PERMISSIONS grant — the executor gates
+        // SetProgram/SetVerificationKey on the cell's permissions, so a live
+        // SetPermissions can re-open those gates, then mint (the audit's route).
+        let set_perms_rug = live_grant_spec(SET_PERMISSIONS_BIT);
+        let decision = strict.evaluate(&set_perms_rug);
+        let GateDecision::Refuse {
+            reason: RefuseReason::Policy(finding),
+        } = &decision
+        else {
+            panic!("a live SET_PERMISSIONS grant must be refused by policy; got: {decision:?}");
+        };
+        assert_eq!(finding.predicate, "NoLiveUpgradeAuthority");
+
+        // PERMIT (renounced): permissions = impossible → permanently
+        // un-exercisable, no live holder. Non-vacuity: the predicate bites the
+        // rug AND lets the renounced variant pass.
+        let renounced = set_program_rug.replace(
+            r#"permissions = "signature""#,
+            r#"permissions = "impossible""#,
+        );
+        let d = strict.evaluate(&renounced);
+        assert!(
+            d.is_permit(),
+            "a RENOUNCED upgrade key (permissions=impossible) must permit; got: {d:?}"
+        );
+
+        // PERMIT (governance): the SAME rug spec permits when `operator` is a
+        // declared governance holder.
+        let gov_gate = DeployGate::new(GatePolicy {
+            as_ring: false,
+            predicates: vec![Predicate::NoLiveUpgradeAuthority {
+                governance_holders: vec!["operator".to_string()],
+            }],
+        });
+        assert!(
+            gov_gate.evaluate(&set_program_rug).is_permit(),
+            "an upgrade key held by a declared governance holder must permit"
+        );
+        assert!(
+            gov_gate.evaluate(&set_vk_rug).is_permit(),
+            "a VK key held by a declared governance holder must permit"
+        );
+
+        // PERMIT (unrelated facet): a transfer-only grant carries no upgrade
+        // authority — the predicate must NOT fire on it.
+        let d = strict.evaluate(&live_grant_spec(2));
+        assert!(
+            d.is_permit(),
+            "a transfer-only grant carries no upgrade authority; got: {d:?}"
+        );
+    }
+
+    // ── (d″) NoLiveBridgeOps: BRIDGE_OPS bites AND the renounced / governance
+    //    variants permit (the cross-federation-mint rug) ──
+    #[test]
+    fn no_live_bridge_ops_bites_and_permits() {
+        let strict = DeployGate::new(GatePolicy {
+            as_ring: false,
+            predicates: vec![Predicate::NoLiveBridgeOps {
+                governance_holders: vec![],
+            }],
+        });
+
+        // BITE: a live EFFECT_BRIDGE_OPS grant to an operator — mint by import.
+        let bridge_rug = live_grant_spec(BRIDGE_OPS_BIT);
+        let decision = strict.evaluate(&bridge_rug);
+        let GateDecision::Refuse {
+            reason: RefuseReason::Policy(finding),
+        } = &decision
+        else {
+            panic!("a live BRIDGE_OPS grant must be refused by policy; got: {decision:?}");
+        };
+        assert_eq!(finding.predicate, "NoLiveBridgeOps");
+        assert!(
+            finding.message.contains("bridge"),
+            "the finding names the bridge-ops authority: {finding}"
+        );
+
+        // PERMIT (renounced).
+        let renounced = bridge_rug.replace(
+            r#"permissions = "signature""#,
+            r#"permissions = "impossible""#,
+        );
+        assert!(
+            strict.evaluate(&renounced).is_permit(),
+            "a RENOUNCED bridge-ops key must permit"
+        );
+
+        // PERMIT (governance).
+        let gov_gate = DeployGate::new(GatePolicy {
+            as_ring: false,
+            predicates: vec![Predicate::NoLiveBridgeOps {
+                governance_holders: vec!["operator".to_string()],
+            }],
+        });
+        assert!(
+            gov_gate.evaluate(&bridge_rug).is_permit(),
+            "a bridge-ops key held by a declared governance holder must permit"
+        );
+
+        // PERMIT (unrelated facet): transfer-only carries no bridge authority.
+        assert!(
+            strict.evaluate(&live_grant_spec(2)).is_permit(),
+            "a transfer-only grant carries no bridge-ops authority"
+        );
+    }
+
+    // ── the sneaky variant covers the new bits too: an UNRESTRICTED grant
+    //    permits EVERY effect, so upgrade + bridge predicates must catch it ──
+    #[test]
+    fn unrestricted_grant_is_treated_as_live_upgrade_and_bridge() {
+        let unrestricted = r#"
+[federation]
+id = "auto"
+[[factory]]
+ref = "f"
+[[cell]]
+name = "issuer"
+factory = "f"
+[[cell]]
+name = "operator"
+factory = "f"
+[[grant]]
+from = "issuer"
+to   = "operator"
+permissions = "signature"
+target = "issuer"
+"#;
+        for pred in [
+            Predicate::NoLiveUpgradeAuthority {
+                governance_holders: vec![],
+            },
+            Predicate::NoLiveBridgeOps {
+                governance_holders: vec![],
+            },
+        ] {
+            let name = pred.name();
+            let gate = DeployGate::new(GatePolicy {
+                as_ring: false,
+                predicates: vec![pred],
+            });
+            let d = gate.evaluate(unrestricted);
+            let GateDecision::Refuse {
+                reason: RefuseReason::Policy(finding),
+            } = &d
+            else {
+                panic!("an unrestricted live grant must be refused by {name}; got: {d:?}");
+            };
+            assert_eq!(finding.predicate, name);
+        }
+    }
+
+    // ── the fair_launch PRESET now covers upgrade + bridge, not just mint ──
+    #[test]
+    fn fair_launch_preset_refuses_upgrade_and_bridge_rugs() {
+        let gate = fair_launch_gate();
+
+        // The clean spec + a live SET_PROGRAM grant to the operator: mint is
+        // clean (held by gov), yet the preset refuses on the upgrade key.
+        let upgrade_rug = format!(
+            "{}\n[[grant]]\nfrom = \"issuer\"\nto = \"operator\"\npermissions = \"signature\"\ntarget = \"issuer\"\nallowed_effects = {SET_PROGRAM_BIT}\n",
+            clean_spec()
+        );
+        let d = gate.evaluate(&upgrade_rug);
+        let GateDecision::Refuse {
+            reason: RefuseReason::Policy(finding),
+        } = &d
+        else {
+            panic!("fair_launch must refuse a live upgrade key; got: {d:?}");
+        };
+        assert_eq!(finding.predicate, "NoLiveUpgradeAuthority");
+
+        // The clean spec + a live BRIDGE_OPS grant to the operator.
+        let bridge_rug = format!(
+            "{}\n[[grant]]\nfrom = \"issuer\"\nto = \"operator\"\npermissions = \"signature\"\ntarget = \"issuer\"\nallowed_effects = {BRIDGE_OPS_BIT}\n",
+            clean_spec()
+        );
+        let d = gate.evaluate(&bridge_rug);
+        let GateDecision::Refuse {
+            reason: RefuseReason::Policy(finding),
+        } = &d
+        else {
+            panic!("fair_launch must refuse a live bridge-ops key; got: {d:?}");
+        };
+        assert_eq!(finding.predicate, "NoLiveBridgeOps");
+
+        // And BOTH rugs permit when granted to the declared governance holder
+        // instead — the preset's governance carve-out covers the new bits.
+        let gov_upgrade = upgrade_rug.replace(
+            "from = \"issuer\"\nto = \"operator\"\npermissions",
+            "from = \"issuer\"\nto = \"gov\"\npermissions",
+        );
+        assert!(
+            gate.evaluate(&gov_upgrade).is_permit(),
+            "an upgrade key held by the declared governance holder must permit"
         );
     }
 
