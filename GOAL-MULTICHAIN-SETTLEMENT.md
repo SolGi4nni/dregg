@@ -154,3 +154,10 @@ wakeup; seize the wrap the instant it quiets. Meanwhile: e2e-eth validation + re
 NEXT: harvest the shrink layer; if it needs the apex-verifier AIR / real apex, that's the blocked end-to-end piece.
 The wrap's MEASURED + ASSEMBLED (gnark) + CONFIG (rust) are the achievable pieces; end-to-end real-apex verify awaits
 the (other-terminal) apex pipeline fix.
+
+## ⚑ WRAP BOTH SIDES BUILT (07-12 ~5:14am)
+DreggOuterConfig shrink layer COMMITTED + verified (4/4: synthetic STARK round-trips; Rust perm == gnark KAT
+exactly; challenger/compress agree). gnark native VerifyFri already committed+measured. The wrap's two sides
+KAT-AGREE (perm/challenger/compress). One seam: gnark leaf-hash port to the Rust shifted-radix MMCS layout —
+IN FLIGHT. End-to-end real-apex verify still awaits the apex-verifier AIR + a producible apex (blocked pipeline).
+Achievable wrap pieces = DONE/near-done; the blocked piece is the real-apex plumbing.

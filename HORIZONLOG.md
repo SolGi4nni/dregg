@@ -7642,3 +7642,15 @@ a look-alike game (same slot-0/DEFENDER_WINS layout, non-CWIA bytecode) — synt
 145 crate tests. R3 (code-hash was a fixture constant) closed; remaining lower residuals (impl-addr/template constants
 = OP-upgrade re-pin; guardian keys; SystemConfig.paused) named honestly. The live-Base fault-proof anchor is now
 hardened to the semantics-pin level.
+
+## WRAP re-architecture — both sides BUILT + cross-verified (2026-07-12, multichain lane)
+The BN254-native-hash wrap is realized on both sides (the achievable pieces): (1) gnark native VerifyFri
+(fri_verify_native.go) — MEASURED emulated 40.9M → native 1.0M R1CS (hashing 51×), fold residual byte-identical.
+(2) Rust DreggOuterConfig (circuit-prove/src/dregg_outer_config.rs) — a StarkGenericConfig with Poseidon2Bn254
+MMCS + MultiField32Challenger; a synthetic STARK proves+verifies round-trip under it (verified myself, 4/4).
+CROSS-SIDE AGREEMENT KAT-pinned: Rust perm == gnark bn254KATOutHex EXACTLY; challenger pack/split + compress
+agree. One seam being closed: gnark's Merkle LEAF hash was an unshifted stand-in; the Rust MMCS defines the
+shifted-radix-2^31 leaf layout, and a chain/gnark port to match it is in flight (mismatch = gnark rejects a
+valid shrink proof). REMAINING for end-to-end: the apex-verifier AIR under DreggOuterConfig + a producible real
+apex (BLOCKED on the rotated-proof pipeline, another lane's). git-hygiene: poseidon2_bn254*.go (untracked since
+session start) now committed so chain/gnark builds clean.
