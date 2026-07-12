@@ -279,3 +279,15 @@ bridge/ethereum.rs = the submission side (assume a Groth16 proof exists). GAP = 
 LAUNCHED: the native full-STARK-verify last-mile (constraint-eval + quotient framework on the real fixture, honest
 partial — it's the multi-week assembly). NEXT after it: the Groth16 wrap + the settlement VK; then the message-root
 proof-binding residual (26th PI). GPU de-prioritized (banked: shrink ~2x via BN254 wgpu, Amdahl-capped; ember value call).
+
+## ⚑⚑⚑ NATIVE FULL-STARK-VERIFY (metaprogrammed) — VERIFIED ON REAL SHRINK PROOF (07-12 ~2pm)
+The EVM last mile, built the dregg way (ember: metaprogram from the verified AIR). gnark now does the FULL STARK
+algebra on the REAL shrink proof (5/5 instances incl. heavy ALU 146 + Poseidon2 337 constraints): constraint-eval
+GENERATED from the AIRs via get_symbolic_constraints (correct-by-construction) → generic gnark interpreter over
+BBApi → 5 quotient identities + global LogUp balance + VerifyFriNative FRI core → ACCEPTS the real proof (verified
+myself, FullVerifyGadgetAccepts 2.18s); 22 tamper canaries reject; symbolic-vs-hand differential pinned. THIS IS
+the Lean AirChecksSatisfied "half (ii)" (constraint/quotient soundness) realized in-circuit. FRI-core = half (i).
+REMAINING EVM PATH: (1) the reduced-opening-BINDING seam (open_input in-circuit: per-query input-batch Merkle
+openings + the α-combination — binds opened-values-at-zeta to the actual COMMITMENTS; currently host-computed;
+the last SOUNDNESS piece; needs an exporter extension) → (2) VK baking (DAG as circuit constants) → (3) Groth16
+wrap → DreggSettlement.sol VK pin → real on-chain settlement. Then the message→root proof-binding residual (26th PI).
