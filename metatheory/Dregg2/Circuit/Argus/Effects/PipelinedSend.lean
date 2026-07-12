@@ -324,6 +324,18 @@ columns) AND ALL 8 side-table roots FROZEN (via the wide commitment). This close
 ghost" on the runnable descriptor (the narrow 186-wide `pipelinedSendVmDescriptor`'s commitment bound
 NONE of the 8 side-table roots; only a record-layer commitment off to the side did).
 
+DEBT-A (mod-p `holdsVm .gate ≡ 0 [ZMOD p]`): the runnable soundness `pipelinedSend_runnable_full_sound`
+carries the EXPLICIT canonicality envelope `PipelinedSendRowCanon env` (the deployed range-check /
+field-representative invariant: every state-block cell canonical in `[0,p)`, the NOOP selector boolean,
+the nonce tick in-field), threaded here as a NAMED hypothesis. This effect is REPAIRABLE, NOT a
+wrap-forgery: the apply-time pipelined send is a BALANCE-NEUTRAL clock tick — its `CellSendSpec` FREEZES
+the entire economic block (both balance limbs equal pre = post; no debit) and TICKS the nonce, so the only
+migrated invariants are EQUALITIES (freeze) and a TICK (`nonce+1`), both preserved mod `p` under
+canonicality. There is NO order (`amt ≤ bal`) invariant over an un-range-checked amount limb — the send's
+real dispatch/admissibility already ran in the deferred `ConditionalTurn` pass; at apply time no balance
+is debited. So the classifying rule's forgery predicate (ORDER over an un-range-checked limb) does NOT
+fire; threading `PipelinedSendRowCanon` faithfully restores the ℤ intent, no `guardAvail` residual needed.
+
 RESIDUALS (carried, NOT papered — the SAME boundaries §3/§4 name): (a) the apply-time pipelined
 send's SOLE motion is the neutral receipt prepended to the chained `RecChainedState.log`, NOT a
 `RecordKernelState` field and with NO EffectVM row column — it rides universe-A's `logHashInjective`
@@ -334,27 +346,34 @@ binding gap on the kernel state. -/
 
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv satisfiedVm)
 open Dregg2.Circuit.Emit.EffectVmEmitTransferSound (CellState)
-open Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend (IsPipelinedSendRow RowEncodesSend CellSendSpec)
+open Dregg2.Circuit.Emit.EffectVmEmitPipelinedSend
+  (IsPipelinedSendRow RowEncodesSend CellSendSpec PipelinedSendRowCanon)
 open Dregg2.Circuit.Emit.EffectVmEmitPipelinedSendWide
   (pipelinedSendVmDescriptorWide pipelinedSend_runnable_full_sound)
 open Dregg2.Exec.SystemRoots (SysRoots)
 
 /-- **`pipelinedSend_runnable_full_state_weld` — THE RUNNABLE full-state soundness (pipelinedSend slice).**
 A row satisfying the RUNNABLE wide descriptor `pipelinedSendVmDescriptorWide` (`satisfiedVm`, first/last
-active), decoded by `RowEncodesSend env pre post` with the frozen-roots witness `sr = preRoots`, pins the
-FULL 17-field declarative post-state: the per-cell `CellSendSpec` (economic block FROZEN, nonce TICKED) AND
-all 8 side-table roots FROZEN (`sr = preRoots`). This is the analog of the abstract
-`pipelinedSendA_full_sound` (§4's circuit side), but for the circuit the prover ACTUALLY RUNS — and it
-BINDS the side-table roots the abstract descriptor's per-cell EffectVM row left unbound. The per-cell
-economic freeze IS the frozen kernel the IR term's executor produces (§4 `pipelinedSend_compile_sound`);
-the nonce-tick + log-receipt are the carried turn-level residuals named above. -/
+active), decoded by `RowEncodesSend env pre post` UNDER the explicit DEBT-A canonicality envelope
+`PipelinedSendRowCanon env` (the deployed range-check invariant), with the frozen-roots witness
+`sr = preRoots`, pins the FULL 17-field declarative post-state: the per-cell `CellSendSpec` (economic
+block FROZEN, nonce TICKED) AND all 8 side-table roots FROZEN (`sr = preRoots`). This is the analog of the
+abstract `pipelinedSendA_full_sound` (§4's circuit side), but for the circuit the prover ACTUALLY RUNS —
+and it BINDS the side-table roots the abstract descriptor's per-cell EffectVM row left unbound. Under the
+mod-p `holdsVm .gate` denotation the `PipelinedSendRowCanon` envelope is what reads the ℤ-stated freeze +
+nonce-tick back off the field-checked gates; there is NO order-over-un-range-checked-limb here (the
+apply-time send debits no balance — the economic block is frozen), so this is a faithful REPAIR, not a
+`guardAvail` residual. The per-cell economic freeze IS the frozen kernel the IR term's executor produces
+(§4 `pipelinedSend_compile_sound`); the nonce-tick + log-receipt are the carried turn-level residuals
+named above. -/
 theorem pipelinedSend_runnable_full_state_weld
     (hash : List ℤ → ℤ) (env : VmRowEnv) (pre post : CellState) (sr preRoots : SysRoots)
     (hrow : IsPipelinedSendRow env)
+    (hcanon : PipelinedSendRowCanon env)
     (henc : RowEncodesSend env pre post) (hroots : sr = preRoots)
     (hsat : satisfiedVm hash pipelinedSendVmDescriptorWide env true false) :
     CellSendSpec pre post ∧ sr = preRoots :=
-  pipelinedSend_runnable_full_sound hash env pre post sr preRoots hrow henc hroots hsat
+  pipelinedSend_runnable_full_sound hash env pre post sr preRoots hrow hcanon henc hroots hsat
 
 #assert_axioms pipelinedSend_runnable_full_state_weld
 
