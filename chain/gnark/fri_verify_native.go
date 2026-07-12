@@ -26,18 +26,23 @@
 // runs. This is the arithmetic RESIDUAL WRAP-NATIVE-HASH-DECISION.md names as
 // untouched by the hash swap.
 //
-// LEAF PACKING. A commit-phase leaf row (two extension evals = 8 canonical
-// BabyBear coordinates) enters the native tree as
-// Poseidon2Bn254Compress(pack(e0), pack(e1)), where pack is the injective
-// little-endian radix-2^31 packing of 4 canonical coordinates into one BN254
-// word (a pure linear combination, zero constraints; injective because each
-// canonical coordinate is < 2^31 and 4·31 = 124 < 254 bits). Canonicity of
-// every packed coordinate is asserted at the boundary — canonicity is what
-// makes the packing injective, hence the leaf binding. The production leaf
-// layout is the Rust shrink layer's to define (the named followup in
-// merkle_bn254.go); this packing is the measurement-faithful stand-in: one
-// native permutation per leaf, matching the one-perm PaddingFreeSponge leaf
-// hash of the emulated path.
+// LEAF PACKING — the Rust shrink layer's MMCS leaf hash, ported exactly. The
+// shrink layer (circuit-prove/src/dregg_outer_config.rs, OuterHash) commits
+// leaf rows with MultiField32PaddingFreeSponge<BabyBear, Bn254,
+// Poseidon2Bn254<3>, 3, 2, 1> (sponge.rs:443 hash_iter at the pinned Plonky3
+// rev 82cfad7): the row's canonical BabyBear coordinates are packed with
+// reduce_packed_shifted (helpers.rs:147) — little-endian radix-2^31 Horner
+// over digits (v_i + 1), the SHIFTED encoding, NOT the challenger's unshifted
+// reduce_packed — 8 limbs per BN254 rate slot
+// (max_shifted_absorb_injective_limbs, helpers.rs:243: p·Σ_{i<8} 2^{31i} <
+// p_BN254), 2 rate slots per permutation, one Poseidon2Bn254 per 16-limb
+// block, digest = state[0]. A commit-phase leaf row here is two extension
+// evals = 8 coordinates = exactly one packed slot: state = [pack(row), 0, 0],
+// one permutation. Canonicity of every packed coordinate is asserted at the
+// boundary — canonicity is what makes the shifted packing injective, hence
+// the leaf binding. Cross-side agreement is pinned by the leaf-hash/MMCS-root
+// KATs in fri_leaf_hash_kat_test.go (digests computed by the REAL fork sponge
+// + MerkleTreeMmcs over the pinned permutation).
 //
 // HONEST SCOPE (mirrors the fri_verify.go scope, plus the shrink-layer gap):
 // single-matrix, arity-2, LogFinalPolyLen = 0. This gadget MEASURES the
@@ -49,7 +54,11 @@
 // does not need the shrink layer, the end-to-end real-apex verify does.
 package friverifier
 
-import "github.com/consensys/gnark/frontend"
+import (
+	"math/big"
+
+	"github.com/consensys/gnark/frontend"
+)
 
 // FriNativeQueryOpening is one query's opening data for the native-hash flow:
 // the initial reduced-opening seed and, per commit round, the sibling
@@ -62,25 +71,61 @@ type FriNativeQueryOpening struct {
 	MerkleProofs [][]frontend.Variable // [R][lfh_r] native sibling nodes
 }
 
-// packBBExtToBn254 packs the 4 canonical BabyBear coordinates of one extension
-// element into a single native BN254 word, little-endian radix 2^31 — the same
-// injective packing discipline as the MultiField absorb (reduce_packed,
-// multifield_challenger.go). Pure linear combination: zero constraints.
-// Callers must have asserted every coordinate canonical (injectivity).
-func packBBExtToBn254(api frontend.API, e BBExt) frontend.Variable {
+// packShiftedBn254 packs ≤ 8 canonical BabyBear values into one BN254 rate
+// slot with the SHIFTED radix-2^31 encoding (reduce_packed_shifted,
+// helpers.rs:147-154): little-endian Horner over digits (v_i + 1). The +1
+// shift reserves zero as an out-of-band "no digit" value, so limb sequences
+// of different lengths stay distinct inside a fixed-width slot. Pure linear
+// combination: zero constraints. Callers must have asserted every value
+// canonical — a canonical digit +1 is ≤ p < 2^31, and 8 shifted limbs pack
+// injectively (p·Σ_{i<8} 2^{31i} < p_BN254, helpers.rs:226-243).
+func packShiftedBn254(api frontend.API, vals []frontend.Variable) frontend.Variable {
+	if len(vals) == 0 || len(vals) > mfAbsorbNumFElms {
+		panic("packShiftedBn254: limb count out of range for one BN254 slot")
+	}
+	base := new(big.Int).Lsh(big.NewInt(1), mfAbsorbRadixBits)
 	acc := frontend.Variable(0)
-	base := uint64(1) << mfAbsorbRadixBits
-	for i := 3; i >= 0; i-- {
-		acc = api.Add(api.Mul(acc, base), e[i])
+	for i := len(vals) - 1; i >= 0; i-- {
+		acc = api.Add(api.Mul(acc, base), vals[i], 1)
 	}
 	return acc
 }
 
+// multiField32HashNative is the in-circuit twin of the Rust MMCS leaf hasher
+// MultiField32PaddingFreeSponge<BabyBear, Bn254, Poseidon2Bn254<3>, 3, 2, 1>
+// (sponge.rs:443-483 hash_iter): state = [0, 0, 0]; the limbs are absorbed in
+// blocks of RATE·8 = 16, each 8-limb chunk packed SHIFTED into one rate slot
+// (a partial block overwrites only the slots it fills — the remaining rate
+// slots RETAIN the previous permutation output, overwrite-mode); one native
+// Poseidon2Bn254 per block; digest = state[0].
+func multiField32HashNative(api frontend.API, limbs []frontend.Variable) frontend.Variable {
+	state := [bn254P3Width]frontend.Variable{
+		frontend.Variable(0), frontend.Variable(0), frontend.Variable(0),
+	}
+	const blockLimbs = bn254SpongeRate * mfAbsorbNumFElms
+	for start := 0; start < len(limbs); start += blockLimbs {
+		block := limbs[start:min(start+blockLimbs, len(limbs))]
+		for slot := 0; slot*mfAbsorbNumFElms < len(block); slot++ {
+			cs := slot * mfAbsorbNumFElms
+			state[slot] = packShiftedBn254(api, block[cs:min(cs+mfAbsorbNumFElms, len(block))])
+		}
+		Poseidon2Bn254(api, &state)
+	}
+	return state[0]
+}
+
 // friMerkleLeafHashNative hashes a commit-phase leaf row of two extension
-// evals into ONE native BN254 node: compress(pack(e0), pack(e1)) — one native
-// permutation, the native twin of friMerkleLeafHash (fri_query.go).
+// evals (8 canonical BabyBear coordinates, e0's coefficients first — the
+// ExtensionMmcs flatten_to_base order) into ONE native BN254 node via the
+// MultiField32PaddingFreeSponge — the EXACT MMCS leaf hash of the Rust shrink
+// layer (dregg_outer_config.rs OuterHash; mmcs.rs:1100 hash_iter_slices over
+// the opened row). 8 coordinates = one packed slot: state = [pack, 0, 0], one
+// native permutation, digest = state[0]. Cross-side KAT:
+// fri_leaf_hash_kat_test.go.
 func friMerkleLeafHashNative(api frontend.API, e0, e1 BBExt) frontend.Variable {
-	return Poseidon2Bn254Compress(api, packBBExtToBn254(api, e0), packBBExtToBn254(api, e1))
+	return multiField32HashNative(api, []frontend.Variable{
+		e0[0], e0[1], e0[2], e0[3], e1[0], e1[1], e1[2], e1[3],
+	})
 }
 
 // VerifyFriQueryNative constrains one FRI query's fold chain with NATIVE

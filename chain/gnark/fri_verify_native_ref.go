@@ -8,7 +8,8 @@
 //     native BN254 duplex, BabyBear pack/split) instead of challengerRef;
 //     commit roots observed as native BN254 digests.
 //   - Merkle = native BN254 Poseidon2 nodes (poseidon2Bn254RefCompress) with
-//     the radix-2^31 leaf packing, instead of the 8-lane Poseidon2-w16 tree.
+//     the shifted-radix-2^31 padding-free leaf sponge (the Rust shrink layer's
+//     MMCS leaf hash), instead of the 8-lane Poseidon2-w16 tree.
 //
 // The fold arithmetic is UNCHANGED — it reuses friFoldCoreRef /
 // invSFromParentRef / foldVectorRef verbatim (fri_query_ref.go): the fold is
@@ -81,25 +82,48 @@ func mfGrindRef(c *multiFieldChallengerRef, bits int) uint32 {
 
 // --- Native BN254 Merkle reference -------------------------------------------
 
-// mfRefPackExt packs one extension element's 4 canonical coordinates into a
-// native BN254 element, little-endian radix 2^31 — the reference twin of
-// packBBExtToBn254 (injective on canonical coordinates: 4·31 = 124 < 254 bits).
-func mfRefPackExt(e bbExtRef) fr.Element {
+// mfRefPackShifted packs ≤ 8 canonical BabyBear values into one BN254 rate
+// slot with the SHIFTED radix-2^31 encoding (reduce_packed_shifted,
+// helpers.rs:147-154): little-endian Horner over digits (v_i + 1) — the
+// reference twin of packShiftedBn254.
+func mfRefPackShifted(vals []uint32) fr.Element {
 	acc := new(big.Int)
-	for i := 3; i >= 0; i-- {
+	for i := len(vals) - 1; i >= 0; i-- {
 		acc.Lsh(acc, mfAbsorbRadixBits)
-		acc.Add(acc, new(big.Int).SetUint64(uint64(e[i])))
+		acc.Add(acc, new(big.Int).SetUint64(uint64(vals[i])+1))
 	}
 	var out fr.Element
 	out.SetBigInt(acc)
 	return out
 }
 
+// mfRefSpongeHash is the plain-Go twin of the Rust MMCS leaf hasher
+// MultiField32PaddingFreeSponge<BabyBear, Bn254, Poseidon2Bn254<3>, 3, 2, 1>
+// (sponge.rs:443-483 hash_iter): blocks of 16 limbs, 8 shifted limbs per rate
+// slot, partial blocks overwrite only the slots they fill, one permutation per
+// block, digest = state[0]. Reference twin of multiField32HashNative.
+func mfRefSpongeHash(limbs []uint32) fr.Element {
+	var state [bn254P3Width]fr.Element
+	const blockLimbs = bn254SpongeRate * mfAbsorbNumFElms
+	for start := 0; start < len(limbs); start += blockLimbs {
+		block := limbs[start:min(start+blockLimbs, len(limbs))]
+		for slot := 0; slot*mfAbsorbNumFElms < len(block); slot++ {
+			cs := slot * mfAbsorbNumFElms
+			state[slot] = mfRefPackShifted(block[cs:min(cs+mfAbsorbNumFElms, len(block))])
+		}
+		poseidon2Bn254Ref(&state)
+	}
+	return state[0]
+}
+
 // merkleLeafHashBn254Ref hashes a commit-phase leaf row of two extension evals
-// into ONE native BN254 node: compress(pack(e0), pack(e1)) — the reference twin
-// of friMerkleLeafHashNative.
+// (8 canonical coordinates, e0's coefficients first — the ExtensionMmcs
+// flatten_to_base order) into ONE native BN254 node via the padding-free
+// sponge — the reference twin of friMerkleLeafHashNative and the byte-exact
+// twin of the Rust shrink layer's MMCS leaf hash (dregg_outer_config.rs
+// OuterHash; KATs in fri_leaf_hash_kat_test.go).
 func merkleLeafHashBn254Ref(e0, e1 bbExtRef) fr.Element {
-	return poseidon2Bn254RefCompress(mfRefPackExt(e0), mfRefPackExt(e1))
+	return mfRefSpongeHash([]uint32{e0[0], e0[1], e0[2], e0[3], e1[0], e1[1], e1[2], e1[3]})
 }
 
 // merkleCommitBn254Ref builds the whole native binary Merkle tree over a

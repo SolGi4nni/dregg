@@ -15,8 +15,10 @@
 // is a drop-in.
 //
 // The BabyBear-leaf -> BN254-node packing at the leaf boundary (how a row of
-// BabyBear evals becomes the BN254 leaf element) is the NAMED pack/split
-// followup; this gadget takes the leaf as a native field element.
+// BabyBear evals becomes the BN254 leaf element) is defined by the Rust shrink
+// layer's MMCS leaf hash and implemented by friMerkleLeafHashNative
+// (fri_verify_native.go; KATs in fri_leaf_hash_kat_test.go); this gadget takes
+// the leaf as a native field element.
 package friverifier
 
 import "github.com/consensys/gnark/frontend"
