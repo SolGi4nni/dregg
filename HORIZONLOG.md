@@ -7827,3 +7827,14 @@ wideEmbedded_sound_v1 is ready for both; ③ regen checklist: the Rust
 membership fold tooth's teeth COLUMNS move 2607→2617 (PIs unchanged) and v3RegistryWide /
 EmitWideTransferProbe (the old wide-roundtrip slice) still emit the bare transfer at index 0;
 ④ ember-gated wide/welded TSV+FP regen unchanged (this lane emits + proves, it does not flip).
+
+## gnark-verify-real-shrink: honest scope + a sibling block (2026-07-12)
+The gnark-side wrap end-to-end pipeline (apex_shrink_gnark_export.rs + tests + chain/gnark/apex_shrink_real_fixture_test.go)
+is BUILT + compiles green. Intended scope = FRI-CORE (transcript agreement + native-BN254 Merkle openings + arity-2 fold +
+final-poly; reduced openings as host witnesses). NAMED RESIDUAL = the full 5-instance batch-STARK verify (in-circuit batch
+openings + alpha reduction + per-instance constraint eval at zeta + quotient recomposition) → Groth16 → EVM. The end-to-end
+RUN was blocked by a sibling GAP#4 flag-day inconsistency (circuit/descriptors/rotation-wide-registry-staged.tsv still has
+-bare- transfer names vs the V3 registry's -avail- — off-limits, sibling-owned). RETARGETED the fixture off the transfer
+chain onto the capstone's already-foldable chain (apex_shrink_bn254_tooth) to demonstrate the FRI-core gnark verify on a
+REAL apex without the sibling block; the transfer-chain fixture runs unchanged once the sibling regenerates that .tsv.
+GPU epoch: wgpu native-class on M2(88%)+AMD(wins wide); native-Metal-finish + AMD-RDNA2-tune + gnark-retarget lanes running.
