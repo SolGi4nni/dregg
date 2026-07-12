@@ -23,12 +23,15 @@
 //!     (`bond_min`) — the same floor the relay-operator slash transition
 //!     enforces.
 //!   * [`build_slash_turn`] drives the real [`build_slash_action`] and appends
-//!     the **conserving [`Effect::Transfer`]** of the seized bond FROM the relay
-//!     cell TO the wronged inbox owner (per-asset Σδ = 0). `build_slash_action`
-//!     deliberately omits the Transfer (its doc: "the accompanying
-//!     `Effect::Transfer` … is the cclerk-side composition"); this is that
-//!     composition, wired to the WRONGED PARTY rather than a treasury, because
-//!     the fault is bilateral.
+//!     the **conserving [`Effect::Transfer`]s** that distribute the seized bond
+//!     FROM the relay cell: a bounded RESTITUTION to the wronged inbox owner
+//!     (their proven loss + a small bounty) and the REMAINDER to the protocol
+//!     treasury cell (per-asset Σδ = 0; the two legs sum to the seizure).
+//!     `build_slash_action` deliberately omits the Transfer (its doc: "the
+//!     accompanying `Effect::Transfer` … is the cclerk-side composition"); this
+//!     is that composition. Restitution makes the wronged party whole; the
+//!     remainder funds the protocol rather than becoming a windfall to the
+//!     disputer.
 //!   * [`handle_dispute`] is the `POST /relay/dispute` intake: it gates on the
 //!     referee's own `well_formed`, reads the inbox cell (the content-addressed
 //!     delivered set is the service's `delivery_proofs` cache), runs the referee,
@@ -46,6 +49,13 @@
 //!     plan rather than submitting a signed turn. Promotion = give `RelayState`
 //!     the operator's clerk + the real relay `CellId`, then call
 //!     [`build_slash_turn`] and submit through the operator's turn pipeline.
+//!   * **Intake still on the deprecated relay-service route.** The live
+//!     `POST /relay/dispute` handler hangs off [`crate::relay_service`], the
+//!     legacy in-process HTTP surface. The custody-sound intake belongs on the
+//!     cell-program relay (the
+//!     [`dregg_storage_templates::relay_operator`] executor-enforced slash
+//!     transition), NOT this deprecated route; promotion moves the intake there
+//!     so the slash rides the executor's turn pipeline, not a mirror mutation.
 //!   * **The refund witness.** The in-process service has no per-message refund
 //!     record queryable by `content_hash`, so [`handle_dispute`] passes
 //!     `refund_recorded = false` to
@@ -72,9 +82,61 @@ use dregg_storage_templates::relay_operator::{
 
 use crate::relay_service::SharedRelayState;
 
-/// Default restitution the wronged party receives on a proven drop (computrons),
-/// used when the disputant does not name one. Always capped by the bond floor.
+/// Default TOTAL seizure requested on a proven drop (computrons), used when the
+/// disputant does not name one. Always capped by the bond floor. The seizure is
+/// split into a bounded restitution to the wronged party + a treasury remainder.
 pub const DEFAULT_SLASH_PENALTY: u64 = 1_000;
+
+/// Default bounty added to the wronged party's proven fee when bounding
+/// restitution (computrons). Small — it compensates the cost of raising a
+/// well-formed dispute without turning restitution into a windfall; everything
+/// beyond `proven_fee + this` flows to the treasury.
+pub const DEFAULT_RESTITUTION_BOUNTY: u64 = 100;
+
+/// The protocol treasury cell — destination of the seizure REMAINDER (the part
+/// beyond the wronged party's bounded restitution). A well-known, system-owned
+/// cell id; the seizure that exceeds restitution funds the protocol rather than
+/// becoming a windfall to the disputer.
+pub const PROTOCOL_TREASURY_CELL: [u8; 32] = *b"dregg-protocol-treasury-cell-v1\0";
+
+// =============================================================================
+// The payout split: restitution to the wronged party, remainder to the treasury
+// =============================================================================
+
+/// How a seizure is distributed. A conviction does NOT hand the whole bond to
+/// the disputer: the wronged party is made whole up to their proven loss (plus a
+/// small bounty), and everything beyond that funds the protocol treasury. Both
+/// legs are conserving Transfers out of the relay cell; by construction
+/// `restitution + treasury == seized`.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub struct SlashPayout {
+    /// Computrons restituted to the wronged inbox owner (their proven loss,
+    /// bounded by the seizure).
+    pub restitution: u64,
+    /// Computrons routed to the protocol treasury (the remainder of the seizure).
+    pub treasury: u64,
+}
+
+impl SlashPayout {
+    /// Split a `seized` seizure into a bounded restitution + treasury remainder.
+    ///
+    /// Restitution is `min(seized, proven_fee + bounty)`: the wronged party never
+    /// receives more than their proven loss (fee) plus a small bounty, and never
+    /// more than was actually seized. The remainder funds the treasury. Total is
+    /// conserved: `restitution + treasury == seized`.
+    pub fn split(seized: u64, proven_fee: u64, bounty: u64) -> SlashPayout {
+        let restitution = seized.min(proven_fee.saturating_add(bounty));
+        SlashPayout {
+            restitution,
+            treasury: seized - restitution,
+        }
+    }
+
+    /// The total distributed — always equal to the seizure.
+    pub fn total(&self) -> u64 {
+        self.restitution + self.treasury
+    }
+}
 
 // =============================================================================
 // The slash plan: the adjudicated seizure, floor-capped
@@ -92,6 +154,12 @@ pub struct SlashPlan {
     /// The wronged inbox owner (`receipt.inbox_owner`) — the `to` of the
     /// conserving restitution Transfer.
     pub wronged_party: CellId,
+    /// The protocol treasury cell — the `to` of the conserving REMAINDER
+    /// Transfer (the seizure beyond the wronged party's bounded restitution).
+    pub treasury_cell: CellId,
+    /// How the seizure is split between the wronged party and the treasury.
+    /// `payout.restitution + payout.treasury == seized_amount`.
+    pub payout: SlashPayout,
     /// Computrons seized from the bond = `min(requested_penalty, bond - bond_min)`.
     /// May be `0` if the bond is already at its floor (the dispute is still
     /// recorded, but nothing is seizable).
@@ -105,12 +173,14 @@ pub struct SlashPlan {
     pub reason: [u8; 32],
 }
 
-/// Turn a referee verdict into a floor-capped [`SlashPlan`].
+/// Turn a referee verdict into a floor-capped [`SlashPlan`] with a split payout.
 ///
 /// Returns `None` when the verdict is `acquit`. On `slash` it always returns a
 /// plan (recording the dispute), with `seized_amount` capped by the bond floor:
 /// the seizure can never push the bond below `bond_min`, mirroring the
-/// relay-operator slash transition's floor.
+/// relay-operator slash transition's floor. The seizure is then SPLIT: a bounded
+/// restitution (`min(seized, proven_fee + restitution_bounty)`) to the wronged
+/// party and the remainder to the treasury — conserving by construction.
 #[allow(clippy::too_many_arguments)]
 pub fn plan_slash(
     slash: bool,
@@ -118,8 +188,11 @@ pub fn plan_slash(
     bond_min: u64,
     dispute_count: u64,
     requested_penalty: u64,
+    proven_fee: u64,
+    restitution_bounty: u64,
     relay_cell: CellId,
     wronged_party: CellId,
+    treasury_cell: CellId,
     reason: [u8; 32],
 ) -> Option<SlashPlan> {
     if !slash {
@@ -129,9 +202,15 @@ pub fn plan_slash(
     // drops below bond_min (the relay-operator slash floor).
     let headroom = bond_amount.saturating_sub(bond_min);
     let seized = requested_penalty.min(headroom);
+    // Split the seizure: restitution makes the wronged party whole (their proven
+    // loss + a small bounty, never more than was seized); the remainder funds the
+    // protocol treasury rather than becoming a windfall to the disputer.
+    let payout = SlashPayout::split(seized, proven_fee, restitution_bounty);
     Some(SlashPlan {
         relay_cell,
         wronged_party,
+        treasury_cell,
+        payout,
         seized_amount: seized,
         new_bond_amount: bond_amount - seized,
         new_dispute_count: dispute_count.saturating_add(1),
@@ -140,10 +219,13 @@ pub fn plan_slash(
 }
 
 /// Run the referee ([`adjudicate_from_inbox`]) against the inbox cell and, on a
-/// slash, compute the floor-capped [`SlashPlan`]. Returns `(slash_verdict, plan)`.
+/// slash, compute the floor-capped, split [`SlashPlan`]. Returns
+/// `(slash_verdict, plan)`.
 ///
 /// The wronged party is `receipt.inbox_owner` interpreted as a cell, and the
-/// slash reason is the dropped box's `content_hash`.
+/// slash reason is the dropped box's `content_hash`. `proven_fee` is the wronged
+/// party's proven loss (bounding restitution); `treasury_cell` receives the
+/// remainder.
 #[allow(clippy::too_many_arguments)]
 pub fn referee_then_plan(
     evidence: &EvidenceOfDrop,
@@ -152,7 +234,10 @@ pub fn referee_then_plan(
     bond_min: u64,
     dispute_count: u64,
     requested_penalty: u64,
+    proven_fee: u64,
+    restitution_bounty: u64,
     relay_cell: CellId,
+    treasury_cell: CellId,
 ) -> (bool, Option<SlashPlan>) {
     let slash = adjudicate_from_inbox(evidence, inbox);
     let wronged_party = CellId::from_bytes(evidence.receipt.inbox_owner.0);
@@ -163,21 +248,27 @@ pub fn referee_then_plan(
         bond_min,
         dispute_count,
         requested_penalty,
+        proven_fee,
+        restitution_bounty,
         relay_cell,
         wronged_party,
+        treasury_cell,
         reason,
     );
     (slash, plan)
 }
 
 /// Drive the relay-operator slash transition for `plan` and append the conserving
-/// restitution Transfer.
+/// payout Transfers.
 ///
 /// [`build_slash_action`] emits the state-transition effects only (`SetField`
-/// bond, `SetField` dispute_count, `EmitEvent`); this appends the
-/// [`Effect::Transfer`] of the seized bond FROM the relay cell TO the wronged
-/// party, so computron conservation holds across the pair (Σδ = 0). No Transfer
-/// is appended when nothing was seizable (`seized_amount == 0`).
+/// bond, `SetField` dispute_count, `EmitEvent`); this appends up to TWO
+/// [`Effect::Transfer`]s that distribute the seized bond FROM the relay cell: the
+/// bounded RESTITUTION to the wronged party and the REMAINDER to the treasury
+/// cell. Their amounts sum to the seizure, so computron conservation holds across
+/// the three cells (Σδ = 0). A zero-amount leg is omitted (a fully-restituted or
+/// fully-treasuried seizure carries a single Transfer; a zero seizure carries
+/// none).
 pub fn build_slash_turn(cclerk: &AppCipherclerk, plan: &SlashPlan) -> Action {
     let mut action = build_slash_action(
         cclerk,
@@ -186,11 +277,20 @@ pub fn build_slash_turn(cclerk: &AppCipherclerk, plan: &SlashPlan) -> Action {
         u64_to_field(plan.new_dispute_count),
         plan.reason,
     );
-    if plan.seized_amount > 0 {
+    // Restitution leg: the wronged party's bounded make-whole.
+    if plan.payout.restitution > 0 {
         action.effects.push(Effect::Transfer {
             from: plan.relay_cell,
             to: plan.wronged_party,
-            amount: plan.seized_amount,
+            amount: plan.payout.restitution,
+        });
+    }
+    // Treasury leg: the remainder of the seizure funds the protocol.
+    if plan.payout.treasury > 0 {
+        action.effects.push(Effect::Transfer {
+            from: plan.relay_cell,
+            to: plan.treasury_cell,
+            amount: plan.payout.treasury,
         });
     }
     action
@@ -204,12 +304,16 @@ pub fn build_slash_turn(cclerk: &AppCipherclerk, plan: &SlashPlan) -> Action {
 ///
 /// The body is the referee's own [`EvidenceOfDrop`] (the relay's signed receipt
 /// + the dispute height), which deserializes directly from JSON. `requested_penalty`
-/// is the restitution the disputant asks for (capped by the bond floor).
+/// is the TOTAL seizure the disputant asks for (capped by the bond floor); the
+/// seizure is then split into restitution + treasury remainder, so a large
+/// request is not a windfall to the disputer.
 #[derive(Debug, Deserialize)]
 pub struct DisputeRequest {
     /// The relay's own signed receipt + claimed outcome + dispute height.
     pub evidence: EvidenceOfDrop,
-    /// Requested restitution in computrons; defaults to [`DEFAULT_SLASH_PENALTY`].
+    /// Requested TOTAL seizure in computrons; defaults to [`DEFAULT_SLASH_PENALTY`].
+    /// The wronged party's restitution is bounded by their proven loss regardless
+    /// of this; the remainder flows to the treasury.
     #[serde(default)]
     pub requested_penalty: Option<u64>,
 }
@@ -224,6 +328,12 @@ pub struct DisputeResponse {
     pub slashed: bool,
     /// Bond seized (computrons); `0` on acquit or when the bond is at its floor.
     pub seized_amount: u64,
+    /// Of the seizure, computrons restituted to the wronged party (their bounded
+    /// proven loss). `0` on acquit.
+    pub restitution_amount: u64,
+    /// Of the seizure, computrons routed to the protocol treasury (the
+    /// remainder). `0` on acquit.
+    pub treasury_amount: u64,
     /// The bond before this dispute.
     pub prior_bond_amount: u64,
     /// The bond after this dispute (== prior on acquit).
@@ -232,12 +342,15 @@ pub struct DisputeResponse {
     pub dispute_count: u64,
     /// The wronged inbox owner (hex) — the restitution recipient.
     pub wronged_party: String,
+    /// The protocol treasury cell (hex) — the remainder recipient.
+    pub treasury_cell: String,
     /// The bonded relay-operator cell (hex).
     pub relay_cell: String,
     /// The dropped box's `content_hash` (hex) — the slash provenance.
     pub reason: String,
-    /// Number of conserving Transfer effects the paired ledger turn would carry
-    /// (`1` when a positive amount was seized, else `0`).
+    /// Number of conserving Transfer effects the paired ledger turn would carry:
+    /// one per non-zero payout leg (restitution and/or treasury), so `0`, `1`,
+    /// or `2`.
     pub transfer_effects: usize,
 }
 
@@ -297,10 +410,19 @@ pub async fn handle_dispute(
     let bond_min = u64_from_field(s.template.slots[BOND_MIN_SLOT as usize]);
     let dispute_count = u64_from_field(s.template.slots[DISPUTE_COUNT_SLOT as usize]);
     let penalty = req.requested_penalty.unwrap_or(DEFAULT_SLASH_PENALTY);
+    // The wronged party's PROVEN per-message loss: the fee-policy floor a sender
+    // must post per message (the minimum they paid for the box the relay
+    // dropped). Restitution is bounded by this + a small bounty; the remainder of
+    // any seizure funds the treasury. Promotion sources the exact paid fee from
+    // the dropped box's queue-entry `deposit` (see module docs).
+    let proven_fee = s.config.fee_policy.min_deposit_computrons;
     // The relay-operator cell identity. The legacy service does not track the
     // minted relay CellId; the operator identity is its closest in-process
     // proxy (promotion binds the real minted cell — see module docs).
     let relay_cell = CellId::from_bytes(s.config.operator_key);
+    // The protocol treasury cell — receives the seizure REMAINDER beyond the
+    // wronged party's bounded restitution (not a windfall to the disputer).
+    let treasury_cell = CellId::from_bytes(PROTOCOL_TREASURY_CELL);
 
     let (slash, plan) = referee_then_plan(
         &evidence,
@@ -309,7 +431,10 @@ pub async fn handle_dispute(
         bond_min,
         dispute_count,
         penalty,
+        proven_fee,
+        DEFAULT_RESTITUTION_BOUNTY,
         relay_cell,
+        treasury_cell,
     );
 
     if let Some(plan) = plan {
@@ -320,15 +445,20 @@ pub async fn handle_dispute(
         // no per-cell balance ledger.
         s.template.slots[BOND_AMOUNT_SLOT as usize] = u64_to_field(plan.new_bond_amount);
         s.template.slots[DISPUTE_COUNT_SLOT as usize] = u64_to_field(plan.new_dispute_count);
-        let transfer_effects = usize::from(plan.seized_amount > 0);
+        // One conserving Transfer per non-zero leg of the payout split.
+        let transfer_effects =
+            usize::from(plan.payout.restitution > 0) + usize::from(plan.payout.treasury > 0);
         return Ok(Json(DisputeResponse {
             verdict: "slash",
             slashed: true,
             seized_amount: plan.seized_amount,
+            restitution_amount: plan.payout.restitution,
+            treasury_amount: plan.payout.treasury,
             prior_bond_amount: prior_bond,
             new_bond_amount: plan.new_bond_amount,
             dispute_count: plan.new_dispute_count,
             wronged_party: hex32(&plan.wronged_party.0),
+            treasury_cell: hex32(&plan.treasury_cell.0),
             relay_cell: hex32(&plan.relay_cell.0),
             reason: hex32(&plan.reason),
             transfer_effects,
@@ -340,10 +470,13 @@ pub async fn handle_dispute(
         verdict: "acquit",
         slashed: false,
         seized_amount: 0,
+        restitution_amount: 0,
+        treasury_amount: 0,
         prior_bond_amount: prior_bond,
         new_bond_amount: prior_bond,
         dispute_count,
         wronged_party: hex32(&owner),
+        treasury_cell: hex32(&treasury_cell.0),
         relay_cell: hex32(&relay_cell.0),
         reason: hex32(&evidence.receipt.content_hash),
         transfer_effects: 0,
@@ -405,38 +538,193 @@ mod tests {
     }
 
     #[test]
-    fn proven_drop_yields_conserving_slash_turn() {
+    fn proven_drop_splits_restitution_and_treasury_conserving() {
         // A well-formed receipt + a dropped inbox (no delivered hash, no refund)
-        // convicts, and the built turn carries the conserving Transfer to the
-        // wronged inbox owner.
+        // convicts. The seizure SPLITS: a bounded restitution to the wronged
+        // owner + the remainder to the treasury. The two Transfers conserve.
         let evidence = EvidenceOfDrop::from_receipt(demo_receipt());
         let inbox = InboxState::from_dequeue(&evidence.receipt, &[], [0x64; 32], false);
         let relay_cell = CellId::from_bytes([0x11; 32]);
+        let treasury_cell = CellId::from_bytes([0x77; 32]);
 
-        let (slash, plan) = referee_then_plan(&evidence, &inbox, 10_000, 1_000, 0, 500, relay_cell);
+        // Seize 500; proven loss 120 + bounty 30 => restitution 150, treasury 350.
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            10_000,
+            1_000,
+            0,
+            500,
+            120,
+            30,
+            relay_cell,
+            treasury_cell,
+        );
         assert!(slash, "a genuine drop must slash");
         let plan = plan.expect("a slash verdict must yield a plan");
         assert_eq!(plan.seized_amount, 500);
+        assert_eq!(plan.payout.restitution, 150, "proven loss + bounty");
+        assert_eq!(
+            plan.payout.treasury, 350,
+            "the remainder funds the protocol"
+        );
+        assert_eq!(
+            plan.payout.total(),
+            plan.seized_amount,
+            "the split conserves the seizure"
+        );
         assert_eq!(plan.new_bond_amount, 9_500);
         assert_eq!(plan.new_dispute_count, 1);
         assert_eq!(plan.wronged_party.0, [0x03; 32]);
+        assert_eq!(plan.treasury_cell.0, [0x77; 32]);
         assert_eq!(plan.reason, [0xAB; 32], "slash names the dropped box");
 
         let action = build_slash_turn(&test_cclerk(), &plan);
         // build_slash_action = SetField(bond) + SetField(dispute) + EmitEvent (3);
-        // the weld appends ONE conserving Transfer.
-        assert_eq!(action.effects.len(), 4);
-        let (from, to, amount) = action
+        // the weld appends TWO conserving Transfers (restitution + treasury).
+        assert_eq!(action.effects.len(), 5);
+        let transfers: Vec<(CellId, CellId, u64)> = action
             .effects
             .iter()
-            .find_map(|e| match e {
+            .filter_map(|e| match e {
                 Effect::Transfer { from, to, amount } => Some((*from, *to, *amount)),
                 _ => None,
             })
-            .expect("the slash turn must carry a conserving Transfer");
-        assert_eq!(from, relay_cell, "seized FROM the relay cell");
-        assert_eq!(to.0, [0x03; 32], "restituted TO the wronged owner");
-        assert_eq!(amount, 500);
+            .collect();
+        assert_eq!(transfers.len(), 2, "restitution + treasury legs");
+        assert!(
+            transfers.iter().all(|(from, _, _)| *from == relay_cell),
+            "every leg is seized FROM the relay cell"
+        );
+        let restitution = transfers
+            .iter()
+            .find(|(_, to, _)| *to == plan.wronged_party)
+            .expect("a restitution leg to the wronged owner");
+        let treasury = transfers
+            .iter()
+            .find(|(_, to, _)| *to == treasury_cell)
+            .expect("a treasury leg for the remainder");
+        assert_eq!(restitution.2, 150);
+        assert_eq!(treasury.2, 350);
+        assert_eq!(
+            restitution.2 + treasury.2,
+            plan.seized_amount,
+            "Σδ = 0 across the seizure"
+        );
+    }
+
+    #[test]
+    fn treasury_gets_the_rest_when_no_proven_loss() {
+        // No proven fee and no bounty => the wronged party is owed nothing extra,
+        // so the ENTIRE seizure funds the treasury (a single treasury Transfer).
+        let evidence = EvidenceOfDrop::from_receipt(demo_receipt());
+        let inbox = InboxState::from_dequeue(&evidence.receipt, &[], [0x64; 32], false);
+        let relay_cell = CellId::from_bytes([0x11; 32]);
+        let treasury_cell = CellId::from_bytes([0x77; 32]);
+
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            10_000,
+            1_000,
+            0,
+            500,
+            0,
+            0,
+            relay_cell,
+            treasury_cell,
+        );
+        assert!(slash);
+        let plan = plan.unwrap();
+        assert_eq!(plan.payout.restitution, 0, "nothing proven to restitute");
+        assert_eq!(
+            plan.payout.treasury, 500,
+            "the whole seizure funds the treasury"
+        );
+        assert_eq!(plan.payout.total(), plan.seized_amount);
+
+        let action = build_slash_turn(&test_cclerk(), &plan);
+        let transfers: Vec<(CellId, u64)> = action
+            .effects
+            .iter()
+            .filter_map(|e| match e {
+                Effect::Transfer { to, amount, .. } => Some((*to, *amount)),
+                _ => None,
+            })
+            .collect();
+        assert_eq!(transfers.len(), 1, "a zero restitution leg is omitted");
+        assert_eq!(transfers[0], (treasury_cell, 500));
+    }
+
+    #[test]
+    fn restitution_capped_at_seized() {
+        // The proven loss dwarfs the seizure (bond at its floor): restitution is
+        // capped at the whole seizure and the treasury gets nothing.
+        let evidence = EvidenceOfDrop::from_receipt(demo_receipt());
+        let inbox = InboxState::from_dequeue(&evidence.receipt, &[], [0x64; 32], false);
+        let relay_cell = CellId::from_bytes([0x11; 32]);
+        let treasury_cell = CellId::from_bytes([0x77; 32]);
+
+        // Headroom only 200; proven loss 10_000 + bounty 100 dwarfs it.
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            1_200,
+            1_000,
+            3,
+            5_000,
+            10_000,
+            100,
+            relay_cell,
+            treasury_cell,
+        );
+        assert!(slash);
+        let plan = plan.unwrap();
+        assert_eq!(plan.seized_amount, 200, "capped at the bond floor");
+        assert_eq!(
+            plan.payout.restitution, 200,
+            "restitution never exceeds the seizure"
+        );
+        assert_eq!(plan.payout.treasury, 0, "nothing left for the treasury");
+        assert_eq!(plan.payout.total(), plan.seized_amount);
+
+        let action = build_slash_turn(&test_cclerk(), &plan);
+        let transfers = action
+            .effects
+            .iter()
+            .filter(|e| matches!(e, Effect::Transfer { .. }))
+            .count();
+        assert_eq!(transfers, 1, "a zero-treasury leg is omitted");
+    }
+
+    #[test]
+    fn payout_split_conserves() {
+        // The pure split is conserving for every proven_fee/bounty relative to
+        // the seizure.
+        for (seized, fee, bounty) in [
+            (0u64, 0u64, 0u64),
+            (500, 0, 0),
+            (500, 120, 30),
+            (500, 500, 500),
+            (500, 1_000, 1_000),
+            (1, u64::MAX, u64::MAX),
+        ] {
+            let p = SlashPayout::split(seized, fee, bounty);
+            assert_eq!(
+                p.restitution + p.treasury,
+                seized,
+                "restitution + treasury == seized"
+            );
+            assert_eq!(p.total(), seized);
+            assert!(
+                p.restitution <= seized,
+                "restitution never exceeds the seizure"
+            );
+            assert!(
+                p.restitution <= fee.saturating_add(bounty),
+                "restitution bounded by proven loss + bounty"
+            );
+        }
     }
 
     #[test]
@@ -446,8 +734,20 @@ mod tests {
         let evidence = EvidenceOfDrop::from_receipt(demo_receipt());
         let inbox = InboxState::from_dequeue(&evidence.receipt, &[[0xAB; 32]], [0x8E; 32], false);
         let relay_cell = CellId::from_bytes([0x11; 32]);
+        let treasury_cell = CellId::from_bytes([0x77; 32]);
 
-        let (slash, plan) = referee_then_plan(&evidence, &inbox, 10_000, 1_000, 0, 500, relay_cell);
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            10_000,
+            1_000,
+            0,
+            500,
+            120,
+            30,
+            relay_cell,
+            treasury_cell,
+        );
         assert!(!slash, "a delivered box must acquit");
         assert!(plan.is_none(), "acquit ⇒ no slash plan");
     }
@@ -455,18 +755,33 @@ mod tests {
     #[test]
     fn bond_floor_caps_the_seizure() {
         // penalty 5_000 but only 200 above the floor ⇒ seize 200, land exactly on
-        // bond_min. The dispute is still recorded.
+        // bond_min. The dispute is still recorded, and the 200 splits per the
+        // payout model (here proven loss 500 => all 200 restituted).
         let evidence = EvidenceOfDrop::from_receipt(demo_receipt());
         let inbox = InboxState::from_dequeue(&evidence.receipt, &[], [0x64; 32], false);
         let relay_cell = CellId::from_bytes([0x11; 32]);
+        let treasury_cell = CellId::from_bytes([0x77; 32]);
 
-        let (slash, plan) =
-            referee_then_plan(&evidence, &inbox, 1_200, 1_000, 3, 5_000, relay_cell);
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            1_200,
+            1_000,
+            3,
+            5_000,
+            500,
+            0,
+            relay_cell,
+            treasury_cell,
+        );
         assert!(slash);
         let plan = plan.unwrap();
         assert_eq!(plan.seized_amount, 200, "capped at the bond floor");
         assert_eq!(plan.new_bond_amount, 1_000, "never below bond_min");
         assert_eq!(plan.new_dispute_count, 4);
+        assert_eq!(plan.payout.restitution, 200);
+        assert_eq!(plan.payout.treasury, 0);
+        assert_eq!(plan.payout.total(), plan.seized_amount);
     }
 
     #[test]
@@ -478,8 +793,20 @@ mod tests {
         // Delivered (content_hash in the set) but root overshot the promise.
         let inbox = InboxState::from_dequeue(&evidence.receipt, &[[0xAB; 32]], [0x99; 32], false);
         let relay_cell = CellId::from_bytes([0x11; 32]);
+        let treasury_cell = CellId::from_bytes([0x77; 32]);
 
-        let (slash, plan) = referee_then_plan(&evidence, &inbox, 10_000, 1_000, 0, 500, relay_cell);
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            10_000,
+            1_000,
+            0,
+            500,
+            120,
+            30,
+            relay_cell,
+            treasury_cell,
+        );
         assert!(!slash, "overshoot must not convict a delivered relay");
         assert!(plan.is_none());
     }

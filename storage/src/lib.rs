@@ -79,6 +79,8 @@ pub mod content;
 pub mod dedup;
 /// A structured, serde-serializable verified-storage walkthrough (CLI + web share it).
 pub mod demo;
+/// k-of-n durability deals: bonded-operator shard placement + PoR challenges over erasure + manifest.
+pub mod durability_deal;
 pub mod erasure;
 pub mod inbox;
 pub mod multi_asset;
