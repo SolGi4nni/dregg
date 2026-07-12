@@ -41,12 +41,19 @@
 //! * the per-session binding — the agent's runtime + root token descend from the
 //!   session seed.
 //!
-//! THE SEAM (mock): the [`Brain`] that maps an input to a tool-call is a scripted
-//! [`ScriptedBrain`] (a small command grammar), exactly the shim
-//! `discord-bot/src/hermes_channel.rs`'s `classify` is; the live integration
-//! replaces it with the real Hermes LLM over ACP. The **enforcement seam** — input
-//! → cap-gated metered receipted turn → response — is identical either way; only
-//! the producer of the tool-call changes.
+//! THE BRAIN SEAM — real by default. The [`Brain`] that maps an input to a
+//! tool-call is the REAL [`deos_hermes::ResidentBrain`] by default
+//! ([`ResidentBrainAdapter`]): the on-box `LocalBrain` with no key, a live Anthropic
+//! / OpenAI-compatible brain when the operator's `ANTHROPIC_API_KEY` /
+//! `HERMES_API_KEY` is set. The scripted [`ScriptedBrain`] (a small command grammar,
+//! the same shape as `discord-bot/src/hermes_channel.rs`'s `classify`) is RETAINED as
+//! the hermetic mock the enforcement tests wire in ([`HermesOffering::scripted`]).
+//! The **enforcement seam** — input → cap-gated metered receipted turn → response —
+//! is identical for either brain; only the producer of the tool-call changes, so the
+//! confinement is brain-agnostic. HONEST SCOPE: a live BYO-key brain run needs a
+//! provider key in the env; the offering's replay-`verify` determinism holds for the
+//! deterministic on-box / scripted brains (a fresh-state brain over the same input
+//! yields the same class), the load-bearing property being the confinement chain.
 
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -60,6 +67,8 @@ use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
 };
+
+use deos_hermes::{AgentConvo, BrainStep, LlmBrain, ResidentBrain, resident_brain_from_env};
 
 use deos_view::{MenuItem, ViewNode};
 
@@ -252,6 +261,14 @@ pub trait Brain: Send + Sync {
             .trim()
             .to_string()
     }
+
+    /// A secret-free label naming this brain seam — the offering reports it
+    /// ([`HermesOffering::brain_seam`]) so a caller can confirm which producer is
+    /// wired: the REAL resident brain at deploy vs the scripted mock in tests. NEVER
+    /// includes a credential (the resident label is on-box / a provider NAME only).
+    fn seam_label(&self) -> String {
+        "custom brain seam".to_string()
+    }
 }
 
 /// A deterministic scripted brain — a small command grammar mapping a leading verb
@@ -281,6 +298,138 @@ impl Brain for ScriptedBrain {
             tool: tool.to_string(),
             arg: rest.to_string(),
         }
+    }
+
+    fn seam_label(&self) -> String {
+        "scripted-mock".to_string()
+    }
+}
+
+/// Test-facing alias for the deterministic scripted mock brain — the name the
+/// enforcement tests wire in (the confinement is brain-agnostic; the mock keeps the
+/// tests hermetic, no env / no network / no key).
+pub type MockBrain = ScriptedBrain;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The REAL brain seam — the deos_hermes::ResidentBrain, behind the same `Brain`.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// **The REAL brain seam** — wraps [`deos_hermes::ResidentBrain`] (the on-box /
+/// BYO-key resident brain resolver) behind this crate's [`Brain`] trait, so a
+/// deployed [`HermesOffering`] drives a real closed-loop brain by DEFAULT while the
+/// confinement/metering enforcement is unchanged.
+///
+/// THE ADAPTER (the named seam): the resident brain speaks
+/// [`deos_hermes::LlmBrain`] — `&mut self`, a running [`AgentConvo`] → a
+/// [`BrainStep`] (call a tool / finish) in a decide→observe loop; this crate's
+/// [`Brain`] is a deterministic, `&self`, single-input → [`HermesCall`] classifier.
+/// The adapter bridges them by building a FRESH resident brain per `propose` (from a
+/// factory) and taking its FIRST step over a one-shot [`AgentConvo`], mapping the
+/// proposed Hermes tool name to the confined [`ToolKind`] it is metered under. Fresh
+/// state + the same input yields the same class for the deterministic on-box brain,
+/// so the offering's replay-`verify` holds.
+///
+/// A live BYO-key brain calls the model provider inside `propose` (needs a key,
+/// non-hermetic) — the deploy path; the tests pin the scripted mock via
+/// [`HermesOffering::scripted`] instead.
+pub struct ResidentBrainAdapter {
+    /// Builds a fresh resident brain per proposal. Default:
+    /// [`deos_hermes::resident_brain_from_env`] — `ANTHROPIC_API_KEY` → live
+    /// Anthropic, `HERMES_API_KEY` → an OpenAI-compatible endpoint, else the on-box
+    /// `LocalBrain` (hermetic, keyless).
+    factory: Arc<dyn Fn() -> ResidentBrain + Send + Sync>,
+    /// The working directory the one-shot [`AgentConvo`] opens in (presentational —
+    /// the confinement referees the tool CLASS, not the cwd/args).
+    cwd: String,
+}
+
+impl Default for ResidentBrainAdapter {
+    fn default() -> Self {
+        ResidentBrainAdapter::from_env()
+    }
+}
+
+impl ResidentBrainAdapter {
+    /// The default resident seam: resolve the brain from the operator environment on
+    /// each proposal (BYO key → live provider; else the hermetic on-box brain). The
+    /// factory stores the resolver — no env is read until a proposal drives it.
+    pub fn from_env() -> Self {
+        ResidentBrainAdapter {
+            factory: Arc::new(resident_brain_from_env),
+            cwd: ".".to_string(),
+        }
+    }
+
+    /// A resident seam over a caller-supplied brain factory (e.g. a fixed on-box
+    /// brain, or a deterministic test double) — chainable with [`Self::with_cwd`].
+    pub fn with_factory(factory: Arc<dyn Fn() -> ResidentBrain + Send + Sync>) -> Self {
+        ResidentBrainAdapter {
+            factory,
+            cwd: ".".to_string(),
+        }
+    }
+
+    /// Set the working directory the one-shot conversation opens in (chainable).
+    pub fn with_cwd(mut self, cwd: impl Into<String>) -> Self {
+        self.cwd = cwd.into();
+        self
+    }
+
+    /// A secret-free description of the resolved resident brain ("on-box …" / a
+    /// provider NAME) — builds a brain and reads its label; never touches the
+    /// network, never prints a credential.
+    pub fn describe(&self) -> String {
+        (self.factory)().describe()
+    }
+}
+
+impl Brain for ResidentBrainAdapter {
+    fn propose(&self, input: &str) -> HermesCall {
+        let mut brain = (self.factory)();
+        let convo = AgentConvo::new(&self.cwd, input);
+        match brain.next_step(&convo) {
+            BrainStep::CallTool { name, arguments } => {
+                // The confinement referees the CLASS; the arg text is presentational
+                // (empty for `Null`, the string body for a string, else compact JSON).
+                let arg = if arguments.is_null() {
+                    String::new()
+                } else if let Some(s) = arguments.as_str() {
+                    s.to_string()
+                } else {
+                    arguments.to_string()
+                };
+                HermesCall {
+                    kind: tool_kind_for(&name),
+                    tool: name,
+                    arg,
+                }
+            }
+            BrainStep::Finish { text } => HermesCall {
+                kind: ToolKind::Chat,
+                tool: "chat".to_string(),
+                arg: text,
+            },
+        }
+    }
+
+    fn seam_label(&self) -> String {
+        format!("resident: {}", self.describe())
+    }
+}
+
+/// Map a resident brain's Hermes tool NAME to the confined [`ToolKind`] it is
+/// metered under — mirrors [`ScriptedBrain`]'s verb→class routing and the tool
+/// surface `deos_hermes`'s brains advertise (`web_search` / `read_file` /
+/// `write_file` / `terminal`). An unknown tool falls into the conversational
+/// [`ToolKind::Chat`] class (the safe default the gate still meters).
+fn tool_kind_for(name: &str) -> ToolKind {
+    match name {
+        "read_file" | "read" | "cat" | "open" => ToolKind::Read,
+        "search" | "grep" | "find" => ToolKind::Search,
+        "web_search" | "fetch" | "web" | "browse" => ToolKind::Fetch,
+        "terminal" | "run" | "shell" | "exec" => ToolKind::Execute,
+        "write_file" | "edit" | "write" | "patch" => ToolKind::Edit,
+        _ => ToolKind::Chat,
     }
 }
 
@@ -422,8 +571,9 @@ impl HermesSession {
 /// **The Hermes offering** — offering #1. A stateless factory over a confined-agent
 /// universe; each [`open`](Offering::open) deploys a fresh [`HermesSession`]. Carries
 /// the [`Confinement`] profile (the mandate each session's workers are admitted
-/// under), the [`Brain`] seam (a scripted mock by default; the live LLM at deploy),
-/// the per-turn inference [`RunCost`], and the session mandate window.
+/// under), the [`Brain`] seam (the REAL [`deos_hermes::ResidentBrain`] by default —
+/// on-box, or a live BYO-key brain; the scripted mock in tests), the per-turn
+/// inference [`RunCost`], and the session mandate window.
 pub struct HermesOffering {
     confinement: Confinement,
     brain: Arc<dyn Brain>,
@@ -442,15 +592,34 @@ impl Default for HermesOffering {
 }
 
 impl HermesOffering {
-    /// The default confined offering: the default [`Confinement`], the scripted mock
-    /// [`Brain`], the free inference tier, a generous 30-day-equivalent window.
+    /// The default confined offering: the default [`Confinement`], the REAL
+    /// [`deos_hermes::ResidentBrain`] seam ([`ResidentBrainAdapter::from_env`] —
+    /// on-box by default, a live BYO-key brain when a provider key is set), the free
+    /// inference tier, a generous 30-day-equivalent window. Use [`Self::scripted`]
+    /// for the hermetic mock-brain test constructor.
     pub fn new() -> Self {
         HermesOffering {
             confinement: Confinement::default(),
-            brain: Arc::new(ScriptedBrain),
+            brain: Arc::new(ResidentBrainAdapter::from_env()),
             inference_credits: 0,
             deadline_span: 60 * 60 * 24 * 30,
         }
+    }
+
+    /// The offering wired with the deterministic scripted mock [`Brain`]
+    /// ([`ScriptedBrain`] / [`MockBrain`]) — the hermetic TEST constructor (no env,
+    /// no network, no key). The confinement/metering substrate is identical to
+    /// [`Self::new`]; only the brain seam differs. [`Self::new`] instead resolves the
+    /// REAL [`deos_hermes::ResidentBrain`] seam.
+    pub fn scripted() -> Self {
+        HermesOffering::new().with_brain(Arc::new(ScriptedBrain))
+    }
+
+    /// The secret-free label of the wired brain seam — `resident: …` for the real
+    /// default resident brain (on-box / a provider name), `scripted-mock` for the
+    /// test mock. Lets a caller confirm the default swap without driving a turn.
+    pub fn brain_seam(&self) -> String {
+        self.brain.seam_label()
     }
 
     /// Set the confinement profile (per-class rate + value budget) — chainable.
@@ -798,8 +967,9 @@ mod tamper_tests {
     /// the tampered claim. The confinement chain tooth, through the [`Offering`] API.
     #[test]
     fn a_forged_verdict_fails_replay() {
-        // Execute confined to rate 1: the second `run` is a real refusal.
-        let off = HermesOffering::new()
+        // Execute confined to rate 1: the second `run` is a real refusal. The mock
+        // brain keeps the replay deterministic (the enforcement is brain-agnostic).
+        let off = HermesOffering::scripted()
             .with_confinement(Confinement::default().with_rate(ToolKind::Execute, 1));
         let mut s = off.open(SessionConfig::with_seed(7)).expect("open");
         let actor = DreggIdentity("user".to_string());

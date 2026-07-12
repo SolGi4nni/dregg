@@ -64,7 +64,7 @@ fn open_lists_cap_gated_tool_classes_and_prices() {
 /// advances, the value budget is debited, and the chain re-verifies by replay.
 #[test]
 fn a_mock_brain_in_mandate_prompt_drives_one_metered_receipted_turn() {
-    let off = HermesOffering::new();
+    let off = HermesOffering::scripted();
     let mut s = off.open(SessionConfig::with_seed(11)).expect("open");
     assert_eq!(s.committed_turns(), 0, "no turns committed yet");
 
@@ -116,7 +116,7 @@ fn a_mock_brain_in_mandate_prompt_drives_one_metered_receipted_turn() {
 /// its brain proposes. The honest prefix still re-verifies.
 #[test]
 fn a_rate_exhausted_prompt_is_refused_no_turn_non_vacuous() {
-    let off = HermesOffering::new()
+    let off = HermesOffering::scripted()
         .with_confinement(Confinement::default().with_rate(ToolKind::Execute, 1));
     let mut s = off.open(SessionConfig::with_seed(5)).expect("open");
 
@@ -162,7 +162,7 @@ fn a_rate_exhausted_prompt_is_refused_no_turn_non_vacuous() {
 #[test]
 fn an_over_value_budget_prompt_is_refused_on_the_charge_leg() {
     // Fetch: generous rate (50), but a value budget of exactly 1 call.
-    let off = HermesOffering::new()
+    let off = HermesOffering::scripted()
         .with_confinement(Confinement::default().with_budget(ToolKind::Fetch, 1));
     let mut s = off.open(SessionConfig::with_seed(6)).expect("open");
 
@@ -200,8 +200,8 @@ fn an_over_value_budget_prompt_is_refused_on_the_charge_leg() {
 /// deny a whole tool class, and a live-brain proposal for it never commits.
 #[test]
 fn a_denied_class_fails_closed_on_first_attempt() {
-    let off =
-        HermesOffering::new().with_confinement(Confinement::default().with_rate(ToolKind::Edit, 0));
+    let off = HermesOffering::scripted()
+        .with_confinement(Confinement::default().with_rate(ToolKind::Edit, 0));
     let mut s = off.open(SessionConfig::with_seed(2)).expect("open");
 
     match off.advance(&mut s, prompt("write secrets.txt leak"), user()) {
@@ -230,7 +230,7 @@ fn a_denied_class_fails_closed_on_first_attempt() {
 /// the whole confinement chain re-verifies by replay.
 #[test]
 fn a_mixed_session_renders_a_surface_and_re_verifies() {
-    let off = HermesOffering::new();
+    let off = HermesOffering::scripted();
     let mut s = off.open(SessionConfig::with_seed(42)).expect("open");
     let actor = user();
 
@@ -291,4 +291,26 @@ fn a_mixed_session_renders_a_surface_and_re_verifies() {
         report.detail
     );
     assert_eq!(report.turns, 5);
+}
+
+/// **The default swap — the offering wires the REAL `deos_hermes::ResidentBrain`.**
+/// `HermesOffering::new()` (the DEPLOY constructor) resolves the real resident brain
+/// seam (on-box by default, a live BYO-key brain when a provider key is set), while
+/// `scripted()` pins the deterministic mock the enforcement tests use. Asserted
+/// secret-free and with NO network call (only the seam label is read).
+#[test]
+fn the_default_offering_wires_the_real_resident_brain_seam() {
+    let deployed = HermesOffering::new();
+    let seam = deployed.brain_seam();
+    assert!(
+        seam.starts_with("resident:"),
+        "the default brain seam is the real deos_hermes::ResidentBrain, got {seam:?}"
+    );
+
+    let mock = HermesOffering::scripted();
+    assert_eq!(
+        mock.brain_seam(),
+        "scripted-mock",
+        "the test constructor retains the deterministic mock brain"
+    );
 }

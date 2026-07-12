@@ -37,6 +37,15 @@ dreggnet-offerings = { path = "../dreggnet-offerings" }
 # per-session confined identity). Its `TurnReceipt` is the same one an
 # `Outcome::Landed` carries (both re-export `dregg_turn::TurnReceipt`).
 dregg-sdk = { path = "../sdk" }
+# THE REAL BRAIN SEAM — `deos_hermes::ResidentBrain` (the on-box / BYO-key resident
+# brain resolver: `ANTHROPIC_API_KEY` → live Anthropic, `HERMES_API_KEY` → an
+# OpenAI-compatible endpoint, else the hermetic on-box `LocalBrain`). The default
+# `HermesOffering` drives this REAL closed-loop brain behind this crate's `Brain`
+# trait (via `ResidentBrainAdapter`), so a deploy gets a real brain, not the scripted
+# mock; the confinement/metering enforcement is unchanged and brain-agnostic. Default
+# features only (no live-brain/js-agent/cockpit) — the on-box brain needs no HTTP/TLS.
+# A repo-root workspace member resolved by path (same as `dregg-sdk`).
+deos-hermes = { path = "../deos-hermes" }
 # THE DEOS SURFACE — the gpui-free `ViewNode` an offering's `render` produces.
 deos-view = { path = "../deos-view", default-features = false }
 # Deterministic per-session seed derivation (u64 config seed → the 32-byte agent
