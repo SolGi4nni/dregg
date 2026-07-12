@@ -7574,3 +7574,12 @@ green (8533 jobs). Dregg2/Crypto native_decide: 86 → 79.
   — ntt/intt/pointwise fold mirrors; schoolbookMul is 65K mulModQ ≈ 1-2min kernel, batch at leaf modules.
 - GENUINELY cost-bound (stays native_decide): AcvpKats ML-DSA/ML-KEM batches — dozens-to-hundreds of
   keccakF + NTT per theorem ≈ hours of kernel time vs seconds compiled.
+
+## Wave 2 done: secp256k1 EVM binding + Base OP-stack finality (2026-07-12, multichain lane)
+secp256k1 EVM-address owner binding (dregg-governance): EVM holders now bind→vote non-custodially (EvmOwnerBinding
++ HolderBinding trait; Ed25519/Solana path byte-unchanged; low-S refused at 2 layers, address-recovery verified
+myself; k256+sha3). Base OP-stack proof-of-holdings (eth-lightclient): L1-finalized→L2-output-root(EIP-1186 +
+length-bounds deleteL2Outputs defense)→keccak-preimage(triple-verified incl. LIVE Base output-12086 recompute)→L2
+ERC-20. REAL-EXTERNAL fixture. RESIDUAL named loud: live Base = fault proofs (FaultDisputeGame), not implemented.
+Non-custodial prove-and-vote now spans Solana + EVM(Ethereum/Base) + Cosmos(proof; binding = next). circuit-prove
+still churned (carrier flag-day) → wrap shrink-layer + rung-3 fold-P0 deferred.

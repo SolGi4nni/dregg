@@ -73,6 +73,11 @@ Rust shrink layer waits on circuit-prove going quiet.
 - 07-12 Wave 2: secp256k1 EVM-address owner binding COMMITTED (dregg-governance) — EVM holders now bind→vote
   (EvmOwnerBinding + HolderBinding trait; Ed25519/Solana path byte-unchanged; low-S + address-recovery verified
   myself; k256+sha3). EVM-family voting works end-to-end. Residual: Cosmos bech32/secp256k1 binding.
-- 07-12 Base OP-stack finality: Fable hit the session-limit ONE STEP from done (lib src/base.rs compiles;
-  test fixture missing the L2Outputs length-proof fields). Limit reset → RESUMED the agent to finish the
-  fixture + tests. NOT committed (partial; do not commit broken). Waiting.
+- 07-12 Base OP-stack finality COMMITTED (eth-lightclient): L1 finalized state → L2 output root (EIP-1186 storage
+  proof, l2Outputs array + length-bounds check = the deleteL2Outputs defense) → keccak output-root preimage
+  (TRIPLE-verified: OP spec + kona KAT + LIVE Base-mainnet recompute of output 12086) → L2 ERC-20 MPT. REAL-EXTERNAL
+  fixture (public-node captured). 86 crate tests green. RESIDUAL named loudly: live Base uses FAULT PROOFS
+  (FaultDisputeGame), not the L2OutputOracle model — not implemented. WAVE 2 DONE (secp256k1 + Base).
+- 07-12 circuit-prove STILL churned (carrier-geometry flag-day 178-limb/60-carrier commit 30min ago, 9 files
+  uncommitted) → shrink-layer + rung-3 fold-P0 STAY deferred. Wrap gnark-side also best waits (transcript layout
+  the shrink layer will fix). Wave 3 = clean-and-mine: Cosmos bech32 binding + Base-fault-proof grounding scout.
