@@ -136,4 +136,76 @@ mod tests {
         // The loop closed: a bonded operator was placed, held (or failed to hold) a shard,
         // and a proven durability fault seized its bond into restitution + treasury.
     }
+    /// The INBOX market loop — the second spine: a bonded relay operator makes a custody
+    /// promise, drops the message, an owner-anchored fraud proof convicts it, and the
+    /// relay referee produces a conserving slash into restitution + treasury.
+    #[test]
+    fn inbox_market_loop_end_to_end() {
+        use dregg_app_framework::CellId;
+        use dregg_captp::FederationId;
+        use dregg_captp::custody::{CustodyReceipt, EvidenceOfDrop, InboxState};
+        use dregg_captp::fraud_proof::{FraudProof, OwnerAnchoredFact};
+        use dregg_types::generate_keypair;
+
+        use crate::relay_dispute::referee_then_plan;
+
+        let (sk, pk) = generate_keypair();
+        let relay = FederationId(pk.0);
+        let bonded = open_bonded_operator(10_000, 1_000, pk.0).expect("relay bonds above floor");
+
+        let content = [0xAB; 32];
+        let inbox_owner = FederationId([0x03; 32]);
+        let root = [0x64; 32];
+        let receipt = CustodyReceipt::sign(relay, &sk, content, inbox_owner, root, [0x8E; 32], 500);
+
+        // THE DROP: nothing delivered.
+        let fact = OwnerAnchoredFact::from_dequeue(&receipt, &[], root, false);
+
+        // 1) owner-anchored FRAUD PROOF convicts the drop (bilateral, no global consensus).
+        let fp = FraudProof::at_deadline(receipt.clone(), fact);
+        assert!(
+            fp.verify().convicts(),
+            "the fraud proof convicts the dropped promise"
+        );
+
+        // 2) the relay referee agrees and produces a conserving SLASH plan.
+        let evidence = EvidenceOfDrop::from_receipt(receipt);
+        let inbox = InboxState::from_dequeue(&evidence.receipt, &[], root, false);
+        let relay_cell = CellId::from_bytes(pk.0);
+        let (slash, plan) = referee_then_plan(
+            &evidence,
+            &inbox,
+            bonded.bond_amount(),
+            bonded.bond_min(),
+            0,
+            5_000,
+            300,
+            100,
+            relay_cell,
+        );
+        assert!(slash, "the referee convicts and slashes");
+        let plan = plan.unwrap();
+
+        // 3) conserving split: restitution to the wronged owner + remainder to treasury.
+        assert_eq!(
+            plan.payout.restitution + plan.payout.remainder,
+            plan.seized_amount,
+            "slash conserves (restitution + remainder == seized)"
+        );
+        assert!(
+            plan.payout.restitution > 0,
+            "the wronged owner is made whole"
+        );
+        assert!(
+            plan.payout.remainder > 0,
+            "the remainder routes to the treasury"
+        );
+        assert_eq!(
+            plan.wronged_party,
+            CellId::from_bytes(inbox_owner.0),
+            "restitution targets the fraud proof's wronged owner"
+        );
+        // Inbox spine closed: bonded relay -> promise -> drop -> fraud proof -> conserving
+        // slash. Cross-op settlement (control::xop_settle, DreggNet) is the remote-payee hop.
+    }
 }
