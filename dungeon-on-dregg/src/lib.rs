@@ -1381,3 +1381,682 @@ mod vault_tests {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A THIRD UNIVERSE — "The Tidewrack Hold": a GENERAL N-SLOT HEAP-KEYED INVENTORY
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The Keep proved a heap-keyed `WriteOnce` on ONE key (mechanic #5); the Sunken Vault
+// gave each item its OWN NAMED REGISTER SLOT (`key_owner`, `draughts_held`,
+// `draughts_drunk`) — at most ~15 items before the 16-register budget runs out. The
+// Tidewrack Hold is the fuller version the Vault named: items live in a HEAP-KEYED SLOT
+// MAP (`CellState::fields_map`, keys `>= STATE_SLOTS`), NOT one register per item, so a
+// player holds an UNBOUNDED set of distinct items. Every operation is a real cap-bounded
+// turn the verified [`EmbeddedExecutor`](dregg_app_framework::EmbeddedExecutor) refers,
+// each tooth a real [`StateConstraint`] the executor re-checks on the turn's post-state —
+// never app bookkeeping, identical enforcement to the Keep/Vault.
+//
+// THE MODEL — `heap[held_key] = owner id` (0 / absent = unheld); one heap key per item:
+//
+//   * PICKUP (insert) — a SINGLE generic [`HOLD_PICKUP_METHOD`] turn whose case is a
+//     CONJUNCTION of `HeapField { key, WriteOnce }` over EVERY registered item key.
+//     Writing item K (absent/zero → owner) admits; a RIVAL re-grab of a TAKEN key
+//     (owner_a → owner_b) fails K's `WriteOnce`; every UNTOUCHED key's `WriteOnce` passes
+//     idempotently (old == new), so ONE method safely gates N distinct inserts. A
+//     double-grab of the same heap key by a rival is a real executor refusal.
+//   * USE (a gate / key item) — a per-item `hold_use_<key>` turn gated
+//     `HeapField { key, Gte(1) }`: admitted IFF the item is held (absent post-state ⇒
+//     refuse), and NON-consuming (the held key is untouched; a benign use-tally heap key
+//     bumps so the turn carries a real committed effect and repeat-uses are visible).
+//     Use-without-holding is a real `WorldError::Refused`.
+//   * CONSUME (a charged item) — a per-item `hold_consume_<key>` turn gated by TWO teeth:
+//     `HeapField { held_key, Gte(1) }` (must hold it — absent refuses: use-without-
+//     holding on a consumable) AND `HeapField { used_key, Lte(charges) }` (the consumed
+//     tally may never exceed the item's charge cap). A single-charge item consumed twice
+//     (used 1 → 2 > 1) is refused: a consumed item cannot be re-used.
+//
+// Replay: the inventory turns ride [`WorldCell::apply_raw`] (the heap path, below the
+// choice/passage layer), so their verify-by-replay is the RAW-TURN analog of
+// [`spween_dregg::verify_by_replay`] (which replays register-slot CHOICE playthroughs):
+// [`replay_hold`] re-deploys an identically-seeded Hold and re-applies the SAME op
+// sequence, reproducing the committed heap exactly; a retconned record (a use whose
+// pickup was dropped) is REFUSED by the real executor on replay. The room-scene half of
+// this universe still re-verifies through the stock [`spween_dregg::verify`] machinery
+// unchanged (see `hold_tests::hold_room_playthrough_reverifies`).
+//
+// HONEST SCOPE. This is a general HEAP-KEYED inventory with executor teeth for
+// pickup / use / consume over an unbounded key space. What a FULLER version adds:
+//   * true QUANTITIES / STACKING — held as a live count a consume DECREMENTS with a
+//     dynamic `consumed <= held` budget. The heap vocabulary is SINGLE-KEY atoms
+//     (`Gte`/`Lte`/`WriteOnce`/`Monotonic`/…) with NO heap-vs-heap cross-key `Lte`, so
+//     the consume cap here is a per-item COMPILE-TIME constant, not the live held count
+//     (the Vault's cross-SLOT `FieldLteField` has no heap twin);
+//   * DROP / transfer — heap `WriteOnce` freezes a taken key against erasure (the anti-
+//     double-grab tooth), so a droppable/tradeable item needs a non-`WriteOnce` owner
+//     atom plus a sender-bound `AnyOf[HeapField, SenderIs]` transfer gate (the vocabulary
+//     exists; this slice does not wire it);
+//   * MULTIPLAYER-CONCURRENT holding — one cell is one serial writer (the multi-cell
+//     ceiling this crate already names): concurrent independent inventories are a cell
+//     per player. The rival-refused tooth here is first-grabber-wins on ONE cell.
+
+/// One item in the general heap-keyed inventory: a single `held_key` in the cell heap
+/// (`>= STATE_SLOTS`) plus how the item is USED.
+#[derive(Clone, Copy, Debug)]
+pub struct InvItem {
+    /// A human tag (for docs/printing).
+    pub name: &'static str,
+    /// The heap key holding the item's owner id (nonzero = held; `WriteOnce`-guarded).
+    pub held_key: u64,
+    /// How the item is used.
+    pub kind: ItemKind,
+}
+
+/// How an inventory item is used at the executor.
+#[derive(Clone, Copy, Debug)]
+pub enum ItemKind {
+    /// A gate / key item: `use` is a NON-consuming turn admitted IFF held
+    /// (`HeapField { held_key, Gte(1) }`). It bumps `tally_key` (unconstrained) so the
+    /// turn carries a real committed effect and repeat-uses are visible.
+    Gate {
+        /// A benign per-item "times used" heap counter (no tooth — just a receipt).
+        tally_key: u64,
+    },
+    /// A charged consumable: `consume` increments `used_key`, capped at `charges`
+    /// (`HeapField { used_key, Lte(charges) }`), and requires the item be held
+    /// (`HeapField { held_key, Gte(1) }`).
+    Consumable {
+        /// The heap key tallying how many charges have been consumed.
+        used_key: u64,
+        /// The compile-time charge cap (over-consume past it is refused).
+        charges: u64,
+    },
+}
+
+/// The generic pickup dispatch method (one turn-type, N item keys — its case is a
+/// conjunction of `WriteOnce` over every registered `held_key`).
+pub const HOLD_PICKUP_METHOD: &str = "hold_pickup";
+/// The coral key — a contested gate item (its heap owner key).
+pub const CORAL_KEY: u64 = 200;
+/// The rusted lantern — a second gate item.
+pub const RUSTED_LANTERN: u64 = 201;
+/// The healing draught — a single-charge consumable (heap held key).
+pub const HEALING_DRAUGHT: u64 = 300;
+/// The oil flask — a three-charge consumable.
+pub const OIL_FLASK: u64 = 301;
+/// The thunder rune — a two-charge consumable.
+pub const THUNDER_RUNE: u64 = 302;
+
+/// The Tidewrack Hold's registered inventory: SIXTEEN gate relics (keys `200..216`, use-
+/// tallies `700..716`) plus THREE consumables (`healing_draught` cap 1, `oil_flask`
+/// cap 3, `thunder_rune` cap 2). Nineteen distinct heap-keyed items — more than the 16
+/// register slots, so the collection can ONLY live on the heap. Register more freely: the
+/// key space is unbounded.
+pub fn hold_items() -> Vec<InvItem> {
+    let mut items = Vec::new();
+    for i in 0..16u64 {
+        items.push(InvItem {
+            name: "relic",
+            held_key: 200 + i,
+            kind: ItemKind::Gate { tally_key: 700 + i },
+        });
+    }
+    items.push(InvItem {
+        name: "healing_draught",
+        held_key: HEALING_DRAUGHT,
+        kind: ItemKind::Consumable {
+            used_key: 400,
+            charges: 1,
+        },
+    });
+    items.push(InvItem {
+        name: "oil_flask",
+        held_key: OIL_FLASK,
+        kind: ItemKind::Consumable {
+            used_key: 401,
+            charges: 3,
+        },
+    });
+    items.push(InvItem {
+        name: "thunder_rune",
+        held_key: THUNDER_RUNE,
+        kind: ItemKind::Consumable {
+            used_key: 402,
+            charges: 2,
+        },
+    });
+    items
+}
+
+/// The dispatch method for a NON-consuming use of the gate item at `held_key`.
+fn hold_use_method(held_key: u64) -> String {
+    format!("hold_use_{held_key}")
+}
+
+/// The dispatch method for consuming a charge of the item at `held_key`.
+fn hold_consume_method(held_key: u64) -> String {
+    format!("hold_consume_{held_key}")
+}
+
+/// The Tidewrack Hold scene — two rooms (`deck` → `bilge`) so the universe deploys as a
+/// real world-cell and supports a stock [`Driver`](spween_dregg::Driver) room playthrough
+/// (the heap inventory rides [`WorldCell::apply_raw`] on the same cell).
+pub const HOLD: &str = r#"---
+id: tidewrack-hold
+title: The Tidewrack Hold
+weight: 1
+---
+
+=== deck
+
+The upper deck of a foundered tidewrack hold, timbers groaning under the swell. A hatch
+drops away into the flooded bilge, where the salvage — and the hoard — settled.
+
+* [Descend into the flooded bilge]
+  -> bilge
+
+=== bilge
+
+The bilge brims with barnacled salvage and a heaped tidewrack hoard glinting in the murk.
+
+* [Seize the tidewrack hoard]
+  ~ gold += 900
+  -> END
+"#;
+
+/// The Hold's opening room (the deck).
+pub const ROOM_DECK: &str = "deck";
+/// The Hold's flooded lower room (the bilge — the hoard).
+pub const ROOM_BILGE: &str = "bilge";
+/// `deck`: descend into the bilge (ungated).
+pub const HOLD_DESCEND: usize = 0;
+/// `bilge`: seize the hoard (ends the story).
+pub const HOLD_SEIZE: usize = 0;
+
+/// Parse the Tidewrack Hold scene.
+pub fn hold_scene() -> Scene {
+    parse(HOLD, "tidewrack-hold.scene").expect("the hold scene parses")
+}
+
+/// **Compile the Hold AND augment its program with the general-inventory teeth.** Adds:
+/// the generic [`HOLD_PICKUP_METHOD`] case (a `WriteOnce` per registered heap key), a
+/// per-gate-item `hold_use_<key>` case (`Gte(1)`), and a per-consumable
+/// `hold_consume_<key>` case (`Gte(held, 1)` + `Lte(used, charges)`). Every case is a real
+/// `CellProgram` case the [`EmbeddedExecutor`](dregg_app_framework::EmbeddedExecutor)
+/// re-checks move-for-move.
+pub fn hold_compiled() -> CompiledStory {
+    let mut story = compile_scene(&hold_scene()).expect("the hold compiles");
+    let items = hold_items();
+
+    // PICKUP — one generic turn-type gating N distinct heap inserts: a WriteOnce per
+    // registered item key. Writing one key leaves the rest untouched (old == new ⇒ their
+    // WriteOnce passes idempotently); a rival re-grab of a TAKEN key is refused.
+    let pickup_teeth = items
+        .iter()
+        .map(|it| StateConstraint::HeapField {
+            key: it.held_key,
+            atom: HeapAtom::WriteOnce,
+        })
+        .collect();
+    add_case(&mut story.program, HOLD_PICKUP_METHOD, pickup_teeth);
+
+    for it in &items {
+        match it.kind {
+            // USE — a gate item is usable IFF held (Gte(1) on the heap owner key), non-
+            // consuming (held key untouched; the use-tally key bumps freely).
+            ItemKind::Gate { .. } => add_case(
+                &mut story.program,
+                &hold_use_method(it.held_key),
+                vec![StateConstraint::HeapField {
+                    key: it.held_key,
+                    atom: HeapAtom::Gte {
+                        value: field_from_u64(1),
+                    },
+                }],
+            ),
+            // CONSUME — must hold it (Gte(held, 1)) AND the consumed tally may never
+            // exceed the charge cap (Lte(used, charges)). Absent held ⇒ use-without-
+            // holding refused; used past cap ⇒ over-consume refused.
+            ItemKind::Consumable { used_key, charges } => add_case(
+                &mut story.program,
+                &hold_consume_method(it.held_key),
+                vec![
+                    StateConstraint::HeapField {
+                        key: it.held_key,
+                        atom: HeapAtom::Gte {
+                            value: field_from_u64(1),
+                        },
+                    },
+                    StateConstraint::HeapField {
+                        key: used_key,
+                        atom: HeapAtom::Lte {
+                            value: field_from_u64(charges),
+                        },
+                    },
+                ],
+            ),
+        }
+    }
+
+    story
+}
+
+/// Deploy the augmented Hold as a real world-cell (the inventory teeth installed as
+/// executor predicates). Deterministic in `seed` (re-deploy reproduces identity + hashes).
+pub fn deploy_hold(seed: u8) -> WorldCell {
+    WorldCell::deploy_compiled(Arc::new(hold_compiled()), seed).expect("the hold deploys")
+}
+
+/// One general-inventory operation — the abstract, deploy-independent record a
+/// [`replay_hold`] re-executes (the effects are re-derived against the fresh cell).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum HoldOp {
+    /// Insert item `held_key` into the heap under `owner` (`WriteOnce`-guarded).
+    Pickup {
+        /// The item's heap owner key.
+        held_key: u64,
+        /// The claiming owner id (nonzero).
+        owner: u64,
+    },
+    /// Use a gate item (non-consuming): bump `tally_key`, gated on holding `held_key`.
+    UseGate {
+        /// The gate item's heap owner key (must be held).
+        held_key: u64,
+        /// The item's use-tally heap key (bumped).
+        tally_key: u64,
+    },
+    /// Consume a charge of a consumable: increment `used_key`, gated on holding
+    /// `held_key` and staying within the item's charge cap.
+    Consume {
+        /// The consumable's heap owner key (must be held).
+        held_key: u64,
+        /// The consumed-tally heap key (incremented; capped by the installed `Lte`).
+        used_key: u64,
+    },
+}
+
+/// Drive one [`HoldOp`] as a real cap-bounded turn via [`WorldCell::apply_raw`]. Reads
+/// the current tally/used heap value to compute the next write, then submits — so an
+/// executor tooth (WriteOnce / Gte / Lte) refers the turn exactly as on the choice path.
+pub fn apply_hold_op(
+    world: &WorldCell,
+    op: &HoldOp,
+) -> Result<dregg_app_framework::TurnReceipt, spween_dregg::WorldError> {
+    let cell = world.cell_id();
+    match *op {
+        HoldOp::Pickup { held_key, owner } => world.apply_raw(
+            HOLD_PICKUP_METHOD,
+            vec![stash_effect(cell, held_key, owner)],
+        ),
+        HoldOp::UseGate {
+            held_key,
+            tally_key,
+        } => {
+            let cur = world.read_heap(tally_key).unwrap_or(0);
+            world.apply_raw(
+                &hold_use_method(held_key),
+                vec![stash_effect(cell, tally_key, cur + 1)],
+            )
+        }
+        HoldOp::Consume { held_key, used_key } => {
+            let used = world.read_heap(used_key).unwrap_or(0);
+            world.apply_raw(
+                &hold_consume_method(held_key),
+                vec![stash_effect(cell, used_key, used + 1)],
+            )
+        }
+    }
+}
+
+/// The committed heap projection of every registered item (held + tally/used key), sorted
+/// — the deterministic fingerprint [`replay_hold`] reproduces (`None` = absent on the
+/// heap, distinct from present-zero).
+pub fn hold_heap_snapshot(world: &WorldCell) -> Vec<(u64, Option<u64>)> {
+    let mut keys = Vec::new();
+    for it in hold_items() {
+        keys.push(it.held_key);
+        match it.kind {
+            ItemKind::Gate { tally_key } => keys.push(tally_key),
+            ItemKind::Consumable { used_key, .. } => keys.push(used_key),
+        }
+    }
+    keys.sort_unstable();
+    keys.dedup();
+    keys.into_iter().map(|k| (k, world.read_heap(k))).collect()
+}
+
+/// **Verify-by-replay for the heap inventory.** Re-deploy an identically-seeded Hold and
+/// re-apply the SAME [`HoldOp`] sequence, returning the per-step heap snapshots. A forged
+/// record (a use whose pickup was dropped) is REFUSED by the real executor on replay,
+/// surfacing as `Err((step, why))`. The raw-turn analog of
+/// [`spween_dregg::verify_by_replay`] (which replays register-slot choice playthroughs).
+pub fn replay_hold(
+    seed: u8,
+    ops: &[HoldOp],
+) -> Result<Vec<Vec<(u64, Option<u64>)>>, (usize, String)> {
+    let world = deploy_hold(seed);
+    let mut snaps = Vec::with_capacity(ops.len());
+    for (i, op) in ops.iter().enumerate() {
+        apply_hold_op(&world, op).map_err(|e| (i, e.to_string()))?;
+        snaps.push(hold_heap_snapshot(&world));
+    }
+    Ok(snaps)
+}
+
+#[cfg(test)]
+mod hold_tests {
+    //! The general N-slot heap-keyed inventory, DRIVEN on the real `WorldCell`: multiple
+    //! distinct items held via the heap; the right item's use commits; an unheld item's
+    //! use / a rival re-grab of a taken key / a consumed item's re-use are all REAL
+    //! executor refusals that commit NOTHING (anti-ghost).
+    use super::*;
+    use spween_dregg::{Driver, WorldError, verify, verify_chain_linkage};
+
+    /// The inventory teeth are REAL kernel predicates: the pickup case carries a
+    /// `WriteOnce` for every item key; each gate use is `Gte(1)`; each consume is
+    /// `Gte(held, 1)` + `Lte(used, charges)`.
+    #[test]
+    fn hold_teeth_are_real_kernel_predicates() {
+        let story = hold_compiled();
+
+        let pickup = case_constraints(&story, HOLD_PICKUP_METHOD);
+        for it in hold_items() {
+            assert!(
+                pickup.iter().any(|c| matches!(
+                    c,
+                    StateConstraint::HeapField { key, atom: HeapAtom::WriteOnce }
+                        if *key == it.held_key
+                )),
+                "pickup gates WriteOnce on heap key {}",
+                it.held_key
+            );
+        }
+
+        let use_coral = case_constraints(&story, &hold_use_method(CORAL_KEY));
+        assert!(
+            use_coral.iter().any(|c| matches!(
+                c,
+                StateConstraint::HeapField { key, atom: HeapAtom::Gte { value } }
+                    if *key == CORAL_KEY && *value == field_from_u64(1)
+            )),
+            "coral-key use is HeapField Gte(1); got {use_coral:?}"
+        );
+
+        let consume = case_constraints(&story, &hold_consume_method(HEALING_DRAUGHT));
+        assert!(
+            consume.iter().any(|c| matches!(
+                c,
+                StateConstraint::HeapField { key, atom: HeapAtom::Gte { value } }
+                    if *key == HEALING_DRAUGHT && *value == field_from_u64(1)
+            )),
+            "draught consume requires holding (Gte(held,1)); got {consume:?}"
+        );
+        assert!(
+            consume.iter().any(|c| matches!(
+                c,
+                StateConstraint::HeapField { key, atom: HeapAtom::Lte { value } }
+                    if *key == 400 && *value == field_from_u64(1)
+            )),
+            "draught consume is capped (Lte(used,1)); got {consume:?}"
+        );
+    }
+
+    /// The general inventory holds MULTIPLE DISTINCT items at once — nineteen, more than
+    /// the 16 register slots, so the collection can only live on the heap.
+    #[test]
+    fn hold_multiple_distinct_items_via_heap() {
+        let world = deploy_hold(30);
+        let cell = world.cell_id();
+
+        for it in hold_items() {
+            world
+                .apply_raw(HOLD_PICKUP_METHOD, vec![stash_effect(cell, it.held_key, 1)])
+                .unwrap_or_else(|e| panic!("pickup of heap item {} commits: {e}", it.held_key));
+            assert_eq!(
+                world.read_heap(it.held_key),
+                Some(1),
+                "the heap holds item {}",
+                it.held_key
+            );
+        }
+
+        let held = hold_items()
+            .iter()
+            .filter(|it| world.read_heap(it.held_key) == Some(1))
+            .count();
+        assert!(
+            held >= 17,
+            "the heap holds {held} distinct items at once (> 16 registers)"
+        );
+    }
+
+    /// USE the right item — the held coral key's use COMMITS (its tally bumps); an UNHELD
+    /// item's use is a REAL executor refusal that commits nothing.
+    #[test]
+    fn use_right_item_commits_unheld_refused() {
+        let world = deploy_hold(31);
+        let cell = world.cell_id();
+
+        // Hold ONLY the coral key.
+        world
+            .apply_raw(HOLD_PICKUP_METHOD, vec![stash_effect(cell, CORAL_KEY, 1)])
+            .expect("grab the coral key");
+
+        // Using the held coral key commits (tally 700: absent → 1).
+        apply_hold_op(
+            &world,
+            &HoldOp::UseGate {
+                held_key: CORAL_KEY,
+                tally_key: 700,
+            },
+        )
+        .expect("using a held gate item commits");
+        assert_eq!(world.read_heap(700), Some(1), "the coral key was used once");
+
+        // Using the UNHELD rusted lantern fails FieldGte(held, 1) — a real refusal.
+        let refused = apply_hold_op(
+            &world,
+            &HoldOp::UseGate {
+                held_key: RUSTED_LANTERN,
+                tally_key: 701,
+            },
+        );
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "using an unheld item is refused, got {refused:?}"
+        );
+        assert_eq!(
+            world.read_heap(701),
+            None,
+            "anti-ghost: the unheld lantern left no use-tally"
+        );
+    }
+
+    /// A RIVAL grabbing a TAKEN heap key is refused (WriteOnce, first-grabber-wins).
+    #[test]
+    fn rival_regrab_of_taken_key_refused() {
+        let world = deploy_hold(32);
+        let cell = world.cell_id();
+
+        world
+            .apply_raw(HOLD_PICKUP_METHOD, vec![stash_effect(cell, CORAL_KEY, 1)])
+            .expect("the first crew grabs the coral key (owner 1)");
+        assert_eq!(world.read_heap(CORAL_KEY), Some(1));
+
+        // A rival crew grabs the SAME heap key for a different owner (1 → 2): WriteOnce
+        // refuses — the key is already taken.
+        let refused = world.apply_raw(HOLD_PICKUP_METHOD, vec![stash_effect(cell, CORAL_KEY, 2)]);
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "a rival re-grab of a taken heap key is refused (WriteOnce), got {refused:?}"
+        );
+        assert_eq!(
+            world.read_heap(CORAL_KEY),
+            Some(1),
+            "anti-ghost: the coral key still belongs to the first grabber"
+        );
+    }
+
+    /// CONSUME requires holding, and a consumed charge cannot be re-used past the cap.
+    #[test]
+    fn consume_requires_holding_and_caps_reuse() {
+        let world = deploy_hold(33);
+        let cell = world.cell_id();
+
+        // Consume with NOTHING held — use-without-holding on a consumable: refused.
+        let refused = apply_hold_op(
+            &world,
+            &HoldOp::Consume {
+                held_key: HEALING_DRAUGHT,
+                used_key: 400,
+            },
+        );
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "consuming an unheld draught is refused (Gte(held,1)), got {refused:?}"
+        );
+        assert_eq!(world.read_heap(400), None, "anti-ghost: nothing consumed");
+
+        // Pocket the single-charge draught, then the first consume commits (used 0 → 1).
+        world
+            .apply_raw(
+                HOLD_PICKUP_METHOD,
+                vec![stash_effect(cell, HEALING_DRAUGHT, 1)],
+            )
+            .expect("pocket the healing draught");
+        apply_hold_op(
+            &world,
+            &HoldOp::Consume {
+                held_key: HEALING_DRAUGHT,
+                used_key: 400,
+            },
+        )
+        .expect("the first consume of a held draught commits");
+        assert_eq!(world.read_heap(400), Some(1));
+
+        // A SECOND consume of the single-charge item (used 1 → 2 > cap 1): refused.
+        let over = apply_hold_op(
+            &world,
+            &HoldOp::Consume {
+                held_key: HEALING_DRAUGHT,
+                used_key: 400,
+            },
+        );
+        assert!(
+            matches!(over, Err(WorldError::Refused(_))),
+            "a consumed single-charge item cannot be re-used (Lte cap), got {over:?}"
+        );
+        assert_eq!(
+            world.read_heap(400),
+            Some(1),
+            "anti-ghost: the consumed tally did not advance"
+        );
+
+        // A three-charge item: three consumes commit; the fourth over-consumes and refuses.
+        world
+            .apply_raw(HOLD_PICKUP_METHOD, vec![stash_effect(cell, OIL_FLASK, 1)])
+            .expect("pocket the oil flask");
+        for _ in 0..3 {
+            apply_hold_op(
+                &world,
+                &HoldOp::Consume {
+                    held_key: OIL_FLASK,
+                    used_key: 401,
+                },
+            )
+            .expect("a charge within the cap consumes");
+        }
+        assert_eq!(world.read_heap(401), Some(3));
+        let over = apply_hold_op(
+            &world,
+            &HoldOp::Consume {
+                held_key: OIL_FLASK,
+                used_key: 401,
+            },
+        );
+        assert!(
+            matches!(over, Err(WorldError::Refused(_))),
+            "consuming past the 3-charge cap is refused, got {over:?}"
+        );
+    }
+
+    /// The general inventory REPLAYS deterministically (verify-by-replay), and a retconned
+    /// record — a use whose pickup was dropped — is REFUSED by the executor on replay.
+    #[test]
+    fn hold_inventory_replays_and_a_retcon_fails() {
+        let ops = vec![
+            HoldOp::Pickup {
+                held_key: CORAL_KEY,
+                owner: 1,
+            },
+            HoldOp::Pickup {
+                held_key: RUSTED_LANTERN,
+                owner: 1,
+            },
+            HoldOp::Pickup {
+                held_key: HEALING_DRAUGHT,
+                owner: 1,
+            },
+            HoldOp::UseGate {
+                held_key: CORAL_KEY,
+                tally_key: 700,
+            },
+            HoldOp::UseGate {
+                held_key: RUSTED_LANTERN,
+                tally_key: 701,
+            },
+            HoldOp::Consume {
+                held_key: HEALING_DRAUGHT,
+                used_key: 400,
+            },
+        ];
+
+        let a = replay_hold(40, &ops).expect("the honest inventory playthrough commits");
+        let b = replay_hold(40, &ops).expect("re-deploy + re-apply reproduces it");
+        assert_eq!(
+            a, b,
+            "the general inventory replays deterministically (verify-by-replay)"
+        );
+        // The end state: both gate keys held+used once, the draught held+consumed once.
+        let last = a.last().expect("at least one step");
+        assert!(last.contains(&(CORAL_KEY, Some(1))));
+        assert!(last.contains(&(700, Some(1))));
+        assert!(last.contains(&(HEALING_DRAUGHT, Some(1))));
+        assert!(last.contains(&(400, Some(1))));
+
+        // Retcon: SKIP grabbing the coral key but keep using it. On replay the coral-key
+        // use (now index 2, after the two remaining pickups) is REFUSED — the record cannot
+        // pass, exactly as a choice-path retcon fails `verify_by_replay`.
+        let mut forged = ops.clone();
+        forged.remove(0);
+        match replay_hold(40, &forged) {
+            Err((step, why)) => {
+                assert_eq!(step, 2, "the unheld coral-key use is the refusing step");
+                assert!(
+                    why.contains("refused"),
+                    "the retcon fails by a real executor refusal, got {why}"
+                );
+            }
+            Ok(_) => panic!("a retconned key-skip must not replay clean"),
+        }
+    }
+
+    /// The room-scene half of this universe still re-verifies through the STOCK
+    /// [`spween_dregg::verify`] machinery unchanged — the heap inventory is fully additive.
+    #[test]
+    fn hold_room_playthrough_reverifies() {
+        let s = hold_scene();
+        let mut driver = Driver::start(deploy_hold(41), &s).expect("start the hold");
+
+        driver
+            .advance(HOLD_DESCEND)
+            .expect("descend into the bilge");
+        driver.advance(HOLD_SEIZE).expect("seize the hoard");
+        assert!(driver.is_ended(), "the hold is cleared");
+        assert_eq!(driver.world().read_var("gold"), 900);
+
+        let play = driver.playthrough();
+        assert_eq!(play.receipts().len(), 3, "genesis + 2 moves");
+        verify_chain_linkage(&play).expect("the hold receipt chain links");
+        verify(deploy_hold(41), &s, &play).expect("the honest hold playthrough re-verifies");
+    }
+}
