@@ -10,7 +10,8 @@
 use eth_lightclient::ssz::{hash_pair, is_valid_merkle_branch};
 use eth_lightclient::{
     verify_committee_update, SyncCommittee, NEXT_SYNC_COMMITTEE_DEPTH,
-    NEXT_SYNC_COMMITTEE_SUBTREE_INDEX, SYNC_COMMITTEE_SIZE,
+    NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA, NEXT_SYNC_COMMITTEE_GINDEX,
+    NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA, NEXT_SYNC_COMMITTEE_SUBTREE_INDEX, SYNC_COMMITTEE_SIZE,
 };
 
 /// Reconstruct the root implied by (leaf, branch, index) — the constructive
@@ -101,6 +102,68 @@ fn wrong_branch_length_rejects() {
     let root = compute_root(&leaf, &branch, NEXT_SYNC_COMMITTEE_SUBTREE_INDEX);
     let short = &branch[..NEXT_SYNC_COMMITTEE_DEPTH - 1];
     assert!(verify_committee_update(&committee, short, &root).is_err());
+}
+
+/// Electra+ deepened the `BeaconState`: `next_sync_committee` moved to gindex 87 →
+/// depth 6, SAME subtree index 23. A 6-node branch must verify (ACCEPT polarity of
+/// the post-Electra rotation path).
+#[test]
+fn electra_depth6_committee_branch_accepts() {
+    let committee = sample_committee();
+    let branch: Vec<[u8; 32]> = (0..NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA as u8)
+        .map(|i| [i.wrapping_add(0x40); 32])
+        .collect();
+    let leaf = committee.hash_tree_root();
+    let root = compute_root(&leaf, &branch, NEXT_SYNC_COMMITTEE_SUBTREE_INDEX);
+    assert!(
+        verify_committee_update(&committee, &branch, &root).is_ok(),
+        "a depth-6 Electra committee branch must verify"
+    );
+}
+
+/// REJECT polarity for the Electra path: a tampered 6-node branch must not verify.
+#[test]
+fn electra_depth6_tampered_branch_rejects() {
+    let committee = sample_committee();
+    let branch: Vec<[u8; 32]> = (0..NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA as u8)
+        .map(|i| [i.wrapping_add(0x40); 32])
+        .collect();
+    let leaf = committee.hash_tree_root();
+    let root = compute_root(&leaf, &branch, NEXT_SYNC_COMMITTEE_SUBTREE_INDEX);
+    let mut bad = branch.clone();
+    bad[5][0] ^= 0x01;
+    assert!(verify_committee_update(&committee, &bad, &root).is_err());
+}
+
+/// Any branch length OTHER than the two fork depths (5 Altair..Deneb, 6 Electra+)
+/// is fail-closed — including one deeper than Electra's.
+#[test]
+fn non_fork_branch_lengths_reject() {
+    let committee = sample_committee();
+    let leaf = committee.hash_tree_root();
+    for depth in [0usize, 1, 4, 7, 8] {
+        let branch: Vec<[u8; 32]> = (0..depth as u8).map(|i| [i.wrapping_add(1); 32]).collect();
+        let root = compute_root(&leaf, &branch, NEXT_SYNC_COMMITTEE_SUBTREE_INDEX);
+        assert!(
+            verify_committee_update(&committee, &branch, &root).is_err(),
+            "a depth-{depth} committee branch must be refused"
+        );
+    }
+}
+
+/// The load-bearing fork invariant: gindex 55 (depth 5) and gindex 87 (depth 6) walk
+/// to the SAME subtree index 23, so one verifier serves both forks.
+#[test]
+fn subtree_index_invariant_across_fork() {
+    assert_eq!(
+        NEXT_SYNC_COMMITTEE_GINDEX % (1 << NEXT_SYNC_COMMITTEE_DEPTH),
+        23
+    );
+    assert_eq!(
+        NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA % (1 << NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA),
+        23
+    );
+    assert_eq!(NEXT_SYNC_COMMITTEE_SUBTREE_INDEX, 23);
 }
 
 #[test]

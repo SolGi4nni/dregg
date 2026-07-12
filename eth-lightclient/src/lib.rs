@@ -50,12 +50,20 @@ pub const DOMAIN_SYNC_COMMITTEE: [u8; 4] = [0x07, 0x00, 0x00, 0x00];
 /// underscore; this exact string is the hash-to-curve DST every ETH client uses.
 pub const DST: &[u8] = b"BLS_SIG_BLS12381G2_XMD:SHA-256_SSWU_RO_POP_";
 
-/// Generalized index of `next_sync_committee` within `BeaconState` in Altair
-/// (`NEXT_SYNC_COMMITTEE_INDEX = 55`).
+/// Generalized index of `next_sync_committee` within `BeaconState` in Altair..Deneb
+/// (`NEXT_SYNC_COMMITTEE_GINDEX = 55`).
 pub const NEXT_SYNC_COMMITTEE_GINDEX: u64 = 55;
-/// Merkle-branch depth for `next_sync_committee` = `floor(log2(55)) = 5`.
+/// Merkle-branch depth for `next_sync_committee` in Altair..Deneb = `floor(log2(55)) = 5`.
 pub const NEXT_SYNC_COMMITTEE_DEPTH: usize = 5;
-/// Subtree index used by `is_valid_merkle_branch` = `55 % 2^5 = 23`.
+/// `NEXT_SYNC_COMMITTEE_GINDEX` in Electra+ (the deepened `BeaconState`): 87
+/// (consensus-specs `NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA`).
+pub const NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA: u64 = 87;
+/// Merkle-branch depth for the Electra+ `next_sync_committee` = `floor(log2(87)) = 6`.
+pub const NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA: usize = 6;
+/// Subtree index used by `is_valid_merkle_branch` = `55 % 2^5 = 87 % 2^6 = 23`.
+/// Identical across the fork boundary (the committee keeps the same left/right walk,
+/// one level deeper) — only the branch LENGTH differs, exactly like the finalized-root
+/// dual-depth in [`finality`].
 pub const NEXT_SYNC_COMMITTEE_SUBTREE_INDEX: u64 =
     NEXT_SYNC_COMMITTEE_GINDEX % (1 << NEXT_SYNC_COMMITTEE_DEPTH);
 
@@ -328,18 +336,30 @@ pub fn verify_sync_aggregate(
 /// can advance one sync-period. Fail-closed on a bad branch.
 ///
 /// This models the SSZ inclusion proof at generalized index
-/// `NEXT_SYNC_COMMITTEE_GINDEX = 55` (depth 5, subtree index 23).
+/// `NEXT_SYNC_COMMITTEE_GINDEX = 55` (Altair..Deneb: depth 5) or
+/// `NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA = 87` (Electra+: depth 6) — subtree index 23
+/// in BOTH, so the only observable fork difference is the branch LENGTH. Real
+/// post-Electra updates carry a 6-node branch; we accept either depth and fail
+/// closed on any other length (the same dual-depth treatment
+/// [`finality::verify_finality_branch`] gives the finalized root).
 pub fn verify_committee_update(
     next_sync_committee: &SyncCommittee,
     next_sync_committee_branch: &[[u8; 32]],
     attested_state_root: &[u8; 32],
 ) -> Result<(), Error> {
-    if next_sync_committee_branch.len() != NEXT_SYNC_COMMITTEE_DEPTH {
+    if next_sync_committee_branch.len() != NEXT_SYNC_COMMITTEE_DEPTH
+        && next_sync_committee_branch.len() != NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA
+    {
         return Err(Error::WrongBranchLength {
             got: next_sync_committee_branch.len(),
-            expected: NEXT_SYNC_COMMITTEE_DEPTH,
+            expected: NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA,
         });
     }
+    // Sanity: the subtree index is invariant across the fork boundary.
+    debug_assert_eq!(
+        NEXT_SYNC_COMMITTEE_GINDEX % (1 << NEXT_SYNC_COMMITTEE_DEPTH),
+        NEXT_SYNC_COMMITTEE_GINDEX_ELECTRA % (1 << NEXT_SYNC_COMMITTEE_DEPTH_ELECTRA)
+    );
     let leaf = next_sync_committee.hash_tree_root();
     if ssz::is_valid_merkle_branch(
         &leaf,
