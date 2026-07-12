@@ -193,7 +193,7 @@ faithfulness, and FORCE the deployed gate — the rung the laundering pretended 
 open Dregg2.Circuit.RotatedKernelRefinementFacet (EffAuthoritySource effAuthoritySource_authorizes)
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 VmTrace Satisfied2 ChipTableSound ChipTableSoundN envAt)
 open Dregg2.Circuit.Emit.CapOpenEmit
-  (effCapOpenV3 capOpenCols
+  (effCapOpenV3 capOpenCols CapOpenRowCanon
    EFF_TRANSFER EFF_GRANT_CAPABILITY EFF_REVOKE_CAPABILITY EFF_INTRODUCE EFF_DELEGATION_OPS
    introduceV3 grantCapV3 revokeDelegationV3 refreshDelegationV3 revokeCapabilityBaseV3)
 open Dregg2.Circuit.Emit.EffectVmEmitRotationV3 (attenuateV3)
@@ -227,6 +227,11 @@ structure CapOpenTraceFloor (S8 : Cap8Scheme) (hash : List ℤ → ℤ) (effectB
   membership gates run under `when_transition()`, so the depth-16 open + submask facet gate are forced
   only off the last row (the honest prover lays the cap-open in the active domain). -/
   hiNotLast : i + 1 ≠ t.rows.length
+  /-- the cap-open row's canonicality envelope (cell range + effect-bit range at bit for `effectBit`) —
+  the deployed range invariant the honest prover's BUILT trace genuinely satisfies (every committed cell
+  is the canonical BabyBear representative `0 ≤ · < p`). Part of the irreducible trace realizability, the
+  same category as `hChip`/`hsat`: the mod-`p` gate consequence reads the ℤ-level fields through it. -/
+  hcanon : CapOpenRowCanon (capOpenCols base.traceWidth) (envAt t i) n
   /-- the cap-open row's `src` column IS the edge's `src` (`c.target`). -/
   hsrc : (envAt t i).loc (capOpenCols base.traceWidth).src = (c.target : ℤ)
   /-- the opened leaf IS the CONSTRUCTED on-edge leaf. -/
@@ -268,6 +273,7 @@ def authConstructs_source (S8 : Cap8Scheme) (hash : List ℤ → ℤ)
       i := floor.i
       hi := floor.hi
       hiNotLast := floor.hiNotLast
+      hcanon := floor.hcanon
       leafAt := authLeafAt actor0 c (1 <<< n)
       hfaith := by
         -- the CONSTRUCTED faithfulness, at the trace's committed root (= the constructed root).
