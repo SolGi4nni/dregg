@@ -396,20 +396,24 @@ balanceA-specific content (over the reused transfer descriptor) is exactly this 
 /-- **`debitLeg_matches_executor` — the SOURCE entry agrees.** When `recKExecAsset` commits
 (`interp (balanceAStmt t a) k = some k'`, the §2 cornerstone) with `src ≠ dst`, the DEBIT leg's
 descriptor-pinned per-cell post (`CellTransferSpec` at `debitParamsA t`, decoding the projected `(src,a)`
-entry) agrees with the executor's debited `(src,a)` ledger entry: `post.balLo = k'.bal t.src a = k.bal
-t.src a − t.amt`. So the full-state RUNNABLE leg pins EXACTLY the executor's source debit. -/
+entry) agrees with the executor's debited `(src,a)` ledger entry: `post.balLo ≡ k'.bal t.src a
+[ZMOD 2013265921]`, where the executor entry is exactly `k.bal t.src a − t.amt`.
+
+DEBT-A note: `CellTransferSpec.balLo` denotes a `≡ [ZMOD p]` move over the un-range-checked balance limb.
+The agreement here is a WRITE (an equality of the moved value), NOT an ORDER, so by the classifying rule it
+is REPAIRABLE (not a wrap forgery — the availability `amt ≤ bal` order lives only in `recKExecAsset`'s gate
+over the genuine unbounded-ℤ kernel ledger `bal`, never over a circuit limb). We thread the mod-p congruence
+and state the leg agreement faithfully as `≡ [ZMOD p]` — the executor's source debit, exactly, mod `p`. -/
 theorem debitLeg_matches_executor (t : Turn) (a : AssetId) (k k' : RecordKernelState)
     (pre post : CellState) (postRoots preRoots : SysRoots)
     (hne : t.src ≠ t.dst)
     (hpre : pre = cellProjA k t.src a)
     (hspec : CellTransferSpec pre (debitParamsA t) post ∧ postRoots = preRoots)
     (hexec : interp (balanceAStmt t a) k = some k') :
-    post.balLo = k'.bal t.src a := by
+    post.balLo ≡ k'.bal t.src a [ZMOD 2013265921] := by
   obtain ⟨_, hlo, _, _, _, _, _⟩ := hspec.1
-  -- `post.balLo = pre.balLo + signedMove (debitParamsA t) = (bal src a) + (amt·(1−2·1)) = bal src a − amt`.
-  rw [hlo, hpre]
-  show k.bal t.src a + signedMove (debitParamsA t) = k'.bal t.src a
-  -- the §2 cornerstone names `k'` as `recKExecAsset`'s post: `bal := recTransferBal …`.
+  -- executor side (exact ℤ, no mod-p): the §2 cornerstone names `k'` as `recKExecAsset`'s post
+  -- (`bal := recTransferBal …`), so `k'.bal t.src a = k.bal t.src a − t.amt`.
   rw [interp_balanceAStmt_eq_recKExecAsset] at hexec
   unfold recKExecAsset at hexec
   by_cases hg : (authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
@@ -417,25 +421,28 @@ theorem debitLeg_matches_executor (t : Turn) (a : AssetId) (k k' : RecordKernelS
   · rw [if_pos hg] at hexec
     have hk' : k'.bal = recTransferBal k.bal t.src t.dst a t.amt :=
       (congrArg RecordKernelState.bal (Option.some.inj hexec)).symm
-    rw [hk', (recTransferBal_correct k.bal t.src t.dst a t.amt hne).1]
-    show k.bal t.src a + t.amt * (1 - 2 * 1) = k.bal t.src a - t.amt
-    ring
+    have hbal : k'.bal t.src a = k.bal t.src a - t.amt := by
+      rw [hk', (recTransferBal_correct k.bal t.src t.dst a t.amt hne).1]
+    -- congruence side: `pre.balLo + signedMove (debitParamsA t) = k.bal src a + amt·(1−2·1) = bal src a − amt`.
+    rw [hbal]
+    have hrw : pre.balLo + signedMove (debitParamsA t) = k.bal t.src a - t.amt := by
+      rw [hpre]; show k.bal t.src a + t.amt * (1 - 2 * 1) = k.bal t.src a - t.amt; ring
+    rwa [hrw] at hlo
   · rw [if_neg hg] at hexec; simp only [reduceCtorEq] at hexec
 
 /-- **`creditLeg_matches_executor` — the DESTINATION entry agrees.** Symmetric to the debit leg: the CREDIT
 leg's descriptor-pinned per-cell post (`CellTransferSpec` at `creditParamsA t`, decoding the projected
-`(dst,a)` entry) agrees with the executor's credited `(dst,a)` ledger entry: `post.balLo = k'.bal t.dst a =
-k.bal t.dst a + t.amt`. So the full-state RUNNABLE leg pins EXACTLY the executor's destination credit. -/
+`(dst,a)` entry) agrees with the executor's credited `(dst,a)` ledger entry: `post.balLo ≡ k'.bal t.dst a
+[ZMOD 2013265921]`, where the executor entry is exactly `k.bal t.dst a + t.amt`. Same REPAIRABLE mod-p
+credit-write (equality, not order) as the debit leg — stated faithfully as the `≡ [ZMOD p]` congruence. -/
 theorem creditLeg_matches_executor (t : Turn) (a : AssetId) (k k' : RecordKernelState)
     (pre post : CellState) (postRoots preRoots : SysRoots)
     (hne : t.src ≠ t.dst)
     (hpre : pre = cellProjA k t.dst a)
     (hspec : CellTransferSpec pre (creditParamsA t) post ∧ postRoots = preRoots)
     (hexec : interp (balanceAStmt t a) k = some k') :
-    post.balLo = k'.bal t.dst a := by
+    post.balLo ≡ k'.bal t.dst a [ZMOD 2013265921] := by
   obtain ⟨_, hlo, _, _, _, _, _⟩ := hspec.1
-  rw [hlo, hpre]
-  show k.bal t.dst a + signedMove (creditParamsA t) = k'.bal t.dst a
   rw [interp_balanceAStmt_eq_recKExecAsset] at hexec
   unfold recKExecAsset at hexec
   by_cases hg : (authorizedB k.caps t = true ∧ 0 ≤ t.amt ∧ t.amt ≤ k.bal t.src a
@@ -443,9 +450,12 @@ theorem creditLeg_matches_executor (t : Turn) (a : AssetId) (k k' : RecordKernel
   · rw [if_pos hg] at hexec
     have hk' : k'.bal = recTransferBal k.bal t.src t.dst a t.amt :=
       (congrArg RecordKernelState.bal (Option.some.inj hexec)).symm
-    rw [hk', (recTransferBal_correct k.bal t.src t.dst a t.amt hne).2.1]
-    show k.bal t.dst a + t.amt * (1 - 2 * 0) = k.bal t.dst a + t.amt
-    ring
+    have hbal : k'.bal t.dst a = k.bal t.dst a + t.amt := by
+      rw [hk', (recTransferBal_correct k.bal t.src t.dst a t.amt hne).2.1]
+    rw [hbal]
+    have hrw : pre.balLo + signedMove (creditParamsA t) = k.bal t.dst a + t.amt := by
+      rw [hpre]; show k.bal t.dst a + t.amt * (1 - 2 * 0) = k.bal t.dst a + t.amt; ring
+    rwa [hrw] at hlo
   · rw [if_neg hg] at hexec; simp only [reduceCtorEq] at hexec
 
 #assert_axioms debitLeg_matches_executor
