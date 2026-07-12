@@ -41,8 +41,11 @@ description = "A WeChatFrontend implementing dreggnet-offerings' Frontend trait:
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 # THE DEOS SURFACE — `ViewNode`, the serializable affordance view-tree an offering's
 # `render` produces. The WeChat renderer walks it into OA message text; its affordances
-# become a numbered reply list. `default-features = false` = the gpui-free model only.
-deos-view = { path = "../deos-view", default-features = false }
+# become a numbered reply list. `default-features = false` = the gpui-free view-tree model;
+# the `telegram` feature adds the shared `ViewNode`→text walk (`deos_view::render_text`, the
+# primitive the `TelegramBackend` exposes) the WeChat renderer projects prose through instead
+# of a bespoke subset walker (the affordance ENCODING — position→number — stays WeChat-local).
+deos-view = { path = "../deos-view", default-features = false, features = ["telegram"] }
 # REAL DERIVED IDENTITY — `AgentCipherclerk::from_key_bytes` → a genuine Ed25519 signing
 # identity, mirroring the telegram/discord derivation (only the BLAKE3 domain differs:
 # `dregg-wechat-v1`). `default-features = false` = the offline cipherclerk core.
