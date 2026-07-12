@@ -7465,3 +7465,24 @@ openings [~3.2M→~0.3M]. FLAG: rotated-proof pipeline BROKEN at HEAD on mldsa-s
 (generate_rotated_effect_vm_trace panics, carrier 59≠56, trace_rotated.rs:3650/3663) — blocks real apex proof +
 end-to-end wrap validation; likely in-flight DEBT-A wide-commit work. Native gadget (poseidon2_bn254.go, 243
 R1CS, KAT) built + reusable. WRAP-NATIVE-HASH-DECISION.md updated with the measured numbers.
+
+## MULTICHAIN inbound: ETH/Base + Cosmos light clients landed (2026-07-11, Fable)
+
+Two new inbound sockets — dregg VERIFIES each chain by proof (never RPC-trust), via MAINTAINED libs (not
+hand-rolled, the wrap lesson applied). Both standalone crates, both audits pass (no forgery, no vacuity).
+- eth-lightclient: finality-following (sync-aggregate BLS >=2/3 -> finality branch -> execution-payload branch
+  -> finalized EVM state_root) + EVM proof-of-holdings (verify_erc20_holding via alloy-trie EIP-1186 MPT ->
+  ProvenErc20Holding). REAL end-to-end KAT: a genuine post-Electra beacon finality_update whose recovered
+  state_root is EXACTLY the root a genuine eth_getProof WETH proof (mainnet block 25512833) opens against.
+  52 tests. (Agent caught FINALIZED_ROOT_GINDEX 105/d6 Altair -> 169/d7 Electra.)
+- cosmos-lightclient (NEW): Tendermint light client (informalsystems tendermint-light-client-verifier ProdVerifier,
+  >=2/3 stake voting power, real Ed25519) + ICS-23 membership (ics23 crate, iavl->multistore->app_hash) ->
+  ProvenCosmosFact. 16 tests, fail-closed.
+
+Non-custodial proof-of-holdings now spans Solana (built) + ETH/Base (ProvenErc20Holding) + Cosmos
+(ProvenCosmosFact) — three chains, all by proof. NEXT (completes the cross-chain governance spine): unify the
+three ProvenHolding shapes into one governance weight binding (holding_weight.rs currently takes only Solana's).
+Design nuance: the light clients are STANDALONE crates (heavy deps alloy/tendermint) excluded from the workspace,
+so the governance layer should consume a MINIMAL ProvenForeignHolding {chain, holder, asset, amount, snapshot,
+trust} that each edge produces — not depend on the light-client crates directly. Other followups: ETH
+committee-rotation dual-depth (post-Electra), Base finality source (OP-stack), Cosmos bisection/skipping path.
