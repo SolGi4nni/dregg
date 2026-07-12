@@ -222,3 +222,11 @@ Wrap CONFIRMED end-to-end (Rust): real apex shrunk BN254-native + verified. Now 
   optimize hash-based wrap NOW (PQ-preserving); WATCH LatticeFold (PQ folding) as the future; not a now-migration.
 NEXT: harvest the Rust sweep (prove-time tradeoff → set the production shrink blowup); the cross-platform strategy
 (→ green-light a wgpu BabyBear PoC for a MEASURED Apple Silicon number); AIR reduction; the gnark end-to-end.
+
+## note (07-12 ~9:55am): AIR-reduction lane BLOCKED on the cargo lock (my sweep holds it), didn't write its doc —
+re-issue fresh later with "write doc FIRST before compile checks". Lowest-priority lever; blowup+GPU are the big
+ones + running. circuit-prove/src is HEAVILY churned by the sibling 74→78-PI flag-day right now (custom_leaf_adapter,
+ivc_turn_chain, joint_turn_*, dsl_leaf_adapter, carrier_pin_twin, custom_binding_deployed_tooth all modified) — my
+committed apex_shrink/mpt_holding/dregg_outer sit in that churn; per ember commit-and-move-forward, fine. RUNNING:
+Rust blowup-prove sweep (baseline phase, long), wgpu NTT efficiency PoC (measures %-of-peak-bandwidth — the answer
+to ember's max-perf wariness), gnark-verify-real-shrink. APPLE SILICON wgpu = VERIFIED 107 Gmul/s bit-exact.
