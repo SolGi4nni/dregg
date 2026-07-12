@@ -7633,3 +7633,12 @@ hardened members (wire↔registry coincidence for the two keys currently rides t
 + AvailWireMembers peels); ③ the OTHER transfer-shaped members (transferFee, transferCapOpenEff/TB,
 wide twins) still carry the bare wrap window — same-class close next; ④ circuit lib-test bin is
 pre-broken at HEAD (ivc.rs unrelated errors) — refuse-weld unit pins updated but unrunnable there.
+
+## Base fault-proof R3 CLOSED — CWIA code-hash recomputation (2026-07-12, multichain lane)
+eth-lightclient: cwia_proxy_code_hash reconstructs the Solady LibClone CWIA proxy runtime (impl PUSH20 + immutable
+args creator‖rootClaim‖l1Head‖extraData + length suffix) and reproduces the LIVE game's real code_hash BYTE-EXACTLY
+(KAT vs the L1-account-proof-bound value; grounded pre-Rust via live eth_getCode + cast keccak). Link 5 now refuses
+a look-alike game (same slot-0/DEFENDER_WINS layout, non-CWIA bytecode) — synthetic::look_alike_game_code_rejects.
+145 crate tests. R3 (code-hash was a fixture constant) closed; remaining lower residuals (impl-addr/template constants
+= OP-upgrade re-pin; guardian keys; SystemConfig.paused) named honestly. The live-Base fault-proof anchor is now
+hardened to the semantics-pin level.
