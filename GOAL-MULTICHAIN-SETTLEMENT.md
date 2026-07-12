@@ -98,3 +98,15 @@ Op-note: use `git commit -F` for messages containing quotes (hit a nested-double
   REAL-EXTERNAL live fixture (game 17049), 132 crate tests. FOUND + defended a real alloy-trie 0.9.5 exclusion-proof
   hole (truncated inclusion accepted as absence -> blacklist bypass); strict re-walk + pinning test. ⚑ report upstream.
   execution_timestamp added (consensus-verified airgap clock). LIVE-BASE proof-of-holdings is now REAL.
+- 07-12 Real e2e ETH light-client→holding validation LAUNCHED (Fable): chain a genuine sync-committee-signed
+  mainnet update all the way to a holding (the composed-chain validation the isolated KATs miss). Honest-labeling
+  required (real-external vs round-trip). Waiting.
+
+## ⚑ PLATEAU NOTE (07-12 ~3am): unblocked multichain work is COMPREHENSIVELY done.
+Thread 3 + all its refinements shipped (edges, wire, multi-network, narrowing, binding TRILOGY, Base legacy +
+LIVE fault-proof finality, Cosmos bisection, Electra rotation, + a real alloy-trie security finding). The MARQUEE
+remaining value — thread 1 (wrap shrink-layer, ~5M→~1-2M) + thread 2 (rung-3 fold) — is BLOCKED on circuit-prove
+(stark-kill's carrier flag-day, now 10 uncommitted files, ~90min ongoing). I CANNOT unblock it (another terminal's
+active work; proceeding despite churn = collision risk, against discipline). Pacing: re-poll circuit-prove each
+wakeup; seize the wrap the instant it quiets. Meanwhile: e2e-eth validation + remaining small refinements
+(finalization-window, ADR-036 Cosmos, upstream the alloy-trie fix — the last is outward-facing, ember-gated).
