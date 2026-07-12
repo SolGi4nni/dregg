@@ -90,6 +90,59 @@ gnark Groth16 prove it saves — RISC0/SP1 eat exactly this and land at seconds.
 **holds, but must be measured**, and the single risk is if dregg's apex has an
 unusually large opening/public-value surface making the shrink trace big.
 
+## MEASURED (experiments 1 + 3, 2026-07-11) — the real number + two corrections
+
+Three validation experiments ran (native gadget + perm count + residual). The
+combined, grounded picture — and it moved the number:
+
+**Corrections to the estimates above:**
+- **`max_log_arity = 1`, not 3** (the "3" was the *inner* config; the wrap verifier
+  overrides to 1 — `plonky3_recursion_impl.rs:341`, empirically confirmed). FRI folds
+  by 2 → **~17–19 FRI rounds, not ~7**. This is why the perm count is higher.
+- **Real Poseidon2-w16 perm count ≈ 10,000–13,000** (central ~11,000), NOT the
+  ~1,000–3,000 first estimated — driven by arity-1's ~18 rounds + a ~3,636 constant
+  (leaf-hash/injection/challenger). Empirically measured via an instrumented
+  `verify_all_tables` at the exact ir2 knobs; model
+  `perms(m)=19·[(m+5)(m+6)/2+5m+9]+3636`.
+- **The verifier hashes ONLY width-16** (`all_perms == w16_perms`). The width-24
+  table is constraint-checked, never *hashed* — so the 27,213 w24 figure does NOT
+  enter the hashing cost; only the w16 187/16,837 does. (But the w24 table's **452
+  columns** dominate the *arithmetic* residual below.)
+- **Native BN254 Poseidon2 measured = 243 R1CS/perm (t=3)**, KAT-verified against the
+  HorizenLabs/zkhash gold vector. (The panel's 187 was a t=2 variant.) Swing on the
+  hashing term ≈ **16,837/243 ≈ 69×**.
+
+**The two terms (measured):**
+| term | emulated | native |
+|---|---|---|
+| **Hashing** (~11,000 w16 perms) | ~185M R1CS | **~2.0–2.7M** |
+| **Arithmetic residual** (reduced opening: ~752 opened cols × 19 queries, ~96–221 R1CS/col — Exp 3) | ~3.2M (range 1.4–4.2M) | ~3.2M (UNTOUCHED by the hash swap) |
+| **TOTAL** | **~188M** (infeasible) | **~5.2M** (feasible, ≈ RISC0's real 5.68M) |
+
+So: **naive emulated ~188M (dead on arrival) → native-hash ~5.2M (feasible, CPU/
+modest-GPU minutes, ≈ RISC0).** Native-hash is confirmed necessary and correct, but
+it lands at ~5M, not ~1.2M — the residual and the (larger-than-thought) hashing term
+both matter.
+
+**The three-lever plan to reach the ~1–2M fast target:**
+1. **Native-hash** (185M→~2M hashing) — the confirmed go, biggest single cut.
+2. **Fewer queries via higher blowup** — 19→~12 queries (log_blowup 6→10 holds
+   130-bit soundness) cuts ~37% off BOTH terms (~5.2M→~3.3M), nearly free (tiny
+   shrink prover).
+3. **Cut the arithmetic residual** — (a) **fewer opened columns** (the width-24 table
+   alone is 452 cols ≈ ~1.9M of the residual — does the apex need it that wide?), and
+   (b) **GKR-batch the reduced openings** (one sumcheck replaces ~14,300 per-column
+   ExtMuls → the ~3.2M residual toward ~0.3M). Full stack → **~1.5–2M**.
+
+**⚠ FLAG — the rotated-proof pipeline is BROKEN at HEAD on `mldsa-sign-route`:**
+`generate_rotated_effect_vm_trace` panics (wide-commit carrier count 59≠56,
+out-of-bounds at `circuit/src/effect_vm/trace_rotated.rs:3650/3663`, debug+release),
+so `k_fold_turn_chain_proves_and_verifies` and the `*_deployed_tooth` tests fail
+before proving. Exp 1's apex perm count is therefore *extrapolated* (m_apex 16–19,
+the dominant remaining uncertainty), not from a real apex proof. This regression
+(likely from in-flight DEBT-A wide-commit carrier work) blocks end-to-end wrap
+validation and should be fixed.
+
 ## Validate before re-architecting (the disciplined path)
 
 Do NOT rip out gadgets yet. Two cheap experiments settle dregg's real numbers:

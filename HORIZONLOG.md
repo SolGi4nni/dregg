@@ -7451,3 +7451,17 @@ VALIDATE FIRST (don't rip out gadgets yet): (1) count real perms at ir2_leaf_wra
 native-hash FRI verify in gnark + measure ~1-6M. Then: Rust shrink layer (DreggOuterConfig), Rust<->gnark
 transcript differential, gnark v0.11→v0.15 (native poseidon2 std) or hand-roll, SRS/ceremony for the new circuit.
 Full decision: docs/deos/WRAP-NATIVE-HASH-DECISION.md; ETH-NATIVE-WRAP.md corrected.
+
+## WRAP measured (exp 1+3 combined): native-hash → ~5M (≈RISC0), full levers → ~1-2M (2026-07-11)
+
+Combined measurement: naive emulated ~188M (hashing ~185M @ ~11k w16 perms × 16,837 + residual ~3.2M) =
+infeasible. Native-hash → ~5.2M (~2M hashing @ 243/perm + ~3.2M residual UNTOUCHED by hash swap) = feasible,
+≈ RISC0's real 5.68M, CPU/modest-GPU. Corrections: max_log_arity=1 (not 3) → ~17-19 FRI rounds (not 7) →
+~10-13k perms (not 1-3k); verifier hashes ONLY w16 (w24 table is constraint-checked not hashed, but its 452
+cols dominate the residual); native BN254 Poseidon2 = 243 R1CS measured (t=3, KAT-verified). THREE-LEVER PLAN
+to ~1-2M: (1) native-hash [go, 185M→2M hashing]; (2) queries 19→12 via log_blowup 6→10 [~37% off both terms,
+nearly free]; (3) residual cut = fewer opened columns (the w24 table = 452 cols ≈ 1.9M) + GKR-batch the reduced
+openings [~3.2M→~0.3M]. FLAG: rotated-proof pipeline BROKEN at HEAD on mldsa-sign-route
+(generate_rotated_effect_vm_trace panics, carrier 59≠56, trace_rotated.rs:3650/3663) — blocks real apex proof +
+end-to-end wrap validation; likely in-flight DEBT-A wide-commit work. Native gadget (poseidon2_bn254.go, 243
+R1CS, KAT) built + reusable. WRAP-NATIVE-HASH-DECISION.md updated with the measured numbers.
