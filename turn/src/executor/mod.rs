@@ -1335,6 +1335,45 @@ impl TurnExecutor {
         self.witnessed_registry = Some(registry);
     }
 
+    /// WAVE A / WELD — OWNER LIVENESS. Install an [`OwnerEnvelopeSigVerifier`]
+    /// for `owner_pubkey` into THIS executor's witnessed-predicate registry, and
+    /// return the `Custom` vk_hash it was registered under
+    /// (`owner_envelope_vk(&owner_pubkey)`).
+    ///
+    /// This is the LIVENESS half of the owner-signed envelope: after this call a
+    /// turn carrying an `Authorization::Custom { predicate }` whose
+    /// `predicate.kind == Custom { vk_hash: owner_envelope_vk(&owner_pubkey) }`
+    /// RESOLVES in [`Self::verify_custom_authorization`] step-2 (rather than
+    /// failing `AuthModeNotRegistered`) and is accepted iff the proof blob is a
+    /// valid ed25519 signature by `owner_pubkey` over the canonical custom signing
+    /// message. The SAFETY half — the host cannot forge the owner signature —
+    /// already holds fail-closed even with no verifier registered.
+    ///
+    /// The returned vk_hash is exactly the value stamped into the enveloped worker
+    /// cell's authority-widening permission slots (`set_permissions` / `delegate`
+    /// / `set_verification_key`) via `dregg_cell::Permissions::enveloped_worker`,
+    /// so the same owner named here is the one that satisfies the gate.
+    ///
+    /// WHO calls this: whoever builds the executor that will ADMIT the enveloped
+    /// worker's turns, at RENT — the platform holds the owner key as
+    /// `agent_platform::RenterAnchor.pubkey`. If the registry is absent it is
+    /// first populated with the production real-verifier set, so this never lowers
+    /// the executor's default crypto floor.
+    pub fn register_owner_envelope(&mut self, owner_pubkey: [u8; 32]) -> [u8; 32] {
+        let registry = self
+            .witnessed_registry
+            .get_or_insert_with(membership_verifier::registry_with_real_verifiers);
+        owner_envelope::register_owner_envelope_verifier(registry, owner_pubkey)
+    }
+
+    /// Builder form of [`Self::register_owner_envelope`]: install the owner-
+    /// envelope verifier for `owner_pubkey` and return the executor. The
+    /// registered vk_hash is recoverable as `owner_envelope_vk(&owner_pubkey)`.
+    pub fn with_owner_envelope(mut self, owner_pubkey: [u8; 32]) -> Self {
+        self.register_owner_envelope(owner_pubkey);
+        self
+    }
+
     /// Set the [`Effect::Custom`] verifier registry after construction.
     ///
     /// When set, the proof-carrying turn path consults this registry

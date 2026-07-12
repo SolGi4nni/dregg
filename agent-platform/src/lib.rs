@@ -848,15 +848,17 @@ impl AgentPlatform {
             // Upgrade-safety: an anchored (owner-provided RenterAnchor) grain is
             // enveloped — its authority-widening slots gate to the owner key, so the
             // host cannot escalate over the grain through the executor.
-            let owner_vk_hash = tenant
-                .anchor
-                .as_ref()
-                .map(|a| dregg_turn::executor::owner_envelope::owner_envelope_vk(&a.pubkey));
+            // WAVE A / WELD — OWNER LIVENESS: pass the renter/owner PUBLIC key down
+            // (not just its `owner_envelope_vk`) so the grain's node executor can
+            // REGISTER the owner-envelope verifier and the owner can actually
+            // authorize the Custom-gated widening turns. The vk_hash for the cell's
+            // permission slots is re-derived inside `admit_enveloped_owned`.
+            let owner_pubkey = tenant.anchor.as_ref().map(|a| a.pubkey);
             let node_minter = node::NodeMinter::open_signed(
                 localnode.clone(),
                 tenant.budget,
                 self.executor_signing_seed,
-                owner_vk_hash,
+                owner_pubkey,
             )
             .map_err(|e| AgentPlatformError::Session(format!("open node minter: {e}")))?;
             tenant.node = Some(localnode);

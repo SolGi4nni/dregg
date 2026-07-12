@@ -1063,6 +1063,9 @@ impl AgentRuntime {
             // executor this worker builds per `execute_method` signs the committed
             // grain-turn receipt (forge-admissible). `None` = unsigned worker turns.
             executor_signing_seed: self.executor_signing_seed,
+            // WAVE A / WELD — a freshly spawned worker is NOT enveloped until the
+            // gateway pins the owner key (`admit_enveloped_owned`); default `None`.
+            owner_envelope_pubkey: None,
         })
     }
 }
@@ -1232,6 +1235,17 @@ pub struct SubAgent {
     /// served / minted grain turn is forge-admissible. `None` = today's UNSIGNED
     /// worker receipts.
     executor_signing_seed: Option<[u8; 32]>,
+    /// WAVE A / WELD — OWNER LIVENESS. When this worker was admitted ENVELOPED
+    /// (`ToolGateway::admit_enveloped_owned`), the renter/owner ed25519 public key
+    /// (`agent_platform::RenterAnchor.pubkey`) whose signature gates the worker's
+    /// authority-widening turns. The FRESH executor this worker builds per
+    /// [`Self::execute_method`] registers an owner-envelope verifier for this key
+    /// (`dregg_turn::TurnExecutor::register_owner_envelope`), so a VALID
+    /// owner-signed `Authorization::Custom` on a `Delegate`/`SetPermissions` turn
+    /// RESOLVES and is accepted (liveness) — while the host, lacking the owner
+    /// key, still cannot forge it (safety). `None` for a non-enveloped worker
+    /// (byte-unchanged).
+    owner_envelope_pubkey: Option<[u8; 32]>,
 }
 
 impl SubAgent {
@@ -1350,6 +1364,17 @@ impl SubAgent {
         self.execute_method(DEFAULT_SUBAGENT_METHOD, effects)
     }
 
+    /// WAVE A / WELD — pin the renter/owner ed25519 public key this worker's
+    /// fresh executor registers as the owner-envelope verifier (see
+    /// [`Self::owner_envelope_pubkey`]). Called by
+    /// [`crate::ToolGateway::admit_enveloped_owned`] right after spawn, with the
+    /// key that is ALSO stamped (hashed) into the worker cell's authority-widening
+    /// permission slots — so the executor gate and the verifier answer for the
+    /// SAME owner. Installs LIVENESS only; the fail-closed safety is unaffected.
+    pub(crate) fn set_owner_envelope_pubkey(&mut self, owner_pubkey: [u8; 32]) {
+        self.owner_envelope_pubkey = Some(owner_pubkey);
+    }
+
     /// Execute effects under an explicit `method` verb.
     ///
     /// The worker presents its biscuit capability credential as
@@ -1375,6 +1400,15 @@ impl SubAgent {
             // of federation — but keeping the executor on the same federation
             // keeps signing/domain context consistent.
             e.set_local_federation_id(self.federation_id);
+            // WAVE A / WELD — OWNER LIVENESS: an ENVELOPED worker's fresh executor
+            // registers the owner-envelope verifier for the renter/owner key pinned
+            // at rent, so a VALID owner-signed `Authorization::Custom` on a
+            // `Delegate`/`SetPermissions` turn RESOLVES and is accepted (instead of
+            // `AuthModeNotRegistered`). The host, lacking the owner key, still cannot
+            // forge the signature (safety unchanged). `None` = non-enveloped worker.
+            if let Some(owner_pubkey) = self.owner_envelope_pubkey {
+                e.register_owner_envelope(owner_pubkey);
+            }
             e
         };
 

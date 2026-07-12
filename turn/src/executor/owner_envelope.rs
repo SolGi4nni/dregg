@@ -292,4 +292,61 @@ mod tests {
             proof_witness_index: 0,
         };
     }
+
+    // WAVE A / WELD — OWNER LIVENESS: building an executor via the
+    // `with_owner_envelope` seam actually REGISTERS the verifier, so an
+    // owner-signed Custom auth over the canonical message RESOLVES + verifies
+    // through the executor's own registry (a bare executor would MISS it ->
+    // AuthModeNotRegistered), and a wrong (host) key is rejected.
+    #[test]
+    fn with_owner_envelope_registers_verifier_on_the_executor() {
+        use crate::executor::{ComputronCosts, TurnExecutor};
+        use dregg_cell::predicate::{InputRef, WitnessedPredicate};
+
+        let owner = signing_key(7);
+        let owner_pk = owner.verifying_key().to_bytes();
+
+        // Build the executor through the liveness seam.
+        let exec = TurnExecutor::new(ComputronCosts::default_costs()).with_owner_envelope(owner_pk);
+        let registry = exec
+            .witnessed_registry
+            .as_ref()
+            .expect("with_owner_envelope leaves the witnessed registry populated");
+
+        // The owner-envelope Custom kind now RESOLVES on this executor's registry.
+        let vk = owner_envelope_vk(&owner_pk);
+        assert!(
+            registry
+                .get(WitnessedPredicateKind::Custom { vk_hash: vk })
+                .is_some(),
+            "with_owner_envelope must register the OwnerEnvelopeSigVerifier under its vk_hash"
+        );
+
+        let wp = WitnessedPredicate {
+            kind: WitnessedPredicateKind::Custom { vk_hash: vk },
+            commitment: owner_pk,
+            input_ref: InputRef::SigningMessage,
+            proof_witness_index: 0,
+        };
+        let msg = b"canonical-custom-signing-message-bytes";
+
+        // Owner-signed over the canonical message -> ACCEPTED (liveness).
+        let owner_sig = owner.sign(msg).to_bytes();
+        assert!(
+            registry
+                .verify(&wp, &PredicateInput::SigningMessage(msg), &owner_sig)
+                .is_ok(),
+            "a valid owner signature over the canonical message must verify through the seam-built executor's registry"
+        );
+
+        // A wrong (host) key -> REJECTED (the host cannot forge the owner sig).
+        let host = signing_key(9);
+        let host_sig = host.sign(msg).to_bytes();
+        assert!(
+            registry
+                .verify(&wp, &PredicateInput::SigningMessage(msg), &host_sig)
+                .is_err(),
+            "a non-owner signature must be rejected"
+        );
+    }
 }

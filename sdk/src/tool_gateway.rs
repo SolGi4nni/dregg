@@ -662,6 +662,34 @@ impl ToolGateway {
         })
     }
 
+    /// WAVE A / WELD — OWNER LIVENESS admit. Exactly [`Self::admit_enveloped`],
+    /// but takes the renter/owner ed25519 PUBLIC key
+    /// (`agent_platform::RenterAnchor.pubkey`) rather than its pre-hashed
+    /// `owner_envelope_vk`, so it can additionally make the gate LIVE. It (1)
+    /// stamps the same `Custom { vk_hash = owner_envelope_vk(&owner_pubkey) }`
+    /// gate onto the worker cell's authority-widening slots (safety — identical to
+    /// [`Self::admit_enveloped`]), and (2) PINS `owner_pubkey` onto the worker so
+    /// the FRESH executor it builds per [`crate::SubAgent::execute_method`]
+    /// registers a `dregg_turn::executor::OwnerEnvelopeSigVerifier` for it — which
+    /// makes a VALID owner-signed `Authorization::Custom` on a `Delegate` /
+    /// `SetPermissions` turn RESOLVE and be accepted (liveness) instead of failing
+    /// `AuthModeNotRegistered`. The host, lacking the owner key, still cannot forge
+    /// the signature (safety unchanged). Called by the served/rent path
+    /// (`agent_platform` -> `NodeMinter::open_signed`), which holds the owner key.
+    pub fn admit_enveloped_owned(
+        runtime: &AgentRuntime,
+        parent_token: &HeldToken,
+        grant: ToolGrant,
+        owner_pubkey: [u8; 32],
+    ) -> Result<Self, SdkError> {
+        let owner_vk_hash = dregg_turn::executor::owner_envelope::owner_envelope_vk(&owner_pubkey);
+        let mut gateway = Self::admit_enveloped(runtime, parent_token, grant, owner_vk_hash)?;
+        // Pin the owner key so the worker's per-`execute_method` executor registers
+        // the owner-envelope verifier (liveness). Safety already held without it.
+        gateway.worker.set_owner_envelope_pubkey(owner_pubkey);
+        Ok(gateway)
+    }
+
     /// **Fund the consumer's spend account from a REAL funded source.**
     ///
     /// The gateway's worker cell IS the consumer's spend account — the cell the

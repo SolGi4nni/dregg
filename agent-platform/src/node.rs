@@ -241,7 +241,7 @@ impl NodeMinter {
         node: LocalNode,
         budget: i64,
         executor_signing_seed: Option<[u8; 32]>,
-        owner_vk_hash: Option<[u8; 32]>,
+        owner_pubkey: Option<[u8; 32]>,
     ) -> Result<NodeMinter, SdkError> {
         let mut cclerk = AgentCipherclerk::new();
         let root = cclerk.mint_token(&[0x6au8; 32], node.domain());
@@ -277,8 +277,12 @@ impl NodeMinter {
         // Upgrade-safety keystone: when the renter supplied an anchor, stamp the
         // owner-signed envelope onto the grain worker so the host cannot widen its
         // authority over the grain through the executor.
-        let gateway = match owner_vk_hash {
-            Some(vk) => ToolGateway::admit_enveloped(&runtime, &root, grant, vk)?,
+        let gateway = match owner_pubkey {
+            // WAVE A / WELD — OWNER LIVENESS: admit the worker enveloped AND register
+            // the owner-envelope verifier live on its executor path (the owner can
+            // now authorize the Custom-gated Delegate/SetPermissions; the host still
+            // cannot forge the owner signature).
+            Some(pk) => ToolGateway::admit_enveloped_owned(&runtime, &root, grant, pk)?,
             None => ToolGateway::admit(&runtime, &root, grant)?,
         };
         Ok(NodeMinter {
