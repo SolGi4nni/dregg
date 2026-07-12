@@ -27,8 +27,11 @@ the §11.7 chain reused blind would force `fee = 0`), `rotV3FrozenFeeWide_sound_
 Rust `transfer_fee_avail_weld.rs` + pad-16 producer (`generate_rotated_effect_vm_trace_with_fee_avail`),
 emission retargeted. Fee residuals riding the SAME regen: the live fee route (cipherclerk /
 proof_verify) derives the pad from the registry name at the flip and calls the `_with_fee_avail`
-producer; `effect_vm_rotation_flip.rs` fee-test width pins reconcile then (same as the transfer/burn
-sibling pins).
+producer — narrow AND wide (the SDK wide fee provers already pad-key by
+avail_pad_for_descriptor_name → `generate_rotated_transfer_shape_with_fee_wide_avail`; still owed
+at the flip: the cipherclerk wide fee PRECOMPUTE at step 6 and the proof_verify wide fee PI
+reconstruction, both currently the pad-0 wrapper); `effect_vm_rotation_flip.rs` fee-test width
+pins reconcile then (same as the transfer/burn sibling pins).
 
 ## NOW-STATE addition (2026-07-10, Fable — fresh-clone buildability + CI-green runbook, ember report "others can't build a fresh clone")
 
@@ -7820,10 +7823,19 @@ generate_rotated_transfer_shape_wide_avail + the wide dispatcher's transfer arm 
 avail_pad_for_descriptor_name(&desc.name) + the SDK wide TB lift at CAP_OPEN_TB_WIDTH + avail_pad.
 REMAINING (named): ① the WIDE burn twin (burnVmDescriptor2R24's wide crown host still rides the
 bare burn face — same-class close, burnVmDescriptorAvail + wideEmbedded_sound_v1 are ready);
-② the WIDE cap-open EFF twin (transferCapOpenEffVmDescriptor2R24, wide position 42) + the WIDE
-fee'd-transfer twin (transferFeeVmDescriptor2R24 — its §11.8 `-v1-fee-avail` face EXISTS and the
-narrow key is flipped; the wide crown row still rides the bare fee face) — same wrap class,
-wideEmbedded_sound_v1 is ready for both; ③ regen checklist: the Rust
+② the WIDE cap-open EFF twin (transferCapOpenEffVmDescriptor2R24, wide position 42);
+the WIDE fee'd-transfer twin: CLOSED (2026-07-12, wide-fee lane) — `Emit/AvailWideFeeMember.lean`
+(transferFeeAvailWide = wideAppend transferFeeV3AvailWire at the FEE avail base 204; 67-PI layout
+UNCHANGED, width 2607→2623; KEYSTONE wideEmbeddedFee_sound_v1, the FEE-PINNED twin of
+wideEmbedded_sound_v1 over v3OfFrozenFeeWide's freeze→fee-pin→graduation composition) +
+`RotatedKernelRefinementFeeAvailWide.lean` (wideFee_availability_and_exact_move_forced{,_welded}:
+amount ≤ before ∧ amount+fee ≤ before ∧ exact ℤ move on the wide + welded rows; TEETH
+wideFee_{fee,amount}_forgery_unsat + weldedFee twins — both GAP #4 wrap witnesses UNSAT) +
+crown/probe retargets (EffectVmEmitUMemWeldWide fee arm, EmitWideRegistryProbe fee branch —
+57/57 emits validated, fee row = the `-v1-fee-avail` member) + Rust
+generate_rotated_transfer_shape_with_fee_wide_avail (pad-16 wide fee producer; SDK wide fee
+provers key the pad by avail_pad_for_descriptor_name — dormant at pad 0 until the regen);
+③ regen checklist: the Rust
 membership fold tooth's teeth COLUMNS move 2607→2617 (PIs unchanged) and v3RegistryWide /
 EmitWideTransferProbe (the old wide-roundtrip slice) still emit the bare transfer at index 0;
 ④ ember-gated wide/welded TSV+FP regen unchanged (this lane emits + proves, it does not flip).
@@ -7869,3 +7881,46 @@ wide names are bare ⇒ pad 0 byte-identical today). REMAINING (unchanged, ember
 wide/welded TSV+FP regen mints the retargeted bytes (regen checklist as in the wide-transfer
 entry; the gnark fixture lane un-blocks on the same regen); the WIDE cap-open-EFF + fee twins
 ride their own entries.
+
+## WIDE cap-open-EFF availability wrap-forgery CLOSED, AUTHORITY INTACT (2026-07-12)
+The `transferCapOpenEffVmDescriptor2R24` WIDE crown host (v3RegistryCapOpenWide position 42) and
+its umem-welded twin still rode the BARE transfer face, so a cap-AUTHORIZED wide transfer proof
+carried NO borrow gates — the last transfer-shaped wide member of the GAP #4 wrap class (forgery 1
+of docs/FINDING-modp-wrap-forgery-audit.md) after the bare, cap-open-narrow, fee, wide-transfer
+(98c148699), and wide-burn closes. Retargeted + discharged end to end, WITH the cap-open authority
+facet re-established on the wide objects. Lean (#assert_axioms-clean, additive):
+`CapOpenEmit` — the three cap-open bridge lemmas made MEMBERSHIP-PARAMETRIC
+(capOpenMem_{membershipCore,satisfiedEff,gate_forces}: any descriptor whose constraints CONTAIN the
+appendix rebuilds SatisfiedEff — the cap-open mirror of wideEmbedded_sound_v1's design; the old
+effCapOpenV3_* statements survive verbatim as one-line instantiations, so nothing downstream moved).
+`AvailWideMembers` §8 — transferCapOpenEffAvailWide (= wideAppend transferCapOpenEffV3Avail at
+TR_AVAIL_BB 198, width 1986→2946, 46+16 PIs; the crown mirror of the TB live-only retarget) +
+availHost_mem_effAvailWide + capOpenAppendix_mem_effAvailWide (decidable no-legacy-pins: the
+appendix is never pin-shaped, so wideAppend's retirement misses the AUTHORITY facet entirely) +
+effAvailWide_row_v1 (via wideEmbedded_sound_v1). `EffectVmEmitUMemWeldWide` — crown position-42
+host retargeted (name-stable) + weldedTransferCapOpenEffAvailWide + no-narrowing guards.
+`RotatedKernelRefinementCapOpenAvailWide.lean` (NEW) — the §0 rfl tie to the flipped narrow member;
+wideCapOpenEff_availability_and_exact_move_forced (+_welded) over the UNCHANGED rotatedEncodesAvail
+decode; TEETH: wideCapOpenEff_rejects_overdebit (+_welded) + the audit pre.bal=0/amt=10⁹ witness
+UNSAT; AUTHORITY INTACT: wideCapOpenEffAvail_authorizes (+_welded — the exact narrow keystone
+statement, wide: depth-16 open ⟹ kernel authorizedFacetB + leaf.target = src) +
+wideCapOpenEffAvail_rejects_wrong_facet (+_welded — a clear EFF_TRANSFER mask bit is UNSAT through
+the wide weld). Probes validated fresh: 57/57 both registries, position 42 carries the
+`dregg-effectvm-transfer-v1-avail-rot24-v3-capopen-eff` pad key (+ weld suffix on the welded twin).
+Rust (dormant until regen — committed names are bare ⇒ pad 0 byte-identical):
+trace_rotated.rs append_wide_carriers_cap_open_avail (carriers at CAP_OPEN_WIDTH + avail_pad, limbs
+re-absorbed at the shifted bases; delegates the bare geometry at pad 0) + sdk full_turn_proof.rs
+go_wide cap-open lift rewired through it (avail_pad from the RESOLVED descriptor name). REMAINING
+(unchanged, ember-gated): the wide/welded TSV+FP regen mints the retargeted bytes (same checklist);
+the WIDE fee twin rides its own entry.
+
+## ⚠ CORRECTION (ember, 2026-07-12): the "stay portable" verdict was NTT-ONLY, premature
+The native-Metal≈wgpu verdict is REAL but NARROW — it's the NTT, which is BANDWIDTH-BOUND (native's ALU win doesn't
+translate → tie). The prover is NOT just the NTT. It is HASH-DOMINATED (Merkle-commit + FRI folding = mostly
+Poseidon2), and Poseidon2 is COMPUTE-BOUND, where native's measured ~3x Montgomery-mul ALU advantage (native mulhi
+320 Gmul/s vs wgpu 16-bit-split 60-106) SHOULD translate to ~2-3x. So the backend decision is made on the COMPUTE-
+BOUND hashing (the dominant cost), NOT the NTT. Retracting the premature "stay portable"; it holds ONLY for the NTT
+slice. DECIDER LANE launched: Poseidon2-W16 + Merkle-commit native-vs-wgpu head-to-head (circuit-prove/sketches/
+poseidon2-merkle-bench). If native wins ~2-3x on Poseidon2 (likely) AND hashing dominates → native IS worth a seam
+for the hash-dominated prover. ULTIMATE measurement = wire the GPU kernels behind the Plonky3 DFT+hash trait seams
+and measure REAL end-to-end shrink prove-time (native vs wgpu vs CPU) — micro-benchmarks inform, the full prover decides.
