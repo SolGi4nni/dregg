@@ -8,6 +8,20 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## Transfer availability — hardened-path deployment flip (2026-07-12, Fable avail-wide lane, named in `1547493e1` + `RotatedKernelRefinementAvail.lean`)
+
+**The Lean proof that availability is circuit-forced on the hardened graduable-wide path is LANDED**
+(`transferV3Avail = v3OfFrozenWide transferVmDescriptorAvail`; `availability_and_exact_move_forced`;
+DEBT-A forgery-1 class UNSAT; axiom-clean). REMAINING (EMBER-GATED deployment flip, the audit's
+"denotation fix" step): (a) flip the `v3RegistryBare` transfer entry (`EffectVmEmitRotationV3.lean`
+registry tail) to `transferV3Avail`; (b) the Rust `Ir2Air` assembly realizes the 15-bit range table
+(`rangeTidW 15 = .custom 79`, the `transfer_avail_weld.rs` `RangeSpec{bits:15}` teeth) so the
+`RotTableSideW.rangesWide` pin is deployed-forced; (c) descriptor-JSON/FP re-emit + VK regen (rides
+the ONE big-bang regen with the vault weld). Same pattern then owed to BURN (forgery 2 —
+`RotatedKernelRefinementMintBurn.rotatedEncodesBurn.guardAvail`; the burn weld mirrors
+`transferVmDescriptorAvail` per `EffectVmEmitBurn.lean:623`, its wide-graduation discharge is now a
+clone of `RotatedKernelRefinementAvail`) and to the fee'd transfer (`transferFeeVmDescriptor`).
+
 ## NOW-STATE addition (2026-07-10, Fable — fresh-clone buildability + CI-green runbook, ember report "others can't build a fresh clone")
 
 **Fresh clones fail at manifest load** — the root `[patch]` points the four `p3-*` crates at a
