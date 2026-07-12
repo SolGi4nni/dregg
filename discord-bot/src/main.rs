@@ -65,6 +65,7 @@ pub mod bot_reactor;
 mod devnet;
 pub mod discord_caps;
 mod embeds;
+pub mod orchestration;
 // $DREGG-paid, real-AI dungeon runs: the sqlite-backed `dregg_pay::CreditStore`, the per-user
 // deposit-address provider, the credit ledger, the payment poll, and the `/dungeon` gate that
 // debits one earned credit and routes to real Bedrock (`dregg_narrator`) under a PER-RUN budget.
