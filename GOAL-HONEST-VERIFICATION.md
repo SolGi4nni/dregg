@@ -493,3 +493,21 @@ invariant." GATE LESSON banked: check WHERE an envelope's exactness comes from (
 STATUS: Phase 0 migration ~2/3 through the Emit family + AIR chain remaining; Phases 1A/1B/2/3 ahead. But the
 headline is the four gaps — a system that CLAIMED verification was silently believing settlement/authorization/
 conservation/transfer-debit invariants the real field circuit does NOT enforce. Found, with proofs and witnesses.
+
+### ⚑ HONEST SCOPE (2026-07-11, ember's "what about the rest of the kernel?"): KERNEL STARK-SOUNDNESS = 1/27
+The transferV3 STARK-soundness work (reduced to {Poseidon2SpongeCR, FRI-LDT@deployed, FS-game}) is ONE effect. The
+kernel is NOT STARK-sound — it is transfer-sound (1/27 EffectTags), and even that in a ZERO-ROW slice. The other 26
+have NO Satisfied2Faithful keystone at any perm. Doc: docs/reference/PHASE2-ALL-EFFECTS-SOUNDNESS.md.
+SHARED foundation extends free to all 27: field denotation (Phase 0), MainAirAcceptF⟹Satisfied2 (generic), the crypto
+floor, the descriptor-independent perm-level faithfulness half, Rfix (real registry), algoStarkSound_of_bricks
+(already general over any R). So Phase 2 is a GROUNDED FAN-OUT, not 27 hard problems:
+- ~38 mechanical faithfulness copy-swaps (19 pure-graduated effects × {leg + real-perm keystone}, one-line swaps).
+- ~8 real aux-table legs (NoteSpend/NoteCreate/CreateCell/Factory/Spawn/Refusal/SetFieldDyn/HeapWrite touch memory/
+  mapOps; per-effect arithmetic teeth mostly EXIST — wire into aux-table faithfulness + a real boundary).
+- 1 SHARED LogUp floor (hbus_is_lookup pins all obligations to chip/range lookup membership; the bus-balance⟹
+  membership bridge is the one out-of-Lean residual, Lookup.lean:17 — the single hardest piece).
+- The UNIFIED active+real-perm keystone (0/27) — moving faithfulness from the zero-row slice to real per-row logic.
+CURRENT: registry+lift done; per-effect leg 1/27; real-perm keystone 1/27; aux legs 0/8; unified keystone 0/27.
+PLAN: finish transferV3 floor (SZ reductions in flight) → shared LogUp floor (unblocks all 27) → aux legs → the
+mechanical fan-out → unified keystone. Honest bar for "kernel STARK-sound": [StarkSound hash Rfix] DISCHARGED for all
+27 at the real perm, LogUp named once, aux legs real. transferV3-soundness must NOT be reported as kernel-soundness.
