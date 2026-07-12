@@ -291,3 +291,13 @@ REMAINING EVM PATH: (1) the reduced-opening-BINDING seam (open_input in-circuit:
 openings + the α-combination — binds opened-values-at-zeta to the actual COMMITMENTS; currently host-computed;
 the last SOUNDNESS piece; needs an exporter extension) → (2) VK baking (DAG as circuit constants) → (3) Groth16
 wrap → DreggSettlement.sol VK pin → real on-chain settlement. Then the message→root proof-binding residual (26th PI).
+
+## ⚑ open_input SEAM CLOSED + self-verified (07-12 ~2:32pm) — CRITIC AUDITING the whole claim set
+The last soundness seam: opened values now COMMITMENT-bound (open_input: per-query native-BN254 multi-height batch
+Merkle + α-reduction == FRI InitialEval/RollIns). Verified myself: 9 ref + gadget tampers reject (input-row,
+merkle-path, commitment-root, opened-at-zeta, initial-eval, roll-in, α, ζ); assembled FullVerify rejects a tampered
+opening. So the native STARK verify on the real proof = transcript + FRI + opening-binding + constraint/quotient(5/5).
+HELD (not celebrating): (a) FRI low-degree still ASSUMED (StarkSound half (i)); (b) "gnark==Lean AirChecksSatisfied"
+is ANALOGY not a differential-to-Lean (TODO); (c) VK not baked (trusts fixture), Groth16 wrap DOES NOT EXIST,
+DreggSettlement VK not pinned → "near settlement" optimistic. An OPUS adversarial CRITIC is auditing all of this
+(a6826754db48c1dd0) — its findings become the work-list; scope will be corrected to what it survives.
