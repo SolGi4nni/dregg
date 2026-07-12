@@ -89,5 +89,8 @@ Edges(Sol/EVM/Cosmos)✓ · from_foreign_fields wire✓ · multi-network ChainId
 trilogy✓ · Base finality(L2OutputOracle)✓ · Cosmos bisection✓ · Electra rotation✓.
 BLOCKED (circuit-prove churn — stark-kill's carrier flag-day): thread 1 (wrap shrink-layer) + thread 2 (rung-3
 fold-P0). These are the marquee remaining value; pick up the moment circuit-prove goes quiet.
-UNBLOCKED refinements left (lower wow/effort): Base fault-proof anchor (scout→build), Base finalization-window,
-real e2e LightClientUpdate→holding chain, ADR-036 Cosmos framing.
+UNBLOCKED work: Base fault-proof anchor BUILD LAUNCHED (Fable, eth-lightclient) from the committed plan
+(BASE-FAULT-PROOF-ANCHOR.md, live-validated type-621 AggregateVerifier) — the honest live-Base completion, 8-link
+trust chain + verify_evm_storage_slot_absent (MPT exclusion), reuses verify_op_output_root. Waiting.
+Other unblocked refinements: Base finalization-window, real e2e LightClientUpdate→holding chain, ADR-036 Cosmos.
+Op-note: use `git commit -F` for messages containing quotes (hit a nested-double-quote break).
