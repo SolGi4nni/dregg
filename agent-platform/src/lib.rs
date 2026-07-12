@@ -1153,6 +1153,77 @@ impl AgentPlatform {
         }
     }
 
+    /// **THE RAIL JOIN — the landed attestation slot is proven by REAL TEE vendor
+    /// crypto.** [`verify_landed_attested`](Self::verify_landed_attested) (unchanged,
+    /// Rail A) is a plain byte-compare: it confirms the landed turns witness *some*
+    /// expected 32 bytes, trusting the caller to know what those bytes mean. This is
+    /// the join to Rail B (the `WitnessedPredicate` crypto): it runs the SAME
+    /// light-client chain checks ([`verify_landed`](Self::verify_landed)), reads the
+    /// commitment the finalized ledger witnesses at [`grain_turn::ATTESTATION_SLOT`],
+    /// then requires a genuine TEE quote to bind it — the
+    /// [`dregg_cell::tee_attest::tee_attestation_predicate`] for `pinned_measurement`
+    /// at the attestation slot, verified through the caller's `registry` against
+    /// `tee_proof`. The registered verifier (install the real vendor crypto with
+    /// `deos_hermes::tee_fact::install_tee_fact_verifier`; an empty registry refuses)
+    /// enforces the full contract: the quote is vendor-signed to the hardware root,
+    /// its measurement equals `pinned_measurement` (pinned out of band), and its
+    /// `report_data` equals the LANDED slot value — so "an enclave-attested session"
+    /// becomes a light-client-checkable fact: *the measured binary, inside a genuine
+    /// TEE, bound exactly this finalized session commitment.*
+    ///
+    /// `tee_proof` is the kind-prefixed quote blob
+    /// ([`dregg_cell::tee_attest::encode_tee_proof`]`(kind, document)`) — e.g. an AWS
+    /// Nitro attestation document as `dregg-tee-produce` transports it. Fail-closed
+    /// everywhere: no node, no slot, an unregistered predicate kind, or any vendor-
+    /// crypto refusal (forged/tampered quote, wrong measurement, unbound
+    /// `report_data`, down-level TCB) is [`AgentPlatformError::Verify`].
+    ///
+    /// Honest strength: this adds **single-hardware-root execution-integrity** on top
+    /// of the landed R2 rail — you trust the CPU vendor's attestation root, and the
+    /// quote says nothing about the output's *correctness* (that remains R3's
+    /// whole-history STARK leg).
+    pub fn verify_landed_tee_attested(
+        &self,
+        host: &str,
+        registry: &dregg_cell::predicate::WitnessedPredicateRegistry,
+        pinned_measurement: [u8; 32],
+        tee_proof: &[u8],
+    ) -> Result<Landed, AgentPlatformError> {
+        // Rail A: the light-client chain verify + manifest-membership check.
+        let landed = self.verify_landed(host)?;
+        // The landed ground truth: the commitment witnessed at ATTESTATION_SLOT on
+        // the node's committed grain-turn cell (read off the finalized ledger, not
+        // off any host claim).
+        let arc = self.tenant_arc(host)?;
+        let guard = arc.lock().expect("tenant poisoned");
+        let minter = guard.node_minter.as_ref().ok_or_else(|| {
+            AgentPlatformError::Verify("grain has no node minter (never driven-minted)".into())
+        })?;
+        let slot = minter.attestation_slot().ok_or_else(|| {
+            AgentPlatformError::Verify(
+                "the grain's committed turn cell has no attestation slot".into(),
+            )
+        })?;
+        // Rail B: the quote must be genuine (vendor-signed to the hardware root),
+        // for the pinned binary, and bound to EXACTLY the landed slot commitment.
+        let predicate = dregg_cell::tee_attest::tee_attestation_predicate(
+            pinned_measurement,
+            grain_turn::ATTESTATION_SLOT as u8,
+        );
+        registry
+            .verify(
+                &predicate,
+                &dregg_cell::predicate::PredicateInput::Slot(&slot),
+                tee_proof,
+            )
+            .map_err(|e| {
+                AgentPlatformError::Verify(format!(
+                    "TEE attestation predicate refused the landed slot binding: {e:?}"
+                ))
+            })?;
+        Ok(landed)
+    }
+
     /// Lapse the lease at `host` if it is behind schedule at `clock` (non-payment):
     /// the grain is reclaimed and driving it is refused. Returns whether it lapsed.
     pub fn reap_if_behind(&self, host: &str, clock: i64) -> Result<bool, AgentPlatformError> {
@@ -2609,6 +2680,138 @@ mod tests {
                 Err(AgentPlatformError::Verify(_))
             ),
             "an unattested grain has no attestation binding → refused (distinguishable)"
+        );
+    }
+
+    /// **THE RAIL JOIN, END TO END — an enclave-attested session becomes a
+    /// light-client-checkable fact, driven by the REAL captured Nitro document.**
+    /// The live capture enclave (us-east-1 c5.xlarge, debug) bound
+    /// `user_data = [0xAB; 32]`; we bind that SAME commitment as the drive's
+    /// attestation commitment, so the finalized ledger's ATTESTATION_SLOT carries
+    /// exactly what the quote's `report_data` binds — the honest join, no mock:
+    ///   1. drive_serving_attested lands turns witnessing [0xAB; 32], and
+    ///      `verify_landed_tee_attested` (light-client chain checks + the REAL
+    ///      Nitro COSE/X.509 verify through the registered rail) ACCEPTS with the
+    ///      fixture document + its true measurement;
+    ///   2. a WRONG pinned measurement is refused (quote for a different binary);
+    ///   3. a TAMPERED document byte is refused (vendor signature breaks);
+    ///   4. a grain whose LANDED commitment differs from the quote's report_data
+    ///      is refused (the slot↔quote binding is load-bearing);
+    ///   5. an EMPTY registry refuses even the genuine quote (fail-closed: no
+    ///      vendor verifier installed means no TEE fact, ever).
+    #[test]
+    fn landed_tee_attested_joins_the_real_nitro_quote_to_the_landed_slot() {
+        use dregg_cell::predicate::WitnessedPredicateRegistry;
+        use dregg_cell::tee_attest::{
+            TeeQuoteKind, TeeWitnessedPredicateVerifier, encode_tee_proof, tee_predicate_vk,
+        };
+        use dregg_tee_verify::{NitroVerifier, verify_nitro_core};
+
+        /// The REAL captured live-enclave attestation document (tee-verify's fixture).
+        const REAL_DOC: &[u8] = include_bytes!("../../tee-verify/tests/data/nitro_att.bin");
+        // The commitment the capture enclave really bound into the quote.
+        let commitment = [0xABu8; 32];
+        let (claims, _) = verify_nitro_core(REAL_DOC).expect("the fixture doc verifies");
+        let measurement = claims.measurement; // the enclave's true code identity
+
+        // The host-side install (the same wiring deos_hermes::tee_fact performs):
+        // the REAL Nitro verifier into dregg-cell's fail-closed seam, registered
+        // under tee_predicate_vk. `without_freshness` because the doc is captured —
+        // the crypto teeth (COSE sig + chain to the pinned AWS root) are unchanged.
+        let mut registry = WitnessedPredicateRegistry::empty();
+        registry.register_custom(
+            tee_predicate_vk(),
+            Arc::new(TeeWitnessedPredicateVerifier::with_verifier(Arc::new(
+                NitroVerifier::without_freshness(),
+            ))),
+        );
+
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        let host = platform
+            .rent(
+                "enclave.agents.dregg",
+                "dga1_enclave",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision");
+        let mut brain = fs_plan(&[("tee.txt", "attested")]);
+        platform
+            .drive_serving_attested(&host, "write tee-attested", &mut brain, commitment)
+            .expect("the attested served drive mints + lands");
+
+        let proof = encode_tee_proof(TeeQuoteKind::AwsNitro, REAL_DOC);
+
+        // (1) ACCEPT: chain checks + the real vendor crypto bind quote → landed slot.
+        let landed = platform
+            .verify_landed_tee_attested(&host, &registry, measurement, &proof)
+            .expect("the genuine quote proves the landed attestation slot");
+        assert!(landed.finalized_len > 0, "real turns finalized");
+        // The byte-compare rail (Rail A) still stands unchanged beside the join.
+        platform
+            .verify_landed_attested(&host, commitment)
+            .expect("the plain byte-compare rail is untouched");
+
+        // (2) A quote for a DIFFERENT measured binary is refused.
+        assert!(
+            matches!(
+                platform.verify_landed_tee_attested(&host, &registry, [0u8; 32], &proof),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "a wrong pinned measurement must be refused"
+        );
+
+        // (3) A TAMPERED signed byte breaks the vendor signature → refused.
+        let mut tampered = REAL_DOC.to_vec();
+        let mid = tampered.len() / 2;
+        tampered[mid] ^= 0xFF;
+        let tampered_proof = encode_tee_proof(TeeQuoteKind::AwsNitro, &tampered);
+        assert!(
+            matches!(
+                platform.verify_landed_tee_attested(&host, &registry, measurement, &tampered_proof),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "a tampered quote must be refused"
+        );
+
+        // (4) A grain whose LANDED commitment is not the quote's report_data is
+        // refused — the quote is bound to one session, not transplantable.
+        let other = platform
+            .rent(
+                "otherbind.agents.dregg",
+                "dga1_otherbind",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("provision other");
+        let mut other_brain = fs_plan(&[("o.txt", "other")]);
+        platform
+            .drive_serving_attested(&other, "write other-bound", &mut other_brain, [0x11u8; 32])
+            .expect("the other attested drive mints + lands");
+        assert!(
+            matches!(
+                platform.verify_landed_tee_attested(&other, &registry, measurement, &proof),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "a landed commitment the quote did not bind must be refused"
+        );
+
+        // (5) FAIL-CLOSED: with no verifier registered, even the genuine quote is
+        // refused (KindNotRegistered — the rail cannot be talked into accepting).
+        let empty = WitnessedPredicateRegistry::empty();
+        assert!(
+            matches!(
+                platform.verify_landed_tee_attested(&host, &empty, measurement, &proof),
+                Err(AgentPlatformError::Verify(_))
+            ),
+            "an empty registry must refuse (fail-closed)"
         );
     }
 

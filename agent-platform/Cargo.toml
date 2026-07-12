@@ -66,3 +66,11 @@ blake3 = "1"
 # heap; a fresh host-held receipt-chain secret is drawn per grain.
 postcard = { version = "1", features = ["use-std"] }
 getrandom = { version = "0.3" }
+
+[dev-dependencies]
+# THE RAIL JOIN's end-to-end test (`verify_landed_tee_attested`): the REAL Nitro
+# vendor verifier + the captured live-enclave fixture document drive the landed
+# attestation slot through genuine TEE crypto — no enclave hardware needed. The
+# production method itself takes only dregg-cell's registry seam; the vendor
+# crypto stays a dev/test (or host-install, see deos-hermes::tee_fact) concern.
+dregg-tee-verify = { path = "../tee-verify" }

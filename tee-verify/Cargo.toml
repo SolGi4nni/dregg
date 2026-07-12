@@ -3,9 +3,13 @@ name = "dregg-tee-verify"
 version = "0.1.0"
 edition = "2021"
 
-# Detached from the parent workspace (explicit-members list) so this host-side
-# crypto crate builds standalone and never touches the shared root manifest.
-[workspace]
+# A root-workspace MEMBER (it used to carry a detached `[workspace]` opt-out with
+# zero dependents): the TEE fact rail now has real consumers — `deos-hermes`
+# installs `NitroVerifier`/`SnpVerifier` into dregg-cell's fail-closed seam
+# (`deos-hermes/src/tee_fact.rs`), `agent-platform` drives the landed-slot rail
+# join (`verify_landed_tee_attested`), and `dregg-tee-produce`'s tests close the
+# produce→verify loop — so it resolves under the ONE root lock those members use.
+# (The stale local Cargo.lock from the detached era is ignored by cargo.)
 
 [dependencies]
 dregg-cell = { path = "../cell" }

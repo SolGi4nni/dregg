@@ -113,6 +113,12 @@ pub mod run_js;
 #[cfg(feature = "screenshot")]
 pub mod screenshot;
 pub mod surface;
+// The REAL TEE attestation-fact verifier homed here (the vendor-crypto seam
+// `dregg-cell`'s fail-closed `TeeWitnessedPredicateVerifier` installs): dispatches
+// to `dregg-tee-verify`'s NitroVerifier / SnpVerifier and registers under
+// `tee_predicate_vk()`. Default build — the deps are light (X.509/P-384/CBOR),
+// unlike the `zk-live`-gated oracle seam.
+pub mod tee_fact;
 pub mod tool_effects;
 pub mod world_bridge;
 

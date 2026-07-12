@@ -84,6 +84,13 @@ serde_json = "1"
 # operational remainder (docs/deos/ZKORACLE-PROVER-STATUS.md).
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
 
+# THE REAL TEE-FACT VERIFIER SEAM (`crate::tee_fact`, default build — unlike the
+# oracle seam it needs no heavy MPC-TLS backend, only X.509/P-384/CBOR). The genuine
+# vendor-crypto verifiers (`NitroVerifier` chain-to-pinned-AWS-root, `SnpVerifier`
+# fail-closed until AMD roots are pinned) that `dregg-cell`'s fail-closed
+# `TeeWitnessedPredicateVerifier` installs under `tee_predicate_vk()`.
+dregg-tee-verify = { path = "../tee-verify" }
+
 # THE REAL ORACLE-FACT VERIFIER SEAM (`crate::oracle_fact`, behind `zk-live`). The genuine
 # `ZkOracleFactVerifier` that `dregg-cell`'s fail-closed `OracleWitnessedPredicateVerifier`
 # installs: it decodes a portable oracle-fact proof and authenticates it with
