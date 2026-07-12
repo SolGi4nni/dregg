@@ -540,7 +540,7 @@ live registry still routes the bare gap-carrying descriptors until the ONE ember
 live routing changed; no liveness degraded. THE CAMPAIGN: found four exploitable deployed soundness gaps the ℤ
 "verified" model hid, and closed all four with field-faithful in-circuit enforcement + proofs + forgery-UNSAT witnesses.
 
-## ⚠⚠ CANONICAL-HEAP-TREE (5th-candidate, SEVERITY PENDING RECONCILIATION) — 2026-07-12
+## ⚠⚠⚠ GAP #5 CONFIRMED — HEAP-SORTEDNESS UNFORCED → DOUBLE-SPEND (verdict B/adversarial, 2026-07-12) — 2026-07-12
 Refusing to CARRY the `CanonicalHeapTree` fact (ember: "prove real config evolution, don't carry facts") exposed a
 real question about the deployed memory/heap circuit. Doc: `docs/reference/CANONICAL-HEAP-TREE-INVESTIGATION.md`
 (verdict B with a C caveat). The memory soundness of the 7 mapOp effects (NoteSpend nullifiers / NoteCreate
@@ -564,3 +564,25 @@ way is one shared lane for all 7 mapOp effects: (real gap) strengthen the .inser
 the chain invariant from sorted genesis (whole_image_fold pattern); (faithfulness) wire the deployed sorted-tree
 gates into the Lean derivation. The config-evolution object carries `CanonicalHeapExtract` as the ONE named residual
 until this resolves.
+
+### RECONCILED (2026-07-12): CONFIRMED REAL GAP (not a faithfulness debt) — the 5th deployed soundness gap
+Definitive (`CANONICAL-HEAP-TREE-INVESTIGATION.md` reconciliation): the deployed per-turn mapOp INSERT
+(`nullifierInsertOp`/`commitmentsInsertOp`/`cellsInsertOp`, `descriptor_ir2.rs:2817-2845` Ir2Air::MapOps insert leg)
+folds the new leaf up a PROVER-SUPPLIED path to new_root8 and range-checks the new key against NOTHING (verified: no
+eval_lex_lt / key-range gate in the insert leg). The adjacency (diff==1) + key-gap (lo<key<hi, `eval_lex_lt`) gates
+live ONLY in the separate Ir2Air::MapAbsent arm (`:2880-2926`, comment "THE GAP: lo_addr < key < hi_addr"), for
+PROVING absence — never on insert. `heap_root.rs:41` confirms its "genuine sorted-tree insert gates" are the Phase-E
+UNDEPLOYED lane (`:292/:295` "Phase-E AIR"). So sortedness is NOT forced in-circuit; the Lean carrying SpineCommits.
+sorted as a hypothesis is HONEST (no forcing gate to under-model).
+EXPLOIT (live under the adversarial SNARK model — the correct threat model for a ZK prover): a malicious prover
+commits a NON-SORTED heap root (free-placement insert allows it), then proves a spent nullifier n ABSENT via an
+out-of-order bracket — witness heap [MIN,(20),(30),(25,n),MAX], n@25 at position 3; the .absent arm brackets 25 by
+positions 1-2 (20<25<30), both open to the genuine root; the circuit never checks pos2.key(30) < pos3.key(25) →
+absence ACCEPTED → re-spend n → DOUBLE-SPEND. Also forges fresh-commitment / cell-creation (any mapOp absence).
+Honest execution is safe (the trusted producer builds only sorted trees); the gap is the missing in-circuit
+INDUCTION: genesis sorted is in-circuit-pinnable, but per-insert sorted-PRESERVATION is not enforced.
+FIX (ember-approved, circuit): on each .insert row add the MapAbsent adjacency + lo<key<hi gap gate binding the new
+key to a real sorted gap of the PRE-root + a sorted-splice post-root constraint. Chained from sorted genesis this
+makes sortedness an in-circuit INDUCTIVE invariant ⟹ discharges CanonicalHeapTree for all 7 mapOp effects (one shared
+lane). Then MapReconcileFamily's CanonicalHeapExtract reduces into {Poseidon2, FRI-LDT}, closing kernelConfigSound's
+one genuine assumption. STAGED like the wrap-class fixes (rides the VK epoch flip).

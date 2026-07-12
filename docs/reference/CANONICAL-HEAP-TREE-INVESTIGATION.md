@@ -141,3 +141,72 @@ adversarial-prover model it is a REAL residual of the same class as the wrap gap
 forge-absence → double-spend witness (§3). The discharge (§6) reuses the already-realized
 `whole_image_fold` sorted-insert-chain. **No Lean was edited: sortedness is not provable-forced from
 acceptance, so verdict A could not honestly be claimed.**
+
+---
+
+## RECONCILIATION (2026-07-12) — the CARRIER-CENSUS "5th-candidate" tension, decided at the gate
+
+**The tension.** (a) The first investigation read the per-turn `MapKind::Insert` as a free-path
+recompute with no sorted splice (→ real gap). (b) `heap_root.rs:39` names "genuine in-circuit
+sorted-tree update/insert gates" and `whole_image_fold.rs:165` a "sorted-insert chain pinned at both
+ends." IF either forced sorted placement on the DEPLOYED per-turn insert, the Lean `SortedKeys`
+hypothesis would be a FAITHFULNESS DEBT (discharge in Lean), not a gap.
+
+**The deciding read — the deployed per-turn insert gate does NOT force sorted placement.** The
+per-turn grow-gate (`nullifierInsertOp`/`commitmentsInsertOp`/`cellsInsertOp`) is the `Ir2Air::MapOps`
+arm for `op ∈ {read=0, write=1, insert=3}` (`descriptor_ir2.rs:2724-2851`). On an insert row the
+entire gate is:
+
+* dir bits binary-checked (`descriptor_ir2.rs:2742-2744`);
+* the `not_insert` selector (`:2751`) GATES OFF the old-leaf and old-root opening on an insert
+  (`is_real * not_insert`, `:2802,2831`) — so the pre-root is not even opened by the insert leg;
+* the NEW leaf `hash[key,value]` is absorbed and folded up the **prover-supplied `(sib, dir)` path**
+  through `node8` to `new_root8` (`:2817-2845`), with `new_root8` bound to the post-root column.
+
+**There is NO adjacency and NO key-range check on the insert path.** The `diff == 1` adjacency gate
+(`:2882`) and the two `eval_lex_lt` gap checks `lo_addr < key < hi_addr` (`:2906-2925`) live ONLY in
+the SEPARATE `Ir2Air::MapAbsent` arm (`:2854-2994`). The insert leg range-checks the new key against
+NOTHING: a malicious prover picks any dir bits + any siblings, folds the fresh leaf to SOME root, and
+commits it — a NON-sorted placement is accepted. (The prover-side `insert_witness` self-check
+`w.new_root != new_root`, `descriptor_ir2.rs:4420`, is HONEST-producer code behind the `check` flag,
+not an AIR constraint.)
+
+**Tension (b) dissolves — neither doc-comment claims the deployed insert forces sortedness.**
+`heap_root.rs:39` explicitly says the sorted-tree insert gates "**are the Phase-E lane**" — an
+UNDEPLOYED future, not the live per-turn path. `whole_image_fold.rs:165`'s sorted-insert chain rides
+the SAME non-forcing `MapKind::Insert`; its no-extra-cells soundness rests on `mapRoot_injective` +
+the empty-root PI pin (`assert_empty_root_pin`) + the boundary-table `UMemOp::Read` binding — NOT on
+each insert forcing sorted placement — and it is a cross-cell-READ construction, not the per-turn
+nullifier/commitment/cells insert. So `heap_root.rs:39`'s "genuine sorted-tree gates" is a NAME for
+future work; verified against what it CHECKS, the deployed insert checks no order.
+
+**VERDICT: NOT a faithfulness debt. This is the REAL residual (verdict B stands).** The deployed
+insert only path-recomputes; it does not force sorted placement (quote: `descriptor_ir2.rs:2817-2845`,
+no range/adjacency, `not_insert` off-gating the pre-root). The Lean carrying `SortedKeys` /
+`SpineCommits.sorted` as a HYPOTHESIS is therefore HONEST and correct — the Lean does NOT under-model
+a forcing gate. **No Lean discharge was wired: wiring one would claim the gate forces sortedness (it
+does not) and would launder the insecurity.**
+
+**Induction status (§4, item 4).** Genesis IS in-circuit-sortable: the empty accumulator =
+`empty_heap_root_8` (sentinels only, sorted by construction — a verifier-known constant, pinnable as
+`whole_image_fold::assert_empty_root_pin` already does). Per-insert PRESERVATION
+(`SortedKeys(pre) ⟹ SortedKeys(post)`) is **NOT in-circuit** — this is the decisive missing half. So
+the chain invariant is kept by the TRUSTED PRODUCER (the generator always builds via
+`CanonicalHeapTree8` + `insert_witness`), not by the gate.
+
+**Is the double-spend witness live?** On the DEPLOYED HONEST prover: NO — the generator emits only
+sorted roots, and the paired `.absent` freshness op (`nullifierFreshOp`) refuses a present nullifier
+(`trace_rotated.rs:1447-1453`). Under the fully-adversarial SNARK-soundness model (prover = executor =
+cell, one adversary): YES — an earlier `.insert` can commit a non-sorted root (free placement), then a
+later `.absent` bracket at sorted-looking adjacent positions misses the out-of-order spent nullifier
+(§3 witness `[MIN,20,30,25,MAX]`), and every deployed gate accepts → double-spend. Same class as the
+vault/cap-open/transfer wrap gaps.
+
+**THE FIX GATE (circuit, not Lean).** On every `.insert` row, add the `MapAbsent` adjacency+range
+machinery: the `diff == 1` adjacency constraint + the two `eval_lex_lt` gap checks binding the
+inserted key to a genuine sorted gap `lo < key < hi` at adjacent positions `p, p+1` of the PRE-root,
+AND force the post-root to be the pre-tree with the leaf spliced at that gap (a sorted-splice re-hash,
+not a free-path recompute). Chained from the sorted-genesis constant this makes preservation
+in-circuit and discharges `CanonicalHeapTree` into `{Poseidon2SpongeCR, FRI-LDT}` (§6 option (ii)).
+The `.absent`/`.insert` pairing already threads both ops on the same pre-root, so the adjacency
+witness is present — the gate additions are local to the `Ir2Air::MapOps` insert leg.
