@@ -77,6 +77,11 @@ open Dregg2.Crypto
 
 set_option autoImplicit false
 
+/-- Equality-recovery-via-canonicality: an exact ℤ equation lifts to the deployed mod-`p` congruence.
+After the DEBT-A migration `holdsVm`/`TransferRowIntent`/`colEq` denote `≡ [ZMOD 2013265921]`; every
+row-value here is a concrete canonical literal (`< p`), so the exact equation IS the field one. -/
+private theorem modEq_of_eq {a b : ℤ} (h : a = b) : a ≡ b [ZMOD 2013265921] := by rw [h]
+
 /-! ## §1 — the generic lookup-table-faithfulness machinery.
 
 `Satisfied2`'s `rowConstraints` quantifies the per-row constraints over the whole trace; the lookup
@@ -154,8 +159,8 @@ def realRow : Assignment := fun v =>
   else if v = prmCol param.AMOUNT then 10       -- col 68
   else if v = prmCol param.DIRECTION then 1     -- col 69
   else if v = 189 then 100                       -- rotated BEFORE r0 (welded to bal_lo = 100)
-  else if v = 416 then 90                        -- rotated AFTER r0 (welded to after bal_lo = 90)
-  else if v = 417 then 1                         -- rotated AFTER r1 (welded to after nonce = 1)
+  else if v = 428 then 90                        -- rotated AFTER r0 (welded to after bal_lo = 90; base tw+239)
+  else if v = 429 then 1                         -- rotated AFTER r1 (welded to after nonce = 1; base tw+239)
   else 0                                          -- before-nonce 0, everything else 0
 
 /-- The public inputs forced by the boundary/rotated PI pins. The v1 first-row pins
@@ -248,14 +253,15 @@ theorem transferRowIntent_envReal : TransferRowIntent envReal := by
   obtain ⟨_, _, hblo, hbn, hbhi, hbcap, hbres, ham, hdir, halo, han, hahi, hacap, hares⟩ := realRow_vals
   unfold TransferRowIntent
   simp only [envReal]
-  refine ⟨Or.inr hdir, ?_, ?_, ?_, ?_, ?_, ?_⟩
-  · rw [halo, hblo, ham, hdir]; ring
-  · rw [hahi, hbhi]
-  · rw [han, hbn]; ring
-  · rw [hacap, hbcap]
-  · rw [hares, hbres]
+  refine ⟨Or.inr (modEq_of_eq hdir), ?_, ?_, ?_, ?_, ?_, ?_⟩
+  · exact modEq_of_eq (by rw [halo, hblo, ham, hdir]; ring)
+  · exact modEq_of_eq (by rw [hahi, hbhi])
+  · exact modEq_of_eq (by rw [han, hbn]; ring)
+  · exact modEq_of_eq (by rw [hacap, hbcap])
+  · exact modEq_of_eq (by rw [hares, hbres])
   · intro i hi
     -- both after-field (saCol 3+i) and before-field (sbCol 3+i) miss every named column ⇒ both 0.
+    refine modEq_of_eq ?_
     show realRow (saCol (state.FIELD_BASE + i)) = realRow (sbCol (state.FIELD_BASE + i))
     have ha : realRow (saCol (state.FIELD_BASE + i)) = 0 := by
       simp only [realRow, sel.TRANSFER, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
@@ -268,8 +274,8 @@ theorem transferRowIntent_envReal : TransferRowIntent envReal := by
       have e5 : ¬ (76 + (3 + i) = 68) := by omega
       have e6 : ¬ (76 + (3 + i) = 69) := by omega
       have e7 : ¬ (76 + (3 + i) = 189) := by omega
-      have e8 : ¬ (76 + (3 + i) = 416) := by omega
-      have e9 : ¬ (76 + (3 + i) = 417) := by omega
+      have e8 : ¬ (76 + (3 + i) = 428) := by omega
+      have e9 : ¬ (76 + (3 + i) = 429) := by omega
       simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7,
         if_neg e8, if_neg e9]
     have hb : realRow (sbCol (state.FIELD_BASE + i)) = 0 := by
@@ -283,18 +289,18 @@ theorem transferRowIntent_envReal : TransferRowIntent envReal := by
       have e5 : ¬ (54 + (3 + i) = 68) := by omega
       have e6 : ¬ (54 + (3 + i) = 69) := by omega
       have e7 : ¬ (54 + (3 + i) = 189) := by omega
-      have e8 : ¬ (54 + (3 + i) = 416) := by omega
-      have e9 : ¬ (54 + (3 + i) = 417) := by omega
+      have e8 : ¬ (54 + (3 + i) = 428) := by omega
+      have e9 : ¬ (54 + (3 + i) = 429) := by omega
       simp only [if_neg e1, if_neg e2, if_neg e3, if_neg e4, if_neg e5, if_neg e6, if_neg e7,
         if_neg e8, if_neg e9]
     rw [ha, hb]
 
 /-! ## §5 — `realRow` is `0` off the seven named columns (the bulk evaluator). -/
 
-/-- Off the nine named columns (`1, 54, 76, 78, 68, 69, 189, 416, 417`), `realRow` is `0`. -/
+/-- Off the nine named columns (`1, 54, 76, 78, 68, 69, 189, 428, 429`), `realRow` is `0`. -/
 theorem realRow_zero_of {v : Nat} (h1 : v ≠ 1) (h54 : v ≠ 54) (h76 : v ≠ 76)
-    (h78 : v ≠ 78) (h68 : v ≠ 68) (h69 : v ≠ 69) (h188 : v ≠ 189) (h239 : v ≠ 416)
-    (h240 : v ≠ 417) : realRow v = 0 := by
+    (h78 : v ≠ 78) (h68 : v ≠ 68) (h69 : v ≠ 69) (h188 : v ≠ 189) (h239 : v ≠ 428)
+    (h240 : v ≠ 429) : realRow v = 0 := by
   simp only [realRow, sel.TRANSFER, sbCol, saCol, prmCol, STATE_BEFORE_BASE, STATE_AFTER_BASE,
     PARAM_BASE, NUM_EFFECTS, STATE_SIZE, NUM_PARAMS, state.BALANCE_LO, state.NONCE, param.AMOUNT,
     param.DIRECTION]
@@ -317,6 +323,7 @@ theorem lastRow_vals :
 
 /-! ## §6 — the base constraints of the rotated frozen-authority transfer descriptor all hold. -/
 
+set_option maxRecDepth 8192 in
 /-- **Every base (v1 + rotation) constraint of `rotateV3FrozenAuthority transferVmDescriptor` holds on
 `envReal` (both boundary flags set).** Group by group: the transfer gates (`transferVm_faithful` ←
 `transferRowIntent_envReal`); the transition continuity (`nxt = 0 = after-state`); the v1 boundary PI
@@ -358,7 +365,8 @@ theorem base_constraints_hold :
       simp only [List.mem_map, List.mem_range] at htr
       obtain ⟨i, hi, rfl⟩ := htr
       have hi' : i < 14 := by simpa [STATE_SIZE] using hi
-      show envReal.nxt (sbCol i) = envReal.loc (saCol i)
+      rw [holdsVm_transition_false]
+      refine modEq_of_eq ?_
       show lastRow (sbCol i) = realRow (saCol i)
       -- `lastRow` carries row 0's after-state in its before block; for the two moved cells the
       -- carried value equals row 0's after value, else both sides are 0.
@@ -404,7 +412,7 @@ theorem base_constraints_hold :
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hwb
       rcases hwb with rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl | rfl <;>
         · rw [colEq_holds_iff _ _ _ _ _ rfl]; rfl
-    · -- after-block welds: base 415. r0(416)=after bal_lo(76)=90; r1(417)=after nonce(78)=1; the
+    · -- after-block welds: base 427 (tw+239). r0(428)=after bal_lo(76)=90; r1(429)=after nonce(78)=1; the
       -- rest `0 = 0`. All reduce by computation.
       unfold weldsAt at hwa
       simp only [List.mem_cons, List.not_mem_nil, or_false] at hwa
