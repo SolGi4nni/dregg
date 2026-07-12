@@ -102,6 +102,11 @@ pub mod mcp_server;
 pub mod mock_peer;
 #[cfg(all(unix, feature = "node-brain"))]
 pub mod node_hands;
+// The REAL zkTLS oracle-fact verifier homed here (the crypto seam `dregg-cell`'s
+// fail-closed `OracleWitnessedPredicateVerifier` installs). Behind `zk-live`, which
+// pulls the heavy `tlsn` MPC-TLS backend `verify_zkoracle_live_host` links.
+#[cfg(feature = "zk-live")]
+pub mod oracle_fact;
 pub mod resident;
 #[cfg(feature = "js-agent")]
 pub mod run_js;
@@ -117,6 +122,8 @@ pub use acp_client::{
 };
 pub use agent_peer::HermesAgentPeer;
 pub use attest::{AttestationCarrier, attestation_commitment, messages_body};
+#[cfg(feature = "zk-live")]
+pub use oracle_fact::{OracleFactProof, ZkOracleFactVerifier};
 // THE CROWN — re-export the zkOracle attestation surface a HOST verifies with, so a
 // caller attaches + checks a confined turn's attestation without depending on
 // `dregg-zkoracle-prove` directly.
