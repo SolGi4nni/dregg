@@ -205,3 +205,20 @@ config-only, the measurement inverted the optimal: native-hash made queries chea
 now faster prove], (2) forge not laptop (free ~3-5×), (3) GPU/ICICLE (10-100× on NTT+Poseidon2+Merkle — the deploy-
 a-GPU answer), (4) shrink the apex-verifier AIR trace (decision doc's 3 levers), (5) folding-recursion frontier.
 Two lanes running: gnark-verifies-real-shrink-proof (final wrap increment) + the blowup sweep.
+
+## ⚑ PERF + PLATFORM EPOCH (07-12 ~9:40am) — attacking the ~18min shrink prove
+Wrap CONFIRMED end-to-end (Rust): real apex shrunk BN254-native + verified. Now optimizing:
+- BLOWUP REBALANCE (ember's Q): the measurement that proved the wrap inverted the optimal (native-hash made
+  queries cheap). GNARK SIDE MEASURED: blowup 64→4 grows gnark verify only 1.0M→1.9M R1CS (<<5M ceiling), all
+  130-bit. Rust shrink-PROVE-time sweep RUNNING (does lower blowup slash 18min? the load-bearing half). Committed harness.
+- CROSS-PLATFORM PROVER (ember: hbox is AMD, want Apple Silicon too, maybe NOT ICICLE): redirected the GPU lane to
+  a cross-platform STRATEGY (ICICLE CUDA-first/AMD-weak → wrong for us; compare Futhark [AMD/NVIDIA, no Metal] vs
+  wgpu/WGSL [Rust-native, Apple+AMD+NVIDIA one source] vs HIP vs raw). KEY INSIGHT: BabyBear inner proving (31-bit,
+  simple kernels) = CLIENT-SIDE proving on Apple Silicon = dregg's non-custodial soul; BN254 shrink (256-bit) =
+  server. My lean: wgpu/WGSL BabyBear-first PoC (behind Plonky3's DFT/hash traits). Strategy doc in flight.
+- AIR REDUCTION analysis running (shrink the 2^15-row apex-verifier AIR tables; levers tagged mine vs stark-kill's apex config).
+- FOLDING RECURSION primer WRITTEN + committed (docs/deos/FOLDING-RECURSION-PRIMER.md): the crux for dregg = curve-
+  folding is NOT PQ (breaks dregg's quantum-safe thesis) + wants a big field (re-imports the emulation tax). Verdict:
+  optimize hash-based wrap NOW (PQ-preserving); WATCH LatticeFold (PQ folding) as the future; not a now-migration.
+NEXT: harvest the Rust sweep (prove-time tradeoff → set the production shrink blowup); the cross-platform strategy
+(→ green-light a wgpu BabyBear PoC for a MEASURED Apple Silicon number); AIR reduction; the gnark end-to-end.
