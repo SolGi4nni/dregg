@@ -5887,4 +5887,73 @@ theorem rotV3FrozenWide_sound_v1 (permOut : List ℤ → List ℤ) (hash : List 
 #assert_axioms graduableWide_rotateV3FrozenAuthority
 #assert_axioms rotV3FrozenWide_sound_v1
 
+/-! ### The FEE-PINNED wide rotation lift (the §11.8 fee availability face reaches the tower).
+
+`transferFeeV3` composes `graduateV1 (rotateV3WithFeePin (rotateV3FrozenAuthority ·))`; the
+hardened fee face (`EffectVmEmitTransfer.transferFeeVmDescriptorAvail`, 15-bit teeth) needs the
+SAME composition at the WIDE graduation. The fee pin is one appended `.piBinding` constraint
+(sites/ranges verbatim), so both the graduability lift and the per-row v1 peel are structural. -/
+
+/-- The fee pin is a CONSTRAINT; `graduableWide` reads only sites/ranges (the wide mirror of
+`graduable_rotateV3WithNullifierPin`, at the fee pin). -/
+theorem graduableWide_rotateV3WithFeePin {base : EffectVmDescriptor}
+    (h : graduableWide base = true) : graduableWide (rotateV3WithFeePin base) = true := by
+  unfold rotateV3WithFeePin
+  unfold graduableWide at h ⊢
+  simpa using h
+
+/-- The fee-pinned constraints are the base's plus the one appended pin. -/
+theorem rotateV3WithFeePin_constraints (base : EffectVmDescriptor) :
+    (rotateV3WithFeePin base).constraints
+      = base.constraints ++ [.piBinding .last FEE_COL ROT_FEE_PI] := rfl
+
+/-- The per-row v1 denotation peels through the fee pin (constraints-prefix; sites/ranges
+verbatim). -/
+theorem rotateV3WithFeePin_satisfiedVm (hash : List ℤ → ℤ) (base : EffectVmDescriptor)
+    (env : VmRowEnv) (isFirst isLast : Bool)
+    (h : satisfiedVm hash (rotateV3WithFeePin base) env isFirst isLast) :
+    satisfiedVm hash base env isFirst isLast := by
+  obtain ⟨hc, hsites, hr⟩ := h
+  exact ⟨fun c hc' => hc c (by
+      rw [rotateV3WithFeePin_constraints]; exact List.mem_append_left _ hc'),
+    hsites, hr⟩
+
+/-- **`v3OfFrozenFeeWide d`** — the WIDE graduated FEE-PINNED rotated descriptor of a hardened fee
+member: `transferFeeV3`'s composition (freeze → fee pin → graduation) at the multi-width
+graduation, so the 15-bit borrow/carry teeth of the §11.8 fee availability weld lower into the
+15-bit table. -/
+def v3OfFrozenFeeWide (d : EffectVmDescriptor) : EffectVmDescriptor2 :=
+  graduateV1Wide (rotateV3WithFeePin (rotateV3FrozenAuthority d))
+
+/-- **`rotV3FrozenFeeWide_sound_v1`** — a `Satisfied2FaithfulWide` witness of the wide fee-pinned
+frozen graduation yields the full v1 denotation of the original descriptor on every row (the
+fee-pinned mirror of `rotV3FrozenWide_sound_v1`). This is the bridge that lets a rotated witness
+over the hardened FEE availability descriptor reach
+`EffectVmEmitTransfer.transferFeeAvail_derives_availability_row`. -/
+theorem rotV3FrozenFeeWide_sound_v1 (permOut : List ℤ → List ℤ) (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor)
+    (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
+    (hgrad : graduableWide d = true)
+    (hf : Satisfied2FaithfulWide permOut hash (v3OfFrozenFeeWide d) minit mfin maddrs t) :
+    ∀ i, i < t.rows.length →
+      satisfiedVm hash d (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
+  intro i hi
+  have hg : graduableWide (rotateV3WithFeePin (rotateV3FrozenAuthority d)) = true :=
+    graduableWide_rotateV3WithFeePin (graduableWide_rotateV3FrozenAuthority hgrad)
+  exact rotateV3FrozenAuthority_satisfiedVm_v1 hash d _ _ _
+    (rotateV3WithFeePin_satisfiedVm hash _ _ _ _
+      (satisfied2FaithfulWide_satisfiedVm permOut hash _ minit mfin maddrs t hg hf i hi))
+
+-- The hardened fee face is wide-graduable and its fee-pinned frozen rotation keeps the
+-- `transferFeeV3` PI shape (46 + the fee pin = 47).
+#guard graduableWide EffectVmEmitTransfer.transferFeeVmDescriptorAvail
+#guard graduableWide
+  (rotateV3WithFeePin (rotateV3FrozenAuthority EffectVmEmitTransfer.transferFeeVmDescriptorAvail))
+#guard (rotateV3WithFeePin (rotateV3FrozenAuthority
+  EffectVmEmitTransfer.transferFeeVmDescriptorAvail)).piCount == 47
+
+#assert_axioms graduableWide_rotateV3WithFeePin
+#assert_axioms rotateV3WithFeePin_satisfiedVm
+#assert_axioms rotV3FrozenFeeWide_sound_v1
+
 end Dregg2.Circuit.Emit.EffectVmEmitRotationV3

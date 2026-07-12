@@ -136,6 +136,20 @@ def burnV3AvailWire : EffectVmDescriptor2 :=
   availWireOf Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH
     (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail)
 
+/-- **`transferFeeV3AvailWire`** — the deployable hardened FEE'D-transfer wire member: the §11.8
+fee availability face (`transferFeeVmDescriptorAvail` — MID-linked borrow/carry chains closing the
+wrap forgery through BOTH debit legs, amount AND fee) lifted `v3OfFrozenFeeWide` (freeze → fee pin
+→ WIDE graduation, `transferFeeV3`'s exact composition at the hardened face) + the uniform DSL
+rc-EMIT at the fee-avail-shifted geometry (`withDfaRcPinsAt FEE_AVAIL_WIDTH`). NO capacity-floor
+refuse wrapper: the DEPLOYED fee member (`withDfaRcPins transferFeeV3`, registry tail position 44,
+PAST the 36 refused cohort members) carries none, and the hardened member mirrors the deployed
+shape wrapper-for-wrapper. The `transferFeeVmDescriptor2R24` registry key's post-flip bytes. -/
+def transferFeeV3AvailWire : EffectVmDescriptor2 :=
+  withDfaRcPinsAt Dregg2.Circuit.Emit.EffectVmEmitTransfer.FEE_AVAIL_WIDTH
+    (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozenFeeWide
+      Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferFeeVmDescriptorAvail)
+
+
 /-! ## §3 — THE PEELS: `Satisfied2 (wire member) ⟹ Satisfied2 (hardened rotated face)`.
 
 Structural mirrors of `satisfied2_of_withDfaRcPins` / `satisfied2_of_gentianDeployedBareRefuse`
@@ -233,6 +247,19 @@ theorem satisfied2_of_availWireOf (hash : List ℤ → ℤ) (w : Nat) (d : Effec
     Satisfied2 hash d minit mfin maddrs t :=
   satisfied2_of_gentianDeployedBareRefuseAt hash (cavBaseOf w) d
     (satisfied2_of_withDfaRcPinsAt hash w (gentianDeployedBareRefuseAt (cavBaseOf w) d) h)
+
+/-- **THE FEE PEEL** — a satisfying fee-wire witness is a fortiori a satisfying witness of the
+hardened fee-pinned rotated face (`v3OfFrozenFeeWide transferFeeVmDescriptorAvail` — the exact
+object `rotV3FrozenFeeWide_sound_v1` consumes down to the §11.8 availability discharge). The fee
+wire carries ONLY the rc-pin wrapper (the deployed fee member's shape), so the peel is one call. -/
+theorem satisfied2_of_transferFeeV3AvailWire (hash : List ℤ → ℤ)
+    {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (h : Satisfied2 hash transferFeeV3AvailWire minit mfin maddrs t) :
+    Satisfied2 hash
+      (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozenFeeWide
+        Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferFeeVmDescriptorAvail)
+      minit mfin maddrs t :=
+  satisfied2_of_withDfaRcPinsAt hash _ _ h
 
 /-! ## §4 — THE REFUSE TEETH at the avail geometry (the flag-day soundness carried over).
 
@@ -355,9 +382,10 @@ theorem declared_vault_unsat_availWire (hash : List ℤ → ℤ) (hCR : Poseidon
 
 section Witnesses
 
--- The hardened v1 faces widen the bare face by the avail pads (transfer 10 / burn 8).
+-- The hardened v1 faces widen the bare face by the avail pads (transfer 10 / burn 8 / fee'd 16).
 #guard Dregg2.Circuit.Emit.EffectVmEmitTransfer.AVAIL_WIDTH == EFFECT_VM_WIDTH + 10
 #guard Dregg2.Circuit.Emit.EffectVmEmitBurn.AVAIL_WIDTH == EFFECT_VM_WIDTH + 8
+#guard Dregg2.Circuit.Emit.EffectVmEmitTransfer.FEE_AVAIL_WIDTH == EFFECT_VM_WIDTH + 16
 -- Both hardened faces are WIDE-graduable (their 15-bit borrow teeth lower into the 15-bit table).
 #guard graduableWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail
 #guard graduableWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail
@@ -379,12 +407,27 @@ section Witnesses
   == (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferVmDescriptorAvail).constraints.length + 39 + 4
 #guard burnV3AvailWire.constraints.length
   == (v3OfFrozenWide Dregg2.Circuit.Emit.EffectVmEmitBurn.burnVmDescriptorAvail).constraints.length + 39 + 4
+-- The FEE'D hardened wire member: the fee-pinned wide face (piCount 47) + the 4 rc pins = 51 (the
+-- deployed `withDfaRcPins transferFeeV3` PI shape); traceWidth = the wide-graduated fee face
+-- (NO refuse block — the deployed fee member carries none); name-marked `-fee-avail`; the ONLY
+-- constraint delta past the face is the 4 rc pins.
+#guard transferFeeV3AvailWire.piCount == 51
+#guard transferFeeV3AvailWire.traceWidth
+  == (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozenFeeWide
+      Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferFeeVmDescriptorAvail).traceWidth
+#guard (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozenFeeWide
+    Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferFeeVmDescriptorAvail).tables.length == 6
+#guard transferFeeV3AvailWire.name == "dregg-effectvm-transfer-v1-fee-avail-rot24-v3-staged"
+#guard transferFeeV3AvailWire.constraints.length
+  == (Dregg2.Circuit.Emit.EffectVmEmitRotationV3.v3OfFrozenFeeWide
+      Dregg2.Circuit.Emit.EffectVmEmitTransfer.transferFeeVmDescriptorAvail).constraints.length + 4
 
 end Witnesses
 
 #assert_axioms satisfied2_of_withDfaRcPinsAt
 #assert_axioms satisfied2_of_gentianDeployedBareRefuseAt
 #assert_axioms satisfied2_of_availWireOf
+#assert_axioms satisfied2_of_transferFeeV3AvailWire
 #assert_axioms declared_capacity_unsat_availWire
 #assert_axioms declared_escrow_unsat_availWire
 #assert_axioms declared_discharge_unsat_availWire

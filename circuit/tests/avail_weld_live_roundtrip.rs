@@ -197,3 +197,95 @@ fn burn_member_roundtrips_live() {
         false,
     );
 }
+
+/// The live FEE'D transfer member roundtrips (bare pre-regen at pad 0, byte-identical to the
+/// deployed fee path; hardened §11.8 fee-availability member + 15-bit MID/fee teeth post-regen).
+/// THE FEE TOOTH (hardened only): a forged final FEE-BORROW bit — claiming the fee subtraction
+/// under-borrowed, the fee-leg wrap-forgery's witness shape — is REFUSED.
+#[test]
+fn transfer_fee_member_roundtrips_live() {
+    use dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_with_fee_avail;
+
+    let key = "transferFeeVmDescriptor2R24";
+    let json = registry_json(key);
+    let desc = parse_vm_descriptor2(&json).unwrap_or_else(|e| panic!("{key} parses: {e}"));
+    let pad = avail_pad_for_descriptor_name(&desc.name);
+    if desc.name.contains("-v1-fee-avail") {
+        assert_eq!(
+            pad,
+            dregg_circuit::effect_vm::trace_rotated::TRANSFER_FEE_AVAIL_PAD,
+            "{key}: the hardened fee member derives the 16-col fee pad from its name"
+        );
+    }
+
+    let before_balance: i64 = 100_000;
+    let amount: u64 = 50;
+    let fee: u64 = 7;
+    let st = CellState::new(before_balance as u64, 0);
+    let effects = vec![Effect::Transfer {
+        amount,
+        direction: 1,
+    }];
+    // The producer's after-cell debits BOTH the transfer AND the fee (the proven post-fee state).
+    let mut ledger = Ledger::new();
+    let before_cell = producer_cell(before_balance, 0);
+    let after_cell = producer_cell(before_balance - amount as i64 - fee as i64, 0);
+    ledger.insert_cell(after_cell.clone()).unwrap();
+    let receipt_log: Vec<[u8; 32]> = vec![[1u8; 32], [2u8; 32]];
+    let produce = |cell: &Cell| {
+        rw::produce(
+            cell,
+            &ledger,
+            &dregg_circuit::heap_root::empty_heap_root_8(),
+            &dregg_circuit::heap_root::empty_heap_root_8(),
+            &dregg_turn::rotation_witness::empty_revoked_root_8(),
+            &receipt_log,
+            &Default::default(),
+        )
+    };
+    let before_w = produce(&before_cell);
+    let after_w = produce(&after_cell);
+    let bridge = |w: &rw::RotationWitness| {
+        RotatedBlockWitness::new(w.pre_limbs.clone(), w.iroot).expect("pre-iroot limbs")
+    };
+    let caveat = transfer_caveat_manifest();
+    let (trace, dpis) = generate_rotated_effect_vm_trace_with_fee_avail(
+        pad,
+        &st,
+        &effects,
+        &bridge(&before_w),
+        &bridge(&after_w),
+        &caveat,
+        fee,
+    )
+    .expect("live fee'd rotated generator (avail-aware)");
+    assert_eq!(dpis.len(), desc.public_input_count, "{key}: PI shape");
+    let proof = prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
+        .unwrap_or_else(|e| {
+            panic!("{key}: honest fee'd turn must prove against the live member: {e}")
+        });
+    verify_vm_descriptor2(&desc, &proof, &dpis)
+        .unwrap_or_else(|e| panic!("{key}: honest fee'd proof verifies: {e}"));
+
+    // THE FEE TOOTH (bites only on the hardened member): forge the final FEE-borrow bit `FB1`
+    // (col `V1_WIDTH + 15`) — claim `fee > mid`, the fee-leg wrap forgery's witness shape. The
+    // UNGATED no-final-fee-borrow gate demands 0; flipping it to 1 must refuse.
+    if pad > 0 {
+        use dregg_circuit::effect_vm::EFFECT_VM_WIDTH;
+        let mut forged = trace.clone();
+        for row in forged.iter_mut() {
+            row[EFFECT_VM_WIDTH + 15] = BabyBear::ONE; // FB1 := 1 (forged final fee borrow)
+        }
+        let refused = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2(&desc, &forged, &dpis, &MemBoundaryWitness::default(), &[])
+                .and_then(|p| verify_vm_descriptor2(&desc, &p, &dpis))
+        }));
+        assert!(
+            match refused {
+                Err(_) => true,
+                Ok(res) => res.is_err(),
+            },
+            "{key}: a forged final fee-borrow bit must not prove+verify on the hardened member"
+        );
+    }
+}

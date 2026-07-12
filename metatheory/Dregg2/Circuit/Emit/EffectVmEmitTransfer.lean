@@ -1156,6 +1156,424 @@ theorem goodCreditRow_ranges_hold (r : VmRange) (hr : r ∈ transferAvailRanges)
     r.holds goodCreditRow := by
   fin_cases hr <;> exact ⟨by decide, by decide⟩
 
+/-! ## §11.8 — THE FEE'D-TRANSFER AVAILABILITY WELD (the fee member of the GAP #4 full-closure).
+
+`transferFeeVmDescriptor` (§11.5) debits BOTH the transfer amount AND the fee from `BALANCE_LO`
+(`gBalLoFee`: `new ≡ old − amount·(1−2·dir) − fee [ZMOD p]`) and range-checks only the AFTER limbs
++ the fee at 30 bits — the SAME wrap class as the bare transfer, open through EITHER debit leg: the
+amount leg (`before=1, amount=1006632961, fee=0`) or the FEE leg (`before=1, amount=0,
+fee=1006632961`: `after − before + fee = p ≡ 0`, `after = 1006632961 < 2^30` passes the range).
+
+⚠ The §11.7 chain CANNOT be reused blind: its debit gates force `before = after + amount` over ℤ,
+which against the fee'd gate would force `fee ≡ 0 [ZMOD p]` — with the 30-bit fee range that is
+`fee = 0`, a LIVENESS break (every fee'd transfer UNSAT). The weld must chain the fee subtraction.
+
+THE FIX (the §11.7 mirror with one extra link): an intermediate MID witness (`mid = the balance
+after the transfer move, before the fee`) with
+
+  * DEBIT (`dir = 1`):  borrow chain `before − amount = mid`, no final borrow ⟹ `amount ≤ before`;
+  * CREDIT (`dir = 0`): carry chain `before + amount = mid`, no final carry ⟹ no overflow wrap;
+  * BOTH directions:    UNGATED borrow chain `mid − fee = after`, no final borrow ⟹ `fee ≤ mid`
+    (the fee'd gate is `after = mid − fee` in both directions, so this link needs no selector).
+
+All operands at 15-bit limbs (no residual reaches `p`). On a debit row this forces
+`amount + fee ≤ before` AND the exact ℤ move `after = before − amount − fee`
+(`transferFeeAvail_derives_availability_row`); both wrap forgeries are UNSAT
+(`transferFeeAvail_forgery_unsat` / `transferFeeAvail_fee_forgery_unsat`). Witness columns live
+past the base width (the §11.7 pattern, 6 more than the transfer weld); the registry row + VK ride
+the ONE big-bang regen (STAGED, the §11.7 status). Rust twin: `transfer_fee_avail_weld.rs`. -/
+
+/-- `mid` (`before − amount` on a debit / `before + amount` on a credit — the balance after the
+transfer move, before the fee) low/high 15-bit limbs. The §11.7 columns `cBEF0..cCRY1` are REUSED
+verbatim (same indices 188..197; this is a DIFFERENT descriptor, so no collision). -/
+def cMID0 : Nat := AVAIL_BASE + 10
+def cMID1 : Nat := AVAIL_BASE + 11
+/-- `fee` (the `feeCol = saCol RESERVED` carrier) low/high 15-bit limbs. -/
+def cFEE0 : Nat := AVAIL_BASE + 12
+def cFEE1 : Nat := AVAIL_BASE + 13
+/-- The fee-subtraction borrow bits (`cFB1` = the final borrow; forced `0` ⟺ `fee ≤ mid`). -/
+def cFB0 : Nat := AVAIL_BASE + 14
+def cFB1 : Nat := AVAIL_BASE + 15
+/-- The fee'd widened trace width (§11.7's 10 columns + mid/fee limbs + fee borrow bits). -/
+def FEE_AVAIL_WIDTH : Nat := AVAIL_BASE + 16
+
+/-- Operand assembly: `feeCol = fee0 + 2^15·fee1` (decomposes — and thereby 30-bit-bounds — the
+fee carrier the debit gate reads). -/
+def gAsmFee : EmittedExpr :=
+  eSub (.var feeCol) (.add (.var cFEE0) (.mul (.const 32768) (.var cFEE1)))
+/-- Debit borrow to MID, limb 0 (`dir`-gated): `dir·(bef0 − am0 + bb0·2^15 − mid0)` (the §11.7
+`gBorrow0` with the target retargeted `aft → mid`). -/
+def gFeeBorrow0 : EmittedExpr :=
+  .mul (ePrm param.DIRECTION)
+    (eSub (.add (eSub (.var cBEF0) (.var cAM0)) (.mul (.const 32768) (.var cBRW0))) (.var cMID0))
+/-- Debit borrow to MID, limb 1 (`dir`-gated): `dir·(bef1 − am1 − bb0 + bb1·2^15 − mid1)`. -/
+def gFeeBorrow1 : EmittedExpr :=
+  .mul (ePrm param.DIRECTION)
+    (eSub (.add (eSub (eSub (.var cBEF1) (.var cAM1)) (.var cBRW0))
+        (.mul (.const 32768) (.var cBRW1)))
+      (.var cMID1))
+/-- Credit carry to MID, limb 0 (`(1−dir)`-gated): `(1−dir)·((bef0 + am0) − (mid0 + cc0·2^15))`
+(the §11.7 `gCarry0` retargeted `aft → mid`). -/
+def gFeeCarry0 : EmittedExpr :=
+  .mul eCreditSel
+    (eSub (.add (.var cBEF0) (.var cAM0)) (.add (.var cMID0) (.mul (.const 32768) (.var cCRY0))))
+/-- Credit carry to MID, limb 1 (`(1−dir)`-gated): `(1−dir)·((bef1 + am1 + cc0) − (mid1 + cc1·2^15))`. -/
+def gFeeCarry1 : EmittedExpr :=
+  .mul eCreditSel
+    (eSub (.add (.add (.var cBEF1) (.var cAM1)) (.var cCRY0))
+      (.add (.var cMID1) (.mul (.const 32768) (.var cCRY1))))
+/-- Fee-borrow-bit booleanity: `fb0·(fb0 − 1)`. -/
+def gFb0Bool : EmittedExpr := .mul (.var cFB0) (.add (.var cFB0) (.const (-1)))
+/-- Fee-borrow-bit booleanity: `fb1·(fb1 − 1)`. -/
+def gFb1Bool : EmittedExpr := .mul (.var cFB1) (.add (.var cFB1) (.const (-1)))
+/-- Fee subtraction, limb 0 — UNGATED (`after = mid − fee` holds in BOTH directions):
+`mid0 − fee0 + fb0·2^15 − aft0`. -/
+def gFeeSub0 : EmittedExpr :=
+  eSub (.add (eSub (.var cMID0) (.var cFEE0)) (.mul (.const 32768) (.var cFB0))) (.var cAFT0)
+/-- Fee subtraction, limb 1 — UNGATED: `mid1 − fee1 − fb0 + fb1·2^15 − aft1`. -/
+def gFeeSub1 : EmittedExpr :=
+  eSub (.add (eSub (eSub (.var cMID1) (.var cFEE1)) (.var cFB0)) (.mul (.const 32768) (.var cFB1)))
+    (.var cAFT1)
+/-- The NO-FINAL-FEE-BORROW gate — UNGATED: `fb1 = 0` ⟺ `fee ≤ mid` (the fee cannot underflow the
+post-move balance, in either direction). -/
+def gNoFeeBorrow : EmittedExpr := .var cFB1
+
+/-- The fee'd availability-weld gates: the four operand assemblies + the `dir`-gated debit borrow
+chain to MID + the `(1−dir)`-gated credit carry chain to MID + the UNGATED fee-subtraction borrow
+chain MID → AFTER. `gNoBorrow`/`gNoCarry` and the §11.7 booleanity gates are reused verbatim (same
+witness columns, same trees). -/
+def transferFeeAvailGates : List VmConstraint :=
+  [ .gate gAsmBefore, .gate gAsmAfter, .gate gAsmAmount, .gate gAsmFee
+  , .gate gBrw0Bool, .gate gBrw1Bool
+  , .gate gFeeBorrow0, .gate gFeeBorrow1, .gate gNoBorrow
+  , .gate gCry0Bool, .gate gCry1Bool
+  , .gate gFeeCarry0, .gate gFeeCarry1, .gate gNoCarry
+  , .gate gFb0Bool, .gate gFb1Bool
+  , .gate gFeeSub0, .gate gFeeSub1, .gate gNoFeeBorrow ]
+
+/-- The fee'd availability-weld range checks: every operand limb at 15 bits (before/after/amount
+as §11.7, PLUS the mid and fee limbs). -/
+def transferFeeAvailRanges : List VmRange :=
+  [ ⟨cBEF0, 15⟩, ⟨cBEF1, 15⟩, ⟨cAFT0, 15⟩, ⟨cAFT1, 15⟩, ⟨cAM0, 15⟩, ⟨cAM1, 15⟩
+  , ⟨cMID0, 15⟩, ⟨cMID1, 15⟩, ⟨cFEE0, 15⟩, ⟨cFEE1, 15⟩ ]
+
+/-- **`transferFeeVmDescriptorAvail`** — the HARDENED fee'd transfer descriptor: the bare
+`transferFeeVmDescriptor` PLUS the fee'd availability-weld gates and the 15-bit limb range checks,
+trace widened to carry the witness columns. Closes the fee'd-transfer wrap forgery through BOTH
+debit legs (amount AND fee) and the credit overflow twin — with no `hcanonMove`. STAGED. -/
+def transferFeeVmDescriptorAvail : EffectVmDescriptor :=
+  { transferFeeVmDescriptor with
+    name        := transferVmAirName ++ "-fee-avail"
+    traceWidth  := FEE_AVAIL_WIDTH
+    constraints := transferFeeVmDescriptor.constraints ++ transferFeeAvailGates
+    ranges      := transferFeeVmDescriptor.ranges ++ transferFeeAvailRanges }
+
+/-- A fee-weld gate is a member of the hardened fee descriptor's constraints. -/
+theorem feeAvailGate_mem (g : VmConstraint) (hg : g ∈ transferFeeAvailGates) :
+    g ∈ transferFeeVmDescriptorAvail.constraints :=
+  List.mem_append_right _ hg
+
+/-- A fee-weld range is a member of the hardened fee descriptor's ranges. -/
+theorem feeAvailRange_mem (r : VmRange) (hr : r ∈ transferFeeAvailRanges) :
+    r ∈ transferFeeVmDescriptorAvail.ranges :=
+  List.mem_append_right _ hr
+
+/-- **SOUNDNESS — FEE'D AVAILABILITY DERIVED IN-CIRCUIT.** On a DEBIT row (`direction = 1`) a trace
+satisfying the hardened fee descriptor FORCES `amount ≤ before.bal_lo`, `amount + fee ≤
+before.bal_lo` (availability INCLUDING the fee — the fee-leg wrap closed), AND the exact ℤ move
+`after = before − amount − fee` — with NO `hcanonMove`. Only hypothesis: the DEPLOYED canonicality
+invariant `0 ≤ loc c < p` (the §11.7 premise verbatim). Stated at an ARBITRARY `isFirst` (every
+weld constraint is a `.gate`, bound on the transition domain), so a rotated witness's designated
+debit row at ANY trace index consumes it. -/
+theorem transferFeeAvail_derives_availability_row (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (isFirst : Bool)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferFeeVmDescriptorAvail env isFirst false)
+    (hdir : env.loc (prmCol param.DIRECTION) = 1) :
+    env.loc (prmCol param.AMOUNT) ≤ env.loc (sbCol state.BALANCE_LO)
+    ∧ env.loc (prmCol param.AMOUNT) + env.loc feeCol ≤ env.loc (sbCol state.BALANCE_LO)
+    ∧ env.loc (saCol state.BALANCE_LO)
+        = env.loc (sbCol state.BALANCE_LO) - env.loc (prmCol param.AMOUNT) - env.loc feeCol := by
+  obtain ⟨hcs, _hsites, hrs⟩ := hsat
+  -- range facts (each limb in [0, 2^15))
+  have hb0 := hrs _ (feeAvailRange_mem ⟨cBEF0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hb1 := hrs _ (feeAvailRange_mem ⟨cBEF1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have ha0 := hrs _ (feeAvailRange_mem ⟨cAFT0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have ha1 := hrs _ (feeAvailRange_mem ⟨cAFT1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hm0 := hrs _ (feeAvailRange_mem ⟨cAM0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hm1 := hrs _ (feeAvailRange_mem ⟨cAM1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hd0 := hrs _ (feeAvailRange_mem ⟨cMID0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hd1 := hrs _ (feeAvailRange_mem ⟨cMID1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hf0 := hrs _ (feeAvailRange_mem ⟨cFEE0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hf1 := hrs _ (feeAvailRange_mem ⟨cFEE1, 15⟩ (by simp [transferFeeAvailRanges]))
+  simp only [VmRange.holds] at hb0 hb1 ha0 ha1 hm0 hm1 hd0 hd1 hf0 hf1
+  norm_num at hb0 hb1 ha0 ha1 hm0 hm1 hd0 hd1 hf0 hf1
+  -- gate facts (bodies vanish mod p on the active row)
+  have gAsmB := hcs _ (feeAvailGate_mem (.gate gAsmBefore) (by simp [transferFeeAvailGates]))
+  have gAsmA := hcs _ (feeAvailGate_mem (.gate gAsmAfter) (by simp [transferFeeAvailGates]))
+  have gAsmM := hcs _ (feeAvailGate_mem (.gate gAsmAmount) (by simp [transferFeeAvailGates]))
+  have gAsmF := hcs _ (feeAvailGate_mem (.gate gAsmFee) (by simp [transferFeeAvailGates]))
+  have gB0 := hcs _ (feeAvailGate_mem (.gate gBrw0Bool) (by simp [transferFeeAvailGates]))
+  have gB1 := hcs _ (feeAvailGate_mem (.gate gBrw1Bool) (by simp [transferFeeAvailGates]))
+  have gBor0 := hcs _ (feeAvailGate_mem (.gate gFeeBorrow0) (by simp [transferFeeAvailGates]))
+  have gBor1 := hcs _ (feeAvailGate_mem (.gate gFeeBorrow1) (by simp [transferFeeAvailGates]))
+  have gNoB := hcs _ (feeAvailGate_mem (.gate gNoBorrow) (by simp [transferFeeAvailGates]))
+  have gF0 := hcs _ (feeAvailGate_mem (.gate gFb0Bool) (by simp [transferFeeAvailGates]))
+  have gF1 := hcs _ (feeAvailGate_mem (.gate gFb1Bool) (by simp [transferFeeAvailGates]))
+  have gSub0 := hcs _ (feeAvailGate_mem (.gate gFeeSub0) (by simp [transferFeeAvailGates]))
+  have gSub1 := hcs _ (feeAvailGate_mem (.gate gFeeSub1) (by simp [transferFeeAvailGates]))
+  have gNoF := hcs _ (feeAvailGate_mem (.gate gNoFeeBorrow) (by simp [transferFeeAvailGates]))
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gAsmFee, gBrw0Bool, gBrw1Bool,
+    gFeeBorrow0, gFeeBorrow1, gNoBorrow, gFb0Bool, gFb1Bool, gFeeSub0, gFeeSub1, gNoFeeBorrow,
+    eSA, eSB, ePrm, eSub,
+    EmittedExpr.eval] at gAsmB gAsmA gAsmM gAsmF gB0 gB1 gBor0 gBor1 gNoB gF0 gF1 gSub0 gSub1 gNoF
+  rw [hdir, one_mul] at gBor0 gBor1 gNoB
+  -- borrow bits are boolean (mod-p booleanity + canonicality + p prime)
+  have brw0Bool : 0 ≤ env.loc cBRW0 ∧ env.loc cBRW0 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gB0
+    obtain ⟨z0, zp⟩ := hcanon cBRW0
+    rcases pPrimeInt.dvd_mul.mp gB0 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have brw1Bool : 0 ≤ env.loc cBRW1 ∧ env.loc cBRW1 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gB1
+    obtain ⟨z0, zp⟩ := hcanon cBRW1
+    rcases pPrimeInt.dvd_mul.mp gB1 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have fb0Bool : 0 ≤ env.loc cFB0 ∧ env.loc cFB0 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gF0
+    obtain ⟨z0, zp⟩ := hcanon cFB0
+    rcases pPrimeInt.dvd_mul.mp gF0 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have fb1Bool : 0 ≤ env.loc cFB1 ∧ env.loc cFB1 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gF1
+    obtain ⟨z0, zp⟩ := hcanon cFB1
+    rcases pPrimeInt.dvd_mul.mp gF1 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  -- operand assemblies lift to exact ℤ (canonical operand, limb sum < 2^30 < p)
+  have eBef : env.loc (sbCol state.BALANCE_LO) = env.loc cBEF0 + 32768 * env.loc cBEF1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmB) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eAft : env.loc (saCol state.BALANCE_LO) = env.loc cAFT0 + 32768 * env.loc cAFT1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmA) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eAmt : env.loc (prmCol param.AMOUNT) = env.loc cAM0 + 32768 * env.loc cAM1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmM) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eFee : env.loc feeCol = env.loc cFEE0 + 32768 * env.loc cFEE1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmF) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  -- the two borrow chains are exact over ℤ (each residual confined to (−p, p) by the 15-bit ranges)
+  have e0 : env.loc cBEF0 + -1 * env.loc cAM0 + 32768 * env.loc cBRW0 + -1 * env.loc cMID0 = 0 :=
+    availBounded gBor0 (by omega) (by omega)
+  have e1 : env.loc cBEF1 + -1 * env.loc cAM1 + -1 * env.loc cBRW0
+      + 32768 * env.loc cBRW1 + -1 * env.loc cMID1 = 0 :=
+    availBounded gBor1 (by omega) (by omega)
+  have eBB : env.loc cBRW1 = 0 := availBounded gNoB (by omega) (by omega)
+  have s0 : env.loc cMID0 + -1 * env.loc cFEE0 + 32768 * env.loc cFB0 + -1 * env.loc cAFT0 = 0 :=
+    availBounded gSub0 (by omega) (by omega)
+  have s1 : env.loc cMID1 + -1 * env.loc cFEE1 + -1 * env.loc cFB0
+      + 32768 * env.loc cFB1 + -1 * env.loc cAFT1 = 0 :=
+    availBounded gSub1 (by omega) (by omega)
+  have eFB : env.loc cFB1 = 0 := availBounded gNoF (by omega) (by omega)
+  -- availability (both legs) + exact move: purely linear now
+  refine ⟨?_, ?_, ?_⟩ <;> omega
+
+/-- The boundary-row (`isFirst = true`) form, mirroring `transferAvail_derives_availability`. -/
+theorem transferFeeAvail_derives_availability (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferFeeVmDescriptorAvail env true false)
+    (hdir : env.loc (prmCol param.DIRECTION) = 1) :
+    env.loc (prmCol param.AMOUNT) ≤ env.loc (sbCol state.BALANCE_LO)
+    ∧ env.loc (prmCol param.AMOUNT) + env.loc feeCol ≤ env.loc (sbCol state.BALANCE_LO)
+    ∧ env.loc (saCol state.BALANCE_LO)
+        = env.loc (sbCol state.BALANCE_LO) - env.loc (prmCol param.AMOUNT) - env.loc feeCol :=
+  transferFeeAvail_derives_availability_row hash env true hcanon hsat hdir
+
+/-- **THE AMOUNT-LEG FORGERY IS UNSAT.** The §11.7 audit witness (`before=1, amount=1006632961,
+direction=1`) cannot satisfy the hardened FEE descriptor either. -/
+theorem transferFeeAvail_forgery_unsat (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferFeeVmDescriptorAvail env true false)
+    (hbefore : env.loc (sbCol state.BALANCE_LO) = 1)
+    (hamount : env.loc (prmCol param.AMOUNT) = 1006632961)
+    (hdir : env.loc (prmCol param.DIRECTION) = 1) : False := by
+  have h := (transferFeeAvail_derives_availability hash env hcanon hsat hdir).1
+  rw [hbefore, hamount] at h; omega
+
+/-- **THE FEE-LEG FORGERY IS UNSAT (the §11.8 tooth).** The fee-leg wrap witness (`before=1,
+amount=0, fee=1006632961, direction=1` — `after − before + fee = p ≡ 0` with `after < 2^30`
+passing the bare descriptor's ranges) CANNOT satisfy the hardened fee descriptor: the fee borrow
+chain forces `amount + fee ≤ before` (`1006632961 ≤ 1` is false), so no witness exists. The
+fee'd-transfer underflow-wrap value forgery is closed in-circuit. -/
+theorem transferFeeAvail_fee_forgery_unsat (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferFeeVmDescriptorAvail env true false)
+    (hbefore : env.loc (sbCol state.BALANCE_LO) = 1)
+    (hamount : env.loc (prmCol param.AMOUNT) = 0)
+    (hfee : env.loc feeCol = 1006632961)
+    (hdir : env.loc (prmCol param.DIRECTION) = 1) : False := by
+  have h := (transferFeeAvail_derives_availability hash env hcanon hsat hdir).2.1
+  rw [hbefore, hamount, hfee] at h; omega
+
+/-- **SOUNDNESS — FEE'D CREDIT NO-OVERFLOW/NO-UNDERFLOW DERIVED IN-CIRCUIT.** On a CREDIT row
+(`direction = 0`) a trace satisfying the hardened fee descriptor FORCES `fee ≤ before + amount`
+AND the exact ℤ move `after = before + amount − fee`: the `(1−dir)`-gated carry chain makes the
+credit addition exact (no overflow wrap — the intermediate `before + amount = mid < 2^30 < p`) and
+the ungated fee borrow chain makes the fee subtraction exact (no underflow wrap through the fee
+leg). Same single hypothesis: the deployed canonicality invariant. -/
+theorem transferFeeAvail_credit_exact (hash : List ℤ → ℤ) (env : VmRowEnv)
+    (isFirst : Bool)
+    (hcanon : ∀ c, 0 ≤ env.loc c ∧ env.loc c < 2013265921)
+    (hsat : satisfiedVm hash transferFeeVmDescriptorAvail env isFirst false)
+    (hdir : env.loc (prmCol param.DIRECTION) = 0) :
+    env.loc feeCol ≤ env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.AMOUNT)
+    ∧ env.loc (saCol state.BALANCE_LO)
+        = env.loc (sbCol state.BALANCE_LO) + env.loc (prmCol param.AMOUNT) - env.loc feeCol := by
+  obtain ⟨hcs, _hsites, hrs⟩ := hsat
+  -- range facts (each limb in [0, 2^15))
+  have hb0 := hrs _ (feeAvailRange_mem ⟨cBEF0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hb1 := hrs _ (feeAvailRange_mem ⟨cBEF1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have ha0 := hrs _ (feeAvailRange_mem ⟨cAFT0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have ha1 := hrs _ (feeAvailRange_mem ⟨cAFT1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hm0 := hrs _ (feeAvailRange_mem ⟨cAM0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hm1 := hrs _ (feeAvailRange_mem ⟨cAM1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hd0 := hrs _ (feeAvailRange_mem ⟨cMID0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hd1 := hrs _ (feeAvailRange_mem ⟨cMID1, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hf0 := hrs _ (feeAvailRange_mem ⟨cFEE0, 15⟩ (by simp [transferFeeAvailRanges]))
+  have hf1 := hrs _ (feeAvailRange_mem ⟨cFEE1, 15⟩ (by simp [transferFeeAvailRanges]))
+  simp only [VmRange.holds] at hb0 hb1 ha0 ha1 hm0 hm1 hd0 hd1 hf0 hf1
+  norm_num at hb0 hb1 ha0 ha1 hm0 hm1 hd0 hd1 hf0 hf1
+  -- gate facts
+  have gAsmB := hcs _ (feeAvailGate_mem (.gate gAsmBefore) (by simp [transferFeeAvailGates]))
+  have gAsmA := hcs _ (feeAvailGate_mem (.gate gAsmAfter) (by simp [transferFeeAvailGates]))
+  have gAsmM := hcs _ (feeAvailGate_mem (.gate gAsmAmount) (by simp [transferFeeAvailGates]))
+  have gAsmF := hcs _ (feeAvailGate_mem (.gate gAsmFee) (by simp [transferFeeAvailGates]))
+  have gK0 := hcs _ (feeAvailGate_mem (.gate gCry0Bool) (by simp [transferFeeAvailGates]))
+  have gK1 := hcs _ (feeAvailGate_mem (.gate gCry1Bool) (by simp [transferFeeAvailGates]))
+  have gCar0 := hcs _ (feeAvailGate_mem (.gate gFeeCarry0) (by simp [transferFeeAvailGates]))
+  have gCar1 := hcs _ (feeAvailGate_mem (.gate gFeeCarry1) (by simp [transferFeeAvailGates]))
+  have gNoC := hcs _ (feeAvailGate_mem (.gate gNoCarry) (by simp [transferFeeAvailGates]))
+  have gF0 := hcs _ (feeAvailGate_mem (.gate gFb0Bool) (by simp [transferFeeAvailGates]))
+  have gF1 := hcs _ (feeAvailGate_mem (.gate gFb1Bool) (by simp [transferFeeAvailGates]))
+  have gSub0 := hcs _ (feeAvailGate_mem (.gate gFeeSub0) (by simp [transferFeeAvailGates]))
+  have gSub1 := hcs _ (feeAvailGate_mem (.gate gFeeSub1) (by simp [transferFeeAvailGates]))
+  have gNoF := hcs _ (feeAvailGate_mem (.gate gNoFeeBorrow) (by simp [transferFeeAvailGates]))
+  simp only [holdsVm_gate_false, gAsmBefore, gAsmAfter, gAsmAmount, gAsmFee, gCry0Bool, gCry1Bool,
+    gFeeCarry0, gFeeCarry1, gNoCarry, gFb0Bool, gFb1Bool, gFeeSub0, gFeeSub1, gNoFeeBorrow,
+    eCreditSel, eSA, eSB, ePrm, eSub,
+    EmittedExpr.eval] at gAsmB gAsmA gAsmM gAsmF gK0 gK1 gCar0 gCar1 gNoC gF0 gF1 gSub0 gSub1 gNoF
+  rw [hdir] at gCar0 gCar1 gNoC
+  simp only [mul_zero, add_zero, one_mul] at gCar0 gCar1 gNoC
+  -- carry + fee-borrow bits are boolean
+  have cry0Bool : 0 ≤ env.loc cCRY0 ∧ env.loc cCRY0 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gK0
+    obtain ⟨z0, zp⟩ := hcanon cCRY0
+    rcases pPrimeInt.dvd_mul.mp gK0 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have cry1Bool : 0 ≤ env.loc cCRY1 ∧ env.loc cCRY1 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gK1
+    obtain ⟨z0, zp⟩ := hcanon cCRY1
+    rcases pPrimeInt.dvd_mul.mp gK1 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have fb0Bool : 0 ≤ env.loc cFB0 ∧ env.loc cFB0 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gF0
+    obtain ⟨z0, zp⟩ := hcanon cFB0
+    rcases pPrimeInt.dvd_mul.mp gF0 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  have fb1Bool : 0 ≤ env.loc cFB1 ∧ env.loc cFB1 ≤ 1 := by
+    rw [Int.modEq_zero_iff_dvd] at gF1
+    obtain ⟨z0, zp⟩ := hcanon cFB1
+    rcases pPrimeInt.dvd_mul.mp gF1 with hd | hd
+    · obtain ⟨k, hk⟩ := hd; omega
+    · obtain ⟨k, hk⟩ := hd; omega
+  -- operand assemblies lift to exact ℤ
+  have eBef : env.loc (sbCol state.BALANCE_LO) = env.loc cBEF0 + 32768 * env.loc cBEF1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmB) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eAft : env.loc (saCol state.BALANCE_LO) = env.loc cAFT0 + 32768 * env.loc cAFT1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmA) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eAmt : env.loc (prmCol param.AMOUNT) = env.loc cAM0 + 32768 * env.loc cAM1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmM) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  have eFee : env.loc feeCol = env.loc cFEE0 + 32768 * env.loc cFEE1 :=
+    availCanonEq ((gate_modEq_iff (by ring)).mp gAsmF) (hcanon _).1 (hcanon _).2 (by omega) (by omega)
+  -- the carry chain + fee borrow chain are exact over ℤ
+  have e0 := availBounded gCar0 (by omega) (by omega)
+  have e1 := availBounded gCar1 (by omega) (by omega)
+  have eCC : env.loc cCRY1 = 0 := availBounded gNoC (by omega) (by omega)
+  have s0 : env.loc cMID0 + -1 * env.loc cFEE0 + 32768 * env.loc cFB0 + -1 * env.loc cAFT0 = 0 :=
+    availBounded gSub0 (by omega) (by omega)
+  have s1 : env.loc cMID1 + -1 * env.loc cFEE1 + -1 * env.loc cFB0
+      + 32768 * env.loc cFB1 + -1 * env.loc cAFT1 = 0 :=
+    availBounded gSub1 (by omega) (by omega)
+  have eFB : env.loc cFB1 = 0 := availBounded gNoF (by omega) (by omega)
+  constructor <;> omega
+
+/-! ### LIVENESS: honest fee'd debit + credit rows satisfy the fee weld. -/
+
+/-- An honest FEE'D DEBIT row: outgoing transfer of `amount = 30` with `fee = 5` from
+`bal_lo 100 → 65` (`mid = 100 − 30 = 70`, then `70 − 5 = 65`), no borrows anywhere. -/
+def goodFeeAvailRow : VmRowEnv where
+  loc := fun v =>
+    if v = sel.TRANSFER then 1
+    else if v = sbCol state.BALANCE_LO then 100
+    else if v = saCol state.BALANCE_LO then 65
+    else if v = sbCol state.NONCE then 5
+    else if v = saCol state.NONCE then 6
+    else if v = prmCol param.AMOUNT then 30
+    else if v = prmCol param.DIRECTION then 1
+    else if v = feeCol then 5
+    else if v = cBEF0 then 100 else if v = cAFT0 then 65 else if v = cAM0 then 30
+    else if v = cMID0 then 70 else if v = cFEE0 then 5
+    else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
+
+/-- **LIVENESS (fee'd debit).** Every fee-weld gate holds on the honest `goodFeeAvailRow` — no
+valid fee'd transfer is rejected by the new gates. -/
+theorem goodFeeAvailRow_gates_hold (c : VmConstraint) (hc : c ∈ transferFeeAvailGates) :
+    c.holdsVm goodFeeAvailRow false false := by
+  have hb : ∃ b, c = .gate b ∧ b.eval goodFeeAvailRow.loc = 0 := by
+    fin_cases hc <;> exact ⟨_, rfl, by decide⟩
+  obtain ⟨b, rfl, hval⟩ := hb
+  rw [holdsVm_gate_false, hval]
+
+/-- **LIVENESS (fee'd debit ranges).** The honest limb witnesses satisfy the 15-bit ranges. -/
+theorem goodFeeAvailRow_ranges_hold (r : VmRange) (hr : r ∈ transferFeeAvailRanges) :
+    r.holds goodFeeAvailRow := by
+  fin_cases hr <;> exact ⟨by decide, by decide⟩
+
+/-- An honest FEE'D CREDIT row (`direction = 0`): credit of `amount = 30` with `fee = 5` into
+`bal_lo 100 → 125` (`mid = 100 + 30 = 130`, then `130 − 5 = 125`), no carries, no borrows. -/
+def goodFeeCreditRow : VmRowEnv where
+  loc := fun v =>
+    if v = sel.TRANSFER then 1
+    else if v = sbCol state.BALANCE_LO then 100
+    else if v = saCol state.BALANCE_LO then 125
+    else if v = sbCol state.NONCE then 5
+    else if v = saCol state.NONCE then 6
+    else if v = prmCol param.AMOUNT then 30
+    else if v = feeCol then 5
+    else if v = cBEF0 then 100 else if v = cAFT0 then 125 else if v = cAM0 then 30
+    else if v = cMID0 then 130 else if v = cFEE0 then 5
+    else 0
+  nxt := fun _ => 0
+  pub := fun _ => 0
+
+/-- **LIVENESS (fee'd credit).** Every fee-weld gate holds on the honest `goodFeeCreditRow`. -/
+theorem goodFeeCreditRow_gates_hold (c : VmConstraint) (hc : c ∈ transferFeeAvailGates) :
+    c.holdsVm goodFeeCreditRow false false := by
+  have hb : ∃ b, c = .gate b ∧ b.eval goodFeeCreditRow.loc = 0 := by
+    fin_cases hc <;> exact ⟨_, rfl, by decide⟩
+  obtain ⟨b, rfl, hval⟩ := hb
+  rw [holdsVm_gate_false, hval]
+
+/-- **LIVENESS (fee'd credit ranges).** The honest credit limb witnesses satisfy the ranges. -/
+theorem goodFeeCreditRow_ranges_hold (r : VmRange) (hr : r ∈ transferFeeAvailRanges) :
+    r.holds goodFeeCreditRow := by
+  fin_cases hr <;> exact ⟨by decide, by decide⟩
+
 /-! ## §12 — Axiom-hygiene pins (the honesty tripwire). -/
 
 #guard transferVmDescriptor.constraints.length == 14 + 14 + 4 + 3 + 1  -- gates+transitions+4first+3last+selectorGate
@@ -1187,6 +1605,29 @@ theorem goodCreditRow_ranges_hold (r : VmRange) (hr : r ∈ transferAvailRanges)
 #assert_axioms goodAvailRow_ranges_hold
 #assert_axioms goodCreditRow_gates_hold
 #assert_axioms goodCreditRow_ranges_hold
+
+-- The FEE'D availability weld (§11.8): 19 gates (4 asm + borrow chain to MID + carry chain to MID
+-- + ungated fee borrow chain MID→AFTER), 10 limb ranges, 16 witness cols (§11.7's 10 + mid/fee
+-- limbs + fee borrow bits).
+#guard transferFeeAvailGates.length == 19
+#guard transferFeeAvailRanges.length == 10
+#guard transferFeeVmDescriptorAvail.constraints.length == (13 + 14 + 4 + 3 + 1) + 19
+#guard transferFeeVmDescriptorAvail.ranges.length == 3 + 10
+#guard transferFeeVmDescriptorAvail.traceWidth == 204
+#guard transferFeeVmDescriptorAvail.name == "dregg-effectvm-transfer-v1-fee-avail"
+-- LIVENESS witness (kernel-evaluated): every fee-weld gate body is 0 on the honest debit AND
+-- credit rows.
+#guard transferFeeAvailGates.all (fun c => match c with | .gate b => b.eval goodFeeAvailRow.loc == 0 | _ => true)
+#guard transferFeeAvailGates.all (fun c => match c with | .gate b => b.eval goodFeeCreditRow.loc == 0 | _ => true)
+#assert_axioms transferFeeAvail_derives_availability_row
+#assert_axioms transferFeeAvail_derives_availability
+#assert_axioms transferFeeAvail_forgery_unsat
+#assert_axioms transferFeeAvail_fee_forgery_unsat
+#assert_axioms transferFeeAvail_credit_exact
+#assert_axioms goodFeeAvailRow_gates_hold
+#assert_axioms goodFeeAvailRow_ranges_hold
+#assert_axioms goodFeeCreditRow_gates_hold
+#assert_axioms goodFeeCreditRow_ranges_hold
 
 #assert_axioms transferRowGates_holds_iff
 #assert_axioms transferVm_faithful

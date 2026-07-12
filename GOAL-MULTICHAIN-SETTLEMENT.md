@@ -230,3 +230,12 @@ ivc_turn_chain, joint_turn_*, dsl_leaf_adapter, carrier_pin_twin, custom_binding
 committed apex_shrink/mpt_holding/dregg_outer sit in that churn; per ember commit-and-move-forward, fine. RUNNING:
 Rust blowup-prove sweep (baseline phase, long), wgpu NTT efficiency PoC (measures %-of-peak-bandwidth — the answer
 to ember's max-perf wariness), gnark-verify-real-shrink. APPLE SILICON wgpu = VERIFIED 107 Gmul/s bit-exact.
+
+## ⚑⚑ BLOWUP REBALANCE WON — MEASURED ~8× faster shrink prove (07-12 ~10am)
+The perf lever ember asked for, DONE on measured data. Real-apex sweep (one apex reused):
+  blowup 64 (19q): prove 760s, gnark 1.02M R1CS   →  blowup 8 (38q): prove 95s (8×), gnark 1.46M
+Set production shrink config OUTER_FRI_LOG_BLOWUP 6→3, NUM_QUERIES 19→38 (130-bit held). The ~12-18min
+shrink is now ~1.6min BEFORE any GPU. gnark verify 1.0M→1.5M R1CS (trivial, <<5M Groth16). blowup 8
+verified a real apex in the sweep = validated end-to-end. (blowup 4 panicked — config edge, deferred.)
+So the wrap prover: apex fold ~4-6min + shrink ~1.6min. Next perf tiers: wgpu BabyBear GPU (NTT PoC running,
+measuring %-peak-bandwidth for ember's max-perf question) + AIR-trace reduction (re-issue). Committed.

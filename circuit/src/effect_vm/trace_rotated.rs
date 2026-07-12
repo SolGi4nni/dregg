@@ -150,14 +150,23 @@ pub const TRANSFER_AVAIL_PAD: usize = super::transfer_avail_weld::AVAIL_WIDTH - 
 /// The burn twin (`burnVmDescriptorAvail`, Lean §8¾): 8 witness columns — burn is debit-only
 /// (no credit carry chain).
 pub const BURN_AVAIL_PAD: usize = super::burn_avail_weld::AVAIL_WIDTH - EFFECT_VM_WIDTH; // 8
+/// The FEE'D-transfer twin (`transferFeeVmDescriptorAvail`, Lean §11.8): 16 witness columns — the
+/// transfer weld's 10 (same indices) + MID intermediate limbs + fee limbs + fee borrow bits (the
+/// fee subtraction gets its OWN borrow chain; reusing the transfer chain blind would force
+/// `fee = 0`).
+pub const TRANSFER_FEE_AVAIL_PAD: usize =
+    super::transfer_fee_avail_weld::FEE_AVAIL_WIDTH - EFFECT_VM_WIDTH; // 16
 
 /// The availability-weld pad a ROTATED COHORT DESCRIPTOR demands of its producer trace, read off
-/// the descriptor's wire name (the hardened v1 faces are named `…-v1-avail` and every rotation /
-/// refuse-weld wrapper only APPENDS suffixes, so the mark survives to the registry TSV name).
-/// `0` for every bare member — the pre-flip registry produces byte-identical traces.
+/// the descriptor's wire name (the hardened v1 faces are named `…-v1-avail` / `…-v1-fee-avail` and
+/// every rotation / refuse-weld wrapper only APPENDS suffixes, so the mark survives to the
+/// registry TSV name). `0` for every bare member — the pre-flip registry produces byte-identical
+/// traces.
 pub fn avail_pad_for_descriptor_name(name: &str) -> usize {
     if name.starts_with("dregg-effectvm-transfer-v1-avail") {
         TRANSFER_AVAIL_PAD
+    } else if name.starts_with("dregg-effectvm-transfer-v1-fee-avail") {
+        TRANSFER_FEE_AVAIL_PAD
     } else if name.starts_with("dregg-effectvm-burn-v1-avail") {
         BURN_AVAIL_PAD
     } else {
@@ -167,14 +176,37 @@ pub fn avail_pad_for_descriptor_name(name: &str) -> usize {
 
 /// Fill one row's availability-weld witness columns (`[V1_WIDTH, V1_WIDTH + pad)`) from the row's
 /// OWN v1 state/param columns: the 15-bit operand limb decompositions + the borrow (and, for
-/// transfer, credit-carry) bits. Runs on EVERY row — the weld's assembly/range teeth are
-/// unconditional, and a NoOp padding row (`amount = 0`, `before = after`) closes both chains with
-/// zero bits. Fails closed (the descriptor's UNSAT) on an over-debit / credit-overflow row.
-fn fill_avail_aux_row(row: &mut [BabyBear], lead: &Effect) -> Result<(), String> {
+/// transfer, credit-carry; for the fee'd member, MID/fee) bits. Runs on EVERY row — the weld's
+/// assembly/range teeth are unconditional, and a NoOp padding row (`amount = 0`, `before = after`)
+/// closes the chains with zero bits. Fails closed (the descriptor's UNSAT) on an over-debit /
+/// credit-overflow / fee-underflow row. `avail_pad` selects the weld SHAPE — a Transfer lead rides
+/// either the bare-transfer 10-col weld or the fee'd 16-col weld, by target descriptor.
+fn fill_avail_aux_row(
+    row: &mut [BabyBear],
+    lead: &Effect,
+    avail_pad: usize,
+    fee_for_weld: Option<u32>,
+) -> Result<(), String> {
     use super::columns::{PARAM_BASE, param};
     let bef = row[STATE_BEFORE_BASE + state::BALANCE_LO].as_u32();
     let aft = row[STATE_AFTER_BASE + state::BALANCE_LO].as_u32();
     match lead {
+        Effect::Transfer { .. } if avail_pad == TRANSFER_FEE_AVAIL_PAD => {
+            let amount = row[PARAM_BASE + param::AMOUNT].as_u32();
+            let direction = row[PARAM_BASE + param::DIRECTION].as_u32();
+            // The fee rides the after-block RESERVED carrier (`feeCol`, col 89) — but on the BASE
+            // generator pass col 89 still holds the v1 passthrough (`sealed_mask | mode_flag`,
+            // pre-surgery), so the fee'd generator passes the REAL fee explicitly. The post-fee
+            // surgery RE-RUNS this fill after writing the fee + post-fee balances, so the base
+            // pass's aft limbs are transient.
+            let fee =
+                fee_for_weld.unwrap_or_else(|| row[STATE_AFTER_BASE + state::RESERVED].as_u32());
+            for (c, v) in super::transfer_fee_avail_weld::try_fill_transfer_fee_avail_aux(
+                bef, aft, amount, fee, direction,
+            )? {
+                row[c] = BabyBear::new(v);
+            }
+        }
         Effect::Transfer { .. } => {
             let amount = row[PARAM_BASE + param::AMOUNT].as_u32();
             let direction = row[PARAM_BASE + param::DIRECTION].as_u32();
@@ -514,6 +546,30 @@ pub fn generate_rotated_effect_vm_trace_avail(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    generate_rotated_effect_vm_trace_avail_core(
+        avail_pad,
+        None,
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+    )
+}
+
+/// The core of [`generate_rotated_effect_vm_trace_avail`], with the fee'd weld's REAL fee threaded
+/// (`fee_for_weld`) — the fee'd generator's base pass runs BEFORE the post-fee column surgery, so
+/// the fee weld's availability check (`fee ≤ mid`) must read the published fee, not the transient
+/// pre-surgery RESERVED column. `None` everywhere else (byte-identical to the public wrapper).
+fn generate_rotated_effect_vm_trace_avail_core(
+    avail_pad: usize,
+    fee_for_weld: Option<u32>,
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     // The shifted appendix bases (identical to the module constants at pad 0).
     let before_base = V1_WIDTH + avail_pad;
     let after_base = before_base + B_SPAN;
@@ -521,11 +577,13 @@ pub fn generate_rotated_effect_vm_trace_avail(
     match (avail_pad, effects.first()) {
         (0, _) => {}
         (p, Some(Effect::Transfer { .. })) if p == TRANSFER_AVAIL_PAD => {}
+        (p, Some(Effect::Transfer { .. })) if p == TRANSFER_FEE_AVAIL_PAD => {}
         (p, Some(Effect::Burn { .. })) if p == BURN_AVAIL_PAD => {}
         (p, lead) => {
             return Err(format!(
                 "rotated generator: avail pad {p} does not match lead effect {lead:?} \
-                 (transfer pad = {TRANSFER_AVAIL_PAD}, burn pad = {BURN_AVAIL_PAD})"
+                 (transfer pad = {TRANSFER_AVAIL_PAD}, fee'd transfer pad = \
+                 {TRANSFER_FEE_AVAIL_PAD}, burn pad = {BURN_AVAIL_PAD})"
             ));
         }
     }
@@ -571,7 +629,7 @@ pub fn generate_rotated_effect_vm_trace_avail(
     for row in trace.iter_mut() {
         row.resize(ROT_WIDTH + avail_pad, BabyBear::ZERO);
         if avail_pad > 0 {
-            fill_avail_aux_row(row, &effects[0])?;
+            fill_avail_aux_row(row, &effects[0], avail_pad, fee_for_weld)?;
         }
         fill_block(row, before_base, STATE_BEFORE_BASE, before_w);
         fill_block(row, after_base, STATE_AFTER_BASE, after_w);
@@ -841,6 +899,35 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
     caveat: &RotatedCaveatManifest,
     fee: u64,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    generate_rotated_effect_vm_trace_with_fee_avail(
+        0,
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+        fee,
+    )
+}
+
+/// The AVAILABILITY-WELD-AWARE fee-in-proof generator (the §11.8 hardened fee-member producer).
+/// `avail_pad = 0` is byte-identical to [`generate_rotated_effect_vm_trace_with_fee`];
+/// [`TRANSFER_FEE_AVAIL_PAD`] targets the hardened `…-v1-fee-avail` member: the appendix bases
+/// shift by the pad and the fee-weld witness columns (`[V1_WIDTH, V1_WIDTH + 16)`: operand/MID/fee
+/// limbs + borrow/carry/fee-borrow bits) are RE-LAID on every row AFTER the post-fee balance
+/// surgery, from the row's own post-fee v1 columns + the published fee. Fails closed (the
+/// hardened descriptor's UNSAT) if the fee exceeds the post-move balance on any row.
+// crypto index loops kept verbatim
+#[allow(clippy::needless_range_loop)]
+pub fn generate_rotated_effect_vm_trace_with_fee_avail(
+    avail_pad: usize,
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+    fee: u64,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     use super::columns::state;
 
     if fee > FEE_MAX {
@@ -849,10 +936,29 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
              range witness for a larger fee — the descriptor's table-2 lookup would be UNSAT)"
         ));
     }
+    if avail_pad != 0 && avail_pad != TRANSFER_FEE_AVAIL_PAD {
+        return Err(format!(
+            "fee-in-proof generator: avail pad {avail_pad} is neither 0 (bare member) nor the \
+             fee'd transfer pad {TRANSFER_FEE_AVAIL_PAD}"
+        ));
+    }
+    // The (pad-shifted) appendix bases — identical to the module constants at pad 0.
+    let before_base = V1_WIDTH + avail_pad;
+    let after_base = before_base + B_SPAN;
+    let caveat_base = before_base + 2 * B_SPAN;
 
     // The base rotated trace + 38-PI vector (PRE-fee after-balance, welds, v1 economic block).
-    let (mut trace, base_pis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+    // The REAL fee is threaded to the base pass's fee-weld fill so its availability check
+    // (`fee ≤ mid`) is the genuine one, not a read of the pre-surgery RESERVED column.
+    let (mut trace, base_pis) = generate_rotated_effect_vm_trace_avail_core(
+        avail_pad,
+        Some(fee as u32),
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+    )?;
 
     let fee_col = STATE_AFTER_BASE + state::RESERVED; // 89
     let record_digest = super::columns::AUX_BASE + super::columns::aux_off::STATE_RECORD_DIGEST; // 186
@@ -879,7 +985,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
         // OLD_COMMIT state).
         if !is_transfer_row {
             debit_v1_block_balance(&mut trace[r], STATE_BEFORE_BASE, fee, record_digest, None);
-            fill_block(&mut trace[r], BEFORE_BASE, STATE_BEFORE_BASE, before_w);
+            fill_block(&mut trace[r], before_base, STATE_BEFORE_BASE, before_w);
         }
         // AFTER block: debit on EVERY row (row 0's post-transfer after, and the NoOp carry-forward).
         // The AFTER block's GROUP-4 intermediates ARE published (cols 98/99/100), so thread them.
@@ -896,7 +1002,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
             record_digest,
             Some(inters),
         );
-        fill_block(&mut trace[r], AFTER_BASE, STATE_AFTER_BASE, after_w);
+        fill_block(&mut trace[r], after_base, STATE_AFTER_BASE, after_w);
         // The fee rides the RESERVED limb on EVERY row, in BOTH the after-block (col 89 — read by the
         // bal-lo fee gate and the last-row PI-38 pin) AND the before-block (col 67). The fee descriptor
         // DROPS the RESERVED passthrough GATE but KEEPS the RESERVED cross-row CONTINUITY transition
@@ -921,6 +1027,16 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
             trace[r][super::columns::PARAM_BASE] = fee_felt; // param0 (amount) = fee
             trace[r][super::columns::PARAM_BASE + 1] = BabyBear::ZERO; // param1 (dir) = 0
         }
+
+        // HARDENED MEMBER (§11.8): re-lay the fee-weld witness columns from the row's OWN
+        // post-surgery v1 columns (post-fee balances, the NoOp rows' amount = fee / dir = 0
+        // rewrite, the fee at col 89) — the base pass's aft/mid limbs were pre-fee transients.
+        // The NoOp rows close as a CREDIT chain (`mid = before + fee`, then `mid − fee = after =
+        // before`); the transfer row closes its own direction's chain. Fails closed if the fee
+        // exceeds the post-move balance (the fee-leg forgery).
+        if avail_pad == TRANSFER_FEE_AVAIL_PAD {
+            fill_avail_aux_row(&mut trace[r], &effects[0], avail_pad, Some(fee as u32))?;
+        }
     }
 
     // Re-read the rotated PI vector from the post-fee trace carriers so producer + verifier agree.
@@ -932,7 +1048,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
     dpis[super::pi::NEW_COMMIT] = last[STATE_AFTER_BASE + state::STATE_COMMIT]; // v1 after STATE_COMMIT
     dpis[super::pi::FINAL_BAL_LO] = last[STATE_AFTER_BASE + state::BALANCE_LO]; // v1 after bal_lo
     dpis[super::pi::FINAL_BAL_HI] = last[STATE_AFTER_BASE + state::BALANCE_HI]; // v1 after bal_hi
-    dpis[V1_PI_COUNT + 1] = last[AFTER_BASE + B_STATE_COMMIT]; // rotated NEW_COMMIT (post-fee)
+    dpis[V1_PI_COUNT + 1] = last[after_base + B_STATE_COMMIT]; // rotated NEW_COMMIT (post-fee)
     // (the rotated OLD_COMMIT / height / caveat pins are unaffected by the fee; ride the base vector.)
     dpis.push(fee_felt); // PI ROT_PI_COUNT: the published fee (col 89, last-row pinned).
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 1);
@@ -940,7 +1056,7 @@ pub fn generate_rotated_effect_vm_trace_with_fee(
     // The fee surgery never touches the caveat region, so the base generator's rc values are
     // still the trace's carrier values — re-read them from the post-fee last row all the same.
     for k in 0..DFA_RC_LEN {
-        dpis.push(last[CAVEAT_BASE + C_DFA_RC_OFF + k]);
+        dpis.push(last[caveat_base + C_DFA_RC_OFF + k]);
     }
 
     Ok((trace, dpis))
@@ -3310,21 +3426,37 @@ pub fn patch_attenuate_base_for_cap_open(
 /// rotated trace the base `attenuateV3` constraints already accept (e.g. from
 /// [`generate_rotated_effect_vm_trace`] on an AttenuateCapability turn).
 pub fn widen_to_cap_open(trace: &mut [Vec<BabyBear>], w: &CapOpenWitness) -> Result<(), String> {
+    widen_to_cap_open_avail(trace, w, 0)
+}
+
+/// The AVAIL-AWARE cap-open widener (GAP #4, cap-open member): [`widen_to_cap_open`] for a base
+/// trace produced at a NONZERO availability pad ([`generate_rotated_effect_vm_trace_avail`]). The
+/// hardened `…-v1-avail` transfer cap-open members widen their v1 FACE by `avail_pad` witness
+/// columns, so the rotated appendix, the graduated lanes, and hence the cap-open appendix base ALL
+/// shift by the pad (Lean `effCapOpenV3` appends at `base.traceWidth`). At `avail_pad = 0` this is
+/// byte-identical to the bare widener. Derive the pad from the TARGET DESCRIPTOR's name
+/// ([`avail_pad_for_descriptor_name`]) — the pad is a property of the descriptor being proven.
+pub fn widen_to_cap_open_avail(
+    trace: &mut [Vec<BabyBear>],
+    w: &CapOpenWitness,
+    avail_pad: usize,
+) -> Result<(), String> {
     if trace.is_empty() {
         return Err("cap-open widen: empty base trace".into());
     }
-    if trace[0].len() != ROT_WIDTH {
+    if trace[0].len() != ROT_WIDTH + avail_pad {
         return Err(format!(
-            "cap-open widen: base trace width {} != {ROT_WIDTH}",
-            trace[0].len()
+            "cap-open widen: base trace width {} != {} (ROT_WIDTH {ROT_WIDTH} + avail pad {avail_pad})",
+            trace[0].len(),
+            ROT_WIDTH + avail_pad
         ));
     }
     if w.recomposes() != w.cap_root {
         return Err("cap-open widen: witness does not recompose its cap_root".into());
     }
     for row in trace.iter_mut() {
-        row.resize(CAP_OPEN_WIDTH, BabyBear::ZERO);
-        fill_cap_open(row, CAP_OPEN_BASE, w);
+        row.resize(CAP_OPEN_WIDTH + avail_pad, BabyBear::ZERO);
+        fill_cap_open(row, CAP_OPEN_BASE + avail_pad, w);
     }
     Ok(())
 }
@@ -3604,10 +3736,27 @@ pub fn widen_to_cap_open_tb(
     actor: BabyBear,
     dst: BabyBear,
 ) -> Result<(), String> {
-    widen_to_cap_open(trace, w)?;
+    widen_to_cap_open_tb_avail(trace, w, actor, dst, 0)
+}
+
+/// The AVAIL-AWARE turn-bound widener (GAP #4, cap-open TB member): [`widen_to_cap_open_tb`] for a
+/// base trace produced at a NONZERO availability pad — the hardened
+/// `transferCapOpenTBVmDescriptor2R24` member's cap-open appendix AND its two turn-identity
+/// columns ride `avail_pad` past the bare layout (the three turn-identity PI slots are UNCHANGED:
+/// the pad shifts columns, never PI indices). At `avail_pad = 0` this is byte-identical to the
+/// bare TB widener.
+pub fn widen_to_cap_open_tb_avail(
+    trace: &mut [Vec<BabyBear>],
+    w: &CapOpenWitness,
+    actor: BabyBear,
+    dst: BabyBear,
+    avail_pad: usize,
+) -> Result<(), String> {
+    widen_to_cap_open_avail(trace, w, avail_pad)?;
     for row in trace.iter_mut() {
-        row.resize(CAP_OPEN_TB_WIDTH, BabyBear::ZERO);
-        fill_cap_open_turn_pins(row, actor, dst);
+        row.resize(CAP_OPEN_TB_WIDTH + avail_pad, BabyBear::ZERO);
+        row[CAP_OPEN_TB_ACTOR_COL + avail_pad] = actor;
+        row[CAP_OPEN_TB_DST_COL + avail_pad] = dst;
     }
     Ok(())
 }
@@ -3881,13 +4030,31 @@ pub fn append_wide_carriers(
     base_pis: Vec<BabyBear>,
     host_width: usize,
 ) -> Vec<BabyBear> {
+    append_wide_carriers_avail(trace, base_pis, host_width, 0)
+}
+
+/// The AVAIL-AWARE generic wide widener (GAP #4, the wide leg of the availability weld):
+/// [`append_wide_carriers`] for a base trace produced at a NONZERO availability pad. A hardened
+/// `…-v1-avail` member lays its rotated BEFORE/AFTER limb blocks `avail_pad` past the bare layout
+/// (`generate_rotated_effect_vm_trace_avail` — the pad shifts every appendix base), so the wide
+/// carriers must RE-ABSORB the limbs at `BEFORE_BASE + avail_pad` / `AFTER_BASE + avail_pad`, and
+/// the caller passes the member's avail-shifted HOST width (`GRAD_ROT_WIDTH + avail_pad` for the
+/// transfer-shape cohort, `CAP_OPEN_TB_WIDTH + avail_pad` for the TB route). PI indices are
+/// UNCHANGED (the pad shifts columns, never PIs). At `avail_pad = 0` byte-identical to the bare
+/// widener.
+pub fn append_wide_carriers_avail(
+    trace: &mut [Vec<BabyBear>],
+    base_pis: Vec<BabyBear>,
+    host_width: usize,
+    avail_pad: usize,
+) -> Vec<BabyBear> {
     let cb_before = host_width;
     let cb_after = host_width + WIDE_NUM_CARRIERS * 8;
     let wide_width = host_width + 2 * WIDE_NUM_CARRIERS * 8;
     for row in trace.iter_mut() {
         row.resize(wide_width, BabyBear::ZERO);
-        fill_wide_block(row, cb_before, BEFORE_BASE);
-        fill_wide_block(row, cb_after, AFTER_BASE);
+        fill_wide_block(row, cb_before, BEFORE_BASE + avail_pad);
+        fill_wide_block(row, cb_after, AFTER_BASE + avail_pad);
     }
     let mut dpis = base_pis;
     // STAGE-1 PIN RETIREMENT: the 1-felt rotated OLD/NEW commit pins (the first two of the four
@@ -3931,8 +4098,33 @@ pub fn generate_rotated_transfer_shape_wide(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
-    let (mut trace, base_pis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, before_w, after_w, caveat)?;
+    generate_rotated_transfer_shape_wide_avail(0, initial_state, effects, before_w, after_w, caveat)
+}
+
+/// The AVAIL-AWARE transfer-shape wide generator (GAP #4, the wide leg): the base trace at the
+/// availability pad ([`generate_rotated_effect_vm_trace_avail`] — witness limbs at
+/// `[V1_WIDTH, V1_WIDTH + pad)`, every appendix base shifted) + the generic widener at the
+/// avail-shifted host width (`GRAD_ROT_WIDTH + avail_pad`), limbs re-absorbed at the shifted
+/// rotated bases. The wide dispatcher routes here with
+/// [`avail_pad_for_descriptor_name`]`(&desc.name)` — a hardened `…-v1-avail` WIDE member (the
+/// post-retarget `transferVmDescriptor2R24` row) gets the pad; every bare member takes pad 0
+/// (byte-identical to the legacy path).
+pub fn generate_rotated_transfer_shape_wide_avail(
+    avail_pad: usize,
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    let (mut trace, base_pis) = generate_rotated_effect_vm_trace_avail(
+        avail_pad,
+        initial_state,
+        effects,
+        before_w,
+        after_w,
+        caveat,
+    )?;
     if base_pis.len() != ROT_PI_COUNT + DFA_RC_LEN {
         return Err(format!(
             "transfer-shape wide generator: base PI vector {} != {} (this wrapper is for the bare \
@@ -3941,7 +4133,8 @@ pub fn generate_rotated_transfer_shape_wide(
             ROT_PI_COUNT + DFA_RC_LEN
         ));
     }
-    let dpis = append_wide_carriers(&mut trace, base_pis, GRAD_ROT_WIDTH);
+    let dpis =
+        append_wide_carriers_avail(&mut trace, base_pis, GRAD_ROT_WIDTH + avail_pad, avail_pad);
     Ok((trace, dpis))
 }
 
@@ -5384,9 +5577,21 @@ pub fn generate_rotated_effect_vm_descriptor_and_trace_wide(
         d.drain(ROT_PI_COUNT..ROT_PI_COUNT + DFA_RC_LEN);
         (t, d, vec![])
     } else {
-        let (t, d) =
-            generate_rotated_transfer_shape_wide(initial_state, effects, before, after, caveat)
-                .map_err(|e| format!("wide transfer-shape generation: {e}"))?;
+        // THE AVAILABILITY-WELD PAD (GAP #4, wide leg): the resolved committed WIDE row for a
+        // hardened `…-v1-avail` member (the post-retarget `transferVmDescriptor2R24` row) demands
+        // the avail-padded geometry — witness limbs at `[V1_WIDTH, V1_WIDTH + pad)`, every
+        // appendix + carrier base shifted by the pad. Descriptor-name-driven: 0 for every bare
+        // member (byte-identical legacy path).
+        let avail_pad = avail_pad_for_descriptor_name(&desc.name);
+        let (t, d) = generate_rotated_transfer_shape_wide_avail(
+            avail_pad,
+            initial_state,
+            effects,
+            before,
+            after,
+            caveat,
+        )
+        .map_err(|e| format!("wide transfer-shape generation: {e}"))?;
         (t, d, vec![])
     };
 

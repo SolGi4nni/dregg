@@ -84,9 +84,15 @@ def main : IO Unit := do
   -- THE AVAILABILITY FLIP: override the two flipped cohort keys with the hardened wire members
   -- (the availability weld gates + 15-bit range teeth + the SAME refuse/rc wrappers). Every other
   -- member emits its committed bare bytes unchanged.
+  -- The FEE'D transfer key (tail position 44, the live sovereign transfer's effect-vm leg) rides
+  -- the flip too: `transferFeeV3AvailWire` — the §11.8 fee availability weld (MID-linked
+  -- borrow/carry chains closing the wrap through BOTH debit legs, amount AND fee) under the same
+  -- fee pin + rc wrapper; discharge in RotatedKernelRefinementFeeAvail.
   let availOverride : List (String × Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2) :=
     [ ("transferVmDescriptor2R24", Dregg2.Circuit.Emit.AvailWireMembers.transferV3AvailWire)
-    , ("burnVmDescriptor2R24", Dregg2.Circuit.Emit.AvailWireMembers.burnV3AvailWire) ]
+    , ("burnVmDescriptor2R24", Dregg2.Circuit.Emit.AvailWireMembers.burnV3AvailWire)
+    , ("transferFeeVmDescriptor2R24",
+       Dregg2.Circuit.Emit.AvailWireMembers.transferFeeV3AvailWire) ]
   for (key, d0) in v3RegistryCapOpenDep do
     let d := (availOverride.lookup key).getD d0
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
