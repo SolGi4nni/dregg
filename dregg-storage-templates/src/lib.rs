@@ -36,6 +36,14 @@
 //! - [`relay_operator`] — `RelayOperatorTemplate` (per §3.5, DFA
 //!   caveat for dispatch + `RateLimitBySum` for quota +
 //!   `BoundedBy` for slash-on-dispute).
+//! - [`bonded_operator`] — the bond/standing lens over the
+//!   relay-operator template (post a bond, pin the operator key, read
+//!   bond + standing). Not a sixth factory.
+//! - [`bonded_slash`] — the back half of the economic slash loop:
+//!   custody evidence → typed challenge window → adjudication →
+//!   the executor-enforced slash transition with a conserving seizure
+//!   Transfer, or a typed acquittal. Consumes the
+//!   `dregg_captp::custody` referee; also not a new factory.
 //!
 //! ## What this crate retires
 //!
@@ -77,6 +85,7 @@
 
 pub mod blinded_queue;
 pub mod bonded_operator;
+pub mod bonded_slash;
 pub mod cap_inbox;
 pub mod programmable_queue;
 pub mod pubsub_topic;

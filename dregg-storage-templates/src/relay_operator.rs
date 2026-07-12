@@ -420,6 +420,8 @@ pub fn build_relay_action(
 /// The accompanying `Effect::Transfer` from the relay cell to the
 /// governance treasury is the cclerk-side composition; this template
 /// produces the state-transition effects (bond + dispute counter).
+/// [`crate::bonded_slash::adjudicate`] is the canonical composition:
+/// referee verdict → this action + the conserving seizure Transfer.
 pub fn build_slash_action(
     cclerk: &AppCipherclerk,
     relay_cell: CellId,

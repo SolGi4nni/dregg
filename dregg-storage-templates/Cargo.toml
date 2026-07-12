@@ -29,6 +29,11 @@ name = "dregg_storage_templates"
 dregg-app-framework = { path = "../app-framework" }
 dregg-cell = { path = "../cell", default-features = false }
 dregg-types = { path = "../types" }
+# The custody referee (CustodyReceipt / EvidenceOfDrop / InboxState /
+# adjudicate_from_inbox) consumed by the `bonded_slash` weld: evidence →
+# adjudication → the relay-operator slash transition + conserving seizure.
+# Acyclic: dregg-captp depends only on types/cell/pq, never on this crate.
+dregg-captp = { path = "../captp" }
 
 blake3 = "1"
 serde = { workspace = true }
