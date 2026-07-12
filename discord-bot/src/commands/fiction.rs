@@ -1,32 +1,46 @@
-//! `/dungeon` — a whole Discord channel plays a shared, AI-narrated, on-chain dungeon.
+//! `/dungeon` — a whole Discord channel plays a shared, AI-narrated dungeon on the
+//! **REAL dregg executor**.
 //!
-//! This is the [`attested_dm`] fiction engine surfaced as a **party game**: a channel opens a
-//! session, the bot posts the room (gemma2 narrates it, the engine describes it) with a row of
-//! **buttons for the candidate moves**, and every button press is a **ballot** — one write-once
-//! vote per Discord user per round, attributed not to a nickname but to that user's derived
-//! **dregg identity** (`cipherclerk::UserCipherclerk::derive(...).public_key_hex()`). When the
-//! round closes, the **plurality winner** is played through [`GameSession::command`]: a legal
-//! move lands as one verified, attested, on-chain turn (the receipt count grows); an illegal one
-//! is refused in-band — the crowd decided, the world disposed, room unchanged, no receipt (the
-//! anti-ghost tooth). `/dungeon verify` re-verifies the whole hash chain in-channel.
+//! The play path is [`dungeon_on_dregg`]'s committed universe — "The Warden's Keep" —
+//! hosted on [`spween_dregg`]'s real [`WorldCell`]: the same `EmbeddedExecutor`, cell,
+//! `CellProgram` and [`TurnReceipt`] the flagship substrate uses, NOT `attested-dm`'s
+//! toy `WorldCell`/blake3 ledger. What the party pays for and plays is verifiable
+//! substrate, not a LARP hash-chain.
 //!
-//! The engine is the SOURCE OF TRUTH: the AI narrates, the world resolves, the chain remembers.
-//! A jailbroken narration cannot open a locked door or mint an unearned item — only a move the
-//! deterministic resolver admits ever changes the world.
+//! A channel opens a session, the bot posts the room (Bedrock/gemma narrates it, the
+//! scene describes it) with a row of **buttons for the candidate moves**, and every
+//! button press is a **ballot** — one write-once vote per Discord user per round,
+//! attributed not to a nickname but to that user's derived **dregg identity**
+//! (`cipherclerk::UserCipherclerk::derive(...).public_key_hex()`). When the round closes,
+//! the **plurality winner** is applied as ONE real cap-bounded turn
+//! ([`WorldCell::apply_choice`]): a legal move lands a real [`TurnReceipt`] (the receipt
+//! chain grows); an illegal one — a move the executor's installed `StateConstraint`
+//! refuses (a killing blow past the HP floor, a second grab of a `WriteOnce` relic, an
+//! over-budget ward, a climb up a one-way stair) — is a real [`WorldError::Refused`]:
+//! the crowd decided, the world disposed, nothing commits, no receipt (the anti-ghost
+//! tooth). `/dungeon verify` re-verifies the whole receipt chain by REPLAY
+//! ([`spween_dregg::verify_by_replay`]) — re-driving a fresh, identically-seeded
+//! world-cell through the recorded choices and confirming it reproduces exactly the
+//! committed state chain. A forged/reordered record fails.
+//!
+//! The executor is the SOURCE OF TRUTH: the AI narrates, the world resolves, the chain
+//! remembers. A jailbroken narration cannot open a gated stair or mint an unearned
+//! relic — only a move the verified executor admits ever changes the world.
 
 use std::collections::HashMap;
 use std::sync::{Mutex, OnceLock};
 
 use serenity::all::{
-    ButtonStyle, CommandDataOptionValue, CommandInteraction, CommandOptionType,
-    ComponentInteraction, Context, CreateActionRow, CreateButton, CreateCommand,
-    CreateCommandOption, CreateEmbed, CreateEmbedFooter, CreateInteractionResponse,
-    CreateInteractionResponseMessage,
+    ButtonStyle, CommandInteraction, CommandOptionType, ComponentInteraction, Context,
+    CreateActionRow, CreateButton, CreateCommand, CreateCommandOption, CreateEmbed,
+    CreateEmbedFooter, CreateInteractionResponse, CreateInteractionResponseMessage,
 };
 
-use attested_dm::{
-    GameSession, GameStatus, GameWorld, Issue, PlayResult, WorldCell, bramble_keep, deepdark_mine,
-    parse_world, starfall_spire, sunken_vault, validate,
+use dregg_app_framework::TurnReceipt;
+use dungeon_on_dregg::{deploy_keep, keep_scene};
+use spween::{CompareOp, ConditionClause, ConditionExpr, PassageContent, Scene};
+use spween_dregg::{
+    Playthrough, StepReceipt, VerifyBreak, WorldCell, WorldError, value_to_u64, verify_by_replay,
 };
 
 use crate::BotState;
@@ -36,145 +50,299 @@ use crate::cipherclerk::UserCipherclerk;
 const DUNGEON_COLOR: u32 = 0x7B2CBF;
 /// The honest tagline that footers every dungeon surface.
 const TAGLINE: &str = "the AI narrates · the world resolves · the chain remembers";
+/// The hosted universe's display name.
+const KEEP_NAME: &str = "The Warden's Keep";
+/// The Keep's objective, stated for the party.
+const KEEP_OBJECTIVE: &str = "trade past the gate-warden, claim the crown, descend the collapsing stair, and seize the hoard";
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Embedded sample dungeons (authored in the `.dungeon` DSL) — compiled in so the
-// bot always has them, no runtime path dependency. The four hand-written worlds
-// come from the engine directly.
+// The REAL engine adapter — a session over a dungeon-on-dregg WorldCell.
 // ─────────────────────────────────────────────────────────────────────────────
 
-const LANTERN_FEN: &str = include_str!("../../../attested-dm/dungeons/lantern_fen.dungeon");
-const CLOCKWORK_ORCHARD: &str =
-    include_str!("../../../attested-dm/dungeons/clockwork_orchard.dungeon");
-const EMBER_OBSERVATORY: &str =
-    include_str!("../../../attested-dm/dungeons/ember_observatory.dungeon");
-
-/// The playable catalogue: `(slug, display name, one-line blurb)`.
-const CATALOG: &[(&str, &str, &str)] = &[
-    (
-        "sunken-vault",
-        "The Sunken Vault",
-        "a drowned vault, a Warden, a heart to carry out",
-    ),
-    (
-        "bramble-keep",
-        "The Bramble Keep",
-        "thorn-choked halls and a foe that bleeds you slow",
-    ),
-    (
-        "starfall-spire",
-        "The Starfall Spire",
-        "an orrery of learned words and warded stairs",
-    ),
-    (
-        "deepdark-mine",
-        "The Deepdark Mine",
-        "a lamp that burns down; the dark is absolute",
-    ),
-    (
-        "lantern-fen",
-        "The Lantern Fen",
-        "a bog crossing lit one guttering lantern at a time",
-    ),
-    (
-        "clockwork-orchard",
-        "The Clockwork Orchard",
-        "brass trees, a Keeper's trade, a heartspring",
-    ),
-    (
-        "ember-observatory",
-        "The Ember Observatory",
-        "a cold dome and the spark to relight it",
-    ),
-];
-
-/// Load the [`GameWorld`] for a catalogue slug (builtins built directly; samples parsed from
-/// their embedded DSL source). `None` for an unknown slug.
-fn load_world(slug: &str) -> Option<GameWorld> {
-    match slug {
-        "sunken-vault" => Some(sunken_vault()),
-        "bramble-keep" => Some(bramble_keep()),
-        "starfall-spire" => Some(starfall_spire()),
-        "deepdark-mine" => Some(deepdark_mine()),
-        // The samples parse fail-closed; a sound sample yields a world, else it is simply
-        // absent from the catalogue at runtime (it never ships a broken world to the channel).
-        "lantern-fen" => parse_playable(LANTERN_FEN),
-        "clockwork-orchard" => parse_playable(CLOCKWORK_ORCHARD),
-        "ember-observatory" => parse_playable(EMBER_OBSERVATORY),
-        _ => None,
-    }
-}
-
-/// The display name for a slug (falls back to the slug itself).
-fn display_name(slug: &str) -> String {
-    CATALOG
-        .iter()
-        .find(|(s, _, _)| *s == slug)
-        .map(|(_, n, _)| n.to_string())
-        .unwrap_or_else(|| slug.to_string())
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// The forge flow — parse + validate an authored dungeon, fail-closed.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Why a `/dungeon forge` source was refused.
+/// The outcome of applying a round's plurality winner as a real turn.
 #[derive(Clone, Debug)]
-pub enum ForgeError {
-    /// A syntactic / whole-file parse error, carrying its 1-based line and message.
-    Parse { line: usize, message: String },
-    /// The source parsed but the validator found blocking (`is_error`) issues — every one listed.
-    Invalid(Vec<Issue>),
+pub enum MoveOutcome {
+    /// The move landed as one verified, committed turn — a real [`TurnReceipt`].
+    Landed {
+        /// The committed turn's receipt (a genuine `turn_hash`, chained pre/post state).
+        receipt: TurnReceipt,
+        /// Whether this move ended the dungeon (navigated to `END`).
+        ended: bool,
+    },
+    /// The real executor REFUSED the move (an installed `StateConstraint` bit): nothing
+    /// committed, no receipt — the anti-ghost tooth. Carries the executor's reason.
+    Refused(String),
 }
 
-/// **Forge a playable world from `.dungeon` source, fail-closed.** Parses syntactically
-/// ([`parse_world`]) then runs the semantic [`validate`] and refuses if ANY issue
-/// [`Issue::is_error`]s — listing every blocking issue, not just the first. A returned world is
-/// guaranteed sound enough to open a session over.
-pub fn forge_world(src: &str) -> Result<GameWorld, ForgeError> {
-    let world = parse_world(src).map_err(|e| ForgeError::Parse {
-        line: e.line,
-        message: e.message,
-    })?;
-    let errors: Vec<Issue> = validate(&world)
-        .into_iter()
-        .filter(Issue::is_error)
-        .collect();
-    if !errors.is_empty() {
-        return Err(ForgeError::Invalid(errors));
+/// **A play session over the REAL substrate.** Owns the live [`WorldCell`] (the committed
+/// dungeon-on-dregg Keep), the owned scene (choices/conditions the ballot is built from),
+/// the deterministic seed, and the accumulated [`Playthrough`] (genesis + committed steps)
+/// that `/dungeon verify` re-verifies by replay.
+pub struct RealSession {
+    /// The live world-cell — genesis committed, subsequent moves committed on it.
+    world: WorldCell,
+    /// The owned Keep scene (deterministic; a re-deploy under `seed` reproduces it).
+    scene: Scene,
+    /// The deterministic deploy seed — `verify` re-deploys a fresh identically-seeded cell.
+    seed: u8,
+    /// The genesis receipt (intro entry effects + initial passage bind).
+    genesis: TurnReceipt,
+    /// The committed slot vector right after genesis (the replay verifier reproduces it).
+    genesis_state: Vec<u64>,
+    /// The committed choice-steps, in order — each a real landed turn.
+    steps: Vec<StepReceipt>,
+}
+
+impl RealSession {
+    /// Open a fresh session hosting the Keep: deploy a real world-cell under `seed`, run
+    /// the intro's entry effects as the genesis turn (via the stock [`Driver`], which we
+    /// then finish to hold the post-genesis cell), and record the genesis snapshot.
+    pub fn open(seed: u8) -> Result<RealSession, WorldError> {
+        let scene = keep_scene();
+        let world = deploy_keep(seed);
+        // Drive genesis with the stock runtime (intro entry effects: hp=50, mana_budget=50),
+        // then finish to hold the post-genesis world-cell for direct `apply_choice` play.
+        let driver = spween_dregg::Driver::start(world, &scene)?;
+        let genesis = driver.genesis().cloned().unwrap_or_default();
+        let genesis_state = driver.playthrough().genesis_state;
+        let (world, _no_steps) = driver.finish();
+        Ok(RealSession {
+            world,
+            scene,
+            seed,
+            genesis,
+            genesis_state,
+            steps: Vec::new(),
+        })
     }
-    Ok(world)
+
+    /// The current passage name (the "room"), if the dungeon is still running.
+    pub fn current_passage_name(&self) -> Option<String> {
+        let idx = self.world.read_passage()?;
+        self.scene.passages.get(idx).map(|p| p.name.to_string())
+    }
+
+    /// The current room's prose (the scene's authored description of the passage).
+    pub fn current_prose(&self) -> String {
+        let Some(idx) = self.world.read_passage() else {
+            return String::new();
+        };
+        let Some(passage) = self.scene.passages.get(idx) else {
+            return String::new();
+        };
+        let mut out = String::new();
+        for c in &passage.content {
+            if let PassageContent::Prose(p) = c {
+                if !out.is_empty() {
+                    out.push(' ');
+                }
+                out.push_str(p.text.trim());
+            }
+        }
+        out
+    }
+
+    /// Whether the dungeon has ended.
+    pub fn is_ended(&self) -> bool {
+        self.world.read_passage().is_none()
+    }
+
+    /// The number of real verified turns so far (genesis + committed steps).
+    pub fn receipts_len(&self) -> usize {
+        1 + self.steps.len()
+    }
+
+    /// Read a narrative var off the committed cell state.
+    pub fn read_var(&self, name: &str) -> u64 {
+        self.world.read_var(name)
+    }
+
+    /// **Build the ballot for the current room** — the current passage's choices, in the
+    /// SAME order the compiler indexed them (so the ballot option's `choice_index` is
+    /// exactly the index [`WorldCell::apply_choice`] checks the gate case against). A
+    /// choice whose scene condition currently fails is marked `🔒` (a decoration; the
+    /// executor is the sole referee — a transition-gated illegal move still surfaces as a
+    /// real refusal on close).
+    pub fn round_options(&self) -> Vec<VoteOption> {
+        let Some(idx) = self.world.read_passage() else {
+            return Vec::new();
+        };
+        let Some(passage) = self.scene.passages.get(idx) else {
+            return Vec::new();
+        };
+        let mut out = Vec::new();
+        for (choice_index, choice) in passage
+            .content
+            .iter()
+            .filter_map(|c| match c {
+                PassageContent::Choice(ch) => Some(ch),
+                _ => None,
+            })
+            .enumerate()
+        {
+            let available = choice
+                .condition
+                .as_ref()
+                .map(|c| eval_condition(&c.expr, &self.world))
+                .unwrap_or(true);
+            let label = if available {
+                choice.text.to_string()
+            } else {
+                format!("🔒 {}", choice.text)
+            };
+            out.push(VoteOption {
+                label: truncate(&label, 80),
+                choice_index,
+            });
+        }
+        out
+    }
+
+    /// **Apply a winning choice as ONE real cap-bounded turn.** The `choice_index` is the
+    /// index of the winning move among the current passage's choices. A legal move commits
+    /// a real [`TurnReceipt`] (recorded onto the playthrough); an illegal one is a real
+    /// [`WorldError::Refused`] — nothing commits, no step recorded (anti-ghost).
+    pub fn apply_winner(&mut self, choice_index: usize) -> MoveOutcome {
+        let Some(idx) = self.world.read_passage() else {
+            return MoveOutcome::Refused("the dungeon has already ended".to_string());
+        };
+        let passage_name = match self.scene.passages.get(idx) {
+            Some(p) => p.name.to_string(),
+            None => return MoveOutcome::Refused("no current passage".to_string()),
+        };
+        let Some(choice) = nth_choice(&self.scene, &passage_name, choice_index) else {
+            return MoveOutcome::Refused("that move is not on the current ballot".to_string());
+        };
+        match self
+            .world
+            .apply_choice(&passage_name, choice_index, &choice)
+        {
+            Ok(receipt) => {
+                let step = StepReceipt {
+                    passage: passage_name,
+                    choice_index,
+                    receipt: receipt.clone(),
+                    state: self.world.snapshot(),
+                };
+                self.steps.push(step);
+                let ended = self.world.read_passage().is_none();
+                MoveOutcome::Landed { receipt, ended }
+            }
+            Err(WorldError::Refused(why)) => MoveOutcome::Refused(why),
+            Err(e) => MoveOutcome::Refused(e.to_string()),
+        }
+    }
+
+    /// The recorded playthrough (genesis + committed steps) — the input to replay-verify.
+    pub fn playthrough(&self) -> Playthrough {
+        Playthrough {
+            genesis: self.genesis.clone(),
+            genesis_state: self.genesis_state.clone(),
+            steps: self.steps.clone(),
+        }
+    }
+
+    /// **Re-verify the whole receipt chain by REPLAY.** Re-drives a fresh, identically-
+    /// seeded world-cell through the recorded choices and confirms it reproduces exactly
+    /// the committed state chain in passage order (a forged/reordered record fails). This
+    /// is [`spween_dregg::verify_by_replay`] over the real substrate — not a hash-chain walk.
+    pub fn verify(&self) -> Result<(), VerifyBreak> {
+        verify_by_replay(deploy_keep(self.seed), &self.scene, &self.playthrough())
+    }
+
+    /// A compact one-line projection of the party's committed state (for the embed).
+    pub fn state_line(&self) -> String {
+        let owner = match self.read_var("relic_owner") {
+            1 => "Red Hand",
+            2 => "Blue Hand",
+            _ => "unclaimed",
+        };
+        format!(
+            "HP {} · depth {} · gold {} · crown {} · will spent {}",
+            self.read_var("hp"),
+            self.read_var("depth"),
+            self.read_var("gold"),
+            owner,
+            self.read_var("mana_spent"),
+        )
+    }
 }
 
-/// Parse a bundled sample only if it is fully playable (used at catalogue-load time).
-fn parse_playable(src: &str) -> Option<GameWorld> {
-    forge_world(src).ok()
+/// Pull the `n`-th `Choice` out of `passage` in the scene (the same ordering the compiler
+/// indexes with `choice_method(passage, n)`). `None` if the passage or index is absent — a
+/// non-panicking lookup used when applying a possibly-stale ballot winner.
+fn nth_choice(scene: &Scene, passage_name: &str, n: usize) -> Option<spween::Choice> {
+    let passage = scene
+        .passages
+        .iter()
+        .find(|p| p.name.as_str() == passage_name)?;
+    passage
+        .content
+        .iter()
+        .filter_map(|c| match c {
+            PassageContent::Choice(ch) => Some(ch),
+            _ => None,
+        })
+        .nth(n)
+        .cloned()
+}
+
+/// Evaluate a scene condition against the committed cell state (mirrors the runtime's own
+/// evaluation via the public world reads). Used only to decorate a ballot label with `🔒`;
+/// the installed `CellProgram` gate is the sole authority over whether the move lands.
+fn eval_condition(expr: &ConditionExpr, world: &WorldCell) -> bool {
+    match expr {
+        ConditionExpr::Atom(clause) => eval_clause(clause, world),
+        ConditionExpr::And(a, b) => eval_condition(a, world) && eval_condition(b, world),
+        ConditionExpr::Or(a, b) => eval_condition(a, world) || eval_condition(b, world),
+    }
+}
+
+fn eval_clause(clause: &ConditionClause, world: &WorldCell) -> bool {
+    match clause {
+        ConditionClause::Has(h) => world.read_membership(&h.category, &h.key),
+        ConditionClause::Compare(c) => {
+            let lhs = world.read_var(&c.var);
+            let rhs = value_to_u64(&c.value);
+            match c.op {
+                CompareOp::Ge => lhs >= rhs,
+                CompareOp::Le => lhs <= rhs,
+                CompareOp::Gt => lhs > rhs,
+                CompareOp::Lt => lhs < rhs,
+                CompareOp::Eq => lhs == rhs,
+                CompareOp::Ne => lhs != rhs,
+            }
+        }
+        ConditionClause::Not(inner) => !eval_clause(inner, world),
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // The round / ballot model — the write-once vote, the tally, the plurality winner.
+// (KEPT verbatim from the collective mechanism — the crowd decides, the world disposes.)
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// One candidate move on the ballot — its human label and the command it plays.
+/// One candidate move on the ballot — its human label and the real scene choice index it
+/// resolves to (the index [`WorldCell::apply_choice`] checks the gate case against).
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct VoteOption {
-    /// The button label (e.g. `"go to The Cistern"`, `"take lantern"`, `"🔒 iron door"`).
+    /// The button label (e.g. `"Press on into the plundered hall"`, `"🔒 Trade blows"`).
     pub label: String,
-    /// The engine command this option resolves to (e.g. `"go cistern"`, `"take lantern"`).
-    pub command: String,
+    /// The scene choice index (within the current passage) this option applies.
+    pub choice_index: usize,
 }
 
-/// **A voting round** — the candidate moves and the write-once ballots cast against them. A voter
-/// is a **derived dregg public key** (hex), never a Discord nickname: a ballot is attributable to
-/// a real cryptographic identity.
+/// **A voting round** — the candidate moves and the write-once ballots cast against them. A
+/// voter is a **derived dregg public key** (hex), never a Discord nickname: a ballot is
+/// attributable to a real cryptographic identity.
 #[derive(Clone, Debug, Default)]
 pub struct Round {
     /// The round number (monotonic per session). A ballot for a stale round is rejected.
     pub round: u64,
-    /// The candidate moves, in stable order (the index is the ballot's option id).
+    /// The candidate moves, in stable order (the position is the ballot's option id).
     pub options: Vec<VoteOption>,
-    /// The ballots cast: voter public-key hex → chosen option index. **Write-once**: a second
-    /// vote from the same key is refused (see [`Round::cast`]).
+    /// The ballots cast: voter public-key hex → chosen option position. **Write-once**: a
+    /// second vote from the same key is refused (see [`Round::cast`]).
     pub ballots: HashMap<String, usize>,
 }
 
@@ -199,8 +367,8 @@ impl Round {
         }
     }
 
-    /// **Cast a write-once ballot.** `voter` is the voter's derived dregg public-key hex. The first
-    /// vote is [`BallotOutcome::Recorded`]; any later vote from the same key is
+    /// **Cast a write-once ballot.** `voter` is the voter's derived dregg public-key hex. The
+    /// first vote is [`BallotOutcome::Recorded`]; any later vote from the same key is
     /// [`BallotOutcome::AlreadyVoted`] (the world does not let a voter stuff the box). An
     /// out-of-range option is [`BallotOutcome::BadOption`].
     pub fn cast(&mut self, voter: &str, option: usize) -> BallotOutcome {
@@ -214,7 +382,7 @@ impl Round {
         BallotOutcome::Recorded
     }
 
-    /// The vote count per option index, in option order.
+    /// The vote count per option position, in option order.
     pub fn tally(&self) -> Vec<usize> {
         let mut counts = vec![0usize; self.options.len()];
         for &idx in self.ballots.values() {
@@ -225,40 +393,33 @@ impl Round {
         counts
     }
 
-    /// **The plurality winner's option index** — the option with the most votes, ties broken
-    /// **deterministically toward the lowest option index** (documented, reproducible). `None`
-    /// only when there are no options at all; a round with options but zero ballots still resolves
-    /// to option `0` (the deterministic default the crowd left to the world).
+    /// **The plurality winner's option position** — the option with the most votes, ties
+    /// broken **deterministically toward the lowest option index** (documented, reproducible).
+    /// `None` only when there are no options at all; a round with options but zero ballots
+    /// still resolves to option `0` (the deterministic default the crowd left to the world).
     pub fn winner(&self) -> Option<usize> {
         if self.options.is_empty() {
             return None;
         }
         let counts = self.tally();
-        // `max_by_key` over (count, reversed index) — highest count wins; on a tie the LOWEST
-        // index wins (we negate the index so the smallest index has the largest key).
         (0..self.options.len()).max_by_key(|&i| (counts[i], std::cmp::Reverse(i)))
     }
 }
 
-/// **A per-channel play session** — the engine session, the world slug, the live round, and how
+/// A per-channel play session — the real engine, the world's name, the live round, and how
 /// the last narration was produced (never misreported).
 pub struct DungeonSession {
-    /// The engine session (world + attested cap-bounded DM + hash-chain ledger).
-    pub game: GameSession,
-    /// The catalogue slug (or `"authored"` for a forged world) — for display.
-    pub slug: String,
+    /// The REAL engine session (world-cell + receipt chain).
+    pub real: RealSession,
     /// The world's display name.
     pub name: String,
     /// The live voting round.
     pub round: Round,
-    /// How the current room narration was produced (`gemma2:2b` or `scripted`).
+    /// How the current room narration was produced (bedrock / gemma / scripted).
     pub narrator: NarratorKind,
-    /// The narration text posted for the current room — kept so a live vote re-render preserves
-    /// the gemma2 prose (a vote never re-hits the network, so it never misreports the narrator).
+    /// The narration text posted for the current room — kept so a live vote re-render
+    /// preserves the prose (a vote never re-hits the network, so it never misreports it).
     pub last_narration: String,
-    /// The `.dungeon` SOURCE this session was forged from, if it was authored (vs a bundled world).
-    /// Kept so `/dungeon publish` can save exactly what is being played.
-    pub authored_source: Option<String>,
 }
 
 /// How a piece of narration was produced — surfaced honestly in the embed footer.
@@ -268,7 +429,7 @@ pub enum NarratorKind {
     Bedrock,
     /// A real local `gemma2:2b` (ollama) narrated it (the free tier).
     Gemma,
-    /// ollama was unreachable; the engine's own scripted description stood in (the free tier).
+    /// ollama was unreachable; the scene's own scripted description stood in (the free tier).
     Scripted,
 }
 
@@ -283,190 +444,46 @@ impl NarratorKind {
 }
 
 /// The per-channel session store — keyed by Discord channel id. A module-global (behind a
-/// `OnceLock<Mutex<…>>`) so it needs no change to `BotState`; every command locks it briefly and
-/// never holds the guard across an `.await` (narration happens outside the lock).
+/// `OnceLock<Mutex<…>>`) so it needs no change to `BotState`; every command locks it briefly
+/// and never holds the guard across an `.await` (narration happens outside the lock).
 fn sessions() -> &'static Mutex<HashMap<u64, DungeonSession>> {
     static SESSIONS: OnceLock<Mutex<HashMap<u64, DungeonSession>>> = OnceLock::new();
     SESSIONS.get_or_init(|| Mutex::new(HashMap::new()))
 }
 
-// ─────────────────────────────────────────────────────────────────────────────
-// Candidate-move generation — the ballot for the current room.
-// ─────────────────────────────────────────────────────────────────────────────
-
-/// Build the candidate ballot for the current room: each exit (open, or 🔒 gated — a locked
-/// exit stays on the ballot so the crowd CAN vote it and see the world refuse it), each item
-/// present (take), each foe (attack), each NPC (talk), and always a `look`. Capped at 20 so the
-/// components fit Discord's five rows of five.
-fn round_options(map: &GameWorld, world: &WorldCell) -> Vec<VoteOption> {
-    let here = &world.scene;
-    let mut options: Vec<VoteOption> = Vec::new();
-
-    if let Some(room) = map.rooms.get(here) {
-        // Exits — labelled by destination name; 🔒 marks a gate not yet satisfied.
-        for (dir, exit) in &room.exits {
-            let dest = map
-                .rooms
-                .get(&exit.to_room)
-                .map(|r| r.name.clone())
-                .unwrap_or_else(|| exit.to_room.clone());
-            let locked = exit
-                .gate
-                .as_ref()
-                .map(|g| !gate_open(g, world))
-                .unwrap_or(false);
-            let label = if locked {
-                format!("🔒 {dest} ({dir})")
-            } else {
-                format!("go {dest} ({dir})")
-            };
-            options.push(VoteOption {
-                label: truncate(&label, 80),
-                command: format!("go {}", exit.to_room),
-            });
-        }
-        // Items present here.
-        for item in map.items_here(here, world) {
-            options.push(VoteOption {
-                label: truncate(&format!("take {item}"), 80),
-                command: format!("take {item}"),
-            });
-        }
-    }
-    // A one-shot hostile or an HP-bearing foe in this room.
-    if let Some(h) = map.hostiles.get(here) {
-        options.push(VoteOption {
-            label: truncate(&format!("attack {}", h.name), 80),
-            command: format!("attack {}", h.name),
-        });
-    }
-    if let Some(c) = map.combat.get(here) {
-        options.push(VoteOption {
-            label: truncate(&format!("attack {}", c.name), 80),
-            command: format!("attack {}", c.name),
-        });
-    }
-    // NPCs standing here.
-    for npc in map.npcs_here(here) {
-        options.push(VoteOption {
-            label: truncate(&format!("talk to {}", npc.name), 80),
-            command: format!("talk to {}", npc.id),
-        });
-    }
-
-    options.truncate(19);
-    options.push(VoteOption {
-        label: "look around".to_string(),
-        command: "look".to_string(),
-    });
-    options
-}
-
-/// Whether a gate is currently satisfied (mirrors the engine's private `Gate::satisfied` via the
-/// public world state — item held, or flag high enough). Used only to decorate the button label;
-/// the resolver is still the sole authority over whether the move lands.
-fn gate_open(gate: &attested_dm::game::Gate, world: &WorldCell) -> bool {
-    use attested_dm::game::Gate;
-    match gate {
-        Gate::NeedsItem(i) => world.inventory.contains(i),
-        Gate::NeedsFlag(k, v) => world.flags.get(k).copied().unwrap_or(0) >= *v,
-    }
+/// The deterministic deploy seed for a channel's session (stable per channel, so a re-open
+/// reproduces the same world identity — what the replay verifier leans on).
+fn channel_seed(channel: u64) -> u8 {
+    ((channel % 251) + 1) as u8
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
 // Registration + slash routing.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A `source` string option (a fenced ```code block``` works) — shared by check/forge/publish.
-fn source_opt(required: bool) -> CreateCommandOption {
-    CreateCommandOption::new(
-        CommandOptionType::String,
-        "source",
-        "The .dungeon source (a fenced ```code block``` works too)",
-    )
-    .required(required)
-}
-
-/// An `attachment` option — attach a `.dungeon` file instead of pasting.
-fn attachment_opt() -> CreateCommandOption {
-    CreateCommandOption::new(
-        CommandOptionType::Attachment,
-        "attachment",
-        "A .dungeon file to read instead of pasting source",
-    )
-    .required(false)
-}
-
-/// Register the `/dungeon` command (list / start / close / verify / check / forge / publish / library).
+/// Register the `/dungeon` command (list / start / close / verify).
 pub fn register() -> CreateCommand {
-    // `world` is free-text: it accepts a bundled slug OR a published library name (see /list, /library).
-    let start = CreateCommandOption::new(
-        CommandOptionType::SubCommand,
-        "start",
-        "Open a shared dungeon in this channel (bundled slug or a published name)",
-    )
-    .add_sub_option(
-        CreateCommandOption::new(
-            CommandOptionType::String,
-            "world",
-            "Bundled slug or published name",
-        )
-        .required(false),
-    );
-
     CreateCommand::new("dungeon")
-        .description("Play — and author — a shared, AI-narrated, on-chain dungeon as a channel")
+        .description("Play a shared, AI-narrated dungeon on the REAL dregg executor, as a channel")
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "list",
-            "List the bundled playable worlds",
+            "Describe the hosted world and its executor-enforced rules",
         ))
-        .add_option(start)
+        .add_option(CreateCommandOption::new(
+            CommandOptionType::SubCommand,
+            "start",
+            "Open the Warden's Keep in this channel (a real world-cell)",
+        ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "close",
-            "Close the round: play the party's plurality choice, post the next round",
+            "Close the round: apply the party's plurality choice as a real turn, post the next round",
         ))
         .add_option(CreateCommandOption::new(
             CommandOptionType::SubCommand,
             "verify",
-            "Re-verify the whole hash chain of this channel's playthrough",
-        ))
-        .add_option(
-            CreateCommandOption::new(
-                CommandOptionType::SubCommand,
-                "check",
-                "LINT a .dungeon (no session): parse + validate, list every issue",
-            )
-            .add_sub_option(source_opt(false))
-            .add_sub_option(attachment_opt()),
-        )
-        .add_option(
-            CreateCommandOption::new(
-                CommandOptionType::SubCommand,
-                "forge",
-                "Play a dungeon someone authored: paste its .dungeon source or attach a file",
-            )
-            .add_sub_option(source_opt(false))
-            .add_sub_option(attachment_opt()),
-        )
-        .add_option(
-            CreateCommandOption::new(
-                CommandOptionType::SubCommand,
-                "publish",
-                "Save an authored world to the community library (source, attachment, or last-forged)",
-            )
-            .add_sub_option(
-                CreateCommandOption::new(CommandOptionType::String, "name", "A library name for the world")
-                    .required(true),
-            )
-            .add_sub_option(source_opt(false))
-            .add_sub_option(attachment_opt()),
-        )
-        .add_option(CreateCommandOption::new(
-            CommandOptionType::SubCommand,
-            "library",
-            "List community-published worlds",
+            "Re-verify this channel's playthrough by replay (the real receipt chain)",
         ))
 }
 
@@ -480,10 +497,6 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
         "start" => handle_start(ctx, command, state).await,
         "close" => handle_close(ctx, command, state).await,
         "verify" => handle_verify(ctx, command).await,
-        "check" => handle_check(ctx, command).await,
-        "forge" => handle_forge(ctx, command, state).await,
-        "publish" => handle_publish(ctx, command, state).await,
-        "library" => handle_library(ctx, command, state).await,
         _ => {}
     }
 }
@@ -509,16 +522,19 @@ async fn respond(
 // ─── /dungeon list ───────────────────────────────────────────────────────────
 
 async fn handle_list(ctx: &Context, command: &CommandInteraction) {
-    let mut desc = String::from(
-        "Pick one with `/dungeon start world:<slug>`. Author your own with `/dungeon check` + `/dungeon forge`, and see community worlds with `/dungeon library`.\n\n",
+    let desc = format!(
+        "**{KEEP_NAME}** — a dungeon hosted on the REAL dregg executor.\n\n\
+         Every move is one cap-bounded turn the verified executor admits; every rule is an \
+         executor-enforced `StateConstraint`, not app bookkeeping:\n\
+         • **the gate-warden** — a killing blow past the HP floor is refused (`FieldGte`)\n\
+         • **the reliquary crown** — the first hand to close on it holds it; a rival re-claim is refused (`WriteOnce`)\n\
+         • **the collapsing stair** — descent is one-way; climbing back is refused (`Monotonic`)\n\
+         • **the sealing ward** — will is a finite budget; an over-spend is refused (`FieldLteField`)\n\n\
+         Open it with `/dungeon start`. Each button is a write-once ballot (one vote per \
+         dregg identity); `/dungeon close` applies the party's plurality choice as a real \
+         turn; `/dungeon verify` re-verifies the receipt chain by replay."
     );
-    for (slug, name, blurb) in CATALOG {
-        // Only advertise worlds that actually load (a sample that failed to parse is hidden).
-        if load_world(slug).is_some() {
-            desc.push_str(&format!("**{name}** — {blurb}\n`{slug}`\n\n"));
-        }
-    }
-    let embed = base_embed("The bundled playable worlds")
+    let embed = base_embed(&format!("{KEEP_NAME} — the hosted world"))
         .description(desc)
         .footer(footer(NarratorKind::Scripted));
     respond(ctx, command, embed, vec![], true).await;
@@ -527,323 +543,233 @@ async fn handle_list(ctx: &Context, command: &CommandInteraction) {
 // ─── /dungeon start ──────────────────────────────────────────────────────────
 
 async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let requested =
-        subcommand_string(command, "world").unwrap_or_else(|| "sunken-vault".to_string());
+    let channel = command.channel_id.get();
+    let seed = channel_seed(channel);
 
-    // (1) A bundled world?
-    if let Some(world) = load_world(&requested) {
-        let name = display_name(&requested);
-        open_session_and_post(ctx, command, state, world, requested, name).await;
-        return;
+    // Deploy the real world-cell FIRST (no lock, no network) — fail-closed if it refuses.
+    let real = match RealSession::open(seed) {
+        Ok(r) => r,
+        Err(e) => {
+            let embed = error_embed(
+                "The Keep did not deploy",
+                &format!("The world-cell deploy failed: {e}"),
+            );
+            respond(ctx, command, embed, vec![], true).await;
+            return;
+        }
+    };
+
+    // Insert the session + first round inside the lock, snapshot the render data, then
+    // narrate OUTSIDE the lock (narration hits the network).
+    let (room_name, room_desc, snap) = {
+        let mut store = sessions().lock().unwrap_or_else(|e| e.into_inner());
+        let options = real.round_options();
+        let room_name = real
+            .current_passage_name()
+            .unwrap_or_else(|| "the threshold".to_string());
+        let room_desc = real.current_prose();
+        let round = Round::new(0, options);
+        let sess = DungeonSession {
+            real,
+            name: KEEP_NAME.to_string(),
+            round,
+            narrator: NarratorKind::Scripted,
+            last_narration: String::new(),
+        };
+        let snap = render_snapshot(&sess);
+        store.insert(channel, sess);
+        (room_name, room_desc, snap)
+    };
+
+    let (narration, kind) =
+        narrate_room_gated(state, command.user.id.get(), &room_name, &room_desc).await;
+    if let Ok(mut store) = sessions().lock() {
+        if let Some(sess) = store.get_mut(&channel) {
+            sess.narrator = kind;
+            sess.last_narration = narration.clone();
+        }
     }
 
-    // (2) A community-published world? Re-parse its stored SOURCE fail-closed (never a cached shape).
-    match state.db.get_dungeon_world(&requested).await {
-        Ok(Some(rec)) => match forge_world(&rec.source) {
-            Ok(world) => {
-                open_generic_and_post(
-                    ctx,
-                    command,
+    let embed = round_embed(&snap, &narration, kind);
+    let rows = ballot_rows(&snap.options, snap.round);
+    respond(ctx, command, embed, rows, false).await;
+}
+
+// ─── /dungeon close — resolve the plurality winner as a REAL turn ─────────────
+
+async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotState) {
+    let channel = command.channel_id.get();
+
+    enum CloseRender {
+        NoSession,
+        Empty,
+        Resolved {
+            resolution: ResolvedRound,
+            next_room_name: String,
+            next_room_desc: String,
+            next_snapshot: Option<RenderSnapshot>,
+        },
+    }
+
+    let render = {
+        let mut store = sessions().lock().unwrap_or_else(|e| e.into_inner());
+        match store.get_mut(&channel) {
+            None => CloseRender::NoSession,
+            Some(sess) => match sess.round.winner() {
+                None => CloseRender::Empty,
+                Some(winner_pos) => {
+                    let winner = sess.round.options[winner_pos].clone();
+                    let tally = sess.round.tally();
+                    let votes_for_winner = tally.get(winner_pos).copied().unwrap_or(0);
+                    let total_ballots = sess.round.ballots.len();
+                    let round_no = sess.round.round;
+                    let was_tie = is_tie(&tally, winner_pos);
+
+                    // THE WORLD DISPOSES — apply the crowd's choice as one real cap-bounded turn.
+                    let outcome = sess.real.apply_winner(winner.choice_index);
+                    let receipts = sess.real.receipts_len();
+
+                    let resolution = ResolvedRound {
+                        world_name: sess.name.clone(),
+                        round_no,
+                        winner_label: winner.label.clone(),
+                        votes_for_winner,
+                        total_ballots,
+                        was_tie,
+                        result: describe_outcome(&outcome),
+                        ended: sess.real.is_ended(),
+                        receipts,
+                    };
+
+                    if sess.real.is_ended() {
+                        CloseRender::Resolved {
+                            resolution,
+                            next_room_name: String::new(),
+                            next_room_desc: String::new(),
+                            next_snapshot: None,
+                        }
+                    } else {
+                        let options = sess.real.round_options();
+                        let next = Round::new(round_no + 1, options);
+                        sess.round = next;
+                        let next_room_name = sess
+                            .real
+                            .current_passage_name()
+                            .unwrap_or_else(|| "the dark".to_string());
+                        let next_room_desc = sess.real.current_prose();
+                        let snap = render_snapshot(sess);
+                        CloseRender::Resolved {
+                            resolution,
+                            next_room_name,
+                            next_room_desc,
+                            next_snapshot: Some(snap),
+                        }
+                    }
+                }
+            },
+        }
+    };
+
+    match render {
+        CloseRender::NoSession => {
+            let embed = warn_embed(
+                "No session",
+                "This channel has no dungeon open. Start one with `/dungeon start`.",
+            );
+            respond(ctx, command, embed, vec![], true).await;
+        }
+        CloseRender::Empty => {
+            let embed = warn_embed(
+                "No moves",
+                "There is nothing to vote on. Try `/dungeon verify` or `/dungeon start` a new run.",
+            );
+            respond(ctx, command, embed, vec![], true).await;
+        }
+        CloseRender::Resolved {
+            resolution,
+            next_room_name,
+            next_room_desc,
+            next_snapshot,
+        } => match next_snapshot {
+            Some(snap) => {
+                let (narration, kind) = narrate_room_gated(
                     state,
-                    world,
-                    rec.name.clone(),
-                    rec.display_name.clone(),
-                    Some(rec.source),
+                    command.user.id.get(),
+                    &next_room_name,
+                    &next_room_desc,
                 )
                 .await;
+                if let Ok(mut store) = sessions().lock() {
+                    if let Some(sess) = store.get_mut(&channel) {
+                        sess.narrator = kind;
+                        sess.last_narration = narration.clone();
+                    }
+                }
+                let embed = resolution_then_round_embed(&resolution, &snap, &narration, kind);
+                let rows = ballot_rows(&snap.options, snap.round);
+                respond(ctx, command, embed, rows, false).await;
             }
-            Err(_) => {
-                let embed = error_embed(
-                    "That published world no longer parses",
-                    &format!(
-                        "`{}` is in the library but its stored source fails to parse now. Nothing started.",
-                        rec.name
-                    ),
-                );
-                respond(ctx, command, embed, vec![], true).await;
+            None => {
+                let embed = resolution_final_embed(&resolution);
+                respond(ctx, command, embed, vec![], false).await;
             }
         },
-        Ok(None) => {
-            let embed = error_embed(
-                "No such world",
-                &format!(
-                    "`{requested}` is neither a bundled world nor a published one. Try `/dungeon list` or `/dungeon library`."
-                ),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        Err(e) => {
-            let embed = error_embed(
-                "Library unavailable",
-                &format!("Could not read the world library: {e}"),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
     }
 }
 
-// ─── /dungeon check — the LINTER (no session) ─────────────────────────────────
+/// Whether the winning option `pos` shares its vote count with ANY OTHER option — i.e. the
+/// deterministic lowest-index tie-break was exercised.
+fn is_tie(tally: &[usize], pos: usize) -> bool {
+    let top = tally.get(pos).copied().unwrap_or(0);
+    tally.iter().enumerate().any(|(j, &c)| j != pos && c == top)
+}
 
-async fn handle_check(ctx: &Context, command: &CommandInteraction) {
-    let src = match gather_source(command).await {
-        Ok(s) => s,
-        Err(e) => {
-            let embed = warn_embed("Nothing to check", &e);
-            respond(ctx, command, embed, vec![], true).await;
-            return;
-        }
-    };
-    // Stage 1 — PARSE (syntactic). Fail-closed, line-pinned.
-    let world = match parse_world(&src) {
-        Ok(w) => w,
-        Err(e) => {
-            let embed = error_embed(
-                "❌ parse — the dungeon would not parse",
-                &format!(
-                    "`line {}: {}`\n\nFail-closed. No session started.",
-                    e.line, e.message
-                ),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-            return;
-        }
-    };
-    // Stage 2 — VALIDATE (semantic). List EVERY issue with its severity.
-    let issues = validate(&world);
-    let error_count = issues.iter().filter(|i| i.is_error()).count();
-    let obj = &world.objective;
-    let obj_room = world
-        .rooms
-        .get(&obj.room)
-        .map(|r| r.name.clone())
-        .unwrap_or_else(|| obj.room.clone());
-    if issues.is_empty() {
-        let embed = base_embed("✓ validates clean")
-            .description(format!(
-                "**{} room(s)** · objective: reach **{}** holding the **{}**.\n\nPlay it now with `/dungeon forge` (same source).",
-                world.rooms.len(),
-                obj_room,
-                obj.holding,
-            ))
-            .footer(footer(NarratorKind::Scripted));
-        respond(ctx, command, embed, vec![], true).await;
-    } else {
-        let mut body = String::new();
-        for issue in &issues {
-            let mark = if issue.is_error() { "❌" } else { "⚠" };
-            body.push_str(&format!("{mark} {}\n", issue.message));
-        }
-        let embed = if error_count > 0 {
-            error_embed(
-                &format!("❌ {error_count} blocking error(s) — not playable"),
-                &truncate(&body, 3800),
-            )
-        } else {
-            base_embed("⚠ warnings only — playable")
-                .description(truncate(&body, 3800))
-                .footer(footer(NarratorKind::Scripted))
-        };
-        respond(ctx, command, embed, vec![], true).await;
+/// A plain-language account of a move outcome for the channel.
+struct ResultView {
+    /// The headline line.
+    headline: String,
+    /// The engine's own narration (the executor refusal reason on a refusal).
+    body: String,
+    /// Whether this landed a real receipt.
+    landed: bool,
+}
+
+fn describe_outcome(outcome: &MoveOutcome) -> ResultView {
+    match outcome {
+        MoveOutcome::Landed { .. } => ResultView {
+            headline: "A verified turn landed on the chain.".to_string(),
+            body:
+                "The world resolved the party's choice — a real, committed, executor-admitted turn."
+                    .to_string(),
+            landed: true,
+        },
+        MoveOutcome::Refused(why) => ResultView {
+            headline:
+                "Refused — the crowd decided, the world disposed: room unchanged, no receipt."
+                    .to_string(),
+            body: format!("The executor refused the move: {why}"),
+            landed: false,
+        },
     }
 }
 
-// ─── /dungeon forge — check + OPEN a session ──────────────────────────────────
-
-async fn handle_forge(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let src = match gather_source(command).await {
-        Ok(s) => s,
-        Err(e) => {
-            let embed = warn_embed("Nothing to forge", &e);
-            respond(ctx, command, embed, vec![], true).await;
-            return;
-        }
-    };
-    match forge_world(&src) {
-        Err(ForgeError::Parse { line, message }) => {
-            let embed = error_embed(
-                "❌ parse — the dungeon would not parse",
-                &format!(
-                    "`line {line}: {message}`\n\nFail-closed — no session started. Fix the source and forge again."
-                ),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        Err(ForgeError::Invalid(issues)) => {
-            let mut body =
-                String::from("The validator refused this world (every blocking issue):\n\n");
-            for issue in &issues {
-                body.push_str(&format!("❌ {}\n", issue.message));
-            }
-            body.push_str(
-                "\nFail-closed — no session started. `/dungeon check` shows warnings too.",
-            );
-            let embed = error_embed(
-                "❌ validate — the dungeon is not sound",
-                &truncate(&body, 3800),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        Ok(world) => {
-            let name =
-                extract_world_name(&src).unwrap_or_else(|| "An authored dungeon".to_string());
-            // A forged session remembers its SOURCE so `/dungeon publish` can save exactly this.
-            open_generic_and_post(
-                ctx,
-                command,
-                state,
-                world,
-                "authored".to_string(),
-                name,
-                Some(src),
-            )
-            .await;
-        }
-    }
-}
-
-// ─── /dungeon publish — save to the community library ─────────────────────────
-
-async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let Some(name) = subcommand_string(command, "name") else {
-        let embed = warn_embed(
-            "Name required",
-            "Give the world a library name: `/dungeon publish name:<name>`.",
-        );
-        respond(ctx, command, embed, vec![], true).await;
-        return;
-    };
-    let name = slugify(&name);
-    // Source: a supplied source/attachment wins; else the channel session's last-forged source.
-    let src = match gather_source(command).await {
-        Ok(s) => Some(s),
-        Err(_) => {
-            let channel = command.channel_id.get();
-            sessions()
-                .lock()
-                .ok()
-                .and_then(|store| store.get(&channel).and_then(|s| s.authored_source.clone()))
-        }
-    };
-    let Some(src) = src else {
-        let embed = warn_embed(
-            "Nothing to publish",
-            "Supply a `source:`/`attachment:`, or `/dungeon forge` a world in this channel first, then publish it.",
-        );
-        respond(ctx, command, embed, vec![], true).await;
-        return;
-    };
-    // Only publish a SOUND world (parses + validates clean).
-    let world = match forge_world(&src) {
-        Ok(w) => w,
-        Err(ForgeError::Parse { line, message }) => {
-            let embed = error_embed(
-                "❌ parse — cannot publish",
-                &format!("`line {line}: {message}`"),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-            return;
-        }
-        Err(ForgeError::Invalid(issues)) => {
-            let mut body = String::from("Only sound worlds are published. Blocking issues:\n\n");
-            for issue in &issues {
-                body.push_str(&format!("❌ {}\n", issue.message));
-            }
-            let embed = error_embed("❌ validate — cannot publish", &truncate(&body, 3600));
-            respond(ctx, command, embed, vec![], true).await;
-            return;
-        }
-    };
-    let display = extract_world_name(&src).unwrap_or_else(|| name.clone());
-    let author_discord_id = command.user.id.get().to_string();
-    // The author LABEL — the publisher's derived dregg public key hex (deterministic per user).
-    // This records WHO published; it is NOT a signature over the source.
-    let author_pubkey = UserCipherclerk::derive(
-        &state.config.bot_secret,
-        command.user.id.get(),
-        state.federation_id_bytes,
-    )
-    .public_key_hex()
-    .to_string();
-    let rec = crate::db::DungeonWorldRecord {
-        name: name.clone(),
-        display_name: display.clone(),
-        source: src,
-        author_discord_id,
-        author_pubkey: author_pubkey.clone(),
-        validates_clean: true,
-        room_count: world.rooms.len() as i64,
-        created_at: now_secs(),
-    };
-    match state.db.publish_dungeon_world(&rec).await {
-        Ok(()) => {
-            let embed = base_embed(&format!("Published: {display}"))
-                .description(format!(
-                    "Saved to the community library as `{name}` — **{} room(s)**, validates clean.\n\nPlay it with `/dungeon start world:{name}`.",
-                    world.rooms.len()
-                ))
-                .field("Author", format!("<@{}>", command.user.id.get()), true)
-                .field("Author key (label)", format!("`{}…`", &author_pubkey[..author_pubkey.len().min(16)]), true)
-                .footer(CreateEmbedFooter::new(
-                    "provenance = author label (derived dregg pubkey), NOT a signature over the source",
-                ));
-            respond(ctx, command, embed, vec![], false).await;
-        }
-        Err(e) => {
-            let embed = error_embed(
-                "Could not publish",
-                &format!("The library write failed: {e}"),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-    }
-}
-
-// ─── /dungeon library — list community worlds ─────────────────────────────────
-
-async fn handle_library(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    match state.db.list_dungeon_worlds().await {
-        Ok(worlds) if worlds.is_empty() => {
-            let embed = base_embed("The community library is empty")
-                .description("No worlds published yet. Author one, `/dungeon check` it, then `/dungeon publish name:<name>`.")
-                .footer(footer(NarratorKind::Scripted));
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        Ok(worlds) => {
-            let mut desc = String::from("Play any with `/dungeon start world:<name>`.\n\n");
-            for w in worlds.iter().take(20) {
-                let clean = if w.validates_clean {
-                    "✓ clean"
-                } else {
-                    "⚠ has issues"
-                };
-                desc.push_str(&format!(
-                    "**{}** · `{}`\n{} room(s) · {} · by <@{}>\n\n",
-                    w.display_name, w.name, w.room_count, clean, w.author_discord_id
-                ));
-            }
-            let embed = base_embed("Community dungeon library")
-                .description(truncate(&desc, 3800))
-                .footer(CreateEmbedFooter::new(
-                    "provenance = author label (derived dregg pubkey) · sources re-parsed on load",
-                ));
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        Err(e) => {
-            let embed = error_embed(
-                "Library unavailable",
-                &format!("Could not read the library: {e}"),
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-    }
+/// The resolved-round facts to render.
+struct ResolvedRound {
+    world_name: String,
+    round_no: u64,
+    winner_label: String,
+    votes_for_winner: usize,
+    total_ballots: usize,
+    was_tie: bool,
+    result: ResultView,
+    ended: bool,
+    receipts: usize,
 }
 
 // ─── /dungeon verify ─────────────────────────────────────────────────────────
 
 async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
     let channel = command.channel_id.get();
-    // Resolve the verification entirely inside the lock into OWNED values, so the (non-`Send`)
-    // `MutexGuard` is dropped before any `.await` (an `interaction_create` future must be `Send`).
     enum VerifyOutcome {
         NoSession,
         Result {
@@ -858,8 +784,8 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
         match store.get(&channel) {
             None => VerifyOutcome::NoSession,
             Some(sess) => {
-                let count = sess.game.world().ledger.len();
-                match sess.game.verify() {
+                let count = sess.real.receipts_len();
+                match sess.real.verify() {
                     Ok(()) => VerifyOutcome::Result {
                         verified: true,
                         count,
@@ -893,16 +819,16 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
         } => (verified, count, name, break_msg),
     };
     let embed = if verified {
-        base_embed(&format!("✓ {name} — chain re-verifies"))
+        base_embed(&format!("✓ {name} — playthrough re-verifies by replay"))
             .description(format!(
-                "**{count} verified turns** re-verify as one unbroken hash chain: every landed move is authentic, on-chain, and un-forged.\n\nReorder, mutation, or mid-history insertion would all break this walk."
+                "**{count} verified turns** re-verify: a fresh, identically-seeded world-cell, re-driven through the recorded choices, reproduces exactly this committed state chain in passage order.\n\nA reordered, mutated, or forged (ineligible) choice would break replay — the executor refuses on re-drive, or the reproduced state diverges."
             ))
             .footer(footer(NarratorKind::Scripted))
     } else {
         error_embed(
-            &format!("✗ {name} — chain BREAKS"),
+            &format!("✗ {name} — replay BREAKS"),
             &format!(
-                "The ledger did not re-verify:\n`{}`",
+                "The playthrough did not re-verify:\n`{}`",
                 break_msg.unwrap_or_default()
             ),
         )
@@ -911,279 +837,13 @@ async fn handle_verify(ctx: &Context, command: &CommandInteraction) {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Session open + round posting.
-// ─────────────────────────────────────────────────────────────────────────────
-
-async fn open_session_and_post(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &BotState,
-    world: GameWorld,
-    slug: String,
-    name: String,
-) {
-    open_generic_and_post(ctx, command, state, world, slug, name, None).await;
-}
-
-/// Open a session for this channel over `world`, narrate the start room, and post the round-0
-/// embed + ballot buttons. Replaces any existing session in the channel. `source` is the authored
-/// `.dungeon` text if this world was forged (so `/dungeon publish` can save it), else `None`.
-async fn open_generic_and_post(
-    ctx: &Context,
-    command: &CommandInteraction,
-    state: &BotState,
-    world: GameWorld,
-    slug: String,
-    name: String,
-    source: Option<String>,
-) {
-    let channel = command.channel_id.get();
-
-    // Build the session + first round inside the lock, snapshot the render data, then narrate
-    // OUTSIDE the lock (narration hits the network).
-    let (room_name, room_desc, snap) = {
-        let mut store = sessions().lock().unwrap_or_else(|e| e.into_inner());
-        let game = GameSession::open(world);
-        let options = round_options(game.map(), game.world());
-        let room = game.current_room();
-        let room_name = room
-            .map(|r| r.name.clone())
-            .unwrap_or_else(|| game.world().scene.clone());
-        let room_desc = game.look();
-        let round = Round::new(0, options);
-        let snap = render_snapshot(&game, &name, &round);
-        store.insert(
-            channel,
-            DungeonSession {
-                game,
-                slug,
-                name,
-                round,
-                narrator: NarratorKind::Scripted,
-                last_narration: String::new(),
-                authored_source: source,
-            },
-        );
-        (room_name, room_desc, snap)
-    };
-
-    let (narration, kind) =
-        narrate_room_gated(state, command.user.id.get(), &room_name, &room_desc).await;
-    // Record the narrator kind + prose for this posted room (honest footer, live-vote re-render).
-    if let Ok(mut store) = sessions().lock() {
-        if let Some(sess) = store.get_mut(&channel) {
-            sess.narrator = kind;
-            sess.last_narration = narration.clone();
-        }
-    }
-
-    let embed = round_embed(&snap, &narration, kind);
-    let rows = ballot_rows(&snap.options, snap.round);
-    respond(ctx, command, embed, rows, false).await;
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
-// /dungeon close — resolve the plurality winner through the engine.
-// ─────────────────────────────────────────────────────────────────────────────
-
-async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotState) {
-    let channel = command.channel_id.get();
-
-    // Resolve the round entirely inside the lock (pure, no network), snapshotting what to render
-    // + what to narrate for the next room.
-    enum CloseRender {
-        NoSession,
-        Empty, // a round with no options at all (shouldn't happen)
-        Resolved {
-            resolution: ResolvedRound,
-            next_room_name: String,
-            next_room_desc: String,
-            next_snapshot: Option<RenderSnapshot>,
-        },
-    }
-
-    let render = {
-        let mut store = sessions().lock().unwrap_or_else(|e| e.into_inner());
-        match store.get_mut(&channel) {
-            None => CloseRender::NoSession,
-            Some(sess) => match sess.round.winner() {
-                None => CloseRender::Empty,
-                Some(winner_idx) => {
-                    let winner = sess.round.options[winner_idx].clone();
-                    let tally = sess.round.tally();
-                    let votes_for_winner = tally.get(winner_idx).copied().unwrap_or(0);
-                    let total_ballots: usize = sess.round.ballots.len();
-                    let round_no = sess.round.round;
-
-                    // THE WORLD DISPOSES — play the crowd's choice through the engine.
-                    let result = sess.game.command("party", &winner.command);
-                    let status = sess.game.status();
-                    let receipts = sess.game.world().ledger.len();
-
-                    let resolution = ResolvedRound {
-                        world_name: sess.name.clone(),
-                        round_no,
-                        winner_label: winner.label.clone(),
-                        winner_command: winner.command.clone(),
-                        votes_for_winner,
-                        total_ballots,
-                        was_tie: is_tie(&tally, winner_idx),
-                        result: describe_result(&result),
-                        status,
-                        receipts,
-                    };
-
-                    // Open the next round unless the game ended.
-                    if status == GameStatus::Playing {
-                        let options = round_options(sess.game.map(), sess.game.world());
-                        let next = Round::new(round_no + 1, options);
-                        let room = sess.game.current_room();
-                        let next_room_name = room
-                            .map(|r| r.name.clone())
-                            .unwrap_or_else(|| sess.game.world().scene.clone());
-                        let next_room_desc = sess.game.look();
-                        let snap = render_snapshot(&sess.game, &sess.name, &next);
-                        sess.round = next;
-                        CloseRender::Resolved {
-                            resolution,
-                            next_room_name,
-                            next_room_desc,
-                            next_snapshot: Some(snap),
-                        }
-                    } else {
-                        CloseRender::Resolved {
-                            resolution,
-                            next_room_name: String::new(),
-                            next_room_desc: String::new(),
-                            next_snapshot: None,
-                        }
-                    }
-                }
-            },
-        }
-    };
-
-    match render {
-        CloseRender::NoSession => {
-            let embed = warn_embed(
-                "No session",
-                "This channel has no dungeon open. Start one with `/dungeon start`.",
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        CloseRender::Empty => {
-            let embed = warn_embed(
-                "No moves",
-                "There is nothing to vote on. Try `/dungeon verify` or start a new world.",
-            );
-            respond(ctx, command, embed, vec![], true).await;
-        }
-        CloseRender::Resolved {
-            resolution,
-            next_room_name,
-            next_room_desc,
-            next_snapshot,
-        } => {
-            match next_snapshot {
-                Some(snap) => {
-                    // Narrate the NEW room outside the lock (gated: paid Bedrock if the closer has a
-                    // credit, else the free ollama/scripted tier).
-                    let (narration, kind) = narrate_room_gated(
-                        state,
-                        command.user.id.get(),
-                        &next_room_name,
-                        &next_room_desc,
-                    )
-                    .await;
-                    if let Ok(mut store) = sessions().lock() {
-                        if let Some(sess) = store.get_mut(&channel) {
-                            sess.narrator = kind;
-                            sess.last_narration = narration.clone();
-                        }
-                    }
-                    let embed = resolution_then_round_embed(&resolution, &snap, &narration, kind);
-                    let rows = ballot_rows(&snap.options, snap.round);
-                    respond(ctx, command, embed, rows, false).await;
-                }
-                None => {
-                    // Game over — no next round.
-                    let embed = resolution_final_embed(&resolution);
-                    respond(ctx, command, embed, vec![], false).await;
-                }
-            }
-        }
-    }
-}
-
-/// Whether the winning option `idx` shares its vote count with ANY OTHER option — i.e. the
-/// deterministic lowest-index tie-break was exercised. (`idx` is the winner, always the lowest
-/// index at the max count, so a *lower*-only scan would always be false; we must scan every other
-/// option.)
-fn is_tie(tally: &[usize], idx: usize) -> bool {
-    let top = tally.get(idx).copied().unwrap_or(0);
-    tally.iter().enumerate().any(|(j, &c)| j != idx && c == top)
-}
-
-/// A plain-language account of a play result for the channel.
-struct ResultView {
-    /// The headline line ("A verified turn landed." / "Refused — …").
-    headline: String,
-    /// The engine's own narration (or the refusal reason).
-    body: String,
-    /// Whether this changed the world (landed a receipt).
-    landed: bool,
-}
-
-fn describe_result(result: &PlayResult) -> ResultView {
-    match result {
-        PlayResult::Landed { narration, .. } => ResultView {
-            headline: "A verified turn landed on the chain.".to_string(),
-            body: narration.clone(),
-            landed: true,
-        },
-        PlayResult::Refused(reason) => ResultView {
-            headline:
-                "Refused — the crowd decided, the world disposed: room unchanged, no receipt."
-                    .to_string(),
-            body: reason.to_string(),
-            landed: false,
-        },
-        PlayResult::DmRefused(e) => ResultView {
-            headline: "Refused by the dungeon-master's tooth — no receipt.".to_string(),
-            body: e.to_string(),
-            landed: false,
-        },
-        PlayResult::Unparsed(msg) => ResultView {
-            headline: "The dungeon-master could not read that move — nothing landed.".to_string(),
-            body: msg.clone(),
-            landed: false,
-        },
-    }
-}
-
-/// The resolved-round facts to render.
-struct ResolvedRound {
-    world_name: String,
-    round_no: u64,
-    winner_label: String,
-    winner_command: String,
-    votes_for_winner: usize,
-    total_ballots: usize,
-    was_tie: bool,
-    result: ResultView,
-    status: GameStatus,
-    receipts: usize,
-}
-
-// ─────────────────────────────────────────────────────────────────────────────
 // Component route — a button press is a ballot.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Route a `fiction:` component press (a ballot). custom_id: `fiction:vote:<round>:<optionIdx>`.
+/// Route a `fiction:` component press (a ballot). custom_id: `fiction:vote:<round>:<optionPos>`.
 pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, state: &BotState) {
     let id = component.data.custom_id.clone();
     let parts: Vec<&str> = id.split(':').collect();
-    // fiction : vote : <round> : <idx>
     if parts.len() != 4 || parts[1] != "vote" {
         return;
     }
@@ -1235,9 +895,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
                             Reply::Ephemeral("That option is no longer on the ballot.".to_string())
                         }
                         BallotOutcome::Recorded => {
-                            // Re-render the SAME message with the updated live tally + same buttons,
-                            // preserving the already-posted narration + its (honest) narrator kind.
-                            let snapshot = render_snapshot(&sess.game, &sess.name, &sess.round);
+                            let snapshot = render_snapshot(sess);
                             Reply::Update {
                                 snapshot,
                                 narration: sess.last_narration.clone(),
@@ -1268,9 +926,6 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             narration,
             kind,
         } => {
-            // The room narration already lives on the message; a vote keeps the tally live by
-            // re-rendering the SAME stored narration (no network, so it never misreports the
-            // narrator kind). Fall back to the engine description only if nothing was stored.
             let narration = if narration.trim().is_empty() {
                 snapshot.room_desc.clone()
             } else {
@@ -1296,15 +951,15 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
 // Rendering — embeds + ballot buttons.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// A snapshot of everything needed to render a round embed + its buttons, taken while the lock is
-/// held so the network narration can happen afterwards without the lock.
+/// A snapshot of everything needed to render a round embed + its buttons, taken while the
+/// lock is held so the network narration can happen afterwards without the lock.
 #[derive(Clone)]
 pub struct RenderSnapshot {
     world_name: String,
     round: u64,
     room_name: String,
     room_desc: String,
-    inventory: Vec<String>,
+    state_line: String,
     objective: String,
     receipts: usize,
     options: Vec<VoteOption>,
@@ -1312,52 +967,37 @@ pub struct RenderSnapshot {
     ballots: usize,
 }
 
-fn render_snapshot(game: &GameSession, world_name: &str, round: &Round) -> RenderSnapshot {
-    let world = game.world();
-    let room = game.current_room();
-    let room_name = room
-        .map(|r| r.name.clone())
-        .unwrap_or_else(|| world.scene.clone());
-    let obj = &game.map().objective;
-    let obj_room = game
-        .map()
-        .rooms
-        .get(&obj.room)
-        .map(|r| r.name.clone())
-        .unwrap_or_else(|| obj.room.clone());
+fn render_snapshot(sess: &DungeonSession) -> RenderSnapshot {
+    let room_name = sess
+        .real
+        .current_passage_name()
+        .unwrap_or_else(|| "the dark".to_string());
     RenderSnapshot {
-        world_name: world_name.to_string(),
-        round: round.round,
+        world_name: sess.name.clone(),
+        round: sess.round.round,
         room_name,
-        room_desc: game.look(),
-        inventory: world.inventory.iter().cloned().collect(),
-        objective: format!("reach {obj_room} holding the {}", obj.holding),
-        receipts: world.ledger.len(),
-        options: round.options.clone(),
-        tally: round.tally(),
-        ballots: round.ballots.len(),
+        room_desc: sess.real.current_prose(),
+        state_line: sess.real.state_line(),
+        objective: KEEP_OBJECTIVE.to_string(),
+        receipts: sess.real.receipts_len(),
+        options: sess.round.options.clone(),
+        tally: sess.round.tally(),
+        ballots: sess.round.ballots.len(),
     }
 }
 
-/// The round embed: the room (narrated), inventory, objective, receipts, and the live ballot.
+/// The round embed: the room (narrated), state, objective, receipts, and the live ballot.
 fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> CreateEmbed {
-    let inv = if snap.inventory.is_empty() {
-        "— (empty)".to_string()
-    } else {
-        snap.inventory.join(", ")
-    };
     let mut desc = String::new();
     desc.push_str(&truncate(narration, 1400));
-    // Only append the engine's own room description when the narration is DIFFERENT from it (a
-    // gemma2 narration adds flavor; a scripted fallback IS the description, so don't print twice).
-    if narration.trim() != snap.room_desc.trim() {
+    if narration.trim() != snap.room_desc.trim() && !snap.room_desc.trim().is_empty() {
         desc.push_str("\n\n");
         desc.push_str(&format!("_{}_", truncate(&snap.room_desc, 800)));
     }
 
     base_embed(&format!("{} — {}", snap.world_name, snap.room_name))
         .description(truncate(&desc, 4000))
-        .field("Inventory", inv, false)
+        .field("Party", snap.state_line.clone(), false)
         .field("Objective", snap.objective.clone(), false)
         .field("Verified turns", snap.receipts.to_string(), true)
         .field(
@@ -1387,10 +1027,9 @@ fn resolution_then_round_embed(
         ""
     };
     let outcome = format!(
-        "**Round {} closed.** The party chose **{}** — `{}` with {}/{} ballot(s){}.\n\n{}\n> {}",
+        "**Round {} closed.** The party chose **{}** with {}/{} ballot(s){}.\n\n{}\n> {}",
         res.round_no,
         res.winner_label,
-        res.winner_command,
         res.votes_for_winner,
         res.total_ballots,
         tie,
@@ -1401,18 +1040,15 @@ fn resolution_then_round_embed(
     embed
 }
 
-/// The final embed when the game ended (Won/Lost) on the closed round.
+/// The final embed when the dungeon ended on the closed round.
 fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
-    let (title, verdict) = match res.status {
-        GameStatus::Won => (
-            "🏆 The party WON",
-            "The objective is met — the crowd carried it out together.",
-        ),
-        GameStatus::Lost => (
-            "💀 The party fell",
-            "A lose condition fired. The chain remembers how it ended.",
-        ),
-        GameStatus::Playing => ("The round closed", ""),
+    let (title, verdict) = if res.ended && res.result.landed {
+        (
+            "🏆 The Keep is cleared",
+            "The objective is met — the crowd carried it out together, one real turn at a time.",
+        )
+    } else {
+        ("The round closed", "")
     };
     let tie = if res.was_tie {
         " (tie → lowest option index)"
@@ -1420,9 +1056,8 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
         ""
     };
     let body = format!(
-        "**{}** — `{}` with {}/{} ballot(s){}.\n\n{}\n> {}\n\n{}\n\n**{} verified turns** on the chain. Run `/dungeon verify` to re-check them.",
+        "**{}** with {}/{} ballot(s){}.\n\n{}\n> {}\n\n{}\n\n**{} verified turns** on the chain. Run `/dungeon verify` to re-check them by replay.",
         res.winner_label,
-        res.winner_command,
         res.votes_for_winner,
         res.total_ballots,
         tie,
@@ -1436,7 +1071,7 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
         .footer(footer(NarratorKind::Scripted))
 }
 
-/// A monospace tally block: `go north  ▓▓▓ 3` per option.
+/// A monospace tally block: `Trade blows  ▓▓▓ 3` per option.
 fn tally_block(options: &[VoteOption], tally: &[usize]) -> String {
     if options.is_empty() {
         return "—".to_string();
@@ -1466,9 +1101,7 @@ fn ballot_rows(options: &[VoteOption], round: u64) -> Vec<CreateActionRow> {
         let mut buttons: Vec<CreateButton> = Vec::new();
         for (i, opt) in chunk.iter().enumerate() {
             let idx = row_idx * 5 + i;
-            let style = if opt.command == "look" {
-                ButtonStyle::Secondary
-            } else if opt.label.starts_with('🔒') {
+            let style = if opt.label.starts_with('🔒') {
                 ButtonStyle::Danger
             } else {
                 ButtonStyle::Primary
@@ -1507,14 +1140,14 @@ fn footer(kind: NarratorKind) -> CreateEmbedFooter {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// The narrator — a real local gemma2:2b via ollama, scripted fallback (honest).
+// The narrator — a real hosted Bedrock (paid), local gemma2:2b (free), scripted fallback.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// **The credit gate.** Narrate a room for `discord_user_id`, spending a `$DREGG` run-credit on a
-/// real Bedrock narration when the user has one, else falling back to the FREE tier
-/// ([`narrate_room`], ollama/scripted). The paid backend is never free-ridden: a paid narration
-/// debits exactly one credit ([`crate::pay::PayState::try_paid_run`], which debits only AFTER a
-/// successful hosted call, under a PER-RUN USD budget). The narrator kind is reported honestly.
+/// **The credit gate.** Narrate a room for `discord_user_id`, spending a `$DREGG` run-credit
+/// on a real Bedrock narration when the user has one, else falling back to the FREE tier
+/// ([`narrate_room`], ollama/scripted). The paid backend is never free-ridden: a paid
+/// narration debits exactly one credit AFTER a successful hosted call. The narrator kind is
+/// reported honestly.
 async fn narrate_room_gated(
     state: &BotState,
     discord_user_id: u64,
@@ -1523,9 +1156,6 @@ async fn narrate_room_gated(
 ) -> (String, NarratorKind) {
     let discord = discord_user_id.to_string();
 
-    // Free tier when the caller has no credits (or no hosted backend is configured). This is the
-    // canonical gate that `crate::pay::PayState::try_paid_run` also implements + the tests drive; the
-    // live path splits the phases only so the hosted call runs OFF the async worker.
     if !state.pay.can_run_paid(&discord) {
         return narrate_room(room_name, room_desc).await;
     }
@@ -1538,8 +1168,8 @@ async fn narrate_room_gated(
         .to_string();
     let prompt = format!("Room: {room_name}. {room_desc}");
 
-    // The hosted Bedrock client drives its OWN Tokio runtime with `block_on`, which must not run on
-    // a bot async worker — do the paid narration on a blocking thread.
+    // The hosted Bedrock client drives its OWN Tokio runtime with `block_on`, which must not run
+    // on a bot async worker — do the paid narration on a blocking thread.
     let narration = tokio::task::spawn_blocking(move || paid.narrate(&system, &prompt))
         .await
         .ok()
@@ -1548,7 +1178,6 @@ async fn narrate_room_gated(
 
     match narration {
         Some(n) => {
-            // Success → spend exactly one credit (on the worker; a failed call above never debits).
             let _ = state.pay.debit_one(&discord);
             (sanitize(&n.text), NarratorKind::Bedrock)
         }
@@ -1556,10 +1185,9 @@ async fn narrate_room_gated(
     }
 }
 
-/// Narrate a room (the FREE tier). Tries a real local `gemma2:2b` over ollama's `/api/generate`
-/// (`stream:false` → `.response`); if ollama is unreachable OR returns nothing usable, falls back
-/// to the engine's own scripted description and reports `NarratorKind::Scripted` — the narrator is
-/// NEVER misreported.
+/// Narrate a room (the FREE tier). Tries a real local `gemma2:2b` over ollama; if unreachable
+/// OR returns nothing usable, falls back to the scene's own scripted description and reports
+/// `NarratorKind::Scripted` — the narrator is NEVER misreported.
 async fn narrate_room(room_name: &str, room_desc: &str) -> (String, NarratorKind) {
     match gemma_narrate(room_name, room_desc).await {
         Some(text) if !text.trim().is_empty() => (sanitize(&text), NarratorKind::Gemma),
@@ -1567,8 +1195,7 @@ async fn narrate_room(room_name: &str, room_desc: &str) -> (String, NarratorKind
     }
 }
 
-/// One ollama `/api/generate` call (model `gemma2:2b`, `stream:false`). `None` on any failure
-/// (unreachable, timeout, malformed) so the caller falls back to scripted.
+/// One ollama `/api/generate` call (model `gemma2:2b`, `stream:false`). `None` on any failure.
 async fn gemma_narrate(room_name: &str, room_desc: &str) -> Option<String> {
     let endpoint =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
@@ -1600,8 +1227,7 @@ async fn gemma_narrate(room_name: &str, room_desc: &str) -> Option<String> {
 }
 
 /// Drop the two JSON-hostile bytes + control chars but KEEP `{`/`}` (so a would-be `{{` is not
-/// laundered) — mirrors the engine's own field cleaning philosophy. The engine's attestation leg
-/// is what actually refuses an injecting narration when a move lands; here we only tidy display.
+/// laundered). The executor is what actually refuses an injecting move; here we only tidy display.
 fn sanitize(s: &str) -> String {
     s.chars()
         .filter(|c| *c != '"' && *c != '\\' && !c.is_control() || *c == '\n')
@@ -1614,166 +1240,6 @@ fn sanitize(s: &str) -> String {
 // Small helpers.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// The string value of a leaf option `name` inside the first subcommand.
-fn subcommand_string(command: &CommandInteraction, name: &str) -> Option<String> {
-    let sub = command.data.options.first()?;
-    let opts = match &sub.value {
-        CommandDataOptionValue::SubCommand(opts) => opts,
-        _ => return None,
-    };
-    opts.iter()
-        .find(|o| o.name == name)
-        .and_then(|o| match &o.value {
-            CommandDataOptionValue::String(s) => Some(s.clone()),
-            _ => None,
-        })
-}
-
-/// Strip a leading/trailing Markdown code fence (```…```), keeping the inner source. If the first
-/// fenced line names a language (```dungeon), that line is dropped too.
-fn strip_fence(raw: &str) -> String {
-    let t = raw.trim();
-    if let Some(rest) = t.strip_prefix("```") {
-        let rest = rest.strip_suffix("```").unwrap_or(rest);
-        // Drop the optional language tag on the first line.
-        let mut lines = rest.lines();
-        let first = lines.clone().next().unwrap_or("");
-        if !first.contains(' ')
-            && !first.contains(':')
-            && first.len() < 16
-            && !first.trim().is_empty()
-        {
-            // Looks like a lone language tag — drop it.
-            lines.next();
-            return lines.collect::<Vec<_>>().join("\n");
-        }
-        return rest.to_string();
-    }
-    t.to_string()
-}
-
-/// The cap on an authored source we will read (256 KiB) — a `.dungeon` is text and small.
-const MAX_SRC_BYTES: usize = 256 * 1024;
-
-/// The [`Attachment`] bound to leaf option `name` inside the first subcommand, resolved against
-/// the interaction's `resolved.attachments`.
-fn subcommand_attachment<'a>(
-    command: &'a CommandInteraction,
-    name: &str,
-) -> Option<&'a serenity::all::Attachment> {
-    let sub = command.data.options.first()?;
-    let opts = match &sub.value {
-        CommandDataOptionValue::SubCommand(opts) => opts,
-        _ => return None,
-    };
-    let id = opts
-        .iter()
-        .find(|o| o.name == name)
-        .and_then(|o| match &o.value {
-            CommandDataOptionValue::Attachment(id) => Some(*id),
-            _ => None,
-        })?;
-    command.data.resolved.attachments.get(&id)
-}
-
-/// **Gather the `.dungeon` source for check/forge/publish**, from an attachment (fetched, size-
-/// capped, UTF-8-checked) or a pasted `source:` (fence-stripped). An attachment wins if both are
-/// present. `Err` carries a user-facing message.
-async fn gather_source(command: &CommandInteraction) -> Result<String, String> {
-    if let Some(att) = subcommand_attachment(command, "attachment") {
-        return fetch_attachment_source(att).await;
-    }
-    if let Some(s) = subcommand_string(command, "source") {
-        let src = strip_fence(&s);
-        if src.trim().is_empty() {
-            return Err("The `source:` you gave is empty.".to_string());
-        }
-        return Ok(src);
-    }
-    Err("Provide a `.dungeon` source — paste it in `source:` (a ```code block``` works) or attach a `.dungeon` file.".to_string())
-}
-
-/// Fetch a `.dungeon` attachment's bytes and decode them, rejecting an over-cap or non-UTF-8 body.
-async fn fetch_attachment_source(att: &serenity::all::Attachment) -> Result<String, String> {
-    if att.size as usize > MAX_SRC_BYTES {
-        return Err(format!(
-            "That attachment is {} bytes — the cap is {} KiB.",
-            att.size,
-            MAX_SRC_BYTES / 1024
-        ));
-    }
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(20))
-        .build()
-        .map_err(|e| e.to_string())?;
-    let resp = client
-        .get(&att.url)
-        .send()
-        .await
-        .map_err(|e| format!("Could not fetch the attachment: {e}"))?;
-    let bytes = resp
-        .bytes()
-        .await
-        .map_err(|e| format!("Could not read the attachment: {e}"))?;
-    decode_source_bytes(&bytes)
-}
-
-/// Decode raw attachment bytes into a source string, enforcing the size cap and UTF-8. Pure (no
-/// network) so the cap + non-UTF-8 rejection are unit-testable.
-fn decode_source_bytes(bytes: &[u8]) -> Result<String, String> {
-    if bytes.len() > MAX_SRC_BYTES {
-        return Err(format!(
-            "That file is {} bytes — the cap is {} KiB.",
-            bytes.len(),
-            MAX_SRC_BYTES / 1024
-        ));
-    }
-    String::from_utf8(bytes.to_vec())
-        .map_err(|_| "That file is not valid UTF-8 text — a .dungeon is plain text.".to_string())
-}
-
-/// Extract the world's display name from a `.dungeon` `name:` header line, if present.
-fn extract_world_name(src: &str) -> Option<String> {
-    for line in src.lines() {
-        let l = line.trim();
-        if let Some(rest) = l.strip_prefix("name:") {
-            let name = rest.trim().trim_matches('"').trim();
-            if !name.is_empty() {
-                return Some(name.to_string());
-            }
-        }
-    }
-    None
-}
-
-/// A conservative library-name slug: lowercase, spaces/underscores → dashes, keep `[a-z0-9-]`.
-fn slugify(s: &str) -> String {
-    let mut out = String::new();
-    for c in s.trim().to_lowercase().chars() {
-        if c.is_ascii_alphanumeric() {
-            out.push(c);
-        } else if (c == ' ' || c == '_' || c == '-') && !out.ends_with('-') {
-            // Collapse runs of separators into a single dash (so "weird  name" / "weird--name"
-            // both slugify to "weird-name", not "weird--name").
-            out.push('-');
-        }
-    }
-    let trimmed = out.trim_matches('-').to_string();
-    if trimmed.is_empty() {
-        "world".to_string()
-    } else {
-        trimmed
-    }
-}
-
-/// Unix seconds now.
-fn now_secs() -> i64 {
-    std::time::SystemTime::now()
-        .duration_since(std::time::UNIX_EPOCH)
-        .map(|d| d.as_secs() as i64)
-        .unwrap_or(0)
-}
-
 /// Truncate `s` to at most `max` characters (char-safe), appending `…` when cut.
 fn truncate(s: &str, max: usize) -> String {
     if s.chars().count() <= max {
@@ -1785,19 +1251,20 @@ fn truncate(s: &str, max: usize) -> String {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// Tests — the round/ballot logic, the engine seam, the forge flow, and the
-// deterministic voter-id derivation. No live Discord required.
+// Tests — the round/ballot logic, the REAL-engine seam (a legal winner lands a real
+// receipt; an illegal winner is a real executor refusal), the deterministic voter-id.
+// No live Discord required.
 // ─────────────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use attested_dm::GameStatus;
+    use dungeon_on_dregg::{KP_PRESS_ON, KP_TRADE_BLOWS};
 
-    fn opt(label: &str, command: &str) -> VoteOption {
+    fn opt(label: &str, choice_index: usize) -> VoteOption {
         VoteOption {
             label: label.to_string(),
-            command: command.to_string(),
+            choice_index,
         }
     }
 
@@ -1805,176 +1272,168 @@ mod tests {
 
     #[test]
     fn a_ballot_is_write_once_per_voter() {
-        let mut round = Round::new(0, vec![opt("go north", "go north"), opt("look", "look")]);
+        let mut round = Round::new(0, vec![opt("go north", 0), opt("look", 1)]);
         assert_eq!(round.cast("pubkey_alice", 0), BallotOutcome::Recorded);
-        // A second vote from the SAME derived identity is refused (no box-stuffing).
         assert_eq!(round.cast("pubkey_alice", 1), BallotOutcome::AlreadyVoted);
-        // The first vote stands.
         assert_eq!(round.tally(), vec![1, 0]);
-        // A different identity votes freely.
         assert_eq!(round.cast("pubkey_bob", 1), BallotOutcome::Recorded);
         assert_eq!(round.tally(), vec![1, 1]);
     }
 
     #[test]
     fn a_bad_option_index_is_refused() {
-        let mut round = Round::new(0, vec![opt("look", "look")]);
+        let mut round = Round::new(0, vec![opt("look", 0)]);
         assert_eq!(round.cast("pk", 9), BallotOutcome::BadOption);
         assert!(round.ballots.is_empty());
     }
 
     #[test]
     fn plurality_winner_is_the_most_voted() {
-        let mut round = Round::new(
-            0,
-            vec![
-                opt("north", "go n"),
-                opt("south", "go s"),
-                opt("look", "look"),
-            ],
-        );
+        let mut round = Round::new(0, vec![opt("north", 0), opt("south", 1), opt("look", 2)]);
         round.cast("a", 1);
         round.cast("b", 1);
         round.cast("c", 0);
-        assert_eq!(round.winner(), Some(1)); // south, 2 votes
+        assert_eq!(round.winner(), Some(1));
     }
 
     #[test]
     fn ties_break_toward_the_lowest_option_index() {
-        let mut round = Round::new(0, vec![opt("north", "go n"), opt("south", "go s")]);
+        let mut round = Round::new(0, vec![opt("north", 0), opt("south", 1)]);
         round.cast("a", 0);
         round.cast("b", 1);
-        // 1–1 tie → the LOWEST index (0) wins, deterministically.
         assert_eq!(round.winner(), Some(0));
         assert!(is_tie(&round.tally(), 0));
     }
 
     #[test]
     fn an_empty_round_defaults_to_option_zero() {
-        let round = Round::new(0, vec![opt("look", "look")]);
-        // No ballots at all → the world still resolves the default (index 0).
+        let round = Round::new(0, vec![opt("look", 0)]);
         assert_eq!(round.winner(), Some(0));
     }
 
-    // ── (b) the engine seam: a voted legal move lands; a voted locked exit is refused ──
+    // ── (b) the REAL-engine seam ─────────────────────────────────────────────
+    // These supersede the two previously-#[ignore]d attested-dm `sunken_vault` tests:
+    // now they drive the REAL dungeon-on-dregg WorldCell (a landed move is a real
+    // TurnReceipt; an illegal move is a real executor refusal; verify_by_replay holds).
 
+    /// A voted LEGAL move lands a REAL receipt — the ballot winner is applied as one
+    /// cap-bounded turn on the real executor, the receipt count grows, and the whole
+    /// playthrough re-verifies by replay against a fresh identically-seeded world-cell.
     #[test]
-    #[ignore = "pre-existing drift (not the payment work): attested-dm sunken_vault() content changed in the 17h combat-engine commit, so the antechamber lantern/gated-exit these assert on moved; the bot /dungeon is migrating to the real dungeon-on-dregg engine which supersedes this attested-dm path — re-add under the migration"]
-    fn a_voted_legal_move_lands_a_receipt() {
-        // The Sunken Vault opens in the antechamber with the lantern present. A vote to TAKE the
-        // lantern is a legal move: it lands as one verified turn and the receipt count grows.
-        let mut game = GameSession::open(sunken_vault());
-        let before = game.world().ledger.len();
-        // The crowd's plurality command:
-        let result = game.command("party", "take lantern");
-        assert!(result.landed(), "take lantern is legal: {result:?}");
-        assert_eq!(
-            game.world().ledger.len(),
-            before + 1,
-            "a verified turn landed"
+    fn a_voted_legal_move_lands_a_real_receipt() {
+        let mut sess = RealSession::open(7).expect("the Keep opens on a real world-cell");
+        assert_eq!(sess.current_passage_name().as_deref(), Some("gatehall"));
+        assert_eq!(sess.receipts_len(), 1, "genesis is the first verified turn");
+
+        // "Press on into the plundered hall" — an ungated, legal move (choice KP_PRESS_ON).
+        let opts = sess.round_options();
+        assert!(
+            opts.iter().any(|o| o.choice_index == KP_PRESS_ON),
+            "the ballot offers the ungated press-on move"
         );
-        assert!(game.world().inventory.contains("lantern"));
+        match sess.apply_winner(KP_PRESS_ON) {
+            MoveOutcome::Landed { receipt, ended } => {
+                assert!(!ended, "pressing on does not end the Keep");
+                assert_ne!(receipt.turn_hash, [0u8; 32], "a genuine committed turn");
+            }
+            other => panic!("a legal move must land a real receipt, got {other:?}"),
+        }
+        assert_eq!(sess.receipts_len(), 2, "a real verified turn landed");
+        assert_eq!(
+            sess.current_passage_name().as_deref(),
+            Some("hall"),
+            "the world advanced to the plundered hall"
+        );
+
+        // The real receipt chain re-verifies by replay.
+        sess.verify()
+            .expect("the honest playthrough re-verifies via verify_by_replay");
     }
 
+    /// A voted ILLEGAL move is a REAL executor refusal — world unchanged, no receipt
+    /// (the anti-ghost tooth). Two survivable blows land; the killing blow past the HP
+    /// floor (`FieldGte`) is refused, and the honest chain still re-verifies.
     #[test]
-    #[ignore = "pre-existing drift (not the payment work): attested-dm sunken_vault() start-room gated exit changed in the 17h combat-engine commit; the bot /dungeon is migrating to the real dungeon-on-dregg engine which supersedes this attested-dm path — re-add under the migration"]
-    fn a_voted_locked_exit_is_refused_world_unchanged_no_receipt() {
-        // The stair down from the antechamber is dark/gated — locked until the lantern is held.
-        // The crowd votes to descend it WITHOUT the lantern: the world disposes — refused, the
-        // world is unchanged, and NO receipt lands (the anti-ghost tooth).
-        let mut game = GameSession::open(sunken_vault());
-        let before_scene = game.world().scene.clone();
-        let before_receipts = game.world().ledger.len();
-        // Try every exit from the start room that is currently gated; assert at least one refuses
-        // and nothing lands.
-        let start_room = game.current_room().cloned().expect("start room exists");
-        let mut saw_refusal = false;
-        for exit in start_room.exits.values() {
-            if exit.gate.is_some() {
-                let result = game.command("party", &format!("go {}", exit.to_room));
-                assert!(
-                    !result.landed(),
-                    "a gated exit taken without its key must NOT land: {result:?}"
-                );
-                assert!(matches!(result, PlayResult::Refused(_)));
-                saw_refusal = true;
+    fn a_voted_illegal_move_is_a_real_executor_refusal_no_receipt() {
+        let mut sess = RealSession::open(8).expect("the Keep opens");
+
+        // Two survivable trade-blows (hp 50 → 30 → 10), each a real committed turn.
+        for _ in 0..2 {
+            match sess.apply_winner(KP_TRADE_BLOWS) {
+                MoveOutcome::Landed { receipt, ended } => {
+                    assert!(!ended);
+                    assert_ne!(receipt.turn_hash, [0u8; 32]);
+                }
+                other => panic!("a survivable blow must land, got {other:?}"),
             }
         }
+        assert_eq!(sess.read_var("hp"), 10, "two blows dropped hp to 10");
+        let receipts_before = sess.receipts_len();
+
+        // At hp 10 the gate-warden choice is now shown locked (its `{ hp >= 21 }` fails).
+        let opts = sess.round_options();
+        let blow = opts
+            .iter()
+            .find(|o| o.choice_index == KP_TRADE_BLOWS)
+            .expect("the trade-blows move is still on the ballot");
         assert!(
-            saw_refusal,
-            "the vault's start room has a gated exit to exercise"
+            blow.label.starts_with('🔒'),
+            "the killing blow is decorated locked (condition eval), got {:?}",
+            blow.label
         );
-        // World unchanged: same room, no new receipts.
-        assert_eq!(
-            game.world().scene,
-            before_scene,
-            "room unchanged after refusal"
-        );
-        assert_eq!(
-            game.world().ledger.len(),
-            before_receipts,
-            "no receipt landed for the refused crowd choice"
-        );
-    }
 
-    #[test]
-    fn the_session_chain_reverifies_after_a_landed_move() {
-        let mut game = GameSession::open(sunken_vault());
-        game.command("party", "take lantern");
-        assert!(game.verify().is_ok(), "the hash chain re-verifies");
-        assert_eq!(game.status(), GameStatus::Playing);
-    }
-
-    // ── (c) the forge flow: broken refuses (no session), a sound sample starts ──
-
-    #[test]
-    fn forge_broken_dungeon_is_refused_and_starts_no_session() {
-        let broken = include_str!("../../../attested-dm/dungeons/broken.dungeon");
-        let result = forge_world(broken);
-        assert!(
-            result.is_err(),
-            "the broken dungeon must be refused fail-closed"
-        );
-        match result {
-            Err(ForgeError::Parse { line, .. }) => {
-                assert!(line >= 1, "a parse error names a source line");
-            }
-            Err(ForgeError::Invalid(issues)) => {
-                assert!(
-                    !issues.is_empty(),
-                    "every blocking validator issue is listed"
-                );
-                assert!(issues.iter().all(|i| i.is_error()));
-            }
-            Ok(_) => panic!("broken.dungeon must not produce a playable world"),
+        // The crowd votes it anyway — the REAL executor refuses (FieldGte on the post-state).
+        match sess.apply_winner(KP_TRADE_BLOWS) {
+            MoveOutcome::Refused(_) => {}
+            other => panic!("a killing blow must be a real executor refusal, got {other:?}"),
         }
+        // Anti-ghost: nothing committed.
+        assert_eq!(
+            sess.receipts_len(),
+            receipts_before,
+            "no receipt landed for the refused choice"
+        );
+        assert_eq!(sess.read_var("hp"), 10, "hp unchanged after the refusal");
+        assert_eq!(
+            sess.current_passage_name().as_deref(),
+            Some("gatehall"),
+            "still in the gatehall — the world did not move"
+        );
+
+        // The honest chain (genesis + two blows) still re-verifies by replay.
+        sess.verify()
+            .expect("the honest prefix re-verifies after the refusal");
     }
 
+    /// The recorded playthrough re-verifies through a full legal sequence, and a forged
+    /// (ineligible) choice fails replay — the real receipt-chain tooth end to end.
     #[test]
-    fn forge_clockwork_orchard_starts_a_session() {
-        let src = include_str!("../../../attested-dm/dungeons/clockwork_orchard.dungeon");
-        let world = forge_world(src).expect("the clockwork orchard is a sound, playable world");
-        // A session opens over the AUTHORED world and can be looked at + played.
-        let game = GameSession::open(world);
-        assert!(!game.look().is_empty());
+    fn the_playthrough_reverifies_and_a_forged_choice_fails() {
+        let mut sess = RealSession::open(9).expect("the Keep opens");
+        // A legal opening: press on into the hall, claim the crown for the Red Hand.
+        assert!(matches!(
+            sess.apply_winner(KP_PRESS_ON),
+            MoveOutcome::Landed { .. }
+        ));
+        // hall: claim red (choice 0).
+        assert!(matches!(sess.apply_winner(0), MoveOutcome::Landed { .. }));
+        sess.verify().expect("the legal playthrough re-verifies");
+
+        // Forge the recorded record: swap the first step's choice for a different one and
+        // confirm replay rejects it (state divergence or an executor refusal on re-drive).
+        let mut play = sess.playthrough();
+        if let Some(first) = play.steps.first_mut() {
+            // gatehall had choices 0 (trade-blows) and 1 (press-on); forge 1 → 0.
+            first.choice_index = 0;
+        }
+        let out = verify_by_replay(deploy_keep(9), &sess.scene, &play);
         assert!(
-            !round_options(game.map(), game.world()).is_empty(),
-            "the room offers candidate moves"
+            out.is_err(),
+            "a forged choice must fail replay, got {out:?}"
         );
     }
 
-    #[test]
-    fn a_fenced_code_block_is_stripped_before_parsing() {
-        let src = include_str!("../../../attested-dm/dungeons/clockwork_orchard.dungeon");
-        let fenced = format!("```dungeon\n{src}\n```");
-        let stripped = strip_fence(&fenced);
-        assert!(
-            forge_world(&stripped).is_ok(),
-            "the fenced source forges the same world"
-        );
-    }
-
-    // ── (d) the voter id IS the cipherclerk-derived public key (deterministic) ──
+    // ── (c) the voter id IS the cipherclerk-derived public key (deterministic) ──
 
     #[test]
     fn the_voter_id_equals_the_derived_public_key_deterministically() {
@@ -1983,155 +1442,28 @@ mod tests {
         let discord_user_id: u64 = 123456789012345678;
         let a = UserCipherclerk::derive(&bot_secret, discord_user_id, fed);
         let b = UserCipherclerk::derive(&bot_secret, discord_user_id, fed);
-        // The derivation is deterministic: same user → same dregg public key (the ballot voter id).
         assert_eq!(a.public_key_hex(), b.public_key_hex());
-        // And it is a real 32-byte Ed25519 public key (64 hex chars), not a nickname.
         assert_eq!(a.public_key_hex().len(), 64);
-        // Different users → different voter ids.
         let c = UserCipherclerk::derive(&bot_secret, discord_user_id + 1, fed);
         assert_ne!(a.public_key_hex(), c.public_key_hex());
     }
 
     #[test]
-    fn round_options_include_look_and_the_start_room_moves() {
-        let game = GameSession::open(sunken_vault());
-        let options = round_options(game.map(), game.world());
-        assert!(
-            options.iter().any(|o| o.command == "look"),
-            "a look is always on the ballot"
-        );
+    fn round_options_offer_the_start_room_moves() {
+        let sess = RealSession::open(3).expect("open");
+        let options = sess.round_options();
         assert!(
             options.len() >= 2,
-            "the start room offers more than just a look"
+            "the gatehall offers more than one candidate move"
         );
-    }
-
-    // ── (e) /dungeon check — the linter's two stages ─────────────────────────
-
-    #[test]
-    fn check_broken_dungeon_lists_validator_errors() {
-        // `/dungeon check` runs parse (syntactic) then validate; the broken world parses
-        // syntactically but the validator finds blocking errors (dangling exit, unreachable
-        // objective, an item placed nowhere) — every one listed, no session.
-        let broken = include_str!("../../../attested-dm/dungeons/broken.dungeon");
-        let world = parse_world(broken).expect("broken.dungeon parses syntactically");
-        let issues = validate(&world);
-        let errors: Vec<_> = issues.iter().filter(|i| i.is_error()).collect();
+        // The ungated press-on move is present and NOT locked.
+        let press = options
+            .iter()
+            .find(|o| o.choice_index == KP_PRESS_ON)
+            .expect("press-on present");
         assert!(
-            !errors.is_empty(),
-            "the validator reports the broken world's blocking errors"
+            !press.label.starts_with('🔒'),
+            "an ungated move is not locked"
         );
-    }
-
-    #[test]
-    fn check_clockwork_orchard_validates_clean() {
-        let src = include_str!("../../../attested-dm/dungeons/clockwork_orchard.dungeon");
-        let world = parse_world(src).expect("parses");
-        let issues = validate(&world);
-        assert!(
-            issues.iter().all(|i| !i.is_error()),
-            "the clockwork orchard validates with no blocking errors"
-        );
-    }
-
-    #[test]
-    fn a_syntax_broken_source_yields_a_line_pinned_parse_error() {
-        // No `name:`, no `start:`, no rooms — a whole-file / syntactic failure.
-        let garbage = "this is not a dungeon at all\njust some words\n";
-        let err = parse_world(garbage).expect_err("garbage must not parse");
-        // A DungeonError carries a line (0 = whole-file) and a message — fail-closed.
-        assert!(
-            !err.message.is_empty(),
-            "the parse error names what is wrong"
-        );
-        // And forge starts no session (it is Err).
-        assert!(forge_world(garbage).is_err());
-    }
-
-    // ── (f) the source-input plumbing: size cap + non-utf8 ───────────────────
-
-    #[test]
-    fn the_size_cap_rejects_an_oversized_source() {
-        let big = vec![b'x'; MAX_SRC_BYTES + 1];
-        assert!(
-            decode_source_bytes(&big).is_err(),
-            "an over-cap body is rejected"
-        );
-        let ok = vec![b'x'; 16];
-        assert!(decode_source_bytes(&ok).is_ok(), "a small body decodes");
-    }
-
-    #[test]
-    fn a_non_utf8_attachment_is_rejected() {
-        // 0xFF is never valid UTF-8.
-        let bytes = [0x66u8, 0x6f, 0x6f, 0xff, 0xfe];
-        assert!(
-            decode_source_bytes(&bytes).is_err(),
-            "a non-utf8 body is rejected"
-        );
-    }
-
-    #[test]
-    fn extract_world_name_reads_the_header() {
-        let src = "name: The Clockwork Orchard\nstart: gate\n";
-        assert_eq!(
-            extract_world_name(src).as_deref(),
-            Some("The Clockwork Orchard")
-        );
-        assert_eq!(extract_world_name("no header here"), None);
-    }
-
-    #[test]
-    fn slugify_makes_a_library_name() {
-        assert_eq!(slugify("The Clockwork Orchard"), "the-clockwork-orchard");
-        assert_eq!(slugify("  weird__name!!  "), "weird-name");
-    }
-
-    // ── (g) publish + library + start round-trip through the db ──────────────
-
-    #[tokio::test]
-    async fn publish_library_start_round_trip_through_the_db() {
-        use crate::db::{Database, DungeonWorldRecord};
-
-        let db = Database::connect("sqlite::memory:").await.unwrap();
-        let src =
-            include_str!("../../../attested-dm/dungeons/clockwork_orchard.dungeon").to_string();
-        // A sound world (parses + validates clean) is what gets published.
-        let world = forge_world(&src).expect("clockwork orchard is sound");
-        let rec = DungeonWorldRecord {
-            name: "clockwork-orchard".to_string(),
-            display_name: extract_world_name(&src).unwrap(),
-            source: src.clone(),
-            author_discord_id: "424242".to_string(),
-            author_pubkey: "deadbeef".to_string(),
-            validates_clean: true,
-            room_count: world.rooms.len() as i64,
-            created_at: 1_700_000_000,
-        };
-        db.publish_dungeon_world(&rec).await.unwrap();
-
-        // /dungeon library lists it.
-        let listed = db.list_dungeon_worlds().await.unwrap();
-        assert_eq!(listed.len(), 1);
-        assert_eq!(listed[0].name, "clockwork-orchard");
-        assert_eq!(listed[0].author_discord_id, "424242");
-
-        // /dungeon start <name> loads it — re-parsed from the STORED SOURCE (never a cached shape).
-        let fetched = db
-            .get_dungeon_world("clockwork-orchard")
-            .await
-            .unwrap()
-            .unwrap();
-        assert_eq!(fetched.source, src, "the exact source round-trips");
-        let reparsed =
-            forge_world(&fetched.source).expect("the stored source re-parses into a world");
-        let game = GameSession::open(reparsed);
-        assert!(
-            !game.look().is_empty(),
-            "the re-loaded published world is playable"
-        );
-
-        // A missing name is absent.
-        assert!(db.get_dungeon_world("no-such").await.unwrap().is_none());
     }
 }

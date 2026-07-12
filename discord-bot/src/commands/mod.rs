@@ -21,7 +21,6 @@ pub mod gallery;
 // `credential` is retired from the slash surface (→ `/dregg` Identity panel); the
 // handlers are kept so the capability can be re-exposed without re-implementing.
 #[allow(dead_code)]
-pub mod identity;
 pub mod key;
 pub mod presence;
 pub mod social;
@@ -54,18 +53,15 @@ pub mod fiction;
 // Governance / Names / Subscription panels, which build the same actions). The
 // handlers are kept so the capability can be re-exposed without re-implementing.
 #[allow(dead_code)]
-pub mod governance;
 pub mod handoff;
 pub mod intent;
 // `/buy-credits` + `/balance` — the $DREGG earning surface: issue the caller's deterministic
 // deposit address + price, and show their persisted run-credit balance. A paid /dungeon run
 // spends one credit for a real-AI (Bedrock) narration. See `crate::pay`.
 #[allow(dead_code)]
-pub mod names;
 pub mod pay;
 pub mod polis;
 #[allow(dead_code)]
-pub mod queue;
 // `/start` + `/help` — the Telegram-style front door: onboarding, a button menu
 // for the common actions, and a funnel into the conversational channel. The
 // buttons fire the same real cap-gated turns the slash commands did. See

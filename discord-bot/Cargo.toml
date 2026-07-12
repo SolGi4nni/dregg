@@ -135,6 +135,17 @@ zeroize = { workspace = true }
 # key at rest under a per-user derived key (`src/key_vault.rs`). Already in the
 # build graph transitively, so this adds nothing to the closure.
 chacha20poly1305 = "0.10"
+# THE REAL dungeon substrate — `/dungeon` plays a real dregg-executor universe, not
+# the attested-dm toy hash-chain. `dungeon-on-dregg` hosts the committed "Warden's
+# Keep" on `spween-dregg`'s real `WorldCell` (a move is one cap-bounded `TurnReceipt`,
+# an illegal move a real `WorldError::Refused`, the gate an executor-enforced
+# `StateConstraint`); `spween-dregg` gives the `WorldCell`/`Driver`/`verify_by_replay`
+# receipt-chain verifier; `spween` names the scene AST (passages/choices/conditions the
+# ballot is built from). Root workspace members (their workspace-inherited deps resolve
+# against the root manifest) + the spween git rev `dungeon-on-dregg` already pins.
+dungeon-on-dregg = { path = "../dungeon-on-dregg", default-features = false }
+spween-dregg = { path = "../spween-dregg" }
+spween = { git = "https://github.com/emberian/spween", rev = "afb5b1fce8c9dd3b787e197bddf105adca20e08a" }
 
 [dev-dependencies]
 # `ServiceExt::oneshot` drives the admin webportal router in tests without
