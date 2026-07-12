@@ -225,6 +225,24 @@ the honest numbers.
    CPU's 0.17-0.19. This single number decides whether the shrink's ~60%
    collapses (goes like the BabyBear story) or resists (256-bit tax eats the
    parallelism).
+
+   **MEASURED (2026-07-12, `circuit-prove/sketches/bn254-poseidon2-wgpu`,
+   Apple M2 Max/Metal): it does NOT collapse — 0.85-1.09 Mperm/s**
+   (wg=64 best 1.09, sustained ~0.85-1.0 under thermal droop; wg=128/256
+   are ~20% slower — register pressure from the 8-limb state + 17-word
+   product scratch favors small workgroups). Parity FIRST and green:
+   1024 field mul/add KATs vs num-bigint, the `[0,1,2]` gold KAT
+   (`bn254KATOutHex`) straight off the GPU, and 65536 permutations
+   bit-exact vs the pinned p3 `Poseidon2Bn254<3>` (the exact `OuterPerm`).
+   Ratio vs the 0.17-0.19 Mperm/s exact-outer-stack CPU rate: **4.5-6.4x**
+   (central ~5-6x; vs the conservative 0.13 figure: 6.5-8.4x). CPU
+   1-thread raw perm measured 0.06-0.09 Mperm/s alongside, consistent
+   with the stack rate. Amdahl at hash ~60% of the ~95s shrink:
+   **e2e ≈ 1.9-2.0x** (hash-free ceiling 2.5x) — the 256-bit Montgomery
+   tax in 32-bit WGSL (16-bit-split mul32, SOS reduction, ~246 monty
+   muls/perm) costs real throughput vs BabyBear's story but the GPU still
+   clears the bar: **GPU-wiring the BN254 outer MMCS is worth it**;
+   proceed to sub-step (2) for the outer config too, not just the inner.
 2. **`GpuMmcs: Mmcs<BabyBear>`** reproducing `MerkleTree::new`'s layout
    (injection, sponge packing, compress, cap) with root-parity acceptance
    against the CPU MMCS on real LDE outputs — wired first for the inner

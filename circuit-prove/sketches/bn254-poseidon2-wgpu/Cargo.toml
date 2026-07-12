@@ -1,0 +1,23 @@
+[package]
+name = "bn254-poseidon2-wgpu"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone probe crate — deliberately NOT a workspace member (empty [workspace]
+# opts out of the breadstuffs root workspace). Run with `cargo run --release`
+# from this directory. This is the GPU-PROVER-WIRING-PLAN.md §7 step-1 microprobe:
+# the BN254 t=3 Poseidon2 permutation (the shrink prove's dominant kernel) in
+# wgpu/WGSL — 8×u32-limb Montgomery arithmetic, bit-exact parity vs the pinned
+# plonky3 Poseidon2Bn254<3> and the gnark gold KAT (bn254KATOutHex), then Mperm/s.
+[workspace]
+
+[dependencies]
+wgpu = "24"
+pollster = "0.4"
+bytemuck = "1"
+rand = "0.8"
+num-bigint = "0.4"
+p3-bn254 = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-poseidon2 = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-symmetric = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
