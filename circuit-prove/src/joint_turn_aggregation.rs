@@ -757,8 +757,7 @@ impl RotatedParticipantLeg {
             verify_vm_descriptor2_with_config,
         };
         use dregg_circuit::effect_vm::trace_rotated::{
-            empty_caveat_manifest, generate_rotated_effect_vm_trace,
-            rotated_descriptor_name_for_effect, transfer_caveat_manifest,
+            empty_caveat_manifest, rotated_descriptor_name_for_effect, transfer_caveat_manifest,
         };
         use dregg_circuit::effect_vm_descriptors::{
             V3_STAGED_REGISTRY_TSV, weld_umem_into_rotated_descriptor,
@@ -809,9 +808,20 @@ impl RotatedParticipantLeg {
             [dregg_circuit::effect_vm::Effect::Transfer { .. }] => transfer_caveat_manifest(),
             _ => empty_caveat_manifest(),
         };
+        // The trace SHAPE follows the COMMITTED descriptor: a hardened `…-v1-avail` transfer/burn
+        // member (the GAP #4 availability weld) demands the avail-padded geometry.
         let (rot_trace, mut dpis) =
-            generate_rotated_effect_vm_trace(initial_state, effects, before, after, &caveat)
-                .map_err(|e| format!("mint_welded: rotated trace generation failed: {e}"))?;
+            dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_avail(
+                dregg_circuit::effect_vm::trace_rotated::avail_pad_for_descriptor_name(
+                    &rotated_desc.name,
+                ),
+                initial_state,
+                effects,
+                before,
+                after,
+                &caveat,
+            )
+            .map_err(|e| format!("mint_welded: rotated trace generation failed: {e}"))?;
         if let Some(tid) = turn_id {
             dpis[pi::TURN_HASH_BASE] = tid;
         }

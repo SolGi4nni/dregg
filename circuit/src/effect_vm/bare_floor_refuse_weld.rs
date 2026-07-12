@@ -263,6 +263,50 @@ fn refuse_aux_base(desc: &crate::descriptor_ir2::EffectVmDescriptor2) -> usize {
     }
 }
 
+/// Recover the four caveat TYPE-TAG columns the refuse decode reads, from the descriptor's OWN
+/// committed is-zero DEF gates (`b_k + (tag_k − T)·inv_k − 1 == 0`) of block 0. The tag columns
+/// are a function of the member's geometry — the bare cohort reads the fixed
+/// `caveat_tag_col(k)` (`CAVEAT_BASE + 1 + k·ENTRY_SIZE`), but a HARDENED `…-v1-avail`
+/// transfer/burn member (the GAP #4 availability weld) shifts the whole caveat region by its
+/// avail pad, so the fill must land on the columns the committed gates actually constrain, not a
+/// fixed base. Falls back to the fixed columns per-slot when a gate is not found.
+fn recover_tag_cols(
+    desc: &crate::descriptor_ir2::EffectVmDescriptor2,
+    aux_base: usize,
+) -> [usize; cav::MAX_CAVEATS] {
+    let mut cols = [0usize; cav::MAX_CAVEATS];
+    for (k, out) in cols.iter_mut().enumerate() {
+        let bit = aux_base + k; // block 0, slot k (`bit_col(0, k)` at this member's aux base)
+        // Match `Gate(Add(Add(Var(bit), Mul(Add(Var(tag), Const(_)), Var(_))), Const(-1)))`.
+        let found = desc.constraints.iter().find_map(|c| {
+            let VmConstraint2::Base(VmConstraint::Gate(LeanExpr::Add(outer_l, outer_r))) = c else {
+                return None;
+            };
+            if !matches!(**outer_r, LeanExpr::Const(-1)) {
+                return None;
+            }
+            let LeanExpr::Add(bit_e, mul_e) = &**outer_l else {
+                return None;
+            };
+            if !matches!(**bit_e, LeanExpr::Var(v) if v == bit) {
+                return None;
+            }
+            let LeanExpr::Mul(diff_e, _inv_e) = &**mul_e else {
+                return None;
+            };
+            let LeanExpr::Add(tag_e, _t_e) = &**diff_e else {
+                return None;
+            };
+            match **tag_e {
+                LeanExpr::Var(tag_c) => Some(tag_c),
+                _ => None,
+            }
+        });
+        *out = found.unwrap_or_else(|| caveat_tag_col(k));
+    }
+    cols
+}
+
 pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &mut [BabyBear]) {
     // Detect the refuse weld by SUBSTRING, not `ends_with`: an additive downstream weld (the WIDE+umem
     // leg, `weld_umem_into_descriptor_with_suffix`) appends its own `-umem-wide-welded-staged` suffix
@@ -274,6 +318,7 @@ pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &
         return;
     }
     let aux_base = refuse_aux_base(desc);
+    let tag_cols = recover_tag_cols(desc, aux_base);
     let bit_at = |b: usize, k: usize| aux_base + b * REFUSE_STRIDE + k;
     let inv_at = |b: usize, k: usize| aux_base + b * REFUSE_STRIDE + cav::MAX_CAVEATS + k;
     let or_at = |b: usize, j: usize| aux_base + b * REFUSE_STRIDE + 2 * cav::MAX_CAVEATS + j;
@@ -281,7 +326,7 @@ pub fn fill_refuse_aux(desc: &crate::descriptor_ir2::EffectVmDescriptor2, row: &
     for (b, &tag) in CAPACITY_TAGS.iter().enumerate() {
         let mut running_or = 0u32;
         for k in 0..cav::MAX_CAVEATS {
-            let tag_k = row[caveat_tag_col(k)];
+            let tag_k = row[tag_cols[k]];
             let is_tag = tag_k == BabyBear::new(tag);
             let bit = u32::from(is_tag);
             row[bit_at(b, k)] = BabyBear::new(bit);
@@ -383,11 +428,11 @@ mod tests {
     fn tag_cols_are_the_deployed_bound_columns() {
         // The decode reads the EXACT deployed caveat-manifest type-tag columns the COVERAGE carrier
         // binds via the caveat-commit chain (imported `caveat_tag_col` = `CAVEAT_BASE + 1 + k·ENTRY_SIZE`).
-        // Concrete drift pin at the v13 geometry (CAVEAT_BASE = 642; ENTRY_SIZE = 7).
-        assert_eq!(caveat_tag_col(0), 643);
-        assert_eq!(caveat_tag_col(1), 650);
-        assert_eq!(caveat_tag_col(2), 657);
-        assert_eq!(caveat_tag_col(3), 664);
+        // Concrete drift pin at the REVOKED-ROOT/178-limb geometry (CAVEAT_BASE = 666; ENTRY_SIZE = 7).
+        assert_eq!(caveat_tag_col(0), 667);
+        assert_eq!(caveat_tag_col(1), 674);
+        assert_eq!(caveat_tag_col(2), 681);
+        assert_eq!(caveat_tag_col(3), 688);
     }
 
     #[test]
@@ -524,9 +569,15 @@ mod tests {
         let member_floor_col =
             |base: usize, b: usize| base + b * REFUSE_STRIDE + 3 * cav::MAX_CAVEATS;
 
+        use crate::effect_vm::trace_rotated::{BURN_AVAIL_PAD, TRANSFER_AVAIL_PAD};
+        // The distinct-geometry V1Face members (setFieldDyn / custom) carry four fewer chip
+        // sites than the standard graduated member.
+        const DISTINCT_BASE: usize = GRAD_ROT_WIDTH - 28; // 1619
+
         let mut cohort_rows = 0usize;
         let mut standard_rows = 0usize;
         let mut distinct_rows = 0usize;
+        let mut avail_rows = 0usize;
         for line in tsv.lines() {
             let cols: Vec<&str> = line.split('\t').collect();
             // v3rot cohort rows are `key \t name \t json`; the welded cohort carries the suffix.
@@ -544,24 +595,33 @@ mod tests {
                 .and_then(|s| s.parse().ok())
                 .unwrap_or_else(|| panic!("cohort row {name} has a trace_width"));
             let base = tw - REFUSE_SPAN;
-            match tw {
-                1626 => {
-                    assert_eq!(
-                        base, GRAD_ROT_WIDTH,
-                        "standard member bases at GRAD_ROT_WIDTH"
-                    );
-                    standard_rows += 1;
-                }
-                1598 => {
-                    assert_eq!(
-                        base, 1553,
-                        "distinct V1Face member (setFieldDyn/custom) bases at 1553"
-                    );
-                    distinct_rows += 1;
-                }
-                other => panic!(
-                    "cohort row {name} has unexpected welded width {other} (expected 1626 or 1598)"
-                ),
+            // Per-member geometry: the standard graduated base, the distinct V1Face base
+            // (setFieldDyn / custom, four fewer chip sites), or a HARDENED `…-v1-avail` member
+            // (the GAP #4 availability weld — transfer pad 10 / burn pad 8 over the graduated
+            // base, since the avail witness columns widen the v1 face BEFORE the appendix).
+            if name.contains("-transfer-v1-avail") {
+                assert_eq!(
+                    base,
+                    GRAD_ROT_WIDTH + TRANSFER_AVAIL_PAD,
+                    "hardened transfer member bases at GRAD_ROT_WIDTH + the avail pad"
+                );
+                avail_rows += 1;
+            } else if name.contains("-burn-v1-avail") {
+                assert_eq!(
+                    base,
+                    GRAD_ROT_WIDTH + BURN_AVAIL_PAD,
+                    "hardened burn member bases at GRAD_ROT_WIDTH + the avail pad"
+                );
+                avail_rows += 1;
+            } else if base == GRAD_ROT_WIDTH {
+                standard_rows += 1;
+            } else if base == DISTINCT_BASE {
+                distinct_rows += 1;
+            } else {
+                panic!(
+                    "cohort row {name} has unexpected welded width {tw} (base {base}; expected \
+                     the standard {GRAD_ROT_WIDTH}, distinct {DISTINCT_BASE}, or avail-padded base)"
+                );
             }
             for (b, tag) in [(0, "escrow"), (1, "discharge"), (2, "vault")] {
                 let g = refuse_gate(member_floor_col(base, b));
@@ -578,15 +638,21 @@ mod tests {
             cohort_rows, 36,
             "all 36 deployed bare cohort rows must carry the flag-day refuse weld"
         );
-        // Exactly the two distinct-geometry members (setFieldDyn + custom) ride the 1553 base; the rest
-        // are standard 1581-base graduated members. This pins the HETEROGENEOUS-geometry weld.
+        // Exactly the two distinct-geometry members (setFieldDyn + custom) ride the reduced base;
+        // transfer/burn ride the avail-padded base once the availability flip is INSTALLED (0
+        // before the regen, 2 after); the rest are standard graduated members.
         assert_eq!(
             distinct_rows, 2,
-            "setFieldDyn + custom are the two distinct-geometry (1553-base) members"
+            "setFieldDyn + custom are the two distinct-geometry members"
+        );
+        assert!(
+            avail_rows == 0 || avail_rows == 2,
+            "the availability flip lands on BOTH transfer and burn or on neither (got {avail_rows})"
         );
         assert_eq!(
-            standard_rows, 34,
-            "the other 34 cohort members are standard 1581-base members"
+            standard_rows + avail_rows,
+            34,
+            "the 34 non-distinct cohort members are standard or avail-hardened members"
         );
     }
 }

@@ -821,7 +821,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "81cb9bfe624a6c573a5b68ec457ad580b2088f1d74f8c30dceb8ec685a5e8653";
+    "81b54548fd57d4c93e5f9cf0f8d452a4d4998f20d7a62550064ab7b96a1cdd97";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1205,7 +1205,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "bab59c1bf66f9ebdb87691f904f4a655610a3f4746496444ee94b919a51970bf";
+    "65023ac79f06091acce8eb4045a8c0043ad8e5eeb7f25967257c84a80e24a6ae";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1231,7 +1231,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "55df51aba83bde3f4666c46eda01d9164c236fe2a16e94b6c81b10312e0d656b";
+    "5297f30480c92f6a15829838b0af1ee383aa383a4b007f41eb6baeee6fca5599";
 
 // ============================================================================
 // THE WIDE-CARRIER GEOMETRY VERSION BOUNDARY (the flag-day rotation, v2).
@@ -2260,23 +2260,28 @@ mod tests {
             //     no-dilution gadget columns).
             use crate::effect_vm::bare_floor_refuse_weld as refuse;
             use crate::effect_vm::trace_rotated::GRAD_ROT_WIDTH;
+            // THE AVAILABILITY-WELD PAD (GAP #4): a hardened `…-v1-avail` transfer/burn member
+            // widens its v1 FACE by the avail witness columns, so its rotated appendix, refuse
+            // anchor, and rc carrier all shift by the pad. Zero for every bare member.
+            let avail_pad = crate::effect_vm::trace_rotated::avail_pad_for_descriptor_name(name);
             let is_refuse_welded = name.ends_with("-gentian-deployed-bare-refuse");
             let graduated_width = if is_refuse_welded {
-                // The three per-tag refuse blocks anchor at GRAD_ROT_WIDTH; the deployed width extends
-                // EXACTLY to cover the last floor column (`floor_col(NB-1)+1`). CONFIRM the flip is
-                // REAL: assert that exact geometry AND that all three `floor_col(b) == 0` refuse gates
-                // are PRESENT in the committed descriptor (a positive coverage tooth for the flag-day,
-                // not a width fudge). Derived from the weld's own constants, so a stride/block change
-                // moves BOTH the width tooth and the gate check together.
+                // The three per-tag refuse blocks anchor at the member's OWN graduated width
+                // (GRAD_ROT_WIDTH + its avail pad); the deployed width extends EXACTLY to cover
+                // the last floor column (`floor_col(NB-1)+1`). CONFIRM the flip is REAL: assert
+                // that exact geometry AND that all three `floor_col(b) == 0` refuse gates are
+                // PRESENT in the committed descriptor (a positive coverage tooth for the
+                // flag-day, not a width fudge). Derived from the weld's own constants, so a
+                // stride/block change moves BOTH the width tooth and the gate check together.
                 const NB: usize = refuse::CAPACITY_TAGS.len();
-                let refuse_end = refuse::floor_col(NB - 1) + 1;
+                let refuse_end = refuse::floor_col(NB - 1) + 1 + avail_pad;
                 assert_eq!(
                     d.trace_width, refuse_end,
                     "{key}: refuse-welded member width must extend exactly to cover the {NB} \
-                     bare-floor-refuse aux blocks anchored at GRAD_ROT_WIDTH"
+                     bare-floor-refuse aux blocks anchored at its own graduated width"
                 );
                 for b in 0..NB {
-                    let fc = refuse::floor_col(b);
+                    let fc = refuse::floor_col(b) + avail_pad;
                     assert!(
                         d.constraints.iter().any(|c| matches!(
                             c,
@@ -2286,7 +2291,7 @@ mod tests {
                          gentian flag-day weld did not land on this cohort member"
                     );
                 }
-                GRAD_ROT_WIDTH
+                GRAD_ROT_WIDTH + avail_pad
             } else if key == "dischargeSatVmDescriptor2R24" || key == "vaultSatVmDescriptor2R24" {
                 // The STAGED discharge/vault satisfaction descriptors graduate on the transfer base
                 // (GRAD_ROT_WIDTH) and carry their satisfaction-gate FIELD columns PAST it. Pin the
@@ -2307,19 +2312,20 @@ mod tests {
                 d.trace_width
             };
             assert!(
-                graduated_width >= V1_WIDTH + APPENDIX_SPAN
-                    && (graduated_width - (V1_WIDTH + APPENDIX_SPAN)) % 7 == 0,
-                "{key}: rotated GRADUATED trace width = v1 width + appendix + 7·n_sites lane cols"
+                graduated_width >= V1_WIDTH + avail_pad + APPENDIX_SPAN
+                    && (graduated_width - (V1_WIDTH + avail_pad + APPENDIX_SPAN)) % 7 == 0,
+                "{key}: rotated GRADUATED trace width = (avail-padded) v1 width + appendix + \
+                 7·n_sites lane cols"
             );
             assert!(
                 d.hash_sites.is_empty() && d.ranges.is_empty(),
                 "{key}: graduated carriers only"
             );
 
-            // The three appendix blocks, at fixed bases past the v1 layout.
-            let before_base = V1_WIDTH;
-            let after_base = V1_WIDTH + B_SPAN;
-            let caveat_base = V1_WIDTH + 2 * B_SPAN;
+            // The three appendix blocks, past the (avail-padded) v1 layout.
+            let before_base = V1_WIDTH + avail_pad;
+            let after_base = before_base + B_SPAN;
+            let caveat_base = before_base + 2 * B_SPAN;
 
             // A "fresh limb" of the appendix is a column inside one of the three blocks'
             // LIMB ranges (before/after rotated limbs 0..=iroot, or the caveat manifest
@@ -2451,7 +2457,7 @@ mod tests {
             // the quad here so the per-effect branches below keep their pre-rc expectations;
             // fail-closed on membership (a cohort member MISSING the rc pins, or a tail member
             // GROWING them, both fail).
-            let rc_col = V1_WIDTH + 2 * B_SPAN + crate::effect_vm::trace_rotated::C_DFA_RC_OFF;
+            let rc_col = caveat_base + crate::effect_vm::trace_rotated::C_DFA_RC_OFF;
             let (rc_pins, nullifier_pins): (Vec<(usize, usize)>, Vec<(usize, usize)>) =
                 nullifier_pins
                     .into_iter()

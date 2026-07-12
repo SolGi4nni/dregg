@@ -43,6 +43,12 @@ import Dregg2.Deos.SettleEscrowSatDescriptor
 -- proven kernel-clean in Dregg2.Deos.{Discharge,Vault}SatDescriptor.
 import Dregg2.Deos.DischargeSatDescriptor
 import Dregg2.Deos.VaultSatDescriptor
+-- THE AVAILABILITY FLIP (GAP #4 close — the two mint-from-nothing forgeries of
+-- docs/FINDING-modp-wrap-forgery-audit.md): the transfer/burn cohort keys route the HARDENED
+-- `…-v1-avail` wire members (the §11.7/§8¾ borrow-weld faces `v3OfFrozenWide` + the SAME
+-- capacity-floor-refuse + rc wrappers, at the avail-shifted geometry). Bare defs stay for the
+-- bare-path proofs; the WIRE carries the hardened members. See AvailWireMembers.
+import Dregg2.Circuit.Emit.AvailWireMembers
 
 open Dregg2.Circuit.DescriptorIR2 (emitVmJson2)
 open Dregg2.Circuit.Emit.EffectVmEmitRotation
@@ -75,7 +81,14 @@ def main : IO Unit := do
   -- carry the capacity-floor refuse; the cap-open tail is identical). The apex's `Rfix` re-keys over
   -- the SAME list (via `v3RegistryHeap = v3RegistryCapOpenDep ++ …`), so the committed VK bytes and
   -- the soundness apex coincide on the refuse — the flip is REAL, not staged.
-  for (key, d) in v3RegistryCapOpenDep do
+  -- THE AVAILABILITY FLIP: override the two flipped cohort keys with the hardened wire members
+  -- (the availability weld gates + 15-bit range teeth + the SAME refuse/rc wrappers). Every other
+  -- member emits its committed bare bytes unchanged.
+  let availOverride : List (String × Dregg2.Circuit.DescriptorIR2.EffectVmDescriptor2) :=
+    [ ("transferVmDescriptor2R24", Dregg2.Circuit.Emit.AvailWireMembers.transferV3AvailWire)
+    , ("burnVmDescriptor2R24", Dregg2.Circuit.Emit.AvailWireMembers.burnV3AvailWire) ]
+  for (key, d0) in v3RegistryCapOpenDep do
+    let d := (availOverride.lookup key).getD d0
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
   -- THE TURN-IDENTITY WELD (CapOpenTurnPins): the transfer cap-open PLUS the three turn-identity PI
   -- pins welding `capOpenCols.src`/`actor`/`dst` to published PIs (the in-circuit realization of

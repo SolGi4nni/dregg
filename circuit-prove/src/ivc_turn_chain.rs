@@ -2921,10 +2921,14 @@ pub fn dsl_rc_claim_pi_lo(
     desc: &dregg_circuit::descriptor_ir2::EffectVmDescriptor2,
 ) -> Result<usize, String> {
     use dregg_circuit::descriptor_ir2::VmConstraint2;
-    use dregg_circuit::effect_vm::trace_rotated::{C_DFA_RC_OFF, CAVEAT_BASE};
+    use dregg_circuit::effect_vm::trace_rotated::{
+        C_DFA_RC_OFF, CAVEAT_BASE, avail_pad_for_descriptor_name,
+    };
     use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
 
-    let rc_col0 = CAVEAT_BASE + C_DFA_RC_OFF;
+    // The hardened `…-v1-avail` transfer/burn members (the GAP #4 availability weld) shift the
+    // whole rotated caveat region by their avail pad, so the rc carrier column shifts with it.
+    let rc_col0 = CAVEAT_BASE + avail_pad_for_descriptor_name(&desc.name) + C_DFA_RC_OFF;
     desc.constraints
         .iter()
         .find_map(|c| match c {
@@ -3250,18 +3254,23 @@ fn prove_chain_core_rotated(
             //     re-exec rung (`carrier_witness: None`), never a fabricated fold.
             Some(CarrierWitness::Dsl(bundle)) => {
                 use dregg_circuit::effect_vm::trace_rotated::{
-                    C_DFA_RC_OFF, CAVEAT_BASE, DFA_RC_LEN,
+                    C_DFA_RC_OFF, CAVEAT_BASE, DFA_RC_LEN, avail_pad_for_descriptor_name,
                 };
                 use dregg_circuit::lean_descriptor_air::VmRow;
                 let rc_lo = dsl_rc_claim_pi_lo(&leg.descriptor)
                     .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
+                // The rc carrier column shifts by the avail pad on the hardened `…-v1-avail`
+                // transfer/burn members (the caveat region rides past the widened v1 face).
+                let rc_col0 = CAVEAT_BASE
+                    + avail_pad_for_descriptor_name(&leg.descriptor.name)
+                    + C_DFA_RC_OFF;
                 carrier_claim_pins_admitted(
                     &leg.descriptor,
                     &leg.public_inputs,
                     rc_lo,
                     DFA_RC_LEN,
                     "dsl",
-                    Some((CAVEAT_BASE + C_DFA_RC_OFF, VmRow::Last)),
+                    Some((rc_col0, VmRow::Last)),
                 )
                 .map_err(|reason| TurnChainError::TurnProofInvalid { index: i, reason })?;
                 if leg.public_inputs[rc_lo..rc_lo + DFA_RC_LEN]

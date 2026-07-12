@@ -1012,7 +1012,7 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        RotatedBlockWitness, generate_rotated_effect_vm_trace, rotated_descriptor_name_for_effect,
+        RotatedBlockWitness, rotated_descriptor_name_for_effect,
     };
     use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 
@@ -1111,10 +1111,22 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated note-spend IR-v2 proof: {e}")));
     }
 
-    // LIVE-generate the 311-column rotated trace + 38-PI vector.
+    // LIVE-generate the rotated trace + PI vector. The trace SHAPE follows the COMMITTED
+    // descriptor: a hardened `…-v1-avail` transfer/burn member (the GAP #4 availability weld)
+    // demands the avail-padded geometry (witness limbs at `[V1_WIDTH, V1_WIDTH + pad)`, appendix
+    // shifted by the pad); every bare member keeps the byte-identical `0`-pad shape.
+    let avail_pad =
+        dregg_circuit::effect_vm::trace_rotated::avail_pad_for_descriptor_name(&desc.name);
     let (trace, dpis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, caveat)
-            .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?;
+        dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_avail(
+            avail_pad,
+            initial_state,
+            effects,
+            &before,
+            &after,
+            caveat,
+        )
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?;
 
     // Prove through the IR-v2 batch prover (self-verifies before return).
     prove_vm_descriptor2(&desc, &trace, &dpis, &MemBoundaryWitness::default(), &[])
@@ -1352,7 +1364,7 @@ pub fn prove_rotated_umem_welded_staged(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2_umem, verify_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        RotatedBlockWitness, generate_rotated_effect_vm_trace, rotated_descriptor_name_for_effect,
+        RotatedBlockWitness, rotated_descriptor_name_for_effect,
     };
     use dregg_circuit::effect_vm_descriptors::{
         V3_STAGED_REGISTRY_TSV, weld_umem_into_rotated_descriptor,
@@ -1411,9 +1423,20 @@ pub fn prove_rotated_umem_welded_staged(
         .map_err(|e| SdkError::InvalidWitness(format!("rotated before-witness: {e}")))?;
     let after = bridge(after_w)
         .map_err(|e| SdkError::InvalidWitness(format!("rotated after-witness: {e}")))?;
+    // The trace SHAPE follows the COMMITTED descriptor (see `prove_effect_vm_rotated_ir2_with_caveat`):
+    // a hardened `…-v1-avail` member demands the avail-padded geometry.
     let (rot_trace, dpis) =
-        generate_rotated_effect_vm_trace(initial_state, effects, &before, &after, caveat)
-            .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?;
+        dregg_circuit::effect_vm::trace_rotated::generate_rotated_effect_vm_trace_avail(
+            dregg_circuit::effect_vm::trace_rotated::avail_pad_for_descriptor_name(
+                &rotated_desc.name,
+            ),
+            initial_state,
+            effects,
+            &before,
+            &after,
+            caveat,
+        )
+        .map_err(|e| SdkError::InvalidWitness(format!("rotated trace generation: {e}")))?;
 
     // Assemble the WELDED base trace: each rotated row widened to the welded width, the REAL umem
     // cohort rows (guard col 6 == 1) injected into the appended 7 columns of the first rows. The

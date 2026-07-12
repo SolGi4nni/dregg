@@ -171,6 +171,7 @@ pub mod pi;
 mod air;
 pub mod authority_digest_weld;
 pub mod bare_floor_refuse_weld;
+pub mod burn_avail_weld;
 pub mod carrier_floor_weld;
 mod cell_state;
 pub mod discharge_weld;

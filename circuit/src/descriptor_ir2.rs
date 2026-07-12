@@ -1189,10 +1189,21 @@ struct MainLayout {
 
 impl MainLayout {
     fn build(desc: &EffectVmDescriptor2) -> Result<Self, String> {
-        let range_bits = desc.tables.iter().find_map(|t| match t.sem {
-            TableSem::Range { bits } => Some(bits),
-            _ => None,
-        });
+        // Resolve a lookup's target table to a declared range width. The shared 30-bit table
+        // rides the stable wire id `TID_RANGE`; the MULTI-WIDTH graduation (`graduateV1Wide`,
+        // Lean `rangeTidW b`) declares each non-30-bit width as a width-tagged CUSTOM range
+        // table (e.g. the availability-weld's 15-bit borrow-limb table `.custom 79` = wire
+        // id 84). Any declared table whose row semantics are `Range { bits }` realizes the
+        // SAME byte-limb decomposition at ITS OWN width.
+        let range_bits_for = |tid: usize| -> Option<usize> {
+            desc.tables
+                .iter()
+                .find(|t| t.id == tid)
+                .and_then(|t| match t.sem {
+                    TableSem::Range { bits } => Some(bits),
+                    _ => None,
+                })
+        };
         let mut next = desc.trace_width;
         let mut ranges = Vec::new();
         let mut submasks = Vec::new();
@@ -1201,8 +1212,8 @@ impl MainLayout {
                 continue;
             };
             match l.table {
-                TID_RANGE => {
-                    let bits = range_bits.ok_or_else(|| {
+                tid if tid == TID_RANGE || range_bits_for(tid).is_some() => {
+                    let bits = range_bits_for(tid).ok_or_else(|| {
                         format!("constraint {ci}: range lookup but no range table declared")
                     })?;
                     if l.tuple.len() != 1 {
@@ -1214,7 +1225,7 @@ impl MainLayout {
                     let LeanExpr::Var(wire) = l.tuple[0] else {
                         return Err(format!(
                             "constraint {ci}: range lookup tuple must be a bare column \
-                             (graduateV1 emits `.var wire`)"
+                             (graduateV1/graduateV1Wide emit `.var wire`)"
                         ));
                     };
                     ranges.push(RangeBlock {

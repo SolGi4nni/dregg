@@ -139,18 +139,16 @@ pub fn transfer_avail_gates() -> Vec<VmConstraint> {
         // --- CREDIT carry chain (dir = 0): `before + amount = after`, no overflow wrap ---
         bool_gate(CRY0),
         bool_gate(CRY1),
-        // limb 0: (1−dir)·(bef0 + am0 − cry0·2^15 − aft0)
+        // limb 0: (1−dir)·((bef0 + am0) − (aft0 + cry0·2^15)) — byte-for-byte the Lean `gCarry0`
+        // tree (`eSub (.add BEF0 AM0) (.add AFT0 (.mul 2^15 CRY0))`).
         credit_gate(sub(
-            sub(add(var(BEF0), var(AM0)), mul(k(TWO15), var(CRY0))),
-            var(AFT0),
+            add(var(BEF0), var(AM0)),
+            add(var(AFT0), mul(k(TWO15), var(CRY0))),
         )),
-        // limb 1: (1−dir)·(bef1 + am1 + cry0 − cry1·2^15 − aft1)
+        // limb 1: (1−dir)·((bef1 + am1 + cry0) − (aft1 + cry1·2^15)) — the Lean `gCarry1` tree.
         credit_gate(sub(
-            sub(
-                add(add(var(BEF1), var(AM1)), var(CRY0)),
-                mul(k(TWO15), var(CRY1)),
-            ),
-            var(AFT1),
+            add(add(var(BEF1), var(AM1)), var(CRY0)),
+            add(var(AFT1), mul(k(TWO15), var(CRY1))),
         )),
         // no final carry: (1−dir)·cry1  (⟹ before + amount = after < 2^30, no wrap)
         credit_gate(var(CRY1)),
@@ -182,26 +180,23 @@ pub fn transfer_avail_ranges() -> Vec<RangeSpec> {
 /// are `(1−direction)`-gated off).
 ///
 /// Returns the ten `(column, value)` writes (limbs + borrow bits + carry bits) for the caller to lay
-/// into the trace. Panics if an operand exceeds the 30-bit window, if a debit under-borrows, or if a
-/// credit overflows (`before + amount ≥ 2^30`) — each fails closed, matching the descriptor's UNSAT.
-pub fn fill_transfer_avail_aux(
+/// into the trace. Errors (fails closed, matching the descriptor's UNSAT) if an operand exceeds the
+/// 30-bit window, if a debit under-borrows, or if a credit overflows (`before + amount ≥ 2^30`).
+pub fn try_fill_transfer_avail_aux(
     before_bal_lo: u32,
     after_bal_lo: u32,
     amount: u32,
     direction: u32,
-) -> [(usize, u32); 10] {
-    assert!(
-        before_bal_lo < (1u32 << 30),
-        "before.bal_lo exceeds the 30-bit operand window"
-    );
-    assert!(
-        after_bal_lo < (1u32 << 30),
-        "after.bal_lo exceeds the 30-bit operand window"
-    );
-    assert!(
-        amount < (1u32 << 30),
-        "amount exceeds the 30-bit operand window"
-    );
+) -> Result<[(usize, u32); 10], String> {
+    for (what, v) in [
+        ("before.bal_lo", before_bal_lo),
+        ("after.bal_lo", after_bal_lo),
+        ("amount", amount),
+    ] {
+        if v >= (1u32 << 30) {
+            return Err(format!("{what} {v} exceeds the 30-bit operand window"));
+        }
+    }
 
     let split = |v: u32| -> (u32, u32) { (v & 0x7fff, v >> 15) };
     let (bef0, bef1) = split(before_bal_lo);
@@ -211,13 +206,15 @@ pub fn fill_transfer_avail_aux(
     // The two-limb borrow bits of `before − amount` (only load-bearing on a debit; on a credit the
     // gates are `direction`-gated off, so any consistent value passes — we write the honest 0/0).
     let (brw0, brw1) = if direction == 1 {
-        assert!(
-            before_bal_lo >= amount,
-            "debit availability: amount {amount} exceeds pre-balance {before_bal_lo} — UNSAT (no borrow witness)"
-        );
-        let b0 = if bef0 < am0 { 1u32 } else { 0 };
+        if before_bal_lo < amount {
+            return Err(format!(
+                "debit availability: amount {amount} exceeds pre-balance {before_bal_lo} — UNSAT \
+                 (no borrow witness)"
+            ));
+        }
+        let b0 = u32::from(bef0 < am0);
         // limb-1 minuend includes the incoming borrow b0
-        let b1 = if bef1 < am1 + b0 { 1u32 } else { 0 };
+        let b1 = u32::from(bef1 < am1 + b0);
         (b0, b1)
     } else {
         (0, 0)
@@ -226,23 +223,21 @@ pub fn fill_transfer_avail_aux(
     // The two-limb carry bits of `before + amount` (only load-bearing on a credit; on a debit the
     // gates are `(1−direction)`-gated off, so we write the honest 0/0).
     let (cry0, cry1) = if direction == 0 {
-        assert!(
-            (before_bal_lo as u64) + (amount as u64) < (1u64 << 30),
-            "credit no-overflow: pre-balance {before_bal_lo} + amount {amount} ≥ 2^30 — UNSAT (would field-wrap)"
-        );
-        let c0 = if bef0 + am0 >= (1u32 << 15) { 1u32 } else { 0 };
+        if (before_bal_lo as u64) + (amount as u64) >= (1u64 << 30) {
+            return Err(format!(
+                "credit no-overflow: pre-balance {before_bal_lo} + amount {amount} ≥ 2^30 — UNSAT \
+                 (would field-wrap)"
+            ));
+        }
+        let c0 = u32::from(bef0 + am0 >= (1u32 << 15));
         // limb-1 addend includes the incoming carry c0
-        let c1 = if bef1 + am1 + c0 >= (1u32 << 15) {
-            1u32
-        } else {
-            0
-        };
+        let c1 = u32::from(bef1 + am1 + c0 >= (1u32 << 15));
         (c0, c1)
     } else {
         (0, 0)
     };
 
-    [
+    Ok([
         (BEF0, bef0),
         (BEF1, bef1),
         (AFT0, aft0),
@@ -253,7 +248,18 @@ pub fn fill_transfer_avail_aux(
         (BRW1, brw1),
         (CRY0, cry0),
         (CRY1, cry1),
-    ]
+    ])
+}
+
+/// The panicking convenience wrapper of [`try_fill_transfer_avail_aux`] (test/tooling ergonomics).
+pub fn fill_transfer_avail_aux(
+    before_bal_lo: u32,
+    after_bal_lo: u32,
+    amount: u32,
+    direction: u32,
+) -> [(usize, u32); 10] {
+    try_fill_transfer_avail_aux(before_bal_lo, after_bal_lo, amount, direction)
+        .unwrap_or_else(|e| panic!("transfer avail aux fill: {e}"))
 }
 
 #[cfg(test)]

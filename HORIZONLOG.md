@@ -7612,3 +7612,24 @@ period-1800 committee, 397/512) → verify_finalized_update (real Electra depth-
 verify_erc20_holding_finalized (real WETH eth_getProof) → ConsensusProven. 8 reject tests on real data (fail-closed
 at the BLS gate). Weak-subjectivity anchor (period-1799 committee source) named honestly. 142 crate tests. The
 whole ETH light client (underpinning Ethereum + Base holdings) is now empirically validated end-to-end.
+
+## Availability weld wired LIVE + emission retargeted (2026-07-12, vk-flip Rust half)
+The GAP #4 mint-from-nothing pair (transfer underflow-wrap + burn well-supply-inflation,
+docs/FINDING-modp-wrap-forgery-audit.md) is now DEPLOYABLE end-to-end: burn twin authored
+(circuit/src/effect_vm/burn_avail_weld.rs — 8 UNGATED borrow gates + 6×15-bit ranges, Lean §8¾
+byte-trees); rotated producer avail-aware (generate_rotated_effect_vm_trace_avail — descriptor-
+name-driven pad 10/8, per-row aux fill, appendix/PI bases shifted); IR-2 realizes MULTI-WIDTH
+range tables (the Lean rangeTidW 15 `.custom 79`/wire-84 table — MainLayout routes by declared
+table sem); refuse-weld aux fill + drift gates made geometry-aware; emission retargeted
+(EmitRotationV3.lean overrides transfer/burn keys with AvailWireMembers.{transferV3AvailWire,
+burnV3AvailWire} = v3OfFrozenWide(availFace) + gentianDeployedBareRefuseAt + withDfaRcPinsAt at
+the SHIFTED caveat/rc geometry — the fixed wrappers would read wrong columns; peels + the three
+capacity-refuse dodges re-proven parametrically, #assert_axioms-clean). VALIDATED: emitted
+registry diff = ONLY lines 1-2 (1702/1700 wide, pi 50, 6 lookups into table 84 each);
+avail_weld_live_roundtrip proves+verifies transfer/burn against BOTH the committed bare AND the
+freshly-emitted hardened bytes, forged-BRW1 tooth refused. REMAINING: ① ember runs the VK regen
+(DREGG_VK_REGEN_ACK) + smoke; ② in-library v3RegistryBare flip + apex Rfix re-key onto the
+hardened members (wire↔registry coincidence for the two keys currently rides the emitter override
++ AvailWireMembers peels); ③ the OTHER transfer-shaped members (transferFee, transferCapOpenEff/TB,
+wide twins) still carry the bare wrap window — same-class close next; ④ circuit lib-test bin is
+pre-broken at HEAD (ivc.rs unrelated errors) — refuse-weld unit pins updated but unrunnable there.

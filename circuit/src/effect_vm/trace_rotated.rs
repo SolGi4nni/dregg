@@ -137,6 +137,69 @@ pub const N_ROT_SITES: usize = 134;
 /// automatically by the prove wrapper's `descriptor_ir2::fill_chip_lanes`.
 pub const GRAD_ROT_WIDTH: usize = ROT_WIDTH + 7 * N_ROT_SITES; // 1647 (REVOKED-ROOT + cells-relocation clean 58×3)
 
+// ============================================================================
+// THE AVAILABILITY-WELD PAD (GAP #4 close — the hardened transfer/burn geometry).
+// ============================================================================
+
+/// The AVAILABILITY-WELD v1-face pad of the HARDENED transfer member
+/// (`transferVmDescriptorAvail`, Lean §11.7): 10 witness columns (3×2 operand limbs + 2 borrow
+/// bits + 2 credit-carry bits) at `[V1_WIDTH, V1_WIDTH + 10)`. The rotated appendix of the
+/// hardened member rides at `V1_WIDTH + TRANSFER_AVAIL_PAD` (Lean `rotateV3` appends at
+/// `d.traceWidth`), so EVERY appendix base shifts by the pad on the hardened trace.
+pub const TRANSFER_AVAIL_PAD: usize = super::transfer_avail_weld::AVAIL_WIDTH - EFFECT_VM_WIDTH; // 10
+/// The burn twin (`burnVmDescriptorAvail`, Lean §8¾): 8 witness columns — burn is debit-only
+/// (no credit carry chain).
+pub const BURN_AVAIL_PAD: usize = super::burn_avail_weld::AVAIL_WIDTH - EFFECT_VM_WIDTH; // 8
+
+/// The availability-weld pad a ROTATED COHORT DESCRIPTOR demands of its producer trace, read off
+/// the descriptor's wire name (the hardened v1 faces are named `…-v1-avail` and every rotation /
+/// refuse-weld wrapper only APPENDS suffixes, so the mark survives to the registry TSV name).
+/// `0` for every bare member — the pre-flip registry produces byte-identical traces.
+pub fn avail_pad_for_descriptor_name(name: &str) -> usize {
+    if name.starts_with("dregg-effectvm-transfer-v1-avail") {
+        TRANSFER_AVAIL_PAD
+    } else if name.starts_with("dregg-effectvm-burn-v1-avail") {
+        BURN_AVAIL_PAD
+    } else {
+        0
+    }
+}
+
+/// Fill one row's availability-weld witness columns (`[V1_WIDTH, V1_WIDTH + pad)`) from the row's
+/// OWN v1 state/param columns: the 15-bit operand limb decompositions + the borrow (and, for
+/// transfer, credit-carry) bits. Runs on EVERY row — the weld's assembly/range teeth are
+/// unconditional, and a NoOp padding row (`amount = 0`, `before = after`) closes both chains with
+/// zero bits. Fails closed (the descriptor's UNSAT) on an over-debit / credit-overflow row.
+fn fill_avail_aux_row(row: &mut [BabyBear], lead: &Effect) -> Result<(), String> {
+    use super::columns::{PARAM_BASE, param};
+    let bef = row[STATE_BEFORE_BASE + state::BALANCE_LO].as_u32();
+    let aft = row[STATE_AFTER_BASE + state::BALANCE_LO].as_u32();
+    match lead {
+        Effect::Transfer { .. } => {
+            let amount = row[PARAM_BASE + param::AMOUNT].as_u32();
+            let direction = row[PARAM_BASE + param::DIRECTION].as_u32();
+            for (c, v) in super::transfer_avail_weld::try_fill_transfer_avail_aux(
+                bef, aft, amount, direction,
+            )? {
+                row[c] = BabyBear::new(v);
+            }
+        }
+        Effect::Burn { .. } => {
+            let amount = row[PARAM_BASE + param::BURN_AMOUNT_LO].as_u32();
+            for (c, v) in super::burn_avail_weld::try_fill_burn_avail_aux(bef, aft, amount)? {
+                row[c] = BabyBear::new(v);
+            }
+        }
+        other => {
+            return Err(format!(
+                "availability weld: no hardened member exists for lead effect {other:?} \
+                 (only transfer/burn carry the avail pad)"
+            ));
+        }
+    }
+    Ok(())
+}
+
 /// In-block offset of the AUTHORITY-DIGEST limb (r23, limb 24) — the single felt
 /// folding ALL authority-bearing cell state no other rotated limb carries
 /// (permissions / VK / delegate / delegation / program / mode / token_id +
@@ -428,6 +491,44 @@ pub fn generate_rotated_effect_vm_trace(
     after_w: &RotatedBlockWitness,
     caveat: &RotatedCaveatManifest,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    generate_rotated_effect_vm_trace_avail(0, initial_state, effects, before_w, after_w, caveat)
+}
+
+/// The AVAILABILITY-WELD-AWARE rotated trace generator (the GAP #4 hardened-member producer).
+///
+/// `avail_pad` is the hardened member's v1-face widening — `0` for every bare cohort member
+/// (byte-identical to [`generate_rotated_effect_vm_trace`]), [`TRANSFER_AVAIL_PAD`] /
+/// [`BURN_AVAIL_PAD`] for the `…-v1-avail` hardened transfer/burn members (derive it from the
+/// TARGET DESCRIPTOR with [`avail_pad_for_descriptor_name`] — the pad is a property of the
+/// descriptor being proven, NOT of the lead effect: a transfer routed to the cap-open / fee'd /
+/// wide members stays on the bare `0`-pad shape). With a pad the generator:
+///  * fills the availability-weld witness columns `[V1_WIDTH, V1_WIDTH + pad)` on EVERY row from
+///    that row's own v1 state/param columns (`fill_avail_aux_row` — fails closed on the forgery);
+///  * lays the rotated appendix at the SHIFTED bases (`V1_WIDTH + pad + …`, exactly where the
+///    hardened descriptor's welds/pins/sites read — Lean `rotateV3` appends at `d.traceWidth`).
+pub fn generate_rotated_effect_vm_trace_avail(
+    avail_pad: usize,
+    initial_state: &CellState,
+    effects: &[Effect],
+    before_w: &RotatedBlockWitness,
+    after_w: &RotatedBlockWitness,
+    caveat: &RotatedCaveatManifest,
+) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
+    // The shifted appendix bases (identical to the module constants at pad 0).
+    let before_base = V1_WIDTH + avail_pad;
+    let after_base = before_base + B_SPAN;
+    let caveat_base = before_base + 2 * B_SPAN;
+    match (avail_pad, effects.first()) {
+        (0, _) => {}
+        (p, Some(Effect::Transfer { .. })) if p == TRANSFER_AVAIL_PAD => {}
+        (p, Some(Effect::Burn { .. })) if p == BURN_AVAIL_PAD => {}
+        (p, lead) => {
+            return Err(format!(
+                "rotated generator: avail pad {p} does not match lead effect {lead:?} \
+                 (transfer pad = {TRANSFER_AVAIL_PAD}, burn pad = {BURN_AVAIL_PAD})"
+            ));
+        }
+    }
     if before_w.pre_limbs.len() != NUM_PRE_LIMBS || after_w.pre_limbs.len() != NUM_PRE_LIMBS {
         return Err(format!(
             "rotated generator: each block witness needs {NUM_PRE_LIMBS} pre-iroot limbs"
@@ -464,12 +565,17 @@ pub fn generate_rotated_effect_vm_trace(
         ));
     }
 
-    // Widen each row to the rotated width and fill the appendix.
+    // Widen each row to the rotated width and fill the appendix (at the avail-shifted bases).
+    // With a pad, first lay the availability-weld witness columns from the row's OWN v1 columns
+    // — the hardened member's borrow/carry teeth read them beside the unmoved v1 layout.
     for row in trace.iter_mut() {
-        row.resize(ROT_WIDTH, BabyBear::ZERO);
-        fill_block(row, BEFORE_BASE, STATE_BEFORE_BASE, before_w);
-        fill_block(row, AFTER_BASE, STATE_AFTER_BASE, after_w);
-        fill_caveat(row, CAVEAT_BASE, caveat);
+        row.resize(ROT_WIDTH + avail_pad, BabyBear::ZERO);
+        if avail_pad > 0 {
+            fill_avail_aux_row(row, &effects[0])?;
+        }
+        fill_block(row, before_base, STATE_BEFORE_BASE, before_w);
+        fill_block(row, after_base, STATE_AFTER_BASE, after_w);
+        fill_caveat(row, caveat_base, caveat);
     }
 
     // THE LIFECYCLE-PAYLOAD HASH GATE declared column (cellSeal / cellDestroy / receiptArchive — the
@@ -498,10 +604,10 @@ pub fn generate_rotated_effect_vm_trace(
     let r0 = &trace[0];
     let last = &trace[trace.len() - 1];
     let mut dpis: Vec<BabyBear> = pis[..V1_PI_COUNT].to_vec();
-    dpis.push(r0[BEFORE_BASE + B_STATE_COMMIT]); // PI 42 (V1_PI_COUNT): rotated OLD commit (col 218)
-    dpis.push(last[AFTER_BASE + B_STATE_COMMIT]); // PI 43: rotated NEW commit (col 261)
-    dpis.push(last[AFTER_BASE + B_COMMITTED_HEIGHT]); // PI 44: committed height (col 259)
-    dpis.push(last[CAVEAT_BASE + C_CAVEAT_COMMIT]); // PI 45: caveat commit
+    dpis.push(r0[before_base + B_STATE_COMMIT]); // PI 42 (V1_PI_COUNT): rotated OLD commit
+    dpis.push(last[after_base + B_STATE_COMMIT]); // PI 43: rotated NEW commit
+    dpis.push(last[after_base + B_COMMITTED_HEIGHT]); // PI 44: committed height
+    dpis.push(last[caveat_base + C_CAVEAT_COMMIT]); // PI 45: caveat commit
     debug_assert_eq!(dpis.len(), ROT_PI_COUNT);
 
     // THE C4 LAST-FLIP-GATE (note-spend nullifier weld): a NoteSpend turn rotates against the
@@ -560,7 +666,7 @@ pub fn generate_rotated_effect_vm_trace(
     // pre-state + the effect, so a forgery cannot match it. The 33 other cohort members keep the
     // 38-PI vector.
     if let Some(off) = record_pin_offset(effects.first()) {
-        dpis.push(last[AFTER_BASE + off]); // PI 46: the correctly-written post lifecycle / record digest
+        dpis.push(last[after_base + off]); // PI 46: the correctly-written post lifecycle / record digest
         // H1: the RECORD-DIGEST movers (off == B_AUTHORITY_DIGEST: setPerms/setVK/makeSovereign/refusal)
         // pin ALL 8 faithful authority limbs (`withRecordPin8Headroom2`): limb-0 above + the 7 headroom
         // limbs (AFTER offsets 12..18) at PI 47..53. Push the honest post values (read from the LAST
@@ -570,7 +676,7 @@ pub fn generate_rotated_effect_vm_trace(
         // B_LIFECYCLE) keep the single limb-0 pin.
         if off == B_AUTHORITY_DIGEST {
             for i in 0..7 {
-                dpis.push(last[AFTER_BASE + 12 + i]);
+                dpis.push(last[after_base + 12 + i]);
             }
             debug_assert_eq!(dpis.len(), ROT_PI_COUNT + 8);
         } else {
@@ -605,10 +711,10 @@ pub fn generate_rotated_effect_vm_trace(
     // the dsl rc tail (PI 63..66) — per-effect extras first, rc last-pre-wide.
     if matches!(effects.first(), Some(Effect::CreateCellFromFactory { .. })) {
         for k in 0..8 {
-            dpis.push(last[AFTER_BASE + B_CHILD_VK_OCTET + k]); // PI 47..54: child_vk8
+            dpis.push(last[after_base + B_CHILD_VK_OCTET + k]); // PI 47..54: child_vk8
         }
         for k in 0..8 {
-            dpis.push(last[AFTER_BASE + B_CONTRACT_HASH_OCTET + k]); // PI 55..62: contract_hash8
+            dpis.push(last[after_base + B_CONTRACT_HASH_OCTET + k]); // PI 55..62: contract_hash8
         }
         debug_assert_eq!(dpis.len(), ROT_NULLIFIER_PI_COUNT + 16);
     }
@@ -673,7 +779,7 @@ pub fn generate_rotated_effect_vm_trace(
     // WITHOUT a Dfa caveat publishes the ZERO sentinel and proves identically (the pins are plain
     // PI bindings over the uniformly-filled carrier).
     for k in 0..DFA_RC_LEN {
-        dpis.push(last[CAVEAT_BASE + C_DFA_RC_OFF + k]);
+        dpis.push(last[caveat_base + C_DFA_RC_OFF + k]);
     }
 
     Ok((trace, dpis))
