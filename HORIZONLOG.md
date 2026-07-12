@@ -7935,3 +7935,33 @@ RESIDUAL = full 5-instance batch-STARK verify (constraint eval + quotient) → G
 capstone chain (transfer-chain fixture awaits the sibling GAP#4 wide-registry regen). THE WRAP WORKS on real data.
 GPU perf (ember value Q pending): blowup gave 8x free; GPU-wiring Amdahl-capped ~2-2.5x shrink (DFT only 1-2%,
 BN254-hash the dominant ~60% — BN254-t3 wgpu microprobe running = the decisive number). Server-shrink vs client-turn-proof = ember's call.
+
+## ⚠⚠ SCOPE CORRECTION (2026-07-12) — adversarial critic (opus) demolished the "near EVM settlement" framing
+I OVERCLAIMED. The critic (a6826754db48c1dd0) read the code, ran the suite, and tried to break the verifier.
+WHAT HELD (could not be broken — the circuit work is REAL + non-vacuous): the quotient identity is a genuine
+algebraic check (not x==x; a MISSING constraint fails at random OOD zeta); the symbolic constraint-eval is
+non-vacuous (the heavy-instance canaries REJECT in symbolic mode where the trivial hand mode ACCEPTS — the exact
+"would a broken verifier also reject?" discriminator); the open_input binding genuinely Merkle-verifies against
+transcript roots; the fixture is a GENUINE real-fold export (real 2-turn chain → recursion → shrink, self-checked
+vs real p3), not synthetic.
+WHAT WAS OVERCLAIMED (the corrections):
+1. THERE IS NO SNARK. Every "verified in-circuit" runs through gnark test.IsSolved = R1CS SATISFACTION. No
+   groth16.Setup/Prove/Verify exists anywhere; no proving key, no VK, no compiled SNARK, no on-chain-verifiable
+   proof. DreggSettlement.sol is tested ONLY against MockGroth16Verifier25. "The wrap works end-to-end" actually
+   means "the constraint system is satisfiable by a real proof's witness + rejects tampers". NOT a wrap. NOT settlement.
+2. UNLISTED SEAM (the real chasm): the verifier circuit and the settlement circuit are DISJOINT. fri_verifier.go
+   declares the 25-lane public-input contract (genesis/final root, numTurns, chainDigest) but its Define is a STUB;
+   the circuit that ACTUALLY verifies (apexShrinkFullVerifyCircuit) declares ZERO public fields. So verifying "some
+   shrink proof is internally valid" does NOT settle a SPECIFIC dregg state root. Never named before.
+3. VK NOT BAKED — shape/DAG/roots come from the FIXTURE at test time; a self-consistent proof of a DIFFERENT
+   circuit would pass today.
+4. "gnark == Lean AirChecksSatisfied half (ii)" is ANALOGY, not a mechanized tie (grep finds no link). Retracted.
+5. FRI low-degree soundness fully ASSUMED (StarkSound half (i), 0 instances).
+6. The non-symbolic "hand" folded mode is VACUOUS for Alu/Poseidon2 (heavyFolded witnessed → identity holds by
+   construction; an Alu/Poseidon2 trace tamper PASSES there). Disclosed + closed by the symbolic path, but a trap.
+WORK-LIST (from the findings, in order): (a) BIND the 25-lane public statement to the REAL verifier circuit (expose
+the expose_claim state root as a gnark public input — without this there is no settlement of a specific root);
+(b) the actual GROTH16 wrap (setup + prove + gnark-solidity-verifier + trusted setup) — the missing SNARK;
+(c) BAKE the VK (shape + constraint DAG as circuit constants); (d) replace the MOCK verifier in DreggSettlement.t.sol
+with the generated real one; (e) make the Lean tie REAL (a differential to Satisfied2/deciden) or drop the claim;
+(f) remove/neuter the vacuous hand mode. THEN the message→root 26th-PI residual.
