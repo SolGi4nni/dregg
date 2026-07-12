@@ -119,6 +119,17 @@ work; collision risk). Marginal polish left (ADR-036 Cosmos wallet-native framin
 NOT forcing it. PACING purely on the wrap: re-poll circuit-prove each wakeup, SEIZE it the instant it quiets.
 ember lever: coordinate/land stark-kill's flag-day to free circuit-prove, OR say to proceed despite churn (advise against).
 
+## ⚑ CORRECTION (07-12 ~4:36am): I'd been MISREADING circuit-prove churn.
+The 9 "uncommitted" circuit-prove files are ALL pre-existing STALE test files (the exact *_audit_*.rs set in the
+git status at SESSION START) — NOT a terminal mid-editing. The real churn was the COMMITS (carrier flag-day,
+vk-epoch weld), which have STOPPED (no commits 45min). My target src/ files (plonky3_recursion_impl.rs, ivc_turn_
+chain.rs) are clean+stable. So the WRAP is more advanceable than I'd been treating it. SEIZED it on the side I
+FULLY OWN (zero circuit-prove collision): the gnark VERIFIER. Native-hash VerifyFriNative lane LAUNCHED (chain/gnark)
+— composes MultiFieldChallenger + merkle_bn254 in the fork-faithful order, MEASURES its constraint count vs the
+emulated VerifyFri (empirical validation of the ~1-6M native premise vs ~30-70M emulated). Verifies a SYNTHETIC
+native-hash FRI (real-apex verify awaits the Rust shrink layer). NEXT: if circuit-prove stays quiet, the Rust shrink
+layer (DreggOuterConfig) is the disjoint parallel piece — but gnark-side first (safest, validates premise).
+
 ## ⚑ PLATEAU NOTE (07-12 ~3am): unblocked multichain work is COMPREHENSIVELY done.
 Thread 3 + all its refinements shipped (edges, wire, multi-network, narrowing, binding TRILOGY, Base legacy +
 LIVE fault-proof finality, Cosmos bisection, Electra rotation, + a real alloy-trie security finding). The MARQUEE
