@@ -153,7 +153,7 @@ aux-table-emptiness assembly facts (`hMemEmpty`/`hMapEmpty`) yields the full `Sa
 empty declared address boundary. The other six premises are discharged structurally (see §2). -/
 theorem airAccept_forces_satisfied2_transferV3
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (t : VmTrace)
-    (hAir : MainAirAccept hash transferV3 t)
+    (hAir : MainAirAcceptF transferV3 t)
     (hbus : ∀ i < t.rows.length, ∀ c ∈ transferV3.constraints, ¬ isArith c →
         c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length))
     (hMemEmpty : t.tf .memory = [])
@@ -181,7 +181,7 @@ assembly facts) forces the WHOLE `Satisfied2`. `hbus` is discharged by `hall` (n
 constraint), so nothing rides the un-modeled LogUp bus. -/
 theorem airAccept_forces_satisfied2_allArith
     (hash : List ℤ → ℤ) (d : EffectVmDescriptor2) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (t : VmTrace)
-    (hAir : MainAirAccept hash d t)
+    (hAir : MainAirAcceptF d t)
     (hall : ∀ c ∈ d.constraints, isArith c)
     (hNoHash : d.hashSites = []) (hNoRange : d.ranges = [])
     (hNoMem : memLog d t = []) (hNoMap : mapLog d t = [])

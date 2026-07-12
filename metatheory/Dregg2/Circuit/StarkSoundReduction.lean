@@ -70,7 +70,7 @@ open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.CircuitSoundness.Verdict (accept)
 open Dregg2.Circuit.DescriptorIR2
   (Satisfied2 VmTrace EffectVmDescriptor2 envAt memLog mapLog opRow VmConstraint2)
-open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept isArith)
+open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept MainAirAcceptF isArith)
 open Dregg2.Circuit.AlgoStarkSoundInstance (algoStarkSound_of_bricks)
 open Dregg2.Circuit.Emit.EffectVmEmit (siteHoldsAll)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
@@ -98,7 +98,7 @@ def DeployedTraceExtract
     verifyAlgo perm RATE toNat params vk checks initState logN
         (view pi π).1 (view pi π).2 = true →
     ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace),
-      MainAirAccept hash (R pi.effect) t ∧
+      MainAirAcceptF (R pi.effect) t ∧
       (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
           c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
       (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) (R pi.effect).hashSites) ∧
@@ -245,17 +245,17 @@ prover cannot meet `extract` with a lying trace. (Reuses the committed witnesses
 that the BUNDLED core inherits their bite.) -/
 
 /-- **BITING** — the core's extraction conjunct is a real obligation: a tampered-gate trace cannot
-supply `MainAirAccept`, so it cannot witness `DeployedTraceExtract`'s existential. -/
+supply `MainAirAcceptF`, so it cannot witness `DeployedTraceExtract`'s existential. -/
 theorem core_extract_biting :
-    ¬ MainAirAccept (fun _ => 0) Dregg2.Circuit.AirChecksSatisfied.dArith
+    ¬ MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
         Dregg2.Circuit.AirChecksSatisfied.tTampered :=
-  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unaccepted
+  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unacceptedF
 
 /-- **RESPECTING** — and the conjunct is inhabited on honest data, so the core is non-vacuous. -/
 theorem core_extract_respecting :
-    MainAirAccept (fun _ => 0) Dregg2.Circuit.AirChecksSatisfied.dArith
+    MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
       Dregg2.Circuit.AirChecksSatisfied.tHonest :=
-  Dregg2.Circuit.AirChecksSatisfied.honest_mainAirAccept
+  Dregg2.Circuit.AirChecksSatisfied.honest_mainAirAcceptF
 
 #assert_axioms core_extract_biting
 #assert_axioms core_extract_respecting

@@ -82,7 +82,7 @@ open Dregg2.Circuit.CircuitSoundness
   (Registry BatchPublicInputs BatchProof EffectIdx tracePublishedCommit)
 open Dregg2.Circuit.DescriptorIR2
   (Satisfied2 VmTrace EffectVmDescriptor2 envAt memLog mapLog opRow VmConstraint2)
-open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept isArith airAccept_forces_satisfied2)
+open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept MainAirAcceptF isArith airAccept_forces_satisfied2)
 open Dregg2.Circuit.AirLegsDischarged (airAccept_forces_satisfied2_transferV3)
 open Dregg2.Circuit.RotatedKernelRefinement (transferV3)
 open Dregg2.Circuit.Emit.EffectVmEmit (siteHoldsAll)
@@ -113,8 +113,10 @@ theorem algoStarkSound_of_bricks_transferV3
       verifyAlgo perm RATE toNat params vk checks initState logN
           (view pi π).1 (view pi π).2 = true →
       ∃ (t : VmTrace),
-        -- FRI-proximity onto the deployed descriptor's trace (DEPLOYED-MODELING):
-        MainAirAccept hash transferV3 t ∧
+        -- FRI-proximity onto the deployed descriptor's trace, as the CANONICAL field predicate
+        -- (DEPLOYED-MODELING; `FieldIntegerLift.ood_forces_mainAirAccept_field_of_residuals` produces
+        -- exactly this from `hood` + `hnonexc`):
+        MainAirAcceptF transferV3 t ∧
         -- the `.lookup` arm — LogUp / chip-range table membership (FLOOR):
         (∀ i < t.rows.length, ∀ c ∈ transferV3.constraints, ¬ isArith c →
             c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
@@ -154,8 +156,8 @@ theorem algoStarkSound_of_bricks
       verifyAlgo perm RATE toNat params vk checks initState logN
           (view pi π).1 (view pi π).2 = true →
       ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace),
-        -- FRI-proximity onto the deployed descriptor's trace (DEPLOYED-MODELING):
-        MainAirAccept hash (R pi.effect) t ∧
+        -- FRI-proximity onto the deployed descriptor's trace, as the CANONICAL field predicate:
+        MainAirAcceptF (R pi.effect) t ∧
         -- the `.lookup`/`.mapOp` arms — LogUp / map-ops table (FLOOR):
         (∀ i < t.rows.length, ∀ c ∈ (R pi.effect).constraints, ¬ isArith c →
             c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
@@ -185,21 +187,22 @@ theorem algoStarkSound_of_bricks
 The extraction hypothesis is a REAL obligation, not free by unfolding: its FRI-side conjunct
 `MainAirAccept` both FIRES on honest data and BITES on a tampered gate. -/
 
-/-- **RESPECTING** — the `MainAirAccept` premise is INHABITED on the honest toy descriptor/trace
-(`AirChecksSatisfied.honest_mainAirAccept`): the extraction hypothesis is satisfiable, so the assembled
+/-- **RESPECTING** — the `MainAirAcceptF` premise is INHABITED on the honest toy descriptor/trace
+(`AirChecksSatisfied.honest_mainAirAcceptF`): the extraction hypothesis is satisfiable, so the assembled
 `AlgoStarkSound` is non-vacuous. -/
 theorem mainAirAccept_respecting :
-    MainAirAccept (fun _ => 0) Dregg2.Circuit.AirChecksSatisfied.dArith
+    MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
       Dregg2.Circuit.AirChecksSatisfied.tHonest :=
-  Dregg2.Circuit.AirChecksSatisfied.honest_mainAirAccept
+  Dregg2.Circuit.AirChecksSatisfied.honest_mainAirAcceptF
 
-/-- **BITING** — the `MainAirAccept` premise is FALSIFIABLE: a trace with a tampered arithmetic gate
-CANNOT supply it (`AirChecksSatisfied.tampered_gate_unaccepted`). So a prover cannot meet the extraction
-hypothesis with a lying trace — the premise carries genuine soundness content. -/
+/-- **BITING** — the `MainAirAcceptF` premise is FALSIFIABLE: a trace with a tampered arithmetic gate
+CANNOT supply it (`AirChecksSatisfied.tampered_gate_unacceptedF`; the tampered residual `5 ≢ 0` mod `p`).
+So a prover cannot meet the extraction hypothesis with a lying trace — the premise carries genuine
+soundness content, and the field migration did NOT make it vacuous. -/
 theorem mainAirAccept_biting :
-    ¬ MainAirAccept (fun _ => 0) Dregg2.Circuit.AirChecksSatisfied.dArith
+    ¬ MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
         Dregg2.Circuit.AirChecksSatisfied.tTampered :=
-  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unaccepted
+  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unacceptedF
 
 #assert_axioms algoStarkSound_of_bricks_transferV3
 #assert_axioms algoStarkSound_of_bricks

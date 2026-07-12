@@ -95,6 +95,12 @@ congruence — so lifting it is the easy direction, no range-check / canonicalit
 witness satisfying the residual over ℤ a fortiori satisfies it mod `p`. -/
 private theorem modEq_of_eq {a b : ℤ} (h : a = b) : a ≡ b [ZMOD 2013265921] := by rw [h]
 
+/-- **The mod-p continuity step** — a difference congruent to `0` gives the two sides congruent. The
+mod-p twin of `sub_eq_zero`: `holdsVm`'s `.transition` / `.piBinding` arms demand `a ≡ b [ZMOD p]`,
+which the field residual `a - b ≡ 0 [ZMOD p]` delivers directly (no ℤ range envelope). -/
+private theorem modEq_of_sub_modEq_zero {a b : ℤ} (h : a - b ≡ 0 [ZMOD 2013265921]) :
+    a ≡ b [ZMOD 2013265921] := by simpa using h.add_right b
+
 /-! ## §1 — `arithResidual`: the per-row field element the deployed `assert_zero` vanishes.
 
 For each ARITHMETIC constraint form this is the polynomial the p3 `AirBuilder` asserts is zero on the
@@ -133,15 +139,18 @@ def isArith : VmConstraint2 → Prop
   | .umemOp _     => False
   | .proofBind _  => False
 
-/-- **The arithmetic bridge — a zero residual FORCES the row-local denotation.** For every ARITHMETIC
-constraint form, `arithResidual env isFirst isLast c = 0` implies `c.holdsAt hash tf env isFirst isLast`.
-Guard-for-guard against `VmConstraint.holdsVm` / `WindowConstraint.holdsAt`, so each case is either the
-vacuous guard branch (`True`) or the field equation the denotation demands (`= 0`, or `a - b = 0 ⟹ a = b`
-via `sub_eq_zero`). This is the whole content of "the AIR constraint check forces the trace to satisfy
-the (arithmetic) constraints", per constraint. -/
+/-- **The arithmetic bridge — a mod-p-zero residual FORCES the row-local denotation.** For every
+ARITHMETIC constraint form, `arithResidual env isFirst isLast c ≡ 0 [ZMOD p]` implies
+`c.holdsAt hash tf env isFirst isLast`. Post-Phase-0 both sides live over BabyBear `p`: the residual
+congruence is EXACTLY the field equation each `VmConstraint.holdsVm` / `WindowConstraint.holdsAt` arm
+demands — a near-`rfl` (`gate`/`boundary`/`windowGate`: `body ≡ 0`) or the mod-p continuity step
+(`transition`/`piBinding`: `a - b ≡ 0 ⟹ a ≡ b` via `modEq_of_sub_modEq_zero`). No ℤ→field lift and no
+range envelope: the hypothesis is stated in the same field the denotation lives in. This is the whole
+content of "the AIR constraint check forces the trace to satisfy the (arithmetic) constraints". -/
 theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceFamily)
     (env : VmRowEnv) (isFirst isLast : Bool) :
-    ∀ c : VmConstraint2, isArith c → arithResidual env isFirst isLast c = 0 →
+    ∀ c : VmConstraint2, isArith c →
+      arithResidual env isFirst isLast c ≡ 0 [ZMOD 2013265921] →
       c.holdsAt hash tf env isFirst isLast := by
   intro c harith h0
   cases c with
@@ -150,24 +159,21 @@ theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceF
     | gate body =>
         cases isLast with
         | true  => exact trivial
-        | false =>
-            have h : body.eval env.loc = 0 := by simpa [arithResidual] using h0
-            simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using modEq_of_eq h
+        | false => simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm, arithResidual] using h0
     | transition hi lo =>
         cases isLast with
         | true  => exact trivial
         | false =>
-            have hs : env.nxt (sbCol hi) - env.loc (saCol lo) = 0 := by
+            have hs : env.nxt (sbCol hi) - env.loc (saCol lo) ≡ 0 [ZMOD 2013265921] := by
               simpa [arithResidual] using h0
-            simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using modEq_of_eq (sub_eq_zero.mp hs)
+            simpa [VmConstraint2.holdsAt, VmConstraint.holdsVm] using modEq_of_sub_modEq_zero hs
     | boundary row b =>
         cases row with
         | first =>
             cases isFirst with
             | true  =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
-                intro _
-                exact modEq_of_eq (show b.eval env.loc = 0 by simpa [arithResidual] using h0)
+                intro _; simpa [arithResidual] using h0
             | false =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
                 intro h; exact absurd h (by simp)
@@ -175,8 +181,7 @@ theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceF
             cases isLast with
             | true  =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
-                intro _
-                exact modEq_of_eq (show b.eval env.loc = 0 by simpa [arithResidual] using h0)
+                intro _; simpa [arithResidual] using h0
             | false =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
                 intro h; exact absurd h (by simp)
@@ -187,8 +192,7 @@ theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceF
             | true  =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
                 intro _
-                have hs : env.loc col - env.pub k = 0 := by simpa [arithResidual] using h0
-                exact modEq_of_eq (sub_eq_zero.mp hs)
+                exact modEq_of_sub_modEq_zero (by simpa [arithResidual] using h0)
             | false =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
                 intro h; exact absurd h (by simp)
@@ -197,8 +201,7 @@ theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceF
             | true  =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
                 intro _
-                have hs : env.loc col - env.pub k = 0 := by simpa [arithResidual] using h0
-                exact modEq_of_eq (sub_eq_zero.mp hs)
+                exact modEq_of_sub_modEq_zero (by simpa [arithResidual] using h0)
             | false =>
                 simp only [VmConstraint2.holdsAt, VmConstraint.holdsVm]
                 intro h; exact absurd h (by simp)
@@ -208,11 +211,8 @@ theorem arithResidual_zero_forces_holdsAt (hash : List ℤ → ℤ) (tf : TraceF
       | true =>
           cases isLast with
           | true  => intro h; exact absurd h (by simp)
-          | false =>
-              intro _
-              exact modEq_of_eq (show WindowExpr.eval env w.body = 0 by simpa [arithResidual, hw] using h0)
-      | false =>
-          exact modEq_of_eq (show WindowExpr.eval env w.body = 0 by simpa [arithResidual, hw] using h0)
+          | false => intro _; simpa [arithResidual, hw] using h0
+      | false => simpa [arithResidual, hw] using h0
   | lookup l    => exact absurd harith (by simp [isArith])
   | memOp m     => exact absurd harith (by simp [isArith])
   | mapOp m     => exact absurd harith (by simp [isArith])
@@ -247,6 +247,29 @@ theorem mainAirAccept_forces_residual (hash : List ℤ → ℤ) (d : EffectVmDes
   intro i hi c hc
   rw [hid i c hc, hdom i hi, zero_mul]
 
+/-! ### §2b — `MainAirAcceptF`: the CANONICAL field-valued AIR-accept predicate.
+
+Phase-0 migrated `VmConstraint.holdsVm` / `WindowConstraint.holdsAt` to denote over BabyBear `p`
+(`… ≡ 0 [ZMOD 2013265921]`). `MainAirAcceptF` is the AIR-accept predicate stated in the SAME field:
+the per-row arithmetic residual is congruent to `0` mod `p` at every trace row. This is what the
+deployed BabyBear main-table quotient check actually enforces — the OOD/quotient identity resolved to
+the field residual (`FieldIntegerLift.ood_forces_mainAirAccept_field_of_residuals` produces exactly
+this from the two crypto residuals `hood` + `hnonexc`). It SUPERSEDES the ℤ `MainAirAccept` as the
+canonical target: for a multiplicative gate the ℤ residual can equal `p` (`≡ 0` mod `p`, `≠ 0` over ℤ),
+so the ℤ predicate is UNREACHABLE for `transferV3`'s gates (`FieldIntegerLift.mainAirAcceptF_does_not_
+imply_MainAirAcceptZ`). `MainAirAccept` (ℤ) survives only as the STRICTLY-STRONGER witness the teeth
+and that counterexample use. -/
+def MainAirAcceptF (d : EffectVmDescriptor2) (t : VmTrace) : Prop :=
+  ∀ i < t.rows.length, ∀ c ∈ d.constraints,
+    arithResidual (envAt t i) (i == 0) (i + 1 == t.rows.length) c ≡ 0 [ZMOD 2013265921]
+
+/-- **The ℤ AIR-accept predicate is STRICTLY STRONGER than the field one.** An exact ℤ residual of `0`
+a fortiori vanishes mod `p`, so `MainAirAccept ⟹ MainAirAcceptF`. (The converse FAILS at a
+multiplicative wraparound gate — that is the whole reason `MainAirAcceptF` is the faithful target.) -/
+theorem mainAirAccept_forces_mainAirAcceptF (hash : List ℤ → ℤ) (d : EffectVmDescriptor2) (t : VmTrace)
+    (h : MainAirAccept hash d t) : MainAirAcceptF d t :=
+  fun i hi c hc => modEq_of_eq (mainAirAccept_forces_residual hash d t h i hi c hc)
+
 /-! ## §3 — AIR acceptance forces `rowConstraints` (arithmetic arms proved; bus arms carried). -/
 
 /-- **`MainAirAccept` forces `Satisfied2.rowConstraints`.** The ARITHMETIC arms (`base`/`windowGate`)
@@ -264,7 +287,24 @@ theorem mainAirAccept_forces_rowConstraints (hash : List ℤ → ℤ) (d : Effec
   intro i hi c hc
   by_cases hA : isArith c
   · exact arithResidual_zero_forces_holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)
-      c hA (mainAirAccept_forces_residual hash d t h i hi c hc)
+      c hA (modEq_of_eq (mainAirAccept_forces_residual hash d t h i hi c hc))
+  · exact hbus i hi c hc hA
+
+/-- **`MainAirAcceptF` forces `Satisfied2.rowConstraints`** — the CANONICAL field-valued lift. The
+field predicate hands the mod-p residual `arithResidual … c ≡ 0 [ZMOD p]` per constraint DIRECTLY (no
+`mul_zero`/quotient collapse — that is baked into `MainAirAcceptF`), which the mod-p arithmetic bridge
+turns into the row-local denotation on ARITHMETIC arms; the bus arms ride `hbus`. This is the version
+the deployed extraction chain consumes (the FRI/OOD side delivers `MainAirAcceptF`, not the ℤ one). -/
+theorem mainAirAcceptF_forces_rowConstraints (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
+    (t : VmTrace) (h : MainAirAcceptF d t)
+    (hbus : ∀ i < t.rows.length, ∀ c ∈ d.constraints, ¬ isArith c →
+        c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) :
+    ∀ i < t.rows.length, ∀ c ∈ d.constraints,
+      c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length) := by
+  intro i hi c hc
+  by_cases hA : isArith c
+  · exact arithResidual_zero_forces_holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)
+      c hA (h i hi c hc)
   · exact hbus i hi c hc hA
 
 /-- **The all-arithmetic corollary — full `rowConstraints` from the quotient check alone.** When every
@@ -279,6 +319,15 @@ theorem mainAirAccept_forces_rowConstraints_allArith (hash : List ℤ → ℤ)
   mainAirAccept_forces_rowConstraints hash d t h
     (fun _ _ c hc hA => absurd (hall c hc) hA)
 
+/-- **The all-arithmetic corollary for the FIELD predicate.** -/
+theorem mainAirAcceptF_forces_rowConstraints_allArith (hash : List ℤ → ℤ)
+    (d : EffectVmDescriptor2) (t : VmTrace)
+    (h : MainAirAcceptF d t) (hall : ∀ c ∈ d.constraints, isArith c) :
+    ∀ i < t.rows.length, ∀ c ∈ d.constraints,
+      c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length) :=
+  mainAirAcceptF_forces_rowConstraints hash d t h
+    (fun _ _ c hc hA => absurd (hall c hc) hA)
+
 /-! ## §4 — Compose toward `airAccept ⟹ Satisfied2` (the partial assembly).
 
 `rowConstraints` is half (ii)'s PROVED contribution; the remaining eight `Satisfied2` fields ride the
@@ -289,8 +338,8 @@ table-assembly carriers ⟹ `Satisfied2`. It plugs UNDER `CircuitSoundness.Stark
 acceptance and the bus/table legs by their carriers. -/
 theorem airAccept_forces_satisfied2 (hash : List ℤ → ℤ) (d : EffectVmDescriptor2)
     (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
-    -- half (ii), PROVED here:
-    (hAir : MainAirAccept hash d t)
+    -- half (ii), PROVED here — the CANONICAL field-valued AIR acceptance:
+    (hAir : MainAirAcceptF d t)
     -- the `lookup`/`mapOp` arms of `rowConstraints` — LogUp / map-ops-table carriers:
     (hbus : ∀ i < t.rows.length, ∀ c ∈ d.constraints, ¬ isArith c →
         c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length))
@@ -306,7 +355,7 @@ theorem airAccept_forces_satisfied2 (hash : List ℤ → ℤ) (d : EffectVmDescr
     (hMemTF : t.tf .memory = (memLog d t).map opRow)
     (hMapTF : t.tf .mapOps = mapLog d t) :
     Satisfied2 hash d minit mfin maddrs t where
-  rowConstraints  := mainAirAccept_forces_rowConstraints hash d t hAir hbus
+  rowConstraints  := mainAirAcceptF_forces_rowConstraints hash d t hAir hbus
   rowHashes       := hHashes
   rowRanges       := hRanges
   memAddrsNodup   := hNodup
@@ -318,8 +367,11 @@ theorem airAccept_forces_satisfied2 (hash : List ℤ → ℤ) (d : EffectVmDescr
 
 #assert_axioms arithResidual_zero_forces_holdsAt
 #assert_axioms mainAirAccept_forces_residual
+#assert_axioms mainAirAccept_forces_mainAirAcceptF
 #assert_axioms mainAirAccept_forces_rowConstraints
+#assert_axioms mainAirAcceptF_forces_rowConstraints
 #assert_axioms mainAirAccept_forces_rowConstraints_allArith
+#assert_axioms mainAirAcceptF_forces_rowConstraints_allArith
 #assert_axioms airAccept_forces_satisfied2
 
 /-! ## §5 — TEETH (both instances load-bearing).
@@ -391,11 +443,31 @@ theorem tampered_gate_unaccepted : ¬ MainAirAccept (fun _ => 0) dArith tTampere
   rw [hres, hz, zero_mul] at hidentity
   exact absurd hidentity (by norm_num)
 
+/-- **RESPECTING (FIELD) — the honest trace satisfies the CANONICAL field predicate.** The stronger ℤ
+acceptance a fortiori gives the mod-p `MainAirAcceptF`. -/
+theorem honest_mainAirAcceptF : MainAirAcceptF dArith tHonest :=
+  mainAirAccept_forces_mainAirAcceptF (fun _ => 0) dArith tHonest honest_mainAirAccept
+
+/-- **WRONG-GATE TOOTH (FIELD, load-bearing).** The tampered trace CANNOT satisfy `MainAirAcceptF`
+either: at row `0` the gate residual is the integer `5`, and `5 ≢ 0 [ZMOD 2013265921]` (since
+`0 < 5 < p`). So the field predicate is genuinely falsifiable by a lying arithmetic row — the mod-p
+migration does NOT weaken the tooth (it is not vacuously true on tampered data). -/
+theorem tampered_gate_unacceptedF : ¬ MainAirAcceptF dArith tTampered := by
+  intro h
+  have hres := h 0 (by simp [tTampered]) (.base (.gate (.var 0))) (by simp [dArith])
+  rw [show arithResidual (envAt tTampered 0) (0 == 0) (0 + 1 == tTampered.rows.length)
+        (.base (.gate (.var 0))) = 5 by
+        simp [arithResidual, envAt, tTampered, tRow, EmittedExpr.eval, List.getD]] at hres
+  rw [Int.modEq_zero_iff_dvd] at hres
+  norm_num at hres
+
 end Teeth
 
 #assert_axioms honest_mainAirAccept
+#assert_axioms honest_mainAirAcceptF
 #assert_axioms honest_rowConstraints
 #assert_axioms tampered_gate_unaccepted
+#assert_axioms tampered_gate_unacceptedF
 
 /-! ## §6 — the plug into `StarkSound` / `circuit_sound_via_fri`.
 

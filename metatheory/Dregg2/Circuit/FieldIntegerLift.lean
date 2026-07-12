@@ -47,14 +47,21 @@ theorem canonical_babyBear_sub_eq_zero_lifts (x y : ℤ)
   · omega
   · exact hxy
 
-/-! ## The field-valued OOD landing -/
+/-! ## The field-valued OOD landing
 
-/-- The row identity actually asserted by the BabyBear main-table AIR.  No hash argument appears:
-the arithmetic quotient does not inspect the semantic hash (the committed `MainAirAccept` retains
-one only for its later composition with `Satisfied2`). -/
-def MainAirAcceptF (d : EffectVmDescriptor2) (t : VmTrace) : Prop :=
-  ∀ i < t.rows.length, ∀ c ∈ d.constraints,
-    ((arithResidual (envAt t i) (i == 0) (i + 1 == t.rows.length) c : ℤ) : BabyBear) = 0
+`MainAirAcceptF` is now the CANONICAL AIR-accept predicate, promoted into
+`AirChecksSatisfied` and stated as the mod-p congruence `arithResidual … c ≡ 0 [ZMOD 2013265921]`
+(coherent with `holdsVm`/`holdsAt`). The BabyBear cast `((· : ℤ) : BabyBear) = 0` that this file's OOD
+machinery produces is DEFINITIONALLY that congruence (`BabyBear = ZMod 2013265921`); the bridge below
+records the equivalence so the OOD landing lands the canonical predicate directly. -/
+
+/-- **`((z : ℤ) : BabyBear) = 0 ↔ z ≡ 0 [ZMOD 2013265921]`** — the BabyBear cast is the mod-p
+congruence, since `BabyBear = ZMod 2013265921`. This lets the OOD chain's field residual land the
+canonical `AirChecksSatisfied.MainAirAcceptF` (stated mod-p) without a separate predicate. -/
+theorem babyBear_cast_eq_zero_iff (z : ℤ) :
+    ((z : ℤ) : BabyBear) = 0 ↔ z ≡ 0 [ZMOD 2013265921] := by
+  rw [ZMod.intCast_zmod_eq_zero_iff_dvd, Int.modEq_zero_iff_dvd]
+  norm_num [babyBearP]
 
 /-- The concrete BabyBear OOD bridge.  Unlike `OodInterpZ`, its constraint polynomial is not an
 unmodeled field: it is exactly the committed trace-column polynomial `constraintPoly d t c`, and
@@ -83,6 +90,7 @@ theorem OodInterpF.hCrow {d : EffectVmDescriptor2} {t : VmTrace} (I : OodInterpF
 theorem ood_forces_mainAirAccept_field (d : EffectVmDescriptor2) (t : VmTrace)
     (I : OodInterpF d t) : MainAirAcceptF d t := by
   intro i hi c hc
+  rw [← babyBear_cast_eq_zero_iff]
   by_cases ha : isArith c
   · have hCq : constraintPoly d t c = I.Zp * I.qp c :=
       ood_consistency (constraintPoly d t c) I.Zp (I.qp c) I.ζ
@@ -208,6 +216,7 @@ theorem wrap_mainAirAcceptF : MainAirAcceptF wrapDescriptor wrapTrace := by
   intro i hi c hc
   simp only [wrapDescriptor, List.mem_singleton] at hc
   subst c
+  rw [← babyBear_cast_eq_zero_iff]
   have hi' : i < 2 := by simpa [wrapTrace] using hi
   interval_cases i
   · exact wrap_field_residual
@@ -231,6 +240,7 @@ theorem mainAirAcceptF_does_not_imply_MainAirAcceptZ :
 
 #assert_axioms babyBear_zero_lifts_in_centered_range
 #assert_axioms canonical_babyBear_sub_eq_zero_lifts
+#assert_axioms babyBear_cast_eq_zero_iff
 #assert_axioms OodInterpF.hCrow
 #assert_axioms ood_forces_mainAirAccept_field
 #assert_axioms vanishingPoly_eval_rowPt

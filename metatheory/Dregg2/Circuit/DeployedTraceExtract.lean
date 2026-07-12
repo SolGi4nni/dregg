@@ -58,6 +58,7 @@ apex modules (`StarkSoundReduction`, `FriBridgeDeployedArity`, …) are imported
 -/
 import Dregg2.Circuit.StarkSoundReduction
 import Dregg2.Circuit.FriBridgeDeployedArity
+import Dregg2.Circuit.FieldIntegerLift
 
 namespace Dregg2.Circuit.DeployedTraceExtract
 
@@ -70,7 +71,7 @@ open Dregg2.Circuit.CircuitSoundness
   (Registry BatchPublicInputs BatchProof EffectIdx tracePublishedCommit StarkSound)
 open Dregg2.Circuit.DescriptorIR2
   (Satisfied2 VmTrace EffectVmDescriptor2 envAt memLog mapLog opRow VmConstraint2)
-open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept isArith)
+open Dregg2.Circuit.AirChecksSatisfied (MainAirAccept MainAirAcceptF isArith)
 open Dregg2.Circuit.Emit.EffectVmEmit (siteHoldsAll)
 open Dregg2.Circuit.FriSoundness (closeN closeN_zero_iff_mem)
 open Dregg2.Circuit.FriFoldArity
@@ -91,7 +92,7 @@ carrying the AIR quotient acceptance `MainAirAccept`, the non-arithmetic (LogUp/
 The `D := R pi.effect` specialization is exactly one disjunct-per-`(pi,π)` of `DeployedTraceExtract`. -/
 def TraceWitnessed (hash : List Int → Int) (D : EffectVmDescriptor2) (pi : BatchPublicInputs) : Prop :=
   ∃ (minit : Int → Int) (mfin : Int → Int × Nat) (maddrs : List Int) (t : VmTrace),
-    MainAirAccept hash D t ∧
+    MainAirAcceptF D t ∧
     (∀ i < t.rows.length, ∀ c ∈ D.constraints, ¬ isArith c →
         c.holdsAt hash t.tf (envAt t i) (i == 0) (i + 1 == t.rows.length)) ∧
     (∀ i < t.rows.length, siteHoldsAll hash (envAt t i) D.hashSites) ∧
@@ -259,24 +260,74 @@ theorem fri_fold_respecting :
     Function.Injective chal8 ∧ ∀ i, Fold friSetupK8.geom (chal8 i) fHon8 ∈ friSetupK8.C' :=
   ⟨chal8_inj, fun i => fHon8_fold_complete (chal8 i)⟩
 
-/-- **CODEWORD-DECODE BITES** — the `MainAirAccept` conjunct `decode_trace` must supply is
-FALSIFIABLE: a tampered-gate trace cannot meet it (`AirChecksSatisfied.tampered_gate_unaccepted`). So
+/-- **CODEWORD-DECODE BITES** — the `MainAirAcceptF` conjunct `decode_trace` must supply is
+FALSIFIABLE: a tampered-gate trace cannot meet it (`AirChecksSatisfied.tampered_gate_unacceptedF`). So
 the codeword-decode map cannot be met with a lying trace — it carries genuine soundness content. -/
 theorem decode_trace_biting :
-    ¬ MainAirAccept (fun _ => 0) Dregg2.Circuit.AirChecksSatisfied.dArith
+    ¬ MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
         Dregg2.Circuit.AirChecksSatisfied.tTampered :=
-  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unaccepted
+  Dregg2.Circuit.AirChecksSatisfied.tampered_gate_unacceptedF
 
-/-- **CODEWORD-DECODE FIRES** — and its `MainAirAccept` conjunct is inhabited on honest data
-(`AirChecksSatisfied.honest_mainAirAccept`), so the codeword-decode map is non-vacuous. -/
+/-- **CODEWORD-DECODE FIRES** — and its `MainAirAcceptF` conjunct is inhabited on honest data
+(`AirChecksSatisfied.honest_mainAirAcceptF`), so the codeword-decode map is non-vacuous. -/
 theorem decode_trace_respecting :
-    MainAirAccept (fun _ => 0) Dregg2.Circuit.AirChecksSatisfied.dArith
+    MainAirAcceptF Dregg2.Circuit.AirChecksSatisfied.dArith
       Dregg2.Circuit.AirChecksSatisfied.tHonest :=
-  Dregg2.Circuit.AirChecksSatisfied.honest_mainAirAccept
+  Dregg2.Circuit.AirChecksSatisfied.honest_mainAirAcceptF
 
 #assert_axioms embedding_rejects_far_oracle
 #assert_axioms fri_fold_respecting
 #assert_axioms decode_trace_biting
 #assert_axioms decode_trace_respecting
+
+/-! ## §6 — THE PAYOFF: the field-OOD landing feeds the extraction's AIR conjunct DIRECTLY.
+
+Post-Phase-0 the extraction hypothesis's hardest conjunct is the CANONICAL field predicate
+`MainAirAcceptF transferV3 t` (the first conjunct of `TraceWitnessed`, i.e. of `decode_trace`'s
+deliverable and of `AlgoStarkSoundInstance`'s `hextract`). `FieldIntegerLift`'s committed field-OOD
+bridge produces EXACTLY that — no ℤ lift is needed or attempted. The two demonstrators below WITNESS
+the composition as a term:
+
+  * from an `OodInterpF transferV3 t` (the field OOD bundle), directly;
+  * from the two genuine crypto residuals `hood` (OOD/RLC quotient identity at ζ) + `hnonexc`
+    (Fiat–Shamir non-exceptionality) with the domain-geometry vanisher `vanishingPoly` already
+    discharged — so the residual set reaching the AIR conjunct is EXACTLY `{hood, hnonexc}`.
+
+Before Phase-0 this conjunct was the ℤ `MainAirAccept`, which `FieldIntegerLift.mainAirAcceptF_does_not_
+imply_MainAirAcceptZ` shows is UNREACHABLE for `transferV3`'s multiplicative gates — the field-OOD
+lemma could not feed it. That gap is now dissolved. -/
+
+/-- **PAYOFF (bundle form)** — the field OOD bundle for `transferV3` produces the extraction's AIR
+conjunct `MainAirAcceptF transferV3 t` directly. -/
+theorem extractionAirConjunct_of_oodInterpF
+    (t : VmTrace)
+    (I : Dregg2.Circuit.FieldIntegerLift.OodInterpF
+          Dregg2.Circuit.RotatedKernelRefinement.transferV3 t) :
+    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
+  Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field _ t I
+
+/-- **PAYOFF (two-crypto-residual form)** — with the domain vanisher discharged, the extraction's AIR
+conjunct `MainAirAcceptF transferV3 t` follows from EXACTLY the two crypto residuals `hood` + `hnonexc`.
+This is the exact term the ℤ target could not supply. -/
+theorem extractionAirConjunct_of_residuals
+    (t : VmTrace)
+    (hcap : t.rows.length ≤ Dregg2.Circuit.TraceColumnInterp.domainSize)
+    (ζ : Dregg2.Circuit.BabyBearFriField.BabyBear)
+    (qp : VmConstraint2 → Polynomial Dregg2.Circuit.BabyBearFriField.BabyBear)
+    (hood : ∀ c ∈ Dregg2.Circuit.RotatedKernelRefinement.transferV3.constraints, isArith c →
+        (Dregg2.Circuit.TraceColumnInterp.constraintPoly
+            Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c).eval ζ =
+          (Dregg2.Circuit.FieldIntegerLift.vanishingPoly t).eval ζ * (qp c).eval ζ)
+    (hnonexc : ∀ c ∈ Dregg2.Circuit.RotatedKernelRefinement.transferV3.constraints, isArith c →
+        ζ ∉ Dregg2.Circuit.OodQuotientConsistency.exceptionalSet
+          (Dregg2.Circuit.TraceColumnInterp.constraintPoly
+              Dregg2.Circuit.RotatedKernelRefinement.transferV3 t c
+            - Dregg2.Circuit.FieldIntegerLift.vanishingPoly t * qp c)) :
+    MainAirAcceptF Dregg2.Circuit.RotatedKernelRefinement.transferV3 t :=
+  Dregg2.Circuit.FieldIntegerLift.ood_forces_mainAirAccept_field_of_residuals
+    _ t hcap ζ qp hood hnonexc
+
+#assert_axioms extractionAirConjunct_of_oodInterpF
+#assert_axioms extractionAirConjunct_of_residuals
 
 end Dregg2.Circuit.DeployedTraceExtract
