@@ -79,10 +79,7 @@ pub fn var_value_felt(value: &[u8]) -> BabyBear {
 /// The [`HeapLeaf`] for one `/var` entry — the leaf both [`Umem::commit_root_bytes`]
 /// and [`Umem::prove`] build the `CanonicalHeapTree` over.
 fn var_leaf(key: &str, value: &[u8]) -> HeapLeaf {
-    HeapLeaf {
-        addr: var_addr(key),
-        value: var_value_felt(value),
-    }
+    HeapLeaf::entry(var_addr(key), var_value_felt(value))
 }
 
 /// Encode a BabyBear heap-root felt as the raw 32 bytes the federation ledger carries:

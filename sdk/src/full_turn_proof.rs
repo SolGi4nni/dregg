@@ -403,10 +403,7 @@ impl RotationTurnWitness {
                     let leaves: Vec<HeapLeaf> = before_nullifiers
                         .unwrap_or(&[])
                         .iter()
-                        .map(|nf| HeapLeaf {
-                            addr: *nf,
-                            value: BabyBear::new(1),
-                        })
+                        .map(|nf| HeapLeaf::entry(*nf, BabyBear::new(1)))
                         .collect();
                     let (_t, d, _h) = generate_rotated_note_spend_wide(
                         s_k,
@@ -969,10 +966,7 @@ fn rotated_effect_pi_for(
         let leaves: Vec<HeapLeaf> = before_nullifiers
             .unwrap_or(&[])
             .iter()
-            .map(|nf| HeapLeaf {
-                addr: *nf,
-                value: BabyBear::new(1),
-            })
+            .map(|nf| HeapLeaf::entry(*nf, BabyBear::new(1)))
             .collect();
         let (_t, dpis, _mh) = generate_rotated_note_spend_trace_with_nullifier_tree(
             initial_state,
@@ -1085,10 +1079,7 @@ pub fn prove_effect_vm_rotated_ir2_with_caveat(
         let leaves: Vec<HeapLeaf> = before_nullifiers
             .unwrap_or(&[])
             .iter()
-            .map(|nf| HeapLeaf {
-                addr: *nf,
-                value: BabyBear::new(1),
-            })
+            .map(|nf| HeapLeaf::entry(*nf, BabyBear::new(1)))
             .collect();
         let (trace, dpis, map_heaps) = generate_rotated_note_spend_trace_with_nullifier_tree(
             initial_state,
@@ -1742,7 +1733,8 @@ pub fn prove_wide_umem_welded_staged_with_fee(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2_umem, verify_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        RotatedBlockWitness, generate_rotated_transfer_shape_with_fee_wide,
+        RotatedBlockWitness, avail_pad_for_descriptor_name,
+        generate_rotated_transfer_shape_with_fee_wide_avail,
         rotated_descriptor_name_for_effect_fee,
     };
     use dregg_circuit::effect_vm_descriptors::{
@@ -1804,8 +1796,14 @@ pub fn prove_wide_umem_welded_staged_with_fee(
         .map_err(|e| SdkError::InvalidWitness(format!("wide fee after-witness: {e}")))?;
 
     // The fee-aware WIDE trace + PI vector (the deployed fee route; the fee is debited in-proof and
-    // the 8-felt carriers re-absorb the post-fee limbs).
-    let (wide_trace, dpis) = generate_rotated_transfer_shape_with_fee_wide(
+    // the 8-felt carriers re-absorb the post-fee limbs). THE AVAILABILITY-WELD PAD (GAP #4, wide
+    // fee leg): the trace SHAPE follows the COMMITTED wide descriptor — a hardened
+    // `…-v1-fee-avail` member demands the 16-col fee-weld geometry (witness limbs at
+    // `[V1_WIDTH, V1_WIDTH + 16)`, every appendix + carrier base shifted); every bare member
+    // keeps the byte-identical `0`-pad shape.
+    let avail_pad = avail_pad_for_descriptor_name(&wide_desc.name);
+    let (wide_trace, dpis) = generate_rotated_transfer_shape_with_fee_wide_avail(
+        avail_pad,
         initial_state,
         effects,
         &before,
@@ -1891,7 +1889,8 @@ pub fn prove_effect_vm_rotated_wide_with_fee(
         MemBoundaryWitness, parse_vm_descriptor2, prove_vm_descriptor2,
     };
     use dregg_circuit::effect_vm::trace_rotated::{
-        RotatedBlockWitness, generate_rotated_transfer_shape_with_fee_wide,
+        RotatedBlockWitness, avail_pad_for_descriptor_name,
+        generate_rotated_transfer_shape_with_fee_wide_avail,
         rotated_descriptor_name_for_effect_fee,
     };
     use dregg_circuit::effect_vm_descriptors::WIDE_REGISTRY_STAGED_TSV;
@@ -1951,7 +1950,11 @@ pub fn prove_effect_vm_rotated_wide_with_fee(
     let after = bridge(after_w)
         .map_err(|e| SdkError::InvalidWitness(format!("wide fee after-witness: {e}")))?;
 
-    let (trace, dpis) = generate_rotated_transfer_shape_with_fee_wide(
+    // THE AVAILABILITY-WELD PAD (GAP #4, wide fee leg): shape follows the COMMITTED wide
+    // descriptor — pad 16 for a hardened `…-v1-fee-avail` row, 0 (byte-identical) for bare.
+    let avail_pad = avail_pad_for_descriptor_name(&desc.name);
+    let (trace, dpis) = generate_rotated_transfer_shape_with_fee_wide_avail(
+        avail_pad,
         initial_state,
         effects,
         &before,
@@ -2860,9 +2863,8 @@ fn build_effect_vm_cap_open_leg(
 > {
     use dregg_circuit::descriptor_ir2::parse_vm_descriptor2;
     use dregg_circuit::effect_vm::trace_rotated::{
-        CAP_OPEN_TB_WIDTH, CapOpenWitness, RotatedBlockWitness, append_wide_carriers,
-        append_wide_carriers_cap_open, cap_open_tb_dpis, empty_caveat_manifest,
-        generate_rotated_cap_write_base, patch_attenuate_base_for_cap_open,
+        CAP_OPEN_TB_WIDTH, CapOpenWitness, RotatedBlockWitness, cap_open_tb_dpis,
+        empty_caveat_manifest, generate_rotated_cap_write_base, patch_attenuate_base_for_cap_open,
         transfer_caveat_manifest, widen_to_cap_open_avail, widen_to_cap_open_tb_avail,
     };
 
@@ -3400,12 +3402,19 @@ fn build_effect_vm_cap_open_leg(
                 SdkError::InvalidWitness(format!("attenuate after-spine wide ({effective_key}): {e}"))
             })?
         } else if go_wide {
-            // THE WIDE LIFT: append the two 13×8 BEFORE/AFTER wide carriers PAST the 210-col cap-open
-            // appendix (`append_wide_carriers_cap_open`, the `wideAppend (capOpenHost) bb (bb+51)` twin)
-            // and the 16 wide commit PIs. The cap-open host constraints + membership crown carry
-            // UNCHANGED; the carriers re-absorb the SAME limbs into the 8-felt commit. The leg now
-            // publishes the full ~124-bit commit at its LAST 16 PIs (the wide anchor the verifier binds).
-            append_wide_carriers_cap_open(&mut trace, dpis).map_err(|e| {
+            // THE WIDE LIFT: append the two 13×8 BEFORE/AFTER wide carriers PAST the cap-open
+            // appendix (`append_wide_carriers_cap_open_avail` at `CAP_OPEN_WIDTH + avail_pad` —
+            // the hardened `…-v1-avail` cap-open EFF member's host width and rotated limb bases
+            // ride the availability pad, matching the retargeted
+            // `transferCapOpenEffVmDescriptor2R24` wide row = `wideAppend transferCapOpenEffV3Avail`;
+            // 0 for every bare member = byte-identical to the legacy lift) and the 16 wide commit
+            // PIs. The cap-open host constraints + membership crown carry UNCHANGED; the carriers
+            // re-absorb the SAME limbs into the 8-felt commit. The leg now publishes the full
+            // ~124-bit commit at its LAST 16 PIs (the wide anchor the verifier binds).
+            dregg_circuit::effect_vm::trace_rotated::append_wide_carriers_cap_open_avail(
+                &mut trace, dpis, avail_pad,
+            )
+            .map_err(|e| {
                 SdkError::InvalidWitness(format!("cap-open wide carriers ({effective_key}): {e}"))
             })?
         } else {
