@@ -443,3 +443,110 @@ not a native-only capability.
   DRAM; its plausible edge is the ~1.5-2x that the subgroup lever also
   reaches. Revisit only if, after the `GpuDft` integration (P2 tail), the
   in-prover LDE measures far off the 60-73%-of-ceiling band established here.
+
+## 10. MEASURED: AMD hbox — RX 6750 XT via wgpu/Vulkan/RADV (2026-07-12)
+
+The same two probe crates (§4 mul, §9 NTT), rsynced to hbox and built there
+unmodified (`~/scratch-wgpu-babybear/`, standalone `[workspace]` opt-outs; the
+main breadstuffs tree on hbox untouched). First AMD GPU measurements in this
+doc — everything before this section was M2 Max.
+
+**Setup found, not installed:** hbox already had the Vulkan loader
+(`libvulkan.so.1.3.290`) and the Mesa RADV ICD (`radeon_icd.x86_64.json`) —
+zero packages were added. wgpu **auto-selected the real dGPU**:
+
+```
+adapter: AMD Radeon RX 6750 XT (RADV NAVI22) (Vulkan)
+  max workgroup storage: 65536 B, subgroup ops available: true (sizes 32..64)
+```
+
+Not llvmpipe (the `lvp` software ICD is present but was not chosen — no
+forcing needed). Hardware correction: the card is the **6750 XT** (Navi 22
+refresh, 18 Gbps GDDR6, **432 GB/s** DRAM spec, 96 MB Infinity Cache), not the
+6700 XT (384 GB/s) recorded from `lspci` in §2. Same die/`gfx1031`, so the
+ROCm-unsupported caveat stands — and is now moot, per the verdict below.
+(The probe's printed "% of 400 GB/s spec" column is the hard-coded M2
+constant; the honest AMD spec fraction is computed against 432 here.)
+
+### Montgomery-mul microprobe (compute-bound)
+
+```
+gpu runs: 169.96 / 198.01 / 195.87 / 195.88 / 191.35 Gmul/s
+GPU best: 2.7 ms for 4194304 lanes x 128 chained muls = 198.01 Gmul/s
+CPU (1 thread, pinned p3 rev 82cfad7): 1309.2 ms = 0.41 Gmul/s
+PARITY: all 4194304 lanes bit-exact vs Plonky3 BabyBear ✓
+```
+
+**198 Gmul/s, stable (191-198 across post-warmup runs)** — **~1.9x the M2 Max
+best (105.8) and ~2-3x its 60-105 band.** The 16-bit-split mul64 tax is priced
+in on both. RDNA2 through RADV's shader compiler is simply a faster ALU target
+for this kernel than Apple through Metal.
+
+### Copy-bandwidth ceiling
+
+`copy ceiling (64 MiB read+write): vec4 334.5 GB/s, u32x4 329.6 GB/s ->
+ceiling 334.5 GB/s` (334.5-335.2 across two runs) = **~78% of the 432 GB/s
+spec**. The copy working set (64 MiB src + 64 MiB dst = 128 MiB) exceeds the
+96 MB Infinity Cache, so this is a DRAM-honest denominator — though less of
+the spec than the M2 reaches (88-99%), typical for GDDR6 streaming vs Apple's
+LPDDR5 fabric.
+
+**The Infinity Cache is loudly visible everywhere the working set fits**, and
+%-of-ceiling readings above 100% below are exactly that, not measurement
+error: whole cache-resident NTTs sustain 356-417 GB/s effective (106-125% of
+the DRAM ceiling), and individual late radix passes peak at **904 GB/s
+effective (270% of ceiling)**. On this card the NTT's logn roundtrips are
+served by a 96 MB SRAM tier whenever the table is ≤~64 MiB — a structural
+gift to exactly this kernel class that the M2 does not have at these sizes.
+
+### NTT (same 72 parity checks — all green, both runs)
+
+Best plan per shape (run 2, quiet box; `% ceil` vs the measured 334.5 GB/s):
+
+| shape | best plan (passes) | time | Melem/s | eff GB/s | % ceil | vs hbox p3 1-thread | vs hbox p3 rayon |
+|---|---|---|---|---|---|---|---|
+| 2^15 x 64 (8 MiB) | hybrid E1=8 B=8 +radix[4,3] (3) | **0.142 ms** | **14 818** | 355.6 | **106%** | 258x | 17.4x |
+| 2^15 x 256 (32 MiB) | hybrid E1=8 B=8 +radix[4,3] (3) | **0.483 ms** | **17 360** | 416.6 | **125%** | 141x | 17.9x |
+| 2^18 x 16 (16 MiB) | fused2d E1=9 B=16 (2) | 0.413 ms | 10 166 | 162.7 | 49% | 134x | 14.0x |
+| 2^21 x 1 (8 MiB) | fused2d E1=11 B=4 (2) | 0.430 ms | 4 880 | 78.1 | 23% | 240x | 33.8x |
+| 2^21 x 8 (64 MiB) | fused2d E1=11 B=4 (2) | 3.666 ms | 4 577 | 73.2 | 22% | 77x | 11.0x |
+
+### AMD vs M2 Max, same binary, same day
+
+- **Compute-bound mul: AMD wins ~2x** (198 vs 105.8 Gmul/s).
+- **Wide/batch NTT shapes: AMD wins ~1.3x absolute** — 17.4 vs 13.2 Gelem/s
+  on the 2^15x256 interpolate shape (0.48 vs 0.64 ms), riding the Infinity
+  Cache above the DRAM roofline. GPU-vs-rayon leverage is also larger on hbox
+  (~17-18x vs ~8x) because hbox's CPU is weaker than the M2's.
+- **Tall 2^21 shapes: AMD loses ~0.65-0.72x** (4.6-4.9 vs 6.6-7.6 Gelem/s).
+  The per-pass profile names the culprit precisely: every plan's
+  *large-stride* tile pass collapses to **14-19 GB/s (4-6% of ceiling)** on
+  RDNA2 (e.g. fused2d pass2), while the same plan's coalesced passes run
+  158-904 GB/s in the same dispatch sequence. That is a memory-access-pattern
+  penalty — strided 4 B element access defeating GDDR6/IC line granularity —
+  i.e. a *tunable kernel-shape problem* (wider per-thread vectorized loads,
+  column-batched tiles), not a Vulkan/wgpu/RADV tax. Note the real LDE shape
+  is 2^21 rows x O(450) *columns* (§5): column batching converts the tall
+  shape toward the wide regime where AMD already leads, and the RISC0
+  stage-skip trick (§9) removes 6 of 21 stages on top.
+- The zero-init and bounds-check fixes from §9 carry over unchanged (same
+  binary); subgroup ops are available on RADV (sizes 32..64) for the same
+  unmeasured two-tier upside.
+
+### Verdict: is wgpu/Vulkan the hbox production path?
+
+**Yes.** The question this section existed to answer — does portable
+wgpu-on-Vulkan-on-RADV saturate an AMD card well enough to skip both native
+Vulkan compute and the ROCm/HIP escalation (§3.4) — comes back clearly:
+
+- zero setup on a stock Debian box (loader + RADV were already there);
+- correct adapter auto-selected, no llvmpipe trap;
+- bit-exact p3 parity on every kernel, every shape, every run;
+- compute-bound throughput ~2x the M2 Max;
+- NTT at-or-above the DRAM roofline on batch shapes (the Infinity Cache is a
+  real accelerant for this exact kernel), with the one deficit (tall-shape
+  strided pass) named, bounded (~1.4x vs M2), and addressable in WGSL.
+
+The HIP escalation path stays closed unless the `GpuDft` integration measures
+far off this band on real LDE shapes. gfx1031's absence from the ROCm support
+matrix is now irrelevant to the plan.
