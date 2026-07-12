@@ -47,10 +47,16 @@ use dregg_types::CellId;
 use serde::{Deserialize, Serialize};
 
 use crate::solana_consensus::{
-    BankHashComponents, EpochStakeTable, PohAnchorPolicy, PohSegment, ValidatorVote, VoteSetError,
-    verify_accounts_inclusion, verify_poh_anchored, verify_poh_segment, verify_supermajority,
+    BankHashComponents, PohAnchorPolicy, PohSegment, ValidatorVote, verify_accounts_inclusion,
+    verify_poh_anchored,
 };
-use crate::solana_mirror::{MirrorError, MirrorMint, MirrorState};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::solana_consensus::{
+    EpochStakeTable, VoteSetError, verify_poh_segment, verify_supermajority,
+};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::solana_mirror::MirrorMint;
+use crate::solana_mirror::{MirrorError, MirrorState};
 use crate::solana_provenance::{
     ProvenAccount, ProvenanceError, RotationStep, VerifiedStakeTable, WeakSubjectivityAnchor,
     rotate,
@@ -431,18 +437,29 @@ pub fn verify_lock_proof(
     Ok(LockProofTrust::StructureOnly)
 }
 
-/// Verify a Solana lock proof against a **tracked epoch stake table** — the real
-/// trustless check. Returns [`LockProofTrust::ConsensusVerified`] only when:
+/// **LEGACY supplied-table consensus verify — TEST/INTERNAL ONLY, un-shippable.**
+///
+/// Verify a Solana lock proof against a caller-supplied epoch stake table.
+/// `stake_table` is a **trusted input this function cannot check**, and the
+/// tally ([`verify_supermajority`]) is NOT bound to each vote account's on-chain
+/// authorized voter — an adversary who supplies both the proof AND the table
+/// (their key = 100% stake) reaches [`LockProofTrust::ConsensusVerified`].
+/// Compiled only under `cfg(test)` / the dev-only `test-utils` feature;
+/// production verifies with [`verify_lock_proof_consensus_anchored`] (no table
+/// input: derived from bank state back to a governance-pinned anchor).
+///
+/// Returns [`LockProofTrust::ConsensusVerified`] only when:
 ///
 /// 1. structure + binding pass ([`check_binding`]);
 /// 2. the evidence epoch matches `stake_table.epoch`;
-/// 3. ≥ 2/3 of the epoch's active stake validly voted the claimed `(slot,
-///    bank_hash)` — real per-vote Ed25519 + stake-weighted sum;
+/// 3. ≥ 2/3 of the (supplied) epoch's active stake validly voted the claimed
+///    `(slot, bank_hash)` — real per-vote Ed25519 + stake-weighted sum;
 /// 4. the bank-hash components recompute to the voted `bank_hash` and commit to
 ///    the inclusion proof's `accounts_hash`;
 /// 5. the vault account's lock record is included in that accounts hash;
 /// 6. if `require_poh` (or a PoH segment is present), the PoH tick chain links
 ///    the anchor to the slot's blockhash.
+#[cfg(any(test, feature = "test-utils"))]
 pub fn verify_lock_proof_consensus(
     proof: &SolanaLockProof,
     spl_mint: &[u8; 32],
@@ -457,6 +474,7 @@ pub fn verify_lock_proof_consensus(
 }
 
 /// The real Solana-consensus verification (see [`verify_lock_proof_consensus`]).
+#[cfg(any(test, feature = "test-utils"))]
 fn verify_consensus(
     consensus: &ConsensusEvidence,
     inclusion: &AccountInclusionProof,

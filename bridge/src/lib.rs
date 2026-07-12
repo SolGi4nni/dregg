@@ -164,9 +164,10 @@ pub use present::{
     verify_revealed_facts_commitment, verify_wire_fold_chain,
 };
 pub use solana_consensus::{
-    BankHashComponents, EpochStakeTable, PohError, PohSegment, ValidatorVote, VoteSetError,
-    VoteTally, VoteTxWitness, account_leaf, merkle_node, tally_votes, verify_accounts_inclusion,
-    verify_poh_segment, verify_supermajority, vote_message,
+    BankHashComponents, EpochStakeTable, PohAnchorPolicy, PohError, PohSegment, ValidatorVote,
+    VoteSetError, VoteTally, VoteTxWitness, account_leaf, merkle_node, tally_votes,
+    verify_accounts_inclusion, verify_poh_anchored, verify_poh_segment, verify_supermajority,
+    vote_message,
 };
 pub use solana_mirror::{
     MirrorConfig, MirrorError, MirrorMint, MirrorRedeem, MirrorState, SOLANA_LOCK_NULLIFIER_DOMAIN,
@@ -182,9 +183,15 @@ pub use solana_relayer::{
     AccountResponse, Commitment, JsonRpcTransport, ObservedLock, RelayerError, RpcAccount,
     RpcError, SolanaJsonRpc, SolanaRelayer, SolanaRpc, StdHttpTransport,
 };
+/// The LEGACY supplied-table consensus verify — TEST/INTERNAL ONLY (see its doc:
+/// a caller-supplied stake table is forgeable; production uses
+/// [`verify_lock_proof_consensus_anchored`]).
+#[cfg(any(test, feature = "test-utils"))]
+pub use solana_trustless::verify_lock_proof_consensus;
 pub use solana_trustless::{
     AccountInclusionProof, ConsensusEvidence, LockProofError, LockProofTrust, ProofMintError,
-    SolanaConsensusStatement, SolanaLockProof, verify_lock_proof, verify_lock_proof_consensus,
+    SolanaConsensusStatement, SolanaLockProof, StakeProvenance, verify_lock_proof,
+    verify_lock_proof_consensus_anchored,
 };
 pub use solana_wire::{
     AccountsInclusionProof16, IngestedVote, MERKLE_FANOUT, MerkleLevel, WireError,

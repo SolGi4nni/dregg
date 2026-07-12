@@ -25,8 +25,10 @@ use dregg_bridge::solana_consensus::{
 };
 use dregg_bridge::solana_holdings::{
     HoldingAccount, HoldingProof, HoldingProofError, SPL_ACCOUNT_LEN, SPL_AMOUNT_OFFSET,
-    SPL_MINT_OFFSET, SPL_OWNER_OFFSET, observe_holding_structure, prove_holding_consensus,
+    SPL_MINT_OFFSET, SPL_OWNER_OFFSET, fixtures, observe_holding_structure,
+    prove_holding_consensus, prove_holding_consensus_anchored,
 };
+use dregg_bridge::solana_provenance::ProvenanceError;
 use dregg_bridge::solana_trustless::{ConsensusEvidence, LockProofTrust};
 use dregg_bridge::solana_wire::{
     AccountsInclusionProof16, MerkleLevel, accounts_merkle_node, solana_account_hash,
@@ -169,7 +171,11 @@ fn supermajority_holding(amount: u64) -> HoldingProof {
     let data = spl_account_data(DREGG_MINT, HOLDER_WALLET, amount);
     let (account, accounts_hash) = holder_account(data);
     let consensus = consensus_signed_by(accounts_hash, &[vk(11), vk(12)], true);
-    HoldingProof { account, consensus }
+    HoldingProof {
+        account,
+        consensus,
+        stake_provenance: None,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -247,7 +253,11 @@ fn sub_supermajority_does_not_reach_consensus() {
     // Signed by ONLY validator 11 (400/1000 = 40% < 2/3). Every vote is a valid
     // Ed25519 signature over the real bank hash; the ONLY defect is insufficient stake.
     let consensus = consensus_signed_by(accounts_hash, &[vk(11)], false);
-    let proof = HoldingProof { account, consensus };
+    let proof = HoldingProof {
+        account,
+        consensus,
+        stake_provenance: None,
+    };
 
     let err = prove_holding_consensus(
         &proof,
@@ -281,7 +291,11 @@ fn wrong_mint_is_refused() {
     let data = spl_account_data(other_mint, HOLDER_WALLET, amount);
     let (account, accounts_hash) = holder_account(data);
     let consensus = consensus_signed_by(accounts_hash, &[vk(11), vk(12)], false);
-    let proof = HoldingProof { account, consensus };
+    let proof = HoldingProof {
+        account,
+        consensus,
+        stake_provenance: None,
+    };
 
     assert_eq!(
         prove_holding_consensus(
@@ -358,7 +372,11 @@ fn account_not_owned_by_spl_token_program_is_refused() {
     let (account, accounts_hash) = account_owned_by(data, attacker_program);
     // A REAL supermajority genuinely signs this finalized accounts hash.
     let consensus = consensus_signed_by(accounts_hash, &[vk(11), vk(12)], false);
-    let proof = HoldingProof { account, consensus };
+    let proof = HoldingProof {
+        account,
+        consensus,
+        stake_provenance: None,
+    };
 
     // Despite genuine consensus + inclusion, the forged balance grants NO weight:
     // the account is not owned by the SPL Token program.
@@ -395,7 +413,11 @@ fn too_short_blob_is_refused() {
     let short = vec![0u8; 100];
     let (account, accounts_hash) = holder_account(short);
     let consensus = consensus_signed_by(accounts_hash, &[vk(11), vk(12)], false);
-    let proof = HoldingProof { account, consensus };
+    let proof = HoldingProof {
+        account,
+        consensus,
+        stake_provenance: None,
+    };
 
     assert_eq!(
         prove_holding_consensus(
@@ -446,6 +468,183 @@ fn tampered_accounts_hash_is_refused() {
         .unwrap_err(),
         HoldingProofError::AccountsInclusionInvalid,
         "an account not included in the voted accounts hash is not proven"
+    );
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// ANCHORED path — the ONLY production route to ConsensusVerified. The stake
+// table is DERIVED from bank-state provenance and trusted back to a
+// governance-pinned anchor; a caller/attacker-supplied table does not exist as
+// an input at all.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The honest cluster: validators with 700/300 stake, authorized voters proven
+/// from bank state. Returns `(proof, anchor, policy)` where `anchor` pins the
+/// genuine distribution.
+fn honest_anchored(
+    amount: u64,
+) -> (
+    HoldingProof,
+    dregg_bridge::solana_provenance::WeakSubjectivityAnchor,
+    dregg_bridge::solana_consensus::PohAnchorPolicy,
+) {
+    fixtures::anchored_holding_with_cluster(
+        &DREGG_MINT,
+        &SPL_TOKEN_PROGRAM,
+        HOLDER_ACCOUNT,
+        HOLDER_WALLET,
+        amount,
+        &[(11, 700), (12, 300)],
+    )
+}
+
+#[test]
+fn anchored_honest_holding_is_consensus_verified() {
+    let amount = 1_234_567u64;
+    let (proof, anchor, policy) = honest_anchored(amount);
+    let holding = prove_holding_consensus_anchored(
+        &proof,
+        &DREGG_MINT,
+        &SPL_TOKEN_PROGRAM,
+        &anchor,
+        true, // PoH required, against the bounded-anchor policy
+        Some(&policy),
+    )
+    .expect("a genuine holding under the pinned anchor verifies");
+    assert!(holding.is_consensus_proven());
+    assert_eq!(holding.trust, LockProofTrust::ConsensusVerified);
+    assert_eq!(holding.owner, HOLDER_WALLET, "the holder keeps custody");
+    assert_eq!(holding.amount, amount);
+    assert_eq!(holding.mint, DREGG_MINT);
+}
+
+/// **THE CRITIC'S EXACT FORGERY, now closed.** The attacker fabricates a 1-key
+/// stake distribution (their key = 100% of the stake), builds an internally
+/// CONSISTENT holding proof over it — real accounts, real inclusion, real
+/// signed votes by their own key, which their own bank-state provenance even
+/// "proves" — and submits it. On the legacy trusted-table path this minted a
+/// ConsensusVerified holding (governance weight from thin air). On the anchored
+/// path the verifier's trust root is the GOVERNANCE-PINNED anchor: the
+/// attacker's derived table roots to a different value, so the proof is refused
+/// with `AnchorRootMismatch` before any stake is counted.
+#[test]
+fn attacker_supplied_one_key_stake_table_is_rejected() {
+    // The attacker controls everything about this proof INCLUDING its stake
+    // distribution: one key (seed 66) holding 100% of the stake.
+    let (evil_proof, evil_anchor, evil_policy) = fixtures::anchored_holding_with_cluster(
+        &DREGG_MINT,
+        &SPL_TOKEN_PROGRAM,
+        HOLDER_ACCOUNT,
+        HOLDER_WALLET,
+        u64::MAX, // the forged balance the attacker wants weight for
+        &[(66, 1_000)],
+    );
+
+    // Sanity: the forgery is REAL — under the attacker's OWN anchor the proof
+    // verifies (this is exactly what the un-anchored trusted-table path let
+    // through). Only the governance pin stands between this and minted weight.
+    prove_holding_consensus_anchored(
+        &evil_proof,
+        &DREGG_MINT,
+        &SPL_TOKEN_PROGRAM,
+        &evil_anchor,
+        true,
+        Some(&evil_policy),
+    )
+    .expect("internally consistent — the attack is real, the pin is load-bearing");
+
+    // The verifier pins the HONEST governance anchor. The attacker's derived
+    // 1-key table cannot reconstruct its root → REFUSED, no weight minted.
+    let (_, honest_anchor, _) = honest_anchored(1);
+    let err = prove_holding_consensus_anchored(
+        &evil_proof,
+        &DREGG_MINT,
+        &SPL_TOKEN_PROGRAM,
+        &honest_anchor,
+        true,
+        Some(&evil_policy),
+    )
+    .expect_err("an attacker-supplied stake distribution must not mint weight");
+    assert!(
+        matches!(
+            err,
+            HoldingProofError::Provenance(ProvenanceError::AnchorRootMismatch { .. })
+        ),
+        "refused at the anchor-root binding, got: {err:?}"
+    );
+}
+
+/// A sub-2/3 tally on the anchored path rejects: drop the 700-stake validator's
+/// vote, leaving 300/1000.
+#[test]
+fn anchored_sub_supermajority_is_rejected() {
+    let (mut proof, anchor, policy) = honest_anchored(500);
+    proof.consensus.votes.remove(0); // the 700-stake vote
+    assert_eq!(
+        prove_holding_consensus_anchored(
+            &proof,
+            &DREGG_MINT,
+            &SPL_TOKEN_PROGRAM,
+            &anchor,
+            true,
+            Some(&policy),
+        )
+        .unwrap_err(),
+        HoldingProofError::StakeBelowThreshold {
+            voted: 300,
+            total: 1000
+        }
+    );
+}
+
+/// A vote re-signed by an imposter (not the vote account's proven on-chain
+/// authorized voter) contributes ZERO stake — the authorized-voter binding the
+/// legacy supplied-table tally lacked.
+#[test]
+fn anchored_unauthorized_voter_contributes_no_stake() {
+    let (mut proof, anchor, policy) = honest_anchored(500);
+    let imposter = dregg_bridge::solana_provenance::fixtures::sk(99);
+    let va1 = [11u8 ^ 0xA5; 32]; // validator 1's vote account (seed 11)
+    proof.consensus.votes[0] = dregg_bridge::solana_provenance::fixtures::tower_sync_tx(
+        &imposter,
+        &va1,
+        proof.consensus.slot,
+        proof.consensus.bank_hash,
+    );
+    assert_eq!(
+        prove_holding_consensus_anchored(
+            &proof,
+            &DREGG_MINT,
+            &SPL_TOKEN_PROGRAM,
+            &anchor,
+            true,
+            Some(&policy),
+        )
+        .unwrap_err(),
+        HoldingProofError::StakeBelowThreshold {
+            voted: 300,
+            total: 1000
+        }
+    );
+}
+
+/// Without bank-state provenance there is nothing verifiable to tally against —
+/// the anchored path refuses rather than accepting any bare table.
+#[test]
+fn anchored_without_provenance_is_rejected() {
+    let (mut proof, anchor, policy) = honest_anchored(500);
+    proof.stake_provenance = None;
+    assert_eq!(
+        prove_holding_consensus_anchored(
+            &proof,
+            &DREGG_MINT,
+            &SPL_TOKEN_PROGRAM,
+            &anchor,
+            false,
+            Some(&policy),
+        )
+        .unwrap_err(),
+        HoldingProofError::StakeProvenanceMissing
     );
 }
 

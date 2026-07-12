@@ -42,6 +42,11 @@ base64 = { workspace = true }
 # Verify the derived deposit key produces real, verifiable ed25519 signatures
 # (the sweeper custody proof) without any funds or network.
 ed25519-dalek = { version = "2", features = ["std"] }
+# The bridge's TEST-ONLY fixture builders (`solana_holdings::fixtures`) for
+# constructing anchored bank-state holding proofs — used by the watcher's
+# anchored-consensus tests, including the attacker-supplied-1-key-stake-table
+# forgery rejection.
+dregg-bridge = { path = "../bridge", features = ["test-utils"] }
 
 [lints]
 workspace = true

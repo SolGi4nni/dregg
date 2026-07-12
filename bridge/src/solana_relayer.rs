@@ -54,11 +54,17 @@ use base64::Engine as _;
 
 use crate::action_binding::PortableActionBinding;
 use crate::interchain_adapter::{AdapterError, ChainAttestation, DialAdapter, InterchainAdapter};
-use crate::solana_consensus::{BankHashComponents, EpochStakeTable, ValidatorVote};
+#[cfg(any(test, feature = "test-utils"))]
+use crate::solana_consensus::EpochStakeTable;
+use crate::solana_consensus::{BankHashComponents, PohAnchorPolicy, ValidatorVote};
 use crate::solana_mirror::{MirrorConfig, lock_nullifier};
+use crate::solana_provenance::WeakSubjectivityAnchor;
+#[cfg(any(test, feature = "test-utils"))]
+use crate::solana_trustless::verify_lock_proof_consensus;
 use crate::solana_trustless::{
     AccountInclusionProof, ConsensusEvidence, LockProofError, LockProofTrust,
-    MainnetAccountInclusion, SolanaLockProof, verify_lock_proof, verify_lock_proof_consensus,
+    MainnetAccountInclusion, SolanaLockProof, StakeProvenance, verify_lock_proof,
+    verify_lock_proof_consensus_anchored,
 };
 use crate::solana_wire::{
     AccountsInclusionProof16, MerkleLevel, accounts_merkle_node, decode_lock_record,
@@ -594,6 +600,11 @@ pub enum RelayerError {
     NotBridgeVault,
     /// Structure/binding verification of the assembled lock proof failed.
     Proof(LockProofError),
+    /// The mirror config pins NO weak-subjectivity anchor
+    /// (`pinned_anchor_epoch`/`pinned_anchor_root`), so the anchored consensus
+    /// observe has no governance trust root — refused (fail closed) rather than
+    /// falling back to any caller-supplied stake distribution.
+    AnchorNotPinned,
 }
 
 impl std::fmt::Display for RelayerError {
@@ -613,6 +624,10 @@ impl std::fmt::Display for RelayerError {
                 "observed lock does not escrow into the bridge vault owned by the lock program"
             ),
             Self::Proof(e) => write!(f, "lock proof rejected: {e}"),
+            Self::AnchorNotPinned => write!(
+                f,
+                "mirror config pins no weak-subjectivity anchor — anchored consensus observe refused (fail closed)"
+            ),
         }
     }
 }
@@ -739,22 +754,136 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
         })
     }
 
-    /// **Observe the vault lock and verify it to [`LockProofTrust::ConsensusVerified`]**
-    /// against a tracked epoch `stake_table` — the trust level the committed mint
-    /// now REQUIRES (red-team BR-1). This wires the previously-dead consensus
-    /// machinery ([`verify_lock_proof_consensus`] → the stake-weighted Ed25519
-    /// super-majority tally) onto the live mint path: only an `ObservedLock` from
-    /// THIS path carries `trust == ConsensusVerified`, so only it produces a
-    /// mintable request (the `StructureOnly` [`Self::observe_vault_lock`] cannot).
+    /// The governance-pinned [`WeakSubjectivityAnchor`] from the mirror config —
+    /// the ONLY trust root the anchored consensus observe accepts. A config that
+    /// pins no anchor refuses (fail closed) with [`RelayerError::AnchorNotPinned`];
+    /// there is NO fallback to a caller-supplied anchor or stake table.
+    fn pinned_anchor(&self) -> Result<WeakSubjectivityAnchor, RelayerError> {
+        match (
+            self.config.pinned_anchor_epoch,
+            self.config.pinned_anchor_root,
+        ) {
+            (Some(epoch), Some(root)) => Ok(WeakSubjectivityAnchor {
+                epoch,
+                stake_table_root: root,
+            }),
+            _ => Err(RelayerError::AnchorNotPinned),
+        }
+    }
+
+    /// **Observe the vault lock and verify it to
+    /// [`LockProofTrust::ConsensusVerified`] — ANCHORED (the production path).**
     ///
-    /// A plain JSON-RPC endpoint does not expose the bank-hash components / vote
-    /// set, so the `consensus` evidence + `stake_table` are supplied by the
-    /// operator's snapshot/geyser feed; the relayer cross-checks that evidence
-    /// against the REAL finalized account it reads itself (same lock_id /
-    /// recipient / amount, escrow-to-bridge-vault binding), then runs the real
-    /// consensus verify. The fully-trustless in-circuit witness (so a dregg LIGHT
-    /// client, not this re-executing relayer, sees the backing) remains the
-    /// circuit swarm's G1 VK-epoch.
+    /// The stake table is NEVER a caller input: it is *derived from Solana's own
+    /// bank state* via the feed-supplied `provenance`
+    /// ([`verify_lock_proof_consensus_anchored`]) and trusted only back to the
+    /// **governance-pinned** [`WeakSubjectivityAnchor`] in the mirror config
+    /// ([`Self::pinned_anchor`]). A feed (or attacker) supplying a fabricated
+    /// distribution — e.g. one key holding 100% of the stake — is refused because
+    /// the derived table's root cannot match the pinned anchor's root, and every
+    /// counted vote must be a real Solana vote transaction signed by the proven
+    /// on-chain authorized voter.
+    pub fn observe_vault_lock_consensus_anchored(
+        &self,
+        consensus: ConsensusEvidence,
+        provenance: StakeProvenance,
+        require_poh: bool,
+        poh_policy: Option<&PohAnchorPolicy>,
+    ) -> Result<ObservedLock, RelayerError> {
+        let vault = self.config.vault_account;
+        self.observe_lock_at_consensus_anchored(
+            &vault,
+            consensus,
+            provenance,
+            require_poh,
+            poh_policy,
+        )
+    }
+
+    /// Anchored consensus-verifying observe of a specific `pubkey` (see
+    /// [`Self::observe_vault_lock_consensus_anchored`]).
+    pub fn observe_lock_at_consensus_anchored(
+        &self,
+        pubkey: &[u8; 32],
+        consensus: ConsensusEvidence,
+        provenance: StakeProvenance,
+        require_poh: bool,
+        poh_policy: Option<&PohAnchorPolicy>,
+    ) -> Result<ObservedLock, RelayerError> {
+        // (0) the governance-pinned anchor is REQUIRED before anything runs.
+        let anchor = self.pinned_anchor()?;
+
+        // (1) finality gate over the REAL account, exactly as the structure path.
+        let finalized = self.rpc.get_slot(Commitment::Finalized)?;
+        let resp = self.rpc.get_account_info(pubkey, Commitment::Finalized)?;
+        let account = resp.account.ok_or(RelayerError::NotFinalized)?;
+        if resp.context_slot > finalized {
+            return Err(RelayerError::SlotAheadOfFinalized {
+                context: resp.context_slot,
+                finalized,
+            });
+        }
+
+        // (2) decode the lock record from the REAL on-chain bytes.
+        let (lock_id, recipient, amount) =
+            decode_lock_record(&account.data).ok_or(RelayerError::NoLockRecord)?;
+
+        // (3) assemble the proof binding the real finalized account to the
+        //     feed-supplied consensus evidence + bank-state provenance.
+        let proof = build_consensus_proof(
+            pubkey,
+            &account,
+            lock_id,
+            recipient,
+            amount,
+            consensus,
+            Some(provenance),
+            &self.config,
+        );
+
+        // (4) BR-2-B: escrow-to-bridge-vault binding over the real account.
+        if !proof.binds_bridge_vault(&self.config.vault_account, &self.config.lock_program) {
+            return Err(RelayerError::NotBridgeVault);
+        }
+
+        // (5) the ANCHORED consensus verify: derive the stake table from bank
+        //     state back to the pinned anchor, tally the authorized-voter-bound
+        //     ≥ 2/3 super-majority, bind the bank hash + inclusion, enforce the
+        //     bounded PoH policy. Reaches ConsensusVerified — or refuses.
+        let trust = verify_lock_proof_consensus_anchored(
+            &proof,
+            &self.config.spl_mint,
+            self.config.min_amount,
+            self.config.max_amount,
+            &anchor,
+            require_poh,
+            poh_policy,
+        )
+        .map_err(RelayerError::Proof)?;
+
+        Ok(ObservedLock {
+            lock_id,
+            spl_mint: self.config.spl_mint,
+            recipient,
+            amount,
+            nullifier: lock_nullifier(&self.config.spl_mint, &lock_id),
+            proof,
+            observed_slot: resp.context_slot,
+            finalized_slot: finalized,
+            trust,
+        })
+    }
+
+    /// **LEGACY supplied-table observe — TEST/INTERNAL ONLY, un-shippable.**
+    ///
+    /// `stake_table` is a **caller-supplied, unverified input** and the tally is
+    /// NOT bound to the on-chain authorized voters — an adversary controlling
+    /// both the evidence and the table (their key = 100% stake) forges a
+    /// [`LockProofTrust::ConsensusVerified`] observation. Gated behind
+    /// `cfg(test)` / the dev-only `test-utils` feature; production routes through
+    /// [`Self::observe_vault_lock_consensus_anchored`] (pinned-anchor, derived
+    /// table, authorized-voter binding).
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn observe_vault_lock_consensus(
         &self,
         consensus: ConsensusEvidence,
@@ -765,8 +894,10 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
         self.observe_lock_at_consensus(&vault, consensus, stake_table, require_poh)
     }
 
-    /// Consensus-verifying observe of a specific `pubkey` (see
-    /// [`Self::observe_vault_lock_consensus`]).
+    /// **LEGACY supplied-table observe of a specific `pubkey` — TEST/INTERNAL
+    /// ONLY** (see [`Self::observe_vault_lock_consensus`] for why it is
+    /// un-shippable).
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn observe_lock_at_consensus(
         &self,
         pubkey: &[u8; 32],
@@ -800,6 +931,7 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
             recipient,
             amount,
             consensus,
+            None,
             &self.config,
         );
 
@@ -916,12 +1048,15 @@ fn build_structure_proof(
 
 /// Assemble a [`SolanaLockProof`] binding the REAL finalized vault bytes (the
 /// single-leaf accounts inclusion the relayer builds itself) to the
-/// operator-supplied `consensus` evidence (the vote set + bank hash a snapshot/
-/// geyser feed provides, which plain RPC does not). The consensus leg is NOT
-/// re-derived; [`verify_lock_proof_consensus`] then cross-checks it against the
-/// inclusion (`bank_components.accounts_hash == inclusion.accounts_hash`) and the
+/// feed-supplied `consensus` evidence (the vote set + bank hash a snapshot/
+/// geyser feed provides, which plain RPC does not) and, on the anchored path,
+/// the bank-state `stake_provenance`. The consensus leg is NOT re-derived; the
+/// verifier ([`verify_lock_proof_consensus_anchored`], or the test-gated
+/// supplied-table one) then cross-checks it against the inclusion
+/// (`bank_components.accounts_hash == inclusion.accounts_hash`) and the derived
 /// stake table — so a consensus bundle inconsistent with the real account, or one
 /// short of the 2/3 super-majority, is refused.
+#[allow(clippy::too_many_arguments)]
 fn build_consensus_proof(
     pubkey: &[u8; 32],
     account: &RpcAccount,
@@ -929,6 +1064,7 @@ fn build_consensus_proof(
     recipient: CellId,
     amount: u64,
     consensus: ConsensusEvidence,
+    stake_provenance: Option<StakeProvenance>,
     config: &MirrorConfig,
 ) -> SolanaLockProof {
     let vault_data = encode_lock_record(&lock_id, &recipient, amount);
@@ -969,7 +1105,7 @@ fn build_consensus_proof(
                 proof: vault_proof,
             }),
         },
-        stake_provenance: None,
+        stake_provenance,
     }
 }
 
@@ -1168,18 +1304,50 @@ impl ObservedLock {
 /// # The source is UNTRUSTED input, not a trust root
 ///
 /// Whatever this source yields is cross-checked against the REAL finalized account
-/// the relayer read itself: [`SolanaRelayer::observe_lock_at_consensus`] rebuilds
-/// the inclusion over the on-chain bytes and [`verify_lock_proof_consensus`] then
-/// binds `bank_components.accounts_hash == inclusion.accounts_hash`, re-counts the
-/// stake-weighted Ed25519 super-majority against `stake_table`, and enforces the
-/// escrow-to-bridge-vault binding. Evidence inconsistent with the on-chain account,
-/// or short of the 2/3 threshold, is REFUSED — the feed cannot fabricate a mint.
+/// the relayer read itself: the anchored observe rebuilds the inclusion over the
+/// on-chain bytes and [`verify_lock_proof_consensus_anchored`] binds
+/// `bank_components.accounts_hash == inclusion.accounts_hash`, DERIVES the stake
+/// table from the supplied bank-state provenance back to the governance-pinned
+/// anchor, re-counts the authorized-voter-bound ≥ 2/3 super-majority, and enforces
+/// the escrow-to-bridge-vault binding. Evidence inconsistent with the on-chain
+/// account, a fabricated stake distribution (its derived root cannot match the
+/// pinned anchor), or a tally short of 2/3 is REFUSED — the feed cannot fabricate
+/// a mint.
+///
+/// # ⚠ LEGACY supplied-table variant — TEST/INTERNAL ONLY
+///
+/// This trait yields only [`ConsensusEvidence`] and pairs with the test-gated
+/// supplied-table loop ([`SolanaRelayer::scan_to_mint_requests`]), whose stake
+/// table is a caller input an adversary can fabricate. Production implements
+/// [`AnchoredEvidenceSource`] and drives
+/// [`SolanaRelayer::scan_to_mint_requests_anchored`].
+#[cfg(any(test, feature = "test-utils"))]
 pub trait ConsensusEvidenceSource {
     /// The consensus evidence for `lock`'s finalized slot, or `None` when the feed
     /// has no evidence for it yet. A `None` leaves the lock at
     /// [`LockProofTrust::StructureOnly`] — it surfaces as a mint request the
     /// committed mint refuses with `TrustTooLow`, never a mint.
     fn evidence_for(&self, lock: &ObservedLock) -> Option<ConsensusEvidence>;
+}
+
+/// **The PRODUCTION consensus-evidence feed seam.** Like the (test-gated)
+/// [`ConsensusEvidenceSource`], but the feed must also supply the
+/// [`StakeProvenance`] — the proven stake/vote/StakeHistory accounts (and any
+/// epoch-rotation chain) from which the verifier *derives* the stake table,
+/// trusted only back to the governance-pinned [`WeakSubjectivityAnchor`] in the
+/// mirror config. No bare stake table crosses this seam, so a compromised feed
+/// cannot substitute a fabricated distribution: the derived root must match the
+/// pinned anchor and every counted vote must be signed by the proven on-chain
+/// authorized voter.
+pub trait AnchoredEvidenceSource {
+    /// The consensus evidence + bank-state provenance for `lock`'s finalized
+    /// slot, or `None` when the feed has no evidence for it yet. A `None` leaves
+    /// the lock at [`LockProofTrust::StructureOnly`] — it surfaces as a mint
+    /// request the committed mint refuses with `TrustTooLow`, never a mint.
+    fn anchored_evidence_for(
+        &self,
+        lock: &ObservedLock,
+    ) -> Option<(ConsensusEvidence, StakeProvenance)>;
 }
 
 /// One lock's outcome from [`SolanaRelayer::scan_to_mint_requests`] — the
@@ -1269,6 +1437,15 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
     /// `stake_table` is the epoch's tracked stake distribution the consensus verify
     /// counts against (the evidence's `epoch` must match it, else the upgrade is a
     /// typed `WrongEpoch` refusal). A whole-cluster sweep passes the epoch's table.
+    ///
+    /// # ⚠ LEGACY supplied-table loop — TEST/INTERNAL ONLY, un-shippable
+    ///
+    /// `stake_table` is a **caller-supplied, unverified input** whose tally is not
+    /// bound to the on-chain authorized voters — an adversary controlling both the
+    /// evidence and the table forges `ConsensusVerified` requests. Gated behind
+    /// `cfg(test)` / the dev-only `test-utils` feature; THE production loop is
+    /// [`Self::scan_to_mint_requests_anchored`] (pinned anchor, derived table).
+    #[cfg(any(test, feature = "test-utils"))]
     pub fn scan_to_mint_requests<S, B>(
         &self,
         source: &S,
@@ -1300,8 +1477,113 @@ impl<R: SolanaRpc> SolanaRelayer<R> {
         Ok(out)
     }
 
+    /// **The PRODUCTION observation→mint-request loop — ANCHORED.** Exactly the
+    /// pipeline of the (test-gated) supplied-table loop, but step 3 routes through
+    /// [`Self::observe_lock_at_consensus_anchored`]: the [`AnchoredEvidenceSource`]
+    /// yields `(evidence, provenance)` and the stake table is DERIVED from that
+    /// bank-state provenance, trusted only back to the **governance-pinned**
+    /// [`WeakSubjectivityAnchor`] in the mirror config — never a caller-supplied
+    /// table. A config that pins no anchor surfaces every consensus upgrade as a
+    /// typed [`RelayerError::AnchorNotPinned`] refusal (fail closed); locks
+    /// without feed evidence stay `StructureOnly` (cannot mint — `TrustTooLow`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn scan_to_mint_requests_anchored<S, B>(
+        &self,
+        source: &S,
+        bindings: B,
+        require_poh: bool,
+        poh_policy: Option<&PohAnchorPolicy>,
+        this_federation: [u8; 32],
+        actor: CellId,
+        ledger_cell: CellId,
+    ) -> Result<Vec<LoopEntry>, RpcError>
+    where
+        S: AnchoredEvidenceSource,
+        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+    {
+        let scanned = self.scan_program_locks()?;
+        let mut out = Vec::with_capacity(scanned.len());
+        for result in scanned {
+            out.push(self.process_scanned_lock_anchored(
+                result,
+                source,
+                &bindings,
+                require_poh,
+                poh_policy,
+                this_federation,
+                actor,
+                ledger_cell,
+            ));
+        }
+        Ok(out)
+    }
+
+    /// One iteration of [`Self::scan_to_mint_requests_anchored`] over a single
+    /// scanned account result.
+    #[allow(clippy::too_many_arguments)]
+    fn process_scanned_lock_anchored<S, B>(
+        &self,
+        scanned: Result<ObservedLock, RelayerError>,
+        source: &S,
+        bindings: &B,
+        require_poh: bool,
+        poh_policy: Option<&PohAnchorPolicy>,
+        this_federation: [u8; 32],
+        actor: CellId,
+        ledger_cell: CellId,
+    ) -> LoopEntry
+    where
+        S: AnchoredEvidenceSource,
+        B: Fn(&ObservedLock) -> Option<PortableActionBinding>,
+    {
+        // (1) the scan already ran the finalized + escrow-to-bridge-vault verify.
+        let structure_only = match scanned {
+            Ok(o) => o,
+            Err(e) => return LoopEntry::Observe(e),
+        };
+
+        // (2) the relayed cross-chain binding. No binding ⟹ nothing to route.
+        let binding = match bindings(&structure_only) {
+            Some(b) => b,
+            None => return LoopEntry::NoBinding,
+        };
+
+        // (3) ask the feed for consensus evidence + bank-state provenance.
+        //     Present ⟹ RE-OBSERVE the same vault account at ANCHORED consensus
+        //     (derived stake table, pinned anchor, authorized-voter tally);
+        //     absent ⟹ the lock stays StructureOnly (cannot mint).
+        let observed = match source.anchored_evidence_for(&structure_only) {
+            Some((evidence, provenance)) => {
+                let pubkey = structure_only.proof.inclusion.vault_account;
+                match self.observe_lock_at_consensus_anchored(
+                    &pubkey,
+                    evidence,
+                    provenance,
+                    require_poh,
+                    poh_policy,
+                ) {
+                    Ok(consensus_verified) => consensus_verified,
+                    Err(e) => return LoopEntry::Observe(e),
+                }
+            }
+            None => structure_only,
+        };
+
+        // (4) drive the UNIFIED adapter trust-dial path.
+        match observed.to_bridge_mint_request_via_adapter(
+            binding,
+            this_federation,
+            actor,
+            ledger_cell,
+        ) {
+            Ok(req) => LoopEntry::Request(req),
+            Err(e) => LoopEntry::Refused(e),
+        }
+    }
+
     /// One iteration of [`Self::scan_to_mint_requests`] over a single scanned
     /// account result (extracted so the loop body reads as the pipeline above).
+    #[cfg(any(test, feature = "test-utils"))]
     #[allow(clippy::too_many_arguments)]
     fn process_scanned_lock<S, B>(
         &self,

@@ -6,12 +6,14 @@
 //! * [`SolanaWatcher`] — the REAL path. It reuses the bridge crate's
 //!   [`decode_spl_token_account`](dregg_bridge::solana_holdings::decode_spl_token_account)
 //!   (the exact SPL token-account layout decode the proof-of-holdings verifier uses)
-//!   and, for a trustless read, the bridge's
-//!   [`prove_holding_consensus`](dregg_bridge::solana_holdings::prove_holding_consensus)
-//!   (stake-weighted ≥ 2/3 Ed25519 supermajority + accounts-hash inclusion). The RPC
-//!   is an injected seam ([`AccountFetcher`]) — the same shape bridge uses for its
-//!   Solana transport — so tests exercise the real decode/attribution/fail-closed
-//!   logic without ever hitting mainnet.
+//!   and, for a trustless read, the bridge's **anchored** verifier
+//!   [`prove_holding_consensus_anchored`](dregg_bridge::solana_holdings::prove_holding_consensus_anchored)
+//!   (authorized-voter-bound ≥ 2/3 supermajority over a stake table DERIVED from
+//!   bank state, trusted only back to the operator's governance-pinned
+//!   [`WeakSubjectivityAnchor`] — never a caller-supplied stake table, which an
+//!   attacker could fabricate). The RPC is an injected seam ([`AccountFetcher`]) —
+//!   the same shape bridge uses for its Solana transport — so tests exercise the
+//!   real decode/attribution/fail-closed logic without ever hitting mainnet.
 //!
 //! **Attribution is automatic**: a payment landing on user X's derived deposit
 //! address IS X's payment, because the address derivation is deterministic and the
@@ -20,11 +22,12 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex};
 
-use dregg_bridge::EpochStakeTable;
+use dregg_bridge::solana_consensus::PohAnchorPolicy;
 use dregg_bridge::solana_holdings::{
     HoldingProof, HoldingProofError, ProvenHolding, decode_spl_token_account,
-    prove_holding_consensus,
+    prove_holding_consensus_anchored,
 };
+use dregg_bridge::solana_provenance::WeakSubjectivityAnchor;
 
 use crate::config::{Asset, DepositAddress, PayConfig, UserId};
 
@@ -275,6 +278,14 @@ pub struct SolanaWatcher<F: AccountFetcher> {
     mint: [u8; 32],
     asset: Asset,
     spl_token_program: [u8; 32],
+    /// The operator's governance-pinned weak-subjectivity anchor — the ONLY trust
+    /// root [`SolanaWatcher::verify_consensus`] accepts. `None` (not configured)
+    /// fails closed: no consensus-verified holding can be produced, and there is
+    /// NO fallback to a caller-supplied stake table.
+    pinned_anchor: Option<WeakSubjectivityAnchor>,
+    /// The bounded PoH anchor policy paired with the pinned anchor (required to
+    /// verify any PoH segment on the anchored path).
+    poh_policy: Option<PohAnchorPolicy>,
     last_seen: Mutex<HashMap<[u8; 32], u64>>,
 }
 
@@ -294,28 +305,57 @@ impl<F: AccountFetcher> SolanaWatcher<F> {
             mint: config.mint_for(asset),
             asset,
             spl_token_program: config.spl_token_program,
+            pinned_anchor: None,
+            poh_policy: None,
             last_seen: Mutex::new(HashMap::new()),
         }
     }
 
+    /// Pin the operator's governance-chosen [`WeakSubjectivityAnchor`] (+ the
+    /// bounded PoH policy) — the trust root every [`Self::verify_consensus`]
+    /// call verifies back to. Operator configuration, NEVER prover input: the
+    /// stake table an attacker would need to control is *derived from bank
+    /// state* and must reconstruct exactly this anchor's pinned root.
+    pub fn with_pinned_anchor(
+        mut self,
+        anchor: WeakSubjectivityAnchor,
+        poh_policy: Option<PohAnchorPolicy>,
+    ) -> Self {
+        self.pinned_anchor = Some(anchor);
+        self.poh_policy = poh_policy;
+        self
+    }
+
     /// **Trustless upgrade**: verify a full [`HoldingProof`] (the holder's account +
-    /// Solana Tower-BFT consensus evidence) against a tracked stake table, returning
-    /// a consensus-verified [`ProvenHolding`]. This is the bridge's
-    /// [`prove_holding_consensus`] verbatim — the only balance read from which the
-    /// operator should trust large sweeps without a confirmation delay. Fail closed:
-    /// any verification failure returns `Err`, never a trusted holding.
+    /// Solana Tower-BFT consensus evidence + bank-state stake provenance) against
+    /// the watcher's **governance-pinned anchor**, returning a consensus-verified
+    /// [`ProvenHolding`]. This is the bridge's ANCHORED verifier
+    /// ([`prove_holding_consensus_anchored`]) — the stake table is derived from
+    /// the proof's own bank-state provenance and trusted only back to the pinned
+    /// anchor; it is NEVER a caller/prover-supplied table (a prover who supplies
+    /// both the proof and a fabricated 1-key table is refused: the derived root
+    /// cannot match the pinned anchor, and votes must be signed by the proven
+    /// on-chain authorized voters).
+    ///
+    /// Fail closed: any verification failure — including no pinned anchor being
+    /// configured ([`HoldingProofError::AnchorNotPinned`]) — returns `Err`,
+    /// never a trusted holding.
     pub fn verify_consensus(
         &self,
         proof: &HoldingProof,
-        stake_table: &EpochStakeTable,
         require_poh: bool,
     ) -> Result<ProvenHolding, HoldingProofError> {
-        prove_holding_consensus(
+        let anchor = self
+            .pinned_anchor
+            .as_ref()
+            .ok_or(HoldingProofError::AnchorNotPinned)?;
+        prove_holding_consensus_anchored(
             proof,
             &self.mint,
             &self.spl_token_program,
-            stake_table,
+            anchor,
             require_poh,
+            self.poh_policy.as_ref(),
         )
     }
 }
@@ -522,6 +562,117 @@ mod tests {
             err,
             WatchError::Holding(HoldingProofError::WrongMint)
         ));
+    }
+
+    // ── anchored consensus-verified holdings (the production trustless read) ──
+
+    use dregg_bridge::solana_holdings::fixtures as hf;
+
+    /// Build a watcher whose mint/spl-program match the anchored fixture, pinned
+    /// to `anchor` (+ `policy`).
+    fn anchored_watcher(
+        mint: [u8; 32],
+        anchor: WeakSubjectivityAnchor,
+        policy: PohAnchorPolicy,
+    ) -> SolanaWatcher<MockFetcher> {
+        let cfg = PayConfig::devnet_mock(
+            *b"seedseedseedseedseedseedseedseed",
+            mint,
+            DepositAddress([2u8; 32]),
+            100,
+        );
+        SolanaWatcher::new(&cfg, MockFetcher { acct: None })
+            .with_pinned_anchor(anchor, Some(policy))
+    }
+
+    #[test]
+    fn watcher_verify_consensus_accepts_honest_anchored_holding() {
+        let mint = [9u8; 32];
+        let wallet = [1u8; 32];
+        let (proof, anchor, policy) = hf::anchored_holding_with_cluster(
+            &mint,
+            &SPL_TOKEN_PROGRAM_ID,
+            [0x42u8; 32],
+            wallet,
+            750,
+            &[(11, 700), (12, 300)],
+        );
+        let watcher = anchored_watcher(mint, anchor, policy);
+        let holding = watcher
+            .verify_consensus(&proof, true)
+            .expect("a genuine holding under the pinned anchor verifies");
+        assert!(holding.is_consensus_proven());
+        assert_eq!(holding.amount, 750);
+        assert_eq!(holding.owner, wallet);
+    }
+
+    /// THE FORGERY through the PRODUCTION watcher entry: an attacker submits a
+    /// holding proof built over a fabricated 1-key stake table (their key = 100%).
+    /// The watcher pins the HONEST governance anchor, so the attacker's derived
+    /// distribution cannot match it — `verify_consensus` REJECTS, no weight.
+    #[test]
+    fn watcher_verify_consensus_rejects_attacker_one_key_stake_table() {
+        let mint = [9u8; 32];
+        // The honest governance-pinned anchor (700/300 cluster).
+        let (_honest, honest_anchor, honest_policy) = hf::anchored_holding_with_cluster(
+            &mint,
+            &SPL_TOKEN_PROGRAM_ID,
+            [0x42u8; 32],
+            [1u8; 32],
+            1,
+            &[(11, 700), (12, 300)],
+        );
+        // The attacker's proof: a 1-key (100%-self-stake) distribution, forged
+        // huge balance.
+        let (evil, _evil_anchor, evil_policy) = hf::anchored_holding_with_cluster(
+            &mint,
+            &SPL_TOKEN_PROGRAM_ID,
+            [0x42u8; 32],
+            [1u8; 32],
+            u64::MAX,
+            &[(66, 1_000)],
+        );
+        let watcher = anchored_watcher(mint, honest_anchor, honest_policy);
+        // The watcher pins the honest anchor; the attacker's policy is theirs.
+        let _ = evil_policy;
+        let err = watcher
+            .verify_consensus(&evil, true)
+            .expect_err("an attacker-supplied 1-key stake table must not mint weight");
+        assert!(
+            matches!(
+                err,
+                HoldingProofError::Provenance(
+                    dregg_bridge::solana_provenance::ProvenanceError::AnchorRootMismatch { .. }
+                )
+            ),
+            "refused at the anchor-root binding, got: {err:?}"
+        );
+    }
+
+    /// With no pinned anchor configured, the production entry fails closed —
+    /// there is NO caller-supplied-table fallback.
+    #[test]
+    fn watcher_verify_consensus_without_pinned_anchor_fails_closed() {
+        let mint = [9u8; 32];
+        let (proof, _anchor, _policy) = hf::anchored_holding_with_cluster(
+            &mint,
+            &SPL_TOKEN_PROGRAM_ID,
+            [0x42u8; 32],
+            [1u8; 32],
+            10,
+            &[(11, 700), (12, 300)],
+        );
+        let cfg = PayConfig::devnet_mock(
+            *b"seedseedseedseedseedseedseedseed",
+            mint,
+            DepositAddress([2u8; 32]),
+            100,
+        );
+        let watcher = SolanaWatcher::new(&cfg, MockFetcher { acct: None });
+        assert_eq!(
+            watcher.verify_consensus(&proof, true).unwrap_err(),
+            HoldingProofError::AnchorNotPinned
+        );
     }
 
     #[test]

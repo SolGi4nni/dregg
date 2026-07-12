@@ -8,7 +8,10 @@ edition.workspace = true
 # core semantics — and was removed: the verifier is always compiled in.
 # See docs/FEATURE-HYGIENE.md.
 [features]
-test-utils = []
+# `test-utils` additionally activates the type-only `solana-hash`/`solana-pubkey`
+# crates the bank-state-provenance fixture builders (`solana_provenance::fixtures`)
+# need to assemble real vote-transaction / vote-account test vectors.
+test-utils = ["dep:solana-hash", "dep:solana-pubkey"]
 
 [dependencies]
 dregg-commit = { path = "../commit" }
@@ -94,6 +97,13 @@ bs58 = "0.5"
 # observer (`mina_observer`) needs no new dep: Mina GraphQL is a JSON POST over the
 # same injected `JsonRpcTransport`/`StdHttpTransport` seam the Solana relayer ships.
 sha3 = "0.10"
+# Type-only Solana hash/pubkey crates, OPTIONAL and activated only by the
+# dev/test `test-utils` feature: the promoted provenance fixture builders
+# (`solana_provenance::fixtures`) construct `solana_hash::Hash` /
+# `solana_pubkey::Pubkey` when assembling real vote-tx and vote-account test
+# vectors. Never compiled into a shipped (non-test-utils) build.
+solana-hash = { version = "4", optional = true }
+solana-pubkey = { version = "4", optional = true }
 
 [dev-dependencies]
 criterion = { workspace = true }

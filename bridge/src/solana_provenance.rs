@@ -739,25 +739,36 @@ pub fn rotate(
     })
 }
 
-#[cfg(test)]
-pub(crate) mod tests {
+// ============================================================================
+// Test/dev fixture builders (promoted from the unit-test module so INTEGRATION
+// tests and downstream crates' dev builds can assemble anchored fixtures)
+// ============================================================================
+
+/// **Bank-state-provenance fixture builders — TEST/DEV ONLY.**
+///
+/// Real-layout builders for stake accounts, vote accounts, the StakeHistory
+/// sysvar, single-chunk 16-ary inclusions, and genuinely-signed TowerSync vote
+/// transactions — everything needed to assemble a
+/// [`WeakSubjectivityAnchor`]-rooted (anchored) fixture whose stake table is
+/// *derived from bank state*, exactly what the production anchored verifiers
+/// consume. Compiled only under `cfg(test)` or the dev-only `test-utils`
+/// feature; never part of a shipped build.
+#[cfg(any(test, feature = "test-utils"))]
+pub mod fixtures {
     use super::*;
-    use crate::solana_wire::{
-        AccountsInclusionProof16, MerkleLevel, accounts_merkle_node, ingest_vote_transaction,
-    };
+    use crate::solana_wire::{MerkleLevel, accounts_merkle_node, ingest_vote_transaction};
     use ed25519_dalek::{Signer, SigningKey};
     use solana_vote_interface::instruction::VoteInstruction;
     use solana_vote_interface::state::{TowerSync, VoteStateV3, VoteStateVersions};
 
-    pub(crate) fn sk(seed: u8) -> SigningKey {
+    /// A deterministic Ed25519 signing key from a one-byte seed.
+    pub fn sk(seed: u8) -> SigningKey {
         SigningKey::from_bytes(&[seed; 32])
     }
 
-    // ---- stake-account decode ----------------------------------------------
-
     /// Build a mainnet-layout `StakeStateV2::Stake` account `data` for a
     /// delegation. 200 bytes (Solana's stake account size), zero-padded.
-    pub(crate) fn build_stake_account_data(
+    pub fn build_stake_account_data(
         voter: &[u8; 32],
         stake: u64,
         activation_epoch: u64,
@@ -774,6 +785,158 @@ pub(crate) mod tests {
             .copy_from_slice(&deactivation_epoch.to_le_bytes());
         d
     }
+
+    /// Serialize a `StakeHistory` sysvar account `data`: a bincode
+    /// `Vec<(Epoch, StakeHistoryEntry)>` — `u64` LE count then 32-byte records
+    /// `(epoch, effective, activating, deactivating)`. Mirrors what
+    /// [`decode_stake_history`] reads.
+    pub fn encode_stake_history_data(entries: &[(u64, u64, u64, u64)]) -> Vec<u8> {
+        let mut d = Vec::with_capacity(8 + entries.len() * 32);
+        d.extend_from_slice(&(entries.len() as u64).to_le_bytes());
+        for (epoch, effective, activating, deactivating) in entries {
+            d.extend_from_slice(&epoch.to_le_bytes());
+            d.extend_from_slice(&effective.to_le_bytes());
+            d.extend_from_slice(&activating.to_le_bytes());
+            d.extend_from_slice(&deactivating.to_le_bytes());
+        }
+        d
+    }
+
+    /// Build a real bincode `VoteStateVersions::V3` vote-account `data` whose
+    /// authorized voter at every epoch is `voter`.
+    pub fn build_vote_account_data(node: &[u8; 32], voter: &[u8; 32], epoch: u64) -> Vec<u8> {
+        use solana_pubkey::Pubkey;
+        use solana_vote_interface::authorized_voters::AuthorizedVoters;
+        let mut vs = VoteStateV3 {
+            node_pubkey: Pubkey::from(*node),
+            authorized_voters: AuthorizedVoters::new(epoch, Pubkey::from(*voter)),
+            ..VoteStateV3::default()
+        };
+        // Ensure a withdrawer too (irrelevant, but realistic).
+        vs.authorized_withdrawer = Pubkey::from(*node);
+        bincode::serialize(&VoteStateVersions::new_v3(vs)).expect("serialize vote state")
+    }
+
+    /// The 16-ary accounts-tree fan-out (one chunk's maximum children).
+    pub const MERKLE_FANOUT_T: usize = 16;
+
+    /// Place `leaves` into a single 16-ary chunk and return
+    /// `(accounts_hash, proof_for_each_index)`.
+    pub fn single_chunk(leaves: &[[u8; 32]]) -> ([u8; 32], Vec<AccountsInclusionProof16>) {
+        assert!(leaves.len() <= MERKLE_FANOUT_T);
+        let accounts_hash = accounts_merkle_node(leaves);
+        let proofs = (0..leaves.len())
+            .map(|i| {
+                let siblings: Vec<[u8; 32]> = leaves
+                    .iter()
+                    .enumerate()
+                    .filter(|(j, _)| *j != i)
+                    .map(|(_, h)| *h)
+                    .collect();
+                AccountsInclusionProof16 {
+                    levels: vec![MerkleLevel {
+                        position: i as u8,
+                        siblings,
+                    }],
+                }
+            })
+            .collect();
+        (accounts_hash, proofs)
+    }
+
+    /// A [`ProvenAccount`] with fixed lamports/rent (the fields fixtures never
+    /// vary), carrying `data` + its 16-ary inclusion `proof`.
+    pub fn proven_account(
+        pubkey: [u8; 32],
+        owner: [u8; 32],
+        data: Vec<u8>,
+        proof: AccountsInclusionProof16,
+    ) -> ProvenAccount {
+        ProvenAccount {
+            pubkey,
+            lamports: 1_000_000,
+            owner,
+            executable: false,
+            rent_epoch: 0,
+            data,
+            proof,
+        }
+    }
+
+    /// A REAL signed TowerSync vote transaction by `authority` for
+    /// `vote_account` voting `(slot, bank)`, ingested through the mainnet wire
+    /// parser so the produced [`ValidatorVote`] carries a genuine tx witness —
+    /// the only kind of vote [`VerifiedStakeTable::tally_authorized`] counts.
+    pub fn tower_sync_tx(
+        authority: &SigningKey,
+        vote_account: &[u8; 32],
+        slot: u64,
+        bank: [u8; 32],
+    ) -> ValidatorVote {
+        // Build a real legacy vote tx with the authority as sole signer; reuse
+        // the wire ingestion so the produced vote carries a real witness.
+        let auth_pk = authority.verifying_key().to_bytes();
+        let vote_program = vote_program_id();
+        let account_keys: Vec<[u8; 32]> = vec![
+            auth_pk,
+            *vote_account,
+            [0x10u8; 32],
+            [0x11u8; 32],
+            vote_program,
+        ];
+        let ts = TowerSync::from(vec![(slot - 1, 2u32), (slot, 1u32)]);
+        let ts = TowerSync {
+            hash: solana_hash::Hash::new_from_array(bank),
+            ..ts
+        };
+        let vi = VoteInstruction::TowerSync(ts);
+        let ix_data = bincode::serialize(&vi).expect("serialize vi");
+        let metas: Vec<u8> = vec![1, 0]; // vote account(1), authority(0)
+        let mut msg = Vec::new();
+        msg.push(1u8); // num_required_signatures
+        msg.push(0u8);
+        msg.push(3u8);
+        put_compact_u16(&mut msg, account_keys.len() as u16);
+        for k in &account_keys {
+            msg.extend_from_slice(k);
+        }
+        msg.extend_from_slice(&[0x99u8; 32]); // recent_blockhash
+        put_compact_u16(&mut msg, 1);
+        msg.push(4u8); // program id index
+        put_compact_u16(&mut msg, metas.len() as u16);
+        msg.extend_from_slice(&metas);
+        put_compact_u16(&mut msg, ix_data.len() as u16);
+        msg.extend_from_slice(&ix_data);
+        let sig = authority.sign(&msg).to_bytes();
+        let mut tx = Vec::new();
+        put_compact_u16(&mut tx, 1);
+        tx.extend_from_slice(&sig);
+        tx.extend_from_slice(&msg);
+        ingest_vote_transaction(&tx).expect("ingest")
+    }
+
+    /// Solana's compact-u16 (shortvec) length encoding.
+    pub fn put_compact_u16(out: &mut Vec<u8>, mut v: u16) {
+        loop {
+            let mut byte = (v & 0x7f) as u8;
+            v >>= 7;
+            if v != 0 {
+                byte |= 0x80;
+            }
+            out.push(byte);
+            if v == 0 {
+                break;
+            }
+        }
+    }
+}
+
+#[cfg(test)]
+pub(crate) mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+
+    pub(crate) use super::fixtures::*;
 
     #[test]
     fn decode_stake_delegation_reads_layout() {
@@ -811,22 +974,6 @@ pub(crate) mod tests {
     }
 
     // ---- stake-history sysvar fixtures + the warmup/cooldown curve -----------
-
-    /// Serialize a `StakeHistory` sysvar account `data`: a bincode
-    /// `Vec<(Epoch, StakeHistoryEntry)>` — `u64` LE count then 32-byte records
-    /// `(epoch, effective, activating, deactivating)`. Mirrors what
-    /// [`decode_stake_history`] reads.
-    pub(crate) fn encode_stake_history_data(entries: &[(u64, u64, u64, u64)]) -> Vec<u8> {
-        let mut d = Vec::with_capacity(8 + entries.len() * 32);
-        d.extend_from_slice(&(entries.len() as u64).to_le_bytes());
-        for (epoch, effective, activating, deactivating) in entries {
-            d.extend_from_slice(&epoch.to_le_bytes());
-            d.extend_from_slice(&effective.to_le_bytes());
-            d.extend_from_slice(&activating.to_le_bytes());
-            d.extend_from_slice(&deactivating.to_le_bytes());
-        }
-        d
-    }
 
     #[test]
     fn decode_stake_history_round_trips() {
@@ -886,25 +1033,6 @@ pub(crate) mod tests {
 
     // ---- vote-account authorized-voter decode -------------------------------
 
-    /// Build a real bincode `VoteStateVersions::V3` vote-account `data` whose
-    /// authorized voter at every epoch is `voter`.
-    pub(crate) fn build_vote_account_data(
-        node: &[u8; 32],
-        voter: &[u8; 32],
-        epoch: u64,
-    ) -> Vec<u8> {
-        use solana_pubkey::Pubkey;
-        use solana_vote_interface::authorized_voters::AuthorizedVoters;
-        let mut vs = VoteStateV3 {
-            node_pubkey: Pubkey::from(*node),
-            authorized_voters: AuthorizedVoters::new(epoch, Pubkey::from(*voter)),
-            ..VoteStateV3::default()
-        };
-        // Ensure a withdrawer too (irrelevant, but realistic).
-        vs.authorized_withdrawer = Pubkey::from(*node);
-        bincode::serialize(&VoteStateVersions::new_v3(vs)).expect("serialize vote state")
-    }
-
     #[test]
     fn decode_authorized_voter_round_trips() {
         let node = [0x11u8; 32];
@@ -918,49 +1046,6 @@ pub(crate) mod tests {
     }
 
     // ---- inclusion fixtures -------------------------------------------------
-
-    /// Place `leaves` into a single 16-ary chunk and return
-    /// `(accounts_hash, proof_for_each_index)`.
-    pub(crate) fn single_chunk(leaves: &[[u8; 32]]) -> ([u8; 32], Vec<AccountsInclusionProof16>) {
-        assert!(leaves.len() <= MERKLE_FANOUT_T);
-        let accounts_hash = accounts_merkle_node(leaves);
-        let proofs = (0..leaves.len())
-            .map(|i| {
-                let siblings: Vec<[u8; 32]> = leaves
-                    .iter()
-                    .enumerate()
-                    .filter(|(j, _)| *j != i)
-                    .map(|(_, h)| *h)
-                    .collect();
-                AccountsInclusionProof16 {
-                    levels: vec![MerkleLevel {
-                        position: i as u8,
-                        siblings,
-                    }],
-                }
-            })
-            .collect();
-        (accounts_hash, proofs)
-    }
-
-    pub(crate) const MERKLE_FANOUT_T: usize = 16;
-
-    pub(crate) fn proven_account(
-        pubkey: [u8; 32],
-        owner: [u8; 32],
-        data: Vec<u8>,
-        proof: AccountsInclusionProof16,
-    ) -> ProvenAccount {
-        ProvenAccount {
-            pubkey,
-            lamports: 1_000_000,
-            owner,
-            executable: false,
-            rent_epoch: 0,
-            data,
-            proof,
-        }
-    }
 
     /// A small genuine cluster: two vote accounts (authorized voters a1/a2) with
     /// stake 700/300, plus the (empty) StakeHistory sysvar account, all proven
@@ -1093,68 +1178,6 @@ pub(crate) mod tests {
     }
 
     // ---- anchor admission + authorized-voter binding ------------------------
-
-    pub(crate) fn tower_sync_tx(
-        authority: &SigningKey,
-        vote_account: &[u8; 32],
-        slot: u64,
-        bank: [u8; 32],
-    ) -> ValidatorVote {
-        // Build a real legacy vote tx with the authority as sole signer; reuse
-        // the wire ingestion so the produced vote carries a real witness.
-        let auth_pk = authority.verifying_key().to_bytes();
-        let vote_program = vote_program_id();
-        let account_keys: Vec<[u8; 32]> = vec![
-            auth_pk,
-            *vote_account,
-            [0x10u8; 32],
-            [0x11u8; 32],
-            vote_program,
-        ];
-        let ts = TowerSync::from(vec![(slot - 1, 2u32), (slot, 1u32)]);
-        let ts = TowerSync {
-            hash: solana_hash::Hash::new_from_array(bank),
-            ..ts
-        };
-        let vi = VoteInstruction::TowerSync(ts);
-        let ix_data = bincode::serialize(&vi).expect("serialize vi");
-        let metas: Vec<u8> = vec![1, 0]; // vote account(1), authority(0)
-        let mut msg = Vec::new();
-        msg.push(1u8); // num_required_signatures
-        msg.push(0u8);
-        msg.push(3u8);
-        put_compact_u16(&mut msg, account_keys.len() as u16);
-        for k in &account_keys {
-            msg.extend_from_slice(k);
-        }
-        msg.extend_from_slice(&[0x99u8; 32]); // recent_blockhash
-        put_compact_u16(&mut msg, 1);
-        msg.push(4u8); // program id index
-        put_compact_u16(&mut msg, metas.len() as u16);
-        msg.extend_from_slice(&metas);
-        put_compact_u16(&mut msg, ix_data.len() as u16);
-        msg.extend_from_slice(&ix_data);
-        let sig = authority.sign(&msg).to_bytes();
-        let mut tx = Vec::new();
-        put_compact_u16(&mut tx, 1);
-        tx.extend_from_slice(&sig);
-        tx.extend_from_slice(&msg);
-        ingest_vote_transaction(&tx).expect("ingest")
-    }
-
-    pub(crate) fn put_compact_u16(out: &mut Vec<u8>, mut v: u16) {
-        loop {
-            let mut byte = (v & 0x7f) as u8;
-            v >>= 7;
-            if v != 0 {
-                byte |= 0x80;
-            }
-            out.push(byte);
-            if v == 0 {
-                break;
-            }
-        }
-    }
 
     #[test]
     fn anchor_admits_matching_table_and_binds_voters() {
