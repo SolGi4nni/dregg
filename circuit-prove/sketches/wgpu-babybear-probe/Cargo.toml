@@ -1,0 +1,18 @@
+[package]
+name = "wgpu-babybear-probe"
+version = "0.1.0"
+edition = "2021"
+
+# Standalone probe crate — deliberately NOT a workspace member (empty [workspace]
+# opts out of the breadstuffs root workspace). Run with `cargo run --release`
+# from this directory. See docs/deos/GPU-PROVER-PROTOTYPE.md §4 for the measured
+# result (Apple M2 Max/Metal: 105.8 Gmul/s, bit-exact parity vs pinned p3).
+[workspace]
+
+[dependencies]
+wgpu = "24"
+pollster = "0.4"
+bytemuck = "1"
+rand = "0.8"
+p3-baby-bear = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
+p3-field = { git = "https://github.com/Plonky3/Plonky3", rev = "82cfad73cd734d37a0d51953094f970c531817ec" }
