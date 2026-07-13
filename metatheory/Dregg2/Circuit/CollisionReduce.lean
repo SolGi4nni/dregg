@@ -75,6 +75,26 @@ theorem compress_orBreak (h : ℤ → ℤ → ℤ) {a b c d : ℤ} (heq : h a b 
     OrBreak (CompressCollision h) (a = c ∧ b = d) :=
   compress_binds_or_collision h heq
 
+/-- A concrete collision of a keyed leaf hash `CH : α → β → ℤ` — same index, distinct values. -/
+def CellCollision {α β : Type} (CH : α → β → ℤ) : Prop :=
+  ∃ (c : α) (v w : β), v ≠ w ∧ CH c v = CH c w
+
+/-- **Leaf hash** as an `OrBreak` leaf: the value binds, unless a leaf collision (the `cellLeafInjective`
+`CommitSurface` carrier, de-vacuated). -/
+theorem cellLeaf_orBreak {α β : Type} (CH : α → β → ℤ) {c : α} {v w : β} (heq : CH c v = CH c w) :
+    OrBreak (CellCollision CH) (v = w) := by
+  by_cases h : v = w
+  · exact Or.inl h
+  · exact Or.inr ⟨c, v, w, h, heq⟩
+
+/-- **Sponge over a list** (`compressN`) as an `OrBreak` leaf: the lists bind, unless a sponge collision
+(the `compressNInjective` `CommitSurface` carrier, de-vacuated). -/
+theorem spongeN_orBreak (hN : List ℤ → ℤ) {xs ys : List ℤ} (heq : hN xs = hN ys) :
+    OrBreak (SpongeCollision hN) (xs = ys) := by
+  by_cases h : xs = ys
+  · exact Or.inl h
+  · exact Or.inr ⟨xs, ys, h, heq⟩
+
 /-! ## Non-vacuity: the infra is load-bearing, not just plumbing -/
 
 /-- `resolve` inverts `ok`: with no break, the good branch is recovered verbatim. -/
@@ -92,5 +112,7 @@ theorem OrBreak.no_resolve_of_break (hb : Break) : ¬ ∃ _ : ¬ Break, True :=
 #assert_axioms OrBreak.resolve
 #assert_axioms opening_orBreak
 #assert_axioms compress_orBreak
+#assert_axioms cellLeaf_orBreak
+#assert_axioms spongeN_orBreak
 
 end Dregg2.Circuit.CollisionReduce
