@@ -37,18 +37,31 @@ WHOLE ordered post-list). Absorbed as ONE more committed limb each — exactly B
 > `compute_commitment` absorbs a `nullifiers_root` limb and a `commitments_root` limb, and the note
 > trace-fills emit the grown-list root. ONE VK epoch rotation, shared across the note family.
 
-## noteSpend — HONEST scope: the SET-INSERT is FORCED; the FRESHNESS non-membership is CARRIED
+## noteSpend — the list-digest rung: the SET-INSERT is FORCED here; the FRESHNESS is FORCED downstream
 
-`NoteSpendSpec`'s guard is `spendProof = true ∧ nf ∉ pre.nullifiers` (the no-double-spend gate). The
-committed `nullifiersRoot` FORCES the set-insert `post.nullifiers = nf :: pre.nullifiers` — but it does
-NOT, by itself, force `nf ∉ pre.nullifiers`: the root binds the list VALUE, and a list may carry a
-repeated head, so non-membership of the committed pre-list is not derivable from the root alone. Forcing
-it in-circuit needs a sorted-set NON-MEMBERSHIP OPEN (the same sorted cap-tree open cap-reshape PHASE-D
-supplies), which is NOT yet available. So `noteSpend` is **VALUE_PARTIAL**: the set-insert is FORCED via
-`nullifiersRoot`; the freshness `nf ∉ pre.nullifiers` AND the `spendProof = true` proof gate are carried
-as the NAMED `freshness`/`proof` decode residuals — stated precisely, NOT laundered as bound. (The
-both-polarity tooth `…_rejects_double` is still genuine: GIVEN the carried freshness, a `nf ∈
-pre.nullifiers` witness is contradictory — the freshness residual BITES.)
+This file is the **list-digest** rung of noteSpend. Here the committed `nullifiersRoot` FORCES the
+set-insert `post.nullifiers = nf :: pre.nullifiers` but does NOT, by itself, force `nf ∉ pre.nullifiers`
+(the root binds the list VALUE; a list may carry a repeated head, so non-membership of the committed
+pre-list is not derivable from the root alone) — so in THIS rung the freshness is carried as a named
+decode residual (**VALUE_PARTIAL for this rung**).
+
+That is not the deployed end-state. The double-spend freshness `nf ∉ pre.nullifiers` is **FORCED
+in-circuit** by the successor rung `Dregg2.Circuit.RotatedKernelRefinementNotesFresh` (`freshness_forced`
+— DERIVED, not assumed; `noteSpendFresh_rejects_double` bites on the FORCED non-membership open, not a
+carried field). It consumes the sorted-set NON-MEMBERSHIP open `Dregg2.Circuit.SortedTreeNonMembership`
+/ `SortedTreeNonMembershipHeap8` (`nonMembership_sound`, `#assert_axioms`-clean), kernel-bridged in
+`Dregg2.Exec.NullifierAccumulator` + `NullifierAccumulatorKernelBridge` (`RecordKernelState` carries the
+accumulator roots; `noteSpendNullifierAcc_no_double_spend` = fail-closed by witness scarcity). The
+remaining deployment tail is the wire-codec that feeds the client witness into the executor spend path
+(vk-epoch stage E, `vk-epoch-nullifier` branch) — proof done, wiring in flight.
+
+`NoteSpendSpec`'s guard is `spendProof = true ∧ nf ∉ pre.nullifiers` (the no-double-spend gate). In this
+list-digest rung the freshness `nf ∉ pre.nullifiers` AND the `spendProof = true` proof gate are carried
+as NAMED `freshness`/`proof` decode residuals — stated precisely, NOT laundered as bound; the successor
+rung above forces the freshness in-circuit. (The both-polarity tooth `…_rejects_double` here is still
+genuine: GIVEN the carried freshness, a `nf ∈ pre.nullifiers` witness is contradictory — the freshness
+residual BITES; the Fresh rung's `noteSpendFresh_rejects_double` upgrades this to bite on the FORCED
+open.)
 
 ## noteCreate — PROVEN-FIX: the set-insert is FORCED (no guard to carry)
 
@@ -163,8 +176,9 @@ theorem noteGrowForced (compressN : List FieldElem → FieldElem)
 
 `noteSpendGenuineEncodes` ties a satisfying FIX-descriptor witness's nullifiers-root columns onto the
 spend boundary, and carries the residual the committed root cannot witness: the FIX gate (the WITNESS
-leg, forcing the set-insert), the FRESHNESS `nf ∉ pre.nullifiers` (the sorted non-membership open is
-PHASE-D — carried, NOT forced), the `spendProof = true` proof gate, the receipt log, and the global
+leg, forcing the set-insert), the FRESHNESS `nf ∉ pre.nullifiers` (carried HERE in the
+list-digest rung; the sorted non-membership open EXISTS and the successor `RotatedKernelRefinementNotesFresh`
+FORCES it in-circuit), the `spendProof = true` proof gate, the receipt log, and the global
 side-table frame. NAMED, not laundered. -/
 
 /-- The decode relating a satisfying FIX noteSpend witness's row to a kernel `pre → post` spend of
@@ -179,9 +193,10 @@ structure noteSpendGenuineEncodes (compressN : List FieldElem → FieldElem)
   hroots : NoteRootRow compressN pre.kernel.nullifiers post.kernel.nullifiers preRoot postRoot
   -- the FIX gate holds on the row (the WITNESS leg — the nullifier set-insert is FORCED grown).
   gate : gNoteGrow compressN pre.kernel.nullifiers nf postRoot
-  -- ⚑ THE PHASE-D RESIDUAL #1: the DOUBLE-SPEND FRESHNESS. The committed root binds the LIST VALUE,
-  -- not its non-membership; forcing `nf ∉ pre.nullifiers` in-circuit needs the sorted NON-MEMBERSHIP
-  -- OPEN (cap-reshape PHASE-D), NOT yet available — carried, named, here.
+  -- ⚑ FRESHNESS, carried in THIS list-digest rung. The committed root binds the LIST VALUE, not its
+  -- non-membership; forcing `nf ∉ pre.nullifiers` in-circuit needs the sorted NON-MEMBERSHIP OPEN
+  -- (`SortedTreeNonMembership`) — which EXISTS and is consumed by `RotatedKernelRefinementNotesFresh`
+  -- to FORCE it. Here it is carried, named.
   freshness : nf ∉ pre.kernel.nullifiers
   -- ⚑ THE PHASE-D RESIDUAL #2: the §8 spending proof gate (the theorem-layer portal, off the ledger).
   proof : spendProof = true
@@ -433,9 +448,10 @@ structure NoteSpendTraceReadout (hash : List ℤ → ℤ)
         ((envAt t row).loc (prmCol Dregg2.Circuit.Emit.EffectVmEmitNoteSpend.param.NOTE_VALUE_LO))
         ((envAt t row).loc (afterNullifierRootCol EFFECT_VM_WIDTH))
       → post.kernel.nullifiers = nf :: pre.kernel.nullifiers
-  -- ⚑ THE PHASE-D RESIDUAL #1: the DOUBLE-SPEND FRESHNESS (the sorted non-membership open is PHASE-D).
+  -- ⚑ FRESHNESS, carried in this list-digest rung (the sorted non-membership open EXISTS —
+  -- `SortedTreeNonMembership` — and `RotatedKernelRefinementNotesFresh` FORCES it in-circuit).
   freshness : nf ∉ pre.kernel.nullifiers
-  -- ⚑ THE PHASE-D RESIDUAL #2: the §8 spending proof gate.
+  -- ⚑ RESIDUAL #2: the §8 spending proof gate.
   proof : spendProof = true
   logAdv : post.log = noteSpendReceipt actor :: pre.log
   frAccounts : post.kernel.accounts = pre.kernel.accounts
