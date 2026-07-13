@@ -113,4 +113,20 @@ example : rotated178.groupCol .nullifier 0 = some 26 := by native_decide
 example : rotated178.groupCol .nullifier 1 = some 68 := by native_decide
 example : rotated178.groupCol .fields 1 = some 66 := by native_decide  -- the non-contiguous case
 
+/-- **EMIT-READY group table** — each group as `[lane0, completion_1 .. completion_7]`, in exactly the
+    shape the Rust `[[usize; 8]; N]` layout wants. Because it is a projection of a `Legal` layout, the
+    emitted Rust group table is disjoint-by-construction. This is the intended SOURCE for the rotated
+    group positions in the Lean→Rust layout emit (`EmitLayoutManifest` / `layout_generated.rs`), which
+    today emits the scalar constants (B_SPAN, octet bases, …) but NOT the group position lists — those
+    are still hand-duplicated across producer + circuit. Importing this closes that gap with a proof. -/
+def RotatedLayout.groupTable (L : RotatedLayout) : List (List Nat) :=
+  L.groups.map (fun p => p.2.lane0 :: p.2.completion)
+
+/-- The emit-ready table for the current geometry, with its length pinned (10 faithful-8-felt groups). -/
+theorem rotated178_groupTable_len : rotated178.groupTable.length = 10 := by native_decide
+
+/-- The group table's flattened columns are a sublist of the (proven-`Legal`, disjoint) occupied set —
+    so emitting `groupTable` can never introduce an overlap the layout doesn't already forbid. -/
+theorem rotated178_groupTable_columns : rotated178.groupTable.flatten.length = 80 := by native_decide
+
 end Dregg2.Circuit.Emit
