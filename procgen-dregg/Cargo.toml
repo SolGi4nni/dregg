@@ -49,3 +49,6 @@ blake3 = "1"
 # `.dungeon` TEXT; the tests + example prove that text parses and validates as a
 # first-class attested dungeon through the shipped engine.
 attested-dm = { path = "../attested-dm" }
+# Dev-only: decode the real published drand `quicknet` round vector (pk/sig/randomness
+# hex) the beacon-wire test verifies against — genuine drand interop, not self-consistency.
+hex = "0.4"

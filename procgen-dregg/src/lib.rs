@@ -68,6 +68,11 @@ use dregg_dice::{
 
 pub use dregg_dice::{self, Deterministic, Seed};
 
+/// The drand-beacon → daily-seed wire: today's dungeon seed from a real threshold
+/// public-randomness beacon (unpredictable-until-revealed, identical world-wide, verifiable
+/// by re-derivation). See [`beacon::DailyBeacon`].
+pub mod beacon;
+
 /// Domain tag folded into a committed seed's `game_binding`, so a procgen draw
 /// stream can never collide with any other `dregg-dice` consumer's stream.
 pub const DOMAIN_PROCGEN: &[u8] = b"procgen-dregg/dungeon/v1";
