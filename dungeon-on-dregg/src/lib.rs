@@ -105,6 +105,16 @@ pub mod spells;
 /// dungeon (a genuine, replay-verified WIN) unlocks the next on a real committed turn. The salvage
 /// of `attested-dm`'s proven overworld design, re-homed off the toy ledger onto the real substrate.
 pub mod overworld;
+
+/// REAL NPC ROLEPLAY — a character you TALK to, who REMEMBERS on-ledger. Re-homes
+/// `attested-dm`'s proven dialogue design (its `Npc` / `DialogueRule` /
+/// `DialogueGrant` — "ask NPC about TOPIC", a disposition/topic model) off its toy blake3 ledger
+/// onto the REAL `spween-dregg` executor: the NPC's regard + unlocked topics are real committed
+/// cell state, a dialogue line is a real cap-bounded turn that advances it, and every later line is
+/// GATED on that state by a real [`StateConstraint`](dregg_app_framework::StateConstraint) — so the
+/// NPC genuinely remembers, and an out-of-context line is a real `WorldError::Refused`. See
+/// [`dialogue`] ("The Lantern-Keeper's Vigil") for the cell model + the driven conversation teeth.
+pub mod dialogue;
 use dregg_cell::program::HeapAtom;
 use spween::{Choice, PassageContent, Scene};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};
