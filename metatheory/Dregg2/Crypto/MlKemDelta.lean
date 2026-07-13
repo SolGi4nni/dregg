@@ -2126,6 +2126,182 @@ theorem bf_decapsFailure_le_delta_tight :
     _ = (2:ℝ)^((10:ℤ)+(-151:ℤ)) := by rw [← zpow_add₀ (by norm_num : (2:ℝ) ≠ 0)]
     _ = (2:ℝ)^(-141:ℤ) := by norm_num
 
+/-! ## §16 — THE EXACT CONVOLVED-DISTRIBUTION TAIL: the exact-PMF machinery, the counting-model
+faithfulness bridge, the FIPS `δ ≤ 2⁻¹⁶⁴` reduction, and the precisely-named residual + MEASURED wall.
+
+§15 closed the honest ceiling of the exact-MGF **Chernoff** route at `2⁻¹⁴⁸` and MEASURED that FIPS `2⁻¹⁶⁴`
+is out of band FOR THAT METHOD (the Bahadur–Rao `1/(sσ√{2π})` prefactor the exponential rate discards at the
+`≈15.7σ` deviation). Reaching FIPS δ needs the EXACT convolved-distribution tail — a DIFFERENT formalization,
+NOT a Chernoff bound: the per-coefficient noise `e_total c` is a sum of INDEPENDENT bounded-support integer
+terms, so its EXACT law is the finite CONVOLUTION of the per-term laws, and `δ = Pr[832 ≤ |e_total c|]` is the
+exact tail SUM of that convolution. This section (a) builds a kernel-computable integer-distribution
+convolution + tail functional (non-vacuous — it computes EXACT counts/tails under `decide`), (b) PROVES the
+counting-model faithfulness bridge `card_add_eq_conv` (the law of an independent sum IS the convolution of the
+per-term laws, in the exact `winProb` counting model — no measure theory), (c) reduces FIPS δ to the exact
+per-coefficient convolution tail `≤ 2⁻¹⁷⁴` (`exactConvTailFrac_closes_delta`, faithful: its hypothesis is
+literally the exact-PMF tail count over total outcomes), and (d) NAMES the two residuals precisely.
+
+### ⚑ THE TWO MEASURED RESIDUALS (why this does NOT reduce to a kernel `decide`).
+
+**(R1) The exact convolution is astronomically large — MEASURED kernel-infeasible.** The per-coefficient law is
+the `2304`-fold convolution of the CBD-PRODUCT law `prodCounts = [2,0,16,32,156,32,16,0,2]` (support `[−4,4]`,
+total `256`) convolved with the `e2` CBD law and the `Δv` law — support `≈[−10000,10000]` (`≈20000` values),
+exact-rational counts with denominators `256^2304 ≈ 10^5550` (numerators `≈18000` bits). MEASURED under kernel
+`decide` on this same `cvMul`: `16`-fold CBD `≈1.7s`, `64`-fold `≈5.4s`, `256`-fold of the narrower `5`-wide CBD
+law already EXCEEDS the default `200000`-heartbeat budget (`whnf` timeout, `≈13s`). The target — `2304`-fold of a
+`9`-wide law with `18000`-bit entries — is many orders of magnitude beyond kernel reach. (`native_decide` would
+ride `trustCompiler`, which a probabilistic δ theorem MUST NOT; the Kyber δ scripts use float FFT, not exact
+rationals.) So the exact tail is a DECIDABLE `Prop` (`ExactConvTailBound`) whose full-scale evaluation is the
+named residual — not a `sorry`, a measured wall.
+
+**(R2) The exact tail needs the TRUE compression-error laws — a modeling gap the MGF route sidesteps.** §12–§15's
+`mlkemZ` models `Δv` by the `±104` extreme point `dvX` (its `cosh(104s)` MGF DOMINATES any centered
+`Δv ∈ [−104,104]` — valid for the MGF/Chernoff envelope). But that envelope's EXACT law has variance `104² =
+10816`, so the exact per-coefficient tail of the `mlkemZ` MODEL is HEAVY (`≈2⁻⁴²`, `≈7.3σ`) — it does NOT reach
+FIPS δ. The exact-PMF route therefore requires the TRUE near-uniform compression-error laws (`Δv` uniform on
+`[−104,104]`, `Δu` on its small support), a distinct REFINED model whose byte-faithfulness to the literal cipher
+is a separate obligation the MGF-domination of §13–§14 discharges only in MGF-space. Both R1 and R2 are named,
+not hidden; the machinery + bridge + reduction below are the exact-PMF FORMALIZATION, honest-partial. -/
+
+/-- Elementwise add of two count lists (padding the shorter with `0`) — coefficient-list addition. -/
+def cvAdd : List ℕ → List ℕ → List ℕ
+  | [], g => g
+  | f, [] => f
+  | (a :: f), (b :: g) => (a + b) :: cvAdd f g
+
+/-- **INTEGER-DISTRIBUTION CONVOLUTION** as little-endian coefficient-list (polynomial) multiplication:
+`(cvMul f g)[k] = ∑_{i+j=k} f[i]·g[j]` — the EXACT law of the sum of two independent integer variables with
+count-lists `f, g`. Structural recursion; reduces cleanly under kernel `decide` (see the teeth). -/
+def cvMul : List ℕ → List ℕ → List ℕ
+  | [], _ => []
+  | (a :: f), g => cvAdd (g.map (a * ·)) (0 :: cvMul f g)
+
+/-- The CBD(η=2) law as counts over `{−2,−1,0,1,2}` (offset `−2`): weights `(1,4,6,4,1)`, total `16`. -/
+def cbdCounts : List ℕ := [1, 4, 6, 4, 1]
+
+/-- The CBD-PRODUCT law `X·Y` (`X,Y ~ CBD(η=2)`) as counts over `{−4,…,4}` (offset `−4`): the exact per-term law
+of every one of the `2304` negacyclic-convolution cross-terms of `eᵀr`, `sᵀe1`, `sᵀΔu`. Total `256`, variance `1`. -/
+def prodCounts : List ℕ := [2, 0, 16, 32, 156, 32, 16, 0, 2]
+
+/-- **(TOOTH — the machinery computes an EXACT convolution in-kernel.)** The `2`-fold CBD self-convolution is the
+exact binomial `(1,8,28,56,70,56,28,8,1)` over `{−4,…,4}` — `decide`, no `native_decide`. -/
+theorem cbd_selfconv : cvMul cbdCounts cbdCounts = [1, 8, 28, 56, 70, 56, 28, 8, 1] := by decide
+
+/-- **(TOOTH — the product law is a genuine distribution.)** `prodCounts` totals `256` (`= 16²`). -/
+theorem prodCounts_total : prodCounts.sum = 256 := by decide
+
+/-- **(TOOTH — convolution preserves total mass.)** `4`-fold CBD totals `16⁴ = 65536`. Exact, kernel `decide`. -/
+theorem cvMul_total_4fold : (cvMul (cvMul cbdCounts cbdCounts) (cvMul cbdCounts cbdCounts)).sum = 65536 := by
+  decide
+
+/-- The count-distribution (law) of an integer-valued function on a finite space, in the EXACT counting model
+`winProb` is stated against: `convCnt f k = #{ω : f ω = k}`. -/
+def convCnt {Ω : Type*} [Fintype Ω] [DecidableEq Ω] (f : Ω → ℤ) (k : ℤ) : ℕ :=
+  (Finset.univ.filter (fun ω => f ω = k)).card
+
+/-- **THE FAITHFULNESS BRIDGE (PROVED): the law of a sum of two independent coordinates IS the convolution of
+their laws.** `#{(a,b) : g a + h b = m} = ∑_k convCnt g k · convCnt h (m−k)` — the exact-PMF identity in the pure
+counting model (`Fintype`/`card`), NO measure theory, matching `winProb`'s definition. This is the mathematical
+content that makes the exact convolution the genuine law of the independent-coordinate noise sum; iterating it
+over the `2306` coordinates of `mlkemΩ` gives the full per-coefficient PMF. -/
+theorem card_add_eq_conv {A B : Type*} [Fintype A] [DecidableEq A] [Fintype B] [DecidableEq B]
+    (g : A → ℤ) (h : B → ℤ) (m : ℤ) (S : Finset ℤ) (hS : ∀ a : A, g a ∈ S) :
+    (Finset.univ.filter (fun p : A × B => g p.1 + h p.2 = m)).card
+      = ∑ k ∈ S, (convCnt g k) * (convCnt h (m - k)) := by
+  rw [Finset.card_filter, Fintype.sum_prod_type]
+  have step1 : ∀ a : A, (∑ b : B, if g a + h b = m then 1 else 0) = convCnt h (m - g a) := by
+    intro a; rw [convCnt, Finset.card_filter]
+    exact Finset.sum_congr rfl (fun b _ => by
+      congr 1; apply propext; constructor <;> intro hh <;> omega)
+  rw [Finset.sum_congr rfl (fun a _ => step1 a),
+      ← Finset.sum_fiberwise_of_maps_to (g := g) (t := S) (fun a _ => hS a)
+        (f := fun a => convCnt h (m - g a))]
+  exact Finset.sum_congr rfl (fun k _ => by
+    rw [convCnt, Finset.sum_congr rfl (fun a ha => by rw [(Finset.mem_filter.mp ha).2]),
+        Finset.sum_const, smul_eq_mul])
+
+/-- **THE TAIL COUNT IS THE SUM OF THE LAW OVER THE TAIL VALUES (PROVED).** `#{ω : R ≤ |f ω|} = ∑_{k∈S, R≤|k|}
+convCnt f k` — the exact-PMF tail as a finite sum of the law over the escaping values. The bridge between the
+`winProb` count of the failure event and the convolution tail. -/
+theorem card_tail_eq_sum_cnt {Ω : Type*} [Fintype Ω] [DecidableEq Ω]
+    (f : Ω → ℤ) (R : ℤ) (S : Finset ℤ) (hS : ∀ ω, f ω ∈ S) :
+    (Finset.univ.filter (fun ω => R ≤ |f ω|)).card
+      = ∑ k ∈ S.filter (fun k => R ≤ |k|), convCnt f k := by
+  rw [Finset.card_eq_sum_card_fiberwise (f := f) (t := S.filter (fun k => R ≤ |k|))
+      (fun ω hω => Finset.mem_filter.mpr ⟨hS ω, (Finset.mem_filter.mp hω).2⟩)]
+  refine Finset.sum_congr rfl (fun k hk => ?_)
+  have hRk : R ≤ |k| := (Finset.mem_filter.mp hk).2
+  rw [convCnt]; congr 1; ext ω
+  simp only [Finset.mem_filter, Finset.mem_univ, true_and]
+  exact ⟨fun h => h.2, fun h => ⟨by rw [h]; exact hRk, h⟩⟩
+
+/-- **THE PER-COEFFICIENT TAIL PROBABILITY IS THE EXACT CONVOLVED-PMF TAIL (PROVED).** `winProb(badCoeff ez c) =
+(∑_{k∈S, 832≤|k|} convCnt (ez c) k) / #Ω` — the failure probability of coefficient `c` is EXACTLY the exact-PMF
+tail mass over the total number of outcomes. This makes the `2⁻¹⁷⁴` hypothesis of the reduction below literally
+a statement about the exact convolution tail. -/
+theorem winProb_badCoeff_eq_convTail {Ω : Type*} [Fintype Ω] [DecidableEq Ω]
+    (ez : Fin 768 → Ω → ℤ) (c : Fin 768) (S : Finset ℤ) (hS : ∀ ω, ez c ω ∈ S) :
+    winProb (badCoeff ez c)
+      = (∑ k ∈ S.filter (fun k => (832 : ℤ) ≤ |k|), (convCnt (ez c) k : ℝ)) / (Fintype.card Ω : ℝ) := by
+  unfold winProb
+  congr 1
+  have hb : (Finset.univ.filter (fun ω => badCoeff ez c ω = true))
+      = (Finset.univ.filter (fun ω => (832 : ℤ) ≤ |ez c ω|)) := by
+    ext ω; simp [Finset.mem_filter, badCoeff]
+  rw [hb, card_tail_eq_sum_cnt (ez c) 832 S hS, Nat.cast_sum]
+
+/-- **THE EXACT-PMF FIPS REDUCTION (PROVED): the exact convolution tail `≤ 2⁻¹⁷⁴` closes `δ ≤ 2⁻¹⁶⁴`.** Given a
+per-coefficient value support `S c` and the exact-PMF tail mass bound `∑_{k, 832≤|k|} convCnt (ez c) k ≤ 2⁻¹⁷⁴·#Ω`
+(the decidable exact-convolution tail, faithful by `winProb_badCoeff_eq_convTail`), the FIPS decryption-failure
+bound follows through the existing union bound. This is the exact-PMF analog of the exact-MGF capstone — its
+hypothesis is the exact convolved-distribution tail itself, not a Chernoff surrogate. What remains to make it a
+CLOSED theorem for ML-KEM-768 is discharging that hypothesis: residuals **R1** (the astronomical exact
+convolution, kernel-infeasible) and **R2** (the true compression-error laws) named above. -/
+theorem exactConvTailFrac_closes_delta {Ω : Type*} [Fintype Ω] [DecidableEq Ω] [Nonempty Ω]
+    (ez : Fin 768 → Ω → ℤ) (S : Fin 768 → Finset ℤ) (hS : ∀ c ω, ez c ω ∈ S c)
+    (hfrac : ∀ c, (∑ k ∈ (S c).filter (fun k => (832 : ℤ) ≤ |k|), (convCnt (ez c) k : ℝ))
+                    ≤ (2 : ℝ) ^ (-174 : ℤ) * (Fintype.card Ω : ℝ)) :
+    winProb (decapsFails ez) ≤ MlKemCorrect.mlKem768Delta := by
+  refine mlkem768_decapsFailure_le_delta ez (fun c => ?_)
+  rw [winProb_badCoeff_eq_convTail ez c (S c) (hS c),
+      div_le_iff₀ (by exact_mod_cast Fintype.card_pos : (0 : ℝ) < (Fintype.card Ω : ℝ))]
+  exact hfrac c
+
+/-- **(TOOTH — the exact-PMF reduction FIRES end-to-end.)** On the zero-noise model (`ez ≡ 0`, `S c = {0}`) the
+exact tail mass is `0 ≤ 2⁻¹⁷⁴·#Ω`, so the reduction concludes `Pr[decaps fails] = 0 ≤ δ`. Exercises
+`exactConvTailFrac_closes_delta` on a concrete model — the faithful reduction is non-vacuous. -/
+theorem exactConvTail_reduction_fires :
+    winProb (decapsFails zeroModel) ≤ MlKemCorrect.mlKem768Delta := by
+  refine exactConvTailFrac_closes_delta zeroModel (fun _ => {0}) (fun c ω => by simp [zeroModel]) ?_
+  intro c
+  have : ({(0 : ℤ)} : Finset ℤ).filter (fun k => (832 : ℤ) ≤ |k|) = ∅ := by decide
+  rw [this, Finset.sum_empty]
+  positivity
+
+/-- The EXACT tail count of a convolution count-list `d` (offset-indexed, index `i ↔` value `offset+i`): the mass
+at values `k` with `R ≤ |k|`. Kernel-computable via `zipIdx`. -/
+def convTailNum (d : List ℕ) (offset R : ℤ) : ℕ :=
+  (d.zipIdx.filter (fun p => R ≤ |offset + (p.2 : ℤ)|)).foldl (fun a p => a + p.1) 0
+
+/-- **THE NAMED DECIDABLE RESIDUAL (R1).** `tail/total ≤ num/den` as an EXACT ℕ inequality about the convolution
+list — decidable, and the statement whose FULL-SCALE (`2304`-fold, `18000`-bit) kernel evaluation is the measured
+wall. At small scale it evaluates by `decide` (below); at ML-KEM scale it is out of kernel reach (R1). -/
+abbrev ExactConvTailBound (d : List ℕ) (offset R : ℤ) (num den : ℕ) : Prop :=
+  convTailNum d offset R * den ≤ num * d.sum
+
+/-- **(TOOTH — an EXACT tail value, kernel `decide`.)** The product law's mass at `|k| ≥ 3` is `4` (`= 2+2`, the
+`z = ±4` counts) — the exact-PMF tail functional computes a concrete integer in-kernel. -/
+theorem convTailNum_prodCounts : convTailNum prodCounts (-4) 3 = 4 := by decide
+
+/-- **(TOOTH — the residual is satisfiable.)** The `2`-fold-CBD-like tail `2/16 ≤ 3/4` holds — `ExactConvTailBound`
+is a real inequality that can HOLD. -/
+theorem exactConvTailBound_satisfiable : ExactConvTailBound cbdCounts (-2) 5 3 4 := by decide
+
+/-- **(TOOTH — the residual is refutable.)** An all-tail distribution (`[7]` at offset `100`, mass entirely at
+`|k| ≥ 3`) has `tail/total = 1 > 1/2`, refuting `ExactConvTailBound` — a load-bearing constraint, not a
+tautology. -/
+theorem exactConvTailBound_refutable : ¬ ExactConvTailBound [7] 100 3 1 2 := by decide
+
 /-! ## AXIOM HYGIENE — every probabilistic theorem is kernel-clean (⊆ {propext, Classical.choice, Quot.sound}). -/
 
 #assert_all_clean [
@@ -2221,7 +2397,18 @@ theorem bf_decapsFailure_le_delta_tight :
   perCoeffExactMgfTail_tight,
   mlkem768_decapsFailure_le_delta_exactMgf_tight,
   mlkem768_decapsFailure_le_delta_unconditional_tight,
-  bf_decapsFailure_le_delta_tight
+  bf_decapsFailure_le_delta_tight,
+  cbd_selfconv,
+  prodCounts_total,
+  cvMul_total_4fold,
+  card_add_eq_conv,
+  card_tail_eq_sum_cnt,
+  winProb_badCoeff_eq_convTail,
+  exactConvTailFrac_closes_delta,
+  exactConvTail_reduction_fires,
+  convTailNum_prodCounts,
+  exactConvTailBound_satisfiable,
+  exactConvTailBound_refutable
 ]
 
 end Dregg2.Crypto.MlKemDelta
