@@ -2442,18 +2442,22 @@ mod tests {
             // widens its v1 FACE by the avail witness columns, so its rotated appendix, refuse
             // anchor, and rc carrier all shift by the pad. Zero for every bare member.
             let avail_pad = crate::effect_vm::trace_rotated::avail_pad_for_descriptor_name(name);
-            // §HETEROGENEOUS GEOMETRY: not every member graduates off the STANDARD v1 face.
-            // `setFieldDyn`'s face is 28 columns narrower than the cohort's, and `custom` rides that
-            // same narrow face PLUS the 4 COMMIT-TEETH columns of the 8-felt proof-bind rotation
-            // (which are appended PAST the graduated lanes, so they are not lane columns). Both the
-            // refuse anchor and the `7·n_sites` lane check below must therefore be taken against the
-            // member's OWN face, not `GRAD_ROT_WIDTH`/`V1_WIDTH`. Read off the emitted faces:
-            // setFieldDyn base 1619 = 1647 − 28 (width 1664), custom base 1623 = 1619 + 4 (width 1668).
-            const SETFIELD_DYN_FACE_DELTA: usize = 28;
+            // §HETEROGENEOUS GEOMETRY. Two members do NOT graduate to `GRAD_ROT_WIDTH`, and the
+            // reason is the ROTATION-SITE COUNT, not the face width:
+            //   * `setFieldDynV1Face` has the SAME v1 face width (`EFFECT_VM_WIDTH`) as the cohort but
+            //     `hashSites := []` — ZERO hash sites against the standard 4. Since
+            //     `GRAD_ROT_WIDTH = ROT_WIDTH + 7·N_ROT_SITES`, dropping 4 sites drops exactly
+            //     4·7 = 28 LANE columns, so it graduates at 1647 − 28 = 1619 (width 1664).
+            //   * `custom` rides that same zero-site shape PLUS the 4 COMMIT-TEETH columns of the
+            //     8-felt proof-bind rotation, appended PAST the lanes: base 1623 (width 1668).
+            // The lane deficit is a multiple of 7 BY CONSTRUCTION (it is 7 per dropped site), so it
+            // cannot break the `% 7` lane invariant below. Custom's 4 teeth CAN — they are not lane
+            // columns — so they are the only thing that must come out before the modulus is taken.
+            const SETFIELD_DYN_LANE_DEFICIT: usize = 28; // 4 dropped hash sites × 7 lane cols
             const CUSTOM_COMMIT_TEETH: usize = 4;
-            let (face_delta, commit_teeth) = match key {
-                "customVmDescriptor2R24" => (SETFIELD_DYN_FACE_DELTA, CUSTOM_COMMIT_TEETH),
-                "setFieldDynVmDescriptor2R24" => (SETFIELD_DYN_FACE_DELTA, 0),
+            let (lane_deficit, commit_teeth) = match key {
+                "customVmDescriptor2R24" => (SETFIELD_DYN_LANE_DEFICIT, CUSTOM_COMMIT_TEETH),
+                "setFieldDynVmDescriptor2R24" => (SETFIELD_DYN_LANE_DEFICIT, 0),
                 _ => (0, 0),
             };
             let is_refuse_welded = name.ends_with("-gentian-deployed-bare-refuse");
@@ -2468,7 +2472,7 @@ mod tests {
                 const NB: usize = refuse::CAPACITY_TAGS.len();
                 // The refuse blocks anchor at the member's OWN graduated base (see §HETEROGENEOUS
                 // GEOMETRY above), so re-base the cohort's `GRAD_ROT_WIDTH`-anchored `floor_col`.
-                let member_base = GRAD_ROT_WIDTH - face_delta + commit_teeth;
+                let member_base = GRAD_ROT_WIDTH - lane_deficit + commit_teeth;
                 let rebase = |c: usize| c - GRAD_ROT_WIDTH + member_base;
                 let refuse_end = rebase(refuse::floor_col(NB - 1)) + 1 + avail_pad;
                 assert_eq!(
@@ -2512,17 +2516,17 @@ mod tests {
             } else {
                 d.trace_width
             };
-            // The graduated width is the member's OWN v1 face (`V1_WIDTH − face_delta`, avail-padded)
-            // plus the rotated appendix, plus `7·n_sites` lane columns, plus any COMMIT-TEETH columns
-            // appended past the lanes. Taking the face delta and teeth out first is what lets the
-            // heterogeneous members (setFieldDyn, custom) satisfy the same `% 7` lane invariant as the
-            // standard cohort — custom's raw −24 face delta is NOT ≡ 0 (mod 7), and pretending it were
-            // would be a fudge; the lane count is only meaningful against its own face.
-            let own_face = V1_WIDTH - face_delta;
-            let lane_base = own_face + avail_pad + APPENDIX_SPAN + commit_teeth;
+            // The graduated width is the (avail-padded) v1 face + the rotated appendix + `7·n_sites`
+            // LANE columns + any COMMIT-TEETH columns appended past the lanes. Every member shares the
+            // same v1 face width, and a dropped hash site removes a whole 7-column lane, so the lane
+            // residue stays ≡ 0 (mod 7) for setFieldDyn's zero-site shape without any special-casing.
+            // Only custom's 4 COMMIT-TEETH columns are non-lane, so they are the one thing that must
+            // be taken out before the modulus — otherwise its residue is 4 and the invariant would be
+            // "fixed" by fudging a face delta that does not exist.
+            let lane_base = V1_WIDTH + avail_pad + APPENDIX_SPAN + commit_teeth;
             assert!(
                 graduated_width >= lane_base && (graduated_width - lane_base) % 7 == 0,
-                "{key}: rotated GRADUATED trace width = (avail-padded) own v1 face + appendix + \
+                "{key}: rotated GRADUATED trace width = (avail-padded) v1 face + appendix + \
                  7·n_sites lane cols + commit teeth"
             );
             assert!(
