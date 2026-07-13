@@ -3654,3 +3654,673 @@ mod crypt_tests {
         );
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A SIXTH UNIVERSE — "The Vaulted Bazaar": the SAME economy as the Merchant's Bazaar,
+// but the PURSE AND STACKS LIVE IN THE HEAP (keys >= STATE_SLOTS), not register slots
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The Merchant's Bazaar proved a sound economy — exact payment, exact delivery, a
+// quantity that decrements to zero — but it hoisted its purse and every stack into
+// FIXED REGISTER SLOTS. It had to: the heap-atom vocabulary ([`HeapAtom`]) had NO
+// exact-delta twin, so a heap-keyed quantity could not carry the exact-payment /
+// exact-decrement tooth an economy needs. The Bazaar's own "NAMED ATOM GAP" note
+// spelled out the missing pieces: `HeapAtom::Delta { d: i64 }` (the heap twin of
+// `StateConstraint::FieldDelta`) plus a heap cross-key `Lte` for a live
+// `price <= gold` bound.
+//
+// Both now EXIST in the core (committed):
+//   * [`HeapAtom::DeltaEquals`]`{ d: i64 }` — `new[heap key] - old[heap key] == d`
+//     over the signed full-field delta, BOTH-present-fail-closed (an absent old OR
+//     new REFUSES — no heap init escape). The EXACT-delta heap tooth.
+//   * [`StateConstraint::HeapFieldLteOther`]`{ key, other_key, delta }` —
+//     `new[heap key] <= new[heap other_key] + delta`, both operands read from the
+//     openable `fields_map` heap, ABSENT-either-side-fail-closed. The cross-KEY heap
+//     relation the per-key `HeapAtom` vocabulary structurally cannot express (each
+//     atom reads only ITS own key).
+//
+// The Vaulted Bazaar is the Merchant's Bazaar's economy REBUILT with the purse and the
+// item stack in the HEAP — retiring the fixed-slot workaround:
+//
+// | move (raw-turn method)     | executor teeth (all on HEAP keys)                                           |
+// |----------------------------|-----------------------------------------------------------------------------|
+// | fund the purse             | `HeapField{gold, WriteOnce}` + `HeapField{potions, WriteOnce}` (establish once) |
+// | buy a potion (50g)         | `HeapField{gold, DeltaEquals(-50)}` (exact debit; a broke purse cannot pay without clamping ⇒ refused) + `HeapField{potions, DeltaEquals(+1)}` (exact deliver) |
+// | assay (solvency door)      | `HeapFieldLteOther{price <= gold}` (you hold at least the price — a NON-debiting move) |
+// | drink a potion             | `HeapField{potions, DeltaEquals(-1)}` (exact decrement; the stack at 0 ⇒ refused) |
+//
+// ── WHY EACH TOOTH BITES (non-vacuous, DRIVEN below) ──────────────────────────────
+//
+//   * EXACT DEBIT — the purse-key falls by EXACTLY the price. A buy that writes any
+//     other value (an underpay off-by-one, a shoplift that takes the potion while
+//     leaving the purse full, a clamped-at-zero broke write) lands `new - old != -price`
+//     and is a REAL `WorldError::Refused`. The clamped underflow the register Bazaar
+//     caught with `FieldDelta` — now caught on the HEAP with `DeltaEquals`. This is ALSO
+//     the affordability enforcement ON the buy: an unaffordable purse (gold < price)
+//     cannot land `-price` without clamping, so the debit tooth refuses a broke buy.
+//   * SOLVENCY — `HeapFieldLteOther{ key: price, other_key: gold, delta: 0 }` is
+//     "you hold at least the price" (`price <= gold`), installed on the `assay` door — a
+//     move that does NOT touch gold, so the post-state purse IS the pre-state purse and
+//     the cross-key bound is a genuine affordability check (a post-state cross-key gate
+//     CANNOT be the affordability check on the debiting buy itself — the last-coin buy
+//     and a broke buy BOTH clamp the post-purse to 0, indistinguishable post-state; so
+//     solvency lives on a non-debiting door, exactly as the Merchant's Bazaar's
+//     counting-room `FieldGte(gold, toll)` gates a move that does not touch gold). This
+//     is the cross-key heap bound the Bazaar could only have expressed by hoisting price
+//     and purse into register slots.
+//   * EXACT DECREMENT — a use writes `potions - 1` under `DeltaEquals{ -1 }`. The stack
+//     walks `3 → 2 → 1 → 0` on real committed turns; the next use, the stack empty,
+//     writes a clamped `0` whose delta `0 - 0 == 0 != -1` is a REAL executor refusal.
+//
+// ── INSTALL PATH (the Tidewrack Hold's pattern, not a spween-dregg change) ─────────
+//
+// Every tooth is installed on the compiled program via [`add_case`] (a fresh
+// `MethodIs`-guarded [`TransitionCase`]), and every move rides [`WorldCell::apply_raw`]
+// on the heap path — EXACTLY as the Tidewrack Hold installs and drives its heap
+// inventory. `spween-dregg` needed NO change: `apply_raw` (raw cap-bounded heap turn)
+// and `read_heap` (committed `fields_map` read) already exist and already power the
+// Hold. The purse and stack are written with [`stash_effect`] (`SetField` at a key
+// `>= STATE_SLOTS`, routed into the committed `fields_map`).
+//
+// ── HONEST SCOPE — identical to the Merchant's Bazaar, minus the workaround ────────
+//
+// This is the SAME economy the Merchant's Bazaar has (exact payment/delivery/decrement,
+// sound against underflow, underpayment, shoplifting and minting WITHIN this cell's
+// serialized history), with the purse-and-stacks moved OFF fixed registers and INTO the
+// heap — the fixed-slot workaround retired. Gold is still a COUNTER funded at genesis
+// (the `fund` turn), NOT a conserved `Effect::Transfer` of computrons — the same honest
+// boundary the Bazaar drives (`conserved_transfer_is_out_of_reach_gold_is_a_counter`);
+// a globally-conserved economy is still the multi-cell rung. And these teeth are
+// EXECUTOR-ENFORCED cell-program predicates: the AIR that carries `DeltaEquals` /
+// `HeapFieldLteOther` into a proof is the named follow-up (the Lean twins
+// `Dregg2.Exec.HeapAtom.deltaEquals` / `RelationalCaveat.heapFieldLteOther` exist; the
+// circuit teeth are the next rung), exactly as the register Bazaar's `FieldDelta` is
+// executor-enforced today.
+
+// ── The Vaulted Bazaar's heap layout + posted schedule ───────────────────────────
+
+/// The purse's HEAP key (`>= STATE_SLOTS` ⇒ committed `fields_map`, not a register).
+/// The gold the Merchant's Bazaar kept in a fixed register slot now lives here.
+pub const VB_GOLD_KEY: u64 = 500;
+/// The potion stack's HEAP key — the held quantity a buy raises and a use decrements.
+pub const VB_POTIONS_KEY: u64 = 501;
+/// The posted potion price, held in its OWN heap key so the solvency gate
+/// ([`StateConstraint::HeapFieldLteOther`]) can compare `price <= gold` cross-key on
+/// the heap (the comparison the per-key [`HeapAtom`] vocabulary cannot express).
+pub const VB_POTION_PRICE_KEY: u64 = 510;
+/// The solvency door's "assayed" marker HEAP key — the non-debiting assay move writes
+/// it, so the move carries a real committed effect while leaving the purse untouched.
+pub const VB_ASSAYED_KEY: u64 = 520;
+
+/// The dispatch method for the funding turn (establishes the purse + stack in the heap).
+pub const VB_FUND_METHOD: &str = "vaulted_bazaar_fund";
+/// The dispatch method for a heap-keyed potion purchase (exact debit + exact deliver).
+pub const VB_BUY_METHOD: &str = "vaulted_bazaar_buy_potion";
+/// The dispatch method for the solvency door (the cross-key `price <= gold` heap gate).
+pub const VB_ASSAY_METHOD: &str = "vaulted_bazaar_assay";
+/// The dispatch method for drinking a potion (the exact heap-stack decrement).
+pub const VB_USE_METHOD: &str = "vaulted_bazaar_use_potion";
+
+/// The posted price of one healing potion (gold), held at [`VB_POTION_PRICE_KEY`].
+pub const VB_POTION_PRICE: u64 = 50;
+/// The purse the Vaulted Bazaar opens with (funded at genesis into [`VB_GOLD_KEY`]).
+pub const VB_OPENING_PURSE: u64 = 120;
+/// The vault hoard seized in the terminal room (a plain register var — the ECONOMY is
+/// entirely on the heap; this is only so the universe deploys as a real, playable scene).
+pub const VB_HOARD: u64 = 700;
+
+/// A [`HeapAtom::DeltaEquals`] tooth on a heap `key`: the post-state heap value must be
+/// `old + delta` on the nose (both present, else refused). The heap twin of the
+/// Merchant's Bazaar's register [`exact_delta`].
+fn heap_exact_delta(key: u64, delta: i64) -> StateConstraint {
+    StateConstraint::HeapField {
+        key,
+        atom: HeapAtom::DeltaEquals { d: delta },
+    }
+}
+
+/// The sixth dungeon — "The Vaulted Bazaar" — in the spween DSL. Two rooms (`plaza` →
+/// `vaults`) so the universe deploys as a real, [`Driver`](spween_dregg::Driver)-able
+/// world; the HEAP-KEYED economy rides [`WorldCell::apply_raw`] on the same cell (like
+/// the Tidewrack Hold's inventory). The terminal `~ hoard += 700` is a register write —
+/// the economy proper (purse + stack) lives entirely on the heap.
+pub const VAULTED_BAZAAR: &str = r#"---
+id: vaulted-bazaar
+title: The Vaulted Bazaar
+weight: 1
+---
+
+=== plaza
+
+The vaulted bazaar at dusk — its coin-vaults sunk beneath the flagstones, its stalls
+shuttered. Steps descend into the strong-vaults below.
+
+* [Descend into the strong-vaults]
+  -> vaults
+
+=== vaults
+
+The strong-vaults, ledgered and cold. A last unclaimed hoard sits in an open coffer.
+
+* [Seize the coffer hoard]
+  ~ hoard += 700
+  -> END
+"#;
+
+/// The Vaulted Bazaar's opening room (the plaza).
+pub const ROOM_PLAZA: &str = "plaza";
+/// The Vaulted Bazaar's strong-vaults (terminal — the coffer hoard).
+pub const ROOM_VAULTS: &str = "vaults";
+/// `plaza`: descend into the strong-vaults (ungated).
+pub const VB_DESCEND: usize = 0;
+/// `vaults`: seize the coffer hoard (ends the story).
+pub const VB_SEIZE: usize = 0;
+
+/// Parse the Vaulted Bazaar scene.
+pub fn vaulted_bazaar_scene() -> Scene {
+    parse(VAULTED_BAZAAR, "vaulted-bazaar.scene").expect("the vaulted bazaar scene parses")
+}
+
+/// **Compile the Vaulted Bazaar AND augment its program with the HEAP-keyed economy
+/// teeth.** Adds three raw-turn cases (via [`add_case`], the Tidewrack Hold's install
+/// pattern) whose constraints live entirely on HEAP keys:
+///   * `fund`  — `HeapField{gold, WriteOnce}` + `HeapField{potions, WriteOnce}`: the
+///     purse and stack are established once (a re-fund to a different purse is refused).
+///   * `buy`   — `HeapField{gold, DeltaEquals(-price)}` (exact debit; a broke purse
+///     cannot pay without clamping ⇒ refused) then `HeapField{potions, DeltaEquals(+1)}`
+///     (exact deliver).
+///   * `assay` — the SOLVENCY DOOR: `HeapFieldLteOther{ price <= gold }` on a NON-
+///     debiting move (writes only the `assayed` marker), so the cross-key bound is a
+///     genuine "you hold at least the price" check (the heap twin of the Merchant's
+///     Bazaar's counting-room door).
+///   * `use`   — `HeapField{potions, DeltaEquals(-1)}` (exact decrement; empty ⇒ refused).
+/// Every case is a real `CellProgram` case the executor re-checks move-for-move.
+pub fn vaulted_bazaar_compiled() -> CompiledStory {
+    let mut story = compile_scene(&vaulted_bazaar_scene()).expect("the vaulted bazaar compiles");
+
+    // FUND — establish the purse + stack in the heap ONCE. `WriteOnce` admits the
+    // first write (absent-old / zero-old) then freezes: a re-fund that flips the purse
+    // to a different amount is refused (the purse is not a re-mintable slot).
+    add_case(
+        &mut story.program,
+        VB_FUND_METHOD,
+        vec![
+            StateConstraint::HeapField {
+                key: VB_GOLD_KEY,
+                atom: HeapAtom::WriteOnce,
+            },
+            StateConstraint::HeapField {
+                key: VB_POTIONS_KEY,
+                atom: HeapAtom::WriteOnce,
+            },
+        ],
+    );
+
+    // BUY — the EXACT heap debit (the purse falls by exactly the price; a clamped /
+    // underpaid / shoplifted write is `!= old - price` and refused — this is ALSO the
+    // affordability enforcement: a broke purse cannot pay `-price` without clamping, so
+    // the debit tooth itself refuses an unaffordable buy) then the EXACT heap delivery
+    // (one potion lands on the SAME turn).
+    add_case(
+        &mut story.program,
+        VB_BUY_METHOD,
+        vec![
+            heap_exact_delta(VB_GOLD_KEY, -(VB_POTION_PRICE as i64)),
+            heap_exact_delta(VB_POTIONS_KEY, 1),
+        ],
+    );
+
+    // ASSAY — the SOLVENCY DOOR: a NON-debiting move (it writes only the `assayed`
+    // marker key, leaving the purse untouched) gated by the cross-key
+    // `HeapFieldLteOther{ price <= gold }` ("you hold at least the price"). Because the
+    // move does not change gold, the post-state purse IS the pre-state purse, so the
+    // cross-key bound is a genuine affordability check — non-vacuous exactly where the
+    // per-key `HeapAtom` vocabulary cannot reach (it compares TWO heap keys). This is the
+    // heap twin of the Merchant's Bazaar's counting-room door (a `FieldGte(gold, toll)`
+    // on a move that does not touch gold); here BOTH operands live in the openable heap.
+    add_case(
+        &mut story.program,
+        VB_ASSAY_METHOD,
+        vec![StateConstraint::HeapFieldLteOther {
+            key: VB_POTION_PRICE_KEY,
+            other_key: VB_GOLD_KEY,
+            delta: 0,
+        }],
+    );
+
+    // USE — the held potion stack decrements by EXACTLY one on the heap. Drinking with
+    // an empty stack writes a clamped `0` whose delta `0 - 0 == 0 != -1` is refused.
+    add_case(
+        &mut story.program,
+        VB_USE_METHOD,
+        vec![heap_exact_delta(VB_POTIONS_KEY, -1)],
+    );
+
+    story
+}
+
+/// Deploy the augmented Vaulted Bazaar as a real world-cell (the HEAP-keyed economy
+/// teeth installed as executor predicates). Deterministic in `seed`.
+pub fn deploy_vaulted_bazaar(seed: u8) -> WorldCell {
+    WorldCell::deploy_compiled(Arc::new(vaulted_bazaar_compiled()), seed)
+        .expect("the vaulted bazaar deploys")
+}
+
+/// One heap-keyed economy operation — the abstract, deploy-independent record a
+/// [`replay_vaulted_bazaar`] re-executes (its heap writes are re-derived against the
+/// fresh cell, exactly like the Tidewrack Hold's [`HoldOp`]).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum VbOp {
+    /// Fund the purse: establish `gold = purse`, `potions = 0`, and the posted price in
+    /// the heap (the genesis of the counter economy).
+    Fund {
+        /// The opening purse written into [`VB_GOLD_KEY`].
+        purse: u64,
+    },
+    /// Buy one potion: debit the purse by exactly the price and deliver one potion (the
+    /// exact-debit tooth is itself the affordability enforcement).
+    Buy,
+    /// Pass the solvency door: a non-debiting move admitted iff `price <= gold` (you hold
+    /// at least the price), writing the `assayed` marker.
+    Assay,
+    /// Drink one potion: decrement the held stack by exactly one.
+    Use,
+}
+
+/// Drive one [`VbOp`] as a real cap-bounded turn via [`WorldCell::apply_raw`]. Reads the
+/// current heap purse/stack to compute the next write (a `saturating_sub` on a debit /
+/// decrement, exactly the clamp the register Bazaar's Modify handler applies), then
+/// submits — so the executor's `DeltaEquals` / `HeapFieldLteOther` teeth refer the turn
+/// exactly as on the register-slot path.
+pub fn apply_vb_op(
+    world: &WorldCell,
+    op: &VbOp,
+) -> Result<dregg_app_framework::TurnReceipt, spween_dregg::WorldError> {
+    let cell = world.cell_id();
+    match *op {
+        VbOp::Fund { purse } => world.apply_raw(
+            VB_FUND_METHOD,
+            vec![
+                stash_effect(cell, VB_GOLD_KEY, purse),
+                stash_effect(cell, VB_POTIONS_KEY, 0),
+                stash_effect(cell, VB_POTION_PRICE_KEY, VB_POTION_PRICE),
+            ],
+        ),
+        VbOp::Buy => {
+            let gold = world.read_heap(VB_GOLD_KEY).unwrap_or(0);
+            let potions = world.read_heap(VB_POTIONS_KEY).unwrap_or(0);
+            world.apply_raw(
+                VB_BUY_METHOD,
+                vec![
+                    stash_effect(cell, VB_GOLD_KEY, gold.saturating_sub(VB_POTION_PRICE)),
+                    stash_effect(cell, VB_POTIONS_KEY, potions + 1),
+                ],
+            )
+        }
+        VbOp::Assay => {
+            world.apply_raw(VB_ASSAY_METHOD, vec![stash_effect(cell, VB_ASSAYED_KEY, 1)])
+        }
+        VbOp::Use => {
+            let potions = world.read_heap(VB_POTIONS_KEY).unwrap_or(0);
+            world.apply_raw(
+                VB_USE_METHOD,
+                vec![stash_effect(
+                    cell,
+                    VB_POTIONS_KEY,
+                    potions.saturating_sub(1),
+                )],
+            )
+        }
+    }
+}
+
+/// The committed heap projection of the economy (purse, stack, posted price), sorted —
+/// the deterministic fingerprint [`replay_vaulted_bazaar`] reproduces (`None` = absent
+/// on the heap, distinct from present-zero).
+pub fn vaulted_bazaar_heap_snapshot(world: &WorldCell) -> Vec<(u64, Option<u64>)> {
+    let mut keys = [VB_GOLD_KEY, VB_POTIONS_KEY, VB_POTION_PRICE_KEY];
+    keys.sort_unstable();
+    keys.into_iter().map(|k| (k, world.read_heap(k))).collect()
+}
+
+/// **Verify-by-replay for the heap-keyed economy.** Re-deploy an identically-seeded
+/// Vaulted Bazaar and re-apply the SAME [`VbOp`] sequence, returning the per-step heap
+/// snapshots. A forged record (a buy that was never affordable, a use whose stock was
+/// never bought) is REFUSED by the real executor on replay, surfacing as
+/// `Err((step, why))`. The heap-economy analog of [`replay_hold`].
+pub fn replay_vaulted_bazaar(
+    seed: u8,
+    ops: &[VbOp],
+) -> Result<Vec<Vec<(u64, Option<u64>)>>, (usize, String)> {
+    let world = deploy_vaulted_bazaar(seed);
+    let mut snaps = Vec::with_capacity(ops.len());
+    for (i, op) in ops.iter().enumerate() {
+        apply_vb_op(&world, op).map_err(|e| (i, e.to_string()))?;
+        snaps.push(vaulted_bazaar_heap_snapshot(&world));
+    }
+    Ok(snaps)
+}
+
+#[cfg(test)]
+mod vaulted_bazaar_tests {
+    //! The heap-keyed economy, DRIVEN on the real `WorldCell`: a buy debits the HEAP
+    //! purse by EXACTLY the price (`DeltaEquals` — an off-by-one, a shoplift, a broke
+    //! clamp are REAL refusals); the cross-key `HeapFieldLteOther` solvency gate refuses
+    //! an unaffordable buy; a heap stack consume decrements exactly and, at zero, the
+    //! next use is refused; and the whole run re-verifies by replay. The SAME economy as
+    //! the Merchant's Bazaar, purse-and-stacks in the heap — the fixed-slot workaround
+    //! retired.
+    use super::*;
+
+    /// Fund a fresh Vaulted Bazaar with `purse` gold in the heap (the genesis of the
+    /// counter economy — mirrors the Merchant's Bazaar's `seeded` helper).
+    fn funded(seed: u8, purse: u64) -> WorldCell {
+        let world = deploy_vaulted_bazaar(seed);
+        apply_vb_op(&world, &VbOp::Fund { purse }).expect("funding the purse commits");
+        world
+    }
+
+    /// The executor's VERBATIM refusal reason (panics if the turn was not refused) — the
+    /// refusal tests check the reason against the SPECIFIC heap tooth that bit.
+    fn why<T: std::fmt::Debug>(out: Result<T, spween_dregg::WorldError>) -> String {
+        match out {
+            Err(spween_dregg::WorldError::Refused(reason)) => reason,
+            other => panic!("expected a REAL executor refusal, got {other:?}"),
+        }
+    }
+
+    /// Every economy rule is a REAL kernel predicate over HEAP keys: introspect the
+    /// installed program and read back the exact-debit / exact-deliver `DeltaEquals`,
+    /// the cross-key `HeapFieldLteOther` solvency bound, and the exact-decrement tooth —
+    /// with their VALUES checked against the posted price (not merely named).
+    #[test]
+    fn heap_economy_teeth_are_real_kernel_predicates() {
+        let story = vaulted_bazaar_compiled();
+
+        // BUY: the purse falls by EXACTLY the price (DeltaEquals on the heap gold key)...
+        let buy = case_constraints(&story, VB_BUY_METHOD);
+        assert!(
+            buy.contains(&heap_exact_delta(VB_GOLD_KEY, -(VB_POTION_PRICE as i64))),
+            "buy debits the heap purse by EXACTLY {VB_POTION_PRICE} (DeltaEquals); got {buy:?}"
+        );
+        // ...and exactly one potion lands on the heap stack.
+        assert!(
+            buy.contains(&heap_exact_delta(VB_POTIONS_KEY, 1)),
+            "buy delivers EXACTLY one potion to the heap stack (DeltaEquals); got {buy:?}"
+        );
+
+        // ASSAY: the solvency door is the cross-key `price <= gold` bound on the heap.
+        let assay = case_constraints(&story, VB_ASSAY_METHOD);
+        assert!(
+            assay.iter().any(|c| matches!(
+                c,
+                StateConstraint::HeapFieldLteOther { key, other_key, delta }
+                    if *key == VB_POTION_PRICE_KEY && *other_key == VB_GOLD_KEY && *delta == 0
+            )),
+            "the assay door carries the cross-key solvency bound (price <= gold); got {assay:?}"
+        );
+
+        // USE: the heap stack decrements by EXACTLY one.
+        let use_ = case_constraints(&story, VB_USE_METHOD);
+        assert!(
+            use_.contains(&heap_exact_delta(VB_POTIONS_KEY, -1)),
+            "a use decrements the heap stack by EXACTLY one (DeltaEquals); got {use_:?}"
+        );
+
+        // FUND: the purse + stack are established once (WriteOnce on the heap keys).
+        let fund = case_constraints(&story, VB_FUND_METHOD);
+        assert!(
+            fund.iter().any(|c| matches!(
+                c,
+                StateConstraint::HeapField { key, atom: HeapAtom::WriteOnce }
+                    if *key == VB_GOLD_KEY
+            )),
+            "the purse is established WriteOnce on the heap; got {fund:?}"
+        );
+    }
+
+    /// EXACT HEAP DEBIT — DRIVEN. A buy with gold enough debits the HEAP purse by exactly
+    /// the price and lands one potion, all in one committed turn. Spending the last coin
+    /// (gold == price) commits to zero. An off-by-one underpay and a shoplift (potion
+    /// without paying) are REAL refusals by the `DeltaEquals` debit tooth on the heap.
+    #[test]
+    fn heap_buy_debits_gold_exactly_and_delivers() {
+        let world = funded(80, VB_OPENING_PURSE);
+
+        let r = apply_vb_op(&world, &VbOp::Buy).expect("an affordable heap buy commits");
+        assert_eq!(
+            world.read_heap(VB_GOLD_KEY),
+            Some(VB_OPENING_PURSE - VB_POTION_PRICE),
+            "the heap purse fell by exactly the posted price"
+        );
+        assert_eq!(
+            world.read_heap(VB_POTIONS_KEY),
+            Some(1),
+            "one potion landed"
+        );
+        assert_ne!(r.turn_hash, [0u8; 32], "a genuine committed turn");
+
+        // BOUNDARY: a purse of exactly the price buys once, to zero.
+        let last = funded(81, VB_POTION_PRICE);
+        apply_vb_op(&last, &VbOp::Buy).expect("spending the last coin commits (new == 0)");
+        assert_eq!(
+            last.read_heap(VB_GOLD_KEY),
+            Some(0),
+            "the heap purse is empty"
+        );
+        assert_eq!(last.read_heap(VB_POTIONS_KEY), Some(1));
+
+        // OFF-BY-ONE underpay — a forged raw buy that writes gold − 49 (paying 49 for a
+        // 50-gold potion). Solvency passes (71 >= 50), but the exact-debit DeltaEquals
+        // bites: `new − old = 71 − 120 = −49 != −50`.
+        let cell = world.cell_id();
+        let gold_now = world.read_heap(VB_GOLD_KEY).expect("purse present"); // 70
+        let underpay = why(world.apply_raw(
+            VB_BUY_METHOD,
+            vec![
+                stash_effect(cell, VB_GOLD_KEY, gold_now + 1), // paid 49 instead of 50
+                stash_effect(cell, VB_POTIONS_KEY, 2),
+            ],
+        ));
+        assert!(
+            underpay.contains(&format!("heap[{VB_GOLD_KEY}] delta")) && underpay.contains("!= -50"),
+            "an off-by-one underpay is refused by the exact-debit DeltaEquals on the heap \
+             purse; got: {underpay}"
+        );
+        assert_eq!(
+            world.read_heap(VB_GOLD_KEY),
+            Some(70),
+            "anti-ghost: the heap purse is intact"
+        );
+        assert_eq!(
+            world.read_heap(VB_POTIONS_KEY),
+            Some(1),
+            "anti-ghost: no extra potion"
+        );
+
+        // SHOPLIFT — take the potion while leaving the purse full: `70 − 70 = 0 != −50`.
+        let shoplift = why(world.apply_raw(
+            VB_BUY_METHOD,
+            vec![
+                stash_effect(cell, VB_GOLD_KEY, 70), // unchanged: no payment
+                stash_effect(cell, VB_POTIONS_KEY, 2),
+            ],
+        ));
+        assert!(
+            shoplift.contains(&format!("heap[{VB_GOLD_KEY}] delta")) && shoplift.contains("!= -50"),
+            "taking the potion without paying is refused by the exact-debit tooth; got: {shoplift}"
+        );
+        assert_eq!(
+            world.read_heap(VB_POTIONS_KEY),
+            Some(1),
+            "anti-ghost: nothing shoplifted"
+        );
+    }
+
+    /// SOLVENCY DOOR — DRIVEN. The cross-key `HeapFieldLteOther{ price <= gold }` gate on
+    /// the non-debiting `assay` move refuses a purse that cannot show the price (heap gold
+    /// below the posted heap price) and admits one that can. This is the affordability
+    /// bound the per-key `HeapAtom` vocabulary cannot express (it compares TWO heap keys).
+    /// Separately, an unaffordable BUY is refused by the exact-debit `DeltaEquals` (a broke
+    /// purse cannot pay `-price` without clamping) — both the door and the debit bite.
+    #[test]
+    fn solvency_gate_refuses_unaffordable_buy() {
+        // 30 gold in the heap; a potion costs 50 — the assay door refuses it.
+        let broke = funded(82, 30);
+        let reason = why(apply_vb_op(&broke, &VbOp::Assay));
+        assert!(
+            reason.contains(&format!("heap[{VB_POTION_PRICE_KEY}] = 50"))
+                && reason.contains(&format!("heap[{VB_GOLD_KEY}]")),
+            "an under-priced purse is refused at the assay door by the cross-key solvency \
+             bound (price 50 > gold 30); got: {reason}"
+        );
+        assert_eq!(
+            broke.read_heap(VB_ASSAYED_KEY),
+            None,
+            "anti-ghost: the door did not open (no assayed marker)"
+        );
+
+        // ...and the same broke purse's actual BUY is refused by the exact-debit tooth
+        // (30 − 50 clamps to 0; `0 − 30 = −30 != −50`), committing nothing.
+        let buy_refusal = why(apply_vb_op(&broke, &VbOp::Buy));
+        assert!(
+            buy_refusal.contains(&format!("heap[{VB_GOLD_KEY}] delta = -30 != -50")),
+            "an unaffordable buy is refused by the exact-debit DeltaEquals; got: {buy_refusal}"
+        );
+        assert_eq!(
+            broke.read_heap(VB_GOLD_KEY),
+            Some(30),
+            "anti-ghost: purse intact"
+        );
+        assert_eq!(
+            broke.read_heap(VB_POTIONS_KEY),
+            Some(0),
+            "anti-ghost: no potion"
+        );
+
+        // A solvent purse passes the door (the gate is not a blanket refusal) and can buy.
+        let rich = funded(83, VB_OPENING_PURSE);
+        apply_vb_op(&rich, &VbOp::Assay).expect("a solvent purse passes the assay door");
+        assert_eq!(rich.read_heap(VB_ASSAYED_KEY), Some(1), "the door opened");
+        apply_vb_op(&rich, &VbOp::Buy).expect("a solvent buy commits");
+        assert_eq!(rich.read_heap(VB_GOLD_KEY), Some(70));
+    }
+
+    /// EXACT HEAP DECREMENT — DRIVEN. Three buys stack three potions on the heap; each
+    /// use decrements the held count by exactly one on a real committed turn
+    /// (3 → 2 → 1 → 0); the FOURTH use — the stack empty — is a REAL refusal by the
+    /// `DeltaEquals(−1)` tooth (the clamped `0 − 0 = 0 != −1`), committing nothing.
+    #[test]
+    fn heap_stack_consume_decrements_to_zero() {
+        let world = funded(84, 3 * VB_POTION_PRICE); // enough to buy three potions.
+
+        for n in 1..=3u64 {
+            apply_vb_op(&world, &VbOp::Buy).unwrap_or_else(|e| panic!("buy {n} commits: {e}"));
+        }
+        assert_eq!(
+            world.read_heap(VB_POTIONS_KEY),
+            Some(3),
+            "three potions stacked"
+        );
+        assert_eq!(world.read_heap(VB_GOLD_KEY), Some(0), "paid for all three");
+
+        // Spend the stack: 3 → 2 → 1 → 0, each a real committed turn.
+        for expect_left in (0..3u64).rev() {
+            let r = apply_vb_op(&world, &VbOp::Use).expect("using a held potion commits");
+            assert_ne!(r.turn_hash, [0u8; 32]);
+            assert_eq!(
+                world.read_heap(VB_POTIONS_KEY),
+                Some(expect_left),
+                "the heap stack decremented by exactly one"
+            );
+        }
+        assert_eq!(
+            world.read_heap(VB_POTIONS_KEY),
+            Some(0),
+            "the stack is spent"
+        );
+
+        // The stack is EMPTY: the next use is a real refusal (the clamped 0 − 0 != −1).
+        let spent = why(apply_vb_op(&world, &VbOp::Use));
+        assert!(
+            spent.contains(&format!("heap[{VB_POTIONS_KEY}] delta = 0 != -1")),
+            "using a spent heap stack is refused by the exact-decrement DeltaEquals; got: {spent}"
+        );
+        assert_eq!(
+            world.read_heap(VB_POTIONS_KEY),
+            Some(0),
+            "anti-ghost: the empty stack did not go negative"
+        );
+    }
+
+    /// The purse is established ONCE: a re-fund that flips the heap purse to a different
+    /// amount is refused by the `WriteOnce` heap tooth (the purse is not a re-mintable
+    /// slot). The counter is funded at genesis and not re-minted within a run.
+    #[test]
+    fn refund_to_a_different_purse_is_refused() {
+        let world = funded(85, VB_OPENING_PURSE);
+        let remint = why(apply_vb_op(&world, &VbOp::Fund { purse: 9_999 }));
+        assert!(
+            remint.to_lowercase().contains("writeonce")
+                || remint.contains(&format!("heap[{VB_GOLD_KEY}]")),
+            "a re-fund flipping the purse is refused by the WriteOnce heap tooth; got: {remint}"
+        );
+        assert_eq!(
+            world.read_heap(VB_GOLD_KEY),
+            Some(VB_OPENING_PURSE),
+            "anti-ghost: the heap purse is unchanged"
+        );
+    }
+
+    /// The whole heap economy RE-VERIFIES BY REPLAY: an honest op sequence (fund, buy
+    /// twice, use once) reproduces IDENTICAL per-step heap snapshots on a fresh,
+    /// identically-seeded deploy — and a FORGED record (a use whose potion was never
+    /// bought) is REFUSED by the real executor on replay.
+    #[test]
+    fn heap_economy_reverifies_by_replay_and_a_forgery_fails() {
+        let honest = [
+            VbOp::Fund {
+                purse: VB_OPENING_PURSE,
+            },
+            VbOp::Buy,
+            VbOp::Buy,
+            VbOp::Use,
+        ];
+
+        // Drive it live once...
+        let live = deploy_vaulted_bazaar(86);
+        for op in &honest {
+            apply_vb_op(&live, op).expect("the honest heap economy commits live");
+        }
+        assert_eq!(
+            live.read_heap(VB_GOLD_KEY),
+            Some(VB_OPENING_PURSE - 2 * VB_POTION_PRICE)
+        );
+        assert_eq!(live.read_heap(VB_POTIONS_KEY), Some(1), "bought 2, drank 1");
+
+        // ...and replay reproduces the SAME committed heap snapshots step for step.
+        let replayed = replay_vaulted_bazaar(86, &honest).expect("the honest record re-verifies");
+        assert_eq!(replayed.len(), honest.len());
+        assert_eq!(
+            replayed.last().unwrap(),
+            &vaulted_bazaar_heap_snapshot(&live),
+            "replay reproduces the live committed heap state exactly"
+        );
+
+        // A FORGED record — drink a potion that was never bought (fund, then use) — is
+        // REFUSED on replay by the exact-decrement tooth (the clamped 0 − 0 != −1).
+        let forged = [
+            VbOp::Fund {
+                purse: VB_OPENING_PURSE,
+            },
+            VbOp::Use,
+        ];
+        let out = replay_vaulted_bazaar(87, &forged);
+        let (step, why) = out.expect_err("a forged use (no prior buy) fails replay");
+        assert_eq!(step, 1, "the forged use is the failing step");
+        assert!(
+            why.contains(&format!("heap[{VB_POTIONS_KEY}] delta = 0 != -1")),
+            "the phantom use is refused by the exact-decrement DeltaEquals on replay; got: {why}"
+        );
+    }
+}

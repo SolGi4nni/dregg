@@ -6578,6 +6578,7 @@ dependencies = [
  "dregg-doc",
  "dregg-turn",
  "dreggnet-offerings",
+ "ed25519-dalek",
 ]
 
 [[package]]
@@ -6667,6 +6668,8 @@ dependencies = [
  "axum",
  "blake3",
  "deos-view",
+ "dreggnet-council",
+ "dreggnet-market",
  "dreggnet-offerings",
  "dungeon-on-dregg",
  "serde",
