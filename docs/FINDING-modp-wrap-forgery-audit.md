@@ -1,4 +1,4 @@
-# DEBT-A mod-p wrap-forgery audit — findings + repair playbook (found 2026-07-11; CLOSED + DEPLOYED 2026-07-13)
+# DEBT-A mod-p wrap-forgery audit — findings + repair playbook (found 2026-07-11; CLOSED + DEPLOYED + PROVEN-AT-APEX 2026-07-13)
 
 The DEBT-A migration retargeted `VmConstraint.holdsVm .gate` from `body.eval = 0` over ℤ to
 `body.eval ≡ 0 [ZMOD 2013265921]` (BabyBear `p < 2³¹`). This broke a large cascade of circuit-apex
@@ -64,6 +64,36 @@ How the closure works:
   The FP constant is re-stamped → a new VK epoch with mint-from-nothing closed. The regen is
   provenance-clean (`source dirty = no`) — commit `887b95e76` (VK-REGEN) plus `4dd7adee0` (sweep-up of the
   shared-file emission retargets). Recorded as the `2026-07-13` row in `docs/VK-REGEN-LOG.md`.
+
+## PROVEN AT THE APEX — the deployed VK is `vkOfRegistry RfixAvail` (deploy-consistency: CONSISTENT)
+The deployed hardening is now covered by a closed circuit-soundness apex, and the two coincide (no
+registry lag — the apex is over the ALREADY-deployed descriptor set, so no further regen is owed).
+
+- **The apex.** `Dregg2.Circuit.KernelConfigSoundnessAvail.kernelConfigSoundAvail`:
+  `verifyBatch (vkOfRegistry RfixAvail) pi π = accept ⟹ ∃ pre post fa, StateDecode ∧ actionTag fa =
+  pi.effect ∧ fullActionStep pre fa post ∧ endpoints commit`. At `pi.effect ∈ {0,4}` the transition's
+  `amt ≤ bal` is FORCED by the deployed borrow chain — `availOf` is DISCHARGED at the descriptor the
+  light client verifies, not carried as a residual. STARK carrier is the enumerated
+  `AlgoStarkSoundKernelAvail.algoStarkSound_kernelAvail` (the two `.umemOp`-welded avail members route
+  through the umem memory-legs; every other tag via `algoStarkSound_kernel` transported across
+  `RfixAvail_off`). `#assert_axioms`-clean (⊆ {propext, Classical.choice, Quot.sound}, no `sorryAx`).
+  Landed `3ab0349de`; capstone builds green.
+- **`RfixAvail` = the deployed registry.** `RfixAvail` (`ClosureTransferAvail` §5) is `Rfix` with EXACTLY
+  the two debiting tags flipped to the deployed hardened members (`RfixAvail 0 = weldedTransferAvailWide`,
+  `RfixAvail 4 = weldedBurnAvailWide`; every other tag `Rfix` verbatim via `RfixAvail_off`). Those two
+  members are exactly the `-avail-…-umem-wide-welded-staged` rows the emitters
+  (`EmitWideRegistryProbe.lean` / `EmitWideUMemWeldRegistryProbe.lean`) write to the deployed TSVs — the
+  emit emits the hardened avail objects DIRECTLY, it does not range over bare `Rfix`.
+- **Consistency is byte-verified.** `scripts/check-descriptor-drift.sh` regenerates from the current-HEAD
+  Lean corpus and reports `NO-OP — all 73 descriptor files and 66 FP constants byte-identical to the Lean
+  emission`. So the deployed descriptor registry IS the current Lean emission of the hardened avail
+  members = the descriptors `RfixAvail` names. The apex therefore covers the already-deployed VK.
+- **Why `Rfix`/`vkOfRegistry` are deliberately unchanged.** The welded avail members append a `.umemOp`
+  that provably fails `MapShape`, so an in-place flip of `Rfix` would break the STARK-side
+  `algoStarkSound_kernel` map-shape enumeration (`Rfix 0 = transferV3Membership` is a load-bearing `rfl`).
+  `RfixAvail` is the additive parallel config-apex registry the light client verifies against — the bare
+  `Rfix` apex (`kernelConfigSound`) is untouched. This is a design split, NOT a lag: availability is BOTH
+  deployed AND proven at the apex, over the same VK.
 
 ## REMAINING (the DEBT-A campaign — multi-agent, cascading)
 The availability forgery class is closed; the rest of the DEBT-A cascade is mechanical repair, not
