@@ -1,0 +1,53 @@
+# `dreggnet-names` — a NAMESERVICE offering: register / transfer / resolve a name
+# as a `dreggnet_offerings::Offering`, proving the Offering abstraction extends to
+# IDENTITY / NAMING (not just the narrative dungeon #0).
+#
+# It WRAPS a real naming substrate — `starbridge-nameservice`'s per-name sovereign
+# cell (`name_cell_program`: `WriteOnce(NAME_HASH)` first-claim + the F1..F7
+# owner-authorization caveats), driven through the real `EmbeddedExecutor`. Each
+# actor is a distinct signer (its own `AppCipherclerk` + `EmbeddedExecutor`) sharing
+# ONE `Ledger`, so `ctx.sender` — bound by the executor to the action's own signer —
+# is a real cross-actor identity: a free name commits, a taken name is refused by the
+# WriteOnce first-claim tooth, an owner transfers, a NON-owner transfer is refused by
+# the owner-auth caveats. NO naming logic is re-implemented here.
+#
+# A breadstuffs workspace member (registered in the root `members`, not
+# `default-members` — a heavy substrate-adjacent crate). Build/test:
+#   cargo test -p dreggnet-names
+[package]
+name = "dreggnet-names"
+version = "0.1.0"
+edition = "2024"
+description = "A nameservice Offering (register/transfer/resolve) over starbridge-nameservice's per-name sovereign-cell substrate: register a free name commits a real TurnReceipt (resolves to the claimant), a taken name is refused by the WriteOnce first-claim tooth, an owner transfers (re-resolves to the new owner), a non-owner transfer is refused by the owner-authorization caveats, and verify() re-drives the registry chain by replay (a forged claim fails)."
+
+[dependencies]
+# THE OFFERING CORE — the `Offering` trait (open/actions/advance/verify/render/price),
+# `Action`/`Outcome`/`Surface`/`VerifyReport`/`DreggIdentity`. We implement it; we do
+# not modify it.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE NAMING SUBSTRATE — the per-name sovereign-cell program + the signed turn-builders
+# (`build_register_action` / `build_transfer_action` / `build_accept_transfer_action`)
+# + the slot schema (`NAME_HASH_SLOT` / `OWNER_PK_SLOT` / `EXPIRY_SLOT`). This crate
+# CONSUMES it — the WriteOnce first-claim + owner-auth teeth live there, unchanged.
+starbridge-nameservice = { path = "../starbridge-apps/nameservice" }
+# The executor / cipherclerk / effect surface: `EmbeddedExecutor` (the real referee),
+# `AppCipherclerk`, `Effect`/`Event`, the field helpers. `default-features = false`
+# takes the executor/turn core only (matching dreggnet-offerings).
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# `AgentRuntime::with_ledger` + `EmbeddedExecutor::from_runtime` — the seam that lets
+# EACH actor drive its OWN executor (its own per-agent nonce) over ONE shared `Ledger`,
+# so distinct real signers coexist and `ctx.sender` is a genuine cross-actor identity.
+dregg-sdk = { path = "../sdk" }
+# `Cell` / `Permissions` / `Ledger` — a per-name cell born into the shared ledger with
+# the substrate's `name_cell_program` installed + open `set_state` (so the CELL PROGRAM,
+# not a permission, is the sole gate — faithful to the substrate's stance).
+dregg-cell = { path = "../cell", default-features = false }
+dregg-types = { path = "../types" }
+# THE DEOS SURFACE — `ViewNode` / `MenuItem`, the gpui-free affordance view-tree an
+# offering's `render` produces (same surface the dungeon renders).
+deos-view = { path = "../deos-view", default-features = false }
+# Deterministic per-name cell derivation (blake3 of the name string).
+blake3 = "1"
+
+[lints]
+workspace = true

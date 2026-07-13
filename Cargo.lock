@@ -6589,6 +6589,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreggnet-names"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "deos-view",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-sdk",
+ "dregg-types",
+ "dreggnet-offerings",
+ "starbridge-nameservice",
+]
+
+[[package]]
 name = "dreggnet-offerings"
 version = "0.1.0"
 dependencies = [
