@@ -8164,3 +8164,33 @@ NAMED FOLLOW-UPS:
 - Migrate the twelve consumers' ORIGINAL `_under_floor` theorems onto the discharged keystone in-place
   (the discharged siblings currently sit alongside them in `ForkingDischargeConsumers`), then delete the
   `dlFork`/`msisFork` slots from `HybridCombiner` entirely.
+
+## 2026-07-13 — `Fips204Correct` lifted to FULL ML-DSA-65 dimension (`Dregg2/Crypto/Fips204FullDim.lean`)
+
+The trusted correctness floor of the deployed refinement (`DreggPqRefinement.dregg_pq_correct`'s
+`hfips : Fips204Correct api`) was discharged only for `Fips204Verify.extractedApi` — the n=1,
+`A = LinearMap.id`, constant-challenge `c = 1`, fixed-secret SCALAR caricature. It is now proven at
+the REAL ring `R_q = Z_q[X]/(X^256+1)` over `M = R_q^5` / `N = R_q^6`, for an ARBITRARY linear `A`,
+ARBITRARY Fiat-Shamir hash, ARBITRARY SampleInBall sampler and ARBITRARY secret
+(`fullDimApi_fips204`), and fed to `dregg_pq_correct` (`fullDimApi_correct`). Kernel-clean — and
+deliberately SYMBOLIC, so the lift does not trade the toy residual for a `native_decide`/trustCompiler
+one.
+
+NAMED FOLLOW-UPS:
+- THE NEGACYCLIC SHIFT LEMMA (the lever). `repr (root * x) j = if j = 0 then -(repr x 255) else
+  repr x (j-1)` over `Fips204CorrectReal.pb` — the coefficient-level form of the already-PROVED
+  `root_pow_256 : root^256 = -1`. It unlocks the tau-sparse SampleInBall norm bound
+  `|c.s|_inf <= tau * |s|_inf` (tau = 49, eta = 4 => `|c.s2| <= beta = 196`; `2^(d-1) = 4096` =>
+  `|c.t0| <= 200704 <= gamma2`). With it, THREE of the four `HonestKey` gates (`hint_small`,
+  `cs2_small`, `resp_bound`) become THEOREMS from the secret's norm, and the residual collapses to
+  `commit_gap` ALONE — the single genuinely-resampled FIPS condition. Friction to expect: `Fin pb.dim`
+  vs `Fin 256` transport (`realDim` is a propositional eq, not defeq).
+- THE `Poly <-> R_q` COEFFICIENT BRIDGE. `MlDsaRing.Poly` (an `Array Nat` — what `NttFaithful`'s
+  now-forall `ntt_computes_negacyclic_mul` / `ntt_intt_id` talk about) vs `pb.basis.repr` (what `rv`,
+  and hence `realRoundingK`, reads). With that bridge, `fips204Correct_of_fullDim` carries the
+  byte-level `MlDsaSignReal.signCore` / `MlDsaVerifyReal.verifyCore` to a full-dimension
+  `Fips204Correct` — and `MlDsaVerifyReal.verify_accepts_real`'s `native_decide` reverts to what it
+  should be: a cross-check against the crate, not a load-bearing step.
+- THE REMAINING RESIDUAL IS REJECTION-TERMINATION, and it is where it belongs: `HonestKey` bundles the
+  four gates FIPS 204 Alg. 7's loop evaluates. It is probabilistic (~4.25 expected iterations), not a
+  theorem. Do NOT "close" it by weakening `Fips204Correct`.
