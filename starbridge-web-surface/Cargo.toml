@@ -105,4 +105,15 @@ stream = ["dep:futures-core"]
 
 [dev-dependencies]
 # (tests live inline in each module + in `tests/`)
+#
+# The app framework — consumed ONLY as a dev-dependency (tests/game_reactor.rs),
+# because `dregg-app-framework` already depends on THIS crate for its affordance/
+# rehydration re-exports; a normal back-edge would be a forbidden dependency cycle,
+# but cargo permits a DEV-dependency cycle (the framework's lib builds first, then
+# this crate's tests link it). `default-features = false` selects the wasm-clean
+# core (the `Reactor` front-door + `EmbeddedExecutor` + cell/turn primitives),
+# dropping the axum/tokio server stack. This gives the game-loop reactors
+# (GameReactor / RevealReactor) the REAL `app_framework::Reactor` +
+# `plan_reaction`/`react_build` cap-gate, never a parallel one.
+dregg-app-framework = { path = "../app-framework", default-features = false }
 
