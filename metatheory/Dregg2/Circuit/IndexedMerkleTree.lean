@@ -500,6 +500,91 @@ theorem demo_present_not_absent : ¬ ImtAbsent demoChain 20 := by
 
 end Teeth
 
+/-! ## §9b — ★ THE LAYOUT: the chain↔vector correspondence, and MEMBERSHIP DISCHARGED FROM IT.
+
+This is the seam §10's bridge previously took as a bare `low ∈ c` MEMBERSHIP hypothesis. A2's law
+lives on the FLAT committed digest vector `xs` (`xs[p1]? = some (imtLeafHash low)`, CR-bound); the
+chain invariants live on the SORTED `c : List ImtLeaf`. The connecting fact is the placement of the
+chain's leaves into the flat `2^dep` vector — the layout `heap_root.rs` maintains
+(`CanonicalHeapTree8::new` places leaves at slots + `insert_witness_aafi.append_order_after` appends
+at the free slot, low edited in place).
+
+★ THE ORDER OBSERVATION (why membership is modelable but the placement is not a function of `c`):
+the DEPLOYED placement is APPEND order (insertion history), NOT sorted order — the post-insert root is
+`fold_append_order_8(append_order_after)`, so a later insert's pre-vector is append-, not sorted-,
+ordered. The exact position of a leaf in `xs` is therefore order-dependent and NOT reconstructible
+from the sorted `c` alone. BUT the fact the bridge needs — that the opened low leaf is a MEMBER of `c`
+— is order-INVARIANT: it survives any permutation. So we model the physical vector as the layout of a
+PHYSICAL leaf list `phys` that is a `List.Perm` of the logical chain `c` (same multiset, reordered),
+and DISCHARGE membership from that. The residual is the named, differential-checkable
+`ImtVecCorr` faithfulness (`xs = imtLayout phys ∧ phys ~ c`) — NOT a free membership. -/
+
+section Layout
+
+/-- **`imtLayout hash pad n phys`** — the flat committed digest vector obtained by placing the
+PHYSICAL leaf list `phys` (the append-order slots the producer maintains) at positions `0…`, then
+PADDING to length `n = 2^dep` with the empty-slot digest `pad`. The digest-vector face of
+`heap_root.rs::fold_append_order_8` (the leaf-digest prefix + the empty-subtree padding). -/
+def imtLayout (hash : List ℤ → ℤ) (pad : ℤ) (n : Nat) (phys : List ImtLeaf) : List ℤ :=
+  phys.map (imtLeafHash hash) ++ List.replicate (n - phys.length) pad
+
+/-- **`mem_phys_of_layout_get` — MEMBERSHIP FROM THE LAYOUT (a pure Lean fact).** Any occupied cell of
+`imtLayout hash pad n phys` holding a leaf digest (distinct from the empty-slot `pad`) is the digest of
+a genuine member of `phys`: the append-splits into the leaf-digest prefix (⟹ `∈ phys` by CR
+injectivity) or the `pad` replicate (excluded by `hpad`). NO re-assumption — proved from `imtLayout`'s
+definition. -/
+theorem mem_phys_of_layout_get (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {pad : ℤ} {n : Nat} {phys : List ImtLeaf} {p : Nat} {low : ImtLeaf}
+    (hpad : imtLeafHash hash low ≠ pad)
+    (hp : (imtLayout hash pad n phys)[p]? = some (imtLeafHash hash low)) :
+    low ∈ phys := by
+  have hmem : imtLeafHash hash low ∈ imtLayout hash pad n phys := List.mem_of_getElem? hp
+  rw [imtLayout, List.mem_append] at hmem
+  rcases hmem with hL | hR
+  · rw [List.mem_map] at hL
+    obtain ⟨l, hlp, hlh⟩ := hL
+    rwa [imtLeafHash_injective hash hCR hlh] at hlp
+  · exact absurd (List.eq_of_mem_replicate hR) hpad
+
+/-- **`ImtVecCorr hash pad n c xs`** — the chain↔vector correspondence the producer maintains, lifted
+to a NAMED Lean predicate: the committed digest vector `xs` is the `imtLayout` of some physical leaf
+list `phys` that is a `List.Perm` of the logical sorted chain `c`. This is the maximal honest content
+below the (order-dependent) placement map: the permutation is all that survives the append-order
+scramble, and it is exactly what membership needs. The named, differential-checkable Lean↔Rust
+faithfulness (same class as every descriptor boundary) that REPLACES the bare `low ∈ c` hypothesis. -/
+def ImtVecCorr (hash : List ℤ → ℤ) (pad : ℤ) (n : Nat)
+    (c : List ImtLeaf) (xs : List ℤ) : Prop :=
+  ∃ phys : List ImtLeaf, xs = imtLayout hash pad n phys ∧ List.Perm phys c
+
+/-- **`imtVecCorr_mem` — the membership the bridge needs, DERIVED from the correspondence.** Given the
+`ImtVecCorr` faithfulness, a CR-bound low leaf opened at any cell of `xs` (distinct from `pad`) is a
+member of the sorted chain `c`: it is a member of the physical list (`mem_phys_of_layout_get`), and the
+permutation carries membership to `c` (`Perm.mem_iff`). This is the pure Lean fact that discharges the
+seam — the old `low ∈ c` hypothesis is now a THEOREM about the layout. -/
+theorem imtVecCorr_mem (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {pad : ℤ} {n : Nat} {c : List ImtLeaf} {xs : List ℤ} {p : Nat} {low : ImtLeaf}
+    (hcorr : ImtVecCorr hash pad n c xs)
+    (hpad : imtLeafHash hash low ≠ pad)
+    (hp : xs[p]? = some (imtLeafHash hash low)) :
+    low ∈ c := by
+  obtain ⟨phys, hxs, hperm⟩ := hcorr
+  subst hxs
+  exact hperm.mem_iff.mp (mem_phys_of_layout_get hash hCR hpad hp)
+
+/-- **`PreRootModelsChain hash pad dep c oldRoot`** — the producer faithfulness for the AAFI PRE-root:
+whatever digest vector the gate commits behind `oldRoot` (`oldRoot = perfectRoot hash dep xs`) is an
+`ImtVecCorr` of the sorted chain `c`. The root→vector binding is the in-floor CR/FRI commitment; the
+genuine residual carried here is the layout faithfulness `xs = imtLayout phys ∧ phys ~ c`. This is the
+NAMED differential (what a `heap_root.rs`↔Lean check verifies: `xs` bytes = `imtLayout` of the
+append-order `append_order_after`, a permutation of the `sorted_leaves` chain), NOT a free membership.
+-/
+def PreRootModelsChain (hash : List ℤ → ℤ) (pad : ℤ) (dep : Nat)
+    (c : List ImtLeaf) (oldRoot : ℤ) : Prop :=
+  ∀ xs : List ℤ, xs.length = 2 ^ dep → oldRoot = perfectRoot hash dep xs →
+    ImtVecCorr hash pad (2 ^ dep) c xs
+
+end Layout
+
 /-! ## §10 — ★ THE AAFI BRIDGE: the deployed AAFI gates' law (A2) DERIVES sorted-chain preservation
 and `CanonicalHeapExtract`, closing the gap-#5 residual into `{Poseidon2SpongeCR, FRI-LDT}`.
 
@@ -509,16 +594,19 @@ the DIGEST-VECTOR FACE of the two-point update PLUS the pointer bracket `low.add
 `imtInsert`/`imtInsert_preserves` (`IndexedMerkleTree` IMPORTS `MapOpsColumnLayout`, not the reverse),
 so the one-lemma follow-up lives HERE, where both A2's law and `imtInsert_preserves` are in scope.
 
-⚠ NAMED SHAPE SEAM (per `feedback-named-seam-is-not-a-hole.md`): A2's conclusion lives on the FLAT
-committed digest vector `xs : List ℤ` (length `2^dep`, positions `p1/p2`); `imtInsert` lives on the
-SORTED chain `c : List ImtLeaf`. The one fact connecting the two representations — that the low leaf
-the AAFI row OPENS (bound into `xs` at `p1` by `pathRecompute_binds_updates` under CR) is the SAME
-leaf sitting in the sorted chain `c` — is the chain↔vector commitment correspondence, maintained by
-the `heap_root.rs` producer and modeled in NEITHER Lean file. The bridge takes it as the explicit
-`(⟨lowAddr, lowValue, lowNext⟩ : ImtLeaf) ∈ c` hypothesis (a MEMBERSHIP fact — NOT `ImtSorted`, NOT
-`CanonicalHeapExtract`; nothing re-assumed). Given it, A2's forced bracket IS an `ImtAbsent c k`
-witness, and `imtInsert_preserves` fires. This is the maximal bridge below the (unmodeled)
-representation map. -/
+⚠ NAMED SHAPE SEAM (per `feedback-named-seam-is-not-a-hole.md`) — NOW DISCHARGED into the layout (§9b):
+A2's conclusion lives on the FLAT committed digest vector `xs : List ℤ` (length `2^dep`, positions
+`p1/p2`); `imtInsert` lives on the SORTED chain `c : List ImtLeaf`. The connecting fact — that the low
+leaf the AAFI row OPENS (bound into `xs` at `p1` by `pathRecompute_binds_updates` under CR) is a MEMBER
+of the sorted chain `c` — was previously a bare `(⟨lowAddr,lowValue,lowNext⟩ : ImtLeaf) ∈ c` hypothesis.
+§9b MODELS the chain↔vector correspondence (`imtLayout` + `ImtVecCorr`) and DISCHARGES membership FROM
+it (`imtVecCorr_mem`): the `_layout` bridge (§10-L) consumes `PreRootModelsChain` — the named,
+differential-checkable faithfulness `xs = imtLayout phys ∧ phys ~ c` — and DERIVES `low ∈ c` as a
+theorem. The exact placement is order-dependent (append order, not a function of `c`) and stays as the
+differential, but MEMBERSHIP is order-invariant, so nothing about `low ∈ c` remains assumed. The plain
+`aafiGates_force_*` below still take the raw membership (the underlying lemmas the `_layout` twins call);
+the deployed guarantee is the `_layout` chain: gap #5 reduces into `{Poseidon2SpongeCR, FRI-LDT}` + the
+`PreRootModelsChain` layout differential — same class as every Lean↔Rust descriptor boundary. -/
 
 section AafiBridge
 
@@ -555,6 +643,98 @@ theorem aafiGates_force_sortedKeys (hash : List ℤ → ℤ) (hCR : Poseidon2Spo
     imtInsert_preserves hs (aafiGates_force_imtAbsent hash hCR dep hg hlow)
   exact ⟨hpost, imtSorted_sortedKeys hpost⟩
 
+/-! ### §10-L — ★ THE REWIRED BRIDGE: consume the `imtLayout`-correspondence, not a bare membership.
+The `_layout` lemmas DISCHARGE the `low ∈ c` the plain bridge assumed — they DERIVE it from the named
+`PreRootModelsChain` faithfulness (`imtVecCorr_mem` on A2's CR-bound opening `xs[p1]? = some (low)`),
+so the seam is now `xs = imtLayout phys ∧ phys ~ c` (differential-checkable), not a free `low ∈ c`. -/
+
+/-- **`aafiGates_force_lowMem_layout` — the LOW-LEAF MEMBERSHIP, discharged from the layout.** The seam
+itself, closed: A2's CR-bound opening `xs[p1]? = some (imtLeafHash low)` against the committed pre-root,
+fed through the `PreRootModelsChain` layout faithfulness (`imtVecCorr_mem`), YIELDS `low ∈ c`. This is
+the fact the plain bridge took as a bare hypothesis — now a theorem about `imtLayout`. -/
+theorem aafiGates_force_lowMem_layout (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (dep : Nat) (pad : ℤ)
+    {c : List ImtLeaf} {oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty : ℤ}
+    (hg : MapOpsColumnLayout.AafiGatesAt hash dep
+      oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty)
+    (hpad : imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩ ≠ pad)
+    (hcorr : PreRootModelsChain hash pad dep c oldRoot) :
+    (⟨lowAddr, lowValue, lowNext⟩ : ImtLeaf) ∈ c := by
+  obtain ⟨xs, p1, p2, hlen, hne, hor, hmem1, hmem2, hnew, hlk, hkn⟩ :=
+    MapOpsColumnLayout.aafiInsert_forces_imtInsert hash hCR dep hg
+  -- `aafiLeafHash hash a v n` and `imtLeafHash hash ⟨a,v,n⟩` are both `hash [a,v,n]` (defeq).
+  have hmem1' : xs[p1]? = some (imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩) := hmem1
+  exact imtVecCorr_mem hash hCR (hcorr xs hlen hor) hpad hmem1'
+
+/-- **`aafiGates_force_imtAbsent_layout` — the bracket witness with membership DISCHARGED.** Same
+conclusion as `aafiGates_force_imtAbsent`, but instead of the bare `low ∈ c` hypothesis it consumes the
+`PreRootModelsChain` layout faithfulness (and the low leaf ≠ the empty-slot digest): the membership is
+now derived (`aafiGates_force_lowMem_layout`) and A2's forced bracket completes the `ImtAbsent c k`
+witness. The membership is a THEOREM about the layout, not an import from the producer. -/
+theorem aafiGates_force_imtAbsent_layout (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (dep : Nat) (pad : ℤ)
+    {c : List ImtLeaf} {oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty : ℤ}
+    (hg : MapOpsColumnLayout.AafiGatesAt hash dep
+      oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty)
+    (hpad : imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩ ≠ pad)
+    (hcorr : PreRootModelsChain hash pad dep c oldRoot) :
+    ImtAbsent c k :=
+  aafiGates_force_imtAbsent hash hCR dep hg
+    (aafiGates_force_lowMem_layout hash hCR dep pad hg hpad hcorr)
+
+/-- **`aafiGates_force_sortedKeys_layout` — sorted-chain preservation with membership DISCHARGED.** The
+`_layout` twin of `aafiGates_force_sortedKeys`: on an `ImtSorted` pre-chain, an accepting AAFI row plus
+the `PreRootModelsChain` layout faithfulness yields the `ImtSorted` post-chain and its `Heap.SortedKeys`
+projection — the sortedness `CanonicalHeapExtract` carries, now forced by the gates and the NAMED
+layout correspondence, with NO free membership. -/
+theorem aafiGates_force_sortedKeys_layout (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    (dep : Nat) (pad : ℤ)
+    {c : List ImtLeaf} {oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty : ℤ}
+    (hs : ImtSorted c)
+    (hg : MapOpsColumnLayout.AafiGatesAt hash dep
+      oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty)
+    (hpad : imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩ ≠ pad)
+    (hcorr : PreRootModelsChain hash pad dep c oldRoot) :
+    ImtSorted (imtInsert c k v) ∧ Heap.SortedKeys (imtToHeap (imtInsert c k v)) := by
+  have hpost : ImtSorted (imtInsert c k v) :=
+    imtInsert_preserves hs (aafiGates_force_imtAbsent_layout hash hCR dep pad hg hpad hcorr)
+  exact ⟨hpost, imtSorted_sortedKeys hpost⟩
+
+/-- **`AafiReachableL`** — the DEPLOYED AAFI stream with the seam DISCHARGED: each step is an accepting
+AAFI gate row PLUS the NAMED `PreRootModelsChain` layout faithfulness (and the low leaf ≠ empty),
+replacing the bare `low ∈ c`. Membership is derived per step from the layout, so this reachability rests
+on `{Poseidon2SpongeCR, FRI-LDT}` + the differential-checkable `xs = imtLayout phys ∧ phys ~ c`. -/
+inductive AafiReachableL (hash : List ℤ → ℤ) (pad : ℤ) (dep : Nat) (lo hi : ℤ) :
+    List ImtLeaf → Prop where
+  | genesis : AafiReachableL hash pad dep lo hi (genesis lo hi)
+  | step {c k v oldRoot newRoot lowAddr lowValue lowNext freeEmpty} :
+      AafiReachableL hash pad dep lo hi c →
+      MapOpsColumnLayout.AafiGatesAt hash dep
+        oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty →
+      imtLeafHash hash ⟨lowAddr, lowValue, lowNext⟩ ≠ pad →
+      PreRootModelsChain hash pad dep c oldRoot →
+      AafiReachableL hash pad dep lo hi (imtInsert c k v)
+
+/-- **`aafiReachableL_sorted` — THE AAFI CHAIN INVARIANT, seam discharged.** Every chain the deployed
+AAFI stream reaches is `ImtSorted`, with each step's membership DERIVED from the layout faithfulness
+(`aafiGates_force_imtAbsent_layout`) rather than assumed. -/
+theorem aafiReachableL_sorted (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (pad : ℤ)
+    (dep : Nat) {lo hi : ℤ} (hlohi : lo < hi) {c : List ImtLeaf}
+    (h : AafiReachableL hash pad dep lo hi c) : ImtSorted c := by
+  induction h with
+  | genesis => exact genesis_sorted hlohi
+  | step _ hg hpad hcorr ih =>
+      exact imtInsert_preserves ih (aafiGates_force_imtAbsent_layout hash hCR dep pad hg hpad hcorr)
+
+/-- **`aafiChainL_canonicalHeapExtract` — CanonicalHeapExtract DERIVED, seam discharged.** Every root
+the deployed AAFI stream reaches projects to `Heap.SortedKeys` — the residual is now EXACTLY
+`{Poseidon2SpongeCR, FRI-LDT}` + the NAMED `PreRootModelsChain` layout differential, with the low-leaf
+membership no longer a free assumption but a theorem (`imtVecCorr_mem`). -/
+theorem aafiChainL_canonicalHeapExtract (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (pad : ℤ)
+    (dep : Nat) {lo hi : ℤ} (hlohi : lo < hi) {c : List ImtLeaf}
+    (h : AafiReachableL hash pad dep lo hi c) : Heap.SortedKeys (imtToHeap c) :=
+  imtSorted_sortedKeys (aafiReachableL_sorted hash hCR pad dep hlohi h)
+
 /-- **`AafiReachable`** — the chains the DEPLOYED AAFI-routed turn stream reaches: the genesis
 sentinel chain, or one accepting AAFI ROW (`AafiGatesAt` + the opened low leaf in the current chain)
 from a reachable chain. The `Reachable` twin whose step is an actual GATE acceptance rather than an
@@ -590,6 +770,18 @@ theorem aafiChain_canonicalHeapExtract (hash : List ℤ → ℤ) (hCR : Poseidon
     (h : AafiReachable hash dep lo hi c) : Heap.SortedKeys (imtToHeap c) :=
   imtSorted_sortedKeys (aafiReachable_sorted hash hCR dep hlohi h)
 
+/-- **`aafiReachableL_toReachable`** — the DISCHARGED reachability REFINES the plain one: every step's
+derived `low ∈ c` (via the layout, `aafiGates_force_lowMem_layout`) is exactly the membership the plain
+`AafiReachable.step` took as data. So `AafiReachableL` is a genuine strengthening — it consumes strictly
+less (a checkable layout fact, not a free membership) yet reaches the same chains. -/
+theorem aafiReachableL_toReachable (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (pad : ℤ)
+    (dep : Nat) {lo hi : ℤ} {c : List ImtLeaf}
+    (h : AafiReachableL hash pad dep lo hi c) : AafiReachable hash dep lo hi c := by
+  induction h with
+  | genesis => exact AafiReachable.genesis
+  | step _ hg hpad hcorr ih =>
+      exact AafiReachable.step ih hg (aafiGates_force_lowMem_layout hash hCR dep pad hg hpad hcorr)
+
 /-! ### §10a — NON-VACUITY TEETH: a concrete accepting AAFI row FIRES the derivation; a forged
 (out-of-gap) row admits NO gate, so it cannot reach it. On the CR-proved reference sponge, at the
 2-level toy heap (heap-safe: depth-generic law applied symbolically, no `2^16` object, no field
@@ -621,6 +813,74 @@ theorem aafi_forged_no_gate :
         (MapOpsColumnLayout.aafiEmpty refSponge) :=
   MapOpsColumnLayout.aafi_toy_out_of_gap_bites refSponge
 
+/-! ### §10b — LAYOUT NON-VACUITY: the DISCHARGED bridge fires end-to-end — membership DERIVED from a
+real `imtLayout`, not re-assumed; a concrete `ImtVecCorr`/`PreRootModelsChain` holds for the toy
+pre-root (via `perfectRoot_injective`). Heap-safe: the layout is a 4-cell symbolic list, no `2^16`,
+no field `decide`. -/
+
+open Dregg2.Circuit.MapMerkleRoot (perfectRoot_injective)
+
+/-- The genesis MIN-sentinel leaf `⟨0,0,100⟩` is DISTINCT from the empty-slot digest `hash[0,0,0]`:
+under CR, `hash[0,0,100] = hash[0,0,0]` would force `100 = 0`. Discharges the `hpad` side-condition —
+no real bracketing low leaf collides with the pad. -/
+theorem toy_low_ne_pad :
+    imtLeafHash refSponge ⟨0, 0, 100⟩ ≠ MapOpsColumnLayout.aafiEmpty refSponge := by
+  intro h
+  have h' : imtLeafHash refSponge ⟨0, 0, 100⟩ = imtLeafHash refSponge ⟨0, 0, 0⟩ := h
+  have heq : (⟨0, 0, 100⟩ : ImtLeaf) = ⟨0, 0, 0⟩ := imtLeafHash_injective refSponge refSponge_CR h'
+  exact absurd (congrArg ImtLeaf.nextAddr heq) (by norm_num)
+
+/-- **★ `ImtVecCorr` HOLDS concretely** — the toy committed vector `aafiXsToy` IS the `imtLayout` of the
+genesis chain (`phys = genesis 0 100`, a `List.Perm.refl`): the low leaf at cell 0, empties elsewhere.
+The correspondence predicate is inhabited by a real layout, not vacuous. -/
+theorem toy_imtVecCorr :
+    ImtVecCorr refSponge (MapOpsColumnLayout.aafiEmpty refSponge) 4
+      (genesis 0 100) (MapOpsColumnLayout.aafiXsToy refSponge) :=
+  ⟨genesis 0 100, rfl, List.Perm.refl _⟩
+
+/-- **★ `PreRootModelsChain` HOLDS for the toy pre-root** — any length-4 vector committing to
+`aafiOldRootToy` IS the genesis layout: `perfectRoot_injective` peels the root to `aafiXsToy`, then
+`toy_imtVecCorr`. The named faithfulness is discharged for a concrete pre-root — the residual is a
+GENUINE, satisfiable predicate (the differential a `heap_root.rs`↔Lean check certifies), not a hole. -/
+theorem toy_preRootModelsChain :
+    PreRootModelsChain refSponge (MapOpsColumnLayout.aafiEmpty refSponge) 2
+      (genesis 0 100) (MapOpsColumnLayout.aafiOldRootToy refSponge) := by
+  intro xs hxlen hroot
+  have hxsToyLen : (MapOpsColumnLayout.aafiXsToy refSponge).length = 2 ^ 2 := by decide
+  have hroots : perfectRoot refSponge 2 (MapOpsColumnLayout.aafiXsToy refSponge)
+      = perfectRoot refSponge 2 xs := by
+    rw [show perfectRoot refSponge 2 (MapOpsColumnLayout.aafiXsToy refSponge)
+          = MapOpsColumnLayout.aafiOldRootToy refSponge from rfl, hroot]
+  have hxs : MapOpsColumnLayout.aafiXsToy refSponge = xs :=
+    perfectRoot_injective refSponge refSponge_CR 2 hxsToyLen hxlen hroots
+  rw [← hxs]; exact toy_imtVecCorr
+
+/-- **★ MEMBERSHIP DISCHARGED — the seam CLOSED end-to-end.** `aafiGates_force_lowMem_layout` DERIVES
+`⟨0,0,100⟩ ∈ genesis 0 100` from the accepting toy gate + the layout faithfulness — the fact the plain
+bridge took as a bare hypothesis is now PRODUCED, on a real accepting row. NOT re-assumed. -/
+theorem aafiL_lowMem_fires :
+    (⟨0, 0, 100⟩ : ImtLeaf) ∈ genesis (0 : ℤ) 100 :=
+  aafiGates_force_lowMem_layout refSponge refSponge_CR 2 (MapOpsColumnLayout.aafiEmpty refSponge)
+    (MapOpsColumnLayout.aafi_toy_gates refSponge) toy_low_ne_pad toy_preRootModelsChain
+
+/-- **★ RESPECTING TOOTH (layout path) — the DISCHARGED AAFI row FIRES.** The honest gate data plus the
+NAMED layout faithfulness steps `AafiReachableL` — the deployed gate DERIVES a reachable post-chain with
+the low membership no longer assumed but proved from `imtLayout`. -/
+theorem aafiL_genesis_reachable :
+    AafiReachableL refSponge (MapOpsColumnLayout.aafiEmpty refSponge) 2 (0 : ℤ) 100
+      (imtInsert (genesis 0 100) 50 7) :=
+  AafiReachableL.step AafiReachableL.genesis
+    (MapOpsColumnLayout.aafi_toy_gates refSponge) toy_low_ne_pad toy_preRootModelsChain
+
+/-- **★ …and it PROJECTS to `Heap.SortedKeys`** — `CanonicalHeapExtract` fired from the deployed gate
+acceptance, through the DISCHARGED bridge (membership from the layout), to the sortedness conjunct. The
+gap-#5 residual for this path is `{Poseidon2SpongeCR, FRI-LDT}` + the named `PreRootModelsChain`
+differential — no free membership. -/
+theorem aafiL_genesis_sortedKeys :
+    Heap.SortedKeys (imtToHeap (imtInsert (genesis 0 100) 50 7)) :=
+  aafiChainL_canonicalHeapExtract refSponge refSponge_CR
+    (MapOpsColumnLayout.aafiEmpty refSponge) 2 (by norm_num) aafiL_genesis_reachable
+
 end AafiBridge
 
 /-! ## §11 — AXIOM HYGIENE. -/
@@ -647,5 +907,20 @@ end AafiBridge
 #assert_axioms aafi_genesis_reachable
 #assert_axioms aafi_genesis_sortedKeys
 #assert_axioms aafi_forged_no_gate
+-- §9b/§10-L: the layout correspondence + the DISCHARGED bridge (membership no longer assumed).
+#assert_axioms mem_phys_of_layout_get
+#assert_axioms imtVecCorr_mem
+#assert_axioms aafiGates_force_lowMem_layout
+#assert_axioms aafiGates_force_imtAbsent_layout
+#assert_axioms aafiGates_force_sortedKeys_layout
+#assert_axioms aafiReachableL_sorted
+#assert_axioms aafiChainL_canonicalHeapExtract
+#assert_axioms aafiReachableL_toReachable
+#assert_axioms toy_low_ne_pad
+#assert_axioms toy_imtVecCorr
+#assert_axioms toy_preRootModelsChain
+#assert_axioms aafiL_lowMem_fires
+#assert_axioms aafiL_genesis_reachable
+#assert_axioms aafiL_genesis_sortedKeys
 
 end Dregg2.Circuit.IndexedMerkleTree
