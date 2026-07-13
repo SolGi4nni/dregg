@@ -23,12 +23,14 @@ import {IDreggSettlement} from "./IDreggSettlement.sol";
 /// sibling path (position-indexed by `leafIndex`) and requires it to be one
 /// `DreggSettlement` has recorded.
 ///
-/// ⚠ SCOPE (honest, not laundered): the message→root leg is currently
-/// OPERATOR-ATTESTED — `DreggSettlement.settle` records `outboundMessageRoot`
-/// when a valid settlement proof lands, but the 25-lane proof does not yet BIND
-/// the root to the actual messages. Making it fully proof-carrying is a
-/// dregg-circuit residual (a 26th proof lane, or a keccak fold into
-/// `chainDigest`). The proven-STATE half IS by-proof today; this leg is not yet.
+/// ⚠ SCOPE (honest, not laundered): the message→root leg is FAIL-CLOSED today.
+/// The 25-lane proof does not yet carry an outbound-message commitment, so
+/// `DreggSettlement` refuses to record ANY message root (`settle` reverts on a
+/// non-zero `outboundMessageRoot`; the former operator-attested recording is
+/// REMOVED) and `isProvenMessageRoot` is always false — this ISM therefore
+/// rejects all message inclusion until the proof-bound leg lands (the apex
+/// exposing a message commitment as extra claim lanes; see the named residual
+/// in DreggSettlement.sol). The proven-STATE half IS by-proof today.
 ///
 /// ## Historical-root gate (why `isProvenMessageRoot`, historical not current)
 ///

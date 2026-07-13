@@ -876,10 +876,12 @@ interface IDreggSettlementV2 {
     /// @param numTurns    Number of finalized turns folded (canonical BabyBear).
     /// @param chainDigest 8-lane Poseidon2 digest over the ordered (old,new)
     ///                    root pairs.
-    /// @param outboundMessageRoot keccak Merkle root over the span's outbound
-    ///                    cross-chain messages, recorded for adapter inclusion
-    ///                    checks (0 = none). NOT a proof public input —
-    ///                    operator-attested pending proof-binding.
+    /// @param outboundMessageRoot RESERVED for the proof-bound outbound-message
+    ///                    commitment. MUST be bytes32(0) today: the 25-lane
+    ///                    proof carries no message commitment, so the contract
+    ///                    REVERTS on any non-zero value
+    ///                    (MessageRootNotProofBound, fail closed — the
+    ///                    operator-attested recording path is removed).
     /// Reverts if the pairing check fails, any lane >= 2013265921, or the
     /// genesisRoot key mismatches the proven root key.
     function settle(
@@ -953,9 +955,12 @@ pub struct EthSettlementProofV2 {
     /// keccak256 commitment to the underlying recursive STARK root this proof
     /// wraps (binds the SNARK to the dregg proof it attests).
     pub recursive_root_commitment: [u8; 32],
-    /// The span's outbound cross-chain message root (`bytes32(0)` = none).
-    /// NOT a proof public input — operator-attested pending proof-binding
-    /// (the contract's named residual).
+    /// The span's outbound cross-chain message root. MUST be `[0u8; 32]`
+    /// today: the contract fails closed (`MessageRootNotProofBound`) on any
+    /// non-zero value because the 25-lane proof carries no outbound-message
+    /// commitment to bind it to. The field (and calldata word 37) is reserved
+    /// for the proof-bound leg — apex message-commitment claim lanes (the
+    /// contract's named residual in `DreggSettlement.sol`).
     pub outbound_message_root: [u8; 32],
 }
 

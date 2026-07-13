@@ -29,23 +29,36 @@ contract DreggSettlement is IDreggSettlement {
     /// (the Nomad-law default), so `isProvenRoot(0)` is always false.
     mapping(bytes32 => bool) private _provenRoots;
 
-    /// Every OUTBOUND MESSAGE ROOT recorded alongside a settlement: a keccak
-    /// Merkle root over the cross-chain messages/events finalized in that span —
-    /// an EVM-friendly (keccak) commitment DISTINCT from the dregg STATE root
-    /// (`packLanes`, a keccak of 8 Poseidon/BabyBear lanes, under which no EVM
-    /// contract can cheaply prove message inclusion). Interchain adapters
-    /// (Hyperlane ISM, LayerZero DVN) verify a message's inclusion under one of
-    /// these, gated by `isProvenMessageRoot`.
-    ///
-    /// NAMED RESIDUAL (honest scope, not laundered): the `settle` proof does NOT
-    /// yet BIND `outboundMessageRoot` to the actual outbound messages — it is
-    /// OPERATOR-ATTESTED at settle time (recorded only when a valid settlement
-    /// proof lands, but the 25-lane proof does not constrain its contents).
-    /// Making the message→root leg proof-carrying is a dregg-circuit obligation
-    /// (expose the message root as a 26th proof public input, or fold it into
-    /// `chainDigest` as a keccak-reconstructible commitment). `bytes32(0)` is
-    /// never recorded.
-    mapping(bytes32 => bool) private _provenMessageRoots;
+    // OUTBOUND MESSAGE ROOTS — FAIL-CLOSED (no storage, no recording path).
+    //
+    // A span's outbound-message root is a keccak Merkle root over the
+    // cross-chain messages finalized in that span — an EVM-friendly (keccak)
+    // commitment DISTINCT from the dregg STATE root (`packLanes`, a keccak of
+    // 8 Poseidon/BabyBear lanes, under which no EVM contract can cheaply prove
+    // message inclusion). Interchain adapters (Hyperlane ISM, LayerZero DVN)
+    // gate message inclusion on `isProvenMessageRoot`.
+    //
+    // The 25-lane proof (genesis_root ++ final_root ++ num_turns ++
+    // chain_digest) carries NO outbound-message commitment: chain_digest is the
+    // segment accumulator over (old_root, new_root) pairs only
+    // (circuit-prove/src/ivc_turn_chain.rs), so there is nothing proof-bound to
+    // check a submitted message root against. The former behavior — record the
+    // operator-supplied `outboundMessageRoot` whenever a valid settlement proof
+    // landed — was an OPERATOR-TRUST hole: a settling operator could attest an
+    // arbitrary root and forge message inclusion through the adapters. That
+    // path is REMOVED: `settle` reverts on any non-zero `outboundMessageRoot`
+    // (`MessageRootNotProofBound`) and `isProvenMessageRoot` returns false for
+    // every input, until the proof itself exposes the commitment.
+    //
+    // NAMED RESIDUAL (the proof-bound leg, a dregg-circuit obligation): the
+    // turn already commits its emitted effects (the 4-felt Poseidon2
+    // effects-tree hash at descriptor PI EFFECTS_HASH, circuit/src/effect_vm/
+    // pi.rs) but that commitment is not threaded into the apex claim — the
+    // fold's segment accumulator must absorb a per-turn outbound-message
+    // commitment, the apex must expose it as additional claim lanes
+    // (expose_claim), the shrink + gnark SettlementCircuit must bind those
+    // lanes as extra public inputs (a new Groth16 VK), and THEN this contract
+    // checks `outboundMessageRoot` against the proof's lanes before recording.
 
     constructor(
         IGroth16Verifier25 verifier_,
@@ -91,12 +104,14 @@ contract DreggSettlement is IDreggSettlement {
         return _provenRoots[root];
     }
 
-    /// True iff `messageRoot` was recorded by a settlement (any historical span).
-    /// `isProvenMessageRoot(0)` is always false (the Nomad-law default). Adapters
-    /// gate message-inclusion on this. See `_provenMessageRoots` for the
-    /// operator-attested-vs-proof-bound residual.
-    function isProvenMessageRoot(bytes32 messageRoot) external view returns (bool) {
-        return _provenMessageRoots[messageRoot];
+    /// FAIL-CLOSED: always false. The 25-lane proof carries no outbound-message
+    /// commitment yet, no recording path exists (`settle` rejects non-zero
+    /// message roots), so NO message root is provable — adapters reject all
+    /// message inclusion until the proof-bound leg lands (see the named
+    /// residual above). The Nomad-law default (`isProvenMessageRoot(0)` false)
+    /// holds trivially.
+    function isProvenMessageRoot(bytes32) external pure returns (bool) {
+        return false;
     }
 
     function provenRoot() external view returns (bytes32) {
@@ -156,9 +171,13 @@ contract DreggSettlement is IDreggSettlement {
         uint32[8] calldata chainDigest,
         bytes32 outboundMessageRoot
     ) external {
-        // `outboundMessageRoot` is NOT one of the 25 proof public inputs: it is
-        // recorded (operator-attested, see `_provenMessageRoots`) so adapters can
-        // verify message inclusion. Proof-binding it is the named residual.
+        // 0. `outboundMessageRoot` is NOT one of the 25 proof public inputs,
+        //    so there is nothing proof-bound to check it against — REFUSE any
+        //    non-zero value (fail closed). The former operator-attested
+        //    recording is removed; see the named residual at the top.
+        if (outboundMessageRoot != bytes32(0)) {
+            revert MessageRootNotProofBound(outboundMessageRoot);
+        }
 
         // 1. Every lane canonical BabyBear, and assemble the 25-lane vector
         //    in the pinned order: genesis[0..8) ++ final[8..16) ++
@@ -201,13 +220,11 @@ contract DreggSettlement is IDreggSettlement {
             revert ProofRejected();
         }
 
-        // 5. Effects.
+        // 5. Effects. (No message-root recording: step 0 already rejected any
+        //    non-zero `outboundMessageRoot` as not proof-bound.)
         _provenLanes = finalRoot;
         _provenHeight += numTurns;
         _provenRoots[packLanes(finalRoot)] = true;
-        if (outboundMessageRoot != bytes32(0)) {
-            _provenMessageRoots[outboundMessageRoot] = true;
-        }
 
         emit Settled(packedOld, packLanes(finalRoot), _provenHeight);
         emit SettledLanes(genesisRoot, finalRoot, numTurns, chainDigest);

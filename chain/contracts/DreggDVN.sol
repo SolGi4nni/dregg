@@ -36,7 +36,10 @@ import {IReceiveUln} from "./ILayerZeroDVN.sol";
 /// architecture nor imposes bulk rehashing. NAMED RESIDUAL: binding this root
 /// inside the dregg proof is a hash-family DECISION (keccak-in-circuit vs a
 /// Poseidon2 message root vs folding inclusion into the wrap) — see the design
-/// doc; the settlement records it operator-attested until then.
+/// doc. Until that lands the settlement is FAIL-CLOSED: it records NO message
+/// roots (the operator-attested path is removed; `settle` rejects non-zero
+/// roots), so `isProvenMessageRoot` is always false and this DVN attests
+/// nothing.
 ///
 /// ## THE NOMAD LAW (hard constraint — see INTERCHAIN-ADAPTERS-DESIGN.md)
 ///

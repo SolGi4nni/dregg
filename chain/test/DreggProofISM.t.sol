@@ -8,10 +8,16 @@ import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 
-/// Mock Groth16 verifier — always accepts, so the REAL DreggSettlement can be
-/// driven to record message roots in setUp/tests. (Groth16 soundness is
-/// exercised in DreggSettlement.t.sol; here we only need real settlements so the
-/// message-root registry is genuine, not a stub.)
+/// Mock Groth16 verifier — always accepts, so the REAL DreggSettlement deploys
+/// and settles. (Groth16 soundness is exercised in DreggSettlement.t.sol.)
+///
+/// NOTE on the message-root registry: `DreggSettlement` is now FAIL-CLOSED for
+/// message roots — `settle` rejects any non-zero `outboundMessageRoot`
+/// (`MessageRootNotProofBound`) and `isProvenMessageRoot` is always false,
+/// because the 25-lane proof carries no outbound-message commitment. The
+/// ACCEPT-path tests below therefore model the FUTURE proof-bound registry
+/// with `vm.mockCall` on `isProvenMessageRoot(root)` (see `proveMsgRoot`);
+/// the REJECT-path tests run against the real, fail-closed registry.
 contract AcceptingVerifier25 is IGroth16Verifier25 {
     function verifyProof(
         uint256[2] calldata,
@@ -49,18 +55,21 @@ contract DreggProofISMTest is Test {
         }
     }
 
-    /// Advance the REAL settlement one span (genesis -> mkLanes(2)) recording
-    /// `msgRoot` as an outbound message root. After this,
-    /// settlement.isProvenMessageRoot(msgRoot) is true (for msgRoot != 0).
+    /// Model the FUTURE proof-bound registry state in which `msgRoot` was
+    /// exposed by the settlement proof's message-commitment lanes and recorded.
+    /// Today `DreggSettlement` cannot record ANY message root (fail-closed:
+    /// `settle` reverts on non-zero roots — proven by
+    /// `test_MessageRoot_OperatorAttestationRejected` in DreggSettlement.t.sol),
+    /// so the ISM's inclusion machinery is exercised against a mocked oracle
+    /// answer for exactly this one root; every other root still hits the real
+    /// (always-false) registry.
     function recordMsgRoot(bytes32 msgRoot) internal {
-        settlement.settle(
-            [uint256(1), uint256(2)],
-            [[uint256(3), uint256(4)], [uint256(5), uint256(6)]],
-            [uint256(7), uint256(8)],
-            [uint256(9), uint256(10)],
-            [uint256(11), uint256(12)],
-            mkLanes(1), mkLanes(2), 7, mkLanes(3),
-            msgRoot
+        vm.mockCall(
+            address(settlement),
+            abi.encodeWithSelector(
+                IDreggSettlement.isProvenMessageRoot.selector, msgRoot
+            ),
+            abi.encode(true)
         );
     }
 
@@ -116,11 +125,12 @@ contract DreggProofISMTest is Test {
     }
 
     // ==================================================================
-    // ACCEPT — against the REAL DreggSettlement message-root registry
+    // ACCEPT — inclusion machinery under a (mock-)proven message root
+    // (models the future proof-bound registry; see recordMsgRoot)
     // ==================================================================
 
-    /// A single-leaf tree whose root == the message leaf. Record it as a message
-    /// root on the real settlement; verify with an empty proof.
+    /// A single-leaf tree whose root == the message leaf. Mark it proven;
+    /// verify with an empty proof.
     function test_Verify_AcceptsSingleLeaf() public {
         bytes memory message = "a lone cross-chain message";
         bytes32 leaf = keccak256(message);
@@ -129,9 +139,9 @@ contract DreggProofISMTest is Test {
         assertTrue(ism.verify(_meta(leaf, proof, 0), message));
     }
 
-    /// Build a real 4-leaf keccak tree, record its root on the REAL settlement,
-    /// and verify inclusion of leaf 0 (index 0) and leaf 3 (index 3) through the
-    /// ISM's position-indexed fold — the multi-level path against the real oracle.
+    /// Build a real 4-leaf keccak tree, mark its root proven, and verify
+    /// inclusion of leaf 0 (index 0) and leaf 3 (index 3) through the ISM's
+    /// position-indexed fold — the multi-level path.
     function test_Verify_AcceptsMultiLeafInclusion() public {
         (bytes32 root, bytes32 l0, bytes32 l3, bytes32 n01, bytes32 n23) = _tree4();
         recordMsgRoot(root);
@@ -157,9 +167,9 @@ contract DreggProofISMTest is Test {
     // ==================================================================
 
     /// The zero/default message root MUST be rejected. isProvenMessageRoot(0) is
-    /// always false, so the accept path's first gate reverts — even with an empty
-    /// proof (computed root == leaf). This is the exact class of bug that cost
-    /// Nomad $190M. Proven against the REAL settlement.
+    /// always false (unmocked: the REAL fail-closed registry answers), so the
+    /// accept path's first gate reverts — even with an empty proof (computed
+    /// root == leaf). This is the exact class of bug that cost Nomad $190M.
     function test_Verify_Reject_ZeroRoot_NomadLaw() public {
         recordMsgRoot(keccak256("some real message root")); // registry non-empty
         bytes32[] memory proof = new bytes32[](0);
@@ -182,6 +192,30 @@ contract DreggProofISMTest is Test {
             abi.encodeWithSelector(DreggProofISM.UnprovenRoot.selector, stranger)
         );
         ism.verify(_meta(stranger, proof, 0), bytes("anything"));
+    }
+
+    /// FAIL-CLOSED TODAY (no mock anywhere): the REAL registry can never prove
+    /// a message root — even after a genuine accepted settlement — so the ISM
+    /// rejects ALL message inclusion until the proof-bound leg lands. An
+    /// operator who settles honestly still cannot smuggle a message root in.
+    function test_Verify_FailClosed_NoRootProvableViaRealSettlement() public {
+        // A genuine settle (zero message root — the only kind that settles).
+        settlement.settle(
+            [uint256(1), uint256(2)],
+            [[uint256(3), uint256(4)], [uint256(5), uint256(6)]],
+            [uint256(7), uint256(8)],
+            [uint256(9), uint256(10)],
+            [uint256(11), uint256(12)],
+            mkLanes(1), mkLanes(2), 7, mkLanes(3),
+            bytes32(0)
+        );
+        bytes memory message = "a lone cross-chain message";
+        bytes32 leaf = keccak256(message); // single-leaf root == leaf
+        bytes32[] memory proof = new bytes32[](0);
+        vm.expectRevert(
+            abi.encodeWithSelector(DreggProofISM.UnprovenRoot.selector, leaf)
+        );
+        ism.verify(_meta(leaf, proof, 0), message);
     }
 
     // ==================================================================

@@ -62,6 +62,17 @@ interface IDreggSettlement {
     /// The Groth16 verifier returned false for the pairing check.
     error ProofRejected();
 
+    /// A non-zero `outboundMessageRoot` was submitted, but the 25-lane proof
+    /// does not (yet) bind any outbound-message commitment — so the contract
+    /// REFUSES to record it (fail closed). The former behavior (record the
+    /// operator-supplied value alongside a valid settlement) let an operator
+    /// attest an ARBITRARY message root and thereby forge cross-chain message
+    /// inclusion through the ISM/DVN adapters; that path is now dead. The slot
+    /// stays in the ABI for the proof-bound leg (apex message-commitment
+    /// lanes), at which point `settle` will accept a root it can CHECK against
+    /// the proof's public inputs.
+    error MessageRootNotProofBound(bytes32 messageRoot);
+
     // ------------------------------------------------------------------
     // Events
     // ------------------------------------------------------------------
@@ -89,10 +100,13 @@ interface IDreggSettlement {
     /// message proven under a since-superseded root still verifies.
     function isProvenRoot(bytes32 root) external view returns (bool);
 
-    /// True iff `messageRoot` was recorded by a settlement (any historical span).
-    /// `isProvenMessageRoot(0)` is always false. Adapters gate message inclusion
-    /// on this. The message→root binding is operator-attested pending a
-    /// proof-binding circuit change (a named residual, not a hole).
+    /// True iff `messageRoot` is a PROOF-BOUND outbound-message commitment
+    /// recorded by a settlement. Adapters (Hyperlane ISM, LayerZero DVN) gate
+    /// message inclusion on this. FAIL-CLOSED TODAY: the 25-lane proof does not
+    /// yet carry an outbound-message commitment, `settle` refuses non-zero
+    /// message roots (`MessageRootNotProofBound`), and this returns false for
+    /// EVERY input — no operator-attested root can ever satisfy an adapter.
+    /// The former operator-attested recording path is removed.
     function isProvenMessageRoot(bytes32 messageRoot) external view returns (bool);
 
     /// Current proven dregg state root, as keccak256 of the tightly packed
@@ -142,11 +156,13 @@ interface IDreggSettlement {
     /// @param numTurns    Number of finalized turns folded (must be >= 1).
     /// @param chainDigest The 8 digest lanes committing to the ordered
     ///                    (old, new) root pairs.
-    /// @param outboundMessageRoot A keccak Merkle root over the cross-chain
-    ///                    messages finalized in this span, recorded for adapter
-    ///                    inclusion checks (0 to record none). NOT a proof public
-    ///                    input — operator-attested pending proof-binding (see
-    ///                    `isProvenMessageRoot`).
+    /// @param outboundMessageRoot RESERVED for the proof-bound outbound-message
+    ///                    commitment (a keccak Merkle root over the span's
+    ///                    cross-chain messages). MUST be bytes32(0) today: the
+    ///                    25-lane proof carries no message commitment to check
+    ///                    it against, so any non-zero value reverts with
+    ///                    `MessageRootNotProofBound` (fail closed — the
+    ///                    operator-attested recording path is removed).
     /// Reverts on any non-canonical lane, broken continuity, zero turns, or
     /// a failed pairing check.
     function settle(

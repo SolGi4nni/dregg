@@ -207,18 +207,37 @@ contract DreggSettlementTest is Test {
         assertFalse(settlement.isProvenRoot(settlement.packLanes(mkLanes(9))));
     }
 
-    function test_MessageRootRegistry_RecordedAndNomadLaw() public {
-        bytes32 msgRoot = keccak256("outbound-span-1");
-        assertFalse(settlement.isProvenMessageRoot(msgRoot));
-        assertFalse(settlement.isProvenMessageRoot(bytes32(0))); // THE NOMAD LAW
+    /// THE OPERATOR-TRUST CANARY: an operator holding a valid settlement proof
+    /// can no longer attest an ARBITRARY outbound-message root. The 25-lane
+    /// proof carries no message commitment, so `settle` must REJECT any
+    /// non-zero `outboundMessageRoot` (fail closed) — the former recording
+    /// path (`_provenMessageRoots[root] = true`) is gone.
+    function test_MessageRoot_OperatorAttestationRejected() public {
+        bytes32 forged = keccak256("operator-chosen forged message root");
+        // The proof itself is "valid" (accepting mock verifier); ONLY the
+        // unbound message root causes the revert.
+        vm.expectRevert(
+            abi.encodeWithSelector(
+                IDreggSettlement.MessageRootNotProofBound.selector, forged
+            )
+        );
+        callSettleMsg(mkLanes(1), mkLanes(2), 10, mkLanes(3), forged);
 
+        // Nothing was recorded; the registry is fail-closed for every input.
+        assertFalse(settlement.isProvenMessageRoot(forged));
+        assertFalse(settlement.isProvenMessageRoot(bytes32(0))); // THE NOMAD LAW
+    }
+
+    /// Zero (= "no message root") still settles, and the fail-closed registry
+    /// answers false for EVERYTHING — including roots of spans that settled.
+    function test_MessageRoot_FailClosedRegistry() public {
         uint32[8] memory f1 = mkLanes(2);
-        callSettleMsg(mkLanes(1), f1, 10, mkLanes(3), msgRoot);
-        assertTrue(settlement.isProvenMessageRoot(msgRoot));
-        // A settle recording no message root leaves zero un-proven.
+        callSettleMsg(mkLanes(1), f1, 10, mkLanes(3), bytes32(0));
         callSettleMsg(f1, mkLanes(4), 5, mkLanes(5), bytes32(0));
+        assertEq(settlement.provenHeight(), 15); // settles themselves fine
         assertFalse(settlement.isProvenMessageRoot(bytes32(0)));
         assertFalse(settlement.isProvenMessageRoot(keccak256("never-recorded")));
+        assertFalse(settlement.isProvenMessageRoot(settlement.provenRoot()));
     }
 
     function test_Reject_NonCanonicalGenesisAtConstruction() public {

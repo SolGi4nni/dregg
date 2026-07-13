@@ -8075,3 +8075,21 @@ CORRECTIONS (the "complete" claim overreached):
    body fails host admission on the sibling wide-registry flag-day). The "settles a real state root" demo is on an
    economically-trivial effect; the value-bearing Transfer path has never traversed the full wrap. Awaits the sibling registry.
 4th critic found NO new forgery (unlike critics 1-3) — the fixes hold; the corrections are honesty + on-chain freshness.
+
+## ⚑ OUTBOUND MESSAGE ROOT: operator-attestation REMOVED (fail-closed); proof-binding = the named residual (2026-07-13)
+CLOSED (contract side): DreggSettlement no longer trusts an operator-supplied `outboundMessageRoot`. The old path
+(`_provenMessageRoots[root]=true` on any valid settle) let a settling operator attest an ARBITRARY keccak message root
+and forge cross-chain message inclusion through DreggProofISM/DreggDVN. Now: `settle` REVERTS on any non-zero
+`outboundMessageRoot` (`MessageRootNotProofBound`, fail closed), `isProvenMessageRoot` is always false, the mapping is
+gone. Canaries: `test_MessageRoot_OperatorAttestationRejected` + `test_Verify_FailClosed_NoRootProvableViaRealSettlement`
+(ISM). ISM/DVN inclusion machinery stays tested against a `vm.mockCall`-modeled FUTURE proof-bound registry. ABI kept
+(word 37 reserved). forge 94/94 green.
+RESIDUAL (the proof-bound leg, assessed): chain_digest commits ONLY (old_root,new_root) pairs (segment acc,
+ivc_turn_chain.rs) — NO message commitment reaches the 25-lane claim, so nothing was derivable; the turn DOES already
+commit emitted effects (EFFECTS_HASH[4] + EFFECTS_HASH_GLOBAL[4] descriptor PIs, circuit/src/effect_vm/pi.rs:33) but
+it is not threaded into the segment fold. The genuine fix = (1) segment accumulator absorbs a per-turn outbound-message
+commitment, (2) apex exposes it as extra expose_claim lanes (25→25+k), (3) shrink re-exposes + gnark SettlementCircuit
+binds the lanes (new Groth16 VK, IGroth16Verifier25→N), (4) contract checks `outboundMessageRoot` against the proof
+lanes before recording. PLUS the hash-family decision (adapters need keccak; circuit is Poseidon2 — keccak-in-circuit
+vs Poseidon message root vs wrap-level fold; see INTERCHAIN-ADAPTERS-DESIGN.md). Deferred: apex/fold territory is the
+sibling flag-day's (descriptor/effect-vm churn) and a full VK regen flag-day.

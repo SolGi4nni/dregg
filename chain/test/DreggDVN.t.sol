@@ -8,9 +8,12 @@ import {DreggSettlement} from "../contracts/DreggSettlement.sol";
 import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 import {IGroth16Verifier25} from "../contracts/IGroth16Verifier25.sol";
 
-/// Always-true Groth16 mock: `setUp` only needs the real `DreggSettlement` to
-/// accept settles so it records real message roots. The DVN's own gate is
-/// `isProvenMessageRoot`, exercised against real settlement state.
+/// Always-true Groth16 mock so the real `DreggSettlement` deploys and settles.
+/// The DVN's own gate is `isProvenMessageRoot`. NOTE: the settlement is now
+/// FAIL-CLOSED for message roots (no recording path; the operator-attested one
+/// is removed), so accept-path tests model the FUTURE proof-bound registry via
+/// `vm.mockCall` (see `recordMsgRoot`); reject-path tests hit the real,
+/// always-false registry.
 contract MockGroth16Verifier25 is IGroth16Verifier25 {
     function verifyProof(
         uint256[2] calldata,
@@ -82,17 +85,21 @@ contract DreggDVNTest is Test {
         }
     }
 
-    /// Advance the REAL settlement one span (genesis -> mkLanes(2)) recording
-    /// `msgRoot`. After this, settlement.isProvenMessageRoot(msgRoot) is true.
+    /// Model the FUTURE proof-bound registry state in which `msgRoot` was
+    /// exposed by the settlement proof's message-commitment lanes and recorded.
+    /// Today `DreggSettlement` is FAIL-CLOSED for message roots (`settle`
+    /// reverts on any non-zero `outboundMessageRoot`; `isProvenMessageRoot` is
+    /// always false — the operator-attested recording path is removed, see
+    /// DreggSettlement.t.sol `test_MessageRoot_OperatorAttestationRejected`),
+    /// so the DVN's gate is exercised against a mocked oracle answer for
+    /// exactly this root; every other root hits the real fail-closed registry.
     function recordMsgRoot(bytes32 msgRoot) internal {
-        settlement.settle(
-            [uint256(1), uint256(2)],
-            [[uint256(3), uint256(4)], [uint256(5), uint256(6)]],
-            [uint256(7), uint256(8)],
-            [uint256(9), uint256(10)],
-            [uint256(11), uint256(12)],
-            mkLanes(1), mkLanes(2), 10, mkLanes(3),
-            msgRoot
+        vm.mockCall(
+            address(settlement),
+            abi.encodeWithSelector(
+                IDreggSettlement.isProvenMessageRoot.selector, msgRoot
+            ),
+            abi.encode(true)
         );
     }
 
@@ -163,21 +170,23 @@ contract DreggDVNTest is Test {
     }
 
     /// A HISTORICAL recorded root (span 1) still attests after span 2 supersedes
-    /// it — the dispatch-time semantics a cross-chain verifier needs.
+    /// it — the dispatch-time semantics a cross-chain verifier needs. Span 2 is
+    /// a REAL settle (zero message root — the only kind that settles today);
+    /// root1's proven-ness is the modeled future registry (see recordMsgRoot).
     function test_Accept_HistoricalMessageRoot() public {
         (, bytes32 l0, bytes32 l1, bytes32 l2, bytes32 l3) = _tree4();
         bytes32 root1 = _root4(l0, l1, l2, l3);
         recordMsgRoot(root1); // span 1
 
-        // span 2: chain forward from mkLanes(2), record a different root.
+        // span 2: genuinely advance the settlement (genesis -> mkLanes(2)).
         settlement.settle(
             [uint256(1), uint256(2)],
             [[uint256(3), uint256(4)], [uint256(5), uint256(6)]],
             [uint256(7), uint256(8)],
             [uint256(9), uint256(10)],
             [uint256(11), uint256(12)],
-            mkLanes(2), mkLanes(4), 5, mkLanes(5),
-            keccak256("some later span root")
+            mkLanes(1), mkLanes(2), 5, mkLanes(5),
+            bytes32(0)
         );
         assertTrue(settlement.isProvenMessageRoot(root1)); // still queryable
 
