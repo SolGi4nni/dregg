@@ -765,6 +765,7 @@ import Dregg2.Circuit.StarkSoundColumnCfg
 import Dregg2.Circuit.LightClientDeployed
 import Dregg2.Circuit.LightClientDeployedGeneral
 import Dregg2.Circuit.MerkleAcceptForces
+import Dregg2.Circuit.FriTranscriptBind
 import Dregg2.Circuit.CommitmentReduction
 import Dregg2.Circuit.CollisionReduce
 import Dregg2.Circuit.StateCommitReduce
