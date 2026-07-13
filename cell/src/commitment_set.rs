@@ -18,8 +18,11 @@
 //!
 //! # Performance
 //!
-//! Uses `BTreeMap<[u8; 32], u64>` internally for O(log N) insert and lookup,
-//! iterating keys in sorted order.
+//! Uses `BTreeMap<[u8; 32], (value, append-seq)>` internally for O(log N)
+//! insert and lookup, iterating keys in sorted order. The append-seq column
+//! (gap-#5 AAFI) records the canonical tau append order so an
+//! order-dependent AAFI root is reconstructible; see `iter_in_append_order`
+//! / `from_records`.
 
 use std::collections::BTreeMap;
 
@@ -27,19 +30,43 @@ use serde::{Deserialize, Serialize};
 
 use crate::note::{NoteCommitment, NoteError};
 
+/// A stored accumulator entry: the created-note `value` PLUS the entry's
+/// **append sequence** (`seq`) — the gap-#5 AAFI (append-at-free-index) order
+/// column. AAFI roots are insertion-order-dependent (the append order IS the
+/// canonical tau create sequence, INV-6), so the store persists WHERE in the
+/// append sequence each entry landed; a reconstruction replays the records
+/// sorted by `seq` and recovers the identical AAFI layout every time. The
+/// sorted-compacted [`CommitmentSet::root8`] layer ignores `seq` (order-
+/// independent), so this is purely ADDITIVE.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+struct AppendRecord {
+    /// The created note's value (the circuit's `NOTE_VALUE_LO` felt source).
+    value: u64,
+    /// 0-based append index: this entry was the `seq`-th commitment appended.
+    /// Mirrors [`dregg_circuit::heap_root::CanonicalHeapTree8::next_free_index`]
+    /// semantics — the entry with append rank `seq` occupies physical AAFI
+    /// slot `seq + 1` (slot 0 is the MIN sentinel).
+    seq: u64,
+}
+
 /// Append-only `(note-commitment → value)` accumulator of created note commitments.
 /// The CREATE dual of [`crate::nullifier_set::NullifierSet`]. GROW-ONLY: a duplicate
 /// commitment is rejected.
 ///
-/// Uses `BTreeMap<[u8; 32], u64>` for O(log N) insert and contains operations and
+/// Uses `BTreeMap<[u8; 32], (value, seq)>` for O(log N) insert and contains operations and
 /// sorted-key iteration. The value is the created note value carried into the
 /// circuit-faithful [`Self::root8`] leaf.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct CommitmentSet {
-    /// Every created note commitment mapped to its note value, kept in a
-    /// BTreeMap for O(log N) operations and sorted-key iteration. The value is
-    /// the circuit's `NOTE_VALUE_LO` felt source for the accumulator leaf.
-    commitments: BTreeMap<[u8; 32], u64>,
+    /// Every created note commitment mapped to its note value AND its append
+    /// sequence, kept in a BTreeMap for O(log N) operations and sorted-key
+    /// iteration. The value is the circuit's `NOTE_VALUE_LO` felt source for
+    /// the accumulator leaf; the seq is the AAFI append-order column.
+    commitments: BTreeMap<[u8; 32], AppendRecord>,
+    /// The next append sequence number (0-based). Every insert records the
+    /// current `next_seq` and bumps it — the store-side mirror of the AAFI
+    /// tree's `next_free_index` cursor (offset by 1 for the MIN sentinel).
+    next_seq: u64,
 }
 
 impl CommitmentSet {
@@ -47,6 +74,7 @@ impl CommitmentSet {
     pub fn new() -> Self {
         Self {
             commitments: BTreeMap::new(),
+            next_seq: 0,
         }
     }
 
@@ -73,7 +101,14 @@ impl CommitmentSet {
         if self.commitments.contains_key(&commitment.0) {
             return Err(NoteError::DuplicateCommitment { commitment });
         }
-        self.commitments.insert(commitment.0, value);
+        self.commitments.insert(
+            commitment.0,
+            AppendRecord {
+                value,
+                seq: self.next_seq,
+            },
+        );
+        self.next_seq += 1;
         Ok(())
     }
 
@@ -86,7 +121,15 @@ impl CommitmentSet {
 
     /// The note value recorded for a commitment, if present.
     pub fn value_of(&self, commitment: &NoteCommitment) -> Option<u64> {
-        self.commitments.get(&commitment.0).copied()
+        self.commitments.get(&commitment.0).map(|r| r.value)
+    }
+
+    /// The append sequence recorded for a commitment, if present — the 0-based
+    /// rank at which it was appended (the canonical tau create order, INV-6).
+    /// This is the column a persistence layer must carry per entry so an AAFI
+    /// (order-dependent) root is reconstructible; see [`Self::from_records`].
+    pub fn seq_of(&self, commitment: &NoteCommitment) -> Option<u64> {
+        self.commitments.get(&commitment.0).map(|r| r.seq)
     }
 
     /// Iterate the commitments in sorted key order (the universal-memory projection
@@ -99,7 +142,76 @@ impl CommitmentSet {
     /// accumulator record (the projection/persistence path that must carry the
     /// value to reconstruct a matching [`Self::root8`]).
     pub fn iter_with_values(&self) -> impl Iterator<Item = (&[u8; 32], u64)> {
-        self.commitments.iter().map(|(c, v)| (c, *v))
+        self.commitments.iter().map(|(c, r)| (c, r.value))
+    }
+
+    /// Iterate the full `(commitment, value, seq)` records **in append order**
+    /// (ascending `seq`) — the canonical tau create sequence (INV-6). This is
+    /// BOTH the persistence export (each record carries its seq column) and
+    /// the AAFI replay order: a reconstruction that re-applies these records
+    /// in this order rebuilds the order-dependent AAFI tree identically.
+    ///
+    /// Ties on `seq` (impossible for records minted by [`Self::insert`], which
+    /// assigns unique seqs; possible only for hand-built record sets) are
+    /// broken deterministically by the commitment key, so the order is TOTAL.
+    pub fn iter_in_append_order(&self) -> impl Iterator<Item = ([u8; 32], u64, u64)> {
+        let mut records: Vec<([u8; 32], u64, u64)> = self
+            .commitments
+            .iter()
+            .map(|(c, r)| (*c, r.value, r.seq))
+            .collect();
+        records.sort_by_key(|(c, _, seq)| (*seq, *c));
+        records.into_iter()
+    }
+
+    /// Reconstruct the set from durable `(commitment, value, seq)` records,
+    /// **fixing the append order** from the persisted seq column: records are
+    /// replayed sorted by `(seq, key)` and keep their persisted seqs verbatim,
+    /// so the reconstruction is deterministic in the canonical tau order no
+    /// matter what order the storage layer yields the records in. This is the
+    /// AAFI-order reconstruction path — under AAFI the accumulator root
+    /// depends on the append order, so "reconstruct from the store" must
+    /// recover the ORIGINAL order, not the store's key order.
+    ///
+    /// Returns the duplicate-commitment error on a duplicate key.
+    pub fn from_records(
+        records: impl IntoIterator<Item = ([u8; 32], u64, u64)>,
+    ) -> Result<Self, NoteError> {
+        let mut sorted: Vec<([u8; 32], u64, u64)> = records.into_iter().collect();
+        sorted.sort_by_key(|(c, _, seq)| (*seq, *c));
+        let mut set = Self::new();
+        for (commitment, value, seq) in sorted {
+            if set.commitments.contains_key(&commitment) {
+                return Err(NoteError::DuplicateCommitment {
+                    commitment: NoteCommitment(commitment),
+                });
+            }
+            set.commitments
+                .insert(commitment, AppendRecord { value, seq });
+            set.next_seq = set.next_seq.max(seq + 1);
+        }
+        Ok(set)
+    }
+
+    /// The circuit-faithful accumulator leaves **in append order** — the
+    /// canonical tau sequence of [`Self::accumulator_leaf`]s an AAFI
+    /// (append-at-free-index) fold consumes. Each leaf at rank `r` here is the
+    /// one an AAFI replay appends at physical slot `r + 1` (slot 0 is the MIN
+    /// sentinel), mirroring `CanonicalHeapTree8::insert_witness_aafi`'s
+    /// `next_free_index` semantics. The sorted-compacted [`Self::root8`] is
+    /// untouched by this — same leaf SET, append positions instead of sorted.
+    pub fn aafi_leaves(&self) -> Vec<dregg_circuit::heap_root::HeapLeaf> {
+        self.iter_in_append_order()
+            .map(|(c, v, _)| Self::accumulator_leaf(&c, v))
+            .collect()
+    }
+
+    /// The physical AAFI slot the NEXT append would occupy: `len() + 1`
+    /// (slot 0 is the MIN sentinel) — the store-side mirror of
+    /// [`dregg_circuit::heap_root::CanonicalHeapTree8::next_free_index`] for a
+    /// tree replayed from [`Self::aafi_leaves`].
+    pub fn aafi_next_free_index(&self) -> usize {
+        self.commitments.len() + 1
     }
 
     /// Remove a commitment from the set.
@@ -109,9 +221,25 @@ impl CommitmentSet {
     /// the set is append-only.
     ///
     /// Returns `true` if the commitment was present and removed, `false`
-    /// otherwise. O(log N) via BTreeMap remove.
+    /// otherwise. O(log N) via BTreeMap remove (plus an O(N) append-cursor
+    /// recompute — rollback is rare and off the hot path).
+    ///
+    /// The append cursor rolls back with the entry: `next_seq` is recomputed
+    /// to one past the highest surviving seq, so rolling back the LAST append
+    /// frees its seq and the re-executed turn's insert lands at the SAME
+    /// append rank — the deterministic tau order is preserved across a
+    /// speculative-insert rollback.
     pub fn remove(&mut self, commitment: &NoteCommitment) -> bool {
-        self.commitments.remove(&commitment.0).is_some()
+        let removed = self.commitments.remove(&commitment.0).is_some();
+        if removed {
+            self.next_seq = self
+                .commitments
+                .values()
+                .map(|r| r.seq + 1)
+                .max()
+                .unwrap_or(0);
+        }
+        removed
     }
 
     /// The circuit-faithful node8 leaf for a single `(commitment, value)` — the
@@ -160,7 +288,7 @@ impl CommitmentSet {
         let leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = self
             .commitments
             .iter()
-            .map(|(c, v)| Self::accumulator_leaf(c, *v))
+            .map(|(c, r)| Self::accumulator_leaf(c, r.value))
             .collect();
         dregg_circuit::heap_root::CanonicalHeapTree8::new(
             leaves,
@@ -370,5 +498,121 @@ mod tests {
             "turn N after-root must equal turn N+1 before-root over the same \
              (commitment, value) set (INV-2 continuity, insertion-order-independent)"
         );
+    }
+
+    /// **A8 tooth — the append order is RECORDED:** seqs are assigned in
+    /// insertion order regardless of key sort order, and the append-order
+    /// iteration / AAFI leaf sequence follow the INSERTION order. Non-vacuous:
+    /// the keys are inserted in reverse-sorted order so the orders differ.
+    #[test]
+    fn append_seq_records_insertion_order_not_key_order() {
+        let mut cms: Vec<NoteCommitment> = (1u8..=4).map(make_commitment).collect();
+        cms.sort_by_key(|c| c.0);
+        cms.reverse();
+
+        let mut set = CommitmentSet::new();
+        for (i, cm) in cms.iter().enumerate() {
+            set.insert(*cm, 100 + i as u64).unwrap();
+            assert_eq!(
+                set.seq_of(cm),
+                Some(i as u64),
+                "the i-th insert must record append seq i"
+            );
+        }
+        assert_eq!(set.aafi_next_free_index(), cms.len() + 1);
+
+        let append_order: Vec<[u8; 32]> = set.iter_in_append_order().map(|(c, _, _)| c).collect();
+        let inserted_order: Vec<[u8; 32]> = cms.iter().map(|c| c.0).collect();
+        assert_eq!(
+            append_order, inserted_order,
+            "append-order iteration must follow INSERTION order"
+        );
+        let key_order: Vec<[u8; 32]> = set.iter().copied().collect();
+        assert_ne!(
+            append_order, key_order,
+            "vacuity guard: insertion order must differ from sorted-key order"
+        );
+
+        let expected_leaves: Vec<dregg_circuit::heap_root::HeapLeaf> = cms
+            .iter()
+            .enumerate()
+            .map(|(i, cm)| CommitmentSet::accumulator_leaf(&cm.0, 100 + i as u64))
+            .collect();
+        assert_eq!(set.aafi_leaves(), expected_leaves);
+    }
+
+    /// **A8 tooth — reconstruction FIXES the append order:** records exported
+    /// with their seq column and handed back sorted by KEY (the hostile
+    /// storage order) reconstruct the IDENTICAL append order, AAFI leaf
+    /// sequence, seqs, and (sorted-compacted) root8.
+    #[test]
+    fn reconstruction_from_records_fixes_the_append_order() {
+        let mut cms: Vec<NoteCommitment> = (1u8..=5).map(make_commitment).collect();
+        cms.sort_by_key(|c| c.0);
+        cms.reverse();
+
+        let mut original = CommitmentSet::new();
+        for (i, cm) in cms.iter().enumerate() {
+            original.insert(*cm, make_value(i as u8)).unwrap();
+        }
+
+        let mut records: Vec<([u8; 32], u64, u64)> = original.iter_in_append_order().collect();
+        records.sort_by_key(|(c, _, _)| *c);
+
+        let rebuilt = CommitmentSet::from_records(records).unwrap();
+        assert_eq!(
+            rebuilt.iter_in_append_order().collect::<Vec<_>>(),
+            original.iter_in_append_order().collect::<Vec<_>>(),
+            "reconstruction must recover the CANONICAL append order from the \
+             persisted seq column, not the storage yield order"
+        );
+        assert_eq!(rebuilt.aafi_leaves(), original.aafi_leaves());
+        for cm in &cms {
+            assert_eq!(rebuilt.seq_of(cm), original.seq_of(cm));
+        }
+        assert_eq!(
+            rebuilt.aafi_next_free_index(),
+            original.aafi_next_free_index()
+        );
+        assert_eq!(
+            rebuilt.root8(),
+            original.root8(),
+            "ADDITIVE: the sorted-compacted root8 lineage is untouched"
+        );
+    }
+
+    /// **A8 tooth — duplicate keys in a record set are refused** (the same
+    /// duplicate-create gate as the live insert path).
+    #[test]
+    fn from_records_rejects_duplicate_keys() {
+        let c = make_commitment(1);
+        match CommitmentSet::from_records([(c.0, 5, 0), (c.0, 7, 1)]) {
+            Err(NoteError::DuplicateCommitment { commitment }) => assert_eq!(commitment, c),
+            other => panic!("duplicate key must be refused, got {other:?}"),
+        }
+    }
+
+    /// **A8 tooth — rollback frees the LAST seq:** removing the most recent
+    /// speculative insert rolls the append cursor back, so the re-executed
+    /// turn's insert lands at the SAME append rank.
+    #[test]
+    fn rollback_frees_the_last_append_seq() {
+        let mut set = CommitmentSet::new();
+        let a = make_commitment(1);
+        let b = make_commitment(2);
+        let c = make_commitment(3);
+
+        set.insert(a, 10).unwrap();
+        set.insert(b, 20).unwrap();
+        assert_eq!(set.seq_of(&b), Some(1));
+
+        assert!(set.remove(&b));
+        set.insert(c, 30).unwrap();
+        assert_eq!(
+            set.seq_of(&c),
+            Some(1),
+            "the re-executed insert must reuse the rolled-back append rank"
+        );
+        assert_eq!(set.aafi_next_free_index(), 3);
     }
 }

@@ -92,8 +92,8 @@ open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv siteHoldsAll)
 open Dregg2.Circuit.DescriptorIR2
 open Dregg2.Circuit.MapMerkleRoot (mapNode mapNode_injective foldLevel perfectRoot
-  foldLevel_length_half mapRoot mapRoot_injective opensToMerkle writesToMerkle
-  opensToMerkle_functional writesToMerkle_functional)
+  perfectRoot_injective foldLevel_length_half mapRoot mapRoot_injective opensToMerkle
+  writesToMerkle opensToMerkle_functional writesToMerkle_functional)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
 open Dregg2.Circuit.AirChecksSatisfied (isArith MainAirAcceptF airAccept_forces_satisfied2)
 open Dregg2.Circuit.LogUpColumnLayout (BusModelOk busModel_forces_lookup_holds mem_lookupsInto)
@@ -968,5 +968,296 @@ end Teeth
 #check @mapOp_holds_of_mapReconcile
 #check @mapOpsArm_of_modeler
 #check @airAccept_forces_satisfied2_of_modelers
+
+/-! ## §8 — THE AAFI TWO-PATH INSERT COLUMN MODEL (`MapKind::AafiInsert`, code 4).
+
+Mirrors `docs/reference/GAP5-AAFI-CUTOVER-PLAN.md` §2 (the AAFI cutover of the append-only
+accumulators — nullifier / commitment / revoked sets — to the two-path insert that closes GAP #5's
+double-spend). The current per-turn `.insert` opens ONE leaf over ONE shared path against
+`new_root` — sound for value-updates (stable position) but NOT for insert (the compacted-array
+suffix shifts, no shared pre-image binds the shifted region). AAFI replaces it with the Aztec
+INDEXED-Merkle two-path insert at STABLE positions (append-at-free-index), whose leaf is the 3-felt
+linked-list node `hash[addr, value, nextAddr]`.
+
+The AAFI row carries TWO INDEPENDENT openings plus the pointer-bracket range gate (§2.2 columns):
+  * PATH1 (`MAP_SIB0/DIR0`, repurposed) — the LOW leaf `hash[low.addr, low.value, low.next]` opens
+    to the pre-root, and (updated `next := k`) recomputes to the intermediate root `R1` (`MAP_R1`);
+  * the RANGE gate `low.addr < k < low.next` (`MAP_RANGE0`) — the pointer bracket that binds `k`
+    into the low leaf's real gap (the double-spend tooth: a present / out-of-gap `k` has no
+    bracket → UNSAT);
+  * PATH2 (`MAP_SIB2_0/DIR2_0`, NEW) — the FREE slot opens EMPTY (`MAP_FREE_EMPTY`) to `R1`
+    (no overwrite), and the appended leaf `hash[k, v, low.next]` recomputes to `new_root`.
+
+THE LAW (`aafiInsert_forces_imtInsert`): accepting AAFI gates FORCE `new_root` to be the perfect-
+tree root of the digest vector `xs` with EXACTLY two positions changed — the low position updated
+to `next := k`, and the free position set to the appended leaf — i.e. the DIGEST-VECTOR FACE of
+`IndexedMerkleTree.imtInsert` (step (i) update-low-`nextAddr` + step (ii) append-`(k,v,low_oldNext)`
+at a free slot, no shift). Forced through the proven `pathRecompute_binds_updates` (used TWICE: the
+low-update leg — `IndexedMerkleTree.imtLowUpdate_binds` is its 3-felt IMT face — and the append
+leg), under the single named `Poseidon2SpongeCR` floor. The pointer bracket `low.addr < k < low.next`
+survives to the conclusion — the `IndexedMerkleTree.ImtAbsent` witness the sorted-preservation step
+consumes.
+
+★ REMAINING WIRE (named, per `feedback-named-seam-is-not-a-hole.md`) — the `imtInsert`-SYMBOL
+correspondence and `ImtSorted`-preservation live in `Dregg2.Circuit.IndexedMerkleTree`, NOT here:
+that module IMPORTS this file (it opens `pathRecompute`/`pathPos`/`pathRecompute_binds_updates`
+from here), so referencing `imtInsert` / `imtInsert_preserves` / `canonicalHeapExtract_of_imt` in
+this file is a MODULE-IMPORT CYCLE. This law delivers the two-path forcing at the digest-vector
+level (the maximal statement expressible below IMT in the DAG) PLUS the pointer bracket; the bridge
+`new_root = perfectRoot (imtToHeap-digest-vector of imtInsert c k v)` ∧ `ImtSorted (imtInsert …)`
+(from `imtInsert_preserves` + `reachable_sorted` ⟹ `canonicalHeapExtract_of_imt`) is the one-lemma
+follow-up that belongs in `IndexedMerkleTree.lean` (which has both `imtInsert` and this law in
+scope). No re-assumption: the forcing here is genuine (`pathRecompute_binds_updates`, twice). -/
+
+/-- **`aafiLeafHash`** — the 3-felt indexed-Merkle leaf digest `hash[addr, value, nextAddr]` (the
+deployed `heap_root.rs::HeapLeaf::digest8` at arity 3; the `Dregg2.Circuit.IndexedMerkleTree.imtLeafHash`
+twin, restated below IMT in the module DAG). -/
+def aafiLeafHash (hash : List ℤ → ℤ) (addr value nextAddr : ℤ) : ℤ := hash [addr, value, nextAddr]
+
+/-- The 3-felt IMT leaf digest BINDS all three fields under CR — a prover cannot forge the pointer
+(or address, or value) inside the digest. `Heap.leafOf_injective` / `imtLeafHash_injective` at 3-felt
+width, the SAME `Poseidon2SpongeCR` floor. -/
+theorem aafiLeafHash_injective (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash)
+    {a₁ v₁ n₁ a₂ v₂ n₂ : ℤ}
+    (h : aafiLeafHash hash a₁ v₁ n₁ = aafiLeafHash hash a₂ v₂ n₂) :
+    a₁ = a₂ ∧ v₁ = v₂ ∧ n₁ = n₂ := by
+  have hl := hCR _ _ h
+  simp only [List.cons.injEq, and_true] at hl
+  exact hl
+
+/-- **`AafiGatesAt`** — the deployed `MapKind::AafiInsert` (code 4) gate acceptance for ONE AAFI row
+(depth-generic; the deployment pins `MAP_TREE_DEPTH`). Existentially carries the committed digest
+vector `xs` behind the pre-root (the knowledge-extraction premise — the prover's `CanonicalHeapTree8`
+/ `AafiInsertWitness8`, NAMED like `ReconcileGatesAt`'s `∃ h`), the two paths, and `R1`, and asserts
+the four AAFI gates: (a) low-open, (b) pointer-bracket, (c) PATH1 low-update → `R1`,
+(d1) PATH2 free-slot-empty, (d2) PATH2 append → `new_root`. -/
+def AafiGatesAt (hash : List ℤ → ℤ) (dep : Nat)
+    (oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty : ℤ) : Prop :=
+  ∃ (R1 : ℤ) (xs : List ℤ) (steps1 steps2 : List (Bool × ℤ)),
+    xs.length = 2 ^ dep ∧
+    steps1.length = dep ∧
+    steps2.length = dep ∧
+    pathPos steps1 ≠ pathPos steps2 ∧
+    oldRoot = perfectRoot hash dep xs ∧
+    -- gate (a): low-leaf open at its STABLE position vs the pre-root (PATH1).
+    pathRecompute hash (aafiLeafHash hash lowAddr lowValue lowNext) steps1 = oldRoot ∧
+    -- gate (b): the pointer bracket `low.addr < k < low.next`.
+    lowAddr < k ∧
+    k < lowNext ∧
+    -- gate (c): PATH1 low-update (`next := k`) recomputes to R1.
+    pathRecompute hash (aafiLeafHash hash lowAddr lowValue k) steps1 = R1 ∧
+    -- gate (d1): the free slot was EMPTY under R1 (PATH2, no overwrite).
+    pathRecompute hash freeEmpty steps2 = R1 ∧
+    -- gate (d2): PATH2 append of `(k, v, low.next)` recomputes to the post-root.
+    pathRecompute hash (aafiLeafHash hash k v lowNext) steps2 = newRoot
+
+/-- **`aafiInsert_forces_imtInsert` — THE AAFI LAW.** Under the single named CR floor, an accepting
+AAFI row's gates FORCE its `(old_root, new_root, k, v)` to be an `imtInsert` step at the DIGEST-VECTOR
+level: there is a committed digest vector `xs` behind `old_root` whose LOW position holds the opened
+low leaf, whose free position is EMPTY after the low-update, and whose two-point update (low
+`next := k`; append `(k, v, low.next)` at the distinct free slot) has root EXACTLY `new_root`. Forced
+by `pathRecompute_binds_updates` used TWICE (PATH1 low → R1, PATH2 free → new_root through R1). The
+pointer bracket `low.addr < k < low.next` survives — the `ImtAbsent` witness sorted-preservation
+consumes. No re-assumption: the two-point forcing is the proven Merkle-opening extraction. -/
+theorem aafiInsert_forces_imtInsert (hash : List ℤ → ℤ) (hCR : Poseidon2SpongeCR hash) (dep : Nat)
+    {oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty : ℤ}
+    (hg : AafiGatesAt hash dep oldRoot newRoot k v lowAddr lowValue lowNext freeEmpty) :
+    ∃ (xs : List ℤ) (p1 p2 : Nat),
+      xs.length = 2 ^ dep ∧
+      p1 ≠ p2 ∧
+      oldRoot = perfectRoot hash dep xs ∧
+      xs[p1]? = some (aafiLeafHash hash lowAddr lowValue lowNext) ∧
+      (xs.set p1 (aafiLeafHash hash lowAddr lowValue k))[p2]? = some freeEmpty ∧
+      newRoot = perfectRoot hash dep
+        ((xs.set p1 (aafiLeafHash hash lowAddr lowValue k)).set p2
+          (aafiLeafHash hash k v lowNext)) ∧
+      lowAddr < k ∧ k < lowNext := by
+  obtain ⟨R1, xs, s1, s2, hlen, hl1, hl2, hne, hor, hp1old, hlk, hkn, hp1new, hp2e, hp2app⟩ := hg
+  -- PATH1: the low leaf opens to the pre-root, so it is bound and its update lands to R1.
+  have e1 : xs.length = 2 ^ s1.length := by rw [hl1]; exact hlen
+  have hroot1 : pathRecompute hash (aafiLeafHash hash lowAddr lowValue lowNext) s1
+      = perfectRoot hash s1.length xs := by rw [hp1old, hor, hl1]
+  obtain ⟨hmem1, hupd1⟩ := pathRecompute_binds_updates hash hCR s1 xs
+    (aafiLeafHash hash lowAddr lowValue lowNext) e1 hroot1
+  have hR1 : R1 = perfectRoot hash dep
+      (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)) := by
+    rw [← hp1new, hupd1 (aafiLeafHash hash lowAddr lowValue k), hl1]
+  -- PATH2: the free slot opens EMPTY to R1, so the append lands to new_root.
+  have e2 : (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)).length = 2 ^ s2.length := by
+    rw [List.length_set, hl2]; exact hlen
+  have hroot2 : pathRecompute hash freeEmpty s2
+      = perfectRoot hash s2.length
+          (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)) := by
+    rw [hp2e, hR1, hl2]
+  obtain ⟨hmem2, hupd2⟩ := pathRecompute_binds_updates hash hCR s2
+    (xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)) freeEmpty e2 hroot2
+  have hnew : newRoot = perfectRoot hash dep
+      ((xs.set (pathPos s1) (aafiLeafHash hash lowAddr lowValue k)).set (pathPos s2)
+        (aafiLeafHash hash k v lowNext)) := by
+    rw [← hp2app, hupd2 (aafiLeafHash hash k v lowNext), hl2]
+  exact ⟨xs, pathPos s1, pathPos s2, hlen, hne, hor, hmem1, hmem2, hnew, hlk, hkn⟩
+
+/-! ## §8b — THE AAFI COLUMN-WIDTH MIRROR (the DEPLOYED `descriptor_ir2.rs` op=4 block).
+
+The Lean twin of A1's `circuit/src/descriptor_ir2.rs` `MapKind::AafiInsert` (code 4) columns. The
+offsets below are pinned to the DEPLOYED `const MAP_*` values — i.e. the values the compiler
+EVALUATES the const expressions to (`descriptor_ir2.rs:1845-1869`), the columns the AIR actually
+reads — NOT the hand-written `//` comments beside them.
+
+⚠ GROUND-TRUTH NOTE (do not "fix" these to the Rust `//` comments): with `CHIP_OUT_LANES = 8`,
+`HEAP_TREE_DEPTH = 16`, `MA_DECOMP_COLS = MA_CMP_COLS = 13`, the const chain evaluates to
+`MAP_S=421, MAP_R1=422, MAP_LOW_ADDR=430, MAP_LOW_VALUE=431, MAP_LOW_NEW=432, MAP_LOW_NEW_CHAIN0=440,
+MAP_SIB2_0=560, MAP_DIR2_0=688, MAP_FREE_EMPTY=704, MAP_FREE_EMPTY_CHAIN0=712, MAP_A_DEC0=832,
+MAP_WIDTH=897`. The `//` comments in descriptor_ir2.rs beside the AAFI block (429, 559, 831, …) are
+STALE — off by −1 below `MAP_S`, left over from the pre-`MAP_S` plan layout where `MAP_R1 = 421`.
+The compiler ignores comments; the deployed circuit uses the arithmetic, so THIS mirror uses the
+arithmetic. (A1 added the degree-1 `MAP_S` selector at `MAP_AAFI_BASE = 421`, forced by the frozen
+map-ops degree-4 budget — a `op(op-1)(op-3)` polynomial selector is degree 3. It is pinned to op=4
+by three low-degree constraints `s(s-1)=0`, `s·(op-4)=0`, `op(op-1)(op-3)·(1-s)=0`.)
+
+The AAFI region is `[MAP_AAFI_BASE, MAP_WIDTH) = [421, 897) = 476` columns: the 1-felt `MAP_S`
+selector at 421 plus the 475-column two-path payload. The `#guard`s pin every offset to the deployed
+per-group widths (1,8,1,1,8,120,128,16,8,120,65) so this model AGREES with A1's ACTUAL layout
+(WITH `MAP_S`) column-for-column. -/
+
+def MAP_AAFI_BASE : Nat := 421       -- op≤3 layout ends at 421; op=4 columns are byte-disjoint below
+def MAP_S : Nat := 421               -- (1)   the degree-1 `is_aafi` selector (op=4), pinned to op=4
+def MAP_R1 : Nat := 422              -- (8)   intermediate root after the low update
+def MAP_LOW_ADDR : Nat := 430        -- (1)   low_leaf_old.addr  (range lo bound)
+def MAP_LOW_VALUE : Nat := 431       -- (1)   low_leaf_old.value
+def MAP_LOW_NEW : Nat := 432         -- (8)   low leaf digest after next_addr := k
+def MAP_LOW_NEW_CHAIN0 : Nat := 440  -- (120) low_new → R1 over PATH1
+def MAP_SIB2_0 : Nat := 560          -- (128) PATH2 siblings (free slot)
+def MAP_DIR2_0 : Nat := 688          -- (16)  PATH2 direction bits
+def MAP_FREE_EMPTY : Nat := 704      -- (8)   the empty-slot digest, pre-append
+def MAP_FREE_EMPTY_CHAIN0 : Nat := 712 -- (120) free_empty → R1 over PATH2
+def MAP_RANGE0 : Nat := 832          -- (65)  pointer-bracket range block = MAP_A_DEC0 (3·13 + 2·13)
+def MAP_WIDTH_AAFI : Nat := 897      -- = MAP_AAFI_BASE + 476 = 421 + (1 selector + 475 payload)
+
+#guard MAP_AAFI_BASE == 421
+#guard MAP_S == MAP_AAFI_BASE       -- the selector IS the first AAFI column (op=4)
+#guard MAP_R1 == MAP_S + 1          -- R1 sits AFTER MAP_S (the +1 A2 previously omitted)
+#guard MAP_R1 == 422
+#guard MAP_LOW_ADDR == MAP_R1 + 8
+#guard MAP_LOW_VALUE == MAP_LOW_ADDR + 1
+#guard MAP_LOW_NEW == MAP_LOW_VALUE + 1
+#guard MAP_LOW_NEW_CHAIN0 == MAP_LOW_NEW + 8
+#guard MAP_SIB2_0 == MAP_LOW_NEW_CHAIN0 + 120
+#guard MAP_DIR2_0 == MAP_SIB2_0 + 128
+#guard MAP_FREE_EMPTY == MAP_DIR2_0 + 16
+#guard MAP_FREE_EMPTY_CHAIN0 == MAP_FREE_EMPTY + 8
+#guard MAP_RANGE0 == MAP_FREE_EMPTY_CHAIN0 + 120
+#guard MAP_WIDTH_AAFI == MAP_RANGE0 + 65
+#guard MAP_WIDTH_AAFI == 897
+#guard MAP_WIDTH_AAFI - MAP_AAFI_BASE == 476   -- AAFI region incl. MAP_S (1 selector + 475 payload)
+
+#assert_axioms aafiLeafHash_injective
+#assert_axioms aafiInsert_forces_imtInsert
+
+/-! ## §8c — AAFI NON-VACUITY TEETH (both polarities), at a 2-LEVEL heap (4 leaves — heap-safe:
+depth-generic theorems applied symbolically, no `2^16` object, no BabyBear field `decide`), on the
+CR-PROVED reference sponge. FIRES: honest two-path gate data forces the genuine two-point update.
+REJECTS: (1) an out-of-gap key (no pointer bracket → the double-spend tooth) and (2) a FROZEN
+post-root (the append kept `new_root = old_root`) admit NO gate data at all. -/
+
+section AafiTeeth
+
+open Dregg2.Circuit.Poseidon2Binding.Reference (refSponge refSponge_CR)
+
+/-- A toy empty-slot digest (the free position before append). -/
+def aafiEmpty (hash : List ℤ → ℤ) : ℤ := aafiLeafHash hash 0 0 0
+/-- The 2-level committed digest vector: low leaf `(0,0,100)` at position 0, empties at 1/2/3. -/
+def aafiXsToy (hash : List ℤ → ℤ) : List ℤ :=
+  [aafiLeafHash hash 0 0 100, aafiEmpty hash, aafiEmpty hash, aafiEmpty hash]
+/-- PATH1 for position 0 (the low leaf): both steps LEFT. -/
+def aafiSteps1 (hash : List ℤ → ℤ) : List (Bool × ℤ) :=
+  [(false, mapNode hash (aafiEmpty hash) (aafiEmpty hash)), (false, aafiEmpty hash)]
+/-- PATH2 for position 1 (the free slot): top LEFT, bottom RIGHT; the low sibling is `low_new`. -/
+def aafiSteps2 (hash : List ℤ → ℤ) : List (Bool × ℤ) :=
+  [(false, mapNode hash (aafiEmpty hash) (aafiEmpty hash)), (true, aafiLeafHash hash 0 0 50)]
+def aafiOldRootToy (hash : List ℤ → ℤ) : ℤ := perfectRoot hash 2 (aafiXsToy hash)
+def aafiR1Toy (hash : List ℤ → ℤ) : ℤ :=
+  perfectRoot hash 2 [aafiLeafHash hash 0 0 50, aafiEmpty hash, aafiEmpty hash, aafiEmpty hash]
+def aafiNewRootToy (hash : List ℤ → ℤ) : ℤ :=
+  perfectRoot hash 2 [aafiLeafHash hash 0 0 50, aafiLeafHash hash 50 7 100,
+    aafiEmpty hash, aafiEmpty hash]
+
+/-- **Honest AAFI gate data exists** (for every hash) — insert `50 ↦ 7` in the `(0 → 100)` gap: the
+low-open PATH1, the pointer bracket `0 < 50 < 100`, the low-update to R1, the free-slot-empty PATH2,
+and the append to the grown root. All the path recomputes hold STRUCTURALLY. -/
+theorem aafi_toy_gates (hash : List ℤ → ℤ) :
+    AafiGatesAt hash 2 (aafiOldRootToy hash) (aafiNewRootToy hash) 50 7 0 0 100 (aafiEmpty hash) :=
+  ⟨aafiR1Toy hash, aafiXsToy hash, aafiSteps1 hash, aafiSteps2 hash,
+    rfl, rfl, rfl,
+    by rw [show pathPos (aafiSteps1 hash) = 0 from rfl, show pathPos (aafiSteps2 hash) = 1 from rfl]
+       decide,
+    rfl, rfl, by norm_num, by norm_num, rfl, rfl, rfl⟩
+
+/-- **RESPECTING TOOTH — the AAFI row FIRES.** On the CR-proved sponge the law turns the honest gate
+data into the genuine two-point update: the post-root IS the perfect-tree root of `xs` with the low
+position updated (`next := 50`) and the appended leaf `(50, 7, 100)` at the free slot — the
+digest-vector face of `imtInsert`, produced through the whole path-binding extraction. -/
+theorem aafi_toy_fires :
+    ∃ (xs : List ℤ) (p1 p2 : Nat),
+      xs.length = 2 ^ 2 ∧
+      p1 ≠ p2 ∧
+      aafiOldRootToy refSponge = perfectRoot refSponge 2 xs ∧
+      xs[p1]? = some (aafiLeafHash refSponge 0 0 100) ∧
+      (xs.set p1 (aafiLeafHash refSponge 0 0 50))[p2]? = some (aafiEmpty refSponge) ∧
+      aafiNewRootToy refSponge = perfectRoot refSponge 2
+        ((xs.set p1 (aafiLeafHash refSponge 0 0 50)).set p2 (aafiLeafHash refSponge 50 7 100)) ∧
+      (0 : ℤ) < 50 ∧ (50 : ℤ) < 100 :=
+  aafiInsert_forces_imtInsert refSponge refSponge_CR 2 (aafi_toy_gates refSponge)
+
+/-- **REJECT TOOTH 1 (out-of-gap key BITES — the double-spend tooth).** A key `150` outside the low
+leaf's pointer gap `(0, 100)` admits NO accepting AAFI gate data: the pointer-bracket gate
+`k < low.next` demands `150 < 100`, false. A present / out-of-gap `k` (the double-spend shape) is
+UNSAT at the gate. -/
+theorem aafi_toy_out_of_gap_bites (hash : List ℤ → ℤ) :
+    ¬ AafiGatesAt hash 2 (aafiOldRootToy hash) (aafiNewRootToy hash) 150 7 0 0 100 (aafiEmpty hash) := by
+  rintro ⟨_, _, _, _, _, _, _, _, _, _, _, hkn, _, _, _⟩
+  exact absurd hkn (by norm_num)
+
+/-- **REJECT TOOTH 2 (a FROZEN post-root BITES).** No gate data lets an AAFI row claim the insert
+while keeping `new_root = old_root`: the law forces `old_root = perfectRoot xs` AND (frozen)
+`old_root = perfectRoot (two-point-updated xs)`; `perfectRoot_injective` forces the two vectors
+EQUAL, but they differ at the low position (`(0,0,100)` vs `(0,0,50)`, distinct by
+`aafiLeafHash_injective` since `100 ≠ 50`). The append genuinely MOVES the committed root — the
+after-root is a FORCED commitment, not a free witness limb. -/
+theorem aafi_toy_frozen_bites :
+    ¬ AafiGatesAt refSponge 2 (aafiOldRootToy refSponge) (aafiOldRootToy refSponge)
+        50 7 0 0 100 (aafiEmpty refSponge) := by
+  intro hg
+  obtain ⟨xs, p1, p2, hxlen, hne, hor, hlowmem, _, hnew, _, _⟩ :=
+    aafiInsert_forces_imtInsert refSponge refSponge_CR 2 hg
+  have hx2len : ((xs.set p1 (aafiLeafHash refSponge 0 0 50)).set p2
+      (aafiLeafHash refSponge 50 7 100)).length = 2 ^ 2 := by
+    rw [List.length_set, List.length_set]; exact hxlen
+  have hroots : perfectRoot refSponge 2 xs
+      = perfectRoot refSponge 2 ((xs.set p1 (aafiLeafHash refSponge 0 0 50)).set p2
+          (aafiLeafHash refSponge 50 7 100)) := by rw [← hor, ← hnew]
+  have hxx := perfectRoot_injective refSponge refSponge_CR 2 hxlen hx2len hroots
+  have hp1lt : p1 < xs.length := (List.getElem?_eq_some_iff.mp hlowmem).1
+  -- xs = the two-point-updated vector; but at the low position that vector holds low_NEW, while
+  -- `hlowmem` says xs holds low_OLD there — distinct digests (100 ≠ 50) under CR.
+  rw [hxx, List.getElem?_set_ne (fun h => hne h.symm),
+    List.getElem?_set_self hp1lt] at hlowmem
+  -- hlowmem : some (aafiLeafHash refSponge 0 0 50) = some (aafiLeafHash refSponge 0 0 100)
+  have hlow := Option.some.inj hlowmem
+  exact absurd (aafiLeafHash_injective refSponge refSponge_CR hlow).2.2 (by norm_num)
+
+-- The AAFI row's forced two-point update is the heap's REAL insert semantics (executable face):
+#guard pathPos (aafiSteps1 (fun _ => 0)) == 0                         -- low position
+#guard pathPos (aafiSteps2 (fun _ => 0)) == 1                         -- free position (distinct)
+#guard (((aafiXsToy (fun _ => 0)).set 0 99).set 1 88).length == 4     -- two-point update keeps width
+
+#assert_axioms aafi_toy_gates
+#assert_axioms aafi_toy_fires
+#assert_axioms aafi_toy_out_of_gap_bites
+#assert_axioms aafi_toy_frozen_bites
+
+end AafiTeeth
+
+#check @aafiInsert_forces_imtInsert
 
 end Dregg2.Circuit.MapOpsColumnLayout

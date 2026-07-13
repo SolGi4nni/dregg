@@ -217,7 +217,9 @@ use crate::field::{BABYBEAR_P, BabyBear};
 // `HEAP_TREE_DEPTH` indexes the map-absent AIR column layout (verify-needed); the tree
 // type / leaf / sentinels are prover-only (the witness map openings live in `build_traces`).
 use crate::heap_root::HEAP_TREE_DEPTH;
-use crate::heap_root::{CanonicalHeapTree8, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN, heap_node8};
+use crate::heap_root::{
+    CanonicalHeapTree8, HeapLeaf, SENTINEL_MAX, SENTINEL_MIN, heap_empty_subtree_root_8, heap_node8,
+};
 use crate::lean_descriptor_air::{
     EFFECTVM_STATE_AFTER_BASE, EFFECTVM_STATE_BEFORE_BASE, JsonCursor, LeanExpr, VmConstraint,
     VmHashSite, VmRow, const_to_expr, parse_expr, parse_hash_site, parse_range,
@@ -489,6 +491,16 @@ pub enum MapKind {
     /// is against the NEW tree). Freshness must be established separately, e.g. by a
     /// paired `MapKind::Absent` opening against the same pre-root.
     Insert,
+    /// AAFI (append-at-free-index) INSERT — the gap-#5 two-path insert (root advances).
+    /// Where `Insert` splices the fresh leaf in its SORTED position (shifting every later
+    /// position, no shared pre-image binds the shifted suffix), `AafiInsert` mirrors the
+    /// PROVEN Lean `IndexedMerkleTree.imtInsert` EXACTLY: it opens the bracketing LOW leaf
+    /// at its stable position (PATH1), updates its `next_addr := k` giving an intermediate
+    /// root `R1`, then appends `(k, v, low_oldNext)` at a distinct EMPTY free slot (PATH2)
+    /// giving `new_root` — positions STABLE, no shift. Consumes `AafiInsertWitness8`
+    /// (`heap_root.rs`). ADDITIVE: nothing emits this op yet (the atomic routing flip is a
+    /// later single-owned commit); op≤3 rows are byte-identical.
+    AafiInsert,
 }
 
 impl MapKind {
@@ -499,6 +511,7 @@ impl MapKind {
             MapKind::Write => 1,
             MapKind::Absent => 2,
             MapKind::Insert => 3,
+            MapKind::AafiInsert => 4,
         }
     }
 }
@@ -963,6 +976,7 @@ fn parse_constraint2(c: &mut JsonCursor) -> Result<VmConstraint2, String> {
                 "write" => MapKind::Write,
                 "absent" => MapKind::Absent,
                 "insert" => MapKind::Insert,
+                "aafi_insert" => MapKind::AafiInsert,
                 other => return Err(format!("unknown map_op kind \"{other}\"")),
             };
             c.expect(b',')?;
@@ -1813,7 +1827,46 @@ const MAP_OLD_LEAF: usize = MAP_DIR0 + HEAP_TREE_DEPTH; // 165 (8-felt group [16
 const MAP_NEW_LEAF: usize = MAP_OLD_LEAF + CHIP_OUT_LANES; // 173 (8-felt group [173..181))
 const MAP_OLD_CHAIN0: usize = MAP_NEW_LEAF + CHIP_OUT_LANES; // 181 (levels 0..14; level 15 = MAP_ROOT)
 const MAP_NEW_CHAIN0: usize = MAP_OLD_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 301
-const MAP_WIDTH: usize = MAP_NEW_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 421
+// The op≤3 layout ends here (the historical `MAP_WIDTH`, 421). op=4 (AafiInsert) is byte-disjoint:
+// every column below is ZERO on op≠4 rows and gated to op=4 by the `is_aafi` selector.
+const MAP_AAFI_BASE: usize = MAP_NEW_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 421
+// ===================================================================================
+// AAFI (append-at-free-index) TWO-PATH INSERT columns (gap-#5 IMT closure). The insert needs
+// TWO INDEPENDENT openings (the low-leaf pointer update, PATH1, and the append at a distinct
+// EMPTY free slot, PATH2) plus the pointer-bracket range gate. PATH1 REUSES `MAP_SIB0/MAP_DIR0`
+// + `MAP_OLD_LEAF`/`MAP_OLD_CHAIN0` (op≤3 and op=4 are mutually-exclusive rows); PATH2 append
+// REUSES `MAP_NEW_LEAF`/`MAP_NEW_CHAIN0`; the appended leaf's pointer REUSES `MAP_NEXT`
+// (= `low_oldNext`). New groups below mirror the proven Lean `imtInsert` step-for-step. --
+// The AAFI SELECTOR: a committed boolean, 1 on op=4 rows and 0 elsewhere. Used as the DEGREE-1
+// `is_aafi` throughout the AIR (a `op(op-1)(op-3)` polynomial selector would be degree 3, blowing
+// the frozen map-ops degree budget of 4). Pinned to op=4 by three low-degree constraints:
+// `s(s-1)=0`, `s·(op-4)=0` (s ⇒ op=4), and `op(op-1)(op-3)·(1-s)=0` (op=4 ⇒ s), so a prover can
+// neither disable the gates on an op=4 row nor enable them elsewhere.
+const MAP_S: usize = MAP_AAFI_BASE; // 421
+// (`R1` = intermediate root after the low-pointer update; `imtLowUpdate_binds`.)
+const MAP_R1: usize = MAP_S + 1; // 422 (8-felt group)
+// The bracketing low leaf `(low_addr, low_value, low_oldNext=MAP_NEXT)` — its digest opens over
+// PATH1 to `MAP_ROOT` (gate a); the range gate uses `low_addr`/`low_next` (gate b).
+const MAP_LOW_ADDR: usize = MAP_R1 + CHIP_OUT_LANES; // 430
+const MAP_LOW_VALUE: usize = MAP_LOW_ADDR + 1; // 430
+// The UPDATED low leaf `(low_addr, low_value, MAP_KEY)` (`next_addr := k`) — folds over PATH1 to R1.
+const MAP_LOW_NEW: usize = MAP_LOW_VALUE + 1; // 431 (8-felt group)
+const MAP_LOW_NEW_CHAIN0: usize = MAP_LOW_NEW + CHIP_OUT_LANES; // 439 (DEPTH-1 groups: low_new → R1)
+// PATH2 — the free-slot path (independent of PATH1): its own siblings + direction bits.
+const MAP_SIB2_0: usize = MAP_LOW_NEW_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 560 (DEPTH groups of 8)
+const MAP_DIR2_0: usize = MAP_SIB2_0 + CHIP_OUT_LANES * HEAP_TREE_DEPTH; // 687 (DEPTH dir bits)
+// The EMPTY-slot digest under R1 (pinned to the const `heap_empty_subtree_root_8(0)` = ZERO8):
+// folds over PATH2 to R1, proving `free_index` was empty before the append (gate d1).
+const MAP_FREE_EMPTY: usize = MAP_DIR2_0 + HEAP_TREE_DEPTH; // 703 (8-felt group)
+const MAP_FREE_EMPTY_CHAIN0: usize = MAP_FREE_EMPTY + CHIP_OUT_LANES; // 711 (DEPTH-1 groups: free_empty → R1)
+// The pointer-bracket range block `low_addr < k < low_next` — portable from the MapAbsent arm
+// (`MA_A_DEC0..MA_CMP_HI0`): canonical decompositions of low_addr/key/low_next + two strict-lt cmps.
+const MAP_A_DEC0: usize = MAP_FREE_EMPTY_CHAIN0 + CHIP_OUT_LANES * (HEAP_TREE_DEPTH - 1); // 831 (low_addr)
+const MAP_K_DEC0: usize = MAP_A_DEC0 + MA_DECOMP_COLS; // 844 (key)
+const MAP_B_DEC0: usize = MAP_K_DEC0 + MA_DECOMP_COLS; // 857 (low_next)
+const MAP_CMP_LO0: usize = MAP_B_DEC0 + MA_DECOMP_COLS; // 870 (low_addr < key)
+const MAP_CMP_HI0: usize = MAP_CMP_LO0 + MA_CMP_COLS; // 883 (key < low_next)
+const MAP_WIDTH: usize = MAP_CMP_HI0 + MA_CMP_COLS; // 897 (op≤3 uses only [0, 421))
 
 /// The 8-felt column group starting at `base` (a digest lane group: root, leaf, sibling, or
 /// chain node). Returns the `CHIP_OUT_LANES` contiguous column indices.
@@ -2174,6 +2227,109 @@ fn eval_lex_lt<AB>(
         builder.assert_zero(c_eq);
         builder.assert_zero(c_dlo);
     }
+}
+
+// ========================================================================================
+// GATE-COUNTED range-check helpers (gap-#5 AAFI). Twins of [`eval_decomp`] /
+// [`eval_canon_decomp`] / [`eval_lex_lt`] whose BYTE-BUS LOOKUP COUNTS are multiplied by the
+// `gate` selector, so a row where `gate = 0` sends ZERO byte queries. This is what lets the
+// AAFI pointer-bracket range block ride the shared `MapOps` AIR WITHOUT pulling the byte table
+// into op≤3-only descriptors: on op≠4 rows `gate = is_aafi = 0`, every byte send is 0, and the
+// byte-table presence (and hence the op≤3 table set + degree_bits) is byte-identical. The
+// row-local recomposition/boolean asserts already vanish when `gate = 0` and the witnessed
+// columns are zero (the pad convention), so only the counts change. `gate` must be degree ≤ 3.
+fn eval_decomp_counted<AB>(
+    builder: &mut AB,
+    value_expr: AB::Expr,
+    limbs: &[AB::Var],
+    bits: usize,
+    gate: AB::Expr,
+) where
+    AB: AirBuilder + InteractionBuilder,
+    AB::F: PrimeField32,
+{
+    let bus = LookupBus::new(BUS_BYTE);
+    let (n, top_bits) = limb_geom(bits);
+    let partial = top_bits < LIMB_BITS;
+    let limb_base = AB::Expr::from_u64(1 << LIMB_BITS);
+    let mut recomposed = AB::Expr::ZERO;
+    let mut weight = AB::Expr::ONE;
+    for i in 0..n {
+        let limb: AB::Expr = limbs[i].into();
+        recomposed += limb.clone() * weight.clone();
+        weight = weight.clone() * limb_base.clone();
+        if i == n - 1 && partial {
+            let mut top_recomp = AB::Expr::ZERO;
+            let mut bw = AB::Expr::ONE;
+            for b in 0..top_bits {
+                let bit: AB::Expr = limbs[n + b].into();
+                builder.assert_zero(bit.clone() * (bit.clone() - AB::Expr::ONE));
+                top_recomp += bit * bw.clone();
+                bw = bw.clone() + bw;
+            }
+            builder.assert_zero(top_recomp - limb);
+        } else {
+            bus.lookup_key(builder, [limb], gate.clone());
+        }
+    }
+    builder.assert_zero(recomposed - value_expr);
+}
+
+fn eval_canon_decomp_counted<AB>(
+    builder: &mut AB,
+    value_expr: AB::Expr,
+    block: &[AB::Var],
+    gate: AB::Expr,
+) -> (AB::Expr, AB::Expr)
+where
+    AB: AirBuilder + InteractionBuilder,
+    AB::F: PrimeField32,
+{
+    let hi4: AB::Expr = block[0].into();
+    let limbs: Vec<AB::Var> = block[1..1 + decomp_cols(KEY_LO_BITS)].to_vec();
+    let is15: AB::Expr = block[1 + decomp_cols(KEY_LO_BITS)].into();
+    let inv15: AB::Expr = block[2 + decomp_cols(KEY_LO_BITS)].into();
+    let fifteen = AB::Expr::from_u64(KEY_HI_MAX);
+    let bus = LookupBus::new(BUS_BYTE);
+    bus.lookup_key(builder, [hi4.clone()], gate.clone());
+    let lo27 = value_expr - hi4.clone() * AB::Expr::from_u64(KEY_HI_BASE);
+    eval_decomp_counted(builder, lo27.clone(), &limbs, KEY_LO_BITS, gate.clone());
+    builder.assert_zero(is15.clone() * (is15.clone() - AB::Expr::ONE));
+    builder.assert_zero((hi4.clone() - fifteen.clone()) * is15.clone());
+    builder.assert_zero((hi4.clone() - fifteen) * inv15 - (gate - is15.clone()));
+    builder.assert_zero(is15 * lo27.clone());
+    (hi4, lo27)
+}
+
+#[allow(clippy::too_many_arguments)]
+fn eval_lex_lt_counted<AB>(
+    builder: &mut AB,
+    a_hi4: AB::Expr,
+    a_lo27: AB::Expr,
+    b_hi4: AB::Expr,
+    b_lo27: AB::Expr,
+    block: &[AB::Var],
+    gate: AB::Expr,
+) where
+    AB: AirBuilder + InteractionBuilder,
+    AB::F: PrimeField32,
+{
+    let s: AB::Expr = block[0].into();
+    let dhi: AB::Var = block[1];
+    let dlo: AB::Var = block[2];
+    let dlo_limbs: Vec<AB::Var> = block[3..3 + decomp_cols(KEY_LO_BITS)].to_vec();
+    builder.assert_zero(s.clone() * (s.clone() - AB::Expr::ONE));
+    let bus = LookupBus::new(BUS_BYTE);
+    bus.lookup_key(builder, [dhi.into()], gate.clone());
+    eval_decomp_counted(builder, dlo.into(), &dlo_limbs, KEY_LO_BITS, gate.clone());
+    let one = AB::Expr::ONE;
+    let c_dhi =
+        dhi.into() - gate.clone() * s.clone() * (b_hi4.clone() - a_hi4.clone() - one.clone());
+    let c_eq = gate.clone() * (one.clone() - s.clone()) * (b_hi4 - a_hi4);
+    let c_dlo = dlo.into() - gate * (one.clone() - s) * (b_lo27 - a_lo27 - one);
+    builder.assert_zero(c_dhi);
+    builder.assert_zero(c_eq);
+    builder.assert_zero(c_dlo);
 }
 
 impl<AB> Air<AB> for Ir2Air
@@ -2728,21 +2884,15 @@ where
                 let is_real: AB::Expr = local[MAP_IS_REAL].into();
                 let op: AB::Expr = local[MAP_OP].into();
                 builder.assert_zero(is_real.clone() * (is_real.clone() - AB::Expr::ONE));
-                // op ∈ {0 (read), 1 (write), 3 (insert)}. Absent (2) is received by the
-                // map-absent table; the map-log multiset partitions by op code.
+                // op ∈ {0 (read), 1 (write), 3 (insert), 4 (aafi-insert)}. Absent (2) is received
+                // by the map-absent table; the map-log multiset partitions by op code. op=4 is the
+                // gap-#5 AAFI two-path insert — ADDITIVE, gated below by `is_aafi` (no descriptor
+                // emits it yet; op≤3 rows are byte-identical).
                 builder.assert_zero(
                     op.clone()
                         * (op.clone() - AB::Expr::ONE)
-                        * (op.clone() - AB::Expr::from_u64(3)),
-                );
-                // A read returns the committed value: old_value = value on read rows.
-                // The `(op - 3)` factor disables this leg for insert (op = 3), where there
-                // is no committed old leaf.
-                builder.assert_zero(
-                    is_real.clone()
-                        * (AB::Expr::ONE - op.clone())
                         * (op.clone() - AB::Expr::from_u64(3))
-                        * (local[MAP_OLD_VALUE].into() - local[MAP_VALUE].into()),
+                        * (op.clone() - AB::Expr::from_u64(4)),
                 );
                 for lvl in 0..HEAP_TREE_DEPTH {
                     let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
@@ -2755,7 +2905,38 @@ where
                 let inv6 =
                     AB::Expr::from_u64(BabyBear::new(6).inverse().expect("6 != 0").as_u32() as u64);
                 let not_insert: AB::Expr =
-                    AB::Expr::ONE - inv6 * op.clone() * (op.clone() - AB::Expr::ONE);
+                    AB::Expr::ONE - inv6.clone() * op.clone() * (op.clone() - AB::Expr::ONE);
+                // -- AAFI (op=4) selectors. To respect the frozen map-ops degree budget (4), the
+                //    aafi selector is a COMMITTED boolean column `MAP_S` (degree 1), not an
+                //    `op(op-1)(op-3)` polynomial (degree 3). It is pinned to op=4 below. --
+                let s: AB::Expr = local[MAP_S].into();
+                let not_aafi: AB::Expr = AB::Expr::ONE - s.clone();
+                let aafi_gate: AB::Expr = is_real.clone() * s.clone();
+                // s is boolean; s ⇒ op=4; and op=4 ⇒ s (so the gates cannot be disabled on an op=4
+                // row nor enabled elsewhere). The last is degree 4 = the budget ceiling.
+                builder.assert_zero(s.clone() * (s.clone() - AB::Expr::ONE));
+                builder.assert_zero(s.clone() * (op.clone() - AB::Expr::from_u64(4)));
+                builder.assert_zero(
+                    op.clone()
+                        * (op.clone() - AB::Expr::ONE)
+                        * (op.clone() - AB::Expr::from_u64(3))
+                        * (AB::Expr::ONE - s.clone()),
+                );
+                // `rw_sel` fires the read/write OLD-leaf absorb at op∈{0,1} only (= `not_insert` with
+                // its op=4 value repaired from −1 to 0 via +s). `not_insert3` fires the shared PATH1
+                // old-chain at op∈{0,1,4} (op=4 folds the bracketing low leaf → GATE a).
+                let rw_sel: AB::Expr = not_insert.clone() + s.clone();
+                let not_insert3: AB::Expr = not_insert.clone() + AB::Expr::from_u64(2) * s.clone();
+
+                // A read returns the committed value: old_value = value on read rows. The `(op − 3)`
+                // factor disables it for insert (op = 3); on aafi (op = 4) the fill pins
+                // `MAP_OLD_VALUE := MAP_VALUE` so this leg is satisfied trivially (no extra degree).
+                builder.assert_zero(
+                    is_real.clone()
+                        * (AB::Expr::ONE - op.clone())
+                        * (op.clone() - AB::Expr::from_u64(3))
+                        * (local[MAP_OLD_VALUE].into() - local[MAP_VALUE].into()),
+                );
 
                 // Leaf digests ride the chip bus as absorb lookups (gated by is_real — pad rows
                 // query nothing). The old-leaf lookup is suppressed on insert rows.
@@ -2805,12 +2986,26 @@ where
                 p2.lookup_key(
                     builder,
                     chip_absorb_tuple(&old_leaf_cols, MAP_OLD_LEAF, MAP_OLD_LEAF + 1),
-                    is_real.clone() * not_insert.clone(),
+                    is_real.clone() * rw_sel.clone(),
                 );
                 p2.lookup_key(
                     builder,
                     chip_absorb_tuple(&new_leaf_cols, MAP_NEW_LEAF, MAP_NEW_LEAF + 1),
                     is_real.clone(),
+                );
+                // -- AAFI (op=4): the bracketing LOW leaf digest into the SAME `MAP_OLD_LEAF` group,
+                //    but from `[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_NEXT]` (low_oldNext) — a DIFFERENT
+                //    absorb than read/write (which reads `MAP_KEY, MAP_OLD_VALUE`), so it is its own
+                //    lookup, gated to op=4. The shared PATH1 old-chain (gated `not_insert3`, which
+                //    fires op∈{0,1,4}) then folds `MAP_OLD_LEAF` to `MAP_ROOT` = GATE (a). --
+                p2.lookup_key(
+                    builder,
+                    chip_absorb_tuple(
+                        &[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_NEXT],
+                        MAP_OLD_LEAF,
+                        MAP_OLD_LEAF + 1,
+                    ),
+                    aafi_gate.clone(),
                 );
 
                 // The sibling-sharing chains ride the 8-felt `node8` compression on BUS_P2 (Phase
@@ -2831,10 +3026,13 @@ where
                     } else {
                         map_group8(MAP_OLD_CHAIN0 + CHIP_OUT_LANES * lvl)
                     };
+                    // GATE (a) on op=4: the shared PATH1 old-chain folds `MAP_OLD_LEAF` (the low
+                    // leaf on aafi, the read/write leaf on op∈{0,1}) → `MAP_ROOT`. `not_insert3`
+                    // fires op∈{0,1,4}; op=3 (insert has no old leaf) stays off.
                     p2.lookup_key(
                         builder,
                         node8_lookup_tuple::<AB>(&local, &cur_old, &sib8, &dir, &out_old),
-                        is_real.clone() * not_insert.clone(),
+                        is_real.clone() * not_insert3.clone(),
                     );
                     cur_old = out_old;
                     let out_new = if last {
@@ -2842,12 +3040,150 @@ where
                     } else {
                         map_group8(MAP_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
                     };
+                    // The op≤3 new-leaf chain folds over PATH1 → `MAP_NEW_ROOT`. On aafi (op=4) the
+                    // appended leaf folds over PATH2 instead (GATE d2 below), so gate this off with
+                    // `not_aafi` — `MAP_NEW_CHAIN0` is REUSED as the PATH2 append chain on op=4.
                     p2.lookup_key(
                         builder,
                         node8_lookup_tuple::<AB>(&local, &cur_new, &sib8, &dir, &out_new),
-                        is_real.clone(),
+                        is_real.clone() * not_aafi.clone(),
                     );
                     cur_new = out_new;
+                }
+
+                // ============================================================================
+                // AAFI (op=4) TWO-PATH INSERT gates — each ↔ an `imtInsert` step ↔ an
+                // `AafiInsertWitness8` field. All ride `aafi_gate = is_real·is_aafi` (zero on op≤3),
+                // so op≤3 rows see NONE of these lookups/asserts (byte-identical). GATE (a) is the
+                // shared PATH1 old-chain above (low leaf → MAP_ROOT), fed by the low-leaf absorb.
+                // ----------------------------------------------------------------------------
+                // PATH2 direction bits are boolean.
+                for lvl in 0..HEAP_TREE_DEPTH {
+                    let dir2: AB::Expr = local[MAP_DIR2_0 + lvl].into();
+                    builder.assert_zero(s.clone() * dir2.clone() * (dir2 - AB::Expr::ONE));
+                }
+
+                // GATE (b) — pointer-bracket range `low.addr < k < low.next_addr` (≡ Lean
+                // `ImtAbsent`, the double-spend tooth: a present / out-of-gap k has no bracket).
+                // Portable from the MapAbsent arm; the decomposed values are `is_aafi`-gated so op≤3
+                // rows decompose ZERO (their real key/next columns are NOT touched).
+                let (a_hi4, a_lo27) = eval_canon_decomp_counted(
+                    builder,
+                    s.clone() * local[MAP_LOW_ADDR].into(),
+                    &local[MAP_A_DEC0..MAP_A_DEC0 + MA_DECOMP_COLS],
+                    s.clone(),
+                );
+                let (k_hi4, k_lo27) = eval_canon_decomp_counted(
+                    builder,
+                    s.clone() * local[MAP_KEY].into(),
+                    &local[MAP_K_DEC0..MAP_K_DEC0 + MA_DECOMP_COLS],
+                    s.clone(),
+                );
+                let (b_hi4, b_lo27) = eval_canon_decomp_counted(
+                    builder,
+                    s.clone() * local[MAP_NEXT].into(),
+                    &local[MAP_B_DEC0..MAP_B_DEC0 + MA_DECOMP_COLS],
+                    s.clone(),
+                );
+                eval_lex_lt_counted(
+                    builder,
+                    a_hi4,
+                    a_lo27,
+                    k_hi4.clone(),
+                    k_lo27.clone(),
+                    &local[MAP_CMP_LO0..MAP_CMP_LO0 + MA_CMP_COLS],
+                    s.clone(),
+                );
+                eval_lex_lt_counted(
+                    builder,
+                    k_hi4,
+                    k_lo27,
+                    b_hi4,
+                    b_lo27,
+                    &local[MAP_CMP_HI0..MAP_CMP_HI0 + MA_CMP_COLS],
+                    s.clone(),
+                );
+
+                // GATE (c) — PATH1 low UPDATE → R1 (≡ `imtLowUpdate_binds`): the SAME low leaf with
+                // `next_addr := k`, absorbed from `[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_KEY]` (so
+                // `low_new.addr == low_old.addr`, `low_new.value == low_old.value`, `low_new.next ==
+                // k` hold by construction — the same columns as gate (a)/(b)), folded up the SAME
+                // PATH1 siblings to `MAP_R1`.
+                p2.lookup_key(
+                    builder,
+                    chip_absorb_tuple(
+                        &[MAP_LOW_ADDR, MAP_LOW_VALUE, MAP_KEY],
+                        MAP_LOW_NEW,
+                        MAP_LOW_NEW + 1,
+                    ),
+                    aafi_gate.clone(),
+                );
+                {
+                    let mut cur = map_group8(MAP_LOW_NEW);
+                    for lvl in 0..HEAP_TREE_DEPTH {
+                        let sib8 = map_group8(MAP_SIB0 + CHIP_OUT_LANES * lvl);
+                        let dir: AB::Expr = local[MAP_DIR0 + lvl].into();
+                        let out = if lvl + 1 == HEAP_TREE_DEPTH {
+                            map_group8(MAP_R1)
+                        } else {
+                            map_group8(MAP_LOW_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
+                        };
+                        p2.lookup_key(
+                            builder,
+                            node8_lookup_tuple::<AB>(&local, &cur, &sib8, &dir, &out),
+                            aafi_gate.clone(),
+                        );
+                        cur = out;
+                    }
+                }
+
+                // GATE (d1) — PATH2 free-slot EMPTY under R1: `MAP_FREE_EMPTY` is pinned to the
+                // constant `heap_empty_subtree_root_8(0)` = ZERO8, then folds up PATH2 to `MAP_R1`.
+                // Proves the slot at `free_index` was EMPTY before the append (no overwrite), and —
+                // since ZERO8 ≠ the low leaf's digest — that PATH2 ≠ the low position.
+                for i in 0..CHIP_OUT_LANES {
+                    builder.assert_zero(s.clone() * local[MAP_FREE_EMPTY + i].into());
+                }
+                {
+                    let mut cur = map_group8(MAP_FREE_EMPTY);
+                    for lvl in 0..HEAP_TREE_DEPTH {
+                        let sib8 = map_group8(MAP_SIB2_0 + CHIP_OUT_LANES * lvl);
+                        let dir: AB::Expr = local[MAP_DIR2_0 + lvl].into();
+                        let out = if lvl + 1 == HEAP_TREE_DEPTH {
+                            map_group8(MAP_R1)
+                        } else {
+                            map_group8(MAP_FREE_EMPTY_CHAIN0 + CHIP_OUT_LANES * lvl)
+                        };
+                        p2.lookup_key(
+                            builder,
+                            node8_lookup_tuple::<AB>(&local, &cur, &sib8, &dir, &out),
+                            aafi_gate.clone(),
+                        );
+                        cur = out;
+                    }
+                }
+
+                // GATE (d2) — PATH2 APPEND → new_root (≡ `pathRecompute_binds_updates`, second
+                // path): the appended leaf `MAP_NEW_LEAF` = hash[MAP_KEY, MAP_VALUE, MAP_NEXT]
+                // (already absorbed above; `next` inherits `low_oldNext = MAP_NEXT`) folds up the
+                // SAME PATH2 siblings → `MAP_NEW_ROOT`. Only `free_index` changed empty→append.
+                {
+                    let mut cur = map_group8(MAP_NEW_LEAF);
+                    for lvl in 0..HEAP_TREE_DEPTH {
+                        let sib8 = map_group8(MAP_SIB2_0 + CHIP_OUT_LANES * lvl);
+                        let dir: AB::Expr = local[MAP_DIR2_0 + lvl].into();
+                        let out = if lvl + 1 == HEAP_TREE_DEPTH {
+                            map_group8(MAP_NEW_ROOT)
+                        } else {
+                            map_group8(MAP_NEW_CHAIN0 + CHIP_OUT_LANES * lvl)
+                        };
+                        p2.lookup_key(
+                            builder,
+                            node8_lookup_tuple::<AB>(&local, &cur, &sib8, &dir, &out),
+                            aafi_gate.clone(),
+                        );
+                        cur = out;
+                    }
                 }
 
                 // The table carries EXACTLY the gathered log (mapTableFaithful): the 8-felt root and
@@ -3538,6 +3874,13 @@ impl Presence {
             .constraints
             .iter()
             .any(|k| matches!(k, VmConstraint2::MapOp(m) if m.op == MapKind::Absent));
+        // AAFI (op=4) rides the map-ops table (`has_map_rw`) but ALSO the byte table (the
+        // pointer-bracket range block). Its byte queries are gated by `is_aafi`, so op≤3-only
+        // descriptors keep their exact table set — the byte table is pulled in ONLY here.
+        let has_map_aafi = desc
+            .constraints
+            .iter()
+            .any(|k| matches!(k, VmConstraint2::MapOp(m) if m.op == MapKind::AafiInsert));
         let has_umem = desc
             .constraints
             .iter()
@@ -3553,7 +3896,11 @@ impl Presence {
                 .any(|t| t.sem == TableSem::UMemBoundaryCohort);
         Presence {
             chip: has_chip_lookup || has_map_rw || has_map_absent,
-            byte: !layout.ranges.is_empty() || has_mem || has_umem || has_map_absent,
+            byte: !layout.ranges.is_empty()
+                || has_mem
+                || has_umem
+                || has_map_absent
+                || has_map_aafi,
             memory: has_mem,
             map_ops: has_map_rw,
             map_absent: has_map_absent,
@@ -3621,6 +3968,56 @@ fn fill_lex_lt(
     out.push(BabyBear::new(dlo));
     fill_decomp(dlo, KEY_LO_BITS, out, hist);
     Ok(())
+}
+
+/// Build the append-order 8-felt stored levels over `leaves` (physical positions = vector
+/// indices, NOT re-sorted) and return the membership path `(root8, siblings, directions)` of
+/// `position` — the AAFI PATH2 producer. A slot BEYOND the prefix reads all-empty siblings
+/// (`heap_empty_subtree_root_8`). Mirrors `CanonicalHeapTree8::prove_membership` but over APPEND
+/// order (heap_root's `fold_append_order_8` returns only the root, no path).
+fn aafi_membership_8(
+    leaves: &[HeapLeaf],
+    position: usize,
+    depth: usize,
+) -> (
+    [BabyBear; CHIP_OUT_LANES],
+    Vec<[BabyBear; CHIP_OUT_LANES]>,
+    Vec<u8>,
+) {
+    let mut levels: Vec<Vec<[BabyBear; CHIP_OUT_LANES]>> = Vec::with_capacity(depth + 1);
+    levels.push(leaves.iter().map(HeapLeaf::digest8).collect());
+    for level in 0..depth {
+        let prev = levels.last().unwrap();
+        let next_len = prev.len().div_ceil(2);
+        let mut next = Vec::with_capacity(next_len);
+        for i in 0..next_len {
+            let l = prev
+                .get(2 * i)
+                .copied()
+                .unwrap_or_else(|| heap_empty_subtree_root_8(level));
+            let r = prev
+                .get(2 * i + 1)
+                .copied()
+                .unwrap_or_else(|| heap_empty_subtree_root_8(level));
+            next.push(heap_node8(l, r));
+        }
+        levels.push(next);
+    }
+    let node8 = |level: usize, idx: usize| -> [BabyBear; CHIP_OUT_LANES] {
+        levels[level]
+            .get(idx)
+            .copied()
+            .unwrap_or_else(|| heap_empty_subtree_root_8(level))
+    };
+    let mut siblings = Vec::with_capacity(depth);
+    let mut directions = Vec::with_capacity(depth);
+    let mut idx = position;
+    for level in 0..depth {
+        siblings.push(node8(level, idx ^ 1));
+        directions.push((idx & 1) as u8);
+        idx >>= 1;
+    }
+    (node8(depth, 0), siblings, directions)
 }
 
 /// Assemble the PRESENT instance traces from the base main trace + the boundary witness +
@@ -4316,6 +4713,194 @@ fn build_traces(
                 continue;
             }
 
+            // -- `aafi_insert` (op=4): the gap-#5 two-path IMT insert, its own row shape. Consumes
+            //    `AafiInsertWitness8`; each gate below ↔ an `imtInsert` step. Nothing routes here in
+            //    production (ADDITIVE) — the fill exists for the atomic-flip cutover + the tests. --
+            if kind == MapKind::AafiInsert {
+                let w = tree
+                    .insert_witness_aafi(HeapLeaf::entry(key, value))
+                    .ok_or_else(|| {
+                        format!(
+                            "map op {i}: aafi insert key {} present, out-of-gap, or sentinel-colliding",
+                            key.as_u32()
+                        )
+                    })?;
+                if check && w.new_root != new_root {
+                    return Err(format!(
+                        "map op {i}: claimed new_root lane0 {} != genuine AAFI insert {}",
+                        new_root[0].as_u32(),
+                        w.new_root[0].as_u32()
+                    ));
+                }
+                let low_next = w.low_leaf_old.next_addr;
+                // The R1 (post-low-update) layout = the append-order layout MINUS the appended leaf;
+                // its append fold IS R1, and `free_index`'s membership path is PATH2.
+                let r1_prefix = &w.append_order_after[..w.free_index];
+                let (path2_root, sib2, dir2) =
+                    aafi_membership_8(r1_prefix, w.free_index, HEAP_TREE_DEPTH);
+
+                let mut cols = vec![BabyBear::ZERO; MAP_A_DEC0];
+                cols[MAP_ROOT..MAP_ROOT + CHIP_OUT_LANES].copy_from_slice(&root);
+                cols[MAP_KEY] = key;
+                cols[MAP_VALUE] = value;
+                cols[MAP_OP] = BabyBear::new(kind.code());
+                cols[MAP_NEW_ROOT..MAP_NEW_ROOT + CHIP_OUT_LANES].copy_from_slice(&new_root);
+                cols[MAP_IS_REAL] = BabyBear::ONE;
+                cols[MAP_S] = BabyBear::ONE; // the AAFI selector (op=4)
+                // Pin old_value := value so the read-leg `old_value = value` holds trivially on aafi
+                // (it is otherwise unused — the read/write old-leaf absorb is gated off at op=4).
+                cols[MAP_OLD_VALUE] = value;
+                cols[MAP_NEXT] = low_next; // low_oldNext = the appended leaf's next_addr
+                cols[MAP_LOW_ADDR] = w.low_leaf_old.addr;
+                cols[MAP_LOW_VALUE] = w.low_leaf_old.value;
+                for lvl in 0..HEAP_TREE_DEPTH {
+                    cols[MAP_SIB0 + CHIP_OUT_LANES * lvl..MAP_SIB0 + CHIP_OUT_LANES * (lvl + 1)]
+                        .copy_from_slice(&w.low_siblings[lvl]);
+                    cols[MAP_DIR0 + lvl] = BabyBear::new(w.low_directions[lvl] as u32);
+                    cols[MAP_SIB2_0 + CHIP_OUT_LANES * lvl
+                        ..MAP_SIB2_0 + CHIP_OUT_LANES * (lvl + 1)]
+                        .copy_from_slice(&sib2[lvl]);
+                    cols[MAP_DIR2_0 + lvl] = BabyBear::new(dir2[lvl] as u32);
+                }
+                // Fold `leaf8` up (sibs, dirs) through `heap_node8`, store the DEPTH-1 intermediate
+                // groups at `chain0`, register every node8 on the chip bus; the final link IS the
+                // root group (not stored). Twin of the shared block's `fold_chain`, path-parametric.
+                let fold = |leaf8: [BabyBear; CHIP_OUT_LANES],
+                            sibs: &[[BabyBear; CHIP_OUT_LANES]],
+                            dirs: &[u8],
+                            chain0: usize,
+                            cols: &mut [BabyBear],
+                            hist: &mut BTreeMap<Vec<u32>, u64>|
+                 -> [BabyBear; CHIP_OUT_LANES] {
+                    let mut cur8 = leaf8;
+                    for lvl in 0..HEAP_TREE_DEPTH {
+                        let sib8 = sibs[lvl];
+                        let (l8, r8) = if dirs[lvl] != 0 {
+                            (sib8, cur8)
+                        } else {
+                            (cur8, sib8)
+                        };
+                        let d8 = heap_node8(l8, r8);
+                        *hist.entry(node8_hist_tuple(&l8, &r8, &d8)).or_insert(0) += 1;
+                        if lvl + 1 < HEAP_TREE_DEPTH {
+                            cols[chain0 + CHIP_OUT_LANES * lvl
+                                ..chain0 + CHIP_OUT_LANES * (lvl + 1)]
+                                .copy_from_slice(&d8);
+                        }
+                        cur8 = d8;
+                    }
+                    cur8
+                };
+
+                // GATE (a): low_old digest → MAP_OLD_LEAF, folds PATH1 → MAP_ROOT.
+                let low_old8 = w.low_leaf_old.digest8();
+                *chip_hist
+                    .entry(leaf8_hist_tuple(
+                        w.low_leaf_old.addr,
+                        w.low_leaf_old.value,
+                        low_next,
+                        &low_old8,
+                    ))
+                    .or_insert(0) += 1;
+                cols[MAP_OLD_LEAF..MAP_OLD_LEAF + CHIP_OUT_LANES].copy_from_slice(&low_old8);
+                let a_end = fold(
+                    low_old8,
+                    &w.low_siblings,
+                    &w.low_directions,
+                    MAP_OLD_CHAIN0,
+                    &mut cols,
+                    &mut chip_hist,
+                );
+                debug_assert_eq!(a_end, root, "aafi gate(a): low path must open to root8");
+
+                // GATE (c): low_new digest (next := k) → MAP_LOW_NEW, folds PATH1 → MAP_R1.
+                let low_new8 = w.low_leaf_new.digest8();
+                *chip_hist
+                    .entry(leaf8_hist_tuple(
+                        w.low_leaf_new.addr,
+                        w.low_leaf_new.value,
+                        key,
+                        &low_new8,
+                    ))
+                    .or_insert(0) += 1;
+                cols[MAP_LOW_NEW..MAP_LOW_NEW + CHIP_OUT_LANES].copy_from_slice(&low_new8);
+                let r1 = fold(
+                    low_new8,
+                    &w.low_siblings,
+                    &w.low_directions,
+                    MAP_LOW_NEW_CHAIN0,
+                    &mut cols,
+                    &mut chip_hist,
+                );
+                cols[MAP_R1..MAP_R1 + CHIP_OUT_LANES].copy_from_slice(&r1);
+                debug_assert_eq!(
+                    r1, path2_root,
+                    "aafi: PATH1 R1 must equal the R1-layout fold"
+                );
+
+                // GATE (d1): the empty slot (ZERO8) folds PATH2 → MAP_R1 (proves free_index empty).
+                let free_empty8 = heap_empty_subtree_root_8(0);
+                cols[MAP_FREE_EMPTY..MAP_FREE_EMPTY + CHIP_OUT_LANES].copy_from_slice(&free_empty8);
+                let d1_end = fold(
+                    free_empty8,
+                    &sib2,
+                    &dir2,
+                    MAP_FREE_EMPTY_CHAIN0,
+                    &mut cols,
+                    &mut chip_hist,
+                );
+                debug_assert_eq!(d1_end, r1, "aafi gate(d1): empty slot must open to R1");
+
+                // GATE (d2): appended leaf → MAP_NEW_LEAF, folds PATH2 → MAP_NEW_ROOT.
+                let appended8 = w.new_leaf.digest8();
+                *chip_hist
+                    .entry(leaf8_hist_tuple(
+                        w.new_leaf.addr,
+                        w.new_leaf.value,
+                        w.new_leaf.next_addr,
+                        &appended8,
+                    ))
+                    .or_insert(0) += 1;
+                cols[MAP_NEW_LEAF..MAP_NEW_LEAF + CHIP_OUT_LANES].copy_from_slice(&appended8);
+                let d2_end = fold(
+                    appended8,
+                    &sib2,
+                    &dir2,
+                    MAP_NEW_CHAIN0,
+                    &mut cols,
+                    &mut chip_hist,
+                );
+                debug_assert_eq!(d2_end, new_root, "aafi gate(d2): appended leaf → new_root");
+
+                // GATE (b): the pointer-bracket range block (low_addr < key < low_next).
+                debug_assert_eq!(cols.len(), MAP_A_DEC0);
+                fill_canon(
+                    w.low_leaf_old.addr.as_u32(),
+                    true,
+                    &mut cols,
+                    &mut byte_hist,
+                );
+                fill_canon(key.as_u32(), true, &mut cols, &mut byte_hist);
+                fill_canon(low_next.as_u32(), true, &mut cols, &mut byte_hist);
+                fill_lex_lt(
+                    w.low_leaf_old.addr.as_u32(),
+                    key.as_u32(),
+                    true,
+                    &mut cols,
+                    &mut byte_hist,
+                )?;
+                fill_lex_lt(
+                    key.as_u32(),
+                    low_next.as_u32(),
+                    true,
+                    &mut cols,
+                    &mut byte_hist,
+                )?;
+                debug_assert_eq!(cols.len(), MAP_WIDTH);
+                map_rows.push(cols);
+                continue;
+            }
+
             // `next_addr` is the IMT leaf pointer (leaf arity 2→3): read/write SHARE it (the value
             // update holds the pointer fixed), insert carries the appended leaf's `low_oldNext`.
             let (old_value, next_addr, sibs, dirs): (
@@ -4418,6 +5003,7 @@ fn build_traces(
                     )
                 }
                 MapKind::Absent => unreachable!("absent handled above"),
+                MapKind::AafiInsert => unreachable!("aafi insert handled above"),
             };
             let mut cols = vec![BabyBear::ZERO; MAP_WIDTH];
             cols[MAP_ROOT..MAP_ROOT + CHIP_OUT_LANES].copy_from_slice(&root);
@@ -6353,6 +6939,234 @@ mod tests {
             .is_err(),
             "insert at a present key must refuse"
         );
+    }
+
+    // ---- the gap-#5 AAFI (append-at-free-index) two-path insert (op=4) ----
+
+    /// The op=4 descriptor: `root8 [0..8), key 8, value 9, new_root8 [10..18), guard 18`.
+    fn aafi_desc() -> EffectVmDescriptor2 {
+        EffectVmDescriptor2 {
+            name: "ir2-map-aafi-insert".to_string(),
+            trace_width: 19,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::MapOp(MapOpSpec {
+                guard: LeanExpr::Var(18),
+                root: (0..CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                key: LeanExpr::Var(8),
+                value: LeanExpr::Var(9),
+                new_root: (10..10 + CHIP_OUT_LANES).map(LeanExpr::Var).collect(),
+                op: MapKind::AafiInsert,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        }
+    }
+
+    /// The honest AAFI witness (key 150, bracketed by the committed low leaf 100 whose pointer
+    /// `next_addr = 200`) rows for the given claimed `new_root8`.
+    fn aafi_rows(key: u32, value: u32, new_root: [BabyBear; CHIP_OUT_LANES]) -> Vec<Vec<BabyBear>> {
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let root = tree.root8();
+        let mk = |guard: BabyBear| {
+            let mut r = vec![BabyBear::ZERO; 19];
+            r[0..CHIP_OUT_LANES].copy_from_slice(&root.limbs());
+            r[8] = BabyBear::new(key);
+            r[9] = BabyBear::new(value);
+            r[10..10 + CHIP_OUT_LANES].copy_from_slice(&new_root);
+            r[18] = guard;
+            r
+        };
+        vec![
+            mk(BabyBear::ONE),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+            mk(BabyBear::ZERO),
+        ]
+    }
+
+    /// THE AAFI TWO-PATH GATE: an honest `aafi_insert` (key 150 spliced after low leaf 100,
+    /// before its pointer 200) proves and verifies — the four gates (a) low-open (b) bracket
+    /// (c) low-update→R1 (d) empty-append→new_root discharge to the proven Lean `imtInsert`.
+    #[test]
+    fn ir2_aafi_honest_proves_and_verifies() {
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let w = tree
+            .insert_witness_aafi(HeapLeaf::entry(BabyBear::new(150), BabyBear::new(55)))
+            .expect("key 150 is fresh and bracketed by low leaf 100→200");
+        let desc = aafi_desc();
+        let proof = prove_vm_descriptor2(
+            &desc,
+            &aafi_rows(150, 55, w.new_root),
+            &[],
+            &MemBoundaryWitness::default(),
+            &[test_heap()],
+        )
+        .expect("honest aafi insert must prove");
+        verify_vm_descriptor2(&desc, &proof, &[]).expect("aafi insert proof must verify");
+    }
+
+    /// An `aafi_insert` at a key that is ALREADY present (100 — a committed leaf) must refuse:
+    /// no pointer-gap brackets a present key (`imtAbsent` fails), so `insert_witness_aafi`
+    /// returns no witness. The §3 double-spend refusal.
+    #[test]
+    fn ir2_aafi_present_key_refuses() {
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        // A fabricated "new_root" — the point is the witness builder refuses before it is used.
+        let bogus = tree.root8().limbs();
+        assert!(
+            prove_vm_descriptor2(
+                &aafi_desc(),
+                &aafi_rows(100, 55, bogus),
+                &[],
+                &MemBoundaryWitness::default(),
+                &[test_heap()],
+            )
+            .is_err(),
+            "aafi insert at a present key must refuse (no bracketing pointer gap)"
+        );
+    }
+
+    /// THE POINTER-BRACKET TOOTH, in-circuit: build the HONEST aafi assembly for key 150, then
+    /// forge the claim to the PRESENT key 100 in BOTH the main row and the map-ops row (so the
+    /// map-log multiset still balances). The raw batch prover must have no satisfying assembly:
+    /// gate (b) `low_addr < k` becomes `100 < 100` and the canonical decomposition of the re-keyed
+    /// value both refuse — the double-spend has no witness.
+    #[test]
+    fn ir2_aafi_forged_bracket_refuses() {
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let w = tree
+            .insert_witness_aafi(HeapLeaf::entry(BabyBear::new(150), BabyBear::new(55)))
+            .expect("key 150 fresh");
+        let desc = aafi_desc();
+        let layout = check_descriptor2(&desc).expect("aafi gauntlet checks");
+        let presence = Presence::of(&desc, &layout);
+        let mut traces = build_traces(
+            &desc,
+            &layout,
+            presence,
+            &aafi_rows(150, 55, w.new_root),
+            &MemBoundaryWitness::default(),
+            &[test_heap()],
+            &UMemBoundaryWitness::default(),
+            true,
+        )
+        .expect("honest aafi traces");
+        traces.main[0][8] = BabyBear::new(100); // forge the claimed key, main side
+        traces.map_ops.as_mut().expect("map-ops table present")[0][MAP_KEY] = BabyBear::new(100); // …and table side (multiset balanced)
+        let airs = instance_airs(&desc, layout, presence);
+        let mut matrices = vec![to_matrix(&traces.main)];
+        for t in [
+            &traces.chip,
+            &traces.byte,
+            &traces.memory,
+            &traces.boundary,
+            &traces.map_ops,
+            &traces.map_absent,
+            &traces.umemory,
+            &traces.umem_boundary,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            matrices.push(to_matrix(t));
+        }
+        let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
+        let config = ir2_config();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+                .iter()
+                .zip(matrices.iter())
+                .zip(pvs.iter())
+                .map(|((air, trace), pv)| StarkInstance {
+                    air,
+                    trace,
+                    public_values: pv.clone(),
+                })
+                .collect();
+            let prover_data = ProverData::from_instances(&config, &instances);
+            let proof = prove_batch(&config, &instances, &prover_data);
+            verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+        }));
+        match r {
+            Err(_) => {} // the debug prover panicked on the violated bracket / decomp teeth
+            Ok(res) => assert!(
+                res.is_err(),
+                "forged aafi bracket produced an accepted proof — pointer-bracket tooth OPEN"
+            ),
+        }
+    }
+
+    /// THE LOW-UPDATE TOOTH: build the HONEST aafi assembly, then forge the appended leaf's pointer
+    /// `MAP_NEXT` (= the low leaf's old `next_addr`) to a mismatching value. The low-leaf digest
+    /// binds `next_addr`, so gate (a)'s PATH1 opening no longer authenticates under the committed
+    /// root — the tampered "no shift" insert has no witness.
+    #[test]
+    fn ir2_aafi_forged_pointer_refuses() {
+        let tree = CanonicalHeapTree8::new(test_heap(), HEAP_TREE_DEPTH);
+        let w = tree
+            .insert_witness_aafi(HeapLeaf::entry(BabyBear::new(150), BabyBear::new(55)))
+            .expect("key 150 fresh");
+        let desc = aafi_desc();
+        let layout = check_descriptor2(&desc).expect("aafi gauntlet checks");
+        let presence = Presence::of(&desc, &layout);
+        let mut traces = build_traces(
+            &desc,
+            &layout,
+            presence,
+            &aafi_rows(150, 55, w.new_root),
+            &MemBoundaryWitness::default(),
+            &[test_heap()],
+            &UMemBoundaryWitness::default(),
+            true,
+        )
+        .expect("honest aafi traces");
+        // Widen the low leaf's committed pointer (MAP_NEXT). The arity-3 low-leaf digest binds it,
+        // so PATH1 (gate a) no longer opens to the committed root, and gate (b)'s `k < low_next`
+        // decomposition is re-based — no consistent assignment survives.
+        traces.map_ops.as_mut().expect("map-ops table present")[0][MAP_NEXT] =
+            BabyBear::new(0x3FFF_FFFF);
+        let airs = instance_airs(&desc, layout, presence);
+        let mut matrices = vec![to_matrix(&traces.main)];
+        for t in [
+            &traces.chip,
+            &traces.byte,
+            &traces.memory,
+            &traces.boundary,
+            &traces.map_ops,
+            &traces.map_absent,
+            &traces.umemory,
+            &traces.umem_boundary,
+        ]
+        .into_iter()
+        .flatten()
+        {
+            matrices.push(to_matrix(t));
+        }
+        let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
+        let config = ir2_config();
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+                .iter()
+                .zip(matrices.iter())
+                .zip(pvs.iter())
+                .map(|((air, trace), pv)| StarkInstance {
+                    air,
+                    trace,
+                    public_values: pv.clone(),
+                })
+                .collect();
+            let prover_data = ProverData::from_instances(&config, &instances);
+            let proof = prove_batch(&config, &instances, &prover_data);
+            verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+        }));
+        match r {
+            Err(_) => {}
+            Ok(res) => assert!(
+                res.is_err(),
+                "forged aafi pointer produced an accepted proof — pointer-binding tooth OPEN"
+            ),
+        }
     }
 
     // ================================================================
