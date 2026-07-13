@@ -96,6 +96,18 @@ Two-substrate fork -> ship on the DEPLOYED path only. Daily-race cold-start -> t
 5. TOKEN ROLE: $DREGG buys SERVICES only (AI-narration credits, hosting, cosmetics/entry) — never power/features/yield;
    no P2E until retention is proven?
 
+## DECISIONS LOCKED (2026-07-12, ember)
+1. SEQUENCING: **FULLY PARALLEL** — push the flagship AND the keystone schema hard at the same time (more ambitious than
+   product-first-seeded; both tracks run NOW). The through-line still holds (the flagship is customer zero of the schema),
+   but we don't wait for the hit to build the keystone.
+2. ONBOARDING: **YES, pulled forward** — session-keys + passkey + paymaster onboarding is a flagship deliverable (a
+   non-crypto person plays with zero wallet ceremony; a session key = a caveat-bounded play-cap delegation over macaroons).
+3. ATTESTED DM: **WIRE THE REAL CROWN FOR LAUNCH** — light the real MPC-TLS/attestation path (deos-hermes/attest.rs zk-live)
+   so "provably a real model, injection-free, bound to verified state" is true day one, not a fixture. (The operational
+   remainder — a live pinned-notary api session — is the named frontier.)
+4. TOKEN: **SERVICES-ONLY, NO P2E** — $DREGG buys AI-narration credits / hosting / cosmetics / entry, NEVER power/features/
+   yield; no play-to-earn until retention is proven.
+
 ## The call, one line
 Do the cheap fun-fixes now; bet the quarter on ONE turn-based, daily-procgen, attested-DM roguelite ("The Descent") that
 EARNS and is playable by normal humans (session keys pulled forward); extract the keystone schema FROM that hit as its
