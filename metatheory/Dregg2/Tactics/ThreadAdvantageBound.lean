@@ -68,7 +68,8 @@ namespace Dregg2.Tactics.ThreadAdvantageBound
 
 open Dregg2.Crypto.ConcreteSecurity
   (Negl negl_zero negl_two_pow negl_add negl_const_mul negl_mul_monomial negl_finset_sum Ensemble)
-open Dregg2.Crypto.ProbCrypto (MSISHardQuant MLWEHardQuant DLHardQuant HashCRHardQuant)
+open Dregg2.Crypto.ProbCrypto
+  (MSISHardQuant MLWEHardQuant DLHardQuant HashCRHardQuant DecisionMLWEHardQuant)
 open Dregg2.Circuit.HashFloorHonesty
   (KeyedHashFamily CollisionFinder CollisionResistant collisionAdv)
 
@@ -88,6 +89,7 @@ macro_rules
         | exact ‹HashCRHardQuant _› _
         | exact ‹MSISHardQuant _› _
         | exact ‹MLWEHardQuant _› _
+        | exact ‹DecisionMLWEHardQuant _› _
         | exact ‹DLHardQuant _› _
         | assumption)
 
@@ -183,6 +185,32 @@ theorem forger_advantage_with_challenge_bound {S : Type*} (adv : S → Ensemble)
     Negl (fun n => (1 / (2 : ℝ) ^ n) + adv s n) := by
   thread_advantage_bound
 
+/-! ## §4b — PROTOTYPE on the DECISIONAL floor (the LWE-vs-uniform distinguishing leg).
+
+The decisional consumers (`LossyIdentification`'s lossy-keygen switch, the HVZK transcript-indistinguishability
+leg of `AdaptiveTSUF`/`ThresholdSignerRefinement`) rest on `DecisionMLWEHardQuant adv := ∀ s, Negl (adv s)`,
+where `adv s` is a distinguisher's LWE-vs-uniform advantage ENSEMBLE (`ProbCrypto.distinguishAdv`, a
+DIFFERENCE of two acceptance probabilities — not a single `winProb`). The new floor leaf threads it exactly
+like the search floors. -/
+
+/-- **DECISIONAL restatement.** Under `DecisionMLWEHardQuant adv` (the proper distinguishing floor), the
+advantage of any fixed distinguisher index `s` is negligible — the leaf that re-threads every decision-MLWE
+consumer. Proof: `thread_advantage_bound` (the `DecisionMLWEHardQuant` floor leaf). -/
+theorem decision_distinguisher_advantage_bound {S : Type*} (adv : S → Ensemble) (s : S)
+    (hfloor : DecisionMLWEHardQuant adv) :
+    Negl (adv s) := by
+  thread_advantage_bound
+
+/-- **MIXED decisional tower (the lossy-ID game-hop shape).** The tight-EUF-CMA advantage decomposes as the
+decision-MLWE key-switch term (`adv s`, a distinguishing floor leaf) PLUS the statistical lossy-soundness
+term PLUS the HVZK simulation term (both given negligible) — negligible by additive threading. Proof:
+`thread_advantage_bound` (`negl_add` down to the `DecisionMLWEHardQuant` leaf and the two `assumption`
+legs). -/
+theorem lossy_id_advantage_bound {S : Type*} (adv : S → Ensemble) (s : S) (lossyBound simTerm : Ensemble)
+    (hfloor : DecisionMLWEHardQuant adv) (hlossy : Negl lossyBound) (hsim : Negl simTerm) :
+    Negl (fun n => adv s n + lossyBound n + simTerm n) := by
+  thread_advantage_bound
+
 /-! ## §5 — TEETH: the tactic is a REAL discharger, not a `sorry` in tactic costume.
 
 It closes a `Negl` goal ONLY when the negligibility is genuinely available (a floor leaf or a decaying
@@ -214,7 +242,9 @@ example (F : KeyedHashFamily) (A : CollisionFinder F) : True := by
   friFold_binding_advantage_bound,
   stark_sound_tower_advantage_bound,
   forger_advantage_bound_under_msis,
-  forger_advantage_with_challenge_bound
+  forger_advantage_with_challenge_bound,
+  decision_distinguisher_advantage_bound,
+  lossy_id_advantage_bound
 ]
 
 end Dregg2.Tactics.ThreadAdvantageBound

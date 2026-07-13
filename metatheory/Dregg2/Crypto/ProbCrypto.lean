@@ -483,6 +483,149 @@ theorem negl_of_negl_sq_fires : Negl (fun n : ℕ => 1 / (2 : ℝ) ^ n) := by
       abs_of_nonneg (by positivity : (0:ℝ) ≤ 1 / 2 ^ n)]
   exact hle
 
+/-! ## §5 — THE DECISIONAL FLOOR: a distinguishing-advantage substrate (LWE-vs-uniform).
+
+The §3 floors (`MSISHardQuant`/`MLWEHardQuant`/…) are SEARCH floors: `adv s` is one solver's success
+probability (a single `winProb`), and the reduction bounds a forger's advantage through the forking
+inequality. That shape does NOT fit the DECISIONAL consumers (`LossyIdentification`'s lossy-keygen switch,
+the HVZK/masking transcript-indistinguishability leg of `AdaptiveTSUF`/`ThresholdSignerRefinement`), whose
+attack object is an LWE-vs-uniform DISTINGUISHER — its advantage is a DIFFERENCE of two acceptance
+probabilities `|Pr[D(real)=1] − Pr[D(uniform)=1]|`, not a single win probability. This section adds the
+proper decisional floor over that quantity, reusing the same `Negl`/`Ensemble` layer.
+-/
+
+/-- **The distinguishing advantage of a decisional distinguisher.** `accReal`/`accUnif` are its ACCEPT
+predicates in the real-LWE experiment (`ΩR`) and the uniform experiment (`ΩU`); each `winProb` is its
+acceptance probability there. The distinguishing advantage is the GAP
+`|Pr[accept | real] − Pr[accept | uniform]|` — the DECISIONAL shape (a DIFFERENCE of two probabilities),
+distinct from the search `winProb` (a single probability). This is the LWE-vs-uniform distinguishing
+quantity the decisional floor bounds. -/
+noncomputable def distinguishAdv {ΩR ΩU : Type*} [Fintype ΩR] [Fintype ΩU]
+    (accReal : ΩR → Bool) (accUnif : ΩU → Bool) : ℝ :=
+  |winProb accReal - winProb accUnif|
+
+/-- The distinguishing advantage is non-negative (it is an absolute value). -/
+theorem distinguishAdv_nonneg {ΩR ΩU : Type*} [Fintype ΩR] [Fintype ΩU]
+    (accReal : ΩR → Bool) (accUnif : ΩU → Bool) : 0 ≤ distinguishAdv accReal accUnif :=
+  abs_nonneg _
+
+/-- The distinguishing advantage is a genuine probability gap: `≤ 1` (both acceptance probabilities lie
+in `[0,1]`, so their difference lies in `[−1,1]`). -/
+theorem distinguishAdv_le_one {ΩR ΩU : Type*} [Fintype ΩR] [Fintype ΩU]
+    (accReal : ΩR → Bool) (accUnif : ΩU → Bool) : distinguishAdv accReal accUnif ≤ 1 := by
+  unfold distinguishAdv
+  rw [abs_le]
+  have hr0 := winProb_nonneg accReal; have hr1 := winProb_le_one accReal
+  have hu0 := winProb_nonneg accUnif; have hu1 := winProb_le_one accUnif
+  constructor <;> linarith
+
+/-- **`DecisionMLWEHardQuant adv` — the DECISIONAL Module-LWE floor.** Every distinguisher `s`'s
+LWE-vs-uniform distinguishing-advantage ENSEMBLE (`adv s`, a real gap indexed by the security parameter) is
+negligible: `∀ bounded D, Negl (|Pr[D(real)=1] − Pr[D(uniform)=1]|)`. A NEW def alongside the SEARCH
+`MLWEHardQuant` — the decisional (distinguishing) shape does not reduce to the search (finding) one, so it
+carries its own floor. The intended `adv` is a `DecisionFamily.adv`, a real distinguishing advantage that
+CAN be non-negligible (`decisionMLWEHardQuant_perfect_refuted`). -/
+def DecisionMLWEHardQuant {S : Type*} (adv : S → Ensemble) : Prop := ∀ s, Negl (adv s)
+
+/-- **A λ-indexed decisional DISTINGUISHER family.** At each security parameter `l`: a finite real-LWE
+experiment space `RealWorld l`, a finite uniform experiment space `UnifWorld l`, and the distinguisher's
+accept predicates in each. Its `adv` is the distinguishing-advantage ENSEMBLE — the decisional analog of
+`ForkingFamily`. -/
+structure DecisionFamily where
+  /-- The real-LWE experiment outcome space at parameter `l`. -/
+  RealWorld : ℕ → Type
+  /-- The uniform experiment outcome space at parameter `l`. -/
+  UnifWorld : ℕ → Type
+  /-- Finiteness of the real experiment space. -/
+  realFin : ∀ l, Fintype (RealWorld l)
+  /-- Finiteness of the uniform experiment space. -/
+  unifFin : ∀ l, Fintype (UnifWorld l)
+  /-- The distinguisher's accept predicate on a real-LWE sample. -/
+  accReal : ∀ l, RealWorld l → Bool
+  /-- The distinguisher's accept predicate on a uniform sample. -/
+  accUnif : ∀ l, UnifWorld l → Bool
+
+/-- The family's **distinguishing-advantage ensemble** `adv l = |Pr[accept | real] − Pr[accept | uniform]|`
+at parameter `l`. A genuine real in `[0,1]` (`decisionFamily_adv_mem_unit`). -/
+noncomputable def DecisionFamily.adv (F : DecisionFamily) : Ensemble := fun l =>
+  letI := F.realFin l; letI := F.unifFin l
+  distinguishAdv (F.accReal l) (F.accUnif l)
+
+theorem decisionFamily_adv_mem_unit (F : DecisionFamily) (l : ℕ) :
+    0 ≤ F.adv l ∧ F.adv l ≤ 1 := by
+  letI := F.realFin l; letI := F.unifFin l
+  exact ⟨distinguishAdv_nonneg _ _, distinguishAdv_le_one _ _⟩
+
+/-! ### TEETH — the decisional floor is a genuine assumption: satisfiable (decaying) AND refutable (perfect). -/
+
+/-- The trivially-decidable `NeZero` for `2^l`, so `(0 : Fin (2^l))` exists (the decaying distinguisher's
+sole accepting outcome). -/
+instance instNeZeroTwoPow (l : ℕ) : NeZero (2 ^ l) := ⟨pow_ne_zero l two_ne_zero⟩
+
+/-- **A PERFECT distinguisher** — it accepts EVERY real sample and NO uniform sample, so its distinguishing
+advantage is `|1 − 0| = 1` at every parameter. The decisional twin of the Boolean solver: it separates the
+two distributions with certainty. -/
+def perfectDist : DecisionFamily where
+  RealWorld := fun _ => Unit
+  UnifWorld := fun _ => Unit
+  realFin := fun _ => inferInstance
+  unifFin := fun _ => inferInstance
+  accReal := fun _ => fun _ => true
+  accUnif := fun _ => fun _ => false
+
+/-- The perfect distinguisher's advantage is the constant `1` — a genuine, non-negligible distinguishing
+advantage (the negative pole of `distinguishAdv`). -/
+theorem perfectDist_adv_one : perfectDist.adv = fun _ => (1 : ℝ) := by
+  funext l
+  show distinguishAdv (fun _ : Unit => true) (fun _ : Unit => false) = 1
+  unfold distinguishAdv
+  rw [winProb_top, winProb_bot]; norm_num
+
+/-- **A DECAYING distinguisher** — it accepts exactly one real sample out of `2^l` (and no uniform sample),
+so its distinguishing advantage is `1/2^l`, decaying with the security parameter. A genuine, non-degenerate
+distinguishing advantage that vanishes as the sample space grows. -/
+def decayDist : DecisionFamily where
+  RealWorld := fun l => Fin (2 ^ l)
+  UnifWorld := fun _ => Unit
+  realFin := fun _ => inferInstance
+  unifFin := fun _ => inferInstance
+  accReal := fun _ => fun x => decide (x = 0)
+  accUnif := fun _ => fun _ => false
+
+/-- The decaying distinguisher's advantage is exactly `1/2^l`: one accepting real outcome out of `2^l`, no
+uniform accept. The counting is the singleton-vs-full `winProb`. -/
+theorem decayDist_adv : decayDist.adv = fun l => 1 / (2 : ℝ) ^ l := by
+  funext l
+  show distinguishAdv (fun x : Fin (2 ^ l) => decide (x = 0)) (fun _ : Unit => false) = 1 / (2 : ℝ) ^ l
+  unfold distinguishAdv
+  have hwr : winProb (fun x : Fin (2 ^ l) => decide (x = 0)) = 1 / (2 : ℝ) ^ l := by
+    unfold winProb
+    have hfilter : (Finset.univ.filter (fun x : Fin (2 ^ l) => decide (x = 0) = true))
+        = ({0} : Finset (Fin (2 ^ l))) := by
+      ext x; simp [Finset.mem_filter]
+    rw [hfilter, Finset.card_singleton, Fintype.card_fin]; push_cast; ring
+  rw [winProb_bot, hwr, sub_zero, abs_of_nonneg (by positivity)]
+
+/-- **(TOOTH — the floor is SATISFIABLE by a decaying distinguisher.)** The decaying distinguisher's
+advantage `1/2^l` is negligible (`negl_two_pow`), so the decisional floor HOLDS on it — satisfiable for
+reasons of RATE, not because the advantage is trivially `0`. -/
+theorem decisionMLWEHardQuant_decay_holds :
+    DecisionMLWEHardQuant (fun _ : Unit => decayDist.adv) := by
+  intro _; rw [decayDist_adv]; exact negl_two_pow
+
+/-- **(TOOTH — the floor is REFUTABLE by a perfect distinguisher.)** The perfect distinguisher's advantage
+is the constant `1`, NOT negligible (`not_negl_one`), so the decisional floor FAILS on it. Together with
+`decisionMLWEHardQuant_decay_holds` this pins the floor strictly between "vacuously true" and "trivially
+false" — a genuine assumption, on a real distinguishing advantage. -/
+theorem decisionMLWEHardQuant_perfect_refuted :
+    ¬ DecisionMLWEHardQuant (fun _ : Unit => perfectDist.adv) := by
+  intro h; have hp := h (); rw [perfectDist_adv_one] at hp; exact not_negl_one hp
+
+/-- **(TOOTH — the all-zero decisional floor holds.)** A distinguisher with zero advantage everywhere
+satisfies the floor (`negl_zero`) — the indistinguishable pole. -/
+theorem decisionMLWEHardQuant_zero {S : Type*} :
+    DecisionMLWEHardQuant (fun _ : S => (fun _ => 0 : Ensemble)) := fun _ => negl_zero
+
 /-! ## Kernel-clean keystones. -/
 
 #assert_all_clean [
@@ -504,7 +647,15 @@ theorem negl_of_negl_sq_fires : Negl (fun n : ℕ => 1 / (2 : ℝ) ^ n) := by
   const25_forgerAdv,
   const25_forger_breaks_floor,
   zeroFamily_forger_negl,
-  negl_of_negl_sq_fires
+  negl_of_negl_sq_fires,
+  distinguishAdv_nonneg,
+  distinguishAdv_le_one,
+  decisionFamily_adv_mem_unit,
+  perfectDist_adv_one,
+  decayDist_adv,
+  decisionMLWEHardQuant_decay_holds,
+  decisionMLWEHardQuant_perfect_refuted,
+  decisionMLWEHardQuant_zero
 ]
 
 end Dregg2.Crypto.ProbCrypto
