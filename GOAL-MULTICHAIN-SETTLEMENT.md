@@ -378,3 +378,21 @@ NEXT-WAVE (chain/gnark, sequenced): RecursionVk fingerprint-CHECK (Finding 2 —
 GKR-batched Poseidon2 (next shrink ~−2.5M, verification-preserving protocol); GPU byte-identical-test teardown flake
 (wgpu buffer-drop lifecycle, test-hygiene followup — correctness confirmed by the e2e byte-identity). GPU is UNPARKED +
 delivering; the client-side-proving payoff (fast turn/shrink proving on a Mac) is now measured-real.
+
+## ⚑⚑⚑ FRONTIER SUBSTANTIALLY COMPLETE (07-13) — the clean-and-mine scope is done + verified
+EVM SETTLEMENT: real Groth16 proof settles on-chain (Foundry 7/7); 25-lane state root bound to the verified apex
+output; BOTH shrink+apex VK pinned; apex constant RecursionVk-DERIVED + a REAL fail-closed anchor CHECK; open_input
+FRI-binding; metaprogrammed (correct-by-construction) constraint-eval. Circuit 4.98M (−61% verification-preserving),
+prove 17.7s, setup CACHED (skip on unchanged). 4/4 adversarial critics → all findings CLOSED. GPU prover 6.60×
+verified (byte-identical). SOLANA: proof-of-holdings anchored (forgery fixed); settle = M-of-N attested. CROSS-CHAIN:
+binding trilogy + gov spine. Docs honesty-swept. GKR-Poseidon2 measured MARGINAL (banked).
+HONEST REMAINING (none clean-and-mine-trivial):
+- DEEP-DEFERRED (cross-layer / sibling territory): message→root FULL proof-binding (turn/apex must expose an
+  outbound-message commitment — currently fail-closed, not forgeable); IncrementNonce→Transfer full-wrap path (awaits
+  the sibling wide-registry flag-day); the Lean-tie differential (recursion-AIR vs effect-vm-AIR layering).
+- HYGIENE: GPU byte-identical-test wgpu-teardown flake (correctness already confirmed by the e2e byte-identity).
+- MARGINAL: GKR-Poseidon2 integration (−14/−30%, deliberate 2nd shrink wave only if justified).
+- EMBER-OUTWARD (gated on ember, not build): prod MPC ceremony; deploy/testnet timing; alloy-trie upstream; the
+  in-repo governance anchor constants (update at deploy).
+The swarm drove the achievable clean-and-mine scope to completion; the remaining needs sibling coordination or ember's
+outward decisions.
