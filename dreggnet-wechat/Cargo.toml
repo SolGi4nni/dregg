@@ -39,6 +39,12 @@ description = "A WeChatFrontend implementing dreggnet-offerings' Frontend trait:
 # (offering #0) over the real substrate. This crate is a `Frontend` impl; it does NOT
 # re-implement any offering logic.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE OTHER OFFERINGS — registered alongside the dungeon in the multi-offering `WeChatHost`
+# (`src/host.rs`), so a council (governance) and a market (commerce) play on WeChat through the
+# SAME `OfferingHost` the web catalog + Telegram host drive. Consumed as `Offering`s; no offering
+# logic reimplemented (the WeChat layer only maps the shared `Surface` → the OA numbered reply).
+dreggnet-council = { path = "../dreggnet-council" }
+dreggnet-market = { path = "../dreggnet-market" }
 # THE DEOS SURFACE — `ViewNode`, the serializable affordance view-tree an offering's
 # `render` produces, AND the SHARED `WeChatBackend` that projects it. `default-features = false`
 # = the gpui-free view-tree model.
