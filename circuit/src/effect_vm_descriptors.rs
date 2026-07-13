@@ -826,7 +826,7 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =
-    "531fa532c360ce1c75f9319eb159158afa1f33289649ddee512ae20627b72bf9";
+    "360559d332ef6f71dc721bf8865b429a213a1dd349b5878ddf9f87ea6979558e";
 
 /// **THE UMEM-FORM COHORT REGISTRY (STAGED, VK-RISK-FREE).** The 9 per-effect FIXED-cohort umem
 /// descriptors — `setFieldUMem` · `setHeapUMem` · `grantUMem` · `attenuateUMem` ·
@@ -1210,7 +1210,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "d5b6f76af493bff61a7ee7ec97626d051999701378ccc9272d73c71ec79a2451";
+    "141818c67177bd8a311ea66b8b84c7254e52f563550bcd4b866861d03ec13012";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1236,7 +1236,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "603a79364199835b61426921c090faed59edc24a93e59baf1ead8624e6d4e95a";
+    "28a4eb935602e91089d2492cc2ff2b6e3f6ce4a46ebc2d9ef090f7f5fadf0f75";
 
 // ============================================================================
 // THE WIDE-CARRIER GEOMETRY VERSION BOUNDARY (the flag-day rotation, v2).
@@ -2442,6 +2442,20 @@ mod tests {
             // widens its v1 FACE by the avail witness columns, so its rotated appendix, refuse
             // anchor, and rc carrier all shift by the pad. Zero for every bare member.
             let avail_pad = crate::effect_vm::trace_rotated::avail_pad_for_descriptor_name(name);
+            // §HETEROGENEOUS GEOMETRY: not every member graduates off the STANDARD v1 face.
+            // `setFieldDyn`'s face is 28 columns narrower than the cohort's, and `custom` rides that
+            // same narrow face PLUS the 4 COMMIT-TEETH columns of the 8-felt proof-bind rotation
+            // (which are appended PAST the graduated lanes, so they are not lane columns). Both the
+            // refuse anchor and the `7·n_sites` lane check below must therefore be taken against the
+            // member's OWN face, not `GRAD_ROT_WIDTH`/`V1_WIDTH`. Read off the emitted faces:
+            // setFieldDyn base 1619 = 1647 − 28 (width 1664), custom base 1623 = 1619 + 4 (width 1668).
+            const SETFIELD_DYN_FACE_DELTA: usize = 28;
+            const CUSTOM_COMMIT_TEETH: usize = 4;
+            let (face_delta, commit_teeth) = match key {
+                "customVmDescriptor2R24" => (SETFIELD_DYN_FACE_DELTA, CUSTOM_COMMIT_TEETH),
+                "setFieldDynVmDescriptor2R24" => (SETFIELD_DYN_FACE_DELTA, 0),
+                _ => (0, 0),
+            };
             let is_refuse_welded = name.ends_with("-gentian-deployed-bare-refuse");
             let graduated_width = if is_refuse_welded {
                 // The three per-tag refuse blocks anchor at the member's OWN graduated width
@@ -2452,14 +2466,18 @@ mod tests {
                 // flag-day, not a width fudge). Derived from the weld's own constants, so a
                 // stride/block change moves BOTH the width tooth and the gate check together.
                 const NB: usize = refuse::CAPACITY_TAGS.len();
-                let refuse_end = refuse::floor_col(NB - 1) + 1 + avail_pad;
+                // The refuse blocks anchor at the member's OWN graduated base (see §HETEROGENEOUS
+                // GEOMETRY above), so re-base the cohort's `GRAD_ROT_WIDTH`-anchored `floor_col`.
+                let member_base = GRAD_ROT_WIDTH - face_delta + commit_teeth;
+                let rebase = |c: usize| c - GRAD_ROT_WIDTH + member_base;
+                let refuse_end = rebase(refuse::floor_col(NB - 1)) + 1 + avail_pad;
                 assert_eq!(
                     d.trace_width, refuse_end,
                     "{key}: refuse-welded member width must extend exactly to cover the {NB} \
                      bare-floor-refuse aux blocks anchored at its own graduated width"
                 );
                 for b in 0..NB {
-                    let fc = refuse::floor_col(b) + avail_pad;
+                    let fc = rebase(refuse::floor_col(b)) + avail_pad;
                     assert!(
                         d.constraints.iter().any(|c| matches!(
                             c,
@@ -2469,7 +2487,7 @@ mod tests {
                          gentian flag-day weld did not land on this cohort member"
                     );
                 }
-                GRAD_ROT_WIDTH + avail_pad
+                member_base + avail_pad
             } else if key == "dischargeSatVmDescriptor2R24" || key == "vaultSatVmDescriptor2R24" {
                 // The STAGED discharge/vault satisfaction descriptors graduate on the transfer base
                 // (GRAD_ROT_WIDTH) and carry their satisfaction-gate FIELD columns PAST it. Pin the
@@ -2478,7 +2496,12 @@ mod tests {
                 let expected = if key == "dischargeSatVmDescriptor2R24" {
                     1720 // GRAD_ROT_WIDTH(1647) + the cursor/total/due + G5 free-param bind columns
                 } else {
-                    2121 // GRAD_ROT_WIDTH(1647) + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns
+                    // GRAD_ROT_WIDTH(1647) + the no-dilution (Ta·m ≤ Sa·d) satisfaction columns.
+                    // Re-pinned 2121 → 2185 from the emitted TSV: the satisfaction-gadget span grew
+                    // by 64 columns with the arity-3 IMT / AAFI accumulator rewiring. This is a raw
+                    // drift tooth (a literal read off the committed artifact), so it MUST be re-read
+                    // whenever the gadget changes — it does not derive itself.
+                    2185
                 };
                 assert_eq!(
                     d.trace_width, expected,
@@ -2489,11 +2512,18 @@ mod tests {
             } else {
                 d.trace_width
             };
+            // The graduated width is the member's OWN v1 face (`V1_WIDTH − face_delta`, avail-padded)
+            // plus the rotated appendix, plus `7·n_sites` lane columns, plus any COMMIT-TEETH columns
+            // appended past the lanes. Taking the face delta and teeth out first is what lets the
+            // heterogeneous members (setFieldDyn, custom) satisfy the same `% 7` lane invariant as the
+            // standard cohort — custom's raw −24 face delta is NOT ≡ 0 (mod 7), and pretending it were
+            // would be a fudge; the lane count is only meaningful against its own face.
+            let own_face = V1_WIDTH - face_delta;
+            let lane_base = own_face + avail_pad + APPENDIX_SPAN + commit_teeth;
             assert!(
-                graduated_width >= V1_WIDTH + avail_pad + APPENDIX_SPAN
-                    && (graduated_width - (V1_WIDTH + avail_pad + APPENDIX_SPAN)) % 7 == 0,
-                "{key}: rotated GRADUATED trace width = (avail-padded) v1 width + appendix + \
-                 7·n_sites lane cols"
+                graduated_width >= lane_base && (graduated_width - lane_base) % 7 == 0,
+                "{key}: rotated GRADUATED trace width = (avail-padded) own v1 face + appendix + \
+                 7·n_sites lane cols + commit teeth"
             );
             assert!(
                 d.hash_sites.is_empty() && d.ranges.is_empty(),
@@ -2806,19 +2836,27 @@ mod tests {
                 );
             } else if key == "setFieldDynVmDescriptor2R24" {
                 // THE DYNAMIC setField fields-root weld (WAVE 3): the fifth pin welds the AFTER
-                // block's committed `fields_root` sub-limb to PI[46] (col `afterFieldsRootCol
-                // setFieldDynV1Face.traceWidth` = 439 in the current pre_limbs geometry — the appended
-                // post-`fields_root` param sits at the END of the setFieldDyn v1 face, which has grown
-                // as the B_SPAN limb re-lays advanced), so a forged post-`fields_root` is UNSAT
-                // in-circuit (Lean `setFieldDynForcedV3`). Pinned from the committed registry TSV.
+                // block's committed `fields_root` sub-limb to PI[46], so a forged post-`fields_root`
+                // is UNSAT in-circuit (Lean `setFieldDynForcedV3`). The column is the Lean's
+                // `afterFieldsRootCol setFieldDynV1Face.traceWidth` = face + B_SPAN + B_FIELDS_ROOT.
+                //
+                // This pin ROTTED once already (439 → 451) when the REVOKED-ROOT flag day grew
+                // `B_SPAN` 227 → 239 (+12), because it is a hand-pinned literal. It is re-pinned from
+                // the emitted registry TSV (this file's stated practice for it), NOT derived, and the
+                // reason is worth naming rather than hiding: the derived form would be
+                // `V1_WIDTH + B_SPAN + B_FIELDS_ROOT`, but that yields 463 — Rust's `EFFECT_VM_WIDTH`
+                // (188) and the Lean `setFieldDynV1Face` base (451 − 239 − 36 = 176) DISAGREE by 12.
+                // Until that Lean/Rust face-width divergence is reconciled, a "derived" form here
+                // would be a fabricated identity, so the literal stands with the discrepancy recorded.
+                const SETFIELD_DYN_AFTER_FIELDS_ROOT_COL: usize = 451;
                 assert_eq!(
                     base_pi_count, 47,
                     "setFieldDyn: rotated 46-PI + the appended fields-root weld slot"
                 );
                 assert_eq!(
                     nullifier_pins,
-                    vec![(439, pi_base + 4)],
-                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (439) to PI[46]"
+                    vec![(SETFIELD_DYN_AFTER_FIELDS_ROOT_COL, pi_base + 4)],
+                    "setFieldDyn: the fifth pin welds the AFTER fields_root weld col (451) to PI[46]"
                 );
             } else if key == "mintVmDescriptor2R24" {
                 // THE SUPPLY-MINT hash weld: the fifth pin welds the published mint-hash param
@@ -3005,44 +3043,51 @@ mod tests {
             // the wide member is `host + WIDE_CARRIER_APPENDIX (960)` (the v2 flag-day 60-carrier
             // appendix) and `host.piCount + 16`. The committed wide widths — READ OFF THE EMITTED
             // rotation-wide-registry-staged.tsv, never hand-derived — are:
-            //   * 2607 — the rotated-cohort base wide (GRAD_ROT_WIDTH 1647 + 960; supplyMint + the
-            //     non-cohort rotated-width rows);
+            //   * 2607 — the rotated-cohort base wide (GRAD_ROT_WIDTH 1647 + 960; supplyMint);
+            //   * 2623 — the AVAILABILITY-HARDENED transferFee (fee-avail host 1663 + 960);
             //   * 2627 — setFieldDyn (host 1619 = GRAD_ROT_WIDTH − 28) + the gentian 48-column
             //     floor-refuse weld (2579 + 48);
             //   * 2631 — custom (host 1619 + the 4 COMMIT-TEETH columns of the 8-felt proof-bind
             //     rotation = 1623) + the wide appendix + the gentian 48-column refuse weld
             //     (1623 + 960 + 48);
             //   * 2655 — the bare-cohort members: 2607 + the gentian 48-column floor-refuse weld;
-            //   * 2657 — the membership-teeth transfer (2607 + 2 teeth columns + 48,
-            //     `CarrierComposed.transferV3MembershipWide`);
+            //   * 2660 — the AVAILABILITY-HARDENED burn (burn-avail host 1700 + 960);
+            //   * 2664 — the AVAILABILITY-HARDENED transfer (transfer-avail host 1704 + 960);
             //   * 2687 — the KEY_COMMIT-gated sovereign (2607 + the 32-column chip-digest appendix
             //     + 48, `CarrierComposed.makeSovereignV3DeployedWide`);
             //   * 2936 — the cap-open family + the §J′ insert hosts (host 1976 + 960);
-            //   * 2938 — the turn-identity-pinned transferCapOpenTB (host 1978 + 960);
+            //   * 2946 — the avail-hardened transferCapOpenEff leg (host 1986 + 960);
+            //   * 2948 — the turn-identity-pinned transferCapOpenTB (host 1988 + 960);
             //   * 2984 — cap-open bare-cohort hosts + the gentian refuse (2936 + 48);
             //   * 3065 — heapWrite's after-spine membership host (HEAP_WRITE_HOST_WIDTH 2105 + 960);
             //   * 3079 — the refusal fields-write weld + cap-WRITE after-spine members
             //     (REFUSAL_WRITE_HOST_WIDTH 2119 + 960);
             //   * 3127 — the refusal fields-write / cap-WRITE bare-cohort members (3079 + 48).
+            // The retired 2657 (pre-avail membership-teeth transfer) and 2938 (pre-avail
+            // transferCapOpenTB) widths are GONE: the availability-hardening pads (transfer/burn/fee)
+            // grew those hosts, and the AAFI accumulator-insert flip moved the cap-open transfer legs.
             // Any member off this exact set (a carrier block that grew/shrank, or a refuse weld
             // mis-sized) fails this drift tooth. The RETIRED v1 (912-appendix) widths are refused
             // structurally by `wide_carrier_geometry_version` (the versioned boundary).
             assert!(
                 matches!(
                     d.trace_width,
-                    2607 | 2627
+                    2607 | 2623
+                        | 2627
                         | 2631
                         | 2655
-                        | 2657
+                        | 2660
+                        | 2664
                         | 2687
                         | 2936
-                        | 2938
+                        | 2946
+                        | 2948
                         | 2984
                         | 3065
                         | 3079
                         | 3127
                 ),
-                "{key}: wide width {} is a known wide geometry (2607 / 2627 / 2631 / 2655 / 2657 / 2687 / 2936 / 2938 / 2984 / 3065 / 3079 / 3127)",
+                "{key}: wide width {} is a known wide geometry (2607 / 2623 / 2627 / 2631 / 2655 / 2660 / 2664 / 2687 / 2936 / 2946 / 2948 / 2984 / 3065 / 3079 / 3127)",
                 d.trace_width
             );
             // Every wide member carries the 16 wide-commit PIs (the 8-felt ~124-bit before/after
@@ -3077,17 +3122,26 @@ mod tests {
                     plain.public_input_count + 2,
                     "wide registry row 0 (transfer) = the plain wide transfer + 2 membership claim PIs"
                 );
-                // The plain single-line `WIDE_TRANSFER_STAGED_TSV` is neither teeth-advanced NOR
-                // refuse-welded; the registry row 0 is the membership-teeth transfer AND (being a bare
-                // cohort route) carries the `3·REFUSE_STRIDE = 48`-column gentian floor-refuse weld. So
-                // the width relation is `plain + 2 teeth + 48 refuse`; the PI relation stays `plain + 2`
-                // (the refuse weld adds constraints + columns but NO public inputs).
-                let refuse_cols = 3 * crate::effect_vm::bare_floor_refuse_weld::REFUSE_STRIDE;
+                // The plain single-line `WIDE_TRANSFER_STAGED_TSV` is the BARE transfer: neither
+                // availability-hardened, nor teeth-advanced, nor refuse-welded. The registry row 0 is
+                // the AVAIL-HARDENED membership-teeth transfer AND (being a bare cohort route) carries
+                // the gentian floor-refuse weld. Its refuse blocks therefore anchor at
+                // `plain + TRANSFER_AVAIL_PAD + 2 teeth` (verified against the emitted descriptor: the
+                // three floor gates land at 2631 / 2647 / 2663, stride 16), and the member extends
+                // exactly to cover the last floor column — `floor_col(NB−1) + 1`, i.e. 45 columns past
+                // its own anchor, NOT a padded `3·REFUSE_STRIDE = 48`. Both the extent and the pad are
+                // derived from the weld's own constants, so a stride/pad change moves this tooth with
+                // them. The PI relation stays `plain + 2` (the refuse weld adds constraints + columns
+                // but NO public inputs).
+                use crate::effect_vm::bare_floor_refuse_weld as wrefuse;
+                let refuse_extent = wrefuse::floor_col(wrefuse::CAPACITY_TAGS.len() - 1) + 1
+                    - crate::effect_vm::trace_rotated::GRAD_ROT_WIDTH;
+                let avail_pad = crate::effect_vm::trace_rotated::TRANSFER_AVAIL_PAD;
                 assert_eq!(
                     d.trace_width,
-                    plain.trace_width + 2 + refuse_cols,
-                    "wide registry row 0 (transfer) = the plain wide transfer + 2 teeth columns + the \
-                     48-column gentian floor-refuse weld"
+                    plain.trace_width + avail_pad + 2 + refuse_extent,
+                    "wide registry row 0 (transfer) = the plain wide transfer + the availability pad \
+                     + 2 teeth columns + the gentian floor-refuse extent"
                 );
             }
         }

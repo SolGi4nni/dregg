@@ -464,8 +464,9 @@ pub fn produce(
     // limb).
     pre_limbs[32] = lifecycle_disc_felt(&cell.lifecycle);
     // limbs 33,34: perms_digest, vk_digest (the WAVE-2 flag-day committed authority sub-limbs — the
-    // setPerms / setVK welds force these to the declared param). limb-0 stays here (historical); the
-    // v10 weld lands the seven completion felts at extras 37..=43 (perms) / 44..=50 (vk).
+    // setPerms / setVK welds force these to the declared param). limb-0 stays here (historical); post
+    // REVOKED-ROOT flag day (+1 shift ≥ 37) the seven completion felts land at extras 38..=44 (perms) /
+    // 45..=51 (vk) — see `write_lanes` below and Lean `afterPermsExtraCol`/`afterVKExtraCol`.
     // v10 perms/vk faithful 8-felt completion (byte-identical to `commitment::compute_rotated_pre_limbs`).
     dregg_cell::commitment::perms_digest_8(&cell.permissions)
         .write_lanes(&mut pre_limbs, [33, 38, 39, 40, 41, 42, 43, 44]);

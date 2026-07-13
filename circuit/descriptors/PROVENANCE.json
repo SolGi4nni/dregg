@@ -1,9 +1,9 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "a03fdd7df3d91cf68c0d76a818211d20881be211",
-  "repo_head": "4dd7adee0b08a5e48f77064d5902b18f91310852",
-  "source_dirty": false,
+  "dregg2_tree_hash": "296e504c0b6e80ded0e2f4bf5c643d0b530b9fcc",
+  "repo_head": "f9d9efd0df9a59ddb40eca5284ef0aa23993390d",
+  "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",
@@ -17,7 +17,7 @@
     "EmitUMemCohortMulti.lean",
     "EmitWideUMemWeldRegistryProbe.lean"
   ],
-  "generated_utc": "2026-07-13T14:59:13Z",
+  "generated_utc": "2026-07-13T16:05:12Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v2.json": "47222a8cbc3e7809e3a6dc15e5c01faa09eba3bd244f52eb45003fc5fb77277d",
@@ -87,10 +87,10 @@
     "dregg-effectvm-transfer-v1.json": "b56667151f2c531aadc17cc7d9f46c7813716df25302c78f9274069dd2a63166",
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
-    "rotation-v3-staged-registry.tsv": "531fa532c360ce1c75f9319eb159158afa1f33289649ddee512ae20627b72bf9",
-    "rotation-wide-registry-staged.tsv": "d5b6f76af493bff61a7ee7ec97626d051999701378ccc9272d73c71ec79a2451",
+    "rotation-v3-staged-registry.tsv": "360559d332ef6f71dc721bf8865b429a213a1dd349b5878ddf9f87ea6979558e",
+    "rotation-wide-registry-staged.tsv": "141818c67177bd8a311ea66b8b84c7254e52f563550bcd4b866861d03ec13012",
     "rotation-wide-transfer-staged.tsv": "23041ae81e380a2ad923feaa014c899eecab6f1f6718f745ea0a0f5be1cf2652",
-    "rotation-wide-umem-welded-registry-staged.tsv": "603a79364199835b61426921c090faed59edc24a93e59baf1ead8624e6d4e95a",
+    "rotation-wide-umem-welded-registry-staged.tsv": "28a4eb935602e91089d2492cc2ff2b6e3f6ce4a46ebc2d9ef090f7f5fadf0f75",
     "umem-cohort-multidomain-v1-staged-registry.tsv": "89574dbb90269e908911a7f920be691af7e24a6dc4802e5da035feec44867775",
     "umem-cohort-v1-staged-registry.tsv": "97a4d13edb173a831b81c4cb3cab84c2ee03baf2a45593d000dfa239d6bf4cfb"
   },
@@ -121,7 +121,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "dc75ef5362eca39d32aa672c3ed9184d671bfc1feb6a5019773c7f8796763b91",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "93d591dbaa7fd1ac6be759a8e017dc3b6fb146ea75548d66536bf55d717b4fc4",
     "circuit/src/cap_reshape_descriptor.rs": "58cfdabae8f78b683d60dd90da1a4b587992b4498f8d63722653ed7343fd2873",
-    "circuit/src/effect_vm_descriptors.rs": "b578f86816ae2f2585be600b68b183ea4c7ac14c75a6a043580e200acdfceb67",
+    "circuit/src/effect_vm_descriptors.rs": "5798bfb5e604a98eb3ff4e9483532028e3d2c25a4f6d965fcf78a07ff5c181d4",
     "circuit/src/lean_descriptor_air.rs": "5ee79b578d15dd7975388c374b8049fb1d7dc50cffd11e9c615c3300185cf91a"
   }
 }
