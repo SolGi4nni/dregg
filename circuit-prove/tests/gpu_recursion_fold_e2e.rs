@@ -21,13 +21,17 @@
 //! 5. MEASURE the config-dependent PROVE phase (the GPU lever) CPU vs GPU, plus
 //!    the whole-layer wall clock, parity re-asserted.
 //!
-//! This uses NO effect_vm rotated-descriptor leaf, so it is unaffected by the
-//! concurrent descriptor-regen flag-day — a fully real fold layer that runs
-//! today. (The full 2-turn `prove_turn_chain_recursive` apex adds fixed-cost
-//! fold layers of the SAME shape on top; see the report for the honest scope.)
+//! Two tests, two regimes:
+//!   * `real_fold_layer_..` — the small leaf-wrap (~2^13 tables), cross-checked
+//!     byte-identical to the recursion library's own `build_and_prove_next_layer`.
+//!   * `recursion_tower_large_regime_..` — the LARGE regime: a real self-wrapping
+//!     recursion tower (leaf -> L1 -> L2), whose TOP layer verifies the large
+//!     aggregated L2 proof in-circuit — the same operation a chain-fold
+//!     aggregation layer performs, at the fold's steady-state table size —
+//!     proved on the GPU fold config byte-identical to CPU.
 //!
-//! GPU + slow (compiles + proves a verifier circuit twice); run LOCALLY on a
-//! Metal box (persvati/hbox have no GPU):
+//! wgpu is portable, so this runs on any GPU: Apple Metal locally, and the
+//! Vulkan AMD GPUs on hbox (Navi 22 discrete) / persvati (Strix Halo iGPU).
 //!   cargo test -p dregg-circuit-prove --release --test gpu_recursion_fold_e2e -- --ignored --nocapture
 
 use std::time::Instant;
@@ -36,7 +40,7 @@ use dregg_circuit::field::BabyBear;
 use dregg_circuit::plonky3_prover::{P3MerklePoseidon2Air, generate_sound_merkle_trace, to_p3};
 use dregg_circuit::poseidon2_air::create_poseidon2_test_witness;
 use dregg_circuit_prove::gpu_backend::{
-    create_gpu_recursion_config, gpu_recursion_proof_to_cpu, prove_recursion_layer_cpu,
+    GpuDft, create_gpu_recursion_config, gpu_recursion_proof_to_cpu, prove_recursion_layer_cpu,
     prove_recursion_layer_gpu, verify_gpu_recursion_layer,
 };
 use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
@@ -45,7 +49,7 @@ use dregg_circuit_prove::plonky3_recursion_impl::recursive::{
 };
 use p3_baby_bear::BabyBear as P3BabyBear;
 use p3_field::PrimeCharacteristicRing;
-use p3_recursion::{ProveNextLayerParams, RecursionInput, build_and_prove_next_layer};
+use p3_recursion::{BatchOnly, ProveNextLayerParams, RecursionInput, build_and_prove_next_layer};
 
 const D: usize = 4;
 
@@ -223,5 +227,173 @@ fn real_fold_layer_byte_identical_on_gpu_and_measured() {
     println!(
         "byte-identical to real fold: YES ({} bytes)",
         cpu_lib_bytes.len()
+    );
+}
+
+// ============================================================================
+// THE LARGE REGIME: a self-wrapping recursion TOWER at the fold's steady-state
+// table size.
+//
+// A single leaf-wrap commits ~2^13 tables (a wrap is logarithmic in its child).
+// But recursion layers GROW: layer k+1 verifies layer k's WHOLE batch proof in
+// -circuit, so each level's committed tables climb toward the fixed-point shape
+// the fold actually runs at (the shape `normalize_to_shape` targets). This
+// builds a real tower (leaf -> L1 -> L2) at `create_recursion_config` and
+// measures the TOP wrap (verifying L2) CPU vs GPU under the GPU fold config,
+// byte-identical.
+//
+// This is REAL recursion — every layer verifies the previous REAL proof in
+// -circuit, the exact operation a chain-fold aggregation layer performs — not a
+// synthetic stand-in. It needs NO effect_vm leaf, so it is independent of the
+// rotated `prove_turn_chain_recursive` fixture (currently broken at HEAD by an
+// effect_vm descriptor geometry off-by-one: teeth-column tail 47 vs the 48-col
+// refuse-weld, unrelated to this GPU work — see the report).
+// ============================================================================
+
+#[test]
+#[ignore = "GPU + SLOW: a 3-level recursion tower (~minutes) measured CPU vs GPU; run with --ignored --nocapture on a GPU box"]
+fn recursion_tower_large_regime_byte_identical_on_gpu() {
+    let gpu_config = create_gpu_recursion_config();
+    assert!(
+        GpuDft::default().adapter_name().is_some(),
+        "no GPU adapter — this large-regime gate must run on the GPU lane"
+    );
+    let cpu_config = create_recursion_config();
+    let backend = create_recursion_backend();
+    let params = ProveNextLayerParams::default();
+
+    // ---- leaf uni-STARK (P3MerklePoseidon2Air) ------------------------------
+    let leaf = BabyBear::new(42424242);
+    let witness = create_poseidon2_test_witness(leaf, 4);
+    let siblings: Vec<[BabyBear; 3]> = witness.levels.iter().map(|l| l.siblings).collect();
+    let positions: Vec<u8> = witness.levels.iter().map(|l| l.position).collect();
+    let (trace, public_inputs) = generate_sound_merkle_trace(leaf, &siblings, &positions);
+    let inner_proof = prove_for_recursion(&trace, &public_inputs);
+    verify_for_recursion(&inner_proof, &public_inputs).expect("inner proof verifies");
+    let air = P3MerklePoseidon2Air;
+    let p3_public: Vec<P3BabyBear> = public_inputs.iter().map(|&v| to_p3(v)).collect();
+
+    // ---- grow the tower: leaf -> L1 -> L2 (each verifies the previous) -------
+    let t_tower = Instant::now();
+    let l1_input = RecursionInput::UniStark {
+        proof: &inner_proof,
+        air: &air,
+        public_inputs: p3_public,
+        preprocessed_commit: None,
+    };
+    let l1 = build_and_prove_next_layer::<DreggRecursionConfig, P3MerklePoseidon2Air, _, D>(
+        &l1_input,
+        &cpu_config,
+        &backend,
+        &params,
+    )
+    .expect("L1 (wrap the leaf) proves");
+    let l2_input = l1.into_recursion_input::<BatchOnly>();
+    let l2 = build_and_prove_next_layer::<DreggRecursionConfig, BatchOnly, _, D>(
+        &l2_input,
+        &cpu_config,
+        &backend,
+        &params,
+    )
+    .expect("L2 (wrap L1) proves");
+    let tower_secs = t_tower.elapsed().as_secs_f64();
+
+    // The TOP layer input: verify L2 in-circuit (a real, large aggregated child).
+    let top_input = l2.into_recursion_input::<BatchOnly>();
+
+    // ---- prove the TOP layer CPU vs GPU, byte-identical ---------------------
+    let cpu = prove_recursion_layer_cpu(&top_input, &cpu_config, &cpu_config)
+        .expect("CPU top-layer proves");
+    let gpu = prove_recursion_layer_gpu(&top_input, &cpu_config, &gpu_config)
+        .expect("GPU top-layer proves under GpuDreggRecursionConfig");
+
+    let cpu_bytes = postcard::to_allocvec(&cpu.proof).expect("cpu top serializes");
+    let gpu_bytes = postcard::to_allocvec(&gpu.proof).expect("gpu top serializes");
+    assert_eq!(
+        gpu_bytes, cpu_bytes,
+        "GPU top-layer proof is NOT byte-identical to the CPU top-layer proof"
+    );
+    verify_gpu_recursion_layer(&gpu.proof, &gpu_config).expect("GPU top verifies under GPU config");
+    let as_cpu = gpu_recursion_proof_to_cpu(&gpu.proof).expect("gpu top re-tags to CPU");
+    verify_recursive_batch_proof(&as_cpu)
+        .expect("GPU-minted top-layer proof verifies under the untouched CPU verifier");
+    let mut tampered = as_cpu;
+    tampered.proof.opened_values.instances[0]
+        .base_opened_values
+        .trace_local[0] +=
+        <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge::ONE;
+    assert!(
+        verify_recursive_batch_proof(&tampered).is_err(),
+        "the CPU verifier accepted a tampered GPU top-layer proof — the ACCEPT is vacuous"
+    );
+
+    // ---- table heights (the large regime) -----------------------------------
+    println!("\n-- TOP-layer committed table heights (the large fold regime) --");
+    println!("  primitive tables (rows): {:?}", gpu.proof.rows);
+    let mut max_h = 0usize;
+    for np in &gpu.proof.non_primitives {
+        max_h = max_h.max(np.rows);
+        println!(
+            "  non-primitive {:?}: {} rows (~2^{:.1})",
+            np.op_type,
+            np.rows,
+            (np.rows.max(1) as f64).log2()
+        );
+    }
+    println!(
+        "  => largest non-primitive table: {} rows (~2^{:.1})",
+        max_h,
+        (max_h.max(1) as f64).log2()
+    );
+
+    // ---- best-of-3 on the config-dependent PROVE phase ----------------------
+    let mut cpu_prove = cpu.prove_seconds;
+    let mut gpu_prove = gpu.prove_seconds;
+    let mut cpu_prep = cpu.prepare_seconds;
+    let mut gpu_prep = gpu.prepare_seconds;
+    for _ in 0..2 {
+        let c =
+            prove_recursion_layer_cpu(&top_input, &cpu_config, &cpu_config).expect("cpu reprove");
+        let g =
+            prove_recursion_layer_gpu(&top_input, &cpu_config, &gpu_config).expect("gpu reprove");
+        assert_eq!(
+            postcard::to_allocvec(&g.proof).expect("reprove serializes"),
+            cpu_bytes,
+            "a GPU top-layer re-prove diverged from the CPU proof"
+        );
+        cpu_prove = cpu_prove.min(c.prove_seconds);
+        gpu_prove = gpu_prove.min(g.prove_seconds);
+        cpu_prep = cpu_prep.min(c.prepare_seconds);
+        gpu_prep = gpu_prep.min(g.prepare_seconds);
+    }
+
+    let gpu_total = gpu_prep + gpu_prove;
+    let cpu_total = cpu_prep + cpu_prove;
+    println!("\n=== RECURSION TOWER TOP LAYER, END-TO-END ON GPU (large regime, best-of-3) ===");
+    println!(
+        "adapter                    : {}",
+        GpuDft::default().adapter_name().unwrap()
+    );
+    println!("tower build (leaf->L1->L2) : {tower_secs:8.2} s");
+    println!(
+        "top-layer proof bytes      : {} (byte-identical CPU==GPU)",
+        gpu_bytes.len()
+    );
+    println!("prepare phase (shared CPU) : CPU {cpu_prep:8.3} s | GPU {gpu_prep:8.3} s");
+    println!(
+        "PROVE phase (the GPU lever): CPU {:8.3} s | GPU {:8.3} s  =>  {:.2}x",
+        cpu_prove,
+        gpu_prove,
+        cpu_prove / gpu_prove
+    );
+    println!(
+        "whole layer (prepare+prove): CPU {:8.3} s | GPU {:8.3} s  =>  {:.2}x  (conservative: prepare is shared CPU)",
+        cpu_total,
+        gpu_total,
+        cpu_total / gpu_total
+    );
+    println!(
+        "byte-identical to CPU fold : YES ({} bytes)",
+        cpu_bytes.len()
     );
 }
