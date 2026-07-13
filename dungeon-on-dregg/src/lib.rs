@@ -3153,3 +3153,504 @@ mod bazaar_tests {
         assert_eq!(shop.read_var("gold"), OPENING_PURSE - POTION_PRICE);
     }
 }
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// A FIFTH UNIVERSE — "The Whispering Crypt": STEALTH / DETECTION, executor-refereed
+// ═══════════════════════════════════════════════════════════════════════════════
+//
+// The Keep proved rules-as-teeth; the Vault, item pickup/use; the Hold, an unbounded
+// heap inventory; the Bazaar, an economy with exact-delta quantities. The Crypt adds
+// the mechanic they all lacked: **stealth** — an `alert` counter that noisy moves RAISE
+// and a distraction move LOWERS, with the objective gated so you must reach the vault
+// **without tripping the alarm**. Every rule below is a real [`StateConstraint`] the
+// verified [`EmbeddedExecutor`](dregg_app_framework::EmbeddedExecutor) re-checks on the
+// turn's post-state — never app bookkeeping, identical enforcement to the four before it.
+//
+// ── THE MODEL — `alert` (a register slot), two thresholds, three tooth-shapes ──────
+//
+//   * NOISE (a guarded step) — the noisy move `~ alert += FORCE_NOISE` carries TWO
+//     augmented teeth: an EXACT [`StateConstraint::FieldDelta`]`{alert, +FORCE_NOISE}`
+//     (the noise it makes is the kernel's, un-forgeable to `+0`) AND a hard-ceiling
+//     [`StateConstraint::FieldLte`]`{alert, ALERT_CAP}`. A force that would push `alert`
+//     PAST the cap (`post > ALERT_CAP`) is a REAL `WorldError::Refused` — "one more sound
+//     and the sentinels swarm." This is the guarded step the stealth puzzle turns on.
+//   * HUSH (the distraction) — `~ alert -= HUSH` carries an EXACT
+//     `FieldDelta{alert, −HUSH}`: it LOWERS `alert` by exactly `HUSH` on a real committed
+//     turn (un-forgeable to a bigger drop; and with `alert < HUSH` the clamp-at-zero write
+//     is not `old − HUSH` ⇒ refused: you cannot quiet an alarm that was never raised).
+//     A hush re-enables a force the cap had refused, and re-opens the alert-gated door.
+//   * THE OBJECTIVE DOOR — `{ alert <= SANCTUM_ALERT && cage_open >= 1 }` is a
+//     compiler-emitted CONJUNCTION (the move touches neither var, so both thresholds
+//     survive the net-delta lift NON-VACUOUSLY): a `FieldLte{alert, SANCTUM_ALERT}`
+//     solvency-style gate on the alarm AND a `FieldGte{cage_open, 1}` requirement that
+//     the reliquary cage was forced first. Slipping into the sanctum LOUD (`alert >
+//     SANCTUM_ALERT`) is a REAL executor refusal — the alarm is the kernel's referee.
+//
+// THE PUZZLE. The only way in is through the reliquary cage, and forcing it is NOISY
+// (`cage_open` needs a `force`, which raises `alert` past the door's `SANCTUM_ALERT`
+// threshold). So the sound solution is FORCE (make the needed noise) → HUSH (quiet back
+// down) → EASE the door open while silent — the "reach the vault without tripping the
+// alarm" playthrough. Being greedy with noise trips the hard cap; the door stays shut
+// until you have hushed back under the threshold.
+//
+// ── RE-ENTRY (the Bazaar's lesson, applied) ───────────────────────────────────────
+//
+// `alert` is NEVER seeded — an unset register slot reads 0, which is exactly the "silent"
+// start, so there is no genesis entry effect to re-run. And the stealth room (`nave`)
+// carries NO entry effects: the force/hush/creep moves all loop `-> nave`, and a re-entry
+// re-runs a passage's entry effects (the behaviour the Bazaar lane found), so a room that
+// SEEDED `alert` and looped to itself would CLEANSE the alarm every turn. The Crypt sidesteps
+// this by construction: `alert` has no seed to re-run, and `nave` has nothing to cleanse.
+//
+// ── HONEST SCOPE — what this stealth model is, and what a FULLER one adds ──────────
+//
+// This is a single global `alert` scalar with an executor-refereed raise/lower/cap and an
+// alert-gated objective — sound against forged noise, over-quieting, and a loud entry
+// WITHIN this cell's serialized history. What a fuller stealth game adds is OUT OF SCOPE
+// here (each a real, named next rung, not a hole):
+//   * GUARD PATROLS / line-of-sight — a per-tick guard position + a "seen iff in the guard's
+//     cone" rule is a temporal/geometric predicate over MANY slots, not a single scalar; it
+//     wants the multi-cell substrate (a guard cell per patroller) the crate already names;
+//   * PER-GUARD ALERT — one `alert` slot per sentinel (a suspicion vector) rather than one
+//     global counter: reachable TODAY as N register slots (or N heap keys) each with its own
+//     `FieldDelta`/`FieldLte` pair, but the v0 scene compiler has no per-guard syntax, so it
+//     would be augmented raw-turn methods like the Hold's `hold_pickup`;
+//   * a DECAYING alarm (alert bleeds down over time) — a per-turn `−1` ratchet needs a
+//     turn-clock the scene layer does not expose; a `Monotonic`-style DOWN atom plus a clock
+//     slot would express it. No core atom is added here; the Crypt is built entirely from
+//     `FieldDelta` / `FieldLte` / `FieldGte` that already exist.
+
+/// The fifth dungeon — "The Whispering Crypt" — in the spween DSL. Three rooms: the
+/// `threshold` (the way in, never re-entered), the `nave` (the stealth room: force the
+/// noisy cage, hush the alarm with a distraction, ease the alert-gated sanctum door), and
+/// the `reliquary` (the whispering relic — the hoard). The stealth RULES lower to real
+/// executor teeth (see [`crypt_compiled`]).
+pub const CRYPT: &str = r#"---
+id: whispering-crypt
+title: The Whispering Crypt
+weight: 1
+---
+
+=== threshold
+
+A collapsed lychgate, moss-choked, breathing cold. Beyond it the nave of a drowned crypt
+waits — and something in the dark is listening.
+
+* [Slip through the broken lychgate]
+  -> nave
+
+=== nave
+
+The nave. A barnacled reliquary cage stands over the sanctum door, and down the black
+transept the wraith-sentinels drift, roused by every echo. Loud, and they swarm; the
+sanctum will not open for a hand that woke the whole crypt.
+
+* [Force the groaning reliquary cage]
+  ~ alert += 2
+  ~ cage_open = 1
+  -> nave
+
+* [Creep along the shadowed colonnade]
+  -> nave
+
+* [Cast a bone-shard down the black transept]
+  ~ alert -= 2
+  -> nave
+
+* [Ease open the sanctum door] { alert <= 1 && cage_open >= 1 }
+  -> reliquary
+
+=== reliquary
+
+The reliquary, hushed and blue. On a bier of black glass the whispering relic waits.
+
+* [Lift the whispering relic]
+  ~ gold += 800
+  -> END
+"#;
+
+// ── Crypt room / choice coordinates + the stealth thresholds ─────────────────────
+
+/// The way in (never re-entered): no entry effect, so nothing re-seeds `alert`.
+pub const ROOM_THRESHOLD: &str = "threshold";
+/// The stealth room: force the cage, hush the alarm, ease the alert-gated sanctum door.
+pub const ROOM_NAVE: &str = "nave";
+/// The reliquary (terminal): the whispering relic.
+pub const ROOM_RELIQUARY: &str = "reliquary";
+
+/// `threshold`: slip inside into the nave (ungated).
+pub const CRYPT_ENTER: usize = 0;
+/// `nave`: FORCE the reliquary cage — a NOISY move (`alert += FORCE_NOISE`, `cage_open = 1`),
+/// gated so a force that would push `alert` past [`ALERT_CAP`] is refused.
+pub const NAVE_FORCE: usize = 0;
+/// `nave`: creep the colonnade — a purely QUIET move (touches nothing; `alert` unchanged).
+pub const NAVE_CREEP: usize = 1;
+/// `nave`: cast a bone-shard — the DISTRACTION (`alert -= HUSH`), lowering the alarm.
+pub const NAVE_HUSH: usize = 2;
+/// `nave`: ease the sanctum door — refused unless `alert <= SANCTUM_ALERT` AND the cage
+/// was forced (`cage_open >= 1`). The objective gate.
+pub const NAVE_OPEN: usize = 3;
+/// `reliquary`: lift the whispering relic (ends the crypt).
+pub const CRYPT_SEIZE: usize = 0;
+
+/// How much noise one forced cage makes (`alert += FORCE_NOISE`).
+pub const FORCE_NOISE: u64 = 2;
+/// How much a distraction quiets the alarm (`alert -= HUSH`).
+pub const HUSH: u64 = 2;
+/// The HARD CEILING on the alarm: a force that would push `alert` above this is refused
+/// ("one more sound and the sentinels swarm") — a real `FieldLte{alert, ALERT_CAP}` tooth.
+pub const ALERT_CAP: u64 = 4;
+/// The sanctum door threshold: it opens only while `alert <= SANCTUM_ALERT` — a real
+/// compiler-emitted `FieldLte{alert, SANCTUM_ALERT}` gate (the move does not touch `alert`,
+/// so the threshold survives non-vacuously).
+pub const SANCTUM_ALERT: u64 = 1;
+/// The whispering relic's hoard, seized in the reliquary.
+pub const CRYPT_HOARD: u64 = 800;
+
+/// Parse the Whispering Crypt scene.
+pub fn crypt_scene() -> Scene {
+    parse(CRYPT, "whispering-crypt.scene").expect("the crypt scene parses")
+}
+
+/// **Compile the Crypt AND augment its program with the stealth teeth.** The objective
+/// door's alert-and-cage gate (`FieldLte{alert, SANCTUM_ALERT}` + `FieldGte{cage_open, 1}`)
+/// is compiler-emitted from the scene condition; this adds the shapes the v0 compiler does
+/// not emit — the exact-noise + hard-cap teeth on the force, and the exact-quiet tooth on
+/// the distraction — as real `CellProgram` cases the executor re-checks move-for-move.
+pub fn crypt_compiled() -> CompiledStory {
+    let mut story = compile_scene(&crypt_scene()).expect("the crypt compiles");
+
+    let alert = keep_slot(&story, "alert");
+
+    // FORCE — the guarded NOISY step: it makes EXACTLY `FORCE_NOISE` of noise
+    // (`FieldDelta{alert, +FORCE_NOISE}`, un-forgeable to silence) AND is capped
+    // (`FieldLte{alert, ALERT_CAP}`), so a force that would push the alarm past the ceiling
+    // is a REAL executor refusal.
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_NAVE, NAVE_FORCE),
+        vec![
+            exact_delta(alert, FORCE_NOISE as i64),
+            StateConstraint::FieldLte {
+                index: alert,
+                value: field_from_u64(ALERT_CAP),
+            },
+        ],
+    );
+
+    // HUSH — the distraction lowers the alarm by EXACTLY `HUSH` (`FieldDelta{alert, −HUSH}`,
+    // un-forgeable to a bigger drop; and quieting an unraised alarm — `alert < HUSH` — is
+    // refused because the clamp-at-zero write is not `old − HUSH`).
+    augment_case(
+        &mut story.program,
+        &choice_method(ROOM_NAVE, NAVE_HUSH),
+        vec![exact_delta(alert, -(HUSH as i64))],
+    );
+
+    story
+}
+
+/// Deploy the augmented Crypt as a real world-cell (the stealth teeth installed as executor
+/// predicates). Deterministic in `seed` (a re-deploy reproduces the same cell identity +
+/// state hashes — what the replay verifier leans on).
+pub fn deploy_crypt(seed: u8) -> WorldCell {
+    WorldCell::deploy_compiled(Arc::new(crypt_compiled()), seed).expect("the crypt deploys")
+}
+
+#[cfg(test)]
+mod crypt_tests {
+    //! The stealth mechanic, DRIVEN on the real `WorldCell`: a quiet playthrough reaches
+    //! the reliquary; a noisy move that would trip the alarm ceiling is a REAL executor
+    //! refusal that commits NOTHING (anti-ghost); a distraction lowers the alarm and the
+    //! previously-refused step then commits; the alert-gated sanctum door refuses a loud
+    //! entry and opens once hushed. Plus a full playthrough that re-verifies by replay and
+    //! a retcon (dropping the distraction) that fails.
+    use super::*;
+    use spween_dregg::{
+        Driver, StepPos, VerifyBreak, WorldError, verify, verify_by_replay, verify_chain_linkage,
+    };
+
+    /// The reliquary's passage index (the direct tests assert the door did / did not open).
+    fn reliquary_index() -> usize {
+        *crypt_compiled()
+            .passage_index
+            .get(ROOM_RELIQUARY)
+            .expect("the reliquary is a passage")
+    }
+
+    /// Every stealth rule is a REAL kernel predicate: introspect the installed program and
+    /// read back the exact-noise + hard-cap teeth on the force, the exact-quiet tooth on the
+    /// distraction, and the alert-and-cage conjunction on the fully-gated objective door.
+    #[test]
+    fn crypt_stealth_teeth_are_real_kernel_predicates() {
+        let story = crypt_compiled();
+        let alert = keep_slot(&story, "alert");
+        let cage = keep_slot(&story, "cage_open");
+
+        // FORCE: exact noise (FieldDelta +FORCE_NOISE) AND the hard cap (FieldLte ALERT_CAP).
+        let force = case_constraints(&story, &choice_method(ROOM_NAVE, NAVE_FORCE));
+        assert!(
+            force.contains(&exact_delta(alert, FORCE_NOISE as i64)),
+            "a force raises alert by EXACTLY {FORCE_NOISE} (FieldDelta); got {force:?}"
+        );
+        assert!(
+            force.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldLte { index, value }
+                    if *index == alert && *value == field_from_u64(ALERT_CAP)
+            )),
+            "a force is capped at ALERT_CAP={ALERT_CAP} (FieldLte on alert); got {force:?}"
+        );
+
+        // HUSH: the distraction lowers alert by EXACTLY HUSH (FieldDelta −HUSH).
+        let hush = case_constraints(&story, &choice_method(ROOM_NAVE, NAVE_HUSH));
+        assert!(
+            hush.contains(&exact_delta(alert, -(HUSH as i64))),
+            "a distraction lowers alert by EXACTLY {HUSH} (FieldDelta); got {hush:?}"
+        );
+
+        // THE DOOR: fully executor-enforced, and its conjunction is FieldLte(alert, thr) +
+        // FieldGte(cage_open, 1) — both non-vacuous (the move touches neither slot).
+        let m_door = choice_method(ROOM_NAVE, NAVE_OPEN);
+        assert_eq!(
+            story.fully_gated.get(&m_door),
+            Some(&true),
+            "the sanctum door is fully executor-enforced"
+        );
+        let door = case_constraints(&story, &m_door);
+        assert!(
+            door.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldLte { index, value }
+                    if *index == alert && *value == field_from_u64(SANCTUM_ALERT)
+            )),
+            "the door gates on alert <= SANCTUM_ALERT={SANCTUM_ALERT} (FieldLte); got {door:?}"
+        );
+        assert!(
+            door.iter().any(|c| matches!(
+                c,
+                StateConstraint::FieldGte { index, value }
+                    if *index == cage && *value == field_from_u64(1)
+            )),
+            "the door requires the cage forced (FieldGte(cage_open, 1)); got {door:?}"
+        );
+    }
+
+    /// THE STEALTH PUZZLE, DRIVEN — a quiet playthrough reaches the reliquary. Force the
+    /// noisy cage (the only way in), HUSH the alarm back under the door threshold, then ease
+    /// the sanctum door open while silent and lift the relic. The alarm never trips.
+    #[test]
+    fn quiet_playthrough_reaches_the_reliquary() {
+        let s = crypt_scene();
+        let world = deploy_crypt(70);
+
+        let force = choice_at(&s, ROOM_NAVE, NAVE_FORCE);
+        let hush = choice_at(&s, ROOM_NAVE, NAVE_HUSH);
+        let door = choice_at(&s, ROOM_NAVE, NAVE_OPEN);
+
+        // Force the cage: noisy (alert 0→2), but it opens the cage the door needs.
+        world
+            .apply_choice(ROOM_NAVE, NAVE_FORCE, &force)
+            .expect("forcing the cage (alert 0→2 ≤ cap) commits");
+        assert_eq!(world.read_var("alert"), 2, "the force woke the crypt to 2");
+        assert_eq!(world.read_var("cage_open"), 1, "the reliquary cage is open");
+
+        // The door is LOUD-shut: alert 2 > SANCTUM_ALERT (1) ⇒ refused (see the door test).
+        // Hush the alarm back down (alert 2→0) — now silent.
+        world
+            .apply_choice(ROOM_NAVE, NAVE_HUSH, &hush)
+            .expect("the distraction quiets the alarm (alert 2→0)");
+        assert_eq!(world.read_var("alert"), 0, "hushed back to silence");
+
+        // Silent AND the cage open: the sanctum door eases open.
+        world
+            .apply_choice(ROOM_NAVE, NAVE_OPEN, &door)
+            .expect("silent (alert 0 ≤ 1) with the cage open, the door commits");
+        assert_eq!(
+            world.read_passage(),
+            Some(reliquary_index()),
+            "slipped into the reliquary undetected"
+        );
+
+        // Lift the relic — the hoard is claimed.
+        let seize = choice_at(&s, ROOM_RELIQUARY, CRYPT_SEIZE);
+        world
+            .apply_choice(ROOM_RELIQUARY, CRYPT_SEIZE, &seize)
+            .expect("lifting the relic commits");
+        assert_eq!(world.read_var("gold"), CRYPT_HOARD, "the relic is taken");
+    }
+
+    /// THE NOISY PATH, DRIVEN — a force that would push the alarm past the hard ceiling is a
+    /// REAL executor refusal (`FieldLte{alert, ALERT_CAP}`), committing nothing; and the
+    /// DISTRACTION then lowers the alarm and RE-ENABLES the very step the cap had refused.
+    #[test]
+    fn noisy_force_trips_the_cap_and_a_distraction_re_enables_it() {
+        let s = crypt_scene();
+        let world = deploy_crypt(71);
+
+        let force = choice_at(&s, ROOM_NAVE, NAVE_FORCE);
+        let hush = choice_at(&s, ROOM_NAVE, NAVE_HUSH);
+
+        // Two forces raise the alarm to the ceiling (0→2→4), each a real committed turn.
+        let r1 = world
+            .apply_choice(ROOM_NAVE, NAVE_FORCE, &force)
+            .expect("force 1 (alert 0→2) commits");
+        assert_eq!(world.read_var("alert"), 2);
+        let r2 = world
+            .apply_choice(ROOM_NAVE, NAVE_FORCE, &force)
+            .expect("force 2 (alert 2→4 == cap) commits");
+        assert_eq!(world.read_var("alert"), 4, "the alarm is at the ceiling");
+        assert_ne!(r1.turn_hash, [0u8; 32]);
+        assert_eq!(
+            r2.pre_state_hash, r1.post_state_hash,
+            "the force receipts chain (pre == prev.post)"
+        );
+
+        // A THIRD force (4→6) would exceed ALERT_CAP=4: the guarded step is REFUSED.
+        let refused = world.apply_choice(ROOM_NAVE, NAVE_FORCE, &force);
+        assert!(
+            matches!(refused, Err(WorldError::Refused(_))),
+            "a force past the alarm ceiling is refused by the FieldLte cap, got {refused:?}"
+        );
+        assert_eq!(
+            world.read_var("alert"),
+            4,
+            "anti-ghost: the refused force made no noise"
+        );
+
+        // The DISTRACTION lowers the alarm (4→2), re-enabling the capped step.
+        world
+            .apply_choice(ROOM_NAVE, NAVE_HUSH, &hush)
+            .expect("the distraction quiets the alarm (alert 4→2)");
+        assert_eq!(
+            world.read_var("alert"),
+            2,
+            "the alarm is back under the ceiling"
+        );
+
+        // The previously-refused force now commits (2→4 ≤ cap): a real committed turn.
+        let r3 = world
+            .apply_choice(ROOM_NAVE, NAVE_FORCE, &force)
+            .expect("with the alarm hushed, the force commits again");
+        assert_eq!(world.read_var("alert"), 4);
+        assert_ne!(r3.turn_hash, [0u8; 32]);
+    }
+
+    /// THE OBJECTIVE DOOR, DRIVEN — the sanctum door is refused LOUD (`alert >
+    /// SANCTUM_ALERT`) and refused with the cage UNFORCED, and opens only when both clauses
+    /// hold. The distraction is what carries the alarm back under the threshold.
+    #[test]
+    fn sanctum_door_gated_on_alert_and_cage() {
+        let s = crypt_scene();
+        let world = deploy_crypt(72);
+
+        let force = choice_at(&s, ROOM_NAVE, NAVE_FORCE);
+        let hush = choice_at(&s, ROOM_NAVE, NAVE_HUSH);
+        let door = choice_at(&s, ROOM_NAVE, NAVE_OPEN);
+
+        // Silent but the cage UNFORCED (cage_open 0): the FieldGte(cage_open, 1) clause bites.
+        let no_cage = world.apply_choice(ROOM_NAVE, NAVE_OPEN, &door);
+        assert!(
+            matches!(no_cage, Err(WorldError::Refused(_))),
+            "the door is refused with the cage unforced, got {no_cage:?}"
+        );
+        assert_ne!(
+            world.read_passage(),
+            Some(reliquary_index()),
+            "anti-ghost: the door did not open"
+        );
+
+        // Force the cage — cage_open 1, but the noise (alert 0→2) now trips the door threshold.
+        world
+            .apply_choice(ROOM_NAVE, NAVE_FORCE, &force)
+            .expect("force the cage");
+        assert_eq!(world.read_var("cage_open"), 1);
+        assert_eq!(world.read_var("alert"), 2);
+
+        // LOUD (alert 2 > SANCTUM_ALERT 1): the FieldLte(alert, 1) clause refuses the entry.
+        let loud = world.apply_choice(ROOM_NAVE, NAVE_OPEN, &door);
+        assert!(
+            matches!(loud, Err(WorldError::Refused(_))),
+            "a loud entry (alert 2 > 1) is refused by the alert gate, got {loud:?}"
+        );
+        assert_ne!(
+            world.read_passage(),
+            Some(reliquary_index()),
+            "anti-ghost: the alarm kept the sanctum shut"
+        );
+
+        // Hush the alarm (2→0), and NOW — silent, cage open — the door commits.
+        world
+            .apply_choice(ROOM_NAVE, NAVE_HUSH, &hush)
+            .expect("quiet the alarm");
+        assert_eq!(world.read_var("alert"), 0);
+        world
+            .apply_choice(ROOM_NAVE, NAVE_OPEN, &door)
+            .expect("silent + cage open: the sanctum door opens");
+        assert_eq!(
+            world.read_passage(),
+            Some(reliquary_index()),
+            "into the reliquary"
+        );
+    }
+
+    /// A full LEGAL stealth playthrough over the stock runtime — slip in, force the cage,
+    /// hush the alarm, ease the door open, lift the relic — commits a real receipt chain
+    /// through the stealth teeth and re-verifies by replay against a fresh, identically-
+    /// seeded, identically-augmented Crypt.
+    #[test]
+    fn full_crypt_playthrough_reverifies() {
+        let s = crypt_scene();
+        let mut driver = Driver::start(deploy_crypt(73), &s).expect("start the crypt");
+
+        driver.advance(CRYPT_ENTER).expect("slip inside"); // -> nave
+        driver.advance(NAVE_FORCE).expect("force the cage"); // alert 0→2, cage_open 1 (FieldDelta + cap)
+        driver.advance(NAVE_HUSH).expect("hush the alarm"); // alert 2→0 (FieldDelta)
+        driver.advance(NAVE_OPEN).expect("ease the door"); // alert 0 ≤ 1 && cage_open ≥ 1
+        driver.advance(CRYPT_SEIZE).expect("lift the relic");
+        assert!(driver.is_ended(), "the crypt is cleared");
+        assert_eq!(driver.world().read_var("gold"), CRYPT_HOARD);
+        assert_eq!(driver.world().read_var("alert"), 0, "slipped out silent");
+        assert_eq!(driver.world().read_var("cage_open"), 1);
+
+        let play = driver.playthrough();
+        assert_eq!(play.receipts().len(), 6, "genesis + 5 moves");
+        verify_chain_linkage(&play).expect("the crypt receipt chain links");
+        verify(deploy_crypt(73), &s, &play).expect("the honest stealth playthrough re-verifies");
+    }
+
+    /// A retconned stealth record FAILS replay: forge the history to DROP the distraction
+    /// (creep instead of hush), leaving the alarm loud (alert 2) at the sanctum door. The
+    /// real executor REFUSES the loud entry on replay (or the reproduced state/passage order
+    /// diverges first) — a forged stealth run cannot pass verification.
+    #[test]
+    fn retconned_crypt_playthrough_fails() {
+        let s = crypt_scene();
+        let mut driver = Driver::start(deploy_crypt(74), &s).expect("start the crypt");
+        driver.advance(CRYPT_ENTER).expect("slip inside");
+        driver.advance(NAVE_FORCE).expect("force the cage");
+        driver.advance(NAVE_HUSH).expect("hush the alarm");
+        driver.advance(NAVE_OPEN).expect("ease the door");
+        driver.advance(CRYPT_SEIZE).expect("lift the relic");
+
+        let play = driver.playthrough();
+        verify(deploy_crypt(74), &s, &play).expect("the honest record re-verifies");
+
+        // Forge step 2: creep (a no-op quiet move) instead of hushing. The alarm stays at 2,
+        // and the later door step (alert 2 > 1) is REFUSED on replay.
+        let mut forged = play.clone();
+        forged.steps[2].choice_index = NAVE_CREEP;
+        let out = verify_by_replay(deploy_crypt(74), &s, &forged);
+        assert!(
+            matches!(
+                out,
+                Err(VerifyBreak::RefusedOnReplay { .. })
+                    | Err(VerifyBreak::PassageOutOfOrder { .. })
+                    | Err(VerifyBreak::StateMismatch {
+                        step: StepPos::Step(_)
+                    })
+            ),
+            "a retconned stealth run (alarm left loud at the door) fails replay, got {out:?}"
+        );
+    }
+}
