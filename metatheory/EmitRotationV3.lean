@@ -107,8 +107,15 @@ def main : IO Unit := do
       -- gap-#5 AAFI: route the plain revoke to revokeV3 (aafiInsert op=4 on B_REVOKED_ROOT=37 —
       -- the sibling's v10 flag-day limb; forces the revoked root, hole #3 closed). Re-pushed after a
       -- flag-day revert overrode the base routing with the bare-refuse deployed-default.
+      -- rc-WRAP the override (Stage-P coherence): the bare `revokeV3` carried the aafiInsert but
+      -- BYPASSED the uniform DSL rc-EMIT that every non-exempt cohort member has (the 4 `Witnessed{Dfa}`
+      -- route-commitment pins at caveat-region offsets 39..=42). `withDfaRcPins` is width-invariant and
+      -- APPENDS the 4 tail PIs after revokeV3's own pins, so the emitted revoke now carries BOTH the
+      -- forced revoked-root aafiInsert (hole #3) AND the rc carrier — matching the rc-wrapped cohort the
+      -- `revokeVmDescriptor2R24: dsl rc pins present iff …` invariant checks.
     , ("revokeVmDescriptor2R24",
-       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.revokeV3) ]
+       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
+         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.revokeV3) ]
   for (key, d0) in v3RegistryCapOpenDep do
     let d := (availOverride.lookup key).getD d0
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"
