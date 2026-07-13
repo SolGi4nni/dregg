@@ -24,18 +24,21 @@ open Dregg2.Circuit.FriVerifierBridge
 
 /-- **`DeployedRefines` DISCHARGED for the reduced `verifyBatch`.** `verifyBatch` acceptance FORCES
 `verifyAlgo` acceptance on the mapped data — because `verifyBatch` IS
-`verifyAlgo … (cfgView pi π) && cfgExtra …`, an `accept` occurs only when `verifyAlgo` returned `true`.
-Pure unfold; no opaque appeal, no carried hypothesis. -/
+`verifyAlgoTB … (cfgView pi π) && cfgExtra …`, an `accept` occurs only when `verifyAlgoTB` returned
+`true`, and `verifyAlgoTB` is a strengthening of `verifyAlgo`
+(`FriTranscriptBind.verifyAlgoTB_imp_verifyAlgo`). Pure unfold + composition; no opaque appeal, no
+carried hypothesis. -/
 theorem deployedRefines_cfg (R : Registry) :
     DeployedRefines R cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgChecks cfgInitState cfgLogN cfgView := by
   intro pi π hacc
   unfold verifyBatch at hacc
   by_cases h :
-      (verifyAlgo cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgChecks cfgInitState cfgLogN
-          (cfgView pi π).1 (cfgView pi π).2
+      (Dregg2.Circuit.FriTranscriptBind.verifyAlgoTB cfgPerm cfgRATE cfgToNat cfgParams cfgVk
+          cfgChecks cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2
         && cfgExtra (cfgView pi π).1 (cfgView pi π).2) = true
   · simp only [Bool.and_eq_true] at h
-    exact h.1
+    exact Dregg2.Circuit.FriTranscriptBind.verifyAlgoTB_imp_verifyAlgo cfgPerm cfgRATE cfgToNat
+      cfgParams cfgVk cfgChecks cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2 h.1
   · rw [if_neg h] at hacc
     exact absurd hacc (by decide)
 

@@ -27,39 +27,50 @@ let zeta  = challenger.sample_algebra_element();   -- ζ, the OOD point         
 FINDING: BOTH ζ and α(=Λ) are transcript-derived in the DEPLOYED verifier. The survey's "Λ appears
 nowhere in verifyAlgo" was true of the MODEL, not the deployment.
 
-## What `deriveOod` faithfully models, and the named abstraction gap
+## What `deriveOod` models — now the FULL squeeze sequence
 
-`deriveOod` observes `traceCommit` THEN the public values (`pub.segment`), matching the deployed prefix
-`observe(trace); observe_slice(public_values)`, then squeezes one extension element. The essential FS
-property — ζ is a function of the committed trace AND the public inputs, so a prover cannot pick ζ
-before committing — is thereby captured. The residual, named honestly as the KAT correspondence (the
-FRI-batch model abstracts p3-uni-stark, so these are folded / validated by the KAT corpus, not modeled
-term-for-term): (i) the `degree_bits`/`base_degree_bits`/`preprocessed_width` preamble (public
-constants); (ii) the `sample α` + `observe(quotient_chunks)` steps between the public values and ζ — the
-FRI-batch `BatchProofData` carries no separate quotient commitment (α is modeled separately as Λ). The
-probabilistic half (the squeeze is a uniform draw ⇒ ζ non-exceptional except ε ≤ dN/|F|, matching the
-verifier's own "Soundness Error: dN/|EF|" comment) is `OodRomBound`, over this transcript-bound ζ.
+`deriveOod` replicates the deployed sequence TERM-FOR-TERM: `observe(trace); observe(public);
+sample α; observe(quotient_chunks); squeeze ζ`. The α RLC-challenge squeeze and the quotient-chunks
+observation between the public values and ζ — previously an abstraction gap — are now MODELED: the
+`quotientCommit` field was added to `BatchProofData` for exactly this, and α's sponge advance is threaded
+(its value discarded, only its effect on the challenger state kept). So `deriveOod` squeezes ζ at the
+SAME challenger state the deployed verifier does; an honest deployed proof (whose `oodPoint` is that
+deployed ζ) PASSES `oodTranscriptCheck`, so the deployed `verifyBatch → verifyAlgoTB` swap is FAITHFUL
+(it does not reject honest proofs), not merely additive.
+
+Residual abstraction, named honestly (the standing model↔deployment correspondence, validated by the KAT
+corpus): (i) the `degree_bits`/`base_degree_bits`/`preprocessed_width` preamble (public constants absorbed
+before the trace); (ii) the base-field vs extension-field representation — the whole model is a base-field
+FRI abstraction of p3's extension-field challenges (α/ζ squeezed as base-field lanes here, matching the
+model's base-field `oodPoint`). The probabilistic half (the squeeze is a uniform draw ⇒ ζ non-exceptional
+except ε ≤ dN/|F|, the verifier's own "Soundness Error: dN/|EF|") is `OodRomBound`, over this ζ.
 -/
 
 namespace Dregg2.Circuit.FriTranscriptBind
 
 open Dregg2.Circuit.FriVerifier
 
-/-- **Derive the OOD point from the transcript prefix.** Observe the prefix (the challenger's absorbed
-data up to ζ), then squeeze one extension element. Kept prefix-parametric so `observe(a); observe(b)`
-and `observe(a ++ b)` coincide (`observeList` is a left fold — `List.foldl_append`); the deployed order
-`observe(trace); observe_slice(public_values)` is exactly `deriveOod … (traceCommit ++ pub.segment)`. -/
-def deriveOod {F : Type} [Inhabited F] (perm : List F → List F) (RATE : Nat)
-    (initState : List F) (transcriptPrefix : List F) : List F :=
-  (Challenger.sampleExt perm RATE 1
-    (Challenger.observeList perm RATE (Challenger.init initState) transcriptPrefix)).1
+/-- **Derive the OOD point — the EXACT deployed p3 squeeze.** Replicates the verifier's challenger
+sequence around ζ, faithfully (`uni-stark/src/verifier.rs`): observe the trace commitment, observe the
+public values, SAMPLE the constraint RLC challenge `α` (Λ — advancing the sponge, its value discarded
+here), observe the quotient-chunks commitment, then squeeze ζ. Because α is sampled BETWEEN the
+observations, this cannot be folded into one prefix — the `quotientCommit` field (added to
+`BatchProofData` for exactly this) and `extDeg` (the α squeeze width) are threaded. So for an honest
+deployed proof — whose `oodPoint` IS the deployed ζ and whose trace/public/quotient are the deployed
+commitments — `deriveOod = proof.oodPoint`, i.e. the honest proof PASSES, and a prover who chose ζ
+freely does not. -/
+def deriveOod {F : Type} [Inhabited F] (perm : List F → List F) (RATE extDeg : Nat)
+    (initState : List F) (proof : BatchProofData F) (pub : WrapPublics F) : List F :=
+  let c := Challenger.observeList perm RATE (Challenger.init initState) proof.traceCommit
+  let c := Challenger.observeList perm RATE c pub.segment
+  let c := (Challenger.sampleExt perm RATE extDeg c).2          -- sample α (Λ), keep the challenger
+  let c := Challenger.observeList perm RATE c proof.quotientCommit
+  (Challenger.sampleExt perm RATE 1 c).1                         -- squeeze ζ
 
-/-- **The transcript-binding check.** The prover's OOD point must EQUAL the one derived from the FAITHFUL
-deployed prefix `traceCommit ++ pub.segment` (p3's `observe(commitments.trace)` then
-`observe_slice(public_values)` — see the module header). -/
-def oodTranscriptCheck {F : Type} [Inhabited F] [DecidableEq F] (perm : List F → List F) (RATE : Nat)
-    (initState : List F) (proof : BatchProofData F) (pub : WrapPublics F) : Bool :=
-  decide (proof.oodPoint = deriveOod perm RATE initState (proof.traceCommit ++ pub.segment))
+/-- **The transcript-binding check.** The prover's OOD point must EQUAL the exact transcript-derived ζ. -/
+def oodTranscriptCheck {F : Type} [Inhabited F] [DecidableEq F] (perm : List F → List F)
+    (RATE extDeg : Nat) (initState : List F) (proof : BatchProofData F) (pub : WrapPublics F) : Bool :=
+  decide (proof.oodPoint = deriveOod perm RATE extDeg initState proof pub)
 
 /-- **The transcript-bound verifier.** `verifyAlgo` AND the OOD point is transcript-derived — the
 faithful model of the deployed verifier, closing the free-ζ gap. -/
@@ -68,7 +79,7 @@ def verifyAlgoTB {F : Type} [Inhabited F] [DecidableEq F]
     (vk : RecursionVk F) (checks : FriChecks F) (initState : List F) (logN : Nat)
     (proof : BatchProofData F) (pub : WrapPublics F) : Bool :=
   verifyAlgo perm RATE toNat params vk checks initState logN proof pub
-    && oodTranscriptCheck perm RATE initState proof pub
+    && oodTranscriptCheck perm RATE params.extDeg initState proof pub
 
 /-- **`verifyAlgoTB` acceptance FORCES the OOD point transcript-bound.** ζ is no longer a free prover
 choice: acceptance pins `proof.oodPoint` to `deriveOod` of the trace commitment and public values. -/
@@ -77,7 +88,7 @@ theorem verifyAlgoTB_forces_ood_transcript_bound {F : Type} [Inhabited F] [Decid
     (vk : RecursionVk F) (checks : FriChecks F) (initState : List F) (logN : Nat)
     (proof : BatchProofData F) (pub : WrapPublics F)
     (hacc : verifyAlgoTB perm RATE toNat params vk checks initState logN proof pub = true) :
-    proof.oodPoint = deriveOod perm RATE initState (proof.traceCommit ++ pub.segment) := by
+    proof.oodPoint = deriveOod perm RATE params.extDeg initState proof pub := by
   unfold verifyAlgoTB at hacc
   simp only [Bool.and_eq_true] at hacc
   exact of_decide_eq_true hacc.2
@@ -97,19 +108,19 @@ theorem verifyAlgoTB_imp_verifyAlgo {F : Type} [Inhabited F] [DecidableEq F]
 /-- **The check is LOAD-BEARING (anti-forgery tooth).** A prover-chosen OOD point that differs from the
 transcript-derived one is REJECTED — exactly the free-ζ forgery the plain verifier admitted. -/
 theorem oodTranscriptCheck_rejects_free_ood {F : Type} [Inhabited F] [DecidableEq F]
-    (perm : List F → List F) (RATE : Nat) (initState : List F) (proof : BatchProofData F)
+    (perm : List F → List F) (RATE extDeg : Nat) (initState : List F) (proof : BatchProofData F)
     (pub : WrapPublics F)
-    (h : proof.oodPoint ≠ deriveOod perm RATE initState (proof.traceCommit ++ pub.segment)) :
-    oodTranscriptCheck perm RATE initState proof pub = false := by
+    (h : proof.oodPoint ≠ deriveOod perm RATE extDeg initState proof pub) :
+    oodTranscriptCheck perm RATE extDeg initState proof pub = false := by
   unfold oodTranscriptCheck
   exact decide_eq_false h
 
 /-- **Non-vacuity (positive): the honest transcript-derived OOD point PASSES.** -/
 theorem oodTranscriptCheck_accepts_honest {F : Type} [Inhabited F] [DecidableEq F]
-    (perm : List F → List F) (RATE : Nat) (initState : List F) (proof : BatchProofData F)
+    (perm : List F → List F) (RATE extDeg : Nat) (initState : List F) (proof : BatchProofData F)
     (pub : WrapPublics F)
-    (h : proof.oodPoint = deriveOod perm RATE initState (proof.traceCommit ++ pub.segment)) :
-    oodTranscriptCheck perm RATE initState proof pub = true := by
+    (h : proof.oodPoint = deriveOod perm RATE extDeg initState proof pub) :
+    oodTranscriptCheck perm RATE extDeg initState proof pub = true := by
   unfold oodTranscriptCheck
   exact decide_eq_true h
 

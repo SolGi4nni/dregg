@@ -84,6 +84,7 @@ import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.FriVerifier
+import Dregg2.Circuit.FriTranscriptBind
 
 namespace Dregg2.Circuit.CircuitSoundness
 
@@ -419,8 +420,8 @@ opaque cfgExtra : FriVerifier.BatchProofData ℤ → FriVerifier.WrapPublics ℤ
 configuration (the KAT floor above). Its behaviour towards the apex is still carried via the
 `StarkSound` class below — exposing the structure adds knowledge, it removes none. -/
 def verifyBatch (_vk : VerifyKey) (pi : BatchPublicInputs) (π : BatchProof) : Verdict :=
-  if FriVerifier.verifyAlgo cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgChecks cfgInitState cfgLogN
-        (cfgView pi π).1 (cfgView pi π).2
+  if Dregg2.Circuit.FriTranscriptBind.verifyAlgoTB cfgPerm cfgRATE cfgToNat cfgParams cfgVk
+        cfgChecks cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2
       && cfgExtra (cfgView pi π).1 (cfgView pi π).2 then Verdict.accept else Verdict.reject
 
 /-- The published-commitment view induced by a `BatchPublicInputs`. -/

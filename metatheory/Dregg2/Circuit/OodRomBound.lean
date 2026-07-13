@@ -3,9 +3,11 @@
 exceptional-probability of the TRANSCRIPT-BOUND OOD point.
 
 Part (a) (`FriTranscriptBind`) made ζ a FUNCTION of the transcript: `verifyAlgoTB` acceptance
-forces `proof.oodPoint = deriveOod perm RATE initState proof.traceCommit`
-(`verifyAlgoTB_forces_ood_transcript_bound`). Part (b), here, is the PROBABILISTIC half: how
-often does that transcript-derived ζ land in the exceptional set of a residual `R`?
+forces `proof.oodPoint = deriveOod perm RATE extDeg initState proof pub`
+(`verifyAlgoTB_forces_ood_transcript_bound`) — the EXACT deployed p3 squeeze (observe trace,
+observe publics, sample α, observe quotient chunks, squeeze ζ). Part (b), here, is the
+PROBABILISTIC half: how often does that transcript-derived ζ land in the exceptional set of a
+residual `R`?
 
 ## The honest floor — `RomUniform` (THE named residual of this file)
 
@@ -34,14 +36,16 @@ it is where the argument bottoms out. It is a GENUINE assumption, not a tautolog
     the distribution equality lands on the already-proved Schwartz–Zippel game bound
     (`OodSoundnessGame.oodNonExc_winProb_le`); nothing further is assumed.
   * `deriveOod_escape_le` / `…_babybear` — the same bound with `ζmap` the ACTUAL
-    `FriTranscriptBind.deriveOod ∘ enc` squeeze (`RomUniformDerive`), specialized to the deployed
-    field: `≤ natDegree R / 2013265921`.
+    `FriTranscriptBind.deriveOod` squeeze over an adaptive prover strategy
+    `proofOf : Ω → BatchProofData F` (`RomUniformDerive`), specialized to the deployed field:
+    `≤ natDegree R / 2013265921`.
   * `ood_nonexceptionality_is_bounded` — THE PAYOFF: the joint event "`verifyAlgoTB` ACCEPTS and
     the proof's OOD point is exceptional for `R`" has probability `≤ natDegree R / |F|`. The
-    composition is real: acceptance FORCES ζ transcript-bound (part (a)), and the bound rides the
-    forced value through `RomUniform`. The carried `FriLdtExtractV3` "ζ non-exceptional" clause is
-    thereby a BOUNDED-ADVANTAGE event under transcript-binding + `RomUniform` — no longer a free
-    prover choice. `hnonexc_clause_bounded_babybear` states it at the deployed residual
+    composition is real: acceptance FORCES ζ transcript-bound (part (a), now over the full
+    `proof`/`pub` squeeze), and the bound rides the forced value through `RomUniform`. The carried
+    `FriLdtExtractV3` "ζ non-exceptional" clause is thereby a BOUNDED-ADVANTAGE event under
+    transcript-binding + `RomUniform` — no longer a free prover choice.
+    `hnonexc_clause_bounded_babybear` states it at the deployed residual
     `constraintPoly d t c − vanishingPoly t · qp c` over BabyBear.
 
 ## FIRE (non-vacuity, both poles)
@@ -175,27 +179,31 @@ theorem transcriptBound_ood_escape_le {Ω : Type*} [Fintype Ω]
 /-! ## §3 — the ζmap IS `deriveOod`: wiring to the part-(a) transcript squeeze. -/
 
 /-- **The transcript-derived OOD point as a field element** — the single squeezed coefficient of
-`FriTranscriptBind.deriveOod` (a length-1 list; `sampleExt … 1`). -/
-def transcriptZeta {F : Type} [Inhabited F] (perm : List F → List F) (RATE : Nat)
-    (initState : List F) (traceCommit : List F) : F :=
-  (deriveOod perm RATE initState traceCommit).headI
+`FriTranscriptBind.deriveOod` (a length-1 list; `sampleExt … 1`), over the FULL deployed squeeze
+inputs (proof commitments + publics + the α advance at width `extDeg`). -/
+def transcriptZeta {F : Type} [Inhabited F] (perm : List F → List F) (RATE extDeg : Nat)
+    (initState : List F) (proof : BatchProofData F) (pub : WrapPublics F) : F :=
+  (deriveOod perm RATE extDeg initState proof pub).headI
 
 /-- **`RomUniformDerive` — the named residual AT THE REAL SQUEEZE.** `RomUniform` instantiated
-with `ζmap = transcriptZeta ∘ enc`: over the finite sampled-commitment space `Ω` (encoded into the
-observed field-element stream by `enc`), the ACTUAL `deriveOod` duplex-sponge squeeze induces the
-uniform distribution on `F`. Assuming this for the deployed Poseidon2-w16 permutation is the
-standard ROM idealization — the precise honest floor of finding #4(b). -/
+with `ζmap ω = transcriptZeta … (proofOf ω) pub`: over the finite sampled-transcript space `Ω`
+(the prover strategy `proofOf` mapping each freshly sampled commitment/randomness to the submitted
+proof data), the ACTUAL `deriveOod` duplex-sponge squeeze induces the uniform distribution on `F`.
+Assuming this for the deployed Poseidon2-w16 permutation is the standard ROM idealization — the
+precise honest floor of finding #4(b). -/
 def RomUniformDerive {F : Type} [Inhabited F] [Fintype F] {Ω : Type} [Fintype Ω]
-    (perm : List F → List F) (RATE : Nat) (initState : List F) (enc : Ω → List F) : Prop :=
-  RomUniform (fun ω => transcriptZeta perm RATE initState (enc ω))
+    (perm : List F → List F) (RATE extDeg : Nat) (initState : List F)
+    (proofOf : Ω → BatchProofData F) (pub : WrapPublics F) : Prop :=
+  RomUniform (fun ω => transcriptZeta perm RATE extDeg initState (proofOf ω) pub)
 
 /-- The escape bound at the real squeeze: under `RomUniformDerive`, the `deriveOod`-derived ζ is
 exceptional for `R` with probability `≤ natDegree R / |F|`. -/
 theorem deriveOod_escape_le {F : Type} [Inhabited F] [Fintype F]
     [CommRing F] [IsDomain F] [DecidableEq F] {Ω : Type} [Fintype Ω]
-    (perm : List F → List F) (RATE : Nat) (initState : List F) (enc : Ω → List F)
-    (hrom : RomUniformDerive perm RATE initState enc) (R : Polynomial F) :
-    winProb (fun ω => oodNonExcAcc R (transcriptZeta perm RATE initState (enc ω)))
+    (perm : List F → List F) (RATE extDeg : Nat) (initState : List F)
+    (proofOf : Ω → BatchProofData F) (pub : WrapPublics F)
+    (hrom : RomUniformDerive perm RATE extDeg initState proofOf pub) (R : Polynomial F) :
+    winProb (fun ω => oodNonExcAcc R (transcriptZeta perm RATE extDeg initState (proofOf ω) pub))
       ≤ (R.natDegree : ℝ) / (Fintype.card F : ℝ) :=
   transcriptBound_ood_escape_le _ hrom R
 
@@ -207,35 +215,37 @@ is exceptional" is bounded — the carried `FriLdtExtractV3` non-exceptionality 
 a free prover choice. -/
 
 /-- **`ood_nonexceptionality_is_bounded` — the composed payoff.** For any adaptive prover strategy
-`proofOf : Ω → BatchProofData F` whose submitted trace commitment is the sampled one
-(`hcommit`), under `RomUniformDerive`: the probability that `verifyAlgoTB` ACCEPTS and the proof's
-OOD point lies in `exceptionalSet R` is `≤ natDegree R / |F|`. The composition is genuine —
+`proofOf : Ω → BatchProofData F` (the ROM variable: each sampled transcript randomness ω yields
+the submitted proof data), under `RomUniformDerive` at the verifier's own α width `params.extDeg`:
+the probability that `verifyAlgoTB` ACCEPTS and the proof's OOD point lies in `exceptionalSet R`
+is `≤ natDegree R / |F|`. The composition is genuine —
 `verifyAlgoTB_forces_ood_transcript_bound` (part (a)) pins the accepted ζ to
-`deriveOod (traceCommit)`, `hcommit` identifies the commitment with the sample, and the
-`RomUniform` transport (§2) bounds the escape. The "ζ non-exceptional" clause carried by
-`FriLdtExtractV3` is now a bounded-advantage event, not an assumption about the prover's will. -/
+`deriveOod … (proofOf ω) pub` (the EXACT deployed squeeze), and the `RomUniform` transport (§2)
+bounds the escape. The "ζ non-exceptional" clause carried by `FriLdtExtractV3` is now a
+bounded-advantage event, not an assumption about the prover's will. -/
 theorem ood_nonexceptionality_is_bounded {Ω F : Type} [Fintype Ω] [Fintype F] [Inhabited F]
     [CommRing F] [IsDomain F] [DecidableEq F]
     (perm : List F → List F) (RATE : Nat) (toNat : F → Nat) (params : FriParams)
     (vk : RecursionVk F) (checks : FriChecks F) (initState : List F) (logN : Nat)
-    (pub : WrapPublics F) (enc : Ω → List F) (proofOf : Ω → BatchProofData F)
-    (hcommit : ∀ ω, (proofOf ω).traceCommit ++ pub.segment = enc ω)
-    (hrom : RomUniformDerive perm RATE initState enc) (R : Polynomial F) :
+    (pub : WrapPublics F) (proofOf : Ω → BatchProofData F)
+    (hrom : RomUniformDerive perm RATE params.extDeg initState proofOf pub) (R : Polynomial F) :
     winProb (fun ω =>
         verifyAlgoTB perm RATE toNat params vk checks initState logN (proofOf ω) pub
           && decide ((proofOf ω).oodPoint.headI ∈ exceptionalSet R))
       ≤ (R.natDegree : ℝ) / (Fintype.card F : ℝ) := by
   refine le_trans
     (winProb_mono
-      (w2 := fun ω => oodNonExcAcc R (transcriptZeta perm RATE initState (enc ω))) ?_)
-    (deriveOod_escape_le perm RATE initState enc hrom R)
+      (w2 := fun ω =>
+        oodNonExcAcc R (transcriptZeta perm RATE params.extDeg initState (proofOf ω) pub)) ?_)
+    (deriveOod_escape_le perm RATE params.extDeg initState proofOf pub hrom R)
   intro ω hω
   rw [Bool.and_eq_true] at hω
   have hood := verifyAlgoTB_forces_ood_transcript_bound perm RATE toNat params vk checks
     initState logN (proofOf ω) pub hω.1
-  show decide (transcriptZeta perm RATE initState (enc ω) ∈ exceptionalSet R) = true
+  show decide (transcriptZeta perm RATE params.extDeg initState (proofOf ω) pub
+      ∈ exceptionalSet R) = true
   unfold transcriptZeta
-  rw [← hcommit ω, ← hood]
+  rw [← hood]
   exact hω.2
 
 /-! ## §5 — specialization at the deployed field (BabyBear, `|F| = 2013265921`). -/
@@ -252,12 +262,14 @@ noncomputable instance : Inhabited BabyBear := ⟨0⟩
 
 /-- The escape bound at the deployed field: `≤ natDegree R / 2013265921`. -/
 theorem deriveOod_escape_le_babybear {Ω : Type} [Fintype Ω]
-    (perm : List BabyBear → List BabyBear) (RATE : Nat) (initState : List BabyBear)
-    (enc : Ω → List BabyBear) (hrom : RomUniformDerive perm RATE initState enc)
+    (perm : List BabyBear → List BabyBear) (RATE extDeg : Nat) (initState : List BabyBear)
+    (proofOf : Ω → BatchProofData BabyBear) (pub : WrapPublics BabyBear)
+    (hrom : RomUniformDerive perm RATE extDeg initState proofOf pub)
     (R : Polynomial BabyBear) :
-    winProb (fun ω => oodNonExcAcc R (transcriptZeta perm RATE initState (enc ω)))
+    winProb (fun ω =>
+        oodNonExcAcc R (transcriptZeta perm RATE extDeg initState (proofOf ω) pub))
       ≤ (R.natDegree : ℝ) / 2013265921 := by
-  have h := deriveOod_escape_le perm RATE initState enc hrom R
+  have h := deriveOod_escape_le perm RATE extDeg initState proofOf pub hrom R
   rwa [show ((Fintype.card BabyBear : ℝ)) = 2013265921 by exact_mod_cast babybear_card] at h
 
 /-- **The payoff at the DEPLOYED residual.** For the exact residual the `transferV3` frontier
@@ -270,9 +282,8 @@ theorem hnonexc_clause_bounded_babybear {Ω : Type} [Fintype Ω]
     (perm : List BabyBear → List BabyBear) (RATE : Nat) (toNat : BabyBear → Nat)
     (params : FriParams) (vk : RecursionVk BabyBear) (checks : FriChecks BabyBear)
     (initState : List BabyBear) (logN : Nat) (pub : WrapPublics BabyBear)
-    (enc : Ω → List BabyBear) (proofOf : Ω → BatchProofData BabyBear)
-    (hcommit : ∀ ω, (proofOf ω).traceCommit ++ pub.segment = enc ω)
-    (hrom : RomUniformDerive perm RATE initState enc)
+    (proofOf : Ω → BatchProofData BabyBear)
+    (hrom : RomUniformDerive perm RATE params.extDeg initState proofOf pub)
     (d : EffectVmDescriptor2) (t : VmTrace)
     (qp : VmConstraint2 → Polynomial BabyBear) (c : VmConstraint2) :
     winProb (fun ω =>
@@ -281,20 +292,23 @@ theorem hnonexc_clause_bounded_babybear {Ω : Type} [Fintype Ω]
               exceptionalSet (constraintPoly d t c - vanishingPoly t * qp c)))
       ≤ ((constraintPoly d t c - vanishingPoly t * qp c).natDegree : ℝ) / 2013265921 := by
   have h := ood_nonexceptionality_is_bounded perm RATE toNat params vk checks initState logN
-    pub enc proofOf hcommit hrom (constraintPoly d t c - vanishingPoly t * qp c)
+    pub proofOf hrom (constraintPoly d t c - vanishingPoly t * qp c)
   rwa [show ((Fintype.card BabyBear : ℝ)) = 2013265921 by exact_mod_cast babybear_card] at h
 
 /-- FIRE (concrete residual degree, bound in the unit interval): a degree-`≤ 4` residual (the
 BabyBear quartic-extension shape) escapes with probability at most `4 / 2013265921` — a concrete
 real number, and it genuinely lies in `[0,1]`. -/
 theorem ood_escape_deg4_babybear {Ω : Type} [Fintype Ω]
-    (perm : List BabyBear → List BabyBear) (RATE : Nat) (initState : List BabyBear)
-    (enc : Ω → List BabyBear) (hrom : RomUniformDerive perm RATE initState enc)
+    (perm : List BabyBear → List BabyBear) (RATE extDeg : Nat) (initState : List BabyBear)
+    (proofOf : Ω → BatchProofData BabyBear) (pub : WrapPublics BabyBear)
+    (hrom : RomUniformDerive perm RATE extDeg initState proofOf pub)
     (R : Polynomial BabyBear) (hdeg : R.natDegree ≤ 4) :
-    winProb (fun ω => oodNonExcAcc R (transcriptZeta perm RATE initState (enc ω)))
+    winProb (fun ω =>
+        oodNonExcAcc R (transcriptZeta perm RATE extDeg initState (proofOf ω) pub))
         ≤ 4 / 2013265921
       ∧ (0 : ℝ) ≤ 4 / 2013265921 ∧ (4 : ℝ) / 2013265921 ≤ 1 := by
-  refine ⟨le_trans (deriveOod_escape_le_babybear perm RATE initState enc hrom R) ?_,
+  refine ⟨le_trans
+      (deriveOod_escape_le_babybear perm RATE extDeg initState proofOf pub hrom R) ?_,
     by norm_num, by norm_num⟩
   gcongr
   exact_mod_cast hdeg
@@ -304,29 +318,42 @@ end BabyBear
 /-! ## §6 — FIRE: both poles of the named residual AT THE REAL `deriveOod`, and tightness.
 
 Everything here runs the ACTUAL sponge algorithm (`Challenger.observe`/`duplexing`/`sampleExt`)
-over `ZMod 7`, RATE 1, observing the one-element commitment `[ω]`. With the identity permutation
-the squeeze returns exactly the observed element (a bijection ⇒ `RomUniform` HOLDS); with a
-constant permutation it is constant (⇒ `RomUniform` FAILS). So the named floor is neither
-vacuously true nor vacuously false at the real algorithm, and the composed escape probability is
-EXACTLY `deg/|F|` on a concrete instance. -/
+over `ZMod 7`, RATE 1, α width `extDeg = 1`, with the prover strategy submitting the sampled
+element as its trace commitment (`toyProof ω`, empty publics/quotient — the FULL new squeeze
+sequence runs: observe trace, observe publics, sample α, observe quotient, squeeze ζ). With the
+identity permutation the squeeze returns exactly the observed element (a bijection ⇒ `RomUniform`
+HOLDS); with a constant permutation it is constant (⇒ `RomUniform` FAILS). So the named floor is
+neither vacuously true nor vacuously false at the real algorithm, and the composed escape
+probability is EXACTLY `deg/|F|` on a concrete instance. -/
 
 section Fire
 
 private instance : Fact (Nat.Prime 7) := ⟨by norm_num⟩
 private instance : Inhabited (ZMod 7) := ⟨0⟩
 
-/-- Running the REAL `deriveOod` with the identity permutation (RATE 1, init `[0]`) on the
-commitment `[ω]` squeezes back exactly `ω` — computed by the kernel over all of `ZMod 7`. -/
+/-- The toy prover strategy: submit the sampled element `ω` as the trace commitment (everything
+else empty — `quotientCommit` defaults to `[]`, so the α-then-quotient leg of the squeeze runs on
+the sponge state alone). -/
+private def toyProof (ω : ZMod 7) : BatchProofData (ZMod 7) :=
+  { traceCommit := [ω], friCommitments := [], finalPoly := [], queries := [],
+    exposedSegment := [] }
+
+/-- The toy publics: empty segment. -/
+private def toyPub : WrapPublics (ZMod 7) := ⟨[]⟩
+
+/-- Running the REAL `deriveOod` with the identity permutation (RATE 1, extDeg 1, init `[0]`) on
+the toy proof `[ω]` squeezes back exactly `ω` — the α sample drains the output buffer and the ζ
+squeeze re-duplexes the untouched `[ω]` state — computed by the kernel over all of `ZMod 7`. -/
 theorem toyZeta_id : ∀ ω : ZMod 7,
-    transcriptZeta (F := ZMod 7) id 1 [0] [ω] = ω := by decide
+    transcriptZeta (F := ZMod 7) id 1 1 [0] (toyProof ω) toyPub = ω := by decide
 
 /-- **SATISFIABLE pole at the real squeeze**: for the identity permutation the derived ζ is a
 bijection of the sampled commitment, so `RomUniformDerive` HOLDS — the named residual is
 realizable by an actual run of the `deriveOod` algorithm, not just by an abstract map. -/
 theorem romUniformDerive_id_perm_holds :
-    RomUniformDerive (F := ZMod 7) (Ω := ZMod 7) id 1 [0] (fun ω => [ω]) := by
-  show RomUniform (fun ω : ZMod 7 => transcriptZeta id 1 [0] [ω])
-  have hz : (fun ω : ZMod 7 => transcriptZeta id 1 [0] [ω]) = fun ω => ω := by
+    RomUniformDerive (F := ZMod 7) (Ω := ZMod 7) id 1 1 [0] toyProof toyPub := by
+  show RomUniform (fun ω : ZMod 7 => transcriptZeta id 1 1 [0] (toyProof ω) toyPub)
+  have hz : (fun ω : ZMod 7 => transcriptZeta id 1 1 [0] (toyProof ω) toyPub) = fun ω => ω := by
     funext ω
     exact toyZeta_id ω
   rw [hz]
@@ -335,16 +362,18 @@ theorem romUniformDerive_id_perm_holds :
 /-- Running the REAL `deriveOod` with the degenerate constant permutation `fun _ => [0]` squeezes
 the constant `0` whatever was observed. -/
 theorem toyZeta_const : ∀ ω : ZMod 7,
-    transcriptZeta (F := ZMod 7) (fun _ => [0]) 1 [0] [ω] = 0 := by decide
+    transcriptZeta (F := ZMod 7) (fun _ => [0]) 1 1 [0] (toyProof ω) toyPub = 0 := by decide
 
 /-- **REFUTABLE pole at the real squeeze**: the constant permutation makes the derived ζ constant,
 and `RomUniformDerive` FAILS. The residual genuinely discriminates — assuming it for the deployed
 Poseidon2 is a REAL idealization, with content. -/
 theorem romUniformDerive_const_perm_fails :
-    ¬ RomUniformDerive (F := ZMod 7) (Ω := ZMod 7) (fun _ => [0]) 1 [0] (fun ω => [ω]) := by
+    ¬ RomUniformDerive (F := ZMod 7) (Ω := ZMod 7) (fun _ => [0]) 1 1 [0] toyProof toyPub := by
   intro h
-  have h' : RomUniform (fun ω : ZMod 7 => transcriptZeta (fun _ => [0]) 1 [0] [ω]) := h
-  have hz : (fun ω : ZMod 7 => transcriptZeta (fun _ => ([0] : List (ZMod 7))) 1 [0] [ω])
+  have h' : RomUniform
+      (fun ω : ZMod 7 => transcriptZeta (fun _ => [0]) 1 1 [0] (toyProof ω) toyPub) := h
+  have hz : (fun ω : ZMod 7 =>
+        transcriptZeta (fun _ => ([0] : List (ZMod 7))) 1 1 [0] (toyProof ω) toyPub)
       = fun _ => (0 : ZMod 7) := by
     funext ω
     exact toyZeta_const ω
@@ -352,15 +381,16 @@ theorem romUniformDerive_const_perm_fails :
   exact not_romUniform_const (0 : ZMod 7) (by rw [ZMod.card]; norm_num) h'
 
 /-- **FIRE — the composed escape probability is EXACTLY `1/7`, tight against the bound.** At the
-real `deriveOod` (identity permutation, `ZMod 7`) with residual `X` (degree 1), the
-transcript-bound ζ lands exceptional with probability exactly `natDegree X / |F| = 1/7` — a
-genuine positive real in `[0,1]`. The §2 bound is attained, so it is neither vacuous nor slack on
-this instance. -/
+real `deriveOod` (identity permutation, `ZMod 7`, the full observe/α/observe/squeeze sequence)
+with residual `X` (degree 1), the transcript-bound ζ lands exceptional with probability exactly
+`natDegree X / |F| = 1/7` — a genuine positive real in `[0,1]`. The §2 bound is attained, so it
+is neither vacuous nor slack on this instance. -/
 theorem transcriptBound_escape_fires :
     winProb (fun ω : ZMod 7 =>
-        oodNonExcAcc (X : Polynomial (ZMod 7)) (transcriptZeta id 1 [0] [ω])) = 1 / 7 := by
+        oodNonExcAcc (X : Polynomial (ZMod 7))
+          (transcriptZeta id 1 1 [0] (toyProof ω) toyPub)) = 1 / 7 := by
   have hz : (fun ω : ZMod 7 =>
-        oodNonExcAcc (X : Polynomial (ZMod 7)) (transcriptZeta id 1 [0] [ω]))
+        oodNonExcAcc (X : Polynomial (ZMod 7)) (transcriptZeta id 1 1 [0] (toyProof ω) toyPub))
       = oodNonExcAcc (X : Polynomial (ZMod 7)) := by
     funext ω
     exact congrArg _ (toyZeta_id ω)
