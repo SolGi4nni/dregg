@@ -42,3 +42,24 @@ K1. **HeapAtom has no exact-delta twin + no cross-key relation** (`cell/src/prog
   BROKEN one is `starbridge-nameservice` (what dreggnet-names wraps), being fixed separately.
 - collective-choice's PROGRAM is a pure `Always` invariants program (no default-deny) — the exposure is #5's TALLY
   binding, not the dispatch.
+
+## STATUS (2026-07-12, after the repair swarm)
+FIXED + committed:
+- #1/#2/#3-compiler (Bazaar pair) — spween-dregg/compiler.rs: the clamp-defeated lift now emits a companion FieldDelta;
+  the broke buyer is REFUSED. Driven 153/0 (dungeon-on-dregg 118 incl. dice-combat + the workarounds).
+- #5 (quorum aliasing, SECURITY) — collective-choice: RESOLVED gated on CountGe (>=M distinct committed voters, actor-
+  bound commitment); a single-actor tally-inflation forge is REFUSED. Driven 11/0; /council + the liquidity vote inherit.
+- nameservice dispatch-default-deny — starbridge-nameservice name_cell_program -> a flat Predicate; the app's own 6
+  integration tests pass again; teeth still bite.
+PENDING an ember action:
+- #3-runtime (BUG 2, passage re-entry re-run) — FIXED on disk in the EXTERNAL ~/dev/spween (effects_executed HashSet),
+  but breadstuffs pins emberian/spween@afb5b1f, so it lands only by committing+pushing spween + bumping the rev in
+  spween-dregg/Cargo.toml. The test retreat_into_seed_room_does_not_reseed is #[ignore]d until then.
+STILL TODO (app-level, cheap):
+- #4 (dead heap hatch) — compile_scene (spween-dregg/compiler.rs) still emits Cases with NO Always catch-all, so apply_raw
+  (the >16-slot heap-inventory hatch) is refused by dispatch-default-deny. NOT addressed by the Bazaar-pair fix. A
+  follow-up: emit an Always-guarded catch-all (pin with a 5-line apply_raw repro first).
+- NEW: wasm/src/bindings_card.rs:1263 has its OWN independent Monotonic-tally poll_program with the SAME quorum-aliasing
+  shape as #5 — apply the CountGe fix there too (the quorum lane flagged it).
+HELD (coordinated kernel pass): K1 (HeapAtom::DeltaEquals + a cross-key relational atom) — Rust + Lean twin + AIR, with
+the metatheory/circuit terminal.
