@@ -42,7 +42,8 @@ It does **not** mean:
    holder's wallet. (`dregg-governance/`, `bridge/src/solana_holdings.rs`, the light-clients.)
 2. **Outbound — settle a dregg proof onto a chain.** dregg produces a proof of its state
    transition; the target chain's on-chain verifier checks it and settles. (`chain/gnark` →
-   `chain/contracts/DreggSettlement.sol` for EVM; the Mina/Cosmos analogues in progress.)
+   `chain/contracts/DreggSettlement.sol` for EVM; `cosmos-settlement/` is the CosmWasm twin
+   that verifies the SAME BN254 proof natively in a Cosmos runtime; the Mina analogue in progress.)
 
 The non-custodial guarantee is the same both ways: **you never move tokens into a bridge
 wallet.** You prove, you don't lock.
@@ -51,14 +52,15 @@ wallet.** You prove, you don't lock.
 
 | chain | inbound (prove holdings → govern) | outbound (chain verifies a dregg proof) |
 |---|---|---|
-| **Solana** | **REAL** — consensus-anchored ≥2/3 stake supermajority + accounts inclusion, governance-pinned anchor (forgery closed); runs end-to-end (`cargo test -p dregg-governance` green) | asset lock/unlock = **M-of-N oracle-attested** (honest: not proof-carrying) |
+| **Solana** | **REAL** — consensus-anchored ≥2/3 stake supermajority + accounts inclusion, governance-pinned anchor (forgery closed); runs end-to-end (`cargo test -p dregg-governance` green) | asset lock/unlock: the M-of-N oracle attestation is the first slice; its **CONSENSUS-VERIFIED (proof-carrying) successor is built** — the lock is *proven* by the SAME ≥2/3 stake supermajority + accounts-inclusion + governance-pinned anchor as inbound holdings (`bridge/src/solana_trustless.rs` `verify_lock_proof_consensus_anchored`; `tests/solana_lock_trustless.rs` green, both polarities: a genuine lock verifies + mints, a below-2/3 / imposter-voter / wrong-anchor / foreign-vault lock rejects). Honest scope: the consensus check is **off-circuit** (re-executor-grade, not a succinct AIR) and the **live vote feed is pending** (in-test cluster fixtures); the Option-B succinct wrapper (`SolanaConsensusStatement`) is named-not-built. So: consensus-verified, replacing oracle-attested — not yet succinct or live-fed. |
 | **EVM** | ERC-20 storage-proof holding + secp256k1 binding **built**; the compiled join into governance is landing | **REAL** — a genuine Groth16 proof of a dregg state transition **verifies on-chain** (Foundry) against a generated Solidity verifier; forgeries reject; survived four adversarial audits. On dev-ceremony setup, not mainnet. |
-| **Cosmos** | bank-balance holding + secp256k1/bech32 binding **built** (inbound side) | **IN PROGRESS** — a Cosmos-side verifier of dregg proofs (IBC / CosmWasm) is the earlier direction; not yet demonstrated |
+| **Cosmos** | bank-balance holding + secp256k1/bech32 binding **built** (inbound side) | **DEMONSTRATED (test/local).** A CosmWasm contract verifies the SAME real dregg Groth16 proof the EVM verifier verifies — BN254, the pinned 25-lane statement, the same fixture `chain/test/fixtures/settlement_groth16.json` — natively in a Cosmos runtime: `ark-bn254` reproduces the two gnark pairing checks (Groth16 + the Pedersen-commitment gate), and it advances a `provenRoot`/`provenHeight`, the CosmWasm twin of `DreggSettlement.sol` (`cosmos-settlement/`). No Cosmos-native (Pasta) instantiation is needed — a CosmWasm contract IS Rust→wasm, so the BN254 verify runs in it directly (a field-parameterized shrink to Cosmos's field would only be a gas optimization, as BN254 is on the EVM). cw-multi-test: accepts the real proof, rejects a forged final-root / proof-point / commitment (both polarities). Compiles to a deployable `.wasm`. On the same single-party **dev ceremony** as EVM; **not deployed to a live Cosmos chain**. The fuller **IBC light-client path** (a dregg proof arriving as an IBC packet / an ICS-08-style client) is **named, not built**. |
 | **Robinhood Chain** (EVM Arbitrum-Orbit L2, chain id 46630, tokenized stocks/RWA) | **REAL — weak-subjectivity.** A genuine `eth_getProof` for a faucet-dropped tokenized-stock (TSLA) balance on the live testnet verifies through the SAME EIP-1186 machinery into a dregg `ProvenForeignHolding` tagged `Evm(46630)` (`eth-lightclient` `verify_erc20_holding_wide` — the OZ-v5 ERC-7201 namespaced-storage glue; `dregg-interchain-gov` `tests/robinhood_inbound.rs`). Verified against a **supplied** L2 state root → `StructureOnly` / `consensus_proven:false` (an Orbit L2 has no Altair sync committee). **Trustless upgrade (named, not built): verify the L2 root against its L1 (Ethereum) Arbitrum-rollup anchor** — only then `consensus_proven:true`. | — (outbound = settle a dregg proof onto Robinhood Chain; the EVM/BN254 wrap applies but is not demonstrated there) |
 | **Mina** | — | **SCOPED, NOT BUILT** — the Pasta instantiation of the EVM wrap; a go/no-go (Pasta-Poseidon-vs-o1js KAT + Kimchi verifier constraint count) precedes the multi-week build. The old Kimchi/Pickles relay was *vacuous* (never verified the proof in-circuit) and was removed. |
 
 Rule for talking about this: **present-tense claims track the table.** "EVM verifies dregg
-proofs" is demonstrated; "Cosmos/Mina verify" is architecture-in-progress. Say which.
+proofs" is demonstrated; "Cosmos verifies dregg proofs" is demonstrated in test (CosmWasm,
+dev-ceremony, not on a live chain); "Mina verifies" is architecture-in-progress. Say which.
 
 ## Why this is not a bridge (the security point)
 

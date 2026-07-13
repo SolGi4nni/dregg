@@ -1,0 +1,53 @@
+# Standalone workspace: keeps the arkworks (BN254) + CosmWasm dependency tree out
+# of the main dregg workspace (like `chain/`, `cosmos-lightclient/`, and
+# `eth-lightclient/`). This crate is the OUTBOUND Cosmos-side settlement verifier
+# — a CosmWasm contract that verifies a REAL dregg Groth16 proof (BN254, the same
+# proof + VK the EVM `DreggSettlement` verifies) natively inside a Cosmos runtime,
+# advancing a provenRoot/provenHeight. The Cosmos twin of `chain/contracts/
+# DreggSettlement.sol` + its gnark-generated verifier.
+#
+# Build / test standalone:  cd cosmos-settlement && cargo test
+[workspace]
+
+[package]
+name = "cosmos-settlement"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "Outbound Cosmos-side dregg settlement verifier: a CosmWasm contract that verifies a real dregg Groth16 (BN254) proof over the pinned 25-lane statement and advances a provenRoot/provenHeight"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# CosmWasm 2.x contract runtime + storage. A CosmWasm contract IS Rust->wasm, so
+# the BN254 Groth16 verify runs in it directly (arkworks, below).
+cosmwasm-std = { version = "2.2", features = ["staking"] }
+cosmwasm-schema = "2.2"
+cw-storage-plus = "2.0"
+thiserror = "1"
+hex = "0.4"
+# keccak256 — the gnark commitment fold + the packLanes key both hash with the
+# Ethereum keccak (NOT NIST SHA3), byte-identical to the Solidity verifier.
+sha3 = { version = "0.10", default-features = false }
+
+# arkworks 0.5 — the SAME major as the rest of the tree (see storage/Cargo.toml).
+# The real BN254 pairing + field arithmetic behind the Groth16 + Pedersen checks.
+ark-bn254 = { version = "0.5", default-features = false, features = ["curve"] }
+ark-ec = { version = "0.5", default-features = false }
+ark-ff = { version = "0.5", default-features = false }
+ark-serialize = { version = "0.5", default-features = false }
+ark-std = { version = "0.5", default-features = false }
+
+[dev-dependencies]
+# The Cosmos multi-contract test harness — routes instantiate/execute/query
+# through a full App (blocks, addressing, storage), the strongest "runs in a
+# Cosmos runtime" demonstration short of a live chain.
+cw-multi-test = "2.3"
+serde_json = "1"
+cosmwasm-schema = "2.2"
+
+[profile.release]
+# CosmWasm wasm profile: small + panic=abort. `overflow-checks` on for safety.
+opt-level = "s"
+overflow-checks = true
