@@ -340,4 +340,59 @@ abbrev rqCapCav : List RelCaveat :=
 #assert_axioms relStateStepGuarded_rel_violation_fails
 #assert_axioms relStateStepGuarded_capacity_enforced
 
+/-! ## §8 — HEAP-LIFT: the cross-KEY relational caveat over two HEAP keys (the live promotion).
+
+The record-level `RelCaveat.fieldLteOther` reads two NAMED fields; a heap key `k` is just the field
+name `toString k` (the twin of `Dregg2.Exec.heapKey`, kept local so this module needs no new import).
+Lifting `fieldLteOther` at two heap-key names gives the CROSS-KEY heap relation
+`new[heap key] ≤ new[heap other_key] + delta` — which the per-key `HeapAtom` vocabulary (each atom
+reads only ITS own key) cannot express. This is the atom that lets a Bazaar purse keep BOTH operands
+in the openable heap instead of hoisting the pair into fixed register slots.
+
+Rust twin: `StateConstraint::HeapFieldLteOther { key, other_key, delta }`
+(`cell/src/program/types.rs`), evaluated by `evaluate_constraint_full` reading both operands via
+`CellState::get_field_ext`. DIVERGENCE (honest): the verified `RelCaveat.eval` reuses `fieldOf`
+(absent ⇒ 0, dregg1's `FIELD_ZERO` default); the Rust executor FAILS CLOSED on an absent key. The
+Rust is a strict TIGHTENING (it refuses cases this atom would read as 0), so nothing proved here is
+violated — they coincide exactly when both keys are present. -/
+
+/-- Heap-key name convention — the twin of `Dregg2.Exec.heapKey` (`Program.lean`): a heap key `k` is
+the field name `toString k`. Kept local so this module needs no import of `Program`. -/
+def heapName (k : Nat) : FieldName := toString k
+
+/-- **The HEAP-LIFT of `fieldLteOther`** — the verified `RelCaveat.fieldLteOther` at two heap-key
+names. `heapFieldLteOther head cap tail` ≡ `head − tail ≤ cap` (capacity); `heapFieldLteOther tail
+head 0` ≡ `tail ≤ head` (no-underflow) — now over two HEAP keys. Rust twin
+`StateConstraint::HeapFieldLteOther`. -/
+def heapFieldLteOther (key other_key : Nat) (delta : Int) : RelCaveat :=
+  RelCaveat.fieldLteOther (heapName key) (heapName other_key) delta
+
+/-- **`evalHeapRel_fieldLteOther_iff`** — the heap-lifted cross-key atom admits a record IFF
+`record[heap key] ≤ record[heap other_key] + delta`. A REUSE of `RelCaveat.eval` at heap names (same
+shape as `fieldLteOther_expresses_capacity`/`_underflow`), a real characterization — the admit-char
+the Rust `HeapFieldLteOther` teeth mirror (accept when `lhs ≤ rhs`, reject when `lhs > rhs`). -/
+theorem evalHeapRel_fieldLteOther_iff (key other_key : Nat) (delta : Int) (rec : Value) :
+    (heapFieldLteOther key other_key delta).eval rec = true
+      ↔ fieldOf (heapName key) rec ≤ fieldOf (heapName other_key) rec + delta := by
+  unfold heapFieldLteOther RelCaveat.eval
+  rw [decide_eq_true_iff]
+
+/-! ### §8 non-vacuity — the atom admits a satisfying record AND refuses a violating one (BOTH
+polarities), for the capacity (`delta`-carried) and the no-underflow (`delta = 0`) instances. Absent
+keys read as `FIELD_ZERO` here (the verified `fieldOf` default); the Rust twin fails closed. -/
+
+-- capacity `new[130] ≤ new[131] + 2`: 5 ≤ 3+2 ADMITS, 6 ≤ 5 REFUSES.
+#guard ((heapFieldLteOther 130 131 2).eval (.record [(heapName 130, .int 5), (heapName 131, .int 3)]))
+#guard ((heapFieldLteOther 130 131 2).eval (.record [(heapName 130, .int 6), (heapName 131, .int 3)])) == false
+-- no-underflow `new[130] ≤ new[131]` (delta 0): equal ADMITS, over REFUSES.
+#guard ((heapFieldLteOther 130 131 0).eval (.record [(heapName 130, .int 4), (heapName 131, .int 4)]))
+#guard ((heapFieldLteOther 130 131 0).eval (.record [(heapName 130, .int 5), (heapName 131, .int 4)])) == false
+-- the iff bites BOTH ways on a concrete record (a satisfying case AND a violating case):
+#guard (decide (fieldOf (heapName 130) (.record [(heapName 130, .int 5), (heapName 131, .int 3)])
+                  ≤ fieldOf (heapName 131) (.record [(heapName 130, .int 5), (heapName 131, .int 3)]) + 2))
+#guard (decide (fieldOf (heapName 130) (.record [(heapName 130, .int 6), (heapName 131, .int 3)])
+                  ≤ fieldOf (heapName 131) (.record [(heapName 130, .int 6), (heapName 131, .int 3)]) + 2)) == false
+
+#assert_axioms evalHeapRel_fieldLteOther_iff
+
 end Dregg2.Exec.RelationalCaveat

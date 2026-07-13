@@ -276,6 +276,94 @@ fn heap_delta_bounded_admit_refuse_absent() {
 }
 
 #[test]
+fn heap_delta_equals_exact_offby_one_absent() {
+    // EXACT signed delta: new - old == d. Twin of the Lean
+    // `HeapAtom.deltaEquals` (lifts to `fieldDelta`, both-present-refuse).
+    let up = heap_prog(HeapAtom::DeltaEquals { d: 4 });
+    // exact +4 ACCEPTS.
+    assert!(heap_eval(&up, &heap_state(Some(104)), Some(&heap_state(Some(100)))).is_ok());
+    // off-by-one (either direction) REJECTS — DeltaBounded would have admitted
+    // both; DeltaEquals pins the precise delta.
+    assert!(heap_eval(&up, &heap_state(Some(105)), Some(&heap_state(Some(100)))).is_err());
+    assert!(heap_eval(&up, &heap_state(Some(103)), Some(&heap_state(Some(100)))).is_err());
+    // a NEGATIVE exact delta.
+    let down = heap_prog(HeapAtom::DeltaEquals { d: -3 });
+    assert!(heap_eval(&down, &heap_state(Some(97)), Some(&heap_state(Some(100)))).is_ok());
+    assert!(heap_eval(&down, &heap_state(Some(98)), Some(&heap_state(Some(100)))).is_err());
+    // BOTH-present fail-closed (no init/nonce escape): absent-old AND absent-new
+    // both REFUSE, including a missing old_state entirely.
+    assert!(heap_eval(&up, &heap_state(Some(4)), Some(&heap_state(None))).is_err());
+    assert!(heap_eval(&up, &heap_state(Some(4)), None).is_err());
+    assert!(heap_eval(&up, &heap_state(None), Some(&heap_state(Some(0)))).is_err());
+}
+
+// ── Cross-KEY heap relation (HeapFieldLteOther) ─────────────────────────
+//
+// Two heap keys compared in the post-state: new[key] <= new[other_key] +
+// delta. The heap twin of the slot FieldLteOther, fail-closed on an absent
+// key. Mirrors the Lean `heapFieldLteOther` / `evalHeapRel_fieldLteOther_iff`.
+
+const HK_A: u64 = 130; // both well above STATE_SLOTS ⇒ fields_map reads.
+const HK_B: u64 = 131;
+
+fn cross_key_state(a: Option<u64>, b: Option<u64>) -> CellState {
+    let mut s = CellState::new(0);
+    if let Some(a) = a {
+        assert!(s.set_field_ext(HK_A, field_from_u64(a)));
+    }
+    if let Some(b) = b {
+        assert!(s.set_field_ext(HK_B, field_from_u64(b)));
+    }
+    s
+}
+
+#[test]
+fn heap_field_lte_other_capacity_and_underflow() {
+    // CAPACITY-style bound: new[A] <= new[B] + delta.
+    let cap = CellProgram::Predicate(vec![StateConstraint::HeapFieldLteOther {
+        key: HK_A,
+        other_key: HK_B,
+        delta: 2,
+    }]);
+    let ev = |s: &CellState| {
+        cap.evaluate_full(
+            s,
+            None,
+            None,
+            &TransitionMeta::wildcard(),
+            &WitnessBundle::empty(),
+        )
+    };
+    // 5 <= 3 + 2 = 5 : boundary ACCEPTS.
+    assert!(ev(&cross_key_state(Some(5), Some(3))).is_ok());
+    // 6 <= 3 + 2 = 5 : VIOLATION rejects.
+    assert!(ev(&cross_key_state(Some(6), Some(3))).is_err());
+    // absent EITHER operand fails closed.
+    assert!(ev(&cross_key_state(None, Some(3))).is_err());
+    assert!(ev(&cross_key_state(Some(5), None)).is_err());
+    assert!(ev(&cross_key_state(None, None)).is_err());
+
+    // NO-UNDERFLOW bound with delta 0: new[A] <= new[B].
+    let uf = CellProgram::Predicate(vec![StateConstraint::HeapFieldLteOther {
+        key: HK_A,
+        other_key: HK_B,
+        delta: 0,
+    }]);
+    let ev0 = |s: &CellState| {
+        uf.evaluate_full(
+            s,
+            None,
+            None,
+            &TransitionMeta::wildcard(),
+            &WitnessBundle::empty(),
+        )
+    };
+    assert!(ev0(&cross_key_state(Some(4), Some(4))).is_ok());
+    assert!(ev0(&cross_key_state(Some(3), Some(4))).is_ok());
+    assert!(ev0(&cross_key_state(Some(5), Some(4))).is_err());
+}
+
+#[test]
 fn heap_atom_composes_under_heyting_fragment() {
     // Not(HeapField) is the clean complement (heap atoms only ever emit
     // ConstraintViolated, never a structural error, so the Heyting Not
@@ -3167,6 +3255,14 @@ fn view_projection_is_total_and_kind_tagged() {
             },
             "VaultDeposit",
         ),
+        (
+            StateConstraint::HeapFieldLteOther {
+                key: 130,
+                other_key: 131,
+                delta: 0,
+            },
+            "HeapFieldLteOther",
+        ),
     ];
 
     // COVERAGE TOOTH: this match must name every variant exactly once.
@@ -3240,7 +3336,8 @@ fn view_projection_is_total_and_kind_tagged() {
             | StateConstraint::ChallengeWindow { .. }
             | StateConstraint::SettleEscrow { .. }
             | StateConstraint::DischargeObligation { .. }
-            | StateConstraint::VaultDeposit { .. } => {}
+            | StateConstraint::VaultDeposit { .. }
+            | StateConstraint::HeapFieldLteOther { .. } => {}
         }
     }
 

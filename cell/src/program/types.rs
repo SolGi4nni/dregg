@@ -486,6 +486,19 @@ pub enum HeapAtom {
     InRangeTwoSided { lo: u64, hi: u64 },
     /// `|new[heap key] - old[heap key]| <= d` (u64 lane; both present).
     DeltaBounded { d: u64 },
+    /// `new[heap key] - old[heap key] == d` (signed i128 delta; BOTH present
+    /// — an absent old OR new REFUSES, no init/nonce escape on the heap). The
+    /// EXACT-delta twin of [`Self::DeltaBounded`] (which only bounds `|Δ|`):
+    /// this pins the change to a precise signed value, so a heap-keyed
+    /// quantity (a Bazaar purse) can require "the purse moved by EXACTLY `d`"
+    /// without hoisting into a fixed register slot. Reads both sides as the
+    /// full-field signed delta (`field_delta_i128`), like `DeltaBounded`.
+    /// Mirrors the verified Lean atom `Dregg2.Exec.HeapAtom.deltaEquals`,
+    /// which lifts to `SimpleConstraint.fieldDelta (heapKey k) d`
+    /// (both-present-refuse, `metatheory/Dregg2/Exec/Program.lean`).
+    /// APPEND-ONLY (declared LAST so every prior postcard/serde variant index
+    /// is preserved — factory VKs / content addresses byte-identical, §2).
+    DeltaEquals { d: i64 },
 }
 
 /// Simple (non-recursive) constraint set permitted inside `AnyOf`.
@@ -1894,5 +1907,46 @@ pub enum StateConstraint {
         /// (before/after); the gate requires it to advance by `m > 0` minted shares,
         /// with no existing holder diluted.
         shares_slot: u8,
+    },
+
+    /// **Cross-KEY heap relation:** in the post-state, `new[heap key] <=
+    /// new[heap other_key] + delta` (signed). The heap-keyed twin of
+    /// [`Self::FieldLteOther`] (a fixed-register cross-SLOT bound), WIDENED to
+    /// u64 heap keys so two heap-keyed quantities can be COMPARED — which the
+    /// per-key [`HeapAtom`] vocabulary (each atom reads only ITS own key)
+    /// structurally cannot express. This is what lets a Bazaar purse keep BOTH
+    /// operands in the openable `fields_map` heap (`head <= cap + tail`,
+    /// `tail <= head`) instead of hoisting the pair into fixed register slots.
+    ///
+    /// - `HeapFieldLteOther { key: head, other_key: cap, delta: tail }` ≡ the
+    ///   CAPACITY bound `head - tail <= cap`.
+    /// - `HeapFieldLteOther { key: tail, other_key: head, delta: 0 }` ≡ the
+    ///   NO-UNDERFLOW bound `tail <= head`.
+    ///
+    /// Both operands are read via [`CellState::get_field_ext`] (keys
+    /// `< STATE_SLOTS` resolve to the fixed registers, `>= STATE_SLOTS` to the
+    /// committed `fields_map` heap), lifted big-endian u64 → i128 with the
+    /// signed `delta` added on the right. **Fail-closed: an ABSENT `key` OR
+    /// `other_key` REFUSES** — a cross-key bound over an unborn key is
+    /// unevaluable (stricter than the Lean twin's FIELD_ZERO default; the Rust
+    /// executor only ever TIGHTENS).
+    ///
+    /// Lean twin: `Dregg2.Exec.RelationalCaveat.heapFieldLteOther` (the
+    /// heap-lift of the verified `RelCaveat.fieldLteOther`) + admit-char
+    /// `evalHeapRel_fieldLteOther_iff`
+    /// (`metatheory/Dregg2/Exec/RelationalCaveat.lean`). A `StateConstraint`
+    /// (it reads two post-state heap keys, so it does not lift into the
+    /// post-state-local, single-key [`SimpleStateConstraint`]/[`HeapAtom`]
+    /// fragment). APPEND-ONLY (declared LAST so every existing postcard/serde
+    /// variant index is preserved — factory VKs / content addresses
+    /// byte-identical, §2).
+    HeapFieldLteOther {
+        /// The heap key whose value is bounded above (`new[heap key]`).
+        key: u64,
+        /// The heap key on the right of the bound (`new[heap other_key]`).
+        other_key: u64,
+        /// Signed offset added to the right operand (`+delta` tightens when
+        /// negative). Carries the third cross-key term (e.g. the queue tail).
+        delta: i64,
     },
 }

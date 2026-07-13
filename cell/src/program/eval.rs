@@ -1870,6 +1870,49 @@ fn evaluate_constraint_full(
             evaluate_heap_atom(constraint, *key, atom, new_state, old_state)
         }
 
+        // ─── Cross-KEY heap relation: new[key] <= new[other_key] + delta ───
+        StateConstraint::HeapFieldLteOther {
+            key,
+            other_key,
+            delta,
+        } => {
+            // Read BOTH operands from the post-state heap (get_field_ext: keys
+            // < STATE_SLOTS are registers, >= STATE_SLOTS the fields_map).
+            // FAIL CLOSED if EITHER key is absent — a cross-key bound over an
+            // unborn key is unevaluable (stricter than the Lean FIELD_ZERO
+            // default; the executor only ever tightens). Same i128 + signed
+            // delta comparison as StateConstraint::FieldLteOther.
+            let lhs = match new_state.get_field_ext(*key) {
+                Some(ref x) => field_to_u64(x) as i128,
+                None => {
+                    return violated(
+                        constraint,
+                        format!("heap[{key}] absent post-state (HeapFieldLteOther fails closed)"),
+                    );
+                }
+            };
+            let rhs = match new_state.get_field_ext(*other_key) {
+                Some(ref x) => field_to_u64(x) as i128 + *delta as i128,
+                None => {
+                    return violated(
+                        constraint,
+                        format!(
+                            "heap[{other_key}] absent post-state (HeapFieldLteOther fails closed)"
+                        ),
+                    );
+                }
+            };
+            if lhs > rhs {
+                return violated(
+                    constraint,
+                    format!(
+                        "heap[{key}] = {lhs} > heap[{other_key}] + {delta} = {rhs} in post-state"
+                    ),
+                );
+            }
+            Ok(())
+        }
+
         // ─── Program-readable delegation_epoch (the channels closure lane) ───
         StateConstraint::DelegationEpochEquals { index } => {
             let idx = check_index(*index)?;
@@ -2355,6 +2398,26 @@ fn evaluate_heap_atom(
             _ => violated(
                 constraint,
                 format!("heap[{key}] absent pre- or post-state (DeltaBounded fails closed)"),
+            ),
+        },
+        HeapAtom::DeltaEquals { d } => match (old_v, new_v) {
+            // Both present (NO init/nonce escape — an absent old OR new
+            // refuses, exactly like DeltaBounded / the Lean `fieldDelta`
+            // both-present match). EXACT signed delta: `new - old == d`.
+            (Some(ref a), Some(ref b)) => {
+                let delta = field_delta_i128(a, b);
+                if delta == *d as i128 {
+                    Ok(())
+                } else {
+                    violated(
+                        constraint,
+                        format!("heap[{key}] delta = {delta} != {d} (DeltaEquals)"),
+                    )
+                }
+            }
+            _ => violated(
+                constraint,
+                format!("heap[{key}] absent pre- or post-state (DeltaEquals fails closed)"),
             ),
         },
     }

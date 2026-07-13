@@ -418,6 +418,14 @@ pub enum StateConstraintView {
         assets_slot: u8,
         shares_slot: u8,
     },
+    /// Cross-KEY heap relation: `new[heap key] <= new[heap other_key] + delta`
+    /// (signed). Surfaces the two heap keys + the signed offset (the heap-keyed
+    /// twin of `FieldLteOther`, fail-closed on an absent key).
+    HeapFieldLteOther {
+        key: u64,
+        other_key: u64,
+        delta: i64,
+    },
 }
 
 /// [`BoundBranch`] view (nested in [`StateConstraintView::AnyOfBound`]). The
@@ -576,6 +584,7 @@ pub enum HeapAtomView {
     MemberOf { set: Vec<u64> },
     InRangeTwoSided { lo: u64, hi: u64 },
     DeltaBounded { d: u64 },
+    DeltaEquals { d: i64 },
 }
 
 impl HeapAtom {
@@ -600,6 +609,7 @@ impl HeapAtom {
                 HeapAtomView::InRangeTwoSided { lo: *lo, hi: *hi }
             }
             HeapAtom::DeltaBounded { d } => HeapAtomView::DeltaBounded { d: *d },
+            HeapAtom::DeltaEquals { d } => HeapAtomView::DeltaEquals { d: *d },
         }
     }
 }
@@ -1130,6 +1140,15 @@ impl StateConstraint {
             } => StateConstraintView::VaultDeposit {
                 assets_slot: *assets_slot,
                 shares_slot: *shares_slot,
+            },
+            StateConstraint::HeapFieldLteOther {
+                key,
+                other_key,
+                delta,
+            } => StateConstraintView::HeapFieldLteOther {
+                key: *key,
+                other_key: *other_key,
+                delta: *delta,
             },
         }
     }

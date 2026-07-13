@@ -2126,6 +2126,12 @@ inductive HeapAtom where
   | inRangeTwoSided (lo hi : Int)
   /-- `|new[heap k] − old[heap k]| ≤ d`, both present. -/
   | deltaBounded (d : Int)
+  /-- `new[heap k] − old[heap k] = d` (EXACT signed delta), BOTH present. The exact-delta twin
+  of `deltaBounded` (which only bounds `|Δ|`): pins the change to a precise value, so a heap-keyed
+  quantity can require "moved by EXACTLY `d`". Lifts to `SimpleConstraint.fieldDelta` (which is
+  `new = old + d`, both-present-refuse). Rust twin: `HeapAtom::DeltaEquals { d }`
+  (`cell/src/program/types.rs`). -/
+  | deltaEquals (d : Int)
   deriving Repr
 
 /-- **THE LIFT** — a heap atom is the existing name-keyed atom at `heapKey k`. This definitional
@@ -2142,6 +2148,7 @@ def HeapAtom.lift (k : Nat) : HeapAtom → SimpleConstraint
   | .memberOf s          => .memberOf (heapKey k) s
   | .inRangeTwoSided l h => .inRangeTwoSided (heapKey k) l h
   | .deltaBounded d      => .deltaBounded (heapKey k) d
+  | .deltaEquals d       => .fieldDelta (heapKey k) d
 
 /-- Evaluate a heap atom against `(old, new)` — BY DEFINITION the existing evaluator on the
 lifted constraint (`evalHeap_eq_evalSimple` is `rfl`). -/
@@ -2225,6 +2232,21 @@ theorem evalHeap_monotonic_iff (k : Nat) (o n : Value) :
     | none   => simp
     | some b => simp [intLe, decide_eq_true_eq]
 
+/-- **`deltaEquals` admit-char (EXACT signed delta).** Admits IFF BOTH sides are present and
+`new = old + d` — the exact-delta twin of `deltaBounded` (which bounds `|Δ|`). Proved FRESH (there is
+no `evalSimple_fieldDelta_iff` to reuse), same shape as `evalHeap_monotonic_iff`. NO init escape: an
+absent old OR new key refuses (the `fieldDelta` both-present match). -/
+theorem evalHeap_deltaEquals_iff (k : Nat) (d : Int) (o n : Value) :
+    evalHeap k (.deltaEquals d) o n = true ↔
+      ∃ a b, o.scalar (heapKey k) = some a ∧ n.scalar (heapKey k) = some b ∧ b = a + d := by
+  unfold evalHeap HeapAtom.lift evalSimple
+  cases ho : o.scalar (heapKey k) with
+  | none   => simp
+  | some a =>
+    cases hn : n.scalar (heapKey k) with
+    | none   => simp
+    | some b => simp [beq_iff_eq]
+
 /-! ### Absence semantics AS THEOREMS (the heap is partial; every clause is pinned). -/
 
 /-- **`immutable`, absent-old: the FIRST write is free.** An unborn heap key may be initialized
@@ -2302,6 +2324,18 @@ theorem evalHeap_deltaBounded_absent_old_refuses (k : Nat) (d : Int) (o n : Valu
 theorem evalHeap_deltaBounded_absent_new_refuses (k : Nat) (d : Int) (o n : Value)
     (h : n.scalar (heapKey k) = none) :
     evalHeap k (.deltaBounded d) o n = false := by
+  cases ho : o.scalar (heapKey k) <;> simp [evalHeap, HeapAtom.lift, evalSimple, ho, h]
+
+/-- **`deltaEquals` fails closed on an absent OLD key** (no init escape — the exact-delta twin). -/
+theorem evalHeap_deltaEquals_absent_old_refuses (k : Nat) (d : Int) (o n : Value)
+    (h : o.scalar (heapKey k) = none) :
+    evalHeap k (.deltaEquals d) o n = false := by
+  simp [evalHeap, HeapAtom.lift, evalSimple, h]
+
+/-- **`deltaEquals` fails closed on an absent NEW key.** -/
+theorem evalHeap_deltaEquals_absent_new_refuses (k : Nat) (d : Int) (o n : Value)
+    (h : n.scalar (heapKey k) = none) :
+    evalHeap k (.deltaEquals d) o n = false := by
   cases ho : o.scalar (heapKey k) <;> simp [evalHeap, HeapAtom.lift, evalSimple, ho, h]
 
 /-- **`equals` fails closed on an absent NEW key** (absent ≠ present-zero on the heap). -/
@@ -2393,6 +2427,14 @@ theorem heapActorBound_flip_requires_sender (k : Nat) (pk : Int) (ctx : TurnCtx)
 #guard evalHeap 42 (.deltaBounded 5) (.record [(heapKey 42, .int 100)]) (.record [(heapKey 42, .int 110)]) == false
 #guard evalHeap 42 (.deltaBounded 5) (.record []) (.record [(heapKey 42, .int 3)]) == false
 #guard evalHeap 42 (.deltaBounded 5) (.record [(heapKey 42, .int 3)]) (.record []) == false
+-- deltaEquals: EXACT delta admits / off-by-one refuses BOTH ways / absence refuses both sides
+-- (where deltaBounded 5 would admit the neighbours, deltaEquals 4 pins the precise step).
+#guard evalHeap 42 (.deltaEquals 4) (.record [(heapKey 42, .int 100)]) (.record [(heapKey 42, .int 104)])
+#guard evalHeap 42 (.deltaEquals 4) (.record [(heapKey 42, .int 100)]) (.record [(heapKey 42, .int 105)]) == false
+#guard evalHeap 42 (.deltaEquals 4) (.record [(heapKey 42, .int 100)]) (.record [(heapKey 42, .int 103)]) == false
+#guard evalHeap 42 (.deltaEquals (-3)) (.record [(heapKey 42, .int 100)]) (.record [(heapKey 42, .int 97)])
+#guard evalHeap 42 (.deltaEquals 4) (.record []) (.record [(heapKey 42, .int 4)]) == false
+#guard evalHeap 42 (.deltaEquals 4) (.record [(heapKey 42, .int 0)]) (.record []) == false
 
 -- Heyting composition: a lifted heap atom under `not` and under the actor-bound `anyOf`.
 #guard evalSimple (.not (HeapAtom.lift 42 (.equals 5))) (.record []) (.record [(heapKey 42, .int 6)])
@@ -2438,6 +2480,9 @@ def mixedHeapProgram : RecordProgram := .predicate
 #assert_axioms evalHeap_strictMono_absent_new_refuses
 #assert_axioms evalHeap_deltaBounded_absent_old_refuses
 #assert_axioms evalHeap_deltaBounded_absent_new_refuses
+#assert_axioms evalHeap_deltaEquals_iff
+#assert_axioms evalHeap_deltaEquals_absent_old_refuses
+#assert_axioms evalHeap_deltaEquals_absent_new_refuses
 #assert_axioms evalHeap_equals_absent_refuses
 #assert_axioms evalHeap_ge_absent_refuses
 #assert_axioms evalHeap_le_absent_refuses
