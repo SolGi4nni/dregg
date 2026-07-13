@@ -1,0 +1,30 @@
+<!DOCTYPE html>
+<html><head><meta charset="utf-8"><title>drex-browser-check: PENDING</title></head>
+<body>
+<pre id="result">running…</pre>
+<script type="module">
+import { initWallet, traderKey, signOrderTurn, proveSolvency, tamperCheck, proveEligibility, hex } from '../drex-wallet.mjs';
+const out = (o) => { document.getElementById('result').textContent = JSON.stringify(o, null, 2); document.title = 'drex-browser-check: ' + o.result; };
+try {
+  const t0 = performance.now();
+  await initWallet({ wasmJsUrl: '/wasm/dregg_wasm.js', wasmBinUrl: '/wasm/dregg_wasm_bg.wasm' });
+  const order = { v:1, sell:{asset:'GOLD',amount:100}, want:{asset:'ART',min:10}, limitRate:'1/2', sealedUntilBatch:'T+1', priority:3 };
+  const key = traderKey(1);
+  const signed = signOrderTurn(order, key);
+  const sol = proveSolvency(120, 100, signed.turnId);
+  const forged = signOrderTurn({ ...order, want:{asset:'ART',min:1} }, key).turnId;
+  const tamper = tamperCheck(sol, forged);
+  const elig = proveEligibility(hex(key), [0,1,2,3].map(i=>hex(traderKey(i+1))));
+  const pass = !!signed.turnId && sol.ok && !tamper.valid && !!elig.presentationTag;
+  out({
+    result: pass ? 'PASS' : 'FAIL',
+    initMs: Math.round(performance.now() - t0),
+    signedTurnId: signed.turnId,
+    hybridEnvelopeBytes: signed.envelopeLen,
+    solvencyValid: sol.valid, rangeProofsChecked: sol.rangeProofsChecked, rangeProofs: sol.rangeProofs,
+    tamperRejected: !tamper.valid, tamperError: tamper.error,
+    eligibilityTag: elig.presentationTag.slice(0,24) + '…', ringSize: elig.ringSize,
+  });
+} catch (e) { out({ result: 'ERROR', error: String(e && e.stack || e) }); }
+</script>
+</body></html>
