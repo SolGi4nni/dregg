@@ -365,3 +365,16 @@ regen): FREEZE the circuit + cache the params keyed by circuit-hash — save the
 the vk (small, it's in the verifier contract) + SKIP setup when the circuit hash is unchanged → dev proving REUSES the
 params, no re-ceremony. Toxic-waste caveat only bites PRODUCTION (an MPC). NEXT after regen: trusted-setup param-cache
 + Lean-tie differential (chain/gnark frees). NOT gating build work on ember; only deploy/MPC/alloy-trie go outward.
+
+## ⚡ SWARM CYCLE WINS (07-13, verified) — GPU 6.6×, on-chain shrunk circuit, trusted-setup cache
+- SettlementCircuit SHRUNK 12.87M→4.98M (−61%, verification-preserving open_input hoist) DEPLOYED on-chain: fresh
+  4.98M verifier, Foundry RealProof 7/7 (real proof settles 626k gas, forgeries reject), prove 70s→17.7s.
+- TRUSTED-SETUP CACHE (groth16_cache.go — ember's fix): content-hash the R1CS → skip groth16.Setup on unchanged
+  circuit. DEMONSTRATED 7m27s(miss)→1.24s(hit). No more re-ceremony. pk gitignored (2GB), vk committed.
+- GPU PROVER 6.60× MEASURED + VERIFIED: CPU shrink 95.48s (= exact baseline, fair) → GPU shrink 14.46s. Proofs
+  BYTE-IDENTICAL (430565B) + cross-verifier round-trip + reject-polarity. Beat the ~2-2.5× Amdahl floor because the
+  FRI-fold commit hashing is ALSO GPU-resident. Committed gpu_backend + the e2e test.
+NEXT-WAVE (chain/gnark, sequenced): RecursionVk fingerprint-CHECK (Finding 2 — make the anchor real, RUNNING);
+GKR-batched Poseidon2 (next shrink ~−2.5M, verification-preserving protocol); GPU byte-identical-test teardown flake
+(wgpu buffer-drop lifecycle, test-hygiene followup — correctness confirmed by the e2e byte-identity). GPU is UNPARKED +
+delivering; the client-side-proving payoff (fast turn/shrink proving on a Mac) is now measured-real.
