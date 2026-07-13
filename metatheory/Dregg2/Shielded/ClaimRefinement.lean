@@ -47,8 +47,12 @@ Its two halves plug in at DIFFERENT grades (ABI §4.1):
 fold provided the membership teeth) and `hstep` (the shielded turn committed). Its conclusion is a
 REAL law (authorized-membership + fresh→spent→never-re-spendable), not a tautology — witnessed
 non-vacuous BOTH polarities in §NON-VACUITY (a concrete valid spend refines; a forged note and a
-re-used nullifier are REFUSED). `merkleRoot` binds a leaf set through a reference fold
-(`refTreeRoot`, a linear stand-in like `ShieldedValue.refVC` — NOT the real Poseidon2 tree, named).
+re-used nullifier are REFUSED). Here `merkleRoot` binds a leaf set through a reference fold
+(`refTreeRoot`, a linear rolling-hash stand-in like `ShieldedValue.refVC`) — kept so the refinement
+threading stays structural. The REAL Poseidon2 tree (root-binds-set under `Poseidon2SpongeCR`, so a
+forged committed set forces a collision) and the REAL group Pedersen (binding = DLog) that RETIRE
+these two toys are proved in `Dregg2.Shielded.RealCrypto` and composed at rung 3
+(`Market.shielded_ring_clears_real_crypto`).
 -/
 import Dregg2.Exec.ShieldedValue
 

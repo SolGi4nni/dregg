@@ -44,6 +44,13 @@ them:
   * `shielded_ring_value_conserves_hidden` (THE HIDDEN-CONSERVATION WELD) — if the ring's spent (input)
     and created (output) notes carry equal value+blinding sums (the balanced cycle), their COMMITMENT
     sums are equal — the homomorphic excess is zero, provable on commitments with no value revealed.
+  * `shielded_ring_clears_real_crypto` (THE REAL-CRYPTO WELD, §4b) — the SAME two hidden-crypto halves
+    over the REAL primitives that retire the two toy stand-ins the audit flagged: hidden conservation
+    over the real two-generator group Pedersen (binding = DLog `CryptoPrimitives.binding`) and
+    membership over the real Poseidon2 tree (root-binds-set = `Poseidon2SpongeCR`), so a forged
+    committed set forces a collision. See `Dregg2.Shielded.RealCrypto`. The generic
+    `shielded_ring_value_conserves_hidden`'s in-file `refVC`/`refTreeRoot` witnesses are the toy
+    stand-ins; the real primitives + their named floors (DLog / Poseidon2 CR) live in that module.
   * NON-VACUITY, both polarities: a concrete two-leg shielded ring (`demoShieldedRing`, two DISTINCT
     fresh member spends over a `CycleValid` swap) clears fair + private; and the TEETH — a re-used
     nullifier is refused (`shielded_leg_no_double_spend`, from `unshield_no_rewitness`), an
@@ -83,6 +90,7 @@ Pure.
 -/
 import Market.Fairness
 import Dregg2.Shielded.ClaimRefinement
+import Dregg2.Shielded.RealCrypto
 import Dregg2.Exec.NullifierAccumulator
 import Dregg2.Tactics
 
@@ -217,6 +225,46 @@ theorem shielded_ring_value_conserves_hidden (vc : ValueCommitment)
     (hbl  : (ins.map BoundNote.blinding).sum = (outs.map BoundNote.blinding).sum) :
     listCommitment vc ins = listCommitment vc outs := by
   rw [created_value_conservation vc ins hin, created_value_conservation vc outs hout, hval, hbl]
+
+/-! ## 4b. THE SAME WELD OVER REAL CRYPTO — retiring the two toy stand-ins.
+
+`shielded_ring_value_conserves_hidden` above is generic over any `ValueCommitment`, but its
+witnesses (`demo_hidden_conservation`) ran on the TOY `refVC` (`commit v r = (v+r).toNat` —
+additive, non-binding), and `ClaimRefinement`'s membership ran on the TOY `refTreeRoot` (a linear
+rolling hash, no CR). `Dregg2.Shielded.RealCrypto` re-grounds BOTH on the real primitives the tree
+already carries, with the honest floors named:
+
+  * hidden conservation over the REAL two-generator group Pedersen (`commit v r = v·G + r·H`,
+    `commit_hom` PROVED) — binding rests on the DLog carrier `CryptoPrimitives.binding`;
+  * membership over the REAL Poseidon2 tree (`root = sponge leaves`) — root-binds-the-leaf-set
+    rests on the named `Poseidon2SpongeCR` (the SAME sponge CR `StateCommit`/`SortedTreeNonMembership`
+    bind under), so a forged committed set forces a Poseidon2 collision.
+
+The two toys were structurally weak, not merely small: `ValueCommitment.hom` demands
+`Nat`-additivity, satisfiable ONLY by a linear stand-in — a real Pedersen is not `Nat`-additive, it
+lives in a group, so the real conservation lives at the GROUP layer (`RealCrypto.ring_conserves_pedersen`).
+-/
+
+/-- **`shielded_ring_clears_real_crypto` — rung-3's two hidden-crypto halves over REAL primitives.**
+A balanced ring over the real group Pedersen conserves on the COMMITMENTS (hidden conservation,
+under DLog `binding`), and a leaf committed under the real Poseidon2 tree has its membership root
+bind the leaf set (under `Poseidon2SpongeCR`), so a forged set forces a collision. This is
+`shielded_ring_value_conserves_hidden` + the membership half, re-stated over the retired-toy
+replacements — a direct re-export of `RealCrypto.rung3_real_crypto`. -/
+theorem shielded_ring_clears_real_crypto {Digest : Type} [AddCommGroup Digest]
+    [Dregg2.Crypto.CryptoPrimitives Digest] (T : Dregg2.Shielded.RealCrypto.Poseidon2Tree)
+    (ins outs : List Dregg2.Crypto.Pedersen.Note)
+    (hval : (ins.map Dregg2.Crypto.Pedersen.Note.value).sum
+              = (outs.map Dregg2.Crypto.Pedersen.Note.value).sum)
+    (hbl  : (ins.map Dregg2.Crypto.Pedersen.Note.blinding).sum
+              = (outs.map Dregg2.Crypto.Pedersen.Note.blinding).sum)
+    (leaf : ℤ) (leaves : List ℤ)
+    (hmem : Dregg2.Shielded.RealCrypto.MemberAtRoot T (T.root leaves) leaf leaves) :
+    (Dregg2.Crypto.Pedersen.listCommit (Dregg2.Crypto.CryptoPrimitives.commit (Digest := Digest)) ins
+      = Dregg2.Crypto.Pedersen.listCommit
+          (Dregg2.Crypto.CryptoPrimitives.commit (Digest := Digest)) outs)
+    ∧ (leaf ∈ leaves ∧ ∀ forged, T.root forged = T.root leaves → forged = leaves) :=
+  Dregg2.Shielded.RealCrypto.rung3_real_crypto T ins outs hval hbl leaf leaves hmem
 
 /-! ## 5. NON-VACUITY, POSITIVE POLE — a concrete two-leg shielded ring clears fair + private.
 
@@ -360,6 +408,7 @@ theorem demo_hidden_conservation :
   · decide
 
 #assert_axioms shielded_ring_clears
+#assert_axioms shielded_ring_clears_real_crypto
 #assert_axioms shielded_ring_value_conserves_hidden
 #assert_axioms ShieldedLeg.refines
 #assert_axioms demoShieldedRing_fair_and_private
