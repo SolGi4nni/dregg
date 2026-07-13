@@ -125,9 +125,14 @@ single apex proof that folds N sub-proofs as leaves** — e.g. a private collate
 cross-chain collateral} ⊕ {a `clearing_respects_limits` proof} → one apex a venue verifies once, on
 any chain. Every economic fact in the instrument is a proof, and the instrument's *own* proof is
 reusable as a leaf in a fund-of-funds above it. *Grounding: the leaf-adapter fabric + the confirmed
-apex→shrink→gnark wrap (HORIZONLOG 07-13). Gap: the financial leaves (solvency-as-leaf, clearing-as-
-leaf) are not yet written as adapters; each needs its `*_leaf_adapter.rs` + a Lean spec of the
-composed instrument's soundness. This is a build, not new science — the fold machinery works today.*
+apex→shrink→gnark wrap (HORIZONLOG 07-13). **Solvency-as-a-leaf now landed** (`solvency_leaf_adapter.rs`:
+INSTANCE `R ≥ L` via a 30-bit range gadget + two committed openings, re-proven as a foldable IR-v2
+leaf; it composes with the ∀-schedule `stripe_reserve_solvent_forever` by CITATION — the leaf proves a
+given state IS solvent, the Lean theorem proves the state STAYS solvent — it does NOT re-prove the
+∀-schedule in-AIR), and `prove_structured_product_fold` folds {note-spend ⊕ solvency} into one apex
+that verifies both (both poles re-run green: insolvent/forged-commitment ⇒ UNSAT, honest ⇒ mints). Gap:
+clearing-as-leaf is not yet written as an adapter, and a Lean spec of the composed instrument's
+soundness. This is a build, not new science — the fold machinery works today.*
 
 **#2 — Private, capability-scoped, cross-chain prime brokerage with an unconstructable mandate breach.**
 The convergence product the vision names in §3 as "the single most dreggic idea" — raised. A
@@ -137,9 +142,15 @@ collateral is proof-of-holdings across Solana/EVM/Cosmos (`bridge/`, light clien
 the **shielded pool** (no operator sees the orders), settling by proof on any chain (the wrap). No
 party ever holds the plaintext orders, the custody, or the mandate-widening key — a mandate breach
 is *unconstructable*, not monitored. *Grounding: #12/#13 above (mandate proved + materialized; ring
-through Lean FFI) + shielded pool + wrap. Gap: (a) per-trade caveat-admission in-circuit (`Caveat.lean:59`);
-(b) ring-over-shielded-notes weld (DrEX rung-3); (c) the "one position, collateral proven across 3
-chains simultaneously" logic is new — and per #14, no test yet binds a live-mainnet holding end-to-end.*
+through Lean FFI) + shielded pool + wrap. Gap: (a) per-trade caveat-admission in-circuit (`Caveat.lean:59`)
+— the DECIDABLE-atom slice now landed (`caveat_admission_leaf_adapter.rs`: `validUntil`/`heightLt`/`budget`
+`≤`/`<` over u128-scale bignum operands by a range-checked limbwise borrow-subtraction + a limbwise
+asset-equality, teeth re-run green: past-expiry/over-budget/over-height/wrong-asset ⇒ UNSAT; Lean model
+`Dregg2/Circuit/CaveatBignumCompare.borrowSub_iff`, a `sorry`-free soundness+completeness biconditional);
+the un-reified `Caveat.opaque`/`Caveat.thirdParty` atoms stay executor-trusted, and the deployed trade
+descriptor must still DUAL-EXPOSE the `(trade fields ++ caveat params)` limbs to bind this leaf (the named
+VK-regen piece); (b) ring-over-shielded-notes weld (DrEX rung-3); (c) the "one position, collateral proven
+across 3 chains simultaneously" logic is new — and per #14, no test yet binds a live-mainnet holding end-to-end.*
 
 **#3 — The shielded solvency-proven money-market (private AND provably-never-insolvent).**
 `stripe_reserve_solvent_forever` proves `reserve ≥ liabilities` over *every* schedule (∀-adversary),
