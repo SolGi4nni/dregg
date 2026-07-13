@@ -8,6 +8,19 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
+## 2-leg shielded ring-clearing AIR BUILT → the N-leg + integration rungs (named 2026-07-13, `circuit-prove/src/shielded_ring_clearing_air.rs`)
+Rung-3 `shielded_ring_clears` / `shielded_ring_fused_clears` is now BUILT at 2-leg: the ring-clearing
+descriptor AIR enforces in-AIR FUSION (`offer_asset/amount == note asset/value`, anchored to the leaf's
+value_binding under Poseidon2 CR), the `CycleValid` 2-cycle edges + tight-amount match, distinct
+nullifiers, and Pedersen conservation (`Σ C_in − Σ C_out = 0` over `RealCrypto.pedTwoGen`); the apex folds
+it with two `prove_shielded_spend_leaf_with_claim` leaves (membership + fresh nullifier) and connect-binds
+each leg. Both polarities GREEN (genuine circuit non-sat: nonconserving `#15`, mis-fused `#7`, double-spend
+`#8..`, forged-membership `#2`). NAMED next rungs: (1) **N-leg generalization** — a variable-length cycle
+and the general `offer_amount ≥ want_min` partial-fill inequality (needs an in-AIR range gadget; today the
+demo swap is TIGHT so equality suffices); (2) **launchpad/DEX integration** — carry the apex into the
+shielded batch (§3.3/§3.12) and DrEX (§3.13). Closure shape: widen the descriptor to a length-parametric
+ring + a range-decomposition site for the `≥` edge, then wire the apex into the shielded-auction app path.
+
 ## state-field 32-byte residual — v13 wire+kernel widening (named 2026-07-13, `docs/FINDING-state-field-truncation.md`)
 The acute truncation bug (unrelated turn shreds a pinned 32-byte field) is FIXED
 (`76f7a6603`) and now GUARDED by `exec-lean/tests/state_field_truncation_regression.rs`.
