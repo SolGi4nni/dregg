@@ -66,8 +66,37 @@ theorem binds_of_no_collision (sponge : List ℤ → ℤ)
   (commitmentOpening_binds_or_collision sponge hCommitted hOpened).elim id
     (fun ⟨xs, ys, hxy, heq⟩ => absurd (hNoColl xs ys heq) hxy)
 
+/-! ## The 2-to-1 combiner (`cmb`/`compress`, the state-commitment `CommitSurface` carriers)
+
+`CommitSurface` (CircuitSoundness.lean:114) bundles `compressInjective cmb`/`compressInjective compress`
+as structure FIELDS, and StateCommit.lean:208 flags them "⚠ BROKEN/VACUOUS FOR A RANGE-BOUNDED
+COMPRESSION" (two field elements do not fit in one output). Same disease, same cure: the reduction form. -/
+
+/-- **The 2-to-1 combiner BINDS or EXTRACTS a collision.** For any `h a b = h c d`, EITHER the arguments
+agree (`a = c ∧ b = d`, the honest binding) OR the disagreement is a concrete collision of `h`. No
+`compressInjective h` premise — the honest, non-vacuous replacement for the `cmbInj`/`compInj`
+`CommitSurface` fields, valid at the real range-bounded combiner. -/
+theorem compress_binds_or_collision (h : ℤ → ℤ → ℤ) {a b c d : ℤ}
+    (heq : h a b = h c d) :
+    (a = c ∧ b = d) ∨ ∃ p q : ℤ × ℤ, p ≠ q ∧ h p.1 p.2 = h q.1 q.2 := by
+  by_cases hbind : a = c ∧ b = d
+  · exact Or.inl hbind
+  · refine Or.inr ⟨(a, b), (c, d), ?_, heq⟩
+    intro hpq
+    exact hbind ⟨(Prod.mk.injEq .. ▸ hpq).1, (Prod.mk.injEq .. ▸ hpq).2⟩
+
+/-- The combiner reduction is load-bearing: no-collision ⇒ it binds (⇒ `compressInjective h`). -/
+theorem compress_binds_of_no_collision (h : ℤ → ℤ → ℤ) {a b c d : ℤ}
+    (heq : h a b = h c d)
+    (hNoColl : ∀ p q : ℤ × ℤ, h p.1 p.2 = h q.1 q.2 → p = q) :
+    a = c ∧ b = d :=
+  (compress_binds_or_collision h heq).elim id
+    (fun ⟨p, q, hpq, hcol⟩ => absurd (hNoColl p q hcol) hpq)
+
 #assert_axioms equivocation_extracts_collision
 #assert_axioms commitmentOpening_binds_or_collision
 #assert_axioms binds_of_no_collision
+#assert_axioms compress_binds_or_collision
+#assert_axioms compress_binds_of_no_collision
 
 end Dregg2.Circuit.CommitmentReduction
