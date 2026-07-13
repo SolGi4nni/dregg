@@ -2285,7 +2285,7 @@ def nullifierInsertOp : MapOp :=
   , key     := .var NULLIFIER_PARAM_COL
   , value   := .var (prmCol EffectVmEmitNoteSpend.param.NOTE_VALUE_LO)
   , newRoot := afterNullifierRootGroup
-  , op      := .insert }
+  , op      := .aafiInsert }  -- gap-#5 AAFI (F1 flip: op=4, matches the deployed TSV; two-path forces sorted-preservation)
 
 /-- **`noteSpendV3`** — the rotated note-spend WITH the nullifier PI weld AND the KERNEL-SET
 GROW-GATE (the deployment-real set-insert + double-spend tooth). `piCount = 39` (the 38-PI
@@ -2480,7 +2480,7 @@ def commitmentsInsertOp : MapOp :=
   , key     := .var COMMITMENT_KEY_PARAM_COL
   , value   := .var (prmCol EffectVmEmitNoteCreate.param.NOTE_VALUE_LO)
   , newRoot := afterCommitmentsRootGroup
-  , op      := .insert }
+  , op      := .aafiInsert }  -- gap-#5 AAFI (F1 flip: op=4, matches the deployed TSV; two-path forces sorted-preservation)
 
 /-- **`noteCreateV3`** — the rotated noteCreate WITH the commitment PI weld AND the KERNEL-SET
 GROW-GATE (the deployment-real commitments set-insert). `piCount = 39`. Past the graduated
