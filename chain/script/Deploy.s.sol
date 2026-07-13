@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import "../contracts/DreggVault.sol";
 import "../contracts/DreggCredentialGate.sol";
+import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 
 /// @title DeployDregg
 /// @notice Deploys DreggVault and DreggCredentialGate to Base Sepolia.
@@ -20,17 +21,21 @@ contract DeployDregg is Script {
         uint256 deployerPk = vm.envUint("DEPLOYER_PRIVATE_KEY");
         address sp1Verifier = vm.envAddress("SP1_VERIFIER_ADDRESS");
         bytes32 programVkey = vm.envBytes32("DREGG_PROGRAM_VKEY");
+        // The deployed DreggSettlement (the rung-8 clearing accept-path) that gates
+        // escrow releases via isProvenRoot.
+        address settlement = vm.envAddress("DREGG_SETTLEMENT_ADDRESS");
         address deployer = vm.addr(deployerPk);
 
         console.log("Deployer:", deployer);
         console.log("SP1 Verifier Gateway:", sp1Verifier);
+        console.log("Settlement:", settlement);
         console.log("Program VKey:");
         console.logBytes32(programVkey);
 
         vm.startBroadcast(deployerPk);
 
-        // Deploy the shielded deposit/withdraw vault.
-        DreggVault vault = new DreggVault(sp1Verifier, programVkey);
+        // Deploy the shielded deposit/withdraw + escrow vault.
+        DreggVault vault = new DreggVault(sp1Verifier, programVkey, IDreggSettlement(settlement));
 
         // Deploy the credential gate (deployer is initial admin).
         DreggCredentialGate gate = new DreggCredentialGate(

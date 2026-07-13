@@ -11,6 +11,11 @@ use crate::state::MAX_ORACLE_KEYS;
 pub const TAG_INIT_VAULT: u8 = 0;
 pub const TAG_LOCK: u8 = 1;
 pub const TAG_UNLOCK: u8 = 2;
+/// Escrow (timeout/refund) surface — the two-branch, exactly-once DrEX routing-safety
+/// twin of the EVM `DreggVault` escrow.
+pub const TAG_ESCROW_LOCK: u8 = 3;
+pub const TAG_ESCROW_RELEASE: u8 = 4;
+pub const TAG_ESCROW_REFUND: u8 = 5;
 
 /// The parsed, validated instruction.
 #[derive(Clone, Debug, PartialEq, Eq)]
@@ -39,6 +44,24 @@ pub enum LockInstruction {
     /// The signatures ride in ed25519 native-program instructions in the same
     /// transaction — the wire args are unchanged from v1.
     Unlock { amount: u64, redeem_id: [u8; 32] },
+
+    /// ESCROW LOCK — escrow `amount` of $DREGG into a per-escrow vault under
+    /// `escrow_id`, reclaimable after `deadline` (unix seconds) if no DrEX fill
+    /// clears it. The disjoint timed-escrow analog of [`Self::Lock`].
+    EscrowLock {
+        amount: u64,
+        deadline: i64,
+        escrow_id: [u8; 32],
+    },
+    /// ESCROW RELEASE — pay a locked escrow to the ring-matched recipient, authorized
+    /// by an M-of-N oracle attestation over `unlock_message_hash(mint, amount,
+    /// recipient, escrow_id)` (escrow_id doubles as the attestation's redeem/nonce).
+    /// Terminal: the escrow record moves to `Released`.
+    EscrowRelease { amount: u64, escrow_id: [u8; 32] },
+    /// ESCROW REFUND — after the deadline, the depositor reclaims a locked escrow to
+    /// its captured refund destination. No attestation (the timeout is the
+    /// condition). Terminal: the escrow record moves to `Refunded`.
+    EscrowRefund { escrow_id: [u8; 32] },
 }
 
 impl LockInstruction {
@@ -96,6 +119,35 @@ impl LockInstruction {
                 let redeem_id = read_array32(rest, 8, 8 + 32)?;
                 Ok(Self::Unlock { amount, redeem_id })
             }
+            TAG_ESCROW_LOCK => {
+                // amount(8) ‖ deadline_i64(8) ‖ escrow_id(32)
+                if rest.len() != 8 + 8 + 32 {
+                    return Err(LockError::InvalidInstruction);
+                }
+                let amount = read_u64_le(rest, 0)?;
+                let deadline = read_i64_le(rest, 8)?;
+                let escrow_id = read_array32(rest, 16, 16 + 32)?;
+                Ok(Self::EscrowLock {
+                    amount,
+                    deadline,
+                    escrow_id,
+                })
+            }
+            TAG_ESCROW_RELEASE => {
+                if rest.len() != 8 + 32 {
+                    return Err(LockError::InvalidInstruction);
+                }
+                let amount = read_u64_le(rest, 0)?;
+                let escrow_id = read_array32(rest, 8, 8 + 32)?;
+                Ok(Self::EscrowRelease { amount, escrow_id })
+            }
+            TAG_ESCROW_REFUND => {
+                if rest.len() != 32 {
+                    return Err(LockError::InvalidInstruction);
+                }
+                let escrow_id = read_array32(rest, 0, 32)?;
+                Ok(Self::EscrowRefund { escrow_id })
+            }
             _ => Err(LockError::InvalidInstruction),
         }
     }
@@ -133,8 +185,43 @@ impl LockInstruction {
                 d.extend_from_slice(redeem_id);
                 d
             }
+            Self::EscrowLock {
+                amount,
+                deadline,
+                escrow_id,
+            } => {
+                let mut d = Vec::with_capacity(1 + 8 + 8 + 32);
+                d.push(TAG_ESCROW_LOCK);
+                d.extend_from_slice(&amount.to_le_bytes());
+                d.extend_from_slice(&deadline.to_le_bytes());
+                d.extend_from_slice(escrow_id);
+                d
+            }
+            Self::EscrowRelease { amount, escrow_id } => {
+                let mut d = Vec::with_capacity(1 + 8 + 32);
+                d.push(TAG_ESCROW_RELEASE);
+                d.extend_from_slice(&amount.to_le_bytes());
+                d.extend_from_slice(escrow_id);
+                d
+            }
+            Self::EscrowRefund { escrow_id } => {
+                let mut d = Vec::with_capacity(1 + 32);
+                d.push(TAG_ESCROW_REFUND);
+                d.extend_from_slice(escrow_id);
+                d
+            }
         }
     }
+}
+
+fn read_i64_le(data: &[u8], off: usize) -> Result<i64, LockError> {
+    let end = off + 8;
+    if data.len() < end {
+        return Err(LockError::InvalidInstruction);
+    }
+    let mut b = [0u8; 8];
+    b.copy_from_slice(&data[off..end]);
+    Ok(i64::from_le_bytes(b))
 }
 
 fn read_u64_le(data: &[u8], off: usize) -> Result<u64, LockError> {

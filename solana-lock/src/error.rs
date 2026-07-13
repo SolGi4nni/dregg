@@ -32,6 +32,18 @@ pub enum LockError {
     /// The unlock did not carry a threshold of valid signatures from DISTINCT
     /// configured oracle keys over the canonical unlock message hash.
     ThresholdNotMet = 11,
+    /// The escrow is not in the `Locked` state (already Released/Refunded, or the
+    /// record does not exist) — a terminal escrow cannot transition again.
+    EscrowNotLocked = 12,
+    /// A refund was attempted at or before the escrow's deadline (the timeout is
+    /// the refund condition; `Clock.unix_timestamp` must strictly exceed it).
+    RefundBeforeDeadline = 13,
+    /// An escrow release/refund account or attested field (mint, amount, escrow_id,
+    /// depositor, refund destination) did not match the recorded escrow.
+    EscrowFieldMismatch = 14,
+    /// An escrow lock carried a non-positive deadline (fail-closed: a zero/negative
+    /// deadline would make refund immediately available, defeating the timed lock).
+    ZeroDeadline = 15,
 }
 
 impl From<LockError> for ProgramError {

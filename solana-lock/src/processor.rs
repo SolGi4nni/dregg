@@ -2,6 +2,7 @@
 
 use solana_program::{
     account_info::{next_account_info, AccountInfo},
+    clock::Clock,
     ed25519_program,
     entrypoint::ProgramResult,
     msg,
@@ -18,10 +19,14 @@ use solana_instructions_sysvar::{self as instructions_sysvar};
 
 use crate::attestation::{parse_ed25519_refs, unlock_message_hash, PUBKEY_SERIALIZED_SIZE};
 use crate::error::LockError;
+use crate::escrow::{EscrowRecord, EscrowStatus, ESCROW_RECORD_LEN};
 use crate::instruction::LockInstruction;
 use crate::record::{encode_lock_record, LOCK_RECORD_LEN};
 use crate::state::{VaultConfig, CONFIG_LEN, MAX_ORACLE_KEYS};
-use crate::{SEED_CONFIG, SEED_LOCK, SEED_REDEEM, SEED_VAULT, SEED_VAULT_AUTHORITY};
+use crate::{
+    SEED_CONFIG, SEED_ESCROW, SEED_ESCROW_AUTHORITY, SEED_ESCROW_VAULT, SEED_LOCK, SEED_REDEEM,
+    SEED_VAULT, SEED_VAULT_AUTHORITY,
+};
 
 /// Upper bound on how many transaction instructions we will scan for oracle
 /// signatures. Solana caps instructions per transaction well below this; the bound
@@ -45,7 +50,24 @@ pub fn process(
         LockInstruction::Unlock { amount, redeem_id } => {
             unlock(program_id, accounts, amount, redeem_id)
         }
+        LockInstruction::EscrowLock {
+            amount,
+            deadline,
+            escrow_id,
+        } => escrow_lock(program_id, accounts, amount, deadline, escrow_id),
+        LockInstruction::EscrowRelease { amount, escrow_id } => {
+            escrow_release(program_id, accounts, amount, escrow_id)
+        }
+        LockInstruction::EscrowRefund { escrow_id } => {
+            escrow_refund(program_id, accounts, escrow_id)
+        }
     }
+}
+
+/// Derive the per-config escrow custody authority PDA (`[b"escrow_authority",
+/// config]`) — the SPL owner of every per-escrow vault token account.
+fn escrow_authority_pda(program_id: &Pubkey, config: &Pubkey) -> (Pubkey, u8) {
+    Pubkey::find_program_address(&[SEED_ESCROW_AUTHORITY, config.as_ref()], program_id)
 }
 
 /// Derive the config PDA and assert the passed account matches it.
@@ -458,6 +480,424 @@ fn unlock(
     )?;
 
     msg!("dregg-lock: unlocked {} (redeem_id consumed)", amount);
+    Ok(())
+}
+
+// ---------------------------------------------------------------------------
+// Escrow (timeout/refund) — the two-branch, exactly-once DrEX routing-safety twin
+// ---------------------------------------------------------------------------
+
+/// ESCROW LOCK — escrow `amount` of $DREGG into a per-escrow vault under `escrow_id`,
+/// reclaimable after `deadline` if no DrEX fill clears it.
+///
+/// Accounts (in order):
+///   0. `[signer, writable]` payer (funds the escrow vault + record accounts)
+///   1. `[]`                 config PDA `[b"config"]` (for the mint)
+///   2. `[writable]`         user's $DREGG token account (source AND refund destination)
+///   3. `[writable]`         per-escrow vault token account `[b"escrow_vault", config, escrow_id]` (created + SPL-init)
+///   4. `[]`                 escrow authority PDA `[b"escrow_authority", config]` (SPL owner of the escrow vault)
+///   5. `[signer]`           user authority (SPL owner of the source; the depositor / sole refunder)
+///   6. `[writable]`         escrow record PDA `[b"escrow", config, escrow_id]` (created, program-owned)
+///   7. `[]`                 the $DREGG SPL mint
+///   8. `[]`                 SPL Token program
+///   9. `[]`                 System program
+fn escrow_lock(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: u64,
+    deadline: i64,
+    escrow_id: [u8; 32],
+) -> ProgramResult {
+    if amount == 0 {
+        return Err(LockError::ZeroAmount.into());
+    }
+    // Fail-closed: a non-positive deadline would make refund immediately available,
+    // defeating the timed lock (and could underflow the "> deadline" intent).
+    if deadline <= 0 {
+        return Err(LockError::ZeroDeadline.into());
+    }
+
+    let ai = &mut accounts.iter();
+    let payer = next_account_info(ai)?;
+    let config_ai = next_account_info(ai)?;
+    let user_token_ai = next_account_info(ai)?;
+    let escrow_vault_ai = next_account_info(ai)?;
+    let escrow_authority_ai = next_account_info(ai)?;
+    let user_authority = next_account_info(ai)?;
+    let record_ai = next_account_info(ai)?;
+    let mint_ai = next_account_info(ai)?;
+    let token_program = next_account_info(ai)?;
+    let system_program = next_account_info(ai)?;
+
+    if !payer.is_signer {
+        return Err(LockError::MissingSigner.into());
+    }
+    if !user_authority.is_signer {
+        return Err(LockError::MissingSigner.into());
+    }
+    expect_config_pda(program_id, config_ai.key)?;
+    if config_ai.owner != program_id {
+        return Err(LockError::WrongOwner.into());
+    }
+    let cfg = VaultConfig::unpack(&config_ai.try_borrow_data()?)?;
+    if token_program.key != &spl_token::id() {
+        return Err(LockError::AccountMismatch.into());
+    }
+    if mint_ai.key.to_bytes() != cfg.mint {
+        return Err(LockError::MintMismatch.into());
+    }
+
+    // Escrow authority PDA (SPL owner of the per-escrow vault).
+    let (escrow_auth_pda, _escrow_auth_bump) = escrow_authority_pda(program_id, config_ai.key);
+    if &escrow_auth_pda != escrow_authority_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+
+    // Per-escrow vault token account PDA.
+    let (vault_pda, vault_bump) = Pubkey::find_program_address(
+        &[SEED_ESCROW_VAULT, config_ai.key.as_ref(), &escrow_id],
+        program_id,
+    );
+    if &vault_pda != escrow_vault_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+    // Per-escrow record PDA. Freshness of THIS account is the exactly-once id guard:
+    // a terminal escrow keeps its record, so an escrow_id can never be relocked.
+    let (record_pda, record_bump) = Pubkey::find_program_address(
+        &[SEED_ESCROW, config_ai.key.as_ref(), &escrow_id],
+        program_id,
+    );
+    if &record_pda != record_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+    if !record_ai.data_is_empty() || !escrow_vault_ai.data_is_empty() {
+        return Err(LockError::AccountState.into());
+    }
+
+    let rent = Rent::get()?;
+
+    // (1) create + SPL-init the per-escrow vault token account (authority = escrow authority PDA).
+    create_pda_account(
+        payer,
+        escrow_vault_ai,
+        system_program,
+        &spl_token::id(),
+        spl_token::state::Account::LEN,
+        &[
+            SEED_ESCROW_VAULT,
+            config_ai.key.as_ref(),
+            &escrow_id,
+            &[vault_bump],
+        ],
+        &rent,
+    )?;
+    let init_ix = spl_token::instruction::initialize_account3(
+        &spl_token::id(),
+        escrow_vault_ai.key,
+        mint_ai.key,
+        escrow_authority_ai.key,
+    )?;
+    invoke(
+        &init_ix,
+        &[
+            escrow_vault_ai.clone(),
+            mint_ai.clone(),
+            token_program.clone(),
+        ],
+    )?;
+
+    // (2) CPI: transfer `amount` from the user into the per-escrow vault.
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        user_token_ai.key,
+        escrow_vault_ai.key,
+        user_authority.key,
+        &[],
+        amount,
+    )?;
+    invoke(
+        &transfer_ix,
+        &[
+            user_token_ai.clone(),
+            escrow_vault_ai.clone(),
+            user_authority.clone(),
+            token_program.clone(),
+        ],
+    )?;
+
+    // (3) create + write the program-owned escrow record (status = Locked).
+    create_pda_account(
+        payer,
+        record_ai,
+        system_program,
+        program_id,
+        ESCROW_RECORD_LEN,
+        &[
+            SEED_ESCROW,
+            config_ai.key.as_ref(),
+            &escrow_id,
+            &[record_bump],
+        ],
+        &rent,
+    )?;
+    let rec = EscrowRecord {
+        status: EscrowStatus::Locked,
+        mint: cfg.mint,
+        depositor: user_authority.key.to_bytes(),
+        refund_destination: user_token_ai.key.to_bytes(),
+        amount,
+        deadline,
+        escrow_id,
+    };
+    rec.pack_into(&mut record_ai.try_borrow_mut_data()?)?;
+
+    msg!(
+        "dregg-lock: escrow locked {} (deadline {})",
+        amount,
+        deadline
+    );
+    Ok(())
+}
+
+/// ESCROW RELEASE — pay a locked escrow to the ring-matched recipient, authorized by
+/// an M-of-N ed25519 oracle attestation over `unlock_message_hash(mint, amount,
+/// recipient, escrow_id)` (the Solana AssertProvenRoot analog). Terminal: `Released`.
+///
+/// Accounts (in order):
+///   0. `[]`                 config PDA `[b"config"]` (oracle set + mint)
+///   1. `[writable]`         escrow record PDA `[b"escrow", config, escrow_id]`
+///   2. `[writable]`         per-escrow vault token account (source)
+///   3. `[]`                 escrow authority PDA `[b"escrow_authority", config]` (signs transfer out)
+///   4. `[writable]`         recipient $DREGG token account (dest; the attested `solana_recipient`)
+///   5. `[]`                 SPL Token program
+///   6. `[]`                 instructions sysvar
+fn escrow_release(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    amount: u64,
+    escrow_id: [u8; 32],
+) -> ProgramResult {
+    if amount == 0 {
+        return Err(LockError::ZeroAmount.into());
+    }
+
+    let ai = &mut accounts.iter();
+    let config_ai = next_account_info(ai)?;
+    let record_ai = next_account_info(ai)?;
+    let escrow_vault_ai = next_account_info(ai)?;
+    let escrow_authority_ai = next_account_info(ai)?;
+    let recipient_ai = next_account_info(ai)?;
+    let token_program = next_account_info(ai)?;
+    let instructions_ai = next_account_info(ai)?;
+
+    expect_config_pda(program_id, config_ai.key)?;
+    if config_ai.owner != program_id {
+        return Err(LockError::WrongOwner.into());
+    }
+    let cfg = VaultConfig::unpack(&config_ai.try_borrow_data()?)?;
+    if token_program.key != &spl_token::id() {
+        return Err(LockError::AccountMismatch.into());
+    }
+
+    // Record PDA + program ownership.
+    let (record_pda, _record_bump) = Pubkey::find_program_address(
+        &[SEED_ESCROW, config_ai.key.as_ref(), &escrow_id],
+        program_id,
+    );
+    if &record_pda != record_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+    if record_ai.owner != program_id {
+        return Err(LockError::WrongOwner.into());
+    }
+    let mut rec = EscrowRecord::unpack(&record_ai.try_borrow_data()?)?;
+
+    // EXACTLY-ONCE: only a Locked escrow can transition; a terminal one is refused.
+    if rec.status != EscrowStatus::Locked {
+        return Err(LockError::EscrowNotLocked.into());
+    }
+    if rec.escrow_id != escrow_id || rec.mint != cfg.mint || rec.amount != amount {
+        return Err(LockError::EscrowFieldMismatch.into());
+    }
+
+    // Per-escrow vault PDA.
+    let (vault_pda, _vault_bump) = Pubkey::find_program_address(
+        &[SEED_ESCROW_VAULT, config_ai.key.as_ref(), &escrow_id],
+        program_id,
+    );
+    if &vault_pda != escrow_vault_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+    let (escrow_auth_pda, escrow_auth_bump) = escrow_authority_pda(program_id, config_ai.key);
+    if &escrow_auth_pda != escrow_authority_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+
+    // THE trust check: M-of-N oracle attestation over the canonical unlock hash,
+    // binding the recipient token account + escrow_id (escrow_id doubles as the
+    // attestation redeem/nonce). Reuses the exact verification path as `unlock`.
+    let solana_recipient = recipient_ai.key.to_bytes();
+    let message_hash = unlock_message_hash(&cfg.mint, amount, &solana_recipient, &escrow_id);
+    if cfg.oracle_threshold == 0 {
+        return Err(LockError::ThresholdNotMet.into());
+    }
+    let distinct = count_oracle_signers(instructions_ai, &cfg, &message_hash)?;
+    if distinct < cfg.oracle_threshold as usize {
+        msg!(
+            "dregg-lock: escrow release refused — {} distinct oracle sigs < threshold {}",
+            distinct,
+            cfg.oracle_threshold
+        );
+        return Err(LockError::ThresholdNotMet.into());
+    }
+
+    // Effects BEFORE interaction: consume the lock (terminal Released).
+    rec.status = EscrowStatus::Released;
+    rec.pack_into(&mut record_ai.try_borrow_mut_data()?)?;
+
+    // Transfer the escrowed amount to the recipient, signed by the escrow authority.
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        escrow_vault_ai.key,
+        recipient_ai.key,
+        escrow_authority_ai.key,
+        &[],
+        amount,
+    )?;
+    invoke_signed(
+        &transfer_ix,
+        &[
+            escrow_vault_ai.clone(),
+            recipient_ai.clone(),
+            escrow_authority_ai.clone(),
+            token_program.clone(),
+        ],
+        &[&[
+            SEED_ESCROW_AUTHORITY,
+            config_ai.key.as_ref(),
+            &[escrow_auth_bump],
+        ]],
+    )?;
+
+    msg!("dregg-lock: escrow released {}", amount);
+    Ok(())
+}
+
+/// ESCROW REFUND — after the deadline, the depositor reclaims a locked escrow to its
+/// captured refund destination. No attestation (the timeout IS the condition).
+/// Terminal: `Refunded`.
+///
+/// Accounts (in order):
+///   0. `[]`                 config PDA `[b"config"]`
+///   1. `[writable]`         escrow record PDA `[b"escrow", config, escrow_id]`
+///   2. `[writable]`         per-escrow vault token account (source)
+///   3. `[]`                 escrow authority PDA `[b"escrow_authority", config]` (signs transfer out)
+///   4. `[writable]`         refund destination token account (must == record.refund_destination)
+///   5. `[signer]`           depositor authority (must == record.depositor)
+///   6. `[]`                 SPL Token program
+fn escrow_refund(
+    program_id: &Pubkey,
+    accounts: &[AccountInfo],
+    escrow_id: [u8; 32],
+) -> ProgramResult {
+    let ai = &mut accounts.iter();
+    let config_ai = next_account_info(ai)?;
+    let record_ai = next_account_info(ai)?;
+    let escrow_vault_ai = next_account_info(ai)?;
+    let escrow_authority_ai = next_account_info(ai)?;
+    let refund_dest_ai = next_account_info(ai)?;
+    let depositor_authority = next_account_info(ai)?;
+    let token_program = next_account_info(ai)?;
+
+    expect_config_pda(program_id, config_ai.key)?;
+    if config_ai.owner != program_id {
+        return Err(LockError::WrongOwner.into());
+    }
+    if token_program.key != &spl_token::id() {
+        return Err(LockError::AccountMismatch.into());
+    }
+
+    // Record PDA + program ownership + Locked status.
+    let (record_pda, _record_bump) = Pubkey::find_program_address(
+        &[SEED_ESCROW, config_ai.key.as_ref(), &escrow_id],
+        program_id,
+    );
+    if &record_pda != record_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+    if record_ai.owner != program_id {
+        return Err(LockError::WrongOwner.into());
+    }
+    let mut rec = EscrowRecord::unpack(&record_ai.try_borrow_data()?)?;
+    if rec.status != EscrowStatus::Locked {
+        return Err(LockError::EscrowNotLocked.into());
+    }
+    if rec.escrow_id != escrow_id {
+        return Err(LockError::EscrowFieldMismatch.into());
+    }
+
+    // THE refund condition: the deadline must have STRICTLY passed. A release wins
+    // over a timeout only while Locked (checked above); here the timeout is the sole
+    // authorization — no attestation.
+    let now = Clock::get()?.unix_timestamp;
+    if now <= rec.deadline {
+        return Err(LockError::RefundBeforeDeadline.into());
+    }
+
+    // Only the recorded depositor may refund, and only to the captured destination.
+    if !depositor_authority.is_signer {
+        return Err(LockError::MissingSigner.into());
+    }
+    if depositor_authority.key.to_bytes() != rec.depositor {
+        return Err(LockError::EscrowFieldMismatch.into());
+    }
+    if refund_dest_ai.key.to_bytes() != rec.refund_destination {
+        return Err(LockError::EscrowFieldMismatch.into());
+    }
+
+    // Per-escrow vault PDA + authority PDA.
+    let (vault_pda, _vault_bump) = Pubkey::find_program_address(
+        &[SEED_ESCROW_VAULT, config_ai.key.as_ref(), &escrow_id],
+        program_id,
+    );
+    if &vault_pda != escrow_vault_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+    let (escrow_auth_pda, escrow_auth_bump) = escrow_authority_pda(program_id, config_ai.key);
+    if &escrow_auth_pda != escrow_authority_ai.key {
+        return Err(LockError::InvalidPda.into());
+    }
+
+    // Effects BEFORE interaction: consume the lock (terminal Refunded).
+    let amount = rec.amount;
+    rec.status = EscrowStatus::Refunded;
+    rec.pack_into(&mut record_ai.try_borrow_mut_data()?)?;
+
+    // Transfer the escrowed amount back to the depositor's captured destination.
+    let transfer_ix = spl_token::instruction::transfer(
+        &spl_token::id(),
+        escrow_vault_ai.key,
+        refund_dest_ai.key,
+        escrow_authority_ai.key,
+        &[],
+        amount,
+    )?;
+    invoke_signed(
+        &transfer_ix,
+        &[
+            escrow_vault_ai.clone(),
+            refund_dest_ai.clone(),
+            escrow_authority_ai.clone(),
+            token_program.clone(),
+        ],
+        &[&[
+            SEED_ESCROW_AUTHORITY,
+            config_ai.key.as_ref(),
+            &[escrow_auth_bump],
+        ]],
+    )?;
+
+    msg!("dregg-lock: escrow refunded {} (deadline passed)", amount);
     Ok(())
 }
 

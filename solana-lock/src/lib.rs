@@ -43,6 +43,7 @@
 
 pub mod attestation;
 pub mod error;
+pub mod escrow;
 pub mod instruction;
 pub mod record;
 pub mod state;
@@ -57,6 +58,13 @@ pub const SEED_VAULT: &[u8] = b"vault";
 pub const SEED_VAULT_AUTHORITY: &[u8] = b"vault_authority";
 pub const SEED_LOCK: &[u8] = b"lock";
 pub const SEED_REDEEM: &[u8] = b"redeem";
+
+// Escrow (timeout/refund) PDA seed prefixes. The escrow surface is DISJOINT from
+// the pooled mirror vault above: its custody, authority, and per-lock record all
+// live under their own seeds.
+pub const SEED_ESCROW: &[u8] = b"escrow"; // per-escrow record  [b"escrow", config, escrow_id]
+pub const SEED_ESCROW_VAULT: &[u8] = b"escrow_vault"; // per-escrow SPL custody [.., config, escrow_id]
+pub const SEED_ESCROW_AUTHORITY: &[u8] = b"escrow_authority"; // custody authority [.., config]
 
 // Native entrypoint. Gated so `cargo test` (host) and dependents can link the
 // library without a second `entrypoint` symbol.

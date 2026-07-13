@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import "forge-std/Test.sol";
 import "../contracts/DreggVault.sol";
+import {IDreggSettlement} from "../contracts/IDreggSettlement.sol";
 
 /// @dev Mock SP1 Verifier that always succeeds.
 contract MockSP1Verifier {
@@ -18,6 +19,22 @@ contract MockSP1Verifier {
         bytes calldata /* proofBytes */
     ) external view {
         require(shouldPass, "MockSP1Verifier: proof rejected");
+    }
+}
+
+/// @dev Minimal DreggSettlement stand-in: an operator-toggled proven-root set,
+/// enough to exercise the escrow release gate (`isProvenRoot`). The real contract
+/// records roots on a verified Groth16 settlement; here we set them directly.
+contract MockSettlement {
+    mapping(bytes32 => bool) public proven;
+
+    function setProven(bytes32 root, bool ok) external {
+        proven[root] = ok;
+    }
+
+    function isProvenRoot(bytes32 root) external view returns (bool) {
+        if (root == bytes32(0)) return false; // Nomad-law: zero root never proven
+        return proven[root];
     }
 }
 
@@ -87,6 +104,7 @@ contract ReentrantRecipient {
 contract DreggVaultTest is Test {
     DreggVault public vault;
     MockSP1Verifier public verifier;
+    MockSettlement public settlement;
     MockERC20 public token;
 
     bytes32 constant PROGRAM_VKEY = bytes32(uint256(0xdeadbeef));
@@ -94,7 +112,8 @@ contract DreggVaultTest is Test {
 
     function setUp() public {
         verifier = new MockSP1Verifier();
-        vault = new DreggVault(address(verifier), PROGRAM_VKEY);
+        settlement = new MockSettlement();
+        vault = new DreggVault(address(verifier), PROGRAM_VKEY, IDreggSettlement(address(settlement)));
         token = new MockERC20();
     }
 
@@ -348,7 +367,13 @@ contract DreggVaultTest is Test {
     function test_constructorRejectsCodelessVerifier() public {
         address codeless = address(0x1234);
         vm.expectRevert(DreggVault.VerifierNotContract.selector);
-        new DreggVault(codeless, PROGRAM_VKEY);
+        new DreggVault(codeless, PROGRAM_VKEY, IDreggSettlement(address(settlement)));
+    }
+
+    function test_constructorRejectsCodelessSettlement() public {
+        address codelessSettlement = address(0x5678);
+        vm.expectRevert(DreggVault.SettlementNotContract.selector);
+        new DreggVault(address(verifier), PROGRAM_VKEY, IDreggSettlement(codelessSettlement));
     }
 
     function test_withdrawRevertsWhenVerifierLosesCode() public {
