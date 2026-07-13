@@ -77,6 +77,18 @@ DrEX is a Lean-first proof-carrying exchange: the exchange's *rules* are proven 
 `metatheory/Market/` tower), and each execution *instance* carries a proof it obeyed them (the circuit
 + FFI layer). Two rungs are done and axiom-clean (`#assert_all_clean` over all keystones).
 
+> **Status update — rungs 4/5/6 have since LANDED at model scope.** The forward rung-ladder in §4/§5
+> below is the original design framing (written when only rungs 1–2 existed). Since then, rung 5
+> (`Market/Priced.lean` — priced/partial-fill/multi-pair, `priced_clearing_keystone`), rung 4
+> (`Market/Optimality.lean` — uniform-price no-arbitrage / envy-freeness / `uniform_price_optimal`), and
+> rung 6 (`Market/Liquidity.lean` — portfolio `pool_solvent_forever`) are all **PROVED, axiom-clean**.
+> The load-bearing caveat: these three are proved over the **priced `Fill` / reserve model** (real ℚ
+> prices, lifted off `DemoRes`), **NOT** yet ledger-realized through `settleRing`/`recKExec`. Only
+> **rung 1** carries the executor tie (`cycleValid_fulfilled_respects_limits` over `settleRing`, via
+> `RingFFI`). What remains genuinely open above the model rungs: **full k-coalition TTC-core** stability,
+> the **on-ledger delta readback** for the priced layer (the `RecordKernelState.bal`-after-`settleRing`
+> weld rung 5's design named), and the constant-function AMM curve above rung 6's solvency floor.
+
 **Rung 1 — execution soundness + fairness** (`Market/Clearing.lean`, `Market/Fairness.lean`,
 composing `Dregg2/Intent/Ring.lean`). PROVED:
 - **Conservation** — a cleared book's per-asset Σ in = Σ out (`clearing_conserves_per_asset`), lifting
@@ -317,11 +329,16 @@ is one proof.
 
 ## 6. The honest edges (load-bearing — named once, plainly)
 
-- **Exact-book / two-asset today.** The proven conservation + clearability are over `DemoRes` (discrete,
-  two-asset, exact, no prices/partial fills). "DrEX clears fairly" is PROVED for individual rationality
-  on an exact book; priced/optimal clearing is UNBUILT (rungs 4–5). Say which sense you mean.
+- **Exact-book / two-asset for the LEDGER-REALIZED rung.** Rung 1's ledger-tied conservation +
+  clearability (`clearing_conserves_per_asset`, and `cycleValid_fulfilled_respects_limits` over
+  `settleRing`) are over `DemoRes`/`MatchNode` (discrete, two-asset, exact, no prices/partial fills).
+  Priced/optimal clearing IS now proved (rungs 4–5, `Market/{Priced,Optimality}.lean`) — but over the
+  **`Fill` model**, off `DemoRes`, and **not** ledger-realized. So "DrEX clears fairly" is
+  ledger-verified on an exact book (rung 1) and model-verified with prices (rungs 4–5) — say which.
 - **The solver is greedy + bounded-DFS.** Fair and conserving are theorems; *welfare-optimal* is not —
-  no max-weight-matching guarantee. Optimality is rung 4.
+  no max-weight-matching guarantee. Uniform-price no-arbitrage / envy-freeness are proved (rung 4,
+  `Market/Optimality.lean`) at the single-participant / pairwise core; full **k-coalition TTC-core** is
+  the open sub-rung.
 - **The DECRYPT committee is still present.** `trustless.rs` front-running prevention rests on a `t`-of-`n`
   threshold-decryption committee (a real residual trust) *until* rung 3 deletes it. Today's private
   batch is committee-private, not proof-private.
@@ -332,8 +349,11 @@ is one proof.
   pool discharges inflation with per-output Bulletproof range proofs (BUILT, tested both polarities) but
   the range-rib is still a *named obligation* of the Lean conservation law, not yet a Lean theorem — and
   the pool stands *beside* `effect_vm`, not inside it (the rung-3 weld).
-- **Solvency is single-channel over cleartext integers.** `stripe_reserve_solvent_forever` is a real
-  ∀-schedule theorem but for one channel; portfolio + hidden-aggregate is rung 6.
+- **Solvency: portfolio now proved (model), hidden-aggregate open.** `stripe_reserve_solvent_forever`
+  is a real ∀-schedule theorem for one channel; the **portfolio** lift is now ALSO proved —
+  `pool_solvent_forever` (`Market/Liquidity.lean`), a ∀-schedule fold over `Pool = AssetId → ℚ`, reusing
+  the single-channel apex verbatim as the backing line. Both are over the reserve **model** (not welded
+  to `settleRing`); hidden-aggregate solvency and the AMM curve remain rung-6+ open.
 - **Mandate admission is expressiveness at the per-trade caveat.** Delegation/budget/revocation are PROVED
   + materialized into committed effects; only the per-trade `caveatBit` still trusts the executor's
   decision (rung 7 weld).
@@ -353,7 +373,8 @@ turns the proven exact-book core into a real exchange.
 
 ## See also
 `DREGGFI-VISION.md` · `DREGGFI-AMBITION.md` (the substrate frame + the moat) ·
-`metatheory/Market/{Clearing,Fairness,Aggregation}.lean` (rungs 1–2, PROVED) ·
+`metatheory/Market/{Clearing,Fairness,Aggregation}.lean` (rungs 1–2, PROVED; rung 1 ledger-realized) ·
+`metatheory/Market/{Priced,Optimality,Liquidity}.lean` (rungs 5/4/6, PROVED at model scope — priced `Fill`/reserve model, not yet `settleRing`-realized) ·
 `metatheory/Dregg2/Intent/{Kernel,Ring,SealedAuction}.lean` · `metatheory/Dregg2/Agent/Mandate.lean` ·
 `metatheory/Dregg2/Verify/StripeReserve.lean` ·
 `intent/src/{solver,trustless,verified_settle,agent_mandate}.rs` ·
