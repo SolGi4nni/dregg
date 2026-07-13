@@ -8025,3 +8025,17 @@ bridge submitter needs the 12-word blob layout; outboundMessageRoot operator-att
 binding soundness (is the expose_claim channel forgery-free / the wrong-root reject non-vacuous?) — 2/2 critics found
 real holes, this fresh claim gets the same treatment.
 SCORECARD: 3 critics dispatched; EVM (no-SNARK/no-binding/mock) → CLOSED+verified; Solana (trusted table) → CLOSED+verified.
+
+## ⚠ EVM SETTLEMENT — 3rd critic CONFIRMED the apex-VK forgery I flagged (2026-07-12)
+The critic (aeb97c5dfd6c5f775) verified: Leg A HOLDS (the 25 lanes ARE tied to the verified apex output via genuine
+transcript-absorption + ExposeClaimAir quotient binding — not a free-witness label); the SHRINK circuit + shrink VK
+ARE pinned (baked constant, real). BUT Finding 1 (real forgery, no crypto broken): the APEX's preprocessed commitment
+(VK-core) enters the shrink as a prover-supplied public input verified against ITSELF — NEVER against a pinned deployed-
+apex value. FORGERY: author a SAME-SHAPE malicious apex (same AIRs/degrees/widths → shrink op-list + shrink-VK pin match
+byte-for-byte) with doctored preprocessed values → steer expose_claim to any false (genesis,finalRoot) → valid apex
+proof → shrink → Groth16 → settle a FALSE root. The wrong-root canaries prove TAMPER-resistance (can't EDIT an honest
+proof), NOT FORGERY-resistance (can't MINT a malicious-apex proof) — Finding 2, the overclaim. DOWNGRADE the claim:
+"an honest proof cannot be EDITED to a forged root; pinning the apex VK remains OPEN." FIX (closure exists): bake the
+deployed dregg apex's preprocessed commitment (the RecursionVk fingerprint, accumulator.rs) as a constant in
+SettlementCircuit + assert the apex-preprocessed-commitment public input == it (same pattern as the working shrink-VK
+pin). Then a same-shape malicious apex REJECTS. Launching. (3rd critic, 3rd real hole/overclaim found — the discipline holds.)
