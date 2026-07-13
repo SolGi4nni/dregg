@@ -49,14 +49,22 @@ leg (they debit no balance), so the class is exactly these two.
 
 ## What is NOT closed here (and is NOT this module's residual)
 
-  1. **The `Rfix` retarget.** The Lean apex registry `CircuitSoundnessAssembled.Rfix` (over
-     `v3RegistryHeap`) still routes the transfer tag to the BARE `transferV3Membership`, while the WIRE
-     routes the hardened member (VK epoch `887b95e76`). So the apex-level slot
-     (`ClosureTransfer.closedLogExtract_transfer_closed`, stated at `Rfix 0`) still carries `availOf`,
-     CORRECTLY: at the bare descriptor availability genuinely is not forced. The registry flip
-     (`v3RegistryHeap`'s transfer entry → the hardened member, so `Rfix 0` IS what the light client
-     verifies) is the remaining step; THIS module is the proof that the flip discharges the residual —
-     `RfixAvail` (§5) is that flipped registry, and the slot over it needs no availability hypothesis.
+  1. **The `Rfix` retarget — LANDED at the CONFIG apex** (`Dregg2.Circuit.ClosureFinalAvail`). `RfixAvail`
+     (§5) is `Rfix` with EXACTLY the two debiting tags flipped to the deployed hardened members
+     (`RfixAvail 0 = weldedTransferAvailWide`, `RfixAvail 4 = weldedBurnAvailWide`, every other tag `Rfix`
+     verbatim by `RfixAvail_off`). `ClosureFinalAvail.lightclient_unfoolable_closed_final_avail` is the
+     closed circuit-soundness apex over `RfixAvail`: its transfer/burn slots consume THIS module's `_avail`
+     slots (`closedLogExtract_transfer_closed_availFix` / `closedLogExtract_burn_closed_availFix`), so
+     `availOf` is DISCHARGED at the apex — the deployed borrow chain FORCES `amt ≤ bal` at the descriptor
+     the light client verifies. (`CircuitSoundnessAssembled.Rfix` itself is deliberately UNCHANGED: it
+     remains the bare-face registry the STARK-side `algoStarkSound_kernel` enumerates, and `Rfix 0 =
+     transferV3Membership` is a load-bearing `rfl` — the flip is the parallel `RfixAvail`, not a mutation.)
+     The remaining item is the STARK-SIDE re-key: building `[StarkSound hash RfixAvail]` from the
+     enumerated floor is NOT a mem-free `side_transfer`/`side_burn` mirror, because the welded members
+     append a `.umemOp` (`MapShape` provably fails — the `setFieldDynV3_not_mapShape` class), so they route
+     through `algoStarkSound_of_memoryLegs` with a umem memory-checking leg (a separate, floor-expanding
+     lane). At the apex altitude the STARK extraction is the allowed realizable floor, exactly as the
+     `Rfix` apex carries `[StarkSound hash Rfix]`.
   2. **The cap-open authority witness** (`TransferAuthorityWitness`/`toyAuthOf`) — a SEPARATE open seam
      (the authority rides a different descriptor), untouched here.
 
