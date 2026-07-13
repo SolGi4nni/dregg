@@ -82,6 +82,7 @@ use p3_baby_bear::{
 };
 use p3_batch_stark::ProverData;
 use p3_bn254::Bn254;
+use p3_challenger::DuplexChallenger;
 use p3_circuit_prover::{
     AirVariant, BatchStarkProof, BatchStarkProver, CircuitProverData, ConstraintProfile,
     common::{NpoAirBuilder, NpoPreprocessor, get_airs_and_degrees_with_prep},
@@ -3081,6 +3082,388 @@ pub fn gpu_outer_shrink_prover(
 /// e2e test).
 pub fn gpu_shrink_inner_config() -> DreggRecursionConfig {
     ir2_leaf_wrap_config()
+}
+
+// ============================================================================
+// GpuDreggRecursionConfig — the GPU variant of the all-BabyBear FOLD config
+// (`DreggRecursionConfig`), the parallel of `GpuDreggOuterConfig` for the inner
+// recursion tower.
+//
+// The fold (`prove_turn_chain_recursive` → `DreggRecursionConfig`) commits
+// under `TwoAdicFriPcs<BabyBear, Radix2DitParallel, MerkleTreeMmcs<..
+// PaddingFreeSponge<Poseidon2BabyBear<16>,16,8,8> ..>, ExtensionMmcs<..>>`.
+// This config keeps `Val`/`Challenge`/`Challenger` and the FRI knobs identical
+// and swaps only WHERE the two PCS seams compute: the DFT → [`GpuDft`] (native
+// BabyBear) and the Poseidon2-BabyBear-W16 Merkle tree build → the bit-exact
+// [`GpuBabyBearMmcs`] (whose `Commitment`/`Proof` types EQUAL the CPU
+// `MerkleTreeMmcs`'s and whose `verify_batch` delegates to it).
+//
+// Wiring mirror of the shrink (`shrink_recursion_input_to_gpu_outer`): a fold
+// layer's verifier CIRCUIT is built at the CPU inner `DreggRecursionConfig`
+// (which carries `FriRecursionConfig`), and only the OUTPUT tables are proved
+// under this GPU config, which is a plain `StarkGenericConfig`. The emitted
+// `BatchStarkProof<GpuDreggRecursionConfig>` is BYTE-IDENTICAL to the CPU
+// `BatchStarkProof<DreggRecursionConfig>` for the same layer (both provers
+// deterministic, the GPU path bit-exact) and serde-retags into it, so the next
+// fold layer / the in-circuit recursion verifier accepts it unchanged. Both
+// properties are asserted in `tests/gpu_recursion_fold_e2e.rs`.
+// ============================================================================
+
+/// The fold's DuplexChallenger over Poseidon2-BabyBear-W16 (RATE 8) — the exact
+/// challenger `DreggRecursionConfig` uses.
+pub type GpuFoldChallenger = DuplexChallenger<BabyBear, BbPerm, 16, 8>;
+/// GPU value-matrix MMCS for the fold (all-BabyBear tree, GPU-built).
+pub type GpuFoldValMmcs = GpuBabyBearMmcs;
+/// GPU extension-field MMCS (FRI commit phase) — same `ExtensionMmcs`
+/// flattening, GPU tree underneath.
+pub type GpuFoldChallengeMmcs = ExtensionMmcs<BabyBear, EF, GpuFoldValMmcs>;
+/// The GPU fold PCS: same `TwoAdicFriPcs` shape, GPU DFT + GPU BabyBear MMCS.
+pub type GpuFoldPcs = TwoAdicFriPcs<BabyBear, GpuDft, GpuFoldValMmcs, GpuFoldChallengeMmcs>;
+type GpuFoldStarkConfig = StarkConfig<GpuFoldPcs, EF, GpuFoldChallenger>;
+
+/// The GPU variant of [`DreggRecursionConfig`]: identical `Val`/`Challenge`/
+/// `Challenger`/FRI knobs and BIT-IDENTICAL commitments + transcript — only
+/// WHERE the DFT and Poseidon2-BabyBear-W16 Merkle hashing are computed changes.
+#[derive(Clone)]
+pub struct GpuDreggRecursionConfig {
+    config: Arc<GpuFoldStarkConfig>,
+}
+
+impl core::ops::Deref for GpuDreggRecursionConfig {
+    type Target = GpuFoldStarkConfig;
+    fn deref(&self) -> &GpuFoldStarkConfig {
+        &self.config
+    }
+}
+
+impl StarkGenericConfig for GpuDreggRecursionConfig {
+    type Challenge = EF;
+    type Challenger = GpuFoldChallenger;
+    type Pcs = GpuFoldPcs;
+
+    fn pcs(&self) -> &GpuFoldPcs {
+        self.config.pcs()
+    }
+
+    fn initialise_challenger(&self) -> GpuFoldChallenger {
+        self.config.initialise_challenger()
+    }
+}
+
+/// Build a [`GpuDreggRecursionConfig`] with explicit FRI knobs (the GPU twin of
+/// `create_recursion_config_with_fri`).
+pub fn create_gpu_recursion_config_with_fri(
+    log_blowup: usize,
+    log_final_poly_len: usize,
+    max_log_arity: usize,
+    num_queries: usize,
+    commit_pow_bits: usize,
+    query_pow_bits: usize,
+) -> GpuDreggRecursionConfig {
+    let perm = default_babybear_poseidon2_16();
+    let val_mmcs = GpuFoldValMmcs::new(0);
+    let challenge_mmcs = GpuFoldChallengeMmcs::new(val_mmcs.clone());
+    let fri_params = FriParameters {
+        log_blowup,
+        log_final_poly_len,
+        max_log_arity,
+        num_queries,
+        commit_proof_of_work_bits: commit_pow_bits,
+        query_proof_of_work_bits: query_pow_bits,
+        mmcs: challenge_mmcs,
+    };
+    let pcs = GpuFoldPcs::new(GpuDft::default(), val_mmcs, fri_params);
+    let challenger = GpuFoldChallenger::new(perm);
+    GpuDreggRecursionConfig {
+        config: Arc::new(StarkConfig::new(pcs, challenger)),
+    }
+}
+
+/// The default-shape GPU fold config — the SAME FRI knobs as
+/// `create_recursion_config` (log_blowup=3, arity 1, 38 queries, 14 query-PoW
+/// bits). Thread-local cached so all commits in a proving run share one wgpu
+/// device + pipeline set.
+pub fn create_gpu_recursion_config() -> GpuDreggRecursionConfig {
+    thread_local! {
+        static GPU_RECURSION_CONFIG: GpuDreggRecursionConfig =
+            create_gpu_recursion_config_with_fri(3, 0, 1, 38, 0, 14);
+    }
+    GPU_RECURSION_CONFIG.with(|c| c.clone())
+}
+
+/// A recursion-layer (fold) proof minted under the GPU fold config. Byte-
+/// identical (asserted in tests) to the CPU
+/// `RecursionOutput<DreggRecursionConfig>.0` for the same layer.
+pub struct GpuRecursionLayerProof {
+    pub proof: BatchStarkProof<GpuDreggRecursionConfig>,
+    pub prover_data: Rc<CircuitProverData<GpuDreggRecursionConfig>>,
+    /// Wall-clock seconds of the config-independent prepare phase (verifier
+    /// circuit build + table-AIR extraction + witness generation — identical
+    /// CPU code in the CPU and GPU fold paths).
+    pub prepare_seconds: f64,
+    /// Wall-clock seconds of the config-dependent phase (preprocessed commit +
+    /// `prove_all_tables` — the part the GPU backend accelerates).
+    pub prove_seconds: f64,
+}
+
+/// Prove ONE recursion layer (the fold's per-step leaf-wrap / aggregation
+/// verifier circuit) under the GPU fold config. Byte-for-byte the same steps as
+/// the recursion library's `prove_next_layer` (non-cached branch) with the
+/// proving config swapped to the GPU variant — mirror of
+/// [`shrink_recursion_input_to_gpu_outer`], but the output stays all-BabyBear
+/// `DreggRecursionConfig`-shaped (round-trippable, not the BN254 shrink).
+///
+/// The circuit is built and the FRI private data injected at the CPU
+/// `inner_config` (the config of the CHILD being verified in-circuit); only the
+/// output preprocessed commit + `prove_all_tables` run under `gpu_config`.
+pub fn prove_recursion_layer_gpu<A>(
+    input: &RecursionInput<'_, DreggRecursionConfig, A>,
+    inner_config: &DreggRecursionConfig,
+    gpu_config: &GpuDreggRecursionConfig,
+) -> Result<GpuRecursionLayerProof, String>
+where
+    A: RecursiveAir<BabyBear, EF, LogUpGadget>,
+{
+    // Match the recursion library's default layer params (TablePacking::new(1,4),
+    // Standard profile) — `default_shrink_packing()` IS that packing, so the
+    // proof is byte-identical to a `prove_recursive_layer_for_air` layer.
+    let packing = default_shrink_packing();
+    let backend = create_recursion_backend();
+    let t_prepare = std::time::Instant::now();
+
+    // (1) The layer verifier circuit, built against the INNER (child) config.
+    let (circuit, verifier_result) =
+        build_next_layer_circuit::<DreggRecursionConfig, A, _, D>(input, inner_config, &backend)
+            .map_err(|e| format!("layer verifier circuit build failed: {e:?}"))?;
+
+    let constraint_profile = ProveNextLayerParams::default().constraint_profile;
+
+    // (2) Table AIRs + preprocessed columns AT THE GPU FOLD CONFIG. The
+    // preprocessor/builder set mirrors the FRI backend's own at D=4 default
+    // knobs (recompose_lanes=1, coeff-lookups OFF because the W16 challenger's
+    // extension degree equals D) — the SAME reconstruction the shrink uses.
+    let preprocessors: Vec<Box<dyn NpoPreprocessor<BabyBear>>> = vec![
+        poseidon2_preprocessor::<BabyBear>(),
+        recompose_preprocessor::<BabyBear>(false),
+        expose_claim_preprocessor::<BabyBear>(),
+    ];
+    let air_builders: Vec<Box<dyn NpoAirBuilder<GpuDreggRecursionConfig, D>>> = {
+        let mut builders = poseidon2_air_builders::<GpuDreggRecursionConfig, D>();
+        builders.extend(recompose_air_builders::<GpuDreggRecursionConfig, D>(
+            1, false,
+        ));
+        builders.extend(expose_claim_air_builders::<GpuDreggRecursionConfig, D>());
+        builders
+    };
+    let (airs_degrees, primitive_columns, non_primitive_columns) =
+        get_airs_and_degrees_with_prep::<GpuDreggRecursionConfig, EF, D>(
+            &circuit,
+            &packing,
+            &preprocessors,
+            &air_builders,
+            constraint_profile,
+        )
+        .map_err(|e| format!("gpu-fold-config table-AIR extraction failed: {e:?}"))?;
+    let (airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
+    let ext_degrees: Vec<usize> = degrees.iter().map(|&d| d + gpu_config.is_zk()).collect();
+
+    // (3) Witness generation: the FRI private data (the child's BabyBear Merkle
+    // siblings) is injected via the INNER config — it describes the proof being
+    // VERIFIED, not the proof being minted.
+    let traces = {
+        let public_inputs = verifier_result
+            .pack_public_inputs(input)
+            .map_err(|e| format!("layer public-input packing failed: {e:?}"))?;
+        let private_inputs = verifier_result
+            .pack_private_inputs(input)
+            .map_err(|e| format!("layer private-input packing failed: {e:?}"))?;
+        let mut runner = circuit.runner();
+        runner
+            .set_public_inputs(&public_inputs)
+            .map_err(|e| format!("layer runner public inputs: {e:?}"))?;
+        runner
+            .set_private_inputs(&private_inputs)
+            .map_err(|e| format!("layer runner private inputs: {e:?}"))?;
+        let op_ids =
+            <_ as VerifierCircuitResult<DreggRecursionConfig, A>>::op_ids(&verifier_result);
+        backend
+            .set_private_data(inner_config, &mut runner, op_ids, input)
+            .map_err(|e| format!("layer FRI private data: {e}"))?;
+        runner
+            .run()
+            .map_err(|e| format!("layer verifier witness generation failed: {e:?}"))?
+    };
+
+    let prepare_seconds = t_prepare.elapsed().as_secs_f64();
+    let t_prove = std::time::Instant::now();
+
+    // (4)+(5) Preprocessed commit + prove all tables UNDER THE GPU FOLD CONFIG.
+    let prover_data = ProverData::from_airs_and_degrees(gpu_config, &airs, &ext_degrees);
+    let circuit_prover_data =
+        CircuitProverData::new(prover_data, primitive_columns, non_primitive_columns);
+
+    let alu_variant = match constraint_profile {
+        ConstraintProfile::Standard => AirVariant::Baseline,
+        ConstraintProfile::RecursionOptimized => AirVariant::Optimized,
+    };
+    let prover = gpu_recursion_prover(gpu_config)
+        .with_table_packing(packing.clone())
+        .with_alu_variant(alu_variant);
+    let proof = prover
+        .prove_all_tables(&traces, &circuit_prover_data)
+        .map_err(|e| format!("gpu-fold-config layer proving failed: {e}"))?;
+
+    Ok(GpuRecursionLayerProof {
+        proof,
+        prover_data: Rc::new(circuit_prover_data),
+        prepare_seconds,
+        prove_seconds: t_prove.elapsed().as_secs_f64(),
+    })
+}
+
+/// Verify a GPU-minted fold-layer proof under the GPU fold config (the Mmcs
+/// verify path delegates to the CPU `MerkleTreeMmcs` — see [`GpuBabyBearMmcs`]).
+pub fn verify_gpu_recursion_layer(
+    proof: &BatchStarkProof<GpuDreggRecursionConfig>,
+    gpu_config: &GpuDreggRecursionConfig,
+) -> Result<(), String> {
+    gpu_recursion_prover(gpu_config)
+        .verify_all_tables(proof)
+        .map_err(|e| format!("gpu fold-layer proof verification failed: {e:?}"))
+}
+
+/// Re-tag a GPU-config fold-layer proof as a CPU-config one via serde (the
+/// associated `Commitment`/`Proof` types are IDENTICAL, so this is a pure type
+/// re-tag) — round-trips a GPU proof through the unchanged CPU
+/// `verify_recursive_batch_proof` / the next fold layer.
+pub fn gpu_recursion_proof_to_cpu(
+    proof: &BatchStarkProof<GpuDreggRecursionConfig>,
+) -> Result<BatchStarkProof<DreggRecursionConfig>, String> {
+    let bytes = postcard::to_allocvec(proof).map_err(|e| format!("gpu proof serialize: {e}"))?;
+    postcard::from_bytes(&bytes).map_err(|e| format!("gpu->cpu proof deserialize: {e}"))
+}
+
+/// The GPU twin of the recursion backend's non-primitive prover registration —
+/// the SAME four tables `verify_recursive_batch_proof_with_config` registers
+/// (poseidon2 W16 + the isolated segment-digest W24, recompose, expose_claim).
+pub fn gpu_recursion_prover(
+    gpu_config: &GpuDreggRecursionConfig,
+) -> BatchStarkProver<GpuDreggRecursionConfig> {
+    let mut prover = BatchStarkProver::new(gpu_config.clone());
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
+    prover.register_recompose_table::<D>(false);
+    prover.register_expose_claim_table::<D>();
+    prover
+}
+
+/// A recursion-layer (fold) proof minted under the CPU fold config — the
+/// prepare/prove-SPLIT twin of [`GpuRecursionLayerProof`], so the config-
+/// dependent PROVE phase (the GPU lever) can be measured apples-to-apples.
+pub struct CpuRecursionLayerProof {
+    pub proof: BatchStarkProof<DreggRecursionConfig>,
+    pub prover_data: Rc<CircuitProverData<DreggRecursionConfig>>,
+    pub prepare_seconds: f64,
+    pub prove_seconds: f64,
+}
+
+/// [`prove_recursion_layer_gpu`] at the CPU `DreggRecursionConfig` — byte-for-
+/// byte the same steps (so its proof is byte-identical to both the GPU proof
+/// and the recursion library's `build_and_prove_next_layer` output for the same
+/// layer), with the prepare/prove split exposed for measurement.
+pub fn prove_recursion_layer_cpu<A>(
+    input: &RecursionInput<'_, DreggRecursionConfig, A>,
+    inner_config: &DreggRecursionConfig,
+    cpu_config: &DreggRecursionConfig,
+) -> Result<CpuRecursionLayerProof, String>
+where
+    A: RecursiveAir<BabyBear, EF, LogUpGadget>,
+{
+    let packing = default_shrink_packing();
+    let backend = create_recursion_backend();
+    let t_prepare = std::time::Instant::now();
+
+    let (circuit, verifier_result) =
+        build_next_layer_circuit::<DreggRecursionConfig, A, _, D>(input, inner_config, &backend)
+            .map_err(|e| format!("layer verifier circuit build failed: {e:?}"))?;
+
+    let constraint_profile = ProveNextLayerParams::default().constraint_profile;
+
+    let preprocessors: Vec<Box<dyn NpoPreprocessor<BabyBear>>> = vec![
+        poseidon2_preprocessor::<BabyBear>(),
+        recompose_preprocessor::<BabyBear>(false),
+        expose_claim_preprocessor::<BabyBear>(),
+    ];
+    let air_builders: Vec<Box<dyn NpoAirBuilder<DreggRecursionConfig, D>>> = {
+        let mut builders = poseidon2_air_builders::<DreggRecursionConfig, D>();
+        builders.extend(recompose_air_builders::<DreggRecursionConfig, D>(1, false));
+        builders.extend(expose_claim_air_builders::<DreggRecursionConfig, D>());
+        builders
+    };
+    let (airs_degrees, primitive_columns, non_primitive_columns) =
+        get_airs_and_degrees_with_prep::<DreggRecursionConfig, EF, D>(
+            &circuit,
+            &packing,
+            &preprocessors,
+            &air_builders,
+            constraint_profile,
+        )
+        .map_err(|e| format!("cpu-fold-config table-AIR extraction failed: {e:?}"))?;
+    let (airs, degrees): (Vec<_>, Vec<_>) = airs_degrees.into_iter().unzip();
+    let ext_degrees: Vec<usize> = degrees.iter().map(|&d| d + cpu_config.is_zk()).collect();
+
+    let traces = {
+        let public_inputs = verifier_result
+            .pack_public_inputs(input)
+            .map_err(|e| format!("layer public-input packing failed: {e:?}"))?;
+        let private_inputs = verifier_result
+            .pack_private_inputs(input)
+            .map_err(|e| format!("layer private-input packing failed: {e:?}"))?;
+        let mut runner = circuit.runner();
+        runner
+            .set_public_inputs(&public_inputs)
+            .map_err(|e| format!("layer runner public inputs: {e:?}"))?;
+        runner
+            .set_private_inputs(&private_inputs)
+            .map_err(|e| format!("layer runner private inputs: {e:?}"))?;
+        let op_ids =
+            <_ as VerifierCircuitResult<DreggRecursionConfig, A>>::op_ids(&verifier_result);
+        backend
+            .set_private_data(inner_config, &mut runner, op_ids, input)
+            .map_err(|e| format!("layer FRI private data: {e}"))?;
+        runner
+            .run()
+            .map_err(|e| format!("layer verifier witness generation failed: {e:?}"))?
+    };
+
+    let prepare_seconds = t_prepare.elapsed().as_secs_f64();
+    let t_prove = std::time::Instant::now();
+
+    let prover_data = ProverData::from_airs_and_degrees(cpu_config, &airs, &ext_degrees);
+    let circuit_prover_data =
+        CircuitProverData::new(prover_data, primitive_columns, non_primitive_columns);
+
+    let alu_variant = match constraint_profile {
+        ConstraintProfile::Standard => AirVariant::Baseline,
+        ConstraintProfile::RecursionOptimized => AirVariant::Optimized,
+    };
+    let mut prover = BatchStarkProver::new(cpu_config.clone())
+        .with_table_packing(packing.clone())
+        .with_alu_variant(alu_variant);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W16);
+    prover.register_poseidon2_table::<D>(Poseidon2Config::BABY_BEAR_D4_W24);
+    prover.register_recompose_table::<D>(false);
+    prover.register_expose_claim_table::<D>();
+    let proof = prover
+        .prove_all_tables(&traces, &circuit_prover_data)
+        .map_err(|e| format!("cpu-fold-config layer proving failed: {e}"))?;
+
+    Ok(CpuRecursionLayerProof {
+        proof,
+        prover_data: Rc::new(circuit_prover_data),
+        prepare_seconds,
+        prove_seconds: t_prove.elapsed().as_secs_f64(),
+    })
 }
 
 // ============================================================================
