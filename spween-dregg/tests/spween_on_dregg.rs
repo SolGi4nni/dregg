@@ -444,3 +444,238 @@ fn federation_reject_refuses_the_choice() {
     );
     assert_eq!(node.len(), 0, "nothing landed — fail-closed");
 }
+
+// ─────────────────────────────────────────────────────────────────────────────
+// The clamp-defeats-the-lift fix (compiler) + the re-entry-reseed fix (runtime).
+//
+// A gate on a var the SAME choice DECREMENTS (`{gold>=50} ~ gold-=50`) used to lift
+// to a VACUOUS `FieldGte(gold, 0)` (always true): the executor CLAMPS the Modify at
+// zero, so a broke buyer's purchase committed with the purse silently zeroed and the
+// goods delivered. The compiler now pins the delta with a companion
+// `FieldDelta{gold, -50}`, so the clamp cannot vacate the gate. A gate on a var the
+// choice does NOT touch still lifts to a bare comparison. And a passage's entry
+// effects run once per passage, ever — a retreat into a seed room does not re-seed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+const BAZAAR_MINI: &str = r#"---
+id: bazaar-mini
+title: Bazaar Mini
+weight: 1
+---
+
+=== road
+
+~ gold = 100
+
+The coast road; a purse on your hip.
+
+* [Step under the awning]
+  -> shop
+
+=== shop
+
+The merchant's awning. Prices posted, no credit.
+
+* [Buy the charm for 50 gold] { gold >= 50 }
+  ~ gold -= 50
+  -> shop
+
+* [Pay into the counting room] { gold >= 100 }
+  -> counting
+
+* [Step back out to the road]
+  -> road
+
+=== counting
+
+The counting room.
+
+* [Seize the takings]
+  ~ gold += 500
+  -> END
+"#;
+
+fn bazaar_mini() -> spween::Scene {
+    parse(BAZAAR_MINI, "bazaar-mini.scene").expect("bazaar-mini parses")
+}
+
+/// The constraint list installed for a choice's gate case (by dispatch method).
+fn case_constraints<'a>(
+    story: &'a CompiledStory,
+    method: &str,
+) -> &'a [dregg_app_framework::StateConstraint] {
+    use dregg_app_framework::{CellProgram, TransitionGuard, symbol};
+    let CellProgram::Cases(cases) = &story.program else {
+        panic!("compiled program is a Cases table");
+    };
+    let want = symbol(method);
+    cases
+        .iter()
+        .find(|c| matches!(&c.guard, TransitionGuard::MethodIs { method: m } if *m == want))
+        .map(|c| c.constraints.as_slice())
+        .expect("a case for the method")
+}
+
+/// The compiler shape: a same-var DECREMENT gate carries an exact-delta companion;
+/// an UNTOUCHED-slot gate stays a bare comparison (no companion).
+#[test]
+fn decrement_gate_gets_exact_delta_companion_untouched_stays_bare() {
+    use dregg_app_framework::{StateConstraint, field_from_u64};
+    let s = bazaar_mini();
+    let story = compile_scene(&s).expect("compile");
+    let gold = *story.var_slots.get("gold").expect("gold slot") as u8;
+
+    // BUY `{gold>=50} ~ gold-=50`: the lifted comparison collapses to FieldGte(gold, 0)
+    // (always true) — but the companion FieldDelta(gold, -50) pins the delta so the
+    // executor clamp cannot vacate the gate.
+    let buy = case_constraints(&story, &spween_dregg::choice_method("shop", 0));
+    assert!(
+        buy.iter().any(|c| matches!(
+            c,
+            StateConstraint::FieldDelta { index, delta }
+                if *index == gold && *delta == field_from_u64((-50i64) as u64)
+        )),
+        "the decrement gate carries a FieldDelta(gold, -50) companion; got {buy:?}"
+    );
+
+    // COUNTING `{gold>=100}` — the choice does not touch gold, so it stays a bare
+    // FieldGte(gold, 100) with NO exact-delta companion (the correct lift is preserved).
+    let door = case_constraints(&story, &spween_dregg::choice_method("shop", 1));
+    assert!(
+        door.iter().any(|c| matches!(
+            c,
+            StateConstraint::FieldGte { index, value }
+                if *index == gold && *value == field_from_u64(100)
+        )),
+        "the untouched-slot gate lifts to a bare FieldGte(gold, 100); got {door:?}"
+    );
+    assert!(
+        !door
+            .iter()
+            .any(|c| matches!(c, StateConstraint::FieldDelta { .. })),
+        "an untouched-slot gate must NOT get an exact-delta companion; got {door:?}"
+    );
+}
+
+/// The executor tooth, DRIVEN: a broke buyer's `{gold>=50} ~ gold-=50` purchase is
+/// REFUSED (not a clamped commit); a solvent buyer commits paying EXACTLY the price;
+/// spending the last coin commits to zero. (Directly-submitted choice-turns — the
+/// kernel predicate biting, no runtime involved.)
+#[test]
+fn broke_buyer_refused_solvent_and_last_coin_commit() {
+    let s = bazaar_mini();
+    let buy = nth_choice(&s, "shop", 0);
+
+    // BROKE (gold 30, charm 50): the Modify clamps the purse to 0. Without the companion
+    // the gate is `FieldGte(gold, 0)` (always true) and this would commit — the bug.
+    // With it, `FieldDelta(gold, -50)` sees 0 != 30 - 50 and REFUSES.
+    let mut broke = WorldCell::deploy(&s, 21).expect("deploy");
+    broke.seed_var("gold", Value::Int(30));
+    let refused = broke.apply_choice("shop", 0, &buy);
+    assert!(
+        matches!(refused, Err(WorldError::Refused(_))),
+        "a broke buyer's purchase is REFUSED, not a clamped commit; got {refused:?}"
+    );
+    assert_eq!(
+        broke.read_var("gold"),
+        30,
+        "anti-ghost: the purse is untouched"
+    );
+    assert_eq!(
+        broke.read_passage(),
+        Some(0),
+        "anti-ghost: nothing committed — the world never advanced"
+    );
+
+    // SOLVENT (gold 60): commits, purse falls by EXACTLY the price.
+    let mut solvent = WorldCell::deploy(&s, 22).expect("deploy");
+    solvent.seed_var("gold", Value::Int(60));
+    solvent
+        .apply_choice("shop", 0, &buy)
+        .expect("a solvent purchase commits");
+    assert_eq!(solvent.read_var("gold"), 10, "the purse fell by exactly 50");
+
+    // BOUNDARY (gold == 50): the last coin buys exactly, to zero.
+    let mut exact = WorldCell::deploy(&s, 23).expect("deploy");
+    exact.seed_var("gold", Value::Int(50));
+    exact
+        .apply_choice("shop", 0, &buy)
+        .expect("spending the last coin commits (new == 0 == old - price)");
+    assert_eq!(exact.read_var("gold"), 0, "the purse is empty, to the coin");
+}
+
+/// The UNTOUCHED-slot gate still bites, DRIVEN: `{gold>=100}` on a choice that does
+/// not touch gold refuses below the toll and admits at/above it (the correct lift is
+/// preserved by the fix).
+#[test]
+fn untouched_slot_gate_still_bites() {
+    let s = bazaar_mini();
+    let pay = nth_choice(&s, "shop", 1);
+
+    let mut poor = WorldCell::deploy(&s, 24).expect("deploy");
+    poor.seed_var("gold", Value::Int(80));
+    assert!(
+        matches!(
+            poor.apply_choice("shop", 1, &pay),
+            Err(WorldError::Refused(_))
+        ),
+        "below the toll, the counting-room door is refused"
+    );
+    assert_eq!(
+        poor.read_passage(),
+        Some(0),
+        "nothing committed — did not advance"
+    );
+
+    let mut rich = WorldCell::deploy(&s, 25).expect("deploy");
+    rich.seed_var("gold", Value::Int(120));
+    rich.apply_choice("shop", 1, &pay)
+        .expect("at/above the toll, the door opens");
+    assert_eq!(
+        rich.read_passage(),
+        Some(2),
+        "advanced into the counting room"
+    );
+}
+
+/// The re-entry fix, DRIVEN through the stock runtime: `road` seeds the purse on entry.
+/// Buy the charm (100 → 50), step back out to `road` (a RE-ENTRY), then back into the
+/// shop. The `~ gold = 100` seed must NOT re-run — the purse stays 50, not refilled.
+// BUG 2 (the passage re-entry re-run) is fixed in the EXTERNAL spween runtime
+// (~/dev/spween: `effects_executed: HashSet`). It lands in breadstuffs only when
+// emberian/spween is committed + pushed + the rev bumped in spween-dregg/Cargo.toml.
+// Ignored until that rev-bump so the currently-pinned spween (afb5b1f) stays green.
+#[test]
+#[ignore = "needs the spween runtime re-entry fix wired via a spween rev-bump (BUG 2)"]
+fn retreat_into_seed_room_does_not_reseed() {
+    let s = bazaar_mini();
+    let world = WorldCell::deploy(&s, 26).expect("deploy");
+    let mut driver = Driver::start(world, &s).expect("start");
+
+    // Genesis ran `road`'s entry seed once.
+    assert_eq!(driver.current_passage().as_deref(), Some("road"));
+    assert_eq!(driver.world().read_var("gold"), 100);
+
+    // road → shop, then BUY the charm (gold 100 → 50).
+    driver.advance(0).expect("step under the awning");
+    assert_eq!(driver.current_passage().as_deref(), Some("shop"));
+    driver.advance(0).expect("buy the charm");
+    assert_eq!(driver.world().read_var("gold"), 50, "paid exactly 50");
+
+    // shop → road: a RE-ENTRY of the seed room. The seed must not re-run.
+    driver.advance(2).expect("step back out to the road");
+    assert_eq!(driver.current_passage().as_deref(), Some("road"));
+    assert_eq!(
+        driver.world().read_var("gold"),
+        50,
+        "re-entering `road` must NOT re-seed the purse to 100"
+    );
+
+    // And back into the shop — still 50, not refilled.
+    driver.advance(0).expect("back under the awning");
+    assert_eq!(
+        driver.world().read_var("gold"),
+        50,
+        "no refill on the round trip"
+    );
+}

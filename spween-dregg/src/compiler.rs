@@ -29,6 +29,24 @@
 //! runtime/handler gate and no executor constraint is emitted for it. `Compare`
 //! against a string/float is likewise handler-only in v0. The numeric/bool gates
 //! (`courage >= 5`, `gold >= 100`, `inventory.key`) lower to real executor teeth.
+//!
+//! ## The clamp caveat (why a same-var decrement needs an exact-delta companion)
+//!
+//! The `pre ≥ T ⟺ post ≥ T+d` identity assumes the choice applies its delta
+//! *exactly*: `post = pre + d`. But the executor CLAMPS a `Modify` at zero
+//! (`post = max(0, pre + d)`, so `hp -= dmg` never underflows). When the choice
+//! DECREMENTS the gate var (`d < 0`) and the shifted threshold lands `≤ 0`, that
+//! clamp collapses the lifted gate to a vacuous `≥ 0`: `{ gold >= 50 } ~ gold -= 50`
+//! lifts to `FieldGte(gold, 0)`, ALWAYS TRUE — a broke buyer's purchase clamps the
+//! purse to `0 ≥ 0` and commits (goods delivered, purse silently zeroed). For
+//! exactly those clamp-defeated gates (see `lift_defeated_by_clamp`) we PIN the
+//! delta with a companion [`StateConstraint::FieldDelta`]`{ index, d }`: a clamped
+//! underflow lands `0 ≠ old + d` (u64 lane, wrapping) and is REFUSED, so the
+//! pre-gate bites exactly. When the shifted threshold stays `> 0` the comparison
+//! itself catches an underflow (`{ hp >= 21 } ~ hp -= 20` ⇒ `FieldGte(hp, 1)`), so
+//! NO companion is emitted — a case whose delta is overridden at runtime (dice
+//! combat reuses that same case with a *rolled* hp delta) is not over-pinned. A
+//! gate on a var the choice does not touch (`d = 0`) is unchanged.
 
 use std::collections::BTreeMap;
 
@@ -324,8 +342,8 @@ fn lower_expr(
             l && r
         }
         ConditionExpr::Atom(clause) => match lower_clause(clause, effects, var_slots, has_slots) {
-            Some(sc) => {
-                out.push(sc);
+            Some(scs) => {
+                out.extend(scs);
                 true
             }
             None => false,
@@ -348,13 +366,16 @@ fn lower_expr(
     }
 }
 
-/// A top-level clause → one [`StateConstraint`] (or `None` if un-lowerable).
+/// A top-level clause → the [`StateConstraint`]s it lowers to (or `None` if
+/// un-lowerable). Usually one tooth; a gate on a var the same choice DECREMENTS
+/// lowers to two — the lifted comparison PLUS an exact-delta companion (see
+/// [`compare_teeth`]) so the executor's clamp-at-zero cannot defeat the gate.
 fn lower_clause(
     clause: &ConditionClause,
     effects: &[Effect],
     var_slots: &BTreeMap<String, usize>,
     has_slots: &BTreeMap<(String, String), usize>,
-) -> Option<StateConstraint> {
+) -> Option<Vec<StateConstraint>> {
     match clause {
         ConditionClause::Compare(c) => {
             let &slot = var_slots.get(c.var.as_str())?;
@@ -363,24 +384,84 @@ fn lower_clause(
                 Delta::Add(n) => n,
                 Delta::Overwritten => return None,
             };
-            compare_constraint(slot as u8, c.op, base, d)
+            compare_teeth(slot as u8, c.op, base, d)
         }
         ConditionClause::Has(h) => {
             let &slot = has_slots.get(&(h.category.to_string(), h.key.to_string()))?;
             // Membership: the slot must read 1 in the post-state (choices do not
             // mutate membership slots in v0).
-            Some(StateConstraint::FieldEquals {
+            Some(vec![StateConstraint::FieldEquals {
                 index: slot as u8,
                 value: field_from_u64(1),
-            })
+            }])
         }
         // A negated atom lowers via a single-variant AnyOf wrapping a Simple::Not.
         ConditionClause::Not(inner) => {
             let s = simple_of_clause(inner, effects, var_slots, has_slots)?;
-            Some(StateConstraint::AnyOf {
+            Some(vec![StateConstraint::AnyOf {
                 variants: vec![SimpleStateConstraint::Not(Box::new(s))],
-            })
+            }])
         }
+    }
+}
+
+/// The teeth a numeric `var op base` (pre-state) gate lowers to, given the choice's
+/// net delta `d` on that var. The lifted post-comparison (see [`compare_constraint`]),
+/// PLUS — only when the executor's clamp-at-zero would DEFEAT that lift (see
+/// [`lift_defeated_by_clamp`]) — a [`StateConstraint::FieldDelta`]`{ index, d }`
+/// companion that PINS the delta.
+///
+/// The lift `pre op base ⟺ post op (base+d)` assumes `post = pre + d` exactly, but
+/// the executor clamps a `Modify` at zero (`post = max(0, pre+d)`). When the shifted
+/// threshold lands `≤ 0`, the clamp makes the lifted bound vacuous — e.g.
+/// `{gold>=50} ~ gold-=50` shifts to `FieldGte(gold, 0)`, always true, so a broke
+/// buyer's clamped-to-zero purse still passes. `FieldDelta{index, d}` requires
+/// `post == old + d` in the wrapping u64 lane; a clamped underflow lands `0 ≠ old + d`
+/// and is REFUSED, so the two teeth together are equivalent to the pre-gate exactly.
+/// When the shifted threshold stays `> 0` the lift is already clamp-safe (a blow that
+/// would underflow lands below the threshold and is caught by the comparison itself)
+/// — no companion, so a case whose delta is overridden at runtime (e.g. dice combat
+/// reusing an `{hp>=21} ~ hp-=20` case with a *rolled* hp delta) is not over-pinned.
+fn compare_teeth(slot: u8, op: CompareOp, base: i64, d: i64) -> Option<Vec<StateConstraint>> {
+    let cmp = compare_constraint(slot, op, base, d)?;
+    let mut teeth = vec![cmp];
+    if lift_defeated_by_clamp(op, base, d) {
+        teeth.push(StateConstraint::FieldDelta {
+            index: slot,
+            // `d as u64` is the two's-complement additive inverse: `old + (2^64−|d|)
+            // == old − |d|` mod 2^64 under the executor's wrapping `field_add`.
+            delta: field_from_u64(d as u64),
+        });
+    }
+    Some(teeth)
+}
+
+/// Whether the executor's clamp-at-zero (`post = max(0, pre+d)`) defeats the lifted
+/// post-comparison of `var op base` under net delta `d`, so the gate needs an
+/// exact-delta companion (see [`compare_teeth`]).
+///
+/// The clamp diverges from the linear `post = pre + d` ONLY when `d < 0` (a
+/// decrement can drive `pre + d` below zero). For `d ≥ 0` the lift is always exact.
+/// For `d < 0` the lifted bound is defeated exactly when its shifted threshold falls
+/// where `max(0, ·)` erases information (the lower-bound ops) or the clamp shrinks
+/// `post` into the admitted region (the upper-bound ops):
+fn lift_defeated_by_clamp(op: CompareOp, base: i64, d: i64) -> bool {
+    if d >= 0 {
+        return false;
+    }
+    match op {
+        // `FieldGte{post ≥ max(0, base+d)}`: vacuous ⇔ threshold `≤ 0`.
+        CompareOp::Ge => base + d <= 0,
+        // `FieldGte{post ≥ max(0, base+1+d)}`: vacuous ⇔ threshold `≤ 0`.
+        CompareOp::Gt => base + 1 + d <= 0,
+        // `FieldEquals{post == max(0, base+d)}`: clamp region collapses to 0 ⇔ `≤ 0`.
+        CompareOp::Eq => base + d <= 0,
+        // Upper-bound gates on a decremented var: the clamp shrinks `post`, which can
+        // over-admit a value the pre-gate would reject. Pin the delta (fail-closed);
+        // no consumer gates a decremented var with `<=`/`<`.
+        CompareOp::Le | CompareOp::Lt => true,
+        // `!=` is not lowered (`compare_constraint` returns `None`).
+        CompareOp::Ne => false,
     }
 }
 
@@ -414,6 +495,15 @@ fn simple_of_clause(
                 Delta::Add(n) => n,
                 Delta::Overwritten => return None,
             };
+            // When the executor's clamp would defeat the lifted comparison (see
+            // `lift_defeated_by_clamp`) the gate needs an exact-delta companion — but
+            // a disjunct (`AnyOf` variant) / negation cannot carry that companion, so
+            // rather than emit a vacuous simple constraint we leave the whole clause
+            // to the runtime/handler gate (clears `fully_gated`). No consumer gates
+            // such a var behind an `Or`/`Not`; the clamp-safe shapes are unaffected.
+            if lift_defeated_by_clamp(c.op, base, d) {
+                return None;
+            }
             simple_compare(slot as u8, c.op, base, d)
         }
         ConditionClause::Has(h) => {
