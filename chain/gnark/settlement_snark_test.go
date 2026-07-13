@@ -185,7 +185,12 @@ func TestSettlementGroth16EndToEnd(t *testing.T) {
 	for i := 2 * nComm; i < 2*nComm+2; i++ {
 		fixture.CommitmentPok = append(fixture.CommitmentPok, word(rest, i))
 	}
-	for _, v := range claim {
+	// Only the FIRST NumPublicInputs lanes are the Groth16 public inputs (the
+	// Publics struct — the arity of the generated verifier's `uint256[25]`).
+	// The claim channel's tail ApexVkLanes lanes are the re-exposed apex VK
+	// core: baked VK constants, NOT public inputs — they must NOT ride in the
+	// fixture's `inputs` vector (the Foundry test + bridge both pin it to 25).
+	for _, v := range claim[:NumPublicInputs] {
 		fixture.Inputs = append(fixture.Inputs, fmt.Sprintf("%d", v))
 	}
 	copy(fixture.GenesisRoot[:], claim[0:8])
