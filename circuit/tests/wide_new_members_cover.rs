@@ -470,11 +470,22 @@ fn wide_transfer_membership_leg_mints_through_refuse_weld() {
         desc.public_input_count,
         "PIs mint to the descriptor count"
     );
-    // raw_col_tail (trace_width − producer row) = 45 refuse-weld cols + 2 membership teeth = 47.
-    let raw_col_tail = desc.trace_width - trace[0].len();
+    // The RETURNED trace row already carries the 2 spliced membership teeth (the dispatcher's
+    // transfer arm pushed them onto every row); the ONLY columns still past it are the 45
+    // refuse-weld aux cols that `fill_refuse_aux` populates at prove time. So `trace_width −
+    // returned_row = 45`. The dispatcher's INTERNAL `raw_col_tail` (teeth NOT yet in the producer
+    // row) is `45 + 2 = 47`, and the fixed exclusion computes `col_tail = 47 − REFUSE_WELD_WIDEN
+    // (45) = 2 = pi_tail`. With the stale 48 this underflowed (47 < 48) and the mint refused.
+    let post_teeth_tail = desc.trace_width - trace[0].len();
     assert_eq!(
-        raw_col_tail, 47,
-        "45-column refuse-weld footprint + 2 membership teeth past the wide producer's shape"
+        post_teeth_tail, 45,
+        "past the teeth-carrying producer row sit exactly the 45 refuse-weld aux columns"
+    );
+    let internal_raw_col_tail = post_teeth_tail + 2; // pre-teeth raw_col_tail the exclusion sees
+    assert_eq!(
+        internal_raw_col_tail - 45,
+        2,
+        "the fixed exclusion pairs the 2 teeth 1:1 with the 2 claim PIs (col_tail == pi_tail)"
     );
     // The 2 spliced teeth carry the honest pair (the exclusion's 1:1 pairing held).
     assert!(
