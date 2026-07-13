@@ -1693,10 +1693,10 @@ def commitmentsRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
   blockBase + (if i = 0 then B_COMMITMENTS_ROOT else 74 + (i : Nat)) -- lanes 1..7 → 75..81 (REVOKED-ROOT +1)
 
 /-- The cells-root 8-felt column at lane `i` (lane 0 = limb 0 = accounts root; the seven completion
-limbs 82..88 for lanes 1..7, REVOKED-ROOT +1 shift from 81..87). These are the SAME columns as
-`revokedRootGroupCol`'s completion group: the two families never both constrain the group in one turn
-(a createCell/factory/spawn turn carries the default empty `revoked_root`, and no descriptor emits a
-live revoked map-op gate yet — `revoked_root` is a committed-limb-only faithful root). -/
+limbs 169..175 for lanes 1..7 — RELOCATED off revoked's 82..88 by the revoked-root flag-day so the
+two groups are now DISJOINT, not shared). The producer leaves 169..175 zero (circuit-only
+completion); `revoked_root` is the committed-limb-only faithful root (hole #139), sourced from
+`V9RotationContext.revoked_root`. -/
 def cellsRootGroupCol (blockBase : Nat) (i : Fin 8) : Nat :=
   blockBase + (if i = 0 then 0 else 168 + (i : Nat)) -- lanes 1..7 → 169..175 (relocated off revoked 82..88)
 
