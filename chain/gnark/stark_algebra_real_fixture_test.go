@@ -656,23 +656,24 @@ func allocSettlementCircuit(t *testing.T, fx *shrinkRealFixture, ex *shrinkStark
 	t.Helper()
 	inner := allocApexShrinkRealCircuit(fx)
 	return &SettlementCircuit{
-		script:             inner.script,
-		cfg:                inner.cfg,
-		r:                  inner.r,
-		rollInAfterRound:   inner.rollInAfterRound,
-		shapes:             ex.shapes,
-		loc:                ex.loc,
-		sym:                sym,
-		inputRounds:        shrinkInputRoundsFromFixture(t, fx, ex.shapes),
-		claimInstance:      fx.ClaimInstance,
-		vkPreprocessedRoot: shrinkPreprocessedRoot(t, fx, ex.loc),
-		PrefixObs:          inner.PrefixObs,
-		PrefixDigests:      inner.PrefixDigests,
-		PrefixSamples:      inner.PrefixSamples,
-		CommitRoots:        inner.CommitRoots,
-		FinalPoly:          inner.FinalPoly,
-		Queries:            inner.Queries,
-		InputOpenings:      allocShrinkInputOpenings(fx),
+		script:                 inner.script,
+		cfg:                    inner.cfg,
+		r:                      inner.r,
+		rollInAfterRound:       inner.rollInAfterRound,
+		shapes:                 ex.shapes,
+		loc:                    ex.loc,
+		sym:                    sym,
+		inputRounds:            shrinkInputRoundsFromFixture(t, fx, ex.shapes),
+		claimInstance:          fx.ClaimInstance,
+		vkPreprocessedRoot:     shrinkPreprocessedRoot(t, fx, ex.loc),
+		apexPreprocessedCommit: apexPreprocessedCommitConstants(fx),
+		PrefixObs:              inner.PrefixObs,
+		PrefixDigests:          inner.PrefixDigests,
+		PrefixSamples:          inner.PrefixSamples,
+		CommitRoots:            inner.CommitRoots,
+		FinalPoly:              inner.FinalPoly,
+		Queries:                inner.Queries,
+		InputOpenings:          allocShrinkInputOpenings(fx),
 	}
 }
 
@@ -683,27 +684,39 @@ func assignSettlementCircuit(t *testing.T, fx *shrinkRealFixture, ex *shrinkStar
 	}
 	inner := assignApexShrinkRealCircuit(t, fx)
 	c := &SettlementCircuit{
-		script:             inner.script,
-		cfg:                inner.cfg,
-		r:                  inner.r,
-		rollInAfterRound:   inner.rollInAfterRound,
-		shapes:             ex.shapes,
-		loc:                ex.loc,
-		sym:                sym,
-		inputRounds:        shrinkInputRoundsFromFixture(t, fx, ex.shapes),
-		claimInstance:      fx.ClaimInstance,
-		vkPreprocessedRoot: shrinkPreprocessedRoot(t, fx, ex.loc),
-		PrefixObs:          inner.PrefixObs,
-		PrefixDigests:      inner.PrefixDigests,
-		PrefixSamples:      inner.PrefixSamples,
-		CommitRoots:        inner.CommitRoots,
-		FinalPoly:          inner.FinalPoly,
-		PowWitness:         inner.PowWitness,
-		Queries:            inner.Queries,
-		InputOpenings:      assignShrinkInputOpenings(t, fx),
+		script:                 inner.script,
+		cfg:                    inner.cfg,
+		r:                      inner.r,
+		rollInAfterRound:       inner.rollInAfterRound,
+		shapes:                 ex.shapes,
+		loc:                    ex.loc,
+		sym:                    sym,
+		inputRounds:            shrinkInputRoundsFromFixture(t, fx, ex.shapes),
+		claimInstance:          fx.ClaimInstance,
+		vkPreprocessedRoot:     shrinkPreprocessedRoot(t, fx, ex.loc),
+		apexPreprocessedCommit: apexPreprocessedCommitConstants(fx),
+		PrefixObs:              inner.PrefixObs,
+		PrefixDigests:          inner.PrefixDigests,
+		PrefixSamples:          inner.PrefixSamples,
+		CommitRoots:            inner.CommitRoots,
+		FinalPoly:              inner.FinalPoly,
+		PowWitness:             inner.PowWitness,
+		Queries:                inner.Queries,
+		InputOpenings:          assignShrinkInputOpenings(t, fx),
 	}
 	assignSettlementPublics(c, fx.TablePublics[fx.ClaimInstance])
 	return c
+}
+
+// apexPreprocessedCommitConstants lifts the fixture's apex VK-core lanes (the
+// deployed dregg apex's preprocessed commitment — loader-verified to equal
+// the claim channel's tail) to the baked circuit constants of the apex-VK pin.
+func apexPreprocessedCommitConstants(fx *shrinkRealFixture) []*big.Int {
+	out := make([]*big.Int, len(fx.ApexPreprocessedCommit))
+	for i, v := range fx.ApexPreprocessedCommit {
+		out[i] = new(big.Int).SetUint64(uint64(v))
+	}
+	return out
 }
 
 // shrinkDigestWordAt returns the flat digest-stream word at `off` (the same
@@ -875,6 +888,68 @@ func TestSettlementCircuitBindsOpenings(t *testing.T) {
 		ecc.BN254.ScalarField()); err == nil {
 		t.Fatal("assembled circuit ACCEPTED a tampered in-transcript opened value")
 	}
+}
+
+// APEX-VK-PIN CANARY (tooth 2 — THE FORGERY CLOSURE): a same-shape malicious
+// apex is, from this circuit's viewpoint, a shrink whose re-exposed apex
+// VK-core lanes differ from the DEPLOYED dregg apex's baked constants. Both
+// directions must reject:
+//
+//  1. witness lanes ≠ baked constant (the attacker's exposed VK core differs
+//     from the deployed pin) — the pin fires; note the tampered lane is also
+//     transcript-absorbed, so the FS pins fire too (defense in depth);
+//  2. baked constant ≠ honest witness (ISOLATES the pin: every other
+//     constraint — transcript, algebra, FRI, open_input, claim binding — is
+//     satisfied by the honest fixture, so the ONLY failing assert is the
+//     apex-VK pin; this proves the pin constraint exists and binds).
+//
+// The honest fixture (the REAL dregg apex) still ACCEPTS — that is
+// TestSettlementCircuitAcceptsRealProofWithCorrectStatement, which runs with
+// the pin set.
+func TestSettlementCircuitPinsApexPreprocessedCommitment(t *testing.T) {
+	fx := loadShrinkRealFixture(t)
+	ex := extractShrinkStark(t, fx)
+	sym := loadShrinkSymbolicConstraints(t)
+	field := ecc.BN254.ScalarField()
+	claimObsOff := ex.loc.pubObsOffOf(fx.ClaimInstance)
+
+	for lane := 0; lane < ApexVkLanes; lane += ApexVkLanes - 1 { // first and last lane
+		t.Run(fmt.Sprintf("witness-vk-lane-%d-differs-from-deployed-constant", lane), func(t *testing.T) {
+			w := assignSettlementCircuit(t, fx, ex, sym)
+			honest := fx.ApexPreprocessedCommit[lane]
+			w.PrefixObs[claimObsOff+NumPublicInputs+lane] = bbAddRef(honest, 1)
+			if err := test.IsSolved(allocSettlementCircuit(t, fx, ex, sym), w, field); err == nil {
+				t.Fatal("circuit ACCEPTED an apex VK-core lane that differs from the deployed " +
+					"apex's preprocessed commitment (the same-shape-apex forgery is OPEN)")
+			}
+		})
+	}
+
+	t.Run("baked-constant-differs-isolates-the-pin", func(t *testing.T) {
+		c := allocSettlementCircuit(t, fx, ex, sym)
+		// Doctor the BAKED constant: simulate this circuit having been pinned
+		// to a different (deployed) apex than the one the proof verifies. The
+		// honest witness satisfies EVERYTHING else, so a reject here is
+		// attributable to the apex-VK pin alone.
+		c.apexPreprocessedCommit[0] = new(big.Int).Add(c.apexPreprocessedCommit[0], big.NewInt(1))
+		if err := test.IsSolved(c, assignSettlementCircuit(t, fx, ex, sym), field); err == nil {
+			t.Fatal("circuit with a different deployed-apex pin ACCEPTED the honest witness — " +
+				"the apex-VK pin assert is not binding")
+		}
+	})
+
+	t.Run("unpinned-control-accepts", func(t *testing.T) {
+		// Control: with the apex pin REMOVED (and everything else identical),
+		// the honest witness still accepts — so the rejects above are the
+		// pin's teeth, not shape drift.
+		c := allocSettlementCircuit(t, fx, ex, sym)
+		c.apexPreprocessedCommit = nil
+		w := assignSettlementCircuit(t, fx, ex, sym)
+		w.apexPreprocessedCommit = nil
+		if err := test.IsSolved(c, w, field); err != nil {
+			t.Fatalf("unpinned control rejected the honest witness (shape drift?): %v", err)
+		}
+	})
 }
 
 // VK-pin canary: a witness carrying a DIFFERENT preprocessed (VK-core)

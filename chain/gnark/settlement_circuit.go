@@ -37,12 +37,24 @@
 //
 // VK PIN (tooth 1, the shrink half): `vkPreprocessedRoot`, when set, bakes
 // the shrink proof's preprocessed (op-list) commitment digest as a circuit
-// CONSTANT — the shrink circuit's VK core. NAMED RESIDUAL (honest scope): the
-// APEX's own VK identity (its preprocessed commitment) rides as shrink-circuit
-// public inputs in the Public table and is NOT yet independently pinned here;
-// chain-level apex-VK anchoring is the same fingerprint discipline the
-// BabyBear tree uses (RecursionVk). See the audit notes in
-// settlement_snark_test.go.
+// CONSTANT — the shrink circuit's VK core.
+//
+// APEX-VK PIN (tooth 2, the apex half — closes the same-shape-apex forgery):
+// the APEX's own VK identity (its preprocessed commitment, the RecursionVk-
+// fingerprinted value) is a PROVER-SUPPLIED public input of the shrink
+// circuit, verified only against itself — without this tooth a same-shape
+// malicious apex with doctored preprocessed columns could steer its
+// expose_claim to ANY (genesisRoot, finalRoot) and settle a FALSE root. The
+// Rust side (apex_shrink_gnark_export.rs shrink_apex_to_outer_exposed) now
+// (a) pins that commitment IN the shrink circuit (`pin_preprocessed_commit`:
+// baked constants connected to the apex-verification's inputs) and (b)
+// re-exposes the same 8 constant lanes through the shrink's expose_claim
+// table, after the 25 claim lanes. `apexPreprocessedCommit`, when set, bakes
+// the DEPLOYED dregg apex's commitment as circuit constants and asserts the
+// exposed lanes 25..33 equal it — a shrink proof minted over any OTHER apex
+// circuit cannot satisfy this circuit (its exposed VK-core lanes differ, and
+// they are transcript-absorbed + ExposeClaimAir-bound, so they cannot be
+// swapped without re-proving).
 package friverifier
 
 import (
@@ -113,6 +125,11 @@ type SettlementCircuit struct {
 	// vkPreprocessedRoot, when non-nil, pins the shrink proof's preprocessed
 	// (op-list) commitment digest as a circuit constant — the shrink-VK core.
 	vkPreprocessedRoot *big.Int
+	// apexPreprocessedCommit, when non-nil, pins the APEX's preprocessed
+	// commitment (the deployed dregg apex's VK-identity core, ApexVkLanes
+	// BabyBear lanes) as circuit constants against the claim channel's
+	// re-exposed VK-core lanes — the apex-VK pin (tooth 2).
+	apexPreprocessedCommit []*big.Int
 
 	PrefixObs     []frontend.Variable
 	PrefixDigests []frontend.Variable
@@ -160,13 +177,14 @@ func (c *SettlementCircuit) Define(api frontend.API) error {
 		}
 	}
 
-	// ---- THE SETTLEMENT BINDING: the 25 public lanes ARE the shrink proof's
+	// ---- THE SETTLEMENT BINDING: the first 25 lanes of the shrink proof's
 	// expose_claim public values (the transcript-absorbed, AIR-constrained
-	// claim channel), in the pinned order.
+	// claim channel) ARE the 25 public inputs, in the pinned order. The
+	// channel's tail ApexVkLanes lanes are the re-exposed apex VK core.
 	claim := c.PrefixObs[c.loc.pubObsOffOf(c.claimInstance) : c.loc.pubObsOffOf(c.claimInstance)+
 		c.loc.pubLens[c.claimInstance]]
-	if len(claim) != NumPublicInputs {
-		panic("SettlementCircuit: claim channel is not the pinned 25-lane statement")
+	if len(claim) != NumPublicInputs+ApexVkLanes {
+		panic("SettlementCircuit: claim channel is not the pinned 25-lane statement + 8-lane apex VK core")
 	}
 	k := 0
 	for i := 0; i < DigestWidth; i++ {
@@ -184,10 +202,25 @@ func (c *SettlementCircuit) Define(api frontend.API) error {
 		k++
 	}
 
-	// ---- VK pin (shrink half): the preprocessed (op-list) commitment digest
-	// is a constant of the circuit.
+	// ---- VK pin (tooth 1, shrink half): the preprocessed (op-list)
+	// commitment digest is a constant of the circuit.
 	if c.vkPreprocessedRoot != nil {
 		api.AssertIsEqual(c.PrefixDigests[c.loc.preDigOff], c.vkPreprocessedRoot)
+	}
+
+	// ---- APEX-VK pin (tooth 2, apex half): the re-exposed apex preprocessed
+	// commitment lanes equal the DEPLOYED dregg apex's, as baked constants.
+	// These lanes are the same variables the transcript absorbed and the
+	// ExposeClaimAir bus-binds to the constants the in-circuit apex
+	// verification was pinned to — a same-shape malicious apex (different
+	// preprocessed commitment) fails HERE even if everything else self-verifies.
+	if c.apexPreprocessedCommit != nil {
+		if len(c.apexPreprocessedCommit) != ApexVkLanes {
+			panic("SettlementCircuit: apexPreprocessedCommit must carry exactly ApexVkLanes lanes")
+		}
+		for i, want := range c.apexPreprocessedCommit {
+			api.AssertIsEqual(claim[NumPublicInputs+i], want)
+		}
 	}
 
 	// ---- STARK-algebra layer over the transcript-bound opened values.

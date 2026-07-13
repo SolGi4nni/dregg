@@ -123,6 +123,16 @@ fn outer_domain(pcs: &OuterPcsT, degree: usize) -> OuterDomain {
 // THE EXPOSED-CLAIM SHRINK (the settlement-statement binding seam)
 // ============================================================================
 
+/// The pinned settlement-statement lane count (genesis_root8 ++ final_root8 ++
+/// num_turns ++ chain_digest8) — `chain/gnark`'s `NumPublicInputs`.
+pub const SETTLEMENT_CLAIM_LANES: usize = 25;
+
+/// The apex VK-core lane count: the apex's preprocessed commitment is one
+/// BabyBear Poseidon2-W16 Merkle root (cap height 0) = 8 BabyBear felts.
+/// These ride as lanes `25..33` of the shrink proof's `expose_claim` table
+/// (see [`shrink_apex_to_outer_exposed`]).
+pub const APEX_VK_LANES: usize = 8;
+
 /// Shrink a REAL apex into a BN254-native-hash proof **with the apex's exposed
 /// 25-lane chain claim RE-EXPOSED through the shrink proof's OWN
 /// `expose_claim` table** — the seam that makes the settlement statement
@@ -164,6 +174,33 @@ fn outer_domain(pcs: &OuterPcsT, degree: usize) -> OuterDomain {
 /// verified apex exposes claim X". The gnark wrap equates X with its 25
 /// Groth16 public inputs (see `chain/gnark/settlement_circuit.go`).
 ///
+/// ## THE APEX-VK PIN (which apex? — closing the same-shape-forgery seam)
+///
+/// The apex's preprocessed commitment (its VK-identity core — the exact value
+/// [`recursion_vk_fingerprint`](crate::plonky3_recursion_impl::recursive::recursion_vk_fingerprint)
+/// hashes and the BabyBear IVC pins at every fold) enters the verifier circuit
+/// as PROVER-SUPPLIED public inputs, otherwise verified only against itself: a
+/// same-shape malicious apex with doctored preprocessed columns could steer
+/// its expose_claim to ANY (genesis, final) pair and still shrink+settle. Two
+/// welds close it here:
+///
+/// 1. **In-circuit pin (lever (a)).** The apex is folded via
+///    [`RecursionOutput::into_recursion_input_pinned`]: the fork's
+///    `pin_preprocessed_commit` bakes the apex's preprocessed commitment as
+///    circuit CONSTANTS and `connect`s them to the very public-input targets
+///    the in-circuit apex verification consumes — a different-preprocessed
+///    apex makes THIS shrink circuit UNSAT (and a different circuit changes
+///    the shrink's own preprocessed root, which the gnark side already pins).
+/// 2. **Exposure ([`APEX_VK_LANES`] lanes).** The SAME constants are
+///    re-exposed through the shrink's `expose_claim` table, after the 25-lane
+///    chain claim (lanes `25..33`), so the gnark settlement circuit can
+///    assert them equal to the DEPLOYED dregg apex's commitment as a baked
+///    Groth16-VK constant (`chain/gnark/settlement_circuit.go`
+///    `apexPreprocessedCommit`). Constant-cell values are enforced by the
+///    Const table's preprocessed columns, so the exposed lanes are
+///    bus-bound to the same cells the pin constrained — the lanes ARE the
+///    apex VK the in-circuit verification ran against.
+///
 /// Same split-config five steps as
 /// [`crate::apex_shrink::shrink_recursion_input_to_outer_with_packing`], at
 /// [`crate::apex_shrink::default_shrink_packing`].
@@ -185,10 +222,32 @@ pub fn shrink_apex_to_outer_exposed(
         return Err("apex expose_claim table carries no public values".into());
     }
 
-    let input = apex.into_recursion_input::<BatchOnly>();
+    // The apex's preprocessed commitment — the VK-identity core to pin+expose
+    // (see the module doc: THE APEX-VK PIN).
+    let apex_pre_commit = apex
+        .running_preprocessed_commit()
+        .ok_or("apex proof carries no preprocessed commitment (no VK core to pin)")?;
+    let apex_vk_felts: Vec<BabyBear> = apex_pre_commit
+        .roots()
+        .iter()
+        .flat_map(|r| r.iter().copied())
+        .collect();
+    if apex_vk_felts.len() != APEX_VK_LANES {
+        return Err(format!(
+            "apex preprocessed commitment has {} felts, the pinned VK-core shape is {} \
+             (cap height drifted — refusing to expose an unexpected shape)",
+            apex_vk_felts.len(),
+            APEX_VK_LANES
+        ));
+    }
+    let apex_vk_vals: Vec<EF> = apex_vk_felts.iter().map(|&f| EF::from(f)).collect();
+
+    // Lever (a): fold the apex PINNED — the verifier circuit constrains the
+    // apex's preprocessed-commitment public inputs to equal baked constants.
+    let input = apex.into_recursion_input_pinned::<BatchOnly>(apex_pre_commit.clone());
     let backend = create_recursion_backend();
 
-    // (1) The apex-verifier circuit + the claim re-exposure hook.
+    // (1) The apex-verifier circuit + the claim & apex-VK re-exposure hook.
     let expose = move |cb: &mut p3_circuit::CircuitBuilder<EF>,
                        apt: &[Vec<p3_recursion::Target>]| {
         let claim = &apt[claim_idx];
@@ -197,7 +256,18 @@ pub fn shrink_apex_to_outer_exposed(
             claim_len,
             "apex claim target count drifted from the proof's public values"
         );
-        cb.expose_as_public_output(claim);
+        // ONE expose_claim table: the 25 chain-claim lanes, then the 8
+        // apex-VK-core lanes. `alloc_const` memoizes by value, so these are
+        // the SAME const cells `pin_preprocessed_commit` connected to the
+        // apex-verification's preprocessed-commitment inputs.
+        let mut lanes = claim.clone();
+        for &v in &apex_vk_vals {
+            lanes.push(cb.alloc_const(
+                v,
+                "apex VK-core lane (deployed-apex preprocessed commitment)",
+            ));
+        }
+        cb.expose_as_public_output(&lanes);
     };
     let (circuit, verifier_result) = build_next_layer_circuit_with_expose::<
         DreggRecursionConfig,
@@ -276,16 +346,19 @@ pub fn shrink_apex_to_outer_exposed(
         .map_err(|e| format!("outer-config exposed-shrink proving failed: {e}"))?;
 
     // Self-check: the shrink proof's OWN expose_claim public values equal the
-    // apex's claim, lane for lane (the re-exposure is faithful).
+    // apex's claim FOLLOWED BY the apex's preprocessed commitment (the VK-core
+    // lanes), lane for lane (the re-exposure is faithful).
     let shrunk_claim = proof
         .non_primitives
         .iter()
         .find(|e| e.op_type.as_str() == "expose_claim")
         .ok_or("exposed shrink proof carries no expose_claim table")?;
-    if shrunk_claim.public_values != apex.0.non_primitives[claim_pos].public_values {
+    let mut expected_lanes = apex.0.non_primitives[claim_pos].public_values.clone();
+    expected_lanes.extend(apex_vk_felts.iter().copied());
+    if shrunk_claim.public_values != expected_lanes {
         return Err(format!(
-            "re-exposed claim {:?} != apex claim {:?}",
-            shrunk_claim.public_values, apex.0.non_primitives[claim_pos].public_values
+            "re-exposed lanes {:?} != apex claim ++ apex VK-core {:?}",
+            shrunk_claim.public_values, expected_lanes
         ));
     }
 
@@ -402,14 +475,23 @@ pub struct RealShrinkFriFixture {
     pub degree_bits: Vec<usize>,
     /// Per-instance table PUBLIC VALUES (canonical BabyBear lanes), in
     /// instance order — primitive tables carry none; the `expose_claim`
-    /// instance carries the re-exposed 25-lane chain claim. These are the
+    /// instance carries the re-exposed 25-lane chain claim FOLLOWED BY the
+    /// 8 apex VK-core lanes (the apex's preprocessed commitment — see
+    /// [`shrink_apex_to_outer_exposed`], THE APEX-VK PIN). These are the
     /// exact values `verify_batch` observes into the transcript right after
     /// the main commitment, and the `ExposeClaimAir` constraints bind them to
-    /// the committed trace (see [`shrink_apex_to_outer_exposed`]).
+    /// the committed trace.
     pub table_publics: Vec<Vec<u32>>,
     /// Instance index of the shrink proof's own `expose_claim` table (the
     /// settlement claim channel).
     pub claim_instance: usize,
+    /// The apex's preprocessed commitment (the deployed dregg apex's
+    /// VK-identity core, 8 canonical BabyBear lanes) — a labeled copy of
+    /// `table_publics[claim_instance][25..33]`, the value
+    /// `chain/gnark/settlement_circuit.go` bakes as `apexPreprocessedCommit`.
+    /// Fail-closed cross-checked against the claim-channel tail by the gnark
+    /// loader.
+    pub apex_preprocessed_commit: Vec<u32>,
     pub fri: FixtureFriShape,
     /// The pre-FRI transcript, `initialise_challenger()` through the FRI
     /// batch-combination alpha sample (inclusive).
@@ -660,9 +742,19 @@ pub fn export_real_shrink_fri_fixture(
                 "shrink proof carries no expose_claim table — the settlement claim is unbound \
                  (mint with shrink_apex_to_outer_exposed, not the plain shrink)",
             )?;
-    if publics[claim_instance].is_empty() {
-        return Err("shrink expose_claim table carries no public values".into());
+    if publics[claim_instance].len() != SETTLEMENT_CLAIM_LANES + APEX_VK_LANES {
+        return Err(format!(
+            "shrink expose_claim table carries {} lanes, want {} claim + {} apex-VK \
+             (mint with shrink_apex_to_outer_exposed, which pins+exposes the apex VK core)",
+            publics[claim_instance].len(),
+            SETTLEMENT_CLAIM_LANES,
+            APEX_VK_LANES
+        ));
     }
+    let apex_preprocessed_commit: Vec<u32> = publics[claim_instance][SETTLEMENT_CLAIM_LANES..]
+        .iter()
+        .map(bb_u32)
+        .collect();
 
     // Lookup contexts + preprocessed binding, rebuilt exactly as the verifier
     // rebuilds them (public fork API).
@@ -1124,13 +1216,15 @@ pub fn export_real_shrink_fri_fixture(
     }
 
     Ok(RealShrinkFriFixture {
-        version: 3,
+        version: 4,
         description: "REAL dregg apex shrink proof (BatchStarkProof<DreggOuterConfig> over a real \
-                      ir2_leaf_wrap apex) WITH the 25-lane chain claim re-exposed through the \
-                      shrink proof's own expose_claim table (shrink_apex_to_outer_exposed): \
-                      pre-FRI transcript events + per-instance table public values + FRI \
-                      commit-phase data + per-query INPUT-BATCH openings (open_input) for the \
-                      chain/gnark native verifier."
+                      ir2_leaf_wrap apex) WITH the 25-lane chain claim AND the 8-lane apex \
+                      VK-core (the apex's preprocessed commitment, in-circuit pinned via \
+                      pin_preprocessed_commit) re-exposed through the shrink proof's own \
+                      expose_claim table (shrink_apex_to_outer_exposed): pre-FRI transcript \
+                      events + per-instance table public values + FRI commit-phase data + \
+                      per-query INPUT-BATCH openings (open_input) for the chain/gnark native \
+                      verifier."
             .into(),
         degree_bits: p.degree_bits.clone(),
         table_publics: publics
@@ -1138,6 +1232,7 @@ pub fn export_real_shrink_fri_fixture(
             .map(|pv| pv.iter().map(bb_u32).collect())
             .collect(),
         claim_instance,
+        apex_preprocessed_commit,
         fri: FixtureFriShape {
             log_blowup: OUTER_FRI_LOG_BLOWUP,
             log_final_poly_len: 0,
