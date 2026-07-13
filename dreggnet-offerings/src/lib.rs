@@ -35,6 +35,12 @@
 //! surface. [`mock::MockFrontend`] is the reference renderer the tests drive.
 
 pub mod character;
+/// THE DESCENT — the flagship's core: a daily, provably-fair, permadeath procgen roguelite as
+/// an Offering. Today's dungeon is one drand-beacon-seeded world everyone plays; you can die
+/// (real committed defeat + hardcore character death); a persistent character carries in + earns;
+/// a no-cheat leaderboard ranks a verified run and refuses a forged one. See
+/// [`daily_descent::DailyDescentOffering`].
+pub mod daily_descent;
 pub mod dungeon;
 pub mod host;
 pub mod mock;
@@ -44,6 +50,13 @@ pub mod mock;
 /// next on a real committed turn. Re-homes `attested-dm`'s proven overworld design onto the real
 /// executor. See [`overworld::OverworldOffering`].
 pub mod overworld;
+/// THE SESSION-KEY PLAY ONBOARDING — a session key is a caveat-bounded delegation of the
+/// player's play cap (SCOPED to one offering, TIME-BOXED by a deadline, NON-AMPLIFYING over its
+/// parent), so a normal person plays a whole session without re-signing every move; the
+/// [`session::Paymaster`] draws each move's [`RunCost`] from the run-credit ledger, so play is
+/// gasless from the player's view. See [`session`] (the macaroon attenuation model reused for
+/// play; the SDK tool-mandate's `deleg_admit`/`refines` shape, applied to advancing a session).
+pub mod session;
 
 pub use host::{HostError, OfferingHost, OfferingInfo};
 

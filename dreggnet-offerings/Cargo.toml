@@ -44,6 +44,27 @@ deos-view = { path = "../deos-view", default-features = false }
 # Deterministic frontend-agnostic identity derivation (the mock frontend maps a
 # platform user id → a stable `DreggIdentity`); same crate the substrate hashes with.
 blake3 = "1"
+# THE PAYMASTER — the existing run-credit ledger (`CreditLedger` / `CreditStore` /
+# `InMemoryStore` / `debit`). The session-key play path draws each move's `RunCost`
+# from it via `session::CreditPaymaster`, so play is gasless from the player's view
+# (a real ledger debit against pre-funded credits). This is the same ledger the bot
+# mints run-credits into from observed `$DREGG`/USDC payments — consumed, not rebuilt.
+dregg-pay = { path = "../dregg-pay" }
+# THE DAILY BEACON WIRE + the daily seed: `beacon::DailyBeacon` (a verified drand round →
+# today's committed seed, unpredictable-until-revealed) and `CommittedSeed`/`daily_seed`
+# the daily-descent generator draws the day's world from. Re-exports `dregg_dice` for the
+# hash-chain test beacon.
+procgen-dregg = { path = "../procgen-dregg" }
+# THE NO-CHEAT LEADERBOARD substrate: `Universe`/`Registry`/`Completion`/`verify_completion`
+# — a ranked completion provably reaches the win (re-executed against a fresh identically-
+# seeded world), a forged/incomplete run refused. The daily descent publishes its day's world
+# here and ranks verified runs. (ugc-dregg does NOT depend on this crate — acyclic.)
+ugc-dregg = { path = "../ugc-dregg" }
+
+[dev-dependencies]
+# Dev-only: decode the real published drand `quicknet` round vector the daily-descent
+# driven test seeds "today's dungeon" from (genuine drand interop for the beacon leg).
+hex = "0.4"
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`, not
 # `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone

@@ -162,7 +162,10 @@ impl Character {
     /// Deploy the character cell for `who` and seed it from `sheet` (the loaded/carried state). A
     /// FRESH character (level 0) is brought to the natural starting level 1 via the real free
     /// level-up turn (`xp_threshold(1) == 0`); a returning character keeps its carried level.
-    fn open(who: DreggIdentity, sheet: CharacterSheet) -> Character {
+    ///
+    /// `pub` so a sibling offering (e.g. [`crate::daily_descent`]) can bind the SAME persistent
+    /// character to its own run, exactly as [`AdventurerOffering`] does for the Keep.
+    pub fn open(who: DreggIdentity, sheet: CharacterSheet) -> Character {
         let mut world = deploy_hero(hero_seed(&who));
         // Seed the four progression slots to the carried values (genesis setup, not a turn —
         // exactly how the Keep seeds hp=50; the in-run progression turns are the gated ones).
