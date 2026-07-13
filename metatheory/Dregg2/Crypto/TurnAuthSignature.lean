@@ -117,7 +117,18 @@ def TurnAuthForgery (C : CurveGroup) (G agentPk : C.Pt) (turnHash : ℕ)
 turn-auth descriptor that VERIFIES without the rightful agent having signed (a forgery), the forking
 lemma rewinds the prover to extract the discrete log — i.e. a forgery yields a `DLSolver`. This is the
 ONE named cryptographic bridge (the Schnorr forking lemma over this curve), the analogue of
-`Ed25519Reduction`'s reliance on the ed25519 EUF-CMA game; it is a hypothesis, never `:= True`. -/
+`Ed25519Reduction`'s reliance on the ed25519 EUF-CMA game; it is a hypothesis, never `:= True`.
+
+⚠ **STILL UN-DISCHARGED, AND THE REASON IS STRUCTURAL — the ℕ-SCALAR CURVE MODEL.** `ForkingDischarge`
+retires the forking hypothesis on the MSIS leg and on the FIELD-SCALAR Schnorr leg
+(`ForkingDischarge.prob_schnorr_yields_dlog`, which DERIVES the rewind acceptance rather than assuming it).
+It does NOT retire THIS one, and the obstruction is precise: `SchnorrCurveField.CurveGroup` carries only
+`smul : ℕ → Pt → Pt`, so the extraction `pk = ((s − s')/(c − c'))·G` — which needs to DIVIDE by the nonzero
+challenge difference — is not expressible here. `SchnorrCurveField.DLSolver` is likewise an ℕ-valued
+`solve : C.Pt → ℕ`. The `dlSolverF_of_curve` bridge that `SchnorrEufCma`'s header cites DOES NOT EXIST in
+the tree. Closing this slot requires giving `CurveGroup` a scalar FIELD (a `Module (ZMod n) C.Pt` structure
+on the prime-order subgroup) — a named, tractable seam, NOT a cryptographic assumption. Until then this is
+an honest, un-discharged hypothesis, and it is the only one of its kind left. -/
 def ForkingExtractor (C : CurveGroup) (G : C.Pt) : Prop :=
   ∀ {agentPk : C.Pt} {turnHash : ℕ} {chal : C.Pt → C.Pt → ℕ → ℕ} {R : C.Pt} {s : ℕ},
     TurnAuthForgery C G agentPk turnHash chal R s → DLSolver C G
@@ -186,7 +197,14 @@ theorem toy_turnauth_rejects_tampered :
 INHABITED (a DL solver exists), and there IS a turn-auth descriptor that verifies for a turn the agent
 never signed — a real forgery. We exhibit it: the honest boundary verifies, and (because `AgentSigned`
 is opaque, we take the witness that the agent did NOT sign) it is a forgery. This shows: strip
-DL-hardness and the light-client conclusion FAILS. -/
+DL-hardness and the light-client conclusion FAILS.
+
+⚠ **THIS IS A NON-VACUITY WITNESS ONLY — NOT A DISCHARGE.** It inhabits `ForkingExtractor` on `toyCurve`,
+where DL is provably EASY (`toy_dl_not_hard`), so the extractor comes free for the trivial reason that a
+`DLSolver` already exists. It says NOTHING about a real curve, and must never be read as evidence that
+`ForkingExtractor` is discharged at its call sites (`turnauth_no_forgery`, `turnauth_forces_authorization`,
+`DualSchemeAuthority`, `FloorBridge.turnauth_forces_authorization_quant`), where it is passed through as a
+bare hypothesis. See the note on `ForkingExtractor` for what closing it actually requires. -/
 theorem toy_forking_extractor_inhabited : ForkingExtractor toyCurve (1 : ℤ) := by
   -- DL is easy on the toy curve, so a DLSolver exists; the extractor returns it for ANY forgery.
   intro _ _ _ _ _ _

@@ -148,7 +148,12 @@ variable {N : Type*} [AddCommGroup N] [Module Rq N] [ShortNorm N]
 /-- **THE DEPLOYED ML-DSA INHERITS EUF-CMA → MSIS.** Specializes `HybridCombiner.pq_euf_cma_grounded_in_msis`
 to `dreggPqSigScheme api`: with the forking reduction (a forgery yields two SelfTargetMSIS solutions on a
 shared `w`, distinct challenges `c ≠ c'`), Module-SIS hardness makes the concrete `dregg-pq` ML-DSA
-`EufCma`. The code's signature scheme now bottoms out at the SAME lattice floor the model does. -/
+`EufCma`. The code's signature scheme now bottoms out at the SAME lattice floor the model does.
+
+⚠ **`fork` IS RETIRED — use `ForkingDischarge.dregg_pq_is_eufcma_under_msis_discharged`.** `fork` here was
+an UN-DISCHARGED hypothesis on the DEPLOYED path: it assumed the entire forking extraction outright. The
+discharged sibling PROVES the extraction (`ForkingDischarge.forkPair_of_advantage`) and rests on `MSISHard`
+plus a realizability MODELLING bridge. This statement is kept for the existing call sites. -/
 theorem dregg_pq_is_eufcma_under_msis
     (api : DreggPqApi Seed PK Ctx Msg Sig) (pk : PK) (Q : (Ctx × Msg) → Prop)
     (A : M →ₗ[Rq] N) (t : N) (β : ℕ)

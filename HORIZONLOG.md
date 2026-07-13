@@ -8126,3 +8126,41 @@ NAMED FOLLOW-UPS:
   × 38 + transcript ≈ ~2.7M of the remaining 4.98M. Protocol-level lever = GKR-batched Poseidon2 (gnark std/gkr
   direction); est up to −2.5M more (floor ≈ 2.5M). GKR-batching the alpha-combination itself is now MARGINAL (S_x
   arithmetic ≈ 0.32M total) — the algebraic hoist obsoleted most of that ask.
+
+## 2026-07-13 — RETIRED the deterministic forking-extractor hypothesis (crypto pathway #1 reducible)
+
+The keystone `HybridCombiner.hybrid_secure_if_either_floor`, `pq_euf_cma_grounded_in_msis`,
+`DreggPqRefinement.dregg_pq_is_eufcma_under_msis` (the DEPLOYED refinement) and the twelve protocol
+consumers all TOOK `fork : Forgery S pk Q -> DLSolver / two SelfTargetMSIS solutions` as an un-discharged
+hypothesis, prose-cited to "the PROVED forking machinery of HermineTSUF" but never wired — `#assert_axioms`
+never sees a hypothesis. Now: `Dregg2/Crypto/ForkingDischarge.lean` (27 keystones kernel-clean) +
+`Dregg2/Crypto/ForkingDischargeConsumers.lean` (13 keystones kernel-clean).
+
+- THE OBSTRUCTION IS PROVED, not asserted: a bare exists-witness `Forgery` is a SINGLE transcript
+  (`hits <= 1`), so `forkProb = 0` and no two-transcript event exists at ANY floor
+  (`no_forked_pair_of_hits_le_one`). The deterministic shape is un-DISCHARGEABLE, so it was RESTATED,
+  not faked.
+- BRIDGE: `ProbGameForger` carries BOTH `acc_wins` (accepting = a genuine `HybridCombiner.Forgery`) and
+  `acc_sound` (accepting = an `IsSelfTargetMSISSolution` on the prefix-fixed commitment) — `toProbForger`
+  is the map into `HermineTSUF.ProbForger`. `forkPair_of_advantage` then PROVES the exact `msisFork`
+  conclusion from advantage > 1/|Rq|.
+- RESIDUAL: ONE named modelling bridge, `ForgeryRealizable` (the game's bare exists-forgery is produced by
+  an actual adversary with a prefix world and a rewindable challenge). Assumes nothing cryptographic; the
+  extraction is proved.
+
+NAMED FOLLOW-UPS:
+- THE LAST FORK SLOT: `TurnAuthSignature.ForkingExtractor` (used by `turnauth_no_forgery`,
+  `turnauth_forces_authorization`, `DualSchemeAuthority`, `FloorBridge.turnauth_forces_authorization_quant`)
+  is STILL un-discharged, and the obstruction is STRUCTURAL: `SchnorrCurveField.CurveGroup` carries only
+  `smul : Nat -> Pt -> Pt`, so the extraction `pk = ((s-s')/(c-c'))*G` cannot even be stated (no division by
+  the challenge difference), and `DLSolver` is an Nat-valued `solve : C.Pt -> Nat`. CLOSE IT by giving
+  `CurveGroup` a scalar FIELD (a `Module (ZMod n) C.Pt` on the prime-order subgroup); then the
+  `ForkingDischarge.ProbSchnorrForger` lane applies verbatim. Tractable seam, NOT a crypto assumption.
+- PHANTOM CITATION: `SchnorrEufCma.lean` header cites `dlSolverF_of_curve` as the curve<->field scalar
+  bridge. THAT THEOREM DOES NOT EXIST in the tree. It is exactly the seam above; write it or drop the cite.
+- `SchnorrEufCma.SchnorrForgeryFamily.accepts_rewind` is an ASSUMED structure field (the second transcript,
+  hypothesized). `ForkingDischarge.ProbSchnorrForger` DERIVES it from the advantage — migrate
+  `schnorr_euf_cma_reduces_to_dl` onto `no_prob_schnorr_family_under_dl`.
+- Migrate the twelve consumers' ORIGINAL `_under_floor` theorems onto the discharged keystone in-place
+  (the discharged siblings currently sit alongside them in `ForkingDischargeConsumers`), then delete the
+  `dlFork`/`msisFork` slots from `HybridCombiner` entirely.

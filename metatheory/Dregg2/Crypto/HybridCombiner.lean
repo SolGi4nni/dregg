@@ -172,7 +172,14 @@ the existing forking + extraction machinery, NOT a hardness carrier. -/
 /-- **CLASSICAL HALF grounded in discrete log.** Given the Schnorr EUF-CMA→DL reduction — a hybrid/classical
 forgery yields a `DLSolver` on the curve (the forking-lemma reduction; reuses the PROVED forking machinery
 of `HermineTSUF`, cited, not re-asserted) — the discrete-log assumption `SchnorrDLHard` implies the
-classical scheme is `EufCma`. The floor is `SchnorrDLHard`; `fork` is a reduction. -/
+classical scheme is `EufCma`. The floor is `SchnorrDLHard`; `fork` is a reduction.
+
+⚠ **`fork` IS RETIRED — use `ForkingDischarge.classical_euf_cma_grounded_in_dl_discharged`.** The citation
+above was never wired: `fork` is an UN-DISCHARGED hypothesis, and `ForkingDischarge` proves it cannot be
+discharged in this shape at all (a deterministic `Forgery` is a SINGLE transcript, so its fork probability
+is `0` — `no_forked_pair_of_hits_le_one`). The discharged replacement rests on `SchnorrEufCma.SchnorrDLHardF`
+(the field-scalar DL floor the Schnorr forking reduction is actually PROVED against) plus a realizability
+bridge, with the extraction PROVED. This statement is kept for the existing call sites. -/
 theorem classical_euf_cma_grounded_in_dl {SK PK Msg Sig : Type*}
     (S : SigScheme SK PK Msg Sig) (pk : PK) (Q : Msg → Prop)
     (C : CurveGroup) (G : C.Pt)
@@ -190,7 +197,13 @@ yields two SelfTargetMSIS solutions on a SHARED commitment `w` with DISTINCT cha
 rewind/forking step of `HermineTSUF`, cited) — Module-SIS hardness on the augmented map `[A | t]` implies
 the pq scheme is `EufCma`. The discharge runs THROUGH the PROVED extraction
 `HermineSelfTargetMSIS.no_forgery_under_msis_selftarget`, so the ONLY floor invoked is `MSISHard`; `fork`
-is a reduction, not a carrier. -/
+is a reduction, not a carrier.
+
+⚠ **`fork` IS RETIRED — use `ForkingDischarge.pq_euf_cma_grounded_in_msis_discharged`.** The cited rewind
+was never wired: `fork` is an UN-DISCHARGED hypothesis. `ForkingDischarge.fork_of_realizable` now PROVES
+exactly this `fork` type from a realizability bridge plus the forking bound, and
+`ForkingDischarge.pq_advantage_bounded_under_msis` states the reduction in its honest advantage-bounded
+form. This statement is kept for the existing call sites. -/
 theorem pq_euf_cma_grounded_in_msis {SK PK Msg Sig : Type*}
     (S : SigScheme SK PK Msg Sig) (pk : PK) (Q : Msg → Prop)
     (A : M →ₗ[Rq] N) (t : N) (β : ℕ)
@@ -209,7 +222,13 @@ end PqAnchor
 the hybrid `ed25519 × ML-DSA` signature is EUF-CMA-unforgeable if EITHER the discrete-log floor
 `SchnorrDLHard` OR the Module-SIS floor `MSISHard` holds. This is "hybrid, not PQ-only" as a theorem: a
 quantum adversary that breaks the discrete-log half still faces MSIS; a lattice cryptanalyst that breaks
-ML-DSA still faces discrete log. Only if BOTH floors fall does the hybrid fall. -/
+ML-DSA still faces discrete log. Only if BOTH floors fall does the hybrid fall.
+
+⚠ **THE TWO FORKING HYPOTHESES ARE RETIRED — use `ForkingDischarge.hybrid_secure_if_either_floor_discharged`**
+(and `ForkingDischargeConsumers.hybrid_secure_under_msis_alone` for the deployed post-quantum statement,
+which needs NO classical model at all: note `dlFork` below is demanded unconditionally yet is NEVER used on
+the `MSISHard` branch). Every one of the twelve protocol consumers of this keystone has a discharged
+sibling in `ForkingDischargeConsumers`. This statement is kept for the existing call sites. -/
 theorem hybrid_secure_if_either_floor
     {SKc PKc Msg Sigc SKp PKp Sigp : Type*}
     (Cl : SigScheme SKc PKc Msg Sigc) (Pq : SigScheme SKp PKp Msg Sigp)
