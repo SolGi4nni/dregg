@@ -34,11 +34,17 @@
 //! with the computed gate. A node whose turn is NOT a reactive affordance keeps its
 //! authored `enabled` (strictly additive: unrecognized actuations are untouched).
 //!
-//! HONEST SCOPE: this is the pure helper + a driven proof. Wiring it into the live
-//! render walk (`resolve_mounts → disclose → gate_actuation_nodes → backend.render`)
-//! is the named next step — the existing renderers (`render.rs`, `web.rs`) already
-//! honor `item.enabled` (dimmed, non-firing), so the walk needs only to call
-//! [`gate_actuation_nodes`] after disclosure, with the surface's reactive gate.
+//! WIRED: this module is the pure helper; [`crate::pipeline`] is the LIVE render walk that runs it
+//! (`resolve_mounts → disclose → gate_actuation_nodes → backend.render`), so an actuation's `enabled`
+//! is COMPUTED per-viewer, per-transition, per-height at render time instead of read off the author's
+//! bool. The existing renderers (`render.rs`, `web.rs`, the chat backends) already honour
+//! `item.enabled` (dimmed, non-firing), so they paint the four-conjunct verdict unchanged.
+//!
+//! HONEST SCOPE: the IR gives an `enabled` field only to [`ViewNode::Menu`] rows and
+//! [`ViewNode::Halo`] handles, so those are the nodes this walk rewrites. The other actuation nodes
+//! (`Button`/`Tabs`/`Breadcrumb`) carry no such field — the gate reaches them at the TRANSPORT
+//! boundary instead, via [`crate::pipeline::render_actuations`] (the keyboard / numbered-reply list a
+//! channel mints), with no breaking ViewNode change.
 
 use crate::tree::{HaloHandle, MenuItem, ViewNode};
 use dregg_cell::state::CellState;

@@ -183,6 +183,13 @@ discord = ["dep:serenity"]
 # telegram — `ViewNode` → Telegram message text (the `TelegramBackend`, gpui-free + deos-js-free:
 # only serde). The moved-in dreggnet-telegram text walker, over the one IR.
 telegram = []
+# wechat — `ViewNode` → a WeChat Official-Account text message + its NUMBERED REPLY LIST (the
+# `WeChatBackend`, gpui-free + deos-js-free: only serde). WeChat OA has no per-message buttons, so
+# the affordances ride as a `1.`-indexed block the user replies to by NUMBER (a refused one is shown
+# LOCKED, keeping its number — the cap tooth shown, not hidden). Its prose is the SHARED
+# `text::render_text` walk (the same one `telegram` exposes — one walk, never two subset walkers), so
+# this feature does NOT imply `telegram`. The FIFTH backend over the one IR.
+wechat = []
 
 # THE WEB-PROJECTION BAKE — render the SAME counter card view-tree (the EXACT JSON the
 # SpiderMonkey engine produces) to a browser-loadable `.html`, gpui-free. Build + run:

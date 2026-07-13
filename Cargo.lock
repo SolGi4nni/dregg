@@ -6540,6 +6540,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreggnet-doc"
+version = "0.1.0"
+dependencies = [
+ "deos-view",
+ "dregg-doc",
+ "dregg-turn",
+ "dreggnet-offerings",
+]
+
+[[package]]
 name = "dreggnet-grain"
 version = "0.1.0"
 dependencies = [

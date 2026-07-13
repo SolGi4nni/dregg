@@ -56,9 +56,13 @@ pub mod grain_run_card;
 /// live-green surface over an unreachable node). Wired into `console::ConsoleModel`
 /// (`ConsoleModel::health` drives the page banner + panel gate + per-surface notes).
 pub mod source_health;
+/// The shared [`ViewNode`](tree::ViewNode) → plain-text walk — the prose projection BOTH chat
+/// transports use (Telegram's message text, WeChat's OA message body). One walk, never two subset
+/// walkers. Always compiled (pure `tree`).
+pub mod text;
 pub mod tree;
-pub use affordance::{affordance_id, AffordanceTransport};
-pub use backend::SurfaceBackend;
+pub use affordance::{affordance_id, wechat_reply_index, AffordanceTransport};
+pub use backend::{actuations, actuations_with, Actuation, SurfaceBackend};
 pub use console::{
     console_bind_values, console_card, console_slot_seeds, demo_console, ConsoleModel,
     HermesStatus, HermesView, LedgerView, MandateEdge, ReceiptRow, SpendLine, VatState, VatView,
@@ -93,10 +97,17 @@ pub mod gate;
 /// lossless path to "liberate any surface into a card".
 #[cfg(feature = "integration")]
 pub mod lower;
+/// [`pipeline`] — THE RENDER ENTRY, with the gate LIVE in it: `resolve_mounts → disclose →
+/// gate_actuation_nodes → backend.render`. An actuation's `enabled` is COMPUTED at render time from
+/// the FULL 4-conjunct gate for the viewer at the height, not read off the author's bool.
+#[cfg(feature = "integration")]
+pub mod pipeline;
 #[cfg(feature = "integration")]
 pub use gate::{gate_actuation_nodes, reactive_membrane_enabled, ReactiveSurfaceGate};
 #[cfg(feature = "integration")]
 pub use lower::{presentation_to_view, presentations_to_view};
+#[cfg(feature = "integration")]
+pub use pipeline::{gated_view, render_actuations, render_surface, NoMounts, RenderRequest};
 
 // ── THE CAP-SCOPE (feature `cap`): the REAL, cap-scoped console read surface — a `Catalog`
 //    source trait bound to our cells + the dregg-auth caveat-chain subject gate (a resource
@@ -169,3 +180,13 @@ pub use discord::{
 pub mod telegram;
 #[cfg(feature = "telegram")]
 pub use telegram::{render_text, TelegramBackend};
+
+// ── The WECHAT backend: the SAME `ViewNode` → a WeChat Official-Account text message + its
+//    NUMBERED REPLY LIST (the OA channel has no buttons: the user replies with the number). The
+//    prose is the SHARED `text::render_text` walk (no second subset walker); the affordance half is
+//    the tree's actuations, 1-based, a refused one shown LOCKED. gpui-free + deos-js-free (serde
+//    only). The FIFTH backend over the one IR. ──
+#[cfg(feature = "wechat")]
+pub mod wechat;
+#[cfg(feature = "wechat")]
+pub use wechat::{render_message, WeChatBackend, WeChatMessage, WeChatOption, LOCK_GLYPH};
