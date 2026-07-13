@@ -51,8 +51,10 @@ use dregg_app_framework::{
 /// The executor's turn receipt, re-exported so a consumer of [`VoteEngine`] can
 /// name the `cast` return type without depending on the framework directly.
 pub use dregg_app_framework::TurnReceipt;
-use dregg_cell::{Cell, FactoryCreationParams};
+use dregg_cell::program::SimpleStateConstraint;
+use dregg_cell::{Cell, FactoryCreationParams, count_ge_set_commitment};
 use dregg_intent::agent_mandate::{Auth, Caveat, DelegTree, Mandate, Rights};
+use dregg_turn::action::{WitnessBlob, WitnessKind};
 
 use starbridge_privacy_voting::{
     BALLOT_FACTORY_VK, ballot_child_program_vk, ballot_factory_descriptor, build_cast_vote_action,
@@ -62,6 +64,15 @@ use starbridge_privacy_voting::{
 // Poll-cell state schema (16 slots; MAX_OPTIONS tallies fill slots 8..16)
 // =============================================================================
 
+/// The commitment over the **distinct** quorum-approver set — the canonical
+/// sorted-set commitment ([`count_ge_set_commitment`]) of the voter identities
+/// whose votes count toward quorum (all distinct voters for a total-quorum poll;
+/// the gate-option's distinct voters for a gated poll). Maintained by the engine
+/// on every quorum-relevant cast and read by the `CountGe` gate that guards
+/// `RESOLVED`. Bound to operator authorship (`AnyOf[Immutable, SenderIs]`) so a
+/// stray cap-holder cannot mint a quorum by writing it. Slot 1 (free — the
+/// schema's registers begin at slot 2).
+pub const VOTER_SET_COMMITMENT_SLOT: u8 = 1;
 /// BLAKE3 of the poll question. `WriteOnce`.
 pub const QUESTION_HASH_SLOT: u8 = 2;
 /// Commitment over the eligible-voter set (the electorate). `WriteOnce`.
@@ -231,6 +242,17 @@ struct PollRecord {
     cell: CellId,
     electorate: BTreeSet<[u8; 32]>,
     option_count: usize,
+    /// The per-option gate, if this is a gated poll (`open_poll_gated`): quorum
+    /// counts only the distinct voters who chose `gate_option`. `None` ⇒ every
+    /// distinct voter counts toward the total quorum.
+    gate_option: Option<usize>,
+    /// The **distinct** voters whose votes count toward quorum — the set the
+    /// `CountGe` gate re-exhibits on `resolve`. Its
+    /// [`count_ge_set_commitment`] is mirrored in
+    /// [`VOTER_SET_COMMITMENT_SLOT`] on every quorum-relevant cast. A single
+    /// actor inflating a tally slot never grows THIS set, so it can no longer
+    /// forge a quorum (the substrate gap `CountGe` was minted to close).
+    quorum_voters: BTreeSet<[u8; 32]>,
     /// Append-only cast log — what a light client replays to recompute the
     /// tally independently of the stored slots.
     receipts: Vec<usize>,
@@ -445,7 +467,7 @@ impl CollectiveChoice {
         .as_bytes();
         let poll_cell = CellId::derive_raw(&operator, &token);
 
-        let program = Self::poll_program(spec.quorum_m, option_count, gate_option);
+        let program = Self::poll_program(spec.quorum_m, option_count, gate_option, operator);
         let electorate: BTreeSet<[u8; 32]> = spec.electorate.iter().copied().collect();
 
         // Seed the poll (tally-board) cell: install the full program so the
@@ -491,6 +513,8 @@ impl CollectiveChoice {
                 cell: poll_cell,
                 electorate,
                 option_count,
+                gate_option,
+                quorum_voters: BTreeSet::new(),
                 receipts: Vec::new(),
                 issued: HashMap::new(),
             },
@@ -498,7 +522,12 @@ impl CollectiveChoice {
         Ok(PollId(poll_cell))
     }
 
-    fn poll_program(quorum_m: u64, option_count: usize, gate_option: Option<usize>) -> CellProgram {
+    fn poll_program(
+        quorum_m: u64,
+        option_count: usize,
+        gate_option: Option<usize>,
+        operator: [u8; 32],
+    ) -> CellProgram {
         let mut cs: Vec<StateConstraint> = vec![
             StateConstraint::WriteOnce {
                 index: QUESTION_HASH_SLOT,
@@ -537,6 +566,46 @@ impl CollectiveChoice {
             }
         }
         cs.push(StateConstraint::AffineLe { terms, c: 0 });
+
+        // THE SOUND QUORUM GATE (the `CountGe` mint that RETIRES the
+        // `AffineLe`-over-`Monotonic` weakness). The `AffineLe` above certifies
+        // only `Σ TALLY ≥ M`, and a `Monotonic` tally slot admits a single
+        // `0 → M` jump — so one actor inflating ONE slot forges a quorum without
+        // `M` distinct voters. `CountGe` closes it: the `RESOLVED` flip must
+        // EXHIBIT (in the resolve turn's `Cleartext` witness blob) a set of at
+        // least `M` DISTINCT voter identities whose sorted-set commitment opens
+        // [`VOTER_SET_COMMITMENT_SLOT`]. Distinctness is structural (`BTreeSet`),
+        // nothing accumulates in a fakeable counter, so `M` cannot be
+        // counterfeited by arithmetic aliasing. Gated behind `Immutable{RESOLVED}`
+        // so every tally-bump turn (which leaves `RESOLVED` untouched) passes the
+        // `AnyOf` on the first disjunct and carries no witness.
+        cs.push(StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable {
+                    index: RESOLVED_SLOT,
+                },
+                SimpleStateConstraint::CountGe {
+                    threshold: quorum_m as u32,
+                    set_commitment_slot: VOTER_SET_COMMITMENT_SLOT,
+                },
+            ],
+        });
+
+        // The commitment slot is the CountGe gate's root of trust, so bind its
+        // writes to the operator (the mint's "the commitment slot MUST be
+        // governance-written / actor-bound, else whoever writes it mints
+        // quorums"). A turn either leaves the slot unchanged (`Immutable`) or is
+        // authored by the operator (`SenderIs`) — no stray cap-holder can plant a
+        // forged voter-set commitment.
+        cs.push(StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable {
+                    index: VOTER_SET_COMMITMENT_SLOT,
+                },
+                SimpleStateConstraint::SenderIs { pk: operator },
+            ],
+        });
+
         CellProgram::always(cs)
     }
 }
@@ -592,16 +661,40 @@ impl VoteEngine for CollectiveChoice {
             .cell_state(poll_cell)
             .map(|s| field_to_u64(&s.fields[TALLY_BASE as usize + option]))
             .unwrap_or(0);
-        let bump = build_tally_bump(&self.clerk, poll_cell, option, live + 1);
+        // Grow the DISTINCT quorum-approver set (the CountGe witness) when this
+        // vote counts toward quorum, and mirror its commitment into
+        // `VOTER_SET_COMMITMENT_SLOT` in the SAME turn as the tally bump. For a
+        // gated poll only the gate option's voters count; otherwise every
+        // distinct voter does. A single actor inflating a raw tally slot never
+        // touches this set — so it can no longer arm `RESOLVED`.
+        let (relevant, commitment) = {
+            let record = self.polls.get(&poll.0).expect("poll present");
+            let relevant = record.gate_option.map_or(true, |g| option == g);
+            let commitment = if relevant {
+                let mut voters = record.quorum_voters.clone();
+                voters.insert(ballot.voter_pk);
+                Some(count_ge_set_commitment(&voters))
+            } else {
+                None
+            };
+            (relevant, commitment)
+        };
+
+        let bump = match commitment {
+            Some(c) => {
+                build_tally_bump_with_commitment(&self.clerk, poll_cell, option, live + 1, c)
+            }
+            None => build_tally_bump(&self.clerk, poll_cell, option, live + 1),
+        };
         self.exec
             .submit_action(&self.clerk, bump)
             .map_err(|e| VoteError::Executor(e.to_string()))?;
 
-        self.polls
-            .get_mut(&poll.0)
-            .expect("poll present")
-            .receipts
-            .push(option);
+        let rec = self.polls.get_mut(&poll.0).expect("poll present");
+        if relevant {
+            rec.quorum_voters.insert(ballot.voter_pk);
+        }
+        rec.receipts.push(option);
 
         Ok(receipt)
     }
@@ -636,10 +729,24 @@ impl VoteEngine for CollectiveChoice {
             }
         }
 
-        // Attempt the decision-turn: set RESOLVED := 1. The quorum `AffineLe`
-        // (`M·RESOLVED − Σ TALLY ≤ 0`) is the REAL gate — below quorum the
-        // executor refuses this turn, so `resolve` yields `None`.
-        let action = build_resolve_action(&self.clerk, poll_cell);
+        // Attempt the decision-turn: set RESOLVED := 1. The `CountGe` gate is the
+        // REAL quorum gate — the turn must EXHIBIT the distinct quorum-approver
+        // set (re-exhibited every turn, never accumulated). Below quorum (fewer
+        // than `M` distinct approvers) the exhibited set is too small and the
+        // executor refuses the turn, so `resolve` yields `None`. A forged tally
+        // slot does not grow this set, so it can no longer arm `RESOLVED`.
+        let voters: Vec<[u8; 32]> = self
+            .polls
+            .get(&poll.0)
+            .expect("poll present")
+            .quorum_voters
+            .iter()
+            .copied()
+            .collect();
+        let blob = postcard::to_allocvec(&voters).expect("postcard encode of the voter set");
+        let mut action = build_resolve_action(&self.clerk, poll_cell);
+        action.witness_blobs = vec![WitnessBlob::new(WitnessKind::Cleartext, blob)];
+        let action = self.clerk.sign_action(action);
         match self.exec.submit_action(&self.clerk, action) {
             Ok(_) => Ok(Some(decision)),
             Err(_) => Ok(None),
@@ -662,6 +769,37 @@ fn build_tally_bump(
             cell: poll_cell,
             index: TALLY_BASE as usize + option,
             value: field_from_u64(new_val),
+        },
+        Effect::EmitEvent {
+            cell: poll_cell,
+            event: Event::new(symbol("vote-tallied"), vec![field_from_u64(option as u64)]),
+        },
+    ];
+    clerk.make_action(poll_cell, "record_tally", effects)
+}
+
+/// Like [`build_tally_bump`], but ALSO mirrors the distinct quorum-approver
+/// set's [`count_ge_set_commitment`] into [`VOTER_SET_COMMITMENT_SLOT`] in the
+/// same turn — the operator-authored write the `CountGe` gate opens on
+/// `resolve`. The tally slot stays the human-readable board; the commitment slot
+/// is the un-fakeable quorum root.
+fn build_tally_bump_with_commitment(
+    clerk: &AppCipherclerk,
+    poll_cell: CellId,
+    option: usize,
+    new_val: u64,
+    commitment: FieldElement,
+) -> Action {
+    let effects = vec![
+        Effect::SetField {
+            cell: poll_cell,
+            index: TALLY_BASE as usize + option,
+            value: field_from_u64(new_val),
+        },
+        Effect::SetField {
+            cell: poll_cell,
+            index: VOTER_SET_COMMITMENT_SLOT as usize,
+            value: commitment,
         },
         Effect::EmitEvent {
             cell: poll_cell,

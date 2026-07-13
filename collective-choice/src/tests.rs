@@ -101,6 +101,83 @@ fn tally_is_light_client_verifiable_and_a_forge_is_refused() {
     assert_eq!(e.tally(poll).unwrap().per_option, vec![2, 0, 1]);
 }
 
+// ── SECURITY: a single actor CANNOT forge a quorum (the CountGe gate) ────────
+//
+// Before the fix, the quorum was `AffineLe { M·RESOLVED − Σ TALLY ≤ 0 }` over
+// `Monotonic` tally slots. `Monotonic` admits a single `0 → M` jump, so ONE
+// actor authoring ONE tally-bump turn armed `RESOLVED` with ZERO distinct
+// voters (driven: the pre-fix build resolved here). The `CountGe` gate now
+// guards `RESOLVED` on the DISTINCT quorum-approver set, so the same attack is
+// refused while a genuine quorum of M distinct voters still resolves.
+
+#[test]
+fn forged_quorum_single_actor_inflating_a_tally_slot_is_refused() {
+    let mut e = engine();
+    // Quorum M = 3 over a 3-voter electorate. We cast NO real votes — there are
+    // ZERO distinct approvers.
+    let poll = e
+        .open_poll(spec("forge?", 2, vec![ALICE, BOB, CAROL], 3))
+        .unwrap();
+    let poll_cell = poll.0;
+
+    // The raw tally board is still `Monotonic` (it is the human-readable count,
+    // no longer the gate): a single `0 -> M` jump on ONE slot is still ACCEPTED
+    // at the tally level. This is precisely the arithmetic aliasing the old gate
+    // trusted.
+    let forge = build_tally_bump(&e.clerk, poll_cell, 0, 3);
+    e.exec
+        .submit_action(&e.clerk, forge)
+        .expect("Monotonic still admits the raw tally jump");
+    assert_eq!(e.tally(poll).unwrap().per_option, vec![3, 0]);
+
+    // But `resolve` is now gated by `CountGe` over the DISTINCT quorum-approver
+    // set. No genuine votes were cast, so the exhibited set is empty and does
+    // not open the (untouched) commitment slot — the decision-turn is REFUSED.
+    assert!(
+        e.resolve(poll).unwrap().is_none(),
+        "FORGED QUORUM MUST BE REFUSED: inflating a tally slot cannot arm RESOLVED"
+    );
+
+    // Inflating a SECOND slot (one actor writing multiple slots to fake M) also
+    // fails to resolve — the gate reads distinct voters, not the tally sum.
+    let forge2 = build_tally_bump(&e.clerk, poll_cell, 1, 3);
+    e.exec.submit_action(&e.clerk, forge2).unwrap();
+    assert!(
+        e.resolve(poll).unwrap().is_none(),
+        "spreading the forge across slots still cannot arm RESOLVED"
+    );
+}
+
+#[test]
+fn genuine_quorum_of_m_distinct_voters_still_resolves() {
+    let mut e = engine();
+    // M = 3 distinct voters is the genuine quorum.
+    let poll = e
+        .open_poll(spec("proceed?", 2, vec![ALICE, BOB, CAROL], 3))
+        .unwrap();
+
+    // Two distinct voters: below quorum, still refused (the CountGe exhibit has
+    // 2 < 3 distinct elements).
+    for v in [ALICE, BOB] {
+        let cap = e.issue_ballot(poll, v).unwrap();
+        e.cast(poll, &cap, 0).unwrap();
+    }
+    assert!(
+        e.resolve(poll).unwrap().is_none(),
+        "2 < 3 distinct voters must not resolve"
+    );
+
+    // The third DISTINCT voter reaches quorum — the decision-turn now commits.
+    let c = e.issue_ballot(poll, CAROL).unwrap();
+    e.cast(poll, &c, 0).unwrap();
+    let decision = e
+        .resolve(poll)
+        .unwrap()
+        .expect("3 distinct voters exhibit the CountGe quorum — RESOLVED arms");
+    assert_eq!(decision.winner, 0);
+    assert_eq!(decision.winner_tally, 3);
+}
+
 // ── quorum gate: resolve only certifies at threshold ────────────────────────
 
 #[test]

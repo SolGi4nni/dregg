@@ -29,8 +29,12 @@ description = "The general voting engine for dregg — poll → cap-bounded ball
 # otherwise re-enable `server` on the shared instance. Native builds are unaffected.
 dregg-app-framework = { path = "../app-framework", default-features = false }
 dregg-cell = { path = "../cell", default-features = false }
+dregg-turn = { path = "../turn" }
 dregg-intent = { path = "../intent" }
 dregg-types = { path = "../types" }
 starbridge-privacy-voting = { path = "../starbridge-apps/privacy-voting" }
 
 blake3 = "1"
+# The CountGe quorum witness rides as a postcard `Vec<[u8; 32]>` in the resolve
+# turn's `Action::witness_blobs` (the executor decodes it the same way).
+postcard = { version = "1", features = ["alloc"] }
