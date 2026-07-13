@@ -231,7 +231,8 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
 
 /// THE DEPLOYED-IDENTITY DERIVATION + DIFFERENTIAL (the apex-VK pin's VALUE
 /// authority): derive the deployed dregg apex's VK identity — its
-/// `RecursionVk` fingerprint (the light-client trust anchor) plus the
+/// `RecursionVk` fingerprint (asserted against the governance-pinned
+/// `DREGG_APEX_RECURSION_VK` anchor) plus the
 /// `ApexVkLanes` preprocessed-commitment lanes that fingerprint hashes — from
 /// a FRESH fold of the apex circuit at HEAD, WITHOUT reading the proof
 /// fixture. Then:
@@ -241,11 +242,16 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
 ///     HEAD-derived deployed value — proving the fixture was minted over the
 ///     REAL deployed apex, so the SettlementCircuit's baked pin does not rest
 ///     on trusting whoever compiled the fixture;
-///  2. emit `chain/gnark/fixtures/apex_vk_identity.json` — the derived
+///  2. GOVERNANCE PIN: assert the derived fingerprint equals the
+///     governance-pinned `DREGG_APEX_RECURSION_VK` (weak-subjectivity anchor)
+///     — fail-closed BEFORE emitting; a circuit change stops here until
+///     governance re-pins;
+///  3. emit `chain/gnark/fixtures/apex_vk_identity.json` — the derived
 ///     identity artifact the gnark side bakes its `apexPreprocessedCommit`
 ///     constant from (fingerprint-bound: the JSON carries the RecursionVk hex
-///     the lanes hash into, so the pair is checkable against the deployed
-///     anchor; see `ApexVkIdentity`).
+///     the lanes hash into, and every consumer asserts that hex against the
+///     pinned anchor at load; see `ApexVkIdentity` /
+///     `check_apex_vk_identity_pin`).
 ///
 /// VK material is content-independent and (WRAP on) depth-invariant, so the
 /// fixed 2-turn chain's fresh fold carries the deployed circuit's identity —
@@ -255,7 +261,9 @@ fn real_shrink_proof(outer_config: &DreggOuterConfig) -> BatchStarkProof<DreggOu
             asserts the gnark fixture matches it, and (re)writes \
             chain/gnark/fixtures/apex_vk_identity.json"]
 fn derive_deployed_apex_vk_identity_and_check_fixture() {
-    use dregg_circuit_prove::apex_shrink_gnark_export::{APEX_VK_LANES, derive_apex_vk_identity};
+    use dregg_circuit_prove::apex_shrink_gnark_export::{
+        APEX_VK_LANES, check_apex_vk_identity_pin, derive_apex_vk_identity,
+    };
 
     // The deployed apex circuit at HEAD: a fresh fold (NOT the cached shrink,
     // NOT the fixture). Verified before the identity is read off it.
@@ -266,6 +274,16 @@ fn derive_deployed_apex_vk_identity_and_check_fixture() {
 
     let id = derive_apex_vk_identity(&whole.root).expect("the real apex yields a VK identity");
     assert_eq!(id.apex_preprocessed_commit.len(), APEX_VK_LANES);
+    // THE GOVERNANCE PIN (the anchor's teeth, where the VK material exists):
+    // the freshly derived fingerprint must equal the governance-pinned
+    // DREGG_APEX_RECURSION_VK before the artifact is emitted. Fingerprint and
+    // lanes come off the SAME gp.commitment (the recursion_vk_fingerprint
+    // self-binding pair), so passing this pin means the emitted lanes are the
+    // ones the pinned anchor hashes. If the apex circuit changed, this fails
+    // closed until governance re-pins (update the Rust constant AND
+    // chain/gnark/settlement_circuit.go DreggApexRecursionVk).
+    check_apex_vk_identity_pin(&id)
+        .unwrap_or_else(|e| panic!("HEAD-derived apex identity fails the governance pin: {e}"));
     println!("recursion_vk (deployed anchor) : {}", id.recursion_vk_hex);
     println!(
         "apex VK-core lanes (derived)   : {:?}",
@@ -294,6 +312,39 @@ fn derive_deployed_apex_vk_identity_and_check_fixture() {
     let json = serde_json::to_string_pretty(&id).expect("identity serializes");
     std::fs::write(apex_vk_identity_path(), &json).expect("write apex VK identity");
     println!("wrote {}", apex_vk_identity_path().display());
+}
+
+/// THE ANCHOR-CHECK CANARY (fast, no proving — the Rust half; the gnark half
+/// is `TestApexVkIdentityAnchorRejectsMismatchedFingerprint`): the COMMITTED
+/// identity artifact matches the governance-pinned `DREGG_APEX_RECURSION_VK`
+/// anchor (ACCEPT), and an identity carrying any OTHER fingerprint REJECTS —
+/// so the anchor is a real fail-closed check, not a decorative field.
+#[test]
+fn apex_vk_identity_pin_rejects_mismatched_fingerprint() {
+    use dregg_circuit_prove::apex_shrink_gnark_export::{
+        ApexVkIdentity, DREGG_APEX_RECURSION_VK, check_apex_vk_identity_pin,
+    };
+
+    let raw = std::fs::read_to_string(apex_vk_identity_path())
+        .expect("the committed apex VK identity artifact exists");
+    let id: ApexVkIdentity = serde_json::from_str(&raw).expect("identity JSON parses");
+
+    // ACCEPT: the honest deployed identity matches the governance pin.
+    check_apex_vk_identity_pin(&id)
+        .expect("the committed deployed identity must match the governance-pinned anchor");
+    assert_eq!(id.recursion_vk_hex, DREGG_APEX_RECURSION_VK);
+
+    // REJECT: one flipped nibble — a valid-shape 32-byte fingerprint that is
+    // NOT the pinned anchor — must fail the check.
+    let mut doctored = id.clone();
+    let mut hex = doctored.recursion_vk_hex.into_bytes();
+    hex[0] = if hex[0] == b'0' { b'1' } else { b'0' };
+    doctored.recursion_vk_hex = String::from_utf8(hex).expect("still ASCII hex");
+    assert!(
+        check_apex_vk_identity_pin(&doctored).is_err(),
+        "an identity with a NON-pinned recursion_vk_hex was ACCEPTED — the governance anchor \
+         is decorative"
+    );
 }
 
 /// THE APEX-VK-PIN REJECT CANARY (Rust half — the gnark half is

@@ -715,12 +715,16 @@ func assignSettlementCircuit(t *testing.T, fx *shrinkRealFixture, ex *shrinkStar
 // (fixtures/apex_vk_identity.json), minted by the Rust derivation lane —
 // apex_shrink_gnark_fixture.rs derive_deployed_apex_vk_identity_and_check_fixture
 // — from a FRESH fold of the apex circuit at HEAD, NOT from the proof
-// fixture. RecursionVkHex is the blake3-32 RecursionVk fingerprint (the
-// light-client trust anchor, which hashes the preprocessed commitment as a
-// labeled component), so the (fingerprint, lanes) pair is self-binding:
-// anyone holding the deployed anchor can check the lanes belong to the
-// deployed apex (circuit-prove/src/apex_shrink_gnark_export.rs
-// ApexVkIdentity documents the collision-resistance argument).
+// fixture. RecursionVkHex is the blake3-32 RecursionVk fingerprint, and it is
+// ASSERTED equal to the governance-pinned DreggApexRecursionVk constant at
+// load (checkApexVkIdentityAnchor, fail-closed) — the weak-subjectivity
+// anchor check. The fingerprint hashes the preprocessed commitment as a
+// labeled component, so the (fingerprint, lanes) pair is self-binding: the
+// Rust derivation lane asserts the same pin on the freshly derived
+// fingerprint before emitting, which — with blake3 collision resistance —
+// ties the lanes to the pinned anchor
+// (circuit-prove/src/apex_shrink_gnark_export.rs ApexVkIdentity /
+// DREGG_APEX_RECURSION_VK document the collision-resistance argument).
 type apexVkIdentity struct {
 	Version                int      `json:"version"`
 	RecursionVkHex         string   `json:"recursion_vk_hex"`
@@ -729,6 +733,25 @@ type apexVkIdentity struct {
 }
 
 const apexVkIdentityPath = "fixtures/apex_vk_identity.json"
+
+// checkApexVkIdentityAnchor is THE governance-anchor check (fail-closed): the
+// identity's RecursionVk fingerprint must equal the governance-pinned
+// DreggApexRecursionVk constant (settlement_circuit.go). Before this check
+// existed, recursion_vk_hex was validated only as 32-byte hex and used in
+// error messages — a decorative field; now a doctored/stale identity REJECTS
+// at load instead of being trusted because it sits at HEAD.
+func checkApexVkIdentityAnchor(id *apexVkIdentity) error {
+	if id.RecursionVkHex != DreggApexRecursionVk {
+		return fmt.Errorf(
+			"apex VK identity recursion_vk_hex %s != governance-pinned DreggApexRecursionVk %s — "+
+				"either the identity artifact is doctored/stale, or the apex circuit changed and "+
+				"governance has not re-pinned the anchor (re-derive via the Rust lane "+
+				"derive_deployed_apex_vk_identity_and_check_fixture, then update the constant in "+
+				"settlement_circuit.go AND apex_shrink_gnark_export.rs)",
+			id.RecursionVkHex, DreggApexRecursionVk)
+	}
+	return nil
+}
 
 func loadApexVkIdentity(t *testing.T) *apexVkIdentity {
 	t.Helper()
@@ -747,6 +770,10 @@ func loadApexVkIdentity(t *testing.T) *apexVkIdentity {
 	if b, err := hex.DecodeString(id.RecursionVkHex); err != nil || len(b) != 32 {
 		t.Fatalf("recursion_vk_hex %q is not a 32-byte hex fingerprint", id.RecursionVkHex)
 	}
+	// THE ANCHOR CHECK: the fingerprint must be the governance-pinned one.
+	if err := checkApexVkIdentityAnchor(id); err != nil {
+		t.Fatalf("%v", err)
+	}
 	if len(id.ApexPreprocessedCommit) != ApexVkLanes {
 		t.Fatalf("derived apex VK-core has %d lanes (want %d)",
 			len(id.ApexPreprocessedCommit), ApexVkLanes)
@@ -758,10 +785,10 @@ func loadApexVkIdentity(t *testing.T) *apexVkIdentity {
 }
 
 // apexPreprocessedCommitConstants bakes the settlement circuit's apex-VK pin
-// from the DERIVED deployed identity (loadApexVkIdentity) — the value
-// re-derived from the apex circuit definition at HEAD and carried with its
-// RecursionVk fingerprint — NOT from the proof fixture. The fixture's own
-// apex VK-core lanes are separately asserted equal to this derived value
+// from the DERIVED deployed identity (loadApexVkIdentity — whose RecursionVk
+// fingerprint is asserted equal to the governance-pinned DreggApexRecursionVk
+// anchor at load) — NOT from the proof fixture. The fixture's own apex
+// VK-core lanes are separately asserted equal to this derived value
 // (TestApexPinFixtureMatchesDerivedDeployedIdentity), and the accept test
 // closes the loop end-to-end (a fixture minted over any other apex fails the
 // pin these constants bake).
@@ -785,13 +812,22 @@ func apexPreprocessedCommitConstants(t *testing.T) []*big.Int {
 func TestApexPinFixtureMatchesDerivedDeployedIdentity(t *testing.T) {
 	fx := loadShrinkRealFixture(t)
 	id := loadApexVkIdentity(t)
+	if err := apexVkLanesDifferentialErr(fx, id); err != nil {
+		t.Fatalf("%v", err)
+	}
+}
+
+// apexVkLanesDifferentialErr is the cross-artifact lane differential the test
+// above enforces: the proof fixture's apex VK-core must equal the derived
+// (anchor-checked) identity's lanes, lane for lane.
+func apexVkLanesDifferentialErr(fx *shrinkRealFixture, id *apexVkIdentity) error {
 	if len(fx.ApexPreprocessedCommit) != len(id.ApexPreprocessedCommit) {
-		t.Fatalf("fixture apex VK-core has %d lanes, derived deployed identity %d",
+		return fmt.Errorf("fixture apex VK-core has %d lanes, derived deployed identity %d",
 			len(fx.ApexPreprocessedCommit), len(id.ApexPreprocessedCommit))
 	}
 	for i, want := range id.ApexPreprocessedCommit {
 		if got := fx.ApexPreprocessedCommit[i]; got != want {
-			t.Fatalf("fixture apex VK-core lane %d = %d != derived deployed lane %d "+
+			return fmt.Errorf("fixture apex VK-core lane %d = %d != derived deployed lane %d "+
 				"(recursion_vk %s) — the proof fixture was NOT minted over the deployed apex, "+
 				"or one artifact is stale; regenerate both via the Rust lanes "+
 				"(derive_deployed_apex_vk_identity_and_check_fixture + "+
@@ -799,6 +835,61 @@ func TestApexPinFixtureMatchesDerivedDeployedIdentity(t *testing.T) {
 				i, got, want, id.RecursionVkHex)
 		}
 	}
+	return nil
+}
+
+// THE ANCHOR-CHECK CANARY (gnark half; the Rust half is
+// apex_vk_identity_pin_rejects_mismatched_fingerprint): the governance-pinned
+// DreggApexRecursionVk anchor is a REAL fail-closed check, not a decorative
+// field —
+//
+//  1. ACCEPT: the honest deployed identity (fixtures/apex_vk_identity.json)
+//     passes the anchor check (and loadApexVkIdentity itself enforces it, so
+//     every consumer inherits the gate);
+//  2. REJECT (fingerprint): an identity carrying a DIFFERENT recursion_vk_hex
+//     — one flipped nibble, still a valid 32-byte fingerprint shape — fails
+//     checkApexVkIdentityAnchor, i.e. rejects at load;
+//  3. REJECT (lanes): an identity carrying lanes the pinned fingerprint does
+//     not hash fails the cross-artifact differential
+//     (apexVkLanesDifferentialErr) against the loader-verified proof fixture.
+//     The Go side cannot recompute the blake3 lane↔fingerprint tie itself
+//     (recursion_vk_fingerprint hashes VK shape material beyond the lanes);
+//     that tie is enforced in the Rust derivation lane, which computes
+//     fingerprint and lanes from the SAME gp.commitment and asserts the
+//     fingerprint against the same pin before emitting — this differential is
+//     the Go-side tooth that doctored lanes cannot pass.
+func TestApexVkIdentityAnchorRejectsMismatchedFingerprint(t *testing.T) {
+	honest := loadApexVkIdentity(t) // the load path itself enforces the anchor
+	if err := checkApexVkIdentityAnchor(honest); err != nil {
+		t.Fatalf("the honest deployed identity must match the governance pin: %v", err)
+	}
+
+	t.Run("doctored-fingerprint-rejects-at-load", func(t *testing.T) {
+		doctored := *honest
+		b := []byte(doctored.RecursionVkHex)
+		if b[0] == '0' {
+			b[0] = '1'
+		} else {
+			b[0] = '0'
+		}
+		doctored.RecursionVkHex = string(b)
+		if err := checkApexVkIdentityAnchor(&doctored); err == nil {
+			t.Fatal("an identity with a NON-pinned recursion_vk_hex was ACCEPTED — " +
+				"the governance anchor is decorative")
+		}
+	})
+
+	t.Run("doctored-lanes-reject-the-fixture-differential", func(t *testing.T) {
+		fx := loadShrinkRealFixture(t)
+		doctored := *honest
+		doctored.ApexPreprocessedCommit = append([]uint32(nil), honest.ApexPreprocessedCommit...)
+		doctored.ApexPreprocessedCommit[0]++
+		if err := apexVkLanesDifferentialErr(fx, &doctored); err == nil {
+			t.Fatal("an identity with lanes the pinned fingerprint does not hash passed the " +
+				"cross-artifact differential — doctored lanes under an honest fingerprint " +
+				"would go undetected")
+		}
+	})
 }
 
 // shrinkDigestWordAt returns the flat digest-stream word at `off` (the same

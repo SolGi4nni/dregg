@@ -11,5 +11,5 @@
     1361835212,
     1543334732
   ],
-  "description": "The deployed dregg apex's VK identity: recursion_vk_hex is the blake3-32 RecursionVk fingerprint (the light-client trust anchor); apex_preprocessed_commit is the flattened preprocessed commitment the fingerprint hashes (the ApexVkLanes value the gnark SettlementCircuit bakes as its apex-VK pin). Regenerate + differential-check against the proof fixture: cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture derive_deployed -- --ignored --nocapture"
+  "description": "The deployed dregg apex's VK identity: recursion_vk_hex is the blake3-32 RecursionVk fingerprint, asserted at load against the governance-pinned DREGG_APEX_RECURSION_VK / DreggApexRecursionVk constant (the weak-subjectivity anchor); apex_preprocessed_commit is the flattened preprocessed commitment the fingerprint hashes (the ApexVkLanes value the gnark SettlementCircuit bakes as its apex-VK pin). Regenerate + differential-check against the proof fixture: cargo test -p dregg-circuit-prove --release --test apex_shrink_gnark_fixture derive_deployed -- --ignored --nocapture"
 }

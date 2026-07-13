@@ -146,17 +146,25 @@ pub const APEX_VK_LANES: usize = 8;
 ///
 /// ## Why the pair is BOUND, not two independent claims
 ///
-/// [`recursion_vk_fingerprint`] (the light-client trust anchor — a blake3-32
-/// over the apex's verifier-reconstruction material) hashes the apex's
-/// preprocessed commitment `gp.commitment` as a labeled component
+/// [`recursion_vk_fingerprint`] (a blake3-32 over the apex's
+/// verifier-reconstruction material) hashes the apex's preprocessed
+/// commitment `gp.commitment` as a labeled component
 /// (`"preprocessed_commitment"`), and `apex_preprocessed_commit` here is the
 /// flattened canonical-`u32` felts of the SAME `gp.commitment` object
 /// ([`p3_recursion::RecursionOutput::running_preprocessed_commit`] returns
 /// exactly the value the fingerprint serializes). By blake3 collision
 /// resistance, VK material that fingerprints to a given `recursion_vk_hex`
-/// cannot carry different lanes — so anyone holding the deployed
-/// [`RecursionVk`] anchor can check that a claimed `ApexVkLanes` value is the
-/// deployed apex's, without trusting whoever compiled a proof fixture.
+/// cannot carry different lanes.
+///
+/// And the anchor is CHECKED, not merely carried: the derived fingerprint is
+/// asserted `==` the governance-pinned [`DREGG_APEX_RECURSION_VK`] constant
+/// (the weak-subjectivity anchor) by [`check_apex_vk_identity_pin`] — in the
+/// derivation lane before the artifact is emitted, and again by every
+/// consumer at load (`chain/gnark` `loadApexVkIdentity` over the same
+/// constant, `DreggApexRecursionVk`). The lanes are bound to that pinned
+/// fingerprint by the self-binding pair above, so a doctored identity —
+/// different fingerprint, or lanes the pinned fingerprint does not hash —
+/// REJECTS instead of being trusted because it sits at HEAD.
 ///
 /// VK material is content-independent (two proofs of the same circuit over
 /// different data carry identical material) and — with the accumulator's WRAP
@@ -167,8 +175,11 @@ pub const APEX_VK_LANES: usize = 8;
 pub struct ApexVkIdentity {
     /// Artifact schema version.
     pub version: u32,
-    /// Hex of the apex's [`RecursionVk`] fingerprint — the SAME 32-byte
-    /// blake3 anchor a light client pins ([`recursion_vk_fingerprint`]).
+    /// Hex of the apex's [`RecursionVk`] fingerprint
+    /// ([`recursion_vk_fingerprint`]) — asserted equal to the
+    /// governance-pinned [`DREGG_APEX_RECURSION_VK`] anchor at load
+    /// ([`check_apex_vk_identity_pin`]; `chain/gnark` mirrors the check over
+    /// `DreggApexRecursionVk`).
     pub recursion_vk_hex: String,
     /// The apex's preprocessed commitment (its VK-identity core) as
     /// [`APEX_VK_LANES`] canonical BabyBear `u32` lanes — the value
@@ -178,14 +189,63 @@ pub struct ApexVkIdentity {
     pub description: String,
 }
 
+/// The GOVERNANCE-PINNED deployed-apex [`RecursionVk`] fingerprint (blake3-32,
+/// hex) — dregg's apex weak-subjectivity anchor, the exact analogue of the
+/// Solana bridge's pinned `WeakSubjectivityAnchor`
+/// (`bridge/src/solana_trustless.rs` `check_pinned_anchor`): a value
+/// governance commits to at deploy time, which every consumer of the derived
+/// identity artifact asserts against, fail-closed.
+///
+/// Enforced by [`check_apex_vk_identity_pin`] here and by `chain/gnark`'s
+/// `loadApexVkIdentity` over the mirrored Go constant `DreggApexRecursionVk`
+/// (`settlement_circuit.go`): an `apex_vk_identity.json` whose
+/// `recursion_vk_hex` differs REJECTS at load. The `ApexVkLanes` are bound to
+/// this fingerprint by the [`recursion_vk_fingerprint`] self-binding pair
+/// (the fingerprint hashes `gp.commitment`, whose roots ARE the lanes),
+/// enforced where the VK material exists: the derivation lane
+/// (`derive_deployed_apex_vk_identity_and_check_fixture`) computes fingerprint
+/// and lanes from the SAME object and asserts the fingerprint equals THIS pin
+/// before emitting the artifact.
+///
+/// HONEST RESIDUAL (same shape as the Solana anchor pin): the constant is
+/// committed in-repo — governance chooses it at deploy, and an apex circuit
+/// change requires a governance step to re-derive and update it (here AND the
+/// Go mirror); until then, identity loads fail closed. The trust model is
+/// weak subjectivity — "trust a governance-pinned recent fingerprint" — not
+/// "trust whoever compiled the artifact at HEAD".
+pub const DREGG_APEX_RECURSION_VK: &str =
+    "3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503";
+
+/// Assert an [`ApexVkIdentity`]'s fingerprint equals the governance-pinned
+/// [`DREGG_APEX_RECURSION_VK`] anchor — fail-closed. This is the check that
+/// makes the anchor authoritative rather than decorative: without it the
+/// artifact's `recursion_vk_hex` was validated only as 32-byte hex and used
+/// in error messages.
+pub fn check_apex_vk_identity_pin(id: &ApexVkIdentity) -> Result<(), String> {
+    if id.recursion_vk_hex == DREGG_APEX_RECURSION_VK {
+        Ok(())
+    } else {
+        Err(format!(
+            "apex VK identity fingerprint {} != governance-pinned DREGG_APEX_RECURSION_VK {} — \
+             either the identity artifact is doctored/stale, or the apex circuit changed and \
+             governance has not re-pinned the anchor (re-derive via \
+             derive_deployed_apex_vk_identity_and_check_fixture, then update the constant here \
+             AND chain/gnark/settlement_circuit.go DreggApexRecursionVk)",
+            id.recursion_vk_hex, DREGG_APEX_RECURSION_VK,
+        ))
+    }
+}
+
 /// Derive the apex's VK identity — its [`RecursionVk`] fingerprint together
 /// with the [`APEX_VK_LANES`] preprocessed-commitment lanes that fingerprint
 /// hashes — from an apex proof's verifier-reconstruction material.
 ///
 /// The proof argument is a CARRIER of the circuit's VK material, not a trust
 /// root: the material is content-independent, and the returned pair is
-/// self-binding (see [`ApexVkIdentity`]) — check `recursion_vk_hex` against
-/// the deployed anchor and the lanes are the deployed apex's.
+/// self-binding (see [`ApexVkIdentity`]) — [`check_apex_vk_identity_pin`]
+/// asserts `recursion_vk_hex` against the governance-pinned
+/// [`DREGG_APEX_RECURSION_VK`] anchor, and then the lanes are the deployed
+/// apex's.
 pub fn derive_apex_vk_identity(
     apex: &RecursionOutput<DreggRecursionConfig>,
 ) -> Result<ApexVkIdentity, String> {
@@ -210,12 +270,14 @@ pub fn derive_apex_vk_identity(
         recursion_vk_hex: vk.to_hex(),
         apex_preprocessed_commit: lanes,
         description: "The deployed dregg apex's VK identity: recursion_vk_hex is the blake3-32 \
-                      RecursionVk fingerprint (the light-client trust anchor); \
-                      apex_preprocessed_commit is the flattened preprocessed commitment the \
-                      fingerprint hashes (the ApexVkLanes value the gnark SettlementCircuit bakes \
-                      as its apex-VK pin). Regenerate + differential-check against the proof \
-                      fixture: cargo test -p dregg-circuit-prove --release --test \
-                      apex_shrink_gnark_fixture derive_deployed -- --ignored --nocapture"
+                      RecursionVk fingerprint, asserted at load against the governance-pinned \
+                      DREGG_APEX_RECURSION_VK / DreggApexRecursionVk constant (the \
+                      weak-subjectivity anchor); apex_preprocessed_commit is the flattened \
+                      preprocessed commitment the fingerprint hashes (the ApexVkLanes value the \
+                      gnark SettlementCircuit bakes as its apex-VK pin). Regenerate + \
+                      differential-check against the proof fixture: cargo test -p \
+                      dregg-circuit-prove --release --test apex_shrink_gnark_fixture \
+                      derive_deployed -- --ignored --nocapture"
             .to_string(),
     })
 }

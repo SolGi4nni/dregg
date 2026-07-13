@@ -63,18 +63,24 @@
 // derive_deployed_apex_vk_identity_and_check_fixture) mints from a FRESH fold
 // of the apex circuit at HEAD — VK material is content-independent and
 // depth-invariant, so the derivation depends only on the deployed circuit
-// definition — together with the apex's RecursionVk fingerprint (the
-// light-client trust anchor, which hashes the preprocessed commitment as a
-// labeled component, making the (fingerprint, lanes) pair self-binding). The
-// same Rust lane plus TestApexPinFixtureMatchesDerivedDeployedIdentity assert
-// the proof fixture's apex VK-core equals this derived value (a same-shape
-// non-deployed apex would mint a SELF-consistent fixture; the cross-artifact
-// differential is what catches it). HONEST RESIDUAL: there is no proof-free
+// definition — together with the apex's RecursionVk fingerprint, which is
+// ASSERTED equal to the governance-pinned DreggApexRecursionVk constant
+// (below) at every load, fail-closed. The fingerprint hashes the preprocessed
+// commitment as a labeled component, making the (fingerprint, lanes) pair
+// self-binding, and the Rust derivation lane asserts the same pin
+// (DREGG_APEX_RECURSION_VK) on the freshly derived fingerprint before
+// emitting the artifact — so the lanes the circuit bakes are the ones the
+// pinned anchor hashes, not whatever sits at HEAD. The same Rust lane plus
+// TestApexPinFixtureMatchesDerivedDeployedIdentity assert the proof fixture's
+// apex VK-core equals this derived value (a same-shape non-deployed apex
+// would mint a SELF-consistent fixture; the cross-artifact differential is
+// what catches it). HONEST RESIDUAL: there is no proof-free
 // preprocessed-commitment computation (the commitment is produced by the
 // prover's preprocessed-trace commit; a keygen-only path does not exist in
 // p3-circuit-prover), so "derived from the deployed circuit" means "derived
-// by running the HEAD circuit once and recording the fingerprint-bound
-// result" — re-checkable by anyone via the Rust derivation test.
+// by running the HEAD circuit once and recording the fingerprint-bound,
+// anchor-checked result" — re-checkable by anyone via the Rust derivation
+// test.
 package friverifier
 
 import (
@@ -82,6 +88,38 @@ import (
 
 	"github.com/consensys/gnark/frontend"
 )
+
+// DreggApexRecursionVk is the GOVERNANCE-PINNED deployed-apex RecursionVk
+// fingerprint (blake3-32, hex) — dregg's apex weak-subjectivity anchor, the
+// exact analogue of the Solana bridge's pinned WeakSubjectivityAnchor
+// (bridge/src/solana_trustless.rs check_pinned_anchor). Every consumer of the
+// derived identity artifact fixtures/apex_vk_identity.json asserts its
+// recursion_vk_hex equals THIS constant, fail-closed (loadApexVkIdentity via
+// checkApexVkIdentityAnchor, stark_algebra_real_fixture_test.go), so the
+// apex-VK pin's VALUE authority is "checked against a governance-pinned
+// anchor", not "trust the apex source at HEAD".
+//
+// The 8 ApexVkLanes the settlement circuit bakes are bound to this
+// fingerprint by the recursion_vk_fingerprint self-binding pair — the
+// fingerprint hashes the apex's preprocessed commitment (gp.commitment) as a
+// labeled component, and the lanes ARE that commitment's roots — enforced
+// where the VK material exists: the Rust derivation lane
+// (circuit-prove/src/apex_shrink_gnark_export.rs DREGG_APEX_RECURSION_VK +
+// check_apex_vk_identity_pin) computes fingerprint and lanes from the SAME
+// object and asserts the fingerprint equals the same pin before emitting the
+// artifact. The Go side additionally cross-checks the identity's lanes
+// against the loader-verified proof fixture's apex VK-core
+// (TestApexPinFixtureMatchesDerivedDeployedIdentity), so doctored lanes
+// under an honest fingerprint also reject.
+//
+// GOVERNANCE RESIDUAL (weak subjectivity, same shape as the Solana anchor
+// pin): this constant is committed in-repo; governance chooses it at deploy,
+// and an apex circuit change requires a governance/operator step — re-derive
+// via derive_deployed_apex_vk_identity_and_check_fixture, then update this
+// constant AND the Rust mirror — until then every identity load fails
+// closed. The trust model is "trust a governance-pinned recent fingerprint",
+// NOT "trust whoever compiled".
+const DreggApexRecursionVk = "3ad1c9c601686a0983ed8df43a4a145e729d985194386ec22156029b92fc5503"
 
 // shrinkPrefixOp is the structural script for replaying the pre-FRI
 // transcript prefix in-circuit.
