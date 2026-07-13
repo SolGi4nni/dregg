@@ -83,6 +83,7 @@ import Dregg2.Circuit.StateCommit
 import Dregg2.Circuit.ActionDispatch
 import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Poseidon2Binding
+import Dregg2.Circuit.FriVerifier
 
 namespace Dregg2.Circuit.CircuitSoundness
 
@@ -348,9 +349,67 @@ structure BatchProof where
   /-- the opaque proof bytes (unconstrained — the apex reasons only via the verdict). -/
   bytes : List ℤ := []
 
-/-- The (opaque) batch verifier: checks `π` against `vk` and `pi`. Its only SPECIFIED behaviour is via
-the `StarkSound` class below — we make NO unjustified claim about its internals. -/
-opaque verifyBatch : VerifyKey → BatchPublicInputs → BatchProof → Verdict
+/-! ### The deployed verifier configuration (the honest KAT floor).
+
+`verifyBatch` is no longer a fully-opaque function: it IS `FriVerifier.verifyAlgo` — the specified,
+soundness-proved batch-STARK FRI verifier — run at a fixed deployed configuration. Everything ABOVE
+this floor (verifyAlgo's transcript derivation, query binding, rejection teeth, `wrap_sound`) is
+PROVED in `Dregg2.Circuit.FriVerifier`. The configuration constants below are the residue that is
+NOT proved: the deployed p3 verifier's fixed knobs (Poseidon2 permutation `cfgPerm`, sponge `cfgRATE`,
+index extraction `cfgToNat`, FRI parameters `cfgParams`, the baked recursion-VK shape `cfgVk`, the
+arithmetic check bundle `cfgChecks`, the challenger init state `cfgInitState`, the log-domain size
+`cfgLogN`), the byte-deserialization view `cfgView` (proof/PI bytes → the structured
+`BatchProofData`/`WrapPublics` the verifier walks), and the residual non-FRI checks `cfgExtra`. They
+are left UNSPECIFIED (`opaque`) and are validated by the differential KAT corpus against the deployed
+p3 verifier — the validation-tier floor, the same status as Poseidon2 bit-exactness. -/
+
+instance : Inhabited FriVerifier.FriParams :=
+  ⟨{ logBlowup := 0, numQueries := 0, powBits := 0, maxLogArity := 0,
+     logFinalPolyLen := 0, extDeg := 0 }⟩
+
+instance : Inhabited (FriVerifier.RecursionVk ℤ) :=
+  ⟨{ shapeMatches := fun _ => false }⟩
+
+instance : Inhabited (FriVerifier.FriChecks ℤ) :=
+  ⟨{ foldConsistent := fun _ _ _ => false, merklePaths := fun _ _ => false,
+     batchTables := fun _ _ => false, queryPow := fun _ => false }⟩
+
+instance : Inhabited (FriVerifier.BatchProofData ℤ) :=
+  ⟨{ traceCommit := [], friCommitments := [], finalPoly := [], queries := [],
+     exposedSegment := [] }⟩
+
+instance : Inhabited (FriVerifier.WrapPublics ℤ) :=
+  ⟨{ segment := [] }⟩
+
+/-- Deployed config: the Poseidon2 permutation the challenger sponges with. KAT-validated. -/
+opaque cfgPerm : List ℤ → List ℤ
+/-- Deployed config: the sponge rate. KAT-validated. -/
+opaque cfgRATE : Nat
+/-- Deployed config: field-element → query-index bit extraction. KAT-validated. -/
+opaque cfgToNat : ℤ → Nat
+/-- Deployed config: the FRI parameters (the deployed knobs are `ir2LeafWrapConfig`). KAT-validated. -/
+opaque cfgParams : FriVerifier.FriParams
+/-- Deployed config: the baked recursion-VK shape pin. KAT-validated. -/
+opaque cfgVk : FriVerifier.RecursionVk ℤ
+/-- Deployed config: the arithmetic per-query check bundle. KAT-validated. -/
+opaque cfgChecks : FriVerifier.FriChecks ℤ
+/-- Deployed config: the challenger's initial sponge state. KAT-validated. -/
+opaque cfgInitState : List ℤ
+/-- Deployed config: the proof's log-domain size (from the VK shape / degree bits). KAT-validated. -/
+opaque cfgLogN : Nat
+/-- Deployed config: byte-deserialization of `(pi, π)` into the structured proof data and carried
+publics `verifyAlgo` walks. KAT-validated. -/
+opaque cfgView : BatchPublicInputs → BatchProof → (FriVerifier.BatchProofData ℤ × FriVerifier.WrapPublics ℤ)
+/-- Deployed config: the residual non-FRI checks of the deployed verifier. KAT-validated. -/
+opaque cfgExtra : FriVerifier.BatchProofData ℤ → FriVerifier.WrapPublics ℤ → Bool
+
+/-- The batch verifier: `FriVerifier.verifyAlgo` (PROVED structure) at the opaque deployed
+configuration (the KAT floor above). Its behaviour towards the apex is still carried via the
+`StarkSound` class below — exposing the structure adds knowledge, it removes none. -/
+def verifyBatch (_vk : VerifyKey) (pi : BatchPublicInputs) (π : BatchProof) : Verdict :=
+  if FriVerifier.verifyAlgo cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgChecks cfgInitState cfgLogN
+        (cfgView pi π).1 (cfgView pi π).2
+      && cfgExtra (cfgView pi π).1 (cfgView pi π).2 then Verdict.accept else Verdict.reject
 
 /-- The published-commitment view induced by a `BatchPublicInputs`. -/
 def BatchPublicInputs.toPublished (pi : BatchPublicInputs) : PublishedCommit :=
