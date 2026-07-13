@@ -139,12 +139,43 @@ impl std::error::Error for Erc20ProofError {}
 /// Compute the storage-trie SLOT KEY for `balances[holder]` where `balances` is a
 /// Solidity `mapping(address => uint256)` declared at storage slot `balances_slot`:
 /// `keccak256( left_pad32(holder) ‖ uint256_be(balances_slot) )`.
+///
+/// This is the SMALL-slot convenience over [`erc20_balance_slot_key_wide`]: a
+/// `mapping` whose declared base slot fits in a `u64` (slots `0..3` for a hand-written
+/// ERC-20, the common case). It delegates to the wide form with the slot padded into a
+/// 32-byte big-endian word — the two agree exactly.
 pub fn erc20_balance_slot_key(holder: &[u8; 20], balances_slot: u64) -> [u8; 32] {
+    let mut base = [0u8; 32];
+    // uint256_be(balances_slot): the slot number in the low-order 8 bytes.
+    base[24..32].copy_from_slice(&balances_slot.to_be_bytes());
+    erc20_balance_slot_key_wide(holder, &base)
+}
+
+/// Compute the storage-trie SLOT KEY for `balances[holder]` where the `balances`
+/// `mapping(address => uint256)` sits at an ARBITRARY 32-byte base slot:
+/// `keccak256( left_pad32(holder) ‖ balances_base_slot )`.
+///
+/// ## Why the wide form exists (Robinhood-Chain / OZ-v5 glue)
+///
+/// A Solidity `mapping` element is stored at `keccak256(pad(key) ‖ pad(base_slot))`
+/// where `base_slot` is a full `uint256`. [`erc20_balance_slot_key`] restricts the base
+/// slot to a `u64` — fine for a hand-written ERC-20 whose `_balances` lives at slot 0..3,
+/// but WRONG for a token using OpenZeppelin v5's **ERC-7201 namespaced storage**
+/// (`@custom:storage-location erc7201:openzeppelin.storage.ERC20`), where the `ERC20`
+/// struct — and thus the `_balances` mapping base slot — is the 32-byte namespace value
+/// `keccak256("openzeppelin.storage.ERC20") - 1 & ~0xff`
+/// (`0x52c6…bace00`), which does NOT fit in a `u64`.
+///
+/// Robinhood Chain's tokenized-stock ERC-20s (PLTR, NFLX, AMZN, AMD, TSLA on the testnet)
+/// use exactly this OZ-v5 upgradeable layout, so their `balances[holder]` slot key can
+/// only be computed with a 32-byte base. This helper is that computation; it is a strict
+/// generalization — `erc20_balance_slot_key(h, s) == erc20_balance_slot_key_wide(h, &s_be32)`.
+pub fn erc20_balance_slot_key_wide(holder: &[u8; 20], balances_base_slot: &[u8; 32]) -> [u8; 32] {
     let mut preimage = [0u8; 64];
     // pad32(holder): 12 zero bytes then the 20-byte address (left-padded).
     preimage[12..32].copy_from_slice(holder);
-    // uint256_be(balances_slot): 32-byte big-endian slot number.
-    preimage[56..64].copy_from_slice(&balances_slot.to_be_bytes());
+    // the full 32-byte mapping base slot.
+    preimage[32..64].copy_from_slice(balances_base_slot);
     keccak256(preimage).0
 }
 
@@ -434,6 +465,72 @@ pub fn verify_erc20_holding(
     // (2) STORAGE PROOF: storage_hash --MPT--> keccak256(slot_key) -> RLP(balance).
     //     The storage-trie value is the minimal big-endian RLP of the uint256 balance.
     let slot_key = erc20_balance_slot_key(&holder, balances_slot);
+    verify_evm_storage_slot(
+        account.storage_hash,
+        slot_key,
+        claimed_balance,
+        storage_proof,
+    )
+    .map_err(|_| Erc20ProofError::StorageProofInvalid)?;
+
+    Ok(ProvenErc20Holding {
+        holder,
+        token,
+        balance: claimed_balance,
+        state_root,
+        block_number,
+        trust: HoldingTrust::StructureOnly,
+    })
+}
+
+/// **Prove a holder's ERC-20 balance where the `balances` mapping sits at an ARBITRARY
+/// 32-byte base slot** — the wide analog of [`verify_erc20_holding`]. Identical proof
+/// chain and fail-closed refusals; the ONLY difference is that the balance-slot key is
+/// [`erc20_balance_slot_key_wide`] over a 32-byte base rather than a `u64`.
+///
+/// This is the entry point for tokens using OpenZeppelin v5's **ERC-7201 namespaced
+/// storage** (the `_balances` mapping base slot is the 32-byte `openzeppelin.storage.ERC20`
+/// namespace, `0x52c6…bace00`, not a small slot) — e.g. **Robinhood Chain's tokenized
+/// stocks** (chain id 46630: PLTR, NFLX, AMZN, AMD, TSLA). `verify_erc20_holding` cannot
+/// address their balance slot; this can. Mints a [`HoldingTrust::StructureOnly`] holding
+/// (the `state_root` is caller-supplied — see the trust grading below).
+///
+/// ## Trust anchor (honest)
+///
+/// The proof is verified against a **caller-supplied `state_root`**. For an
+/// Ethereum-L1 target that root can be recovered by the full Altair sync-committee
+/// finality path ([`verify_erc20_holding_finalized`]), yielding `ConsensusProven`. For an
+/// **Arbitrum-Orbit L2 like Robinhood Chain there is NO Altair beacon / sync committee**:
+/// the honest near-term anchor is **weak-subjectivity** — trust a checkpointed/recent
+/// Robinhood-Chain state root (exactly the `StructureOnly` rung, `consensus_proven:false`,
+/// ZERO governance weight). The trustless upgrade is to verify the L2 state against its
+/// **L1 (Ethereum) Arbitrum-rollup anchor** (the L2 output root posted to the L1
+/// `SequencerInbox`/rollup contract, itself opened with the SAME EIP-1186 machinery). This
+/// function does NOT establish that; it verifies the MPT chain under whatever root it is
+/// handed, and reports `StructureOnly` so downstream weight stays fail-closed.
+#[allow(clippy::too_many_arguments)]
+pub fn verify_erc20_holding_wide(
+    state_root: [u8; 32],
+    account_proof: &[Vec<u8>],
+    storage_proof: &[Vec<u8>],
+    token: [u8; 20],
+    holder: [u8; 20],
+    balances_base_slot: [u8; 32],
+    account: &AccountClaim,
+    claimed_balance: U256,
+    block_number: u64,
+) -> Result<ProvenErc20Holding, Erc20ProofError> {
+    // Nomad-law floor: a zero holding is not a proof of holding.
+    if claimed_balance.is_zero() {
+        return Err(Erc20ProofError::ZeroBalance);
+    }
+
+    // (1) ACCOUNT PROOF: state_root --MPT--> keccak256(token) -> RLP(account).
+    verify_evm_account_proof(state_root, token, account, account_proof)
+        .map_err(|_| Erc20ProofError::AccountProofInvalid)?;
+
+    // (2) STORAGE PROOF over the WIDE (32-byte-base) balances-mapping slot key.
+    let slot_key = erc20_balance_slot_key_wide(&holder, &balances_base_slot);
     verify_evm_storage_slot(
         account.storage_hash,
         slot_key,
