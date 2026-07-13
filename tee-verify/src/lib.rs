@@ -43,10 +43,12 @@ use sha2::{Digest, Sha256};
 use x509_parser::prelude::*;
 
 pub mod attested_data;
+pub mod oracle_mark;
 pub mod snp;
 pub use attested_data::{
     attest_data, AttestedDataInput, AttestedError, AttestedFact, PayloadBinding, TrustGrade,
 };
+pub use oracle_mark::{Grade, GradedMark, MarkError, MarkPrice, MarkProvenance};
 pub use snp::SnpVerifier;
 
 /// The pinned AWS Nitro Enclaves root G1 certificate (PEM).

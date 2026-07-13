@@ -27,4 +27,5 @@ import Market.Liquidity
 import Market.LedgerRealization
 import Market.CrossMargin
 import Market.Lending
+import Market.OracleWeld
 import Market.ShieldedClearing

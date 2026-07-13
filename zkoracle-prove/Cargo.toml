@@ -74,6 +74,12 @@ tlsn-live = [
 [dev-dependencies]
 # Proof-size measurement in the demo example only (StarkProof is serde).
 bincode = "1.3"
+# The ORACLE WELD tie: a verified Coinbase spot attestation (this crate's zkTLS price lane) binds
+# its authenticated amount into a `GradedMark` — the graded lending/solvency input
+# (`tee-verify/src/oracle_mark.rs`, `metatheory/Market/OracleWeld.lean`). Dev-only: the graded-mark
+# TYPE lives in tee-verify; this crate is the zkTLS PRODUCER, tied end-to-end in
+# `tests/oracle_mark_zktls.rs`. No runtime dependency, no cycle (tee-verify does not depend here).
+dregg-tee-verify = { path = "../tee-verify" }
 
 # The live coinbase demo needs the heavy tlsn-live backend; gate it so `cargo build` without
 # the feature does not try to compile it.

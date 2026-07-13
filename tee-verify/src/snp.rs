@@ -42,6 +42,10 @@ use sha2::{Digest, Sha256};
 /// it builds + tests standalone even when a sibling workspace crate is red. Re-exported so
 /// the historical `snp::SnpTrust` / `snp::verify_snp_cert_chain` / `snp::verify_rsa_pss_sha384`
 /// paths keep resolving.
+///
+/// Kept as the top-level `src/snp_chain.rs` file (so it "builds + tests standalone"), which is
+/// why the child-module path is spelled explicitly rather than the default `src/snp/snp_chain.rs`.
+#[path = "snp_chain.rs"]
 pub mod snp_chain;
 pub use snp_chain::{
     amd_kds_cert_chain_url, verify_cert_link, verify_rsa_pss_sha384, verify_snp_cert_chain,
