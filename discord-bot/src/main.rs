@@ -176,6 +176,11 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     //     presser's derived dregg identity, and `verify` re-checks the chain.
     "council",
     "market",
+    // ─── three further DreggNet Cloud offerings through the SAME generic adapter:
+    //     `/hermes` a confined agent · `/grain` a confined grain · `/doc` a shared doc ─
+    "hermes",
+    "grain",
+    "doc",
     // ─── $DREGG-paid real-AI runs: buy run-credits, check balance ────────────────
     "buy-credits",
     "balance",
@@ -306,6 +311,9 @@ impl EventHandler for Handler {
             // ─── DreggNet Cloud offerings (the generic offering→Discord adapter) ─
             commands::council::register(),
             commands::market::register(),
+            commands::hermes::register(),
+            commands::grain::register(),
+            commands::doc::register(),
             // ─── $DREGG-paid real-AI runs ────────────────────────────────────
             commands::pay::register_buy(),
             commands::pay::register_balance(),
@@ -451,6 +459,10 @@ impl EventHandler for Handler {
                 // offering→Discord adapter (`commands::offering`).
                 "council" => commands::council::handle(&ctx, &command, &self.state).await,
                 "market" => commands::market::handle(&ctx, &command, &self.state).await,
+                // Three further offerings, all served by the ONE generic adapter.
+                "hermes" => commands::hermes::handle(&ctx, &command, &self.state).await,
+                "grain" => commands::grain::handle(&ctx, &command, &self.state).await,
+                "doc" => commands::doc::handle(&ctx, &command, &self.state).await,
                 "buy-credits" => commands::pay::handle_buy(&ctx, &command, &self.state).await,
                 "balance" => commands::pay::handle_balance(&ctx, &command, &self.state).await,
                 _ => {

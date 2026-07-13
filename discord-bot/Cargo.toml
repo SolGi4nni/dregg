@@ -170,6 +170,21 @@ dreggnet-offerings = { path = "../dreggnet-offerings" }
 #     manifest they live under.
 dreggnet-council = { path = "../dreggnet-council" }
 dreggnet-market = { path = "../dreggnet-market" }
+# THREE FURTHER OFFERINGS served by the SAME generic adapter (`src/commands/offering.rs`), so all
+# six DreggNet Cloud offerings are reachable in the bot:
+#   `/hermes` (offering #1) — a hosted, confined agent: a prompt drives ONE cap-bounded, metered,
+#     receipted turn on the PROVEN `dregg_sdk::ToolGateway` (rate cap + value budget); the executor
+#     referees the agent's proposed tool-call against its cell mandate — it CANNOT exceed it. The
+#     bot wires the REAL resident brain (on-box / BYO-key); the logic tests wire the scripted mock.
+#   `/grain` (offering #2) — a confined grain turn-cell: each action is ONE real `ToolGateway::invoke`
+#     kernel turn under a rate-`budget` grant; an over-cap action is the executor's OWN refusal.
+#   `/doc` — a shared collaborative document over the real `dregg-doc` substrate: each edit is one
+#     cap-gated finalized executor turn; an unauthorized/conflicting edit is a real refusal.
+# Root workspace members, consumed (never modified); their workspace-inherited deps resolve against
+# the root manifest they live under.
+dreggnet-hermes = { path = "../dreggnet-hermes" }
+dreggnet-grain = { path = "../dreggnet-grain" }
+dreggnet-doc = { path = "../dreggnet-doc" }
 # THE UGC REGISTRY behind `/gallery` — the real `Registry` (publish a content-addressed
 # `Universe`, submit a `Completion`) and its NO-CHEAT leaderboard: a completion is ranked
 # ONLY if its recorded receipt chain re-verifies to the declared WIN on a stranger's

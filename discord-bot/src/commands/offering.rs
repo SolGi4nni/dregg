@@ -60,7 +60,8 @@ use serenity::all::{
 };
 
 use dreggnet_offerings::{
-    Action, DreggIdentity, Offering, Outcome, SessionConfig, Surface, VerifyReport,
+    Action, CollectiveDecision, DreggIdentity, Offering, Outcome, SessionConfig, Surface, Tally,
+    VerifyReport, VoteCount,
 };
 
 use crate::BotState;
@@ -79,6 +80,11 @@ pub struct Live<O: Offering> {
     pub offering: O,
     /// The live confined session (the real receipt chain).
     pub session: O::Session,
+    /// The live collective ballot round — `Some` iff this offering runs in **collective mode**
+    /// ([`DiscordOffering::collective`]): many pressers cast write-once votes per round, and the
+    /// plurality winner drives ONE [`Offering::advance_collective`]. `None` for a direct
+    /// (1-press-1-turn) offering, whose presses resolve immediately through [`drive`].
+    pub round: Option<CollectiveRound>,
 }
 
 /// A turn whose [`Action::arg`] is a **number the user supplies** rather than a fixed index —
@@ -91,6 +97,23 @@ pub struct ValuePrompt {
     pub label: &'static str,
     /// The input field's placeholder.
     pub placeholder: &'static str,
+}
+
+/// A turn whose [`Action::label`] is a **free-text string the user supplies** (a Hermes prompt, a
+/// document edit's text) rather than a numeric arg — rendered as a button that opens a Discord
+/// modal collecting text. Where a [`ValuePrompt`]'s modal value is parsed to `i64` and fired via
+/// [`drive_value`], a text prompt's raw string rides the [`Action::label`] and fires via
+/// [`drive_text`] (the affordance wire carries no string payload, so the label is where it goes).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct TextPrompt {
+    /// The modal title.
+    pub title: &'static str,
+    /// The input field's label.
+    pub label: &'static str,
+    /// The input field's placeholder.
+    pub placeholder: &'static str,
+    /// A multi-line paragraph input (a document paragraph) vs a single line (a short prompt).
+    pub paragraph: bool,
 }
 
 /// A unit of work against an offering's live session table, run ON the store's owning thread.
@@ -176,6 +199,29 @@ where
         None
     }
 
+    /// Which turns take a user-supplied **free-text string** (a modal), carried on the
+    /// [`Action::label`]. Default: none (the offering is all fixed-arg buttons).
+    fn text_prompt(_turn: &str) -> Option<TextPrompt> {
+        None
+    }
+
+    /// Whether this offering runs as a **collective ballot** — many write-once voters per round,
+    /// the plurality winner driving ONE [`Offering::advance_collective`] — rather than a direct
+    /// 1-press-1-turn offering. Default: direct (`false`). A collective offering's session opens
+    /// with a live [`CollectiveRound`]; a press casts a write-once vote ([`cast_vote`]) and a
+    /// round close resolves the plurality winner as a real crowd turn ([`close_round`]).
+    fn collective() -> bool {
+        false
+    }
+
+    /// For a [`collective`](DiscordOffering::collective) offering, the identity the resolved
+    /// plurality turn is **carried by** (the mover of record on the substrate). A plurality is a
+    /// crowd decision with no single mover, so the default is the "party" pseudo-identity the
+    /// dungeon uses; the real electorate is recorded in the [`CollectiveDecision`] beside it.
+    fn collective_carrier() -> DreggIdentity {
+        DreggIdentity("party".to_string())
+    }
+
     /// A one-line honest status ribbon (verified turns, phase, quorum) for the footer.
     fn status_line(&self, session: &Self::Session) -> String;
 }
@@ -194,7 +240,21 @@ pub fn open_in<O: DiscordOffering>(
 ) -> Result<(), dreggnet_offerings::OfferingError> {
     O::store().run(move |sessions| {
         let session = offering.open(cfg)?;
-        sessions.insert(channel, Live { offering, session });
+        // A collective offering opens with a live round over the session's first actions (an open
+        // crowd — a restricted electorate is set with [`open_round`]); a direct offering has none.
+        let round = if O::collective() {
+            Some(CollectiveRound::new(0, offering.actions(&session), None))
+        } else {
+            None
+        };
+        sessions.insert(
+            channel,
+            Live {
+                offering,
+                session,
+                round,
+            },
+        );
         Ok(())
     })
 }
@@ -254,6 +314,293 @@ pub fn public_key_of(state: &BotState, discord_user_id: u64) -> [u8; 32] {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
+// COLLECTIVE MODE — an optional per-offering write-once ballot.
+//
+// A DIRECT offering resolves each press as one turn (1-press-1-turn, [`drive`]). A COLLECTIVE
+// offering ([`DiscordOffering::collective`]) instead runs a round: many pressers cast write-once
+// votes (keyed by derived dregg identity), and a round *close* resolves the plurality winner as
+// ONE real [`Offering::advance_collective`] carrying the whole [`CollectiveDecision`] (the
+// electorate + the offering core's [`Tally`] + the carrier). The `/dungeon` crowd is the shape
+// this generalises: the crowd decides, the world disposes, the receipt records who decided.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The outcome of casting one collective ballot ([`CollectiveRound::cast`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Cast {
+    /// The ballot was recorded (the voter's first vote this round).
+    Recorded,
+    /// The voter already voted this round — refused (write-once per derived identity).
+    AlreadyVoted,
+    /// The voter is not in this round's electorate — refused (a restricted collective).
+    NotEligible,
+    /// The chosen option is not on this round's ballot.
+    BadOption,
+    /// No round is open (either not a collective offering, or no session).
+    NoRound,
+    /// No session of this offering is open in the channel.
+    NoSession,
+}
+
+/// **A live voting round** over an offering's cap-gated [`Action`]s. A ballot is keyed by the
+/// voter's **derived dregg public-key hex** (never a Discord nickname), and is **write-once**: a
+/// second vote from the same identity is refused. The plurality winner ([`winner_position`]) is
+/// resolved as one real crowd turn by [`close_round`]; ties break toward the lowest option index
+/// (deterministic, reproducible — the SAME rule `/dungeon`'s bespoke ballot uses).
+pub struct CollectiveRound {
+    /// The round number (monotonic per session).
+    pub round: u64,
+    /// The candidate moves, in stable order (the offering's actions at round open). The option
+    /// position is the ballot id; the option's [`Action::arg`] is what the [`Tally`] carries.
+    pub options: Vec<Action>,
+    /// The ballots cast: voter public-key hex → chosen option position (write-once).
+    pub ballots: HashMap<String, usize>,
+    /// The eligible voters (public-key hex), or `None` for an **open crowd** (anyone may vote —
+    /// the `/dungeon` default). A restricted electorate (a council-shaped crowd) refuses an
+    /// outsider's ballot at [`Cast::NotEligible`]; the substrate is still the referee of the
+    /// resolved turn.
+    pub electorate: Option<Vec<String>>,
+}
+
+impl CollectiveRound {
+    /// A fresh round over `options`, restricted to `electorate` (or an open crowd if `None`).
+    pub fn new(round: u64, options: Vec<Action>, electorate: Option<Vec<DreggIdentity>>) -> Self {
+        Self::with_electorate(
+            round,
+            options,
+            electorate.map(|e| e.into_iter().map(|i| i.0).collect()),
+        )
+    }
+
+    /// The internal constructor (electorate already reduced to hex), so a round can preserve its
+    /// electorate restriction across close→re-open without re-wrapping.
+    fn with_electorate(round: u64, options: Vec<Action>, electorate: Option<Vec<String>>) -> Self {
+        CollectiveRound {
+            round,
+            options,
+            ballots: HashMap::new(),
+            electorate,
+        }
+    }
+
+    /// The option position carrying [`Action::arg`] `arg` (the wire fires by arg — see
+    /// [`cast_vote`]), or `None` if no option carries it.
+    pub fn position_of_arg(&self, arg: i64) -> Option<usize> {
+        self.options.iter().position(|a| a.arg == arg)
+    }
+
+    /// **Cast a write-once ballot by option position.** Refuses a non-member ([`Cast::NotEligible`]),
+    /// an out-of-range option ([`Cast::BadOption`]), and a repeat vote ([`Cast::AlreadyVoted`]).
+    pub fn cast(&mut self, voter: &DreggIdentity, option: usize) -> Cast {
+        if let Some(elec) = &self.electorate {
+            if !elec.iter().any(|e| e == &voter.0) {
+                return Cast::NotEligible;
+            }
+        }
+        if option >= self.options.len() {
+            return Cast::BadOption;
+        }
+        if self.ballots.contains_key(&voter.0) {
+            return Cast::AlreadyVoted;
+        }
+        self.ballots.insert(voter.0.clone(), option);
+        Cast::Recorded
+    }
+
+    /// Cast a write-once ballot by the option's [`Action::arg`] (the custom-id wire's shape).
+    pub fn cast_arg(&mut self, voter: &DreggIdentity, arg: i64) -> Cast {
+        match self.position_of_arg(arg) {
+            Some(pos) => self.cast(voter, pos),
+            None => Cast::BadOption,
+        }
+    }
+
+    /// The vote count per option position, in option order.
+    pub fn counts(&self) -> Vec<usize> {
+        let mut c = vec![0usize; self.options.len()];
+        for &p in self.ballots.values() {
+            if p < c.len() {
+                c[p] += 1;
+            }
+        }
+        c
+    }
+
+    /// The plurality winner's option position — most votes, ties to the lowest index. `None` only
+    /// when the round has no options; a round with options but zero ballots resolves to option 0.
+    pub fn winner_position(&self) -> Option<usize> {
+        if self.options.is_empty() {
+            return None;
+        }
+        let counts = self.counts();
+        (0..self.options.len()).max_by_key(|&i| (counts[i], std::cmp::Reverse(i)))
+    }
+
+    /// The offering core's [`Tally`] for this round — the per-option [`VoteCount`] distribution
+    /// (arg + votes) and the winning arg the crowd carried onto the substrate. `None` only when
+    /// there are no options.
+    pub fn tally(&self) -> Option<Tally> {
+        let pos = self.winner_position()?;
+        let counts = self.counts();
+        let vote_counts = self
+            .options
+            .iter()
+            .enumerate()
+            .map(|(i, a)| VoteCount::new(a.arg, counts[i] as u32))
+            .collect();
+        Some(Tally::new(vote_counts, self.options[pos].arg))
+    }
+
+    /// The electorate of record — everyone who actually cast a ballot this round (sorted, so the
+    /// recorded [`CollectiveDecision`] is deterministic). These are the voters the crowd turn is
+    /// attributed to, NOT the eligible set.
+    pub fn voter_ids(&self) -> Vec<DreggIdentity> {
+        let mut v: Vec<String> = self.ballots.keys().cloned().collect();
+        v.sort();
+        v.into_iter().map(DreggIdentity).collect()
+    }
+}
+
+/// The plurality-resolved facts of a closed collective round.
+pub struct CollectiveResolved {
+    /// The round number that closed.
+    pub round: u64,
+    /// The winning option (the [`Action`] carried onto the substrate).
+    pub winner: Action,
+    /// The crowd's [`Tally`] (the ballot distribution + the winning arg).
+    pub tally: Tally,
+    /// The electorate of record (everyone who voted).
+    pub electorate: Vec<DreggIdentity>,
+    /// The real substrate outcome of the resolved crowd turn — a landed [`Outcome::Landed`]
+    /// (a genuine `TurnReceipt`) or the executor's own [`Outcome::Refused`] (anti-ghost).
+    pub outcome: Outcome,
+}
+
+/// The result of [`close_round`].
+#[allow(clippy::large_enum_variant)]
+pub enum CollectiveClose {
+    /// The plurality winner resolved as a real crowd turn (and the next round opened).
+    Resolved(CollectiveResolved),
+    /// The round has no options — nothing to resolve (a re-open, not a turn).
+    Empty,
+    /// No round is open (not a collective offering, or none opened yet).
+    NoRound,
+    /// No session of this offering is open in the channel.
+    NoSession,
+}
+
+/// Open (or replace) a collective round for `channel`, restricted to `electorate` (or an open
+/// crowd if `None`). The candidate options are the offering's current [`Offering::actions`]. Used
+/// to attach a restricted electorate to a collective session (a council-shaped crowd); an open
+/// crowd already gets a round at [`open_in`]. Returns `false` if no session is open.
+#[allow(dead_code)]
+pub fn open_round<O: DiscordOffering>(
+    channel: u64,
+    electorate: Option<Vec<DreggIdentity>>,
+) -> bool {
+    O::store().run(move |sessions| match sessions.get_mut(&channel) {
+        Some(live) => {
+            let options = live.offering.actions(&live.session);
+            live.round = Some(CollectiveRound::new(0, options, electorate));
+            true
+        }
+        None => false,
+    })
+}
+
+/// **Cast one write-once collective ballot**, keyed by `voter`'s derived dregg identity, for the
+/// option carrying `arg` — the SAME path a live vote-button press takes. This is the collective
+/// analogue of [`drive`]: it records a vote rather than resolving a turn (the plurality winner is
+/// resolved later by [`close_round`]).
+pub fn cast_vote<O: DiscordOffering>(channel: u64, voter: DreggIdentity, arg: i64) -> Cast {
+    O::store().run(move |sessions| match sessions.get_mut(&channel) {
+        None => Cast::NoSession,
+        Some(live) => match live.round.as_mut() {
+            None => Cast::NoRound,
+            Some(round) => round.cast_arg(&voter, arg),
+        },
+    })
+}
+
+/// **Close the collective round: resolve its plurality winner as ONE real crowd turn.** Tallies
+/// the write-once ballots, drives the winning [`Action`] through [`Offering::advance_collective`]
+/// carrying the full [`CollectiveDecision`] (the voters of record + the [`Tally`] + the carrier),
+/// and opens the next round over the resulting state (preserving the electorate restriction). A
+/// landed move records a real `TurnReceipt`; a refused one commits nothing (anti-ghost). This is
+/// the collective analogue of a single-press resolution — many pressers, one refereed turn.
+#[allow(dead_code)]
+pub fn close_round<O: DiscordOffering>(channel: u64) -> CollectiveClose {
+    let carrier = O::collective_carrier();
+    O::store().run(move |sessions| {
+        let Some(live) = sessions.get_mut(&channel) else {
+            return CollectiveClose::NoSession;
+        };
+        let Some(round) = live.round.take() else {
+            return CollectiveClose::NoRound;
+        };
+        let Some(pos) = round.winner_position() else {
+            // An option-less round: nothing to resolve — put it back and report empty.
+            live.round = Some(round);
+            return CollectiveClose::Empty;
+        };
+        let winner = round.options[pos].clone();
+        let tally = round.tally().expect("a winner implies a tally");
+        let electorate = round.voter_ids();
+        let restrict = round.electorate.clone();
+        let round_no = round.round;
+
+        // THE CROWD DECIDES, THE WORLD DISPOSES — one real cap-bounded turn carrying the whole
+        // decision (the substrate still admits exactly one typed Action; the tally is provenance).
+        let decision = CollectiveDecision::new(electorate.clone(), carrier, tally.clone());
+        let outcome = live
+            .offering
+            .advance_collective(&mut live.session, winner.clone(), decision);
+
+        // Open the next round over the new state, keeping any electorate restriction.
+        let next_options = live.offering.actions(&live.session);
+        live.round = Some(CollectiveRound::with_electorate(
+            round_no + 1,
+            next_options,
+            restrict,
+        ));
+
+        CollectiveClose::Resolved(CollectiveResolved {
+            round: round_no,
+            winner,
+            tally,
+            electorate,
+            outcome,
+        })
+    })
+}
+
+/// Read the channel's live collective round (`None` when no round is open). Runs on the store's
+/// thread; only the result comes back. The driven tests + a future `/<offering>` collective
+/// surface use it to render the live tally.
+#[allow(dead_code)]
+pub fn with_round<O: DiscordOffering, R: Send + 'static>(
+    channel: u64,
+    f: impl FnOnce(&CollectiveRound) -> R + Send + 'static,
+) -> Option<R> {
+    O::store().run(move |sessions| sessions.get(&channel).and_then(|l| l.round.as_ref()).map(f))
+}
+
+/// An honest one-line note for a cast ballot (the ephemeral ack a live vote gets).
+fn cast_note(cast: Cast) -> String {
+    match cast {
+        Cast::Recorded => {
+            "**Ballot recorded.** One write-once vote per dregg identity.".to_string()
+        }
+        Cast::AlreadyVoted => "You already voted this round. One ballot per identity.".to_string(),
+        Cast::NotEligible => {
+            "You are not in this round's electorate — your ballot is refused.".to_string()
+        }
+        Cast::BadOption => "That option is no longer on the ballot.".to_string(),
+        Cast::NoRound => "No collective round is open here.".to_string(),
+        Cast::NoSession => "No session is open in this channel.".to_string(),
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
 // The custom-id wire.
 // ─────────────────────────────────────────────────────────────────────────────
 
@@ -269,12 +616,24 @@ pub enum Press {
         /// The affordance argument.
         arg: i64,
     },
-    /// The affordance needs a typed value: open the modal for `turn`.
+    /// The affordance needs a typed **numeric** value: open the value modal for `turn`. The value
+    /// the user types IS the arg (a market reserve / a sealed bid), so no pre-arg is carried.
     Ask {
         /// The offering key.
         key: String,
         /// The affordance verb whose value the modal collects.
         turn: String,
+    },
+    /// The affordance needs a **free-text** value AND carries its own `arg`: open the text modal
+    /// for `(turn, arg)`. Unlike [`Ask`](Press::Ask), a text affordance's `arg` is distinct from
+    /// its text (a document insert's anchor position + its prose), so the wire carries both.
+    AskText {
+        /// The offering key.
+        key: String,
+        /// The affordance verb whose text the modal collects.
+        turn: String,
+        /// The affordance argument (the anchor/cell the text applies to).
+        arg: i64,
     },
 }
 
@@ -283,14 +642,24 @@ pub fn fire_id(key: &str, turn: &str, arg: i64) -> String {
     format!("{PREFIX}:fire:{key}:{turn}:{arg}")
 }
 
-/// The custom-id of a value-taking affordance button (opens the modal).
+/// The custom-id of a numeric-value-taking affordance button (opens the value modal).
 pub fn ask_id(key: &str, turn: &str) -> String {
     format!("{PREFIX}:ask:{key}:{turn}")
 }
 
-/// The custom-id of the modal that collects `turn`'s typed value.
+/// The custom-id of a text-taking affordance button carrying its `arg` (opens the text modal).
+pub fn askt_id(key: &str, turn: &str, arg: i64) -> String {
+    format!("{PREFIX}:askt:{key}:{turn}:{arg}")
+}
+
+/// The custom-id of the modal that collects `turn`'s numeric value.
 pub fn submit_id(key: &str, turn: &str) -> String {
     format!("{PREFIX}:submit:{key}:{turn}")
+}
+
+/// The custom-id of the modal that collects `turn`'s free text, carrying its `arg` back.
+pub fn subt_id(key: &str, turn: &str, arg: i64) -> String {
+    format!("{PREFIX}:subt:{key}:{turn}:{arg}")
 }
 
 /// Decode a component press. `None` for any id that is not ours.
@@ -306,11 +675,16 @@ pub fn parse_press(custom_id: &str) -> Option<Press> {
             key: (*key).to_string(),
             turn: (*turn).to_string(),
         }),
+        [PREFIX, "askt", key, turn, arg] => Some(Press::AskText {
+            key: (*key).to_string(),
+            turn: (*turn).to_string(),
+            arg: arg.parse().ok()?,
+        }),
         _ => None,
     }
 }
 
-/// Decode a modal submit id into `(key, turn)`. `None` for any id that is not ours.
+/// Decode a **numeric** modal submit id into `(key, turn)`. `None` for any id that is not ours.
 pub fn parse_submit(custom_id: &str) -> Option<(String, String)> {
     let parts: Vec<&str> = custom_id.split(':').collect();
     match parts.as_slice() {
@@ -319,11 +693,26 @@ pub fn parse_submit(custom_id: &str) -> Option<(String, String)> {
     }
 }
 
+/// Decode a **text** modal submit id into `(key, turn, arg)`. `None` for any id that is not ours.
+pub fn parse_text_submit(custom_id: &str) -> Option<(String, String, i64)> {
+    let parts: Vec<&str> = custom_id.split(':').collect();
+    match parts.as_slice() {
+        [PREFIX, "subt", key, turn, arg] => {
+            Some(((*key).to_string(), (*turn).to_string(), arg.parse().ok()?))
+        }
+        _ => None,
+    }
+}
+
 /// The offering key a press/submit id belongs to (what the router dispatches on).
 pub fn key_of(custom_id: &str) -> Option<String> {
     match parse_press(custom_id) {
-        Some(Press::Fire { key, .. }) | Some(Press::Ask { key, .. }) => Some(key),
-        None => parse_submit(custom_id).map(|(k, _)| k),
+        Some(Press::Fire { key, .. })
+        | Some(Press::Ask { key, .. })
+        | Some(Press::AskText { key, .. }) => Some(key),
+        None => parse_submit(custom_id)
+            .map(|(k, _)| k)
+            .or_else(|| parse_text_submit(custom_id).map(|(k, _, _)| k)),
     }
 }
 
@@ -364,7 +753,10 @@ pub fn action_rows<O: DiscordOffering>(actions: &[Action]) -> Vec<CreateActionRo
     for chunk in actions.chunks(5).take(5) {
         let mut buttons: Vec<CreateButton> = Vec::new();
         for a in chunk {
-            let id = if O::value_prompt(&a.turn).is_some() {
+            let id = if O::text_prompt(&a.turn).is_some() {
+                // A text affordance carries its own arg (a doc insert's anchor) beside the text.
+                askt_id(O::KEY, &a.turn, a.arg)
+            } else if O::value_prompt(&a.turn).is_some() {
                 ask_id(O::KEY, &a.turn)
             } else {
                 fire_id(O::KEY, &a.turn, a.arg)
@@ -400,6 +792,25 @@ pub fn value_modal<O: DiscordOffering>(turn: &str, prompt: ValuePrompt) -> Creat
                 .placeholder(prompt.placeholder)
                 .required(true)
                 .max_length(20),
+        ),
+    ])
+}
+
+/// The modal that collects a text-taking affordance's free-text [`Action::label`] (a Hermes
+/// prompt, a document paragraph), carrying its `arg` (the anchor) back on the submit id. A
+/// paragraph prompt uses a multi-line input.
+pub fn text_modal<O: DiscordOffering>(turn: &str, arg: i64, prompt: TextPrompt) -> CreateModal {
+    let style = if prompt.paragraph {
+        InputTextStyle::Paragraph
+    } else {
+        InputTextStyle::Short
+    };
+    CreateModal::new(subt_id(O::KEY, turn, arg), prompt.title).components(vec![
+        CreateActionRow::InputText(
+            CreateInputText::new(style, prompt.label, VALUE_FIELD)
+                .placeholder(prompt.placeholder)
+                .required(true)
+                .max_length(300),
         ),
     ])
 }
@@ -458,6 +869,15 @@ pub enum Driven {
         /// The prompt to render.
         prompt: ValuePrompt,
     },
+    /// The affordance takes free text: the frontend must open this text modal (carrying `arg`).
+    NeedsText {
+        /// The affordance verb whose text the modal collects.
+        turn: String,
+        /// The affordance argument (the anchor/cell the text applies to).
+        arg: i64,
+        /// The text prompt to render.
+        prompt: TextPrompt,
+    },
     /// No session of this offering is open in the channel.
     NoSession,
     /// The custom-id is not this offering's.
@@ -477,6 +897,11 @@ pub fn drive<O: DiscordOffering>(channel: u64, custom_id: &str, actor: DreggIden
             Some(prompt) => Driven::NeedsValue { turn, prompt },
             // A value-less turn addressed as `ask` — fire it with arg 0 rather than dead-ending.
             None => drive_value::<O>(channel, &turn, 0, actor),
+        },
+        Press::AskText { key, turn, arg } if key == O::KEY => match O::text_prompt(&turn) {
+            Some(prompt) => Driven::NeedsText { turn, arg, prompt },
+            // A text-less turn addressed as `askt` — fire it with its arg rather than dead-ending.
+            None => drive_value::<O>(channel, &turn, arg, actor),
         },
         Press::Fire { key, turn, arg } if key == O::KEY => {
             drive_value::<O>(channel, &turn, arg, actor)
@@ -501,6 +926,30 @@ pub fn drive_value<O: DiscordOffering>(
         // is a decoration too (we pass `true`), because the substrate is the sole referee: a
         // move it does not admit comes back as a real `Refused`, not a frontend veto.
         let action = Action::new(turn.clone(), turn, arg, true);
+        live.offering.advance(&mut live.session, action, actor)
+    });
+    match outcome {
+        Some(o) => Driven::Fired(o),
+        None => Driven::NoSession,
+    }
+}
+
+/// **Drive a text-taking affordance** — the free-text modal-submit path. The typed string rides
+/// the [`Action::label`] (the affordance wire carries no string payload); ONE real offering turn,
+/// attributed to the presser's dregg identity. (A Hermes prompt, a document edit's text.)
+pub fn drive_text<O: DiscordOffering>(
+    channel: u64,
+    turn: &str,
+    arg: i64,
+    text: &str,
+    actor: DreggIdentity,
+) -> Driven {
+    let turn = turn.to_string();
+    let text = text.to_string();
+    let outcome = with_live::<O, _>(channel, move |live| {
+        // The typed text is the label; `arg` is the affordance's own (a doc insert's anchor), and
+        // `enabled` is decoration — the substrate is the sole referee of what lands.
+        let action = Action::new(text, turn, arg, true);
         live.offering.advance(&mut live.session, action, actor)
     });
     match outcome {
@@ -562,12 +1011,32 @@ pub async fn handle_component<O: DiscordOffering>(
 ) {
     let channel = component.channel_id.get();
     let actor = identity_of(state, component.user.id.get());
+
+    // COLLECTIVE MODE: a press is a write-once VOTE, not an immediate turn. Cast the ballot for
+    // the pressed option's arg and ack it ephemerally; the plurality winner is resolved later by
+    // a round close ([`handle_close`]). Direct offerings fall through to the 1-press-1-turn path.
+    if O::collective() {
+        if let Some(Press::Fire { arg, .. }) = parse_press(&component.data.custom_id) {
+            let cast = cast_vote::<O>(channel, actor, arg);
+            component_ephemeral(ctx, component, &cast_note(cast)).await;
+        }
+        return;
+    }
+
     match drive::<O>(channel, &component.data.custom_id, actor) {
         Driven::NeedsValue { turn, prompt } => {
             let _ = component
                 .create_response(
                     &ctx.http,
                     CreateInteractionResponse::Modal(value_modal::<O>(&turn, prompt)),
+                )
+                .await;
+        }
+        Driven::NeedsText { turn, arg, prompt } => {
+            let _ = component
+                .create_response(
+                    &ctx.http,
+                    CreateInteractionResponse::Modal(text_modal::<O>(&turn, arg, prompt)),
                 )
                 .await;
         }
@@ -581,19 +1050,36 @@ pub async fn handle_component<O: DiscordOffering>(
     }
 }
 
-/// Route a modal submit: parse the typed value and fire the affordance as a real turn.
+/// Route a modal submit: parse the typed value/text and fire the affordance as a real turn. A
+/// **text** submit (`subt:<key>:<turn>:<arg>`) carries its string on the label + its `arg` on the
+/// id ([`drive_text`]); a **numeric** submit (`submit:<key>:<turn>`) parses the value the user
+/// typed AS the arg ([`drive_value`], reporting a non-number honestly).
 pub async fn handle_modal<O: DiscordOffering>(
     ctx: &Context,
     modal: &ModalInteraction,
     state: &BotState,
 ) {
+    let channel = modal.channel_id.get();
+    let actor = identity_of(state, modal.user.id.get());
+    let raw = modal_value(modal, VALUE_FIELD);
+
+    // A TEXT submit: (key, turn, arg) on the id, the free text on the label.
+    if let Some((key, turn, arg)) = parse_text_submit(&modal.data.custom_id) {
+        if key != O::KEY {
+            return;
+        }
+        let driven = drive_text::<O>(channel, &turn, arg, raw.trim(), actor);
+        finish_modal::<O>(ctx, modal, channel, driven).await;
+        return;
+    }
+
+    // A NUMERIC submit: the typed value IS the arg.
     let Some((key, turn)) = parse_submit(&modal.data.custom_id) else {
         return;
     };
     if key != O::KEY {
         return;
     }
-    let raw = modal_value(modal, VALUE_FIELD);
     let Ok(value) = raw.trim().parse::<i64>() else {
         let _ = modal
             .create_response(
@@ -607,9 +1093,19 @@ pub async fn handle_modal<O: DiscordOffering>(
             .await;
         return;
     };
-    let channel = modal.channel_id.get();
-    let actor = identity_of(state, modal.user.id.get());
-    match drive_value::<O>(channel, &turn, value, actor) {
+    let driven = drive_value::<O>(channel, &turn, value, actor);
+    finish_modal::<O>(ctx, modal, channel, driven).await;
+}
+
+/// The shared tail of a modal submit: post the move's honest outcome + the re-rendered surface (a
+/// landed receipt / a real refusal), or the no-session note.
+async fn finish_modal<O: DiscordOffering>(
+    ctx: &Context,
+    modal: &ModalInteraction,
+    channel: u64,
+    driven: Driven,
+) {
+    match driven {
         Driven::Fired(outcome) => {
             let note = outcome_note(&outcome);
             let rendered = with_live::<O, _>(channel, |live| surface_of::<O>(live));
@@ -635,6 +1131,44 @@ pub async fn handle_modal<O: DiscordOffering>(
                     ),
                 )
                 .await;
+        }
+    }
+}
+
+/// **Close a collective round** (a `/<offering> close`): resolve the plurality winner as ONE real
+/// crowd turn and post the honest outcome + the next round's surface. The collective analogue of
+/// [`handle_component`]'s single-press resolution. Reachable once a collective offering registers
+/// a close subcommand; today the driven tests + the dungeon adapter exercise [`close_round`].
+#[allow(dead_code)]
+pub async fn handle_close<O: DiscordOffering>(ctx: &Context, command: &CommandInteraction) {
+    let channel = command.channel_id.get();
+    match close_round::<O>(channel) {
+        CollectiveClose::Resolved(resolved) => {
+            let note = format!(
+                "**Round {} closed.** The party chose **{}** ({}/{} ballot(s)).\n{}",
+                resolved.round,
+                truncate(&resolved.winner.label, 120),
+                resolved.tally.winning_votes(),
+                resolved.tally.total_votes(),
+                outcome_note(&resolved.outcome),
+            );
+            let rendered = with_live::<O, _>(channel, |live| surface_of::<O>(live));
+            let msg = match rendered {
+                Some((embed, rows)) => CreateInteractionResponseMessage::new()
+                    .content(truncate(&note, 1900))
+                    .embed(embed)
+                    .components(rows),
+                None => CreateInteractionResponseMessage::new().content(truncate(&note, 1900)),
+            };
+            let _ = command
+                .create_response(&ctx.http, CreateInteractionResponse::Message(msg))
+                .await;
+        }
+        CollectiveClose::Empty => {
+            ephemeral(ctx, command, "There is nothing to vote on this round.").await
+        }
+        CollectiveClose::NoRound | CollectiveClose::NoSession => {
+            ephemeral(ctx, command, &no_session_text::<O>()).await
         }
     }
 }
@@ -738,6 +1272,15 @@ pub async fn route_component(ctx: &Context, component: &ComponentInteraction, st
         k if k == <dreggnet_market::MarketOffering as DiscordOffering>::KEY => {
             handle_component::<dreggnet_market::MarketOffering>(ctx, component, state).await
         }
+        k if k == <dreggnet_hermes::HermesOffering as DiscordOffering>::KEY => {
+            handle_component::<dreggnet_hermes::HermesOffering>(ctx, component, state).await
+        }
+        k if k == <dreggnet_grain::GrainOffering as DiscordOffering>::KEY => {
+            handle_component::<dreggnet_grain::GrainOffering>(ctx, component, state).await
+        }
+        k if k == <dreggnet_doc::DocOffering as DiscordOffering>::KEY => {
+            handle_component::<dreggnet_doc::DocOffering>(ctx, component, state).await
+        }
         _ => {}
     }
 }
@@ -753,6 +1296,12 @@ pub async fn route_modal(ctx: &Context, modal: &ModalInteraction, state: &BotSta
         }
         k if k == <dreggnet_market::MarketOffering as DiscordOffering>::KEY => {
             handle_modal::<dreggnet_market::MarketOffering>(ctx, modal, state).await
+        }
+        k if k == <dreggnet_hermes::HermesOffering as DiscordOffering>::KEY => {
+            handle_modal::<dreggnet_hermes::HermesOffering>(ctx, modal, state).await
+        }
+        k if k == <dreggnet_doc::DocOffering as DiscordOffering>::KEY => {
+            handle_modal::<dreggnet_doc::DocOffering>(ctx, modal, state).await
         }
         _ => {}
     }

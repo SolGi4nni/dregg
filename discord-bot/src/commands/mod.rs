@@ -62,7 +62,19 @@ pub mod intent;
 // surfaced honestly). `/council` and `/market` are its first two consumers; `/dungeon`
 // (`fiction`) still carries its own bespoke ballot frontend and could adopt this next.
 pub mod council;
+// `/dungeon` ADOPTS the generic collective adapter (CONSERVATIVE): `DungeonOffering` implements
+// `DiscordOffering` in collective mode (write-once ballots → plurality → `advance_collective`) —
+// driven end-to-end here — while the LIVE `/dungeon` command keeps its bespoke paid-narrator flow
+// in `fiction`. The precise remaining cutover is named in the module docs.
+pub mod dungeon_offering;
 pub mod market;
+// The three further DreggNet Cloud offerings, each served by the SAME generic adapter:
+//   `/hermes` — a hosted, confined agent (offering #1): prompt → one cap-bounded metered turn.
+//   `/grain`  — a confined grain (offering #2): each action one real cap-bounded grain turn.
+//   `/doc`    — a shared collaborative document: each edit one cap-gated finalized executor turn.
+pub mod doc;
+pub mod grain;
+pub mod hermes;
 pub mod offering;
 // `/buy-credits` + `/balance` — the $DREGG earning surface: issue the caller's deterministic
 // deposit address + price, and show their persisted run-credit balance. A paid /dungeon run
