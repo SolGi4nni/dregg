@@ -9,7 +9,7 @@
 //! every refusal is either the executor's own in-band cap refusal or dregg-doc's own
 //! conflict semantics.
 
-use dregg_doc::{AtomId, Author, History, Op, Patch, PullRequest, PullRequestError, Regime};
+use dregg_doc::{AtomId, Author, History, Op, Patch, PullRequest, Regime};
 use dregg_turn::Finality;
 use dreggnet_doc::{
     DocOffering, DocSession, FIELD_TITLE, Role, TURN_DELETE, TURN_INSERT, TURN_ORDER_CONFLICT,
@@ -581,20 +581,20 @@ fn an_ill_formed_edit_is_refused_without_reaching_the_executor() {
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
-// 7. THE NAMED GAP, AS A LIVE FALSIFIER — why the session gates on the FOLD and
-//    not on `PullRequest::merge`.
+// 7. THE FIXED WART, PINNED — a superseding resolution now LANDS through the PR
+//    pushout on a fast-forward (dregg-doc's three_way now honors its base).
 // ─────────────────────────────────────────────────────────────────────────────
 
 /// A live single-document session is the FAST-FORWARD case: the new history is the
-/// old history plus one patch. `PullRequest`'s pushout is `merge(base_fold,
-/// head_fold)`, and the field union re-introduces the base's assignment that a
-/// *superseding* `SetField` just collapsed — so a resolution can NEVER land through
-/// the PR path on a fast-forward. This test pins that (it is the reason
-/// `dreggnet-doc` gates on the fold with dregg-doc's own conflict DETECTOR instead
-/// of routing a live edit through `PullRequest::merge`; the PR path remains the
-/// right thing for a genuine review FORK).
+/// old history plus one patch. dregg-doc's `three_way` previously ignored its base,
+/// so `PullRequest`'s pushout re-unioned the base's assignment that a *superseding*
+/// `SetField` had collapsed — a resolution could NEVER land through the PR path on a
+/// fast-forward. That is now FIXED upstream (three_way honors its base: the
+/// superseding side is authoritative), so the resolution LANDS. (`dreggnet-doc`
+/// still gates the live 1-patch edit on the FOLD with dregg-doc's conflict DETECTOR
+/// — simplest for a fast-forward — but the PR path is now correct for this case too.)
 #[test]
-fn the_pull_request_pushout_cannot_land_a_superseding_resolution_on_a_fast_forward() {
+fn a_superseding_resolution_now_lands_through_the_pr_pushout_on_a_fast_forward() {
     let mut base = History::new();
     base.commit(Patch::by(
         Author(1),
@@ -631,19 +631,19 @@ fn the_pull_request_pushout_cannot_land_a_superseding_resolution_on_a_fast_forwa
         "the fold of a superseding resolution is a single value"
     );
 
-    // But the PR's PUSHOUT unions the base back in — and refuses to merge.
+    // dregg-doc's three_way now honors its base, so the PR pushout LANDS the
+    // superseding resolution instead of manufacturing a phantom clash.
     let pr = PullRequest::open(base, head);
     match pr.merge() {
-        Err(PullRequestError::UnresolvedConflict(cs)) => {
+        Ok(merged) => {
             assert!(
-                !cs.is_empty(),
-                "the pushout re-introduced the base assignment"
+                !merged.patches.is_empty(),
+                "the superseding resolution's patches landed through the PR path"
             );
         }
-        other => panic!(
-            "expected the fast-forward supersede to be re-unioned into a clash by the PR pushout, \
-             got {:?}",
-            other.map(|o| o.patches.len())
+        Err(e) => panic!(
+            "expected the fast-forward supersede to LAND through the fixed PR pushout, got {:?}",
+            e
         ),
     }
 }
