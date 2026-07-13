@@ -11,3 +11,4 @@ private-matching ZKP; rung 4: cross-chain proof-settlement).
 -/
 import Market.Clearing
 import Market.Fairness
+import Market.Aggregation
