@@ -16,10 +16,7 @@
 
 use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, TURN_CHOOSE};
 use dreggnet_offerings::{Frontend, Offering, SessionConfig};
-use dreggnet_wechat::api::{
-    LOCK_GLYPH, build_miniprogram_card, parse_reply_index, render_affordance_block,
-};
-use dreggnet_wechat::render::render_surface_text;
+use dreggnet_wechat::api::{build_miniprogram_card, present_message};
 use dreggnet_wechat::transport::MockTransport;
 use dreggnet_wechat::{WeChatFrontend, WeChatMessage};
 use dungeon_on_dregg::KP_PRESS_ON;
@@ -69,15 +66,12 @@ fn present_builds_a_message_and_one_numbered_line_per_affordance() {
         "the content names the Keep + room: {:?}",
         req.text.content
     );
-    // The content is the rendered surface prose followed by the numbered affordance block.
-    let expected = format!(
-        "{}\n\n{}",
-        render_surface_text(&surface),
-        render_affordance_block(&acts).expect("a non-terminal room offers moves")
-    );
+    // The content is EXACTLY the shared `WeChatBackend` render (prose + the numbered reply list over
+    // the whole gated ViewNode tree) — the frontend presents through it; there is no crate-local codec.
+    let expected = present_message(&surface).content;
     assert_eq!(
         req.text.content, expected,
-        "content = surface prose + numbered reply list"
+        "content = the shared WeChatBackend render (prose + numbered reply list)"
     );
 
     // ONE numbered line per cap-gated affordance, 1-based, each parseable back to its position.
@@ -135,11 +129,16 @@ fn collect_maps_a_numbered_reply_back_to_the_typed_action_and_derived_identity()
         "the reply is attributed to the sender's derived dregg identity"
     );
 
-    // A "2." / "2 trade blows" style reply parses the leading number too.
-    assert_eq!(parse_reply_index("2. trade blows"), Some(2));
-    assert_eq!(parse_reply_index("  1 "), Some(1));
-    assert_eq!(parse_reply_index("nope"), None);
-    assert_eq!(parse_reply_index("0"), None, "there is no 0th affordance");
+    // A "2." / "2 trade blows" style reply parses the leading number too — via the SHARED positional
+    // half of the WeChat codec (`deos_view::wechat_reply_index`), what `collect` resolves against.
+    assert_eq!(deos_view::wechat_reply_index("2. trade blows"), Some(2));
+    assert_eq!(deos_view::wechat_reply_index("  1 "), Some(1));
+    assert_eq!(deos_view::wechat_reply_index("nope"), None);
+    assert_eq!(
+        deos_view::wechat_reply_index("0"),
+        None,
+        "there is no 0th affordance"
+    );
 
     // A reply naming a position never presented collects None.
     let stray = WeChatMessage::text(OPENID, "99");
@@ -232,6 +231,4 @@ fn miniprogram_card_carries_one_button_per_affordance() {
         json.contains("\"buttons\""),
         "the card carries its buttons: {json}"
     );
-    // The lock glyph is an OA-numbered-list concern, not a card concern (the card uses `enabled`).
-    let _ = LOCK_GLYPH;
 }

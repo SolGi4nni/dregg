@@ -40,12 +40,17 @@ description = "A WeChatFrontend implementing dreggnet-offerings' Frontend trait:
 # re-implement any offering logic.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
 # THE DEOS SURFACE — `ViewNode`, the serializable affordance view-tree an offering's
-# `render` produces. The WeChat renderer walks it into OA message text; its affordances
-# become a numbered reply list. `default-features = false` = the gpui-free view-tree model;
-# the `telegram` feature adds the shared `ViewNode`→text walk (`deos_view::render_text`, the
-# primitive the `TelegramBackend` exposes) the WeChat renderer projects prose through instead
-# of a bespoke subset walker (the affordance ENCODING — position→number — stays WeChat-local).
-deos-view = { path = "../deos-view", default-features = false, features = ["telegram"] }
+# `render` produces, AND the SHARED `WeChatBackend` that projects it. `default-features = false`
+# = the gpui-free view-tree model.
+#   * `wechat` — the `deos_view::WeChatBackend`: `ViewNode` → an OA text message + its NUMBERED
+#     REPLY LIST (the whole gated tree's actuations, `!enabled` shown LOCKED), plus the ONE
+#     affordance codec (`WeChatMessage::resolve` — a reply number or a `#<turn>:<arg>` marked id).
+#     This crate PRESENTS + COLLECTS through it; it no longer carries a crate-local numbered-reply
+#     codec. Its `render` half is the shared `ViewNode`→text walk (full node coverage).
+#   * `telegram` — the same `deos_view::render_text` prose walk, kept only for the RICH
+#     Mini-Program card body (`api::build_miniprogram_card`) which wants prose WITHOUT the numbered
+#     block. (`wechat` does not imply `telegram`; the OA path needs no bare `render_text`.)
+deos-view = { path = "../deos-view", default-features = false, features = ["telegram", "wechat"] }
 # REAL DERIVED IDENTITY — `AgentCipherclerk::from_key_bytes` → a genuine Ed25519 signing
 # identity, mirroring the telegram/discord derivation (only the BLAKE3 domain differs:
 # `dregg-wechat-v1`). `default-features = false` = the offline cipherclerk core.

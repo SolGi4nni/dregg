@@ -16,9 +16,9 @@
 //! - **verify()** re-verifies the whole committed chain by replay;
 //! - **identity** is a real derived Ed25519 key, deterministic + distinct per OpenID.
 
+use deos_view::LOCK_GLYPH; // the SHARED backend's lock glyph (no crate-local codec)
 use dreggnet_offerings::dungeon::{DungeonOffering, TURN_CHOOSE};
 use dreggnet_offerings::{Action, Frontend, Offering, Outcome, SessionConfig};
-use dreggnet_wechat::api::LOCK_GLYPH;
 use dreggnet_wechat::transport::MockTransport;
 use dreggnet_wechat::{WeChatFrontend, WeChatMessage};
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_PRESS_ON, KP_TRADE_BLOWS};

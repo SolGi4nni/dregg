@@ -23,13 +23,17 @@
 //!   seed → a REAL `AgentCipherclerk` Ed25519 identity, hex-encoded into a [`DreggIdentity`]. Same
 //!   primitive as telegram/discord, a WeChat-scoped domain ([`cipherclerk`]) so id-spaces never
 //!   collide.
-//! - **present(Surface) → an OA text message.** The offering's deos [`Surface`] view-tree walks
-//!   into message prose ([`render`]); its cap-gated [`Action`]s become a numbered reply list
-//!   ([`api::build_present_request`]). Sent through an INJECTED [`transport::Transport`] — the whole
-//!   thing drives with [`transport::MockTransport`] (no token, no network).
-//! - **collect(inbound message) → (SessionId, Action, DreggIdentity).** A user's numbered reply is
-//!   parsed into a 1-based index, matched against the affordances currently presented for that
-//!   session, and the firing user's derived identity attributes the move.
+//! - **present(Surface) → an OA text message.** The offering's deos [`Surface`] view-tree is
+//!   rendered by the SHARED [`deos_view::WeChatBackend`] ([`api::present_message`]) into prose + a
+//!   numbered reply list over the whole gated tree's actuations (full node coverage); the body is
+//!   wrapped into the `custom/send` wire request ([`api::build_present_request`]) and sent through
+//!   an INJECTED [`transport::Transport`] — the whole thing drives with [`transport::MockTransport`]
+//!   (no token, no network). The rendered [`deos_view::WeChatMessage`] (its options table) is kept
+//!   per session for the reply.
+//! - **collect(inbound message) → (SessionId, Action, DreggIdentity).** A user's reply is resolved
+//!   against the presented [`deos_view::WeChatMessage`] ([`deos_view::WeChatMessage::resolve`] — a
+//!   reply number or a `#<turn>:<arg>` marked id), reconstructed into the typed [`Action`], and the
+//!   firing user's derived identity attributes the move.
 //!
 //! ## Session shape: per-OpenID, single-player
 //! A WeChat OA conversation is **1:1** — there is no group-chat affordance surface (unlike Telegram
@@ -45,9 +49,10 @@ pub mod transport;
 
 use std::collections::HashMap;
 
+use deos_view::WeChatMessage as PresentedMessage;
 use dreggnet_offerings::{Action, DreggIdentity, Frontend, SessionId, Surface};
 
-use crate::api::{MSG_TYPE_TEXT, build_present_request, parse_reply_index};
+use crate::api::{MSG_TYPE_TEXT, build_present_request, present_message};
 use crate::cipherclerk::WeChatCipherclerk;
 use crate::transport::{Transport, TransportError};
 
@@ -87,9 +92,12 @@ impl WeChatMessage {
 pub struct WeChatSession {
     /// The user (OpenID) hosting the 1:1 session.
     pub openid: OpenId,
-    /// The affordances last presented — a numbered reply must name one of these positions (else the
-    /// frontend never offered it, and [`collect`](WeChatFrontend::collect) returns `None`).
-    pub presented: Vec<Action>,
+    /// The last presented [`deos_view::WeChatMessage`] — the rendered body PLUS its numbered options
+    /// table (from the shared [`deos_view::WeChatBackend`]). An inbound reply is
+    /// [`resolve`](deos_view::WeChatMessage::resolve)d against this (a reply number naming one of the
+    /// options, or a `#<turn>:<arg>` marked id); a reply that names nothing here is a move the
+    /// frontend never offered, and [`collect`](WeChatFrontend::collect) returns `None`.
+    pub presented: PresentedMessage,
 }
 
 /// **The WeChat frontend** — an affordance-renderer over the ONE offering core, generic over the
@@ -156,29 +164,33 @@ impl<T: Transport> WeChatFrontend<T> {
         WeChatCipherclerk::derive(&self.bot_secret, openid)
     }
 
-    /// **Present `surface` + `actions` in `session`** — the fallible inherent form of
-    /// [`present`](Frontend::present). Builds the `custom/send` request purely
-    /// ([`build_present_request`]) and sends it through the transport, recording the affordances so
-    /// a later [`collect`](Frontend::collect) can match a numbered reply. Opens the session slot on
-    /// first present if not already spun.
+    /// **Present `surface` in `session`** — the fallible inherent form of
+    /// [`present`](Frontend::present). Renders the surface through the SHARED
+    /// [`deos_view::WeChatBackend`] ([`present_message`] — prose + the numbered reply list over the
+    /// whole gated tree), wraps the body into the `custom/send` request ([`build_present_request`]),
+    /// sends it through the transport, and records the rendered [`deos_view::WeChatMessage`] (its
+    /// options table) so a later [`collect`](Frontend::collect) can resolve a reply. The `actions`
+    /// slice is now advisory: the numbered list is derived from the surface tree itself (the tree's
+    /// [`ViewNode::Menu`](deos_view::ViewNode)/`Button` actuations), full node coverage. Opens (or
+    /// replaces) the session slot.
     pub fn present_result(
         &mut self,
         session: &SessionId,
         surface: &Surface,
-        actions: &[Action],
+        _actions: &[Action],
     ) -> Result<(), TransportError> {
         let openid = Self::openid_of(session)
             .ok_or_else(|| TransportError(format!("not a wechat session id: {}", session.0)))?;
-        let req = build_present_request(&openid, surface, actions);
+        let message = present_message(surface);
+        let req = build_present_request(&openid, &message);
         self.transport.send_message(&req)?;
-        let slot = self
-            .sessions
-            .entry(session.clone())
-            .or_insert_with(|| WeChatSession {
+        self.sessions.insert(
+            session.clone(),
+            WeChatSession {
                 openid,
-                presented: Vec::new(),
-            });
-        slot.presented = actions.to_vec();
+                presented: message,
+            },
+        );
         self.last_send_error = None;
         Ok(())
     }
@@ -202,7 +214,11 @@ impl<T: Transport> Frontend for WeChatFrontend<T> {
         if let Some(openid) = Self::openid_of(&session) {
             self.sessions.entry(session).or_insert(WeChatSession {
                 openid,
-                presented: Vec::new(),
+                // Nothing presented yet — an empty options table; the first `present` fills it.
+                presented: PresentedMessage {
+                    content: String::new(),
+                    options: Vec::new(),
+                },
             });
         }
     }
@@ -218,19 +234,34 @@ impl<T: Transport> Frontend for WeChatFrontend<T> {
     }
 
     /// Collect an inbound [`WeChatMessage`] (a numbered reply) into `(SessionId, Action,
-    /// DreggIdentity)`: reconstruct the session from the sender's OpenID, parse the reply into a
-    /// 1-based affordance index, match it against the affordances currently presented for that
-    /// session, and attribute it to the sender's derived identity. `None` if the message is not a
-    /// text, the session is unknown, the reply is not a valid index, or it names a position the
-    /// frontend did not present (an event the frontend did not offer).
+    /// DreggIdentity)`: reconstruct the session from the sender's OpenID, [`resolve`] the reply
+    /// against the presented [`deos_view::WeChatMessage`] (a reply number naming an option, or a
+    /// `#<turn>:<arg>` marked id — the ONE shared codec), reconstruct the typed [`Action`] from the
+    /// resolved option (its label + `enabled` cap-tooth bit), and attribute it to the sender's
+    /// derived identity. `None` if the message is not a text, the session is unknown, or the reply
+    /// resolves to nothing the frontend presented (ordinary prose, an out-of-range number, an id
+    /// this transport never minted).
+    ///
+    /// [`resolve`]: deos_view::WeChatMessage::resolve
     fn collect(&self, ev: WeChatMessage) -> Option<(SessionId, Action, DreggIdentity)> {
         if ev.msg_type != MSG_TYPE_TEXT {
             return None;
         }
         let session = Self::session_id(&ev.from_openid);
         let slot = self.sessions.get(&session)?;
-        let idx = parse_reply_index(&ev.content)?; // 1-based
-        let action = slot.presented.get(idx - 1).cloned()?;
+        // The shared codec: a reply number resolved against the presented list, or a marked id.
+        let (turn, arg) = slot.presented.resolve(&ev.content)?;
+        // Reconstruct the typed Action from the option (its label + the render-time `enabled` bit —
+        // a locked cap-tooth resolves to enabled=false, and the executor stays the sole referee on
+        // `advance`). A marked id for an affordance not in this list (a stale Mini-Program button)
+        // still fires; the executor gates it.
+        let action = slot
+            .presented
+            .options
+            .iter()
+            .find(|o| o.turn == turn && o.arg == arg)
+            .map(|o| Action::new(o.label.clone(), o.turn.clone(), o.arg, o.enabled))
+            .unwrap_or_else(|| Action::new(String::new(), turn, arg, true));
         let identity = self.identity(ev.from_openid);
         Some((session, action, identity))
     }

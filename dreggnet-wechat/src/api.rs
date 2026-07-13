@@ -1,19 +1,23 @@
 //! **The PURE WeChat API layer** — request-building with NO transport, NO access-token, NO
 //! network. Mirrors the telegram frontend's pure/live split ([`build_present_request`] separate
-//! from a [`crate::transport::Transport`]): here it turns an offering [`Surface`] + its cap-gated
-//! [`Action`]s into a [`CustomSendRequest`] whose serde encoding IS the real WeChat
-//! `cgi-bin/message/custom/send` JSON wire body. A test that asserts the request shape asserts the
-//! wire shape; a [`crate::transport::Transport`] is the only thing that ever touches the network.
+//! from a [`crate::transport::Transport`]): it turns an already-rendered [`WeChatMessage`] into a
+//! [`CustomSendRequest`] whose serde encoding IS the real WeChat `cgi-bin/message/custom/send` JSON
+//! wire body. A test that asserts the request shape asserts the wire shape; a
+//! [`crate::transport::Transport`] is the only thing that ever touches the network.
 //!
-//! ## Surface → a numbered reply list (the WeChat affordance mapping)
-//! A WeChat Official Account forbids arbitrary per-message buttons. So an offering's cap-gated
-//! [`Action`]s are rendered as a **numbered list appended to the message text** — one line per
-//! affordance, `1.`-indexed — and the user **replies with the number** to pick a move (the reply
-//! arrives as an inbound text message; see [`crate::WeChatMessage`] / [`parse_reply_index`]). The
-//! numbering is over ALL presented affordances (enabled + locked): a `!enabled` affordance is the
-//! **cap tooth shown, not hidden** — it keeps its number and is still selectable, but is marked
-//! with a [`LOCK_GLYPH`] + `(locked)`, and firing it lands a real
-//! [`dreggnet_offerings::Outcome::Refused`] (anti-ghost), exactly as on Discord / Telegram.
+//! ## Render + affordance-encoding = the SHARED backend (no crate-local codec)
+//! A WeChat Official Account forbids arbitrary per-message buttons, so an offering's affordances
+//! ride as a **numbered reply list appended to the message text** and the user **replies with the
+//! number**. That WHOLE projection — the prose (the shared `ViewNode`→text walk) plus the numbered
+//! block (the whole gated tree's actuations in walk order, a `!enabled` one shown LOCKED, keeping
+//! its number) — is [`deos_view::WeChatBackend::render`]. [`present_message`] renders a [`Surface`]
+//! through it; the returned [`WeChatMessage`] carries the options table an inbound reply is
+//! [`resolve`](deos_view::WeChatMessage::resolve)d against (a reply number, or the `#<turn>:<arg>`
+//! marked id a Mini-Program button posts back). This crate no longer carries a numbered-reply codec
+//! — the render + affordance-encoding is the ONE deos-view home for that shape.
+//!
+//! What stays here is genuinely WeChat-specific: the `custom/send` wire body ([`CustomSendRequest`])
+//! and the RICH Mini-Program card payload.
 //!
 //! ## The RICH alternative — a Mini-Program card
 //! For a Mini-Program surface (which CAN render real buttons in WXML), [`build_miniprogram_card`]
@@ -21,6 +25,7 @@
 //! `{turn, arg, enabled}`. This is the heavier path (MP review + custom WXML); the OA numbered-reply
 //! is the CANONICAL surface (lightest, OA-native). Both map the SAME affordances — no reinvention.
 
+use deos_view::{SurfaceBackend, WeChatBackend, WeChatMessage};
 use dreggnet_offerings::{Action, Surface};
 use serde::{Deserialize, Serialize};
 
@@ -30,43 +35,15 @@ use crate::render::render_surface_text;
 /// (both the outbound [`CustomSendRequest`] and the inbound reply are `"text"`).
 pub const MSG_TYPE_TEXT: &str = "text";
 
-/// The dim lock glyph prefixing a `!enabled` (ineligible) affordance's numbered line — the cap
-/// tooth shown, not hidden. The line still carries its reply number; the executor refuses the move
-/// on `advance`.
-pub const LOCK_GLYPH: &str = "🔒 ";
-
-/// Parse a WeChat reply's text into a **1-based affordance index** — the WeChat analogue of the
-/// telegram `decode_callback`. Takes the leading run of ASCII digits (so `"2"`, `"2."`, and
-/// `"2 trade blows"` all resolve to `2`), so a user can reply with just the number. `None` if the
-/// reply has no leading digit or names index `0` (there is no 0th affordance — the list is 1-based).
-pub fn parse_reply_index(content: &str) -> Option<usize> {
-    let digits: String = content
-        .trim()
-        .chars()
-        .take_while(|c| c.is_ascii_digit())
-        .collect();
-    let n: usize = digits.parse().ok()?;
-    if n == 0 { None } else { Some(n) }
-}
-
-/// Render the affordances as the **numbered reply block** appended to an OA message — one `N.` line
-/// per affordance (1-based), a `!enabled` one prefixed with [`LOCK_GLYPH`] and suffixed `(locked)`.
-/// `None` when there are no affordances (a terminal room — nothing to reply). The header tells the
-/// user how to act on WeChat: reply with the number.
-pub fn render_affordance_block(actions: &[Action]) -> Option<String> {
-    if actions.is_empty() {
-        return None;
-    }
-    let mut out = String::from("Reply with the number of your move:");
-    for (i, a) in actions.iter().enumerate() {
-        let n = i + 1; // 1-based reply number
-        if a.enabled {
-            out.push_str(&format!("\n{n}. {}", a.label));
-        } else {
-            out.push_str(&format!("\n{n}. {LOCK_GLYPH}{} (locked)", a.label));
-        }
-    }
-    Some(out)
+/// **Render `surface` into the WeChat OA message** — prose + the numbered reply list — through the
+/// SHARED [`deos_view::WeChatBackend`]. The affordances are the whole gated view-tree's actuations
+/// (full node coverage — every container recurses), numbered 1-based in walk order; a `!enabled`
+/// one is shown LOCKED (keeps its number, the cap tooth shown not hidden). The returned
+/// [`WeChatMessage`] carries the options table a later reply is
+/// [`resolve`](deos_view::WeChatMessage::resolve)d against — this replaces the crate-local
+/// numbered-reply codec entirely.
+pub fn present_message(surface: &Surface) -> WeChatMessage {
+    WeChatBackend.render(surface.view(), &[])
 }
 
 /// The **text payload** of an OA message — `{ "content": "…" }` (the WeChat `text` object).
@@ -93,28 +70,19 @@ pub struct CustomSendRequest {
     pub text: TextPayload,
 }
 
-/// **Build the `custom/send` request that presents `surface` + `actions` to `openid`** — the pure
-/// Surface→(text + numbered reply list) mapping. The prose is the deos view-tree walked into
-/// WeChat-flavored text ([`render_surface_text`]); the affordances are appended as a numbered list
-/// ([`render_affordance_block`]) the user replies to by number. A `!enabled` affordance is rendered
-/// dimmed ([`LOCK_GLYPH`] + `(locked)`) but still numbered — the cap tooth shown, not hidden (the
-/// executor refuses it on `advance`).
-pub fn build_present_request(
-    openid: &str,
-    surface: &Surface,
-    actions: &[Action],
-) -> CustomSendRequest {
-    let mut content = render_surface_text(surface);
-    if let Some(block) = render_affordance_block(actions) {
-        if !content.is_empty() {
-            content.push_str("\n\n");
-        }
-        content.push_str(&block);
-    }
+/// **Build the `custom/send` request carrying an already-rendered [`WeChatMessage`] body to
+/// `openid`** — the WeChat wire-body seam (genuinely WeChat-specific). Render the surface with
+/// [`present_message`] (the shared [`deos_view::WeChatBackend`]) first, then wrap its
+/// [`content`](WeChatMessage::content) — the prose + numbered reply list — into the
+/// `cgi-bin/message/custom/send` body. Kept separate from the render so `present` can also retain
+/// the message's options table for a later reply [`resolve`](deos_view::WeChatMessage::resolve).
+pub fn build_present_request(openid: &str, message: &WeChatMessage) -> CustomSendRequest {
     CustomSendRequest {
         touser: openid.to_string(),
         msgtype: MSG_TYPE_TEXT.to_string(),
-        text: TextPayload { content },
+        text: TextPayload {
+            content: message.content.clone(),
+        },
     }
 }
 
