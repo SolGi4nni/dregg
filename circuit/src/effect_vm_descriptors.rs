@@ -1210,7 +1210,7 @@ pub const WIDE_TRANSFER_STAGED_TSV: &str =
 pub const WIDE_REGISTRY_STAGED_TSV: &str =
     include_str!("../descriptors/rotation-wide-registry-staged.tsv");
 pub const WIDE_REGISTRY_STAGED_FP: &str =
-    "f77eb1764d47a76d3f2a86aca08c7cbe6ecbd3380236b8574f26ed0aca9cad5f";
+    "d5b6f76af493bff61a7ee7ec97626d051999701378ccc9272d73c71ec79a2451";
 
 /// **THE LEAN-EMITTED WIDE+UMEM WELDED REGISTRY (STAGED, VK-RISK-FREE) — the WIDE+umem weld's
 /// MISSING VERIFIER LEG.** A member-for-member, name-stable welded twin of the wire's WIDE cap-open
@@ -1236,7 +1236,7 @@ pub const WIDE_REGISTRY_STAGED_FP: &str =
 pub const WIDE_UMEM_WELD_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-wide-umem-welded-registry-staged.tsv");
 pub const WIDE_UMEM_WELD_REGISTRY_FP: &str =
-    "042edaf515630c72f61dbe0af7bffd6a686a614f18f83f9570802ddef4de8be8";
+    "603a79364199835b61426921c090faed59edc24a93e59baf1ead8624e6d4e95a";
 
 // ============================================================================
 // THE WIDE-CARRIER GEOMETRY VERSION BOUNDARY (the flag-day rotation, v2).
