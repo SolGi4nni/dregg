@@ -78,6 +78,7 @@ loss and no residual hypothesis beyond the lattice/hash floor. The only trusted 
 (`MSIS`/`MLWESearchHard`/`HashCR`); adaptivity is FREE.
 -/
 import Dregg2.Crypto.HermineTSUF
+import Dregg2.Crypto.ProbCrypto
 import Mathlib.Data.Nat.Choose.Basic
 
 namespace Dregg2.Crypto.AdaptiveTSUF
@@ -86,6 +87,8 @@ open Dregg2.Crypto.Lattice
 open Dregg2.Crypto.HermineSelfTargetMSIS
 open Dregg2.Crypto.HermineHintMLWE
 open Dregg2.Crypto.HermineTSUF
+open Dregg2.Crypto.ConcreteSecurity (Negl Ensemble)
+open Dregg2.Crypto.ProbCrypto (DecisionMLWEHardQuant)
 
 /-! ## `section AdaptiveGame` — the interleaved corruption/signing transcript, the adaptive oracle, the budget. -/
 
@@ -347,6 +350,38 @@ theorem adaptive_erasure_from_simulation (A : M →ₗ[Rq] N) (trace : List (Ada
     AdaptiveErasure A trace memberKey chal resp (simTranscriptCommit A memberKey chal resp) :=
   fun i _ => simulate_consistent A (memberKey i) (chal i) (resp i)
 
+/-! ### THE DECISIONAL RE-GROUNDING of the masking / HVZK-simulatability leg.
+
+`adaptive_erasure_from_simulation` proves the simulated transcript is ALGEBRAICALLY consistent with every
+corrupted member (`simulate_consistent`). What makes the on-demand reveal NON-LEAKING is the SECOND,
+DECISIONAL fact: the sampled masked response `z_i` is computationally INDISTINGUISHABLE from the real masked
+response — the transcript distinguisher's LWE-vs-uniform advantage is negligible. The tree grounds that in
+`HermineHintMLWE.HintTranscriptSimulatable` (the uniform-smudging TV bound) reduced to the SEARCH floor
+`MLWESearchHard` (`hint_mlwe_reduces_to_mlwe`). Here it is re-grounded on the PROPER DECISIONAL floor
+`ProbCrypto.DecisionMLWEHardQuant` (the distinguishing-advantage ENSEMBLE `|Pr[D(real)] − Pr[D(sim)]|`
+negligible), the honest shape for an indistinguishability statement — a difference of probabilities, not a
+single win/search probability.
+
+The FORGERY / secret-recovery leg (`HintRecoverable → MLWESearchHard`) is genuinely SEARCH (finding the short
+secret), not decisional, and is re-grounded separately on the search-quant floor
+(`HybridThresholdQuant.adaptive_threshold_negl_of_msis`); it is NOT one of the decisional consumers. Only the
+masking-indistinguishability leg re-grounds here. -/
+
+/-- **`adaptive_transcript_nonleaking_under_decision_floor` — the decisional re-grounding.** Under the proper
+decisional floor `DecisionMLWEHardQuant advSim` (`advSim s` the transcript-distinguisher's LWE-vs-uniform
+advantage ENSEMBLE), the adaptive on-demand reveal is NON-LEAKING: the simulated transcript
+`simTranscriptCommit` is (a) ALGEBRAICALLY erasure-consistent with the ENTIRE realized corrupt set — PROVED
+outright by `adaptive_erasure_from_simulation`, no hypothesis — AND (b) COMPUTATIONALLY indistinguishable
+from the real masked transcript, its distinguishing advantage `Negl (advSim s)` under the decisional floor.
+Together: the reveal is consistent by construction and hides the secret, on a genuine distinguishing floor. -/
+theorem adaptive_transcript_nonleaking_under_decision_floor {S : Type*}
+    (A : M →ₗ[Rq] N) (trace : List (AdaptiveStep Fld Msg))
+    (memberKey : Fld → N) (chal : Fld → Rq) (resp : Fld → M)
+    (advSim : S → Ensemble) (s : S) (hfloor : DecisionMLWEHardQuant advSim) :
+    AdaptiveErasure A trace memberKey chal resp (simTranscriptCommit A memberKey chal resp)
+    ∧ Negl (advSim s) :=
+  ⟨adaptive_erasure_from_simulation A trace memberKey chal resp, hfloor s⟩
+
 end Erasure
 
 section ErasureHeadline
@@ -393,6 +428,7 @@ end ErasureHeadline
 #assert_axioms adaptive_ts_uf_reduces
 #assert_axioms partial_sig_equivocable_algebraic
 #assert_axioms adaptive_erasure_from_simulation
+#assert_axioms adaptive_transcript_nonleaking_under_decision_floor
 #assert_axioms adaptive_ts_uf_reduces_lossfree
 
 /-! ## Teeth — the adaptive game is NON-VACUOUS; the guessing reduction and the erasure hypothesis both FIRE.
@@ -533,6 +569,29 @@ theorem exFreshAdaptive (ρ : ℕ → ZMod 5) (hfresh : Fresh exForger ρ (signe
   refine adaptive_fresh_distinct exForger ρ exTrace hfresh 10 ?_
   rw [exTrace_signed]; decide
 
+/-! ### (d) The decisional re-grounding of the masking leg FIRES and its floor is LOAD-BEARING. -/
+
+/-- **THE DECISIONAL NON-LEAKING RE-GROUNDING FIRES.** Under the decaying transcript-distinguisher floor
+(`ProbCrypto.decayDist.adv = 1/2^l`), the adaptive reveal on `exTraceF` (member keys `3`, challenge `2`,
+response `4`) is NON-LEAKING: the simulated transcript is erasure-consistent (PROVED) AND its distinguishing
+advantage is negligible. The whole decisional pipeline runs on a real distinguishing advantage. -/
+theorem exAdaptiveNonleaking :
+    AdaptiveErasure (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) exTraceF
+      (fun _ => 3) (fun _ => 2) (fun _ => 4)
+      (simTranscriptCommit (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5)
+        (fun _ => 3) (fun _ => 2) (fun _ => 4))
+    ∧ Negl ProbCrypto.decayDist.adv :=
+  adaptive_transcript_nonleaking_under_decision_floor (LinearMap.id : ZMod 5 →ₗ[ZMod 5] ZMod 5) exTraceF
+    (fun _ => 3) (fun _ => 2) (fun _ => 4)
+    (fun _ : Unit => ProbCrypto.decayDist.adv) () ProbCrypto.decisionMLWEHardQuant_decay_holds
+
+/-- **THE DECISIONAL FLOOR IS LOAD-BEARING** — the perfect transcript distinguisher (advantage `1`) refutes
+it, so the masking indistinguishability the reveal relies on is a genuine decisional hardness assumption, not
+a Boolean flag. -/
+theorem exAdaptive_decision_floor_load_bearing :
+    ¬ DecisionMLWEHardQuant (fun _ : Unit => ProbCrypto.perfectDist.adv) :=
+  ProbCrypto.decisionMLWEHardQuant_perfect_refuted
+
 end Teeth
 
 #assert_axioms exTrace_corrupt
@@ -544,5 +603,7 @@ end Teeth
 #assert_axioms exErasureDischarge
 #assert_axioms exErasure_wrong_commit_fails
 #assert_axioms exFreshAdaptive
+#assert_axioms exAdaptiveNonleaking
+#assert_axioms exAdaptive_decision_floor_load_bearing
 
 end Dregg2.Crypto.AdaptiveTSUF

@@ -62,6 +62,7 @@ import Dregg2.Crypto.LatticeEstimate
 import Dregg2.Crypto.Lattice
 import Dregg2.Crypto.HermineTSUF
 import Dregg2.Crypto.HermineThreshold
+import Dregg2.Crypto.ProbCrypto
 import Mathlib.Analysis.SpecialFunctions.Pow.Real
 
 open scoped BigOperators
@@ -99,10 +100,14 @@ distinguisher's advantage when `wr`/`wl` are the real/lossy key distributions. -
 def distAdv (wr wl : N → ℝ) (D : N → ℝ) : ℝ :=
   |(∑ t, wr t * D t) - (∑ t, wl t * D t)|
 
-/-- **DECISION-MLWE hardness (the ONLY assumption residual; the standard lattice floor).** Every bounded key
-distinguisher's advantage against the real (`wr`) vs. lossy (`wl`) key distributions is `≤ adv`. `wr` is the
-real MLWE-key distribution (supported on `IsRealKey`), `wl` the uniform lossy one — so this is decision-MLWE
-at the `(A, β)` instance, the DECISIONAL twin of `Lattice.MLWESearchHard`, not a fresh carrier. -/
+/-- **DECISION-MLWE hardness at a SINGLE parameter (⚠ BROKEN as a hardness floor — a per-instance BOUND, not
+negligibility).** Every bounded key distinguisher's advantage against the real (`wr`) vs. lossy (`wl`) key
+distributions is `≤ adv` for a FIXED real `adv`. This states the correct DECISIONAL shape (`|E_wr D − E_wl D|`,
+the LWE-vs-uniform gap) but is NOT an asymptotic hardness assumption: held at `adv = 1` it is trivially
+satisfied (every advantage is `≤ 1`), so it carries no rate content — it cannot force the EUF-CMA advantage to
+DECAY. The honest floor is the ENSEMBLE-indexed `ProbCrypto.DecisionMLWEHardQuant` (`∀ s, Negl (adv s)`, §5),
+on which the tight bound is re-grounded as a genuine NEGLIGIBILITY theorem. Kept for the definitional
+`key_switch_is_decision_mlwe` identity; superseded as a floor. -/
 def DecisionMLWEHard (wr wl : N → ℝ) (adv : ℝ) : Prop :=
   ∀ D : N → ℝ, (∀ t, 0 ≤ D t ∧ D t ≤ 1) → distAdv wr wl D ≤ adv
 
@@ -324,6 +329,76 @@ end Reduction
   eufcma_tight_bits,
   sigBitsTight_deployed,
   tight_beats_forking
+]
+
+/-! ## §5 — THE DECISIONAL RE-GROUNDING: the tight bound as a NEGLIGIBILITY statement on the proper floor.
+
+`DecisionMLWEHard` (§1) is a per-instance advantage BOUND (`≤ adv` for a FIXED real), not a hardness floor —
+trivially satisfied at `adv = 1`, so it cannot force the EUF-CMA advantage to DECAY. The honest floor is
+`ProbCrypto.DecisionMLWEHardQuant dmlweAdv := ∀ s, Negl (dmlweAdv s)`, the distinguishing-advantage ENSEMBLE
+(`ProbCrypto.distinguishAdv`, `|Pr[D(real)] − Pr[D(uniform)]|`) negligible. Here the AFLT/KLS tight bound is
+re-grounded on it: the key-switch cost is a decision-MLWE distinguisher's advantage (a floor leaf), and the
+whole real-key EUF-CMA advantage ensemble is NEGLIGIBLE. This is the decisional analog of
+`ForkingDischarge.game_forger_negl_under_msis_quant` (search side). -/
+
+section DecisionRegrounded
+
+open Dregg2.Crypto.ConcreteSecurity
+open Dregg2.Crypto.ProbCrypto (DecisionMLWEHardQuant)
+
+/-- **`eufcma_tight_negl_under_decision_floor` — THE RE-GROUNDED TIGHT BOUND (negligibility form).** The
+real-key EUF-CMA advantage ENSEMBLE `eufcmaReal` is negligible, given: (a) it is a genuine nonneg advantage;
+(b) the key-switch cost at every parameter is bounded by a decision-MLWE distinguisher's advantage
+`dmlweAdv s` (§2, `key_switch_is_decision_mlwe`, coefficient 1 — no `√`, no `ε²`, no `q_H`); (c) the lossy
+key game bounds EUF-CMA-lossy by the statistical lossy-soundness ensemble `lossyBound` plus the HVZK
+simulation ensemble `simTerm`, both negligible. Under the proper `DecisionMLWEHardQuant dmlweAdv` floor the
+key-switch term is negligible (`hfloor s`), the tight composition `eufcmaReal ≤ dmlweAdv s + lossyBound +
+simTerm` (triangle inequality of §4's game hops) dominates `eufcmaReal`, so `Negl eufcmaReal` by domination.
+The decisional floor is LOAD-BEARING: strip it (`dmlweAdv` non-negligible) and the domination fails. This
+replaces the per-instance `DecisionMLWEHard` with a genuine asymptotic hardness floor. -/
+theorem eufcma_tight_negl_under_decision_floor {S : Type*}
+    (dmlweAdv : S → Ensemble) (s : S) (eufcmaReal eufcmaLossy lossyBound simTerm : Ensemble)
+    (hnn : ∀ n, 0 ≤ eufcmaReal n)
+    (hswitch : ∀ n, |eufcmaReal n - eufcmaLossy n| ≤ dmlweAdv s n)
+    (hlossy : ∀ n, eufcmaLossy n ≤ lossyBound n + simTerm n)
+    (hfloor : DecisionMLWEHardQuant dmlweAdv) (hlB : Negl lossyBound) (hsT : Negl simTerm) :
+    Negl eufcmaReal := by
+  have hsum : Negl (fun n => dmlweAdv s n + lossyBound n + simTerm n) :=
+    negl_add (negl_add (hfloor s) hlB) hsT
+  refine negl_of_eventually_le (Filter.Eventually.of_forall (fun n => ?_)) hsum
+  have h1 : eufcmaReal n - eufcmaLossy n ≤ dmlweAdv s n := le_trans (le_abs_self _) (hswitch n)
+  have hle : eufcmaReal n ≤ dmlweAdv s n + lossyBound n + simTerm n := by
+    have := hlossy n; linarith
+  rw [abs_of_nonneg (hnn n), abs_of_nonneg (le_trans (hnn n) hle)]
+  exact hle
+
+/-! ### Teeth — the re-grounded floor is SATISFIABLE (fires end-to-end) and LOAD-BEARING (refutable). -/
+
+/-- **THE RE-GROUNDED BOUND FIRES.** With the decaying decision-MLWE distinguisher
+(`ProbCrypto.decayDist.adv = 1/2^l`), a zero-lossy/zero-sim leg, and a zero EUF-CMA advantage, the tight
+reduction concludes `Negl 0` end-to-end — the whole decisional pipeline runs on real ensembles. -/
+theorem tooth_eufcma_tight_negl_fires :
+    Negl (fun _ : ℕ => (0 : ℝ)) :=
+  eufcma_tight_negl_under_decision_floor (fun _ : Unit => ProbCrypto.decayDist.adv) ()
+    (fun _ => 0) (fun _ => 0) (fun _ => 0) (fun _ => 0)
+    (fun _ => le_refl 0)
+    (fun n => by simpa using (ProbCrypto.decisionFamily_adv_mem_unit ProbCrypto.decayDist n).1)
+    (fun n => by simp)
+    ProbCrypto.decisionMLWEHardQuant_decay_holds negl_zero negl_zero
+
+/-- **THE DECISIONAL FLOOR IS LOAD-BEARING** — the perfect distinguisher (advantage `1`) refutes it, so the
+key-switch term the tight reduction consumes is genuinely a decisional hardness assumption, not a Boolean
+flag. Strip the floor and `eufcma_tight_negl_under_decision_floor`'s domination fails. -/
+theorem tooth_decision_floor_load_bearing :
+    ¬ DecisionMLWEHardQuant (fun _ : Unit => ProbCrypto.perfectDist.adv) :=
+  ProbCrypto.decisionMLWEHardQuant_perfect_refuted
+
+end DecisionRegrounded
+
+#assert_all_clean [
+  eufcma_tight_negl_under_decision_floor,
+  tooth_eufcma_tight_negl_fires,
+  tooth_decision_floor_load_bearing
 ]
 
 /-! ## Teeth — every leg FIRES on concrete data; the guard exhibits BOTH instances.
