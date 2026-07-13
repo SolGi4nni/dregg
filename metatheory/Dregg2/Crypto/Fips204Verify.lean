@@ -31,6 +31,20 @@ native via `leanc` and called from Rust through the `@[export]`ed `verifyFFI`. T
      `fips204_correct` — NOT taken as a hypothesis, NOT a `def …Hard`. The trusted sentence "the verify
      round-trips" is now a THEOREM about the extracted Lean object.
 
+## ⚑ THE FULL-DIMENSION FLOOR LIVES ELSEWHERE — read this before citing `extractedApi_fips204`
+
+`realParams` (PART 1) carries the DEPLOYED LITERALS (`q`, `γ₂`, `α`, `β`, `γ₁−β`) but at `n = 1`,
+`A = LinearMap.id`, constant challenge `c = 1`, and a single FIXED secret `(s₁,s₂,t₀) = (5,1,3)` with the
+fixed mask `y = 40` — a SCALAR CARICATURE of the ML-DSA-65 module. So `extractedApi_fips204` /
+`signExtractedApi_fips204` discharge `Fips204Correct` for the extracted EXECUTABLE cores (which is what
+they are for — the `@[export]`ed verify/sign equations, with `#guard` teeth), but they must NOT be read as
+"the deployed `dregg_pq_correct` has a full-dimension correctness floor".
+
+That floor is `Dregg2.Crypto.Fips204FullDim`: `fullDimApi_fips204 : Fips204Correct (fullDimApi A hash chal)`
+over the REAL `R_q = ℤ_q[X]/(X²⁵⁶+1)`, `M = R_q^5`, `N = R_q^6`, for an ARBITRARY linear `A`, an ARBITRARY
+Fiat–Shamir hash, an ARBITRARY `SampleInBall` sampler and an ARBITRARY secret — kernel-clean, no
+`native_decide`. `Fips204FullDim.fullDimApi_correct` is what feeds `dregg_pq_correct` at full dimension.
+
 ## HONEST RESIDUAL (named, not laundered)
 
 The ONLY residual is the `leanc`/FFI toolchain (the extracted `verifyCore`/`signCore` run as native code
