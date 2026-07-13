@@ -19,6 +19,10 @@ serde_bytes = "0.11"
 x509-parser = { version = "0.16", features = ["verify"] }
 p384 = { version = "0.13", features = ["ecdsa"] }
 sha2 = "0.10"
+# The AMD ARK/ASK roots sign RSA-4096 **PSS** (MGF1-SHA-384). x509-parser's `verify`
+# feature covers only PKCS#1 v1.5 / ECDSA / Ed25519 (see snp::verify_cert_link), so the
+# SNP chain routes id-RSASSA-PSS links to this maintained RSA impl for the real AMD path.
+rsa = "0.9"
 
 [dev-dependencies]
 hex = "0.4"
@@ -27,3 +31,5 @@ hex = "0.4"
 # (already enabled) supplies PKCS#8 decode so the VCEK signer can be reconstructed from the
 # rcgen keypair to body-sign the synthetic report.
 rcgen = "0.14"
+# RSA-4096 keygen for the RSA-PSS-SHA384 link primitive test (AMD's ARK/ASK algorithm).
+rand = "0.8"

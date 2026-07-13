@@ -210,6 +210,59 @@ impl SnpReport {
     }
 }
 
+/// The `id-RSASSA-PSS` signature-algorithm OID (`1.2.840.113549.1.1.10`) — how AMD's ARK
+/// and ASK sign (RSA-4096, MGF1-SHA-384, salt 48). `x509-parser`'s `verify_signature`
+/// supports only PKCS#1 v1.5 / ECDSA / Ed25519 (see its `verify.rs`), so a chain link
+/// signed with this OID is routed to [`verify_rsa_pss_sha384`] instead.
+const RSASSA_PSS_OID: &str = "1.2.840.113549.1.1.10";
+
+/// Verify an **RSASSA-PSS / SHA-384** signature (the AMD ARK/ASK certificate-link
+/// algorithm) with the `rsa` crate — the maintained impl `x509-parser` lacks. `issuer_spki`
+/// is the issuer's `SubjectPublicKeyInfo.subjectPublicKey` bytes (a DER `RSAPublicKey`,
+/// PKCS#1); `message` is the signed TBS DER; `signature` is the raw signature. Uses the
+/// SHA-384 salt length (48 = digest output size, which `VerifyingKey::new` selects) — the
+/// AMD ARK/ASK PSS parameter.
+pub fn verify_rsa_pss_sha384(
+    issuer_spki: &[u8],
+    message: &[u8],
+    signature: &[u8],
+) -> Result<(), String> {
+    use rsa::pkcs1::DecodeRsaPublicKey;
+    use rsa::pss::{Signature as PssSignature, VerifyingKey};
+    use rsa::signature::Verifier;
+    use sha2::Sha384;
+
+    let pk = rsa::RsaPublicKey::from_pkcs1_der(issuer_spki)
+        .map_err(|e| format!("issuer RSA public key (PKCS#1) decode: {e}"))?;
+    let vk = VerifyingKey::<Sha384>::new(pk);
+    let sig =
+        PssSignature::try_from(signature).map_err(|e| format!("PSS signature decode: {e}"))?;
+    vk.verify(message, &sig)
+        .map_err(|e| format!("RSA-PSS-SHA384 signature verify FAILED: {e}"))
+}
+
+/// Verify one certificate-chain link: `child`'s signature under `issuer`'s public key,
+/// dispatching on `child`'s signature algorithm. AMD's `id-RSASSA-PSS` ARK/ASK links go to
+/// [`verify_rsa_pss_sha384`] (the `rsa` crate); everything else (the ECDSA-P384 VCEK link,
+/// and the ECDSA self-PKI used in tests) goes through `x509-parser`'s `verify_signature`.
+/// Either arm fails **closed** — an unsupported algorithm or a bad signature is an `Err`.
+pub fn verify_cert_link(
+    child: &X509Certificate<'_>,
+    issuer: &X509Certificate<'_>,
+) -> Result<(), String> {
+    if child.signature_algorithm.algorithm.to_id_string() == RSASSA_PSS_OID {
+        verify_rsa_pss_sha384(
+            issuer.public_key().subject_public_key.data.as_ref(),
+            child.tbs_certificate.as_ref(),
+            child.signature_value.data.as_ref(),
+        )
+    } else {
+        child
+            .verify_signature(Some(issuer.public_key()))
+            .map_err(|e| format!("chain link signature: {e:?}"))
+    }
+}
+
 /// Verify the report-body ECDSA-P384/SHA-384 signature with the chip's VCEK public key.
 /// Real crypto — this is the binding between the VCEK identity and the report contents.
 pub fn verify_snp_signature(report: &SnpReport, vcek_vk: &VerifyingKey) -> Result<(), String> {
@@ -281,11 +334,12 @@ impl SnpTrust {
 /// Verify VCEK ← ASK ← pinned-ARK and return the VCEK's P-384 public key.
 ///
 /// Structured like [`crate::verify_cert_chain`]: each link's signature is checked
-/// against its issuer's key and every cert's validity window is checked at wall-clock
-/// now (SNP reports carry no timestamp of their own). NOTE: AMD's ARK/ASK sign with
-/// RSA-4096 **PSS**; whether `x509-parser`'s `verify` feature accepts a given AMD root
-/// determines whether a real chain verifies — either way this path only ever fails
-/// *closed* (an unsupported signature is an `Err`, never a silent accept).
+/// against its issuer's key (via [`verify_cert_link`]) and every cert's validity window is
+/// checked at wall-clock now (SNP reports carry no timestamp of their own). AMD's ARK/ASK
+/// sign RSA-4096 **PSS** — `x509-parser` cannot verify PSS, so [`verify_cert_link`] routes
+/// those links to [`verify_rsa_pss_sha384`] (the `rsa` crate); the ECDSA-P384 VCEK link
+/// stays on `x509-parser`. Either way this path fails **closed** (an unsupported signature
+/// or a bad one is an `Err`, never a silent accept).
 pub fn verify_snp_cert_chain(vcek_der: &[u8], trust: &SnpTrust) -> Result<VerifyingKey, String> {
     if vcek_der.is_empty() {
         return Err("no VCEK certificate appended to the SNP report bytes".into());
@@ -303,13 +357,11 @@ pub fn verify_snp_cert_chain(vcek_der: &[u8], trust: &SnpTrust) -> Result<Verify
         }
     }
 
-    // ARK is self-signed (the trust anchor); ASK is signed by ARK; VCEK by ASK.
-    ark.verify_signature(Some(ark.public_key()))
-        .map_err(|e| format!("ARK self-signature: {e:?}"))?;
-    ask.verify_signature(Some(ark.public_key()))
-        .map_err(|e| format!("ASK←ARK signature: {e:?}"))?;
-    vcek.verify_signature(Some(ask.public_key()))
-        .map_err(|e| format!("VCEK←ASK signature: {e:?}"))?;
+    // ARK is self-signed (the trust anchor); ASK is signed by ARK; VCEK by ASK. Each link
+    // dispatches by signature algorithm (RSA-PSS for the real AMD ARK/ASK, ECDSA otherwise).
+    verify_cert_link(&ark, &ark).map_err(|e| format!("ARK self-signature: {e}"))?;
+    verify_cert_link(&ask, &ark).map_err(|e| format!("ASK←ARK signature: {e}"))?;
+    verify_cert_link(&vcek, &ask).map_err(|e| format!("VCEK←ASK signature: {e}"))?;
 
     let point = vcek.public_key().subject_public_key.data.as_ref();
     VerifyingKey::from_sec1_bytes(point).map_err(|e| format!("VCEK P-384 key: {e}"))
@@ -713,5 +765,57 @@ mod tests {
             amd_kds_cert_chain_url("Milan"),
             "https://kdsintf.amd.com/vcek/v1/Milan/cert_chain"
         );
+    }
+
+    /// The **RSA-PSS-SHA384 link primitive** — the exact algorithm AMD's ARK/ASK sign
+    /// with, and the piece `x509-parser` cannot verify. Proves both polarities with a real
+    /// RSA key via the `rsa` crate: a genuine PSS-SHA384 signature over a stand-in TBS
+    /// verifies; a tampered message, a tampered signature, or a wrong issuer key is refused.
+    /// (AMD uses RSA-4096; the test uses 2048 for keygen speed — identical code path.)
+    #[test]
+    fn rsa_pss_sha384_link_primitive_roundtrips_and_rejects_tamper() {
+        use rsa::pkcs1::EncodeRsaPublicKey;
+        use rsa::pss::{Signature as PssSignature, SigningKey};
+        use rsa::signature::{RandomizedSigner, SignatureEncoding};
+        use rsa::RsaPrivateKey;
+        use sha2::Sha384;
+
+        let mut rng = rand::thread_rng();
+        let sk = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
+        let spki = sk
+            .to_public_key()
+            .to_pkcs1_der()
+            .expect("pkcs1 der")
+            .as_bytes()
+            .to_vec();
+
+        let signing = SigningKey::<Sha384>::new(sk);
+        let msg = b"a stand-in for a certificate TBS DER (AMD ARK/ASK PSS-SHA384)";
+        let sig: PssSignature = signing.sign_with_rng(&mut rng, msg);
+        let sig_bytes = sig.to_bytes();
+
+        // Genuine PSS-SHA384 signature verifies through the real AMD-link path.
+        verify_rsa_pss_sha384(&spki, msg, &sig_bytes).expect("valid PSS link");
+
+        // Tampered message → refused.
+        let mut bad_msg = msg.to_vec();
+        bad_msg[0] ^= 0xFF;
+        assert!(verify_rsa_pss_sha384(&spki, &bad_msg, &sig_bytes).is_err());
+
+        // Tampered signature → refused.
+        let mut bad_sig = sig_bytes.to_vec();
+        let n = bad_sig.len();
+        bad_sig[n - 1] ^= 0xFF;
+        assert!(verify_rsa_pss_sha384(&spki, msg, &bad_sig).is_err());
+
+        // A different issuer key → refused.
+        let other = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen 2");
+        let other_spki = other
+            .to_public_key()
+            .to_pkcs1_der()
+            .unwrap()
+            .as_bytes()
+            .to_vec();
+        assert!(verify_rsa_pss_sha384(&other_spki, msg, &sig_bytes).is_err());
     }
 }

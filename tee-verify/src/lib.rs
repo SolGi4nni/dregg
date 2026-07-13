@@ -40,7 +40,11 @@ use serde_bytes::ByteBuf;
 use sha2::{Digest, Sha256};
 use x509_parser::prelude::*;
 
+pub mod attested_data;
 pub mod snp;
+pub use attested_data::{
+    attest_data, AttestedDataInput, AttestedError, AttestedFact, PayloadBinding, TrustGrade,
+};
 pub use snp::SnpVerifier;
 
 /// The pinned AWS Nitro Enclaves root G1 certificate (PEM).
