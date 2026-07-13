@@ -5285,6 +5285,7 @@ dependencies = [
  "serde",
  "serde_json",
  "tracing",
+ "tracing-subscriber 0.3.23",
  "wgpu 24.0.5",
 ]
 
@@ -6653,6 +6654,8 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-sdk",
+ "dreggnet-council",
+ "dreggnet-market",
  "dreggnet-offerings",
  "dungeon-on-dregg",
  "hex",

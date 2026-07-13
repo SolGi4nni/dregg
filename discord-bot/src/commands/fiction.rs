@@ -41,7 +41,7 @@
 //! remembers. A jailbroken narration cannot open a gated stair or mint an unearned relic —
 //! only a move the verified executor admits ever changes the world.
 
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 use std::sync::{Mutex, OnceLock};
 
 use serenity::all::{
@@ -51,10 +51,12 @@ use serenity::all::{
     Permissions,
 };
 
+use dreggnet_offerings::character::{CharacterSheet, CharacterStore};
 use dreggnet_offerings::dungeon::{DungeonOffering, KEEP_NAME, KEEP_OBJECTIVE};
 use dreggnet_offerings::{DreggIdentity, Offering, Outcome, SessionConfig};
 
 use crate::BotState;
+use crate::character_store::{award_run_outcome, xp_reward};
 use crate::cipherclerk::UserCipherclerk;
 use crate::commands::offering::{
     Cast, CollectiveClose, CollectiveRound, Live, close_in, close_round, open_in, with_live,
@@ -112,6 +114,12 @@ struct DungeonMeta {
     /// choices the crowd made, so the AI narrates one evolving story, not disconnected rooms.
     /// Purely bot-owned display/continuity state (never touches the substrate).
     history: RunHistory,
+    /// The PERSISTENT characters of the players who have moved in this run, keyed by their dregg
+    /// identity hex — resumed from the durable [`crate::character_store::SqliteCharacterStore`] on
+    /// a player's first ballot (a returning player carries their level / XP / class), and updated
+    /// when the party's real outcomes earn them XP. Display state for the embed's Adventurers
+    /// panel; the durable source of truth is the sqlite store.
+    adventurers: BTreeMap<String, CharacterSheet>,
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -235,6 +243,60 @@ fn continuity_of(channel: u64) -> String {
         .ok()
         .and_then(|m| m.get(&channel).map(|d| d.history.narrator_context()))
         .unwrap_or_default()
+}
+
+/// Record (or resume) a player's PERSISTENT character in this run's adventurer roster — the sheet
+/// the durable store loaded for them on their first move. Idempotent: a returning ballot in the
+/// same run keeps the already-loaded sheet. Purely display bookkeeping; the durable source is the
+/// sqlite [`crate::character_store::SqliteCharacterStore`].
+fn note_adventurer(channel: u64, identity_hex: &str, sheet: CharacterSheet) {
+    if let Ok(mut m) = meta().lock() {
+        if let Some(d) = m.get_mut(&channel) {
+            d.adventurers
+                .entry(identity_hex.to_string())
+                .or_insert(sheet);
+        }
+    }
+}
+
+/// The rendered "Adventurers" panel for this run — each participating player's persistent
+/// character (short id · class · level · XP), or `None` when no one has moved yet. A fresh
+/// (stored level-0) character shows as level 1 (the natural starting level the character cell
+/// promotes it to). This is where a returning player's CARRIED level / XP / class becomes visible.
+fn adventurers_field_text(channel: u64) -> Option<String> {
+    let m = meta().lock().ok()?;
+    let d = m.get(&channel)?;
+    if d.adventurers.is_empty() {
+        return None;
+    }
+    let mut lines = String::new();
+    for (hex, sheet) in d.adventurers.iter().take(10) {
+        lines.push_str(&format!(
+            "{} · {} · L{} · XP {}\n",
+            short_ident(hex),
+            sheet.class_name(),
+            sheet.level.max(1),
+            sheet.xp,
+        ));
+    }
+    if d.adventurers.len() > 10 {
+        lines.push_str(&format!("… +{} more\n", d.adventurers.len() - 10));
+    }
+    Some(lines)
+}
+
+/// Append the persistent-character "Adventurers" panel to an embed, iff this run has any
+/// participants — so the `/dungeon` surface shows each mover's carried level / XP / class. A
+/// no-op when nobody has moved (keeps a fresh run's embed uncluttered).
+fn with_adventurers(embed: CreateEmbed, channel: u64) -> CreateEmbed {
+    match adventurers_field_text(channel) {
+        Some(text) => embed.field(
+            "🧙 Adventurers (persistent · survive restart)",
+            format!("```{}```", truncate(&text, 900)),
+            false,
+        ),
+        None => embed,
+    }
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -506,6 +568,7 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             orchestrated_key,
             current_room: String::new(),
             history: RunHistory::default(),
+            adventurers: BTreeMap::new(),
         },
     );
 
@@ -600,6 +663,21 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
         },
     }
 
+    // Peek the electorate of record + the room BEFORE the round closes, so a landed qualifying
+    // outcome can award the earned XP to the players who carried it (through the real gated
+    // character turn). Read now — `close_round` consumes this round and opens the next.
+    let pre_voters: Vec<DreggIdentity> = with_live::<DungeonOffering, _>(channel, |l| {
+        l.round.as_ref().map(|r| r.voter_ids()).unwrap_or_default()
+    })
+    .unwrap_or_default();
+    let pre_room = meta()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&channel).map(|d| d.current_room.clone()))
+        .unwrap_or_default();
+    // Set iff the closed round LANDED a qualifying outcome: (room, winning choice index, voters).
+    let mut award_ctx: Option<(String, usize, Vec<DreggIdentity>)> = None;
+
     // THE WORLD DISPOSES — resolve the crowd's plurality choice as ONE real cap-bounded crowd
     // turn THROUGH THE GENERIC COLLECTIVE ADAPTER (`close_round` → `advance_collective`): it
     // tallies the write-once ballots, drives the winning `Action`, records the whole
@@ -612,6 +690,15 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
             // the ASCII map trail and the narrator's continuity context include the choice the
             // crowd just carried (room = the room it was made in; landed = a real receipt).
             record_close_into_history(channel, &res.winner.label, res.outcome.landed());
+            // If the party just LANDED a qualifying outcome (bloodying the warden / seizing the
+            // hoard), the electorate of record earns its XP — through the real gated character
+            // turn, below. A refused move earns nothing (the anti-ghost binding).
+            if res.outcome.landed() {
+                let choice = res.winner.arg as usize;
+                if xp_reward(&pre_room, choice).is_some() {
+                    award_ctx = Some((pre_room.clone(), choice, pre_voters.clone()));
+                }
+            }
             let visited = visited_rooms_of(channel);
             // Read the post-turn state (advance_collective already applied it + opened the
             // next round over the resulting state).
@@ -667,6 +754,25 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
         }
     };
 
+    // THE CHARACTER EARNS: a landed qualifying outcome grants its XP to every voter of record
+    // through the REAL gated character turn (auto-leveling where the carried XP now permits), and
+    // PERSISTS each sheet to the durable store — so a leveling character survives restart. Run off
+    // the async worker (it deploys character cells + drives the blocking sqlite store).
+    if let Some((room, choice, voters)) = award_ctx {
+        let store = state.characters.clone();
+        let awarded =
+            tokio::task::spawn_blocking(move || award_run_outcome(&store, &voters, &room, choice))
+                .await
+                .unwrap_or_default();
+        if let Ok(mut m) = meta().lock() {
+            if let Some(d) = m.get_mut(&channel) {
+                for (who, sheet) in awarded {
+                    d.adventurers.insert(who.0, sheet);
+                }
+            }
+        }
+    }
+
     match render {
         CloseRender::NoSession => {
             let embed = warn_embed(
@@ -709,12 +815,15 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                         d.current_room = next_room_name.clone();
                     }
                 }
-                let embed = resolution_then_round_embed(&resolution, &snap, &narration, kind);
+                let embed = with_adventurers(
+                    resolution_then_round_embed(&resolution, &snap, &narration, kind),
+                    channel,
+                );
                 let rows = ballot_rows(&snap.options, snap.round);
                 respond(ctx, command, embed, rows, false).await;
             }
             None => {
-                let embed = resolution_final_embed(&resolution);
+                let embed = with_adventurers(resolution_final_embed(&resolution), channel);
                 respond(ctx, command, embed, vec![], false).await;
                 // The run ended: if it had its own spun thread, TEAR IT DOWN — archive the
                 // surface, unlink the queue, and revoke every capability cell it held. A
@@ -916,7 +1025,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             .public_key_hex()
             .to_string();
     let voter_short = voter_hex[..voter_hex.len().min(16)].to_string();
-    let voter = DreggIdentity(voter_hex);
+    let voter = DreggIdentity(voter_hex.clone());
 
     enum Reply {
         Ephemeral(String),
@@ -942,6 +1051,18 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             Reply::Ephemeral("That option is no longer on the ballot.".to_string())
         }
         BallotCast::Recorded(snapshot) => {
+            // A player's FIRST move in the run RESUMES their persistent character from the durable
+            // store (a returning player carries their level / XP / class; a new player loads a
+            // fresh L1 — a tampered row fails safe to fresh). Loaded off the async worker; the
+            // sheet is recorded in the run's adventurer roster shown on the embed.
+            {
+                let store = state.characters.clone();
+                let who = DreggIdentity(voter_hex.clone());
+                let sheet = tokio::task::spawn_blocking(move || store.load(&who))
+                    .await
+                    .unwrap_or_default();
+                note_adventurer(channel, &voter_hex, sheet);
+            }
             let (narration, kind) = meta()
                 .lock()
                 .ok()
@@ -981,7 +1102,7 @@ pub async fn handle_component(ctx: &Context, component: &ComponentInteraction, s
             } else {
                 narration
             };
-            let embed = round_embed(&snapshot, &narration, kind);
+            let embed = with_adventurers(round_embed(&snapshot, &narration, kind), channel);
             let rows = ballot_rows(&snapshot.options, snapshot.round);
             let _ = component
                 .create_response(

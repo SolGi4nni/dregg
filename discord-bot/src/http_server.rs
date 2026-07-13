@@ -1101,6 +1101,10 @@ mod tests {
             &[0u8; 32],
             tokio::runtime::Handle::current(),
         );
+        let characters = crate::character_store::SqliteCharacterStore::new(
+            db.clone(),
+            tokio::runtime::Handle::current(),
+        );
         Arc::new(BotState {
             config,
             db,
@@ -1120,6 +1124,7 @@ mod tests {
             card_applets: crate::viewnode_applet::CardApplets::new(),
             channel_hermes: std::sync::Mutex::new(std::collections::HashMap::new()),
             pay,
+            characters,
         })
     }
 

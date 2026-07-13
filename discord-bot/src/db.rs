@@ -632,6 +632,25 @@ impl Database {
         .execute(&pool)
         .await?;
 
+        // ─── Persistent leveling characters (character::CharacterStore backing) ──
+        // A player's leveling character (xp/level/class/abilities) keyed by their stable
+        // dregg identity hex, so it survives a process restart. XP + level-ups flow through
+        // the REAL gated character turn (this only persists the resulting sheet); a tampered
+        // row fails safe to a fresh L1 in `SqliteCharacterStore::load`. See
+        // migrations/006_characters.sql.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS characters (
+                identity_hex   TEXT PRIMARY KEY,
+                xp             INTEGER NOT NULL DEFAULT 0,
+                level          INTEGER NOT NULL DEFAULT 0,
+                class          INTEGER NOT NULL DEFAULT 0,
+                abilities_used INTEGER NOT NULL DEFAULT 0,
+                updated_at     INTEGER NOT NULL DEFAULT 0
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
         Ok(Self { pool })
     }
 
@@ -682,6 +701,63 @@ impl Database {
             .bind(reference)
             .execute(&self.pool)
             .await?;
+        Ok(())
+    }
+
+    // ─── Persistent leveling characters (character::CharacterStore backing) ──────
+
+    /// Load a player's persisted character slots `(xp, level, class, abilities_used)` by their
+    /// dregg identity hex, or `None` if no row exists (a new player). The well-formedness /
+    /// fail-safe check lives in `crate::character_store::SqliteCharacterStore::load`.
+    pub async fn character_load(
+        &self,
+        identity_hex: &str,
+    ) -> Result<Option<(u64, u64, u64, u64)>, sqlx::Error> {
+        let row: Option<(i64, i64, i64, i64)> = sqlx::query_as(
+            "SELECT xp, level, class, abilities_used FROM characters WHERE identity_hex = ?",
+        )
+        .bind(identity_hex)
+        .fetch_optional(&self.pool)
+        .await?;
+        Ok(row.map(|(xp, level, class, abilities)| {
+            (
+                xp.max(0) as u64,
+                level.max(0) as u64,
+                class.max(0) as u64,
+                abilities.max(0) as u64,
+            )
+        }))
+    }
+
+    /// Persist a player's character sheet by their dregg identity hex (upsert). The carried
+    /// state a later [`character_load`](Self::character_load) returns.
+    pub async fn character_save(
+        &self,
+        identity_hex: &str,
+        xp: u64,
+        level: u64,
+        class: u64,
+        abilities_used: u64,
+        updated_at: i64,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT INTO characters (identity_hex, xp, level, class, abilities_used, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?)
+             ON CONFLICT(identity_hex) DO UPDATE SET
+                 xp = excluded.xp,
+                 level = excluded.level,
+                 class = excluded.class,
+                 abilities_used = excluded.abilities_used,
+                 updated_at = excluded.updated_at",
+        )
+        .bind(identity_hex)
+        .bind(xp as i64)
+        .bind(level as i64)
+        .bind(class as i64)
+        .bind(abilities_used as i64)
+        .bind(updated_at)
+        .execute(&self.pool)
+        .await?;
         Ok(())
     }
 

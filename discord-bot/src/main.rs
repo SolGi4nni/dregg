@@ -71,6 +71,11 @@ pub mod orchestration;
 // mirrors `pay::SqliteCreditStore`). Installed once at boot; the gallery module then
 // loads + re-verifies the live registry from it. See [`gallery_store`].
 pub mod gallery_store;
+// The sqlite-backed `dreggnet_offerings::character::CharacterStore` — the durable backing of a
+// player's LEVELING character over the bot's async `Database` (the sync↔async bridge mirrors
+// `pay::SqliteCreditStore`). A leveling character now survives a process restart: a returning
+// player resumes their carried level / XP / class. See [`character_store`].
+pub mod character_store;
 // $DREGG-paid, real-AI dungeon runs: the sqlite-backed `dregg_pay::CreditStore`, the per-user
 // deposit-address provider, the credit ledger, the payment poll, and the `/dungeon` gate that
 // debits one earned credit and routes to real Bedrock (`dregg_narrator`) under a PER-RUN budget.
@@ -236,6 +241,12 @@ pub struct BotState {
     /// `/buy-credits`, `/balance`, the payment poll, and the `/dungeon` credit gate. Devnet/mock by
     /// default; mainnet is an operator env flip (`PayConfig::from_env`). See [`crate::pay`].
     pub pay: pay::PayState,
+    /// Persistent, LEVELING characters — the durable [`character_store::SqliteCharacterStore`]
+    /// keyed by a player's stable dregg identity. A player's `/dungeon` character (xp / level /
+    /// class) survives a process restart: on their first move in a run their carried sheet is
+    /// resumed, XP earned by the party's real outcomes is saved back through the gated character
+    /// turn, and a tampered/absent row fails safe to a fresh level-1 character.
+    pub characters: character_store::SqliteCharacterStore,
 }
 
 /// The main event handler for Discord gateway events.
@@ -708,6 +719,14 @@ async fn main() {
         .await
         .expect("build pay state")
     };
+    // The durable character store: persistent leveling characters keyed by a player's stable
+    // dregg identity, so a `/dungeon` character survives a process restart. A plain durable handle
+    // (no boot-time registry to re-verify — a character is loaded lazily on a player's first move);
+    // the sync↔async bridge drives the async db from the sync `CharacterStore` trait.
+    let characters =
+        character_store::SqliteCharacterStore::new(db.clone(), tokio::runtime::Handle::current());
+    info!("Character store ready (persistent leveling characters over sqlite; survive restart)");
+
     info!(
         "Pay backend ready: network={:?} price_per_run={} paid_narrator={}",
         pay.network(),
@@ -737,6 +756,7 @@ async fn main() {
         card_applets: viewnode_applet::CardApplets::new(),
         channel_hermes: std::sync::Mutex::new(std::collections::HashMap::new()),
         pay,
+        characters,
     });
 
     // §4.7 Production HTTP read surface (Starbridge RemoteRuntime + humans).
