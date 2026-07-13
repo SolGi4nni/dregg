@@ -534,11 +534,20 @@ p ≈ 2·2^30 makes the wrap window overlap the valid range).
 4. ✅ CORE-TRANSFER over-debit (the deepest) — 15-bit-limb borrow chain; transferAvail_derives_availability (amount ≤
    before DERIVED, NO hcanonMove), transferAvail_forgery_unsat UNSAT; honest 100→70 passes. `a1be7b5df`.
 TWICE the fix DELETED a laundered assumption I had earlier gated through (cap-open reconExact, transfer hcanonMove) —
-the property is now genuinely enforced by the circuit, not assumed. All four are STAGED replacement descriptors: the
-live registry still routes the bare gap-carrying descriptors until the ONE ember-gated big-bang tag-19 VK epoch flip
-(the widened descriptors + VK commits + drift-gate FP pins + fixture re-emissions all ride that single regen). No
-live routing changed; no liveness degraded. THE CAMPAIGN: found four exploitable deployed soundness gaps the ℤ
-"verified" model hid, and closed all four with field-faithful in-circuit enforcement + proofs + forgery-UNSAT witnesses.
+the property is now genuinely enforced by the circuit, not assumed. THE CAMPAIGN: found four exploitable deployed
+soundness gaps the ℤ "verified" model hid, and closed all four with field-faithful in-circuit enforcement + proofs +
+forgery-UNSAT witnesses.
+
+### DEPLOYMENT UPDATE (2026-07-13): the availability / transfer-shaped cohort is DEPLOYED in the live VK
+The **transfer-shaped availability class — GAP #4 core-transfer over-debit (transfer/burn/fee) + GAP #2 cap-open
+mask-recon (cap-open-EFF/TB), 10 members with their wide twins — is CLOSED + DEPLOYED** in the live VK: the
+provenance-clean regen `887b95e76` retargets every member to its `*Avail` descriptor (borrow-gated, amount
+range-checked, wrap structurally impossible), FP constant re-stamped → new VK epoch, mint-from-nothing closed
+(empirically validated: `avail_weld_live_roundtrip` 3/3, all forgery witnesses UNSAT). See
+`docs/FINDING-modp-wrap-forgery-audit.md` RESOLUTION. **Still STAGED (not yet in a live VK):** the VAULT settlement
+carry-wrap (#1, tag-19 — `effect_vm_descriptors.rs:2435` "STAGED discharge/vault") and CROSS-CELL conservation (#3,
+additive). Those ride a later ember-gated regen; live routing for the transfer-shaped cohort HAS changed to the
+hardened descriptors.
 
 ## ⚠⚠⚠ GAP #5 CONFIRMED — HEAP-SORTEDNESS UNFORCED → DOUBLE-SPEND (verdict B/adversarial, 2026-07-12) — 2026-07-12
 Refusing to CARRY the `CanonicalHeapTree` fact (ember: "prove real config evolution, don't carry facts") exposed a

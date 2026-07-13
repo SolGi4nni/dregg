@@ -74,10 +74,16 @@ binding re-exports `pi.pre`/`pi.post` as the genuine endpoint commitments
 The **carried obligations ledger** — every named, deferred premise (nothing
 laundered to `True` or an open hole):
 
-- **`StarkSound hash R`** (`class`, `CircuitSoundness.lean:382`) — the audited p3
+- **`StarkSound hash R`** (`class`, `CircuitSoundness.lean:382`) — the p3
   batch-STARK soundness / FRI extraction: a verifying batch yields a `Satisfied2`
-  witness of the claimed descriptor whose published PI agree with `pi`. Realizable,
-  audited, **not provable in Lean**; carried as a class.
+  witness of the claimed descriptor whose published PI agree with `pi`. **No longer
+  terminal-by-design:** `starkSound_of_verifyAlgo` (`FriVerifierBridge.lean:106`) makes
+  it a THEOREM over the specified `verifyAlgo`, resting on `AlgoStarkSound` (the FRI-LDT
+  floor) + `DeployedRefines`. The BBHR18/BCIKS20 FRI proximity algebra is itself PROVED
+  in `FriSoundness.lean` resting only on the hash floor `HashCR` (`friProximityK8_discharge`,
+  composed at `d=0` via `FriBridgeDeployedArity`). The one remaining research assumption is
+  the deployed-parameter Johnson list-decoding bound `FriLdtDeployedBound` (a `Prop`, not an
+  axiom; see `STARK-SOUNDNESS-CENSUS.md`). Carried as a class at this apex, discharged below.
 - **`Poseidon2SpongeCR hash`** + the `CommitSurface` CR fields (`CommitSurface`,
   `CircuitSoundness.lean:113-134`) — the standard Poseidon collision-resistance set
   (`cmbInj`, `compInj`, `compNInj`, `leafInj`, `restFrame`) the full-state root

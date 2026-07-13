@@ -88,7 +88,7 @@ Zero `sorry` / `admit` / `sorryAx`. One benign `native_decide` (below).
 |---|---|---|---|---|
 | `demoEd25519VerifyExtern : (1:Nat)=1` | `Dregg2/Widget/Basic.lean:298` | nothing (1=1) | terminal-by-design (inert) | Widget badge-tier fixture; docstring `:294` states "never used by any real dregg proof." Only consumer: `demo_via_carrier`. |
 | `demoUnvettedAssumption : (2:Nat)=2` | `Dregg2/Widget/Basic.lean:299` | nothing | terminal-by-design (inert) | Sibling red-tier fixture. |
-| `StarkSound` | `Circuit/CircuitSoundness.lean:382` | `verifyBatch accept ⟹ ∃ Satisfied2 witness publishing `pi.toPublished`` | **terminal-by-design** | FRI/p3 extraction, a `class … : Prop`, "NOT provable in Lean." |
+| `StarkSound` | `Circuit/CircuitSoundness.lean:382` | `verifyBatch accept ⟹ ∃ Satisfied2 witness publishing `pi.toPublished`` | **discharged (no longer terminal)** | FRI/p3 extraction, a `class … : Prop`; `starkSound_of_verifyAlgo:106` makes it a THEOREM over the specified `verifyAlgo` from `AlgoStarkSound`+`DeployedRefines`. The BBHR18/BCIKS20 proximity algebra is PROVED on `HashCR` (`FriSoundness.friProximityK8_discharge`); residual terminal = the deployed Johnson-radius bound `FriLdtDeployedBound` only. |
 | `AlgoStarkSound` | `Circuit/FriVerifierBridge.lean:75` | same extraction over the *specified* `verifyAlgo` | terminal-by-design | With `DeployedRefines` turns `StarkSound` into a theorem (`starkSound_of_verifyAlgo:106`). |
 | `StarkComplete` | `Circuit/CircuitCompleteness.lean:147` | `Satisfied2 ⟹ ∃ accepting proof` | terminal-by-design | FRI completeness dual. |
 | `Poseidon2SpongeCR` | `Circuit/Poseidon2Binding.lean:169` | `sponge xs = sponge ys → xs = ys` | terminal-by-design | Standard CR as injectivity. |
