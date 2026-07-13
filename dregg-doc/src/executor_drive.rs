@@ -343,43 +343,345 @@ impl ExecutorDrivenDoc {
     /// These are the kernel writes the edit performs; the executor applies the
     /// same `set_field_ext` arm they desugar to.
     fn project_delta_effects(&self, graph: &crate::graph::DocGraph) -> Vec<Effect> {
-        let desired = project_graph(graph);
-        let cell = self.region_cell();
-        let mut effects = Vec::new();
+        region_delta_effects(self.region, self.region_cell(), graph)
+    }
+}
 
-        // Writes / overwrites.
-        for (&(coll, key), &value) in &desired {
-            let fk = field_key(coll, key);
-            if cell.state.get_field_ext(fk) != Some(value) {
+/// The genuine `SetField` delta between `graph`'s projection and `cell`'s current
+/// committed map, targeting `region`. Free-standing so both the single-editor
+/// [`ExecutorDrivenDoc`] and the multi-editor [`MultiEditorDoc`] share ONE
+/// projection-diff — the document/patch semantics are computed identically no
+/// matter which editor drives the turn.
+fn region_delta_effects(
+    region: CellId,
+    cell: &Cell,
+    graph: &crate::graph::DocGraph,
+) -> Vec<Effect> {
+    let desired = project_graph(graph);
+    let mut effects = Vec::new();
+
+    // Writes / overwrites.
+    for (&(coll, key), &value) in &desired {
+        let fk = field_key(coll, key);
+        if cell.state.get_field_ext(fk) != Some(value) {
+            effects.push(Effect::SetField {
+                cell: region,
+                index: fk as usize,
+                value,
+            });
+        }
+    }
+
+    // Removals: a document leaf the cell holds but the document no longer
+    // projects. A `SetField` to the zero felt vacates the slot (the
+    // executor has no Remove arm for committed-map keys; zeroing is the
+    // canonical "empty" leaf — distinct from any real document leaf, which
+    // binds provenance and is overwhelmingly non-zero).
+    for (&k, _) in cell.state.fields_map.iter() {
+        if k >= STATE_SLOTS as u64 {
+            let flat = k - STATE_SLOTS as u64;
+            let coll = (flat >> 32) as u32;
+            let key = (flat & 0xFFFF_FFFF) as u32;
+            if !desired.contains_key(&(coll, key)) {
                 effects.push(Effect::SetField {
-                    cell: self.region,
-                    index: fk as usize,
-                    value,
+                    cell: region,
+                    index: k as usize,
+                    value: [0u8; 32],
                 });
             }
         }
+    }
 
-        // Removals: a document leaf the cell holds but the document no longer
-        // projects. A `SetField` to the zero felt vacates the slot (the
-        // executor has no Remove arm for committed-map keys; zeroing is the
-        // canonical "empty" leaf — distinct from any real document leaf, which
-        // binds provenance and is overwhelmingly non-zero).
+    effects
+}
+
+/// One editor's handle within a [`MultiEditorDoc`]: its own cell (a distinct
+/// agent) plus the mirrored per-agent nonce and receipt-chain head. Each editor
+/// carries its OWN chain — the executor keys `last_receipt_hash` and the agent
+/// nonce by cell id, so interleaving another editor's turns never disturbs this
+/// editor's chain.
+struct EditorSlot {
+    /// The editor's agent cell id (distinct per editor; the turn's agent).
+    cell: CellId,
+    /// This editor's next nonce (mirrors the executor's per-agent nonce advance).
+    nonce: u64,
+    /// This editor's receipt-chain head (the genuine `receipt_hash` of this
+    /// editor's last committed edit; the next of THIS editor's turns carries it
+    /// as `previous_receipt_hash`). `None` until the editor's first commit.
+    chain_head: Option<[u8; 32]>,
+    /// This editor's committed receipts, in the order this editor authored them —
+    /// the editor's real per-agent chain (hash-linked, nonce-monotone, signed).
+    receipts: Vec<TurnReceipt>,
+}
+
+/// **A COLLABORATIVE DOCUMENT: N editors, each with a real per-agent turn chain,
+/// over ONE shared region ledger.**
+///
+/// [`ExecutorDrivenDoc`] binds exactly ONE editor cell; a collaborative session
+/// that re-based a fresh single-editor doc at the current fold for each actor
+/// would keep every edit a genuine cap-gated finalized turn but LOSE the
+/// executor's cross-edit per-agent nonce/receipt chain — each actor's history
+/// would restart at genesis every edit.
+///
+/// `MultiEditorDoc` closes that: N distinct editor cells (distinct agents) each
+/// hold their own c-list cap to the SAME region cell and drive turns through the
+/// SAME [`TurnExecutor`] over the SAME [`Ledger`]. Because the executor keys the
+/// receipt-chain head (`last_receipt_hash`) and the agent nonce by *cell id*, a
+/// sequence of edits from different editors keeps each editor's real per-agent
+/// chain: editor A's third edit chains off A's second (not off B's intervening
+/// edit), with A's nonce monotone across A's own turns. This is the same pattern
+/// distinct cipherclerks/executors-sharing-one-Ledger use — here, distinct
+/// *editors* sharing one region ledger.
+///
+/// The document/patch/conflict semantics are UNCHANGED — the shared witness
+/// graph, the projection, and [`region_delta_effects`] are exactly the
+/// single-editor path's; only the *authority* (which agent, which chain) is
+/// per-editor. An edit lands a genuine finalized turn on the shared doc; an
+/// editor lacking the region cap is refused in-band; each editor's per-agent
+/// chain is distinct and verifiable by replay.
+///
+/// ## What a fuller version adds (named honestly)
+///
+/// - **Concurrent editors.** Here edits are *sequenced* through one executor
+///   (one node, one linear ledger history — the genuine fold). True concurrent
+///   authoring (two editors composing on divergent replicas, then a
+///   branch-and-stitch merge) is the patch algebra's job
+///   ([`crate::merge`] / the two-device-sync path), layered ABOVE this — each
+///   replica would be a `MultiEditorDoc` and the stitch a further turn.
+/// - **Presence / awareness.** Live cursors, selections, and typing indicators
+///   are an ephemeral side channel, not finalized turns; they ride a presence
+///   layer, not the ledger.
+/// - **Cross-node federation.** The executor commits on a single node
+///   (`Finality::Final` is the solo-mode commit); BFT quorum across nodes is the
+///   node layer's job (the same tail [`ExecutorDrivenDoc`] names).
+pub struct MultiEditorDoc {
+    ledger: Ledger,
+    executor: TurnExecutor,
+    /// The one shared document cell — every editor's edits target it.
+    region: CellId,
+    /// The one shared witness graph the patch algebra reads (the fold reflects
+    /// every editor's edits in commit order).
+    graph: crate::graph::DocGraph,
+    /// The editors, in construction order; addressed by index in [`Self::edit`].
+    editors: Vec<EditorSlot>,
+    /// Every committed receipt, in global commit order — the doc's linear ledger
+    /// history (the fold). Distinct from each editor's per-agent `receipts`.
+    history: Vec<TurnReceipt>,
+}
+
+impl MultiEditorDoc {
+    /// Open a fresh collaborative document with `editors.len()` editors over one
+    /// empty region.
+    ///
+    /// Each entry is `(editor_seed, holds_region_cap)`: `editor_seed` seeds the
+    /// editor's (distinct) cell; `holds_region_cap` grants that editor the
+    /// per-region edit cap (so its edits commit) or withholds it (so its edits
+    /// are REFUSED by the executor's cap gate — the unauthorized-editor case).
+    /// Seeds must be distinct so the editor cells are distinct agents.
+    pub fn new(region_seed: u8, editors: &[(u8, bool)]) -> Self {
+        Self::new_at(&crate::graph::DocGraph::new(), region_seed, editors)
+    }
+
+    /// Open a collaborative document whose shared region starts AT `base` (its
+    /// projection seeded as genesis state, NOT as an edit — exactly the way
+    /// [`ExecutorDrivenDoc::new_at`] seeds a pull request's base). The witness
+    /// graph starts as `base`.
+    pub fn new_at(base: &crate::graph::DocGraph, region_seed: u8, editors: &[(u8, bool)]) -> Self {
+        let mut ledger = Ledger::new();
+
+        // The one shared region cell (the document), seeded to `base` as genesis.
+        let mut region_cell = open_region_cell(region_seed);
+        seed_document(&mut region_cell, base);
+        let region = region_cell.id();
+        ledger.insert_cell(region_cell).expect("region insert");
+
+        // N distinct editor cells, each optionally holding the region edit cap.
+        let mut slots = Vec::with_capacity(editors.len());
+        for &(seed, holds_cap) in editors {
+            let mut editor_cell = open_editor_cell(seed, 1_000_000);
+            if holds_cap {
+                editor_cell.capabilities.grant(region, AuthRequired::None);
+            }
+            let cell = editor_cell.id();
+            ledger
+                .insert_cell(editor_cell)
+                .expect("editor insert (seeds must be distinct)");
+            slots.push(EditorSlot {
+                cell,
+                nonce: 0,
+                chain_head: None,
+                receipts: Vec::new(),
+            });
+        }
+
+        MultiEditorDoc {
+            ledger,
+            executor: TurnExecutor::new(ComputronCosts::zero()),
+            region,
+            graph: base.clone(),
+            editors: slots,
+            history: Vec::new(),
+        }
+    }
+
+    /// Equip the shared executor with an Ed25519 signing key — every
+    /// subsequently committed receipt (from ANY editor) carries a genuine
+    /// `executor_signature`, so each editor's per-agent chain is a chain of
+    /// NON-FABRICABLE witnesses (verifiable via
+    /// [`dregg_turn::verify_receipt_signature_with_keys`]). See
+    /// [`ExecutorDrivenDoc::set_receipt_signing_key`].
+    pub fn set_receipt_signing_key(&mut self, seed: [u8; 32]) {
+        self.executor.set_executor_signing_key(seed);
+    }
+
+    /// Number of editors.
+    pub fn editor_count(&self) -> usize {
+        self.editors.len()
+    }
+
+    /// The `ix`-th editor's (agent) cell id.
+    pub fn editor_id(&self, ix: usize) -> CellId {
+        self.editors[ix].cell
+    }
+
+    /// The shared region (document) cell id.
+    pub fn region_id(&self) -> CellId {
+        self.region
+    }
+
+    /// The shared witness graph the patch algebra reads.
+    pub fn graph(&self) -> &crate::graph::DocGraph {
+        &self.graph
+    }
+
+    /// The shared region cell (read-only) — the real substrate object.
+    pub fn region_cell(&self) -> &Cell {
+        self.ledger.get(&self.region).expect("region present")
+    }
+
+    /// The document's commitment: the shared region cell's real canonical state
+    /// commitment.
+    pub fn state_commitment(&self) -> [u8; 32] {
+        compute_canonical_state_commitment(self.region_cell())
+    }
+
+    /// The `ix`-th editor's per-agent receipt chain, in the order that editor
+    /// authored it (hash-linked, nonce-monotone, signed).
+    pub fn editor_chain(&self, ix: usize) -> &[TurnReceipt] {
+        &self.editors[ix].receipts
+    }
+
+    /// The `ix`-th editor's current receipt-chain head.
+    pub fn editor_chain_head(&self, ix: usize) -> Option<[u8; 32]> {
+        self.editors[ix].chain_head
+    }
+
+    /// The `ix`-th editor's next nonce (== the count of that editor's committed
+    /// edits — the executor advanced it once per commit).
+    pub fn editor_nonce(&self, ix: usize) -> u64 {
+        self.editors[ix].nonce
+    }
+
+    /// Every committed receipt in global commit order — the doc's linear ledger
+    /// history (the fold reflects all editors' edits in this order).
+    pub fn history(&self) -> &[TurnReceipt] {
+        &self.history
+    }
+
+    /// **AN EDIT BY EDITOR `ix`, DRIVEN THROUGH THE SHARED EXECUTOR.**
+    ///
+    /// Build `patch` into a genuine [`Turn`] whose agent is editor `ix`, carrying
+    /// THAT editor's nonce and receipt-chain head, and run it through the shared
+    /// [`TurnExecutor`] over the shared [`Ledger`]. On commit the shared witness
+    /// graph advances and editor `ix`'s per-agent nonce + chain head + receipt
+    /// list advance (only that editor's — the others are untouched). On refusal
+    /// the [`TurnError`] is returned and the document is left byte-identical (the
+    /// executor rolled the ledger back; the witness graph was never advanced).
+    ///
+    /// An editor without the region cap is refused with
+    /// [`TurnError::CapabilityNotHeld`] — the same per-region cap gate the
+    /// single-editor path uses.
+    pub fn edit(&mut self, ix: usize, patch: Patch) -> Result<TurnReceipt, TurnError> {
+        // Plan editor `ix`'s turn against the CURRENT shared state (pure —
+        // nothing mutates until the executor commits, so a refusal is byte-safe).
+        let Some((graph, turn)) = self.plan_turn_for(ix, &patch) else {
+            return Err(TurnError::EmptyForest);
+        };
+
+        match self.executor.execute(&turn, &mut self.ledger) {
+            TurnResult::Committed { receipt, .. } => {
+                // The shared fold advances.
+                self.graph = graph;
+                // Mirror ONLY editor `ix`'s per-agent nonce + chain head (read the
+                // nonce the executor just advanced on the editor's own cell).
+                let new_nonce = self
+                    .ledger
+                    .get(&self.editors[ix].cell)
+                    .map(|c| c.state.nonce());
+                let slot = &mut self.editors[ix];
+                slot.nonce = new_nonce.unwrap_or(slot.nonce + 1);
+                slot.chain_head = Some(receipt.receipt_hash());
+                slot.receipts.push(receipt.clone());
+                self.history.push(receipt.clone());
+                Ok(receipt)
+            }
+            TurnResult::Rejected { reason, .. } => {
+                // In-band refusal: the executor rolled the ledger back and the
+                // witness graph was never advanced — no editor's chain moved.
+                Err(reason)
+            }
+            TurnResult::Expired | TurnResult::Pending => Err(TurnError::EmptyForest),
+        }
+    }
+
+    /// The turn [`Self::edit`] WOULD drive for editor `ix` and `patch` at the
+    /// current shared state — the pure planning half. `None` for a no-op patch.
+    /// Agent = editor `ix`; nonce + `previous_receipt_hash` = that editor's own.
+    fn plan_turn_for(&self, ix: usize, patch: &Patch) -> Option<(crate::graph::DocGraph, Turn)> {
+        let slot = &self.editors[ix];
+        let mut graph = self.graph.clone();
+        patch.apply(&mut graph);
+        let effects = region_delta_effects(self.region, self.region_cell(), &graph);
+        if effects.is_empty() {
+            return None;
+        }
+
+        let mut action = ActionBuilder::new_unchecked_for_tests(self.region, "doc_edit", slot.cell);
+        for e in &effects {
+            action = action.effect(e.clone());
+        }
+        let action = action.build();
+
+        let mut builder = TurnBuilder::new(slot.cell, slot.nonce);
+        builder.add_action(action);
+        let mut turn = builder.fee(0).build();
+        turn.previous_receipt_hash = slot.chain_head;
+        Some((graph, turn))
+    }
+
+    /// The invariant: the shared region cell's committed `fields_map` equals the
+    /// canonical projection of the shared witness graph — same check as
+    /// [`ExecutorDrivenDoc::commitment_matches_projection`], now over the
+    /// multi-editor fold.
+    pub fn commitment_matches_projection(&self) -> bool {
+        let desired = project_graph(&self.graph);
+        let cell = self.region_cell();
+        for (&(coll, key), &value) in &desired {
+            if cell.state.get_field_ext(field_key(coll, key)) != Some(value) {
+                return false;
+            }
+        }
         for (&k, _) in cell.state.fields_map.iter() {
             if k >= STATE_SLOTS as u64 {
                 let flat = k - STATE_SLOTS as u64;
                 let coll = (flat >> 32) as u32;
                 let key = (flat & 0xFFFF_FFFF) as u32;
                 if !desired.contains_key(&(coll, key)) {
-                    effects.push(Effect::SetField {
-                        cell: self.region,
-                        index: k as usize,
-                        value: [0u8; 32],
-                    });
+                    return false;
                 }
             }
         }
-
-        effects
+        true
     }
 }
 
@@ -568,5 +870,206 @@ mod tests {
                 .any(|&k| k >= STATE_SLOTS as u64),
             "a document leaf landed in the committed fields_map the executor wrote"
         );
+    }
+
+    // ─────────────────────────────────────────────────────────────────────────
+    // MULTI-EDITOR: N editors, each a real per-agent chain, over ONE shared doc.
+    // ─────────────────────────────────────────────────────────────────────────
+
+    /// Ed25519 verifying key (32 bytes) for a 32-byte signing seed — the executor
+    /// signs receipts with the seed; a light client verifies with this.
+    fn pubkey_of(seed: [u8; 32]) -> [u8; 32] {
+        ed25519_dalek::SigningKey::from_bytes(&seed)
+            .verifying_key()
+            .to_bytes()
+    }
+
+    /// A genuine per-agent chain, checked WITHOUT `verify_receipt_chain`: that
+    /// helper also demands ledger-state continuity (`pre == prev.post`), which an
+    /// INTERLEAVED editor's filtered chain does NOT satisfy — another editor moved
+    /// the shared ledger between this editor's two turns. The authority chain a
+    /// per-agent history genuinely carries is: genesis has no previous, each next
+    /// links its `previous_receipt_hash` to the prior receipt's hash, every
+    /// receipt is the same agent, nonces are strictly monotone from 0, and every
+    /// receipt's executor signature verifies. This is what the executor enforces
+    /// per agent at write time, and it is verifiable by replay here.
+    fn assert_per_agent_chain(chain: &[TurnReceipt], agent: CellId, exec_pk: [u8; 32]) {
+        use dregg_turn::verify_receipt_signature_with_keys;
+        assert!(!chain.is_empty(), "the editor authored at least one turn");
+        assert_eq!(
+            chain[0].previous_receipt_hash, None,
+            "the editor's first turn is genesis for that agent"
+        );
+        for (i, r) in chain.iter().enumerate() {
+            assert_eq!(r.agent, agent, "every receipt is this editor's agent");
+            assert_eq!(r.finality, Finality::Final, "each edit is finalized");
+            assert!(
+                verify_receipt_signature_with_keys(r, &[exec_pk]).is_ok(),
+                "each receipt carries a genuine, verifiable executor signature"
+            );
+            if i > 0 {
+                assert_eq!(
+                    r.previous_receipt_hash,
+                    Some(chain[i - 1].receipt_hash()),
+                    "receipt {i} links to this editor's own prior receipt (NOT re-based to genesis)"
+                );
+            }
+        }
+    }
+
+    #[test]
+    fn multi_editor_session_keeps_each_editors_real_per_agent_chain() {
+        // TWO editors, both authorized, over ONE shared document. They INTERLEAVE:
+        // A, B, A, B. Each editor's turns must form a real per-agent chain (their
+        // OWN receipts hash-linked, their OWN nonce monotone), NOT a fresh doc
+        // re-based at the current fold per edit.
+        let exec_seed = [7u8; 32];
+        let mut doc = MultiEditorDoc::new(9, &[(1, true), (2, true)]);
+        doc.set_receipt_signing_key(exec_seed);
+        let (a, b) = (0usize, 1usize);
+
+        // A: "A1 " after ROOT.
+        let a1 = Patch::add(11, "A1 ", AtomId::ROOT);
+        let ra1 = doc
+            .edit(a, Patch::by(crate::Author(1), [a1.1]))
+            .expect("A's first edit commits");
+        // B: "B1 " after A's atom.
+        let b1 = Patch::add(21, "B1 ", a1.0);
+        let rb1 = doc
+            .edit(b, Patch::by(crate::Author(2), [b1.1]))
+            .expect("B's first edit commits");
+        // A again: "A2 " after B's atom — A's SECOND turn, over a ledger B moved.
+        let a2 = Patch::add(12, "A2 ", b1.0);
+        let ra2 = doc
+            .edit(a, Patch::by(crate::Author(1), [a2.1]))
+            .expect("A's second edit commits");
+        // B again: "B2" after A's second atom.
+        let b2 = Patch::add(22, "B2", a2.0);
+        let rb2 = doc
+            .edit(b, Patch::by(crate::Author(2), [b2.1]))
+            .expect("B's second edit commits");
+
+        // THE POINT: A's second turn chains off A's FIRST (not genesis, not B's
+        // intervening receipt) even though B edited in between — the cross-edit
+        // per-agent chain is preserved, not re-based.
+        assert_eq!(
+            ra2.previous_receipt_hash,
+            Some(ra1.receipt_hash()),
+            "A's chain is preserved across B's interleaved edit"
+        );
+        assert_eq!(
+            rb2.previous_receipt_hash,
+            Some(rb1.receipt_hash()),
+            "B's chain is preserved across A's interleaved edit"
+        );
+
+        // The two chains are DISTINCT agents.
+        assert_ne!(doc.editor_id(a), doc.editor_id(b));
+        assert_eq!(ra1.agent, doc.editor_id(a));
+        assert_eq!(rb1.agent, doc.editor_id(b));
+
+        // Each editor's per-agent chain verifies by replay (hash-linked, agent,
+        // monotone nonce, signed).
+        let pk = pubkey_of(exec_seed);
+        assert_per_agent_chain(doc.editor_chain(a), doc.editor_id(a), pk);
+        assert_per_agent_chain(doc.editor_chain(b), doc.editor_id(b), pk);
+        assert_eq!(doc.editor_chain(a).len(), 2);
+        assert_eq!(doc.editor_chain(b).len(), 2);
+        // Monotone per-agent nonces: two commits each ⇒ next nonce 2.
+        assert_eq!(doc.editor_nonce(a), 2);
+        assert_eq!(doc.editor_nonce(b), 2);
+
+        // The shared fold reflects ALL edits, in order.
+        assert_eq!(content(doc.graph()).to_marked_string(), "A1 B1 A2 B2");
+        assert!(doc.commitment_matches_projection());
+
+        // The GLOBAL history is a genuine linear ledger fold: 4 commits, each
+        // receipt's pre-state == the previous receipt's post-state (the interleaved
+        // history is one consistent chain of ledger roots — the doc fold).
+        let hist = doc.history();
+        assert_eq!(hist.len(), 4);
+        for i in 1..hist.len() {
+            assert_eq!(
+                hist[i].pre_state_hash,
+                hist[i - 1].post_state_hash,
+                "the doc fold is a continuous ledger history over all editors' edits"
+            );
+        }
+    }
+
+    #[test]
+    fn multi_editor_unauthorized_editor_is_refused_others_commit() {
+        // Editor A holds the region cap; editor U does NOT. U's edit is refused
+        // in-band by the SAME per-region cap gate, leaving the shared doc
+        // untouched; A's edits still commit and keep A's chain.
+        let mut doc = MultiEditorDoc::new(9, &[(1, true), (2, false)]);
+        let (a, u) = (0usize, 1usize);
+
+        let a1 = Patch::add(11, "hello ", AtomId::ROOT);
+        doc.edit(a, Patch::by(crate::Author(1), [a1.1]))
+            .expect("authorized editor commits");
+        let pre = doc.state_commitment();
+
+        // U tries to edit — refused with CapabilityNotHeld, targeting the region.
+        let err = doc
+            .edit(u, Patch::by(crate::Author(2), [add(21, "evil", a1.0)]))
+            .expect_err("unauthorized editor is refused");
+        match err {
+            TurnError::CapabilityNotHeld { actor, target } => {
+                assert_eq!(
+                    actor,
+                    doc.editor_id(u),
+                    "the unauthorized editor is refused"
+                );
+                assert_eq!(target, doc.region_id(), "the region is the gated target");
+            }
+            other => panic!("expected CapabilityNotHeld, got {other:?}"),
+        }
+
+        // The doc is byte-identical; U's chain never started; A can edit again and
+        // A's chain continues cleanly (the refused turn perturbed nothing).
+        assert_eq!(
+            doc.state_commitment(),
+            pre,
+            "refused edit left the doc untouched"
+        );
+        assert_eq!(content(doc.graph()).to_marked_string(), "hello ");
+        assert!(
+            doc.editor_chain(u).is_empty(),
+            "the refused editor has no chain"
+        );
+        assert_eq!(
+            doc.editor_nonce(u),
+            0,
+            "the refused editor's nonce never advanced"
+        );
+
+        let a2 = Patch::add(12, "world", a1.0);
+        let ra2 = doc
+            .edit(a, Patch::by(crate::Author(1), [a2.1]))
+            .expect("authorized editor commits again after the refusal");
+        assert_eq!(
+            ra2.previous_receipt_hash,
+            Some(doc.editor_chain(a)[0].receipt_hash()),
+            "A's chain continued across U's refused edit"
+        );
+        assert_eq!(content(doc.graph()).to_marked_string(), "hello world");
+    }
+
+    #[test]
+    fn single_editor_multi_editor_doc_matches_the_single_editor_path() {
+        // A one-editor MultiEditorDoc behaves like ExecutorDrivenDoc: sequential
+        // edits chain off each other on the one agent.
+        let mut doc = MultiEditorDoc::new(9, &[(1, true)]);
+        let h = Patch::add(1, "Hello, ", AtomId::ROOT);
+        let r1 = doc
+            .edit(0, Patch::by(crate::Author(1), [h.1]))
+            .expect("first edit commits");
+        let r2 = doc
+            .edit(0, Patch::by(crate::Author(1), [add(2, "world.", h.0)]))
+            .expect("second edit commits");
+        assert_eq!(r2.previous_receipt_hash, Some(r1.receipt_hash()));
+        assert_eq!(content(doc.graph()).to_marked_string(), "Hello, world.");
+        assert!(doc.commitment_matches_projection());
     }
 }

@@ -235,7 +235,7 @@ pub use doc_heap::{
     text_from_heap, text_into_heap,
 };
 #[cfg(feature = "substrate")]
-pub use executor_drive::{ExecutorDrivenDoc, field_key};
+pub use executor_drive::{ExecutorDrivenDoc, MultiEditorDoc, field_key};
 pub use graph::{DocGraph, FieldAssign};
 pub use history::History;
 pub use literate::{
