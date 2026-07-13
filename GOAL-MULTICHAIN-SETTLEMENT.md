@@ -323,3 +323,16 @@ over a governance-pinned weak-subjectivity anchor (the standard light-client tru
 RESIDUAL (operator, named): deployed config must pin the real governance-chosen (epoch, stake_table_root).
 SCORECARD: 2 critics → 2 real holes (EVM verifier binds no state root; Solana trusted stake table) → EVM being fixed,
 SOLANA FIXED+VERIFIED. Critics-at-completion = standing practice. EVM lane (binding + Groth16) still running.
+
+## ⚑ APEX-VK PIN — forgery CLOSED + verified (07-12 ~8:12am)
+The 3rd critic's same-shape-malicious-apex forgery is CLOSED: SettlementCircuit now bakes the deployed apex's VK-core
+(ApexVkLanes, re-exposed via the expose_claim channel) as constants + asserts equality, like the shrink-VK pin.
+VERIFIED MYSELF: mismatched apex VK-core lanes REJECT; unpinned-control ACCEPTS the same mismatch (pin is load-bearing,
+non-vacuous). So EVM settlement binds BOTH shrink VK + apex VK → only the deployed dregg apex+shrink proves. Trust: the
+constant is fixture-lifted (trust-on-compile, = shrink-pin level, consistent w/ the dev ceremony); strengthening =
+derive from RecursionVk (accumulator.rs) independently.
+SCORECARD: 3 critics → 3 real holes, ALL CLOSED+verified (EVM no-SNARK/no-binding, EVM unpinned-apex, Solana trusted-table).
+REMAINING (named, honest): (a) bridge submitter EthSettlementProof 256→384-byte blob [item 2, doing now]; (b) message→root
+26th-PI (outboundMessageRoot proof-bound not operator-attested — a real soundness gap); (c) RecursionVk-derive the apex
+constant; (d) prod MPC trusted setup (standard Groth16 caveat, needs a ceremony).
+NEXT: bridge submitter blob → message→root 26th-PI (the last operator-trust soundness gap).
