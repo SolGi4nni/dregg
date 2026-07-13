@@ -336,3 +336,16 @@ REMAINING (named, honest): (a) bridge submitter EthSettlementProof 256→384-byt
 26th-PI (outboundMessageRoot proof-bound not operator-attested — a real soundness gap); (c) RecursionVk-derive the apex
 constant; (d) prod MPC trusted setup (standard Groth16 caveat, needs a ceremony).
 NEXT: bridge submitter blob → message→root 26th-PI (the last operator-trust soundness gap).
+
+## ⚑ QUALITY WAVE (07-12 ~8:26am) — status
+DONE+verified: bridge submitter 384-byte blob (calldata BYTE-IDENTICAL to Foundry ground truth, 25/25); sketches
+README index; hygiene clean (no dead code / dangling refs / go-vet clean). RUNNING: docs-honesty-sweep, RecursionVk-
+derive apex-constant (converging on the apex-pin's uncommitted chain/gnark v4 state → commit combined). NAMED GAP
+(loud): the apex-pin changed the circuit (ClaimLen 25→33) → the on-chain Groth16 artifacts (verifier + proof +
+Foundry test) are STALE (pre-pin) → re-run DREGG_SNARK=1 (~13min) to make on-chain match the pinned/sound circuit.
+MESSAGE→ROOT 26th-PI — ASSESSED: NOT a quick bind. The apex does NOT currently compute/expose an outbound message
+root (grep-empty in circuit-prove/src + turn/src); DreggSettlement.sol keeps outboundMessageRoot OPERATOR-ATTESTED.
+Closing it is a DEEPER cross-layer feature: the turn/apex must compute the outbound-message commitment + expose it
+(as a 26th lane OR folded into chain_digest — a design decision), touching the recursion/turn layer (possibly shared/
+stark-kill territory). Deferred with honest scope, NOT pretended-next. NEXT quality: RecursionVk-derive harvest +
+combined commit → Groth16-regen for the pinned circuit → a comprehensive 4th settlement-soundness critic.
