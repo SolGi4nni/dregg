@@ -27,7 +27,9 @@
 //! - PCS: TwoAdicFriPcs with Poseidon2 Merkle trees
 //! - Extension field: BinomialExtensionField<BabyBear, 4> (degree-4 extension)
 //! - DFT: Radix2DitParallel (parallel NTT)
-//! - FRI: log_blowup=2 (4x), 50 queries, 16 PoW bits
+//! - FRI: log_blowup=3 (8x), 38 queries, 16 PoW bits (the `PROD_FRI_*` consts / `create_config`;
+//!   ≈130-bit CONJECTURED capacity floor, ≈73-bit literature-proven Johnson — see create_config's
+//!   note and tests/fri_params_soundness_budget.rs)
 
 use std::sync::LazyLock;
 

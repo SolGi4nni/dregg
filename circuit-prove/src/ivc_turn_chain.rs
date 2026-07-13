@@ -46,14 +46,14 @@
 //!    load-bearing rejections.
 //!
 //! 2. **The recursion tree (Gold) — REAL leaves.** Each finalized turn's leaf
-//!    is the **Lean-descriptor EffectVM AIR itself** ([`EffectVmDescriptorAir`],
-//!    the graduated ONE-circuit cutover constraint set: Poseidon2 state-commit
-//!    hash sites, per-row gates, transition continuity, `OLD_COMMIT`/`NEW_COMMIT`
-//!    PI bindings, balance range checks), re-proven as a recursion-compatible
-//!    uni-STARK over the **same 186-column execution trace** the turn's
-//!    production rotated IR-v2 batch proof (the retired v1 `EffectVmP3Proof`)
-//!    attests, then wrapped in its own **in-circuit verifier layer**
-//!    (uni->batch via `build_and_prove_next_layer`). The chain-binding leaf is
+//!    is the **ROTATED multi-table `Ir2BatchProof`** (`transferVmDescriptor2R24` &c) carried on
+//!    `participant.rotated`, re-proven recursion-compatibly and wrapped in its own **in-circuit
+//!    verifier layer** by [`prove_descriptor_leaf_rotated`] (the inner IR-v2 FRI engine —
+//!    `ir2_config`, log_blowup 6 / 19 queries — is kept as-is; only the recursion verifier's
+//!    params are retargeted to match it, and the leaf-wrap OUTPUT is a standard recursion-config
+//!    log_blowup 3 / 38-query proof). The retired v1 `prove_descriptor_leaf` (the 186-column
+//!    `EffectVmDescriptorAir` uni-STARK over a `FinalizedTurn::base_trace`) is DELETED —
+//!    `FinalizedTurn` no longer carries that trace. The chain-binding leaf is
 //!    wrapped too, and all batch leaves are pairwise aggregated up a binary tree
 //!    (`build_and_prove_aggregation_layer`, chained via [`BatchOnly`]) to ONE
 //!    root batch-STARK proof. The verifier checks ONLY the root; its cost is

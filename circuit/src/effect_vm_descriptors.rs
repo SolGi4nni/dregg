@@ -814,10 +814,15 @@ pub const V3_STAGED_CAVEAT_DESCRIPTORS: &[(&str, &str, &str)] = &[(
 /// added (grantCap · makeSovereign ·
 /// createCell · factory · spawn · receiptArchive · cellUnseal · emitEvent). The TSV is
 /// `key\tname\tjson` per line, structurally covered by `v3_staged_registry_parses_and_covers`.
-/// STAGED: a new constant, no VK bump, the live wire untouched. Each descriptor's
-/// `trace_width = EFFECT_VM_WIDTH (188) + APPENDIX_SPAN (221) = 409` (the v10 pre_limbs geometry),
-/// plus the graduated chip-lane columns; the rotated commitments ride four appended PI slots
-/// (rotated OLD/NEW commit · height · caveat commit).
+/// ⚠ DEPLOYED, NOT staged — the "-staged" name + "no VK bump / live wire untouched" note are STALE.
+/// The HARDSWAP VK-epoch landed this as the DEFAULT registry and RETIRED the v1 effect-VM fallback
+/// (`prove_full_turn` fails closed without a rotation witness). This constant is the sole live
+/// per-turn effect-VM source, read by `prove_effect_vm_rotated_ir2_with_caveat`.
+/// Widths reflect the CURRENT geometry (revoked-root 178 flag-day + the 8-felt ProofBind flag-day
+/// `36f04de71`), NOT the retired `409 = 188 + 221` v10 formula: narrow rotated members run
+/// `trace_width` up to ≈1668 with 62 PIs (transfer-class), the graduated chip-lane columns included.
+/// The commitment is the faithful 8-felt ~124-bit binding (state + ProofBind both 8-felt), not the
+/// old four-appended-PI / ~31-bit form.
 pub const V3_STAGED_REGISTRY_TSV: &str =
     include_str!("../descriptors/rotation-v3-staged-registry.tsv");
 pub const V3_STAGED_REGISTRY_FP: &str =

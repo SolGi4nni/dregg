@@ -22,8 +22,9 @@
 //! Lagrange child arrangement, arity-4 `hash_4_to_1`, and `[leaf, root]` public
 //! inputs), so the public inputs are byte-identical to the DSL path's.
 //!
-//! The proof carries a REAL terminal low-degree test (FRI, log_blowup=3, 50
-//! queries) and an anti-ghost tooth: a forged `root` (or `leaf`) public input
+//! The proof carries a REAL terminal low-degree test (FRI, via the production
+//! `create_config`: log_blowup=3, 38 queries, 16 PoW) and an anti-ghost tooth: a forged `root`
+//! (or `leaf`) public input
 //! is REJECTED by the audited verifier — see the tests.
 
 pub use crate::merkle_types::{
