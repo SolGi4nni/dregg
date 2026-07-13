@@ -947,9 +947,10 @@ pub fn drive_text<O: DiscordOffering>(
     let turn = turn.to_string();
     let text = text.to_string();
     let outcome = with_live::<O, _>(channel, move |live| {
-        // The typed text is the label; `arg` is the affordance's own (a doc insert's anchor), and
+        // The typed text rides the first-class `Action::text` payload (and the label too, for
+        // label-reading offerings like Hermes); `arg` is the affordance's own (a doc insert's anchor),
         // `enabled` is decoration — the substrate is the sole referee of what lands.
-        let action = Action::new(text, turn, arg, true);
+        let action = Action::new(text.clone(), turn, arg, true).with_text(text);
         live.offering.advance(&mut live.session, action, actor)
     });
     match outcome {

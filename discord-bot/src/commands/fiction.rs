@@ -105,6 +105,93 @@ struct DungeonMeta {
     /// If this run got its OWN orchestrated surface (a per-run thread), the session key to
     /// tear it down with at completion. `None` = the classic in-channel run.
     orchestrated_key: Option<String>,
+    /// The room the party is standing in right now — the room a `/dungeon close` resolves a
+    /// choice OUT of, so the history entry recorded on close names the right room.
+    current_room: String,
+    /// The bounded, rolling RUN HISTORY the narrator remembers — the rooms visited + the
+    /// choices the crowd made, so the AI narrates one evolving story, not disconnected rooms.
+    /// Purely bot-owned display/continuity state (never touches the substrate).
+    history: RunHistory,
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// NARRATION MEMORY — a compact, bounded RUN HISTORY the narrator carries so a run
+// reads as ONE evolving story. It records what the party did room by room (the
+// choice + whether it landed on the chain), rolls off the oldest entries past a
+// bound, and renders a token-bounded continuity paragraph fed into the SAME
+// credit-gated narrator call (no extra Bedrock spend — only a bounded prompt prefix).
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// How many recent room-transitions the continuity context carries. A rolling window: older
+/// beats fade so the prompt prefix stays small (the run's arc, not its full transcript).
+const HISTORY_MAX_ENTRIES: usize = 6;
+/// The hard character ceiling on the assembled continuity paragraph — the token budget the run
+/// history is allowed to add to the (unchanged, single) narrator call. ~700 chars ≈ 180 tokens.
+const HISTORY_CONTEXT_BUDGET: usize = 700;
+
+/// One remembered beat of the run: the room the party stood in and the choice they carried out
+/// of it, plus whether that choice actually landed on the chain (a refusal is remembered too —
+/// "tried X, the world refused" is part of the story).
+#[derive(Clone, Debug)]
+struct HistoryEntry {
+    /// The room the choice was made in.
+    room: String,
+    /// The human label of the choice the crowd carried (the winning ballot option).
+    choice: String,
+    /// Whether the executor admitted it (a real receipt) or refused it (nothing committed).
+    landed: bool,
+}
+
+/// The bounded, rolling run history — the narrator's memory of a single playthrough.
+#[derive(Clone, Debug, Default)]
+struct RunHistory {
+    entries: Vec<HistoryEntry>,
+}
+
+impl RunHistory {
+    /// Record one resolved beat, rolling the oldest off past [`HISTORY_MAX_ENTRIES`] so the
+    /// memory stays bounded.
+    fn record(&mut self, room: &str, choice: &str, landed: bool) {
+        self.entries.push(HistoryEntry {
+            room: room.to_string(),
+            choice: truncate(choice, 60),
+            landed,
+        });
+        if self.entries.len() > HISTORY_MAX_ENTRIES {
+            let overflow = self.entries.len() - HISTORY_MAX_ENTRIES;
+            self.entries.drain(0..overflow);
+        }
+    }
+
+    /// The distinct rooms visited so far, in first-visit order — the ASCII map's trail. (The
+    /// current room is appended by the snapshot; this is only the committed-transition history.)
+    fn visited_rooms(&self) -> Vec<String> {
+        let mut out: Vec<String> = Vec::new();
+        for e in &self.entries {
+            if out.last().map(String::as_str) != Some(e.room.as_str()) {
+                out.push(e.room.clone());
+            }
+        }
+        out
+    }
+
+    /// The token-bounded continuity paragraph handed to the narrator (paid AND free tiers). Empty
+    /// on a fresh run (there is no story yet). Never exceeds [`HISTORY_CONTEXT_BUDGET`] chars.
+    fn narrator_context(&self) -> String {
+        if self.entries.is_empty() {
+            return String::new();
+        }
+        let mut beats: Vec<String> = Vec::new();
+        for e in &self.entries {
+            let verb = if e.landed { "chose" } else { "tried (refused)" };
+            beats.push(format!(
+                "in the {} the party {} \"{}\"",
+                e.room, verb, e.choice
+            ));
+        }
+        let body = format!("So far this run: {}.", beats.join("; "));
+        truncate(&body, HISTORY_CONTEXT_BUDGET)
+    }
 }
 
 /// The per-channel narration/thread metadata store, keyed by the channel the run plays in (a
@@ -114,6 +201,40 @@ struct DungeonMeta {
 fn meta() -> &'static Mutex<HashMap<u64, DungeonMeta>> {
     static META: OnceLock<Mutex<HashMap<u64, DungeonMeta>>> = OnceLock::new();
     META.get_or_init(|| Mutex::new(HashMap::new()))
+}
+
+/// Record one resolved beat into a channel's run history (the room the choice was made IN, the
+/// winning choice label, and whether it landed). A brief lock, never held across an `.await`.
+fn record_close_into_history(channel: u64, choice: &str, landed: bool) {
+    if let Ok(mut m) = meta().lock() {
+        if let Some(d) = m.get_mut(&channel) {
+            let room = if d.current_room.is_empty() {
+                "the keep".to_string()
+            } else {
+                d.current_room.clone()
+            };
+            d.history.record(&room, choice, landed);
+        }
+    }
+}
+
+/// The distinct rooms this run has passed through (from the bot-owned history), for the ASCII map.
+fn visited_rooms_of(channel: u64) -> Vec<String> {
+    meta()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&channel).map(|d| d.history.visited_rooms()))
+        .unwrap_or_default()
+}
+
+/// The bounded continuity paragraph the narrator carries for this channel's run (empty on a
+/// fresh run). Assembled from the same bot-owned history — never touches the substrate.
+fn continuity_of(channel: u64) -> String {
+    meta()
+        .lock()
+        .ok()
+        .and_then(|m| m.get(&channel).map(|d| d.history.narrator_context()))
+        .unwrap_or_default()
 }
 
 // ─────────────────────────────────────────────────────────────────────────────
@@ -383,28 +504,33 @@ async fn handle_start(ctx: &Context, command: &CommandInteraction, state: &BotSt
             narrator: NarratorKind::Scripted,
             last_narration: String::new(),
             orchestrated_key,
+            current_room: String::new(),
+            history: RunHistory::default(),
         },
     );
 
     // Snapshot the first room from the store, then narrate OUTSIDE any lock (narration hits
-    // the network).
+    // the network). A fresh run has no history yet, so the map's trail is just the opening room
+    // (the snapshot appends it).
     let (room_name, room_desc, snap) = with_live::<DungeonOffering, _>(target_channel, |live| {
         let room_name = live
             .session
             .current_passage_name()
             .unwrap_or_else(|| "the threshold".to_string());
         let room_desc = live.session.current_prose();
-        let snap = render_snapshot(live, KEEP_NAME);
+        let snap = render_snapshot(live, KEEP_NAME, &[]);
         (room_name, room_desc, snap)
     })
     .expect("the session was just opened in the store");
 
+    // The opening room carries no prior beats — the continuity context is empty on a fresh run.
     let (narration, kind) =
-        narrate_room_gated(state, command.user.id.get(), &room_name, &room_desc).await;
+        narrate_room_gated(state, command.user.id.get(), &room_name, &room_desc, "").await;
     if let Ok(mut m) = meta().lock() {
         if let Some(d) = m.get_mut(&target_channel) {
             d.narrator = kind;
             d.last_narration = narration.clone();
+            d.current_room = room_name.clone();
         }
     }
 
@@ -482,9 +608,14 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
         CollectiveClose::NoRound | CollectiveClose::NoSession => CloseRender::NoSession,
         CollectiveClose::Empty => CloseRender::Empty,
         CollectiveClose::Resolved(res) => {
+            // RECORD THIS BEAT into the run's memory BEFORE snapshotting the next room, so both
+            // the ASCII map trail and the narrator's continuity context include the choice the
+            // crowd just carried (room = the room it was made in; landed = a real receipt).
+            record_close_into_history(channel, &res.winner.label, res.outcome.landed());
+            let visited = visited_rooms_of(channel);
             // Read the post-turn state (advance_collective already applied it + opened the
             // next round over the resulting state).
-            let post = with_live::<DungeonOffering, _>(channel, |live| {
+            let post = with_live::<DungeonOffering, _>(channel, move |live| {
                 let ended = live.session.is_ended();
                 let receipts = live.session.receipts_len();
                 if ended {
@@ -495,7 +626,7 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
                         .current_passage_name()
                         .unwrap_or_else(|| "the dark".to_string());
                     let next_room_desc = live.session.current_prose();
-                    let snap = render_snapshot(live, KEEP_NAME);
+                    let snap = render_snapshot(live, KEEP_NAME, &visited);
                     (ended, receipts, next_room_name, next_room_desc, Some(snap))
                 }
             });
@@ -559,17 +690,23 @@ async fn handle_close(ctx: &Context, command: &CommandInteraction, state: &BotSt
             teardown_key,
         } => match next_snapshot {
             Some(snap) => {
+                // The run REMEMBERS: hand the narrator the bounded continuity context assembled
+                // from this run's history (the just-recorded beat included) so it narrates one
+                // evolving story. Same single credit-gated call — only the prompt prefix grows.
+                let continuity = continuity_of(channel);
                 let (narration, kind) = narrate_room_gated(
                     state,
                     command.user.id.get(),
                     &next_room_name,
                     &next_room_desc,
+                    &continuity,
                 )
                 .await;
                 if let Ok(mut m) = meta().lock() {
                     if let Some(d) = m.get_mut(&channel) {
                         d.narrator = kind;
                         d.last_narration = narration.clone();
+                        d.current_room = next_room_name.clone();
                     }
                 }
                 let embed = resolution_then_round_embed(&resolution, &snap, &narration, kind);
@@ -734,6 +871,9 @@ enum BallotCast {
 /// the round-guard the `/dungeon` UI has always had, which the round-number-agnostic by-arg
 /// `cast_vote` helper does not carry. On a recorded ballot, snapshots the round for re-render.
 fn cast_ballot(channel: u64, voter: DreggIdentity, round: u64, option: usize) -> BallotCast {
+    // The map trail comes from the bot-owned run history; read it before entering the store
+    // thread and carry it into the snapshot so a vote re-render keeps the ASCII map.
+    let visited = visited_rooms_of(channel);
     with_live::<DungeonOffering, _>(channel, move |live| {
         let cast = match live.round.as_mut() {
             Some(r) if r.round == round => r.cast(&voter, option),
@@ -743,7 +883,7 @@ fn cast_ballot(channel: u64, voter: DreggIdentity, round: u64, option: usize) ->
         match cast {
             // Snapshot AFTER recording so the tally reflects this vote. The mutable borrow of
             // `live.round` ends with `cast` above, so re-borrowing `live` here is sound.
-            Cast::Recorded => BallotCast::Recorded(render_snapshot(live, KEEP_NAME)),
+            Cast::Recorded => BallotCast::Recorded(render_snapshot(live, KEEP_NAME, &visited)),
             Cast::AlreadyVoted => BallotCast::AlreadyVoted,
             // BadOption, and the electorate/round variants unreachable for the open-crowd
             // dungeon, all present as "no longer on the ballot".
@@ -869,41 +1009,213 @@ pub struct RenderSnapshot {
     round: u64,
     room_name: String,
     room_desc: String,
-    state_line: String,
     objective: String,
     receipts: usize,
     options: Vec<VoteOption>,
     tally: Vec<usize>,
     ballots: usize,
+    /// The committed party vitals read straight off the cell — the structured source for the
+    /// STATUS HUD (an HP bar, gold, depth, the crown holder, the will budget).
+    hp: u64,
+    mana_budget: u64,
+    mana_spent: u64,
+    depth: u64,
+    gold: u64,
+    relic_owner: u64,
+    /// The rooms this run has passed through so far (in visit order, current last) — the ASCII
+    /// MAP's input. Assembled from the bot-owned run history beside the session.
+    visited: Vec<String>,
+    /// The short public-key tags of everyone who has cast a ballot this round — the PARTY PANEL's
+    /// roster (the electorate of record, not the eligible set).
+    voters: Vec<String>,
 }
 
 /// Snapshot a channel's live session (the offering session + its collective round) for
 /// rendering. Reads the migrated adapter's [`Live`]: the room prose/state from the offering
 /// session, and the ballot options / per-option tally / ballot count from the collective round.
-fn render_snapshot(live: &Live<DungeonOffering>, world_name: &str) -> RenderSnapshot {
+/// `visited` is the bot-owned run history's room trail (read before entering the store thread),
+/// carried through so the ASCII map can draw where the party has been.
+fn render_snapshot(
+    live: &Live<DungeonOffering>,
+    world_name: &str,
+    visited: &[String],
+) -> RenderSnapshot {
     let room_name = live
         .session
         .current_passage_name()
         .unwrap_or_else(|| "the dark".to_string());
-    let (round, options, tally, ballots) = match live.round.as_ref() {
-        Some(r) => (r.round, ballot_options(r), r.counts(), r.ballots.len()),
-        None => (0, Vec::new(), Vec::new(), 0),
+    let (round, options, tally, ballots, voters) = match live.round.as_ref() {
+        Some(r) => (
+            r.round,
+            ballot_options(r),
+            r.counts(),
+            r.ballots.len(),
+            r.voter_ids()
+                .into_iter()
+                .map(|id| short_ident(&id.0))
+                .collect(),
+        ),
+        None => (0, Vec::new(), Vec::new(), 0, Vec::new()),
     };
+    // The visited trail always includes the room the party is standing in now (a fresh run whose
+    // history is still empty must still map its opening room).
+    let mut visited: Vec<String> = visited.to_vec();
+    if visited.last().map(String::as_str) != Some(room_name.as_str()) {
+        visited.push(room_name.clone());
+    }
     RenderSnapshot {
         world_name: world_name.to_string(),
         round,
         room_name,
         room_desc: live.session.current_prose(),
-        state_line: live.session.state_line(),
         objective: KEEP_OBJECTIVE.to_string(),
         receipts: live.session.receipts_len(),
         options,
         tally,
         ballots,
+        hp: live.session.read_var("hp"),
+        mana_budget: live.session.read_var("mana_budget"),
+        mana_spent: live.session.read_var("mana_spent"),
+        depth: live.session.read_var("depth"),
+        gold: live.session.read_var("gold"),
+        relic_owner: live.session.read_var("relic_owner"),
+        visited,
+        voters,
     }
 }
 
-/// The round embed: the room (narrated), state, objective, receipts, and the live ballot.
+/// A short, readable tag for a dregg identity hex — the first 8 hex chars (the same shortening
+/// the ballot ack uses), so the party panel is legible without leaking the full key.
+fn short_ident(hex: &str) -> String {
+    hex.chars().take(8).collect()
+}
+
+// ─────────────────────────────────────────────────────────────────────────────
+// RICH ASCII PRESENTATION — a small monospace MAP of where the party has been, a
+// STATUS HUD (an HP bar, gold, key inventory, the verified-turn count), and a PARTY
+// PANEL (the voters + the live ballot tally). Rendered in the embed as a Discord
+// code block (monospace). Kept compact so it never overflows a mobile embed.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The Keep's committed room topology, in descent order — the ASCII map's spine. The final
+/// `hoard` is the END goal (reached only when the dungeon ends, where the final embed renders
+/// instead of the round embed).
+const KEEP_MAP_ROOMS: &[&str] = &["gatehall", "hall", "sanctum", "hoard"];
+
+/// A fixed-width filled/empty bar, e.g. `[█████████░░░░░░░]` — the HP meter's core.
+fn ascii_bar(cur: u64, max: u64, width: usize) -> String {
+    let max = max.max(1);
+    let filled = ((cur.min(max) as f64 / max as f64) * width as f64).round() as usize;
+    let filled = filled.min(width);
+    let mut out = String::with_capacity(width + 2);
+    out.push('[');
+    for _ in 0..filled {
+        out.push('█');
+    }
+    for _ in 0..(width - filled) {
+        out.push('░');
+    }
+    out.push(']');
+    out
+}
+
+/// The ASCII MAP: the Keep's rooms as a chain, the current room bracketed `<room>`, rooms already
+/// visited `(room)`, and rooms not yet reached plain. Any visited room off the known spine is
+/// appended so the trail is never lost.
+fn ascii_map(visited: &[String], current: &str) -> String {
+    let mut rooms: Vec<String> = KEEP_MAP_ROOMS.iter().map(|s| s.to_string()).collect();
+    for v in visited {
+        if !rooms.iter().any(|r| r == v) {
+            rooms.push(v.clone());
+        }
+    }
+    let mut cells: Vec<String> = Vec::new();
+    for r in &rooms {
+        if r == current {
+            cells.push(format!("<{r}>"));
+        } else if visited.iter().any(|v| v == r) {
+            cells.push(format!("({r})"));
+        } else {
+            cells.push(r.clone());
+        }
+    }
+    cells.join(" -> ")
+}
+
+/// The MAP + STATUS HUD block (no code fence — the caller wraps it). The HUD reads straight off
+/// the committed cell: an HP bar (max 50, the Keep's genesis seed), gold, depth, the crown holder
+/// (key inventory), the will spent against its budget, and the verified-turn count.
+fn status_panel(snap: &RenderSnapshot) -> String {
+    let crown = match snap.relic_owner {
+        1 => "Red Hand",
+        2 => "Blue Hand",
+        _ => "unclaimed",
+    };
+    format!(
+        "MAP  {map}\n\
+         HP   {hp_bar} {hp}/50\n\
+         gold {gold:<4}  depth {depth}   crown {crown}\n\
+         will {spent}/{budget} spent   verified turns {receipts}",
+        map = truncate(&ascii_map(&snap.visited, &snap.room_name), 220),
+        hp_bar = ascii_bar(snap.hp, 50, 16),
+        hp = snap.hp,
+        gold = snap.gold,
+        depth = snap.depth,
+        crown = crown,
+        spent = snap.mana_spent,
+        budget = snap.mana_budget,
+        receipts = snap.receipts,
+    )
+}
+
+/// The PARTY PANEL block (no code fence — the caller wraps it): who has cast a ballot this round
+/// (the roster of short identity tags), then the per-option tally as labelled bars.
+fn party_panel(snap: &RenderSnapshot) -> String {
+    let mut out = String::new();
+    if snap.voters.is_empty() {
+        out.push_str("Party: (no ballots yet — vote a button below)\n");
+    } else {
+        let shown: Vec<String> = snap.voters.iter().take(8).cloned().collect();
+        let extra = snap.voters.len().saturating_sub(shown.len());
+        let roster = if extra > 0 {
+            format!("{}, +{extra} more", shown.join(", "))
+        } else {
+            shown.join(", ")
+        };
+        out.push_str(&format!(
+            "Party ({} voter{}): {}\n",
+            snap.voters.len(),
+            if snap.voters.len() == 1 { "" } else { "s" },
+            roster,
+        ));
+    }
+    out.push_str(&tally_lines(&snap.options, &snap.tally));
+    truncate(&out, 1000)
+}
+
+/// The per-option tally as monospace lines (no code fence — the caller wraps the whole panel):
+/// `0  Trade blows          ▓▓ 2`.
+fn tally_lines(options: &[VoteOption], tally: &[usize]) -> String {
+    if options.is_empty() {
+        return "(no moves on the ballot)".to_string();
+    }
+    let mut out = String::new();
+    for (i, opt) in options.iter().enumerate() {
+        let n = tally.get(i).copied().unwrap_or(0);
+        let bar = "▓".repeat(n.min(12));
+        out.push_str(&format!(
+            "{:>2}  {:<22} {} {}\n",
+            i,
+            truncate(&opt.label, 22),
+            bar,
+            n
+        ));
+    }
+    out
+}
+
+/// The round embed: the room (narrated), a rich ASCII map + status HUD, objective, receipts, and
+/// the live ballot rendered as a party panel.
 fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> CreateEmbed {
     let mut desc = String::new();
     desc.push_str(&truncate(narration, 1400));
@@ -914,7 +1226,11 @@ fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> Cr
 
     base_embed(&format!("{} — {}", snap.world_name, snap.room_name))
         .description(truncate(&desc, 4000))
-        .field("Party", snap.state_line.clone(), false)
+        .field(
+            "🗺 Map & status",
+            format!("```{}```", status_panel(snap)),
+            false,
+        )
         .field("Objective", snap.objective.clone(), false)
         .field("Verified turns", snap.receipts.to_string(), true)
         .field(
@@ -923,8 +1239,8 @@ fn round_embed(snap: &RenderSnapshot, narration: &str, kind: NarratorKind) -> Cr
             true,
         )
         .field(
-            "The party's move — vote a button below",
-            tally_block(&snap.options, &snap.tally),
+            "🎭 The party's move — vote a button below",
+            format!("```{}```", party_panel(snap)),
             false,
         )
         .footer(footer(kind))
@@ -986,26 +1302,6 @@ fn resolution_final_embed(res: &ResolvedRound) -> CreateEmbed {
     base_embed(&format!("{} — {}", res.world_name, title))
         .description(truncate(&body, 4000))
         .footer(footer(NarratorKind::Scripted))
-}
-
-/// A monospace tally block: `Trade blows  ▓▓▓ 3` per option.
-fn tally_block(options: &[VoteOption], tally: &[usize]) -> String {
-    if options.is_empty() {
-        return "—".to_string();
-    }
-    let mut out = String::new();
-    for (i, opt) in options.iter().enumerate() {
-        let n = tally.get(i).copied().unwrap_or(0);
-        let bar = "▓".repeat(n.min(12));
-        out.push_str(&format!(
-            "`{:>2}` {} {} {}\n",
-            i,
-            truncate(&opt.label, 32),
-            bar,
-            n
-        ));
-    }
-    truncate(&out, 1000)
 }
 
 /// The ballot buttons for a round, chunked into Discord action rows of five (max five rows).
@@ -1074,19 +1370,23 @@ async fn narrate_room_gated(
     discord_user_id: u64,
     room_name: &str,
     room_desc: &str,
+    continuity: &str,
 ) -> (String, NarratorKind) {
     let discord = discord_user_id.to_string();
 
     if !state.pay.can_run_paid(&discord) {
-        return narrate_room(room_name, room_desc).await;
+        return narrate_room(room_name, room_desc, continuity).await;
     }
     let Some(paid) = state.pay.paid.clone() else {
-        return narrate_room(room_name, room_desc).await;
+        return narrate_room(room_name, room_desc, continuity).await;
     };
 
-    let system = "You are the dungeon master of a shared party dungeon crawl. In two vivid \
-                  sentences, set the scene for the party as they arrive. Do NOT use curly braces."
-        .to_string();
+    // The system prompt carries the run's MEMORY: a bounded continuity context (the rooms
+    // visited + the choices made) so the AI narrates one evolving story with consistent tone and
+    // characters — NOT a disconnected room. It rides inside the SAME single credit-gated Converse
+    // call (`PaidNarrator::narrate` is one metered request); only this bounded prompt prefix
+    // grows, so there is NO extra Bedrock spend — the debit-after-success gate is untouched.
+    let system = narrator_system_prompt(continuity);
     let prompt = format!("Room: {room_name}. {room_desc}");
 
     // The hosted Bedrock client drives its OWN Tokio runtime with `block_on`, which must not run
@@ -1102,28 +1402,60 @@ async fn narrate_room_gated(
             let _ = state.pay.debit_one(&discord);
             (sanitize(&n.text), NarratorKind::Bedrock)
         }
-        None => narrate_room(room_name, room_desc).await,
+        None => narrate_room(room_name, room_desc, continuity).await,
+    }
+}
+
+/// The narrator's system instruction, with the run's bounded continuity context woven in when
+/// present. On a fresh run (`continuity` empty) this is the original opening instruction verbatim
+/// — the memory is purely additive, only appearing once the run has a story to remember.
+fn narrator_system_prompt(continuity: &str) -> String {
+    let base = "You are the dungeon master of a shared party dungeon crawl. In two vivid \
+                sentences, set the scene for the party as they arrive. Do NOT use curly braces.";
+    if continuity.trim().is_empty() {
+        base.to_string()
+    } else {
+        format!(
+            "{base} Keep the tone and the characters consistent with the run so far, and weave in \
+             continuity where it fits (a callback to a room the party already passed, a \
+             consequence of an earlier choice). {continuity}"
+        )
     }
 }
 
 /// Narrate a room (the FREE tier). Tries a real local `gemma2:2b` over ollama; if unreachable
 /// OR returns nothing usable, falls back to the scene's own scripted description and reports
-/// `NarratorKind::Scripted` — the narrator is NEVER misreported.
-async fn narrate_room(room_name: &str, room_desc: &str) -> (String, NarratorKind) {
-    match gemma_narrate(room_name, room_desc).await {
+/// `NarratorKind::Scripted` — the narrator is NEVER misreported. The `continuity` context (the
+/// same bounded run memory the paid tier carries) is passed to the local model too, so the free
+/// tier also narrates with continuity.
+async fn narrate_room(
+    room_name: &str,
+    room_desc: &str,
+    continuity: &str,
+) -> (String, NarratorKind) {
+    match gemma_narrate(room_name, room_desc, continuity).await {
         Some(text) if !text.trim().is_empty() => (sanitize(&text), NarratorKind::Gemma),
         _ => (room_desc.to_string(), NarratorKind::Scripted),
     }
 }
 
 /// One ollama `/api/generate` call (model `gemma2:2b`, `stream:false`). `None` on any failure.
-async fn gemma_narrate(room_name: &str, room_desc: &str) -> Option<String> {
+/// The `continuity` run-memory rides in the prompt so the free tier narrates with continuity too.
+async fn gemma_narrate(room_name: &str, room_desc: &str, continuity: &str) -> Option<String> {
     let endpoint =
         std::env::var("OLLAMA_URL").unwrap_or_else(|_| "http://127.0.0.1:11434".to_string());
     let url = format!("{}/api/generate", endpoint.trim_end_matches('/'));
+    let continuity_clause = if continuity.trim().is_empty() {
+        String::new()
+    } else {
+        format!(
+            " Keep the tone and characters consistent with the run so far, weaving in continuity \
+             where it fits. {continuity}"
+        )
+    };
     let prompt = format!(
         "You are the dungeon master of a shared party dungeon crawl. In two vivid sentences, \
-         set the scene for the party as they arrive. Do NOT use curly braces. \
+         set the scene for the party as they arrive. Do NOT use curly braces.{continuity_clause} \
          Room: {room_name}. {room_desc}"
     );
     let client = reqwest::Client::builder()
@@ -1466,8 +1798,8 @@ mod tests {
     fn render_snapshot_reflects_the_live_round() {
         let channel = 771_005;
         open_channel(channel, 3);
-        let snap =
-            with_live::<DungeonOffering, _>(channel, |l| render_snapshot(l, KEEP_NAME)).unwrap();
+        let snap = with_live::<DungeonOffering, _>(channel, |l| render_snapshot(l, KEEP_NAME, &[]))
+            .unwrap();
         assert!(
             snap.options.len() >= 2,
             "the gatehall offers more than one candidate move"
@@ -1553,5 +1885,151 @@ mod tests {
             plan_thread_spin(Some(42), None, 555, 999, None).is_none(),
             "unknown app perms → no spin"
         );
+    }
+
+    // ── NARRATION MEMORY: the run history the narrator carries ─────────────────
+
+    /// The run history assembles a bounded continuity context, remembers refusals honestly,
+    /// rolls the oldest beats off past the window, and — the load-bearing wiring — the narrator
+    /// system prompt actually CARRIES it (a fresh run's prompt is the untouched opening line; a
+    /// run with memory weaves the context in).
+    #[test]
+    fn narration_memory_assembles_a_bounded_continuity_the_narrator_carries() {
+        let mut h = RunHistory::default();
+
+        // A fresh run has no story yet — the continuity is empty and the prompt is the original.
+        assert!(
+            h.narrator_context().is_empty(),
+            "a fresh run carries no memory"
+        );
+        let base = narrator_system_prompt("");
+        assert!(
+            base.contains("dungeon master") && !base.contains("So far this run"),
+            "an empty continuity leaves the opening prompt untouched"
+        );
+
+        // Record a few resolved beats.
+        h.record("gatehall", "Trade blows with the gate-warden", true);
+        h.record("gatehall", "Press on into the plundered hall", true);
+        h.record("hall", "Claim the crown for the Red Hand", true);
+
+        let ctx = h.narrator_context();
+        assert!(ctx.starts_with("So far this run:"), "the arc is summarised");
+        assert!(
+            ctx.contains("gatehall") && ctx.contains("hall"),
+            "rooms remembered"
+        );
+        assert!(ctx.contains("Red Hand"), "the key choice is remembered");
+        assert!(
+            ctx.chars().count() <= HISTORY_CONTEXT_BUDGET,
+            "the continuity is token-bounded"
+        );
+
+        // The visited trail dedups consecutive repeats (gatehall visited twice → once).
+        assert_eq!(
+            h.visited_rooms(),
+            vec!["gatehall".to_string(), "hall".to_string()],
+            "the map trail is the distinct room sequence"
+        );
+
+        // THE WIRING: a non-empty continuity is actually woven into the narrator's system prompt.
+        let with_mem = narrator_system_prompt(&ctx);
+        assert!(
+            with_mem.contains("dungeon master")
+                && with_mem.contains(&ctx)
+                && with_mem.contains("consistent"),
+            "the narrator prompt carries the run's memory + a consistency instruction"
+        );
+
+        // The window is bounded: pushing past the max rolls the oldest off.
+        for i in 0..HISTORY_MAX_ENTRIES + 4 {
+            h.record("sanctum", &format!("cast the sealing ward {i}"), i % 2 == 0);
+        }
+        assert_eq!(
+            h.entries.len(),
+            HISTORY_MAX_ENTRIES,
+            "the rolling window bounds the memory"
+        );
+        assert!(
+            h.narrator_context().chars().count() <= HISTORY_CONTEXT_BUDGET,
+            "the context stays bounded even when the window is full"
+        );
+
+        // A refused beat is remembered honestly ("tried, the world refused").
+        h.record("sanctum", "climb back up the stair", false);
+        assert!(
+            h.narrator_context().contains("tried (refused)"),
+            "a refusal is part of the remembered story"
+        );
+    }
+
+    // ── RICH ASCII PRESENTATION: map + HUD + party panel on a live session ─────
+
+    /// The rich ASCII presentation renders for a live session state: an ASCII MAP marking the
+    /// current room and the Keep's spine, a STATUS HUD with an HP bar + gold + crown + verified
+    /// turns, and a PARTY PANEL naming the voter who cast a ballot + the live tally bar.
+    #[test]
+    fn the_rich_ascii_presentation_renders_map_hud_and_party_panel() {
+        let channel = 771_010;
+        open_channel(channel, 7);
+
+        // A voter casts a ballot so the party panel has a roster + a tally.
+        let pos = position_of_arg(channel, KP_PRESS_ON as i64);
+        assert!(matches!(
+            cast_ballot(channel, ident("feed"), 0, pos),
+            BallotCast::Recorded(_)
+        ));
+
+        let visited = vec!["gatehall".to_string()];
+        let snap = with_live::<DungeonOffering, _>(channel, move |l| {
+            render_snapshot(l, KEEP_NAME, &visited)
+        })
+        .unwrap();
+
+        // (a) THE ASCII MAP — the current room bracketed, the unreached rooms plain.
+        let status = status_panel(&snap);
+        assert!(status.contains("MAP"), "the map is present:\n{status}");
+        assert!(
+            status.contains("<gatehall>"),
+            "the current room is marked on the map:\n{status}"
+        );
+        assert!(
+            status.contains("sanctum") && status.contains("hoard"),
+            "the Keep's spine is drawn:\n{status}"
+        );
+
+        // (b) THE STATUS HUD — an HP bar, the verified-turn count, the crown (key inventory).
+        assert!(
+            status.contains("HP") && status.contains('['),
+            "an HP bar renders:\n{status}"
+        );
+        assert!(
+            status.contains("50/50"),
+            "HP reads off the seeded cell:\n{status}"
+        );
+        assert!(
+            status.contains("verified turns 1"),
+            "the verified-turn count (genesis) shows:\n{status}"
+        );
+        assert!(
+            status.contains("crown unclaimed"),
+            "the crown holder (key inventory) shows:\n{status}"
+        );
+
+        // (c) THE PARTY PANEL — the voter roster + the live tally bar.
+        let party = party_panel(&snap);
+        assert!(
+            party.contains("Party (1 voter):"),
+            "the party roster renders:\n{party}"
+        );
+        assert!(
+            party.contains(&short_ident(&ident("feed").0)),
+            "the voter's short id is on the roster:\n{party}"
+        );
+        assert!(party.contains('▓'), "the live tally bar renders:\n{party}");
+
+        // The whole embed builds without panicking (map + HUD + party fields all present).
+        let _ = round_embed(&snap, "You step into the gatehall.", NarratorKind::Scripted);
+        close_in::<DungeonOffering>(channel);
     }
 }
