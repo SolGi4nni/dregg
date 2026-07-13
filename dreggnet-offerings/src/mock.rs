@@ -22,10 +22,17 @@ pub struct MockEvent {
     pub turn: String,
     /// The pressed affordance's argument (matches [`Action::arg`]).
     pub arg: i64,
+    /// The **free text the presser supplied** with this actuation, if any — the real-frontend
+    /// analogue of a Discord modal field / a web form textarea / a Telegram reply the user typed.
+    /// `None` is a plain button press (no text field); `Some(t)` is a text-bearing press whose
+    /// string [`collect`](MockFrontend::collect) overlays onto the collected [`Action::text`]. A
+    /// `None` press is byte-identical to the pre-text behaviour (the presented action is returned
+    /// untouched).
+    pub text: Option<String>,
 }
 
 impl MockEvent {
-    /// A press of `(turn, arg)` in `session` by `user`.
+    /// A **text-free** press of `(turn, arg)` in `session` by `user` — a plain button press.
     pub fn press(
         session: &SessionId,
         user: impl Into<String>,
@@ -37,6 +44,27 @@ impl MockEvent {
             user: user.into(),
             turn: turn.into(),
             arg,
+            text: None,
+        }
+    }
+
+    /// A **text-bearing** press: `(turn, arg)` plus the free `text` the user supplied (the modal
+    /// field / form textarea). [`collect`](MockFrontend::collect) reproduces this string on the
+    /// collected [`Action::text`], so a text-shaped move (a doc edit's prose, a Hermes prompt)
+    /// round-trips present -> collect losslessly.
+    pub fn press_text(
+        session: &SessionId,
+        user: impl Into<String>,
+        turn: impl Into<String>,
+        arg: i64,
+        text: impl Into<String>,
+    ) -> Self {
+        MockEvent {
+            session: session.clone(),
+            user: user.into(),
+            turn: turn.into(),
+            arg,
+            text: Some(text.into()),
         }
     }
 }
@@ -121,11 +149,18 @@ impl Frontend for MockFrontend {
     /// not offer).
     fn collect(&self, ev: MockEvent) -> Option<(SessionId, Action, DreggIdentity)> {
         let presented = self.presented.get(&ev.session)?;
-        let action = presented
+        let mut action = presented
             .actions
             .iter()
             .find(|a| a.turn == ev.turn && a.arg == ev.arg)
             .cloned()?;
+        // A text-bearing press carries the user-supplied free text (the modal field / form
+        // textarea); it overlays the presented affordance's default [`Action::text`]. A text-free
+        // press (`ev.text == None`) leaves the presented action untouched — byte-identical to the
+        // pre-text behaviour, so a plain fixed-arg affordance collects exactly as before.
+        if let Some(t) = ev.text {
+            action.text = Some(t);
+        }
         Some((ev.session.clone(), action, self.identity(ev.user)))
     }
 

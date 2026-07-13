@@ -81,17 +81,54 @@ pub struct Action {
     /// decoration for the surface (`false` → shown dimmed); the executor still refuses an
     /// ineligible move on `advance`.
     pub enabled: bool,
+    /// An **optional first-class free-text payload** the affordance carries alongside its
+    /// `{turn, arg}`. A `{turn, arg: i64}` names an *index* move (a scene choice, a cell to
+    /// delete); a **text-shaped** move — a document EDIT's inserted prose, a hosted-Hermes
+    /// PROMPT, a title's new value — needs a *string*, and this is where it rides.
+    ///
+    /// `None` is the text-free affordance (a fixed-index button/menu-row), and it is the
+    /// **default** every existing affordance already is: this field is additive and invisible to
+    /// them — an `Action` with `text: None` presents, collects, and encodes exactly as before.
+    /// A text-bearing affordance sets it with [`Action::with_text`].
+    ///
+    /// This is the real payload the two WORKAROUNDS approximated and can now retire (as
+    /// follow-ups): dreggnet-doc rode an edit's text on [`Action::label`] (the label doubling as
+    /// the content), and the discord-bot minted a separate `askt`/`subt` modal wire to carry the
+    /// string beside the button. With a first-class `text`, the payload is part of the actuation
+    /// itself — a [`Frontend`] present/collect and the deos affordance codec round-trip it
+    /// losslessly, no label-riding and no side channel.
+    pub text: Option<String>,
 }
 
 impl Action {
-    /// A convenience constructor.
+    /// A convenience constructor for a **text-free** affordance (`text: None`) — the fixed
+    /// `{turn, arg}` button/menu-row every existing offering builds. Attach a free-text payload
+    /// with [`Action::with_text`].
     pub fn new(label: impl Into<String>, turn: impl Into<String>, arg: i64, enabled: bool) -> Self {
         Action {
             label: label.into(),
             turn: turn.into(),
             arg,
             enabled,
+            text: None,
         }
+    }
+
+    /// **Attach a free-text payload** to this affordance (builder-style) — a document edit's
+    /// prose, a Hermes prompt, a title's value. The `{label, turn, arg, enabled}` are unchanged;
+    /// only [`Action::text`] is set, so the affordance now carries its string as a first-class
+    /// part of the actuation rather than on the label or a side channel.
+    ///
+    /// ```
+    /// # use dreggnet_offerings::Action;
+    /// let a = Action::new("…continue the document", "insert", 3, true)
+    ///     .with_text("the dragon's hoard glittered in the torchlight");
+    /// assert_eq!(a.text.as_deref(), Some("the dragon's hoard glittered in the torchlight"));
+    /// assert_eq!(a.arg, 3); // the {turn, arg} shape is untouched
+    /// ```
+    pub fn with_text(mut self, text: impl Into<String>) -> Self {
+        self.text = Some(text.into());
+        self
     }
 }
 

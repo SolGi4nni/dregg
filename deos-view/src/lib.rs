@@ -61,7 +61,10 @@ pub mod source_health;
 /// walkers. Always compiled (pure `tree`).
 pub mod text;
 pub mod tree;
-pub use affordance::{affordance_id, wechat_reply_index, AffordanceTransport};
+pub use affordance::{
+    affordance_id, affordance_id_with_text, parse_affordance_id_with_text, wechat_reply_index,
+    AffordanceTransport,
+};
 pub use backend::{actuations, actuations_with, Actuation, SurfaceBackend};
 pub use console::{
     console_bind_values, console_card, console_slot_seeds, demo_console, ConsoleModel,

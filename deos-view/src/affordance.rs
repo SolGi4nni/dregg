@@ -105,6 +105,97 @@ pub fn parse_affordance_id(id: &str, transport: AffordanceTransport) -> Option<(
     }
 }
 
+// ── THE TEXT-BEARING AFFORDANCE (additive) ──────────────────────────────────────────────────
+// A `{turn, arg}` affordance names an *index* move; a **text-shaped** one (a document edit's
+// prose, a hosted-Hermes prompt) needs a *string* alongside it. These two functions carry that
+// optional text through the SAME transport-parameterised codec — WITHOUT disturbing the text-free
+// wire: `affordance_id_with_text(t, a, None, tr)` is byte-for-byte `affordance_id(t, a, tr)`, and
+// `parse_affordance_id_with_text` on a text-free id reproduces `parse_affordance_id` exactly. So
+// every existing encoded affordance is unaffected; only a text-bearing one grows a trailing
+// segment.
+
+/// The **reserved separator** that introduces a text-bearing affordance's encoded text segment.
+/// A text-FREE id never contains it — the `{turn, arg}` formatters ([`affordance_id`]) never emit
+/// it, and it is an ASCII control character no affordance verb uses — so
+/// [`parse_affordance_id_with_text`] on a text-free id splits off no text and falls through to the
+/// unchanged [`parse_affordance_id`]. The text segment itself is HEX (its alphabet is `[0-9a-f]`,
+/// which excludes this char), so the LAST occurrence is always the real delimiter.
+const TEXT_SEP: char = '\u{1f}';
+
+/// Hex-encode a string's UTF-8 bytes into `[0-9a-f]*` — the text segment's on-wire form. Hex is
+/// dependency-free and its alphabet excludes [`TEXT_SEP`] and every base-id character (`:`, `#`,
+/// the prefix, digits/`-`), so the encoded text is unambiguous to split back off.
+fn hex_encode(s: &str) -> String {
+    let mut out = String::with_capacity(s.len() * 2);
+    for b in s.as_bytes() {
+        out.push(char::from_digit((b >> 4) as u32, 16).expect("nibble is 0..16"));
+        out.push(char::from_digit((b & 0x0f) as u32, 16).expect("nibble is 0..16"));
+    }
+    out
+}
+
+/// The inverse of [`hex_encode`]: `[0-9a-f]*` → the original string. `None` for an odd length, a
+/// non-hex digit, or bytes that are not valid UTF-8 (a malformed / non-ours text segment).
+fn hex_decode(h: &str) -> Option<String> {
+    let bytes = h.as_bytes();
+    if bytes.len() % 2 != 0 {
+        return None;
+    }
+    let mut out = Vec::with_capacity(bytes.len() / 2);
+    for pair in bytes.chunks_exact(2) {
+        let hi = (pair[0] as char).to_digit(16)?;
+        let lo = (pair[1] as char).to_digit(16)?;
+        out.push(((hi << 4) | lo) as u8);
+    }
+    String::from_utf8(out).ok()
+}
+
+/// Encode an affordance `{turn, arg}` **plus an optional free-text payload** into the id
+/// `transport` carries it on. The text-free path is byte-identical to [`affordance_id`]:
+///
+/// - `text == None` → exactly `affordance_id(turn, arg, transport)` (no trailing segment).
+/// - `text == Some(t)` → that same base id, then [`TEXT_SEP`], then the hex of `t`.
+///
+/// The inverse of [`parse_affordance_id_with_text`] for the same `transport`.
+pub fn affordance_id_with_text(
+    turn: &str,
+    arg: i64,
+    text: Option<&str>,
+    transport: AffordanceTransport,
+) -> String {
+    let base = affordance_id(turn, arg, transport);
+    match text {
+        None => base,
+        Some(t) => format!("{base}{TEXT_SEP}{}", hex_encode(t)),
+    }
+}
+
+/// Decode an id minted by [`affordance_id_with_text`] for the same `transport` back into
+/// `(turn, arg, Option<text>)`. A text-free id (no [`TEXT_SEP`]) yields `text = None` and decodes
+/// exactly as [`parse_affordance_id`] — so this is a strict superset of the plain decoder, safe to
+/// point at any affordance id. `None` for an id that is not one of ours for that transport, or
+/// whose text segment is malformed (odd-length / non-hex / non-UTF-8).
+///
+/// The text segment is hex (no [`TEXT_SEP`] in its alphabet), so the split takes the LAST
+/// [`TEXT_SEP`]: everything after it is the text, everything before is the base id (which is then
+/// parsed by the unchanged [`parse_affordance_id`]).
+pub fn parse_affordance_id_with_text(
+    id: &str,
+    transport: AffordanceTransport,
+) -> Option<(String, i64, Option<String>)> {
+    match id.rsplit_once(TEXT_SEP) {
+        Some((base, hex)) => {
+            let text = hex_decode(hex)?;
+            let (turn, arg) = parse_affordance_id(base, transport)?;
+            Some((turn, arg, Some(text)))
+        }
+        None => {
+            let (turn, arg) = parse_affordance_id(id, transport)?;
+            Some((turn, arg, None))
+        }
+    }
+}
+
 /// **The POSITIONAL half of the WeChat codec** — a reply's text → the **1-based index** of the
 /// affordance it names in the presented numbered list. Takes the leading run of ASCII digits (so
 /// `"2"`, `"2."` and `"2 trade blows"` all resolve to `2`), so a user can reply with just the
@@ -155,6 +246,50 @@ mod tests {
                     parse_affordance_id(&id, t),
                     Some((turn.to_string(), arg)),
                     "{t:?} round-trips {turn}/{arg} via {id}"
+                );
+            }
+        }
+    }
+
+    /// A **text-bearing** affordance round-trips turn + arg + text through EVERY transport, and
+    /// the text-free path stays byte-identical to the plain codec (the additive-non-breaking
+    /// tooth). The text deliberately carries `:`, the WeChat `#`, unicode, and an empty case — the
+    /// hex segment carries them all opaquely, never confused with the `{turn, arg}` shape.
+    #[test]
+    fn text_bearing_round_trips_and_text_free_is_byte_identical() {
+        let texts = [
+            "the dragon's hoard glittered",
+            "a:b:c with #marks and 世界 :)",
+            "",
+            "deosturn:looks:like:an:id",
+        ];
+        for t in ALL {
+            // TEXT-FREE is byte-identical to the plain encoder AND decoder (the invariant).
+            for (turn, arg) in [("insert", 3i64), ("prompt", 0), ("choose", -1)] {
+                assert_eq!(
+                    affordance_id_with_text(turn, arg, None, t),
+                    affordance_id(turn, arg, t),
+                    "{t:?} text-free encode is byte-identical",
+                );
+                let plain = affordance_id(turn, arg, t);
+                assert_eq!(
+                    parse_affordance_id_with_text(&plain, t),
+                    Some((turn.to_string(), arg, None)),
+                    "{t:?} a plain id decodes with text: None",
+                );
+                // The plain decoder still sees the plain id unchanged (no regression).
+                assert_eq!(
+                    parse_affordance_id(&plain, t),
+                    Some((turn.to_string(), arg)),
+                );
+            }
+            // TEXT-BEARING carries turn + arg + text losslessly.
+            for text in texts {
+                let id = affordance_id_with_text("insert", 7, Some(text), t);
+                assert_eq!(
+                    parse_affordance_id_with_text(&id, t),
+                    Some(("insert".to_string(), 7, Some(text.to_string()))),
+                    "{t:?} carries {text:?} losslessly beside turn+arg",
                 );
             }
         }
