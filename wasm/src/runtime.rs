@@ -1823,7 +1823,52 @@ impl DreggRuntime {
         effects: Vec<Effect>,
         fee: u64,
     ) -> Result<TurnResult, String> {
-        self.execute_app_turn_inner(agent_idx, target_cell, method, effects, None, fee)
+        self.execute_app_turn_inner(
+            agent_idx,
+            target_cell,
+            method,
+            effects,
+            None,
+            Vec::new(),
+            fee,
+        )
+    }
+
+    /// Like [`execute_app_turn_for_agent`] but carries `witness_blobs` on the
+    /// signed root action (attached BEFORE the Ed25519 signature, so the
+    /// signature covers them — [`Action::compute_hash`] hashes the blobs). This
+    /// is the path a `StateConstraint::CountGe` gate needs: the resolve turn
+    /// EXHIBITS its distinct-approver set as the unique `Cleartext` blob the
+    /// program's `CountGe` arm re-decodes and opens against the commitment slot.
+    pub fn execute_app_turn_for_agent_with_witness(
+        &mut self,
+        agent_idx: usize,
+        target_cell: CellId,
+        method: &str,
+        effects: Vec<Effect>,
+        witness_blobs: Vec<WitnessBlob>,
+        fee: u64,
+    ) -> Result<TurnResult, String> {
+        self.execute_app_turn_inner(
+            agent_idx,
+            target_cell,
+            method,
+            effects,
+            None,
+            witness_blobs,
+            fee,
+        )
+    }
+
+    /// The owner public key of agent `agent_idx` — the identity the executor
+    /// surfaces as `ctx.sender` for turns this agent authors (a
+    /// `StateConstraint::SenderIs { pk }` binds to it). This is the actor cell's
+    /// stored `public_key`, i.e. `agents[idx].public_key`.
+    pub fn agent_owner_pubkey(&self, agent_idx: usize) -> Result<[u8; 32], String> {
+        self.agents
+            .get(agent_idx)
+            .map(|a| a.public_key)
+            .ok_or_else(|| format!("invalid agent index: {agent_idx}"))
     }
 
     /// Like [`execute_app_turn_for_agent`] but the action carries an
@@ -1858,7 +1903,15 @@ impl DreggRuntime {
             predicate,
             proof_bytes,
         };
-        self.execute_app_turn_inner(agent_idx, target_cell, method, effects, Some(auth), fee)
+        self.execute_app_turn_inner(
+            agent_idx,
+            target_cell,
+            method,
+            effects,
+            Some(auth),
+            Vec::new(),
+            fee,
+        )
     }
 
     fn execute_app_turn_inner(
@@ -1868,6 +1921,7 @@ impl DreggRuntime {
         method: &str,
         effects: Vec<Effect>,
         custom: Option<CustomAuth>,
+        witness_blobs: Vec<WitnessBlob>,
         fee: u64,
     ) -> Result<TurnResult, String> {
         let actor_cell = self
@@ -1920,6 +1974,17 @@ impl DreggRuntime {
             }
             turn.call_forest.forest_hash = [0u8; 32];
         } else {
+            // Attach any caller-supplied witness blobs (e.g. the `CountGe`
+            // set-exhibit `Cleartext` blob) to the signed root action BEFORE
+            // signing, so the Ed25519 signature covers them (`Action::compute_hash`
+            // folds `witness_blobs` in) and the program evaluator sees them.
+            if !witness_blobs.is_empty() {
+                if let Some(root) = turn.call_forest.roots.first_mut() {
+                    root.action.witness_blobs = witness_blobs;
+                    root.hash = [0u8; 32];
+                }
+                turn.call_forest.forest_hash = [0u8; 32];
+            }
             let cclerk = &self.agents[agent_idx].cclerk;
             sign_call_forest(&mut turn, cclerk, &federation_id);
         }

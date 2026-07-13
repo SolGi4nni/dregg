@@ -29,6 +29,7 @@
 
 use wasm_bindgen::prelude::*;
 
+use dregg_turn::action::{WitnessBlob, WitnessKind};
 use dregg_turn::{Effect, TurnResult};
 
 use crate::runtime::DreggRuntime;
@@ -36,7 +37,9 @@ use crate::runtime::DreggRuntime;
 use deos_reflect::substance::FieldValue;
 use deos_reflect::{AffordanceSurface, ReflectedCell};
 use dregg_cell::AuthRequired;
+use dregg_cell::count_ge_set_commitment;
 use dregg_cell::interface::{ArgsSchema, InterfaceDescriptor, MethodSig, Semantics, method_symbol};
+use dregg_cell::program::SimpleStateConstraint;
 
 /// Pack a `u64` into a 32-byte field element — little-endian into the low 8 bytes.
 /// Byte-identical to `deos_js::applet::pack_u64` (the native applet's slot encoding).
@@ -1186,9 +1189,16 @@ fn kvstore_view_tree_json() -> String {
 //                               (`try_ballot_write_once` exercises it).
 //   (ii)  monotone tally      : the poll cell's per-option tallies are `Monotonic` — a stale
 //                               or reordered value can never shrink the board.
-//   (iii) quorum gate         : the polis `AffineLe { M·RESOLVED − Σ TALLY_i ≤ 0 }` guards the
-//                               `RESOLVED` slot, so the decision-turn commits ONLY at quorum
-//                               (`try_resolve`).
+//   (iii) quorum gate         : `RESOLVED` is guarded by BOTH the polis
+//                               `AffineLe { M·RESOLVED − Σ TALLY_i ≤ 0 }` (the human-readable
+//                               board tooth) AND — the SOUND gate that retires the
+//                               `AffineLe`-over-`Monotonic` weakness — a `CountGe` over the
+//                               DISTINCT quorum-approver set (`AnyOf[Immutable{RESOLVED},
+//                               CountGe{M, commitment_slot}]`), the commitment slot bound to
+//                               operator authorship. A single actor inflating ONE `Monotonic`
+//                               tally slot `0 → M` can no longer arm `RESOLVED`: the exhibited
+//                               distinct-voter set (the resolve turn's `Cleartext` witness) is
+//                               unchanged and does not open the commitment (`try_resolve`).
 //   plus a one-vote nullifier set (the node's `used_proof_hashes` mirror): a consumed ballot
 //   proof is refused engine-wide (the `cast` double-vote depth).
 // It is a plain counter NOWHERE: every `cast` is two real verified turns, and each guarantee
@@ -1197,6 +1207,14 @@ fn kvstore_view_tree_json() -> String {
 /// The ballot cell's single `WriteOnce` choice slot (the `VOTE` register). Non-zero once the
 /// voter has cast (`option + 1`), frozen thereafter (a second changing write is refused).
 const BALLOT_VOTE_SLOT: usize = 0;
+/// The poll cell's commitment over the **distinct** quorum-approver set — the
+/// canonical sorted-set commitment ([`count_ge_set_commitment`]) of the voter
+/// identities whose votes count toward quorum. Maintained by the engine on every
+/// cast (operator-authored, in the SAME turn as the tally bump) and read by the
+/// `CountGe` gate that guards `RESOLVED`. A single actor inflating a raw tally
+/// slot never grows THIS set, so it can no longer forge a quorum (mirrors
+/// `collective_choice::VOTER_SET_COMMITMENT_SLOT`). Slot 1 (free).
+const POLL_VOTER_SET_COMMITMENT_SLOT: usize = 1;
 /// The poll cell's quorum-threshold `M` slot (mirrors `collective_choice::QUORUM_M_SLOT`).
 const POLL_QUORUM_M_SLOT: usize = 4;
 /// The poll cell's active-option-count slot (mirrors `collective_choice::OPTION_COUNT_SLOT`).
@@ -1233,6 +1251,13 @@ pub struct PollWorld {
     nullifiers: std::collections::HashSet<[u8; 32]>,
     /// The append-only cast log — what the light client replays to recompute the tally.
     cast_log: Vec<usize>,
+    /// The **distinct** voters whose votes count toward quorum — the set the
+    /// `CountGe` gate re-exhibits on `resolve` (never accumulated in a fakeable
+    /// counter). Its [`count_ge_set_commitment`] is mirrored into
+    /// [`POLL_VOTER_SET_COMMITMENT_SLOT`] on every cast; a single actor inflating
+    /// a raw tally slot never grows THIS set (mirrors
+    /// `collective_choice::PollRecord::quorum_voters`).
+    quorum_voters: std::collections::BTreeSet<[u8; 32]>,
 }
 
 #[wasm_bindgen]
@@ -1252,6 +1277,10 @@ impl PollWorld {
         let mut rt = DreggRuntime::new();
         rt.try_create_agent("poll-operator", 1_000_000_000)
             .map_err(|e| JsError::new(&e))?;
+        // The operator (agent 0) — the identity the executor surfaces as
+        // `ctx.sender` for the tally/resolve turns; the `SenderIs` disjunct binds
+        // the commitment-slot writes to it.
+        let operator_pk = rt.agent_owner_pubkey(0).map_err(|e| JsError::new(&e))?;
         // The poll cell, owned by a synthetic key distinct from the operator's, with the
         // quorum-gated program installed (mirrors `collective_choice`'s `seed_poll`).
         let poll_owner = *blake3::hash(b"dregg-wasm-pollworld-poll-owner").as_bytes();
@@ -1260,7 +1289,7 @@ impl PollWorld {
             .map_err(|e| JsError::new(&e))?;
         rt.install_app_program(
             &poll,
-            Self::poll_program(quorum_m, num_options),
+            Self::poll_program(quorum_m, num_options, operator_pk),
             Self::poll_initial_state(quorum_m, num_options),
         )
         .map_err(|e| JsError::new(&e))?;
@@ -1275,6 +1304,7 @@ impl PollWorld {
             next_voter: 0,
             nullifiers: std::collections::HashSet::new(),
             cast_log: Vec::new(),
+            quorum_voters: std::collections::BTreeSet::new(),
         })
     }
 
@@ -1459,9 +1489,17 @@ impl PollWorld {
             },
             Effect::IncrementNonce { cell: poll },
         ];
+        // The `CountGe` gate is the REAL quorum gate: the resolve turn must
+        // EXHIBIT the DISTINCT quorum-approver set (re-exhibited every turn, never
+        // accumulated). Below quorum — or when a raw tally slot was inflated
+        // without growing this set — the exhibited set is too small / does not
+        // open the commitment slot, and the executor refuses the turn.
+        let voters: Vec<[u8; 32]> = self.quorum_voters.iter().copied().collect();
+        let blob = postcard::to_allocvec(&voters).expect("postcard encode of the voter set");
+        let witness = vec![WitnessBlob::new(WitnessKind::Cleartext, blob)];
         match self
             .rt
-            .execute_app_turn_for_agent(0, poll, "resolve", effects, POLL_FEE)
+            .execute_app_turn_for_agent_with_witness(0, poll, "resolve", effects, witness, POLL_FEE)
         {
             Ok(TurnResult::Committed { .. }) => {
                 let (winner, wt) = self.argmax();
@@ -1615,6 +1653,14 @@ impl PollWorld {
 
         // Depth (ii): the poll's `Monotonic` tally bump — read the live slot, write `live + 1`.
         // A stale value cannot shrink the board (the executor re-enforces Monotonic).
+        // In the SAME operator-authored turn, grow the DISTINCT quorum-approver set
+        // (this voter's identity) and mirror its `count_ge_set_commitment` into
+        // `POLL_VOTER_SET_COMMITMENT_SLOT` — the un-fakeable root the `CountGe` gate
+        // opens on `resolve`. A raw tally-slot inflation never touches this set.
+        let voter_pk = Self::voter_pk(voter);
+        let mut next_voters = self.quorum_voters.clone();
+        next_voters.insert(voter_pk);
+        let commitment = count_ge_set_commitment(&next_voters);
         let live = self.read(option);
         let poll = self.poll;
         let tally_effects = vec![
@@ -1622,6 +1668,11 @@ impl PollWorld {
                 cell: poll,
                 index: POLL_TALLY_BASE + option,
                 value: fe_be(live + 1),
+            },
+            Effect::SetField {
+                cell: poll,
+                index: POLL_VOTER_SET_COMMITMENT_SLOT,
+                value: commitment,
             },
             Effect::IncrementNonce { cell: poll },
         ];
@@ -1637,6 +1688,7 @@ impl PollWorld {
             Err(e) => return Err(e),
         }
 
+        self.quorum_voters.insert(voter_pk);
         self.cast_log.push(option);
         Ok(self.read(option))
     }
@@ -1663,10 +1715,18 @@ impl PollWorld {
         }])
     }
 
-    /// The poll (tally-board) cell's program — the three executor-enforced teeth (mirrors
-    /// `collective_choice::CollectiveChoice::poll_program`): `Monotonic` on every tally slot,
-    /// `WriteOnce(RESOLVED)`, and the polis quorum `AffineLe { M·RESOLVED − Σ TALLY_i ≤ 0 }`.
-    fn poll_program(quorum_m: u64, option_count: usize) -> dregg_cell::CellProgram {
+    /// The poll (tally-board) cell's program (mirrors
+    /// `collective_choice::CollectiveChoice::poll_program`): `Monotonic` on every
+    /// tally slot, `WriteOnce(RESOLVED)`, the polis quorum
+    /// `AffineLe { M·RESOLVED − Σ TALLY_i ≤ 0 }`, and — THE SOUND QUORUM GATE that
+    /// retires the `AffineLe`-over-`Monotonic` weakness — a `CountGe` over the
+    /// distinct quorum-approver set guarding `RESOLVED`, plus the operator binding
+    /// on the commitment slot.
+    fn poll_program(
+        quorum_m: u64,
+        option_count: usize,
+        operator: [u8; 32],
+    ) -> dregg_cell::CellProgram {
         use dregg_cell::program::StateConstraint;
         let mut cs: Vec<StateConstraint> = Vec::new();
         for i in 0..POLL_MAX_OPTIONS {
@@ -1679,11 +1739,50 @@ impl PollWorld {
         });
         // THE QUORUM GATE: `M·RESOLVED − Σ TALLY_i ≤ 0`. RESOLVED == 0 ⇒ `−Σ TALLY ≤ 0`
         // (always true); arming RESOLVED := 1 DEMANDS `Σ TALLY ≥ M` in the same post-state.
+        // This stays as the human-readable board gate; it is NO LONGER the sole tooth.
         let mut terms: Vec<(i64, u8)> = vec![(quorum_m as i64, POLL_RESOLVED_SLOT as u8)];
         for i in 0..option_count {
             terms.push((-1, (POLL_TALLY_BASE + i) as u8));
         }
         cs.push(StateConstraint::AffineLe { terms, c: 0 });
+
+        // THE SOUND QUORUM GATE (the `CountGe` mint that RETIRES the
+        // `AffineLe`-over-`Monotonic` weakness). The `AffineLe` above certifies
+        // only `Σ TALLY ≥ M`, and a `Monotonic` tally slot admits a single
+        // `0 → M` jump — so one actor inflating ONE slot forges a quorum without
+        // `M` distinct voters (driven: the pre-fix build resolved a forged
+        // tally). `CountGe` closes it: the `RESOLVED` flip must EXHIBIT (in the
+        // resolve turn's `Cleartext` witness) a set of at least `M` DISTINCT voter
+        // identities whose sorted-set commitment opens
+        // [`POLL_VOTER_SET_COMMITMENT_SLOT`]. Distinctness is structural, nothing
+        // accumulates in a fakeable counter. Gated behind `Immutable{RESOLVED}` so
+        // every tally-bump turn (which leaves `RESOLVED` untouched) passes on the
+        // first disjunct and carries no witness.
+        cs.push(StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable {
+                    index: POLL_RESOLVED_SLOT as u8,
+                },
+                SimpleStateConstraint::CountGe {
+                    threshold: quorum_m as u32,
+                    set_commitment_slot: POLL_VOTER_SET_COMMITMENT_SLOT as u8,
+                },
+            ],
+        });
+
+        // The commitment slot is the `CountGe` gate's root of trust, so bind its
+        // writes to the operator: a turn either leaves the slot unchanged
+        // (`Immutable`) or is authored by the operator (`SenderIs`) — no stray
+        // cap-holder can plant a forged voter-set commitment.
+        cs.push(StateConstraint::AnyOf {
+            variants: vec![
+                SimpleStateConstraint::Immutable {
+                    index: POLL_VOTER_SET_COMMITMENT_SLOT as u8,
+                },
+                SimpleStateConstraint::SenderIs { pk: operator },
+            ],
+        });
+
         dregg_cell::CellProgram::always(cs)
     }
 
@@ -1698,5 +1797,117 @@ impl PollWorld {
             state.fields[POLL_TALLY_BASE + i] = fe_be(0);
         }
         state
+    }
+}
+
+#[cfg(test)]
+mod poll_forgery_tests {
+    use super::*;
+
+    /// SECURITY: a single actor CANNOT forge a quorum by inflating a tally slot.
+    ///
+    /// Before the fix the quorum was `AffineLe { M·RESOLVED − Σ TALLY ≤ 0 }` over
+    /// `Monotonic` tally slots. `Monotonic` admits a single `0 → M` jump, so ONE
+    /// actor authoring ONE raw `record_tally` turn armed `RESOLVED` with ZERO
+    /// distinct voters (DRIVEN: the pre-fix build resolved
+    /// `{"resolved":true,"total":3,"winner_tally":3}` right here). The `CountGe`
+    /// gate now guards `RESOLVED` on the DISTINCT quorum-approver set, so the same
+    /// attack is refused. Mirrors `collective-choice`'s
+    /// `forged_quorum_single_actor_inflating_a_tally_slot_is_refused`.
+    #[test]
+    fn forged_quorum_single_actor_inflating_a_tally_slot_is_refused() {
+        let m = 3u64;
+        let mut poll = PollWorld::new(2, m).expect("open poll");
+        let poll_cell = poll.poll;
+
+        // No real casts — ZERO distinct approvers, and the commitment slot is
+        // untouched (its genesis value). The raw tally board is still `Monotonic`
+        // (it is the human-readable count, no longer the gate): a single `0 -> M`
+        // jump on ONE slot is still ACCEPTED at the tally level — precisely the
+        // arithmetic aliasing the old gate trusted.
+        let forge = vec![
+            Effect::SetField {
+                cell: poll_cell,
+                index: POLL_TALLY_BASE,
+                value: fe_be(m),
+            },
+            Effect::IncrementNonce { cell: poll_cell },
+        ];
+        let r = poll
+            .rt
+            .execute_app_turn_for_agent(0, poll_cell, "record_tally", forge, POLL_FEE)
+            .expect("forge turn executes");
+        assert!(
+            matches!(r, TurnResult::Committed { .. }),
+            "Monotonic still admits the raw 0 -> M tally jump: {r:?}"
+        );
+        assert_eq!(poll.read(0), m, "tally slot inflated to M");
+        assert_eq!(poll.cast_log.len(), 0, "ZERO real casts were made");
+
+        // But `resolve` is now gated by `CountGe` over the DISTINCT approver set.
+        // No genuine votes → the exhibited set is empty and does not open the
+        // (untouched) commitment slot — the decision-turn is REFUSED.
+        let res = poll.try_resolve();
+        eprintln!("FORGE-RESOLVE (fixed) => {res}");
+        let rv: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(
+            rv["resolved"],
+            serde_json::json!(false),
+            "FORGED QUORUM MUST BE REFUSED: inflating a tally slot cannot arm RESOLVED: {res}"
+        );
+
+        // Spreading the forge across a SECOND slot still cannot resolve — the gate
+        // reads distinct voters, not the tally sum.
+        let forge2 = vec![
+            Effect::SetField {
+                cell: poll_cell,
+                index: POLL_TALLY_BASE + 1,
+                value: fe_be(m),
+            },
+            Effect::IncrementNonce { cell: poll_cell },
+        ];
+        poll.rt
+            .execute_app_turn_for_agent(0, poll_cell, "record_tally", forge2, POLL_FEE)
+            .expect("second forge executes");
+        let res2 = poll.try_resolve();
+        let rv2: serde_json::Value = serde_json::from_str(&res2).unwrap();
+        assert_eq!(
+            rv2["resolved"],
+            serde_json::json!(false),
+            "spreading the forge across slots still cannot arm RESOLVED: {res2}"
+        );
+    }
+
+    /// A genuine quorum of M DISTINCT voters still resolves (non-vacuous: the gate
+    /// admits the real path). Below quorum is refused; the Mth distinct voter arms
+    /// `RESOLVED`.
+    #[test]
+    fn genuine_quorum_of_m_distinct_voters_still_resolves() {
+        let m = 3u64;
+        let mut poll = PollWorld::new(2, m).expect("open poll");
+
+        // Two distinct voters: below quorum, still refused (2 < 3 distinct).
+        poll.cast_as(0, 0).expect("voter 0 casts");
+        poll.cast_as(1, 0).expect("voter 1 casts");
+        let below = poll.try_resolve();
+        let bv: serde_json::Value = serde_json::from_str(&below).unwrap();
+        assert_eq!(
+            bv["resolved"],
+            serde_json::json!(false),
+            "2 < 3 distinct voters must not resolve: {below}"
+        );
+
+        // The third DISTINCT voter reaches quorum — the decision-turn commits.
+        poll.cast_as(2, 0).expect("voter 2 casts");
+        let res = poll.try_resolve();
+        eprintln!("GENUINE-RESOLVE => {res}");
+        let rv: serde_json::Value = serde_json::from_str(&res).unwrap();
+        assert_eq!(
+            rv["resolved"],
+            serde_json::json!(true),
+            "3 distinct voters exhibit the CountGe quorum — RESOLVED arms: {res}"
+        );
+        assert_eq!(rv["winner"], serde_json::json!(0));
+        assert_eq!(rv["winner_tally"], serde_json::json!(3));
     }
 }
