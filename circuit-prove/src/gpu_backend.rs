@@ -60,12 +60,19 @@
 //!   MultiField challenger transcript, per-query Merkle openings (host walks
 //!   of already-built layers), constraint/quotient evaluation, and witness
 //!   generation.
-//! - NOT yet wired: NTT→hash device residency (the LDE returns to host
-//!   between the DFT and `commit`; on UMA this is one memcpy each way —
-//!   see plan §3), and the all-BabyBear inner (apex-fold) MMCS.
+//! - NTT→hash device residency (plan §3) IS wired for the upload direction:
+//!   `coset_lde_batch` parks its output on the device (the final transpose
+//!   kernel writes a dedicated retained buffer) and `GpuBn254Mmcs::commit`
+//!   consumes it with a device→device blit into the leaf arena, skipping the
+//!   host staging copy + `write_buffer` re-upload. The host READBACK remains
+//!   by structure: the PCS seam (`.to_row_major_matrix()`) and the FRI
+//!   query/fold phases read the committed matrix on the host. See the
+//!   "LDE device-residency" section below for the binding contract.
+//! - NOT yet wired: the all-BabyBear inner (apex-fold) MMCS.
 
 use std::collections::HashMap;
 use std::rc::Rc;
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, Mutex, OnceLock};
 
 use num_bigint::BigUint;
@@ -146,6 +153,229 @@ fn u32s_into_bb(mut v: Vec<u32>) -> Vec<BabyBear> {
     let (len, cap) = (v.len(), v.capacity());
     std::mem::forget(v);
     unsafe { Vec::from_raw_parts(ptr as *mut BabyBear, len, cap) }
+}
+
+// ============================================================================
+// The shared wgpu device — ONE device/queue for the DFT and the hash engine.
+//
+// Two reasons it is a process-wide static:
+// 1. LDE device-residency requires the DFT's output buffer to be bindable by
+//    the MMCS blit — wgpu buffers are device-scoped, so both seams must share
+//    one device.
+// 2. The teardown fix: buffers dropped late (thread-local config destructors
+//    at thread exit) used to race the device's own drop — wgpu 24.0.5 panics
+//    in `SnatchLock::read` (`Buffer::unmap_inner` → `buffer_drop`) when a
+//    buffer drops after its device is destroyed. A `'static` device outlives
+//    every buffer by construction, so cleanup is always well-ordered.
+// ============================================================================
+
+struct SharedGpu {
+    /// Kept alive for the life of the process (never torn down before any
+    /// late buffer drop).
+    _instance: wgpu::Instance,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
+    adapter_name: String,
+    max_buf_u32s: usize,
+}
+
+static SHARED_GPU: OnceLock<Option<SharedGpu>> = OnceLock::new();
+
+fn shared_gpu() -> Option<&'static SharedGpu> {
+    SHARED_GPU
+        .get_or_init(|| {
+            let instance = wgpu::Instance::default();
+            let adapter =
+                pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
+                    power_preference: wgpu::PowerPreference::HighPerformance,
+                    ..Default::default()
+                }))?;
+            let info = adapter.get_info();
+            let lims = adapter.limits();
+            let (device, queue) = pollster::block_on(adapter.request_device(
+                &wgpu::DeviceDescriptor {
+                    label: None,
+                    required_features: wgpu::Features::empty(),
+                    required_limits: lims.clone(),
+                    memory_hints: Default::default(),
+                },
+                None,
+            ))
+            .ok()?;
+            let max_buf_u32s = (lims
+                .max_buffer_size
+                .min(lims.max_storage_buffer_binding_size as u64)
+                .min(1 << 31) as usize)
+                / 4;
+            Some(SharedGpu {
+                _instance: instance,
+                device,
+                queue,
+                adapter_name: format!("{} ({:?})", info.name, info.backend),
+                max_buf_u32s,
+            })
+        })
+        .as_ref()
+}
+
+// ============================================================================
+// LDE device-residency — the NTT→hash hand-off (plan §3, upload direction).
+//
+// `TwoAdicFriPcs::commit` computes `coset_lde_batch(evals, ..).bit_reverse_
+// rows().to_row_major_matrix()` and passes the result to `Mmcs::commit`. For
+// our `Evaluations = BitReversedMatrixView<RowMajorMatrix<BabyBear>>` the
+// `bit_reverse_rows()` unwraps to the inner matrix and `to_row_major_matrix`
+// is `Vec::to_vec(self) -> self` — the EXACT allocation minted in `gpu_flow`
+// arrives at `commit`. So `coset_lde_batch` registers its retained device
+// buffer under the key `(thread, values.as_ptr(), values.len())`, and the
+// tree build consumes it (device→device blit into the leaf arena) instead of
+// re-uploading the host bytes.
+//
+// Binding contract (why a hit blits the RIGHT data):
+// - Among LIVE allocations, (ptr, len) is unique — a hit on a live entry is
+//   the registered Vec itself, whose contents are byte-identical to the
+//   retained buffer (both are the same kernel output).
+// - A STALE entry (registered Vec dropped uncommitted, allocation reused)
+//   is guarded three ways: entries are one-shot (removed on consume), the
+//   registry is cleared for the thread at the end of every `commit`
+//   (in the prover flow every LDE is committed immediately after minting),
+//   and a hit must additionally match LDE_GUARD_SAMPLES sampled raw words of
+//   the committed matrix against the host copy recorded at registration.
+//   A guard mismatch falls back to the host upload, which is always correct.
+// - Correctness NEVER depends on a hit: any miss/eviction is the old path.
+//   The root-parity and byte-identical gates below re-assert the equivalence
+//   on every run.
+// ============================================================================
+
+/// Sampled raw (Montgomery) words checked before a resident buffer is used.
+const LDE_GUARD_SAMPLES: usize = 64;
+/// Registry caps — evicting an entry only costs the fallback upload.
+const LDE_REGISTRY_MAX_ENTRIES: usize = 128;
+const LDE_REGISTRY_MAX_BYTES: u64 = 6 << 30;
+
+struct ResidentLde {
+    buf: wgpu::Buffer,
+    bytes: u64,
+    seq: u64,
+    /// (flat index, raw word) samples of the host copy at registration.
+    guard: Vec<(usize, u32)>,
+}
+
+/// (registering thread, host values ptr, host values len).
+type LdeKey = (std::thread::ThreadId, usize, usize);
+
+#[derive(Default)]
+struct LdeRegistry {
+    map: HashMap<LdeKey, ResidentLde>,
+    bytes: u64,
+    seq: u64,
+}
+
+static LDE_REGISTRY: OnceLock<Mutex<LdeRegistry>> = OnceLock::new();
+static LDE_RESIDENT_HITS: AtomicU64 = AtomicU64::new(0);
+static LDE_RESIDENT_MISSES: AtomicU64 = AtomicU64::new(0);
+
+fn lde_registry() -> &'static Mutex<LdeRegistry> {
+    LDE_REGISTRY.get_or_init(|| Mutex::new(LdeRegistry::default()))
+}
+
+/// (hits, misses) of the device-resident LDE hand-off across the process —
+/// a hit is one leaf-arena upload replaced by a device→device blit.
+pub fn lde_residency_counters() -> (u64, u64) {
+    (
+        LDE_RESIDENT_HITS.load(Ordering::Relaxed),
+        LDE_RESIDENT_MISSES.load(Ordering::Relaxed),
+    )
+}
+
+/// Park a coset-LDE's retained device buffer, keyed by the host allocation
+/// that `TwoAdicFriPcs::commit` will hand to `Mmcs::commit`.
+fn register_resident_lde(values: &[BabyBear], buf: wgpu::Buffer) {
+    let len = values.len();
+    if len == 0 {
+        return;
+    }
+    let raw = bb_as_u32s(values);
+    let guard: Vec<(usize, u32)> = (0..LDE_GUARD_SAMPLES)
+        .map(|i| {
+            let idx = i * (len - 1) / (LDE_GUARD_SAMPLES - 1);
+            (idx, raw[idx])
+        })
+        .collect();
+    let bytes = (len * 4) as u64;
+    let key: LdeKey = (std::thread::current().id(), values.as_ptr() as usize, len);
+    let mut reg = lde_registry().lock().unwrap();
+    reg.seq += 1;
+    let seq = reg.seq;
+    if let Some(old) = reg.map.insert(
+        key,
+        ResidentLde {
+            buf,
+            bytes,
+            seq,
+            guard,
+        },
+    ) {
+        reg.bytes -= old.bytes;
+    }
+    reg.bytes += bytes;
+    while reg.map.len() > LDE_REGISTRY_MAX_ENTRIES || reg.bytes > LDE_REGISTRY_MAX_BYTES {
+        let oldest = reg
+            .map
+            .iter()
+            .min_by_key(|(_, e)| e.seq)
+            .map(|(k, _)| *k)
+            .expect("non-empty registry over cap");
+        let e = reg.map.remove(&oldest).expect("key just found");
+        reg.bytes -= e.bytes;
+    }
+}
+
+/// Take the resident device buffer for a matrix about to be committed, iff
+/// the (thread, ptr, len) key AND the sampled-content guard both match.
+fn take_resident_lde<M: Matrix<BabyBear>>(m: &M) -> Option<wgpu::Buffer> {
+    let h = m.height();
+    let w = m.width();
+    if h == 0 || w == 0 {
+        return None;
+    }
+    let addr = {
+        let r0 = m.row_slice(0)?;
+        r0.as_ptr() as usize
+    };
+    let key: LdeKey = (std::thread::current().id(), addr, h * w);
+    let mut reg = lde_registry().lock().unwrap();
+    {
+        let entry = reg.map.get(&key)?;
+        for &(idx, word) in &entry.guard {
+            let row = m.row_slice(idx / w)?;
+            if bb_as_u32s(&row)[idx % w] != word {
+                return None;
+            }
+        }
+    }
+    let entry = reg.map.remove(&key).expect("key just found");
+    reg.bytes -= entry.bytes;
+    Some(entry.buf)
+}
+
+/// Drop every resident entry registered by this thread — called at the end
+/// of every `GpuBn254Mmcs::commit` (in the PCS flow all LDEs of a batch are
+/// consumed by exactly the next commit, so leftovers are dead weight and
+/// clearing them promptly closes the stale-pointer window).
+fn clear_thread_resident_ldes() {
+    let tid = std::thread::current().id();
+    let mut reg = lde_registry().lock().unwrap();
+    let mut freed = 0u64;
+    reg.map.retain(|k, e| {
+        if k.0 == tid {
+            freed += e.bytes;
+            false
+        } else {
+            true
+        }
+    });
+    reg.bytes -= freed;
 }
 
 // ============================================================================
@@ -383,8 +613,9 @@ struct DftBufs {
 }
 
 struct DftCtx {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    // Buffers/bind groups/pipelines are declared BEFORE the device handle so
+    // they drop first (and the device itself is a clone of the 'static
+    // SharedGpu one, so it can never be destroyed under a live buffer).
     bgl: wgpu::BindGroupLayout,
     pipe_layout: wgpu::PipelineLayout,
     pipelines: HashMap<String, wgpu::ComputePipeline>,
@@ -394,6 +625,8 @@ struct DftCtx {
     bufs: Option<DftBufs>,
     max_buf_u32s: usize,
     adapter_name: String,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
 }
 
 /// DFT bind group layout: b0 = data (rw), b1 = src (ro), b2 = tw (ro).
@@ -416,34 +649,16 @@ fn dft_bgl(device: &wgpu::Device) -> wgpu::BindGroupLayout {
 
 impl DftCtx {
     fn new() -> Option<Self> {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))?;
-        let info = adapter.get_info();
-        let lims = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: lims.clone(),
-                memory_hints: Default::default(),
-            },
-            None,
-        ))
-        .ok()?;
+        let shared = shared_gpu()?;
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
         let bgl = dft_bgl(&device);
         let pipe_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
             label: None,
             bind_group_layouts: &[&bgl],
             push_constant_ranges: &[],
         });
-        let max_buf_u32s = (lims
-            .max_buffer_size
-            .min(lims.max_storage_buffer_binding_size as u64)
-            .min(1 << 31) as usize)
-            / 4;
+        let max_buf_u32s = shared.max_buf_u32s;
         let tw_cap_u32s = 1 << 20;
         let tw_buf = device.create_buffer(&wgpu::BufferDescriptor {
             label: Some("tw"),
@@ -452,8 +667,6 @@ impl DftCtx {
             mapped_at_creation: false,
         });
         Some(DftCtx {
-            device,
-            queue,
             bgl,
             pipe_layout,
             pipelines: HashMap::new(),
@@ -462,7 +675,31 @@ impl DftCtx {
             tw_key: None,
             bufs: None,
             max_buf_u32s,
-            adapter_name: format!("{} ({:?})", info.name, info.backend),
+            adapter_name: shared.adapter_name.clone(),
+            device,
+            queue,
+        })
+    }
+
+    /// One DFT bind group: b0 = data (rw), b1 = src (ro), b2 = tw.
+    fn bind_dft(&self, data: &wgpu::Buffer, src: &wgpu::Buffer) -> wgpu::BindGroup {
+        self.device.create_bind_group(&wgpu::BindGroupDescriptor {
+            label: None,
+            layout: &self.bgl,
+            entries: &[
+                wgpu::BindGroupEntry {
+                    binding: 0,
+                    resource: data.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 1,
+                    resource: src.as_entire_binding(),
+                },
+                wgpu::BindGroupEntry {
+                    binding: 2,
+                    resource: self.tw_buf.as_entire_binding(),
+                },
+            ],
         })
     }
 
@@ -471,27 +708,7 @@ impl DftCtx {
         a: &wgpu::Buffer,
         b: &wgpu::Buffer,
     ) -> (wgpu::BindGroup, wgpu::BindGroup) {
-        let mk = |data: &wgpu::Buffer, src: &wgpu::Buffer| {
-            self.device.create_bind_group(&wgpu::BindGroupDescriptor {
-                label: None,
-                layout: &self.bgl,
-                entries: &[
-                    wgpu::BindGroupEntry {
-                        binding: 0,
-                        resource: data.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 1,
-                        resource: src.as_entire_binding(),
-                    },
-                    wgpu::BindGroupEntry {
-                        binding: 2,
-                        resource: self.tw_buf.as_entire_binding(),
-                    },
-                ],
-            })
-        };
-        (mk(a, b), mk(b, a))
+        (self.bind_dft(a, b), self.bind_dft(b, a))
     }
 
     fn ensure_bufs(&mut self, need_u32s: usize) {
@@ -647,6 +864,11 @@ impl GpuDft {
         self.gpu().map(|m| m.lock().unwrap().adapter_name.clone())
     }
 
+    /// Run the DFT/LDE plan. With `retain`, the final bit-reversed transpose
+    /// additionally lands in a dedicated device buffer (its kernel output
+    /// target — no extra copy) returned for LDE device-residency; retention
+    /// is skipped on the column-chunked path (no single buffer holds the
+    /// whole result there).
     fn gpu_flow(
         &self,
         ctx: &mut DftCtx,
@@ -654,7 +876,8 @@ impl GpuDft {
         added_bits: u32,
         shift: BabyBear,
         lde: bool,
-    ) -> Vec<u32> {
+        retain: bool,
+    ) -> (Vec<u32>, Option<wgpu::Buffer>) {
         let h = mat.height();
         let w = mat.width();
         let logh = h.trailing_zeros();
@@ -673,6 +896,7 @@ impl GpuDft {
         if !single {
             out = vec![0u32; n * w];
         }
+        let mut retained_out: Option<wgpu::Buffer> = None;
 
         let vals = bb_as_u32s(&mat.values);
         let mut c0 = 0usize;
@@ -826,25 +1050,50 @@ impl GpuDft {
             };
 
             let bufs = ctx.bufs.as_ref().unwrap();
+            // LDE residency: the final transpose writes a dedicated retained
+            // buffer instead of the reusable work buffer, so the result
+            // survives the next dft call and can be blitted into the MMCS
+            // leaf arena without a host round-trip.
+            let retained_bg = if retain && single {
+                let rb = ctx.device.create_buffer(&wgpu::BufferDescriptor {
+                    label: Some("lde_resident"),
+                    size: (n * wb * 4) as u64,
+                    usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_SRC,
+                    mapped_at_creation: false,
+                });
+                let src_buf = match final_src {
+                    Target::A => &bufs.a,
+                    Target::B => &bufs.b,
+                };
+                let bg = ctx.bind_dft(&rb, src_buf);
+                retained_out = Some(rb);
+                Some(bg)
+            } else {
+                None
+            };
+            let trans_out_idx = plan.len() - 1;
             let mut enc = ctx.device.create_command_encoder(&Default::default());
             {
                 let mut pass = enc.begin_compute_pass(&Default::default());
-                for (pipe, tgt, (x, y)) in &plan {
-                    pass.set_bind_group(
-                        0,
-                        match tgt {
+                for (i, (pipe, tgt, (x, y))) in plan.iter().enumerate() {
+                    let bg = match (&retained_bg, i == trans_out_idx) {
+                        (Some(bg), true) => bg,
+                        _ => match tgt {
                             Target::A => &bufs.bg_ab,
                             Target::B => &bufs.bg_ba,
                         },
-                        &[],
-                    );
+                    };
+                    pass.set_bind_group(0, bg, &[]);
                     pass.set_pipeline(pipe);
                     pass.dispatch_workgroups(*x, *y, 1);
                 }
             }
-            let out_buf = match read_from {
-                Target::A => &bufs.a,
-                Target::B => &bufs.b,
+            let out_buf = match &retained_out {
+                Some(rb) => rb,
+                None => match read_from {
+                    Target::A => &bufs.a,
+                    Target::B => &bufs.b,
+                },
             };
             enc.copy_buffer_to_buffer(out_buf, 0, &bufs.read, 0, (n * wb * 4) as u64);
             ctx.queue.submit([enc.finish()]);
@@ -865,7 +1114,7 @@ impl GpuDft {
             bufs.read.unmap();
             c0 += wb;
         }
-        out
+        (out, retained_out)
     }
 }
 
@@ -881,7 +1130,7 @@ impl TwoAdicSubgroupDft<BabyBear> for GpuDft {
             return self.cpu.dft_batch(mat);
         };
         let mut ctx = gm.lock().unwrap();
-        let out = self.gpu_flow(&mut ctx, &mat, 0, BabyBear::ONE, false);
+        let (out, _) = self.gpu_flow(&mut ctx, &mat, 0, BabyBear::ONE, false, false);
         RowMajorMatrix::new(u32s_into_bb(out), mat.width()).bit_reverse_rows()
     }
 
@@ -899,8 +1148,15 @@ impl TwoAdicSubgroupDft<BabyBear> for GpuDft {
             return self.cpu.coset_lde_batch(mat, added_bits, shift);
         };
         let mut ctx = gm.lock().unwrap();
-        let out = self.gpu_flow(&mut ctx, &mat, added_bits as u32, shift, true);
-        RowMajorMatrix::new(u32s_into_bb(out), mat.width()).bit_reverse_rows()
+        let (out, retained) = self.gpu_flow(&mut ctx, &mat, added_bits as u32, shift, true, true);
+        drop(ctx);
+        let values = u32s_into_bb(out);
+        // Park the device copy for the commit that follows in the PCS flow
+        // (the returned Vec is the allocation `commit` will receive).
+        if let Some(buf) = retained {
+            register_resident_lde(&values, buf);
+        }
+        RowMajorMatrix::new(values, mat.width()).bit_reverse_rows()
     }
 }
 
@@ -1277,33 +1533,22 @@ const HASH_WG: u32 = 64;
 const HASH_MAX_PERMS_PER_DISPATCH: usize = 1 << 18;
 
 struct HashCtx {
-    device: wgpu::Device,
-    queue: wgpu::Queue,
+    // Pipelines/layouts before the device handle (same drop-order discipline
+    // as DftCtx; the device is the 'static SharedGpu one).
     bgl: wgpu::BindGroupLayout,
     leaf_pipe: wgpu::ComputePipeline,
     compress_pipe: wgpu::ComputePipeline,
     combine_pipe: wgpu::ComputePipeline,
     max_binding_u32s: usize,
+    device: wgpu::Device,
+    queue: wgpu::Queue,
 }
 
 impl HashCtx {
     fn new() -> Option<Self> {
-        let instance = wgpu::Instance::default();
-        let adapter = pollster::block_on(instance.request_adapter(&wgpu::RequestAdapterOptions {
-            power_preference: wgpu::PowerPreference::HighPerformance,
-            ..Default::default()
-        }))?;
-        let lims = adapter.limits();
-        let (device, queue) = pollster::block_on(adapter.request_device(
-            &wgpu::DeviceDescriptor {
-                label: None,
-                required_features: wgpu::Features::empty(),
-                required_limits: lims.clone(),
-                memory_hints: Default::default(),
-            },
-            None,
-        ))
-        .ok()?;
+        let shared = shared_gpu()?;
+        let device = shared.device.clone();
+        let queue = shared.queue.clone();
         let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
             label: Some("hash_bgl"),
             entries: &[
@@ -1362,19 +1607,15 @@ impl HashCtx {
         let leaf_pipe = mk_pipe("leaf_main");
         let compress_pipe = mk_pipe("compress_main");
         let combine_pipe = mk_pipe("combine_main");
-        let max_binding_u32s = (lims
-            .max_buffer_size
-            .min(lims.max_storage_buffer_binding_size as u64)
-            .min(1 << 31) as usize)
-            / 4;
+        let max_binding_u32s = shared.max_buf_u32s;
         Some(HashCtx {
-            device,
-            queue,
             bgl,
             leaf_pipe,
             compress_pipe,
             combine_pipe,
             max_binding_u32s,
+            device,
+            queue,
         })
     }
 
@@ -1597,42 +1838,69 @@ impl GpuBn254Mmcs {
         }
         let max_h = groups[0].0;
 
-        // Upload one height-group's matrices into an arena buffer and hash
-        // its rows into `out` (digest slots [0, h)).
-        let hash_group = |group: &[usize],
-                          h: usize,
-                          out: &wgpu::Buffer,
-                          desc_buf: &wgpu::Buffer| {
-            let total_w: usize = group.iter().map(|&i| leaves[i].width()).sum();
-            let arena_u32s: usize = h * total_w;
-            let arena = ctx.storage_buffer("leaf_arena", arena_u32s, true);
-            let mut mat_descs: Vec<u32> = Vec::with_capacity(group.len() * 2);
-            let mut off = 0usize;
-            for &i in group {
-                let m = &leaves[i];
-                let w = m.width();
-                let mut staging = vec![0u32; h * w];
-                staging.par_chunks_mut(w).enumerate().for_each(|(r, dst)| {
-                    let row = m.row_slice(r).expect("row in range");
-                    dst.copy_from_slice(bb_as_u32s(&row));
-                });
-                ctx.queue
-                    .write_buffer(&arena, (off * 4) as u64, bytemuck::cast_slice(&staging));
-                mat_descs.push(off as u32);
-                mat_descs.push(w as u32);
-                off += h * w;
-            }
-            let perms_per_row = total_w.div_ceil(16).max(1);
-            ctx.dispatch_leaf(
-                &arena,
-                desc_buf,
-                out,
-                &[group.len() as u32, 0, 0, 0],
-                &mat_descs,
-                h,
-                perms_per_row,
-            );
-        };
+        // Fill one height-group's arena buffer — a device→device blit for
+        // every matrix whose LDE is still device-resident (the round-trip
+        // closure), the host staging upload otherwise — and hash its rows
+        // into `out` (digest slots [0, h)).
+        let hash_group =
+            |group: &[usize], h: usize, out: &wgpu::Buffer, desc_buf: &wgpu::Buffer| {
+                let total_w: usize = group.iter().map(|&i| leaves[i].width()).sum();
+                let arena_u32s: usize = h * total_w;
+                let arena = ctx.storage_buffer("leaf_arena", arena_u32s, true);
+                let mut mat_descs: Vec<u32> = Vec::with_capacity(group.len() * 2);
+                let mut blits: Vec<(wgpu::Buffer, usize)> = Vec::new();
+                let mut off = 0usize;
+                for &i in group {
+                    let m = &leaves[i];
+                    let w = m.width();
+                    if let Some(resident) = take_resident_lde(m) {
+                        LDE_RESIDENT_HITS.fetch_add(1, Ordering::Relaxed);
+                        // The key guarantees the buffer holds exactly h*w u32s.
+                        blits.push((resident, off));
+                    } else {
+                        LDE_RESIDENT_MISSES.fetch_add(1, Ordering::Relaxed);
+                        let mut staging = vec![0u32; h * w];
+                        staging.par_chunks_mut(w).enumerate().for_each(|(r, dst)| {
+                            let row = m.row_slice(r).expect("row in range");
+                            dst.copy_from_slice(bb_as_u32s(&row));
+                        });
+                        ctx.queue.write_buffer(
+                            &arena,
+                            (off * 4) as u64,
+                            bytemuck::cast_slice(&staging),
+                        );
+                    }
+                    mat_descs.push(off as u32);
+                    mat_descs.push(w as u32);
+                    off += h * w;
+                }
+                if !blits.is_empty() {
+                    // One encoder for all resident blits; submitted after the
+                    // write_buffer calls above, so queue ordering puts both
+                    // before the leaf dispatches.
+                    let mut enc = ctx.device.create_command_encoder(&Default::default());
+                    for &(ref resident, boff) in &blits {
+                        enc.copy_buffer_to_buffer(
+                            resident,
+                            0,
+                            &arena,
+                            (boff * 4) as u64,
+                            resident.size(),
+                        );
+                    }
+                    ctx.queue.submit([enc.finish()]);
+                }
+                let perms_per_row = total_w.div_ceil(16).max(1);
+                ctx.dispatch_leaf(
+                    &arena,
+                    desc_buf,
+                    out,
+                    &[group.len() as u32, 0, 0, 0],
+                    &mat_descs,
+                    h,
+                    perms_per_row,
+                );
+            };
 
         let desc_buf = ctx.storage_buffer("desc", 4 + 2 * leaves.len().max(2), true);
         let dig_a = ctx.storage_buffer("dig_a", max_h * 8, true);
@@ -1702,9 +1970,14 @@ impl Mmcs<BabyBear> for GpuBn254Mmcs {
                 let tree = self.build_gpu_tree(&ctx, inputs);
                 let root = tree.digest_layers.last().expect("non-empty tree")[0];
                 let commitment = MerkleCap::new(vec![[bn254_from_canonical_limbs(&root)]]);
+                // Any resident LDEs this commit did not consume are dead
+                // weight — clearing them promptly also closes the
+                // stale-pointer window of the residency binding.
+                clear_thread_resident_ldes();
                 return (commitment, GpuMmcsProverData::Gpu(tree));
             }
         }
+        clear_thread_resident_ldes();
         let (c, d) = self.cpu.commit(inputs);
         (c, GpuMmcsProverData::Cpu(d))
     }
@@ -2192,6 +2465,119 @@ mod tests {
                     .is_err(),
                 "tampered sibling accepted at {index}"
             );
+        }
+    }
+
+    /// Resident-LDE entries registered by THIS test thread (the registry is
+    /// thread-keyed, so parallel tests don't interfere).
+    fn thread_resident_entries() -> usize {
+        let tid = std::thread::current().id();
+        lde_registry()
+            .lock()
+            .unwrap()
+            .map
+            .keys()
+            .filter(|k| k.0 == tid)
+            .count()
+    }
+
+    #[test]
+    fn gpu_lde_device_residency_hit_fallback_and_root_parity() {
+        let gpu_dft = GpuDft::default();
+        assert!(
+            gpu_dft.adapter_name().is_some(),
+            "no GPU adapter — this gate must run on the GPU lane"
+        );
+        let gpu_mmcs = GpuBn254Mmcs::new(0);
+        assert!(gpu_mmcs.adapter_available());
+        let cpu_dft = Radix2DitParallel::<BabyBear>::default();
+        let cpu_mmcs = gpu_mmcs.cpu.clone();
+        let shift = BabyBear::GENERATOR;
+
+        // The PCS commit expression, GPU lane: this mints the LDE on the
+        // device AND registers the retained buffer under the returned Vec.
+        let mat = rand_matrix(42, 1 << 12, 24);
+        let entries0 = thread_resident_entries();
+        let lde_gpu = gpu_dft
+            .coset_lde_batch(mat.clone(), 1, shift)
+            .bit_reverse_rows()
+            .to_row_major_matrix();
+        assert_eq!(
+            thread_resident_entries(),
+            entries0 + 1,
+            "coset_lde_batch must park a device-resident buffer"
+        );
+
+        // Same bytes through a FRESH allocation (must MISS the registry) and
+        // the CPU reference lane.
+        let lde_copy = RowMajorMatrix::new(lde_gpu.values.clone(), lde_gpu.width());
+        let lde_cpu = cpu_dft
+            .coset_lde_batch(mat, 1, shift)
+            .bit_reverse_rows()
+            .to_row_major_matrix();
+        assert_eq!(lde_gpu.values, lde_cpu.values, "DFT parity precondition");
+        assert!(
+            take_resident_lde(&lde_copy).is_none(),
+            "a fresh allocation must not bind a resident buffer"
+        );
+
+        // A second, shorter matrix (below the GPU-DFT height threshold, so
+        // host-borne) exercises the mixed blit + upload arena fill and the
+        // injection level.
+        let side = rand_matrix(43, 1 << 11, 34);
+        let dims: Vec<Dimensions> = [&lde_gpu, &side]
+            .iter()
+            .map(|m| Dimensions {
+                width: m.width(),
+                height: m.height(),
+            })
+            .collect();
+
+        let (hits0, _) = lde_residency_counters();
+        let (commit_resident, data_resident) = gpu_mmcs.commit(vec![lde_gpu, side.clone()]);
+        let (hits1, _) = lde_residency_counters();
+        assert!(
+            matches!(data_resident, GpuMmcsProverData::Gpu(_)),
+            "the GPU path must be taken for this shape"
+        );
+        assert!(hits1 >= hits0 + 1, "the resident hand-off must be consumed");
+        assert_eq!(
+            thread_resident_entries(),
+            0,
+            "commit must clear this thread's registry"
+        );
+
+        // Fallback lane: identical bytes, fresh allocation -> host upload.
+        let (commit_copy, _) = gpu_mmcs.commit(vec![lde_copy, side.clone()]);
+        assert_eq!(
+            commit_resident.roots(),
+            commit_copy.roots(),
+            "device-resident and host-upload commits diverge"
+        );
+
+        // CPU reference: the untouched MerkleTreeMmcs.
+        let (commit_cpu, cpu_data) = cpu_mmcs.commit(vec![lde_cpu, side]);
+        assert_eq!(
+            commit_resident.roots(),
+            commit_cpu.roots(),
+            "device-resident root != CPU MerkleTreeMmcs root"
+        );
+
+        // Openings from the resident-built tree match the CPU tree and
+        // verify under the untouched CPU verifier.
+        for index in [0usize, 999, (1 << 13) - 1] {
+            let gpu_open = gpu_mmcs.open_batch(index, &data_resident);
+            let cpu_open = cpu_mmcs.open_batch(index, &cpu_data);
+            assert_eq!(gpu_open.opened_values, cpu_open.opened_values);
+            assert_eq!(gpu_open.opening_proof, cpu_open.opening_proof);
+            cpu_mmcs
+                .verify_batch(
+                    &commit_cpu,
+                    &dims,
+                    index,
+                    BatchOpeningRef::new(&gpu_open.opened_values, &gpu_open.opening_proof),
+                )
+                .expect("resident-tree opening must verify under the CPU verifier");
         }
     }
 

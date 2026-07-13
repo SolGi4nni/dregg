@@ -17,8 +17,8 @@ use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit_prove::apex_shrink::{shrink_apex_to_outer, verify_shrink_proof};
 use dregg_circuit_prove::dregg_outer_config::create_outer_config;
 use dregg_circuit_prove::gpu_backend::{
-    create_gpu_outer_config, gpu_shrink_proof_to_cpu, shrink_apex_to_gpu_outer,
-    verify_gpu_shrink_proof,
+    create_gpu_outer_config, gpu_shrink_proof_to_cpu, lde_residency_counters,
+    shrink_apex_to_gpu_outer, verify_gpu_shrink_proof,
 };
 use dregg_circuit_prove::ivc_turn_chain::{
     FinalizedTurn, ir2_leaf_wrap_config, prove_turn_chain_recursive,
@@ -104,6 +104,7 @@ fn gpu_backend_real_shrink_gpu_vs_cpu_measured() {
 
     // ---- 3. GPU shrink --------------------------------------------------
     let gpu_config = create_gpu_outer_config();
+    let (lde_hits0, lde_misses0) = lde_residency_counters();
     let t2 = Instant::now();
     let gpu_shrink = shrink_apex_to_gpu_outer(&whole.root, &inner_config, &gpu_config)
         .expect("the real apex shrinks under GpuDreggOuterConfig");
@@ -111,6 +112,12 @@ fn gpu_backend_real_shrink_gpu_vs_cpu_measured() {
     println!(
         "[e2e] GPU shrink total: {gpu_total:.2}s  (prepare {:.2}s [config-independent CPU work] + prove {:.2}s [the GPU-accelerated phase])",
         gpu_shrink.prepare_seconds, gpu_shrink.prove_seconds
+    );
+    let (lde_hits, lde_misses) = lde_residency_counters();
+    println!(
+        "[e2e] LDE device-residency: {} tree-build matrices fed by device-resident blits, {} by host upload",
+        lde_hits - lde_hits0,
+        lde_misses - lde_misses0
     );
 
     // The prepare phase (verifier-circuit build, table-AIR extraction,
