@@ -170,6 +170,12 @@ const REGISTERED_COMMAND_NAMES: &[&str] = &[
     "key",
     // ─── shared AI-narrated on-chain dungeon (buttons are write-once ballots) ─────
     "dungeon",
+    // ─── DreggNet Cloud offerings through the GENERIC offering→Discord adapter
+    //     (`commands::offering`): the offering's cap-gated affordances ARE the
+    //     buttons, a press is ONE real `Offering::advance` attributed to the
+    //     presser's derived dregg identity, and `verify` re-checks the chain.
+    "council",
+    "market",
     // ─── $DREGG-paid real-AI runs: buy run-credits, check balance ────────────────
     "buy-credits",
     "balance",
@@ -297,6 +303,9 @@ impl EventHandler for Handler {
             commands::key::register(),
             // ─── shared AI-narrated on-chain dungeon ─────────────────────────
             commands::fiction::register(),
+            // ─── DreggNet Cloud offerings (the generic offering→Discord adapter) ─
+            commands::council::register(),
+            commands::market::register(),
             // ─── $DREGG-paid real-AI runs ────────────────────────────────────
             commands::pay::register_buy(),
             commands::pay::register_balance(),
@@ -438,6 +447,10 @@ impl EventHandler for Handler {
                 "channel" => commands::channel::handle(&ctx, &command, &self.state).await,
                 "key" => commands::key::handle(&ctx, &command, &self.state).await,
                 "dungeon" => commands::fiction::handle(&ctx, &command, &self.state).await,
+                // The DreggNet Cloud offerings, both served by the ONE generic
+                // offering→Discord adapter (`commands::offering`).
+                "council" => commands::council::handle(&ctx, &command, &self.state).await,
+                "market" => commands::market::handle(&ctx, &command, &self.state).await,
                 "buy-credits" => commands::pay::handle_buy(&ctx, &command, &self.state).await,
                 "balance" => commands::pay::handle_balance(&ctx, &command, &self.state).await,
                 _ => {
@@ -464,14 +477,25 @@ impl EventHandler for Handler {
                 // A `/dungeon` ballot button — a write-once vote attributed to the presser's
                 // derived dregg identity (`commands::fiction`).
                 commands::fiction::handle_component(&ctx, &component, &self.state).await;
+            } else if custom_id.starts_with("offering:") {
+                // A DreggNet-offering affordance (`offering:fire:<key>:<turn>:<arg>` /
+                // `offering:ask:<key>:<turn>`): the generic adapter fires it as ONE real
+                // `Offering::advance` attributed to the presser's derived dregg identity —
+                // a landed `TurnReceipt` or a real executor `Refused` — and re-renders the
+                // offering's own deos surface. `<key>` selects `/council` vs `/market`.
+                commands::offering::route_component(&ctx, &component, &self.state).await;
             } else {
                 commands::dashboard::handle_component(&ctx, &component, &self.state).await;
             }
         } else if let Interaction::Modal(modal) = interaction {
             // `start:modal:*` forms (Send / Set key) belong to the `/start` flow;
-            // everything else is the dashboard's.
+            // `offering:submit:<key>:<turn>` is a DreggNet-offering affordance whose arg the
+            // user typed (a market reserve / a sealed bid) — the generic adapter fires it as
+            // ONE real turn; everything else is the dashboard's.
             if modal.data.custom_id.starts_with("start:") {
                 commands::start::handle_modal(&ctx, &modal, &self.state).await;
+            } else if modal.data.custom_id.starts_with("offering:") {
+                commands::offering::route_modal(&ctx, &modal, &self.state).await;
             } else {
                 commands::dashboard::handle_modal(&ctx, &modal, &self.state).await;
             }

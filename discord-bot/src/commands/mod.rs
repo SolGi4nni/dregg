@@ -55,6 +55,15 @@ pub mod fiction;
 #[allow(dead_code)]
 pub mod handoff;
 pub mod intent;
+// ─── DreggNet Cloud offerings, served through ONE generic Discord frontend ───
+// `offering` is the generic adapter: any `dreggnet_offerings::Offering` becomes a Discord
+// surface (its deos `ViewNode` render → an embed; its cap-gated `Action`s → buttons/modals;
+// a press → ONE real `advance` attributed to the presser's derived dregg identity; `verify`
+// surfaced honestly). `/council` and `/market` are its first two consumers; `/dungeon`
+// (`fiction`) still carries its own bespoke ballot frontend and could adopt this next.
+pub mod council;
+pub mod market;
+pub mod offering;
 // `/buy-credits` + `/balance` — the $DREGG earning surface: issue the caller's deterministic
 // deposit address + price, and show their persisted run-credit balance. A paid /dungeon run
 // spends one credit for a real-AI (Bedrock) narration. See `crate::pay`.

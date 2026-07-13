@@ -156,6 +156,20 @@ spween = { git = "https://github.com/emberian/spween", rev = "afb5b1fce8c9dd3b78
 # root workspace member; its deps (spween-dregg, dungeon-on-dregg, deos-view) are
 # already in this graph, so it adds nothing new to the closure.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE OFFERINGS THE GENERIC ADAPTER SERVES (`src/commands/offering.rs`): any
+# `dreggnet_offerings::Offering` becomes a Discord surface — its deos `ViewNode` render is the
+# embed, its cap-gated `Action`s are the buttons/modals, a press is ONE real `advance` attributed
+# to the presser's derived dregg identity, and `verify` is surfaced honestly.
+#   `/council` — propose → vote → enact over the REAL `collective-choice` quorum engine; a passed
+#     proposal enacts a real `WriteOnce` policy effect on a council cell, a below-quorum one does
+#     not (the AffineLe gate is the referee, not the bot).
+#   `/market` — list → sealed bid → settle on the REAL sealed-auction substrate; a double-bid is a
+#     `WriteOnce` executor refusal, and the clear moves value through the verified per-asset ring
+#     settlement (Σδ=0). Both are root workspace members, consumed (never modified); their deps
+#     (collective-choice, starbridge-sealed-auction, dregg-intent) resolve against the root
+#     manifest they live under.
+dreggnet-council = { path = "../dreggnet-council" }
+dreggnet-market = { path = "../dreggnet-market" }
 # THE UGC REGISTRY behind `/gallery` — the real `Registry` (publish a content-addressed
 # `Universe`, submit a `Completion`) and its NO-CHEAT leaderboard: a completion is ranked
 # ONLY if its recorded receipt chain re-verifies to the declared WIN on a stranger's
