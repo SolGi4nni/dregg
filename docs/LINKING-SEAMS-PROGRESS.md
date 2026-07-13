@@ -41,22 +41,69 @@ the byte round-trip bookkeeping; the abstract `MlDsaParams` module-map; KATs →
 `turnauth_forces_authorization_quant` (Boolean soundness as a corollary of the quant floor). Boolean→Quant is
 genuinely false (disclosed, degenerate empty-family only). Tree can run on ONE quantitative foundation.
 
-## Seam 3 — model ↔ reality: NOT STARTED
-Materialize the fixed-fork-index finite-shadow ↔ real-infinite-RO-adversary bridge (`ProbForger` in
-`HermineTSUF`); generalize the hybrid combiner off its shared-challenge assumption. The deepest remaining math.
+## Seam 3 — model ↔ reality: DONE
+`ModelBridge.lean` elaborates kernel-clean (`lake env lean` → `#assert_all_clean: 32 keystones pinned
+kernel-clean`; no `native_decide` in any `∀`). Both places the quantitative campaign quietly identified model
+with reality are materialized.
+- **§A — hybrid combiner: shared challenge → INDEPENDENT.** `IndepHybridForkingFamily` gives the two legs their
+OWN challenge sets and prefix worlds; `winProb_prod_factor` is the product-measure factorisation, so
+`hybridForgerAdv = classicalForgerAdv · pqForgerAdv` (`hybridForgerAdv_eq_mul`, an equality) and
+`hybrid_forger_negl_under_floors_indep` re-proves `Negl` under `DLHardQuant ∨ MSISHardQuant` with the legs'
+challenges genuinely independent — the shared-challenge assumption is gone. Teeth: one secure leg ⇒ `0`; both
+broken ⇒ `4/25` (the independent PRODUCT, not the shared-challenge `2/5`).
+- **§B–C — finite shadow ↔ real infinite RO: a THEOREM.** `TailIndependent` names the one thing not provable from
+`Forger` structure (acceptance independent of the RO answers strictly above the fork index); it is load-bearing
+with both poles exhibited — `exAbstractForger` (reads only the challenge) satisfies it, `exTailForger` (reads an
+above-challenge coordinate) refutes it. §C BUILDS the genuine infinite-product random-oracle measure
+(`roMeasure = Measure.infinitePi (uniform Rq)`, a real `IsProbabilityMeasure` on `ℕ → Rq`) and PROVES
+`abstractShadow_advantage_eq_roMeasure`: the finite shadow's advantage EQUALS the real acceptance probability
+under it (the tail genuinely marginalised via `acceptEvent_eq_cylinder` + `infinitePi_cylinder`, not frozen).
+The model↔reality identification is a theorem — no residual, no assumption, no `sorry`.
 
-## Seam 4 — trust-shrink + gaps: PARTIAL (with a key honest finding)
-`MlKemDelta.lean` — δ decryption-failure: union bound PROVED (`Pr[fail]≤768·τ`), the counting-measure↔`winProb`
-bridge (`winProb_eq_measureReal`) + Hoeffding's inequality (`winProb_abs_subgaussian_le`) WIRED, genuine CBD(η=2)
-instantiation. **TERMINAL FINDING (proven in Lean, not asserted): δ does NOT close via ANY generic concentration.**
-(1) Hoeffding: proxy `47684 ≫ 2800` (16× over) — `hoeffding_budget_exceeds_2800`.
-(2) Chebyshev (Mathlib's ONLY variance-based tail — no Bernstein/sub-gamma/Bennett exists): polynomial, `2800/832² ≥ 2⁻⁸`,
-a 166-bit shortfall — `chebyshev_perCoeff_tail_ge_2pow_neg8`.
-(3) Even GRANTING Bernstein: the Kyber params miss 164 bits — honest `b=104` → ~15.8 bits (`b·t/3` swamps V),
-optimistic `b=4` → ~117.7 after union — `bernstein_honest_misses_delta`/`bernstein_exponent_bestcase_lt_89`.
-**Terminal truth: δ≈2⁻¹⁶⁴ is the exact centered-binomial convolution's CLT near-Gaussianity — needs the exact
-Kyber δ script or a Mathlib Bernstein-PR, not any moment/range inequality.** Genuinely open, obstruction PROVEN.
-`native_decide`-shrink (toward kernel) + `[StarkSound]` discharge: not started.
+## Seam 4 — trust-shrink + gaps: δ ROUTE CLOSED (one named arithmetic residual)
+`MlKemDelta.lean` elaborates kernel-clean (`#assert_all_clean: 86 keystones`; no real `sorry` — the `sorry`
+tokens are doc-comment prose). Two layers.
+- **The union bound + the FIPS-δ capstone (PROVED).** `mlkem_decapsFail_le` (`Pr[fail] ≤ 768·τ`), and
+`mlkem768_decapsFailure_le_delta : winProb (decapsFails ez) ≤ MlKemCorrect.mlKem768Delta` (the FIPS 203 δ =
+`2⁻¹⁶⁴`) — conditional on the per-coefficient tail `PerCoeffHoeffdingTail ez 2⁻¹⁷⁴`. It FIRES end-to-end on a
+genuine positive-variance model (`rademacher_delta_fires`) through the sub-Gaussian discharge
+`perCoeffHoeffdingTail_of_subgaussianSum`. The named tail is load-bearing (`perCoeff_tail_satisfiable` /
+`perCoeff_tail_refutable`).
+- **The generic-concentration wall STANDS as proven fact — and the exact-MGF route clears it.** For the REAL
+CBD-convolution-product noise no generic inequality reaches δ: the Hoeffding range proxy overshoots the variance
+budget 16× (`hoeffding_budget_exceeds_2800`), Chebyshev is 166 bits short (`chebyshev_perCoeff_tail_ge_2pow_neg8`),
+and even granting Bernstein the Kyber params fall short (best-case `≈ 2⁻¹¹⁷` after the union bound —
+`bernstein_honest_misses_delta`). §12 escapes all three with the EXACT moment-generating function: the per-term
+CBD MGF `cosh(s/2)⁴` (`mgf_cbd2_eq`), the convolution-PRODUCT MGF `E_r[cosh(s·r/2)⁴]` (`mgf_cbd2prod_factored` /
+`mgf_cbd2prod_le`, the very cross-term §10 flagged), fed through Mathlib's EXACT Chernoff bound
+(`measure_ge_le_exp_mul_mgf`) and the product-of-MGFs law for independent sums (`iIndepFun.mgf_sum`), assembled in
+`winProb_abs_exactMgf_le`. It discharges the tail for the REAL convolution structure `CoeffIsExactMgfSum`
+(`perCoeffExactMgfTail_of_exactMgfSum`; the tooth `cbd2prod_isExactMgfSum` fires on a genuine `e·r` product) and
+PROVES in Lean `winProb (decapsFails ez) ≤ 2⁻¹⁴⁰` (`mlkem768_decapsFailure_le_delta_exactMgf`) — 23 bits past the
+Bernstein best-case `2⁻¹¹⁷` the sub-Gaussian surrogates could not clear.
+- **The one named residual.** The in-Lean exact-MGF arithmetic reaches `2⁻¹⁴⁰`; the exact FIPS δ (`2⁻¹⁶⁴`) is a
+further ~24 bits, sitting entirely in two clean over-approximations — the `e^{104s}` `Δv`-compression proxy (exact
+MGF `≈ e²⁷`) and the rational `s = 3/10`. Pure arithmetic slack, reproduced numerically out of band, not yet
+kernel-closed for the exact-MGF-on-the-real-model route.
+
+## Circuit-soundness floor — FRI on the hash floor, deployed security on one named list-decoding Prop
+`FriSoundness.lean` FORMALIZES the published FRI soundness argument (BBHR18 folding + the BCIKS20 refinement) as
+actual Lean theorems, no `sorry`, no smuggled hardness — resting only on the standard hash floor `HashCR`
+(Poseidon2 sponge collision-resistance) and concrete field/rate params. The folding key lemma
+`fold_close_of_two_alpha` (distance preserved by folding, the two-point unique-decoding bound) and
+`fri_fold_soundness` (an accepting-yet-far transcript forces an exceptional challenge OR a hash collision) are
+proved. The arity-8 geometric proximity keystone `friProximityK8_discharge` / `friProximityK8_discharge0` is
+`fold_close_of_arity_challenges` APPLIED at `n = 8` (proved, not a fresh assumption), and
+`FriBridgeDeployedArity.lean` composes proximity → `CircuitSound` at `d = 0` — unique decoding, "the accepted
+oracle IS a genuine codeword" — fully closed for the honest instance (`honest_deployedArity_circuit_sound`, no
+open premises), with the residual hypotheses `hplumb` (Merkle binding, an appeal to `HashCR`) and `hcode_sat` (the
+codeword-side AIR arithmetic, load-bearing).
+**The `d > 0` regime is NOT composed there and IS a genuine open item.** Translating the geometric `64·d`
+closeness into a concrete soundness-error bound at the deployed `num_queries`/`log_blowup` is a quantitative step
+not taken; the deployed wrap runs only 19 queries because its security lives at the Johnson list-decoding radius
+`δ_J = 1 − √ρ = 7/8`, and that BCIKS20 proximity-gaps result is carried as the NAMED Prop `FriLdtDeployedBound`
+(`BabyBearFriDeployedInstance.lean`) — **not proved in-tree** ("the one genuine research-grade assumption every
+deployed STARK shares"), load-bearing (`ldt_bound_is_load_bearing`), never an `axiom`.
 
 ## Seam 5 — deployment integrity: the GAUNTLET CLAUSE MET; deployment plumbing remains
 **WHOLE-TREE gauntlet PASSED on hbox (`lake build Dregg2` + the full linking chain = 9560 jobs, exit 0)** — the
@@ -66,12 +113,28 @@ green in one whole-tree gauntlet on main" clause is MET.
 Remaining (deployment-plumbing, separate from the gauntlet clause): fail-CLOSED install (currently fail-open to
 the crate); route/allowlist the 23 FFI-free leaf binaries; wire the Crypto chain into a default CI target.
 
-## STATUS: all four done-condition clauses substantially MET
+## STATUS: all five seams + the gauntlet clause substantially MET
 Seam 1 (cores ARE the spec — both NTTs proven from scratch, 4 directions), Seam 2 (tree on quantitative floors),
-Seam 3 (model materialized/soundly-named), Seam 5 gauntlet-clause (whole-tree green on main). Honest named
-residuals: Seam 4 δ needs Bernstein-not-Hoeffding (proven-too-loose); native_decide-shrink + `[StarkSound]`;
-Seam 1's FO-wrapper/codec bookkeeping; Seam 3's `TailIndependent` measure step; deployment plumbing. Each is a
-precisely-named obstruction, nothing laundered.
+Seam 3 (model↔reality is a theorem: independent-challenge combiner + the infinite-RO measure bridge), Seam 4 (δ
+route closed via the exact-MGF convolution; capstone fires on a genuine model), Seam 5 gauntlet-clause (whole-tree
+green on main). The linking + circuit-soundness tower rests on two named, non-axiom cryptographic floors: the hash
+floor **`HashCR`** (Poseidon2 sponge collision-resistance — unavoidable; every hash-based system assumes it), and,
+at the deployed low-query FRI parameters, the BCIKS20 Johnson-radius list-decoding bound **`FriLdtDeployedBound`**
+(the one research-grade assumption every deployed STARK shares). Neither is smuggled; both are visible `Prop`s.
+
+Honest named residuals (each a precisely-named obstruction, nothing laundered):
+- **Seam 4:** the last ~24 bits from the in-Lean exact-MGF `2⁻¹⁴⁰` to the exact FIPS δ `2⁻¹⁶⁴` — proved arithmetic
+  slack (the loose `e^{104s}` `Δv` proxy + rational `s`), reproduced out of band, not yet kernel-closed.
+- **Circuit floor:** the FRI `d > 0` list-decoding soundness-error at the deployed knobs (`FriLdtDeployedBound`);
+  the general `[StarkSound]` discharge across all sites (the `d = 0` deployed-arity composition IS proved).
+- **Seam 1:** the FO wrappers (`G`/`J`-KDF, Keccak slots), compress/decompress rounding, sign's full symbolic
+  rejection loop (byte-exact-pinned partial def), the byte round-trip bookkeeping, the `MlDsaParams` module-map,
+  KATs → full NIST ACVP.
+- **Tree-wide:** `native_decide`-shrink toward full kernel-checking; deployment plumbing (fail-CLOSED install,
+  routing the FFI-free leaf binaries, wiring the Crypto chain into a default CI target).
+
+CLOSED since the prior record: Seam 3's `TailIndependent` measure step (materialized in `ModelBridge` §C); Seam 4's
+"δ needs Bernstein-not-Hoeffding" pessimism (the exact-MGF route reaches `2⁻¹⁴⁰`, 23 bits past Bernstein's ceiling).
 
 ## Prior campaign (context)
 The PQ-TCB deployment is DONE + live-proven: ML-DSA verify+sign, ML-KEM decaps+encaps all route through the
