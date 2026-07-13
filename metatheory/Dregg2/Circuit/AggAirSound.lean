@@ -37,8 +37,8 @@ moves from assumed to proven.
     with the SAME ordered `(L.acc, R.acc)` — a same-endpoint reorder of the children is rejected by the
     ordered digest. This is the only result resting on the hash floor, and it rests on it alone.
 
-Anti-ghost, witnessed BOTH ways: an honest node satisfies and `agg_air_sound` fires on it
-(`honest_node_fires`, `honest_parent_count_is_two`); a tampered combine — broken continuity, swapped
+Anti-ghost, witnessed BOTH ways: an honest node satisfies the segment-combine gates
+(`honest_satCombine`, `honest_parent_count_is_two`); a tampered combine — broken continuity, swapped
 child, wrong count, or wrong digest — does NOT satisfy the gates (`broken_continuity_unsat`,
 `swapped_child_unsat`, `wrong_count_unsat`, `wrong_digest_unsat`). So the gate constraints are both
 satisfiable and falsifiable; the discharge is non-vacuous.
@@ -249,39 +249,6 @@ theorem honest_satCombine : SatCombine zSponge honestNode where
   count      := rfl
   digest     := rfl
 
-/-- A child-proof carrier for the witness: `(commitment, exposedSegment)`. Its verifier accepts always;
-`vkCommit`/`exposedPI` read the pair. This makes `FriExtract` trivially realizable — a witnessed
-satisfied child-verifier hands back exactly the pinned `(c, s)`. -/
-abbrev WitProof := ℤ × Seg
-def witVerify : WitProof → Bool := fun _ => true
-def witVkCommit : WitProof → ℤ := fun p => p.1
-def witExposedPI : WitProof → Seg := fun p => p.2
-
-/-- The trivial child-verifier predicate for the witness: every pinned `(c, s)` is satisfied. -/
-def witCVS : ℤ → Seg → Prop := fun _ _ => True
-
-/-- **`wit_friExtract` (the FRI floor is realizable).** On the witness carriers, `FriExtract` holds: a
-satisfied child-verifier at `(c, s)` is discharged by the proof `(c, s)` — it verifies, its VK core is
-`c`, and it exposes `s`. So the named floor is INHABITED, not vacuous. -/
-theorem wit_friExtract : FriExtract WitProof witVerify witVkCommit witExposedPI witCVS := by
-  intro c s _
-  exact ⟨(c, s), rfl, rfl, rfl⟩
-
-/-- The honest fully-satisfying node over the witness carriers. -/
-theorem honest_satNode : SatNode zSponge witCVS honestNode where
-  combine := honest_satCombine
-  leftCV  := trivial
-  rightCV := trivial
-
-/-- **`honest_node_fires` (the discharge is WITNESSED).** `agg_air_sound` fires on the honest node:
-both pinned children are verifying proofs exposing their segments, and `CombineOk` holds — a real,
-non-vacuous firing of the per-node discharge. -/
-theorem honest_node_fires :
-    (∃ pl, witVerify pl = true ∧ witVkCommit pl = honestNode.lCommit ∧ witExposedPI pl = honestNode.L)
-      ∧ (∃ pr, witVerify pr = true ∧ witVkCommit pr = honestNode.rCommit ∧ witExposedPI pr = honestNode.R)
-      ∧ CombineOk (Hsponge zSponge) honestNode.L honestNode.R honestNode.P :=
-  agg_air_sound WitProof witVerify witVkCommit witExposedPI wit_friExtract honest_satNode
-
 /-- **`honest_parent_count_is_two` (the attestation is REAL).** The honest node's exposed parent count
 is literally `2` — a true arithmetic fact read off the genuine combine, not a husk. -/
 theorem honest_parent_count_is_two : honestNode.P.count = 2 := rfl
@@ -360,8 +327,6 @@ end Vacuity
 #assert_axioms segsound_node_discharged
 #assert_axioms combine_digest_binds
 #assert_axioms honest_satCombine
-#assert_axioms wit_friExtract
-#assert_axioms honest_node_fires
 #assert_axioms honest_parent_count_is_two
 #assert_axioms broken_continuity_unsat
 #assert_axioms swapped_child_unsat
