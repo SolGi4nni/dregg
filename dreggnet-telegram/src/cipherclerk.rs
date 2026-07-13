@@ -64,6 +64,14 @@ impl TelegramCipherclerk {
         &self.public_key_hex_cached
     }
 
+    /// The user's Ed25519 public key as raw bytes — the electorate handle a
+    /// [`dreggnet_council::CouncilOffering`] registers a member by (its
+    /// [`identity`](Self::identity) is the lowercase-hex of these bytes, so a member's press
+    /// matches the registered council member).
+    pub fn public_key_bytes(&self) -> [u8; 32] {
+        self.agent.public_key().0
+    }
+
     /// The user's frontend-agnostic [`DreggIdentity`] (the public-key hex handle the core
     /// attributes moves to). The SAME actor → the SAME identity, on every frontend.
     pub fn identity(&self) -> DreggIdentity {

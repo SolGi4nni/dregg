@@ -30,6 +30,11 @@ description = "A TelegramFrontend implementing dreggnet-offerings' Frontend trai
 # (offering #0) over the real substrate. This crate is a `Frontend` impl; it does NOT
 # re-implement any offering logic.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE OTHER OFFERINGS — registered alongside the dungeon in the multi-offering `TelegramHost`
+# (`src/host.rs`), so a council (governance) and a market (commerce) play on Telegram through the
+# SAME `OfferingHost` the web catalog drives. Consumed as `Offering`s; no offering logic reimplemented.
+dreggnet-council = { path = "../dreggnet-council" }
+dreggnet-market = { path = "../dreggnet-market" }
 # THE DEOS SURFACE — `ViewNode`, the serializable affordance view-tree an offering's
 # `render` produces. The Telegram renderer walks it into message text + an inline
 # keyboard. `default-features = false` = the gpui-free view-tree model only; the
