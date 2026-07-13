@@ -237,43 +237,50 @@ theorem wrap_sharp_witness_fires (L : ℕ)
         ⊆ {α : BabyBear | P.eval α = 0} :=
   sharp_of_correlatedAgreementLine L hCA fSqWrap_far
 
-/-! ## §3b. THE δ-PRESERVING PRIMITIVE, PROVED (Guruswami–Sudan / correlated-agreement core).
+/-! ## §3b. THE δ-PRESERVING PRIMITIVE, PROVED at LINEAR list size (BCIKS20 correlated-agreement core).
 
 `correlatedAgreementLineAt_twoPoint` gave the primitive only at the *weak* floor `|κ| − 2·dIn`
 (vacuous at `dIn = 56`). Here the SHARP floor `|κ| − dIn` is PROVED for the deployed wrap setup —
 the exact BCIKS20 correlated-agreement content — by the deployed dimension-`2` collapse, WITHOUT the
-general Guruswami–Sudan interpolation machinery. The list size is loose (`|κ|² = 4096`, not the tight
-linear-in-`n` BCIKS bound), but the RADIUS is sharp: `dIn = 56 = (7/8)·64`, δ-preserving.
+general Guruswami–Sudan interpolation machinery, at a LINEAR list size `L = 512 = |κ|²/(|κ| − dIn)`
+— the tight BCIKS `n/(1−δ)` scaling, not the quadratic `|κ|²`. The RADIUS is sharp too:
+`dIn = 56 = (7/8)·64`, δ-preserving.
 
-**The argument (an ordered-pair / Fisher injection, dual to the packing bound).** Fix `f`. Suppose
-NO constant point `(a,b) ∈ F²` is rich — every fiber `Φ⁻¹(a,b) = {y | E f y = a ∧ O f y = b}` has
-`< 8` fibers. Then the good-challenge set injects into `κ × κ`, so `|Good| ≤ 64² = 4096`:
+**Why single-fibre pinning (Route 1) is IMPOSSIBLE, and how a DUAL count still gives linear.**
+Fix `f`. Suppose NO constant point `(a,b) ∈ F²` is rich — every fibre `Φ⁻¹(a,b)` has `< 8` fibres.
+Each good `α` folds `f` to a constant `c_α` on `≥ 8` fibres `S_α = {y | E f y + α·O f y = c_α}`, and
+`C'` = CONSTANTS forces any `y, y' ∈ S_α` with `Φ y ≠ Φ y'` to obey `O f y ≠ O f y'` and to PIN
+`α = (E f y' − E f y)/(O f y − O f y')`. The pin needs BOTH fibres — the free constant `c_α` cancels
+only in the DIFFERENCE — so no single distinguished fibre determines `α`, and the naive injection
+`α ↦ (y_α, y'_α)` lands in `κ × κ`, giving only the quadratic `|Good| ≤ |κ|² = 4096`.
 
-* Each good `α` folds `f` to a constant `c_α` on `≥ 8` fibers: `|S_α| ≥ 8`, `S_α = {y | E f y + α·O f y = c_α}`.
-* Not all of `S_α` shares one `Φ`-value (else that value is an `≥ 8` rich point). So pick
-  `y_α ≠ y'_α ∈ S_α` with `Φ y_α ≠ Φ y'_α`.
-* Because `C'` is the CONSTANTS, `E f y_α + α·O f y_α = E f y'_α + α·O f y'_α` (both `= c_α`), so
-  `Φ y_α ≠ Φ y'_α` forces `O f y_α ≠ O f y'_α` and PINS
-  `α = (E f y'_α − E f y_α)/(O f y_α − O f y'_α)` — determined by the pair `(y_α, y'_α)` ALONE
-  (the constant `c_α` cancels). Hence `α ↦ (y_α, y'_α)` is injective on `Good`.
-
-This is where the constant folded code makes the general GS weighted-list-decoding collapse to a
-finite injection — the same dimension-`2` lever that made `RSListBound` elementary. -/
+The linear bound comes from the DUAL of that pin. For `α ≠ β`, a pair `(y, y')` with `Φ y ≠ Φ y'`
+lying in BOTH `S_α` and `S_β` folds equal under both, so it pins `α = β` — a contradiction. Hence the
+ordered distinct-`Φ` pair sets `Pairs α = {(y,y') ∈ S_α × S_α | Φ y ≠ Φ y'}` are PAIRWISE DISJOINT.
+Each is large: every one of `8` fibres `y ∈ S_α` has a partner of a different `Φ`-value (its own
+`Φ`-fibre inside `S_α` has `≤ 7 < |S_α|` members), so `y ↦ (y, partner y)` embeds `8` fibres into
+`Pairs α`, giving `|Pairs α| ≥ 8`. Disjoint `≥ 8`-subsets of `κ × κ` (card `4096`) number at most
+`4096/8 = 512`. That `|κ|²/(|κ| − dIn)` is genuinely linear in `|κ|`: with `dIn = (7/8)|κ|` it is
+`8·|κ|`, the BCIKS `n/(1−δ)` list size. (Each `α` consuming only `8 = |κ| − dIn` pairs, rather than
+its full `≈ |S_α|²`, is why the constant is `8·|κ|` and not the ideal `|κ|`; the packing/Fisher method
+that would sharpen it is DEAD here — `a² = 8² = 64 < |κ|·M = 448`, the very obstruction of §F.) -/
 
 set_option maxRecDepth 4000 in
-/-- **THE δ-PRESERVING CORRELATED-AGREEMENT PRIMITIVE, PROVED at the deployed wrap setup.**
-`CorrelatedAgreementLine friSetupWrapRate 56 4096`: for ANY `f`, if more than `4096` folding
-challenges fold `f` to within `56 = (7/8)·64` of the constants, a SINGLE constant pair `(a,b)` agrees
-with `(E f, O f)` on `≥ |κ| − 56 = 8` fibers simultaneously — the sharp `1 − δ` (δ-preserving) floor,
-beyond the `|κ| − 2·dIn` two-point reach and beyond the packing method's `21/32` radius. No `sorry`,
-no hypothesis: the sole caveat is the loose list size `4096` (vs. BCIKS's tight linear bound). -/
+/-- **THE δ-PRESERVING CORRELATED-AGREEMENT PRIMITIVE, PROVED at the deployed wrap setup, LINEAR list
+size.** `CorrelatedAgreementLine friSetupWrapRate 56 512`: for ANY `f`, if more than `512 = 8·|κ|`
+folding challenges fold `f` to within `56 = (7/8)·64` of the constants, a SINGLE constant pair `(a,b)`
+agrees with `(E f, O f)` on `≥ |κ| − 56 = 8` fibers simultaneously — the sharp `1 − δ` (δ-preserving)
+floor, beyond the `|κ| − 2·dIn` two-point reach and beyond the packing method's `21/32` radius. No
+`sorry`, no hypothesis. The list size `512 = |κ|²/(|κ| − dIn)` is LINEAR in `|κ|` (the tight BCIKS
+scaling `n/(1−δ)`), replacing the loose quadratic `|κ|² = 4096` of the pure ordered-pair injection. -/
 theorem wrap_correlatedAgreementLine :
-    CorrelatedAgreementLine friSetupWrapRate 56 4096 := by
+    CorrelatedAgreementLine friSetupWrapRate 56 512 := by
   classical
   intro f Good hclose hL
   set G := friSetupWrapRate.geom with hG
-  -- Either some constant point is rich (`≥ 8` fibers) — the conclusion — or none is, and then
-  -- the good set injects into `κ × κ`, contradicting `4096 < |Good|`.
+  -- Either some constant point is rich (`≥ 8` fibers) — the conclusion — or none is, and then the
+  -- ORDERED distinct-`Φ` pair sets `Pairs α ⊆ κ × κ` are pairwise DISJOINT and each of card `≥ 8`.
+  -- Disjoint `≥ 8`-sets inside `κ × κ` (card `4096`) force `|Good| ≤ 4096 / 8 = 512` — LINEAR.
   rcases em (∃ a b : BabyBear,
       8 ≤ (Finset.univ.filter (fun y : Fin (2 ^ 6) => E G f y = a ∧ O G f y = b)).card)
     with hrich | hnorich
@@ -283,102 +290,133 @@ theorem wrap_correlatedAgreementLine :
     have hn : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
     rw [hn]
     simpa using hab
-  · -- No rich point: build the injection `Good ↪ κ × κ`.
+  · -- No rich point: every `Φ`-fibre has `≤ 7` fibres.
     exfalso
-    -- For each good `α`, a witness pair of fibers with equal fold but distinct `Φ`-value.
-    have hwit : ∀ α ∈ Good, ∃ y y' : Fin (2 ^ 6),
-        Fold G α f y = Fold G α f y' ∧ ¬(E G f y = E G f y' ∧ O G f y = O G f y') := by
+    push_neg at hnorich
+    -- Pick a fold-constant `cc α` for each good `α`, and its agreement set `S α` (card `≥ 8`).
+    have hex : ∀ α ∈ Good, ∃ c : BabyBear,
+        (disagree (Fold G α f) (fun _ => c)).card ≤ 56 := by
       intro α hα
-      obtain ⟨g, hgC, hgcard⟩ := hclose α hα
+      obtain ⟨g, hgC, hcard⟩ := hclose α hα
       obtain ⟨c, rfl⟩ := mem_wrap_C'.mp hgC
-      set S := Finset.univ.filter (fun y : Fin (2 ^ 6) => Fold G α f y = c) with hS
-      have hcompl : S = (disagree (Fold G α f) (fun _ => c))ᶜ := by
+      exact ⟨c, hcard⟩
+    choose! cc hcc using hex
+    set S : BabyBear → Finset (Fin (2 ^ 6)) :=
+      fun α => Finset.univ.filter (fun y => Fold G α f y = cc α) with hSdef
+    have hmemS : ∀ α y, y ∈ S α ↔ Fold G α f y = cc α := by
+      intro α y; simp only [hSdef, Finset.mem_filter, Finset.mem_univ, true_and]
+    have hScard : ∀ α ∈ Good, 8 ≤ (S α).card := by
+      intro α hα
+      have hcompl : S α = (disagree (Fold G α f) (fun _ => cc α))ᶜ := by
         ext y
-        simp only [hS, Finset.mem_filter, Finset.mem_univ, true_and, Finset.mem_compl,
+        simp only [hSdef, Finset.mem_filter, Finset.mem_univ, true_and, Finset.mem_compl,
           mem_disagree, not_not]
       have hn : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
-      have hcc : S.card
-          = Fintype.card (Fin (2 ^ 6)) - (disagree (Fold G α f) (fun _ => c)).card := by
+      have hcard : (S α).card
+          = Fintype.card (Fin (2 ^ 6)) - (disagree (Fold G α f) (fun _ => cc α)).card := by
         rw [hcompl, Finset.card_compl]
-      have hScard : 8 ≤ S.card := by rw [hcc, hn]; omega
-      have hSne : S.Nonempty := by rw [← Finset.card_pos]; omega
-      obtain ⟨y0, hy0⟩ := hSne
-      have hy0S : Fold G α f y0 = c := by
-        have h := hy0; rw [hS, Finset.mem_filter] at h; exact h.2
-      by_cases hall : ∀ y ∈ S, (E G f y, O G f y) = (E G f y0, O G f y0)
-      · -- All of `S` shares `Φ y0` → that constant point is rich, contradicting `hnorich`.
-        exact absurd
-          ⟨E G f y0, O G f y0,
-            le_trans hScard (Finset.card_le_card (by
-              intro y hy
-              simp only [Finset.mem_filter, Finset.mem_univ, true_and]
-              have h := hall y hy; rw [Prod.ext_iff] at h; exact h))⟩
-          hnorich
-      · push_neg at hall
-        obtain ⟨y1, hy1S, hy1ne⟩ := hall
-        have hy1 : Fold G α f y1 = c := by
-          have h := hy1S; rw [hS, Finset.mem_filter] at h; exact h.2
-        refine ⟨y0, y1, by rw [hy0S, hy1], ?_⟩
-        rintro ⟨hE, hO⟩
-        exact hy1ne (by rw [Prod.ext_iff]; exact ⟨hE.symm, hO.symm⟩)
-    choose! yy yy' hpair using hwit
-    -- The fold equation on the witness pair pins `α`: `α·(O y − O y') = E y' − E y`, denom ≠ 0.
-    have hform : ∀ α ∈ Good, O G f (yy α) ≠ O G f (yy' α) ∧
-        α * (O G f (yy α) - O G f (yy' α)) = E G f (yy' α) - E G f (yy α) := by
+      have := hcc α hα
+      rw [hcard, hn]; omega
+    -- The ORDERED distinct-`Φ` pairs drawn from `S α`.
+    set Pairs : BabyBear → Finset (Fin (2 ^ 6) × Fin (2 ^ 6)) :=
+      fun α => (S α ×ˢ S α).filter
+        (fun p => ¬(E G f p.1 = E G f p.2 ∧ O G f p.1 = O G f p.2)) with hPdef
+    -- SIZE: `8 ≤ |Pairs α|`. Each of `8` distinct fibres `y ∈ S α` has a partner `pf y ∈ S α` of a
+    -- DIFFERENT `Φ`-value (its own `Φ`-fibre inside `S α` has `≤ 7 < 8 ≤ |S α|` members), and
+    -- `y ↦ (y, pf y)` injects those `8` fibres into `Pairs α`.
+    have hsize : ∀ α ∈ Good, 8 ≤ (Pairs α).card := by
       intro α hα
-      obtain ⟨hFold, hne⟩ := hpair α hα
-      have heq : E G f (yy α) + α * O G f (yy α)
-               = E G f (yy' α) + α * O G f (yy' α) := hFold
-      have hmul : α * (O G f (yy α) - O G f (yy' α)) = E G f (yy' α) - E G f (yy α) := by
-        linear_combination heq
-      refine ⟨?_, hmul⟩
-      intro hOeq
-      apply hne
-      have hz : (0 : BabyBear) = E G f (yy' α) - E G f (yy α) := by
-        rw [← hmul, hOeq]; ring
-      exact ⟨(sub_eq_zero.mp hz.symm).symm, hOeq⟩
-    -- `α ↦ (yy α, yy' α)` is injective on `Good`.
-    have hinj : Set.InjOn (fun α => (yy α, yy' α)) ↑Good := by
-      intro α hα γ hγ heqp
-      simp only [Prod.mk.injEq] at heqp
-      obtain ⟨h1, h2⟩ := heqp
-      obtain ⟨hαden, hαmul⟩ := hform α hα
-      obtain ⟨hγden, hγmul⟩ := hform γ hγ
-      rw [h1, h2] at hαmul hαden
-      have hDne : O G f (yy γ) - O G f (yy' γ) ≠ 0 := sub_ne_zero.mpr hγden
-      have hcancel : α * (O G f (yy γ) - O G f (yy' γ))
-                   = γ * (O G f (yy γ) - O G f (yy' γ)) := by rw [hαmul, hγmul]
-      exact mul_right_cancel₀ hDne hcancel
-    -- Injection into `κ × κ` (card `4096`) contradicts `4096 < |Good|`.
-    have hcardle : Good.card ≤ (Finset.univ : Finset (Fin (2 ^ 6) × Fin (2 ^ 6))).card :=
-      Finset.card_le_card_of_injOn (fun α => (yy α, yy' α))
-        (fun a _ => Finset.mem_coe.mpr (Finset.mem_univ _)) hinj
-    have hn : (Finset.univ : Finset (Fin (2 ^ 6) × Fin (2 ^ 6))).card = 4096 := by simp
-    rw [hn] at hcardle
+      obtain ⟨S8, hS8sub, hS8card⟩ := Finset.exists_subset_card_eq (hScard α hα)
+      have hpart : ∀ y ∈ S α, ∃ z, z ∈ S α ∧
+          ¬(E G f z = E G f y ∧ O G f z = O G f y) := by
+        intro y hy
+        by_contra hcon
+        push_neg at hcon
+        have hsub : S α ⊆
+            Finset.univ.filter (fun z : Fin (2 ^ 6) => E G f z = E G f y ∧ O G f z = O G f y) := by
+          intro z hz
+          simp only [Finset.mem_filter, Finset.mem_univ, true_and]
+          exact hcon z hz
+        have h7 := hnorich (E G f y) (O G f y)
+        have hle := Finset.card_le_card hsub
+        have := hScard α hα
+        omega
+      choose! pf hpf using hpart
+      have hmaps : ∀ y ∈ S8, (fun y => (y, pf y)) y ∈ Pairs α := by
+        intro y hy
+        have hyS : y ∈ S α := hS8sub hy
+        obtain ⟨hpfS, hpfne⟩ := hpf y hyS
+        simp only [hPdef, Finset.mem_filter, Finset.mem_product]
+        refine ⟨⟨hyS, hpfS⟩, ?_⟩
+        intro hΦ
+        exact hpfne ⟨hΦ.1.symm, hΦ.2.symm⟩
+      have hinj : Set.InjOn (fun y => (y, pf y)) ↑S8 := by
+        intro y _ y' _ heq
+        exact congrArg Prod.fst heq
+      have hcnt := Finset.card_le_card_of_injOn (fun y => (y, pf y)) hmaps hinj
+      rw [hS8card] at hcnt
+      exact hcnt
+    -- DISJOINTNESS: a shared pair `(y, y')` with `Φ y ≠ Φ y'` folds equal under both `α` and `β`,
+    -- so `α = (E y' − E y)/(O y − O y') = β`. Hence distinct `α` give disjoint `Pairs α`.
+    have hdisj : ∀ α ∈ Good, ∀ β ∈ Good, α ≠ β → Disjoint (Pairs α) (Pairs β) := by
+      intro α hα β hβ hαβ
+      rw [Finset.disjoint_left]
+      intro p hpα hpβ
+      simp only [hPdef, Finset.mem_filter, Finset.mem_product] at hpα hpβ
+      obtain ⟨⟨hp1α, hp2α⟩, hΦα⟩ := hpα
+      obtain ⟨⟨hp1β, hp2β⟩, _⟩ := hpβ
+      simp only [hmemS] at hp1α hp2α hp1β hp2β
+      have hEα : E G f p.1 + α * O G f p.1 = E G f p.2 + α * O G f p.2 := by
+        show Fold G α f p.1 = Fold G α f p.2; rw [hp1α, hp2α]
+      have hEβ : E G f p.1 + β * O G f p.1 = E G f p.2 + β * O G f p.2 := by
+        show Fold G β f p.1 = Fold G β f p.2; rw [hp1β, hp2β]
+      have hmulα : α * (O G f p.1 - O G f p.2) = E G f p.2 - E G f p.1 := by
+        linear_combination hEα
+      have hmulβ : β * (O G f p.1 - O G f p.2) = E G f p.2 - E G f p.1 := by
+        linear_combination hEβ
+      have hOne : O G f p.1 ≠ O G f p.2 := by
+        intro hOeq
+        apply hΦα
+        have hz : (0 : BabyBear) = E G f p.2 - E G f p.1 := by rw [← hmulα, hOeq]; ring
+        exact ⟨(sub_eq_zero.mp hz.symm).symm, hOeq⟩
+      have hDne : O G f p.1 - O G f p.2 ≠ 0 := sub_ne_zero.mpr hOne
+      have hcancel : α * (O G f p.1 - O G f p.2) = β * (O G f p.1 - O G f p.2) := by
+        rw [hmulα, hmulβ]
+      exact hαβ (mul_right_cancel₀ hDne hcancel)
+    -- COUNT: `8·|Good| ≤ ∑ |Pairs α| = |⋃ Pairs α| ≤ |κ × κ| = 4096`, so `|Good| ≤ 512`.
+    have hsum : 8 * Good.card ≤ ∑ α ∈ Good, (Pairs α).card := by
+      calc 8 * Good.card = ∑ _α ∈ Good, 8 := by rw [Finset.sum_const, smul_eq_mul]; ring
+        _ ≤ ∑ α ∈ Good, (Pairs α).card := Finset.sum_le_sum hsize
+    have hbu : (Good.biUnion Pairs).card = ∑ α ∈ Good, (Pairs α).card :=
+      Finset.card_biUnion hdisj
+    have huniv : (Finset.univ : Finset (Fin (2 ^ 6) × Fin (2 ^ 6))).card = 4096 := by simp
+    have hle : (Good.biUnion Pairs).card ≤ 4096 :=
+      le_trans (Finset.card_le_card (Finset.subset_univ _)) (le_of_eq huniv)
     omega
 
-/-- **`WrapCorrelatedAgreementSharp 4096`, PROVED (no hypothesis).** The δ-preserving proximity-gap
+/-- **`WrapCorrelatedAgreementSharp 512`, PROVED (no hypothesis).** The δ-preserving proximity-gap
 witness at the folded code's OWN Johnson radius (`dIn = 56 = (7/8)·64`), discharged by feeding the
-now-proved line primitive into the reduction. This is `BadChallengePoly friSetupWrapRate 112 56 4096`
-as an unconditional theorem — the residual named in `FriProximityGapWitness.lean §F`, CLOSED. -/
-theorem wrap_correlatedAgreement_sharp_proved : WrapCorrelatedAgreementSharp 4096 :=
-  sharp_of_correlatedAgreementLine 4096 wrap_correlatedAgreementLine
+now-proved line primitive into the reduction. This is `BadChallengePoly friSetupWrapRate 112 56 512`
+as an unconditional theorem — the residual named in `FriProximityGapWitness.lean §F`, CLOSED at the
+LINEAR list size `512 = |κ|²/(|κ| − dIn)`. -/
+theorem wrap_correlatedAgreement_sharp_proved : WrapCorrelatedAgreementSharp 512 :=
+  sharp_of_correlatedAgreementLine 512 wrap_correlatedAgreementLine
 
 /-- **The δ-PRESERVING FRI proximity gap, PROVED unconditionally.**
-`FriProximityGapChallenges friSetupWrapRate 112 56 4096`: a `112`-far word has at most `4096` folding
+`FriProximityGapChallenges friSetupWrapRate 112 56 512`: a `112`-far word has at most `512` folding
 challenges whose fold is `56`-close (relative `7/8`) to the constants — farness PRESERVED across the
 fold (`7/8 → 7/8`), the sharp radius the Fisher/packing method (`wrap_friProximityGap_johnson`,
-`21/32`) could not reach. No hypothesis remains. -/
+`21/32`) could not reach, at the LINEAR list size. No hypothesis remains. -/
 theorem wrap_friProximityGap_sharp_proved :
-    FriProximityGapChallenges friSetupWrapRate 112 56 4096 :=
-  wrap_friProximityGap_sharp 4096 wrap_correlatedAgreementLine
+    FriProximityGapChallenges friSetupWrapRate 112 56 512 :=
+  wrap_friProximityGap_sharp 512 wrap_correlatedAgreementLine
 
-/-- **The sharp gap FIRES on the concrete `112`-far `fSqWrap`, unconditionally**: at most `4096`
+/-- **The sharp gap FIRES on the concrete `112`-far `fSqWrap`, unconditionally**: at most `512`
 folding challenges fold it `56`-close to the constants, exhibited as the roots of an actual nonzero
-polynomial of degree `≤ 4096`. Non-vacuous (`fSqWrap_far` supplies the far hypothesis), no
+polynomial of degree `≤ 512`. Non-vacuous (`fSqWrap_far` supplies the far hypothesis), no
 correlated-agreement hypothesis assumed. -/
 theorem wrap_sharp_witness_fires_proved :
-    ∃ P : BabyBear[X], P ≠ 0 ∧ P.natDegree ≤ 4096 ∧
+    ∃ P : BabyBear[X], P ≠ 0 ∧ P.natDegree ≤ 512 ∧
       {α : BabyBear | closeN friSetupWrapRate.C' 56 (Fold friSetupWrapRate.geom α fSqWrap)}
         ⊆ {α : BabyBear | P.eval α = 0} :=
   wrap_correlatedAgreement_sharp_proved fSqWrap_far
