@@ -9,7 +9,7 @@
 // advanced deterministically with anvil's evm_increaseTime/evm_mine.
 
 import { ethers } from 'ethers';
-import { LAUNCHPAD_ABI, TOKEN_ABI } from '../shared/abi.mjs';
+import { LAUNCHPAD_ABI, TOKEN_ABI, POOL_ABI } from '../shared/abi.mjs';
 
 const RPC = process.env.RPC || 'http://127.0.0.1:8545';
 const ADDRESS = process.env.ADDRESS;
@@ -36,6 +36,7 @@ let pass = 0, fail = 0;
 const ok = (c, m) => { if (c) { pass++; console.log('  \x1b[32mPASS\x1b[0m', m); } else { fail++; console.log('  \x1b[31mFAIL\x1b[0m', m); } };
 const warp = async (s) => { await provider.send('evm_increaseTime', [s]); await provider.send('evm_mine', []); };
 const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+const spotFmt = (w) => (Number(BigInt(w || 0)) / 1e9).toFixed(3) + ' gwei/token';
 
 async function post(path, body) {
   const r = await fetch(SERVER + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
@@ -49,10 +50,11 @@ async function main() {
 
   // ── (a) register a disclosed launch ──
   const now = (await provider.getBlock('latest')).timestamp;
-  const schedule = { totalSupply: 1200, saleSupply: 1000, creatorAllocation: 200,
+  const schedule = { totalSupply: 1200, saleSupply: 1000, creatorAllocation: 100,
+    poolAllocation: 100, graduationBps: 5000,
     creatorLockUntil: now + 30 * 86400, reservePrice: (1n * G).toString() };
-  const s = [1200n, 1000n, 200n, BigInt(schedule.creatorLockUntil), 1n * G];
-  console.log('(a) registerLaunch — disclosed schedule (1000 sale + 200 creator = 1200)');
+  const s = [1200n, 1000n, 100n, 100n, BigInt(schedule.creatorLockUntil), 1n * G, 5000n];
+  console.log('(a) registerLaunch — disclosed schedule (1000 sale + 100 creator + 100 pool = 1200)');
   const txR = await pad(creator).registerLaunch('AuroraGate', 'AURG', s, 100, 100, ethers.ZeroAddress, ethers.ZeroAddress);
   const rcR = await txR.wait();
   let launchId, token;
@@ -65,9 +67,9 @@ async function main() {
 
   // reject a hidden-supply schedule (sale+creator != total)
   let reverted = false;
-  try { await pad(creator).registerLaunch.staticCall('Bad', 'BAD', [1000n, 900n, 200n, 0n, 1n * G], 10, 10, ethers.ZeroAddress, ethers.ZeroAddress); }
+  try { await pad(creator).registerLaunch.staticCall('Bad', 'BAD', [1000n, 900n, 200n, 100n, 0n, 1n * G, 5000n], 10, 10, ethers.ZeroAddress, ethers.ZeroAddress); }
   catch (_e) { reverted = true; }
-  ok(reverted, 'a supply that does not close (900+200≠1000) reverts — hidden supply unconstructable');
+  ok(reverted, 'a supply that does not close (900+200+100≠1000) reverts — hidden supply unconstructable');
 
   // ── backend: submit + verify the disclosure ──
   const disc = await post(`/api/launches/${launchId}/disclose`, { schedule,
@@ -128,8 +130,31 @@ async function main() {
   ok(await tok.balanceOf(aliceA) === 400n * U, 'alice full fill (400)');
   ok(await tok.balanceOf(carolA) === 200n * U, 'carol marginal fill (200)');
   ok(await tok.balanceOf(daveA) === 0n, 'dave below-clearing, no fill (0)');
+
+  // ── (e) graduation into the provably-solvent liquid market ──
+  console.log('(e) graduation → provably-solvent pool + live trading');
+  const [qSeed, tSeed] = await pad(creator).graduationSeed(launchId);
+  ok(qSeed === (3n * G * 1000n) / 2n, `disclosed quote seed = 50% of proceeds (${ethers.formatEther(qSeed)} ETH)`);
+  // a wrong/hidden seeding reverts (the disclosed fraction is enforced)
+  let seedFailed = false;
+  try { await pad(creator).graduate.staticCall(launchId, qSeed - 1n, tSeed); } catch (_e) { seedFailed = true; }
+  ok(seedFailed, 'a wrong/hidden graduation seeding reverts (GraduationSeedMismatch)');
+  await (await pad(creator).graduate(launchId, qSeed, tSeed)).wait();
+  ok(await pad(creator).isGraduated(launchId), 'launch graduated into a solvent pool');
+  const poolAddr = await pad(creator).poolOf(launchId);
+  const pool = new ethers.Contract(poolAddr, POOL_ABI, provider);
+  const [rq, rt] = await pool.reserves();
+  ok(rq === qSeed && rt === tSeed, 'pool seeded with exactly the disclosed reserves');
+  // a live buy clears against the never-insolvent pool
+  await (await pool.connect(alice).buy(0n, { value: 100n * G })).wait();
+  ok(true, 'a buy clears against the solvent pool');
+  // a trade that would drain the pool below its floor REVERTS (the solvency tooth)
+  let drainFailed = false;
+  try { await pool.connect(alice).buy.staticCall(0n, { value: 20000n * G }); } catch (_e) { drainFailed = true; }
+  ok(drainFailed, 'a drain below the reserve floor reverts (PoolFloorBreached ↔ pool_solvent_forever)');
+
   await (await pad(creator).withdrawProceeds(launchId)).wait();
-  ok(true, 'creator withdrew proceeds (non-custodial)');
+  ok(true, 'creator withdrew the remaining proceeds (non-custodial, post-graduation)');
 
   // creator alloc still locked (dev-dump guard)
   let lockFailed = false;
@@ -141,13 +166,16 @@ async function main() {
   let d = null;
   for (let i = 0; i < 20; i++) { // give the indexer's block-poller a moment
     d = (await get(`/api/launches/${launchId}`)).body;
-    if (d && d.clearingPrice === (3n * G).toString() && (d.holders?.length || 0) >= 3) break;
+    if (d && d.graduated && d.poolState && (d.holders?.length || 0) >= 3) break;
     await sleep(500);
   }
   ok(d && d.disclosure?.verified, 'GET /api/launches/:id — disclosure verified');
   ok(d && d.clearingPrice === (3n * G).toString(), `GET /api/launches/:id — clearing price ${d && ethers.formatUnits(d.clearingPrice,'gwei')} gwei`);
   ok(d && (d.holders?.length || 0) >= 3, `GET /api/launches/:id — holder distribution has ${d?.holders?.length} holders`);
   ok(d && (d.bids?.length || 0) === 4, `GET /api/launches/:id — revealed book has ${d?.bids?.length} bids`);
+  ok(d && d.graduated === true, 'GET /api/launches/:id — backend indexed the graduation');
+  ok(d && d.poolState && d.poolState.reserveToken !== '0' && d.poolState.spotWeiPerToken !== '0',
+     `GET /api/launches/:id — live pool reserves + spot ${d?.poolState && spotFmt(d.poolState.spotWeiPerToken)} indexed`);
   const list = (await get('/api/launches')).body;
   ok(list && list.launches.some((x) => x.id === launchId && typeof x.rank === 'number'),
      'GET /api/launches — launch present with a replayable rank score');

@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Script.sol";
 import {DreggLaunchpad} from "../contracts/launchpad/DreggLaunchpad.sol";
 import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
+import {DreggSolventPool} from "../contracts/launchpad/DreggSolventPool.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
 
@@ -96,12 +97,15 @@ contract DeployLaunchpad is Script {
         vm.deal(carol, 10 ether);
         vm.deal(dave, 10 ether);
 
-        // (a) register: disclosed schedule, supply closes (1000 sale + 200 creator
-        //     = 1200 total). No hidden supply is expressible.
+        // (a) register: disclosed schedule, supply closes (1000 sale + 100 creator
+        //     + 100 pool = 1200 total). No hidden supply is expressible. 50% of the
+        //     raise proceeds graduate into the solvent pool (graduationBps = 5000).
         DreggLaunchpad.Schedule memory s = DreggLaunchpad.Schedule({
             totalSupply: 1200,
             saleSupply: 1000,
-            creatorAllocation: 200,
+            creatorAllocation: 100,
+            poolAllocation: 100,
+            graduationBps: 5000,
             creatorLockUntil: uint64(block.timestamp) + 30 days,
             reservePrice: 1 * G
         });
@@ -157,10 +161,34 @@ contract DeployLaunchpad is Script {
         require(tok.balanceOf(carol) == 200 * pad.TOKEN_UNIT(), "demo: carol marginal fill");
         require(tok.balanceOf(dave) == 0, "demo: dave below-clearing, no fill");
 
+        // (e) GRADUATION — seed a provably-solvent pool with the disclosed fraction
+        //     of the raise (50% of 3000 gwei proceeds + 100 tokens), then a live
+        //     trade against the never-insolvent pool.
+        _graduateAndTrade(pad, id, alice);
+
         vm.prank(creator);
         pad.withdrawProceeds(id);
-        console.log("  raise proceeds (wei)  :", uint256(3 * G * 1000));
-        console.log(">> DEMO LAUNCH cleared fairly (uniform price, no snipe path).");
+        console.log("  creator remainder (wei):", uint256(3 * G * 1000) / 2);
+        console.log(">> DEMO LAUNCH cleared fairly + GRADUATED to a provably-solvent market.");
+    }
+
+    /// The graduation demo, factored out to keep `run`'s stack shallow.
+    function _graduateAndTrade(DreggLaunchpad pad, uint256 id, address alice) internal {
+        (uint256 qSeed, uint256 tSeed) = pad.graduationSeed(id);
+        require(qSeed == (3 * G * 1000) / 2, "demo: quote seed = 50% of proceeds");
+        require(tSeed == 100 * pad.TOKEN_UNIT(), "demo: token seed = poolAllocation");
+        address pool = pad.graduate(id, qSeed, tSeed);
+        console.log("  graduated pool        :", pool);
+        DreggSolventPool p = DreggSolventPool(pool);
+        (uint256 rq, uint256 rt) = p.reserves();
+        console.log("  pool quote reserve    :", rq);
+        console.log("  pool token reserve    :", rt);
+        console.log("  spot wei/token        :", p.spotPriceWeiPerToken());
+
+        vm.deal(alice, 1 ether);
+        vm.prank(alice);
+        uint256 got = p.buy{value: 100 * G}(0);
+        console.log("  alice bought (tokens) :", got);
     }
 
     function _commit(DreggLaunchpad pad, uint256 id, address who, uint256 price, uint256 qty, bytes32 salt)

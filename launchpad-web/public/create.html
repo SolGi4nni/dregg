@@ -19,9 +19,11 @@
     <div>
       <h2>Register a launch — a disclosed-supply creation turn</h2>
       <div class="banner">
-        The supply MUST close: <b>sale + creator = total</b>. A schedule that hides supply does not
+        The supply MUST close: <b>sale + creator + pool = total</b>. A schedule that hides supply does not
         close and the contract reverts (<span class="mono">SupplyDoesNotClose</span>). The token is a
         hard-capped ERC-20 minted <b>exactly once</b> for the whole disclosed supply — no second mint door.
+        The <b>pool allocation</b> + a disclosed fraction of the raise proceeds seed the provably-solvent
+        market the token <b>graduates</b> into.
       </div>
       <div class="card">
         <div class="row2">
@@ -31,12 +33,17 @@
         <div class="row3">
           <div><label>Total supply</label><input id="total" value="1200"></div>
           <div><label>Sale supply</label><input id="sale" value="1000"></div>
-          <div><label>Creator alloc</label><input id="alloc" value="200"></div>
+          <div><label>Creator alloc</label><input id="alloc" value="100"></div>
         </div>
         <div class="row3">
+          <div><label>Pool alloc (graduation)</label><input id="poolAlloc" value="100"></div>
+          <div><label>Graduation % of proceeds</label><input id="gradPct" value="50"></div>
           <div><label>Reserve (gwei/token)</label><input id="reserve" value="1"></div>
+        </div>
+        <div class="row3">
           <div><label>Creator lock (days)</label><input id="lockDays" value="30"></div>
           <div><label></label><div class="note" id="closeHint"></div></div>
+          <div><label></label><div class="note">tokens graduate into a never-insolvent pool</div></div>
         </div>
         <div class="row2">
           <div><label>Commit window (sec)</label><input id="commitDur" value="60"></div>
@@ -81,23 +88,25 @@ await mountWalletPill();
 
 const $ = (id) => document.getElementById(id);
 function renderCard() {
-  const total = +$('total').value, sale = +$('sale').value, alloc = +$('alloc').value;
-  const closes = sale + alloc === total && total > 0;
+  const total = +$('total').value, sale = +$('sale').value, alloc = +$('alloc').value, pool = +$('poolAlloc').value;
+  const closes = sale + alloc + pool === total && total > 0;
   $('closeHint').innerHTML = closes ? '<span class="badge ok">closes ✓</span>'
-    : `<span class="badge no">${sale}+${alloc}≠${total}</span>`;
+    : `<span class="badge no">${sale}+${alloc}+${pool}≠${total}</span>`;
   $('scheduleCard').innerHTML = `
     <h4>${$('name').value} <span class="tick">$${$('symbol').value}</span></h4>
     <div class="kv" style="margin-top:8px">
       <span class="k">total supply</span><span class="v mono">${total}</span>
       <span class="k">— sale (raise)</span><span class="v mono">${sale}</span>
       <span class="k">— creator alloc</span><span class="v mono">${alloc} (locked ${$('lockDays').value}d)</span>
+      <span class="k">— pool alloc (graduation)</span><span class="v mono">${pool}</span>
+      <span class="k">graduation seed</span><span class="v mono">${$('gradPct').value}% of proceeds + ${pool} tokens</span>
       <span class="k">reserve price</span><span class="v mono">${$('reserve').value} gwei/token</span>
       <span class="k">accounting</span><span class="v">${closes
-        ? '<span class="badge ok">sale + creator = total</span>'
+        ? '<span class="badge ok">sale + creator + pool = total</span>'
         : '<span class="badge no">does not close</span>'}</span>
     </div>`;
 }
-['name','symbol','total','sale','alloc','reserve','lockDays'].forEach((id) => $(id).oninput = renderCard);
+['name','symbol','total','sale','alloc','poolAlloc','gradPct','reserve','lockDays'].forEach((id) => $(id).oninput = renderCard);
 renderCard();
 
 $('go').onclick = async () => {
@@ -110,6 +119,7 @@ $('go').onclick = async () => {
     const r = await register({
       name: $('name').value, symbol: $('symbol').value,
       totalSupply: +$('total').value, saleSupply: +$('sale').value, creatorAllocation: +$('alloc').value,
+      poolAllocation: +$('poolAlloc').value, graduationBps: Math.round(+$('gradPct').value * 100),
       creatorLockUntil: lockUntil, reservePriceWei: (BigInt(+$('reserve').value) * G).toString(),
       commitDuration: +$('commitDur').value, revealDuration: +$('revealDur').value,
     });

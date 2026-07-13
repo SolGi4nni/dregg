@@ -4,6 +4,7 @@ pragma solidity ^0.8.20;
 import "forge-std/Test.sol";
 import {DreggLaunchpad} from "../contracts/launchpad/DreggLaunchpad.sol";
 import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
+import {DreggSolventPool} from "../contracts/launchpad/DreggSolventPool.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
 
@@ -71,7 +72,9 @@ contract DreggLaunchpadTest is Test {
         s = DreggLaunchpad.Schedule({
             totalSupply: 1200,
             saleSupply: 1000,
-            creatorAllocation: 200,
+            creatorAllocation: 100,
+            poolAllocation: 100, // reserved to seed the graduated pool
+            graduationBps: 5000, // 50% of raise proceeds seed the pool quote reserve
             creatorLockUntil: 0, // set per-test
             reservePrice: 1 * G
         });
@@ -355,5 +358,206 @@ contract DreggLaunchpadTest is Test {
         assertTrue(pad.clearingAttested(id), "clearing attested by dregg proof (rung 2)");
         // Undersubscribed (800 < 1000): both win, uniform price = lowest winner (bob, 3 gwei).
         assertEq(pad.clearingPriceOf(id), 3 * G, "uniform price = lowest winning bid (bob)");
+    }
+
+    // ══════════════════════════════════════════════════════════════════════════
+    // GRADUATION — the cleared raise graduates into a PROVABLY-SOLVENT liquid
+    // market (§2.3). Seed = a DISCLOSED fraction of the raise; trades cannot drain
+    // the pool below its floor (rung-6 pool_solvent_forever, on-chain).
+    // ══════════════════════════════════════════════════════════════════════════
+
+    /// Run a full fair launch to CLEARED + all winners SETTLED (proceeds realized).
+    /// alice 5, bob 4, carol 3, dave 2 gwei × 400 → clear @ 3 gwei, sold 1000,
+    /// proceeds = 3 gwei × 1000 = 3000 gwei. Returns the launch id.
+    function _runToSettled() internal returns (uint256 id) {
+        id = _register(_schedule(), ILaunchEligibility(address(0)), IClearingAttestor(address(0)));
+        _commit(id, alice, 5 * G, 400, keccak256("a"));
+        _commit(id, bob, 4 * G, 400, keccak256("b"));
+        _commit(id, carol, 3 * G, 400, keccak256("c"));
+        _commit(id, dave, 2 * G, 400, keccak256("d"));
+        vm.warp(block.timestamp + COMMIT_DUR);
+        vm.prank(alice);
+        pad.revealBid(id, 5 * G, 400, keccak256("a")); // index 0
+        vm.prank(bob);
+        pad.revealBid(id, 4 * G, 400, keccak256("b")); // index 1
+        vm.prank(carol);
+        pad.revealBid(id, 3 * G, 400, keccak256("c")); // index 2
+        vm.prank(dave);
+        pad.revealBid(id, 2 * G, 400, keccak256("d")); // index 3
+        vm.warp(block.timestamp + REVEAL_DUR);
+        uint256[] memory order = new uint256[](4);
+        order[0] = 0;
+        order[1] = 1;
+        order[2] = 2;
+        order[3] = 3;
+        pad.finalizeClearing(id, order, "");
+        pad.settleBid(id, alice);
+        pad.settleBid(id, bob);
+        pad.settleBid(id, carol);
+        pad.settleBid(id, dave);
+    }
+
+    /// The canonical disclosed seed for the standard launch: 50% of 3000 gwei
+    /// proceeds = 1500 gwei quote; 100 whole tokens.
+    uint256 constant EXP_QUOTE_SEED = 1500 * G; // 1500 gwei wei
+    uint256 constant EXP_TOKEN_SEED = 100 * 1e18;
+
+    // ── (i) GRADUATION RUNS: seed the solvent pool, trades clear against it ──────
+
+    function test_GraduatesToSolventPoolAndTrades() public {
+        uint256 id = _runToSettled();
+
+        // The disclosed seed is on-chain-verifiable (deterministic from cleared state).
+        (uint256 qSeed, uint256 tSeed) = pad.graduationSeed(id);
+        assertEq(qSeed, EXP_QUOTE_SEED, "quote seed = graduationBps (50%) of proceeds");
+        assertEq(tSeed, EXP_TOKEN_SEED, "token seed = disclosed poolAllocation");
+
+        uint256 padBalBefore = address(pad).balance;
+        DreggSolventPool pool = DreggSolventPool(pad.graduate(id, qSeed, tSeed));
+        assertTrue(pad.isGraduated(id), "launch graduated");
+        assertEq(pad.poolOf(id), address(pool), "pool recorded");
+        // The seed ETH left the launchpad and is in the pool.
+        assertEq(padBalBefore - address(pad).balance, EXP_QUOTE_SEED, "seed ETH left the launchpad");
+        assertEq(address(pool).balance, EXP_QUOTE_SEED, "seed ETH is in the pool");
+
+        _assertSeededPool(pool);
+        _assertBuyClears(pool);
+
+        // The creator withdraws only the REMAINDER (proceeds - seed).
+        uint256 balBefore = creator.balance;
+        vm.prank(creator);
+        pad.withdrawProceeds(id);
+        assertEq(creator.balance - balBefore, 3 * G * 1000 - EXP_QUOTE_SEED, "creator gets proceeds minus seed");
+    }
+
+    /// The graduated pool is seeded with exactly the disclosed reserves + floors.
+    function _assertSeededPool(DreggSolventPool pool) internal view {
+        (uint256 rq, uint256 rt) = pool.reserves();
+        assertEq(rq, EXP_QUOTE_SEED, "pool quote reserve = seed");
+        assertEq(rt, EXP_TOKEN_SEED, "pool token reserve = seed");
+        // Floors = 20% of the seed (the disclosed reserve floor, rung-6).
+        (uint256 fq, uint256 ft) = pool.floors();
+        assertEq(fq, EXP_QUOTE_SEED * 2000 / 10000, "quote floor = 20% of seed");
+        assertEq(ft, EXP_TOKEN_SEED * 2000 / 10000, "token floor = 20% of seed");
+        // Spot price = reserveQuote·1e18 / reserveToken.
+        assertEq(pool.spotPriceWeiPerToken(), (EXP_QUOTE_SEED * 1e18) / EXP_TOKEN_SEED, "honest spot price");
+    }
+
+    /// A live buy clears against the never-insolvent pool; reserves move, x*y grows,
+    /// the floor holds.
+    function _assertBuyClears(DreggSolventPool pool) internal {
+        (uint256 rq, uint256 rt) = pool.reserves();
+        (, uint256 ft) = pool.floors();
+        uint256 kBefore = rq * rt;
+        vm.deal(alice, 1 ether);
+        uint256 tokBefore = pool.token().balanceOf(alice);
+        vm.prank(alice);
+        uint256 out = pool.buy{value: 100 * G}(0);
+        assertGt(out, 0, "buy delivered tokens");
+        assertEq(pool.token().balanceOf(alice) - tokBefore, out, "buyer received the tokens");
+        (uint256 rq2, uint256 rt2) = pool.reserves();
+        assertEq(rq2, rq + 100 * G, "quote reserve grew by the input");
+        assertEq(rt2, rt - out, "token reserve fell by the output");
+        assertGe(rq2 * rt2, kBefore, "x*y non-decreasing (constant product)");
+        assertGe(rt2, ft, "token reserve stayed above the floor");
+    }
+
+    // ── (ii) THE SOLVENCY TOOTH: a drain below the floor REVERTS ─────────────────
+
+    function test_SolvencyDrainReverts() public {
+        uint256 id = _runToSettled();
+        (uint256 qSeed, uint256 tSeed) = pad.graduationSeed(id);
+        DreggSolventPool pool = DreggSolventPool(pad.graduate(id, qSeed, tSeed));
+
+        // A whale buy whose output would push the token reserve below the floor
+        // (20% = 20 tokens) REVERTS — the pool cannot be drained (rung-6).
+        vm.deal(bob, 100 ether);
+        vm.prank(bob);
+        // The floor bites: PoolFloorBreached(reserveAfter, floorToken) — match the
+        // selector, ignore the (computed) args.
+        vm.expectPartialRevert(DreggSolventPool.PoolFloorBreached.selector);
+        pool.buy{value: 20_000 * G}(0);
+
+        // Sanity: reserves untouched by the reverted trade.
+        (uint256 rq, uint256 rt) = pool.reserves();
+        assertEq(rq, EXP_QUOTE_SEED, "quote reserve unchanged after revert");
+        assertEq(rt, EXP_TOKEN_SEED, "token reserve unchanged after revert");
+
+        // A modest buy within the floor still clears (both polarities).
+        vm.deal(bob, 1 ether);
+        vm.prank(bob);
+        uint256 out = pool.buy{value: 50 * G}(0);
+        assertGt(out, 0, "a within-floor buy clears");
+    }
+
+    // ── (iii) DISCLOSED FRACTION ENFORCED: a wrong/hidden seeding REVERTS ────────
+
+    function test_GraduationSeedMismatchReverts() public {
+        uint256 id = _runToSettled();
+        (uint256 qSeed, uint256 tSeed) = pad.graduationSeed(id);
+
+        // Under-seeding the pool (skimming quote) reverts.
+        vm.expectRevert(abi.encodeWithSelector(DreggLaunchpad.GraduationSeedMismatch.selector, qSeed, tSeed));
+        pad.graduate(id, qSeed - 1, tSeed);
+
+        // Wrong token seed reverts.
+        vm.expectRevert(abi.encodeWithSelector(DreggLaunchpad.GraduationSeedMismatch.selector, qSeed, tSeed));
+        pad.graduate(id, qSeed, tSeed + 1);
+
+        // The correct disclosed seed graduates.
+        pad.graduate(id, qSeed, tSeed);
+        assertTrue(pad.isGraduated(id), "correct seed graduates");
+    }
+
+    // ── (iv) SETTLE-FIRST GATE + no double graduation ───────────────────────────
+
+    function test_GraduationRequiresSettlement() public {
+        // Run to CLEARED but leave a winner unsettled → realized proceeds short.
+        uint256 id = _register(_schedule(), ILaunchEligibility(address(0)), IClearingAttestor(address(0)));
+        _commit(id, alice, 5 * G, 400, keccak256("a"));
+        _commit(id, bob, 4 * G, 400, keccak256("b"));
+        _commit(id, carol, 3 * G, 400, keccak256("c"));
+        _commit(id, dave, 2 * G, 400, keccak256("d"));
+        vm.warp(block.timestamp + COMMIT_DUR);
+        vm.prank(alice);
+        pad.revealBid(id, 5 * G, 400, keccak256("a"));
+        vm.prank(bob);
+        pad.revealBid(id, 4 * G, 400, keccak256("b"));
+        vm.prank(carol);
+        pad.revealBid(id, 3 * G, 400, keccak256("c"));
+        vm.prank(dave);
+        pad.revealBid(id, 2 * G, 400, keccak256("d"));
+        vm.warp(block.timestamp + REVEAL_DUR);
+        uint256[] memory order = new uint256[](4);
+        order[0] = 0;
+        order[1] = 1;
+        order[2] = 2;
+        order[3] = 3;
+        pad.finalizeClearing(id, order, "");
+        pad.settleBid(id, alice); // only alice settled → proceeds < canonical
+
+        (uint256 qSeed, uint256 tSeed) = pad.graduationSeed(id);
+        vm.expectRevert(); // GraduationRequiresSettlement(realized, canonical)
+        pad.graduate(id, qSeed, tSeed);
+
+        // Settle the rest → graduation proceeds.
+        pad.settleBid(id, bob);
+        pad.settleBid(id, carol);
+        pad.settleBid(id, dave);
+        pad.graduate(id, qSeed, tSeed);
+        assertTrue(pad.isGraduated(id), "graduates once fully settled");
+
+        // Cannot graduate twice.
+        vm.expectRevert(DreggLaunchpad.AlreadyGraduated.selector);
+        pad.graduate(id, qSeed, tSeed);
+    }
+
+    function test_CannotGraduateAfterProceedsWithdrawn() public {
+        uint256 id = _runToSettled();
+        (uint256 qSeed, uint256 tSeed) = pad.graduationSeed(id);
+        vm.prank(creator);
+        pad.withdrawProceeds(id); // creator took the ETH first
+        vm.expectRevert(DreggLaunchpad.ProceedsAlreadyWithdrawn.selector);
+        pad.graduate(id, qSeed, tSeed);
     }
 }

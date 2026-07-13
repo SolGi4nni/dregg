@@ -2,6 +2,7 @@
 pragma solidity ^0.8.20;
 
 import {DreggLaunchToken} from "./DreggLaunchToken.sol";
+import {DreggSolventPool} from "./DreggSolventPool.sol";
 import {ILaunchEligibility} from "./ILaunchEligibility.sol";
 import {IClearingAttestor} from "./IClearingAttestor.sol";
 
@@ -29,6 +30,16 @@ import {IClearingAttestor} from "./IClearingAttestor.sol";
 ///       tokens, and is refunded the rest of its deposit; the creator withdraws
 ///       proceeds; the creator allocation is VESTING-LOCKED until the disclosed
 ///       cliff — the dev-dump guard (§3, vector A).
+///   (e) GRADUATION into a PROVABLY-SOLVENT liquid market (§2.3): once the raise
+///       has cleared and settled, the token graduates into a `DreggSolventPool` —
+///       the DrEX rung-6 never-insolvent pool (`Market/Liquidity.lean`). The pool
+///       is seeded with a DISCLOSED fraction (`graduationBps`) of the canonical
+///       raise proceeds (the quote reserve) + the disclosed `poolAllocation` (the
+///       token reserve). The seeding is deterministic + on-chain-verifiable
+///       (`graduationSeed`); a wrong/hidden seeding reverts (`GraduationSeedMismatch`).
+///       Post-graduation the token trades on the pool, which CANNOT be drained
+///       below its floor (`DreggSolventPool.PoolFloorBreached`) — the fair
+///       post-launch market a pump.fun bonding curve cannot offer.
 ///
 /// ## Trust grades (honest, per `DREGG-LAUNCHPAD-DESIGN.md` §0 spine)
 /// - supply disclosure + one-shot mint: BUILT/on-chain-enforced (no hidden door).
@@ -56,9 +67,18 @@ contract DreggLaunchpad {
         uint256 totalSupply; // whole tokens, the disclosed cap
         uint256 saleSupply; // whole tokens offered in the raise
         uint256 creatorAllocation; // whole tokens kept by the creator (locked)
+        uint256 poolAllocation; // whole tokens reserved to seed the graduated pool
         uint64 creatorLockUntil; // vesting cliff: creator alloc claimable after
         uint256 reservePrice; // min wei-per-whole-token for a winning bid
+        uint16 graduationBps; // disclosed fraction of raise proceeds seeded as pool quote
     }
+
+    /// The disclosed fraction of the graduation SEED that becomes each reserve's
+    /// solvency FLOOR — the minimum the pool may never trade below (rung-6). 2000 =
+    /// 20% of the seed is floored; a swap that would breach it reverts.
+    uint16 public constant FLOOR_BPS = 2000;
+    /// The graduated pool's swap fee (basis points) — makes `x·y` non-decreasing.
+    uint16 public constant POOL_FEE_BPS = 30;
 
     struct Launch {
         address creator;
@@ -67,6 +87,8 @@ contract DreggLaunchpad {
         uint256 totalSupply;
         uint256 saleSupply;
         uint256 creatorAllocation;
+        uint256 poolAllocation; // disclosed tokens reserved for the graduated pool
+        uint16 graduationBps; // disclosed fraction of proceeds seeded as pool quote
         uint64 creatorLockUntil;
         uint256 reservePrice;
         uint64 commitEnd;
@@ -81,6 +103,8 @@ contract DreggLaunchpad {
         IClearingAttestor attestor; // 0 = REPLAYABLE-only (rung 1)
         bool clearingAttested; // true iff a dregg clearing proof attested it
         uint256 revealedCount;
+        bool graduated; // true once the token graduated into a solvent pool
+        DreggSolventPool pool; // the graduated liquid market (0 until graduation)
     }
 
     struct Bid {
@@ -116,6 +140,14 @@ contract DreggLaunchpad {
     event BidSettled(uint256 indexed launchId, address indexed bidder, uint256 filled, uint256 paid, uint256 refunded);
     event ProceedsWithdrawn(uint256 indexed launchId, address indexed creator, uint256 amount);
     event CreatorAllocationClaimed(uint256 indexed launchId, address indexed creator, uint256 amount);
+    event Graduated(
+        uint256 indexed launchId,
+        address indexed pool,
+        uint256 quoteSeed,
+        uint256 tokenSeed,
+        uint256 floorQuote,
+        uint256 floorToken
+    );
 
     // ─── Errors ───────────────────────────────────────────────────────────────
     error SupplyDoesNotClose(uint256 sale, uint256 creator, uint256 total); // hidden supply
@@ -139,6 +171,13 @@ contract DreggLaunchpad {
     error CreatorLockActive(uint64 until);
     error AlreadyDone();
     error TransferFailed();
+    // ── graduation ──
+    error AlreadyGraduated();
+    error NotCleared();
+    error GraduationRequiresSettlement(uint256 realized, uint256 canonical); // settle winners first
+    error GraduationSeedMismatch(uint256 correctQuote, uint256 correctToken); // wrong/hidden seeding
+    error NothingToGraduate();
+    error ProceedsAlreadyWithdrawn();
 
     // ─── (a) Registration — disclosed supply, no hidden door ────────────────────
 
@@ -157,11 +196,14 @@ contract DreggLaunchpad {
         ILaunchEligibility gate,
         IClearingAttestor attestor
     ) external returns (uint256 launchId) {
-        // NO HIDDEN SUPPLY: the disclosed parts must exactly account for the cap.
-        if (s.saleSupply + s.creatorAllocation != s.totalSupply || s.totalSupply == 0) {
+        // NO HIDDEN SUPPLY: the disclosed parts — sale + creator + pool — must
+        // exactly account for the cap. The pool allocation is disclosed up front,
+        // so the graduation seed is a committed public input (no hidden slice).
+        if (s.saleSupply + s.creatorAllocation + s.poolAllocation != s.totalSupply || s.totalSupply == 0) {
             revert SupplyDoesNotClose(s.saleSupply, s.creatorAllocation, s.totalSupply);
         }
         if (commitDuration == 0 || revealDuration == 0) revert BadWindow();
+        if (s.graduationBps > 10000) revert BadWindow();
 
         launchId = ++launchCount;
 
@@ -180,6 +222,8 @@ contract DreggLaunchpad {
         L.totalSupply = s.totalSupply;
         L.saleSupply = s.saleSupply;
         L.creatorAllocation = s.creatorAllocation;
+        L.poolAllocation = s.poolAllocation;
+        L.graduationBps = s.graduationBps;
         L.creatorLockUntil = s.creatorLockUntil;
         L.reservePrice = s.reservePrice;
         L.commitEnd = commitEnd;
@@ -408,10 +452,96 @@ contract DreggLaunchpad {
         emit CreatorAllocationClaimed(launchId, L.creator, amount);
     }
 
+    // ─── (e) Graduation — into the provably-solvent liquid market ───────────────
+
+    /// @notice The DISCLOSED, on-chain-verifiable graduation seed for a cleared
+    ///         launch: the quote reserve is `graduationBps` of the CANONICAL raise
+    ///         proceeds (`clearingPrice · soldQty` — deterministic from cleared
+    ///         state, independent of settle ordering), and the token reserve is the
+    ///         disclosed `poolAllocation`. Anyone reads this and checks the pool was
+    ///         seeded with exactly these amounts (no hidden/skimmed seeding).
+    function graduationSeed(uint256 launchId) public view returns (uint256 quoteSeed, uint256 tokenSeed) {
+        Launch storage L = _launches[launchId];
+        uint256 canonicalProceeds = L.clearingPrice * L.soldQty;
+        quoteSeed = (canonicalProceeds * L.graduationBps) / 10000;
+        tokenSeed = L.poolAllocation * TOKEN_UNIT;
+    }
+
+    /// @notice GRADUATE a cleared+settled launch into a `DreggSolventPool`. The
+    ///         seed is fixed by the disclosed schedule (`graduationSeed`); the
+    ///         caller passes the amounts it BELIEVES are correct and a mismatch
+    ///         reverts (`GraduationSeedMismatch`) — the disclosed fraction is
+    ///         enforced, a wrong/hidden seeding cannot pass. All winners must be
+    ///         settled first (so `proceeds` equals the canonical proceeds); the pool
+    ///         takes its disclosed quote cut and the REMAINDER stays withdrawable by
+    ///         the creator. The graduated pool is provably never-insolvent
+    ///         (`DreggSolventPool.PoolFloorBreached`, rung-6).
+    ///
+    /// @param claimedQuoteSeed the caller's asserted quote (wei) seed — checked.
+    /// @param claimedTokenSeed the caller's asserted token (base unit) seed — checked.
+    function graduate(uint256 launchId, uint256 claimedQuoteSeed, uint256 claimedTokenSeed)
+        external
+        returns (address pool)
+    {
+        Launch storage L = _launches[launchId];
+        if (L.phase != Phase.Cleared && L.phase != Phase.Finalized) revert NotCleared();
+        if (L.graduated) revert AlreadyGraduated();
+        if (L.proceedsWithdrawn) revert ProceedsAlreadyWithdrawn(); // pool needs the ETH
+
+        // All winners settled ⇒ realized proceeds == the canonical proceeds. This
+        // is the settle-first gate: an unsettled winner leaves proceeds short.
+        uint256 canonicalProceeds = L.clearingPrice * L.soldQty;
+        if (L.proceeds != canonicalProceeds) revert GraduationRequiresSettlement(L.proceeds, canonicalProceeds);
+
+        (uint256 correctQuote, uint256 correctToken) = graduationSeed(launchId);
+        if (correctQuote == 0 || correctToken == 0) revert NothingToGraduate();
+        // THE DISCLOSED FRACTION, ENFORCED — a wrong/hidden seeding reverts.
+        if (claimedQuoteSeed != correctQuote || claimedTokenSeed != correctToken) {
+            revert GraduationSeedMismatch(correctQuote, correctToken);
+        }
+
+        L.graduated = true;
+        L.proceeds -= correctQuote; // the pool's disclosed cut; remainder → creator
+
+        uint256 fQuote = (correctQuote * FLOOR_BPS) / 10000;
+        uint256 fToken = (correctToken * FLOOR_BPS) / 10000;
+        DreggSolventPool p =
+            new DreggSolventPool(address(L.token), launchId, fQuote, fToken, POOL_FEE_BPS);
+        L.pool = p;
+
+        // Seed: token reserve pre-transferred, quote reserve sent with initialize.
+        L.token.transfer(address(p), correctToken);
+        p.initialize{value: correctQuote}(correctToken);
+
+        emit Graduated(launchId, address(p), correctQuote, correctToken, fQuote, fToken);
+        return address(p);
+    }
+
     // ─── Views ──────────────────────────────────────────────────────────────────
 
     function phaseOf(uint256 launchId) external view returns (Phase) {
         return _launches[launchId].phase;
+    }
+
+    function isGraduated(uint256 launchId) external view returns (bool) {
+        return _launches[launchId].graduated;
+    }
+
+    function poolOf(uint256 launchId) external view returns (address) {
+        return address(_launches[launchId].pool);
+    }
+
+    function proceedsOf(uint256 launchId) external view returns (uint256) {
+        return _launches[launchId].proceeds;
+    }
+
+    function graduationParamsOf(uint256 launchId)
+        external
+        view
+        returns (uint256 poolAllocation, uint16 graduationBps)
+    {
+        Launch storage L = _launches[launchId];
+        return (L.poolAllocation, L.graduationBps);
     }
 
     function clearingPriceOf(uint256 launchId) external view returns (uint256) {

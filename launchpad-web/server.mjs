@@ -26,7 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LaunchpadIndexer } from './indexer.mjs';
-import { LAUNCHPAD_ABI } from './shared/abi.mjs';
+import { LAUNCHPAD_ABI, POOL_ABI } from './shared/abi.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const PUB = path.join(HERE, 'public');
@@ -66,7 +66,7 @@ async function handle(req, res) {
 
   // ── API ──
   if (url === '/api/config') {
-    return json(res, 200, { rpc: RPC, address: ADDRESS, abi: LAUNCHPAD_ABI });
+    return json(res, 200, { rpc: RPC, address: ADDRESS, abi: LAUNCHPAD_ABI, poolAbi: POOL_ABI });
   }
   if (url === '/api/launches' && req.method === 'GET') {
     if (!indexer) return json(res, 503, { error: 'indexer not ready' });

@@ -16,7 +16,7 @@
 //     proof a launch card shows.
 
 import { ethers } from 'ethers';
-import { LAUNCHPAD_ABI, TOKEN_ABI, PHASE } from './shared/abi.mjs';
+import { LAUNCHPAD_ABI, TOKEN_ABI, POOL_ABI, PHASE } from './shared/abi.mjs';
 
 export class LaunchpadIndexer {
   constructor({ rpcUrl, launchpad }) {
@@ -45,8 +45,10 @@ export class LaunchpadIndexer {
         BigInt(schedule.totalSupply),
         BigInt(schedule.saleSupply),
         BigInt(schedule.creatorAllocation),
+        BigInt(schedule.poolAllocation),
         BigInt(schedule.creatorLockUntil),
         BigInt(schedule.reservePrice),
+        BigInt(schedule.graduationBps),
       ]);
     } catch (_e) { verified = false; }
     this.disclosed.set(id, { schedule, meta: meta || {}, verified });
@@ -75,6 +77,7 @@ export class LaunchpadIndexer {
       commitEnd: Number(a.commitEnd), revealEnd: Number(a.revealEnd),
       storedPhase: 'Commit', clearingPrice: '0', soldQty: '0', proceeds: '0',
       clearingAttested: false,
+      graduated: false, pool: null, poolState: null,
       bids: {}, // bidder -> { committed, revealed, price, qty, filled, settled, deposit }
     });
     await this._subscribeToken(a.token);
@@ -126,9 +129,53 @@ export class LaunchpadIndexer {
         L.clearingAttested = attested;
         L.revealedCount = Number(revealed);
       } catch (_e) {}
+      // graduation + the live pool (the provably-solvent liquid market)
+      await this._refreshGraduation(L);
       // bids: refresh for every address we have seen commit/reveal from
       await this._refreshBids(L);
     }
+  }
+
+  // ── graduation state + the live solvent pool (reserves / price / floor / trades) ──
+  async _refreshGraduation(L) {
+    try {
+      const graduated = await this.pad.isGraduated(L.id);
+      L.graduated = graduated;
+      // the on-chain-verifiable disclosed seed (deterministic from cleared state)
+      try {
+        const [qSeed, tSeed] = await this.pad.graduationSeed(L.id);
+        L.graduationSeed = { quoteSeed: qSeed.toString(), tokenSeed: tSeed.toString() };
+      } catch (_e) {}
+      if (!graduated) return;
+      const poolAddr = await this.pad.poolOf(L.id);
+      L.pool = poolAddr;
+      const pool = new ethers.Contract(poolAddr, POOL_ABI, this.provider);
+      const [rq, rt, fq, ft, spot, fee] = await Promise.all([
+        pool.reserveQuote(), pool.reserveToken(), pool.floorQuote(), pool.floorToken(),
+        pool.spotPriceWeiPerToken(), pool.feeBps(),
+      ]);
+      // recent trades (Bought / Sold) — the honest tape, read from logs.
+      let trades = [];
+      try {
+        const [bought, sold] = await Promise.all([
+          pool.queryFilter(pool.filters.Bought(), 0),
+          pool.queryFilter(pool.filters.Sold(), 0),
+        ]);
+        trades = [
+          ...bought.map((e) => ({ kind: 'buy', who: e.args.buyer, quote: e.args.quoteIn.toString(),
+            token: e.args.tokenOut.toString(), block: e.blockNumber })),
+          ...sold.map((e) => ({ kind: 'sell', who: e.args.seller, quote: e.args.quoteOut.toString(),
+            token: e.args.tokenIn.toString(), block: e.blockNumber })),
+        ].sort((a, b) => b.block - a.block).slice(0, 20);
+      } catch (_e) {}
+      L.poolState = {
+        address: poolAddr,
+        reserveQuote: rq.toString(), reserveToken: rt.toString(),
+        floorQuote: fq.toString(), floorToken: ft.toString(),
+        spotWeiPerToken: spot.toString(), feeBps: Number(fee),
+        trades,
+      };
+    } catch (_e) {}
   }
 
   async _refreshBids(L) {
@@ -200,6 +247,8 @@ export class LaunchpadIndexer {
       clearingPrice: L.clearingPrice, soldQty: L.soldQty,
       clearingAttested: L.clearingAttested, revealedCount: L.revealedCount || 0,
       disclosure: disc ? { ...disc.schedule, meta: disc.meta, verified: disc.verified } : null,
+      graduated: L.graduated, pool: L.pool, poolState: L.poolState || null,
+      graduationSeed: L.graduationSeed || null,
       rank: rank.score, rankComponents: rank.components,
     };
   }

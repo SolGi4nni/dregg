@@ -18,7 +18,8 @@
   <div class="banner">
     The honest token page: <b>every number here is checkable on-chain</b>. Disclosed supply is verified
     against the commitment; the clearing price is the one price everyone paid; the holder distribution is
-    read from Transfer logs. No pay-to-rank, no market-cap theater.
+    read from Transfer logs; the graduated market price is read from the pool reserves. No pay-to-rank,
+    no market-cap theater.
   </div>
 
   <h2 id="title">token —</h2>
@@ -27,8 +28,8 @@
       <h3>Clearing result — the one price everyone paid</h3>
       <div class="card" id="clearing"></div>
 
-      <h3>Price (chart placeholder)</h3>
-      <div class="chart">candlestick chart — named-not-built (graduation to a liquid market is the next layer)</div>
+      <h3>Graduated market — the provably-solvent liquid pool</h3>
+      <div class="card" id="market"></div>
 
       <h3>Holder distribution — from Transfer logs</h3>
       <div class="card" id="holders"></div>
@@ -50,13 +51,16 @@
 </main>
 
 <script type="module">
-import { mountWalletPill, fmtGwei, fmtWhole, short, phaseBadge, chip } from '/js/app.js';
-import { fetchLaunch } from '/js/launchpad.js';
+import { connect, state, mountWalletPill, fmtGwei, fmtEth, fmtWhole, short, phaseBadge, chip } from '/js/app.js';
+import { fetchLaunch, graduate, poolBuy, poolSell } from '/js/launchpad.js';
 await import('/vendor/ethers.js');
 await mountWalletPill();
 
 const id = new URLSearchParams(location.search).get('id');
 const $ = (i) => document.getElementById(i);
+const G = 10n ** 9n;
+// spot price wei/whole-token → gwei/token for display
+const spotGwei = (weiPerToken) => (Number(BigInt(weiPerToken || 0)) / 1e9).toFixed(3);
 
 async function render() {
   const L = await fetchLaunch(id);
@@ -75,6 +79,9 @@ async function render() {
     </div>
     <div class="note">Every winner paid this same uniform price (uniform_price_envy_free).</div>`
     : `<div class="note">not cleared yet — phase ${L.phase}. <a href="/launch.html?id=${id}">go bid →</a></div>`;
+
+  // graduated market (the provably-solvent pool)
+  renderMarket(L);
 
   // disclosed schedule
   const d = L.disclosure;
@@ -115,6 +122,101 @@ async function render() {
       <span class="${b.filled !== '0' ? 'win' : 'lose'}">${b.filled !== '0' ? 'won ' + b.filled : 'no fill'}</span>
     </div>`).join('') : '<div class="note">no revealed bids yet.</div>';
 }
+
+// ── the graduated market: the live provably-solvent pool ──────────────────────
+function renderMarket(L) {
+  const el = $('market');
+  const cleared = L.clearingPrice !== '0';
+  if (!cleared) { el.innerHTML = '<div class="note">the token graduates into a solvent pool once the raise clears.</div>'; return; }
+
+  if (!L.graduated) {
+    // cleared but not yet graduated — show the disclosed seed + a graduate action.
+    const gs = L.graduationSeed;
+    el.innerHTML = `
+      <div class="note">Cleared — ready to <b>graduate</b> into a provably-solvent liquid market.
+        The seed is the <b>disclosed fraction</b> of the raise (on-chain-verifiable); a wrong seeding reverts.</div>
+      <div class="kv" style="margin-top:8px">
+        <span class="k">quote seed (from proceeds)</span><span class="v mono">${gs ? fmtEth(gs.quoteSeed) + ' ETH' : '—'}</span>
+        <span class="k">token seed (pool allocation)</span><span class="v mono">${gs ? fmtWhole(gs.tokenSeed) : '—'}</span>
+      </div>
+      <div class="row2" style="margin-top:10px">
+        <button class="primary" id="gradBtn">Graduate → seed the solvent pool</button>
+      </div>
+      <div class="note" id="gradMsg" style="margin-top:6px"></div>`;
+    const btn = $('gradBtn');
+    if (btn) btn.onclick = async () => {
+      const msg = $('gradMsg');
+      try { msg.textContent = 'connecting…'; await connect(0);
+        msg.textContent = 'graduating (seeding the pool with the disclosed fraction)…';
+        const r = await graduate({ launchId: id });
+        msg.innerHTML = `<span class="badge ok">graduated ✓</span> pool ${short(r.pool)} · tx ${short(r.txHash)}`;
+        await render();
+      } catch (e) { msg.innerHTML = `<span class="badge no">graduate failed:</span> ${e.shortMessage || e.message}`; }
+    };
+    return;
+  }
+
+  // graduated — the live pool: price, reserves, the solvency invariant, trading.
+  const p = L.poolState;
+  if (!p) { el.innerHTML = '<div class="note">graduated — loading pool…</div>'; return; }
+  const floorPctQ = Number(BigInt(p.floorQuote) * 10000n / (BigInt(p.reserveQuote) || 1n)) / 100;
+  el.innerHTML = `
+    <div class="big">${spotGwei(p.spotWeiPerToken)} gwei / token <span class="chip PROVED">PROVED</span></div>
+    <div class="note">spot price read from the pool reserves — <b>reserveQuote · 1e18 / reserveToken</b>. The
+      pool is the DrEX rung-6 never-insolvent pool: a trade that would drain a reserve below its floor
+      <b>reverts</b> (PoolFloorBreached ↔ pool_solvent_forever).</div>
+    <div class="kv" style="margin-top:8px">
+      <span class="k">quote reserve (ETH)</span><span class="v mono">${fmtEth(p.reserveQuote)}</span>
+      <span class="k">token reserve</span><span class="v mono">${fmtWhole(p.reserveToken)}</span>
+      <span class="k">solvency floor (quote)</span><span class="v mono">${fmtEth(p.floorQuote)} ETH · never below</span>
+      <span class="k">solvency floor (token)</span><span class="v mono">${fmtWhole(p.floorToken)} · never below</span>
+      <span class="k">swap fee</span><span class="v mono">${(p.feeBps/100).toFixed(2)}%</span>
+      <span class="k">pool</span><span class="v mono">${short(p.address)}</span>
+    </div>
+    <div class="fair" style="margin-top:10px">
+      <div class="lab">Trade against the solvent pool</div>
+      <div class="row3" style="margin-top:6px">
+        <div><label>ETH in (buy)</label><input id="buyEth" value="0.001"></div>
+        <div><label>tokens in (sell)</label><input id="sellTok" value="1"></div>
+        <div><label></label><div class="row2"><button class="primary" id="buyBtn">buy</button><button class="ghost" id="sellBtn">sell</button></div></div>
+      </div>
+      <div class="note" id="tradeMsg"></div>
+      <div class="cite">PROVED Market/Liquidity.pool_solvent_forever · Market/GraduationPool.graduated_pool_solvent_forever ·
+        BUILT DreggSolventPool.buy/sell (PoolFloorBreached) · x·y=k pricing</div>
+    </div>
+    <h4 style="margin:12px 0 4px">Recent trades — the honest tape (from pool logs)</h4>
+    <div id="tape"></div>`;
+
+  $('tape').innerHTML = (p.trades || []).length ? p.trades.map((t) => `
+    <div class="alloc">
+      <span class="who">${t.kind === 'buy' ? 'buy' : 'sell'} ${short(t.who)}</span>
+      <span class="mono">${fmtEth(t.quote)} ETH</span>
+      <span class="mono">${fmtWhole(t.token)} tok</span>
+    </div>`).join('') : '<div class="note">no trades yet — be the first.</div>';
+
+  const tokenAddr = L.token;
+  $('buyBtn').onclick = async () => {
+    const msg = $('tradeMsg');
+    try { await connect(0);
+      const eth = $('buyEth').value; const wei = BigInt(Math.round(parseFloat(eth) * 1e18));
+      msg.textContent = `buying with ${eth} ETH…`;
+      const r = await poolBuy({ poolAddr: p.address, quoteWei: wei.toString() });
+      msg.innerHTML = `<span class="badge ok">bought ✓</span> ~${fmtWhole(r.quotedOut)} tokens · tx ${short(r.txHash)}`;
+      await render();
+    } catch (e) { msg.innerHTML = `<span class="badge no">buy failed:</span> ${e.shortMessage || e.message}`; }
+  };
+  $('sellBtn').onclick = async () => {
+    const msg = $('tradeMsg');
+    try { await connect(0);
+      const tok = $('sellTok').value; const base = BigInt(Math.round(parseFloat(tok) * 1e18));
+      msg.textContent = `selling ${tok} tokens…`;
+      const r = await poolSell({ poolAddr: p.address, tokenBase: base.toString(), tokenAddr });
+      msg.innerHTML = `<span class="badge ok">sold ✓</span> tx ${short(r.txHash)}`;
+      await render();
+    } catch (e) { msg.innerHTML = `<span class="badge no">sell failed:</span> ${e.shortMessage || e.message}`; }
+  };
+}
+
 render();
 setInterval(render, 4000);
 </script>
