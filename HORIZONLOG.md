@@ -8,19 +8,26 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
-## Apex-VK pin landed — Groth16 artifacts need one re-mint (2026-07-13, apex-VK-pin lane, named in `chain/gnark/settlement_circuit.go` tooth 2)
+## GAP #4 availability wrap-forgery class CLOSED + DEPLOYED (2026-07-13, VK-regen capstone `887b95e76`)
+The whole transfer-shaped cohort is now hardened IN THE DEPLOYED CIRCUIT: all 10 members (5 narrow +
+5 wide — transfer, cap-open eff/TB, fee, and their wide twins) route to their `*Avail` descriptors
+(borrow-gated, amount range-checked, wrap structurally impossible), `guardAvail` discharged from the
+WITNESS per member. Empirically validated (`avail_weld_live_roundtrip` 3/3, every GAP #4 forgery
+witness UNSAT). The VK regen is PROVENANCE-CLEAN — `887b95e76` (`source_dirty=no`, the FIRST clean
+regen; the 07-12 regens were `source_dirty=YES`); FP constant re-stamped → new VK epoch with
+mint-from-nothing closed. Supersedes the per-member wrap-class lines (bare, cap-open, wide-fee
+`fdfa2aadc`, wide-cap-open-EFF `6c8a4e426`). RESIDUAL: the in-library `v3RegistryBare` transfer/burn
+flip + apex Rfix re-key (item ② of the availability-weld entry below) — the deployed hardening rides
+the Rust emit side; the Lean registry def still names the bare face.
 
-**The same-shape-apex forgery is CLOSED at the circuit level** (shrink pins the apex's
-preprocessed commitment in-circuit via `pin_preprocessed_commit` + re-exposes it as
-expose_claim lanes 25..33; SettlementCircuit bakes the deployed apex's 8 lanes and asserts —
-`TestSettlementCircuitPinsApexPreprocessedCommitment` rejects both directions, full gnark
-suite green on the regenerated v4 fixture). REMAINING (mechanical re-mint, ~15 min + tens of
-GB): the SettlementCircuit R1CS changed, so the `DREGG_SNARK=1` Groth16 end-to-end must be
-re-run to regenerate `chain/contracts/DreggGroth16Verifier25.sol` + the
-`chain/test/fixtures/settlement_groth16.json` calldata fixture (both now STALE — minted from
-the pre-pin circuit; the Foundry real-proof settle test replays them). Closure shape:
-`cd chain/gnark && DREGG_SNARK=1 go test -run TestSettlementGroth16EndToEnd -v -timeout 240m`,
-then `forge test`.
+## Linking-seams tower COMPLETE (2026-07-13, crypto-subtree)
+Seam 3 (`ModelBridge` — the finite-shadow↔abstract-Forger bridge over the genuine infinite-RO
+product measure, `103b52c41`, 32 keystones) and Seam 4 (`MlKemDelta` §12 exact-MGF Chernoff:
+`mlkem768_decapsFailure_le_delta` / `_exactMgf` conclude `Pr[decaps fails] ≤ 2⁻¹⁴⁰` = FIPS δ, the
+exact-MGF machine firing on the genuine `e·r` convolution product, 86 keystones) are both DONE —
+closing the earlier "δ proven-open" finding (`f884a87bd`). With these landed, `StarkSound`/FRI
+soundness (`FriSoundness.lean`) rests only on the standard hash-collision floor `HashCR` — the
+BCIKS20/Johnson list-decoding proximity result is discharged as actual Lean theorems.
 
 ## Transfer availability — hardened-path deployment flip (2026-07-12, Fable avail-wide lane, named in `1547493e1` + `RotatedKernelRefinementAvail.lean`)
 
@@ -7652,12 +7659,14 @@ the SHIFTED caveat/rc geometry — the fixed wrappers would read wrong columns; 
 capacity-refuse dodges re-proven parametrically, #assert_axioms-clean). VALIDATED: emitted
 registry diff = ONLY lines 1-2 (1702/1700 wide, pi 50, 6 lookups into table 84 each);
 avail_weld_live_roundtrip proves+verifies transfer/burn against BOTH the committed bare AND the
-freshly-emitted hardened bytes, forged-BRW1 tooth refused. REMAINING: ① ember runs the VK regen
-(DREGG_VK_REGEN_ACK) + smoke; ② in-library v3RegistryBare flip + apex Rfix re-key onto the
-hardened members (wire↔registry coincidence for the two keys currently rides the emitter override
-+ AvailWireMembers peels); ③ the OTHER transfer-shaped members (transferFee, transferCapOpenEff/TB,
-wide twins) still carry the bare wrap window — same-class close next; ④ circuit lib-test bin is
-pre-broken at HEAD (ivc.rs unrelated errors) — refuse-weld unit pins updated but unrunnable there.
+freshly-emitted hardened bytes, forged-BRW1 tooth refused. REMAINING (① ③ CLOSED — VK regen
+deployed provenance-clean `887b95e76`, the whole transfer-shaped class hardened `fdfa2aadc`
+wide-fee / `6c8a4e426` wide-cap-open-EFF; avail_weld_live_roundtrip 3/3): ② in-library
+v3RegistryBare flip + apex Rfix re-key onto the hardened members (wire↔registry coincidence for the
+two keys currently rides the emitter override + AvailWireMembers peels — `transferVmDescriptor2R24`
+STILL = `v3OfFrozen transferVmDescriptor` bare in `EffectVmEmitRotationV3.lean`); ④ circuit
+lib-test bin is pre-broken at HEAD (ivc.rs unrelated errors) — refuse-weld unit pins updated but
+unrunnable there.
 
 ## Base fault-proof R3 CLOSED — CWIA code-hash recomputation (2026-07-12, multichain lane)
 eth-lightclient: cwia_proxy_code_hash reconstructs the Solady LibClone CWIA proxy runtime (impl PUSH20 + immutable
