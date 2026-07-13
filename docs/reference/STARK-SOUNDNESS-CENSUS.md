@@ -31,8 +31,13 @@ genuinely: `algoStarkSound_kernel` (STARK) → `StarkSound hash Rfix` + `closedL
   (`wrap_far_word_rarely_accepted` ≤ `(65/128)^19`, fired on the committed far word `fSq`). HONEST residual:
   at `19` queries the unique-decoding radius gives only `(65/128)^19 ≈ 2^-18.6` (`wrap_ud_error_not_lt_2e31` —
   NOT `< 2^-31`), so deployed wrap security rests on the JOHNSON list-decoding radius `δ_J=1-√ρ=7/8` (BCIKS20),
-  named `FriLdtDeployedBound` (a `Prop`, not proved — the one research assumption) and shown load-bearing
-  (`ldt_bound_is_load_bearing`: it delivers `(1/8)^19 = 2^-57`). The prover config (rate `1/8`, `38` queries)
+  named `FriLdtDeployedBound`. **That bound as-written is now DISCHARGED** (`FriLdtJohnson.lean`,
+  `friLdtDeployedBound_discharge`, axiom-clean): at `δ_J=7/8` it is exactly the trivial counting else-branch
+  (`accept_prob_le_of_farN`), so `ldt_bound_unconditional` delivers `(1/8)^19 = 2^-57` with NO hypothesis. Its
+  genuine BCIKS20 content (words inside the `δ_J` ball, past unique decoding) is reduced to two precisely-named
+  lemmas — `RSListBound` and `FriProximityGapChallenges` — each PROVED at `L=1` and instantiated on the deployed
+  rate-`1/64` code (min-distance `127` → singleton at radius `63`); only their `L>1` generalization remains open.
+  The prover config (rate `1/8`, `38` queries)
   is separately DISCHARGED in the unique-decoding regime (`DeployedProximitySoundness`, `< 2^-31`).
 - **FS-SZ ε** — Fiat-Shamir non-exceptionality, `ε ≤ deg/|F|` (a game in `ProbCrypto.winProb`, not an axiom).
 - structural range tables (PROVEN, not a floor: `rangeTable bits = [0,2^bits)` symbolically, never enumerated).

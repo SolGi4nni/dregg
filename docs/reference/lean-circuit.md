@@ -81,9 +81,15 @@ laundered to `True` or an open hole):
   it a THEOREM over the specified `verifyAlgo`, resting on `AlgoStarkSound` (the FRI-LDT
   floor) + `DeployedRefines`. The BBHR18/BCIKS20 FRI proximity algebra is itself PROVED
   in `FriSoundness.lean` resting only on the hash floor `HashCR` (`friProximityK8_discharge`,
-  composed at `d=0` via `FriBridgeDeployedArity`). The one remaining research assumption is
-  the deployed-parameter Johnson list-decoding bound `FriLdtDeployedBound` (a `Prop`, not an
-  axiom; see `STARK-SOUNDNESS-CENSUS.md`). Carried as a class at this apex, discharged below.
+  composed at `d=0` via `FriBridgeDeployedArity`). The deployed-parameter `FriLdtDeployedBound`
+  **as written is DISCHARGED** (`FriLdtJohnson.lean`, `friLdtDeployedBound_discharge`, axiom-clean):
+  at the Johnson radius `δ_J = 1−√ρ = 7/8` the statement is the trivial counting else-branch
+  (`accept_prob_le_of_farN`), so `ldt_bound_unconditional` re-derives the `2⁻⁵⁷` LDT payoff with no
+  hypothesis. Its genuine BCIKS20 residual (words inside the `δ_J` ball, past unique decoding) is
+  two precisely-named lemmas — `RSListBound` (RS list-size) and `FriProximityGapChallenges`
+  (bounded good folding challenges) — each PROVED at `L=1` and instantiated on the deployed
+  rate-`1/64` code (min-distance `127` → singleton at radius `63`); only their `L>1` generalization
+  (the Johnson bound + correlated-agreement theorem) remains open. See `STARK-SOUNDNESS-CENSUS.md`.
 - **`Poseidon2SpongeCR hash`** + the `CommitSurface` CR fields (`CommitSurface`,
   `CircuitSoundness.lean:113-134`) — the standard Poseidon collision-resistance set
   (`cmbInj`, `compInj`, `compNInj`, `leafInj`, `restFrame`) the full-state root

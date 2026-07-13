@@ -101,9 +101,12 @@ codeword-side AIR arithmetic, load-bearing).
 **The `d > 0` regime is NOT composed there and IS a genuine open item.** Translating the geometric `64·d`
 closeness into a concrete soundness-error bound at the deployed `num_queries`/`log_blowup` is a quantitative step
 not taken; the deployed wrap runs only 19 queries because its security lives at the Johnson list-decoding radius
-`δ_J = 1 − √ρ = 7/8`, and that BCIKS20 proximity-gaps result is carried as the NAMED Prop `FriLdtDeployedBound`
-(`BabyBearFriDeployedInstance.lean`) — **not proved in-tree** ("the one genuine research-grade assumption every
-deployed STARK shares"), load-bearing (`ldt_bound_is_load_bearing`), never an `axiom`.
+`δ_J = 1 − √ρ = 7/8`, carried as the NAMED Prop `FriLdtDeployedBound` (`BabyBearFriDeployedInstance.lean`).
+**That Prop as-written is now DISCHARGED** (`FriLdtJohnson.lean`, `friLdtDeployedBound_discharge`, axiom-clean):
+at `δ_J = 7/8` it is the trivial counting else-branch, so `ldt_bound_unconditional` supplies the `2⁻⁵⁷` payoff
+with no hypothesis. Its genuine research-grade residual (words inside the `δ_J` ball, past unique decoding) is
+two precisely-named lemmas — `RSListBound` and `FriProximityGapChallenges` — each PROVED at `L=1` and instantiated
+on the deployed rate-`1/64` code (min-distance `127`); only their `L>1` generalization remains open.
 
 ## Seam 5 — deployment integrity: the GAUNTLET CLAUSE MET; deployment plumbing remains
 **WHOLE-TREE gauntlet PASSED on hbox (`lake build Dregg2` + the full linking chain = 9560 jobs, exit 0)** — the
@@ -119,14 +122,19 @@ Seam 3 (model↔reality is a theorem: independent-challenge combiner + the infin
 route closed via the exact-MGF convolution; capstone fires on a genuine model), Seam 5 gauntlet-clause (whole-tree
 green on main). The linking + circuit-soundness tower rests on two named, non-axiom cryptographic floors: the hash
 floor **`HashCR`** (Poseidon2 sponge collision-resistance — unavoidable; every hash-based system assumes it), and,
-at the deployed low-query FRI parameters, the BCIKS20 Johnson-radius list-decoding bound **`FriLdtDeployedBound`**
-(the one research-grade assumption every deployed STARK shares). Neither is smuggled; both are visible `Prop`s.
+at the deployed low-query FRI parameters, the two BCIKS20 Johnson-radius lemmas **`RSListBound`** +
+**`FriProximityGapChallenges`** — the `FriLdtDeployedBound` Prop as-written is now DISCHARGED
+(`FriLdtJohnson.lean`, the trivial counting branch), and these two sharp lemmas are its genuine residual, each
+PROVED at `L=1` (deployed RS min-distance `127` closed) with only the `L>1` generalization open. Neither floor is
+smuggled; both are visible `Prop`s.
 
 Honest named residuals (each a precisely-named obstruction, nothing laundered):
 - **Seam 4:** the last ~24 bits from the in-Lean exact-MGF `2⁻¹⁴⁰` to the exact FIPS δ `2⁻¹⁶⁴` — proved arithmetic
   slack (the loose `e^{104s}` `Δv` proxy + rational `s`), reproduced out of band, not yet kernel-closed.
-- **Circuit floor:** the FRI `d > 0` list-decoding soundness-error at the deployed knobs (`FriLdtDeployedBound`);
-  the general `[StarkSound]` discharge across all sites (the `d = 0` deployed-arity composition IS proved).
+- **Circuit floor:** the two `L>1` Johnson/correlated-agreement lemmas `RSListBound` +
+  `FriProximityGapChallenges` (the `FriLdtDeployedBound` Prop as-written is DISCHARGED, `FriLdtJohnson.lean`;
+  these are its residual, each `L=1`-proved with the deployed RS min-distance `127` closed); the general
+  `[StarkSound]` discharge across all sites (the `d = 0` deployed-arity composition IS proved).
 - **Seam 1:** the FO wrappers (`G`/`J`-KDF, Keccak slots), compress/decompress rounding, sign's full symbolic
   rejection loop (byte-exact-pinned partial def), the byte round-trip bookkeeping, the `MlDsaParams` module-map,
   KATs → full NIST ACVP.
