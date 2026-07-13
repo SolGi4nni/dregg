@@ -1,13 +1,17 @@
 // app.js — DrEX web app. Drives the sealed order end-to-end:
 //   confirm-intent approve → REAL sign + REAL prove (wallet wasm) →
-//   sealed commit/reveal → clear-side mirror → fill + graded fairness panel.
+//   sealed commit/reveal → REAL matcher (POST /clear → solver.rs +
+//   verified_settle.rs) → fill + graded fairness panel.
+//
+// BOTH sides are real: the wallet proving is the extension wasm (unchanged), and
+// the matcher/settlement is the actual Rust pipeline — serve.mjs shells to the
+// `drex_clear` binary (intent/src/bin/drex_clear.rs), the same solver.rs ring
+// match + verified_settle.rs kernel fold as `cargo run --example drex_clear_book`.
 import {
   initWallet, traderKey, signOrderTurn, proveSolvency, tamperCheck,
   proveEligibility, sealedCommit, sealedReveal, randHex, hex,
 } from './drex-wallet.mjs';
-import {
-  demoBook, aggregate, findRings, settleRing, clearingReport, rejectPolarity, fairnessLedger,
-} from './drex-clearside.js';
+import { demoBook, fairnessLedger } from './drex-clearside.js';
 
 const $ = (id) => document.getElementById(id);
 const book = demoBook();
@@ -40,8 +44,8 @@ function step(id, h, opts = {}) {
 }
 function drawFlow() {
   $('flow').innerHTML = steps.map(s => {
-    const badge = s.real ? '<span class="real">REAL wasm</span>'
-      : s.mirror ? '<span class="mirror">clear-side mirror</span>' : '';
+    const badge = s.badge ? `<span class="real">${s.badge}</span>`
+      : s.real ? '<span class="real">REAL wasm</span>' : '';
     return `<div class="step ${s.state || ''}">
       <div class="h">${s.h}${badge}</div>
       ${s.d ? `<div class="d">${s.d}</div>` : ''}
@@ -141,7 +145,7 @@ async function place() {
   $('placeBtn').disabled = false;
 }
 
-// ── reveal + clear the batch ──
+// ── reveal + clear the batch through the REAL matcher (POST /clear) ──
 async function clearBatch() {
   $('advanceBtn').disabled = true;
   const p = window.__drexPending;
@@ -150,29 +154,73 @@ async function clearBatch() {
   const rev = await sealedReveal(p.commit, p.order, p.salt);
   step('reveal', 'Sealed-bid reveal at batch T', { state: rev.ok ? 'done' : 'fail',
     d: 'reveal (order, salt) → commitment binds: ' + rev.ok });
+
+  // Fold the trader's REVEALED order into the book (Ada's leg), so the real
+  // matcher clears the order the user actually placed — not a fixed fixture.
+  const mineIdx = book.findIndex(o => o.trader === 'Ada');
+  if (mineIdx >= 0) {
+    book[mineIdx] = {
+      ...book[mineIdx],
+      offerAsset: p.order.sell.asset,
+      offerAmount: p.order.sell.amount,
+      wantAsset: p.order.want.asset,
+      wantMin: p.order.want.min,
+      priority: p.order.priority,
+    };
+  }
   renderBook(true);
   $('batchPill').className = 'pill live'; $('batchPill').textContent = 'batch T+1 · cleared';
 
-  // clear-side mirror
-  const { agg, ok: aggOk } = aggregate(book);
-  const { twoCycles, ring: ringIdx } = findRings(book);
-  const legs = settleRing(book, ringIdx);
-  step('match', 'Match — multilateral ring found', { mirror: true, state: 'done',
-    d: `bilateral (2-party) matches: ${twoCycles} → genuinely multilateral\n  ring: ${ringIdx.map(i=>book[i].trader).join(' → ')} → ${book[ringIdx[0]].trader}\n  ` + legs.map(l=>`${l.fromTrader}→${l.toTrader} ${l.amount} ${l.asset}`).join('  ·  ') });
-  const rep = clearingReport(book, ringIdx, legs);
-  const rj = rejectPolarity(book, legs);
-  step('settle', 'Settle — conserving, all-or-nothing', { mirror: true, state: 'done',
-    d: `over-debit reject polarity: drained ${rj.victim} one short → leg ${rj.refusedAt} refused, whole ring aborts (${rj.settledLegs} legs settled)` });
+  // ── the REAL matcher + verified settlement (serve.mjs → the drex_clear binary) ──
+  step('match', 'Match — REAL solver.rs (Johnson circuits + Shapley–Scarf TTC)',
+    { badge: 'REAL solver.rs', state: 'active',
+      d: 'POST /clear → running the real ring matcher over the revealed orders…' });
+  const orders = book.map(o => ({
+    trader: o.trader, offerAsset: o.offerAsset, offerAmount: o.offerAmount,
+    wantAsset: o.wantAsset, wantMin: o.wantMin, priority: o.priority,
+  }));
+  let res;
+  try {
+    res = await fetch('/clear', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(orders),
+    }).then(r => r.json());
+  } catch (e) {
+    step('match', 'Match — REAL solver unreachable', { badge: 'REAL solver.rs', state: 'fail',
+      d: 'POST /clear failed: ' + e.message + ' — run the app via serve.mjs (it shells to the Rust matcher)' });
+    return;
+  }
 
-  renderCleared(rep, legs);
+  if (res.error || !res.ring) {
+    step('match', 'Match — no clearing ring', { badge: 'REAL solver.rs', state: 'fail',
+      d: res.error || res.provenance || 'the real matcher found no ring over this book' });
+    if (res.allocations) renderClearedReal(res);
+    return;
+  }
+
+  step('match', 'Match — REAL multilateral ring found', { badge: 'REAL solver.rs', state: 'done',
+    d: `bilateral (2-party) matches: ${res.twoCycles} → genuinely multilateral\n`
+     + `  ring: ${res.ring.participants.join(' → ')} → ${res.ring.participants[0]}\n  `
+     + res.ring.legs.map(l => `${l.fromTrader}→${l.toTrader} ${l.amount} ${l.asset}`).join('  ·  ')
+     + `\n  ${res.provenance}` });
+
+  const rj = res.reject;
+  step('settle', 'Settle — verified kernel fold (recKExecAsset), conserving, all-or-nothing',
+    { badge: 'REAL verified_settle.rs', state: 'done',
+      d: rj
+        ? `allocations read off the verified post-ledger.\n  reject-polarity: ${rj.victim} drained one short → leg ${rj.refusedAt} REFUSED by the verified kernel; whole ring aborts (${rj.settledLegs} legs settled)`
+        : 'each leg folded through the proved recKExecAsset kernel; conserves per asset.' });
+
+  renderClearedReal(res);
   renderFairness();
 }
 
-function renderCleared(rep, legs) {
-  const maxAmt = Math.max(...legs.map(l => l.amount));
+// Render the REAL clearing (JSON from POST /clear → the drex_clear binary).
+function renderClearedReal(res) {
   const color = { GOLD: '#f0c14b', ART: '#bc8cff', WINE: '#f85149', SILVER: '#8b949e', PEARL: '#58a6ff' };
+  const allocs = res.allocations || [];
   let html = '<div class="card">';
-  html += rep.alloc.map(a => {
+  html += allocs.filter(a => !a.rested).map(a => {
     const mine = a.trader === 'Ada';
     return `<div class="alloc ${mine ? 'mine' : ''}">
       <span class="who">${a.trader}${mine ? ' · you' : ''}</span>
@@ -180,14 +228,17 @@ function renderCleared(rep, legs) {
       <span class="${a.ir && a.budget ? 'ok' : 'no'}">${a.ir && a.budget ? '✔' : '✗'}</span>
     </div>`;
   }).join('');
-  html += rep.rested.map(t => `<div class="alloc"><span class="who fade">${t}</span><span class="leg fade">rests — no match this batch</span><span class="fade">·</span></div>`).join('');
+  html += allocs.filter(a => a.rested).map(a =>
+    `<div class="alloc"><span class="who fade">${a.trader}</span><span class="leg fade">rests — no match this batch</span><span class="fade">·</span></div>`).join('');
   html += '</div>';
-  // conservation bars
-  html += '<div class="barwrap card"><div class="fade" style="font-size:11px;margin-bottom:6px">per-asset conservation (in = out)</div>';
-  html += rep.conservation.map(c =>
-    `<div class="leg">${c.asset}: ${c.in} in = ${c.out} out <span class="ok">✔</span></div>
-     <div class="bar"><span style="width:100%;background:${color[c.asset]||'#58a6ff'}"></span></div>`).join('');
-  html += '</div>';
+  // conservation bars (from the verified settle)
+  if (res.conservation && res.conservation.length) {
+    html += '<div class="barwrap card"><div class="fade" style="font-size:11px;margin-bottom:6px">per-asset conservation (in = out) — from the verified settle (recTotalAsset)</div>';
+    html += res.conservation.map(c =>
+      `<div class="leg">${c.asset}: ${c.in} in = ${c.out} out <span class="${c.ok?'ok':'no'}">${c.ok?'✔':'✗'}</span></div>
+       <div class="bar"><span style="width:100%;background:${color[c.asset]||'#58a6ff'}"></span></div>`).join('');
+    html += '</div>';
+  }
   $('cleared').innerHTML = html;
 }
 

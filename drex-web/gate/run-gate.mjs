@@ -3,22 +3,56 @@
 //
 //   node drex-web/gate/run-gate.mjs
 //
-// What is REAL here (the extension wasm actually runs):
+// What is REAL here — EVERYTHING. Both the wallet AND the matcher:
 //   • cipherclerk_make_action_turn  — a real Ed25519-signed order Turn
 //   • assemble_signed_turn_envelope — the real hybrid ed25519 + ML-DSA-65 envelope
 //   • prove_conservation / verify_conservation_proof — a real Bulletproofs+Schnorr
 //     solvency proof, verified green, and a tamper attempt shown flipping to false
 //   • prove_anonymous_membership    — a real blinded eligibility tag
-// What is a LABELED stand-in: the matcher/settlement (clear-side mirror of
-//   solver.rs + verified_settle.rs — see drex-clearside.js banner).
+//   • the MATCHER + SETTLEMENT — the REAL Rust pipeline: this gate shells to the
+//     `drex_clear` binary (intent/src/bin/drex_clear.rs), the same solver.rs ring
+//     match + verified_settle.rs kernel fold as `cargo run --example drex_clear_book`.
+//     No mirror: the clearing, conservation, and over-debit reject are the real
+//     engine's output over the revealed orders.
 
+import { spawn } from 'node:child_process';
+import fs from 'node:fs';
+import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import {
   initWallet, traderKey, signOrderTurn, proveSolvency, tamperCheck,
   proveEligibility, sealedCommit, sealedReveal, randHex, hex,
 } from '../drex-wallet.mjs';
-import {
-  demoBook, aggregate, findRings, settleRing, clearingReport, rejectPolarity, fairnessLedger,
-} from '../drex-clearside.js';
+import { demoBook, fairnessLedger } from '../drex-clearside.js';
+
+const REPO = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..', '..');
+const REMOTE_HOST = process.env.DREX_REMOTE || 'persvati';
+const REMOTE_DIR = process.env.DREX_REMOTE_DIR || 'dregg-build/drex-matcher';
+
+// Run the REAL clear-book pipeline over the revealed orders (same wire the web
+// server uses): a LOCAL binary if one exists, else the prebuilt binary on the
+// persvati build host over ssh (orders piped to its stdin).
+function runRealClear(orders) {
+  const local = ['release', 'debug']
+    .map((p) => path.join(REPO, 'target', p, 'drex_clear'))
+    .find((p) => fs.existsSync(p));
+  const spec = local
+    ? { c: local, a: [] }
+    : { c: 'ssh', a: [REMOTE_HOST, `cd ${REMOTE_DIR} && ./target/debug/drex_clear`] };
+  return new Promise((resolve, reject) => {
+    const child = spawn(spec.c, spec.a, { cwd: REPO });
+    let out = '', err = '';
+    child.stdout.on('data', (d) => (out += d));
+    child.stderr.on('data', (d) => (err += d));
+    child.on('error', reject);
+    child.on('close', () => {
+      const last = out.trim().split('\n').filter(Boolean).pop() || '';
+      try { resolve(JSON.parse(last)); }
+      catch (e) { reject(new Error('drex_clear no JSON: ' + err.slice(-300) + ' / ' + out.slice(-300))); }
+    });
+    child.stdin.end(JSON.stringify(orders));
+  });
+}
 
 const line = (s = '') => console.log(s);
 const rule = (t) => line('\n\x1b[36m── ' + t + ' ' + '─'.repeat(Math.max(0, 72 - t.length)) + '\x1b[0m');
@@ -99,50 +133,56 @@ async function main() {
   line('  reveal (order, salt) → commitment binds: ' + (rev.ok ? ok('✔ true') : bad('✗ false')));
   if (!rev.ok) throw new Error('GATE FAIL: sealed commitment did not bind on reveal');
 
-  // ── STEP 6 — clear the batch (LABELED mirror of solver.rs/verified_settle.rs) ──
-  rule('STEP 6 · clear the batch  \x1b[33m[clear-side MIRROR; real matcher = solver.rs/verified_settle.rs]\x1b[0m');
-  const { agg, ok: aggOk } = aggregate(book);
-  line('  rung-2 aggregate: faithful permutation, sorted by priority → ' + (aggOk ? ok('✔') : bad('✗')));
-  const { twoCycles, ring: ringIdx } = findRings(book);
-  line('  bilateral (2-party) matches among cross-bid traders: ' + twoCycles + '  → genuinely multilateral');
-  if (!ringIdx) throw new Error('GATE FAIL: matcher found no clearing ring');
-  const legs = settleRing(book, ringIdx);
-  line('  clearing ring: ' + ringIdx.map(i => book[i].trader).join(' → ') + ' → ' + book[ringIdx[0]].trader);
-  for (const l of legs) line('    leg  ' + l.fromTrader.padEnd(4) + ' → ' + l.toTrader.padEnd(4) + '  ' + String(l.amount).padStart(3) + ' ' + l.asset);
+  // ── STEP 6 — clear the batch through the REAL matcher (solver.rs + verified_settle.rs) ──
+  rule('STEP 6 · clear the batch  \x1b[32m[REAL: drex_clear → solver.rs + verified_settle.rs]\x1b[0m');
+  // Fold Ada's revealed order into the book, then hand the whole revealed book to
+  // the REAL Rust pipeline (same one `cargo run --example drex_clear_book` runs).
+  const revealed = book.map(o => (o.trader === 'Ada'
+    ? { ...o, offerAsset: order.sell.asset, offerAmount: order.sell.amount, wantAsset: order.want.asset, wantMin: order.want.min, priority: order.priority }
+    : o));
+  const orders = revealed.map(o => ({ trader: o.trader, offerAsset: o.offerAsset, offerAmount: o.offerAmount, wantAsset: o.wantAsset, wantMin: o.wantMin, priority: o.priority }));
+  const res = await runRealClear(orders);
+  if (res.error) throw new Error('GATE FAIL: real matcher errored: ' + res.error);
+  line('  provenance: ' + res.provenance);
+  line('  rung-2 aggregate: faithful permutation, sorted by priority → ' + (res.aggregateFaithful ? ok('✔') : bad('✗')));
+  line('  bilateral (2-party) matches among cross-bid traders: ' + res.twoCycles + '  → genuinely multilateral');
+  if (!res.ring) throw new Error('GATE FAIL: real matcher found no clearing ring');
+  line('  clearing ring: ' + res.ring.participants.join(' → ') + ' → ' + res.ring.participants[0]);
+  for (const l of res.ring.legs) line('    leg  ' + l.fromTrader.padEnd(4) + ' → ' + l.toTrader.padEnd(4) + '  ' + String(l.amount).padStart(3) + ' ' + l.asset);
 
-  const rep = clearingReport(book, ringIdx, legs);
-  rule('CLEARED ALLOCATIONS + your fill');
-  for (const a of rep.alloc) {
+  rule('CLEARED ALLOCATIONS + your fill  (read off the VERIFIED post-ledger)');
+  for (const a of res.allocations) {
+    if (a.rested) { line('  ' + a.trader.padEnd(4) + ' rests (no match this batch)'); continue; }
     const mine = a.trader === 'Ada' ? ' \x1b[35m← your fill\x1b[0m' : '';
     line('  ' + a.trader.padEnd(4) + ' sent ' + String(a.sent).padStart(3) + ' ' + a.sentAsset.padEnd(6) +
          ' received ' + String(a.received).padStart(3) + ' ' + a.recvAsset.padEnd(6) +
          ' (wanted ≥ ' + a.wantMin + ') ' + (a.ir && a.budget ? ok('✔') : bad('✗')) + mine);
   }
-  for (const t of rep.rested) line('  ' + t.padEnd(4) + ' rests (no match this batch)');
 
   rule('WHY IT\'S FAIR — proved properties, graded');
-  line('  conservation (in = out):');
-  for (const c of rep.conservation) line('    ' + c.asset.padEnd(6) + ': ' + c.in + ' in = ' + c.out + ' out ' + (c.ok ? ok('✔') : bad('✗')));
-  line('  limits (IR + budget), every participant: ' + (rep.limitsOk ? ok('✔') : bad('✗')));
+  line('  conservation (in = out), from the verified settle:');
+  for (const c of res.conservation) line('    ' + c.asset.padEnd(6) + ': ' + c.in + ' in = ' + c.out + ' out ' + (c.ok ? ok('✔') : bad('✗')));
+  line('  limits (IR + budget), every participant: ' + (res.limitsOk ? ok('✔') : bad('✗')));
   line('');
   for (const f of fairnessLedger()) {
     line('  ' + f.grades.map(g => gradeChip(g)).join(' ') + ' ' + f.label);
     line('        ' + f.lean);
   }
 
-  // ── STEP 7 — reject polarity ──
-  rule('STEP 7 · reject polarity — a bad settlement is refused, atomically');
-  const rj = rejectPolarity(book, legs);
+  // ── STEP 7 — reject polarity (refused by the REAL verified kernel) ──
+  rule('STEP 7 · reject polarity — a bad settlement is refused by the REAL kernel, atomically');
+  const rj = res.reject;
+  if (!rj) throw new Error('GATE FAIL: no reject-polarity result from the real matcher');
   line('  drained ' + rj.victim + '\'s ' + rj.asset + ' to ' + rj.starvedTo + ' (one short of its ' + rj.need + ' leg)');
-  line('  verified kernel → leg ' + rj.refusedAt + ' refused; whole ring aborts (' + rj.settledLegs + ' legs settled) ' +
+  line('  verified kernel (recKExecAsset) → leg ' + rj.refusedAt + ' refused; whole ring aborts (' + rj.settledLegs + ' legs settled) ' +
        (rj.aborted ? ok('✔') : bad('✗')));
-  if (!rj.aborted) throw new Error('GATE FAIL: over-debit must be refused');
+  if (!rj.aborted) throw new Error('GATE FAIL: over-debit must be refused by the real kernel');
 
   rule('GATE RESULT');
-  const pass = sol.ok && !tamper.valid && rev.ok && aggOk && rep.limitsOk && rep.conservesOk && rj.aborted;
+  const pass = sol.ok && !tamper.valid && rev.ok && res.aggregateFaithful && res.limitsOk && res.conservesOk && rj.aborted;
   line('  ' + (pass ? ok('PASS') : bad('FAIL')) +
-       ' — real signed order-turn + real solvency proof (verified, tamper-rejected) +');
-  line('         real anonymous eligibility, driven through a sealed-bid batch to a fair, conserving fill.');
+       ' — real signed order-turn + real solvency proof (verified, tamper-rejected) + real anonymous');
+  line('         eligibility, driven through a sealed-bid batch to a REAL solver.rs → verified_settle.rs fill.');
   if (!pass) process.exit(1);
 }
 

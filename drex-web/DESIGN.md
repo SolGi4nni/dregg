@@ -29,7 +29,7 @@ Every claim in DrEX carries one or more grades. Nothing is asserted ungraded.
 |---|---|---|
 | **PROVED** | a Lean theorem, checked for *all* inputs | `clearing_respects_limits` (Market/Fairness.lean) |
 | **ATTESTED** | produced/verified by real wallet crypto this run | the Bulletproofs solvency proof (`prove_conservation`) |
-| **REPLAYABLE** | recomputed on *this* batch and shown checking | per-asset conservation on the cleared legs |
+| **REPLAYABLE** | recomputed on *this* batch by the REAL pipeline (solver.rs + verified_settle.rs) and shown checking | per-asset conservation on the cleared legs |
 | **NOT-IN-THIS-BATCH** | proved in Lean, but this rung isn't exercised by the discrete clear-book batch | uniform-price no-arbitrage (the priced rung) |
 
 The "why it's fair" panel is literally a table of these, each with its Lean
@@ -107,9 +107,11 @@ palette: GitHub-dark, `ui-monospace`, dragon-purple accent):
   hashes (`H(order‖salt)`) while sealed; they flip to revealed amounts at clear
   time. Your order is highlighted. A batch clock.
 - **Center — the ticket + the wallet flow.** The order form (sell/want/limit/
-  holdings) and a **live flow log** that narrates each step with a badge:
-  `REAL wasm` (green) vs `clear-side mirror` (orange). Each step shows the real
-  artifacts it produced (turn id, envelope bytes, `valid=true`, nullifier).
+  holdings) and a **live flow log** that narrates each step with a green badge
+  naming the real engine that ran it: `REAL wasm` for the wallet steps,
+  `REAL solver.rs` / `REAL verified_settle.rs` for the matcher + settlement. Each
+  step shows the real artifacts it produced (turn id, envelope bytes, `valid=true`,
+  nullifier, the cleared ring + legs).
 - **Right — cleared batch + "why it's fair".** Your fill + everyone's
   allocations (sent/received, IR + budget checks), per-asset conservation bars,
   and the graded fairness ledger (§1) with Lean citations.
@@ -139,13 +141,14 @@ audit trail.
        │ sealed commit  … batch T … reveal
        ▼
  ┌────────────────────────────────────────────────────────────────────┐
- │  MATCHER + SETTLEMENT   [LABELED: clear-side mirror in the proto]    │
- │   real engine = intent/src/solver.rs  (Johnson circuits + TTC ring) │
- │              + intent/src/verified_settle.rs (fold each leg through  │
- │                the Lean-proved Exec.recKExec per-asset kernel)       │
- │              + intent/examples/drex_clear_book.rs (the runnable e2e) │
+ │  MATCHER + SETTLEMENT   [REAL: the actual Rust, via POST /clear]     │
+ │   serve.mjs shells to intent/src/bin/drex_clear.rs, which runs:      │
+ │     intent/src/solver.rs  (Johnson circuits + Shapley–Scarf TTC ring)│
+ │   + intent/src/verified_settle.rs (fold each leg through the         │
+ │     Lean-proved Exec.recKExecAsset per-asset kernel)                 │
+ │   — the SAME pipeline as intent/examples/drex_clear_book.rs.         │
  └─────┬──────────────────────────────────────────────────────────────┘
-       │ cleared allocations + reject-polarity
+       │ cleared allocations (off the verified post-ledger) + reject-polarity
        ▼   DrEX web app renders the fill + graded "why it's fair" panel
 ```
 
@@ -154,6 +157,12 @@ In production the browser↔extension hop is the shipped
 page.ts` + `content.ts`). In the prototype the app loads the **same
 `dregg_wasm.js`** directly (dev harness — same wasm, same entry points) so the
 proving is real without requiring the packed extension to be installed.
+
+The matcher hop is the web app POSTing the batch's **revealed orders** to
+serve.mjs `/clear`, which shells to the `drex_clear` binary and returns the real
+clearing as JSON. So the ring, the per-asset conservation, the allocations (read
+off the **verified post-ledger**), and the over-debit reject the UI shows are the
+REAL `solver.rs` + `verified_settle.rs` output — not a JS re-implementation.
 
 ---
 
@@ -167,12 +176,27 @@ proving is real without requiring the packed extension to be installed.
 | Anonymous eligibility | **REAL** | `prove_anonymous_membership` → blinded tag + nullifier |
 | Sealed commit/reveal | **REAL** | SHA-256 commitment, binds on reveal |
 | Confirm-intent approve | **REAL surface** | the shipped card, reused verbatim, nonce-bound |
-| **Matcher + settlement** | **LABELED mirror** | `drex-clearside.js` mirrors solver.rs/verified_settle.rs/drex_clear_book.rs (same ring, same conservation + limit + reject-polarity checks). Not the verified executor — that needs the B_IROOT Rust build. Every property it recomputes cites the Lean theorem that PROVES it. |
+| Ring matcher | **REAL** | `intent/src/solver.rs` — Johnson elementary circuits + Shapley–Scarf TTC, run over the revealed orders via the `drex_clear` binary (POST /clear) |
+| Verified settlement | **REAL** | `intent/src/verified_settle.rs` — each leg folded through the proved per-asset kernel `recKExecAsset` (`settle_ring_verified`); allocations read off the verified post-ledger; per-asset conservation asserted (`settleRing_conserves`) |
+| Over-debit reject | **REAL** | drain a sender one short → the verified kernel refuses the leg and aborts the whole ring (`settleRing_atomic` / `overdebit_refused`) — computed by the Rust kernel, not a JS check |
 
-The matcher is the *only* stand-in, and it is honestly labeled everywhere it
-appears (flow-log badge, panel citations, this table). The full engine already
-exists and runs (`cargo run -p dregg-intent --example drex_clear_book`); the
-mirror exists so the UI clears a batch without a fresh Rust toolchain build.
+**The demo is now end-to-end REAL** — real wallet proving (extension wasm) AND a
+real matcher + settlement (`solver.rs` → `verified_settle.rs`, the same pipeline
+`cargo run -p dregg-intent --example drex_clear_book` runs). There is no mirror.
+
+Named remaining stand-ins (honest, no unlabeled gaps):
+- **The verified-executor cross-check is in-process, not FFI.** `drex_clear` is an
+  FFI-free target: it registers no `IntentVerifiedGate`, so each leg runs the
+  IN-PROCESS proved transition (`rec_exec_asset`, the `recKExecAsset` gate the Lean
+  `RingFFI.ffi_export_realises_settleRing_leg` proves the FFI export realises). On a
+  native node with the `dregg-exec-lean` gate installed, each leg is ADDITIONALLY
+  cross-checked against the real `dregg_record_kernel_step` Lean export and fails
+  closed on drift. The *transition* is the verified one either way; the extra FFI
+  cross-check is what the standalone binary omits.
+- **No on-chain settlement contract.** Settlement is the verified kernel fold over
+  an in-memory ledger — there is no external chain/contract leg in this demo.
+- Demo key material is deterministic (`traderKey`); a real wallet holds the seed
+  in the extension's sealed store.
 
 ## 6. Honesty notes worth stating once
 - The wasm is **fail-closed**: `prove_committed_threshold` in this build refuses
