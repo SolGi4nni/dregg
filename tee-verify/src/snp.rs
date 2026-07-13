@@ -12,24 +12,41 @@
 //!    the signature) are verified as ECDSA-P384 / SHA-384 against the chip's **VCEK**
 //!    public key — exactly the scheme [`crate::verify_cose_sig`] uses for Nitro's
 //!    ES384, via `p384`.
-//! 3. **Cert chain** (behind the pinned-roots seam): VCEK ← ASK ← pinned **ARK**,
-//!    structured like [`crate::verify_cert_chain`] with `x509-parser`'s `verify`
-//!    feature. The VCEK certificate rides appended to the report bytes
-//!    (`report(1184) ‖ vcek_der`); ASK + ARK are the operator-pinned AMD roots.
+//! 3. **Cert chain** (anchored to the real AMD roots): VCEK ← ASK ← pinned **ARK**,
+//!    structured like [`crate::verify_cert_chain`]. The VCEK certificate rides appended to
+//!    the report bytes (`report(1184) ‖ vcek_der`); ASK + ARK are the **real AMD roots**
+//!    embedded from the AMD KDS per product (Milan/Genoa/Turin) — see [`snp_chain`] for the
+//!    pinned roots + provenance. AMD's ARK/ASK sign RSA-4096-PSS, verified via the `rsa`
+//!    crate (the algorithm `x509-parser` lacks).
 //!
 //! **Fail-closed.** A [`SnpVerifier`] built with [`SnpVerifier::new`] carries no pinned
-//! AMD roots and rejects *every* report (`Err`) before it would extract claims —
-//! parsing and body-signature code are real, but no trust decision is made without the
-//! pinned ARK/ASK. Install the real chain with [`SnpVerifier::with_pinned_roots`]. This
-//! is the honest first cut: the report PARSING + field extraction + body-signature
-//! verify are real; the chain-to-AMD-root is a clearly-marked seam that fails closed,
-//! never silently accepts.
+//! AMD roots and rejects *every* report (`Err`) before it would extract claims. Build the
+//! anchored verifier with [`SnpVerifier::new_with_amd_roots`] (real embedded AMD roots per
+//! product) — or [`SnpVerifier::with_pinned_roots`] / [`SnpVerifier::with_pinned_roots_pem`]
+//! for operator-supplied roots. With the roots pinned, the verifier ACCEPTS a genuine AMD
+//! `VCEK ← ASK ← ARK` chain and fail-closes on a forged / wrong-product / tampered chain.
+//!
+//! **Grade.** This is ATTESTED grade: the AMD hardware-vendor root chain is real + pinned,
+//! and the report PARSING + field extraction + body-signature verify are real crypto. The
+//! remaining piece to verify a *live* report is a genuine SEV-SNP `ATTESTATION_REPORT` +
+//! its per-chip VCEK captured from EPYC-SNP hardware (the report-body fixture) — the ROOT
+//! trust is now real, not a seam.
 
 use dregg_cell::tee_attest::{TeeAttestationVerifier, TeeQuoteKind, TeeReportClaims};
 use p384::ecdsa::signature::Verifier;
 use p384::ecdsa::{Signature, VerifyingKey};
 use sha2::{Digest, Sha256};
-use x509_parser::prelude::*;
+
+/// The `dregg-cell`-free cert-chain trust core: the pinned real AMD roots (ARK/ASK per
+/// product), the RSA-PSS link primitive, and `VCEK ← ASK ← ARK` chain verify. Split out so
+/// it builds + tests standalone even when a sibling workspace crate is red. Re-exported so
+/// the historical `snp::SnpTrust` / `snp::verify_snp_cert_chain` / `snp::verify_rsa_pss_sha384`
+/// paths keep resolving.
+pub mod snp_chain;
+pub use snp_chain::{
+    amd_kds_cert_chain_url, verify_cert_link, verify_rsa_pss_sha384, verify_snp_cert_chain,
+    SnpProduct, SnpTrust,
+};
 
 /// Total size of a SEV-SNP `ATTESTATION_REPORT` (`0x4A0`).
 pub const REPORT_LEN: usize = 1184;
@@ -210,59 +227,6 @@ impl SnpReport {
     }
 }
 
-/// The `id-RSASSA-PSS` signature-algorithm OID (`1.2.840.113549.1.1.10`) — how AMD's ARK
-/// and ASK sign (RSA-4096, MGF1-SHA-384, salt 48). `x509-parser`'s `verify_signature`
-/// supports only PKCS#1 v1.5 / ECDSA / Ed25519 (see its `verify.rs`), so a chain link
-/// signed with this OID is routed to [`verify_rsa_pss_sha384`] instead.
-const RSASSA_PSS_OID: &str = "1.2.840.113549.1.1.10";
-
-/// Verify an **RSASSA-PSS / SHA-384** signature (the AMD ARK/ASK certificate-link
-/// algorithm) with the `rsa` crate — the maintained impl `x509-parser` lacks. `issuer_spki`
-/// is the issuer's `SubjectPublicKeyInfo.subjectPublicKey` bytes (a DER `RSAPublicKey`,
-/// PKCS#1); `message` is the signed TBS DER; `signature` is the raw signature. Uses the
-/// SHA-384 salt length (48 = digest output size, which `VerifyingKey::new` selects) — the
-/// AMD ARK/ASK PSS parameter.
-pub fn verify_rsa_pss_sha384(
-    issuer_spki: &[u8],
-    message: &[u8],
-    signature: &[u8],
-) -> Result<(), String> {
-    use rsa::pkcs1::DecodeRsaPublicKey;
-    use rsa::pss::{Signature as PssSignature, VerifyingKey};
-    use rsa::signature::Verifier;
-    use sha2::Sha384;
-
-    let pk = rsa::RsaPublicKey::from_pkcs1_der(issuer_spki)
-        .map_err(|e| format!("issuer RSA public key (PKCS#1) decode: {e}"))?;
-    let vk = VerifyingKey::<Sha384>::new(pk);
-    let sig =
-        PssSignature::try_from(signature).map_err(|e| format!("PSS signature decode: {e}"))?;
-    vk.verify(message, &sig)
-        .map_err(|e| format!("RSA-PSS-SHA384 signature verify FAILED: {e}"))
-}
-
-/// Verify one certificate-chain link: `child`'s signature under `issuer`'s public key,
-/// dispatching on `child`'s signature algorithm. AMD's `id-RSASSA-PSS` ARK/ASK links go to
-/// [`verify_rsa_pss_sha384`] (the `rsa` crate); everything else (the ECDSA-P384 VCEK link,
-/// and the ECDSA self-PKI used in tests) goes through `x509-parser`'s `verify_signature`.
-/// Either arm fails **closed** — an unsupported algorithm or a bad signature is an `Err`.
-pub fn verify_cert_link(
-    child: &X509Certificate<'_>,
-    issuer: &X509Certificate<'_>,
-) -> Result<(), String> {
-    if child.signature_algorithm.algorithm.to_id_string() == RSASSA_PSS_OID {
-        verify_rsa_pss_sha384(
-            issuer.public_key().subject_public_key.data.as_ref(),
-            child.tbs_certificate.as_ref(),
-            child.signature_value.data.as_ref(),
-        )
-    } else {
-        child
-            .verify_signature(Some(issuer.public_key()))
-            .map_err(|e| format!("chain link signature: {e:?}"))
-    }
-}
-
 /// Verify the report-body ECDSA-P384/SHA-384 signature with the chip's VCEK public key.
 /// Real crypto — this is the binding between the VCEK identity and the report contents.
 pub fn verify_snp_signature(report: &SnpReport, vcek_vk: &VerifyingKey) -> Result<(), String> {
@@ -276,95 +240,6 @@ pub fn verify_snp_signature(report: &SnpReport, vcek_vk: &VerifyingKey) -> Resul
     vcek_vk
         .verify(report.signed_body(), &sig)
         .map_err(|e| format!("SNP report signature verify FAILED: {e}"))
-}
-
-/// The operator-pinned AMD roots. `ark_der` is the self-signed AMD Root Key; `ask_der`
-/// is the AMD SEV Signing Key (intermediate, signed by ARK). These are chip-family
-/// constants fetched once from the AMD KDS and pinned — the per-chip VCEK is presented
-/// alongside each report.
-#[derive(Debug, Clone)]
-pub struct SnpTrust {
-    pub ark_der: Vec<u8>,
-    pub ask_der: Vec<u8>,
-}
-
-/// Decode a single PEM `CERTIFICATE` block to its DER bytes. Only the first block is
-/// read; a non-`CERTIFICATE` label is an error (fail-closed on malformed input).
-fn pem_cert_to_der(pem: &str, what: &str) -> Result<Vec<u8>, String> {
-    let (_, block) = x509_parser::pem::parse_x509_pem(pem.as_bytes())
-        .map_err(|e| format!("{what} PEM parse: {e}"))?;
-    if block.label != "CERTIFICATE" {
-        return Err(format!(
-            "{what} PEM label is {:?}, expected CERTIFICATE",
-            block.label
-        ));
-    }
-    Ok(block.contents)
-}
-
-/// The AMD **Key Distribution Service (KDS)** endpoint that serves the ASK+ARK PEM chain
-/// for a SEV product line (`"Milan"`, `"Genoa"`, …). A GET returns the ASK (SEV
-/// intermediate) followed by the self-signed ARK (SEV root), both PEM `CERTIFICATE`
-/// blocks. Fetch this once per chip family, split the two blocks, and pin them via
-/// [`SnpTrust::from_pem`]. The matching per-chip **VCEK** is fetched from
-/// `https://kdsintf.amd.com/vcek/v1/{product}/{hwid}?blSPL=..&teeSPL=..&snpSPL=..&ucodeSPL=..`
-/// and rides appended to each report (`report(1184) ‖ vcek_der`). No fetch happens here —
-/// this only names the source URL so an operator (or a fetch tool outside the TCB) can
-/// retrieve the roots and install them.
-pub fn amd_kds_cert_chain_url(product: &str) -> String {
-    format!("https://kdsintf.amd.com/vcek/v1/{product}/cert_chain")
-}
-
-impl SnpTrust {
-    /// Build pinned roots from operator-provided PEM: the self-signed AMD **ARK** (SEV
-    /// root) and the **ASK** (SEV intermediate). Each argument must contain a single PEM
-    /// `CERTIFICATE` block; the DER is extracted and stored for chain verification.
-    ///
-    /// The real certificates come from the AMD KDS — see [`amd_kds_cert_chain_url`]. The
-    /// `cert_chain` endpoint returns ASK then ARK; split the two blocks and pass the ARK
-    /// block as `ark_pem` and the ASK block as `ask_pem`.
-    pub fn from_pem(ark_pem: &str, ask_pem: &str) -> Result<SnpTrust, String> {
-        Ok(SnpTrust {
-            ark_der: pem_cert_to_der(ark_pem, "ARK")?,
-            ask_der: pem_cert_to_der(ask_pem, "ASK")?,
-        })
-    }
-}
-
-/// Verify VCEK ← ASK ← pinned-ARK and return the VCEK's P-384 public key.
-///
-/// Structured like [`crate::verify_cert_chain`]: each link's signature is checked
-/// against its issuer's key (via [`verify_cert_link`]) and every cert's validity window is
-/// checked at wall-clock now (SNP reports carry no timestamp of their own). AMD's ARK/ASK
-/// sign RSA-4096 **PSS** — `x509-parser` cannot verify PSS, so [`verify_cert_link`] routes
-/// those links to [`verify_rsa_pss_sha384`] (the `rsa` crate); the ECDSA-P384 VCEK link
-/// stays on `x509-parser`. Either way this path fails **closed** (an unsupported signature
-/// or a bad one is an `Err`, never a silent accept).
-pub fn verify_snp_cert_chain(vcek_der: &[u8], trust: &SnpTrust) -> Result<VerifyingKey, String> {
-    if vcek_der.is_empty() {
-        return Err("no VCEK certificate appended to the SNP report bytes".into());
-    }
-    let (_, ark) =
-        X509Certificate::from_der(&trust.ark_der).map_err(|e| format!("pinned ARK parse: {e}"))?;
-    let (_, ask) =
-        X509Certificate::from_der(&trust.ask_der).map_err(|e| format!("pinned ASK parse: {e}"))?;
-    let (_, vcek) = X509Certificate::from_der(vcek_der).map_err(|e| format!("VCEK parse: {e}"))?;
-
-    let now = ASN1Time::now();
-    for (name, cert) in [("ARK", &ark), ("ASK", &ask), ("VCEK", &vcek)] {
-        if !cert.validity().is_valid_at(now) {
-            return Err(format!("{name} certificate is not valid now"));
-        }
-    }
-
-    // ARK is self-signed (the trust anchor); ASK is signed by ARK; VCEK by ASK. Each link
-    // dispatches by signature algorithm (RSA-PSS for the real AMD ARK/ASK, ECDSA otherwise).
-    verify_cert_link(&ark, &ark).map_err(|e| format!("ARK self-signature: {e}"))?;
-    verify_cert_link(&ask, &ark).map_err(|e| format!("ASK←ARK signature: {e}"))?;
-    verify_cert_link(&vcek, &ask).map_err(|e| format!("VCEK←ASK signature: {e}"))?;
-
-    let point = vcek.public_key().subject_public_key.data.as_ref();
-    VerifyingKey::from_sec1_bytes(point).map_err(|e| format!("VCEK P-384 key: {e}"))
 }
 
 /// Verifier for AMD SEV-SNP attestation reports. Fail-closed unless pinned AMD roots
@@ -401,6 +276,19 @@ impl SnpVerifier {
     pub fn with_pinned_roots_pem(ark_pem: &str, ask_pem: &str) -> Result<SnpVerifier, String> {
         Ok(SnpVerifier {
             trust: Some(SnpTrust::from_pem(ark_pem, ask_pem)?),
+            min_tcb: TcbVersion::default(),
+        })
+    }
+
+    /// Anchor to the **real AMD roots** for a SEV-SNP product line — the ARK/ASK embedded
+    /// from the AMD KDS (provenance in [`snp_chain`]). This is the production anchor: the
+    /// verifier now trusts the genuine AMD root chain, accepts a real `VCEK ← ASK ← ARK`,
+    /// and fail-closes on a forged / wrong-product / tampered chain. The remaining piece to
+    /// verify a *live* report is a real SEV-SNP `ATTESTATION_REPORT` + its VCEK from
+    /// EPYC-SNP hardware (the report-body path); the root trust here is real.
+    pub fn new_with_amd_roots(product: SnpProduct) -> Result<SnpVerifier, String> {
+        Ok(SnpVerifier {
+            trust: Some(SnpTrust::for_product(product)?),
             min_tcb: TcbVersion::default(),
         })
     }
@@ -759,63 +647,24 @@ mod tests {
         assert!(verify_snp_cert_chain(&bad, &trust).is_err());
     }
 
+    // NOTE: the RSA-PSS-SHA384 link primitive test and the KDS-URL test moved to
+    // `snp_chain.rs` (the `dregg-cell`-free module), where they run under the standalone
+    // harness alongside the real-AMD-root tests — see `snp_chain::tests`.
+
+    /// Anchoring to the real embedded AMD roots produces a verifier whose chain trust is
+    /// the genuine AMD root (Milan/Genoa/Turin). We can't drive a full report without a
+    /// live VCEK, but the roots load and the chain seam rejects an absent VCEK (fail-closed).
     #[test]
-    fn amd_kds_url_names_the_real_source() {
-        assert_eq!(
-            amd_kds_cert_chain_url("Milan"),
-            "https://kdsintf.amd.com/vcek/v1/Milan/cert_chain"
-        );
-    }
-
-    /// The **RSA-PSS-SHA384 link primitive** — the exact algorithm AMD's ARK/ASK sign
-    /// with, and the piece `x509-parser` cannot verify. Proves both polarities with a real
-    /// RSA key via the `rsa` crate: a genuine PSS-SHA384 signature over a stand-in TBS
-    /// verifies; a tampered message, a tampered signature, or a wrong issuer key is refused.
-    /// (AMD uses RSA-4096; the test uses 2048 for keygen speed — identical code path.)
-    #[test]
-    fn rsa_pss_sha384_link_primitive_roundtrips_and_rejects_tamper() {
-        use rsa::pkcs1::EncodeRsaPublicKey;
-        use rsa::pss::{Signature as PssSignature, SigningKey};
-        use rsa::signature::{RandomizedSigner, SignatureEncoding};
-        use rsa::RsaPrivateKey;
-        use sha2::Sha384;
-
-        let mut rng = rand::thread_rng();
-        let sk = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen");
-        let spki = sk
-            .to_public_key()
-            .to_pkcs1_der()
-            .expect("pkcs1 der")
-            .as_bytes()
-            .to_vec();
-
-        let signing = SigningKey::<Sha384>::new(sk);
-        let msg = b"a stand-in for a certificate TBS DER (AMD ARK/ASK PSS-SHA384)";
-        let sig: PssSignature = signing.sign_with_rng(&mut rng, msg);
-        let sig_bytes = sig.to_bytes();
-
-        // Genuine PSS-SHA384 signature verifies through the real AMD-link path.
-        verify_rsa_pss_sha384(&spki, msg, &sig_bytes).expect("valid PSS link");
-
-        // Tampered message → refused.
-        let mut bad_msg = msg.to_vec();
-        bad_msg[0] ^= 0xFF;
-        assert!(verify_rsa_pss_sha384(&spki, &bad_msg, &sig_bytes).is_err());
-
-        // Tampered signature → refused.
-        let mut bad_sig = sig_bytes.to_vec();
-        let n = bad_sig.len();
-        bad_sig[n - 1] ^= 0xFF;
-        assert!(verify_rsa_pss_sha384(&spki, msg, &bad_sig).is_err());
-
-        // A different issuer key → refused.
-        let other = RsaPrivateKey::new(&mut rng, 2048).expect("rsa keygen 2");
-        let other_spki = other
-            .to_public_key()
-            .to_pkcs1_der()
-            .unwrap()
-            .as_bytes()
-            .to_vec();
-        assert!(verify_rsa_pss_sha384(&other_spki, msg, &sig_bytes).is_err());
+    fn new_with_amd_roots_anchors_real_chain() {
+        for product in [SnpProduct::Milan, SnpProduct::Genoa, SnpProduct::Turin] {
+            let v = SnpVerifier::new_with_amd_roots(product).expect("real AMD roots load");
+            // A synthetic report with no appended VCEK fails the (now real-root-anchored)
+            // chain seam — fail-closed, never a silent accept.
+            let bytes = synthetic_report();
+            let err = v
+                .verify_report(TeeQuoteKind::SevSnp, &bytes)
+                .expect_err("no VCEK under real roots");
+            assert!(err.contains("VCEK"), "unexpected: {err}");
+        }
     }
 }

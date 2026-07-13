@@ -28,8 +28,10 @@
 //! Parses the fixed-layout 1184-byte SEV-SNP `ATTESTATION_REPORT`, extracts the launch
 //! `measurement` (folded to 32 bytes via SHA-256) and `report_data` (first 32 bytes),
 //! and verifies the report-body ECDSA-P384/SHA-384 signature with the chip's VCEK
-//! public key after checking VCEK ← ASK ← pinned-ARK. Fail-closed: with no pinned AMD
-//! roots installed it rejects every report. See [`snp`].
+//! public key after checking VCEK ← ASK ← pinned-ARK. The **real AMD roots** (ARK/ASK per
+//! product: Milan/Genoa/Turin) are embedded from the AMD KDS — build the anchored verifier
+//! with [`SnpVerifier::new_with_amd_roots`]. Fail-closed: [`SnpVerifier::new`] (no roots)
+//! rejects every report. See [`snp`] and [`snp::snp_chain`] (roots + provenance).
 
 use std::collections::BTreeMap;
 use std::time::{SystemTime, UNIX_EPOCH};
