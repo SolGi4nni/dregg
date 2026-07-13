@@ -24,7 +24,7 @@ namespace Dregg2.Circuit.Emit
 
 /-- The named faithful-8-felt roots the rotated block commits. -/
 inductive GroupName
-  | authority | cap | nullifier | commitments | heap | perms | vk | fields | revoked
+  | authority | cap | nullifier | commitments | heap | perms | vk | fields | revoked | cells
 deriving DecidableEq, Repr
 
 /-- One faithful-8-felt group: lane 0 (the scalar limb the root historically rode) plus the seven
@@ -77,7 +77,7 @@ structure Legal (L : RotatedLayout) : Prop where
     `compute_rotated_pre_limbs`. This enumeration is a complete tiling of `0..177` (every column once). -/
 def rotated178 : RotatedLayout where
   numPreLimbs := 178
-  singles := [0, 1, 2, 3,                    -- cells_root, r0/r1/r2 = bal_lo/nonce/bal_hi
+  singles := [1, 2, 3,                       -- r0/r1/r2 = bal_lo/nonce/bal_hi (cells lane-0 is a group)
               4, 5, 6, 7, 8, 9, 10, 11,      -- r3..r10 = fields[0..7] lane-0 (welded)
               29, 30, 31, 32, 35]            -- lifecycle, epoch, committed_height, disc, mode
   groups := [
@@ -89,10 +89,11 @@ def rotated178 : RotatedLayout where
     (.perms,       ⟨33, [38, 39, 40, 41, 42, 43, 44]⟩),
     (.vk,          ⟨34, [45, 46, 47, 48, 49, 50, 51]⟩),
     (.fields,      ⟨36, [66, 67, 19, 20, 21, 22, 23]⟩),  -- non-contiguous: reuses headroom 19..23
-    (.revoked,     ⟨37, [82, 83, 84, 85, 86, 87, 88]⟩)]
+    (.revoked,     ⟨37, [82, 83, 84, 85, 86, 87, 88]⟩),
+    (.cells,       ⟨0, [169, 170, 171, 172, 173, 174, 175]⟩)]  -- completion circuit-only, producer-zero
   octets := [89, 97, 105]                    -- child_vk, contract_hash, pubkey octet bases
   fieldsOctet := (List.range 56).map (· + 113)   -- 113..168
-  cellsCompletion := [169, 170, 171, 172, 173, 174, 175]  -- circuit-only, producer-zero
+  cellsCompletion := []                      -- (cells is now a group; kept for structural symmetry)
   pads := [176, 177]
 
 /-- The current layout is LEGAL — disjoint, in-bounds, body-aligned. The disjointness invariant that
