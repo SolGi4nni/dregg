@@ -100,6 +100,11 @@ pub mod live_js;
 pub mod mandate;
 pub mod mcp_server;
 pub mod mock_peer;
+// THE CROWN over the GAME NARRATOR — wraps a `dregg-narrator` hosted DM narration in the
+// attestation crown (`crate::attest`): a narration call yields the prose AND a
+// `ZkOracleAttestation` (real JSON-CFG + injection-free legs; fixture authentic leg by
+// default, real MPC-TLS 2PC under `zk-live`) + the commitment a game turn's receipt binds.
+pub mod narrator_crown;
 #[cfg(all(unix, feature = "node-brain"))]
 pub mod node_hands;
 // The REAL zkTLS oracle-fact verifier homed here (the crypto seam `dregg-cell`'s
@@ -157,6 +162,7 @@ pub use grant_registry::{GrantRegistry, MandateKey};
 #[cfg(unix)]
 pub use host::{DreggHost, HostedAgentReport, HostedToolVerdict};
 pub use mcp_server::{ConfinedToolResult, DREGG_TOOL_NAMES, McpServer, McpToolHost};
+pub use narrator_crown::{AttestedNarration, AttestedNarrator, CrownError};
 #[cfg(unix)]
 pub use world_bridge::{BridgeWorld, SocketWorldSink, serve_world_bridge};
 

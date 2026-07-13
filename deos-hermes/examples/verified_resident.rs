@@ -165,8 +165,9 @@ fn main() {
         let (att, field) = carrier
             .attest_turn(&run.agent_text)
             .expect("the confined turn is attestable (benign, well-formed)");
-        verify_zkoracle(&att, carrier.config())
-            .expect("the attestation verifies — all three legs (authentic ∧ well-formed ∧ inj-free)");
+        verify_zkoracle(&att, carrier.config()).expect(
+            "the attestation verifies — all three legs (authentic ∧ well-formed ∧ inj-free)",
+        );
         (att, field.len(), "modeled ed25519 carrier")
     };
     // Under `zk-live`: a GENUINE local MPC-TLS 2PC roundtrip authenticates the turn body, and
@@ -179,7 +180,11 @@ fn main() {
         verify_zkoracle_live(&att, "test-server.io").expect(
             "the attestation verifies — authentic leg by REAL presentation.verify() ∧ well-formed ∧ inj-free",
         );
-        (att, run.agent_text.len(), "REAL MPC-TLS 2PC presentation (trustless)")
+        (
+            att,
+            run.agent_text.len(),
+            "REAL MPC-TLS 2PC presentation (trustless)",
+        )
     };
     let commitment = attestation_commitment(&att);
     println!(

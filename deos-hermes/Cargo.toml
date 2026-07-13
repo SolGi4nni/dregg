@@ -84,6 +84,17 @@ serde_json = "1"
 # operational remainder (docs/deos/ZKORACLE-PROVER-STATUS.md).
 dregg-zkoracle-prove = { path = "../zkoracle-prove" }
 
+# THE GAME NARRATOR — the hosted, budget-metered DM narrator (`dregg-narrator`:
+# Bedrock Claude/Nova → Ollama → scripted, behind the hard USD `BudgetLedger`). The
+# `crate::narrator_crown` seam wraps a `Narrator`'s DM narration in the attestation
+# crown above (`crate::attest::AttestationCarrier`): a narration call yields the text
+# AND a `ZkOracleAttestation` (real JSON-CFG well-formedness + the real injection-free
+# matcher; the authentic leg the fixture carrier by default, the real MPC-TLS 2PC under
+# `zk-live`), plus the 32-byte `attestation_commitment` a game turn's receipt witnesses.
+# LIGHT: dregg-narrator pulls only the AWS Converse SDK + serde + fs2 (no Lean, no
+# MPC-TLS); the crown's crypto stays `dregg-zkoracle-prove`'s default surface.
+dregg-narrator = { path = "../narrator" }
+
 # THE REAL TEE-FACT VERIFIER SEAM (`crate::tee_fact`, default build — unlike the
 # oracle seam it needs no heavy MPC-TLS backend, only X.509/P-384/CBOR). The genuine
 # vendor-crypto verifiers (`NitroVerifier` chain-to-pinned-AWS-root, `SnpVerifier`
