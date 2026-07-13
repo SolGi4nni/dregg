@@ -619,15 +619,17 @@ theorem intt_addLinear_pair (a b : Poly) (ha : a.size = 256) (halt : ∀ (p : Na
       = ((intt a)[2*i+r]! : ZMod q) + ((intt b)[2*i+r]! : ZMod q) := by
   have hab : (addPoly a b).size = 256 := MlKemRing.addPoly_size a b
   have hablt : ∀ (p : Nat), (addPoly a b)[p]! < q := MlKemRing.addPoly_lt a b
+  -- the `intt` coefficient is a `ℤ_q`-LINEAR functional of the inputs; split the sum termwise.
+  have hsum : (∑ u ∈ Finset.range 128, ((addPoly a b)[2*u+r]! : ZMod q) * (MlKemRing.kirt u)^i)
+      = (∑ u ∈ Finset.range 128, (a[2*u+r]! : ZMod q) * (MlKemRing.kirt u)^i)
+        + (∑ u ∈ Finset.range 128, (b[2*u+r]! : ZMod q) * (MlKemRing.kirt u)^i) := by
+    rw [← Finset.sum_add_distrib]
+    refine Finset.sum_congr rfl (fun u hu => ?_)
+    have hu256 : 2*u+r < 256 := by have := Finset.mem_range.mp hu; omega
+    rw [MlKemRing.cast_addPoly a b (2*u+r) hu256, add_mul]
   rw [MlKemRing.intt_interp_kem (addPoly a b) hab hablt i r hi hr,
       MlKemRing.intt_interp_kem a ha halt i r hi hr,
-      MlKemRing.intt_interp_kem b hb hblt i r hi hr]
-  rw [← mul_add]
-  congr 1
-  rw [← Finset.sum_add_distrib]
-  refine Finset.sum_congr rfl (fun u hu => ?_)
-  have hu256 : 2*u+r < 256 := by have := Finset.mem_range.mp hu; omega
-  rw [MlKemRing.cast_addPoly a b (2*u+r) hu256, add_mul]
+      MlKemRing.intt_interp_kem b hb hblt i r hi hr, hsum, mul_add]
 
 /-- **`intt`-LINEARITY (all coefficients)** — `φ(intt(addPoly a b)) = φ(intt a) + φ(intt b)` coefficient-wise in
 `ℤ_q`, for canonical reduced `a, b`. The reusable additivity that distributes `intt` over the K-PKE decryption
@@ -645,16 +647,16 @@ theorem intt_addLinear (a b : Poly) (ha : a.size = 256) (halt : ∀ (p : Nat), a
 /-! ### §8.3 — `ntt ∘ intt = id` on canonical reduced polys (the finiteness/bijection dual of `ntt_intt_id`). -/
 
 /-- The canonical-poly predicate: size 256 and every coefficient reduced (`< q`). -/
-abbrev IsCanPoly (c : Poly) : Prop := c.size = 256 ∧ ∀ (p : Nat), c[p]! < q
+abbrev IsCanPoly (c : Poly) : Prop := c.size = 256 ∧ (∀ (p : Nat), getElem! c p < q)
 
 /-- The finite domain the incomplete NTT bijects: canonical (size-256) reduced (`< q`) polys. -/
 abbrev CanPoly : Type := { c : Poly // IsCanPoly c }
 
-/-- `CanPoly` is FINITE — the reduced coefficient reading `CanPoly ↪ (Fin 256 → Fin q)` is injective
-(`arrayExtAll` + reducedness), and the codomain is a `Fintype`. -/
+/-- `CanPoly` is FINITE — the reduced `ℤ_q` coefficient reading `CanPoly ↪ (Fin 256 → ZMod q)` is injective
+(`arrayExtAll` + `natCast_inj_of_lt` on the reduced coefficients), and the codomain is a `Fintype`. -/
 instance : Finite CanPoly :=
-  Finite.of_injective
-    (fun c : CanPoly => (fun i : Fin 256 => (⟨c.1[i.val]!, c.2.2 i.val⟩ : Fin q)))
+  Finite.of_injective (β := Fin 256 → ZMod q)
+    (fun c i => ((c.1[(i : Nat)]! : ZMod q)))
     (by
       intro x y hxy
       apply Subtype.ext
@@ -662,7 +664,7 @@ instance : Finite CanPoly :=
       intro j hj
       have hj256 : j < 256 := by rw [x.2.1] at hj; exact hj
       have hcong := congrFun hxy ⟨j, hj256⟩
-      exact congrArg Fin.val hcong)
+      exact MlKemRing.natCast_inj_of_lt _ _ (x.2.2 j) (y.2.2 j) hcong)
 
 /-- `ntt` as an endofunction of `CanPoly` (`ntt_size`/`ntt_lt` keep the shape). -/
 def nttC (c : CanPoly) : CanPoly := ⟨ntt c.1, MlKemRing.ntt_size c.1 c.2.1, MlKemRing.ntt_lt c.1 c.2.2⟩
