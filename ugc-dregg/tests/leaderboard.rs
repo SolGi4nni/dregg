@@ -13,9 +13,10 @@
 use dungeon_on_dregg::{
     CH_CLAIM, CH_DESCEND, CH_LEAVE_LANTERN, CH_RETREAT, CH_TAKE_LANTERN, DUNGEON,
 };
+use ed25519_dalek::{Signer, SigningKey};
 use ugc_dregg::{
-    Completion, Provenance, Registry, RejectReason, Universe, WinCondition, record_playthrough,
-    verify_completion,
+    AuthorSignature, Completion, LineageError, Provenance, Registry, RejectReason, Universe,
+    UniversePlan, WinCondition, record_playthrough, verify_completion,
 };
 
 #[test]
@@ -334,6 +335,147 @@ fn a_procgen_universe_is_winnable_and_seed_addressed() {
             );
         }
     }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// VERIFIED AUTHOR IDENTITY — an author attests a universe with a real ed25519 signature
+// over its content commitment; a forged (mismatched/absent) attestation is REFUSED.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A deterministic author signing key for the tests (32 fixed bytes IS the ed25519
+/// secret — no `rand` needed, so the identity is reproducible across a run).
+fn author_key(tag: u8) -> SigningKey {
+    SigningKey::from_bytes(&[tag; 32])
+}
+
+#[test]
+fn a_signed_universe_binds_a_real_author_key_and_a_forgery_is_refused() {
+    let author = author_key(0xA1);
+    let pubkey = author.verifying_key().to_bytes();
+
+    // The honest author attests THEIR universe: sign its content commitment.
+    let plan = UniversePlan::authored(
+        "The Salt Shore Descent",
+        "ada",
+        DUNGEON,
+        WinCondition::ended_with(&[("gold", 500)]),
+        None,
+    )
+    .expect("valid world");
+    let sig = AuthorSignature::from_bytes(author.sign(&plan.signing_commitment()).to_bytes());
+    let signed = plan
+        .attest(pubkey, sig)
+        .expect("the honest attestation verifies");
+
+    // The universe now carries the VERIFIED identity, bound into its content address.
+    assert!(signed.is_signed());
+    assert_eq!(signed.author_id().unwrap().as_bytes(), &pubkey);
+    // The signed id differs from the anonymous twin (the key is bound in).
+    let anon = Universe::authored(
+        "The Salt Shore Descent",
+        "ada",
+        DUNGEON,
+        WinCondition::ended_with(&[("gold", 500)]),
+    )
+    .unwrap();
+    assert_ne!(
+        signed.id(),
+        anon.id(),
+        "the author key is bound into the id"
+    );
+
+    // FORGERY 1 — claim mallory's key without her secret: sign with ada's key but publish
+    // under mallory's pubkey. The signature does not verify against the claimed key.
+    let mallory_pub = author_key(0xFF).verifying_key().to_bytes();
+    let plan2 = UniversePlan::authored(
+        "The Salt Shore Descent",
+        "ada",
+        DUNGEON,
+        WinCondition::ended_with(&[("gold", 500)]),
+        None,
+    )
+    .unwrap();
+    let ada_sig = AuthorSignature::from_bytes(author.sign(&plan2.signing_commitment()).to_bytes());
+    assert!(
+        matches!(
+            plan2.attest(mallory_pub, ada_sig),
+            Err(ugc_dregg::PublishError::AuthorSignature)
+        ),
+        "claiming another author's key without its signature must be REFUSED"
+    );
+
+    // FORGERY 2 — a signature LIFTED from a different universe cannot attest this one.
+    let other =
+        UniversePlan::authored("Other World", "ada", DUNGEON, WinCondition::ended(), None).unwrap();
+    let lifted = AuthorSignature::from_bytes(author.sign(&other.signing_commitment()).to_bytes());
+    let plan3 = UniversePlan::authored(
+        "The Salt Shore Descent",
+        "ada",
+        DUNGEON,
+        WinCondition::ended_with(&[("gold", 500)]),
+        None,
+    )
+    .unwrap();
+    assert!(
+        matches!(
+            plan3.attest(pubkey, lifted),
+            Err(ugc_dregg::PublishError::AuthorSignature)
+        ),
+        "a signature over a DIFFERENT universe must not attest this one"
+    );
+}
+
+#[test]
+fn a_remix_records_lineage_and_a_fake_parent_is_refused() {
+    let mut reg = Registry::new();
+
+    // A published ROOT universe.
+    let root = salt_shore();
+    let root_id = reg.publish(root);
+    assert_eq!(reg.is_root(root_id), Some(true));
+
+    // A REMIX declaring the root as its parent — a real derivation edge.
+    let remix = UniversePlan::authored(
+        "The Salt Shore Descent (Nightmare Cut)",
+        "bran",
+        DUNGEON,
+        WinCondition::ended_with(&[("gold", 500)]),
+        Some(root_id),
+    )
+    .unwrap()
+    .anonymous();
+    let remix_id = reg
+        .publish_derived(remix)
+        .expect("a remix of a real parent is accepted");
+
+    // The lineage is recorded + queryable, and the graph is sound.
+    assert_eq!(reg.parent_of(remix_id), Some(root_id));
+    assert_eq!(reg.is_root(remix_id), Some(false));
+    assert_eq!(reg.children_of(root_id), vec![remix_id]);
+    assert!(reg.lineage_holds());
+
+    // A REMIX of a NON-EXISTENT parent is REFUSED — non-vacuous (nothing lands).
+    let fake_parent = ugc_dregg::UniverseId::from_bytes([0x99; 32]);
+    let orphan = UniversePlan::authored(
+        "Orphan Fork",
+        "mallory",
+        DUNGEON,
+        WinCondition::ended_with(&[("gold", 500)]),
+        Some(fake_parent),
+    )
+    .unwrap()
+    .anonymous();
+    let orphan_id = orphan.id();
+    assert_eq!(
+        reg.publish_derived(orphan),
+        Err(LineageError::UnknownParent(fake_parent)),
+        "a remix of a non-existent parent must be REFUSED"
+    );
+    assert!(
+        reg.universe(orphan_id).is_none(),
+        "the refused orphan is not in the registry"
+    );
+    assert!(reg.lineage_holds(), "the graph is still sound");
 }
 
 /// Derive the winning move sequence for a generated linear dungeon: at room0 take the

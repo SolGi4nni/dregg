@@ -42,15 +42,34 @@
 //!
 //! Verification is **O(N) replay** — a re-verifier re-executes every move. The
 //! succinct light client (verify a win in time sub-linear in the playthrough) is a
-//! separate, Lane-D-blocked workstream and is NOT claimed here. What also remains:
-//! **author identity / signatures** (a universe carries an author *name*, not yet a
-//! verified signing key), **persistence** (the [`Registry`] is in-memory), and
-//! **anti-sybil** (nothing rate-limits or stakes a submission). The no-cheat property
-//! — *a ranked completion provably reaches the win* — holds regardless of those.
+//! separate, Lane-D-blocked workstream and is NOT claimed here.
+//!
+//! ## Creator-economy foundation (this crate)
+//!
+//! Two pieces of the creator economy are now VERIFIABLE, not merely labelled:
+//!
+//! * **Verified author identity.** A universe's author can be a real ed25519 signing
+//!   identity ([`AuthorId`]) that **attests** the world with a signature over its
+//!   content commitment ([`UniversePlan::attest`]). The pubkey is bound into the
+//!   [`UniverseId`], so authorship is attributable + unforgeable: a publish claiming
+//!   another author's key WITHOUT a valid signature is refused
+//!   ([`PublishError::AuthorSignature`]). A legacy/anonymous universe (author = a bare
+//!   name) is still supported ([`UniversePlan::anonymous`] / [`Universe::authored`]).
+//! * **Remix / fork lineage.** A universe can declare a **parent**
+//!   ([`UniversePlan`]'s `parent`) — a content-addressed edge forming a derivation
+//!   graph. The parent is bound into the child's content address, and
+//!   [`Registry::publish_derived`] refuses a remix whose parent is not a published
+//!   universe. A root universe has no parent.
+//!
+//! What a fuller creator economy STILL needs (named, not built): **paid / premium
+//! universes + a remix-royalty split** over the `$DREGG` rails, and **anti-sybil**
+//! (staking / rate-limiting a publish or a submission). The no-cheat property — *a
+//! ranked completion provably reaches the win* — holds regardless of those.
 
 use std::collections::BTreeMap;
 use std::fmt;
 
+use ed25519_dalek::{Signature, VerifyingKey};
 use procgen_dregg::CommittedSeed;
 use spween_dregg::{
     CompiledStory, Driver, PASSAGE_ENDED, PASSAGE_SLOT, Playthrough, Scene, VerifyBreak, WorldCell,
@@ -61,6 +80,9 @@ use spween_dregg::{
 const DOMAIN_UNIVERSE_ID: &[u8] = b"ugc-dregg/universe-id/v1";
 /// Domain tag for a completion id.
 const DOMAIN_COMPLETION_ID: &[u8] = b"ugc-dregg/completion-id/v1";
+/// Domain tag for an author's **attestation** — the content commitment an author
+/// ed25519-signs to bind their key to a universe (see [`AuthorId`] / [`UniversePlan`]).
+const DOMAIN_AUTHOR_SIG: &[u8] = b"ugc-dregg/author-attestation/v1";
 
 // ═══════════════════════════════════════════════════════════════════════════════
 // Universe — a content-addressed publishable world.
@@ -76,6 +98,76 @@ impl UniverseId {
     /// The raw 32-byte commitment.
     pub fn as_bytes(&self) -> &[u8; 32] {
         &self.0
+    }
+    /// Reconstruct an id from its 32 raw bytes (e.g. decoding a persisted parent link).
+    pub fn from_bytes(bytes: [u8; 32]) -> UniverseId {
+        UniverseId(bytes)
+    }
+}
+
+/// A **verified author identity** — an ed25519 public key. When a universe is published
+/// via [`UniversePlan::attest`], the author proves control of this key by signing the
+/// universe's content commitment, and the key is bound into the [`UniverseId`]. So an
+/// author is *attributable* (the key is public and stable across their universes) and
+/// authorship is *unforgeable* (nobody can publish under this key without its secret).
+#[derive(Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Hash)]
+pub struct AuthorId([u8; 32]);
+
+impl AuthorId {
+    /// Wrap a raw 32-byte ed25519 public key as an author identity. (The key is only
+    /// *verified* — proven to sign the content — when it attests a [`UniversePlan`].)
+    pub fn from_public_key(public_key: [u8; 32]) -> AuthorId {
+        AuthorId(public_key)
+    }
+    /// The raw 32-byte ed25519 public key.
+    pub fn as_bytes(&self) -> &[u8; 32] {
+        &self.0
+    }
+    /// The public key as full lowercase hex.
+    pub fn hex(&self) -> String {
+        self.0.iter().map(|b| format!("{b:02x}")).collect()
+    }
+}
+
+impl fmt::Display for AuthorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        for b in &self.0[..8] {
+            write!(f, "{b:02x}")?;
+        }
+        write!(f, "…")
+    }
+}
+
+impl fmt::Debug for AuthorId {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AuthorId({self})")
+    }
+}
+
+/// A detached ed25519 **attestation signature** by an author over a universe's content
+/// commitment ([`UniversePlan::signing_commitment`]). Held alongside the universe so the
+/// attestation can be *re-verified* independently (e.g. rebuilt from a durable store).
+#[derive(Clone, Copy, PartialEq, Eq)]
+pub struct AuthorSignature([u8; 64]);
+
+impl AuthorSignature {
+    /// Wrap 64 raw signature bytes.
+    pub fn from_bytes(bytes: [u8; 64]) -> AuthorSignature {
+        AuthorSignature(bytes)
+    }
+    /// The raw 64 signature bytes.
+    pub fn as_bytes(&self) -> &[u8; 64] {
+        &self.0
+    }
+}
+
+impl fmt::Debug for AuthorSignature {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        write!(f, "AuthorSignature(")?;
+        for b in &self.0[..8] {
+            write!(f, "{b:02x}")?;
+        }
+        write!(f, "…)")
     }
 }
 
@@ -147,6 +239,16 @@ pub struct Universe {
     deploy_seed: u8,
     provenance: Provenance,
     win: WinCondition,
+    /// The **parent** this universe is a remix/fork of, if any — a content-addressed edge
+    /// in the derivation graph. Bound into [`UniverseId`]. `None` for a root universe.
+    parent: Option<UniverseId>,
+    /// The **verified author identity** — the ed25519 key that attested this universe.
+    /// `Some` iff the universe was published via [`UniversePlan::attest`]; `None` for a
+    /// legacy/anonymous universe whose author is a bare name label.
+    author_id: Option<AuthorId>,
+    /// The author's attestation signature (held so it can be re-verified from a store).
+    /// `Some` exactly when `author_id` is.
+    attestation: Option<AuthorSignature>,
     /// The parsed scene (playable + verifiable).
     scene: Scene,
     /// Compiled var→slot map, for evaluating the win condition off a committed state
@@ -161,6 +263,13 @@ pub enum PublishError {
     Parse(String),
     /// The scene did not compile to a world-cell (or deploy).
     Compile(String),
+    /// The claimed author public key is not a valid ed25519 key (a bad curve point).
+    AuthorKey(String),
+    /// **The author's attestation signature did not verify** over the universe's content
+    /// commitment — a publish claiming an author key it cannot sign for is REFUSED. This
+    /// is the author-identity tooth biting (mismatched key, forged/absent signature, or a
+    /// signature lifted from a different universe).
+    AuthorSignature,
 }
 
 impl fmt::Display for PublishError {
@@ -168,6 +277,12 @@ impl fmt::Display for PublishError {
         match self {
             PublishError::Parse(e) => write!(f, "universe scene did not parse: {e}"),
             PublishError::Compile(e) => write!(f, "universe scene did not compile: {e}"),
+            PublishError::AuthorKey(e) => write!(f, "author public key is invalid: {e}"),
+            PublishError::AuthorSignature => write!(
+                f,
+                "author attestation signature did not verify over the universe content \
+                 commitment — this key did not sign this universe"
+            ),
         }
     }
 }
@@ -175,74 +290,61 @@ impl fmt::Display for PublishError {
 impl std::error::Error for PublishError {}
 
 impl Universe {
-    /// **PUBLISH an authored universe** from spween DSL `source`. Parses + compiles it
-    /// (a scene that does not deploy is rejected up front) and content-addresses it.
+    /// **PUBLISH an anonymous authored universe** from spween DSL `source` (author = a
+    /// bare name label; no verified signing key). Convenience for
+    /// [`UniversePlan::authored`] + [`UniversePlan::anonymous`], a root (no parent).
     pub fn authored(
         name: &str,
         author: &str,
         source: &str,
         win: WinCondition,
     ) -> Result<Universe, PublishError> {
-        Self::build(name, author, source, 7, Provenance::Authored, win)
+        Ok(UniversePlan::authored(name, author, source, win, None)?.anonymous())
     }
 
-    /// **PUBLISH a procgen universe** from a committed verifiable seed. The scene is
-    /// generated deterministically from the seed through procgen-dregg's VERIFIED
+    /// **PUBLISH an anonymous procgen universe** from a committed verifiable seed. The
+    /// scene is generated deterministically from the seed through procgen-dregg's VERIFIED
     /// `dregg-dice` draw stream (never `rand`), and anyone can re-generate the
     /// byte-identical scene from the seed alone ([`Universe::regenerates_from_seed`]).
     /// The win is "seize the hoard" (`gold == 500`) — the generated world's objective.
     pub fn from_procgen(author: &str, seed: CommittedSeed) -> Result<Universe, PublishError> {
-        let (source, title) = generate::scene_source(&seed);
-        // A stable deploy seed derived from the committed seed.
-        let deploy_seed = seed.as_bytes()[0];
-        Self::build(
-            &title,
-            author,
-            &source,
-            deploy_seed,
-            Provenance::Procgen {
-                committed_seed: *seed.as_bytes(),
-            },
-            WinCondition::ended_with(&[("gold", 500)]),
-        )
+        Ok(UniversePlan::procgen(author, seed, None)?.anonymous())
     }
 
     /// **PUBLISH the DAILY universe** for a committed epoch value — a fresh, fair,
     /// publishable dungeon that everyone who sees the epoch commitment derives
     /// identically (via procgen-dregg's [`daily_seed`](procgen_dregg::daily_seed)).
     pub fn daily(author: &str, epoch_commitment: &[u8; 32]) -> Result<Universe, PublishError> {
-        Self::from_procgen(author, procgen_dregg::daily_seed(epoch_commitment))
+        Ok(UniversePlan::daily(author, epoch_commitment, None)?.anonymous())
     }
 
-    fn build(
+    /// **PUBLISH a SIGNED authored universe** — the author `author_public_key` attests
+    /// the world with `signature` over its content commitment, and (optionally) declares
+    /// a `parent` it remixes. Refused ([`PublishError::AuthorSignature`]) if the signature
+    /// does not verify. Convenience for [`UniversePlan::authored`] + [`UniversePlan::attest`].
+    pub fn authored_signed(
         name: &str,
         author: &str,
         source: &str,
-        deploy_seed: u8,
-        provenance: Provenance,
         win: WinCondition,
+        parent: Option<UniverseId>,
+        author_public_key: [u8; 32],
+        signature: AuthorSignature,
     ) -> Result<Universe, PublishError> {
-        let scene = parse(source, &format!("{name}.scene"))
-            .map_err(|e| PublishError::Parse(e.to_string()))?;
-        // Compile up front: a scene that does not lower to a world-cell is not a
-        // publishable universe. We keep the var→slot map for win evaluation.
-        let compiled: CompiledStory =
-            compile_scene(&scene).map_err(|e| PublishError::Compile(e.to_string()))?;
-        // Deploy once to confirm it actually births a world (fail-closed on publish).
-        WorldCell::deploy(&scene, deploy_seed).map_err(|e| PublishError::Compile(e.to_string()))?;
+        UniversePlan::authored(name, author, source, win, parent)?
+            .attest(author_public_key, signature)
+    }
 
-        let id = universe_id(name, author, source, deploy_seed, &provenance, &win);
-        Ok(Universe {
-            id,
-            name: name.to_string(),
-            author: author.to_string(),
-            source: source.to_string(),
-            deploy_seed,
-            provenance,
-            win,
-            scene,
-            var_slots: compiled.var_slots,
-        })
+    /// **PUBLISH a SIGNED daily/procgen universe** — as [`Universe::authored_signed`] but
+    /// for a committed epoch (procgen) world.
+    pub fn daily_signed(
+        author: &str,
+        epoch_commitment: &[u8; 32],
+        parent: Option<UniverseId>,
+        author_public_key: [u8; 32],
+        signature: AuthorSignature,
+    ) -> Result<Universe, PublishError> {
+        UniversePlan::daily(author, epoch_commitment, parent)?.attest(author_public_key, signature)
     }
 
     /// The universe commitment (content address / registry key).
@@ -253,9 +355,30 @@ impl Universe {
     pub fn name(&self) -> &str {
         &self.name
     }
-    /// The author (a name — signature identity is a named follow-up, see crate docs).
+    /// The author **label** (a display name). For a *verified* identity use
+    /// [`Universe::author_id`]; a signed universe has both a label and a proven key.
     pub fn author(&self) -> &str {
         &self.author
+    }
+    /// The **verified author identity** (ed25519 pubkey) that attested this universe, or
+    /// `None` for a legacy/anonymous universe. When `Some`, the key provably signed this
+    /// universe's content and is bound into its [`UniverseId`].
+    pub fn author_id(&self) -> Option<AuthorId> {
+        self.author_id
+    }
+    /// The author's attestation signature (present exactly when [`Universe::author_id`]
+    /// is) — retained so the attestation can be re-verified from a durable store.
+    pub fn attestation(&self) -> Option<&AuthorSignature> {
+        self.attestation.as_ref()
+    }
+    /// Whether this universe carries a verified author identity (vs. an anonymous label).
+    pub fn is_signed(&self) -> bool {
+        self.author_id.is_some()
+    }
+    /// The **parent** this universe remixes/forks, or `None` if it is a root. A
+    /// content-addressed edge in the derivation graph, bound into the [`UniverseId`].
+    pub fn parent(&self) -> Option<UniverseId> {
+        self.parent
     }
     /// The spween DSL source of the world.
     pub fn source(&self) -> &str {
@@ -289,6 +412,195 @@ impl Universe {
     /// re-executes against). Deterministic in the pinned deploy seed.
     fn fresh_world(&self) -> Result<WorldCell, WorldError> {
         WorldCell::deploy(&self.scene, self.deploy_seed)
+    }
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// UniversePlan — a validated, not-yet-published universe. Splits the two publish
+// concerns: (1) is this a real, deployable world (parse/compile/deploy)? and (2) who
+// authored it (anonymous label, or a signed identity)? A plan resolves (1) and exposes
+// the exact bytes an author signs for (2), so the *bot* can sign with the author's
+// cipherclerk BEFORE the universe exists, then attest it.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A **validated, unpublished universe** — a real deployable world (parse/compile/deploy
+/// all passed) whose authorship is not yet fixed. Finish it with
+/// [`UniversePlan::anonymous`] (author = a bare label) or [`UniversePlan::attest`] (a
+/// verified ed25519 author identity). A plan can declare a `parent` it remixes.
+pub struct UniversePlan {
+    name: String,
+    author_label: String,
+    source: String,
+    deploy_seed: u8,
+    provenance: Provenance,
+    win: WinCondition,
+    parent: Option<UniverseId>,
+    scene: Scene,
+    var_slots: BTreeMap<String, usize>,
+    /// The 32-byte content commitment an author signs — see [`Self::signing_commitment`].
+    commitment: [u8; 32],
+}
+
+impl UniversePlan {
+    /// Validate an authored (hand-written spween) world, optionally remixing `parent`.
+    pub fn authored(
+        name: &str,
+        author_label: &str,
+        source: &str,
+        win: WinCondition,
+        parent: Option<UniverseId>,
+    ) -> Result<UniversePlan, PublishError> {
+        Self::assemble(
+            name,
+            author_label,
+            source,
+            7,
+            Provenance::Authored,
+            win,
+            parent,
+        )
+    }
+
+    /// Validate a procgen world drawn from a committed verifiable seed, optionally
+    /// remixing `parent`. The win is the generated world's objective (`gold == 500`).
+    pub fn procgen(
+        author_label: &str,
+        seed: CommittedSeed,
+        parent: Option<UniverseId>,
+    ) -> Result<UniversePlan, PublishError> {
+        let (source, title) = generate::scene_source(&seed);
+        let deploy_seed = seed.as_bytes()[0];
+        Self::assemble(
+            &title,
+            author_label,
+            &source,
+            deploy_seed,
+            Provenance::Procgen {
+                committed_seed: *seed.as_bytes(),
+            },
+            WinCondition::ended_with(&[("gold", 500)]),
+            parent,
+        )
+    }
+
+    /// Validate the DAILY procgen world for a committed epoch, optionally remixing
+    /// `parent`.
+    pub fn daily(
+        author_label: &str,
+        epoch_commitment: &[u8; 32],
+        parent: Option<UniverseId>,
+    ) -> Result<UniversePlan, PublishError> {
+        Self::procgen(
+            author_label,
+            procgen_dregg::daily_seed(epoch_commitment),
+            parent,
+        )
+    }
+
+    fn assemble(
+        name: &str,
+        author_label: &str,
+        source: &str,
+        deploy_seed: u8,
+        provenance: Provenance,
+        win: WinCondition,
+        parent: Option<UniverseId>,
+    ) -> Result<UniversePlan, PublishError> {
+        let scene = parse(source, &format!("{name}.scene"))
+            .map_err(|e| PublishError::Parse(e.to_string()))?;
+        // Compile up front: a scene that does not lower to a world-cell is not a
+        // publishable universe. We keep the var→slot map for win evaluation.
+        let compiled: CompiledStory =
+            compile_scene(&scene).map_err(|e| PublishError::Compile(e.to_string()))?;
+        // Deploy once to confirm it actually births a world (fail-closed on publish).
+        WorldCell::deploy(&scene, deploy_seed).map_err(|e| PublishError::Compile(e.to_string()))?;
+
+        let commitment = content_commitment(
+            name,
+            author_label,
+            source,
+            deploy_seed,
+            &provenance,
+            &win,
+            parent,
+        );
+        Ok(UniversePlan {
+            name: name.to_string(),
+            author_label: author_label.to_string(),
+            source: source.to_string(),
+            deploy_seed,
+            provenance,
+            win,
+            parent,
+            scene,
+            var_slots: compiled.var_slots,
+            commitment,
+        })
+    }
+
+    /// The **32-byte content commitment** an author signs to attest this universe. It
+    /// binds everything that identifies the world (name, label, source, deploy identity,
+    /// provenance, win, parent) EXCEPT the author key itself — so a valid signature over
+    /// it proves the key's holder vouches for *this* exact world (and it cannot be lifted
+    /// onto a different one).
+    pub fn signing_commitment(&self) -> [u8; 32] {
+        self.commitment
+    }
+
+    /// The declared parent of this remix, or `None` for a root.
+    pub fn parent(&self) -> Option<UniverseId> {
+        self.parent
+    }
+
+    /// Finish as an **anonymous** universe — the author is the bare label, with no
+    /// verified signing key. (The legacy `Universe::authored`/`daily` path.)
+    pub fn anonymous(self) -> Universe {
+        self.finish(None, None)
+    }
+
+    /// Finish as a **signed** universe: verify `signature` is a valid ed25519 signature by
+    /// `author_public_key` over [`Self::signing_commitment`], then bind the key into the
+    /// content address. Refused with [`PublishError::AuthorSignature`] if it does not
+    /// verify (a forged/absent/mismatched signature, or one lifted from another universe),
+    /// or [`PublishError::AuthorKey`] if the key is not a valid ed25519 point.
+    pub fn attest(
+        self,
+        author_public_key: [u8; 32],
+        signature: AuthorSignature,
+    ) -> Result<Universe, PublishError> {
+        let vk = VerifyingKey::from_bytes(&author_public_key)
+            .map_err(|e| PublishError::AuthorKey(e.to_string()))?;
+        let sig = Signature::from_bytes(signature.as_bytes());
+        vk.verify_strict(&self.commitment, &sig)
+            .map_err(|_| PublishError::AuthorSignature)?;
+        Ok(self.finish(Some(AuthorId(author_public_key)), Some(signature)))
+    }
+
+    fn finish(self, author_id: Option<AuthorId>, attestation: Option<AuthorSignature>) -> Universe {
+        let id = universe_id(
+            &self.name,
+            &self.author_label,
+            &self.source,
+            self.deploy_seed,
+            &self.provenance,
+            &self.win,
+            self.parent,
+            author_id,
+        );
+        Universe {
+            id,
+            name: self.name,
+            author: self.author_label,
+            source: self.source,
+            deploy_seed: self.deploy_seed,
+            provenance: self.provenance,
+            win: self.win,
+            parent: self.parent,
+            author_id,
+            attestation,
+            scene: self.scene,
+            var_slots: self.var_slots,
+        }
     }
 }
 
@@ -461,6 +773,26 @@ pub struct Accepted {
     pub rank: usize,
 }
 
+/// Why a remix/fork could not be published into the derivation graph.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum LineageError {
+    /// The universe declares a parent that is not a published universe — a remix of a
+    /// non-existent (or not-yet-published) parent is refused.
+    UnknownParent(UniverseId),
+}
+
+impl fmt::Display for LineageError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            LineageError::UnknownParent(p) => {
+                write!(f, "remix parent {p} is not a published universe")
+            }
+        }
+    }
+}
+
+impl std::error::Error for LineageError {}
+
 /// The **UGC registry + leaderboards**. Universes are keyed by their content address;
 /// each has a leaderboard of verified completions, ranked by turns-to-win.
 #[derive(Default)]
@@ -477,11 +809,36 @@ impl Registry {
 
     /// **PUBLISH** a universe. Idempotent by content address: re-publishing the same
     /// universe returns the same id and does not duplicate it. Returns the id.
+    ///
+    /// Lineage guard: a remix whose declared `parent` is NOT already published is
+    /// **dropped** (not inserted) — the derivation graph never dangles — though the id is
+    /// still returned to preserve the infallible signature. Roots (no parent) always
+    /// publish. Use [`Registry::publish_derived`] for the Result-returning path that
+    /// surfaces an absent parent as [`LineageError::UnknownParent`].
     pub fn publish(&mut self, universe: Universe) -> UniverseId {
         let id = universe.id;
+        if let Some(parent) = universe.parent {
+            if !self.universes.contains_key(&parent) {
+                return id;
+            }
+        }
         self.universes.entry(id).or_insert(universe);
         self.boards.entry(id).or_default();
         id
+    }
+
+    /// **PUBLISH a remix / fork.** Like [`Registry::publish`], but a universe that
+    /// declares a `parent` is accepted ONLY if that parent is already a published
+    /// universe — otherwise it is refused with [`LineageError::UnknownParent`] and nothing
+    /// is inserted. A root (no parent) always succeeds. This is the lineage tooth: a remix
+    /// of a non-existent parent cannot enter the derivation graph.
+    pub fn publish_derived(&mut self, universe: Universe) -> Result<UniverseId, LineageError> {
+        if let Some(parent) = universe.parent {
+            if !self.universes.contains_key(&parent) {
+                return Err(LineageError::UnknownParent(parent));
+            }
+        }
+        Ok(self.publish(universe))
     }
 
     /// Look up a published universe.
@@ -492,6 +849,37 @@ impl Registry {
     /// Every published universe.
     pub fn universes(&self) -> impl Iterator<Item = &Universe> {
         self.universes.values()
+    }
+
+    /// The **parent** of a published universe (the universe it remixes), or `None` if it
+    /// is a root or not registered.
+    pub fn parent_of(&self, id: UniverseId) -> Option<UniverseId> {
+        self.universes.get(&id).and_then(|u| u.parent)
+    }
+
+    /// Every published **child** (direct remix/fork) of `id`.
+    pub fn children_of(&self, id: UniverseId) -> Vec<UniverseId> {
+        self.universes
+            .values()
+            .filter(|u| u.parent == Some(id))
+            .map(|u| u.id)
+            .collect()
+    }
+
+    /// Whether a published universe is a root (no parent). `None` if not registered.
+    pub fn is_root(&self, id: UniverseId) -> Option<bool> {
+        self.universes.get(&id).map(|u| u.parent.is_none())
+    }
+
+    /// **Re-verify the derivation graph**: every published universe's declared parent is
+    /// itself published (no dangling edge). Holds by construction ([`Registry::publish`]
+    /// drops a child with an absent parent); call it after a boot replay to confirm the
+    /// reconstructed lineage is sound.
+    pub fn lineage_holds(&self) -> bool {
+        self.universes.values().all(|u| match u.parent {
+            None => true,
+            Some(parent) => self.universes.contains_key(&parent),
+        })
     }
 
     /// **SUBMIT a completion.** The board re-verifies it ([`verify_completion`]) and
@@ -602,28 +990,31 @@ fn field(h: &mut blake3::Hasher, bytes: &[u8]) {
     h.update(bytes);
 }
 
-/// The universe commitment binds every rule that changes verification: scene bytes,
-/// deploy identity, provenance, and the declared win predicate. Omitting `win` would
-/// let `gold == 500` and merely `ENDED` publish under the same supposedly-content-
-/// addressed id.
-fn universe_id(
+/// The **core** of the content address: every rule that changes verification (scene
+/// bytes, deploy identity, provenance, the declared win predicate) plus the derivation
+/// edge (`parent`). Shared by [`universe_id`] (which additionally binds the author key)
+/// and [`content_commitment`] (what the author signs — no author key, to avoid
+/// circularity). Omitting `win` would let `gold == 500` and merely `ENDED` share an id;
+/// omitting `parent` would let a remix collide with its own root.
+fn hash_universe_core(
+    h: &mut blake3::Hasher,
     name: &str,
-    author: &str,
+    author_label: &str,
     source: &str,
     deploy_seed: u8,
     provenance: &Provenance,
     win: &WinCondition,
-) -> UniverseId {
-    let mut h = domain_hasher(DOMAIN_UNIVERSE_ID);
-    field(&mut h, name.as_bytes());
-    field(&mut h, author.as_bytes());
-    field(&mut h, source.as_bytes());
-    field(&mut h, &[deploy_seed]);
+    parent: Option<UniverseId>,
+) {
+    field(h, name.as_bytes());
+    field(h, author_label.as_bytes());
+    field(h, source.as_bytes());
+    field(h, &[deploy_seed]);
     match provenance {
-        Provenance::Authored => field(&mut h, b"authored"),
+        Provenance::Authored => field(h, b"authored"),
         Provenance::Procgen { committed_seed } => {
-            field(&mut h, b"procgen");
-            field(&mut h, committed_seed);
+            field(h, b"procgen");
+            field(h, committed_seed);
         }
     }
     // A win condition is a conjunction, so canonicalize the caller's order.
@@ -631,8 +1022,77 @@ fn universe_id(
     vars.sort();
     h.update(&(vars.len() as u64).to_le_bytes());
     for (name, value) in vars {
-        field(&mut h, name.as_bytes());
+        field(h, name.as_bytes());
         h.update(&value.to_le_bytes());
+    }
+    // The derivation edge: a root and a remix of it are distinct content addresses.
+    match parent {
+        None => field(h, b"root"),
+        Some(p) => {
+            field(h, b"child");
+            field(h, p.as_bytes());
+        }
+    }
+}
+
+/// The 32-byte **author content commitment** — the message an author ed25519-signs to
+/// attest a universe. Binds the core (including the parent) but NOT the author key, so a
+/// valid signature over it proves the key vouches for this exact world and cannot be
+/// replayed onto a different one.
+fn content_commitment(
+    name: &str,
+    author_label: &str,
+    source: &str,
+    deploy_seed: u8,
+    provenance: &Provenance,
+    win: &WinCondition,
+    parent: Option<UniverseId>,
+) -> [u8; 32] {
+    let mut h = domain_hasher(DOMAIN_AUTHOR_SIG);
+    hash_universe_core(
+        &mut h,
+        name,
+        author_label,
+        source,
+        deploy_seed,
+        provenance,
+        win,
+        parent,
+    );
+    *h.finalize().as_bytes()
+}
+
+/// The universe commitment: the core, plus the verified author identity (so a signed
+/// universe and its anonymous twin — or a fork under a different author key — are
+/// distinct content addresses, and the id *binds the real author key*).
+#[allow(clippy::too_many_arguments)]
+fn universe_id(
+    name: &str,
+    author_label: &str,
+    source: &str,
+    deploy_seed: u8,
+    provenance: &Provenance,
+    win: &WinCondition,
+    parent: Option<UniverseId>,
+    author_id: Option<AuthorId>,
+) -> UniverseId {
+    let mut h = domain_hasher(DOMAIN_UNIVERSE_ID);
+    hash_universe_core(
+        &mut h,
+        name,
+        author_label,
+        source,
+        deploy_seed,
+        provenance,
+        win,
+        parent,
+    );
+    match author_id {
+        None => field(&mut h, b"anon"),
+        Some(a) => {
+            field(&mut h, b"signed");
+            field(&mut h, a.as_bytes());
+        }
     }
     UniverseId(*h.finalize().as_bytes())
 }

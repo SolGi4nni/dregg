@@ -52,6 +52,9 @@ impl GalleryStore for SqliteGalleryStore {
             source: u.source.clone(),
             epoch_hex: u.epoch_hex.clone(),
             win_json: u.win_json.clone(),
+            parent_id_hex: u.parent_id_hex.clone(),
+            author_key_hex: u.author_key_hex.clone(),
+            author_sig_hex: u.author_sig_hex.clone(),
         };
         self.block(self.db.persist_ugc_universe(&row))
             .map_err(|e| e.to_string())
@@ -83,6 +86,9 @@ impl GalleryStore for SqliteGalleryStore {
                 source: r.source,
                 epoch_hex: r.epoch_hex,
                 win_json: r.win_json,
+                parent_id_hex: r.parent_id_hex,
+                author_key_hex: r.author_key_hex,
+                author_sig_hex: r.author_sig_hex,
             })
             .collect())
     }

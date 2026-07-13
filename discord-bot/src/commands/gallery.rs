@@ -26,6 +26,19 @@
 //! player's cipherclerk now signs their submitted run, binding the completion to their
 //! custodial identity (see [`sign_run`]).
 //!
+//! ## Verified author identity + remix lineage (the creator-economy foundation)
+//!
+//! `publish` no longer stamps a bare author *name*. It **signs the universe with the
+//! publisher's cipherclerk** — a real ed25519 attestation over the world's content
+//! commitment (mirroring how a `play` run is signed). ugc-dregg binds that verified
+//! author key into the content address ([`UniversePlan::attest`]), so authorship is
+//! attributable + unforgeable: nobody can publish under another author's key. `publish`
+//! also accepts an optional `parent` — a REMIX/fork of an already-published universe,
+//! recorded as a content-addressed derivation edge and admitted only if the parent really
+//! exists ([`Registry::publish_derived`]). Both survive a restart: the author key +
+//! attestation signature + parent link are persisted, and the attestation is re-verified
+//! (and the lineage re-checked) on boot.
+//!
 //! ## Persistence — DURABLE, with boot-time re-verification
 //!
 //! The live [`Registry`] is still the process-wide `OnceLock<Mutex<Registry>>` cache, but
@@ -52,8 +65,11 @@
 //! * **Auctions are gone, not stubbed.** `ugc-dregg` has no auction/bid concept, so
 //!   `auctions`/`mybids` are NOT carried forward as dead UI. The bidding *machinery*
 //!   (cclerk signing) is repurposed onto `play`, which is a real submission.
-//! * **Author identity** is a *name*, not a verified signing key (ugc-dregg's own named
-//!   gap). The `play` signature binds the *player*; the *author* string is still trusted.
+//! * **Author identity** is now a *verified* ed25519 key (the publisher's cclerk),
+//!   attested over the universe content and bound into its content address — not a
+//!   trusted string. What a fuller creator economy still needs (named, not built): **paid
+//!   / premium universes + a remix-royalty split** over the `$DREGG` rails, and
+//!   **anti-sybil** (staking / rate-limiting a publish). See ugc-dregg's crate docs.
 //
 // ─── MAIN-LOOP WIRING (what closes the loop; NOT owned by this file) ─────────────
 // This module OWNS the `GalleryStore` trait, its `InMemoryGalleryStore` (tests), and the
@@ -82,10 +98,12 @@ use serenity::all::{
     EditInteractionResponse,
 };
 
+use ed25519_dalek::{Signer, SigningKey};
+
 use dungeon_on_dregg::DUNGEON;
 use ugc_dregg::{
-    Accepted, Completion, Provenance, Registry, RejectReason, Universe, UniverseId, WinCondition,
-    record_playthrough,
+    Accepted, AuthorSignature, Completion, LineageError, Provenance, PublishError, Registry,
+    RejectReason, Universe, UniverseId, UniversePlan, WinCondition, record_playthrough,
 };
 
 use crate::BotState;
@@ -205,12 +223,36 @@ pub struct StoredUniverse {
     pub epoch_hex: Option<String>,
     /// The declared win condition's `(var, value)` vars, as JSON.
     pub win_json: String,
+    /// The **parent** content address (hex) this universe remixes/forks, or `None` for a
+    /// root. Re-verified on boot: the parent must be a published universe, and it is bound
+    /// into this universe's own content address (so a tampered link recomputes a
+    /// different `id_hex` and the row is dropped).
+    pub parent_id_hex: Option<String>,
+    /// The **verified author** ed25519 public key (hex), or `None` for an anonymous
+    /// (legacy) universe. Re-verified on boot against `author_sig_hex`.
+    pub author_key_hex: Option<String>,
+    /// The author's **attestation signature** (hex) over the universe content commitment.
+    /// `Some` exactly when `author_key_hex` is; on boot ugc-dregg re-checks it and drops a
+    /// forged/tampered attestation.
+    pub author_sig_hex: Option<String>,
 }
 
 impl StoredUniverse {
+    /// The verified-identity + lineage fields as persisted (parent link, author key,
+    /// attestation signature) — read straight off a published [`Universe`].
+    fn identity_fields(u: &Universe) -> (Option<String>, Option<String>, Option<String>) {
+        (
+            u.parent().map(|p| hex32(p.as_bytes())),
+            u.author_id().map(|a| hex32(a.as_bytes())),
+            u.attestation().map(|s| hex64(s.as_bytes())),
+        )
+    }
+
     /// The persistable descriptor for a `daily` (procgen) universe. `epoch` is
-    /// `blake3(seed_text)` — the commitment `Universe::daily` regenerates from.
+    /// `blake3(seed_text)` — the commitment `Universe::daily` regenerates from. The
+    /// verified author key + attestation + parent link are read off `u`.
     fn daily_desc(id: UniverseId, author: &str, epoch: &[u8; 32], u: &Universe) -> StoredUniverse {
+        let (parent_id_hex, author_key_hex, author_sig_hex) = Self::identity_fields(u);
         StoredUniverse {
             id_hex: id_hex(&id),
             kind: "daily".to_string(),
@@ -219,6 +261,9 @@ impl StoredUniverse {
             source: String::new(),
             epoch_hex: Some(hex32(epoch)),
             win_json: serde_json::to_string(&u.win().vars).unwrap_or_else(|_| "[]".to_string()),
+            parent_id_hex,
+            author_key_hex,
+            author_sig_hex,
         }
     }
 
@@ -227,6 +272,7 @@ impl StoredUniverse {
     /// the current `/gallery publish` only mints `daily` universes.
     #[allow(dead_code)]
     fn authored_desc(u: &Universe) -> StoredUniverse {
+        let (parent_id_hex, author_key_hex, author_sig_hex) = Self::identity_fields(u);
         StoredUniverse {
             id_hex: id_hex(&u.id()),
             kind: "authored".to_string(),
@@ -235,6 +281,9 @@ impl StoredUniverse {
             source: u.source().to_string(),
             epoch_hex: None,
             win_json: serde_json::to_string(&u.win().vars).unwrap_or_else(|_| "[]".to_string()),
+            parent_id_hex,
+            author_key_hex,
+            author_sig_hex,
         }
     }
 }
@@ -381,12 +430,28 @@ impl GalleryStore for InMemoryGalleryStore {
 pub fn load_registry(store: &dyn GalleryStore) -> Registry {
     let mut reg = seed_registry();
 
-    for su in store.list_universes().unwrap_or_default() {
-        if let Some(universe) = reconstruct_universe(&su) {
-            // Tamper check: the reconstructed world must hash back to the stored address.
-            if id_hex(&universe.id()) == su.id_hex {
-                reg.publish(universe);
-            }
+    // Reconstruct every stored universe (re-verifying its author attestation) and keep
+    // only those whose recomputed content address matches the stored id (the tamper
+    // check — which also catches a tampered parent link, since the parent is bound in).
+    let mut pending: Vec<Universe> = store
+        .list_universes()
+        .unwrap_or_default()
+        .iter()
+        .filter_map(|su| {
+            let u = reconstruct_universe(su)?;
+            (id_hex(&u.id()) == su.id_hex).then_some(u)
+        })
+        .collect();
+
+    // Publish honoring LINEAGE: a remix is admitted only once its parent is present, so we
+    // iterate to a fixpoint (store order is irrelevant). A universe whose parent never
+    // appears — dropped as tampered, or a dangling/absent parent — is itself dropped.
+    loop {
+        let before = pending.len();
+        // Keep the ones that could NOT publish yet (parent still absent); retry next pass.
+        pending.retain(|u| reg.publish_derived(u.clone()).is_err());
+        if pending.len() == before {
+            break;
         }
     }
 
@@ -398,19 +463,47 @@ pub fn load_registry(store: &dyn GalleryStore) -> Registry {
 }
 
 /// Reconstruct a universe from its persisted public source, through a PUBLIC constructor.
-/// Returns `None` if the row does not reconstruct (a bad kind, a corrupt seed-epoch, or a
-/// source that no longer parses/compiles) — such a row is simply dropped.
+/// Returns `None` if the row does not reconstruct (a bad kind, a corrupt seed-epoch, a
+/// source that no longer parses/compiles, a malformed parent link, or — the tooth — an
+/// author attestation that no longer verifies). Such a row is simply dropped.
+///
+/// The verified author identity + lineage roundtrip here: a signed row is rebuilt through
+/// [`UniversePlan::attest`], which RE-CHECKS the ed25519 signature over the content
+/// commitment (a forged/tampered `author_sig_hex` fails → dropped); the parent link is
+/// bound into the content address, so a tampered `parent_id_hex` recomputes a different
+/// id (the caller's `id_hex` tamper check then drops it).
 fn reconstruct_universe(su: &StoredUniverse) -> Option<Universe> {
-    match su.kind.as_str() {
+    let parent = match &su.parent_id_hex {
+        None => None,
+        Some(h) => Some(UniverseId::from_bytes(decode_hex32(h)?)),
+    };
+    let plan = match su.kind.as_str() {
         "daily" => {
             let epoch = decode_hex32(su.epoch_hex.as_deref()?)?;
-            Universe::daily(&su.author, &epoch).ok()
+            UniversePlan::daily(&su.author, &epoch, parent).ok()?
         }
         "authored" => {
             let vars: Vec<(String, u64)> = serde_json::from_str(&su.win_json).ok()?;
-            Universe::authored(&su.name, &su.author, &su.source, WinCondition { vars }).ok()
+            UniversePlan::authored(
+                &su.name,
+                &su.author,
+                &su.source,
+                WinCondition { vars },
+                parent,
+            )
+            .ok()?
         }
-        _ => None,
+        _ => return None,
+    };
+    match (&su.author_key_hex, &su.author_sig_hex) {
+        (Some(k), Some(s)) => {
+            let key = decode_hex32(k)?;
+            let sig = AuthorSignature::from_bytes(decode_hex64(s)?);
+            // A forged/tampered attestation is refused here — the row drops out.
+            plan.attest(key, sig).ok()
+        }
+        // Legacy / anonymous universe: no verified key.
+        _ => Some(plan.anonymous()),
     }
 }
 
@@ -447,6 +540,19 @@ fn decode_hex32(s: &str) -> Option<[u8; 32]> {
         return None;
     }
     let mut out = [0u8; 32];
+    for (i, byte) in out.iter_mut().enumerate() {
+        *byte = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
+    }
+    Some(out)
+}
+
+/// Decode a 128-char hex string to 64 bytes — an author attestation signature (`None` on
+/// any malformed input).
+fn decode_hex64(s: &str) -> Option<[u8; 64]> {
+    if s.len() != 128 {
+        return None;
+    }
+    let mut out = [0u8; 64];
     for (i, byte) in out.iter_mut().enumerate() {
         *byte = u8::from_str_radix(s.get(2 * i..2 * i + 2)?, 16).ok()?;
     }
@@ -491,6 +597,11 @@ struct UniverseView {
     win: String,
     /// How many rooms/passages the world has (a cheap "size" the gallery can show).
     passages: usize,
+    /// The **verified author** ed25519 public key (hex), or `None` if the universe is
+    /// anonymous/legacy. When present, authorship is attributable + unforgeable.
+    author_key_hex: Option<String>,
+    /// The **parent** content address (hex) this universe remixes, or `None` for a root.
+    parent_id_hex: Option<String>,
     board: Vec<BoardEntry>,
 }
 
@@ -540,6 +651,10 @@ fn id_hex(id: &UniverseId) -> String {
 }
 
 fn hex32(bytes: &[u8; 32]) -> String {
+    bytes.iter().map(|b| format!("{b:02x}")).collect()
+}
+
+fn hex64(bytes: &[u8; 64]) -> String {
     bytes.iter().map(|b| format!("{b:02x}")).collect()
 }
 
@@ -624,23 +739,100 @@ fn show_universe(reg: &Registry, needle: &str) -> Option<UniverseView> {
         },
         win: win.clone(),
         passages: u.source().matches("=== ").count(),
+        author_key_hex: u.author_id().map(|a| a.hex()),
+        parent_id_hex: u.parent().map(|p| id_hex(&p)),
         board,
     })
 }
 
-/// **PUBLISH** a real procgen universe from a committed seed. The `seed` text is hashed
-/// into the 32-byte epoch commitment [`Universe::daily`] derives its verifiable
-/// `CommittedSeed` from, so the world is drawn from procgen-dregg's VERIFIED draw stream
-/// (never `rand`) and anyone holding the same seed text re-derives the byte-identical
-/// world and the identical content address. Publishing is idempotent by content address.
+/// Something that can **attest** a universe: the author's public key + a signer over the
+/// content commitment. The bot's implementation ([`CclerkSigner`]) is the publisher's
+/// custodial cipherclerk; a test can supply any ed25519 key.
+trait UniverseSigner {
+    /// The author's ed25519 public key (bound into the universe's content address).
+    fn public_key(&self) -> [u8; 32];
+    /// Sign the 32-byte content commitment, producing the attestation signature.
+    fn sign(&self, commitment: &[u8; 32]) -> AuthorSignature;
+}
+
+/// Attest a universe with a Discord user's custodial cipherclerk — the SAME ed25519 key
+/// their `play` runs are bound to. Built from the cclerk's raw seed (== its ed25519
+/// secret; see `cipherclerk`), so `public_key()` equals the cclerk's identity.
+struct CclerkSigner {
+    signing_key: SigningKey,
+}
+
+impl CclerkSigner {
+    fn from_cclerk(cclerk: &UserCipherclerk) -> CclerkSigner {
+        CclerkSigner {
+            signing_key: SigningKey::from_bytes(cclerk.legacy_secret()),
+        }
+    }
+}
+
+impl UniverseSigner for CclerkSigner {
+    fn public_key(&self) -> [u8; 32] {
+        self.signing_key.verifying_key().to_bytes()
+    }
+    fn sign(&self, commitment: &[u8; 32]) -> AuthorSignature {
+        AuthorSignature::from_bytes(self.signing_key.sign(commitment).to_bytes())
+    }
+}
+
+/// Why a `/gallery publish` did not land. Every arm is a REAL refusal.
+#[derive(Debug)]
+enum PublishFail {
+    /// The seed did not produce a deployable universe, or the author attestation did not
+    /// verify (a mismatched/forged author key).
+    Build(PublishError),
+    /// A `parent` was named for a remix, but nothing published matches it.
+    UnknownParent(String),
+    /// The parent vanished between resolution and publish (a lineage race — should not
+    /// happen under the single registry lock, surfaced for completeness).
+    Lineage(LineageError),
+}
+
+impl std::fmt::Display for PublishFail {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            PublishFail::Build(e) => write!(f, "{e}"),
+            PublishFail::UnknownParent(needle) => write!(
+                f,
+                "no published universe matches the parent `{needle}` — try `/gallery list`"
+            ),
+            PublishFail::Lineage(e) => write!(f, "{e}"),
+        }
+    }
+}
+
+/// **PUBLISH** a real procgen universe from a committed seed, **signed by its author**.
+/// The `seed` text is hashed into the 32-byte epoch commitment [`Universe::daily`] derives
+/// its verifiable `CommittedSeed` from, so the world is drawn from procgen-dregg's VERIFIED
+/// draw stream (never `rand`) and anyone holding the same seed re-derives the byte-identical
+/// world. The author `signer` attests it — the ed25519 key is bound into the content
+/// address, so authorship is unforgeable. An optional `parent` makes it a REMIX/fork of an
+/// already-published universe (refused if the parent does not exist). Idempotent by content
+/// address.
 fn publish_universe(
     reg: &mut Registry,
     author: &str,
     seed_text: &str,
-) -> Result<UniverseId, String> {
+    parent: Option<&str>,
+    signer: &dyn UniverseSigner,
+) -> Result<UniverseId, PublishFail> {
     let epoch: [u8; 32] = *blake3::hash(seed_text.as_bytes()).as_bytes();
-    let universe = Universe::daily(author, &epoch).map_err(|e| e.to_string())?;
-    Ok(reg.publish(universe))
+    let parent_id = match parent {
+        None => None,
+        Some(needle) => Some(
+            find_universe(reg, needle).ok_or_else(|| PublishFail::UnknownParent(needle.into()))?,
+        ),
+    };
+    let plan = UniversePlan::daily(author, &epoch, parent_id).map_err(PublishFail::Build)?;
+    let signature = signer.sign(&plan.signing_commitment());
+    let universe = plan
+        .attest(signer.public_key(), signature)
+        .map_err(PublishFail::Build)?;
+    reg.publish_derived(universe).map_err(PublishFail::Lineage)
 }
 
 /// **PLAY** — submit a run. The moves are recorded on a REAL, freshly-deployed,
@@ -724,7 +916,7 @@ pub fn register() -> CreateCommand {
             CreateCommandOption::new(
                 CommandOptionType::SubCommand,
                 "publish",
-                "Publish a new procgen universe from a committed seed",
+                "Publish a procgen universe (signed by your cclerk), optionally a remix",
             )
             .add_sub_option(
                 CreateCommandOption::new(
@@ -733,7 +925,12 @@ pub fn register() -> CreateCommand {
                     "Seed text — the same seed always regenerates the same world",
                 )
                 .required(true),
-            ),
+            )
+            .add_sub_option(CreateCommandOption::new(
+                CommandOptionType::String,
+                "parent",
+                "Remix: parent universe id (a prefix of its content address)",
+            )),
         )
         .add_option(
             CreateCommandOption::new(
@@ -767,7 +964,7 @@ pub async fn handle(ctx: &Context, command: &CommandInteraction, state: &BotStat
     match subcommand.as_str() {
         "list" => handle_list(ctx, command).await,
         "show" => handle_show(ctx, command).await,
-        "publish" => handle_publish(ctx, command).await,
+        "publish" => handle_publish(ctx, command, state).await,
         "play" => handle_play(ctx, command, state).await,
         _ => {}
     }
@@ -866,9 +1063,25 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
         None => view.provenance.to_string(),
     };
 
-    let embed = embeds::dregg_embed(&view.name)
-        .description(format!("by **{}**\n\nID: `{}`", view.author, view.id_hex))
-        .field("Provenance", provenance, false)
+    let author_line = match &view.author_key_hex {
+        Some(key) => format!(
+            "by **{}** · verified author ed25519 `{}…`",
+            view.author,
+            &key[..16.min(key.len())]
+        ),
+        None => format!("by **{}** (anonymous — no verified key)", view.author),
+    };
+    let mut embed = embeds::dregg_embed(&view.name)
+        .description(format!("{author_line}\n\nID: `{}`", view.id_hex))
+        .field("Provenance", provenance, false);
+    if let Some(parent) = &view.parent_id_hex {
+        embed = embed.field(
+            "Remix of",
+            format!("`{}…` (a fork in the derivation graph)", &parent[..16]),
+            false,
+        );
+    }
+    let embed = embed
         .field("Win condition", view.win, false)
         .field("Passages", view.passages.to_string(), true)
         .field("Ranked", view.board.len().to_string(), true)
@@ -878,9 +1091,11 @@ async fn handle_show(ctx: &Context, command: &CommandInteraction) {
         .await;
 }
 
-async fn handle_publish(ctx: &Context, command: &CommandInteraction) {
+async fn handle_publish(ctx: &Context, command: &CommandInteraction, state: &BotState) {
     let seed_text = string_option(command, "seed").unwrap_or_default();
+    let parent_needle = string_option(command, "parent");
     let author = command.user.name.clone();
+    let user_id = command.user.id.get();
     defer_ephemeral(ctx, command).await;
 
     // The epoch commitment `Universe::daily` regenerates the world from — the same
@@ -888,35 +1103,71 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction) {
     // persist the universe's reproducible public source.
     let epoch: [u8; 32] = *blake3::hash(seed_text.as_bytes()).as_bytes();
 
+    // The author attests the universe with THEIR custodial cipherclerk — the same ed25519
+    // identity their `play` runs are bound to. Deterministic from the bot secret + Discord
+    // id, so every publisher has a stable, verifiable author key (no `/cipherclerk create`
+    // prerequisite — the key is derivable).
+    let cclerk =
+        UserCipherclerk::derive(&state.config.bot_secret, user_id, state.federation_id_bytes);
+    let signer = CclerkSigner::from_cclerk(&cclerk);
+
     // Capture the persistable descriptor + view under the lock; persist AFTER releasing it
     // (the store may do blocking sqlite IO — never hold the registry lock across it).
     let result = {
         let mut reg = registry().lock().expect("universe registry lock");
-        publish_universe(&mut reg, &author, &seed_text).and_then(|id| {
+        publish_universe(
+            &mut reg,
+            &author,
+            &seed_text,
+            parent_needle.as_deref(),
+            &signer,
+        )
+        .map(|id| {
             let stored = reg
                 .universe(id)
                 .map(|u| StoredUniverse::daily_desc(id, &author, &epoch, u));
-            show_universe(&reg, &id_hex(&id))
-                .map(|view| (stored, view))
-                .ok_or_else(|| "published universe vanished".to_string())
+            let view = show_universe(&reg, &id_hex(&id));
+            (stored, view)
         })
     };
 
     match result {
-        Ok((stored, view)) => {
+        Ok((stored, Some(view))) => {
             // Durable: the published universe survives a restart (re-derived from its
-            // seed-epoch and re-verified on boot).
+            // seed-epoch, its author attestation + lineage re-verified on boot).
             if let Some(stored) = stored {
                 store_universe(&stored);
             }
-            let embed = embeds::success_embed("Universe Published")
+            let mut embed = embeds::success_embed("Universe Published")
                 .description(format!(
                     "**{}** by **{}**\n\nID: `{}`",
                     view.name, view.author, view.id_hex
                 ))
                 .field("Provenance", view.provenance, true)
                 .field("Passages", view.passages.to_string(), true)
-                .field("Win condition", view.win, false)
+                .field("Win condition", view.win.clone(), false);
+            if let Some(key) = &view.author_key_hex {
+                embed = embed.field(
+                    "Verified author",
+                    format!(
+                        "ed25519 `{}…` — signed by your cclerk and bound into the content \
+                         address, so this authorship is unforgeable.",
+                        &key[..16.min(key.len())]
+                    ),
+                    false,
+                );
+            }
+            if let Some(parent) = &view.parent_id_hex {
+                embed = embed.field(
+                    "Remix of",
+                    format!(
+                        "`{}…` — a fork recorded in the derivation graph.",
+                        &parent[..16]
+                    ),
+                    false,
+                );
+            }
+            embed = embed
                 .field(
                     "Content-addressed",
                     "The id is the hash of the world itself. Republishing the same seed is \
@@ -935,11 +1186,17 @@ async fn handle_publish(ctx: &Context, command: &CommandInteraction) {
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
         }
-        Err(e) => {
+        Ok((_, None)) => {
             let embed = embeds::error_embed(
                 "Publish Failed",
-                &format!("That seed did not produce a deployable universe: {e}"),
+                "The published universe could not be shown.",
             );
+            let _ = command
+                .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
+                .await;
+        }
+        Err(e) => {
+            let embed = embeds::error_embed("Publish Failed", &format!("Publish refused: {e}"));
             let _ = command
                 .edit_response(&ctx.http, EditInteractionResponse::new().embed(embed))
                 .await;
@@ -1096,6 +1353,35 @@ mod tests {
     use super::*;
     use dungeon_on_dregg::{CH_CLAIM, CH_DESCEND, CH_LEAVE_LANTERN, CH_TAKE_LANTERN};
 
+    /// A deterministic author signer for tests — a fixed 32-byte ed25519 secret keyed by
+    /// `tag`, so a given tag always yields the same verifiable author identity.
+    struct TestSigner {
+        key: SigningKey,
+    }
+    impl TestSigner {
+        fn new(tag: u8) -> TestSigner {
+            TestSigner {
+                key: SigningKey::from_bytes(&[tag; 32]),
+            }
+        }
+    }
+    impl UniverseSigner for TestSigner {
+        fn public_key(&self) -> [u8; 32] {
+            self.key.verifying_key().to_bytes()
+        }
+        fn sign(&self, commitment: &[u8; 32]) -> AuthorSignature {
+            AuthorSignature::from_bytes(self.key.sign(commitment).to_bytes())
+        }
+    }
+
+    /// Publish a signed procgen universe with a fixed test author (tag `0x11`) and no
+    /// parent — the common case for the pre-existing publish/play/leaderboard tests.
+    /// Deterministic: same author + seed ⇒ same content address (ed25519 is deterministic
+    /// and the id binds the pubkey, not the signature).
+    fn publish_signed(reg: &mut Registry, author: &str, seed: &str) -> Result<UniverseId, String> {
+        publish_universe(reg, author, seed, None, &TestSigner::new(0x11)).map_err(|e| e.to_string())
+    }
+
     /// A test-owned publish of the real, winnable salt-shore dungeon.
     fn publish_dungeon(reg: &mut Registry) -> UniverseId {
         let u = Universe::authored(
@@ -1154,7 +1440,7 @@ mod tests {
         assert!(list_universes(&reg).is_empty());
 
         // PUBLISH — a real procgen universe from a committed seed.
-        let id = publish_universe(&mut reg, "ember", "gallery-drive-1").expect("publishes");
+        let id = publish_signed(&mut reg, "ember", "gallery-drive-1").expect("publishes");
         let hex = id_hex(&id);
 
         // LIST — it is there, with its author + provenance.
@@ -1166,12 +1452,12 @@ mod tests {
         assert_eq!(listed[0].entries, 0, "a fresh universe has an empty board");
 
         // The content address is real: the same seed republishes idempotently.
-        let again = publish_universe(&mut reg, "ember", "gallery-drive-1").expect("republishes");
+        let again = publish_signed(&mut reg, "ember", "gallery-drive-1").expect("republishes");
         assert_eq!(again, id, "same seed + author ⇒ same content address");
         assert_eq!(list_universes(&reg).len(), 1, "no duplicate was created");
 
         // ...and a DIFFERENT seed is a different world.
-        let other = publish_universe(&mut reg, "ember", "gallery-drive-2").expect("publishes");
+        let other = publish_signed(&mut reg, "ember", "gallery-drive-2").expect("publishes");
         assert_ne!(other, id, "a different seed is a different universe");
         assert_eq!(list_universes(&reg).len(), 2);
 
@@ -1193,7 +1479,15 @@ mod tests {
         assert_eq!(view.board[0].player, "ada");
         assert_eq!(view.board[0].rank, 1);
         assert_eq!(view.board[0].turns, moves.len());
-        assert_eq!(list_universes(&reg)[0].entries, 1);
+        // Target THIS universe by id (two are published; list order is by content address).
+        assert_eq!(
+            list_universes(&reg)
+                .iter()
+                .find(|u| u.id_hex == hex)
+                .expect("published universe is listed")
+                .entries,
+            1
+        );
 
         // A prefix of the content address resolves too (what a user actually types).
         assert!(show_universe(&reg, &hex[..16]).is_some());
@@ -1329,7 +1623,7 @@ mod tests {
     ) -> (String, Vec<usize>, usize) {
         let epoch: [u8; 32] = *blake3::hash(seed.as_bytes()).as_bytes();
         let mut reg = Registry::new();
-        let id = publish_universe(&mut reg, "ember", seed).expect("publishes");
+        let id = publish_signed(&mut reg, "ember", seed).expect("publishes");
         let idhex = id_hex(&id);
         store
             .persist_universe(&StoredUniverse::daily_desc(
@@ -1502,5 +1796,241 @@ mod tests {
         assert!(view.win.contains("gold"), "the win condition roundtripped");
         assert_eq!(view.board.len(), 1);
         assert_eq!(view.board[0].turns, 3);
+    }
+
+    // ═══════════════════════════════════════════════════════════════════════════
+    // VERIFIED AUTHOR IDENTITY + REMIX LINEAGE — the creator-economy foundation,
+    // DRIVEN through the /gallery layer (signed publish, forged author refused, remix
+    // records lineage, fake parent refused, and both re-verify on gallery boot).
+    // ═══════════════════════════════════════════════════════════════════════════
+
+    #[test]
+    fn a_signed_publish_binds_a_real_author_key_and_a_forged_author_is_refused() {
+        let mut reg = Registry::new();
+        let author = TestSigner::new(0x42);
+
+        // HONEST: publish signed by the author's key — it lands AND carries the verified id.
+        let id = publish_universe(&mut reg, "ada", "signed-1", None, &author)
+            .expect("an honestly-signed publish lands");
+        let u = reg.universe(id).expect("published");
+        assert!(
+            u.is_signed(),
+            "the published universe carries a verified author"
+        );
+        assert_eq!(
+            u.author_id().unwrap().as_bytes(),
+            &author.public_key(),
+            "the bound key is the author's real key"
+        );
+        // The gallery view surfaces it.
+        let view = show_universe(&reg, &id_hex(&id)).unwrap();
+        assert_eq!(view.author_key_hex.unwrap(), hex32(&author.public_key()));
+
+        // FORGERY: a signer whose signature does NOT match the pubkey it presents. We build
+        // one by hand: present ada's pubkey but sign with mallory's key.
+        struct ForgedSigner {
+            claim: [u8; 32],
+            secret: SigningKey,
+        }
+        impl UniverseSigner for ForgedSigner {
+            fn public_key(&self) -> [u8; 32] {
+                self.claim
+            }
+            fn sign(&self, c: &[u8; 32]) -> AuthorSignature {
+                AuthorSignature::from_bytes(self.secret.sign(c).to_bytes())
+            }
+        }
+        let forger = ForgedSigner {
+            claim: author.public_key(),                  // claims ada's key…
+            secret: SigningKey::from_bytes(&[0xFF; 32]), // …but signs with a different secret
+        };
+        let out = publish_universe(&mut reg, "ada", "signed-forge", None, &forger);
+        assert!(
+            matches!(out, Err(PublishFail::Build(PublishError::AuthorSignature))),
+            "claiming an author key without its signature must be REFUSED, got {out:?}"
+        );
+        // Non-vacuous: only the honest universe is registered.
+        assert_eq!(
+            reg.universes().count(),
+            1,
+            "the forged publish did not land"
+        );
+    }
+
+    #[test]
+    fn a_remix_records_lineage_and_a_fake_parent_is_refused() {
+        let mut reg = Registry::new();
+        let author = TestSigner::new(0x7A);
+
+        // A published ROOT.
+        let root = publish_universe(&mut reg, "ada", "lineage-root", None, &author).expect("root");
+        let root_hex = id_hex(&root);
+        assert_eq!(reg.is_root(root), Some(true));
+
+        // A REMIX of it (a prefix of the parent id resolves).
+        let remix = publish_universe(
+            &mut reg,
+            "bran",
+            "lineage-remix",
+            Some(&root_hex[..16]),
+            &author,
+        )
+        .expect("a remix of a real parent lands");
+        assert_eq!(
+            reg.parent_of(remix),
+            Some(root),
+            "the lineage edge is recorded"
+        );
+        assert_eq!(reg.children_of(root), vec![remix]);
+        assert!(reg.lineage_holds());
+        // The view shows the remix's parent.
+        assert_eq!(
+            show_universe(&reg, &id_hex(&remix))
+                .unwrap()
+                .parent_id_hex
+                .unwrap(),
+            root_hex
+        );
+
+        // A remix of a NON-EXISTENT parent is REFUSED — non-vacuous.
+        let out = publish_universe(
+            &mut reg,
+            "mallory",
+            "lineage-orphan",
+            Some("deadbeef"),
+            &author,
+        );
+        assert!(
+            matches!(out, Err(PublishFail::UnknownParent(_))),
+            "a remix of a non-existent parent must be REFUSED, got {out:?}"
+        );
+        assert_eq!(reg.universes().count(), 2, "the orphan did not land");
+    }
+
+    /// Publish a SIGNED root + a SIGNED remix of it, and persist both to `store`.
+    /// Returns (root id hex, remix id hex).
+    fn seed_store_with_signed_lineage(store: &InMemoryGalleryStore) -> (String, String) {
+        let author = TestSigner::new(0x5C);
+        let mut reg = Registry::new();
+
+        let root = publish_universe(&mut reg, "ada", "boot-root", None, &author).expect("root");
+        let root_hex = id_hex(&root);
+        let root_epoch: [u8; 32] = *blake3::hash("boot-root".as_bytes()).as_bytes();
+        store
+            .persist_universe(&StoredUniverse::daily_desc(
+                root,
+                "ada",
+                &root_epoch,
+                reg.universe(root).unwrap(),
+            ))
+            .unwrap();
+
+        let remix = publish_universe(&mut reg, "bran", "boot-remix", Some(&root_hex), &author)
+            .expect("remix");
+        let remix_hex = id_hex(&remix);
+        let remix_epoch: [u8; 32] = *blake3::hash("boot-remix".as_bytes()).as_bytes();
+        store
+            .persist_universe(&StoredUniverse::daily_desc(
+                remix,
+                "bran",
+                &remix_epoch,
+                reg.universe(remix).unwrap(),
+            ))
+            .unwrap();
+
+        (root_hex, remix_hex)
+    }
+
+    #[test]
+    fn the_derivation_graph_and_author_identity_reverify_on_boot() {
+        let store = InMemoryGalleryStore::new();
+        let (root_hex, remix_hex) = seed_store_with_signed_lineage(&store);
+
+        // A FRESH process: rebuild from the store alone. The author attestations are
+        // re-verified and the lineage re-checked (parent published before child).
+        let reg = load_registry(&store);
+        let root = find_universe(&reg, &root_hex).expect("root survived restart");
+        let remix = find_universe(&reg, &remix_hex).expect("remix survived restart");
+        assert!(
+            reg.universe(root).unwrap().is_signed(),
+            "root author re-verified"
+        );
+        assert!(
+            reg.universe(remix).unwrap().is_signed(),
+            "remix author re-verified"
+        );
+        assert_eq!(
+            reg.parent_of(remix),
+            Some(root),
+            "the derivation edge was rebuilt"
+        );
+        assert!(reg.lineage_holds(), "the reconstructed graph is sound");
+    }
+
+    #[test]
+    fn a_tampered_lineage_row_fails_and_the_child_drops_off() {
+        let store = InMemoryGalleryStore::new();
+        let (_root_hex, remix_hex) = seed_store_with_signed_lineage(&store);
+
+        // Baseline: untampered, the remix reconstructs.
+        assert!(find_universe(&load_registry(&store), &remix_hex).is_some());
+
+        // TAMPER the lineage: repoint the remix's parent at a universe that isn't there.
+        // The parent is bound into the child's content address, so the recomputed id no
+        // longer matches the stored id_hex — the row is dropped on reload.
+        store.tamper(|us, _cs| {
+            for u in us.iter_mut() {
+                if u.parent_id_hex.is_some() {
+                    u.parent_id_hex = Some("00".repeat(32));
+                }
+            }
+        });
+
+        let reg = load_registry(&store);
+        assert!(
+            find_universe(&reg, &remix_hex).is_none(),
+            "the tampered-lineage remix did NOT re-verify and is off the gallery"
+        );
+        assert!(reg.lineage_holds(), "no dangling edge survived");
+    }
+
+    #[test]
+    fn a_tampered_author_signature_row_fails_to_reverify() {
+        let store = InMemoryGalleryStore::new();
+        let author = TestSigner::new(0x3B);
+        let mut reg = Registry::new();
+        let id =
+            publish_universe(&mut reg, "ada", "boot-authtamper", None, &author).expect("signed");
+        let idhex = id_hex(&id);
+        let epoch: [u8; 32] = *blake3::hash("boot-authtamper".as_bytes()).as_bytes();
+        store
+            .persist_universe(&StoredUniverse::daily_desc(
+                id,
+                "ada",
+                &epoch,
+                reg.universe(id).unwrap(),
+            ))
+            .unwrap();
+
+        // Baseline: untampered, it reconstructs (author attestation re-verifies).
+        assert!(find_universe(&load_registry(&store), &idhex).is_some());
+
+        // TAMPER the attestation signature — flip a byte. It no longer verifies against the
+        // bound key, so `attest` refuses it on reload and the row is dropped.
+        store.tamper(|us, _cs| {
+            for u in us.iter_mut() {
+                if let Some(sig) = &u.author_sig_hex {
+                    let mut bytes = sig.clone().into_bytes();
+                    bytes[0] ^= 1; // corrupt the first hex nibble
+                    u.author_sig_hex = Some(String::from_utf8(bytes).unwrap());
+                }
+            }
+        });
+
+        let reg = load_registry(&store);
+        assert!(
+            find_universe(&reg, &idhex).is_none(),
+            "a forged/tampered author signature must fail re-verification on boot"
+        );
     }
 }

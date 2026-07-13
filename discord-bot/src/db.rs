@@ -601,17 +601,31 @@ impl Database {
         // a cheat. See migrations/005_ugc_gallery.sql.
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS ugc_universes (
-                id_hex    TEXT PRIMARY KEY,
-                kind      TEXT NOT NULL,
-                name      TEXT NOT NULL,
-                author    TEXT NOT NULL,
-                source    TEXT NOT NULL,
-                epoch_hex TEXT,
-                win_json  TEXT NOT NULL
+                id_hex         TEXT PRIMARY KEY,
+                kind           TEXT NOT NULL,
+                name           TEXT NOT NULL,
+                author         TEXT NOT NULL,
+                source         TEXT NOT NULL,
+                epoch_hex      TEXT,
+                win_json       TEXT NOT NULL,
+                parent_id_hex  TEXT,
+                author_key_hex TEXT,
+                author_sig_hex TEXT
             )",
         )
         .execute(&pool)
         .await?;
+
+        // Additive columns for a pre-existing DB (verified author identity + remix
+        // lineage; see migrations/007_ugc_author_lineage.sql). `ADD COLUMN` errors if the
+        // column already exists, so each is best-effort — ignore the duplicate-column error.
+        for add in [
+            "ALTER TABLE ugc_universes ADD COLUMN parent_id_hex TEXT",
+            "ALTER TABLE ugc_universes ADD COLUMN author_key_hex TEXT",
+            "ALTER TABLE ugc_universes ADD COLUMN author_sig_hex TEXT",
+        ] {
+            let _ = sqlx::query(add).execute(&pool).await;
+        }
 
         sqlx::query(
             "CREATE TABLE IF NOT EXISTS ugc_completions (
@@ -805,8 +819,9 @@ impl Database {
     pub async fn persist_ugc_universe(&self, row: &UgcUniverseRow) -> Result<(), sqlx::Error> {
         sqlx::query(
             "INSERT OR IGNORE INTO ugc_universes
-                (id_hex, kind, name, author, source, epoch_hex, win_json)
-             VALUES (?, ?, ?, ?, ?, ?, ?)",
+                (id_hex, kind, name, author, source, epoch_hex, win_json,
+                 parent_id_hex, author_key_hex, author_sig_hex)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)",
         )
         .bind(&row.id_hex)
         .bind(&row.kind)
@@ -815,6 +830,9 @@ impl Database {
         .bind(&row.source)
         .bind(&row.epoch_hex)
         .bind(&row.win_json)
+        .bind(&row.parent_id_hex)
+        .bind(&row.author_key_hex)
+        .bind(&row.author_sig_hex)
         .execute(&self.pool)
         .await?;
         Ok(())
@@ -840,7 +858,8 @@ impl Database {
     /// Every persisted universe (the boot-replay source).
     pub async fn list_ugc_universes(&self) -> Result<Vec<UgcUniverseRow>, sqlx::Error> {
         let rows = sqlx::query(
-            "SELECT id_hex, kind, name, author, source, epoch_hex, win_json
+            "SELECT id_hex, kind, name, author, source, epoch_hex, win_json,
+                    parent_id_hex, author_key_hex, author_sig_hex
              FROM ugc_universes",
         )
         .fetch_all(&self.pool)
@@ -855,6 +874,9 @@ impl Database {
                 source: row.get("source"),
                 epoch_hex: row.get("epoch_hex"),
                 win_json: row.get("win_json"),
+                parent_id_hex: row.get("parent_id_hex"),
+                author_key_hex: row.get("author_key_hex"),
+                author_sig_hex: row.get("author_sig_hex"),
             })
             .collect())
     }
@@ -2180,6 +2202,12 @@ pub struct UgcUniverseRow {
     pub source: String,
     pub epoch_hex: Option<String>,
     pub win_json: String,
+    /// Remix/fork parent content address (hex), or `None` for a root. Re-verified on boot.
+    pub parent_id_hex: Option<String>,
+    /// Verified author ed25519 public key (hex), or `None` for an anonymous universe.
+    pub author_key_hex: Option<String>,
+    /// The author's attestation signature (hex) over the universe content commitment.
+    pub author_sig_hex: Option<String>,
 }
 
 /// A persisted UGC-gallery completion row — the plain DB shape of an accepted

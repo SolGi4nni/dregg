@@ -49,3 +49,10 @@ procgen-dregg = { path = "../procgen-dregg" }
 # Content-addressing: the universe commitment (its id) and the completion id are
 # domain-separated blake3 hashes — the same universe has the same id.
 blake3 = "1"
+# Verified author identity. An author ATTESTS a published universe with a real
+# ed25519 signature over its content commitment; the pubkey is bound into the
+# content address, so authorship is attributable + unforgeable (a publish claiming
+# another author's key without the signature is refused). This is the SAME
+# `ed25519-dalek` the SDK/bot cipherclerk signs with, so the bot's custodial cclerk
+# key verifies here verbatim.
+ed25519-dalek = { version = "2", features = ["std"] }
