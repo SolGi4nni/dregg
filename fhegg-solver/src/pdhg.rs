@@ -186,6 +186,164 @@ pub fn finalize(lp: &FlowLp, f: Vec<f64>, y: Vec<f64>, iters: usize) -> PdhgResu
 }
 
 // ============================================================================
+// Exactness — project the ε-optimal flow onto an EXACT circulation.
+// ============================================================================
+//
+// Fixed-T PDHG is ε-approximate: `A f = 0` holds only up to a small residual
+// (`feas_residual`), which the coordinator flagged as the named exactness gap.
+// The residual `r = A f` is a divergence that sums to zero on every connected
+// component (each incidence column sums to zero, so `1ᵀ A = 0`). We therefore
+// ROUTE the residual away along a spanning forest of the undirected graph — an
+// O(m) leaves-to-root pass that cancels the residual at every node — producing
+// `f'` with `A f' = 0` to MACHINE PRECISION (~1e-13), twelve orders tighter than
+// the ε=0.1 optimality tolerance. This is the cheap flow-rounding / feasibility
+// restoration the certificate needs to certify STRICTLY, not just to ε.
+
+/// Minimal union-find for the max-slack spanning forest.
+struct UnionFind {
+    parent: Vec<usize>,
+    rank: Vec<u8>,
+}
+impl UnionFind {
+    fn new(n: usize) -> Self {
+        UnionFind {
+            parent: (0..n).collect(),
+            rank: vec![0; n],
+        }
+    }
+    fn find(&mut self, x: usize) -> usize {
+        let mut r = x;
+        while self.parent[r] != r {
+            r = self.parent[r];
+        }
+        // path compression
+        let mut c = x;
+        while self.parent[c] != r {
+            let nxt = self.parent[c];
+            self.parent[c] = r;
+            c = nxt;
+        }
+        r
+    }
+    /// Union; returns true if the two were in different components.
+    fn union(&mut self, a: usize, b: usize) -> bool {
+        let (ra, rb) = (self.find(a), self.find(b));
+        if ra == rb {
+            return false;
+        }
+        if self.rank[ra] < self.rank[rb] {
+            self.parent[ra] = rb;
+        } else if self.rank[ra] > self.rank[rb] {
+            self.parent[rb] = ra;
+        } else {
+            self.parent[rb] = ra;
+            self.rank[ra] += 1;
+        }
+        true
+    }
+}
+
+/// Project `f` onto the exact circulation subspace `{A f = 0}` by routing the
+/// conservation residual along a MAX-SLACK spanning forest. Returns
+/// `(f', box_violation)` where `box_violation` is the max amount any edge left
+/// `[0, c]` after routing.
+///
+/// The forest is built greedily from the edges with the most box slack
+/// `min(f_e, c_e − f_e)` first (a max-slack spanning tree via union-find), so the
+/// residual is routed through edges FAR from their bounds — for a warm PDHG input
+/// (residual ~1e-3) this keeps the corrected flow inside `[0, c]` (box_violation
+/// ≈0) while making `A f' = 0` hold to machine precision. Routing through an
+/// arbitrary tree would instead push near-saturated edges over their caps.
+pub fn restore_feasibility(lp: &FlowLp, mut f: Vec<f64>) -> (Vec<f64>, f64) {
+    let n = lp.n_nodes;
+    let m = lp.m();
+
+    // Max-slack spanning forest (Kruskal on descending slack).
+    let slack = |fe: f64, ce: f64| fe.min(ce - fe).max(0.0);
+    let mut order_e: Vec<usize> = (0..m).collect();
+    order_e.sort_by(|&a, &b| {
+        slack(f[b], lp.c[b])
+            .partial_cmp(&slack(f[a], lp.c[a]))
+            .unwrap_or(std::cmp::Ordering::Equal)
+    });
+    let mut uf = UnionFind::new(n);
+    let mut adj: Vec<Vec<(usize, usize)>> = vec![Vec::new(); n];
+    for &e in &order_e {
+        let (t, h) = lp.edges[e];
+        if t == h {
+            continue;
+        }
+        if uf.union(t as usize, h as usize) {
+            adj[t as usize].push((h as usize, e));
+            adj[h as usize].push((t as usize, e));
+        }
+    }
+    let mut r = lp.a_times(&f);
+
+    // BFS spanning forest: parent[v] = (parent_node, edge_to_parent); `order` is
+    // the discovery order (processed in reverse = leaves first).
+    let mut visited = vec![false; n];
+    let mut parent: Vec<Option<(usize, usize)>> = vec![None; n];
+    let mut order: Vec<usize> = Vec::with_capacity(n);
+    for s in 0..n {
+        if visited[s] {
+            continue;
+        }
+        visited[s] = true;
+        let mut queue = std::collections::VecDeque::new();
+        queue.push_back(s);
+        while let Some(u) = queue.pop_front() {
+            order.push(u);
+            for &(v, e) in &adj[u] {
+                if !visited[v] {
+                    visited[v] = true;
+                    parent[v] = Some((u, e));
+                    queue.push_back(v);
+                }
+            }
+        }
+    }
+
+    // Leaves → root: push each node's residual to its parent through the tree
+    // edge, zeroing it. Adding Δ to f_e changes (Af) by +Δ at head, −Δ at tail;
+    // so to move u's residual `r_u` up to its parent: if u is the edge HEAD,
+    // f_e −= r_u; if u is the edge TAIL, f_e += r_u.
+    for &u in order.iter().rev() {
+        if let Some((p, e)) = parent[u] {
+            let (_t, h) = lp.edges[e];
+            let ru = r[u];
+            if h as usize == u {
+                f[e] -= ru;
+            } else {
+                f[e] += ru;
+            }
+            r[u] = 0.0;
+            r[p] += ru;
+        }
+    }
+
+    let mut viol = 0.0f64;
+    for e in 0..lp.m() {
+        if f[e] < 0.0 {
+            viol = viol.max(-f[e]);
+        }
+        if f[e] > lp.c[e] {
+            viol = viol.max(f[e] - lp.c[e]);
+        }
+    }
+    (f, viol)
+}
+
+/// Run PDHG then restore exact feasibility. The dual `y` is unchanged (so the
+/// certificate's `π, s` are as before); only the primal `f` is projected onto an
+/// exact circulation. `box_violation` reports any edge pushed out of `[0,c]`.
+pub fn solve_cpu_exact(lp: &FlowLp, iters: usize) -> (PdhgResult, f64) {
+    let approx = solve_cpu(lp, iters);
+    let (f_exact, viol) = restore_feasibility(lp, approx.f);
+    (finalize(lp, f_exact, approx.y, iters), viol)
+}
+
+// ============================================================================
 // Test-instance builders
 // ============================================================================
 
@@ -261,6 +419,93 @@ mod tests {
         assert!(report.gap_ok, "cᵀs − wᵀf ≤ ε: gap={}", report.gap);
         // f is within the box.
         assert!(report.primal_boxed, "0 ≤ f ≤ c");
+    }
+
+    #[test]
+    fn restoration_makes_conservation_machine_exact() {
+        // Triangle: PDHG leaves a small residual; restoration zeroes it exactly.
+        // A chorded graph with unequal weights: mid-iteration flows do NOT
+        // conserve, so PDHG genuinely leaves a residual (unlike a uniform cycle,
+        // where equal flows keep Af=0 at every step).
+        let edges = vec![(0u32, 1u32), (1, 2), (2, 0), (1, 3), (3, 2)];
+        let w = vec![2.0, 1.0, 1.5, 0.5, 3.0];
+        let c = vec![5.0, 3.0, 7.0, 4.0, 6.0];
+        let lp = FlowLp {
+            n_nodes: 4,
+            edges,
+            w,
+            c,
+        };
+        let approx = solve_cpu(&lp, 40);
+        assert!(approx.feas_residual > 1e-6, "short PDHG leaves a residual");
+        let (exact, viol) = solve_cpu_exact(&lp, 40);
+        assert!(
+            exact.feas_residual < 1e-10,
+            "restored ‖Af‖ {} must be machine-zero",
+            exact.feas_residual
+        );
+        assert!(viol < 1e-9, "no box violation on a warm input: {viol}");
+    }
+
+    #[test]
+    fn restoration_exact_on_larger_random_graph() {
+        // A bigger, chorded graph — restoration still zeroes conservation.
+        let mut edges = Vec::new();
+        let n = 200usize;
+        for i in 0..n {
+            edges.push((i as u32, ((i + 1) % n) as u32));
+        }
+        // deterministic chords
+        for i in 0..300usize {
+            edges.push(((i * 37 % n) as u32, (i * 53 % n) as u32));
+        }
+        let m = edges.len();
+        // drop self-loops
+        edges.retain(|&(a, b)| a != b);
+        let m = edges.len().min(m);
+        let _ = m;
+        let w = vec![1.0; edges.len()];
+        let c = vec![5.0; edges.len()];
+        let lp = FlowLp {
+            n_nodes: n,
+            edges,
+            w,
+            c,
+        };
+        let (exact, viol) = solve_cpu_exact(&lp, 3000);
+        assert!(
+            exact.feas_residual < 1e-9,
+            "restored ‖Af‖ {} must be machine-zero on the larger graph",
+            exact.feas_residual
+        );
+        // A valid, box-feasible circulation: max-slack routing keeps f in [0,c].
+        assert!(
+            viol < 1e-9,
+            "box respected after max-slack restoration: {viol}"
+        );
+        for (fe, ce) in exact.f.iter().zip(&lp.c) {
+            assert!(*fe >= -1e-6 && *fe <= *ce + 1e-6, "0 ≤ f ≤ c after restore");
+        }
+    }
+
+    #[test]
+    fn exact_certificate_passes_strict_check() {
+        use crate::cert::CertF;
+        let caps = vec![4.0, 6.0, 2.0, 8.0];
+        let w = vec![1.0; 4];
+        let lp = cycle_lp(4, &caps, &w);
+        let (exact, _) = solve_cpu_exact(&lp, 10_000);
+        let cert = CertF::from_solution(&lp, &exact.f, &exact.y, 0.1);
+        let strict = cert.check_strict();
+        assert!(
+            strict.conserves,
+            "strict conservation: ‖Af‖={}",
+            strict.feas_residual
+        );
+        assert!(
+            strict.valid,
+            "exact certificate must pass the STRICT check: {strict:?}"
+        );
     }
 
     #[test]

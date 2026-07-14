@@ -155,6 +155,15 @@ impl CertF {
         self.check_with(1e-3 * scale)
     }
 
+    /// STRICT check for an exactly-restored certificate: the feasibility slack is
+    /// scaled to machine precision (`1e-9 · scale`), so it passes only when
+    /// `A f = 0` holds to double-precision — the exactness guarantee, not the ε
+    /// optimality tolerance. Emitted after [`crate::pdhg::restore_feasibility`].
+    pub fn check_strict(&self) -> CertReport {
+        let scale = self.c.iter().cloned().fold(1.0f64, f64::max).max(1.0);
+        self.check_with(1e-9 * scale)
+    }
+
     /// Serialize to the JSON wire format the Lean Cert-F checker / STARK ingests.
     pub fn to_json(&self) -> String {
         serde_json::to_string_pretty(self).expect("cert serializes")

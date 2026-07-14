@@ -11,7 +11,9 @@
 use fhegg_solver::cert::CertF;
 use fhegg_solver::clearing::{allocate, clear, crossing, scan_curves, Order, Side};
 use fhegg_solver::gpu::GpuContext;
-use fhegg_solver::pdhg::{cycle_lp, cycle_optimum, solve_cpu, FlowLp};
+use fhegg_solver::pdhg::{
+    cycle_lp, cycle_optimum, restore_feasibility, solve_cpu, solve_cpu_exact, FlowLp,
+};
 use rand::rngs::StdRng;
 use rand::{Rng, SeedableRng};
 use std::time::Instant;
@@ -186,6 +188,42 @@ fn bench_pdhg(gpu: &Option<GpuContext>) {
     }
 }
 
+fn bench_exactness() {
+    println!("\n=== EXACTNESS: spanning-forest residual restoration ===");
+    println!(
+        "{:>7} {:>7} {:>16} {:>16} {:>14} {:>12}",
+        "m", "nodes", "‖Af‖ before", "‖Af‖ after", "restore (µs)", "box viol"
+    );
+    for &(m, t, n) in &[
+        (256usize, 2000usize, 64usize),
+        (4096, 4000, 1024),
+        (16384, 4000, 4096),
+    ] {
+        let extra = m.saturating_sub(n);
+        let lp = gen_graph(n, extra, 0xBEEF ^ (m as u64));
+        let approx = solve_cpu(&lp, t);
+        let before = approx.feas_residual;
+        let f = approx.f.clone();
+        let restore_s = best_of(20, || {
+            let _ = restore_feasibility(&lp, f.clone());
+        });
+        let (exact, viol) = solve_cpu_exact(&lp, t);
+        println!(
+            "{:>7} {:>7} {:>16.3e} {:>16.3e} {:>14.2} {:>12.2e}",
+            lp.m(),
+            n,
+            before,
+            exact.feas_residual,
+            restore_s * 1e6,
+            viol,
+        );
+    }
+    println!(
+        "  (restoration is O(m), zeroes conservation to machine precision — the\n   \
+         primal becomes an EXACT box-feasible circulation, not ε-approximate.)"
+    );
+}
+
 fn demonstrate_certificate() {
     println!("\n=== Cert-F CERTIFICATE OUTPUT (bridge to the Lean checker) ===");
     // A known-optimum triangle: caps [5,3,7], w=1 → optimum = 3*3 = 9.
@@ -193,19 +231,19 @@ fn demonstrate_certificate() {
     let w = vec![1.0, 1.0, 1.0];
     let lp = cycle_lp(3, &caps, &w);
     let opt = cycle_optimum(&caps, &w);
-    let res = solve_cpu(&lp, 20_000);
+    let (res, viol) = solve_cpu_exact(&lp, 20_000);
     let cert = CertF::from_solution(&lp, &res.f, &res.y, 0.05);
-    let report = cert.check();
-    println!("  triangle LP (known optimum wᵀf* = {opt}):");
+    let report = cert.check_strict();
+    println!("  triangle LP (known optimum wᵀf* = {opt}), EXACT-restored:");
     println!("    primal wᵀf = {:.6}", cert.primal_obj);
     println!("    dual   cᵀs = {:.6}", cert.dual_obj);
     println!("    duality gap = {:.3e}", cert.duality_gap);
     println!(
-        "    ‖Af‖_∞ (conservation residual) = {:.3e}",
-        cert.feas_residual
+        "    ‖Af‖_∞ (conservation residual) = {:.3e}  (box viol {:.1e})",
+        cert.feas_residual, viol
     );
     println!(
-        "    Cert-F checks: conserves={} boxed={} s≥0={} dual_feas={} gap≤ε={} => VALID={}",
+        "    Cert-F STRICT checks: conserves={} boxed={} s≥0={} dual_feas={} gap≤ε={} => VALID={}",
         report.conserves,
         report.primal_boxed,
         report.s_nonneg,
@@ -231,5 +269,6 @@ fn main() {
     }
     bench_clearing(&gpu);
     bench_pdhg(&gpu);
+    bench_exactness();
     demonstrate_certificate();
 }
