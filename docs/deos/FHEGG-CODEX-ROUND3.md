@@ -287,7 +287,10 @@ Bekić/Conway for nested feedback.
   provable one.** That is the honest and most valuable outcome: the deployed `ZKOpenRel.lean` should stop
   carrying `GuardedTraceClosure` as a to-be-discharged hypothesis field and instead prove
   `TraceAdmissible f → Guarded (gtrace f)` (the finite-box Tarski case first, directly on `Fstep`). This
-  is a concrete, buildable change to the verified tower, not a slogan.
+  is a concrete, buildable change to the verified tower, not a slogan. **LANDED** — `ZKOpenRel.lean` now
+  carries `guardedTraceClosure_refuted` + `traceAdmissible_guarded` (kernel-clean), with the crossing case
+  discharged directly on `crossing_fixed` (the honest witness — a naive `lfp` on `ℕ` would pick up the
+  spurious top `K` a non-clearing book has, which is exactly why `CrossingExists` + `Nat.find` is used).
 - **Net Q3:** a valid disproof (checked against the real definitions), the precise true theorems (Tarski/
   Kakutani/flow-Hoffman), a correction to the brief's own flow hypothesis, and a typed-admissibility
   categorical repair that is the verify-not-find pattern lifted to feedback. Gold.
@@ -404,8 +407,14 @@ concrete sound-quantized PQ carrier + a Lean-provable `mint_safe_quantization` (
 conjecture is false, with the true theorem landing on the already-proven `Fstep` monotonicity). The
 immediate build consequences: **(i)** make Tier-0 "approximation proposes / exactification disposes" the
 architecture, and land `mint_safe_quantization` + `field_gate_refines_nat_eq` in `CertF.lean` /
-`RealCrypto.lean`; **(ii)** replace `GuardedTraceClosure` in `ZKOpenRel.lean` with `TraceAdmissible →
-Guarded (gtrace)`, proving the finite-box Tarski case on `Fstep` first; **(iii)** prototype the linked
+`RealCrypto.lean`; **(ii) — LANDED (`metatheory/Market/ZKOpenRel.lean`):** `GuardedTraceClosure` is now a
+proven refutation (`guardedTraceClosure_refuted`, the `Bool`-negation witness) and the true replacement
+`traceAdmissible_guarded : TraceAdmissible f → Guarded (gtrace f)` (Knaster–Tarski via `OrderHom.lfp`)
+lands on the proven crossing operator (`crossing_gtrace_guarded` via `crossing_fixed`/`Fstep_monotone`);
+the four instances are shown `TraceAdmissible`, the closure is non-vacuous on a real monotone `Prop`
+feedback, is extended to adaptive composition + tensor (`gtrace_comp_guarded`/`gtrace_tensor_guarded`) and
+partial guards (`GuardedOn`), and `ZKUnification` is now INHABITED (`zkUnification`) over the true
+`AdmissibleTraceClosure`; **(iii)** prototype the linked
 `(ct, C, Π)` carrier + coefficient-difference-polynomial prefix scan; **(iv)** add streaming
 dual-potential receipts and the arbitrage-width derivative to the `fhIR` product surface.
 
