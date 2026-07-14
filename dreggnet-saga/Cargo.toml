@@ -1,0 +1,44 @@
+# `dreggnet-saga` — the WEAVE: proof the game-infra crates COMPOSE.
+#
+# The eight feature crates (party / quest / craft / cheevo / trade / faction /
+# guild / tavern) were each built in isolation. This crate is the enmeshment
+# proof: a driven end-to-end SAGA that threads ONE player through the features so
+# that one crate's OUTPUT is the next crate's INPUT, on the shared substrate —
+#   * the SAME `ugc_dregg::Completion` object flows quest -> cheevo -> guild;
+#   * the SAME `dreggnet_asset::AssetId` flows craft -> trade -> the buyer's
+#     provenance-verify.
+# It CONSUMES the feature crates + the foundation; it modifies NONE of them
+# (reconciliation wants are recorded as NAMED follow-ups in the lib docs, never
+# done here). Additive.
+#
+# A workspace MEMBER of the breadstuffs root, but NOT a `default-member`: it
+# depends on `dreggnet-guild`, which pulls the full `starbridge-v2` (gpui) graph.
+# Build/test it explicitly (persvati warm dir):
+#   cargo test -p dreggnet-saga
+[package]
+name = "dreggnet-saga"
+version = "0.1.0"
+edition = "2024"
+description = "The weave: a driven end-to-end saga threading one player through party/faction/quest/cheevo/craft/trade/guild, proving the feature crates compose on the shared substrate with real object-identity handoffs (the same Completion flows quest->cheevo->guild; the same AssetId flows craft->trade->buyer)."
+
+[dependencies]
+# ── the feature crates the saga threads (consumed, never modified) ──
+dreggnet-party = { path = "../dreggnet-party" }
+dreggnet-faction = { path = "../dreggnet-faction" }
+dreggnet-quest = { path = "../dreggnet-quest" }
+dreggnet-craft = { path = "../dreggnet-craft" }
+dreggnet-trade = { path = "../dreggnet-trade" }
+dreggnet-cheevo = { path = "../dreggnet-cheevo" }
+dreggnet-guild = { path = "../dreggnet-guild" }
+# ── the shared substrate that makes composition possible ──
+# The Completion currency (the run a quest produces / a cheevo anchors / a guild sums)
+# + the Universe the run is verified against.
+ugc-dregg = { path = "../ugc-dregg" }
+# The AssetId currency (the note a craft mints / a trade moves / a buyer verifies).
+dreggnet-asset = { path = "../dreggnet-asset" }
+# The stable per-player identity a guild is keyed by.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# The committed beacon the craft draw is anchored to.
+procgen-dregg = { path = "../procgen-dregg" }
+# The narrative-world driver + `WorldError` the faction gate is driven / refused on.
+spween-dregg = { path = "../spween-dregg" }
