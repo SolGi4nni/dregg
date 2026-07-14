@@ -34,6 +34,7 @@
 
 use std::collections::{BTreeMap, HashMap};
 
+use crate::resume::{SessionMoveLog, SessionResumeStore};
 use crate::{
     Action, CollectiveDecision, DreggIdentity, Offering, OfferingError, Outcome, RunCost,
     SessionConfig, SessionId, Surface, VerifyReport,
@@ -73,6 +74,51 @@ impl std::fmt::Display for HostError {
 }
 
 impl std::error::Error for HostError {}
+
+/// An error **resuming** a session from its [`SessionMoveLog`] — reopening it by replaying the log
+/// ([`OfferingHost::resume`]). Fail-closed: a session either reopens to its authentic committed state
+/// or it does not reopen at all (no partial / forged session is left live).
+#[derive(Debug, Clone)]
+pub enum ResumeError {
+    /// The log names an offering key that is not registered on this host.
+    UnknownOffering(String),
+    /// The offering refused to deploy the fresh session the replay re-drives from.
+    Deploy(OfferingError),
+    /// A live session already occupies the log's id (a resume never clobbers a running session).
+    AlreadyOpen(SessionId),
+    /// **A logged advance did not land on re-drive** — the executor REFUSED it: a forged, ineligible,
+    /// reordered, or otherwise tampered move spliced into the log. The same anti-ghost gate a live
+    /// move hits, so a tampered log cannot reopen to a forged state; it fails to reopen. Carries the
+    /// 0-based index of the offending move and the executor's own reason. The partially-resumed
+    /// session is rolled back (closed) before this returns.
+    Refused {
+        /// The 0-based index into [`SessionMoveLog::moves`] of the move that was refused.
+        index: usize,
+        /// The executor's reason for refusing it.
+        reason: String,
+    },
+}
+
+impl std::fmt::Display for ResumeError {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            ResumeError::UnknownOffering(k) => {
+                write!(f, "no offering registered under key {k:?}")
+            }
+            ResumeError::Deploy(e) => write!(f, "{e}"),
+            ResumeError::AlreadyOpen(id) => {
+                write!(f, "a session is already open under id {:?}", id.0)
+            }
+            ResumeError::Refused { index, reason } => write!(
+                f,
+                "resume refused: logged move #{index} did not land on re-drive ({reason}) — \
+                 the log is tampered"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for ResumeError {}
 
 /// **The type-erased offering slot** — one registered offering plus its live sessions, with the
 /// [`Offering::Session`] type erased. This is the seam that lets heterogeneous offerings (whose
@@ -203,12 +249,35 @@ pub struct OfferingHost {
     slots: BTreeMap<String, Box<dyn OfferingSlot>>,
     /// A monotone counter minting fresh session ids for [`open`](OfferingHost::open).
     counter: u64,
+    /// **The per-session move-log** — the reproducible public input (seed + ordered landed advances)
+    /// of every live session, keyed by `(offering key, session id)`. Grown on
+    /// [`open`](OfferingHost::open_session) (the seed) and each landed [`advance`](OfferingHost::advance).
+    /// A session survives restart by REPLAYING its log ([`resume`](OfferingHost::resume)), not by a
+    /// trusted state blob. Held in memory here; mirrored to a durable [`SessionResumeStore`] when one
+    /// is attached.
+    logs: HashMap<(String, SessionId), SessionMoveLog>,
+    /// An optional durable persistence seam for the move-logs. When attached
+    /// ([`with_resume_store`](OfferingHost::with_resume_store)), the host writes each open + landed
+    /// advance THROUGH to it, and [`resume_all`](OfferingHost::resume_all) replays every stored log
+    /// on boot. The in-process default is `None` (logs live only in memory).
+    resume_store: Option<Box<dyn SessionResumeStore>>,
 }
 
 impl OfferingHost {
     /// A fresh host with no offerings registered.
     pub fn new() -> Self {
         OfferingHost::default()
+    }
+
+    /// **Attach a durable [`SessionResumeStore`]** — the session-resume persistence seam. With one
+    /// attached, the host writes each session OPEN (its seed) and each LANDED advance through to the
+    /// store, so the move-logs outlive the process; [`resume_all`](OfferingHost::resume_all) replays
+    /// every stored log on the next boot, reopening each session to its identical committed state. The
+    /// reference impl is [`crate::resume::InMemoryResumeStore`]; the durable sqlite impl is the
+    /// discord-bot's follow-up. Additive: a host with no store keeps its move-logs in memory only.
+    pub fn with_resume_store(mut self, store: Box<dyn SessionResumeStore>) -> Self {
+        self.resume_store = Some(store);
+        self
     }
 
     /// **Register an offering** under `key` with a human `title`. Any [`Offering`] whose session is
@@ -294,7 +363,17 @@ impl OfferingHost {
             .slots
             .get_mut(key)
             .ok_or_else(|| HostError::UnknownOffering(key.to_string()))?;
-        slot.open(id, cfg).map_err(HostError::Deploy)
+        slot.open(id.clone(), cfg.clone())
+            .map_err(HostError::Deploy)?;
+        // Establish the session's move-log with its seed (the reproducible public input's root); a
+        // re-open of a known id keeps the existing log rather than dropping its recorded advances.
+        self.logs
+            .entry((key.to_string(), id.clone()))
+            .or_insert_with(|| SessionMoveLog::new(key, id.clone(), cfg.clone()));
+        if let Some(store) = &self.resume_store {
+            store.record_open(key, &id, &cfg);
+        }
+        Ok(())
     }
 
     /// Whether session `id` of offering `key` is live.
@@ -310,12 +389,21 @@ impl OfferingHost {
             .unwrap_or_default()
     }
 
-    /// Close (drop) session `id` of offering `key`. `true` if a session was removed.
+    /// Close (drop) session `id` of offering `key`. `true` if a session was removed. Also drops the
+    /// session's move-log (in memory + the durable store) — a closed session is not resumed on boot.
     pub fn close(&mut self, key: &str, id: &SessionId) -> bool {
-        self.slots
+        let removed = self
+            .slots
             .get_mut(key)
             .map(|s| s.close(id))
-            .unwrap_or(false)
+            .unwrap_or(false);
+        if removed {
+            self.logs.remove(&(key.to_string(), id.clone()));
+            if let Some(store) = &self.resume_store {
+                store.forget(key, id);
+            }
+        }
+        removed
     }
 
     /// The current cap-gated affordances of session `(key, id)` — the buttons/forms a frontend
@@ -335,7 +423,33 @@ impl OfferingHost {
         input: Action,
         actor: DreggIdentity,
     ) -> Option<Outcome> {
-        self.slots.get_mut(key)?.advance(id, input, actor)
+        let out = self
+            .slots
+            .get_mut(key)?
+            .advance(id, input.clone(), actor.clone());
+        // A LANDED advance is a committed step of the session's reproducible public input — append it
+        // to the move-log (and mirror it to the durable store). A REFUSED move committed nothing, so
+        // it records nothing (the anti-ghost tooth: the log holds only what actually landed, which is
+        // exactly what replaying it must re-land).
+        if let Some(o) = &out {
+            if o.landed() {
+                self.record_landed(key, id, input, actor);
+            }
+        }
+        out
+    }
+
+    /// Append a landed advance to the session's in-memory move-log and mirror it to the durable
+    /// store (if attached). Shared by [`advance`](OfferingHost::advance) /
+    /// [`advance_collective`](OfferingHost::advance_collective).
+    fn record_landed(&mut self, key: &str, id: &SessionId, input: Action, actor: DreggIdentity) {
+        if let Some(store) = &self.resume_store {
+            store.record_landed(key, id, &input, &actor);
+        }
+        self.logs
+            .entry((key.to_string(), id.clone()))
+            .or_insert_with(|| SessionMoveLog::new(key, id.clone(), SessionConfig::default()))
+            .record(input, actor);
     }
 
     /// Advance session `(key, id)` by one real **crowd** turn carrying a [`CollectiveDecision`] (the
@@ -347,9 +461,21 @@ impl OfferingHost {
         input: Action,
         decision: CollectiveDecision,
     ) -> Option<Outcome> {
-        self.slots
+        let carrier = decision.carrier.clone();
+        let out = self
+            .slots
             .get_mut(key)?
-            .advance_collective(id, input, decision)
+            .advance_collective(id, input.clone(), decision);
+        // Record a landed crowd turn as `(action, carrier)` — the substrate admits exactly one typed
+        // move attributed to the mover of record, and re-driving that reproduces the committed STATE
+        // chain (the crowd's electorate/tally is beside-the-committed-turn provenance, not part of the
+        // replayed state — a named residual for a richer collective-aware log).
+        if let Some(o) = &out {
+            if o.landed() {
+                self.record_landed(key, id, input, carrier);
+            }
+        }
+        out
     }
 
     /// Render session `(key, id)`'s current [`Surface`] (`None` if absent).
@@ -365,6 +491,108 @@ impl OfferingHost {
     /// What `input` would cost in session `(key, id)` (`None` if absent).
     pub fn price(&self, key: &str, id: &SessionId, input: &Action) -> Option<RunCost> {
         self.slots.get(key)?.price(id, input)
+    }
+
+    // ── The session-resume seam — move-log export, replay-resume, and a state commitment ──
+
+    /// **Export session `(key, id)`'s move-log** — its reproducible public input (the seed + the
+    /// ordered landed advances). This is the small, un-forgeable footprint a frontend persists (to a
+    /// [`SessionResumeStore`]) and re-drives with [`resume`](OfferingHost::resume) to reopen the
+    /// session after a restart. `None` if no session was opened under `(key, id)`.
+    pub fn move_log(&self, key: &str, id: &SessionId) -> Option<SessionMoveLog> {
+        self.logs.get(&(key.to_string(), id.clone())).cloned()
+    }
+
+    /// **A commitment of session `(key, id)`'s committed state** — a fingerprint over its rendered
+    /// surface + its replay-verified turn count. Two sessions in the identical committed state
+    /// fingerprint identically; a session in a different state fingerprints differently. This is the
+    /// observable a resume asserts against: a session reopened by replaying its move-log
+    /// ([`resume`](OfferingHost::resume)) fingerprints IDENTICALLY to the original (non-vacuously —
+    /// a session driven to a different state does not). `None` if the session is absent.
+    pub fn commitment(&self, key: &str, id: &SessionId) -> Option<Vec<u8>> {
+        let surface = self.render(key, id)?;
+        let report = self.verify(key, id)?;
+        let mut h = blake3::Hasher::new();
+        h.update(format!("{:?}", surface.0).as_bytes());
+        h.update(&(report.turns as u64).to_le_bytes());
+        h.update(&[report.verified as u8]);
+        Some(h.finalize().as_bytes().to_vec())
+    }
+
+    /// **Reopen a session by REPLAYING its move-log** — the durable-store closure. Deploys a fresh
+    /// session under the log's recorded `cfg` (the same seed), then re-drives every logged advance in
+    /// order through the real executor. A legal log re-lands every move and reopens the session to its
+    /// **identical committed state** ([`commitment`](OfferingHost::commitment) matches the original) —
+    /// the state was never trusted, it was re-derived from the inputs.
+    ///
+    /// Fail-closed: a **tampered** log (a forged / ineligible / reordered advance spliced in) is
+    /// REFUSED by the executor on re-drive ([`ResumeError::Refused`]) — the partially-resumed session
+    /// is rolled back and nothing is left live. A tampered log cannot reopen to a forged state; it
+    /// fails to reopen. Errors also if the log's offering key is unregistered
+    /// ([`ResumeError::UnknownOffering`]), the fresh deploy is refused ([`ResumeError::Deploy`]), or a
+    /// live session already occupies the id ([`ResumeError::AlreadyOpen`] — a resume never clobbers a
+    /// running session). On success returns the reopened [`SessionId`].
+    pub fn resume(&mut self, log: &SessionMoveLog) -> Result<SessionId, ResumeError> {
+        if !self.has(&log.key) {
+            return Err(ResumeError::UnknownOffering(log.key.clone()));
+        }
+        if self.is_open(&log.key, &log.id) {
+            return Err(ResumeError::AlreadyOpen(log.id.clone()));
+        }
+        // Deploy a fresh session under the recorded seed (the replay root). Bypass the recording
+        // wrapper (`open_session` would re-establish the log; we set it authoritatively below).
+        {
+            let slot = self
+                .slots
+                .get_mut(&log.key)
+                .ok_or_else(|| ResumeError::UnknownOffering(log.key.clone()))?;
+            slot.open(log.id.clone(), log.cfg.clone())
+                .map_err(ResumeError::Deploy)?;
+        }
+        // Re-drive each logged advance through the REAL executor. A move that does not land is a
+        // tampered log — the executor refused it (the same anti-ghost gate a live move hits).
+        for (index, m) in log.moves.iter().enumerate() {
+            let out = self
+                .slots
+                .get_mut(&log.key)
+                .expect("slot present (just opened)")
+                .advance(&log.id, m.action.clone(), m.actor.clone());
+            let landed = matches!(&out, Some(o) if o.landed());
+            if !landed {
+                // Roll back the partially-resumed session — fail-closed, nothing left live.
+                if let Some(slot) = self.slots.get_mut(&log.key) {
+                    slot.close(&log.id);
+                }
+                let reason = match out {
+                    Some(Outcome::Refused(why)) => why,
+                    _ => "the move is not on the current ballot".to_string(),
+                };
+                return Err(ResumeError::Refused { index, reason });
+            }
+        }
+        // The session reopened to its authentic state; adopt the log so further advances append to it.
+        self.logs
+            .insert((log.key.clone(), log.id.clone()), log.clone());
+        Ok(log.id.clone())
+    }
+
+    /// **Boot-resume every session recorded in the attached [`SessionResumeStore`]** — the restart
+    /// path. Loads every stored move-log and [`resume`](OfferingHost::resume)s it, reopening each live
+    /// session to its identical committed state. Returns each log paired with its resume result
+    /// (`Ok(id)` reopened, `Err` a tampered / undeployable / already-open log). A no-op returning
+    /// empty if no store is attached. Register the offerings BEFORE calling this (a log for an
+    /// unregistered key resolves to [`ResumeError::UnknownOffering`]).
+    pub fn resume_all(&mut self) -> Vec<(SessionMoveLog, Result<SessionId, ResumeError>)> {
+        let logs = match &self.resume_store {
+            Some(store) => store.all(),
+            None => Vec::new(),
+        };
+        logs.into_iter()
+            .map(|log| {
+                let outcome = self.resume(&log);
+                (log, outcome)
+            })
+            .collect()
     }
 }
 

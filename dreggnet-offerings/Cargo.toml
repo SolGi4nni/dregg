@@ -65,6 +65,12 @@ dregg-node-target = { path = "../node-target" }
 # seeded world), a forged/incomplete run refused. The daily descent publishes its day's world
 # here and ranks verified runs. (ugc-dregg does NOT depend on this crate — acyclic.)
 ugc-dregg = { path = "../ugc-dregg" }
+# THE WEEKLY DESCENT TOURNAMENT (the `descent_tournament` hook). The no-cheat verifiable
+# bracket: each round runs on a fresh beacon-seeded universe and a competitor advances only
+# on a verified win (ugc-dregg's `verify_completion`). The hook wires The Descent's daily
+# world in as each round's universe + a Descent win as a competitor's submission. Consumed,
+# never modified.
+dreggnet-tournament = { path = "../dreggnet-tournament" }
 
 [dev-dependencies]
 # Dev-only: decode the real published drand `quicknet` round vector the daily-descent

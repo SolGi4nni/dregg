@@ -41,6 +41,13 @@ pub mod character;
 /// a no-cheat leaderboard ranks a verified run and refuses a forged one. See
 /// [`daily_descent::DailyDescentOffering`].
 pub mod daily_descent;
+/// THE WEEKLY DESCENT TOURNAMENT — a thin hook that runs a [`dreggnet_tournament`] no-cheat
+/// bracket OVER The Descent. Each round is a fresh beacon-seeded daily descent (the same day
+/// for every competitor — fair); a competitor advances only on a VERIFIED win (their day's
+/// run re-executed to the hoard through ugc-dregg's no-cheat gate), so a forged/lost run does
+/// not advance and the champion is the last verified survivor. See
+/// [`descent_tournament::weekly_descent_tournament`].
+pub mod descent_tournament;
 pub mod dungeon;
 pub mod host;
 pub mod mock;
@@ -50,6 +57,14 @@ pub mod mock;
 /// next on a real committed turn. Re-homes `attested-dm`'s proven overworld design onto the real
 /// executor. See [`overworld::OverworldOffering`].
 pub mod overworld;
+/// THE SESSION-RESUME SEAM — the [`OfferingHost`]'s durable-store closure. A live session is held
+/// in memory (some `!Send`) and lost on restart; this module persists ONLY the reproducible public
+/// input (the seed + the ordered landed advances — a [`resume::SessionMoveLog`]) and reopens a
+/// session by REPLAYING that log from a fresh [`open`](Offering::open) to the identical committed
+/// state. A tampered log (a forged/ineligible advance) is refused on re-drive — never a trusted
+/// blob. See [`resume::SessionResumeStore`] (in-memory reference impl; durable sqlite = the bot's
+/// follow-up, like `CharacterStore`).
+pub mod resume;
 /// THE SESSION-KEY PLAY ONBOARDING — a session key is a caveat-bounded delegation of the
 /// player's play cap (SCOPED to one offering, TIME-BOXED by a deadline, NON-AMPLIFYING over its
 /// parent), so a normal person plays a whole session without re-signing every move; the
@@ -58,7 +73,8 @@ pub mod overworld;
 /// play; the SDK tool-mandate's `deleg_admit`/`refines` shape, applied to advancing a session).
 pub mod session;
 
-pub use host::{HostError, OfferingHost, OfferingInfo};
+pub use host::{HostError, OfferingHost, OfferingInfo, ResumeError};
+pub use resume::{InMemoryResumeStore, LoggedMove, SessionMoveLog, SessionResumeStore};
 
 use dregg_app_framework::TurnReceipt;
 
