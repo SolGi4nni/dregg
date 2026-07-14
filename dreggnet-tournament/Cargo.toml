@@ -1,0 +1,45 @@
+# `dreggnet-tournament` — a NO-CHEAT verifiable tournament BRACKET.
+#
+# A tournament is a seeded single-elimination bracket over N competitors. Each ROUND
+# runs on a FRESH, beacon-seeded universe (the SAME universe for every competitor that
+# round — fair), and a competitor ADVANCES only on a VERIFIED WIN: their submission is
+# re-executed to the win state through ugc-dregg's `verify_completion` (the audited
+# no-cheat gate). A forged / incomplete / result-tampered / lost run does NOT advance.
+# The champion is the last verified survivor. So a bracket is un-riggable BY
+# CONSTRUCTION: you cannot advance without a real, independently re-verifiable win.
+#
+# CONSUMES (reimplements nothing; never modifies their src):
+#   * ugc-dregg     — `Universe` / `Registry` / `Completion` / `verify_completion` (the
+#                     no-cheat leaderboard gate — the load-bearing tooth) + the succinct
+#                     `ProofCompletion` accept-path. Each round IS a real ugc leaderboard.
+#   * procgen-dregg — a per-round beacon-derived seed (`daily_seed`); the round universe
+#                     is a fresh, fair, everyone-derives-it-identically procgen world.
+#
+# A breadstuffs workspace MEMBER (registered in the root `members`). The root
+# `[workspace]` / `[patch]` / `[lints]` apply; no standalone workspace here.
+# Build/test:  cargo test -p dreggnet-tournament
+[package]
+name = "dreggnet-tournament"
+version = "0.1.0"
+edition = "2024"
+description = "A no-cheat verifiable tournament bracket: each round runs on a fresh beacon-seeded universe and a competitor advances only on a verified win (ugc-dregg's verify_completion); forged/incomplete/lost runs do not advance; the champion is the last verified survivor."
+
+[lints]
+workspace = true
+
+[dependencies]
+# THE NO-CHEAT GATE — `Universe`/`Registry`/`Completion`/`ProofCompletion` +
+# `verify_completion` / `verify_proof_completion` / `record_playthrough`. Every
+# advancement in the bracket is gated on one of these verifiers accepting the run.
+ugc-dregg = { path = "../ugc-dregg" }
+# Domain-separated per-round seed derivation (the same blake3 1.x resolved workspace-wide,
+# the same hash procgen-dregg's `daily_seed` uses). A round's epoch = H(tournament seed,
+# round index), so each round is a fresh, deterministically-derivable universe.
+blake3 = "1"
+
+[dev-dependencies]
+# The real, winnable built-in dungeon (its `DUNGEON` scene + `CH_*` choice constants) the
+# driven bracket tests run authored-universe rounds + build forgeries against.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# The committed-seed type for deriving beacon-fresh procgen round universes in the tests.
+procgen-dregg = { path = "../procgen-dregg" }

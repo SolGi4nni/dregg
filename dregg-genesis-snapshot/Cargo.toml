@@ -1,0 +1,43 @@
+# `dregg-genesis-snapshot` — GENESIS-FROM-SNAPSHOT: carry a cell-set across an
+# EPOCH bump. A devnet re-genesis today WIPES everything (new committee keys →
+# new `federation_id` → a fresh chain; the old data-dir is archived). This crate
+# lets a re-genesis instead SEED the fresh chain with a frozen EXPORT of the old
+# chain's cell-set — each cell carrying an IVC proof of its history-from-old-genesis
+# and (reusing the vat-migration primitive) a cross-epoch MigrationVoucher — so
+# characters / leaderboards / universes SURVIVE a devnet bump.
+#
+# This is the vat-migration `CellExportBundle` primitive (plans/vat-migration-design.md)
+# GENERALIZED from cross-FEDERATION to cross-EPOCH: the "source federation" is the
+# old chain (committee epoch N) and the "destination federation" is the fresh
+# genesis (epoch N+1). The imported cell RE-ADDRESSES IDENTICALLY because the
+# content-addressed `CellId = derive_raw(public_key, token_id)` is federation- and
+# epoch-independent.
+#
+# Additive workspace member. CONSUMES `dregg-cell` (Cell / CellId / the
+# MigrationVoucher migration primitive) and `dregg-circuit` (the IVC history
+# proof: prove_ivc / verify_ivc / IvcProof). Touches NEITHER circuit/ NOR cell/.
+[package]
+name = "dregg-genesis-snapshot"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Genesis-from-snapshot: export an old chain's cell-set (each cell + an IVC proof of its history-from-old-genesis + a cross-epoch migration voucher) into a snapshot, then import it to SEED a fresh genesis — cells survive a re-genesis, re-address identically via content-addressing, and their history is validated on import; a tampered export is refused."
+
+[dependencies]
+# The Cell / CellId content-addressed identity AND the vat-migration primitive
+# (`cell::migration::{MigrationVoucher, FederationId}`, `Cell::migration_voucher`)
+# that this crate generalizes from cross-federation to cross-epoch.
+dregg-cell = { path = "../cell" }
+# The IVC history proof: `ivc::{prove_ivc, verify_ivc, IvcProof, FoldDelta}` +
+# `field::BabyBear` + `fold_air::create_test_fold` (a valid single fold whose
+# roots we chain into the cell's history).
+dregg-circuit = { path = "../circuit" }
+serde = { workspace = true }
+blake3 = "1"
+
+[dev-dependencies]
+serde_json = { workspace = true }
