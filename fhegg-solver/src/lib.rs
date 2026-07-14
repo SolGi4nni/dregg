@@ -37,11 +37,17 @@
 //!    curves, solved by water-filling on the marginal price with the
 //!    [`cfmm::CertRoute`] KKT certificate.
 //! 6. [`qp`] — the Markowitz portfolio QP ([`qp::CertQp`]).
+//! 7. [`package`] — the all-or-none / package combinatorial clearing by CERTIFIED
+//!    APPROXIMATION: an untrusted integral packing + a Lagrangian dual bound, with
+//!    the [`package::CertPackage`] certificate proving feasibility (indivisibility
+//!    preserved, `x ∈ {0,1}`) + a near-optimality ratio `W ≤ W* ≤ UB(y)`.
 //!
 //! Cert-F/Aggregation certificates are LINEAR (Tier-0/1); CertEq is bilinear and
 //! CertRoute nonlinear in the witness (both `O(size)`, Tier-1). The integer /
 //! combinatorial exact clearing (all-or-none, indivisible assignment) is the
-//! NP-hard boundary — Tier-2, or an LP relaxation with a rounding certificate.
+//! NP-hard boundary — the EXACT optimum stays NP-hard, but [`package`] answers it
+//! the verify-not-find way: a feasible integral clearing plus a CHECKED weak-
+//! duality bound certifying it is within a factor of optimal (Tier-1/Shielded).
 //!
 //! Trust model: the solver is UNTRUSTED. What makes its output trustworthy is
 //! the [`cert::CertF`] certificate — a LINEAR primal-dual witness the verified
@@ -55,6 +61,7 @@ pub mod clearing;
 pub mod discriminatory;
 pub mod fisher;
 pub mod gpu;
+pub mod package;
 pub mod pdhg;
 pub mod pricecert;
 pub mod qp;

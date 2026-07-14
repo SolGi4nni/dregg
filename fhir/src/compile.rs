@@ -17,7 +17,8 @@
 //! compiles, the full iff) is the six-part theorem, the Lean lane's target.
 
 use crate::ast::{
-    BinomialSpec, EdgeSpec, FillType, MatrixData, OrderSide, OrderSpec, Product, ProductBody,
+    BinomialSpec, EdgeSpec, FillType, MatrixData, OrderSide, OrderSpec, PackageBidSpec, Product,
+    ProductBody,
 };
 use crate::tier::Tier;
 use crate::types::{
@@ -29,6 +30,7 @@ use crate::ast::PoolSpec;
 use fhegg_solver::cfmm::{Pool, RoutingProblem};
 use fhegg_solver::clearing::{Order as EngineOrder, Side as EngineSide};
 use fhegg_solver::fisher::FisherMarket;
+use fhegg_solver::package::{PackageAuction, PackageBid};
 use fhegg_solver::pdhg::FlowLp;
 use fhegg_solver::pricecert::{american_put_binomial, Market, SnellTree};
 use fhegg_solver::qp::{markowitz, QpProblem};
@@ -62,6 +64,10 @@ pub enum ConvexProgram {
     WelfareMax(FisherMarket),
     /// A CFMM optimal-routing program over public pool curves.
     CfmmRouting(RoutingProblem),
+    /// A package / all-or-none combinatorial auction. Runs the certified-
+    /// approximation clearing (an integral packing + a Lagrangian dual bound) and
+    /// emits its CertPackage.
+    PackageClearing(PackageAuction),
 }
 
 /// A successfully-compiled product: its program, its most-private honest tier,
@@ -149,6 +155,11 @@ fn lower(p: &Product) -> Lowered {
             util,
         } => lower_welfare_max(*n_buyers, *n_goods, budgets, supplies, util),
         ProductBody::CfmmRouting { pools, budget } => lower_cfmm(pools, *budget),
+        ProductBody::PackageAuction {
+            n_items,
+            supply,
+            bids,
+        } => lower_package(*n_items, supply, bids),
     }
 }
 
@@ -429,6 +440,42 @@ fn lower_cfmm(pools: &[PoolSpec], budget: f64) -> Lowered {
     }
 }
 
+fn lower_package(n_items: usize, supply: &[f64], bids: &[PackageBidSpec]) -> Lowered {
+    let engine_bids: Vec<PackageBid> = bids
+        .iter()
+        .map(|b| PackageBid::new(b.value, b.demand.clone()))
+        .collect();
+    let auction = PackageAuction {
+        n_items,
+        supply: supply.to_vec(),
+        bids: engine_bids,
+    };
+    let shape = ProgramType {
+        kind: ProgramKind::PackageClearing,
+        // The winner-determination is DISCRETE (all-or-none / 0-1 combinatorial),
+        // NP-hard — outside the FHE v0 affine-aggregation core, so Dark rejects it
+        // (CombinatorialObjective) and the honest tier is Shielded. Note: the
+        // integer feature is INTRINSIC to the product and answered by certified
+        // approximation, so it is NOT listed as an `IntegerFeature` (which would
+        // force Open) — the discrete curvature is the honest signal.
+        curvature: Curvature::Discrete,
+        matrices: vec![MatrixFlag {
+            // The bundle/demand matrix + item supply are PUBLIC structure; only the
+            // bid values are private amounts.
+            role: MatrixRole::Constraint,
+            visibility: Visibility::Public,
+        }],
+        cones: vec![Cone::NonNeg, Cone::Box], // x ≥ 0, Σ dᵢxᵢ ≤ s; integrality is certified
+        integer_features: vec![],
+        size: bids.len(),
+        cert: CertKind::CertPackage,
+    };
+    Lowered {
+        shape,
+        program: ConvexProgram::PackageClearing(auction),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -558,6 +605,34 @@ mod tests {
         assert_eq!(c.tier, Tier::Shielded);
         assert_eq!(c.cert, CertKind::CertRoute);
         assert!(matches!(c.program, ConvexProgram::CfmmRouting(_)));
+    }
+
+    #[test]
+    fn package_auction_is_shielded_certpackage() {
+        // The all-or-none combinatorial WDP compiles to a certified-approximation
+        // clearing (NOT a rejection): discrete curvature ⇒ not Dark ⇒ Shielded,
+        // CertPackage. This is the better answer to the NP-hard boundary.
+        let c = compile(&products::package_auction_clearing()).unwrap();
+        assert_eq!(c.tier, Tier::Shielded);
+        assert_eq!(c.cert, CertKind::CertPackage);
+        assert!(matches!(c.program, ConvexProgram::PackageClearing(_)));
+    }
+
+    #[test]
+    fn package_auction_claiming_dark_is_rejected() {
+        let err = compile(&products::package_auction_claiming_dark()).unwrap_err();
+        match err {
+            TypeError::OverClaimsTier {
+                claimed,
+                honest,
+                because,
+            } => {
+                assert_eq!(claimed, Tier::Dark);
+                assert_eq!(honest, Tier::Shielded);
+                assert!(matches!(*because, TypeError::CombinatorialObjective { .. }));
+            }
+            other => panic!("expected over-claim/combinatorial-objective, got {other:?}"),
+        }
     }
 
     #[test]

@@ -153,6 +153,12 @@ pub enum ProgramKind {
     /// CFMM optimal routing — `max Σ gᵢ(δᵢ) s.t. Σδ≤Δ` over public pool curves
     /// (concave, water-filling on the marginal price).
     CfmmRouting,
+    /// All-or-none / package combinatorial clearing — the winner-determination
+    /// `max Σ vᵢxᵢ s.t. Σ dᵢⱼxᵢ ≤ sⱼ, xᵢ∈{0,1}` (NP-hard). Solved by CERTIFIED
+    /// APPROXIMATION: an untrusted integral packing + a Lagrangian dual bound, with
+    /// a certificate proving feasibility (indivisibility preserved) + a
+    /// near-optimality ratio. The EXACT optimum stays NP-hard.
+    PackageClearing,
 }
 
 /// The certificate a product compiles to (`FHEGG-PRODUCT-ORDER-FRONTIER.md`
@@ -179,6 +185,12 @@ pub enum CertKind {
     /// The CFMM routing certificate `(δ, λ)` — the water-filling KKT witness
     /// (`fhegg_solver::cfmm::CertRoute`). Nonlinear in the witness (`gᵢ'`), `O(N)`.
     CertRoute,
+    /// The package-clearing certificate `(x, y)` — an integral packing `x∈{0,1}`
+    /// + item prices `y≥0` whose Lagrangian bound `UB(y)` certifies feasibility +
+    /// a near-optimality ratio `W ≤ W* ≤ UB` (`fhegg_solver::package::CertPackage`).
+    /// Linear (weak-duality) in the witness, `O(n·m)`. CERTIFIED APPROXIMATION —
+    /// the honest answer to the NP-hard all-or-none boundary.
+    CertPackage,
 }
 
 /// The extracted convex-program TYPE — what the tier judgment reads. This is the
@@ -241,9 +253,12 @@ impl ProgramType {
             | ProgramKind::Discriminatory => self.size <= DARK_LP_ENVELOPE,
             ProgramKind::Qp => false,
             // WelfareMax / CfmmRouting have a Concave (log / rational) objective,
-            // so the curvature check rejects them at Dark before this is reached;
-            // the bound is moot but kept exhaustive.
-            ProgramKind::WelfareMax | ProgramKind::CfmmRouting => self.size <= DARK_LP_ENVELOPE,
+            // and PackageClearing a Discrete (combinatorial) one, so the curvature
+            // check rejects them at Dark before this is reached; the bound is moot
+            // but kept exhaustive.
+            ProgramKind::WelfareMax | ProgramKind::CfmmRouting | ProgramKind::PackageClearing => {
+                self.size <= DARK_LP_ENVELOPE
+            }
         }
     }
 
@@ -294,6 +309,9 @@ impl ProgramType {
                 if self.curvature == Curvature::Concave {
                     return Err(TypeError::EntropicObjective { tier });
                 }
+                if self.curvature == Curvature::Discrete {
+                    return Err(TypeError::CombinatorialObjective { tier });
+                }
                 if !self.within_dark_envelope() {
                     return Err(TypeError::SizeExceedsEnvelope {
                         size: self.size,
@@ -324,6 +342,12 @@ pub enum TypeError {
     /// → the entropic/mirror-descent prox is outside the FHE v0 aggregation core
     /// (exp/log/reciprocal) → not Dark-admissible (Shielded is fine).
     EntropicObjective { tier: Tier },
+    /// The winner-determination is a DISCRETE (all-or-none / combinatorial)
+    /// optimization → NP-hard, outside the FHE v0 affine-aggregation core → not
+    /// Dark-admissible. The certified-approximation clearing runs at Shielded (the
+    /// certificate check — feasibility + a Lagrangian bound — is a bounded
+    /// oblivious circuit the STARK carries); the EXACT optimum stays NP-hard.
+    CombinatorialObjective { tier: Tier },
     /// An unapproved cone (SOC/PSD/exp) → outside fhIR-0's cone library.
     UnapprovedCone { cone: Cone, tier: Tier },
     /// An integer/disjunctive feature → breaks the continuous oblivious regime →
@@ -360,6 +384,11 @@ impl fmt::Display for TypeError {
             TypeError::EntropicObjective { tier } => write!(
                 f,
                 "concave-nonlinear objective (log-welfare / rational CFMM output; entropic/mirror-descent prox = exp/log/reciprocal) is outside the FHE v0 aggregation core → not {}-admissible",
+                tier.short(),
+            ),
+            TypeError::CombinatorialObjective { tier } => write!(
+                f,
+                "discrete/combinatorial winner-determination (all-or-none package bids, NP-hard) is outside the FHE v0 affine-aggregation core → not {}-admissible (runs as a certified-approximation clearing at Tier 1/Shielded; the exact optimum stays NP-hard)",
                 tier.short(),
             ),
             TypeError::UnapprovedCone { cone, tier } => write!(
@@ -458,6 +487,22 @@ mod tests {
             Err(TypeError::SizeExceedsEnvelope { .. })
         ));
         assert!(t.admissible_at(Tier::Shielded).is_ok());
+    }
+
+    #[test]
+    fn package_clearing_is_shielded_not_dark() {
+        // A discrete/combinatorial winner-determination: NOT Dark (outside the FHE
+        // affine core), but Shielded (the certified-approximation certificate is a
+        // bounded oblivious circuit) and Open.
+        let mut t = public_affine(ProgramKind::PackageClearing, 6, CertKind::CertPackage);
+        t.curvature = Curvature::Discrete;
+        t.cones = vec![Cone::NonNeg, Cone::Box];
+        assert!(matches!(
+            t.admissible_at(Tier::Dark),
+            Err(TypeError::CombinatorialObjective { .. })
+        ));
+        assert!(t.admissible_at(Tier::Shielded).is_ok());
+        assert!(t.admissible_at(Tier::Open).is_ok());
     }
 
     #[test]

@@ -110,6 +110,14 @@ mod integration_tests {
                 Tier::Shielded,
                 CertKind::CertRoute,
             ),
+            // The certified-approximation answer to the NP-hard all-or-none
+            // boundary: package bids COMPILE (no longer a flat rejection) to a
+            // feasible integral clearing + a near-optimality certificate.
+            (
+                products::package_auction_clearing(),
+                Tier::Shielded,
+                CertKind::CertPackage,
+            ),
         ];
         for (product, tier, cert) in cases {
             let name = product.name.clone();
@@ -132,5 +140,32 @@ mod integration_tests {
         assert!(compile(&products::portfolio_qp_private_claiming_dark()).is_err());
         assert!(compile(&products::all_or_none_claiming_shielded()).is_err());
         assert!(compile(&products::welfare_max_claiming_dark()).is_err());
+        assert!(compile(&products::package_auction_claiming_dark()).is_err());
+    }
+
+    /// The certified-approximation package clearing runs end-to-end: feasible
+    /// integral packing (indivisibility preserved) + a certified near-optimality
+    /// ratio ∈ (0,1], the bound soundly ≥ the achieved welfare.
+    #[test]
+    fn package_auction_runs_certified_approx() {
+        let c = compile(&products::package_auction_clearing()).unwrap();
+        let out = run(&c);
+        assert_eq!(out.certificate_valid(), Some(true), "{}", out.summary());
+        if let RunOutcome::CertPackage {
+            report, clearing, ..
+        } = &out
+        {
+            assert!(report.integral, "all-or-none preserved (x∈{{0,1}})");
+            assert!(report.capacity_ok, "supply respected");
+            assert!(report.bound_sound, "W ≤ UB (weak duality)");
+            assert!(
+                report.ratio > 0.0 && report.ratio <= 1.0 + 1e-9,
+                "certified ratio ∈ (0,1]: {}",
+                report.ratio
+            );
+            assert!(clearing.upper_bound >= clearing.welfare - 1e-9);
+        } else {
+            panic!("expected a CertPackage outcome, got {}", out.summary());
+        }
     }
 }

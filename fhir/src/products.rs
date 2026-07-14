@@ -6,7 +6,9 @@
 //! Each demonstrates the compiler reporting the right tier
 //! (`DREGGFI-PRIVACY-TIERS.md` §3 mapping table).
 
-use crate::ast::{BinomialSpec, EdgeSpec, MatrixData, OrderSpec, PoolSpec, Product, ProductBody};
+use crate::ast::{
+    BinomialSpec, EdgeSpec, MatrixData, OrderSpec, PackageBidSpec, PoolSpec, Product, ProductBody,
+};
 use crate::tier::Tier;
 
 /// A diagonal-dominant PSD covariance (public structure for the test), n×n.
@@ -285,6 +287,45 @@ pub fn cfmm_routing() -> Product {
     )
 }
 
+/// **Package / all-or-none combinatorial auction** — Tier 1 SHIELDED, CertPackage.
+/// The certified-approximation answer to the NP-hard boundary. Six all-or-none
+/// package bids over 3 items (one unit each): singletons, pairs, and the grand
+/// bundle. Each bid is filled FULLY or NOT AT ALL (indivisibility preserved —
+/// NOT relaxed to fractional). The winner-determination is NP-hard, so it compiles
+/// to a CERTIFIED-APPROXIMATION clearing (a feasible integral packing + a
+/// Lagrangian dual bound), NOT a rejection. Discrete curvature ⇒ not Dark
+/// (outside the FHE affine core); the honest tier is Shielded. The certificate
+/// proves feasibility + a near-optimality ratio; the EXACT optimum stays NP-hard.
+pub fn package_auction_clearing() -> Product {
+    let bids = vec![
+        PackageBidSpec::new(6.0, vec![1.0, 0.0, 0.0]), // {item0}
+        PackageBidSpec::new(5.0, vec![0.0, 1.0, 0.0]), // {item1}
+        PackageBidSpec::new(5.0, vec![0.0, 0.0, 1.0]), // {item2}
+        PackageBidSpec::new(12.0, vec![1.0, 1.0, 0.0]), // {item0,item1}
+        PackageBidSpec::new(12.0, vec![0.0, 1.0, 1.0]), // {item1,item2}
+        PackageBidSpec::new(17.0, vec![1.0, 1.0, 1.0]), // {item0,item1,item2}
+    ];
+    Product::infer(
+        "package-all-or-none-auction",
+        ProductBody::PackageAuction {
+            n_items: 3,
+            supply: vec![1.0, 1.0, 1.0],
+            bids,
+        },
+    )
+}
+
+/// **REJECTION — a package auction claiming Tier 0.** The winner-determination is
+/// a DISCRETE (all-or-none / combinatorial) optimization, NP-hard, outside the FHE
+/// v0 affine core. Claiming Dark over-claims privacy → rejected with
+/// `CombinatorialObjective`. Its honest tier is Shielded (the certified-
+/// approximation certificate is a bounded oblivious circuit; the exact optimum
+/// stays NP-hard).
+pub fn package_auction_claiming_dark() -> Product {
+    let base = package_auction_clearing();
+    Product::claiming("package-auction-OVERCLAIM", base.body, Tier::Dark)
+}
+
 /// **REJECTION — welfare-max claiming Tier 0.** The Eisenberg–Gale `log` objective
 /// is concave-nonlinear (entropic prox = exp/log), outside the FHE v0 affine
 /// core. Claiming Dark over-claims privacy → rejected with `EntropicObjective`.
@@ -307,8 +348,10 @@ pub fn all() -> Vec<Product> {
         discriminatory_clearing(),
         welfare_max_fisher(),
         cfmm_routing(),
+        package_auction_clearing(),
         portfolio_qp_private_claiming_dark(),
         all_or_none_claiming_shielded(),
         welfare_max_claiming_dark(),
+        package_auction_claiming_dark(),
     ]
 }

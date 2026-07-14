@@ -14,6 +14,7 @@ use fhegg_solver::cfmm::{solve_waterfill, CertRoute, CertRouteReport};
 use fhegg_solver::clearing::{allocate, clear, Allocation, Clearing};
 use fhegg_solver::discriminatory::{clear_discriminatory, DiscriminatoryClearing};
 use fhegg_solver::fisher::{solve_proportional_response, CertEq, CertEqReport};
+use fhegg_solver::package::{clear_package, CertPackage, CertPackageReport, PackageClearing};
 use fhegg_solver::pdhg::solve_cpu;
 use fhegg_solver::pricecert::{
     solve_price_cert, solve_snell_cert, CertPrice, CertPriceReport, CertSnell, CertSnellReport,
@@ -66,6 +67,14 @@ pub enum RunOutcome {
     /// honest negative polarity of the Price-Cert runner (a mispriced/arbitrage
     /// derivative is REJECTED, not certified).
     NoArbitrageFreePrice { reason: &'static str },
+    /// Package / all-or-none clearing: the CERTIFIED-APPROXIMATION certificate
+    /// (feasible integral packing + a Lagrangian near-optimality bound) + its
+    /// report + the clearing (accepts, welfare, certified ratio).
+    CertPackage {
+        cert: CertPackage,
+        report: CertPackageReport,
+        clearing: PackageClearing,
+    },
 }
 
 impl RunOutcome {
@@ -84,6 +93,7 @@ impl RunOutcome {
             RunOutcome::CertSnell { report, .. } => Some(report.valid),
             // Arbitrage detected → the derivative is REJECTED (no valid cert).
             RunOutcome::NoArbitrageFreePrice { .. } => Some(false),
+            RunOutcome::CertPackage { report, .. } => Some(report.valid),
         }
     }
 
@@ -165,6 +175,20 @@ impl RunOutcome {
             RunOutcome::NoArbitrageFreePrice { reason } => {
                 format!("no-arbitrage-free-price (REJECTED): {reason}")
             }
+            RunOutcome::CertPackage {
+                report, clearing, ..
+            } => format!(
+                "Package-Cert (certified-approx): valid={} integral={} capacity_ok={} | W={:.2} UB={:.2} ratio={:.3} (achieved ≥ {:.1}% of optimum) accepted={}/{}",
+                report.valid,
+                report.integral,
+                report.capacity_ok,
+                clearing.welfare,
+                clearing.upper_bound,
+                report.ratio,
+                report.ratio * 100.0,
+                clearing.accept.iter().filter(|&&x| x > 0.5).count(),
+                clearing.accept.len(),
+            ),
         }
     }
 }
@@ -228,6 +252,15 @@ pub fn run(compiled: &Compiled) -> RunOutcome {
             let cert = solve_snell_cert(tree, 1e-9);
             let report = cert.check();
             RunOutcome::CertSnell { cert, report }
+        }
+        ConvexProgram::PackageClearing(auction) => {
+            let (clearing, cert) = clear_package(auction, 4000);
+            let report = cert.check();
+            RunOutcome::CertPackage {
+                cert,
+                report,
+                clearing,
+            }
         }
     }
 }

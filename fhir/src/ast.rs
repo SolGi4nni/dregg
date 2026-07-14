@@ -109,6 +109,37 @@ pub enum ProductBody {
     /// (`max Σ gᵢ(δᵢ) s.t. Σδ≤Δ`). The pool curves are public; the routing is
     /// private. The rational-concave output is a nonlinear objective ⇒ Shielded.
     CfmmRouting { pools: Vec<PoolSpec>, budget: f64 },
+
+    /// A **package / all-or-none combinatorial auction** — the winner-determination
+    /// `max Σ vᵢxᵢ s.t. Σ dᵢⱼxᵢ ≤ sⱼ, xᵢ∈{0,1}` over public item supply. Each bid
+    /// is a public bundle (`demand`) at a private `value`, filled FULLY or NOT AT
+    /// ALL — indivisibility that is NP-hard to optimize exactly. It compiles to a
+    /// CERTIFIED-APPROXIMATION clearing (a feasible integral packing + a Lagrangian
+    /// dual bound), NOT a rejection. Honest tier: Shielded (the exact optimum stays
+    /// NP-hard; the certificate proves feasibility + a near-optimality ratio).
+    PackageAuction {
+        n_items: usize,
+        /// Public supply per item `sⱼ`.
+        supply: Vec<f64>,
+        bids: Vec<PackageBidSpec>,
+    },
+}
+
+/// One all-or-none package bid: a private value for a PUBLIC bundle
+/// ([`ProductBody::PackageAuction`]). The bundle `demand` (which items, how many
+/// units) is public structure; only the `value` is a private amount.
+#[derive(Clone, Debug)]
+pub struct PackageBidSpec {
+    /// The bid value for the WHOLE bundle (private amount).
+    pub value: f64,
+    /// Units of each item the package demands, length `n_items` (public).
+    pub demand: Vec<f64>,
+}
+
+impl PackageBidSpec {
+    pub fn new(value: f64, demand: Vec<f64>) -> Self {
+        PackageBidSpec { value, demand }
+    }
 }
 
 /// A recombining CRR binomial American/Bermudan option — the PUBLIC scenario
