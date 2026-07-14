@@ -19,6 +19,21 @@ The whole tree's soundness floor is `HashCR` (Poseidon2 sponge collision-resista
 deployed FRI provably ~112.6-bit (memory `project-linking-tower-forgery-closure`). Everything below
 inherits that floor for its STARK soundness; component 6 states where the shielded objects sit on it.
 
+> **⚑ PQ posture correction (2026-07-14).** The shielded pool's value-commitment is today a Pedersen
+> commitment over Ristretto (`cell-crypto/src/value_commitment.rs`), with a Schnorr excess and a
+> Bulletproof range — all **discrete-log**. Pedersen *hiding* is perfect/information-theoretic and the
+> STARK privacy path is statistical-ZK (`HidingFriPcs`), so **privacy is quantum-safe**. But Pedersen
+> *binding* IS discrete-log, and DLog is **Shor-broken**: a quantum adversary recovers the generators'
+> DLog relations, re-opens a value-commitment to a larger value, and forges a conservation-satisfying
+> batch that **mints** while privacy hides the theft. So the shielded **value-binding / no-mint
+> soundness is NOT post-quantum** — a real hole that contradicts dregg's PQ posture (ML-DSA, quantum-safe
+> finality, memory `project-pq-metatheory-connected`), and is **not** covered by the PQ metatheory (whose
+> floor `MSIS·MLWESearchHard·SchnorrDLHard·HashCR` uses DLog only as the *classical leg of a hybrid
+> signature* with an MSIS fallback — the shielded binding has **no** lattice fallback). Component 2 below
+> is rewritten to the PQ-correct target (Poseidon2 hash-commitment + fully-in-AIR STARK conservation,
+> retiring DLog); see `docs/deos/PQ-SHIELDED-COMMITMENT.md`. The previously-named "full Ristretto
+> EC-in-AIR" item is **deleted** — it entrenches the Shor-broken DLog rather than retiring it.
+
 ---
 
 ## The six components at a glance
@@ -26,7 +41,7 @@ inherits that floor for its STARK soundness; component 6 states where the shield
 | # | Component | PROVEN | BUILT | NEEDED (gap) | Diff. | Depends on |
 |---|-----------|--------|-------|--------------|-------|-----------|
 | 1 | Ring-clearing AIR | 2-leg spec + fusion spec | 2-leg tight-cycle apex | N-leg variable cycle + partial-fill `offer ≥ want_min` in-AIR | **M**(N-leg) / **M**(inequality) | in-AIR range gadget (exists) |
-| 2 | Value-commitments in-AIR | field⇒integer conservation (no-wrap) | 30-bit range gadget, `pedTwoGen` excess | full Ristretto `Σ(v·G+r·H)=0` EC arithmetic in-circuit; 64-bit range | **RESEARCH** | EC-in-circuit primitives |
+| 2 | **PQ value-commitment** (Poseidon2 hash + in-AIR STARK conservation) | field⇒integer conservation (no-wrap); Poseidon2 value_binding hiding | `value_binding` hash-commitment, in-AIR conservation gate, `VALUE_BITS` range gadget | migrate note-commitment Poseidon2 (not Ristretto); asset-coord + split/merge equality in-AIR; 64-bit in-AIR range; **retire Pedersen/Schnorr/Bulletproof DLog** | **M** (cutover) / **M–L** (64-bit) | Poseidon2 CR + in-AIR range (exist) |
 | 3 | **ZK / reveal-nothing (the crux)** | abstract perfect-ZK lemma; Pedersen/nullifier hiding carriers | hiding PCS path (ZK=true), minimal PIs, tested | **clearing-level ZK theorem** — transcript independent of trades; simulator/indistinguishability; statistical-ZK of FRI PCS | **RESEARCH** | 1, 2; HidingFriPcs ZK floor |
 | 4 | Membership + nullifier in-clearing | `shielded_spend_claim_refines`; deployed nullifier flip | apex `connect` binds legs to spend leaves | bind ring legs to the **deployed** nullifier accumulator (not per-leg toy pre-state) | **M** | deployed accumulator (exists) |
 | 5 | Shielded SetField-attestation | — | — | attested-but-hidden per-trader allocation commitment; resolve SetField cohort ambiguity | **L** | 3, 4 |
@@ -69,36 +84,73 @@ inequality unlocks interior clearing. Both are M and independent of the crux (3)
 
 ---
 
-## 2. Value-commitments in-AIR
+## 2. PQ value-commitment — Poseidon2 hash + fully-in-AIR STARK conservation (retire DLog)
+
+**⚑ This component was rewritten (2026-07-14) from "value-commitments in-AIR / full Ristretto
+EC-in-AIR" to the PQ-correct target.** The old direction entrenched the Shor-broken Pedersen/Ristretto
+discrete-log binding; the right direction retires DLog and lands the shielded value-binding on dregg's
+existing PQ floors (`HashCR` / Poseidon2 CR, `Poseidon2ChipArithSound`, `HidingFriPcs` statistical-ZK).
+Full diagnosis + migration scope: `docs/deos/PQ-SHIELDED-COMMITMENT.md`. **Options:** A (recommended) =
+Poseidon2 hash-commitment + in-AIR STARK conservation; B (fallback) = a Module-SIS lattice homomorphic
+commitment (PQ + homomorphic, but kilobyte commitments + a second lattice proof system). A dominates —
+it reuses machinery the tree already carries and adds no new cryptographic system.
 
 **PROVEN.** `RealCrypto.lean::twoLeg_noWrap_conservation` + `inAir_conservation_refines_pedersen`
 — a field conservation gate `Σ value_in ≡ Σ value_out (mod p)` **plus the range bound** upgrades to
-integer conservation, so the in-AIR field gate refines the real group-Pedersen conservation
-`ring_conserves_pedersen_list`. `pedCommit_binding` / `pedCommit_mint_refused` are the binding +
-anti-mint teeth over the two-generator `pedTwoGen`.
+integer conservation. (Today this is stated as refining the group-Pedersen `ring_conserves_pedersen_list`;
+under Option A the *same* no-wrap conservation stands on the STARK soundness directly — the target is to
+re-anchor this refinement onto the Poseidon2 value-commitment instead of `pedTwoGen`, dropping the DLog
+`binding` carrier.)
 
-**BUILT.** The wraparound-mint hole is **closed in-circuit**: the AIR bit-decomposes every
-conservation value into `VALUE_BITS = 29` boolean columns with a compile-time `RING_LEGS·2^29 ≤ p`
-no-wrap assertion (`shielded_ring_clearing_air.rs::VALUE_BITS`, `RANGE_TARGET_COLS`), tested by
-`wraparound_mint_ring_is_unsat` / `out_of_range_output_is_unsat`. This moves the shielded pool's
-per-output Bulletproof range proof from ATTESTED off-AIR to a CIRCUIT constraint, for the
-BabyBear-scale range.
+**BUILT — Option A is largely already present.** The three pieces of the PQ path exist in the codebase:
+- **Hash value-commitment.** The shielded-spend circuit already publishes a **hiding Poseidon2 commitment
+  to the value**: `value_binding = hash_fact(value, [randomness, 0, 0])` (C7,
+  `shielded/spend_circuit.rs:39–40, 111–125, 143`; PI `[nullifier, merkle_root, value_binding]`), binding
+  = Poseidon2 CR, hiding = the randomness blinder. This *is* the Option-A note-value commitment.
+- **In-AIR conservation.** `Σ value_in − Σ value_out = 0` is a BabyBear field gate
+  (`shielded_ring_clearing_air.rs`, clause (c)).
+- **In-AIR range gadget.** Every conservation value is bit-decomposed into `VALUE_BITS` boolean columns
+  with a compile-time `RING_LEGS·2^VALUE_BITS ≤ p` no-wrap assertion
+  (`shielded_ring_clearing_air.rs::VALUE_BITS`, `RANGE_TARGET_COLS`), tested by
+  `wraparound_mint_ring_is_unsat` / `out_of_range_output_is_unsat`. The AIR header itself notes this
+  *"moves the shielded pool's per-output Bulletproof range proof from ATTESTED off-AIR to a CIRCUIT
+  constraint."* That is the Option-A range gadget, landed for the BabyBear-scale range.
 
-**NEEDED.**
-- **Full Ristretto EC-point excess in-circuit.** The in-AIR conservation runs over the
-  two-**coordinate** abstraction `pedTwoGen (v, r)`, NOT the real group point `v·G + r·H` over
-  Ristretto (named residual (ii) in the AIR header, lines ~88–93). Realizing the actual curve-point
-  excess `Σ(v·G + r·H) = 0` in-circuit is heavy EC-in-circuit arithmetic (foreign-field, point
-  add/double, scalar mul). **Difficulty RESEARCH.** Depends on EC-in-circuit primitives the tree
-  does not yet carry. Until then, binding of the coordinate abstraction to the real curve rides the
-  named DLog `binding` floor + the off-AIR Schnorr excess for the blinding coordinate.
-- **64-bit amount range.** One BabyBear field caps a 2-leg conserving sum near `2^30`; amounts above
-  `2^29` still lean on the off-AIR Bulletproof (`pool.rs::output_range_proofs`). **Difficulty M→L** —
-  a multi-limb (Bignum) in-AIR range, or accept the off-AIR Bulletproof with the weld back to Lean.
+So the AIR already proves value conservation over hash-committed, in-AIR-ranged STARK witnesses. What is
+still DLog is the **redundant off-AIR Pedersen aggregate** (`pedTwoGen` coordinate excess + the off-AIR
+Schnorr `prove_asset_conservation` + the off-AIR Bulletproof `pool.rs::output_range_proofs` + the
+Ristretto `commit_hidden_asset` bytes). This component is the decision to make the in-AIR hash+STARK path
+the *sole* value-binding and **delete the DLog aggregate** — not a from-scratch build.
 
-**Honest framing:** the *value-minting* soundness hole (the one that lets a batch print money) is
-CLOSED in-circuit for the deployed field range. What remains is faithfulness of the coordinate
-model to the real curve (a modeling-resolution upgrade, not an open mint hole) and the wider range.
+**NEEDED (the Option-A migration).**
+- **Note commitment: Poseidon2, not Ristretto.** Make the on-chain leg the Poseidon2 `value_binding`
+  (already a PI) rather than the 32-byte compressed Ristretto `commitment_bytes`
+  (`pool.rs::HiddenAssetLeg`, `value_commitment.rs::commit_hidden_asset`). Extend the hash preimage to
+  also commit `asset_type` (e.g. `hash_fact(value, [asset_type, randomness, 0])`) so one hash binds
+  `(value, asset_type)` jointly, as the three-generator Ristretto commitment did. **Difficulty S–M.**
+- **Conservation + asset-tag + split/merge equality: fully in-AIR, not off-AIR Schnorr.** Delete
+  `prove_asset_conservation`/`verify_asset_conservation` (the Schnorr DLog excess). The value conservation
+  is already the in-AIR field gate (c); fold the **asset-tag conservation** in as a second in-AIR field
+  sum over the witnessed `asset_type` cells (replacing the `H_asset`-component check), and turn the
+  split/merge `AssetEqualityProof` (a Chaum-Pedersen equal-DLog proof) into an in-AIR equality constraint
+  over the witnessed asset cells. **Difficulty M** — wiring the asset coordinate into the same in-AIR
+  conservation the value coordinate already uses.
+- **Range: in-AIR 64-bit, not Bulletproof.** Delete `output_range_proofs` (`bulletproofs`). Extend the
+  `VALUE_BITS` gadget to the full 64-bit amount via a multi-limb (Bignum) in-AIR range — the N-leg /
+  multi-limb keystone `Dregg2.Bignum.legs_noWrap_conservation` already generalizes the no-wrap proof.
+  **Difficulty M–L** (the 64-bit widening is the only real depth).
+- **Drop the DLog crates from the shielded path.** Once the above land, `curve25519-dalek`, `bulletproofs`,
+  and the Schnorr excess leave the shielded value-commitment TCB. (`ed25519-dalek` stays only as the
+  *classical leg of the hybrid signature* — that surface IS covered by the PQ metatheory's hybrid combiner
+  with an MSIS fallback; the shielded binding is the one with no fallback, so it is the one to retire.)
+
+**Honest framing:** the *value-minting* soundness hole (the one that lets a batch print money) is CLOSED
+in-circuit for the deployed field range — but its *binding floor today is DLog* (the `pedTwoGen`/Pedersen
+model), which is **Shor-broken**. Option A re-anchors that same closed no-mint property onto Poseidon2 CR
++ STARK soundness, retiring DLog entirely. Most of the machinery already exists; the residual is a cutover
+(delete Pedersen/Schnorr/Bulletproof, promote `value_binding` to the on-chain commitment) plus the 64-bit
+in-AIR range widening. The old "full Ristretto EC-in-AIR" item is **deleted** — realizing the DLog curve
+point in-circuit would deepen the exact assumption Shor breaks.
 
 ---
 
@@ -235,11 +287,13 @@ the cleared claim round-trips.
 **NEEDED / named residuals (what is NOT yet clean):**
 - The N-leg apex under the **deployed VK** (composition 1 + 6): the 2-leg apex is a leaf-wrap config,
   not the deployed epoch VK. **Difficulty M→L.**
-- The full Ristretto EC excess (2) and 64-bit range (2) remain ATTESTED off-AIR — the coordinate
-  `pedTwoGen` model is faithful for the mint hazard but is a resolution placeholder for the real
-  curve.
-- The blinding coordinate's group-scalar reduction rides the off-AIR Schnorr excess (out of the
-  value-mint weld's scope, correctly — a blinding wrap mints no value).
+- **⚑ PQ residual (real, not just resolution).** The shielded value-**binding** today rests on DLog
+  (Pedersen/Ristretto + Schnorr excess + Bulletproof range, `cell-crypto/src/value_commitment.rs`,
+  `pool.rs`), which is **Shor-broken** — a genuine hole in the PQ posture, NOT covered by the PQ
+  metatheory (component 2, `PQ-SHIELDED-COMMITMENT.md`). The fix is the Option-A cutover to the Poseidon2
+  hash-commitment + fully-in-AIR STARK conservation (`value_binding` + the in-AIR conservation gate + the
+  `VALUE_BITS` range, most of which is built), retiring DLog. The 64-bit in-AIR range is the remaining
+  depth. Privacy is already quantum-safe (perfect hiding + statistical ZK) and needs no change.
 - The uniform-price/optimality layer is MODEL-proved, not ledger-realized (DREGGFI-VISION §7,
   ZK-AUCTION-SUITE §8) — individual-rationality fairness IS ledger-realized; say which.
 
@@ -258,16 +312,19 @@ the cleared claim round-trips.
    │    + partial-fill ≥ (M)│──── app wiring   │    + retire residuals│
    └────────────────────────┘                  └──────────────────────┘
    ┌────────────────────────┐   ┌───────────────────────┐
-   │ 4. accumulator bind (M)│   │ 2. EC-in-circuit       │
-   │    (deployed nullifier)│   │    (RESEARCH) / 64-bit  │
+   │ 4. accumulator bind (M)│   │ 2. PQ value-commitment │
+   │    (deployed nullifier)│   │  hash+in-AIR (M), retire│
+   │                        │   │  DLog; 64-bit range(M-L)│
    └────────────────────────┘   └───────────────────────┘
                                   └── 5. shielded allocation (L, after 3+4)
 ```
 
 - **1 (N-leg AIR)** unlocks a real DEX batch (not 2 legs) → app wiring. Independent of the crux.
 - **4 (accumulator bind)** makes the double-spend gate deployed-real, not per-leg toy. Independent, M.
-- **2 (EC-in-circuit)** is the deepest single item (RESEARCH) but is a *faithfulness* upgrade — the
-  mint hazard is already closed — so it is not on the critical path to a demonstrable private batch.
+- **2 (PQ value-commitment)** is a *posture-alignment* item, NOT a faithfulness upgrade: the shielded
+  value-binding is DLog (Shor-broken) today, so this retires DLog onto Poseidon2 CR + in-AIR STARK
+  conservation. Most is built (`value_binding`, in-AIR conservation, `VALUE_BITS` range); the residual is
+  a cutover + the 64-bit in-AIR range. The old "Ristretto EC-in-AIR" item is deleted (it entrenched DLog).
 - **3 (the ZK theorem)** depends on 1+2 finalizing the transcript, but its *statement* can be drafted
   now against the current 2-leg transcript and refined. It is the differentiator and gates the honest
   "nobody learns what settled" claim.
@@ -292,8 +349,11 @@ the cleared claim round-trips.
    DEX batch + the app wiring. It also finalizes the transcript shape that (1) must quantify over, so
    the two are complementary: build N-leg to fix the transcript, then state the ZK theorem over it.
 
-Everything else (EC-in-circuit, 64-bit range, shielded allocation) is real work but either a
-faithfulness upgrade off the critical path or a downstream dependent.
+Everything else (the PQ value-commitment cutover, 64-bit range, shielded allocation) is real work but
+either a posture-alignment cutover reusing built machinery or a downstream dependent. **Note the PQ
+value-commitment (component 2) is a real security residual, not a mere faithfulness upgrade** — the
+shielded binding is Shor-broken today; retiring DLog is on the posture-critical path even if off the
+demonstrable-batch path.
 
 ---
 
@@ -311,7 +371,11 @@ faithfulness upgrade off the critical path or a downstream dependent.
    simulator/indistinguishability at the clearing level and no named statistical-ZK floor for the
    deployed hiding FRI. That theorem is the differentiator and does not exist today.
 4. **Also NEEDED:** N-leg variable cycles + the partial-fill inequality in-AIR (M), binding legs to
-   the *deployed* nullifier accumulator (M), full Ristretto EC excess in-circuit (RESEARCH,
-   faithfulness), and the shielded attested-but-hidden allocation (L). Honest posture: the 2-leg AIR
-   and the spec are real; the fully-private N-leg ZK clearing that reveals nothing is the frontier —
-   do not overclaim it as proved.
+   the *deployed* nullifier accumulator (M), **the PQ value-commitment cutover — the shielded binding is
+   discrete-log (Shor-broken) today; retire Pedersen/Schnorr/Bulletproof onto the Poseidon2
+   hash-commitment + fully-in-AIR STARK conservation (M, mostly built) + a 64-bit in-AIR range (M–L)**,
+   and the shielded attested-but-hidden allocation (L). Honest posture: the 2-leg AIR and the spec are
+   real; shielded *privacy* is quantum-safe (perfect hiding + statistical ZK) but shielded
+   *value-binding* is NOT post-quantum (a real posture hole, `PQ-SHIELDED-COMMITMENT.md`); and the
+   fully-private N-leg ZK clearing that reveals nothing is the frontier — do not overclaim either as
+   proved.
