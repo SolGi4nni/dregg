@@ -660,18 +660,65 @@ impl Database {
                 class          INTEGER NOT NULL DEFAULT 0,
                 abilities_used INTEGER NOT NULL DEFAULT 0,
                 dead           INTEGER NOT NULL DEFAULT 0,
+                echoes         INTEGER NOT NULL DEFAULT 0,
+                boon           INTEGER NOT NULL DEFAULT 0,
                 updated_at     INTEGER NOT NULL DEFAULT 0
             )",
         )
         .execute(&pool)
         .await?;
 
-        // Additive column for a pre-existing DB: the HARDCORE death flag (a `/descent` permadeath
-        // character's `WriteOnce`-final death must carry across restart). `ADD COLUMN` errors if
-        // the column already exists, so it is best-effort — ignore the duplicate-column error.
-        let _ = sqlx::query("ALTER TABLE characters ADD COLUMN dead INTEGER NOT NULL DEFAULT 0")
-            .execute(&pool)
-            .await;
+        // Additive columns for a pre-existing DB. The HARDCORE death flag (a `/descent` permadeath
+        // character's `WriteOnce`-final death must carry across restart), then the META-CURRENCY:
+        // `echoes` (the roguelite-retention accrual, granted only on a real death) and `boon` (the
+        // persistent `WriteOnce` unlock a next run starts holding). All three MUST survive restart or
+        // a returning player's meta-progression silently resets. `ADD COLUMN` errors if the column
+        // already exists, so each is best-effort — ignore the duplicate-column error. See
+        // migrations/008_character_meta_currency.sql.
+        for add in [
+            "ALTER TABLE characters ADD COLUMN dead INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE characters ADD COLUMN echoes INTEGER NOT NULL DEFAULT 0",
+            "ALTER TABLE characters ADD COLUMN boon INTEGER NOT NULL DEFAULT 0",
+        ] {
+            let _ = sqlx::query(add).execute(&pool).await;
+        }
+
+        // ─── The /descent no-cheat leaderboard board (commands::descent DescentBoardStore) ──
+        // The durable backing of today's Descent board. Like the UGC gallery it stores ONLY the
+        // reproducible PUBLIC input: a day-universe's committed beacon SEED (never a cached world)
+        // and a winning run's MOVE SEQUENCE + player + claimed turns (never a trusted receipt blob).
+        // On boot `commands::descent::load_board` regenerates each day-world from its seed and
+        // REPLAYS every completion through the real no-cheat gate — so a tampered row (a losing
+        // move line, a lied turn count, or a mismatched seed) cannot resurrect a cheat onto the
+        // board. See migrations/009_descent_board.sql.
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS descent_universes (
+                id_hex   TEXT PRIMARY KEY,
+                author   TEXT NOT NULL,
+                seed_hex TEXT NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE TABLE IF NOT EXISTS descent_completions (
+                key_hex         TEXT PRIMARY KEY,
+                universe_id_hex TEXT NOT NULL,
+                player          TEXT NOT NULL,
+                moves_json      TEXT NOT NULL,
+                claimed_turns   INTEGER NOT NULL
+            )",
+        )
+        .execute(&pool)
+        .await?;
+
+        sqlx::query(
+            "CREATE INDEX IF NOT EXISTS idx_descent_completions_universe
+             ON descent_completions (universe_id_hex)",
+        )
+        .execute(&pool)
+        .await?;
 
         Ok(Self { pool })
     }
@@ -728,35 +775,41 @@ impl Database {
 
     // ─── Persistent leveling characters (character::CharacterStore backing) ──────
 
-    /// Load a player's persisted character slots `(xp, level, class, abilities_used, dead)` by
-    /// their dregg identity hex, or `None` if no row exists (a new player). The `dead` slot is the
-    /// HARDCORE death flag (`1` once perished — a `/descent` permadeath death that carries across
-    /// restart). The well-formedness / fail-safe check lives in
-    /// `crate::character_store::SqliteCharacterStore::load`.
+    /// Load a player's persisted character slots
+    /// `(xp, level, class, abilities_used, dead, echoes, boon)` by their dregg identity hex, or
+    /// `None` if no row exists (a new player). The `dead` slot is the HARDCORE death flag (`1` once
+    /// perished); `echoes` / `boon` are the META-CURRENCY (the accrued roguelite currency + the
+    /// claimed `WriteOnce` unlock) — all three carry across restart. The well-formedness / fail-safe
+    /// check lives in `crate::character_store::SqliteCharacterStore::load`.
     pub async fn character_load(
         &self,
         identity_hex: &str,
-    ) -> Result<Option<(u64, u64, u64, u64, u64)>, sqlx::Error> {
-        let row: Option<(i64, i64, i64, i64, i64)> = sqlx::query_as(
-            "SELECT xp, level, class, abilities_used, dead FROM characters WHERE identity_hex = ?",
+    ) -> Result<Option<(u64, u64, u64, u64, u64, u64, u64)>, sqlx::Error> {
+        let row: Option<(i64, i64, i64, i64, i64, i64, i64)> = sqlx::query_as(
+            "SELECT xp, level, class, abilities_used, dead, echoes, boon
+             FROM characters WHERE identity_hex = ?",
         )
         .bind(identity_hex)
         .fetch_optional(&self.pool)
         .await?;
-        Ok(row.map(|(xp, level, class, abilities, dead)| {
-            (
-                xp.max(0) as u64,
-                level.max(0) as u64,
-                class.max(0) as u64,
-                abilities.max(0) as u64,
-                dead.max(0) as u64,
-            )
-        }))
+        Ok(
+            row.map(|(xp, level, class, abilities, dead, echoes, boon)| {
+                (
+                    xp.max(0) as u64,
+                    level.max(0) as u64,
+                    class.max(0) as u64,
+                    abilities.max(0) as u64,
+                    dead.max(0) as u64,
+                    echoes.max(0) as u64,
+                    boon.max(0) as u64,
+                )
+            }),
+        )
     }
 
     /// Persist a player's character sheet by their dregg identity hex (upsert), including the
-    /// HARDCORE `dead` flag. The carried state a later [`character_load`](Self::character_load)
-    /// returns.
+    /// HARDCORE `dead` flag and the META-CURRENCY (`echoes` / `boon`). The carried state a later
+    /// [`character_load`](Self::character_load) returns.
     #[allow(clippy::too_many_arguments)]
     pub async fn character_save(
         &self,
@@ -766,17 +819,22 @@ impl Database {
         class: u64,
         abilities_used: u64,
         dead: u64,
+        echoes: u64,
+        boon: u64,
         updated_at: i64,
     ) -> Result<(), sqlx::Error> {
         sqlx::query(
-            "INSERT INTO characters (identity_hex, xp, level, class, abilities_used, dead, updated_at)
-             VALUES (?, ?, ?, ?, ?, ?, ?)
+            "INSERT INTO characters
+                (identity_hex, xp, level, class, abilities_used, dead, echoes, boon, updated_at)
+             VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
              ON CONFLICT(identity_hex) DO UPDATE SET
                  xp = excluded.xp,
                  level = excluded.level,
                  class = excluded.class,
                  abilities_used = excluded.abilities_used,
                  dead = excluded.dead,
+                 echoes = excluded.echoes,
+                 boon = excluded.boon,
                  updated_at = excluded.updated_at",
         )
         .bind(identity_hex)
@@ -785,6 +843,8 @@ impl Database {
         .bind(class as i64)
         .bind(abilities_used as i64)
         .bind(dead as i64)
+        .bind(echoes as i64)
+        .bind(boon as i64)
         .bind(updated_at)
         .execute(&self.pool)
         .await?;
@@ -908,6 +968,83 @@ impl Database {
         Ok(rows
             .iter()
             .map(|row| UgcCompletionRow {
+                key_hex: row.get("key_hex"),
+                universe_id_hex: row.get("universe_id_hex"),
+                player: row.get("player"),
+                moves_json: row.get("moves_json"),
+                claimed_turns: row.get("claimed_turns"),
+            })
+            .collect())
+    }
+
+    // ─── The /descent no-cheat leaderboard (commands::descent DescentBoardStore) ────
+
+    /// Persist a day-universe's reproducible descriptor (its committed beacon seed + author),
+    /// idempotent by content address (`INSERT OR IGNORE` — matching the store's idempotency
+    /// contract). The world is regenerated byte-for-byte from the seed on boot.
+    pub async fn persist_descent_universe(
+        &self,
+        row: &DescentUniverseRow,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO descent_universes (id_hex, author, seed_hex)
+             VALUES (?, ?, ?)",
+        )
+        .bind(&row.id_hex)
+        .bind(&row.author)
+        .bind(&row.seed_hex)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Persist an accepted board completion (player + move sequence + claimed turns), idempotent by
+    /// `key_hex` (`INSERT OR IGNORE`). Re-verified by replay on boot.
+    pub async fn persist_descent_completion(
+        &self,
+        row: &DescentCompletionRow,
+    ) -> Result<(), sqlx::Error> {
+        sqlx::query(
+            "INSERT OR IGNORE INTO descent_completions
+                (key_hex, universe_id_hex, player, moves_json, claimed_turns)
+             VALUES (?, ?, ?, ?, ?)",
+        )
+        .bind(&row.key_hex)
+        .bind(&row.universe_id_hex)
+        .bind(&row.player)
+        .bind(&row.moves_json)
+        .bind(row.claimed_turns)
+        .execute(&self.pool)
+        .await?;
+        Ok(())
+    }
+
+    /// Every persisted day-universe (the boot-replay source).
+    pub async fn list_descent_universes(&self) -> Result<Vec<DescentUniverseRow>, sqlx::Error> {
+        let rows = sqlx::query("SELECT id_hex, author, seed_hex FROM descent_universes")
+            .fetch_all(&self.pool)
+            .await?;
+        Ok(rows
+            .iter()
+            .map(|row| DescentUniverseRow {
+                id_hex: row.get("id_hex"),
+                author: row.get("author"),
+                seed_hex: row.get("seed_hex"),
+            })
+            .collect())
+    }
+
+    /// Every persisted board completion (re-verified by replay on boot).
+    pub async fn list_descent_completions(&self) -> Result<Vec<DescentCompletionRow>, sqlx::Error> {
+        let rows = sqlx::query(
+            "SELECT key_hex, universe_id_hex, player, moves_json, claimed_turns
+             FROM descent_completions",
+        )
+        .fetch_all(&self.pool)
+        .await?;
+        Ok(rows
+            .iter()
+            .map(|row| DescentCompletionRow {
                 key_hex: row.get("key_hex"),
                 universe_id_hex: row.get("universe_id_hex"),
                 player: row.get("player"),
@@ -2230,6 +2367,31 @@ pub struct UgcUniverseRow {
 /// completion (player + move sequence + claimed turns). Re-verified by replay on boot.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub struct UgcCompletionRow {
+    pub key_hex: String,
+    pub universe_id_hex: String,
+    pub player: String,
+    pub moves_json: String,
+    pub claimed_turns: i64,
+}
+
+/// A persisted /descent day-universe row — the plain DB shape of a day-world's reproducible
+/// descriptor (its committed beacon seed + author). `commands::descent`'s `SqliteDescentBoardStore`
+/// translates this to/from its `StoredDescentUniverse` (kept out of the DB layer so `db` stays free
+/// of the descent command types). The world is regenerated byte-for-byte from `seed_hex` on boot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescentUniverseRow {
+    /// The day-universe content address (hex) at publish time — the row PK + tamper check.
+    pub id_hex: String,
+    /// The board author label the day's world is published under.
+    pub author: String,
+    /// Hex of the 32-byte committed beacon seed the day's world regenerates from.
+    pub seed_hex: String,
+}
+
+/// A persisted /descent board completion row — the plain DB shape of an accepted winning run
+/// (player + move sequence + claimed turns). Re-verified by replay on boot.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub struct DescentCompletionRow {
     pub key_hex: String,
     pub universe_id_hex: String,
     pub player: String,

@@ -34,6 +34,7 @@ use dreggnet_offerings::character::{
     AdventurerOffering, CharacterSheet, CharacterStore, XP_BLOODY_WARDEN, XP_SEIZE_HOARD,
 };
 use dreggnet_offerings::{DreggIdentity, SessionConfig};
+use dungeon_on_dregg::meta::{BOON_PRICE, BOON_VALUE};
 use dungeon_on_dregg::progression::{MAGE, MAX_LEVEL, ROGUE, WARRIOR, xp_threshold};
 use dungeon_on_dregg::{KP_SEIZE, KP_TRADE_BLOWS, ROOM_GATEHALL, ROOM_SANCTUM};
 
@@ -71,16 +72,17 @@ impl CharacterStore for SqliteCharacterStore {
     fn load(&self, who: &DreggIdentity) -> CharacterSheet {
         let raw = self.block(self.db.character_load(&who.0)).ok().flatten();
         match raw {
-            Some((xp, level, class, abilities_used, dead)) => {
+            Some((xp, level, class, abilities_used, dead, echoes, boon)) => {
                 let sheet = CharacterSheet {
                     xp,
                     level,
                     class,
                     abilities_used,
                     dead,
-                    // Meta-progression (echoes / boon) is not yet a durable sqlite column — a named
-                    // follow-up; the in-memory + offering seam carries it, this store defaults it.
-                    ..Default::default()
+                    // Meta-progression (echoes / boon) now persists in its own columns, so a
+                    // returning player's accrued currency + claimed unlock survive restart.
+                    echoes,
+                    boon,
                 };
                 // FAIL-SAFE: a row that does not sit on the real progression curve (a forged
                 // level its XP never earned, an unknown class, a level past the ceiling) loads
@@ -103,6 +105,8 @@ impl CharacterStore for SqliteCharacterStore {
             sheet.class,
             sheet.abilities_used,
             sheet.dead,
+            sheet.echoes,
+            sheet.boon,
             now_secs(),
         ));
     }
@@ -119,7 +123,14 @@ fn sheet_is_wellformed(sheet: &CharacterSheet) -> bool {
     let xp_ok = sheet.xp >= xp_threshold(sheet.level);
     // The hardcore death flag is a boolean; anything else is a tampered row.
     let dead_ok = sheet.dead <= 1;
-    class_ok && level_ok && xp_ok && dead_ok
+    // META-CURRENCY fail-safe: `boon` is the `WriteOnce` unlock marker (unclaimed `0` or the single
+    // claimed value [`BOON_VALUE`]); anything else is a tampered row. A claimed boon could ONLY be
+    // reached by accruing at least [`BOON_PRICE`] echoes (echoes is `Monotonic` — never spent down),
+    // so a row that claims the unlock without the echoes that (un-forgeably) buy it is tampered and
+    // fails safe. Echoes itself has no curve ceiling (pure accrual), so no upper bound is checked.
+    let boon_ok = sheet.boon == 0 || sheet.boon == BOON_VALUE;
+    let echoes_back_the_boon = sheet.boon != BOON_VALUE || sheet.echoes >= BOON_PRICE;
+    class_ok && level_ok && xp_ok && dead_ok && boon_ok && echoes_back_the_boon
 }
 
 // ── The XP reward binding (collective outcome → earned XP), mirroring character.rs ──────────
@@ -331,7 +342,9 @@ mod tests {
         let (_tmp, _url, db) = temp_db().await;
         let who = ident("cheater");
         // Forge: level 5 with 0 XP (level 5 needs 700 XP), plus a bogus class id.
-        db.character_save(&who.0, 0, 5, 99, 0, 0, 0).await.unwrap();
+        db.character_save(&who.0, 0, 5, 99, 0, 0, 0, 0, 0)
+            .await
+            .unwrap();
 
         let store = SqliteCharacterStore::new(db, tokio::runtime::Handle::current());
         let got = store.load(&who);
@@ -409,5 +422,122 @@ mod tests {
             before,
             "the sheet is unchanged by a non-reward move"
         );
+    }
+
+    /// THE META-CURRENCY ROUND-TRIPS + SURVIVES RESTART: a character that banked `echoes` and
+    /// claimed the `boon` unlock loads its meta-progression back — NOT defaulted — on a fresh
+    /// sqlite open, so a returning player's roguelite retention loop carries across a process
+    /// restart. Non-vacuous: a character with no meta-progression loads zeroed.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn the_meta_currency_round_trips_and_survives_restart() {
+        let (_tmp, url, db) = temp_db().await;
+        let fallen = ident("fallen");
+        let fresh = ident("fresh");
+        // A hardcore character that died deep, banked echoes over the boon price, and claimed it.
+        let banked = CharacterSheet {
+            xp: 40,
+            level: 1,
+            class: WARRIOR,
+            abilities_used: 0,
+            dead: 1,
+            echoes: BOON_PRICE + 12,
+            boon: BOON_VALUE,
+        };
+        {
+            let mut store =
+                SqliteCharacterStore::new(db.clone(), tokio::runtime::Handle::current());
+            store.save(&fallen, banked);
+            store.save(
+                &fresh,
+                CharacterSheet {
+                    xp: 40,
+                    level: 1,
+                    class: WARRIOR,
+                    ..Default::default()
+                },
+            );
+            // Round-trips within the same open.
+            assert_eq!(
+                store.load(&fallen),
+                banked,
+                "echoes + boon round-trip through sqlite"
+            );
+        }
+        drop(db); // a "restart".
+
+        let db2 = Database::connect(&url).await.unwrap();
+        let store2 = SqliteCharacterStore::new(db2, tokio::runtime::Handle::current());
+        let resumed = store2.load(&fallen);
+        assert_eq!(
+            resumed, banked,
+            "the meta-currency survived a fresh sqlite open — NOT defaulted"
+        );
+        assert_eq!(
+            resumed.echoes,
+            BOON_PRICE + 12,
+            "carried the accrued echoes across restart"
+        );
+        assert_eq!(resumed.boon, BOON_VALUE, "carried the claimed unlock");
+        // Non-vacuous: a character with no meta-progression loads zeroed.
+        let fresh_back = store2.load(&fresh);
+        assert_eq!(fresh_back.echoes, 0, "no unearned echoes");
+        assert_eq!(fresh_back.boon, 0, "no unearned boon");
+        println!(
+            "[meta] fallen carries echoes={} boon={} across restart; fresh stays zeroed",
+            resumed.echoes, resumed.boon
+        );
+    }
+
+    /// FAIL-SAFE (meta-currency): a forged `boon` claimed WITHOUT the echoes that (un-forgeably) buy
+    /// it, or a bogus `boon` value, loads as a FRESH character — the tampered unlock never survives.
+    /// Non-vacuous: an honestly-backed boon (echoes >= BOON_PRICE) loads faithfully.
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn a_forged_boon_fails_safe() {
+        let (_tmp, _url, db) = temp_db().await;
+        let cheater = ident("booncheat");
+        // Forge: claim the boon with zero accrued echoes (a claim needs >= BOON_PRICE echoes).
+        db.character_save(&cheater.0, 0, 1, WARRIOR, 0, 0, 0, BOON_VALUE, 0)
+            .await
+            .unwrap();
+        let store = SqliteCharacterStore::new(db.clone(), tokio::runtime::Handle::current());
+        assert_eq!(
+            store.load(&cheater),
+            CharacterSheet::default(),
+            "a boon claimed without the echoes fails safe to a fresh character"
+        );
+
+        // A bogus boon VALUE (neither 0 nor BOON_VALUE) also fails safe.
+        let weird = ident("boonweird");
+        db.character_save(&weird.0, 0, 1, WARRIOR, 0, 0, BOON_PRICE, 99, 0)
+            .await
+            .unwrap();
+        assert_eq!(
+            store.load(&weird),
+            CharacterSheet::default(),
+            "a bogus boon value fails safe"
+        );
+
+        // Non-vacuous: an honestly-backed boon (echoes >= BOON_PRICE) loads faithfully.
+        let honest = CharacterSheet {
+            xp: 0,
+            level: 1,
+            class: WARRIOR,
+            abilities_used: 0,
+            dead: 1,
+            echoes: BOON_PRICE,
+            boon: BOON_VALUE,
+        };
+        let mut store2 = store.clone();
+        store2.save(&honest_ident(), honest);
+        assert_eq!(
+            store2.load(&honest_ident()),
+            honest,
+            "an honestly-backed boon loads faithfully"
+        );
+        println!("[meta fail-safe] forged/weird boon → fresh; echoes-backed boon → loads");
+    }
+
+    fn honest_ident() -> DreggIdentity {
+        ident("boonhonest")
     }
 }

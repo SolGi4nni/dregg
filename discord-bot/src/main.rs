@@ -76,6 +76,11 @@ pub mod gallery_store;
 // `pay::SqliteCreditStore`). A leveling character now survives a process restart: a returning
 // player resumes their carried level / XP / class. See [`character_store`].
 pub mod character_store;
+// The sqlite-backed `commands::descent::DescentBoardStore` — the durable backing of the `/descent`
+// no-cheat leaderboard board over the bot's async `Database`. Installed once at boot; the descent
+// module then loads + re-verifies the live board from it (regenerating each day-world from its
+// committed seed and replaying every winning run through the no-cheat gate). See [`descent_board_store`].
+pub mod descent_board_store;
 // $DREGG-paid, real-AI dungeon runs: the sqlite-backed `dregg_pay::CreditStore`, the per-user
 // deposit-address provider, the credit ledger, the payment poll, and the `/dungeon` gate that
 // debits one earned credit and routes to real Bedrock (`dregg_narrator`) under a PER-RUN budget.
@@ -631,6 +636,24 @@ async fn main() {
         .expect("install gallery store");
     }
     info!("UGC gallery store installed (registry loaded + re-verified from sqlite)");
+
+    // Install the durable /descent board store and load + re-verify the live no-cheat board from it
+    // (each day-world regenerated from its committed seed, every winning run replayed through the
+    // no-cheat gate). First install wins; done BEFORE any `/descent` command is served. Built on a
+    // blocking thread because `install_store` drives the sync DescentBoardStore and forces the
+    // dedicated board thread to spawn + load now.
+    {
+        let store = descent_board_store::SqliteDescentBoardStore::new(
+            db.clone(),
+            tokio::runtime::Handle::current(),
+        );
+        tokio::task::spawn_blocking(move || {
+            commands::descent::install_store(Box::new(store));
+        })
+        .await
+        .expect("install descent board store");
+    }
+    info!("Descent board store installed (board loaded + re-verified from sqlite)");
 
     // Create devnet client.
     let devnet = DevnetClient::new(&config.devnet_url);
