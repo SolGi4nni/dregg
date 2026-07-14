@@ -257,6 +257,10 @@ pub const TID_UMEMORY: usize = 6;
 /// Wire id of `custom 2` = the universal boundary table (declared `(domain, key)` addresses
 /// with their init/final `Option` images).
 pub const TID_UMEM_BOUNDARY: usize = 7;
+/// Wire id of the NARROW chip bus receiver (tuple-narrowing pass): single-output hash sites
+/// send an 18-wide `[arity, ins, out0]` lookup here (no output lanes) instead of the 25-wide
+/// `TID_P2`. Served by the SAME chip rows (`BUS_P2_1`, `CHIP_MULT_NARROW`); 0..7 are taken.
+pub const TID_P2_NARROW: usize = 8;
 
 /// **THE WIDTH-TAGGED CUSTOM RANGE-TABLE WIRE BASE.** The multi-width graduation (Lean
 /// `EffectVmEmitV2.rangeTidW`) lowers every non-30-bit range tooth into a WIDTH-TAGGED custom
@@ -1300,6 +1304,17 @@ impl MainLayout {
                         return Err(format!(
                             "constraint {ci}: chip lookup tuple arity {} != {CHIP_TUPLE_LEN}",
                             l.tuple.len()
+                        ));
+                    }
+                }
+                TID_P2_NARROW => {
+                    // Narrow chip lookup (tuple-narrowing pass): `[arity, ins, out0]`, no output
+                    // lanes — 1 + CHIP_RATE + 1 = 18 wide. Served by the SAME chip rows on BUS_P2_1.
+                    if l.tuple.len() != 1 + CHIP_RATE + 1 {
+                        return Err(format!(
+                            "constraint {ci}: narrow chip lookup tuple arity {} != {}",
+                            l.tuple.len(),
+                            1 + CHIP_RATE + 1
                         ));
                     }
                 }
@@ -2463,6 +2478,20 @@ where
                         let tuple: Vec<AB::Expr> =
                             l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
                         p2.lookup_key(builder, tuple, AB::Expr::ONE);
+                    }
+                }
+
+                // -- Narrow chip lookups (tuple-narrowing pass): single-output sites query the
+                //    18-wide `[arity, ins, out0]` tuple on the narrow bus, served by the SAME chip
+                //    rows via `CHIP_MULT_NARROW`. Absent for wide-only descriptors (loop is empty). --
+                let p2n = LookupBus::new(BUS_P2_1);
+                for k in &desc.constraints {
+                    if let VmConstraint2::Lookup(l) = k
+                        && l.table == TID_P2_NARROW
+                    {
+                        let tuple: Vec<AB::Expr> =
+                            l.tuple.iter().map(|e| e.eval_expr::<AB>(&local)).collect();
+                        p2n.lookup_key(builder, tuple, AB::Expr::ONE);
                     }
                 }
 
@@ -3940,7 +3969,7 @@ impl Presence {
         let has_chip_lookup = desc
             .constraints
             .iter()
-            .any(|k| matches!(k, VmConstraint2::Lookup(l) if l.table == TID_P2));
+            .any(|k| matches!(k, VmConstraint2::Lookup(l) if l.table == TID_P2 || l.table == TID_P2_NARROW));
         let umem_cohort = has_umem
             && desc
                 .tables
@@ -4144,6 +4173,37 @@ fn build_traces(
                         .map(|e| eval_c(e, base_row).as_u32())
                         .collect();
                     *chip_hist.entry(tuple).or_insert(0) += 1;
+                }
+            }
+        }
+    }
+
+    // ---- narrow chip histogram (tuple-narrowing pass): single-output sites ride an 18-wide
+    //      `[arity, ins, out0]` lookup on `BUS_P2_1`. Derive the FULL 25-wide chip key from the
+    //      genuine permutation (`chip_absorb_all_lanes`) so the SAME chip row serves both buses;
+    //      `chip_hist.entry(..).or_insert(0)` guarantees that row exists (wide mult may be 0). ----
+    let mut narrow_hist: BTreeMap<Vec<u32>, u64> = BTreeMap::new();
+    if presence.chip {
+        for base_row in base_trace {
+            for k in &desc.constraints {
+                if let VmConstraint2::Lookup(l) = k
+                    && l.table == TID_P2_NARROW
+                {
+                    let arity = eval_c(&l.tuple[0], base_row).as_u32() as usize;
+                    let ins: Vec<BabyBear> = (0..CHIP_RATE)
+                        .map(|i| eval_c(&l.tuple[1 + i], base_row))
+                        .collect();
+                    let outs = chip_absorb_all_lanes(arity, &ins);
+                    let mut full: Vec<u32> = Vec::with_capacity(CHIP_TUPLE_LEN);
+                    full.push(arity as u32);
+                    for b in &ins {
+                        full.push(b.as_u32());
+                    }
+                    for o in &outs {
+                        full.push(o.as_u32());
+                    }
+                    chip_hist.entry(full.clone()).or_insert(0); // ensure a chip row exists to serve it
+                    *narrow_hist.entry(full).or_insert(0) += 1;
                 }
             }
         }
@@ -5230,7 +5290,11 @@ fn build_traces(
             row[CHIP_OUT..CHIP_OUT + CHIP_OUT_LANES].copy_from_slice(&lanes[..CHIP_OUT_LANES]);
             let (aux, _digest) = perm_aux(st);
             row.extend(aux);
-            row.push(BabyBear::ZERO); // CHIP_MULT_NARROW = 0 (wide-only deployed path; narrow bus inert)
+            // CHIP_MULT_NARROW: how many single-output sites this row serves on BUS_P2_1 (0 for the
+            // deployed wide-only path — the narrow bus balances at 0 and the wide path is unchanged).
+            row.push(BabyBear::new(
+                (narrow_hist.get(tuple).copied().unwrap_or(0) % (BABYBEAR_P as u64)) as u32,
+            ));
             chip_rows.push(row);
         }
         for (&(l, r, out), mult) in &fact_hist {
@@ -6153,6 +6217,91 @@ mod tests {
             .is_err(),
             "witness heaps without map ops must refuse"
         );
+    }
+
+    /// Tuple-narrowing pass: a single-output hash site routed to the NARROW chip bus
+    /// (`TID_P2_NARROW`, 18-wide `[arity, ins, out0]`) proves + verifies — the same chip rows
+    /// serve it through `CHIP_MULT_NARROW` — and it carries `CHIP_OUT_LANES - 1` = 7 fewer
+    /// main-trace columns than the equivalent WIDE (`TID_P2`, 25-wide) site (the exposed output
+    /// lanes are gone from the sender).
+    #[test]
+    fn ir2_narrow_chip_site_proves_and_is_smaller() {
+        let a = BabyBear::new(11);
+        let b = BabyBear::new(22);
+        // out0 of the arity-2 absorb hash[a, b] (== lane0 == hash_many(&[a, b])).
+        let digest = perm_lanes(hash2_state_c(a, b))[0];
+        debug_assert_eq!(digest, hash_many(&[a, b]));
+
+        // Shared arity-2 absorb prefix: [2, a, b, 0×(CHIP_RATE-2)].
+        let mut prefix = vec![LeanExpr::Const(2), LeanExpr::Var(0), LeanExpr::Var(1)];
+        for _ in 0..(CHIP_RATE - 2) {
+            prefix.push(LeanExpr::Const(0));
+        }
+
+        // NARROW site: tuple = [arity, ins, out0]; out0 = col 2. NO output-lane columns. width 3.
+        let mut narrow_tuple = prefix.clone();
+        narrow_tuple.push(LeanExpr::Var(2)); // out0
+        let narrow = EffectVmDescriptor2 {
+            name: "ir2-narrow".to_string(),
+            trace_width: 3,
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: TID_P2_NARROW,
+                tuple: narrow_tuple,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        let narrow_trace = vec![vec![a, b, digest]; 4];
+        let np = prove_vm_descriptor2(
+            &narrow,
+            &narrow_trace,
+            &[],
+            &MemBoundaryWitness::default(),
+            &[],
+        )
+        .expect("narrow chip site must prove");
+        assert_eq!(
+            np.degree_bits.len(),
+            2,
+            "narrow-only descriptor commits main + chip (no output-lane / byte tables)"
+        );
+        verify_vm_descriptor2(&narrow, &np, &[]).expect("narrow chip proof must verify");
+
+        // WIDE site: the SAME hash routed the OLD way — 25-wide tuple binds out0 (col 2) PLUS the
+        // 7 exposed output lanes (cols 3..9, witnessed by `trace_with_chip_lanes`). width 10.
+        let mut wide_tuple = prefix;
+        wide_tuple.push(LeanExpr::Var(2)); // out0
+        for i in 0..(CHIP_OUT_LANES - 1) {
+            wide_tuple.push(LeanExpr::Var(3 + i)); // lane1..7 witness columns
+        }
+        let wide = EffectVmDescriptor2 {
+            name: "ir2-wide".to_string(),
+            trace_width: 3 + (CHIP_OUT_LANES - 1),
+            public_input_count: 0,
+            tables: vec![],
+            constraints: vec![VmConstraint2::Lookup(LookupSpec {
+                table: TID_P2,
+                tuple: wide_tuple,
+            })],
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+        // The producer supplies [a, b, digest]; the lane columns are grown + filled internally.
+        let wide_trace = vec![vec![a, b, digest]; 4];
+        let wp = prove_vm_descriptor2(&wide, &wide_trace, &[], &MemBoundaryWitness::default(), &[])
+            .expect("wide chip site must prove");
+        verify_vm_descriptor2(&wide, &wp, &[]).expect("wide chip proof must verify");
+
+        // The narrow routing drops the 7 exposed output-lane columns from the sender.
+        assert!(
+            narrow.trace_width < wide.trace_width,
+            "narrow site trace ({}) must be smaller than wide ({})",
+            narrow.trace_width,
+            wide.trace_width
+        );
+        assert_eq!(wide.trace_width - narrow.trace_width, CHIP_OUT_LANES - 1);
     }
 
     /// A tampered memory READ (claims value 7 where the init image holds 9) must REFUSE:
