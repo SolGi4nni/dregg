@@ -85,7 +85,7 @@ import Dregg2.Circuit.DescriptorIR2
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Circuit.FriVerifier
 import Dregg2.Circuit.FriTranscriptBind
-import Dregg2.Circuit.FriChallengerUnified
+import Dregg2.Circuit.ExtFieldChallenge
 
 namespace Dregg2.Circuit.CircuitSoundness
 
@@ -353,14 +353,14 @@ structure BatchProof where
 
 /-! ### The deployed verifier configuration (the honest KAT floor).
 
-`verifyBatch` is no longer a fully-opaque function: it IS `FriVerifier.verifyAlgo` — the specified,
-soundness-proved batch-STARK FRI verifier — run at a fixed deployed configuration. Everything ABOVE
-this floor (verifyAlgo's transcript derivation, query binding, rejection teeth, `wrap_sound`) is
-PROVED in `Dregg2.Circuit.FriVerifier`. The configuration constants below are the residue that is
+`verifyBatch` is no longer a fully-opaque function: it runs the specified batch-STARK verifier plus
+the quartic-extension FRI fold at a fixed deployed configuration. Everything ABOVE this floor
+(continued transcript derivation, query/beta binding, full-lane p3 fold, rejection teeth,
+`wrap_sound`) is concrete Lean. The configuration constants below are the residue that is
 NOT proved: the deployed p3 verifier's fixed knobs (Poseidon2 permutation `cfgPerm`, sponge `cfgRATE`,
 index extraction `cfgToNat`, FRI parameters `cfgParams`, the baked recursion-VK shape `cfgVk`, the
-arithmetic check bundle `cfgChecks`, the challenger init state `cfgInitState`, the log-domain size
-`cfgLogN`), the byte-deserialization view `cfgView` (proof/PI bytes → the structured
+base/extension arithmetic and hashing leaves, the challenger init state `cfgInitState`, the
+log-domain size `cfgLogN`), and the byte-deserialization views `cfgView`/`cfgExtView` (proof/PI bytes → the structured
 `BatchProofData`/`WrapPublics` the verifier walks), and the residual non-FRI checks `cfgExtra`. They
 are left UNSPECIFIED (`opaque`) and are validated by the differential KAT corpus against the deployed
 p3 verifier — the validation-tier floor, the same status as Poseidon2 bit-exactness. -/
@@ -389,6 +389,13 @@ instance : Inhabited (FriVerifier.FriCore ℤ) :=
 instance : Inhabited (FriVerifier.FieldArith ℤ) :=
   ⟨{ add := fun _ _ => 0, mul := fun _ _ => 0, pow := fun _ _ => 0, zero := 0, one := 0 }⟩
 
+instance : Inhabited (Dregg2.Circuit.ExtFieldChallenge.ExtFriArith ℤ) :=
+  ⟨{ base := default, neg := fun _ => 0, half := 0 }⟩
+
+instance : Inhabited (Dregg2.Circuit.ExtFieldChallenge.ExtFriCore ℤ) :=
+  ⟨{ compress := fun _ _ => [], leafHash := fun _ _ => [],
+     domainPoint := fun _ _ => ⟨[]⟩, domainPointInv := fun _ _ => ⟨[]⟩ }⟩
+
 /-- Deployed config: the Poseidon2 permutation the challenger sponges with. KAT-validated. -/
 opaque cfgPerm : List ℤ → List ℤ
 /-- Deployed config: the sponge rate. KAT-validated. -/
@@ -399,10 +406,19 @@ opaque cfgToNat : ℤ → Nat
 opaque cfgParams : FriVerifier.FriParams
 /-- Deployed config: the baked recursion-VK shape pin. KAT-validated. -/
 opaque cfgVk : FriVerifier.RecursionVk ℤ
-/-- Deployed config: the FRI-core ops (Poseidon2 compress + arity-2 fold combine). KAT-validated. -/
+/-- Deployed config: the legacy scalar-restriction FRI ops. KAT-validated. -/
 opaque cfgCore : FriVerifier.FriCore Int
 /-- Deployed config: the field-arithmetic op bundle the batch-table check runs over. KAT-validated. -/
 opaque cfgA : FriVerifier.FieldArith Int
+/-- Deployed config: Poseidon2 leaf/node hashing and the two-adic domain-point tables used
+by the extension-valued FRI walk.  The walk around these leaves is concrete in Lean. -/
+opaque cfgExtCore : Dregg2.Circuit.ExtFieldChallenge.ExtFriCore Int
+/-- Deployed config: BabyBear negation and `1/2`, used by the concrete p3 interpolation
+formula.  Its `2 * half = 1` law is checked on every accepting extension fold. -/
+opaque cfgExtA : Dregg2.Circuit.ExtFieldChallenge.ExtFriArith Int
+/-- The deployed BabyBear quartic binomial residue.  The verifier checks its canonical
+projection is `11` before accepting. -/
+opaque cfgExtW : Int
 /-- Deployed config: the arithmetic per-query check bundle — the SPECIFIED `fullChecks` at the
 opaque deployed core/arith ops (no longer an opaque record itself). KAT-validated at the leaves. -/
 @[reducible] def cfgChecks : FriVerifier.FriChecks Int :=
@@ -414,16 +430,23 @@ opaque cfgLogN : Nat
 /-- Deployed config: byte-deserialization of `(pi, π)` into the structured proof data and carried
 publics `verifyAlgo` walks. KAT-validated. -/
 opaque cfgView : BatchPublicInputs → BatchProof → (FriVerifier.BatchProofData ℤ × FriVerifier.WrapPublics ℤ)
+/-- Reconstruct the extension-valued commit-phase openings from the same deployed proof.
+This is kept as a sibling of `cfgView` because the legacy scalar view remains the target of
+the established `DeployedRefines` theorem; the apex verifier consumes both, and the full
+extension walk is no longer projected through lane zero. -/
+opaque cfgExtView : BatchPublicInputs → BatchProof →
+  List (Dregg2.Circuit.ExtFieldChallenge.ExtQueryOpening Int)
 /-- Deployed config: the residual non-FRI checks of the deployed verifier. KAT-validated. -/
 opaque cfgExtra : FriVerifier.BatchProofData ℤ → FriVerifier.WrapPublics ℤ → Bool
 
-/-- The batch verifier: the continued-thread, transcript-bound verifier strengthened
-with the faithful deployed single-AIR quotient identity.  The apex therefore consumes
-the real RLC/chunk-recomposition/inverse teeth, not merely the legacy free-field table
-shell. -/
+/-- The batch verifier: the continued-thread verifier strengthened with the faithful
+single-AIR quotient identity AND the quartic-extension p3 fold.  The apex consumes the
+real RLC/chunk-recomposition/inverse teeth and full four-lane FRI arithmetic; the scalar
+fold is retained only as a redundant soundness-refinement conjunct. -/
 def verifyBatch (_vk : VerifyKey) (pi : BatchPublicInputs) (π : BatchProof) : Verdict :=
-  if Dregg2.Circuit.FriChallengerUnified.verifyAlgoUnifiedFaithful cfgPerm cfgRATE cfgToNat cfgParams cfgVk
-        cfgCore cfgA cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2
+  if Dregg2.Circuit.ExtFieldChallenge.verifyAlgoUnifiedFaithfulExt
+        cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA cfgExtCore cfgExtA cfgExtW
+        cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2 (cfgExtView pi π)
       && cfgExtra (cfgView pi π).1 (cfgView pi π).2 then Verdict.accept else Verdict.reject
 
 /-- The published-commitment view induced by a `BatchPublicInputs`. -/

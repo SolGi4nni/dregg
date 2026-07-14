@@ -28,13 +28,13 @@ This SUPERSEDES `verifyAlgoTB` rather than conjoining with it: `verifyAlgoTB`'s
 `deriveOod` squeezes ζ as a 1-lane preamble-less thread, which conflicts with the
 one-thread `params.extDeg`-lane ζ here — ANDing both would leave no accepting proofs.
 
-## Residual (named honestly)
+## Extension representation
 
-* **Base-vs-extension representation.** Deployed algebra challenges are quartic extension
-  elements; this model represents one as its ordered `params.extDeg = 4` base-lane list.
-  `projBeta` is used only by the older scalar `LayerOpening` shell. Replacing that shell
-  with an extension-valued fold is the explicitly named `ExtensionFoldWidthResidual`;
-  no squeeze or absorb is omitted.
+Deployed algebra challenges are quartic extension elements, represented here by their
+ordered `params.extDeg = 4` base-lane lists. `projBeta` remains only for the redundant
+legacy scalar restriction. `ExtFieldChallenge.verifyAlgoUnifiedFaithfulExt`, consumed by
+the apex, binds all four beta lanes and performs the FRI fold in the quartic extension;
+no squeeze, absorb, or extension lane is omitted from that path.
 
 The qidx residual is CLOSED here: `FriVerifier.verifyAlgo` now consumes this same
 continued transcript's `qidx` directly.  The init-seeded query-position tooth was
@@ -45,9 +45,9 @@ namespace Dregg2.Circuit.FriChallengerUnified
 
 open Dregg2.Circuit.FriVerifier
 
-/-- A name for the one representation mismatch that remains after the full sequencing
-cutover: p3 challenges are extension elements, while the old FRI-opening shell stores a
-single base element. This proposition is documentary and is never assumed by a theorem. -/
+/-- Historical diagnostic for the legacy scalar restriction: p3 challenges have width
+greater than one.  The apex no longer relies on this projection alone; the proposition is
+documentary and is never assumed by a theorem. -/
 def ExtensionFoldWidthResidual (params : FriParams) : Prop := params.extDeg ≠ 1
 
 /-- Re-export the base verifier's one-thread challenge record.  There is exactly one
@@ -87,9 +87,8 @@ def deriveTranscript {F : Type} [Inhabited F]
     (proof : BatchProofData F) (pub : WrapPublics F) : DerivedChallenges F :=
   Dregg2.Circuit.FriVerifier.deriveTranscript perm RATE toNat params initState logN proof pub
 
-/-- Project the base-field beta out of a derived `extDeg`-lane extension squeeze: the first
-basis coefficient (at `extDeg = 1` the ext element IS its single base lane). The
-base-vs-extension residual is named in the module docstring. -/
+/-- Project the base-field beta out of a derived `extDeg`-lane extension squeeze for the
+redundant scalar restriction. At `extDeg = 1` the ext element IS its single base lane. -/
 def projBeta {F : Type} [Inhabited F] (d : List F) : F := d.headD default
 
 /-- **The beta-binding check.** For EVERY query, the prover's per-layer betas
@@ -316,7 +315,7 @@ private def uToNat : Nat → Nat := id
 private def uLogN : Nat := 3
 
 /-- Toy params: ONE query, `powBits = 0` (any witness grinds), `extDeg = 1` (ζ and each
-beta are single base lanes — the named residual), `logFinalPolyLen = 0` (constant final
+beta are single base lanes for this scalar regression fixture), `logFinalPolyLen = 0` (constant final
 poly, as deployed). -/
 private def uParams : FriParams :=
   { logBlowup := 1, numQueries := 1, powBits := 0, maxLogArity := 1,

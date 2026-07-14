@@ -430,8 +430,9 @@ structure BatchProofData (F : Type) where
   /-- The `expose_claim` table's exposed segment `[first_old, last_new, count,
   acc_0..acc_3]` — tooth 3 compares this to the carried publics. -/
   exposedSegment : List F
-  /-- The Fiat-Shamir out-of-domain point `ζ` (a singleton when present; the batch
-  constraint check opens every table here). Empty ⇒ malformed ⇒ REJECT. -/
+  /-- The Fiat-Shamir out-of-domain point `ζ`, flattened into its `extDeg` ordered
+  base lanes. The legacy table shell reads the head restriction; the unified transcript
+  binds the complete list. Empty ⇒ malformed ⇒ REJECT. -/
   oodPoint : List F := []
   /-- The per-table out-of-domain openings the batch-STARK constraint check verifies
   (Const/Public/Alu + the four NPO tables). -/
@@ -634,19 +635,20 @@ structure FriChecks (F : Type) where
 /-- **The concrete FRI-core checks** (§1b), wired into the `FriChecks` bundle.
 `foldConsistent` runs the per-query Merkle+fold-chain check for EVERY query, and
 BINDS each query's domain index to the transcript-derived `qidx` (and the query
-count to `numQueries`) — so the Fiat-Shamir indices are load-bearing. The final poly
-must be the singleton constant `log_final_poly_len = 0` demands; anything else
-rejects. The Poseidon2 Merkle openings live inside the per-query walk, so
+count to `numQueries`) — so the Fiat-Shamir indices are load-bearing. With
+`log_final_poly_len = 0`, `finalPoly` is one EXTENSION coefficient flattened into base
+lanes; this scalar restriction consumes its head, while `foldConsistentExt` checks all
+four lanes. The Poseidon2 Merkle openings live inside the per-query walk, so
 `merklePaths` is discharged there. -/
 def concreteFriChecks [DecidableEq F] (core : FriCore F) : FriChecks F where
   foldConsistent := fun proof _betas qidx =>
     match proof.finalPoly with
-    | [finalConst] =>
+    | finalConst :: _ =>
         decide (proof.queries.length = qidx.length)
           && (proof.queries.zip qidx).all
               (fun qe => decide (qe.1.index = qe.2)
                 && friQueryCheck core proof.traceCommit proof.friCommitments finalConst qe.1)
-    | _ => false
+    | [] => false
   merklePaths := fun _ _ => true
   batchTables := fun _ _ => true
   queryPow := fun _ => true
@@ -665,17 +667,14 @@ theorem concreteFriChecks_rejects_query_count [DecidableEq F] (core : FriCore F)
   left
   exact decide_eq_false hlen
 
-/-- The concrete FRI check requires the `log_final_poly_len = 0` shape: a non-singleton
-final poly REJECTS (the fold-chain has no constant to bottom out at). -/
-theorem concreteFriChecks_rejects_nonconstant_final [DecidableEq F] (core : FriCore F)
+/-- The concrete scalar restriction requires at least the head lane of the final extension
+coefficient.  The quartic verifier separately enforces exactly four lanes and compares all
+of them; an empty flattened coefficient is malformed and rejects here too. -/
+theorem concreteFriChecks_rejects_empty_final [DecidableEq F] (core : FriCore F)
     (proof : BatchProofData F) (betas : List (List F)) (qidx : List Nat)
-    (hfp : ∀ c, proof.finalPoly ≠ [c]) :
+    (hfp : proof.finalPoly = []) :
     (concreteFriChecks core).foldConsistent proof betas qidx = false := by
-  unfold concreteFriChecks
-  match h : proof.finalPoly with
-  | [] => simp [h]
-  | [c] => exact absurd h (hfp c)
-  | _ :: _ :: _ => simp [h]
+  simp [concreteFriChecks, hfp]
 
 /-- The trusted recursion VK shape (tooth 1). Per ETH-NATIVE-WRAP §4 the VK is best
 baked as a CIRCUIT CONSTANT, so the per-instance check is structural shape equality
@@ -784,15 +783,16 @@ def tableOk {F : Type} [DecidableEq F] (A : FieldArith F) (ood : F) (t : TableOp
     && decide (A.add t.vanishingAtZeta A.one = A.pow ood (2 ^ t.degreeBits))
     && decide (t.constraintEval = A.mul t.vanishingAtZeta t.quotientAtZeta)
 
-/-- **The concrete batch-table check.** Opens every table at the OOD point `ζ` (the
-proof's singleton `oodPoint`), runs each table's `tableOk`, and checks the bus sums to
-`zero`. A missing OOD point (malformed proof) REJECTS. -/
+/-- **The concrete batch-table scalar restriction.** `oodPoint` is one extension element
+flattened into base lanes; this legacy check consumes its head lane, runs each table's
+`tableOk`, and checks the bus sum.  The extension-faithful verifier binds the complete
+four-lane `ζ` elsewhere. A missing OOD point is malformed and rejects. -/
 def batchTablesCheck {F : Type} [DecidableEq F]
     (A : FieldArith F) (proof : BatchProofData F) : Bool :=
   match proof.oodPoint with
-  | [ood] => proof.tableOpenings.all (tableOk A ood)
+  | ood :: _ => proof.tableOpenings.all (tableOk A ood)
       && decide (busSum A proof.tableOpenings = A.zero)
-  | _ => false
+  | [] => false
 
 /-- The RETIRED wrong-Rust self-test, kept only as a named diagnostic for old proof
 artifacts. p3 never tests the witness's own low bits; it absorbs the witness and tests a

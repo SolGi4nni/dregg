@@ -746,16 +746,27 @@ plane; content-addressed static-site hosting.
   lookups/degree bits, including p3 Montgomery-field decode, and was run against the committed 399,048-byte
   root artifact (8 trace + 8 quotient cap felts, 10,520 opened coefficients, 16 FRI caps, 19 queries,
   quartic final polynomial; exact 331-byte metadata suffix); its first real cap is kernel-guarded.
-  NAMED REMAINING: (a) `ExtensionFoldWidthResidual` — `LayerOpening.beta` and the single-AIR quotient
-  record remain the `extDeg=1` scalar restriction while deployment folds quartic extension elements;
-  (b) `InnerProofReconstructionResidual` — qidx/β/x/ζ and AIR-derived constraint, vanishing, table, and
-  single-AIR openings are not serialized and must be reconstructed from the parsed proof plus transcript/
-  domains/AIRs before `cfgView` is fully concrete; (c) `BatchStarkMetadataTailResidual` — parse the 331-byte
-  `table_packing..stark_common` suffix, notably the optional preprocessed cap; (d)
+  TASK-4 CUTOVER (2026-07-14): `ExtensionFoldWidthResidual` is CLOSED at the apex.
+  `ExtFieldChallenge.foldConsistentExt` walks extension-valued queries with the exact p3 arity-two
+  interpolation `(f(x)+f(-x))/2 + β·(f(x)-f(-x))/(2x)` in BabyBear[X]/(X^4−11), binds all four
+  transcript β lanes, parity-selected carried value, verifier-derived x/inv(x), Merkle row, and all
+  four final-coefficient lanes. `verifyBatch` consumes `verifyAlgoUnifiedFaithfulExt`; its strengthening
+  preserves `deployedRefines_cfg`'s statement. The full predicate has an executable honest ACCEPT pole
+  and rejects a same-lane-zero/higher-lane tamper. The scalar fold is proved to be exactly extDeg=1.
+  NAMED REMAINING: (a) `ExtensionOodWidthResidual` — the single-AIR quotient record still checks the
+  head-lane scalar restriction of quartic α/ζ; the FRI beta/fold path itself is full-width;
+  (b) `HigherArityExtRowResidual` — this cutover deliberately fail-closes unless every serialized
+  `log_arity = 1`; p3's generic log-arity 2/3 `fold_row` needs the full 4/8-evaluation Lagrange row
+  (or its β,β²,β⁴ decomposition) plus the corresponding wide Merkle leaf, not a fabricated pair;
+  (c) `InnerProofReconstructionResidual` — qidx/β/x/ζ, the extension `initialEval/e0/e1` rows and
+  Merkle openings now read by `cfgExtView`, and AIR-derived constraint/vanishing/table/single-AIR openings
+  must still be reconstructed from the parsed proof plus transcript/domains/AIRs before `cfgView/cfgExtView`
+  are concrete; (d) `BatchStarkMetadataTailResidual` — parse the 331-byte
+  `table_packing..stark_common` suffix, notably the optional preprocessed cap; (e)
   `CoreProjectionRoundtripResidual` — the general postcard varint roundtrip and full
   nested cursor golden are proved, but the `BatchProofData` projection deliberately
   discards consumed Merkle paths/lookup names and therefore has no honest inverse;
-  (e) **ExecutorApplyDifferentialPin** remains.
+  (f) **ExecutorApplyDifferentialPin** remains.
 - CI-GREEN GRIND (2026-06-26). Drove the workspace toward green after the wide-registry/umem churn. LANDED (committed):
   (1) `circuit/src/dsl/garbled.rs` — the DSL garbled prover/verifier pushed a 16-felt PI vector (`as_slice()` over the
   now-8-felt WideHash ×2) while the descriptor reuses the deprecated 4-felt GarbledEvaluationAir columns + expects 8 PIs;

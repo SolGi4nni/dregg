@@ -3,11 +3,11 @@ import Dregg2.Circuit.FriVerifierBridge
 /-!
 # `StarkSound` rests on ONE floor: `DeployedRefines` discharged for the reduced `verifyBatch`
 
-`verifyBatch` (CircuitSoundness) is now a `def` — `FriVerifier.verifyAlgo` at the deployed config over
-the byte-deserialization `cfgView` (commit *"verifyBatch REDUCED"*). `DeployedRefines` — "the verifier
-computes the same accept Boolean as `verifyAlgo` on the mapped data" — is therefore a THEOREM here,
-proved by unfolding the def: an `accept` can only occur when `verifyAlgo` itself returned `true`. The
-deployment's faithfulness to the Rust wire is absorbed into the `cfgView`/`cfg*` KAT floor (the same
+`verifyBatch` (CircuitSoundness) is now a `def` — the quartic-extension faithful verifier at the
+deployed config over `cfgView`/`cfgExtView`. `DeployedRefines` — "acceptance implies `verifyAlgo`
+acceptance on the legacy mapped data" — remains a THEOREM with the same statement: extension-faithful
+acceptance strengthens to the faithful scalar restriction, which strengthens to `verifyAlgo`. The
+deployment's faithfulness to the Rust wire is absorbed into the reconstruction/config KAT floor (the same
 validation tier as Poseidon2 bit-exactness), not carried as a proof obligation.
 
 `starkSound_of_verifyAlgo` rested on TWO named pieces — `AlgoStarkSound` (the FRI/AIR/decode math
@@ -24,22 +24,28 @@ open Dregg2.Circuit.FriVerifierBridge
 
 /-- **`DeployedRefines` DISCHARGED for the reduced `verifyBatch`.** `verifyBatch` acceptance FORCES
 `verifyAlgo` acceptance on the mapped data — because `verifyBatch` IS
-`verifyAlgoUnifiedFaithful … (cfgView pi π) && cfgExtra …`, an `accept` occurs only when the faithful
-verifier returned `true`.  Faithful acceptance first strengthens to `verifyAlgoUnified`, then to
-`verifyAlgo` (`verifyAlgoUnifiedFaithful_imp_verifyAlgoUnified` followed by
+`verifyAlgoUnifiedFaithfulExt … (cfgView pi π) (cfgExtView pi π) && cfgExtra …`, an `accept`
+occurs only when the quartic-extension verifier returned `true`. Extension-faithful acceptance
+first strengthens to the scalar faithful verifier, then to `verifyAlgoUnified`, then to
+`verifyAlgo` (`verifyAlgoUnifiedFaithfulExt_imp_verifyAlgoUnifiedFaithful`, followed by
+`verifyAlgoUnifiedFaithful_imp_verifyAlgoUnified`, followed by
 `verifyAlgoUnified_imp_verifyAlgo`). Pure unfold + composition; no opaque appeal, no carried hypothesis. -/
 theorem deployedRefines_cfg (R : Registry) :
     DeployedRefines R cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgChecks cfgInitState cfgLogN cfgView := by
   intro pi π hacc
   unfold verifyBatch at hacc
   by_cases h :
-      (Dregg2.Circuit.FriChallengerUnified.verifyAlgoUnifiedFaithful cfgPerm cfgRATE cfgToNat cfgParams cfgVk
-          cfgCore cfgA cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2
+      (Dregg2.Circuit.ExtFieldChallenge.verifyAlgoUnifiedFaithfulExt
+          cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA cfgExtCore cfgExtA cfgExtW
+          cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2 (cfgExtView pi π)
         && cfgExtra (cfgView pi π).1 (cfgView pi π).2) = true
   · simp only [Bool.and_eq_true] at h
+    have hf := Dregg2.Circuit.ExtFieldChallenge.verifyAlgoUnifiedFaithfulExt_imp_verifyAlgoUnifiedFaithful
+      cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA cfgExtCore cfgExtA cfgExtW
+      cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2 (cfgExtView pi π) h.1
     have hu := Dregg2.Circuit.FriChallengerUnified.verifyAlgoUnifiedFaithful_imp_verifyAlgoUnified
       cfgPerm cfgRATE cfgToNat cfgParams cfgVk cfgCore cfgA cfgInitState cfgLogN
-      (cfgView pi π).1 (cfgView pi π).2 h.1
+      (cfgView pi π).1 (cfgView pi π).2 hf
     exact Dregg2.Circuit.FriChallengerUnified.verifyAlgoUnified_imp_verifyAlgo cfgPerm cfgRATE cfgToNat
       cfgParams cfgVk cfgCore cfgA cfgInitState cfgLogN (cfgView pi π).1 (cfgView pi π).2 hu
   · rw [if_neg h] at hacc
