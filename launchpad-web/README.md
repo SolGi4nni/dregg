@@ -8,6 +8,30 @@ dregg's **differentiated fair-launch engine — no bonding curve**.
 Every number the pages show is checkable on-chain; the frontend/backend only read
 and drive the real `DreggLaunchpad` contract — there is no mirror of the mechanism.
 
+## Node-driven mode: a launch is a real turn stream on a live dregg node
+
+Set `DREGG_NODE` and `server.mjs` reads its launches from a **live dregg node**
+instead of the EVM contract (`node-indexer.mjs` in place of the ethers
+`indexer.mjs`). A launch is then a sequence of **real turns** — register → bids →
+clear — each submitted to the node's `POST /turn/submit`, executed on the
+effect-VM, and executor-signed; the indexer reconstructs the launch from the
+node's own `GET /api/starbridge/identity/events` stream (each launch event carries
+its payload in the EmitEvent data words under a fixed marker). There is no mock:
+every field a card shows is read back from the node.
+
+```
+# with a dev node up (see drex-web/README.md), drive a launch as real turns:
+DREGG_NODE=http://127.0.0.1:8420 node node-launch-driver.mjs
+# then serve the node-driven launchpad:
+DREGG_NODE=http://127.0.0.1:8420 node server.mjs      # → /api/config source: dregg-node
+```
+
+**Honest scope.** This reads a **single-node dev instance** (federation mode
+"solo"); the EVM fair-launch contract (below) remains the separate on-chain lane.
+`executorAttested` reflects the executor-signed receipt (the honest committed
+signal), NOT the full-turn STARK proof — proof attachment is the node's named
+`prove_pool` follow-up.
+
 ## What it does
 
 - **Create** (`/create.html`) — register a launch with a DISCLOSED supply/vesting

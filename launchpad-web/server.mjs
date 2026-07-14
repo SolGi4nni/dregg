@@ -26,6 +26,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { LaunchpadIndexer } from './indexer.mjs';
+import { NodeLaunchIndexer } from './node-indexer.mjs';
 import { LAUNCHPAD_ABI, POOL_ABI } from './shared/abi.mjs';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
@@ -35,6 +36,12 @@ const ETHERS_UMD = path.join(HERE, 'node_modules', 'ethers', 'dist', 'ethers.umd
 const PORT = process.env.PORT || 8785;
 const RPC = process.env.LAUNCHPAD_RPC || 'http://127.0.0.1:8545';
 const ADDRESS = process.env.LAUNCHPAD_ADDRESS || '';
+// When DREGG_NODE is set the launchpad reads its launches from a LIVE dregg node
+// (launches as a real turn stream — register/bid/clear turns executed on the
+// effect-VM and proven by the node's prove_pool), instead of the EVM contract.
+// This is the "node-driven, not a separate mock" source. HONEST: single-node dev
+// instance; the EVM fair-launch contract remains the separate on-chain lane.
+const DREGG_NODE = (process.env.DREGG_NODE || '').replace(/\/$/, '');
 
 const MIME = {
   '.html': 'text/html; charset=utf-8', '.js': 'text/javascript; charset=utf-8',
@@ -66,7 +73,10 @@ async function handle(req, res) {
 
   // ── API ──
   if (url === '/api/config') {
-    return json(res, 200, { rpc: RPC, address: ADDRESS, abi: LAUNCHPAD_ABI, poolAbi: POOL_ABI });
+    return json(res, 200, {
+      rpc: RPC, address: ADDRESS, abi: LAUNCHPAD_ABI, poolAbi: POOL_ABI,
+      source: DREGG_NODE ? 'dregg-node' : 'evm', node: DREGG_NODE || null,
+    });
   }
   if (url === '/api/launches' && req.method === 'GET') {
     if (!indexer) return json(res, 503, { error: 'indexer not ready' });
@@ -101,11 +111,17 @@ async function handle(req, res) {
 }
 
 async function main() {
-  if (ADDRESS) {
+  if (DREGG_NODE) {
+    // NODE-DRIVEN: launches are a real turn stream on a live dregg node.
+    indexer = await new NodeLaunchIndexer({ nodeUrl: DREGG_NODE }).start();
+    console.log(`indexer: reading launches as real turns from dregg node ${DREGG_NODE}`);
+    if (!indexer.up) console.log('  (node not reachable yet — the API will fill in as the node comes up)');
+  } else if (ADDRESS) {
     indexer = await new LaunchpadIndexer({ rpcUrl: RPC, launchpad: ADDRESS }).start();
     console.log(`indexer: watching DreggLaunchpad ${ADDRESS} @ ${RPC}`);
   } else {
-    console.log('WARNING: LAUNCHPAD_ADDRESS unset — API will 503 until a deploy is wired.');
+    console.log('WARNING: neither DREGG_NODE nor LAUNCHPAD_ADDRESS set — API will 503.');
+    console.log('  node-driven:  DREGG_NODE=http://127.0.0.1:8420 node server.mjs');
   }
   http.createServer((req, res) => handle(req, res).catch((e) => json(res, 500, { error: String(e) })))
     .listen(PORT, () => {

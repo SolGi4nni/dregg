@@ -213,6 +213,65 @@ async function clearBatch() {
 
   renderClearedReal(res);
   renderFairness();
+
+  // ── land the cleared batch as ONE REAL turn on the live dregg node ──
+  await settleOnLiveNode(res);
+}
+
+// Settle the cleared batch on a LIVE dregg node: the ring the solver found lands
+// as a single real turn (POST /settle → node /turn/submit), executed on the
+// effect-VM and proven by the node's prove_pool. The turn hash, the proof, the
+// committed receipt, and the ledger state come back FROM the node.
+async function settleOnLiveNode(cleared) {
+  if (!cleared || !cleared.ring) return;
+  step('node', 'Settle on the LIVE node — real turn → effect-VM → prove_pool',
+    { badge: 'REAL node', state: 'active',
+      d: 'POST /settle → node /turn/submit: the clearing settles as one real turn…' });
+  let r;
+  try {
+    r = await fetch('/settle', {
+      method: 'POST', headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(cleared),
+    }).then((x) => x.json());
+  } catch (e) {
+    step('node', 'Settle on the LIVE node — proxy error', { badge: 'REAL node', state: 'fail',
+      d: 'POST /settle failed: ' + e.message });
+    return;
+  }
+
+  if (!r.nodeUp) {
+    // Honest fallback: no live node → the clearing above is the verified solver
+    // (drex_clear); it did NOT land on a node ledger this run.
+    step('node', 'Settle on the LIVE node — no node reachable (local matcher only)',
+      { badge: 'LOCAL fallback', state: 'fail',
+        d: `no dregg node at ${r.node || 'the configured address'} (${r.error || 'unreachable'}).\n`
+         + '  the clearing shown is the REAL verified solver, but it did NOT land on a node this run.\n'
+         + '  start one:  dregg-node run --port 8420 --enable-faucet --prove-turns' });
+    $('nodePill') && ($('nodePill').className = 'pill warn', $('nodePill').textContent = 'node: offline · local matcher');
+    return;
+  }
+  if (!r.accepted) {
+    step('node', 'Settle on the LIVE node — turn not accepted', { badge: 'REAL node', state: 'fail',
+      d: `node ${r.node} rejected the settlement turn: ${r.error || 'unknown'}` });
+    return;
+  }
+
+  const proof = r.proof || {};
+  const rc = r.receipt || {};
+  const cell = r.cell || {};
+  const proofLine = proof.present
+    ? (proof.mode === 'stark_full_turn'
+        ? `full-turn STARK proof: ${proof.len} bytes (GET /api/turn/${r.turnHash.slice(0, 12)}…/proof)`
+        : `witnessed receipt attached by prove_pool (witness_count=${proof.witnessCount})`)
+    : `proof: ${r.proofNote || 'pending'} (status=${r.proofStatus})`;
+  step('node', 'Settle on the LIVE node — committed + proven', { badge: 'REAL node', state: 'done',
+    d: `node ${r.node}  ·  operator cell ${r.operator.slice(0, 16)}…\n`
+     + `  turn ${r.turnHash.slice(0, 24)}…  → executed on the effect-VM, finality=${rc.finality}\n`
+     + `  ${rc.computronsUsed} computrons · ${rc.actionCount} action(s) committed · executor-signed=${rc.executorSigned}\n`
+     + `  pre-state ${(rc.preState || '').slice(0, 16)}…  →  post-state ${(rc.postState || '').slice(0, 16)}…\n`
+     + `  ${proofLine}\n`
+     + `  ledger state now reflects the clear: cell fields = [${(cell.fields || []).map((f) => f.slice(0, 6)).join(', ')}]  (SetField writes read back from the node)` });
+  if ($('nodePill')) { $('nodePill').className = 'pill live'; $('nodePill').textContent = 'node: live · turn committed + proven'; }
 }
 
 // Render the REAL clearing (JSON from POST /clear → the drex_clear binary).
@@ -261,6 +320,11 @@ const tick = () => new Promise(r => setTimeout(r, 30));
   renderBook(false);
   renderFairness();
   $('placeBtn').onclick = place;
+  // probe the live node so the header shows whether settlement will land on-chain
+  fetch('/node/status').then((r) => r.json()).then((s) => {
+    if (s.up) { $('nodePill').className = 'pill live'; $('nodePill').textContent = 'node: live @ ' + (s.node || '').replace(/^https?:\/\//, ''); }
+    else { $('nodePill').className = 'pill warn'; $('nodePill').textContent = 'node: offline · local matcher only'; }
+  }).catch(() => { $('nodePill').className = 'pill warn'; $('nodePill').textContent = 'node: offline · local matcher only'; });
   try {
     await initWallet();
     walletReady = true;

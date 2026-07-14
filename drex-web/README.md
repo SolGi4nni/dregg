@@ -16,6 +16,40 @@ real solver's, settled through the verified kernel.
 
 See `DESIGN.md` for the full UX + wire. This file is how to run it.
 
+## The clear lands on a LIVE dregg node (the make-it-real unlock)
+
+The solver finds the ring; the **clearing then settles as ONE real turn on a live
+dregg node**. `serve.mjs` exposes `POST /settle`: it unlocks the node
+(`/cipherclerk/unlock`), submits the clearing to the node's turn ingress
+(`POST /turn/submit` — SetField writes the per-trader allocations into the ledger,
+EmitEvent records each ring leg), and reads back the committed receipt, the ledger
+state, and the proof — all **from the node**, not synthesized in JS. The header
+shows `node: live` when a node is reachable; the flow log's last step is the real
+node turn (its hash, the effect-VM execution, pre→post state, the ledger fields
+that now reflect the clear).
+
+```
+# 1. a single-node dev instance (federation mode "solo"):
+dregg-node init --data-dir ~/.dregg-drex
+dregg-node run --data-dir ~/.dregg-drex --port 8420 --enable-faucet --prove-turns
+
+# 2. point the web at it (default is http://127.0.0.1:8420):
+DREGG_NODE=http://127.0.0.1:8420 node drex-web/serve.mjs
+```
+
+**Honest scope.** The node ingress is real: a click → a real turn → executed on
+the node's effect-VM → executor-signed receipt → the ledger state reflects the
+clear (verified end-to-end; see the flow log's node step). This is a **single-node
+dev instance**, not the multi-node BFT federation, and there is **no on-chain
+settle** (that is the separate multichain-settlement lane). Two named node-side
+follow-ups the demo surfaces rather than hides: (a) the async `prove_pool` STARK
+proof does not yet attach for the SetField-shaped settlement turn at HEAD (the
+effect-vm rotated-IR prover reports an unrealized custom-table shape) — the turn is
+committed-but-unattested, and the UI says so; (b) in solo mode the blocklace
+re-executes the committed turn at finalization and rejects the replayed nonce (the
+tentative commit and its state stand for reads). If no node is reachable, `/settle`
+returns `nodeUp:false` and the UI keeps the labeled local matcher (`drex_clear`).
+
 ## Prerequisite: build the real matcher once
 
 ```
