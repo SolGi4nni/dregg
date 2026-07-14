@@ -120,6 +120,22 @@ dregg-observability = { path = "../observability", default-features = false }
 # `DocCollabWorld` does, and `bindings_story` is in the shipped bundle (no target gate).
 spween-dregg = { path = "../spween-dregg" }
 
+# THE DESCENT SURFACE — `dreggnet-offerings`'s daily, provably-fair, permadeath procgen
+# roguelite (`daily_descent::daily_scene` — the SAME generator the offering + the no-cheat
+# leaderboard deploy, so the world played in the tab is byte-identical to the one a stranger
+# re-executes). `bindings_descent`'s `DescentWorld` drives it on the SAME wasm-clean executor
+# `<dregg-story>` uses: `dreggnet-offerings`'s substrate deps are `spween-dregg` +
+# `dungeon-on-dregg` + `dregg-app-framework` (all `default-features = false`, dropping the
+# non-wasm32 `server` feature), plus `procgen-dregg` (the beacon → daily-seed wire) below — the
+# `dregg-zkoracle-prove` `tlsn`/`tokio` edge is optional + off. So it crosses to the tab exactly
+# like `spween-dregg`, and `bindings_descent` is in the shipped bundle (no target gate).
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE BEACON → DAILY-SEED WIRE — `procgen-dregg`: `daily_seed`/`CommittedSeed` (fold a committed
+# beacon output into the day's dungeon seed) and `beacon::DailyBeacon` (verify a fetched drand
+# `quicknet` reveal by BLS pairing, in the tab, before it will open a day). Pure `dregg-dice`
+# (blake3 + bls12_381, pure Rust) + blake3; wasm32-safe.
+procgen-dregg = { path = "../procgen-dregg" }
+
 # Token crate without biscuit (biscuit-auth has complex deps)
 dregg-token = { path = "../token", default-features = false, features = ["macaroon", "rand-deps"] }
 

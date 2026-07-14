@@ -900,6 +900,10 @@ fn constraint_dissect(
             assets_slot,
             shares_slot,
         } => ("vault_deposit", Some(*assets_slot), vec![*shares_slot]),
+        // Cross-key heap bound (`new[key] <= new[other_key] + delta`): both operands
+        // are u64 fields_map keys, which do not fit the u8 slot lanes (like the sibling
+        // `HeapField`); consumers read the keys from the program view.
+        SC::HeapFieldLteOther { .. } => ("heap_field_lte_other", None, vec![]),
     }
 }
 

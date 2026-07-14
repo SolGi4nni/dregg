@@ -64,6 +64,17 @@ pub mod bindings_doc;
 // is OFF), so `StoryWorld` crosses to the tab exactly like `DocCollabWorld`. No target
 // gate: the module is in the shipped wasm32 bundle AND the native `cargo test`.
 pub mod bindings_story;
+// The Descent in the tab: `dreggnet-offerings`'s daily, provably-fair, permadeath procgen
+// roguelite (`daily_descent::daily_scene`) running on the SAME wasm-clean in-tab executor the
+// story surface uses. `DescentWorld` opens today's beacon-seeded world (verify a fetched drand
+// reveal in-tab, or from an already-verified beacon output), presents the room + gate-computed
+// moves, advances each move as ONE cap-gated verified turn (a blow you could not survive is
+// refused; a reckless line falls into a committed DEFEAT), reads depth/hp/alive-dead/won off the
+// committed cell, and replays the whole run for a stranger — all in the tab, the moves never
+// leaving the device. It is the action sibling of `StoryWorld` (the "play private + fast" leg);
+// the persistent cross-day character + no-cheat leaderboard + node settle are the separate
+// publish-a-verified-run leg (`DailyDescentOffering` / `ugc_dregg`), not built here.
+pub mod bindings_descent;
 
 // ============================================================================
 // Token operations (Macaroon backend)
