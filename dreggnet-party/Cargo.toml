@@ -1,0 +1,59 @@
+# `dreggnet-party` — FIRST-CLASS PARTIES on the real multi-actor dregg substrate.
+#
+# A party = a fixed roster of N seated identities, each a real player-cell whose
+# held capabilities ARE its ROLE (division of labor): the tank acts on the
+# front-rank cell, the scout on the trap/lock cell, the mage on the spell cell,
+# the healer on the party-unit cell. SEATED CO-OP is executor-refereed — a seat
+# firing a move outside its role has no cap to that cell and is a real
+# `CapabilityNotHeld` refusal (nobody plays your seat / forges your move). A
+# COLLECTIVE decision at a fork is a signed party ballot on the REAL
+# `collective-choice` quorum engine; the quorum-certified winner resolves the
+# shared move into the party world as a real turn (a non-member vote is
+# Ineligible, a forged vote BadSignature, a sub-quorum round moves nothing). The
+# party shares one FOCUS pool — a `FieldLteField` budget cell whose overspend the
+# kernel refuses. The LOOT SPLIT is an on-ledger fact: each seat's share a
+# committed, `WriteOnce`-frozen cell field, not a leader's promise.
+#
+# CONSUMES `dungeon-on-dregg` (mud/collective) + the real multi-actor
+# `starbridge-v2::world::World`; ADDITIVE — modifies nothing it consumes.
+#
+#   cargo test -p dreggnet-party
+[package]
+name = "dreggnet-party"
+version = "0.1.0"
+edition = "2024"
+description = "First-class parties on the real dregg substrate: a roster of seated player-cells whose caps ARE their roles, a signed fork ballot resolved by quorum, a shared FieldLteField focus pool, and a WriteOnce on-ledger loot split — executor-refereed, non-vacuous."
+
+[dependencies]
+# THE MULTI-ACTOR LEDGER — the real `starbridge_v2::world::World`: each seat is
+# its own cell/identity, `World::turn(agent, effects)` builds a turn attributed to
+# that seat, and `commit_turn` admits it IFF the seat holds a cap to every touched
+# cell (an ungranted target is a real `CapabilityNotHeld` refusal). The same
+# substrate `dungeon-on-dregg::mud` rides. Embedded-executor, gpui-free.
+starbridge-v2 = { path = "../starbridge-v2", default-features = false, features = ["embedded-executor"] }
+# The cell/constraint vocabulary: `CellProgram::Predicate` + `StateConstraint`
+# (`FieldLteField` for the shared focus pool, `WriteOnce` for the loot split),
+# `AuthRequired`/`Cell`/`CellId`/`FieldElement`, and the capability grant that IS a
+# seat's role mandate.
+dregg-cell = { path = "../cell" }
+# The canonical `field_from_u64` big-endian encoding (matches the kernel's
+# integer-constraint comparison) for writing the focus/loot/gate slots.
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# The `Effect` type a move lowers to (the `SetField` writes a turn carries).
+dregg-turn = { path = "../turn" }
+# THE COLLECTIVE — the REAL quorum-certified voting engine consumed at the fork:
+# `CollectiveRound::open_with` (a signed roster + quorum), `cast` (a ballot is a
+# real cap-bounded turn admitted only under a valid custody signature; a
+# non-member is Ineligible, a forged/wrong-key signature BadSignature), and
+# `resolve` (the quorum gate certifies the winner). Consumed, never modified.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# The `VoteError` a refused ballot surfaces (Ineligible / BadSignature / DoubleVote)
+# — matched by the driven fork tests.
+collective-choice = { path = "../collective-choice" }
+# The ed25519 custody `Signature`/`PublicKey` a seat signs a ballot with (the SAME
+# classical signature the executor authorizes turns with) — used to construct the
+# adversarial forged/non-member ballots the tests refuse.
+dregg-types = { path = "../types" }
+
+# A workspace MEMBER of the breadstuffs root (registered in `members`). The root
+# `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

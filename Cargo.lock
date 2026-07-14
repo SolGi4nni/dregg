@@ -5727,6 +5727,7 @@ dependencies = [
  "dregg-token",
  "dregg-trace",
  "dregg-turn",
+ "ed25519-dalek",
  "getrandom 0.3.4",
  "globset",
  "postcard",
@@ -5956,6 +5957,7 @@ dependencies = [
  "blake3",
  "bs58",
  "collective-choice",
+ "curve25519-dalek",
  "dregg-bridge",
  "dregg-governance",
  "ed25519-dalek",
@@ -6617,6 +6619,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreggnet-cheevo"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-epoch",
+ "dregg-season",
+ "dreggnet-asset",
+ "dungeon-on-dregg",
+ "spween-dregg",
+ "ugc-dregg",
+]
+
+[[package]]
 name = "dreggnet-compute"
 version = "0.1.0"
 dependencies = [
@@ -6641,6 +6656,15 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreggnet-craft"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dreggnet-asset",
+ "procgen-dregg",
+]
+
+[[package]]
 name = "dreggnet-doc"
 version = "0.1.0"
 dependencies = [
@@ -6649,6 +6673,15 @@ dependencies = [
  "dregg-turn",
  "dreggnet-offerings",
  "ed25519-dalek",
+]
+
+[[package]]
+name = "dreggnet-faction"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "spween",
+ "spween-dregg",
 ]
 
 [[package]]
@@ -6662,6 +6695,21 @@ dependencies = [
  "dregg-sdk",
  "dreggnet-offerings",
  "grain-turn",
+]
+
+[[package]]
+name = "dreggnet-guild"
+version = "0.1.0"
+dependencies = [
+ "collective-choice",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+ "dreggnet-offerings",
+ "dungeon-on-dregg",
+ "starbridge-escrow-market",
+ "starbridge-v2",
+ "ugc-dregg",
 ]
 
 [[package]]
@@ -6723,6 +6771,54 @@ dependencies = [
 ]
 
 [[package]]
+name = "dreggnet-party"
+version = "0.1.0"
+dependencies = [
+ "collective-choice",
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-turn",
+ "dregg-types",
+ "dungeon-on-dregg",
+ "starbridge-v2",
+]
+
+[[package]]
+name = "dreggnet-quest"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-turn",
+ "dungeon-on-dregg",
+ "spween",
+ "spween-dregg",
+ "ugc-dregg",
+]
+
+[[package]]
+name = "dreggnet-tavern"
+version = "0.1.0"
+dependencies = [
+ "axum",
+ "blake3",
+ "dregg-cell",
+ "dregg-federation",
+ "dregg-node",
+ "dregg-sdk",
+ "dregg-sdk-net",
+ "dregg-turn",
+ "dregg-types",
+ "libc",
+ "reqwest 0.12.28",
+ "rustls 0.23.41",
+ "serde_json",
+ "tempfile",
+ "tokio",
+ "zeroize",
+]
+
+[[package]]
 name = "dreggnet-telegram"
 version = "0.1.0"
 dependencies = [
@@ -6747,6 +6843,17 @@ dependencies = [
  "dungeon-on-dregg",
  "procgen-dregg",
  "ugc-dregg",
+]
+
+[[package]]
+name = "dreggnet-trade"
+version = "0.1.0"
+dependencies = [
+ "blake3",
+ "dregg-cell",
+ "dregg-types",
+ "dreggnet-asset",
+ "starbridge-escrow-market",
 ]
 
 [[package]]

@@ -1,0 +1,36 @@
+# `dreggnet-trade` — scam-proof P2P player trading (game-infra SOCIAL #3).
+#
+# Binds a `dreggnet-asset` transfer (an owner-signed spend of an owned note) to a
+# `starbridge-escrow-market` sealed-escrow leg, yielding a TRUSTLESS ATOMIC SWAP of
+# owned assets: "I give X iff you give Y" with no trusted middleman. asset<->asset
+# and asset<->$DREGG-value. settle crosses both legs atomically (no half-open
+# trade); a ghosting counterparty's stranded leg is reclaimed (the depositor made
+# whole); a non-owner cannot offer an asset it does not own (the transfer signature
+# gate); and the traded item's provenance re-verifies (mint -> trade -> new owner).
+#
+# Additive workspace member. CONSUMES dreggnet-asset + starbridge-escrow-market's
+# sealed-escrow capacity; modifies NEITHER. No-P2W by scope: tradable goods are
+# cosmetics / provenance-trophies / crafting-mats — never raw power.
+[package]
+name = "dreggnet-trade"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Scam-proof P2P player trading: a trustless atomic swap binding a dreggnet-asset transfer to a sealed-escrow leg. asset<->asset and asset<->$DREGG. settle crosses both legs atomically or a ghosting counterparty's stranded leg is reclaimed; a non-owner cannot offer an asset it does not own; the traded item's provenance travels with it. Cosmetics/trophies/crafting-mats only — no pay-to-win."
+
+[dependencies]
+# The owned, transfer-gated, provenance-chained asset layer.
+dreggnet-asset = { path = "../dreggnet-asset" }
+# The sealed-escrow atomic-swap capacity (open / deposit_leg / settle / reclaim_leg,
+# EscrowTerms / Leg / LegRequirement / Side / EscrowError, + move_value), re-exported
+# by the escrow-market app.
+starbridge-escrow-market = { path = "../starbridge-apps/escrow-market" }
+# Cell (the sealed-escrow coordination host + the $DREGG value custody/wallet cells).
+dregg-cell = { path = "../cell", default-features = false }
+# The single CellId type (the escrow leg party/asset addresses).
+dregg-types = { path = "../types" }
+blake3 = "1"

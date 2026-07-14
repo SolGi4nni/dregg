@@ -1,0 +1,42 @@
+# `dreggnet-faction` — FACTIONS / REPUTATION as real gated cell state.
+#
+# The dialogue slice proved a single NPC's disposition is REAL committed cell state
+# (rise-only warmth gating friendly content, a `WriteOnce` betrayal, a `FieldLte`
+# refusal). This crate generalizes that disposition graph to a FACTION cell: a
+# `FactionCell` with per-faction REPUTATION slots (`Monotonic` on gain — rep cannot
+# be un-earned), content GATED on standing (a faction quest/region unlocks at
+# `FieldGte(rep, threshold)`; a betrayed faction's content permanently sealed via
+# `WriteOnce`), and FACTION-VS-FACTION as a real CROSS-SLOT invariant (raising
+# standing with the Embers CAPS standing with the rival Tide — the compiler's
+# var-op-var `FieldLteOther` tooth, driven on the verified executor).
+#
+# It CONSUMES the real foundation by composition only — `spween-dregg`'s
+# `WorldCell` / scene->`CellProgram` compiler (the cross-var `FieldLteOther`
+# lowering) and `dungeon-on-dregg`'s dialogue idiom (augment a compiled program
+# with the social teeth the v0 compiler does not emit). It does NOT modify either.
+#
+# A breadstuffs workspace member; builds via the warm default `target/`:
+#   cargo test -p dreggnet-faction
+[package]
+name = "dreggnet-faction"
+version = "0.1.0"
+edition = "2024"
+description = "Factions/reputation as real gated cell state: a FactionCell with per-faction Monotonic reputation slots, content gated on standing (FieldGte quest/region unlock, WriteOnce betrayal seal), and faction-vs-faction as a cross-slot FieldLteOther cap — all real executor-enforced StateConstraint teeth on spween-dregg's WorldCell."
+
+[dependencies]
+# THE FOUNDATION — the real cell/turn substrate. `WorldCell` (a faction move is ONE
+# cap-bounded turn the real `EmbeddedExecutor` admits IFF the installed gate passes),
+# the scene->`CellProgram` compiler (whose var-op-var lowering emits the cross-faction
+# `FieldLteOther` tooth), and the replay verifier. We EXTEND by composition.
+spween-dregg = { path = "../spween-dregg" }
+# The narrative DSL — needed to name a `Choice`/`PassageContent` when driving a
+# faction move directly at the executor (`apply_choice`). Same git rev spween-dregg pins.
+spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e109138496849a444f28c4b9076a4e2" }
+# The real framework types — `CellProgram`, `StateConstraint`, `TransitionGuard`,
+# `field_from_u64`, `symbol` — so we can AUGMENT the compiled program with the
+# `Monotonic` / `WriteOnce` / `FieldEquals` teeth the v0 compiler does not emit and
+# INTROSPECT the installed program (proof each faction rule is a kernel predicate).
+dregg-app-framework = { path = "../app-framework", default-features = false }
+
+# A workspace MEMBER of the breadstuffs root (registered in `members`). The root
+# `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

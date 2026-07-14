@@ -1,0 +1,53 @@
+# `dreggnet-cheevo` — un-fakeable, SOULBOUND achievements over verified runs.
+#
+# THE CROWN of the game-infra roadmap (`docs/GAME-INFRA-ROADMAP.md`): an achievement
+# is an ANCHORED PREDICATE over a VERIFIED run — reached-depth >= N, a no-death clear,
+# a speed clear, a season-championship. A cheevo is EARNED only when a real completion
+# passes the ugc no-cheat verify AND satisfies the predicate over the run's real
+# committed trajectory. A forged / insufficient run earns nothing. An earned cheevo
+# MINTS a SOULBOUND asset (a `dreggnet-asset` note bound to the earner — no transfer
+# path; it can't be sold or faked), carrying the provenance of the run that earned it.
+#
+# CONSUMES (reimplements nothing; never modifies their src):
+#   * ugc-dregg      — `verify_completion` (THE no-cheat gate: re-execute the run to the
+#                      declared win) + `Completion`/`Universe` (the achievement source).
+#   * spween-dregg   — `parse`/`compile_scene` to reconstruct the var->slot map from the
+#                      universe's PUBLIC source, so a predicate reads the run's real vars.
+#   * dregg-season   — `Season`/`Champion`/`identity_of` (the season-champion predicate,
+#                      over the season's no-cheat hall-of-fame).
+#   * dreggnet-asset — `AssetWorld`/`AssetId` (the note the soulbound cheevo mints).
+#
+# A breadstuffs workspace member; the root `[workspace]`/`[patch]`/`[lints]` apply.
+[package]
+name = "dreggnet-cheevo"
+version = "0.1.0"
+edition = "2024"
+description = "Un-fakeable soulbound achievements: a cheevo is an anchored predicate over a verified run (depth/no-death/speed/champion), earned only by a real run that passes the no-cheat verify + satisfies the predicate, minting a non-transferable provenance-bound asset."
+
+[lints]
+workspace = true
+
+[dependencies]
+# THE NO-CHEAT GATE. A cheevo is a proof you earned it: `verify_completion` re-executes
+# the anchored run to the declared win — a forged/insufficient run is refused here and
+# earns nothing. `Completion`/`Universe` carry the run the achievement is a predicate over.
+ugc-dregg = { path = "../ugc-dregg" }
+# Reconstruct the var->slot map from the universe's PUBLIC source (`parse` + `compile_scene`),
+# so an anchored predicate (depth/no-death) reads the run's real committed vars — the same
+# projection the executor uses. `PASSAGE_SLOT`/`PASSAGE_ENDED` name the control slot.
+spween-dregg = { path = "../spween-dregg" }
+# The season-champion predicate: `Season::champions` over the season's no-cheat board (every
+# entry provably reached the win) + `identity_of` (the stable per-player identity).
+dregg-season = { path = "../dregg-season" }
+# The SOULBOUND mint: an earned cheevo mints a `dreggnet-asset` note owned by the earner.
+# Soulbound is enforced at this layer (no transfer path; the note stays owner-bound).
+dreggnet-asset = { path = "../dreggnet-asset" }
+# Domain-separated content addressing: the run anchor + the soulbound seal (which binds
+# earner|achievement|universe|run|witness and is the note's content-addressing mint seed).
+blake3 = "1"
+
+[dev-dependencies]
+# An `EpochManifest` to pin a `Season` in the champion test.
+dregg-epoch = { path = "../dregg-epoch" }
+# A real, winnable built-in dungeon scene + its choice indices, for a champion-board run.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }

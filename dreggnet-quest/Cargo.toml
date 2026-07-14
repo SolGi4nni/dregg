@@ -1,0 +1,59 @@
+# `dreggnet-quest` — QUESTS on the REAL dregg substrate: a quest-giver hands a
+# multi-step gated objective, each step is a real cap-bounded turn advancing a
+# WriteOnce step-flag, the steps are ORDER-gated (step B can't be raised until step
+# A is set — a `BoundedBy` tooth), and a return-and-turn-in reward opens ONLY once
+# the committed step-flags clear a `FieldGte(steps_done, N)` gate. A completion is a
+# `Playthrough` re-executed to a declared WIN — a forged / out-of-order record fails
+# on replay; it is NOT a self-reported "I did the steps."
+#
+# This is the DIALOGUE IDIOM generalized (docs/GAME-INFRA-ROADMAP.md, world #1). It
+# CONSUMES the real foundation by composition and never modifies it:
+#   * spween-dregg     — `WorldCell`/`Driver`/`verify`/`verify_by_replay` + the
+#                        scene->`CellProgram` compiler (the quest is a compiled scene
+#                        whose teeth are augmented, exactly the dialogue pattern).
+#   * dungeon-on-dregg — the dialogue (WriteOnce step-flags + BoundedBy ordering +
+#                        FieldGte turn-in), overworld (a replay-verified WIN clears a
+#                        flag), multicell (the cross-cell `ObservedFieldEquals` gate),
+#                        and progression/meta (the authored-`Cases` cell pattern).
+#   * ugc-dregg        — `WinCondition` + the completion re-execution model (a
+#                        completion is accepted only if a replay reaches the win).
+#
+# A breadstuffs workspace member (registered in the root `members`); the root
+# `[workspace]`/`[patch]` apply. No standalone workspace here.
+#   cargo test -p dreggnet-quest
+[package]
+name = "dreggnet-quest"
+version = "0.1.0"
+edition = "2024"
+description = "Quests on the real dregg executor: a quest-giver + a multi-step gated objective (WriteOnce step-flags + BoundedBy ordering + a FieldGte turn-in) whose reward is gated on the committed steps, and whose completion is a replay-verified receipt — never a self-reported count."
+
+[dependencies]
+# THE FOUNDATION — the scene->cell compiler + the real replay verifier. A quest is a
+# compiled spween scene whose social/ordering teeth are AUGMENTED onto the program
+# (the dialogue pattern); each step is one cap-bounded turn the executor admits IFF
+# its gate passes, and the playthrough re-verifies (`verify`/`verify_by_replay`).
+spween-dregg = { path = "../spween-dregg" }
+# The narrative DSL — to name a `Choice` when driving a step directly at the executor
+# (`apply_choice`), for the non-vacuous refusal legs. Same rev spween-dregg pins.
+spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e109138496849a444f28c4b9076a4e2" }
+# The real framework types — `CellProgram`/`StateConstraint`/`TransitionCase`/
+# `TransitionGuard` — so the quest program is authored/augmented as executor-enforced
+# kernel predicates (WriteOnce/BoundedBy/FieldGte/FieldDelta), not app bookkeeping.
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# The dungeon universe we CONSUME (never modify): `choice_at` (naming a `Choice` for a
+# direct-executor step) plus the dialogue/overworld/multicell/progression patterns this
+# crate generalizes into a quest.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# The no-cheat completion model: `WinCondition` (a declared win a completion must reach
+# on replay). A quest turn-in is a completion re-executed to this win.
+ugc-dregg = { path = "../ugc-dregg" }
+# The cell crate — `Cell`/`Permissions` for the cross-cell quest-giver (the multicell
+# idiom): the giver cell + the quest-state cell share ONE `EmbeddedExecutor` ledger.
+dregg-cell = { path = "../cell" }
+# The turn crate — the `WitnessBlob`/`WitnessKind` carrier the cross-cell gated grant
+# attaches (the Merkle-open witness referenced by the giver's `ObservedFieldEquals` at
+# `proof_witness_index`). Same `dregg-turn` the framework/executor build on.
+dregg-turn = { path = "../turn" }
+
+[lints]
+workspace = true

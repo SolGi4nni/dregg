@@ -1,0 +1,84 @@
+# `dreggnet-guild` — GUILDS on the real dregg substrate (roadmap SOCIAL #5).
+#
+# A formed persistent group whose every guarantee rides a primitive that already
+# ships on the executor — nothing here is host bookkeeping:
+#
+#   * MEMBERSHIP IS THE CAP SET. A guild is a mud-style shared cell (the same
+#     `starbridge-v2` `World` + cap-gated turns `dungeon-on-dregg/src/mud.rs` runs
+#     on): joining is a genuine capability grant to the guild cell; a NON-member
+#     acting on guild state is a real `CapabilityNotHeld` executor refusal, never a
+#     silent apply. You cannot forge your way onto the roster.
+#   * THE LEADERBOARD IS THE SUM OF UN-FORGEABLE CLEARS. A guild's rank aggregates
+#     its members' ugc-dregg-verified completions (`verify_completion` — a stranger
+#     re-executes the identically-seeded universe and it reaches the WIN, or it is
+#     REJECTED) plus survived-run facts read off the character's WriteOnce-final
+#     `dead` flag. A forged clear fails the no-cheat verify and contributes NOTHING;
+#     a dead character cannot un-die to pad the survivor board.
+#   * THE TREASURY IS ESCROW-CUSTODIED. Contributions are locked into the
+#     protocol-proven `SealedEscrow` capacity (`starbridge-escrow-market`): value
+#     leaves the depositor's wallet into custody (conserved, witnessed), and the
+#     capacity permits a reclaim ONLY to the leg's original depositor — an officer
+#     (any non-depositor) pulling a member's contribution is a real refusal. No
+#     officer can abscond with the bank.
+#   * GUILD-VS-GUILD ranks two guilds by their aggregate PROVEN stats — you cannot
+#     win by padding fakes, because the aggregate only ever counts verified clears.
+#   * GOVERNANCE (optional) elects officers via the real quorum-certified collective
+#     vote (`dungeon-on-dregg/src/collective.rs`): below quorum no officer is seated,
+#     a non-seated key is Ineligible, a forged ballot signature is refused.
+#
+# CONSUMES (reimplements nothing; never modifies their src):
+#   * dungeon-on-dregg      — `mud` (the cap-gated shared-world substrate + `actor_tag`
+#                             + `CommandOutcome`), `collective` (officer ballots), and
+#                             `DUNGEON`/`CH_*` for the driven test universe.
+#   * dreggnet-offerings    — `DreggIdentity` + `character::CharacterSheet` (the
+#                             WriteOnce-final `dead` fact the survivor board leans on).
+#   * ugc-dregg             — `Universe`/`Completion`/`verify_completion` (the no-cheat
+#                             aggregate source).
+#   * starbridge-escrow-market — `SealedEscrowMarket` (the escrow-custodied treasury).
+#   * starbridge-v2         — `world::{World, make_open_cell, set_field}` (the guild cell).
+#
+# A breadstuffs workspace member (registered in the root `members`); the root
+# `[workspace]`/`[patch]`/`[lints]` apply. Build/test:
+#   cargo test -p dreggnet-guild
+[package]
+name = "dreggnet-guild"
+version = "0.1.0"
+edition = "2024"
+description = "Guilds on the real dregg substrate: membership-as-capabilities (a non-member is a real CapabilityNotHeld refusal), a leaderboard that SUMS members' un-forgeable ugc-verified clears (a forged clear counts for nothing), and an escrow-custodied treasury (no officer can abscond). Guild-vs-guild by aggregate proven stats; optional quorum-certified officer governance."
+
+[lints]
+workspace = true
+
+[dependencies]
+# The cap-gated shared-world substrate (the guild cell = a mud-style "room" only
+# members hold a cap to), `actor_tag`/`CommandOutcome`, the `collective` officer-vote
+# engine, and the `DUNGEON` scene + `CH_*` choice constants the tests drive a real
+# winnable universe with. Consumed, never modified.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# `DreggIdentity` (the stable per-player identity a member is keyed by) + the
+# persistable `CharacterSheet` whose WriteOnce-final `dead` flag is the survivor
+# board's un-undoable fact.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# The no-cheat aggregate source: `Universe`/`Completion`/`verify_completion` — a
+# ranked clear provably reaches the win on a stranger's re-execution; a forged /
+# incomplete / result-tampered completion is rejected and cannot inflate the guild.
+ugc-dregg = { path = "../ugc-dregg" }
+# The escrow-custodied treasury: the protocol-proven `SealedEscrow` capacity as a
+# market — a member's contribution is locked into custody, and a reclaim is permitted
+# ONLY to the leg's depositor (an officer cannot abscond). Consumed, never modified.
+starbridge-escrow-market = { path = "../starbridge-apps/escrow-market" }
+# The real `World` ledger + cap-gated turn path the guild cell is built on (the SAME
+# substrate `mud.rs` uses): `make_open_cell` + `genesis_install` (a member cell holds
+# the guild cap), `set_field` (a guild-state write), `commit_turn` (the executor
+# re-checks the cap — a non-member is `CapabilityNotHeld`).
+starbridge-v2 = { path = "../starbridge-v2" }
+# `CellId`/`Cell`/`AuthRequired` for the guild cell + the escrow wallet cells, and
+# `dregg_turn::action::Effect` the guild turn carries.
+dregg-cell = { path = "../cell" }
+dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
+# The real quorum-certified vote engine behind optional officer governance — the
+# `PollId`/`Tally`/`TurnReceipt`/`Decision` the `collective` round returns. Already in
+# the build graph (dungeon-on-dregg consumes it); named here so governance can spell
+# the round's return types.
+collective-choice = { path = "../collective-choice" }

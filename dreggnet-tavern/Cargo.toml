@@ -1,0 +1,77 @@
+# `dreggnet-tavern` — THE SHARED HUB / TAVERN: a persistent social place players
+# inhabit between runs.
+#
+# This crate RE-HOMES the deployed live-co-inhabitance rung — `node/src/shared_world.rs`
+# `boot_shared_world` (a hosted shared BOARD cell + a presence SEAT per identity + per-
+# identity caps + live receipt-stream sync + the over-reach refusal) — as a TAVERN: a
+# persistent presence + board hub with N seats, an LFG board (each post a real attributed
+# turn), private market stalls (a listing you own; another's stall is the over-reach foil),
+# and a party-roster (the party-up hook). It reuses the SAME reusable core shared_world is
+# built from — `dregg_node::deos_host::host_server_program` (the headless deos-js GM host),
+# the real `/turns/submit` + `/api/events/stream` wires (`dregg-sdk-net`), and `NodeState` —
+# parameterized to N patrons. It does NOT modify shared_world; the tavern is a new instance
+# of the same primitive.
+#
+# HONEST SCOPE: presence + attribution are un-spoofable (a receipt carries WHO acted; you
+# cannot fake being online as someone else, and you cannot write another's private stall —
+# the executor's authority gate refuses it). NAMED RESIDUALS: many concurrent tavern rooms
+# via a Lobby; spatial presence; tavern furniture as owned assets; the live cockpit/bot
+# render; and the party-roster / stall listings graduating to first-class `dreggnet-party` /
+# `dreggnet-trade` crates (today they are real committed cells inside the tavern).
+#
+# A breadstuffs workspace member (registered in the root `members`, NOT `default-members`:
+# it pulls `dregg-node/deos-host` → deos-js → mozjs, a heavy graph the default dev loop must
+# not feature-unify onto the node). Build/test (persvati warm dir):
+#   cargo test -p dreggnet-tavern
+[package]
+name = "dreggnet-tavern"
+version = "0.1.0"
+edition = "2024"
+description = "The shared hub / tavern: a persistent presence + LFG-board hub re-homing shared_world's board+presence+receipt-stream-sync core, with N seats, private market stalls, and a party-roster — un-fakeable presence, the over-reach refusal, live sync, over the real dregg node wire."
+
+[dependencies]
+# THE REUSABLE CORE this tavern re-homes: the headless deos-js GM host
+# (`deos_host::host_server_program`), the in-process `NodeState`, the axum router
+# (`api::router_with_cors`), and the metrics recorder. `deos-host` pulls deos-js (mozjs) —
+# the same feature the `shared_world` module lives behind.
+dregg-node = { path = "../node", features = ["deos-host"] }
+# The client identity: a per-patron `AgentCipherclerk` signer from its own key-ceremony seed.
+dregg-sdk = { path = "../sdk" }
+# The real node wire the patrons drive: `fire_affordance` (sign + POST a turn to
+# `/turns/submit`), `discover_server_affordances`, and the live receipt SSE
+# (`NodeEvents`/`ReceiptFilter`/`ReceiptStream` over `/api/events/stream`).
+dregg-sdk-net = { path = "../dregg-sdk-net" }
+# The cell primitives the GM grants + the patrons write: `Cell`/`CellId`/`Permissions`/
+# `AuthRequired`/`FieldElement`.
+dregg-cell = { path = "../cell" }
+# `Effect::SetField` — the concrete effect a fired affordance carries.
+dregg-turn = { path = "../turn" }
+# `solo::SoloConsensusState` — the committee-of-one the in-process boot enables so a FOREIGN
+# client's turn commits authoritatively at submit (a single-node harness has no BFT-quorum
+# finalization crank; solo is exactly what the real node runs with no peers).
+dregg-federation = { path = "../federation" }
+# `hex_encode` — the cell-id/turn-hash hex the wire speaks.
+dregg-types = { path = "../types" }
+
+blake3 = "1"
+zeroize = { workspace = true }
+tempfile = "3"
+tokio = { version = "1", features = ["full"] }
+axum = { version = "0.8", features = ["ws"] }
+reqwest = { version = "0.12", features = ["json"] }
+serde_json = "1"
+rustls = { version = "0.23", default-features = false, features = ["ring"] }
+
+[dev-dependencies]
+tokio = { version = "1", features = ["full"] }
+# `_exit(0)` — after a fully-green run, exit the test process WITHOUT running C++ static
+# destructors. The deos-host SpiderMonkey runtime is a process-global the host thread never
+# drops (see `dregg_node::shared_world`'s module docs); at normal process teardown its
+# `mozilla::MutexImpl` destructor calls `pthread_mutex_destroy` on the still-live engine mutex
+# and SIGSEGVs. That teardown crash is unrelated to the tavern's correctness (it hits
+# `shared_world`'s own e2e identically); `_exit(0)` skips it so a passing run reports success.
+libc = "0.2"
+
+# A workspace MEMBER of the breadstuffs root (registered in `members`, NOT
+# `default-members`). The root `[workspace]` + `[patch]` tables apply; no standalone
+# `[workspace]`/`[patch]` here.

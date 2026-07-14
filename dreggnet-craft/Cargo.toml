@@ -1,0 +1,45 @@
+# `dreggnet-craft` — a provably-fair FORGE: the economy's first real SINK.
+#
+# CRAFTING (GAME-INFRA-ROADMAP progression #2). A forge COMBINES N owned material
+# assets (the inputs) into a new output asset. The outcome (a quality tier) is a
+# VERIFIED DRAW off a committed seed (the `procgen-dregg` `verified_stream` fairness
+# anchor the `loot.rs` fair-drop pattern rides): a legendary craft is a re-derivable
+# ~3% flex, not a claim. The recipe id + the input AssetIds + the roll bind into the
+# output's content address (the `drop_commitment` pattern), so the item's identity
+# encodes "forged from THESE inputs, THAT recipe, a 1% roll". The inputs are genuinely
+# SPENT — destroyed on-chain via the asset spend tooth (the first real sink; no
+# dupe-then-craft). A forged craft (an output without the real inputs spent, or a
+# fabricated roll) mints NOTHING (the `reverify` pattern).
+#
+# Additive workspace member. CONSUMES `dreggnet-asset` (the owned/spend asset layer)
+# + `procgen-dregg` (the committed-seed verified draw); modifies NEITHER.
+[package]
+name = "dreggnet-craft"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "A provably-fair forge: combine N owned material assets into a new output asset. The quality is a verified draw off a committed seed (a legendary is a re-derivable ~3% flex); the recipe + inputs + roll bind into the output's content address; the inputs are genuinely spent (destroyed on-chain — the economy's first real sink); a forged craft mints nothing."
+
+[lints]
+workspace = true
+
+[dependencies]
+# THE ASSET LAYER — the owned, transfer-gated, provenance-chained, content-addressed
+# note. The forge MINTS the output as a `dreggnet_asset` note owned by the crafter,
+# and SPENDS (destroys on-chain) each input note through the asset layer's own spend
+# tooth (`attempt_respend` on a live tail = a genuine committed owner-signed spend,
+# after which the asset-layer's `verify_provenance` reports the note gone). Consumed,
+# never modified.
+dreggnet-asset = { path = "../dreggnet-asset" }
+# THE FAIRNESS ANCHOR — procgen's committed-seed -> VERIFIED dregg-dice DrawStream
+# (`verified_stream` + `CommittedSeed`). The craft outcome is one indexed draw off the
+# committed craft seed, so a quality tier is re-derivable by anyone and a claimed
+# legendary is un-fakeable. Consumed as the fair roll; never modified.
+procgen-dregg = { path = "../procgen-dregg" }
+# Domain-separated hashing for the craft-seed derivation + the output's content
+# commitment (the same blake3 1.x resolved workspace-wide).
+blake3 = "1"
