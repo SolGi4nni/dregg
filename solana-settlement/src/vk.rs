@@ -1,14 +1,17 @@
 //! BN254 Groth16 verifying key for the dregg 25-lane settlement proof.
 //!
-//! GENERATED from `chain/contracts/DreggGroth16Verifier25.sol` by
-//! `scripts/gen_vk.py` -- the SAME gnark VK the live EVM DreggGroth16Verifier25
-//! embeds (Base-Sepolia 0x7FBe1D2505644e1e4D50a1B5Cf08d0AcbF60C7cD). The proof is
-//! chain-agnostic BN254; only the on-chain verifier differs. Points are re-encoded
-//! for the Solana `alt_bn128` syscalls: G1 = X||Y (64 be), G2 = X_c1||X_c0||Y_c1||Y_c0
-//! (128, EIP-197 imaginary-first). BETA/GAMMA/DELTA are the pre-negated key points
-//! (pairing eq e(A,B)e(C,-D)e(A,-B)e(L,-G)==1), lifted verbatim from the .sol.
+//! GENERATED from the canonical spec `chain/codegen/dregg_vk.json` by
+//! `chain/codegen/gen_verifiers.py` -- the ONE source the EVM/Solana/Cosmos
+//! verifiers are all generated from (the SAME gnark VK the live EVM
+//! DreggGroth16Verifier25 embeds, Base-Sepolia
+//! 0x7FBe1D2505644e1e4D50a1B5Cf08d0AcbF60C7cD). The proof is chain-agnostic
+//! BN254; only the on-chain verifier differs. Points are re-encoded for the
+//! Solana `alt_bn128` syscalls: G1 = X||Y (64 be), G2 = X_c1||X_c0||Y_c1||Y_c0
+//! (128, EIP-197 imaginary-first). BETA/GAMMA/DELTA are the pre-negated key
+//! points (pairing eq e(A,B)e(C,-D)e(A,-B)e(L,-G)==1).
 //!
-//! DO NOT EDIT BY HAND -- regenerate with `python3 scripts/gen_vk.py`.
+//! DO NOT EDIT BY HAND -- regenerate with
+//! `python3 chain/codegen/gen_verifiers.py`.
 
 /// Number of settlement public inputs (the pinned 25-lane statement).
 pub const NUM_PUBLIC_INPUTS: usize = 25;

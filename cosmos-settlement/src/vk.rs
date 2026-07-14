@@ -1,11 +1,14 @@
 //! Verification key constants for the dregg settlement Groth16 circuit (25 lanes).
 //!
-//! GENERATED — do not hand-edit. Extracted verbatim from the gnark-generated
-//! Solidity verifier `chain/contracts/DreggGroth16Verifier25.sol` (the SAME VK the
-//! EVM verifier bakes in). The G2 points are stored PRE-NEGATED exactly as the
-//! Solidity contract stores them (BETA_NEG/GAMMA_NEG/DELTA_NEG), so the pairing
-//! product is checked == 1 in GT, mirroring the EIP-197 precompile call.
-//! Coordinate order matches Solidity: G2 stores (x.c0, x.c1, y.c0, y.c1).
+//! GENERATED -- do not hand-edit. Emitted from the canonical spec
+//! `chain/codegen/dregg_vk.json` by `chain/codegen/gen_verifiers.py` -- the ONE
+//! source the EVM/Solana/Cosmos verifiers are all generated from (the SAME gnark
+//! VK the EVM `DreggGroth16Verifier25` bakes in). The G2 points are stored
+//! PRE-NEGATED (BETA_NEG/GAMMA_NEG/DELTA_NEG), so the pairing product is checked
+//! == 1 in GT, mirroring the EIP-197 precompile call. Coordinate order matches
+//! Solidity: G2 stores (x.c0, x.c1, y.c0, y.c1).
+//!
+//! Regenerate with `python3 chain/codegen/gen_verifiers.py`.
 
 /// A G1 point as decimal strings (x, y) in Fq.
 pub type G1Str = (&'static str, &'static str);
