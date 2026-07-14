@@ -462,28 +462,12 @@ fn witness_refuses_babybear_aliases_and_missing_slots() {
 // PART 3 — THE FULL FOLD (upstream-gated, #[ignore]d)
 // ============================================================================
 
-/// The full fold → `dregg_lightclient::verify_history` over a K-turn playthrough of these
-/// game turns is UPSTREAM-BLOCKED on Lane D's wide-carrier geometry. The revoked-root base
-/// widen bumped `NUM_PRE_LIMBS` 169→178 but did NOT re-derive the wide 8-felt commitment
-/// chain constants (`WIDE_NUM_CARRIERS`/`WIDE_COMMIT_CARRIER`, still the 169-limb 57/56), so
-/// each `Custom` leg panics in `fill_wide_block` ("wide chain must end on carrier 56"; actual
-/// end is carrier 59 for 178 limbs). This is entirely a `circuit/` constant relationship —
-/// game-turn-slice only CALLS the wide generator and needs NO change; its fold wiring
-/// (`tests/game_turn_slice.rs`: `game_turn_folds_and_lightclient_accepts`, guarded by the
-/// live-constant geometry gate) runs unchanged once Lane D re-derives the constants
-/// (`WIDE_NUM_CARRIERS` 57→60, `WIDE_COMMIT_CARRIER` 56→59). The met bar today is leaf-level
-/// (`game_program_leaf_accepts` + `forged_ordering_rejects`). The DRIVEN record of the block
-/// (reads the live constants, computes the required carrier count, flips RED when Lane D
-/// lands) is `wide_carrier_geometry_tripwire` in `tests/game_turn_slice.rs`.
-#[test]
-#[ignore = "BLOCKED upstream: full fold -> verify_history is gated on Lane D's wide-carrier geometry (NUM_PRE_LIMBS 178 but WIDE_NUM_CARRIERS still 57/commit-carrier 56 == the 169-limb geometry; required 60/59). See tests/game_turn_slice.rs::wide_carrier_geometry_tripwire (driven) + gate_full_fold_on_geometry. Leaf-level (prove_custom_leaf_with_commitment) is the met bar."]
-fn game_program_full_fold_gated_on_lane_d() {
-    // No fold assertions here: the rotated-leg → FinalizedTurn → prove_turn_chain_recursive →
-    // verify_history path (wired in tests/game_turn_slice.rs) is upstream-gated. The precise,
-    // driven characterization lives in wide_carrier_geometry_tripwire; running this signals the
-    // block rather than a false green.
-    panic!(
-        "upstream-gated on Lane D's wide-carrier geometry (NUM_PRE_LIMBS 178, carriers 57/56 stale \
-         vs required 60/59); see tests/game_turn_slice.rs::wide_carrier_geometry_tripwire"
-    );
-}
+// LANE-D LANDED (2026-07-14): the full fold -> dregg_lightclient::verify_history over a K-turn
+// playthrough is NO LONGER blocked. The wide-carrier geometry migration is in the TCB
+// (NUM_PRE_LIMBS=178, WIDE_NUM_CARRIERS=60 / WIDE_COMMIT_CARRIER=59, derived + const-asserted),
+// and the real multi-turn recursion fold PROVES green with verify_history ACCEPT. The headline
+// fold test lives in tests/game_turn_slice.rs::game_turn_folds_and_lightclient_accepts (+
+// forged_game_commitment_rejected), `--ignored` (SLOW ~45min on persvati). The old
+// `game_program_full_fold_gated_on_lane_d` stub — which panicked to signal the block — is removed.
+// The met bar HERE stays leaf-level (game_program_leaf_accepts + forged_ordering_rejects); the full
+// fold is exercised in the sibling test file.

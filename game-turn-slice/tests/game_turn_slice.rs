@@ -610,11 +610,11 @@ fn wide_geometry_consistent() -> bool {
     WIDE_NUM_CARRIERS == required && WIDE_COMMIT_CARRIER == required - 1
 }
 
-/// The precise, evidenced characterization of the current Lane D block (numbers computed
-/// from the live constants, not narrated). Panics from inside the guarded fold tests so a
-/// `--ignored` run shows the exact violation at the TOP of the stack, not the raw
-/// `fill_wide_block` debug-assert; auto-clears (guard returns, fold proceeds) once Lane D
-/// re-derives the wide carrier constants.
+/// REGRESSION SENTINEL (Lane-D landed 2026-07-14): while the wide-carrier geometry is
+/// consistent with `NUM_PRE_LIMBS` (it is), this is a no-op and the fold proceeds. If the
+/// geometry ever DRIFTS again, the guarded fold tests panic here with the exact census at the
+/// TOP of the stack (instead of the raw `fill_wide_block` debug-assert). Numbers computed from
+/// the live constants, not narrated.
 fn gate_full_fold_on_geometry() {
     if wide_geometry_consistent() {
         return;
@@ -638,32 +638,13 @@ fn gate_full_fold_on_geometry() {
     );
 }
 
-/// TRIPWIRE (cheap, always runs): asserts the wide-carrier geometry is CURRENTLY
-/// inconsistent with `NUM_PRE_LIMBS`. This is the honest, driven record of the Lane D block
-/// — it reads the live constants, computes the required carrier count, and prints the
-/// census. It is GREEN while the fold is blocked and flips RED the instant Lane D re-derives
-/// the constants, which is the signal to un-`#[ignore]` the full-fold headline.
-#[test]
-fn wide_carrier_geometry_tripwire() {
-    let required = required_wide_carriers(NUM_PRE_LIMBS);
-    eprintln!(
-        "\n=============== WIDE-CARRIER GEOMETRY CENSUS (driven from live constants) ===============\n\
-         \x20 NUM_PRE_LIMBS            = {NUM_PRE_LIMBS}\n\
-         \x20 required carriers        = {required}\n\
-         \x20 WIDE_NUM_CARRIERS (decl) = {WIDE_NUM_CARRIERS}\n\
-         \x20 WIDE_COMMIT_CARRIER      = {WIDE_COMMIT_CARRIER}\n\
-         \x20 consistent               = {}\n\
-         ========================================================================================\n",
-        wide_geometry_consistent(),
-    );
-    assert!(
-        !wide_geometry_consistent(),
-        "Lane D wide-carrier migration LANDED (WIDE_NUM_CARRIERS now == {required}). \
-         The full-fold block is CLEARED: un-#[ignore] `game_turn_folds_and_lightclient_accepts` \
-         + `forged_game_commitment_rejected` (they now run the real game playthrough through \
-         verify_history) and delete this tripwire."
-    );
-}
+// LANE-D LANDED (2026-07-14): the wide-carrier geometry migration is in the TCB
+// (NUM_PRE_LIMBS=178, WIDE_NUM_CARRIERS=60 / WIDE_COMMIT_CARRIER=59, derived + const-asserted),
+// and the multi-turn recursion fold below PROVES green with verify_history ACCEPT
+// (`game_turn_folds_and_lightclient_accepts` in 2675s + `forged_game_commitment_rejected` in
+// 416s, both `--ignored`, on persvati). The old `wide_carrier_geometry_tripwire` — which asserted
+// the geometry was INCONSISTENT while the fold was blocked — is removed; its job (signal the
+// migration) is done. `gate_full_fold_on_geometry()` is kept below as a regression sentinel.
 
 /// THE REAL-PROVING BOUNDARY (runnable in THIS tree — no rotated-witness path): the
 /// combat `CellProgram` lowers via `cellprogram_to_descriptor2` and PROVES as a real
