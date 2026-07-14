@@ -100,4 +100,43 @@ theorem siteLookupNarrow_replaces_site (hash : List ℤ → ℤ) (tbl : Table)
 #assert_axioms chip_lookup_sound_narrow
 #assert_axioms siteLookupNarrow_replaces_site
 
+/-! ### The narrow chip TABLE ID + table def + the site-level narrow lookup (the emit-routing unit).
+
+**Why `.custom 3` and not a fresh enum case.** The Rust decoder pins `TID_P2_NARROW = 8`
+(`descriptor_ir2.rs:263`), and its own comment records "0..7 are taken" — the narrow bus RESERVES
+the wire slot that `.custom 3` already serializes to (`TableId.wireId (.custom 3) = 5 + 3 = 8`). A
+*fresh* `TableId` constructor cannot take wire id 8 without breaking the deployed
+`TableId.wireId_injective`: `.custom n ↦ 5 + n` is a bijection onto `[5, ∞)`, so ANY fixed new id in
+that range collides with some `.custom n` (here `.custom 3`), and injectivity — quantified over all
+`n` — becomes false and un-provable. `.custom 3` is genuinely UNUSED (the deployed custom ids are
+`0/1/2` = submask/umem/umem-boundary and `64 + bits` = the width-tagged range tables), so binding it
+to the narrow bus is the faithful Lean twin of the Rust reservation, PURELY ADDITIVE: no edit to the
+`TableId` inductive, to `wireId`, or to `wireId_injective`. -/
+
+/-- The NARROW chip bus receiver's table id: the reserved `.custom 3` slot (wire id 8 =
+`descriptor_ir2.rs::TID_P2_NARROW`). Single-output hash sites route their 18-wide `[arity, ins,
+out0]` lookup here instead of the 25-wide `.poseidon2` bus. -/
+def poseidon2narrow : TableId := .custom 3
+
+/-- The NARROW Poseidon2 chip table: `1 (arity tag) + CHIP_RATE (padded inputs) + 1 (out0)` = 18
+columns — the single-output shape with NO output lanes (the 7 lane columns the wide chip carries are
+dropped for single-output sites). Served by the SAME genuine permutation rows as the wide chip. -/
+def poseidon2NarrowChipTableDef : TableDef :=
+  ⟨poseidon2narrow, "poseidon2_narrow_chip", CHIP_RATE + 1 + 1, .permutation⟩
+
+/-- The NARROW chip lookup replacing single-output site `s` of the ordered family `sites`: the
+18-wide tuple `[arity, padded inputs, digestCol]`. NO per-site lane base — narrow lookups carry no
+lane columns, so there is nothing to offset (contrast `siteLookup`'s `base`). -/
+def siteLookupNarrow (sites : List VmHashSite) (s : VmHashSite) : Lookup :=
+  { table := poseidon2narrow
+  , tuple := chipLookupTupleNarrow (s.inputs.map (HashInput.toExpr sites)) s.digestCol }
+
+-- The narrow bus rides the reserved wire slot 8 (= Rust `TID_P2_NARROW`); the table is 18-wide.
+#guard poseidon2narrow.wireId == 8
+#guard poseidon2NarrowChipTableDef.arity == 18
+#guard poseidon2NarrowChipTableDef.arity == CHIP_RATE + 1 + 1
+-- The narrow id is DISTINCT from the wide chip / main / other tables (no wire collision).
+#guard poseidon2narrow.wireId != TableId.poseidon2.wireId
+#guard (poseidon2NarrowChipTableDef.arity + (CHIP_OUT_LANES - 1)) == poseidon2ChipTableDef.arity
+
 end Dregg2.Circuit.DescriptorIR2
