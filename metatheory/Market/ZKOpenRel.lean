@@ -426,6 +426,22 @@ theorem tensor_guarded {X Y X' Y' : ZKObj R} {f : X ⟶ Y} {g : X' ⟶ Y'}
   obtain ⟨y', hy'⟩ := hg p.2
   exact ⟨(y, y'), hy, hy'⟩
 
+/-- **GUARDED ITERATION** — a clearing endomorphism's history `T^n = T ∘ ⋯ ∘ T` clears at every step. The
+guarded twin of `iterate_conservative`: guardedness was missing the iteration lemma conservation already
+had. -/
+theorem iterate_guarded {X : ZKObj R} {f : X ⟶ X} (hf : Guarded f) :
+    ∀ n, Guarded (iterate f n)
+  | 0 => id_guarded X
+  | n + 1 => comp_guarded (iterate_guarded hf n) hf
+
+/-- The turn clears (defect-free identity, diagonal is total) — the guarded twin of `turn_conservative`. -/
+theorem turn_guarded : Guarded turnMor := id_guarded unitObj
+
+/-- **THE TURN HISTORY CLEARS AND CONSERVES** — `T^n` is BOTH guarded (`iterate_guarded`) and conservative
+(`turn_history_conservative`) for every `n`: the conserving turn-stream clears at every step. -/
+theorem turn_history_guarded (n : ℕ) : Guarded (iterate turnMor n) :=
+  iterate_guarded turn_guarded n
+
 /-- **The guarded trace (feedback)** `tr_U : (X ⊗ U ⟶ Y ⊗ U) → (X ⟶ Y)` — glue the `U` output boundary
 back to the `U` input, imposing the loop `u = u` (the fed-back value). The resource grade is UNCHANGED
 (feedback is internal — it neither mints nor burns), so the GRADE side of the ring is easy. -/
@@ -791,6 +807,8 @@ now a PROVEN refutation (`guardedTraceClosure_refuted`) plus a PROVEN Tarski rep
   Market.ZKOpenRel.clearing_is_conservative, Market.ZKOpenRel.ring_auction_conservative,
   Market.ZKOpenRel.turn_conservative, Market.ZKOpenRel.turn_history_conservative,
   Market.ZKOpenRel.id_guarded, Market.ZKOpenRel.comp_guarded, Market.ZKOpenRel.tensor_guarded,
+  Market.ZKOpenRel.iterate_guarded, Market.ZKOpenRel.turn_guarded,
+  Market.ZKOpenRel.turn_history_guarded,
   Market.ZKOpenRel.gtrace_defect, Market.ZKOpenRel.gtrace_conservative,
   Market.ZKOpenRel.guardedTraceClosure_refuted, Market.ZKOpenRel.traceAdmissible_guarded,
   Market.ZKOpenRel.andFeedback_traceAdmissible, Market.ZKOpenRel.andFeedback_gtrace_guarded,
