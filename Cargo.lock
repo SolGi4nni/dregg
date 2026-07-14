@@ -5801,9 +5801,13 @@ dependencies = [
 name = "dregg-multiway-tug"
 version = "0.1.0"
 dependencies = [
+ "blake3",
  "dregg-app-framework",
  "dregg-cell",
+ "dregg-circuit",
  "dregg-schema",
+ "dreggnet-asset",
+ "procgen-dregg",
  "spween-dregg",
 ]
 
@@ -6790,8 +6794,29 @@ dependencies = [
  "dregg-app-framework",
  "dregg-cell",
  "dregg-turn",
+ "dreggnet-faction",
  "dungeon-on-dregg",
  "spween",
+ "spween-dregg",
+ "ugc-dregg",
+]
+
+[[package]]
+name = "dreggnet-saga"
+version = "0.1.0"
+dependencies = [
+ "dregg-types",
+ "dreggnet-asset",
+ "dreggnet-cheevo",
+ "dreggnet-craft",
+ "dreggnet-faction",
+ "dreggnet-guild",
+ "dreggnet-offerings",
+ "dreggnet-party",
+ "dreggnet-quest",
+ "dreggnet-trade",
+ "dungeon-on-dregg",
+ "procgen-dregg",
  "spween-dregg",
  "ugc-dregg",
 ]

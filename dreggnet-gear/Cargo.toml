@@ -1,0 +1,65 @@
+# `dreggnet-gear` — equippable, cross-cell-ownership-gated GEAR + class-gated TALENTS.
+#
+# Progression roadmap #2–3 (docs/GAME-INFRA-ROADMAP.md):
+#   GEAR   — an owned `dreggnet-asset` carrying a stat/trait block (rarity via the
+#            content-addressed traits_root). EQUIPPING gates a run/character-cell ability
+#            on OWNING + equipping the PEER gear-asset cell, via the `multicell`
+#            `ObservedFieldEquals` cross-cell primitive — "the flaming-sword ability
+#            unlocks BECAUSE you own+equip it at a finalized root" is a KERNEL predicate,
+#            not a client `if`. Gear persists across runs (the asset lineage). Durability
+#            is an optional `Monotonic` wear sink.
+#   TALENTS — the built-but-idle `spells.rs` wired into play (class-gated spells: a Mage
+#            run casts what a Warrior cannot — the class `WriteOnce` + `FieldEquals` gate)
+#            plus an echoes-gated TALENT TREE extending `meta.rs` (each talent a
+#            `FieldGte(echoes, price_k)` + `WriteOnce(boon_k)` case, some class- or
+#            prereq-gated). Talents are bought with death-earned ECHOES, never $DREGG —
+#            the no-P2W line, enforced by construction (no dregg field/method exists).
+#
+# ADDITIVE workspace member. CONSUMES dreggnet-asset (the owned asset), dungeon-on-dregg
+# (multicell / spells / progression / meta) and dregg-schema (the declared stat block).
+# Does NOT modify any of them.
+[package]
+name = "dreggnet-gear"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Equippable cross-cell-ownership-gated gear (an owned dreggnet-asset carrying a content-addressed stat block; equipping unlocks a run-cell ability via the multicell ObservedFieldEquals kernel predicate; gear persists across runs) plus class-gated talents (the wired spellbook — a Mage run casts what a Warrior cannot) and an echoes-gated talent tree. No pay-to-win: talents cost death-earned echoes, never $DREGG."
+
+[dependencies]
+# THE OWNED ASSET — gear is a real `dreggnet-asset` note: owned (the executor's
+# signature gate IS the ownership gate — a non-owner equip is a cryptographic refusal),
+# transfer-gated (double-spend-once), provenance-chained + content-addressed. The stat
+# block is committed into the mint seed, so the AssetId content-binds the gear's rarity.
+dreggnet-asset = { path = "../dreggnet-asset" }
+# THE GAME FOUNDATION — the built modules we WIRE:
+#   `multicell`   : the real cross-cell `ObservedFieldEquals` primitive the equip gate rides.
+#   `spells`      : the class-locked, mana-costed spellbook (Fireball/Mend/Rally/Backstab).
+#   `progression` : class (`WriteOnce`) / xp / level / dead — the class-gate spells lock to.
+#   `meta`        : echoes (death-earned meta-currency) + boon (`FieldGte`/`WriteOnce`) —
+#                   the tooth the talent TREE extends.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# THE VERIFIED ALLOCATOR keystone — the gear stat block is a `dregg_schema::Schema`
+# lowered by `allocate_checked` to a Legal register layout (declare components, don't
+# hand-roll a slot map). Same keystone `dreggnet-asset`'s note layout rides.
+dregg-schema = { path = "../dregg-schema" }
+# The real single-cell world substrate (`WorldCell` / `CompiledStory` / `WorldError`) —
+# the talent-tree hero cell is a `WorldCell::deploy_compiled` of the meta hero story
+# augmented with the tree, and the wired spellbook casts on it. Same `spween-dregg`
+# dungeon-on-dregg builds the spells / progression / meta cells on.
+spween-dregg = { path = "../spween-dregg" }
+# The tooth ISA + the real EmbeddedExecutor for the shared-ledger equip world (the gear
+# cell + the run cell live in ONE executor so the cross-cell gate can read the peer).
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# Cell / Permissions for assembling the gear + run cells (mirrors `multicell::world_cell`).
+dregg-cell = { path = "../cell" }
+# The `WitnessBlob` / `WitnessKind` carrier the gated equip-ability turn attaches (the
+# Merkle-open witness of the gear's finalized state, referenced by `ObservedFieldEquals`
+# at `proof_witness_index`) — same `dregg-turn` the framework + executor are built on.
+dregg-turn = { path = "../turn" }
+blake3 = "1"
+
+# A workspace MEMBER of the breadstuffs root; the root `[workspace]` + `[patch]` apply.

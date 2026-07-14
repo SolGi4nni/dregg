@@ -1,0 +1,59 @@
+# `dreggnet-companion` — an owned ASSET fused with a leveling CELL: a provable bond.
+#
+# COMPANIONS (GAME-INFRA-ROADMAP progression #5). A companion is two real things
+# fused: an OWNED `dreggnet-asset` note (identity/ownership/tradeable/un-dupable —
+# hatched from a fair draw, its rarity the draw tail) AND its own PROGRESSION cell
+# (the REAL `dungeon-on-dregg` `hero_story` leveling program — XP-gated levels + the
+# hardcore `WriteOnce` permadeath flag), hosted in a shared executor so a RUN can gate
+# a buff CROSS-CELL on it (`multicell`'s `ObservedFieldEquals`: "the buff applies
+# BECAUSE the companion is at level N" — a kernel predicate). A companion cannot be
+# faked-leveled (XP-gated), cannot be duped (the asset lineage double-spend), and its
+# bond — that you genuinely RAISED it across runs — is a provable receipt chain.
+#
+# Additive workspace member. CONSUMES `dreggnet-asset` (owned/spend asset layer),
+# `dungeon-on-dregg` (the `progression` leveling program + the `multicell`
+# cross-cell-gate pattern + the `loot` fair-draw rarity), and `procgen-dregg` (the
+# committed-seed verified draw). Modifies NONE of them.
+[package]
+name = "dreggnet-companion"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "A companion: an owned dreggnet-asset (fair-hatched, un-dupable, tradeable) fused with a real leveling cell (XP-gated levels + hardcore WriteOnce permadeath). Its buff applies cross-cell only at the required level (an ObservedFieldEquals kernel predicate); it can't be faked-leveled or duped; the bond that you genuinely raised it across runs is a provable receipt chain."
+
+[lints]
+workspace = true
+
+[dependencies]
+# THE OWNED IDENTITY — the owned, transfer-gated, provenance-chained, content-addressed
+# note. A companion is HATCHED as a `dreggnet_asset` note owned by the player's key (a
+# non-owner transfer / a double-spend is a cryptographic executor refusal), so its
+# ownership, tradeability, and un-dupability are the asset layer's. Consumed, never modified.
+dreggnet-asset = { path = "../dreggnet-asset" }
+# THE PROGRESSION + THE CROSS-CELL GATE. `progression::hero_story` is the REAL XP-gated
+# leveling program (a level-up without the earned XP is a real executor refusal; the
+# hardcore `dead` slot is `WriteOnce`-final), reused verbatim as the companion's leveling
+# cell. `multicell`'s `ObservedFieldEquals` is the cross-cell buff gate pattern, and `loot`
+# supplies the fair-draw `Rarity` a hatch's rarity is drawn from. Consumed, never modified.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# THE FAIRNESS ANCHOR — procgen's committed-seed -> VERIFIED dregg-dice DrawStream
+# (`verified_stream` + `CommittedSeed`). A hatch is one indexed draw off the committed hatch
+# seed, so a companion's rarity is re-derivable by anyone and a fair-hatched legendary is
+# un-fakeable. Consumed as the fair roll; never modified.
+procgen-dregg = { path = "../procgen-dregg" }
+# The tooth ISA: CellProgram / StateConstraint::ObservedFieldEquals / Effect /
+# EmbeddedExecutor / AppCipherclerk / AgentCipherclerk / AuthRequired / CellId / FieldElement /
+# TurnReceipt / field_from_u64 — the shared run executor the leveling + buff cells live in.
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# Cell / Permissions for assembling the leveling + buff cells in the shared run executor.
+dregg-cell = { path = "../cell" }
+# The real turn crate — the `WitnessBlob`/`WitnessKind` carrier the cross-cell buff turn
+# attaches (the Merkle-open witness referenced by the peer-cell `ObservedFieldEquals` at
+# `proof_witness_index`; its absence fails the gate closed). Not re-exported by app-framework.
+dregg-turn = { path = "../turn" }
+# Domain-separated hashing for the hatch-seed derivation + the companion's content commitment.
+blake3 = "1"
