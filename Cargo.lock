@@ -5797,6 +5797,16 @@ dependencies = [
 ]
 
 [[package]]
+name = "dregg-multiway-tug"
+version = "0.1.0"
+dependencies = [
+ "dregg-app-framework",
+ "dregg-cell",
+ "dregg-schema",
+ "spween-dregg",
+]
+
+[[package]]
 name = "dregg-narrator"
 version = "0.1.0"
 dependencies = [

@@ -1,0 +1,35 @@
+# `dregg-multiway-tug` — Phase 0 of the multiway-tug subproject: the rules of a
+# 2-player tug-of-influence card game on the REAL dregg executor. A play is a
+# cap-gated executor turn admitted IFF the game teeth pass; an illegal play is a
+# refusal; every move is a receipt.
+#
+# The underlying mechanic is derived (mechanics aren't copyrightable) from
+# Hanamikoji (designer Kota Nakayama); this crate ships an ORIGINAL re-theming
+# ("multiway-tug": guilds/influence/favors) with its own name and framing.
+#
+# Additive workspace member. Consumes dregg-schema (the verified allocator / Legal
+# layout) + spween-dregg::WorldCell (the deployed EmbeddedExecutor). Does NOT modify
+# cell / circuit / dregg-schema.
+[package]
+name = "dregg-multiway-tug"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Phase 0 of multiway-tug: a 2-player tug-of-influence card game (an original re-theming of the Hanamikoji mechanic) modeled on the real dregg executor — the state as a dregg-schema-allocated layout, the play teeth as a hand-rolled CellProgram::Cases (conservation via SumEquals, one-action-per-round via WriteOnce, monotone scores, win thresholds). A play is a verified turn; an illegal play is a WorldError::Refused."
+
+[dependencies]
+# The tooth vocabulary (CellProgram / StateConstraint / TransitionCase / TransitionGuard /
+# Effect / symbol / field_from_u64 / CellId / TurnReceipt).
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# SimpleStateConstraint + HeapAtom (the heap-keyed / disjunction atoms not re-exported
+# by the app framework).
+dregg-cell = { path = "../cell" }
+# The verified allocator (Schema -> allocate -> CheckedLayout, the RotatedLayout Legal
+# discipline) whose Legal slot/heap layout we consume for the register + collection state.
+dregg-schema = { path = "../dregg-schema" }
+# THE REAL WorldCell — the deployed executor + ledger the game deploys onto.
+spween-dregg = { path = "../spween-dregg" }
