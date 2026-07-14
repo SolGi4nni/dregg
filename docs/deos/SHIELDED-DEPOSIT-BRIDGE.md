@@ -28,18 +28,39 @@ Both runs are cited below.
   real testnet token  →   shielded note in     →   fhEgg engine +      →   wrap-adapter → chain
   locked + LC-attested    the pool, nullifier-     reveal-nothing STARK     OR unshield → release
                           gated, PQ-bound          + no-viewer MPC
-  ── PARTIAL ──            ── EXISTS ──             ── EXISTS ──             ── EXISTS (tail) ──
-  primitives real,        real + Lean-proven       engine+STARK+MPC real,   settle-back PoC'd,
-  mint-glue MISSING                                note↔order seam PoC'd     wrap-prove own-tested
+  ── EXISTS (code) ──      ── EXISTS ──             ── EXISTS ──             ── EXISTS (tail) ──
+  attest→mint glue PoC'd,  real + Lean-proven       engine+STARK+MPC real,   settle-back PoC'd,
+  escrow CONTRACT stub                              note↔order seam PoC'd     wrap-prove own-tested
 ```
 
 ---
 
-## Stage (a) — DEPOSIT: lock a real token, attest it, mint a note — **PARTIAL**
+## Stage (a) — DEPOSIT: lock a real token, attest it, mint a note — **EXISTS (code brick); escrow contract stub**
 
 A real token on a public testnet is locked in a bridge escrow; a proof of that
 lock is produced; the shielded pool consumes the proof and mints a note bound to
 the locked `(value, asset)`.
+
+**EXISTS (PoC'd, runs green) — the attestation→mint GLUE (`deposit_to_note`).**
+`circuit-prove/tests/shielded_deposit_glue_poc.rs` is the deposit-glue brick:
+`deposit_to_note = attest ∘ shieldK`. Given an attested lock (the `verify_holding` /
+`mpt_holding_leaf` output — `(asset, locked_value, chain, lock_ref)`, holding
+identity `mpt_holding_hash_felt(root, token, holder, slot, balance)`,
+`ConsensusProven`), it mints a shielded `BoundNote` bound to `(asset, value)` GATED
+on: **no-mint-without-a-valid-lock** (the holding identity must recompute — the REAL
+in-AIR Poseidon2 leaf binding — AND the trust tag must be `ConsensusProven`);
+**`value ≤ locked`** (the custody `drawMint` gate `supply + a ≤ locked`,
+`overMint_refused`); and **one-lock-one-note** (a deposit nullifier keyed on the
+lock identity, consumed once). It `recordEscrow`s the lock + `drawMint`s the note on
+a per-asset `MirrorState`, so `Σ minted ≤ Σ locked` per asset (`supply ≤ locked`).
+The PoC then COMPOSES the whole chain — the deposit notes are sealed as REAL fhEgg
+orders, cleared by the REAL engine (c), and a cleared output note unshields+releases
+(d): **deposit → shield → clear → settle over real pool notes, in one run.** Both
+polarities fire: a valid ConsensusProven lock (`value ≤ locked`) mints + clears +
+settles; a FORGED attestation (tampered locked balance ⇒ holding-hash mismatch), an
+ABSENT/unproven attestation (`trust ≠ ConsensusProven`), a MINT BEYOND THE LOCK
+(`value > locked`), and a DOUBLE-MINT against the same lock are each REJECTED. Run:
+`cargo test -p dregg-circuit-prove --test shielded_deposit_glue_poc -- --nocapture`.
 
 **EXISTS — the real-token attestation.**
 `eth-lightclient/src/bin/verify_holding.rs` is a RUNNING Ethereum light client
@@ -66,19 +87,20 @@ redeemability gap `locked − supply` invariant), and `systemValue` conserved ac
 the whole lifecycle. The red-team BR-3 gate (a mint with no backing lock →
 `MirrorError::InsufficientLocked`) is the load-bearing check.
 
-**MISSING — the wire (two gaps):**
-1. **Lock-event, not balance-snapshot.** `verify_holding` proves a *holding* (a
-   balance at a finalized root). A deposit needs a *lock event* into a specific
-   escrow contract's storage slot. The LC machinery proves arbitrary storage
-   slots, so this is a fixture/contract-address change, not new crypto — but the
-   deposit **escrow contract** itself is unbuilt.
-2. **Attestation → note-mint glue.** Nothing binds a `ProvenErc20Holding` (the LC
-   output) to `shieldK` (the note-mint, stage (b)). `InterchainCustody` mints a
-   **transparent mirror** (`drawMint` into a mirror asset), NOT a shielded note.
-   The missing constraint: *the minted note's `value_binding` opens to exactly the
-   LC-proven locked amount*, and *one lock event mints exactly one note* (a
-   deposit-dedup nullifier keyed on the lock's storage key). This equality is a
-   single circuit constraint over primitives that all exist — it is not yet written.
+**CLOSED — attestation → note-mint glue (the deposit-glue brick, above).**
+`deposit_to_note` (`shielded_deposit_glue_poc.rs`) binds the attested lock to the
+`shieldK` note-mint: the mint fires only against a valid ConsensusProven holding
+whose identity opens, the note's value is `≤` the attested locked amount (the
+`drawMint` gate), and one lock event mints exactly one note (the deposit dedup
+nullifier). The note is a REAL shielded `BoundNote`, not a transparent mirror.
+
+**REMAINING (labelled stub) — the escrow CONTRACT / lock-event, not balance-snapshot.**
+`verify_holding` proves a *holding* (a balance at a finalized root). A production
+deposit needs a *lock event* into a specific escrow contract's storage slot. The LC
+machinery proves arbitrary storage slots (real), so the deposit-glue attests the
+LC-verified holding identity + a labelled `lock_ref` (the escrow address + lock
+slot) — but the deposit **escrow contract** itself is unbuilt (its deploy is
+ember-gated). This is a contract-deploy + fixture change, not new crypto.
 
 ---
 
@@ -226,9 +248,9 @@ deployed vault contract (stage (a)).
   │  (deposit  │   +storage-slot       │  BoundNote   │   adapter     │  clear + │
   │  contract) │   lock proof          │  in the POOL │  ◀(output     │  Cert-F  │
   └────────────┘                       └──────────────┘    notes)     │  + MPC   │
-   [MISSING:                            [EXISTS:            [MISSING:  └──────────┘
-    contract +                           §6 proven]          seam]          │
-    LC→mint glue]                                                           ▼
+   [glue EXISTS,                        [EXISTS:            [seam        └──────────┘
+    contract stub]                       §6 proven]          PoC'd]         │
+                                                                            ▼
                                                               finalized_turn_from_full_turn
                                                               → wrap → on-chain  [EXISTS,
                                                                                   not yet fed]
@@ -333,11 +355,18 @@ depends on, positive polarity accepted and all three negative polarities rejecte
 nullifier, no-double-mint, no-inflation), the reveal-nothing STARK, the numeric
 clear + Cert-F settle-certificate. All cited above.
 
-**DESIGNED (primitives real, glue unbuilt):**
-- the deposit escrow contract on a testnet + the lock-event storage proof;
-- the LC-attestation → `shieldK` mint glue (the `value_binding` = LC-amount equality);
-- the note ↔ order clearing seam (the single highest-leverage next brick);
-- the clearing-turn → wrap / output-note → unshield → release settle-back path.
+**PoC'd (the glue bricks, all run green over real primitives):**
+- the LC-attestation → `shieldK` mint glue (`deposit_to_note`, stage (a) — no-mint-
+  without-a-valid-lock, `value ≤ locked`, one-lock-one-note);
+- the note ↔ order clearing seam (stage (c));
+- the output-note → unshield → release settle-back path (stage (d));
+- the full deposit → shield → clear → settle composition over real pool notes.
+
+**DESIGNED (primitives real, deploy unbuilt):**
+- the deposit escrow contract on a testnet + the lock-event storage proof (the
+  attested lock is the LC-verified holding identity + a labelled `lock_ref`);
+- the clearing-turn → wrap on-chain shrink (`finalized_turn_from_full_turn`, wired
+  in shape, own-tested).
 
 **EMBER-GATED (deploy-time, not code):**
 - the persistent federation of `n` parties for the no-viewer MPC (today: solo
@@ -345,18 +374,18 @@ clear + Cert-F settle-certificate. All cited above.
 - the actual public-testnet deploy + live tokens;
 - the VK-epoch re-key + re-genesis for the shielded-bridge descriptors.
 
-### The next concrete brick
+### The composition — all four code bricks CLOSED
 
-**The note ↔ order clearing adapter.** A `note_to_order` (seal a minted `BoundNote`
-as an fhEgg `Order`, value hidden under the commitment) + `order_to_note` (mint the
-fill as a fresh conserving output note), wired so `clear`/`allocate` over the pool's
-notes produces output notes with `Σ in = Σ out = V*`, closing
-`created_value_conservation` across the clearing. This connects stage (b) (real) to
-stage (c) (real) — the one seam that turns two proven halves into a shielded
-clearing over real pool notes. It requires no new crypto: `shieldK`/`unshieldK`,
-`clear`/`allocate`, and `created_value_conservation` all exist; the adapter is the
-translation between their data shapes.
+The four glue bricks are PoC'd and run green over real primitives:
+- (a) deposit LC→mint glue — `shielded_deposit_glue_poc.rs` (`deposit_to_note`);
+- (b) shielded hold — `ShieldedValue.lean §6` + `RealCrypto.lean` (Lean-proven);
+- (c) note↔order clearing — `shielded_clearing_note_order_poc.rs`;
+- (d) settle-back — `shielded_settle_back_poc.rs`.
 
-After that: the LC→mint glue (stage (a)), then the settle-back (stage (d)) — at
-which point a real testnet token flows all the way through the dregg circuits.
+The deposit-glue PoC composes (a)→(b)→(c)→(d) in one run — a deposited token mints a
+shielded note, clears privately, and settles, over real pool notes. What remains is
+NOT code: the on-chain escrow CONTRACT deploy (the attested lock is today the
+LC-verified holding identity + a labelled `lock_ref`), the persistent MPC federation
+for the no-viewer clearing, and the public-testnet deploy + VK-epoch re-genesis — all
+ember-gated (deploy-time).
 ```
