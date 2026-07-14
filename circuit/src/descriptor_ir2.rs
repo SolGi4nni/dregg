@@ -7735,12 +7735,50 @@ mod tests {
                 &ir2_config(),
             )
         });
+        assert_umem_forgery_refused(&desc, &rows, &boundary, "double-spend freshness");
+    }
+
+    /// A umem forgery must be refused AT THE REAL SOUNDNESS BOUNDARY — the verifier. The raw
+    /// [`prove_vm_descriptor2_inner`] here runs with `check = false` (the pre-flight replay
+    /// bypassed) so the forged multiset actually reaches the prover; the ONE Blum multiset
+    /// (`ir2_umem_check`) is what must reject it. Three refusal faces, all sound:
+    ///   * the debug prover PANICS on the unbalanced bus (`lookup/debug_util`), or
+    ///   * the assembler/prover returns `Err`, or
+    ///   * (release, where `check = false` also skips the self-verify) the prover emits a proof —
+    ///     and the VERIFIER rejects it with a `GlobalCumulativeMismatch` on `ir2_umem_check`.
+    /// Asserting on the prover's return value ALONE is a false tooth: a `check = false` proof is
+    /// unverified, so a release build would read the emitted (yet unverifiable) proof as "accepted".
+    /// The tooth is OPEN only if a produced proof VERIFIES.
+    fn assert_umem_forgery_refused(
+        desc: &EffectVmDescriptor2,
+        rows: &[Vec<BabyBear>],
+        boundary: &UMemBoundaryWitness,
+        tooth: &str,
+    ) {
+        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_vm_descriptor2_inner(
+                desc,
+                rows,
+                &[],
+                &MemBoundaryWitness::default(),
+                &[],
+                boundary,
+                false,
+                &ir2_config(),
+            )
+        }));
         match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "intra-proof double spend produced an accepted proof — freshness tooth OPEN"
-            ),
+            Err(_) => {}     // debug prover panicked on the unbalanced umem_check bus
+            Ok(Err(_)) => {} // the assembler/prover refused the forgery
+            Ok(Ok(proof)) => {
+                // The prover produced a proof (release: `check = false` skips self-verify). The
+                // soundness boundary is the CONSUMER's verify — it must reject the unbalanced bus.
+                let v = verify_vm_descriptor2(desc, &proof, &[]);
+                assert!(
+                    v.is_err(),
+                    "{tooth}: an intra-proof umem forgery produced a VERIFYING proof — tooth OPEN"
+                );
+            }
         }
     }
 
@@ -7777,25 +7815,7 @@ mod tests {
             .is_err(),
             "pre-flight replay must refuse the cross-domain steal"
         );
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &umem_trace(),
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &boundary,
-                false,
-                &ir2_config(),
-            )
-        });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "cross-domain tuple steal produced an accepted proof — domain-tag tooth OPEN"
-            ),
-        }
+        assert_umem_forgery_refused(&desc, &umem_trace(), &boundary, "cross-domain tuple steal");
     }
 
     /// THE INSERT-ONLY TOOTH: a nullifier-domain write installing `none`. The statically
@@ -7858,25 +7878,7 @@ mod tests {
             .is_err(),
             "pre-flight must refuse the dynamic un-spend"
         );
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc2,
-                &rows,
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &boundary,
-                false,
-                &ir2_config(),
-            )
-        });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "nullifier un-spend produced an accepted proof — insert-only tooth OPEN"
-            ),
-        }
+        assert_umem_forgery_refused(&desc2, &rows, &boundary, "nullifier un-spend (insert-only)");
     }
 
     /// A tampered umem READ (claims register value 43 where the write installed 42) must
@@ -7907,25 +7909,12 @@ mod tests {
             )
             .is_err()
         );
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &umem_trace(),
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &umem_test_boundary(),
-                false,
-                &ir2_config(),
-            )
-        });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "tampered umem read produced an accepted proof — Blum tooth OPEN"
-            ),
-        }
+        assert_umem_forgery_refused(
+            &desc,
+            &umem_trace(),
+            &umem_test_boundary(),
+            "tampered umem read (Blum)",
+        );
     }
 
     // ---- the `absent` (bracketed sorted-gap) realization ----
