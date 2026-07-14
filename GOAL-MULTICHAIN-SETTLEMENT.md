@@ -430,3 +430,12 @@ outward decisions.
 - **cv-patch** (9501774): subagent search-surface fixed (bare agentId + ⤷tag); verified cv search hits the real af56cb4f transcript.
 - **DESIGNS**: ZK-AUCTION-SUITE (comprehensive, starbridge-apps foundation, top-1 = the 2-leg ring-clearing AIR); SHIELDED-AUCTIONS; RECOVERED-THREADS.
 - NOW FIRING: the rotated-fixture geometry FIX (pipeline broken at HEAD, careful) + the 2-leg shielded RING-CLEARING AIR (the marquee — rung-3 now fused + real-crypto'd, so the AIR realizes it).
+
+## ⚡ ROUTING/CUSTODY ARC COMPLETE + marquee AIR (07-13, v-late) — verified
+- **INTERCHAIN-CUSTODY MODELED+PROVEN** (92aaa9dd1, InterchainCustody.lean): run_backed (Rust live_supply≤currently_locked LIFTED to inductive invariant) + custody_cross_boundary_conserves (end-to-end lock→mirror→clear→release conservation, composes DrEX clearing) + ringRelease_atomic. 21 keystones clean. THE answer to "modeling too naive" — Lean now crosses the vault boundary. VERIFIED.
+- **TIMEOUT/REFUND ESCROW on ALL 3 custody chains** (4bfc3de9e EVM+Solana, 1c0f1f212 cosmos-lock NEW): two-branch exactly-once (release-on-proof XOR refund-on-timeout), Released XOR Refunded never-both-never-stuck; escrow custody DISJOINT from mirror pool. forge 146 / solana 54 / cosmos 12. Locking into DrEX is SAFE. Residual: cross-vault ATOMIC release across a permanently-down chain = named RESEARCH.
+- **ROUTING DESIGN** (e1ca1be44, DREX-ROUTING.md): ring-of-locks (counterparties' locks ARE liquidity, no LP, no bridge validators); 3 custody modes; docs fixed (prove-don't-lock=governance-only). ember caught this gap; now designed+proven+safe.
+- **RING-CLEARING AIR** (34ae42157): rung-3 shielded_ring_clears SPEC→BUILT (2-leg, in-AIR Pedersen conservation + Poseidon2 fusion; 8/8 GENUINE circuit-UNSAT teeth). The marquee private-auction primitive runs.
+- **LAUNCHPAD GRADUATION** (d4ae11725): fair-launch→proven-solvent x·y=k pool (floor-drain reverts, refines rung-6); forge 16/16 + web 29/29 live-anvil e2e.
+- **FIXTURE-FIX** (60e49265a + swept 97a56a0ed): geometry off-by-one FIXED (exclusion subtracted stale 48; weld adds 45=REFUSE_WELD_WIDEN; verified vs 5e84c5dd4 intent + committed bytes). Fixture MINTS again; proof-regen UNBLOCKED. ⚠ FLAGGED (not green-hacked): deployed_cohort_bytes_carry_the_refuse stale (36→35 rows, custom base 1619→1623 = aa282f8c0 debt) — honest follow-up.
+- NOW FIRING: DrEX-VAULT WIRING (route end-to-end: lock→mirror→DrEX-clear→clearing-proof-gated escrow-release, now unblocked) + the stale-cohort-test HONEST resolve.
