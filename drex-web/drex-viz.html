@@ -1,0 +1,237 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>DrEX · see a fair clearing happen</title>
+<meta name="description" content="The DrEX legibility layer — SEE a verified fair clearing: the cleared circulation ring, the uniform-price crossing, the Cert-F certificate as a checkable object, and the privacy-tier reveal-diff (Open / Shielded / Dark). Driven by the real fhEgg engine.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303100b'/%3E%3Cellipse cx='16' cy='17' rx='8' ry='10' fill='none' stroke='%237df3d6' stroke-width='2'/%3E%3Cellipse cx='16' cy='18' rx='3.5' ry='4.5' fill='%23e9c98a' fill-opacity='.55'/%3E%3C/svg%3E">
+<script>
+  (function(){ try{ var t=localStorage.getItem('drex-theme'); if(t) document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
+</script>
+<style>
+  :root{
+    --plane:#f6f6f3; --surface:#fcfcfb; --ink:#0b0b0b; --ink2:#52514e; --muted:#898781;
+    --ring:rgba(11,11,11,0.10); --teal:#0c8f6e; --gold:#a9781f; --line:#e4e3dc;
+  }
+  :root[data-theme="dark"], html:not([data-theme="light"]){}
+  @media (prefers-color-scheme: dark){ :root:not([data-theme="light"]){
+    --plane:#08120d; --surface:#0d1a14; --ink:#eaf6ef; --ink2:#a9c4b7; --muted:#7f948a;
+    --ring:rgba(220,255,240,0.10); --teal:#5fe0b8; --gold:#e9c98a; --line:#183226;
+  }}
+  :root[data-theme="dark"]{
+    --plane:#08120d; --surface:#0d1a14; --ink:#eaf6ef; --ink2:#a9c4b7; --muted:#7f948a;
+    --ring:rgba(220,255,240,0.10); --teal:#5fe0b8; --gold:#e9c98a; --line:#183226;
+  }
+  *{box-sizing:border-box}
+  body{margin:0;background:var(--plane);color:var(--ink);
+    font-family:system-ui,-apple-system,"Segoe UI",sans-serif;line-height:1.5;
+    -webkit-font-smoothing:antialiased}
+  a{color:var(--teal)}
+  .top{display:flex;align-items:center;gap:12px;padding:14px 22px;border-bottom:1px solid var(--line);position:sticky;top:0;background:color-mix(in srgb,var(--plane) 88%,transparent);backdrop-filter:blur(8px);z-index:10}
+  .brand{display:flex;align-items:center;gap:9px;font-weight:800;text-decoration:none;color:var(--ink)}
+  .brand .g{color:var(--teal);font-size:19px}
+  .brand .tag{font-weight:400;color:var(--muted);font-size:13px}
+  .sp{flex:1}
+  .pill{font-size:12px;padding:4px 11px;border-radius:20px;border:1px solid var(--ring);background:var(--surface);color:var(--ink2)}
+  .pill.live{color:var(--teal);border-color:color-mix(in srgb,var(--teal) 45%,transparent)}
+  .pill.baked{color:var(--gold);border-color:color-mix(in srgb,var(--gold) 45%,transparent)}
+  .tbtn{cursor:pointer;font-size:13px;padding:5px 12px;border-radius:20px;border:1px solid var(--ring);background:var(--surface);color:var(--ink2)}
+  main{max-width:1120px;margin:0 auto;padding:26px 22px 80px}
+  .hero{margin:14px 0 30px}
+  .kick{color:var(--teal);font-weight:700;font-size:13px;letter-spacing:.08em;text-transform:uppercase}
+  h1{font-size:clamp(26px,4vw,40px);margin:8px 0 10px;letter-spacing:-.02em}
+  .lede{font-size:17px;color:var(--ink2);max-width:760px}
+  .card{background:var(--surface);border:1px solid var(--line);border-radius:16px;padding:20px 22px;margin:18px 0}
+  .card h2{font-size:20px;margin:0 0 4px;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+  .card .hint{color:var(--ink2);font-size:14px;margin:0 0 16px;max-width:820px}
+  .two{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+  @media (max-width:900px){.two{grid-template-columns:1fr}}
+  .panel{background:var(--plane);border-radius:12px;padding:14px}
+  .panel h3{font-size:14px;margin:0 0 4px}
+  .panel .ph{font-size:12px;color:var(--muted);margin:0 0 10px}
+  .seg{display:inline-flex;border:1px solid var(--ring);border-radius:9px;overflow:hidden;margin-bottom:12px}
+  .seg button{border:0;background:var(--surface);color:var(--ink2);padding:6px 14px;font-size:12.5px;cursor:pointer;font-weight:600}
+  .seg button.on{background:var(--teal);color:var(--plane)}
+  .prov{font-size:11.5px;color:var(--muted);margin-top:12px;font-family:ui-monospace,'SF Mono',Menlo,monospace;word-break:break-all;background:var(--plane);padding:9px 11px;border-radius:8px}
+  .prov b{color:var(--ink2);font-family:system-ui}
+  .stat{display:flex;gap:18px;flex-wrap:wrap;margin:2px 0 14px}
+  .stat .s{background:var(--plane);border-radius:10px;padding:9px 14px;min-width:96px}
+  .stat .sv{font-size:20px;font-weight:800;font-variant-numeric:tabular-nums}
+  .stat .sl{font-size:11px;color:var(--muted)}
+  .foot{border-top:1px solid var(--line);padding:22px;text-align:center;color:var(--muted);font-size:13px}
+  .note{font-size:12.5px;color:var(--ink2);background:color-mix(in srgb,var(--gold) 10%,transparent);border:1px solid color-mix(in srgb,var(--gold) 30%,transparent);border-radius:10px;padding:10px 13px;margin-top:12px}
+  .why{font-size:13px;color:var(--ink2);margin-top:12px;line-height:1.55}
+  #dvzStyle{}
+</style>
+</head>
+<body>
+<header class="top">
+  <a class="brand" href="index.html">
+    <span class="g">◉</span><b>DrEX</b><span class="tag">see a fair clearing happen</span>
+  </a>
+  <span class="sp"></span>
+  <span class="pill" id="srcPill" role="status">loading…</span>
+  <button class="tbtn" id="theme">◐ theme</button>
+</header>
+
+<main>
+  <section class="hero">
+    <p class="kick">the legibility layer</p>
+    <h1>Don't trust the clearing — <i>watch</i> it.</h1>
+    <p class="lede">Every panel below is drawn from the <b>real fhEgg engine</b> — the same
+      <code>fhegg_clear</code> / <code>fhegg_uniform</code> binaries the node runs, not a mock. See the
+      cleared circulation, the price crossing, the certificate a buyer can re-check themselves, and
+      the same clearing shown three ways along the privacy dial.</p>
+  </section>
+
+  <!-- ── 1. THE CLEARING, VISUALIZED ── -->
+  <section class="card">
+    <h2>1 · The clearing, visualized</h2>
+    <p class="hint">Two faces of a real cleared batch. Left: a multi-asset barter <b>ring</b> — value
+      circulates so every asset conserves (<code>Af = 0</code>), and one edge is the <b>binding
+      bottleneck</b>. Right: a single-pair <b>uniform-price</b> auction — demand meets supply and the batch
+      clears at the one volume-maximising price.</p>
+    <div class="two">
+      <div class="panel">
+        <h3>Circulation ring — why it cleared</h3>
+        <p class="ph">nodes = assets · arrows = orders (offer→want) · green = cleared flow · ◆ = the binding edge</p>
+        <div class="seg" id="ringSeg" role="tablist" aria-label="viewer">
+          <button data-v="open" class="on">Open</button>
+          <button data-v="shielded">Shielded</button>
+          <button data-v="dark">Dark</button>
+        </div>
+        <div id="ring"></div>
+        <div class="stat" id="ringStat"></div>
+        <p class="why" id="ringWhy"></p>
+      </div>
+      <div class="panel">
+        <h3>Uniform-price crossing</h3>
+        <p class="ph">demand D(j) falls, supply S(j) rises · they cross at p* = argmax min(D,S)</p>
+        <div id="cross"></div>
+        <div class="stat" id="crossStat"></div>
+        <div id="fills"></div>
+      </div>
+    </div>
+    <div class="prov" id="prov1"></div>
+  </section>
+
+  <!-- ── 2. THE CERTIFICATE, VISUALIZED ── -->
+  <section class="card">
+    <h2>2 · The certificate — the trust <span class="pill">verify me, not trust me</span></h2>
+    <p class="hint">The solver is <b>untrusted</b>. What makes its clearing trustworthy is the
+      <code>Cert-F</code> primal-dual certificate: a cheap linear object a buyer re-checks themselves.
+      <b>Weak duality</b> says <code>wᵀf ≤ cᵀs</code> always; here they <b>meet</b> (gap ≈ 0) so the clearing is
+      provably optimal, and <code>‖Af‖∞ = 0</code> proves nothing was minted. The verified AIR gate
+      <b>accepts</b> the honest certificate and <b>rejects</b> a tampered one — a cheat can't even be built.</p>
+    <div id="cert"></div>
+    <div class="prov" id="prov2"></div>
+  </section>
+
+  <!-- ── 3. THE PRIVACY-TIER REVEAL-DIFF ── -->
+  <section class="card">
+    <h2>3 · The privacy dial — one clearing, three viewers</h2>
+    <p class="hint">The single sharpest thing about DrEX: the <b>same clearing</b>, over the <b>same verified
+      kernel</b>, shown to three different viewers. <b>Open</b> shows everyone everything. <b>Shielded</b> makes
+      the world see only the proof + the public volume — the per-order flows live in the STARK witness (the
+      blur below is <i>exactly</i> what the proof hides). <b>Dark</b> keeps the inputs encrypted — no solver,
+      committee, or enclave ever sees an order. Fair, conserving, no-mint, proven is identical at every tier;
+      only what the world <i>sees</i> moves.</p>
+    <div id="tiers"></div>
+    <div class="note"><b>Honest scope.</b> Open is ≈ the DrEX that runs today. Shielded is the Stage-1
+      engine being built — its clearing-level reveal-nothing theorem is named research (the hiding-FRI
+      statistical-ZK floor). Dark is the FHE frontier, bounded by the real FHE performance envelope
+      (uniform-price / Cert-F products, bounded N, minute cadence). Each tier's label is exactly what it is.</div>
+  </section>
+</main>
+
+<footer class="foot">
+  Every number on this page is the verbatim stdout of a real fhEgg binary. Regenerate:
+  <code>cargo build -p fhegg-solver --bin fhegg_clear --bin fhegg_uniform</code> · dregg.net
+</footer>
+
+<script>
+  (function(){
+    var b=document.getElementById('theme');
+    function cur(){var t=document.documentElement.getAttribute('data-theme');return t||(matchMedia('(prefers-color-scheme: light)').matches?'light':'dark');}
+    b.onclick=function(){var n=cur()==='light'?'dark':'light';document.documentElement.setAttribute('data-theme',n);try{localStorage.setItem('drex-theme',n);}catch(e){}};
+  })();
+</script>
+<script type="module">
+  import DrexViz from './drex-viz.js';
+  import { RING as BAKED_RING, UNIFORM as BAKED_UNIFORM } from './drex-viz-data.js';
+
+  const $ = (id) => document.getElementById(id);
+  // inject the viz stylesheet + theme vars
+  const st = document.createElement('style'); st.textContent = DrexViz.styles(); document.head.appendChild(st);
+  DrexViz.applyThemeVars();
+
+  let RING = BAKED_RING, UNIFORM = BAKED_UNIFORM, ringViewer = 'open';
+
+  // Try a LIVE run of the existing /clear-shielded endpoint (real fhEgg engine via
+  // serve.mjs). Falls back to the baked real snapshot when opened as a bare file.
+  async function loadRing() {
+    const orders = BAKED_RING.orders.map(o => ({
+      trader: o.trader, offerAsset: o.offerAsset, offerAmount: o.offerAmount,
+      wantAsset: o.wantAsset, wantMin: o.wantMin, priority: o.priority,
+    }));
+    try {
+      const r = await fetch('/clear-shielded', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(orders) });
+      const j = await r.json();
+      if (j && j.solverCert && !j.error) {
+        RING = j;
+        $('srcPill').className = 'pill live';
+        $('srcPill').textContent = 'LIVE · POST /clear-shielded → fhegg_clear';
+        return;
+      }
+    } catch (_e) { /* offline / bare file — use the baked real snapshot */ }
+    $('srcPill').className = 'pill baked';
+    $('srcPill').textContent = 'baked real snapshot (serve via drex-web/serve.mjs for live)';
+  }
+
+  function drawRing() {
+    $('ring').innerHTML = DrexViz.ringGraph(RING, ringViewer);
+    const cleared = RING.orders.filter(o => o.filled);
+    const binding = RING.solverCert.f.map((f, i) => Math.abs(f - RING.solverCert.c[i]) < 1e-6 && f > 1e-6 ? i : -1).filter(i => i >= 0);
+    const bEdge = binding.length ? RING.orders[binding[0]] : null;
+    $('ringStat').innerHTML =
+      stat(RING.certificate.clearedVolume, 'cleared wᵀf') +
+      stat(cleared.length + '/' + RING.orders.length, 'orders cleared') +
+      stat(RING.certificate.conservationResidual, '‖Af‖∞ (conserved)');
+    $('ringWhy').innerHTML = bEdge
+      ? `<b>Why it cleared:</b> the ring ${cleared.map(o => o.trader).join(' → ')} closes a circulation — what each asset sends out as offers equals what it takes in as wants, so <code>Af = 0</code> and nothing is minted. The <b>binding edge is ${bEdge.trader}</b> (${bEdge.offerAsset}→${bEdge.wantAsset}, at capacity ${RING.solverCert.c[binding[0]]}) — it caps the whole ring at ${RING.orders.find(o=>o.filled).clearedFlow}. Any order with no return leg (${RING.orders.filter(o=>!o.filled).map(o=>o.trader).join(', ')||'none'}) rests.`
+      : `<b>Why it cleared:</b> value circulates so every asset conserves (<code>Af = 0</code>).`;
+  }
+  function drawCross() {
+    $('cross').innerHTML = DrexViz.crossingCurves(UNIFORM);
+    $('fills').innerHTML = DrexViz.fillBars(UNIFORM);
+    $('crossStat').innerHTML =
+      stat(UNIFORM.clearingPriceLabel, 'clearing price p*') +
+      stat(UNIFORM.clearedVolume, 'cleared V*') +
+      stat((UNIFORM.conserves ? '✓' : '✗'), 'buy = sell');
+  }
+  function drawCert() { $('cert').innerHTML = DrexViz.certificateViz(RING); }
+  function drawTiers() { $('tiers').innerHTML = DrexViz.tierReveal(RING); }
+  function stat(v, l) { return `<div class="s"><div class="sv">${v}</div><div class="sl">${l}</div></div>`; }
+
+  function drawProv() {
+    $('prov1').innerHTML = `<b>real engine output.</b> ring: <code>${escp(RING.provenance || BAKED_RING.provenance)}</code><br><b>&nbsp;</b>crossing: <code>${escp(UNIFORM.provenance)}</code>`;
+    $('prov2').innerHTML = `<b>real engine output.</b> certificate + AIR: same <code>fhegg_clear</code> run above — Cert-F <code>check_strict</code> + <code>ConstraintSystem::emit/evaluate</code> (the n+4m+1 rows Market/CertF.lean proves sound).`;
+  }
+  const escp = (s) => String(s).replace(/[&<>]/g, m => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;' }[m]));
+
+  function drawAll() { drawRing(); drawCross(); drawCert(); drawTiers(); drawProv(); }
+
+  // ring viewer toggle
+  $('ringSeg').addEventListener('click', (e) => {
+    const btn = e.target.closest('button'); if (!btn) return;
+    ringViewer = btn.dataset.v;
+    [...$('ringSeg').children].forEach(c => c.classList.toggle('on', c === btn));
+    drawRing();
+  });
+
+  DrexViz.onThemeChange(drawAll);
+  (async () => { await loadRing(); drawAll(); })();
+</script>
+</body>
+</html>
