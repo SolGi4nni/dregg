@@ -38,11 +38,47 @@
 //! can re-run [`verify_completion`] — or [`Registry::reverify_entry`] — against a
 //! universe they reconstruct independently, and get the same verdict.
 //!
+//! ## The succinct (proof-backed) path — the ZK-leaderboard accept-path
+//!
+//! There is a SECOND, additive submission variant ([`ProofCompletion`] →
+//! [`Registry::submit_proof`]) that does NOT post the moves. Instead of a
+//! [`Playthrough`], it carries a **succinct fold proof** — a `WholeChainProof` byte
+//! envelope — plus the attested public roots. The board verifies it in **O(1)** via
+//! the REAL whole-history light client ([`verify_history_bytes`]), re-witnessing
+//! nothing: no replay, no re-hash, no walk of the moves. Acceptance requires
+//! ([`verify_proof_completion`]):
+//!
+//! 1. the light client ACCEPTS the proof under the universe's pinned VK anchor (a
+//!    tampered / relabeled proof is refused here — the crypto tooth bites);
+//! 2. the attested `genesis_root` equals the universe's pinned genesis anchor (binds
+//!    THIS identically-seeded universe);
+//! 3. the attested `final_root` equals the universe's pinned **win anchor** (binds the
+//!    win predicate — the attested history reached the declared win state);
+//! 4. the claimed turns equal the attested `num_turns`.
+//!
+//! A proof-backed [`Entry`] stores ONLY the proof envelope + the attested publics + the
+//! id — **the moves are NOT stored** ([`Entry::has_moves`] is `false`;
+//! [`Entry::playthrough`] is `None`). [`Registry::reverify_entry`] re-runs the O(1)
+//! light client, never a replay. The two paths co-exist on one ranked board.
+//!
 //! ## Honest scope
 //!
-//! Verification is **O(N) replay** — a re-verifier re-executes every move. The
-//! succinct light client (verify a win in time sub-linear in the playthrough) is a
-//! separate, Lane-D-blocked workstream and is NOT claimed here.
+//! The replay path's verification is **O(N) replay** — a re-verifier re-executes every
+//! move. The proof path's verification is **O(1)** and posts no moves.
+//!
+//! What is REAL here: the succinct proof-verify accept-path (the light client's own
+//! verifier, consumed verbatim) and the *moves-not-posted* practical privacy. What is a
+//! NAMED FRONTIER, not built:
+//!
+//! * **A real multi-turn Descent RUN → a fold proof.** The proof SOURCE the driven test
+//!   folds is the light client's green in-tree recipe (a real recursive-turn chain), NOT
+//!   yet a Descent playthrough compiled to per-turn leaves. That run→leaves→fold glue is
+//!   Lane-D-blocked (the wide-carrier geometry, `WIDE_NUM_CARRIERS`; see
+//!   `game-turn-slice`). The universe's pinned genesis/win anchors are therefore set from
+//!   the fold's endpoints, standing in for a Descent run's genesis/win.
+//! * **True crypto-ZK.** The deployed STARK is *succinct*, not *hiding* — "moves not
+//!   posted" is a data-availability property, NOT "moves cryptographically hidden".
+//!   Transcript masking (zero-knowledge) is a separate workstream.
 //!
 //! ## Creator-economy foundation (this crate)
 //!
@@ -69,6 +105,9 @@
 use std::collections::BTreeMap;
 use std::fmt;
 
+use dregg_circuit::field::BabyBear;
+use dregg_circuit_prove::ivc_turn_chain::{RecursionVk, SEG_ANCHOR_WIDTH};
+use dregg_lightclient::{AttestedHistory, LightClientError, verify_history_bytes};
 use ed25519_dalek::{Signature, VerifyingKey};
 use procgen_dregg::CommittedSeed;
 use spween_dregg::{
@@ -80,6 +119,9 @@ use spween_dregg::{
 const DOMAIN_UNIVERSE_ID: &[u8] = b"ugc-dregg/universe-id/v1";
 /// Domain tag for a completion id.
 const DOMAIN_COMPLETION_ID: &[u8] = b"ugc-dregg/completion-id/v1";
+/// Domain tag for a PROOF-backed completion id (over the player + the succinct proof
+/// envelope, since a proof-backed completion posts NO moves to hash).
+const DOMAIN_PROOF_COMPLETION_ID: &[u8] = b"ugc-dregg/proof-completion-id/v1";
 /// Domain tag for an author's **attestation** — the content commitment an author
 /// ed25519-signs to bind their key to a universe (see [`AuthorId`] / [`UniversePlan`]).
 const DOMAIN_AUTHOR_SIG: &[u8] = b"ugc-dregg/author-attestation/v1";
@@ -254,6 +296,48 @@ pub struct Universe {
     /// Compiled var→slot map, for evaluating the win condition off a committed state
     /// vector without re-driving.
     var_slots: BTreeMap<String, usize>,
+    /// The **proof-backed leaderboard anchor**, if this universe accepts succinct
+    /// [`ProofCompletion`]s. `None` for a replay-only universe. Attached as CONFIG (via
+    /// [`Universe::with_proof_anchor`]); it does not change the content [`UniverseId`]
+    /// (it is a verification channel, not world content — like a distributed SNARK VK).
+    proof_anchor: Option<ProofAnchor>,
+}
+
+/// The trust anchor a **proof-backed** leaderboard pins for a universe: the light-client
+/// VK fingerprint plus the genesis state anchor this universe's runs start from and the
+/// final state anchor that encodes the **WIN**. A [`ProofCompletion`] is accepted only
+/// when [`verify_history_bytes`] succeeds under `vk` AND the attested `genesis_root` /
+/// `final_root` equal these pinned anchors ([`verify_proof_completion`]).
+///
+/// These are CONFIGURATION — held by whoever runs the board, distributed exactly like a
+/// SNARK VK, and **never read from the submitted proof** (which the submitter controls).
+/// A submitter cannot pick their own anchor to forge a win: the board compares the
+/// attested roots against the pinned ones it configured.
+#[derive(Clone, Debug)]
+pub struct ProofAnchor {
+    /// The light client's trust anchor — the honest root circuit's VK fingerprint.
+    pub vk: RecursionVk,
+    /// The genesis state anchor of this universe's identically-seeded runs. A verified
+    /// proof MUST attest a history starting here.
+    pub genesis_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    /// The final state anchor that encodes the WIN — the state a completed (won) run
+    /// reaches. A verified proof MUST attest a history ENDING here to count as a win.
+    pub win_root: [BabyBear; SEG_ANCHOR_WIDTH],
+}
+
+impl ProofAnchor {
+    /// Pin a proof-backed anchor from a VK + the genesis and win state anchors.
+    pub fn new(
+        vk: RecursionVk,
+        genesis_root: [BabyBear; SEG_ANCHOR_WIDTH],
+        win_root: [BabyBear; SEG_ANCHOR_WIDTH],
+    ) -> ProofAnchor {
+        ProofAnchor {
+            vk,
+            genesis_root,
+            win_root,
+        }
+    }
 }
 
 /// Why a universe could not be published (its scene is not a valid, deployable world).
@@ -391,6 +475,20 @@ impl Universe {
     /// The declared win condition.
     pub fn win(&self) -> &WinCondition {
         &self.win
+    }
+
+    /// Attach a [`ProofAnchor`], making this universe accept succinct
+    /// [`ProofCompletion`]s alongside replay ones. Config only — it does NOT change the
+    /// content [`UniverseId`] (a verification channel, not world content). Returns the
+    /// universe so it can be chained into [`Registry::publish`].
+    pub fn with_proof_anchor(mut self, anchor: ProofAnchor) -> Universe {
+        self.proof_anchor = Some(anchor);
+        self
+    }
+
+    /// The proof-backed anchor, if this universe accepts succinct proof completions.
+    pub fn proof_anchor(&self) -> Option<&ProofAnchor> {
+        self.proof_anchor.as_ref()
     }
 
     /// **Re-generate check** for a procgen universe: does its scene regenerate
@@ -600,6 +698,7 @@ impl UniversePlan {
             attestation,
             scene: self.scene,
             var_slots: self.var_slots,
+            proof_anchor: None,
         }
     }
 }
@@ -641,13 +740,29 @@ pub enum RejectReason {
     /// did not end, or a declared win-var did not hold). An incomplete playthrough.
     DidNotWin,
     /// The playthrough won, but the **claimed result was tampered** — the claimed
-    /// turns-to-win did not equal the verified move count.
+    /// turns-to-win did not equal the verified move count (or, for a proof completion,
+    /// the attested `num_turns`).
     ResultMismatch {
         /// What the submitter claimed.
         claimed: usize,
-        /// The verified move count.
+        /// The verified move count (or attested turn count).
         actual: usize,
     },
+    // ── proof-backed (succinct) path ──────────────────────────────────────────────
+    /// A [`ProofCompletion`] was submitted to a universe with no [`ProofAnchor`]
+    /// configured — it does not accept succinct proofs.
+    NotProofBacked,
+    /// **The succinct proof did not verify** — the whole-history light client REJECTED
+    /// it (a tampered / relabeled / foreign proof). This is the crypto no-cheat tooth
+    /// biting, at O(1), re-witnessing nothing.
+    ProofRejected(LightClientError),
+    /// The proof verified, but its attested `genesis_root` is not this universe's pinned
+    /// genesis anchor — the proof attests a DIFFERENT universe's history.
+    GenesisMismatch,
+    /// The proof verified and starts from this universe's genesis, but its attested
+    /// `final_root` is not the pinned **win anchor** — the attested history did NOT reach
+    /// the win state (the proof-path analogue of [`RejectReason::DidNotWin`]).
+    WinNotProven,
 }
 
 impl fmt::Display for RejectReason {
@@ -670,6 +785,20 @@ impl fmt::Display for RejectReason {
             RejectReason::ResultMismatch { claimed, actual } => write!(
                 f,
                 "tampered result: claimed {claimed} turns, verified {actual}"
+            ),
+            RejectReason::NotProofBacked => {
+                write!(f, "universe does not accept succinct proof completions")
+            }
+            RejectReason::ProofRejected(e) => {
+                write!(f, "succinct proof did not verify: {e}")
+            }
+            RejectReason::GenesisMismatch => write!(
+                f,
+                "proof attests a different universe's genesis than the one submitted to"
+            ),
+            RejectReason::WinNotProven => write!(
+                f,
+                "proof verified but its final root is not the universe's declared win state"
             ),
         }
     }
@@ -720,6 +849,78 @@ pub fn verify_completion(universe: &Universe, c: &Completion) -> Result<usize, R
     Ok(actual)
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// ProofCompletion — a submitted, to-be-verified SUCCINCT proof (no moves posted).
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// A **submitted proof-backed completion**: which universe, who played it, the succinct
+/// fold-proof envelope (a `WholeChainProof` serialized via `to_bytes()`), and the claimed
+/// turns-to-win. It carries **no moves** — the playthrough is not posted. Nothing here is
+/// trusted; the board verifies the proof in O(1) ([`verify_proof_completion`]).
+#[derive(Clone, Debug)]
+pub struct ProofCompletion {
+    /// The universe this completion is for (must have a [`ProofAnchor`]).
+    pub universe: UniverseId,
+    /// The player's name.
+    pub player: String,
+    /// The succinct whole-history proof envelope (`WholeChainProof::to_bytes()`). The
+    /// board decodes + verifies it against the universe's pinned VK anchor — the moves
+    /// are NOT here and never re-executed.
+    pub proof_bytes: Vec<u8>,
+    /// The player's claimed turns-to-win (verified against the attested `num_turns`).
+    pub claimed_turns: usize,
+}
+
+/// **THE SUCCINCT NO-CHEAT VERIFIER** — the proof-path analogue of [`verify_completion`],
+/// usable independently of any [`Registry`]. Verifies a proof-backed completion in
+/// **O(1)**, re-witnessing NOTHING (no replay, no re-hash, no walk of the moves):
+///
+/// 1. the universe must be proof-backed (have a [`ProofAnchor`]);
+/// 2. the whole-history light client ([`verify_history_bytes`]) must ACCEPT the proof
+///    under the universe's pinned VK anchor — a tampered/relabeled/foreign proof is
+///    refused HERE (the crypto tooth);
+/// 3. the attested `genesis_root` must equal the pinned genesis anchor (this universe);
+/// 4. the attested `final_root` must equal the pinned **win anchor** (the win predicate);
+/// 5. the claimed turns must equal the attested `num_turns`.
+///
+/// On success returns `(turns-to-win, the attested publics)` — the ranking key + the
+/// publics an [`Entry`] stores in place of the moves.
+pub fn verify_proof_completion(
+    universe: &Universe,
+    c: &ProofCompletion,
+) -> Result<(usize, AttestedHistory), RejectReason> {
+    if c.universe != universe.id {
+        return Err(RejectReason::WrongUniverse);
+    }
+    let anchor = universe
+        .proof_anchor
+        .as_ref()
+        .ok_or(RejectReason::NotProofBacked)?;
+
+    // (2) THE O(1) LIGHT-CLIENT CHECK — re-witnessing nothing. A relabeled/forged proof
+    // is refused here (Fiat–Shamir binds the publics into the carried binding proof).
+    let attested =
+        verify_history_bytes(&c.proof_bytes, &anchor.vk).map_err(RejectReason::ProofRejected)?;
+
+    // (3) Bind THIS universe's identically-seeded genesis.
+    if attested.genesis_root != anchor.genesis_root {
+        return Err(RejectReason::GenesisMismatch);
+    }
+    // (4) Bind the WIN predicate: the attested history reached the declared win state.
+    if attested.final_root != anchor.win_root {
+        return Err(RejectReason::WinNotProven);
+    }
+    // (5) Bind the claimed result to the attested turn count.
+    if c.claimed_turns != attested.num_turns {
+        return Err(RejectReason::ResultMismatch {
+            claimed: c.claimed_turns,
+            actual: attested.num_turns,
+        });
+    }
+
+    Ok((attested.num_turns, attested))
+}
+
 /// Evaluate the universe's win condition against a final committed state vector: the
 /// scene must have ENDED and every declared win-var must hold.
 fn reached_win(universe: &Universe, state: &[u64]) -> bool {
@@ -740,25 +941,76 @@ fn reached_win(universe: &Universe, state: &[u64]) -> bool {
 // The leaderboard registry.
 // ═══════════════════════════════════════════════════════════════════════════════
 
-/// One accepted, verified entry on a universe's leaderboard. It carries the recorded
-/// playthrough so anyone can INDEPENDENTLY re-verify it later.
+/// The evidence backing an accepted [`Entry`] — the two leaderboard variants.
+#[derive(Clone, Debug)]
+enum Evidence {
+    /// The REPLAY path: the full recorded playthrough is kept, so anyone can re-execute
+    /// it from scratch (O(N)).
+    Replay(Playthrough),
+    /// The SUCCINCT (ZK-leaderboard) path: **the moves are NOT stored** — only the fold
+    /// proof envelope + the attested publics. Re-verification re-runs the O(1) light
+    /// client, never a replay.
+    Proof {
+        /// The `WholeChainProof` byte envelope (`to_bytes()`).
+        proof_bytes: Vec<u8>,
+        /// The attested public roots the verified proof binds (genesis/final/digest/turns).
+        publics: AttestedHistory,
+    },
+}
+
+/// One accepted, verified entry on a universe's leaderboard. A REPLAY entry carries the
+/// recorded playthrough (re-executable from scratch); a PROOF entry carries ONLY the
+/// succinct proof envelope + the attested publics — **the moves are not stored**. Either
+/// way it is INDEPENDENTLY re-verifiable ([`Registry::reverify_entry`]).
 #[derive(Clone, Debug)]
 pub struct Entry {
     /// The player's name.
     pub player: String,
     /// The verified turns-to-win (the rank key — lower is better).
     pub turns: usize,
-    /// A content id for this completion (over the player + the receipt chain).
+    /// A content id for this completion (over the player + the receipt chain, or the
+    /// player + the proof envelope for a proof entry).
     pub completion_id: [u8; 32],
-    /// The recorded playthrough — kept so [`Registry::reverify_entry`] (or any third
-    /// party) can re-execute it from scratch.
-    play: Playthrough,
+    /// What backs this entry — a full playthrough (replay path) or a succinct proof
+    /// (proof path, moves not posted).
+    evidence: Evidence,
 }
 
 impl Entry {
-    /// The recorded playthrough behind this entry (for independent re-verification).
-    pub fn playthrough(&self) -> &Playthrough {
-        &self.play
+    /// The recorded playthrough behind a REPLAY entry, or `None` for a PROOF entry
+    /// (whose moves were never posted — the practical-privacy property).
+    pub fn playthrough(&self) -> Option<&Playthrough> {
+        match &self.evidence {
+            Evidence::Replay(play) => Some(play),
+            Evidence::Proof { .. } => None,
+        }
+    }
+
+    /// The succinct proof envelope behind a PROOF entry, or `None` for a replay entry.
+    pub fn proof_bytes(&self) -> Option<&[u8]> {
+        match &self.evidence {
+            Evidence::Proof { proof_bytes, .. } => Some(proof_bytes),
+            Evidence::Replay(_) => None,
+        }
+    }
+
+    /// The attested public roots behind a PROOF entry, or `None` for a replay entry.
+    pub fn attested(&self) -> Option<&AttestedHistory> {
+        match &self.evidence {
+            Evidence::Proof { publics, .. } => Some(publics),
+            Evidence::Replay(_) => None,
+        }
+    }
+
+    /// Whether this entry stores the moves (a replay entry) — `false` for a proof-backed
+    /// entry, whose moves are not posted.
+    pub fn has_moves(&self) -> bool {
+        matches!(self.evidence, Evidence::Replay(_))
+    }
+
+    /// Whether this entry is backed by a succinct proof (moves not posted).
+    pub fn is_proof_backed(&self) -> bool {
+        matches!(self.evidence, Evidence::Proof { .. })
     }
 }
 
@@ -899,24 +1151,59 @@ impl Registry {
             player: c.player,
             turns,
             completion_id,
-            play: c.play,
+            evidence: Evidence::Replay(c.play),
         };
+        Ok(self.rank_entry(c.universe, entry))
+    }
 
-        let board = self.boards.entry(c.universe).or_default();
+    /// **SUBMIT a succinct proof-backed completion** — the ZK-leaderboard accept-path.
+    /// The board verifies the fold proof in **O(1)** ([`verify_proof_completion`]) and
+    /// ONLY on success accepts + ranks it — WITHOUT re-executing any move. The accepted
+    /// [`Entry`] stores ONLY the proof + attested publics; **the moves are not posted**.
+    /// A tampered/forged proof, a wrong genesis, an unproven win, or a lied turn count is
+    /// REJECTED (nothing is added to the board).
+    pub fn submit_proof(&mut self, c: ProofCompletion) -> Result<Accepted, RejectReason> {
+        let universe = self
+            .universes
+            .get(&c.universe)
+            .ok_or(RejectReason::UnknownUniverse)?;
+
+        // The succinct no-cheat gate — O(1), re-witnessing nothing.
+        let (turns, publics) = verify_proof_completion(universe, &c)?;
+
+        let completion_id = proof_completion_id(&c.player, &c.proof_bytes);
+        let entry = Entry {
+            player: c.player,
+            turns,
+            completion_id,
+            // THE PRIVACY: only the proof envelope + attested publics. NO moves.
+            evidence: Evidence::Proof {
+                proof_bytes: c.proof_bytes,
+                publics,
+            },
+        };
+        Ok(self.rank_entry(c.universe, entry))
+    }
+
+    /// Insert a verified entry onto a universe's board and return its rank (shared by the
+    /// replay + proof submit paths — both rank by turns ascending on one board).
+    fn rank_entry(&mut self, universe: UniverseId, entry: Entry) -> Accepted {
+        let completion_id = entry.completion_id;
+        let turns = entry.turns;
+        let board = self.boards.entry(universe).or_default();
         board.push(entry);
         // Rank by turns ascending; stable for equal turns (insertion order preserved).
         board.sort_by_key(|e| e.turns);
-
         let rank = board
             .iter()
             .position(|e| e.completion_id == completion_id)
             .map(|i| i + 1)
             .unwrap_or(board.len());
-        Ok(Accepted {
+        Accepted {
             turns,
             completion_id,
             rank,
-        })
+        }
     }
 
     /// The **leaderboard** for a universe — accepted entries ranked by turns-to-win
@@ -928,10 +1215,12 @@ impl Registry {
             .unwrap_or_default()
     }
 
-    /// **INDEPENDENTLY re-verify** a leaderboard entry: re-execute its recorded
-    /// playthrough from scratch against a fresh world and confirm it still verifies to
-    /// the claimed win in the claimed turns. Anyone can do this; a tampered board
-    /// cannot survive it.
+    /// **INDEPENDENTLY re-verify** a leaderboard entry. For a REPLAY entry: re-execute its
+    /// recorded playthrough from scratch against a fresh world and confirm it still
+    /// verifies to the claimed win in the claimed turns (O(N)). For a PROOF entry: re-run
+    /// the O(1) whole-history light client on the stored proof against the universe's
+    /// pinned anchor — **never a replay** (the moves were never posted). Anyone can do
+    /// this; a tampered board cannot survive it either way.
     pub fn reverify_entry(
         &self,
         id: UniverseId,
@@ -946,13 +1235,27 @@ impl Registry {
             .iter()
             .find(|e| &e.completion_id == completion_id)
             .ok_or(RejectReason::UnknownUniverse)?;
-        let c = Completion {
-            universe: id,
-            player: entry.player.clone(),
-            play: entry.play.clone(),
-            claimed_turns: entry.turns,
-        };
-        verify_completion(universe, &c)
+        match &entry.evidence {
+            Evidence::Replay(play) => {
+                let c = Completion {
+                    universe: id,
+                    player: entry.player.clone(),
+                    play: play.clone(),
+                    claimed_turns: entry.turns,
+                };
+                verify_completion(universe, &c)
+            }
+            Evidence::Proof { proof_bytes, .. } => {
+                // Re-verify via the O(1) light client — re-witnessing nothing, no replay.
+                let c = ProofCompletion {
+                    universe: id,
+                    player: entry.player.clone(),
+                    proof_bytes: proof_bytes.clone(),
+                    claimed_turns: entry.turns,
+                };
+                verify_proof_completion(universe, &c).map(|(turns, _)| turns)
+            }
+        }
     }
 }
 
@@ -1104,6 +1407,15 @@ fn completion_id(player: &str, play: &Playthrough) -> [u8; 32] {
     for r in play.receipts() {
         h.update(&r.turn_hash);
     }
+    *h.finalize().as_bytes()
+}
+
+/// The content id of a **proof-backed** completion: the player + the succinct proof
+/// envelope (there are no moves to hash — the whole point of the proof path).
+fn proof_completion_id(player: &str, proof_bytes: &[u8]) -> [u8; 32] {
+    let mut h = domain_hasher(DOMAIN_PROOF_COMPLETION_ID);
+    field(&mut h, player.as_bytes());
+    field(&mut h, proof_bytes);
     *h.finalize().as_bytes()
 }
 

@@ -266,7 +266,10 @@ fn an_entry_reverifies_against_a_freshly_reconstructed_universe() {
     let independent_completion = Completion {
         universe: id,
         player: entry.player.clone(),
-        play: entry.playthrough().clone(),
+        play: entry
+            .playthrough()
+            .expect("a replay entry stores its moves")
+            .clone(),
         claimed_turns: entry.turns,
     };
     let turns = verify_completion(&independent, &independent_completion)

@@ -56,3 +56,16 @@ blake3 = "1"
 # `ed25519-dalek` the SDK/bot cipherclerk signs with, so the bot's custodial cclerk
 # key verifies here verbatim.
 ed25519-dalek = { version = "2", features = ["std"] }
+# THE SUCCINCT ACCEPT-PATH (the ZK-leaderboard half). A proof-backed completion
+# carries a `WholeChainProof` byte envelope INSTEAD of a `Playthrough`; the board
+# verifies it in O(1) via the real whole-history light client
+# (`dregg_lightclient::verify_history_bytes`) — re-witnessing NOTHING, never replaying
+# any move. We CONSUME the light client + its `AttestedHistory`; we add no crypto.
+dregg-lightclient = { path = "../lightclient" }
+# The `RecursionVk` trust anchor + `SEG_ANCHOR_WIDTH` a proof-backed universe pins as
+# CONFIG (the light-client VK fingerprint + the genesis/win state anchors), and the
+# `WholeChainProofBytes` envelope shape. We only NAME these types (store the anchor,
+# decode the envelope); the proving itself lives entirely in the circuit crates.
+dregg-circuit-prove = { path = "../circuit-prove" }
+# `BabyBear` — the field the attested state anchors (genesis/win roots) are vectors of.
+dregg-circuit = { path = "../circuit" }
