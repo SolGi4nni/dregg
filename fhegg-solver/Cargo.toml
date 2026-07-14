@@ -1,0 +1,34 @@
+[package]
+name = "fhegg-solver"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "fhEgg Stage-1 fast UNTRUSTED solver: uniform-price aggregation clearing + PDHG flow-LP, emitting the Cert-F primal-dual certificate the Lean-verified checker validates."
+
+# Standalone probe/tool crate — deliberately NOT a breadstuffs workspace member
+# (empty [workspace] opts out of the root workspace). This is the Stage-1
+# untrusted solver: it sees plaintext orders/flows and runs MAXIMALLY FAST
+# (CPU + wgpu). Privacy is the STARK-ZK/FHE stage, NOT here. Trust comes from
+# the Cert-F certificate it emits, which the separate Lean-verified checker
+# validates. Kept standalone to avoid feature-unifying wgpu onto the protocol
+# crates and to build/run the GPU benchmark locally on Metal/Vulkan.
+# See docs/deos/PRIVATE-CONVEX-ENGINE.md (§2.3 Cert-F, §2.x PDHG, §2.5
+# topology-only preconditioner) and docs/deos/FHEGG-KERNEL.md (§2 the fold + crossing).
+[workspace]
+
+[dependencies]
+wgpu = "24"
+pollster = "0.4"
+bytemuck = { version = "1", features = ["derive"] }
+rayon = "1"
+rand = "0.8"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "fhegg-bench"
+path = "src/bin/bench.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
