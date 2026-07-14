@@ -89,6 +89,15 @@ pub mod dice_combat;
 
 pub mod bloodgate;
 pub mod combat;
+/// LOOT-AS-ASSETS — a Descent reward is a real OWNED, TRANSFERABLE [`dreggnet_asset`] item,
+/// not a flat stat bump. A rare chest / boss drop is a provably-fair draw ([`dregg_dice`]
+/// over a [`procgen_dregg`]-committed seed) that MINTS a real asset owned by the player's
+/// key, with rarity = the draw distribution (a legendary is a provable ~3% flex) and
+/// provenance bound to the run + seed it dropped from. The player can then TRANSFER it
+/// (the asset layer's cryptographic owner-gate); a forged loot claim (an item without a
+/// real drop) is REFUSED before any mint. See [`loot`] for the fair-draw-mints-owned-asset
+/// / owner-gated-transfer / forged-refused teeth.
+pub mod loot;
 /// RPG CHARACTER PROGRESSION on the real substrate. XP, LEVEL and CLASS are real
 /// character-cell state; a level-up is a real turn the executor GATES on earned XP
 /// (`FieldGte(xp, threshold(L))`) so you cannot level without the XP, and a class
