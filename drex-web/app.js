@@ -53,6 +53,63 @@ function drawFlow() {
   }).join('');
 }
 
+// ── the stepper (Place → Reveal → Clear → Settle) ──
+// Purely presentational: highlights where the sealed-bid mechanic currently is,
+// so the flow is obvious. Nodes before `activeIdx` read done; `activeIdx` reads
+// active (or done when opts.complete). opts.failIdx marks a stalled step.
+function setStepper(activeIdx, opts = {}) {
+  document.querySelectorAll('.step-node').forEach((n, i) => {
+    n.classList.remove('active', 'done', 'fail');
+    n.removeAttribute('aria-current');
+    if (opts.failIdx === i) n.classList.add('fail');
+    else if (i < activeIdx) n.classList.add('done');
+    else if (i === activeIdx) { n.classList.add(opts.complete ? 'done' : 'active'); if (!opts.complete) n.setAttribute('aria-current', 'step'); }
+  });
+}
+
+// ── the proof celebration ("Settled · PROVEN") ──
+// Shown only when the live node actually attached a proof to the settlement
+// turn (a full-turn STARK proof, or a prove_pool witnessed receipt with
+// has_proof). The turn hash is copyable; the microcopy points at re-checking it
+// on the node — the guarantee comes from the math, not from us.
+function renderProofBadge(r) {
+  const el = $('proofBadge');
+  if (!el) return;
+  const proof = r.proof || {}, rc = r.receipt || {};
+  const proven = !!(proof.present || (rc && rc.hasProof));
+  if (!proven) { el.classList.remove('show'); el.innerHTML = ''; return; }
+  const h = r.turnHash || '';
+  const proofDesc = proof.mode === 'stark_full_turn'
+    ? `full-turn STARK proof · ${proof.len} bytes`
+    : proof.mode === 'witnessed_receipt'
+      ? `witnessed receipt · prove_pool (witness count ${proof.witnessCount || rc.witnessCount || 1})`
+      : 'attached by the node prove_pool';
+  el.innerHTML = `
+    <div class="proof-card">
+      <div class="crest">
+        <div class="seal" aria-hidden="true">✓</div>
+        <div class="titles">
+          <h2>Settled&nbsp;·&nbsp;<span class="badge-proven">proven</span></h2>
+          <p class="say">This batch cleared as one real turn on the live node — and math itself signed the receipt.</p>
+        </div>
+      </div>
+      <div class="rows">
+        <div class="pr"><span class="k">Turn hash</span><span class="v hash mono">${h}<button class="copybtn" id="copyHash" type="button" aria-label="Copy turn hash">copy</button></span></div>
+        <div class="pr"><span class="k">Proof</span><span class="v">has_proof: <span class="ok">true</span> · ${proofDesc}</span></div>
+        <div class="pr"><span class="k">Finality</span><span class="v">${rc.finality || '—'} · ${rc.computronsUsed ?? '—'} computrons · ${rc.actionCount ?? '—'} action(s) committed</span></div>
+        <div class="pr"><span class="k">Ledger</span><span class="v mono">${(rc.preState || '').slice(0, 14)}… → ${(rc.postState || '').slice(0, 14)}…</span></div>
+        <div class="pr"><span class="k">Node</span><span class="v">${r.node || ''} · operator ${(r.operator || '').slice(0, 14)}…</span></div>
+      </div>
+      <p class="recheck">Don't take our word for it — <b>anyone can re-run this check.</b> The proof is fetchable from the node at <span class="mono">/api/turn/${h.slice(0, 10)}…/proof</span> and re-verifies against the committed turn. The guarantee comes from the math, not from us.</p>
+    </div>`;
+  el.classList.add('show');
+  const cb = $('copyHash');
+  if (cb) cb.onclick = () => {
+    try { navigator.clipboard && navigator.clipboard.writeText(h); } catch (_e) {}
+    cb.textContent = 'copied ✓'; setTimeout(() => { cb.textContent = 'copy'; }, 1400);
+  };
+}
+
 // ── the reused confirm-intent modal ──
 function currentOrder() {
   return {
@@ -83,6 +140,8 @@ function openIntent(order) {
 // ── the full flow ──
 async function place() {
   steps.length = 0; drawFlow();
+  setStepper(0);
+  const pb = $('proofBadge'); if (pb) { pb.classList.remove('show'); pb.innerHTML = ''; }
   $('placeBtn').disabled = true;
   const order = currentOrder();
   const holdings = +$('holdings').value;
@@ -134,12 +193,13 @@ async function place() {
 
   // hold onto the order for reveal/clear
   window.__drexPending = { order, salt, commit, signed, sol, elig };
-  $('clock').innerHTML = `<span class="ok">order sealed + proven.</span> advance the batch to reveal &amp; clear.`;
+  $('clock').innerHTML = `<span class="ok">Your order is sealed and proven.</span> Open the batch to reveal every envelope at once and clear at one fair price.`;
   $('batchPill').className = 'pill warn'; $('batchPill').textContent = 'batch T+1 · ready to clear';
+  setStepper(1); // Place done → Reveal is next
   // add an advance button
   if (!$('advanceBtn')) {
     const b = document.createElement('button'); b.className = 'primary'; b.id = 'advanceBtn';
-    b.textContent = 'Advance batch → reveal & clear'; b.onclick = clearBatch;
+    b.textContent = 'Open the batch → reveal & clear →'; b.onclick = clearBatch;
     $('placeBtn').after(b);
   }
   $('placeBtn').disabled = false;
@@ -154,6 +214,7 @@ async function clearBatch() {
   const rev = await sealedReveal(p.commit, p.order, p.salt);
   step('reveal', 'Sealed-bid reveal at batch T', { state: rev.ok ? 'done' : 'fail',
     d: 'reveal (order, salt) → commitment binds: ' + rev.ok });
+  setStepper(2); // Reveal done → Clear active
 
   // Fold the trader's REVEALED order into the book (Ada's leg), so the real
   // matcher clears the order the user actually placed — not a fixed fixture.
@@ -188,12 +249,14 @@ async function clearBatch() {
   } catch (e) {
     step('match', 'Match — REAL solver unreachable', { badge: 'REAL solver.rs', state: 'fail',
       d: 'POST /clear failed: ' + e.message + ' — run the app via serve.mjs (it shells to the Rust matcher)' });
+    setStepper(2, { failIdx: 2 });
     return;
   }
 
   if (res.error || !res.ring) {
     step('match', 'Match — no clearing ring', { badge: 'REAL solver.rs', state: 'fail',
       d: res.error || res.provenance || 'the real matcher found no ring over this book' });
+    setStepper(2, { failIdx: 2 });
     if (res.allocations) renderClearedReal(res);
     return;
   }
@@ -224,6 +287,7 @@ async function clearBatch() {
 // committed receipt, and the ledger state come back FROM the node.
 async function settleOnLiveNode(cleared) {
   if (!cleared || !cleared.ring) return;
+  setStepper(3); // Clear done → Settle active
   step('node', 'Settle on the LIVE node — real turn → effect-VM → prove_pool',
     { badge: 'REAL node', state: 'active',
       d: 'POST /settle → node /turn/submit: the clearing settles as one real turn…' });
@@ -236,6 +300,7 @@ async function settleOnLiveNode(cleared) {
   } catch (e) {
     step('node', 'Settle on the LIVE node — proxy error', { badge: 'REAL node', state: 'fail',
       d: 'POST /settle failed: ' + e.message });
+    setStepper(3, { failIdx: 3 });
     return;
   }
 
@@ -248,11 +313,13 @@ async function settleOnLiveNode(cleared) {
          + '  the clearing shown is the REAL verified solver, but it did NOT land on a node this run.\n'
          + '  start one:  dregg-node run --port 8420 --enable-faucet --prove-turns' });
     $('nodePill') && ($('nodePill').className = 'pill warn', $('nodePill').textContent = 'node: offline · local matcher');
+    setStepper(3, { failIdx: 3 });
     return;
   }
   if (!r.accepted) {
     step('node', 'Settle on the LIVE node — turn not accepted', { badge: 'REAL node', state: 'fail',
       d: `node ${r.node} rejected the settlement turn: ${r.error || 'unknown'}` });
+    setStepper(3, { failIdx: 3 });
     return;
   }
 
@@ -272,6 +339,12 @@ async function settleOnLiveNode(cleared) {
      + `  ${proofLine}\n`
      + `  ledger state now reflects the clear: cell fields = [${(cell.fields || []).map((f) => f.slice(0, 6)).join(', ')}]  (SetField writes read back from the node)` });
   if ($('nodePill')) { $('nodePill').className = 'pill live'; $('nodePill').textContent = 'node: live · turn committed + proven'; }
+  // celebrate the proof moment — the sealed-bid trade cleared and math signed the receipt.
+  renderProofBadge(r);
+  const provenNow = !!(proof.present || (rc && rc.hasProof));
+  setStepper(3, { complete: provenNow });
+  if (!provenNow) setStepper(3, { failIdx: 3 }); // committed-but-unattested: honest, not a celebration
+  if ($('batchPill') && provenNow) { $('batchPill').className = 'pill live'; $('batchPill').textContent = 'batch T+1 · settled · proven'; }
 }
 
 // Render the REAL clearing (JSON from POST /clear → the drex_clear binary).
@@ -298,6 +371,7 @@ function renderClearedReal(res) {
        <div class="bar"><span style="width:100%;background:${color[c.asset]||'#58a6ff'}"></span></div>`).join('');
     html += '</div>';
   }
+  $('cleared').classList.remove('empty');
   $('cleared').innerHTML = html;
 }
 
@@ -319,6 +393,7 @@ const tick = () => new Promise(r => setTimeout(r, 30));
 (async function boot() {
   renderBook(false);
   renderFairness();
+  setStepper(0);
   $('placeBtn').onclick = place;
   // probe the live node so the header shows whether settlement will land on-chain
   fetch('/node/status').then((r) => r.json()).then((s) => {

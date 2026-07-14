@@ -3,176 +3,242 @@
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1">
-<title>DrEX · Dragon's EXchange</title>
-<style>
-  :root{
-    --bg:#0d1117;--bg2:#161b22;--bg3:#0a0e14;--line:#21262d;--fg:#c9d1d9;--muted:#8b949e;
-    --accent:#58a6ff;--green:#3fb950;--red:#f85149;--orange:#f0883e;--purple:#bc8cff;--dragon:#a78bfa;
-    --proved:#238636;--attested:#1f6feb;--replay:#8957e5;--notbatch:#484f58;
-  }
-  *{box-sizing:border-box}
-  html,body{margin:0;height:100%;background:var(--bg);color:var(--fg);
-    font:13px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
-  a{color:var(--accent)}
-  header{display:flex;align-items:center;gap:14px;padding:11px 18px;border-bottom:1px solid var(--line);background:var(--bg3)}
-  header h1{font-size:16px;margin:0;color:var(--dragon);letter-spacing:.2px}
-  header h1 small{color:var(--muted);font-weight:normal;font-size:11px;margin-left:6px}
-  .grow{margin-left:auto}
-  .pill{font-size:11px;padding:3px 10px;border-radius:11px;border:1px solid var(--line);color:var(--muted)}
-  .pill.live{border-color:var(--green);color:var(--green)}
-  .pill.warn{border-color:var(--orange);color:var(--orange)}
-  #wrap{display:grid;grid-template-columns:340px 1fr 400px;gap:0;height:calc(100vh - 46px)}
-  .col{padding:14px 16px;overflow-y:auto}
-  .col.rail{border-right:1px solid var(--line);background:var(--bg3)}
-  .col.side{border-left:1px solid var(--line);background:var(--bg3)}
-  h2{font-size:12px;color:var(--accent);margin:0 0 10px;text-transform:uppercase;letter-spacing:.06em}
-  h3{font-size:11px;color:var(--green);border-bottom:1px solid var(--line);padding-bottom:4px;margin:20px 0 8px;text-transform:uppercase;letter-spacing:.05em}
-  .card{border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:11px;margin-bottom:9px}
-  .ord{display:grid;grid-template-columns:1fr auto;gap:2px 8px;align-items:center}
-  .ord .t{color:var(--accent);font-weight:600}
-  .ord .m{color:var(--muted);font-size:11px}
-  .ord .sealed{color:var(--dragon);font-size:10px;border:1px solid var(--dragon);border-radius:9px;padding:1px 7px}
-  .ord.mine{border-color:var(--orange)}
-  .bal{color:var(--orange)}
-  label{display:block;font-size:11px;color:var(--muted);margin:9px 0 3px;text-transform:uppercase;letter-spacing:.04em}
-  input,select{width:100%;background:var(--bg3);border:1px solid var(--line);border-radius:6px;color:var(--fg);
-    padding:7px 9px;font:13px ui-monospace,monospace}
-  input:focus,select:focus{outline:none;border-color:var(--accent)}
-  .row2{display:grid;grid-template-columns:1fr 1fr;gap:8px}
-  button{width:100%;padding:11px;border:none;border-radius:8px;font:600 13px ui-monospace,monospace;cursor:pointer;transition:.15s}
-  .primary{background:var(--dragon);color:#12121f;margin-top:14px}
-  .primary:hover{background:#c4b1ff}
-  .primary:disabled{opacity:.4;cursor:not-allowed}
-  .ghost{background:#21262d;color:var(--fg)}
-  .ghost:hover{background:#2d333b}
-  /* flow log */
-  #flow .step{border-left:2px solid var(--line);padding:6px 0 6px 12px;margin-left:4px;position:relative}
-  #flow .step.done{border-color:var(--green)}
-  #flow .step.active{border-color:var(--dragon)}
-  #flow .step.fail{border-color:var(--red)}
-  #flow .step .h{color:var(--fg);font-weight:600}
-  #flow .step .d{color:var(--muted);font-size:11px;white-space:pre-wrap;word-break:break-all;margin-top:2px}
-  #flow .step .real{font-size:10px;color:var(--green);border:1px solid var(--green);border-radius:8px;padding:0 6px;margin-left:6px}
-  #flow .step .mirror{font-size:10px;color:var(--orange);border:1px solid var(--orange);border-radius:8px;padding:0 6px;margin-left:6px}
-  /* fairness grades */
-  .fair{border:1px solid var(--line);border-radius:8px;padding:9px 10px;margin-bottom:8px;background:var(--bg2)}
-  .fair .lab{font-weight:600}
-  .fair .det{color:var(--muted);font-size:11px;margin:3px 0 6px}
-  .fair .cite{color:#6e7681;font-size:10px}
-  .chip{display:inline-block;font-size:9.5px;font-weight:700;letter-spacing:.05em;border-radius:5px;padding:1px 6px;margin-right:5px;color:#fff}
-  .chip.PROVED{background:var(--proved)} .chip.ATTESTED{background:var(--attested)}
-  .chip.REPLAYABLE{background:var(--replay)} .chip.NOTBATCH{background:var(--notbatch);color:#c9d1d9}
-  /* clearing */
-  .alloc{display:grid;grid-template-columns:auto 1fr auto;gap:3px 10px;align-items:center;font-size:12px;padding:5px 0;border-bottom:1px solid var(--line)}
-  .alloc:last-child{border-bottom:none}
-  .alloc .who{color:var(--accent)} .alloc.mine .who{color:var(--orange)}
-  .ok{color:var(--green)} .no{color:var(--red)}
-  .leg{color:var(--muted);font-size:11px}
-  .barwrap{margin-top:10px}
-  .bar{height:9px;border-radius:5px;background:var(--bg3);overflow:hidden;margin:3px 0 8px;border:1px solid var(--line)}
-  .bar > span{display:block;height:100%}
-  /* modal — the reused confirm-intent card */
-  #modal{position:fixed;inset:0;background:rgba(4,6,12,.72);display:none;align-items:center;justify-content:center;z-index:20}
-  #modal.show{display:flex}
-  .intent{width:420px;max-width:92vw;background:#1a1a2e;border:1px solid #2a2a4a;border-radius:12px;padding:22px;color:#e0e0e0;
-    box-shadow:0 20px 60px rgba(0,0,0,.5)}
-  .intent h1{font-size:17px;color:var(--dragon);margin:0 0 4px}
-  .intent .sub{font-size:12px;color:#9ca3af;margin-bottom:16px}
-  .intent .box{background:#16213e;border-radius:8px;padding:14px;margin-bottom:14px}
-  .intent .r{display:flex;justify-content:space-between;gap:14px;padding:6px 0;border-bottom:1px solid #2a2a4a;font-size:12px}
-  .intent .r:last-child{border-bottom:none}
-  .intent .r .k{color:#9ca3af;text-transform:uppercase;font-size:10px;letter-spacing:.05em}
-  .intent .r .v{text-align:right;word-break:break-all}
-  .intent .expl{background:#0f172a;border:1px solid #374151;border-radius:8px;padding:11px;font-size:11px;color:#a5d6ff;
-    white-space:pre-wrap;word-break:break-all;margin-bottom:14px;max-height:150px;overflow:auto}
-  .intent .btns{display:flex;gap:10px}
-  .intent .btns button{padding:11px}
-  #acceptBtn{background:#4ade80;color:#12121f}
-  #rejectBtn{background:#374151;color:#e0e0e0}
-  .nonce{font-size:10px;color:#6e7681;margin-top:10px;text-align:center}
-  .mono{font-family:ui-monospace,monospace}
-  .fade{color:var(--muted)}
-  .banner{font-size:11px;color:var(--orange);background:#1c1408;border:1px solid #4d3410;border-radius:7px;padding:7px 10px;margin-bottom:12px}
-</style>
+<title>DrEX · a fair place to trade</title>
+<meta name="description" content="The Dragon's EXchange — a sealed-bid batch market where nobody can jump ahead of your order, everyone pays one fair price, and the fairness is proven, not promised.">
+<link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='7' fill='%2303100b'/%3E%3Cellipse cx='16' cy='17' rx='8' ry='10' fill='none' stroke='%237df3d6' stroke-width='2'/%3E%3Cellipse cx='16' cy='18' rx='3.5' ry='4.5' fill='%23e9c98a' fill-opacity='.55'/%3E%3C/svg%3E">
+<link rel="stylesheet" href="styles.css">
+<script>
+  // theme: honour the saved choice; otherwise follow the OS. Set before paint.
+  (function(){ try{ var t=localStorage.getItem('drex-theme'); if(t) document.documentElement.setAttribute('data-theme',t); }catch(e){} })();
+</script>
 </head>
 <body>
-<header>
-  <h1>◈ DrEX <small>Dragon's EXchange · sealed-bid batch clearing</small></h1>
-  <span class="grow"></span>
-  <span class="pill" id="walletPill">wallet: connecting…</span>
-  <span class="pill" id="nodePill">node: probing…</span>
-  <span class="pill live" id="batchPill">batch T+1 · sealed</span>
+
+<!-- ── top bar ─────────────────────────────────────────────────────────── -->
+<header class="top">
+  <a class="brand" href="#top">
+    <span class="glyph" aria-hidden="true">◉</span>
+    <b>DrEX</b>
+    <span class="tag">a fair place to trade</span>
+  </a>
+  <span class="spacer"></span>
+  <div class="controls">
+    <span class="pill" id="walletPill" role="status" aria-live="polite">wallet: connecting…</span>
+    <span class="pill" id="nodePill" role="status" aria-live="polite">node: probing…</span>
+    <span class="pill live" id="batchPill">batch T+1 · sealed</span>
+    <button class="themeToggle" id="themeToggle" type="button" aria-label="Switch between dark and light">
+      <span class="ico" aria-hidden="true">◐</span><span id="themeLabel">theme</span>
+    </button>
+  </div>
 </header>
 
-<div id="wrap">
-  <!-- ── left: sealed order book / batch state ── -->
-  <section class="col rail">
-    <h2>Sealed batch · order book</h2>
-    <div class="banner">Sealed-bid: orders are committed as <span class="mono">H(order‖salt)</span> and hidden until batch T. Revealed amounts appear at clear time.</div>
-    <div id="book"></div>
-    <h3>Batch clock</h3>
-    <div class="card"><div id="clock" class="fade">commit window open — place your order</div></div>
+<main class="page" id="top">
+
+  <!-- ── welcome ───────────────────────────────────────────────────────── -->
+  <section class="welcome">
+    <p class="kicker">the dragon's exchange</p>
+    <h1>a fair place to trade<span class="dot">.</span></h1>
+    <p class="lede">
+      DrEX gathers everyone's orders in a <b>sealed envelope</b>, opens them all at
+      the same instant, and clears the batch at <b>one fair price</b> — so no bot can
+      race ahead of you, and the fairness is a receipt you can re-check, not a promise
+      you have to trust.
+    </p>
+    <div class="assurances">
+      <div class="assurance">
+        <span class="em" aria-hidden="true">✉️</span>
+        <h3>sealed envelopes</h3>
+        <p>Your order is hidden until the batch opens — so <b>there's no line to cut</b> and nothing for a bot to jump.</p>
+      </div>
+      <div class="assurance">
+        <span class="em" aria-hidden="true">⚖️</span>
+        <h3>one fair price</h3>
+        <p>Everyone in a batch trades on the exact same terms. <b>No first to win, no last to lose.</b></p>
+      </div>
+      <div class="assurance">
+        <span class="em" aria-hidden="true">🧾</span>
+        <h3>a receipt math vouches for</h3>
+        <p>Every clear settles as a proof a machine can check, step by step. <b>Trust nothing; verify.</b></p>
+      </div>
+    </div>
   </section>
 
-  <!-- ── center: ticket + flow ── -->
-  <section class="col">
-    <h2>Place a sealed order</h2>
-    <div class="card">
-      <div class="row2">
-        <div><label>Sell</label><input id="sellAmt" value="100"></div>
-        <div><label>Asset</label><select id="sellAsset"><option>GOLD</option><option>ART</option><option>WINE</option><option>SILVER</option></select></div>
-      </div>
-      <div class="row2">
-        <div><label>Want ≥</label><input id="wantMin" value="10"></div>
-        <div><label>Asset</label><select id="wantAsset"><option>ART</option><option>WINE</option><option>GOLD</option><option>PEARL</option></select></div>
-      </div>
-      <div class="row2">
-        <div><label>Limit rate</label><input id="limit" value="1/2"></div>
-        <div><label>Your holdings</label><input id="holdings" value="120"></div>
-      </div>
-      <button class="primary" id="placeBtn" disabled>Review &amp; approve in cipherclerk →</button>
+  <!-- ── the stepper ───────────────────────────────────────────────────── -->
+  <ol class="stepper" id="stepper" aria-label="How a sealed trade flows">
+    <li class="step-node active" data-step="0">
+      <span class="num"><span class="n">1</span></span>
+      <span class="txt"><span class="lab">Place sealed order</span>
+        <span class="sub">seal your bid; the wallet signs it and proves it can cover it</span></span>
+    </li>
+    <li class="step-node" data-step="1">
+      <span class="num"><span class="n">2</span></span>
+      <span class="txt"><span class="lab">Reveal</span>
+        <span class="sub">at batch close, every envelope opens at the same instant</span></span>
+    </li>
+    <li class="step-node" data-step="2">
+      <span class="num"><span class="n">3</span></span>
+      <span class="txt"><span class="lab">Clear</span>
+        <span class="sub">the real matcher finds one fair multilateral ring</span></span>
+    </li>
+    <li class="step-node" data-step="3">
+      <span class="num"><span class="n">4</span></span>
+      <span class="txt"><span class="lab">Settle</span>
+        <span class="sub">the clear lands as one proven turn on a live node</span></span>
+    </li>
+  </ol>
+
+  <!-- ── workspace ─────────────────────────────────────────────────────── -->
+  <div class="workspace">
+
+    <!-- left: your order + the sealed book -->
+    <div class="stack">
+      <section class="card" aria-labelledby="ticketH">
+        <h2 id="ticketH">Place a sealed order</h2>
+        <p class="hint">Write your order and seal it. Nobody — not even the exchange — reads it until the batch opens.</p>
+        <div class="row2">
+          <div><label for="sellAmt">Sell</label><input id="sellAmt" value="100" inputmode="numeric"></div>
+          <div><label for="sellAsset">Asset</label><select id="sellAsset"><option>GOLD</option><option>ART</option><option>WINE</option><option>SILVER</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label for="wantMin">Want at least</label><input id="wantMin" value="10" inputmode="numeric"></div>
+          <div><label for="wantAsset">Asset</label><select id="wantAsset"><option>ART</option><option>WINE</option><option>GOLD</option><option>PEARL</option></select></div>
+        </div>
+        <div class="row2">
+          <div><label for="limit">Limit rate</label><input id="limit" value="1/2"></div>
+          <div><label for="holdings">Your holdings</label><input id="holdings" value="120" inputmode="numeric"></div>
+        </div>
+        <button class="primary" id="placeBtn" disabled>Review &amp; seal in your wallet →</button>
+        <p class="readout" id="clock">Commit window open — write your order and seal it.</p>
+      </section>
+
+      <section class="card" aria-labelledby="bookH">
+        <h2 id="bookH">The sealed batch</h2>
+        <div class="note">Every order is committed as <span class="mono">H(order‖salt)</span> and stays hidden until batch T. Revealed amounts appear only at clear time — the same instant, for everyone.</div>
+        <div id="book"></div>
+      </section>
     </div>
 
-    <h2 style="margin-top:22px">Wallet flow — what actually runs</h2>
-    <div id="flow"></div>
+    <!-- right: what runs → the proof → the clearing → why it's fair -->
+    <div class="stack">
+      <section class="card" aria-labelledby="flowH">
+        <h2 id="flowH">What actually runs</h2>
+        <p class="hint">Not a story — the real engine. Your wallet really signs and really proves; the matcher and the node are the real Rust pipeline.</p>
+        <div id="flow"></div>
+      </section>
+
+      <!-- the proof celebration — revealed on a proven settle -->
+      <div id="proofBadge" aria-live="polite"></div>
+
+      <section class="card" aria-labelledby="clearedH">
+        <h2 id="clearedH">Cleared batch</h2>
+        <div id="cleared" class="empty">No batch cleared yet — seal an order, then advance the batch to reveal and clear at a fair price.</div>
+      </section>
+
+      <section class="card" aria-labelledby="fairH">
+        <h2 id="fairH">Why it's fair</h2>
+        <p class="legend">Every claim is graded, honestly:
+          <span class="chip PROVED">PROVED</span> a machine-checked theorem ·
+          <span class="chip ATTESTED">ATTESTED</span> your wallet's real crypto ·
+          <span class="chip REPLAYABLE">REPLAYABLE</span> recomputed here, this batch ·
+          <span class="chip NOTBATCH">NOT-IN-THIS-BATCH</span> proven, not exercised now.
+        </p>
+        <div id="fair"></div>
+      </section>
+    </div>
+  </div>
+
+  <!-- ── the honest floor ──────────────────────────────────────────────── -->
+  <section class="honest">
+    <div class="head">
+      <h2>where it honestly stands</h2>
+      <p>The same discipline as the rest of dregg: what's proven, what's running, and what's still coming — each said out loud, in place. This is not open for real-money trading, and we won't pretend it is until it is.</p>
+    </div>
+    <div class="rows">
+      <div class="hrow">
+        <span class="name">The rules are proven</span>
+        <span class="desc">Money is conserved, every trader's limits are respected, and a batch clears all-at-once or not at all — machine-checked theorems, not tests. An unfair or money-minting clearing can't even be built.</span>
+        <span class="badge proved">proved</span>
+      </div>
+      <div class="hrow">
+        <span class="name">Every clear is a verified turn</span>
+        <span class="desc">When a batch clears, it settles as one real, proof-carrying step on a live node — checked by the same engine that runs the rest of dregg, not a script that could lie.</span>
+        <span class="badge running">running</span>
+      </div>
+      <div class="hrow">
+        <span class="name">A clickable demo</span>
+        <span class="desc">Seal an order, watch your own wallet really sign it and really prove it can cover it, then watch the batch reveal and clear at a fair price — each step showing the real engine behind it.</span>
+        <span class="badge running">running</span>
+      </div>
+      <div class="hrow">
+        <span class="name">Open to everyone</span>
+        <span class="desc">Today it runs as a single developer instance you can stand up yourself — not yet a public exchange anyone can walk up to. That opening-up is a named, in-progress step.</span>
+        <span class="badge coming">coming</span>
+      </div>
+      <div class="hrow">
+        <span class="name">An outside security review</span>
+        <span class="desc">The core is machine-checked, but no independent firm has audited the whole system yet. We say so on every page. Don't put anything you can't lose on it today.</span>
+        <span class="badge coming">coming</span>
+      </div>
+      <div class="hrow">
+        <span class="name">Real-value trading</span>
+        <span class="desc">Trading things of real value — and settling across other chains by proof — is a separate lane still being built. Right now DrEX proves the fair-market machinery; it is not a live money market.</span>
+        <span class="badge coming">coming</span>
+      </div>
+    </div>
+    <div class="floornote">
+      <span class="sig" aria-hidden="true">▚</span>
+      <span class="body"><b>see it clear</b>&nbsp; the fairness here is something you can check, not something to believe. Seal an order above and watch the batch reveal, clear, and settle as a proof anyone can re-run.</span>
+    </div>
   </section>
 
-  <!-- ── right: fairness + clearing ── -->
-  <section class="col side">
-    <h2>Cleared batch</h2>
-    <div id="cleared" class="fade">no batch cleared yet — place a sealed order and advance the batch.</div>
-    <h3>Why it's fair</h3>
-    <div class="fade" style="font-size:11px;margin-bottom:10px">Every claim graded:
-      <span class="chip PROVED">PROVED</span>Lean theorem ·
-      <span class="chip ATTESTED">ATTESTED</span>wallet crypto ·
-      <span class="chip REPLAYABLE">REPLAYABLE</span>recomputed here ·
-      <span class="chip NOTBATCH">NOT-IN-THIS-BATCH</span></div>
-    <div id="fair"></div>
-  </section>
-</div>
+</main>
+
+<footer class="foot">
+  <span><span class="glyph" aria-hidden="true">🐉</span> proof, spoken aloud</span>
+  <span>·</span>
+  <span>no middle to trust · one price for all</span>
+  <span>·</span>
+  <span>dregg.net</span>
+</footer>
 
 <!-- ── the reused confirm-intent card (extension/confirm-intent.html) ── -->
-<div id="modal">
+<div id="modal" role="dialog" aria-modal="true" aria-labelledby="intentTitle">
   <div class="intent">
-    <h1>Sign order · Dragon's Egg Cipherclerk</h1>
-    <p class="sub">A page asks your cipherclerk to place this SEALED order. This is exactly what it does:</p>
+    <h1 id="intentTitle">Sign order · Dragon's Egg Cipherclerk</h1>
+    <p class="sub">A page is asking your wallet to seal this order. This is exactly what it does — nothing else:</p>
     <div class="box">
-      <div class="r"><span class="k">Origin</span><span class="v" style="color:#fbbf24">drex.local</span></div>
+      <div class="r"><span class="k">Origin</span><span class="v" style="color:var(--gold)">drex.local</span></div>
       <div class="r"><span class="k">Action</span><span class="v">drex_place_order</span></div>
       <div class="r" id="mSell"><span class="k">Sell</span><span class="v"></span></div>
       <div class="r" id="mWant"><span class="k">Want</span><span class="v"></span></div>
       <div class="r" id="mLimit"><span class="k">Limit</span><span class="v"></span></div>
-      <div class="r"><span class="k">Sealed</span><span class="v" style="color:#a78bfa">until batch T+1</span></div>
+      <div class="r"><span class="k">Sealed</span><span class="v" style="color:var(--teal-deep)">until batch T+1</span></div>
     </div>
     <div class="expl" id="mExpl"></div>
     <div class="btns">
-      <button id="rejectBtn">Reject</button>
+      <button class="ghost" id="rejectBtn">Reject</button>
       <button id="acceptBtn">Approve &amp; sign</button>
     </div>
     <div class="nonce" id="mNonce"></div>
   </div>
 </div>
 
+<script>
+  // theme toggle — flip data-theme and remember it.
+  (function(){
+    var btn=document.getElementById('themeToggle'), lab=document.getElementById('themeLabel');
+    function cur(){ var t=document.documentElement.getAttribute('data-theme');
+      if(t) return t; return matchMedia('(prefers-color-scheme: light)').matches?'light':'dark'; }
+    function paint(){ lab.textContent = cur()==='light' ? 'light' : 'dark'; }
+    paint();
+    btn.addEventListener('click', function(){
+      var next = cur()==='light' ? 'dark' : 'light';
+      document.documentElement.setAttribute('data-theme', next);
+      try{ localStorage.setItem('drex-theme', next); }catch(e){}
+      paint();
+    });
+  })();
+</script>
 <script type="module" src="app.js"></script>
 </body>
 </html>
