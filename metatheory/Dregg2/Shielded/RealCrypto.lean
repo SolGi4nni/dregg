@@ -159,6 +159,55 @@ theorem demo_hidden_conservation_pedersen :
     [{ value := 3, blinding := 2, bits := [] }, { value := 4, blinding := 1, bits := [] }]
     [{ value := 7, blinding := 3, bits := [] }] <;> decide
 
+/-! ### §1.2 — the in-AIR RANGE GADGET's meaning: field conservation + range ⇒ INTEGER conservation.
+
+The circuit realization (`circuit-prove/src/shielded_ring_clearing_air.rs`, clause (c)) enforces the
+conservation `Σ value_in − Σ value_out = 0` as a BabyBear FIELD gate. A field equation ALONE is NOT
+integer conservation: a value-minting ring can satisfy `Σ value_in ≡ Σ value_out (mod p)` by
+WRAPAROUND (an output committed to `p − k`, a "wrapped negative"), minting real value while the field
+sum stays fixed. The AIR's in-AIR RANGE GADGET bit-decomposes every conservation value into
+`[0, 2^k)` with `RING_LEGS · 2^k ≤ p` — which is exactly what forces the field gate to be the INTEGER
+`hval` hypothesis `ring_conserves_pedersen_list` consumes. These two lemmas ARE that reduction: the
+Lean meaning of the range gadget, tying the in-AIR conservation to the real group Pedersen. -/
+
+/-- **No-wraparound reduction (2-leg, matching the deployed `RING_LEGS = 2` AIR).** Two
+range-bounded inputs and two range-bounded outputs (each `< 2^k`, with `2·2^k ≤ p` — the BabyBear
+no-wrap bound the AIR asserts at compile time) whose FIELD sums agree mod `p` have EQUAL INTEGER
+sums. The range bound is LOAD-BEARING: drop any `_ < 2^k` and the conclusion is false (wraparound
+mints) — the exact field-soundness the in-AIR range gadget supplies. -/
+theorem twoLeg_noWrap_conservation {p a0 a1 b0 b1 k : ℕ}
+    (ha0 : a0 < 2 ^ k) (ha1 : a1 < 2 ^ k) (hb0 : b0 < 2 ^ k) (hb1 : b1 < 2 ^ k)
+    (hnoWrap : 2 * 2 ^ k ≤ p) (hcong : (a0 + a1) % p = (b0 + b1) % p) :
+    a0 + a1 = b0 + b1 := by
+  have hin : a0 + a1 < p := by omega
+  have hout : b0 + b1 < p := by omega
+  rwa [Nat.mod_eq_of_lt hin, Nat.mod_eq_of_lt hout] at hcong
+
+/-- **The tie: the in-AIR conservation REFINES `ring_conserves_pedersen_list`.** Given two input
+notes and two output notes whose VALUES are range-bounded (the in-AIR range gadget) and whose value
+sums agree mod `p` (the in-AIR field conservation gate), and whose BLINDING sums are equal, their
+REAL two-generator Pedersen commitment sums are equal. The range-gadget hypotheses are precisely what
+upgrade the field gate to the integer `hval` that `ring_conserves_pedersen_list` needs — so the
+circuit's field-level conservation refines the Lean group-Pedersen conservation. -/
+theorem inAir_conservation_refines_pedersen [CryptoPrimitives Digest]
+    {p k : ℕ} {a0 a1 b0 b1 : ℕ} (i0 i1 o0 o1 : Note)
+    (hv0 : i0.value = (a0 : Int)) (hv1 : i1.value = (a1 : Int))
+    (hw0 : o0.value = (b0 : Int)) (hw1 : o1.value = (b1 : Int))
+    (ha0 : a0 < 2 ^ k) (ha1 : a1 < 2 ^ k) (hb0 : b0 < 2 ^ k) (hb1 : b1 < 2 ^ k)
+    (hnoWrap : 2 * 2 ^ k ≤ p) (hcong : (a0 + a1) % p = (b0 + b1) % p)
+    (hbl : i0.blinding + i1.blinding = o0.blinding + o1.blinding) :
+    listCommit (CryptoPrimitives.commit (Digest := Digest)) [i0, i1]
+      = listCommit (CryptoPrimitives.commit (Digest := Digest)) [o0, o1] := by
+  have hint : a0 + a1 = b0 + b1 := twoLeg_noWrap_conservation ha0 ha1 hb0 hb1 hnoWrap hcong
+  apply ring_conserves_pedersen_list [i0, i1] [o0, o1]
+  · -- value sums equal (as Int), from the no-wrap integer equality
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
+    rw [hv0, hv1, hw0, hw1]
+    exact_mod_cast hint
+  · -- blinding sums equal
+    simp only [List.map_cons, List.map_nil, List.sum_cons, List.sum_nil, add_zero]
+    exact hbl
+
 /-! ## §2 — REAL POSEIDON2 tree (retires `refTreeRoot`).
 
 The note-commitment tree root is the Poseidon2 sponge over the leaf list — `root = sponge leaves`,
@@ -268,6 +317,8 @@ theorem rung3_real_crypto [CryptoPrimitives Digest] (T : Poseidon2Tree)
 
 #assert_axioms ring_conserves_pedersen
 #assert_axioms ring_conserves_pedersen_list
+#assert_axioms twoLeg_noWrap_conservation
+#assert_axioms inAir_conservation_refines_pedersen
 #assert_axioms pedCommit_binding
 #assert_axioms pedCommit_mint_refused
 #assert_axioms Poseidon2Tree.root_binds

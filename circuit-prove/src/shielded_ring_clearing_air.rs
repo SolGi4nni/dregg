@@ -51,10 +51,27 @@
 //!     hypothesis→conclusion of `ring_conserves_pedersen_list`
 //!     (`shielded_ring_value_conserves_hidden`). The AIR enforces both coordinate
 //!     sums, so a value-minting ring (Σ value_out too large) has a NON-zero excess and
-//!     is UNSAT — the circuit twin of `RealCrypto.pedCommit_mint_refused`. No amount is
-//!     revealed: the values live only in the witness (hidden under the hiding PCS); the
-//!     apex exposes only the cleared ring's committed claim `[nf₀,root₀,vb₀,nf₁,root₁,
-//!     vb₁]`.
+//!     is UNSAT — the circuit twin of `RealCrypto.pedCommit_mint_refused`.
+//!
+//!     **(c.range) THE VALUE RANGE GADGET (the field-soundness weld).** The bare
+//!     coordinate sum is a BabyBear FIELD equation, and a field equation alone does NOT
+//!     testify to INTEGER conservation: a value-minting ring can satisfy `Σ value_in ≡
+//!     Σ value_out (mod p)` by WRAPAROUND (an output committed to `p − k`, a "wrapped
+//!     negative"), keeping the field sum fixed while minting real value — a genuine
+//!     soundness hole in the pre-range AIR. So every conservation value is now
+//!     BIT-DECOMPOSED IN-AIR into `VALUE_BITS` boolean columns that recompose to it,
+//!     forcing `value ∈ [0, 2^VALUE_BITS)`. With `RING_LEGS · 2^VALUE_BITS ≤ p`
+//!     (compile-time asserted), both per-side sums are `< p` (canonical), so the field
+//!     conservation gate IS the integer conservation `Σ value_in = Σ value_out` — the
+//!     `hval` hypothesis `RealCrypto.ring_conserves_pedersen_list` consumes
+//!     (`RealCrypto.twoLeg_noWrap_conservation` /
+//!     `RealCrypto.inAir_conservation_refines_pedersen`). This is the in-AIR realization
+//!     of the shielded pool's per-output Bulletproof range proof
+//!     (`shielded/pool.rs::output_range_proofs`) — moved from ATTESTED off-AIR to a
+//!     CIRCUIT constraint (a wraparound mint is now UNSAT in-AIR, not merely attested
+//!     out-of-range). No amount is revealed: the values (and their bit witnesses) live
+//!     only in the witness (hidden under the hiding PCS); the apex exposes only the
+//!     cleared ring's committed claim `[nf₀,root₀,vb₀,nf₁,root₁,vb₁]`.
 //!
 //! ## HONEST GRADE — 2-leg BUILT; what is in-AIR vs the leaf's exposed claim
 //!
@@ -62,6 +79,18 @@
 //!     + Σ blinding), matching `ring_conserves_pedersen_list` (the 2-generator
 //!     `pedTwoGen`, NOT the multi-generator asset commitment); the per-ASSET routing
 //!     is carried by the ring edges (b), exactly the two-weld split of the Lean.
+//!     PROVED-IN-CIRCUIT: the VALUE-conservation soundness — that the field gate is the
+//!     integer conservation, no wraparound mint — is now a CIRCUIT constraint via the
+//!     range gadget (c.range), retiring the ATTESTED off-AIR range-proof residual for
+//!     the BabyBear-scale (`< 2^VALUE_BITS`) range. NAMED RESIDUAL (still off-AIR /
+//!     ATTESTED): (i) the full 64-bit amount range — one BabyBear field caps a 2-leg
+//!     conserving sum near `2^30`, so amounts above `2^VALUE_BITS` still lean on the
+//!     off-AIR Bulletproof; (ii) full in-AIR Ristretto EC arithmetic — the conservation
+//!     runs over the two-COORDINATE `pedTwoGen (v, r)` abstraction, NOT the real group
+//!     point `v·G + r·H` over Ristretto; realizing the actual curve-point excess in-AIR
+//!     is the EC-in-circuit build named next; (iii) the blinding coordinate's faithful
+//!     (group-scalar) reduction, which rides the off-AIR Schnorr excess (a blinding
+//!     wraparound mints no value, so it is out of THIS weld's scope).
 //!   * The fusion value `value[i]` is bound to the real spent note THROUGH the leaf's
 //!     value_binding (Poseidon2 CR), re-computed in-AIR here and `connect`ed to the
 //!     leaf's exposed lane 2 — it is NOT a fresh in-AIR opening of a curve point. This
@@ -135,8 +164,57 @@ const fn leg_col(i: usize, f: usize) -> usize {
 /// The shared inverse-witness column for the `nullifier[0] != nullifier[1]` gate.
 const NF_DIFF_INV: usize = RING_LEGS * lc::LEG_WIDTH;
 
-/// The pre-chip-lane base width.
+/// The pre-range base width (base ring columns + the nullifier-difference inverse).
 const BASE_WIDTH: usize = NF_DIFF_INV + 1;
+
+/// **The in-AIR range-gadget bit-width.** Each conservation-relevant value is
+/// bit-decomposed into `VALUE_BITS` boolean columns recomposing to the value, so a
+/// witnessed value provably lies in `[0, 2^VALUE_BITS)`. This is the FIELD-SOUNDNESS
+/// tooth of the conservation gate: without it, `Σ value_in − Σ value_out == 0` is only a
+/// BabyBear FIELD equation, satisfiable by a value-minting ring via wraparound (an output
+/// committed to `p − k`, a "wrapped negative"). With every value range-bounded and
+/// `RING_LEGS · 2^VALUE_BITS ≤ p`, both per-side sums are `< p` (canonical), so the field
+/// equation IS the INTEGER conservation `Σ value_in = Σ value_out`. `29` is the largest
+/// width the single BabyBear field admits for a 2-leg conserving sum
+/// (`2·2^29 = 2^30 < p ≈ 2^30.9`); the full 64-bit amount range stays the off-AIR
+/// Bulletproof (named residual — one BabyBear field caps a 2-leg sum near `2^30`).
+const VALUE_BITS: usize = 29;
+
+/// No-wraparound guarantee, checked at compile time: `RING_LEGS · 2^VALUE_BITS ≤ p`, so
+/// neither the input nor the output value-sum can wrap BabyBear and the field conservation
+/// gate is exactly integer conservation.
+const _: () = assert!(
+    (RING_LEGS as u64) * (1u64 << VALUE_BITS) <= dregg_circuit::field::BABYBEAR_P as u64,
+    "VALUE_BITS too large: a 2-leg value-sum could wrap BabyBear, re-opening wraparound mint"
+);
+
+/// The value columns the range gadget bounds: both legs' spent-note `value` and both legs'
+/// created-note `out_val`. Range-checking BOTH sides makes the field⇒integer conservation
+/// reduction self-contained within this AIR (the output half is the in-AIR analog of the
+/// shielded pool's per-output Bulletproof range proof; the input half closes the dual
+/// hole of an input note carrying a wrapped value).
+const RANGE_TARGET_COLS: [usize; 4] = [
+    leg_col(0, lc::VALUE),
+    leg_col(1, lc::VALUE),
+    leg_col(0, lc::OUT_VAL),
+    leg_col(1, lc::OUT_VAL),
+];
+
+/// First column of the range bit-decomposition block (right after the base region; the
+/// chip lanes are appended AFTER the range block).
+const RANGE_BIT_BASE: usize = BASE_WIDTH;
+
+/// Total width of the range bit block: one `VALUE_BITS`-wide decomposition per target.
+const RANGE_WIDTH: usize = RANGE_TARGET_COLS.len() * VALUE_BITS;
+
+/// The pre-chip-lane trace width (base ring columns + the range bit block). The chip lanes
+/// (`alloc_lanes`) grow the width from here.
+const PRE_LANE_WIDTH: usize = BASE_WIDTH + RANGE_WIDTH;
+
+/// Column of bit `j` of range target `t`.
+const fn range_bit_col(t: usize, j: usize) -> usize {
+    RANGE_BIT_BASE + t * VALUE_BITS + j
+}
 
 /// The main-trace height (a power of two ≥ `MIN_TABLE_HEIGHT`; every row carries the
 /// same constant ring data — the gates fire on the transition rows, the PiBindings on
@@ -200,7 +278,7 @@ fn fact_site_always(output_col: usize, input_cols: &[usize], lane_base: usize) -
 /// fused `value[i]` is bound to the note the spend leaf published).
 pub fn shielded_ring_clear_descriptor() -> EffectVmDescriptor2 {
     let mut constraints: Vec<VmConstraint2> = Vec::new();
-    let mut width = BASE_WIDTH;
+    let mut width = PRE_LANE_WIDTH;
     let mut alloc_lanes = || {
         let base = width;
         width += CHIP_OUT_LANES - 1;
@@ -260,7 +338,11 @@ pub fn shielded_ring_clear_descriptor() -> EffectVmDescriptor2 {
             LeanExpr::Var(leg_col(1, lc::OUT_VAL)),
         ),
     )));
-    // blinding coordinate: (rand₀ + rand₁) − (out_blind₀ + out_blind₁) == 0
+    // blinding coordinate: (rand₀ + rand₁) − (out_blind₀ + out_blind₁) == 0.
+    // (The blinding coordinate is NOT range-checked in-AIR: a blinding wraparound mints no
+    // VALUE — it is the group-scalar coordinate, whose faithful reduction rides the real
+    // Schnorr excess off-AIR. Only the VALUE coordinate carries the mint hazard the range
+    // gadget below closes.)
     constraints.push(gate(sub(
         LeanExpr::add(
             LeanExpr::Var(leg_col(0, lc::RANDOMNESS)),
@@ -271,6 +353,36 @@ pub fn shielded_ring_clear_descriptor() -> EffectVmDescriptor2 {
             LeanExpr::Var(leg_col(1, lc::OUT_BLIND)),
         ),
     )));
+
+    // --- (c.range) THE VALUE RANGE GADGET: every conservation value ∈ [0, 2^VALUE_BITS). ---
+    // This is what makes the field conservation gate above IMPLY integer conservation: with
+    // both per-side sums range-bounded below the wrap point (`RING_LEGS·2^VALUE_BITS ≤ p`,
+    // checked at compile time), `Σ value_in ≡ Σ value_out (mod p)` forces `Σ value_in =
+    // Σ value_out` over ℤ. A value-minting ring that balances the FIELD equation by
+    // wraparound (an output committed to `p − k`) has no `VALUE_BITS`-bit preimage and is
+    // UNSAT at the recompose gate. This is the in-AIR realization of the shielded pool's
+    // per-output Bulletproof range proof (`shielded/pool.rs`) — moved from ATTESTED off-AIR
+    // to a CIRCUIT constraint (over the BabyBear no-wrap range; the full 64-bit range stays
+    // the off-AIR Bulletproof, named).
+    for (t, &col) in RANGE_TARGET_COLS.iter().enumerate() {
+        // Each bit column is boolean: b·(b − 1) == 0.
+        for j in 0..VALUE_BITS {
+            let b = LeanExpr::Var(range_bit_col(t, j));
+            constraints.push(gate(LeanExpr::mul(b.clone(), sub(b, LeanExpr::Const(1)))));
+        }
+        // Recompose: col − Σⱼ 2ʲ·bitⱼ == 0 (so a witnessed `col` has an exact bit preimage).
+        let mut acc = LeanExpr::Var(col);
+        for j in 0..VALUE_BITS {
+            acc = sub(
+                acc,
+                LeanExpr::mul(
+                    LeanExpr::Const(1i64 << j),
+                    LeanExpr::Var(range_bit_col(t, j)),
+                ),
+            );
+        }
+        constraints.push(gate(acc));
+    }
 
     // --- the value-binding pad cells are constant-zero (so the fact absorbs
     // [randomness, 0, 0]). ---
@@ -425,7 +537,7 @@ impl ShieldedRing2 {
         // is exactly the double-spend refusal.
         let nf_diff_inv = nf_diff.inverse().unwrap_or(BabyBear::ZERO);
 
-        let mut row = vec![BabyBear::ZERO; BASE_WIDTH];
+        let mut row = vec![BabyBear::ZERO; PRE_LANE_WIDTH];
         for i in 0..RING_LEGS {
             let w = &self.leg[i];
             row[leg_col(i, lc::VALUE)] = w.value;
@@ -444,6 +556,17 @@ impl ShieldedRing2 {
             row[leg_col(i, lc::OUT_BLIND)] = self.out_blind[i];
         }
         row[NF_DIFF_INV] = nf_diff_inv;
+
+        // The range-gadget witness: bit-decompose each conservation value into its
+        // `VALUE_BITS` boolean columns. For an IN-RANGE value the recompose gate holds; for
+        // an out-of-range / wrapped value the low-`VALUE_BITS` bits do NOT recompose to the
+        // canonical field value, so the recompose gate is violated ⇒ UNSAT (the tooth).
+        for (t, &col) in RANGE_TARGET_COLS.iter().enumerate() {
+            let v = row[col].as_u32();
+            for j in 0..VALUE_BITS {
+                row[range_bit_col(t, j)] = BabyBear::new((v >> j) & 1);
+            }
+        }
 
         vec![row; TRACE_HEIGHT]
     }
@@ -642,7 +765,18 @@ mod tests {
             .filter(|c| matches!(c, VmConstraint2::Base(VmConstraint::PiBinding { .. })))
             .count();
         assert_eq!(pins, RING_CLAIM_LEN, "nf/root/vb per leg");
-        assert_eq!(desc.trace_width, BASE_WIDTH + 2 * (CHIP_OUT_LANES - 1));
+        // Base + range bit block + the two value-binding chip-lane groups.
+        assert_eq!(desc.trace_width, PRE_LANE_WIDTH + 2 * (CHIP_OUT_LANES - 1));
+        // The range gadget adds, per target, VALUE_BITS boolean gates + 1 recompose gate.
+        let gates = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::Base(VmConstraint::Gate(_))))
+            .count();
+        assert!(
+            gates >= RANGE_TARGET_COLS.len() * (VALUE_BITS + 1),
+            "each range target contributes VALUE_BITS boolean gates + 1 recompose gate"
+        );
     }
 
     /// The honest demo ring IS a fused, tight, value-neutral 2-cycle (the plaintext
@@ -719,6 +853,68 @@ mod tests {
             Err(_) => {}
             Ok(Err(_)) => {}
             Ok(Ok(_)) => panic!("a value-minting ring minted a foldable leaf — conservation OPEN"),
+        }
+    }
+
+    /// THE NEGATIVE POLE (WRAPAROUND MINT — the range gadget's reason to exist): a ring that
+    /// balances the FIELD conservation gate `Σ value_in ≡ Σ value_out (mod p)` by WRAPAROUND —
+    /// one output committed to a large value, its counterpart to a "wrapped negative"
+    /// (`p − k`), keeping the field sum fixed — MINTS real value. The pre-range AIR accepted
+    /// this (the field equation holds); the range gadget makes it UNSAT: neither `out_val₀ +
+    /// 2^VALUE_BITS` nor `out_val₁ − 2^VALUE_BITS = p − …` has a `VALUE_BITS`-bit preimage, so
+    /// the recompose gate is violated. This is the field-soundness weld: no wraparound mint.
+    #[test]
+    fn wraparound_mint_ring_is_unsat() {
+        let config = ir2_leaf_wrap_config();
+        let mut r = ShieldedRing2::honest_demo();
+        // Shift value between the two outputs by 2^VALUE_BITS: the FIELD sum
+        // (out_val₀ + out_val₁) is UNCHANGED (the conservation gate still holds), but
+        // out_val₀ jumps out of [0, 2^VALUE_BITS) and out_val₁ wraps to p − (…), a minted
+        // "negative". Only the range gadget can refuse it.
+        let wrap = BabyBear::new(1u32 << VALUE_BITS);
+        r.out_val[0] = r.out_val[0] + wrap;
+        r.out_val[1] = r.out_val[1] - wrap;
+        // Sanity: the field conservation gate is STILL satisfied (Σ unchanged) —
+        // so the ONLY thing that can reject this is the in-AIR range gadget.
+        assert_eq!(
+            r.leg[0].value + r.leg[1].value,
+            r.out_val[0] + r.out_val[1],
+            "the wraparound mint keeps the FIELD conservation equation satisfied"
+        );
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_shielded_ring_clear_leaf(&r, &config)
+        }));
+        match result {
+            Err(_) => {}
+            Ok(Err(_)) => {}
+            Ok(Ok(_)) => panic!(
+                "a wraparound-minting ring (field-conserving, range-violating) minted a \
+                 foldable leaf — the value range gadget is OPEN"
+            ),
+        }
+    }
+
+    /// THE NEGATIVE POLE (out-of-range output): an output value ≥ 2^VALUE_BITS (even without
+    /// touching the conservation equation) has no `VALUE_BITS`-bit preimage and is UNSAT at the
+    /// recompose gate — the input side is left conserving so ONLY the range gate bites. (Here
+    /// the conservation gate ALSO breaks, but the point is the recompose gate independently
+    /// refuses any out-of-range committed value.)
+    #[test]
+    fn out_of_range_output_is_unsat() {
+        let config = ir2_leaf_wrap_config();
+        let mut r = ShieldedRing2::honest_demo();
+        r.out_val[0] = BabyBear::new(1u32 << VALUE_BITS); // exactly 2^VALUE_BITS: out of range
+
+        let result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            prove_shielded_ring_clear_leaf(&r, &config)
+        }));
+        match result {
+            Err(_) => {}
+            Ok(Err(_)) => {}
+            Ok(Ok(_)) => panic!(
+                "an out-of-range output value minted a foldable leaf — the range gadget is OPEN"
+            ),
         }
     }
 
