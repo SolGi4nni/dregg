@@ -18,12 +18,14 @@
 // POST /settle takes the cleared batch (the ring the solver found + allocations)
 // and lands it as ONE real turn on a LIVE dregg node:
 //   /cipherclerk/unlock  → bearer token (first unlock sets the dev passphrase)
-//   POST /turn/submit     → the clearing settles as a real turn: SetField writes
-//                           the per-trader allocations into the node ledger and
-//                           EmitEvent records each ring leg. The node executes it
-//                           on the effect-VM (execute_via_producer) and the async
-//                           prove_pool proves it (a --prove-turns node additionally
-//                           stores a full-turn STARK proof under /api/turn/{h}/proof).
+//   POST /turn/submit     → the clearing settles as a real turn: one REAL per-trader
+//                           Transfer (operator → the trader's deterministic ledger
+//                           cell) per cleared fill lands each trader's `received`
+//                           amount as a genuine, light-client-checkable balance
+//                           change, plus one EmitEvent recording the batch. The node
+//                           executes it on the effect-VM (execute_via_producer) and
+//                           the async prove_pool proves it (a --prove-turns node
+//                           attaches the full-turn STARK proof to the receipt).
 //   GET  /api/turn/{h}/proof, /api/receipts, /api/cell/{op} → the proof, the
 //                           committed receipt, and the ledger state — all read
 //                           back FROM the node, not synthesized here.
@@ -38,6 +40,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { spawn } from 'node:child_process';
+import crypto from 'node:crypto';
 
 const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, '..', 'extension');
@@ -80,9 +83,19 @@ const NODE = (process.env.DREGG_NODE || 'http://127.0.0.1:8420').replace(/\/$/, 
 const NODE_PASSPHRASE = process.env.DREGG_NODE_PASSPHRASE || 'drex-dev-node';
 let nodeBearer = null; // cached across requests once the node is unlocked.
 
-// The DrEX settlement-pool cell — value the clearing moves lands here as a real
-// Transfer. A fixed dev address (`de55e771…`, "settle"); materialized once.
+// The DrEX settlement-pool cell — the fallback destination for a batch that
+// cleared nothing (no per-trader fills), so /settle still lands a committed +
+// proven turn. A fixed dev address (`de55e771…`, "settle"); materialized once.
 const SETTLE_CELL = 'de55e771' + '0'.repeat(56);
+
+// The deterministic per-trader ledger cell: a stable 32-byte cell id namespaced
+// under the DrEX trader space (v1), so re-settling the SAME trader credits the
+// SAME cell — the trader's cleared allocations accrete as real, light-client-
+// checkable balance. Any 64-hex value is a valid destination cell id (the node
+// materializes it on first faucet-touch), so a namespaced sha-256 is a clean,
+// collision-resistant address book keyed by the solver's trader label.
+const traderCell = (trader) =>
+  crypto.createHash('sha256').update('drex-trader-v1:' + String(trader)).digest('hex');
 
 // Unlock the node (idempotent): the FIRST unlock on a fresh data dir sets the
 // dev passphrase and returns the bearer token that authorizes /turn/submit;
@@ -131,36 +144,72 @@ async function settleOnNode(cleared) {
 
   const legs = (cleared.ring && cleared.ring.legs) || [];
   const conserved = (cleared.conservation || []).reduce((s, c) => s + (Number(c.in) || 0), 0);
-  const legSum = legs.reduce((s, l) => s + (Number(l.amount) || 0), 0);
 
-  // The settlement lands as a REAL value-bearing Transfer (operator → the DrEX
-  // settlement-pool cell) plus one EmitEvent per ring leg. This is the cohort the
-  // node's full-turn STARK prover REALIZES: a Transfer turn commits AND gets a
-  // self-verified full-turn STARK proof attached (has_proof:true). A multi-
-  // SetField turn is committed-but-UNATTESTED at this node HEAD — the per-index
-  // setFieldVmDescriptor2 cohort selector binds ambiguously and the prover rejects
-  // its own proof — so we settle the clearing as value MOVED, which both proves
-  // and models the clearing (the batch moved `legSum` of value) more faithfully.
-  const settleAmount = Math.max(1, Math.min(legSum || legs.length || 1, 1000));
+  // ── FAITHFUL PER-TRADER SETTLEMENT ──
+  // Each trader's cleared `received` amount (read off the VERIFIED post-ledger by
+  // drex_clear) lands as a REAL, INDIVIDUAL Transfer: operator → that trader's
+  // deterministic ledger cell. Each fill is a genuine per-trader balance change,
+  // light-client-checkable, not a single lump value-move into a pool.
+  //
+  // WHY TRANSFER, NOT SETFIELD (the cohort reality — INVESTIGATED against the
+  // deployed --release binary, not assumed): a per-trader `SetField` allocation
+  // turn COMMITS but is UNATTESTED at the deployed VK. Its rotated effect-vm proof
+  // verifies under ALL EIGHT per-slot descriptors at once (setFieldVmDescriptor2-0R24
+  // … -7R24 — the deployed `v3OfFrozen` freezes the field block and does NOT bind the
+  // written slot uniquely into the PIs), so the SDK's uniqueness gate rejects it:
+  // "rotated effect-vm proof verified under MULTIPLE cohort descriptors … selector
+  // binding ambiguous, rejecting" (sdk/src/full_turn_proof.rs). Making SetField prove
+  // needs a UNIQUE per-slot binding (the VALUE8 / freeze-EXCEPT weld) — a descriptor/VK
+  // change, i.e. a VK-EPOCH FLIP, which is EMBER-GATED and NOT fired here. Transfer is a
+  // clean, uniquely-binding DEPLOYED cohort (transferVmDescriptor2R24) that PROVES, so
+  // per-trader value delivery is the faithful settle that needs no VK flip. (setFieldDyn
+  // would bind uniquely but is field_idx>=8, which panics in the executor's trace-gen —
+  // structurally unreachable — so it is not a live cohort either.)
+  const fills = (cleared.allocations || [])
+    .filter((a) => !a.rested && Number(a.received) > 0)
+    .map((a) => ({
+      trader: String(a.trader),
+      cell: traderCell(a.trader),
+      recvAsset: a.recvAsset,
+      received: Math.floor(Number(a.received)),
+      amount: Math.max(1, Math.floor(Number(a.received))),
+    }));
 
-  // The pool cell must EXIST before value can move into it (Transfer rejects an
-  // unmaterialized destination). Faucet 1 computron to materialize it (idempotent;
-  // per-cell rate-limited, but it only needs to exist once).
-  await nodeFaucet(SETTLE_CELL, 1);
-
-  const effects = [
-    { kind: 'transfer', to: SETTLE_CELL, amount: settleAmount },
-  ];
-  for (const l of legs) {
-    effects.push({ kind: 'emit_event', topic: 'drex_clear_leg', data: [felt(l.amount)] });
+  // Devnet computron-budget envelope (a LABELED inadequacy, not a silent clamp): the
+  // operator is funded by the rate-limited faucet (<=10000/min). If the batch's total
+  // cleared amount would exceed a fundable ceiling, we scale the settled COMPUTRON
+  // amounts proportionally and SURFACE it (`scaled`/`scale` in the response) so the UI
+  // can show the true `received` alongside the settled amount. Demo-scale batches settle
+  // at the EXACT cleared amount (scale = 1).
+  const FUND_CEILING = 9000; // headroom under the 10000 faucet cap for the turn fee
+  const rawTotal = fills.reduce((s, f) => s + f.amount, 0);
+  let scale = 1;
+  if (rawTotal > FUND_CEILING) {
+    scale = FUND_CEILING / rawTotal;
+    for (const f of fills) f.amount = Math.max(1, Math.floor(f.amount * scale));
   }
-  effects.push({ kind: 'emit_event', topic: 'drex_clear_batch', data: [felt(legs.length), felt(conserved)] });
+  const settledTotal = fills.reduce((s, f) => s + f.amount, 0);
+
+  // Each destination cell must EXIST before value can move into it (Transfer rejects an
+  // unmaterialized destination). A zero-amount faucet materializes it withOUT consuming
+  // the per-cell rate limit (node/src/api.rs: "A zero amount … does not consume the
+  // per-cell faucet limit"). Idempotent — a trader cell only needs to exist once.
+  const dests = fills.length ? fills.map((f) => f.cell) : [SETTLE_CELL];
+  await Promise.all(dests.map((c) => nodeFaucet(c, 0)));
+
+  // Build the settlement turn: one Transfer per cleared fill + a batch EmitEvent. A
+  // batch with NO fills (nothing cleared) still lands one committed+proven turn: a
+  // single 1-computron Transfer into the settlement-pool cell as the carrier.
+  const effects = fills.length
+    ? fills.map((f) => ({ kind: 'transfer', to: f.cell, amount: f.amount }))
+    : [{ kind: 'transfer', to: SETTLE_CELL, amount: 1 }];
+  effects.push({ kind: 'emit_event', topic: 'drex_clear_batch', data: [felt(fills.length), felt(conserved)] });
 
   // Budget: the turn fee sets the computron limit and the operator cell must back
-  // fee + the transferred amount. Top the operator up first (faucet is 1/cell/min
+  // fee + the total value transferred. Top the operator up first (faucet is 1/cell/min
   // on a dev node, so keep the fee modest).
   const fee = 800 + 350 * effects.length;
-  const need = fee + settleAmount;
+  const need = fee + settledTotal + (fills.length ? 0 : 1);
   if ((ident.agent_balance || 0) < need) {
     await nodeFaucet(operator, 10000);
     const re = await nodeGet('/api/node/identity');
@@ -215,10 +264,31 @@ async function settleOnNode(cleared) {
 
   const cell = await nodeGet('/api/cell/' + operator);
 
+  // Read each trader's cell balance back FROM the node — the per-trader allocation
+  // is now a real ledger state change, not a synthesized number. The `balance` is
+  // the node's committed value after this settle (it accretes across settles).
+  const perTrader = await Promise.all(fills.map(async (f) => {
+    const tc = await nodeGet('/api/cell/' + f.cell);
+    return {
+      trader: f.trader, cell: f.cell, recvAsset: f.recvAsset,
+      received: f.received,          // the true cleared amount (drex_clear post-ledger)
+      settled: f.amount,             // the computrons transferred this settle (== received unless scaled)
+      balance: tc && !tc.__status && tc.found ? tc.balance : null,
+    };
+  }));
+
   return {
     nodeUp: true, accepted: true, node: NODE, operator, turnHash,
     proofStatus: submit.proof_status, witnessCount: submit.witness_count,
     proof: proof || { present: false }, proofNote,
+    // The per-trader settlement summary: the faithful spine (each trader's cleared
+    // amount as its OWN real, provable Transfer). `scaled` flags the devnet
+    // computron-budget envelope (a LABELED inadequacy — the true `received` is kept).
+    settle: {
+      mode: 'per_trader_transfer', traders: fills.length,
+      settledTotal, scaled: scale < 1, scale: Number(scale.toFixed(6)),
+    },
+    perTrader,
     receipt: r && {
       chainIndex: r.chain_index, finality: r.finality,
       preState: r.pre_state, postState: r.post_state,

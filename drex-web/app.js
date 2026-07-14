@@ -331,19 +331,27 @@ async function settleOnLiveNode(cleared) {
 
   const proof = r.proof || {};
   const rc = r.receipt || {};
-  const cell = r.cell || {};
   const proofLine = proof.present
     ? (proof.mode === 'stark_full_turn'
         ? `full-turn STARK proof: ${proof.len} bytes (GET /api/turn/${r.turnHash.slice(0, 12)}…/proof)`
         : `witnessed receipt attached by prove_pool (witness_count=${proof.witnessCount})`)
     : `proof: ${r.proofNote || 'pending'} (status=${r.proofStatus})`;
+  const settle = r.settle || {};
+  const perTrader = r.perTrader || [];
+  const alloClause = perTrader.length
+    ? `  per-trader allocations settled as REAL transfers (balances read back from the node):\n`
+      + perTrader.map((t) =>
+          `    ${t.trader} · cell ${(t.cell || '').slice(0, 12)}… · got ${t.settled}${t.scaled ? ` (of ${t.received}, scaled)` : ''} → balance ${t.balance}`
+        ).join('\n')
+      + (settle.scaled ? `\n  (settled at scale ${settle.scale} — devnet computron-budget envelope; true cleared amounts kept)` : '')
+    : `  batch cleared no fills — one carrier turn committed`;
   step('node', 'Settle on the LIVE node — committed + proven', { badge: 'REAL node', state: 'done',
     d: `node ${r.node}  ·  operator cell ${r.operator.slice(0, 16)}…\n`
      + `  turn ${r.turnHash.slice(0, 24)}…  → executed on the effect-VM, finality=${rc.finality}\n`
      + `  ${rc.computronsUsed} computrons · ${rc.actionCount} action(s) committed · executor-signed=${rc.executorSigned}\n`
      + `  pre-state ${(rc.preState || '').slice(0, 16)}…  →  post-state ${(rc.postState || '').slice(0, 16)}…\n`
      + `  ${proofLine}\n`
-     + `  ledger state now reflects the clear: cell fields = [${(cell.fields || []).map((f) => f.slice(0, 6)).join(', ')}]  (SetField writes read back from the node)` });
+     + alloClause });
   if ($('nodePill')) { $('nodePill').className = 'pill live'; $('nodePill').textContent = 'node: live · turn committed + proven'; }
   // celebrate the proof moment — the sealed-bid trade cleared and math signed the receipt.
   renderProofBadge(r);
