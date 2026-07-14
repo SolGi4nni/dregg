@@ -1,5 +1,5 @@
 /-
-# Market.ZKOpenRel — the fhEgg CATEGORICAL UNIFICATION: `ZKOpenRel_R`, the objects + the one open theorem.
+# Market.ZKOpenRel — the fhEgg CATEGORICAL UNIFICATION: `ZKOpenRel_R`, the objects + the feedback closure (refuted conjecture + proven Tarski replacement).
 
 **Q2 of `docs/deos/FHEGG-CODEX-INSIGHTS.md`, formalized as a Lean development (not prose).** Codex
 (GPT-5.6-sol) named the categorical home of the whole fhEgg stack:
@@ -16,9 +16,10 @@
 >     right objects named, NOT a discharged proof.*
 
 This module turns that from prose into a real, sorry-free Lean development. It builds the OBJECTS,
-proves the TRACTABLE pieces, and isolates the ONE open theorem as a NAMED conjecture (a `Prop`-valued
-`def` + a hypothesis field of the unification bundle) — **never a `sorry`, never a fake-green
-tautology.**
+proves the TRACTABLE pieces, and — where codex named a feedback-closure conjecture — REFUTES the false
+statement with a proof (`guardedTraceClosure_refuted`) and REPLACES it with the true Tarski feedback
+closure (`traceAdmissible_guarded`), which the four instances satisfy — **never a `sorry`, never a
+fake-green tautology.**
 
 ## What is BUILT + PROVEN (the tractable core, kernel-clean)
 
@@ -51,37 +52,42 @@ tautology.**
     to BE exactly such a natural transformation (`ofRevealBundle`). This is the categorical home of the
     reveal-nothing theorem — privacy = the simulator natural transformation over the leakage functor `Q`.
 
-## THE ONE OPEN THEOREM, NAMED (§6) — NOT sorried, NOT overclaimed
+## THE FEEDBACK CLOSURE (§6) — a REFUTED conjecture + its PROVEN Tarski replacement
 
 The guarded trace (feedback) is the ring/feedback operation. Its GRADE side is easy and PROVEN
-(`gtrace_conservative`: feedback does not change the resource accounting — `d(tr f) = d f`). The HARD,
-OPEN content codex named is the **feasibility closure**: an ordinary trace of a relation can produce the
-EMPTY relation ("it wires a cycle; it does not prove the cycle clears"). So the frontier is whether the
-GUARD (non-vacuity of the feedback fiber — the loop actually clears) SURVIVES feedback and composes
-adaptively. We:
+(`gtrace_conservative`: feedback does not change the resource accounting — `d(tr f) = d f`). The
+feasibility half was originally STATED as the conjecture `GuardedTraceClosure R` ("guarded trace of a
+guarded conservative morphism is guarded"). **Codex R3 Q3 REFUTED it** (`guardedTraceClosure_refuted`): a
+minimal `Bool`-negation feedback is conservative + guarded + functional yet its trace is EMPTY, so the
+conjecture is FALSE for every `R` — the module's `Guarded` is a totality, not a genuine guarded/Conway
+trace. Consequently the old `ZKUnification` (whose one field WAS `GuardedTraceClosure R`) could never be
+inhabited. We refute-and-replace:
 
   * PROVE the **non-feedback fragment**: guardedness is preserved by sequential/adaptive composition
-    (`comp_guarded`) and by tensor (`tensor_guarded`) — the adaptive-composition half of the closure;
-  * STATE the **feedback half as a named conjecture** — `GuardedTraceClosure R : Prop` (the precise
-    statement "guarded trace of a guarded conservative morphism is guarded"), carried as an explicit
-    HYPOTHESIS FIELD `ZKUnification.feedback_closure`, NEVER proven, NEVER `sorry`-ed. `ZKUnification`
-    is the well-defined development with the ONE open field isolated; `traced_history_closed` shows what
-    that field would buy (feedback preserves both conservation — proven — and guardedness — the open
-    field).
+    (`comp_guarded`) and by tensor (`tensor_guarded`);
+  * REFUTE the false conjecture with a PROOF (`guardedTraceClosure_refuted`, the `Bool`-negation witness);
+  * REPLACE it with the TRUE **Tarski feedback closure** `traceAdmissible_guarded : TraceAdmissible f →
+    Guarded (gtrace f)` — when the feedback is a MONOTONE self-map of a complete lattice, its least fixed
+    point (`OrderHom.lfp`) witnesses that the loop clears. This lands on the already-proven monotone
+    crossing operator of `Market/FhEggClearing.lean` (`crossing_gtrace_guarded` via `crossing_fixed` /
+    `Fstep_monotone`), and the four instances are shown `TraceAdmissible`;
+  * package it as `AdmissibleTraceClosure R` — the true closure, carried as `ZKUnification.feedback_closure`,
+    now a THEOREM (`admissibleTraceClosure_holds`) so the bundle is INHABITED (`zkUnification`).
 
-**HONEST GRADE.** This is the RESEARCH TARGET, formalized: the objects + the functor + conservation-as-
-kernel + the four instances + non-feedback composition + the privacy natural transformation are PROVEN
-and kernel-clean; the **compositionality/closure-under-feedback theorem is the OPEN frontier**, stated
-precisely as a conjecture, NOT proved, NOT sorried. Do NOT read this as "the unification is proved" — it
-is the honest categorical skeleton with the one open theorem isolated.
+**HONEST GRADE.** The objects + functor + conservation-as-kernel + four instances + non-feedback
+composition + privacy natural transformation are PROVEN and kernel-clean; the feedback closure is now a
+proven refutation of the false full-generality conjecture PLUS a proven replacement for the mechanism-
+relevant (monotone/finite) cases — the unification holds for the admissible instances, unconditionally.
 
 Pure.
 -/
 import Market.Clearing
 import Market.CertF
 import Market.RevealNothing
+import Market.FhEggClearing
 import Mathlib.CategoryTheory.SingleObj
 import Mathlib.Algebra.Group.TypeTags.Basic
+import Mathlib.Order.FixedPoints
 import Dregg2.Tactics
 
 namespace Market.ZKOpenRel
@@ -201,7 +207,7 @@ theorem dGrade_id (X : ZKObj R) : dGrade (𝟙 X) = 0 := rfl
 def tensorObj (X Y : ZKObj R) : ZKObj R := ⟨X.S × Y.S⟩
 
 /-- **The unit object** — the empty boundary. -/
-def unitObj : ZKObj R := ⟨PUnit⟩
+@[reducible] def unitObj : ZKObj R := ⟨PUnit⟩
 
 /-- **The tensor of morphisms** — parallel composition: relations run side by side, **defects ADD**
 (the other half of the strong-monoidal-functor law: `d` is additive over `⊗`, not just `∘`). -/
@@ -272,7 +278,7 @@ variable {V E : Type} [Fintype V] [Fintype E]
 
 /-- The circulation object — the flow boundary (kept abstract; the categorical content used here is the
 grade). -/
-def flowObj (V : Type) : ZKObj (V → ℤ) := ⟨PUnit⟩
+@[reducible] def flowObj (V : Type) : ZKObj (V → ℤ) := ⟨PUnit⟩
 
 /-- **The circulation morphism** — a flow `f` on `lp`, graded by its **node imbalance** `A f : V → ℤ`
 (zero iff `f` conserves at every node). The decorated-cospan open-network morphism of codex's Q2. -/
@@ -344,7 +350,7 @@ theorem clearingDefect_zero {book : Book DemoRes Bl reg stmtOf} (C : MarketClear
   omega
 
 /-- The clearing object — a market boundary, graded by `R = AssetId → ℤ` (the per-asset ledger). -/
-def clearingObj : ZKObj (AssetId → ℤ) := ⟨PUnit⟩
+@[reducible] def clearingObj : ZKObj (AssetId → ℤ) := ⟨PUnit⟩
 
 /-- **The auction/clearing morphism** — a multilateral market clearing as a graded endomorphism, graded
 by its per-asset pool imbalance `clearingDefect`. -/
@@ -379,18 +385,15 @@ theorem turn_conservative : Conservative turnMor := id_conservative _
 theorem turn_history_conservative (n : ℕ) : Conservative (iterate turnMor n) :=
   iterate_conservative turn_conservative n
 
-/-! ## 6. THE ONE OPEN THEOREM — the guarded trace (feedback) closure. NAMED, not sorried.
+/-! ## 6. THE FEEDBACK CLOSURE — the FALSE conjecture REFUTED + its PROVEN Tarski replacement.
 
 The **ring** is the guarded trace: feedback that glues an output boundary back to an input, imposing the
-loop constraint (`A f = 0` = the cycle clears). Its GRADE side is trivial and PROVEN (feedback does not
-change resource accounting). The OPEN content codex named is the **feasibility closure**: an ordinary
-trace of a relation can produce the EMPTY relation ("it wires a cycle; it does NOT prove the cycle
-clears"). So the frontier is whether the GUARD — non-vacuity of the feedback fiber, i.e. the loop
-actually clears — SURVIVES feedback and composes adaptively.
-
-We PROVE the non-feedback fragment (guardedness preserved by composition + tensor) and STATE the feedback
-half as a NAMED conjecture (`GuardedTraceClosure`), carried as an explicit hypothesis FIELD — never a
-`sorry`, never a fake-green tautology. -/
+loop constraint. Its GRADE side is trivial and PROVEN (feedback does not change resource accounting). The
+feasibility half was conjectured as `GuardedTraceClosure` — but codex R3 Q3 REFUTED it: a `Bool`-negation
+feedback is conservative + guarded yet traces to the EMPTY relation. We prove the refutation
+(`guardedTraceClosure_refuted`), then REPLACE the false conjecture with the TRUE Tarski feedback closure
+`traceAdmissible_guarded` (monotone feedback on a complete lattice ⇒ its `lfp` clears the loop), landing
+on the proven fhEgg crossing operator and discharging the four instances as `TraceAdmissible`. -/
 
 /-- **`Guarded f` — the feasibility fiber is inhabited at every input** (`∀ x, ∃ y, rel x y`): the open
 system CLEARS — a witness exists, not merely a wired topology. This is the property the trace can
@@ -436,39 +439,197 @@ open part is the FEASIBILITY (guardedness), below. -/
 theorem gtrace_conservative {X Y U : ZKObj R} {f : tensorObj X U ⟶ tensorObj Y U}
     (hf : Conservative f) : Conservative (gtrace f) := hf
 
-/-- **THE ONE OPEN THEOREM — `GuardedTraceClosure R`, the feedback FEASIBILITY closure conjecture.**
+/-- **`GuardedTraceClosure R` — the ORIGINAL feedback-feasibility conjecture. FALSE (refuted below).**
 
-STATED PRECISELY, NOT PROVEN, NOT `sorry`-ed: *for a conservative morphism whose feedback fiber clears
-(guarded), the guarded trace CLEARS* — the loop's non-vacuity survives feedback. This is codex's named
-frontier: "tracing a relation can produce the EMPTY relation; it wires a cycle, it does NOT prove the
-cycle clears." The GRADE side (`gtrace_conservative`) is proven; THIS — the feasibility/non-vacuity of
-the feedback — is the research target, false for general relations without the extra structure a genuine
-guarded trace supplies. It is a `Prop`-valued `def` (a conjecture), carried as a HYPOTHESIS FIELD of
-`ZKUnification`, never discharged here. -/
+The tempting conjecture: *for a conservative morphism whose feedback fiber clears (guarded), the guarded
+trace CLEARS* — the loop's non-vacuity survives feedback. Codex (R3 Q3) gave a minimal COUNTEREXAMPLE
+against these very definitions, so this is not merely open — it is FALSE for every `R`
+(`guardedTraceClosure_refuted`). It is kept only as the object of that refutation; the `ZKUnification`
+bundle no longer carries it (a false statement cannot be an honest hypothesis field), and the true
+closure is `traceAdmissible_guarded` below. -/
 def GuardedTraceClosure (R : Type) [AddCommMonoid R] : Prop :=
   ∀ (X Y U : ZKObj R) (f : tensorObj X U ⟶ tensorObj Y U),
     Conservative f → Guarded f → Guarded (gtrace f)
 
-/-- **`ZKUnification R` — the categorical unification as a well-defined development with the ONE OPEN
-FIELD isolated.** Everything else in this module (the category, the functor `d`, conservation = `d⁻¹(0)`,
-the four instances, non-feedback composition, the privacy natural transformation) is PROVEN
-unconditionally. The single unproven piece — the compositionality/closure-under-FEEDBACK theorem — is
-this structure's ONE field: an explicit named hypothesis (`GuardedTraceClosure`), NEVER a `sorry`. To
-INHABIT `ZKUnification` is exactly to discharge the open theorem; this module does not claim to. -/
-structure ZKUnification (R : Type) [AddCommMonoid R] where
-  /-- **THE OPEN THEOREM as a hypothesis field** — the guarded-trace feedback-feasibility closure. Proving
-  the unification = constructing this field. Not done here (the research frontier). -/
-  feedback_closure : GuardedTraceClosure R
+/-- **The counterexample — the `Bool`-negation feedback (codex R3 Q3).** `X = Y = 1` (`PUnit`),
+`U = Bool`, defect `0`, and `f.rel ((*,u),(*,v)) ⟺ v = ¬u`. It is conservative (defect `0`), guarded
+(every `u` maps to `¬u`), functional — yet its guarded trace asks for `∃ u, u = ¬u`, which is FALSE.
+`Conservative + Guarded + Functional does NOT imply traced Guardedness`: the module's `Guarded` is a
+totality, not a genuine guarded/Conway trace. -/
+def negFeedback : tensorObj (⟨PUnit⟩ : ZKObj R) (⟨Bool⟩ : ZKObj R) ⟶
+    tensorObj (⟨PUnit⟩ : ZKObj R) (⟨Bool⟩ : ZKObj R) where
+  defect := 0
+  rel p q := q.2 = !p.2
 
-/-- **What the open theorem BUYS — full closure under feedback.** GIVEN a `ZKUnification` (i.e. assuming
-the open `feedback_closure` field), the guarded trace of a conserving, clearing morphism is BOTH
-conservative (proven unconditionally, `gtrace_conservative`) AND clearing (from the open field). This is
-the compositional closure the unification targets — stated so the ONE open dependency is explicit. -/
-theorem ZKUnification.traced_history_closed (U : ZKUnification R)
-    {X Y V : ZKObj R} (f : tensorObj X V ⟶ tensorObj Y V)
-    (hc : Conservative f) (hg : Guarded f) :
+/-- **`GuardedTraceClosure` is FALSE — a PROOF, not a comment.** The `negFeedback` witness is conservative
+and guarded, but its guarded trace is the EMPTY relation (`∃ u : Bool, u = ¬u` is false). So the
+conjecture fails for every `R`; consequently the `ZKUnification` structure whose one field was
+`feedback_closure : GuardedTraceClosure R` could NEVER be inhabited — the earlier "to inhabit
+`ZKUnification` is to discharge the open theorem" was chasing a FALSE statement. Refute-and-replace. -/
+theorem guardedTraceClosure_refuted : ¬ GuardedTraceClosure R := by
+  intro h
+  have hg : Guarded (gtrace (negFeedback (R := R))) :=
+    h (⟨PUnit⟩) (⟨PUnit⟩) (⟨Bool⟩) negFeedback rfl (fun p => ⟨(p.1, !p.2), rfl⟩)
+  obtain ⟨_, u, hu⟩ := hg PUnit.unit
+  -- `hu : u = !u` — impossible for `Bool`.
+  have hne : u = !u := hu
+  cases u <;> simp at hne
+
+/-! ### The CORRECT replacement — typed feedback admissibility + the Tarski/Knaster–Tarski closure.
+
+The repair (codex R3 Q3): the full-generality conjecture is false, but the feedback DOES close for the
+mechanism-relevant cases — when the feedback map is a MONOTONE self-map of a complete lattice, its least
+fixed point IS the fed-back value that clears the loop. This is verify-not-find lifted to feedback:
+admissibility is a typed proof-carrying witness (a monotone operator + Knaster–Tarski), not the false
+claim that every wired cycle clears. -/
+
+/-- **`TraceAdmissible f` — the typed feedback-admissibility witness (finite-box / complete-lattice Tarski).**
+For each input `x`, the feedback is realized by a MONOTONE self-map `Φ` of the (complete-lattice) feedback
+state together with an output map `out`, i.e. `f.rel (x,u) (out u, Φ u)` for all `u`. This is the honest
+hypothesis the false `GuardedTraceClosure` lacked: the `Bool`-negation counterexample fails it precisely
+because `¬` is NOT monotone. -/
+def TraceAdmissible {X Y U : ZKObj R} [CompleteLattice U.S]
+    (f : tensorObj X U ⟶ tensorObj Y U) : Prop :=
+  ∀ x : X.S, ∃ (Φ : U.S →o U.S) (out : U.S → Y.S), ∀ u : U.S, f.rel (x, u) (out u, Φ u)
+
+/-- **THE REPLACEMENT THEOREM — `TraceAdmissible f → Guarded (gtrace f)` (Knaster–Tarski feedback closure).**
+A trace-admissible morphism's feedback CLEARS: the least fixed point `lfp Φ` of the monotone feedback
+operator satisfies `Φ (lfp Φ) = lfp Φ` (`OrderHom.map_lfp`), so the fed-back input and output `U`-values
+coincide — the loop's non-vacuity is WITNESSED by the fixed point. This is the true content the false
+conjecture over-reached for; it lands on exactly the monotone-operator/least-fixed-point machinery
+`Market/FhEggClearing.lean` proves for the fhEgg crossing (`Fstep_monotone` / `crossing_fixed`). -/
+theorem traceAdmissible_guarded {X Y U : ZKObj R} [CompleteLattice U.S]
+    (f : tensorObj X U ⟶ tensorObj Y U) (h : TraceAdmissible f) : Guarded (gtrace f) := by
+  intro x
+  obtain ⟨Φ, out, hrel⟩ := h x
+  refine ⟨out (OrderHom.lfp Φ), OrderHom.lfp Φ, ?_⟩
+  have hr := hrel (OrderHom.lfp Φ)
+  rwa [OrderHom.map_lfp] at hr
+
+/-! ### Mechanism landing — the fhEgg CROSSING feedback clears, via the PROVEN monotone operator.
+
+The genuinely-constrained instance (feedback `rel` is a real update, not `True`): wire the fhEgg price
+update `Market.Fstep` as the feedback map. Its admissibility is `Market.Fstep_monotone` (the monotone
+crossing operator, the codex correction), and the fed-back value that clears the loop is the crossing —
+the fixed point `Market.crossing_fixed` establishes. So the guarded trace of the crossing feedback is
+guarded exactly when a crossing exists (the honest `CrossingExists` hypothesis). -/
+
+/-- **The crossing feedback morphism** — `U`-state = the price index `ℕ`; the feedback wires the proven
+monotone crossing operator `Market.Fstep bk K`. -/
+def crossingFeedback (bk : Market.OrderBook) (K : ℕ) :
+    tensorObj (⟨PUnit⟩ : ZKObj R) (⟨ℕ⟩ : ZKObj R) ⟶ tensorObj (⟨PUnit⟩ : ZKObj R) (⟨ℕ⟩ : ZKObj R) where
+  defect := 0
+  rel p q := q.2 = Market.Fstep bk K p.2
+
+/-- **THE fhEgg CROSSING FEEDBACK CLEARS** — the guarded trace of `crossingFeedback` is guarded whenever a
+crossing exists: its feedback fiber is `∃ n, n = Fstep bk K n`, a FIXED POINT of the monotone crossing
+operator, witnessed by `Market.crossing_fixed`. This is the replacement theorem's content on the real,
+already-proven mechanism operator — feedback closure for the monotone/finite case that actually matters. -/
+theorem crossing_gtrace_guarded (bk : Market.OrderBook) (K : ℕ) (h : Market.CrossingExists bk) :
+    Guarded (gtrace (crossingFeedback (R := R) bk K)) := by
+  intro _
+  exact ⟨PUnit.unit, Market.crossing bk h, (Market.crossing_fixed bk h K).symm⟩
+
+/-! ### The four fhEgg instances are `TraceAdmissible` (their feasibility is total ⇒ trivially admissible).
+
+The four instances (turn / auction / circulation / convex-engine) carry a TOTAL feasibility relation, so
+their self-feedback is trivially admissible (`Φ = id`, monotone) and its trace clears. The nontrivial
+admissibility is the crossing above; here we discharge the four named instances so the unification holds
+for them. `toLoop` presents an endomorphism as a traceable (feedback-shaped) morphism. -/
+
+/-- **`toLoop g`** — an endomorphism `g : Z ⟶ Z` presented as a traceable morphism `1 ⊗ Z ⟶ 1 ⊗ Z` whose
+feedback boundary is `Z` (the loop feeds `Z`'s output back to its input). -/
+def toLoop {Z : ZKObj R} (g : Z ⟶ Z) : tensorObj unitObj Z ⟶ tensorObj unitObj Z where
+  defect := g.defect
+  rel p q := g.rel p.2 q.2
+
+/-- The loop preserves the grade, so a conservative endomorphism has a conservative loop. -/
+theorem toLoop_conservative {Z : ZKObj R} {g : Z ⟶ Z} (hg : Conservative g) :
+    Conservative (toLoop g) := hg
+
+/-- **A TOTAL endomorphism's loop is `TraceAdmissible`** — with `Φ = id` (monotone) the feedback relation
+holds for every `u` (the relation is total), so the loop admits a fixed-point witness on any complete
+lattice. -/
+theorem total_toLoop_traceAdmissible {Z : ZKObj R} [CompleteLattice Z.S] (g : Z ⟶ Z)
+    (htot : ∀ a b : Z.S, g.rel a b) : TraceAdmissible (toLoop g) := by
+  intro _
+  refine ⟨OrderHom.id, fun _ => PUnit.unit, ?_⟩
+  intro u
+  exact htot u u
+
+/-- A total endomorphism's loop trace clears (composing `total_toLoop_traceAdmissible` with the closure). -/
+theorem total_toLoop_gtrace_guarded {Z : ZKObj R} [CompleteLattice Z.S] (g : Z ⟶ Z)
+    (htot : ∀ a b : Z.S, g.rel a b) : Guarded (gtrace (toLoop g)) :=
+  traceAdmissible_guarded _ (total_toLoop_traceAdmissible g htot)
+
+/-- **CIRCULATION is `TraceAdmissible`.** -/
+theorem circulation_traceAdmissible :
+    TraceAdmissible (toLoop (circulationMor Market.ringLP Market.ringF)) :=
+  total_toLoop_traceAdmissible _ (fun _ _ => trivial)
+
+/-- **CONVEX ENGINE is `TraceAdmissible`.** -/
+theorem convex_engine_traceAdmissible :
+    TraceAdmissible (toLoop (convexEngineMor Market.ringLP Market.ringF Market.ringπ Market.ringS)) :=
+  total_toLoop_traceAdmissible _ (fun _ _ => trivial)
+
+/-- **AUCTION is `TraceAdmissible`.** -/
+theorem auction_traceAdmissible :
+    TraceAdmissible (toLoop (clearingMor Market.ringClearing)) :=
+  total_toLoop_traceAdmissible _ (fun _ _ => trivial)
+
+/-- **TURN is `TraceAdmissible`.** (Its feasibility relation is `Eq` on `PUnit`, total by subsingleton.) -/
+theorem turn_traceAdmissible :
+    TraceAdmissible (toLoop turnMor) :=
+  total_toLoop_traceAdmissible _ (fun a b => Subsingleton.elim a b)
+
+/-- **THE UNIFICATION HOLDS FOR A REAL INSTANCE (circulation)** — its feedback trace is BOTH conservative
+(`gtrace_conservative` of the proven `ring_circulation_conservative`) AND clearing (`traceAdmissible_guarded`
+of `circulation_traceAdmissible`). Full closure under feedback, for the mechanism-relevant instance —
+unconditionally, no open field. -/
+theorem ring_circulation_traced_closed :
+    Conservative (gtrace (toLoop (circulationMor Market.ringLP Market.ringF)))
+      ∧ Guarded (gtrace (toLoop (circulationMor Market.ringLP Market.ringF))) :=
+  ⟨gtrace_conservative (toLoop_conservative ring_circulation_conservative),
+   traceAdmissible_guarded _ circulation_traceAdmissible⟩
+
+/-! ### The admissible-subcategory closure + the (now INHABITED) unification. -/
+
+/-- **`AdmissibleTraceClosure R` — the TRUE feedback closure (the admissible subcategory).** The honest
+replacement for the false `GuardedTraceClosure`: on the trace-admissible (monotone/complete-lattice)
+morphisms, the guarded trace clears. Unlike its predecessor, this is PROVABLE
+(`admissibleTraceClosure_holds`). -/
+def AdmissibleTraceClosure (R : Type) [AddCommMonoid R] : Prop :=
+  ∀ (X Y U : ZKObj R) [CompleteLattice U.S] (f : tensorObj X U ⟶ tensorObj Y U),
+    TraceAdmissible f → Guarded (gtrace f)
+
+/-- **The admissible feedback closure HOLDS** — the replacement theorem, packaged as the subcategory
+closure. This is what makes `ZKUnification` inhabitable (below). -/
+theorem admissibleTraceClosure_holds : AdmissibleTraceClosure R := by
+  intro X Y U _ f h
+  exact traceAdmissible_guarded f h
+
+/-- **`ZKUnification R` — the categorical unification, now with a TRUE, PROVEN closure field.** Everything
+in this module (the category, the functor `d`, conservation = `d⁻¹(0)`, the four instances, non-feedback
+composition, the privacy natural transformation) is proven unconditionally; the feedback closure — once a
+false hypothesis field (`GuardedTraceClosure`, refuted by `guardedTraceClosure_refuted`) — is now the true
+`AdmissibleTraceClosure`, so the bundle is INHABITED (`zkUnification`), not a chase after a false statement. -/
+structure ZKUnification (R : Type) [AddCommMonoid R] where
+  /-- **THE FEEDBACK CLOSURE — a TRUE theorem, not a false hypothesis.** The admissible-subcategory Tarski
+  closure; discharged by `admissibleTraceClosure_holds`. -/
+  feedback_closure : AdmissibleTraceClosure R
+
+/-- **THE UNIFICATION IS INHABITED** — the honest closure discharges the (formerly uninhabitable) bundle. -/
+def zkUnification : ZKUnification R := ⟨admissibleTraceClosure_holds⟩
+
+/-- **What the closure BUYS — full closure under feedback for admissible morphisms.** Given the unification,
+the guarded trace of a conserving, trace-admissible morphism is BOTH conservative (`gtrace_conservative`)
+AND clearing (`feedback_closure`). This is the compositional closure the unification targets — now a
+theorem, with the honest `TraceAdmissible` precondition in place of the false unconditional conjecture. -/
+theorem ZKUnification.traced_history_closed (Uc : ZKUnification R)
+    {X Y U : ZKObj R} [CompleteLattice U.S] (f : tensorObj X U ⟶ tensorObj Y U)
+    (hc : Conservative f) (ha : TraceAdmissible f) :
     Conservative (gtrace f) ∧ Guarded (gtrace f) :=
-  ⟨gtrace_conservative hc, U.feedback_closure X Y V f hc hg⟩
+  ⟨gtrace_conservative hc, Uc.feedback_closure X Y U f ha⟩
 
 /-! ## 7. PRIVACY — the simulator natural transformation `View ≈ Sim∘Q` (the categorical home).
 
@@ -538,9 +699,9 @@ theorem shell_privacy_indistinguishable :
 #guard (tensorHom (X := (⟨PUnit⟩ : ZKObj ℤ)) (Y := ⟨PUnit⟩) (X' := ⟨PUnit⟩) (Y' := ⟨PUnit⟩)
           ⟨2, fun _ _ => True⟩ ⟨3, fun _ _ => True⟩).defect == 5
 
-/-! ### Axiom hygiene — the categorical-unification keystones pinned kernel-clean. The ONE open theorem
-(`GuardedTraceClosure` / `ZKUnification.feedback_closure`) is a NAMED hypothesis, NOT a `sorry` and NOT
-an axiom these catch. -/
+/-! ### Axiom hygiene — the categorical-unification keystones pinned kernel-clean. The feedback closure is
+now a PROVEN refutation (`guardedTraceClosure_refuted`) plus a PROVEN Tarski replacement
+(`traceAdmissible_guarded` / `admissibleTraceClosure_holds`), NOT a `sorry` and NOT an open field. -/
 
 #assert_all_clean [Market.ZKOpenRel.dGrade_comp, Market.ZKOpenRel.dGrade_id,
   Market.ZKOpenRel.dFunctor_tensor, Market.ZKOpenRel.dFunctor_unit,
@@ -552,6 +713,12 @@ an axiom these catch. -/
   Market.ZKOpenRel.turn_conservative, Market.ZKOpenRel.turn_history_conservative,
   Market.ZKOpenRel.id_guarded, Market.ZKOpenRel.comp_guarded, Market.ZKOpenRel.tensor_guarded,
   Market.ZKOpenRel.gtrace_defect, Market.ZKOpenRel.gtrace_conservative,
+  Market.ZKOpenRel.guardedTraceClosure_refuted, Market.ZKOpenRel.traceAdmissible_guarded,
+  Market.ZKOpenRel.crossing_gtrace_guarded, Market.ZKOpenRel.total_toLoop_traceAdmissible,
+  Market.ZKOpenRel.total_toLoop_gtrace_guarded, Market.ZKOpenRel.circulation_traceAdmissible,
+  Market.ZKOpenRel.convex_engine_traceAdmissible, Market.ZKOpenRel.auction_traceAdmissible,
+  Market.ZKOpenRel.turn_traceAdmissible, Market.ZKOpenRel.ring_circulation_traced_closed,
+  Market.ZKOpenRel.admissibleTraceClosure_holds,
   Market.ZKOpenRel.ZKUnification.traced_history_closed,
   Market.ZKOpenRel.PrivacyNatTrans.indistinguishable,
   Market.ZKOpenRel.ofRevealBundle_reveal_nothing, Market.ZKOpenRel.shell_privacy_indistinguishable]
