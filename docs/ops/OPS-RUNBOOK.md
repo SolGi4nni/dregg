@@ -144,6 +144,135 @@ line — the firewall + localhost-bind + throwaway-key + honest-labels quartet.
 
 ---
 
+## Node / RPC infra (the per-chain data feed)
+
+Every chain the demos read needs a **data feed** — a way for hbox to see chain
+state. The design principle is **TRUST-for-liveness vs VERIFY-for-soundness**:
+
+> dregg **verifies** the proof / consensus anchor for every claim it accepts (a
+> STARK apex, an Altair sync-committee signature, a Tendermint validator-set
+> quorum, a ≥2/3-stake Solana vote). So a **lying feed can only STALL** the demo
+> (a liveness/DoS failure — it withholds or lies and the anchored verify rejects)
+> — it **cannot FORGE** an accepted state (a soundness failure). This is why the
+> feed choice is a **cost/liveness** decision, not a security one: we spend where
+> a light client is impractical, and light-client-verify everywhere it is not.
+
+### Provisioning list (the shopping list)
+
+| Chain | Feed | Trust posture | Cost |
+|---|---|---|---|
+| **Ethereum L1** | **Helios-style light client on hbox** (Altair sync-committee verify) — dregg already speaks this: `eth-lightclient/` | **light-client trust-minimized** | **free** |
+| **Cosmos** | **Tendermint light client on hbox** (IBC-grade validator-set verify) — `cosmos-lightclient/` — or a public RPC | **light-client trust-minimized** (RPC if the LC is deferred) | **free** |
+| **Base-Sepolia** (EVM L2, 84532) | **free public testnet RPC** `https://sepolia.base.org` | **RPC weak-subjectivity** (honestly graded) | **free** |
+| **Robinhood testnet** (EVM L2, 46630) | **free public testnet RPC** `https://rpc.testnet.chain.robinhood.com` | **RPC weak-subjectivity** (honestly graded) | **free** |
+| **Solana** | **HELIUS (paid — ember has the account)** | **RPC trusted for LIVENESS**; dregg's ≥2/3-stake consensus-anchored read (`bridge/src/solana_consensus.rs` + `solana_holdings.rs`) provides the **SOUNDNESS** | **paid — the ONE paid line item** |
+
+Notes on the two that aren't a plain light client:
+
+- **EVM L2 testnets (Base-Sepolia / Robinhood).** The free public testnet RPCs are
+  **weak-subjectivity** (you trust the endpoint for liveness; the demo is testnet,
+  no value). This is honestly fine for the demo. The **named trust-min upgrade for
+  production** is the **L1-anchored light client**: verify the L2's state root
+  against the Ethereum L1 it settles to, through the Helios LC above
+  (`eth-lightclient/` already carries the Base fault-proof path:
+  `eth-lightclient/src/base_fault_proof.rs`). Labelled as the upgrade, not shipped
+  for the testnet demo.
+- **Solana.** A **full node is impractical** (multi-TB state, heavy validator), and
+  there is **no clean light client** (no sync-committee analogue). So the feed
+  (**Helius**) is **trusted for LIVENESS only** — it tells hbox what to look at —
+  while dregg's own **≥2/3-stake consensus-anchored verify** re-derives soundness
+  from the validator votes (a lying Helius stalls; it cannot forge an accepted
+  holding/settlement). This is the single justified paid feed.
+
+### The honest-grade panel (the demo MUST show this)
+
+Each chain leg the demo reads carries its trust grade inline — the same
+honest-grade discipline as the PROVED/ATTESTED/BUILT labels. The demo must render:
+
+```
+  Ethereum L1     ● light-client verified   (Altair sync committee, trust-min)
+  Cosmos          ● light-client verified   (Tendermint validator-set, trust-min)
+  Base-Sepolia    ○ RPC (weak-subjectivity) — testnet; L1-anchored LC = prod upgrade
+  Robinhood       ○ RPC (weak-subjectivity) — testnet; L1-anchored LC = prod upgrade
+  Solana          ◐ RPC-liveness (Helius) + ≥2/3-stake consensus-anchored SOUNDNESS
+```
+
+Filled ● = trust-minimized verify; hollow ○ = trusted RPC (testnet-graded);
+half ◐ = trusted-for-liveness, verified-for-soundness. **Do not present an ○ or ◐
+leg as trust-minimized** — the grade is the honesty.
+
+### How each wires into the demo (env + processes on hbox)
+
+**RPC-fed legs** (env vars the demo/indexer read):
+```bash
+# /etc/dregg/testnet-feeds.env   (mode 0600, EnvironmentFile= for the units)
+LAUNCHPAD_RPC=https://sepolia.base.org          # or the Robinhood testnet RPC
+BASE_SEPOLIA_RPC_URL=https://sepolia.base.org
+ROBINHOOD_TESTNET_RPC_URL=https://rpc.testnet.chain.robinhood.com
+SOLANA_RPC_URL=https://mainnet.helius-rpc.com/?api-key=${HELIUS_API_KEY}
+```
+
+**Light-client processes on hbox** (long-running, systemd-supervised, same pattern
+as the demo units above):
+```ini
+# /etc/systemd/system/dregg-eth-lc.service   (Helios-style Ethereum L1 LC)
+[Unit]
+Description=dregg Ethereum L1 light client (Altair sync committee)
+After=network-online.target
+[Service]
+WorkingDirectory=/home/hbox/dregg-testnet-demo
+EnvironmentFile=/etc/dregg/testnet-feeds.env    # ETH beacon + execution RPC seeds
+ExecStart=/home/hbox/dregg-testnet-demo/bin/eth-lightclient   # built via hbuild
+Restart=on-failure
+User=hbox
+[Install]
+WantedBy=multi-user.target
+```
+```ini
+# /etc/systemd/system/dregg-cosmos-lc.service  (Tendermint LC)
+[Unit]
+Description=dregg Cosmos Tendermint light client (validator-set verify)
+After=network-online.target
+[Service]
+WorkingDirectory=/home/hbox/dregg-testnet-demo
+EnvironmentFile=/etc/dregg/testnet-feeds.env
+ExecStart=/home/hbox/dregg-testnet-demo/bin/cosmos-lightclient
+Restart=on-failure
+User=hbox
+[Install]
+WantedBy=multi-user.target
+```
+Build the light-client crates on the box (Rust; `forge` is not needed for these).
+The verify logic lives in the `eth-lightclient` and `cosmos-lightclient` crates
+(libraries — the LC runs as a host process driven by the node harness, not a
+standalone `[[bin]]` today; `ExecStart` above points at the node driver wired to
+sync those crates, or a thin bin you add):
+```bash
+scripts/hbuild eth-lc     'cargo build --release -p eth-lightclient'
+scripts/hbuild cosmos-lc  'cargo build --release -p cosmos-lightclient'
+# place the resulting binary at ~/dregg-testnet-demo/bin/ and enable the units:
+sudo systemctl enable --now dregg-eth-lc dregg-cosmos-lc
+```
+The light clients expose a local read endpoint (bound `127.0.0.1`, like the demo
+servers — never `0.0.0.0`); the demo/indexer points at that instead of a trusted
+RPC for the ETH/Cosmos legs. The LCs are **read-only** and hold **no keys**.
+
+### Security — the Helius API key is a SECRET
+
+- `HELIUS_API_KEY` lives **only** in `/etc/dregg/testnet-feeds.env` (mode 0600) on
+  hbox, loaded via `EnvironmentFile=` — **never committed** to the repo, **never**
+  passed through the gateway, **never** rendered into a client-served page (the
+  browser must not see it; if a leg needs a browser-side Solana read, proxy it
+  through the hbox backend so the key stays server-side).
+- Rotate it like any credential (`docs/ops/KEY-MANAGEMENT.md`); a leaked testnet-
+  demo Helius key is a **quota/liveness** exposure (someone burns your RPC quota),
+  **not** a value/soundness one — dregg's consensus-anchored verify still gates
+  soundness — but rotate promptly regardless.
+- The light-client legs carry **no secret** (they verify public consensus data),
+  so ETH/Cosmos have no key-management surface — another reason to prefer them.
+
+---
+
 ## Deploy procedures
 
 ### A. Testnet contract deploys (ember-gated broadcast; dry-run is keyless)
