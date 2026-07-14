@@ -72,6 +72,7 @@ pub mod governance;
 pub mod hd;
 pub mod ledger;
 pub mod multichain;
+pub mod nft_mint;
 pub mod otc;
 pub mod pricing;
 pub mod swap;
@@ -103,6 +104,11 @@ pub use multichain::{
 // `dregg-governance` dependency (the light-client lanes render these; the treasury
 // view points them at the treasury's own addresses).
 pub use dregg_governance::proven_foreign_holding::{ChainId, ProvenForeignHolding};
+pub use nft_mint::{
+    ATA_PROGRAM_ID, BuiltNftMint, CompiledInstruction, DreggAchievementProof, MEMO_PROGRAM_ID,
+    MINT_RENT_LAMPORTS, MintNftRequest, NftMintError, NftMinter, NftTxSubmitter, SPL_MINT_LEN,
+    SYSTEM_PROGRAM_ID, build_mint_nft, find_associated_token_address,
+};
 pub use otc::{
     OtcError, OtcQuote, OtcSettleError, OtcSettlement, otc_dregg_out, otc_quote, otc_settle,
     otc_settle_message,

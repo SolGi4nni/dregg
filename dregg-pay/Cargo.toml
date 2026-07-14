@@ -34,6 +34,11 @@ sha2 = { workspace = true }
 ed25519-dalek = { version = "2", features = ["std"] }
 # base58 encode/decode for Solana pubkeys (mint / treasury / deposit addresses).
 bs58 = "0.5"
+# ed25519 curve-point test for the Associated-Token-Account PDA derivation
+# (`find_program_address`): a PDA is valid iff it is OFF the ed25519 curve (no
+# private key exists). We decompress the candidate to decide. Already in the tree
+# (ed25519-dalek's own curve backend); pinned to the same 4.x.
+curve25519-dalek = "4"
 # Stable per-user derivation index + payment references.
 blake3 = "1"
 # The HD seed is secret custody material — wipe it on drop.
