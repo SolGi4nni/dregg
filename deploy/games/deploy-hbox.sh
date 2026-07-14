@@ -30,6 +30,11 @@
 #
 # Usage (on hbox unless noted):
 #   ./deploy-hbox.sh                 # build -> install -> reload -> health (+ auto-revert)
+#   ./deploy-hbox.sh --funnel        # TAILSCALE-FUNNEL variant: NO gateway leg. Build + install
+#                                    #   the web unit bound 127.0.0.1:8790 (DREGG_NODE_URL=:8420),
+#                                    #   health-check localhost:8790, then PRINT the ember-gated
+#                                    #   `tailscale funnel 8790` public-exposure flip (never run).
+#                                    #   See deploy/games/RUNBOOK-FUNNEL.md.
 #   ./deploy-hbox.sh --dry-run       # print every step; NO side effects (safe anywhere)
 #   ./deploy-hbox.sh gateway         # ON THE GATEWAY: install the games Caddy block + reload
 #   ./deploy-hbox.sh health          # just run the health gate
@@ -55,40 +60,65 @@ set -euo pipefail
 
 # ── flags + config ───────────────────────────────────────────────────────────
 DRY_RUN=0
+FUNNEL=0
 ARGS=()
 for a in "$@"; do
   case "$a" in
     --dry-run) DRY_RUN=1 ;;
+    --funnel)  FUNNEL=1 ;;
     *) ARGS+=("$a") ;;
   esac
 done
 set -- "${ARGS[@]:-up}"
 
 GAMES_REPO_DIR="${GAMES_REPO_DIR:-$HOME/dev/breadstuffs}"
-GAMES_ENV="${GAMES_ENV:-$HOME/.config/dregg/games.env}"
 STATE_DIR="${STATE_DIR:-$HOME/.local/state/dregg-games}"
 USER_UNIT_DIR="${USER_UNIT_DIR:-$HOME/.config/systemd/user}"
-# The web server binds the Tailscale iface (hbox-dregg 100.95.240.73:8790), NOT
-# localhost — so the on-hbox health probe must hit the tailnet IP, not 127.0.0.1.
-HEALTH_URL="${HEALTH_URL:-http://100.95.240.73:8790/health}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 KEEP="${KEEP:-5}"
 AUTO_REVERT="${AUTO_REVERT:-1}"
 # CADDY_FILE / GAMES_BLOCK are used ONLY by the `gateway` subcommand (run on the gateway).
 CADDY_FILE="${CADDY_FILE:-/etc/caddy/Caddyfile}"
 GAMES_BLOCK="${GAMES_BLOCK:-}"
-# Caddy on hbox is OFF by default — the real topology puts Caddy on the AWS gateway.
+# Caddy on hbox is OFF by default — neither topology runs Caddy on hbox (gateway holds
+# it in the gateway topology; Funnel IS the edge in the funnel topology).
 SKIP_CADDY="${SKIP_CADDY:-1}"
-SKIP_BOT="${SKIP_BOT:-0}"
+
+# ── topology fork: FUNNEL vs the default GATEWAY topology ─────────────────────
+# FUNNEL=1 (--funnel): Tailscale-Funnel variant. The web server binds LOOPBACK
+#   (127.0.0.1:8790 — Funnel proxies the local port), anchors on the hbox solo
+#   devnet node (:8420), and there is NO gateway leg at all. The public-exposure
+#   flip is `tailscale funnel 8790`, printed as an ember-gated banner (never run).
+# FUNNEL=0 (default): the gateway topology. The web server binds the tailnet iface
+#   (100.95.240.73:8790) so the AWS gateway's Caddy reverse-proxies over Tailscale.
+if [[ "$FUNNEL" == "1" ]]; then
+  WEB_UNIT=dregg-web-games-funnel.service
+  GAMES_ENV="${GAMES_ENV:-$HOME/.config/dregg/games-funnel.env}"
+  ENV_EXAMPLE=".env.funnel.example"
+  # Funnel serves a LOCAL port — the on-hbox health probe hits loopback.
+  HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8790/health}"
+  # The funnel fast-path is the WEB demo only (the bot is not a funnel surface).
+  SKIP_BOT="${SKIP_BOT:-1}"
+else
+  WEB_UNIT=dregg-web-games.service
+  GAMES_ENV="${GAMES_ENV:-$HOME/.config/dregg/games.env}"
+  ENV_EXAMPLE=".env.example"
+  # The web server binds the Tailscale iface (hbox-dregg 100.95.240.73:8790), NOT
+  # localhost — so the on-hbox health probe must hit the tailnet IP, not 127.0.0.1.
+  HEALTH_URL="${HEALTH_URL:-http://100.95.240.73:8790/health}"
+  SKIP_BOT="${SKIP_BOT:-0}"
+fi
 
 RELEASES_DIR="$STATE_DIR/releases"
 SRC_DIR="$GAMES_REPO_DIR/deploy/games"
 BINARIES=(dreggnet-web-server)
-UNITS=(dregg-web-games.service)
+UNITS=("$WEB_UNIT")
 if [[ "$SKIP_BOT" != "1" ]]; then
   BINARIES+=(dregg-discord-bot)
   UNITS+=(dregg-games-bot.service)
 fi
+# The web unit's basename minus .service — for `journalctl --user -u <unit>`.
+WEB_UNIT_NAME="${WEB_UNIT%.service}"
 
 # Per-binary source path. dreggnet-web is a ROOT-workspace member (built into the
 # root target/); dregg-discord-bot is a SEPARATE workspace (excluded from root —
@@ -138,14 +168,43 @@ gated_banner() {
 BANNER
 }
 
+# ── the FUNNEL-variant ember-gated banner (--funnel) ─────────────────────────
+funnel_gated_banner() {
+  cat <<'BANNER'
+[deploy-games] ══════════════════════════════════════════════════════════════
+[deploy-games]  FUNNEL VARIANT (--funnel): NO gateway, NO Caddy, NO DNS.
+[deploy-games]  EMBER-GATED steps this script does NOT perform (see
+[deploy-games]  deploy/games/RUNBOOK-FUNNEL.md):
+[deploy-games]    (a) the hbox devnet node :8420 must be UP + UNLOCKED (POST
+[deploy-games]        /cipherclerk/unlock) + its OPERATOR CELL faucet-materialized once
+[deploy-games]    (b) place ~/.config/dregg/games-funnel.env + chmod 600
+[deploy-games]    (d) PUBLIC-EXPOSURE FLIP: `tailscale funnel 8790`  ← the single
+[deploy-games]        decision that makes the demo public at
+[deploy-games]        https://hbox-dregg.<tailnet>.ts.net  (printed after health passes)
+[deploy-games] ══════════════════════════════════════════════════════════════
+BANNER
+}
+
+# print_funnel_flip(): after a passing health gate, print the exact (ember-gated)
+# `tailscale funnel` command that flips the demo public. NEVER executed here.
+print_funnel_flip() {
+  echo "[deploy-games]"
+  echo "[deploy-games]  ── EMBER-GATED PUBLIC-EXPOSURE FLIP (run by hand when ready) ──"
+  echo "[deploy-games]    tailscale funnel --bg 8790     # serve 127.0.0.1:8790 publicly (443->8790)"
+  echo "[deploy-games]    tailscale funnel status        # confirm the public https://hbox-dregg.<tailnet>.ts.net URL"
+  echo "[deploy-games]  Take it down:"
+  echo "[deploy-games]    tailscale funnel --https=443 off"
+  echo "[deploy-games]  (deploy/games/RUNBOOK-FUNNEL.md steps d–f)"
+}
+
 # ── preflight ────────────────────────────────────────────────────────────────
 preflight() {
   log "preflight"
   [[ -d "$GAMES_REPO_DIR" ]] || die "repo not found: $GAMES_REPO_DIR (set GAMES_REPO_DIR)"
   [[ -d "$SRC_DIR" ]] || die "deploy/games not found under $GAMES_REPO_DIR — is this the right checkout / branch?"
   if [[ ! -f "$GAMES_ENV" ]]; then
-    warn "env file $GAMES_ENV MISSING — ember must place it (tokens + bind + DATABASE_URL)."
-    gated "place $GAMES_ENV from deploy/games/.env.example, then chmod 600"
+    warn "env file $GAMES_ENV MISSING — ember must place it (bind + DREGG_NODE_URL + DATABASE_URL)."
+    gated "place $GAMES_ENV from deploy/games/$ENV_EXAMPLE, then chmod 600"
     [[ "$DRY_RUN" == "1" ]] || die "cannot start units without $GAMES_ENV; place it and re-run"
   fi
   run mkdir -p "$STATE_DIR" "$USER_UNIT_DIR" "$RELEASES_DIR"
@@ -224,6 +283,13 @@ install_units() {
 }
 
 install_caddy() {
+  # Funnel variant: there is NO Caddy leg at all — Tailscale Funnel is the public
+  # edge (TLS + hostname). Skip unconditionally.
+  if [[ "$FUNNEL" == "1" ]]; then
+    log "FUNNEL variant — no Caddy / no gateway leg; Tailscale Funnel is the edge."
+    log '  public-exposure flip is `tailscale funnel 8790` (ember-gated; printed after health).'
+    return 0
+  fi
   # Default topology: Caddy lives on the AWS GATEWAY, NOT hbox. SKIP_CADDY defaults 1,
   # so this hbox leg is a no-op — the games site block is installed by the separate
   # `gateway` subcommand (run ON THE GATEWAY, gateway_install below).
@@ -293,13 +359,17 @@ health_gate() {
     sleep 5
   done
   log "health gate FAILED after ${HEALTH_TIMEOUT}s; recent log:"
-  journalctl --user -u dregg-web-games --no-pager -n 30 2>/dev/null || true
+  journalctl --user -u "$WEB_UNIT_NAME" --no-pager -n 30 2>/dev/null || true
   return 1
 }
 
 # ── the gated deploy ─────────────────────────────────────────────────────────
 deploy_up() {
-  gated_banner
+  if [[ "$FUNNEL" == "1" ]]; then
+    funnel_gated_banner
+  else
+    gated_banner
+  fi
   preflight
   local snap
   snap="$(record_release | tail -1)"
@@ -309,7 +379,13 @@ deploy_up() {
   start_units
   if health_gate; then
     log "games stack HEALTHY on the new release ($snap was the rollback point)"
-    log "smoke test next (deploy/games/RUNBOOK.md step e): open the URL, play a game, /descent in Discord."
+    if [[ "$FUNNEL" == "1" ]]; then
+      log "the web unit is up on 127.0.0.1:8790 (loopback) — NOT yet public."
+      print_funnel_flip
+      log "smoke test after the flip (deploy/games/RUNBOOK-FUNNEL.md step e): open the public URL, play a game, submit a run, confirm it anchors on :8420."
+    else
+      log "smoke test next (deploy/games/RUNBOOK.md step e): open the URL, play a game, /descent in Discord."
+    fi
     return 0
   fi
   if [[ "$AUTO_REVERT" == "1" ]]; then

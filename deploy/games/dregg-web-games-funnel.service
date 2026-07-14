@@ -1,0 +1,73 @@
+# dregg games web demo — FUNNEL VARIANT (Tailscale-Funnel public exposure).
+#
+# Same `dreggnet-web-server` as dregg-web-games.service, but wired for the
+# TAILSCALE-FUNNEL topology instead of the AWS-gateway topology:
+#
+#   • BIND 127.0.0.1:8790  (NOT the tailnet iface). Tailscale Funnel proxies a
+#     LOCAL port: `tailscale funnel 8790` serves 127.0.0.1:8790 publicly at
+#     https://hbox-dregg.<tailnet>.ts.net with auto-TLS. Funnel reaches into
+#     localhost, so the server binds loopback — contrast the gateway variant,
+#     which binds the tailscale iface (100.95.240.73:8790) so a SEPARATE gateway
+#     Caddy can reverse-proxy over the tailnet. Here there is NO gateway and NO
+#     Caddy: Funnel IS the public edge (TLS + the public hostname).
+#
+#   • DREGG_NODE_URL=http://127.0.0.1:8420 — the hbox solo devnet node (faucet).
+#     A submitted Descent run anchors on that node's ledger (resolve_node_target
+#     → NodeTarget::Federation). Unset would keep it in-process (NodeTarget::Local).
+#     DREGG_NODE_BEARER is supplied via the env file after unlock (only needed if
+#     the node has a passphrase; a loopback devnet needs none).
+#
+# hbox discipline (deploy/hbox/RUNBOOK.md): a USER unit under
+# ~/.config/systemd/user/ , `loginctl enable-linger hbox` so it survives logout,
+# `%h`-relative paths, WantedBy=default.target.
+#
+# ⚠ THE PUBLIC-EXPOSURE FLIP IS NOT HERE. This unit only binds loopback. Nothing
+# is public until `tailscale funnel 8790` is run — the single ember-gated
+# public-exposure decision (deploy/games/RUNBOOK-FUNNEL.md step d).
+[Unit]
+Description=dregg games web demo (dreggnet-web-server, funnel variant, loopback:8790)
+After=network-online.target
+Wants=network-online.target
+# Restart-storm brake (same discipline as dregg-web-games.service). A hard crash
+# loop stops the unit instead of pegging the box. `systemctl --user reset-failed
+# dregg-web-games-funnel` re-arms it after a fix.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# Funnel-variant env file (DREGGNET_WEB_BIND, DREGG_NODE_URL, optional
+# DREGG_NODE_BEARER, DATABASE_URL). SEPARATE from the gateway variant's games.env
+# so the two topologies never share a bind line. Placed by ember, chmod 600.
+EnvironmentFile=%h/.config/dregg/games-funnel.env
+Environment=RUST_LOG=info
+# Fallback bind if the env file omits DREGGNET_WEB_BIND: LOOPBACK (Funnel proxies
+# the local port; the server never binds a public iface). NEVER 0.0.0.0.
+Environment=DREGGNET_WEB_BIND=127.0.0.1:8790
+# Fallback node target if the env file omits DREGG_NODE_URL: the hbox solo devnet
+# node on loopback :8420 (the faucet node). Submitted runs anchor on its ledger.
+Environment=DREGG_NODE_URL=http://127.0.0.1:8420
+WorkingDirectory=%h/dev/breadstuffs
+ExecStart=%h/dev/breadstuffs/target/release/dreggnet-web-server
+Restart=always
+RestartSec=5
+
+# Security hardening (user-unit-safe subset — no ProtectHome, the binary + sqlite
+# db both live under $HOME).
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h/.local/state/dregg-games
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits — the games server is a thin in-process web app; bound it well
+# below hbox's capacity so it can never starve the co-resident :8420 node / builds.
+LimitNOFILE=65536
+MemoryHigh=1G
+MemoryMax=2G
+TasksMax=1024
+
+[Install]
+WantedBy=default.target
