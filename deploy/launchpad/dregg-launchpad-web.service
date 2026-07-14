@@ -1,0 +1,72 @@
+# dregg launchpad web — the launchpad product layer (launchpad-web) on hbox.
+#
+# Runs `node server.mjs` (package launchpad-web): the create / bid / token-page /
+# replayable-discovery frontend + backend over the fair-launch engine
+# (chain/contracts/launchpad). The browser drives the REAL DreggLaunchpad contract
+# with the user's own wallet (window.ethereum) over a public testnet RPC; the node
+# backend is a read-only ethers event-indexer + REST API (server.mjs). No node, no
+# secrets in this process — for rung-1 (attestor=0, permissionless finalize) the
+# launchpad-web + the on-chain contracts are the WHOLE thing, and rung-1 needs ZERO
+# dregg (docs/deos/PRIVATE-DREGG-PUBLIC-LAUNCHPAD-ARCHITECTURE.md §2.3).
+#
+# hbox discipline (deploy/hbox/RUNBOOK.md, mirrors deploy/games/dregg-web-games.service):
+# a USER unit under ~/.config/systemd/user/, `loginctl enable-linger hbox` so it
+# survives logout, `%h`-relative paths, WantedBy=default.target.
+#
+# BIND: the TAILSCALE interface (100.95.240.73:8785 — tailnet node hbox-dregg), so the
+# AWS gateway's Caddy reaches it OVER TAILSCALE (deploy/launchpad/caddy/Caddyfile.launchpad
+# runs on the gateway, NOT on hbox). NEVER 0.0.0.0 — binding the tailnet IP means only
+# tailnet peers (the gateway) can reach it; the public internet cannot. LAUNCHPAD_HOST is
+# read by server.mjs (unset → all ifaces for local dev; SET here to the tailnet iface).
+# 8790/8781/8787 are taken on hbox (games web / drex-web / dreggcloud; OPS-RUNBOOK);
+# 8785 is FREE (it is launchpad-web's own default port). Override via PORT in the env file.
+[Unit]
+Description=dregg launchpad web (launchpad-web/server.mjs, rung-1 permissionless)
+After=network-online.target
+Wants=network-online.target
+# Restart-storm brake (same discipline as deploy/games/dregg-web-games.service): a hard
+# crash loop stops the unit instead of pegging the box. `systemctl --user reset-failed
+# dregg-launchpad-web` re-arms it after a fix.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+# One env file for the launchpad web stack (LAUNCHPAD_HOST, PORT, LAUNCHPAD_RPC,
+# LAUNCHPAD_ADDRESS, optional DREGG_NODE). Placed by ember, chmod 600. NO prod key is
+# ever in this file — the browser drives the contract with the USER's wallet; the
+# backend only READS the chain over LAUNCHPAD_RPC.
+EnvironmentFile=%h/.config/dregg/launchpad.env
+Environment=NODE_ENV=production
+# Fallback bind if the env file omits LAUNCHPAD_HOST/PORT (the Tailscale iface so the
+# gateway can reach it over the tailnet; NEVER 0.0.0.0). hbox-dregg = 100.95.240.73.
+Environment=LAUNCHPAD_HOST=100.95.240.73
+Environment=PORT=8785
+WorkingDirectory=%h/dev/breadstuffs/launchpad-web
+# node_modules (ethers) is installed by deploy-launchpad.sh (npm ci) into the working
+# dir; server.mjs serves the vendored ethers UMD from there. `node` from PATH.
+ExecStart=/usr/bin/env node server.mjs
+Restart=always
+RestartSec=5
+
+# Security hardening (user-unit-safe subset — no ProtectHome; the source + node_modules
+# both live under $HOME).
+NoNewPrivileges=true
+ProtectSystem=strict
+# Read-only source tree is fine; the process writes nothing durable (no db) — a scratch
+# state dir is granted for parity/future use and PrivateTmp for temp.
+ReadWritePaths=%h/.local/state/dregg-launchpad
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# Resource limits — a thin in-process node read/serve app; bound it well below hbox
+# capacity so it can never starve a co-resident build/node.
+LimitNOFILE=65536
+MemoryHigh=768M
+MemoryMax=1G
+TasksMax=512
+
+[Install]
+WantedBy=default.target

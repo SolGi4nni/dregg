@@ -1,0 +1,106 @@
+# Caddyfile block — the dregg launchpad public surface (launchpad.dregg.fg-goose.online).
+#
+# ⚠ THIS BLOCK RUNS ON THE AWS GATEWAY, NOT ON hbox. It is a NEW, SEPARATE SITE BLOCK
+# to be ADDED to the gateway's Caddy config (deploy/aws/caddy/Caddyfile), sitting next
+# to the existing devnet.dregg.fg-goose.online block AND the games block
+# (deploy/games/caddy/Caddyfile.games). It does NOT edit the games block — it is its
+# own domain. The gateway is the SOLE public surface; it terminates Let's Encrypt TLS
+# and reverse-proxies OVER TAILSCALE to the launchpad-web server on hbox (tailnet node
+# hbox-dregg, 100.95.240.73:8785). hbox opens NO public port — launchpad-web binds the
+# Tailscale interface only (deploy/launchpad/dregg-launchpad-web.service,
+# LAUNCHPAD_HOST=100.95.240.73).
+#
+# Real live topology (docs/deos/DEVNET-DEPLOYMENT-REALITY.md, mirrors deploy/games):
+#   DNS launchpad.dregg.fg-goose.online
+#         │  :443 TLS (Let's Encrypt, on the gateway)
+#   ┌──────▼─── AWS GATEWAY (public) ───┐
+#   │  Caddy: devnet.  (existing)       │
+#   │         games.   (games block)    │
+#   │         launchpad. (THIS block)   │
+#   │        │ reverse_proxy over Tailscale
+#   └────────┼──────────────────────────┘
+#            │  100.95.240.73:8785  (tailnet: hbox-dregg)
+#   ┌────────▼─── hbox (private, tailnet) ───┐
+#   │  dregg-launchpad-web 100.95.240.73:8785│  ← create / bid / token / discovery / API
+#   └────────────────────────────────────────┘
+#
+# PREREQUISITE (ember-gated): the AWS gateway must be ON THE TAILNET so it can dial
+# 100.95.240.73:8785. It is the SAME shared prerequisite as the games block
+# (deploy/games/RUNBOOK.md step 0) — once the gateway is a tailnet node, BOTH the games
+# and the launchpad upstreams are reachable with no inbound port opened on hbox.
+#
+# The upstream target is a Caddy env placeholder so re-pointing is a config edit, not a
+# Caddyfile patch: set DREGG_LAUNCHPAD_UPSTREAM (default 100.95.240.73:8785). The public
+# domain is DREGG_LAUNCHPAD_DOMAIN (default launchpad.dregg.fg-goose.online), matching
+# deploy/aws/caddy/Caddyfile's DREGG_SITE_DOMAINS discipline.
+
+# CORS ownership: Caddy is the single owner of the Access-Control-* response headers.
+# Strip any upstream copy so the browser never sees a duplicate Access-Control-Allow-
+# Origin. (A DISTINCT snippet name from the games block's strip_upstream_cors_games so
+# the two blocks coexist in one Caddyfile — a snippet may be defined only once. If this
+# name already exists where you paste, drop these lines and reuse it.)
+(strip_upstream_cors_launchpad) {
+	header_down -Access-Control-Allow-Origin
+	header_down -Access-Control-Allow-Methods
+	header_down -Access-Control-Allow-Headers
+}
+
+{$DREGG_LAUNCHPAD_DOMAIN:launchpad.dregg.fg-goose.online} {
+	# Cap request bodies. The backend's only POST is /api/launches/:id/disclose (a small
+	# JSON schedule); server.mjs already destroys bodies over 1 MB. A gateway cap is cheap
+	# defence in depth.
+	request_body {
+		max_size 2MB
+	}
+
+	# RATE LIMITING — NAMED, not built in. Caddy core has no rate_limit directive; it
+	# needs the `caddyserver/caddy-ratelimit` plugin baked into a custom xcaddy build on
+	# the GATEWAY (`xcaddy build --with github.com/mholt/caddy-ratelimit`). Until that
+	# build is in place, per-IP rate limiting is an EMBER-GATED go-live item
+	# (deploy/launchpad/RUNBOOK.md). With the plugin, uncomment:
+	#   rate_limit {
+	#       zone launchpad_per_ip {
+	#           key    {remote_host}
+	#           events 120
+	#           window 1m
+	#       }
+	#   }
+
+	# Health probe — the fronting proxy / uptime check hits /api/config (200 JSON,
+	# server.mjs returns it unconditionally, indexer-independent). Proxied to the
+	# launchpad-web server on hbox over Tailscale so the probe reflects the real upstream,
+	# not just Caddy being up.
+	handle /api/config {
+		reverse_proxy {$DREGG_LAUNCHPAD_UPSTREAM:100.95.240.73:8785} {
+			import strip_upstream_cors_launchpad
+		}
+	}
+
+	# Everything else — the discovery /, create.html, launch.html, token.html, the
+	# /vendor/ethers.js UMD, and the /api/launches read + /disclose POST — is served by
+	# the one in-process launchpad-web app on hbox, reached over the Tailscale tunnel.
+	handle {
+		reverse_proxy {$DREGG_LAUNCHPAD_UPSTREAM:100.95.240.73:8785} {
+			import strip_upstream_cors_launchpad
+		}
+	}
+
+	# CORS: the surface is same-origin (the gateway serves the pages AND proxies the API
+	# from the one launchpad.dregg.fg-goose.online origin), so browsers need no Access-
+	# Control negotiation. These remain for any genuinely cross-origin client.
+	header Access-Control-Allow-Origin "*"
+	header Access-Control-Allow-Methods "GET, POST, OPTIONS"
+	header Access-Control-Allow-Headers "Content-Type"
+
+	# Security headers. NOTE: the frontend drives an injected wallet (window.ethereum)
+	# and the vendored ethers UMD — both same-origin — so a self-framed CSP is safe.
+	header X-Content-Type-Options "nosniff"
+	header X-Frame-Options "SAMEORIGIN"
+	header Content-Security-Policy "frame-ancestors 'self'"
+	header Referrer-Policy "strict-origin-when-cross-origin"
+
+	log {
+		output stderr
+		format console
+	}
+}

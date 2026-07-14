@@ -34,6 +34,12 @@ const PUB = path.join(HERE, 'public');
 const ETHERS_UMD = path.join(HERE, 'node_modules', 'ethers', 'dist', 'ethers.umd.min.js');
 
 const PORT = process.env.PORT || 8785;
+// Bind interface. UNSET (default) → Node binds all interfaces (the local-dev / gate
+// behaviour, unchanged). On hbox the deploy unit sets LAUNCHPAD_HOST=100.95.240.73
+// (the Tailscale iface, hbox-dregg) so ONLY tailnet peers — the AWS gateway — reach
+// it; the public internet never can. NEVER 0.0.0.0 in the deployed unit. See
+// deploy/launchpad/dregg-launchpad-web.service.
+const HOST = process.env.LAUNCHPAD_HOST || undefined;
 const RPC = process.env.LAUNCHPAD_RPC || 'http://127.0.0.1:8545';
 const ADDRESS = process.env.LAUNCHPAD_ADDRESS || '';
 // When DREGG_NODE is set the launchpad reads its launches from a LIVE dregg node
@@ -124,8 +130,8 @@ async function main() {
     console.log('  node-driven:  DREGG_NODE=http://127.0.0.1:8420 node server.mjs');
   }
   http.createServer((req, res) => handle(req, res).catch((e) => json(res, 500, { error: String(e) })))
-    .listen(PORT, () => {
-      console.log(`dregg launchpad → http://localhost:${PORT}`);
+    .listen(PORT, HOST, () => {
+      console.log(`dregg launchpad → http://${HOST || 'localhost'}:${PORT}`);
       console.log(`  discovery /  · create /create.html · token /token.html?id=1`);
     });
 }
