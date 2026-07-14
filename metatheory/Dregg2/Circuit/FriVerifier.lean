@@ -1,3 +1,5 @@
+import Dregg2.Tactics
+
 /-
 # Dregg2.Circuit.FriVerifier — a LEAN SPEC of the batch-STARK FRI verifier ALGORITHM,
 and the REFINEMENT statement for the gnark/BN254 ETH-wrap circuit.
@@ -31,9 +33,10 @@ silent soundness break") becomes a refinement THEOREM.
 `#assert_axioms` on the theorems here stays `⊆ {propext, Classical.choice,
 Quot.sound}`: the FRI floor enters as a typeclass HYPOTHESIS, never an `axiom`. No
 `sorry`. The verifier sub-checks are now ALL concrete: the FRI fold-chain + Merkle
-recompute (§1b), AND the per-table quotient / logup interaction bus / degree-bit / PoW
-checks (§3b `batchTablesCheck`/`queryPowCheck` — the `FriChecks.batchTables`/`queryPow`
-fields the prior lane parked are SPECIFIED, with proven reject-teeth). The
+recompute (§1b), AND the per-table quotient / logup interaction bus / degree-bit checks
+(§3b `batchTablesCheck`). Query PoW cannot be checked from a witness value alone: its
+deployed transcript-bound check is `FriChallengerUnified.queryPowCheckUnified`; this base
+module checks only the singleton wire shape in `FriChecks.queryPow`.
 `verifyAlgo → StarkSound` bridge (getting the verifier algorithm OUT of the apex's TCB)
 is `Dregg2.Circuit.FriVerifierBridge`; the REAL Poseidon2-w16 hash, KAT-validated
 bit-exact, is `Dregg2.Circuit.Poseidon2BabyBearW16`.
@@ -377,8 +380,21 @@ TRANSCRIPT consumes here (fold-layer commitments, final poly) plus the
 `expose_claim` exposed segment (tooth 3). The trace/quotient openings, logup bus,
 and NPO-table rows enter via the `FriChecks` per-query components (§3, roadmap). -/
 structure BatchProofData (F : Type) where
+  /-- Canonical base-field encoding of `degree_bits`. The deployed verifier absorbs
+  this singleton FIRST, before every commitment. A list is used because the generic
+  model cannot manufacture an `F` default; the unified verifier enforces singleton
+  shape. -/
+  degreeBitsPreamble : List F := []
+  /-- Canonical base-field encoding of `base_degree_bits`, absorbed second. -/
+  baseDegreeBitsPreamble : List F := []
+  /-- Canonical base-field encoding of `preprocessed_width`, absorbed third. -/
+  preprocessedWidthPreamble : List F := []
   /-- The trace Merkle-cap commitment (the codeword the FRI low-degree test certifies). -/
   traceCommit : List F
+  /-- Optional preprocessed-trace commitment. It is empty on the deployed no-
+  preprocessing EffectVm AIR; observing the empty list is a no-op. Keeping it in
+  the sequence makes the positive-width verifier branch explicit. -/
+  preprocessedCommit : List F := []
   /-- One Merkle-cap commitment per FRI fold layer (observed; each followed by a
   beta squeeze in the commit phase). -/
   friCommitments : List (List F)
@@ -404,6 +420,16 @@ structure BatchProofData (F : Type) where
   `FriTranscriptBind.deriveOod` can replicate the EXACT deployed ζ-squeeze point (making the deployed
   `verifyBatch → verifyAlgoTB` swap faithful, not just additive). Empty ⇒ the abstract/legacy shape. -/
   quotientCommit : List F := []
+  /-- Every extension-field opening supplied to `Pcs::verify`, flattened into base
+  coefficients in the exact nested iteration order of `two_adic_pcs.rs::verify`.
+  The PCS observes this stream after `ζ` and before sampling its batch-combination
+  challenge. -/
+  openedEvaluations : List F := []
+  /-- The variable-arity FRI schedule, encoded as base-field scalars in commit-round
+  order. Current plonky3 observes this stream after `finalPoly` and before query
+  grinding. The unified verifier checks one entry per FRI commitment and bounds each
+  canonical value by `maxLogArity`. -/
+  friLogArities : List F := []
 
 /-- The public inputs the wrap carries: `[genesis_root, final_root, num_turns,
 chain_digest…]` (`ivc_turn_chain.rs:1296–1304`). Tooth 3 is `exposedSegment = this`. -/
@@ -494,7 +520,8 @@ structure FriChecks (F : Type) where
   /-- REMAINING (roadmap §5 step 4): per-table constraint + quotient evaluation and
   the logup interaction-bus check across the batched tables + the four NPO tables. -/
   batchTables : BatchProofData F → List (List F) → Bool
-  /-- REMAINING: the query grinding proof-of-work check (`powBits`). -/
+  /-- Query-PoW slot. The base verifier can check wire shape; the deployed masked squeeze
+  is supplied by the continued challenger in `FriChallengerUnified`. -/
   queryPow : BatchProofData F → Bool
 
 /-- **The concrete FRI-core checks** (§1b), wired into the `FriChecks` bundle.
@@ -622,15 +649,16 @@ for each batched AIR (`verify_all_tables` → `p3_batch_stark::verify_batch`,
     `LIMB_BITS` pin — `verify_vm_descriptor2` checks `degree_bits[byte] == LIMB_BITS`);
   * checks the LOGUP INTERACTION BUS balances — the per-table cumulative sums net to
     zero across all tables (`p3_lookup::logup::LogUpGadget`; sends = receives);
-  * checks the GRINDING PoW — the witness output's low `query_proof_of_work_bits` bits
-    are zero (`query_proof_of_work_bits = 16`).
+  * checks the query-PoW witness wire shape. Its cryptographic condition is necessarily
+    transcript-dependent and lives in `FriChallengerUnified.queryPowCheckUnified`.
 
 These are real Boolean functions of the proof data, parameterized by a `FieldArith`
 op bundle (the field `+`/`*`/`^`/`0`/`1`, mirroring how `FriCore` abstracts the
-Poseidon2 `compress` + the arity-2 `foldCombine` — this module imports nothing, so the
-ring ops are carried as a record, not a Mathlib typeclass). The soundness-relevant
+Poseidon2 `compress` + the arity-2 `foldCombine`; the ring ops stay explicit rather
+than silently selecting a field instance). The soundness-relevant
 TEETH are proven: a tampered quotient, a wrong degree-bit, an unbalanced bus, and a
-failed/missing PoW each REJECT. They are NOT opaque verdicts and NOT `sorry`. -/
+missing PoW wire each REJECT here; transcript-bound bad PoW rejects in the unified
+module. They are NOT opaque verdicts and NOT `sorry`. -/
 
 /-- The field arithmetic the batch-table constraint check needs — the additive group
 `(add, zero)`, the multiplication `mul`, the powering `pow` (for the vanishing
@@ -664,22 +692,31 @@ def batchTablesCheck {F : Type} [DecidableEq F]
       && decide (busSum A proof.tableOpenings = A.zero)
   | _ => false
 
-/-- **The concrete grinding-PoW check.** The witness output's low `powBits` bits must
-be zero (`rand & ((1<<powBits)−1) = 0`). A missing witness (no grinding) REJECTS. -/
-def queryPowCheck {F : Type} (toNat : F → Nat) (powBits : Nat) (proof : BatchProofData F) : Bool :=
+/-- The RETIRED wrong-Rust self-test, kept only as a named diagnostic for old proof
+artifacts. p3 never tests the witness's own low bits; it absorbs the witness and tests a
+fresh squeeze. This function is deliberately NOT consumed by `fullChecks` or the deployed
+unified verifier. -/
+def legacyQueryPowSelfCheck {F : Type} (toNat : F → Nat) (powBits : Nat)
+    (proof : BatchProofData F) : Bool :=
   match proof.powWitness with
   | [w] => decide (toNat w % (2 ^ powBits) = 0)
   | _ => false
 
-/-- **The fully-concrete `FriChecks` bundle**: the FRI query core (§1b) PLUS the
-specified batch-table constraint check and the grinding PoW. No remaining opaque
-record stub — every `verifyAlgo` sub-check is now a real algorithm. -/
+/-- The base shell's honest share of query-PoW checking: exactly one witness scalar must
+deserialize. The continued transcript adds the actual absorb/fresh-squeeze condition. -/
+def queryPowWitnessShape {F : Type} (proof : BatchProofData F) : Bool :=
+  match proof.powWitness with
+  | [_] => true
+  | _ => false
+
+/-- The base `FriChecks` bundle: FRI query core, legacy batch-table identity, and the
+query-witness wire shape. The continued challenger supplies the cryptographic PoW tooth. -/
 def fullChecks {F : Type} [DecidableEq F]
-    (core : FriCore F) (A : FieldArith F) (toNat : F → Nat) (powBits : Nat) : FriChecks F where
+    (core : FriCore F) (A : FieldArith F) (_toNat : F → Nat) (_powBits : Nat) : FriChecks F where
   foldConsistent := (concreteFriChecks core).foldConsistent
   merklePaths := (concreteFriChecks core).merklePaths
   batchTables := fun proof _betas => batchTablesCheck A proof
-  queryPow := fun proof => queryPowCheck toNat powBits proof
+  queryPow := fun proof => queryPowWitnessShape proof
 
 /-! ### The batch-check teeth (REAL, proven). -/
 
@@ -736,20 +773,24 @@ batch check REJECTS. -/
     (hood : proof.oodPoint = []) : batchTablesCheck A proof = false := by
   unfold batchTablesCheck; rw [hood]
 
-/-- **Failed-PoW tooth**: a grinding witness whose low `powBits` bits are not zero
-REJECTS — the prover must have ground a valid nonce. -/
-theorem queryPowCheck_rejects_bad_pow {F : Type} (toNat : F → Nat) (powBits : Nat)
+/-- The retired self-test still documents the exact old bug, but has no verifier
+authority. -/
+theorem legacyQueryPowSelfCheck_rejects_bad_self_bits {F : Type}
+    (toNat : F → Nat) (powBits : Nat)
     (proof : BatchProofData F) (w : F) (hw : proof.powWitness = [w])
     (h : toNat w % (2 ^ powBits) ≠ 0) :
-    queryPowCheck toNat powBits proof = false := by
-  unfold queryPowCheck; rw [hw]; exact decide_eq_false h
+    legacyQueryPowSelfCheck toNat powBits proof = false := by
+  unfold legacyQueryPowSelfCheck; rw [hw]; exact decide_eq_false h
 
-/-- **Missing-PoW tooth**: a proof with no grinding witness REJECTS (no proof of
-work ⇒ the query-soundness amplification is absent). -/
-@[simp] theorem queryPowCheck_no_witness {F : Type} (toNat : F → Nat) (powBits : Nat)
+#assert_axioms legacyQueryPowSelfCheck_rejects_bad_self_bits
+
+/-- Missing query-PoW wire data is rejected even before the transcript check. -/
+@[simp] theorem queryPowWitnessShape_no_witness {F : Type}
     (proof : BatchProofData F) (hw : proof.powWitness = []) :
-    queryPowCheck toNat powBits proof = false := by
-  unfold queryPowCheck; rw [hw]
+    queryPowWitnessShape proof = false := by
+  unfold queryPowWitnessShape; rw [hw]
+
+#assert_axioms queryPowWitnessShape_no_witness
 
 /-- **Composite tooth through the real `verifyAlgo`**: a proof carrying a tampered
 quotient on a batched table is REJECTED by the full verifier, whatever else holds —
@@ -809,9 +850,11 @@ private def toyBatch : BatchProofData Int :=
 #guard batchTablesCheck intArith toyBatch = true                                        -- honest batch ACCEPTS
 #guard batchTablesCheck intArith { toyBatch with tableOpenings := [toyTableA] } = false -- unbalanced bus REJECTS
 #guard batchTablesCheck intArith { toyBatch with oodPoint := [] } = false               -- missing OOD REJECTS
-#guard queryPowCheck (fun z => z.toNat) 3 toyBatch = true                       -- 8 % 8 = 0: PoW ACCEPTS
-#guard queryPowCheck (fun z => z.toNat) 3 { toyBatch with powWitness := [9] } = false  -- 9 % 8 ≠ 0 REJECTS
-#guard queryPowCheck (fun z => z.toNat) 3 { toyBatch with powWitness := [] } = false   -- missing PoW REJECTS
+#guard queryPowWitnessShape toyBatch = true
+#guard queryPowWitnessShape { toyBatch with powWitness := [9] } = true
+#guard queryPowWitnessShape { toyBatch with powWitness := [] } = false
+#guard legacyQueryPowSelfCheck (fun z => z.toNat) 3 toyBatch = true
+#guard legacyQueryPowSelfCheck (fun z => z.toNat) 3 { toyBatch with powWitness := [9] } = false
 
 end BatchNonVacuity
 

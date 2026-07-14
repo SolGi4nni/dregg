@@ -1,5 +1,5 @@
 /-
-# Dregg2.Circuit.CommitFaithfulRegrounded — the deployed cell commitment, without G3.
+# Dregg2.Circuit.CommitFaithfulRegrounded — the live rotated eight-lane commitment.
 
 The legacy EffectVM continuity leaf is the four-node `hash_4_to_1` tree over
 `[balLo, balHi, nonce, fields[0..8], capRoot, recordDigest]`.  The last felt is not an
@@ -24,10 +24,15 @@ a finite hash.  This file removes both errors:
   adversary-failure event, which is inhabited on honest equal openings; no theorem assumes global
   nonexistence of collisions.
 
-The honest residual is computational.  The 13-limb prefix uses only authority lane zero (and the
-Rust differential suite contains a concrete lane-zero collision); the live rotated path publishes
-all eight authority lanes and an eight-output `wireCommitR8`.  Nothing here promotes one BabyBear
-felt to 128-bit binding or revives `Poseidon2SpongeCR` injectivity.
+The legacy analysis remains as a diagnostic, but the keystone surface is the live 178-limb rotated
+path.  `RotatedCell` and `rotatedLimb` place the authority octet at `[24,12..18]`, the faithful cap
+and heap roots in their deployed groups, lifecycle/epoch/height at `29/30/31`, and publish the
+eight-output `wireCommitR8`.  `CH_faithful8` uses a lossless tuple serialization only to fit the
+older scalar `recStateCommit` interface; it adds no hash assumption and projects no lane.
+
+Consequently the kernel/no-replay/transfer keystones return only a genuine collision of the full
+eight-lane authority digest, the 178-limb wide chain, or an outer state-tree primitive.  A collision
+visible only in legacy lane zero is no longer on their break surface.
 
 No `sorry`, `admit`, `native_decide`, or new axiom.  Every theorem is audited below.
 -/
@@ -36,8 +41,11 @@ import Dregg2.Circuit.CommitDifferential
 import Dregg2.Circuit.StateCommitReduce
 import Dregg2.Circuit.HashFloorHonesty
 import Dregg2.Circuit.OodRomBound
+import Dregg2.Circuit.Emit.EffectVmEmitRotationR
 import Dregg2.Exec.RecordKernel
 import Dregg2.Exec.EffectTransfer
+import Mathlib.Data.List.OfFn
+import Mathlib.Logic.Encodable.Pi
 
 namespace Dregg2.Circuit.CommitFaithfulRegrounded
 
@@ -226,7 +234,7 @@ def lane0Fold (fold8 : AuthorityFold8) : AuthorityFold := fun x => fold8 x 0
 /-- A lane-zero collision that the other seven deployed authority lanes distinguish.  The Rust
 differential suite contains such a locked/open pair; this is why the 13-limb prefix alone is not the
 128-bit binding surface. -/
-def Lane0OnlyCollision (fold8 : AuthorityFold8) : Prop :=
+def LegacyLane0OnlyCollision (fold8 : AuthorityFold8) : Prop :=
   ∃ x y : AuthorityInput, x ≠ y ∧ fold8 x 0 = fold8 y 0 ∧ ∃ i : Fin 8, fold8 x i ≠ fold8 y i
 
 noncomputable def recordDigestLimb (fold : AuthorityFold) (v : Value) : Int := fold (authorityInput v)
@@ -362,12 +370,12 @@ theorem sameSurface_authorityInput_injective {v w : Value}
 def AuthorityDigestCollision (fold : AuthorityFold) : Prop :=
   ∃ x y : AuthorityInput, x ≠ y ∧ fold x = fold y
 
-theorem lane0OnlyCollision_breaks_legacy (fold8 : AuthorityFold8)
-    (h : Lane0OnlyCollision fold8) : AuthorityDigestCollision (lane0Fold fold8) := by
+theorem legacyLane0OnlyCollision_breaks_legacy (fold8 : AuthorityFold8)
+    (h : LegacyLane0OnlyCollision fold8) : AuthorityDigestCollision (lane0Fold fold8) := by
   rcases h with ⟨x, y, hne, hzero, _⟩
   exact ⟨x, y, hne, hzero⟩
 
-#assert_axioms lane0OnlyCollision_breaks_legacy
+#assert_axioms legacyLane0OnlyCollision_breaks_legacy
 
 /-- A genuine collision in one `hash_4_to_1` node. -/
 def Compress4Collision (h4 : Int → Int → Int → Int → Int) : Prop :=
@@ -454,57 +462,485 @@ theorem cellCollision_faithful_reduces (fold : AuthorityFold)
 
 #assert_axioms cellCollision_faithful_reduces
 
-/-! ## 3. Whole-kernel and freshness keystones on the faithful leaf. -/
+/-! ## 3. The deployed rotated 178-limb / eight-output surface.
 
-def FaithfulBreak (fold : AuthorityFold) (h4 : Int → Int → Int → Int → Int)
+The legacy leaf above remains only as the differential-pinned diagnostic.  The binding consumer
+below models the live wide route: the authority digest occupies all eight deployed lanes
+`[24,12..18]`; the capability and heap roots occupy their eight-lane groups; lifecycle,
+delegation epoch, and committed height remain explicit scalar limbs; and `wireCommitR8` publishes
+the final eight-felt carrier. -/
+
+abbrev Digest8 := Fin 8 → Int
+
+def digest8Value (d : Digest8) : Value :=
+  .record [("lane0", .int (d 0)), ("lane1", .int (d 1)), ("lane2", .int (d 2)),
+    ("lane3", .int (d 3)), ("lane4", .int (d 4)), ("lane5", .int (d 5)),
+    ("lane6", .int (d 6)), ("lane7", .int (d 7))]
+
+def digest8OfValue (v : Value) : Digest8
+  | 0 => (v.scalar "lane0").getD 0
+  | 1 => (v.scalar "lane1").getD 0
+  | 2 => (v.scalar "lane2").getD 0
+  | 3 => (v.scalar "lane3").getD 0
+  | 4 => (v.scalar "lane4").getD 0
+  | 5 => (v.scalar "lane5").getD 0
+  | 6 => (v.scalar "lane6").getD 0
+  | 7 => (v.scalar "lane7").getD 0
+
+theorem digest8OfValue_digest8Value (d : Digest8) : digest8OfValue (digest8Value d) = d := by
+  funext i
+  fin_cases i <;> simp [digest8OfValue, digest8Value, Value.scalar, Value.field]
+
+/-- The per-cell semantic portion of Rust's rotated preimage.  Turn-level roots and carrier
+material stay in `RotatedContext`; these fields are exactly the cell-owned values relevant to P1. -/
+structure RotatedCell where
+  balance : Int
+  nonce : Int
+  f0 : Int
+  f1 : Int
+  f2 : Int
+  f3 : Int
+  f4 : Int
+  f5 : Int
+  f6 : Int
+  f7 : Int
+  capRoot8 : Digest8
+  authorityResidue : Value
+  heapRoot8 : Digest8
+  lifecycle : Int
+  delegationEpoch : Int
+  committedHeight : Int
+
+def RotatedCell.field (d : RotatedCell) : Fin 8 → Int
+  | 0 => d.f0 | 1 => d.f1 | 2 => d.f2 | 3 => d.f3
+  | 4 => d.f4 | 5 => d.f5 | 6 => d.f6 | 7 => d.f7
+
+def RotatedCell.toValue (d : RotatedCell) : Value :=
+  .record [("balance", .int d.balance), ("nonce", .int d.nonce),
+    ("f0", .int d.f0), ("f1", .int d.f1), ("f2", .int d.f2), ("f3", .int d.f3),
+    ("f4", .int d.f4), ("f5", .int d.f5), ("f6", .int d.f6), ("f7", .int d.f7),
+    ("capRoot8", digest8Value d.capRoot8), ("authorityResidue", d.authorityResidue),
+    ("heapRoot8", digest8Value d.heapRoot8), ("lifecycle", .int d.lifecycle),
+    ("delegationEpoch", .int d.delegationEpoch), ("committedHeight", .int d.committedHeight)]
+
+def rotatedNestedValue (v : Value) (name : String) : Value :=
+  (v.field name).getD (.record [])
+
+def decodedRotatedCell (v : Value) : RotatedCell where
+  balance := balOf v
+  nonce := nonceOf v
+  f0 := fieldLimbs v 0
+  f1 := fieldLimbs v 1
+  f2 := fieldLimbs v 2
+  f3 := fieldLimbs v 3
+  f4 := fieldLimbs v 4
+  f5 := fieldLimbs v 5
+  f6 := fieldLimbs v 6
+  f7 := fieldLimbs v 7
+  capRoot8 := digest8OfValue (rotatedNestedValue v "capRoot8")
+  authorityResidue := authorityResidueValue v
+  heapRoot8 := digest8OfValue (rotatedNestedValue v "heapRoot8")
+  lifecycle := (v.scalar "lifecycle").getD 0
+  delegationEpoch := (v.scalar "delegationEpoch").getD 0
+  committedHeight := (v.scalar "committedHeight").getD 0
+
+def CanonicalRotatedCell (v : Value) : Prop := v = (decodedRotatedCell v).toValue
+
+def RotatedCell.clear (d : RotatedCell) :
+    Int × Int × (Fin 8 → Int) × Digest8 × Digest8 × Int × Int × Int :=
+  (d.balance, d.nonce, d.field, d.capRoot8, d.heapRoot8, d.lifecycle,
+    d.delegationEpoch, d.committedHeight)
+
+def rotatedClear (v : Value) := (decodedRotatedCell v).clear
+
+theorem RotatedCell.ext_of_clear {d e : RotatedCell} (hc : d.clear = e.clear)
+    (ha : d.authorityResidue = e.authorityResidue) : d = e := by
+  cases d
+  cases e
+  simp only [RotatedCell.clear, Prod.mk.injEq] at hc
+  have hf := hc.2.2.1
+  have hf0 := congrFun hf (0 : Fin 8)
+  have hf1 := congrFun hf (1 : Fin 8)
+  have hf2 := congrFun hf (2 : Fin 8)
+  have hf3 := congrFun hf (3 : Fin 8)
+  have hf4 := congrFun hf (4 : Fin 8)
+  have hf5 := congrFun hf (5 : Fin 8)
+  have hf6 := congrFun hf (6 : Fin 8)
+  have hf7 := congrFun hf (7 : Fin 8)
+  simp only [RotatedCell.field] at hf0 hf1 hf2 hf3 hf4 hf5 hf6 hf7
+  simp_all
+
+theorem RotatedCell.toValue_canonical (d : RotatedCell) : CanonicalRotatedCell d.toValue := by
+  cases d
+  simp [CanonicalRotatedCell, decodedRotatedCell, RotatedCell.toValue, rotatedNestedValue,
+    digest8OfValue_digest8Value, fieldLimbs, fieldName, authorityResidueValue, balOf, balanceField,
+    Value.scalar, Value.field, nonceOf, nonceField]
+
+/-- The exact wide boundary tag.  Canonical deployed cells hash only Rust's authority-residue
+bytes; malformed/open abstract values hash their entire `Value` in the disjoint fallback domain. -/
+noncomputable def rotatedAuthorityInput (v : Value) : AuthorityInput :=
+  letI : Decidable (CanonicalRotatedCell v) := Classical.propDecidable _
+  if CanonicalRotatedCell v then .rust (authorityResidueValue v) else .abstract v
+
+theorem sameRotatedSurface_authorityInput_injective {v w : Value}
+    (hs : rotatedClear v = rotatedClear w)
+    (ha : rotatedAuthorityInput v = rotatedAuthorityInput w) : v = w := by
+  classical
+  by_cases hv : CanonicalRotatedCell v
+  · by_cases hw : CanonicalRotatedCell w
+    · have hres : authorityResidueValue v = authorityResidueValue w := by
+        simpa only [rotatedAuthorityInput, if_pos hv, if_pos hw, AuthorityInput.rust.injEq] using ha
+      have hd : decodedRotatedCell v = decodedRotatedCell w :=
+        RotatedCell.ext_of_clear hs hres
+      rw [hv, hw, hd]
+    · simp only [rotatedAuthorityInput, if_pos hv, if_neg hw] at ha
+      cases ha
+  · by_cases hw : CanonicalRotatedCell w
+    · simp only [rotatedAuthorityInput, if_neg hv, if_pos hw] at ha
+      cases ha
+    · simpa only [rotatedAuthorityInput, if_neg hv, if_neg hw,
+        AuthorityInput.abstract.injEq] using ha
+
+/-- The non-cell/turn-owned remainder of the deployed 178-limb row.  Known cell-owned positions are
+overridden below; `residual` carries cells/nullifier/commitments/revoked roots, carrier octets, pads,
+and other already-modeled lanes without pretending they are authority bytes. -/
+structure RotatedContext where
+  residual : Fin 178 → Int
+  iroot : Int
+
+abbrev RotatedContextProvider := CellId → Value → RotatedContext
+
+/-- One exact deployed pre-iroot position.  The indices mirror
+`cell::commitment::compute_rotated_pre_limbs` and `trace_rotated.rs` at HEAD. -/
+noncomputable def rotatedLimb (fold8 : AuthorityFold8) (ctx : RotatedContext)
+    (v : Value) (i : Fin 178) : Int :=
+  let d := decodedRotatedCell v
+  match i.1 with
+  | 1 => d.balance % splitMod
+  | 2 => d.nonce
+  | 3 => d.balance / splitMod
+  | 4 => d.field 0 | 5 => d.field 1 | 6 => d.field 2 | 7 => d.field 3
+  | 8 => d.field 4 | 9 => d.field 5 | 10 => d.field 6 | 11 => d.field 7
+  | 12 => fold8 (rotatedAuthorityInput v) 1
+  | 13 => fold8 (rotatedAuthorityInput v) 2
+  | 14 => fold8 (rotatedAuthorityInput v) 3
+  | 15 => fold8 (rotatedAuthorityInput v) 4
+  | 16 => fold8 (rotatedAuthorityInput v) 5
+  | 17 => fold8 (rotatedAuthorityInput v) 6
+  | 18 => fold8 (rotatedAuthorityInput v) 7
+  | 24 => fold8 (rotatedAuthorityInput v) 0
+  | 25 => d.capRoot8 0
+  | 28 => d.heapRoot8 0
+  | 29 => d.lifecycle
+  | 30 => d.delegationEpoch
+  | 31 => d.committedHeight
+  | 52 => d.capRoot8 1 | 53 => d.capRoot8 2 | 54 => d.capRoot8 3
+  | 55 => d.capRoot8 4 | 56 => d.capRoot8 5 | 57 => d.capRoot8 6 | 58 => d.capRoot8 7
+  | 59 => d.heapRoot8 1 | 60 => d.heapRoot8 2 | 61 => d.heapRoot8 3
+  | 62 => d.heapRoot8 4 | 63 => d.heapRoot8 5 | 64 => d.heapRoot8 6 | 65 => d.heapRoot8 7
+  | _ => ctx.residual i
+
+noncomputable def rotatedPreLimbs (fold8 : AuthorityFold8) (ctx : RotatedContext)
+    (v : Value) : List Int :=
+  List.ofFn (rotatedLimb fold8 ctx v)
+
+theorem rotatedPreLimbs_length (fold8 : AuthorityFold8) (ctx : RotatedContext) (v : Value) :
+    (rotatedPreLimbs fold8 ctx v).length = 178 := by
+  unfold rotatedPreLimbs
+  exact List.length_ofFn
+
+open Dregg2.Circuit.Emit.EffectVmEmitRotationR
+  (wireCommitR8 chainFrom8_len Poseidon2Width8 refWide)
+
+noncomputable def rotatedCommit8 (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContext) (v : Value) : List Int :=
+  wireCommitR8 permW (rotatedPreLimbs fold8 ctx v) ctx.iroot
+
+/-- Computable direct twin on a canonical `RotatedCell`, used by the golden guards and by a Rust
+differential: it avoids the abstract malformed-value branch while retaining the exact 178 indices. -/
+def deployedRotatedLimb (fold8 : AuthorityFold8) (ctx : RotatedContext)
+    (d : RotatedCell) (i : Fin 178) : Int :=
+  match i.1 with
+  | 1 => d.balance % splitMod
+  | 2 => d.nonce
+  | 3 => d.balance / splitMod
+  | 4 => d.field 0 | 5 => d.field 1 | 6 => d.field 2 | 7 => d.field 3
+  | 8 => d.field 4 | 9 => d.field 5 | 10 => d.field 6 | 11 => d.field 7
+  | 12 => fold8 (.rust d.authorityResidue) 1
+  | 13 => fold8 (.rust d.authorityResidue) 2
+  | 14 => fold8 (.rust d.authorityResidue) 3
+  | 15 => fold8 (.rust d.authorityResidue) 4
+  | 16 => fold8 (.rust d.authorityResidue) 5
+  | 17 => fold8 (.rust d.authorityResidue) 6
+  | 18 => fold8 (.rust d.authorityResidue) 7
+  | 24 => fold8 (.rust d.authorityResidue) 0
+  | 25 => d.capRoot8 0
+  | 28 => d.heapRoot8 0
+  | 29 => d.lifecycle
+  | 30 => d.delegationEpoch
+  | 31 => d.committedHeight
+  | 52 => d.capRoot8 1 | 53 => d.capRoot8 2 | 54 => d.capRoot8 3
+  | 55 => d.capRoot8 4 | 56 => d.capRoot8 5 | 57 => d.capRoot8 6 | 58 => d.capRoot8 7
+  | 59 => d.heapRoot8 1 | 60 => d.heapRoot8 2 | 61 => d.heapRoot8 3
+  | 62 => d.heapRoot8 4 | 63 => d.heapRoot8 5 | 64 => d.heapRoot8 6 | 65 => d.heapRoot8 7
+  | _ => ctx.residual i
+
+def deployedRotatedCommit8 (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContext) (d : RotatedCell) : List Int :=
+  wireCommitR8 permW (List.ofFn (deployedRotatedLimb fold8 ctx d)) ctx.iroot
+
+private def fold8Demo : AuthorityFold8 := fun x i =>
+  match i.1 with
+  | 0 => 41
+  | 1 => foldDemo x
+  | n => 41 + n
+
+private def rotatedCellDemo (mode : Nat) : RotatedCell where
+  balance := 5
+  nonce := 7
+  f0 := 10
+  f1 := 11
+  f2 := 12
+  f3 := 13
+  f4 := 14
+  f5 := 15
+  f6 := 16
+  f7 := 17
+  capRoot8 := fun i => 100 + i.1
+  authorityResidue := residueDemo mode
+  heapRoot8 := fun i => 200 + i.1
+  lifecycle := 3
+  delegationEpoch := 4
+  committedHeight := 5
+
+private def rotatedContextDemo : RotatedContext where
+  residual := fun i => 300 + i.1
+  iroot := 9
+
+-- The legacy lane agrees, but authority lane 1 and therefore the live wide commitment differ.
+#guard fold8Demo (.rust (rotatedCellDemo 0).authorityResidue) 0 ==
+  fold8Demo (.rust (rotatedCellDemo 1).authorityResidue) 0
+#guard fold8Demo (.rust (rotatedCellDemo 0).authorityResidue) 1 !=
+  fold8Demo (.rust (rotatedCellDemo 1).authorityResidue) 1
+#guard deployedRotatedCommit8 fold8Demo refWide rotatedContextDemo (rotatedCellDemo 0) !=
+  deployedRotatedCommit8 fold8Demo refWide rotatedContextDemo (rotatedCellDemo 1)
+
+theorem rotatedCommit8_length (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (fold8 : AuthorityFold8) (ctx : RotatedContext) (v : Value) :
+    (rotatedCommit8 fold8 permW ctx v).length = 8 := by
+  unfold rotatedCommit8 wireCommitR8
+  exact chainFrom8_len permW hW (hW ((rotatedPreLimbs fold8 ctx v).take 4))
+
+/-- Lossless mathematical packing of the eight PIs into the scalar carrier expected by the older
+`recStateCommit` abstraction.  This is serialization, not another hash: equality of packs recovers
+all eight lanes under the deployed width contract. -/
+def wideTuple (xs : List Int) : Fin 8 → Int := fun i => xs.getD i.1 0
+
+def packWideTuple (xs : List Int) : Int :=
+  Int.ofNat (Encodable.encode (wideTuple xs))
+
+theorem list_eq_of_wideTuple_eq {xs ys : List Int} (hx : xs.length = 8) (hy : ys.length = 8)
+    (h : wideTuple xs = wideTuple ys) : xs = ys := by
+  apply List.ext_getElem
+  · exact hx.trans hy.symm
+  · intro i hi hi'
+    have hi8 : i < 8 := by simpa [hx] using hi
+    have hget := congrFun h (⟨i, hi8⟩ : Fin 8)
+    simp only [wideTuple] at hget
+    rw [List.getD_eq_getElem?_getD, List.getD_eq_getElem?_getD,
+      List.getElem?_eq_getElem hi, List.getElem?_eq_getElem hi'] at hget
+    exact hget
+
+noncomputable def CH_faithful8 (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (c : CellId) (v : Value) : Int :=
+  packWideTuple (rotatedCommit8 fold8 permW (ctx c v) v)
+
+/-- A collision of the complete authority digest: both distinct tagged preimages agree in all
+eight lanes.  This is the only authority failure on the live wide surface. -/
+def AuthorityDigest8Collision (fold8 : AuthorityFold8) : Prop :=
+  ∃ x y : AuthorityInput, x ≠ y ∧ fold8 x = fold8 y
+
+/-- A genuine collision of the deployed 178-limb plus iroot wide chain. -/
+def WireCommit8Collision (permW : List Int → List Int) : Prop :=
+  ∃ l l' : List Int, ∃ ir ir' : Int,
+    (l ≠ l' ∨ ir ≠ ir') ∧ wireCommitR8 permW l ir = wireCommitR8 permW l' ir'
+
+theorem rotatedPreLimbs_eq_implies (fold8 : AuthorityFold8)
+    (ctx ctx' : RotatedContext) {v w : Value}
+    (h : rotatedPreLimbs fold8 ctx v = rotatedPreLimbs fold8 ctx' w) :
+    rotatedClear v = rotatedClear w ∧
+      fold8 (rotatedAuthorityInput v) = fold8 (rotatedAuthorityInput w) := by
+  have hfn : rotatedLimb fold8 ctx v = rotatedLimb fold8 ctx' w :=
+    List.ofFn_injective h
+  have hp (n : Nat) (hn : n < 178) :
+      rotatedLimb fold8 ctx v ⟨n, hn⟩ = rotatedLimb fold8 ctx' w ⟨n, hn⟩ :=
+    congrFun hfn ⟨n, hn⟩
+  have hlo : (decodedRotatedCell v).balance % splitMod =
+      (decodedRotatedCell w).balance % splitMod := by
+    simpa [rotatedLimb] using hp 1 (by decide)
+  have hhi : (decodedRotatedCell v).balance / splitMod =
+      (decodedRotatedCell w).balance / splitMod := by
+    simpa [rotatedLimb] using hp 3 (by decide)
+  have hbal : (decodedRotatedCell v).balance = (decodedRotatedCell w).balance := by
+    rw [← Int.emod_add_mul_ediv (decodedRotatedCell v).balance splitMod,
+      ← Int.emod_add_mul_ediv (decodedRotatedCell w).balance splitMod, hlo, hhi]
+  have hn : (decodedRotatedCell v).nonce = (decodedRotatedCell w).nonce := by
+    simpa [rotatedLimb] using hp 2 (by decide)
+  have hf : (decodedRotatedCell v).field = (decodedRotatedCell w).field := by
+    funext i
+    fin_cases i
+    · simpa [rotatedLimb] using hp 4 (by decide)
+    · simpa [rotatedLimb] using hp 5 (by decide)
+    · simpa [rotatedLimb] using hp 6 (by decide)
+    · simpa [rotatedLimb] using hp 7 (by decide)
+    · simpa [rotatedLimb] using hp 8 (by decide)
+    · simpa [rotatedLimb] using hp 9 (by decide)
+    · simpa [rotatedLimb] using hp 10 (by decide)
+    · simpa [rotatedLimb] using hp 11 (by decide)
+  have hcap : (decodedRotatedCell v).capRoot8 = (decodedRotatedCell w).capRoot8 := by
+    funext i
+    fin_cases i
+    · simpa [rotatedLimb] using hp 25 (by decide)
+    · simpa [rotatedLimb] using hp 52 (by decide)
+    · simpa [rotatedLimb] using hp 53 (by decide)
+    · simpa [rotatedLimb] using hp 54 (by decide)
+    · simpa [rotatedLimb] using hp 55 (by decide)
+    · simpa [rotatedLimb] using hp 56 (by decide)
+    · simpa [rotatedLimb] using hp 57 (by decide)
+    · simpa [rotatedLimb] using hp 58 (by decide)
+  have hheap : (decodedRotatedCell v).heapRoot8 = (decodedRotatedCell w).heapRoot8 := by
+    funext i
+    fin_cases i
+    · simpa [rotatedLimb] using hp 28 (by decide)
+    · simpa [rotatedLimb] using hp 59 (by decide)
+    · simpa [rotatedLimb] using hp 60 (by decide)
+    · simpa [rotatedLimb] using hp 61 (by decide)
+    · simpa [rotatedLimb] using hp 62 (by decide)
+    · simpa [rotatedLimb] using hp 63 (by decide)
+    · simpa [rotatedLimb] using hp 64 (by decide)
+    · simpa [rotatedLimb] using hp 65 (by decide)
+  have hlifecycle : (decodedRotatedCell v).lifecycle = (decodedRotatedCell w).lifecycle := by
+    simpa [rotatedLimb] using hp 29 (by decide)
+  have hepoch : (decodedRotatedCell v).delegationEpoch =
+      (decodedRotatedCell w).delegationEpoch := by
+    simpa [rotatedLimb] using hp 30 (by decide)
+  have hheight : (decodedRotatedCell v).committedHeight =
+      (decodedRotatedCell w).committedHeight := by
+    simpa [rotatedLimb] using hp 31 (by decide)
+  have hclear : rotatedClear v = rotatedClear w := by
+    simp only [rotatedClear, RotatedCell.clear, Prod.mk.injEq]
+    exact ⟨hbal, hn, hf, hcap, hheap, hlifecycle, hepoch, hheight⟩
+  have hauth : fold8 (rotatedAuthorityInput v) = fold8 (rotatedAuthorityInput w) := by
+    funext i
+    fin_cases i
+    · simpa [rotatedLimb] using hp 24 (by decide)
+    · simpa [rotatedLimb] using hp 12 (by decide)
+    · simpa [rotatedLimb] using hp 13 (by decide)
+    · simpa [rotatedLimb] using hp 14 (by decide)
+    · simpa [rotatedLimb] using hp 15 (by decide)
+    · simpa [rotatedLimb] using hp 16 (by decide)
+    · simpa [rotatedLimb] using hp 17 (by decide)
+    · simpa [rotatedLimb] using hp 18 (by decide)
+  exact ⟨hclear, hauth⟩
+
+/-- A collision in the scalar compatibility view is never a lane-0 residue: it reduces to equality
+of all eight authority lanes on distinct preimages, or to a genuine collision of the wide chain. -/
+theorem cellCollision_faithful8_reduces (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) :
+    CellCollision (CH_faithful8 fold8 permW ctx) →
+      AuthorityDigest8Collision fold8 ∨ WireCommit8Collision permW := by
+  rintro ⟨c, v, w, hne, hpack⟩
+  have htuple : wideTuple (rotatedCommit8 fold8 permW (ctx c v) v) =
+      wideTuple (rotatedCommit8 fold8 permW (ctx c w) w) := by
+    apply Encodable.encode_injective
+    exact Int.ofNat.inj (by simpa [CH_faithful8, packWideTuple] using hpack)
+  have hcommit : rotatedCommit8 fold8 permW (ctx c v) v =
+      rotatedCommit8 fold8 permW (ctx c w) w :=
+    list_eq_of_wideTuple_eq
+      (rotatedCommit8_length permW hW fold8 (ctx c v) v)
+      (rotatedCommit8_length permW hW fold8 (ctx c w) w) htuple
+  by_cases ha : rotatedAuthorityInput v = rotatedAuthorityInput w
+  · by_cases hs : rotatedClear v = rotatedClear w
+    · exact absurd (sameRotatedSurface_authorityInput_injective hs ha) hne
+    · apply Or.inr
+      have hl : rotatedPreLimbs fold8 (ctx c v) v ≠ rotatedPreLimbs fold8 (ctx c w) w := by
+        intro heq
+        exact hs (rotatedPreLimbs_eq_implies fold8 (ctx c v) (ctx c w) heq).1
+      exact ⟨_, _, _, _, Or.inl hl, hcommit⟩
+  · by_cases hd : fold8 (rotatedAuthorityInput v) = fold8 (rotatedAuthorityInput w)
+    · exact Or.inl ⟨rotatedAuthorityInput v, rotatedAuthorityInput w, ha, hd⟩
+    · apply Or.inr
+      have hl : rotatedPreLimbs fold8 (ctx c v) v ≠ rotatedPreLimbs fold8 (ctx c w) w := by
+        intro heq
+        exact hd (rotatedPreLimbs_eq_implies fold8 (ctx c v) (ctx c w) heq).2
+      exact ⟨_, _, _, _, Or.inl hl, hcommit⟩
+
+#assert_axioms digest8OfValue_digest8Value
+#assert_axioms RotatedCell.ext_of_clear
+#assert_axioms RotatedCell.toValue_canonical
+#assert_axioms sameRotatedSurface_authorityInput_injective
+#assert_axioms rotatedPreLimbs_length
+#assert_axioms rotatedCommit8_length
+#assert_axioms list_eq_of_wideTuple_eq
+#assert_axioms rotatedPreLimbs_eq_implies
+#assert_axioms cellCollision_faithful8_reduces
+
+/-! ## 4. Whole-kernel and freshness keystones on the live eight-lane leaf. -/
+
+def FaithfulBreak (fold8 : AuthorityFold8) (permW : List Int → List Int)
     (cmb compress : Int → Int → Int) (compressN : List Int → Int) : Prop :=
   SpongeCollision compressN ∨ CompressCollision cmb ∨ CompressCollision compress
-    ∨ AuthorityDigestCollision fold ∨ Compress4Collision h4
+    ∨ AuthorityDigest8Collision fold8 ∨ WireCommit8Collision permW
 
-theorem stateBreak_faithful_reduces (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem stateBreak_faithful_reduces (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) :
-    StateBreakP (CH_faithful fold h4) cmb compress compressN →
-      FaithfulBreak fold h4 cmb compress compressN := by
+    StateBreakP (CH_faithful8 fold8 permW ctx) cmb compress compressN →
+      FaithfulBreak fold8 permW cmb compress compressN := by
   rintro (hs | hcmb | hcomp | hcell)
   · exact Or.inl hs
   · exact Or.inr (Or.inl hcmb)
   · exact Or.inr (Or.inr (Or.inl hcomp))
-  · rcases cellCollision_faithful_reduces fold h4 hcell with ha | hh4
+  · rcases cellCollision_faithful8_reduces fold8 permW hW ctx hcell with ha | hwide
     · exact Or.inr (Or.inr (Or.inr (Or.inl ha)))
-    · exact Or.inr (Or.inr (Or.inr (Or.inr hh4)))
+    · exact Or.inr (Or.inr (Or.inr (Or.inr hwide)))
 
-/-- Equal faithful roots determine the entire kernel, or exhibit a concrete collision. -/
-theorem recStateCommit_binds_kernel_faithful (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+/-- Equal live-wide faithful roots determine the entire kernel, or exhibit a concrete collision. -/
+theorem recStateCommit_binds_kernel_faithful (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
-    (hroot : recStateCommit (CH_faithful fold h4) RH cmb compress compressN k t =
-      recStateCommit (CH_faithful fold h4) RH cmb compress compressN k' t) :
-    k = k' ∨ FaithfulBreak fold h4 cmb compress compressN := by
-  rcases recStateCommit_binds_kernel_orBreak (CH_faithful fold h4) cmb compress compressN RH hRest
-      k k' t hwf hwf' hroot with hk | hb
+    (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+      recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
+    k = k' ∨ FaithfulBreak fold8 permW cmb compress compressN := by
+  rcases recStateCommit_binds_kernel_orBreak (CH_faithful8 fold8 permW ctx)
+      cmb compress compressN RH hRest k k' t hwf hwf' hroot with hk | hb
   · exact Or.inl hk
-  · exact Or.inr (stateBreak_faithful_reduces fold h4 cmb compress compressN hb)
+  · exact Or.inr (stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN hb)
 
 /-- The local adversarial event.  Unlike global `¬ ∃ collision`, its negation is satisfiable for
 honest/equal openings and is the event on which deterministic recovery is meant to run. -/
-def KernelEquivocation (fold : AuthorityFold) (h4 : Int → Int → Int → Int → Int)
+def KernelEquivocation (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider)
     (cmb compress : Int → Int → Int) (compressN : List Int → Int)
     (RH : RecordKernelState → Int) (k k' : RecordKernelState) (t : Turn) : Prop :=
   AccountsWF k ∧ AccountsWF k' ∧ k ≠ k' ∧
-    recStateCommit (CH_faithful fold h4) RH cmb compress compressN k t =
-      recStateCommit (CH_faithful fold h4) RH cmb compress compressN k' t
+    recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+      recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t
 
-theorem kernelEquivocation_reduces (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem kernelEquivocation_reduces (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn)
-    (heqv : KernelEquivocation fold h4 cmb compress compressN RH k k' t) :
-    FaithfulBreak fold h4 cmb compress compressN := by
+    (heqv : KernelEquivocation fold8 permW ctx cmb compress compressN RH k k' t) :
+    FaithfulBreak fold8 permW cmb compress compressN := by
   rcases heqv with ⟨hwf, hwf', hne, hroot⟩
-  rcases recStateCommit_binds_kernel_faithful fold h4 cmb compress compressN RH hRest
+  rcases recStateCommit_binds_kernel_faithful fold8 permW hW ctx cmb compress compressN RH hRest
       k k' t hwf hwf' hroot with hk | hb
   · exact absurd hk hne
   · exact hb
@@ -512,52 +948,55 @@ theorem kernelEquivocation_reduces (fold : AuthorityFold)
 /-- Non-vacuous recovery: on a sampled key/run where this adversary did not equivocate, equal roots
 recover equal states.  The premise is witnessed by `kernelEquivocation_refl_false`; it is not the
 unsatisfiable assertion that a finite hash has no collisions anywhere. -/
-theorem recStateCommit_binds_kernel_faithful_on_adversary_failure (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem recStateCommit_binds_kernel_faithful_on_adversary_failure (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (ctx : RotatedContextProvider)
+    (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (k k' : RecordKernelState) (t : Turn)
-    (hNo : ¬ KernelEquivocation fold h4 cmb compress compressN RH k k' t)
+    (hNo : ¬ KernelEquivocation fold8 permW ctx cmb compress compressN RH k k' t)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
-    (hroot : recStateCommit (CH_faithful fold h4) RH cmb compress compressN k t =
-      recStateCommit (CH_faithful fold h4) RH cmb compress compressN k' t) : k = k' := by
+    (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+      recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) : k = k' := by
   by_contra hne
   exact hNo ⟨hwf, hwf', hne, hroot⟩
 
-theorem kernelEquivocation_refl_false (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem kernelEquivocation_refl_false (fold8 : AuthorityFold8) (permW : List Int → List Int)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (k : RecordKernelState) (t : Turn) :
-    ¬ KernelEquivocation fold h4 cmb compress compressN RH k k t := by
+    ¬ KernelEquivocation fold8 permW ctx cmb compress compressN RH k k t := by
   intro h
   exact h.2.2.1 rfl
 
 /-- Faithful nonce binding in reduction form. -/
-theorem commit_binds_nonce_faithful (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem commit_binds_nonce_faithful (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn) (agent : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
-    (hroot : recStateCommit (CH_faithful fold h4) RH cmb compress compressN k t =
-      recStateCommit (CH_faithful fold h4) RH cmb compress compressN k' t) :
+    (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+      recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
     nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨
-      FaithfulBreak fold h4 cmb compress compressN := by
-  rcases recStateCommit_binds_kernel_faithful fold h4 cmb compress compressN RH hRest
+      FaithfulBreak fold8 permW cmb compress compressN := by
+  rcases recStateCommit_binds_kernel_faithful fold8 permW hW ctx cmb compress compressN RH hRest
       k k' t hwf hwf' hroot with hk | hb
   · exact Or.inl (congrArg (fun s => nonceOf (s.cell agent)) hk)
   · exact Or.inr hb
 
 /-- Pairwise replay tooth: two states with different agent nonces cannot share the faithful root
 unless a concrete commitment collision is exhibited. -/
-theorem nonce_difference_reduces (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem nonce_difference_reduces (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrame RH) (k k' : RecordKernelState) (t : Turn) (agent : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hnonce : nonceOf (k.cell agent) ≠ nonceOf (k'.cell agent))
-    (hroot : recStateCommit (CH_faithful fold h4) RH cmb compress compressN k t =
-      recStateCommit (CH_faithful fold h4) RH cmb compress compressN k' t) :
-    FaithfulBreak fold h4 cmb compress compressN := by
-  rcases commit_binds_nonce_faithful fold h4 cmb compress compressN RH hRest
+    (hroot : recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t =
+      recStateCommit (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k' t) :
+    FaithfulBreak fold8 permW cmb compress compressN := by
+  rcases commit_binds_nonce_faithful fold8 permW hW ctx cmb compress compressN RH hRest
       k k' t agent hwf hwf' hroot with hn | hb
   · exact absurd hn hnonce
   · exact hb
@@ -567,8 +1006,10 @@ theorem nonce_difference_reduces (fold : AuthorityFold)
 /-- The deployed binding surface without impossible injectivity fields.  Its only structural
 carrier is the rest-frame correspondence; every hash failure is returned as `FaithfulBreak`. -/
 structure FaithfulCommitSurface where
-  fold : AuthorityFold
-  h4 : Int → Int → Int → Int → Int
+  fold8 : AuthorityFold8
+  permW : List Int → List Int
+  width8 : Poseidon2Width8 permW
+  ctx : RotatedContextProvider
   cmb : Int → Int → Int
   compress : Int → Int → Int
   compressN : List Int → Int
@@ -577,22 +1018,24 @@ structure FaithfulCommitSurface where
 
 noncomputable def FaithfulCommitSurface.commit (S : FaithfulCommitSurface)
     (k : RecordKernelState) (t : Turn) : Int :=
-  recStateCommit (CH_faithful S.fold S.h4) S.RH S.cmb S.compress S.compressN k t
+  recStateCommit (CH_faithful8 S.fold8 S.permW S.ctx) S.RH S.cmb S.compress S.compressN k t
 
 abbrev FaithfulCommitSurface.Break (S : FaithfulCommitSurface) : Prop :=
-  FaithfulBreak S.fold S.h4 S.cmb S.compress S.compressN
+  FaithfulBreak S.fold8 S.permW S.cmb S.compress S.compressN
 
 theorem FaithfulCommitSurface.commit_binds_kernel (S : FaithfulCommitSurface)
     (k k' : RecordKernelState) (t : Turn) (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (hroot : S.commit k t = S.commit k' t) : k = k' ∨ S.Break :=
-  recStateCommit_binds_kernel_faithful S.fold S.h4 S.cmb S.compress S.compressN S.RH
+  recStateCommit_binds_kernel_faithful S.fold8 S.permW S.width8 S.ctx
+    S.cmb S.compress S.compressN S.RH
     S.restFrame k k' t hwf hwf' hroot
 
 theorem FaithfulCommitSurface.commit_binds_nonce (S : FaithfulCommitSurface)
     (k k' : RecordKernelState) (t : Turn) (agent : CellId)
     (hwf : AccountsWF k) (hwf' : AccountsWF k') (hroot : S.commit k t = S.commit k' t) :
     nonceOf (k.cell agent) = nonceOf (k'.cell agent) ∨ S.Break :=
-  commit_binds_nonce_faithful S.fold S.h4 S.cmb S.compress S.compressN S.RH S.restFrame
+  commit_binds_nonce_faithful S.fold8 S.permW S.width8 S.ctx
+    S.cmb S.compress S.compressN S.RH S.restFrame
     k k' t agent hwf hwf' hroot
 
 /-- A verified sequence at the faithful surface.  The executor supplies `nonceMono` from its
@@ -620,11 +1063,13 @@ theorem no_replay_faithful {S : FaithfulCommitSurface} {agent : CellId} {t : Tur
   · apply Or.inr
     have hroot : S.commit (C.seq i) t = S.commit (C.seq j) t := hi.trans hj.symm
     rcases Nat.lt_or_gt_of_ne hij with hlt | hgt
-    · exact nonce_difference_reduces S.fold S.h4 S.cmb S.compress S.compressN S.RH S.restFrame
+    · exact nonce_difference_reduces S.fold8 S.permW S.width8 S.ctx
+        S.cmb S.compress S.compressN S.RH S.restFrame
         (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) (ne_of_lt (C.nonceMono hlt)) hroot
     · have hn : nonceOf ((C.seq i).cell agent) ≠ nonceOf ((C.seq j).cell agent) :=
         ne_of_gt (C.nonceMono hgt)
-      exact nonce_difference_reduces S.fold S.h4 S.cmb S.compress S.compressN S.RH S.restFrame
+      exact nonce_difference_reduces S.fold8 S.permW S.width8 S.ctx
+        S.cmb S.compress S.compressN S.RH S.restFrame
         (C.seq i) (C.seq j) t agent (C.wf i) (C.wf j) hn hroot
 
 /-- Exact recovery on the satisfiable local adversary-failure event.  It quantifies only the pairs
@@ -632,7 +1077,8 @@ the supplied chain opens, never global nonexistence of finite-hash collisions. -
 theorem no_replay_faithful_on_adversary_failure {S : FaithfulCommitSurface}
     {agent : CellId} {t : Turn} (C : FaithfulCommitChain S agent t)
     (hNo : ∀ a b : Nat,
-      ¬ KernelEquivocation S.fold S.h4 S.cmb S.compress S.compressN S.RH (C.seq a) (C.seq b) t)
+      ¬ KernelEquivocation S.fold8 S.permW S.ctx S.cmb S.compress S.compressN S.RH
+        (C.seq a) (C.seq b) t)
     {i j : Nat} {preCommit : Int}
     (hi : C.LiveCommitMatches i preCommit) (hj : C.LiveCommitMatches j preCommit) : i = j := by
   by_contra hij
@@ -653,36 +1099,37 @@ theorem no_replay_faithful_on_adversary_failure {S : FaithfulCommitSurface}
 full-state transfer witness reconstructs the complete `TransferSpec`; if a digest cannot be opened
 uniquely, the proof returns the concrete faithful break.  No `cellLeafInjective`,
 `compressInjective`, or `compressNInjective` premise occurs. -/
-theorem transfer_circuit_full_sound_faithful (fold : AuthorityFold)
-    (h4 : Int → Int → Int → Int → Int) (cmb compress : Int → Int → Int)
+theorem transfer_circuit_full_sound_faithful (fold8 : AuthorityFold8)
+    (permW : List Int → List Int) (hW : Poseidon2Width8 permW)
+    (ctx : RotatedContextProvider) (cmb compress : Int → Int → Int)
     (compressN : List Int → Int) (RH : RecordKernelState → Int)
     (hRest : RestHashIffFrame RH) (k : RecordKernelState) (t : Turn) (k' : RecordKernelState)
     (hwf : AccountsWF k) (hwf' : AccountsWF k')
     (h : satisfiedS cmb compress
-      (encodeS (CH_faithful fold h4) RH cmb compress compressN k t k')) :
-    TransferSpec k t k' ∨ FaithfulBreak fold h4 cmb compress compressN := by
+      (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k')) :
+    TransferSpec k t k' ∨ FaithfulBreak fold8 permW cmb compress compressN := by
   obtain ⟨hsat, _hcommit⟩ := h
-  have e0 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e0 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vSrcPre (by decide)
-  have e1 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e1 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vDstPre (by decide)
-  have e2 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e2 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vSrcPost (by decide)
-  have e3 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e3 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vDstPost (by decide)
-  have e4 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e4 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vAmt (by decide)
-  have e5 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e5 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vTAuth (by decide)
-  have e6 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e6 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vTNonneg (by decide)
-  have e7 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e7 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vTAvail (by decide)
-  have e8 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e8 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vTDistinct (by decide)
-  have e9 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e9 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vTSrcLive (by decide)
-  have e10 := encodeS_agrees_encodeT (CH_faithful fold h4) RH cmb compress compressN
+  have e10 := encodeS_agrees_encodeT (CH_faithful8 fold8 permW ctx) RH cmb compress compressN
     k t k' vTDstLive (by decide)
   have htsat : satisfied transferCircuit (encodeT k t k') := by
     intro c hc
@@ -700,30 +1147,30 @@ theorem transfer_circuit_full_sound_faithful (fold : AuthorityFold)
   obtain ⟨hg, _hdeb, _hcre, _hcons⟩ := transfer_circuit_sound k t k' htsat
   obtain ⟨hauth, hnn, hav, hne, hsrc, hdst⟩ := hg
   have hrestgate : cSRestFrame.holds
-      (encodeS (CH_faithful fold h4) RH cmb compress compressN k t k') :=
+      (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k') :=
     hsat cSRestFrame (by unfold stateCircuit; simp)
   have hframegate : cSFrameReuse.holds
-      (encodeS (CH_faithful fold h4) RH cmb compress compressN k t k') :=
+      (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k') :=
     hsat cSFrameReuse (by unfold stateCircuit; simp)
   have hmovedgate : cSMovedBind.holds
-      (encodeS (CH_faithful fold h4) RH cmb compress compressN k t k') :=
+      (encodeS (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k') :=
     hsat cSMovedBind (by unfold stateCircuit; simp)
   have hRHeq : RH k = RH k' :=
-    (srestframe_iff (CH_faithful fold h4) RH cmb compress compressN k t k').mp hrestgate
+    (srestframe_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hrestgate
   obtain ⟨hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs,
     hDE, hDEA, hHeaps, hNR, hRR, hCR⟩ := (hRest k k').mp hRHeq
-  have hfdeq : frameDigest (CH_faithful fold h4) compressN k (frameCarrier k t) =
-      frameDigest (CH_faithful fold h4) compressN k' (frameCarrier k t) :=
-    (sframereuse_iff (CH_faithful fold h4) RH cmb compress compressN k t k').mp hframegate
+  have hfdeq : frameDigest (CH_faithful8 fold8 permW ctx) compressN k (frameCarrier k t) =
+      frameDigest (CH_faithful8 fold8 permW ctx) compressN k' (frameCarrier k t) :=
+    (sframereuse_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hframegate
   rcases StateCommitReduce.frameDigestBindsCells_orBreak
-      (CH_faithful fold h4) cmb compress compressN k k' (frameCarrier k t) hfdeq with
+      (CH_faithful8 fold8 permW ctx) cmb compress compressN k k' (frameCarrier k t) hfdeq with
     hcellframe | hb
-  · have hmoveq : movedDigest (CH_faithful fold h4) compress k'.cell t.src t.dst =
-        movedDigest (CH_faithful fold h4) compress
+  · have hmoveq : movedDigest (CH_faithful8 fold8 permW ctx) compress k'.cell t.src t.dst =
+        movedDigest (CH_faithful8 fold8 permW ctx) compress
           (recTransfer k.cell t.src t.dst t.amt) t.src t.dst :=
-      (smovedbind_iff (CH_faithful fold h4) RH cmb compress compressN k t k').mp hmovedgate
+      (smovedbind_iff (CH_faithful8 fold8 permW ctx) RH cmb compress compressN k t k').mp hmovedgate
     rcases StateCommitReduce.movedDigestBindsCells_orBreak
-        (CH_faithful fold h4) cmb compress compressN k'.cell
+        (CH_faithful8 fold8 permW ctx) cmb compress compressN k'.cell
         (recTransfer k.cell t.src t.dst t.amt) t.src t.dst hmoveq with hmove | hb
     · obtain ⟨hmsrc, hmdst⟩ := hmove
       have hcellmap : k'.cell = recTransfer k.cell t.src t.dst t.amt := by
@@ -750,8 +1197,8 @@ theorem transfer_circuit_full_sound_faithful (fold : AuthorityFold)
       exact Or.inl ⟨⟨hauth, hnn, hav, hne, hsrc, hdst⟩, hcellmap,
         hAcc, hCaps, hBal, hNul, hRev, hCom, hSC, hFac, hLif, hDC, hDel, hDgs, hDE, hDEA,
         hHeaps, hNR, hRR, hCR⟩
-    · exact Or.inr (stateBreak_faithful_reduces fold h4 cmb compress compressN hb)
-  · exact Or.inr (stateBreak_faithful_reduces fold h4 cmb compress compressN hb)
+    · exact Or.inr (stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN hb)
+  · exact Or.inr (stateBreak_faithful_reduces fold8 permW hW ctx cmb compress compressN hb)
 
 #assert_axioms stateBreak_faithful_reduces
 #assert_axioms recStateCommit_binds_kernel_faithful
@@ -785,6 +1232,25 @@ theorem constantAuthorityFold_collision : AuthorityDigestCollision constantAutho
     have hi : (0 : Int) = 1 := Value.int.inj hv
     omega, rfl⟩
 
+def constantAuthorityFold8 : AuthorityFold8 := fun _ _ => 0
+
+theorem constantAuthorityFold8_collision : AuthorityDigest8Collision constantAuthorityFold8 :=
+  ⟨abstractA, abstractB, by
+    intro h
+    have hv : Value.int 0 = Value.int 1 := AuthorityInput.abstract.inj h
+    have hi : (0 : Int) = 1 := Value.int.inj hv
+    omega, rfl⟩
+
+def constantWide : List Int → List Int := fun _ => List.replicate 8 0
+
+theorem constantWide_width8 : Poseidon2Width8 constantWide := by
+  intro xs
+  simp [constantWide]
+
+theorem constantWide_collision : WireCommit8Collision constantWide := by
+  refine ⟨[0], [1], 0, 0, Or.inl (by decide), ?_⟩
+  simp [wireCommitR8, constantWide]
+
 theorem no_free_decode_gap (fold : AuthorityFold) :
     (∃ v w, LimbDecodeCollision fold v w) → AuthorityDigestCollision fold := by
   rintro ⟨v, w, h⟩
@@ -792,6 +1258,9 @@ theorem no_free_decode_gap (fold : AuthorityFold) :
 
 #assert_axioms plus4_collision
 #assert_axioms constantAuthorityFold_collision
+#assert_axioms constantAuthorityFold8_collision
+#assert_axioms constantWide_width8
+#assert_axioms constantWide_collision
 #assert_axioms no_free_decode_gap
 
 /-! ## 5. The honest floor.

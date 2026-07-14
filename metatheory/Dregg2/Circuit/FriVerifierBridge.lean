@@ -16,7 +16,7 @@ bug anywhere in the algorithm is invisible to the proof.
 SPECIFIED Lean function `verifyAlgo` whose soundness-relevant TEETH are PROVEN as
 theorems (`concreteFriChecks_rejects_query_count`, `friQueryCheck_rejects_bad_final`,
 `merkleRecompute_binds`, `batchTablesCheck_rejects_tampered_quotient`,
-`queryPowCheck_rejects_bad_pow`, …). This module bridges the two: it makes `StarkSound`
+`FriChallengerUnified.queryPowCheckUnified_rejects_nonzero`, …). This module bridges the two: it makes `StarkSound`
 a THEOREM (`starkSound_of_verifyAlgo`) resting on exactly two named pieces —
 
   1. **`AlgoStarkSound`** — the FRI/STARK extraction floor, now stated over the

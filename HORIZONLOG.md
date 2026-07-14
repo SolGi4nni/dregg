@@ -712,6 +712,20 @@ plane; content-addressed static-site hosting.
   apex). (4) the gnark-side discharge (implement the challenger/merkle/fold gadgets, fixture-anchored accept/reject agreement).
   Closure shape: each is a specify-and-prove lane over the landed skeleton; the FRI low-degree soundness stays a NAMED TERMINAL
   CARRIER (`FriLowDegreeSound`, like StarkSound) — NOT re-derived.
+- FRI-VERIFIER FAITHFULNESS FOLLOW-UP (2026-07-14, deputized WIP; uncommitted at handoff): P2/P3 are
+  modeled in `FriChallengerUnified.lean`. `deriveTranscript` now runs the continued deployed sequence
+  through `{degree_bits, base_degree_bits, preprocessed_width}` → trace/preprocessed/publics →
+  constraint-RLC α → quotient → ζ → flattened opened evaluations → PCS batch α → FRI commits/β →
+  final poly → log-arity schedule → query-witness absorb/fresh masked squeeze → query draws, retaining
+  each squeeze and checkpoint. `queryPowCheck`'s wrong witness-self-test is retired from `fullChecks`;
+  `queryPowCheckUnified` is consumed by `verifyAlgoUnified`, with an executable zero-self-bits/nonzero-
+  transcript-squeeze rejection tooth. NAMED REMAINING: (a) `ExtensionFoldWidthResidual` — the transcript
+  carries quartic challenges as four ordered base lanes while the legacy `LayerOpening.beta` shell is
+  scalar; (b) the unified verifier still binds query openings to `verifyAlgo`'s old init-seeded qidx,
+  although the correct continued qidx is computed; (c) **P4 SingleAirQuotientRetarget** — replace the
+  old `TableOpening.{constraintEval,vanishingAtZeta,quotientAtZeta}` authority and downstream per-table
+  OOD tower with the live uni-stark `air.eval(α)` / `inv_vanishing` / quotient-chunk recomposition path;
+  (d) **P5 ProofByteDecoderGolden** (`cfgView`/`WrapPublics`) and **ExecutorApplyDifferentialPin** remain.
 - CI-GREEN GRIND (2026-06-26). Drove the workspace toward green after the wide-registry/umem churn. LANDED (committed):
   (1) `circuit/src/dsl/garbled.rs` — the DSL garbled prover/verifier pushed a 16-felt PI vector (`as_slice()` over the
   now-8-felt WideHash ×2) while the descriptor reuses the deprecated 4-felt GarbledEvaluationAir columns + expects 8 PIs;
