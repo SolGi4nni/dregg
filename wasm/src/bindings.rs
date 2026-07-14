@@ -1631,23 +1631,116 @@ pub fn list_deployed_factories(handle: usize) -> Result<JsValue, JsError> {
     })
 }
 
-/// DFA compile/eval stub. In full: delegates to dregg_dfa::compiler + air.
-/// For inspector <dregg-dfa> + relay/pubsub. Returns placeholder shape today.
+/// DFA compile — delegates to the REAL in-tree `dregg_dfa` compiler (the same
+/// `Pattern → NFA → DFA` product path the router + AIR consume). `dregg-dfa` is
+/// an unconditional wasm dependency (see `Cargo.toml`; already used by
+/// `route_table_commitment` above), so no feature gate is needed — a `dfa`
+/// feature toggling this runtime path while the dep is always linked would be a
+/// reflexive gate (forbidden by FEATURE-HYGIENE). For the inspector `<dregg-dfa>`.
+///
+/// Input (`pattern_json`) selects the pattern; empty/absent ⇒ a real default
+/// demo (`docs/*` path-prefix), so this is NEVER a silent zeroed stub:
+///   `{"literal":"GET /health"}`           — exact byte-sequence match
+///   `{"pathPrefix":"docs/"}`              — URL `prefix/*` wildcard
+///   `{"pattern":<serialized dregg_dfa::Pattern>, "samples":["docs/a","x"]}`
 #[wasm_bindgen]
-pub fn compile_dfa(_pattern_json: &str) -> Result<JsValue, JsError> {
-    // Placeholder — real path wires dfa crate when DFA lane + wasm gate complete.
-    #[derive(Serialize)]
-    struct DfaStub {
-        states: u32,
-        transitions: u32,
-        note: &'static str,
+pub fn compile_dfa(pattern_json: &str) -> Result<JsValue, JsError> {
+    use dregg_dfa::{DEAD_STATE, Pattern};
+
+    #[derive(Deserialize)]
+    struct DfaCompileIn {
+        /// Exact byte-sequence match.
+        literal: Option<String>,
+        /// URL `prefix/*` wildcard (inner literal followed by any tail).
+        #[serde(rename = "pathPrefix")]
+        path_prefix: Option<String>,
+        /// The full serialized `dregg_dfa::Pattern` enum (maximal power).
+        pattern: Option<Pattern>,
+        /// Optional inputs to test acceptance against the compiled DFA.
+        #[serde(default)]
+        samples: Vec<String>,
     }
-    serde_wasm_bindgen::to_value(&DfaStub {
-        states: 0,
-        transitions: 0,
-        note: "dfa wasm binding pending DFA-RATIONALIZATION + dfa feature gate",
-    })
-    .map_err(|e| JsError::new(&e.to_string()))
+
+    #[derive(Serialize)]
+    struct SampleResult {
+        input: String,
+        accepts: bool,
+    }
+
+    #[derive(Serialize)]
+    struct DfaOut {
+        pattern: String,
+        /// Number of states, including the dead state at index 0.
+        states: u32,
+        /// Real (non-dead) transition edges in the compiled table.
+        transitions: u32,
+        /// Flat transition-table entries (`states * 256`).
+        #[serde(rename = "tableEntries")]
+        table_entries: usize,
+        start: u32,
+        accepting: Vec<u32>,
+        #[serde(rename = "tableSizeBytes")]
+        table_size_bytes: usize,
+        matches: Vec<SampleResult>,
+    }
+
+    // Empty / unparseable input ⇒ a real default demo pattern (never a silent
+    // zero). A non-empty body must parse (honest error), else the demo default.
+    let input: DfaCompileIn = if pattern_json.trim().is_empty() {
+        DfaCompileIn {
+            literal: None,
+            path_prefix: Some("docs/".to_string()),
+            pattern: None,
+            samples: vec!["docs/readme".to_string(), "src/main".to_string()],
+        }
+    } else {
+        serde_json::from_str(pattern_json)
+            .map_err(|e| JsError::new(&format!("compile_dfa: bad pattern JSON: {e}")))?
+    };
+
+    let (pattern, label) = if let Some(p) = input.pattern {
+        (p, "pattern".to_string())
+    } else if let Some(s) = &input.path_prefix {
+        (Pattern::path_prefix(s), format!("pathPrefix {s:?}"))
+    } else if let Some(s) = &input.literal {
+        (Pattern::literal(s), format!("literal {s:?}"))
+    } else {
+        // Nothing selected ⇒ the demo default rather than an empty DFA.
+        (
+            Pattern::path_prefix("docs/"),
+            "pathPrefix \"docs/\"".to_string(),
+        )
+    };
+
+    // ---- the REAL compile: Pattern → NFA → DFA (or derivative path). ----
+    let dfa = pattern.compile();
+
+    let transitions = dfa
+        .transitions
+        .iter()
+        .filter(|&&next| next != DEAD_STATE)
+        .count() as u32;
+
+    let matches = input
+        .samples
+        .iter()
+        .map(|s| SampleResult {
+            input: s.clone(),
+            accepts: dfa.matches(s.as_bytes()),
+        })
+        .collect();
+
+    let out = DfaOut {
+        pattern: label,
+        states: dfa.num_states,
+        transitions,
+        table_entries: dfa.transitions.len(),
+        start: dfa.start,
+        accepting: dfa.accepting.iter().copied().collect(),
+        table_size_bytes: dfa.table_size_bytes(),
+        matches,
+    };
+    serde_wasm_bindgen::to_value(&out).map_err(|e| JsError::new(&e.to_string()))
 }
 
 // ============================================================================

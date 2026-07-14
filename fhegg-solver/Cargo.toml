@@ -56,6 +56,10 @@ path = "src/bin/pricecert_clear.rs"
 name = "package_clear"
 path = "src/bin/package_clear.rs"
 
+[[bin]]
+name = "fhegg_uniform"
+path = "src/bin/fhegg_uniform.rs"
+
 [profile.release]
 opt-level = 3
 lto = "thin"

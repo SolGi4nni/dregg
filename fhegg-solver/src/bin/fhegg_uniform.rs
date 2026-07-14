@@ -4,6 +4,10 @@
 //! echo '<uniform-book-json>' | fhegg_uniform
 //! ```
 //!
+//! Empty stdin ⇒ the default GOLD/ART uniform-price demo book (a sibling of
+//! `pricecert_clear`'s default-demo behaviour): a real 6-order crossing at
+//! `p*` index 6 (`0.60`), `V*=160`, never a silent empty.
+//!
 //! The COMPANION to `fhegg_clear` (the circulation route). Where `fhegg_clear`
 //! clears a multi-asset barter ring through the Cert-F convex circulation,
 //! `fhegg_uniform` clears a SINGLE-PAIR uniform-price call auction — the fhEgg
@@ -115,17 +119,53 @@ struct UniformOut {
     tiers: Vec<Tier>,
 }
 
+/// The default GOLD/ART uniform-price demo book, used when stdin is empty (the
+/// same book recorded in `drex-web/drex-viz-data.js`'s UNIFORM `.provenance`):
+/// six orders that fold to a real crossing at `p*` index 6 (`0.60`), `V*=160`.
+/// So an empty invocation is never silently empty — it emits a real crossing.
+fn default_book() -> BookIn {
+    let order = |trader: &str, side: &str, qty: u64, limit: u32| OrderIn {
+        trader: trader.to_string(),
+        side: side.to_string(),
+        qty,
+        limit,
+    };
+    BookIn {
+        pair: "GOLD/ART".to_string(),
+        k: Some(10),
+        price_grid: [
+            "0.30", "0.35", "0.40", "0.45", "0.50", "0.55", "0.60", "0.65", "0.70", "0.75",
+        ]
+        .iter()
+        .map(|s| s.to_string())
+        .collect(),
+        orders: vec![
+            order("Ada", "bid", 100, 7),
+            order("Bram", "bid", 60, 6),
+            order("Cyl", "bid", 40, 5),
+            order("Del", "ask", 80, 3),
+            order("Eve", "ask", 50, 4),
+            order("Fox", "ask", 70, 6),
+        ],
+    }
+}
+
 fn main() {
     let mut buf = String::new();
     if std::io::stdin().read_to_string(&mut buf).is_err() {
         eprintln!("fhegg_uniform: failed to read stdin");
         std::process::exit(2);
     }
-    let book: BookIn = match serde_json::from_str(&buf) {
-        Ok(b) => b,
-        Err(e) => {
-            eprintln!("fhegg_uniform: bad book JSON: {e}");
-            std::process::exit(2);
+    // Empty stdin ⇒ the default GOLD/ART demo book (never a silent empty).
+    let book: BookIn = if buf.trim().is_empty() {
+        default_book()
+    } else {
+        match serde_json::from_str(&buf) {
+            Ok(b) => b,
+            Err(e) => {
+                eprintln!("fhegg_uniform: bad book JSON: {e}");
+                std::process::exit(2);
+            }
         }
     };
     if book.orders.is_empty() {
