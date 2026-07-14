@@ -52,7 +52,9 @@ import Mathlib.Algebra.Order.BigOperators.Group.Finset
 import Mathlib.Algebra.BigOperators.Ring.Finset
 import Mathlib.Algebra.Order.Field.Rat
 import Mathlib.Data.ZMod.Basic
+import Mathlib.Data.Rat.Floor
 import Mathlib.Tactic.Linarith
+import Mathlib.Tactic.FieldSimp
 
 namespace Market
 
@@ -270,6 +272,121 @@ theorem worked_exact_dispose_optimal {f' : Fin 3 → ℤ} (hf' : PrimalFeasible 
     ringLP.w ⬝ᵥ f' ≤ ringLP.w ⬝ᵥ ringF + exactGap ringLP ringF ringπ ringS :=
   exact_gap_feeds_keystone ringLP ringCert_valid.1 ringCert_valid.2.1 (le_of_eq rfl) hf'
 
+/-! ## 5. The CONCRETE floor/ceil quantizer — the mint-safe directionality is a THEOREM, not a hypothesis.
+
+`mint_safe_quantization` takes the rounding directions as hypotheses. Here we discharge them for the
+ACTUAL quantizer codex named — `qin = ⌊vin/Δ⌋` (floor inputs), `qout = ⌈vout/Δ⌉` (ceil outputs) — so the
+mint-safe rule is not "assume you rounded the right way" but "floor the inputs, ceil the outputs, and
+mint-safety is automatic." The two facts are `Δ·⌊v/Δ⌋ ≤ v` (floor under-approximates) and
+`v ≤ Δ·⌈v/Δ⌉` (ceil over-approximates), each just `Int.floor_le` / `Int.le_ceil` scaled by `Δ > 0`. -/
+
+/-- **Floor under-approximates.** For `Δ > 0`, the floored proxy scaled back is `≤` the true value:
+`Δ · ⌊v/Δ⌋ ≤ v`. This is the mint-safe INPUT direction, proven (not assumed). -/
+theorem quantize_floor_under (Δ : ℚ) (hΔ : 0 < Δ) (v : ℚ) :
+    Δ * ((⌊v / Δ⌋ : ℤ) : ℚ) ≤ v := by
+  have key : Δ * (v / Δ) = v := by field_simp
+  calc Δ * ((⌊v / Δ⌋ : ℤ) : ℚ)
+      ≤ Δ * (v / Δ) := mul_le_mul_of_nonneg_left (Int.floor_le (v / Δ)) hΔ.le
+    _ = v := key
+
+/-- **Ceil over-approximates.** For `Δ > 0`, the true value is `≤` its ceiled proxy scaled back:
+`v ≤ Δ · ⌈v/Δ⌉`. This is the mint-safe OUTPUT direction, proven (not assumed). -/
+theorem quantize_ceil_over (Δ : ℚ) (hΔ : 0 < Δ) (v : ℚ) :
+    v ≤ Δ * ((⌈v / Δ⌉ : ℤ) : ℚ) := by
+  have key : Δ * (v / Δ) = v := by field_simp
+  calc v = Δ * (v / Δ) := key.symm
+    _ ≤ Δ * ((⌈v / Δ⌉ : ℤ) : ℚ) := mul_le_mul_of_nonneg_left (Int.le_ceil (v / Δ)) hΔ.le
+
+/-- **`mint_safe_quantization_int`** — the ℤ-proxy form of the mint-safe rule (the floor/ceil proxies are
+integers, possibly of either sign; the ℕ form is `mint_safe_quantization`). Identical sandwich. -/
+theorem mint_safe_quantization_int
+    {ι κ : Type*} [Fintype ι] [Fintype κ]
+    (Δ : ℚ) (hΔ : 0 ≤ Δ)
+    (vin : ι → ℚ) (vout : κ → ℚ) (qin : ι → ℤ) (qout : κ → ℤ)
+    (hin  : ∀ i, Δ * (qin i : ℚ) ≤ vin i)
+    (hout : ∀ j, vout j ≤ Δ * (qout j : ℚ))
+    (hgate : (∑ j, qout j) ≤ ∑ i, qin i) :
+    (∑ j, vout j) ≤ ∑ i, vin i := by
+  have hcast : (∑ j, (qout j : ℚ)) ≤ ∑ i, (qin i : ℚ) := by exact_mod_cast hgate
+  calc ∑ j, vout j
+      ≤ ∑ j, Δ * (qout j : ℚ) := Finset.sum_le_sum (fun j _ => hout j)
+    _ = Δ * ∑ j, (qout j : ℚ) := by rw [Finset.mul_sum]
+    _ ≤ Δ * ∑ i, (qin i : ℚ) := mul_le_mul_of_nonneg_left hcast hΔ
+    _ = ∑ i, Δ * (qin i : ℚ) := by rw [Finset.mul_sum]
+    _ ≤ ∑ i, vin i := Finset.sum_le_sum (fun i _ => hin i)
+
+/-- **`mint_safe_floor_ceil` — THE CONCRETE QUANTIZER IS MINT-SAFE.** Floor the inputs (`⌊vin/Δ⌋`), ceil
+the outputs (`⌈vout/Δ⌉`), at any step `Δ > 0`. Then the cheap integer gate `Σ ⌈vout/Δ⌉ ≤ Σ ⌊vin/Δ⌋`
+PROVABLY forbids a mint of the true rational values: `Σ vout ≤ Σ vin`. No directional hypothesis — the
+directionality is discharged by `quantize_floor_under` / `quantize_ceil_over`. This is the mint-safe
+rule for the deployable quantizer, not an abstract proxy. -/
+theorem mint_safe_floor_ceil
+    {ι κ : Type*} [Fintype ι] [Fintype κ]
+    (Δ : ℚ) (hΔ : 0 < Δ)
+    (vin : ι → ℚ) (vout : κ → ℚ)
+    (hgate : (∑ j, ⌈vout j / Δ⌉) ≤ ∑ i, ⌊vin i / Δ⌋) :
+    (∑ j, vout j) ≤ ∑ i, vin i :=
+  mint_safe_quantization_int Δ hΔ.le vin vout
+    (fun i => ⌊vin i / Δ⌋) (fun j => ⌈vout j / Δ⌉)
+    (fun i => quantize_floor_under Δ hΔ (vin i))
+    (fun j => quantize_ceil_over Δ hΔ (vout j))
+    hgate
+
+/-! ## 6. The tolerance/reserve bound — codex's Level-B COMPLETENESS (parameter, not soundness).
+
+Soundness (§1–§5) says the gate never mints. Completeness asks the dual question: does an HONEST clearing
+survive the quantization? Each floor loses `< Δ` and each ceil adds `< Δ`, so the quantized gate can only
+reject a genuine clearing whose true surplus is below `Δ·(n_in + n_out)`. Equivalently: if the true
+surplus is at least `Δ·(n_in + n_out)`, the integer gate PROVABLY accepts. This is the honest
+precision/tolerance knob — sizing `Δ` down shrinks the reserve — and it is COMPLETENESS, never soundness
+(no clearing that the gate accepts can mint, regardless of `Δ`). -/
+
+/-- **`sufficient_surplus_passes_gate` — the completeness / tolerance bound.** If the true surplus
+`Σ vin − Σ vout` is at least `Δ·(|κ| + |ι|)` (outputs plus inputs), then the floor/ceil integer gate
+`Σ ⌈vout/Δ⌉ ≤ Σ ⌊vin/Δ⌋` ACCEPTS. So the only clearings the quantizer can reject are those within
+`Δ·(n_in+n_out)` of breaking even — the quantization tolerance, bounded and tunable by `Δ`. -/
+theorem sufficient_surplus_passes_gate
+    {ι κ : Type*} [Fintype ι] [Fintype κ]
+    (Δ : ℚ) (hΔ : 0 < Δ)
+    (vin : ι → ℚ) (vout : κ → ℚ)
+    (hsurplus : Δ * ((Fintype.card κ : ℚ) + (Fintype.card ι : ℚ)) ≤ (∑ i, vin i) - ∑ j, vout j) :
+    (∑ j, ⌈vout j / Δ⌉) ≤ ∑ i, ⌊vin i / Δ⌋ := by
+  -- ceil side: Δ·Σ⌈vout/Δ⌉ ≤ Σvout + Δ·|κ|
+  have hup : Δ * (∑ j, ((⌈vout j / Δ⌉ : ℤ) : ℚ)) ≤ (∑ j, vout j) + Δ * (Fintype.card κ : ℚ) := by
+    rw [Finset.mul_sum]
+    have hpt : ∀ j, Δ * ((⌈vout j / Δ⌉ : ℤ) : ℚ) ≤ vout j + Δ := by
+      intro j
+      have h2 : ((⌈vout j / Δ⌉ : ℤ) : ℚ) ≤ vout j / Δ + 1 := le_of_lt (Int.ceil_lt_add_one _)
+      have hm := mul_le_mul_of_nonneg_left h2 hΔ.le
+      have key : Δ * (vout j / Δ + 1) = vout j + Δ := by field_simp
+      linarith [hm, key]
+    calc ∑ j, Δ * ((⌈vout j / Δ⌉ : ℤ) : ℚ)
+        ≤ ∑ _j : κ, (vout _j + Δ) := Finset.sum_le_sum (fun j _ => hpt j)
+      _ = (∑ j, vout j) + Δ * (Fintype.card κ : ℚ) := by
+          rw [Finset.sum_add_distrib, Finset.sum_const, Finset.card_univ, nsmul_eq_mul]; ring
+  -- floor side: Σvin − Δ·|ι| ≤ Δ·Σ⌊vin/Δ⌋
+  have hlo : (∑ i, vin i) - Δ * (Fintype.card ι : ℚ) ≤ Δ * (∑ i, ((⌊vin i / Δ⌋ : ℤ) : ℚ)) := by
+    rw [Finset.mul_sum]
+    have hpt : ∀ i, vin i - Δ ≤ Δ * ((⌊vin i / Δ⌋ : ℤ) : ℚ) := by
+      intro i
+      have h2 : vin i / Δ - 1 ≤ ((⌊vin i / Δ⌋ : ℤ) : ℚ) := by
+        have := Int.sub_one_lt_floor (vin i / Δ); linarith
+      have hm := mul_le_mul_of_nonneg_left h2 hΔ.le
+      have key : Δ * (vin i / Δ - 1) = vin i - Δ := by field_simp
+      linarith [hm, key]
+    calc (∑ i, vin i) - Δ * (Fintype.card ι : ℚ)
+        = ∑ _i : ι, (vin _i - Δ) := by
+          rw [Finset.sum_sub_distrib, Finset.sum_const, Finset.card_univ, nsmul_eq_mul]; ring
+      _ ≤ ∑ i, Δ * ((⌊vin i / Δ⌋ : ℤ) : ℚ) := Finset.sum_le_sum (fun i _ => hpt i)
+  -- combine: surplus ≥ Δ(|κ|+|ι|) ⇒ Δ·Σ⌈⌉ ≤ Δ·Σ⌊⌋ ⇒ Σ⌈⌉ ≤ Σ⌊⌋
+  have hexp : Δ * ((Fintype.card κ : ℚ) + (Fintype.card ι : ℚ))
+      = Δ * (Fintype.card κ : ℚ) + Δ * (Fintype.card ι : ℚ) := by ring
+  have hmul : Δ * (∑ j, ((⌈vout j / Δ⌉ : ℤ) : ℚ)) ≤ Δ * (∑ i, ((⌊vin i / Δ⌋ : ℤ) : ℚ)) := by
+    linarith [hup, hlo, hsurplus, hexp]
+  have hle : (∑ j, ((⌈vout j / Δ⌉ : ℤ) : ℚ)) ≤ ∑ i, ((⌊vin i / Δ⌋ : ℤ) : ℚ) :=
+    le_of_mul_le_mul_left hmul hΔ
+  exact_mod_cast hle
+
 /-! ### `#guard` smoke — the gate arithmetic + exact gap are COMPUTED, not asserted. -/
 
 -- the honest clearing's integer gate passes (17 ≤ 20):
@@ -281,6 +398,15 @@ theorem worked_exact_dispose_optimal {f' : Fin 3 → ℤ} (hf' : PrimalFeasible 
 -- the honest output proxy sums to 17, its input proxy to 20:
 #guard (∑ j, exQout j) == 17
 #guard (∑ i, exQin i) == 20
+-- the CONCRETE floor/ceil quantizer on the honest clearing: ⌈7.5⌉=8, ⌈8.5⌉=9 (sum 17); ⌊10⌋=10 (sum 20):
+#guard (∑ j, ⌈exVout j / 1⌉) == 17
+#guard (∑ i, ⌊exVin i / 1⌋) == 20
+
+/-- **THE CONCRETE QUANTIZER, WORKED.** `honest_clearing_passes` re-derived through the deployable
+floor/ceil quantizer (`mint_safe_floor_ceil`) — no hand-supplied proxies, the directions are theorems. -/
+theorem honest_clearing_passes_floor_ceil : (∑ j, exVout j) ≤ ∑ i, exVin i :=
+  mint_safe_floor_ceil 1 (by norm_num) exVin exVout
+    (by norm_num [exVin, exVout, Fin.sum_univ_two])
 
 /-! ### Axiom hygiene — the mint-safety foundation pinned kernel-clean. -/
 
@@ -288,6 +414,9 @@ theorem worked_exact_dispose_optimal {f' : Fin 3 → ℤ} (hf' : PrimalFeasible 
   Market.wrong_direction_admits_mint, Market.field_gate_without_range_mints,
   Market.exactified_certified, Market.exact_gap_feeds_keystone,
   Market.honest_clearing_passes, Market.genuine_mint_fails_gate, Market.mint_attempt_rejected,
-  Market.worked_exact_dispose, Market.worked_exact_dispose_optimal]
+  Market.worked_exact_dispose, Market.worked_exact_dispose_optimal,
+  Market.quantize_floor_under, Market.quantize_ceil_over, Market.mint_safe_quantization_int,
+  Market.mint_safe_floor_ceil, Market.sufficient_surplus_passes_gate,
+  Market.honest_clearing_passes_floor_ceil]
 
 end Market
