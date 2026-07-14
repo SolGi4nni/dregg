@@ -36,6 +36,11 @@ import Market.InterchainCustody
 import Market.FhEggClearing
 import Market.CertF
 import Market.MintSafeQuantization
+import Market.QuantizedConservation
+import Market.ExactGapNoWrap
+import Market.AggregateBinding
+import Market.StreamingCert
+import Market.PrecisionEnvelope
 import Market.RevealNothing
 import Market.CertQp
 import Market.PriceCert
