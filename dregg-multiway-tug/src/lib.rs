@@ -19,6 +19,8 @@
 //!   counters/win-registers + 8 used-flags + 14 per-guild scores on the heap) and the
 //!   PLAY TEETH as a hand-rolled [`dregg_app_framework::CellProgram::Cases`].
 //! * [`game`] — [`game::MultiwayTug`], the game deployed and driven on a real world-cell.
+//! * [`packs`] — **Phase 1, the COLLECTIBLE layer**: a printed favor card is an owned
+//!   [`dreggnet_asset`] note, opening a pack is a provably-fair draw ([`packs::CardVault`]).
 //!
 //! ## What the teeth enforce (see [`state`])
 //!
@@ -42,8 +44,9 @@
 //! ## Honest scope (per `docs/VERIFIED-GAME-PORTFOLIO.md`)
 //!
 //! Phase 0 is rules-on-executor with the hand hidden only by NON-REVEAL on a trusted host
-//! (the counters are public; card identities live in the reference mover). The named next
-//! phases: **1** cards-as-owned assets + packs (`dreggnet-asset`); **2** the zk
+//! (the counters are public; card identities live in the reference mover). **Phase 1** is
+//! BUILT ([`packs`]): the collectible layer — cards as owned `dreggnet-asset` notes +
+//! provably-fair packs. The named next phases: **2** the zk
 //! HIDDEN-HAND — `Witnessed{MerkleMembership}` proving a play is from the committed hand +
 //! the opponent pick as a sealed-auction commit-reveal (opponent-SIGNED); **3** the STARK
 //! fold (a Custom AIR leaf → `prove_turn_chain_recursive`, Lane-D-gated); **4** the Lean
@@ -52,9 +55,13 @@
 //! goes beyond the five archetypes.
 
 pub mod game;
+pub mod packs;
 pub mod reference;
 pub mod state;
 
 pub use game::MultiwayTug;
+pub use packs::{
+    CardDraw, CardItem, CardRarity, CardVault, Pack, PackError, reverify_pack, roll_pack,
+};
 pub use reference::{ActionKind, Engine, Player, Projection, ResolvedMove};
 pub use state::Deployment;

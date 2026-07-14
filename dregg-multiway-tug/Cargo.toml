@@ -33,3 +33,18 @@ dregg-cell = { path = "../cell" }
 dregg-schema = { path = "../dregg-schema" }
 # THE REAL WorldCell — the deployed executor + ledger the game deploys onto.
 spween-dregg = { path = "../spween-dregg" }
+
+# --- Phase 1: the COLLECTIBLE layer (cards-as-assets + provably-fair packs). ---
+# THE ASSET LAYER — the owned, transfer-gated, provenance-chained, content-addressed
+# note. Opening a pack MINTS each drawn card as a `dreggnet_asset` note owned by the
+# opener, content-addressed by the draw; a card TRANSFERS under the asset layer's own
+# signature owner-gate. Consumed, never modified.
+dreggnet-asset = { path = "../dreggnet-asset" }
+# THE FAIRNESS ANCHOR — procgen's committed-seed -> VERIFIED dregg-dice DrawStream
+# (`verified_stream` + `CommittedSeed`). A pack's cards are indexed draws off the
+# committed pack seed, so a rarity/foil is re-derivable by anyone and a claimed pull is
+# un-fakeable. Consumed as the fair roll; never modified.
+procgen-dregg = { path = "../procgen-dregg" }
+# Domain-separated hashing for the pack-seed derivation + the card content/traits/mint
+# commitments (the same blake3 1.x resolved workspace-wide).
+blake3 = "1"
