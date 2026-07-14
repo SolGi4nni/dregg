@@ -70,7 +70,12 @@ inhabited. We refute-and-replace:
     Guarded (gtrace f)` — when the feedback is a MONOTONE self-map of a complete lattice, its least fixed
     point (`OrderHom.lfp`) witnesses that the loop clears. This lands on the already-proven monotone
     crossing operator of `Market/FhEggClearing.lean` (`crossing_gtrace_guarded` via `crossing_fixed` /
-    `Fstep_monotone`), and the four instances are shown `TraceAdmissible`;
+    `Fstep_monotone`), the four instances are shown `TraceAdmissible`, and it is exercised NON-VACUOUSLY on
+    a real non-total monotone feedback on the complete lattice `Prop` (`andFeedback_gtrace_guarded`);
+  * COMPLETE the closure target (codex named feedback AND adaptive composition): the guarded trace of
+    admissible feedbacks is closed under sequential (`gtrace_comp_guarded`) and tensor
+    (`gtrace_tensor_guarded`) composition, plus the typed PARTIAL guard `GuardedOn P` for the honest
+    "markets do not clear every boundary state" (`comp_guardedOn`, `guarded_iff_guardedOn_true`);
   * package it as `AdmissibleTraceClosure R` — the true closure, carried as `ZKUnification.feedback_closure`,
     now a THEOREM (`admissibleTraceClosure_holds`) so the bundle is INHABITED (`zkUnification`).
 
@@ -506,6 +511,80 @@ theorem traceAdmissible_guarded {X Y U : ZKObj R} [CompleteLattice U.S]
   have hr := hrel (OrderHom.lfp Φ)
   rwa [OrderHom.map_lfp] at hr
 
+/-! ### The replacement is NON-VACUOUS — it fires on a genuine complete lattice with a NON-total monotone
+feedback (not just the total instances). We exercise `traceAdmissible_guarded` on the complete lattice
+`Prop` with the monotone, single-valued, NON-total feedback `Φ P = P ∧ c` (least fixed point `⊥ = False`);
+the trace clears at that fixed point — verify-not-find on a real monotone operator with a nontrivial
+`lfp`, not a `True`-relation triviality. -/
+
+/-- The feedback state `Prop` as an object (reducible so its complete-lattice instance resolves). -/
+@[reducible] def propObj : ZKObj R := ⟨Prop⟩
+
+/-- A NON-total monotone feedback on the complete lattice `Prop`: `v = (u ∧ c)`. Its feedback operator
+`Φ P = P ∧ c` is genuinely monotone (not the total relation), with least fixed point `False`. -/
+def andFeedback (c : Prop) :
+    tensorObj (unitObj : ZKObj R) propObj ⟶ tensorObj (unitObj : ZKObj R) propObj where
+  defect := 0
+  rel p q := q.2 = (p.2 ∧ c)
+
+theorem andFeedback_traceAdmissible (c : Prop) : TraceAdmissible (andFeedback (R := R) c) :=
+  fun _ => ⟨⟨fun P => P ∧ c, fun _ _ hPQ hp => ⟨hPQ hp.1, hp.2⟩⟩, fun _ => PUnit.unit, fun _ => rfl⟩
+
+/-- **THE REPLACEMENT FIRES ON A NON-TOTAL MONOTONE FEEDBACK** — `andFeedback c` clears through
+`traceAdmissible_guarded`, so the Tarski closure is non-vacuous beyond the total instances (its feedback
+is a real monotone operator on `Prop`, and the cleared value is the least fixed point). -/
+theorem andFeedback_gtrace_guarded (c : Prop) : Guarded (gtrace (andFeedback (R := R) c)) :=
+  traceAdmissible_guarded _ (andFeedback_traceAdmissible c)
+
+/-! ### FULL closure for the admissible subcategory — feedback AND adaptive composition AND tensor.
+
+Codex's stated target was closure under BOTH feedback AND adaptive composition. The feedback half is
+`traceAdmissible_guarded`; the composition/tensor half rides the already-proven `comp_guarded` /
+`tensor_guarded`. Together: on the admissible subcategory, the guarded trace is closed under sequential
+composition and parallel (tensor) composition — the compositional closure the unification names, now a
+THEOREM (not a hypothesis field). -/
+
+/-- **ADAPTIVE COMPOSITION of cleared admissible traces CLEARS** — the sequential composite of two
+trace-admissible feedbacks has a guarded trace-composite (`comp_guarded` of the two closures). -/
+theorem gtrace_comp_guarded {X Y Z U V : ZKObj R} [CompleteLattice U.S] [CompleteLattice V.S]
+    (f : tensorObj X U ⟶ tensorObj Y U) (g : tensorObj Y V ⟶ tensorObj Z V)
+    (hf : TraceAdmissible f) (hg : TraceAdmissible g) :
+    Guarded (gtrace f ≫ gtrace g) :=
+  comp_guarded (traceAdmissible_guarded f hf) (traceAdmissible_guarded g hg)
+
+/-- **PARALLEL (TENSOR) COMPOSITION of cleared admissible traces CLEARS** — the ⊗-product of two guarded
+traces of admissible feedbacks clears (`tensor_guarded` of the two closures). -/
+theorem gtrace_tensor_guarded {X Y X' Y' U V : ZKObj R} [CompleteLattice U.S] [CompleteLattice V.S]
+    (f : tensorObj X U ⟶ tensorObj Y U) (g : tensorObj X' V ⟶ tensorObj Y' V)
+    (hf : TraceAdmissible f) (hg : TraceAdmissible g) :
+    Guarded (tensorHom (gtrace f) (gtrace g)) :=
+  tensor_guarded (traceAdmissible_guarded f hf) (traceAdmissible_guarded g hg)
+
+/-! ### `GuardedOn` — the typed PARTIAL guard (codex R3 Q3: markets do not clear every boundary state).
+
+Not every syntactic input clears; the honest predicate is guardedness on an admissible DOMAIN. We give
+the restricted guard, show it generalizes `Guarded`, and prove partial adaptive composition (the image of
+the admissible domain must land in the next stage's domain). -/
+
+/-- **`GuardedOn P f` — guardedness restricted to the admissible domain `P`.** `Guarded` is the `P = ⊤`
+case (`guarded_iff_guardedOn_true`). -/
+def GuardedOn {X Y : ZKObj R} (P : X.S → Prop) (f : X ⟶ Y) : Prop := ∀ x, P x → ∃ y, f.rel x y
+
+/-- `Guarded` is `GuardedOn` the total domain. -/
+theorem guarded_iff_guardedOn_true {X Y : ZKObj R} (f : X ⟶ Y) :
+    Guarded f ↔ GuardedOn (fun _ => True) f :=
+  ⟨fun h x _ => h x, fun h x => h x trivial⟩
+
+/-- **PARTIAL ADAPTIVE COMPOSITION** — if `f` clears on `P` and `g` clears on `Q`, and every `P`-input's
+`f`-image satisfies `Q`, then the composite clears on `P`. The domain-tracked form of `comp_guarded`. -/
+theorem comp_guardedOn {X Y Z : ZKObj R} {P : X.S → Prop} {Q : Y.S → Prop}
+    {f : X ⟶ Y} {g : Y ⟶ Z} (hf : GuardedOn P f) (hg : GuardedOn Q g)
+    (hPQ : ∀ x y, P x → f.rel x y → Q y) : GuardedOn P (f ≫ g) := by
+  intro x hx
+  obtain ⟨y, hy⟩ := hf x hx
+  obtain ⟨z, hz⟩ := hg y (hPQ x y hx hy)
+  exact ⟨z, y, hy, hz⟩
+
 /-! ### Mechanism landing — the fhEgg CROSSING feedback clears, via the PROVEN monotone operator.
 
 The genuinely-constrained instance (feedback `rel` is a real update, not `True`): wire the fhEgg price
@@ -714,6 +793,10 @@ now a PROVEN refutation (`guardedTraceClosure_refuted`) plus a PROVEN Tarski rep
   Market.ZKOpenRel.id_guarded, Market.ZKOpenRel.comp_guarded, Market.ZKOpenRel.tensor_guarded,
   Market.ZKOpenRel.gtrace_defect, Market.ZKOpenRel.gtrace_conservative,
   Market.ZKOpenRel.guardedTraceClosure_refuted, Market.ZKOpenRel.traceAdmissible_guarded,
+  Market.ZKOpenRel.andFeedback_traceAdmissible, Market.ZKOpenRel.andFeedback_gtrace_guarded,
+  Market.ZKOpenRel.gtrace_comp_guarded,
+  Market.ZKOpenRel.gtrace_tensor_guarded, Market.ZKOpenRel.guarded_iff_guardedOn_true,
+  Market.ZKOpenRel.comp_guardedOn,
   Market.ZKOpenRel.crossing_gtrace_guarded, Market.ZKOpenRel.total_toLoop_traceAdmissible,
   Market.ZKOpenRel.total_toLoop_gtrace_guarded, Market.ZKOpenRel.circulation_traceAdmissible,
   Market.ZKOpenRel.convex_engine_traceAdmissible, Market.ZKOpenRel.auction_traceAdmissible,
