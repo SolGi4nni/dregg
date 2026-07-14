@@ -117,3 +117,23 @@ stream = ["dep:futures-core"]
 # `plan_reaction`/`react_build` cap-gate, never a parallel one.
 dregg-app-framework = { path = "../app-framework", default-features = false }
 
+# THE ATTESTED CROWN over the game narrator — consumed ONLY as a dev-dependency
+# (tests/game_reactor.rs), the SAME cycle-safe home the `Reactor` front-door rides:
+# `deos-hermes` path-deps back through the dregg graph (a normal back-edge would be a
+# cycle, but cargo permits a DEV-dependency cycle). It ships the REAL committed crown —
+# `AttestedNarrator::narrate_attested` (the DM narration + the `ZkOracleAttestation`:
+# real JSON-CFG well-formedness + the real injection-free matcher over the narrator's
+# actual output) + `attestation_commitment` (the 32-byte value a game turn's receipt
+# witnesses) + `verify_zkoracle`. The GameReactor's `react()` binds that commitment
+# alongside its cap-gated world-resolution turn; a jailbroken/injected narration is
+# REFUSED by the crown's injection-free leg. Default features only (no `zk-live`): the
+# modeled fixture authentic leg, HTTP/TLS-free. Never a parallel crown — the genuine one.
+deos-hermes = { path = "../deos-hermes" }
+
+# The hosted DM narrator the crown wraps (`Narrator`/`Narration`/`BudgetLedger`/
+# `ModelRegistry`) — needed to construct a PURE scripted narrator for the test
+# (`Narrator::for_test` with no Bedrock/Ollama backend: deterministic, no network, no
+# spend). Already in the lockfile transitively via `deos-hermes`; named directly so the
+# test builds the real `Narration` the crown attests, never a parallel narration type.
+dregg-narrator = { path = "../narrator" }
+
