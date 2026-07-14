@@ -265,16 +265,23 @@ Each is large: every one of `8` fibres `y ∈ S_α` has a partner of a different
 its full `≈ |S_α|²`, is why the constant is `8·|κ|` and not the ideal `|κ|`; the packing/Fisher method
 that would sharpen it is DEAD here — `a² = 8² = 64 < |κ|·M = 448`, the very obstruction of §F.) -/
 
-set_option maxRecDepth 4000 in
+set_option maxRecDepth 8000 in
 /-- **THE δ-PRESERVING CORRELATED-AGREEMENT PRIMITIVE, PROVED at the deployed wrap setup, LINEAR list
-size.** `CorrelatedAgreementLine friSetupWrapRate 56 512`: for ANY `f`, if more than `512 = 8·|κ|`
-folding challenges fold `f` to within `56 = (7/8)·64` of the constants, a SINGLE constant pair `(a,b)`
-agrees with `(E f, O f)` on `≥ |κ| − 56 = 8` fibers simultaneously — the sharp `1 − δ` (δ-preserving)
-floor, beyond the `|κ| − 2·dIn` two-point reach and beyond the packing method's `21/32` radius. No
-`sorry`, no hypothesis. The list size `512 = |κ|²/(|κ| − dIn)` is LINEAR in `|κ|` (the tight BCIKS
-scaling `n/(1−δ)`), replacing the loose quadratic `|κ|² = 4096` of the pure ordered-pair injection. -/
+size.** `CorrelatedAgreementLine friSetupWrapRate 56 292`: for ANY `f`, if more than `292` folding
+challenges fold `f` to within `56 = (7/8)·64` of the constants, a SINGLE constant pair `(a,b)` agrees
+with `(E f, O f)` on `≥ |κ| − 56 = 8` fibers simultaneously — the sharp `1 − δ` (δ-preserving) floor,
+beyond the `|κ| − 2·dIn` two-point reach and beyond the packing method's `21/32` radius. No `sorry`,
+no hypothesis.
+
+The list size `292 = ⌈4096/14⌉` is LINEAR in `|κ|`, SHARPENED from the earlier `512 = 4096/8` by the
+SHARP per-`α` pair count `|Pairs α| ≥ 14` (§3b): every good `α`'s agreement set has a `Φ`-fibre `A`
+with `1 ≤ |A| ≤ 7` (no-rich-point) whose cross pairs with `S α \ A` number `2·|A|·(|S α|−|A|) ≥ 14`,
+the exact minimum (attained by the `7+1` split). `14 = min(|S α|² − Σ mᵢ²)` is the true ceiling of
+the ordered-pair method, so `292` is the sharpest bound THIS method reaches; the ideal `≤ |κ| = 64` is
+UNREACHABLE (see §5 — the agreement floor `8 = √ρ·|κ|` sits EXACTLY at the Johnson radius, where every
+GS/Johnson list-size bound has a vanishing denominator, and the true list is genuinely `> |κ|`). -/
 theorem wrap_correlatedAgreementLine :
-    CorrelatedAgreementLine friSetupWrapRate 56 512 := by
+    CorrelatedAgreementLine friSetupWrapRate 56 292 := by
   classical
   intro f Good hclose hL
   set G := friSetupWrapRate.geom with hG
@@ -321,41 +328,81 @@ theorem wrap_correlatedAgreementLine :
     set Pairs : BabyBear → Finset (Fin (2 ^ 6) × Fin (2 ^ 6)) :=
       fun α => (S α ×ˢ S α).filter
         (fun p => ¬(E G f p.1 = E G f p.2 ∧ O G f p.1 = O G f p.2)) with hPdef
-    -- SIZE: `8 ≤ |Pairs α|`. Each of `8` distinct fibres `y ∈ S α` has a partner `pf y ∈ S α` of a
-    -- DIFFERENT `Φ`-value (its own `Φ`-fibre inside `S α` has `≤ 7 < 8 ≤ |S α|` members), and
-    -- `y ↦ (y, pf y)` injects those `8` fibres into `Pairs α`.
-    have hsize : ∀ α ∈ Good, 8 ≤ (Pairs α).card := by
+    -- SIZE (SHARPENED to `14`, from `512 = 4096/8` to `292 = ⌈4096/14⌉`). Fix any fibre `y₀ ∈ S α`
+    -- and split `S α = A ⊍ B` where `A` = the `Φ`-fibre of `y₀` inside `S α` and `B = S α \ A`. Every
+    -- CROSS pair (one endpoint in `A`, the other in `B`) has distinct `Φ`, so `A ×ˢ B ⊍ B ×ˢ A ⊆
+    -- Pairs α`, of card `2·|A|·|B|`. The no-rich-point cap gives `1 ≤ |A| ≤ 7`, and `|A| + |B| =
+    -- |S α| ≥ 8` forces `|B| ≥ 1`; then `|A|·|B| ≥ |A| + |B| − 1 ≥ 7` (the `(|A|−1)(|B|−1) ≥ 0`
+    -- inequality), so `2·|A|·|B| ≥ 14`. This is the exact per-`α` minimum: the `7+1` split (a fibre of
+    -- `7` and a singleton, `|S α| = 8`) attains `2·7·1 = 14`, matching `min(s²−Σmᵢ²) = 14`.
+    have harith : ∀ a b : ℕ, 1 ≤ a → 1 ≤ b → 8 ≤ a + b → 14 ≤ 2 * (a * b) := by
+      intro a b ha hb hab
+      obtain ⟨a, rfl⟩ := Nat.exists_eq_add_of_le ha
+      obtain ⟨b, rfl⟩ := Nat.exists_eq_add_of_le hb
+      have h6 : 6 ≤ a + b := by omega
+      nlinarith [h6, Nat.zero_le (a * b)]
+    have hsize : ∀ α ∈ Good, 14 ≤ (Pairs α).card := by
       intro α hα
-      obtain ⟨S8, hS8sub, hS8card⟩ := Finset.exists_subset_card_eq (hScard α hα)
-      have hpart : ∀ y ∈ S α, ∃ z, z ∈ S α ∧
-          ¬(E G f z = E G f y ∧ O G f z = O G f y) := by
-        intro y hy
-        by_contra hcon
-        push_neg at hcon
-        have hsub : S α ⊆
-            Finset.univ.filter (fun z : Fin (2 ^ 6) => E G f z = E G f y ∧ O G f z = O G f y) := by
+      have hScardα := hScard α hα
+      have hSpos : (S α).Nonempty := Finset.card_pos.mp (by omega)
+      obtain ⟨y₀, hy₀⟩ := hSpos
+      -- `Φ`-fibre of `y₀` inside `S α` (`A`), and its complement `B` inside `S α` (as `filter (¬·)`).
+      set A : Finset (Fin (2 ^ 6)) :=
+        (S α).filter (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀) with hAdef
+      set B : Finset (Fin (2 ^ 6)) :=
+        (S α).filter (fun y => ¬ (E G f y = E G f y₀ ∧ O G f y = O G f y₀)) with hBdef
+      have hAsub : A ⊆ S α := Finset.filter_subset _ _
+      have hy₀A : y₀ ∈ A := Finset.mem_filter.mpr ⟨hy₀, rfl, rfl⟩
+      have hApos : 1 ≤ A.card := Finset.card_pos.mpr ⟨y₀, hy₀A⟩
+      have hAle : A.card ≤ 7 := by
+        have hsub : A ⊆ Finset.univ.filter
+            (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀) := by
           intro z hz
-          simp only [Finset.mem_filter, Finset.mem_univ, true_and]
-          exact hcon z hz
-        have h7 := hnorich (E G f y) (O G f y)
-        have hle := Finset.card_le_card hsub
-        have := hScard α hα
-        omega
-      choose! pf hpf using hpart
-      have hmaps : ∀ y ∈ S8, (fun y => (y, pf y)) y ∈ Pairs α := by
-        intro y hy
-        have hyS : y ∈ S α := hS8sub hy
-        obtain ⟨hpfS, hpfne⟩ := hpf y hyS
-        simp only [hPdef, Finset.mem_filter, Finset.mem_product]
-        refine ⟨⟨hyS, hpfS⟩, ?_⟩
-        intro hΦ
-        exact hpfne ⟨hΦ.1.symm, hΦ.2.symm⟩
-      have hinj : Set.InjOn (fun y => (y, pf y)) ↑S8 := by
-        intro y _ y' _ heq
-        exact congrArg Prod.fst heq
-      have hcnt := Finset.card_le_card_of_injOn (fun y => (y, pf y)) hmaps hinj
-      rw [hS8card] at hcnt
-      exact hcnt
+          rw [Finset.mem_filter] at hz ⊢
+          exact ⟨Finset.mem_univ _, hz.2⟩
+        have h7 : (Finset.univ.filter
+            (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀)).card < 8 :=
+          hnorich (E G f y₀) (O G f y₀)
+        exact le_trans (Finset.card_le_card hsub) (by omega)
+      have hABcard : A.card + B.card = (S α).card :=
+        Finset.filter_card_add_filter_neg_card_eq_card _
+      have hBpos : 1 ≤ B.card := by omega
+      -- Every cross pair (`A`-endpoint, `B`-endpoint), both directions, is a distinct-`Φ` pair: an
+      -- `A`-endpoint has `Φ = Φ y₀`, a `B`-endpoint has `Φ ≠ Φ y₀`, so the two disagree.
+      have mkPair : ∀ q : Fin (2 ^ 6) × Fin (2 ^ 6), q.1 ∈ S α → q.2 ∈ S α →
+          (E G f q.1 = E G f y₀ ∧ O G f q.1 = O G f y₀) →
+          ¬ (E G f q.2 = E G f y₀ ∧ O G f q.2 = O G f y₀) → q ∈ Pairs α := by
+        intro q hq1 hq2 hqA hqB
+        rw [hPdef, Finset.mem_filter, Finset.mem_product]
+        exact ⟨⟨hq1, hq2⟩, fun hΦ => hqB ⟨hΦ.1.symm.trans hqA.1, hΦ.2.symm.trans hqA.2⟩⟩
+      have hcross : ∀ p : Fin (2 ^ 6) × Fin (2 ^ 6),
+          (p.1 ∈ A ∧ p.2 ∈ B) ∨ (p.1 ∈ B ∧ p.2 ∈ A) → p ∈ Pairs α := by
+        rintro p (⟨h1, h2⟩ | ⟨h1, h2⟩)
+        · exact mkPair p (hAsub h1) (Finset.filter_subset _ _ h2)
+            (Finset.mem_filter.mp h1).2 (Finset.mem_filter.mp h2).2
+        · -- swap the roles: `(p.2, p.1)` is an ordered pair; disagreement predicate is symmetric.
+          have hbase := mkPair (p.2, p.1) (hAsub h2) (Finset.filter_subset _ _ h1)
+            (Finset.mem_filter.mp h2).2 (Finset.mem_filter.mp h1).2
+          rw [hPdef, Finset.mem_filter, Finset.mem_product] at hbase ⊢
+          exact ⟨⟨hbase.1.2, hbase.1.1⟩, fun hΦ => hbase.2 ⟨hΦ.1.symm, hΦ.2.symm⟩⟩
+      have hunion : (A ×ˢ B) ∪ (B ×ˢ A) ⊆ Pairs α := by
+        intro p hp
+        rw [Finset.mem_union, Finset.mem_product, Finset.mem_product] at hp
+        exact hcross p (hp.imp id id)
+      have hABdisj : Disjoint A B :=
+        Finset.disjoint_filter_filter_neg (S α) (S α)
+          (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀)
+      have hdisjAB : Disjoint (A ×ˢ B) (B ×ˢ A) := by
+        rw [Finset.disjoint_left]
+        intro p hp1 hp2
+        rw [Finset.mem_product] at hp1 hp2
+        exact (Finset.disjoint_left.mp hABdisj hp1.1) hp2.1
+      have hcardU : ((A ×ˢ B) ∪ (B ×ˢ A)).card = 2 * (A.card * B.card) := by
+        rw [Finset.card_union_of_disjoint hdisjAB, Finset.card_product, Finset.card_product]
+        ring
+      have hle := Finset.card_le_card hunion
+      rw [hcardU] at hle
+      exact le_trans (harith A.card B.card hApos hBpos (by omega)) hle
     -- DISJOINTNESS: a shared pair `(y, y')` with `Φ y ≠ Φ y'` folds equal under both `α` and `β`,
     -- so `α = (E y' − E y)/(O y − O y') = β`. Hence distinct `α` give disjoint `Pairs α`.
     have hdisj : ∀ α ∈ Good, ∀ β ∈ Good, α ≠ β → Disjoint (Pairs α) (Pairs β) := by
@@ -383,9 +430,9 @@ theorem wrap_correlatedAgreementLine :
       have hcancel : α * (O G f p.1 - O G f p.2) = β * (O G f p.1 - O G f p.2) := by
         rw [hmulα, hmulβ]
       exact hαβ (mul_right_cancel₀ hDne hcancel)
-    -- COUNT: `8·|Good| ≤ ∑ |Pairs α| = |⋃ Pairs α| ≤ |κ × κ| = 4096`, so `|Good| ≤ 512`.
-    have hsum : 8 * Good.card ≤ ∑ α ∈ Good, (Pairs α).card := by
-      calc 8 * Good.card = ∑ _α ∈ Good, 8 := by rw [Finset.sum_const, smul_eq_mul]; ring
+    -- COUNT: `14·|Good| ≤ ∑ |Pairs α| = |⋃ Pairs α| ≤ |κ × κ| = 4096`, so `|Good| ≤ 292`.
+    have hsum : 14 * Good.card ≤ ∑ α ∈ Good, (Pairs α).card := by
+      calc 14 * Good.card = ∑ _α ∈ Good, 14 := by rw [Finset.sum_const, smul_eq_mul]; ring
         _ ≤ ∑ α ∈ Good, (Pairs α).card := Finset.sum_le_sum hsize
     have hbu : (Good.biUnion Pairs).card = ∑ α ∈ Good, (Pairs α).card :=
       Finset.card_biUnion hdisj
@@ -394,32 +441,83 @@ theorem wrap_correlatedAgreementLine :
       le_trans (Finset.card_le_card (Finset.subset_univ _)) (le_of_eq huniv)
     omega
 
-/-- **`WrapCorrelatedAgreementSharp 512`, PROVED (no hypothesis).** The δ-preserving proximity-gap
+/-- **`WrapCorrelatedAgreementSharp 292`, PROVED (no hypothesis).** The δ-preserving proximity-gap
 witness at the folded code's OWN Johnson radius (`dIn = 56 = (7/8)·64`), discharged by feeding the
-now-proved line primitive into the reduction. This is `BadChallengePoly friSetupWrapRate 112 56 512`
+now-proved line primitive into the reduction. This is `BadChallengePoly friSetupWrapRate 112 56 292`
 as an unconditional theorem — the residual named in `FriProximityGapWitness.lean §F`, CLOSED at the
-LINEAR list size `512 = |κ|²/(|κ| − dIn)`. -/
-theorem wrap_correlatedAgreement_sharp_proved : WrapCorrelatedAgreementSharp 512 :=
-  sharp_of_correlatedAgreementLine 512 wrap_correlatedAgreementLine
+LINEAR list size `292 = ⌈4096/14⌉` (sharpened from `512`). -/
+theorem wrap_correlatedAgreement_sharp_proved : WrapCorrelatedAgreementSharp 292 :=
+  sharp_of_correlatedAgreementLine 292 wrap_correlatedAgreementLine
 
 /-- **The δ-PRESERVING FRI proximity gap, PROVED unconditionally.**
-`FriProximityGapChallenges friSetupWrapRate 112 56 512`: a `112`-far word has at most `512` folding
+`FriProximityGapChallenges friSetupWrapRate 112 56 292`: a `112`-far word has at most `292` folding
 challenges whose fold is `56`-close (relative `7/8`) to the constants — farness PRESERVED across the
 fold (`7/8 → 7/8`), the sharp radius the Fisher/packing method (`wrap_friProximityGap_johnson`,
 `21/32`) could not reach, at the LINEAR list size. No hypothesis remains. -/
 theorem wrap_friProximityGap_sharp_proved :
-    FriProximityGapChallenges friSetupWrapRate 112 56 512 :=
-  wrap_friProximityGap_sharp 512 wrap_correlatedAgreementLine
+    FriProximityGapChallenges friSetupWrapRate 112 56 292 :=
+  wrap_friProximityGap_sharp 292 wrap_correlatedAgreementLine
 
-/-- **The sharp gap FIRES on the concrete `112`-far `fSqWrap`, unconditionally**: at most `512`
+/-- **The sharp gap FIRES on the concrete `112`-far `fSqWrap`, unconditionally**: at most `292`
 folding challenges fold it `56`-close to the constants, exhibited as the roots of an actual nonzero
-polynomial of degree `≤ 512`. Non-vacuous (`fSqWrap_far` supplies the far hypothesis), no
+polynomial of degree `≤ 292`. Non-vacuous (`fSqWrap_far` supplies the far hypothesis), no
 correlated-agreement hypothesis assumed. -/
 theorem wrap_sharp_witness_fires_proved :
-    ∃ P : BabyBear[X], P ≠ 0 ∧ P.natDegree ≤ 512 ∧
+    ∃ P : BabyBear[X], P ≠ 0 ∧ P.natDegree ≤ 292 ∧
       {α : BabyBear | closeN friSetupWrapRate.C' 56 (Fold friSetupWrapRate.geom α fSqWrap)}
         ⊆ {α : BabyBear | P.eval α = 0} :=
   wrap_correlatedAgreement_sharp_proved fSqWrap_far
+
+/-! ## §5. WHY `≤ |κ| = 64` IS UNREACHABLE — the exact-Johnson-radius wall, and the named GS target.
+
+The task's optimistic hope was that the CONSTANT-code collapse (`C'` = constants, so the
+correlated-agreement codewords are `const a`) would let Guruswami–Sudan interpolation drive the list
+size all the way to `≤ |κ| = 64` — the ideal `n/(1−δ)` constant `= 1`. It does NOT, and this is not a
+looseness of *our* proof but of the primitive at this radius. Two independent honest facts.
+
+**(a) `≤ |κ|` is literally FALSE at the deployed radius (a construction, not a gap).** Reduce as in
+§3b: `Φ = (E f, O f) : κ → F²` gives `|κ| = 64` points (multiplicity `≤ 7` under no-rich-point), and
+a good challenge `α` is a LINE `E = −α·O + c` in `F²` covering `≥ 8` points-with-multiplicity (its
+slope `−α` distinct per `α`). Take two "heavy" points `p₁, p₂` of multiplicity `7` (`14` total) and
+`50` further points of multiplicity `1`. Each line through `p₁` and one singleton covers `7 + 1 = 8`
+(good), with a distinct slope per singleton — `50` good `α`; likewise `50` through `p₂`; generic
+placement keeps these slopes distinct, so `≈ 100 > 64` good challenges with NO point of multiplicity
+`≥ 8`. (A `k`-pencil optimum reaches `≈ 155`.) All of `E f, O f, α` are free (`f : ι → F` arbitrary,
+`α ∈ BabyBear`), so the configuration is realizable: **no theorem of the form
+`CorrelatedAgreementLine friSetupWrapRate 56 L` with `L < ~100` can hold**, and `≤ 64` is refuted. So
+the residual `8×` factor is INHERENT to the radius, exactly as the dead packing quadratic of §F warned
+(`a² = 8² = 64 < |κ|·M = 448`).
+
+**(b) The reason: agreement `8` is BELOW the GS/Johnson radius of the line code.** Viewing the good
+slopes as the degree-`≤ 1` codewords (`k = 2`, block length `n = |κ| = 64`) they agree with, GS
+weighted interpolation produces a nonzero bivariate `Q(x, y)` with a controllable positive `y`-degree
+(hence a LINEAR list bound with the ideal constant) only when the agreement `t` STRICTLY exceeds the GS
+radius `√(k·n) = √128 ≈ 11.31`, i.e. `t² > k·n`. The deployed agreement is `t = |κ| − dIn = 8`, and
+`t² = 64 < 128 = k·n` — the interpolation degenerates (`Q` is forced to `0`), and no GS bound, least of
+all `≤ |κ|`, exists at this radius. Equivalently, in rate terms the constant code has `√ρ = √(1/64) =
+1/8` and the agreement is `8/64 = 1/8 = √ρ` EXACTLY — the Johnson boundary, where every list-size
+denominator vanishes. This is certified below. -/
+
+/-- **The deployed agreement floor sits below the GS line-decoding radius.** `t = |κ| − 56 = 8`, and
+`t² = 64 < 128 = 2·|κ| = k·n` (line code `k = 2`, `n = |κ|`): the Guruswami–Sudan interpolation
+hypothesis `t² > k·n` is NOT met, so GS delivers no bound at this radius — the formal reason `≤ |κ|` is
+out of reach and the honest `292` (the sharp reach of the ordered-pair method) stands. -/
+theorem wrap_below_gs_line_radius :
+    (Fintype.card (Fin (2 ^ 6)) - 56) ^ 2 < 2 * Fintype.card (Fin (2 ^ 6)) := by
+  have h : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
+  rw [h]; norm_num
+
+/-- **NAMED UPSTREAM TARGET — the general Guruswami–Sudan line list bound (Mathlib lacks it).** The
+genuine BCIKS/GS correlated-agreement statement: STRICTLY above the GS radius (`t² > k·|κ|`, here
+`k = 2` for the affine line), the good-challenge (good-slope) list is bounded by the IDEAL LINEAR size
+`2·|κ|` via the weighted-interpolation polynomial `Q(x, y)` and the `(y − f(x)) ∣ Q` divisibility. It
+is stated as a conditional `Prop` so the residual is a Lean object, not prose; it is NOT proved here
+(it is the real upstream lemma, on the order of Berry–Esseen), and — crucially — its hypothesis is
+FALSE at the deployed radius (`wrap_below_gs_line_radius`), so even a proof of it would say nothing
+about the deployed case: the `8×` gap is genuinely at/below the Johnson boundary. -/
+def GuruswamiSudanLineListBound (S : FriSetup F ι κ) (dIn : ℕ) : Prop :=
+  (Fintype.card κ - dIn) ^ 2 > 2 * Fintype.card κ →
+    CorrelatedAgreementLine S dIn (2 * Fintype.card κ)
 
 /-! ## §4. Axiom hygiene. -/
 
@@ -433,5 +531,6 @@ theorem wrap_sharp_witness_fires_proved :
 #assert_axioms wrap_correlatedAgreement_sharp_proved
 #assert_axioms wrap_friProximityGap_sharp_proved
 #assert_axioms wrap_sharp_witness_fires_proved
+#assert_axioms wrap_below_gs_line_radius
 
 end Dregg2.Circuit.FriCorrelatedAgreementSharp
