@@ -1,0 +1,14 @@
+name = "Fhegg"
+defaultTargets = ["Fhegg"]
+
+# The fhEgg verified-RTL spine. DELIBERATELY dependency-free: it imports ONLY
+# Lean 4 core (`Init`) — no mathlib — so a contributor can `lake build` the whole
+# Lean→Verilog seed in seconds with just the pinned toolchain, no multi-GB fetch.
+# The netlist DSL, its denotational `eval`, the `toVerilog` emitter, the worked
+# full-adder / ripple-adder proofs, and the FHE-fold golden models all live in
+# core Lean (BitVec/Bool/Nat/Int + `decide`/`omega`). The DEEP value-domain
+# proofs (mint-safety over ℚ, directional rounding) live under mathlib in
+# `metatheory/Market/*` and are CITED, not re-derived here.
+
+[[lean_lib]]
+name = "Fhegg"
