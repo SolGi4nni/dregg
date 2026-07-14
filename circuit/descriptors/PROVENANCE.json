@@ -1,9 +1,9 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "12b728d9b8ca99ef8cbc150d5d36c21c6abc2ad3",
-  "repo_head": "722cb4ebcd5456d03a2779e1b03bf5583cecea2f",
-  "source_dirty": false,
+  "dregg2_tree_hash": "e337666840868ff974c59adc103a827597b69ac9",
+  "repo_head": "23c0a30e87966749e3c480dfde11537ccbee146d",
+  "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
     "Dregg2/Circuit/Emit/EmitAllJson.lean",
@@ -18,7 +18,7 @@
     "EmitWideUMemWeldRegistryProbe.lean",
     "EmitLayoutManifest.lean"
   ],
-  "generated_utc": "2026-07-13T21:43:12Z",
+  "generated_utc": "2026-07-14T05:01:11Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v2.json": "47222a8cbc3e7809e3a6dc15e5c01faa09eba3bd244f52eb45003fc5fb77277d",
@@ -88,7 +88,7 @@
     "dregg-effectvm-transfer-v1.json": "b56667151f2c531aadc17cc7d9f46c7813716df25302c78f9274069dd2a63166",
     "rotation-caveat-layout-v3-staged.json": "8cfcaf978f7123f9f159f9ae05ab85ef9a245c93d9d9e1b6e2ce7b9500c890a8",
     "rotation-layout-v3-staged.json": "17d4d1097a020bc389fb8e3b584e44ffc4eb5a7438d47b810db1e7ad1954a7b4",
-    "rotation-v3-staged-registry.tsv": "bf263dd41c5b32de9d027de361d87f7242d91198608fa88c8780cfde7c4ed51a",
+    "rotation-v3-staged-registry.tsv": "609bf2698679e648d5c9a0359e5748706901f5f42ed9789436f2bec6e44f45cb",
     "rotation-wide-registry-staged.tsv": "872fcb0d5ebdf809bddfb2808dd345859c200baa662ae6021701d5a9f06226a7",
     "rotation-wide-transfer-staged.tsv": "23041ae81e380a2ad923feaa014c899eecab6f1f6718f745ea0a0f5be1cf2652",
     "rotation-wide-umem-welded-registry-staged.tsv": "d17064a2435fe41e68202995201f2661ba98b8e81365cda09be8ce8b9834dcde",
@@ -122,7 +122,7 @@
     "circuit/src/bilateral_aggregation_air.rs": "dc75ef5362eca39d32aa672c3ed9184d671bfc1feb6a5019773c7f8796763b91",
     "circuit/src/cap_delegation_nonamp_descriptor.rs": "93d591dbaa7fd1ac6be759a8e017dc3b6fb146ea75548d66536bf55d717b4fc4",
     "circuit/src/cap_reshape_descriptor.rs": "58cfdabae8f78b683d60dd90da1a4b587992b4498f8d63722653ed7343fd2873",
-    "circuit/src/effect_vm_descriptors.rs": "88b69fe1ecbaa1e88478fdf4eeff024ae56bf2d3f52b0e0333f295ef56b1947a",
+    "circuit/src/effect_vm_descriptors.rs": "e94c192b764e60592520047ebdd4a5cf0b0840747484a9dfea51947c0b1f38ac",
     "circuit/src/lean_descriptor_air.rs": "5ee79b578d15dd7975388c374b8049fb1d7dc50cffd11e9c615c3300185cf91a"
   }
 }

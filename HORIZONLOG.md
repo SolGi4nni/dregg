@@ -8,20 +8,6 @@ lot: per WE-DO-NOT-NAME-WE-SHIP, anything that sits here across many sessions
 should be either scheduled or explicitly demoted to the Research tier with a
 reason.)*
 
-## revokeDelegation-v2 deployed floor-refuse weld DROPPED by the VK-epoch regen (named 2026-07-14, `circuit/src/effect_vm/bare_floor_refuse_weld.rs::deployed_cohort_bytes_carry_the_refuse`)
-The VK-epoch flip regen `1e12d8886` (emit-descriptors.sh, GAP 1-6) dropped exactly one deployed bare
-cohort member — `revokeDelegation-v2-rot24-v3-staged-gentian-deployed-bare-refuse` (36→35) — while
-`revokeDelegation-v2` remains a LIVE rostered GRADUATED effect (#30 in `effect_vm_descriptors.rs`,
-sibling of the still-welded `refreshDelegation-v2` #29). Its deployed descriptor (`…-rot24-v3-staged`,
-tw=1647, correct arity-3 geometry) therefore lacks the escrow/discharge/vault capacity floor-refuse
-gates its 26 peer graduated effects carry — a light client verifying it would not refuse a
-declared-capacity dodge. Uncovered when the whole-tree gauntlet's stale masking (custom base 1623,
-tag-col pins, nullifier-limb shift, bridge fixture) was reconciled; the `cohort_rows == 36` count tooth
-now fires precisely on the hole (`bare_floor_refuse_weld.rs:675`, left 35 / right 36). NOT green-hacked
-to 35. Closure shape: re-emit the `revokeDelegation-v2` bare-floor-refuse welded row via
-`emit-descriptors.sh` + VK regen (ember-gated, same lane as the GAP#5 arity-3 / availability-weld
-descriptor regens); the count tooth greens the instant the 36th member is restored.
-
 ## 2-leg shielded ring-clearing AIR BUILT → the N-leg + integration rungs (named 2026-07-13, `circuit-prove/src/shielded_ring_clearing_air.rs`)
 Rung-3 `shielded_ring_clears` / `shielded_ring_fused_clears` is now BUILT at 2-leg: the ring-clearing
 descriptor AIR enforces in-AIR FUSION (`offer_asset/amount == note asset/value`, anchored to the leaf's

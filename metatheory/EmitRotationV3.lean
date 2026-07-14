@@ -103,19 +103,17 @@ def main : IO Unit := do
     , ("transferCapOpenEffVmDescriptor2R24",
        Dregg2.Circuit.RotatedKernelRefinementCapOpenAvail.transferCapOpenEffV3Avail)
     , ("transferFeeVmDescriptor2R24",
-       Dregg2.Circuit.Emit.AvailWireMembers.transferFeeV3AvailWire)
-      -- gap-#5 AAFI: route the plain revoke to revokeV3 (aafiInsert op=4 on B_REVOKED_ROOT=37 —
-      -- the sibling's v10 flag-day limb; forces the revoked root, hole #3 closed). Re-pushed after a
-      -- flag-day revert overrode the base routing with the bare-refuse deployed-default.
-      -- rc-WRAP the override (Stage-P coherence): the bare `revokeV3` carried the aafiInsert but
-      -- BYPASSED the uniform DSL rc-EMIT that every non-exempt cohort member has (the 4 `Witnessed{Dfa}`
-      -- route-commitment pins at caveat-region offsets 39..=42). `withDfaRcPins` is width-invariant and
-      -- APPENDS the 4 tail PIs after revokeV3's own pins, so the emitted revoke now carries BOTH the
-      -- forced revoked-root aafiInsert (hole #3) AND the rc carrier — matching the rc-wrapped cohort the
-      -- `revokeVmDescriptor2R24: dsl rc pins present iff …` invariant checks.
-    , ("revokeVmDescriptor2R24",
-       Dregg2.Circuit.Emit.EffectVmEmitRotationV3.withDfaRcPins
-         Dregg2.Circuit.Emit.EffectVmEmitRotationV3.revokeV3) ]
+       Dregg2.Circuit.Emit.AvailWireMembers.transferFeeV3AvailWire) ]
+      -- NOTE — `revokeVmDescriptor2R24` is DELIBERATELY NOT overridden here. The deployed cohort
+      -- member `v3RegistryCapOpenDep` already provides it as `withDfaRcPins (gentianDeployedBareRefuse
+      -- revokeV3)`: `revokeV3` carries the gap-#5 aafiInsert (op=4 on B_REVOKED_ROOT=37, hole #3),
+      -- `gentianDeployedBareRefuse` welds the escrow/discharge/vault capacity-floor refuse (PRESERVING
+      -- every existing constraint incl. the aafiInsert), and `withDfaRcPins` appends the 4 route-
+      -- commitment tail PIs. A bespoke `withDfaRcPins revokeV3` override (the prior form) STRIPPED the
+      -- gentianDeployedBareRefuse weld — dropping revoke's floor-refuse below its 26 graduated peers
+      -- (the 36→35 cohort residual, `bare_floor_refuse_weld.rs::deployed_cohort_bytes_carry_the_refuse`).
+      -- Letting the welded cohort member flow through (no override) restores all three: aafiInsert +
+      -- floor-refuse + rc pins.
   for (key, d0) in v3RegistryCapOpenDep do
     let d := (availOverride.lookup key).getD d0
     IO.println s!"v3rot\t{key}\t{d.name}\t{emitVmJson2 d}"

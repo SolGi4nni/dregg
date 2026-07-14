@@ -672,13 +672,13 @@ mod tests {
             }
         }
         // The whole bare cohort (28 named + 8 setField slots) must be welded — not a subset.
-        // ⚠ KNOWN OPEN (soundness residual, NOT a stale count): the VK-epoch regen `1e12d8886`
-        // dropped `revokeDelegation-v2`'s deployed bare-floor-refuse welded row (36→35) while it
-        // remains a live rostered GRADUATED effect (#30, sibling of the welded refreshDelegation-v2
-        // #29) — so its deployed descriptor lacks the escrow/discharge/vault capacity floor-refuse
-        // its 26 peers carry. This assertion STAYS at 36 (the gap is real; do not launder it to 35):
-        // closure = re-emit `revokeDelegation-v2-…-gentian-deployed-bare-refuse` via
-        // `emit-descriptors.sh` + VK regen (ember-gated). See HORIZONLOG.
+        // CLOSED (2026-07-14): `revokeDelegation-v2`'s deployed bare-floor-refuse welded row is
+        // RESTORED (35→36). The prior VK-epoch regen dropped it via a stale `availOverride` entry in
+        // `metatheory/EmitRotationV3.lean` that emitted `withDfaRcPins revokeV3` (unwelded) in place of
+        // the deployed cohort member `withDfaRcPins (gentianDeployedBareRefuse revokeV3)` — stripping
+        // the refuse. Removing that override lets the welded cohort member flow through, so revoke now
+        // carries revokeV3's aafiInsert (hole #3) AND the escrow/discharge/vault floor-refuse (base
+        // 1647 → tw 1692, floor cols 1659/1675/1691) its 26 graduated peers carry.
         assert_eq!(
             cohort_rows, 36,
             "all 36 deployed bare cohort rows must carry the flag-day refuse weld"
