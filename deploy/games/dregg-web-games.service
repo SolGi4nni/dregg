@@ -11,10 +11,12 @@
 # `%h`-relative paths, WantedBy=default.target. (A system unit is the alternative
 # — set User=hbox and absolute paths; see deploy/games/RUNBOOK.md.)
 #
-# BIND: 127.0.0.1 ONLY — the fronting Caddy (deploy/games/caddy/Caddyfile.games)
-# is the sole public surface; the server is NEVER reachable except via Caddy.
-# The default port 8787 is already taken on hbox (OPS-RUNBOOK :8787), so the games
-# server uses 8790; override with DREGGNET_WEB_BIND in the env file.
+# BIND: the TAILSCALE interface (100.95.240.73:8790 — tailnet node hbox-dregg), so
+# the AWS gateway's Caddy can reach it OVER TAILSCALE (deploy/games/caddy/Caddyfile.games
+# runs on the gateway, NOT on hbox). NEVER 0.0.0.0 (contrast the existing drex-web
+# wrongly on 0.0.0.0:8781) — binding the tailnet IP means only tailnet peers (the
+# gateway) can reach it; the public internet cannot. 8787/8781 are already taken on
+# hbox (OPS-RUNBOOK), 8790 is FREE; override with DREGGNET_WEB_BIND in the env file.
 [Unit]
 Description=dregg games web demo (dreggnet-web-server, no-cheat-by-replay)
 After=network-online.target
@@ -31,8 +33,9 @@ Type=simple
 # vars in the same file are simply ignored by this process. Placed by ember, chmod 600.
 EnvironmentFile=%h/.config/dregg/games.env
 Environment=RUST_LOG=info
-# Fallback bind if the env file omits DREGGNET_WEB_BIND (localhost, never 0.0.0.0).
-Environment=DREGGNET_WEB_BIND=127.0.0.1:8790
+# Fallback bind if the env file omits DREGGNET_WEB_BIND (the Tailscale iface so the
+# gateway can reach it over the tailnet; NEVER 0.0.0.0). hbox-dregg = 100.95.240.73.
+Environment=DREGGNET_WEB_BIND=100.95.240.73:8790
 WorkingDirectory=%h/dev/breadstuffs
 ExecStart=%h/dev/breadstuffs/target/release/dreggnet-web-server
 Restart=always

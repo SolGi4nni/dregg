@@ -1,34 +1,49 @@
-# Caddyfile — the dregg games public demo (demo.dregg.net).
+# Caddyfile block — the dregg games public demo (games.dregg.fg-goose.online).
 #
-# Fronts the localhost dreggnet-web-server (127.0.0.1:8790) with automatic
-# Let's Encrypt TLS. This is the SOLE public surface; the games server binds
-# 127.0.0.1 only (deploy/games/dregg-web-games.service). Adapted from
-# deploy/aws/caddy/Caddyfile — same env-placeholder-domain + strip_upstream_cors
-# discipline, reduced to the single games upstream.
+# ⚠ THIS BLOCK RUNS ON THE AWS GATEWAY, NOT ON hbox. It is a NEW SITE BLOCK to be
+# ADDED to the gateway's Caddy config (deploy/aws/caddy/Caddyfile), sitting next to
+# the existing devnet.dregg.fg-goose.online / dregg.fg-goose.online block. The
+# gateway is the SOLE public surface; it terminates Let's Encrypt TLS and reverse-
+# proxies OVER TAILSCALE to the games server on hbox (tailnet node hbox-dregg,
+# 100.95.240.73:8790). hbox opens NO public port — the games server binds the
+# Tailscale interface only (deploy/games/dregg-web-games.service,
+# DREGGNET_WEB_BIND=100.95.240.73:8790).
 #
-# DEPLOY MODELS (deploy/games/RUNBOOK.md picks one):
-#   A. Caddy ON hbox (this file's default): DNS demo.dregg.net -> hbox, hbox opens
-#      :80/:443 (ufw + port-forward), Caddy on hbox does TLS + proxies to :8790.
-#      Simplest one-command path. Needs hbox publicly reachable on :80/:443.
-#   B. Caddy on the AWS gateway (the OPS-RUNBOOK topology): the gateway terminates
-#      TLS and reverse-proxies over a WireGuard tunnel to hbox:8790. Then this
-#      block runs on the GATEWAY and `reverse_proxy` targets the wg peer IP:8790
-#      instead of localhost. hbox opens NO public port (defence in depth).
+# Real live topology (docs/ops/OPS-RUNBOOK.md):
+#   DNS games.dregg.fg-goose.online
+#         │  :443 TLS (Let's Encrypt, on the gateway)
+#   ┌──────▼─── AWS GATEWAY (public) ───┐
+#   │  Caddy (this block)               │
+#   │        │ reverse_proxy over Tailscale
+#   └────────┼──────────────────────────┘
+#            │  100.95.240.73:8790  (tailnet: hbox-dregg)
+#   ┌────────▼─── hbox (private, tailnet) ───┐
+#   │  dregg-web-games  100.95.240.73:8790   │  ← games, board, /health
+#   │  dregg-games-bot  -> Discord           │  ← Descent daily (standalone)
+#   └────────────────────────────────────────┘
 #
-# Domain is an env placeholder so re-pointing is a config edit, not a Caddyfile
-# patch: set DREGG_GAMES_DOMAIN in caddy's environment (systemd Environment= or
-# `export DREGG_GAMES_DOMAIN=demo.dregg.net` before `caddy run`).
+# PREREQUISITE (ember-gated): the AWS gateway must be ON THE TAILNET so it can dial
+# 100.95.240.73:8790. It is NOT yet a tailnet node (deploy/games/RUNBOOK.md step 0).
+#
+# The upstream target is a Caddy env placeholder so re-pointing is a config edit,
+# not a Caddyfile patch: set DREGG_GAMES_UPSTREAM (default 100.95.240.73:8790, the
+# hbox-dregg Tailscale IP; hbox-dregg:8790 also works once the gateway is on the
+# tailnet). The public domain is DREGG_GAMES_DOMAIN (default
+# games.dregg.fg-goose.online), matching deploy/aws/caddy/Caddyfile's
+# DREGG_SITE_DOMAINS discipline.
 
 # CORS ownership: Caddy is the single owner of the Access-Control-* response
 # headers (same rationale as deploy/aws/caddy/Caddyfile). Strip any upstream copy
-# so the browser never sees a duplicate Access-Control-Allow-Origin.
-(strip_upstream_cors) {
+# so the browser never sees a duplicate Access-Control-Allow-Origin. (If this
+# snippet name already exists in the gateway Caddyfile you are pasting into, DROP
+# these two lines and reuse the gateway's — a snippet may be defined only once.)
+(strip_upstream_cors_games) {
 	header_down -Access-Control-Allow-Origin
 	header_down -Access-Control-Allow-Methods
 	header_down -Access-Control-Allow-Headers
 }
 
-{$DREGG_GAMES_DOMAIN:demo.dregg.net} {
+{$DREGG_GAMES_DOMAIN:games.dregg.fg-goose.online} {
 	# Cap request bodies. The games server is in-process (no compute-amplifying
 	# matcher endpoint like DrEX's POST /clear), but a body cap is cheap defence.
 	request_body {
@@ -38,8 +53,8 @@
 	# RATE LIMITING — NAMED, not built in. Caddy core has no rate_limit directive;
 	# it needs the `caddyserver/caddy-ratelimit` plugin baked into a custom build
 	# (`xcaddy build --with github.com/mholt/caddy-ratelimit`). Until that build is
-	# in place, per-IP rate limiting is an EMBER-GATED go-live item (deploy/games/
-	# RUNBOOK.md). With the plugin, uncomment:
+	# in place on the GATEWAY, per-IP rate limiting is an EMBER-GATED go-live item
+	# (deploy/games/RUNBOOK.md). With the plugin, uncomment:
 	#   rate_limit {
 	#       zone games_per_ip {
 	#           key    {remote_host}
@@ -49,25 +64,27 @@
 	#   }
 
 	# Health probe — the fronting proxy / uptime check hits /health (200
-	# {"status":"ok"}; dreggnet-web/src/lib.rs). Proxied to the games server so the
-	# probe reflects the real upstream, not just Caddy being up.
+	# {"status":"ok"}; dreggnet-web/src/lib.rs). Proxied to the games server on hbox
+	# over Tailscale so the probe reflects the real upstream, not just Caddy being up.
 	handle /health {
-		reverse_proxy 127.0.0.1:8790 {
-			import strip_upstream_cors
+		reverse_proxy {$DREGG_GAMES_UPSTREAM:100.95.240.73:8790} {
+			import strip_upstream_cors_games
 		}
 	}
 
 	# Everything else — the games, the offerings catalog, the Descent board, the
-	# POST /descent/submit run-ingest — is served by the one in-process app.
+	# POST /descent/submit run-ingest — is served by the one in-process app on hbox,
+	# reached over the Tailscale tunnel.
 	handle {
-		reverse_proxy 127.0.0.1:8790 {
-			import strip_upstream_cors
+		reverse_proxy {$DREGG_GAMES_UPSTREAM:100.95.240.73:8790} {
+			import strip_upstream_cors_games
 		}
 	}
 
-	# CORS: the demo is same-origin (Caddy serves the pages AND proxies the app
-	# from the same demo.dregg.net origin), so browsers need no Access-Control
-	# negotiation at all. These remain for any genuinely cross-origin client.
+	# CORS: the demo is same-origin (the gateway's Caddy serves the pages AND proxies
+	# the app from the same games.dregg.fg-goose.online origin), so browsers need no
+	# Access-Control negotiation at all. These remain for any genuinely cross-origin
+	# client.
 	header Access-Control-Allow-Origin "*"
 	header Access-Control-Allow-Methods "GET, POST, OPTIONS"
 	header Access-Control-Allow-Headers "Content-Type"

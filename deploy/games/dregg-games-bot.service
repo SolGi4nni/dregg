@@ -11,8 +11,10 @@
 # deploy/hbox/dregg-discord-bot.service, extended with the games env + hardening.
 #
 # ⚠ DOUBLE-FIRE HAZARD: two bots on ONE Discord token fire every command twice.
-# STOP the old bot FIRST (graviton's dregg-discord-bot per deploy/aws, or a prior
-# hbox run) before this one starts. See deploy/games/RUNBOOK.md step (c) — ember-gated.
+# The token is currently held by the GRAVITON bot (deploy/aws/dregg-discord-bot.service);
+# hbox runs NO bot today. STOP the graviton bot FIRST before this one starts. See
+# deploy/games/RUNBOOK.md step (c) — ember-gated. (This is a STANDALONE hbox unit with
+# no gateway route — the bot talks straight to Discord + drand egress, not through Caddy.)
 [Unit]
 Description=dregg games Discord bot (Descent daily, hbox, standalone)
 After=network-online.target

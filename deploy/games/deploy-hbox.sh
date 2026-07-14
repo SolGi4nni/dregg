@@ -1,10 +1,16 @@
 #!/bin/bash
 # deploy-hbox.sh — one-command deploy of the dregg GAMES stack onto hbox.
 #
-# The automated flow: BUILD (dreggnet-web-server + dregg-discord-bot) -> SNAPSHOT
-# (rollback point) -> INSTALL (user systemd units + the Caddyfile) -> RELOAD ->
-# HEALTH-CHECK (/health). A failed health gate AUTO-REVERTS to the snapshot. This
-# turns the go-live into a small, safe flip, NOT a new build.
+# Real topology (docs/ops/OPS-RUNBOOK.md): DNS -> AWS GATEWAY (public, runs its OWN
+# Caddy for *.dregg.fg-goose.online) -> TAILSCALE -> hbox (tailnet node hbox-dregg,
+# 100.95.240.73). Caddy lives on the GATEWAY, not hbox. THIS SCRIPT RUNS ON hbox and
+# handles ONLY the hbox side: the 2 binaries + the 2 user units. The gateway Caddy
+# block is a SEPARATE step (`./deploy-hbox.sh gateway`, run ON THE GATEWAY).
+#
+# The automated hbox flow: BUILD (dreggnet-web-server + dregg-discord-bot) -> SNAPSHOT
+# (rollback point) -> INSTALL (user systemd units) -> RELOAD -> HEALTH-CHECK (/health).
+# A failed health gate AUTO-REVERTS to the snapshot. This turns the go-live into a
+# small, safe flip, NOT a new build. Caddy on hbox is SKIPPED by default (SKIP_CADDY=1).
 #
 # Grounded in the existing deploy infra (deploy/aws/update.sh + update-gated.sh):
 # the build->install->reload->health->rollback shape is theirs, re-homed onto
@@ -13,16 +19,19 @@
 #
 # ⚠ WHAT THIS SCRIPT DOES NOT DO (ember-gated flips — printed as MANUAL banners,
 # never executed):
+#   - (0) add the AWS gateway to the TAILNET (the private channel to hbox-dregg) —
+#     the currently-missing prerequisite; without it the gateway cannot reach :8790;
 #   - place the Discord token / secrets (~/.config/dregg/games.env, chmod 600);
-#   - STOP THE OLD BOT FIRST (graviton's dregg-discord-bot, or a prior hbox run) —
-#     two bots on one token double-fire every command;
-#   - point DNS demo.dregg.net -> hbox;
-#   - open hbox :80/:443 (ufw + port-forward) for Let's Encrypt / Caddy;
+#   - STOP THE OLD BOT FIRST — the GRAVITON bot (deploy/aws/dregg-discord-bot.service)
+#     holds the token; two bots on one token double-fire every command;
+#   - point DNS games.dregg.fg-goose.online -> the gateway;
+#   - add the games site block to the gateway Caddy + reload it (`gateway` step);
 #   - flip the demo public (the go-live decision).
 #
-# Usage:
+# Usage (on hbox unless noted):
 #   ./deploy-hbox.sh                 # build -> install -> reload -> health (+ auto-revert)
 #   ./deploy-hbox.sh --dry-run       # print every step; NO side effects (safe anywhere)
+#   ./deploy-hbox.sh gateway         # ON THE GATEWAY: install the games Caddy block + reload
 #   ./deploy-hbox.sh health          # just run the health gate
 #   ./deploy-hbox.sh releases        # list rollback snapshots
 #   ./deploy-hbox.sh rollback [S]    # revert binaries to snapshot S (default newest) + restart
@@ -32,12 +41,15 @@
 #   GAMES_ENV        the stack env file           (default $HOME/.config/dregg/games.env)
 #   STATE_DIR        durable db + snapshots        (default $HOME/.local/state/dregg-games)
 #   USER_UNIT_DIR    user systemd unit dir         (default $HOME/.config/systemd/user)
-#   HEALTH_URL       web server liveness probe     (default http://127.0.0.1:8790/health)
+#   HEALTH_URL       web server liveness probe     (default http://100.95.240.73:8790/health)
+#                    (the tailnet iface — the server binds hbox-dregg, not localhost)
 #   HEALTH_TIMEOUT   gate timeout, seconds         (default 120)
 #   KEEP             snapshots retained            (default 5)
 #   AUTO_REVERT      0 disables the auto-revert    (default 1)
-#   CADDY_FILE       system Caddy config target    (default /etc/caddy/Caddyfile)
-#   SKIP_CADDY       1 skips the Caddy leg (web+bot only; Caddy on the gateway)
+#   CADDY_FILE       GATEWAY Caddy config (gateway step only)  (default /etc/caddy/Caddyfile)
+#   GAMES_BLOCK      the games site block to add to gateway Caddy (default caddy/Caddyfile.games)
+#   SKIP_CADDY       DEFAULT 1: no Caddy on hbox (Caddy lives on the gateway). Set 0
+#                    only for a legacy all-on-one-box test — NOT the real topology.
 #   SKIP_BOT         1 skips the bot leg (web demo only)
 set -euo pipefail
 
@@ -56,12 +68,17 @@ GAMES_REPO_DIR="${GAMES_REPO_DIR:-$HOME/dev/breadstuffs}"
 GAMES_ENV="${GAMES_ENV:-$HOME/.config/dregg/games.env}"
 STATE_DIR="${STATE_DIR:-$HOME/.local/state/dregg-games}"
 USER_UNIT_DIR="${USER_UNIT_DIR:-$HOME/.config/systemd/user}"
-HEALTH_URL="${HEALTH_URL:-http://127.0.0.1:8790/health}"
+# The web server binds the Tailscale iface (hbox-dregg 100.95.240.73:8790), NOT
+# localhost — so the on-hbox health probe must hit the tailnet IP, not 127.0.0.1.
+HEALTH_URL="${HEALTH_URL:-http://100.95.240.73:8790/health}"
 HEALTH_TIMEOUT="${HEALTH_TIMEOUT:-120}"
 KEEP="${KEEP:-5}"
 AUTO_REVERT="${AUTO_REVERT:-1}"
+# CADDY_FILE / GAMES_BLOCK are used ONLY by the `gateway` subcommand (run on the gateway).
 CADDY_FILE="${CADDY_FILE:-/etc/caddy/Caddyfile}"
-SKIP_CADDY="${SKIP_CADDY:-0}"
+GAMES_BLOCK="${GAMES_BLOCK:-}"
+# Caddy on hbox is OFF by default — the real topology puts Caddy on the AWS gateway.
+SKIP_CADDY="${SKIP_CADDY:-1}"
 SKIP_BOT="${SKIP_BOT:-0}"
 
 RELEASES_DIR="$STATE_DIR/releases"
@@ -111,10 +128,11 @@ gated_banner() {
 [deploy-games] ══════════════════════════════════════════════════════════════
 [deploy-games]  EMBER-GATED FLIPS this script does NOT perform (do them first /
 [deploy-games]  around the run — see deploy/games/RUNBOOK.md):
+[deploy-games]    (0) add the AWS GATEWAY to the TAILNET (reach hbox-dregg :8790)
 [deploy-games]    (b) place ~/.config/dregg/games.env (tokens) + chmod 600
-[deploy-games]    (c) STOP THE OLD BOT FIRST (graviton / prior hbox) — double-fire
-[deploy-games]    (a) DNS: demo.dregg.net -> hbox
-[deploy-games]    (g) open hbox :80/:443 (ufw + port-forward) for Caddy/LetsEncrypt
+[deploy-games]    (c) STOP THE OLD BOT FIRST — the GRAVITON bot holds the token
+[deploy-games]    (a) DNS: games.dregg.fg-goose.online -> the gateway
+[deploy-games]    (caddy) ON THE GATEWAY: ./deploy-hbox.sh gateway (add block + reload)
 [deploy-games]    (go-live) flip the demo public
 [deploy-games] ══════════════════════════════════════════════════════════════
 BANNER
@@ -206,16 +224,42 @@ install_units() {
 }
 
 install_caddy() {
+  # Default topology: Caddy lives on the AWS GATEWAY, NOT hbox. SKIP_CADDY defaults 1,
+  # so this hbox leg is a no-op — the games site block is installed by the separate
+  # `gateway` subcommand (run ON THE GATEWAY, gateway_install below).
   if [[ "$SKIP_CADDY" == "1" ]]; then
-    log "SKIP_CADDY=1 — Caddy leg skipped (Caddy on the gateway per OPS-RUNBOOK topology B)"
+    log "SKIP_CADDY=1 (default) — no Caddy on hbox; the gateway holds Caddy."
+    log "  add the games block ON THE GATEWAY: ./deploy-hbox.sh gateway (see RUNBOOK step d)"
     return 0
   fi
-  log "install Caddyfile -> $CADDY_FILE (system caddy; needs sudo + hbox :80/:443 open)"
-  # Validate the Caddyfile before installing it (adapt=caddyfile).
+  # SKIP_CADDY=0 is a LEGACY all-on-one-box path (Caddy on hbox); NOT the real topology.
+  log "install Caddyfile -> $CADDY_FILE (LEGACY on-hbox Caddy; needs sudo + hbox :80/:443 open)"
   run bash -c "caddy validate --adapter caddyfile --config '$SRC_DIR/caddy/Caddyfile.games'"
   run sudo cp "$SRC_DIR/caddy/Caddyfile.games" "$CADDY_FILE"
   run sudo systemctl reload caddy
-  gated "DNS demo.dregg.net -> hbox and hbox :80/:443 must be OPEN for Let's Encrypt to issue"
+  warn "SKIP_CADDY=0 puts Caddy on hbox — NOT the gateway<->Tailscale<->hbox topology."
+}
+
+# gateway_install(): the SEPARATE gateway step. Run this ON THE AWS GATEWAY (not hbox),
+# AFTER the gateway is on the tailnet (step 0). It validates the games site block,
+# appends it to the gateway's Caddy config, and reloads caddy THERE. The block reverse-
+# proxies over Tailscale to hbox-dregg (100.95.240.73:8790); nothing is installed on hbox.
+gateway_install() {
+  local block dst
+  block="${GAMES_BLOCK:-$SRC_DIR/caddy/Caddyfile.games}"
+  dst="$CADDY_FILE"
+  log "GATEWAY STEP — add the games site block to the gateway Caddy ($dst) + reload"
+  [[ -f "$block" ]] || die "games block not found: $block (set GAMES_BLOCK, or run from a repo checkout)"
+  # Validate the block standalone first (a self-contained site block adapts on its own).
+  run bash -c "caddy validate --adapter caddyfile --config '$block'"
+  gated "the gateway must be ON THE TAILNET (step 0) so it can reach 100.95.240.73:8790"
+  gated "APPEND the block to $dst (next to the devnet.dregg.fg-goose.online block):"
+  gated "    sudo sh -c 'cat \"$block\" >> \"$dst\"'   # or paste it in by hand"
+  gated "then validate the WHOLE merged config + reload:"
+  gated "    sudo caddy validate --adapter caddyfile --config \"$dst\""
+  gated "    sudo systemctl reload caddy"
+  gated "DNS games.dregg.fg-goose.online -> the gateway must resolve for Let's Encrypt to issue"
+  log "block validated; the append+reload are ember-gated manual steps above."
 }
 
 restart_units() {
@@ -279,8 +323,9 @@ deploy_up() {
 
 case "${1:-up}" in
   up)        deploy_up ;;
+  gateway)   gateway_install ;;
   health)    health_gate ;;
   releases)  list_releases ;;
   rollback)  restore_release "${2:-}"; health_gate ;;
-  *)         die "unknown subcommand: $1 (up | health | releases | rollback [stamp] | --dry-run)" ;;
+  *)         die "unknown subcommand: $1 (up | gateway | health | releases | rollback [stamp] | --dry-run)" ;;
 esac
