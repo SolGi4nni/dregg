@@ -26,7 +26,7 @@ use std::time::Instant;
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit_prove::apex_shrink::verify_shrink_proof;
 use dregg_circuit_prove::apex_shrink_gnark_export::{
-    export_real_shrink_fri_fixture, shrink_apex_to_outer_exposed,
+    DREGG_APEX_RECURSION_VK, export_real_shrink_fri_fixture, shrink_apex_to_outer_exposed,
 };
 use dregg_circuit_prove::dregg_outer_config::{DreggOuterConfig, create_outer_config};
 use dregg_circuit_prove::ivc_turn_chain::{
@@ -114,8 +114,38 @@ fn repo_root() -> PathBuf {
 /// expected 33-lane channel, so cache-hit runs can still assert the binding
 /// without re-folding the apex. (v2 cached the 25-lane pre-pin proof — the
 /// filename bump retires it.)
+///
+/// LANE-INDEPENDENT + VK-EPOCH-KEYED: the cache lives OUTSIDE the per-lane
+/// build tree so the ~20-min fold+shrink is reused ACROSS lanes (a fresh
+/// `pbuild`/`hbuild` lane no longer re-pays it), not just within one
+/// `target/`. The directory is, in order of preference:
+///   1. `$DREGG_SHRINK_CACHE_DIR` (explicit override), else
+///   2. `$HOME/.cache/dregg-shrink`, else
+///   3. the old lane-local `target/` (last-resort fallback if HOME is unset).
+///
+/// The filename is KEYED on the governance-pinned apex VK epoch
+/// (`DREGG_APEX_RECURSION_VK`): that constant changes exactly when the apex
+/// circuit / VK epoch is re-pinned, so a VK-flip mints a NEW cache filename and
+/// the stale proof is NOT reused (invalidation by construction, on top of the
+/// existing load-time `verify_shrink_proof` + claim-match self-check). The key
+/// is the first 16 hex chars of the pin — enough to separate epochs, short
+/// enough for a readable filename.
+fn shrink_cache_dir() -> PathBuf {
+    if let Some(dir) = std::env::var_os("DREGG_SHRINK_CACHE_DIR") {
+        return PathBuf::from(dir);
+    }
+    if let Some(home) = std::env::var_os("HOME") {
+        return PathBuf::from(home).join(".cache/dregg-shrink");
+    }
+    // HOME unset (unusual): fall back to the lane-local target so we never panic.
+    repo_root().join("target")
+}
+
 fn cache_path() -> PathBuf {
-    repo_root().join("target/apex_shrink_exposed_proof_cache_v3.postcard")
+    let vk_key: String = DREGG_APEX_RECURSION_VK.chars().take(16).collect();
+    shrink_cache_dir().join(format!(
+        "apex_shrink_exposed_proof_cache_v3_{vk_key}.postcard"
+    ))
 }
 
 fn fixture_path() -> PathBuf {

@@ -2,7 +2,7 @@
 # pbuild — offload a CARGO build/test to persvati (24-core build host), in an
 # ISOLATED per-lane dir so concurrent lanes don't fight one target lock.
 #
-#   Usage:  scripts/pbuild <lane-name> <command...>
+#   Usage:  scripts/pbuild [--force-cold] <lane-name> <command...>
 #   e.g.    scripts/pbuild swap cargo build -p dregg-turn
 #           scripts/pbuild crypto cargo test -p dregg-lightclient
 #
@@ -13,21 +13,85 @@
 # NOTE: use this for CARGO (Rust) builds — the CPU-heavy crypto/circuit/lightclient
 # ones. Keep LEAN (lake) builds LOCAL (the local .lake/mathlib cache is warm;
 # a fresh persvati lane-dir would re-download mathlib = catastrophic).
+#
+# COLD-LANE GUARD: a lane dir with no warm build cache (no populated cargo
+# target/ and no warm .lake/mathlib) compiles the WHOLE dependency graph from
+# scratch — the load-95+ box-spike this guard exists to prevent. By default an
+# agent that invents a fresh lane name is REFUSED and shown the warm lanes to
+# reuse; pass --force-cold to deliberately seed a new lane.
 set -euo pipefail
-LANE="${1:?usage: pbuild <lane> <command...>}"; shift
+
+HOST="persvati"
+# Warmth threshold: a lane counts as warm if its cargo target/{release,debug}/deps
+# holds at least this many built artifacts (a fresh lane has 0). Override with
+# PBUILD_WARM_DEPS. A warm .lake/packages/mathlib also counts as warm.
+WARM_DEPS="${PBUILD_WARM_DEPS:-100}"
+
+FORCE_COLD=0
+if [ "${1:-}" = "--force-cold" ]; then FORCE_COLD=1; shift; fi
+LANE="${1:?usage: pbuild [--force-cold] <lane> <command...>}"; shift
 [ "$#" -ge 1 ] || { echo "pbuild: no command given" >&2; exit 2; }
 
 SRC="/Users/ember/dev/breadstuffs/"
 REMOTE="dregg-build/${LANE}"
 
+# ---- cold-lane guard ------------------------------------------------------
+# Probe the remote (BEFORE any mkdir/rsync — a brand-new lane dir does not yet
+# exist, so it reads as cold) for this lane's warmth + the list of warm lanes.
+PROBE="$(ssh "$HOST" "bash -s" <<PROBE_EOF
+set -e
+warm_of() {
+  d="\$1"
+  [ -d "\${d}/.lake/packages/mathlib" ] && { echo warm; return; }
+  n=\$(ls "\${d}/target/release/deps" "\${d}/target/debug/deps" 2>/dev/null | wc -l | tr -d ' ')
+  if [ "\${n:-0}" -ge ${WARM_DEPS} ]; then echo warm; else echo cold; fi
+}
+echo "STATUS:\$(warm_of "dregg-build/${LANE}")"
+echo "WARM_BEGIN"
+for x in dregg-build/*/; do
+  [ -d "\$x" ] || continue
+  xd="\${x%/}"
+  [ "\$(warm_of "\$xd")" = warm ] && echo "\${xd#dregg-build/}"
+done
+echo "WARM_END"
+PROBE_EOF
+)"
+
+STATUS="$(printf '%s\n' "$PROBE" | sed -n 's/^STATUS://p')"
+WARM_LANES="$(printf '%s\n' "$PROBE" | sed -n '/^WARM_BEGIN$/,/^WARM_END$/p' | sed '/^WARM_BEGIN$/d;/^WARM_END$/d')"
+
+if [ "$STATUS" != "warm" ]; then
+  if [ "$FORCE_COLD" -eq 1 ]; then
+    echo "pbuild: WARNING — lane '${LANE}' is COLD; --force-cold given, seeding a" >&2
+    echo "        fresh build (compiles the whole dep graph from scratch, box load spikes)." >&2
+  else
+    {
+      echo "pbuild: REFUSING — lane '${LANE}' is COLD on ${HOST} (no warm cargo target/,"
+      echo "        no warm .lake/mathlib). Running it would rebuild EVERYTHING from"
+      echo "        scratch (~20min+, box load 95+ — the exact spike this guard prevents)."
+      echo ""
+      if [ -n "$WARM_LANES" ]; then
+        echo "        Reuse a WARM lane instead (these already have a build cache):"
+        printf '          %s\n' $WARM_LANES
+      else
+        echo "        (no warm lanes found on ${HOST} to reuse)"
+      fi
+      echo ""
+      echo "        Or pass --force-cold to deliberately seed lane '${LANE}':"
+      echo "          scripts/pbuild --force-cold ${LANE} $*"
+    } >&2
+    exit 3
+  fi
+fi
+
 # Sync working tree (WIP included) -> isolated lane dir. gitignore filter keeps
 # target/.lake out so persvati's per-lane build cache survives across invocations.
-ssh persvati "mkdir -p '${REMOTE}'"
+ssh "$HOST" "mkdir -p '${REMOTE}'"
 rsync -az --delete --filter=':- .gitignore' --exclude='.git/' \
-  "$SRC" "persvati:${REMOTE}/"
+  "$SRC" "${HOST}:${REMOTE}/"
 
 # Build on persvati with cargo + elan env sourced (non-login shells lack them).
-ssh persvati "set -e; source ~/.cargo/env 2>/dev/null || true; \
+ssh "$HOST" "set -e; source ~/.cargo/env 2>/dev/null || true; \
   [ -f ~/.elan/env ] && source ~/.elan/env 2>/dev/null || true; \
   export PATH=\"\$HOME/.cargo/bin:\$HOME/.elan/bin:\$PATH\"; \
   cd '${REMOTE}' && $*"
