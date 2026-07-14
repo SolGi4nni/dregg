@@ -191,15 +191,14 @@ main.page{max-width:1120px;margin:0 auto;padding:clamp(20px,4vw,44px) clamp(16px
 .assurance p{margin:0;color:var(--dim);font-size:12.5px;line-height:1.55}
 .assurance p b{color:var(--ink);font-weight:600}
 
-/* ── the stepper: Place → Reveal → Clear → Settle ─────────────────────── */
+/* ── the stepper: Seal → Clear → Settle (the strong single-phase shape) ── */
 .stepper{
   list-style:none;margin:34px 0 6px;padding:14px 10px;
-  display:grid;grid-template-columns:repeat(4,1fr);gap:6px;align-items:start;
+  display:grid;grid-template-columns:repeat(3,1fr);gap:6px;align-items:start;
   border:1px solid var(--line);border-radius:14px;background:var(--panel);
   box-shadow:var(--card-shadow);counter-reset:step;
 }
-@media(max-width:720px){.stepper{grid-template-columns:1fr 1fr}}
-@media(max-width:420px){.stepper{grid-template-columns:1fr}}
+@media(max-width:640px){.stepper{grid-template-columns:1fr}}
 .step-node{
   position:relative;display:flex;gap:11px;align-items:flex-start;
   padding:11px 13px;border-radius:10px;transition:background .2s,box-shadow .2s;
@@ -226,6 +225,39 @@ main.page{max-width:1120px;margin:0 auto;padding:clamp(20px,4vw,44px) clamp(16px
 .step-node.done .num::after{content:"✓";font-size:13px}
 .step-node.done .num .n{display:none}
 .step-node.fail .num{border-color:var(--red);color:var(--red);background:transparent}
+
+/* ── the framing panel: the strong mechanism + the honest floor ────────── */
+.framing{
+  display:grid;grid-template-columns:repeat(3,1fr);gap:14px;margin:16px 0 4px;
+}
+@media(max-width:820px){.framing{grid-template-columns:1fr}}
+.frame-card{
+  border:1px solid var(--line);border-radius:14px;background:var(--panel);
+  box-shadow:var(--card-shadow);padding:16px 18px;
+}
+.frame-card.strong{
+  border-color:var(--proved-bd);
+  background:
+    radial-gradient(360px 160px at 88% -40%, color-mix(in srgb,var(--teal) 12%,transparent), transparent 70%),
+    var(--panel);
+}
+.frame-card.floor{border-style:dashed;border-color:var(--line-lit);background:var(--panel-2)}
+.frame-head{display:flex;align-items:center;gap:9px;margin-bottom:9px;flex-wrap:wrap}
+.frame-head .ico{color:var(--teal);font-size:15px;line-height:1;flex:none}
+.frame-card.floor .frame-head .ico{color:var(--gold)}
+.frame-head h3{
+  margin:0;font-size:12px;letter-spacing:.1em;text-transform:uppercase;color:var(--ink);flex:1 1 auto;
+}
+.frame-head .badge{justify-self:end;flex:none}
+.frame-card p{margin:0;color:var(--dim);font-size:12.5px;line-height:1.6}
+.frame-card p b{color:var(--ink);font-weight:600}
+.frame-card.strong p b{color:var(--teal-deep)}
+.frame-card p .mono{color:var(--teal-deep);font-size:12px}
+.frame-card p em{color:var(--gold);font-style:normal}
+
+/* the cleared-batch floor note — this fill is a demo reveal, not the shielded truth */
+.floor-note{border-style:dashed;border-color:var(--line-lit)}
+.floor-note b{color:var(--gold)}
 
 /* ── workspace grid ────────────────────────────────────────────────────── */
 .workspace{

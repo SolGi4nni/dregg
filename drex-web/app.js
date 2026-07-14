@@ -53,10 +53,13 @@ function drawFlow() {
   }).join('');
 }
 
-// ── the stepper (Place → Reveal → Clear → Settle) ──
+// ── the stepper (Seal → Clear → Settle) — the strong single-phase shape ──
 // Purely presentational: highlights where the sealed-bid mechanic currently is,
-// so the flow is obvious. Nodes before `activeIdx` read done; `activeIdx` reads
-// active (or done when opts.complete). opts.failIdx marks a stalled step.
+// so the flow is obvious. No "Reveal" headline node — the strong DrEX is
+// single-phase (seal → clears at one price → proven); the demo's commit-reveal
+// is folded into Clear as an honest floor-detail. 3 nodes: 0 Seal, 1 Clear,
+// 2 Settle. Nodes before `activeIdx` read done; `activeIdx` reads active (or
+// done when opts.complete). opts.failIdx marks a stalled step.
 function setStepper(activeIdx, opts = {}) {
   document.querySelectorAll('.step-node').forEach((n, i) => {
     n.classList.remove('active', 'done', 'fail');
@@ -193,13 +196,13 @@ async function place() {
 
   // hold onto the order for reveal/clear
   window.__drexPending = { order, salt, commit, signed, sol, elig };
-  $('clock').innerHTML = `<span class="ok">Your order is sealed and proven.</span> Open the batch to reveal every envelope at once and clear at one fair price.`;
+  $('clock').innerHTML = `<span class="ok">Your order is sealed and proven.</span> Clear the batch — every sealed order settles together at one fair price.`;
   $('batchPill').className = 'pill warn'; $('batchPill').textContent = 'batch T+1 · ready to clear';
-  setStepper(1); // Place done → Reveal is next
+  setStepper(1); // Seal done → Clear is next
   // add an advance button
   if (!$('advanceBtn')) {
     const b = document.createElement('button'); b.className = 'primary'; b.id = 'advanceBtn';
-    b.textContent = 'Open the batch → reveal & clear →'; b.onclick = clearBatch;
+    b.textContent = 'Clear the batch at one price →'; b.onclick = clearBatch;
     $('placeBtn').after(b);
   }
   $('placeBtn').disabled = false;
@@ -210,11 +213,14 @@ async function clearBatch() {
   $('advanceBtn').disabled = true;
   const p = window.__drexPending;
 
-  // reveal
+  // Confirm the sealed order binds to its commitment before the batch clears.
+  // FLOOR DETAIL — the current demo does a commit-reveal confirm here; the STRONG
+  // single-phase DrEX (shielded_ring_clears) has NO reveal round. We keep the call
+  // (mechanism unchanged) but present it honestly as a floor step, not a headline.
   const rev = await sealedReveal(p.commit, p.order, p.salt);
-  step('reveal', 'Sealed-bid reveal at batch T', { state: rev.ok ? 'done' : 'fail',
-    d: 'reveal (order, salt) → commitment binds: ' + rev.ok });
-  setStepper(2); // Reveal done → Clear active
+  step('reveal', 'Confirm sealed order — demo floor (single-phase has no reveal)', { state: rev.ok ? 'done' : 'fail',
+    d: 'the current demo confirms your sealed order binds to its commitment before the batch clears — a simpler commit-reveal floor while the shielded single-phase circuit (shielded_ring_clears) finishes wiring in. commitment binds: ' + rev.ok });
+  setStepper(1); // Clear active — the reveal above is folded into Clear, not a headline step
 
   // Fold the trader's REVEALED order into the book (Ada's leg), so the real
   // matcher clears the order the user actually placed — not a fixed fixture.
@@ -249,14 +255,14 @@ async function clearBatch() {
   } catch (e) {
     step('match', 'Match — REAL solver unreachable', { badge: 'REAL solver.rs', state: 'fail',
       d: 'POST /clear failed: ' + e.message + ' — run the app via serve.mjs (it shells to the Rust matcher)' });
-    setStepper(2, { failIdx: 2 });
+    setStepper(1, { failIdx: 1 });
     return;
   }
 
   if (res.error || !res.ring) {
     step('match', 'Match — no clearing ring', { badge: 'REAL solver.rs', state: 'fail',
       d: res.error || res.provenance || 'the real matcher found no ring over this book' });
-    setStepper(2, { failIdx: 2 });
+    setStepper(1, { failIdx: 1 });
     if (res.allocations) renderClearedReal(res);
     return;
   }
@@ -287,7 +293,7 @@ async function clearBatch() {
 // committed receipt, and the ledger state come back FROM the node.
 async function settleOnLiveNode(cleared) {
   if (!cleared || !cleared.ring) return;
-  setStepper(3); // Clear done → Settle active
+  setStepper(2); // Clear done → Settle active
   step('node', 'Settle on the LIVE node — real turn → effect-VM → prove_pool',
     { badge: 'REAL node', state: 'active',
       d: 'POST /settle → node /turn/submit: the clearing settles as one real turn…' });
@@ -300,7 +306,7 @@ async function settleOnLiveNode(cleared) {
   } catch (e) {
     step('node', 'Settle on the LIVE node — proxy error', { badge: 'REAL node', state: 'fail',
       d: 'POST /settle failed: ' + e.message });
-    setStepper(3, { failIdx: 3 });
+    setStepper(2, { failIdx: 2 });
     return;
   }
 
@@ -313,13 +319,13 @@ async function settleOnLiveNode(cleared) {
          + '  the clearing shown is the REAL verified solver, but it did NOT land on a node this run.\n'
          + '  start one:  dregg-node run --port 8420 --enable-faucet --prove-turns' });
     $('nodePill') && ($('nodePill').className = 'pill warn', $('nodePill').textContent = 'node: offline · local matcher');
-    setStepper(3, { failIdx: 3 });
+    setStepper(2, { failIdx: 2 });
     return;
   }
   if (!r.accepted) {
     step('node', 'Settle on the LIVE node — turn not accepted', { badge: 'REAL node', state: 'fail',
       d: `node ${r.node} rejected the settlement turn: ${r.error || 'unknown'}` });
-    setStepper(3, { failIdx: 3 });
+    setStepper(2, { failIdx: 2 });
     return;
   }
 
@@ -342,8 +348,8 @@ async function settleOnLiveNode(cleared) {
   // celebrate the proof moment — the sealed-bid trade cleared and math signed the receipt.
   renderProofBadge(r);
   const provenNow = !!(proof.present || (rc && rc.hasProof));
-  setStepper(3, { complete: provenNow });
-  if (!provenNow) setStepper(3, { failIdx: 3 }); // committed-but-unattested: honest, not a celebration
+  setStepper(2, { complete: provenNow });
+  if (!provenNow) setStepper(2, { failIdx: 2 }); // committed-but-unattested: honest, not a celebration
   if ($('batchPill') && provenNow) { $('batchPill').className = 'pill live'; $('batchPill').textContent = 'batch T+1 · settled · proven'; }
 }
 

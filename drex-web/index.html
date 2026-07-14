@@ -63,29 +63,43 @@
     </div>
   </section>
 
-  <!-- ── the stepper ───────────────────────────────────────────────────── -->
+  <!-- ── the stepper — the STRONG single-phase shape: Seal → Clear → Settle.
+       No "Reveal" as a headline step: the strong DrEX is single-phase (seal, it
+       clears at one price, proven). The demo's commit-reveal is folded into
+       Clear as an honest floor-detail, not immortalized as the mechanism. ── -->
   <ol class="stepper" id="stepper" aria-label="How a sealed trade flows">
     <li class="step-node active" data-step="0">
       <span class="num"><span class="n">1</span></span>
-      <span class="txt"><span class="lab">Place sealed order</span>
+      <span class="txt"><span class="lab">Seal your order</span>
         <span class="sub">seal your bid; the wallet signs it and proves it can cover it</span></span>
     </li>
     <li class="step-node" data-step="1">
       <span class="num"><span class="n">2</span></span>
-      <span class="txt"><span class="lab">Reveal</span>
-        <span class="sub">at batch close, every envelope opens at the same instant</span></span>
+      <span class="txt"><span class="lab">Clear at one price</span>
+        <span class="sub">the batch clears into one fair multilateral ring — one price, no reveal round</span></span>
     </li>
     <li class="step-node" data-step="2">
       <span class="num"><span class="n">3</span></span>
-      <span class="txt"><span class="lab">Clear</span>
-        <span class="sub">the real matcher finds one fair multilateral ring</span></span>
-    </li>
-    <li class="step-node" data-step="3">
-      <span class="num"><span class="n">4</span></span>
       <span class="txt"><span class="lab">Settle</span>
         <span class="sub">the clear lands as one proven turn on a live node</span></span>
     </li>
   </ol>
+
+  <!-- ── the strong mechanism + the honest floor ─────────────────────────── -->
+  <section class="framing" aria-label="How DrEX clears — the strong version and today's floor">
+    <div class="frame-card strong">
+      <div class="frame-head"><span class="ico" aria-hidden="true">◈</span><h3>The strong version — single-phase</h3><span class="badge proved">proven</span></div>
+      <p>You seal your order and the batch clears — <b>no reveal round, no committee, nothing to grief.</b> One sealed message, one fair clearing price. That's <span class="mono">shielded_ring_clears</span> (a machine-checked theorem) with the 2-leg ring-clearing circuit built.</p>
+    </div>
+    <div class="frame-card strong">
+      <div class="frame-head"><span class="ico" aria-hidden="true">◇</span><h3>Private by default</h3><span class="badge proved">proven</span></div>
+      <p>The batch clears over <b>hidden commitments</b> — the world learns only that a fair batch happened, <b>never who traded what.</b> No trade tape, no surveillance surface, nothing for a sniper to read. The only public output is a proof: <em>fairness held, here's the math.</em></p>
+    </div>
+    <div class="frame-card floor">
+      <div class="frame-head"><span class="ico" aria-hidden="true">▚</span><h3>Today's floor</h3><span class="badge coming">upgrading</span></div>
+      <p>This live demo still runs a simpler <b>commit-reveal</b> confirm and shows you your own fill — a working floor while the shielded single-phase circuit finishes wiring in. The shielded version reveals nothing to anyone. Honest today, upgrading to the private single-phase clearing above — <span class="fade">proven, coming.</span></p>
+    </div>
+  </section>
 
   <!-- ── workspace ─────────────────────────────────────────────────────── -->
   <div class="workspace">
@@ -131,7 +145,8 @@
 
       <section class="card" aria-labelledby="clearedH">
         <h2 id="clearedH">Cleared batch</h2>
-        <div id="cleared" class="empty">No batch cleared yet — seal an order, then advance the batch to reveal and clear at a fair price.</div>
+        <div class="note floor-note"><b>floor:</b> this demo shows you the allocations — a commit-reveal reveal by design. The <b>shielded version reveals nothing to anyone</b>: the only public output is a proof that a fair, conserving batch cleared — never who traded what.</div>
+        <div id="cleared" class="empty">No batch cleared yet — seal an order, then clear the batch at one fair price.</div>
       </section>
 
       <section class="card" aria-labelledby="fairH">
@@ -165,8 +180,13 @@
         <span class="badge running">running</span>
       </div>
       <div class="hrow">
+        <span class="name">Single-phase &amp; private</span>
+        <span class="desc">The strong DrEX seals your order and clears it in one shot over hidden commitments: no reveal round to grief, no committee to trust, and <b>nothing published but a proof</b> — the world never learns who traded what. That's <span class="mono">shielded_ring_clears</span> (proven), with the 2-leg ring-clearing circuit built. This live demo still runs a simpler commit-reveal confirm and shows you your own fill while that shielded circuit finishes wiring in — an honest floor being upgraded, not how DrEX ultimately works.</span>
+        <span class="badge coming">coming</span>
+      </div>
+      <div class="hrow">
         <span class="name">A clickable demo</span>
-        <span class="desc">Seal an order, watch your own wallet really sign it and really prove it can cover it, then watch the batch reveal and clear at a fair price — each step showing the real engine behind it.</span>
+        <span class="desc">Seal an order, watch your own wallet really sign it and really prove it can cover it, then watch the batch clear at one fair price and settle as a proof — each step showing the real engine behind it.</span>
         <span class="badge running">running</span>
       </div>
       <div class="hrow">
@@ -187,7 +207,7 @@
     </div>
     <div class="floornote">
       <span class="sig" aria-hidden="true">▚</span>
-      <span class="body"><b>see it clear</b>&nbsp; the fairness here is something you can check, not something to believe. Seal an order above and watch the batch reveal, clear, and settle as a proof anyone can re-run.</span>
+      <span class="body"><b>see it clear</b>&nbsp; the fairness here is something you can check, not something to believe. Seal an order above and watch the batch clear at one fair price and settle as a proof anyone can re-run.</span>
     </div>
   </section>
 
