@@ -690,6 +690,232 @@ theorem ntt_intt_rightInverse (d : Poly) (hd : d.size = 256) (hdlt : ∀ (p : Na
   have hR : nttC (inttC ⟨d, hd, hdlt⟩) = ⟨d, hd, hdlt⟩ := by rw [hid]; exact hc
   exact congrArg Subtype.val hR
 
+/-! ### §8.4 — the COEFFICIENT RING HOM `φ : Poly → (Fin 256 → ℤ_q)` and its additivity.
+
+`φ` reads the 256 `ℤ_q` coefficients. It respects `addPoly` (`cast_addPoly`, §RUNG-1) — the reusable
+additive structure the K-PKE decryption accumulator `∑ᵢ …` is summed in. On canonical reduced polys it also
+carries the executable NTT-domain product to the negacyclic ring product (§8.5, via
+`ntt_computes_negacyclic_mul`). -/
+
+/-- The coefficient hom `φ : Poly → (Fin 256 → ZMod q)` — coefficient `c` read into `ℤ_q`. -/
+def phiCoeff (p : Poly) : Fin 256 → ZMod q := fun c => ((p[(c : Nat)]! : Nat) : ZMod q)
+
+/-- **`φ` respects `+`** — `φ(addPoly a b) = φ a + φ b`. Immediate from the RUNG-1 cast `cast_addPoly`; this is
+the additive-hom property that lets `φ` distribute over the K-PKE decryption accumulator's `∑ᵢ`. -/
+theorem phiCoeff_addPoly (a b : Poly) : phiCoeff (addPoly a b) = phiCoeff a + phiCoeff b := by
+  funext c
+  simp only [phiCoeff, Pi.add_apply]
+  exact MlKemRing.cast_addPoly a b (c : Nat) c.isLt
+
+/-! ### §8.5 — the per-term negacyclic reduction and the assembled `φ(kpkeW)`.
+
+The executable K-PKE decrypt builds `w = v − NTT⁻¹(∑ᵢ ŝᵢ ∘ NTT(uᵢ))`. Each accumulator term
+`intt (pointwiseNtt ŝᵢ (ntt uᵢ))` (the fast incomplete-NTT multiply of the STORED NTT-domain secret `ŝᵢ` by
+`uᵢ`) reduces to the ground-truth negacyclic product `schoolbookMul (intt ŝᵢ) uᵢ` — this is exactly where
+`ntt_intt_rightInverse` (§8.3, `ntt (intt ŝᵢ) = ŝᵢ`) and `ntt_computes_negacyclic_mul` combine. `φ` then
+distributes over the `∑ᵢ` by `intt_addLinear` (§8.2), exhibiting `φ(kpkeW)` in the `wVal` shape
+`φ v − ∑ⱼ φ(sⱼ · uⱼ)` (`MlKemCorrect.wVal`, up to the input identifications §8-(2/3/4)). -/
+
+/-- The stored NTT-domain secret `ŝᵢ = ByteDecode₁₂(dk_pke)` at index `i`. -/
+def sHatOf (dkPke : List UInt8) (i : Nat) : Poly :=
+  byteDecodeAt dCoeff dkPke.toArray (i * polyBytes dCoeff)
+
+/-- The decompressed ciphertext component `uᵢ` (`ctDecode c` first projection). -/
+def uOf (c : List UInt8) (i : Nat) : Poly := (ctDecode c).1[i]!
+
+/-- `ŝᵢ = ByteDecode₁₂(…)` is a canonical `R_q` element: 256 coefficients. -/
+theorem sHatOf_size (dkPke : List UInt8) (i : Nat) : (sHatOf dkPke i).size = 256 :=
+  byteDecodeAt_size _ _ _
+
+/-- `ŝᵢ` is reduced (`< q` everywhere) — the `ByteDecode₁₂` codomain reduces every 12-bit digit mod `q`; out
+of range the reader is `0`. This is the byte-codec faithfulness fact that `ŝ` lands in the ring `R_q`. -/
+theorem sHatOf_lt (dkPke : List UInt8) (i : Nat) : ∀ (p : Nat), (sHatOf dkPke i)[p]! < q := by
+  intro p
+  by_cases hp : p < 256
+  · rw [sHatOf, byteDecodeAt_getElem dCoeff _ _ p hp]
+    simp only [dCoeff, show ((12 : Nat) == 12) = true from rfl, if_true]
+    exact Nat.mod_lt _ (by unfold MlKemRing.q; omega)
+  · rw [MlKemRing.getElem!_ge _ p (by rw [sHatOf, byteDecodeAt_size]; omega)]
+    unfold MlKemRing.q; omega
+
+/-- **PER-TERM NEGACYCLIC REDUCTION.** The executable accumulator term `intt (pointwiseNtt ŝ (ntt u))` — the
+fast incomplete-NTT multiply of the stored NTT-domain secret `ŝ` by `u` — IS the ground-truth negacyclic ring
+product `schoolbookMul (intt ŝ) u`. Assembles `ntt_intt_rightInverse` (`ntt (intt ŝ) = ŝ`, so `ŝ` is an
+`ntt`-image) with `ntt_computes_negacyclic_mul`. -/
+theorem intt_pointwiseNtt_ntt (sh u : Poly) (hsh : sh.size = 256) (hshlt : ∀ (p : Nat), sh[p]! < q)
+    (hu : u.size = 256) :
+    intt (pointwiseNtt sh (ntt u)) = MlKemRing.schoolbookMul (intt sh) u := by
+  have hrs : ntt (intt sh) = sh := ntt_intt_rightInverse sh hsh hshlt
+  have hisz : (intt sh).size = 256 := intt_size sh hsh hshlt
+  calc intt (pointwiseNtt sh (ntt u))
+      = intt (pointwiseNtt (ntt (intt sh)) (ntt u)) := by rw [hrs]
+    _ = MlKemRing.schoolbookMul (intt sh) u :=
+        MlKemRing.ntt_computes_negacyclic_mul (intt sh) u hisz hu
+
+/-- `φ(intt zeroPoly) = 0` coefficient-wise — `intt` of the zero poly has zero `ℤ_q` coefficients (each is
+`nInv · ∑ 0 = 0` via `intt_interp_kem`). Base of the accumulator's `∑ᵢ` distribution. -/
+theorem intt_zeroPoly_cast (p : Nat) (hp : p < 256) : ((intt zeroPoly)[p]! : ZMod q) = 0 := by
+  have hz256 : (zeroPoly : Poly).size = 256 := by simp [zeroPoly]
+  have hpair : ∀ i r, i < 128 → r < 2 → ((intt zeroPoly)[2*i+r]! : ZMod q) = 0 := by
+    intro i r hi hr
+    rw [MlKemRing.intt_interp_kem zeroPoly hz256 MlKemRing.zeroPoly_lt i r hi hr]
+    rw [Finset.sum_eq_zero (fun u _ => by rw [MlKemRing.zeroPoly_cast, zero_mul])]
+    rw [mul_zero]
+  rcases Nat.even_or_odd p with ⟨i, he⟩ | ⟨i, ho⟩
+  · have : p = 2*i+0 := by omega
+    rw [this]; exact hpair i 0 (by omega) (by norm_num)
+  · have : p = 2*i+1 := by omega
+    rw [this]; exact hpair i 1 (by omega) (by norm_num)
+
+/-- The K-PKE decryption accumulator, unrolled at `k = paramK = 3` into an explicit `addPoly` chain of the
+three fast-NTT products (the `for i in [0:3]` loop). -/
+theorem kpkeAcc_fold3 (dkPke c : List UInt8) :
+    kpkeAcc dkPke c =
+      addPoly (addPoly (addPoly zeroPoly
+          (pointwiseNtt (sHatOf dkPke 0) (ntt (uOf c 0))))
+          (pointwiseNtt (sHatOf dkPke 1) (ntt (uOf c 1))))
+          (pointwiseNtt (sHatOf dkPke 2) (ntt (uOf c 2))) := by
+  unfold kpkeAcc sHatOf uOf
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, Std.Legacy.Range.size, Nat.sub_zero, Nat.add_one_sub_one,
+    Nat.div_one, bind_pure]
+  rfl
+
+/-- **`φ` DISTRIBUTES over the accumulator's `∑ᵢ`** — `φ(intt(∑ᵢ ŝᵢ∘NTT uᵢ)) = ∑ᵢ φ(intt(ŝᵢ∘NTT uᵢ))`,
+coefficient-wise in `ℤ_q`, by `intt_addLinear` (§8.2) applied down the three-term `addPoly` chain (all
+`addPoly`/`pointwiseNtt` sub-polys are canonical unconditionally). -/
+theorem kpkeAcc_intt_cast (dkPke c : List UInt8) (p : Nat) (hp : p < 256) :
+    ((intt (kpkeAcc dkPke c))[p]! : ZMod q)
+      = ((intt (pointwiseNtt (sHatOf dkPke 0) (ntt (uOf c 0))))[p]! : ZMod q)
+      + ((intt (pointwiseNtt (sHatOf dkPke 1) (ntt (uOf c 1))))[p]! : ZMod q)
+      + ((intt (pointwiseNtt (sHatOf dkPke 2) (ntt (uOf c 2))))[p]! : ZMod q) := by
+  rw [kpkeAcc_fold3]
+  set t0 := pointwiseNtt (sHatOf dkPke 0) (ntt (uOf c 0)) with ht0
+  set t1 := pointwiseNtt (sHatOf dkPke 1) (ntt (uOf c 1)) with ht1
+  set t2 := pointwiseNtt (sHatOf dkPke 2) (ntt (uOf c 2)) with ht2
+  have hz256 : (zeroPoly : Poly).size = 256 := by simp [zeroPoly]
+  rw [intt_addLinear (addPoly (addPoly zeroPoly t0) t1) t2
+        (MlKemRing.addPoly_size _ _) (MlKemRing.addPoly_lt _ _)
+        (MlKemRing.pointwiseNtt_size _ _) (MlKemRing.pointwiseNtt_lt _ _) p hp,
+      intt_addLinear (addPoly zeroPoly t0) t1
+        (MlKemRing.addPoly_size _ _) (MlKemRing.addPoly_lt _ _)
+        (MlKemRing.pointwiseNtt_size _ _) (MlKemRing.pointwiseNtt_lt _ _) p hp,
+      intt_addLinear zeroPoly t0
+        hz256 MlKemRing.zeroPoly_lt
+        (MlKemRing.pointwiseNtt_size _ _) (MlKemRing.pointwiseNtt_lt _ _) p hp,
+      intt_zeroPoly_cast p hp]
+  ring
+
+/-- **THE COEFFICIENT RING-HOM IMAGE OF THE DECRYPTED `w`** — `φ(kpkeW) = φ v − ∑ⱼ φ(sⱼ · uⱼ)` coefficient-wise
+in `ℤ_q`, the executable pipeline exhibited in `MlKemCorrect.wVal`'s shape (`v − ∑ⱼ sⱼ·uⱼ`). Assembles all
+three §8 reusable legs: `cast_subPoly` (`w = v − NTT⁻¹(acc)`), `kpkeAcc_intt_cast` (`φ∘intt` distributes over
+`∑ᵢ` via `intt_addLinear`), and `intt_pointwiseNtt_ntt` (each fast-NTT term is the negacyclic product `sⱼ·uⱼ`,
+via `ntt_intt_rightInverse` + `ntt_computes_negacyclic_mul`). Here `sⱼ = intt (sHatOf dkPke j)` and
+`uⱼ = uOf c j`; the residual to the LITERAL `MlKemCorrect.wVal` is only the input identification (§8-(2/3/4):
+`u = uVec`, `v = vVal`) and lifting `schoolbookMul` into a `CommRing R_q` instance. `hu` — that `u` decodes to
+size-256 `R_q` elements — is the byte-codec faithfulness fact (`uOf_size` discharges it). -/
+theorem kpkeW_phi (dkPke c : List UInt8) (hu : ∀ i, i < paramK → (uOf c i).size = 256)
+    (p : Nat) (hp : p < 256) :
+    ((kpkeW dkPke c)[p]! : ZMod q)
+      = (((ctDecode c).2[p]! : Nat) : ZMod q)
+        - ( ((MlKemRing.schoolbookMul (intt (sHatOf dkPke 0)) (uOf c 0))[p]! : ZMod q)
+          + ((MlKemRing.schoolbookMul (intt (sHatOf dkPke 1)) (uOf c 1))[p]! : ZMod q)
+          + ((MlKemRing.schoolbookMul (intt (sHatOf dkPke 2)) (uOf c 2))[p]! : ZMod q) ) := by
+  have haccsz : (kpkeAcc dkPke c).size = 256 := by rw [kpkeAcc_fold3]; exact MlKemRing.addPoly_size _ _
+  have hacclt : ∀ (p : Nat), (kpkeAcc dkPke c)[p]! < q := by
+    rw [kpkeAcc_fold3]; exact MlKemRing.addPoly_lt _ _
+  have hintt_lt : (intt (kpkeAcc dkPke c))[p]! ≤ q :=
+    le_of_lt (intt_lt (kpkeAcc dkPke c) haccsz hacclt p)
+  unfold kpkeW
+  rw [MlKemRing.cast_subPoly _ _ p hp hintt_lt, kpkeAcc_intt_cast dkPke c p hp,
+      intt_pointwiseNtt_ntt (sHatOf dkPke 0) (uOf c 0) (sHatOf_size _ _) (sHatOf_lt _ _)
+        (hu 0 (by unfold paramK; omega)),
+      intt_pointwiseNtt_ntt (sHatOf dkPke 1) (uOf c 1) (sHatOf_size _ _) (sHatOf_lt _ _)
+        (hu 1 (by unfold paramK; omega)),
+      intt_pointwiseNtt_ntt (sHatOf dkPke 2) (uOf c 2) (sHatOf_size _ _) (sHatOf_lt _ _)
+        (hu 2 (by unfold paramK; omega))]
+
+/-! ### §8.6 — BYTE-CODEC FAITHFULNESS (item 2): the decode legs land canonical `R_q` elements.
+
+The proven codec round-trips live in `MlKemCodecSpec` (`byteDecode₁₂_byteEncode₁₂`, `byteDecode_du/dv_…`)
+and `MlKemCodec` (`compress_decompress_id`, over the whole compressed field). Here we discharge the
+faithfulness facts the domination assembly (§8.5) consumes: `ŝ` (`sHatOf_size`/`_lt`, above) and `u`
+(`uOf_size`, below) decode to genuine size-256 `R_q` ring elements. `v` is the fourth `ctDecode` field. -/
+
+/-- `decompressPoly` unrolled to the indexed-`set!` fold (the loop shape `compressPoly` also has). -/
+theorem decompressPoly_fold (d : Nat) (p : Poly) :
+    decompressPoly d p =
+      List.foldl (fun (out : Poly) (i : Nat) => out.set! i (decompress d p[i]!)) zeroPoly
+        (List.range' 0 256 1) := by
+  unfold decompressPoly
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, Std.Legacy.Range.size, Nat.sub_zero, Nat.add_one_sub_one,
+    Nat.div_one]
+  rfl
+
+/-- `decompressPoly d p` is a canonical `R_q` element: 256 coefficients. -/
+theorem decompressPoly_size (d : Nat) (p : Poly) : (decompressPoly d p).size = 256 := by
+  rw [decompressPoly_fold]
+  rw [(idxSetFold_spec (fun i => decompress d p[i]!) 256 zeroPoly).1]
+  simp [zeroPoly]
+
+/-- The `u`-array `ctDecode` recovers, unrolled at `k = paramK = 3` (three `Decompress_{du} ∘ ByteDecode_{du}`
+polynomials). -/
+theorem ctDecode_fst (c : List UInt8) :
+    (ctDecode c).1 =
+      #[decompressPoly du (byteDecodeAt du c.toArray (0 * polyBytes du)),
+        decompressPoly du (byteDecodeAt du c.toArray (1 * polyBytes du)),
+        decompressPoly du (byteDecodeAt du c.toArray (2 * polyBytes du))] := by
+  unfold ctDecode
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, Std.Legacy.Range.size, Nat.sub_zero, Nat.add_one_sub_one,
+    Nat.div_one]
+  rfl
+
+/-- **BYTE-CODEC FAITHFULNESS (u).** Each decoded ciphertext component `uᵢ` (`i < k`) is a canonical size-256
+`R_q` ring element — discharging the `hu` hypothesis of `kpkeW_phi`. (`Decompress_{du} ∘ ByteDecode_{du}`
+always writes 256 coefficients.) -/
+theorem uOf_size (c : List UInt8) (i : Nat) (hi : i < paramK) : (uOf c i).size = 256 := by
+  unfold uOf
+  rw [ctDecode_fst]
+  have : i = 0 ∨ i = 1 ∨ i = 2 := by unfold paramK at hi; omega
+  rcases this with h | h | h <;> subst h <;> exact decompressPoly_size _ _
+
+/-- **`φ(kpkeW) = wVal`-SHAPE, with the codec faithfulness DISCHARGED** — `uOf_size` supplies `kpkeW_phi`'s
+`hu`, so the executable decrypted `w`'s `ℤ_q` coefficient hom is `φ v − ∑ⱼ φ(sⱼ·uⱼ)` with NO codec-faithfulness
+side condition. This is the §8-(1)+(2) result: the coefficient ring hom `φ` carries the byte-exact executable
+K-PKE decrypt to the `MlKemCorrect.wVal` algebraic shape over the real negacyclic products `sⱼ·uⱼ`. -/
+theorem kpkeW_phi_faithful (dkPke c : List UInt8) (p : Nat) (hp : p < 256) :
+    ((kpkeW dkPke c)[p]! : ZMod q)
+      = (((ctDecode c).2[p]! : Nat) : ZMod q)
+        - ( ((MlKemRing.schoolbookMul (intt (sHatOf dkPke 0)) (uOf c 0))[p]! : ZMod q)
+          + ((MlKemRing.schoolbookMul (intt (sHatOf dkPke 1)) (uOf c 1))[p]! : ZMod q)
+          + ((MlKemRing.schoolbookMul (intt (sHatOf dkPke 2)) (uOf c 2))[p]! : ZMod q) ) :=
+  kpkeW_phi dkPke c (uOf_size c) p hp
+
+/-! ### §8.7 — the REMAINING faithfulness residuals (items 3, 4), each a precise Lean statement.
+
+The §8.5/§8.6 result exhibits `φ(kpkeW) = φ v − ∑ⱼ φ(sⱼ·uⱼ)` — the `wVal` SHAPE over the negacyclic products.
+Reaching the LITERAL `MlKemCorrect.mlkem_decrypt_cancellation` (hence `hdom`) additionally requires: a `CommRing`
+`R_q` instance carrying `schoolbookMul` as its `*` (so the abstract matrix `sum_comm` cancellation applies), and
+the following two SEED-EXPANSION faithfulness facts, stated here precisely against the executable samplers. -/
+
+/-- **ITEM 3 — `ExpandA` faithfulness (NAMED).** The public matrix `Â = expandMatrix ρ` the executable parses
+from the seed (`SampleNTT`/XOF) realizes an abstract matrix `A : Fin k → Fin k → Poly` in the sense that each
+parsed entry is canonical (size-256, reduced) and matches `A` at every `(i,j)`. Discharging this needs the
+`SampleNTT` rejection-sampling faithfulness (uniform `< q` parse from SHAKE-128), which is not built. -/
+def ExpandAFaithful (rho : List UInt8) (A : Nat → Nat → Poly) : Prop :=
+  ∀ i j, i < paramK → j < paramK →
+    ((MlKemSample.expandMatrix rho)[i * paramK + j]!) = A i j
+    ∧ (A i j).size = 256 ∧ (∀ (p : Nat), (A i j)[p]! < q)
+
+/-- **ITEM 4 — CBD sampler faithfulness (NAMED).** `samplePolyCBD η B` (centered-binomial from PRF bytes `B`)
+realizes the abstract CBD(η) noise polynomial `cbd` that `MlKemDelta` models — each coefficient is the
+centered `∑ x - ∑ y` of `2η` PRF bits, canonical in `R_q`. Discharging this needs the `getBit`/`BytesToBits`
+faithfulness plus the tie to `MlKemDelta`'s `cbd` law, which is not built. -/
+def CbdFaithful (eta : Nat) (bytes : List UInt8) (cbd : Poly) : Prop :=
+  MlKemSample.samplePolyCBD eta bytes = cbd ∧ cbd.size = 256 ∧ (∀ (p : Nat), cbd[p]! < q)
+
 /-! ## AXIOM HYGIENE — every ∀-theorem is kernel-clean (⊆ {propext, Classical.choice, Quot.sound}).
 `realDk_good` / `ekOfDk_realDk` / `emptyDk_not_good` / `roundtrip_fails_le_delta_nonvacuous` (the concrete byte
 checks) are NOT in this list: they carry the `native_decide` residual, and NOTHING above depends on them. -/
@@ -710,7 +936,20 @@ checks) are NOT in this list: they carry the `native_decide` residual, and NOTHI
   intt_addLinear_pair,
   intt_addLinear,
   inttC_nttC,
-  ntt_intt_rightInverse
+  ntt_intt_rightInverse,
+  phiCoeff_addPoly,
+  sHatOf_size,
+  sHatOf_lt,
+  intt_pointwiseNtt_ntt,
+  intt_zeroPoly_cast,
+  kpkeAcc_fold3,
+  kpkeAcc_intt_cast,
+  kpkeW_phi,
+  decompressPoly_fold,
+  decompressPoly_size,
+  ctDecode_fst,
+  uOf_size,
+  kpkeW_phi_faithful
 ]
 
 end Dregg2.Crypto.MlKemFips203FullDim
