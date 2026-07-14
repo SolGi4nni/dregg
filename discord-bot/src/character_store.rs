@@ -78,6 +78,9 @@ impl CharacterStore for SqliteCharacterStore {
                     class,
                     abilities_used,
                     dead,
+                    // Meta-progression (echoes / boon) is not yet a durable sqlite column — a named
+                    // follow-up; the in-memory + offering seam carries it, this store defaults it.
+                    ..Default::default()
                 };
                 // FAIL-SAFE: a row that does not sit on the real progression curve (a forged
                 // level its XP never earned, an unknown class, a level past the ceiling) loads
@@ -215,6 +218,7 @@ mod tests {
             class: MAGE,
             abilities_used: 3,
             dead: 0,
+            ..Default::default()
         };
         store.save(&who, sheet);
         let got = store.load(&who);
@@ -237,6 +241,7 @@ mod tests {
             class: WARRIOR,
             abilities_used: 1,
             dead: 0,
+            ..Default::default()
         };
         {
             let mut store =
@@ -270,6 +275,7 @@ mod tests {
             class: WARRIOR,
             abilities_used: 0,
             dead: 1,
+            ..Default::default()
         };
         {
             let mut store =
@@ -283,6 +289,7 @@ mod tests {
                     class: WARRIOR,
                     abilities_used: 0,
                     dead: 0,
+                    ..Default::default()
                 },
             );
         }
@@ -342,6 +349,7 @@ mod tests {
             class: WARRIOR,
             abilities_used: 0,
             dead: 0,
+            ..Default::default()
         };
         let mut store2 = store.clone();
         store2.save(&who, honest);

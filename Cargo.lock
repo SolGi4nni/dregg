@@ -6653,6 +6653,7 @@ dependencies = [
  "blake3",
  "deos-view",
  "dregg-app-framework",
+ "dregg-node-target",
  "dregg-pay",
  "dungeon-on-dregg",
  "hex",
@@ -6690,10 +6691,13 @@ dependencies = [
  "dreggnet-market",
  "dreggnet-offerings",
  "dungeon-on-dregg",
+ "procgen-dregg",
  "serde",
  "serde_json",
+ "spween-dregg",
  "tokio",
  "tower",
+ "ugc-dregg",
 ]
 
 [[package]]

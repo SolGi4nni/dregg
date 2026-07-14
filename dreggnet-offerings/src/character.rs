@@ -50,7 +50,8 @@ use deos_view::ViewNode;
 use dregg_app_framework::TurnReceipt;
 use spween_dregg::{Value, WorldCell, WorldError};
 
-use dungeon_on_dregg::progression::{self, MAGE, ROGUE, WARRIOR, deploy_hero, xp_threshold};
+use dungeon_on_dregg::meta::{self, deploy_meta_hero};
+use dungeon_on_dregg::progression::{self, MAGE, ROGUE, WARRIOR, xp_threshold};
 use dungeon_on_dregg::{KP_SEIZE, KP_TRADE_BLOWS, ROOM_GATEHALL, ROOM_SANCTUM};
 
 use crate::dungeon::{DungeonOffering, DungeonSession};
@@ -80,6 +81,15 @@ pub struct CharacterSheet {
     /// leaderboard leans on this un-forgeable, un-undoable fact. A non-hardcore character
     /// never sets it (stays `0`).
     pub dead: u64,
+    /// The META-CURRENCY (the `echoes` slot): the roguelite retention loop's accrual. A run that
+    /// ENDS IN DEATH grants echoes tied to the depth reached ([`dungeon_on_dregg::meta`]); the slot
+    /// is `Monotonic` (it only accrues) and a grant is gated `FieldEquals(dead, 1)` — earned ONLY on
+    /// a real death. Carries across runs by identity (this is what makes death ADVANCE you).
+    pub echoes: u64,
+    /// The persistent UNLOCK (the `boon` slot): bought with enough accrued [`echoes`](Self::echoes)
+    /// via a real `FieldGte(echoes, price)` + `WriteOnce(boon)` turn. A modest permanent starting
+    /// nudge a NEXT run starts holding (carried across runs by identity).
+    pub boon: u64,
 }
 
 impl CharacterSheet {
@@ -166,7 +176,9 @@ impl Character {
     /// `pub` so a sibling offering (e.g. [`crate::daily_descent`]) can bind the SAME persistent
     /// character to its own run, exactly as [`AdventurerOffering`] does for the Keep.
     pub fn open(who: DreggIdentity, sheet: CharacterSheet) -> Character {
-        let mut world = deploy_hero(hero_seed(&who));
+        // The META-augmented hero cell: carries `echoes` / `boon` (meta-progression) alongside the
+        // xp / level / class / abilities / dead progression slots, all on ONE persistent cell.
+        let mut world = deploy_meta_hero(hero_seed(&who));
         // Seed the four progression slots to the carried values (genesis setup, not a turn —
         // exactly how the Keep seeds hp=50; the in-run progression turns are the gated ones).
         world.seed_var("xp", Value::Int(sheet.xp as i64));
@@ -178,6 +190,12 @@ impl Character {
         // Carry the HARDCORE death flag: a saved-dead character LOADS dead (and stays dead).
         if sheet.dead != 0 {
             world.seed_var("dead", Value::Int(sheet.dead as i64));
+        }
+        // Carry the META-PROGRESSION: accrued echoes + a claimed boon carry across runs by identity,
+        // so a next run STARTS with the earned unlock — death advances you.
+        world.seed_var("echoes", Value::Int(sheet.echoes as i64));
+        if sheet.boon != 0 {
+            world.seed_var("boon", Value::Int(sheet.boon as i64));
         }
 
         // A fresh adventurer begins at level 1 — a REAL free level-up turn (threshold(1) == 0).
@@ -208,6 +226,8 @@ impl Character {
             class: self.world.read_var("class"),
             abilities_used: self.world.read_var("abilities_used"),
             dead: self.world.read_var("dead"),
+            echoes: self.world.read_var("echoes"),
+            boon: self.world.read_var("boon"),
         }
     }
 
@@ -265,6 +285,34 @@ impl Character {
     /// bars the 1→0 change). The non-vacuous proof that hardcore death is FINAL.
     pub fn attempt_resurrect(&self) -> Result<TurnReceipt, WorldError> {
         progression::attempt_resurrect(&self.world)
+    }
+
+    // ── Meta-progression-on-death (the roguelite retention loop) ──────────────────
+
+    /// Current accrued META-CURRENCY (the carried `echoes` slot).
+    pub fn echoes(&self) -> u64 {
+        meta::echoes(&self.world)
+    }
+
+    /// Whether the persistent UNLOCK has been claimed (the carried `boon` slot is set) — what a
+    /// next run starts holding.
+    pub fn has_boon(&self) -> bool {
+        meta::has_boon(&self.world)
+    }
+
+    /// **Grant the meta-currency for a death at `depth`** — the sanctioned accrual (a real turn
+    /// gated `FieldEquals(dead, 1)` + `StrictMonotonic(echoes)`). The offering calls this ONLY when
+    /// a hardcore run has truly ended in death; a grant on a living character is a real executor
+    /// refusal (a won / unfinished run advances you no echoes). A deeper death grants more.
+    pub fn grant_echoes(&self, depth: u64) -> Result<TurnReceipt, WorldError> {
+        meta::grant_echoes(&self.world, depth)
+    }
+
+    /// **Claim the persistent unlock** — the `FieldGte(echoes, price)` + `WriteOnce(boon)`-gated
+    /// turn. Without enough accrued (possibly carried) echoes the executor REFUSES it; once claimed,
+    /// the boon persists on the sheet and a next run starts holding it.
+    pub fn claim_boon(&self) -> Result<TurnReceipt, WorldError> {
+        meta::claim_boon(&self.world)
     }
 }
 
@@ -745,6 +793,136 @@ mod tests {
                 "a carried-dead character still earns nothing"
             );
         }
+    }
+
+    /// META-PROGRESSION-ON-DEATH: a LOST run advances you. A hardcore run that ends in a deep death
+    /// banks the meta-currency (a real gated grant, tied to depth), buys a persistent unlock, and
+    /// SAVES — and a NEXT run for the same identity STARTS with the earned unlock (echoes + boon
+    /// carry via the store). Non-vacuous + executor-refereed: a LIVING character earns no echoes (a
+    /// won / unfinished run grants none), a claim without enough echoes is refused, and a forged
+    /// grant (unknown method) is refused — the teeth bite.
+    #[test]
+    fn meta_progression_on_death_grants_a_persistent_unlock_the_next_run_carries() {
+        let mut off = AdventurerOffering::new(InMemoryCharacterStore::new());
+        let who = DreggIdentity("player-fallen-key".to_string());
+
+        // ── Run 1: a hardcore run LOST deep — perish, bank echoes, buy the boon, save. ──
+        {
+            let s = off
+                .open(who.clone(), SessionConfig::with_seed(3))
+                .expect("open run 1");
+            off.choose_class(&s, WARRIOR).expect("class");
+            assert_eq!(s.character().echoes(), 0, "fresh: no echoes");
+            assert!(!s.character().has_boon(), "fresh: no unlock");
+
+            // A LIVING character (a won / unfinished run) earns NO echoes — the grant needs a death.
+            assert!(
+                matches!(s.character().grant_echoes(6), Err(WorldError::Refused(_))),
+                "a living character earns no echoes (a won/unfinished run advances none)"
+            );
+            // A claim with no accrued echoes is refused (unlock-without-currency).
+            assert!(
+                matches!(s.character().claim_boon(), Err(WorldError::Refused(_))),
+                "a boon claim without the echoes is refused"
+            );
+            // A forged grant under an unknown method is a real executor refusal (default-deny).
+            let cell = s.character().hero_cell().cell_id();
+            let forged = s.character().hero_cell().apply_raw(
+                "cheat/inject_echoes",
+                vec![Effect::SetField {
+                    cell,
+                    index: dungeon_on_dregg::meta::ECHOES_SLOT as usize,
+                    value: field_from_u64(9_999),
+                }],
+            );
+            assert!(
+                matches!(forged, Err(WorldError::Refused(_))),
+                "a forged echoes grant is refused, got {forged:?}"
+            );
+            assert_eq!(s.character().echoes(), 0, "anti-ghost: no forged echoes");
+
+            // The run ENDS IN DEATH → perish, then bank echoes for the depth reached (deep = enough).
+            s.character().perish().expect("the death commits");
+            s.character()
+                .grant_echoes(6)
+                .expect("a real death funds the echoes grant");
+            let banked = s.character().echoes();
+            assert!(
+                banked >= dungeon_on_dregg::meta::BOON_PRICE,
+                "a deep death banks over the boon price: {banked}"
+            );
+
+            // The accrued echoes BUY the persistent unlock.
+            s.character()
+                .claim_boon()
+                .expect("enough echoes buys the boon");
+            assert!(s.character().has_boon(), "the boon is claimed");
+
+            off.save(&s); // persist echoes + boon (and the death).
+        }
+
+        // ── Run 2: the SAME identity RESUMES — a next run STARTS with the earned unlock. ──
+        {
+            let s = off
+                .open(who.clone(), SessionConfig::with_seed(9))
+                .expect("open run 2");
+            assert!(
+                s.character().echoes() >= dungeon_on_dregg::meta::BOON_PRICE,
+                "carried echoes across the run boundary: {}",
+                s.character().echoes()
+            );
+            assert!(
+                s.character().has_boon(),
+                "the NEXT run starts with the earned unlock (the boon carried by identity)"
+            );
+        }
+
+        // ── A DIFFERENT identity is a fresh character with no meta-progression. ──
+        {
+            let stranger = DreggIdentity("player-stranger-key".to_string());
+            let s = off
+                .open(stranger, SessionConfig::with_seed(3))
+                .expect("open stranger");
+            assert_eq!(
+                s.character().echoes(),
+                0,
+                "a different identity has no echoes"
+            );
+            assert!(!s.character().has_boon(), "and no carried unlock");
+        }
+    }
+
+    /// A DEEPER death banks strictly MORE meta-currency (the depth-scaled grant, driven end-to-end):
+    /// two identities perish, the one who died deeper carries more echoes across the run boundary.
+    #[test]
+    fn a_deeper_death_carries_more_meta_currency() {
+        let mut off = AdventurerOffering::new(InMemoryCharacterStore::new());
+        let shallow = DreggIdentity("player-shallow-key".to_string());
+        let deep = DreggIdentity("player-deep-key".to_string());
+
+        for (who, depth) in [(&shallow, 2u64), (&deep, 7u64)] {
+            let s = off
+                .open(who.clone(), SessionConfig::with_seed(3))
+                .expect("open");
+            s.character().perish().expect("death");
+            s.character().grant_echoes(depth).expect("grant on death");
+            off.save(&s);
+        }
+
+        let shallow_carry = off
+            .open(shallow, SessionConfig::with_seed(1))
+            .expect("reopen shallow")
+            .character()
+            .echoes();
+        let deep_carry = off
+            .open(deep, SessionConfig::with_seed(1))
+            .expect("reopen deep")
+            .character()
+            .echoes();
+        assert!(
+            deep_carry > shallow_carry,
+            "a deeper death carries more meta-currency: deep {deep_carry} > shallow {shallow_carry}"
+        );
     }
 
     /// The render reflects the (carried) character: level / XP / class appear in the surface.

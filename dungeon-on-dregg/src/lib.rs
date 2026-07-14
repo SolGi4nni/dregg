@@ -96,6 +96,17 @@ pub mod combat;
 /// kernel, not the game code. See [`progression`] for the cell model + the driven
 /// earned/premature/class-gate teeth.
 pub mod progression;
+
+/// META-PROGRESSION-ON-DEATH — the roguelite retention loop (the Hades / FTL reframe: a lost run
+/// ADVANCES you). Adds two slots to the persistent [`progression`] hero cell, each a real executor
+/// tooth: `echoes` (a [`Monotonic`](dregg_app_framework::StateConstraint::Monotonic) META-CURRENCY
+/// granted ONLY on a real death — `FieldEquals(dead, 1)` — tied to the depth reached) and `boon` (a
+/// [`WriteOnce`](dregg_app_framework::StateConstraint::WriteOnce) persistent UNLOCK bought with
+/// enough accrued echoes — `FieldGte(echoes, price)`). So a death funds a persistent unlock the next
+/// run carries; a forged grant (currency-without-death / unlock-without-currency) is refused. See
+/// [`meta`] for the cell model + the driven death-grants / deeper-more / won-grants-none /
+/// forged-refused teeth.
+pub mod meta;
 pub mod skills;
 pub mod spells;
 
