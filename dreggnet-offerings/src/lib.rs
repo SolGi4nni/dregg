@@ -487,6 +487,26 @@ pub trait Offering {
     /// state plus the [`actions`](Offering::actions) as cap-gated affordances.
     fn render(&self, session: &Self::Session) -> Surface;
 
+    /// **Render the session for a specific VIEWER** — the per-player projection an offering with
+    /// hidden information (a card hand, a fog-of-war board, a sealed bid) needs. Where
+    /// [`render`](Offering::render) paints ONE surface for everyone, `render_for` paints the
+    /// surface *as `viewer` sees it*: the viewer's own private state is revealed (their hand's
+    /// card ids), while every other player's private state stays fog (a count + a committed
+    /// commitment, never the identities). The same [`Surface`] shape every frontend already
+    /// renders; a [`Frontend`] that knows the acting identity calls `render_for(session, viewer)`
+    /// to serve the right projection to the right person.
+    ///
+    /// **Default (additive, non-breaking):** it falls back to [`render`](Offering::render) — a
+    /// full-information / public offering (the dungeon, the market, a grain) needs no per-viewer
+    /// projection, so it inherits this default and NOTHING changes for it. Only an offering with
+    /// genuinely hidden per-player state (a [`crate::Surface`] that must differ by who is looking)
+    /// overrides it; the hidden-hand fog lives in that override, not in the trait. This is the UI
+    /// projection (what a frontend paints for a viewer) — DISTINCT from the in-proof hidden hand
+    /// (the committed Merkle fold the executor gates on); the two agree but are separate seams.
+    fn render_for(&self, session: &Self::Session, _viewer: &DreggIdentity) -> Surface {
+        self.render(session)
+    }
+
     /// What a paid action costs (run-credits). The free tier is [`RunCost::free`].
     fn price(&self, input: &Action) -> RunCost;
 }
@@ -555,4 +575,51 @@ pub trait Frontend {
 
     /// Tear a session's surface down (archive the thread/chat on completion).
     fn teardown(&mut self, session: &SessionId);
+}
+
+#[cfg(test)]
+mod render_for_default_tests {
+    use super::*;
+    use deos_view::ViewNode;
+
+    /// A minimal full-information offering that does NOT override `render_for` — the additive
+    /// default must fall back to `render` so no existing impl breaks.
+    struct PublicOffering;
+
+    impl Offering for PublicOffering {
+        type Session = u64;
+        fn open(&self, _cfg: SessionConfig) -> Result<u64, OfferingError> {
+            Ok(42)
+        }
+        fn actions(&self, _s: &u64) -> Vec<Action> {
+            Vec::new()
+        }
+        fn advance(&self, _s: &mut u64, _i: Action, _a: DreggIdentity) -> Outcome {
+            Outcome::Refused("read-only".into())
+        }
+        fn verify(&self, _s: &u64) -> VerifyReport {
+            VerifyReport::ok(1)
+        }
+        fn render(&self, s: &u64) -> Surface {
+            Surface(ViewNode::Text(format!("session {s}")))
+        }
+        fn price(&self, _i: &Action) -> RunCost {
+            RunCost::free()
+        }
+        // render_for intentionally NOT overridden — exercises the trait default.
+    }
+
+    /// The defaulted `render_for` returns exactly what `render` returns (additive, non-breaking).
+    #[test]
+    fn render_for_defaults_to_render() {
+        let off = PublicOffering;
+        let s = off.open(SessionConfig::default()).expect("open");
+        let viewer = DreggIdentity("anyone".into());
+        let public = format!("{:?}", off.render(&s).view());
+        let viewed = format!("{:?}", off.render_for(&s, &viewer).view());
+        assert_eq!(
+            public, viewed,
+            "an offering that does not override render_for inherits render"
+        );
+    }
 }

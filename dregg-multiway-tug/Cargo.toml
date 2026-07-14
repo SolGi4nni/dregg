@@ -42,6 +42,16 @@ dregg-circuit = { path = "../circuit" }
 # THE REAL WorldCell — the deployed executor + ledger the game deploys onto.
 spween-dregg = { path = "../spween-dregg" }
 
+# --- Phase 5: the OFFERING + the per-player HIDDEN-HAND surface. ---
+# The frontend-agnostic Offering/Session core (the `Offering` trait + `Surface`/`Action`/
+# `Outcome`/`DreggIdentity`): `TugOffering` (`src/surface.rs`) hosts a round as an Offering
+# with a per-viewer hidden-hand render. Consumed, never modified.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# The deos affordance view-tree (`ViewNode` + the coordinate-grid `CoordGrid`/`CoordCell`,
+# the `Menu`/`Pill`/`Icon` nodes). `default-features = false` = NO gpui / SpiderMonkey (the
+# same light dep dreggnet-offerings takes); the surface is pure serializable DATA.
+deos-view = { path = "../deos-view", default-features = false }
+
 # --- Phase 3: the STARK FOLD (the hidden-hand tooth lowered into the recursive fold). ---
 # The `Witnessed{MerkleMembership}` → foldable-leaf lowering (`compiler::lower_witnessed_
 # merkle_membership`) — the IMT terminal owns the lowering; multiway-tug consumes it to fold

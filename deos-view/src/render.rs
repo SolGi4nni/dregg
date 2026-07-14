@@ -142,7 +142,9 @@ fn bind_plan(tree: &ViewNode, out: &mut Vec<Slot>) {
         | ViewNode::Halo { .. }
         | ViewNode::Slider { .. }
         | ViewNode::Toggle { .. }
-        | ViewNode::Tile { .. } => {}
+        | ViewNode::Tile { .. }
+        // A `coordgrid` holds DATA cells (no child `ViewNode`s, no bind sources) — registers nothing.
+        | ViewNode::CoordGrid { .. } => {}
     }
 }
 
@@ -716,6 +718,60 @@ impl AppletView {
                         cell = cell.max_w(w);
                     }
                     grid = grid.child(cell);
+                }
+                grid.into_any_element()
+            }
+            ViewNode::CoordGrid { cols, cells } => {
+                // A COORDINATE board — a wrapping flex of fixed-width cells (`cols` caps a row).
+                // A clickable cell (non-empty `turn`) is a Button firing the SAME `{turn, arg}`
+                // a menu row would (a real cap-gated verified turn); an inert cell is a Label. A
+                // highlighted cell is tinted with the accent (the legal-move / selected set).
+                let mut grid = div().flex().flex_wrap().gap_1();
+                let cell_w = if *cols > 0 {
+                    px(((480.0 / *cols as f32) - 8.0).max(32.0))
+                } else {
+                    px(40.)
+                };
+                for (i, cell) in cells.iter().enumerate() {
+                    let hl_color = if cell.highlight {
+                        tag_color("accent")
+                    } else if cell.tag.is_empty() {
+                        theme_fg
+                    } else {
+                        tag_color(&cell.tag)
+                    };
+                    if cell.turn.is_empty() {
+                        let mut inert = div()
+                            .w(cell_w)
+                            .items_center()
+                            .child(Label::new(cell.glyph.clone()).text_color(hl_color));
+                        if cell.highlight {
+                            inert = inert.border_1().border_color(tag_color("accent"));
+                        }
+                        grid = grid.child(inert);
+                    } else {
+                        let applet = self.applet.clone();
+                        let turn = cell.turn.clone();
+                        let arg = cell.arg;
+                        grid = grid.child(
+                            div().w(cell_w).child(
+                                Button::new((
+                                    "deos-cell",
+                                    label_hash(&format!("{}:{}:{}", cell.turn, cell.arg, i)),
+                                ))
+                                .label(cell.glyph.clone())
+                                .on_click(
+                                    move |_ev: &ClickEvent, _window, _cx| {
+                                        if let Err(e) = applet.borrow_mut().fire(&turn, arg) {
+                                            eprintln!(
+                                                "deos-view: cell '{turn}' did not commit: {e}"
+                                            );
+                                        }
+                                    },
+                                ),
+                            ),
+                        );
+                    }
                 }
                 grid.into_any_element()
             }

@@ -268,6 +268,40 @@ fn node(n: &ViewNode, binds: &BindValues, cursor: &mut usize, out: &mut String) 
             }
             out.push_str("</div>");
         }
+        // A COORDINATE board (`coordgrid`) → the SAME CSS grid + one control per DATA cell: a
+        // clickable cell is a `data-turn`/`data-arg` `<button>` (the identical affordance payload
+        // a `Button` carries — a REAL cap-gated verified turn), an inert cell a `<span>`. A cell
+        // in the highlight-set gets the `highlighted` class; its `tag` rides `data-tag` (the icon
+        // tint / cell class). The board is a leaf (no bind cursor consumed).
+        ViewNode::CoordGrid { cols, cells } => {
+            out.push_str(&format!(
+                "<div class=\"deos-coordgrid\" data-cols=\"{cols}\" style=\"{}\">",
+                if *cols > 0 {
+                    format!("display:grid;grid-template-columns:repeat({cols},1fr);")
+                } else {
+                    String::new()
+                }
+            ));
+            for cell in cells {
+                let hl = if cell.highlight { " highlighted" } else { "" };
+                if cell.turn.is_empty() {
+                    out.push_str(&format!(
+                        "<span class=\"deos-cell{hl}\" data-tag=\"{}\">{}</span>",
+                        escape(&cell.tag),
+                        escape(&cell.glyph)
+                    ));
+                } else {
+                    out.push_str(&format!(
+                        "<button class=\"deos-cell deos-button{hl}\" data-tag=\"{}\" data-turn=\"{}\" data-arg=\"{}\">{}</button>",
+                        escape(&cell.tag),
+                        escape(&cell.turn),
+                        cell.arg,
+                        escape(&cell.glyph)
+                    ));
+                }
+            }
+            out.push_str("</div>");
+        }
         ViewNode::Breadcrumb { items } => {
             out.push_str("<nav class=\"deos-breadcrumb\">");
             for (i, crumb) in items.iter().enumerate() {
@@ -576,6 +610,27 @@ fn session_node(node: &ViewNode, sid: &str, out: &mut String) {
         }
         ViewNode::Host { view: Some(v), .. } => session_node(v, sid, out),
         ViewNode::Adept(inner) => session_node(inner, sid, out),
+        // A coordinate board: each clickable cell is one POST-form control (its glyph the label);
+        // inert cells carry no affordance and are skipped in the server-form path.
+        ViewNode::CoordGrid { cells, .. } => {
+            for cell in cells {
+                if !cell.turn.is_empty() {
+                    let cls = if cell.highlight {
+                        "affordance highlighted"
+                    } else {
+                        "affordance"
+                    };
+                    out.push_str(&session_form(
+                        sid,
+                        &cell.turn,
+                        cell.arg,
+                        &cell.glyph,
+                        cls,
+                        "",
+                    ));
+                }
+            }
+        }
         ViewNode::Divider => out.push_str("<hr>"),
         // The live/bound rich leaves (bind/gauge/pill/slider/…) have no server-form actuation — the
         // deos-js + web-cells live path renders those. An unresolved host / bound leaf is skipped.

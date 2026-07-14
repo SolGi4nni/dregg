@@ -222,6 +222,22 @@ pub enum ViewNode {
     /// `WebShell`'s Servo render tile, any embedded native surface.
     Tile { handle: String, w: u32, h: u32 },
 
+    /// `coordgrid({cols}, cells:[{glyph, tag, turn, arg, highlight}])` → a COORDINATE-ADDRESSED
+    /// board field for spatial games (an automatafl board, a multiway-tug guild-lane strip).
+    /// Unlike [`ViewNode::Grid`] (which wraps arbitrary child `ViewNode`s in a wrapping flow),
+    /// a `CoordGrid` is a fixed `cols`-wide board of DATA cells: each [`CoordCell`] is a
+    /// glyph/short-label + a styling `tag` (icon tint / cell class) + an optional affordance
+    /// (`turn`/`arg` — a click fires a REAL cap-gated verified turn carrying, e.g., the target
+    /// square index) + a `highlight` flag (the legal-move / selected set the renderer paints
+    /// with an accent). The cells hold no child nodes, so a `CoordGrid` is a LEAF to the bind
+    /// cursor and the mount resolver (it consumes neither). The four renderers paint it: web =
+    /// the existing grid CSS + a `<button>`/`<span>` per cell + a `highlighted` class;
+    /// discord/telegram/wechat = a text grid (`cols`-wide, a highlighted / clickable cell
+    /// marked), the clickable cells surfacing as affordances (Discord buttons, the WeChat
+    /// numbered block). `n` (the number of cells) is `cells.len()`. Serves the tug board here,
+    /// the automatafl board next.
+    CoordGrid { cols: usize, cells: Vec<CoordCell> },
+
     /// **An ADEPT-ONLY wrapper (progressive disclosure).** Any node tagged `props.adept:true`
     /// lifts wrapped in this transparent marker — the "see the bones" detail (raw hashes, slot
     /// indices, internal fields) a newcomer should NOT see. [`disclose`] with [`Disclosure::Simple`]
@@ -354,6 +370,26 @@ pub struct HaloHandle {
     pub enabled: bool,
 }
 
+/// One cell of a [`ViewNode::CoordGrid`] — a coordinate-addressed board square. `glyph` is the
+/// short label / icon painted in the cell; `tag` its styling accent (icon tint / cell class); a
+/// non-empty `turn` makes the cell CLICKABLE (a press fires `turn` with `arg`, e.g. the target
+/// square index) — an empty `turn` is an inert cell (a wall, an occupied square, a spacer).
+/// `highlight` marks the cell as part of the highlight-set (the legal moves / the selected
+/// piece), painted with an accent in every renderer. A leaf datum: it carries no child nodes.
+#[derive(Debug, Clone)]
+pub struct CoordCell {
+    /// The glyph / short label painted in the cell.
+    pub glyph: String,
+    /// The styling accent (`good`/`warn`/`accent`/… — the renderer's cell class / icon tint).
+    pub tag: String,
+    /// The affordance a click fires (`arg` is the target-cell index). Empty → an inert cell.
+    pub turn: String,
+    /// The affordance argument (the cell index / the target square).
+    pub arg: i64,
+    /// Whether this cell is in the highlight-set (a legal move / the selected piece).
+    pub highlight: bool,
+}
+
 /// The raw JSON mirror of a `deos.ui.*` node (`{ kind, props, children }`). The
 /// engine's `JSON.stringify(tree)` produces exactly this; we then [`RawNode::lift`]
 /// it into the typed [`ViewNode`].
@@ -462,6 +498,9 @@ pub struct RawProps {
     pub w: Option<u32>,
     #[serde(default)]
     pub h: Option<u32>,
+    /// A `coordgrid`'s data cells (the `{glyph, tag, turn, arg, highlight}` board squares).
+    #[serde(default)]
+    pub cells: Option<Vec<RawCoordCell>>,
 
     // ── The CONSUMER-DELIGHT props (short-hash/avatar · value→word pill · disclosure). Every
     //    field optional; default behaviour is unchanged so existing cards are untouched. ──────
@@ -480,6 +519,21 @@ pub struct RawProps {
     /// via [`Disclosure::from_prop`] to choose which level to [`disclose`] before rendering.
     #[serde(default)]
     pub disclosure: Option<String>,
+}
+
+/// The raw `{glyph?, tag?, turn?, arg?, highlight?}` mirror of a `coordgrid` cell.
+#[derive(Debug, Clone, Deserialize)]
+pub struct RawCoordCell {
+    #[serde(default)]
+    pub glyph: String,
+    #[serde(default)]
+    pub tag: String,
+    #[serde(default)]
+    pub turn: String,
+    #[serde(default)]
+    pub arg: i64,
+    #[serde(default)]
+    pub highlight: bool,
 }
 
 /// The raw `{value, label, tag}` mirror of a live `pill`'s case (the value→word mapping).
@@ -679,6 +733,23 @@ impl RawNode {
                 w: self.props.w.unwrap_or(0),
                 h: self.props.h.unwrap_or(0),
             },
+            "coordgrid" => ViewNode::CoordGrid {
+                cols: self.props.cols.unwrap_or(0),
+                cells: self
+                    .props
+                    .cells
+                    .clone()
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(|c| CoordCell {
+                        glyph: c.glyph,
+                        tag: c.tag,
+                        turn: c.turn,
+                        arg: c.arg,
+                        highlight: c.highlight,
+                    })
+                    .collect(),
+            },
             // `host(cellId)` — a child (if present) is the provided/pre-baked hosted subtree;
             // no child = an UNRESOLVED mount (filled later from the cell heap by
             // [`resolve_mounts`]). At most one hosted subtree (a host mounts ONE cell's tree).
@@ -724,6 +795,35 @@ impl MountSource for MapMountSource {
     fn hosted_tree(&self, cell: &str) -> Option<ViewNode> {
         self.0.get(cell).cloned()
     }
+}
+
+/// **Render a [`ViewNode::CoordGrid`] as a plain-text grid** — `cols`-wide rows of cell glyphs,
+/// a highlighted cell bracketed `[g]`, an inert cell padded ` g `. The ONE text projection the
+/// text renderers (discord / telegram / wechat) share so the board reads identically across them
+/// (the same spirit as [`pill_display`]). An empty glyph paints `·`.
+pub fn coordgrid_text(cols: usize, cells: &[CoordCell]) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut row: Vec<String> = Vec::new();
+    for cell in cells {
+        let g = if cell.glyph.is_empty() {
+            "·"
+        } else {
+            cell.glyph.as_str()
+        };
+        row.push(if cell.highlight {
+            format!("[{g}]")
+        } else {
+            format!(" {g} ")
+        });
+        if cols > 0 && row.len() == cols {
+            lines.push(row.join(""));
+            row.clear();
+        }
+    }
+    if !row.is_empty() {
+        lines.push(row.join(""));
+    }
+    lines.join("\n")
 }
 
 /// Resolve a live `pill`'s display `(label, tag)` from its bound slot `value`: the first
@@ -912,7 +1012,9 @@ fn resolve_rec(
         | ViewNode::Halo { .. }
         | ViewNode::Slider { .. }
         | ViewNode::Toggle { .. }
-        | ViewNode::Tile { .. } => node.clone(),
+        | ViewNode::Tile { .. }
+        // A `coordgrid` holds DATA cells (no child `ViewNode`s), so no mount can hide inside it.
+        | ViewNode::CoordGrid { .. } => node.clone(),
     }
 }
 
@@ -1575,5 +1677,36 @@ mod delight_tests {
         let mut adept = Vec::new();
         slots(&disclose(&card, Disclosure::Adept), &mut adept);
         assert_eq!(adept, vec![5, 6, 7], "adept keeps all three in pre-order");
+    }
+
+    /// A `coordgrid` lifts its `cols` + its DATA cells (glyph/tag/turn/arg/highlight) — the
+    /// coordinate board node. Non-vacuous: the highlight-set + the per-cell affordances survive.
+    #[test]
+    fn coordgrid_lifts_cells_cols_and_highlight() {
+        let tree = parse_view_tree(
+            r##"{ "kind":"coordgrid", "props":{ "cols":2, "cells":[
+                 { "glyph":"·", "turn":"move", "arg":0, "highlight":true },
+                 { "glyph":"P", "tag":"accent", "arg":1 },
+                 { "glyph":"·", "turn":"move", "arg":2, "highlight":true },
+                 { "glyph":"#" } ] } }"##,
+        )
+        .expect("parse coordgrid");
+        let ViewNode::CoordGrid { cols, cells } = tree else {
+            panic!("root is a coordgrid");
+        };
+        assert_eq!(cols, 2, "board is 2 cols wide");
+        assert_eq!(cells.len(), 4, "four board squares (n = cells.len())");
+        // The highlight-set = the two `move` cells (legal targets).
+        let hl: Vec<i64> = cells
+            .iter()
+            .filter(|c| c.highlight)
+            .map(|c| c.arg)
+            .collect();
+        assert_eq!(hl, vec![0, 2], "the highlight-set is honored per cell");
+        // A clickable cell carries its affordance; an inert cell (wall/piece) does not.
+        assert_eq!(cells[0].turn, "move");
+        assert!(cells[1].turn.is_empty(), "the piece cell is inert");
+        assert_eq!(cells[1].tag, "accent");
+        assert!(cells[3].turn.is_empty(), "the wall cell is inert");
     }
 }

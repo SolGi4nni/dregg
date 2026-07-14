@@ -68,6 +68,14 @@ fn walk(node: &ViewNode, depth: usize, out: &mut String) {
         }
         ViewNode::Host { view: Some(v), .. } => walk(v, depth, out),
         ViewNode::Adept(inner) => walk(inner, depth, out),
+        // A coordinate board contributes its text grid to the prose (a highlighted cell bracketed);
+        // the clickable cells ride the channel's affordance carrier (keyboard / numbered block).
+        ViewNode::CoordGrid { cols, cells } => {
+            let grid = crate::tree::coordgrid_text(*cols, cells);
+            for line in grid.lines() {
+                push_line(out, line);
+            }
+        }
         // The bound/indicator leaves have no plain-text projection here.
         _ => {}
     }

@@ -60,6 +60,9 @@ pub mod hidden_hand;
 pub mod packs;
 pub mod reference;
 pub mod state;
+/// Phase 5 — the [`dreggnet_offerings::Offering`] + the per-player HIDDEN-HAND surface (the
+/// guild-lane table, the coordinate-grid hand, the greyed action menu; a play is a real turn).
+pub mod surface;
 
 pub use game::MultiwayTug;
 pub use hidden_hand::{
@@ -71,3 +74,4 @@ pub use packs::{
 };
 pub use reference::{ActionKind, Engine, Player, Projection, ResolvedMove};
 pub use state::Deployment;
+pub use surface::{TugOffering, TugSession};

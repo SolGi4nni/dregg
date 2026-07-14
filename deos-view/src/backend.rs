@@ -153,6 +153,15 @@ fn walk(node: &ViewNode, enabled_for: &dyn Fn(&str) -> Option<bool>, out: &mut V
         | ViewNode::Grid { children: cs, .. } => kids(cs, out),
         ViewNode::Host { view: Some(v), .. } => walk(v, enabled_for, out),
         ViewNode::Adept(inner) => walk(inner, enabled_for, out),
+        // A coordinate board: each CLICKABLE cell (non-empty `turn`) is one fixed `{turn, arg}`
+        // press — the glyph is its label — so a board square reaches the numbered/keyboard carrier.
+        ViewNode::CoordGrid { cells, .. } => {
+            for cell in cells {
+                if !cell.turn.is_empty() {
+                    push(out, &cell.turn, cell.arg, &cell.glyph, true);
+                }
+            }
+        }
         // Leaves (and the value-dependent Slider/Toggle — see the doc above) carry no fixed press.
         _ => {}
     }

@@ -42,7 +42,7 @@
 
 use crate::affordance::AffordanceTransport;
 use crate::backend::SurfaceBackend;
-use crate::tree::ViewNode;
+use crate::tree::{coordgrid_text, ViewNode};
 use serenity::all::{ButtonStyle, CreateActionRow, CreateButton, CreateEmbed};
 
 /// The custom-id prefix carrying a [`ViewNode::Button`]'s affordance through Discord's
@@ -216,6 +216,19 @@ fn block(n: &ViewNode, binds: &[u64], cursor: &mut usize, acc: &mut Accum) {
         ViewNode::Grid { children, .. } => {
             for c in children {
                 block(c, binds, cursor, acc);
+            }
+        }
+        // A coordinate board flattens to a text grid line-block; each CLICKABLE cell also joins
+        // the component grid as a button (its glyph the label, its `{turn, arg}` the custom-id).
+        ViewNode::CoordGrid { cols, cells } => {
+            push_line(&mut acc.description, &coordgrid_text(*cols, cells));
+            for cell in cells {
+                if !cell.turn.is_empty() {
+                    acc.buttons.push((
+                        cell.glyph.clone(),
+                        affordance_custom_id(&cell.turn, cell.arg),
+                    ));
+                }
             }
         }
         ViewNode::Breadcrumb { items } => {
@@ -394,6 +407,17 @@ fn inline(
         ViewNode::Grid { children, .. } => {
             for c in children {
                 inline(c, binds, cursor, parts, buttons);
+            }
+        }
+        ViewNode::CoordGrid { cols, cells } => {
+            parts.push(coordgrid_text(*cols, cells));
+            for cell in cells {
+                if !cell.turn.is_empty() {
+                    buttons.push((
+                        cell.glyph.clone(),
+                        affordance_custom_id(&cell.turn, cell.arg),
+                    ));
+                }
             }
         }
         ViewNode::Gauge { slot, max, label } => {

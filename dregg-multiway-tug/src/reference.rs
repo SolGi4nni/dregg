@@ -275,6 +275,28 @@ impl Engine {
         }
     }
 
+    /// The player whose turn it is to act next (the mover of the next [`Engine::play_next`]).
+    pub fn current_player(&self) -> Player {
+        self.current
+    }
+
+    /// The action the current player would play next (their scheduled order), or `None` if the
+    /// round is complete. Lets a surface offer the *right* once-per-round action and refuse an
+    /// out-of-order fire.
+    pub fn peek_next_action(&self) -> Option<ActionKind> {
+        if self.round_complete() {
+            None
+        } else {
+            Some(self.order[self.order_pos[self.current.idx()]])
+        }
+    }
+
+    /// Whether `p` has already spent their once-per-round `action` (the used-flag). A surface
+    /// greys a used action.
+    pub fn used_flag(&self, p: Player, a: ActionKind) -> bool {
+        self.used[p.idx()][a.idx()]
+    }
+
     fn board_count(&self, p: Player) -> u64 {
         (0..N_GUILDS).map(|g| self.score[g][p.idx()]).sum()
     }
