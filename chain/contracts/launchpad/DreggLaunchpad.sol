@@ -116,9 +116,20 @@ contract DreggLaunchpad {
         uint256 qty; // whole tokens demanded (revealed)
         uint256 filled; // whole tokens awarded (set at clearing)
         bool settled;
+        bool refunded; // escrow reclaimed via the timeout backstop (mutually exclusive with a cleared settle)
     }
 
     uint256 public constant TOKEN_UNIT = 1e18;
+
+    /// The liveness backstop grace: after a launch's `revealEnd`, the clearing has
+    /// exactly this long to land a valid `finalizeClearing`. Past it, the clearing
+    /// window is CLOSED and every committed bidder may permissionlessly reclaim the
+    /// full escrow (`reclaimEscrow`). This turns a stuck/un-finalized clearing — a
+    /// dead devnet, an attestor that never attests, a committee that withholds —
+    /// into a stall-then-refund, never a loss (the shielded-grade liveness backstop
+    /// designed in `PRIVATE-DREGG-PUBLIC-LAUNCHPAD-ARCHITECTURE.md` §5). The two
+    /// windows are DISJOINT in time, so a clearing and a refund can never both apply.
+    uint64 public constant REFUND_GRACE = 7 days;
 
     uint256 public launchCount;
     mapping(uint256 => Launch) private _launches;
@@ -138,6 +149,7 @@ contract DreggLaunchpad {
     event BidRevealed(uint256 indexed launchId, address indexed bidder, uint256 price, uint256 qty);
     event Cleared(uint256 indexed launchId, uint256 clearingPrice, uint256 soldQty, bool attested);
     event BidSettled(uint256 indexed launchId, address indexed bidder, uint256 filled, uint256 paid, uint256 refunded);
+    event EscrowReclaimed(uint256 indexed launchId, address indexed bidder, uint256 amount);
     event ProceedsWithdrawn(uint256 indexed launchId, address indexed creator, uint256 amount);
     event CreatorAllocationClaimed(uint256 indexed launchId, address indexed creator, uint256 amount);
     event Graduated(
@@ -166,6 +178,11 @@ contract DreggLaunchpad {
     error BadPermutation(); // not a permutation of revealed bids (drop/insert)
     error NotSortedDescending(); // book not in uniform-clearing order
     error ClearingNotAttested();
+    error ClearingWindowClosed(uint64 closedAt); // past revealEnd+grace: finalize is refused, refunds are open
+    error LaunchAlreadyCleared(); // a cleared/finalized launch cannot be refund-drained
+    error RefundNotYetAvailable(uint64 refundableAt); // before revealEnd+grace: escrow is still in play
+    error NothingToRefund(); // never committed / already zeroed
+    error AlreadyRefunded(); // no double-refund
     error NothingToSettle();
     error NotCreator();
     error CreatorLockActive(uint64 until);
@@ -325,6 +342,12 @@ contract DreggLaunchpad {
         Launch storage L = _launches[launchId];
         if (L.phase == Phase.None) revert NoSuchLaunch(launchId);
         if (block.timestamp < L.revealEnd) revert RevealWindowOpen();
+        // Liveness backstop: the clearing window closes at revealEnd+grace. Past it,
+        // finalize is refused so a straggler can never override the refund path — the
+        // clearing and refund windows are DISJOINT (a valid clearing here can't be
+        // escaped by a refund; a stale clearing there can't reopen after refunds).
+        uint64 clearingDeadline = L.revealEnd + REFUND_GRACE;
+        if (block.timestamp >= clearingDeadline) revert ClearingWindowClosed(clearingDeadline);
         if (L.phase == Phase.Cleared || L.phase == Phase.Finalized) revert NotClearPhase();
 
         // Permutation-checked descending-sort + marginal-fill walk (kept in a
@@ -420,6 +443,50 @@ contract DreggLaunchpad {
         if (refund > 0) _sendEth(bidder, refund);
 
         emit BidSettled(launchId, bidder, b.filled, payment, refund);
+    }
+
+    // ─── Liveness backstop: timeout escrow-reclaim ──────────────────────────────
+
+    /// @notice Reclaim the FULL escrowed bid of a STUCK launch — permissionlessly,
+    ///         from the on-chain escrow, no operator needed. A launch is stuck iff
+    ///         the clearing window (revealEnd + `REFUND_GRACE`) has elapsed and it
+    ///         never reached `Cleared`/`Finalized`: dregg stalled, the attestor
+    ///         never attested, a committee withheld, or a devnet died mid-clearing.
+    ///         Because `finalizeClearing` is refused past that same deadline
+    ///         (`ClearingWindowClosed`), the refund and clearing windows are
+    ///         DISJOINT — this can never race a valid clearing, and a cleared launch
+    ///         can never be refund-drained (`LaunchAlreadyCleared`). Worst case for a
+    ///         private/shielded clearing is therefore stall-then-refund, NEVER loss.
+    ///         Refunds the committer's own `deposit` (works for a committed-but-never-
+    ///         revealed bidder too — the launch may have died in the commit phase).
+    function reclaimEscrow(uint256 launchId) external {
+        Launch storage L = _launches[launchId];
+        if (L.phase == Phase.None) revert NoSuchLaunch(launchId);
+        // A cleared/finalized launch settles by the clearing rules — no refund door.
+        if (L.phase == Phase.Cleared || L.phase == Phase.Finalized) revert LaunchAlreadyCleared();
+        uint64 refundableAt = L.revealEnd + REFUND_GRACE;
+        if (block.timestamp < refundableAt) revert RefundNotYetAvailable(refundableAt);
+
+        Bid storage b = _bids[launchId][msg.sender];
+        if (b.refunded) revert AlreadyRefunded(); // precise double-refund report (before the zeroed-deposit check)
+        if (!b.committed || b.deposit == 0) revert NothingToRefund();
+
+        // Checks-effects-interactions: latch + zero the escrow BEFORE the transfer,
+        // so a re-entrant reclaim finds nothing (AlreadyRefunded / zero deposit).
+        b.refunded = true;
+        uint256 amount = b.deposit;
+        b.deposit = 0;
+
+        _sendEth(msg.sender, amount);
+        emit EscrowReclaimed(launchId, msg.sender, amount);
+    }
+
+    /// @notice Whether `launchId` is in its permissionless refund window (stuck: past
+    ///         revealEnd+grace and never cleared). A UI reads this to offer reclaim.
+    function refundable(uint256 launchId) external view returns (bool) {
+        Launch storage L = _launches[launchId];
+        if (L.phase == Phase.None || L.phase == Phase.Cleared || L.phase == Phase.Finalized) return false;
+        return block.timestamp >= L.revealEnd + REFUND_GRACE;
     }
 
     /// @notice Creator withdraws the accumulated raise PROCEEDS (the winners'
