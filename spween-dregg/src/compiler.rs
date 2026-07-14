@@ -27,8 +27,20 @@
 //! touch the var). A gate whose var is *`Set`* by the same choice (post is a
 //! constant, independent of pre) cannot be lifted — that clause is left to the
 //! runtime/handler gate and no executor constraint is emitted for it. `Compare`
-//! against a string/float is likewise handler-only in v0. The numeric/bool gates
-//! (`courage >= 5`, `gold >= 100`, `inventory.key`) lower to real executor teeth.
+//! against a string/float literal is likewise handler-only in v0. The numeric/bool
+//! gates (`courage >= 5`, `gold >= 100`, `inventory.key`) lower to real executor teeth.
+//!
+//! ## VAR-OP-VAR gates (a cross-variable tooth)
+//!
+//! A comparison whose RHS is another VARIABLE (`{ gold >= "$price" }`, `{ hp <= "$cap"
+//! }`) lowers to a real CROSS-SLOT tooth — [`StateConstraint::FieldLteOther`]
+//! (`new[a] <= new[b] + delta`) — instead of falling back to the handler gate, so a
+//! cross-variable gate BITES on the verified executor (a broke buyer whose `gold` is
+//! below the dynamic `price` is REFUSED, not merely hidden client-side). The current
+//! git-pinned spween grammar parses a comparison's RHS only as a literal, so the
+//! var-reference rides the closest expressible form — a quoted string with a `$` sigil
+//! (see [`var_ref`]); a native `var op var` is the noted parser follow-up. See
+//! [`cross_var_teeth`] for the pre→post lift and its clamp guard.
 //!
 //! ## The clamp caveat (why a same-var decrement needs an exact-delta companion)
 //!
@@ -327,11 +339,39 @@ fn collect_clause(
     match clause {
         ConditionClause::Compare(c) => {
             vars.insert(c.var.to_string());
+            // A VAR-OP-VAR gate (`{ gold >= "$price" }`): the referenced var on the
+            // RHS also needs a slot so the cross-slot tooth can read it. See
+            // [`var_ref`] for the `$`-sigil convention (the closest form the current
+            // spween grammar expresses; a native `var op var` is the noted follow-up).
+            if let Some(rname) = var_ref(&c.value) {
+                vars.insert(rname.to_string());
+            }
         }
         ConditionClause::Has(h) => {
             has.insert((h.category.to_string(), h.key.to_string()));
         }
         ConditionClause::Not(inner) => collect_clause(inner, vars, has),
+    }
+}
+
+/// A **VAR-OP-VAR reference** on the RHS of a `Compare` clause. The current spween
+/// grammar (git-pinned `emberian/spween`) parses a comparison's RHS only as a literal
+/// (`parse_value` rejects a bare identifier), so `{ gold >= price }` does NOT parse.
+/// The closest expressible form is a QUOTED STRING RHS, which the v0 compiler always
+/// left handler-only (a string never projects to the numeric slot encoding). We give
+/// that idle form a meaning: a string beginning with `$` names a VARIABLE, so
+/// `{ gold >= "$price" }` is the cross-variable gate `gold >= price`. Unambiguous (a
+/// real string literal does not lead with `$`) and strictly additive (a plain-string
+/// RHS stays handler-only exactly as before).
+///
+/// FOLLOW-UP (the external grammar): teach `emberian/spween`'s `parse_condition_clause`
+/// to accept an identifier RHS (`var op var`) directly, so authors can drop the
+/// `"$…"` quoting; the compiler already lowers the relation, so it is a pure parser
+/// widening.
+fn var_ref(value: &Value) -> Option<&str> {
+    match value {
+        Value::String(s) => s.strip_prefix('$').filter(|r| !r.is_empty()),
+        _ => None,
     }
 }
 
@@ -422,6 +462,20 @@ fn lower_clause(
     match clause {
         ConditionClause::Compare(c) => {
             let &slot = var_slots.get(c.var.as_str())?;
+            // VAR-OP-VAR (`{ gold >= "$price" }`): compare two cell slots, not a slot to
+            // a literal. Lowers to a cross-slot [`StateConstraint::FieldLteOther`] tooth
+            // the executor re-checks — a real cross-variable gate, not a handler courtesy.
+            if let Some(rname) = var_ref(&c.value) {
+                let &rslot = var_slots.get(rname)?;
+                return cross_var_teeth(
+                    slot as u8,
+                    rslot as u8,
+                    c.op,
+                    effects,
+                    c.var.as_str(),
+                    rname,
+                );
+            }
             let base = numeric_value(&c.value)?;
             let d = match delta_for(effects, c.var.as_str()) {
                 Delta::Add(n) => n,
@@ -506,6 +560,72 @@ fn lift_defeated_by_clamp(op: CompareOp, base: i64, d: i64) -> bool {
         // `!=` is not lowered (`compare_constraint` returns `None`).
         CompareOp::Ne => false,
     }
+}
+
+/// The teeth a **VAR-OP-VAR** gate (`gvar op rvar`, both variables) lowers to: a
+/// cross-slot [`StateConstraint::FieldLteOther`] (`new[a] <= new[b] + delta`, signed)
+/// the executor re-checks on the post-state — a real cross-variable tooth, not a
+/// handler courtesy.
+///
+/// ## The lift (pre-gate → post-tooth), and its clamp guard
+///
+/// The gate is a PRE-state relation but a constraint bites POST-state. With the
+/// choice's net deltas `dg` on `gvar` and `dr` on `rvar` and NO clamp, `gvar_post =
+/// gvar_pre + dg` and `rvar_post = rvar_pre + dr`, so e.g. `gvar_pre >= rvar_pre ⟺
+/// gvar_post >= rvar_post + (dg − dr) ⟺ new[rvar] <= new[gvar] + (dr − dg)`.
+///
+/// The lift assumes `post = pre + d` EXACTLY, but the executor CLAMPS a `Modify` at
+/// zero (`post = max(0, pre+d)`). When BOTH deltas are non-negative (`dg ≥ 0` and
+/// `dr ≥ 0`) no clamp can fire (`pre ≥ 0 ⇒ pre+d ≥ 0`) and the lift is exact, so we
+/// emit the real tooth. When either operand is DECREMENTED by the same choice the
+/// clamp can defeat the lift; rather than emit an under-pinned tooth we leave the whole
+/// clause to the runtime/handler gate (returns `None`, clearing `fully_gated`) — the
+/// cross-var clamp companion is a scheduled sharpening, and the spween grammar cannot
+/// even decrement by a *variable* amount (only a literal `-=`), so a var-priced
+/// purchase's gate var is untouched (`dg = 0`) in the realistic case.
+///
+/// `!=` has no single cross-slot `<=` form and stays handler-only (mirrors the literal
+/// [`compare_constraint`] `Ne` case).
+fn cross_var_teeth(
+    gslot: u8,
+    rslot: u8,
+    op: CompareOp,
+    effects: &[Effect],
+    gname: &str,
+    rname: &str,
+) -> Option<Vec<StateConstraint>> {
+    let dg = match delta_for(effects, gname) {
+        Delta::Add(n) => n,
+        Delta::Overwritten => return None,
+    };
+    let dr = match delta_for(effects, rname) {
+        Delta::Add(n) => n,
+        Delta::Overwritten => return None,
+    };
+    // Clamp guard: only the both-non-negative case lifts exactly (see doc above).
+    if dg < 0 || dr < 0 {
+        return None;
+    }
+    // `FieldLteOther { index, other, delta }` ⟺ `new[index] <= new[other] + delta`.
+    let lte = |index: u8, other: u8, delta: i64| StateConstraint::FieldLteOther {
+        index,
+        other,
+        delta,
+    };
+    Some(match op {
+        // gvar >= rvar  ⟺  new[rvar] <= new[gvar] + (dr − dg)
+        CompareOp::Ge => vec![lte(rslot, gslot, dr - dg)],
+        // gvar <= rvar  ⟺  new[gvar] <= new[rvar] + (dg − dr)
+        CompareOp::Le => vec![lte(gslot, rslot, dg - dr)],
+        // gvar >  rvar  ⟺  gvar ≥ rvar+1  ⟺  new[rvar] <= new[gvar] + (dr − dg) − 1
+        CompareOp::Gt => vec![lte(rslot, gslot, dr - dg - 1)],
+        // gvar <  rvar  ⟺  gvar+1 ≤ rvar  ⟺  new[gvar] <= new[rvar] + (dg − dr) − 1
+        CompareOp::Lt => vec![lte(gslot, rslot, dg - dr - 1)],
+        // gvar == rvar  ⟺  the pair of `<=` bounds (each direction).
+        CompareOp::Eq => vec![lte(gslot, rslot, dg - dr), lte(rslot, gslot, dr - dg)],
+        // `!=` has no single cross-slot `<=` form — leave to the handler gate.
+        CompareOp::Ne => return None,
+    })
 }
 
 /// Reduce an expression to a single [`SimpleStateConstraint`] for use inside an
