@@ -43,6 +43,17 @@ const HERE = path.dirname(fileURLToPath(import.meta.url));
 const EXT = path.resolve(HERE, '..', 'extension');
 const REPO = path.resolve(HERE, '..');
 const PORT = process.env.PORT || 8781;
+// Bind address. Default localhost-only (nothing off-box reaches it). Set
+// DREX_BIND to the hbox LAN IP (192.168.50.39) to let ember reach it from
+// their Mac over the LAN — still PRIVATE: hbox's ufw is default-deny inbound
+// with the LAN allowed, so a LAN bind is reachable-to-ember, not public. We
+// REFUSE 0.0.0.0 / :: (an all-interfaces bind is public) — a LAN dogfood is a
+// specific-interface bind, never the wildcard.
+const HOST = process.env.DREX_BIND || '127.0.0.1';
+if (HOST === '0.0.0.0' || HOST === '::' || HOST === '*') {
+  console.error(`refusing to bind ${HOST} (public/all-interfaces). Set DREX_BIND to 127.0.0.1 or the LAN IP 192.168.50.39.`);
+  process.exit(1);
+}
 
 // The live dregg node the settlement lands on. Default: a local single-node dev
 // instance (`dregg-node run --port 8420 --enable-faucet --prove-turns`), or the
@@ -50,6 +61,10 @@ const PORT = process.env.PORT || 8781;
 const NODE = (process.env.DREGG_NODE || 'http://127.0.0.1:8420').replace(/\/$/, '');
 const NODE_PASSPHRASE = process.env.DREGG_NODE_PASSPHRASE || 'drex-dev-node';
 let nodeBearer = null; // cached across requests once the node is unlocked.
+
+// The DrEX settlement-pool cell — value the clearing moves lands here as a real
+// Transfer. A fixed dev address (`de55e771…`, "settle"); materialized once.
+const SETTLE_CELL = 'de55e771' + '0'.repeat(56);
 
 // Unlock the node (idempotent): the FIRST unlock on a fresh data dir sets the
 // dev passphrase and returns the bearer token that authorizes /turn/submit;
@@ -96,36 +111,43 @@ async function settleOnNode(cleared) {
   const operator = ident && ident.agent_cell;
   if (!operator) throw new Error('node identity has no agent cell');
 
-  const allocs = (cleared.allocations || []).filter((a) => !a.rested);
   const legs = (cleared.ring && cleared.ring.legs) || [];
   const conserved = (cleared.conservation || []).reduce((s, c) => s + (Number(c.in) || 0), 0);
+  const legSum = legs.reduce((s, l) => s + (Number(l.amount) || 0), 0);
 
-  // Effects on the operator's own cell (the node signs as itself and owns it):
-  //   SetField index 0     = number of settled ring legs (a real state write)
-  //   SetField index 1     = total conserved value across the batch (batch digest)
-  //   SetField index 2+i   = trader i's received amount (the cleared allocation)
-  //   EmitEvent drex_clear_leg per leg  → queryable via /api/events + receipts
+  // The settlement lands as a REAL value-bearing Transfer (operator → the DrEX
+  // settlement-pool cell) plus one EmitEvent per ring leg. This is the cohort the
+  // node's full-turn STARK prover REALIZES: a Transfer turn commits AND gets a
+  // self-verified full-turn STARK proof attached (has_proof:true). A multi-
+  // SetField turn is committed-but-UNATTESTED at this node HEAD — the per-index
+  // setFieldVmDescriptor2 cohort selector binds ambiguously and the prover rejects
+  // its own proof — so we settle the clearing as value MOVED, which both proves
+  // and models the clearing (the batch moved `legSum` of value) more faithfully.
+  const settleAmount = Math.max(1, Math.min(legSum || legs.length || 1, 1000));
+
+  // The pool cell must EXIST before value can move into it (Transfer rejects an
+  // unmaterialized destination). Faucet 1 computron to materialize it (idempotent;
+  // per-cell rate-limited, but it only needs to exist once).
+  await nodeFaucet(SETTLE_CELL, 1);
+
   const effects = [
-    { kind: 'set_field', index: 0, value: felt(legs.length) },
-    { kind: 'set_field', index: 1, value: felt(conserved) },
+    { kind: 'transfer', to: SETTLE_CELL, amount: settleAmount },
   ];
-  allocs.slice(0, 8).forEach((a, i) => {
-    effects.push({ kind: 'set_field', index: 2 + i, value: felt(a.received) });
-  });
   for (const l of legs) {
     effects.push({ kind: 'emit_event', topic: 'drex_clear_leg', data: [felt(l.amount)] });
   }
   effects.push({ kind: 'emit_event', topic: 'drex_clear_batch', data: [felt(legs.length), felt(conserved)] });
 
-  // Budget: the turn fee sets the computron limit (must exceed the ~200/effect
-  // the effect-VM charges) and the operator cell balance must back it. Top the
-  // operator up first (faucet is 1/cell/min on a dev node, so keep the fee modest).
+  // Budget: the turn fee sets the computron limit and the operator cell must back
+  // fee + the transferred amount. Top the operator up first (faucet is 1/cell/min
+  // on a dev node, so keep the fee modest).
   const fee = 800 + 350 * effects.length;
-  if ((ident.agent_balance || 0) < fee) {
+  const need = fee + settleAmount;
+  if ((ident.agent_balance || 0) < need) {
     await nodeFaucet(operator, 10000);
     const re = await nodeGet('/api/node/identity');
-    if (re && (re.agent_balance || 0) < fee) {
-      throw new Error(`operator cell underfunded (have ${re.agent_balance}, need ${fee}); faucet is rate-limited — retry in ~1 min`);
+    if (re && (re.agent_balance || 0) < need) {
+      throw new Error(`operator cell underfunded (have ${re.agent_balance}, need ${need}); faucet is rate-limited — retry in ~1 min`);
     }
   }
 
@@ -147,16 +169,19 @@ async function settleOnNode(cleared) {
   // WitnessedReceipt (has_proof / witness_count on the receipt).
   // The receipt endpoint returns a flat ReceiptInfo (serde-flattened): turn_hash,
   // pre_state/post_state, computrons_used, action_count, has_proof, witness_count.
+  // The async prove_pool attaches the self-verified full-turn STARK proof within
+  // ~4–15s (a Transfer cohort; queue-depth dependent), so poll for up to ~24s
+  // rather than time out before it lands.
   let proof = null, r = null;
-  for (let i = 0; i < 8; i++) {
+  for (let i = 0; i < 40; i++) {
     if (!proof) {
       const p = await nodeGet('/api/turn/' + turnHash + '/proof');
       if (p && !p.__status && p.proof_len) proof = { present: true, len: p.proof_len, mode: 'stark_full_turn' };
     }
     const recs = await nodeGet('/api/starbridge/receipts?turn_hash=' + turnHash);
     if (Array.isArray(recs) && recs.length) r = recs[0].receipt || recs[0];
-    if (proof || (r && r.witness_count > 0)) break;
-    await new Promise((x) => setTimeout(x, 500));
+    if (proof || (r && (r.witness_count > 0 || r.has_proof))) break;
+    await new Promise((x) => setTimeout(x, 600));
   }
   if (!proof && r && (r.witness_count > 0 || r.has_proof)) {
     proof = { present: true, len: null, mode: 'witnessed_receipt', witnessCount: r.witness_count };
@@ -309,8 +334,8 @@ http.createServer(async (req, res) => {
     if (err) return send(res, 404, 'not found: ' + url);
     send(res, 200, buf, MIME[path.extname(file)] || 'application/octet-stream');
   });
-}).listen(PORT, () => {
-  console.log('DrEX dev server → http://localhost:' + PORT);
+}).listen(PORT, HOST, () => {
+  console.log('DrEX dev server → http://' + HOST + ':' + PORT);
   console.log('  wallet wasm mounted from ' + EXT + '  (/wasm/dregg_wasm.js)');
   const { where } = drexClearCmd();
   console.log('  REAL matcher   POST /clear  → drex_clear @ ' + where + '  (solver.rs + verified_settle.rs)');

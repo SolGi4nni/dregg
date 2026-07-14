@@ -59,6 +59,67 @@ Manage it with [`scripts/private-node.sh`](../../scripts/private-node.sh).
 
 ---
 
+## The clickable DrEX (private LAN dogfood) — for ember
+
+`drex-web` is stood up on hbox, LAN-bound, pointed at this private node. Open it
+from your Mac (192.168.50.130) over the LAN:
+
+> **http://192.168.50.39:8781**
+
+What to do: click **Place sealed order** → approve the nonce-bound order card in
+the cipherclerk popup (real wasm sign + solvency/eligibility proofs) → **Advance
+batch → reveal & clear**. The reveal runs the REAL Rust solver (`drex_clear`:
+`solver.rs` ring match + `verified_settle.rs` kernel fold) and then lands the
+clearing as **one real turn on this private node** — executed on the verified
+effect-VM and **STARK-proven** by the prove-pool. The final flow row shows
+`committed + proven` with the turn hash and `witness_count=1` (a self-verified
+full-turn STARK proof attached to the receipt). A trade in the browser IS a real
+proven turn on the private node — verified end-to-end:
+
+```
+POST /clear  → real solver ring  (e.g. Bram → Ada → Cyl, genuinely multilateral)
+POST /settle → turn 3eb0dd7f57065db148209c68b44dde4a190ff05bb4ff942163774a7cfa7e107f
+               executor_signed:true · has_proof:true · witness_count:1  (verified on the node)
+```
+
+**How it settles (and why this shape):** the settlement lands as a real
+value-bearing **Transfer** (operator → the DrEX settlement-pool cell
+`de55e771…`) plus one `EmitEvent` per ring leg. Transfer is the cohort the
+node's full-turn STARK prover realizes, so the turn commits AND gets a
+self-verified proof. (A multi-`SetField` turn is committed-but-UNATTESTED at this
+node HEAD — the per-index `setFieldVmDescriptor2` cohort selector binds
+ambiguously and the prover rejects its own proof; settling as value *moved* both
+proves and models the clearing faithfully.)
+
+**Private + safe:** `drex-web` binds `LISTEN 192.168.50.39:8781` — the LAN
+interface, **never `0.0.0.0`** (`serve.mjs` refuses a wildcard/`0.0.0.0` bind).
+hbox's ufw is default-deny inbound with the LAN allowed, so the LAN bind is
+reachable to your Mac but **not public**. This changed no ufw rule, opened no
+public port, and left the node (`127.0.0.1:8420`) and `dreggcloud` (`:8787`)
+untouched.
+
+**Manage it (on hbox):**
+
+```bash
+# start (LAN-bound, pointed at the private node) — runs in a detached tmux session
+tmux new-session -d -s drexweb \
+  "cd ~/dregg-build/privnode && DREGG_NODE=http://127.0.0.1:8420 \
+   DREX_BIND=192.168.50.39 PORT=8781 node drex-web/serve.mjs \
+   2>&1 | tee ~/dregg-priv/drex-web.log"
+
+tmux ls                       # is it running?
+ss -tlnp | grep 8781          # LISTEN 192.168.50.39:8781 (not 0.0.0.0)
+tail -f ~/dregg-priv/drex-web.log
+tmux kill-session -t drexweb  # stop it
+```
+
+`serve.mjs` env: `DREX_BIND` (bind address; `127.0.0.1` default, `192.168.50.39`
+for LAN — `0.0.0.0`/`::` refused), `PORT` (8781), `DREGG_NODE`
+(`http://127.0.0.1:8420`). The real matcher runs from the locally-built
+`target/release/drex_clear`.
+
+---
+
 ## Run it
 
 Run **on hbox**, from the synced build lane (`~/dregg-build/privnode`; sync it
