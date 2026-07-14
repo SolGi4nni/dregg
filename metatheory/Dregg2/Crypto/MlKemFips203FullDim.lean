@@ -1114,6 +1114,189 @@ theorem cbdFaithful_self (eta : Nat) (bytes : List UInt8) :
     CbdFaithful eta bytes (MlKemSample.samplePolyCBD eta bytes) :=
   ⟨rfl, samplePolyCBD_size eta bytes, samplePolyCBD_lt eta bytes⟩
 
+/-! ### §8.10 — ITEM 3 DISCHARGED: `ExpandA` faithfulness via the REJECTION-FILL invariant.
+
+`SampleNTT` (FIPS 203 Alg 7) fills exactly 256 coefficients by a 12-bit parse-and-reject loop over SHAKE-128:
+each 3-byte read yields two candidates `d1, d2`, and each is APPENDED iff `< q` (else dropped), stopping at 256.
+Its `forIn` is BRANCHING (a conditional double-push), so it does not reduce to a clean `foldl` of a total
+step. The content here is the **fill invariant**: the branching loop's accumulator holds exactly the `< q`-
+accepted candidates in order, truncated at 256 — i.e. `SampleNTT` equals the DECLARATIVE `filter (· < q)` then
+`take 256` of the parsed candidate stream (`sampleNTT_spec`). The abstract matrix `A` uses the SAME reject rule,
+so faithfulness is that the executable accept-sequence equals the declarative one (NOT `SampleNTT = SampleNTT`,
+which would be vacuous — `abstractA` is the filter/take spec, not the sampler). `< q` (every coefficient) is
+UNCONDITIONAL; the "exactly 256" fill needs a long-enough stream, carried as the clean named hypothesis
+`hlen` (the deployed `rejReads = 512`-read SHAKE-128 stream yields `≥ 256` accepts — the `expandMatrix_shape`
+gate witnesses it concretely for `ρ = [0,…,31]`). -/
+
+section ExpandAFill
+open Dregg2.Crypto.MlKemSample (sampleNTT expandMatrix rejReads)
+open Dregg2.Crypto.Keccak (shake128)
+
+/-- `foldl` congruence under a pointwise-equal step (local, to avoid a cross-module open). -/
+theorem rejFoldlExt {A B : Type} (f g : B → A → B) (h : ∀ b a, f b a = g b a)
+    (l : List A) (init : B) : l.foldl f init = l.foldl g init := by
+  induction l generalizing init with
+  | nil => rfl
+  | cons hd tl ih => simp only [List.foldl_cons]; rw [h init hd]; exact ih _
+
+/-- Single-candidate rejection push: append `d` iff there's room (`< 256`) and it passes (`< q`). -/
+def pushIf (acc : Array Nat) (d : Nat) : Array Nat :=
+  if acc.size < 256 then (if d < q then acc.push d else acc) else acc
+
+/-- The SHAKE-128 byte stream `sampleNTT` reads (`3·rejReads` bytes). -/
+def streamOf (seed : List UInt8) : Array UInt8 := (shake128 seed (3 * rejReads)).toArray
+
+/-- The two 12-bit candidates parsed from read `r` of `stream` (`d1 = b0 + 256·(b1 mod 16)`,
+`d2 = ⌊b1/16⌋ + 16·b2`). -/
+def candsOfRead (stream : Array UInt8) (r : Nat) : List Nat :=
+  [ stream[3*r]!.toNat + 256 * (stream[3*r+1]!.toNat % 16),
+    stream[3*r+1]!.toNat / 16 + 16 * stream[3*r+2]!.toNat ]
+
+/-- The full flattened candidate list of `sampleNTT seed`: `d1,d2` for each of the `rejReads` reads. -/
+def allCands (seed : List UInt8) : List Nat :=
+  (List.range' 0 rejReads 1).flatMap (candsOfRead (streamOf seed))
+
+/-- One read of `sampleNTT`: two conditional pushes (the branching `forIn` body). -/
+def rejStep (seed : List UInt8) (acc : Array Nat) (r : Nat) : Array Nat :=
+  pushIf (pushIf acc ((streamOf seed)[3*r]!.toNat + 256 * ((streamOf seed)[3*r+1]!.toNat % 16)))
+         ((streamOf seed)[3*r+1]!.toNat / 16 + 16 * (streamOf seed)[3*r+2]!.toNat)
+
+/-- Seed for matrix entry `(i,j)`: `ρ ‖ IntegerToBytes(j,1) ‖ IntegerToBytes(i,1)` (FIPS 203 Alg 13). -/
+def seedOf (rho : List UInt8) (i j : Nat) : List UInt8 := rho ++ [UInt8.ofNat j, UInt8.ofNat i]
+
+/-- **The DECLARATIVE abstract matrix.** Entry `(i,j)` is the first 256 `< q`-accepted 12-bit candidates of the
+SHAKE-128 stream over `ρ ‖ j ‖ i` — the FIPS 203 rejection rule stated declaratively (`filter`/`take`), NOT the
+executable sampler. This is what makes `ExpandAFaithful` non-vacuous. -/
+def abstractA (rho : List UInt8) (i j : Nat) : Poly :=
+  (((allCands (seedOf rho i j)).filter (· < q)).take 256).toArray
+
+/-- The branching `sampleNTT` `forIn` reduces to a `foldl` of `rejStep` (the conditional-double-push step). -/
+theorem sampleNTT_foldl (seed : List UInt8) :
+    sampleNTT seed = (List.range' 0 rejReads 1).foldl (rejStep seed) #[] := by
+  unfold MlKemSample.sampleNTT rejStep streamOf
+  -- Abstract the (large) SHAKE-128 stream so the branching body is SMALL — keeps the simp/rfl cheap.
+  generalize (shake128 seed (3 * rejReads)).toArray = S
+  simp only [Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    ← apply_ite, List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size,
+    Nat.sub_zero, Nat.add_one_sub_one, Nat.div_one]
+  refine rejFoldlExt _ _ ?_ _ _
+  intro b a
+  simp only [pushIf]
+  split_ifs <;> rfl
+
+/-- The double-push per read is `pushIf` over the flattened candidate stream. -/
+theorem foldl_rejStep_flatMap (seed : List UInt8) (L : List Nat) (init : Array Nat) :
+    L.foldl (rejStep seed) init
+      = (L.flatMap (candsOfRead (streamOf seed))).foldl pushIf init := by
+  induction L generalizing init with
+  | nil => rfl
+  | cons hd tl ih =>
+    simp only [List.foldl_cons, List.flatMap_cons, List.foldl_append, candsOfRead]
+    rw [ih]; rfl
+
+/-- **THE REJECTION-FILL INVARIANT.** Folding `pushIf` over a candidate list `cs` from any accumulator whose
+length is `≤ 256` yields exactly the `< q`-accepted candidates, appended and truncated at 256 — the declarative
+characterization of the branching accept/reject loop (the accept branch appends the `< q` value; the reject
+branch and the full accumulator are no-ops). -/
+theorem pushIf_foldl_spec (cs : List Nat) (init : Array Nat) (hinit : init.size ≤ 256) :
+    (cs.foldl pushIf init).toList = (init.toList ++ cs.filter (· < q)).take 256 := by
+  induction cs generalizing init with
+  | nil =>
+    simp only [List.filter_nil, List.append_nil, List.foldl_nil]
+    rw [List.take_of_length_le]; rwa [Array.length_toList]
+  | cons d rest ih =>
+    simp only [List.foldl_cons]
+    have hstep : (pushIf init d).size ≤ 256 := by
+      unfold pushIf; split_ifs with h1 h2
+      · rw [Array.size_push]; omega
+      · exact hinit
+      · exact hinit
+    rw [ih (pushIf init d) hstep]
+    by_cases hd : d < q
+    · rw [List.filter_cons_of_pos (by simpa using hd)]
+      by_cases hsz : init.size < 256
+      · have hpu : pushIf init d = init.push d := by unfold pushIf; rw [if_pos hsz, if_pos hd]
+        rw [hpu, Array.toList_push]
+        simp only [List.append_assoc, List.cons_append, List.nil_append]
+      · have h256 : init.toList.length = 256 := by rw [Array.length_toList]; omega
+        have hpu : pushIf init d = init := by unfold pushIf; rw [if_neg hsz]
+        rw [hpu, List.take_append_of_le_length (by omega),
+            List.take_append_of_le_length (by omega)]
+    · rw [List.filter_cons_of_neg (by simpa using hd)]
+      have hpu : pushIf init d = init := by
+        unfold pushIf
+        by_cases h1 : init.size < 256
+        · rw [if_pos h1, if_neg hd]
+        · rw [if_neg h1]
+      rw [hpu]
+
+/-- **The declarative rejection-sample spec** — `sampleNTT` is exactly the first 256 of the `< q`-accepted
+12-bit candidates parsed from the SHAKE-128 stream (the fill invariant, assembled). -/
+theorem sampleNTT_spec (seed : List UInt8) :
+    sampleNTT seed = (((allCands seed).filter (· < q)).take 256).toArray := by
+  rw [sampleNTT_foldl, foldl_rejStep_flatMap]
+  show List.foldl pushIf #[] (allCands seed) = _
+  have key : (List.foldl pushIf #[] (allCands seed)).toList
+      = ((allCands seed).filter (· < q)).take 256 := by
+    have h := pushIf_foldl_spec (allCands seed) #[] (by simp)
+    simpa using h
+  conv_lhs => rw [← Array.toArray_toList (xs := List.foldl pushIf #[] (allCands seed))]
+  rw [key]
+
+/-- Every coefficient of `sampleNTT seed` is `< q` — UNCONDITIONAL (each accepted candidate passed the test). -/
+theorem sampleNTT_lt (seed : List UInt8) (p : Nat) : (sampleNTT seed)[p]! < q := by
+  rw [sampleNTT_spec, List.getElem!_toArray]
+  by_cases hp : p < (((allCands seed).filter (· < q)).take 256).length
+  · have hmemf := List.mem_of_mem_take (List.getElem_mem hp)
+    have hlt := (List.mem_filter.mp hmemf).2
+    rw [List.getElem!_eq_getElem?_getD, List.getElem?_eq_getElem hp]
+    simpa using hlt
+  · rw [List.getElem!_eq_getElem?_getD, List.getElem?_eq_none (by omega)]; decide
+
+/-- `sampleNTT seed` has exactly 256 coefficients WHEN the stream yields ≥ 256 accepts (the deployed
+SHAKE-128 stream is long enough — carried as a clean named hypothesis, not a fake). -/
+theorem sampleNTT_size (seed : List UInt8)
+    (hlen : 256 ≤ ((allCands seed).filter (· < q)).length) :
+    (sampleNTT seed).size = 256 := by
+  rw [sampleNTT_spec, List.size_toArray, List.length_take, Nat.min_eq_left hlen]
+
+/-- `expandMatrix ρ` unrolled at `k = 3` to the explicit `3×3` array of `sampleNTT` entries. -/
+theorem expandMatrix_unroll (rho : List UInt8) :
+    expandMatrix rho =
+      #[ sampleNTT (seedOf rho 0 0), sampleNTT (seedOf rho 0 1), sampleNTT (seedOf rho 0 2),
+         sampleNTT (seedOf rho 1 0), sampleNTT (seedOf rho 1 1), sampleNTT (seedOf rho 1 2),
+         sampleNTT (seedOf rho 2 0), sampleNTT (seedOf rho 2 1), sampleNTT (seedOf rho 2 2) ] := by
+  unfold MlKemSample.expandMatrix seedOf
+  simp only [MlKemSample.k, Id.run, Std.Legacy.Range.forIn_eq_forIn_range', bind_pure_comp, map_pure,
+    List.forIn_pure_yield_eq_foldl, bind_pure, Std.Legacy.Range.size, Nat.sub_zero,
+    Nat.add_one_sub_one, Nat.div_one]
+  rfl
+
+/-- **ITEM 3 DISCHARGED — `ExpandAFaithful` is INHABITED by the declarative rejection-sample matrix.** Under the
+long-enough-stream hypothesis `hlen` (per entry), the executable `expandMatrix ρ` at every `(i,j)` IS the
+abstract `abstractA ρ`, which is canonical (256 coefficients, all `< q`). Non-vacuous: `abstractA` is the
+`filter (· < q)`/`take 256` DECLARATIVE spec, and `sampleNTT_spec` (the fill invariant) is what bridges the
+executable branching loop to it. -/
+theorem expandAFaithful (rho : List UInt8)
+    (hlen : ∀ i j, i < paramK → j < paramK →
+       256 ≤ ((allCands (seedOf rho i j)).filter (· < q)).length) :
+    ExpandAFaithful rho (abstractA rho) := by
+  intro i j hi hj
+  have hi3 : i < 3 := hi
+  have hj3 : j < 3 := hj
+  have hbridge : abstractA rho i j = sampleNTT (seedOf rho i j) := by
+    unfold abstractA; exact (sampleNTT_spec _).symm
+  refine ⟨?_, ?_, ?_⟩
+  · rw [expandMatrix_unroll, hbridge]
+    -- SYMBOLIC index reduction (no kernel `rfl` over the sampler terms — that would deep-reduce SHAKE).
+    interval_cases i <;> interval_cases j <;>
+      simp only [paramK, Nat.reduceMul, Nat.reduceAdd, List.getElem!_toArray,
+        List.getElem!_cons_succ, List.getElem!_cons_zero]
+  · rw [hbridge]; exact sampleNTT_size _ (hlen i j hi hj)
+  · intro p; rw [hbridge]; exact sampleNTT_lt _ p
+
+end ExpandAFill
+
 /-! ## AXIOM HYGIENE — every ∀-theorem is kernel-clean (⊆ {propext, Classical.choice, Quot.sound}).
 `realDk_good` / `ekOfDk_realDk` / `emptyDk_not_good` / `roundtrip_fails_le_delta_nonvacuous` (the concrete byte
 checks) are NOT in this list: they carry the `native_decide` residual, and NOTHING above depends on them. -/
@@ -1158,7 +1341,15 @@ checks) are NOT in this list: they carry the `native_decide` residual, and NOTHI
   samplePolyCBD_size,
   samplePolyCBD_getElem,
   samplePolyCBD_lt,
-  cbdFaithful_self
+  cbdFaithful_self,
+  sampleNTT_foldl,
+  foldl_rejStep_flatMap,
+  pushIf_foldl_spec,
+  sampleNTT_spec,
+  sampleNTT_lt,
+  sampleNTT_size,
+  expandMatrix_unroll,
+  expandAFaithful
 ]
 
 end Dregg2.Crypto.MlKemFips203FullDim
