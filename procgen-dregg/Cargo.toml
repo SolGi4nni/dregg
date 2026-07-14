@@ -60,8 +60,26 @@ reqwest = { version = "0.12", default-features = false, features = [
 # Parse the drand `public/{round}` JSON body (round + signature). Already resolved
 # workspace-wide; adds nothing new to the closure.
 serde_json = "1"
+# THE PQ HALF OF THE HYBRID DAY SEED (`beacon.rs`) — the federation's finalization
+# types, consumed READ-ONLY (nothing re-implemented):
+#   * `dregg-types`      — `finalization_vote_signing_message` (the ONE canonical
+#     preimage `dregg-finalization-vote-v2 || block_id || merkle_root` the node's
+#     `FinalizationVote` signs) and `HybridQuorumSig` (the wire record carrying a
+#     signer's ed25519 half + ML-DSA-65 half + its self-carried PQ key).
+#   * `dregg-federation` — `receipt::verify_hybrid_quorum_sigs` (the ONE place the
+#     `classical ∧ pq` quorum rule with the ENROLLED-key PIN lives) and
+#     `frost::MlDsaPublicKey` (FIPS 204 ML-DSA-65 verification under `HYBRID_PQ_CTX`).
+# The day seed therefore folds a root the SAME quorum evidence a node re-verifies on
+# restart authenticates — a re-deriver re-checks the PQ half against the pinned
+# committee roster with no node running.
+dregg-types = { path = "../types" }
+dregg-federation = { path = "../federation", default-features = false }
 
 [dev-dependencies]
+# Sign the hybrid-quorum test fixtures' CLASSICAL half (the ML-DSA half is signed by
+# `dregg_federation::frost::MlDsaSigningKey`) — the tests build REAL hybrid quorum
+# evidence over the real canonical preimage, so the PQ verification bites for real.
+ed25519-dalek = { version = "2", features = ["std"] }
 # The real attested-dm DSL parser + validator. Dev-only: the generator emits
 # `.dungeon` TEXT; the tests + example prove that text parses and validates as a
 # first-class attested dungeon through the shipped engine.
