@@ -89,6 +89,17 @@ const RESTRICTED_METHODS = new Set<MessageType>([
   "dregg:voteOnProposal",
   "dregg:registerFederation",
   "dregg:createCapTpDeliveredAuth",
+  // Shielded proof composition (now sound: Poseidon2 membership) + the EVM
+  // signing leg + the fhEgg sealed-bid ceremony + DrEX routed through the
+  // extension — each is a key-touching operation, gated per-origin and behind
+  // the un-overlayable confirm-intent consent.
+  "dregg:composeProofs",
+  "dregg:evmGetAddress",
+  "dregg:evmPersonalSign",
+  "dregg:evmSignTypedData",
+  "dregg:sealedBidCommit",
+  "dregg:sealedBidReveal",
+  "dregg:drexPlaceOrder",
 ]);
 
 // Inject page.js with the session nonce as a data attribute.

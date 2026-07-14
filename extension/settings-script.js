@@ -1,8 +1,8 @@
 // Settings page script for Dragon's Egg Cipherclerk node configuration.
 
 const NODE_CONFIG_KEY = 'dregg_node_config';
-const DEFAULT_NODE_URL = 'https://devnet.dregg.fg-goose.online';
-const DEFAULT_NODE_WSS_URL = 'wss://devnet.dregg.fg-goose.online/ws';
+const DEFAULT_NODE_URL = 'https://node.dregg.net';
+const DEFAULT_NODE_WSS_URL = 'wss://node.dregg.net/ws';
 const DEFAULT_NODE_WS_URL = 'ws://localhost:8420/ws';
 
 const nodeUrlInput = document.getElementById('nodeUrl');

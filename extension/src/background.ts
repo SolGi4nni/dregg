@@ -15,6 +15,25 @@ import { ChromeCustodyStore } from "./passkey";
 import { resolveCustody } from "./custody-resolve";
 import { validateFederationDomain, ZERO_FEDERATION_DOMAIN_HEX } from "./federation-domain";
 import {
+  deriveEvmIdentity,
+  personalSign as evmPersonalSign,
+  personalSignDigest as evmPersonalSignDigest,
+  signTypedData as evmSignTypedData,
+  eip712Digest as evmEip712Digest,
+  hex0x as evmHex0x,
+  type Eip712Domain,
+  type Eip712Types,
+  type EvmIdentity,
+} from "./evm";
+import {
+  buildCommitment,
+  checkReveal,
+  orderHash as sealedOrderHash,
+  sealedAuctionDomain,
+  SEALED_BID_TYPES,
+  REVEAL_BID_TYPES,
+} from "./sealedbid";
+import {
   PollEngine,
   CellEngine,
   DocEngine,
@@ -1809,12 +1828,10 @@ function evaluateDatalog(token: CapabilityToken, request: AuthorizeRequest): { a
 }
 
 // MED-3: produce the authorization receipt seed with a REAL collision-resistant
-// hash (blake3, from the dregg wasm crypto core) — NOT the
-// `generate_demo_stark_proof` path, whose `MerkleStarkAir` uses a linear hash
-// binding the build itself flags as not collision-resistant (forgeable). The
-// authorization decision is the datalog evaluation (sound); this value only
-// seeds the receipt chain, so it must be a CR commitment, never advertised as a
-// zero-knowledge proof.
+// hash (blake3, from the dregg wasm crypto core). The authorization decision is
+// the datalog evaluation (sound); this value only SEEDS the receipt chain, so it
+// is a plain CR commitment and is never advertised as a zero-knowledge proof —
+// membership proving (now the sound Poseidon2 descriptor) is a separate path.
 function generateAuthReceiptSeed(witness: Uint8Array, mode: string): Uint8Array {
   requireWasm("generateAuthReceiptSeed");
   const w = wasm!;
@@ -2348,6 +2365,56 @@ function showTurnConfirmation(input: {
       }
     });
   });
+}
+
+// ---------------------------------------------------------------------------
+// EVM signing leg + fhEgg sealed-bid ceremony.
+//
+// The EVM key is DERIVED from the same sealed wallet seed the Ed25519 identity
+// expands from (see `./evm`), so one recovery phrase restores both faces and no
+// out-of-band binding is needed. Every EVM/sealed-bid signature is gated by the
+// same un-overlayable confirm-intent consent chrome that turn-signing uses
+// (`showTurnConfirmation`), bound to the digest actually being signed.
+// ---------------------------------------------------------------------------
+
+const SEALED_BID_OPENINGS_KEY = "dregg_sealed_bid_openings";
+
+interface SealedOpening {
+  commitment: string;
+  orderHash: string;
+  salt: string;
+  order: Record<string, unknown>;
+  bidder: string;
+  chainId: number;
+  verifyingContract: string;
+  deadline: number;
+  createdAt: number;
+}
+
+/** Derive the EVM identity from the UNLOCKED wallet seed, or an error. */
+async function requireEvmIdentity(): Promise<
+  { ok: true; id: EvmIdentity } | { ok: false; error: string }
+> {
+  const cc = await loadState();
+  if (cc.locked) return { ok: false, error: "Cipherclerk is locked" };
+  if (cc.needsPassphraseSetup) {
+    return { ok: false, error: "Set a cipherclerk passphrase before signing." };
+  }
+  if (!cc.secretKey) return { ok: false, error: "Cipherclerk secret key not available" };
+  return { ok: true, id: deriveEvmIdentity(new Uint8Array(cc.secretKey)) };
+}
+
+async function storeSealedOpening(auctionId: number, opening: SealedOpening): Promise<void> {
+  const stored = await chrome.storage.local.get(SEALED_BID_OPENINGS_KEY);
+  const map = (stored[SEALED_BID_OPENINGS_KEY] as Record<string, SealedOpening>) || {};
+  map[String(auctionId)] = opening;
+  await chrome.storage.local.set({ [SEALED_BID_OPENINGS_KEY]: map });
+}
+
+async function loadSealedOpening(auctionId: number): Promise<SealedOpening | null> {
+  const stored = await chrome.storage.local.get(SEALED_BID_OPENINGS_KEY);
+  const map = (stored[SEALED_BID_OPENINGS_KEY] as Record<string, SealedOpening>) || {};
+  return map[String(auctionId)] || null;
 }
 
 async function computeIntentId(kind: string, matchSpec: MatchSpec, expiry: number): Promise<string> {
@@ -3344,6 +3411,8 @@ const PAGE_ALLOWED_METHODS = new Set<MessageType>([
   "dregg:createBearerCap", "dregg:verifyBearerCap",
   "dregg:createFromFactory", "dregg:verifyProvenance",
   "dregg:makeCellSovereign", "dregg:peerExchange", "dregg:composeProofs",
+  "dregg:evmGetAddress", "dregg:evmPersonalSign", "dregg:evmSignTypedData",
+  "dregg:sealedBidCommit", "dregg:sealedBidReveal", "dregg:drexPlaceOrder",
   "dregg:signTurn", "dregg:signTurnV3", "dregg:queryBalance",
   "dregg:shareCapability", "dregg:acceptCapability", "dregg:createHandoff",
   "dregg:mountService", "dregg:discoverServices", "dregg:resolvePath",
@@ -4378,18 +4447,47 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
       }
     }
 
-    // Proof composition
+    // Proof composition (shielded membership + range + conservation)
     case "dregg:composeProofs": {
-      // MED-3: this path composes/verifies STARK membership proofs over
-      // `MerkleStarkAir`, whose linear hash binding is NOT collision-resistant
-      // (forgeable). Rather than ship a forgeable "ZK proof" as a usable
-      // feature, it is gated off until the circuit moves to a
-      // collision-resistant (Poseidon2) Merkle hash. The sound disclosure path
-      // (range predicate proofs over Bulletproofs) is unaffected.
-      return {
-        id: message.id,
-        error: "Proof composition is disabled: the STARK membership hash is not collision-resistant (forgeable) and must not be relied on. Use range predicate proofs for selective disclosure.",
-      };
+      // The STARK Merkle-membership seam is now SOUND: the wasm crate migrated
+      // off the forgeable linear `MerkleStarkAir` onto a REAL arity-4 Poseidon2
+      // Merkle descriptor (`merkle-membership::poseidon2-4ary-general-depthN`),
+      // proven by `prove_vm_descriptor2` and checked by the deployed
+      // `verify_vm_descriptor2` — a genuine member ACCEPTS, and a forged/tampered
+      // claim is REJECTED (host-probe: `probe-membership.mjs`). So composition is
+      // re-enabled and routes to `compose_and_verify_proofs`, which discharges
+      // each tagged proof against its canonical verifier (membership via the
+      // Poseidon2 descriptor consumer, range via Bulletproofs, conservation via
+      // the Schnorr excess) and returns the REAL boolean composition — never a
+      // BLAKE3 content-hash stand-in.
+      requireWasm("composeProofs");
+      const w = wasm!;
+      const proofs = (message.proofs as Array<Record<string, unknown>>) || [];
+      const mode = (message.mode as string) || "and";
+      // Map the page shape { proofJson, publicInputs } onto the wasm's tagged
+      // envelope; a bare `proofJson` is a membership (Ir2ProofEnvelope) proof.
+      const tagged = proofs.map((p) => {
+        if (p.kind) return p; // already a tagged {kind, ...} envelope
+        return { kind: "membership", proof_json: p.proofJson ?? p.proof_json };
+      });
+      try {
+        const res = w.compose_and_verify_proofs(JSON.stringify(tagged), mode) as {
+          composed_proof: string; mode: string; input_count: number; valid: boolean;
+          results?: Array<{ kind: string; valid: boolean; error: string | null }>;
+        };
+        return {
+          id: message.id,
+          result: {
+            composedProof: res.composed_proof,
+            mode: res.mode,
+            inputCount: res.input_count,
+            valid: res.valid,
+            results: res.results ?? [],
+          },
+        };
+      } catch (e: unknown) {
+        return { id: message.id, error: (e as Error).message || "compose failed" };
+      }
     }
 
     // Privacy
@@ -4624,6 +4722,195 @@ async function handleMessage(message: Record<string, unknown>, sender: chrome.ru
         message.senderPk as string,
         message.senderSig as string,
       );
+      return { id: message.id, result };
+    }
+
+    // ── EVM signing leg (secp256k1) ──
+    case "dregg:evmGetAddress": {
+      const idr = await requireEvmIdentity();
+      if (!idr.ok) return { id: message.id, error: idr.error };
+      resetLockTimer();
+      return { id: message.id, result: { address: idr.id.address } };
+    }
+
+    case "dregg:evmPersonalSign": {
+      const idr = await requireEvmIdentity();
+      if (!idr.ok) return { id: message.id, error: idr.error };
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const msg = typeof message.message === "string"
+        ? message.message
+        : new TextDecoder().decode(new Uint8Array((message.message as number[]) || []));
+      const digest = evmPersonalSignDigest(new TextEncoder().encode(msg));
+      const confirmed = await showTurnConfirmation({
+        explanation: `EVM personal_sign (secp256k1)\n\naddress: ${idr.id.address}\n\nmessage:\n${msg}`,
+        turnId: `evm-personal-sign:${evmHex0x(digest)}`,
+        origin,
+        hasUnknown: false,
+      });
+      if (!confirmed) return { id: message.id, error: "User declined the EVM signature" };
+      const sig = evmPersonalSign(idr.id.privateKey, msg);
+      resetLockTimer();
+      return { id: message.id, result: { address: idr.id.address, signature: sig.signature, v: sig.v, digest: sig.digest } };
+    }
+
+    case "dregg:evmSignTypedData": {
+      const idr = await requireEvmIdentity();
+      if (!idr.ok) return { id: message.id, error: idr.error };
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const domain = (message.domain as Eip712Domain) || {};
+      const types = (message.types as Eip712Types) || {};
+      const primaryType = String(message.primaryType || "");
+      const data = (message.messageData as Record<string, unknown>) || {};
+      let digest: Uint8Array;
+      try {
+        digest = evmEip712Digest(domain, types, primaryType, data);
+      } catch (e: unknown) {
+        return { id: message.id, error: `EIP-712: ${(e as Error).message}` };
+      }
+      const confirmed = await showTurnConfirmation({
+        explanation: `EVM EIP-712 sign (secp256k1)\n\naddress: ${idr.id.address}\ntype: ${primaryType}\ndomain: ${domain.name ?? "?"} v${domain.version ?? "?"} chain ${domain.chainId ?? "?"}\ncontract: ${domain.verifyingContract ?? "-"}\n\n${JSON.stringify(data, null, 2)}`,
+        turnId: `evm-712:${evmHex0x(digest)}`,
+        origin,
+        hasUnknown: false,
+      });
+      if (!confirmed) return { id: message.id, error: "User declined the EVM signature" };
+      const sig = evmSignTypedData(idr.id.privateKey, domain, types, primaryType, data);
+      resetLockTimer();
+      return { id: message.id, result: { address: idr.id.address, signature: sig.signature, v: sig.v, digest: sig.digest } };
+    }
+
+    // ── fhEgg sealed-bid commit → reveal ceremony ──
+    case "dregg:sealedBidCommit": {
+      const idr = await requireEvmIdentity();
+      if (!idr.ok) return { id: message.id, error: idr.error };
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const auctionId = Number(message.auctionId ?? 0);
+      const order = (message.order as Record<string, unknown>) || {};
+      const chainId = Number(message.chainId ?? 0);
+      const verifyingContract = String(message.verifyingContract ?? "0x0000000000000000000000000000000000000000");
+      const deadline = Number(message.deadline ?? 0);
+      const salt = new Uint8Array(32);
+      crypto.getRandomValues(salt);
+      let commit;
+      try {
+        commit = buildCommitment(idr.id.address, order, salt);
+      } catch (e: unknown) {
+        return { id: message.id, error: `sealed-bid commit: ${(e as Error).message}` };
+      }
+      const confirmed = await showTurnConfirmation({
+        explanation: `fhEgg SEALED BID — COMMIT (auction #${auctionId})\n\nbidder: ${idr.id.address}\ncommitment: ${commit.commitment}\ndeadline: ${deadline || "none"}\n\norder (hidden until reveal):\n${JSON.stringify(order, null, 2)}`,
+        turnId: `sealed-commit:${commit.commitment}`,
+        origin,
+        hasUnknown: false,
+      });
+      if (!confirmed) return { id: message.id, error: "User declined the sealed-bid commit" };
+      const domain = sealedAuctionDomain(chainId, verifyingContract);
+      const sig = evmSignTypedData(idr.id.privateKey, domain, SEALED_BID_TYPES, "SealedBid", {
+        auctionId, commitment: commit.commitment, deadline,
+      });
+      await storeSealedOpening(auctionId, {
+        commitment: commit.commitment, orderHash: commit.orderHash, salt: commit.salt,
+        order, bidder: idr.id.address, chainId, verifyingContract, deadline, createdAt: Date.now(),
+      });
+      resetLockTimer();
+      return {
+        id: message.id,
+        result: {
+          phase: "commit", auctionId, bidder: idr.id.address,
+          commitment: commit.commitment, signature: sig.signature, digest: sig.digest,
+          escrow: { domain, primaryType: "SealedBid", message: { auctionId, commitment: commit.commitment, deadline } },
+        },
+      };
+    }
+
+    case "dregg:sealedBidReveal": {
+      const idr = await requireEvmIdentity();
+      if (!idr.ok) return { id: message.id, error: idr.error };
+      const auctionId = Number(message.auctionId ?? 0);
+      const opening = await loadSealedOpening(auctionId);
+      if (!opening) return { id: message.id, error: `no stored sealed bid for auction #${auctionId}` };
+      const check = checkReveal(opening.bidder, opening.order, opening.salt, opening.commitment);
+      if (!check.ok) {
+        return { id: message.id, error: "stored opening does not bind to its commitment (corrupt state)" };
+      }
+      const domain = sealedAuctionDomain(opening.chainId, opening.verifyingContract);
+      const sig = evmSignTypedData(idr.id.privateKey, domain, REVEAL_BID_TYPES, "RevealBid", {
+        auctionId, orderHash: opening.orderHash, salt: opening.salt,
+      });
+      resetLockTimer();
+      return {
+        id: message.id,
+        result: {
+          phase: "reveal", auctionId, bidder: opening.bidder, order: opening.order,
+          salt: opening.salt, orderHash: opening.orderHash, commitment: opening.commitment,
+          bindsCommitment: check.ok, signature: sig.signature, digest: sig.digest,
+          escrow: { domain, primaryType: "RevealBid", message: { auctionId, orderHash: opening.orderHash, salt: opening.salt } },
+        },
+      };
+    }
+
+    // ── DrEX order routed THROUGH the extension (dregg-native sealed order) ──
+    case "dregg:drexPlaceOrder": {
+      requireWasm("drexPlaceOrder");
+      const w = wasm!;
+      const cc = await loadState();
+      if (cc.locked) return { id: message.id, error: "Cipherclerk is locked" };
+      if (!cc.secretKey) return { id: message.id, error: "Cipherclerk secret key not available" };
+      const origin = (message._origin as string) || (sender?.tab?.url && new URL(sender.tab.url).origin) || undefined;
+      const order = (message.order as Record<string, unknown>) || {};
+      const holdings = message.holdings != null ? Number(message.holdings) : null;
+      const offer = message.offer != null ? Number(message.offer) : null;
+      const traderId = message.traderId != null ? String(message.traderId) : null;
+      const ring = (message.ring as string[]) || null;
+      const orderId = evmHex0x(sealedOrderHash(order));
+      const confirmed = await showTurnConfirmation({
+        explanation: `DrEX place order (dregg-native, sealed key)\n\norder:\n${JSON.stringify(order, null, 2)}${holdings != null && offer != null ? `\n\nsolvency: holdings ${holdings} ≥ offer ${offer}` : ""}${ring ? `\n\neligibility: blinded ring membership (ring size ${ring.length})` : ""}`,
+        turnId: `drex-order:${orderId}`,
+        origin,
+        hasUnknown: false,
+      });
+      if (!confirmed) return { id: message.id, error: "User declined the DrEX order" };
+      // STEP A — sign the order-turn with the SEALED key (real Ed25519 over the canonical action).
+      const spec = JSON.stringify({
+        sender_privkey: Array.from(cc.secretKey),
+        method: "drex_place_order",
+        memo_json: JSON.stringify(order),
+      });
+      const turn = w.cipherclerk_make_action_turn(spec);
+      const result: Record<string, unknown> = {
+        turnId: turn.turn_id, agentCell: turn.agent_cell_id, orderHash: orderId, routedThroughExtension: true,
+      };
+      // STEP B — optional REAL solvency (conservation) proof bound to the order-turn id.
+      if (holdings != null && offer != null) {
+        if (holdings < offer) {
+          result.solvency = { ok: false, reason: "insufficient holdings — cannot construct a non-negative change output (fail-closed)" };
+        } else {
+          const randHex = (): string => {
+            const b = new Uint8Array(32); crypto.getRandomValues(b);
+            return Array.from(b).map(x => x.toString(16).padStart(2, "0")).join("");
+          };
+          const inputs = JSON.stringify([{ value: holdings, blinding_hex: randHex() }]);
+          const outputs = JSON.stringify([
+            { value: offer, blinding_hex: randHex() },
+            { value: holdings - offer, blinding_hex: randHex() },
+          ]);
+          const proof = w.prove_conservation(inputs, outputs, turn.turn_id);
+          const v = w.verify_conservation_proof(
+            JSON.stringify(proof.input_commitments),
+            JSON.stringify(proof.output_commitments),
+            JSON.stringify(proof.proof),
+            proof.message_hex,
+            JSON.stringify(proof.output_range_proofs),
+          );
+          result.solvency = { ok: v.valid && v.range_proofs_checked, valid: v.valid, rangeProofsChecked: v.range_proofs_checked, boundTo: turn.turn_id };
+        }
+      }
+      // STEP C — optional REAL blinded ring-membership (sealed-bid trader anonymity).
+      if (ring && traderId) {
+        const r = w.prove_anonymous_membership(traderId, JSON.stringify(ring));
+        result.eligibility = { presentationTag: r.presentation_tag_full_hex, setRoot: r.set_root, ringSize: r.ring_size };
+      }
+      resetLockTimer();
       return { id: message.id, result };
     }
 

@@ -153,6 +153,14 @@ export type MessageType =
   | "dregg:peerExchange"
   // Proof composition
   | "dregg:composeProofs"
+
+  // EVM signing leg (secp256k1) + fhEgg sealed-bid ceremony + DrEX routing
+  | "dregg:evmGetAddress"
+  | "dregg:evmPersonalSign"
+  | "dregg:evmSignTypedData"
+  | "dregg:sealedBidCommit"
+  | "dregg:sealedBidReveal"
+  | "dregg:drexPlaceOrder"
   // Turn submission
   | "dregg:signTurn"
   | "dregg:queryBalance"
@@ -828,6 +836,46 @@ export interface DreggWasm {
     turn_bytes: Uint8Array;
     agent_cell_id: string;
     method: string;
+  };
+
+  /**
+   * Honest proof composition: deserialize each tagged proof, run its canonical
+   * verifier (membership via the Poseidon2 4-ary descriptor consumer, range via
+   * Bulletproofs, conservation via the Schnorr excess), and return the REAL
+   * boolean composition under `mode`. Unlike `compose_proofs` (a BLAKE3 content
+   * id, always `valid:false`), this `valid` MEANS the proofs verified.
+   */
+  compose_and_verify_proofs(proofsJson: string, mode: string): {
+    composed_proof: string;
+    mode: string;
+    input_count: number;
+    valid: boolean;
+    results: Array<{ kind: string; valid: boolean; error: string | null }>;
+  };
+
+  // ── DrEX order-side proofs (routed through the extension) ──
+  /** REAL Bulletproof conservation (solvency) bound to `messageHex`. */
+  prove_conservation(inputsJson: string, outputsJson: string, messageHex: string): {
+    input_commitments: string[];
+    output_commitments: string[];
+    proof: { excess_commitment: string; nonce_commitment: string; response: string };
+    message_hex: string;
+    output_range_proofs: string[];
+  };
+  /** Verify a conservation proof (fail-closed on tamper). */
+  verify_conservation_proof(
+    inputCommitmentsJson: string,
+    outputCommitmentsJson: string,
+    proofJson: string,
+    messageHex: string,
+    outputRangeProofsJson: string,
+  ): { valid: boolean; range_proofs_checked: boolean; error: string | null };
+  /** REAL blinded ring-membership (sealed-bid trader anonymity). */
+  prove_anonymous_membership(traderIdHex: string, ringHexIdsJson: string): {
+    presentation_tag_full_hex: string;
+    set_root: string;
+    ring_size: number;
+    proof_size_bytes: number;
   };
 }
 

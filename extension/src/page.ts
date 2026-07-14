@@ -179,7 +179,57 @@ export interface DreggAPI {
   verifyProvenance(cellVkHex: string, knownFactoryVks: string[]): Promise<{ fromFactory: boolean; factoryVk: string | null }>;
   makeCellSovereign(cellIdHex: string): Promise<{ cellId: string; stateCommitment: string; mode: string }>;
   peerExchange(receiverCellHex: string, amount: number): Promise<{ exchangeId: string; proofCommitment: string }>;
-  composeProofs(proofs: Array<{ proofJson: string; publicInputs?: number[] }>, mode: "and" | "or" | "chain" | "aggregate"): Promise<{ composedProof: string; mode: string; inputCount: number; valid: boolean }>;
+  composeProofs(proofs: Array<{ proofJson: string; publicInputs?: number[] }>, mode: "and" | "or" | "chain" | "aggregate"): Promise<{ composedProof: string; mode: string; inputCount: number; valid: boolean; results: Array<{ kind: string; valid: boolean; error: string | null }> }>;
+  /**
+   * The EVM signing leg (secp256k1). The EVM key is derived from the same sealed
+   * wallet seed the dregg-native Ed25519 identity uses, so one recovery phrase
+   * restores both. Every signature is gated by the confirm-intent consent.
+   *
+   * - `getAddress` returns the derived checksummed EVM address (unlock required).
+   * - `personalSign` produces an EIP-191 `personal_sign` signature.
+   * - `signTypedData` produces an EIP-712 typed-data signature (the shape an
+   *   on-chain launchpad escrow verifies).
+   */
+  evm: {
+    getAddress(): Promise<{ address: string }>;
+    personalSign(message: string): Promise<{ address: string; signature: string; v: number; digest: string }>;
+    signTypedData(
+      domain: Record<string, unknown>,
+      types: Record<string, Array<{ name: string; type: string }>>,
+      primaryType: string,
+      messageData: Record<string, unknown>,
+    ): Promise<{ address: string; signature: string; v: number; digest: string }>;
+  };
+  /**
+   * The fhEgg sealed-bid commit→reveal ceremony. `commit` hides an order behind
+   * a keccak256 commitment, escrows it via an EIP-712 `SealedBid` signature, and
+   * stores the opening locally; `reveal` returns the opening + a `RevealBid`
+   * signature and checks it binds. The two phases are separate user actions.
+   */
+  sealedBid: {
+    commit(params: { auctionId: number; order: Record<string, unknown>; chainId?: number; verifyingContract?: string; deadline?: number }): Promise<{
+      phase: "commit"; auctionId: number; bidder: string; commitment: string; signature: string; digest: string;
+      escrow: { domain: Record<string, unknown>; primaryType: string; message: Record<string, unknown> };
+    }>;
+    reveal(params: { auctionId: number }): Promise<{
+      phase: "reveal"; auctionId: number; bidder: string; order: Record<string, unknown>; salt: string; orderHash: string;
+      commitment: string; bindsCommitment: boolean; signature: string; digest: string;
+      escrow: { domain: Record<string, unknown>; primaryType: string; message: Record<string, unknown> };
+    }>;
+  };
+  /**
+   * DrEX routed THROUGH the installed extension (not the standalone wasm): signs
+   * a dregg-native order-turn with the sealed key, and optionally attaches a REAL
+   * Bulletproof solvency proof (`holdings ≥ offer`, bound to the order-turn id)
+   * and a blinded ring-membership eligibility proof.
+   */
+  drex: {
+    placeOrder(order: Record<string, unknown>, opts?: { holdings?: number; offer?: number; traderId?: string; ring?: string[] }): Promise<{
+      turnId: string; agentCell: string; orderHash: string; routedThroughExtension: boolean;
+      solvency?: { ok: boolean; valid?: boolean; rangeProofsChecked?: boolean; boundTo?: string; reason?: string };
+      eligibility?: { presentationTag: string; setRoot: string; ringSize: number };
+    }>;
+  };
   signTurn(turnSpec: { action: string; resource?: string; amount?: number; recipient?: string; metadata?: Record<string, unknown> }): Promise<{ turnId?: string; submitted: boolean; error?: string }>;
   queryBalance(): Promise<{ balance?: number; error?: string }>;
   shareCapability(cellId: string): Promise<{ uri: string; cellId: string; nodeId: string }>;
@@ -324,8 +374,35 @@ const dregg: DreggAPI = {
   },
 
   composeProofs(proofs, mode) {
-    return sendMessage("dregg:composeProofs", { proofs, mode }) as Promise<{ composedProof: string; mode: string; inputCount: number; valid: boolean }>;
+    return sendMessage("dregg:composeProofs", { proofs, mode }) as Promise<{ composedProof: string; mode: string; inputCount: number; valid: boolean; results: Array<{ kind: string; valid: boolean; error: string | null }> }>;
   },
+
+  evm: Object.freeze({
+    getAddress() {
+      return sendMessage("dregg:evmGetAddress", {}) as Promise<{ address: string }>;
+    },
+    personalSign(message: string) {
+      return sendMessage("dregg:evmPersonalSign", { message }) as Promise<{ address: string; signature: string; v: number; digest: string }>;
+    },
+    signTypedData(domain, types, primaryType, messageData) {
+      return sendMessage("dregg:evmSignTypedData", { domain, types, primaryType, messageData }) as Promise<{ address: string; signature: string; v: number; digest: string }>;
+    },
+  }),
+
+  sealedBid: Object.freeze({
+    commit(params: { auctionId: number; order: Record<string, unknown>; chainId?: number; verifyingContract?: string; deadline?: number }) {
+      return sendMessage("dregg:sealedBidCommit", { ...params }) as Promise<{ phase: "commit"; auctionId: number; bidder: string; commitment: string; signature: string; digest: string; escrow: { domain: Record<string, unknown>; primaryType: string; message: Record<string, unknown> } }>;
+    },
+    reveal(params: { auctionId: number }) {
+      return sendMessage("dregg:sealedBidReveal", { ...params }) as Promise<{ phase: "reveal"; auctionId: number; bidder: string; order: Record<string, unknown>; salt: string; orderHash: string; commitment: string; bindsCommitment: boolean; signature: string; digest: string; escrow: { domain: Record<string, unknown>; primaryType: string; message: Record<string, unknown> } }>;
+    },
+  }),
+
+  drex: Object.freeze({
+    placeOrder(order: Record<string, unknown>, opts?: { holdings?: number; offer?: number; traderId?: string; ring?: string[] }) {
+      return sendMessage("dregg:drexPlaceOrder", { order, ...(opts || {}) }) as Promise<{ turnId: string; agentCell: string; orderHash: string; routedThroughExtension: boolean; solvency?: { ok: boolean; valid?: boolean; rangeProofsChecked?: boolean; boundTo?: string; reason?: string }; eligibility?: { presentationTag: string; setRoot: string; ringSize: number } }>;
+    },
+  }),
 
   signTurn(turnSpec) {
     return sendMessage("dregg:signTurn", { turnSpec }) as Promise<{ turnId?: string; submitted: boolean; error?: string }>;

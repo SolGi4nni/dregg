@@ -59,9 +59,24 @@ to the node's receipt stream so you can see what committed.
 - **Privacy** — selective disclosure with **ZK range predicate proofs**
   (Bulletproofs over Ristretto, collision-resistant), stealth addresses, and
   committed private transfers. STARK Merkle-*membership* proof composition is
-  **disabled**: its current `MerkleStarkAir` hash binding is not
-  collision-resistant (forgeable), so it is not shipped as a usable feature
-  until the circuit moves to a Poseidon2 Merkle hash.
+  **enabled and sound**: the wasm crate moved off the forgeable linear
+  `MerkleStarkAir` onto a **real arity-4 Poseidon2 Merkle descriptor**
+  (`merkle-membership::poseidon2-4ary-general-depthN`, proven by
+  `prove_vm_descriptor2` and checked by the deployed `verify_vm_descriptor2`).
+  A genuine member proof verifies and a forged/tampered claim is rejected;
+  `composeProofs` discharges each tagged proof against its canonical verifier and
+  returns the real boolean composition.
+- **EVM signing leg (secp256k1)** — the extension signs both dregg-native
+  (Ed25519 + ML-DSA-65) **and** EVM (`secp256k1`). The EVM key is derived from
+  the same sealed wallet seed, so one recovery phrase restores both faces.
+  `window.dregg.evm.{getAddress, personalSign, signTypedData}` produce EIP-191
+  and EIP-712 signatures an on-chain launchpad escrow recovers.
+- **fhEgg sealed-bid ceremony** — `window.dregg.sealedBid.commit(...)` hides an
+  order behind a keccak256 commitment and EIP-712-escrows it; a later
+  `reveal(...)` returns the opening and its `RevealBid` signature. DrEX routes
+  **through the installed extension** via `window.dregg.drex.placeOrder(...)`
+  (a sealed-key order-turn + optional Bulletproof solvency + blinded ring
+  eligibility) rather than loading the wasm standalone.
 - **CapTP / directory / storage / federation** — share/accept sturdy refs,
   mount + discover services, content-addressed storage, and federation
   proposals/votes — all routed through the node.
