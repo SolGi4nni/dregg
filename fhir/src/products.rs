@@ -6,7 +6,7 @@
 //! Each demonstrates the compiler reporting the right tier
 //! (`DREGGFI-PRIVACY-TIERS.md` §3 mapping table).
 
-use crate::ast::{EdgeSpec, MatrixData, OrderSpec, PoolSpec, Product, ProductBody};
+use crate::ast::{BinomialSpec, EdgeSpec, MatrixData, OrderSpec, PoolSpec, Product, ProductBody};
 use crate::tier::Tier;
 
 /// A diagonal-dominant PSD covariance (public structure for the test), n×n.
@@ -149,10 +149,13 @@ pub fn small_flow_clearing() -> Product {
 }
 
 /// A **Price-Cert derivative** — a state-price / superhedging LP over a small
-/// PUBLIC scenario grid. Its shape type-checks (Dark, PriceCert); the dedicated
-/// runner is the fhIR-1 lane.
+/// PUBLIC scenario grid. An INCOMPLETE market (3 scenarios, 2 instruments): a
+/// bond `[1,1,1]`@1 and an asset `[0,0.5,1]`@0.6, pricing a call-like payoff
+/// `h=[0,0.2,0.8]`. Many consistent state prices exist (a genuine arbitrage-free
+/// interval); the runner returns the upper price `0.48` with a tight superhedge
+/// `y=(0,0.8)` (gap 0). Compiles Dark/PriceCert and now RUNS end-to-end.
 pub fn derivative_price_cert() -> Product {
-    // 3 scenarios × 2 calibrated instruments (public payoff grid H).
+    // 3 scenarios × 2 calibrated instruments (public payoff grid H, scenario-major).
     let instruments = MatrixData::public(3, 2, vec![1.0, 0.0, 1.0, 0.5, 1.0, 1.0]);
     Product::infer(
         "european-call-price-cert",
@@ -160,6 +163,50 @@ pub fn derivative_price_cert() -> Product {
             instruments,
             marks: vec![1.0, 0.6],
             payoff: vec![0.0, 0.2, 0.8],
+        },
+    )
+}
+
+/// An **American put** priced by the Snell-envelope LP over a PUBLIC recombining
+/// binomial tree — the early-exercise member of the Price-Cert family. 16 steps
+/// ⇒ 153 tree nodes, which EXCEEDS the Dark LP envelope (64), so the honest tier
+/// is Shielded: the American "cliff is tree size, not solver class" (R2.1) —
+/// exactly the size boundary biting. Optimal stopping is an LP, not mixed-integer;
+/// the runner computes the tight envelope by backward induction and certifies it.
+/// The SAME Price-Cert discipline as the European.
+pub fn american_put_price_cert() -> Product {
+    Product::infer(
+        "american-put-price-cert",
+        ProductBody::American {
+            spec: BinomialSpec {
+                s0: 100.0,
+                strike: 100.0,
+                rate: 0.05,
+                vol: 0.2,
+                expiry: 1.0,
+                steps: 16,
+                is_put: true,
+            },
+        },
+    )
+}
+
+/// **REJECTION (economic) — an ARBITRAGE derivative market.** Two instruments
+/// with IDENTICAL payoff `[1,1]` marked at DIFFERENT prices (1 vs 0.5): a
+/// textbook arbitrage. No consistent state price `π ≥ 0` with `Hπ = a` exists,
+/// so the runner produces NO certificate and REJECTS the market
+/// (`NoArbitrageFreePrice`) — the runner's honest negative polarity, distinct
+/// from the type-level over-claim rejections. It still type-checks (the SHAPE is
+/// a valid state-price LP); the RUN detects the arbitrage.
+pub fn arbitrage_derivative_rejected() -> Product {
+    // scenario-major 2×2: both instruments pay [1,1]; only the marks differ.
+    let instruments = MatrixData::public(2, 2, vec![1.0, 1.0, 1.0, 1.0]);
+    Product::infer(
+        "arbitrage-derivative-REJECTED",
+        ProductBody::Derivative {
+            instruments,
+            marks: vec![1.0, 0.5],
+            payoff: vec![1.0, 0.0],
         },
     )
 }
@@ -255,6 +302,8 @@ pub fn all() -> Vec<Product> {
         flow_lp_clearing(),
         portfolio_qp_public(),
         derivative_price_cert(),
+        american_put_price_cert(),
+        arbitrage_derivative_rejected(),
         discriminatory_clearing(),
         welfare_max_fisher(),
         cfmm_routing(),

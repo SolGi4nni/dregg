@@ -16,7 +16,9 @@
 //! reports more privacy than the math delivers. The converse (admissible ⇒
 //! compiles, the full iff) is the six-part theorem, the Lean lane's target.
 
-use crate::ast::{EdgeSpec, FillType, MatrixData, OrderSide, OrderSpec, Product, ProductBody};
+use crate::ast::{
+    BinomialSpec, EdgeSpec, FillType, MatrixData, OrderSide, OrderSpec, Product, ProductBody,
+};
 use crate::tier::Tier;
 use crate::types::{
     CertKind, Cone, Curvature, IntegerFeature, MatrixFlag, MatrixRole, ProgramKind, ProgramType,
@@ -28,6 +30,7 @@ use fhegg_solver::cfmm::{Pool, RoutingProblem};
 use fhegg_solver::clearing::{Order as EngineOrder, Side as EngineSide};
 use fhegg_solver::fisher::FisherMarket;
 use fhegg_solver::pdhg::FlowLp;
+use fhegg_solver::pricecert::{american_put_binomial, Market, SnellTree};
 use fhegg_solver::qp::{markowitz, QpProblem};
 
 /// The back-end IR a product compiles to — holding the REAL `fhegg-solver`
@@ -41,12 +44,14 @@ pub enum ConvexProgram {
     FlowLp(FlowLp),
     /// A quadratic program (portfolio / Markowitz).
     Qp(QpProblem),
-    /// A state-price / superhedging LP (Price-Cert) — typed shape only in
-    /// fhIR-0; the dedicated runner is the fhIR-1 lane.
-    StatePriceLp {
-        n_scenarios: usize,
-        n_instruments: usize,
-    },
+    /// A state-price / superhedging LP (Price-Cert) — the REAL `fhegg-solver`
+    /// market, so a compiled derivative RUNS the state-price LP and emits its
+    /// CertPrice (the fhIR-1 runner).
+    StatePriceLp(Market),
+    /// A Snell-envelope LP (Price-Cert American/Bermudan) — the REAL scenario
+    /// tree, so a compiled early-exercise option RUNS backward induction and
+    /// emits its CertSnell.
+    SnellLp(SnellTree),
     /// A discriminatory / pay-as-bid clearing: the input book + the public price
     /// grid. Runs the gains-from-trade flow-LP (Cert-F) + the pay-as-bid payment.
     Discriminatory {
@@ -134,6 +139,7 @@ fn lower(p: &Product) -> Lowered {
             marks,
             payoff,
         } => lower_derivative(instruments, marks, payoff),
+        ProductBody::American { spec } => lower_american(spec),
         ProductBody::Discriminatory { orders, k } => lower_discriminatory(orders, *k),
         ProductBody::WelfareMax {
             n_buyers,
@@ -250,10 +256,9 @@ fn lower_portfolio(cov: &MatrixData, mu: &[f64], lambda: f64, w_max: f64) -> Low
 }
 
 fn lower_derivative(instruments: &MatrixData, marks: &[f64], payoff: &[f64]) -> Lowered {
-    let _ = marks;
     let shape = ProgramType {
         kind: ProgramKind::StatePriceLp,
-        curvature: Curvature::Affine, // max hᵀπ s.t. Hᵀπ = a — an LP
+        curvature: Curvature::Affine, // max hᵀπ s.t. Hπ = a — an LP
         matrices: vec![MatrixFlag {
             // The scenario-payoff grid H is PUBLIC topology.
             role: MatrixRole::Constraint,
@@ -264,12 +269,48 @@ fn lower_derivative(instruments: &MatrixData, marks: &[f64], payoff: &[f64]) -> 
         size: payoff.len(), // M scenarios
         cert: CertKind::PriceCert,
     };
+    // The fhir `MatrixData` is SCENARIO-MAJOR (rows = scenarios, cols =
+    // instruments); the Market transposes to the instrument-major H the Lean uses.
+    let market = Market::from_scenario_major(
+        instruments.rows,
+        instruments.cols,
+        &instruments.data,
+        marks.to_vec(),
+        payoff.to_vec(),
+        1e-6,
+    );
     Lowered {
         shape,
-        program: ConvexProgram::StatePriceLp {
-            n_scenarios: instruments.rows,
-            n_instruments: instruments.cols,
-        },
+        program: ConvexProgram::StatePriceLp(market),
+    }
+}
+
+fn lower_american(spec: &BinomialSpec) -> Lowered {
+    let tree = american_put_binomial(
+        spec.s0,
+        spec.strike,
+        spec.rate,
+        spec.vol,
+        spec.expiry,
+        spec.steps,
+        spec.is_put,
+    );
+    let shape = ProgramType {
+        kind: ProgramKind::SnellLp,
+        curvature: Curvature::Affine, // min V_root s.t. V ≥ g, V superharmonic — an LP
+        matrices: vec![MatrixFlag {
+            // The recombining tree topology + transition weights are PUBLIC.
+            role: MatrixRole::Constraint,
+            visibility: Visibility::Public,
+        }],
+        cones: vec![Cone::NonNeg], // V ≥ g (dominance), superharmonic rows
+        integer_features: vec![],  // optimal stopping is an LP, NOT mixed-integer
+        size: tree.n_nodes,
+        cert: CertKind::PriceCert,
+    };
+    Lowered {
+        shape,
+        program: ConvexProgram::SnellLp(tree),
     }
 }
 
@@ -473,9 +514,20 @@ mod tests {
     fn derivative_price_cert_typed() {
         let c = compile(&products::derivative_price_cert()).unwrap();
         assert_eq!(c.cert, CertKind::PriceCert);
-        // Small public scenario grid → Dark; the shape typechecks even though the
-        // runner is the fhIR-1 lane.
+        // Small public scenario grid → Dark; the state-price LP runs (fhIR-1).
         assert_eq!(c.tier, Tier::Dark);
+        assert!(matches!(c.program, ConvexProgram::StatePriceLp(_)));
+    }
+
+    #[test]
+    fn american_snell_typed() {
+        let c = compile(&products::american_put_price_cert()).unwrap();
+        // Same Price-Cert family; the Snell-envelope LP over a public tree (16
+        // steps ⇒ 153 nodes) EXCEEDS the Dark LP envelope (64) ⇒ Shielded — the
+        // American tree-size cliff (R2.1), the size boundary biting honestly.
+        assert_eq!(c.cert, CertKind::PriceCert);
+        assert_eq!(c.tier, Tier::Shielded);
+        assert!(matches!(c.program, ConvexProgram::SnellLp(_)));
     }
 
     // --- the mechanism family: three more clearings on the one engine ---

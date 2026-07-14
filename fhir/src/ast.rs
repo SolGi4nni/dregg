@@ -77,6 +77,12 @@ pub enum ProductBody {
         payoff: Vec<f64>,
     },
 
+    /// An **American / Bermudan** option priced by the Snell-envelope LP over a
+    /// PUBLIC recombining binomial tree — the early-exercise member of the
+    /// Price-Cert family (`PriceCert.lean` § Snell). Optimal stopping is an LP,
+    /// NOT mixed-integer; the tree topology is public.
+    American { spec: BinomialSpec },
+
     /// A **discriminatory / pay-as-bid** call auction over a PUBLIC `k`-level price
     /// grid — a DIFFERENT clearing on the same book form as [`ProductBody::
     /// UniformPrice`]. The efficient fill is a gains-from-trade flow-LP (linear
@@ -103,6 +109,28 @@ pub enum ProductBody {
     /// (`max Σ gᵢ(δᵢ) s.t. Σδ≤Δ`). The pool curves are public; the routing is
     /// private. The rational-concave output is a nonlinear objective ⇒ Shielded.
     CfmmRouting { pools: Vec<PoolSpec>, budget: f64 },
+}
+
+/// A recombining CRR binomial American/Bermudan option — the PUBLIC scenario
+/// tree the Snell-envelope LP prices against ([`ProductBody::American`]). All
+/// fields are public model parameters; the state prices / stopping policy stay
+/// hidden (only the certified value opens).
+#[derive(Clone, Copy, Debug)]
+pub struct BinomialSpec {
+    /// Spot price `S₀`.
+    pub s0: f64,
+    /// Strike `K`.
+    pub strike: f64,
+    /// Risk-free rate `r` (per annum, continuous).
+    pub rate: f64,
+    /// Volatility `σ` (per annum).
+    pub vol: f64,
+    /// Expiry `T` in years.
+    pub expiry: f64,
+    /// Number of binomial steps (tree depth) — the state-size knob.
+    pub steps: usize,
+    /// `true` = put `(K−S)₊`; `false` = call `(S−K)₊`.
+    pub is_put: bool,
 }
 
 /// One constant-product pool for a [`ProductBody::CfmmRouting`] — a PUBLIC curve.

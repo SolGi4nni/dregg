@@ -15,6 +15,10 @@ use fhegg_solver::clearing::{allocate, clear, Allocation, Clearing};
 use fhegg_solver::discriminatory::{clear_discriminatory, DiscriminatoryClearing};
 use fhegg_solver::fisher::{solve_proportional_response, CertEq, CertEqReport};
 use fhegg_solver::pdhg::solve_cpu;
+use fhegg_solver::pricecert::{
+    solve_price_cert, solve_snell_cert, CertPrice, CertPriceReport, CertSnell, CertSnellReport,
+    PriceOutcome,
+};
 use fhegg_solver::qp::{solve_admm, CertQp, CertQpReport};
 
 /// The outcome of running a compiled product through the engine — the certificate
@@ -45,9 +49,23 @@ pub enum RunOutcome {
         cert: CertRoute,
         report: CertRouteReport,
     },
-    /// The program's runner is the fhIR-1 lane (Price-Cert). The shape compiled;
-    /// the engine builder is future work — stated plainly, not faked.
-    NotWired { reason: &'static str },
+    /// Price-Cert (European / basket / Asian): the state-price LP CertPrice +
+    /// its check report — the arbitrage-free price with its superhedging dual.
+    CertPrice {
+        cert: CertPrice,
+        report: CertPriceReport,
+    },
+    /// Price-Cert (American / Bermudan): the Snell-envelope CertSnell + its check
+    /// report — the certified early-exercise value.
+    CertSnell {
+        cert: CertSnell,
+        report: CertSnellReport,
+    },
+    /// The market admits ARBITRAGE (no consistent state price `π ≥ 0` with
+    /// `Hπ = a`) — there is NO arbitrage-free price and NO certificate. The
+    /// honest negative polarity of the Price-Cert runner (a mispriced/arbitrage
+    /// derivative is REJECTED, not certified).
+    NoArbitrageFreePrice { reason: &'static str },
 }
 
 impl RunOutcome {
@@ -62,7 +80,10 @@ impl RunOutcome {
             RunOutcome::Discriminatory { report, .. } => Some(report.valid),
             RunOutcome::CertEq { report, .. } => Some(report.valid),
             RunOutcome::CertRoute { report, .. } => Some(report.valid),
-            RunOutcome::NotWired { .. } => None,
+            RunOutcome::CertPrice { report, .. } => Some(report.valid),
+            RunOutcome::CertSnell { report, .. } => Some(report.valid),
+            // Arbitrage detected → the derivative is REJECTED (no valid cert).
+            RunOutcome::NoArbitrageFreePrice { .. } => Some(false),
         }
     }
 
@@ -119,7 +140,31 @@ impl RunOutcome {
                 cert.total_output,
                 cert.pools.len(),
             ),
-            RunOutcome::NotWired { reason } => format!("not-wired: {reason}"),
+            RunOutcome::CertPrice { report, cert } => format!(
+                "Price-Cert: valid={} price(hᵀπ)={:.4} hedge(aᵀy)={:.4} gap={:.3e} (ε={:.1e}) π≥0={} Hπ=a={} yᵀH≥h={} (S={}, J={})",
+                report.valid,
+                cert.primal_price,
+                cert.dual_cost,
+                report.gap,
+                cert.epsilon,
+                report.pi_nonneg,
+                report.consistent,
+                report.superhedge,
+                cert.n_scenarios,
+                cert.n_instruments,
+            ),
+            RunOutcome::CertSnell { report, cert } => format!(
+                "Snell-Cert: valid={} value(V_root)={:.4} dominates={} superharmonic={} (nodes={}, d={:.4})",
+                report.valid,
+                cert.root_value,
+                report.dominates,
+                report.superharmonic,
+                cert.n_nodes,
+                cert.d,
+            ),
+            RunOutcome::NoArbitrageFreePrice { reason } => {
+                format!("no-arbitrage-free-price (REJECTED): {reason}")
+            }
         }
     }
 }
@@ -170,10 +215,20 @@ pub fn run(compiled: &Compiled) -> RunOutcome {
             let report = cert.check();
             RunOutcome::CertRoute { cert, report }
         }
-        ConvexProgram::StatePriceLp { .. } => RunOutcome::NotWired {
-            reason:
-                "Price-Cert state-price LP runner is the fhIR-1 lane; the shape type-checks here",
+        ConvexProgram::StatePriceLp(market) => match solve_price_cert(market) {
+            PriceOutcome::Certified(cert) => {
+                let report = cert.check();
+                RunOutcome::CertPrice { cert, report }
+            }
+            PriceOutcome::Arbitrage => RunOutcome::NoArbitrageFreePrice {
+                reason: "no consistent state price π≥0 with Hπ=a — the marks admit arbitrage",
+            },
         },
+        ConvexProgram::SnellLp(tree) => {
+            let cert = solve_snell_cert(tree, 1e-9);
+            let report = cert.check();
+            RunOutcome::CertSnell { cert, report }
+        }
     }
 }
 
@@ -218,11 +273,47 @@ mod tests {
     }
 
     #[test]
-    fn derivative_is_not_wired_but_typed() {
+    fn european_price_cert_runs_and_certifies() {
+        // The state-price LP runs end-to-end: compile → run → CertPrice valid,
+        // with the hand-checked upper price 0.48 and a tight (gap 0) superhedge.
         let c = compile(&products::derivative_price_cert()).unwrap();
         let out = run(&c);
-        assert_eq!(out.certificate_valid(), None);
-        assert!(matches!(out, RunOutcome::NotWired { .. }));
+        assert_eq!(out.certificate_valid(), Some(true), "{}", out.summary());
+        if let RunOutcome::CertPrice { cert, report } = &out {
+            assert!((cert.primal_price - 0.48).abs() < 1e-6, "{}", out.summary());
+            assert!(cert.gap.abs() < 1e-6, "tight gap: {}", cert.gap);
+            assert!(report.pi_nonneg && report.consistent && report.superhedge);
+        } else {
+            panic!("expected a CertPrice outcome, got {}", out.summary());
+        }
+    }
+
+    #[test]
+    fn american_snell_runs_and_certifies() {
+        // The Snell-envelope LP runs end-to-end for the early-exercise value.
+        let c = compile(&products::american_put_price_cert()).unwrap();
+        let out = run(&c);
+        assert_eq!(out.certificate_valid(), Some(true), "{}", out.summary());
+        if let RunOutcome::CertSnell { cert, report } = &out {
+            assert!(cert.root_value > 0.0, "ATM American put has value");
+            assert!(
+                report.dominates && report.superharmonic,
+                "{}",
+                out.summary()
+            );
+        } else {
+            panic!("expected a CertSnell outcome, got {}", out.summary());
+        }
+    }
+
+    #[test]
+    fn arbitrage_derivative_is_rejected() {
+        // The runner's honest negative polarity: an arbitrage market yields NO
+        // certificate — certificate_valid() is NOT Some(true).
+        let c = compile(&products::arbitrage_derivative_rejected()).unwrap();
+        let out = run(&c);
+        assert_eq!(out.certificate_valid(), Some(false), "{}", out.summary());
+        assert!(matches!(out, RunOutcome::NoArbitrageFreePrice { .. }));
     }
 
     #[test]

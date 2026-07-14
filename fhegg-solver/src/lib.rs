@@ -56,4 +56,5 @@ pub mod discriminatory;
 pub mod fisher;
 pub mod gpu;
 pub mod pdhg;
+pub mod pricecert;
 pub mod qp;

@@ -141,6 +141,9 @@ pub enum ProgramKind {
     Qp,
     /// State-price LP for derivative pricing (Price-Cert superhedging LP).
     StatePriceLp,
+    /// Snell-envelope LP for American/Bermudan early-exercise pricing — the
+    /// optimal-stopping member of the Price-Cert family (LP, not mixed-integer).
+    SnellLp,
     /// Discriminatory / pay-as-bid clearing — the gains-from-trade flow-LP
     /// winner-determination (linear, same Cert-F engine) + a pay-as-bid payment.
     Discriminatory,
@@ -232,9 +235,10 @@ impl ProgramType {
     fn within_dark_envelope(&self) -> bool {
         match self.kind {
             ProgramKind::Aggregation => self.size <= DARK_AGGREGATION_ENVELOPE,
-            ProgramKind::FlowLp | ProgramKind::StatePriceLp | ProgramKind::Discriminatory => {
-                self.size <= DARK_LP_ENVELOPE
-            }
+            ProgramKind::FlowLp
+            | ProgramKind::StatePriceLp
+            | ProgramKind::SnellLp
+            | ProgramKind::Discriminatory => self.size <= DARK_LP_ENVELOPE,
             ProgramKind::Qp => false,
             // WelfareMax / CfmmRouting have a Concave (log / rational) objective,
             // so the curvature check rejects them at Dark before this is reached;

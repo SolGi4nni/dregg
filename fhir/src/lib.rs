@@ -83,6 +83,17 @@ mod integration_tests {
                 Tier::Shielded,
                 CertKind::CertQp,
             ),
+            // The derivatives family — one Price-Cert, all derivatives, RUNNING.
+            (
+                products::derivative_price_cert(),
+                Tier::Dark,
+                CertKind::PriceCert,
+            ),
+            (
+                products::american_put_price_cert(),
+                Tier::Shielded,
+                CertKind::PriceCert,
+            ),
             // The mechanism FAMILY: three more clearings, same engine.
             (
                 products::discriminatory_clearing(),
