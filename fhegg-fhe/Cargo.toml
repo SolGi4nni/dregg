@@ -1,0 +1,41 @@
+[package]
+name = "fhegg-fhe"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "fhEgg Stage-2 NO-VIEWER FHE clearing PoC: uniform-price batch auction cleared entirely on TFHE ciphertexts (nobody decrypts the orders), plus one PDHG flow-LP iteration under FHE. Real tfhe-rs, measured envelope."
+
+# Standalone probe/tool crate — deliberately NOT a breadstuffs workspace member
+# (empty [workspace] opts out of the root workspace), exactly like the Stage-1
+# fhegg-solver sibling. This is the NO-VIEWER stage: orders are submitted as
+# TFHE ciphertexts (unary price-bucket increments, Cryptobazaar-style) and the
+# clearing is computed HOMOMORPHICALLY. Nobody — not this binary, not any
+# committee — ever holds a plaintext order; only the public clearing price p*
+# (and the aggregate volume V*) is decrypted at the end.
+#
+# Kept standalone to avoid feature-unifying the heavy tfhe-rs FHE dependency
+# onto the protocol crates, and to build/run the honest CPU benchmark locally.
+# See docs/deos/DREX-NO-VIEWER-SURPASS.md (the FHE-feasibility estimates this
+# crate VALIDATES against real numbers), docs/deos/FHEGG-KERNEL.md (§2 the fold
+# + crossing), docs/deos/PRIVATE-CONVEX-ENGINE.md (§2.x PDHG, §1.4 FHE cost).
+[workspace]
+
+[dependencies]
+tfhe = { version = "1.6", features = ["integer"] }
+rand = "0.8"
+
+[[bin]]
+name = "smoke"
+path = "src/bin/smoke.rs"
+
+[[bin]]
+name = "fhe-clearing-bench"
+path = "src/bin/bench.rs"
+
+[[bin]]
+name = "fhe-pdhg-bench"
+path = "src/bin/pdhg.rs"
+
+[profile.release]
+opt-level = 3
+lto = "thin"
