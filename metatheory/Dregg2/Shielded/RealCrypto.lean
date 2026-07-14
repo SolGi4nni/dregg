@@ -44,6 +44,7 @@ Pedersen/Poseidon2 STRUCTURE with those floors named — not a `Nat`-additive / 
 import Dregg2.Crypto.Pedersen
 import Dregg2.Circuit.Poseidon2Binding
 import Dregg2.Exec.ShieldedValue
+import Dregg2.Bignum
 
 namespace Dregg2.Shielded.RealCrypto
 
@@ -174,14 +175,25 @@ Lean meaning of the range gadget, tying the in-AIR conservation to the real grou
 range-bounded inputs and two range-bounded outputs (each `< 2^k`, with `2·2^k ≤ p` — the BabyBear
 no-wrap bound the AIR asserts at compile time) whose FIELD sums agree mod `p` have EQUAL INTEGER
 sums. The range bound is LOAD-BEARING: drop any `_ < 2^k` and the conclusion is false (wraparound
-mints) — the exact field-soundness the in-AIR range gadget supplies. -/
+mints) — the exact field-soundness the in-AIR range gadget supplies.
+
+CONSOLIDATED onto the audited bedrock: this is the `k = 2` instance of the unified library keystone
+`Dregg2.Bignum.legs_noWrap_conservation` (which was written to generalize exactly this lemma from the
+deployed `RING_LEGS = 2` to any leg count). One audited no-wrap proof, instantiated here — not a
+second hand-rolled copy. -/
 theorem twoLeg_noWrap_conservation {p a0 a1 b0 b1 k : ℕ}
     (ha0 : a0 < 2 ^ k) (ha1 : a1 < 2 ^ k) (hb0 : b0 < 2 ^ k) (hb1 : b1 < 2 ^ k)
     (hnoWrap : 2 * 2 ^ k ≤ p) (hcong : (a0 + a1) % p = (b0 + b1) % p) :
     a0 + a1 = b0 + b1 := by
-  have hin : a0 + a1 < p := by omega
-  have hout : b0 + b1 < p := by omega
-  rwa [Nat.mod_eq_of_lt hin, Nat.mod_eq_of_lt hout] at hcong
+  have hpk : 0 < 2 ^ k := pow_pos (by norm_num) k
+  have hp : 0 < p := by omega
+  have key := Dregg2.Bignum.legs_noWrap_conservation (n := k) (p := p)
+    (as := [a0, a1]) (bs := [b0, b1]) hp
+    (by intro x hx; fin_cases hx <;> assumption)
+    (by intro x hx; fin_cases hx <;> assumption)
+    (by simpa using hnoWrap) (by simpa using hnoWrap)
+    (by simpa using hcong)
+  simpa using key
 
 /-- **The tie: the in-AIR conservation REFINES `ring_conserves_pedersen_list`.** Given two input
 notes and two output notes whose VALUES are range-bounded (the in-AIR range gadget) and whose value
