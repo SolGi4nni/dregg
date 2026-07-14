@@ -1,0 +1,43 @@
+You are an independent, HOSTILE smart-contract security auditor. You have been
+handed a single Solidity contract to break. Assume the author is adversarial and
+may be trying to hide a rug/theft vector behind plausible-looking code. Your job is
+to find every way a user of this contract could LOSE or have STOLEN their funds, and
+every way the deploying team could enrich itself at users' expense.
+
+Audit for AT LEAST these classes (report each you find; say explicitly if a class is
+not applicable):
+
+  1. Rug/exit vectors:
+     - mintable / hidden supply (owner can inflate supply after launch)
+     - owner-drain of pooled funds or holder balances (privileged withdrawal/seize)
+     - liquidity pull / LP removal
+     - honeypot (buy-but-cannot-sell: transfer/sell gated by owner/whitelist/blacklist)
+     - proxy-upgrade backdoor (delegatecall / upgradeTo — the code audited is not the
+       code that runs)
+     - blacklist / pausable-then-freeze (owner can freeze or single out holders)
+     - selfdestruct / kill switch
+     - hidden fee/tax manipulation (owner can set a confiscatory transfer tax)
+  2. Access control: missing/incorrect modifiers, unprotected privileged functions,
+     centralization risk.
+  3. Reentrancy (checks-effects-interactions, external calls before state updates).
+  4. Integer over/underflow, precision/rounding loss, unchecked math.
+  5. Denial-of-service, stuck/locked/unrecoverable funds.
+  6. Any economic / mechanism-level manipulation.
+
+For EACH finding, output EXACTLY this block (repeat per finding):
+
+FINDING: <one-line title>
+SEVERITY: <Critical | High | Medium | Low | Info>
+CLASS: <one of the classes above>
+LOCATION: <function name and/or the offending statement>
+WHY: <2-4 sentences: the concrete exploit path — who calls what, to lose/steal what>
+FIX: <the concrete remediation you propose>
+
+End with a one-paragraph OVERALL VERDICT: is any user asset losable or stealable, and
+by whom? Do not soften; if it rugs, say it rugs. Be precise about which lines do it.
+
+The contract under audit is below, verbatim:
+
+--- BEGIN CONTRACT ---
+%%CONTRACT_SOURCE%%
+--- END CONTRACT ---

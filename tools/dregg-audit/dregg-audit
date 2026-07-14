@@ -1,0 +1,332 @@
+#!/usr/bin/env bash
+# ============================================================================
+# dregg-audit — a repeatable DREGG-kernel contract-audit pipeline.
+#
+#   Usage: dregg-audit <contract.sol> [options]
+#
+#   Options:
+#     --out DIR           report output dir (default: tools/dregg-audit/reports)
+#     --no-fv             skip the Halmos formal-verification stage
+#     --no-codex          skip the codex adversarial-audit stage
+#     --codex-timeout N   codex wall-clock budget in seconds (default 600)
+#
+# Stages (see docs/deos/DREGG-AUDIT-SERVICE.md):
+#   A. rug-forensics   — deterministic grep over the rug-door taxonomy
+#                        (docs/deos/RUG-FORENSICS-VS-DREGG.md). AUTO verdict.
+#   B. formal-verify   — Halmos symbolic proof of the standard supply invariants
+#                        against the REAL compiled bytecode. AUTO verdict (PASS /
+#                        COUNTEREXAMPLE), or scaffold-only if no template matches.
+#   C. adversarial     — codex exec hostile-audit (read-only sandbox). RAW findings.
+#   D. triage + report — a structured markdown report. Stages A/B are machine-decided;
+#                        stage C findings are emitted TRIAGE-REQUIRED for a human/dev to
+#                        confirm-real / false-positive / known-residual against source.
+#
+# HONEST SCOPE: this is an ASSISTED-AUDIT TOOL — it finds vulns and proposes fixes,
+# with a machine proof where a standard invariant applies. It is NOT a push-button
+# certification (a real audit needs human review) and it does NOT auto-rewrite the
+# contract to secure (that is a research problem; this AUDITS + PROPOSES, a human
+# applies).
+# ============================================================================
+set -uo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$SCRIPT_DIR/../.." && pwd)"
+FV_WS="$SCRIPT_DIR/fv-workspace"
+PROMPT_TMPL="$SCRIPT_DIR/prompts/hostile-audit.txt"
+
+# ---- args -----------------------------------------------------------------
+CONTRACT=""
+OUT_DIR="$SCRIPT_DIR/reports"
+DO_FV=1
+DO_CODEX=1
+REUSE_CODEX=0
+CODEX_TIMEOUT=600
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --out) OUT_DIR="$2"; shift 2 ;;
+    --no-fv) DO_FV=0; shift ;;
+    --no-codex) DO_CODEX=0; shift ;;
+    --reuse-codex) REUSE_CODEX=1; shift ;;
+    --codex-timeout) CODEX_TIMEOUT="$2"; shift 2 ;;
+    -h|--help) sed -n '2,40p' "$0" | sed 's/^# \{0,1\}//'; exit 0 ;;
+    *) CONTRACT="$1"; shift ;;
+  esac
+done
+
+if [[ -z "$CONTRACT" || ! -f "$CONTRACT" ]]; then
+  echo "error: pass a path to a .sol contract. Got: '${CONTRACT:-<none>}'" >&2
+  exit 2
+fi
+CONTRACT="$(cd "$(dirname "$CONTRACT")" && pwd)/$(basename "$CONTRACT")"
+BASENAME="$(basename "$CONTRACT" .sol)"
+mkdir -p "$OUT_DIR"
+REPORT="$OUT_DIR/${BASENAME}.audit.md"
+CODEX_LOG="$OUT_DIR/${BASENAME}.codex.log"
+STAMP="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+
+say() { printf '\033[1;36m[dregg-audit]\033[0m %s\n' "$*" >&2; }
+
+# Fresh report header
+{
+  echo "# DREGG-kernel contract audit — \`$BASENAME.sol\`"
+  echo
+  echo "Pipeline: \`tools/dregg-audit/dregg-audit\` · Generated: $STAMP"
+  echo "Target: \`$CONTRACT\`"
+  echo
+  echo "> **Assisted-audit tool, not a certification.** Stages A (rug-forensics) and"
+  echo "> B (formal verification) are machine-decided. Stage C (codex) is an LLM"
+  echo "> adversarial pass whose findings are emitted **TRIAGE-REQUIRED** — a human"
+  echo "> must confirm each against source. This tool finds + proposes; it does **not**"
+  echo "> auto-rewrite to secure, and green here is **not** a security guarantee."
+  echo
+} > "$REPORT"
+
+# ============================================================================
+# STAGE A — rug-forensics (deterministic grep over the rug-door taxonomy)
+# ============================================================================
+say "Stage A: rug-forensics taxonomy scan"
+{
+  echo "## A. Rug-forensics — the rug-door taxonomy"
+  echo
+  echo "Deterministic scan for the rug doors dissected in"
+  echo "\`docs/deos/RUG-FORENSICS-VS-DREGG.md\` (owner-drain / hidden-mint / proxy-upgrade"
+  echo "/ honeypot / blacklist / pause / selfdestruct / fee-manipulation). A door marked"
+  echo "PRESENT is a *surface to review*, not proof of a rug; ABSENT means the pattern"
+  echo "does not occur in source (structural absence, the strongest anti-rug signal)."
+  echo
+  echo "| # | Rug door | Verdict | Evidence (line:match) |"
+  echo "|---|----------|---------|-----------------------|"
+} >> "$REPORT"
+
+# door name | ERE pattern
+DOORS=(
+  "owner/admin role|onlyOwner|Ownable|\\bgovernance\\b|\\badmin\\b|modifier +onlyOwner|require *\\( *msg\\.sender *== *owner"
+  "mintable supply (mint fn)|function +mint\\b|function +_mint\\b"
+  "proxy / upgradeable|delegatecall|upgradeTo|proxiableUUID|_setImplementation|__gap|\\binitializer\\b"
+  "selfdestruct / kill|selfdestruct|suicide"
+  "honeypot / transfer-gate|isWhitelisted|\\bwhitelist|marketersAndDev|canTrade|tradingEnabled|_isExcluded|_isBot"
+  "blacklist|blacklist|blocklist|isBlacklisted|_isBlacklisted|\\bbanned\\b"
+  "pausable / freeze|Pausable|whenNotPaused|_paused\\b|function +setPaused|function +pause\\b"
+  "owner-drain / seize|\\bseize\\b|\\bsweep\\b|\\brescue\\b|withdrawAll|emergencyWithdraw|\\bdrain\\b"
+  "fee / tax manipulation|setFee|setTax|updateFee|taxFee|sellTax|buyTax|_feeBps *="
+)
+
+PRESENT_DOORS=()
+i=0
+for entry in "${DOORS[@]}"; do
+  i=$((i+1))
+  name="${entry%%|*}"
+  pat="${entry#*|}"
+  hits="$(grep -nE "$pat" "$CONTRACT" 2>/dev/null | grep -vE '^\s*[0-9]+:\s*(//|\*|///)' | head -4 || true)"
+  if [[ -n "$hits" ]]; then
+    verdict="**PRESENT**"
+    ev="$(echo "$hits" | awk -F: '{ln=$1; $1=""; gsub(/^ +| +$/,""); s=$0; gsub(/\|/,"\\|",s); printf "%s: `%s`<br>", ln, substr(s,1,60)}')"
+    PRESENT_DOORS+=("$name")
+  else
+    verdict="ABSENT"
+    ev="_(no match)_"
+  fi
+  echo "| $i | $name | $verdict | $ev |" >> "$REPORT"
+done
+
+# Mint-latch mitigation note (a mint fn is only a rug door absent a one-shot cap latch)
+LATCH="$(grep -nE '\bminted\b|onlyMinter|AlreadyMinted|CapExceeded|cap_?\b.*immutable|immutable.*\bcap' "$CONTRACT" | head -2 || true)"
+{
+  echo
+  if grep -qE 'function +mint\b' "$CONTRACT"; then
+    if [[ -n "$LATCH" ]]; then
+      echo "_Mint mitigation detected_ (one-shot latch / cap enforcement): the \`mint\`"
+      echo "door appears **bounded** — \`$(echo "$LATCH" | head -1 | cut -c1-70)\`. Confirm in stage B."
+    else
+      echo "_No mint mitigation detected_: \`mint\` has **no visible one-shot latch or cap"
+      echo "enforcement** — a likely mintable-supply rug door. Stage B will attempt to"
+      echo "prove or refute the hard cap symbolically."
+    fi
+  fi
+  echo
+} >> "$REPORT"
+say "Stage A done: ${#PRESENT_DOORS[@]} door(s) present — ${PRESENT_DOORS[*]:-none}"
+
+# ============================================================================
+# STAGE B — Halmos formal verification (standard supply invariants)
+# ============================================================================
+{
+  echo "## B. Formal verification — Halmos symbolic proof"
+  echo
+} >> "$REPORT"
+
+FV_VERDICT="skipped"
+if [[ "$DO_FV" -eq 0 ]]; then
+  echo "_Skipped (\`--no-fv\`)._" >> "$REPORT"; echo >> "$REPORT"
+  say "Stage B: skipped"
+else
+  say "Stage B: generating symbolic harness"
+  rm -rf "$FV_WS/test" "$FV_WS/target" "$FV_WS/out" "$FV_WS/cache"
+  mkdir -p "$FV_WS/test" "$FV_WS/target"
+  cp "$CONTRACT" "$FV_WS/target/$(basename "$CONTRACT")"
+
+  # Generate the harness (token supply-cap shape). Prints "SHAPE=<...>" then writes harness.
+  SHAPE="$(python3 "$SCRIPT_DIR/gen_fv_harness.py" "$CONTRACT" "$FV_WS/test/GenFV.t.sol" 2>>"$OUT_DIR/${BASENAME}.fv.log")"
+
+  if [[ "$SHAPE" != "token-cap" ]]; then
+    {
+      echo "**No standard invariant template matched** (detected shape: \`${SHAPE:-unknown}\`)."
+      echo "The auto-harness covers the ERC-20 **supply-cap** shape (a \`mint\` fn plus"
+      echo "public \`cap\`/\`totalSupply\`). For pool-solvency contracts (reserves + floor)"
+      echo "use the hand-written template in \`chain/formal-verification/\` — its init"
+      echo "sequence is contract-specific. **FV here is scaffold-only; a manual harness is"
+      echo "the named next step** (this is expected — FV is not push-button)."
+      echo
+    } >> "$REPORT"
+    FV_VERDICT="scaffold-only"
+    say "Stage B: no template matched (shape=$SHAPE) — scaffold-only"
+  else
+    say "Stage B: running Halmos (this can take a minute)"
+    FV_OUT="$OUT_DIR/${BASENAME}.halmos.log"
+    ( cd "$FV_WS" && NO_COLOR=1 uvx --from halmos halmos --solver-timeout-assertion 0 --function check_ ) \
+      2>&1 | perl -pe 's/\e\[[0-9;]*m//g' > "$FV_OUT"
+    npass="$(grep -cE '^\[PASS\]|  \[PASS\]|\bPASS\b.*check_' "$FV_OUT" 2>/dev/null || echo 0)"
+    nfail="$(grep -cE '^\[FAIL\]|  \[FAIL\]|Counterexample' "$FV_OUT" 2>/dev/null || echo 0)"
+    {
+      echo "Auto-generated symbolic harness (\`fv-workspace/test/GenFV.t.sol\`) proving the"
+      echo "**hard-cap** invariant (INV-CAP: \`totalSupply <= cap\` after any call, and over a"
+      echo "two-mint sequence) against the real compiled bytecode, all inputs symbolic. This"
+      echo "is the EVM twin of the Lean supply theorem \`execMintA_iff_spec\`"
+      echo "(\`metatheory/Dregg2/Verify/KeystoneAuditSupply.lean:124\`)."
+      echo
+      echo '```'
+      grep -E '\[PASS\]|\[FAIL\]|Counterexample|passed;|failed|Running|check_' "$FV_OUT" | head -40
+      echo '```'
+      echo
+    } >> "$REPORT"
+    if grep -qE 'Counterexample|\[FAIL\]' "$FV_OUT"; then
+      FV_VERDICT="COUNTEREXAMPLE (invariant violated)"
+      {
+        echo "**Result: HALMOS FOUND A COUNTEREXAMPLE — the hard cap is NOT enforced.**"
+        echo "Symbolic execution reached a state where \`totalSupply > cap\`. This is a"
+        echo "machine-proved mintable-supply defect (CONFIRMED-REAL, no human triage needed"
+        echo "— it is a proof, not a heuristic)."
+      } >> "$REPORT"
+      say "Stage B: COUNTEREXAMPLE — hard cap violated"
+    elif grep -qiE 'passed|\[PASS\]' "$FV_OUT"; then
+      FV_VERDICT="PROVEN (hard cap holds, bounded)"
+      {
+        echo "**Result: PROVEN.** No counterexample — the hard cap holds over all inputs"
+        echo "for the bounded call depth. (Bounded proof; see \`chain/formal-verification/\`"
+        echo "README §The honest gap for the depth/overflow bounds this shares.)"
+      } >> "$REPORT"
+      say "Stage B: PROVEN (hard cap holds)"
+    else
+      FV_VERDICT="inconclusive"
+      echo "**Result: inconclusive** (Halmos did not report PASS/FAIL — see \`$FV_OUT\`)." >> "$REPORT"
+      say "Stage B: inconclusive"
+    fi
+    echo >> "$REPORT"
+  fi
+fi
+
+# ============================================================================
+# STAGE C — codex adversarial audit (hostile external auditor, read-only)
+# ============================================================================
+{
+  echo "## C. Adversarial audit — codex hostile pass (TRIAGE-REQUIRED)"
+  echo
+} >> "$REPORT"
+
+if [[ "$DO_CODEX" -eq 0 ]]; then
+  echo "_Skipped (\`--no-codex\`)._" >> "$REPORT"; echo >> "$REPORT"
+  say "Stage C: skipped"
+elif ! command -v codex >/dev/null 2>&1; then
+  echo "_codex CLI not found — stage skipped. Install codex-cli to enable._" >> "$REPORT"; echo >> "$REPORT"
+  say "Stage C: codex not found, skipped"
+else
+  if [[ "$REUSE_CODEX" -eq 1 && -s "$CODEX_LOG" ]]; then
+    say "Stage C: reusing existing codex log ($CODEX_LOG)"
+    rc=0
+  else
+    say "Stage C: running codex hostile-audit (timeout ${CODEX_TIMEOUT}s)"
+    # Build the prompt: substitute the contract source into the template.
+    PROMPT_FILE="$(mktemp)"
+    python3 - "$PROMPT_TMPL" "$CONTRACT" > "$PROMPT_FILE" <<'PY'
+import sys
+tmpl = open(sys.argv[1]).read()
+src = open(sys.argv[2]).read()
+sys.stdout.write(tmpl.replace("%%CONTRACT_SOURCE%%", src))
+PY
+    timeout "$CODEX_TIMEOUT" codex exec --sandbox read-only --skip-git-repo-check \
+      -C "$REPO_ROOT" - < "$PROMPT_FILE" > "$CODEX_LOG" 2>&1
+    rc=$?
+    rm -f "$PROMPT_FILE"
+  fi
+  {
+    echo "Tool: \`codex exec --sandbox read-only\` (\`$(codex --version 2>/dev/null)\`). Raw"
+    echo "output captured at \`$(basename "$CODEX_LOG")\`. Exit: $rc. Each finding below is"
+    echo "**TRIAGE-REQUIRED** — codex errs both ways; confirm every one against source."
+    echo
+  } >> "$REPORT"
+  # Isolate codex's response body: the region between the standalone `codex` marker
+  # and `tokens used`. This drops the echoed prompt (which contains the template's
+  # `FINDING: <one-line title>` placeholder) and codex-exec's duplicate final print.
+  BODY="$(mktemp)"
+  awk '/^codex$/{c=1; next} /^tokens used$/{if(c){exit}} c' "$CODEX_LOG" > "$BODY"
+  [[ -s "$BODY" ]] || cp "$CODEX_LOG" "$BODY"
+  # Extract structured FINDING blocks; fall back to a tail if none matched the format.
+  if grep -qE '^FINDING:' "$BODY"; then
+    awk '
+      /^FINDING:/{inb=1}
+      inb{print}
+      /^FIX:/{inb=0; print ""}
+    ' "$BODY" | sed 's/^/    /' >> "$REPORT"
+    nfind="$(grep -cE '^FINDING:' "$BODY" || echo 0)"
+    say "Stage C done: $nfind structured finding(s) captured"
+  else
+    {
+      echo "_codex did not emit the structured FINDING format; verbatim tail follows_:"
+      echo '```'
+      tail -60 "$BODY"
+      echo '```'
+    } >> "$REPORT"
+    say "Stage C done: unstructured output (see log)"
+  fi
+  # Overall verdict paragraph, if present
+  { echo; grep -iE '^OVERALL VERDICT' "$BODY" | head -1 | sed 's/^/> /'; echo; } >> "$REPORT"
+  rm -f "$BODY"
+fi
+
+# ============================================================================
+# STAGE D — triage summary table (auto verdicts + triage-required scaffold)
+# ============================================================================
+# Clean per-stage summary cells
+if [[ ${#PRESENT_DOORS[@]} -gt 0 ]]; then
+  A_VERDICT="**REVIEW**"; A_SEV="High"
+else
+  A_VERDICT="CLEAN"; A_SEV="Info"
+fi
+case "$FV_VERDICT" in
+  COUNTEREXAMPLE*) B_SEV="Critical" ;;
+  PROVEN*)         B_SEV="Info" ;;
+  *)               B_SEV="—" ;;
+esac
+{
+  echo "## D. Triage summary"
+  echo
+  echo "| Source | Finding | Verdict | Severity | Proposed fix |"
+  echo "|--------|---------|---------|----------|--------------|"
+  echo "| A (auto) | Rug doors present: ${PRESENT_DOORS[*]:-none} | $A_VERDICT | $A_SEV | Remove/constrain each present door; see §A |"
+  echo "| B (auto/proof) | Hard-cap invariant | $FV_VERDICT | $B_SEV | If COUNTEREXAMPLE: add one-shot latch + \`amount<=cap\` guard (see \`DreggLaunchToken.mint\`) |"
+  echo "| C (codex) | see §C | **TRIAGE-REQUIRED** | per-finding | per-finding; human confirms vs source |"
+  echo
+  echo "**Verdict legend.** Stage A/B rows are machine-decided. Stage C rows require a"
+  echo "human to mark each finding CONFIRMED-REAL / FALSE-POSITIVE / KNOWN-RESIDUAL"
+  echo "against the source (the \`docs/deos/LAUNCHPAD-CONTRACT-AUDIT.md\` division of labor:"
+  echo "codex hunts + reasons; a human verifies + reproduces). A confirmed bug should be"
+  echo "reproduced with a failing test before the proposed fix is applied by a developer."
+  echo
+  echo "---"
+  echo "_Assisted-audit tool — finds vulns + proposes fixes with a proof where a standard"
+  echo "invariant applies. NOT a push-button certification (needs human review); does NOT"
+  echo "auto-rewrite to secure (audit + propose; a developer applies)._"
+} >> "$REPORT"
+
+say "Report written: $REPORT"
+echo "$REPORT"

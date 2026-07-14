@@ -1,0 +1,43 @@
+Compiling 21 files with Solc 0.8.30
+Solc 0.8.30 finished in 2.76s
+Compiler run successful with warnings:
+Warning (5159): "selfdestruct" has been deprecated. Note that, starting from the Cancun hard fork, the underlying opcode no longer deletes the code and data associated with an account and only transfers its Ether to the beneficiary, unless executed in the same transaction in which the contract was created (see EIP-6780). Any use in newly deployed contracts is strongly discouraged even if the new behavior is taken into account. Future changes to the EVM might further reduce the functionality of the opcode.
+   --> target/MoonRugToken.sol:118:9:
+    |
+118 |         selfdestruct(payable(owner));
+    |         ^^^^^^^^^^^^
+
+
+Running 2 tests for test/GenFV.t.sol:GenFV
+Counterexample: 
+    p__c0_uint256_1d433d7_00 = 0x8000000000000000000000000
+    p_caller_address_6f999ea_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_sel_uint8_e96f9f1_00 = 0x00
+    p_v_uint256_09fd3f7_00 = 0x8000000000000000000000000000000000000000000000000000000000000000
+    p_x_address_5ae5ffd_00 = 0x00
+    p_y_address_07290c5_00 = 0x00
+[FAIL] check_cap_singleCall(uint256,uint8,address,address,address,uint256) (paths: 13, time: 0.12s, bounds: [])
+Counterexample: 
+    p__c0_uint256_814c9cb_00 = 0x8000000000000000000000000
+    p_a1_uint256_6a4ab2a_00 = 0x00
+    p_a2_uint256_d15dbee_00 = 0x8000000000000000000000000000000000000000000000000000000000000000
+    p_c1_address_6383d8e_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_c2_address_c233e14_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_to1_address_4c0cded_00 = 0x00
+    p_to2_address_3c034b8_00 = 0x00
+Counterexample: 
+    p__c0_uint256_814c9cb_00 = 0x8000000000000000000000000
+    p_a1_uint256_6a4ab2a_00 = 0x8000000000000000000000000000000000000000000000000000000000000000
+    p_c1_address_6383d8e_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_c2_address_c233e14_00 = 0x00
+    p_to1_address_4c0cded_00 = 0x00
+    p_to2_address_3c034b8_00 = 0x00
+Counterexample: 
+    p__c0_uint256_814c9cb_00 = 0x8000000000000000000000000
+    p_a2_uint256_d15dbee_00 = 0x8000000000000000000000000000000000000000000000000000000000000000
+    p_c1_address_6383d8e_00 = 0x00
+    p_c2_address_c233e14_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_to1_address_4c0cded_00 = 0x00
+    p_to2_address_3c034b8_00 = 0x00
+[FAIL] check_cap_twoMints(uint256,address,address,uint256,address,address,uint256) (paths: 15, time: 0.24s, bounds: [])
+Symbolic test result: 0 passed; 2 failed; time: 0.39s

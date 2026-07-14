@@ -1,0 +1,9 @@
+# Runtime FV workspace artifacts (regenerated per run)
+fv-workspace/test/
+fv-workspace/target/
+fv-workspace/out/
+fv-workspace/cache/
+# Raw codex logs are large; the committed sample report cites them. Ignore by default,
+# but the committed sample run's codex log is force-added.
+reports/*.codex.log
+reports/*.raw/

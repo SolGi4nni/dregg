@@ -1,0 +1,23 @@
+# Foundry profile for the dregg-audit Halmos FV stage.
+#
+# The `dregg-audit` pipeline copies the contract-under-audit into ./target/ and
+# writes a generated symbolic harness into ./test/ at runtime (both gitignored),
+# then runs `uvx --from halmos halmos` from this directory. solc executes the
+# compiled bytecode under Halmos, so the solc-CHC custom-error unsoundness noted in
+# chain/formal-verification/README.md does not apply here.
+[profile.default]
+src = "test"
+test = "test"
+out = "out"
+libs = []
+solc = "0.8.30"
+optimizer = true
+optimizer_runs = 200
+via_ir = true
+evm_version = "paris"
+# forge-std lives in the repo's chain/lib tree (outside this workspace); allow solc
+# to read it and the copied ./target/ contract.
+allow_paths = ["../../../chain/lib", "./target"]
+remappings = [
+    "forge-std/=../../../chain/lib/forge-std/src/",
+]
