@@ -1,0 +1,38 @@
+# `dreggnet-asset` — the canonical VERIFIABLE ASSET layer (Track B #6).
+#
+# An OWNED, TRANSFER-GATED, PROVENANCE-CHAINED, cross-cell-ADDRESSED asset cell —
+# the primitive new genres (TCG cards, RPG loot, item markets, betting stakes) want.
+# An asset version is a real dregg CELL owned by its current holder's key: the
+# executor's signature gate (a turn on the cell must verify against the cell's own
+# pubkey) IS the ownership gate, so a non-owner transfer is refused cryptographically.
+# A transfer SPENDS the current version (a real committed, owner-signed turn, gated
+# double-spend-once) and MINTS a holder-owned successor carrying the content-addressed
+# provenance chain + the stable cross-cell asset id.
+#
+# Additive workspace member. Consumes the tooth ISA (cell/program via app-framework),
+# the real EmbeddedExecutor, and dregg-schema's VERIFIED allocator for the note layout.
+# Does NOT modify cell / circuit / metatheory.
+[package]
+name = "dreggnet-asset"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "The canonical verifiable asset layer: an owned, transfer-gated, provenance-chained, cross-cell-addressed asset cell. Ownership is the executor's signature gate; a transfer spends the current version (double-spend-once) and mints a holder-owned successor carrying a content-addressed lineage + a stable asset id. TCG cards, RPG loot, item markets, betting stakes are asset archetypes over the tooth vocab."
+
+[dependencies]
+# The tooth ISA: CellProgram / StateConstraint / TransitionCase / TransitionGuard /
+# Effect / EmbeddedExecutor / AppCipherclerk / AgentCipherclerk / AuthRequired / CellId /
+# FieldElement / TurnReceipt / field_from_u64 / symbol.
+dregg-app-framework = { path = "../app-framework", default-features = false }
+# Cell / Ledger for minting + seeding the note cells.
+dregg-cell = { path = "../cell" }
+# THE VERIFIED ALLOCATOR keystone: an asset is a component schema (identity[owner] +
+# transfer-gated fields); allocate_checked gives a Legal (disjoint + in-bounds) slot
+# layout the note program is built over.
+dregg-schema = { path = "../dregg-schema" }
+blake3 = "1"
+zeroize = { workspace = true }
