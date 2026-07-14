@@ -193,9 +193,242 @@ theorem graduateV1Narrow_width_shrink (d : EffectVmDescriptor) :
 #guard (graduateV1Narrow EffectVmEmitTransfer.transferVmDescriptor).traceWidth
      < (graduateV1 EffectVmEmitTransfer.transferVmDescriptor).traceWidth
 
+/-! ## §5 — Completeness: a v1-satisfying row family BUILDS a satisfying NARROW v2 witness.
+
+The exact mirror of §5 of `EffectVmEmitV2.lean` (`graduateV1_complete`/`graduateV1_faithful`), with the
+25-wide chip lookups replaced by the 18-wide narrow ones. The narrow chip table is the gathered genuine
+NARROW rows (`chipLogOfNarrow`, sound BY CONSTRUCTION via `go_siteLookups_complete_narrow`); the range
+table is the faithful limb table; memory/map tables are empty (the graduated v1 face is inert there). No
+lane base is threaded (narrow lookups carry no per-site lane columns), so the gathering is a plain `map`,
+not a `mapIdx`. -/
+
+/-- A narrow-graduated v1 descriptor's constraints are ONLY `.base`/`.lookup` (mirror of
+`constraints_graduateV1_shapes`). -/
+theorem constraints_graduateV1Narrow_shapes (d : EffectVmDescriptor) :
+    ∀ c ∈ (graduateV1Narrow d).constraints,
+      (∃ c₀, c = .base c₀) ∨ (∃ l, c = .lookup l) := by
+  intro c hc
+  unfold graduateV1Narrow at hc
+  simp only [List.mem_append, List.mem_map] at hc
+  rcases hc with (⟨c₀, _, rfl⟩ | ⟨s, _, rfl⟩) | ⟨r, _, rfl⟩
+  · exact Or.inl ⟨c₀, rfl⟩
+  · exact Or.inr ⟨_, rfl⟩
+  · exact Or.inr ⟨_, rfl⟩
+
+/-- A narrow-graduated v1 descriptor declares no mem ops. -/
+theorem memOpsOf_graduateV1Narrow (d : EffectVmDescriptor) : memOpsOf (graduateV1Narrow d) = [] := by
+  unfold memOpsOf
+  rw [List.filterMap_eq_nil_iff]
+  intro c hc
+  rcases constraints_graduateV1Narrow_shapes d c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
+
+/-- A narrow-graduated v1 descriptor declares no map ops. -/
+theorem mapOpsOf_graduateV1Narrow (d : EffectVmDescriptor) : mapOpsOf (graduateV1Narrow d) = [] := by
+  unfold mapOpsOf
+  rw [List.filterMap_eq_nil_iff]
+  intro c hc
+  rcases constraints_graduateV1Narrow_shapes d c hc with ⟨c₀, rfl⟩ | ⟨l, rfl⟩ <;> rfl
+
+/-- A narrow-graduated v1 descriptor's memory log is empty. -/
+theorem memLog_graduateV1Narrow (d : EffectVmDescriptor) (t : VmTrace) :
+    memLog (graduateV1Narrow d) t = [] := by
+  unfold memLog
+  rw [memOpsOf_graduateV1Narrow]
+  simp
+
+/-- A narrow-graduated v1 descriptor's map-ops log is empty. -/
+theorem mapLog_graduateV1Narrow (d : EffectVmDescriptor) (t : VmTrace) :
+    mapLog (graduateV1Narrow d) t = [] := by
+  unfold mapLog
+  rw [mapOpsOf_graduateV1Narrow]
+  simp
+
+/-- The gathered NARROW chip rows: every row's every narrow site lookup tuple, evaluated. No lane base
+is threaded (narrow lookups carry no per-site lane columns), so this is a plain `map`, not `mapIdx`
+(contrast `chipLogOf`). -/
+def chipLogOfNarrow (sites : List VmHashSite) (rows : List Assignment) : Table :=
+  rows.flatMap fun a =>
+    sites.map fun s =>
+      (siteLookupNarrow sites s).tuple.map (·.eval a)
+
+/-- **The narrow completeness induction.** Under the same prefix invariant, a v1 site walk makes every
+suffix site's NARROW lookup tuple evaluate to a GENUINE 18-wide narrow chip row (`chipRowNarrow hash
+ins`, NO lanes). Mirror of `go_siteLookups_complete`, lane block dropped (so no `base`, no `lanes`). -/
+theorem go_siteLookups_complete_narrow (hash : List ℤ → ℤ) (env : VmRowEnv) (all : List VmHashSite)
+    (rest : List VmHashSite) :
+    ∀ (pre : List VmHashSite) (acc : List ℤ),
+      all = pre ++ rest →
+      acc.length = pre.length →
+      (∀ k, k < acc.length → env.loc ((all.getD k default).digestCol) = acc.getD k 0) →
+      sitesWFAux acc.length rest = true →
+      siteHoldsAll.go hash env acc rest →
+      ∀ s ∈ rest, ∃ ins : List ℤ, ins.length = s.inputs.length
+        ∧ (siteLookupNarrow all s).tuple.map (·.eval env.loc) = chipRowNarrow hash ins := by
+  induction rest with
+  | nil => intro pre acc _ _ _ _ _ s hs; cases hs
+  | cons s ss ih =>
+    intro pre acc hall hlen hacc hwf hgo s' hs'
+    simp only [sitesWFAux, Bool.and_eq_true] at hwf
+    obtain ⟨hwfs, hwfss⟩ := hwf
+    obtain ⟨hd, hgo'⟩ := hgo
+    rcases List.mem_cons.mp hs' with rfl | hs''
+    · -- the head site: its 18-wide narrow tuple IS a genuine narrow chip row (out0 = hash, no lanes)
+      refine ⟨s'.resolvedInputs env acc, by simp [VmHashSite.resolvedInputs], ?_⟩
+      have hev : (chipLookupTupleNarrow (s'.inputs.map (HashInput.toExpr all)) s'.digestCol).map
+            (·.eval env.loc)
+          = ((s'.inputs.map (HashInput.toExpr all)).length : ℤ)
+            :: padTo CHIP_RATE ((s'.inputs.map (HashInput.toExpr all)).map (·.eval env.loc))
+            ++ [env.loc s'.digestCol] := by
+        simp [chipLookupTupleNarrow, List.map_cons, List.map_append, map_eval_padToE,
+          EmittedExpr.eval, List.map_map, Function.comp_def]
+      show (chipLookupTupleNarrow (s'.inputs.map (HashInput.toExpr all)) s'.digestCol).map
+          (·.eval env.loc)
+          = chipRowNarrow hash (s'.resolvedInputs env acc)
+      rw [hev, siteTuple_eval_resolved env all acc s' hwfs hacc, hd]
+      unfold chipRowNarrow
+      simp [VmHashSite.resolvedInputs, List.length_map]
+    · -- a later site: recurse with the extended prefix
+      exact ih (pre ++ [s]) (acc ++ [hash (s.resolvedInputs env acc)])
+        (by rw [hall, List.append_assoc]; rfl)
+        (by simp [hlen])
+        (hacc_extend env pre ss s acc _ all hall hlen hacc hd)
+        (by simpa using hwfss)
+        hgo' s' hs''
+
+/-- The gathered NARROW chip table is SOUND by construction (mirror of `chipLogOf_sound`). -/
+theorem chipLogOfNarrow_sound (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
+    (rows : List Assignment) (pub : Assignment)
+    (hgrad : graduable d = true)
+    (hsat : ∀ i, i < rows.length →
+      satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length)) :
+    ChipTableSoundNarrow hash (chipLogOfNarrow d.hashSites rows) := by
+  obtain ⟨hwf, hfit, _⟩ := graduable_spec hgrad
+  intro r hr
+  unfold chipLogOfNarrow at hr
+  rw [List.mem_flatMap] at hr
+  obtain ⟨a, ha, hr⟩ := hr
+  rw [List.mem_map] at hr
+  obtain ⟨s, hs, rfl⟩ := hr
+  obtain ⟨i, hi, rfl⟩ := List.mem_iff_getElem.mp ha
+  have hloc : (envOf rows pub i).loc = rows[i] := by
+    simp [envOf, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi]
+  have hgo : siteHoldsAll hash (envOf rows pub i) d.hashSites := (hsat i hi).2.1
+  obtain ⟨ins, hlen, heq⟩ := go_siteLookups_complete_narrow hash (envOf rows pub i)
+    d.hashSites d.hashSites [] []
+    rfl rfl (fun k hk => absurd hk (by simp)) hwf hgo s hs
+  rw [hloc] at heq
+  refine ⟨ins, ?_, heq⟩
+  rw [hlen]
+  exact of_decide_eq_true (List.all_eq_true.mp hfit s hs)
+
+/-- The constructed NARROW trace family: gathered narrow chip rows at `poseidon2narrow` (`.custom 3`),
+the faithful range table, empty memory/map/other tables, main unconstrained. Mirror of `v2TF`. -/
+def v2TFNarrow (d : EffectVmDescriptor) (rows : List Assignment) : TraceFamily := fun tid =>
+  match tid with
+  | .custom 3 => chipLogOfNarrow d.hashSites rows
+  | .range => rangeRows BAL_LIMB_BITS
+  | _ => []
+
+/-- The constructed narrow multi-table witness over a v1-satisfying row family. -/
+def v2TraceOfNarrow (d : EffectVmDescriptor) (rows : List Assignment) (pub : Assignment) : VmTrace :=
+  { rows := rows, pub := pub, tf := v2TFNarrow d rows }
+
+/-- The constructed narrow trace's family, projected (kept as a `rw` target: a bare `rfl` at the
+`.range` use site sends the unifier whnf-ing `rangeRows 30` — the documented evaluation trap). -/
+theorem v2TraceOfNarrow_tf (d : EffectVmDescriptor) (rows : List Assignment) (pub : Assignment) :
+    (v2TraceOfNarrow d rows pub).tf = v2TFNarrow d rows := rfl
+
+/-- The constructed narrow family's range table is the faithful limb table. -/
+theorem v2TFNarrow_range (d : EffectVmDescriptor) (rows : List Assignment) :
+    v2TFNarrow d rows .range = rangeRows BAL_LIMB_BITS := rfl
+
+/-- **`graduateV1Narrow_complete`** — a v1-satisfying row family yields a `Satisfied2` witness of the
+NARROW-graduated descriptor, over the constructed narrow tables, with the EMPTY memory boundary. The
+byte-identical mirror of `graduateV1_complete` (`graduateV1 -> graduateV1Narrow`, `v2TraceOf ->
+v2TraceOfNarrow`): the hash sites discharge through the gathered NARROW chip table `chipLogOfNarrow`. -/
+theorem graduateV1Narrow_complete (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
+    (rows : List Assignment) (pub : Assignment)
+    (hgrad : graduable d = true)
+    (hsat : ∀ i, i < rows.length →
+      satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length)) :
+    Satisfied2 hash (graduateV1Narrow d) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) []
+      (v2TraceOfNarrow d rows pub) := by
+  obtain ⟨hwf, hfit, hbits⟩ := graduable_spec hgrad
+  refine ⟨?_, ?_, ?_, List.nodup_nil, ?_, ?_, ?_, ?_, ?_⟩
+  · -- rowConstraints
+    intro i hi c hc
+    unfold graduateV1Narrow at hc
+    simp only [List.mem_append, List.mem_map] at hc
+    rcases hc with (⟨c₀, hc₀, rfl⟩ | ⟨s, hs, rfl⟩) | ⟨r, hr, rfl⟩
+    · exact (hsat i hi).1 c₀ hc₀
+    · -- narrow chip lookup: membership in the gathered narrow table, by construction
+      have hi' : i < rows.length := hi
+      show (siteLookupNarrow d.hashSites s).tuple.map
+          (·.eval (envAt (v2TraceOfNarrow d rows pub) i).loc)
+        ∈ chipLogOfNarrow d.hashSites rows
+      have hloc : (envAt (v2TraceOfNarrow d rows pub) i).loc = rows[i] := by
+        simp [v2TraceOfNarrow, envAt, List.getD_eq_getElem?_getD, List.getElem?_eq_getElem hi']
+      rw [hloc]
+      unfold chipLogOfNarrow
+      rw [List.mem_flatMap]
+      exact ⟨rows[i], List.getElem_mem hi', List.mem_map.mpr ⟨s, hs, rfl⟩⟩
+    · -- range lookup: completeness of the limb table (IDENTICAL to `graduateV1_complete`)
+      obtain ⟨w, bits⟩ := r
+      have hb : bits = BAL_LIMB_BITS := hbits ⟨w, bits⟩ hr
+      subst hb
+      exact lookup_range_complete BAL_LIMB_BITS (v2TFNarrow d rows) rfl
+        (envAt (v2TraceOfNarrow d rows pub) i) w ((hsat i hi).2.2 ⟨w, BAL_LIMB_BITS⟩ hr)
+  · intro i hi; trivial
+  · intro i hi r hr
+    have hnil : (graduateV1Narrow d).ranges = [] := rfl
+    rw [hnil] at hr
+    cases hr
+  · intro op hop
+    rw [memLog_graduateV1Narrow] at hop
+    cases hop
+  · rw [memLog_graduateV1Narrow]
+    trivial
+  · rw [memLog_graduateV1Narrow]
+    exact memCheck_nil _ _
+  · rw [memLog_graduateV1Narrow]
+    rfl
+  · rw [mapLog_graduateV1Narrow]
+    rfl
+
+/-- **`graduateV1Narrow_faithful` — THE NARROW RE-ANCHOR ROUND TRIP.** A row family satisfies the v1
+descriptor on every window IFF some multi-table witness over it (sound NARROW chip table, faithful
+range table) satisfies the NARROW-graduated v2 descriptor. Byte-identical mirror of
+`graduateV1_faithful` (`graduateV1 -> graduateV1Narrow`, `ChipTableSound -> ChipTableSoundNarrow`,
+`.poseidon2 -> poseidon2narrow`): nothing gained, nothing lost — the narrow emission target moved; the
+semantics did not. -/
+theorem graduateV1Narrow_faithful (hash : List ℤ → ℤ) (d : EffectVmDescriptor)
+    (rows : List Assignment) (pub : Assignment)
+    (hgrad : graduable d = true) :
+    (∀ i, i < rows.length →
+        satisfiedVm hash d (envOf rows pub i) (i == 0) (i + 1 == rows.length))
+      ↔ ∃ t : VmTrace, t.rows = rows ∧ t.pub = pub
+          ∧ ChipTableSoundNarrow hash (t.tf poseidon2narrow)
+          ∧ t.tf .range = rangeRows BAL_LIMB_BITS
+          ∧ Satisfied2 hash (graduateV1Narrow d) (fun _ => 0) (fun _ => ((0 : ℤ), 0)) [] t := by
+  constructor
+  · intro h
+    refine ⟨v2TraceOfNarrow d rows pub, rfl, rfl, chipLogOfNarrow_sound hash d rows pub hgrad h, ?_,
+      graduateV1Narrow_complete hash d rows pub hgrad h⟩
+    rw [v2TraceOfNarrow_tf]
+    exact v2TFNarrow_range d rows
+  · rintro ⟨t, rfl, rfl, hchip, hrange, hsat⟩
+    exact graduateV1Narrow_sound hash d _ _ _ t hchip hrange hgrad hsat
+
 #assert_axioms go_of_siteLookupsNarrow
 #assert_axioms siteLookupsNarrow_sound
 #assert_axioms graduateV1Narrow_sound
 #assert_axioms graduateV1Narrow_width_shrink
+#assert_axioms constraints_graduateV1Narrow_shapes
+#assert_axioms memLog_graduateV1Narrow
+#assert_axioms mapLog_graduateV1Narrow
+#assert_axioms go_siteLookups_complete_narrow
+#assert_axioms chipLogOfNarrow_sound
+#assert_axioms graduateV1Narrow_complete
+#assert_axioms graduateV1Narrow_faithful
 
 end Dregg2.Circuit.Emit.EffectVmEmitV2
