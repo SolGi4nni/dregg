@@ -190,8 +190,11 @@ pub fn csr(lp: &FlowLp) -> (Vec<u32>, Vec<u32>, Vec<f32>) {
 }
 
 /// Rayon-parallel PDHG (CSR gather for the dual, disjoint per-edge primal). Same
-/// iteration as [`solve_cpu`]; parallelises the two matvecs across threads. The
-/// "SIMD/batching where it helps" CPU path — pays off past a few thousand edges.
+/// iteration and results as [`solve_cpu`] (parity-tested). NOTE — measured
+/// NET-NEGATIVE: the per-iteration fork-join overhead swamps the trivial O(m)
+/// matvec (2·T tiny joins), so this is ~30× slower than the serial loop at
+/// m≤128k (see `bench_frontier`). Kept as the honest "where parallelism does NOT
+/// help" data point; the GPU resident loop is the scale answer, not CPU threads.
 pub fn solve_cpu_par(lp: &FlowLp, iters: usize) -> PdhgResult {
     use rayon::prelude::*;
     let m = lp.m();
