@@ -518,7 +518,8 @@ once` — is `Freshness.no_replay` / `replay_rejected_after_apply`, lifted onto 
 by `Freshness.deployed_no_replay` (the accepted-`runTurn` sequence IS a monotone `CommitChain`; the
 advance is DERIVED, not assumed). Its crypto residual is EXACTLY `Poseidon2SpongeCR` (the four
 sponge-shaped CR fields — root/node/frame/leaf — all reduce to that one hash floor via
-`Freshness.poseidon2CommitSurface`) plus the PROVED nonce-monotone invariant; the sole non-crypto
+the historical (retired) `Freshness.poseidon2CommitSurface`) plus the PROVED nonce-monotone invariant;
+the deployed replacement is `CommitFaithfulRegrounded.no_replay_faithful`; the sole non-crypto
 carrier is the structural `RestHashIffFrame` (not sponge-reducible — the state carries function-valued
 components). Do NOT read "a light client that runs nothing cannot be fooled" as covering replay: it
 covers AUTHENTICITY of a single transition; FRESHNESS is the CAS's job, discharged in `Freshness`. -/

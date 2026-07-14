@@ -1,6 +1,10 @@
 /-
-# Dregg2.Circuit.FinBindsKernel — DEBT-B lane R4: collapse the apex's carried set to
-`Poseidon2SpongeCR` ALONE, on the finite/reachable (`denote`-image) subclass.
+# Dregg2.Circuit.FinBindsKernel — HISTORICAL finite-image experiment (retired from the apex).
+
+This file is preserved for proof archaeology. `CH_fin` is a whole-`Value` encoding sponge, not the
+Rust `CellState::compute_commitment` leaf, and `Poseidon2SpongeCR` is bounded-hash injectivity, proved
+false at deployed parameters by `HashFloorHonesty`. The root module no longer imports this as a
+keystone; use `CommitFaithfulRegrounded` for the deployed residue-fold leaf and collision reduction.
 
 `StateCommit.recStateCommit_binds_kernel` (equal full-state roots for the same turn ⇒ equal whole
 `RecordKernelState`) currently carries FIVE crypto/structural carriers — `compressInjective cmb`,
@@ -60,7 +64,7 @@ set_option autoImplicit false
 
 /-! ## §1 — the concrete Poseidon2 leaf encoder + its REALIZED `LeafRealization` (no hypothesis). -/
 
-/-- **`CH_fin sponge c v`** — the concrete Poseidon2 leaf hash: the sponge of the injective canonical
+/-- **HISTORICAL TOY `CH_fin sponge c v` (not deployed).** The sponge of the injective canonical
 serialization `refEncodeLeaf c v = [c, encV v]` (`Poseidon2Binding.Reference`). This is a genuine
 `sponge ∘ encode` leaf hash, realized at the SAME `sponge` the frame/root use. -/
 def CH_fin (sponge : List ℤ → ℤ) (c : CellId) (v : Value) : ℤ :=

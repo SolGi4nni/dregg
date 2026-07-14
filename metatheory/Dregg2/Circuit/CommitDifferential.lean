@@ -15,10 +15,10 @@ absorbed as
   `inter3 = h4 fields[5] fields[6] fields[7] cap_root`
   `commitment = h4 inter1 inter2 inter3 record_digest`
 
-where `record_digest = dregg_cell::compute_authority_digest_felt` is the SINGLE authority-residue
-felt folding ALL authority-bearing state no named limb carries (permissions / VK / lifecycle /
-delegate / delegation / program / mode / visibility / side-table roots / `fields[8..16]`) — the exact
-EffectVM analog of the Lean `RH`/`systemRootsDigest` rest-hash limb. A residue-free cell uses
+where `record_digest = dregg_cell::compute_authority_digest_felt` is LANE ZERO of the eight-limb
+BLAKE3-rooted authority residue (permissions / VK / delegate / delegation / program / mode /
+visibility / side-table roots / `fields[8..16]`). Lifecycle/epoch/height/heap are separate named
+limbs on the live rotated surface; lanes 1..7 ride its authority headroom. A residue-free cell uses
 `empty_record_digest() = ZERO` (the Rust no-op), mirroring the Lean `emptySystemRootsDigest`.
 
 This module makes "the running per-cell commitment IS the proven shape" a CHECKED Lean fact:
@@ -38,8 +38,9 @@ This module makes "the running per-cell commitment IS the proven shape" a CHECKE
     commitments agree iff the SAME limb list was absorbed (the shape MATCHES — no reorder, no dropped
     limb, no extra limb).
 
-  * `effectVmCommit_binds_record_digest` (+ the per-limb binding family) — INJECTIVITY OVER THE FULL
-    LIMB LIST off a single realizable `h4`-collision-resistance carrier (`compress4Injective`): the
+  * `effectVmCommit_binds_record_digest` (+ the per-limb binding family) — the HISTORICAL injective
+    formulation. `compress4Injective` cannot hold for a bounded hash; the live theorem is
+    `CommitFaithfulRegrounded.effectVmCommit_collision_of_ne`, which returns an `h4` collision. The
     deployed commitment binds the `record_digest` limb (and every other limb), so tampering the
     authority residue — a permission flip, a VK swap, a dropped side-table root — provably MOVES the
     commitment. This is the deployed twin of `SystemRoots.cellCommitS_binds_systemRoots`. A
@@ -52,9 +53,8 @@ This module makes "the running per-cell commitment IS the proven shape" a CHECKE
   * the VACUITY GUARD: concrete computable `#guard`s over an injective toy `h4` — the residue limb
     is load-bearing (a residue-bearing cell DIFFERS from its residue-free twin) AND the no-op holds.
 
-Pure, computable, `#guard`-able (no `native_decide`). The carried `compress4Injective` is the SAME
-shape as `StateCommit.compressInjective` (a realizable Poseidon 4-to-1 collision-resistance), never an
-`axiom`, never a `+`-fold. The Rust-side empirical twin is
+Pure, computable, `#guard`-able (no `native_decide`). `compress4Injective` below is retained only as
+the algebraic historical form; it is not a realizable Poseidon floor. The Rust-side empirical twin is
 `circuit/tests/effect_vm_commit_lean_differential.rs` (same limb order, same record_digest position,
 same no-op).
 -/
@@ -135,11 +135,10 @@ theorem effectVmCommit_absorbs_limbs (balLo balHi nonce : ℤ) (fields : Fin 8 �
     effectVmCommit h4 balLo balHi nonce fields capRoot recordDigest
       = effectVmFoldLimbs h4 (effectVmLimbs balLo balHi nonce fields capRoot recordDigest) := rfl
 
-/-! ## §3 — INJECTIVITY OVER THE FULL LIMB LIST (the anti-ghost teeth, incl. `record_digest`).
+/-! ## §3 — HISTORICAL injective form (retained; not the deployed crypto floor).
 
-Off the single realizable `compress4Injective h4` carrier, the deployed commitment binds EVERY limb —
-crucially `record_digest`. So tampering the authority residue MOVES the commitment (audit P0-2 closed
-in the deployed model). -/
+This implication is algebraically valid, but its `compress4Injective h4` premise is false for any
+bounded real hash. Consumers must use `CommitFaithfulRegrounded`'s bind-or-collision reduction. -/
 
 /-- **`effectVmCommit_binds_all` — full-limb binding.** Equal deployed commitments force EVERY limb
 equal: the three intermediates + `record_digest` (root injectivity), then each intermediate's four
@@ -166,7 +165,7 @@ theorem effectVmCommit_binds_all (hCR : compress4Injective h4)
 
 /-- **`effectVmCommit_binds_record_digest` — THE audit-P0-2 anti-ghost tooth.** Equal deployed
 commitments (same carried limbs) force EQUAL `record_digest`: the authority residue is bound. So two
-cells differing ONLY in their authority residue (permissions / VK / lifecycle / …, which live ONLY in
+cells differing ONLY in their authority residue value (permissions / VK / delegate / …, which live in
 `record_digest`) commit DIFFERENTLY — the exact gap the old `…, ZERO` fourth input left open. The
 deployed twin of `SystemRoots.cellCommitS_binds_systemRoots` / `RecordCommit.cellCommit_binds_fieldsRoot`. -/
 theorem effectVmCommit_binds_record_digest (hCR : compress4Injective h4)

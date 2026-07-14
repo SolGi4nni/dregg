@@ -20,17 +20,22 @@ pub struct CellState {
     pub fields: [BabyBear; 8],
     /// Capability list Merkle root.
     pub capability_root: BabyBear,
-    /// Record digest: a single Poseidon2 felt folding ALL authority-bearing cell
-    /// state that the balance/nonce/fields/cap_root limbs do NOT carry —
-    /// permissions, verification key, lifecycle, deathCert, delegate, delegation,
-    /// program, mode, sealed-field mask, visibility, the side-table roots, and
-    /// `fields[8..]`. This is the EffectVM analog of the canonical commitment's
-    /// authority residue (cell-side `dregg_cell::compute_authority_digest_felt`
-    /// and the Lean `recStateCommit`'s `RH`/`record_digest` rest-hash limb).
+    /// Record digest: lane 0 of the 8-felt BLAKE3-rooted authority digest
+    /// (`dregg_cell::compute_authority_digest_felt`). It folds the exact
+    /// `authority_residue_bytes` sections: identity, permissions/custom VKs,
+    /// verification key, delegate/delegation, program, mode, visibility,
+    /// commitments/proved state, overflow fields, and side-table roots.
+    ///
+    /// It does NOT by itself carry lifecycle, delegation epoch, committed height,
+    /// or heap root; the live rotated commitment carries those as separate named
+    /// limbs. Nor does this one BabyBear lane provide the 8-lane collision floor:
+    /// the rotated authority group carries lanes 0..7. The legacy continuity leaf
+    /// binds the lane-0 VALUE, while full-state computational binding is the wide
+    /// rotated surface plus the hash collision-resistance floor.
     ///
     /// It is ABSORBED as the fourth input of the state-commitment root hash
     /// (replacing the old literal `ZERO`), so `OLD_COMMIT`/`NEW_COMMIT` bind the
-    /// FULL cell state, not the lossy `(balance, nonce, fields, cap_root)` subset
+    /// named authority residue, not merely `(balance, nonce, fields, cap_root)`
     /// (audit P0-2 — `cell/src/commitment.rs`, `REVIEW[circuit-fix-coordination]`).
     ///
     /// A cell with no authority residue beyond the carried limbs uses
@@ -115,11 +120,13 @@ impl CellState {
     ///   commitment = hash_4_to_1(inter1, inter2, inter3, record_digest)
     ///
     /// The fourth input to the root hash is the `record_digest` — the single
-    /// Poseidon2 felt folding ALL authority-bearing state the other limbs do not
-    /// carry (permissions / VK / lifecycle / deathCert / delegate / delegation /
-    /// program / mode / visibility / side-table roots / `fields[8..]`). This makes
-    /// the commitment (and `OLD_COMMIT`/`NEW_COMMIT`) bind the FULL cell state,
-    /// closing audit P0-2 (`cell/src/commitment.rs`,
+    /// BabyBear lane of the BLAKE3-rooted authority residue the other limbs do not
+    /// carry (permissions / VK / delegate / delegation / program / mode /
+    /// visibility / side-table roots / `fields[8..]`). This makes the commitment
+    /// bind that named lane. Full-state and 8-lane binding is supplied by the live
+    /// rotated commitment, which separately carries lifecycle/epoch/height/heap
+    /// and authority lanes 1..7. This closes the legacy missing-input audit P0-2
+    /// without claiming one felt is injective (`cell/src/commitment.rs`,
     /// `REVIEW[circuit-fix-coordination]`), structurally mirroring the Lean
     /// `recStateCommit = cmb(cellDigest, RH)` (the rest-hash limb) and
     /// `cellCommitS = compressN(rest ++ [systemRootsDigest])` (one absorbed digest

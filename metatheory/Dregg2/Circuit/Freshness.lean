@@ -32,9 +32,11 @@ COLLISION — not an assumption.
 `§2` grounds that residual: the FOUR sponge-shaped CR fields (`cmb`, `compress` as 2-element sponges,
 `compressN` the frame sponge, `CH` the leaf) all reduce to a SINGLE `Poseidon2SpongeCR sponge` (via
 `compressNInjective_of_poseidon2CR` + `cellLeafInjective_of_realization` + the 2-element specialization
-`spongeCompress_inj` proved here). `poseidon2CommitSurface` assembles a live `CommitSurface` whose
-crypto floor is exactly `Poseidon2SpongeCR` — so `poseidon2_commit_binds_nonce` / `poseidon2_no_replay`
-carry the hash floor and NOTHING else crypto.
+`spongeCompress_inj` proved here). HISTORICAL NOTE: `poseidon2CommitSurface` is retained only so old
+proof terms elaborate. Its `Poseidon2SpongeCR` premise is bounded-hash injectivity and is FALSE at the
+deployed BabyBear parameters (`HashFloorHonesty.poseidon2SpongeCR_false_babyBear`). The live binding
+consumer is `CommitFaithfulRegrounded.commit_binds_nonce_faithful` / `no_replay_faithful`, which use
+the deployed residue-fold leaf and return concrete collision events.
 
 THE ONE HONEST RESIDUAL, named precisely: `RestHashIffFrame RH` (the rest-hash binding of the 15
 non-`cell` components) is NOT reducible to a `List ℤ` sponge CR, because the state carries
@@ -199,8 +201,9 @@ theorem spongeCompress_inj (sponge : List ℤ → ℤ) (hCR : Poseidon2SpongeCR 
   have hlist : [a, b] = [c, d] := hCR _ _ h
   exact ⟨(List.cons.inj hlist).1, (List.cons.inj (List.cons.inj hlist).2).1⟩
 
-/-- **`poseidon2CommitSurface`** — a live `CommitSurface` whose crypto floor is a SINGLE
-`Poseidon2SpongeCR sponge`. `cmb`/`compress` are 2-element sponges over `sponge`; `compressN` IS
+/-- **HISTORICAL `poseidon2CommitSurface` (retired from the apex).** Its single
+`Poseidon2SpongeCR sponge` premise is injectivity and cannot hold for deployed bounded Poseidon2.
+`cmb`/`compress` are 2-element sponges over `sponge`; `compressN` IS
 `sponge`; `CH` is realized on a Poseidon2 sponge (`LeafRealization`, whose `spongeCR` is the same
 `Poseidon2SpongeCR` shape). The ONLY non-sponge-reducible carrier is `restFrame : RestHashIffFrame RH`
 — structural (a canonical rest hash is injective on the 15 non-`cell` components), not crypto, and not

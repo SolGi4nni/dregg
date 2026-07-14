@@ -34,7 +34,7 @@ Each sibling's `Negl` obligation is discharged MECHANICALLY by `thread_advantage
 bottoms every collision leaf out at the `CollisionResistant` floor in context. Three SHAPES occur:
 
   * **SINGLE-USE equivocation** — one Merkle opening bound (`OodCommitmentBinding`,
-    `FriSoundness.oracle_binding`, `AirSoundness.committed_trace_pinned`, `FinBindsKernel` root):
+    `FriSoundness.oracle_binding`, `AirSoundness.committed_trace_pinned`, faithful state root):
     a single `collisionAdv` leaf.
   * **MULTI-ROUND FRI/STARK fold** — `rounds` Merkle-binding checks (`FriSoundness.fri_fold_soundness`
     across a query set, the `StarkSound` chain): a `Finset.sum` of per-round collision advantages,
@@ -65,7 +65,7 @@ import Dregg2.Tactics.ThreadAdvantageBound
 import Dregg2.Circuit.OodCommitmentBinding
 import Dregg2.Circuit.FriSoundness
 import Dregg2.Circuit.AirSoundness
-import Dregg2.Circuit.FinBindsKernel
+import Dregg2.Circuit.CommitFaithfulRegrounded
 
 namespace Dregg2.Circuit.FloorRegroundedConsumers
 
@@ -132,16 +132,16 @@ theorem committedTrace_pinned_advantage_bound {F : KeyedHashFamily}
     Negl (collisionAdv F traceEquivocator) := by
   thread_advantage_bound
 
-/-! ## §4 — SINGLE-USE full-state root binding (`FinBindsKernel`).
+/-! ## §4 — SINGLE-USE faithful full-state root binding (`CommitFaithfulRegrounded`).
 
-`FinBindsKernel.recStateCommit_binds_kernel_fin` (SOLE crypto residual `Poseidon2SpongeCR sponge`) says
-equal full-state roots for the same turn ⟹ equal kernel state. The root-equivocation adversary — two
-distinct kernel states committing to one full-state root — is a `CollisionFinder` on the state-commitment
-sponge family. -/
+`CommitFaithfulRegrounded.kernelEquivocation_reduces` maps an unequal pair of kernels with equal roots
+over the deployed residue-fold leaf to a concrete `FaithfulBreak`; the hash-family realization maps
+that exhibited break to a `CollisionFinder`.  The bound below is the computational floor consumed by
+that reduction.  Unlike the retired `CH_fin` route, the leaf is the Rust `effectVmCommit` tree and no
+`Poseidon2SpongeCR` injectivity premise occurs. -/
 
-/-- **RE-GROUNDED `FinBindsKernel.recStateCommit_binds_kernel_fin`.** Under the proper keyed floor, the
-full-state-root-equivocation adversary (two distinct kernel states to one root) has negligible advantage —
-the root binds the kernel state except with negligible probability. Proof: `thread_advantage_bound`. -/
+/-- **FAITHFUL state-root advantage bound.** Under the proper keyed floor, the collision finder
+extracted from a faithful full-state-root equivocation has negligible advantage. -/
 theorem recStateCommit_root_advantage_bound {F : KeyedHashFamily}
     (hCR : CollisionResistant F) (rootEquivocator : CollisionFinder F) :
     Negl (collisionAdv F rootEquivocator) := by
