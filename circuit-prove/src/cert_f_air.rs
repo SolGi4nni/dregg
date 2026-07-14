@@ -471,16 +471,29 @@ pub fn verify_cert_f(
     verify_vm_descriptor2(desc, proof, pis)
 }
 
-/// The negative-polarity gate: return `true` iff proving `cert` is REFUSED (the AIR
-/// rejects the bad certificate). Wraps [`prove_cert_f`] in `catch_unwind` because the
-/// prover's pre-flight replay may panic rather than return `Err` on an unsatisfiable
-/// trace.
+/// The negative-polarity gate: return `true` iff a bad certificate CANNOT produce a
+/// verifying Cert-F STARK proof — the soundness tooth, held in BOTH debug and release.
+///
+/// A forged/non-conserving/gap-violating witness has no satisfying trace, so its
+/// quotient is not divisible by the vanishing polynomial: the AIR constraint bites at
+/// VERIFY time (`OodEvaluationMismatch`). We therefore treat the certificate as refused
+/// iff EITHER the prover errs OR — when the prover mints a proof — that proof FAILS to
+/// verify. This is release-correct: in release the producer-side self-verify is skipped
+/// (`prove_vm_descriptor2` gates it on `debug_assertions`), so `prove_cert_f` returns
+/// `Ok` for a bad cert, but `verify_cert_f` still rejects it (the consumer's verify is
+/// the real soundness boundary). In debug the pre-flight self-verify makes `prove_cert_f`
+/// itself err — both polarities land on "refused". `catch_unwind` covers a pre-flight
+/// replay that panics rather than returns `Err`.
 pub fn prove_cert_f_refused(cert: &CertFWitness) -> bool {
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| prove_cert_f(cert)));
     match r {
         Err(_) => true,     // panicked (pre-flight refusal)
-        Ok(Err(_)) => true, // returned Err (prove/verify rejected)
-        Ok(Ok(_)) => false, // minted a proof — the AIR did NOT refuse it
+        Ok(Err(_)) => true, // prove returned Err (debug self-verify / preflight rejected)
+        Ok(Ok((desc, proof, pis))) => {
+            // A proof was minted (release path). It is REFUSED iff it does NOT verify —
+            // the AIR constraint (conservation / range) bites at verify time.
+            verify_cert_f(&desc, &proof, &pis).is_err()
+        }
     }
 }
 
@@ -759,6 +772,36 @@ mod tests {
             prove_cert_f_refused(&cert),
             "the STARK must REFUSE a gap-violating certificate"
         );
+    }
+
+    /// THE DECISIVE SOUNDNESS DIAGNOSTIC (release-hard): even when the prover MINTS a
+    /// proof for a bad certificate (which it does in release, where the producer-side
+    /// self-verify is skipped), that minted proof MUST FAIL to verify. This is the
+    /// verify-not-find soundness boundary: a forged/non-conserving/gap-violating cert
+    /// cannot produce a VERIFYING STARK proof. Runs the mint→verify path directly so the
+    /// property is asserted regardless of build profile.
+    #[test]
+    fn stark_bad_cert_proof_does_not_verify() {
+        // (a) non-conserving.
+        let mut nonconserving = ring3_cert();
+        nonconserving.f[0] += 1;
+        assert!(!nonconserving.check().valid);
+        if let Ok((desc, proof, pis)) = prove_cert_f(&nonconserving) {
+            assert!(
+                verify_cert_f(&desc, &proof, &pis).is_err(),
+                "SOUNDNESS HOLE: a minted proof of a NON-CONSERVING cert verified"
+            );
+        }
+        // (b) gap-violating.
+        let mut gap_bad = ring3_cert();
+        gap_bad.f = vec![0, 0, 0];
+        assert!(gap_bad.check().conserves && !gap_bad.check().gap_ok);
+        if let Ok((desc, proof, pis)) = prove_cert_f(&gap_bad) {
+            assert!(
+                verify_cert_f(&desc, &proof, &pis).is_err(),
+                "SOUNDNESS HOLE: a minted proof of a GAP-VIOLATING cert verified"
+            );
+        }
     }
 
     /// The solver bridge, end-to-end into the REAL STARK: take a fhegg-solver Cert-F
