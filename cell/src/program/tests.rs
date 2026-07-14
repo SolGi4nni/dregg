@@ -3664,3 +3664,93 @@ fn temporal_register_atoms_round_trip_views() {
         assert_eq!(json.get("kind").and_then(|k| k.as_str()), Some(kind));
     }
 }
+
+// ─── NUMERICS AUDIT: DischargeObligation no-wrap (field-vs-integer close) ────────
+//
+// The DischargeObligation gate verifies a schedule transition
+// `cursor_after == cursor_before + period` and `total_after == total_before + amount`.
+// Both were computed with `wrapping_add`, so a `total_before` near `u64::MAX` let the
+// expected total WRAP to a small value — a prover could then satisfy the equality with
+// a `total_after` that does NOT reflect the true accumulated discharge (a
+// value-conservation forgery by wraparound, the exact class the shielded-ring /
+// cross-cell conservation AIRs close). The gate now uses `checked_add` and fails CLOSED
+// on overflow. Both polarities:
+
+/// The HONEST discharge (advance by exactly one period / the schedule amount) still
+/// passes — no liveness lost by the no-wrap hardening.
+#[test]
+fn discharge_obligation_honest_advance_passes() {
+    let p = CellProgram::Predicate(vec![StateConstraint::DischargeObligation {
+        cursor_slot: 1,
+        due_slot: 2,
+        amount_slot: 3,
+        period: 1,
+        amount: 50,
+    }]);
+    let mut old = CellState::new(0);
+    old.fields[1] = field_from_u64(0); // cursor_before
+    old.fields[2] = field_from_u64(0); // due_block
+    old.fields[3] = field_from_u64(100); // total_before
+    let mut new_s = CellState::new(0);
+    new_s.fields[1] = field_from_u64(1); // cursor advances one period
+    new_s.fields[2] = field_from_u64(0);
+    new_s.fields[3] = field_from_u64(150); // total advances by the schedule amount
+    assert!(
+        p.evaluate(&new_s, Some(&old), Some(&ctx_at(10))).is_ok(),
+        "the honest per-period discharge must still pass"
+    );
+}
+
+/// THE WRAPAROUND FORGERY, now UNSAT: `total_before = u64::MAX - 10`, `amount = 50`,
+/// so the true total overflows `u64`. Pre-fix, `wrapping_add` yielded 39 and a prover
+/// setting `total_after = 39` PASSED — minting a wrong committed total. The `checked_add`
+/// gate now REFUSES the overflowing schedule (no wraparound-satisfiable equality).
+#[test]
+fn discharge_obligation_total_wraparound_is_refused() {
+    let p = CellProgram::Predicate(vec![StateConstraint::DischargeObligation {
+        cursor_slot: 1,
+        due_slot: 2,
+        amount_slot: 3,
+        period: 1,
+        amount: 50,
+    }]);
+    let total_before = u64::MAX - 10;
+    let wrapped = total_before.wrapping_add(50); // = 39, the pre-fix "expected" total
+    let mut old = CellState::new(0);
+    old.fields[1] = field_from_u64(0);
+    old.fields[2] = field_from_u64(0);
+    old.fields[3] = field_from_u64(total_before);
+    let mut new_s = CellState::new(0);
+    new_s.fields[1] = field_from_u64(1); // cursor advances honestly (reaches the total gate)
+    new_s.fields[2] = field_from_u64(0);
+    new_s.fields[3] = field_from_u64(wrapped); // the forged, wraparound-satisfying total
+    assert!(
+        p.evaluate(&new_s, Some(&old), Some(&ctx_at(10))).is_err(),
+        "a wraparound-satisfying discharged total must be REFUSED (no-wrap, fail closed)"
+    );
+}
+
+/// THE CURSOR WRAPAROUND, now UNSAT: `cursor_before = u64::MAX`, `period = 1` overflows.
+/// Pre-fix the wrapped cursor `0` was accepted; the `checked_add` gate now refuses it.
+#[test]
+fn discharge_obligation_cursor_wraparound_is_refused() {
+    let p = CellProgram::Predicate(vec![StateConstraint::DischargeObligation {
+        cursor_slot: 1,
+        due_slot: 2,
+        amount_slot: 3,
+        period: 1,
+        amount: 50,
+    }]);
+    let mut old = CellState::new(0);
+    old.fields[1] = field_from_u64(u64::MAX); // cursor_before at the ceiling
+    old.fields[2] = field_from_u64(0);
+    old.fields[3] = field_from_u64(100);
+    let mut new_s = CellState::new(0);
+    new_s.fields[1] = field_from_u64(0); // the wrapped cursor a pre-fix prover would set
+    new_s.fields[2] = field_from_u64(0);
+    new_s.fields[3] = field_from_u64(150);
+    assert!(
+        p.evaluate(&new_s, Some(&old), Some(&ctx_at(10))).is_err(),
+        "a wraparound-satisfying cursor advance must be REFUSED (no-wrap, fail closed)"
+    );
+}

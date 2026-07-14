@@ -1152,7 +1152,20 @@ fn evaluate_constraint_full(
                 );
             }
             // ADVANCED: the one-shot cursor advances by exactly one period.
-            let expected_cursor = cursor_before.wrapping_add(u64::from(*period));
+            // NO-WRAP (fail closed): compute the expected cursor over ℤ via
+            // `checked_add`, refusing an overflowing schedule rather than letting a
+            // `u64` wrap satisfy the equality with a wrong `cursor_after` (the
+            // field-vs-integer discipline the `VaultDeposit` arm below states — a
+            // conservation/advance equality must never be satisfiable by wraparound).
+            let Some(expected_cursor) = cursor_before.checked_add(u64::from(*period)) else {
+                return violated(
+                    constraint,
+                    format!(
+                        "DischargeObligation: cursor advance overflows u64 \
+                         (cursor {cursor_before} + period {period}) — refused (no wrap)"
+                    ),
+                );
+            };
             if cursor_after != expected_cursor {
                 return violated(
                     constraint,
@@ -1163,7 +1176,21 @@ fn evaluate_constraint_full(
                 );
             }
             // EXACT: the discharged total advances by exactly the schedule amount.
-            let expected_total = total_before.wrapping_add(u64::from(*amount));
+            // NO-WRAP (fail closed): `checked_add` over ℤ so a discharge that would
+            // overflow `u64` is REFUSED, never wrapped. Without this a `total_before`
+            // near `u64::MAX` plus `amount` wraps to a small value, and a prover could
+            // satisfy `total_after == wrapped` while the true discharged total is wrong
+            // — a value-conservation forgery by wraparound (the same class the shielded
+            // ring / cross-cell conservation AIRs close with their range gadgets).
+            let Some(expected_total) = total_before.checked_add(u64::from(*amount)) else {
+                return violated(
+                    constraint,
+                    format!(
+                        "DischargeObligation: discharged total advance overflows u64 \
+                         (total {total_before} + amount {amount}) — refused (no wrap)"
+                    ),
+                );
+            };
             if total_after != expected_total {
                 return violated(
                     constraint,
