@@ -14,6 +14,13 @@ description = "Payment backend for accepting $DREGG (SPL token on Solana) for re
 # balance read live in the bridge crate's `solana_holdings` (reused verbatim, not
 # reimplemented). No cycle: bridge does not depend on dregg-pay.
 dregg-bridge = { path = "../bridge" }
+# The chain-agnostic proven-holding FACT (`ProvenForeignHolding` / `ChainId`) — the
+# COMPILED cross-chain read the light clients (Solana / eth-lightclient /
+# cosmos-lightclient) render and `dregg-interchain-gov` aggregates. The multichain
+# treasury VIEW (`multichain.rs`) points those facts at the TREASURY's own addresses,
+# so the treasury proves its cross-chain holdings non-custodially. Read-only reuse: no
+# cycle (dregg-governance does not depend on dregg-pay).
+dregg-governance = { path = "../dregg-governance" }
 # The quorum engine for the liquidity VOTE: poll → write-once ballots → monotone
 # tally → the quorum `AffineLe` gate — the SAME engine the bot's `/party` uses. The
 # governance module drives a liquidity-event proposal through it; a passed vote is

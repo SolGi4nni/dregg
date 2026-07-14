@@ -22538,11 +22538,9 @@ name = "ugc-dregg"
 version = "0.1.0"
 dependencies = [
  "blake3",
- "dregg-cell",
  "dregg-circuit",
  "dregg-circuit-prove",
  "dregg-lightclient",
- "dregg-turn",
  "dungeon-on-dregg",
  "ed25519-dalek",
  "procgen-dregg",

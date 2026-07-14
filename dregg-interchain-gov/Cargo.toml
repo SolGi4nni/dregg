@@ -58,6 +58,14 @@ eth-lightclient = { path = "../eth-lightclient" }
 cosmos-lightclient = { path = "../cosmos-lightclient" }
 
 [dev-dependencies]
+# The NON-CUSTODIAL multichain treasury VIEW consumer: the same join this crate
+# compiles (light-client fields → ProvenForeignHolding), pointed at the TREASURY's
+# addresses instead of a voter's, feeds dregg-pay's TreasuryView. A dev-dep only — the
+# published join graph is unchanged; this is the thin consumer that drives the view
+# end-to-end (real edge fields → join seam → treasury statement). dregg-pay's graph
+# (dregg-bridge, collective-choice, dregg-governance) is already resolved by this
+# workspace, so no new patch is needed.
+dregg-pay = { path = "../dregg-pay" }
 # The Solana anchored-cluster fixture (`anchored_holding_with_cluster`): a
 # synthesized 2-validator cluster driven through the REAL
 # `prove_holding_consensus_anchored` verifier (stake provenance, signed

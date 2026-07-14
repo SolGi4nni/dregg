@@ -71,6 +71,7 @@ pub mod config;
 pub mod governance;
 pub mod hd;
 pub mod ledger;
+pub mod multichain;
 pub mod otc;
 pub mod pricing;
 pub mod swap;
@@ -91,6 +92,10 @@ pub use hd::{
 };
 pub use ledger::{
     CreditLedger, CreditOutcome, CreditStore, DebitError, InMemoryStore, StoreCreditOutcome,
+};
+pub use multichain::{
+    HoldingRejection, MultichainHoldings, ProvenChainHolding, RejectedHolding, TreasurySlot,
+    TreasuryView,
 };
 pub use otc::{
     OtcError, OtcQuote, OtcSettleError, OtcSettlement, otc_dregg_out, otc_quote, otc_settle,
