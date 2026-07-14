@@ -1048,3 +1048,4 @@ import Dregg2.ForMathlib.BerryEsseen        -- upstreamable: exponential-tilt + 
 import Dregg2.ForMathlib.GuruswamiSudan     -- upstreamable: GS list-size half (card ≤ y-degree via card_roots') + the multiplicity-m interpolation obstruction for multiset words
 import Dregg2.ForMathlib.CertifiedInterval  -- upstreamable: signed rational intervals w/ the FOUR-CORNER product (Mathlib's is cone-only, unsound over ℚ) + outward dyadic rounding
 import Dregg2.ForMathlib.IntervalConvolution -- upstreamable: certified interval convolution/power ENCLOSE the exact (icvPow 2304 = the δ R1 object) + tail-bound capstone
+import Dregg2.ForMathlib.IntervalFFT          -- upstreamable: certified COMPLEX interval arithmetic + interval DFT/IDFT; fftConvI_contains BRACKETS the exact convolution via the kernel-clean complex DFT convolution theorem (the frequency-domain δ-R1 acceleration)
