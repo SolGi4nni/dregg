@@ -1,0 +1,12 @@
+{
+  "name": "Good Capped Token",
+  "symbol": "GOOD",
+  "decimals": 18,
+  "cap": 1000000000,
+  "mint_authority": "launchpad-oneshot",
+  "tokenomics": {
+    "creator_allocation_bps": 500,
+    "vesting": "12-month linear, launchpad-committed schedule"
+  },
+  "notes": "A reasonable hard-capped memecoin: 1B supply, single disclosed mint by the launchpad, 5% creator allocation vested. The FV'd template path."
+}

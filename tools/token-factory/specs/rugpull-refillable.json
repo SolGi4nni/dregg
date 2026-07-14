@@ -1,0 +1,12 @@
+{
+  "name": "Refillable Moon Token",
+  "symbol": "RMOON",
+  "decimals": 18,
+  "cap": 1000000000,
+  "mint_authority": "owner-refillable",
+  "tokenomics": {
+    "creator_allocation_bps": 500,
+    "vesting": "none"
+  },
+  "notes": "A rug-y spec: it asks for 'owner-refillable' mint authority ('let me mint more later'). The FV'd template cannot express this; the factory emits the variant the spec implies and the audit CATCHES it (Halmos counterexample + owner door) -> REJECTED, never shipped."
+}

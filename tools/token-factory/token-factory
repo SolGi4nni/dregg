@@ -1,0 +1,216 @@
+#!/usr/bin/env python3
+# ============================================================================
+# token-factory — the dreggic AI-token-factory pipeline.
+#
+#   token-factory <spec.json> [--out DIR] [--codex] [--audit PATH]
+#
+# The p0-but-dreggic core: a token SPEC becomes a PROVEN-SAFE token or is CAUGHT.
+# p0's AI factory emits a token that CAN rug; ours emits from the FV'd launch-token
+# template and runs the DREGG-kernel audit as the GATE — every token that leaves the
+# factory is proven-safe, and a rug-y spec is caught before it ships.
+#
+# Pipeline (spec -> FV'd-emit -> auto-audit -> verified-safe-or-caught):
+#   1. EMIT   emit_token.py turns the spec into a concrete launch-token contract.
+#             A safe spec (mint_authority "launchpad-oneshot") emits the FV'd template
+#             (chain/contracts/launchpad/DreggLaunchToken.sol parameterized: hard cap
+#             baked as a literal, one-shot mint, no other door). A rug-y spec emits the
+#             variant it implies.
+#   2. AUDIT  tools/dregg-audit/dregg-audit runs on the emitted contract:
+#             Stage A rug-forensics (the 9 doors), Stage B Halmos hard-cap proof.
+#             (Stage C codex is off by default — the GATE is the machine-decided A+B;
+#             pass --codex for the deep LLM triage pass.)
+#   3. GATE   VERIFIED-SAFE iff Halmos PROVES the cap AND no dangerous rug door is
+#             present (the disclosed one-shot `mint` is the only allowed door, and it
+#             is allowed only because the cap is proven and the one-shot latch is
+#             detected). Otherwise REJECTED — not shipped.
+#   4. ARTIFACT  A "verified-safe token" bundle (emitted contract + audit report +
+#             the proof: rug-doors-absent + cap-proven) ready for the anti-rug
+#             launchpad — or a rejection artifact citing the counterexample/flag.
+#
+# HONEST SCOPE: the FV'd token and the audit pipeline are REAL (not mock). "Proven-
+# safe" is genuine — the emitted token's cap is Halmos-proven over symbolic inputs
+# against real compiled bytecode, the rug doors are absent by construction. A rug-y
+# spec is genuinely caught by the audit (a machine counterexample). The AI-generation
+# front is HONESTLY the named front: this is fed a STRUCTURED SPEC (see the specs/
+# dir and README); an LLM provider that drafts the spec from natural language is the
+# labeled wire-later. The dreggic value is the FV+audit backend, not the AI.
+# ============================================================================
+import argparse
+import json
+import os
+import re
+import subprocess
+import sys
+from datetime import datetime, timezone
+
+HERE = os.path.dirname(os.path.abspath(__file__))
+REPO = os.path.abspath(os.path.join(HERE, "..", ".."))
+EMIT = os.path.join(HERE, "emit_token.py")
+DEFAULT_AUDIT = os.path.join(REPO, "tools", "dregg-audit", "dregg-audit")
+
+# The one rug-forensics door our own tokens legitimately trip: a `function mint`.
+# It is SAFE only when the cap is Halmos-proven AND the one-shot latch is detected.
+ALLOWED_PRESENT = {"mintable supply (mint fn)"}
+
+
+def log(msg):
+    sys.stderr.write(f"\033[1;35m[token-factory]\033[0m {msg}\n")
+
+
+def parse_audit_report(text):
+    """Extract the machine-decided verdicts from a dregg-audit report."""
+    fv_proven = "**Result: PROVEN.**" in text
+    fv_counterexample = "HALMOS FOUND A COUNTEREXAMPLE" in text
+    latch_detected = "_Mint mitigation detected_" in text
+    present = []
+    for m in re.finditer(r"^\|\s*\d+\s*\|\s*([^|]+?)\s*\|\s*\*\*PRESENT\*\*", text, re.M):
+        present.append(m.group(1).strip())
+    return {
+        "fv_proven": fv_proven,
+        "fv_counterexample": fv_counterexample,
+        "latch_detected": latch_detected,
+        "present_doors": present,
+    }
+
+
+def main():
+    ap = argparse.ArgumentParser(description="dreggic AI-token-factory pipeline")
+    ap.add_argument("spec", help="path to a token spec (.json)")
+    ap.add_argument("--out", default=os.path.join(HERE, "artifacts"),
+                    help="artifact output dir (default tools/token-factory/artifacts)")
+    ap.add_argument("--codex", action="store_true",
+                    help="also run the codex adversarial stage (slow, triage-required)")
+    ap.add_argument("--audit", default=DEFAULT_AUDIT, help="path to the dregg-audit script")
+    args = ap.parse_args()
+
+    if not os.path.isfile(args.spec):
+        sys.exit(f"error: spec not found: {args.spec}")
+    spec = json.load(open(args.spec))
+    symbol = spec.get("symbol", "TOKEN")
+    stamp = datetime.now(timezone.utc).strftime("%Y-%m-%dT%H:%M:%SZ")
+    os.makedirs(args.out, exist_ok=True)
+    workdir = os.path.join(args.out, symbol)
+    os.makedirs(workdir, exist_ok=True)
+
+    # ---- 1. EMIT -----------------------------------------------------------
+    emitted = os.path.join(workdir, f"{symbol}.sol")
+    log(f"Emitting launch token from spec '{spec.get('name')}' ({symbol})")
+    r = subprocess.run([sys.executable, EMIT, args.spec, emitted],
+                       capture_output=True, text=True)
+    if r.returncode != 0:
+        sys.exit(f"emit failed: {r.stderr.strip()}")
+    kind = r.stdout.strip()
+    log(f"Emitted {emitted}  (template: {kind})")
+
+    # ---- 2. AUDIT ----------------------------------------------------------
+    log("Running dregg-audit (Stage A rug-forensics + Stage B Halmos cap-proof)")
+    audit_cmd = [args.audit, emitted, "--out", workdir]
+    if not args.codex:
+        audit_cmd.append("--no-codex")
+    a = subprocess.run(audit_cmd, capture_output=True, text=True)
+    report_path = os.path.join(workdir, f"{symbol}.audit.md")
+    if not os.path.isfile(report_path):
+        sys.exit(f"audit did not produce a report ({report_path}).\n{a.stderr[-800:]}")
+    report = open(report_path).read()
+    v = parse_audit_report(report)
+
+    # ---- 3. GATE -----------------------------------------------------------
+    dangerous = [d for d in v["present_doors"] if d not in ALLOWED_PRESENT]
+    safe = (
+        v["fv_proven"]
+        and not v["fv_counterexample"]
+        and not dangerous
+        and v["latch_detected"]
+    )
+
+    reasons = []
+    if not v["fv_proven"]:
+        reasons.append("Halmos did not PROVE the hard cap")
+    if v["fv_counterexample"]:
+        reasons.append("Halmos found a COUNTEREXAMPLE (cap breakable)")
+    if dangerous:
+        reasons.append("dangerous rug door(s) present: " + ", ".join(dangerous))
+    if v["present_doors"] and not v["latch_detected"] and "mintable supply (mint fn)" in v["present_doors"]:
+        reasons.append("a mint fn without a one-shot latch")
+
+    # ---- 4. ARTIFACT -------------------------------------------------------
+    verdict = "VERIFIED-SAFE" if safe else "REJECTED"
+    art_name = f"{symbol}.verified-safe.md" if safe else f"{symbol}.rejected.md"
+    artifact = os.path.join(workdir, art_name)
+
+    doors_line = ", ".join(v["present_doors"]) if v["present_doors"] else "none"
+    fv_line = (
+        "PROVEN (hard cap holds over all symbolic inputs)" if v["fv_proven"]
+        else "COUNTEREXAMPLE (cap breakable)" if v["fv_counterexample"]
+        else "not proven"
+    )
+
+    lines = []
+    lines.append(f"# {verdict} token artifact — {spec.get('name')} (`{symbol}`)")
+    lines.append("")
+    lines.append(f"Pipeline: `tools/token-factory/token-factory` · Generated: {stamp}")
+    lines.append(f"Spec: `{os.path.abspath(args.spec)}`")
+    lines.append(f"Emitted contract: `{emitted}`  ·  template: **{kind}**")
+    lines.append(f"Audit report: `{report_path}`")
+    lines.append("")
+    if safe:
+        lines.append("> **VERIFIED-SAFE — ready for the anti-rug launchpad.** Every token that")
+        lines.append("> leaves this factory carries this bundle: the emitted contract, the audit")
+        lines.append("> report, and the machine proof below. The rug doors are absent by")
+        lines.append("> construction; the hard cap is Halmos-proven.")
+    else:
+        lines.append("> **REJECTED — not shipped.** The audit caught a rug property in the")
+        lines.append("> contract this spec implies. The factory only outputs proven-safe tokens;")
+        lines.append("> this one is cited below and stopped here.")
+    lines.append("")
+    lines.append("## Token spec")
+    lines.append("")
+    lines.append("```json")
+    lines.append(json.dumps(spec, indent=2))
+    lines.append("```")
+    lines.append("")
+    lines.append("## The proof (machine-decided)")
+    lines.append("")
+    lines.append("| Check | Source | Result |")
+    lines.append("|-------|--------|--------|")
+    lines.append(f"| Hard cap `totalSupply <= cap` | Halmos symbolic EVM (Stage B) | **{fv_line}** |")
+    lines.append(f"| One-shot mint latch | rug-forensics mint-mitigation (Stage A) | {'detected' if v['latch_detected'] else 'ABSENT'} |")
+    lines.append(f"| Rug doors present | rug-forensics 9-door taxonomy (Stage A) | {doors_line} |")
+    lines.append(f"| Dangerous doors (owner/seize/pause/blacklist/selfdestruct/proxy/fee) | Stage A | {', '.join(dangerous) if dangerous else 'none'} |")
+    lines.append("")
+    if safe:
+        lines.append("**Verdict: VERIFIED-SAFE.** The only rug-forensics door present is the")
+        lines.append("disclosed one-shot `mint` (a `function mint` exists) — and it is allowed")
+        lines.append("*only* because the cap is Halmos-proven and the one-shot latch is detected,")
+        lines.append("so no second mint and no over-cap mint can occur. No owner role, seize,")
+        lines.append("pause, blacklist, selfdestruct, proxy, or fee door exists. Proven-safe.")
+    else:
+        lines.append("**Verdict: REJECTED.** " + "; ".join(reasons) + ".")
+        lines.append("")
+        lines.append("The differentiator, demonstrated: a rug-y spec does not become a shipped")
+        lines.append("token. The audit — not a human's read of the spec — is the gate, and it")
+        lines.append("caught this by proof/flag.")
+    lines.append("")
+    lines.append("## The full audit report")
+    lines.append("")
+    lines.append(f"See `{os.path.relpath(report_path, REPO)}` (rug-forensics table + Halmos log).")
+    lines.append("")
+    lines.append("---")
+    lines.append("_The dreggic value is this FV+audit backend (proven-safe emit), not the spec")
+    lines.append("drafting. The AI-generation front is a structured spec-builder now; an LLM")
+    lines.append("provider that drafts the spec from natural language is the honestly-labeled")
+    lines.append("wire-later (see tools/token-factory/README.md)._")
+    open(artifact, "w").write("\n".join(lines) + "\n")
+
+    log(f"{verdict}: {artifact}")
+    # Machine-readable one-liner on stdout.
+    print(json.dumps({
+        "verdict": verdict, "symbol": symbol, "template": kind,
+        "fv_proven": v["fv_proven"], "fv_counterexample": v["fv_counterexample"],
+        "present_doors": v["present_doors"], "artifact": artifact,
+    }))
+    sys.exit(0 if safe else 1)
+
+
+if __name__ == "__main__":
+    main()

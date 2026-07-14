@@ -1,0 +1,2 @@
+# Transient per-run FV log (empty on success; the halmos.log carries the proof).
+artifacts/**/*.fv.log

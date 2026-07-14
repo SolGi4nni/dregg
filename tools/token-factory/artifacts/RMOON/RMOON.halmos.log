@@ -1,0 +1,33 @@
+Compiling 21 files with Solc 0.8.30
+Solc 0.8.30 finished in 2.41s
+Compiler run successful!
+
+Running 2 tests for test/GenFV.t.sol:GenFV
+Counterexample: 
+    p_caller_address_e8b1564_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_sel_uint8_5513a74_00 = 0x00
+    p_v_uint256_61f9954_00 = 0x38000000000000000000000
+    p_x_address_5540e35_00 = 0x00
+    p_y_address_0406391_00 = 0x00
+[FAIL] check_cap_singleCall(uint8,address,address,address,uint256) (paths: 12, time: 0.08s, bounds: [])
+Counterexample: 
+    p_a1_uint256_df65f7b_00 = 0x00
+    p_a2_uint256_5e5ac67_00 = 0x38000000000000000000000
+    p_c1_address_082ca27_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_c2_address_4c546ad_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_to1_address_3388451_00 = 0x00
+    p_to2_address_dcc7f86_00 = 0x00
+Counterexample: 
+    p_a1_uint256_df65f7b_00 = 0x38000000000000000000000
+    p_c1_address_082ca27_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_c2_address_4c546ad_00 = 0x00
+    p_to1_address_3388451_00 = 0x00
+    p_to2_address_dcc7f86_00 = 0x00
+Counterexample: 
+    p_a2_uint256_5e5ac67_00 = 0x38000000000000000000000
+    p_c1_address_082ca27_00 = 0x00
+    p_c2_address_4c546ad_00 = 0x7fa9385be102ac3eac297483dd6233d62b3e1496
+    p_to1_address_3388451_00 = 0x00
+    p_to2_address_dcc7f86_00 = 0x00
+[FAIL] check_cap_twoMints(address,address,uint256,address,address,uint256) (paths: 13, time: 0.10s, bounds: [])
+Symbolic test result: 0 passed; 2 failed; time: 0.19s
