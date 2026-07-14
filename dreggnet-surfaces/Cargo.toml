@@ -1,0 +1,54 @@
+# `dreggnet-surfaces` — the DO-ONCE frontend batch: game-infra features exposed as
+# `dreggnet_offerings::Offering`s whose `render()` -> `Surface` IS a `deos_view::ViewNode`.
+#
+# THE DO-ONCE PATH (docs/FRONTEND-PLAN.md, Tier A/B): write `render -> ViewNode` ONCE per
+# feature and web + discord + telegram + wechat render it for free (every renderer already
+# covers the ViewNode vocab). `dreggnet-market` is the reference (the one prior new-domain
+# Offering). This crate lights up FOUR more:
+#   * TradeOffering  — a market #2 over dreggnet-trade (list -> settle a real atomic asset
+#                      swap; the actions fire real owner-signed transfer turns).
+#   * InventoryOffering — a READ-surface over dreggnet-asset owned notes (name/rarity/
+#                      provenance/owner as a Table).
+#   * CheevoShowcase — a READ-surface over dreggnet-cheevo earned achievements + proofs.
+#   * GuildPage      — a READ-surface over dreggnet-guild (roster + aggregate verified-clears).
+#
+# ADDITIVE: consumes dreggnet-offerings (the Offering trait) + deos-view (the ViewNode vocab)
+# + the feature crates; modifies NONE of them. `register_surfaces(&mut OfferingHost)` is the
+# one-call web/discord/telegram reach (the web/bot mounts the four alongside the market).
+[package]
+name = "dreggnet-surfaces"
+version = "0.1.0"
+edition = "2024"
+description = "The do-once frontend batch: game-infra features (trade/inventory/cheevo/guild) exposed as dreggnet_offerings::Offerings whose render()->Surface is a deos_view::ViewNode, so web+discord+telegram+wechat render them for free. TradeOffering is a playable market #2 over dreggnet-trade (real atomic asset swaps); inventory/cheevo/guild are read-surfaces over the real substrate (owned notes, earned soulbound achievements, the guild roster + aggregate verified clears)."
+
+[lints]
+workspace = true
+
+[dependencies]
+# THE OFFERING CORE — the frontend-agnostic `Offering` trait (open/actions/advance/verify/
+# render->Surface/price), `Action`/`Outcome`/`Surface`/`DreggIdentity`/`VerifyReport`, plus
+# `OfferingHost` (the register-per-offering seam) + `character::CharacterSheet` (the guild
+# survivor fact). Each surface here is one more instance of the SAME abstraction.
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE VIEW VOCAB — the serializable deos affordance tree an offering's `render` produces
+# (Section/Menu/Table/Row/Text/Pill/Grid/Icon). The SAME model dreggnet-offerings re-exports;
+# every renderer (web/discord/telegram/wechat) already walks it. default-features=false = no gpui.
+deos-view = { path = "../deos-view", default-features = false }
+# MARKET #2 — the scam-proof trade layer: `TradeWorld` (mint/fund/wallets + the owned-note
+# `AssetWorld`) whose owner-signed `transfer` is a real verified turn (a non-owner / double-spend
+# is a real refusal) and whose `verify_provenance` re-checks a traded item's lineage. Consumed.
+dreggnet-trade = { path = "../dreggnet-trade" }
+# THE OWNED-ASSET LAYER — `AssetWorld`/`AssetId`/`ProvenanceReport` for the inventory read-surface
+# (mint owned notes; read their provenance + current owner). The same type dreggnet-trade re-exports.
+dreggnet-asset = { path = "../dreggnet-asset" }
+# THE ACHIEVEMENT LAYER — `CheevoLedger`/`Cheevo`/`Achievement`/`Witness`: un-fakeable soulbound
+# cheevos earned over ugc-verified runs (the showcase read-surface renders the earned proofs).
+dreggnet-cheevo = { path = "../dreggnet-cheevo" }
+# THE GUILD LAYER — `Guild`/`GuildBoard`/`GuildStats`: membership-as-capabilities + a leaderboard
+# that sums un-forgeable clears (the guild-page read-surface renders the roster + the aggregate).
+dreggnet-guild = { path = "../dreggnet-guild" }
+# THE NO-CHEAT RUN SOURCE — `Universe`/`Completion`/`record_playthrough`/`WinCondition`: seeds the
+# demo cheevo (a real earned achievement) + the demo guild's one verified clear (a real winning run).
+ugc-dregg = { path = "../ugc-dregg" }
+# The built-in winnable dungeon scene + its choice indices, for the demo guild's verified clear.
+dungeon-on-dregg = { path = "../dungeon-on-dregg" }

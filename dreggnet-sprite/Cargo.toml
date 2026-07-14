@@ -1,0 +1,40 @@
+# `dreggnet-sprite` — the in-house DETERMINISTIC generative asset → SVG sprite renderer.
+#
+# Replaces the (unavailable) external art dependency with a pure Rust function
+# `content-addressed asset  ->  trait vector  ->  composed vector SVG`. Same asset
+# ⇒ byte-identical sprite (reproducible + verifiable, matching the byte-identical-
+# replay ethos); a different AssetId ⇒ a different sprite. The trait vector is
+# derived FROM the existing AssetId bytes (the note's content address, TCB — no new
+# NoteDesc field this pass, see E1) via the real `dregg-dice` verifiable draw stream,
+# and rarity is a `dregg-dice` E2 provably-fair WEIGHTED draw over a committed table
+# (a legendary glows/gilds). Additive workspace member; consumes `dreggnet-asset`
+# (the owned note / AssetId) + `dregg-dice` read-only. Modifies neither.
+[package]
+name = "dreggnet-sprite"
+version.workspace = true
+edition.workspace = true
+rust-version.workspace = true
+authors.workspace = true
+license.workspace = true
+homepage.workspace = true
+repository.workspace = true
+description = "Deterministic generative renderer: a content-addressed dreggnet asset -> a trait vector (derived from its AssetId via the dregg-dice draw stream, rarity by a committed provably-fair weighted draw) -> a composed vector SVG sprite. Same asset yields a byte-identical sprite; traits visibly vary the art; gear + card kinds. In-house replacement for an external art dependency."
+
+[lints]
+workspace = true
+
+[dependencies]
+# The owned, content-addressed note: AssetId (blake3 content address, the sprite
+# seed) is consumed READ-ONLY — no NoteDesc field is added (the AssetId derivation
+# is TCB; the first-class trait_root field is the named E1 pass).
+dreggnet-asset = { path = "../dreggnet-asset" }
+# The verifiable randomness draw stream: a domain-separated Seed expands into an
+# indexed, reject-free draw stream; E2's `weighted` is the provably-fair rarity draw.
+dregg-dice = { path = "../dice" }
+# Domain-separated derivation of the sprite Seed from the AssetId bytes (the same
+# blake3 the whole workspace resolves).
+blake3 = "1"
+
+[dev-dependencies]
+# Real XML well-formedness parse of the emitted SVG in tests (already in the lock).
+roxmltree = "0.20"
