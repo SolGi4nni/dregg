@@ -1,0 +1,28 @@
+[package]
+name = "fhir"
+version = "0.1.0"
+edition = "2021"
+license = "AGPL-3.0-or-later"
+description = "fhIR-0: the typed order/product DSL over the fhEgg Cert-F engine — 'admissible iff it compiles'. A product's TYPE carries its convex-program shape (public/private matrices), its privacy TIER, and its certificate kind; the compiler reports the MOST-PRIVATE tier a product can honestly run at and refuses to over-promise privacy."
+
+# Standalone probe/product-language crate — deliberately NOT a breadstuffs
+# workspace member (the empty [workspace] opts out of the root workspace, same
+# pattern as the sibling fhegg-solver / fhegg-fhe crates). It depends on
+# fhegg-solver by path so a COMPILED product's convex program actually RUNS
+# through the real PDHG/ADMM/aggregation engine and produces its certificate.
+# See docs/deos/FHEGG-PRODUCT-ORDER-FRONTIER.md (fhIR, the six-part
+# admissibility theorem — a NAMED research target, not discharged here) and
+# docs/deos/DREGGFI-PRIVACY-TIERS.md §3 (the tier-as-a-TYPE).
+[workspace]
+
+[dependencies]
+fhegg-solver = { path = "../fhegg-solver" }
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+[[bin]]
+name = "fhir-demo"
+path = "src/bin/fhir_demo.rs"
+
+[profile.release]
+opt-level = 3
