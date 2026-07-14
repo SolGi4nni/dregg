@@ -23,6 +23,17 @@ description = "fhEgg Stage-2 NO-VIEWER FHE clearing PoC: uniform-price batch auc
 [dependencies]
 tfhe = { version = "1.6", features = ["integer"] }
 rand = "0.8"
+# The CARRY-FREE ADDITIVE lane (codex Round-3 Q1): a REAL pure-Rust BFV/BGV
+# scheme (fhe.rs, Tancrède Lepoint) — exact-quantized R_q ring, SIMD-batched,
+# additions are native modular poly-adds (NO carry propagation, NO PBS). This is
+# the "exact quantized BFV/BGV for the carry-free fold" codex named in
+# docs/deos/FHEGG-CODEX-ROUND3.md §B/Q1. CKKS is not in tfhe-rs; BFV is the
+# cleanest real additive-homomorphic path in pure Rust and it is what codex
+# specified for the auction fold. `rand_09` is BFV's rng (fhe.rs is on rand 0.9;
+# the existing tfhe bins stay on rand 0.8, so it is a renamed second dep).
+fhe = "0.1.1"
+fhe-traits = "0.1.1"
+rand_09 = { package = "rand", version = "0.9" }
 
 [[bin]]
 name = "smoke"
@@ -35,6 +46,11 @@ path = "src/bin/bench.rs"
 [[bin]]
 name = "fhe-pdhg-bench"
 path = "src/bin/pdhg.rs"
+
+# The additive-fold vs exact-integer-TFHE head-to-head (codex R3 Q1 Tier-0 lever).
+[[bin]]
+name = "fhe-additive-bench"
+path = "src/bin/additive_bench.rs"
 
 [profile.release]
 opt-level = 3

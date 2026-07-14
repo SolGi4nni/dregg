@@ -36,6 +36,10 @@ use std::time::{Duration, Instant};
 use tfhe::prelude::*;
 use tfhe::{ClientKey, FheUint16};
 
+/// The CARRY-FREE ADDITIVE fold (BFV / fhe.rs) — codex Round-3 Q1's Tier-0 speed
+/// lever, measured head-to-head against the exact-integer TFHE fold above.
+pub mod additive;
+
 pub type Qty = u16;
 
 #[derive(Clone, Copy, Debug)]
