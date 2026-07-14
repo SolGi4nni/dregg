@@ -519,6 +519,299 @@ def GuruswamiSudanLineListBound (S : FriSetup F ι κ) (dIn : ℕ) : Prop :=
   (Fintype.card κ - dIn) ^ 2 > 2 * Fintype.card κ →
     CorrelatedAgreementLine S dIn (2 * Fintype.card κ)
 
+/-! ## §6. THE INTERIOR RADIUS `dIn = 52` — off the Johnson boundary, GS NON-DEGENERATE.
+
+`§3b`/`§5` run the deployed analysis AT the Johnson boundary `dIn = 56` (relative `7/8`), where the
+line code's GS interpolation DEGENERATES: agreement `t = |κ| − 56 = 8`, and `t² = 64 < 128 = 2·|κ|`
+(`wrap_below_gs_line_radius`) — the boundary `t = √ρ·|κ|` where every GS/Johnson denominator vanishes,
+forcing the boundary-bespoke ordered-pair list `292`.
+
+This section pulls the analysis radius INTERIOR to `dIn = 52` (relative `13/16`). That is a
+proof-cleanliness choice, NOT a security one: the deployed `19`-query soundness has `~116` bits of
+headroom (`|F| ≈ 2¹²⁴`, list term `L/2¹²⁴`), so `L = 186` at `dIn = 52` and `L = 292` at `dIn = 56`
+are security-indistinguishable. What the interior BUYS is regime: at `dIn = 52` the agreement is
+`t = |κ| − 52 = 12` and `t² = 144 > 128 = 2·|κ|`, so the Guruswami–Sudan NON-DEGENERACY hypothesis of
+`GuruswamiSudanLineListBound` (`§5`) is MET (`wrap_meets_gs_line_radius`) — the deployed proximity
+soundness now runs in the interior list-decoding regime with margin, not on the degenerate boundary.
+
+Two honest facts about the list size at `dIn = 52`:
+* **The ORDERED-PAIR method gives `L ≤ 186`, PROVED here** (`wrap_correlatedAgreementLine_interior`).
+  Each good `α` now folds `f` to a constant on `≥ 12` fibers (vs `8` at `dIn = 56`), so under
+  no-rich-point (every constant point has `< 12`, i.e. `≤ 11` fibers) its ordered distinct-`Φ` pair
+  set `Pairs α` has card `≥ 2·11·1 = 22` (the `11+1` split minimum, vs `14` at `dIn = 56`). Each good
+  `α` "consumes more pairs", so the disjoint pair sets inside `κ × κ` (card `4096`) force
+  `|Good| ≤ ⌊4096/22⌋ = 186` — sharper than the boundary's `292`, and genuinely interior.
+* **The GS-IDEAL `L ≤ 2·|κ| = 128` is NOT reached by the ordered-pair method** (`186 > 128`), and is
+  NOT claimed here. `128 = 2·|κ|` is exactly the conclusion of `GuruswamiSudanLineListBound` — the
+  weighted-interpolation lemma that handles the point MULTIPLICITIES the ordered-pair method cannot
+  (a good line may carry `≥ 12` fibers on only `2` distinct `Φ`-points, mult `11 + 1`, so naive
+  Johnson double-counting has a negative denominator `t² − m·n = 144 − 11·64 < 0`). Its hypothesis is
+  now SATISFIABLE at `dIn = 52` (that is the value of moving interior — at `dIn = 56` the hypothesis
+  is FALSE, `wrap_below_gs_line_radius`), but the lemma itself remains the named upstream target and is
+  NOT discharged here. The honest interior list is `186`; the ideal `128` awaits GS. -/
+
+/-- **The GS line-decoding NON-DEGENERACY hypothesis is MET at the interior radius `dIn = 52`.**
+`t = |κ| − 52 = 12`, and `t² = 144 > 128 = 2·|κ| = k·n` (line code `k = 2`, `n = |κ|`): the
+Guruswami–Sudan interpolation hypothesis `t² > k·n` HOLDS — precisely the hypothesis of
+`GuruswamiSudanLineListBound friSetupWrapRate 52`, and precisely what `wrap_below_gs_line_radius`
+shows FAILS at the Johnson boundary `dIn = 56`. So the interior analysis runs OFF the degenerate
+boundary, in the regime where GS delivers a bound. -/
+theorem wrap_meets_gs_line_radius :
+    (Fintype.card (Fin (2 ^ 6)) - 52) ^ 2 > 2 * Fintype.card (Fin (2 ^ 6)) := by
+  have h : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
+  rw [h]; norm_num
+
+set_option maxRecDepth 8000 in
+/-- **THE δ-PRESERVING CORRELATED-AGREEMENT PRIMITIVE at the INTERIOR radius `dIn = 52`, PROVED.**
+`CorrelatedAgreementLine friSetupWrapRate 52 186`: for ANY `f`, if more than `186` folding challenges
+fold `f` to within `52 = (13/16)·64` of the constants, a SINGLE constant pair `(a,b)` agrees with
+`(E f, O f)` on `≥ |κ| − 52 = 12` fibers simultaneously — the sharp `1 − δ` (δ-preserving) floor at
+the interior radius. No `sorry`, no hypothesis.
+
+The list `186 = ⌊4096/22⌋` is LINEAR in `|κ|` and SHARPER than the boundary `dIn = 56` list `292`,
+because the interior agreement floor `12` (vs `8`) forces the per-`α` ordered distinct-`Φ` pair count
+up to `22` (vs `14`): under no-rich-point every constant point has `≤ 11` fibers, so a good `α`'s
+agreement set (card `≥ 12`) splits into a `Φ`-fibre `A` (`1 ≤ |A| ≤ 11`) and its complement `B`
+(`|B| ≥ 1`) with `2·|A|·|B| ≥ 22` (the `11+1` minimum). The GS-ideal `≤ 2·|κ| = 128` is NOT reached
+by this ordered-pair method (see `wrap_meets_gs_line_radius`: the GS hypothesis is now MET, so the
+ideal is no longer refuted — but discharging it is the upstream GS interpolation lemma, not proved). -/
+theorem wrap_correlatedAgreementLine_interior :
+    CorrelatedAgreementLine friSetupWrapRate 52 186 := by
+  classical
+  intro f Good hclose hL
+  set G := friSetupWrapRate.geom with hG
+  -- Either some constant point is rich (`≥ 12` fibers) — the δ-preserving conclusion — or none is,
+  -- and then the ORDERED distinct-`Φ` pair sets `Pairs α ⊆ κ × κ` are pairwise DISJOINT and each of
+  -- card `≥ 22`. Disjoint `≥ 22`-sets inside `κ × κ` (card `4096`) force `|Good| ≤ 4096/22 = 186`.
+  rcases em (∃ a b : BabyBear,
+      12 ≤ (Finset.univ.filter (fun y : Fin (2 ^ 6) => E G f y = a ∧ O G f y = b)).card)
+    with hrich | hnorich
+  · -- Rich point → the δ-preserving agreement pair.
+    obtain ⟨a, b, hab⟩ := hrich
+    refine ⟨(fun _ => a), mem_wrap_C'.mpr ⟨a, rfl⟩, (fun _ => b), mem_wrap_C'.mpr ⟨b, rfl⟩, ?_⟩
+    have hn : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
+    rw [hn]
+    simpa using hab
+  · -- No rich point: every `Φ`-fibre has `≤ 11` fibers.
+    exfalso
+    push_neg at hnorich
+    have hex : ∀ α ∈ Good, ∃ c : BabyBear,
+        (disagree (Fold G α f) (fun _ => c)).card ≤ 52 := by
+      intro α hα
+      obtain ⟨g, hgC, hcard⟩ := hclose α hα
+      obtain ⟨c, rfl⟩ := mem_wrap_C'.mp hgC
+      exact ⟨c, hcard⟩
+    choose! cc hcc using hex
+    set S : BabyBear → Finset (Fin (2 ^ 6)) :=
+      fun α => Finset.univ.filter (fun y => Fold G α f y = cc α) with hSdef
+    have hmemS : ∀ α y, y ∈ S α ↔ Fold G α f y = cc α := by
+      intro α y; simp only [hSdef, Finset.mem_filter, Finset.mem_univ, true_and]
+    have hScard : ∀ α ∈ Good, 12 ≤ (S α).card := by
+      intro α hα
+      have hcompl : S α = (disagree (Fold G α f) (fun _ => cc α))ᶜ := by
+        ext y
+        simp only [hSdef, Finset.mem_filter, Finset.mem_univ, true_and, Finset.mem_compl,
+          mem_disagree, not_not]
+      have hn : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
+      have hcard : (S α).card
+          = Fintype.card (Fin (2 ^ 6)) - (disagree (Fold G α f) (fun _ => cc α)).card := by
+        rw [hcompl, Finset.card_compl]
+      have := hcc α hα
+      rw [hcard, hn]; omega
+    set Pairs : BabyBear → Finset (Fin (2 ^ 6) × Fin (2 ^ 6)) :=
+      fun α => (S α ×ˢ S α).filter
+        (fun p => ¬(E G f p.1 = E G f p.2 ∧ O G f p.1 = O G f p.2)) with hPdef
+    -- SIZE `≥ 22`. Split `S α = A ⊍ B` at the `Φ`-fibre `A` of a chosen `y₀`. No-rich caps `|A| ≤ 11`;
+    -- `|S α| ≥ 12` forces `|B| ≥ 1`; then `2·|A|·|B| ≥ 22` (the `11+1` minimum) cross pairs.
+    have harith : ∀ a b : ℕ, 1 ≤ a → 1 ≤ b → 12 ≤ a + b → 22 ≤ 2 * (a * b) := by
+      intro a b ha hb hab
+      obtain ⟨a, rfl⟩ := Nat.exists_eq_add_of_le ha
+      obtain ⟨b, rfl⟩ := Nat.exists_eq_add_of_le hb
+      have h10 : 10 ≤ a + b := by omega
+      nlinarith [h10, Nat.zero_le (a * b)]
+    have hsize : ∀ α ∈ Good, 22 ≤ (Pairs α).card := by
+      intro α hα
+      have hScardα := hScard α hα
+      have hSpos : (S α).Nonempty := Finset.card_pos.mp (by omega)
+      obtain ⟨y₀, hy₀⟩ := hSpos
+      set A : Finset (Fin (2 ^ 6)) :=
+        (S α).filter (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀) with hAdef
+      set B : Finset (Fin (2 ^ 6)) :=
+        (S α).filter (fun y => ¬ (E G f y = E G f y₀ ∧ O G f y = O G f y₀)) with hBdef
+      have hAsub : A ⊆ S α := Finset.filter_subset _ _
+      have hy₀A : y₀ ∈ A := Finset.mem_filter.mpr ⟨hy₀, rfl, rfl⟩
+      have hApos : 1 ≤ A.card := Finset.card_pos.mpr ⟨y₀, hy₀A⟩
+      have hAle : A.card ≤ 11 := by
+        have hsub : A ⊆ Finset.univ.filter
+            (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀) := by
+          intro z hz
+          rw [Finset.mem_filter] at hz ⊢
+          exact ⟨Finset.mem_univ _, hz.2⟩
+        have h11 : (Finset.univ.filter
+            (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀)).card < 12 :=
+          hnorich (E G f y₀) (O G f y₀)
+        exact le_trans (Finset.card_le_card hsub) (by omega)
+      have hABcard : A.card + B.card = (S α).card :=
+        Finset.filter_card_add_filter_neg_card_eq_card _
+      have hBpos : 1 ≤ B.card := by omega
+      have mkPair : ∀ q : Fin (2 ^ 6) × Fin (2 ^ 6), q.1 ∈ S α → q.2 ∈ S α →
+          (E G f q.1 = E G f y₀ ∧ O G f q.1 = O G f y₀) →
+          ¬ (E G f q.2 = E G f y₀ ∧ O G f q.2 = O G f y₀) → q ∈ Pairs α := by
+        intro q hq1 hq2 hqA hqB
+        rw [hPdef, Finset.mem_filter, Finset.mem_product]
+        exact ⟨⟨hq1, hq2⟩, fun hΦ => hqB ⟨hΦ.1.symm.trans hqA.1, hΦ.2.symm.trans hqA.2⟩⟩
+      have hcross : ∀ p : Fin (2 ^ 6) × Fin (2 ^ 6),
+          (p.1 ∈ A ∧ p.2 ∈ B) ∨ (p.1 ∈ B ∧ p.2 ∈ A) → p ∈ Pairs α := by
+        rintro p (⟨h1, h2⟩ | ⟨h1, h2⟩)
+        · exact mkPair p (hAsub h1) (Finset.filter_subset _ _ h2)
+            (Finset.mem_filter.mp h1).2 (Finset.mem_filter.mp h2).2
+        · have hbase := mkPair (p.2, p.1) (hAsub h2) (Finset.filter_subset _ _ h1)
+            (Finset.mem_filter.mp h2).2 (Finset.mem_filter.mp h1).2
+          rw [hPdef, Finset.mem_filter, Finset.mem_product] at hbase ⊢
+          exact ⟨⟨hbase.1.2, hbase.1.1⟩, fun hΦ => hbase.2 ⟨hΦ.1.symm, hΦ.2.symm⟩⟩
+      have hunion : (A ×ˢ B) ∪ (B ×ˢ A) ⊆ Pairs α := by
+        intro p hp
+        rw [Finset.mem_union, Finset.mem_product, Finset.mem_product] at hp
+        exact hcross p (hp.imp id id)
+      have hABdisj : Disjoint A B :=
+        Finset.disjoint_filter_filter_neg (S α) (S α)
+          (fun y => E G f y = E G f y₀ ∧ O G f y = O G f y₀)
+      have hdisjAB : Disjoint (A ×ˢ B) (B ×ˢ A) := by
+        rw [Finset.disjoint_left]
+        intro p hp1 hp2
+        rw [Finset.mem_product] at hp1 hp2
+        exact (Finset.disjoint_left.mp hABdisj hp1.1) hp2.1
+      have hcardU : ((A ×ˢ B) ∪ (B ×ˢ A)).card = 2 * (A.card * B.card) := by
+        rw [Finset.card_union_of_disjoint hdisjAB, Finset.card_product, Finset.card_product]
+        ring
+      have hle := Finset.card_le_card hunion
+      rw [hcardU] at hle
+      exact le_trans (harith A.card B.card hApos hBpos (by omega)) hle
+    -- DISJOINTNESS: a shared distinct-`Φ` pair folds equal under both `α, β`, pinning `α = β`.
+    have hdisj : ∀ α ∈ Good, ∀ β ∈ Good, α ≠ β → Disjoint (Pairs α) (Pairs β) := by
+      intro α hα β hβ hαβ
+      rw [Finset.disjoint_left]
+      intro p hpα hpβ
+      simp only [hPdef, Finset.mem_filter, Finset.mem_product] at hpα hpβ
+      obtain ⟨⟨hp1α, hp2α⟩, hΦα⟩ := hpα
+      obtain ⟨⟨hp1β, hp2β⟩, _⟩ := hpβ
+      simp only [hmemS] at hp1α hp2α hp1β hp2β
+      have hEα : E G f p.1 + α * O G f p.1 = E G f p.2 + α * O G f p.2 := by
+        show Fold G α f p.1 = Fold G α f p.2; rw [hp1α, hp2α]
+      have hEβ : E G f p.1 + β * O G f p.1 = E G f p.2 + β * O G f p.2 := by
+        show Fold G β f p.1 = Fold G β f p.2; rw [hp1β, hp2β]
+      have hmulα : α * (O G f p.1 - O G f p.2) = E G f p.2 - E G f p.1 := by
+        linear_combination hEα
+      have hmulβ : β * (O G f p.1 - O G f p.2) = E G f p.2 - E G f p.1 := by
+        linear_combination hEβ
+      have hOne : O G f p.1 ≠ O G f p.2 := by
+        intro hOeq
+        apply hΦα
+        have hz : (0 : BabyBear) = E G f p.2 - E G f p.1 := by rw [← hmulα, hOeq]; ring
+        exact ⟨(sub_eq_zero.mp hz.symm).symm, hOeq⟩
+      have hDne : O G f p.1 - O G f p.2 ≠ 0 := sub_ne_zero.mpr hOne
+      have hcancel : α * (O G f p.1 - O G f p.2) = β * (O G f p.1 - O G f p.2) := by
+        rw [hmulα, hmulβ]
+      exact hαβ (mul_right_cancel₀ hDne hcancel)
+    -- COUNT: `22·|Good| ≤ ∑ |Pairs α| = |⋃ Pairs α| ≤ |κ × κ| = 4096`, so `|Good| ≤ 186`.
+    have hsum : 22 * Good.card ≤ ∑ α ∈ Good, (Pairs α).card := by
+      calc 22 * Good.card = ∑ _α ∈ Good, 22 := by rw [Finset.sum_const, smul_eq_mul]; ring
+        _ ≤ ∑ α ∈ Good, (Pairs α).card := Finset.sum_le_sum hsize
+    have hbu : (Good.biUnion Pairs).card = ∑ α ∈ Good, (Pairs α).card :=
+      Finset.card_biUnion hdisj
+    have huniv : (Finset.univ : Finset (Fin (2 ^ 6) × Fin (2 ^ 6))).card = 4096 := by simp
+    have hle : (Good.biUnion Pairs).card ≤ 4096 :=
+      le_trans (Finset.card_le_card (Finset.subset_univ _)) (le_of_eq huniv)
+    omega
+
+/-- **The good-challenge card bound at the INTERIOR inner radius `dIn = 52`.** Given the δ-preserving
+line-correlated-agreement primitive at `dIn = 52`, a `112`-far word has at most `L` folding challenges
+whose fold is `52`-close to the constants. The contradiction is the deployed dimension-`2` collapse:
+correlated agreement forces `≥ 12` fibers onto a single point `(a,b)` of `F²`, but
+`wrap_fiber_le_seven` caps that at `7` — with even MORE slack (`12 > 7`) than the boundary (`8 > 7`). -/
+theorem wrap_good_challenge_card_le_interior {f : Fin (2 ^ 7) → BabyBear} {L : ℕ}
+    (hCA : CorrelatedAgreementLine friSetupWrapRate 52 L)
+    (hfar : farN friSetupWrapRate.C 112 f)
+    (Good : Finset BabyBear)
+    (hGood : ∀ α ∈ Good, closeN friSetupWrapRate.C' 52 (Fold friSetupWrapRate.geom α f)) :
+    Good.card ≤ L := by
+  by_contra hcon
+  rw [not_le] at hcon
+  obtain ⟨ge, hge, go, hgo, hbig⟩ := hCA Good hGood hcon
+  obtain ⟨a, rfl⟩ := mem_wrap_C'.mp hge
+  obtain ⟨b, rfl⟩ := mem_wrap_C'.mp hgo
+  have hle7 := wrap_fiber_le_seven hfar a b
+  have hn : Fintype.card (Fin (2 ^ 6)) = 64 := by simp
+  simp only at hbig
+  rw [hn] at hbig
+  omega
+
+/-- **THE INTERIOR REDUCTION — `BadChallengePoly friSetupWrapRate 112 52 L` from the line primitive.**
+`CorrelatedAgreementLine friSetupWrapRate 52 L → BadChallengePoly friSetupWrapRate 112 52 L`. For a
+`112`-far `f` the good set has card `≤ L` (`wrap_good_challenge_card_le_interior`), so
+`∏_{α good}(X − C α)` is the nonzero degree-`≤ L` witness — the δ-preserving proximity-gap witness at
+the INTERIOR radius `dIn = 52 = (13/16)·64`, off the Johnson boundary. No `sorry`: the SOLE hypothesis
+is the precisely-named correlated-agreement `Prop`. -/
+theorem interior_of_correlatedAgreementLine (L : ℕ)
+    (hCA : CorrelatedAgreementLine friSetupWrapRate 52 L) :
+    BadChallengePoly friSetupWrapRate 112 52 L := by
+  classical
+  intro f hfar
+  set Gd : Set BabyBear :=
+    {α : BabyBear | closeN friSetupWrapRate.C' 52 (Fold friSetupWrapRate.geom α f)} with hGd
+  have hfin : Gd.Finite := Set.toFinite _
+  set Good : Finset BabyBear := hfin.toFinset with hGood
+  have hmem : ∀ α, α ∈ Good ↔ α ∈ Gd := by
+    intro α; rw [hGood]; simp only [Set.Finite.mem_toFinset]
+  have hcard : Good.card ≤ L :=
+    wrap_good_challenge_card_le_interior hCA hfar Good (fun α hα => (hmem α).mp hα)
+  refine ⟨∏ α ∈ Good, (X - C α),
+    (monic_prod_X_sub_C (fun α : BabyBear => α) Good).ne_zero, ?_, ?_⟩
+  · rw [natDegree_finsetProd_X_sub_C_eq_card Good (fun α : BabyBear => α)]
+    exact hcard
+  · intro α hα
+    have hαG : α ∈ Good := (hmem α).mpr hα
+    show (∏ β ∈ Good, (X - C β)).eval α = 0
+    rw [eval_prod]
+    exact Finset.prod_eq_zero hαG (by simp)
+
+/-- **The δ-preserving proximity gap at the INTERIOR radius, from the primitive.** `dIn = 52`
+(relative `13/16`) is interior to the folded code's Johnson radius, in the GS NON-DEGENERATE regime
+(`wrap_meets_gs_line_radius`), so farness is preserved across the fold with margin, off the degenerate
+boundary the `dIn = 56` version sits on. -/
+theorem wrap_friProximityGap_interior (L : ℕ)
+    (hCA : CorrelatedAgreementLine friSetupWrapRate 52 L) :
+    FriProximityGapChallenges friSetupWrapRate 112 52 L :=
+  friProximityGap_of_badChallengePoly friSetupWrapRate 112 52 L
+    (interior_of_correlatedAgreementLine L hCA)
+
+/-- **`BadChallengePoly friSetupWrapRate 112 52 186`, PROVED (no hypothesis).** The interior-radius
+proximity-gap witness, discharged by feeding the now-proved interior line primitive into the
+reduction. -/
+theorem wrap_badChallengePoly_interior_proved :
+    BadChallengePoly friSetupWrapRate 112 52 186 :=
+  interior_of_correlatedAgreementLine 186 wrap_correlatedAgreementLine_interior
+
+/-- **THE PREFERRED DEPLOYED PROXIMITY GAP — δ-preserving, INTERIOR, unconditional.**
+`FriProximityGapChallenges friSetupWrapRate 112 52 186`: a `112`-far word has at most `186` folding
+challenges whose fold is `52`-close (relative `13/16`) to the constants. This is the composition run
+in the INTERIOR list-decoding regime (`wrap_meets_gs_line_radius`: `t² = 144 > 128`), OFF the
+degenerate Johnson boundary that `wrap_friProximityGap_sharp_proved` (`dIn = 56`) sits on. The
+`dIn = 56` result is kept as the sharpest-RADIUS lemma; this `dIn = 52` result is the preferred
+composition — same `~116`-bit security headroom, a strictly cleaner list-decoding regime. -/
+theorem wrap_friProximityGap_interior_proved :
+    FriProximityGapChallenges friSetupWrapRate 112 52 186 :=
+  wrap_friProximityGap_interior 186 wrap_correlatedAgreementLine_interior
+
+/-- **The interior gap FIRES on the concrete `112`-far `fSqWrap`, unconditionally**: at most `186`
+folding challenges fold it `52`-close to the constants, exhibited as the roots of an actual nonzero
+polynomial of degree `≤ 186`. Non-vacuous (`fSqWrap_far` supplies the far hypothesis). -/
+theorem wrap_interior_witness_fires_proved :
+    ∃ P : BabyBear[X], P ≠ 0 ∧ P.natDegree ≤ 186 ∧
+      {α : BabyBear | closeN friSetupWrapRate.C' 52 (Fold friSetupWrapRate.geom α fSqWrap)}
+        ⊆ {α : BabyBear | P.eval α = 0} :=
+  wrap_badChallengePoly_interior_proved fSqWrap_far
+
 /-! ## §4. Axiom hygiene. -/
 
 #assert_axioms correlatedAgreementLine_twoPoint
@@ -532,5 +825,13 @@ def GuruswamiSudanLineListBound (S : FriSetup F ι κ) (dIn : ℕ) : Prop :=
 #assert_axioms wrap_friProximityGap_sharp_proved
 #assert_axioms wrap_sharp_witness_fires_proved
 #assert_axioms wrap_below_gs_line_radius
+#assert_axioms wrap_meets_gs_line_radius
+#assert_axioms wrap_correlatedAgreementLine_interior
+#assert_axioms wrap_good_challenge_card_le_interior
+#assert_axioms interior_of_correlatedAgreementLine
+#assert_axioms wrap_friProximityGap_interior
+#assert_axioms wrap_badChallengePoly_interior_proved
+#assert_axioms wrap_friProximityGap_interior_proved
+#assert_axioms wrap_interior_witness_fires_proved
 
 end Dregg2.Circuit.FriCorrelatedAgreementSharp
