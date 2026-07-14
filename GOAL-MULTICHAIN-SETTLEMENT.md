@@ -463,3 +463,9 @@ outward decisions.
 - **help-the-next-guy sweep** (13c2a871a): 10 stale "staged/frozen/open" artifacts rewritten to DEPLOYED truth (avail-weld, emit files, census docs, GOAL trail, memory); real residuals kept accurate.
 - ⚠ codex drex-web UX redesign DID NOT SHIP (stuck on stdin). ⚠ intent lib-tests + dregg-turn test-bin independently broken (circuit prove-API drift — separate fixup).
 - NOW: close the revokeDelegation-v2 dropped-weld (soundness residual, VK-change, ember-un-gated).
+
+## ⚡ fhEgg KERNEL + CONVEX-ENGINE FRONTIER (07-14)
+- **FHEGG-KERNEL.md** (e19e0a2ad): aggregation-monoid CONFIRMED as the kernel (clearing = homomorphic fold of order-curves + one crossing; O(N·K) bootstrap-free vs O(N log²N) matching). ⚑ MULTILATERAL RING VINDICATED (ember's coequalizer instinct): it's a CIRCULATION in ker ∂ (linear, public basis) → free conservation check for exact intents, poly-time oblivious-LP only for scaled partial-fill — NOT graph-hard. Privacy STRONGER than Penumbra (decrypt-nothing vs threshold-decrypt). Residual: DLog homomorphic layer → PQ lattice-additive fold cutover.
+- **N-leg ring-clearing AIR** (49d05235d): variable cycle + partial-fill inequality, transcript [nf,root,vb]ⁿ, 12/12 genuine teeth.
+- **currency-fixup** (a40b15bd5): 3 stark-kill/revoked-root test drifts green; ⚑ REAL BREAK flagged = dsl_rc transfer avail-weld (wire 188 15-bit vs 30-bit producer = GAP#4 dropped weld, VK-regen reconcile needed); teasting/* + demo-agent same-class fallout named; persvati disk-full reclaimed ~35G.
+- NOW: (1) PRIVATE-CONVEX-ENGINE research+design (first-order/operator-splitting = oblivious + homomorphic-linear; the products suite); (2) dsl_rc avail-weld reconcile (VK-regen, real break); pending: PQ-value cutover (DLog→hash), teasting-fallout cleanup, SetField-attestation.
