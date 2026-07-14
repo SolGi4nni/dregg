@@ -341,6 +341,19 @@ fn state_constraint_executor_coverage(c: &StateConstraint) -> bool {
         // live circuit-side, circuit/tests/vault_deposit_air_teeth.rs). Conservatively
         // `false` per the honesty contract (under-claim).
         StateConstraint::VaultDeposit { .. } => false,
+
+        // The cross-KEY heap relation (`new[heap key] <= new[heap other_key] +
+        // delta`) — the heap-lift of `FieldLteOther`, appended LAST. HOST-EVALUATED
+        // ONLY: the executor's scalar `cell::program::eval` enforces it (fails
+        // closed when either key is absent), but it carries NO in-circuit teeth and
+        // there is no `SLOT_CAVEAT_TAG_HEAP_*` PI (turn::executor projects it into
+        // the deferred `None` bucket). No dedicated teasting executor accept/reject
+        // coverage pair authored yet (the driving accept/reject lives app-side in
+        // the dungeon Bazaar solvency door), so conservatively `false` per the
+        // honesty contract (under-claim) — mirrors the staged VaultDeposit/
+        // SettleEscrow/DischargeObligation atoms above. Shrink when a
+        // coverage_state_constraints accept/reject pair lands.
+        StateConstraint::HeapFieldLteOther { .. } => false,
     }
 }
 
@@ -382,6 +395,10 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
     // evaluator + manifest projection + off-AIR verifier wired, but no executor-commit
     // accept/reject pair authored yet (teeth are circuit-side).
     "VaultDeposit",
+    // The cross-KEY heap relation (heap-lift of `FieldLteOther`), appended LAST.
+    // Host-evaluated only (scalar `cell::program::eval`), no in-circuit teeth and no
+    // dedicated teasting executor accept/reject coverage pair authored yet.
+    "HeapFieldLteOther",
 ];
 
 /// Ratchet for StateConstraint executor-enforcement coverage — may only shrink.
@@ -392,9 +409,11 @@ const NOT_YET_COVERED_CONSTRAINTS: &[&str] = &[
 /// atomic-swap gate landed STAGED (in-circuit weld, teeth circuit-side); 21 → 22 when
 /// the standing-obligation per-period discharge gate landed STAGED (in-circuit weld,
 /// teeth circuit-side); 22 → 23 when the share-vault no-dilution deposit gate landed
-/// STAGED (in-circuit weld, teeth circuit-side). Shrink as each gains an executor
-/// accept/reject coverage pair.
-const MAX_UNCOVERED_CONSTRAINTS: usize = 23;
+/// STAGED (in-circuit weld, teeth circuit-side); 23 → 24 when the cross-KEY heap
+/// relation `HeapFieldLteOther` was appended (host-evaluated only — the heap-lift of
+/// `FieldLteOther`; no in-circuit teeth, no dedicated teasting executor accept/reject
+/// pair yet). Shrink as each gains an executor accept/reject coverage pair.
+const MAX_UNCOVERED_CONSTRAINTS: usize = 24;
 
 #[test]
 fn state_constraint_coverage_ratchet_only_shrinks() {
