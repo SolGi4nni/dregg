@@ -603,7 +603,35 @@ pub fn from_solution_json(json: &str, scale: i64) -> Result<CertFWitness, String
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_circuit::descriptor_ir2::ir2_eval_accepts_i64;
+    use dregg_circuit::descriptor_ir2::{ir2_eval_accepts_i64, parse_vm_descriptor2};
+
+    /// **THE LEAN-AUTHORED DESCRIPTOR (byte-twin discipline).** `metatheory/Market/CertFDescriptor.lean`
+    /// AUTHORS the Cert-F `EffectVmDescriptor2` (`certFDescriptorOf`) and PROVES the emit-soundness
+    /// bridge `Satisfied2 ↔ certificate-valid` (`certFDescriptor_emit_sound`) — the theorem this
+    /// hand-built Rust could only *test*. The Lean descriptor's canonical wire string is emitted by
+    /// `emitVmJson2` and committed at `circuit/descriptors/dregg-cert-f-ir2.json`. This constant is
+    /// that byte string; Lean is the source of truth, the Rust builder is the checked twin.
+    const CERT_F_LEAN_JSON: &str = include_str!("../../circuit/descriptors/dregg-cert-f-ir2.json");
+
+    /// **THE BYTE-TWIN GATE.** The hand-built Rust descriptor for the worked 3-cycle is BYTE-IDENTICAL
+    /// to the Lean-authored one (decoded from the committed `emitVmJson2` wire string). This retires the
+    /// hand-write as the source of truth: `cert_f_descriptor` is now validated against the Lean descriptor
+    /// that carries the proven `Satisfied2 ↔ valid` emit-soundness, exactly as the effect_vm family pins
+    /// its Rust twin to the Lean `#guard` golden. (The @[export] archive build that would let Rust
+    /// consume the Lean object directly is the deploy step; this twin is the same staged discipline the
+    /// rotation lanes use — the JSON is regenerated from Lean via `emitVmJson2`.)
+    #[test]
+    fn cert_f_descriptor_matches_lean() {
+        let rust = cert_f_descriptor(&ring3_cert());
+        let lean = parse_vm_descriptor2(CERT_F_LEAN_JSON)
+            .expect("the Lean-authored Cert-F descriptor JSON must parse");
+        assert_eq!(
+            rust, lean,
+            "SOURCE-OF-TRUTH DRIFT: the hand-built Rust Cert-F descriptor is NOT byte-identical to the \
+             Lean-authored `certFDescriptorOf ring3Prog` (regenerate the golden with \
+             `emitVmJson2 certFDescriptor` if the Lean descriptor changed)"
+        );
+    }
 
     /// The i64 base-trace as the native evaluator wants it (single row is enough — every
     /// row is identical, but we hand it the real height).

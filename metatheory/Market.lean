@@ -35,6 +35,7 @@ import Market.CrossChainSettlement
 import Market.InterchainCustody
 import Market.FhEggClearing
 import Market.CertF
+import Market.CertFDescriptor
 import Market.MintSafeQuantization
 import Market.QuantizedConservation
 import Market.ExactGapNoWrap
