@@ -1,524 +1,331 @@
-# The fhEgg Kernel — the computational kernel that makes DrEX private clearing world-class-tractable
+# The fhEgg Kernel — the computational kernel of private market clearing
 
-*Companion to `DREX-DESIGN.md` (the exchange) and the turn-kernel. This doc answers a
-narrower, deeper question: is there an **elegant, composable computational kernel** for
-private market clearing — the way "a turn = an attenuable proof-carrying token over owned
-state, leaving a receipt" is the kernel that makes ZK + coordination fall out of dregg
-naturally? SOTA survey (cited, with numbers) · the fhEgg kernel (precisely stated) · the
-featureset it unlocks · the honest feasibility envelope. What-is, present tense; every
-ambitious edge names its grade. No incremental ladder — this is the straight-at-it design.*
-
----
-
-## 0. Six-line summary
-
-1. **The hypothesis holds.** A batch uniform-price call auction is an **AGGREGATION, not a
-   matching**: orders sum into a price-indexed supply/demand curve (a commutative-monoid
-   fold of per-order increments), and clearing is a **single monotone crossing** of that
-   curve. The expensive part of "private matching" (sort/compare, the bootstrap-heavy FHE
-   regime) *evaporates* — it is replaced by **O(N) homomorphic additions + an O(K) crossing**
-   over the aggregate, K = price resolution, cost independent of N.
-2. **The aggregation-monoid IS the right kernel** — confirmed by economics (cumulative
-   curves are folds), by cryptography (additive homomorphism is the cheap primitive across
-   FHE / additive commitments / threshold-ElGamal / MPC-sum), and by **dregg's own proved
-   Lean** (`exact_clears_iff`: clearability *is* Σ-balance; `toBal_mul`: the additive
-   homomorphism; `created_value_conservation`: Σ commit = commit Σ, checkable with **nothing
-   decrypted**).
-3. **How rich a book:** a **full private limit-order-book call auction** — each limit order is
-   one curve increment, the aggregate *is* the book, clearing is the crossing. Aggregation-
-   tractable to N in the thousands today (Penumbra runs it per-block on mainnet; Cryptobazaar:
-   128 bidders × 1024 prices in **< 0.5 s**).
-4. **Which products:** the private-but-attested **clearing mark** is a manipulation-resistant
-   fair oracle → options (strike vs mark), perps (funding off mark), lending (the private
-   oracle), structured products — all over **shielded positions**, **proof-settled**.
-5. **The multilateral cross-asset ring is *less hard than it looks*.** Multilateral clearing
-   is a **circulation** (a flow in the cycle space = ker ∂, a linear subspace); netting is a
-   **coequalizer**/quotient. The private part is **homomorphic linear algebra over the public
-   incidence matrix `A`** (cheap — use `A` directly, *not* a dense cycle basis; §3.3). Two
-   distinct claims, kept separate (correction, `FHEGG-CODEX-INSIGHTS.md` Q3): **verifying** a
-   *given* exact book conserves is a **free homomorphic conservation check** (`exact_clears_iff`,
-   T3) — but **selecting** the max-volume exact subset of all-or-nothing orders is
-   `max Σwᵢxᵢ s.t. Σxᵢaᵢ=0, xᵢ∈{0,1}`, a 0-1 balancing problem that encodes subset-sum /
-   set-packing and is **NP-hard**; a public topology does *not* remove the integrality. The
-   tractability comes specifically from the **`[0,1]` partial-fill RELAXATION**, a genuine
-   **oblivious flow-LP** — poly-time, real protocols exist (Aly–Van Vyve secure min-cost
-   circulation; Toft secure simplex), the scale frontier.
-6. **Honest feasibility:** single-pair uniform-price private clearing is **real-soon / already-
-   real** at N≈10³, K≈10²–10³. The frontier is (a) large price resolution K (linear cost),
-   (b) marginal pro-rata rationing at the exact clearing price, (c) private volume-maximizing
-   multilateral at scale (oblivious LP), (d) a PQ additive layer (today's Pedersen/ElGamal are
-   classical-DLog). None of these is the exponential monster "private matching" was feared to be.
-
-**The single biggest insight:** *"private matching" was mis-framed.* "Matching" evokes
-sorting/pairing — the comparison-heavy, bootstrap-dominated corner of FHE. But a uniform-price
-call auction **never pairs orders**; it **aggregates them into a price-indexed curve and
-crosses it once**. Aggregation is the *cheap* homomorphic primitive (ciphertext addition, **no
-bootstrap** — microseconds in TFHE); the crossing is O(price-buckets), independent of the
-number of orders. Private clearing therefore lives in the **cheap half of FHE**, and dregg has
-the algebra **already proved**. And the deeper turn of the same key: even the multilateral ring
-— which *looks* like NP-flavoured graph-matching — is a **circulation in a linear cycle space
-with a public basis**, so netting is homomorphic linear algebra and the residual hard core is a
-*polynomial* oblivious LP, not a combinatorial explosion.
+*The foundational kernel doc for the fhEgg line. It states the core model precisely, grounds
+each claim in the machine-checked Lean and the Rust that realizes it, and grades every edge:
+what is **proven** (kernel-clean, at model/spec scope), what is **floor-conditional** (proven
+modulo a named hypothesis), what is **measured** (a real performance envelope), and what is a
+**named residual** (a build not yet done). Companions: `PRIVATE-CONVEX-ENGINE.md` (the convex
+engine), `DREGGFI-PRIVACY-TIERS.md` (the three postures), `FHEGG-PRODUCT-ORDER-FRONTIER.md`
+(the `fhIR` typed product DSL). What-is, present tense; no trajectory narrative.*
 
 ---
 
-## 1. SOTA survey — private/verifiable market clearing (cited, with numbers)
+## 0. The kernel in one paragraph
 
-### 1.1 The "auction as private aggregation / homomorphic tallying" line
-
-The oldest and most robust idea in secure auctions is that **you do not need to match — you need
-to tally**. The line runs voting → auctions:
-
-- **Homomorphic threshold tallying (the ancestor).** Encrypt each contribution under a threshold
-  key in an **additively homomorphic** scheme (Paillier, exponential-ElGamal), sum the
-  ciphertexts publicly, threshold-decrypt **only the aggregate**. No individual input is ever
-  revealed. This is the standard homomorphic e-voting tally and it ports directly to auctions:
-  the "tally" becomes the **aggregate demand/supply at each price**.
-- **BOREALIS** (Blass & Kerschbaum, ePrint **2019/276**, ASIA CCS'20): secure computation of the
-  **k-th ranked** of n sealed integers using **additively homomorphic ECC-ElGamal** under
-  *distinct* per-party keys + Groth–Sahai ZK, in **4 rounds — constant** in both bit-length ℓ and
-  party count n. For **n = 200, ℓ = 32 bits**, all ZK proofs compute in **less than one Bitcoin
-  block interval** (~10 min), and they explicitly note this *surpasses generic constant-round MPC
-  including shared-key FHE*. This is the reference for the cost of the **crossing/comparison** half
-  (rank/threshold), and it is already small.
-- **SEAL** (Bag, Hao, Shahandashti, Ray, ePrint **2019/1332**): the first **auctioneer-free**
-  sealed-bid protocol with **linear O(c)** computation/communication (c = bid bit-length), fully
-  publicly verifiable, bidders jointly compute the max bid while losing bids stay secret;
-  extends to Vickrey (reveal only winner + 2nd price).
-- **Cryptobazaar** (Novakovic, Kavousi, Gurkan, Jovanovic, ePrint **2024/1410**, NDSS'25):
-  *private sealed-bid auctions at scale* with a **single untrusted auctioneer** for coordination
-  only. Core technique: **unary-encode each bid across the price range, then run a distributed
-  logical-OR (an anonymous-veto aggregation)** over the unary vectors + succinct ZK gadgets.
-  Handles first-, second-, and general **(p+1)-st-price** and sequential auctions. Concrete:
-  **128 bidders × 1024-value price range terminates in < 0.5 s**. This is the cleanest published
-  confirmation of the fhEgg decomposition — *unary-encoded orders are aggregated (OR/sum) across
-  price buckets, then the outcome reads off a crossing*.
-- **Functional encryption for inner products** (Abdalla–Bourse–De Caro–Pointcheval, ePrint
-  **2015/017**; Agrawal–Libert–Stehlé, ePrint **2015/608**): efficient FE where a key for vector
-  **k** reveals exactly ⟨k, x⟩ and nothing else. **Linear functionals only** — a weighted-sum
-  clearing rule is expressible, but **comparison / threshold / max FE remains far less efficient
-  than the additive path** (confirmed across the FE literature). Takeaway: use FE/additive-HE for
-  the **aggregation** (linear), and *avoid* pushing the crossing into a general-comparison FE.
-
-**Survey verdict on the line:** the field independently converged on *aggregate-then-open* —
-additive homomorphism does the heavy lifting, and only a small ranked/threshold reveal remains.
-That is the fhEgg kernel, arrived at from the auction side.
-
-### 1.2 FHE-DeFi concrete numbers — is "aggregate cheap, cross small" borne out?
-
-| Operation | Scheme | Concrete cost | Source |
-|---|---|---|---|
-| Ciphertext **addition** | TFHE (`tfhe-rs`) | **linear, no bootstrap — microseconds** | Zama docs; FHE folklore |
-| Programmable bootstrap (PBS) — the unit of **comparison / LUT** | TFHE | **< 1 ms on 8×H100**; ~10–50 ms historical CPU | Zama (Messari/BlockEden reports) |
-| Throughput | Zama fhEVM | **20+ TPS CPU**; **189,000+ bootstraps/s on 8×H100**; roadmap **500–1000 TPS** | Zama 2025–26 |
-| Oblivious **sort** of N | any FHE (bitonic) | **O(N log²N) compare-swaps**, each ≈ a PBS | standard |
-| Live **sealed-bid Dutch auction**, uniform clearing price computed homomorphically | Zama fhEVM (2025) | shipped on Ethereum; aggregates bids, reveals only clearing price | Zama token-auction announcement |
-
-The asymmetry is the whole game. **Addition is ~free; the bootstrap (comparison/sort) is the
-cost unit.** Naive "private matching" via oblivious sort of N orders is **O(N log²N) bootstraps**
-— at even 1 ms/PBS that is seconds-to-minutes for N in the thousands, and it is the wrong shape.
-The aggregation kernel does **O(N) additions (≈ free) into K price buckets + O(K) crossing**: the
-N-dependent part never touches a bootstrap, and K (price resolution) is a *chosen* constant. This
-is the numerical statement of "the matching cost evaporates."
-
-### 1.3 The competitors — every one has a viewer or a committee, and all are classical
-
-| System | Actual clearing mechanism | The viewer / committee | Class |
-|---|---|---|---|
-| **Penumbra ZSwap** | Additive **exponential-ElGamal** flow encryption: values split into **4×16-bit limbs**, encrypted to a validator DKG key, **homomorphically summed component-wise**, then **threshold-decrypt only the per-block aggregate**; recovery via **DLog lookup table over [0, 2²³)**; **640 bytes/value**. | A **t-of-n validator committee** threshold-decrypts; a colluding quorum can decrypt individual pre-aggregation contributions. Distributed, *not eliminated*. | classical DLog |
-| **Renegade** | 2-party **MPC (SPDZ variant)** among relayers computes `VALID MATCH MPC` and emits a **collaborative zkSNARK**; orders matched on secret-shared inputs. | The **relayer pair holds the secret shares** and runs the match — a computing viewer. | classical |
-| **Aztec** | Private notes, but the **sequencer orders/executes** the batch. | The **sequencer** sees ordering. | classical |
-| **CoW Protocol** | Off-chain **solver competition** over batches, uniform directed clearing price. | **Every solver sees every signed order** before execution — *not private*. | classical |
-
-**Penumbra is the closest relative and the sharpest contrast:** it *already does* the fhEgg
-aggregation — additive homomorphic sum, decrypt only the aggregate — which is exactly why it has
-the field's strongest privacy. But it **decrypts** (a committee holds the key), and it is
-**classical DLog**. dregg's move (§2, §3.4) is to make the aggregate a **Pedersen/commitment fold
-that never decrypts at all** — conservation is checked *on the commitments* (`Σ commit = commit
-Σ`) — and to carry a **STARK proof** of the aggregation+crossing rather than trusting a committee.
-
-### 1.4 The algebra that makes it fall out — clearing as a monotone operator on a lattice
-
-The clean structures the research surfaces (and that the fhEgg kernel is built on):
-
-- **Clearing as a Tarski / Knaster–Tarski fixpoint.** Market clearing is a **monotone operator on
-  a complete lattice** (of price/allocation vectors); a fixed point *exists* and is reachable by
-  monotone iteration — no smoothness or uniqueness needed. This is the standard treatment of
-  **financial-network clearing** (Eisenberg–Noe; *Clearing Sections of Lattice Liability
-  Networks*, arXiv 2503.17836; *Computing Tarski Fixed Points in Financial Networks*, arXiv
-  2602.16387). For a **single-pair** uniform-price auction the lattice collapses to a chain (one
-  price axis) and the crossing is a **monotone threshold**, the simplest possible case.
-  **Honest caveat (correction, `FHEGG-CODEX-INSIGHTS.md` Q2):** the crossing is *not* automatically
-  a Tarski fixpoint just because the curves `D, S` are monotone — monotone *curves* are not a
-  monotone *operator*. The fixpoint statement requires the explicit update
-  `F(j) = j if D(pⱼ) ≤ S(pⱼ) else min(j+1, K)`; `F` is monotone on the price-index chain, and `p*`
-  is its **least fixed point, assuming a crossing exists** (`∃ j. D(pⱼ) ≥ S(pⱼ)` — else the book
-  does not clear). With that operator named, Knaster–Tarski applies cleanly.
-- **Curves as commutative-monoid folds / CRDTs.** The aggregate demand/supply curve is the fold
-  of per-order increments under an **associative, commutative** ⊕; order-independent mergeable
-  increments are exactly the **CRDT / commutative-monoid (G-Counter)** shape — merge does not
-  depend on arrival order. This is what makes the aggregation **coordination-lite** (no consensus
-  on order needed to compute the total) and **composable** (batches fold associatively).
-- **Netting as a coequalizer; circulations as graph homology.** A multilateral net position is
-  the **quotient of the gross flow by the cycle relations** — a coequalizer — and the space of
-  conserving flows is the **cycle space = ker ∂** of the boundary map, a **linear subspace**
-  (graph homology H₁). The homomorphic linear algebra should be carried out on the **public
-  incidence matrix `A`** (= ∂) **directly, not on an explicit cycle basis** (correction,
-  `FHEGG-CODEX-INSIGHTS.md` Q3): `A` is sparser and better-conditioned, a fundamental cycle basis
-  can be dense/ill-conditioned and enlarges the fixed-point bounds, and the traversal stays public
-  either way. This is the structure that de-fangs the multilateral case (§3.3).
-
-These are not decoration: each maps to a concrete dregg primitive that is **already proved**
-(§2.4). The private clearing *falls out* of the algebra the way ZK + coordination fall out of the
-turn-kernel — because in both cases the operation is an **associative fold of increments over
-owned state** and the proof is a STARK over that fold.
+A clearing is an **aggregation-monoid fold**, and trust in it is **verify-not-find**. Orders
+sum into a price-indexed aggregate curve — a commutative-monoid fold of per-order increments,
+order-independent and computable without decryption. Clearing reads a result off that
+aggregate (a monotone crossing, for the uniform-price base case; a convex optimum, in
+general). The result is **not** trusted because a solver produced it: an untrusted solver
+*proposes* a candidate, and a small **certificate** — a set of linear feasibility rows plus a
+duality gap — *disposes* it, proving the candidate is (ε-)optimal independent of how it was
+found. The certificate is the object the proof carries; the solver is out of the trusted base.
+This is the exact structural twin of the turn-kernel ("a turn is the exercise of an attenuable
+proof-carrying token over owned state, leaving a receipt"): a clearing is an associative,
+commutative, homomorphic fold of order-increments, resolved once, leaving a proof-carrying mark.
 
 ---
 
-## 2. The fhEgg kernel — stated precisely
+## 1. The two moves: the fold, and verify-not-find
 
-> **A clearing is the fold of order-increments into an aggregate curve, crossed once, leaving a
-> proof-carrying mark.**
->
-> — the exact structural twin of the turn-kernel ("a turn is the exercise of an attenuable
-> proof-carrying token over owned state, leaving a receipt").
+### 1.1 The object and the fold
 
-### 2.1 The four parts
+Fix a public price grid `P = {p₁ < … < p_K}` (`K` the chosen resolution). The market state is a
+price-indexed vector of aggregates `D, S : P → 𝔸` (cumulative demand, cumulative supply) valued
+in a commutative monoid `𝔸` that is additively homomorphic under commitment/encryption
+(Pedersen `ValueCommitment`, a lattice-additive ciphertext, or plaintext). A limit order
+`(side, qty, limit)` is **one curve increment**: a bid adds its `qty` to every bucket at or
+below its limit, an ask to every bucket at or above. Aggregation is the bucketwise fold
+`D = ⊕ bids`, `S = ⊕ asks`.
 
-**(a) The object — an encrypted/committed aggregate curve.**
-Fix a price grid `P = {p₁ < … < p_K}` (public; K is the chosen resolution). The market state is a
-**price-indexed vector of aggregates**
+This is formalized directly in `metatheory/Market/FhEggClearing.lean`:
 
-```
-   D : P → 𝔸        (cumulative demand)          S : P → 𝔸        (cumulative supply)
-```
+- `demand`/`supply` are the folds; `demand_cons`/`supply_cons` are the **fold homomorphism**
+  (the histogram-grain analogue of `Market/Clearing.lean`'s `toBal_mul`);
+- `demand_perm`/`supply_perm` prove **order-independence** (the fold is commutative — a CRDT;
+  the `pool_as_perm` analogue) — no consensus on arrival order is needed to compute the total;
+- `demand_antitone`/`supply_monotone`/`imbalance_antitone` prove the aggregate curves are
+  monotone, so the excess-demand `imbalance = demand − supply` is non-increasing in price.
 
-valued in a **commutative monoid 𝔸** that is *additively homomorphic under encryption/commitment*
-— e.g. Pedersen commitments `𝔸 = 𝔾` (dregg's `ValueCommitment`), exponential-ElGamal (Penumbra),
-a lattice-additive ciphertext (PQ), or an MPC additive share. The curve is the **aggregate**;
-there is no per-order object to look at.
+### 1.2 The uniform-price crossing (a fixpoint on a chain)
 
-**(b) The operation — a commutative-monoid fold of order-increments.**
-A limit order `(side, qty q, limit ℓ)` is one **curve increment**: on the bid side it adds `q` to
-every bucket `p ≤ ℓ` (you'll trade any price at or below your limit); on the ask side it adds `q`
-to every bucket `p ≥ ℓ`. Concretely it is a **unary/step increment vector** `δ ∈ 𝔸^K` (the
-Cryptobazaar encoding). Aggregation is the fold
+The uniform clearing price is the crossing `p* = min{ p : demand(p) ≤ supply(p) }`. Because the
+curves are monotone this is a threshold search over `K` buckets — the least fixed point of the
+explicit index update `F(j) = j if demand(j) ≤ supply(j) else min(j+1, K)`.
 
-```
-   D = ⊕_{i ∈ bids}  δ_i        S = ⊕_{i ∈ asks} δ_i        (⊕ = homomorphic add, bucketwise)
-```
+The load-bearing correction (codex Q2, `FHEGG-CODEX-INSIGHTS.md`): monotone *curves* are not a
+monotone *operator*; the fixpoint is of `F`, not of `D, S`. `Fstep_monotone` proves **`F` is the
+monotone operator** (using `imbalance_antitone`: the clearing guard is upward-closed), so
+Knaster–Tarski applies. `crossing_is_least` proves `crossing` is the least clearing bucket and
+`crossing_fixed` that it is a fixed point of `F` — **assuming a crossing exists**. That
+hypothesis (`CrossingExists`) is stated honestly and is not free: a book whose demand exceeds
+supply at every bucket does not clear (`noCrossBook_no_crossing`), and there is then only the
+spurious top bucket, not a genuine fixpoint.
 
-`⊕` is **associative and commutative** with identity `𝟘` — a commutative monoid. Hence the fold is
-**order-independent** (CRDT-shaped: submit-order does not matter), **mergeable** (two sub-batches
-fold associatively into one — `D = D_A ⊕ D_B`), and computable **without any decryption** (it is
-ciphertext/commitment addition, the cheap primitive). Cost: **O(N·K) homomorphic additions**, all
-bootstrap-free; with SIMD-packing or Pedersen scalars, effectively O(N) group ops.
+At the crossing the matched volume is `demand(p*)` (`clearedVolume_eq_demand`). The aggregate
+cleared batch neither mints nor burns — `netFlow = 0` on every asset (`clearedBatch_conserves`,
+the priced lift of `clearing_conserves_per_asset`) — and is uniform-price optimal
+(`clearedBatch_optimal`, discharged through `Market/Optimality.lean`'s `uniform_price_optimal`:
+no-arbitrage / value-neutral / individually rational). **Scope, stated plainly:** this is
+model-level optimality over the `Fill` substrate; binding the histogram fold to the on-chain
+fills in-circuit (**ledger-realization**) is a named circuit step, not proved here.
 
-**(c) The clearing — a single monotone crossing (a fixpoint on a chain).**
-The uniform clearing price is the **crossing** of the two monotone curves:
+### 1.3 Verify-not-find: the certificate disposes
 
-```
-   p* = the price where cumulative demand first meets cumulative supply
-      = min { p ∈ P : D(p) ≥ S(p) }        (a monotone threshold / prefix-crossing)
-```
-
-Because D is non-increasing in p and S is non-decreasing, `D − S` is monotone and the crossing is
-a **single threshold search over K buckets** — the least fixed point of the monotone index-update
-`F(j) = j if D(pⱼ) ≤ S(pⱼ) else min(j+1, K)` on the price *chain*, assuming a crossing exists (the
-Tarski fixpoint is of *that operator*, not of the curves themselves — `FHEGG-CODEX-INSIGHTS.md` Q2).
-This is the **only** place a comparison happens, and it is **O(K)**, *independent of N*. It reveals **only
-p\*** (and, if desired, the cleared aggregate volume `V* = S(p*)`); the individual orders and the
-rest of the curve stay sealed.
-
-**(d) The proof + the privacy.**
-- **Privacy — no viewer.** The fold is homomorphic, so the aggregate leaks nothing about any
-  addend (additive-HE / commitment hiding). Conservation is checked **on the commitments**:
-  `Σ commit(vᵢ, rᵢ) = commit(Σ vᵢ, Σ rᵢ)` (dregg's `created_value_conservation`) means a verifier
-  confirms the batch minted nothing **without learning a single amount**. **Only p\* opens** —
-  and p\* is a *market* fact, not anyone's private input. There is **no decryption committee**
-  (contrast Penumbra) and **no computing relayer** (contrast Renegade).
-- **Proof — a STARK over the fold + the crossing.** The prover shows, in one succinct proof:
-  (i) the aggregate `D, S` is the **faithful fold** of the committed orders (no drop / no insert /
-  no reorder — `aggregate_sound`); (ii) `p*` is the **correct crossing** of `D, S`; (iii) the
-  cleared allocation **conserves** per asset (`exact_clears_iff` / `clearing_conserves_per_asset`)
-  and is **within each order's limits** (`clearing_respects_limits`). WHO traded is the nullifier
-  layer's job; **WHAT cleared correctly** is this STARK. The proof rides dregg's existing
-  recursion/aggregation layer — the aggregation *is* a fold, so it proves like the turn-fold.
-
-### 2.2 Why it is cheap — aggregation-cost, not matching-cost
-
-The naive framing ("match N private orders") lands you in **oblivious sort**: O(N log²N)
-compare-swaps, each a **bootstrap** — the expensive FHE corner. The fhEgg framing lands you in
-**aggregation + one crossing**:
+The kernel does not prove a solver converged. For the canonical general program — the
+volume-max circulation LP `max wᵀf s.t. A f = 0, 0 ≤ f ≤ c` (`A` the **public incidence
+matrix** of the trade graph; `w, c, f` the private amounts) — a primal-dual triple `(f, π, s)`
+satisfying the linear certificate
 
 ```
-   naive private matching:   O(N log²N)  bootstraps           (comparison-dominated)
-   fhEgg kernel:             O(N·K)      additions  +  O(K)  comparisons
-                                ╰─ bootstrap-free ─╯     ╰─ N-independent ─╯
+   A f = 0,   0 ≤ f ≤ c,   s ≥ 0,   Aᵀπ + s ≥ w,   cᵀs − wᵀf ≤ ε
 ```
 
-The N-dependent work never touches a comparison; the comparison work never depends on N. At Zama's
-numbers (addition ≈ µs, PBS ≈ 1 ms) this is the difference between "free" and "the bill." This is
-the precise sense in which **the expensive part of private matching evaporates**.
+certifies that `f` is ε-optimal, **independent of how `(f, π, s)` was found**. This is `Cert-F`,
+proven in `metatheory/Market/CertF.lean`:
 
-### 2.3 Why it is composable + coordination-lite — the turn-parallel, made concrete
+- `weak_duality` — for every primal-feasible `f` and dual-feasible `(π, s)`, `wᵀf ≤ cᵀs`, using
+  nothing about how either arose;
+- `certifies_epsilon_optimal` (**the keystone**) — a certificate with gap `≤ ε` forces every
+  primal-feasible `f'` to satisfy `wᵀf' ≤ wᵀf + ε`: no feasible flow beats the certified one by
+  more than `ε`, and the proof reads only the certificate;
+- `gap_nonneg` — a certified gap is `≥ 0`, so a "certificate" claiming a negative gap is vacuous.
 
-| turn-kernel property | fhEgg-kernel mirror | why |
+The theorem is general (any ordered commutative ring), instantiated at `ℤ` on a worked 3-cycle
+with teeth (`leakF_infeasible`, `zeroFlow_not_certifiable`, `zeroFlow_gap_refused`: an
+unsound or non-optimal triple is refused). The check emits as linear circuit `Constraint`s of
+size `O(m + nnz A)` — **not** `O(T·m)` (proving the `T` solver iterations) — with `certCircuit_sound`
+the emit bridge. `circuit-prove/src/cert_f_air.rs` (`prove_cert_f`) carries those rows into a
+real production STARK (`EffectVmDescriptor2`, BabyBear + FRI): the private `(f, π, s)` live only
+in the trace under the hiding PCS, and the only public value exposed is the cleared volume `wᵀf`.
+
+The solver that produces `(f, π, s)` is an **untrusted search** and out of the trusted base.
+`fhegg-solver/` is that search: `pdhg.rs` is a fixed-`T`, topology-only-preconditioned PDHG for
+the circulation LP; `clearing.rs` is the uniform-price fold-and-cross (the `T=1` base case). Each
+emits a certificate a verified checker validates.
+
+---
+
+## 2. The mechanism family
+
+Uniform-price is the **floor**, not the only clearing. Because the engine is verify-not-find —
+an untrusted convex solve plus a checked certificate — **any convex program with a duality/KKT
+certificate is a member**. The engine is defined by the certificate, not by a fixed rule. The
+family carried in `fhegg-solver/` and formalized in `metatheory/Market/`:
+
+| Mechanism | Program | Certificate (proven soundness) |
 |---|---|---|
-| a turn refines a kernel step, carries a receipt | a clearing folds order-increments, carries a mark | both are **increments over owned state leaving a proof** |
-| turns compose **associatively** (the accumulator left-fold) | batches fold **associatively** (`D = D_A ⊕ D_B`) | ⊕ is a monoid — sub-batches merge into one aggregate |
-| attenuation is **order-independent** within a turn | order-increments are **order-independent** (CRDT) | ⊕ is **commutative** — no consensus on arrival order |
-| the STARK-fold aggregates turns into one proof | the STARK aggregates the fold+crossing into one proof | the aggregation **is** a fold — same recursion apex |
-| coordination-lite: mergeable increments, no lock | coordination-lite: mergeable curves, no matching engine | commutativity kills the ordering authority |
+| Uniform-price call auction | fold + one crossing (`T=1`) | Σ-balance / crossing (`FhEggClearing.lean`, `clearedBatch_conserves`) |
+| Volume-max circulation | `max wᵀf s.t. Af=0, 0≤f≤c` | `Cert-F` — `certifies_epsilon_optimal` (`CertF.lean`) |
+| Convex QP (portfolio, execution) | `min ½xᵀPx+qᵀx s.t. Ax=b, l≤x≤u`, `P⪰0` public | `CertQp` — KKT/complementarity gap, `qp_certifies_epsilon_optimal` (`CertQp.lean`) |
+| Derivatives family | state-price LP + superhedging dual | `Price-Cert` — `price_cert_certifies`; American = Snell-envelope LP, `snell_feasible_upper_bound` (`PriceCert.lean`) |
+| Discriminatory (pay-as-bid), CFMM routing, Fisher/welfare-max | flow-LP / convex over public curve / Eisenberg–Gale | reuse `Cert-F` / mirror-descent prox (`fhegg-solver/{discriminatory,cfmm,fisher}.rs`) |
 
-The turn-kernel makes ZK + coordination natural because a turn is *an associative fold of
-proof-carrying increments*. The fhEgg-kernel makes **private clearing** natural for the identical
-reason: a clearing is *an associative, commutative, homomorphic fold of order-increments*, crossed
-once. Same shape, same recursion layer, same "reveal only the receipt" discipline — the receipt is
-just the **clearing mark** instead of a turn hash.
+Each certificate has the same shape and the same honest scope: **verifying** a candidate is the
+cheap, proven part; **selecting** the optimum is the untrusted solver's job. `CertQp` names its
+edge case precisely (the keystone needs exact stationarity; the inexact-dual-residual case
+`qp.rs` also accepts contributes an `ε_stat·diam(box)` term, not proved). `Price-Cert` names its
+residuals (continuous/path-dependent payoffs are state-size hard, not solver-hard; general
+finite-DAG Snell assembly).
 
-### 2.4 Mapping to dregg's existing pieces (all real, most PROVED)
+**The integer boundary (named honestly).** For a *given* exact all-or-nothing book, verifying
+that it clears is a **free homomorphic conservation check** (`exact_clears_iff`: clearability is
+Σ-balance; `shielded_ring_clears`: a given ring clears over shielded notes, decrypting nothing).
+But **selecting** the max-volume exact subset is `max Σwᵢxᵢ s.t. Σxᵢaᵢ=0, xᵢ∈{0,1}`, a 0-1
+balancing problem that encodes subset-sum / set-packing and is **NP-hard**. A public topology
+does *not* remove the integrality (codex Q3). So the tractable engine is deliberately the `[0,1]`
+partial-fill **relaxation** — a poly-time flow-LP certified by `Cert-F` — not exact-subset
+optimization. The two must not be conflated: verifying an exact-intent ring folds into the kernel
+(proven); optimal exact-subset selection is integer-hard; the tractable optimizer is the
+partial-fill oblivious flow-LP.
 
-| fhEgg component | dregg primitive | file |
+**The cheap-regime boundary is "matrices public," not "convex."** The operative efficiency line
+is that the constraint matrix `A` (incidence/topology, tick grid, CFMM curve) is a **public
+constant**, so the matvec is a linear combination of ciphertexts with public scalars — the
+bootstrap-free primitive. The private data are the amounts. A program with a *private* matrix
+(e.g. a private covariance) falls off the cheap public-matvec line regardless of convexity
+(`PRIVATE-CONVEX-ENGINE.md` precision-correction #4; `fhir/src/lib.rs`). Work on the incidence
+`A` directly, not a dense cycle basis: `A` is sparse and well-conditioned, a fundamental cycle
+basis can be dense and ill-conditioned and enlarges the solver's fixed-point/modulus bounds
+(codex Q3).
+
+---
+
+## 3. Three privacy postures over one kernel
+
+The same verified kernel runs at three privacy postures (`DREGGFI-PRIVACY-TIERS.md`). The
+soundness guarantee — fair, conserving, no-mint, certificate-carrying — is identical at every
+posture; only the privacy carrier, mechanism-generality, and cost move.
+
+- **Dark (no viewer).** The clearing runs entirely on ciphertexts; a threshold committee holds
+  decryption-key shares and decrypts only the public result. No solver, relayer, enclave, or
+  committee ever holds a plaintext order. FHE is lattice/LWE, hence post-quantum by construction.
+  Privacy is unconditional on committee honesty; correctness is not (a committee can force a
+  *wrong* result — an integrity fault the correctness proof catches — but still cannot *see* an
+  order), and the two are stated separately.
+- **Shielded (private-from-the-world).** The solver/prover sees plaintext; the public transcript
+  reveals nothing else. Value, owner, key, path, offer/want, and allocation live only in the
+  STARK witness under the hiding PCS (Poseidon2/FRI), and only `[nullifier, merkle_root,
+  value_binding]` per leg plus the price is exposed. Fast (GPU), PQ hash-commitment. This is what
+  `cert_f_air.rs` realizes.
+- **Open (public).** The book is public; the clearing is a STARK of correctness over it. Widest
+  generality (the full matcher), cheapest.
+
+`fhIR` (`fhir/`) makes the posture a **type**: a product type-checks at the most private tier its
+compiled form can honestly run at, and the compiler refuses to promise more. The soundness
+direction — *compiles ⇒ admissible* — is proven (`FhIRAdmissible.lean`: `passes_runnable`,
+`compiles_admissible`, monotonicity `Dark ⇒ Shielded ⇒ Open`); the full iff (with completeness /
+resource-relative maximality) is a named research target, with a concrete counterexample
+witnessing why the `⟹` is open.
+
+### 3.1 The honest measured FHE reality (Dark)
+
+The Dark posture is correct but bounded by a real, measured envelope
+(`DREX-NO-VIEWER-SURPASS.md`), and the honest numbers matter:
+
+- Uniform-price FHE clearing is tractable at **N ≈ 32–512 orders per pair at minute cadence** on
+  one server today (published FHE sorts land 128 elements in ~22 s CKKS, 64 in ~36 s rank-sort);
+  it **breaks** at N in the thousands (tens of minutes → hours).
+- **Exact-integer TFHE is slower than approximate CKKS**, because exact-integer radix addition
+  **carry-propagates** — the aggregation fold is not free at exact precision. A DEX needs exact
+  conservation, which argues for exact TFHE with a range/precision discipline (paying the higher
+  constant) rather than treating ciphertext addition as costless. The crossing itself is `O(K)`
+  and cheap; the fold is where the exact-integer bill lands.
+- **The sound-quantized / additive fold is the speed direction**, and it is mint-safe by
+  construction (§3.2). This keeps the aggregation in the cheap additive layer without charging
+  soundness to the approximation.
+
+### 3.2 Mint-safe quantization: approximation proposes, exactification disposes
+
+The tempting shortcut — charge approximate feasibility to `ε` and reuse
+`certifies_epsilon_optimal` — is **unsound**, and `MintSafeQuantization.lean` corrects it (codex
+Round-3 Q1). The deployed `Certified` predicate demands **exact** primal and dual feasibility;
+quantization / FHE / iteration noise cannot be absorbed into `ε`. The sound discipline:
+
+1. run the cheap **approximate** encrypted solver as an untrusted search;
+2. **exactify** the candidate onto the integer grid → an exactly-feasible `(f, π, s)`;
+3. recompute the **exact** gap `G_q = cᵀs − wᵀf` and feed it verbatim to the keystone — the
+   certified target is literally `ε_cert = G_q` (`exactified_certified`, `exact_gap_feeds_keystone`).
+
+Quantization governs **completeness** (does an honest clearing pass; how large is `G_q`) and
+**parameter sizing** — never **soundness**; the keystone only ever sees the exact recomputed gap.
+The no-mint gate is a cheap integer check made sound by **directional rounding**: over-approximate
+outputs, under-approximate inputs. `mint_safe_quantization` proves the integer gate
+`Σ qout ≤ Σ qin` then forbids a mint of the true rational values (`Σ vout ≤ Σ vin`), and the
+directionality is discharged as a theorem for the concrete floor/ceil quantizer
+(`mint_safe_floor_ceil`: floor the inputs, ceil the outputs), not left as a hypothesis. Teeth:
+`wrong_direction_admits_mint` (flip a rounding and the gate launders a mint),
+`genuine_mint_fails_gate` (a real mint with correct rounding provably fails the gate). The no-wrap
+refinement `field_gate_refines_nat_eq` closes the modular-mint gap: a field equality without range
+bounds admits a discrepancy of `p` (`field_gate_without_range_mints`); with the `VALUE_BITS`
+range discipline the field equation is the integer equation. `sufficient_surplus_passes_gate`
+bounds the completeness tolerance — the only clearings the quantizer can reject are within
+`Δ·(n_in+n_out)` of breaking even, tunable by the step `Δ`.
+
+---
+
+## 4. Reveal-nothing and the categorical frame
+
+### 4.1 Reveal-nothing — `View ≈ Sim∘Q`, floor-conditional
+
+The Shielded transcript is **not** independent of the trades — it reveals the batch cleared, the
+price, and the conserved totals. The honest statement is a **simulator over a leakage functor**
+(`RevealNothing.lean`, codex Q2): there is a witness-free `Sim` with `View(clearing) = Sim(Q(clearing))`,
+where `Q` is the public leakage (price, batch size, conserved total, committed root) and
+explicitly *not* the per-leg owner / value / offer / want / allocation. So an observer learns
+only the leakage class `Q`.
+
+What is **proven** (kernel-clean): the `View = Sim∘Q` theorem and its consequence
+`same_leakage_indistinguishable` (two clearings with the same leakage but genuinely different
+trades produce the identical transcript — witnessed non-vacuously on `c_alpha ≠ c_beta`); the
+teeth `leaky_no_simulator` (a transcript leaking a private value admits no simulator — the law is
+falsifiable, not vacuous); perfect value-binding hiding `HidingValueBinding` with a Pedersen
+witness (`addHVB`) and teeth (`leakyVB_not_hiding`); the `Q`-faithful simulator shell
+`canonicalSim`; and the bridge onto the repo's `PerfectZK` machinery.
+
+What is the **named floor**: the deployed bundle's `reveal_law` — the `HidingFriPcs`
+statistical-ZK + hash-hiding + nullifier-unlinkability obligation (the PCS simulator) — is an
+explicit bundle field, not yet a Lean theorem and not a `sorry`. Every reveal-nothing consequence
+is *conditional on that field*, the same shape the linking tower's forgery bound is conditional on
+`HashCR`. The ideal `shellBundle` satisfies it by construction; the deployed bundle satisfies it
+only under the floor. **Honest grade: reveal-nothing at the clearing level is proved *conditional
+on the PCS-ZK floor*, not unconditionally.**
+
+### 4.2 The categorical frame — conservation = `d⁻¹(0)`, and the refuted-then-repaired closure
+
+`ZKOpenRel.lean` gives the categorical home (codex Q2): a resource-graded category of open
+relations, with a strong-monoidal **resource-defect functor** `d` to `(R,+,0)`, and **conservation
+= the zero-defect subcategory `d⁻¹(0)`**. Proven: the category laws, the functor laws
+(`dFunctor_tensor`, `dFunctor_unit`), that `d⁻¹(0)` is closed under composition and tensor
+(`comp_conservative`, `tensor_conservative`), and that the four objects (turn / auction /
+circulation / convex-engine) recover as instances living in `d⁻¹(0)`.
+
+The **feedback closure** is the honest part. The tempting full-generality conjecture — that the
+guarded trace of a conservative guarded morphism is guarded — is **false**, and
+`guardedTraceClosure_refuted` proves it with a `Bool`-negation counterexample (conservative,
+guarded, functional, yet its trace is the empty relation). It is **replaced** with the true
+**Tarski feedback closure** `traceAdmissible_guarded`: when the feedback is a monotone self-map of
+a complete lattice, its least fixed point witnesses that the loop clears. This lands on exactly the
+proven monotone crossing operator (`crossing_gtrace_guarded` via `Fstep_monotone` / `crossing_fixed`),
+fires non-vacuously on a real non-total monotone feedback, and the four instances are discharged as
+`TraceAdmissible`. Privacy is the simulator natural transformation `PrivacyNatTrans`
+(`View ≈ Sim∘Q`), with `RevealNothing.RevealBundle` shown to be exactly such a transformation.
+**Grade:** the objects, functor, conservation-as-kernel, four instances, non-feedback composition,
+and privacy transformation are proven unconditionally; the feedback closure is a proven refutation
+of the false conjecture plus a proven replacement for the monotone/finite cases — the unification
+holds for the admissible instances, not for the false full generality.
+
+---
+
+## 5. The verified substrate — what maps to what
+
+The kernel is the name of a decomposition the repo has largely proved. All Lean below is
+kernel-clean (`#assert_all_clean` / `#assert_axioms`) at model/spec scope.
+
+| Kernel component | Lean / code | Status |
 |---|---|---|
-| aggregate-curve object (homomorphic 𝔸) | `ValueCommitment` with `impl Add/Sub/Neg` (Pedersen) | `cell-crypto/src/value_commitment.rs` |
-| commutative-monoid fold (the operation) | `pool = foldr (·⊗·) 𝟙` + the online left-fold `Accumulator::accumulate` | `metatheory/Market/Clearing.lean`; `circuit-prove/src/accumulator.rs` |
-| order-independence (CRDT / commutativity) | `pool_as_perm` (reorder leaves the pool bundle unchanged) | `metatheory/Market/Aggregation.lean` |
-| the additive homomorphism (Σ distributes) | `toBal_mul : toBal (b*b') a = toBal b a + toBal b' a` | `metatheory/Market/Clearing.lean` |
-| **clearing = Σ-balance** (the crossing, as characterization) | `exact_clears_iff : clears ↔ pools balance`; `clearing_conserves_per_asset` | `metatheory/Market/Clearing.lean` |
-| aggregation faithfulness (no drop/insert/reorder) | `aggregate_sound` (permutation + priority-sorted) | `metatheory/Market/Aggregation.lean` |
-| **privacy: conserve over commitments, decrypt nothing** | `created_value_conservation : Σ commit(vᵢ,rᵢ) = commit(Σvᵢ,Σrᵢ)`; `shielded_ring_clears` | `Dregg2/Exec/ShieldedValue.lean`; `metatheory/Market/ShieldedClearing.lean` |
-| STARK over the fold (the proof apex) | `joint_turn_aggregation` / `Accumulator::finalize` (recursion) | `circuit-prove/src/joint_turn_aggregation.rs`, `.../accumulator.rs` |
-| shielded positions (hidden owner/value/asset) | shielded pool + stealth addresses | `circuit-prove/src/shielded/pool.rs`; `cell-crypto/src/stealth.rs` |
-| settlement (the fold onto the ledger) | `settle_ring_verified` / `settleRing` (per-asset conserving, atomic) | `intent/src/verified_settle.rs`; `Dregg2/Intent/Ring.lean` |
-| cross-chain proof-settle | Groth16/BN254 verifier contracts | `cosmos-settlement/`, `solana-settlement/` |
-
-The striking fact: **the kernel is not a new build — it is the name of a decomposition dregg has
-already proved.** `exact_clears_iff` says clearability *is* Σ-balance; `toBal_mul` is the additive
-homomorphism; `ShieldedValue.created_value_conservation` is "conserve on commitments, decrypt
-nothing." The fhEgg kernel is the statement that *these three, folded, are the whole of private
-uniform-price clearing.*
+| aggregate curve, fold homomorphism, order-independence | `FhEggClearing.lean` (`demand_cons`, `demand_perm`); `Clearing.lean` (`toBal_mul`); `Aggregation.lean` (`pool_as_perm`, `aggregate_sound`) | proven |
+| the monotone crossing operator (curves ≠ operator) | `FhEggClearing.lean` (`Fstep_monotone`, `crossing_is_least`, `crossing_fixed`) | proven; `CrossingExists` an honest hypothesis |
+| conservation + uniform-price optimality of the cleared batch | `FhEggClearing.lean` (`clearedBatch_conserves`, `clearedBatch_optimal`); `Optimality.lean` (`uniform_price_optimal`) | proven at model scope; ledger-realization named |
+| verify-not-find certificate (`Cert-F`) | `CertF.lean` (`weak_duality`, `certifies_epsilon_optimal`, `gap_nonneg`); `cert_f_air.rs` (`prove_cert_f`) | proven; STARK-realized |
+| convex-QP / derivatives certificates | `CertQp.lean` (`qp_certifies_epsilon_optimal`); `PriceCert.lean` (`price_cert_certifies`, `snell_feasible_upper_bound`) | proven; named edge cases |
+| mint-safe sound quantization (exactify-then-check) | `MintSafeQuantization.lean` (`mint_safe_floor_ceil`, `field_gate_refines_nat_eq`, `exact_gap_feeds_keystone`) | proven |
+| exact-ring conservation over commitments (decrypt nothing) | `Clearing.lean` (`exact_clears_iff`); `ShieldedClearing.lean` (`shielded_ring_clears`); `Dregg2/Exec/ShieldedValue.lean` (`created_value_conservation`) | proven |
+| reveal-nothing (`View ≈ Sim∘Q`) | `RevealNothing.lean` (`reveal_nothing`, `same_leakage_indistinguishable`, `leaky_no_simulator`) | proven **conditional** on the PCS-ZK floor |
+| categorical unification (`d⁻¹(0)`, Tarski feedback closure) | `ZKOpenRel.lean` (`comp_conservative`, `guardedTraceClosure_refuted`, `traceAdmissible_guarded`) | proven for admissible instances; false conjecture refuted |
+| the tier-as-type direction | `FhIRAdmissible.lean` (`compiles_admissible`); `fhir/` | `⟸` proven; full iff a named target |
+| untrusted solver family + STARK apex | `fhegg-solver/` (`clearing.rs`, `pdhg.rs`, `qp.rs`, `pricecert.rs`, …); `circuit-prove/src/{accumulator,joint_turn_aggregation}.rs` | untrusted-by-design; checked by the certificate |
 
 ---
 
-## 3. The featureset
+## 6. Honest feasibility envelope + named residuals
 
-### 3.1 A full private limit-order-book call auction (aggregation-tractable ✓)
-
-Each limit order is exactly **one curve increment** (§2.1b); the aggregate curve **is** the book;
-clearing is the crossing. This is a *complete* LOB semantics for the **batch / call-auction**
-mechanism:
-
-- **Limit orders** — the step increment at the limit price. Native.
-- **Market orders** — a limit at the extreme bucket (`ℓ = p_K` bid / `p₁` ask). Native.
-- **Uniform clearing price** — the crossing p\* (`Market/Optimality.lean`: `uniform_price_optimal`,
-  no-arbitrage / envy-free at p\*, PROVED at model scope).
-- **Price-time / batch priority** — the aggregation is priority-faithful (`aggregate_sound`).
-- **Partial fills at p\*** — the aggregate volume `V* = S(p*)` fills; the marginal bucket may
-  over-subscribe → **pro-rata rationing** (the one honest extra step, §4).
-
-**What it is *not*:** a *continuous* double-auction (CLOB with continuous-time matching, cancels,
-price-time priority across a live book) is **inherently sequential/ordered** — it is *not* an
-aggregation, because outcome depends on arrival order. The fhEgg kernel is a **frequent-batch
-uniform-price call auction** (Budish–Cramton–Shim FBA). This is a **feature, not a limitation**:
-FBA converts speed competition into price competition and kills mechanical latency-arb / sniping.
-DrEX is a frequent-batch auction *by design*; state it plainly rather than pretend to be a CLOB.
-
-### 3.2 The products the private-fair-clearing MARK unlocks
-
-The clearing price p\* is a **private-but-attested fair oracle**: computed from sealed orders with
-no viewer, carrying a STARK that it is the honest crossing, and **manipulation-resistant** because
-there is no public book to spoof and no committee to bribe. That mark is the primitive the rest of
-the exchange composes against — all over **shielded positions** (`shielded/pool.rs`), all
-**proof-settled** (`verified_settle`):
-
-- **Options** — settle intrinsic value = `max(0, mark − strike)` against the proof-carrying mark;
-  strike-vs-mark is a comparison against p\*, not a re-run of the book. (`CONDITIONAL-VAULT.md`,
-  `DERIVATIVE-MATCHING-DESIGN.md` are the existing dregg surfaces.)
-- **Perps** — funding rate off `mark − index`; positions shielded, PnL proof-settled. The private
-  mark is exactly the funding oracle a perp needs, without a manipulable public last-trade.
-- **Lending** — the mark as the **private, manipulation-resistant liquidation oracle**
-  (`Market/Lending.lean`). The dominant DeFi-lending exploit is oracle manipulation of a thin
-  public pool; a sealed-batch mark with a correctness proof removes the surface.
-- **Structured products / baskets** — a portfolio marks and settles against the vector of
-  clearing prices; `Market/Liquidity.lean` (`pool_solvent_forever`) is the standing-pool floor.
-
-The unifying statement: **one private-fair mark, proved once, is the settlement reference for a
-whole product surface** — the fhEgg analogue of "one turn-receipt anchors a whole state
-transition."
-
-### 3.3 The multilateral cross-asset ring — folded IN, not walled off
-
-The pessimistic framing: multilateral cross-asset clearing (A wants B, B wants C, C wants A — a
-Top-Trading-Cycle) is **graph-matching**, and graph-matching *feels* NP / combinatorial, hence
-"not aggregation, needs its own throwaway machinery." **That framing is half-wrong**: the
-*conservation and linear-algebra core* is cheap homomorphic algebra over the public incidence `A`,
-and *verifying* a given clearing is free — but choosing the **optimal exact all-or-nothing subset**
-genuinely *is* NP-hard (integer selection; `FHEGG-CODEX-INSIGHTS.md` Q3), so the tractable engine is
-deliberately the continuous `[0,1]` partial-fill relaxation, not exact-subset optimization. With
-that distinction kept sharp, the right algebra brings the ring substantially into the fhEgg kernel.
-
-**The structure.** A multilateral clearing is a **circulation**: a flow `f` on the trade graph
-that **conserves at every node** (`∂f = 0`, in = out for every participant/asset). The space of
-circulations is the **cycle space `Z = ker ∂`** — the kernel of the boundary/incidence map — a
-**linear subspace** (graph homology H₁, dimension = |E| − |V| + #components). Netting is the
-**coequalizer**: the quotient of the gross flow by the cycle relations (gross → net collapses
-exactly the boundaries). Clearing = find a circulation in `Z ∩ box`, where `box` is the per-order
-offer/want min–max constraints, **maximizing traded volume** — a **min-cost / max-volume flow LP**.
-Flow LPs are **poly-time** (NOT NP-hard); network-flow is P.
-
-**Why this is (mostly) FHE-cheap.** The load-bearing facts:
-
-1. **The topology is PUBLIC — work on the incidence `A`, not a cycle basis.** *Who can trade what*
-   (the graph topology) is structural, not secret — only the **flow amounts** on edges are private.
-   So the incidence matrix `A = ∂` is a public constant. Computing net positions (`net = ∂f`) and
-   verifying conservation (`∂f = 0`) are **homomorphic linear algebra over a public matrix and
-   private (committed) amounts** — i.e. **linear combinations of ciphertexts**, the *bootstrap-free*
-   primitive. Cheap, exactly like the §2 fold. This is Penumbra's homomorphic sum generalized from a
-   scalar to a **vector**. **Use `A` directly, not an explicit (dense) cycle basis `B`** (correction,
-   `FHEGG-CODEX-INSIGHTS.md` Q3): `A` is sparse and well-conditioned; a fundamental cycle basis can
-   be dense and ill-conditioned, which enlarges the fixed-point/modulus bounds of the oblivious
-   solver — and the traversal is public with `A` alone. The earlier "lean on the public cycle basis"
-   framing is superseded here.
-2. **For a GIVEN exact all-or-nothing book, VERIFYING the clearing is free — but SELECTING the
-   optimal book is NP-hard.** dregg's kernel models orders as exact intents (you get precisely your
-   `wanted` or nothing — `ExactBook`). Then **`exact_clears_iff`** proves a clearing exists **iff the
-   pools balance**, and **`exact_alloc_eq`** proves the allocation is **pinned** (everyone gets
-   exactly their wanted). So *for a fixed proposed book* there is **no LP, no search** — checking
-   that it clears is a **pure homomorphic conservation check** over the committed offers/wants
-   (`Σ commit = commit Σ`, `= 0`). This is what `shielded_ring_clears` states — *a given ring clears
-   over shielded notes with nothing decrypted*. **The honest correction (`FHEGG-CODEX-INSIGHTS.md`
-   Q3):** *choosing* the max-volume exact **subset** of all-or-nothing orders is **not** free — it is
-   `max Σᵢ wᵢ xᵢ s.t. Σᵢ xᵢ aᵢ = 0, xᵢ ∈ {0,1}`, a 0-1 balancing problem that encodes subset-sum /
-   set-packing and is **NP-hard**. A public topology does *not* remove the integrality. So the "exact
-   intents ⇒ optimization vanishes" statement holds only for **verifying a fixed given book**, not
-   for **optimizing which orders to include**. The tractable *engine* is the **`[0,1]` partial-fill
-   relaxation** (below), whose LP is poly-time. The current live path (`solver.rs`: Johnson cycles +
-   Shapley–Scarf TTC) is the **cleartext** finder producing a candidate book; the private version is
-   the homomorphic conservation check on that book's commitments.
-
-**The residual hard core (named honestly).** When orders admit **partial fills** and the market
-**maximizes total volume** across many candidate cycles with binding box constraints, you are back
-to a genuine **optimization**: a max-volume circulation LP whose *binding set* and *pivot path* are
-**data-dependent**. Doing that **obliviously** (so the control flow leaks nothing) is the real
-frontier:
-
-- **Aly & Van Vyve**, *Securely Solving Classical Network Flow Problems* — secure **minimum-cost
-  circulation** via **MMCC (minimum-mean-cycle-canceling)** in MPC. Existence proof that oblivious
-  network-flow is *poly-time realizable*.
-- **Toft**, *Solving Linear Programs Using MPC* (FC'09) — **oblivious simplex**: masked pivoting,
-  ≈ **O(nm) secure multiplications per pivot**; number of pivots must be **padded to worst-case**
-  or it leaks.
-- **Interior-point**: **O(√n · log(1/ε))** iterations, each a secure linear solve — smoother
-  round-count, fixed-point arithmetic.
-
-So the ring **is not hard the way it looked** — its *linear-algebra and conservation core is
-homomorphically cheap over the public incidence `A`*, and **verifying a given exact-intent book is a
-free conservation check** (`shielded_ring_clears`). But two hard cores remain, and they must not be
-conflated (`FHEGG-CODEX-INSIGHTS.md` Q3): (a) **selecting** the optimal exact all-or-nothing subset
-is **NP-hard** (0-1 balancing = subset-sum; integrality is not removed by a public topology); (b)
-the tractable continuous engine is **oblivious volume-maximizing partial-fill** over the `[0,1]`
-relaxation — a poly-time flow-LP with real protocols, but the scale frontier (worst-case padding =
-the perf/leakage tax). **Verdict: verifying an exact-intent ring folds into the fhEgg kernel (PROVED,
-`shielded_ring_clears`); optimal exact-subset selection is integer-hard; the tractable optimizer is
-the `[0,1]` partial-fill oblivious flow-LP — poly-time, the frontier, not a combinatorial wall.**
-
----
-
-## 4. Honest feasibility envelope
-
-| Regime | Tractability | Basis |
+| Regime | Status | Basis |
 |---|---|---|
-| **Single-pair uniform-price call auction**, N ≈ 10³ orders, K ≈ 10²–10³ price buckets | **Real-soon / already-real.** Cost = O(N·K) bootstrap-free additions + O(K) crossing. | Penumbra runs additive aggregation **per block on mainnet**; Cryptobazaar **128×1024 < 0.5 s**; Zama shipped a live homomorphic clearing-price auction (2025). |
-| **Fine price resolution** (large K) | **Linear cost wall.** K is the true cost driver, not N. | O(N·K) additions + O(K) crossing scale linearly in K; pick K to the asset's tick, use SIMD packing / a coarse→fine two-pass crossing. |
-| **Marginal pro-rata rationing** at the exact clearing bucket | **One extra private step (NEAR).** | The crossing gives p\* and V\* cheaply; splitting the over-subscribed marginal bucket needs a small private division, or reveal only the *marginal-bucket* aggregate. Honest named seam. |
-| **Multilateral ring, exact all-or-nothing intents — VERIFYING a given book** | **Tractable, PROVED at spec.** Pure homomorphic conservation check, no LP. | `exact_clears_iff` + `exact_alloc_eq` + `shielded_ring_clears`; conservation on commitments (`created_value_conservation`). |
-| **Multilateral ring, exact all-or-nothing — SELECTING the optimal (max-volume) subset** | **NP-hard.** 0-1 balancing `max Σwᵢxᵢ s.t. Σxᵢaᵢ=0, xᵢ∈{0,1}` = subset-sum / set-packing; a public topology does not remove integrality. | Correction, `FHEGG-CODEX-INSIGHTS.md` Q3. The tractable path is the `[0,1]` relaxation (next row), not exact-subset optimization. |
-| **Multilateral ring, partial-fill volume-max, private, at scale** | **RESEARCH frontier — poly-time, not exponential.** | Oblivious flow-LP (Aly–Van Vyve secure MCC; Toft secure simplex O(nm)/pivot; interior-point O(√n log 1/ε)); worst-case pivot padding is the tax. Small rings clear in clear today (`solver.rs`). |
-| **Continuous CLOB** (live matching, cancels, price-time across a live book) | **Out of scope by construction.** | Inherently order-dependent → not an aggregation. DrEX is a **frequent-batch** auction by design (Budish FBA); this is a feature (kills latency-arb), stated plainly. |
-| **Post-quantum aggregate layer** | **Named residual.** | Today's `ValueCommitment` (Pedersen) and Penumbra-style ElGamal are **classical DLog**. A PQ fold needs **lattice-additive** commitments/ciphertexts (BGV/Regev-additive). dregg's *signature* layer is already PQ-hybrid (ed25519 + ML-DSA-65); the *homomorphic* layer is the open PQ upgrade. |
+| Uniform-price call auction (`T=1`), single pair | proven at model scope; fold + one crossing | `FhEggClearing.lean` |
+| Verify a given exact-intent ring | proven; free homomorphic conservation check | `exact_clears_iff`, `shielded_ring_clears` |
+| `Cert-F` / `CertQp` / `Price-Cert` optimality certificate | proven; verify-not-find keystone | `CertF.lean`, `CertQp.lean`, `PriceCert.lean` |
+| Select the optimal exact all-or-nothing subset | **NP-hard** (0-1 balancing = subset-sum); use the `[0,1]` relaxation | codex Q3 |
+| Partial-fill volume-max at scale, oblivious | poly-time flow-LP; scale is the frontier (worst-case padding is the tax) | `pdhg.rs` |
+| Dark FHE clearing | **measured**: tractable N ≈ 32–512/pair at minute cadence; breaks at thousands; exact-integer TFHE > approximate CKKS | `DREX-NO-VIEWER-SURPASS.md` |
+| Reveal-nothing at the clearing level | proven **conditional** on the `HidingFriPcs` statistical-ZK floor | `RevealNothing.lean` |
+| Ledger-realization of the histogram fold in-circuit | named circuit build | `FhEggClearing.lean §2.4`-analogue |
+| Post-quantum aggregate/binding layer | `Cert-F` STARK is PQ; the classical-DLog Pedersen commitment binding is the named cutover | `PQ-SHIELDED-COMMITMENT.md` |
 
-**Where it genuinely breaks (no spin):** (1) fine-grained price resolution costs linearly — you
-cannot have both N-independence *and* arbitrarily fine K for free; (2) exact-tie marginal rationing
-needs a labeled extra step; (3) private, scaled, volume-maximizing multilateral partial-fill is a
-real research problem (poly-time, but oblivious-LP overhead + worst-case padding); (4) the PQ
-homomorphic layer is unbuilt. **What does NOT break:** the core claim — single-pair private
-uniform-price clearing is dominated by cheap additive aggregation + a tiny crossing, is tractable
-now at market-relevant sizes, requires **no decryption committee and no computing relayer**, and is
-**already proved in dregg's Lean** modulo the circuit realization of the aggregation+crossing STARK
-(the one MEDIUM→RESEARCH build named in `ShieldedClearing.lean §4b`).
+The core does not move: a private clearing is an associative, commutative, homomorphic fold of
+order-increments, resolved by a result whose optimality a **linear certificate** proves —
+verify-not-find — provable by a STARK over the certificate, revealing only the market fact. The
+solver is untrusted; the certificate is the trusted object; and the same fold-and-certify shape,
+run once (uniform-price) or `T` times (the convex engine), is the whole of it.
 
 ---
 
-## 5. The verdict on the hypothesis
+## 7. See also
 
-**Confirmed, and sharpened.** The aggregation-monoid **is** the right kernel: a uniform-price call
-auction is a commutative-monoid fold of order-increments crossed once, the expensive matching cost
-evaporates into cheap additive aggregation, and the whole thing is composable (associative fold),
-coordination-lite (commutative/CRDT increments), and STARK-provable (a proof over the fold+crossing
-that reveals only the price). The sharpening the research forced:
-
-1. **The aggregate is a price-indexed *curve* (vector), not a scalar net.** The pure "sum
-   everything" reveals only net volume; a *clearing price* needs the cumulative curve. But the
-   curve is still an additive fold (bucketwise), so the cheap-aggregation claim survives intact —
-   this is exactly Cryptobazaar's unary-encoding + Penumbra's limb-vector, generalized.
-2. **The privacy is stronger than "additive-HE + threshold-decrypt."** dregg's move is *decrypt
-   nothing*: conserve on commitments (`Σ commit = commit Σ`), open only p\*. This removes the
-   decryption committee that even Penumbra keeps — the field's best privacy, improved.
-3. **The multilateral ring is not a different, harder kernel — it is the same kernel over the
-   cycle space.** Circulation = ker ∂ (linear; work on the public incidence `A`, not a dense cycle
-   basis); netting = coequalizer; *verifying* a given exact-intent book is a free conservation
-   check — but *selecting* the optimal exact subset is NP-hard (0-1 balancing), so the tractable
-   optimizer is the `[0,1]` partial-fill relaxation, a poly-time oblivious-LP residue
-   (`FHEGG-CODEX-INSIGHTS.md` Q3).
-
-**Is there a better kernel?** No cleaner one surfaced. The alternatives are strictly worse or
-narrower: general-comparison **FHE sorting** (the O(N log²N)-bootstrap trap the kernel exists to
-avoid), **MPC matching** (Renegade — a computing viewer, no succinct proof), **FE for the whole
-clearing rule** (inner-product FE is linear-only; comparison FE is inefficient), **TEE** (a hardware
-viewer + side channels). The **aggregation-fold + monotone-crossing + homomorphic-conservation +
-STARK-over-the-fold** decomposition is the one that (a) puts the work in the cheap half of the
-crypto, (b) has the same algebra as dregg's turn-kernel so it composes into the existing recursion
-and settlement layers, and (c) is **already largely proved**. That is the fhEgg kernel.
-
----
-
-## 6. Sources
-
-**IACR ePrint (read full-text from the local mirror):**
-- BOREALIS — Blass & Kerschbaum, ePrint **2019/276** (ASIA CCS'20): additively-homomorphic ECC-
-  ElGamal k-th-rank, **4 rounds constant**, n=200/ℓ=32 under one block interval.
-- SEAL — Bag, Hao, Shahandashti, Ray, ePrint **2019/1332**: auctioneer-free, **O(c)** linear,
-  publicly verifiable.
-- FE for inner products — Abdalla–Bourse–De Caro–Pointcheval, ePrint **2015/017**; Agrawal–Libert–
-  Stehlé, ePrint **2015/608** (linear functionals only).
-
-**Web / Kagi:**
-- Cryptobazaar — Novakovic, Kavousi, Gurkan, Jovanovic, ePrint **2024/1410** (NDSS'25): unary-
-  encoded bids + distributed OR aggregation, **128 bidders × 1024 prices < 0.5 s**,
-  single untrusted auctioneer, (p+1)-st price. <https://eprint.iacr.org/2024/1410>
-- Penumbra homomorphic threshold encryption (ZSwap flow encryption): exponential-ElGamal, 4×16-bit
-  limbs, aggregate-only threshold-decrypt, DLog LUT [0,2²³), 640 B/value.
-  <https://protocol.penumbra.zone/main/crypto/flow-encryption/threshold-encryption.html> ·
-  <https://protocol.penumbra.zone/main/concepts/batching_flows.html>
-- Renegade — MPC (SPDZ) + collaborative zkSNARK `VALID MATCH MPC`.
-  <https://help.renegade.fi/hc/en-us/articles/32529961385363> · <https://github.com/renegade-fi/renegade>
-- CoW Protocol batch auctions / solver competition. <https://cow.fi/learn/understanding-batch-auctions>
-- Zama fhEVM / TFHE numbers: 20+ TPS CPU, 189k+ bootstraps/s (8×H100), <1 ms PBS, live sealed-bid
-  auction (2025). <https://www.zama.ai/products-and-services/fhevm> · Messari "Understanding Zama"
-- Aly & Van Vyve, *Securely Solving Classical Network Flow Problems* (secure min-cost circulation via
-  MMCC). Toft, *Solving Linear Programs Using MPC*, FC'09 (oblivious simplex, O(nm)/pivot).
-  *Privacy Preserving Decentralized Netting*, FC'23 short paper.
-- Clearing-as-Tarski-fixpoint / lattice liability networks: arXiv **2503.17836**, arXiv **2602.16387**;
-  Knaster–Tarski. CRDT / commutative-monoid convergence (standard).
-
-**dregg (this repo) — the kernel is already largely proved:**
-- `metatheory/Market/Clearing.lean` — `pool` (the fold), `toBal_mul` (the additive homomorphism),
-  `exact_clears_iff` (clearability = Σ-balance), `clearing_conserves_per_asset`.
-- `metatheory/Market/Aggregation.lean` — `aggregate_sound`, `pool_as_perm` (CRDT / order-independence).
-- `metatheory/Market/ShieldedClearing.lean` — `shielded_ring_clears` (decrypt nothing);
-  `Dregg2/Exec/ShieldedValue.lean` — `created_value_conservation` (Σ commit = commit Σ).
-- `cell-crypto/src/value_commitment.rs` — `ValueCommitment` (`impl Add/Sub/Neg`, the homomorphic 𝔸).
-- `circuit-prove/src/accumulator.rs`, `.../joint_turn_aggregation.rs` — the STARK-over-the-fold apex.
-- `intent/src/verified_settle.rs`, `Dregg2/Intent/Ring.lean` — conserving atomic settlement.
-- `docs/deos/DREX-DESIGN.md` — the exchange this kernel sits inside (scholar survey §1, rung ladder).
+- `docs/deos/PRIVATE-CONVEX-ENGINE.md` — the oblivious first-order convex engine (the `Cert-F` factory).
+- `docs/deos/DREGGFI-PRIVACY-TIERS.md` — the Dark / Shielded / Open postures over the one kernel.
+- `docs/deos/FHEGG-PRODUCT-ORDER-FRONTIER.md` — `fhIR`, the admissibility theorem, `Price-Cert`.
+- `docs/deos/DREX-NO-VIEWER-SURPASS.md` — the measured FHE envelope for the Dark posture.
+- `docs/deos/FHEGG-CODEX-INSIGHTS.md`, `FHEGG-CODEX-ROUND3.md` — the framing corrections cited above.
+- `metatheory/Market/{FhEggClearing,CertF,CertQp,PriceCert,MintSafeQuantization,RevealNothing,ZKOpenRel,FhIRAdmissible}.lean` — the proven core.
+- `fhegg-solver/`, `fhir/`, `circuit-prove/src/cert_f_air.rs` — the untrusted solver family, the typed DSL, and the STARK realization.
