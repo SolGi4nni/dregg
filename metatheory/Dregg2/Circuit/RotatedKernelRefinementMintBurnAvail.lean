@@ -38,13 +38,17 @@ transfer discharge (`RotatedKernelRefinementAvail`, THE TEMPLATE this module mir
     (`pre.bal cell a < amt`, the audit's well-supply-inflation class) riding a satisfying hardened
     witness is UNSAT.
 
-## What this module is NOT (the remaining deployment step, EMBER-GATED)
+## The deployment step — DONE (GAP 1-6 VK epoch flip)
 
-The live registry still routes the BARE `burnVmDescriptor` (`burnVmDescriptor2R24`); flipping the
-burn entry to `burnV3Avail` is a descriptor-JSON/FP + VK regen (with the Rust assembly realizing
-the 15-bit range table) and is deliberately NOT done here. Until that flip, production burn
-availability rides `rotatedEncodesBurn.guardAvail` exactly as the audit documents; this module is
-the proof that the flip CLOSES the forgery.
+The live registry now routes the HARDENED burn avail member (`Emit.AvailWireMembers`, the
+`v3OfFrozenWide burnVmDescriptorAvail` face), NOT the bare `burnVmDescriptor` (`burnVmDescriptor2R24`).
+The flip was materialized into the re-keyed VK epoch — descriptor-JSON/FP + VK regen with the Rust
+assembly realizing the 15-bit range table (commits aa282f8c0 Rust half → 1e12d8886 authorized regen →
+764225f0c producer reconcile → 72469afd0 "deployed VK IS vkOfRegistry RfixAvail"). Production burn
+availability is now circuit-FORCED (the well-supply-inflation forgery is UNSAT on the deployed wire);
+this module is the refinement proof that the deployed flip CLOSES the forgery. (The distinct WIDE /
+welded-registry member — `RotatedKernelRefinementMintBurnAvailWide` — is the light-client-attestation
+extension and remains a separate staged track.)
 
 ## Axiom hygiene
 

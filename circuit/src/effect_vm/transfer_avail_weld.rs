@@ -1,10 +1,11 @@
 //! # `transfer_avail_weld` — the IN-AIR TRANSFER-DEBIT AVAILABILITY gates with an OVERFLOW-SAFE
-//! MULTI-LIMB BORROW SUBTRACTION (the GAP #4 close, STAGED).
+//! MULTI-LIMB BORROW SUBTRACTION (the GAP #4 close — DEPLOYED in the re-keyed VK epoch).
 //!
 //! Faithful Rust twin of the Lean `Dregg2.Circuit.Emit.EffectVmEmitTransfer` §11.7 availability weld
 //! (`transferVmDescriptorAvail`, `transferAvailGates`, `transferAvailRanges`,
-//! `transferAvail_derives_availability`). The deployed bare transfer descriptor
-//! (`dregg-effectvm-transfer-v1`) range-checks ONLY the AFTER balance limbs; its debit gate
+//! `transferAvail_derives_availability`). The FORMER bare transfer descriptor
+//! (`dregg-effectvm-transfer-v1`, now superseded in the live registry) range-checked ONLY the AFTER
+//! balance limbs; its debit gate
 //! `after.bal_lo ≡ before.bal_lo − amount [ZMOD p]` alone admits an UNDERFLOW WRAP — the audit's
 //! witness `before=1, amount=1006632961, after=1006632961` satisfies `after − before + amount = p ≡ 0`
 //! and `after < 2^30`, OVER-DEBITING ~10^9 (a value forgery). Range-checking a single 30-bit operand
@@ -26,12 +27,16 @@
 //! (`direction = 0`) destroys value rather than minting it and is not the forgery. The previously
 //! UNRANGED `amount` is now decomposed + range-checked, closing the unranged-amount hole.
 //!
-//! ## STAGED — descriptor gates + producer aux-fill EXPORTED; the registry row + VK ride the big-bang
+//! ## DEPLOYED — the live registry routes the hardened avail member (the GAP 1-6 VK epoch flip)
 //!
 //! The witness columns live PAST the base trace width (`≥ EFFECT_VM_WIDTH = 188`), so they are DISTINCT
-//! from every base-layout column. What rides the ONE big-bang descriptor regen: the
-//! `rotation-v3-staged-registry.tsv` row, the drift-gate FP pin, the widened VK commit + live
-//! admission. Until the flip the LIVE registry still routes the bare `transferVmDescriptor2R24`.
+//! from every base-layout column. As of the GAP 1-6 VK epoch flip (commits `aa282f8c0` Rust half →
+//! `1e12d8886` authorized `emit-descriptors.sh` regen → `764225f0c` producer reconcile → `72469afd0`
+//! deploy-consistency verdict "deployed VK IS vkOfRegistry RfixAvail"), the
+//! `rotation-v3-staged-registry.tsv` row, the drift-gate FP pin, and the re-keyed VK all carry the
+//! hardened avail member: the LIVE registry now routes the WELDED `transferVmDescriptor2R24`, not the
+//! bare one, so the over-debit forgery is structurally UNSAT on the deployed wire. (The `-staged` in
+//! the tsv filename is a legacy name, not a status — see the note at `effect_vm_descriptors.rs`.)
 
 use super::columns::{
     EFFECT_VM_WIDTH, PARAM_BASE, STATE_AFTER_BASE, STATE_BEFORE_BASE, param, state,

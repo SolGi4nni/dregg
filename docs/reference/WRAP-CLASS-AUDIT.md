@@ -1,5 +1,15 @@
 # Wrap-class soundness audit of the deployed dregg circuit
 
+> ✅ **RESOLVED (2026-07-13) — this is a point-in-time FINDING record; the gaps it names are CLOSED.**
+> Every verdict-A wrap-class gap below (GAP #1 vault, #2 cap-open, #3 cross-cell, #4 core-transfer
+> over-debit / credit-overflow) was FIXED and MATERIALIZED into the re-keyed VK epoch by the GAP 1-6
+> flip (commits aa282f8c0 Rust half → 1e12d8886 authorized `emit-descriptors.sh` regen → 764225f0c
+> producer reconcile → 72469afd0 "deployed VK IS vkOfRegistry RfixAvail"). The deployed AIR now
+> range-checks the operand limbs + runs the 15-bit borrow/carry chains, so the over-debit /
+> well-supply-inflation forgeries are structurally UNSAT on the live wire. Status table:
+> `docs/reference/STARK-SOUNDNESS-CENSUS.md`. The prose below is preserved as the original audit; do
+> NOT re-chase these as open.
+
 Systematic sweep for the **mod-p reconstruction wrap class**: a deployed AIR gate reconstructs or
 sums a value whose honest range can reach `≥ p = 2013265921` (BabyBear ≈ 2³¹), but the gate only
 forces it `≡ 0 [ZMOD p]`. When the adversary controls the decomposition (bits / limbs / carries /

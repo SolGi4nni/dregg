@@ -52,10 +52,10 @@ membership → SZ (`busBalance_forces_membership` + the multiset `_perm` extensi
 
 | # | Gap | Exploit | Status |
 |---|-----|---------|--------|
-| 1 | Vault settlement carry-wrap (16-bit carries reach p) | forge share-inflating settlement | FIXED (`CARRY_BITS 16→15`), staged |
-| 2 | Cap-open mask-recon (32-bit, 2p<2³²) | a cap granting nothing authorizes a transfer | FIXED (per-16-bit-limb recon, `reconExact` DERIVED), staged |
-| 3 | Cross-cell conservation (≥2-cell sum wraps p) | forge value-conservation | FIXED (multi-limb accumulator), staged |
-| 4 | Core-transfer over-debit (amount unranged) + credit overflow | mint from nothing / value destruction | FIXED (15-bit borrow + carry, BOTH directions, availability DERIVED), staged |
+| 1 | Vault settlement carry-wrap (16-bit carries reach p) | forge share-inflating settlement | ✅ FIXED + MATERIALIZED (`CARRY_BITS 16→15`), re-keyed VK epoch |
+| 2 | Cap-open mask-recon (32-bit, 2p<2³²) | a cap granting nothing authorizes a transfer | ✅ FIXED + MATERIALIZED (per-16-bit-limb recon, `reconExact` DERIVED), re-keyed VK epoch |
+| 3 | Cross-cell conservation (≥2-cell sum wraps p) | forge value-conservation | ✅ FIXED + MATERIALIZED (multi-limb accumulator), re-keyed VK epoch |
+| 4 | Core-transfer over-debit (amount unranged) + credit overflow | mint from nothing / value destruction | ✅ FIXED + MATERIALIZED (15-bit borrow + carry, BOTH directions, availability DERIVED), re-keyed VK epoch |
 | 5 | Heap-sortedness double-spend (per-turn insert forces no sorted placement) | commit a non-sorted heap → forge a nullifier absence → re-spend | ✅ FIXED + MATERIALIZED: nullifier/commitment/revoked op=4 AAFI (two-path forces sorted-preservation), re-keyed VK epoch |
 | 6 | Mutable-cell unforced-sortedness (createCell/factory/spawn op=3 insert) | forge a cell birth over a live cell → identity/state takeover | ✅ FIXED + MATERIALIZED: cellsInsertOp op=4 AAFI (same closure), capRoot-weld consistent, re-keyed VK epoch |
 

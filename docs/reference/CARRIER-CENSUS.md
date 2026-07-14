@@ -519,7 +519,7 @@ COMMON ROOT: the deployed circuit reconstructs/moves values that can exceed p; a
 the ℤ value; where no range-check bounds the reconstruction < p, an adversary picks a p-shifted witness. THE ℤ
 MODEL HID ALL FOUR. Field-faithfulness + the audit surfaced them.
 
-## ✅✅✅✅ ALL FOUR WRAP-CLASS GAPS FIXED (2026-07-11) — staged for the tag-19 VK epoch flip
+## ✅✅✅✅ ALL FOUR WRAP-CLASS GAPS FIXED (2026-07-11) — DEPLOYED into the re-keyed VK epoch (GAP 1-6 flip 1e12d8886/764225f0c/72469afd0; no longer "staged")
 Every gap the field-faithfulness migration + audit surfaced is now closed with a PROVEN-CORRECT in-circuit fix
 (both twins: deployed Rust + Lean), claude-gated hard on the identical bar: the safety property DERIVED from
 in-circuit range/borrow gates (NOT an assumed hypothesis), the exact forgery witness UNSAT, honest transactions

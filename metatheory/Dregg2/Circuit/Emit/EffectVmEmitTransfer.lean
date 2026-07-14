@@ -221,17 +221,18 @@ def transferVmDescriptor : EffectVmDescriptor :=
   , constraints := transferRowGates ++ transitionAll ++ boundaryFirstPins ++ boundaryLastPins
                      ++ selectorGates sel.TRANSFER
   , hashSites := transferHashSites
-  -- ⚠ DEPLOYED SOUNDNESS GAP #4 (wrap-class, verdict A, HIGH — `docs/reference/WRAP-CLASS-AUDIT.md`) — CLOSED by the
-  -- AVAILABILITY WELD in §11.7 (`transferVmDescriptorAvail`), STAGED for the big-bang VK/fixture regen (the vault
-  -- pattern: `Dregg2.Deos.VaultSatDescriptor` / `vault_weld.rs`). The bare descriptor below range-checks ONLY the
-  -- AFTER limbs; the debit gate `after.bal_lo ≡ before.bal_lo − amount [ZMOD p]` alone admits an UNDERFLOW WRAP
+  -- ✅ FORMER DEPLOYED SOUNDNESS GAP #4 (wrap-class, verdict A, HIGH — `docs/reference/WRAP-CLASS-AUDIT.md`) — CLOSED
+  -- AND DEPLOYED by the AVAILABILITY WELD in §11.7 (`transferVmDescriptorAvail`), materialized into the re-keyed VK
+  -- epoch by the GAP 1-6 flip (commits aa282f8c0/1e12d8886/764225f0c/72469afd0; the vault pattern:
+  -- `Dregg2.Deos.VaultSatDescriptor` / `vault_weld.rs`). The BARE descriptor below range-checks ONLY the
+  -- AFTER limbs; its debit gate `after.bal_lo ≡ before.bal_lo − amount [ZMOD p]` alone admitted an UNDERFLOW WRAP
   -- (witness `before=1, amount=1006632961, after=1006632961`: `after − before + amount = p ≡ 0`, `after < 2^30`),
   -- and the availability tooth used to LAUNDER the gap through an `hcanonMove` (= `0 ≤ before − amount`, availability
   -- ITSELF) that no gate enforced. The §11.7 hardened descriptor DECOMPOSES the debit into 15-bit limbs with a
   -- borrow chain (`before = after + amount`, no residual reaches `p`), range-checks `amount` + the operand limbs, and
   -- DERIVES availability in-circuit (`transferAvail_derives_availability`, NO `hcanonMove`; the forgery is UNSAT,
-  -- `transferAvail_forgery_unsat`). Covers Transfer debit / Burn / fee-debit. Until the flip the LIVE registry still
-  -- routes this bare descriptor; a pure light client does not yet witness availability in production.
+  -- `transferAvail_forgery_unsat`). Covers Transfer debit / Burn / fee-debit. `EmitRotationV3` now routes the LIVE
+  -- registry to the hardened avail member (`Emit.AvailWireMembers`), NOT this bare def — the flip is DONE.
   , ranges := [ ⟨saCol state.BALANCE_LO, 30⟩, ⟨saCol state.BALANCE_HI, 30⟩ ] }
 
 /-! ## §5 — The TRANSFER ROW INTENT (the independent faithfulness target).
