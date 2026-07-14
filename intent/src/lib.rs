@@ -66,6 +66,7 @@ pub mod bond;
 pub mod commit_reveal_fulfillment;
 pub mod cross_fed;
 pub mod delay_pool;
+pub mod drex_routing;
 pub mod exchange;
 pub mod fulfillment;
 pub mod generalized;

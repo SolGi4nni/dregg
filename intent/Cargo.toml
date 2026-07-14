@@ -44,6 +44,14 @@ default = []
 # fail-closed in production builds; enabling it here scopes the permissive stub
 # behavior to `cargo test`/dev builds of this crate.
 dregg-cell = { path = "../cell", features = ["test-stubs"] }
+# The `drex_routing` end-to-end test exercises the REAL mirror mint accounting
+# (`mint_against_lock` + the `live_supply ≤ currently_locked` invariant), which
+# is `test-utils`-gated on the bridge. This activates it for `cargo test` builds
+# ONLY (dev-dep features never reach the normal lib build).
+dregg-bridge = { path = "../bridge", features = ["test-utils"] }
+# The lock-attestation SIGNING helper (`SolanaLockAttestation::create`) the test
+# uses to build the ring's locks needs an Ed25519 signing key.
+ed25519-dalek = { version = "2", features = ["std"] }
 
 [lints]
 workspace = true

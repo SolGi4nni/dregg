@@ -1,0 +1,32 @@
+{
+  "clearing_root": "0x7e7a5a0195ebdf209995b1d3106b6be2b65d0b906dadc3aff86e1797f1ea7883",
+  "batch_id": 0,
+  "escrow_ids": [
+    "0x1e6d4bd8296fee9c8ceaef6f1306fa82c6408019a1700cbcfded1a3d8708d1ee",
+    "0x58064cd6460932e7803a1c2b70dbb18ba29a4b9c7ef0537d5d8e1e2b5d7d3caf",
+    "0x7a988051124df001a8f5a89b533038507d7e11824f3dc02a2fc1dac0be44c321"
+  ],
+  "depositors": [
+    "0x00000000000000000000000000000000000000a1",
+    "0x00000000000000000000000000000000000000c0",
+    "0x00000000000000000000000000000000000000b0"
+  ],
+  "recipients": [
+    "0x00000000000000000000000000000000000000c0",
+    "0x00000000000000000000000000000000000000b0",
+    "0x00000000000000000000000000000000000000a1"
+  ],
+  "amounts": [
+    30,
+    20,
+    10
+  ],
+  "assets": [
+    "asset-61",
+    "asset-63",
+    "asset-62"
+  ],
+  "mirror_conserves": true,
+  "ring_conserves": true,
+  "provenance": "solana_mirror.verify_lock (lock→mirror) → solver.rs (Johnson circuits + Shapley–Scarf TTC) → verified_settle.rs (each leg through the proved recKExecAsset kernel) → clearing root over the verified post-ledger"
+}
