@@ -55,7 +55,7 @@ getrandom = { workspace = true }
 # GPU prover backend (gpu_backend.rs): portable wgpu kernels behind the Plonky3
 # trait seams (TwoAdicSubgroupDft + a GPU Mmcs). Runtime-dispatched: no adapter
 # or non-GPU-able shapes fall back to the CPU path (no feature gate).
-wgpu = "24"
+wgpu = { version = "24", features = ["spirv"] }
 pollster = "0.4"
 bytemuck = "1"
 rayon = "1"

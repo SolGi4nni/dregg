@@ -16,9 +16,11 @@
 //!    (`CryptographicHasher`/`PseudoCompressionFunction` are per-node), so
 //!    [`GpuBn254Mmcs`] is an alternative [`Mmcs<BabyBear>`] whose `commit`
 //!    builds the digest layers with batched GPU permutation kernels
-//!    (`circuit-prove/sketches/bn254-poseidon2-wgpu`: BN254 t=3 Poseidon2,
-//!    measured 0.85-1.09 Mperm/s vs the 0.17-0.19 Mperm/s CPU stack rate).
-//!    This is the shrink prove's dominant term (~60%, the Amdahl lever).
+//!    (`circuit-prove/sketches/bn254-poseidon2-wgpu`: BN254 t=3 Poseidon2).
+//!    Native Vulkan uses the precompiled direct-SPIR-V/native-int64 kernel
+//!    (13.688 Mperm/s RADV, 24.738 Mperm/s AMDVLK on Navi 22); other backends
+//!    retain the portable WGSL engine. This is the shrink prove's dominant
+//!    term (~60%, the Amdahl lever).
 //!
 //! ## Bit-exactness contract (the parity gates in `tests` below)
 //!
@@ -189,6 +191,10 @@ struct SharedGpu {
     device: wgpu::Device,
     queue: wgpu::Queue,
     adapter_name: String,
+    /// True only when the selected adapter is Vulkan and the device was
+    /// created with the two features required by the precompiled native-int64
+    /// BN254 Poseidon2 module.
+    direct_bn254_spirv: bool,
     max_buf_u32s: usize,
 }
 
@@ -215,10 +221,18 @@ fn shared_gpu() -> Option<&'static SharedGpu> {
                 }))?;
             let info = adapter.get_info();
             let lims = adapter.limits();
+            let direct_spirv_features =
+                wgpu::Features::SHADER_INT64 | wgpu::Features::SPIRV_SHADER_PASSTHROUGH;
+            let direct_bn254_spirv = info.backend == wgpu::Backend::Vulkan
+                && adapter.features().contains(direct_spirv_features);
             let (device, queue) = pollster::block_on(adapter.request_device(
                 &wgpu::DeviceDescriptor {
                     label: None,
-                    required_features: wgpu::Features::empty(),
+                    required_features: if direct_bn254_spirv {
+                        direct_spirv_features
+                    } else {
+                        wgpu::Features::empty()
+                    },
                     required_limits: lims.clone(),
                     memory_hints: Default::default(),
                 },
@@ -235,6 +249,7 @@ fn shared_gpu() -> Option<&'static SharedGpu> {
                 device,
                 queue,
                 adapter_name: format!("{} ({:?})", info.name, info.backend),
+                direct_bn254_spirv,
                 max_buf_u32s,
             })
         })
@@ -1254,10 +1269,11 @@ impl TwoAdicSubgroupDft<BabyBear> for GpuDft {
 }
 
 // ============================================================================
-// SEAM 2 — the BN254 Poseidon2 GPU hash engine (WGSL codegen + tree builder)
-// (kernels from circuit-prove/sketches/bn254-poseidon2-wgpu, parity-proven
-// there against the pinned Poseidon2Bn254<3> and the gnark gold KAT;
-// re-gated here by root parity vs the CPU MerkleTreeMmcs)
+// SEAM 2 — the BN254 Poseidon2 GPU hash engine (portable WGSL plus a native
+// Vulkan direct-SPIR-V/native-int64 path, both under the same tree builder).
+// The permutation is parity-proven in sketches/bn254-poseidon2-wgpu against
+// the pinned Poseidon2Bn254<3> and the gnark gold KAT, then re-gated here by
+// root parity vs the CPU MerkleTreeMmcs.
 // ============================================================================
 
 /// BN254 scalar field prime.
@@ -1433,8 +1449,44 @@ fn int_linear(s: ptr<function, array<Fp, 3>>) {
     (*s)[2] = fp_add(fp_add((*s)[2], (*s)[2]), sum);
 }
 
+// Poseidon2-t3 round constants (Montgomery form), emitted as const arrays so
+// the permutation LOOPS its rounds instead of unrolling all 64 in-register —
+// this keeps the shader IR small enough for RADV's compiler (a fully-unrolled
+// permute SIGSEGVs Mesa's create_compute_pipeline). Bit-identical math.
+@RC_ARRAYS@
+
+// External (full) round: add RC to all 3 lanes, sbox all 3, external MDS.
+fn full_round(s: ptr<function, array<Fp, 3>>, rc: ptr<function, array<Fp, 3>>) {
+    (*s)[0] = fp_add((*s)[0], (*rc)[0]);
+    (*s)[1] = fp_add((*s)[1], (*rc)[1]);
+    (*s)[2] = fp_add((*s)[2], (*rc)[2]);
+    (*s)[0] = sbox((*s)[0]);
+    (*s)[1] = sbox((*s)[1]);
+    (*s)[2] = sbox((*s)[2]);
+    ext_linear(s);
+}
+
 fn permute(s: ptr<function, array<Fp, 3>>) {
-@PERM_BODY@
+    ext_linear(s);
+    for (var r = 0u; r < @N_INIT@u; r++) {
+        var rc: array<Fp, 3>;
+        rc[0] = RC_INIT[r * 3u + 0u];
+        rc[1] = RC_INIT[r * 3u + 1u];
+        rc[2] = RC_INIT[r * 3u + 2u];
+        full_round(s, &rc);
+    }
+    for (var r = 0u; r < @N_INT@u; r++) {
+        (*s)[0] = fp_add((*s)[0], RC_INT[r]);
+        (*s)[0] = sbox((*s)[0]);
+        int_linear(s);
+    }
+    for (var r = 0u; r < @N_TERM@u; r++) {
+        var rc: array<Fp, 3>;
+        rc[0] = RC_TERM[r * 3u + 0u];
+        rc[1] = RC_TERM[r * 3u + 1u];
+        rc[2] = RC_TERM[r * 3u + 2u];
+        full_round(s, &rc);
+    }
 }
 
 fn load_canon_to_monty(buf_index: u32, which: u32) -> Fp {
@@ -1577,45 +1629,49 @@ fn hash_shader_source(wg: u32) -> String {
         ));
     }
 
-    let mut body = String::new();
-    body.push_str("    ext_linear(s);\n");
-    for r_idx in 0..4 {
-        for l in 0..3 {
-            body.push_str(&format!(
-                "    (*s)[{l}] = fp_add((*s)[{l}], {});\n",
-                fp_lit(&to_monty(RC3_EXT_INITIAL[r_idx][l]))
-            ));
+    // Round constants (Montgomery form) emitted as const arrays, so the WGSL
+    // permutation LOOPS its rounds instead of unrolling all 64 inline. Flatten
+    // the external rounds to [round*3 + lane]; the internal rounds are already
+    // one-per-round (only lane 0 is dosed).
+    let n_init = RC3_EXT_INITIAL.len();
+    let n_int = RC3_INTERNAL.len();
+    let n_term = RC3_EXT_TERMINAL.len();
+    let rc_array = |name: &str, elems: &[BigUint]| -> String {
+        let mut s = format!(
+            "var<private> {name}: array<Fp, {}> = array<Fp, {}>(\n",
+            elems.len(),
+            elems.len()
+        );
+        for (i, e) in elems.iter().enumerate() {
+            let sep = if i + 1 < elems.len() { "," } else { "" };
+            s.push_str(&format!("    {}{sep}\n", fp_lit(e)));
         }
-        for l in 0..3 {
-            body.push_str(&format!("    (*s)[{l}] = sbox((*s)[{l}]);\n"));
-        }
-        body.push_str("    ext_linear(s);\n");
-    }
-    for r_idx in 0..56 {
-        body.push_str(&format!(
-            "    (*s)[0] = fp_add((*s)[0], {});\n    (*s)[0] = sbox((*s)[0]);\n    int_linear(s);\n",
-            fp_lit(&to_monty(RC3_INTERNAL[r_idx]))
-        ));
-    }
-    for r_idx in 0..4 {
-        for l in 0..3 {
-            body.push_str(&format!(
-                "    (*s)[{l}] = fp_add((*s)[{l}], {});\n",
-                fp_lit(&to_monty(RC3_EXT_TERMINAL[r_idx][l]))
-            ));
-        }
-        for l in 0..3 {
-            body.push_str(&format!("    (*s)[{l}] = sbox((*s)[{l}]);\n"));
-        }
-        body.push_str("    ext_linear(s);\n");
-    }
+        s.push_str(");\n");
+        s
+    };
+    let init_rc: Vec<BigUint> = (0..n_init)
+        .flat_map(|r| (0..3).map(move |l| (r, l)))
+        .map(|(r, l)| to_monty(RC3_EXT_INITIAL[r][l]))
+        .collect();
+    let int_rc: Vec<BigUint> = (0..n_int).map(|r| to_monty(RC3_INTERNAL[r])).collect();
+    let term_rc: Vec<BigUint> = (0..n_term)
+        .flat_map(|r| (0..3).map(move |l| (r, l)))
+        .map(|(r, l)| to_monty(RC3_EXT_TERMINAL[r][l]))
+        .collect();
+    let mut rc_arrays = String::new();
+    rc_arrays.push_str(&rc_array("RC_INIT", &init_rc));
+    rc_arrays.push_str(&rc_array("RC_INT", &int_rc));
+    rc_arrays.push_str(&rc_array("RC_TERM", &term_rc));
 
     HASH_WGSL
         .replace("@P_FP@", &fp_lit(&p))
         .replace("@R2_FP@", &fp_lit(&r2))
         .replace("@N0INV@", &format!("0x{n0inv:08x}"))
         .replace("@GEQ_BODY@", &geq)
-        .replace("@PERM_BODY@", &body)
+        .replace("@RC_ARRAYS@", &rc_arrays)
+        .replace("@N_INIT@", &n_init.to_string())
+        .replace("@N_INT@", &n_int.to_string())
+        .replace("@N_TERM@", &n_term.to_string())
         .replace("@WG@", &wg.to_string())
 }
 
@@ -1625,14 +1681,177 @@ const HASH_WG: u32 = 64;
 /// Max permutations per dispatch (Metal watchdog headroom at ~1 Mperm/s).
 const HASH_MAX_PERMS_PER_DISPATCH: usize = 1 << 18;
 
+/// The direct-SPIR-V kernel was compiled from
+/// `sketches/bn254_poseidon2_int64.comp` with workgroup size 128, then passed
+/// through `spirv-opt -O` and `spirv-val --target-env vulkan1.2`.
+#[cfg(not(target_arch = "wasm32"))]
+const BN254_POSEIDON2_INT64_SPIRV: &[u8] = include_bytes!("../sketches/bn254_poseidon2_int64.spv");
+#[cfg(not(target_arch = "wasm32"))]
+const HASH_SPIRV_WG: u32 = 128;
+
+/// Tree orchestration around the Vulkan permutation primitive. This shader
+/// deliberately contains no BN254 arithmetic: it canonicalizes/ packs
+/// BabyBear leaf digits, lays out compression inputs as width-three states,
+/// and extracts lane zero after the direct-SPIR-V permutation dispatch.
+#[cfg(not(target_arch = "wasm32"))]
+const HASH_SPIRV_TREE_WGSL: &str = r#"
+const BB_P: u32 = 0x78000001u;
+const BB_MU: u32 = 0x88000001u;
+
+fn mul64(a: u32, b: u32) -> vec2<u32> {
+    let a0 = a & 0xffffu; let a1 = a >> 16u;
+    let b0 = b & 0xffffu; let b1 = b >> 16u;
+    let p00 = a0 * b0;
+    let p01 = a0 * b1;
+    let p10 = a1 * b0;
+    let p11 = a1 * b1;
+    let mid = p01 + p10;
+    let carry_mid = select(0u, 0x10000u, mid < p01);
+    let mid_lo = mid << 16u;
+    let lo = p00 + mid_lo;
+    let carry_lo = select(0u, 1u, lo < p00);
+    let hi = p11 + (mid >> 16u) + carry_mid + carry_lo;
+    return vec2<u32>(lo, hi);
+}
+
+fn bb_canon(x: u32) -> u32 {
+    let t = x * BB_MU;
+    let tp = mul64(t, BB_P);
+    var r: u32 = 0u - tp.y;
+    if (tp.y != 0u) { r += BB_P; }
+    return r;
+}
+
+// b0: leaf arena or compact digest source; b1: descriptor words;
+// b2: canonical width-three states (read-write) or compact digest output.
+@group(0) @binding(0) var<storage, read> src: array<u32>;
+@group(0) @binding(1) var<storage, read> desc: array<u32>;
+@group(0) @binding(2) var<storage, read_write> dst: array<u32>;
+
+// desc = [n_mats, base_row, n_rows, permutation_index, (off, width)*n_mats].
+// Overwrite the next one/two rate lanes in the prior canonical state exactly
+// as MultiField32PaddingFreeSponge's overwrite-mode absorb does.
+@compute @workgroup_size(128)
+fn leaf_pack_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i0 = gid.x;
+    if (i0 >= desc[2]) { return; }
+    let row = desc[1] + i0;
+    let block_start = desc[3] * 16u;
+    let block_end = block_start + 16u;
+    var acc0: array<u32, 8>;
+    var acc1: array<u32, 8>;
+    var prefix = 0u;
+    var digits = 0u;
+    for (var m = 0u; m < desc[0]; m++) {
+        let off = desc[4u + 2u * m];
+        let width = desc[5u + 2u * m];
+        let lo = max(block_start, prefix);
+        let hi = min(block_end, prefix + width);
+        for (var g = lo; g < hi; g++) {
+            let rel = g - block_start;
+            let pos = rel & 7u;
+            let bitpos = 31u * pos;
+            let limb = bitpos >> 5u;
+            let sh = bitpos & 31u;
+            let digit = bb_canon(src[off + row * width + (g - prefix)]) + 1u;
+            if (rel < 8u) {
+                acc0[limb] |= digit << sh;
+                if (sh > 1u) { acc0[limb + 1u] |= digit >> (32u - sh); }
+            } else {
+                acc1[limb] |= digit << sh;
+                if (sh > 1u) { acc1[limb + 1u] |= digit >> (32u - sh); }
+            }
+            digits += 1u;
+        }
+        prefix += width;
+    }
+    for (var w = 0u; w < 8u; w++) { dst[(i0 * 3u) * 8u + w] = acc0[w]; }
+    if (digits > 8u) {
+        for (var w = 0u; w < 8u; w++) { dst[(i0 * 3u + 1u) * 8u + w] = acc1[w]; }
+    }
+}
+
+// desc = [n, base, mode, _]. mode 0 lays out [src[2i], src[2i+1], 0]
+// for a normal Merkle level. Modes 1 and 2 copy src[i] to lane 0 or lane 1,
+// respectively; the pair composes compress(out[i], injected[i]).
+@compute @workgroup_size(128)
+fn level_pack_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i0 = gid.x;
+    if (i0 >= desc[0]) { return; }
+    let i = desc[1] + i0;
+    if (desc[2] == 0u) {
+        for (var w = 0u; w < 8u; w++) {
+            dst[(i0 * 3u) * 8u + w] = src[(2u * i) * 8u + w];
+            dst[(i0 * 3u + 1u) * 8u + w] = src[(2u * i + 1u) * 8u + w];
+        }
+    } else {
+        let lane = desc[2] - 1u;
+        for (var w = 0u; w < 8u; w++) {
+            dst[(i0 * 3u + lane) * 8u + w] = src[i * 8u + w];
+        }
+    }
+}
+
+// desc = [n, base, _, _]; copy canonical output lane zero back to the compact
+// digest arena at indices [base, base+n).
+@compute @workgroup_size(128)
+fn extract_main(@builtin(global_invocation_id) gid: vec3<u32>) {
+    let i0 = gid.x;
+    if (i0 >= desc[0]) { return; }
+    let i = desc[1] + i0;
+    for (var w = 0u; w < 8u; w++) {
+        dst[i * 8u + w] = src[(i0 * 3u) * 8u + w];
+    }
+}
+"#;
+
+#[cfg(not(target_arch = "wasm32"))]
+fn bn254_round_words() -> Vec<u32> {
+    let p = biguint_from_hex(BN254_P_HEX);
+    let r = (BigUint::from(1u32) << 256u32) % &p;
+    let to_monty = |hex: &str| -> BigUint { (biguint_from_hex(hex) * &r) % &p };
+    let mut out = Vec::with_capacity(640);
+    for row in RC3_EXT_INITIAL {
+        for value in row {
+            out.extend_from_slice(&limbs8(&to_monty(value)));
+        }
+    }
+    for value in RC3_INTERNAL {
+        out.extend_from_slice(&limbs8(&to_monty(value)));
+    }
+    for row in RC3_EXT_TERMINAL {
+        for value in row {
+            out.extend_from_slice(&limbs8(&to_monty(value)));
+        }
+    }
+    assert_eq!(out.len(), 640);
+    out
+}
+
+#[cfg(not(target_arch = "wasm32"))]
+enum HashEngine {
+    Wgsl {
+        bgl: wgpu::BindGroupLayout,
+        leaf_pipe: wgpu::ComputePipeline,
+        compress_pipe: wgpu::ComputePipeline,
+        combine_pipe: wgpu::ComputePipeline,
+    },
+    DirectSpirv {
+        tree_bgl: wgpu::BindGroupLayout,
+        leaf_pack_pipe: wgpu::ComputePipeline,
+        level_pack_pipe: wgpu::ComputePipeline,
+        extract_pipe: wgpu::ComputePipeline,
+        perm_bgl: wgpu::BindGroupLayout,
+        perm_pipe: wgpu::ComputePipeline,
+        round_constants: wgpu::Buffer,
+    },
+}
+
 #[cfg(not(target_arch = "wasm32"))]
 struct HashCtx {
-    // Pipelines/layouts before the device handle (same drop-order discipline
+    // Engine resources precede the device handle (same drop-order discipline
     // as DftCtx; the device is the 'static SharedGpu one).
-    bgl: wgpu::BindGroupLayout,
-    leaf_pipe: wgpu::ComputePipeline,
-    compress_pipe: wgpu::ComputePipeline,
-    combine_pipe: wgpu::ComputePipeline,
+    engine: HashEngine,
     max_binding_u32s: usize,
     device: wgpu::Device,
     queue: wgpu::Queue,
@@ -1644,92 +1863,176 @@ impl HashCtx {
         let shared = shared_gpu()?;
         let device = shared.device.clone();
         let queue = shared.queue.clone();
-        let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
-            label: Some("hash_bgl"),
-            entries: &[
-                wgpu::BindGroupLayoutEntry {
-                    binding: 0,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 1,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: true },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-                wgpu::BindGroupLayoutEntry {
-                    binding: 2,
-                    visibility: wgpu::ShaderStages::COMPUTE,
-                    ty: wgpu::BindingType::Buffer {
-                        ty: wgpu::BufferBindingType::Storage { read_only: false },
-                        has_dynamic_offset: false,
-                        min_binding_size: None,
-                    },
-                    count: None,
-                },
-            ],
-        });
-        let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
-            label: None,
-            bind_group_layouts: &[&bgl],
-            push_constant_ranges: &[],
-        });
-        let src = hash_shader_source(HASH_WG);
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("bn254_poseidon2_tree"),
-            source: wgpu::ShaderSource::Wgsl(src.into()),
-        });
-        let mk_pipe = |entry: &str| {
-            device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-                label: Some(entry),
-                layout: Some(&layout),
-                module: &module,
-                entry_point: Some(entry),
+        let storage_entry = |binding: u32, read_only: bool| wgpu::BindGroupLayoutEntry {
+            binding,
+            visibility: wgpu::ShaderStages::COMPUTE,
+            ty: wgpu::BindingType::Buffer {
+                ty: wgpu::BufferBindingType::Storage { read_only },
+                has_dynamic_offset: false,
+                min_binding_size: None,
+            },
+            count: None,
+        };
+        let engine = if shared.direct_bn254_spirv {
+            // The orchestration layout matches the portable tree shader. The
+            // raw module has its own mandatory explicit layout: reflection is
+            // bypassed by SPIR-V passthrough, so `layout: None` is invalid.
+            let tree_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bn254_tree_orchestration_bgl"),
+                entries: &[
+                    storage_entry(0, true),
+                    storage_entry(1, true),
+                    storage_entry(2, false),
+                ],
+            });
+            let tree_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bn254_tree_orchestration_layout"),
+                bind_group_layouts: &[&tree_bgl],
+                push_constant_ranges: &[],
+            });
+            let tree_module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("bn254_tree_orchestration"),
+                source: wgpu::ShaderSource::Wgsl(HASH_SPIRV_TREE_WGSL.into()),
+            });
+            let mk_tree_pipe = |entry: &str| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&tree_layout),
+                    module: &tree_module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
+            let leaf_pack_pipe = mk_tree_pipe("leaf_pack_main");
+            let level_pack_pipe = mk_tree_pipe("level_pack_main");
+            let extract_pipe = mk_tree_pipe("extract_main");
+
+            // SACRED ABI from the direct-SPIR-V runbook:
+            //   b0 readonly canonical input states
+            //   b1 read-write canonical output states
+            //   b2 readonly Montgomery round constants
+            let perm_bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("bn254_poseidon2_int64_bgl"),
+                entries: &[
+                    storage_entry(0, true),
+                    storage_entry(1, false),
+                    storage_entry(2, true),
+                ],
+            });
+            let perm_layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: Some("bn254_poseidon2_int64_layout"),
+                bind_group_layouts: &[&perm_bgl],
+                push_constant_ranges: &[],
+            });
+            let perm_module = unsafe {
+                device.create_shader_module_spirv(&wgpu::ShaderModuleDescriptorSpirV {
+                    label: Some("bn254_poseidon2_int64"),
+                    source: wgpu::util::make_spirv_raw(BN254_POSEIDON2_INT64_SPIRV),
+                })
+            };
+            let perm_pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                label: Some("bn254_poseidon2_int64"),
+                layout: Some(&perm_layout),
+                module: &perm_module,
+                entry_point: Some("main"),
                 compilation_options: Default::default(),
                 cache: None,
-            })
+            });
+            let round_constants = device.create_buffer(&wgpu::BufferDescriptor {
+                label: Some("bn254_poseidon2_montgomery_round_constants"),
+                size: (640 * 4) as u64,
+                usage: wgpu::BufferUsages::STORAGE | wgpu::BufferUsages::COPY_DST,
+                mapped_at_creation: false,
+            });
+            queue.write_buffer(
+                &round_constants,
+                0,
+                bytemuck::cast_slice(&bn254_round_words()),
+            );
+            tracing::info!(
+                adapter = %shared.adapter_name,
+                "GpuBn254Mmcs selected Vulkan direct-SPIR-V + shaderInt64"
+            );
+            HashEngine::DirectSpirv {
+                tree_bgl,
+                leaf_pack_pipe,
+                level_pack_pipe,
+                extract_pipe,
+                perm_bgl,
+                perm_pipe,
+                round_constants,
+            }
+        } else {
+            let bgl = device.create_bind_group_layout(&wgpu::BindGroupLayoutDescriptor {
+                label: Some("hash_bgl"),
+                entries: &[
+                    storage_entry(0, true),
+                    storage_entry(1, true),
+                    storage_entry(2, false),
+                ],
+            });
+            let layout = device.create_pipeline_layout(&wgpu::PipelineLayoutDescriptor {
+                label: None,
+                bind_group_layouts: &[&bgl],
+                push_constant_ranges: &[],
+            });
+            let src = hash_shader_source(HASH_WG);
+            let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+                label: Some("bn254_poseidon2_tree"),
+                source: wgpu::ShaderSource::Wgsl(src.into()),
+            });
+            let mk_pipe = |entry: &str| {
+                device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+                    label: Some(entry),
+                    layout: Some(&layout),
+                    module: &module,
+                    entry_point: Some(entry),
+                    compilation_options: Default::default(),
+                    cache: None,
+                })
+            };
+            let leaf_pipe = mk_pipe("leaf_main");
+            let compress_pipe = mk_pipe("compress_main");
+            let combine_pipe = mk_pipe("combine_main");
+            HashEngine::Wgsl {
+                bgl,
+                leaf_pipe,
+                compress_pipe,
+                combine_pipe,
+            }
         };
-        let leaf_pipe = mk_pipe("leaf_main");
-        let compress_pipe = mk_pipe("compress_main");
-        let combine_pipe = mk_pipe("combine_main");
         let max_binding_u32s = shared.max_buf_u32s;
         Some(HashCtx {
-            bgl,
-            leaf_pipe,
-            compress_pipe,
-            combine_pipe,
+            engine,
             max_binding_u32s,
             device,
             queue,
         })
     }
 
-    fn bind(&self, src: &wgpu::Buffer, desc: &wgpu::Buffer, out: &wgpu::Buffer) -> wgpu::BindGroup {
+    fn bind(
+        &self,
+        layout: &wgpu::BindGroupLayout,
+        b0: &wgpu::Buffer,
+        b1: &wgpu::Buffer,
+        b2: &wgpu::Buffer,
+    ) -> wgpu::BindGroup {
         self.device.create_bind_group(&wgpu::BindGroupDescriptor {
             label: None,
-            layout: &self.bgl,
+            layout,
             entries: &[
                 wgpu::BindGroupEntry {
                     binding: 0,
-                    resource: src.as_entire_binding(),
+                    resource: b0.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 1,
-                    resource: desc.as_entire_binding(),
+                    resource: b1.as_entire_binding(),
                 },
                 wgpu::BindGroupEntry {
                     binding: 2,
-                    resource: out.as_entire_binding(),
+                    resource: b2.as_entire_binding(),
                 },
             ],
         })
@@ -1760,55 +2063,205 @@ impl HashCtx {
         n_rows: usize,
         perms_per_row: usize,
     ) {
-        let rows_per_chunk = (HASH_MAX_PERMS_PER_DISPATCH / perms_per_row.max(1))
-            .max(HASH_WG as usize)
-            .next_multiple_of(HASH_WG as usize);
-        let bindg = self.bind(arena, desc_buf, out);
-        let mut base = 0usize;
-        while base < n_rows {
-            let rows = rows_per_chunk.min(n_rows - base);
-            let mut desc = vec![desc_head[0], base as u32, rows as u32, 0];
-            desc.extend_from_slice(mat_descs);
-            self.queue
-                .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
-            let mut enc = self.device.create_command_encoder(&Default::default());
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(&self.leaf_pipe);
-                pass.set_bind_group(0, &bindg, &[]);
-                pass.dispatch_workgroups((rows as u32).div_ceil(HASH_WG), 1, 1);
+        match &self.engine {
+            HashEngine::Wgsl { bgl, leaf_pipe, .. } => {
+                let rows_per_chunk = (HASH_MAX_PERMS_PER_DISPATCH / perms_per_row.max(1))
+                    .max(HASH_WG as usize)
+                    .next_multiple_of(HASH_WG as usize);
+                let bindg = self.bind(bgl, arena, desc_buf, out);
+                let mut base = 0usize;
+                while base < n_rows {
+                    let rows = rows_per_chunk.min(n_rows - base);
+                    let mut desc = vec![desc_head[0], base as u32, rows as u32, 0];
+                    desc.extend_from_slice(mat_descs);
+                    self.queue
+                        .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                    let mut enc = self.device.create_command_encoder(&Default::default());
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(leaf_pipe);
+                        pass.set_bind_group(0, &bindg, &[]);
+                        pass.dispatch_workgroups((rows as u32).div_ceil(HASH_WG), 1, 1);
+                    }
+                    self.queue.submit([enc.finish()]);
+                    base += rows;
+                }
             }
-            self.queue.submit([enc.finish()]);
-            base += rows;
+            HashEngine::DirectSpirv {
+                tree_bgl,
+                leaf_pack_pipe,
+                extract_pipe,
+                perm_bgl,
+                perm_pipe,
+                round_constants,
+                ..
+            } => {
+                // Each raw dispatch sees an exactly-sized state binding, so
+                // the kernel's `input_data.length()/24` guard also fences the
+                // padded last workgroup. Keep each dispatch under the same
+                // watchdog ceiling used by the portable engine.
+                let rows_per_chunk = HASH_MAX_PERMS_PER_DISPATCH
+                    .min(self.max_binding_u32s / 24)
+                    .max(1);
+                let mut base = 0usize;
+                while base < n_rows {
+                    let rows = rows_per_chunk.min(n_rows - base);
+                    let mut state_a = self.storage_buffer("bn254_states_a", rows * 24, true);
+                    let mut state_b = self.storage_buffer("bn254_states_b", rows * 24, true);
+                    for permutation_index in 0..perms_per_row {
+                        let mut desc = vec![
+                            desc_head[0],
+                            base as u32,
+                            rows as u32,
+                            permutation_index as u32,
+                        ];
+                        desc.extend_from_slice(mat_descs);
+                        self.queue
+                            .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                        let pack_bg = self.bind(tree_bgl, arena, desc_buf, &state_a);
+                        let perm_bg = self.bind(perm_bgl, &state_a, &state_b, round_constants);
+                        let mut enc = self.device.create_command_encoder(&Default::default());
+                        {
+                            let mut pass = enc.begin_compute_pass(&Default::default());
+                            pass.set_pipeline(leaf_pack_pipe);
+                            pass.set_bind_group(0, &pack_bg, &[]);
+                            pass.dispatch_workgroups((rows as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                        }
+                        {
+                            let mut pass = enc.begin_compute_pass(&Default::default());
+                            pass.set_pipeline(perm_pipe);
+                            pass.set_bind_group(0, &perm_bg, &[]);
+                            pass.dispatch_workgroups((rows as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                        }
+                        self.queue.submit([enc.finish()]);
+                        std::mem::swap(&mut state_a, &mut state_b);
+                    }
+                    let desc = [rows as u32, base as u32, 0u32, 0u32];
+                    self.queue
+                        .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                    let extract_bg = self.bind(tree_bgl, &state_a, desc_buf, out);
+                    let mut enc = self.device.create_command_encoder(&Default::default());
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(extract_pipe);
+                        pass.set_bind_group(0, &extract_bg, &[]);
+                        pass.dispatch_workgroups((rows as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                    }
+                    self.queue.submit([enc.finish()]);
+                    base += rows;
+                }
+            }
         }
     }
 
-    /// One compress or combine level (single dispatch — level sizes are
-    /// bounded by 2^17 nodes at the shrink shapes, well under the watchdog).
+    /// One compress or injection-combine level. `combine` means
+    /// `out[i] = compress(out[i], src[i])`; otherwise this is the normal
+    /// `out[i] = compress(src[2i], src[2i+1])` Merkle step.
     fn dispatch_level(
         &self,
-        pipe: &wgpu::ComputePipeline,
         src: &wgpu::Buffer,
         desc_buf: &wgpu::Buffer,
         out: &wgpu::Buffer,
         n: usize,
+        combine: bool,
     ) {
-        let mut base = 0usize;
-        let bindg = self.bind(src, desc_buf, out);
-        while base < n {
-            let cnt = (HASH_MAX_PERMS_PER_DISPATCH).min(n - base);
-            let desc = [cnt as u32, base as u32, 0u32, 0u32];
-            self.queue
-                .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
-            let mut enc = self.device.create_command_encoder(&Default::default());
-            {
-                let mut pass = enc.begin_compute_pass(&Default::default());
-                pass.set_pipeline(pipe);
-                pass.set_bind_group(0, &bindg, &[]);
-                pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_WG), 1, 1);
+        match &self.engine {
+            HashEngine::Wgsl {
+                bgl,
+                compress_pipe,
+                combine_pipe,
+                ..
+            } => {
+                let pipe = if combine { combine_pipe } else { compress_pipe };
+                let mut base = 0usize;
+                let bindg = self.bind(bgl, src, desc_buf, out);
+                while base < n {
+                    let cnt = HASH_MAX_PERMS_PER_DISPATCH.min(n - base);
+                    let desc = [cnt as u32, base as u32, 0u32, 0u32];
+                    self.queue
+                        .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                    let mut enc = self.device.create_command_encoder(&Default::default());
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(pipe);
+                        pass.set_bind_group(0, &bindg, &[]);
+                        pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_WG), 1, 1);
+                    }
+                    self.queue.submit([enc.finish()]);
+                    base += cnt;
+                }
             }
-            self.queue.submit([enc.finish()]);
-            base += cnt;
+            HashEngine::DirectSpirv {
+                tree_bgl,
+                level_pack_pipe,
+                extract_pipe,
+                perm_bgl,
+                perm_pipe,
+                round_constants,
+                ..
+            } => {
+                let nodes_per_chunk = HASH_MAX_PERMS_PER_DISPATCH
+                    .min(self.max_binding_u32s / 24)
+                    .max(1);
+                let mut base = 0usize;
+                while base < n {
+                    let cnt = nodes_per_chunk.min(n - base);
+                    let state_in = self.storage_buffer("bn254_level_in", cnt * 24, true);
+                    let state_out = self.storage_buffer("bn254_level_out", cnt * 24, true);
+
+                    if combine {
+                        // First lane is the already-compressed parent in
+                        // `out`; the second is this height's injected leaf.
+                        let desc = [cnt as u32, base as u32, 1u32, 0u32];
+                        self.queue
+                            .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                        let lane0_bg = self.bind(tree_bgl, out, desc_buf, &state_in);
+                        let mut enc = self.device.create_command_encoder(&Default::default());
+                        {
+                            let mut pass = enc.begin_compute_pass(&Default::default());
+                            pass.set_pipeline(level_pack_pipe);
+                            pass.set_bind_group(0, &lane0_bg, &[]);
+                            pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                        }
+                        self.queue.submit([enc.finish()]);
+                    }
+
+                    let mode = if combine { 2u32 } else { 0u32 };
+                    let desc = [cnt as u32, base as u32, mode, 0u32];
+                    self.queue
+                        .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                    let pack_bg = self.bind(tree_bgl, src, desc_buf, &state_in);
+                    let perm_bg = self.bind(perm_bgl, &state_in, &state_out, round_constants);
+                    let mut enc = self.device.create_command_encoder(&Default::default());
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(level_pack_pipe);
+                        pass.set_bind_group(0, &pack_bg, &[]);
+                        pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                    }
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(perm_pipe);
+                        pass.set_bind_group(0, &perm_bg, &[]);
+                        pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                    }
+                    self.queue.submit([enc.finish()]);
+
+                    let desc = [cnt as u32, base as u32, 0u32, 0u32];
+                    self.queue
+                        .write_buffer(desc_buf, 0, bytemuck::cast_slice(&desc));
+                    let extract_bg = self.bind(tree_bgl, &state_out, desc_buf, out);
+                    let mut enc = self.device.create_command_encoder(&Default::default());
+                    {
+                        let mut pass = enc.begin_compute_pass(&Default::default());
+                        pass.set_pipeline(extract_pipe);
+                        pass.set_bind_group(0, &extract_bg, &[]);
+                        pass.dispatch_workgroups((cnt as u32).div_ceil(HASH_SPIRV_WG), 1, 1);
+                    }
+                    self.queue.submit([enc.finish()]);
+                    base += cnt;
+                }
+            }
         }
     }
 
@@ -2032,11 +2485,11 @@ impl GpuBn254Mmcs {
             } else {
                 (&dig_b, &dig_a)
             };
-            ctx.dispatch_level(&ctx.compress_pipe, src, &desc_buf, dst, next_len);
+            ctx.dispatch_level(src, &desc_buf, dst, next_len, false);
             if next_group < groups.len() && groups[next_group].0 == next_len {
                 // Inject: hash the group's rows, then combine pairwise.
                 hash_group(&groups[next_group].1, next_len, &inj, &desc_buf);
-                ctx.dispatch_level(&ctx.combine_pipe, &inj, &desc_buf, dst, next_len);
+                ctx.dispatch_level(&inj, &desc_buf, dst, next_len, true);
                 next_group += 1;
             }
             digest_layers.push(ctx.read_digests(dst, next_len));
@@ -3021,20 +3474,43 @@ pub fn create_gpu_outer_config_with_fri(
 }
 
 /// The production-shape GPU outer config (same FRI knobs as
-/// `create_outer_config`). Thread-local cached so all commits in a proving
-/// run share one wgpu device + pipeline set.
+/// `create_outer_config`). Native builds cache this in process-static storage:
+/// wgpu 24 uses TLS internally while dropping buffers, so a Rust `thread_local!`
+/// config can run its destructor after wgpu's own TLS is already gone and
+/// abort an otherwise-successful proving thread. The static is intentionally
+/// never torn down before process exit. wasm retains thread-local storage
+/// because its WebGPU handles are not `Send + Sync`.
 pub fn create_gpu_outer_config() -> GpuDreggOuterConfig {
-    thread_local! {
-        static GPU_OUTER_CONFIG: GpuDreggOuterConfig = create_gpu_outer_config_with_fri(
-            OUTER_FRI_LOG_BLOWUP,
-            0,
-            1,
-            OUTER_FRI_NUM_QUERIES,
-            0,
-            OUTER_FRI_QUERY_POW_BITS,
-        );
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static GPU_OUTER_CONFIG: OnceLock<GpuDreggOuterConfig> = OnceLock::new();
+        GPU_OUTER_CONFIG
+            .get_or_init(|| {
+                create_gpu_outer_config_with_fri(
+                    OUTER_FRI_LOG_BLOWUP,
+                    0,
+                    1,
+                    OUTER_FRI_NUM_QUERIES,
+                    0,
+                    OUTER_FRI_QUERY_POW_BITS,
+                )
+            })
+            .clone()
     }
-    GPU_OUTER_CONFIG.with(|c| c.clone())
+    #[cfg(target_arch = "wasm32")]
+    {
+        thread_local! {
+            static GPU_OUTER_CONFIG: GpuDreggOuterConfig = create_gpu_outer_config_with_fri(
+                OUTER_FRI_LOG_BLOWUP,
+                0,
+                1,
+                OUTER_FRI_NUM_QUERIES,
+                0,
+                OUTER_FRI_QUERY_POW_BITS,
+            );
+        }
+        GPU_OUTER_CONFIG.with(|c| c.clone())
+    }
 }
 
 // ============================================================================
@@ -3309,14 +3785,24 @@ pub fn create_gpu_recursion_config_with_fri(
 
 /// The default-shape GPU fold config — the SAME FRI knobs as
 /// `create_recursion_config` (log_blowup=3, arity 1, 38 queries, 14 query-PoW
-/// bits). Thread-local cached so all commits in a proving run share one wgpu
-/// device + pipeline set.
+/// bits). Native builds use process-static storage for the same wgpu-TLS
+/// teardown reason documented on [`create_gpu_outer_config`].
 pub fn create_gpu_recursion_config() -> GpuDreggRecursionConfig {
-    thread_local! {
-        static GPU_RECURSION_CONFIG: GpuDreggRecursionConfig =
-            create_gpu_recursion_config_with_fri(3, 0, 1, 38, 0, 14);
+    #[cfg(not(target_arch = "wasm32"))]
+    {
+        static GPU_RECURSION_CONFIG: OnceLock<GpuDreggRecursionConfig> = OnceLock::new();
+        GPU_RECURSION_CONFIG
+            .get_or_init(|| create_gpu_recursion_config_with_fri(3, 0, 1, 38, 0, 14))
+            .clone()
     }
-    GPU_RECURSION_CONFIG.with(|c| c.clone())
+    #[cfg(target_arch = "wasm32")]
+    {
+        thread_local! {
+            static GPU_RECURSION_CONFIG: GpuDreggRecursionConfig =
+                create_gpu_recursion_config_with_fri(3, 0, 1, 38, 0, 14);
+        }
+        GPU_RECURSION_CONFIG.with(|c| c.clone())
+    }
 }
 
 /// A recursion-layer (fold) proof minted under the GPU fold config. Byte-
@@ -3624,6 +4110,48 @@ mod tests {
             .map(|_| BabyBear::from_int(next()))
             .collect();
         RowMajorMatrix::new(values, cols)
+    }
+
+    // DIAGNOSTIC: dump the generated hash-engine WGSL to a file for offline
+    // bisection of the RADV compiler crash.
+    #[test]
+    fn dump_hash_wgsl() {
+        let path = std::env::var("DUMP_WGSL").unwrap_or_else(|_| "/tmp/hash.wgsl".into());
+        std::fs::write(&path, super::hash_shader_source(super::HASH_WG)).unwrap();
+        eprintln!("wrote {path}");
+    }
+
+    // DIAGNOSTIC: fast RADV-crash harness. Reads a WGSL file (WGSL_FILE) and
+    // creates a compute pipeline for entry WGSL_ENTRY — reproduces the
+    // create_compute_pipeline SIGSEGV without a full recompile so the shader
+    // can be bisected by editing the external file.
+    #[test]
+    fn compile_wgsl_from_env() {
+        let Ok(file) = std::env::var("WGSL_FILE") else {
+            eprintln!("WGSL_FILE unset; skipping");
+            return;
+        };
+        let entry = std::env::var("WGSL_ENTRY").unwrap_or_else(|_| "leaf_main".into());
+        let src = std::fs::read_to_string(&file).unwrap();
+        let shared = super::shared_gpu().expect("no gpu");
+        let device = &shared.device;
+        eprintln!("compiling {file} entry={entry} ...");
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("harness"),
+            source: wgpu::ShaderSource::Wgsl(src.into()),
+        });
+        let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("harness"),
+            layout: None,
+            module: &module,
+            entry_point: Some(&entry),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        eprintln!(
+            "OK compiled entry={entry}: {:?}",
+            pipe.get_bind_group_layout(0)
+        );
     }
 
     #[test]
