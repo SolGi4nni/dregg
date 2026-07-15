@@ -860,6 +860,21 @@ hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
 .kv{grid-template-columns:repeat(auto-fit,minmax(7rem,1fr))}
 }
 @media (max-width:26rem){.topnav a{padding:.35rem .45rem}}
+/* ═══ LIVE REGION — the fragment the progressive-enhancement script swaps ═ */
+/* The surface region a POST-act swaps in place (JS on); with JS off it is a plain container the */
+/* full server-rendered page fills — ONE render path, so no-JS and JS look identical. `:focus` is */
+/* moved here after a swap for keyboard continuity; the outline is suppressed (it is a programmatic */
+/* focus target, not a user-tabbed one). */
+.live-surface{outline:none}
+.live-surface:focus{outline:none}
+/* A just-swapped fragment fades+lifts in briefly, so a move reads as a real change, not a fl. */
+.live-surface.swap-in{animation:surface-swap .2s var(--ease) both}
+@keyframes surface-swap{from{opacity:.35;transform:translateY(4px)}to{opacity:1;transform:none}}
+/* An in-flight affordance (its fetch outstanding): the pressed control dims and shows a wait */
+/* cursor, so a tap gives instant feedback before the fragment lands. */
+.affordance.pending button,.coordgrid form.cell.pending button{opacity:.6;cursor:progress}
+.affordance.pending,.coordgrid form.cell.pending{cursor:progress}
+form.in-flight button[disabled]{cursor:progress}
 /* ═══ MOTION — only where it clarifies, and never against the user ═══════ */
 @media (prefers-reduced-motion:reduce){
 *,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
@@ -907,6 +922,69 @@ fn topbar(active: &str) -> String {
     )
 }
 
+/// **The progressive-enhancement script** — the ONLY client JS on the whole product, inlined (the
+/// CSP + no-build reality forbid an external file). It makes the affordance play loop feel LIVE
+/// without a framework, a router, or a state store: the server stays authoritative and the client
+/// only swaps the one fragment the server re-rendered.
+///
+/// It delegates a single `submit` listener off `document` (so forms swapped IN later are handled
+/// with no re-binding). For a POST-`/act` affordance form (`form.affordance` — a menu control — or
+/// `form.cell` — a board square), it: cancels the native navigation; disables the pressed button +
+/// marks the form `pending`; POSTs the SAME body with an `X-Fragment: 1` header; and replaces the
+/// `#live-surface` region's HTML with the returned FRAGMENT (the re-rendered surface — notice,
+/// board/forms, receipt), so a move updates the board in place with no full reload. It then moves
+/// focus to the live region and scrolls the board into view (honouring `prefers-reduced-motion`).
+///
+/// **Progressive**: if JS is off the plain `<form>` POST works exactly as before (server-form
+/// fallback); if the `fetch` itself fails, it re-submits the form the classic way — the current
+/// no-JS behaviour is the guaranteed floor, never bypassed.
+const ENHANCE_SCRIPT: &str = r##"<script>
+(function(){
+  "use strict";
+  var REGION="live-surface";
+  function reduced(){return window.matchMedia&&window.matchMedia("(prefers-reduced-motion: reduce)").matches;}
+  document.addEventListener("submit",function(ev){
+    var form=ev.target;
+    if(!form||form.tagName!=="FORM")return;
+    if(!(form.classList.contains("affordance")||form.classList.contains("cell")))return;
+    var action=form.getAttribute("action")||"";
+    if(action.indexOf("/act")===-1)return;
+    var live=document.getElementById(REGION);
+    if(!live)return; /* nothing to swap into — let the browser navigate (fallback) */
+    ev.preventDefault();
+    var btn=form.querySelector("button[type=submit]")||form.querySelector("button");
+    if(form.classList.contains("in-flight"))return; /* ignore a double-submit */
+    form.classList.add("in-flight","pending");
+    if(btn)btn.disabled=true;
+    var body=new URLSearchParams(new FormData(form)).toString();
+    fetch(action,{
+      method:"POST",
+      headers:{"X-Fragment":"1","Content-Type":"application/x-www-form-urlencoded","Accept":"text/html"},
+      body:body,
+      credentials:"same-origin"
+    }).then(function(r){
+      if(!r.ok)throw new Error("HTTP "+r.status);
+      return r.text();
+    }).then(function(html){
+      var cur=document.getElementById(REGION);
+      if(!cur)return;
+      cur.innerHTML=html;
+      cur.classList.remove("swap-in");
+      void cur.offsetWidth; /* restart the transition */
+      cur.classList.add("swap-in");
+      try{cur.focus({preventScroll:true});}catch(e){cur.focus();}
+      var board=cur.querySelector(".coordgrid")||cur;
+      if(board&&board.scrollIntoView)board.scrollIntoView({block:"nearest",behavior:reduced()?"auto":"smooth"});
+    }).catch(function(){
+      /* the fetch path failed — restore the control and let the classic form POST navigate */
+      form.classList.remove("in-flight","pending");
+      if(btn)btn.disabled=false;
+      form.submit();
+    });
+  },false);
+})();
+</script>"##;
+
 /// The page footer — states the one property the whole product rests on, and repeats the nav.
 const FOOTER: &str = "<footer class=\"foot\">\
      <p>Verification is in-process re-execution — no node, no testnet.</p>\
@@ -925,12 +1003,13 @@ pub(crate) fn document(title: &str, active: &str, body: &str) -> String {
         "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
          <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
          <meta name=\"color-scheme\" content=\"dark\">\
-         <title>{title}</title>{style}</head><body>{topbar}{body}{footer}</body></html>",
+         <title>{title}</title>{style}</head><body>{topbar}{body}{footer}{script}</body></html>",
         title = esc(title),
         style = STYLE,
         topbar = topbar(active),
         body = body,
         footer = FOOTER,
+        script = ENHANCE_SCRIPT,
     )
 }
 
@@ -1249,7 +1328,16 @@ async fn get_offering_session(
     // The viewer's derived identity (the `dregg_user` cookie / `?user=` param) — the SAME identity a
     // POST attributes a turn to. A seated player renders their OWN hidden hand; a spectator sees fog.
     let viewer = web_identity(&web_user(&headers, &query));
-    Html(render_offering_page(&state, &key, &sid, None, &viewer))
+    // A GET is normally a full navigation (full page); an `X-Fragment: 1` GET (e.g. a script
+    // refresh) returns just the swappable surface — additive, and the same one render path.
+    Html(render_offering_response(
+        &state,
+        &key,
+        &sid,
+        None,
+        &viewer,
+        wants_fragment(&headers),
+    ))
 }
 
 /// The `{turn, arg}` POST body of `POST /offerings/{key}/session/{id}/act`.
@@ -1343,13 +1431,16 @@ async fn post_offering_act(
     };
 
     // Re-render AS the acting user — so the player who just claimed/played a seat sees their own
-    // hidden hand (and their own cap-gated affordances), not the viewer-blind public fog.
-    Html(render_offering_page(
+    // hidden hand (and their own cap-gated affordances), not the viewer-blind public fog. When the
+    // POST came from the progressive-enhancement script (`X-Fragment: 1`), return JUST the
+    // re-rendered surface fragment for an in-place swap; a plain no-JS form POST gets the full page.
+    Html(render_offering_response(
         &state,
         &key,
         &sid,
         Some(&notice),
         &actor,
+        wants_fragment(&headers),
     ))
 }
 
@@ -1374,15 +1465,19 @@ async fn get_offering_verify(
     }
 }
 
-/// Render an offering session as a full HTML page: its [`Surface`] as POST forms + the live verify
-/// line + an optional notice banner. Fetches the surface + verify report from the host thread.
-fn render_offering_page(
+/// **The live-region HTML for an offering session** — the notice banner + the surface's POST forms
+/// + the re-verified receipt line, and NOTHING else. This is THE fragment a turn swaps: the
+/// progressive-enhancement script `fetch`es it (via `X-Fragment: 1`) and drops it straight into
+/// `#live-surface`, and the full page ([`offering_page`]) embeds this SAME string verbatim inside
+/// that region — so no-JS (full page) and JS (swapped fragment) render an identical surface (ONE
+/// render path). `None` if the session/offering is absent.
+fn offering_surface_fragment(
     state: &CatalogState,
     key: &str,
     id: &SessionId,
     notice: Option<&str>,
     viewer: &DreggIdentity,
-) -> String {
+) -> Option<String> {
     let rendered = {
         let key = key.to_string();
         let id = id.clone();
@@ -1393,18 +1488,70 @@ fn render_offering_page(
             .host
             .run(move |h| h.render_for(&key, &id, &viewer).zip(h.verify(&key, &id)))
     };
-    let Some((surface, verify)) = rendered else {
-        return page_missing(id);
-    };
-    let title = state
+    let (surface, verify) = rendered?;
+    let forms = render_catalog_forms(surface.view(), key, &id.0);
+    Some(format!(
+        "{notice}{forms}{receipt}",
+        notice = notice_html(notice),
+        forms = forms,
+        receipt = receipt_html(&verify, "chain re-verified by replay"),
+    ))
+}
+
+/// The offering title (registered `Name — tagline`), or the key if none is registered.
+fn offering_title(state: &CatalogState, key: &str) -> String {
+    state
         .host
         .run({
             let key = key.to_string();
             move |h| h.title(&key).map(|t| t.to_string())
         })
-        .unwrap_or_else(|| key.to_string());
-    let fragment = render_catalog_forms(surface.view(), key, &id.0);
-    offering_page(&title, id, notice, &fragment, &verify)
+        .unwrap_or_else(|| key.to_string())
+}
+
+/// Render an offering session as a full HTML page: the page chrome (crumb + head) around the
+/// [`offering_surface_fragment`] live region. Fetches the surface + verify report from the host
+/// thread. Missing session → [`page_missing`].
+fn render_offering_page(
+    state: &CatalogState,
+    key: &str,
+    id: &SessionId,
+    notice: Option<&str>,
+    viewer: &DreggIdentity,
+) -> String {
+    let Some(surface) = offering_surface_fragment(state, key, id, notice, viewer) else {
+        return page_missing(id);
+    };
+    let title = offering_title(state, key);
+    offering_page(&title, id, &surface)
+}
+
+/// Render an offering-session response, choosing the surface by the `X-Fragment: 1` request header:
+/// when `fragment_only` (a progressive-enhancement `fetch`), return JUST the swappable surface
+/// fragment ([`offering_surface_fragment`] — no `<html>`/`<head>`/chrome); otherwise the full page
+/// (the no-JS server-form path). Both embed the identical fragment — ONE render path.
+fn render_offering_response(
+    state: &CatalogState,
+    key: &str,
+    id: &SessionId,
+    notice: Option<&str>,
+    viewer: &DreggIdentity,
+    fragment_only: bool,
+) -> String {
+    if fragment_only {
+        // The fragment path: the bare live-region HTML (or, if the session vanished, an honest
+        // notice fragment — the swap target still gets valid HTML, never a whole error document).
+        offering_surface_fragment(state, key, id, notice, viewer)
+            .unwrap_or_else(|| notice_html(Some("Refused: no such offering session.")))
+    } else {
+        render_offering_page(state, key, id, notice, viewer)
+    }
+}
+
+/// Whether the request asked for JUST the surface fragment (the progressive-enhancement `fetch`
+/// sets `X-Fragment: 1`); a plain browser navigation / no-JS POST omits it and gets the full page.
+fn wants_fragment(headers: &HeaderMap) -> bool {
+    headers.get("x-fragment").is_some_and(|v| !v.is_empty())
 }
 
 /// **Render an offering's [`ViewNode`] surface into POST-form controls** — the multi-offering
@@ -1633,8 +1780,8 @@ fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
     format!(
         "<form class=\"{cls}\" method=\"post\" action=\"/offerings/{key}/session/{id}/act\">\
          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
-         <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\" \
-         aria-label=\"{turn} value\"{disabled}>\
+         <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\" step=\"1\" \
+         inputmode=\"numeric\" aria-label=\"{turn} value\"{disabled}>\
          <button type=\"submit\"{disabled}>{label}</button></form>",
         cls = cls,
         key = esc(key),
@@ -1789,14 +1936,12 @@ fn split_title(title: &str) -> (&str, &str) {
     }
 }
 
-/// Wrap an offering session's fragment in a full HTML page (breadcrumb + notice + verify line).
-fn offering_page(
-    title: &str,
-    id: &SessionId,
-    notice: Option<&str>,
-    fragment: &str,
-    verify: &VerifyReport,
-) -> String {
+/// Wrap an offering session's live-region surface in a full HTML page (breadcrumb + head + the
+/// swappable `#live-surface` region). The `surface` argument is the [`offering_surface_fragment`]
+/// output (notice + forms + receipt) — embedded VERBATIM here, so the full page and the swapped
+/// fragment render the identical surface (ONE render path). The static chrome (crumb, name,
+/// tagline) sits OUTSIDE the region: it never changes across a turn, so it is never re-sent.
+fn offering_page(title: &str, id: &SessionId, surface: &str) -> String {
     // The crumb names the offering; the surface's own sections carry the rest. The full registered
     // title still reaches the page (name + tagline), so a reader — and the portfolio test — sees it.
     let (name, tagline) = split_title(title);
@@ -1808,16 +1953,19 @@ fn offering_page(
             esc(tagline)
         )
     };
+    // `#live-surface` is the region the progressive-enhancement script swaps. `tabindex="-1"` makes
+    // it a programmatic focus target (keyboard continuity after a swap); `aria-live="polite"` has a
+    // screen reader announce the updated surface. With JS off it is just the container the
+    // server-rendered surface fills — the fallback is the current behaviour, untouched.
     let body = format!(
-        "{crumb}<main class=\"session\">{notice}\
+        "{crumb}<main class=\"session\">\
          <div class=\"page-head\" style=\"padding-top:var(--s4)\"><h1>{name}</h1>{tagline}</div>\
-         {fragment}{receipt}</main>",
+         <div id=\"live-surface\" class=\"live-surface\" tabindex=\"-1\" aria-live=\"polite\">{surface}</div>\
+         </main>",
         crumb = crumb(name, id),
-        notice = notice_html(notice),
         name = esc(name),
         tagline = tagline_html,
-        fragment = fragment,
-        receipt = receipt_html(verify, "chain re-verified by replay"),
+        surface = surface,
     );
     document(&format!("DreggNet Cloud — {title}"), "offerings", &body)
 }
