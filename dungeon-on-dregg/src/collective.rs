@@ -82,7 +82,7 @@ use collective_choice::{
 };
 use dregg_types::{PublicKey, Signature, SigningKey};
 use spween::Scene;
-use spween_dregg::{WorldCell, WorldError};
+use spween_dregg::{FieldElement, WorldCell, WorldError, decision_commitment};
 
 use crate::choice_at;
 use crate::narrator::Command;
@@ -288,6 +288,14 @@ pub struct CertifiedTurn {
     /// The winning command's real [`TurnReceipt`] on the GAME executor (a genuine
     /// committed turn — its `turn_hash` is non-zero and it chains `pre == prev.post`).
     pub receipt: TurnReceipt,
+    /// The certified-decision commitment this world turn is BOUND to — the value
+    /// [`decision_commitment`] mints from the quorum-certified winner, pinned into the
+    /// world cell's [`DECISION_EXT_KEY`](spween_dregg::DECISION_EXT_KEY) in the SAME turn as
+    /// the command's advance. The committed world state carries it (readable via
+    /// [`WorldCell::read_decision`]), so the turn commits to WHICH decision authored it;
+    /// [`verify_world_bound_to_winner`] recomputes it from the certified winner and
+    /// checks the world, catching an operator who advanced by a different choice.
+    pub decision_commitment: FieldElement,
 }
 
 /// Everything a collective round can refuse.
@@ -510,18 +518,28 @@ impl CollectiveRound {
         // The crowd decides — only a quorum-certified winner reaches the world.
         let winner = self.resolve()?.ok_or(CollectiveError::BelowQuorum)?;
 
+        // BIND the certified decision to the world turn. The commitment is minted from
+        // the quorum-certified winner (winner option + the choice it resolves to +
+        // winning tally + quorum-met total) and pinned into the world cell's
+        // DECISION_EXT_KEY in the SAME turn as the command's advance — so the committed
+        // world turn commits to WHICH decision authored it. An operator who instead
+        // advanced the world by a different choice (via the plain `apply_choice`) leaves
+        // the slot un-bound and is caught by `verify_world_bound_to_winner`.
+        let commitment = winner_commitment(&winner);
+
         // The world resolves the DECIDED command on the real game executor. An ineligible
         // gate on the post-state is a real refusal — the vote cannot override it.
         let cmd = winner.command;
         let choice = choice_at(scene, &cmd.room, cmd.choice);
         let receipt = world
-            .apply_choice(&cmd.room, cmd.choice, &choice)
+            .apply_choice_certified(&cmd.room, cmd.choice, &choice, commitment)
             .map_err(CollectiveError::World)?;
 
         Ok(CertifiedTurn {
             decision: winner.decision,
             command: cmd,
             receipt,
+            decision_commitment: commitment,
         })
     }
 
@@ -534,6 +552,36 @@ impl CollectiveRound {
     pub fn roster(&self) -> Vec<&str> {
         self.electorate.iter().map(|s| s.name.as_str()).collect()
     }
+}
+
+/// The [`decision_commitment`] of a quorum-certified winner — the value the world turn
+/// binds to. Minted from the winner's option index, the choice its command resolves to,
+/// its winning tally, and the quorum-met total. Kept in one place so
+/// [`CollectiveRound::resolve_into_world`] (which pins it) and
+/// [`verify_world_bound_to_winner`] (which re-checks it) can never diverge.
+fn winner_commitment(winner: &CertifiedWinner) -> FieldElement {
+    decision_commitment(
+        winner.decision.winner as u64,
+        winner.command.choice as u64,
+        winner.decision.winner_tally,
+        winner.decision.total,
+    )
+}
+
+/// **The certified-winner tooth — did the world commit to the decision the crowd
+/// certified?** Recomputes the certified winner's [`decision_commitment`] and checks it
+/// against the world cell's committed [`DECISION_EXT_KEY`](spween_dregg::DECISION_EXT_KEY)
+/// (via [`WorldCell::read_decision`]). Returns `true` iff the world turn was BOUND to
+/// this exact decision.
+///
+/// This closes the vote→world leak. Before the binding, an operator could quorum-certify
+/// winner `W` yet advance the world by a DIFFERENT choice `X` (a plain `apply_choice`
+/// the executor still admits as a legal move), and nothing tied the world back to the
+/// certified decision. Now the certified path pins `commitment(W)` in the same turn; a
+/// world advanced by `X` (or by the un-bound path) leaves the slot zero / mismatched, so
+/// this check returns `false` — the mismatch is caught.
+pub fn verify_world_bound_to_winner(world: &WorldCell, winner: &CertifiedWinner) -> bool {
+    world.read_decision() == winner_commitment(winner)
 }
 
 #[cfg(test)]
@@ -635,6 +683,72 @@ mod collective_tests {
             "the certified command committed a genuine world turn"
         );
         assert_eq!(world.read_var("hp"), 30, "the world resolved trade-blows");
+
+        // THE BINDING: the world turn committed to the certified decision — the world's
+        // DECISION_EXT_KEY holds the certified winner's commitment (non-zero, and exactly
+        // the value the cert carries). The world is provably bound to WHAT the crowd
+        // certified, not merely to a host-side call.
+        assert_ne!(
+            world.read_decision(),
+            [0u8; 32],
+            "the collective world turn pinned a certified-decision commitment"
+        );
+        assert_eq!(
+            world.read_decision(),
+            cert.decision_commitment,
+            "the committed decision-slot equals the cert's commitment"
+        );
+    }
+
+    /// **THE VOTE→WORLD BINDING BITES — an operator who applies a DIFFERENT choice than
+    /// the certified winner is CAUGHT.** The audit's #1 leak: `resolve_into_world` used
+    /// to `apply_choice` the winning command with nothing tying "the world committed X"
+    /// to "the quorum decided X" — so an operator could quorum-certify winner `W` yet
+    /// advance the world by a different legal choice `X`, and no replay noticed. Here the
+    /// crowd certifies trade-blows (option 0), but the operator advances the world by
+    /// press-on (option 1) through the plain un-bound `apply_choice`. The honest path is
+    /// bound; the bypass is CAUGHT by `verify_world_bound_to_winner`.
+    #[test]
+    fn applying_a_different_choice_than_the_certified_winner_is_caught() {
+        let mut round = keep_round();
+        let s = keep_scene();
+        let mut world = deploy_keep(33);
+        world.seed_var("hp", Value::Int(50));
+
+        // Three seats reach quorum for TRADE-BLOWS (option 0) — the certified winner.
+        let poll = round.poll();
+        for name in ["Bramwen", "Corvin", "Della"] {
+            round
+                .cast(&seat(name).sign_ballot(poll, KP_TRADE_BLOWS))
+                .unwrap_or_else(|e| panic!("{name} votes: {e}"));
+        }
+        let winner = round
+            .resolve()
+            .expect("resolve")
+            .expect("quorum reached — trade-blows certified");
+        assert_eq!(winner.decision.winner, KP_TRADE_BLOWS);
+
+        // THE LEAK: the operator advances the world by PRESS-ON (option 1) — a legal move
+        // the executor admits, but NOT what the crowd certified — via the plain
+        // `apply_choice`, bypassing the bound seam.
+        let cmd_x = Command::press_on();
+        let choice_x = choice_at(&s, &cmd_x.room, cmd_x.choice);
+        world
+            .apply_choice(&cmd_x.room, cmd_x.choice, &choice_x)
+            .expect("press-on is a legal move and commits");
+
+        // The world genuinely moved (a real committed turn) — before the binding, nothing
+        // caught that it moved to a branch the crowd did not certify. Now it is CAUGHT:
+        // the world was never bound to the certified decision (its DECISION_EXT_KEY is zero).
+        assert_eq!(
+            world.read_decision(),
+            [0u8; 32],
+            "the un-bound apply pinned no certified-decision commitment"
+        );
+        assert!(
+            !verify_world_bound_to_winner(&world, &winner),
+            "an operator who applied a different choice than the certified winner is caught"
+        );
     }
 
     /// **Sub-quorum does NOT move the world (anti-ghost).** Only two of five seats vote

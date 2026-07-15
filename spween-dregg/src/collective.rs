@@ -11,7 +11,7 @@
 //! lands via the same one-verified-turn path as single-player.
 
 use crate::vote::{VoteEngine, VoteError, VoteOption, labeled_tally};
-use crate::world::{Driver, StepReceipt, WorldError};
+use crate::world::{Driver, StepReceipt, WorldError, decision_commitment};
 
 /// The context handed to the ballot source each round.
 #[derive(Clone, Debug)]
@@ -132,11 +132,25 @@ where
             // A double vote / bad option is refused; skip it (the ballot did not count).
             let _ = engine.cast(&voter, option);
         }
-        let tally = labeled_tally(&options, &engine.tally());
+        let raw_tally = engine.tally();
+        let tally = labeled_tally(&options, &raw_tally);
         let winning_option = engine.resolve()?;
         let winning_choice = options[winning_option].choice_index;
 
-        let step = driver.advance(winning_choice)?;
+        // BIND the certified winner to the world turn: the same turn that advances the
+        // world by the winner's choice commits to the decision that authored it. The
+        // commitment is minted from the SAME (winner, tally) the crowd certified, so an
+        // operator who later swaps the applied choice is caught by
+        // [`verify_collective_certified`] (the committed slot no longer matches).
+        let winner_tally = raw_tally.get(winning_option).copied().unwrap_or(0);
+        let total: u64 = raw_tally.iter().sum();
+        let commitment = decision_commitment(
+            winning_option as u64,
+            winning_choice as u64,
+            winner_tally,
+            total,
+        );
+        let step = driver.advance_certified(winning_choice, commitment)?;
         rounds.push(CollectiveRound {
             passage,
             options,
@@ -148,4 +162,90 @@ where
         round += 1;
     }
     Ok(rounds)
+}
+
+/// A way the certified-winner check failed — an operator applied a choice the crowd did
+/// not certify.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum CollectiveVerifyBreak {
+    /// The world turn at this round did not commit to the certified winner: the round's
+    /// [`DECISION_EXT_KEY`](crate::DECISION_EXT_KEY) commitment is absent (a plain,
+    /// un-bound advance) or does not equal `commitment(certified winner)` — the world was
+    /// advanced by a choice other than the one the crowd certified.
+    DecisionBindingBroken { round: usize },
+    /// The applied choice index differs from the certified winner's choice index (the
+    /// world moved to a branch the crowd did not certify).
+    AppliedChoiceMismatch {
+        /// Which round.
+        round: usize,
+        /// The spween choice the world was actually advanced by.
+        applied: usize,
+        /// The spween choice the crowd's certified winner resolves to.
+        certified: usize,
+    },
+}
+
+impl std::fmt::Display for CollectiveVerifyBreak {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            CollectiveVerifyBreak::DecisionBindingBroken { round } => write!(
+                f,
+                "round {round}: the world turn is not bound to the certified winner \
+                 (the decision-commitment slot is absent or mismatched)"
+            ),
+            CollectiveVerifyBreak::AppliedChoiceMismatch {
+                round,
+                applied,
+                certified,
+            } => write!(
+                f,
+                "round {round}: applied choice {applied} != the certified winner's choice {certified}"
+            ),
+        }
+    }
+}
+
+impl std::error::Error for CollectiveVerifyBreak {}
+
+/// **The certified-winner tooth.** For each resolved [`CollectiveRound`], confirm the
+/// world turn that advanced the story was BOUND to the crowd's certified winner: the
+/// applied choice equals the certified winner's choice, AND the turn's committed
+/// [`DECISION_EXT_KEY`](crate::DECISION_EXT_KEY) commitment equals the
+/// [`decision_commitment`] recomputed from that round's certified winner (option +
+/// choice + winning tally + total).
+///
+/// This closes the vote→branch leak: with only the receipt chain + replay, an operator
+/// could resolve a poll to winner `W` yet advance the world by a DIFFERENT choice `X`
+/// and the record still verified (replay re-drives whatever choices were recorded). A
+/// choice advanced by the plain (un-bound) path leaves the decision slot zero, and a
+/// choice bound to a different winner mints a different commitment — either way this
+/// check refuses it. Run it ALONGSIDE [`crate::verify`] (chain-linkage + replay), which
+/// pins the committed decision slot itself un-retconnably.
+pub fn verify_collective_certified(
+    rounds: &[CollectiveRound],
+) -> Result<(), CollectiveVerifyBreak> {
+    for (i, r) in rounds.iter().enumerate() {
+        // The world must have advanced by the certified winner's choice.
+        if r.step.choice_index != r.winning_choice {
+            return Err(CollectiveVerifyBreak::AppliedChoiceMismatch {
+                round: i,
+                applied: r.step.choice_index,
+                certified: r.winning_choice,
+            });
+        }
+        // The committed turn must be bound to THIS certified winner's commitment.
+        let winner_tally = r.tally.get(r.winner_label()).copied().unwrap_or(0);
+        let total: u64 = r.tally.values().copied().sum();
+        let expected = decision_commitment(
+            r.winning_option as u64,
+            r.winning_choice as u64,
+            winner_tally,
+            total,
+        );
+        match r.step.decision_commitment {
+            Some(c) if c == expected => {}
+            _ => return Err(CollectiveVerifyBreak::DecisionBindingBroken { round: i }),
+        }
+    }
+    Ok(())
 }

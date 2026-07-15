@@ -151,14 +151,19 @@ pub fn verify_by_replay(
             }
             Some(_) => {}
         }
-        // Advance by the recorded choice — a forged/ineligible pick is refused here.
-        let advanced =
-            driver
-                .advance(step.choice_index)
-                .map_err(|e| VerifyBreak::RefusedOnReplay {
-                    step: i,
-                    why: e.to_string(),
-                })?;
+        // Advance by the recorded choice — a forged/ineligible pick is refused here. A
+        // collective step re-pins its recorded certified-decision commitment in the SAME
+        // turn (so the reproduced state, including DECISION_EXT_KEY, matches the record);
+        // the certified-winner tooth (`verify_collective_certified`) checks that
+        // commitment against the round's certified winner separately.
+        let advanced = match step.decision_commitment {
+            Some(commitment) => driver.advance_certified(step.choice_index, commitment),
+            None => driver.advance(step.choice_index),
+        }
+        .map_err(|e| VerifyBreak::RefusedOnReplay {
+            step: i,
+            why: e.to_string(),
+        })?;
         if advanced.state != step.state {
             return Err(VerifyBreak::StateMismatch {
                 step: StepPos::Step(i),

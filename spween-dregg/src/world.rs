@@ -21,7 +21,7 @@ use std::sync::Arc;
 
 use dregg_app_framework::{
     AgentCipherclerk, AppCipherclerk, AuthRequired, CellId, Effect, EmbeddedExecutor, Event,
-    ExecutorSubmitError, FieldElement, TurnReceipt, field_from_u64, symbol,
+    ExecutorSubmitError, FieldElement, TurnReceipt, field_from_bytes, field_from_u64, symbol,
 };
 use dregg_cell::Cell;
 use dregg_node_target::{NodeTarget, SubmittedTurn};
@@ -37,6 +37,50 @@ use crate::encoding::{field_to_u64, value_to_field, value_to_u64};
 /// The fixed federation the world-cell's turns commit under (identity is carried by
 /// the deterministic owner key, not the federation).
 const WORLD_FEDERATION: [u8; 32] = [0xD6; 32];
+
+/// The domain tag prefixing every certified-decision commitment — binds a commitment
+/// to THIS scheme so a value minted elsewhere never reads as a decision binding.
+const DECISION_DOMAIN: &[u8] = b"spween-dregg/collective/decision-binding-v1";
+
+/// **The reserved certified-decision binding key.** A collective world turn
+/// ([`WorldCell::apply_choice_certified`] / [`Driver::advance_certified`]) writes the
+/// [`decision_commitment`] of the quorum-certified decision that authored it under THIS
+/// ext-field key, in the SAME turn as the choice's passage advance — so the committed
+/// turn binds "the world moved here" to "the crowd decided this". An ext key
+/// (`>= dregg_cell::state::STATE_SLOTS`) lands in the committed `fields_map` /
+/// `fields_root` (folded into the turn's post-state commitment, so a retcon breaks the
+/// receipt chain), NOT a register slot — so it costs a scene ZERO of its 16 fixed slots
+/// and can never collide with a story variable. Keyed high (`2^33`, above app ext-field
+/// usage and distinct from `REFUSAL_AUDIT_EXT_KEY = 2^32`) so no application heap key
+/// clashes. Absent on a single-player turn; [`WorldCell::read_decision`] reads it back
+/// and [`crate::verify_collective_certified`] checks it against the certified winner.
+pub const DECISION_EXT_KEY: u64 = 0x0000_0002_0000_0000;
+
+/// **The canonical commitment of a quorum-certified decision** — the value a collective
+/// world turn pins into [`DECISION_EXT_KEY`] so the committed turn binds
+/// to WHICH decision authored it. A commitment over the winning option, the choice it
+/// resolves to, the winner's tally, and the quorum-met total: `blake3(domain ‖ winner
+/// option ‖ winner choice ‖ winner tally ‖ total)`. Both the CYOA branch loop
+/// ([`crate::run_collective`]) and the dungeon seam
+/// (`dungeon_on_dregg::CollectiveRound::resolve_into_world`) mint it from the SAME
+/// certified winner they advance the world by, and [`crate::verify_collective_certified`]
+/// recomputes it from the round's certified winner to check the committed slot — an
+/// operator who advanced the world by a DIFFERENT choice than the certified winner
+/// leaves the slot zero / mismatched and is caught.
+pub fn decision_commitment(
+    winner_option: u64,
+    winner_choice: u64,
+    winner_tally: u64,
+    total: u64,
+) -> FieldElement {
+    let mut h = blake3::Hasher::new();
+    h.update(DECISION_DOMAIN);
+    h.update(&winner_option.to_be_bytes());
+    h.update(&winner_choice.to_be_bytes());
+    h.update(&winner_tally.to_be_bytes());
+    h.update(&total.to_be_bytes());
+    field_from_bytes(h.finalize().as_bytes())
+}
 
 /// Why a turn on the world-cell could not be committed.
 #[derive(Clone, Debug)]
@@ -273,6 +317,50 @@ impl WorldCell {
         choice: &Choice,
     ) -> Result<TurnReceipt, WorldError> {
         let method = choice_method(passage_name, choice_index);
+        let effects = self.choice_effects(choice)?;
+        self.commit(&method, effects)
+    }
+
+    /// **Apply a choice as ONE cap-bounded turn, BOUND to a certified decision.** Like
+    /// [`apply_choice`](Self::apply_choice), but the same turn ALSO writes `commitment`
+    /// (a [`decision_commitment`]) into [`DECISION_EXT_KEY`] — so the
+    /// committed world turn binds "the world advanced by this choice" to "the crowd
+    /// certified this decision", atomically. The collective seam
+    /// (`dungeon_on_dregg::CollectiveRound::resolve_into_world`) drives THIS path with
+    /// the commitment of the quorum-certified winner it resolves; a caller that instead
+    /// advances the world by a different choice via the plain [`apply_choice`](Self::apply_choice)
+    /// leaves the slot unwritten and is caught by [`crate::verify_collective_certified`] /
+    /// [`Self::read_decision`].
+    pub fn apply_choice_certified(
+        &self,
+        passage_name: &str,
+        choice_index: usize,
+        choice: &Choice,
+        commitment: FieldElement,
+    ) -> Result<TurnReceipt, WorldError> {
+        let method = choice_method(passage_name, choice_index);
+        let mut effects = self.choice_effects(choice)?;
+        effects.push(set_field(self.cell, DECISION_EXT_KEY as usize, commitment));
+        self.commit(&method, effects)
+    }
+
+    /// Read the certified-decision commitment currently pinned under
+    /// [`DECISION_EXT_KEY`]. A single-player (or un-bound) turn never wrote it, so it
+    /// reads field-zero (`[0u8; 32]`); a collective turn via
+    /// [`apply_choice_certified`](Self::apply_choice_certified) pins its winner's
+    /// [`decision_commitment`]. The certified-winner check reads THIS to confirm the
+    /// world committed to the decision the crowd certified.
+    pub fn read_decision(&self) -> FieldElement {
+        self.exec
+            .cell_state(self.cell)
+            .and_then(|s| s.get_field_ext(DECISION_EXT_KEY))
+            .unwrap_or([0u8; 32])
+    }
+
+    /// Build the cell-write effects of a choice (its `Set`/`Modify`/`Call` effects +
+    /// the passage-slot advance) — the shared body of [`apply_choice`](Self::apply_choice)
+    /// and [`apply_choice_certified`](Self::apply_choice_certified).
+    fn choice_effects(&self, choice: &Choice) -> Result<Vec<Effect>, WorldError> {
         let mut effects = Vec::new();
         // A local accumulator so multiple Modify effects on one var compose within
         // the single turn (each reads the running value, not stale committed state).
@@ -305,7 +393,7 @@ impl WorldCell {
         }
         let pidx = self.nav_index(choice)?;
         effects.push(set_field(self.cell, PASSAGE_SLOT, field_from_u64(pidx)));
-        self.commit(&method, effects)
+        Ok(effects)
     }
 
     fn nav_index(&self, choice: &Choice) -> Result<u64, WorldError> {
@@ -483,6 +571,12 @@ pub struct StepReceipt {
     /// The world-cell's committed slot vector right after this turn — the
     /// deterministic state fingerprint the replay verifier reproduces.
     pub state: Vec<u64>,
+    /// The certified-decision commitment this turn committed to, if it was a
+    /// collective turn ([`Driver::advance_certified`]). `None` for a single-player
+    /// turn (nothing pinned in [`DECISION_EXT_KEY`]). The certified-winner
+    /// check ([`crate::verify_collective_certified`]) reads it, and the replay verifier
+    /// re-pins it so a collective playthrough reproduces its committed state.
+    pub decision_commitment: Option<FieldElement>,
 }
 
 /// A recorded playthrough: the genesis turn + every committed choice-step. Handed to
@@ -517,6 +611,10 @@ pub struct Driver<'s> {
     steps: Vec<StepReceipt>,
     genesis: Option<TurnReceipt>,
     genesis_state: Vec<u64>,
+    /// The certified-decision commitment to pin in the NEXT flushed turn (set by
+    /// [`Driver::advance_certified`], consumed by [`Driver::flush`]). `None` on a
+    /// single-player advance / the genesis turn.
+    pending_decision: Option<FieldElement>,
 }
 
 impl<'s> Driver<'s> {
@@ -538,6 +636,7 @@ impl<'s> Driver<'s> {
             steps: Vec::new(),
             genesis: None,
             genesis_state: Vec::new(),
+            pending_decision: None,
         };
         // Commit the intro's entry effects + the initial passage bind as genesis.
         let receipt = driver.flush(GENESIS_METHOD)?;
@@ -604,6 +703,29 @@ impl<'s> Driver<'s> {
     /// `select_choice` (which checks the gate, runs effects, navigates), then flushes
     /// the buffered cell writes as ONE verified turn. Returns the step's receipt.
     pub fn advance(&mut self, index: usize) -> Result<StepReceipt, WorldError> {
+        self.advance_inner(index, None)
+    }
+
+    /// **Advance the story, BOUND to a certified decision.** Like
+    /// [`advance`](Self::advance), but the flushed turn ALSO pins `commitment` (a
+    /// [`decision_commitment`]) into [`DECISION_EXT_KEY`] and the resulting
+    /// [`StepReceipt`] records it — so a collective playthrough's committed state binds
+    /// each step to the crowd's certified winner. [`crate::run_collective`] drives THIS
+    /// with the commitment of the winner it resolves; the certified-winner check
+    /// ([`crate::verify_collective_certified`]) reads it back.
+    pub fn advance_certified(
+        &mut self,
+        index: usize,
+        commitment: FieldElement,
+    ) -> Result<StepReceipt, WorldError> {
+        self.advance_inner(index, Some(commitment))
+    }
+
+    fn advance_inner(
+        &mut self,
+        index: usize,
+        decision: Option<FieldElement>,
+    ) -> Result<StepReceipt, WorldError> {
         let passage = self
             .current_passage()
             .ok_or_else(|| WorldError::Refused("scene already ended".into()))?;
@@ -611,18 +733,22 @@ impl<'s> Driver<'s> {
             .select_choice(index)
             .map_err(|e| WorldError::Refused(format!("runtime refused choice: {e}")))?;
         let method = choice_method(&passage, index);
+        self.pending_decision = decision;
         let receipt = self.flush(&method)?;
+        self.pending_decision = None;
         let step = StepReceipt {
             passage,
             choice_index: index,
             receipt,
             state: self.world.snapshot(),
+            decision_commitment: decision,
         };
         self.steps.push(step.clone());
         Ok(step)
     }
 
-    /// Flush the handler's buffered writes + the current passage bind as one turn.
+    /// Flush the handler's buffered writes + the current passage bind (+ any pending
+    /// certified-decision commitment) as one turn.
     fn flush(&mut self, method: &str) -> Result<TurnReceipt, WorldError> {
         let mut effects = self.runtime.handler_mut().take_pending();
         let pidx = match self.runtime.state() {
@@ -634,6 +760,15 @@ impl<'s> Driver<'s> {
             PASSAGE_SLOT,
             field_from_u64(pidx),
         ));
+        // Pin the certified-decision commitment (a collective turn) in the SAME turn as
+        // the passage advance — the world commits to which decision authored it.
+        if let Some(commitment) = self.pending_decision {
+            effects.push(set_field(
+                self.world.cell,
+                DECISION_EXT_KEY as usize,
+                commitment,
+            ));
+        }
         self.world.commit(method, effects)
     }
 
