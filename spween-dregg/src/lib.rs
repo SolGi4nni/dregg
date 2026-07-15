@@ -44,7 +44,10 @@ mod verify;
 mod vote;
 mod world;
 
-pub use collective::{Ballot, CollectiveError, CollectiveRound, PollContext, run_collective};
+pub use collective::{
+    Ballot, CollectiveError, CollectiveRound, CollectiveVerifyBreak, PollContext, run_collective,
+    verify_collective_certified,
+};
 pub use compiler::{
     CompileError, CompiledStory, GENESIS_METHOD, HEAP_HATCH_METHOD, PASSAGE_ENDED, PASSAGE_SLOT,
     STATE_SLOTS, choice_method, compile_scene, value_to_field,
@@ -53,7 +56,15 @@ pub use encoding::{field_to_u64, value_to_u64};
 pub use real_engine::CollectiveChoiceEngine;
 pub use verify::{StepPos, VerifyBreak, verify, verify_by_replay, verify_chain_linkage};
 pub use vote::{StubVoteEngine, VoteEngine, VoteError, VoteOption, labeled_tally};
-pub use world::{CellHandler, ChoiceView, Driver, Playthrough, StepReceipt, WorldCell, WorldError};
+pub use world::{
+    CellHandler, ChoiceView, DECISION_EXT_KEY, Driver, Playthrough, StepReceipt, WorldCell,
+    WorldError, decision_commitment,
+};
+
+// The field type the certified-decision binding is expressed in (a re-export so a
+// consumer — e.g. `dungeon-on-dregg` — can name a `decision_commitment` without a
+// direct `dregg-app-framework` dependency line just for the type).
+pub use dregg_app_framework::FieldElement;
 
 // Re-export the pieces of spween a consumer needs to parse + describe a story.
 pub use spween::{Scene, Value, parse};
