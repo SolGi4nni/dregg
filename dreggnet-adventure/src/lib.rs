@@ -246,6 +246,66 @@ pub fn loot_seed(run: &DailyRun, idx: u64) -> Vec<u8> {
     h.finalize().as_bytes().to_vec()
 }
 
+/// The typed material **kind** the run's loot drops carry as forge inputs — the single kind
+/// the descent-relic recipe consumes two of (the forge's real typed sink; a wrong-kind input
+/// is a refusal).
+pub const RELIC_MATERIAL_KIND: &str = "essence:descent";
+
+/// **The recipe the run's loot forges into** — a SAFE (always-succeeds) two-input relic recipe
+/// over the shared [`dreggnet_gear::StatBlock`] schema. The forge crafts against its COMMITTED
+/// [`dreggnet_craft::RecipeBook`], looking the recipe up by `draw.recipe_id`, so a craft cannot
+/// bring its own odds; this recipe is registered into the forge before the craft. It is safe
+/// (outcome weight wholly on success) so a driven win always mints the relic the trade moves —
+/// the loot-into-relic sink the flagship after-run spine needs, not a gamble. The `id` binds
+/// into the craft seed and the output's content address.
+pub fn descent_relic_recipe() -> dreggnet_craft::Recipe {
+    use dreggnet_craft::{GearSlot, GearTemplate, Recipe};
+    Recipe::gear(
+        "forge:descent-relic",
+        &[RELIC_MATERIAL_KIND, RELIC_MATERIAL_KIND],
+        GearTemplate {
+            slot: GearSlot::Weapon,
+            rune: 0xDE5CE7,
+            base_might: 30,
+            base_ward: 6,
+            base_guile: 6,
+        },
+    )
+}
+
+/// **Forge the run's loot into the relic note** — mint two typed material drops bound to THIS
+/// run's loot seed (the fair-draw-seeded material faucet), register the committed recipe into a
+/// fresh forge, roll the fair craft over the catalog's odds, and craft (a safe recipe always
+/// mints). Returns the forge — still carrying the live relic note in its one ledger, ready to
+/// hand to [`dreggnet_trade::TradeWorld::with_assets`] so the SAME note-cell trades on with no
+/// re-mint — and the relic's [`AssetId`]. Non-panicking (a reusable library entry).
+fn forge_run_loot(
+    run: &DailyRun,
+    who: &PlayerIdentity,
+) -> Result<(dreggnet_craft::CraftForge, dreggnet_asset::AssetId), String> {
+    use dreggnet_craft::{CraftForge, RecipeBook, roll_craft};
+    let recipe = descent_relic_recipe();
+    let mut forge = {
+        let mut book = RecipeBook::new();
+        book.register(recipe.clone());
+        CraftForge::with_book(book)
+    };
+    let m1 = forge.mint_material(who.holder_label(), RELIC_MATERIAL_KIND, &loot_seed(run, 1));
+    let m2 = forge.mint_material(who.holder_label(), RELIC_MATERIAL_KIND, &loot_seed(run, 2));
+    let draw = roll_craft(
+        &CommittedSeed::from_bytes(run.final_commitment()),
+        &recipe,
+        &[m1, m2],
+    );
+    let relic = forge
+        .craft(who.holder_label(), &draw)
+        .map_err(|e| format!("the loot did not forge: {e:?}"))?
+        .output()
+        .map(|out| out.asset_id)
+        .ok_or_else(|| "the safe descent-relic recipe botched (unreachable)".to_string())?;
+    Ok((forge, relic))
+}
+
 /// **Open + drive a full winning Descent run for `who`** — the shared entry the API and the
 /// after-run handoffs reuse. Returns the offering (owning the character store) and the WON run,
 /// or the executor's own reason if the run could not open or be driven to the win. Non-panicking
@@ -554,7 +614,6 @@ impl Adventure {
         use dreggnet_asset::AssetId;
         use dreggnet_cheevo::{Achievement, CheevoLedger};
         use dreggnet_companion::{CompanionRoost, roll_hatch};
-        use dreggnet_craft::{CraftForge, Recipe, roll_craft};
         use dreggnet_gear::{Armory, Loadout, Rarity as GearRarity, StatBlock};
         use dreggnet_guild::Guild;
         use dreggnet_party::{Party, PartyMove};
@@ -619,11 +678,14 @@ impl Adventure {
             .map_err(|e| {
                 AdventureError::at("loadout", format!("the companion did not hatch: {e:?}"))
             })?;
-        let buff = roost.arm_buff(&comp, COMPANION_AID_LEVEL);
+        let mut buff = roost.arm_buff(&comp, COMPANION_AID_LEVEL);
         roost
             .raise_to(&comp, 1)
             .map_err(|e| AdventureError::at("loadout", format!("raise to level 1: {e:?}")))?;
-        if roost.attempt_buff(&buff, hero.holder_label(), true).is_ok() {
+        if roost
+            .attempt_buff(&mut buff, hero.holder_label(), true)
+            .is_ok()
+        {
             return Err(AdventureError::at(
                 "loadout",
                 "the companion buff fired below the required level (fail-closed gate did not bite)",
@@ -633,7 +695,7 @@ impl Adventure {
             .raise_to(&comp, COMPANION_AID_LEVEL)
             .map_err(|e| AdventureError::at("loadout", format!("raise to the aid level: {e:?}")))?;
         roost
-            .attempt_buff(&buff, hero.holder_label(), true)
+            .attempt_buff(&mut buff, hero.holder_label(), true)
             .map_err(|e| {
                 AdventureError::at(
                     "loadout",
@@ -642,33 +704,20 @@ impl Adventure {
             })?;
         let companion_buff = roost.buff_value(&buff);
 
-        // (3+5) THE RUN — the ACTUAL DailyDescentOffering, opened + driven to the win.
-        let (offering, mut run) = {
-            let offering = descent_offering();
-            let mut run = offering
-                .open_from_seed(hero.guild_member(), self.seed)
-                .map_err(|e| {
-                    AdventureError::at("run", format!("the descent did not open: {e:?}"))
-                })?;
-            drive_descent_to_win(&offering, &mut run)
-                .map_err(|reason| AdventureError::at("run", reason))?;
-            (offering, run)
-        };
-        if !run.is_won() || run.is_dead() {
-            return Err(AdventureError::at(
-                "run",
-                "the run did not end in a survived win",
-            ));
-        }
-        let run_won = true;
-        let xp = run.character().xp();
-
-        // (4) THE ONE RUN OBJECT — the day's universe + the single completion.
-        let (universe, completion) =
-            run_object(&offering, &run, hero).map_err(|r| AdventureError::at("run-object", r))?;
+        // (3) THE FACTION-GATED QUEST — posted against THIS day and STARTED *before* the run, so
+        // the faction standing is a real PRECONDITION of the descent, not a formality re-checked
+        // after the win. The day (hence its universe) is a pure function of the seed, fixed the
+        // moment the run opens — so the quest is posted + faction-started before a single move is
+        // driven, and the run is gated on it below.
+        let offering = descent_offering();
+        let mut run = offering
+            .open_from_seed(hero.guild_member(), self.seed)
+            .map_err(|e| AdventureError::at("run", format!("the descent did not open: {e:?}")))?;
+        let universe = run.day().universe(hero.name()).map_err(|e| {
+            AdventureError::at("run-object", format!("the day did not publish: {e:?}"))
+        })?;
         let universe_id: [u8; 32] = *universe.id().as_bytes();
 
-        // (3) THE FACTION- + COMPLETION-GATED QUEST — posted against THIS day; start on rep.
         let mut quest = CompletionGatedQuest::post(&universe);
         if quest.start().is_ok() {
             return Err(AdventureError::at(
@@ -681,6 +730,38 @@ impl Adventure {
             .start()
             .map_err(|e| AdventureError::at("quest", format!("the started quest refused: {e}")))?;
         let quest_started = quest.is_started();
+        // THE RUN GATE: the descent is driven ONLY once the faction-gated quest has actually
+        // started. A player who never earned Ember standing never reaches the run (the START
+        // above fails closed for them), so the faction rep truly gates the descent here — the
+        // gate is not dead theatre after a win.
+        if !quest_started {
+            return Err(AdventureError::at(
+                "run",
+                "the descent is gated on the started faction quest (no standing, no run)",
+            ));
+        }
+
+        // (3+5) THE RUN — the ACTUAL DailyDescentOffering, now driven to the win behind the gate.
+        drive_descent_to_win(&offering, &mut run)
+            .map_err(|reason| AdventureError::at("run", reason))?;
+        if !run.is_won() || run.is_dead() {
+            return Err(AdventureError::at(
+                "run",
+                "the run did not end in a survived win",
+            ));
+        }
+        let run_won = true;
+        let xp = run.character().xp();
+
+        // (4) THE ONE RUN OBJECT — the day's completion, re-verified + bound to the posted day.
+        let (run_universe, completion) =
+            run_object(&offering, &run, hero).map_err(|r| AdventureError::at("run-object", r))?;
+        if run_universe.id() != universe.id() {
+            return Err(AdventureError::at(
+                "run-object",
+                "the won run's day drifted from the faction-gated posted day",
+            ));
+        }
 
         // (6) CHEEVO + GUILD + QUEST TURN-IN — all off the SAME &universe + &completion.
         let mut cheevos = CheevoLedger::new();
@@ -716,21 +797,15 @@ impl Adventure {
                 AdventureError::at("cheevo", format!("the cheevo did not re-verify: {e:?}"))
             })?;
 
-        // (7) THE LOOT -> CRAFT -> TRADE — the SAME note-cell to a buyer.
+        // (7) THE LOOT -> CRAFT -> TRADE — the SAME note-cell to a buyer. The run's loot is
+        // forged against a recipe REGISTERED in the forge's committed catalog: two typed
+        // material drops bound to THIS run's loot seed are consumed (the real on-chain sink),
+        // and the fair draw is taken over the catalog's odds (the forge looks the recipe up by
+        // `draw.recipe_id`, never the caller's odds). The forge is handed to the trade world
+        // whole, so the relic the market moves IS the note the forge just minted (no re-mint).
         const BUYER: &str = "Corvane";
-        let mut forge = CraftForge::new();
-        let recipe = Recipe::new("forge:descent-relic", 2);
-        let m1 = forge.mint_material(hero.holder_label(), &loot_seed(&run, 1));
-        let m2 = forge.mint_material(hero.holder_label(), &loot_seed(&run, 2));
-        let draw = roll_craft(
-            &CommittedSeed::from_bytes(run.final_commitment()),
-            &recipe,
-            &[m1, m2],
-        );
-        let relic: AssetId = forge
-            .craft(hero.holder_label(), &draw, &recipe)
-            .map_err(|e| AdventureError::at("craft", format!("the loot did not forge: {e:?}")))?
-            .asset_id;
+        let (forge, relic): (_, AssetId) =
+            forge_run_loot(&run, hero).map_err(|r| AdventureError::at("craft", r))?;
         let mut market = TradeWorld::with_assets(forge.into_assets());
         market.fund_dregg(BUYER, 100);
         let mut trade = market.open_trade(
@@ -822,10 +897,10 @@ mod adventure {
     use dreggnet_asset::AssetId;
     use dreggnet_cheevo::{Achievement, CheevoError, CheevoLedger};
     use dreggnet_companion::{CompanionRoost, roll_hatch};
-    use dreggnet_craft::{CraftForge, Recipe, roll_craft};
+    use dreggnet_craft::{CraftForge, RecipeBook, roll_craft};
     use dreggnet_gear::{Armory, Loadout, Rarity as GearRarity, StatBlock};
     use dreggnet_guild::Guild;
-    use dreggnet_party::{Party, PartyMove};
+    use dreggnet_party::Party;
     use dreggnet_quest::giver::{EMBER_QUEST_VALUE, FactionGatedGiverWorld, GRANTED_SLOT};
     use dreggnet_trade::{LegSpec, TradeSide, TradeWorld};
     use dungeon_on_dregg::loot::{LootVault, reverify_drop, roll_drop};
@@ -1063,9 +1138,9 @@ mod adventure {
         let comp = roost
             .hatch(hero.holder_label(), &draw)
             .expect("the companion hatches from the run's seed");
-        let gate = roost.arm_buff(&comp, COMPANION_AID_LEVEL);
+        let mut gate = roost.arm_buff(&comp, COMPANION_AID_LEVEL);
         roost.raise_to(&comp, 1).expect("raise to level 1");
-        let below = roost.attempt_buff(&gate, hero.holder_label(), true);
+        let below = roost.attempt_buff(&mut gate, hero.holder_label(), true);
         assert!(
             below.is_err(),
             "the buff refuses below level, got {below:?}"
@@ -1079,7 +1154,7 @@ mod adventure {
             .raise_to(&comp, COMPANION_AID_LEVEL)
             .expect("raise to the required level");
         roost
-            .attempt_buff(&gate, hero.holder_label(), true)
+            .attempt_buff(&mut gate, hero.holder_label(), true)
             .expect("the level-2 companion aids the run cross-cell");
         assert_eq!(roost.buff_value(&gate), COMPANION_AID_LEVEL);
     }
@@ -1237,15 +1312,33 @@ mod adventure {
         let hero = hero();
         let (_offering, run) = won_descent(&hero);
 
-        let mut forge = CraftForge::new();
-        let recipe = Recipe::new("forge:descent-relic", 2);
-        let m1 = forge.mint_material(hero.holder_label(), &loot_seed(&run, 1));
-        let m2 = forge.mint_material(hero.holder_label(), &loot_seed(&run, 2));
+        // Register the committed recipe into a fresh forge, mint two TYPED material drops bound
+        // to the run's loot seed, roll the fair craft, and forge (2-arg craft; the recipe is
+        // looked up by `draw.recipe_id` in the catalog, not caller-supplied).
+        let recipe = descent_relic_recipe();
+        let mut forge = {
+            let mut book = RecipeBook::new();
+            book.register(recipe.clone());
+            CraftForge::with_book(book)
+        };
+        let m1 = forge.mint_material(
+            hero.holder_label(),
+            RELIC_MATERIAL_KIND,
+            &loot_seed(&run, 1),
+        );
+        let m2 = forge.mint_material(
+            hero.holder_label(),
+            RELIC_MATERIAL_KIND,
+            &loot_seed(&run, 2),
+        );
         let beacon = CommittedSeed::from_bytes(run.final_commitment());
         let draw = roll_craft(&beacon, &recipe, &[m1, m2]);
         let output = forge
-            .craft(hero.holder_label(), &draw, &recipe)
-            .expect("the run's loot forges into the relic");
+            .craft(hero.holder_label(), &draw)
+            .expect("the run's loot forges into the relic")
+            .output()
+            .cloned()
+            .expect("the safe descent-relic recipe mints an output");
         let relic: AssetId = output.asset_id;
         assert!(
             forge.is_destroyed(m1) && forge.is_destroyed(m2),
