@@ -1643,74 +1643,96 @@ fn escape(s: &str) -> String {
     out
 }
 
-/// The card styling — mirrors the cockpit dark theme so the browser projection matches
-/// the gpui `headless` dark-mode bake. `deos-vstack`/`deos-row` are flex; the button is
-/// the cockpit's primary accent.
+/// The card styling — the coherent dark **product** theme (the `#0b1020` catalog palette the
+/// dreggnet-web page-shell uses, so a surface rendered here sits flush inside the catalog). A
+/// readable max-width column, card-like panels, buttons that read as clickable, chips for pills,
+/// and — the star — a real, centered, square-celled game BOARD for [`ViewNode::CoordGrid`] (the
+/// automatafl grid + the multiway-tug hand), with hover, legal-move highlighting, and per-role
+/// cell tints. Every projection (native gpui / discord / web) inherits the SAME view-tree; this is
+/// the web skin.
 const CSS: &str = "
-:root{--bg:#15161c;--fg:#ece9e3;--muted:#9a958c;--accent:#6ea0ff;--border:#2c2e36;--panel:#22242c;--card:#1b1d24;}
+:root{--bg:#0b1020;--fg:#dfe8fb;--muted:#8fa2c4;--accent:#5cc9ff;--accent-ink:#04121f;--border:#243352;--panel:#111a2e;--card:#0f1830;--elev:#152444;--good:#48d597;--warn:#f2c94c;--bad:#f8737f;--head:#7fdfe0;}
 *{box-sizing:border-box;}
-body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',system-ui,sans-serif;display:flex;justify-content:center;padding:2rem;line-height:1.5;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
-.deos-card{background:var(--card);border:1px solid var(--border);border-radius:12px;padding:.6rem;min-width:248px;box-shadow:0 1px 3px rgba(0,0,0,.25);}
-.deos-vstack{display:flex;flex-direction:column;gap:.55rem;padding:.8rem;}
-.deos-row{display:flex;flex-direction:row;gap:.5rem;align-items:center;}
+body{margin:0;background:var(--bg);color:var(--fg);font-family:'IBM Plex Sans',ui-sans-serif,system-ui,-apple-system,sans-serif;display:flex;justify-content:center;padding:2rem 1.25rem;line-height:1.55;-webkit-font-smoothing:antialiased;text-rendering:optimizeLegibility;}
+.deos-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:.4rem;width:100%;max-width:640px;min-width:0;box-shadow:0 8px 30px -12px rgba(0,0,0,.6);}
+.deos-vstack{display:flex;flex-direction:column;gap:.6rem;padding:.9rem 1rem;}
+.deos-row{display:flex;flex-direction:row;gap:.55rem;align-items:center;flex-wrap:wrap;}
 .deos-text{color:var(--fg);}
-.deos-bind{font-weight:600;color:var(--fg);font-variant-numeric:tabular-nums;}
-.deos-input{padding:.3rem .55rem;border:1px solid var(--border);border-radius:6px;color:var(--muted);background:var(--bg);}
-.deos-button{background:var(--accent);color:#101216;font-weight:600;border:none;border-radius:7px;padding:.42rem .85rem;font-family:inherit;font-size:.9rem;cursor:pointer;transition:filter .12s,transform .06s;}
-.deos-button:hover{filter:brightness(1.08);}
+.deos-bind{font-weight:700;color:#fff;font-variant-numeric:tabular-nums;}
+.deos-input{padding:.4rem .6rem;border:1px solid var(--border);border-radius:7px;color:var(--fg);background:#0a1224;font:inherit;}
+.deos-input::placeholder{color:var(--muted);}
+.deos-input:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(92,201,255,.2);}
+.deos-button{background:var(--accent);color:var(--accent-ink);font-weight:700;border:none;border-radius:8px;padding:.44rem .9rem;font-family:inherit;font-size:.9rem;cursor:pointer;transition:filter .12s,transform .06s,box-shadow .12s;box-shadow:0 1px 0 rgba(0,0,0,.25);}
+.deos-button:hover{filter:brightness(1.09);box-shadow:0 3px 12px -4px var(--accent);}
 .deos-button:active{transform:translateY(1px);}
-.deos-list,.deos-table{display:flex;flex-direction:column;gap:.25rem;}
-.deos-table{border:1px solid var(--border);border-radius:6px;padding:.25rem;}
-.deos-section{display:flex;flex-direction:column;gap:.5rem;border:1px solid var(--border);border-radius:9px;padding:.7rem .8rem;background:rgba(255,255,255,.012);}
-.deos-section[data-tag=genuine]{border-color:#3a4d6b;}
-.deos-section-title{font-weight:600;font-size:.74rem;letter-spacing:.06em;text-transform:uppercase;color:var(--muted);}
-.deos-tabs{display:flex;flex-direction:column;gap:.5rem;}
-.deos-tabstrip{display:flex;flex-direction:row;gap:.4rem;}
-.deos-tab{background:var(--panel,#22242c);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:.3rem .7rem;font:inherit;cursor:pointer;}
-.deos-tab[data-index='0']{background:var(--accent);color:#fff;border-color:var(--accent);}
+.deos-list,.deos-table{display:flex;flex-direction:column;gap:.2rem;}
+.deos-table{border:1px solid var(--border);border-radius:9px;padding:.3rem;background:var(--panel);}
+.deos-table>.deos-row{justify-content:space-between;gap:.6rem;padding:.4rem .6rem;border-radius:6px;}
+.deos-table>.deos-row:nth-child(even){background:rgba(255,255,255,.03);}
+.deos-section{display:flex;flex-direction:column;gap:.55rem;border:1px solid var(--border);border-radius:11px;padding:.85rem 1rem;background:var(--panel);}
+.deos-section[data-tag=accent]{border-color:#2f5f8f;box-shadow:inset 0 0 0 1px rgba(92,201,255,.12);}
+.deos-section[data-tag=genuine]{border-color:#2f5f8f;}
+.deos-section-title{font-weight:700;font-size:.72rem;letter-spacing:.08em;text-transform:uppercase;color:var(--head);}
+.deos-tabs{display:flex;flex-direction:column;gap:.55rem;}
+.deos-tabstrip{display:flex;flex-direction:row;gap:.4rem;flex-wrap:wrap;}
+.deos-tab{background:var(--elev);color:var(--fg);border:1px solid var(--border);border-radius:7px;padding:.32rem .8rem;font:inherit;cursor:pointer;transition:border-color .12s;}
+.deos-tab:hover{border-color:var(--accent);}
+.deos-tab[data-index='0']{background:var(--accent);color:var(--accent-ink);border-color:var(--accent);font-weight:700;}
 .deos-tabpanel{display:block;}
 .deos-tabpanel:not([data-index='0']){display:none;}
-.deos-gauge{display:flex;flex-direction:column;gap:.25rem;}
+.deos-gauge{display:flex;flex-direction:column;gap:.3rem;}
 .deos-gauge-label{color:var(--fg);font-weight:700;}
-.deos-gauge-track{width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden;}
-.deos-gauge-fill{height:8px;background:var(--fg);border-radius:4px;width:0;}
-.deos-divider{border:none;border-top:1px solid var(--border);width:100%;margin:.25rem 0;}
-.deos-host{display:flex;flex-direction:column;gap:.4rem;border:1px solid var(--border);border-radius:8px;padding:.5rem .6rem;}
-.deos-host-head{color:var(--muted);font-size:.8rem;font-weight:600;}
+.deos-gauge-track{width:100%;max-width:220px;height:9px;background:#0a1224;border:1px solid var(--border);border-radius:5px;overflow:hidden;}
+.deos-gauge-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--good));border-radius:5px;width:0;}
+.deos-divider{border:none;border-top:1px solid var(--border);width:100%;margin:.35rem 0;}
+.deos-host{display:flex;flex-direction:column;gap:.45rem;border:1px solid var(--border);border-radius:10px;padding:.6rem .75rem;background:var(--panel);}
+.deos-host-head{color:var(--head);font-size:.78rem;font-weight:700;letter-spacing:.04em;}
 .deos-host-unresolved{color:var(--muted);font-style:italic;}
 .deos-inputgroup{display:inline-flex;gap:.4rem;align-items:center;}
-.deos-input-submit{background:var(--accent);color:#fff;border:none;border-radius:6px;padding:.35rem .7rem;font:inherit;cursor:pointer;}
+.deos-input-submit{background:var(--accent);color:var(--accent-ink);border:none;border-radius:7px;padding:.4rem .8rem;font:inherit;font-weight:700;cursor:pointer;}
 .deos-grid{display:flex;flex-wrap:wrap;gap:.5rem;}
 .deos-grid[style*=grid-template]{display:grid;}
+/* ── THE GAME BOARD — a coordgrid renders as a real, centered, square-celled board. ── */
+.deos-coordgrid{display:grid;gap:.35rem;width:100%;max-width:26rem;margin:.9rem auto;padding:.55rem;background:#0a1326;border:1px solid var(--border);border-radius:12px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35),0 6px 24px -14px #000;}
+.deos-cell,button.deos-cell{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-width:1.9rem;border:1px solid var(--border);border-radius:7px;background:#0d1830;color:var(--muted);font-size:1.2rem;font-weight:700;line-height:1;font-family:inherit;padding:0;margin:0;transition:border-color .12s,background .12s,color .12s,transform .07s,box-shadow .12s;}
+button.deos-cell{cursor:pointer;}
+button.deos-cell:hover{border-color:var(--accent);background:#15315a;color:#fff;transform:translateY(-1px);box-shadow:0 4px 14px -6px var(--accent);}
+button.deos-cell:active{transform:translateY(0);}
+.deos-cell.highlighted{color:#eaf5ff;border-color:var(--good);box-shadow:inset 0 0 0 1px var(--good),0 0 12px -4px var(--good);}
+.deos-cell[data-tag=good]{color:var(--good);}
+button.deos-cell[data-tag=good]:hover{border-color:var(--good);box-shadow:0 4px 14px -6px var(--good);}
+.deos-cell[data-tag=warn]{color:var(--warn);border-color:var(--warn);box-shadow:inset 0 0 0 1px var(--warn);}
+.deos-cell[data-tag=accent]{color:#f2fbff;border-color:var(--accent);background:radial-gradient(circle at 50% 42%,rgba(92,201,255,.32),#0d1830 72%);box-shadow:inset 0 0 0 1px var(--accent),0 0 14px -4px var(--accent);}
+.deos-cell[data-tag=muted]{color:#4d6187;}
 .deos-breadcrumb{display:flex;flex-direction:row;align-items:center;gap:.35rem;flex-wrap:wrap;}
 .deos-crumb{color:var(--fg);}
 .deos-crumb-sep{color:var(--muted);}
 button.deos-crumb{background:none;border:none;color:var(--accent);cursor:pointer;font:inherit;padding:0;}
-.deos-progress{display:flex;flex-direction:column;gap:.25rem;}
+.deos-progress{display:flex;flex-direction:column;gap:.3rem;}
 .deos-progress-label{color:var(--fg);font-weight:700;}
-.deos-progress-track{width:140px;height:8px;background:var(--border);border-radius:4px;overflow:hidden;}
-.deos-progress-fill{height:8px;background:var(--fg);border-radius:4px;}
-.deos-pill{display:inline-block;padding:.15rem .55rem;border-radius:999px;font-size:.7rem;font-weight:700;letter-spacing:.05em;text-transform:uppercase;color:#fff;background:var(--accent);transition:background .15s;}
-.deos-pill[data-tag=good],.deos-pill[data-tag=genuine],.deos-pill[data-tag=live]{background:#3fb950;}
-.deos-pill[data-tag=warn],.deos-pill[data-tag=pending]{background:#d29922;}
-.deos-pill[data-tag=bad],.deos-pill[data-tag=refusal],.deos-pill[data-tag=revoked]{background:#f85149;}
-.deos-pill[data-tag=muted]{background:#9aa0aa;}
-.deos-icon{font-weight:700;color:var(--accent);}
-.deos-icon[data-tag=good],.deos-icon[data-tag=live]{color:#3fb950;}
-.deos-icon[data-tag=warn]{color:#d29922;}
-.deos-icon[data-tag=bad],.deos-icon[data-tag=refusal]{color:#f85149;}
-.deos-icon[data-tag=muted]{color:#9aa0aa;}
-.deos-menu{display:flex;flex-direction:column;gap:.2rem;margin:0;padding:.25rem;border:1px solid var(--border);border-radius:6px;list-style:none;}
+.deos-progress-track{width:100%;max-width:220px;height:9px;background:#0a1224;border:1px solid var(--border);border-radius:5px;overflow:hidden;}
+.deos-progress-fill{height:100%;background:linear-gradient(90deg,var(--accent),var(--good));border-radius:5px;}
+.deos-pill{display:inline-block;padding:.18rem .6rem;border-radius:999px;font-size:.68rem;font-weight:800;letter-spacing:.05em;text-transform:uppercase;color:var(--accent-ink);background:var(--accent);transition:background .15s;}
+.deos-pill[data-tag=good],.deos-pill[data-tag=genuine],.deos-pill[data-tag=live]{background:var(--good);}
+.deos-pill[data-tag=warn],.deos-pill[data-tag=pending]{background:var(--warn);}
+.deos-pill[data-tag=bad],.deos-pill[data-tag=refusal],.deos-pill[data-tag=revoked]{background:var(--bad);color:#fff;}
+.deos-pill[data-tag=muted]{background:#33415e;color:var(--fg);}
+.deos-icon{font-weight:800;color:var(--accent);}
+.deos-icon[data-tag=good],.deos-icon[data-tag=live]{color:var(--good);}
+.deos-icon[data-tag=warn]{color:var(--warn);}
+.deos-icon[data-tag=bad],.deos-icon[data-tag=refusal]{color:var(--bad);}
+.deos-icon[data-tag=muted]{color:var(--muted);}
+.deos-menu{display:flex;flex-direction:column;gap:.15rem;margin:0;padding:.3rem;border:1px solid var(--border);border-radius:9px;background:var(--panel);list-style:none;}
 .deos-menuitem{text-align:left;}
-button.deos-menuitem{background:none;border:none;color:var(--fg);cursor:pointer;font:inherit;padding:.25rem .5rem;border-radius:4px;}
-button.deos-menuitem:hover{background:var(--border);}
-.deos-disabled{opacity:.4;cursor:default;padding:.25rem .5rem;}
-.deos-halo{display:flex;flex-wrap:wrap;gap:.3rem;align-items:center;}
-.deos-handle{width:28px;height:28px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:var(--panel,#22242c);border:1px solid var(--border);color:var(--fg);cursor:pointer;font:inherit;}
+button.deos-menuitem{background:none;border:none;color:var(--fg);cursor:pointer;font:inherit;padding:.4rem .6rem;border-radius:6px;transition:background .12s;}
+button.deos-menuitem:hover{background:var(--elev);color:#fff;}
+.deos-disabled{opacity:.4;cursor:default;padding:.4rem .6rem;}
+.deos-halo{display:flex;flex-wrap:wrap;gap:.35rem;align-items:center;}
+.deos-handle{width:30px;height:30px;border-radius:999px;display:inline-flex;align-items:center;justify-content:center;background:var(--elev);border:1px solid var(--border);color:var(--fg);cursor:pointer;font:inherit;transition:border-color .12s;}
 button.deos-handle:hover{border-color:var(--accent);}
-.deos-slider{width:200px;accent-color:var(--accent);}
-.deos-toggle{background:var(--panel,#22242c);color:var(--fg);border:1px solid var(--border);border-radius:6px;padding:.3rem .6rem;cursor:pointer;font:inherit;}
-.deos-tile{display:flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:6px;background:#101216;color:var(--muted);font-size:.8rem;}
+.deos-slider{width:200px;max-width:100%;accent-color:var(--accent);}
+.deos-toggle{background:var(--elev);color:var(--fg);border:1px solid var(--border);border-radius:7px;padding:.34rem .7rem;cursor:pointer;font:inherit;}
+.deos-tile{display:flex;align-items:center;justify-content:center;border:1px dashed var(--border);border-radius:8px;background:#0a1224;color:var(--muted);font-size:.8rem;}
 ";
 
 /// The browser-side affordance wire — a button click reads its `data-turn`/`data-arg`,
@@ -1929,6 +1951,109 @@ mod trustless_tests {
         // The field flips from unverified to verified/refused on its opening.
         assert!(doc.contains("deos-field-unverified") && doc.contains("deos-field-verified"));
         assert!(doc.contains("deosVerifyFields"));
+    }
+
+    /// THE STYLED GAME BOARD. A `CoordGrid` (the automatafl board / the multiway-tug hand)
+    /// renders as a REAL, designed board — a CSS grid of square cells, one clickable
+    /// `<button class="deos-cell deos-button">` per legal-move cell (carrying its `{turn, arg}`
+    /// affordance), an inert `<span class="deos-cell">` per non-move square, a `highlighted`
+    /// class on the legal-move / selected / automaton set, and per-role `data-tag` tints — NOT a
+    /// wall of bare `·`/`R`/`A` glyph text. The card document inlines the board stylesheet (the
+    /// `grid`, the square `.deos-cell`, the `highlighted` accent, the tag tints) so it PAINTS.
+    #[test]
+    fn coordgrid_renders_as_a_styled_clickable_board_not_raw_text() {
+        use crate::tree::CoordCell;
+        // A 3-wide slice of an automatafl board: the automaton `@` (accent, highlighted, inert),
+        // a repulsor piece `R` (inert), a vacant square `·` (muted, inert), and a legal target
+        // `·` (good, highlighted, CLICKABLE — a `commit` to square index 5).
+        let board = ViewNode::CoordGrid {
+            cols: 3,
+            cells: vec![
+                CoordCell {
+                    glyph: "@".into(),
+                    tag: "accent".into(),
+                    turn: String::new(),
+                    arg: 0,
+                    highlight: true,
+                },
+                CoordCell {
+                    glyph: "R".into(),
+                    tag: String::new(),
+                    turn: String::new(),
+                    arg: 1,
+                    highlight: false,
+                },
+                CoordCell {
+                    glyph: "·".into(),
+                    tag: "muted".into(),
+                    turn: String::new(),
+                    arg: 2,
+                    highlight: false,
+                },
+                CoordCell {
+                    glyph: "·".into(),
+                    tag: "good".into(),
+                    turn: "commit".into(),
+                    arg: 5,
+                    highlight: true,
+                },
+            ],
+        };
+        let html = render_html(&board, &[]);
+
+        // ── The board is a CSS GRID, centered, with the dynamic column template. ──────────
+        assert!(
+            html.contains(r#"<div class="deos-coordgrid" data-cols="3""#),
+            "the board is a coordgrid container: {html}"
+        );
+        assert!(
+            html.contains("display:grid;grid-template-columns:repeat(3,1fr);"),
+            "the grid column template is emitted for the {{cols}}-wide board: {html}"
+        );
+        // ── A legal-move cell is a CLICKABLE button carrying its verified-turn affordance. ─
+        assert!(
+            html.contains(r#"<button class="deos-cell deos-button highlighted" data-tag="good" data-turn="commit" data-arg="5">·</button>"#),
+            "the legal-move cell is a highlighted <button> with its {{turn, arg}} intact: {html}"
+        );
+        // ── The automaton is a highlighted, tinted, INERT cell (a span, no affordance). ────
+        assert!(
+            html.contains(r#"<span class="deos-cell highlighted" data-tag="accent">@</span>"#),
+            "the automaton marker is a highlighted accent cell: {html}"
+        );
+        // ── An ordinary square is an inert span cell — the glyph is WRAPPED in a cell, not
+        //    a bare run of `·`/`R` text. ────────────────────────────────────────────────
+        assert!(
+            html.contains(r#"<span class="deos-cell" data-tag="">R</span>"#),
+            "a piece square is a cell element, not raw glyph text: {html}"
+        );
+        assert!(
+            !html.contains(">·  ·") && !html.contains("· · "),
+            "no bare space-separated `·` grid text — every glyph is a cell: {html}"
+        );
+
+        // ── The full document inlines the BOARD STYLESHEET so the grid actually paints. ───
+        let doc = render_card_document("automatafl board", &board, &[]);
+        assert!(
+            doc.contains(".deos-coordgrid{"),
+            "the board grid CSS is inlined"
+        );
+        assert!(
+            doc.contains("aspect-ratio:1/1"),
+            "cells are styled as SQUARES (the game-board look), not text runs"
+        );
+        assert!(
+            doc.contains(".deos-cell.highlighted{"),
+            "the legal-move highlight style is inlined"
+        );
+        assert!(
+            doc.contains(".deos-cell[data-tag=accent]"),
+            "the per-role cell tints (automaton/goal) are inlined"
+        );
+        // The clickable cell overrides the big-pill button look with the square cell rule.
+        assert!(
+            doc.contains("button.deos-cell:hover"),
+            "clickable board cells get a board-cell hover, not the accent-pill button hover"
+        );
     }
 
     /// THE CONFIG-NOT-ARTIFACT SHAPE (server-supplied). The envelope is embedded as an
