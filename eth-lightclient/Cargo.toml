@@ -5,9 +5,8 @@
 # a standard audited BLS library (blst, the implementation every ETH consensus
 # client uses) is the correct and safe choice here.
 #
-# Build / test standalone:  cd eth-lightclient && cargo test && cargo build
-[workspace]
-
+# Folded into the root workspace (members, NOT default-members — the heavy blst /
+# alloy-trie native tree stays out of the bare dev loop, built via `-p eth-lightclient`).
 [package]
 name = "eth-lightclient"
 version = "0.1.0"

@@ -6,10 +6,8 @@ description = "Spec-faithful REFERENCE implementation of the Hermine lattice thr
 license = "AGPL-3.0-only"
 publish = false
 
-# Standalone: opt out of the breadstuffs root workspace (staged reference
-# work — deliberately NOT a member; builds in its own dir).
-[workspace]
-
+# Folded into the root workspace (members + default-members — 6 pure-Rust deps,
+# no native/links crate; dregg-federation path-deps it, now a normal member dep).
 [dependencies]
 # Production-hardening deps for the CSPRNG + constant-time Gaussian sampler
 # (all pure-Rust, no C). rand_chacha = a real ChaCha20 CSPRNG; subtle = constant-

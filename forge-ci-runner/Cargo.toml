@@ -16,6 +16,11 @@
 # genesis-turn commit path) and `dregg-firmament` (features=process-pd-sandbox —
 # the genuine macOS Seatbelt confinement). It is in the repo-root `Cargo.toml`
 # `exclude` list, so `cargo build/test --workspace` at the root never pulls it.
+# NOTE: a fold-back into the root was attempted + REVERTED — src/materialize.rs
+# calls `AtomContent::as_bytes()` and expects `d.string()?: AtomContent`, but the
+# current dregg-doc API dropped as_bytes and `string()` now returns `String`. That
+# pre-existing source drift (hidden by this crate's isolation) must be fixed in
+# materialize.rs before it can join the root workspace.
 [workspace]
 
 # THE FORK SEAM — replicated from `sel4/dregg-firmament/Cargo.toml`. Because this

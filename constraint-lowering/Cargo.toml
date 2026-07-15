@@ -3,9 +3,7 @@ name = "constraint-lowering"
 version = "0.1.0"
 edition = "2021"
 
-# Own workspace (excluded from the root) so `cd constraint-lowering && cargo test`
-# builds just this crate + dregg-circuit, robust to churn elsewhere in the tree.
-[workspace]
-
+# Folded into the root workspace (members + default-members — its sole dep
+# dregg-circuit is already a member, so folding adds nothing to the resolve).
 [dependencies]
 dregg-circuit = { path = "../circuit" }

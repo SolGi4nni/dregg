@@ -1,12 +1,11 @@
-[workspace]
-# Standalone workspace: keeps the heavy alloy/EVM dependency tree out of the
-# main workspace. Build with: cd chain && cargo check
-
+# Folded into the root workspace (members, NOT default-members): its heavy
+# alloy/EVM tree is optional (`on-chain` feature, off by default), so the default
+# dev loop never compiles it.
 [package]
 name = "dregg-chain"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.94.0"
+edition.workspace = true
+rust-version.workspace = true
 authors = ["Dregg Contributors"]
 license = "AGPL-3.0-or-later"
 description = "EVM settlement layer for dregg: Solidity contracts + host-side bridge flows (wrap prover: native gnark circuit, pending)"

@@ -4,12 +4,10 @@ version = "0.1.0"
 edition = "2021"
 description = "Trustless web facts you can reuse. A CLI + library that produces a PORTABLE, independently-verifiable proof that a real HTTPS endpoint genuinely returned a value (a Coinbase spot price, a GitHub commit) — authentic (MPC-TLS / tlsn), well-formed (JSON CFG parse certificate), injection-free, STARK-bound. Anyone can re-verify a proof.json trusting no one but the pinned transport anchors."
 
-# Detached from the parent workspace (its own empty `[workspace]` table, like
-# ../tee-verify) so this reusable crate builds standalone and never touches the
-# shared root manifest. The path-dep below still inherits its own settings from
-# the breadstuffs workspace it lives in.
-[workspace]
-
+# Folded into the root workspace (members, NOT default-members — its default
+# `live` feature links the heavy tlsn-live MPC-TLS backend, so keeping it out of
+# default-members prevents that from feature-unifying onto zkoracle-prove in the
+# light dev loop; build it explicitly with `-p dregg-oracle`).
 [dependencies]
 # THE PROVER/VERIFIER this tool wraps. `default-features = false` keeps the light
 # modeled core available; the `live` feature (default) turns on the real MPC-TLS

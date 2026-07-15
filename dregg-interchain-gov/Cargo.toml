@@ -9,32 +9,15 @@
 # join is a COMPILED, TESTED path: a tag drift is a build/test failure here, not a
 # silent nullifier-space corruption in a relayer.
 #
-# STANDALONE WORKSPACE (the `dregg-tui` pattern): deliberately NOT a member of the
-# repo-root workspace, because it must merge the excluded light-client graphs
-# (blst, alloy-trie, tendermint-rs, ics23) with the dregg-governance graph in one
-# resolution. Its path-deps that ARE root-workspace members (dregg-governance,
-# dregg-bridge, …) resolve their `workspace = true` inheritance against the ROOT
-# workspace, exactly as dregg-tui's do. `[patch.*]` replicates only the root
-# patches this graph consumes: the ark-serialize serde-integration fork and the
-# local plonky3-recursion checkout (both reached via dregg-governance →
-# collective-choice → the executor/circuit tree).
+# Folded into the root workspace (members, NOT default-members): it merges the
+# now-folded light-client graphs (blst/alloy-trie via eth-lightclient,
+# tendermint-rs/ics23 via cosmos-lightclient) with the dregg-governance graph.
+# Those heavy foreign-chain crates enter the root lock via the eth/cosmos members
+# anyway; this crate just joins them. Kept OUT of default-members so the bare dev
+# loop never compiles blst/tendermint. The plonky3-recursion + ark-serialize
+# [patch] blocks it replicated are now INHERITED from the root manifest.
 #
-# Build / test standalone:  cd dregg-interchain-gov && cargo test
-# Narrative demo:           cargo run --example cross_chain_vote
-[workspace]
-members = ["."]
-resolver = "2"
-
-[patch."https://github.com/emberian/plonky3-recursion"]
-p3-recursion = { path = "../../plonky3-recursion/recursion" }
-p3-circuit = { path = "../../plonky3-recursion/circuit" }
-p3-circuit-prover = { path = "../../plonky3-recursion/circuit-prover" }
-p3-poseidon2-circuit-air = { path = "../../plonky3-recursion/poseidon2-circuit-air" }
-
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-
+# Narrative demo:  cargo run -p dregg-interchain-gov --example cross_chain_vote
 [package]
 name = "dregg-interchain-gov"
 version = "0.1.0"

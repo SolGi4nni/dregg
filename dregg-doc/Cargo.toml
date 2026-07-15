@@ -18,17 +18,15 @@
 [package]
 name = "dregg-doc"
 version = "0.1.0"
-edition = "2024"
-rust-version = "1.94.0"
+edition.workspace = true
+rust-version.workspace = true
 license = "AGPL-3.0-or-later"
 description = "Pijul-shaped patch-theory core for the dreggverse document language: a document as a graph of alive/dead atoms, patches as graph operations, merge as the total pushout/union, conflicts as first-class antichain states."
 homepage = "https://dregg.fg-goose.online"
 repository = "https://github.com/emberian/dregg"
 
-# Own (empty) workspace root: keeps dregg-doc out of the parent workspace's
-# `cargo build/test --workspace` without touching the root Cargo.toml.
-[workspace]
-
+# Folded into the root workspace (members + default-members — light by default;
+# all heavy deps are optional behind `cell-heap`/`substrate`/`rope`).
 [features]
 # OFF by default: the core stays STANDALONE and dependency-free (load-bearing —
 # pure data structures + algorithms, fast and `cargo test`-able in isolation).
@@ -150,16 +148,9 @@ serde_json = { version = "1", optional = true }
 [dev-dependencies]
 ed25519-dalek = "2"
 
-# The parent dregg workspace patches `ark-serialize` to ember's fork (the
-# `serde_with` feature `dregg-hints` needs, transitively reachable through
-# `dregg-turn` under the `substrate` feature). Because dregg-doc is its OWN
-# (empty) workspace, it does not inherit the parent's `[patch]`, so it must
-# mirror it for `--features substrate` to resolve. The pure-git Plonky3 / p3
-# pins need no mirroring (the parent comment: "PURE git deps, no `[patch]` — a
-# fresh clone resolves identically"); only this `crates.io` patch does.
-[patch.crates-io]
-ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
-ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+# The ark-serialize serde-integration fork `[patch.crates-io]` this crate used to
+# mirror (needed by the transitive `dregg-hints` under `--features substrate`) is
+# now INHERITED from the root workspace manifest.
 
 [lints.rust]
 unsafe_code = "forbid"

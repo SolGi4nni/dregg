@@ -7,9 +7,8 @@
 # libraries every Cosmos/IBC client uses (tendermint-light-client-verifier, ics23)
 # are the correct and safe choice here — the same discipline as blst for ETH BLS.
 #
-# Build / test standalone:  cd cosmos-lightclient && cargo test && cargo build
-[workspace]
-
+# Folded into the root workspace (members, NOT default-members — the tendermint-rs /
+# ics23 tree stays out of the bare dev loop, built via `-p cosmos-lightclient`).
 [package]
 name = "cosmos-lightclient"
 version = "0.1.0"
@@ -47,6 +46,3 @@ prost = "0.13"
 base64 = "0.22"
 # Decode the app_hash hex.
 hex = "0.4"
-
-[profile.release]
-overflow-checks = true

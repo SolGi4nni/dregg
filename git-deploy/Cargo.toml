@@ -15,12 +15,8 @@
 #     is an on-disk JSON-lines checkpoint log; a general durable-workflow engine
 #     implements the same trait to take over crash-resume + exactly-once).
 #
-# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT a member of the
-# breadstuffs root, so it builds disjointly with
-#   cargo build --manifest-path git-deploy/Cargo.toml
-#   cargo test  --manifest-path git-deploy/Cargo.toml
-# Deliberately light deps (no proof tree, no `[patch]`) so the pull is buildable in
-# isolation. Promoting it to a root member is a one-line `members += "git-deploy"`.
+# Folded into the root workspace (members + default-members — light vanilla deps,
+# no proof tree, no `[patch]`, no native/links crate).
 
 [package]
 name = "git-deploy"
@@ -54,5 +50,3 @@ libc = "0.2"
 # The crash-resume test uses an on-disk journal + on-disk workdir in a temp dir, so
 # the durable checkpoint log + the built tree genuinely survive an engine teardown.
 tempfile = "3"
-
-[workspace]
