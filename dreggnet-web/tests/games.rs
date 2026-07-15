@@ -184,6 +184,85 @@ async fn a_full_automatafl_turn_plays_through_the_catalog() {
     );
 }
 
+/// **The server-form automatafl board renders as a POLISHED, clickable grid — not the minimal prior
+/// CSS.** This pins the ACTUAL deployed no-JS path (`render_catalog_forms` → `.coordgrid`/`.cell`/
+/// `tag-*` + the page `STYLE`): the board is a centered framed grid of SQUARE cells (`aspect-ratio:
+/// 1/1`), the clickable squares (`form.cell`) get a hover/lift + pointer cursor, a highlighted legal
+/// move gets a green ring, and the role tints paint (automaton = cyan glow, selected = amber, target
+/// = green, vacant = dim). The design is ported from deos-view's `.deos-cell`, but onto THIS path —
+/// the one the deployed demo actually serves.
+#[tokio::test]
+async fn the_server_form_automatafl_board_is_polished() {
+    let app = app();
+    let base = "/offerings/automatafl/session/auto-css";
+
+    // Open the board and light a piece's legal moves (so a `highlighted` legal-move cell is present).
+    let (status, body) = get(&app, base).await;
+    assert_eq!(status, StatusCode::OK);
+    let (_, body_after) = post(&app, &format!("{base}/act"), "select", idx(1, 1), "alice").await;
+
+    // ── THE MARKUP: a coordgrid of square cells, clickable POST forms, tinted + highlighted.
+    assert!(
+        body.contains("<div class=\"coordgrid\" style=\"grid-template-columns:repeat(5,1fr)\">"),
+        "the board is a 5-wide coordgrid: {body}"
+    );
+    assert!(
+        body.contains("<form class=\"cell") && body.contains("<button type=\"submit\">"),
+        "clickable squares are POST forms with a submit button"
+    );
+    assert!(
+        body.contains("tag-accent") && body.contains('@'),
+        "the automaton paints with the accent tint"
+    );
+    assert!(
+        body_after.contains("cell highlighted")
+            || body_after.contains("highlighted good")
+            || body_after.contains("tag-good"),
+        "a selected piece lights its legal moves (highlighted / good tint): {body_after}"
+    );
+
+    // ── THE CSS: the polished board rules are present (NOT the minimal prior stylesheet).
+    // The grid frame + square cells.
+    assert!(
+        body.contains(".coordgrid{display:grid")
+            && body.contains("max-width:24rem")
+            && body.contains("border-radius:14px"),
+        "the board is a centered, framed grid"
+    );
+    assert!(
+        body.contains(".coordgrid .cell{") && body.contains("aspect-ratio:1/1"),
+        "cells are square (aspect-ratio:1/1)"
+    );
+    // Clickable cells: pointer cursor + a hover lift.
+    assert!(
+        body.contains(".coordgrid form.cell{padding:0;cursor:pointer}"),
+        "clickable squares get a pointer cursor"
+    );
+    assert!(
+        body.contains(".coordgrid form.cell:hover{") && body.contains("transform:translateY(-1px)"),
+        "clickable squares lift on hover"
+    );
+    // The highlighted legal-move ring.
+    assert!(
+        body.contains(".coordgrid .cell.highlighted{")
+            && body.contains("box-shadow:inset 0 0 0 1px var(--good)"),
+        "a highlighted legal move gets a green ring"
+    );
+    // The role tints: accent (cyan automaton glow), warn (amber selected), good (green), muted (dim).
+    assert!(
+        body.contains(".coordgrid .cell.tag-accent{") && body.contains("radial-gradient"),
+        "the automaton cell has a cyan radial glow"
+    );
+    assert!(
+        body.contains(".coordgrid .cell.tag-warn{") && body.contains("var(--warn)"),
+        "the selected cell tints amber"
+    );
+    assert!(
+        body.contains(".coordgrid .cell.tag-good{") && body.contains(".coordgrid .cell.tag-muted{"),
+        "legal-target (green) + vacant (dim) tints are defined"
+    );
+}
+
 /// **A tug play lands for a browser user.** The seat-claiming adapter seats the first two browser
 /// users; a third is a spectator (refused, nothing commits), and the chain verifies.
 #[tokio::test]
