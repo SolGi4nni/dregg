@@ -66,6 +66,7 @@ pub mod inventory;
 pub mod party;
 pub mod tavern;
 pub mod trade;
+pub mod world;
 
 use deos_view::{MenuItem, ViewNode};
 use dreggnet_offerings::OfferingHost;
@@ -78,6 +79,7 @@ pub use inventory::{InventoryItem, InventoryOffering};
 pub use party::PartyOffering;
 pub use tavern::TavernOffering;
 pub use trade::TradeOffering;
+pub use world::{GameWorld, ItemRecord, Origin, SharedWorld};
 
 // ── Shared ViewNode builders — the ONE place these four surfaces compose the vocab, so every
 //    surface reads the same and a renderer change is felt uniformly. ─────────────────────────
@@ -146,18 +148,30 @@ pub(crate) fn short_hex(bytes: &[u8]) -> String {
 /// companion + tavern + party alongside the market (it avoids editing `dreggnet-web`: the web's
 /// `catalog_default_host` calls this after registering the dungeon/council/market, and the generic
 /// `/offering` discord adapter + the telegram/wechat frontends reach them the same way — each
-/// renders the SAME `render->ViewNode`). The read-surfaces mount their populated `demo()` state; the
-/// playable markets open fresh per session.
+/// renders the SAME `render->ViewNode`).
+///
+/// **The craft / inventory / trade surfaces are mounted onto ONE [`SharedWorld`]** — one
+/// [`dreggnet_asset::AssetWorld`], one item registry, one canonical player. So the demo IS the
+/// composition: forge a Greatblade on the craft surface and it is in your inventory and listable on
+/// your market stall, as the SAME note-cell (`dreggnet-saga`'s craft→trade handoff, in the shape
+/// live coexisting surfaces need — see [`world`]). The remaining five mount their own state:
+/// cheevo/guild/tavern are read-surfaces over other substrates, party has no asset ledger, and
+/// companion mints into its own `CompanionRoost` (the named next graduation).
+///
+/// One world per registration, so every session of these three shares it — a single-player demo
+/// world. Per-player worlds want a `SessionConfig` that carries the viewer's identity (today it
+/// carries only a seed); named, not faked.
 pub fn register_surfaces(host: &mut OfferingHost) {
+    let world = SharedWorld::demo("Adventurer");
     host.register(
         "trade",
         "DreggNet Trade — a player market (list · settle an atomic asset swap)",
-        TradeOffering::new(),
+        TradeOffering::in_world(world.clone()),
     );
     host.register(
         "inventory",
         "Inventory — your owned notes (gear · cards · trophies), provenance-checked",
-        InventoryOffering::demo("Adventurer"),
+        InventoryOffering::in_world(world.clone()),
     );
     host.register(
         "cheevos",
@@ -172,7 +186,7 @@ pub fn register_surfaces(host: &mut OfferingHost) {
     host.register(
         "craft",
         "Forge — a provably-fair craft loop (consume materials · mint a bound output)",
-        CraftOffering::new(),
+        CraftOffering::in_world(world),
     );
     host.register(
         "companion",

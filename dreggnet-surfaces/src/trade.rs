@@ -8,7 +8,19 @@
 //! to), so a non-owner listing, a double-list, a re-buy, or a paid-out buyer is a **real refusal**.
 //!
 //! The good's lineage (mint → custody → buyer) re-verifies through
-//! [`TradeWorld::verify_provenance`] — a traded item's rarity is a checkable hash chain.
+//! [`verify_provenance`](dreggnet_asset::AssetWorld::verify_provenance) — a traded item's rarity is
+//! a checkable hash chain.
+//!
+//! ## What the seller can sell
+//!
+//! [`TradeOffering::in_world`] opens the stall onto a [`SharedWorld`] — the ONE ledger
+//! [`crate::craft`] forges into and [`crate::inventory`] lists. The goods are then a LIVE read of
+//! the player's shelf, so **anything the player forges is listable the moment it is forged**: the
+//! crafted note crosses to a buyer as the EXACT note-cell the forge minted, its provenance lineage
+//! CONTINUING (mint(craft) → the crafter's claim → custody → buyer) in one ledger rather than
+//! restarting in a second world. The canned stock is exactly what its name says — an initial
+//! seeding of that shared world, the player's own notes, sitting beside what they craft.
+//! [`TradeOffering::new`] keeps the old siloed shape (a private world per session).
 //!
 //! ## Honest scope
 //!
@@ -24,8 +36,9 @@ use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
 };
-use dreggnet_trade::{AssetId, TradeWorld};
+use dreggnet_trade::AssetId;
 
+use crate::world::SharedWorld;
 use crate::{action_menu, menu, pill, row, section, text};
 use deos_view::ViewNode;
 
@@ -37,92 +50,148 @@ pub const TURN_BUY: &str = "buy";
 /// The affordance verb a seller fires to pull a listing back out of custody (`arg` = the good index).
 pub const TURN_CANCEL: &str = "cancel";
 
-/// The seller / buyer / neutral-custodian labels (the trade parties in the shared [`TradeWorld`]).
+/// The seller label of a SILOED stall ([`TradeOffering::new`]). A shared stall sells as its world's
+/// canonical player — the one identity the forge crafts as and the inventory lists for.
 const SELLER: &str = "seller";
-const BUYER: &str = "buyer";
+/// The buyer label (holds the trade-coin purse in the shared ledger).
+pub(crate) const BUYER: &str = "buyer";
+/// The neutral custodian a listing rests with between the list and the settle.
 const CUSTODY: &str = "market-custodian";
 
-/// A good on offer — an owned [`dreggnet_asset`](dreggnet_trade) note plus its display metadata
-/// (name/rarity are the content layer; the asset id + provenance are the real substrate).
-#[derive(Clone, Debug)]
-struct Good {
-    asset: AssetId,
+/// One good's paintable state, snapshotted out of the shared world for a render.
+struct Painted {
     name: String,
     rarity: String,
-    /// The price in trade-coins (how many coins the buyer crosses to take it).
     price: usize,
     listed: bool,
     sold: bool,
+    lineage: usize,
 }
 
-/// **A live trade session over the real trade substrate.** Owns the shared [`TradeWorld`] (the
-/// seller's + buyer's sovereign note ledgers), the goods on offer, the buyer's unspent trade-coins
-/// (owned notes the buyer crosses to pay), the coins already spent (for a genuine double-spend
-/// refusal probe), and the committed-turn count (each list/buy/cancel is a real transfer turn).
+/// **A live trade session over the real trade substrate.** A handle on the world holding the one
+/// ledger (the seller's + buyer's notes), the seller label, the coin the buyer last spent (for a
+/// genuine double-spend refusal probe), and the committed-turn count. The goods on offer are a live
+/// read of the seller's shelf — in a shared world, that includes whatever they just forged.
 pub struct TradeSession {
-    world: TradeWorld,
-    goods: Vec<Good>,
-    /// The buyer's unspent trade-coin notes (popped as they are crossed to the seller).
-    coins: Vec<AssetId>,
+    world: SharedWorld,
+    seller: String,
     /// A coin the buyer has already spent — a re-pay with it is a genuine executor refusal.
     last_spent_coin: Option<AssetId>,
     turns: usize,
 }
 
 impl TradeSession {
+    /// The registry indices of the seller's goods, in shelf order.
+    fn shelf(&self) -> Vec<usize> {
+        self.world.read().shelf(&self.seller)
+    }
+    /// The number of goods on offer.
+    pub fn goods_count(&self) -> usize {
+        self.shelf().len()
+    }
     /// Whether every good has sold (the market is exhausted).
     pub fn all_sold(&self) -> bool {
-        self.goods.iter().all(|g| g.sold)
+        let w = self.world.read();
+        let shelf = w.shelf(&self.seller);
+        !shelf.is_empty() && shelf.iter().all(|&i| w.items()[i].sold)
     }
     /// The number of goods currently listed (in custody, buyable).
     pub fn listed_count(&self) -> usize {
-        self.goods.iter().filter(|g| g.listed && !g.sold).count()
+        let w = self.world.read();
+        w.shelf(&self.seller)
+            .into_iter()
+            .filter(|&i| w.items()[i].listed && !w.items()[i].sold)
+            .count()
     }
     /// The number of goods sold to the buyer.
     pub fn sold_count(&self) -> usize {
-        self.goods.iter().filter(|g| g.sold).count()
+        let w = self.world.read();
+        w.shelf(&self.seller)
+            .into_iter()
+            .filter(|&i| w.items()[i].sold)
+            .count()
     }
     /// The buyer's unspent trade-coin balance.
     pub fn coin_balance(&self) -> usize {
-        self.coins.len()
+        self.world.read().coins().len()
     }
     /// The number of real committed transfer turns so far.
     pub fn turns(&self) -> usize {
         self.turns
     }
+    /// **The real asset ids on offer**, in render order — the same note-cells the inventory surface
+    /// lists and the forge minted.
+    pub fn asset_ids(&self) -> Vec<AssetId> {
+        let w = self.world.read();
+        w.shelf(&self.seller)
+            .into_iter()
+            .map(|i| w.items()[i].asset)
+            .collect()
+    }
+    /// This surface's index for `asset` (its position on the shelf), if the seller offers it.
+    pub fn index_of(&self, asset: AssetId) -> Option<usize> {
+        self.asset_ids().iter().position(|a| *a == asset)
+    }
     /// The current holder label of good `idx` off the real substrate (`seller`/custody/`buyer`).
     pub fn holder_of(&self, idx: usize) -> Option<String> {
-        let g = self.goods.get(idx)?;
-        self.world.current_holder_label(g.asset).map(str::to_string)
+        let asset = *self.asset_ids().get(idx)?;
+        self.world.write().holder_label(asset)
+    }
+    /// The world this stall stands on (the handle a sibling surface shares).
+    pub fn world(&self) -> &SharedWorld {
+        &self.world
+    }
+
+    /// The registry index of shelf position `idx`.
+    fn reg(&self, idx: usize) -> Option<usize> {
+        self.shelf().get(idx).copied()
     }
 }
 
-/// **The trade offering** — a stateless factory over the trade substrate. Each [`open`](Offering::open)
-/// deploys a fresh [`TradeSession`] (a seller stocked with goods + a buyer stocked with trade-coins).
-pub struct TradeOffering;
+/// **The trade offering** — a factory over the trade substrate. [`new`](Self::new) deploys a
+/// private world per session (a seller stocked with canned goods + a buyer stocked with coins);
+/// [`in_world`](Self::in_world) opens the stall onto a [`SharedWorld`] the craft + inventory
+/// surfaces also stand on.
+pub struct TradeOffering {
+    world: Option<SharedWorld>,
+}
 
 impl TradeOffering {
-    /// A fresh trade offering.
+    /// A SILOED trade offering — each [`open`](Offering::open) stands up its own world with the
+    /// canned stock. Nothing here reaches another surface.
     pub fn new() -> Self {
-        TradeOffering
+        TradeOffering { world: None }
+    }
+
+    /// **A stall onto a SHARED world** — it offers the world's canonical player's shelf off the ONE
+    /// ledger, so a note [`crate::CraftOffering::in_world`] forged is listable and sellable here as
+    /// the EXACT crafted note-cell (its forge lineage continuing across the sale, not restarting).
+    pub fn in_world(world: SharedWorld) -> Self {
+        TradeOffering { world: Some(world) }
     }
 
     fn do_list(&self, s: &mut TradeSession, idx: usize) -> Outcome {
-        let Some(g) = s.goods.get(idx) else {
+        let Some(reg) = s.reg(idx) else {
             return Outcome::Refused(format!("no good #{idx} on offer"));
         };
-        if g.sold {
-            return Outcome::Refused(format!("`{}` has already sold", g.name));
+        let (asset, name, listed, sold) = {
+            let w = s.world.read();
+            let r = &w.items()[reg];
+            (r.asset, r.name.clone(), r.listed, r.sold)
+        };
+        if sold {
+            return Outcome::Refused(format!("`{name}` has already sold"));
         }
-        if g.listed {
-            return Outcome::Refused(format!("`{}` is already listed", g.name));
+        if listed {
+            return Outcome::Refused(format!("`{name}` is already listed"));
         }
-        let (asset, name) = (g.asset, g.name.clone());
         // The listing IS a real owner-signed transfer of the owned note into neutral custody — a
-        // non-owner (or a double-list of a note no longer held) is a real executor refusal.
-        match s.world.assets().transfer(asset, SELLER, CUSTODY) {
+        // non-owner (or a list of a note the player gifted away) is a real executor refusal.
+        let seller = s.seller.clone();
+        let moved = s.world.write().assets().transfer(asset, &seller, CUSTODY);
+        match moved {
             Ok(tr) => {
-                s.goods[idx].listed = true;
+                s.world.write().item_mut(reg).expect("checked").listed = true;
                 s.turns += 1;
                 Outcome::Landed {
                     receipt: tr.spend,
@@ -134,29 +203,36 @@ impl TradeOffering {
     }
 
     fn do_buy(&self, s: &mut TradeSession, idx: usize) -> Outcome {
-        let Some(g) = s.goods.get(idx) else {
+        let Some(reg) = s.reg(idx) else {
             return Outcome::Refused(format!("no good #{idx} on offer"));
         };
-        if g.sold {
-            return Outcome::Refused(format!("`{}` has already sold", g.name));
+        let (asset, name, price, listed, sold) = {
+            let w = s.world.read();
+            let r = &w.items()[reg];
+            (r.asset, r.name.clone(), r.price, r.listed, r.sold)
+        };
+        if sold {
+            return Outcome::Refused(format!("`{name}` has already sold"));
         }
-        if !g.listed {
-            return Outcome::Refused(format!(
-                "`{}` is not listed — the seller must list it",
-                g.name
-            ));
+        if !listed {
+            return Outcome::Refused(format!("`{name}` is not listed — the seller must list it"));
         }
-        let (asset, name, price) = (g.asset, g.name.clone(), g.price);
 
         // THE PAYMENT LEG. The buyer crosses `price` trade-coins to the seller. If the buyer is
         // paid out, we drive a GENUINE executor refusal by attempting to re-pay with an
         // already-spent coin (a real double-spend the substrate rejects), so the "cannot pay"
         // refusal is non-vacuous — and the good stays safe in custody (no half-open trade).
-        if s.coins.len() < price {
+        let seller = s.seller.clone();
+        if s.coin_balance() < price {
             if let Some(spent) = s.last_spent_coin {
-                let err = s.world.assets().transfer(spent, BUYER, SELLER).expect_err(
-                    "a re-pay with an already-spent coin must be refused by the executor",
-                );
+                let err = s
+                    .world
+                    .write()
+                    .assets()
+                    .transfer(spent, BUYER, &seller)
+                    .expect_err(
+                        "a re-pay with an already-spent coin must be refused by the executor",
+                    );
                 return Outcome::Refused(format!(
                     "the buyer cannot pay for `{name}` — no unspent trade-coin (a re-pay is refused: {err})"
                 ));
@@ -166,8 +242,13 @@ impl TradeOffering {
             ));
         }
         for _ in 0..price {
-            let coin = s.coins.pop().expect("checked coins.len() >= price above");
-            if let Err(e) = s.world.assets().transfer(coin, BUYER, SELLER) {
+            let coin = s
+                .world
+                .write()
+                .pop_coin()
+                .expect("checked coin_balance() >= price above");
+            let paid = s.world.write().assets().transfer(coin, BUYER, &seller);
+            if let Err(e) = paid {
                 // Payment refused mid-way — nothing crosses onward (the good is untouched).
                 return Outcome::Refused(format!("payment for `{name}` refused: {e}"));
             }
@@ -175,10 +256,12 @@ impl TradeOffering {
             s.turns += 1;
         }
 
-        // THE GOOD LEG. The good crosses custody → buyer (a real owner-signed transfer).
-        match s.world.assets().transfer(asset, CUSTODY, BUYER) {
+        // THE GOOD LEG. The good crosses custody → buyer (a real owner-signed transfer). In a
+        // shared world this is the crafted note's OWN cell continuing its lineage to a new owner.
+        let crossed = s.world.write().assets().transfer(asset, CUSTODY, BUYER);
+        match crossed {
             Ok(tr) => {
-                s.goods[idx].sold = true;
+                s.world.write().item_mut(reg).expect("checked").sold = true;
                 s.turns += 1;
                 let ended = s.all_sold();
                 Outcome::Landed {
@@ -191,19 +274,25 @@ impl TradeOffering {
     }
 
     fn do_cancel(&self, s: &mut TradeSession, idx: usize) -> Outcome {
-        let Some(g) = s.goods.get(idx) else {
+        let Some(reg) = s.reg(idx) else {
             return Outcome::Refused(format!("no good #{idx} on offer"));
         };
-        if g.sold {
-            return Outcome::Refused(format!("`{}` has already sold", g.name));
+        let (asset, name, listed, sold) = {
+            let w = s.world.read();
+            let r = &w.items()[reg];
+            (r.asset, r.name.clone(), r.listed, r.sold)
+        };
+        if sold {
+            return Outcome::Refused(format!("`{name}` has already sold"));
         }
-        if !g.listed {
-            return Outcome::Refused(format!("`{}` is not listed", g.name));
+        if !listed {
+            return Outcome::Refused(format!("`{name}` is not listed"));
         }
-        let (asset, name) = (g.asset, g.name.clone());
-        match s.world.assets().transfer(asset, CUSTODY, SELLER) {
+        let seller = s.seller.clone();
+        let moved = s.world.write().assets().transfer(asset, CUSTODY, &seller);
+        match moved {
             Ok(tr) => {
-                s.goods[idx].listed = false;
+                s.world.write().item_mut(reg).expect("checked").listed = false;
                 s.turns += 1;
                 Outcome::Landed {
                     receipt: tr.spend,
@@ -212,6 +301,39 @@ impl TradeOffering {
             }
             Err(e) => Outcome::Refused(format!("cancelling `{name}` refused: {e}")),
         }
+    }
+
+    /// Snapshot the seller's shelf for a render / an action pass (ONE short borrow).
+    fn paint(&self, s: &TradeSession) -> Vec<Painted> {
+        let mut w = s.world.write();
+        let shelf = w.shelf(&s.seller);
+        let base: Vec<(String, String, usize, bool, bool, AssetId)> = shelf
+            .into_iter()
+            .map(|i| {
+                let r = &w.items()[i];
+                (
+                    r.name.clone(),
+                    r.rarity.clone(),
+                    r.price,
+                    r.listed,
+                    r.sold,
+                    r.asset,
+                )
+            })
+            .collect();
+        base.into_iter()
+            .map(|(name, rarity, price, listed, sold, asset)| {
+                let lineage = w.assets().lineage_len(asset);
+                Painted {
+                    name,
+                    rarity,
+                    price,
+                    listed,
+                    sold,
+                    lineage,
+                }
+            })
+            .collect()
     }
 }
 
@@ -225,48 +347,35 @@ impl Offering for TradeOffering {
     type Session = TradeSession;
 
     fn open(&self, _cfg: SessionConfig) -> Result<TradeSession, OfferingError> {
-        let mut world = TradeWorld::new();
-        // The seller's stock — three goods of varied rarity, each an owned note the seller may list.
-        let stock = [
-            ("Ember Cloak", "legendary", 2usize),
-            ("Frost Charm", "rare", 1),
-            ("Whisper Dagger", "uncommon", 1),
-        ];
-        let goods = stock
-            .iter()
-            .enumerate()
-            .map(|(i, (name, rarity, price))| {
-                let asset = world.mint(SELLER, format!("dreggnet-surfaces/good-{i}").as_bytes());
-                Good {
-                    asset,
-                    name: (*name).to_string(),
-                    rarity: (*rarity).to_string(),
-                    price: *price,
-                    listed: false,
-                    sold: false,
-                }
-            })
-            .collect();
-        // The buyer's purse — three trade-coins (owned notes it crosses to pay). Enough for two of
-        // the three goods at their prices (2 + 1 + 1 = 4 total demand > 3 coins), so the market can
-        // exhaust the buyer and a further buy is a genuine "cannot pay" refusal.
-        let coins = (0..3)
-            .map(|i| world.mint(BUYER, format!("dreggnet-surfaces/coin-{i}").as_bytes()))
-            .collect();
-
+        // SHARED: adopt the world (already stocked — and its shelf grows as the player forges).
+        // SILOED: stand up a private world with the canned stock + the buyer's purse, exactly as
+        // this surface always did.
+        let world = match &self.world {
+            Some(w) => w.clone(),
+            None => {
+                let w = SharedWorld::new(SELLER);
+                w.seed_trade_stock(BUYER);
+                w
+            }
+        };
         Ok(TradeSession {
+            seller: world.player(),
             world,
-            goods,
-            coins,
             last_spent_coin: None,
             turns: 0,
         })
     }
 
     fn actions(&self, s: &TradeSession) -> Vec<Action> {
+        let painted = self.paint(s);
+        // A good the player still holds is listable; one they gifted away is not (the executor
+        // would refuse it anyway — the affordance just tells the truth up front).
+        let held: Vec<bool> = (0..painted.len())
+            .map(|i| s.holder_of(i).as_deref() == Some(s.seller.as_str()))
+            .collect();
+        let coins = s.coin_balance();
         let mut out = Vec::new();
-        let can_pay_any = !s.coins.is_empty();
-        for (i, g) in s.goods.iter().enumerate() {
+        for (i, g) in painted.iter().enumerate() {
             if g.sold {
                 continue;
             }
@@ -275,14 +384,14 @@ impl Offering for TradeOffering {
                     format!("List {} ({}★ · {}◈)", g.name, g.rarity, g.price),
                     TURN_LIST,
                     i as i64,
-                    true,
+                    held[i],
                 ));
             } else {
                 out.push(Action::new(
                     format!("Buy {} ({}◈)", g.name, g.price),
                     TURN_BUY,
                     i as i64,
-                    can_pay_any && s.coins.len() >= g.price,
+                    coins >= g.price,
                 ));
                 out.push(Action::new(
                     format!("Cancel the {} listing", g.name),
@@ -307,31 +416,50 @@ impl Offering for TradeOffering {
 
     /// Re-verify every good's provenance off the real substrate: each lineage re-derives (the
     /// content-addressed hash chain + the on-chain spent re-reads), and the current holder matches
-    /// the good's status (sold → buyer, listed → custody, else the seller).
+    /// what this stall did with it — sold → the buyer, listed → custody. An un-listed good must
+    /// simply NOT be in custody: in a shared world the player may have gifted it from the inventory
+    /// surface, and this stall reports only the notes it actually took (it holds nothing it did not
+    /// list).
     fn verify(&self, s: &TradeSession) -> VerifyReport {
-        for g in &s.goods {
-            let report = s.world.verify_provenance(g.asset);
+        let ids = s.asset_ids();
+        let painted = self.paint(s);
+        for (i, g) in painted.iter().enumerate() {
+            let report = s.world.read().forge().asset_provenance(ids[i]);
             if !report.verified {
                 return VerifyReport::broken(
                     s.turns,
                     format!("`{}` provenance broke: {:?}", g.name, report.reasons),
                 );
             }
-            let expected = if g.sold {
-                BUYER
-            } else if g.listed {
-                CUSTODY
-            } else {
-                SELLER
-            };
-            match s.world.current_holder_label(g.asset) {
-                Some(h) if h == expected => {}
-                other => {
+            let holder = s.world.write().holder_label(ids[i]);
+            if g.sold {
+                if holder.as_deref() != Some(BUYER) {
                     return VerifyReport::broken(
                         s.turns,
-                        format!("`{}` is held by {other:?}, expected `{expected}`", g.name),
+                        format!(
+                            "`{}` sold but is held by {holder:?}, expected `{BUYER}`",
+                            g.name
+                        ),
                     );
                 }
+            } else if g.listed {
+                if holder.as_deref() != Some(CUSTODY) {
+                    return VerifyReport::broken(
+                        s.turns,
+                        format!(
+                            "`{}` listed but is held by {holder:?}, expected `{CUSTODY}`",
+                            g.name
+                        ),
+                    );
+                }
+            } else if holder.as_deref() == Some(CUSTODY) {
+                return VerifyReport::broken(
+                    s.turns,
+                    format!(
+                        "`{}` is in custody but this stall lists nothing of the sort",
+                        g.name
+                    ),
+                );
             }
         }
         VerifyReport::ok(s.turns)
@@ -339,6 +467,7 @@ impl Offering for TradeOffering {
 
     fn render(&self, s: &TradeSession) -> Surface {
         let mut children: Vec<ViewNode> = Vec::new();
+        let painted = self.paint(s);
 
         // The stall summary.
         children.push(section(
@@ -346,7 +475,7 @@ impl Offering for TradeOffering {
             "muted",
             vec![text(format!(
                 "goods {} · listed {} · sold {} · buyer purse {}◈",
-                s.goods.len(),
+                painted.len(),
                 s.listed_count(),
                 s.sold_count(),
                 s.coin_balance(),
@@ -361,7 +490,7 @@ impl Offering for TradeOffering {
             text("Status"),
             text("Lineage"),
         ])];
-        for g in &s.goods {
+        for g in &painted {
             let (status, tag) = if g.sold {
                 ("sold", "good")
             } else if g.listed {
@@ -369,13 +498,12 @@ impl Offering for TradeOffering {
             } else {
                 ("in stock", "muted")
             };
-            let versions = s.world.lineage_len(g.asset);
             rows.push(row(vec![
                 text(&g.name),
                 pill(&g.rarity, "warn"),
                 text(format!("{}◈", g.price)),
                 pill(status, tag),
-                text(format!("v{versions}")),
+                text(format!("v{}", g.lineage)),
             ]));
         }
         children.push(section("Goods", "accent", vec![ViewNode::Table(rows)]));
