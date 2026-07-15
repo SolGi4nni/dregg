@@ -52,3 +52,5 @@ import Market.CertQpRustDenotation
 import Market.PriceCert
 import Market.FhIRAdmissible
 import Market.ZKOpenRel
+import Market.WideCommitBoundary
+import Market.ShieldedRingEndpointDescriptor
