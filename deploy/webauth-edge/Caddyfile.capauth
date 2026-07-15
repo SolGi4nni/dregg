@@ -1,0 +1,118 @@
+# webauth-edge — the capability forward-auth CADDY IDIOM.
+# ===========================================================================
+# The passwordless, capability-scoped edge that a gated surface sits behind. A
+# request is admitted only if it presents a `dga1_` capability that satisfies the
+# surface's required cap — verified OFFLINE by the `webauth-edge` service
+# (webauth-core/src/bin/webauth-edge.rs) against the issuer root. No password
+# anywhere. Every value below is CONFIGURATION — there is no hardcoded apex; set
+# the domains + upstreams in the environment and paste the blocks you need.
+#
+# ENV PLACEHOLDERS (Caddy `{$VAR:default}` — the default is a neutral example):
+#   WEBAUTH_UPSTREAM      the webauth-edge service         (default webauth:8099)
+#   WEBAUTH_LOGIN_BASE    public prefix for the login flow (default /.auth)
+#   OPS_DOMAIN            an operator dashboard host        (default ops.example)
+#   OPS_UPSTREAM          its private upstream              (default ops:8090)
+#   LAUNCHPAD_DOMAIN      the launchpad product host        (default launchpad.example)
+#   LAUNCHPAD_UPSTREAM    the launchpad-web upstream        (default launchpad:8785)
+#   IPFS_GATEWAY_UPSTREAM the content-addressed asset gateway (default ipfs-gateway:8080)
+#
+# THE NO-FORGE DISCIPLINE (why every gated route imports the strip):
+#   A gated upstream trusts X-Dregg-Subject / X-Dregg-Cap / X-Dregg-Auth as the
+#   VERIFIED identity webauth-edge set. That trust is sound ONLY if a CLIENT
+#   cannot supply those headers. `(strip_forged_identity)` DELETES any
+#   client-supplied identity/break-glass header BEFORE the `forward_auth`
+#   subrequest, on EVERY gated route. The second half of the discipline: the
+#   gated upstreams are reachable ONLY from Caddy on the private network — never
+#   host-published — so nothing can hit them directly and set headers freely.
+#
+# BOOTSTRAP: mint a root authority + caps with the issuing side
+# (webauth_core::grant / your issuing CLI), publish the root public key as
+# WEBAUTH_ROOT_PUBKEY in the webauth-edge service env, then sign in once at
+# https://<host>/.auth/login (a cookie scoped to the parent domain covers every
+# gated subdomain that shares it).
+
+# The login flow — PUBLIC (no auth) so a denied user CAN sign in. Import into
+# every gated host. Caddy strips the `{$WEBAUTH_LOGIN_BASE}` prefix, so
+# webauth-edge serves /login, /login/challenge, /logout, /healthz, /whoami.
+(webauth_login) {
+	handle_path {$WEBAUTH_LOGIN_BASE:/.auth}/* {
+		reverse_proxy {$WEBAUTH_UPSTREAM:webauth:8099}
+	}
+}
+
+# SUBJECT-SPOOFING DEFENCE — delete every client-supplied identity/break-glass
+# header BEFORE the auth subrequest. Import inside EVERY gated `handle`, ahead of
+# `forward_auth`.
+(strip_forged_identity) {
+	request_header -X-Dregg-Subject
+	request_header -X-Dregg-Cap
+	request_header -X-Dregg-Auth
+	request_header -X-Dregg-Break-Glass
+}
+
+# The forward_auth call itself, parameterized by the required cap. Usage inside a
+# handle block:  import cap_gate ops-admin
+(cap_gate) {
+	forward_auth {$WEBAUTH_UPSTREAM:webauth:8099} {
+		uri /auth?cap={args[0]}
+		copy_headers X-Dregg-Subject X-Dregg-Cap X-Dregg-Auth
+	}
+}
+
+# --- an OPERATOR dashboard — fully CAP-GATED (ops-admin) --------------------
+{$OPS_DOMAIN:ops.example} {
+	import webauth_login
+	handle {
+		import strip_forged_identity
+		import cap_gate ops-admin
+		reverse_proxy {$OPS_UPSTREAM:ops:8090}
+	}
+}
+
+# --- the LAUNCHPAD product surface — PUBLIC read, CAP-GATED writes ----------
+# The launchpad's discovery (/, token pages) and read/health API stay OPEN so
+# anyone can browse a launch; only the OPERATOR mutations (create a launch,
+# disclose the schedule) are gated behind the `launchpad-operator` capability.
+# This is the microsite-hosting composition: a signed-in operator's `create`
+# yields a landing page for the launch, and the launch's token metadata + images
+# are pinned content-addressed (see the IPFS block) so the token page renders
+# from a CID, not a mutable path. The verified X-Dregg-Subject the edge echoes on
+# an admitted `create` is the launch's content owner.
+{$LAUNCHPAD_DOMAIN:launchpad.example} {
+	request_body {
+		max_size 2MB
+	}
+
+	# PUBLIC: the login flow (so an operator can sign in with their capability).
+	import webauth_login
+
+	# CAP-GATED writes: creating a launch and disclosing its schedule are the
+	# only mutations, and both require `launchpad-operator`.
+	@writes {
+		method POST PUT PATCH DELETE
+		path /api/launches /api/launches/*
+	}
+	handle @writes {
+		import strip_forged_identity
+		import cap_gate launchpad-operator
+		reverse_proxy {$LAUNCHPAD_UPSTREAM:launchpad:8785}
+	}
+
+	# CONTENT-ADDRESSED assets: a launch's token metadata + image are served by
+	# CID from the IPFS gateway, so a visitor re-witnesses the bytes against the
+	# CID (content-addressing) AND the launch record that commits it. Public,
+	# read-only, immutable-cacheable.
+	handle /ipfs/* {
+		header Cache-Control "public, max-age=31536000, immutable"
+		reverse_proxy {$IPFS_GATEWAY_UPSTREAM:ipfs-gateway:8080}
+	}
+
+	# PUBLIC read: discovery, token pages, and the read/health API stay open.
+	handle {
+		reverse_proxy {$LAUNCHPAD_UPSTREAM:launchpad:8785}
+	}
+
+	header X-Content-Type-Options "nosniff"
+	header X-Frame-Options "SAMEORIGIN"
+	header Referrer-Policy "strict-origin-when-cross-origin"
+}

@@ -19,18 +19,17 @@
 //! - [`challenge`] — the stateless, replica-safe login challenge (keyed-BLAKE3
 //!   self-authenticating nonce).
 //! - [`decide`] — the per-request authorization decision.
-//!
-//! ## The named work item (out of scope here)
-//! The HTTP server half — `/auth` forward-auth endpoint, `/login` page +
-//! challenge/PoP flow, session cookie management, safe-redirect — is the prior operated layer
-//! `webauth/src/server.rs` (688 lines) and is NOT ported yet; this crate is
-//! everything it stands on.
+//! - [`server`] — the pure-`std` forward-auth HTTP server that turns a reverse
+//!   proxy's `forward_auth` subrequest into a `200`/`401`/`403` over [`decide`],
+//!   plus the `/login` proof-of-possession flow and a `/whoami` session probe.
+//!   The serving binary is `src/bin/webauth-edge.rs`.
 
 pub mod account_id;
 pub mod challenge;
 pub mod config;
 pub mod credext;
 pub mod grant;
+pub mod server;
 
 use config::WebAuthConfig;
 use credext::CredentialExt;
