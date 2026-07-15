@@ -921,14 +921,14 @@ mod tests {
     /// test interns the 32-byte keys/roots to stable u64 ids (signer = its pool
     /// index, root = its pool index) and applies the SAME first-write-wins
     /// dedup to the raw emission sequence it feeds the collector — the identical
-    /// tally, two deciders. Self-skips when the archive lacks the export.
+    /// tally, two deciders. Self-skips when the archive lacks the export — unless
+    /// `DREGG_TEST_REQUIRE_LEAN=1`, under which the absent export PANICS.
     #[test]
     fn quorum_decision_matches_verified_lean_gate() {
-        if !dregg_lean_ffi::distributed_ffi::finalization_quorum_available() {
-            eprintln!(
-                "SKIP: Lean finalization-quorum export not linked \
-                 (finalization_quorum_available()==false)"
-            );
+        if !dregg_lean_ffi::demand_lean(
+            dregg_lean_ffi::distributed_ffi::finalization_quorum_available(),
+            "the Lean finalization-quorum export (finalization_quorum_available()==false)",
+        ) {
             return;
         }
 

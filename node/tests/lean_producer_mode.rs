@@ -198,8 +198,10 @@ fn run_producer_mode(pre: Ledger, turn: Turn, expected_committed: bool, ids: &[C
 
 #[test]
 fn producer_mode_transfer_commits_lean_state_matching_rust() {
-    if !dregg_lean_ffi::lean_available() {
-        eprintln!("SKIP: Lean archive not linked (lean_available()==false)");
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::lean_available(),
+        "the Lean executor archive (lean_available()==false)",
+    ) {
         return;
     }
     let (pre, a_id, b_id) = two_cell_ledger();
@@ -219,8 +221,10 @@ fn producer_mode_transfer_commits_lean_state_matching_rust() {
 
 #[test]
 fn producer_mode_setfield_commits_lean_state_matching_rust() {
-    if !dregg_lean_ffi::lean_available() {
-        eprintln!("SKIP: Lean archive not linked (lean_available()==false)");
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::lean_available(),
+        "the Lean executor archive (lean_available()==false)",
+    ) {
         return;
     }
     let (pre, a_id, b_id) = two_cell_ledger();
@@ -240,8 +244,10 @@ fn producer_mode_setfield_commits_lean_state_matching_rust() {
 
 #[test]
 fn producer_mode_cell_unseal_commits_lean_state_matching_rust() {
-    if !dregg_lean_ffi::lean_available() {
-        eprintln!("SKIP: Lean archive not linked (lean_available()==false)");
+    if !dregg_lean_ffi::demand_lean(
+        dregg_lean_ffi::lean_available(),
+        "the Lean executor archive (lean_available()==false)",
+    ) {
         return;
     }
     // CellUnseal (Sealed->Live) — the LIFECYCLE root-gap CLOSE driven through the node commit

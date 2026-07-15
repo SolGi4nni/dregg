@@ -4668,6 +4668,52 @@ where
 }
 
 // ============================================================================
+// WGSL debug seam (NOT a gate — see `examples/wgsl_debug.rs`)
+// ============================================================================
+
+/// The RADV-crash bisection tools, as a narrow debug seam rather than as `#[test]`s.
+///
+/// These two entry points reproduce a live RADV `create_compute_pipeline` SIGSEGV by dumping the
+/// generated hash-engine WGSL and re-compiling an externally-edited copy — the shader can then be
+/// bisected without a full Rust recompile. They assert nothing and are not gates; they were
+/// previously registered as `#[test]`s, which made them report `ok` on every CI run while proving
+/// nothing (and writing `/tmp/hash.wgsl` unconditionally).
+///
+/// `#[doc(hidden)]` and deliberately narrow: the shader source and the wgpu device stay PRIVATE to
+/// the prover. Only these two functions cross the wall, so a debug tool cannot become a second,
+/// unaudited way into the GPU backend. Driven by `examples/wgsl_debug.rs`.
+#[cfg(not(target_arch = "wasm32"))]
+#[doc(hidden)]
+pub mod wgsl_debug {
+    /// The generated hash-engine WGSL at the deployed workgroup size — the exact source the prover
+    /// compiles, so a bisection starts from the real text and not a reconstruction.
+    pub fn hash_shader_source_at_deployed_wg() -> String {
+        super::hash_shader_source(super::HASH_WG)
+    }
+
+    /// Create a compute pipeline for `entry` from `src` on the shared adapter. `Ok` carries the
+    /// bind-group-layout debug string (the crash reproduces *inside* this call, as a SIGSEGV, so a
+    /// returned `Ok` is itself the signal that the shader survived compilation).
+    pub fn compile_probe(src: &str, entry: &str) -> Result<String, String> {
+        let shared = super::shared_gpu().ok_or("no GPU adapter available")?;
+        let device = &shared.device;
+        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
+            label: Some("wgsl-debug-harness"),
+            source: wgpu::ShaderSource::Wgsl(src.into()),
+        });
+        let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
+            label: Some("wgsl-debug-harness"),
+            layout: None,
+            module: &module,
+            entry_point: Some(entry),
+            compilation_options: Default::default(),
+            cache: None,
+        });
+        Ok(format!("{:?}", pipe.get_bind_group_layout(0)))
+    }
+}
+
+// ============================================================================
 // Parity gates
 // ============================================================================
 
@@ -4699,49 +4745,20 @@ mod tests {
         RowMajorMatrix::new(values, cols)
     }
 
-    // DIAGNOSTIC: dump the generated hash-engine WGSL to a file for offline
-    // bisection of the RADV compiler crash.
-    #[test]
-    fn dump_hash_wgsl() {
-        let path = std::env::var("DUMP_WGSL").unwrap_or_else(|_| "/tmp/hash.wgsl".into());
-        std::fs::write(&path, super::hash_shader_source(super::HASH_WG)).unwrap();
-        eprintln!("wrote {path}");
-    }
-
-    // DIAGNOSTIC: fast RADV-crash harness. Reads a WGSL file (WGSL_FILE) and
-    // creates a compute pipeline for entry WGSL_ENTRY — reproduces the
-    // create_compute_pipeline SIGSEGV without a full recompile so the shader
-    // can be bisected by editing the external file.
-    #[test]
-    fn compile_wgsl_from_env() {
-        let Ok(file) = std::env::var("WGSL_FILE") else {
-            eprintln!("WGSL_FILE unset; skipping");
-            return;
-        };
-        let entry = std::env::var("WGSL_ENTRY").unwrap_or_else(|_| "leaf_main".into());
-        let src = std::fs::read_to_string(&file).unwrap();
-        let shared = super::shared_gpu().expect("no gpu");
-        let device = &shared.device;
-        eprintln!("compiling {file} entry={entry} ...");
-        let module = device.create_shader_module(wgpu::ShaderModuleDescriptor {
-            label: Some("harness"),
-            source: wgpu::ShaderSource::Wgsl(src.into()),
-        });
-        let pipe = device.create_compute_pipeline(&wgpu::ComputePipelineDescriptor {
-            label: Some("harness"),
-            layout: None,
-            module: &module,
-            entry_point: Some(&entry),
-            compilation_options: Default::default(),
-            cache: None,
-        });
-        eprintln!(
-            "OK compiled entry={entry}: {:?}",
-            pipe.get_bind_group_layout(0)
-        );
-    }
+    // The two RADV-bisection DIAGNOSTICS that used to sit here — `dump_hash_wgsl` and
+    // `compile_wgsl_from_env` — are NOT tests and are no longer registered as such (P7). They were
+    // honestly comment-labelled DIAGNOSTIC, but being `#[test]` they reported `ok` on every CI run
+    // while asserting nothing: `dump_hash_wgsl` had ZERO assertions and wrote `/tmp/hash.wgsl`
+    // unconditionally; `compile_wgsl_from_env` returned early because `WGSL_FILE` is unset in CI,
+    // so it never executed its body. They inflated the count and measured nothing.
+    //
+    // They now live as real debug tools driven by the `wgsl_debug` example:
+    //   cargo run -p dregg-circuit-prove --example wgsl_debug -- dump [PATH]
+    //   cargo run -p dregg-circuit-prove --example wgsl_debug -- compile FILE [ENTRY]
+    // backed by the doc-hidden `crate::gpu_backend::wgsl_debug` seam below.
 
     #[test]
+    #[ignore = "GPU: asserts a real adapter; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn gpu_dft_parity_vs_radix2() {
         let gpu = GpuDft::default();
         assert!(
@@ -4779,6 +4796,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU: asserts a real adapter; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn gpu_mmcs_root_parity_openings_and_reject() {
         let gpu_mmcs = GpuBn254Mmcs::new(0);
         assert!(
@@ -4856,6 +4874,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU: asserts a real adapter; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn gpu_bn254_mmcs_wide_leaf_parity() {
         let gpu = GpuBn254Mmcs::new(0);
         assert!(gpu.adapter_available(), "GPU adapter required");
@@ -4905,6 +4924,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU: asserts a real adapter; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn gpu_lde_device_residency_hit_fallback_and_root_parity() {
         let gpu_dft = GpuDft::default();
         assert!(
@@ -5005,6 +5025,7 @@ mod tests {
     }
 
     #[test]
+    #[ignore = "GPU: asserts a real adapter; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn gpu_babybear_lde_residency_hit_and_root_parity() {
         let gpu_dft = GpuDft::default();
         assert!(
@@ -5546,15 +5567,23 @@ mod ondevice_tests {
         RowMajorMatrix::new(values, cols)
     }
 
+    /// FAIL-CLOSED + explicitly `#[ignore]`d, the one GPU law.
+    ///
+    /// This gate used to open `Err(e) => { eprintln!("no WebGPU device; on-device gate skipped");
+    /// return; }` — the SAME fail-open shape as the two in `tests/gpu_babybear_merkle_e2e.rs`, but
+    /// living in the file that is otherwise the reference for doing this right. A test named
+    /// `..._matches_cpu` reported **`ok`** on every GPU-less runner having matched nothing against
+    /// nothing.
     #[test]
+    #[ignore = "GPU: needs a real WebGPU device; run on the GPU lane (`scripts/test-gauntlet.sh gpu`)"]
     fn on_device_async_bn254_root_matches_cpu() {
-        let gpu = match pollster::block_on(init_gpu()) {
-            Ok(g) => g,
-            Err(e) => {
-                eprintln!("no WebGPU device ({e}); on-device gate skipped");
-                return;
-            }
-        };
+        let gpu = pollster::block_on(init_gpu()).unwrap_or_else(|e| {
+            panic!(
+                "no WebGPU device ({e}) — this on-device parity gate must RUN on the GPU lane, \
+                 never silently skip. It is `#[ignore]`d so a GPU-less runner skips it EXPLICITLY; \
+                 reaching this means the lane opted in with `--ignored` on a host with no device."
+            )
+        });
         eprintln!("on-device async engine adapter: {}", gpu.adapter_name());
 
         // The CPU floor is the untouched `OuterValMmcs` inside `GpuBn254Mmcs`.

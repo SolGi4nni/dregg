@@ -88,6 +88,160 @@ pub fn lean_available() -> bool {
     lean_init_once().is_ok()
 }
 
+/// ── THE TEST-SIDE HARD MODE (`DREGG_TEST_REQUIRE_LEAN`) ─────────────────────────────────────
+///
+/// The RUNTIME twin of the `DREGG_REQUIRE_LEAN` BUILD gate in `build.rs`. Same env grammar
+/// (`1`/`true`/`on`, any case), same purpose, different moment: the build gate refuses to *produce*
+/// a silently-marshal-only binary; this gate refuses to let a *test* silently self-skip the
+/// verified-gate assertion it is named for.
+///
+/// The hole it closes: a test that opens `if !finality_gate_available() { eprintln!("SKIP"); return; }`
+/// reports **`ok`** on an archive-less build having asserted NOTHING. Every load-bearing
+/// verified-gate test in `dregg-node` was shaped that way, so the crate's verified-consensus claim
+/// rested on assertions that no archive-less runner ever executed — and every runner was
+/// archive-less. A green that means nothing is worse than a red.
+///
+/// Usage — the ONE line at the top of a self-skipping test:
+///
+/// ```ignore
+/// if !dregg_lean_ffi::demand_lean(dregg_lean_ffi::finality_gate_available(), "finality-gate export") {
+///     return;
+/// }
+/// ```
+///
+/// Unset (a dev box, a marshal-only CI runner): returns `false`, the test prints its honest SKIP
+/// line and returns — today's behaviour, unchanged.
+/// Set to `1` (the scheduled hard-mode lane, where the archive IS seeded): **panics**, so an
+/// archive that lost an export cannot masquerade as a passing suite.
+pub fn test_require_lean() -> bool {
+    armed_from_env_value(std::env::var("DREGG_TEST_REQUIRE_LEAN").ok().as_deref())
+}
+
+/// The env GRAMMAR, split out from the env READ so it is testable as a pure function.
+/// Byte-for-byte the build gate's truthy set (`build.rs`'s `require_lean`).
+fn armed_from_env_value(v: Option<&str>) -> bool {
+    matches!(
+        v,
+        Some("1") | Some("true") | Some("TRUE") | Some("on") | Some("ON")
+    )
+}
+
+/// The skip-or-panic decision for a Lean-export-conditional test. Returns `true` when `available`
+/// (run the body); returns `false` to skip when the export is absent and the hard mode is OFF; and
+/// PANICS when the export is absent and `DREGG_TEST_REQUIRE_LEAN=1` — see [`test_require_lean`].
+///
+/// `what` names the missing export so the panic tells an operator which archive leg is stale
+/// (mirroring the build gate's fix-the-cause message rather than a bare assertion failure).
+pub fn demand_lean(available: bool, what: &str) -> bool {
+    demand_lean_armed(available, what, test_require_lean())
+}
+
+/// [`demand_lean`] with the armed decision passed IN rather than read from the process
+/// environment — which is what makes the gate's own poles testable.
+///
+/// The env is process-global and `cargo test` runs a binary's tests on parallel threads, so a test
+/// that armed the gate by `set_var` would race any sibling reading it (and `set_var` is `unsafe` in
+/// edition 2024, safe in this crate's 2021 — a portability wart on top). Threading the decision
+/// through a parameter removes the shared mutable state instead of synchronizing it.
+fn demand_lean_armed(available: bool, what: &str, armed: bool) -> bool {
+    if available {
+        return true;
+    }
+    assert!(
+        !armed,
+        "DREGG_TEST_REQUIRE_LEAN=1 but the linked archive lacks the {what} — this test would have \
+         SILENTLY SKIPPED its verified-gate assertion and reported `ok`, which is exactly what the \
+         hard mode exists to forbid. Fix the cause (seed a HEAD-matching dregg-lean-ffi/\
+         libdregg_lean.a via ./scripts/bootstrap.sh — the seed must match the current Lean HEAD or \
+         the export goes missing; see docs/BUILD-LEAN-LINKED-NODE.md), or unset \
+         DREGG_TEST_REQUIRE_LEAN to allow the honest skip."
+    );
+    eprintln!("SKIP: {what} not linked (DREGG_TEST_REQUIRE_LEAN unset — honest skip)");
+    false
+}
+
+#[cfg(test)]
+mod test_require_lean_gate {
+    use super::*;
+
+    /// HONEST POLE FIRST — a PRESENT export runs the body under BOTH modes.
+    ///
+    /// Without this the panic pole below would be vacuous: a `demand_lean` that panicked
+    /// unconditionally, or always returned `false`, would satisfy "absent ⇒ panic" just fine. This
+    /// is also the property that matters operationally — arming the hard mode must never red a test
+    /// whose export is actually there.
+    #[test]
+    fn present_export_runs_the_body_under_both_modes() {
+        assert!(
+            demand_lean_armed(true, "a present export", false),
+            "a present export must run the body with the hard mode OFF"
+        );
+        assert!(
+            demand_lean_armed(true, "a present export", true),
+            "a present export must run the body with the hard mode ON — arming reds nothing honest"
+        );
+    }
+
+    /// THE TOOTH — an ABSENT export under the hard mode PANICS, rather than returning the
+    /// skip-and-report-`ok` `false`. The forged witness is the exact live shape: the export is
+    /// missing and the lane claimed to require it.
+    #[test]
+    fn absent_export_panics_when_armed() {
+        let r = std::panic::catch_unwind(|| demand_lean_armed(false, "a missing export", true));
+        let err = r.expect_err("an absent export under the hard mode must PANIC, not return");
+        // Assert WHY it refused — a match on the message, not "something went wrong" (the P1b
+        // anti-pattern: any panic counting as a correct refusal).
+        let msg = err
+            .downcast_ref::<String>()
+            .map(String::as_str)
+            .expect("the gate must panic with a String message naming the cause");
+        assert!(
+            msg.contains("DREGG_TEST_REQUIRE_LEAN=1"),
+            "the panic must name the gate that fired; got: {msg}"
+        );
+        assert!(
+            msg.contains("a missing export"),
+            "the panic must name WHICH export is missing, or an operator cannot act on it; got: {msg}"
+        );
+    }
+
+    /// THE OPPOSITE POLE — hard mode OFF: an absent export skips (`false`) and does NOT panic.
+    /// This is what keeps a dev box / marshal-only runner green, and it is why arming is opt-in.
+    #[test]
+    fn absent_export_skips_when_not_armed() {
+        assert!(
+            !demand_lean_armed(false, "a missing export", false),
+            "an absent export must skip (return false) when the hard mode is off"
+        );
+    }
+
+    /// The env grammar is the BUILD gate's grammar, spelling for spelling. Divergence here would
+    /// mean `DREGG_TEST_REQUIRE_LEAN=on` arming the build but not the tests (or vice versa) —
+    /// exactly the kind of silent asymmetry that makes a gate untrustworthy. Pure function, so no
+    /// process env is touched and nothing races a sibling test.
+    #[test]
+    fn env_grammar_mirrors_the_build_gate() {
+        for truthy in ["1", "true", "TRUE", "on", "ON"] {
+            assert!(
+                armed_from_env_value(Some(truthy)),
+                "build.rs's require_lean accepts {truthy:?} as ON; this gate must agree"
+            );
+        }
+        // Explicitly-falsy, unset, and unrecognized spellings all mean NOT armed — the gate is
+        // opt-IN, so anything that is not a known truthy value must leave the honest skip in place.
+        for falsy in ["0", "false", "FALSE", "off", "OFF", "", "yes", "2"] {
+            assert!(
+                !armed_from_env_value(Some(falsy)),
+                "{falsy:?} is not a truthy spelling in the build gate's grammar"
+            );
+        }
+        assert!(
+            !armed_from_env_value(None),
+            "UNSET must not arm the hard mode — the skip stays honest by default"
+        );
+    }
+}
+
 /// Marshal a wire string through `dregg_exec_full_forest_auth_str` and return the raw
 /// output wire. Requires `lean_available()`.
 pub fn shadow_exec_full_forest_auth(wire: &str) -> Result<String, String> {

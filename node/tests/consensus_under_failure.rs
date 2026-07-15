@@ -191,10 +191,22 @@ fn launch(
         .args(["--consensus", "blocklace"])
         .args(["--idle-heartbeat-ms", "2000"])
         .args(["--block-cadence-ms", "1000"])
-        .env("DREGG_LEAN_PRODUCER", "0")
         .env("RUST_LOG", "warn")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
+    // THE PRODUCTION DEFAULT IS WHAT GETS FAULT-INJECTED. This harness used to hard-pin
+    // `DREGG_LEAN_PRODUCER=0` on every launched node, so the verified Lean producer — THE SWAP,
+    // on by default in production (`node/src/state.rs::lean_producer_env_enabled`) — was the one
+    // thing a real cross-node kill never exercised. The fault injection ran against a
+    // configuration no validator ships. Leaving the var UNSET is the production default; the
+    // effective producer still ANDs with the build-time `lean_available()`, so a marshal-only
+    // build degrades to Rust on its own rather than lying.
+    //
+    // The legacy-Rust comparison lane is still reachable, but now it must be ASKED for:
+    // `DREGG_TEST_LEAN_PRODUCER=0 cargo test ... -- --ignored`.
+    if let Ok(v) = std::env::var("DREGG_TEST_LEAN_PRODUCER") {
+        cmd.env("DREGG_LEAN_PRODUCER", v);
+    }
     if faucet {
         cmd.arg("--enable-faucet");
     }
@@ -289,6 +301,36 @@ fn run_kill_sim(n: usize, http_base: u16, gossip_base: u16) {
         ids.len(),
         n,
         "the {n} nodes must have {n} distinct identities (a real committee)"
+    );
+
+    // ── WHICH PRODUCER IS ACTUALLY UNDER FAULT? (the anti-vacuity leg of dropping the
+    // DREGG_LEAN_PRODUCER=0 pin). `state_producer` is the node's OWN report of the effective
+    // setting — env intent AND the build-time `lean_available()`. Reading it here means the lane
+    // can never quietly claim to fault-inject the verified producer while running the Rust one.
+    //
+    // Under `DREGG_TEST_REQUIRE_LEAN=1` (the scheduled hard-mode lane) a Rust producer is a hard
+    // FAILURE: that lane exists to assert the swap survives a validator kill, and a marshal-only
+    // build cannot assert it. Unset, we report precisely and keep the progress assertions —
+    // which bite either way.
+    let producers: Vec<String> = procs
+        .iter()
+        .map(|p| status_field(p.http, "state_producer").unwrap_or_else(|| "unknown".into()))
+        .collect();
+    let all_lean = producers.iter().all(|p| p == "lean");
+    if dregg_lean_ffi::test_require_lean() {
+        assert!(
+            all_lean,
+            "DREGG_TEST_REQUIRE_LEAN=1 demands the VERIFIED producer under fault injection, but \
+             the launched nodes report state_producer = {producers:?}. Either the node binary is \
+             marshal-only (seed a HEAD-matching dregg-lean-ffi/libdregg_lean.a — see \
+             docs/BUILD-LEAN-LINKED-NODE.md) or DREGG_TEST_LEAN_PRODUCER=0 is set, which \
+             deliberately runs the LEGACY comparison lane and must not be combined with the hard \
+             mode."
+        );
+    }
+    eprintln!(
+        "[producer] n={n}: state_producer = {producers:?} (all_lean = {all_lean}) — this is the \
+         configuration the kill below is injected against."
     );
 
     // Let steady rounds build before the fault.

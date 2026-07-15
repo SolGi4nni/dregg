@@ -1,0 +1,156 @@
+# armed-teeth.yml — RUN the adversarial tests that were written, correct, and never executed.
+#
+# THE HOLE THIS CLOSES. `#[ignore]` in this tree does not mean "broken" — it means "a real
+# recursion fold that takes minutes". But nothing ran the ignored set: `ci.yml` runs
+# `cargo test --workspace` (which by definition never runs ignored tests) and no script passed
+# `--ignored`. So all 8 `circuit-prove/tests/*_binding_deployed_tooth.rs` files — the DEPLOYED
+# light-client binding teeth, each of which builds a SPECIFIC forged witness (a claim no leg's
+# published teeth back) and requires the deployed recursion fold to refuse it — provided ZERO
+# assurance. They were documentation that compiled.
+#
+# "Expensive" must mean "runs nightly", never "runs never". That is all this workflow is.
+#
+# WHY A SEPARATE WORKFLOW rather than a step in ci.yml: these are minute-scale folds. Putting them
+# on the per-push gate would make every push wait on them, and the first slow week would end with
+# someone deleting the step. A schedule is the honest home for a lane whose cost is real.
+#
+# WHAT IS NOT HERE (named, not hidden):
+#
+#   * THE GPU TEETH. They now fail CLOSED on a missing adapter (they assert `adapter_available()`)
+#     and are `#[ignore]`d, so a GPU-less runner skips them EXPLICITLY — that is the one GPU law.
+#     A GitHub-hosted runner has no usable adapter, so running them here would be a guaranteed red
+#     that says nothing about the code. They run via `scripts/test-gauntlet.sh gpu` on a GPU box.
+#     There is no hosted GPU lane to add them to; wiring one needs a self-hosted GPU runner.
+#
+#   * THE LEAN HARD-MODE SOAK LANE (`DREGG_TEST_REQUIRE_LEAN=1` + `DREGG_TEST_REQUIRE_FINALITY=1`).
+#     It CANNOT run on a GitHub-hosted runner today, and saying so is more useful than shipping a
+#     lane that is red every night for a reason that is not a defect. The hard mode panics unless
+#     `libdregg_lean.a` is linked; that archive is gitignored and ~180 MB, `scripts/fetch-lean-seed.sh`
+#     is the minutes-long fast path — and `dregg-lean-ffi/lean-seed.pin` has `TAG=` EMPTY, i.e. NO
+#     seed release has ever been cut, so fetch dies. The only other path is a cold `lake` bootstrap,
+#     which `lean-seed.yml`'s own header says a hosted runner is too weak to do. So the hard-mode
+#     lane is defined below as `lean-hard-mode`, gated to a SELF-HOSTED runner that has the archive
+#     (the same posture `lean-seed.yml` takes), and is `workflow_dispatch`-only until a seed release
+#     exists. Cut a seed (see docs/LEAN-SEED-ARTIFACT.md), then add the schedule.
+name: Armed teeth
+
+on:
+  schedule:
+    # Daily, 05:00 UTC — two hours ahead of the proof-integrity canary (07:00) so the two
+    # long-running scheduled gates do not contend for runners.
+    - cron: '0 5 * * *'
+  workflow_dispatch:
+    inputs:
+      runner:
+        description: "Self-hosted runner label for the lean-hard-mode job (needs a seeded libdregg_lean.a)."
+        required: false
+        default: "lassie"
+        type: string
+      lean_hard_mode:
+        description: "Also run the DREGG_TEST_REQUIRE_LEAN=1 soak lane on the self-hosted runner."
+        required: false
+        default: false
+        type: boolean
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  binding-teeth:
+    name: Deployed light-client binding teeth (--ignored)
+    runs-on: ubuntu-latest
+    # Eight binaries of real recursion folds. Generous but bounded: a lane that hangs to the
+    # 6h ceiling is a lane nobody reads.
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+
+      # Same disk reclaim as ci.yml's Linux test job: the hosted runner ships ~14 GB free on /,
+      # which this workspace's target/ overruns (ci.yml documents the SIGBUS root cause at length).
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - uses: Swatinem/rust-cache@v2
+
+      # --release is not a nicety: these are FRI folds, and debug is the dominant cost (the
+      # nextest heavy profile documents the same reasoning). A debug run would not finish.
+      #
+      # The 8 tooth binaries are named EXPLICITLY rather than using a bare
+      # `-p dregg-circuit-prove -- --ignored`. That bare form is what the plan prescribed, but it
+      # also sweeps in the GPU binaries (guaranteed red here — no adapter, and they now fail
+      # closed) and the apex-shrink/gnark-fixture/mpt-pilot probes, whose external prerequisites
+      # are a separate question from these teeth. Naming the binaries makes the lane's claim exact:
+      # THESE teeth ran, and they either bit or they did not. Widening it is a follow-up, not a
+      # thing to do silently by leaving a wildcard in.
+      - name: Arm the deployed binding teeth
+        run: |
+          cargo test -p dregg-circuit-prove --release \
+            --test bridge_binding_deployed_tooth \
+            --test custom_binding_deployed_tooth \
+            --test deco_binding_deployed_tooth \
+            --test dsl_binding_deployed_tooth \
+            --test factory_binding_deployed_tooth \
+            --test hatchery_binding_deployed_tooth \
+            --test membership_binding_deployed_tooth \
+            --test sovereign_binding_deployed_tooth \
+            -- --ignored --nocapture
+
+  # THE HARD-MODE LANE. Every load-bearing verified-gate test in `dregg-node` opens with
+  # `if !<export>_available() { eprintln!("SKIP"); return; }` — reporting `ok` having asserted
+  # NOTHING on an archive-less build. `DREGG_TEST_REQUIRE_LEAN=1` (dregg_lean_ffi::demand_lean)
+  # turns every one of those skips into a PANIC, mirroring the DREGG_REQUIRE_LEAN *build* gate.
+  # This job is the only thing that makes that hard mode more than an available flag.
+  #
+  # It requires a seeded `dregg-lean-ffi/libdregg_lean.a`, which a hosted runner cannot get today
+  # (see the header). Hence: self-hosted, and opt-in until a seed release exists.
+  lean-hard-mode:
+    name: Verified-gate hard mode (DREGG_TEST_REQUIRE_LEAN=1)
+    if: ${{ github.event_name == 'workflow_dispatch' && inputs.lean_hard_mode }}
+    runs-on: ["self-hosted", "${{ inputs.runner }}"]
+    timeout-minutes: 180
+    steps:
+      - uses: actions/checkout@v4
+
+      # FAIL LOUD, EARLY. Without this the job's first symptom would be a wall of demand_lean
+      # panics that read like the gates are broken, when the real cause is a runner with no seed.
+      - name: Require a seeded Lean archive (the whole point of this lane)
+        run: |
+          set -euo pipefail
+          if [ ! -f dregg-lean-ffi/libdregg_lean.a ]; then
+            echo "::error::no dregg-lean-ffi/libdregg_lean.a on this runner. DREGG_TEST_REQUIRE_LEAN=1 asserts the VERIFIED gates actually ran; without the archive every gate would panic for the wrong reason. Seed it (./scripts/bootstrap.sh) or point `runner` at a host that has one."
+            exit 1
+          fi
+          echo "seed present: $(du -h dregg-lean-ffi/libdregg_lean.a | cut -f1)"
+
+      # The verified-gate unit tests: finality_gate (4), coord_gate, finalization_votes, plus the
+      # lean_producer_mode integration tests. Under the hard mode these can no longer self-skip.
+      - name: node verified-gate tests, hard mode
+        env:
+          DREGG_TEST_REQUIRE_LEAN: "1"
+          DREGG_REQUIRE_LEAN: "1"
+        run: cargo test -p dregg-node --release --lib --test lean_producer_mode
+
+      # The real-process soak: 4- and 5-node federations over real QUIC gossip with a validator
+      # KILLED mid-run. It no longer pins DREGG_LEAN_PRODUCER=0, so the VERIFIED producer — the
+      # production default — is what gets fault-injected; under DREGG_TEST_REQUIRE_LEAN=1 the
+      # harness also asserts every launched node reports `state_producer = lean`, so this lane
+      # cannot quietly degrade to the Rust producer and still pass.
+      #
+      # DREGG_TEST_REQUIRE_FINALITY is deliberately NOT set: post-kill cross-node finality is a
+      # NAMED OPEN leg (A1), measured non-converging at n=4/n=5 on 2026-07-06 and documented as
+      # such in the test's own header. Arming it here would red this lane every run for a reason
+      # its authors already wrote down. That is the frontier's job, not the arming lane's.
+      - name: consensus-under-failure soak (production producer default)
+        env:
+          DREGG_TEST_REQUIRE_LEAN: "1"
+          DREGG_REQUIRE_LEAN: "1"
+        run: cargo test -p dregg-node --release --test consensus_under_failure -- --ignored --nocapture

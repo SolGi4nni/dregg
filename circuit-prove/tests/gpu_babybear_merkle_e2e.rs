@@ -48,18 +48,37 @@ fn rand_matrix(seed: u64, rows: usize, cols: usize) -> RowMajorMatrix<BabyBear> 
     RowMajorMatrix::new(values, cols)
 }
 
-fn require_gpu() -> Option<GpuBabyBearMmcs> {
+/// THE GPU LANE IS FAIL-CLOSED (the crate's own better pattern, `gpu_backend.rs`'s
+/// `assert!(gpu_mmcs.adapter_available())`).
+///
+/// This used to be `Option<..>` + `eprintln!("no GPU adapter — skipping"); return;` at both call
+/// sites — which reported **`ok`** having verified NOTHING, in a file whose own module doc says
+/// "PARITY IS LOAD-BEARING... a fast wrong tree is worthless." A green that means nothing is worse
+/// than a red. The honest posture is ONE law, both halves required:
+///   * `#[ignore]` — so a GPU-less runner reports these as SKIPPED, explicitly, in its summary;
+///   * this hard assert — so once a runner DOES opt in via `--ignored`, an absent adapter is a
+///     LOUD failure and can never degenerate into a silent no-op.
+///
+/// Run it with `scripts/test-gauntlet.sh gpu` on a box that has an adapter. HONEST SCOPE: there is
+/// NO scheduled GPU lane — GitHub-hosted runners have no usable adapter, so these teeth are
+/// human-invoked on a GPU box today. Wiring a nightly lane needs a self-hosted GPU runner; that is
+/// named as the open lane in `.github/workflows/armed-teeth.yml`'s header, not implied here.
+fn require_gpu() -> GpuBabyBearMmcs {
     let m = GpuBabyBearMmcs::new(0);
-    if m.adapter_available() { Some(m) } else { None }
+    assert!(
+        m.adapter_available(),
+        "no GPU adapter — this parity gate must RUN on the GPU lane, never silently skip. It is \
+         `#[ignore]`d precisely so a GPU-less runner skips it EXPLICITLY; reaching this assert \
+         means the lane opted in with `--ignored` on a host with no adapter. Run it on the GPU box \
+         (`scripts/test-gauntlet.sh gpu`) or drop `--ignored` here."
+    );
+    m
 }
 
 #[test]
-#[ignore = "GPU + slow: run with --ignored --nocapture"]
+#[ignore = "GPU + slow: run on the GPU lane with --ignored --nocapture (fail-CLOSED: asserts adapter_available())"]
 fn gpu_babybear_merkle_parity_and_speed() {
-    let Some(gpu) = require_gpu() else {
-        eprintln!("no GPU adapter — skipping (CPU-fallback path is exercised elsewhere)");
-        return;
-    };
+    let gpu = require_gpu();
     let cpu = cpu_mmcs();
     println!("=== GpuBabyBearMmcs: Poseidon2-BabyBear-W16 GPU Merkle ===");
 
@@ -159,16 +178,18 @@ fn gpu_babybear_merkle_parity_and_speed() {
 }
 
 #[test]
-#[ignore = "GPU + slow: run with --ignored --nocapture"]
+#[ignore = "GPU + slow: run on the GPU lane with --ignored --nocapture (fail-CLOSED: asserts adapter_name())"]
 fn gpu_babybear_dft_parity_and_speed() {
     // Confirm the SHRINK's GpuDft serves the FOLD's BabyBear DFT (it is native
     // BabyBear): byte-identical coset LDE vs the fold's `Radix2DitParallel`,
     // plus wall-time. (The fold's PCS commits `coset_lde_batch` at log_blowup.)
     let gpu = GpuDft::default();
-    let Some(name) = gpu.adapter_name() else {
-        eprintln!("no GPU adapter — skipping DFT parity/speed");
-        return;
-    };
+    // Fail-CLOSED, same law as `require_gpu` above: absent adapter ⇒ LOUD, never a hollow `ok`.
+    let name = gpu.adapter_name().expect(
+        "no GPU adapter — this DFT parity gate must RUN on the GPU lane, never silently skip. It \
+         is `#[ignore]`d so a GPU-less runner skips it EXPLICITLY; reaching this means the lane \
+         opted in with `--ignored` on a host with no adapter.",
+    );
     println!("=== GpuDft on BabyBear (fold DFT lever) — adapter: {name} ===");
     let cpu = Radix2DitParallel::<BabyBear>::default();
     let shift = BabyBear::GENERATOR;
