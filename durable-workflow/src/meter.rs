@@ -81,8 +81,22 @@ pub mod metrics {
     }
 
     /// The meter units charged against the lease for this instance.
+    ///
+    /// NOTE: this is the in-process *observability* tally, backed by a process-global
+    /// static that a genuine process restart wipes. It is correct within one process;
+    /// across a real cross-process crash-resume the authoritative total is the one the
+    /// orchestration derives deterministically and returns in
+    /// [`WorkflowOutput::meter_units`](crate::WorkflowOutput) — not this counter.
     pub fn meter_units(instance: &str) -> i64 {
         get(instance, "meter_units")
+    }
+
+    /// The measured wall-clock milliseconds a step actually ran (summed over its
+    /// executions). A real usage signal recorded alongside the deterministic charge —
+    /// the charge stays declared-cost so it replays identically, while this records
+    /// what the step consumed.
+    pub fn wall_ms(instance: &str, label: &str) -> i64 {
+        get(instance, &format!("wall_ms:{label}"))
     }
 }
 
@@ -146,8 +160,40 @@ pub fn lease_budget_admits(budget_units: i64, cost_per_step: i64, period: i64) -
     }
 }
 
+/// Whether charging `amount` more units, on top of `already_spent`, still fits under
+/// `budget_units`. The cumulative-cost admission decision — pure and replay-safe, and
+/// correct for *variable* per-step costs (unlike [`lease_budget_admits`], which
+/// assumes a uniform per-step cost). Overflow ⇒ refuse.
+pub fn cumulative_admits(already_spent: i64, amount: i64, budget_units: i64) -> bool {
+    match already_spent.checked_add(amount) {
+        Some(projected) => projected <= budget_units,
+        None => false,
+    }
+}
+
 #[cfg(feature = "pg")]
 pub use hosted_durable::pg_outbox::{ensure_meter_schema, read_meter_outbox, MeterRow};
+
+#[cfg(feature = "pg")]
+pub use sqlx::PgPool;
+
+/// Connect a Postgres meter pool from a connection URL and ensure the shared
+/// `hosted_meter` outbox schema exists — the one call a caller needs to build a
+/// [`MeterBackend::Postgres`] and later read the settlement rows back
+/// ([`read_meter_outbox`]). Keeps `sqlx` an internal detail of this crate rather than
+/// a dependency every caller must take.
+#[cfg(feature = "pg")]
+pub async fn connect_meter_pool(url: &str) -> Result<std::sync::Arc<sqlx::PgPool>, String> {
+    let pool = sqlx::postgres::PgPoolOptions::new()
+        .max_connections(4)
+        .connect(url)
+        .await
+        .map_err(|e| format!("meter: connect postgres: {e}"))?;
+    ensure_meter_schema(&pool)
+        .await
+        .map_err(|e| format!("meter: ensure schema: {e}"))?;
+    Ok(std::sync::Arc::new(pool))
+}
 
 #[cfg(test)]
 mod tests {
@@ -159,5 +205,13 @@ mod tests {
         assert!(lease_budget_admits(10, 3, 3)); // 9 <= 10
         assert!(!lease_budget_admits(10, 3, 4)); // 12 > 10
         assert!(!lease_budget_admits(i64::MAX, i64::MAX, 2)); // overflow ⇒ refuse
+    }
+
+    #[test]
+    fn cumulative_admits_handles_variable_costs() {
+        assert!(cumulative_admits(0, 5, 10)); // 5 <= 10
+        assert!(cumulative_admits(5, 5, 10)); // 10 <= 10
+        assert!(!cumulative_admits(5, 6, 10)); // 11 > 10
+        assert!(!cumulative_admits(i64::MAX, 1, i64::MAX)); // overflow ⇒ refuse
     }
 }

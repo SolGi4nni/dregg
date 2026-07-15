@@ -15,12 +15,39 @@ mid-workflow therefore resumes **exactly-once** from the last checkpoint.
 
 | item | where | what it is |
 |---|---|---|
-| `WorkloadRun` / `WorkloadSpec` | `src/lib.rs`, `src/runner.rs` | an ordered list of steps run as durable, exactly-once-metered units |
-| `StepRunner` (trait) | `src/runner.rs` | the **pluggable executor seam** — one method, `run(spec) -> value`. A production runner drives a wasm sandbox / OCI container / microVM behind it; the checkpoint/resume/meter machinery is unchanged |
+| `WorkloadRun` / `WorkloadSpec` | `src/lib.rs`, `src/runner.rs` | an ordered list of steps run as durable, exactly-once-metered units; per-step `cost`, `retry` policy, and `max_steps_per_execution` (history roll) |
+| `StepRunner` (trait) | `src/runner.rs` | the **pluggable executor seam** — one method, `run(spec) -> Result<value, StepError>`. A production runner drives a wasm sandbox / OCI container / microVM behind it |
+| `ProcessRunner` | `src/runner.rs` | a **real subprocess isolate**: each step runs in its own OS process under a wall-clock deadline (killed on overrun), an output cap, a scrubbed env + confined cwd, and (Unix) CPU/AS/file-size/fd `rlimit`s. `WorkloadSpec::tier` selects the `IsolationTier` |
 | `ExprRunner` | `src/runner.rs` | the bundled deterministic runner (a tiny `expr`/`echo` interpreter) so the engine is complete + testable with no external executor |
+| `StepError` / `RetryPolicy` | `src/error.rs` | the transient-vs-permanent error taxonomy + retry-with-exponential-backoff and a step-timeout safety net |
+| `LeaseAuthority` / `SignedGrant` / `admit` | `src/admission.rs` | the **identity + capability gate**: a workload runs only under a MAC-signed, funded, unexpired lease grant bound to its instance id |
 | `run_workflow_on_disk` | `src/lib.rs` | the persistent path — checkpoints to an on-disk WAL-durable SQLite store; a crashed instance resumes exactly-once on a fresh process |
-| `MeterBackend` / `lease_budget_admits` | `src/meter.rs` | where a step's charge lands (in-process tally, or the shared `hosted_meter` outbox) + the replenishing-lease admission gate |
+| `run_workflow_authenticated_on_disk` | `src/lib.rs` | the production entry point — verifies the lease grant before any step runs; naming an instance is not enough to run and charge it |
+| `MeterBackend` / `cumulative_admits` | `src/meter.rs` | where a step's charge lands (in-process tally, or the shared `hosted_meter` outbox) + the cumulative-cost admission gate |
 | `deploy::*` | `src/deploy.rs` (feature `deploy`) | the launchpad seam: a launch = a durable metered workflow **plus** a content-addressed landing page + token metadata over IPFS |
+
+## Identity + capability admission
+
+A workload runs only under a **verified, funded lease grant**. A `LeaseAuthority` (the
+settlement rail that funds leases) issues a `SignedGrant` — a keyed-BLAKE3 MAC over
+`{lease_id, budget_units, not_after, nonce}`. `run_workflow_authenticated_on_disk`
+verifies the MAC (constant-time), the expiry, and that the workload's declared budget
+fits the funded ceiling, **before** any step runs — and takes the instance id *from the
+grant*, so a grant for one lease cannot run another. An unsigned, expired, forged, or
+over-budget request is refused. `tests/admission.rs` proves the happy path plus each
+refusal. (This is the self-contained capability gate; in the composed system the
+authority is the `hosted-lease` funded-lease cell.)
+
+## Error handling + unhappy paths
+
+`StepError` classifies a failure `Transient` (timeout, lost isolate) or `Permanent`
+(bad input, program fault). The orchestration reads the classification back from durable
+history and, per the `RetryPolicy`, retries a transient fault with exponential backoff or
+fails a permanent one fast; a `step_timeout` races each attempt against a durable timer
+so a hung runner cannot hang the workflow. `ProcessRunner` additionally kills a step that
+overruns its own wall-clock deadline. `tests/unhappy_paths.rs` drives transient-retry,
+retry-exhaustion, permanent-fast-fail, the step-timeout net, a mid-workflow abort, and a
+malformed input.
 
 ## The exactly-once + metered guarantee
 

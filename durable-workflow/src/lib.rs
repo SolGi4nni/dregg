@@ -49,14 +49,18 @@ use anyhow::Result;
 use serde::{Deserialize, Serialize};
 use std::sync::Arc;
 
+pub mod admission;
+pub mod error;
 pub mod meter;
 pub mod runner;
 
 #[cfg(feature = "deploy")]
 pub mod deploy;
 
-pub use meter::{lease_budget_admits, metrics, MeterBackend, MeterCharge};
-pub use runner::{ExprRunner, StepRunner, WorkloadSpec};
+pub use admission::{admit, AdmissionError, LeaseAuthority, LeaseGrant, SignedGrant};
+pub use error::{RetryPolicy, StepError, StepErrorKind};
+pub use meter::{cumulative_admits, lease_budget_admits, metrics, MeterBackend, MeterCharge};
+pub use runner::{ExprRunner, IsolationTier, ProcessRunner, StepRunner, WorkloadSpec};
 
 /// The orchestration name the general workload runner registers under: an arbitrary
 /// ordered list of [`WorkloadSpec`] steps run as durable, exactly-once-metered units.
@@ -84,7 +88,8 @@ pub const METER_TABLE: &str = "hosted_meter";
 pub struct WorkloadRun {
     /// The execution-lease budget, in meter units.
     pub budget_units: i64,
-    /// Meter cost charged per step.
+    /// Default meter cost per step; a [`WorkloadSpec`] may override it with its own
+    /// `cost`, so metering is variable per step, not a flat constant.
     pub cost_per_step: i64,
     /// The workload steps to run durably, in order.
     pub steps: Vec<WorkloadSpec>,
@@ -97,6 +102,26 @@ pub struct WorkloadRun {
     /// runs leave it `None`.
     #[serde(default)]
     pub pause_event: Option<String>,
+    /// How a transient step failure is retried (default: no retry).
+    #[serde(default)]
+    pub retry: RetryPolicy,
+    /// Roll the durable history via continue-as-new after this many steps in one
+    /// execution, so a long-lived workflow's history does not grow without bound.
+    /// `None` runs all steps in a single execution.
+    #[serde(default)]
+    pub max_steps_per_execution: Option<usize>,
+
+    // --- continue-as-new carry (set by the engine across a history roll; not part
+    //     of the caller-facing constructors) ---
+    /// Steps already completed in prior executions (the resume cursor).
+    #[serde(default)]
+    resume_done: usize,
+    /// Meter units already charged in prior executions.
+    #[serde(default)]
+    resume_spent: i64,
+    /// Outputs already produced in prior executions.
+    #[serde(default)]
+    resume_outputs: Vec<String>,
 }
 
 impl WorkloadRun {
@@ -109,6 +134,11 @@ impl WorkloadRun {
             steps,
             pause_after_step: None,
             pause_event: None,
+            retry: RetryPolicy::default(),
+            max_steps_per_execution: None,
+            resume_done: 0,
+            resume_spent: 0,
+            resume_outputs: Vec::new(),
         }
     }
 
@@ -119,6 +149,24 @@ impl WorkloadRun {
         self.pause_event = Some(event.into());
         self
     }
+
+    /// Retry transient step failures under `policy`.
+    pub fn with_retry(mut self, policy: RetryPolicy) -> WorkloadRun {
+        self.retry = policy;
+        self
+    }
+
+    /// Roll the durable history via continue-as-new every `chunk` steps.
+    pub fn with_history_roll(mut self, chunk: usize) -> WorkloadRun {
+        self.max_steps_per_execution = Some(chunk.max(1));
+        self
+    }
+
+    /// The declared per-step charge for step index `i` (0-based): the spec's own
+    /// `cost` if set, else the workflow's uniform `cost_per_step`.
+    fn charge_amount(&self, i: usize) -> i64 {
+        self.steps[i].cost.unwrap_or(self.cost_per_step)
+    }
 }
 
 /// The terminal result of a durable workflow.
@@ -128,6 +176,67 @@ pub struct WorkflowOutput {
     pub outputs: Vec<String>,
     /// Total meter units charged against the lease across the workflow.
     pub meter_units: i64,
+}
+
+// ---------------------------------------------------------------------------
+// Step execution with retry, backoff, and a durable step-timeout safety net.
+// ---------------------------------------------------------------------------
+
+/// Run one `RunWorkload` step with retry-on-transient and, if the policy sets a
+/// step-timeout, a durable safety net that races the activity against a timer (so a
+/// runner that hangs without self-cancelling cannot hang the whole workflow).
+///
+/// Retry counting and the backoff timers are orchestration state, recorded in durable
+/// history, so the entire retry decision replays identically after a crash. A
+/// permanent fault, or an exhausted attempt budget, fails the step (and the workflow).
+async fn run_step_with_retry(
+    ctx: &duroxide::OrchestrationContext,
+    spec_json: &str,
+    label: &str,
+    retry: &RetryPolicy,
+) -> Result<String, String> {
+    use duroxide::Either2;
+
+    let mut attempt: u32 = 1;
+    loop {
+        let attempt_res: std::result::Result<String, String> = match retry.step_timeout() {
+            Some(to) => match ctx
+                .select2(
+                    ctx.schedule_activity(ACTIVITY_RUN_WORKLOAD, spec_json.to_string()),
+                    ctx.schedule_timer(to),
+                )
+                .await
+            {
+                Either2::First(r) => r,
+                Either2::Second(()) => Err(StepError::transient(format!(
+                    "step `{label}`: orchestration step-timeout after {to:?}"
+                ))
+                .to_wire()),
+            },
+            None => {
+                ctx.schedule_activity(ACTIVITY_RUN_WORKLOAD, spec_json.to_string())
+                    .await
+            }
+        };
+
+        match attempt_res {
+            Ok(v) => return Ok(v),
+            Err(wire) => {
+                let se = StepError::from_wire(&wire);
+                if se.is_transient() && attempt < retry.max_attempts {
+                    let backoff = retry.backoff_before(attempt + 1);
+                    if !backoff.is_zero() {
+                        ctx.schedule_timer(backoff).await;
+                    }
+                    attempt += 1;
+                    continue;
+                }
+                return Err(format!(
+                    "step `{label}` failed after {attempt} attempt(s): {se}"
+                ));
+            }
+        }
+    }
 }
 
 // ---------------------------------------------------------------------------
@@ -161,16 +270,35 @@ pub fn build_registries(
                 let runner = runner.clone();
                 async move {
                     let instance = ctx.instance_id().to_string();
-                    let spec: WorkloadSpec = serde_json::from_str(&input)
-                        .map_err(|e| format!("RunWorkload: bad spec: {e}"))?;
+                    // A malformed spec is a PERMANENT fault (retrying cannot fix it):
+                    // encode it so the orchestration classifies it and fails fast.
+                    let spec: WorkloadSpec = serde_json::from_str(&input).map_err(|e| {
+                        StepError::permanent(format!("RunWorkload: bad spec: {e}")).to_wire()
+                    })?;
                     let label = spec.label.clone();
+                    // Offload to a blocking thread (a real runner may block on an
+                    // isolate). A join error (the runner panicked / the worker died) is
+                    // TRANSIENT — a retry on a fresh worker may succeed.
+                    let started = std::time::Instant::now();
                     let value = tokio::task::spawn_blocking(move || runner.run(&spec))
                         .await
-                        .map_err(|e| format!("RunWorkload: join error: {e}"))?
-                        .map_err(|e| format!("RunWorkload: {e}"))?;
-                    // Count the REAL execution (not the replayed return) so
-                    // exactly-once is observable.
+                        .map_err(|e| {
+                            StepError::transient(format!("RunWorkload: join error: {e}")).to_wire()
+                        })?
+                        // The runner's own StepError classification passes straight
+                        // through the wire so the orchestration honors it.
+                        .map_err(|e: StepError| e.to_wire())?;
+                    // Observability: count the REAL execution (not the replayed
+                    // return) so exactly-once is witnessable, and record the measured
+                    // wall-time this step actually consumed (a real usage signal — the
+                    // durable *charge* stays the declared cost so it replays
+                    // deterministically, but the measurement is recorded alongside).
                     metrics::add(&instance, &format!("run:{label}"), 1);
+                    metrics::add(
+                        &instance,
+                        &format!("wall_ms:{label}"),
+                        started.elapsed().as_millis() as i64,
+                    );
                     Ok(value)
                 }
             }
@@ -204,45 +332,78 @@ pub fn build_registries(
                 let cfg: WorkloadRun =
                     serde_json::from_str(&input).map_err(|e| format!("bad WorkloadRun: {e}"))?;
 
-                let mut total: i64 = 0;
-                let mut outputs: Vec<String> = Vec::with_capacity(cfg.steps.len());
-                for (i, spec) in cfg.steps.iter().enumerate() {
+                // The authoritative meter total is derived DETERMINISTICALLY from the
+                // workflow's own charges (durable input, replayed identically), NOT
+                // from the meter backend's returned running tally — which, for the
+                // in-process backend, lives in a process-global static that a genuine
+                // process restart wipes. Deriving it here makes `meter_units` correct
+                // across a real cross-process crash-resume, not just an in-process one.
+                let mut total: i64 = cfg.resume_spent;
+                let mut outputs: Vec<String> = cfg.resume_outputs.clone();
+                let mut processed_this_exec: usize = 0;
+
+                for i in cfg.resume_done..cfg.steps.len() {
+                    let spec = &cfg.steps[i];
                     let period = (i as i64) + 1;
-                    // Replenishing-lease admission (pure / deterministic ⇒
-                    // replay-safe inside the orchestration).
-                    if !lease_budget_admits(cfg.budget_units, cfg.cost_per_step, period) {
-                        let projected = total + cfg.cost_per_step;
+                    let amount = cfg.charge_amount(i);
+
+                    // Cumulative-cost admission (pure / deterministic ⇒ replay-safe):
+                    // the running total plus this step's charge must fit the budget.
+                    if !cumulative_admits(total, amount, cfg.budget_units) {
+                        let projected = total.saturating_add(amount);
                         return Err(format!(
                             "execution-lease exhausted: step {period} charge would reach \
                              {projected} > budget {}",
                             cfg.budget_units
                         ));
                     }
-                    let spec_json = serde_json::to_string(spec).map_err(|e| e.to_string())?;
-                    let value = ctx
-                        .schedule_activity(ACTIVITY_RUN_WORKLOAD, spec_json)
-                        .await?;
 
-                    let charge = serde_json::to_string(&MeterCharge {
-                        period,
-                        amount: cfg.cost_per_step,
-                    })
-                    .map_err(|e| e.to_string())?;
-                    total = ctx
-                        .schedule_activity(ACTIVITY_METER_TICK, charge)
-                        .await?
-                        .parse()
-                        .map_err(|e| format!("meter total: {e}"))?;
+                    let spec_json = serde_json::to_string(spec).map_err(|e| e.to_string())?;
+
+                    // Run the step with retry-on-transient + a durable step-timeout
+                    // safety net. Each attempt is a fresh, checkpointed activity; the
+                    // attempt count and backoff timers are orchestration state, so the
+                    // whole retry decision replays identically after a crash.
+                    let value =
+                        run_step_with_retry(&ctx, &spec_json, &spec.label, &cfg.retry).await?;
+
+                    // The transactional twin: charge the meter for this period. The
+                    // tick is a durable activity (at-most-once, replayed on resume), so
+                    // the backend side effect (observability tally / `hosted_meter`
+                    // outbox) commits exactly once — but the reported total comes from
+                    // the deterministic accumulation above, not the tick's return.
+                    let charge = serde_json::to_string(&MeterCharge { period, amount })
+                        .map_err(|e| e.to_string())?;
+                    let _tick_total = ctx.schedule_activity(ACTIVITY_METER_TICK, charge).await?;
+                    total = total.saturating_add(amount);
                     outputs.push(value);
 
-                    // Deterministic crash/pause point (recovery proof only): park
-                    // after this step is durably checkpointed + metered.
+                    // Deterministic crash/pause point (recovery proof only): park after
+                    // this step is durably checkpointed + metered.
                     if cfg.pause_after_step == Some(period as usize) {
                         if let Some(ev) = cfg.pause_event.as_ref() {
                             let _ = ctx.schedule_wait(ev).await;
                         }
                     }
+
+                    // History roll: after `chunk` steps in this execution, continue-as-
+                    // new carrying the cursor + accumulated total/outputs, so a long
+                    // workflow's duroxide history stays bounded per execution.
+                    processed_this_exec += 1;
+                    if let Some(chunk) = cfg.max_steps_per_execution {
+                        let more_remain = (i + 1) < cfg.steps.len();
+                        if processed_this_exec >= chunk && more_remain {
+                            let mut next = cfg.clone();
+                            next.resume_done = i + 1;
+                            next.resume_spent = total;
+                            next.resume_outputs = outputs.clone();
+                            let next_json =
+                                serde_json::to_string(&next).map_err(|e| e.to_string())?;
+                            return ctx.continue_as_new(next_json).await;
+                        }
+                    }
                 }
+
                 let out = WorkflowOutput {
                     outputs,
                     meter_units: total,
@@ -432,4 +593,59 @@ pub fn run_expr_workflow_on_disk(
     db_path: &std::path::Path,
 ) -> Result<WorkflowOutput, String> {
     run_workflow_on_disk_blocking(input, instance, db_path, Arc::new(ExprRunner))
+}
+
+// ---------------------------------------------------------------------------
+// Authenticated admission: run only under a verified, funded lease grant.
+// ---------------------------------------------------------------------------
+
+/// Run a workload on disk **only if** `grant` authorizes it — the production entry
+/// point. The instance id is taken from the verified grant (you cannot run a lease you
+/// were not granted), and admission ([`admit`]) checks the grant's MAC, its expiry, and
+/// that the workload's declared budget fits the funded ceiling, all **before** any step
+/// runs or any charge commits. An unsigned, expired, forged, or over-budget grant is
+/// refused here — naming an instance is no longer enough to run and charge it.
+///
+/// On success the run proceeds exactly as [`run_workflow_on_disk`] under the granted
+/// lease id, so crash-resume and exactly-once metering carry through unchanged.
+#[cfg(feature = "sqlite")]
+pub fn run_workflow_authenticated_on_disk(
+    authority: &LeaseAuthority,
+    grant: &SignedGrant,
+    input: &WorkloadRun,
+    db_path: &std::path::Path,
+    runner: Arc<dyn StepRunner>,
+) -> Result<WorkflowOutput, String> {
+    admit(
+        authority,
+        grant,
+        &grant.grant.lease_id,
+        input.budget_units,
+        admission::now_unix(),
+    )
+    .map_err(|e| format!("admission refused: {e}"))?;
+    run_workflow_on_disk_blocking(input, &grant.grant.lease_id, db_path, runner)
+}
+
+/// The async core of [`run_workflow_authenticated_on_disk`], for callers already inside
+/// a tokio runtime. Admission is checked at `now_unix` (pass [`admission::now_unix`] for
+/// wall clock; an explicit value makes the check testable).
+#[cfg(feature = "sqlite")]
+pub async fn run_workflow_authenticated(
+    authority: &LeaseAuthority,
+    grant: &SignedGrant,
+    input: &WorkloadRun,
+    db_path: &std::path::Path,
+    runner: Arc<dyn StepRunner>,
+    now_unix: u64,
+) -> Result<WorkflowOutput, String> {
+    admit(
+        authority,
+        grant,
+        &grant.grant.lease_id,
+        input.budget_units,
+        now_unix,
+    )
+    .map_err(|e| format!("admission refused: {e}"))?;
+    run_workflow_on_disk(input, &grant.grant.lease_id, db_path, runner).await
 }

@@ -46,6 +46,15 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 duroxide = { version = "0.1.29", default-features = false }
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+# The identity/capability gate: a keyed-BLAKE3 MAC over a funded lease grant, a
+# constant-time verify, an OS CSPRNG for authority keys. Small, self-contained — it
+# does NOT pull the full lease-cell stack into this standalone durable-store workspace.
+blake3 = "1"
+constant_time_eq = "0.4"
+getrandom = "0.3"
+# The real subprocess isolate (`ProcessRunner`) confines each step to its own temp
+# working directory and, on Unix, applies rlimits in the child before exec.
+tempfile = "3"
 # pg outbox meter (DB-gated): reuse the shared `hosted_meter` writer + sqlx.
 sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
 hosted-durable = { path = "../hosted-durable", features = ["pg"], optional = true }
@@ -53,5 +62,6 @@ hosted-durable = { path = "../hosted-durable", features = ["pg"], optional = tru
 # IPFS CIDv1, so microsite assets + token metadata are pinned + re-witnessed.
 dregg-ipfs = { path = "../dregg-ipfs", optional = true }
 
-[dev-dependencies]
-tempfile = "3"
+# The subprocess isolate's Unix rlimit teeth (setrlimit in the child before exec).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
