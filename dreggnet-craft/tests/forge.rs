@@ -75,24 +75,19 @@ fn a_safe_craft_consumes_typed_inputs_and_mints_a_real_statblock() {
     assert_eq!(out.owner, smith_pk, "the output is owned by the crafter");
     assert_eq!(forge.owner_of(out.asset_id), Some(smith_pk));
 
-    // THE SINK: every input is provably destroyed on-chain.
+    // THE SINK: every input is provably BURNED on-chain by the owner-signed spend.
     for id in [ore1, ore2, haft] {
         assert!(forge.is_destroyed(id), "the input was consumed");
-        assert!(
-            !forge.owns_live("smith", id),
-            "a destroyed input is not live"
-        );
+        assert!(!forge.owns_live("smith", id), "a burned input is not live");
         let ap = forge.asset_provenance(id);
+        // The owner-signed sink BURNED the input: the asset layer reports it revoked (its
+        // origin spent on-chain, no successor) and it has no live owner.
         assert!(
-            !ap.verified,
-            "the asset layer reports the input gone: {:?}",
+            ap.revoked,
+            "the asset layer reports the input burned on-chain: {:?}",
             ap.reasons
         );
-        assert!(
-            ap.reasons.iter().any(|r| r.contains("gone")),
-            "the on-chain refusal is the spent-note tooth: {:?}",
-            ap.reasons
-        );
+        assert_eq!(forge.owner_of(id), None, "a burned input has no live owner");
     }
 
     // THE OUTPUT is a REAL gear stat block (the shared dreggnet-gear schema).
@@ -505,6 +500,56 @@ fn inputs_cannot_be_reused_or_stolen() {
         "re-crafting consumed inputs is refused: {reuse:?}"
     );
     assert_eq!(forge.output_count(), 1, "the dupe craft minted nothing");
+}
+
+/// The input consume is OWNER-SIGNED: a non-owner cannot craft another player's materials,
+/// and the owner-gated burn refuses a non-owner directly — the authorization to consume is an
+/// ISA owner-signature gate, not merely a host `owns_live` check. The owner then crafts
+/// cleanly, its inputs burned by a real owner-signed spend (non-vacuous).
+#[test]
+fn the_input_consume_is_owner_signed_a_non_owner_craft_is_refused() {
+    let mut forge = CraftForge::new();
+    let recipe = greatblade(&forge); // 2x ore:iron + haft:oak
+
+    // HERO owns exactly the greatblade inputs.
+    let i1 = forge.mint_material("hero", "ore:iron", b"os-1");
+    let i2 = forge.mint_material("hero", "ore:iron", b"os-2");
+    let haft = forge.mint_material("hero", "haft:oak", b"os-3");
+    let draw = roll_craft(&beacon(7), &recipe, &[i1, i2, haft]);
+
+    // MALLORY (not the owner) tries to craft HERO's materials -> refused, nothing consumed.
+    let stolen = forge.craft("mallory", &draw);
+    assert!(
+        matches!(
+            stolen,
+            Err(CraftError::InputsUnavailable(_)) | Err(CraftError::Asset(_))
+        ),
+        "a non-owner craft is refused, got {stolen:?}"
+    );
+    assert!(
+        !forge.is_destroyed(i1) && !forge.is_destroyed(i2) && !forge.is_destroyed(haft),
+        "anti-ghost: a refused craft burns nothing"
+    );
+
+    // The owner-gated burn refuses a non-owner directly: MALLORY cannot burn HERO's note.
+    assert!(
+        forge.assets_mut().revoke(i1, "mallory").is_err(),
+        "a non-owner cannot burn the note"
+    );
+    assert!(
+        !forge.is_destroyed(i1),
+        "the note survived the non-owner burn"
+    );
+
+    // The OWNER crafts cleanly: the owner-signed burn commits as a real executor turn and the
+    // item mints.
+    let out = forge.craft("hero", &draw).expect("the owner crafts");
+    assert!(out.is_crafted(), "the owner's craft mints an output");
+    assert!(
+        forge.is_destroyed(i1) && forge.is_destroyed(i2) && forge.is_destroyed(haft),
+        "the owner-signed sink burned every input"
+    );
+    assert_eq!(forge.owner_of(i1), None, "a burned input has no live owner");
 }
 
 /// The starter catalog holds the expected recipes and rejects a degenerate one.

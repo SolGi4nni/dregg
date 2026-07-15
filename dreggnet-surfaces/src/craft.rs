@@ -11,14 +11,17 @@
 //! This is a *playable* Offering: a legal craft mints a real output (and commits a genuine
 //! owner-signed turn on the freshly-forged note, carried as the [`Outcome::Landed`] receipt); an
 //! illegal one — too few live inputs for the recipe floor, or inputs already consumed — is a real
-//! [`CraftError`](dreggnet_craft::CraftError) refusal that mints NOTHING (anti-ghost). The forge's
-//! internal input-sink spends are themselves real committed turns; the Offering additionally
-//! commits an owner-claim turn on the output to carry a first-class [`TurnReceipt`] for the render
-//! seam. NAMED NEXT (not built here): weighted-quality tiers + catalysts + recipe trees (the
-//! `dreggnet_craft` residuals), and routing a commissioned craft through the escrow-market swap.
+//! [`CraftError`](dreggnet_craft::CraftError) refusal that mints NOTHING (anti-ghost). The recipes
+//! come from the forge's COMMITTED [`RecipeBook`](dreggnet_craft::RecipeBook): a craft can only
+//! present a recipe the catalog holds (bring-your-own odds are forbidden), and every material is a
+//! typed [`MaterialKind`](dreggnet_craft::MaterialKind) matching the recipe it feeds. The forge's
+//! internal input-sink spends are themselves real committed, owner-signed burns; the Offering
+//! additionally commits an owner-claim turn on the output to carry a first-class [`TurnReceipt`]
+//! for the render seam. NAMED NEXT (not built here): risky recipes (botch/partial bands) surfaced
+//! as a playable gamble, and routing a commissioned craft through the escrow-market swap.
 
 use dreggnet_asset::AssetId;
-use dreggnet_craft::{CraftForge, CraftQuality, Recipe, roll_craft};
+use dreggnet_craft::{CraftForge, CraftOutcome, CraftQuality, CraftResolution, Recipe, roll_craft};
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
@@ -40,8 +43,9 @@ struct Material {
     name: String,
 }
 
-/// A recipe on the bench — the [`Recipe`] (its id + input floor), a display label, and the
-/// material indices it draws its inputs from.
+/// A recipe on the bench — the committed [`Recipe`] (cloned from the forge's catalog: its id,
+/// its typed input multiset, its committed odds), a display label, and the material indices it
+/// draws its inputs from.
 struct Bench {
     recipe: Recipe,
     label: String,
@@ -49,12 +53,13 @@ struct Bench {
     inputs: Vec<usize>,
 }
 
-/// A forged output — the crafted note's id, the recipe that forged it, and its fair-draw quality.
+/// A forged output — the crafted note's id, the recipe that forged it, its fair-draw quality
+/// tier, and the outcome band (a safe recipe always lands on `success`).
 struct Forged {
     asset: AssetId,
     recipe_label: String,
     quality: CraftQuality,
-    roll: u64,
+    outcome: CraftOutcome,
 }
 
 /// **A live forge session** over the real [`CraftForge`] — the crafter's materials, the recipes on
@@ -126,13 +131,16 @@ impl CraftOffering {
             .map(|m| m.asset)
             .collect();
 
-        // The fair draw off the committed beacon (deterministic in beacon/recipe/inputs).
+        // The fair draw off the committed beacon (deterministic in beacon/recipe/inputs). The
+        // forge looks the recipe up in its COMMITTED catalog by `draw.recipe_id`, so the odds
+        // are the catalog's, never the caller's.
         let draw = roll_craft(&s.beacon, &recipe, &input_assets);
 
-        // THE FORGE: re-verify the fair draw, destroy the inputs on-chain (the sink), mint the
-        // output. A forged draw or an unavailable/too-few-input craft is refused with NO mint.
-        match s.forge.craft(&s.crafter, &draw, &recipe) {
-            Ok(out) => {
+        // THE FORGE: re-verify the fair draw, burn the inputs on-chain (the owner-signed sink),
+        // mint the output. A forged draw, an unknown recipe, or a wrong/too-few-input craft is
+        // refused with NO burn and NO mint (anti-ghost).
+        match s.forge.craft(&s.crafter, &draw) {
+            Ok(CraftResolution::Crafted(out)) => {
                 // A genuine committed owner-signed turn on the freshly-forged note — the crafter
                 // claims what it forged. Carries the first-class receipt for the seam.
                 let claim = s
@@ -144,7 +152,7 @@ impl CraftOffering {
                     asset: out.asset_id,
                     recipe_label: label,
                     quality: out.quality,
-                    roll: draw.roll,
+                    outcome: out.outcome,
                 });
                 s.turns += 1;
                 Outcome::Landed {
@@ -152,6 +160,12 @@ impl CraftOffering {
                     ended: false,
                 }
             }
+            // The surface's recipes are all SAFE (their odds sit wholly on success), so a botch
+            // is unreachable here; handle it honestly if a risky recipe is ever benched.
+            Ok(CraftResolution::Botched(receipt)) => Outcome::Refused(format!(
+                "craft `{label}` botched — the {} materials were consumed, no item forged",
+                receipt.consumed.len()
+            )),
             Err(e) => Outcome::Refused(format!("craft `{label}` refused: {e}")),
         }
     }
@@ -167,42 +181,50 @@ impl Offering for CraftOffering {
     type Session = CraftSession;
 
     fn open(&self, cfg: SessionConfig) -> Result<CraftSession, OfferingError> {
-        let mut forge = CraftForge::new();
-        // The crafter's materials — real owned notes the forge can consume.
-        let mats = [
-            "Iron Ore",
-            "Oak Hilt",
-            "Star Iron",
-            "Void Glass",
-            "Salvaged Scrap",
+        let mut forge = CraftForge::new(); // the committed STARTER catalog
+        // The crafter's materials — real owned notes, each carrying the TYPED `MaterialKind` a
+        // starter recipe consumes (a greatblade needs 2× `ore:iron` + `haft:oak`, a charm needs
+        // `essence:frost` + `silver:leaf`).
+        let specs: [(&str, &str); 7] = [
+            ("Iron Ore", "ore:iron"),
+            ("Iron Ore", "ore:iron"),
+            ("Oak Haft", "haft:oak"),
+            ("Frost Essence", "essence:frost"),
+            ("Silver Leaf", "silver:leaf"),
+            ("Iron Ore", "ore:iron"),
+            ("Iron Ore", "ore:iron"),
         ];
-        let materials = mats
+        let materials = specs
             .iter()
             .enumerate()
-            .map(|(i, name)| Material {
-                asset: forge
-                    .mint_material(CRAFTER, format!("dreggnet-surfaces/mat-{i}").as_bytes()),
+            .map(|(i, (name, kind))| Material {
+                asset: forge.mint_material(
+                    CRAFTER,
+                    kind,
+                    format!("dreggnet-surfaces/mat-{i}").as_bytes(),
+                ),
                 name: (*name).to_string(),
             })
             .collect();
-        // The bench — three recipes. Greatblade + Relic each consume a live pair (both craftable);
-        // Masterwork needs THREE inputs but only one is wired, so its floor cannot be met (a real
-        // RecipeUnsatisfied refusal is always reachable).
+        // The bench — three recipes pulled from the COMMITTED catalog (bring-your-own is
+        // forbidden). Greatblade (2× iron + haft) and Charm (frost + silver) are both fully
+        // stocked and craftable; Aegis needs 2× iron + `hide:drake`, but only the two iron are
+        // wired, so its typed floor can never be met — a real refusal is always reachable.
         let benches = vec![
             Bench {
-                recipe: Recipe::new("forge:greatblade", 2),
+                recipe: forge.recipe("forge:greatblade").expect("starter").clone(),
                 label: "Greatblade".to_string(),
-                inputs: vec![0, 1],
+                inputs: vec![0, 1, 2],
             },
             Bench {
-                recipe: Recipe::new("forge:relic", 2),
-                label: "Relic".to_string(),
-                inputs: vec![2, 3],
+                recipe: forge.recipe("forge:charm").expect("starter").clone(),
+                label: "Charm".to_string(),
+                inputs: vec![3, 4],
             },
             Bench {
-                recipe: Recipe::new("forge:masterwork", 3),
-                label: "Masterwork".to_string(),
-                inputs: vec![4],
+                recipe: forge.recipe("forge:aegis").expect("starter").clone(),
+                label: "Aegis".to_string(),
+                inputs: vec![5, 6],
             },
         ];
         // The committed beacon (a Descent day-seed stand-in); the seed pins a deterministic day.
@@ -224,14 +246,12 @@ impl Offering for CraftOffering {
             .enumerate()
             .map(|(i, b)| {
                 let have = s.live_inputs(b);
+                let need = b.recipe.input_count();
                 Action::new(
-                    format!(
-                        "Forge {} ({}/{} inputs)",
-                        b.label, have, b.recipe.min_inputs
-                    ),
+                    format!("Forge {} ({}/{} inputs)", b.label, have, need),
                     TURN_CRAFT,
                     i as i64,
-                    have >= b.recipe.min_inputs,
+                    have >= need,
                 )
             })
             .collect()
@@ -262,11 +282,13 @@ impl Offering for CraftOffering {
         }
         for m in &s.materials {
             if s.forge.is_destroyed(m.asset) {
-                let report = s.forge.asset_provenance(m.asset);
-                if report.verified {
+                // A consumed material is burned on-chain (the owner-signed sink): it must have
+                // NO live owner. A "destroyed" note that still reports an owner would be a real
+                // break (the sink did not fire).
+                if s.forge.owner_of(m.asset).is_some() {
                     return VerifyReport::broken(
                         s.turns,
-                        format!("`{}` was consumed but still verifies live", m.name),
+                        format!("`{}` was consumed but is still owned/live", m.name),
                     );
                 }
             }
@@ -325,7 +347,7 @@ impl Offering for CraftOffering {
             let mut out_rows: Vec<ViewNode> = vec![row(vec![
                 text("Item"),
                 text("Quality"),
-                text("Roll"),
+                text("Outcome"),
                 text("Owner"),
             ])];
             for f in &s.outputs {
@@ -342,7 +364,7 @@ impl Offering for CraftOffering {
                 out_rows.push(row(vec![
                     text(&f.recipe_label),
                     pill(f.quality.label(), tag),
-                    text(format!("{}/100", f.roll)),
+                    text(f.outcome.label()),
                     text(owner),
                 ]));
             }

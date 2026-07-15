@@ -84,6 +84,11 @@ fn why(w: &Witness) -> String {
         Witness::Champion { top_n, rank, turns } => {
             format!("season champion #{rank} of top-{top_n} ({turns} turns)")
         }
+        Witness::Threshold { var, observed } => format!("`{var}` reached {observed}"),
+        Witness::Composite { parts } => {
+            let inner: Vec<String> = parts.iter().map(why).collect();
+            format!("all held — {}", inner.join("; "))
+        }
     }
 }
 
@@ -94,6 +99,9 @@ fn achievement_title(a: &Achievement) -> String {
         Achievement::NoDeathClear { .. } => "Flawless Clear".to_string(),
         Achievement::SpeedClear { max_turns } => format!("Speedrunner (≤{max_turns})"),
         Achievement::SeasonChampion { top_n } => format!("Season Champion (top-{top_n})"),
+        // Authored predicates carry the author's own display name.
+        Achievement::VarThreshold { label, .. } => label.clone(),
+        Achievement::All { label, parts } => format!("{label} ({}×)", parts.len()),
     }
 }
 

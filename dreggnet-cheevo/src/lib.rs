@@ -21,11 +21,13 @@
 //! run that verifies but does not satisfy the predicate earns nothing
 //! ([`CheevoError::PredicateNotMet`]) — the predicate is NON-VACUOUS.
 //!
-//! **Soulbound, not tradeable.** An earned cheevo MINTS a [`dreggnet_asset`] note owned
-//! by the earner, but a cheevo has **no transfer path**: [`CheevoLedger::attempt_transfer`]
-//! is refused unconditionally ([`CheevoError::Soulbound`]) — a cheevo can't be sold. The
-//! note stays owner-bound (the ledger exposes no owner-change), and each cheevo carries a
-//! **seal** — a content address over `earner | achievement | universe | run | witness`.
+//! **Soulbound, not tradeable — ISA-ENFORCED.** An earned cheevo MINTS a [`dreggnet_asset`]
+//! note `soulbound = 1`, owned by the earner. The asset layer's transfer case gates
+//! `FieldEquals(soulbound, 0)`, so the EXECUTOR refuses any transfer turn on the note at the
+//! ISA — not by a host `if`. [`CheevoLedger::attempt_transfer`] DRIVES that real executor turn
+//! and reports the (expected) refusal as [`CheevoError::Soulbound`] — a cheevo can't be sold.
+//! The note stays owner-bound, and each cheevo carries a **seal** — a content address over
+//! `earner | achievement | universe | run | witness`.
 //! [`CheevoLedger::reverify_run`] re-runs the whole gate + re-derives the seal, so a
 //! tampered / re-bound (laundered onto a buyer) cheevo record is refused
 //! ([`CheevoError::Tampered`]).
@@ -42,9 +44,11 @@
 //! REAL here: the anchored predicates over the ugc no-cheat verify (a forged run earns
 //! nothing), the non-vacuous predicate evaluation over the run's real trajectory, and the
 //! soulbound mint (earned, un-transferable, provenance-bound) — all DRIVEN in
-//! `tests/cheevos.rs`. The earner identity is the deterministic per-player key; soulbound
-//! is enforced at THIS layer (no transfer method + the seal binding), which is the honest
-//! resolution of the property today.
+//! `tests/cheevos.rs`. The earner identity is the deterministic per-player key; soulbound is
+//! now enforced **at the ISA** — the note is minted `soulbound = 1` and the asset layer's
+//! transfer case gates `FieldEquals(soulbound, 0)`, so a real executor transfer turn on a
+//! cheevo note is refused cryptographically (not by this layer's bookkeeping), bound together
+//! with the seal.
 //!
 //! NAMED RESIDUALS (not built here):
 //! * **A ZK-proof-backed cheevo** (Lane-D-gated) — prove the achievement predicate WITHOUT
@@ -52,14 +56,12 @@
 //!   replay-verify; the succinct proof of the predicate is the frontier. (ugc's
 //!   `verify_proof_completion` already gives an O(1) win-proof path; a predicate circuit
 //!   over the trajectory is the missing leg.)
-//! * **An executor-level soulbound note program** — a `WriteOnce(owner)` cell program that
-//!   refuses a transfer turn cryptographically at the ISA (vs. this layer's refusal).
 //! * **The Solana NFT export** — minting an earned cheevo out as an on-chain soulbound NFT.
 //! * **A whole attested cheevo tree** — an accumulator of an identity's cheevos.
 
 use blake3::Hasher;
 use dregg_season::{Champion, Season};
-use dreggnet_asset::{AssetId, AssetWorld};
+use dreggnet_asset::{AssetError, AssetId, AssetWorld};
 use spween_dregg::{Playthrough, compile_scene, parse};
 use ugc_dregg::{Completion, RejectReason, Universe, UniverseId, verify_completion};
 
@@ -657,9 +659,12 @@ impl CheevoLedger {
             return existing.clone();
         }
 
-        // The soulbound note: a dreggnet-asset note owned by the earner, content-addressed
-        // by the seal (its mint seed). The ledger exposes no path to move its ownership.
-        let note = self.assets.mint(&player, &seal);
+        // The soulbound note: a dreggnet-asset note minted `soulbound = 1`, owned by the
+        // earner, content-addressed by the seal (its mint seed). The asset layer's transfer
+        // case gates `FieldEquals(soulbound, 0)`, so the EXECUTOR refuses any transfer turn on
+        // this note at the ISA — the non-transferability is enforced cryptographically, not by
+        // this layer's bookkeeping.
+        let note = self.assets.mint_soulbound(&player, &seal);
         let cheevo = Cheevo {
             achievement,
             witness,
@@ -675,11 +680,44 @@ impl CheevoLedger {
         cheevo
     }
 
-    /// **THE SOULBOUND TOOTH.** A cheevo cannot be transferred or sold — the transfer path
-    /// is refused unconditionally. (Contrast a plain [`dreggnet_asset`] note, whose owner
-    /// CAN sign a transfer; a cheevo has no such path.) Always [`CheevoError::Soulbound`].
-    pub fn attempt_transfer(&self, _cheevo: &Cheevo, _to: &str) -> Result<(), CheevoError> {
-        Err(CheevoError::Soulbound)
+    /// **THE SOULBOUND TOOTH — ISA-ENFORCED.** A cheevo cannot be transferred or sold. This
+    /// DRIVES a real executor transfer turn on the cheevo's note ([`Self::drive_note_transfer`]):
+    /// the note was minted `soulbound = 1`, and the asset layer's transfer case gates
+    /// `FieldEquals(soulbound, 0)`, so the executor REFUSES the turn at the ISA — not by a host
+    /// `if`. The (expected) refusal is reported as [`CheevoError::Soulbound`]. (Contrast a plain
+    /// [`dreggnet_asset`] note, whose owner CAN sign a transfer.) If the executor ever ADMITTED
+    /// the turn, that would be a real break, surfaced as [`CheevoError::Tampered`].
+    pub fn attempt_transfer(&mut self, cheevo: &Cheevo, to: &str) -> Result<(), CheevoError> {
+        match self.drive_note_transfer(cheevo, to) {
+            Ok(()) => Err(CheevoError::Tampered(
+                "a soulbound cheevo note admitted a transfer turn — the ISA gate did not bite"
+                    .into(),
+            )),
+            Err(_) => Err(CheevoError::Soulbound),
+        }
+    }
+
+    /// **Drive a REAL executor transfer turn** on a cheevo's soulbound note, returning the raw
+    /// asset-layer result — so a caller can witness the executor's OWN refusal at the ISA. The
+    /// note is `soulbound = 1`; the transfer case gates `FieldEquals(soulbound, 0)`, which it
+    /// can never satisfy, so this returns the executor's [`AssetError::Refused`]. (A caller who
+    /// only wants the semantic tooth uses [`Self::attempt_transfer`].)
+    pub fn drive_note_transfer(&mut self, cheevo: &Cheevo, to: &str) -> Result<(), AssetError> {
+        self.assets
+            .transfer(cheevo.note, &cheevo.player, to)
+            .map(|_| ())
+    }
+
+    /// Whether a cheevo's note is minted soulbound at the ISA (`soulbound = 1`, so the transfer
+    /// case's `FieldEquals(soulbound, 0)` gate can never be satisfied).
+    pub fn note_is_soulbound(&self, cheevo: &Cheevo) -> bool {
+        self.assets.is_soulbound(cheevo.note)
+    }
+
+    /// The current on-chain owner of a cheevo's note (the earner, for a soulbound cheevo that
+    /// never moved) — the anti-ghost check that a would-be transfer changed nothing.
+    pub fn note_owner(&self, cheevo: &Cheevo) -> Option<[u8; 32]> {
+        self.assets.current_owner(cheevo.note)
     }
 
     /// **INDEPENDENTLY re-verify** an earned run-cheevo — anyone can run this against the

@@ -205,7 +205,9 @@ mod saga {
 
     use dreggnet_asset::AssetId;
     use dreggnet_cheevo::{Achievement, CheevoError, CheevoLedger};
-    use dreggnet_craft::{CraftForge, Recipe, craft_commitment, roll_craft};
+    use dreggnet_craft::{
+        CraftForge, GearSlot, GearTemplate, Recipe, RecipeBook, craft_commitment, roll_craft,
+    };
     use dreggnet_faction::{
         LN_EMBER_TRIAL, LN_ENTER_SANCTUM, LN_PLEDGE_EMBERS, ROOM_HALL, choice_at, deploy_feud,
         feud_scene,
@@ -219,6 +221,31 @@ mod saga {
 
     const HERO: &str = "Alkas";
     const BUYER: &str = "Brenna";
+
+    /// The saga's bespoke recipe — the **Loremaster's Charm**, a safe two-input trinket forge
+    /// (`essence:lore` + `silver:leaf`). It is NOT in the starter catalog; the saga REGISTERS it
+    /// so the errand's material drops forge a real, catalog-committed item.
+    fn loremasters_charm() -> Recipe {
+        Recipe::gear(
+            "forge:loremasters-charm",
+            &["essence:lore", "silver:leaf"],
+            GearTemplate {
+                slot: GearSlot::Trinket,
+                rune: 0x2a,
+                base_might: 4,
+                base_ward: 4,
+                base_guile: 20,
+            },
+        )
+    }
+
+    /// A forge over a catalog holding exactly the registered Loremaster's Charm — the committed
+    /// book the saga crafts against (a craft can only present a recipe the catalog holds).
+    fn charm_forge() -> CraftForge {
+        let mut book = RecipeBook::new();
+        book.register(loremasters_charm());
+        CraftForge::with_book(book)
+    }
 
     // ── faction gate: real committed rep state opens (or refuses) the quest-giver ──
 
@@ -397,16 +424,19 @@ mod saga {
     /// ledger, its length growing rather than restarting in a second world.
     #[test]
     fn crafted_note_is_object_identical_craft_to_trade_to_buyer() {
-        // ── forge: two owned materials -> one crafted output, inputs spent on-chain ──
-        let mut forge = CraftForge::new();
-        let recipe = Recipe::new("forge:loremasters-charm", 2);
-        let m1 = forge.mint_material(HERO, b"errand-drop-1");
-        let m2 = forge.mint_material(HERO, b"errand-drop-2");
+        // ── forge: two typed owned materials -> one crafted output, inputs spent on-chain ──
+        let recipe = loremasters_charm();
+        let mut forge = charm_forge();
+        let m1 = forge.mint_material(HERO, "essence:lore", b"errand-drop-1");
+        let m2 = forge.mint_material(HERO, "silver:leaf", b"errand-drop-2");
         let beacon = CommittedSeed::from_bytes([0x5A; 32]);
         let draw = roll_craft(&beacon, &recipe, &[m1, m2]);
         let output = forge
-            .craft(HERO, &draw, &recipe)
-            .expect("the forge mints the crafted charm");
+            .craft(HERO, &draw)
+            .expect("the forge mints the crafted charm")
+            .output()
+            .expect("a safe craft mints an output")
+            .clone();
         let charm: AssetId = output.asset_id;
 
         // The output is a real owned note (its lineage's origin mint); the inputs are
@@ -428,7 +458,9 @@ mod saga {
         // the same commitment in a SEPARATE world reproduces the byte-identical id.
         let mut elsewhere = TradeWorld::new();
         assert_eq!(
-            elsewhere.mint(HERO, &craft_commitment(&draw)).bytes(),
+            elsewhere
+                .mint(HERO, &craft_commitment(&draw, &output.artifact))
+                .bytes(),
             charm.bytes(),
             "the crafted note's AssetId is a reproducible content address"
         );
@@ -657,15 +689,18 @@ mod saga {
 
         // (6) THE CRAFT — the errand's material drops forged into one owned item (minted by
         // the hero's ONE identity's holder label).
-        let mut forge = CraftForge::new();
-        let recipe = Recipe::new("forge:loremasters-charm", 2);
-        let m1 = forge.mint_material(hero.holder_label(), b"errand-drop-1");
-        let m2 = forge.mint_material(hero.holder_label(), b"errand-drop-2");
+        let recipe = loremasters_charm();
+        let mut forge = charm_forge();
+        let m1 = forge.mint_material(hero.holder_label(), "essence:lore", b"errand-drop-1");
+        let m2 = forge.mint_material(hero.holder_label(), "silver:leaf", b"errand-drop-2");
         let beacon = CommittedSeed::from_bytes([0x5A; 32]);
         let draw = roll_craft(&beacon, &recipe, &[m1, m2]);
         let output = forge
-            .craft(hero.holder_label(), &draw, &recipe)
-            .expect("the charm is forged");
+            .craft(hero.holder_label(), &draw)
+            .expect("the charm is forged")
+            .output()
+            .expect("a safe craft mints an output")
+            .clone();
         let charm: AssetId = output.asset_id;
         assert!(
             forge.is_destroyed(m1) && forge.is_destroyed(m2),

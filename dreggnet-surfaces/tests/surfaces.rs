@@ -421,26 +421,31 @@ fn craft_renders_valid_viewnode_and_forges_consuming_inputs() {
     );
     let mats = find_section(root, "Materials").expect("a Materials section");
     let mrows = first_table(mats).expect("Materials holds a Table");
-    assert_eq!(mrows.len(), 6, "header + 5 material rows");
+    assert_eq!(mrows.len(), 8, "header + 7 material rows");
     assert!(
         find_section(root, "Recipes").is_some(),
         "a Recipes menu section"
     );
 
-    // Three recipes; Greatblade + Relic are craftable (2/2), Masterwork is below floor (1/3).
+    // Three recipes from the COMMITTED catalog; Greatblade (3/3) + Charm (2/2) are craftable,
+    // Aegis is below floor (2/3 — its `hide:drake` input is not stocked).
     let acts = offering.actions(&s);
     assert_eq!(acts.len(), 3, "three recipes on the bench");
     assert!(
         acts[0].enabled && acts[1].enabled,
-        "the two pair recipes are craftable"
+        "the fully-stocked recipes are craftable"
     );
-    assert!(!acts[2].enabled, "Masterwork is below its 3-input floor");
+    assert!(!acts[2].enabled, "Aegis is below its 3-input typed floor");
 
-    // FORGE recipe 0 (Greatblade, inputs 0+1) — a real craft: inputs consumed, output minted.
+    // FORGE recipe 0 (Greatblade, inputs 0+1+2) — a real craft: inputs burned, output minted.
     let out = offering.advance(&mut s, act("craft", 0), actor());
     assert!(out.landed(), "the craft lands a real turn: {out:?}");
     assert_eq!(s.output_count(), 1, "one output forged");
-    assert_eq!(s.live_material_count(), 3, "two of five materials consumed");
+    assert_eq!(
+        s.live_material_count(),
+        4,
+        "three of seven materials consumed"
+    );
 
     // The forged output renders in a Forged table.
     let surface = offering.render(&s);
@@ -449,8 +454,8 @@ fn craft_renders_valid_viewnode_and_forges_consuming_inputs() {
         "the forged output renders"
     );
 
-    // NON-VACUOUS REFUSED — re-crafting recipe 0 is refused (its inputs are consumed), and a
-    // below-floor Masterwork is refused (RecipeUnsatisfied). Neither mints.
+    // NON-VACUOUS REFUSED — re-crafting recipe 0 is refused (its inputs are burned), and a
+    // below-floor Aegis is refused (typed floor unmet). Neither mints.
     let reuse = offering.advance(&mut s, act("craft", 0), actor());
     assert!(
         !reuse.landed(),
@@ -460,9 +465,9 @@ fn craft_renders_valid_viewnode_and_forges_consuming_inputs() {
     assert!(!below.landed(), "a below-floor craft is refused: {below:?}");
     assert_eq!(s.output_count(), 1, "the refused crafts minted nothing");
 
-    // A second real craft (Relic, inputs 2+3) still lands — the refusals were non-vacuous.
+    // A second real craft (Charm, inputs 3+4) still lands — the refusals were non-vacuous.
     let out2 = offering.advance(&mut s, act("craft", 1), actor());
-    assert!(out2.landed(), "the Relic craft lands: {out2:?}");
+    assert!(out2.landed(), "the Charm craft lands: {out2:?}");
     assert_eq!(s.output_count(), 2, "two outputs forged");
 
     // verify() re-verifies every output's provenance off the real substrate.

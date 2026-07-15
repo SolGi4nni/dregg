@@ -25,9 +25,11 @@
 //!    legendary craft cannot be fabricated.
 //! 3. **The typed inputs are SPENT.** Before minting anything the forge checks the presented
 //!    inputs are the recipe's exact typed multiset, each a real live asset the crafter owns.
-//!    It then **destroys each input on-chain** through the asset layer's own spend tooth
-//!    ([`dreggnet_asset::AssetWorld::attempt_respend`]). The materials are consumed — there is
-//!    no dupe-then-craft, because a spent note cannot be spent again. On a **botch** the
+//!    It then **burns each input on-chain** with a real `player`-signed spend through the asset
+//!    layer's owner-gated burn ([`dreggnet_asset::AssetWorld::revoke`]) — the executor admits
+//!    the burn only under the crafter's own owner signature, so the authorization to consume is
+//!    an ISA owner-signature gate, not a host `owns_live` check. The materials are consumed —
+//!    there is no dupe-then-craft, because a spent note cannot be spent again. On a **botch** the
 //!    materials are still consumed and nothing is minted (the gamble a risky recipe carries).
 //! 4. **The output binds its provenance + is a REAL artifact.** A minting craft MINTS a
 //!    [`dreggnet_asset`] note owned by the crafter under a **mint seed = the craft's content

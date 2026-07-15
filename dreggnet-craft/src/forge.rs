@@ -295,7 +295,10 @@ impl CraftForge {
     /// re-verified against the catalog's committed weight tables ([`reverify_craft`]); a
     /// fabricated craft is refused with NO spend and NO mint. The presented inputs must be the
     /// recipe's exact typed multiset, each a distinct live asset `player` owns (checked BEFORE
-    /// any state change). Then every input is **destroyed on-chain** (the sink). On a
+    /// any state change). Then every input is **burned on-chain** by a real `player`-signed
+    /// spend turn (the owner-signed sink — the executor admits the burn only under the crafter's
+    /// own owner signature, so the authorization to consume is an ISA gate, not host bookkeeping).
+    /// On a
     /// [`CraftOutcome::Success`] / [`CraftOutcome::Partial`] a real output note is minted under
     /// the craft's content commitment; on a [`CraftOutcome::Botch`] the materials are consumed
     /// and nothing is minted ([`CraftResolution::Botched`]).
@@ -332,13 +335,16 @@ impl CraftForge {
             None => None,
         };
 
-        // The SINK: destroy every input on-chain (fires on BOTH a mint and a botch).
+        // The SINK: burn every input on-chain (fires on BOTH a mint and a botch). The burn is
+        // an OWNER-SIGNED spend: `AssetWorld::revoke` drives a real `player`-signed executor
+        // turn on the input note, admitted only because `player`'s signature matches the note's
+        // owner key (the ISA owner-signature gate). So crafter-authorization to consume the
+        // materials is enforced at the executor — the `player` who crafts must be the notes'
+        // owner — not merely by the host-side `owns_live` pre-flight in `check_inputs`.
+        // (The forge only ever mints a material FOR its crafter, so owner == minter; a fully
+        // general owner≠minter burn would want an owner-burn primitive on the asset layer.)
         for id in &inputs {
-            let tail = self.world.lineage_len(*id);
-            debug_assert!(tail >= 1, "a checked-live input has a lineage");
-            self.world
-                .attempt_respend(*id, tail - 1)
-                .map_err(CraftError::Asset)?;
+            self.world.revoke(*id, player).map_err(CraftError::Asset)?;
             self.destroyed.insert(id.bytes());
         }
 

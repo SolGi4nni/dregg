@@ -19,6 +19,7 @@ use dregg_season::{CarryForwardPolicy, Season};
 use dungeon_on_dregg::{CH_CLAIM, CH_DESCEND, CH_RETREAT, CH_TAKE_LANTERN, DUNGEON};
 use ugc_dregg::{Completion, Registry, Universe, WinCondition, record_playthrough};
 
+use dreggnet_asset::AssetError;
 use dreggnet_cheevo::{Achievement, CheevoError, CheevoLedger, Witness};
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -369,6 +370,52 @@ fn a_cheevo_is_soulbound_transfer_is_refused() {
         matches!(out, Err(CheevoError::Soulbound)),
         "a cheevo transfer must be REFUSED (soulbound), got {out:?}"
     );
+}
+
+#[test]
+fn a_cheevo_note_refuses_a_real_executor_transfer_turn_at_the_isa() {
+    let mut reg = Registry::new();
+    let u = descent();
+    let id = reg.publish(u.clone());
+    let c = completion(&u, id, "ada", &DEEP_MOVES);
+
+    let mut ledger = CheevoLedger::new();
+    let cheevo = ledger
+        .earn(
+            &u,
+            &c,
+            Achievement::ReachedDepth {
+                var: "depth".into(),
+                min: 3,
+            },
+        )
+        .expect("earned");
+
+    // The note is minted SOULBOUND at the ISA (soulbound = 1; the asset layer's transfer case
+    // gates FieldEquals(soulbound, 0), which it can never satisfy).
+    assert!(
+        ledger.note_is_soulbound(&cheevo),
+        "the cheevo note is minted soulbound at the ISA"
+    );
+    let earner = cheevo.earner;
+
+    // A REAL executor transfer turn on the note is REFUSED by the executor — not a host `if`.
+    let raw = ledger.drive_note_transfer(&cheevo, "buyer");
+    assert!(
+        matches!(raw, Err(AssetError::Refused(_))),
+        "the executor refuses the soulbound transfer at the ISA, got {raw:?}"
+    );
+    // Anti-ghost: ownership never moved.
+    assert_eq!(
+        ledger.note_owner(&cheevo),
+        Some(earner),
+        "the soulbound note is still owner-bound after the refused transfer"
+    );
+    // The semantic tooth agrees (and drives the same real executor turn under the hood).
+    assert!(matches!(
+        ledger.attempt_transfer(&cheevo, "buyer"),
+        Err(CheevoError::Soulbound)
+    ));
 }
 
 #[test]
