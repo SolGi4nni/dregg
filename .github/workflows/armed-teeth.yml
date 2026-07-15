@@ -91,9 +91,42 @@ jobs:
       # are a separate question from these teeth. Naming the binaries makes the lane's claim exact:
       # THESE teeth ran, and they either bit or they did not. Widening it is a follow-up, not a
       # thing to do silently by leaving a wildcard in.
+      # `--no-fail-fast` is load-bearing, not a nicety. `cargo test` aborts the whole run at the
+      # first failing test BINARY, so without it this lane reports 1 of 8 and hides the other 7 —
+      # measured: the first run stopped at `bridge` and said nothing about the rest. A nightly
+      # diagnostic exists to tell you the SHAPE of the damage; a lane that stops at the first red
+      # is a lane you have to run eight times.
+      #
+      # ⚠ THIS LANE IS RED AT LANDING, AND THAT IS THE POINT. Arming is what revealed the break.
+      # MEASURED 2026-07-15, all 8 binaries, --release --no-fail-fast -- --ignored:
+      #
+      #     4 passed / 11 FAILED  of the 17 armed teeth  (8/8 binaries RED)
+      #
+      # ONE root cause dominates (9 of the failures). Every tooth that mints a wide transfer leg
+      # dies in its SETUP — before any fold — with
+      #   "row 0: range wire 188 value 1230416006 >= 2^15"
+      # raised by `descriptor_ir2.rs:4129`, the prover's witness builder, which refuses a value
+      # overflowing a range block the DEPLOYED descriptor declares (wire 188 — a 15-bit
+      # availability-weld borrow limb, see `descriptor_ir2.rs:273-277`). It reproduces byte-identically
+      # across the plain, membership-edge, and Dfa-carrying transfer legs, so it is one break in the
+      # shared `generate_rotated_transfer_shape_wide` ↔ `transferVmDescriptor2R24` pair — NOT the
+      # teeth's own witness surgery (wire 188 sits far below the teeth columns at ~1771). Every file
+      # on that path is clean at HEAD.
+      #
+      # Tell-tale: these advertise themselves as minute-scale folds and finish in 0.06s–8.67s. They
+      # never reach the recursion at all. The remaining failures are downstream noise: 3 PoisonError
+      # cascades (a sibling test's panic poisoning a shared mutex) and 1 `wgpu error: Validation
+      # Error` in `factory` — worth noting on its own, since `64dbf9ed9` made the fold auto-select a
+      # GPU, so a CPU-shaped tooth can now be dragged onto a GPU path by the host it happens to run on.
+      #
+      # This is the producer-equals-descriptor drift class the crate's own coverage gate already
+      # names (43 Uncovered rows), and the class that bit before at `be732a9dd` — honest turns
+      # failing to prove, which the drift gate cannot see. It was invisible for exactly one reason:
+      # nothing ran these tests. Do NOT silence this lane to make it green, and do NOT `#[ignore]`
+      # them again. Fix the producer/descriptor pair.
       - name: Arm the deployed binding teeth
         run: |
-          cargo test -p dregg-circuit-prove --release \
+          cargo test -p dregg-circuit-prove --release --no-fail-fast \
             --test bridge_binding_deployed_tooth \
             --test custom_binding_deployed_tooth \
             --test deco_binding_deployed_tooth \
