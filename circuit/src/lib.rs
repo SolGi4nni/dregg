@@ -161,10 +161,14 @@
 //! [`derivation_air`] (single Datalog derivation step), [`fold_air`] (attenuation step),
 //! [`presentation`] (the composed presentation proof).
 
-// A deleted item must never again be documented as live: the front door claimed a `stark`
-// module and a `verify_proof_bind` engine long after both were gone, and nothing red-flagged
-// it. This makes that class a build error at `cargo doc` time rather than a reader's problem.
-#![deny(rustdoc::broken_intra_doc_links)]
+// ⚠ NOT YET DENIABLE — `#![deny(rustdoc::broken_intra_doc_links)]` belongs here and does not
+// fit yet (measured 2026-07-15, `CRATE-EXCELLENCE-PLAN.md` §4 MOVE 4's last bullet). Turning it
+// on today reds `cargo doc -p dregg-circuit` with **311** hits, of which ~187 are pure array
+// notation rustdoc mis-parses as links (`[0]`, `[4..7]`) and most of the rest are prose in
+// brackets (`[a]`, `[asset]`). Only a handful are genuine doc rot — the lint DID find one this
+// sweep missed (`constraint_prover.rs`'s third live `[crate::stark]`, now dead). Landing the
+// deny is a real lane (escape ~300 bracket spans), not a one-line add; shipping it red would
+// just train readers to ignore `cargo doc`. Do it, but do it as its own lane.
 
 pub mod air_descriptor;
 pub mod babybear8;

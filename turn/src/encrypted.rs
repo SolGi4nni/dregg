@@ -55,8 +55,10 @@ use crate::turn::Turn;
 
 /// An encrypted turn submission for privacy-preserving federation ordering.
 ///
-/// The federation orders these without seeing their content. The validity proof
-/// guarantees the enclosed turn is well-formed and payable.
+/// The federation orders these without seeing their content. It does **not** know the
+/// enclosed turn is well-formed or payable: [`Self::validity_proof`] carries submitter
+/// authentication only, so those remain executor gates applied after decryption. See
+/// [`TurnValidityProof`].
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EncryptedTurn {
     /// The agent submitting this turn (public — needed for nonce/fee lookup).

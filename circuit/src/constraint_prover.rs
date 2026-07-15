@@ -2,8 +2,10 @@
 //!
 //! Evaluates AIR constraints row-by-row on a given execution trace and checks
 //! that every constraint evaluates to zero. This validates circuit logic and
-//! produces a compact trace-digest proof. For full cryptographic soundness,
-//! use the STARK prover in the [`crate::stark`] module.
+//! produces a compact trace-digest proof — **not** a cryptographic proof: a
+//! trace digest is not a STARK, and nothing here is sound against a prover that
+//! lies about its trace. For real proofs use [`crate::plonky3_prover`] (the
+//! deployed Plonky3 STARK prover/verifier). There is no `crate::stark` module.
 
 use crate::field::BabyBear;
 use std::fmt;
