@@ -28,6 +28,11 @@ dregg-auth = { path = "../../dregg-auth" }
 
 serde = { workspace = true, features = ["std"] }
 serde_json = { workspace = true }
+# The DNS challenge nonce is drawn from OS entropy (a control challenge MUST be
+# unpredictable) and domain-separated with blake3; the persistence snapshot and the
+# cell-commitment nonce path also hash through blake3.
+getrandom = { version = "0.3" }
+blake3 = "1"
 # Live DNS verification backend (off by default to keep the crate dependency-light;
 # `LiveDns` is a production `DnsResolver` instance, `MockDns` is the test one).
 hickory-resolver = { version = "0.25", default-features = false, features = ["system-config", "tokio"], optional = true }

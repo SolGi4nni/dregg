@@ -82,27 +82,61 @@ impl ChallengeMethod {
 
 /// Whether a binding has proven control of its domain yet — the field-imaged
 /// `verification_state` a domain cell commits (`Monotonic`, one-way).
+///
+/// The three codes are **strictly increasing** (`0 < 1 < 2`), so every legal
+/// transition is a `Monotonic` advance the executor admits and every illegal one
+/// (un-verify, un-revoke) is a refused rewind. `Revoked` is deliberately the
+/// *highest* code: a domain that loses control (DNS re-pointed, owner takedown,
+/// abuse) advances **past** `Verified` to a terminal state that no longer routes —
+/// it is NOT an un-verify (which `Monotonic` would refuse), it is a distinct
+/// forward transition. Once revoked, a binding can never be re-verified on the same
+/// cell; the owner rebinds a fresh challenge instead.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum VerificationState {
     /// Bound, challenge issued, control not yet proven. Not routed; no cert.
     Pending,
     /// Control proven — the binding routes and is eligible for a certificate.
     Verified,
+    /// Control was proven but has since been withdrawn — a periodic re-validation
+    /// found the DNS record gone / re-pointed, the owner unbound, or an operator
+    /// took the domain down for abuse. Terminal and one-way (a `Monotonic` advance
+    /// past `Verified`, never a rewind): it stops routing and blocks cert renewal,
+    /// and cannot be flipped back to `Verified` on the same cell.
+    Revoked,
 }
 
 impl VerificationState {
     /// The stable numeric code committed at [`VERIFICATION_STATE_SLOT`](crate::VERIFICATION_STATE_SLOT):
-    /// `0` pending, `1` verified. The `Monotonic` caveat makes `0 -> 1` one-way.
+    /// `0` pending, `1` verified, `2` revoked. The `Monotonic` caveat makes the
+    /// sequence `0 -> 1 -> 2` one-way (no un-verify, no un-revoke).
     pub fn code(self) -> u64 {
         match self {
             VerificationState::Pending => 0,
             VerificationState::Verified => 1,
+            VerificationState::Revoked => 2,
         }
     }
 
-    /// Whether this state is [`VerificationState::Verified`].
+    /// Reconstruct a state from its committed numeric code (the inverse of
+    /// [`code`](Self::code)); an unknown code reads as `None`.
+    pub fn from_code(code: u64) -> Option<VerificationState> {
+        match code {
+            0 => Some(VerificationState::Pending),
+            1 => Some(VerificationState::Verified),
+            2 => Some(VerificationState::Revoked),
+            _ => None,
+        }
+    }
+
+    /// Whether this state is [`VerificationState::Verified`] — the ONLY state that
+    /// routes and mints a certificate. `Pending` and `Revoked` both read `false`.
     pub fn is_verified(self) -> bool {
         matches!(self, VerificationState::Verified)
+    }
+
+    /// Whether control has been permanently withdrawn ([`VerificationState::Revoked`]).
+    pub fn is_revoked(self) -> bool {
+        matches!(self, VerificationState::Revoked)
     }
 }
 
@@ -231,11 +265,76 @@ pub fn is_valid_label(label: &str) -> bool {
         .all(|b| b.is_ascii_lowercase() || b.is_ascii_digit() || b == b'-')
 }
 
-/// A deterministic challenge nonce for `(domain, owner, seq)`. FNV-1a/64 hex,
-/// prefixed `dregg-verify-`. Deterministic so a bind receipt is re-derivable; bound
-/// to the owner + the registry seq so two binds never collide. (On a real node the
-/// nonce is drawn from the cell's commitment; the property — a value the owner must
-/// place in DNS to prove control — is the same.)
+/// The number of CSPRNG bytes behind a challenge nonce (256 bits — unguessable).
+const CHALLENGE_ENTROPY_BYTES: usize = 32;
+
+/// A **cryptographically-random** challenge nonce — the value the owner must place
+/// in DNS to prove control. 256 bits of OS entropy ([`getrandom`]) rendered as
+/// `dregg-verify-<64-hex>`, domain-separated by hashing the entropy together with
+/// `(domain, owner)` so the wire form is bound to the binding it proves.
+///
+/// This is the security-critical replacement for the former deterministic FNV nonce:
+/// a DNS control challenge MUST be unpredictable, or an attacker who knows the public
+/// `(domain, owner, seq)` inputs could precompute a victim's expected value and
+/// publish it (or race the bind) to pre-satisfy the challenge. With 256 bits of
+/// CSPRNG entropy the value is unguessable and un-precomputable.
+///
+/// Falls back to [`challenge_token_from_commitment`] over a best-effort entropy mix
+/// only if the OS RNG is unavailable (it essentially never is); the fallback still
+/// folds in `getrandom`'s partial output when present, so it never degrades to the
+/// old fully-predictable form.
+pub fn random_challenge_token(domain: &str, owner: &str) -> String {
+    let mut entropy = [0u8; CHALLENGE_ENTROPY_BYTES];
+    match getrandom::fill(&mut entropy) {
+        Ok(()) => challenge_token_from_commitment(domain, owner, &entropy),
+        Err(_) => {
+            // OS RNG unavailable: fold whatever high-resolution, per-process varying
+            // material we can reach. Not a substitute for CSPRNG, but never the old
+            // attacker-computable `(domain, owner, seq)`-only form.
+            use std::time::{SystemTime, UNIX_EPOCH};
+            let nanos = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|d| d.as_nanos())
+                .unwrap_or(0);
+            let mut mix = Vec::with_capacity(48);
+            mix.extend_from_slice(&nanos.to_le_bytes());
+            mix.extend_from_slice(&(std::process::id() as u64).to_le_bytes());
+            mix.extend_from_slice(&entropy);
+            challenge_token_from_commitment(domain, owner, &mix)
+        }
+    }
+}
+
+/// A challenge nonce **drawn from a cell commitment** (or any unpredictable seed) —
+/// the shape the per-domain cell weld uses. `commitment` is an unpredictable value
+/// tied to the binding's cell (its post-register state root / turn-receipt hash);
+/// this hashes it under a domain-separated key together with `(domain, owner)` and
+/// renders the first 32 bytes as `dregg-verify-<64-hex>`. Because the seed is
+/// unpredictable to anyone who cannot see the committed cell, the resulting nonce
+/// is un-precomputable — the property the FNV placeholder lacked.
+pub fn challenge_token_from_commitment(domain: &str, owner: &str, commitment: &[u8]) -> String {
+    let mut buf = Vec::with_capacity(commitment.len() + domain.len() + owner.len() + 2);
+    buf.extend_from_slice(domain.trim().to_ascii_lowercase().as_bytes());
+    buf.push(0);
+    buf.extend_from_slice(owner.as_bytes());
+    buf.push(0);
+    buf.extend_from_slice(commitment);
+    let digest = blake3::derive_key("starbridge-domains-challenge-nonce-v1", &buf);
+    let mut hex = String::with_capacity(13 + 64);
+    hex.push_str("dregg-verify-");
+    for b in digest.iter() {
+        use std::fmt::Write;
+        let _ = write!(hex, "{b:02x}");
+    }
+    hex
+}
+
+/// A **deterministic** challenge nonce for `(domain, owner, seq)` — FNV-1a/64 hex.
+///
+/// DEPRECATED for the live bind path: a deterministic nonce over public inputs is
+/// precomputable, so `bind` now issues [`random_challenge_token`] instead. Retained
+/// only for tests and for re-deriving a legacy binding's expected value; NEVER use
+/// it to mint a fresh challenge.
 pub fn challenge_token(domain: &str, owner: &str, seq: u64) -> String {
     const OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
     const PRIME: u64 = 0x0000_0100_0000_01b3;
@@ -327,10 +426,66 @@ mod tests {
     }
 
     #[test]
-    fn verification_state_codes_are_stable() {
+    fn random_challenge_token_is_unpredictable_and_well_formed() {
+        // 256-bit CSPRNG nonce: two draws for the SAME public inputs differ (so it is
+        // not precomputable from `(domain, owner)`), and it is 32 hex-bytes long.
+        let a = random_challenge_token("blog.example.com", "dregg:alice");
+        let b = random_challenge_token("blog.example.com", "dregg:alice");
+        assert_ne!(a, b, "a random nonce must not repeat for the same inputs");
+        assert!(a.starts_with("dregg-verify-"));
+        assert_eq!(a.len(), "dregg-verify-".len() + 64, "256-bit hex nonce");
+        assert!(
+            a["dregg-verify-".len()..]
+                .bytes()
+                .all(|c| c.is_ascii_hexdigit())
+        );
+    }
+
+    #[test]
+    fn commitment_nonce_is_bound_to_seed_and_binding() {
+        // The commitment-derived nonce is deterministic in its seed, but a different
+        // seed / domain / owner yields a different value — un-precomputable without
+        // the (unpredictable) commitment.
+        let seed = [9u8; 32];
+        let a = challenge_token_from_commitment("blog.example.com", "dregg:alice", &seed);
+        assert_eq!(
+            a,
+            challenge_token_from_commitment("blog.example.com", "dregg:alice", &seed)
+        );
+        assert_ne!(
+            a,
+            challenge_token_from_commitment("blog.example.com", "dregg:alice", &[8u8; 32])
+        );
+        assert_ne!(
+            a,
+            challenge_token_from_commitment("other.example.com", "dregg:alice", &seed)
+        );
+        assert_ne!(
+            a,
+            challenge_token_from_commitment("blog.example.com", "dregg:bob", &seed)
+        );
+    }
+
+    #[test]
+    fn verification_state_codes_are_stable_and_ordered() {
         assert_eq!(VerificationState::Pending.code(), 0);
         assert_eq!(VerificationState::Verified.code(), 1);
+        assert_eq!(VerificationState::Revoked.code(), 2);
+        // Strictly increasing: every legal transition is a Monotonic advance.
+        assert!(VerificationState::Pending.code() < VerificationState::Verified.code());
+        assert!(VerificationState::Verified.code() < VerificationState::Revoked.code());
         assert!(VerificationState::Verified.is_verified());
         assert!(!VerificationState::Pending.is_verified());
+        // Revoked does NOT route and IS revoked.
+        assert!(!VerificationState::Revoked.is_verified());
+        assert!(VerificationState::Revoked.is_revoked());
+        for s in [
+            VerificationState::Pending,
+            VerificationState::Verified,
+            VerificationState::Revoked,
+        ] {
+            assert_eq!(VerificationState::from_code(s.code()), Some(s));
+        }
+        assert_eq!(VerificationState::from_code(3), None);
     }
 }

@@ -54,16 +54,49 @@
 //! consults — a byte is routed (and a cert minted) only for a domain a tenant has
 //! *proven* they control.
 //!
-//! ## Honest gaps (what this is, and is not)
+//! ## The two planes, WELDED
 //!
-//! The routing plane's source of truth is the pure serializable
-//! [`registry::DomainBinding`] record (the plaintext `domain -> site` map a gateway
-//! needs); the cell mirrors its commitments into scalar slots (the executor-enforced
-//! invariants) via [`mirror_binding`]. The `WriteOnce`/`Monotonic` teeth and the
-//! cap-verify (a forged credential refused, unforgeably) are REAL. A production lane
-//! threads the DNS challenge issuance itself through a witnessed-predicate program
-//! (so an off-challenge verify is an executor refusal, not just a registry check) —
-//! this models the shape; the challenge compare lives in [`dns::challenge_satisfied`].
+//! There are two representations of a binding: the plaintext routing record
+//! ([`registry::DomainBinding`], the `domain -> site` map a gateway needs) and the
+//! per-domain executor cell (whose committed slots carry the `WriteOnce`/`Monotonic`
+//! invariants). [`weld::CellBackedRegistry`] drives them as ONE: every `bind` /
+//! `verify` / `revoke` submits a real signed turn against the per-domain cell FIRST
+//! (so a re-seal of a frozen nonce, an un-verify, or an un-revoke is an executor
+//! refusal), and only then mirrors the committed state into the routing index. On that
+//! path the `WriteOnce`/`Monotonic` teeth genuinely gate the routing record — not just
+//! an isolated unit test. The bare [`registry::DomainRegistry`] remains the read side a
+//! gateway consults (`site_for_host` / `is_verified`) and the index-only control plane
+//! for a deployment that has not wired an executor.
+//!
+//! ## Persistence + reconciliation
+//!
+//! The plaintext routing strings live only in the index (the cell commits their
+//! one-way commitments), so a durable [`registry::RegistrySnapshot`]
+//! ([`DomainRegistry::save_to_path`](registry::DomainRegistry::save_to_path) /
+//! [`restore_from_path`](registry::DomainRegistry::restore_from_path)) is what a
+//! process restart — or a fresh replica in a gateway fleet — rehydrates. The cell is
+//! the source of truth for the enforced *transitions*; the snapshot carries the
+//! routing plaintext.
+//!
+//! ## Lifecycle beyond first-verify
+//!
+//! `verify` is one-way to [`VerificationState::Verified`], but control can be
+//! *withdrawn*: [`revalidate`](weld::CellBackedRegistry::revalidate) re-checks live DNS
+//! and demotes a binding to [`VerificationState::Revoked`] (a distinct `Monotonic`-
+//! forward transition past `Verified`, NOT an un-verify) if the record is gone;
+//! [`revoke`](weld::CellBackedRegistry::revoke) is the abuse takedown; and
+//! [`unbind`](registry::DomainRegistry::unbind) drops the record so the domain can be
+//! bound afresh. A `Revoked` binding stops routing immediately and can never be
+//! re-verified on the same cell.
+//!
+//! ## Remaining gaps (honest)
+//!
+//! There is no TLS/ACME certificate plane yet — [`is_verified`] is the *gate* an
+//! on-demand-TLS `ask` consults, but the ACME client / cert storage / CAA check are
+//! not in this crate. IDNA/punycode normalization is the caller's responsibility
+//! ([`dns::is_valid_label`] accepts only `[a-z0-9-]`), and the DNS challenge issuance
+//! is not yet threaded through a witnessed-predicate program (the challenge compare
+//! lives in [`dns::challenge_satisfied`]).
 
 #![forbid(unsafe_code)]
 
@@ -95,9 +128,18 @@ pub mod registry;
 /// The CELLS-AS-SERVICE-OBJECTS face: a typed `InterfaceDescriptor` + `invoke()`
 /// dispatch over the `register` / `bind` / `verify` / `resolve` vocabulary.
 pub mod service;
+/// The WELD: [`weld::CellBackedRegistry`] drives the routing index AND the per-domain
+/// executor cell together, so the `WriteOnce`/`Monotonic` teeth gate the routing record.
+pub mod weld;
 
-pub use dns::{ChallengeMethod, DnsChallenge, DnsResolver, MockDns, VerificationState};
-pub use registry::{BindReceipt, DomainBinding, DomainError, DomainRegistry};
+pub use dns::{
+    ChallengeMethod, DnsChallenge, DnsResolver, MockDns, VerificationState,
+    challenge_token_from_commitment, random_challenge_token,
+};
+pub use registry::{
+    BindReceipt, DomainBinding, DomainError, DomainRegistry, RegistrySnapshot, SNAPSHOT_VERSION,
+};
+pub use weld::{CellBackedRegistry, WeldError};
 
 // =============================================================================
 // Slot layout (the per-domain cell) — the program-enforced scalars
@@ -433,6 +475,67 @@ pub fn build_bind_action(cipherclerk: &AppCipherclerk, site: &str, nonce: &str) 
 pub fn build_verify_action(cipherclerk: &AppCipherclerk, verified_seq: u64) -> Action {
     let cell = cipherclerk.cell_id();
     cipherclerk.make_action(cell, "verify_domain", verify_effects(cell, verified_seq))
+}
+
+/// **The `repoint` cell effects** — re-point an already-bound domain at a different
+/// `site` (write `SITE` only) and emit `domain-repointed`. `SITE` is un-caveated, so
+/// this is admitted on a bound cell without re-proving control — exactly the
+/// semantics a custom-domain host wants (repointing does not reset verification). It
+/// deliberately does NOT touch the `WriteOnce` `CHALLENGE_NONCE`, so it composes with
+/// an already-sealed binding cell (unlike [`bind_effects`], which seals the nonce and
+/// is a one-time genesis).
+pub fn repoint_effects(cell: CellId, site: &str) -> Vec<Effect> {
+    vec![
+        Effect::SetField {
+            cell,
+            index: SITE_SLOT as usize,
+            value: site_tag(site),
+        },
+        Effect::EmitEvent {
+            cell,
+            event: Event::new(symbol("domain-repointed"), vec![site_tag(site)]),
+        },
+    ]
+}
+
+/// **The `revoke` cell effects** — advance `VERIFICATION_STATE` to `Revoked` (code 2)
+/// and set `VERIFIED_SEQ` to `revoked_seq`, then emit `domain-revoked`. Because
+/// `Revoked` (2) is strictly greater than `Verified` (1), the executor's
+/// `Monotonic(VERIFICATION_STATE)` admits this as a FORWARD transition (it is not an
+/// un-verify, which `Monotonic` would refuse) — and, being forward, it can itself
+/// never be rewound: a revoked domain is terminal. Control withdrawal (failed
+/// re-validation, owner unbind, abuse takedown) all build this.
+pub fn revoke_effects(cell: CellId, revoked_seq: u64) -> Vec<Effect> {
+    vec![
+        Effect::SetField {
+            cell,
+            index: VERIFICATION_STATE_SLOT as usize,
+            value: state_field(VerificationState::Revoked),
+        },
+        Effect::SetField {
+            cell,
+            index: VERIFIED_SEQ_SLOT as usize,
+            value: field_from_u64(revoked_seq),
+        },
+        Effect::EmitEvent {
+            cell,
+            event: Event::new(symbol("domain-revoked"), vec![field_from_u64(revoked_seq)]),
+        },
+    ]
+}
+
+/// Build the on-ledger [`Action`] that records a re-point (write `SITE`). See
+/// [`repoint_effects`].
+pub fn build_repoint_action(cipherclerk: &AppCipherclerk, site: &str) -> Action {
+    let cell = cipherclerk.cell_id();
+    cipherclerk.make_action(cell, "repoint_domain", repoint_effects(cell, site))
+}
+
+/// Build the on-ledger [`Action`] that records a revocation (advance
+/// `VERIFICATION_STATE` to `Revoked`). See [`revoke_effects`].
+pub fn build_revoke_action(cipherclerk: &AppCipherclerk, revoked_seq: u64) -> Action {
+    let cell = cipherclerk.cell_id();
+    cipherclerk.make_action(cell, "revoke_domain", revoke_effects(cell, revoked_seq))
 }
 
 // =============================================================================

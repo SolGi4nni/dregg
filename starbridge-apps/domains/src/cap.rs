@@ -24,6 +24,14 @@ use dregg_auth::credential::{Caveat, Context, Credential, Pred, PublicKey, RootK
 
 use crate::DomainError;
 
+/// A stable **fingerprint** of a credential's wire form — `blake3` of the presented
+/// `dga1_…` string. The key a [`DomainRegistry`](crate::DomainRegistry) revokes by
+/// ([`revoke_credential`](crate::DomainRegistry::revoke_credential)); a compromised cap
+/// is refused on the bind path by its fingerprint even though it still verifies.
+pub fn credential_fingerprint(credential: &str) -> [u8; 32] {
+    *blake3::hash(credential.as_bytes()).as_bytes()
+}
+
 /// The context attribute key for the binding owner's subject — pinned into every
 /// domains credential and re-bound at verify (so the subject value is chain-signed).
 pub const SUBJECT_KEY: &str = "subject";
@@ -81,6 +89,32 @@ pub fn mint_domains_cap(root: &RootKey, subject: &str) -> Credential {
 /// confines a delegate to one domain and can only ever narrow (no amplification).
 pub fn mint_domain_bind_cap(root: &RootKey, subject: &str, domain: &str) -> Credential {
     mint_domains_cap(root, subject)
+        .attenuate([attr_eq(DOMAIN_KEY, &domain.trim().to_ascii_lowercase())])
+}
+
+/// Mint an **expiring broad domains cap** for `subject` — the broad cap plus a
+/// `NotAfter { at: expiry }` temporal caveat (unix seconds). Presented after `expiry`
+/// the cap fails [`verify_bind_authority`] (the verifier binds the current clock), so
+/// a leaked long-lived credential has a bounded blast radius even without an explicit
+/// revocation. Attenuation-safe: a delegate may only tighten the expiry, never extend
+/// it (`NotAfter` is downward-closed).
+pub fn mint_domains_cap_expiring(root: &RootKey, subject: &str, expiry: u64) -> Credential {
+    root.mint([
+        attr_eq(SUBJECT_KEY, subject),
+        attr_eq(ACTION_KEY, ACTION_BIND),
+        Caveat::FirstParty(Pred::NotAfter { at: expiry }),
+    ])
+}
+
+/// Mint an **expiring per-domain delegate cap** — [`mint_domains_cap_expiring`]
+/// `attenuate`d to exactly `domain`. Both the domain scope and the expiry bite.
+pub fn mint_domain_bind_cap_expiring(
+    root: &RootKey,
+    subject: &str,
+    domain: &str,
+    expiry: u64,
+) -> Credential {
+    mint_domains_cap_expiring(root, subject, expiry)
         .attenuate([attr_eq(DOMAIN_KEY, &domain.trim().to_ascii_lowercase())])
 }
 
@@ -202,6 +236,45 @@ mod tests {
             verify_bind_authority(&forged, &root.public(), "blog.example.com", 100),
             Err(DomainError::CapRefused { .. })
         ));
+    }
+
+    #[test]
+    fn an_expiring_cap_is_refused_after_its_deadline() {
+        let root = root();
+        let cred = mint_domains_cap_expiring(&root, "dregg:alice", 1_000).encode();
+        // Before the deadline: authorized.
+        assert!(verify_bind_authority(&cred, &root.public(), "blog.example.com", 999).is_ok());
+        assert!(verify_bind_authority(&cred, &root.public(), "blog.example.com", 1_000).is_ok());
+        // After the deadline: the `NotAfter` caveat refuses (bounded blast radius on a
+        // leaked long-lived credential).
+        assert!(matches!(
+            verify_bind_authority(&cred, &root.public(), "blog.example.com", 1_001),
+            Err(DomainError::CapRefused { .. })
+        ));
+    }
+
+    #[test]
+    fn an_expiring_delegate_cannot_extend_its_expiry() {
+        let root = root();
+        let delegate =
+            mint_domain_bind_cap_expiring(&root, "dregg:alice", "blog.example.com", 1_000);
+        // Appending a LATER NotAfter only narrows (the meet keeps the earlier bound).
+        let forged = delegate
+            .attenuate([Caveat::FirstParty(Pred::NotAfter { at: 9_999 })])
+            .encode();
+        assert!(matches!(
+            verify_bind_authority(&forged, &root.public(), "blog.example.com", 1_001),
+            Err(DomainError::CapRefused { .. })
+        ));
+    }
+
+    #[test]
+    fn credential_fingerprint_is_stable_and_distinguishing() {
+        let root = root();
+        let a = mint_domains_cap(&root, "dregg:alice").encode();
+        let b = mint_domains_cap(&root, "dregg:bob").encode();
+        assert_eq!(credential_fingerprint(&a), credential_fingerprint(&a));
+        assert_ne!(credential_fingerprint(&a), credential_fingerprint(&b));
     }
 
     #[test]
