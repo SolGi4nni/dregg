@@ -13,37 +13,32 @@ exactly here: the SIS witness extracted from a binding break is
 
 ## What this file is (honest scope)
 
-This is the **reduction STRUCTURE**, not a security proof:
-
-  * `Com` is the abstract *additive/linear* commitment shape `A·r + G·m` over a commutative ring
-    `R`. The concrete BDLOP matrix distribution (`A, G` sampled, `‖·‖`-norms) is the crypto build,
-    NOT this Lean. Linearity is the only load-bearing property, and it is exactly what turns a
-    collision into a linear kernel witness.
-  * `IsShort : R → R → Prop` is the abstract SIS norm bound on the *witness pair* `(dr, dm)` — it
-    carries codex's radius, and it is a **REQUIRED field** of an `AggregateOpening`: an opening
-    that forgot to establish its radius bound cannot be constructed (a forgotten radius = a type
-    error).
-  * `MSISHard A G IsShort` is a **NAMED hardness HYPOTHESIS** — "no short nonzero `(dr, dm)` lies in
-    the kernel of `[A | G]`". It is **NEVER proven and NEVER laundered as an axiom** (`#assert_axioms`
-    only inspects `axiom`-keyword decls; hardness enters solely as an explicit `Prop` hypothesis).
+The first section records only the generic additive algebra.  The security floor below it is no
+longer scalar: it uses the repository's genuine ML-DSA-65 negacyclic ring and module dimensions,
+the existing Hermine product norm and augmented map, and the existing adversary-indexed
+`ProbCrypto.MSISHardQuant` floor.  A finite parameter distribution samples `(A,G,β)` for each security
+parameter; a resource model identifies uniform efficient adversaries and proves that subtraction
+preserves efficiency.  The concrete production sampler and its parameter estimate remain explicit
+crypto-build inputs, not theorems manufactured here.
 
 ## Proven vs assumed
 
   * PROVEN (pure algebra): `collision_yields_msis_witness` — two distinct openings of one commitment
     yield the message-difference-carrying kernel witness, nonzero.
-  * PROVEN (reduction): `aggregate_binding_of_msis` — GIVEN `MSISHard`, a radius-bounded collision of
-    the aggregate commitment forces equality (binding). The security content is discharged onto the
-    hypothesis; the theorem is the reduction, not the hardness.
-  * ASSUMED: `MSISHard A G IsShort` (Module-SIS).  **Audit correction:** the historical
-    `msisHard_trivial_model` below proves only logical consistency by defining the short set to contain
-    `(0,0)` and nothing else.  It is not cryptographic non-vacuity: under that predicate the reduction's
-    own `hshort` premise already forces the two openings equal.  The scalar `[A|G]` model is in fact
-    refuted by the explicit radius-1 kernel witness `(1,-1)` at `A=G=1`
-    (`AggregateBindingScalarFloorResidual`).  A faithful close must replace the scalar stand-in with
-    the deployed matrix/ring distribution and an adversary-indexed Module-SIS advantage ensemble.
+  * PROVEN (reduction): `BDLOP.binding_break_yields_msis_solution` and
+    `BDLOP.aggregate_binding_of_MSISHard` — a binding win becomes a real Module-SIS win with no loss in
+    success probability, hence quantitative Module-SIS hardness implies aggregate binding.
+  * CARRIED: the concrete parameter sampler/resource bound and its `BDLOP.MSISHard` estimate.  Hardness
+    enters only as a theorem hypothesis; it is neither an axiom nor the false existence-refutation
+    `Lattice.MSISHard`.
 -/
 import Market.MintSafeQuantization
+import Dregg2.Crypto.Fips204CorrectReal
+import Dregg2.Crypto.HermineSelfTargetMSIS
+import Dregg2.Crypto.ProbCrypto
+import Dregg2.Tactics
 import Mathlib.Algebra.Ring.Basic
+import Mathlib.Data.ZMod.ValMinAbs
 import Mathlib.Tactic.LinearCombination
 
 namespace Market
@@ -54,9 +49,8 @@ variable {R : Type u} [CommRing R]
 
 /-- The abstract additive/linear commitment shape: `Com A G r m = A·r + G·m`.
 
-`A, G` are the (here scalar-modelled) BDLOP matrices, `r` the randomness, `m` the message. The
-only property used downstream is LINEARITY in `(r, m)`, which is exactly what makes a collision a
-linear kernel witness. The concrete matrix distribution is the crypto build, not this model. -/
+This generic lemma is retained for downstream additive algebra only; the security theorem below uses
+the real ring/module construction rather than treating these scalars as a hardness instance. -/
 def Com (A G r m : R) : R := A * r + G * m
 
 @[simp] theorem Com_def (A G r m : R) : Com A G r m = A * r + G * m := rfl
@@ -66,15 +60,6 @@ def Com (A G r m : R) : R := A * r + G * m
 theorem Com_add (A G r₁ m₁ r₂ m₂ : R) :
     Com A G r₁ m₁ + Com A G r₂ m₂ = Com A G (r₁ + r₂) (m₁ + m₂) := by
   simp only [Com]; ring
-
-/-- **The named Module-SIS hardness hypothesis** (assumption, never proven).
-
-`MSISHard A G IsShort` asserts: there is NO short, nonzero pair `(dr, dm)` in the kernel of the
-concatenated matrix `[A | G]`, i.e. with `A·dr + G·dm = 0`. `IsShort` carries codex's radius bound
-on the *whole* witness pair — crucially INCLUDING the message component `dm`. This is carried as an
-ordinary `Prop`; it is never an `axiom` and never discharged. -/
-def MSISHard (A G : R) (IsShort : R → R → Prop) : Prop :=
-  ¬ ∃ dr dm : R, (dr ≠ 0 ∨ dm ≠ 0) ∧ IsShort dr dm ∧ A * dr + G * dm = 0
 
 /-- **The crux (PROVEN, pure algebra).** Two DISTINCT openings `(r, m) ≠ (r', m')` of the SAME
 commitment `Com A G r m = Com A G r' m'` yield the Module-SIS witness
@@ -96,23 +81,6 @@ theorem collision_yields_msis_witness (A G r m r' m' : R)
     simp only [not_or, not_not] at h
     obtain ⟨h1, h2⟩ := h
     exact hne (Prod.ext (sub_eq_zero.mp h1) (sub_eq_zero.mp h2))
-
-/-- **Aggregate binding, the REDUCTION (PROVEN modulo the named hypothesis).**
-
-GIVEN `MSISHard A G IsShort`, any two openings of the aggregate commitment whose difference is
-short (radius-bounded, `IsShort (r − r') (m − m')`) and which open the SAME commitment must be
-EQUAL. A binding break would be exactly the short nonzero kernel witness forbidden by `MSISHard`.
-
-The security content lives entirely in the hypothesis `hard`; this theorem is the reduction. -/
-theorem aggregate_binding_of_msis (A G : R) (IsShort : R → R → Prop)
-    (hard : MSISHard A G IsShort)
-    (r m r' m' : R)
-    (hshort : IsShort (r - r') (m - m'))
-    (hcol : Com A G r m = Com A G r' m') :
-    (r, m) = (r', m') := by
-  by_contra hne
-  obtain ⟨hker, hnz⟩ := collision_yields_msis_witness A G r m r' m' hne hcol
-  exact hard ⟨r - r', m - m', hnz, hshort, hker⟩
 
 /-- **A proof-carrying aggregate opening.** The radius bound `radius : IsShort r m` is a REQUIRED
 field: an `AggregateOpening` that never established its shortness/radius bound cannot be formed — a
@@ -167,79 +135,396 @@ theorem combine_radius_is_aggregate (A G : R) (IsShort : R → R → Prop)
             (AggregateOpening.combine A G IsShort o₁ o₂ h).m := by
   simpa using h
 
-/-! ## Non-vacuity — concrete witnesses over `ℤ` -/
+/-! ## The real BDLOP/Module-SIS floor
 
-/-- A concrete valid aggregate opening over `ℤ`: `Com 1 1 2 3 = 5`, trivial radius. Exists ⇒ the
-proof-carrying structure is inhabited. -/
-def exampleOpening : AggregateOpening (1 : ℤ) 1 (fun _ _ => True) where
-  r := 2
-  m := 3
-  C := 5
-  opens := by simp only [Com]; norm_num
-  radius := trivial
+The scalar `[A | G] : R² → R` model ends here.  The construction below reuses the exact
+`HermineSelfTargetMSIS.augmented` map and `Lattice.IsMSISSolution` relation over ML-DSA-65's genuine
+negacyclic ring `R_q = Z_q[X]/(X^256+1)`.  Binding is computational: every resource-bounded binding
+adversary has negligible advantage under the existing adversary-indexed `ProbCrypto.MSISHardQuant`
+floor.  No second Module-SIS definition is introduced.
+-/
 
-/-- The aggregate of a concrete opening with itself, formed by native addition — its radius field is
-the aggregate `(4, 6)` bound (here trivially discharged). Non-vacuous use of `combine`. -/
-def exampleAggregate : AggregateOpening (1 : ℤ) 1 (fun _ _ => True) :=
-  AggregateOpening.combine (1 : ℤ) 1 (fun _ _ => True) exampleOpening exampleOpening trivial
+namespace BDLOP
 
-example : exampleAggregate.r = 4 := rfl
-example : exampleAggregate.m = 6 := rfl
-example : exampleAggregate.C = 10 := rfl
+set_option maxRecDepth 20000
 
-/-- **`collision_yields_msis_witness` FIRES on a concrete collision.** Over `ℤ` with `A = G = 1`,
-`Com 1 1 2 3 = 5 = Com 1 1 1 4` while `(2,3) ≠ (1,4)`; the extracted witness `(2−1, 3−4) = (1, −1)`
-is a nonzero kernel element `1·1 + 1·(−1) = 0`. The message component `3 − 4 = −1` is genuinely
-present in the witness. -/
-example :
-    (1 : ℤ) * (2 - 1) + 1 * (3 - 4) = 0 ∧ ((2 : ℤ) - 1 ≠ 0 ∨ (3 : ℤ) - 4 ≠ 0) :=
-  collision_yields_msis_witness (1 : ℤ) 1 2 3 1 4
-    (by decide)
-    (by simp only [Com]; norm_num)
+open Dregg2.Crypto.Lattice
+open Dregg2.Crypto.ConcreteSecurity
+open Dregg2.Crypto.ProbCrypto
+open Dregg2.Crypto.HermineSelfTargetMSIS
+open Dregg2.Crypto.Fips204CorrectReal
+open Filter
+open scoped BigOperators
+open scoped Dregg2.Crypto.HermineSelfTargetMSIS
 
-/-- **Logical consistency witness only — NOT cryptographic non-vacuity.**  The model where the ONLY
-short pair is `(0,0)` admits no short nonzero kernel element for any `A,G`.  Because a downstream
-`hshort` in this model already states both opening differences are zero, this witness must not be used
-as evidence that the deployed hardness floor is meaningful. -/
-theorem msisHard_trivial_model (A G : R) :
-    MSISHard A G (fun dr dm => dr = 0 ∧ dm = 0) := by
-  rintro ⟨dr, dm, hnz, ⟨h0r, h0m⟩, _⟩
-  rcases hnz with h | h
-  · exact h h0r
-  · exact h h0m
+/-- The genuine ML-DSA-65 negacyclic ring, reused rather than redefined. -/
+abbrev Rq := Dregg2.Crypto.Fips204CorrectReal.Rq
 
-/-- **The reduction genuinely consumes `MSISHard`.** Instantiated at the trivial hardness model,
-aggregate binding holds — and the ONLY way two openings can be short here is if their difference is
-`(0,0)`, i.e. they were already equal; the reduction then returns equality. This exercises
-`aggregate_binding_of_msis` against a live (non-`False`) hypothesis. -/
-example (A G r m r' m' : R)
-    (hshort : (r - r' = 0 ∧ m - m' = 0))
-    (hcol : Com A G r m = Com A G r' m') :
-    (r, m) = (r', m') :=
-  aggregate_binding_of_msis A G (fun dr dm => dr = 0 ∧ dm = 0)
-    (msisHard_trivial_model A G) r m r' m' hshort hcol
+/-- BDLOP randomness module `R_q^5` (the real ML-DSA-65 source-module dimension). -/
+abbrev Randomness := Dregg2.Crypto.Fips204CorrectReal.M
 
-/-! ## Faithfulness tooth — the scalar hardness stand-in is false for a real short ball. -/
+/-- BDLOP commitment module `R_q^6` (the real ML-DSA-65 target-module dimension). -/
+abbrev Commitment := Dregg2.Crypto.Fips204CorrectReal.N
 
-/-- A concrete, populated radius-one short set over `ℤ`. -/
-def radiusOneShort (dr dm : ℤ) : Prop :=
-  -1 ≤ dr ∧ dr ≤ 1 ∧ -1 ≤ dm ∧ dm ≤ 1
+/-- The complete Module-SIS witness `(dr, dm)`; the message difference is a real ring coordinate. -/
+abbrev Witness := Randomness × Rq
 
-/-- **`AggregateBindingScalarFloorResidual` — the present scalar floor is FALSE.**  At `A=G=1`,
-`(dr,dm)=(1,-1)` is nonzero, radius-one short, and lies in the kernel of `[A|G]` because
-`1·1 + 1·(-1)=0`.  Thus the only positive floor witness in this file (`msisHard_trivial_model`) wins by
-excluding this ordinary short vector.  Closing aggregate binding requires the actual BDLOP matrix/ring
-instance and a resource-bounded adversary advantage statement, not this scalar existence-refutation. -/
-theorem AggregateBindingScalarFloorResidual :
-    ¬ MSISHard (1 : ℤ) 1 radiusOneShort := by
-  intro hard
-  exact hard ⟨1, -1, by norm_num, by norm_num [radiusOneShort], by norm_num⟩
+/-- Coefficient `ℓ₁` short norm on the real quotient ring, using centered `ZMod q` representatives. -/
+noncomputable def coeffL1 (x : Rq) : Nat :=
+  ∑ j : Fin pb.dim, (pb.basis.repr x j).valMinAbs.natAbs
 
-#guard decide ((-1 : ℤ) ≤ 1 ∧ (1 : ℤ) ≤ 1 ∧ (-1 : ℤ) ≤ -1 ∧ (-1 : ℤ) ≤ 1)
-#guard Com (1 : ℤ) 1 1 (-1) == 0
+/-- The centered coefficient norm is a `Hermine` `ShortNorm`: zero and negation laws plus the triangle
+inequality all hold in the quotient ring. -/
+noncomputable instance instShortNormRq : ShortNorm Rq where
+  nrm := coeffL1
+  nrm_zero := by simp [coeffL1, ZMod.valMinAbs_zero]
+  nrm_neg x := by
+    simp only [coeffL1, map_neg, Finsupp.neg_apply]
+    apply Finset.sum_congr rfl
+    intro j _
+    exact ZMod.natAbs_valMinAbs_neg _
+  nrm_add_le x y := by
+    simp only [coeffL1, map_add, Finsupp.add_apply]
+    calc
+      (∑ j : Fin pb.dim, ((pb.basis.repr x j) + (pb.basis.repr y j)).valMinAbs.natAbs)
+          ≤ ∑ j : Fin pb.dim,
+              ((pb.basis.repr x j).valMinAbs + (pb.basis.repr y j).valMinAbs).natAbs :=
+        Finset.sum_le_sum fun j _ => ZMod.natAbs_valMinAbs_add_le _ _
+      _ ≤ ∑ j : Fin pb.dim,
+              ((pb.basis.repr x j).valMinAbs.natAbs +
+                (pb.basis.repr y j).valMinAbs.natAbs) :=
+        Finset.sum_le_sum fun j _ => Int.natAbs_add_le _ _
+      _ = (∑ j : Fin pb.dim, (pb.basis.repr x j).valMinAbs.natAbs) +
+            ∑ j : Fin pb.dim, (pb.basis.repr y j).valMinAbs.natAbs :=
+        Finset.sum_add_distrib
 
-#assert_all_clean [Market.collision_yields_msis_witness, Market.aggregate_binding_of_msis,
-  Market.Com_add, Market.combine_radius_is_aggregate, Market.msisHard_trivial_model,
-  Market.AggregateBindingScalarFloorResidual]
+/-- Coordinate-sum norm on `R_q^5`, matching Hermine's product/sum norm discipline. -/
+noncomputable instance instShortNormRandomness : ShortNorm Randomness where
+  nrm r := ∑ i, nrm (r i)
+  nrm_zero := by simp [nrm_zero]
+  nrm_neg r := by simp [nrm_neg]
+  nrm_add_le r s := by
+    calc
+      (∑ i, nrm ((r + s) i)) = ∑ i, nrm (r i + s i) := rfl
+      _ ≤ ∑ i, (nrm (r i) + nrm (s i)) :=
+        Finset.sum_le_sum fun i _ => nrm_add_le _ _
+      _ = (∑ i, nrm (r i)) + ∑ i, nrm (s i) := Finset.sum_add_distrib
+
+/-- Reuse Hermine SelfTargetMSIS's coordinate-sum product norm for `(dr,dm)`. -/
+noncomputable instance instShortNormWitness : ShortNorm Witness :=
+  Dregg2.Crypto.HermineSelfTargetMSIS.instShortNormProd
+
+/-- Public BDLOP parameters. `A` is the sampled `6×5` ring matrix, `G` the public message/gadget
+column, and `beta` the accepted aggregate opening-difference radius.  The concrete sampler and its
+parameter-security estimate remain the ordinary cryptographic build assumption. -/
+structure PublicParameters where
+  A : Randomness →ₗ[Rq] Commitment
+  G : Commitment
+  beta : Nat
+
+/-- The exact `[A | G]` Module-SIS map, reused from Hermine SelfTargetMSIS. -/
+noncomputable def PublicParameters.msisMap (P : PublicParameters) : Witness →ₗ[Rq] Commitment :=
+  augmented P.A P.G
+
+/-- The real BDLOP additive commitment `Com(m;r) = A·r + G·m`. -/
+noncomputable def com (P : PublicParameters) (r : Randomness) (m : Rq) : Commitment :=
+  P.msisMap (r, m)
+
+theorem com_apply (P : PublicParameters) (r : Randomness) (m : Rq) :
+    com P r m = P.A r + m • P.G := by
+  simp [com, PublicParameters.msisMap, augmented_apply]
+
+/-- Native ring/module addition aggregates commitments and openings exactly. -/
+theorem com_add (P : PublicParameters) (r₁ r₂ : Randomness) (m₁ m₂ : Rq) :
+    com P r₁ m₁ + com P r₂ m₂ = com P (r₁ + r₂) (m₁ + m₂) := by
+  rw [com_apply, com_apply, com_apply]
+  simp only [map_add, add_smul]
+  abel
+
+/-- A proof-carrying BDLOP opening.  The radius is on the complete `(r,m)` pair. -/
+structure Opening (P : PublicParameters) where
+  r : Randomness
+  m : Rq
+  C : Commitment
+  opens : com P r m = C
+  radius : nrm (r, m) ≤ P.beta
+
+/-- Aggregating openings requires the aggregate radius explicitly; omitting it remains a type error. -/
+noncomputable def Opening.combine (P : PublicParameters) (o₁ o₂ : Opening P)
+    (hradius : nrm (o₁.r + o₂.r, o₁.m + o₂.m) ≤ P.beta) : Opening P where
+  r := o₁.r + o₂.r
+  m := o₁.m + o₂.m
+  C := o₁.C + o₂.C
+  opens := by rw [← com_add, o₁.opens, o₂.opens]
+  radius := hradius
+
+/-- Two candidate openings returned by a binding adversary. -/
+structure OpeningPair where
+  r : Randomness
+  m : Rq
+  r' : Randomness
+  m' : Rq
+
+/-- The extracted message-carrying Module-SIS witness `(r-r',m-m')`. -/
+noncomputable def OpeningPair.diff (o : OpeningPair) : Witness := (o.r - o.r', o.m - o.m')
+
+/-- A genuine binding break: distinct openings, short complete difference, same commitment. -/
+def BindingBreak (P : PublicParameters) (o : OpeningPair) : Prop :=
+  (o.r, o.m) ≠ (o.r', o.m') ∧
+  nrm o.diff ≤ P.beta ∧
+  com P o.r o.m = com P o.r' o.m'
+
+/-- **The algebraic binding reduction.** A BDLOP collision yields the existing Hermine/Lattice
+`IsMSISSolution` for the real `[A | G]` map.  The witness includes `dm = m-m'`. -/
+theorem binding_break_yields_msis_solution (P : PublicParameters) (o : OpeningPair)
+    (h : BindingBreak P o) :
+    IsMSISSolution P.msisMap P.beta o.diff := by
+  obtain ⟨hne, hshort, hcol⟩ := h
+  refine ⟨?_, hshort, ?_⟩
+  · intro hzero
+    apply hne
+    apply sub_eq_zero.mp
+    simpa [OpeningPair.diff] using hzero
+  · rw [show o.diff = (o.r, o.m) - (o.r', o.m') by rfl, map_sub]
+    exact sub_eq_zero.mpr hcol
+
+/-- A finite ensemble of real-ring BDLOP public parameters.  At security parameter `l`, `sample`
+draws the full matrix/gadget/radius tuple `(A,G,β)`.  The production sampler is supplied by the
+cryptographic build rather than replaced by a deterministic Lean toy. -/
+structure ParameterDistribution where
+  Coins : Nat → Type
+  coinsFintype : ∀ l, Fintype (Coins l)
+  sample : ∀ l, Coins l → PublicParameters
+
+/-- A resource-bounded binding adversary, represented by a finite private coin space at each security
+parameter.  It receives the sampled real-ring public parameters and returns two candidate openings. -/
+structure BindingAdversary (D : ParameterDistribution) where
+  Coins : Nat → Type
+  coinsFintype : ∀ l, Fintype (Coins l)
+  run : ∀ l, PublicParameters → Coins l → OpeningPair
+
+/-- A resource-bounded Module-SIS solver for the same sampled real `[A | G]` instance. -/
+structure MSISSolver (D : ParameterDistribution) where
+  Coins : Nat → Type
+  coinsFintype : ∀ l, Fintype (Coins l)
+  run : ∀ l, PublicParameters → Coins l → Witness
+
+/-- Binding-breaking advantage over both parameter sampling and adversary coins, as a real finite-game
+probability ensemble. -/
+noncomputable def bindingAdv (D : ParameterDistribution) (B : BindingAdversary D) : Ensemble := by
+  classical
+  exact fun l =>
+    letI : Fintype (D.Coins l) := D.coinsFintype l
+    letI : Fintype (B.Coins l) := B.coinsFintype l
+    winProb (fun ω : D.Coins l × B.Coins l =>
+      let P := D.sample l ω.1
+      decide (BindingBreak P (B.run l P ω.2)))
+
+/-- Module-SIS solving advantage over the identical public-parameter distribution and solver coins. -/
+noncomputable def msisAdv (D : ParameterDistribution) (S : MSISSolver D) : Ensemble := by
+  classical
+  exact fun l =>
+    letI : Fintype (D.Coins l) := D.coinsFintype l
+    letI : Fintype (S.Coins l) := S.coinsFintype l
+    winProb (fun ω : D.Coins l × S.Coins l =>
+      let P := D.sample l ω.1
+      decide (IsMSISSolution P.msisMap P.beta (S.run l P ω.2)))
+
+/-- The deterministic collision-to-Module-SIS extractor, lifted to adversaries. -/
+noncomputable def toMSISSolver (D : ParameterDistribution) (B : BindingAdversary D) : MSISSolver D where
+  Coins := B.Coins
+  coinsFintype := B.coinsFintype
+  run := fun l P ω => (B.run l P ω).diff
+
+/-- Monotonicity of finite winning probability under implication of winning events. -/
+theorem winProb_mono {Ω : Type*} [Fintype Ω] (f g : Ω → Bool)
+    (h : ∀ ω, f ω = true → g ω = true) : winProb f ≤ winProb g := by
+  unfold winProb
+  apply div_le_div_of_nonneg_right
+  · exact_mod_cast Finset.card_le_card (by
+      intro ω hω
+      simp only [Finset.mem_filter] at hω ⊢
+      exact ⟨hω.1, h ω hω.2⟩)
+  · positivity
+
+/-- Every binding win is a Module-SIS win of the extracted solver, so the extractor loses no binding
+success probability. -/
+theorem bindingAdv_le_msisAdv (D : ParameterDistribution) (B : BindingAdversary D) (l : Nat) :
+    bindingAdv D B l ≤ msisAdv D (toMSISSolver D B) l := by
+  classical
+  letI : Fintype (D.Coins l) := D.coinsFintype l
+  letI : Fintype (B.Coins l) := B.coinsFintype l
+  apply winProb_mono
+  intro ω hwin
+  simp only [decide_eq_true_eq] at hwin ⊢
+  exact binding_break_yields_msis_solution (D.sample l ω.1)
+    (B.run l (D.sample l ω.1) ω.2) hwin
+
+theorem bindingAdv_nonneg (D : ParameterDistribution) (B : BindingAdversary D) (l : Nat) :
+    0 ≤ bindingAdv D B l := by
+  classical
+  letI : Fintype (D.Coins l) := D.coinsFintype l
+  letI : Fintype (B.Coins l) := B.coinsFintype l
+  exact winProb_nonneg _
+
+theorem msisAdv_nonneg (D : ParameterDistribution) (S : MSISSolver D) (l : Nat) :
+    0 ≤ msisAdv D S l := by
+  classical
+  letI : Fintype (D.Coins l) := D.coinsFintype l
+  letI : Fintype (S.Coins l) := S.coinsFintype l
+  exact winProb_nonneg _
+
+/-- The uniform resource model supplied by the cryptographic build.  It identifies the efficient
+binding breakers and efficient Module-SIS solvers and records that the deterministic subtraction
+extractor preserves efficiency.  This prevents non-uniform hardcoded solutions from being silently
+quantified as “efficient” adversaries. -/
+structure ResourceModel (D : ParameterDistribution) where
+  bindingEfficient : BindingAdversary D → Prop
+  msisEfficient : MSISSolver D → Prop
+  /-- The binding security game is not made vacuous by declaring that no adversary is efficient. -/
+  bindingNonempty : Nonempty {B : BindingAdversary D // bindingEfficient B}
+  /-- The Module-SIS floor quantifies over a genuinely inhabited efficient-solver class. -/
+  msisNonempty : Nonempty {S : MSISSolver D // msisEfficient S}
+  extractionEfficient : ∀ B, bindingEfficient B → msisEfficient (toMSISSolver D B)
+
+/-- The existing adversary-indexed quantitative Module-SIS floor, specialized to the efficient
+solvers for this real instance. -/
+abbrev MSISHard (D : ParameterDistribution) (M : ResourceModel D) : Prop :=
+  MSISHardQuant (fun S : {S : MSISSolver D // M.msisEfficient S} => msisAdv D S.1)
+
+/-- Computational aggregate binding: every efficient binding adversary has negligible advantage. -/
+def AggregateBinding (D : ParameterDistribution) (M : ResourceModel D) : Prop :=
+  ∀ B : BindingAdversary D, M.bindingEfficient B → Negl (bindingAdv D B)
+
+/-- **The real floor.** Quantitative Module-SIS hardness of the genuine `[A | G]` ring/matrix instance
+implies aggregate binding.  This is an advantage reduction, not an existence-refutation. -/
+theorem aggregate_binding_of_MSISHard (D : ParameterDistribution) (M : ResourceModel D)
+    (hard : MSISHard D M) : AggregateBinding D M := by
+  intro B hEff
+  let S : {S : MSISSolver D // M.msisEfficient S} :=
+    ⟨toMSISSolver D B, M.extractionEfficient B hEff⟩
+  have hsolver : Negl (msisAdv D (toMSISSolver D B)) := hard S
+  refine negl_of_eventually_le (Eventually.of_forall (fun l => ?_)) hsolver
+  rw [abs_of_nonneg (bindingAdv_nonneg D B l),
+    abs_of_nonneg (msisAdv_nonneg D (toMSISSolver D B) l)]
+  exact bindingAdv_le_msisAdv D B l
+
+/-! ### A real-ring inhabited reference instance and anti-scalar teeth. -/
+
+/-- Executable reference radius; not a claim about production distribution sizing. -/
+def referenceBeta : Nat := 1
+
+/-- Inhabited real-ring shape witness.  `A` and `G` have the genuine `6×5`/`6` ML-DSA module shape;
+`beta = 1` is only the executable non-vacuity radius.  This deterministic correctness witness is
+deliberately NOT installed as the security distribution: production BDLOP sampling and its concrete
+security estimate remain carried crypto-build inputs. -/
+noncomputable def realParameters : PublicParameters where
+  A := honestA
+  G := wVec
+  beta := referenceBeta
+
+theorem coeffL1_one : coeffL1 (1 : Rq) = 1 := by
+  classical
+  let j0 : Fin pb.dim := ⟨0, dim_pos⟩
+  have hbasis : pb.basis j0 = (1 : Rq) := by rw [pb.basis_eq_pow]; simp [j0]
+  have hre : pb.basis.repr (1 : Rq) = Finsupp.single j0 1 := by
+    rw [← hbasis, pb.basis.repr_self]
+  unfold coeffL1
+  rw [hre]
+  rw [Finset.sum_eq_single j0]
+  · have hone : (1 : ZMod q).valMinAbs = 1 :=
+      ZMod.valMinAbs_natCast_of_le_half (n := q) (a := 1) (by norm_num [q])
+    rw [Finsupp.single_eq_same]
+    rw [hone]
+    norm_num
+  · intro j _ hj
+    simp [Finsupp.single_eq_of_ne hj]
+  · simp
+
+theorem coeffL1_neg_one : coeffL1 (-1 : Rq) = 1 := by
+  calc
+    coeffL1 (-1 : Rq) = coeffL1 (1 : Rq) := instShortNormRq.nrm_neg 1
+    _ = 1 := coeffL1_one
+
+theorem coeffL1_zero : coeffL1 (0 : Rq) = 0 := instShortNormRq.nrm_zero
+
+/-- A nonzero opening of the real-ring reference instance: message `1`, randomness `0`, commitment `G`. -/
+noncomputable def realOpening : Opening realParameters where
+  r := 0
+  m := 1
+  C := wVec
+  opens := by simp [com_apply, realParameters]
+  radius := by
+    change (∑ _ : Fin ell, coeffL1 0) + coeffL1 1 ≤ referenceBeta
+    simp [coeffL1_zero, coeffL1_one, referenceBeta]
+
+/-- The real-ring witness is inhabited by a nonzero commitment, not only the zero opening. -/
+theorem realOpening_commitment_ne_zero : realOpening.C ≠ 0 := by
+  intro hzero
+  have hcoord := congrFun hzero (0 : Fin kk)
+  have hrv := congrArg (fun x : Rq => rv x ⟨0, dim_pos⟩) hcoord
+  simp [realOpening, wVec, gappedElt_rv, rv_zero] at hrv
+
+/-- The real quotient-ring/module opening relation is inhabited by a nonzero commitment. -/
+theorem real_ring_nonzero_opening_exists :
+    ∃ o : Opening realParameters, o.C ≠ 0 :=
+  ⟨realOpening, realOpening_commitment_ne_zero⟩
+
+/-- The old scalar `(1,-1)` pattern, embedded faithfully in the real witness space: one randomness
+basis coordinate is the ring unit and the message coordinate is `-1`. -/
+noncomputable def scalarStyleBreak : Witness := (unitMask, -1)
+
+/-- Its genuine Hermine coordinate-sum norm is two, not the scalar model's radius one. -/
+theorem scalarStyleBreak_norm : nrm scalarStyleBreak = 2 := by
+  change (∑ i : Fin ell, coeffL1 (unitMask i)) + coeffL1 (-1) = 2
+  have hsum : (∑ i : Fin ell, coeffL1 (unitMask i)) = 1 := by
+    rw [Finset.sum_eq_single (0 : Fin ell)]
+    · simp [unitMask, coeffL1_one]
+    · intro i _ hi
+      simp [unitMask, hi, coeffL1_zero]
+    · simp
+  rw [hsum, coeffL1_neg_one]
+
+/-- **Anti-scalar tooth:** the old scalar-style witness is not accepted by the real reference radius. -/
+theorem scalarStyleBreak_not_short : ¬ nrm scalarStyleBreak ≤ realParameters.beta := by
+  rw [scalarStyleBreak_norm]
+  norm_num [realParameters, referenceBeta]
+
+/-- The historical residual name now points to the positive distributed real-ring reduction. -/
+theorem AggregateBindingScalarFloorResidual (D : ParameterDistribution) (M : ResourceModel D)
+    (hard : MSISHard D M) : AggregateBinding D M :=
+  aggregate_binding_of_MSISHard D M hard
+
+#guard Dregg2.Crypto.Fips204CorrectReal.q == 8380417
+#guard Dregg2.Crypto.Fips204CorrectReal.ell == 5
+#guard Dregg2.Crypto.Fips204CorrectReal.kk == 6
+#guard (2 : Nat) > referenceBeta
+
+#assert_axioms coeffL1_one
+#assert_axioms coeffL1_neg_one
+#assert_axioms coeffL1_zero
+#assert_axioms com_apply
+#assert_axioms com_add
+#assert_axioms binding_break_yields_msis_solution
+#assert_axioms winProb_mono
+#assert_axioms bindingAdv_le_msisAdv
+#assert_axioms bindingAdv_nonneg
+#assert_axioms msisAdv_nonneg
+#assert_axioms aggregate_binding_of_MSISHard
+#assert_axioms realOpening_commitment_ne_zero
+#assert_axioms real_ring_nonzero_opening_exists
+#assert_axioms scalarStyleBreak_norm
+#assert_axioms scalarStyleBreak_not_short
+#assert_axioms AggregateBindingScalarFloorResidual
+
+end BDLOP
+
+#assert_axioms Com_def
+#assert_axioms Com_add
+#assert_axioms collision_yields_msis_witness
+#assert_axioms combine_r
+#assert_axioms combine_m
+#assert_axioms combine_C
+#assert_axioms combine_radius_is_aggregate
 
 end Market

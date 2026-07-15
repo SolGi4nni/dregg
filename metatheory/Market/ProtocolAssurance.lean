@@ -11,13 +11,17 @@ This module makes the seam explicit without inventing it:
 * `MarketBoundaryBinding` is the smallest faithful endpoint relation: the accepted batch's public roots
   are exactly the commitments of a real `DrexClearing`.  Commitment binding then forces the decoded
   STARK endpoints to be that clearing's endpoints.
-* `StarkMarketClaimExtraction` is the precise missing circuit theorem: acceptance under the designated
-  Market effect must *produce* such a proof-carrying clearing.  It is a named proposition, not an axiom,
-  instance, or hidden field.  No module at HEAD proves it.
-* `lightclient_market_seam` and `accepted_market_settles_on_same_commitment_surface` prove everything
-  that follows once that exact residual is supplied: the decoded STARK transition is the fair,
-  kernel-real clearing; it conserves every asset; and the cross-chain register advances from the same
-  pre-commitment to the same post-commitment.
+* `MarketEffectStepExtractsClearing` is the maximally narrow endpoint fact: the kernel endpoints of a
+  step extracted for the designated effect are realized by a proof-carrying clearing.  The ordinary
+  STARK extraction, witness decode, and commitment binding are no longer hidden in a second accept-level
+  hypothesis; the theorems below invoke `lightclient_unfoolable` themselves.
+* `DrexClearingEffectRefinementResidual` names the strictly stronger fact still absent: the clearing's
+  exact allocation lowers to the ordinary balance-action list that the extracted step denotes.  This
+  distinction prevents endpoint equivalence from being mislabeled as trace/allocation identity.
+* `starkMarketClaimExtraction_of_effect_step`, `lightclient_market_seam`, and
+  `accepted_market_settles_on_same_commitment_surface` prove everything above that exact descriptor
+  fact: the decoded STARK transition is the fair, kernel-real clearing; it conserves every asset; and
+  the cross-chain register advances from the same pre-commitment to the same post-commitment.
 * `SettlementVerifierRefines` names the second missing theorem.  The current `settleDrex` consumes a
   pre-proved `DrexClearing` and models only continuity plus register update.  The deployed Groth16
   verifier consumes bytes.  Its soundness must imply existence of the `DrexClearing` whose roots and
@@ -26,6 +30,12 @@ This module makes the seam explicit without inventing it:
 The repaired cross-chain witness is also shown to satisfy `AccountsWF`, the structural invariant
 required by `StateDecode`.  Previously its `cell` function was non-default outside `{1,2}`, so the
 Market demo could not inhabit the light-client boundary at all.
+
+At HEAD the single-effect dispatcher has no `DrexClearing` constructor: a clearing contains at least
+two settlement legs, while `BatchPublicInputs.effect` selects one `FullActionA`.  The operated DrEX
+path lowers a clearing to a list of ordinary effects, but that list/allocation is not part of this
+single-effect apex.  Therefore the final descriptor/whole-turn extraction remains named precisely
+below; it cannot honestly be manufactured from the four public-input fields.
 
 Pure.  No axioms; the two missing links remain named propositions.
 -/
@@ -41,6 +51,8 @@ open Dregg2.Intent.Ring
 open Dregg2.Circuit.StateCommit (AccountsWF)
 open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
+open Dregg2.Circuit.ActionDispatch (turnSpec)
+open Dregg2.Exec.TurnExecutorFull (FullActionA)
 
 set_option autoImplicit false
 
@@ -152,15 +164,58 @@ theorem demo_market_boundary_realizable (S : CommitSurface) :
 #assert_axioms marketBoundaryBinding_rejects_wrong_post
 #assert_axioms demo_market_boundary_realizable
 
-/-! ## 3. The precisely named missing STARK claim extractor. -/
+/-! ## 3. The precisely named Market-effect semantic extraction. -/
 
-/-- **`StarkMarketClaimExtractionResidual` (OPEN):** for the registry's designated Market effect, an
-accepted STARK must extract a real `DrexClearing` whose executor endpoints are the public roots.
+/-- **The maximal endpoint-level fragment at the current apex.**  The designated single effect's
+kernel endpoints admit a fair, kernel-real clearing.  Because `DrexClearing.settled` executes the
+allocation's settlement list, this is a real state-transition statement, but it deliberately does NOT
+claim that the single `FullActionA` retained the allocation identity. -/
+def MarketEffectStepExtractsClearing (marketEffect : EffectIdx) : Prop :=
+  ∀ (pre post : RecChainedState), dispatchArm marketEffect pre post →
+    ∃ c : DrexClearing, c.pre = pre.kernel ∧ c.post = post.kernel
+
+/-- The endpoint extraction hypothesis consumed by the outward composition. -/
+abbrev MarketEffectEndpointExtractionResidual := MarketEffectStepExtractsClearing
+
+/-- The exact ordinary effect list induced by a clearing allocation. -/
+def clearingActions (c : DrexClearing) : List FullActionA :=
+  (settlementsOf c.nodes).map fun l => .balanceA l.toTurn l.asset
+
+/-- **`DrexClearingEffectRefinementResidual` (OPEN):** the missing per-effect/whole-turn descriptor
+theorem.  Besides matching kernel endpoints, the extracted step must denote the exact list of ordinary
+balance effects lowered from `c.nodes`; thus the allocation, not merely its final roots, is retained.
+
+A faithful implementation can discharge this by adding a genuine clearing action whose descriptor
+carries the allocation, or by lifting the apex to the emitted effect list.  At HEAD a public input names
+one `FullActionA`, so this statement is named and not fabricated. -/
+def MarketEffectAllocationIdentity (marketEffect : EffectIdx) : Prop :=
+  ∀ (pre post : RecChainedState), dispatchArm marketEffect pre post →
+    ∃ c : DrexClearing,
+      c.pre = pre.kernel ∧ c.post = post.kernel ∧
+      turnSpec pre (clearingActions c) post
+
+abbrev DrexClearingEffectRefinementResidual := MarketEffectAllocationIdentity
+
+/-- Exact allocation refinement implies the endpoint fragment used by the current commitment-surface
+composition.  The converse is intentionally absent. -/
+theorem marketEffectStepExtractsClearing_of_allocation_identity
+    (marketEffect : EffectIdx) (h : MarketEffectAllocationIdentity marketEffect) :
+    MarketEffectStepExtractsClearing marketEffect := by
+  intro pre post hstep
+  obtain ⟨c, hcpre, hcpost, _⟩ := h pre post hstep
+  exact ⟨c, hcpre, hcpost⟩
+
+#guard (clearingActions demoFill).length == 2
+#assert_axioms marketEffectStepExtractsClearing_of_allocation_identity
+
+/-- The historical outward statement: for the registry's designated Market effect, an accepted STARK
+extracts a real `DrexClearing` whose executor endpoints are the public roots.
 
 This is stronger than importing both towers and weaker than revealing the private order book.  The
 clearing can remain existential/zero-knowledge; its `valid`, `wantPos`, and `settled` proofs ensure
-fairness and kernel-real conservation.  At HEAD, `BatchPublicInputs` has no Market claim field and no
-Market descriptor supplies this extraction, so this proposition is intentionally not instantiated. -/
+fairness and kernel-real conservation.  It is retained as the convenient outward interface, but the
+theorem below derives it from the ordinary STARK floors plus only the narrowly named
+`MarketEffectStepExtractsClearing` descriptor fact. -/
 def StarkMarketClaimExtraction (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx) : Prop :=
   ∀ (pi : BatchPublicInputs) (π : BatchProof), pi.effect = marketEffect →
     verifyBatch (vkOfRegistry R) pi π = Verdict.accept →
@@ -169,17 +224,45 @@ def StarkMarketClaimExtraction (S : CommitSurface) (R : Registry) (marketEffect 
 /-- A compact alias used by the horizon ledger: this is an obligation, not an assumption or axiom. -/
 abbrev StarkMarketClaimExtractionResidual := StarkMarketClaimExtraction
 
-/-! ## 4. What the two verified towers prove once the exact seam is discharged. -/
+/-- **The accept-level extractor, factored honestly.**  The deployed STARK apex supplies a satisfying
+trace and decoded kernel step; the sole Market-specific input is that the designated step's endpoints
+admit a proof-carrying clearing.  Commitment roots are inherited from `StateDecode` rather than assumed
+by the Market fact.  Allocation identity remains the stronger named residual above. -/
+theorem starkMarketClaimExtraction_of_effect_step
+    (hash : List Int → Int) (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
+    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
+    (hrefines : ∀ e, descriptorRefines S hash (R e) (dispatchArm e))
+    (hmarket : MarketEffectEndpointExtractionResidual marketEffect)
+    (hwitdec : ∀ pi : BatchPublicInputs, WitnessDecodes hash R S pi) :
+    StarkMarketClaimExtraction S R marketEffect := by
+  intro pi π heffect hacc
+  obtain ⟨pre, post, hdecode, hstep, _hpre, _hpost⟩ :=
+    lightclient_unfoolable hash S R hCR dispatchArm hrefines pi π (hwitdec pi) hacc
+  have hmarketStep : dispatchArm marketEffect pre post := by
+    simpa only [heffect] using hstep
+  obtain ⟨c, hcpre, hcpost⟩ := hmarket pre post hmarketStep
+  refine ⟨c, ?_⟩
+  refine ⟨hcpre ▸ hdecode.preWF, ?_, ?_⟩
+  · calc
+      pi.pre = S.commit pre.kernel pi.turn := hdecode.preBinds
+      _ = S.commit c.pre pi.turn := by rw [hcpre]
+  · calc
+      pi.post = S.commit post.kernel pi.turn := hdecode.postBinds
+      _ = S.commit c.post pi.turn := by rw [hcpost]
 
-/-- **The STARK↔Market composition theorem.**  Given the exact missing extractor, the ordinary
-light-client floors derive decoded endpoints and a real dispatcher step; commitment binding then
-identifies those endpoints with the extracted fair, kernel-settled Market clearing.  The same post-state
-therefore conserves every asset. -/
+#assert_axioms starkMarketClaimExtraction_of_effect_step
+
+/-! ## 4. What the two verified towers prove from the narrowed effect-refinement residual. -/
+
+/-- **The STARK↔Market composition theorem.**  The ordinary light-client floors derive decoded endpoints
+and a real dispatcher step; only the narrowly Market-specific effect-refinement fact is supplied.
+Commitment binding then identifies those endpoints with the extracted fair, kernel-settled Market
+clearing.  The same post-state therefore conserves every asset. -/
 theorem lightclient_market_seam
     (hash : List Int → Int) (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
     (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
     (hrefines : ∀ e, descriptorRefines S hash (R e) (dispatchArm e))
-    (hextract : StarkMarketClaimExtraction S R marketEffect)
+    (hmarket : MarketEffectEndpointExtractionResidual marketEffect)
     (pi : BatchPublicInputs) (π : BatchProof)
     (heffect : pi.effect = marketEffect)
     (hwitdec : WitnessDecodes hash R S pi)
@@ -190,9 +273,19 @@ theorem lightclient_market_seam
       dispatchArm pi.effect pre post ∧
       pre.kernel = c.pre ∧ post.kernel = c.post ∧
       ∀ b : AssetId, recTotalAsset post.kernel b = recTotalAsset pre.kernel b := by
-  obtain ⟨c, hbound⟩ := hextract pi π heffect hacc
   obtain ⟨pre, post, hdecode, hstep, _hpre, _hpost⟩ :=
     lightclient_unfoolable hash S R hCR dispatchArm hrefines pi π hwitdec hacc
+  have hmarketStep : dispatchArm marketEffect pre post := by
+    simpa only [heffect] using hstep
+  obtain ⟨c, hcpre, hcpost⟩ := hmarket pre post hmarketStep
+  have hbound : MarketBoundaryBinding S pi c := by
+    refine ⟨hcpre ▸ hdecode.preWF, ?_, ?_⟩
+    · calc
+        pi.pre = S.commit pre.kernel pi.turn := hdecode.preBinds
+        _ = S.commit c.pre pi.turn := by rw [hcpre]
+    · calc
+        pi.post = S.commit post.kernel pi.turn := hdecode.postBinds
+        _ = S.commit c.post pi.turn := by rw [hcpost]
   have hpreCommit : S.commit pre.kernel pi.turn = S.commit c.pre pi.turn := by
     calc
       S.commit pre.kernel pi.turn = pi.pre := hdecode.preBinds.symm
@@ -213,13 +306,17 @@ theorem lightclient_market_seam
 /-- **The full outward composition on one commitment surface.**  If a target-chain register is anchored
 at the accepted batch's public pre-root, the extracted Market clearing advances it to exactly the
 accepted public post-root, while that transition is the same decoded STARK transition and conserves
-every asset.  This is the theorem the two formerly separate towers were missing; its one Market-specific
-hypothesis is the openly named `StarkMarketClaimExtraction` residual above. -/
+every asset.  The former accept-level extractor is no longer assumed; its one Market-specific
+hypothesis is the endpoint fragment `MarketEffectEndpointExtractionResidual`.  Exact allocation
+identity remains `DrexClearingEffectRefinementResidual`. -/
 theorem accepted_market_settles_on_same_commitment_surface
-    (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
-    (hextract : StarkMarketClaimExtraction S R marketEffect)
+    (hash : List Int → Int) (S : CommitSurface) (R : Registry) (marketEffect : EffectIdx)
+    (hCR : Poseidon2SpongeCR hash) [StarkSound hash R]
+    (hrefines : ∀ e, descriptorRefines S hash (R e) (dispatchArm e))
+    (hmarket : MarketEffectEndpointExtractionResidual marketEffect)
     (pi : BatchPublicInputs) (π : BatchProof)
     (heffect : pi.effect = marketEffect)
+    (hwitdec : WitnessDecodes hash R S pi)
     (hacc : verifyBatch (vkOfRegistry R) pi π = Verdict.accept)
     (target : ProvenState Int) (hanchor : target.provenRoot = pi.pre) :
     ∃ (c : DrexClearing) (target' : ProvenState Int),
@@ -228,7 +325,19 @@ theorem accepted_market_settles_on_same_commitment_surface
       target'.provenRoot = pi.post ∧
       target'.provenHeight = target.provenHeight + c.nodes.length ∧
       ∀ b : AssetId, recTotalAsset c.post b = recTotalAsset c.pre b := by
-  obtain ⟨c, hbound⟩ := hextract pi π heffect hacc
+  obtain ⟨pre, post, hdecode, hstep, _hpre, _hpost⟩ :=
+    lightclient_unfoolable hash S R hCR dispatchArm hrefines pi π hwitdec hacc
+  have hmarketStep : dispatchArm marketEffect pre post := by
+    simpa only [heffect] using hstep
+  obtain ⟨c, hcpre, hcpost⟩ := hmarket pre post hmarketStep
+  have hbound : MarketBoundaryBinding S pi c := by
+    refine ⟨hcpre ▸ hdecode.preWF, ?_, ?_⟩
+    · calc
+        pi.pre = S.commit pre.kernel pi.turn := hdecode.preBinds
+        _ = S.commit c.pre pi.turn := by rw [hcpre]
+    · calc
+        pi.post = S.commit post.kernel pi.turn := hdecode.postBinds
+        _ = S.commit c.post pi.turn := by rw [hcpost]
   have hcont : S.commit c.pre pi.turn = target.provenRoot := by
     calc
       S.commit c.pre pi.turn = pi.pre := hbound.preRoot.symm

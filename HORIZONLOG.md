@@ -787,13 +787,22 @@ plane; content-addressed static-site hosting.
   `ExecutorApplyDifferentialPin` remain.
 
   OUTWARD MAP (priority order; each gap either formalized or named):
-  1. **`StarkMarketClaimExtractionResidual` (P0, OPEN).** `Dregg2.Circuit.CircuitSoundness` and
-     `Market` were two separate theorem towers. Accepted PI contains only `(effect,pre,post,turn)`;
-     no Market descriptor/extractor yields a `DrexClearing`. New `Market.ProtocolAssurance` defines
-     the exact missing extraction and proves the conditional seam: once supplied, commitment binding
-     identifies the decoded STARK endpoints with the fair/kernel-real clearing, gives per-asset
-     conservation, and advances `settleDrex` from the SAME public pre-root to the SAME public post-root.
-     `MarketBoundaryBinding` has a wrong-post refusal tooth and a concrete nonempty `demoFill` witness.
+  1. **`StarkMarketClaimExtractionResidual` FACTORED through
+     `MarketEffectEndpointExtractionResidual` (P0, OPEN).** `Market.ProtocolAssurance` now composes the
+     deployed `lightclient_unfoolable` apex directly: accept supplies `StateDecode` plus the real
+     `dispatchArm` step, and `starkMarketClaimExtraction_of_effect_step` derives the historical
+     accept-level extractor from only the Market-specific semantic fact.  Consequently
+     `lightclient_market_seam` and `accepted_market_settles_on_same_commitment_surface` no longer carry
+     an opaque accept-level extractor; commitment binding identifies decoded endpoints with the fair,
+     kernel-real clearing, proves per-asset conservation, and advances `settleDrex` across the SAME
+     public roots.  `DrexClearingEffectRefinementResidual` separately names the strictly stronger
+     allocation identity; exact allocation refinement proves the endpoint fragment, but no converse is
+     claimed.  Current PI contains one `(effect,pre,post,turn)` and `dispatchArm` yields one
+     `FullActionA`, while a `DrexClearing` retains an allocation and emits a LIST of settlement effects.
+     Close by registering a genuine
+     clearing action/descriptor carrying that allocation, or lift the apex to the emitted effect list
+     and prove it equals `settlementsOf c.nodes`. `MarketBoundaryBinding` retains its wrong-post tooth
+     and concrete nonempty `demoFill` witness.
   2. **fhEgg deployed denotation (P0, FORMALLY REFUTED).** New `Market.FhEggRustDenotation` proves
      `FhEggCrossingConventionResidual`: Lean selects least `D≤S`, Rust `reference_clear`/`fhe_clear`/
      `mpc.rs` select largest `D≥S`; the repository worked book is Lean `(2,6)` vs Rust `(1,8)`.
@@ -821,12 +830,19 @@ plane; content-addressed static-site hosting.
      prose, but no Lean-authored descriptor/refinement proves that satisfying its serialized trace
      yields `shielded_ring_clears`, nor is it routed into the Market STARK extractor. This is the exact
      order-book/hidden-note/settled-fill identity theorem still missing.
-  6. **`AggregateBindingScalarFloorResidual` (P1, FORMALLY REFUTED).** Market's scalar BDLOP stand-in
-     used `msisHard_trivial_model` as “non-vacuity,” but its `IsShort` contains only `(0,0)`, so the
-     reduction premise already forces equal openings. At `A=G=1`, the ordinary radius-one short witness
-     `(1,−1)` is an explicit kernel vector; the scalar `MSISHard` floor is false. Close with the actual
-     BDLOP module/matrix distribution and an adversary-indexed negligible-advantage floor (the discipline
-     already developed in `Dregg2.Crypto.CryptoFloorTeeth`), not another existence-refutation.
+  6. **`AggregateBindingScalarFloorResidual` CLOSED at the real-ring reduction boundary (P1).**
+     `Market.AggregateBinding.BDLOP` now uses the repository's genuine
+     `Z_q[X]/(X^256+1)`, `R_q^5→R_q^6` module shape, Hermine coordinate/product short norm,
+     `HermineSelfTargetMSIS.augmented`, and `Lattice.IsMSISSolution`.  A binding collision extracts
+     the complete nonzero short witness `(r−r',m−m')`; the finite game samples `(A,G,β)` and
+     `aggregate_binding_of_MSISHard` reduces every efficient binding adversary to an efficient solver
+     with no probability loss under the existing adversary-indexed `MSISHardQuant`.  Anti-scalar teeth
+     faithfully embed the old `(1,−1)` in one module basis coordinate, compute its real norm as two,
+     and reject it at the inhabited reference radius one; a nonzero real-ring opening is exhibited.
+     OPEN crypto-build input, named rather than
+     fabricated: the production BDLOP `(A,G,β)` sampler/resource class and its quantitative Module-SIS
+     estimate.  The deterministic `honestA/wVec` correctness witness is used only to inhabit the real
+     shape, never installed as the hard distribution.
   7. **certificate/crypto integration (P2, OPEN).** Cert-F is the strongest deployed Market bridge:
      Lean authors its descriptor and proves emit soundness, while Rust byte-pins the ring-3 twin; the
      general solver JSON/fixed-point conversion and live Market settlement still do not feed the STARK↔
