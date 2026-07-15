@@ -52,6 +52,33 @@ impl Rarity {
             Rarity::Legendary => 3,
         }
     }
+
+    /// **The gear rarity a fair-drawn craft QUALITY-TAG maps to** — the one-to-one lift of a
+    /// craft quality tier (its stable byte tag: `0`=common, `1`=uncommon, `2`=rare,
+    /// `3`=legendary, matching `dreggnet_craft::CraftQuality`) onto a gear [`Rarity`]. A
+    /// legendary forging (the provable ~3% craft tail) becomes a Legendary item; the tiers line
+    /// up exactly, so a crafted item's rarity is PROVABLY the fair draw's tier (never a claim).
+    /// Taking the primitive tag (not the craft type) keeps the pipe cycle-free: `dreggnet-craft`
+    /// depends on THIS crate, so it passes `quality.tag()` in.
+    pub fn from_quality_tag(tag: u8) -> Self {
+        match tag {
+            0 => Rarity::Common,
+            1 => Rarity::Uncommon,
+            2 => Rarity::Rare,
+            _ => Rarity::Legendary,
+        }
+    }
+
+    /// A small stat multiplier for the tier (a rarer item forges a stronger block) — used
+    /// by [`StatBlock::from_craft_draw`] to scale a craft's roll into stats.
+    fn stat_scale(self) -> u64 {
+        match self {
+            Rarity::Common => 1,
+            Rarity::Uncommon => 2,
+            Rarity::Rare => 3,
+            Rarity::Legendary => 5,
+        }
+    }
 }
 
 /// Which equipment slot a piece of gear occupies. Named residual: multi-slot loadouts
@@ -74,6 +101,36 @@ impl GearSlot {
             GearSlot::Weapon => 0,
             GearSlot::Armor => 1,
             GearSlot::Trinket => 2,
+        }
+    }
+
+    /// **The slot a craft recipe forges into** — the deterministic classification of a
+    /// recipe id. A recipe naming a blade / sword / weapon forges a Weapon; armor / plate /
+    /// shield forges Armor; a ring / amulet / charm / relic / trinket forges a Trinket; any
+    /// other recipe id folds through a stable `blake3` digest into one of the three (so
+    /// EVERY recipe forges into a real slot, deterministically). Same recipe id → same slot.
+    pub fn from_recipe_id(recipe_id: &str) -> Self {
+        let lower = recipe_id.to_ascii_lowercase();
+        const WEAPON: &[&str] = &["blade", "sword", "weapon", "axe", "spear", "bow", "dagger"];
+        const ARMOR: &[&str] = &[
+            "armor", "armour", "plate", "shield", "mail", "helm", "greave",
+        ];
+        const TRINKET: &[&str] = &[
+            "ring", "amulet", "charm", "relic", "trinket", "band", "idol",
+        ];
+        if WEAPON.iter().any(|k| lower.contains(k)) {
+            GearSlot::Weapon
+        } else if ARMOR.iter().any(|k| lower.contains(k)) {
+            GearSlot::Armor
+        } else if TRINKET.iter().any(|k| lower.contains(k)) {
+            GearSlot::Trinket
+        } else {
+            // No keyword — a stable fold of the recipe id decides (deterministic).
+            match blake3::hash(lower.as_bytes()).as_bytes()[0] % 3 {
+                0 => GearSlot::Weapon,
+                1 => GearSlot::Armor,
+                _ => GearSlot::Trinket,
+            }
         }
     }
 }
@@ -107,6 +164,76 @@ impl StatBlock {
             ward: 0,
             guile: 0,
             rune,
+        }
+    }
+
+    /// An armor stat block (ward-heavy).
+    pub fn armor(rarity: Rarity, ward: u64, rune: u64) -> Self {
+        StatBlock {
+            rarity,
+            slot: GearSlot::Armor,
+            might: 0,
+            ward,
+            guile: 0,
+            rune,
+        }
+    }
+
+    /// A trinket stat block (guile-heavy).
+    pub fn trinket(rarity: Rarity, guile: u64, rune: u64) -> Self {
+        StatBlock {
+            rarity,
+            slot: GearSlot::Trinket,
+            might: 0,
+            ward: 0,
+            guile,
+            rune,
+        }
+    }
+
+    /// **Forge a stat block FROM a provably-fair craft outcome** — the craft→gear pipe, in
+    /// primitive terms (so `dreggnet-craft`, which depends on THIS crate, can call it with its
+    /// `CraftDraw` fields — `quality.tag()`, `recipe_id`, `roll`, `craft_commitment(draw)` —
+    /// without a dependency cycle). A craft outcome lowers DETERMINISTICALLY to a gear block:
+    /// * **rarity** ← `quality_tag` ([`Rarity::from_quality_tag`]) — a legendary forging is a
+    ///   Legendary item;
+    /// * **slot** ← `recipe_id` ([`GearSlot::from_recipe_id`]);
+    /// * **stats** scale the fair `roll` (`0..100`) by the tier, concentrated in the slot's
+    ///   primary stat (Weapon→might, Armor→ward, Trinket→guile) with a small spread into the
+    ///   others (so the block is shaped by BOTH the fair roll and the forged slot);
+    /// * **rune** ← the low 8 bytes of the craft's content `commitment`, so the ability the gear
+    ///   unlocks is bound to the exact recipe + inputs + roll it was forged from.
+    ///
+    /// Deterministic in the inputs: the SAME craft always lowers to the SAME block (hence the
+    /// same [`traits_root`](Self::traits_root) and the same forged
+    /// [`AssetId`](dreggnet_asset::AssetId)). This is the shared-content-address keystone: the
+    /// crafted note and the gear note commit the same forge facts, so a forged item's stat block
+    /// is provably its craft's outcome.
+    pub fn from_forge(quality_tag: u8, recipe_id: &str, roll: u64, commitment: &[u8]) -> Self {
+        let rarity = Rarity::from_quality_tag(quality_tag);
+        let slot = GearSlot::from_recipe_id(recipe_id);
+        let scale = rarity.stat_scale();
+        // The primary magnitude scales the fair roll by the tier; the secondary is a small,
+        // deterministic spread (so a piece is not one-dimensional but still roll-driven).
+        let primary = (roll + 1) * scale;
+        let secondary = (roll / 4 + 1) * scale;
+        let (might, ward, guile) = match slot {
+            GearSlot::Weapon => (primary, secondary, secondary),
+            GearSlot::Armor => (secondary, primary, secondary),
+            GearSlot::Trinket => (secondary, secondary, primary),
+        };
+        // The rune binds the craft's content commitment (recipe + inputs + roll + quality). A
+        // short commitment is zero-padded so any caller-supplied digest lowers cleanly.
+        let mut rune_bytes = [0u8; 8];
+        let n = commitment.len().min(8);
+        rune_bytes[..n].copy_from_slice(&commitment[..n]);
+        StatBlock {
+            rarity,
+            slot,
+            might,
+            ward,
+            guile,
+            rune: u64::from_le_bytes(rune_bytes),
         }
     }
 

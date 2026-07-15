@@ -33,9 +33,13 @@
 //! bought. Everything is DRIVEN on the real executor (see each module's tests), never LARPed.
 
 pub mod gear;
+pub mod multislot;
+pub mod offering;
 pub mod statblock;
 pub mod talents;
 
 pub use gear::{Armory, EquipError, EquipGate, Gear, Loadout};
+pub use multislot::{MultiLoadout, SetBonusGate, SlotError};
+pub use offering::{LoadoutOffering, TalentTreeOffering};
 pub use statblock::{GearSlot, Rarity, StatBlock};
 pub use talents::{ClassRun, TALENT_TREE, Talent};

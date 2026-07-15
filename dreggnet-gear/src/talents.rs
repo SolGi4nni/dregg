@@ -232,6 +232,166 @@ pub fn deploy_talent_hero(seed: u8) -> WorldCell {
         .expect("the talent-tree hero cell deploys")
 }
 
+// ═══════════════════════════════════════════════════════════════════════════════
+// 3. RESPEC — a generation-keyed talent tree with a real re-key sink.
+// ═══════════════════════════════════════════════════════════════════════════════
+
+/// The hero cell's **respec generation** slot — a [`StrictMonotonic`] counter. A talent is
+/// "held" iff its slot stores `generation + 1`; bumping the generation (a respec) makes every
+/// previously-claimed talent stale (its slot no longer equals `generation + 1`), so the tree
+/// is CLEARED without ever rewriting a slot to a lower value.
+pub const RESPEC_SLOT: u8 = 12;
+/// The `read_var` name for the respec generation counter.
+pub const RESPEC_VAR: &str = "respec_generation";
+/// The **respec method** — bumps the generation (clearing the tree), echoes-gated.
+pub const RESPEC_METHOD: &str = "talent/respec";
+/// The accrued-echoes THRESHOLD a respec requires (a real gate; escalating per-respec cost is
+/// a named residual).
+pub const RESPEC_PRICE: u64 = 20;
+
+/// **Build a RESPEC-capable talent tree story.** Like [`talent_tree_story`] but the talent
+/// slots are keyed to the [`RESPEC_SLOT`] generation instead of being globally `WriteOnce`:
+///
+/// * a `talent/claim/<name>` case stamps `talent_slot = generation + 1` — enforced by a pair of
+///   [`FieldLteOther`](StateConstraint::FieldLteOther) bounds (`slot <= gen+1` AND `slot >=
+///   gen+1`), so a claim writes EXACTLY the current generation marker (not an arbitrary value)
+///   — plus the echoes gate + any prereq (held IN THIS GENERATION) / class gate;
+/// * the [`RESPEC_METHOD`] case bumps `generation` ([`StrictMonotonic`] — a respec can only
+///   move forward, never rewind) and is echoes-gated ([`RESPEC_PRICE`]). After a bump, every
+///   talent's `slot` (an old `gen+1`) is stale, so the whole tree reads un-held and is
+///   re-pickable — a real re-key sink, no `WriteOnce` wall.
+///
+/// The no-P2W teeth are untouched (the ONLY currency is death-earned echoes). A wrong-value
+/// claim, a rewind, or a claim below price is a real [`WorldError::Refused`].
+pub fn respec_talent_tree_story() -> CompiledStory {
+    let mut story = meta::meta_hero_story();
+
+    for t in TALENT_TREE {
+        story.var_slots.insert(t.var.to_string(), t.slot as usize);
+    }
+    story
+        .var_slots
+        .insert(RESPEC_VAR.to_string(), RESPEC_SLOT as usize);
+
+    let CellProgram::Cases(cases) = &mut story.program else {
+        panic!("the meta hero story is a Cases program");
+    };
+
+    // A claim case per talent — the marker is generation-keyed (no global WriteOnce).
+    for t in TALENT_TREE {
+        let mut constraints = vec![
+            // THE ECHOES GATE.
+            StateConstraint::FieldGte {
+                index: ECHOES_SLOT,
+                value: field_from_u64(t.price),
+            },
+            // THE GENERATION KEY: slot == generation + 1 (a claim stamps THIS generation).
+            //   slot <= gen + 1
+            StateConstraint::FieldLteOther {
+                index: t.slot,
+                other: RESPEC_SLOT,
+                delta: 1,
+            },
+            //   gen <= slot - 1   (i.e. slot >= gen + 1)
+            StateConstraint::FieldLteOther {
+                index: RESPEC_SLOT,
+                other: t.slot,
+                delta: -1,
+            },
+        ];
+        if let Some(prereq) = t.prereq_slot {
+            // THE TREE EDGE, generation-aware: the prerequisite must be held IN THIS
+            // generation (prereq_slot >= gen + 1; a stale prereq from before a respec does
+            // not count).
+            constraints.push(StateConstraint::FieldLteOther {
+                index: RESPEC_SLOT,
+                other: prereq,
+                delta: -1,
+            });
+        }
+        if let Some(class) = t.class {
+            constraints.push(StateConstraint::FieldEquals {
+                index: CLASS_SLOT,
+                value: field_from_u64(class),
+            });
+        }
+        cases.push(TransitionCase {
+            guard: TransitionGuard::MethodIs {
+                method: symbol(t.method),
+            },
+            constraints,
+        });
+    }
+
+    // The RESPEC case — a strictly-forward generation bump, echoes-gated.
+    cases.push(TransitionCase {
+        guard: TransitionGuard::MethodIs {
+            method: symbol(RESPEC_METHOD),
+        },
+        constraints: vec![
+            StateConstraint::StrictMonotonic { index: RESPEC_SLOT },
+            StateConstraint::FieldGte {
+                index: ECHOES_SLOT,
+                value: field_from_u64(RESPEC_PRICE),
+            },
+        ],
+    });
+
+    story
+}
+
+/// **Deploy a RESPEC-capable hero cell.** Deterministic in `seed`.
+pub fn deploy_respec_hero(seed: u8) -> WorldCell {
+    WorldCell::deploy_compiled(Arc::new(respec_talent_tree_story()), seed)
+        .expect("the respec talent-tree hero cell deploys")
+}
+
+/// The hero's current respec generation (0 before any respec).
+pub fn generation(world: &WorldCell) -> u64 {
+    world.read_var(RESPEC_VAR)
+}
+
+/// **Claim a talent in the RESPEC tree** — stamps `talent_slot = generation + 1`. The executor
+/// gates it on the echoes price + the generation key (+ any prereq / class gate). A claim below
+/// price, in the wrong class, without an in-generation prerequisite, or writing the wrong marker
+/// is a real [`WorldError::Refused`].
+pub fn claim_talent_gen(world: &WorldCell, talent: Talent) -> Result<TurnReceipt, WorldError> {
+    let cell = world.cell_id();
+    let marker = generation(world) + 1;
+    world.apply_raw(
+        talent.method,
+        vec![Effect::SetField {
+            cell,
+            index: talent.slot as usize,
+            value: field_from_u64(marker),
+        }],
+    )
+}
+
+/// Whether `talent` is held IN THE CURRENT GENERATION (its slot stores `generation + 1`). A
+/// talent claimed before a respec reads un-held (its stale marker no longer matches).
+pub fn has_talent_gen(world: &WorldCell, talent: Talent) -> bool {
+    let marker = world.read_var(talent.var);
+    marker != 0 && marker == generation(world) + 1
+}
+
+/// **Respec** — bump the generation, clearing every held talent (they go stale) so the tree can
+/// be re-picked. A real turn under [`RESPEC_METHOD`]; the executor gates it on
+/// `StrictMonotonic(generation)` (no rewind) + `FieldGte(echoes, RESPEC_PRICE)`. A respec below
+/// the echoes threshold is refused.
+pub fn respec(world: &WorldCell) -> Result<TurnReceipt, WorldError> {
+    let cell = world.cell_id();
+    let next = generation(world) + 1;
+    world.apply_raw(
+        RESPEC_METHOD,
+        vec![Effect::SetField {
+            cell,
+            index: RESPEC_SLOT as usize,
+            value: field_from_u64(next),
+        }],
+    )
+}
+
 /// **Claim a talent** — a real turn under the talent's `talent/claim/<name>` method
 /// writing `slot = 1`. The executor GATES it on `FieldGte(echoes, price)` (+ any prereq /
 /// class gate); a claim without the accrued echoes (or missing prereq / wrong class) is a
@@ -489,5 +649,77 @@ mod tests {
             has_talent(&world, IRONHIDE),
             "bought with earned echoes, never dregg"
         );
+    }
+
+    // ── 3. RESPEC — the generation-keyed re-key sink ─────────────────────────────────
+
+    /// Accrue death-echoes into a RESPEC-capable hero.
+    fn dead_respec_hero(seed: u8, class: u64, depth: u64) -> WorldCell {
+        let world = deploy_respec_hero(seed);
+        progression::choose_class(&world, class).expect("class");
+        progression::perish(&world).expect("a real death");
+        meta::grant_echoes(&world, depth).expect("a death funds echoes");
+        world
+    }
+
+    /// RESPEC (non-vacuous): a talent claimed in generation 0 is held; a respec bumps the
+    /// generation and CLEARS it (its stale marker no longer matches), and the SAME talent can
+    /// be re-claimed in the new generation. The generation strictly increases (no rewind).
+    #[test]
+    fn a_respec_clears_talents_and_the_tree_is_repickable() {
+        // 40 echoes >= Ironhide (30) and >= RESPEC_PRICE (20).
+        let world = dead_respec_hero(60, MAGE, 6);
+        assert_eq!(generation(&world), 0, "no respec yet");
+
+        // Claim Ironhide in generation 0 (marker = 1) — held.
+        claim_talent_gen(&world, IRONHIDE).expect("buy Ironhide in gen 0");
+        assert!(has_talent_gen(&world, IRONHIDE), "held in gen 0");
+        assert_eq!(world.read_var(IRONHIDE.var), 1, "the gen-0 marker is 1");
+
+        // Respec — the generation bumps to 1, and Ironhide reads un-held (stale marker 1 != 2).
+        respec(&world).expect("respec with enough echoes");
+        assert_eq!(generation(&world), 1, "generation advanced");
+        assert!(
+            !has_talent_gen(&world, IRONHIDE),
+            "the respec cleared the talent (its marker is now stale)"
+        );
+
+        // Re-claim in generation 1 (marker = 2) — held again.
+        claim_talent_gen(&world, IRONHIDE).expect("re-buy Ironhide in gen 1");
+        assert!(has_talent_gen(&world, IRONHIDE), "re-held in gen 1");
+        assert_eq!(world.read_var(IRONHIDE.var), 2, "the gen-1 marker is 2");
+    }
+
+    /// A respec is echoes-gated + strictly-forward: a below-price respec is refused, and a claim
+    /// writing the WRONG generation marker (not `gen + 1`) is refused by the generation-key
+    /// bounds (a claim cannot forge a held talent).
+    #[test]
+    fn respec_is_echoes_gated_and_the_generation_key_is_enforced() {
+        // A shallow death banks 15 echoes < RESPEC_PRICE (20) → respec refused.
+        let poor = dead_respec_hero(61, WARRIOR, 1);
+        assert!(meta::echoes(&poor) < RESPEC_PRICE);
+        assert!(
+            matches!(respec(&poor), Err(WorldError::Refused(_))),
+            "a respec below the echoes threshold is refused"
+        );
+        assert_eq!(generation(&poor), 0, "anti-ghost: no generation bump");
+
+        // A rich hero: a claim writing a wrong marker (2 while gen is 0, so gen+1 == 1) is
+        // refused by the generation-key bounds.
+        let rich = dead_respec_hero(62, WARRIOR, 6);
+        let cell = rich.cell_id();
+        let forged = rich.apply_raw(
+            IRONHIDE.method,
+            vec![Effect::SetField {
+                cell,
+                index: IRONHIDE.slot as usize,
+                value: field_from_u64(2), // gen+1 is 1, not 2
+            }],
+        );
+        assert!(
+            matches!(forged, Err(WorldError::Refused(_))),
+            "a claim writing the wrong generation marker is refused, got {forged:?}"
+        );
+        assert!(!has_talent_gen(&rich, IRONHIDE), "anti-ghost: not forged");
     }
 }

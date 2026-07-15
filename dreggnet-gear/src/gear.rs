@@ -80,10 +80,10 @@ pub const WEAR_SLOT: u8 = 1;
 pub const WEAR_CAP_SLOT: u8 = 2;
 
 /// The federation the equip world's turns commit under.
-const GEAR_FEDERATION: [u8; 32] = [0x6E; 32];
+pub(crate) const GEAR_FEDERATION: [u8; 32] = [0x6E; 32];
 /// A FIXED driver seed — so the dry-run pinning the finalized equip root and the real
 /// world share ONE driver identity (mirrors `multicell`'s `DRIVER_SEED`).
-const DRIVER_SEED: [u8; 64] = [0x6D; 64];
+pub(crate) const DRIVER_SEED: [u8; 64] = [0x6D; 64];
 
 const GEAR_CELL_SEED: u8 = 0x6A;
 const RUN_CELL_SEED: u8 = 0x6B;
@@ -150,6 +150,26 @@ impl Armory {
         Gear { asset_id, stats }
     }
 
+    /// **Forge gear FROM a provably-fair craft outcome** — the craft→gear pipe. The craft
+    /// outcome (its quality tag + recipe id + fair roll + content commitment) lowers to a
+    /// [`StatBlock`] via [`StatBlock::from_forge`] (quality→rarity, recipe→slot, roll→stats,
+    /// commitment→rune), and that block is forged into a real owned asset owned by
+    /// `smith_label`. So a forged item is DIRECTLY an equippable piece of gear whose stat
+    /// block is provably its craft's outcome (deterministic in the inputs), carried by the
+    /// same content-address keystone. `dreggnet-craft` (which depends on this crate) calls this
+    /// with its `CraftDraw` fields — the primitive signature keeps the pipe cycle-free.
+    pub fn forge_from_craft(
+        &mut self,
+        smith_label: &str,
+        quality_tag: u8,
+        recipe_id: &str,
+        roll: u64,
+        commitment: &[u8],
+    ) -> Gear {
+        let stats = StatBlock::from_forge(quality_tag, recipe_id, roll, commitment);
+        self.forge(smith_label, stats)
+    }
+
     /// **Prove current ownership of `gear` by `holder_label`** — an owner-signed
     /// self-transfer (spend the tail version, mint a same-owner successor). Only the
     /// REAL current owner can sign the tail spend, so a non-owner is a cryptographic
@@ -202,7 +222,7 @@ impl Armory {
 /// cross-cell GATE (`ObservedFieldEquals`), not a per-cell signature mismatch, is what a
 /// test observes. (Ownership is enforced at the ASSET layer, above.) Mirrors
 /// `multicell::open_permissions`.
-fn open_permissions() -> Permissions {
+pub(crate) fn open_permissions() -> Permissions {
     Permissions {
         send: AuthRequired::None,
         receive: AuthRequired::None,
@@ -216,7 +236,7 @@ fn open_permissions() -> Permissions {
 }
 
 /// Build an open world cell with `token` identity and `program`, deterministic in `seed`.
-fn world_cell(seed: u8, token: [u8; 32], program: CellProgram) -> Cell {
+pub(crate) fn world_cell(seed: u8, token: [u8; 32], program: CellProgram) -> Cell {
     let mut pk = [0u8; 32];
     pk[0] = seed;
     pk[31] = seed.wrapping_mul(37);
@@ -330,14 +350,14 @@ fn finalized_equip_root(gear_token: [u8; 32]) -> [u8; 32] {
 }
 
 /// A `SetField` effect on `cell`'s slot `index`.
-fn set_field(cell: CellId, index: usize, value: FieldElement) -> Effect {
+pub(crate) fn set_field(cell: CellId, index: usize, value: FieldElement) -> Effect {
     Effect::SetField { cell, index, value }
 }
 
 /// Build, sign (over the attached witness blobs), wrap, and submit one turn — a real
 /// cap-bounded turn the executor admits IFF every cap AND every touched cell's program
 /// admits it. Mirrors `multicell::issue`.
-fn issue(
+pub(crate) fn issue(
     exec: &EmbeddedExecutor,
     cclerk: &AppCipherclerk,
     target: CellId,
@@ -492,7 +512,7 @@ impl EquipGate {
 }
 
 /// The inverse of [`field_from_u64`], which stores the value big-endian in bytes `[24..32]`.
-fn field_to_u64(f: FieldElement) -> u64 {
+pub(crate) fn field_to_u64(f: FieldElement) -> u64 {
     let mut b = [0u8; 8];
     b.copy_from_slice(&f[24..32]);
     u64::from_be_bytes(b)
@@ -552,6 +572,17 @@ impl Loadout {
             .map_err(EquipError::NotOwner)?;
         self.gate.equip().map_err(EquipError::GateRefused)?;
         Ok(())
+    }
+
+    /// **Equip and return the cross-cell equip [`TurnReceipt`]** — the same "own AND equip"
+    /// conjunction as [`Self::equip`], but surfacing the real committed equip turn's receipt
+    /// (for an [`Offering`](dreggnet_offerings::Offering)'s `Outcome::Landed`). A non-owner is
+    /// still refused at the ownership proof (nothing stamped).
+    pub fn equip_with_receipt(&mut self, holder_label: &str) -> Result<TurnReceipt, EquipError> {
+        self.armory
+            .prove_ownership(&self.gear, holder_label)
+            .map_err(EquipError::NotOwner)?;
+        self.gate.equip().map_err(EquipError::GateRefused)
     }
 
     /// The owned gear.

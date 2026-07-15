@@ -60,6 +60,19 @@ dregg-cell = { path = "../cell" }
 # Merkle-open witness of the gear's finalized state, referenced by `ObservedFieldEquals`
 # at `proof_witness_index`) — same `dregg-turn` the framework + executor are built on.
 dregg-turn = { path = "../turn" }
+# THE CRAFT PIPE (direction note): `dreggnet-craft` DEPENDS ON `dreggnet-gear` (a forged craft
+# output lowers to a `dreggnet_gear::StatBlock`), so the pipe cannot import craft types HERE
+# (that is a dependency cycle). Instead this crate exposes a PRIMITIVE-typed lowering
+# ([`StatBlock::from_forge`]) — quality-tag + recipe-id + fair-roll + commitment → a real
+# equippable stat block — and `dreggnet-craft` wires its `CraftDraw` fields into it (the
+# craft-side follow-up). The content-address keystone (the traits_root mint seed) is the same.
+# THE FRONTEND-AGNOSTIC OFFERING CORE — `Offering`/`Surface`/`Action`/`Outcome`: exposing the
+# loadout + talent tree as `Offering`s lights up EVERY frontend (web/discord/telegram/wechat)
+# through the one `render -> ViewNode` do-once path (mirrors `dreggnet-surfaces`).
+dreggnet-offerings = { path = "../dreggnet-offerings" }
+# THE SURFACE VOCAB — `ViewNode`/`MenuItem` (Section/Menu/Table/Row/Text/Pill): a `Surface` IS
+# a `deos_view::ViewNode`, so a gear/talent render reaches every renderer with no per-surface code.
+deos-view = { path = "../deos-view", default-features = false }
 blake3 = "1"
 
 # A workspace MEMBER of the breadstuffs root; the root `[workspace]` + `[patch]` apply.
