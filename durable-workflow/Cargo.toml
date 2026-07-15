@@ -1,0 +1,57 @@
+# durable-workflow — the crash-resumable, exactly-once, metered durable-execution
+# engine for the hosting substrate. A workload is a deterministic orchestration of
+# steps; each step runs at-most-once and its result is checkpointed to a durable
+# store, so a crash mid-workflow resumes exactly-once from the last checkpoint.
+#
+# The step executor is a PLUGGABLE seam (`StepRunner`) — the engine is substrate-
+# general, not bound to any one sandbox. The per-step meter writes the shared
+# `hosted_meter` outbox the `hosted-durable` settlement rail reads (the `pg`
+# feature reuses that writer; no duplication). The `deploy` feature composes a
+# launch with a content-addressed microsite + token metadata over IPFS
+# (`dregg-ipfs`), the git-deploy / launchpad seam.
+#
+# Standalone workspace: this crate carries a durable-store stack (duroxide/sqlite
+# → libsqlite3-sys) kept out of the main tree's single `links = "sqlite3"` budget.
+# It composes into the main tree by path dependency, not workspace membership.
+
+[workspace]
+
+[package]
+name = "durable-workflow"
+description = "Crash-resumable, exactly-once, metered durable-execution workflow engine: pluggable-runner steps checkpointed to a durable store, resumed exactly-once after a crash, metered into the shared settlement outbox"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.82"
+license = "AGPL-3.0-only"
+
+[lib]
+name = "durable_workflow"
+
+[features]
+default = ["sqlite"]
+# The on-disk durable store: crash survives on the same host (WAL-durable SQLite).
+sqlite = ["duroxide/sqlite"]
+# The Postgres transactional-outbox meter: each step's charge lands in the shared
+# `hosted_meter` outbox (reused from `hosted-durable`, idempotent on
+# `(lease_id, period)`), the wire a conserving settlement reads. DB-gated; the
+# durable store stays SQLite. Adds no `links` crate to the main tree via reuse.
+pg = ["dep:sqlx", "dep:hosted-durable"]
+# The launchpad seam: a launch composes the durable workflow with a content-
+# addressed microsite + token metadata pinned to IPFS (blake3 CIDv1).
+deploy = ["dep:dregg-ipfs"]
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+duroxide = { version = "0.1.29", default-features = false }
+tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "time"] }
+# pg outbox meter (DB-gated): reuse the shared `hosted_meter` writer + sqlx.
+sqlx = { version = "0.8", default-features = false, features = ["runtime-tokio", "postgres"], optional = true }
+hosted-durable = { path = "../hosted-durable", features = ["pg"], optional = true }
+# launchpad content-addressing (deploy-gated): a blake3 content commitment IS an
+# IPFS CIDv1, so microsite assets + token metadata are pinned + re-witnessed.
+dregg-ipfs = { path = "../dregg-ipfs", optional = true }
+
+[dev-dependencies]
+tempfile = "3"
