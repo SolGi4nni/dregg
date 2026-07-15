@@ -53,6 +53,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
 use dregg_circuit::effect_vm::{CellState, Effect};
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::{Outcome, classify};
 use dregg_turn::rotation_witness as rw;
 
 const B_CAP_ROOT: usize = 25;
@@ -373,13 +374,19 @@ fn rotated_transfer_proves_verifies_differential_and_refuses_ghost() {
 
     // -- (3) ANTI-GHOST: tamper teeth bite on the rotated shape. --
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_transfer_proves_verifies_differential_and_refuses_ghost",
+            || {
+                prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
     // tampered heap_root limb (before block, offset 27).
@@ -724,27 +731,33 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
             AFTER_BASE as AB, B_NULLIFIER_ROOT, B_STATE_COMMIT as BSC,
         };
         let bump = BabyBear::new(0x9999);
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut t = trace.clone();
-            for row in t.iter_mut() {
-                row[AB + B_NULLIFIER_ROOT] = row[AB + B_NULLIFIER_ROOT] + bump; // a set the kernel never grew
-            }
-            // re-derive the NEW commit PI from the (self-consistently re-filled) forged trace.
-            // (the generator already re-fills the chain in-place via recompute_block_commit on a
-            //  fresh trace; here we only need the prover to reject the forged after-root, so we
-            //  fully re-fill below by re-running the wiring on a forged-after witness is overkill —
-            //  instead recompute the commit pin from the forged last row directly.)
-            let mut p = dpis.clone();
-            // recompute the after-block chain for every row so STATE_COMMIT matches the forged limb,
-            // then publish the new commit PI from the last row.
-            dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
-            p[43] = t[t.len() - 1][AB + BSC];
-            prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
-        }));
-        let rejected = match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        let rejected = match classify(
+            "rotated_note_spend_pins_nullifier_and_refuses_tamper",
+            || {
+                let mut t = trace.clone();
+                for row in t.iter_mut() {
+                    row[AB + B_NULLIFIER_ROOT] = row[AB + B_NULLIFIER_ROOT] + bump; // a set the kernel never grew
+                }
+                // re-derive the NEW commit PI from the (self-consistently re-filled) forged trace.
+                // (the generator already re-fills the chain in-place via recompute_block_commit on a
+                //  fresh trace; here we only need the prover to reject the forged after-root, so we
+                //  fully re-fill below by re-running the wiring on a forged-after witness is overkill —
+                //  instead recompute the commit pin from the forged last row directly.)
+                let mut p = dpis.clone();
+                // recompute the after-block chain for every row so STATE_COMMIT matches the forged limb,
+                // then publish the new commit PI from the last row.
+                dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
+                p[43] = t[t.len() - 1][AB + BSC];
+                prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         };
         assert!(
             rejected,
@@ -781,13 +794,19 @@ fn rotated_note_spend_pins_nullifier_and_refuses_tamper() {
     // -- THE SOUNDNESS TOOTH (anti-ghost): a published nullifier ≠ the spend row's param0 is
     //    UNSAT. This is the rotated boundary's analog of the v1 `rejects_swap` test. --
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_note_spend_pins_nullifier_and_refuses_tamper",
+            || {
+                prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
     // (a) publish a DIFFERENT nullifier in PI[46] than the spend row carries ("prove N, spend M").
@@ -983,20 +1002,26 @@ fn rotated_revoke_forces_revoked_set_insert_and_refuses_double_revoke() {
     // forged root has no witness and the prover REFUSES it.
     {
         let bump = BabyBear::new(0x7777);
-        let rejected = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let mut t = trace.clone();
-            for row in t.iter_mut() {
-                row[AFTER_BASE + B_REVOKED_ROOT] = row[AFTER_BASE + B_REVOKED_ROOT] + bump;
-            }
-            dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
-            let mut p = dpis.clone();
-            p[43] = t[t.len() - 1][AFTER_BASE + BSC]; // PI 43 = V1_PI_COUNT+1 = rotated NEW commit
-            prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
-        }));
-        let rejected = match rejected {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        let rejected = match classify(
+            "rotated_revoke_forces_revoked_set_insert_and_refuses_double_revoke",
+            || {
+                let mut t = trace.clone();
+                for row in t.iter_mut() {
+                    row[AFTER_BASE + B_REVOKED_ROOT] = row[AFTER_BASE + B_REVOKED_ROOT] + bump;
+                }
+                dregg_circuit::effect_vm::trace_rotated::recompute_after_blocks_for_test(&mut t);
+                let mut p = dpis.clone();
+                p[43] = t[t.len() - 1][AFTER_BASE + BSC]; // PI 43 = V1_PI_COUNT+1 = rotated NEW commit
+                prove_vm_descriptor2(&desc, &t, &p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         };
         assert!(
             rejected,
@@ -1166,13 +1191,19 @@ fn rotated_create_cell_pins_accounts_and_refuses_tamper() {
     );
 
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>, mh: &Vec<Vec<HeapLeaf>>| -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(&desc, t, p, &mem_boundary, mh)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_create_cell_pins_accounts_and_refuses_tamper",
+            || {
+                prove_vm_descriptor2(&desc, t, p, &mem_boundary, mh)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
 
@@ -1412,13 +1443,19 @@ fn rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta() {
                    t: &Vec<Vec<BabyBear>>,
                    p: &Vec<BabyBear>|
      -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_set_field_and_bridge_mint_tick_nonce_and_refuse_forged_delta",
+            || {
+                prove_vm_descriptor2(desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
 
@@ -1674,13 +1711,19 @@ fn rotated_supply_mint_self_verifies_under_dedicated_selector() {
      -> bool {
         // The debug constraint-checker panics (rather than returning Err) on a
         // violated trace, so catch the unwind — either path means refusal.
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_supply_mint_self_verifies_under_dedicated_selector",
+            || {
+                prove_vm_descriptor2(desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
 
@@ -2500,13 +2543,19 @@ fn rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery() {
 
     // -- THE SOUNDNESS TOOTH (anti-ghost): the FROZEN-lifecycle forgery is UNSAT. --
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_cellseal_record_pin_forces_lifecycle_and_rejects_frozen_forgery",
+            || {
+                prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
     // (a) publish a DIFFERENT post in PI[46] than the AFTER block carries.
@@ -2664,13 +2713,19 @@ fn rotated_transfer_frozen_authority_forces_r23_and_rejects_drift() {
     //     BEFORE-r23 (authority drift smuggled into NEW_COMMIT during a value move) is UNSAT via
     //     `prove`/`verify` ALONE — the forgery the deployed descriptor USED to accept.
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "rotated_transfer_frozen_authority_forces_r23_and_rejects_drift",
+            || {
+                prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
     // (a) THE CENTRAL FORGERY: drift the AFTER-r23 authority limb away from the BEFORE — a value
@@ -2922,13 +2977,19 @@ fn rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery() {
 
         // -- THE SOUNDNESS TOOTH (anti-ghost): the FROZEN-audit-slot forgery is UNSAT. --
         let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
-            let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-                prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
-                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-            }));
-            match r {
-                Err(_) => true,
-                Ok(res) => res.is_err(),
+            match classify(
+                "rotated_audit_record_pin_forces_record_digest_and_rejects_frozen_forgery",
+                || {
+                    prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                        .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+                },
+            ) {
+                // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+                // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+                // debug_assert), which used to land here and read as "rejected".
+                Outcome::UnsatPanic(_) => true,
+                Outcome::Err(_) => true,
+                Outcome::Accepted(_) => false,
             }
         };
         // (a) publish a DIFFERENT post in PI[46] than the AFTER block carries.
@@ -3252,13 +3313,19 @@ fn fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client() {
     );
 
     let refused = |t: &Vec<Vec<BabyBear>>, p: &Vec<BabyBear>| -> bool {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
-                .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
-        }));
-        match r {
-            Err(_) => true,
-            Ok(res) => res.is_err(),
+        match classify(
+            "fee_debit_is_proven_and_underclaimed_fee_is_unsat_for_a_ledgerless_client",
+            || {
+                prove_vm_descriptor2(&desc, t, p, &mem_boundary, &map_heaps)
+                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, p))
+            },
+        ) {
+            // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+            // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+            // debug_assert), which used to land here and read as "rejected".
+            Outcome::UnsatPanic(_) => true,
+            Outcome::Err(_) => true,
+            Outcome::Accepted(_) => false,
         }
     };
     let refused_verify = |p: &Vec<BabyBear>| -> bool {

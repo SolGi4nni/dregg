@@ -43,6 +43,7 @@ use dregg_circuit::effect_vm::trace_rotated::{
 };
 use dregg_circuit::effect_vm_descriptors::V3_STAGED_REGISTRY_TSV;
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::{Outcome, classify};
 use dregg_turn::rotation_witness as rw;
 
 const LEG_A: usize = 0;
@@ -202,12 +203,15 @@ fn proving_refuses(
 ) -> bool {
     let mem_boundary = MemBoundaryWitness::default();
     let map_heaps: Vec<Vec<dregg_circuit::heap_root::HeapLeaf>> = vec![];
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    match classify("proving_refuses", || {
         prove_vm_descriptor2(desc, trace, dpis, &mem_boundary, &map_heaps)
-    }));
-    match r {
-        Err(_) => true,          // panic unwound
-        Ok(res) => res.is_err(), // prover/replay returned Err
+    }) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     }
 }
 

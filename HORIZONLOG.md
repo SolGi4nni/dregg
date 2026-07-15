@@ -8523,3 +8523,36 @@ trustless Solana lane — each spot-checked plausible at the code level, none ye
    a witness tx's signer isn't bound to the vote account's on-chain authorized voter on the rotation path.
 Closure lane: confirm/refute each with adversarial tests; fix or explicitly bound the verified relation
 (anchor-epoch-only, rotation excluded) — the grant's M1 audit scope mirrors exactly this list.
+
+## P1b — the reject idiom is dead in circuit/circuit-prove; two teeth it exposed are open
+
+`circuit/src/refusal.rs` is the shared REFUSAL DISCRIMINATOR (`must_refuse` / `must_refuse_or_unsat_panic`
+/ `classify` / `must_accept` / `must_panic_containing`). It replaces the `match catch_unwind(..) { Err(_)
+=> {}, .. }` idiom, under which **any** panic counted as "the forgery was refused". A panic is now a
+refusal ONLY when it carries one of the p3 batch prover's two documented unsat panics
+(`P3_UNSAT_PANIC_MARKERS`, read off Plonky3 @ 82cfad73: `check_constraints.rs:133` "constraints not
+satisfied on row", `lookup/debug_util.rs:82` "Lookup mismatch"). Every other panic — a stray `unwrap`, a
+trace-assembly `debug_assert`, a trace-SHAPE `assert_eq!` — now REDs.
+
+Converting the sites exposed two teeth that were green and proving nothing. Neither is papered over:
+
+1. ⚑ **`descriptor_ir2::tests::ir2_forged_map_opening_refuses` never reached the constraint system.**
+   Its `check: false` leg was satisfied by map-row assembly's own `debug_assert_eq!(end, root, "old path
+   must authenticate against root8")` — a producer-side witness sanity check that fires BEFORE
+   `prove_batch`. So the in-circuit opening tooth was never exercised, and the assembly assert is
+   `debug_assert` — compiled OUT under `--release`, i.e. absent in exactly the build where the in-circuit
+   tooth is the only thing left. The test now pins the deployed replay refusal (`must_refuse` on the
+   public entry, a real tooth) and names the assembly leg for what it is.
+   **Closure lane: forge the witness AFTER assembly (corrupt the assembled map row, not the input row)
+   so the forgery reaches `prove_batch`, and require an unsat panic naming the opening lookup.**
+   Contrast `ir2_tampered_read_refuses`, whose forgery genuinely does reach the prover (verified: it
+   refuses with a `Lookup mismatch` on the `mem_check` bus).
+
+2. **A dead `catch_unwind` in the umem double-spend tooth** (`descriptor_ir2.rs`, the "double-spend
+   freshness" site): it ran a full `prove_vm_descriptor2_inner` and bound the verdict to `r`, which was
+   never read. Removed — `assert_umem_forgery_refused` is the tooth and re-runs the prove itself.
+
+Remaining: 46 of the original 181 idiom sites are unconverted (see the lane report for the exact
+per-file list) — the shapes the mechanical converter deliberately refused to guess at. Reason-matching
+(`assert!(matches!(e, LeafError::BindingUnsat{..}))`) lands with MOVE 5's typed errors; the panic/Err
+split is done now, as the plan prescribes.

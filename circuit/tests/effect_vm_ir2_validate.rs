@@ -39,6 +39,7 @@ use dregg_circuit::effect_vm::columns::{STATE_AFTER_BASE, state};
 use dregg_circuit::effect_vm::{CellState, Effect, generate_effect_vm_trace, pi};
 use dregg_circuit::effect_vm_descriptors::descriptor2_for_key;
 use dregg_circuit::field::BabyBear;
+use dregg_circuit::refusal::{Outcome, classify};
 
 /// THE GATE: IR-v2 proves+verifies a real transfer end-to-end, with the anti-ghost tooth.
 #[test]
@@ -110,13 +111,19 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
             let mut forged = pis.clone();
             forged[pi::FINAL_BAL_LO] = forged[pi::FINAL_BAL_LO] + BabyBear::new(123);
             let fdpis: Vec<BabyBear> = forged[..desc.public_input_count].to_vec();
-            let r = std::panic::catch_unwind(|| {
-                prove_vm_descriptor2(&desc, &base_trace, &fdpis, &mem_boundary, &map_heaps)
-                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &fdpis))
-            });
-            let refused = match r {
-                Err(_) => true,          // debug prover panicked on the unsatisfiable binding
-                Ok(res) => res.is_err(), // or returned a prove/self-verify error
+            let refused = match classify(
+                "ir2_validate_transfer_proves_verifies_and_refuses_ghost",
+                || {
+                    prove_vm_descriptor2(&desc, &base_trace, &fdpis, &mem_boundary, &map_heaps)
+                        .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &fdpis))
+                },
+            ) {
+                // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+                // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+                // debug_assert), which used to land here and read as "rejected".
+                Outcome::UnsatPanic(_) => true,
+                Outcome::Err(_) => true,
+                Outcome::Accepted(_) => false,
             };
             assert!(
                 refused,
@@ -132,13 +139,19 @@ fn ir2_validate_transfer_proves_verifies_and_refuses_ghost() {
             let last = t.len() - 1;
             t[last][STATE_AFTER_BASE + state::STATE_COMMIT] =
                 t[last][STATE_AFTER_BASE + state::STATE_COMMIT] + BabyBear::new(1);
-            let r = std::panic::catch_unwind(|| {
-                prove_vm_descriptor2(&desc, &t, &dpis, &mem_boundary, &map_heaps)
-                    .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis))
-            });
-            let refused = match r {
-                Err(_) => true,
-                Ok(res) => res.is_err(),
+            let refused = match classify(
+                "ir2_validate_transfer_proves_verifies_and_refuses_ghost",
+                || {
+                    prove_vm_descriptor2(&desc, &t, &dpis, &mem_boundary, &map_heaps)
+                        .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &dpis))
+                },
+            ) {
+                // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+                // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+                // debug_assert), which used to land here and read as "rejected".
+                Outcome::UnsatPanic(_) => true,
+                Outcome::Err(_) => true,
+                Outcome::Accepted(_) => false,
             };
             assert!(
                 refused,

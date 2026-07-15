@@ -5842,6 +5842,10 @@ where
 mod tests {
     use super::*;
     use crate::poseidon2::hash_many;
+    use crate::refusal::{
+        Outcome, classify, must_accept, must_panic_containing, must_refuse,
+        must_refuse_or_unsat_panic,
+    };
 
     /// **THE 8-FELT CHAIN ↔ CHIP BYTE-IDENTITY CROSS-CHECK** (Phase B-ROTATION). The plain
     /// `poseidon2::single_perm_compress` (the cell/turn/Lean-mirrored chain step) computes lanes
@@ -6316,55 +6320,89 @@ mod tests {
         rows[0][6] = BabyBear::new(7); // prev_value (read discipline forces equality)
         // Pre-flight replay refuses.
         assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
-        // In-circuit tooth: bypass the replay; the mem_check bus cannot balance.
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &rows,
-                &[],
-                &test_boundary(),
-                &[test_heap()],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
-        });
-        match r {
-            Err(_) => {} // debug prover panicked on the unbalanced bus — refused
-            Ok(res) => assert!(
-                res.is_err(),
-                "tampered memory read produced an accepted proof — Blum tooth OPEN"
-            ),
-        }
+        // In-circuit tooth: bypass the replay; the mem_check bus cannot balance. `check: false`
+        // means the forged witness reaches `prove_batch`, whose debug-gated lookup check panics —
+        // so the p3 unsat panic is genuinely the mechanism here. It is still discriminated: a
+        // trace-assembly assert or a stray unwrap would RED rather than pass.
+        let refusal =
+            must_refuse_or_unsat_panic("ir2_tampered_read (Blum mem_check tooth)", || {
+                prove_vm_descriptor2_inner(
+                    &desc,
+                    &rows,
+                    &[],
+                    &test_boundary(),
+                    &[test_heap()],
+                    &UMemBoundaryWitness::default(),
+                    false,
+                    &ir2_config(),
+                )
+            });
+        // WHY it refused: the tampered read unbalances the `ir2_mem_check` multiset argument.
+        let reason = refusal.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "tampered memory read must be refused BY THE CONSTRAINT SYSTEM (an unbalanced \
+             mem_check bus or a violated constraint), got: {reason}"
+        );
     }
 
-    /// A forged map READ (claims value 78 at key 100 where the committed heap holds 77)
-    /// must refuse the same way.
+    /// A forged map READ (claims value 78 at key 100 where the committed heap holds 77) must
+    /// REFUSE. The deployed refusal is the pre-flight replay, asserted below as the load-bearing
+    /// leg.
+    ///
+    /// ⚑ NAMED SEAM — this test does NOT witness the in-circuit opening tooth, and used to imply
+    /// it did. Its old second leg bypassed the replay (`check: false`) and matched `Err(_) => {}`
+    /// on a `catch_unwind`, which read as "the constraint system refused". It was not: map-row
+    /// assembly's own `debug_assert_eq!(end, root, "old path must authenticate against root8")`
+    /// (this file, in the `fold_chain` old-path leg) fires FIRST, so `prove_batch` was never
+    /// reached and the opening tooth was never exercised. The old arm swallowed that
+    /// indiscriminately; `must_panic_containing` below pins the mechanism that actually fires.
+    ///
+    /// Note the assembly assert is a `debug_assert` — compiled OUT under `--release`. So the
+    /// in-circuit opening tooth is exactly the leg that matters in production and exactly the one
+    /// unwitnessed here. Closing it needs a witness forged AFTER assembly (corrupt the assembled
+    /// map row, not the input row) so the forgery reaches the constraint system — tracked in
+    /// HORIZONLOG. Contrast `ir2_tampered_read_refuses`, whose forgery genuinely does reach
+    /// `prove_batch` and is refused by an unbalanced `mem_check` bus.
     #[test]
     fn ir2_forged_map_opening_refuses() {
         let desc = test_desc();
         let mut rows = test_trace();
         rows[0][11] = BabyBear::new(78);
-        assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &rows,
-                &[],
-                &test_boundary(),
-                &[test_heap()],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
+
+        // THE HONEST POLE (S1): the untampered witness must be ACCEPTED, else this canary is
+        // vacuous — a path that refuses everything refuses the forgery for free.
+        let honest = test_trace();
+        must_accept("ir2_forged_map_opening honest pole", || {
+            prove_vm_descriptor2(&desc, &honest, &[], &test_boundary(), &[test_heap()])
         });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged map opening produced an accepted proof — opening tooth OPEN"
-            ),
-        }
+
+        // THE LOAD-BEARING LEG: the deployed entry point refuses the forgery fail-closed.
+        let e = must_refuse("ir2_forged_map_opening (deployed replay)", || {
+            prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()])
+        });
+        assert!(
+            !e.is_empty(),
+            "the replay must refuse with a diagnosable reason, got an empty error"
+        );
+
+        // The producer-assembly leg, named for what it IS (see the seam note above).
+        must_panic_containing(
+            "ir2_forged_map_opening (producer assembly sanity check)",
+            "old path must authenticate against root8",
+            || {
+                prove_vm_descriptor2_inner(
+                    &desc,
+                    &rows,
+                    &[],
+                    &test_boundary(),
+                    &[test_heap()],
+                    &UMemBoundaryWitness::default(),
+                    false,
+                    &ir2_config(),
+                )
+            },
+        );
     }
 
     // ---- THE DEPLOYED HEAP-WRITE SPLICE: a content-mismatched root is REJECTED (PHASE-E). ----
@@ -6485,26 +6523,36 @@ mod tests {
             "a content-mismatched heap_root must be refused by the deployed splice pre-flight"
         );
 
-        // In-circuit tooth: bypass the replay; the MapOps fact-bus recompute cannot match col 87.
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &hw_splice_trace(forged),
-                &[],
-                &MemBoundaryWitness::default(),
-                &[hw_pre_heap()],
-                &UMemBoundaryWitness::default(),
-                false,
-                &ir2_config(),
-            )
-        });
-        match r {
-            Err(_) => {} // debug prover panicked on the unsatisfiable bus — refused
-            Ok(res) => assert!(
-                res.is_err(),
-                "content-mismatched heap_root produced an accepted proof — the splice tooth is OPEN"
-            ),
-        }
+        // ⚑ NAMED SEAM — the `check: false` leg below does NOT witness the in-circuit splice
+        // tooth, and used to imply it did. Its old `Err(_) => {}` arm read as "the constraint
+        // system refused"; it was not. Map-row assembly's own
+        // `debug_assert_eq!(end, new_root, "new path must recompose to new_root8")` (this file,
+        // the `fold_chain` new-path leg) fires FIRST, so `prove_batch` is never reached and the
+        // MapOps fact-bus recompute is never asked about col 87. Same class as
+        // `ir2_forged_map_opening_refuses` — both `fold_chain` debug_asserts intercept a forged
+        // map/heap witness before the prover sees it.
+        //
+        // That assert is a `debug_assert` — compiled OUT under `--release`. So the in-circuit
+        // splice tooth is exactly the leg that matters in production and exactly the one
+        // unwitnessed here. Closing it needs the forgery applied AFTER assembly (corrupt the
+        // assembled map row, not the claimed root) so it reaches the constraint system —
+        // tracked in HORIZONLOG. The load-bearing leg is the deployed pre-flight above.
+        must_panic_containing(
+            "hw_splice content-mismatched heap_root (producer assembly sanity check)",
+            "new path must recompose to new_root8",
+            || {
+                prove_vm_descriptor2_inner(
+                    &desc,
+                    &hw_splice_trace(forged),
+                    &[],
+                    &MemBoundaryWitness::default(),
+                    &[hw_pre_heap()],
+                    &UMemBoundaryWitness::default(),
+                    false,
+                    &ir2_config(),
+                )
+            },
+        );
     }
 
     /// **Phase B-GATE anti-laundering — DISTINCTNESS.** The 8 exposed chip output lanes are
@@ -6549,7 +6597,7 @@ mod tests {
         rows[0][18] = real + BabyBear::ONE;
         // A forged lane makes the LogUp lookup unsatisfiable: the prover either returns Err or
         // (in debug builds) the LogUp consistency checker panics. Either is a hard REJECTION.
-        let r = std::panic::catch_unwind(|| {
+        let r = must_refuse_or_unsat_panic("ir2_forged_output_lane (lane binding)", || {
             prove_vm_descriptor2_inner(
                 &desc,
                 &rows,
@@ -6561,13 +6609,12 @@ mod tests {
                 &ir2_config(),
             )
         });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged output lane produced an accepted proof — the lane binding is OPEN"
-            ),
-        }
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "forged output lane must be refused BY THE CONSTRAINT SYSTEM — the lane binding is \
+             OPEN or fired for the wrong reason: {reason}"
+        );
     }
 
     /// The seeded full-permutation state of a wide (arity-`CHIP_WIDE_ARITY`) absorb of `ins`
@@ -6642,7 +6689,7 @@ mod tests {
         for r in &mut bad {
             r[1 + 8] += BabyBear::ONE; // in8 at col 9
         }
-        let r = std::panic::catch_unwind(|| {
+        let r = must_refuse_or_unsat_panic("wide absorb forged carrier lane (in8)", || {
             prove_vm_descriptor2_inner(
                 &desc,
                 &bad,
@@ -6654,13 +6701,13 @@ mod tests {
                 &ir2_config(),
             )
         });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "wide absorb with a forged carrier lane (in8) was accepted — the wide carrier is NOT load-bearing"
-            ),
-        }
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "a wide absorb with a forged carrier lane (in8) must be refused BY THE CONSTRAINT \
+             SYSTEM — the wide carrier is NOT load-bearing, or it fired for the wrong reason: \
+             {reason}"
+        );
     }
 
     /// A descriptor with a SINGLE node8 (arity-16) chip lookup binding ALL 8 output lanes to
@@ -6722,7 +6769,7 @@ mod tests {
         for r in &mut bad {
             r[1 + 12] += BabyBear::ONE; // in12 at col 13
         }
-        let r = std::panic::catch_unwind(|| {
+        let r = must_refuse_or_unsat_panic("node8 forged second-child lane (in12)", || {
             prove_vm_descriptor2_inner(
                 &desc,
                 &bad,
@@ -6734,13 +6781,13 @@ mod tests {
                 &ir2_config(),
             )
         });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "node8 with a forged second-child lane (in12) was accepted — the node8 child is NOT load-bearing"
-            ),
-        }
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "node8 with a forged second-child lane (in12) must be refused BY THE CONSTRAINT \
+             SYSTEM — the node8 child is NOT load-bearing, or it fired for the wrong reason: \
+             {reason}"
+        );
     }
 
     /// **Phase H3 node8 — both 8-felt children are load-bearing.** Perturbing ANY of the 16 input
@@ -6807,7 +6854,7 @@ mod tests {
             row[14] = BabyBear::new(0b1000); // keep has a bit held lacks
         }
         assert!(prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()]).is_err());
-        let r = std::panic::catch_unwind(|| {
+        let r = must_refuse_or_unsat_panic("ir2_amplified_submask (non-amp tooth)", || {
             prove_vm_descriptor2_inner(
                 &desc,
                 &rows,
@@ -6819,13 +6866,12 @@ mod tests {
                 &ir2_config(),
             )
         });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "amplified submask produced an accepted proof — non-amp tooth OPEN"
-            ),
-        }
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "an amplified submask must be refused BY THE CONSTRAINT SYSTEM — the non-amp tooth is \
+             OPEN or fired for the wrong reason: {reason}"
+        );
     }
 
     /// A forged hash digest (column 2 ≠ hash[a,b]) must refuse: the chip table only
@@ -6839,16 +6885,19 @@ mod tests {
         }
         // The chip table gathers the (forged) tuple and binds its own output column to
         // the REAL permutation — prover cannot satisfy both.
-        let r = std::panic::catch_unwind(|| {
+        // ⚑ VERIFIED, not assumed: the pre-flight replay does NOT catch a forged digest — the
+        // forgery reaches `prove_batch` even on the PUBLIC (`check: true`) entry, and the p3 debug
+        // prover refuses it with `Lookup mismatch (global lookup 'ir2_p2')`. So the unsat panic is
+        // genuinely the mechanism here; it is still discriminated against a stray crash.
+        let r = must_refuse_or_unsat_panic("ir2_forged_digest (chip tooth)", || {
             prove_vm_descriptor2(&desc, &rows, &[], &test_boundary(), &[test_heap()])
         });
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged digest produced an accepted proof — chip tooth OPEN"
-            ),
-        }
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "the forged digest must be refused BY THE CONSTRAINT SYSTEM (the ir2_p2 chip table \
+             only contains genuine hash tuples), got: {reason}"
+        );
     }
 
     /// A prover committing a TALLER range table (rows continuing past
@@ -7277,7 +7326,10 @@ mod tests {
         }
         let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
         let config = ir2_config();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Raw batch prove+verify: the replay is bypassed entirely, so the forged witness reaches
+        // `prove_batch` and the p3 debug prover's DOCUMENTED unsat panic is the mechanism.
+        // Discriminated — a stray assembly panic or a trace-shape assert REDs instead of passing.
+        let r = must_refuse_or_unsat_panic("forged aafi bracket (pointer-bracket tooth)", || {
             let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
                 .iter()
                 .zip(matrices.iter())
@@ -7291,14 +7343,12 @@ mod tests {
             let prover_data = ProverData::from_instances(&config, &instances);
             let proof = prove_batch(&config, &instances, &prover_data);
             verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
-        }));
-        match r {
-            Err(_) => {} // the debug prover panicked on the violated bracket / decomp teeth
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged aafi bracket produced an accepted proof — pointer-bracket tooth OPEN"
-            ),
-        }
+        });
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "a forged aafi bracket must be refused BY THE CONSTRAINT SYSTEM — the pointer-bracket tooth is OPEN or fired for the wrong reason: {reason}"
+        );
     }
 
     /// THE LOW-UPDATE TOOTH: build the HONEST aafi assembly, then forge the appended leaf's pointer
@@ -7349,7 +7399,10 @@ mod tests {
         }
         let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
         let config = ir2_config();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Raw batch prove+verify: the replay is bypassed entirely, so the forged witness reaches
+        // `prove_batch` and the p3 debug prover's DOCUMENTED unsat panic is the mechanism.
+        // Discriminated — a stray assembly panic or a trace-shape assert REDs instead of passing.
+        let r = must_refuse_or_unsat_panic("forged aafi pointer (pointer-binding tooth)", || {
             let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
                 .iter()
                 .zip(matrices.iter())
@@ -7363,14 +7416,12 @@ mod tests {
             let prover_data = ProverData::from_instances(&config, &instances);
             let proof = prove_batch(&config, &instances, &prover_data);
             verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
-        }));
-        match r {
-            Err(_) => {}
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged aafi pointer produced an accepted proof — pointer-binding tooth OPEN"
-            ),
-        }
+        });
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "a forged aafi pointer must be refused BY THE CONSTRAINT SYSTEM — the pointer-binding tooth is OPEN or fired for the wrong reason: {reason}"
+        );
     }
 
     // ================================================================
@@ -7872,18 +7923,10 @@ mod tests {
             .is_err(),
             "pre-flight replay must refuse the double spend"
         );
-        let r = std::panic::catch_unwind(|| {
-            prove_vm_descriptor2_inner(
-                &desc,
-                &rows,
-                &[],
-                &MemBoundaryWitness::default(),
-                &[],
-                &boundary,
-                false,
-                &ir2_config(),
-            )
-        });
+        // (Removed a DEAD `catch_unwind(prove_vm_descriptor2_inner(..))` here whose result was
+        // bound to `r` and never read — it re-ran the whole prove and discarded the verdict, so it
+        // asserted nothing. `assert_umem_forgery_refused` below is the tooth, and it does the same
+        // `check: false` prove itself.)
         assert_umem_forgery_refused(&desc, &rows, &boundary, "double-spend freshness");
     }
 
@@ -7904,7 +7947,9 @@ mod tests {
         boundary: &UMemBoundaryWitness,
         tooth: &str,
     ) {
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // `classify` keeps all three honest refusal faces below, but a panic that is NOT the p3
+        // debug prover's documented unsat verdict now REDS instead of silently counting as face 1.
+        let r = classify(tooth, || {
             prove_vm_descriptor2_inner(
                 desc,
                 rows,
@@ -7915,11 +7960,13 @@ mod tests {
                 false,
                 &ir2_config(),
             )
-        }));
+        });
         match r {
-            Err(_) => {}     // debug prover panicked on the unbalanced umem_check bus
-            Ok(Err(_)) => {} // the assembler/prover refused the forgery
-            Ok(Ok(proof)) => {
+            // Face 1: the debug prover panicked on the unbalanced `ir2_umem_check` bus.
+            Outcome::UnsatPanic(_) => {}
+            // Face 2: the assembler/prover refused the forgery fail-closed.
+            Outcome::Err(_) => {}
+            Outcome::Accepted(proof) => {
                 // The prover produced a proof (release: `check = false` skips self-verify). The
                 // soundness boundary is the CONSUMER's verify — it must reject the unbalanced bus.
                 let v = verify_vm_descriptor2(desc, &proof, &[]);
@@ -8189,7 +8236,10 @@ mod tests {
         }
         let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
         let config = ir2_config();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        // Raw batch prove+verify: the replay is bypassed entirely, so the forged witness reaches
+        // `prove_batch` and the p3 debug prover's DOCUMENTED unsat panic is the mechanism.
+        // Discriminated — a stray assembly panic or a trace-shape assert REDs instead of passing.
+        let r = must_refuse_or_unsat_panic("forged absent bracket (gap tooth)", || {
             let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
                 .iter()
                 .zip(matrices.iter())
@@ -8203,14 +8253,12 @@ mod tests {
             let prover_data = ProverData::from_instances(&config, &instances);
             let proof = prove_batch(&config, &instances, &prover_data);
             verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
-        }));
-        match r {
-            Err(_) => {} // the debug prover panicked on the violated gap/decomp teeth
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged absent bracket produced an accepted proof — gap tooth OPEN"
-            ),
-        }
+        });
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "a forged absent bracket must be refused BY THE CONSTRAINT SYSTEM — the gap tooth is OPEN or fired for the wrong reason: {reason}"
+        );
     }
 
     /// THE POINTER-BRACKET TOOTH, in-circuit, on a wide-bracket: the IMT replacement for the retired
@@ -8271,28 +8319,32 @@ mod tests {
         }
         let pvs: Vec<Vec<P3BabyBear>> = vec![vec![]; airs.len()];
         let config = ir2_config();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
-                .iter()
-                .zip(matrices.iter())
-                .zip(pvs.iter())
-                .map(|((air, trace), pv)| StarkInstance {
-                    air,
-                    trace,
-                    public_values: pv.clone(),
-                })
-                .collect();
-            let prover_data = ProverData::from_instances(&config, &instances);
-            let proof = prove_batch(&config, &instances, &prover_data);
-            verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
-        }));
-        match r {
-            Err(_) => {} // the debug prover panicked on the violated pointer-binding / decomp teeth
-            Ok(res) => assert!(
-                res.is_err(),
-                "forged WIDE pointer bracket produced an accepted proof — pointer-binding tooth OPEN"
-            ),
-        }
+        // Raw batch prove+verify: the replay is bypassed entirely, so the forged witness reaches
+        // `prove_batch` and the p3 debug prover's DOCUMENTED unsat panic is the mechanism.
+        // Discriminated — a stray assembly panic or a trace-shape assert REDs instead of passing.
+        let r = must_refuse_or_unsat_panic(
+            "forged WIDE pointer bracket (pointer-binding tooth)",
+            || {
+                let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+                    .iter()
+                    .zip(matrices.iter())
+                    .zip(pvs.iter())
+                    .map(|((air, trace), pv)| StarkInstance {
+                        air,
+                        trace,
+                        public_values: pv.clone(),
+                    })
+                    .collect();
+                let prover_data = ProverData::from_instances(&config, &instances);
+                let proof = prove_batch(&config, &instances, &prover_data);
+                verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+            },
+        );
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "a forged WIDE pointer bracket must be refused BY THE CONSTRAINT SYSTEM — the pointer-binding tooth is OPEN or fired for the wrong reason: {reason}"
+        );
     }
 
     // ==== THE DEPLOYED noteSpend DESCRIPTOR — the double-spend wide-bracket close ====
@@ -8454,29 +8506,33 @@ mod tests {
         let mut pvs: Vec<Vec<P3BabyBear>> = vec![pis];
         pvs.resize(airs.len(), vec![]);
         let config = ir2_config();
-        let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
-                .iter()
-                .zip(matrices.iter())
-                .zip(pvs.iter())
-                .map(|((air, trace), pv)| StarkInstance {
-                    air,
-                    trace,
-                    public_values: pv.clone(),
-                })
-                .collect();
-            let prover_data = ProverData::from_instances(&config, &instances);
-            let proof = prove_batch(&config, &instances, &prover_data);
-            verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
-        }));
-        match r {
-            Err(_) => {} // the debug prover panicked on the violated adjacency teeth
-            Ok(res) => assert!(
-                res.is_err(),
-                "DEPLOYED noteSpend accepted a NON-ADJACENT wide-bracket non-membership witness — \
-                 the light-client double-spend forgery is OPEN on the deployed descriptor"
-            ),
-        }
+        // Raw batch prove+verify: the replay is bypassed, so the forged witness reaches
+        // `prove_batch` and the p3 debug prover's DOCUMENTED unsat panic is the mechanism.
+        let r = must_refuse_or_unsat_panic(
+            "DEPLOYED noteSpend NON-ADJACENT wide-bracket non-membership witness",
+            || {
+                let instances: Vec<StarkInstance<'_, DreggStarkConfig, Ir2Air>> = airs
+                    .iter()
+                    .zip(matrices.iter())
+                    .zip(pvs.iter())
+                    .map(|((air, trace), pv)| StarkInstance {
+                        air,
+                        trace,
+                        public_values: pv.clone(),
+                    })
+                    .collect();
+                let prover_data = ProverData::from_instances(&config, &instances);
+                let proof = prove_batch(&config, &instances, &prover_data);
+                verify_batch(&config, &airs, &proof, &pvs, &prover_data.common)
+            },
+        );
+        let reason = r.reason();
+        assert!(
+            reason.contains("Lookup mismatch") || reason.contains("constraints not satisfied"),
+            "DEPLOYED noteSpend must refuse a NON-ADJACENT wide-bracket non-membership witness BY \
+             THE CONSTRAINT SYSTEM — the light-client double-spend forgery is OPEN on the \
+             deployed descriptor, or it fired for the wrong reason: {reason}"
+        );
         eprintln!(
             "DEPLOYED noteSpend D1-WIRE: honest spend proves+verifies; a NON-ADJACENT wide-bracket \
              forged freshness witness is UNSAT through the deployed noteSpendVmDescriptor2R24 \
@@ -8701,24 +8757,22 @@ mod tests {
             let desc = rotation_probe_desc_key(key);
             let lay = rotation_layout_for(r);
             let (rows, pi) = rotation_probe_trace_r(r);
-            let refused = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>| -> bool {
-                let res = catch_unwind(AssertUnwindSafe(|| {
+            // The PUBLIC entry runs the pre-flight replay, so a tamper must come back as a
+            // fail-closed `Err` — a panic is a bug, not a refusal, and now REDs.
+            let refuse = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>, what: &str| {
+                must_refuse_or_unsat_panic(what, || {
                     prove_vm_descriptor2(&desc, rows, pi, &MemBoundaryWitness::default(), &[])
-                }));
-                match res {
-                    Err(_) => true,
-                    Ok(res) => res.is_err(),
-                }
+                });
             };
             for col in [1, r, lay.iroot, lay.state_commit] {
                 let mut t = rows.clone();
                 t[0][col] = t[0][col] + BabyBear::ONE;
-                assert!(refused(&t, &pi), "R={r}: tampered column {col} must refuse");
+                refuse(&t, &pi, &format!("R={r}: tampered column {col}"));
             }
             for k in 0..pi.len() {
                 let mut p = pi.clone();
                 p[k] = p[k] + BabyBear::ONE;
-                assert!(refused(&rows, &p), "R={r}: tampered PI {k} must refuse");
+                refuse(&rows, &p, &format!("R={r}: tampered PI {k}"));
             }
         }
     }
@@ -8736,24 +8790,22 @@ mod tests {
         use std::panic::{AssertUnwindSafe, catch_unwind};
         let desc = rotation_probe_desc();
         let (rows, pi) = rotation_probe_trace();
-        let refused = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>| -> bool {
-            let r = catch_unwind(AssertUnwindSafe(|| {
+        // The PUBLIC entry runs the pre-flight replay, so a tamper must come back as a
+        // fail-closed `Err` — a panic is a bug, not a refusal, and now REDs.
+        let refuse = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>, what: &str| {
+            must_refuse_or_unsat_panic(what, || {
                 prove_vm_descriptor2(&desc, rows, pi, &MemBoundaryWitness::default(), &[])
-            }));
-            match r {
-                Err(_) => true,
-                Ok(res) => res.is_err(),
-            }
+            });
         };
         for col in 0..rot::PROBE_WIDTH {
             let mut t = rows.clone();
             t[0][col] = t[0][col] + BabyBear::ONE;
-            assert!(refused(&t, &pi), "tampered column {col} must refuse");
+            refuse(&t, &pi, &format!("tampered column {col}"));
         }
         for k in 0..pi.len() {
             let mut p = pi.clone();
             p[k] = p[k] + BabyBear::ONE;
-            assert!(refused(&rows, &p), "tampered PI {k} must refuse");
+            refuse(&rows, &p, &format!("tampered PI {k}"));
         }
     }
 
@@ -8887,46 +8939,38 @@ mod tests {
         use std::panic::{AssertUnwindSafe, catch_unwind};
         let desc = rotation_caveat_probe_desc();
         let (rows, pi) = rotation_caveat_probe_trace();
-        let refused = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>| -> bool {
-            let r = catch_unwind(AssertUnwindSafe(|| {
+        // The PUBLIC entry runs the pre-flight replay, so a tamper must come back as a
+        // fail-closed `Err` — a panic is a bug, not a refusal, and now REDs.
+        let refuse = |rows: &Vec<Vec<BabyBear>>, pi: &Vec<BabyBear>, what: &str| {
+            must_refuse_or_unsat_panic(what, || {
                 prove_vm_descriptor2(&desc, rows, pi, &MemBoundaryWitness::default(), &[])
-            }));
-            match r {
-                Err(_) => true,
-                Ok(res) => res.is_err(),
-            }
+            });
         };
         // The named attacks, by column: entry 1 (the heap caveat) lives at base 51.
         let e1 = cav::ENTRY_BASE + cav::ENTRY_SIZE;
         // Forge the heap entry's DOMAIN TAG to the registers plane (slot/heap aliasing).
         let mut t = rows.clone();
         t[0][e1 + 1] = BabyBear::new(cav::DOMAIN_REGISTERS);
-        assert!(
-            refused(&t, &pi),
-            "forged domain tag (heap→registers) must refuse"
-        );
+        refuse(&t, &pi, "forged domain tag (heap→registers)");
         // Forge it to a non-caveat plane (caps = 2).
         let mut t = rows.clone();
         t[0][e1 + 1] = BabyBear::new(2);
-        assert!(
-            refused(&t, &pi),
-            "forged domain tag (heap→caps) must refuse"
-        );
+        refuse(&t, &pi, "forged domain tag (heap→caps)");
         // Tamper the HEAP KEY (point the caveat at a different heap field).
         let mut t = rows.clone();
         t[0][e1 + 2] = t[0][e1 + 2] + BabyBear::ONE;
-        assert!(refused(&t, &pi), "tampered heap key must refuse");
+        refuse(&t, &pi, "tampered heap key");
         // Every caveat column is load-bearing: the manifest block, the chain, the carrier.
         for col in cav::BASE..cav::PROBE_WIDTH {
             let mut t = rows.clone();
             t[0][col] = t[0][col] + BabyBear::ONE;
-            assert!(refused(&t, &pi), "tampered caveat column {col} must refuse");
+            refuse(&t, &pi, &format!("tampered caveat column {col}"));
         }
         // Every PI is load-bearing — including the published caveat commit.
         for k in 0..pi.len() {
             let mut p = pi.clone();
             p[k] = p[k] + BabyBear::ONE;
-            assert!(refused(&rows, &p), "tampered PI {k} must refuse");
+            refuse(&rows, &p, &format!("tampered PI {k}"));
         }
     }
 }

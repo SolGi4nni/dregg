@@ -59,6 +59,7 @@ use dregg_circuit::effect_vm_descriptors::{V3_STAGED_REGISTRY_TSV, WIDE_REGISTRY
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_TREE_DEPTH, HeapLeaf};
 use dregg_circuit::lean_descriptor_air::LeanExpr;
+use dregg_circuit::refusal::{Outcome, classify};
 use dregg_turn::rotation_witness as rw;
 
 fn registry_json_static(tsv: &'static str, name: &str) -> &'static str {
@@ -130,13 +131,16 @@ fn refused(
     mem_boundary: &MemBoundaryWitness,
     map_heaps: &[Vec<HeapLeaf>],
 ) -> bool {
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+    match classify("refused", || {
         let proof = prove_vm_descriptor2(desc, trace, dpis, mem_boundary, map_heaps)?;
         verify_vm_descriptor2(desc, &proof, dpis)
-    }));
-    match r {
-        Err(_) => true,
-        Ok(res) => res.is_err(),
+    }) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     }
 }
 

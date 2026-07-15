@@ -47,6 +47,7 @@ use dregg_circuit::descriptor_ir2::{
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::heap_root::{CanonicalHeapTree8, HEAP_DIGEST_W, HEAP_TREE_DEPTH, HeapLeaf};
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
+use dregg_circuit::refusal::{Outcome, classify};
 use dregg_turn::umem::{UKey, UVal, UmemKind, UmemOp, disciplined, fold, receipt_op};
 use dregg_turn::{
     Action, Authorization, CallForest, ComputronCosts, DelegationMode, Effect, TurnExecutor,
@@ -688,7 +689,7 @@ fn cross_cell_read_pi_mismatch_refuses() {
     wrong_pi[0] += BabyBear::ONE;
     // The PI mismatch is a boundary PiBinding caught at VERIFY (the light-client op), not
     // necessarily at prove — exercise both legs.
-    let outcome = std::panic::catch_unwind(|| {
+    let refused = match classify("cross_cell_read_pi_mismatch_refuses", || {
         prove_vm_descriptor2(
             &desc,
             &trace,
@@ -697,10 +698,13 @@ fn cross_cell_read_pi_mismatch_refuses() {
             std::slice::from_ref(&heap),
         )
         .and_then(|proof| verify_vm_descriptor2(&desc, &proof, &wrong_pi))
-    });
-    let refused = match outcome {
-        Err(_) => true,      // in-circuit PiBinding constraint failed (no satisfying proof)
-        Ok(r) => r.is_err(), // or refused with an Err
+    }) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     };
     assert!(
         refused,
@@ -781,13 +785,16 @@ fn cross_cell_read_whole_image_extra_cell_refuses() {
     // Err or an in-circuit panic — either way no satisfying proof exists.
     // The `PiBinding{Last}` published-root pin is caught at VERIFY (the light-client op), not
     // necessarily at prove — exercise both legs.
-    let outcome = std::panic::catch_unwind(|| {
+    let refused = match classify("cross_cell_read_whole_image_extra_cell_refuses", || {
         prove_whole_image_fold(&witness)
             .and_then(|proof| verify_whole_image_fold(&proof, &witness.public_inputs))
-    });
-    let refused = match outcome {
-        Err(_) => true,
-        Ok(r) => r.is_err(),
+    }) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     };
     assert!(
         refused,
@@ -814,10 +821,15 @@ fn cross_cell_read_whole_image_tampered_value_refuses() {
     row[dregg_circuit::whole_image_fold::WIF_VALUE] =
         row[dregg_circuit::whole_image_fold::WIF_VALUE] + BabyBear::ONE;
 
-    let outcome = std::panic::catch_unwind(|| prove_whole_image_fold(&witness));
-    let refused = match outcome {
-        Err(_) => true,
-        Ok(r) => r.is_err(),
+    let refused = match classify("cross_cell_read_whole_image_tampered_value_refuses", || {
+        prove_whole_image_fold(&witness)
+    }) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     };
     assert!(
         refused,
@@ -930,12 +942,15 @@ fn whole_image_fold_bound_undeclared_cell_refuses() {
     let boundary =
         boundary_witness_for_fold(&declared, FIELD_DOMAIN).expect("boundary witness builds");
 
-    let outcome = std::panic::catch_unwind(|| {
+    let refused = match classify("whole_image_fold_bound_undeclared_cell_refuses", || {
         prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN)
-    });
-    let refused = match outcome {
-        Err(_) => true,
-        Ok(r) => r.is_err(),
+    }) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     };
     assert!(
         refused,
@@ -963,12 +978,16 @@ fn whole_image_fold_bound_boundary_value_mismatch_refuses() {
         .expect("a present declared cell exists");
     *bumped = Some(bumped.unwrap() + BabyBear::ONE);
 
-    let outcome = std::panic::catch_unwind(|| {
-        prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN)
-    });
-    let refused = match outcome {
-        Err(_) => true,
-        Ok(r) => r.is_err(),
+    let refused = match classify(
+        "whole_image_fold_bound_boundary_value_mismatch_refuses",
+        || prove_whole_image_fold_bound(&witness, &boundary, FIELD_DOMAIN),
+    ) {
+        // The p3 debug prover's DOCUMENTED unsat verdict — a real refusal.
+        // `classify` REDs on any other panic (a stray unwrap, a trace-assembly
+        // debug_assert), which used to land here and read as "rejected".
+        Outcome::UnsatPanic(_) => true,
+        Outcome::Err(_) => true,
+        Outcome::Accepted(_) => false,
     };
     assert!(
         refused,
