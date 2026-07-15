@@ -1,0 +1,228 @@
+<!doctype html>
+<html lang="en" data-theme="dark">
+<head>
+  <meta charset="utf-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>8-bit shader — dregg web studio</title>
+  <style>
+    /* Self-contained. Tokens lifted from drex-web-v2/styles.css + the board's
+       navy accent (assets/games README). No external fonts/assets/CDN. */
+    :root {
+      --bg:#0d1117; --surface:#161b22; --surface2:#1c2230; --border:#2a3240;
+      --ink:#e6edf3; --ink2:#9da7b3; --muted:#6e7681; --accent:#5cc9ff;
+      --good:#3fb950; --violet:#bc8cff;
+    }
+    * { box-sizing: border-box; }
+    body { margin:0; background:var(--bg); color:var(--ink);
+      font:14px/1.5 system-ui,-apple-system,"Segoe UI",Roboto,sans-serif; }
+    .wrap { max-width:1080px; margin:0 auto; padding:22px 20px 60px; }
+    header { display:flex; align-items:baseline; gap:12px; flex-wrap:wrap; margin-bottom:6px; }
+    h1 { font-size:22px; font-weight:800; letter-spacing:-.02em; margin:0; }
+    h1 .px { color:var(--accent); }
+    .sub { color:var(--ink2); font-size:12.5px; }
+    .card { background:var(--surface); border:1px solid var(--border); border-radius:12px; padding:16px; margin-top:16px; }
+    .card-h { font-weight:700; margin-bottom:12px; display:flex; gap:8px; align-items:baseline; flex-wrap:wrap; }
+    .hint { color:var(--muted); font-size:12px; }
+    .row { display:flex; gap:18px; flex-wrap:wrap; align-items:flex-start; }
+    .stage { display:flex; gap:16px; flex-wrap:wrap; }
+    .frame { background:var(--surface2); border:1px solid var(--border); border-radius:10px; padding:10px; }
+    .frame > .lbl { font-size:11px; color:var(--ink2); margin-bottom:6px; letter-spacing:.03em; text-transform:uppercase; }
+    canvas, #srcImg { display:block; image-rendering:pixelated; background:#000; border-radius:6px; max-width:320px; height:auto; }
+    .controls { display:flex; flex-direction:column; gap:14px; min-width:240px; }
+    label { display:flex; flex-direction:column; gap:4px; font-size:12.5px; color:var(--ink2); }
+    input[type=range] { accent-color:var(--accent); }
+    select, button, input[type=file]::file-selector-button {
+      font:inherit; background:var(--surface2); color:var(--ink); border:1px solid var(--border);
+      border-radius:8px; padding:7px 11px; cursor:pointer; }
+    button.primary { background:var(--accent); color:#06121f; border-color:var(--accent); font-weight:700; }
+    .val { color:var(--accent); font-variant-numeric:tabular-nums; }
+    .drop { border:1.5px dashed var(--border); border-radius:10px; padding:20px; text-align:center; color:var(--ink2); }
+    .drop.over { border-color:var(--accent); background:color-mix(in srgb, var(--accent) 8%, transparent); }
+    .foot { margin-top:22px; color:var(--muted); font-size:12px; }
+    a { color:var(--accent); }
+    .chips { display:flex; gap:6px; flex-wrap:wrap; }
+    .chip { font-size:10.5px; padding:2px 7px; border-radius:6px; background:var(--surface2); border:1px solid var(--border); color:var(--ink2); }
+    .chip.gl { color:var(--good); border-color:color-mix(in srgb,var(--good) 40%,var(--border)); }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <header>
+      <h1><span class="px">▚</span> 8-bit shader</h1>
+      <span class="sub">downsample · palette-quantize · dither · scanlines — self-contained WebGL, CPU fallback</span>
+    </header>
+    <div class="chips">
+      <span class="chip" id="backendChip">backend: …</span>
+      <span class="chip">no CDN · one module</span>
+    </div>
+
+    <div class="card">
+      <div class="card-h">Input <span class="hint">— drop an image (uploaded / AI-gen), or use the live game-canvas demo</span></div>
+      <div class="row">
+        <div class="controls" style="min-width:280px">
+          <div class="drop" id="drop">Drop an image here, or
+            <input type="file" id="file" accept="image/*" style="margin-top:8px" /></div>
+          <button id="liveBtn">▶ Use the live game-canvas demo</button>
+          <div class="hint">The live demo animates a CoordGrid-style board; the shader runs on it per-frame — the same path you'd point at a real dreggnet-web render.</div>
+        </div>
+        <div class="frame">
+          <div class="lbl">source</div>
+          <canvas id="srcCanvas" width="256" height="256"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="card">
+      <div class="card-h">8-bit output <span class="hint">— live; adjust the controls</span></div>
+      <div class="row">
+        <div class="controls">
+          <label>pixel size <span class="val" id="psVal">8</span> px
+            <input type="range" id="pixelSize" min="1" max="24" value="8" /></label>
+          <label>palette
+            <select id="palette"></select></label>
+          <label>dither <span class="val" id="dVal">0.0</span>
+            <input type="range" id="dither" min="0" max="100" value="0" /></label>
+          <label>scanlines <span class="val" id="sVal">0.0</span>
+            <input type="range" id="scanline" min="0" max="100" value="0" /></label>
+          <label>contrast <span class="val" id="cVal">1.00</span>
+            <input type="range" id="contrast" min="50" max="200" value="100" /></label>
+          <button class="primary" id="download">⬇ Download PNG (game-ready)</button>
+          <div class="hint">128×128 export drops straight into the sprite slot (CANVAS=128).</div>
+        </div>
+        <div class="frame">
+          <div class="lbl">8-bit</div>
+          <canvas id="outCanvas" width="256" height="256"></canvas>
+        </div>
+      </div>
+    </div>
+
+    <div class="foot">
+      Part of the dregg web content-tooling suite (<span class="hint">docs/deos/WEB-CONTENT-TOOLING.md</span>).
+      The shader module is <code>shader.js</code> + <code>palettes.js</code>; the same
+      <code>processRGBA</code> core is verified headless (<code>verify.mjs</code>).
+    </div>
+  </div>
+
+  <script type="module">
+    import { EightBitShader } from './shader.js';
+    import { PALETTES, DEFAULT_PALETTE, paletteList } from './palettes.js';
+
+    const srcCanvas = document.getElementById('srcCanvas');
+    const outCanvas = document.getElementById('outCanvas');
+    const sctx = srcCanvas.getContext('2d');
+
+    // Build shader over the output canvas.
+    const opts = { pixelSize: 8, palette: PALETTES[DEFAULT_PALETTE].colors, dither: 0, scanline: 0, contrast: 1 };
+    const shader = new EightBitShader(outCanvas, opts);
+    document.getElementById('backendChip').textContent = 'backend: ' + (shader.usingGL ? 'WebGL' : 'CPU (2D fallback)');
+    document.getElementById('backendChip').classList.toggle('gl', shader.usingGL);
+
+    // Populate palette selector.
+    const sel = document.getElementById('palette');
+    paletteList().forEach(p => {
+      const o = document.createElement('option');
+      o.value = p.id; o.textContent = `${p.name} (${p.size})`;
+      if (p.id === DEFAULT_PALETTE) o.selected = true;
+      sel.appendChild(o);
+    });
+
+    // Current source: a drawable (img/canvas). Default = a starter gradient.
+    let source = srcCanvas;      // we always draw the "source" into srcCanvas first
+    let live = null;             // rAF handle for the live demo
+    let lastImg = null;
+
+    function drawStarter() {
+      const g = sctx.createLinearGradient(0, 0, 256, 256);
+      g.addColorStop(0, '#5cc9ff'); g.addColorStop(.5, '#bc8cff'); g.addColorStop(1, '#f0c14b');
+      sctx.fillStyle = g; sctx.fillRect(0, 0, 256, 256);
+      sctx.fillStyle = '#0b1020';
+      sctx.font = 'bold 54px system-ui'; sctx.textAlign = 'center';
+      sctx.fillText('dregg', 128, 145);
+    }
+
+    function setImageSource(img) {
+      stopLive();
+      lastImg = img;
+      const scale = Math.min(256 / img.width, 256 / img.height, 1);
+      const w = Math.round(img.width * scale), h = Math.round(img.height * scale);
+      srcCanvas.width = w; srcCanvas.height = h;
+      outCanvas.width = w; outCanvas.height = h;
+      sctx.drawImage(img, 0, 0, w, h);
+      apply();
+    }
+
+    function apply() {
+      // Match out canvas to source dims, run the shader on the source canvas.
+      outCanvas.width = srcCanvas.width; outCanvas.height = srcCanvas.height;
+      shader.render(srcCanvas);
+    }
+
+    // ── controls ──
+    const ps = document.getElementById('pixelSize'), psVal = document.getElementById('psVal');
+    const di = document.getElementById('dither'), dVal = document.getElementById('dVal');
+    const sc = document.getElementById('scanline'), sVal = document.getElementById('sVal');
+    const co = document.getElementById('contrast'), cVal = document.getElementById('cVal');
+    function readControls() {
+      opts.pixelSize = +ps.value; psVal.textContent = ps.value;
+      opts.dither = +di.value / 100; dVal.textContent = opts.dither.toFixed(2);
+      opts.scanline = +sc.value / 100; sVal.textContent = opts.scanline.toFixed(2);
+      opts.contrast = +co.value / 100; cVal.textContent = opts.contrast.toFixed(2);
+      opts.palette = PALETTES[sel.value].colors;
+      shader.setOptions(opts);
+      if (!live) apply();
+    }
+    [ps, di, sc, co, sel].forEach(el => el.addEventListener('input', readControls));
+
+    // ── file / drop ──
+    function loadFile(file) {
+      if (!file || !file.type.startsWith('image/')) return;
+      const img = new Image();
+      img.onload = () => setImageSource(img);
+      img.src = URL.createObjectURL(file);
+    }
+    document.getElementById('file').addEventListener('change', e => loadFile(e.target.files[0]));
+    const drop = document.getElementById('drop');
+    ['dragover', 'dragenter'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.add('over'); }));
+    ['dragleave', 'drop'].forEach(ev => drop.addEventListener(ev, e => { e.preventDefault(); drop.classList.remove('over'); }));
+    drop.addEventListener('drop', e => loadFile(e.dataTransfer.files[0]));
+
+    // ── live game-canvas demo (a CoordGrid-ish animated board) ──
+    function stopLive() { if (live) { cancelAnimationFrame(live); live = null; } }
+    document.getElementById('liveBtn').addEventListener('click', () => {
+      lastImg = null;
+      srcCanvas.width = 256; srcCanvas.height = 256;
+      outCanvas.width = 256; outCanvas.height = 256;
+      const t0 = performance.now();
+      const tick = () => {
+        const t = (performance.now() - t0) / 1000;
+        sctx.fillStyle = '#0b1020'; sctx.fillRect(0, 0, 256, 256);
+        const N = 8, cell = 256 / N;
+        for (let y = 0; y < N; y++) for (let x = 0; x < N; x++) {
+          const on = ((x + y) & 1);
+          sctx.fillStyle = on ? `hsl(${(x * 30 + y * 20 + t * 60) % 360} 70% 55%)` : '#141b33';
+          sctx.fillRect(x * cell + 1, y * cell + 1, cell - 2, cell - 2);
+        }
+        // a moving "piece"
+        const px = (2.5 + 2.5 * Math.sin(t)) * cell, py = (3.5 + 2.5 * Math.cos(t * .8)) * cell;
+        sctx.fillStyle = '#5cc9ff'; sctx.beginPath(); sctx.arc(px + cell / 2, py + cell / 2, cell * .35, 0, 7); sctx.fill();
+        shader.render(srcCanvas);
+        live = requestAnimationFrame(tick);
+      };
+      tick();
+    });
+
+    // ── download ──
+    document.getElementById('download').addEventListener('click', () => {
+      // Export at 128×128 (the engine's native sprite canvas).
+      const exp = document.createElement('canvas'); exp.width = 128; exp.height = 128;
+      const s2 = new EightBitShader(exp, { ...opts });
+      s2.render(srcCanvas);
+      const a = document.createElement('a');
+      a.download = 'sprite-8bit-128.png'; a.href = exp.toDataURL('image/png'); a.click();
+    });
+
+    // boot
+    drawStarter(); readControls();
+  </script>
+</body>
+</html>
