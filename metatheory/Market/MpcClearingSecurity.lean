@@ -206,9 +206,9 @@ theorem demand_nonneg (hb : OrdersValid bk) (p : ℕ) : 0 ≤ demand bk p := by
   · exact le_refl 0
 
 /-- The cleared volume `V* = min(demand, supply)` at the crossing is nonnegative for a valid book. -/
-theorem clearedVolume_nonneg (hb : OrdersValid bk) (h : CrossingExists bk) :
-    0 ≤ clearedVolume bk h := by
-  rw [clearedVolume_eq_demand]; exact demand_nonneg hb _
+theorem balanceVolume_nonneg (hb : OrdersValid bk) (h : CrossingExists bk) :
+    0 ≤ balanceVolume bk h := by
+  rw [balanceVolume_eq_demand]; exact demand_nonneg hb _
 
 /-- **`Clears` is UPWARD-CLOSED** — once the market clears at `a`, it clears at every `b ≥ a` (the
 imbalance is non-increasing, `FhEggClearing.imbalance_antitone`). The step's up-closure. -/
@@ -217,19 +217,19 @@ theorem clears_of_ge (hb : OrdersValid bk) {a b : ℕ} (hab : a ≤ b) (ha : Cle
   unfold Clears imbalance at *; omega
 
 /-- **`clears_iff_ge_crossing` — the crossing indicator is a THRESHOLD STEP at `p* = crossing`.** For a
-valid book with a crossing, `Clears bk j ↔ crossing bk h ≤ j`: below the crossing the market never clears
-(`below_crossing_not_clears`), at/above it always clears (up-closure). So the opened sign vector is a
+valid book with a crossing, `Clears bk j ↔ balanceCrossing bk h ≤ j`: below the crossing the market never clears
+(`below_balanceCrossing_not_clears`), at/above it always clears (up-closure). So the opened sign vector is a
 deterministic function of `p*` ALONE — the mechanized form of "the monotone sign vector is
 `p*`-determined" (`OUTPUT-BOUNDARY-MPC.md` §2c). -/
 theorem clears_iff_ge_crossing (hb : OrdersValid bk) (h : CrossingExists bk) (j : ℕ) :
-    Clears bk j ↔ crossing bk h ≤ j := by
+    Clears bk j ↔ balanceCrossing bk h ≤ j := by
   constructor
   · intro hj
     by_contra hlt
     push_neg at hlt
-    exact below_crossing_not_clears bk h hlt hj
+    exact below_balanceCrossing_not_clears bk h hlt hj
   · intro hle
-    exact clears_of_ge hb hle (crossing_clears bk h)
+    exact clears_of_ge hb hle (balanceCrossing_clears bk h)
 
 /-- The opened sign vector over `k` buckets, as computed from the (secret-shared) curves: the crossing
 indicator `[Clears bk j]` at each bucket. This is exactly what `mpc.rs`'s `mpc_crossing` opens. -/
@@ -245,7 +245,7 @@ def stepVec (pStar k : ℕ) : List Bool :=
 curve-computed sign vector equals the step vector built from `p* = crossing` alone: revealing it leaks no
 more than `p*`. The load-bearing "leaks nothing beyond `p*`" fact, from the fold monotonicity (§2). -/
 theorem clearsVec_eq_step (hb : OrdersValid bk) (h : CrossingExists bk) (k : ℕ) :
-    clearsVec bk h k = stepVec (crossing bk h) k := by
+    clearsVec bk h k = stepVec (balanceCrossing bk h) k := by
   unfold clearsVec stepVec
   apply List.map_congr_left
   intro j _
@@ -311,10 +311,10 @@ namespace MpcClearing
 variable (mc : MpcClearing)
 
 /-- The clearing price bucket `p*` — the crossing of the book. -/
-def pStar : ℕ := crossing mc.bk mc.hcross
+def pStar : ℕ := balanceCrossing mc.bk mc.hcross
 
 /-- The cleared volume `V*` — the matched volume at the crossing. -/
-def vStar : ℤ := clearedVolume mc.bk mc.hcross
+def vStar : ℤ := balanceVolume mc.bk mc.hcross
 
 /-- **The PUBLIC LEAKAGE of this clearing — `Q = (p*, V*)`.** -/
 def leakage : CrossingLeakage := ⟨mc.pStar, mc.vStar⟩
@@ -365,16 +365,16 @@ theorem bookB_valid : OrdersValid bookB := by unfold OrdersValid bookB; decide
 theorem bookB_crosses : CrossingExists bookB := ⟨2, by decide⟩
 
 /-- Book B's crossing is bucket `2` (buckets `0, 1` do NOT clear: imbalance `11, 6 > 0`). -/
-theorem bookB_crossing : crossing bookB bookB_crosses = 2 := by
-  unfold crossing
+theorem bookB_crossing : balanceCrossing bookB bookB_crosses = 2 := by
+  unfold balanceCrossing
   rw [Nat.find_eq_iff]
   refine ⟨by decide, ?_⟩
   intro m hm
   interval_cases m <;> decide
 
 /-- Book B's cleared volume is `6` — the SAME `V*` as book A. -/
-theorem bookB_clearedVolume : clearedVolume bookB bookB_crosses = 6 := by
-  rw [clearedVolume_eq_demand, bookB_crossing]; decide
+theorem bookB_clearedVolume : balanceVolume bookB bookB_crosses = 6 := by
+  rw [balanceVolume_eq_demand, bookB_crossing]; decide
 
 /-- Book A and book B differ at demand bucket `0` (`10` vs `11`) — the private content the reveal-nothing
 law must NOT expose. -/
@@ -390,13 +390,13 @@ could NOT be simulated from `(p*, V*)` — the reveal-only property is not vacuo
 theorem mpc_leaky_no_simulator :
     ¬ ∃ sim : CrossingLeakage → ℤ,
         (∀ (bk : OrderBook) (hv : OrdersValid bk) (hc : CrossingExists bk),
-          demand bk 0 = sim ⟨crossing bk hc, clearedVolume bk hc⟩) := by
+          demand bk 0 = sim ⟨balanceCrossing bk hc, balanceVolume bk hc⟩) := by
   rintro ⟨sim, h⟩
   have hA := h bookA workBook_valid workBook_crosses
   have hB := h bookB bookB_valid bookB_crosses
   -- Both leakages are (2, 6):
-  rw [show crossing bookA workBook_crosses = 2 from workBook_crossing,
-      show clearedVolume bookA workBook_crosses = 6 from workBook_clearedVolume] at hA
+  rw [show balanceCrossing bookA workBook_crosses = 2 from workBook_balanceCrossing,
+      show balanceVolume bookA workBook_crosses = 6 from workBook_balanceVolume] at hA
   rw [bookB_crossing, bookB_clearedVolume] at hB
   -- demand bookA 0 = 10, demand bookB 0 = 11, both = sim ⟨2,6⟩ → 10 = 11.
   rw [(bookAB_demand0_differs).1] at hA
@@ -439,7 +439,7 @@ theorem cleared_conserving_optimal_and_reveal_only (mc : MpcClearing) :
     ( mc.mpcView = mpcSim mc.k mc.maskedLen mc.leakage ∧
       mc.leakage = ⟨mc.pStar, mc.vStar⟩ ) := by
   refine ⟨clearedBatch_optimal (mc.vStar : ℚ) mc.ρ ?_ mc.hρ, mc.reveal_only, rfl⟩
-  have h := clearedVolume_nonneg mc.hvalid mc.hcross
+  have h := balanceVolume_nonneg mc.hvalid mc.hcross
   exact_mod_cast h
 
 /-! ### The joined theorem, WITNESSED on book A (`workBook`). -/
@@ -467,8 +467,8 @@ theorem mcA_joined :
 /-- Book A's leakage is exactly `(2, 6)` — the concrete `(p*, V*)`. -/
 theorem mcA_leakage : mcA.leakage = ⟨2, 6⟩ := by
   unfold MpcClearing.leakage MpcClearing.pStar MpcClearing.vStar mcA
-  rw [show crossing bookA workBook_crosses = 2 from workBook_crossing,
-      show clearedVolume bookA workBook_crosses = 6 from workBook_clearedVolume]
+  rw [show balanceCrossing bookA workBook_crosses = 2 from workBook_balanceCrossing,
+      show balanceVolume bookA workBook_crosses = 6 from workBook_balanceVolume]
 
 /-! ## 5. THE Cert-F ε-OPTIMALITY FACE — joined to reveal-only (the convex-engine tier).
 
@@ -603,7 +603,7 @@ theorem mpc_reveal_nothing (k maskedLen : ℕ) (q : CrossingLeakage) (mc₁ mc�
   Market.MpcClearingSecurity.otpMasks,
   Market.MpcClearingSecurity.clears_iff_ge_crossing,
   Market.MpcClearingSecurity.clearsVec_eq_step,
-  Market.MpcClearingSecurity.clearedVolume_nonneg,
+  Market.MpcClearingSecurity.balanceVolume_nonneg,
   Market.MpcClearingSecurity.MpcClearing.reveal_only,
   Market.MpcClearingSecurity.MpcClearing.same_leakage_indistinguishable,
   Market.MpcClearingSecurity.mpc_leaky_no_simulator,

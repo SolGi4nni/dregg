@@ -31,22 +31,27 @@
 //! decryption key (unlike threshold-FHE, where a colluding key-share subset can
 //! decrypt any submitted ORDER ciphertext forever).
 //!
-//! ## What "the sign vector leaks nothing beyond p*" means (the leakage argument)
+//! ## What "reveal only (p*, V*)" means (the leakage argument)
 //!
-//! The monotone crossing reveals the sign vector `c[p] = [D[p] ≥ S[p]]`. Because
-//! `D` is non-increasing and `S` non-decreasing, `c` is a single downward step
-//! `1…1 0…0` whose flip index is exactly `p*`. So `c` is a DETERMINISTIC FUNCTION
-//! of `p*`: a simulator given only `p*` reproduces `c` exactly. Revealing `c` (or
-//! equivalently `p*`) therefore leaks no more than `p*` itself. We open `c`, count
-//! it to `p*`, then reveal only `V* = min(D[p*], S[p*])` via one more secure
-//! comparison (never the two curve heights individually).
+//! The crossing computes `p* = argmax_p min(D[p], S[p])` (ties to the lowest p)
+//! by an OBLIVIOUS argmax — a data-oblivious scan whose gate schedule is fixed by
+//! `(K, b)`, not by the inputs — and opens ONLY the argmax index `p*` and its
+//! volume `V* = min(D[p*], S[p*])`. No sign bit `[D[p] ≥ S[p]]`, no per-bucket
+//! comparison, and no curve height is ever opened. (The earlier "open the sign
+//! vector, take the last crossing" shortcut both mis-cleared — the volume peak can
+//! sit one bucket above the crossing — AND leaked the crossing index, which is
+//! strictly more than `p*`.) Every other protocol message is a one-time-pad-masked
+//! Beaver reveal — uniform and input-independent — so a simulator given only
+//! `(p*, V*)` reproduces the whole view distribution (the masked pad plus the p*-
+//! and V*-bit openings). The real view therefore leaks nothing beyond `(p*, V*)`.
 //!
 //! ## What is real here vs. abstracted (honest)
 //!
 //! - **REAL:** boolean (GF(2)) additive secret sharing among `n` parties; a real
 //!   Beaver-triple AND gate whose opened values are one-time-pad masked; a real
-//!   bit-sliced secure `≥` comparator; the monotone crossing; a real secure `min`.
-//!   No party ever holds a plaintext curve coefficient; only `(p*, V*)` open.
+//!   bit-sliced secure `≥` comparator; a real secure `min`; an oblivious argmax
+//!   crossing (secure MUX on a secret compare bit). No party ever holds a
+//!   plaintext curve coefficient; only `(p*, V*)` open.
 //! - **PREPROCESSING (standard MPC assumption):** the Beaver triples are produced
 //!   by a simulated offline dealer (the SPDZ "offline phase"). In production the
 //!   triples come from OT/HE preprocessing AMONG the parties — the ONLINE phase
@@ -91,8 +96,8 @@ pub struct Transcript {
     /// Every `d = x ⊕ a` / `e = y ⊕ b` opened inside a Beaver AND gate. These are
     /// the protocol messages. Each is uniform because `a`,`b` are fresh uniform.
     pub masked: Vec<u8>,
-    /// The opened sign vector `c[p] = [D[p] ≥ S[p]]` — determined by `p*`.
-    pub revealed_sign: Vec<u8>,
+    /// The opened clearing-price index `p*` bits (LSB first) — the argmax result.
+    pub revealed_pstar: Vec<u8>,
     /// The opened cleared volume `V*` bits (the only value output besides `p*`).
     pub revealed_vstar: Vec<u8>,
     /// AND gates executed (= triples consumed) — the online multiplicative cost.
@@ -104,9 +109,10 @@ pub struct Transcript {
 impl Transcript {
     /// The result the crossing outputs and reveals: exactly `(p*, V*)`.
     pub fn is_reveal_only(&self, k: usize) -> bool {
-        // The only opened non-masked values are the K sign bits and V*'s bits.
-        // (The masked bits are uniform pad, not information about inputs.)
-        self.revealed_sign.len() == k
+        // The only opened non-masked values are p*'s index bits and V*'s bits.
+        // (The masked bits are uniform pad, not information about inputs.) The
+        // oblivious argmax never opens a per-bucket quantity.
+        self.revealed_pstar.len() == index_bits(k)
     }
 }
 
@@ -305,17 +311,56 @@ pub fn open_int(x: &SharedInt) -> u64 {
         .fold(0u64, |acc, (i, bit)| acc | ((open(bit) as u64) << i))
 }
 
-/// The number of Beaver triples one crossing consumes: `3·b` per `≥` over K
-/// buckets, plus one `secure_min` (`geq` = `3b` + `b` MUX ANDs). Sizing the pool.
+/// An upper bound on the Beaver triples one crossing consumes: `K` per-bucket
+/// `secure_min` (`4b` each) plus a `K-1`-step oblivious argmax (each step a `geq`
+/// = `3b`, a `b`-bit value MUX, and an `index_bits`-bit index MUX). A small `+b`
+/// slack keeps the pool safely sized. Over-allocation is harmless (`consumed()`
+/// reports the actual count); an under-count would panic in `pool.take()`.
 pub fn triples_needed(k: usize, b: usize) -> usize {
-    k * (3 * b) + (3 * b + b)
+    let idx = index_bits(k);
+    k * (4 * b) + k.saturating_sub(1) * (4 * b + idx) + b
+}
+
+/// Bit-width of a bucket index over `k` buckets — enough to hold the largest
+/// index `k-1` (at least 1). `p*` is opened as this many bits.
+pub fn index_bits(k: usize) -> usize {
+    ceil_log2(k).max(1)
+}
+
+/// A PUBLIC integer as a boolean-shared constant (party 0 carries the bits, LSB
+/// first). No secrecy — used for the argmax's candidate bucket indices.
+fn const_int(value: u64, bits: usize, n: usize) -> SharedInt {
+    (0..bits)
+        .map(|i| share_const(((value >> i) & 1) as u8, n))
+        .collect()
+}
+
+/// Oblivious multiplexer on boolean-shared integers: returns `a` when `cond`=1,
+/// else `b`, bit-by-bit `out_i = b_i ⊕ (cond ∧ (a_i ⊕ b_i))`. One AND gate per
+/// bit; opens only the (one-time-pad-masked) Beaver reveals, never `cond` itself.
+fn select_int(
+    cond: &Bit,
+    a: &SharedInt,
+    b: &SharedInt,
+    pool: &mut TriplePool,
+    tr: &mut Transcript,
+) -> SharedInt {
+    a.iter()
+        .zip(b)
+        .map(|(ai, bi)| {
+            let dxor = xor(ai, bi);
+            let t = pool.take().clone();
+            let sel = and_gate(cond, &dxor, &t, tr);
+            xor(bi, &sel)
+        })
+        .collect()
 }
 
 /// The public result of an output-boundary MPC crossing.
 #[derive(Clone, Debug, PartialEq, Eq)]
 pub struct Crossing {
-    /// clearing price bucket = argmax_j min(D[j],S[j]) = largest p with D[p]≥S[p].
-    /// `None` if the book never clears.
+    /// clearing price bucket p* = argmax_j min(D[j],S[j]), ties to the lowest j.
+    /// `None` if the book never clears (the max executed volume is 0).
     pub p_star: Option<usize>,
     /// cleared volume V* = min(D[p*], S[p*]).
     pub v_star: u64,
@@ -325,11 +370,18 @@ pub struct Crossing {
 /// aggregate curves `d_shared[p]`, `s_shared[p]` (the threshold-BFV
 /// partial-decrypt-into-shares of the folded curves). Reveals ONLY `(p*, V*)`.
 ///
-/// 1. For each bucket open `c[p] = [D[p] ≥ S[p]]` — the monotone sign vector,
-///    determined by `p*` (leaks nothing more; §leakage argument above).
-/// 2. `p* = (Σ_p c[p]) − 1` (public arithmetic on the opened, p*-determined bits).
-/// 3. `V* = min(D[p*], S[p*])` via one secure_min at the now-public `p*`, opening
-///    only the min — never the two heights.
+/// The uniform-price rule is `p* = argmax_p min(D[p],S[p])` (ties to the lowest
+/// p), `V* = min(D[p*],S[p*])`. We compute it OBLIVIOUSLY — no per-bucket
+/// quantity or comparison is ever opened:
+///
+/// 1. Per bucket, `v[p] = secure_min(D[p], S[p])` — a secret-shared volume.
+/// 2. A data-oblivious argmax scans the K volumes, keeping a running
+///    `(best_v, best_idx)` and replacing it, via `select_int` on the secret bit
+///    `[v[p] > best_v]`, only on a STRICT increase (so ties keep the lower index).
+///    The gate schedule is independent of the data, so the transcript's masked
+///    reveals are a pure one-time pad.
+/// 3. Open ONLY `best_idx` (= p*) and `best_v` (= V*). Nothing else — not the
+///    sign vector, not any curve height — is ever revealed.
 pub fn mpc_crossing(
     d_shared: &[SharedInt],
     s_shared: &[SharedInt],
@@ -338,32 +390,37 @@ pub fn mpc_crossing(
 ) -> Crossing {
     let k = d_shared.len();
     assert_eq!(k, s_shared.len());
+    assert!(k >= 1, "at least one price bucket");
+    let n = d_shared[0][0].len();
+    let idx_bits = index_bits(k);
 
-    // (1) sign vector — each c[p] opened (it is p*-determined, so this is exactly
-    //     the reveal-only-p* leakage). The K comparisons are INDEPENDENT: in a
-    //     real deployment their AND gates batch by depth-level → O(b) rounds total.
-    let mut count = 0usize;
-    for p in 0..k {
-        let c = geq(&d_shared[p], &s_shared[p], pool, tr);
-        let cbit = open(&c);
-        tr.revealed_sign.push(cbit);
-        count += cbit as usize;
+    // (1) per-bucket executed volume v[p] = min(D[p], S[p]) — NEVER opened.
+    let vols: Vec<SharedInt> = (0..k)
+        .map(|p| secure_min(&d_shared[p], &s_shared[p], pool, tr))
+        .collect();
+
+    // (2) OBLIVIOUS ARGMAX with lowest-index tie-break. Replace only on a STRICT
+    //     increase: strict `>` is `NOT(best_v ≥ v[p])`, so equal volumes keep the
+    //     lower index. Every step runs the same gates regardless of the data.
+    let mut best_v = vols[0].clone();
+    let mut best_idx = const_int(0, idx_bits, n);
+    for p in 1..k {
+        let gt = not(&geq(&best_v, &vols[p], pool, tr));
+        let p_const = const_int(p as u64, idx_bits, n);
+        best_idx = select_int(&gt, &p_const, &best_idx, pool, tr);
+        best_v = select_int(&gt, &vols[p], &best_v, pool, tr);
     }
-    // AND-depth of the whole sign phase = depth of one geq (buckets are parallel).
-    tr.rounds += 3 * d_shared[0].len(); // ~3b sequential rounds (b = bit-width)
+    // AND-depth ≈ per-bucket secure_min (parallel) + the sequential K-1 argmax scan.
+    tr.rounds += (3 * best_v.len()) + k.saturating_sub(1) * (3 * best_v.len() + idx_bits);
 
-    let p_star = if count == 0 { None } else { Some(count - 1) };
-
-    // (2)+(3) V* = min at the public p* — reveal ONLY the min.
-    let v_star = match p_star {
-        None => 0,
-        Some(p) => {
-            let m = secure_min(&d_shared[p], &s_shared[p], pool, tr);
-            let v = open_int(&m);
-            tr.revealed_vstar = (0..m.len()).map(|i| ((v >> i) & 1) as u8).collect();
-            v
-        }
-    };
+    // (3) reveal ONLY (p*, V*). V*==0 means the book never clears.
+    let v_star = open_int(&best_v);
+    let idx = open_int(&best_idx) as usize;
+    tr.revealed_pstar = (0..idx_bits).map(|i| ((idx >> i) & 1) as u8).collect();
+    tr.revealed_vstar = (0..best_v.len())
+        .map(|i| ((v_star >> i) & 1) as u8)
+        .collect();
+    let p_star = if v_star == 0 { None } else { Some(idx) };
 
     Crossing { p_star, v_star }
 }
@@ -398,29 +455,27 @@ pub fn cross_curves<R: Rng>(
 /// beyond `(p*, V*)` — the definition of "reveal only p*+V*".
 ///
 /// It works because: (a) every opened `masked` bit is a one-time-pad, so the
-/// simulator samples it uniform; (b) the sign vector is the p*-determined step
-/// `1…1 0…0`; (c) `V*` is given. No curve coefficient is ever needed.
+/// simulator samples it uniform, and the argmax runs the SAME gate count on every
+/// input (data-oblivious), so that count depends only on `(k, b)`; (b) the opened
+/// `p*` index bits are a deterministic function of `p*`; (c) `V*` is given. No
+/// curve coefficient is ever needed.
 pub fn simulate<R: Rng>(cross: &Crossing, k: usize, b: usize, rng: &mut R) -> Transcript {
     let mut tr = Transcript::default();
+    let idx_bits = index_bits(k);
     // (a) masked bits: exactly as many as the real run (2 opens per AND gate),
-    //     each sampled uniform — the real ones are one-time-pad masked, so this
-    //     is the same distribution. A no-clear run skips the secure_min ANDs.
-    let and_gates = if cross.p_star.is_some() {
-        k * (3 * b) + (3 * b + b)
-    } else {
-        k * (3 * b)
-    };
+    //     each sampled uniform. The real run's gate count is data-oblivious:
+    //     K secure_min (4b each) + a K-1-step argmax (geq 3b + value MUX b +
+    //     index MUX idx_bits per step), independent of the outcome.
+    let and_gates = k * (4 * b) + k.saturating_sub(1) * (4 * b + idx_bits);
     for _ in 0..(2 * and_gates) {
         tr.masked.push(rng.gen_range(0..=1));
     }
     tr.and_gates = and_gates;
-    // (b) sign vector = p*-determined step function.
-    let flip = cross.p_star.map(|p| p + 1).unwrap_or(0);
-    tr.revealed_sign = (0..k).map(|p| (p < flip) as u8).collect();
-    // (c) V* bits.
-    if cross.p_star.is_some() {
-        tr.revealed_vstar = (0..b).map(|i| ((cross.v_star >> i) & 1) as u8).collect();
-    }
+    // (b) p* index bits — determined by p* alone (0 when the book never clears).
+    let idx = cross.p_star.unwrap_or(0);
+    tr.revealed_pstar = (0..idx_bits).map(|i| ((idx >> i) & 1) as u8).collect();
+    // (c) V* bits — determined by V* alone (0 when no clear).
+    tr.revealed_vstar = (0..b).map(|i| ((cross.v_star >> i) & 1) as u8).collect();
     tr
 }
 
@@ -762,6 +817,26 @@ mod pure_tests {
             let counts: std::collections::BTreeSet<u64> = h0.values().copied().collect();
             assert_eq!(counts.len(), 1, "coalition view is not uniform");
         }
+    }
+
+    #[test]
+    fn mpc_crossing_workbook_and_counter_witness() {
+        // The shared uniform-price rule on the two named witnesses, run through the
+        // real secret-shared Beaver-triple crossing (share curves -> MPC argmax).
+        let mut rng = StdRng::seed_from_u64(11);
+        // workbook: min=(3,8,6) => p*=1, V*=8.
+        let (c, tr, _) = cross_curves(&[10u64, 10, 6], &[3u64, 8, 8], 16, 3, &mut rng);
+        assert_eq!(c.p_star, Some(1));
+        assert_eq!(c.v_star, 8);
+        assert!(tr.is_reveal_only(3));
+        // counter-witness that BREAKS largest-crossing: min=(5,9) => p*=1, V*=9.
+        let (c2, _, _) = cross_curves(&[10u64, 9], &[5u64, 20], 16, 3, &mut rng);
+        assert_eq!(c2.p_star, Some(1));
+        assert_eq!(c2.v_star, 9);
+        // a genuinely-no-clear book (no asks) => V*=0 => None.
+        let (c3, _, _) = cross_curves(&[10u64, 8], &[0u64, 0], 16, 3, &mut rng);
+        assert_eq!(c3.p_star, None);
+        assert_eq!(c3.v_star, 0);
     }
 
     #[test]

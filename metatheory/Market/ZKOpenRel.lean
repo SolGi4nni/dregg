@@ -69,7 +69,7 @@ inhabited. We refute-and-replace:
   * REPLACE it with the TRUE **Tarski feedback closure** `traceAdmissible_guarded : TraceAdmissible f →
     Guarded (gtrace f)` — when the feedback is a MONOTONE self-map of a complete lattice, its least fixed
     point (`OrderHom.lfp`) witnesses that the loop clears. This lands on the already-proven monotone
-    crossing operator of `Market/FhEggClearing.lean` (`crossing_gtrace_guarded` via `crossing_fixed` /
+    crossing operator of `Market/FhEggClearing.lean` (`crossing_gtrace_guarded` via `balanceCrossing_fixed` /
     `Fstep_monotone`), the four instances are shown `TraceAdmissible`, and it is exercised NON-VACUOUSLY on
     a real non-total monotone feedback on the complete lattice `Prop` (`andFeedback_gtrace_guarded`);
   * COMPLETE the closure target (codex named feedback AND adaptive composition): the guarded trace of
@@ -518,7 +518,7 @@ A trace-admissible morphism's feedback CLEARS: the least fixed point `lfp Φ` of
 operator satisfies `Φ (lfp Φ) = lfp Φ` (`OrderHom.map_lfp`), so the fed-back input and output `U`-values
 coincide — the loop's non-vacuity is WITNESSED by the fixed point. This is the true content the false
 conjecture over-reached for; it lands on exactly the monotone-operator/least-fixed-point machinery
-`Market/FhEggClearing.lean` proves for the fhEgg crossing (`Fstep_monotone` / `crossing_fixed`). -/
+`Market/FhEggClearing.lean` proves for the balance threshold (`Fstep_monotone` / `balanceCrossing_fixed`). -/
 theorem traceAdmissible_guarded {X Y U : ZKObj R} [CompleteLattice U.S]
     (f : tensorObj X U ⟶ tensorObj Y U) (h : TraceAdmissible f) : Guarded (gtrace f) := by
   intro x
@@ -606,7 +606,7 @@ theorem comp_guardedOn {X Y Z : ZKObj R} {P : X.S → Prop} {Q : Y.S → Prop}
 The genuinely-constrained instance (feedback `rel` is a real update, not `True`): wire the fhEgg price
 update `Market.Fstep` as the feedback map. Its admissibility is `Market.Fstep_monotone` (the monotone
 crossing operator, the codex correction), and the fed-back value that clears the loop is the crossing —
-the fixed point `Market.crossing_fixed` establishes. So the guarded trace of the crossing feedback is
+the fixed point `Market.balanceCrossing_fixed` establishes. So the guarded trace of the crossing feedback is
 guarded exactly when a crossing exists (the honest `CrossingExists` hypothesis). -/
 
 /-- **The crossing feedback morphism** — `U`-state = the price index `ℕ`; the feedback wires the proven
@@ -618,12 +618,12 @@ def crossingFeedback (bk : Market.OrderBook) (K : ℕ) :
 
 /-- **THE fhEgg CROSSING FEEDBACK CLEARS** — the guarded trace of `crossingFeedback` is guarded whenever a
 crossing exists: its feedback fiber is `∃ n, n = Fstep bk K n`, a FIXED POINT of the monotone crossing
-operator, witnessed by `Market.crossing_fixed`. This is the replacement theorem's content on the real,
+operator, witnessed by `Market.balanceCrossing_fixed`. This is the replacement theorem's content on the real,
 already-proven mechanism operator — feedback closure for the monotone/finite case that actually matters. -/
 theorem crossing_gtrace_guarded (bk : Market.OrderBook) (K : ℕ) (h : Market.CrossingExists bk) :
     Guarded (gtrace (crossingFeedback (R := R) bk K)) := by
   intro _
-  exact ⟨PUnit.unit, Market.crossing bk h, (Market.crossing_fixed bk h K).symm⟩
+  exact ⟨PUnit.unit, Market.balanceCrossing bk h, (Market.balanceCrossing_fixed bk h K).symm⟩
 
 /-! ### The four fhEgg instances are `TraceAdmissible` (their feasibility is total ⇒ trivially admissible).
 

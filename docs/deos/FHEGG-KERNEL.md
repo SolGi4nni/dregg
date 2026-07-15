@@ -49,9 +49,19 @@ This is formalized directly in `metatheory/Market/FhEggClearing.lean`:
 
 ### 1.2 The uniform-price crossing (a fixpoint on a chain)
 
-The uniform clearing price is the crossing `p* = min{ p : demand(p) ≤ supply(p) }`. Because the
-curves are monotone this is a threshold search over `K` buckets — the least fixed point of the
-explicit index update `F(j) = j if demand(j) ≤ supply(j) else min(j+1, K)`.
+The uniform clearing price is the **volume-maximizing** price `p* = argmax_p min(demand(p), supply(p))`
+(ties → lowest `p`), and the cleared volume is `V* = min(demand(p*), supply(p*))`. This is the defining
+rule of a uniform-price call auction: it MAXIMIZES executed volume, and every filled leg is individually
+rational (a bid trades at `p ≤ limit`, an ask at `p ≥ limit`). Because `min(D,S)` is unimodal (rising with
+`S` through the `D≥S` region, falling with `D` after), `p*` is one of the two buckets straddling the
+crossing — an O(K) selection.
+
+**Correction (assurance audit, 2026-07-14):** earlier this section gave the *least crossing*
+`p* = min{ p : demand(p) ≤ supply(p) }`, and `fhegg-fhe/src/lib.rs` gave the *largest* `{ demand ≥ supply }`.
+BOTH are heuristics that leave tradeable volume unmatched whenever the `min(D,S)` peak is on their blind
+side — e.g. on `D=(10,9), S=(5,20)` the `argmax` rule clears `p=1, V=9`, but largest-crossing mis-clears
+`p=0, V=5` (4 units lost). The spec, `fhegg-fhe`, and the Lean model are now cut to the single
+`argmax min(D,S)` rule.
 
 The load-bearing correction (codex Q2, `FHEGG-CODEX-INSIGHTS.md`): monotone *curves* are not a
 monotone *operator*; the fixpoint is of `F`, not of `D, S`. `Fstep_monotone` proves **`F` is the
@@ -62,7 +72,10 @@ hypothesis (`CrossingExists`) is stated honestly and is not free: a book whose d
 supply at every bucket does not clear (`noCrossBook_no_crossing`), and there is then only the
 spurious top bucket, not a genuine fixpoint.
 
-At the crossing the matched volume is `demand(p*)` (`clearedVolume_eq_demand`). The aggregate
+At `p*` the cleared volume is `V* = min(demand(p*), supply(p*))` — NOT `demand(p*)`, which was an artifact
+of the superseded least-crossing rule. (The fixpoint/`F`-operator/`crossing_is_least` prose above described
+that least-crossing formalization and is being re-cast to the `argmax min(D,S)` selector alongside the Lean
+`FhEggClearing` rewrite.) The aggregate
 cleared batch neither mints nor burns — `netFlow = 0` on every asset (`clearedBatch_conserves`,
 the priced lift of `clearing_conserves_per_asset`) — and is uniform-price optimal
 (`clearedBatch_optimal`, discharged through `Market/Optimality.lean`'s `uniform_price_optimal`:

@@ -140,7 +140,7 @@ fn correctness_and_latency() {
 }
 
 /// Collect the input-dependent part of a party's view over `runs` fresh executions
-/// and return `(P[masked bit = 1], sign_vector, vstar_bits)`.
+/// and return `(P[masked bit = 1], pstar_bits, vstar_bits)`.
 fn view_profile(
     demand: &[u64],
     supply: &[u64],
@@ -152,7 +152,7 @@ fn view_profile(
     let mut rng = StdRng::seed_from_u64(seed);
     let mut ones = 0u64;
     let mut total = 0u64;
-    let mut sign = Vec::new();
+    let mut pstar = Vec::new();
     let mut vstar = Vec::new();
     for _ in 0..runs {
         let mut pool = TriplePool::generate(triples_needed(k, B), n_parties, &mut rng);
@@ -170,10 +170,10 @@ fn view_profile(
             ones += m as u64;
             total += 1;
         }
-        sign = tr.revealed_sign.clone();
+        pstar = tr.revealed_pstar.clone();
         vstar = tr.revealed_vstar.clone();
     }
-    (ones as f64 / total as f64, sign, vstar)
+    (ones as f64 / total as f64, pstar, vstar)
 }
 
 fn privacy_demo() {
@@ -240,8 +240,8 @@ fn privacy_demo() {
         }
     );
 
-    let (bias1, sign1, vstar1) = view_profile(&b1.0, &b1.1, n_parties, runs, 0x1111);
-    let (bias2, sign2, vstar2) = view_profile(&b2.0, &b2.1, n_parties, runs, 0x2222);
+    let (bias1, pstar1, vstar1) = view_profile(&b1.0, &b1.1, n_parties, runs, 0x1111);
+    let (bias2, pstar2, vstar2) = view_profile(&b2.0, &b2.1, n_parties, runs, 0x2222);
 
     println!("\nparty view over {runs} fresh runs each ({n_parties} parties, K={k}):");
     println!(
@@ -252,7 +252,7 @@ fn privacy_demo() {
         "  |bias1 - bias2|           =  {:.4}   (-> 0: the masked messages carry no input info)",
         (bias1 - bias2).abs()
     );
-    println!("  opened sign vector equal  :  {}", sign1 == sign2);
+    println!("  opened p* index bits equal:  {}", pstar1 == pstar2);
     println!("  revealed V* bits equal    :  {}", vstar1 == vstar2);
 
     // Simulator: given ONLY (p*,V*), reproduce the view distribution.
@@ -263,7 +263,7 @@ fn privacy_demo() {
     let mut srng = StdRng::seed_from_u64(0x51A);
     let mut sim_ones = 0u64;
     let mut sim_total = 0u64;
-    let mut sim_sign = Vec::new();
+    let mut sim_pstar = Vec::new();
     let mut sim_vstar = Vec::new();
     for _ in 0..runs {
         let tr = simulate(&cross_ref, k, B, &mut srng);
@@ -271,26 +271,26 @@ fn privacy_demo() {
             sim_ones += m as u64;
             sim_total += 1;
         }
-        sim_sign = tr.revealed_sign.clone();
+        sim_pstar = tr.revealed_pstar.clone();
         sim_vstar = tr.revealed_vstar.clone();
     }
     let sim_bias = sim_ones as f64 / sim_total as f64;
     println!("\nsimulator (given ONLY (p*,V*), no curves):");
     println!("  P[simulated bit = 1]      =  {:.4}   (matches real -> real view learnable from (p*,V*) alone)", sim_bias);
     println!(
-        "  simulated sign vector = real sign vector : {}",
-        sim_sign == sign1
+        "  simulated p* bits = real p* bits : {}",
+        sim_pstar == pstar1
     );
     println!(
-        "  simulated V* bits     = real V* bits     : {}",
+        "  simulated V* bits = real V* bits : {}",
         sim_vstar == vstar1
     );
 
-    let indistinguishable = sign1 == sign2
+    let indistinguishable = pstar1 == pstar2
         && vstar1 == vstar2
         && (bias1 - bias2).abs() < 0.03
         && (bias1 - 0.5).abs() < 0.03
-        && sim_sign == sign1
+        && sim_pstar == pstar1
         && sim_vstar == vstar1;
     println!(
         "\nprivacy verdict: {}",

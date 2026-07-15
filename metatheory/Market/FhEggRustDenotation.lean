@@ -8,10 +8,11 @@ with `Market.FhEggClearing`.
 
 The comparison exposes three independent residuals at HEAD:
 
-* **`FhEggCrossingConventionResidual`.**  Rust selects the *largest* bucket satisfying `D >= S`;
-  `FhEggClearing` selects the *least* bucket satisfying `D <= S`.  Those are adjacent sides of a
-  crossing in general, not two presentations of the same function.  The worked book is a concrete
-  counterexample: Rust returns `(1, 8)`, Lean returns `(2, 6)`.
+* **`FhEggCrossingConventionResidual`.**  `FhEggClearing` now selects the *volume-maximizing* bucket
+  (`p* = argmax_p min(D,S)`, the textbook uniform-price rule); Rust still selects the *largest* bucket
+  satisfying `D >= S`.  These agree on the worked book (both `(1, 8)`), but Rust's heuristic is not
+  volume-maximizing: on the counter-witness `D=(10,9), S=(5,20)` the corrected rule clears at `(1, 9)`
+  while Rust returns `(0, 5)`.
 * **`FhEggTfheNoCrossResidual`.**  `fhe_clear` reports the no-crossing sentinel when the comparison-bit
   count is zero, but nevertheless decrypts bucket zero and reports its `min(D,S)` as `v_star`.
   `reference_clear` reports volume zero.  This diverges without overflow or cryptographic assumptions.
@@ -69,41 +70,43 @@ def rustReferenceOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
   | none => ⟨none, 0⟩
   | some p => ⟨some p, min (demand bk p) (supply bk p)⟩
 
-/-- The output proved by the current Lean `FhEggClearing` crossing. -/
-def leanClearingOutput (bk : OrderBook) (h : CrossingExists bk) : ClearingOutput :=
-  ⟨some (crossing bk h), clearedVolume bk h⟩
+/-- The output proved by the corrected Lean `FhEggClearing` rule — the volume-argmax
+`crossing`/`clearedVolume` over `k` price buckets. -/
+def leanClearingOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
+  ⟨some (crossing bk k), clearedVolume bk k⟩
 
-/-- **The exact current denotation obligation:** on every valid in-range Lean crossing, Lean's
-clearing output equals the deployed Rust plaintext reference output. -/
+/-- **The exact denotation obligation:** over every nonempty bucket range, the corrected Lean clearing
+output equals the deployed Rust plaintext reference output. -/
 def FhEggCrossingDenotation : Prop :=
-  ∀ (bk : OrderBook) (h : CrossingExists bk) (k : Nat), crossing bk h < k →
-    leanClearingOutput bk h = rustReferenceOutput bk k
+  ∀ (bk : OrderBook) (k : Nat), 0 < k → leanClearingOutput bk k = rustReferenceOutput bk k
 
-/-! The repository's own worked book separates the two conventions. -/
+/-! The corrected Lean rule (volume-argmax) AGREES with Rust on the worked book — both `(1, 8)` — but the
+counter-witness separates them: Rust's largest-`{D ≥ S}` heuristic is not volume-maximizing. -/
 
 #guard rustSignVec workBook 3 == [true, true, false]
 #guard rustPStar workBook 3 == some 1
 #guard rustReferenceOutput workBook 3 == (⟨some 1, 8⟩ : ClearingOutput)
-#guard leanClearingOutput workBook workBook_crosses == (⟨some 2, 6⟩ : ClearingOutput)
+#guard leanClearingOutput workBook 3 == (⟨some 1, 8⟩ : ClearingOutput)
 
-/-- **Concrete denotation failure:** deployed Rust returns `(p*,V*) = (1,8)`, while the Lean theorem
-tower returns `(2,6)`, on the same valid worked book and the same three buckets. -/
-theorem workBook_crossing_conventions_diverge :
-    leanClearingOutput workBook workBook_crosses ≠ rustReferenceOutput workBook 3 := by
-  rw [show leanClearingOutput workBook workBook_crosses = ⟨some 2, 6⟩ by
-    simp [leanClearingOutput, workBook_crossing, workBook_clearedVolume]]
-  decide
+/-- **On the worked book the corrected Lean rule and Rust AGREE** — both clear at `(p*, V*) = (1, 8)`, the
+volume peak. (Before the fix the Lean least-`{D ≤ S}` heuristic returned `(2, 6)` and diverged here.) -/
+theorem workBook_conventions_agree :
+    leanClearingOutput workBook 3 = rustReferenceOutput workBook 3 := by decide
 
-/-- **`FhEggCrossingConventionResidual` is OPEN, formally:** the current Lean clearing does not denote
-the deployed Rust reference clearing. -/
+/-- **The counter-witness SEPARATES them:** on `D = (10, 9)`, `S = (5, 20)` the corrected Lean rule clears
+at the volume peak `(1, 9)`, while Rust's largest-`{D ≥ S}` selects bucket `0` at volume `5` — Rust's
+heuristic is not the volume-maximizing rule. -/
+theorem counterWitness_conventions_diverge :
+    leanClearingOutput counterBook 2 ≠ rustReferenceOutput counterBook 2 := by decide
+
+/-- **`FhEggCrossingConventionResidual` is OPEN, formally:** the deployed Rust largest-`{D ≥ S}` reference
+does NOT denote the corrected (volume-maximizing) Lean clearing — witnessed by the counter-witness. -/
 theorem FhEggCrossingConventionResidual : ¬ FhEggCrossingDenotation := by
   intro h
-  have hlt : crossing workBook workBook_crosses < 3 := by
-    rw [workBook_crossing]
-    decide
-  exact workBook_crossing_conventions_diverge (h workBook workBook_crosses 3 hlt)
+  exact counterWitness_conventions_diverge (h counterBook 2 (by decide))
 
-#assert_axioms workBook_crossing_conventions_diverge
+#assert_axioms workBook_conventions_agree
+#assert_axioms counterWitness_conventions_diverge
 #assert_axioms FhEggCrossingConventionResidual
 
 /-! ## 2. The observable `FheUint16` semantics and its two independent gaps. -/

@@ -171,14 +171,18 @@ pub fn bfv_fold(
     t.decrypt = t0.elapsed();
 
     // (c) CLEAR-DOMAIN crossing (NOT additive, NOT part of the measured cost — the
-    //     real crossing stays TFHE, ~10 s O(K)). Recover p*/V* to CHECK the fold.
-    let count = (0..k).filter(|&p| demand[p] >= supply[p]).count();
-    let (p_star, v_star) = if count == 0 {
-        (usize::MAX, 0u32)
-    } else {
-        let p = count - 1;
-        (p, demand[p].min(supply[p]) as u32)
-    };
+    //     real crossing stays TFHE, ~10 s O(K)). Recover p*/V* to CHECK the fold,
+    //     under the uniform-price rule p* = argmax_p min(D[p],S[p]) (ties to the
+    //     lowest p). V*==0 (usize::MAX sentinel) => the book never clears.
+    let mut p_star = usize::MAX;
+    let mut v_star = 0u32;
+    for p in 0..k {
+        let v = demand[p].min(supply[p]) as u32;
+        if v > v_star {
+            v_star = v;
+            p_star = p;
+        }
+    }
     t.p_star = p_star;
     t.v_star = v_star;
 
