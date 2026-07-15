@@ -29,7 +29,7 @@ Theorems:
     `https://app.example.com` and echoes it (no wildcard, no credentials) — pure-kernel
     `decide` over the genuine policy, NOT a stub.
   * `acao_name_wire_bytes` — the header name is exactly the 27 bytes of
-    `"Access-Control-Allow-Origin"` (pure-kernel `decide` via the `ba_toList_eq` bridge,
+    `"Access-Control-Allow-Origin"` (pure-kernel `decide` via the `Shortcuts.ba_toList_eq` bridge,
     no `native_decide`, no `Lean.ofReduceBool`).
   * `deployed_cors_acao_present` — for ANY deployed ctx whose canonical `origin` is the
     permitted `https://app.example.com`, the `(Access-Control-Allow-Origin,
@@ -40,48 +40,13 @@ Theorems:
 import Reactor.Deploy
 import Reactor.Stage.Cors
 import Cors
+import Proto.Kernel.Shortcuts
 
 namespace Proto.CorsAcaoProven
 
 open Proto (Bytes)
 open Reactor.Pipeline (Ctx)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel `decide`
-(`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The deployed policy's single permitted origin. -/
 def deployedOrigin : String := "https://app.example.com"
@@ -100,13 +65,13 @@ theorem cors_acao_value_deployed :
 /-! ## The exact wire name -/
 
 /-- **`acao_name_wire_bytes`.** The deployed CORS header name is exactly the 27 bytes of
-`"Access-Control-Allow-Origin"` — pinned to an explicit literal through the `ba_toList_eq`
+`"Access-Control-Allow-Origin"` — pinned to an explicit literal through the `Shortcuts.ba_toList_eq`
 bridge (pure-kernel `decide`, no `native_decide`), matching the curl. -/
 theorem acao_name_wire_bytes :
     Reactor.Stage.Cors.acaoName
       = [65, 99, 99, 101, 115, 115, 45, 67, 111, 110, 116, 114, 111, 108, 45,
          65, 108, 108, 111, 119, 45, 79, 114, 105, 103, 105, 110] := by
-  simp only [Reactor.Stage.Cors.acaoName, Reactor.Stage.Cors.strBytes, ba_toList_eq]; decide
+  simp only [Reactor.Stage.Cors.acaoName, Reactor.Stage.Cors.strBytes, Shortcuts.ba_toList_eq]; decide
 
 /-! ## The deployed byte-effect: ACAO reaches the BUILT deployed inner fold -/
 

@@ -25,7 +25,7 @@ no `Lean.ofReduceBool`):
 
   * `notimpl_status_501` — the deployed refusal's status is `501`.
   * `notimpl_reason_wire_bytes` — its reason phrase is exactly the 15 bytes of
-    `"Not Implemented"` (pinned via the `ba_toList_eq` bridge — pure-kernel `decide`),
+    `"Not Implemented"` (pinned via the `Shortcuts.ba_toList_eq` bridge — pure-kernel `decide`),
     the phrase the wire's status line carries.
   * `notimpl_body_wire_bytes` — the refusal's body is exactly `"not implemented\n"`.
   * `frob_not_known` — the concrete method `"FROB"` really is unrecognized.
@@ -34,50 +34,15 @@ no `Lean.ofReduceBool`):
 -/
 
 import Reactor.Stage.RequestValidation
+import Proto.Kernel.Shortcuts
 
 namespace Proto.NotImplementedProven
 
 open Proto (Bytes Request)
+open Proto.Kernel
 open Reactor.Stage.RequestValidation
   (notImplementedResp strBytes versionSupported methodKnown httpV11
    validationStage validationStage_rejects_unknown_method)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
 
 /-! ## The deployed `501` response shape -/
 
@@ -85,19 +50,19 @@ private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
 theorem notimpl_status_501 : notImplementedResp.status = 501 := rfl
 
 /-- **`notimpl_reason_wire_bytes`.** The refusal's reason phrase is exactly the 15 bytes of
-`"Not Implemented"` — pinned through the `ba_toList_eq` bridge (pure-kernel `decide`, no
+`"Not Implemented"` — pinned through the `Shortcuts.ba_toList_eq` bridge (pure-kernel `decide`, no
 `native_decide`), matching the wire status line. -/
 theorem notimpl_reason_wire_bytes :
     notImplementedResp.reason =
       [78, 111, 116, 32, 73, 109, 112, 108, 101, 109, 101, 110, 116, 101, 100] := by
-  simp only [notImplementedResp, strBytes, ba_toList_eq]; decide
+  simp only [notImplementedResp, strBytes, Shortcuts.ba_toList_eq]; decide
 
 /-- **`notimpl_body_wire_bytes`.** The refusal's body is exactly the 16 bytes of
 `"not implemented\n"`. -/
 theorem notimpl_body_wire_bytes :
     notImplementedResp.body =
       [110, 111, 116, 32, 105, 109, 112, 108, 101, 109, 101, 110, 116, 101, 100, 10] := by
-  simp only [notImplementedResp, strBytes, ba_toList_eq]; decide
+  simp only [notImplementedResp, strBytes, Shortcuts.ba_toList_eq]; decide
 
 /-! ## The deployed gate genuinely fires on an unknown method (non-vacuous witness) -/
 

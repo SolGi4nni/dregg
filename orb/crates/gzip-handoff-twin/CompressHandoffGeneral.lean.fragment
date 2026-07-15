@@ -1,0 +1,108 @@
+import Reactor.Stage.Gzip
+
+namespace O11y.CompressProven.Deployed
+open Reactor.Pipeline
+open Reactor.Stage.Gzip
+
+-- ============================================================================
+-- FRAGMENT to append to O11y/CompressProven.lean (verified in-situ context)
+-- ============================================================================
+
+/-! ## The GENERAL CRC-checked handoff round-trip (spec twin of the Rust seam)
+
+`gunzip_gzipStored_id` upgrades `compress_stream_decodes` (a single `"not found"`
+witness) to ∀ `x`: for EVERY body within one stored block and the ceiling, the
+real `Gzip.gunzip` of the proven `gzipStored x` recovers exactly `x`, with no
+error — the header parses, the stored block inflates (`inflate_stored_identity`),
+and BOTH the CRC-32 and ISIZE trailer checks pass. This is the spec-level
+statement the reactor seam (`crates/dataplane/src/gzip.rs::recompress`, modeled
+in `gzip-handoff-twin`) relies on: because the plaintext it re-compresses is
+`gunzip(proven output)` and that gunzip verifies the proven CRC-32, the bytes
+handed to flate2 equal the serve body — for every body, not just one witness. -/
+
+/-- `readU32le` inverts `u32le` on any 32-bit value. -/
+theorem readU32le_u32le (n : Nat) (r : List UInt8) (h : n < 4294967296) :
+    _root_.Gzip.readU32le (_root_.Gzip.u32le n ++ r) = some (n, r) := by
+  unfold _root_.Gzip.u32le _root_.Gzip.readU32le
+  simp only [List.cons_append, List.nil_append]
+  have e : ∀ k : Nat, (UInt8.ofNat k).toNat = k % 256 := fun k => rfl
+  rw [e, e, e, e]
+  congr 1
+  refine Prod.ext ?_ rfl
+  simp only
+  omega
+
+/-- `u32le n` is always 4 bytes. -/
+theorem u32le_length (n : Nat) : (_root_.Gzip.u32le n).length = 4 := rfl
+
+/-- The gzip CRC-32 of any body fits in 32 bits. -/
+theorem crc32_toNat_lt (x : List UInt8) : (_root_.Gzip.crc32 x).toNat < 4294967296 :=
+  UInt32.toNat_lt_size (_root_.Gzip.crc32 x)
+
+set_option maxRecDepth 100000 in
+/-- **The general handoff round-trip.** For every `x` with `x.length < 65536`
+(one stored block's 16-bit LEN) and `x.length ≤ cfg.maxOut`, gunzip of the proven
+`gzipStored x` returns exactly `x` with no error. -/
+theorem gunzip_gzipStored_id (cfg : Deflate.Cfg) (x : List UInt8)
+    (hlen : x.length < 65536) (hcap : x.length ≤ cfg.maxOut) :
+    (_root_.Gzip.gunzip cfg (_root_.Gzip.gzipStored x)).out.toList = x
+      ∧ (_root_.Gzip.gunzip cfg (_root_.Gzip.gzipStored x)).err = none := by
+  have hhdr := (_root_.Gzip.gzip_header_wellformed
+    (Deflate.deflateStored x
+      ++ (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+          ++ _root_.Gzip.u32le (x.length % 4294967296)))).1
+  obtain ⟨hout, herr⟩ := Deflate.inflate_stored_identity cfg x hlen hcap
+  have htrail : (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+      ++ _root_.Gzip.u32le (x.length % 4294967296)).length = 8 := by
+    simp only [List.length_append, u32le_length]
+  have hbody : _root_.Gzip.gzipStored x
+      = _root_.Gzip.mkHeader ++ (Deflate.deflateStored x
+          ++ (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+              ++ _root_.Gzip.u32le (x.length % 4294967296))) := by
+    simp only [_root_.Gzip.gzipStored, List.append_assoc]
+  have hnlt : ¬ (Deflate.deflateStored x
+      ++ (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+          ++ _root_.Gzip.u32le (x.length % 4294967296))).length < 8 := by
+    simp only [List.length_append, htrail]; omega
+  have hn : (Deflate.deflateStored x
+      ++ (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+          ++ _root_.Gzip.u32le (x.length % 4294967296))).length - 8
+      = (Deflate.deflateStored x).length := by
+    simp only [List.length_append, htrail]; omega
+  have hpay : (Deflate.deflateStored x
+      ++ (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+          ++ _root_.Gzip.u32le (x.length % 4294967296))).take
+      (Deflate.deflateStored x).length = Deflate.deflateStored x := List.take_left _ _
+  have hdrop : (Deflate.deflateStored x
+      ++ (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+          ++ _root_.Gzip.u32le (x.length % 4294967296))).drop
+      (Deflate.deflateStored x).length
+      = _root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+          ++ _root_.Gzip.u32le (x.length % 4294967296) := List.drop_left _ _
+  have hr1 : _root_.Gzip.readU32le (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+        ++ _root_.Gzip.u32le (x.length % 4294967296))
+      = some ((_root_.Gzip.crc32 x).toNat, _root_.Gzip.u32le (x.length % 4294967296)) :=
+    readU32le_u32le _ _ (crc32_toNat_lt x)
+  have hr2 : _root_.Gzip.readU32le ((_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+        ++ _root_.Gzip.u32le (x.length % 4294967296)).drop 4)
+      = some (x.length % 4294967296, []) := by
+    have h4 : (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat
+        ++ _root_.Gzip.u32le (x.length % 4294967296)).drop 4
+        = _root_.Gzip.u32le (x.length % 4294967296) := by
+      have : (4 : Nat) = (_root_.Gzip.u32le (_root_.Gzip.crc32 x).toNat).length :=
+        (u32le_length _).symm
+      rw [this]; exact List.drop_left _ _
+    rw [h4, ← List.append_nil (_root_.Gzip.u32le (x.length % 4294967296))]
+    exact readU32le_u32le _ _ (by omega)
+  have hsize : (Deflate.inflate cfg (Deflate.deflateStored x)).out.size = x.length := by
+    have h1 : (Deflate.inflate cfg (Deflate.deflateStored x)).out.size
+        = (Deflate.inflate cfg (Deflate.deflateStored x)).out.toList.length := rfl
+    rw [h1, hout]
+  unfold _root_.Gzip.gunzip
+  rw [hbody, hhdr]
+  simp only [hnlt, hn, hpay, hdrop, herr, hr1, hr2, hout, hsize,
+    bne_self_eq_false, Bool.false_eq_true, if_false, ite_false, and_true, reduceIte]
+
+#print axioms gunzip_gzipStored_id
+
+end O11y.CompressProven.Deployed

@@ -37,7 +37,7 @@ no `Lean.ofReduceBool`):
   * `nope_dispatches` — a concrete `GET /nope` routed request whose REAL `dispatch` reaches
     the catch-all 404 route, so the 404 branch is genuinely reachable (non-vacuity).
   * `reasonFor_404_wire_bytes` — the deployed reason phrase is exactly the 9 bytes of
-    `"Not Found"` (pinned via `ba_toList_eq`), matching the curl `404 Not Found`.
+    `"Not Found"` (pinned via `Shortcuts.ba_toList_eq`), matching the curl `404 Not Found`.
   * `notfound_body_wire_bytes` — the deployed 404 body is exactly the 9 bytes of
     `"not found"` (⇒ `Content-Length: 9`, curl-confirmed).
   * `deployed_404_status_line` — the full serialized status LINE of the 404 response is
@@ -46,49 +46,14 @@ no `Lean.ofReduceBool`):
 
 import Reactor.App
 import Reactor.Serialize
+import Proto.Kernel.Shortcuts
 
 namespace Proto.NotFoundProven
 
 open Proto (Bytes)
 open Reactor.App
 open RouteAdvanced (dispatch catchAllRoute)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-! ## The deployed routing decision: an unmatched safe path 404s -/
 
@@ -142,17 +107,17 @@ theorem nope_dispatches :
 /-! ## The exact wire bytes -/
 
 /-- **`reasonFor_404_wire_bytes`.** The deployed reason phrase for `404` is exactly the 9
-bytes of `"Not Found"` — pinned through the `ba_toList_eq` bridge (pure-kernel `decide`, no
+bytes of `"Not Found"` — pinned through the `Shortcuts.ba_toList_eq` bridge (pure-kernel `decide`, no
 `native_decide`), matching the curl `HTTP/1.1 404 Not Found`. -/
 theorem reasonFor_404_wire_bytes :
     reasonFor 404 = [78, 111, 116, 32, 70, 111, 117, 110, 100] := by
-  simp only [reasonFor, ba_toList_eq]; decide
+  simp only [reasonFor, Shortcuts.ba_toList_eq]; decide
 
 /-- **`notfound_body_wire_bytes`.** The deployed 404 body is exactly the 9 bytes of
 `"not found"` — so the serializer frames `Content-Length: 9` (curl-confirmed). -/
 theorem notfound_body_wire_bytes :
     ("not found".toUTF8.toList : Bytes) = [110, 111, 116, 32, 102, 111, 117, 110, 100] := by
-  simp only [ba_toList_eq]; decide
+  simp only [Shortcuts.ba_toList_eq]; decide
 
 /-- **`deployed_404_status_line`.** The full serialized status LINE of the deployed 404
 response (`Reactor.statusLine` over the built wire record) is exactly the bytes of
@@ -165,7 +130,7 @@ theorem deployed_404_status_line :
       = [72, 84, 84, 80, 47, 49, 46, 49, 32, 52, 48, 52, 32,
          78, 111, 116, 32, 70, 111, 117, 110, 100] := by
   simp only [Reactor.statusLineOf, Reactor.statusLine, Reactor.build, Reactor.http11,
-             Reactor.natToDec, reasonFor, ba_toList_eq]
+             Reactor.natToDec, reasonFor, Shortcuts.ba_toList_eq]
   decide
 
 end Proto.NotFoundProven

@@ -1,0 +1,13 @@
+[package]
+name = "gzip-handoff-twin"
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-or-later"
+description = "Executable model of the CRC-checked handoff at the real-gzip reactor seam (crates/dataplane/src/gzip.rs::recompress): the bytes flate2 recompresses are recovered by gunzipping the PROVEN stored-gzip stage output, so they equal the serve body confirmed against the proven CRC-32 trailer; on any flate2 decode failure the proven output is left untouched. Not a loom crate — the seam has no cross-thread shared state (per-connection &mut resp, recompress is embarrassingly parallel), so this is a functional/adversarial property model, not a schedule model. flate2 is a real dependency here BECAUSE flate2 is the trusted transform the twin models; this crate deliberately does NOT link the Lean runtime (unlike the dataplane package), keeping the model self-contained."
+publish = false
+
+[dependencies]
+flate2 = "1"
+
+[lints.rust]
+unexpected_cfgs = { level = "warn", check-cfg = ["cfg(loom)"] }

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-08T11:24:02",
+  "generated": "2026-07-09T00:04:41",
   "scenarios": [
     {
       "name": "route-exact-match",
@@ -257,10 +257,10 @@
       "name": "proto-quic-h3",
       "category": "protocols",
       "request": "aioquic H3 GET /health over UDP",
-      "expected": "1-RTT QUIC handshake completes and H3 returns 200 'ok'",
-      "observed": "STATUS 200 BODY b'ok'",
-      "verdict": "PASS",
-      "note": "verified EverCrypt 1-RTT handshake, H3 GET answered by the proven serve"
+      "expected": "1-RTT QUIC handshake + H3 200 'ok'",
+      "observed": "aioquic venv unavailable (QUIC_PYTHON unset)",
+      "verdict": "SKIPPED",
+      "note": ""
     },
     {
       "name": "proto-concurrent",
@@ -373,11 +373,11 @@
     {
       "name": "comp-quic-route-middleware",
       "category": "compositional",
-      "request": "aioquic H3 GET / (route + middleware over H3)",
-      "expected": "route decides (403 policy on undeclared /) AND middleware transforms apply",
-      "observed": "STATUS 404 BODY b'not found'; H3 runs the 3-stage guarded serve (route/policy fire, but no gzip/cors/security stages)",
+      "request": "aioquic H3 GET /",
+      "expected": "route + middleware over H3",
+      "observed": "aioquic venv unavailable",
       "verdict": "SKIPPED",
-      "note": "routing + policy gate fire over H3, but the H3 path is the guarded serve \u2014 the gzip/cors/security/jwt transforms are not on it"
+      "note": ""
     },
     {
       "name": "native-jwt-gap",
@@ -414,12 +414,273 @@
       "observed": "orb stdin -> 200/b'ok', dataplane -> 200/b'ok'",
       "verdict": "PASS",
       "note": ""
+    },
+    {
+      "name": "braid-default-byte-identical",
+      "category": "braid",
+      "request": "braid ON (DRORB_BRAID=1) vs OFF on unmarked traffic",
+      "expected": "byte-identical response for every unmarked request (config-gated off)",
+      "observed": "/health:=  /no-such-route:=  /old:=  /static/app.js:=",
+      "verdict": "PASS",
+      "note": "servePipelineBraided_off_eq: the composed stages are contextually transparent, so the fold is faithful to servePipelineFull2"
+    },
+    {
+      "name": "braid-forward-auth-denies",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Forward-Auth marker",
+      "expected": "401 Unauthorized \u2014 the forward-auth gate short-circuits before the handler",
+      "observed": "status=401 (handler would have returned 200)",
+      "verdict": "PASS",
+      "note": "braided_fa_denies_status: pipeline_gate_status keeps the 401 through the whole inner onion"
+    },
+    {
+      "name": "braid-forward-auth-passes-unmarked",
+      "category": "braid",
+      "request": "braid ON, GET /health with NO forward-auth marker",
+      "expected": "200 'ok' \u2014 the gate passes through an unmarked request",
+      "observed": "status=200, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid-request-id-echo",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Request-Id: trace-abc-123",
+      "expected": "the response echoes X-Request-Id: trace-abc-123 (trusted id preserved)",
+      "observed": "X-Request-Id='trace-abc-123'",
+      "verdict": "PASS",
+      "note": "braided_rid_echoes_trusted: RequestId.resolve_trust_preserve, present in the finalized headers via the response onion"
+    },
+    {
+      "name": "braid-request-id-absent-unmarked",
+      "category": "braid",
+      "request": "braid ON, GET /health with no incoming id",
+      "expected": "no X-Request-Id header (the echo stage is a pass-through when unmarked)",
+      "observed": "X-Request-Id present=no",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid2-conn-limit-503",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Conn-Limit marker",
+      "expected": "503 Service Unavailable \u2014 the per-source connection-cap gate short-circuits",
+      "observed": "status=503 (handler would have returned 200)",
+      "verdict": "PASS",
+      "note": "braided2_conn_denies_status (axioms {propext,Classical.choice,Quot.sound})"
+    },
+    {
+      "name": "braid2-stick-table-429",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Stick-Limit marker",
+      "expected": "429 Too Many Requests \u2014 the aggregated stick-table threshold gate short-circuits",
+      "observed": "status=429 (handler would have returned 200)",
+      "verdict": "PASS",
+      "note": "braided2_stick_denies_status (conn gate passes, then stick fires)"
+    },
+    {
+      "name": "braid2-slowloris-408",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Slow-Timeout marker",
+      "expected": "408 Request Timeout \u2014 the slowloris header-timeout gate short-circuits",
+      "observed": "status=408 (handler would have returned 200)",
+      "verdict": "PASS",
+      "note": "braided2_slow_denies_status (conn+stick gates pass, then slow fires)"
+    },
+    {
+      "name": "braid2-error-page-404",
+      "category": "braid",
+      "request": "braid ON, GET /no-such-route with X-Error-Page marker",
+      "expected": "404 with the rendered custom error page as body (not the handler's default)",
+      "observed": "status=404, body[:40]=b'<html><body><h1>Error 404</h1><p>Path: /'",
+      "verdict": "PASS",
+      "note": "braided2_errorpage_maps_404: ErrorPage.applyPage replaces the 404 body"
+    },
+    {
+      "name": "braid2-error-page-off-unmarked",
+      "category": "braid",
+      "request": "braid ON, GET /no-such-route with NO X-Error-Page marker",
+      "expected": "404 with the handler's default body (the transform is a pass-through when unmarked)",
+      "observed": "status=404, custom-page-present=no",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid2-compress-content-encoding",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Compress-Ext + Accept-Encoding: zstd",
+      "expected": "Content-Encoding: zstd \u2014 the negotiated codec frames the body",
+      "observed": "Content-Encoding='zstd'",
+      "verdict": "PASS",
+      "note": "braided2_compress_encodes: CompressExt.content_encoding_set"
+    },
+    {
+      "name": "braid2-compress-off-unmarked",
+      "category": "braid",
+      "request": "braid ON, GET /health with Accept-Encoding: zstd but NO X-Compress-Ext marker",
+      "expected": "no zstd Content-Encoding (the compress transform is a pass-through when unmarked)",
+      "observed": "Content-Encoding=''",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid3-conditional-304",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Conditional marker",
+      "expected": "304 Not Modified \u2014 the RFC 7232 conditional gate short-circuits the handler",
+      "observed": "status=304 (handler would have returned 200)",
+      "verdict": "PASS",
+      "note": "braided3_conditional_304: the 304 survives the whole inner onion"
+    },
+    {
+      "name": "braid3-conditional-off-unmarked",
+      "category": "braid",
+      "request": "braid ON, GET /health with NO X-Conditional marker",
+      "expected": "200 'ok' \u2014 the conditional gate passes an unmarked request",
+      "observed": "status=200, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid3-variants-vary",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Variants marker",
+      "expected": "Vary: Accept-Encoding \u2014 the pre-compressed-variant representation-dependence header",
+      "observed": "Vary='Accept-Encoding'",
+      "verdict": "PASS",
+      "note": "braided3_variants_vary: Variants.varyName/aeVary, variant_vary_always"
+    },
+    {
+      "name": "braid3-autoindex-listing",
+      "category": "braid",
+      "request": "braid ON, GET /health with X-Autoindex marker",
+      "expected": "the response body is the real Autoindex directory listing (Index of /pub, one link row per entry)",
+      "observed": "body[:40]=b'<!doctype html><html><head><title>Index '",
+      "verdict": "PASS",
+      "note": "braided3_autoindex_lists: renderIndexHtml, autoindex_lists_dir/entry_in_listingRows"
+    },
+    {
+      "name": "braid3-autoindex-off-unmarked",
+      "category": "braid",
+      "request": "braid ON, GET /health with NO X-Autoindex marker",
+      "expected": "the handler's default body (the listing transform is a pass-through when unmarked)",
+      "observed": "listing-present=no, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid-dp-forward-auth-denies",
+      "category": "braid",
+      "request": "braided dataplane (DRORB_BRAID=1), GET /health with X-Forward-Auth marker",
+      "expected": "401 Unauthorized FROM THE RUST DATAPLANE \u2014 the forward-auth gate short-circuits before the handler",
+      "observed": "status=401 (dataplane socket 127.0.0.1:8393)",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided_fa_denies_status: the 401 survives the metered inner onion"
+    },
+    {
+      "name": "braid-dp-request-id-echo",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Request-Id: dp-trace-777",
+      "expected": "the dataplane response echoes X-Request-Id: dp-trace-777",
+      "observed": "X-Request-Id='dp-trace-777' (dataplane socket)",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided_rid_echoes: the trusted id is present in the finalized headers"
+    },
+    {
+      "name": "braid-dp-passes-unmarked",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with NO braid markers",
+      "expected": "200 'ok' \u2014 the gate passes an unmarked request",
+      "observed": "status=200, body=b'ok'",
+      "verdict": "PASS",
+      "note": ""
+    },
+    {
+      "name": "braid2-dp-conn-limit-503",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Conn-Limit marker",
+      "expected": "503 FROM THE RUST DATAPLANE \u2014 the connection-cap gate short-circuits",
+      "observed": "status=503",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided2_conn_denies_status"
+    },
+    {
+      "name": "braid2-dp-stick-table-429",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Stick-Limit marker",
+      "expected": "429 FROM THE RUST DATAPLANE \u2014 the stick-table threshold gate short-circuits",
+      "observed": "status=429",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided2_stick_denies_status"
+    },
+    {
+      "name": "braid2-dp-slowloris-408",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Slow-Timeout marker",
+      "expected": "408 FROM THE RUST DATAPLANE \u2014 the slowloris timeout gate short-circuits",
+      "observed": "status=408",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided2_slow_denies_status"
+    },
+    {
+      "name": "braid2-dp-error-page-404",
+      "category": "braid",
+      "request": "braided dataplane, GET /no-such-route with X-Error-Page marker",
+      "expected": "404 with the rendered custom error page body FROM THE RUST DATAPLANE",
+      "observed": "status=404, body[:32]=b'<html><body><h1>Error 404</h1><p'",
+      "verdict": "PASS",
+      "note": "braided2_errorpage_maps_404 through the metered fold"
+    },
+    {
+      "name": "braid2-dp-compress-content-encoding",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Compress-Ext + Accept-Encoding: zstd",
+      "expected": "Content-Encoding: zstd FROM THE RUST DATAPLANE",
+      "observed": "Content-Encoding='zstd'",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided2_compress_encodes"
+    },
+    {
+      "name": "braid3-dp-conditional-304",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Conditional marker",
+      "expected": "304 Not Modified FROM THE RUST DATAPLANE \u2014 the RFC 7232 conditional gate short-circuits with the real Cache.Conditional decision",
+      "observed": "status=304",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided3_conditional_304: the 304 survives the metered inner onion"
+    },
+    {
+      "name": "braid3-dp-variants-vary",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Variants marker",
+      "expected": "Vary: Accept-Encoding FROM THE RUST DATAPLANE \u2014 the pre-compressed-variant representation-dependence header",
+      "observed": "Vary='Accept-Encoding'",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided3_variants_vary: Variants.variant_vary_always"
+    },
+    {
+      "name": "braid3-dp-autoindex-listing",
+      "category": "braid",
+      "request": "braided dataplane, GET /health with X-Autoindex marker",
+      "expected": "the response body is the real Autoindex.renderIndexHtml directory listing (Index of /pub, one link row per entry) FROM THE RUST DATAPLANE",
+      "observed": "body[:40]=b'<!doctype html><html><head><title>Index '",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided3_autoindex_lists: autoindex_lists_dir"
+    },
+    {
+      "name": "braid-dp-default-byte-identical",
+      "category": "braid",
+      "request": "braided dataplane vs default dataplane on unmarked traffic (live sockets)",
+      "expected": "byte-identical response for every unmarked request (config-gated off)",
+      "observed": "/health:=  /no-such-route:=  /old:=",
+      "verdict": "PASS",
+      "note": "servePipelineOfMetered_braided_off_eq: the composed head stages are transparent, so the metered fold is faithful to servePipelineFull2Metered"
     }
   ],
   "counts": {
-    "PASS": 45,
+    "PASS": 73,
     "FAIL": 0,
     "UNWIRED": 0,
-    "SKIPPED": 1
+    "SKIPPED": 2
   }
 }

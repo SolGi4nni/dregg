@@ -33,6 +33,43 @@ def maskFrom (key : Bytes) : Nat → Bytes → Bytes
   | _, [] => []
   | i, b :: bs => (b ^^^ key.getD (i % 4) 0) :: maskFrom key (i + 1) bs
 
+/-! ### Bounded-stack `maskFrom`
+
+`maskFrom` conses the transformed octet *before* recursing, so the compiled
+code pushes one C stack frame per payload byte — recursion depth = payload
+length, and a large frame exhausts the thread stack. `maskFromRevGo` is the
+same per-octet map with the output accumulated in reverse (tail-recursive ⇒
+compiled to a loop, constant stack regardless of payload); `maskFrom_eq_tail`
+proves it equal and installs it as the compiled implementation (`@[csimp]`).
+The involution/length theorems keep referring to the unchanged spec. -/
+
+/-- Tail-recursive `maskFrom`: transformed octets accumulate in reverse, one
+loop iteration per byte, constant stack. -/
+def maskFromRevGo (key : Bytes) : Nat → Bytes → Bytes → Bytes
+  | _, [], acc => acc.reverse
+  | i, b :: bs, acc => maskFromRevGo key (i + 1) bs ((b ^^^ key.getD (i % 4) 0) :: acc)
+
+/-- The reverse-accumulator map equals `maskFrom` under the flushed
+accumulator. -/
+theorem maskFromRevGo_eq (key : Bytes) : ∀ (p : Bytes) (i : Nat) (acc : Bytes),
+    maskFromRevGo key i p acc = acc.reverse ++ maskFrom key i p
+  | [], _, _ => by simp [maskFromRevGo, maskFrom]
+  | b :: bs, i, acc => by
+    show maskFromRevGo key (i + 1) bs ((b ^^^ key.getD (i % 4) 0) :: acc)
+        = acc.reverse ++ maskFrom key i (b :: bs)
+    rw [maskFromRevGo_eq key bs (i + 1), maskFrom]
+    simp
+
+/-- The loop form `maskFrom` compiles to. -/
+def maskFromTail (key : Bytes) (i : Nat) (p : Bytes) : Bytes := maskFromRevGo key i p []
+
+/-- **The loop/spec agreement.** Installs the constant-stack loop as the
+compiled implementation of `maskFrom`. -/
+@[csimp] theorem maskFrom_eq_tail : @maskFrom = @maskFromTail := by
+  funext key i p
+  rw [maskFromTail, maskFromRevGo_eq key p i []]
+  rfl
+
 /-- Mask (or unmask) a payload with a 4-byte key, starting at index `0`. Masking
 and unmasking are the same operation (see `applyMask_involution`). -/
 def applyMask (key : Bytes) (p : Bytes) : Bytes := maskFrom key 0 p

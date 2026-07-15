@@ -51,7 +51,22 @@ def imports(mod):
 # the archived client roots their export objects are never built -> undefined
 # symbol at the FROM-SCRATCH host link (a warm .lake cache masks it). The earlier
 # per-module hand-list (b937721) was incomplete; seeding the closure is the durable fix.
-seen, stack = set(), ['Dataplane', 'Client.FetchExport', 'Client.H2Receive', 'Client.Fetch', 'Client.H2', 'Client.H2Receive']
+# `Body.FrameRaw` (`drorb_frame_request`, the proven raw request-framing
+# decision the host's http.rs crosses from its IO threads) is NOT in Dataplane's
+# import closure — the serve modules never call it — so seed it too, else the
+# export object and `initialize_Body_FrameRaw` are absent from the archive and
+# the host link fails undefined.
+# `Ws.Decode` (`drorb_ws_header` / `drorb_ws_close_ok`, the proven WebSocket
+# frame-parse verdict + close-code registry the host frame codec crosses from
+# its IO threads) is likewise NOT in the serve closure — seed it too.
+# Ws.ReassemblyAdmit / Ws.ReassemblyClose (drorb_ws_admit / drorb_ws_utf8 /
+# drorb_ws_close_body, the proven reassembly-admission, incremental-UTF-8, and
+# close-body verdicts the host message engine crosses) are likewise NOT in the
+# serve closure - seed them too (they pull Ws.Utf8 / Ws.Reassembly transitively).
+# Ws.Encode (drorb_ws_encode_header / drorb_ws_encode_close, the proven outbound
+# server-frame header + close-frame construction the host writes to the wire) is
+# likewise NOT in the serve closure - seed it too.
+seen, stack = set(), ['Dataplane', 'Client.FetchExport', 'Client.H2Receive', 'Client.Fetch', 'Client.H2', 'Client.H2Receive', 'Body.FrameRaw', 'Ws.Decode', 'Ws.ReassemblyAdmit', 'Ws.ReassemblyClose', 'Ws.Encode']
 while stack:
     m = stack.pop()
     if m in seen: continue
@@ -69,6 +84,12 @@ done < /tmp/drorb_dp_closure.txt
 echo "closure export build: $(wc -l < /tmp/drorb_dp_closure.txt | tr -d ' ') modules"
 
 lake build Reactor.ProxyDial:c.o.export
+
+# `Reactor.LoadBalance` (`drorb_lb_pick`, the config-policy + load-aware proxy
+# pick) is imported by Dataplane but lives in the `Reactor` lib, so compile its
+# export object explicitly - otherwise `drorb_lb_pick` / initialize_Reactor_LoadBalance
+# are absent from the archive and the host link fails undefined.
+lake build Reactor.LoadBalance:c.o.export
 
 # `Reactor.ServeStep` (the `drorb_serve_step` / `drorb_serve_resume` effect/
 # continuation seam) is likewise imported by Dataplane but lives in the `Reactor`
@@ -269,10 +290,19 @@ rm -f "$out"
 # by name, so a symbol that lives ONLY in a shadowed same-named member can fail to
 # resolve (undefined at link, even though `nm` shows it defined). Stage every
 # object under a path-flattened UNIQUE name first, so no two members collide.
+# A module that defines a top-level `main` (a live-selftest entry, e.g.
+# `Route.StaticServe` — run via its own lean_exe / `lake env lean --run`)
+# compiles to an object that DEFINES the C `main` symbol; archived as-is it
+# collides with the host binary's own `main` at link. No archive member should
+# ever export `main` to the host link, so localize it in the STAGED COPY (the
+# exe targets link their own objects and are untouched). `objcopy -L` on an
+# object without the symbol is a no-op.
 stage="$(mktemp -d)"
 while IFS= read -r -d '' f; do
   rel="${f#.lake/build/ir/}"
-  cp "$f" "$stage/$(printf '%s' "$rel" | tr '/.' '__').o"
+  staged="$stage/$(printf '%s' "$rel" | tr '/.' '__').o"
+  cp "$f" "$staged"
+  objcopy -L main "$staged"
 done < <(find .lake/build/ir -name '*.c.o.export' -print0)
 ar crs "$out" "$stage"/*.o
 rm -rf "$stage"

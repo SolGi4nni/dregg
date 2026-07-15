@@ -33,7 +33,7 @@ Theorems:
   * `plain_get_accept_ranges` — a plain `GET /static/app.js` is served `200 (OK)` with
     `Accept-Ranges: bytes` in its headers and the real embedded body.
   * `accept_ranges_wire_bytes` — the name/value are exactly the bytes of
-    `"Accept-Ranges"` / `"bytes"` (pinned via the `ba_toList_eq` bridge — pure-kernel
+    `"Accept-Ranges"` / `"bytes"` (pinned via the `Shortcuts.ba_toList_eq` bridge — pure-kernel
     `decide`, no `native_decide`).
   * `accept_ranges_advertised` — for EVERY request whose selection is the full `.ok`
     serve (any headers, any body, any etag), the `Accept-Ranges: bytes` advertisement is
@@ -44,49 +44,12 @@ Theorems:
 
 import StaticFile
 import Reactor.App
+import Proto.Kernel.Shortcuts
 
 namespace Proto.AcceptRangesProven
 
 open StaticFile
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`ByteArray.toList` is well-founded-recursive, so it does NOT reduce in the kernel; this
-rewrites it to the structural `bs.data.toList`, which the kernel DOES reduce, so `toUTF8`
-byte constants close by pure-kernel `decide` (`{propext, Quot.sound}`; no `native_decide`,
-no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The served path segments for the deployed asset `/static/app.js`. -/
 def assetSegs : List String := ["static", "app.js"]
@@ -132,11 +95,11 @@ theorem plain_get_accept_ranges :
 
 /-- **`accept_ranges_wire_bytes`.** The `Accept-Ranges` name/value the deployed handler
 emits are exactly the bytes of `"Accept-Ranges"` / `"bytes"`. Pinned to explicit byte
-literals through the `ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`. -/
+literals through the `Shortcuts.ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`. -/
 theorem accept_ranges_wire_bytes :
     strBytes "Accept-Ranges" = [65, 99, 99, 101, 112, 116, 45, 82, 97, 110, 103, 101, 115]
   ∧ strBytes "bytes" = [98, 121, 116, 101, 115] := by
-  refine ⟨?_, ?_⟩ <;> simp only [strBytes, ba_toList_eq] <;> decide
+  refine ⟨?_, ?_⟩ <;> simp only [strBytes, Shortcuts.ba_toList_eq] <;> decide
 
 /-! ## `accept_ranges_advertised` — advertised on EVERY full-serve response -/
 

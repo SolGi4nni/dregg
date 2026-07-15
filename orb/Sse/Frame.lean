@@ -50,6 +50,54 @@ def splitColon : Bytes → Option (Bytes × Bytes)
       | none => none
       | some (n, v) => some (b :: n, v)
 
+/-! ### Bounded-stack scan
+
+`splitColon` conses onto the name *after* its recursive call, so the compiled
+code pushes one stack frame per octet before the first colon — recursion depth
+= line length, on the field-line parse path. The reverse-accumulator twin below
+compiles to a loop (`O(1)` stack regardless of input) and is installed as the
+compiled implementation by `@[csimp]`; the spec and every proof above/below are
+untouched. -/
+
+/-- Tail-recursive `splitColon`: the name accumulates in reverse, one loop
+iteration per octet, constant stack. -/
+def splitColonRevGo : Bytes → Bytes → Option (Bytes × Bytes)
+  | _, [] => none
+  | acc, b :: bs =>
+    if b = COLON then some (acc.reverse, bs)
+    else splitColonRevGo (b :: acc) bs
+
+/-- The reverse-accumulator scan equals `splitColon` under the flushed
+accumulator. -/
+theorem splitColonRevGo_eq (bs : Bytes) :
+    ∀ acc, splitColonRevGo acc bs
+        = (splitColon bs).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  induction bs with
+  | nil => intro acc; rfl
+  | cons b t ih =>
+    intro acc
+    show (if b = COLON then some (acc.reverse, t) else splitColonRevGo (b :: acc) t)
+        = (splitColon (b :: t)).map (fun p => (acc.reverse ++ p.1, p.2))
+    rw [splitColon]
+    by_cases h : b = COLON
+    · simp [h]
+    · rw [if_neg h, if_neg h, ih (b :: acc)]
+      rcases splitColon t with _ | ⟨pre, rest⟩
+      · rfl
+      · simp
+
+/-- The loop form `splitColon` compiles to. -/
+def splitColonTail (bs : Bytes) : Option (Bytes × Bytes) := splitColonRevGo [] bs
+
+/-- **The loop/spec agreement.** Installs the constant-stack loop as the
+compiled implementation of `splitColon`. -/
+@[csimp] theorem splitColon_eq_tail : @splitColon = @splitColonTail := by
+  funext bs
+  rw [splitColonTail, splitColonRevGo_eq bs []]
+  rcases splitColon bs with _ | ⟨pre, rest⟩
+  · rfl
+  · simp
+
 /-- Strip a single leading space (SSE §9.2.5: exactly one optional space after
 the field colon is removed). -/
 def dropOneSpace : Bytes → Bytes

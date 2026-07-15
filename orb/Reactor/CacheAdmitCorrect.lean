@@ -10,11 +10,13 @@ fold. `Reactor.ServeStep` already proves the gate-before-lookup discipline and t
 key/lifetime the store uses. This module proves the missing SOUNDNESS boundary of
 that same deployed decision: which requests the cache is allowed to admit at all.
 
-Concretely, the deployed cache **never** admits a non-`GET` method, and never
-admits a target outside the two cacheable route prefixes (`/static`, `/admin`) — so
-a `POST` (or any non-`GET`), and a `GET` to an ordinary route, is served fresh, not
+Concretely, the deployed cache **never** admits a non-`GET` method, never admits a
+target outside the two cacheable route prefixes (`/static`, `/admin`), and never
+admits a `Range` request (RFC 7233 — the store holds only the FULL `200`; the fold,
+which genuinely answers the `206`/`416`, serves it fresh) — so a `POST` (or any
+non-`GET`), a `GET` to an ordinary route, and a ranged `GET` are served fresh, not
 from cache. This is the "no wrong-request cache serve" boundary for the deployed
-path. No behaviour change — a pure proof of `serveStep`'s existing decision.
+path.
 -/
 
 namespace Reactor.CacheAdmitCorrect
@@ -23,10 +25,11 @@ open Reactor.ServeStep
 open Proto (Bytes)
 
 /-- The request-level cache-admission decision the deployed `cacheableKey` factors
-through: `some key` iff a cacheable `GET`, `none` otherwise — the exact predicate
-`serveStep` consults. -/
+through: `some key` iff a cacheable, range-free `GET`, `none` otherwise — the exact
+predicate `serveStep` consults. -/
 def cacheableOfReq (req : Proto.Request) : Option Bytes :=
-  if isGet req && isCacheableTarget req.target then some (cacheKeyOf req) else none
+  if isGet req && isCacheableTarget req.target && !hasRange req then some (cacheKeyOf req)
+  else none
 
 /-- `cacheableKey` (the deployed decision) is exactly `cacheableOfReq` on the
 dispatched request. -/
@@ -45,6 +48,13 @@ theorem cacheableOfReq_non_cacheable (req : Proto.Request)
     (h : isCacheableTarget req.target = false) : cacheableOfReq req = none := by
   unfold cacheableOfReq; rw [h, Bool.and_false]; rfl
 
+/-- **A `Range` request is never cached** (RFC 7233): the store holds only the FULL
+`200` representation, and the fold — which genuinely answers the `206`/`416` —
+serves it fresh. -/
+theorem cacheableOfReq_range (req : Proto.Request) (h : hasRange req = true) :
+    cacheableOfReq req = none := by
+  unfold cacheableOfReq; rw [h]; simp
+
 /-- **The deployed decision rejects a non-`GET` request.** -/
 theorem cacheableKey_non_get (input : Bytes) (h : isGet (reqOf input) = false) :
     cacheableKey input = none := by
@@ -55,16 +65,23 @@ theorem cacheableKey_non_cacheable (input : Bytes)
     (h : isCacheableTarget (reqOf input).target = false) : cacheableKey input = none := by
   rw [cacheableKey_factors]; exact cacheableOfReq_non_cacheable _ h
 
+/-- **The deployed decision rejects a `Range` request** — it is served by the
+fold (`serveStep_noncacheable`), which answers the `206`/`416`. -/
+theorem cacheableKey_range (input : Bytes) (h : hasRange (reqOf input) = true) :
+    cacheableKey input = none := by
+  rw [cacheableKey_factors]; exact cacheableOfReq_range _ h
+
 /-! ## The deployed serve consequence: a non-cacheable request is served fresh,
 with no cache effect (never a hit). -/
 
 /-- **A non-`GET`, non-proxy request is served fresh — the cache is never
 consulted.** `serveStep` (the deployed `drorb_serve_step`) `.done`-s exactly the
-fresh deployed fold `servePipelineFull2`, yielding no `.cacheLookup`/`.cacheStore`
-effect: a `POST` (or any non-`GET`) is never answered from cache. -/
+fresh consolidated deployed fold (`seamInner`, `Date`-finished by `revalidate`),
+yielding no `.cacheLookup`/`.cacheStore` effect: a `POST` (or any non-`GET`) is
+never answered from cache. -/
 theorem serveStep_non_get_no_cache (mask : Nat) (input : Bytes)
     (hapi : isApiPath input = false) (h : isGet (reqOf input) = false) :
-    serveStep mask input = .done (Reactor.Deploy.servePipelineFull2 input) :=
+    serveStep mask input = .done (revalidate (reqOf input) (seamInner input)) :=
   serveStep_noncacheable mask input hapi (cacheableKey_non_get input h)
 
 /-- **A `GET` to an ordinary (non-`/static`, non-`/admin`) route is served fresh.**
@@ -73,7 +90,7 @@ bypasses it. -/
 theorem serveStep_non_cacheable_no_cache (mask : Nat) (input : Bytes)
     (hapi : isApiPath input = false)
     (h : isCacheableTarget (reqOf input).target = false) :
-    serveStep mask input = .done (Reactor.Deploy.servePipelineFull2 input) :=
+    serveStep mask input = .done (revalidate (reqOf input) (seamInner input)) :=
   serveStep_noncacheable mask input hapi (cacheableKey_non_cacheable input h)
 
 /-! ## Non-vacuity — the boundary on real requests -/
@@ -84,6 +101,10 @@ def getStaticReq : Proto.Request := { method := getMethod, target := staticPrefi
 def postStaticReq : Proto.Request := { method := [80, 79, 83, 84], target := staticPrefix }
 /-- `GET /` — a `GET` to an ordinary route (not a cacheable prefix). -/
 def getRootReq : Proto.Request := { method := getMethod, target := [47] }
+/-- `GET /static` with `Range: bytes=0-3` — cacheable-shaped, but a range request. -/
+def getStaticRangeReq : Proto.Request :=
+  { method := getMethod, target := staticPrefix
+    headers := [([82, 97, 110, 103, 101], [98, 121, 116, 101, 115, 61, 48, 45, 51])] }
 
 /-- A cacheable `GET` IS admitted, under its proven key. -/
 theorem getStatic_admitted : cacheableOfReq getStaticReq = some (cacheKeyOf getStaticReq) := by decide
@@ -91,6 +112,8 @@ theorem getStatic_admitted : cacheableOfReq getStaticReq = some (cacheKeyOf getS
 theorem postStatic_rejected : cacheableOfReq postStaticReq = none := by decide
 /-- A `GET` to an ordinary route is NOT admitted (target boundary). -/
 theorem getRoot_rejected : cacheableOfReq getRootReq = none := by decide
+/-- A `Range` request to the cacheable route is NOT admitted (range boundary). -/
+theorem getStaticRange_rejected : cacheableOfReq getStaticRangeReq = none := by decide
 
 /-- **The decision genuinely discriminates.** The cacheable `GET` is admitted and
 the same-route `POST` is not — the deployed cache is method-scoped, not a proof
@@ -100,9 +123,11 @@ theorem cache_admit_discriminates :
 
 #print axioms cacheableKey_non_get
 #print axioms cacheableKey_non_cacheable
+#print axioms cacheableKey_range
 #print axioms serveStep_non_get_no_cache
 #print axioms serveStep_non_cacheable_no_cache
 #print axioms getStatic_admitted
 #print axioms postStatic_rejected
+#print axioms getStaticRange_rejected
 
 end Reactor.CacheAdmitCorrect

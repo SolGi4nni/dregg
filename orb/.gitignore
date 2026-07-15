@@ -1,6 +1,24 @@
+# Build artifacts
 .lake/
+.lake/build/
 target/
 *.o
 *.olean
 *.o.tmp
+
+# Python
+__pycache__/
+*.pyc
 venv/
+
+# Editor / backup cruft
+*.bak
+
+# Conformance run outputs (regenerated)
+conformance/**/results*.json
+
+# Imported test corpora and differential harness binaries (not vendored)
+conformance/external/structured-field-tests/
+conformance/differential/*/bin/
+conformance/differential/**/caddy
+conformance/differential/**/h2o

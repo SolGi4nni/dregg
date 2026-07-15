@@ -1,6 +1,7 @@
 import Reactor.Deploy
 import Reactor.Stage.BasicAuth
 import BasicAuth
+import Proto.Kernel.Shortcuts
 
 /-!
 # Proto.BasicAuthProven — the DEPLOYED `WWW-Authenticate`/`401` (ledger row `h1.basicauth`)
@@ -32,7 +33,7 @@ Status `401`, the RFC 7235 §4.1 `WWW-Authenticate` header with value
 
 * `basicauth_deployed` — `basicStage` really is in `deployStagesFull2`.
 * `www_auth_name_bytes` — the challenge header name is exactly the ASCII bytes of
-  `"WWW-Authenticate"` (`.toUTF8.toList` kernel-reduced via `ba_toList_eq`).
+  `"WWW-Authenticate"` (`.toUTF8.toList` kernel-reduced via `Shortcuts.ba_toList_eq`).
 * `unauthorized_body_bytes` — the emitted body is exactly the bytes of
   `"authentication required"` (the wire's 23-byte body).
 * `basic_401_shape` — the gate's short-circuit `Response` has status `401`, a
@@ -55,45 +56,8 @@ namespace Proto.BasicAuthProven
 open Reactor.Pipeline (Ctx Stage ResponseBuilder runPipeline)
 open Reactor (Response)
 
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (the `ba_toList_eq`
-bridge from `Proto.GzipProven`). Rewrites `"…".toUTF8.toList` to the structurally
-kernel-reducible `bs.data.toList`, so concrete byte witnesses close by `decide` in
-the pure kernel ({propext, Quot.sound}; no `native_decide`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
-
 open Reactor.Stage.BasicAuth
+open Proto.Kernel
 
 /-! ## The Basic-auth gate is on the DEPLOYED path -/
 
@@ -106,14 +70,14 @@ theorem basicauth_deployed : basicStage ∈ Reactor.Deploy.deployStagesFull2 := 
     | exact List.mem_cons_self _ _
     | apply List.mem_cons_of_mem
 
-/-! ## Byte-exact challenge header name and body (pure kernel via `ba_toList_eq`) -/
+/-! ## Byte-exact challenge header name and body (pure kernel via `Shortcuts.ba_toList_eq`) -/
 
 /-- **`www_auth_name_bytes`.** The challenge header NAME is exactly the ASCII bytes
 of `"WWW-Authenticate"` (RFC 7235 §4.1). -/
 theorem www_auth_name_bytes :
     wwwAuthName = [87, 87, 87, 45, 65, 117, 116, 104, 101, 110, 116, 105, 99, 97, 116, 101] := by
   show "WWW-Authenticate".toUTF8.toList = _
-  rw [ba_toList_eq]; decide
+  rw [Shortcuts.ba_toList_eq]; decide
 
 /-- **`unauthorized_body_bytes`.** The `401` diagnostic body is exactly the bytes
 of `"authentication required"` — the wire's 23-byte body. -/
@@ -122,7 +86,7 @@ theorem unauthorized_body_bytes :
       [97, 117, 116, 104, 101, 110, 116, 105, 99, 97, 116, 105, 111, 110,
        32, 114, 101, 113, 117, 105, 114, 101, 100] := by
   show "authentication required".toUTF8.toList = _
-  rw [ba_toList_eq]; decide
+  rw [Shortcuts.ba_toList_eq]; decide
 
 /-! ## The `401` response shape and the real challenge value -/
 

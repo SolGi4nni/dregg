@@ -69,6 +69,61 @@ def findDoubleCrlf : Bytes → Option Nat
     else (findDoubleCrlf rest).map (· + 1)
   | _ => none
 
+/-! ### Bounded-stack `findDoubleCrlf`
+
+`findDoubleCrlf` recurses *inside* `Option.map`, so the compiled code pushes one
+stack frame per input byte until the `CRLFCRLF` — recursion depth = input
+length, and a large request head exhausts the thread stack before any byte
+gate can refuse it. `findDoubleCrlfGo` is the same single pass in
+accumulator-passing (tail-recursive) form: the compiler emits a loop, so the
+stack cost is `O(1)` **regardless of input length**. `findDoubleCrlf_eq_tail`
+proves the two agree and installs the loop as the compiled implementation
+(`@[csimp]`); every theorem about `findDoubleCrlf` (the framing lemmas, the
+span-scan refinements) keeps referring to the unchanged spec. -/
+
+/-- Tail-recursive `findDoubleCrlf` carrying the running offset: the recursive
+call is the whole `else` branch, so the compiler emits a loop (constant
+stack). -/
+def findDoubleCrlfGo : Nat → Bytes → Option Nat
+  | _, [] => none
+  | _, [_] => none
+  | _, [_, _] => none
+  | _, [_, _, _] => none
+  | i, a :: b :: c :: d :: t =>
+    if a == CR && b == LF && c == CR && d == LF then some i
+    else findDoubleCrlfGo (i + 1) (b :: c :: d :: t)
+
+/-- The loop equals the spec up to the running-offset shift. -/
+theorem findDoubleCrlfGo_eq (bs : Bytes) :
+    ∀ i, findDoubleCrlfGo i bs = (findDoubleCrlf bs).map (· + i) := by
+  induction bs with
+  | nil => intro i; simp [findDoubleCrlfGo, findDoubleCrlf]
+  | cons a xs ih =>
+    intro i
+    match xs, ih with
+    | [], _ => simp [findDoubleCrlfGo, findDoubleCrlf]
+    | [_], _ => simp [findDoubleCrlfGo, findDoubleCrlf]
+    | [_, _], _ => simp [findDoubleCrlfGo, findDoubleCrlf]
+    | b :: c :: d :: t, ih =>
+      rw [findDoubleCrlfGo, findDoubleCrlf]
+      by_cases h : a == CR && b == LF && c == CR && d == LF
+      · simp [h]
+      · rw [if_neg h, if_neg h, ih (i + 1), Option.map_map]
+        congr 1
+        funext x
+        simp only [Function.comp_apply]
+        omega
+
+/-- The bounded-stack `findDoubleCrlf`: the loop from offset `0`. -/
+def findDoubleCrlfTail (bs : Bytes) : Option Nat := findDoubleCrlfGo 0 bs
+
+/-- **The loop/spec agreement.** `findDoubleCrlfTail` computes the same offset
+as `findDoubleCrlf`, in constant stack. -/
+@[csimp] theorem findDoubleCrlf_eq_tail : @findDoubleCrlf = @findDoubleCrlfTail := by
+  funext bs
+  rw [findDoubleCrlfTail, findDoubleCrlfGo_eq bs 0]
+  simp
+
 /-- Offsets of every `CRLF` within `bs`. -/
 def crlfPositions (bs : Bytes) : List Nat :=
   (List.range bs.length).filter fun i =>
@@ -94,6 +149,55 @@ def crlfPositionsGo : Nat → Bytes → List Nat
   | i, a :: b :: rest =>
     if a == CR && b == LF then i :: crlfPositionsGo (i + 1) (b :: rest)
     else crlfPositionsGo (i + 1) (b :: rest)
+
+/-! `crlfPositionsGo` made the sweep linear-*time* but left it linear-*stack*:
+it conses the hit *before* recursing, so the compiled code pushes one frame per
+byte — depth = head length. `crlfPositionsRevGo` is the same pass with the hits
+accumulated in reverse (tail-recursive ⇒ compiled to a loop, constant stack);
+`crlfPositionsGo_eq_tail` installs it as the compiled implementation
+(`@[csimp]`), so `crlfPositionsFast` — and through `crlfPositions_eq_fast`
+every compiled caller of `crlfPositions` — runs in `O(1)` stack. -/
+
+/-- Tail-recursive `crlfPositionsGo`: hits accumulate in reverse, one loop
+iteration per byte, constant stack. -/
+def crlfPositionsRevGo : Nat → Bytes → List Nat → List Nat
+  | _, [], acc => acc.reverse
+  | _, [_], acc => acc.reverse
+  | i, a :: b :: rest, acc =>
+    crlfPositionsRevGo (i + 1) (b :: rest) (if a == CR && b == LF then i :: acc else acc)
+
+/-- The reverse-accumulator pass equals `crlfPositionsGo` under the flushed
+accumulator. -/
+theorem crlfPositionsRevGo_eq (bs : Bytes) :
+    ∀ (i : Nat) (acc : List Nat),
+      crlfPositionsRevGo i bs acc = acc.reverse ++ crlfPositionsGo i bs := by
+  induction bs with
+  | nil => intro i acc; simp [crlfPositionsRevGo, crlfPositionsGo]
+  | cons a xs ih =>
+    intro i acc
+    match xs, ih with
+    | [], _ => simp [crlfPositionsRevGo, crlfPositionsGo]
+    | b :: rest, ih =>
+      show crlfPositionsRevGo (i + 1) (b :: rest)
+              (if a == CR && b == LF then i :: acc else acc)
+          = acc.reverse ++ crlfPositionsGo i (a :: b :: rest)
+      rw [ih (i + 1)]
+      show _ = acc.reverse ++
+          (if a == CR && b == LF then i :: crlfPositionsGo (i + 1) (b :: rest)
+            else crlfPositionsGo (i + 1) (b :: rest))
+      by_cases h : a == CR && b == LF
+      · simp [h]
+      · simp [h]
+
+/-- The loop form `crlfPositionsGo` compiles to. -/
+def crlfPositionsGoTail (i : Nat) (bs : Bytes) : List Nat := crlfPositionsRevGo i bs []
+
+/-- **The loop/pass agreement.** Installs the constant-stack loop as the
+compiled implementation of `crlfPositionsGo`. -/
+@[csimp] theorem crlfPositionsGo_eq_tail : @crlfPositionsGo = @crlfPositionsGoTail := by
+  funext i bs
+  rw [crlfPositionsGoTail, crlfPositionsRevGo_eq bs i []]
+  rfl
 
 /-- The linear `crlfPositions`: one pass from index `0`. -/
 def crlfPositionsFast (bs : Bytes) : List Nat := crlfPositionsGo 0 bs
@@ -167,6 +271,40 @@ positions (each position `p` consumes bytes `p` and `p+1`). -/
 def segments (start headLen : Nat) : List Nat → List Span
   | [] => [⟨start, headLen - start⟩]
   | p :: ps => ⟨start, p - start⟩ :: segments (p + 2) headLen ps
+
+/-! `segments` conses before recursing — one frame per header line. The
+reverse-accumulator form compiles to a loop (constant stack); the `@[csimp]`
+below installs it, spec untouched. -/
+
+/-- Tail-recursive `segments`: spans accumulate in reverse, constant stack. -/
+def segmentsRevGo (headLen : Nat) : Nat → List Nat → List Span → List Span
+  | start, [], acc => (⟨start, headLen - start⟩ :: acc).reverse
+  | start, p :: ps, acc => segmentsRevGo headLen (p + 2) ps (⟨start, p - start⟩ :: acc)
+
+/-- The reverse-accumulator cut equals `segments` under the flushed
+accumulator. -/
+theorem segmentsRevGo_eq (headLen : Nat) (ps : List Nat) :
+    ∀ (start : Nat) (acc : List Span),
+      segmentsRevGo headLen start ps acc = acc.reverse ++ segments start headLen ps := by
+  induction ps with
+  | nil => intro start acc; simp [segmentsRevGo, segments]
+  | cons p t ih =>
+    intro start acc
+    show segmentsRevGo headLen (p + 2) t (⟨start, p - start⟩ :: acc)
+        = acc.reverse ++ segments start headLen (p :: t)
+    rw [ih (p + 2), segments]
+    simp
+
+/-- The loop form `segments` compiles to. -/
+def segmentsTail (start headLen : Nat) (ps : List Nat) : List Span :=
+  segmentsRevGo headLen start ps []
+
+/-- **The loop/spec agreement.** Installs the constant-stack loop as the
+compiled implementation of `segments`. -/
+@[csimp] theorem segments_eq_tail : @segments = @segmentsTail := by
+  funext start headLen ps
+  rw [segmentsTail, segmentsRevGo_eq headLen ps start []]
+  rfl
 
 def findByteIdx (t : UInt8) (l : Bytes) : Option Nat :=
   l.findIdx? (· == t)
@@ -406,6 +544,65 @@ theorem parseHeadersAcc_toArray (input : Bytes) (spans : List Span) (sacc : Arra
         rcases hp : canonNameEntryAcc input.toArray sacc raw.name with ⟨sA, neA⟩
         rw [hp] at hce
         simp [hp, ← hce, ih sA]
+
+/-! `parseHeadersAcc` still conses the parsed header *after* its recursive call
+— one frame per header line, depth = header count. `parseHeadersAccRevGo` is
+the same pass with the parsed headers accumulated in reverse (tail-recursive ⇒
+loop, constant stack); `parseHeadersAcc_eq_tail` installs it as the compiled
+implementation (`@[csimp]`), so `parseHeadersFast` and every other compiled
+caller of `parseHeadersAcc` run in `O(1)` stack. Spec chain untouched:
+`parseHeaders` ← `parseHeadersAcc_toArray` still names the same functions. -/
+
+/-- Tail-recursive `parseHeadersAcc`: parsed headers accumulate in reverse,
+one loop iteration per header line, constant stack. -/
+def parseHeadersAccRevGo (arr : Array UInt8) :
+    List Span → Array UInt8 → List ParsedHeader → Option (Bytes × List ParsedHeader)
+  | [], sidecar, acc => some (sidecar.toList, acc.reverse)
+  | sp :: rest, sidecar, acc =>
+    if sp.len == 0 then
+      none
+    else
+      match parseHeaderLine sp.off (sliceArr arr sp) with
+      | none => none
+      | some raw =>
+        let (sidecar', nameEntry) := canonNameEntryAcc arr sidecar raw.name
+        let valueEntry := mkEntry .headerValue raw.value.off raw.value.len
+        parseHeadersAccRevGo arr rest sidecar'
+          ({ name := nameEntry, value := valueEntry } :: acc)
+
+/-- The reverse-accumulator pass equals `parseHeadersAcc` under the flushed
+accumulator. -/
+theorem parseHeadersAccRevGo_eq (arr : Array UInt8) (spans : List Span) :
+    ∀ (sidecar : Array UInt8) (acc : List ParsedHeader),
+      parseHeadersAccRevGo arr spans sidecar acc
+        = (parseHeadersAcc arr spans sidecar).map (fun p => (p.1, acc.reverse ++ p.2)) := by
+  induction spans with
+  | nil => intro sidecar acc; simp [parseHeadersAccRevGo, parseHeadersAcc]
+  | cons sp rest ih =>
+    intro sidecar acc
+    unfold parseHeadersAccRevGo parseHeadersAcc
+    by_cases hlen : sp.len == 0
+    · simp [hlen]
+    · simp only [hlen, Bool.false_eq_true, if_false]
+      rcases hpl : parseHeaderLine sp.off (sliceArr arr sp) with _ | raw
+      · simp [hpl]
+      · rcases hce : canonNameEntryAcc arr sidecar raw.name with ⟨sidecar', nameEntry⟩
+        rcases hpa : parseHeadersAcc arr rest sidecar' with _ | ⟨s, ps⟩ <;>
+          simp [hpl, hce, hpa, ih sidecar']
+
+/-- The loop form `parseHeadersAcc` compiles to. -/
+def parseHeadersAccTail (arr : Array UInt8) (spans : List Span) (sidecar : Array UInt8) :
+    Option (Bytes × List ParsedHeader) :=
+  parseHeadersAccRevGo arr spans sidecar []
+
+/-- **The loop/pass agreement.** Installs the constant-stack loop as the
+compiled implementation of `parseHeadersAcc`. -/
+@[csimp] theorem parseHeadersAcc_eq_tail : @parseHeadersAcc = @parseHeadersAccTail := by
+  funext arr spans sidecar
+  rw [parseHeadersAccTail, parseHeadersAccRevGo_eq arr spans sidecar []]
+  rcases parseHeadersAcc arr spans sidecar with _ | ⟨s, ps⟩
+  · rfl
+  · simp
 
 /-- The compiled header parse: materialize the head into a flat buffer once, then
 slice every header window by index, growing the sidecar in a flat array. -/

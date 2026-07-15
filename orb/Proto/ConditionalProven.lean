@@ -1,5 +1,6 @@
 import StaticFile
 import Reactor.App
+import Proto.Kernel.Shortcuts
 
 /-!
 # Proto.ConditionalProven — `If-Modified-Since`/`304`: a REAL half-deployment finding
@@ -56,52 +57,15 @@ The contrast (the logic EXISTS and the entity-tag half IS live — so this is a 
 
 The `304` byte format:
 * `etag_header_name_bytes` — the `304` response's header name is exactly the ASCII
-  bytes of `"ETag"` (`.toUTF8.toList` kernel-reduced via `ba_toList_eq`).
+  bytes of `"ETag"` (`.toUTF8.toList` kernel-reduced via `Shortcuts.ba_toList_eq`).
 * `notModified_304_empty` — `toResponse` maps a `.notModified` selection to a
   `304`-status response with an EMPTY body (RFC 7232 §4.1).
 -/
 
 namespace Proto.ConditionalProven
 
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (the `ba_toList_eq`
-bridge from `Proto.GzipProven`): rewrites `"…".toUTF8.toList` to the structurally
-kernel-reducible `bs.data.toList`, so byte constants close by `decide` in the pure
-kernel ({propext, Quot.sound}; no `native_decide`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
-
 open StaticFile
+open Proto.Kernel
 
 /-! ## THE FINDING — the deployed parser drops `If-Modified-Since` -/
 
@@ -167,13 +131,13 @@ theorem deployed_inm_304 :
       = .notModified (contentETag appJs) :=
   StaticFile.deployed_conditional_304
 
-/-! ## `304` byte format (pure kernel via `ba_toList_eq`) -/
+/-! ## `304` byte format (pure kernel via `Shortcuts.ba_toList_eq`) -/
 
 /-- **`etag_header_name_bytes`.** The header name a `304` response carries is
 exactly the ASCII bytes of `"ETag"`. -/
 theorem etag_header_name_bytes : strBytes "ETag" = [69, 84, 97, 103] := by
   show "ETag".toUTF8.toList = _
-  rw [ba_toList_eq]; decide
+  rw [Shortcuts.ba_toList_eq]; decide
 
 /-- **`notModified_304_empty`.** `toResponse` maps a `.notModified` selection to a
 `304`-status response whose single header is the `"ETag"` validator (byte-exact by

@@ -50,51 +50,13 @@ import Reactor.Stage.Gzip
 import Reactor.App
 import StaticFile
 import Gzip
+import Proto.Kernel.Shortcuts
 
 namespace Proto.GzipProven
 
 open Reactor.Pipeline (Ctx Stage ResponseBuilder runPipeline)
 open Reactor (Response)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists. `ByteArray.toList` (Lean
-core) is defined by well-founded recursion (`termination_by bs.size - i`), so it does NOT
-reduce in the kernel — which is what makes `"…".toUTF8.toList` opaque to `decide`/`rfl`.
-This rewrites it to the structural `Array.toList` (`bs.data.toList`), which the kernel DOES
-reduce, so concrete byte witnesses close by `decide` in the pure kernel
-(`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-! ## `accepts_gzip_gated` — gzip offered IFF `Accept-Encoding: gzip` present -/
 
@@ -111,10 +73,10 @@ theorem accepts_gzip_gated :
   ∧ Reactor.Stage.Gzip.acceptsGzip { headers := [] } = false := by
   -- `acceptsGzip` is a pure byte-level scan (`lower`/`isInfix`/`==` on `List UInt8`); the
   -- only kernel-opaque parts are the `toUTF8.toList` byte constants, discharged by the
-  -- `ba_toList_eq` bridge. Pure-kernel `decide` — no `native_decide`.
+  -- `Shortcuts.ba_toList_eq` bridge. Pure-kernel `decide` — no `native_decide`.
   simp only [Reactor.Stage.Gzip.acceptsGzip, gzipReq, Reactor.Stage.Gzip.aeName,
     Reactor.Stage.Gzip.gzipTok, Reactor.Stage.Gzip.lower, Reactor.Stage.Gzip.isInfix,
-    ba_toList_eq]
+    Shortcuts.ba_toList_eq]
   refine ⟨?_, ?_⟩ <;> decide
 
 /-! ## The deployed stage stamps `Content-Encoding: gzip` and gzips the body
@@ -143,8 +105,8 @@ def appJsBytes : Proto.Bytes :=
 /-- The literal IS the deployed `StaticFile.appJs`, and it is 35 bytes (< 64 KiB). -/
 theorem appJsBytes_eq : StaticFile.appJs = appJsBytes ∧ appJsBytes.length = 35 := by
   refine ⟨?_, ?_⟩
-  · -- `StaticFile.appJs = "…".toUTF8.toList`; the `ba_toList_eq` bridge makes it kernel-reduce.
-    simp only [StaticFile.appJs, StaticFile.strBytes, ba_toList_eq]; decide
+  · -- `StaticFile.appJs = "…".toUTF8.toList`; the `Shortcuts.ba_toList_eq` bridge makes it kernel-reduce.
+    simp only [StaticFile.appJs, StaticFile.strBytes, Shortcuts.ba_toList_eq]; decide
   · decide
 
 /-- The number a 16-bit `Deflate.u16le` field decodes back to (little-endian). -/

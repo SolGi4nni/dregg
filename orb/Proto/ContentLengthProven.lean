@@ -38,55 +38,20 @@ no `Lean.ofReduceBool`):
 -/
 
 import Reactor.Serialize
+import Proto.Kernel.Shortcuts
 
 namespace Proto.ContentLengthProven
 
 open Proto (Bytes)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-! ## The exact header-name bytes -/
 
 /-- **`clName_wire_bytes`.** The deployed `Content-Length` header name equals the 14 bytes
 of `"Content-Length"` (connecting the serializer literal to the string bytes through the
-`ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`). -/
+`Shortcuts.ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`). -/
 theorem clName_wire_bytes : Reactor.clName = "Content-Length".toUTF8.toList := by
-  simp only [Reactor.clName, ba_toList_eq]; decide
+  simp only [Reactor.clName, Shortcuts.ba_toList_eq]; decide
 
 /-! ## The framed length equals the body length, terminally, for ANY response -/
 
@@ -119,12 +84,12 @@ theorem deployed_cl_present (resp : Reactor.Response) :
 /-- **`cl_value_9_wire_bytes`.** A 9-byte body (the deployed `"not found"` 404 body) frames
 `Content-Length: 9` — `natToDec 9` is exactly the single byte of `"9"`. -/
 theorem cl_value_9_wire_bytes : Reactor.natToDec 9 = [57] := by
-  simp only [Reactor.natToDec, ba_toList_eq]; decide
+  simp only [Reactor.natToDec, Shortcuts.ba_toList_eq]; decide
 
 /-- **`cl_value_35_wire_bytes`.** A 35-byte body (the deployed `/static/app.js` body) frames
 `Content-Length: 35` — `natToDec 35` is exactly the two bytes of `"35"`. -/
 theorem cl_value_35_wire_bytes : Reactor.natToDec 35 = [51, 53] := by
-  simp only [Reactor.natToDec, ba_toList_eq]; decide
+  simp only [Reactor.natToDec, Shortcuts.ba_toList_eq]; decide
 
 end Proto.ContentLengthProven
 

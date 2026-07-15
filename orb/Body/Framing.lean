@@ -29,7 +29,9 @@ in the trusted surface. Here that boundary computation is modelled and proven:
   the head end; the whole remainder is the next request verbatim.
 * `framing_faithful_chunked` — a chunked framing consumes `head ++ chunked-section`
   and leaves the remainder verbatim, with the chunked section's length taken from
-  the proven `Chunked.decodeStream`.
+  the proven `Chunked.decodeStreamExt` — the framing-grade decode of the full
+  RFC 7230 §4.1 wire (chunk extensions parsed and ignored, the trailer section
+  after the last-chunk consumed; a recipient MUST accept both).
 * `frame_bounded` — a `complete` boundary never runs past the buffer (no
   overread): `consumed ≤ buf.length`.
 * `frame_no_smuggle` — a `Content-Length` present **together with** a chunked
@@ -76,12 +78,15 @@ def frameFixed (buf : Bytes) (headEnd : Nat) (req : Smuggling.Request) : Outcome
   | .empty =>
       if headEnd ≤ buf.length then .complete headEnd else .needMore
   | .chunked =>
-      match Chunked.decodeStream (buf.drop headEnd) with
+      -- The framing-grade decode of the full RFC 7230 §4.1 wire: chunk
+      -- extensions are parsed and ignored (§4.1.1) and the trailer section
+      -- after the last-chunk is consumed (§4.1.2), as a recipient MUST.
+      match Chunked.decodeStreamExt (buf.drop headEnd) with
       | .complete _ c =>
           if headEnd + c ≤ buf.length then .complete (headEnd + c) else .needMore
       | .incomplete => .needMore
-      -- a malformed chunk is rejected (closed), never silently truncated —
-      -- `Body.Smuggling.reject_bad_chunk`.
+      -- a malformed chunk (e.g. a non-hex size token) is rejected (closed),
+      -- never silently truncated — `Body.Smuggling.reject_bad_chunk`.
       | .error => .reject .unsupportedTransferEncoding
 
 /-! ## No overread: a complete boundary stays inside the buffer -/
@@ -152,7 +157,7 @@ theorem framing_faithful_empty (head rest : Bytes) (headEnd : Nat)
   rw [if_pos hbound]
 
 /-- **`framing_faithful_chunked`.** A chunked framing consumes `head ++ section`,
-where `section` is the chunked body region the proven `Chunked.decodeStream`
+where `section` is the chunked body region the proven `Chunked.decodeStreamExt`
 delimits (`consumed = c`), and leaves the remainder verbatim. The chunked
 section's length is taken from the proven decoder, not from body content past the
 region; the boundary reassembly is exact. -/
@@ -160,7 +165,7 @@ theorem framing_faithful_chunked (head rest tail : Bytes) (headEnd c : Nat)
     (body : Bytes) (req : Smuggling.Request)
     (hhead : head.length = headEnd) (hdec : Smuggling.decide req = .chunked)
     (hsec : rest.length = c)
-    (hds : Chunked.decodeStream ((head ++ rest ++ tail).drop headEnd)
+    (hds : Chunked.decodeStreamExt ((head ++ rest ++ tail).drop headEnd)
               = .complete body c) :
     frameFixed (head ++ rest ++ tail) headEnd req = .complete (headEnd + c)
     ∧ (head ++ rest ++ tail).take (headEnd + c) = head ++ rest

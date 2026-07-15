@@ -1,11 +1,14 @@
 import Reactor.Stage.RequestValidation
 import Reactor.Stage.FramingValidation
+import Reactor.Stage.StrictValidation
 import Reactor.Stage.DateHeader
 import Reactor.Stage.RequestHeadLimit
 import Reactor.Stage.ConditionalRequest
+import Reactor.Stage.DateCondition
 import Reactor.Serialize
 import Proto.RequestSerialize
 import Proto.ResponseParse
+import Arena.Parse
 
 /-!
 # Reactor.ServeConformant — the RFC-conformance WRAPPER around the deployed serve
@@ -31,8 +34,10 @@ family's byte-identity to `drorbServe` is untouched. `conformantServe inner`:
    it answers the stage's `4xx/5xx` (`+ Date`) and never touches `inner`.
 2. If `validationStage` passes, it routes through `inner` — normalizing an
    absolute-form target to origin-form FIRST (C3) so `inner` keys on `/path`.
-3. It post-processes the response bytes: injects a `Date` header (F1), and on a
-   `HEAD` request strips the body (B1).
+3. It post-processes the response bytes: injects a `Date` header (F1), scrubs the
+   `x-corr` header line from the head (N2 — the inner serve's correlation id echoes
+   the request bytes dotted-decimal, an amplification/disclosure; see the
+   `scrubLines` section), and on a `HEAD` request strips the body (B1).
 
 ## Residual (honest)
 
@@ -55,10 +60,18 @@ open Reactor.Pipeline (Ctx StageStep Stage)
 open Reactor.Stage.RequestValidation
   (validationStage badRequestResp notImplementedResp badVersionResp)
 open Reactor.Stage.FramingValidation (framingValidationStage expectationFailedResp)
+open Reactor.Stage.StrictValidation
+  (strictStage syntaxCheck semanticsCheck canonReq strictStage_validation_reject
+   strictStage_passes)
 open Reactor.Stage.DateHeader (dateName mHEAD)
-open Reactor.Stage.RequestHeadLimit (headBytesTooLarge requestHeaderFieldsTooLargeResp)
+open Reactor.Stage.RequestHeadLimit (headBytesTooLarge requestHeaderFieldsTooLargeResp
+  headGate uriTooLongResp headPrefix maxHeadBytes maxRequestLine crlf2At crlfAt byteAt
+  scanFor headGate_small headGate_none_of_within headGate_none_bound headPrefix_small
+  headPrefix_size_le)
 open Reactor.Stage.ConditionalRequest
-  (conditionalRewrite headerVal ifNoneMatchNameLower ifMatchNameLower)
+  (conditionalRewrite headerVal ifNoneMatchNameLower ifMatchNameLower respETag)
+open Reactor.Stage.DateCondition
+  (dcRewrite hasDateCond imsNameLower iusNameLower lastModifiedNameLower)
 
 /-! ## The Date value (fixed placeholder — see residual) -/
 
@@ -561,6 +574,437 @@ theorem stripBodyBA_toList (bs : ByteArray) :
   simp only [Nat.sub_zero, List.drop_zero]
   rw [hj, stripBody_eq_take]
 
+/-! ## N2 — the `x-corr` scrub (response amplification / request-byte disclosure)
+
+The deployed inner serve stamps an `x-corr` response header carrying the request's
+correlation id; under the deployed generator (`demoGen = id`) that id is the WHOLE
+REQUEST re-rendered as dotted decimal (`Reactor.Deploy.corrVal` — ~3× the request
+bytes). The ext-probe N2 flags exactly this: a large request head comes back
+amplified and disclosed inside a response header. The conformant wrapper SCRUBS the
+`x-corr` line from the response HEAD at the same byte boundary as `injectDate` —
+post-process; the inner serve (the anchor) is untouched. The body (everything after
+the first blank line) is re-attached VERBATIM (one native `extract`; never walked),
+so only the head pays the scan.
+
+`scrubLines` walks the head's CRLF-separated lines, DROPS every line whose first
+bytes are `x-corr:` (`corrPrefix`), keeps every other line byte-verbatim, and stops
+at the head-terminating blank line (kept, with everything after it, verbatim).
+`headLines_scrubLines` pins the WHOLE behavior: the scrubbed head's lines are
+EXACTLY the original head's lines with the `x-corr:`-prefixed ones filtered out —
+nothing else added, dropped, or reordered. -/
+
+/-- `"x-corr:"` — the scrubbed header-line prefix, lower-case ASCII exactly as the
+deployed serve emits it (`Reactor.Deploy.corrName` + colon). -/
+def corrPrefix : Bytes := [120, 45, 99, 111, 114, 114, 58]
+
+/-- `"x-upstream:"` — the second scrubbed header-line prefix (the deployed serve's
+`Reactor.Deploy.upstreamName` + colon). The upstream/load-balancer address is an
+internal routing fact and must not reach the wire, so it is dropped from the
+served head alongside `x-corr`. -/
+def upstreamPrefix : Bytes := [120, 45, 117, 112, 115, 116, 114, 101, 97, 109, 58]
+
+/-- Whether the byte string begins with a `CRLF` — i.e. the current "line" is the
+head-terminating blank line. -/
+def startsCRLF : Bytes → Bool
+  | a :: b :: _ => a == 13 && b == 10
+  | _ => false
+
+theorem startsCRLF_cons2 (a b : UInt8) (t : Bytes) :
+    startsCRLF (a :: b :: t) = (a == 13 && b == 10) := rfl
+
+/-- Singleton reductions (the literal-pattern matchers do not `rfl` on a variable
+head byte, so pin them once via `simp`). -/
+theorem beforeCRLF_singleton (b : UInt8) : beforeCRLF [b] = [b] := by simp [beforeCRLF]
+
+theorem afterCRLF_singleton (b : UInt8) : afterCRLF [b] = [] := by simp [afterCRLF]
+
+/-- No adjacent `CR LF` pair anywhere — the shape of a single header LINE (what
+`beforeCRLF` returns). First arm binds plain variables, so cons reduces by `rfl`. -/
+def crlfFree : Bytes → Bool
+  | a :: b :: rest => if a = 13 ∧ b = 10 then false else crlfFree (b :: rest)
+  | _ => true
+
+theorem crlfFree_cons2 (a b : UInt8) (rest : Bytes) :
+    crlfFree (a :: b :: rest) = if a = 13 ∧ b = 10 then false else crlfFree (b :: rest) := rfl
+
+theorem crlfFree_rest (a : UInt8) (rest : Bytes) (h : crlfFree (a :: rest) = true) :
+    crlfFree rest = true := by
+  cases rest with
+  | nil => rfl
+  | cons b t =>
+    rw [crlfFree_cons2] at h
+    by_cases hcr : a = 13 ∧ b = 10
+    · rw [if_pos hcr] at h; exact absurd h (by decide)
+    · rw [if_neg hcr] at h; exact h
+
+theorem crlfFree_head (a b : UInt8) (t : Bytes) (h : crlfFree (a :: b :: t) = true) :
+    ¬(a = 13 ∧ b = 10) := by
+  rw [crlfFree_cons2] at h
+  by_cases hcr : a = 13 ∧ b = 10
+  · rw [if_pos hcr] at h; exact absurd h (by decide)
+  · exact hcr
+
+/-- `beforeCRLF` of a non-blank-starting head keeps the head byte. -/
+theorem beforeCRLF_cons_of_not_startsCRLF (b : UInt8) (rest : Bytes)
+    (hs : startsCRLF (b :: rest) = false) :
+    beforeCRLF (b :: rest) = b :: beforeCRLF rest := by
+  cases rest with
+  | nil => simp [beforeCRLF]
+  | cons c t =>
+    rw [beforeCRLF_cons2, if_neg]
+    rintro ⟨rfl, rfl⟩
+    rw [startsCRLF_cons2] at hs
+    exact absurd hs (by decide)
+
+/-- `beforeCRLF` never contains a `CR LF` pair. -/
+theorem crlfFree_beforeCRLF (bs : Bytes) : crlfFree (beforeCRLF bs) = true := by
+  induction bs with
+  | nil => rfl
+  | cons a t ih =>
+    cases t with
+    | nil => rw [beforeCRLF_singleton]; rfl
+    | cons b t' =>
+      rw [beforeCRLF_cons2]
+      by_cases hcr : a = 13 ∧ b = 10
+      · rw [if_pos hcr]; rfl
+      · rw [if_neg hcr]
+        cases hb : beforeCRLF (b :: t') with
+        | nil => rfl
+        | cons c u =>
+          have hcb : c = b := by
+            cases t' with
+            | nil =>
+              rw [beforeCRLF_singleton] at hb
+              injection hb with h1 _; exact h1.symm
+            | cons d u' =>
+              rw [beforeCRLF_cons2] at hb
+              by_cases h2 : b = 13 ∧ d = 10
+              · rw [if_pos h2] at hb; exact absurd hb (by simp)
+              · rw [if_neg h2] at hb; injection hb with h1 _; exact h1.symm
+          subst hcb
+          rw [crlfFree_cons2, if_neg hcr]
+          rw [hb] at ih; exact ih
+
+/-- A `crlfFree` line followed by a `CRLF` parses back as exactly that line. -/
+theorem beforeCRLF_append (L : Bytes) :
+    ∀ (M : Bytes), crlfFree L = true → beforeCRLF (L ++ 13 :: 10 :: M) = L := by
+  induction L with
+  | nil => intro M _; show beforeCRLF (13 :: 10 :: M) = []
+           rw [beforeCRLF_cons2, if_pos ⟨rfl, rfl⟩]
+  | cons a L' ih =>
+    intro M h
+    cases L' with
+    | nil =>
+      show beforeCRLF (a :: 13 :: 10 :: M) = [a]
+      rw [beforeCRLF_cons2, if_neg (by rintro ⟨-, h10⟩; exact absurd h10 (by decide)),
+          beforeCRLF_cons2, if_pos ⟨rfl, rfl⟩]
+    | cons b L'' =>
+      show beforeCRLF (a :: b :: (L'' ++ 13 :: 10 :: M)) = a :: b :: L''
+      rw [beforeCRLF_cons2, if_neg (crlfFree_head a b L'' h),
+          show b :: (L'' ++ 13 :: 10 :: M) = (b :: L'') ++ 13 :: 10 :: M from rfl,
+          ih M (crlfFree_rest a (b :: L'') h)]
+
+/-- …and the bytes after that `CRLF` are exactly the tail `M`. -/
+theorem afterCRLF_append (L : Bytes) :
+    ∀ (M : Bytes), crlfFree L = true → afterCRLF (L ++ 13 :: 10 :: M) = M := by
+  induction L with
+  | nil => intro M _; show afterCRLF (13 :: 10 :: M) = M
+           rw [afterCRLF_cons2, if_pos ⟨rfl, rfl⟩]
+  | cons a L' ih =>
+    intro M h
+    cases L' with
+    | nil =>
+      show afterCRLF (a :: 13 :: 10 :: M) = M
+      rw [afterCRLF_cons2, if_neg (by rintro ⟨-, h10⟩; exact absurd h10 (by decide)),
+          afterCRLF_cons2, if_pos ⟨rfl, rfl⟩]
+    | cons b L'' =>
+      show afterCRLF (a :: b :: (L'' ++ 13 :: 10 :: M)) = M
+      rw [afterCRLF_cons2, if_neg (crlfFree_head a b L'' h),
+          show b :: (L'' ++ 13 :: 10 :: M) = (b :: L'') ++ 13 :: 10 :: M from rfl,
+          ih M (crlfFree_rest a (b :: L'') h)]
+
+/-- A `crlfFree` NONEMPTY line followed by `CRLF` never BEGINS with the blank. -/
+theorem startsCRLF_append (a : UInt8) (L' M : Bytes) (h : crlfFree (a :: L') = true) :
+    startsCRLF ((a :: L') ++ 13 :: 10 :: M) = false := by
+  cases L' with
+  | nil =>
+    show startsCRLF (a :: 13 :: 10 :: M) = false
+    rw [startsCRLF_cons2, show ((13 : UInt8) == 10) = false from by decide, Bool.and_false]
+  | cons b L'' =>
+    show startsCRLF (a :: b :: (L'' ++ 13 :: 10 :: M)) = false
+    rw [startsCRLF_cons2]
+    have hne := crlfFree_head a b L'' h
+    by_cases ha : a = 13
+    · by_cases hb : b = 10
+      · exact absurd ⟨ha, hb⟩ hne
+      · rw [beq_false_of_ne hb, Bool.and_false]
+    · rw [beq_false_of_ne ha, Bool.false_and]
+
+/-- Strictly fewer bytes after the first `CRLF` — the line walk terminates. -/
+theorem afterCRLF_length_lt (l : Bytes) (h : l ≠ []) : (afterCRLF l).length < l.length := by
+  match l with
+  | [] => exact absurd rfl h
+  | [b] => simp [afterCRLF_singleton]
+  | a :: b :: rest =>
+    rw [afterCRLF_cons2]
+    by_cases hcr : a = 13 ∧ b = 10
+    · rw [if_pos hcr]; simp only [List.length_cons]; omega
+    · rw [if_neg hcr]
+      have := afterCRLF_length_lt (b :: rest) (by simp)
+      simp only [List.length_cons] at this ⊢
+      omega
+termination_by l.length
+
+/-- **The head scrub.** Walk the head's CRLF-separated lines: DROP a line whose
+first bytes are `x-corr:`, keep every other line byte-verbatim, stop at the blank
+line (kept, with everything after it, verbatim). -/
+def scrubLines (bs : Bytes) : Bytes :=
+  match bs with
+  | [] => []
+  | b :: rest =>
+    if startsCRLF (b :: rest) then b :: rest
+    else if corrPrefix.isPrefixOf (b :: rest) || upstreamPrefix.isPrefixOf (b :: rest) then scrubLines (afterCRLF (b :: rest))
+    else beforeCRLF (b :: rest) ++ crlf ++ scrubLines (afterCRLF (b :: rest))
+termination_by bs.length
+decreasing_by
+  all_goals exact afterCRLF_length_lt _ (by simp)
+
+/-- The head's CRLF-separated lines up to (excluding) the blank line — the probe's
+`head.split(b"\r\n")` view, status line first. -/
+def headLines (bs : Bytes) : List Bytes :=
+  match bs with
+  | [] => []
+  | b :: rest =>
+    if startsCRLF (b :: rest) then []
+    else beforeCRLF (b :: rest) :: headLines (afterCRLF (b :: rest))
+termination_by bs.length
+decreasing_by
+  all_goals exact afterCRLF_length_lt _ (by simp)
+
+theorem scrubLines_nil : scrubLines [] = [] := by rw [scrubLines.eq_def]
+
+theorem scrubLines_cons (b : UInt8) (rest : Bytes) :
+    scrubLines (b :: rest) =
+      if startsCRLF (b :: rest) then b :: rest
+      else if corrPrefix.isPrefixOf (b :: rest) || upstreamPrefix.isPrefixOf (b :: rest) then scrubLines (afterCRLF (b :: rest))
+      else beforeCRLF (b :: rest) ++ crlf ++ scrubLines (afterCRLF (b :: rest)) := by
+  rw [scrubLines.eq_def]
+
+theorem headLines_cons (b : UInt8) (rest : Bytes) :
+    headLines (b :: rest) =
+      if startsCRLF (b :: rest) then []
+      else beforeCRLF (b :: rest) :: headLines (afterCRLF (b :: rest)) := by
+  rw [headLines.eq_def]
+
+/-- `headLines` of a kept (nonempty, `crlfFree`) line: that line, then the rest. -/
+theorem headLines_line_append (a : UInt8) (L' M : Bytes) (h : crlfFree (a :: L') = true) :
+    headLines ((a :: L') ++ 13 :: 10 :: M) = (a :: L') :: headLines M := by
+  rw [show ((a :: L') ++ 13 :: 10 :: M) = a :: (L' ++ 13 :: 10 :: M) from rfl,
+      headLines_cons,
+      show (a :: (L' ++ 13 :: 10 :: M)) = ((a :: L') ++ 13 :: 10 :: M) from rfl,
+      startsCRLF_append a L' M h, if_neg (by simp),
+      beforeCRLF_append (a :: L') M h, afterCRLF_append (a :: L') M h]
+
+/-- `startsCRLF` is `false` whenever the first byte is not `CR`. -/
+theorem startsCRLF_ne13 (a : UInt8) (rest : Bytes) (h : a ≠ 13) :
+    startsCRLF (a :: rest) = false := by
+  cases rest with
+  | nil => rfl
+  | cons b t => rw [startsCRLF_cons2, beq_false_of_ne h, Bool.false_and]
+
+/-- `beforeCRLF` distributes over the (CR-free) `corrPrefix`. -/
+theorem beforeCRLF_corrPrefix (t : Bytes) :
+    beforeCRLF (corrPrefix ++ t) = corrPrefix ++ beforeCRLF t := by
+  show beforeCRLF (120 :: 45 :: 99 :: 111 :: 114 :: 114 :: 58 :: t)
+      = 120 :: 45 :: 99 :: 111 :: 114 :: 114 :: 58 :: beforeCRLF t
+  repeat rw [beforeCRLF_cons_of_not_startsCRLF _ _ (startsCRLF_ne13 _ _ (by decide))]
+
+/-- A line-start `x-corr:` match survives `beforeCRLF` (the prefix is CR-free). -/
+theorem corrPrefix_beforeCRLF_true (bs : Bytes) (h : corrPrefix.isPrefixOf bs = true) :
+    corrPrefix.isPrefixOf (beforeCRLF bs) = true := by
+  obtain ⟨t, rfl⟩ := List.isPrefixOf_iff_prefix.mp h
+  rw [beforeCRLF_corrPrefix]
+  exact List.isPrefixOf_iff_prefix.mpr ⟨beforeCRLF t, rfl⟩
+
+/-- …and a non-match stays a non-match on the line (`beforeCRLF bs` prefixes `bs`). -/
+theorem corrPrefix_beforeCRLF_false (bs : Bytes) (h : corrPrefix.isPrefixOf bs = false) :
+    corrPrefix.isPrefixOf (beforeCRLF bs) = false := by
+  cases hv : corrPrefix.isPrefixOf (beforeCRLF bs) with
+  | false => rfl
+  | true =>
+    exfalso
+    have h1 : corrPrefix <+: beforeCRLF bs := List.isPrefixOf_iff_prefix.mp hv
+    have h2 : beforeCRLF bs <+: bs := by
+      rw [beforeCRLF_eq_take]; exact List.take_prefix _ _
+    have h3 := List.isPrefixOf_iff_prefix.mpr (h1.trans h2)
+    rw [h] at h3
+    exact Bool.false_ne_true h3
+
+/-- `beforeCRLF` distributes over the (CR-free) `upstreamPrefix`. -/
+theorem beforeCRLF_upstreamPrefix (t : Bytes) :
+    beforeCRLF (upstreamPrefix ++ t) = upstreamPrefix ++ beforeCRLF t := by
+  show beforeCRLF (120 :: 45 :: 117 :: 112 :: 115 :: 116 :: 114 :: 101 :: 97 :: 109 :: 58 :: t)
+      = 120 :: 45 :: 117 :: 112 :: 115 :: 116 :: 114 :: 101 :: 97 :: 109 :: 58 :: beforeCRLF t
+  repeat rw [beforeCRLF_cons_of_not_startsCRLF _ _ (startsCRLF_ne13 _ _ (by decide))]
+
+/-- A line-start `x-upstream:` match survives `beforeCRLF` (the prefix is CR-free). -/
+theorem upstreamPrefix_beforeCRLF_true (bs : Bytes) (h : upstreamPrefix.isPrefixOf bs = true) :
+    upstreamPrefix.isPrefixOf (beforeCRLF bs) = true := by
+  obtain ⟨t, rfl⟩ := List.isPrefixOf_iff_prefix.mp h
+  rw [beforeCRLF_upstreamPrefix]
+  exact List.isPrefixOf_iff_prefix.mpr ⟨beforeCRLF t, rfl⟩
+
+/-- A non-match of ANY prefix stays a non-match on the line (`beforeCRLF bs` prefixes
+`bs`) — the generic form of `corrPrefix_beforeCRLF_false`. -/
+theorem isPrefixOf_beforeCRLF_false (P bs : Bytes) (h : P.isPrefixOf bs = false) :
+    P.isPrefixOf (beforeCRLF bs) = false := by
+  cases hv : P.isPrefixOf (beforeCRLF bs) with
+  | false => rfl
+  | true =>
+    exfalso
+    have h1 : P <+: beforeCRLF bs := List.isPrefixOf_iff_prefix.mp hv
+    have h2 : beforeCRLF bs <+: bs := by
+      rw [beforeCRLF_eq_take]; exact List.take_prefix _ _
+    have h3 := List.isPrefixOf_iff_prefix.mpr (h1.trans h2)
+    rw [h] at h3
+    exact Bool.false_ne_true h3
+
+/-- The scrub-match (`x-corr:` OR `x-upstream:`) survives `beforeCRLF`. -/
+theorem scrubMatch_beforeCRLF_true (bs : Bytes)
+    (h : (corrPrefix.isPrefixOf bs || upstreamPrefix.isPrefixOf bs) = true) :
+    (corrPrefix.isPrefixOf (beforeCRLF bs) || upstreamPrefix.isPrefixOf (beforeCRLF bs)) = true := by
+  cases hc : corrPrefix.isPrefixOf bs with
+  | true => simp [corrPrefix_beforeCRLF_true bs hc]
+  | false =>
+    cases hu : upstreamPrefix.isPrefixOf bs with
+    | true => simp [upstreamPrefix_beforeCRLF_true bs hu]
+    | false => rw [hc, hu] at h; exact absurd h (by decide)
+
+/-- A non-scrub-match line stays a non-match under `beforeCRLF`. -/
+theorem scrubMatch_beforeCRLF_false (bs : Bytes)
+    (h : (corrPrefix.isPrefixOf bs || upstreamPrefix.isPrefixOf bs) = false) :
+    (corrPrefix.isPrefixOf (beforeCRLF bs) || upstreamPrefix.isPrefixOf (beforeCRLF bs)) = false := by
+  have hc : corrPrefix.isPrefixOf bs = false := by
+    cases hv : corrPrefix.isPrefixOf bs with
+    | false => rfl
+    | true => rw [hv] at h; simp at h
+  have hu : upstreamPrefix.isPrefixOf bs = false := by
+    cases hv : upstreamPrefix.isPrefixOf bs with
+    | false => rfl
+    | true => rw [hv] at h; simp at h
+  simp [isPrefixOf_beforeCRLF_false _ _ hc, isPrefixOf_beforeCRLF_false _ _ hu]
+
+/-- **The scrub, pinned (both directions).** The scrubbed head's lines are EXACTLY
+the original head's lines with the `x-corr:` / `x-upstream:`-prefixed ones filtered
+out — no other line is added, dropped, or reordered. -/
+theorem headLines_scrubLines (bs : Bytes) :
+    headLines (scrubLines bs)
+      = (headLines bs).filter (fun l => !(corrPrefix.isPrefixOf l || upstreamPrefix.isPrefixOf l)) := by
+  match bs with
+  | [] => rw [scrubLines_nil, headLines.eq_def]; rfl
+  | b :: rest =>
+    rw [scrubLines_cons]
+    by_cases hs : startsCRLF (b :: rest) = true
+    · simp only [if_pos hs, headLines_cons, List.filter_nil]
+    · rw [if_neg hs]
+      have hs' : startsCRLF (b :: rest) = false := by
+        cases hval : startsCRLF (b :: rest) with
+        | false => rfl
+        | true => exact absurd hval hs
+      by_cases hc : (corrPrefix.isPrefixOf (b :: rest) || upstreamPrefix.isPrefixOf (b :: rest)) = true
+      · rw [if_pos hc, headLines_scrubLines (afterCRLF (b :: rest))]
+        conv => rhs; rw [headLines_cons, if_neg hs]
+        rw [List.filter_cons]
+        have hcl : (corrPrefix.isPrefixOf (beforeCRLF (b :: rest))
+            || upstreamPrefix.isPrefixOf (beforeCRLF (b :: rest))) = true :=
+          scrubMatch_beforeCRLF_true _ hc
+        simp [hcl]
+      · rw [if_neg hc]
+        have hc' : (corrPrefix.isPrefixOf (b :: rest)
+            || upstreamPrefix.isPrefixOf (b :: rest)) = false := by
+          cases hval : (corrPrefix.isPrefixOf (b :: rest)
+              || upstreamPrefix.isPrefixOf (b :: rest)) with
+          | false => rfl
+          | true => exact absurd hval hc
+        have hL : beforeCRLF (b :: rest) = b :: beforeCRLF rest :=
+          beforeCRLF_cons_of_not_startsCRLF b rest hs'
+        have hcf : crlfFree (b :: beforeCRLF rest) = true := by
+          rw [← hL]; exact crlfFree_beforeCRLF (b :: rest)
+        rw [hL,
+            show (b :: beforeCRLF rest) ++ crlf ++ scrubLines (afterCRLF (b :: rest))
+                = (b :: beforeCRLF rest) ++ 13 :: 10 :: scrubLines (afterCRLF (b :: rest)) from by
+              rw [List.append_assoc]; rfl,
+            headLines_line_append b (beforeCRLF rest) _ hcf,
+            headLines_scrubLines (afterCRLF (b :: rest))]
+        conv => rhs; rw [headLines_cons, if_neg hs, hL]
+        rw [List.filter_cons]
+        have hkeep : (corrPrefix.isPrefixOf (b :: beforeCRLF rest)
+            || upstreamPrefix.isPrefixOf (b :: beforeCRLF rest)) = false := by
+          rw [← hL]; exact scrubMatch_beforeCRLF_false _ hc'
+        simp [hkeep]
+termination_by bs.length
+decreasing_by
+  all_goals exact afterCRLF_length_lt _ (by simp)
+
+/-- The filtered-out lines match neither scrub prefix. -/
+theorem scrubLines_no_match (bs : Bytes) :
+    ∀ l ∈ headLines (scrubLines bs),
+      (corrPrefix.isPrefixOf l || upstreamPrefix.isPrefixOf l) = false := by
+  intro l hl
+  rw [headLines_scrubLines] at hl
+  have h := (List.mem_filter.mp hl).2
+  cases hv : (corrPrefix.isPrefixOf l || upstreamPrefix.isPrefixOf l) with
+  | false => rfl
+  | true => rw [hv] at h; exact absurd h (by decide)
+
+/-- **N2 (disclosure).** No line of the scrubbed head begins with `x-corr:`. -/
+theorem scrubLines_no_corr (bs : Bytes) :
+    ∀ l ∈ headLines (scrubLines bs), corrPrefix.isPrefixOf l = false := by
+  intro l hl
+  have h := scrubLines_no_match bs l hl
+  cases hc : corrPrefix.isPrefixOf l with
+  | false => rfl
+  | true => rw [hc] at h; simp at h
+
+/-- **N2 (disclosure), upstream.** No line of the scrubbed head begins with
+`x-upstream:` — the load-balancer address is dropped from the served head too. -/
+theorem scrubLines_no_upstream (bs : Bytes) :
+    ∀ l ∈ headLines (scrubLines bs), upstreamPrefix.isPrefixOf l = false := by
+  intro l hl
+  have h := scrubLines_no_match bs l hl
+  cases hu : upstreamPrefix.isPrefixOf l with
+  | false => rfl
+  | true => rw [hu] at h; simp at h
+
+/-- **The N2 scrub (list spec).** Scrub the response HEAD — everything up to and
+including the first blank line — of `x-corr` lines; the body is appended VERBATIM. -/
+def scrubCorr (bs : Bytes) : Bytes :=
+  scrubLines (bs.take (blankLen bs)) ++ bs.drop (blankLen bs)
+
+/-- **The N2 scrub (dense).** One native `blankTakeFrom` scan finds the head; the
+head (alone) is scrubbed as a list; the body is re-attached with ONE native
+`ByteArray.extract`/`append` — the body is never walked or re-consed. -/
+def scrubCorrBA (bs : ByteArray) : ByteArray :=
+  ByteArray.mk (scrubLines (bs.extract 0 (blankTakeFrom bs 0)).toList).toArray
+    ++ bs.extract (blankTakeFrom bs 0) bs.size
+
+/-- **Dense = spec (N2).** The native scrub is byte-identical to the list `scrubCorr`. -/
+theorem scrubCorrBA_toList (bs : ByteArray) :
+    (scrubCorrBA bs).toList = scrubCorr bs.toList := by
+  have hk : blankTakeFrom bs 0 = blankLen bs.toList := by
+    have h := blankTakeFrom_eq bs bs.size 0 (by omega) (by omega)
+    simpa using h
+  have h2 : (bs.toList.drop (blankLen bs.toList)).take (bs.size - blankLen bs.toList)
+      = bs.toList.drop (blankLen bs.toList) := by
+    have hlen : bs.size - blankLen bs.toList
+        = (bs.toList.drop (blankLen bs.toList)).length := by
+      rw [List.length_drop, ba_toList_length]
+    rw [hlen, List.take_length]
+  unfold scrubCorrBA scrubCorr
+  rw [BA_append_toList, mk_toArray_toList, BA_extract_toList, BA_extract_toList, hk]
+  simp only [Nat.sub_zero, List.drop_zero]
+  rw [h2]
+
 /-! ## The request context -/
 
 /-- Build the pipeline context from the raw input bytes and the parsed request. -/
@@ -576,7 +1020,9 @@ theorem addDate_status (r : Response) : (addDate r).status = r.status := rfl
 
 /-! ## The conformant serve -/
 
-/-- The request bytes to parse for the validation gate: the raw input with any
+/-- The request bytes to parse for the validation gate: the **HEAD PREFIX** of the
+raw input (everything through the first `CRLFCRLF`; the whole input when it is
+≤ `maxHeadBytes` — see `Reactor.Stage.RequestHeadLimit.headPrefix`), with any
 LEADING `NUL` bytes dropped. The io_uring zero-copy receive path hands the seam a
 leased provided-buffer slot with a fixed 4-byte zeroed header before the request
 line; the deployed `drorbServe` tokenizer already skips those leading `NUL`s (a
@@ -584,9 +1030,37 @@ line; the deployed `drorbServe` tokenizer already skips those leading `NUL`s (a
 the leniency is `NUL`-specific, not general). The validation gate parses the SAME
 `NUL`-skipped view so its request-line/Host decisions agree with the inner serve's
 routing. `inner` is still handed the ORIGINAL `input` (it skips the `NUL`s itself),
-keeping its output byte-identical to the deployed serve. -/
+keeping its output byte-identical to the deployed serve.
+
+Cutting at the head end BOUNDS the validation parse **by construction**: every
+scan `Proto.RequestSerialize.parse` runs (`takeUntil SP`, `takeUntilCrlf`,
+`parseHeaders`) is structural recursion on this list, and `reqBytes_length_le`
+pins its length ≤ `maxHeadBytes + 4` — a fixed constant, for EVERY input. No
+request-target, header shape, or BODY content can drive the head parse's
+recursion input-deep (the Z1 stack-overflow class): in particular a scan such as
+`takeUntil SP` on a malformed SP-free head can no longer run off the head into a
+multi-megabyte body. On every input whose head is within the bound — all
+previously-admitted traffic — the prefix IS the input (`headPrefix_small`), so
+the parsed bytes are byte-identical to before. -/
 def reqBytes (input : ByteArray) : Bytes :=
-  (input.toList).dropWhile (· == (0 : UInt8))
+  (headPrefix input).toList.dropWhile (· == (0 : UInt8))
+
+/-- `reqBytes` on a within-bound message reads the same bytes it always did. -/
+theorem reqBytes_small (input : ByteArray) (h : input.size ≤ maxHeadBytes) :
+    reqBytes input = (input.toList).dropWhile (· == (0 : UInt8)) := by
+  unfold reqBytes; rw [headPrefix_small input h]
+
+/-- **The head-parse input bound, unconditional.** The list the request-head
+parser recurses on is ≤ `maxHeadBytes + 4` long for EVERY wire input — the
+by-construction stack bound for the wrapper's parse. -/
+theorem reqBytes_length_le (input : ByteArray) :
+    (reqBytes input).length ≤ maxHeadBytes + 4 := by
+  unfold reqBytes
+  calc ((headPrefix input).toList.dropWhile (· == (0 : UInt8))).length
+      ≤ (headPrefix input).toList.length := (List.dropWhile_sublist _).length_le
+    _ = (headPrefix input).size := by
+        rw [ba_toList_eq, Array.length_toList]; rfl
+    _ ≤ maxHeadBytes + 4 := headPrefix_size_le input
 
 /-! ## The conditional-request finisher, wired at the response-byte boundary (H1/H2/H3/H5)
 
@@ -599,35 +1073,93 @@ body as a `List`, so it is GATED on the request actually carrying `If-None-Match
 `If-Match` (`hasConditional`): a request with no precondition header NEVER pays it and
 takes the DENSE `injectDateBA` splice — so the common `/bulk` path is untouched. -/
 
-/-- Whether the request carries a precondition header (`If-None-Match` or `If-Match`).
-Only such a request is routed through the record round-trip; everything else stays
-dense. A pure `Bool` on the parsed request — identical in the spec and dense paths. -/
+/-- Whether the request carries a conditional header — an entity-tag precondition
+(`If-None-Match` / `If-Match`) OR a date conditional (`If-Modified-Since` /
+`If-Unmodified-Since`, via `hasDateCond`). Only such a request is routed through the
+record round-trip; everything else stays dense. A pure `Bool` on the parsed request —
+identical in the spec and dense paths. Extending the gate to the date conditionals is
+what lets a bare `If-Modified-Since` / `If-Unmodified-Since` request reach the
+date-conditional finisher (`dateFinish`); a request with NO conditional header still
+NEVER pays the round-trip (the `/bulk` fast path is untouched). -/
 def hasConditional (req : Request) : Bool :=
   (headerVal ifNoneMatchNameLower req.headers).isSome ||
-  (headerVal ifMatchNameLower req.headers).isSome
+  (headerVal ifMatchNameLower req.headers).isSome ||
+  hasDateCond req
+
+/-! ### The date-conditional finisher (J09 / J11, RFC 9110 §13.1.3 / §13.1.4)
+
+`Reactor.Stage.DateCondition.dcRewrite` decides the two date conditionals by the
+`Reactor.Stage.HttpDateOrder` total-order scalar, reading the representation's date
+from the response's OWN `Last-Modified` header. The deployed static `200` carries an
+`ETag` but NO `Last-Modified`, so the finisher first STAMPS the representation's
+`Last-Modified` (`stampLastMod` — only on a `200` that carries an `ETag`, i.e. a
+cacheable static representation, and only if it does not already carry the validator),
+then applies the proven `dcRewrite`. The whole thing runs AFTER the entity-tag
+`conditionalRewrite` and only when the request carries a date conditional, so
+`If-None-Match` precedence over `If-Modified-Since` (§13.2.2) is honoured by
+construction (`dcRewrite`'s `ims_precedence_inm` disables IMS whenever `If-None-Match`
+is present) — the exact precedence the inner serve could not honour once
+`stripCondReq` removed `If-None-Match` before it. -/
+
+/-- `Last-Modified` (wire case) — explicit ASCII so every date guard reduces without
+unfolding `String.toUTF8`. -/
+def lastModifiedName : Bytes :=
+  [76, 97, 115, 116, 45, 77, 111, 100, 105, 102, 105, 101, 100]
+
+/-- The representation's `Last-Modified` value — `Mon, 01 Jan 2024 00:00:00 GMT`,
+byte-identical to the fixed `deployNow` date (so `Last-Modified ≤ Date` on the wire,
+RFC 9110 §8.8.2.1) and to `Reactor.Stage.DateCondition.wireLm`, which parses to
+`encode 2024 1 1 0 0 0`. -/
+def lastModifiedVal : Bytes := Reactor.Stage.DateCondition.wireLm
+
+/-- **The representation-date stamp.** A `200` carrying an `ETag` (a cacheable static
+representation) that does not already carry a `Last-Modified` gains the fixed
+representation date; everything else is the identity. This is the response-side
+validator `dcRewrite` compares the client's `If-Modified-Since`/`If-Unmodified-Since`
+against — no constant is duplicated: `dcRewrite` reads THIS header back. -/
+def stampLastMod (resp : Response) : Response :=
+  if resp.status == 200 && (respETag resp).isSome
+      && (headerVal lastModifiedNameLower resp.headers).isNone then
+    { resp with headers := resp.headers ++ [(lastModifiedName, lastModifiedVal)] }
+  else resp
+
+/-- **The date-conditional finisher.** On a request carrying `If-Modified-Since` /
+`If-Unmodified-Since`, stamp the representation date and apply the proven `dcRewrite`
+(IUS→`412`, IMS→`304`, with §13.2.2 precedence by construction); a request with no
+date conditional is the identity. Composes OVER the entity-tag `conditionalRewrite`
+result: a `304`/`412` the entity-tag verdict already produced is not a `200`, so
+`dcRewrite` leaves it verbatim (`dcRewrite_not200`). -/
+def dateFinish (req : Request) (resp : Response) : Response :=
+  if hasDateCond req then dcRewrite req (stampLastMod resp) else resp
 
 /-- **The conditional finisher over serialized bytes.** Parse the inner response
-(`Proto.ResponseParse.parse`), apply the proven `conditionalRewrite` (which fires only
-on a `200` carrying an `ETag`), re-serialize with `Date` (F1). If the inner bytes do
-not parse as a well-formed response (never, for `serialize`-shaped output) fall back to
-the plain `Date` splice — so this is total and never drops a response. -/
+(`Proto.ResponseParse.parse`), apply the proven entity-tag `conditionalRewrite` (fires
+only on a `200` carrying an `ETag`) FIRST — §13.2.2 evaluates `If-None-Match` before
+`If-Modified-Since` — then the date-conditional `dateFinish`, re-serialize with `Date`
+(F1). If the inner bytes do not parse as a well-formed response (never, for
+`serialize`-shaped output) fall back to the plain `Date` splice — so this is total and
+never drops a response. -/
 def condRewriteBytes (req : Request) (innerBytes : Bytes) : Bytes :=
   match Proto.ResponseParse.parse innerBytes with
-  | some resp => serialize (addDate (conditionalRewrite req resp))
+  | some resp => serialize (addDate (dateFinish req (conditionalRewrite req resp)))
   | none => injectDate innerBytes
 
-/-- The request with any `If-None-Match` / `If-Match` header REMOVED. The inner serve
-(`drorbServe`) applies its OWN direction-blind precondition handling (a matching tag ⇒
-`304` for BOTH `If-Match` and `If-None-Match`), so feeding it the precondition headers
-would let it answer a `304` that masks the correct `412` (H5). Stripping them makes the
+/-- The request with any conditional header REMOVED — the entity-tag preconditions
+(`If-None-Match` / `If-Match`) AND the date conditionals (`If-Modified-Since` /
+`If-Unmodified-Since`). The inner serve applies its OWN direction-blind precondition
+handling (a matching tag ⇒ `304` for BOTH `If-Match` and `If-None-Match`), so feeding
+it the precondition headers would let it answer a `304` that masks the correct `412`
+(H5); likewise a date conditional inside the inner fold cannot see a stripped
+`If-None-Match` and could not honour §13.2.2 precedence. Stripping them all makes the
 inner return the plain `200` representation, so the PROVEN `conditionalRewrite`
-(`If-None-Match` ⇒ `304`, `If-Match` non-match ⇒ `412`) is the SOLE authority for the
-precondition semantics. Only the (rare) conditional path re-serializes; `/bulk` is
+(entity-tag) and `dateFinish` (date) at THIS layer are the SOLE authority for the
+conditional semantics. Only the (rare) conditional path re-serializes; `/bulk` is
 untouched. -/
 def stripCondReq (req : Request) : Request :=
   { req with headers := req.headers.filter (fun kv =>
       let n := Reactor.Stage.FramingValidation.lowerBytes kv.1
-      n != ifNoneMatchNameLower && n != ifMatchNameLower) }
+      n != ifNoneMatchNameLower && n != ifMatchNameLower
+        && n != imsNameLower && n != iusNameLower) }
 
 /-- The inner input for a conditional request: the precondition-stripped request,
 re-serialized so `inner` routes it identically but sees NO precondition header. -/
@@ -660,15 +1192,17 @@ theorem acceptedRawBA_toList (inner : ByteArray → ByteArray) (req : Request) (
 
 /-- The response bytes BEFORE the HEAD-strip: the reject `4xx/5xx` (+Date), or the
 Date-injected inner serve. Two request gates run in front of `inner`, in order:
-`validationStage` (C1/C2/B2/G1/C3 — version/method/Host, absolute-form normalize)
-then `framingValidationStage` (L1/J2/M1 — Transfer-Encoding-final, Expect,
-field-name whitespace). Either gate's `.respond` answers `serialize (addDate r)`
-and never touches `inner`; only a request clearing BOTH reaches `inner`. -/
+`strictStage` (request-line/field SYNTAX + the proven `validationStage`
+version/method/Host + absolute-form normalize + method SEMANTICS —
+`Reactor.Stage.StrictValidation`) then `framingValidationStage` (L1/J2/M1 —
+Transfer-Encoding-final, Expect, field-name whitespace). Either gate's
+`.respond` answers `serialize (addDate r)` and never touches `inner`; only a
+request clearing BOTH reaches `inner`. -/
 def respBytesRaw (inner : ByteArray → ByteArray) (input : ByteArray) : Bytes :=
   match Proto.RequestSerialize.parse (reqBytes input) with
   | none => serialize (addDate badRequestResp)
   | some req =>
-    match validationStage.onRequest (mkCtx input req) with
+    match strictStage.onRequest (mkCtx input req) with
     | .respond r => serialize (addDate r)
     | .continue c' =>
         match framingValidationStage.onRequest c' with
@@ -688,7 +1222,7 @@ def respBytesRawBA (inner : ByteArray → ByteArray) (input : ByteArray) : ByteA
   match Proto.RequestSerialize.parse (reqBytes input) with
   | none => ByteArray.mk (serialize (addDate badRequestResp)).toArray
   | some req =>
-    match validationStage.onRequest (mkCtx input req) with
+    match strictStage.onRequest (mkCtx input req) with
     | .respond r => ByteArray.mk (serialize (addDate r)).toArray
     | .continue c' =>
         match framingValidationStage.onRequest c' with
@@ -723,47 +1257,63 @@ def isHeadReq (input : ByteArray) : Bool :=
   | some req => req.method == mHEAD
   | none => false
 
-/-- **The conformant serve (DENSE + Z1).** Wraps `inner` with the proven conformance
-stages: the O(1) pre-parse head-length gate (Z1 → `431`, before the recursive parse can
-overflow) → validation gate (C1/C2/B2/G1/C3) → `inner` → `Date` (F1, dense splice) /
-`HEAD`-strip (B1, dense truncate). The accepted-path body is carried as `ByteArray`
-throughout — no 1 MiB `List` re-cons (`conformantServe_toList` pins the bytes to the
-list spec). -/
+/-- **The conformant serve (DENSE + Z1 + N2).** Wraps `inner` with the proven
+conformance stages: the pre-parse HEAD gate (Z1 — `414 URI Too Long` for an
+over-long request-line, `431` for an oversized header block, decided by bounded
+index probes BEFORE the recursive parse can overflow; a large BODY behind a small
+head passes) → validation gate (C1/C2/B2/G1/C3) → `inner` → `Date` (F1, dense
+splice) → `x-corr` head scrub (N2, dense — no amplification / request-byte
+disclosure) / `HEAD`-strip (B1, dense truncate). The accepted-path body is carried
+as `ByteArray` throughout — no 1 MiB `List` re-cons (`conformantServe_toList` pins
+the bytes to the list spec). -/
 def conformantServe (inner : ByteArray → ByteArray) (input : ByteArray) : ByteArray :=
-  if headBytesTooLarge input.size then
-    ByteArray.mk (serialize (addDate requestHeaderFieldsTooLargeResp)).toArray
-  else
-    let raw := respBytesRawBA inner input
+  match headGate input with
+  | some r => ByteArray.mk (serialize (addDate r)).toArray
+  | none =>
+    let raw := scrubCorrBA (respBytesRawBA inner input)
     if isHeadReq input then stripBodyBA raw else raw
 
-/-- **The deployed dense bytes ARE the list spec.** For a within-limit request the
-served bytes read back as the list `respBytesRaw` (HEAD → `stripBody` of it); an
-over-limit head short-circuits to the `431` (Z1). Every list-spec conformance theorem
-(`conformant_reject_eq`, `conformant_date_present_accept`, `conformant_head_no_body`)
+/-- **The deployed dense bytes ARE the list spec.** For a gate-passed request the
+served bytes read back as the list `scrubCorr (respBytesRaw …)` (HEAD → `stripBody`
+of it); a gate-refused head short-circuits to the `414`/`431` (Z1). Every list-spec
+conformance theorem (`conformant_reject_eq`, `conformant_date_present_accept`,
+`conformant_head_no_body`, `scrubLines_no_corr` via `headLines_scrubLines`)
 therefore governs the ACTUAL served `ByteArray`. -/
 theorem conformantServe_toList (inner : ByteArray → ByteArray) (input : ByteArray) :
     (conformantServe inner input).toList =
-      if headBytesTooLarge input.size then
-        serialize (addDate requestHeaderFieldsTooLargeResp)
-      else if isHeadReq input then stripBody (respBytesRaw inner input)
-      else respBytesRaw inner input := by
+      match headGate input with
+      | some r => serialize (addDate r)
+      | none =>
+        if isHeadReq input then stripBody (scrubCorr (respBytesRaw inner input))
+        else scrubCorr (respBytesRaw inner input) := by
   unfold conformantServe
-  by_cases hz : headBytesTooLarge input.size = true
-  · rw [if_pos hz, if_pos hz]; exact mk_toArray_toList _
-  · rw [if_neg hz, if_neg hz]
+  rcases hz : headGate input with _ | r
+  · simp only []
     by_cases hh : isHeadReq input = true
-    · rw [if_pos hh, if_pos hh, stripBodyBA_toList, respBytesRawBA_toList]
-    · rw [if_neg hh, if_neg hh, respBytesRawBA_toList]
+    · rw [if_pos hh, if_pos hh, stripBodyBA_toList, scrubCorrBA_toList, respBytesRawBA_toList]
+    · rw [if_neg hh, if_neg hh, scrubCorrBA_toList, respBytesRawBA_toList]
+  · exact mk_toArray_toList _
+
+/-- **N2, end to end.** The served HEAD is `scrubLines` of the raw pipeline head BY
+DEFINITION of `scrubCorr` (see `conformantServe_toList`), so no served head line
+begins with `x-corr:` — for ANY inner serve and ANY input; and by
+`headLines_scrubLines` every other head line is preserved in order. -/
+theorem conformant_no_corr_line (inner : ByteArray → ByteArray) (input : ByteArray) :
+    ∀ l ∈ headLines (scrubLines ((respBytesRaw inner input).take
+        (blankLen (respBytesRaw inner input)))),
+      corrPrefix.isPrefixOf l = false :=
+  fun _l hl => scrubLines_no_corr _ _ hl
 
 /-! ## Conformance theorems (reusing the proven stage lemmas) -/
 
-/-- **Reject → the stage's status.** If the request parses and `validationStage`
-rejects it with `r`, the wrapper emits `serialize (addDate r)`, whose status is
-`r.status` — `inner` is never consulted. Parametric over `inner`, `input`, `r`. -/
+/-- **Reject → the stage's status.** If the request parses and the strict gate
+(syntax ⇒ the proven validation gate ⇒ method semantics) rejects it with `r`,
+the wrapper emits `serialize (addDate r)`, whose status is `r.status` — `inner`
+is never consulted. Parametric over `inner`, `input`, `r`. -/
 theorem conformant_reject_eq
     (inner : ByteArray → ByteArray) (input : ByteArray) (req : Request) (r : Response)
     (hp : Proto.RequestSerialize.parse (reqBytes input) = some req)
-    (hr : validationStage.onRequest (mkCtx input req) = .respond r) :
+    (hr : strictStage.onRequest (mkCtx input req) = .respond r) :
     respBytesRaw inner input = serialize (addDate r) := by
   simp only [respBytesRaw, hp, hr]
 
@@ -774,7 +1324,7 @@ for ANY `inner`. -/
 theorem conformant_date_present_accept
     (inner : ByteArray → ByteArray) (input : ByteArray) (req : Request) (c' c'' : Ctx)
     (hp : Proto.RequestSerialize.parse (reqBytes input) = some req)
-    (hr : validationStage.onRequest (mkCtx input req) = .continue c')
+    (hr : strictStage.onRequest (mkCtx input req) = .continue c')
     (hf : framingValidationStage.onRequest c' = .continue c'')
     (htgt : c''.req.target = req.target)
     (hnc : hasConditional req = false) :
@@ -785,14 +1335,112 @@ theorem conformant_date_present_accept
   rw [hraw]
   exact injectDate_date_present _
 
-/-- On a within-limit HEAD request, the served bytes read back exactly as `stripBody`
-of the list-spec raw response — the dense truncate is byte-identical to the spec. -/
+/-- On a gate-passed HEAD request, the served bytes read back exactly as `stripBody`
+of the scrubbed list-spec raw response — the dense truncate is byte-identical to the
+spec. -/
 theorem conformantServe_head_bytes
     (inner : ByteArray → ByteArray) (input : ByteArray)
     (hhead : isHeadReq input = true)
-    (hz : headBytesTooLarge input.size = false) :
-    (conformantServe inner input).toList = stripBody (respBytesRaw inner input) := by
-  rw [conformantServe_toList, if_neg (by rw [hz]; decide), if_pos hhead]
+    (hz : headGate input = none) :
+    (conformantServe inner input).toList
+      = stripBody (scrubCorr (respBytesRaw inner input)) := by
+  rw [conformantServe_toList, hz]
+  simp only []
+  rw [if_pos hhead]
+
+/-! ## The gate carried to the deployed framing scan — the parse-depth bound
+
+The inner serves' request framing is driven by `Arena.Parse.findDoubleCrlf`, a
+recursion whose depth is exactly the offset it returns (one frame per byte until
+the first `CRLFCRLF`). The two theorems below carry `headGate_none_bound` to that
+scanner: a gate-passed input either is ≤ `maxHeadBytes` long outright, or its
+`findDoubleCrlf` STOPS at some offset ≤ `maxHeadBytes` — so behind the gate no
+head-walking recursion exceeds the constant, for any wire input. -/
+
+/-- The clamped index probe reads the input's byte list: `byteAt = toList.getD`. -/
+theorem byteAt_toList_getD (input : ByteArray) (i : Nat) :
+    byteAt input i = input.toList.getD i 0 := by
+  unfold Reactor.Stage.RequestHeadLimit.byteAt
+  rw [ba_toList_eq, List.getD_eq_getElem?_getD]
+  by_cases h : i < input.size
+  · rw [dif_pos h]
+    have hlen : i < input.data.toList.length := by
+      rw [Array.length_toList]; exact h
+    rw [List.getElem?_eq_getElem hlen, Option.getD_some, Array.getElem_toList hlen]
+    rfl
+  · rw [dif_neg h]
+    have hlen : input.data.toList.length ≤ i := by
+      rw [Array.length_toList]
+      have : input.data.size = input.size := rfl
+      omega
+    rw [List.getElem?_eq_none hlen, Option.getD_none]
+
+/-- A `CRLFCRLF` at `k` ⇒ the deployed framing scan stops at some `j ≤ k`:
+`findDoubleCrlf` returns its FIRST match, which is no later than any match. -/
+theorem findDoubleCrlf_le_of_match (l : List UInt8) :
+    ∀ k, l.getD k 0 = 13 → l.getD (k + 1) 0 = 10 →
+      l.getD (k + 2) 0 = 13 → l.getD (k + 3) 0 = 10 →
+      ∃ j, j ≤ k ∧ Arena.Parse.findDoubleCrlf l = some j := by
+  induction l with
+  | nil => intro k h0 _ _ _; simp [List.getD] at h0
+  | cons a t ih =>
+    intro k h0 h1 h2 h3
+    match t, ih with
+    | [], _ =>
+      -- getD (k+1) on [a] is 0 ≠ 10
+      exfalso
+      rcases k with _ | k' <;> simp [List.getD] at h1
+    | [b], _ =>
+      exfalso
+      rcases k with _ | k'
+      · simp [List.getD] at h2
+      · rcases k' with _ | k'' <;> simp [List.getD] at h1 h2
+    | [b, c], _ =>
+      exfalso
+      rcases k with _ | k'
+      · simp [List.getD] at h3
+      · rcases k' with _ | k''
+        · simp [List.getD] at h2
+        · rcases k'' with _ | k''' <;> simp [List.getD] at h1 h2 h3
+    | b :: c :: d :: t', ih =>
+      rw [Arena.Parse.findDoubleCrlf]
+      by_cases hm : a == Arena.Parse.CR && b == Arena.Parse.LF
+          && c == Arena.Parse.CR && d == Arena.Parse.LF
+      · exact ⟨0, Nat.zero_le k, by rw [if_pos hm]⟩
+      · rw [if_neg hm]
+        rcases k with _ | k'
+        · -- the four bytes at 0..3 ARE a match, contradicting hm
+          exfalso
+          apply hm
+          simp only [List.getD_cons_zero, List.getD_cons_succ] at h0 h1 h2 h3
+          have hCR : (13 : UInt8) = Arena.Parse.CR := rfl
+          have hLF : (10 : UInt8) = Arena.Parse.LF := rfl
+          rw [h0, h1, h2, h3, hCR, hLF]
+          simp
+        · -- the match sits at k' in the tail; lift the IH through `.map (+1)`
+          simp only [List.getD_cons_succ] at h0 h1 h2 h3
+          obtain ⟨j, hj, hfd⟩ := ih k' h0 h1 h2 h3
+          exact ⟨j + 1, by omega, by rw [hfd]; rfl⟩
+
+/-- **The deployed-parse depth bound.** Behind a passed gate the framing recursion
+is constant-bounded: the whole input is ≤ `maxHeadBytes`, or `findDoubleCrlf` on
+its bytes stops at an offset ≤ `maxHeadBytes`. -/
+theorem headGate_none_parse_bound (input : ByteArray) (h : headGate input = none) :
+    input.size ≤ maxHeadBytes ∨
+    ∃ j, j ≤ maxHeadBytes ∧ Arena.Parse.findDoubleCrlf input.toList = some j := by
+  rcases headGate_none_bound input h with hs | ⟨k, hk, hcrlf2⟩
+  · exact Or.inl hs
+  · right
+    unfold Reactor.Stage.RequestHeadLimit.crlf2At
+      Reactor.Stage.RequestHeadLimit.crlfAt at hcrlf2
+    simp only [Bool.and_eq_true, beq_iff_eq] at hcrlf2
+    obtain ⟨⟨h0, h1⟩, h2, h3⟩ := hcrlf2
+    rw [byteAt_toList_getD] at h0 h1 h2 h3
+    have h3' : input.toList.getD (k + 3) 0 = 10 := by
+      have : k + 2 + 1 = k + 3 := by omega
+      rwa [this] at h3
+    obtain ⟨j, hj, hfd⟩ := findDoubleCrlf_le_of_match input.toList k h0 h1 h2 h3'
+    exact ⟨j, by omega, hfd⟩
 
 /-- **B1.** On a HEAD request, the wrapper strips the body: the post-processed
 response bytes carry no body octets (`afterBlank … = []`), for ANY `inner`. This is
@@ -832,10 +1480,10 @@ theorem missingHostInput_parses :
           = Proto.RequestSerialize.serialize missingHostReq
     exact Array.toList_toArray _
   have h2 : reqBytes missingHostInput = Proto.RequestSerialize.serialize missingHostReq := by
-    -- the serialized request starts with the method byte `G` (71) ≠ 0, so the leading-
+    -- a tiny head: the head prefix is the whole input (`reqBytes_small`), and the
+    -- serialized request starts with the method byte `G` (71) ≠ 0, so the leading-
     -- NUL strip is the identity here.
-    unfold reqBytes
-    rw [h1]
+    rw [reqBytes_small missingHostInput (by decide), h1]
     rfl
   rw [h2]
   exact Proto.RequestSerialize.parse_serialize missingHostReq missingHostReq_WF
@@ -845,12 +1493,20 @@ theorem missingHostReq_rejected :
       = .respond badRequestResp := by
   apply Reactor.Stage.RequestValidation.validationStage_rejects_bad_host <;> decide
 
+/-- The strict gate carries the C1 rejection: the request is syntactically clean
+(so the syntax layer passes) and the composed validation gate answers the `400`. -/
+theorem missingHostReq_strict_rejected :
+    strictStage.onRequest (mkCtx missingHostInput missingHostReq)
+      = .respond badRequestResp := by
+  refine strictStage_validation_reject _ _ rfl ?_
+  apply Reactor.Stage.RequestValidation.validationStage_rejects_bad_host <;> decide
+
 /-- **C1, end to end.** The missing-Host input is rejected as `serialize (addDate
 badRequestResp)` — a `400` (`badRequestResp.status = 400`) — for ANY inner serve. -/
 theorem conformant_rejects_missingHost (inner : ByteArray → ByteArray) :
     respBytesRaw inner missingHostInput = serialize (addDate badRequestResp) :=
   conformant_reject_eq inner missingHostInput missingHostReq badRequestResp
-    missingHostInput_parses missingHostReq_rejected
+    missingHostInput_parses missingHostReq_strict_rejected
 
 theorem conformant_missingHost_status :
     (addDate badRequestResp).status = 400 :=
@@ -869,7 +1525,7 @@ rejected by the FRAMING gate — the parse is pinned by
 theorem conformant_framing_reject_eq
     (inner : ByteArray → ByteArray) (input : ByteArray) (req : Request) (c' : Ctx) (r : Response)
     (hp : Proto.RequestSerialize.parse (reqBytes input) = some req)
-    (hv : validationStage.onRequest (mkCtx input req) = .continue c')
+    (hv : strictStage.onRequest (mkCtx input req) = .continue c')
     (hf : framingValidationStage.onRequest c' = .respond r) :
     respBytesRaw inner input = serialize (addDate r) := by
   simp only [respBytesRaw, hp, hv, hf]
@@ -886,7 +1542,7 @@ theorem teInput_parses : Proto.RequestSerialize.parse (reqBytes teInput) = some 
   have h1 : teInput.toList = Proto.RequestSerialize.serialize teReq := by
     rw [ba_toList_eq teInput]; exact Array.toList_toArray _
   have h2 : reqBytes teInput = Proto.RequestSerialize.serialize teReq := by
-    unfold reqBytes; rw [h1]; rfl
+    rw [reqBytes_small teInput (by decide), h1]; rfl
   rw [h2]; exact Proto.RequestSerialize.parse_serialize teReq teReq_WF
 
 /-- **L1, end to end.** The `chunked, gzip` request PASSES validation (valid Host) and
@@ -895,8 +1551,9 @@ is then rejected by the framing gate as `serialize (addDate badRequestResp)` —
 theorem conformant_rejects_te_not_final (inner : ByteArray → ByteArray) :
     respBytesRaw inner teInput = serialize (addDate badRequestResp) := by
   refine conformant_framing_reject_eq inner teInput teReq _ badRequestResp teInput_parses
-    (Reactor.Stage.RequestValidation.validationStage_passes_valid (mkCtx teInput teReq)
-      (by decide) (by decide) (by decide)) ?_
+    (strictStage_passes _ _ rfl
+      (Reactor.Stage.RequestValidation.validationStage_passes_valid _
+        (by decide) (by decide) (by decide)) rfl) ?_
   apply Reactor.Stage.FramingValidation.framingValidationStage_rejects_te_not_final <;> decide
 
 /-- **J2** request bytes: `GET /health HTTP/1.1`, `Host: x`,
@@ -911,7 +1568,7 @@ theorem exInput_parses : Proto.RequestSerialize.parse (reqBytes exInput) = some 
   have h1 : exInput.toList = Proto.RequestSerialize.serialize exReq := by
     rw [ba_toList_eq exInput]; exact Array.toList_toArray _
   have h2 : reqBytes exInput = Proto.RequestSerialize.serialize exReq := by
-    unfold reqBytes; rw [h1]; rfl
+    rw [reqBytes_small exInput (by decide), h1]; rfl
   rw [h2]; exact Proto.RequestSerialize.parse_serialize exReq exReq_WF
 
 /-- **J2, end to end.** The unsupported-`Expect` request PASSES validation and is then
@@ -920,8 +1577,9 @@ for ANY inner serve. -/
 theorem conformant_rejects_bad_expect (inner : ByteArray → ByteArray) :
     respBytesRaw inner exInput = serialize (addDate expectationFailedResp) := by
   refine conformant_framing_reject_eq inner exInput exReq _ expectationFailedResp exInput_parses
-    (Reactor.Stage.RequestValidation.validationStage_passes_valid (mkCtx exInput exReq)
-      (by decide) (by decide) (by decide)) ?_
+    (strictStage_passes _ _ rfl
+      (Reactor.Stage.RequestValidation.validationStage_passes_valid _
+        (by decide) (by decide) (by decide)) rfl) ?_
   apply Reactor.Stage.FramingValidation.framingValidationStage_rejects_bad_expect <;> decide
 
 theorem conformant_te_status : (addDate badRequestResp).status = 400 :=
@@ -970,12 +1628,20 @@ theorem condInput_parses :
   have h1 : condInput.toList = Proto.RequestSerialize.serialize reqINM := by
     rw [ba_toList_eq condInput]; exact Array.toList_toArray _
   have h2 : reqBytes condInput = Proto.RequestSerialize.serialize reqINM := by
-    unfold reqBytes; rw [h1]; rfl
+    rw [reqBytes_small condInput (by decide), h1]; rfl
   rw [h2]; exact Proto.RequestSerialize.parse_serialize reqINM reqINM_WF
 
 /-- `hasConditional` genuinely fires on the `If-None-Match` request (it is routed to
 the record round-trip, not the dense splice). -/
 theorem reqINM_isConditional : hasConditional reqINM = true := by decide
+
+/-- The `If-None-Match` request carries NO date conditional, so `dateFinish` is the
+identity on it — the entity-tag `conditionalRewrite` verdict is unchanged by the
+date-conditional finisher (H1/H2 are byte-identical to before the date wiring). -/
+theorem reqINM_noDateCond : hasDateCond reqINM = false := by decide
+
+theorem dateFinish_reqINM (resp : Response) : dateFinish reqINM resp = resp := by
+  simp only [dateFinish, reqINM_noDateCond, Bool.false_eq_true, if_false]
 
 /-- The validation + framing gates both PASS the `If-None-Match` request, with the
 origin-form target preserved (so `inner` is fed the verbatim input). -/
@@ -983,6 +1649,15 @@ theorem condReq_valid_pass :
     validationStage.onRequest (mkCtx condInput reqINM)
       = .continue (mkCtx condInput { reqINM with target := normalizeTarget reqINM.target }) :=
   Reactor.Stage.RequestValidation.validationStage_passes_valid
+    (mkCtx condInput reqINM) (by decide) (by decide) (by decide)
+
+/-- The STRICT gate passes the `If-None-Match` request identically (syntax clean,
+`Host` already canonical, `GET` semantics-transparent). -/
+theorem condReq_strict_pass :
+    strictStage.onRequest (mkCtx condInput reqINM)
+      = .continue (mkCtx condInput { reqINM with target := normalizeTarget reqINM.target }) := by
+  refine strictStage_passes _ _ rfl ?_ rfl
+  exact Reactor.Stage.RequestValidation.validationStage_passes_valid
     (mkCtx condInput reqINM) (by decide) (by decide) (by decide)
 
 theorem condReq_framing_pass :
@@ -1008,14 +1683,142 @@ theorem cond_witness_304 :
       = notModifiedOf (Proto.ResponseParse.wireForm condResp) :=
     Reactor.Stage.ConditionalRequest.conditionalRewrite_ifNoneMatch
       reqINM (Proto.ResponseParse.wireForm condResp) etag9e h200 hetag reqINM_im_ok reqINM_inm
-  simp only [respBytesRaw, condInput_parses, condReq_valid_pass, condReq_framing_pass]
+  simp only [respBytesRaw, condInput_parses, condReq_strict_pass, condReq_framing_pass]
   rw [hnt]
   simp only [mkCtx, beq_self_eq_true, if_true, acceptedRaw,
-    reqINM_isConditional, if_true, condRewriteBytes, hinner, hpr, hcr]
+    reqINM_isConditional, if_true, condRewriteBytes, hinner, hpr, hcr, dateFinish_reqINM]
 
 theorem cond_witness_304_status :
     (addDate (notModifiedOf (Proto.ResponseParse.wireForm condResp))).status = 304 := by
   rw [addDate_status]; exact notModifiedOf_status _
+
+/-! ## J09 / J11 / J12 date-conditional witnesses (the deployed conformant path)
+
+The date-conditional finisher (`dateFinish`), exercised on the deployed static
+representation shape (`condResp` — a `200` with an `ETag`, no `Last-Modified`), against
+the probe's exact date bytes (`Reactor.Stage.HttpDateOrder.wireFuture` = 2050,
+`wirePast` = 1970). The unit witnesses `decide` the WHOLE finisher — entity-tag
+`conditionalRewrite` THEN `stampLastMod` THEN the proven `dcRewrite` — so no step is
+vacuous; the end-to-end witness pins the deployed `respBytesRaw` wiring for a BARE
+`If-Modified-Since` request (routed by the extended `hasConditional`). -/
+
+/-- **J09 request.** `If-Modified-Since: Sat, 01 Jan 2050 00:00:00 GMT`. -/
+def reqIMS : Request :=
+  { method := Reactor.Stage.ConditionalRequest.mGET,
+    target := Reactor.Stage.ConditionalRequest.hpath,
+    version := Reactor.Stage.ConditionalRequest.v11,
+    headers := [(Reactor.Stage.ConditionalRequest.hostName, [120]),
+                (Reactor.Stage.DateCondition.imsWireName,
+                 Reactor.Stage.HttpDateOrder.wireFuture)] }
+
+/-- **J10 request.** `If-Modified-Since: Thu, 01 Jan 1970 00:00:00 GMT`. -/
+def reqIMSpast : Request :=
+  { method := Reactor.Stage.ConditionalRequest.mGET,
+    target := Reactor.Stage.ConditionalRequest.hpath,
+    version := Reactor.Stage.ConditionalRequest.v11,
+    headers := [(Reactor.Stage.ConditionalRequest.hostName, [120]),
+                (Reactor.Stage.DateCondition.imsWireName,
+                 Reactor.Stage.HttpDateOrder.wirePast)] }
+
+/-- **J11 request.** `If-Unmodified-Since: Thu, 01 Jan 1970 00:00:00 GMT`. -/
+def reqIUS : Request :=
+  { method := Reactor.Stage.ConditionalRequest.mGET,
+    target := Reactor.Stage.ConditionalRequest.hpath,
+    version := Reactor.Stage.ConditionalRequest.v11,
+    headers := [(Reactor.Stage.ConditionalRequest.hostName, [120]),
+                (Reactor.Stage.DateCondition.iusWireName,
+                 Reactor.Stage.HttpDateOrder.wirePast)] }
+
+/-- **J12 request.** `If-None-Match: "deadbeef"` (non-matching) + `If-Modified-Since:
+2050` — the §13.2.2 precedence shape. -/
+def reqInmIms : Request :=
+  { method := Reactor.Stage.ConditionalRequest.mGET,
+    target := Reactor.Stage.ConditionalRequest.hpath,
+    version := Reactor.Stage.ConditionalRequest.v11,
+    headers := [(Reactor.Stage.ConditionalRequest.hostName, [120]),
+                (Reactor.Stage.DateCondition.inmWireName,
+                 [34, 100, 101, 97, 100, 98, 101, 101, 102, 34]),
+                (Reactor.Stage.DateCondition.imsWireName,
+                 Reactor.Stage.HttpDateOrder.wireFuture)] }
+
+/-- **J09 (§13.1.3 MUST).** IMS 2050 on the ETag-bearing static `200` ⇒ the finisher
+answers `304`. -/
+theorem finish_ims_future_304 :
+    (dateFinish reqIMS (conditionalRewrite reqIMS condResp)).status = 304 := by decide
+
+/-- **J10 (§13.1.3 MUST).** IMS 1970 (before the representation date) ⇒ `200`. -/
+theorem finish_ims_past_200 :
+    (dateFinish reqIMSpast (conditionalRewrite reqIMSpast condResp)).status = 200 := by decide
+
+/-- **J11 (§13.1.4 MUST).** IUS 1970 (before the representation date) ⇒ `412`. -/
+theorem finish_ius_past_412 :
+    (dateFinish reqIUS (conditionalRewrite reqIUS condResp)).status = 412 := by decide
+
+/-- **J12 (§13.2.2 MUST).** `If-None-Match` non-match + IMS 2050 ⇒ `200`: the
+`If-None-Match` precedence disables IMS (`dcRewrite`'s `ims_precedence_inm`), so the
+far-future `If-Modified-Since` does NOT force a `304`. -/
+theorem finish_inm_over_ims_200 :
+    (dateFinish reqInmIms (conditionalRewrite reqInmIms condResp)).status = 200 := by decide
+
+/-- The J09 finisher genuinely fires: the `304`'s body is stripped (RFC 7232 §4.1). -/
+theorem finish_ims_future_304_nobody :
+    (dateFinish reqIMS (conditionalRewrite reqIMS condResp)).body = [] := by decide
+
+/-! ### J09 end to end — the deployed `respBytesRaw` on a BARE `If-Modified-Since` -/
+
+/-- The J09 request on the wire. -/
+def condInputIMS : ByteArray := ByteArray.mk (Proto.RequestSerialize.serialize reqIMS).toArray
+
+theorem reqIMS_WF : Proto.RequestSerialize.WF reqIMS := by
+  refine ⟨by decide, by decide, by decide, by decide⟩
+
+theorem condInputIMS_parses :
+    Proto.RequestSerialize.parse (reqBytes condInputIMS) = some reqIMS := by
+  have h1 : condInputIMS.toList = Proto.RequestSerialize.serialize reqIMS := by
+    rw [ba_toList_eq condInputIMS]; exact Array.toList_toArray _
+  have h2 : reqBytes condInputIMS = Proto.RequestSerialize.serialize reqIMS := by
+    rw [reqBytes_small condInputIMS (by decide), h1]; rfl
+  rw [h2]; exact Proto.RequestSerialize.parse_serialize reqIMS reqIMS_WF
+
+/-- The extended `hasConditional` routes the BARE `If-Modified-Since` request through
+the record round-trip (the finisher), NOT the dense splice — the wiring J09 needs. -/
+theorem reqIMS_isConditional : hasConditional reqIMS = true := by decide
+
+theorem condReqIMS_strict_pass :
+    strictStage.onRequest (mkCtx condInputIMS reqIMS)
+      = .continue (mkCtx condInputIMS { reqIMS with target := normalizeTarget reqIMS.target }) := by
+  refine strictStage_passes _ _ rfl ?_ rfl
+  exact Reactor.Stage.RequestValidation.validationStage_passes_valid
+    (mkCtx condInputIMS reqIMS) (by decide) (by decide) (by decide)
+
+theorem condReqIMS_framing_pass :
+    framingValidationStage.onRequest (mkCtx condInputIMS { reqIMS with target := normalizeTarget reqIMS.target })
+      = .continue (mkCtx condInputIMS { reqIMS with target := normalizeTarget reqIMS.target }) :=
+  Reactor.Stage.FramingValidation.framingValidationStage_passes _ (by decide) (by decide) (by decide)
+
+/-- **J09, end to end.** The bare `If-Modified-Since: 2050` request, served by the
+ETag-bearing inner `200`, produces `serialize (addDate (dateFinish …))` — the deployed
+conformant path routes it through the date-conditional finisher. -/
+theorem cond_witness_ims :
+    respBytesRaw condInner condInputIMS
+      = serialize (addDate (dateFinish reqIMS
+          (conditionalRewrite reqIMS (Proto.ResponseParse.wireForm condResp)))) := by
+  have hnt : normalizeTarget reqIMS.target = reqIMS.target := by decide
+  have hinner : (condInner (condInnerInput reqIMS)).toList = serialize condResp := mk_toArray_toList _
+  have hpr : Proto.ResponseParse.parse (serialize condResp)
+      = some (Proto.ResponseParse.wireForm condResp) :=
+    Proto.ResponseParse.parse_serialize condResp condResp_WF
+  simp only [respBytesRaw, condInputIMS_parses, condReqIMS_strict_pass, condReqIMS_framing_pass]
+  rw [hnt]
+  simp only [mkCtx, beq_self_eq_true, if_true, acceptedRaw,
+    reqIMS_isConditional, if_true, condRewriteBytes, hinner, hpr]
+
+/-- The J09 end-to-end verdict is a `304` (the `dateFinish` fires on the round-tripped
+`200`). -/
+theorem cond_witness_ims_status :
+    (addDate (dateFinish reqIMS
+      (conditionalRewrite reqIMS (Proto.ResponseParse.wireForm condResp)))).status = 304 := by
+  rw [addDate_status]; decide
 
 /-! ## Axiom audit -/
 
@@ -1041,13 +1844,43 @@ theorem cond_witness_304_status :
 #print axioms respBytesRawBA_toList
 #print axioms conformantServe_toList
 
+/-! ### Axiom audit — the Z1 head gate (414/431) + the by-construction parse bounds -/
+
+#print axioms reqBytes_small
+#print axioms reqBytes_length_le
+#print axioms byteAt_toList_getD
+#print axioms findDoubleCrlf_le_of_match
+#print axioms headGate_none_parse_bound
+
 /-! ### Axiom audit — the CONDITIONAL wiring (H1/H2/H3/H5) -/
 
 #print axioms acceptedRawBA_toList
 #print axioms condInput_parses
 #print axioms condReq_valid_pass
+#print axioms condReq_strict_pass
+#print axioms missingHostReq_strict_rejected
 #print axioms condReq_framing_pass
 #print axioms cond_witness_304
 #print axioms cond_witness_304_status
+
+/-! ### Axiom audit — the DATE-conditional finisher (J09 / J10 / J11 / J12) -/
+
+#print axioms finish_ims_future_304
+#print axioms finish_ims_past_200
+#print axioms finish_ius_past_412
+#print axioms finish_inm_over_ims_200
+#print axioms finish_ims_future_304_nobody
+#print axioms condInputIMS_parses
+#print axioms reqIMS_isConditional
+#print axioms cond_witness_ims
+#print axioms cond_witness_ims_status
+
+/-! ### Axiom audit — the N2 `x-corr` scrub -/
+
+#print axioms headLines_scrubLines
+#print axioms scrubLines_no_corr
+#print axioms scrubLines_no_upstream
+#print axioms scrubCorrBA_toList
+#print axioms conformant_no_corr_line
 
 end Reactor.ServeConformant

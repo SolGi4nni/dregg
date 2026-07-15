@@ -27,7 +27,7 @@ Theorems:
   * `plain_get_content_type` — a plain `GET /static/app.js` is served `200 (OK)` with
     `Content-Type: application/javascript` in its headers and the real embedded body.
   * `content_type_wire_bytes` — the value the wire carries is exactly the 22 bytes of
-    `"application/javascript"` (pinned to an explicit literal via the `ba_toList_eq`
+    `"application/javascript"` (pinned to an explicit literal via the `Shortcuts.ba_toList_eq`
     bridge — pure-kernel `decide`, no `native_decide`).
   * `content_type_is_route_not_sniffed` — the `Content-Type` is a pure function of the
     served route/resource: it is `application/javascript` for EVERY request to this asset
@@ -38,49 +38,12 @@ Theorems:
 
 import StaticFile
 import Reactor.App
+import Proto.Kernel.Shortcuts
 
 namespace Proto.ContentTypeProven
 
 open StaticFile
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`).
-`ByteArray.toList` is well-founded-recursive, so it does NOT reduce in the kernel; this
-rewrites it to the structural `bs.data.toList`, which the kernel DOES reduce, so `toUTF8`
-byte constants close by pure-kernel `decide` (`{propext, Quot.sound}`; no `native_decide`,
-no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The served path segments for the deployed asset `/static/app.js` — exactly what
 `Reactor.App.targetSegments` yields for that request-target and what `serveDeployed`
@@ -129,12 +92,12 @@ theorem plain_get_content_type :
 
 /-- **`content_type_wire_bytes`.** The `Content-Type` value the deployed handler emits is
 exactly the 22 bytes of `"application/javascript"`. Pinned to an explicit byte literal
-through the `ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`. -/
+through the `Shortcuts.ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`. -/
 theorem content_type_wire_bytes :
     strBytes "application/javascript"
       = [97, 112, 112, 108, 105, 99, 97, 116, 105, 111, 110, 47,
          106, 97, 118, 97, 115, 99, 114, 105, 112, 116] := by
-  simp only [strBytes, ba_toList_eq]; decide
+  simp only [strBytes, Shortcuts.ba_toList_eq]; decide
 
 /-! ## `content_type_is_route_not_sniffed` — the type is declared, not sniffed -/
 

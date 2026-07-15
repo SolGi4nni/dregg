@@ -19,31 +19,40 @@ head triggers it — a long URI, one large header value, or ~900 small headers �
 they all inflate the same quantity: the **total head byte length**. A 28 KiB head
 survives (`200`); 32 KiB crashes. Body size is safe.
 
-**The fix (RFC 7230 §3.2.5 / §6.5 practice).** Bound the head length BEFORE the
-recursive parse and answer `431 Request Header Fields Too Large`. This file provides:
+**The fix (RFC 7230 §3.1.1 / §3.2.5, RFC 6585 §5).** Bound the head BEFORE the
+recursive parse, and answer the RFC's status for the shape that broke the bound.
+This file provides:
 
-* `headBytesTooLarge` — the single decision (`limit < size`) the fix keys on, over a
-  Nat byte-count. `maxHeadBytes` (16 KiB) sits well below the 28–32 KiB crash band and
-  well above any legitimate head.
-* `requestHeaderFieldsTooLargeResp` — the `431` refusal.
-* `headLimitStage` — a request-phase GATE that rejects an oversized head with the
-  `431`. In the `runPipeline` model this is an in-pipeline BACKSTOP (defense in
-  depth). The DEFINITIVE Z1 fix is the SAME decision applied at the BYTE boundary —
-  on `input.size` (an O(1) `ByteArray.size`) **before** `Proto.RequestSerialize.parse`
-  is ever called — so the recursive parse never runs on an oversized head and cannot
-  overflow. See the ServeConformant wire fragment in the lane report. (A gate that
-  runs AFTER the parse cannot un-overflow it; hence the primary gate is pre-parse.
-  This stage's Lean content is the shared, proven decision + the `431` response the
-  pre-parse gate emits, plus a post-parse backstop for any head the byte gate lets
-  through.)
+* `headGate` — **the definitive pre-parse gate**: reads the head GEOMETRY of the
+  raw `ByteArray` with a fixed number of index probes (no scan at all on a
+  message ≤ `maxHeadBytes`) and refuses `414 URI Too Long` when the
+  request-LINE is over `maxRequestLine` (the RFC 7230 §3.1.1 MUST) or
+  `431 Request Header Fields Too Large` when the header block is over
+  `maxHeadBytes`, BEFORE `Proto.RequestSerialize.parse` is ever called. A large
+  BODY behind a small head passes: the gate never confuses message size with
+  head size.
+* `headPrefix` — the head-only slice of the input, ≤ `maxHeadBytes + 4` bytes
+  for EVERY input (`headPrefix_size_le`): what the wrapper feeds the request-head
+  parser, so the parser's structural recursion is bounded by a CONSTANT by
+  construction (a gate that runs AFTER the parse cannot un-overflow it).
+* `headBytesTooLarge` — the older whole-message decision (`limit < size`), kept
+  for the in-pipeline BACKSTOP `headLimitStage` (defense in depth) and as the
+  compatibility reference: everything it admitted, `headGate` admits
+  (`headGate_none_of_within`), so previously-served traffic is byte-identical.
+* `requestHeaderFieldsTooLargeResp` / `uriTooLongResp` — the `431` and `414`.
 
 ## What is proven (non-vacuous on concrete witnesses)
 
-* `headLimitStage_rejects` — an oversized head ⇒ `.respond` the `431`.
-* `headLimitStage_passes` — a within-limit head ⇒ `.continue` unchanged.
-* `requestHeaderFieldsTooLargeResp_status` — the refusal is a `431`.
-* Concrete witnesses: a 40000-byte head (`bigCtx`) ⇒ `431`; a small head (`smallCtx`)
-  ⇒ pass — each guard `by decide` (no `native_decide`).
+* `scanFor_some` / `scanFor_none` — the constant-fuel index scans find exactly
+  the in-window matches.
+* `headGate_none_bound` — a gate-passed head ENDS within `maxHeadBytes`.
+* `headPrefix_size_le` — the parser's input is ≤ `maxHeadBytes + 4`, always.
+* `headGate_small` / `headGate_none_of_within` — pass-through compatibility.
+* `headGate_statuses` — the only refusals are the `414` and the `431`.
+* `headLimitStage_rejects` / `headLimitStage_passes` — the pipeline backstop.
+* Executable witnesses: the 20 KB / 100 KB request-targets ⇒ `414`; a ~28 KB
+  header block ⇒ `431`; a 20 KB BODY behind a 57-byte head ⇒ pass; an
+  8000-octet request-line (the RFC SHOULD) ⇒ pass.
 -/
 
 namespace Reactor.Stage.RequestHeadLimit
@@ -159,6 +168,251 @@ def decideStatus : StageStep → Nat
 #guard headBytesTooLarge 16384 == false
 #guard headBytesTooLarge 16385 == true
 
+/-! ## The pre-parse HEAD gate — `414`/`431` by bounded index probes
+
+The `input.size` byte gate above refuses on the TOTAL message length: head plus
+body. That conflates two different quantities. The stack hazard is driven by the
+HEAD length alone (the Z1 bisection: body size is safe), and RFC 7230 §3.1.1
+separately demands `414 URI Too Long` — not `431` — when it is the request-LINE
+that is over-long. Gating on `input.size`:
+
+* refuses a legitimate request whose BODY pushes the message over 16 KiB with a
+  bogus `431 Request Header Fields Too Large` (a body-cliff: no header was large);
+* answers `431` where the RFC says `414` MUST be the answer for an over-long
+  request-target.
+
+`headGate` below reads the head GEOMETRY instead, with a fixed number of index
+probes — `O(1)` on every message up to `maxHeadBytes` (one size test, no scan),
+and at most `maxRequestLine + maxHeadBytes + 1` probes on a larger one — all
+BEFORE any recursive parse:
+
+* no `CRLF` within the first `maxRequestLine` bytes ⇒ the request-line (hence
+  the request-target) is longer than the server parses ⇒ `414` (the RFC 7230
+  §3.1.1 MUST; `maxRequestLine` = 8192 honors the SHOULD of ≥ 8000 octets);
+* otherwise no `CRLFCRLF` within the first `maxHeadBytes + 1` positions ⇒ the
+  header block is over the head bound ⇒ `431` (RFC 6585 §5);
+* otherwise pass: `headGate_none_bound` proves the head then ENDS within
+  `maxHeadBytes` — the constant that bounds every head-walking recursion — while
+  the body behind it may be arbitrarily large.
+
+The scanners are CONSTANT-fuel tail loops (`scanFor`): their recursion depth is
+the fuel constant, never the input length, so the gate itself cannot be the
+overflow it guards against. -/
+
+/-- RFC 7230 §3.1.1: a server SHOULD support a request-line of at least 8000
+octets, and MUST answer `414` when the request-target is longer than any URI it
+is willing to parse. The accepted request-line bound: 8192. -/
+def maxRequestLine : Nat := 8192
+
+/-- `414 URI Too Long` — the over-long request-line refusal (RFC 7230 §3.1.1). -/
+def uriTooLongResp : Response :=
+  { status := 414, reason := strBytes "URI Too Long", headers := []
+    body := strBytes "uri too long\n" }
+
+theorem uriTooLongResp_status : uriTooLongResp.status = 414 := rfl
+
+/-- Clamped byte load: byte `i`, `0` past the end — the index probe the gate
+scans are built from (the deployed scanners' `List.getD … 0`, index-native). -/
+def byteAt (input : ByteArray) (i : Nat) : UInt8 :=
+  if h : i < input.size then input[i] else 0
+
+/-- `CRLF` starting at `i` (two probes; `false` past the end since `0 ≠ CR`). -/
+def crlfAt (input : ByteArray) (i : Nat) : Bool :=
+  byteAt input i == 13 && byteAt input (i + 1) == 10
+
+/-- `CRLFCRLF` — the head terminator — starting at `i`. -/
+def crlf2At (input : ByteArray) (i : Nat) : Bool :=
+  crlfAt input i && crlfAt input (i + 2)
+
+/-- First index `j ∈ [i, i + fuel)` with `p j = true`. A TAIL-recursive cursor
+loop structurally recursive on `fuel`; the gate instantiates `fuel` with a fixed
+constant, so the scan's stack depth is bounded by that constant for EVERY input
+— by construction, not by an argument about the input's shape. -/
+def scanFor (p : Nat → Bool) : Nat → Nat → Option Nat
+  | _, 0 => none
+  | i, fuel + 1 => if p i then some i else scanFor p (i + 1) fuel
+
+/-- `scanFor` finds only genuine, in-window matches. -/
+theorem scanFor_some (p : Nat → Bool) :
+    ∀ fuel i k, scanFor p i fuel = some k → p k = true ∧ i ≤ k ∧ k < i + fuel := by
+  intro fuel
+  induction fuel with
+  | zero => intro i k h; exact absurd h (by simp [scanFor])
+  | succ f ih =>
+    intro i k h
+    rw [scanFor] at h
+    by_cases hp : p i = true
+    · rw [if_pos hp] at h
+      cases h
+      exact ⟨hp, Nat.le_refl i, by omega⟩
+    · rw [if_neg hp] at h
+      obtain ⟨h1, h2, h3⟩ := ih (i + 1) k h
+      exact ⟨h1, by omega, by omega⟩
+
+/-- `scanFor` misses nothing in its window: `none` ⇒ no index in `[i, i + fuel)`
+satisfies `p`. -/
+theorem scanFor_none (p : Nat → Bool) :
+    ∀ fuel i, scanFor p i fuel = none →
+      ∀ j, i ≤ j → j < i + fuel → p j = false := by
+  intro fuel
+  induction fuel with
+  | zero => intro i _ j h1 h2; omega
+  | succ f ih =>
+    intro i h j h1 h2
+    rw [scanFor] at h
+    by_cases hp : p i = true
+    · rw [if_pos hp] at h; exact absurd h (by simp)
+    · rw [if_neg hp] at h
+      by_cases hj : j = i
+      · subst hj; exact Bool.eq_false_iff.mpr hp
+      · exact ih (i + 1) h j (by omega) (by omega)
+
+/-- **The pre-parse request-head gate.** `none` = proceed to the parse;
+`some r` = answer `r` (`414` or `431`) without parsing. See the section
+comment for the three cases. -/
+def headGate (input : ByteArray) : Option Response :=
+  if input.size ≤ maxHeadBytes then none
+  else if (scanFor (crlfAt input) 0 maxRequestLine).isNone then
+    some uriTooLongResp
+  else if (scanFor (crlf2At input) 0 (maxHeadBytes + 1)).isNone then
+    some requestHeaderFieldsTooLargeResp
+  else none
+
+/-- A message within the head bound is never refused — `O(1)`, no scan. -/
+theorem headGate_small (input : ByteArray) (h : input.size ≤ maxHeadBytes) :
+    headGate input = none := by
+  unfold headGate; rw [if_pos h]
+
+/-- Old-gate compatibility: every input the `input.size` byte gate ADMITTED, the
+head gate admits — so on that whole class the wrapped serve is byte-identical to
+what it was. (The gates differ only on `> maxHeadBytes` messages: the old gate
+refused them all with `431`; the head gate refuses only oversized HEADS, and
+distinguishes `414`.) -/
+theorem headGate_none_of_within (input : ByteArray)
+    (h : headBytesTooLarge input.size = false) : headGate input = none := by
+  apply headGate_small
+  have := of_decide_eq_false h
+  omega
+
+/-- The gate's only refusals are the `414` and the `431`. -/
+theorem headGate_statuses (input : ByteArray) (r : Response)
+    (h : headGate input = some r) : r.status = 414 ∨ r.status = 431 := by
+  unfold headGate at h
+  by_cases h1 : input.size ≤ maxHeadBytes
+  · rw [if_pos h1] at h; exact absurd h (by simp)
+  · rw [if_neg h1] at h
+    by_cases h2 : (scanFor (crlfAt input) 0 maxRequestLine).isNone = true
+    · rw [if_pos h2] at h; cases h; exact Or.inl rfl
+    · rw [if_neg h2] at h
+      by_cases h3 : (scanFor (crlf2At input) 0 (maxHeadBytes + 1)).isNone = true
+      · rw [if_pos h3] at h; cases h; exact Or.inr rfl
+      · rw [if_neg h3] at h; exact absurd h (by simp)
+
+/-- **The head bound.** When the gate passes, the head ENDS within the constant:
+either the whole message is ≤ `maxHeadBytes`, or a `CRLFCRLF` sits at some
+`k ≤ maxHeadBytes`. This is the fact that bounds every head-walking recursion
+behind the gate (`ServeConformant.headGate_none_parse_bound` carries it to the
+deployed framing scan). -/
+theorem headGate_none_bound (input : ByteArray) (h : headGate input = none) :
+    input.size ≤ maxHeadBytes ∨ ∃ k, k ≤ maxHeadBytes ∧ crlf2At input k = true := by
+  unfold headGate at h
+  by_cases h1 : input.size ≤ maxHeadBytes
+  · exact Or.inl h1
+  · rw [if_neg h1] at h
+    by_cases h2 : (scanFor (crlfAt input) 0 maxRequestLine).isNone = true
+    · rw [if_pos h2] at h; exact absurd h (by simp)
+    · rw [if_neg h2] at h
+      by_cases h3 : (scanFor (crlf2At input) 0 (maxHeadBytes + 1)).isNone = true
+      · rw [if_pos h3] at h; exact absurd h (by simp)
+      · rcases hk : scanFor (crlf2At input) 0 (maxHeadBytes + 1) with _ | k
+        · rw [hk] at h3; exact absurd rfl h3
+        · obtain ⟨hp, _, hlt⟩ := scanFor_some (crlf2At input) _ 0 k hk
+          exact Or.inr ⟨k, by omega, hp⟩
+
+/-! ## The head prefix — everything a request-head parse may read -/
+
+/-- The HEAD PREFIX of the input: the whole input when it is small; otherwise
+the bytes through the first `CRLFCRLF` (inclusive). An input the gate refuses is
+cut at the bound (defensive — the wrapper answers the gate's `414`/`431` and
+never parses it), so the prefix is ≤ `maxHeadBytes + 4` for EVERY input
+(`headPrefix_size_le`): feeding the request-head parser `headPrefix input`
+instead of `input` bounds its structural recursion by a CONSTANT, by
+construction. The body — however large — is never in the parser's input. -/
+def headPrefix (input : ByteArray) : ByteArray :=
+  if input.size ≤ maxHeadBytes then input
+  else
+    match scanFor (crlf2At input) 0 (maxHeadBytes + 1) with
+    | some k => ByteArray.mk (input.data.extract 0 (k + 4))
+    | none => ByteArray.mk (input.data.extract 0 (maxHeadBytes + 4))
+
+/-- On every message within the head bound the prefix IS the input — the parse
+sees byte-identical bytes (all previously-admitted traffic is unchanged). -/
+theorem headPrefix_small (input : ByteArray) (h : input.size ≤ maxHeadBytes) :
+    headPrefix input = input := by
+  unfold headPrefix; rw [if_pos h]
+
+/-- **The parse-input bound, unconditional.** For EVERY input — gated or not —
+the head prefix is at most `maxHeadBytes + 4` bytes. Every scan the request-head
+parser runs is structural recursion on (a suffix of) this list, so its recursion
+depth is bounded by this constant regardless of what arrives on the wire. -/
+theorem headPrefix_size_le (input : ByteArray) :
+    (headPrefix input).size ≤ maxHeadBytes + 4 := by
+  unfold headPrefix
+  by_cases h1 : input.size ≤ maxHeadBytes
+  · rw [if_pos h1]; omega
+  · rw [if_neg h1]
+    rcases hk : scanFor (crlf2At input) 0 (maxHeadBytes + 1) with _ | k
+    · show (ByteArray.mk (input.data.extract 0 (maxHeadBytes + 4))).size ≤ maxHeadBytes + 4
+      show (input.data.extract 0 (maxHeadBytes + 4)).size ≤ maxHeadBytes + 4
+      rw [Array.size_extract]
+      omega
+    · obtain ⟨_, _, hlt⟩ := scanFor_some (crlf2At input) _ 0 k hk
+      show (input.data.extract 0 (k + 4)).size ≤ maxHeadBytes + 4
+      rw [Array.size_extract]
+      omega
+
+/-! ### Executable witnesses — the gate discriminates the three refusal shapes
+
+Real wire bytes (evaluator-checked): the 20 KB and 100 KB request-targets that
+crashed the serve are `414`s; an oversized header BLOCK (short request-line) is
+a `431`; a large BODY behind a small head — refused `431` by the `input.size`
+gate — passes; a normal request and an 8000-octet request-line (the RFC SHOULD)
+pass. -/
+
+private def gateStatus (input : ByteArray) : Nat :=
+  match headGate input with
+  | some r => r.status
+  | none => 0
+
+private def longTargetInput (n : Nat) : ByteArray :=
+  ("GET /" ++ String.mk (List.replicate n 'a') ++ " HTTP/1.1\r\nHost: x\r\n\r\n").toUTF8
+
+private def bigHeaderInput : ByteArray :=
+  ("GET / HTTP/1.1\r\nHost: x\r\n"
+    ++ String.join (List.replicate 900 "x-filler: aaaaaaaaaaaaaaaaaaaa\r\n")
+    ++ "\r\n").toUTF8
+
+private def bigBodyInput : ByteArray :=
+  ("POST /health HTTP/1.1\r\nHost: x\r\nContent-Length: 20000\r\n\r\n"
+    ++ String.mk (List.replicate 20000 'x')).toUTF8
+
+private def line8000BigBody : ByteArray :=
+  ("GET /" ++ String.mk (List.replicate 7994 'a')
+    ++ " HTTP/1.1\r\nHost: x\r\nContent-Length: 20000\r\n\r\n"
+    ++ String.mk (List.replicate 20000 'x')).toUTF8
+
+#guard gateStatus (longTargetInput 20000) == 414   -- crash #1's request, by hand
+#guard gateStatus (longTargetInput 100000) == 414
+#guard gateStatus bigHeaderInput == 431            -- ~28 KB of headers, short line
+#guard gateStatus bigBodyInput == 0                -- the body-cliff: 20 KB body passes
+#guard gateStatus ("GET /health HTTP/1.1\r\nHost: x\r\n\r\n".toUTF8) == 0
+#guard gateStatus line8000BigBody == 0             -- RFC SHOULD: 8000-octet line passes
+#guard (headPrefix (longTargetInput 100000)).size ≤ maxHeadBytes + 4
+#guard (headPrefix bigBodyInput).size ≤ maxHeadBytes + 4
+-- the prefix cut keeps the whole head: it still ends in CRLFCRLF
+#guard ((headPrefix bigBodyInput).size == 57
+        && crlf2At (headPrefix bigBodyInput) 53) == true
+
 /-! ## Axiom audit -/
 
 #print axioms headLimitStage_rejects
@@ -168,5 +422,16 @@ def decideStatus : StageStep → Nat
 #print axioms bigCtx_rejected
 #print axioms smallCtx_passes
 #print axioms gate_discriminates
+
+/-! ### Axiom audit — the pre-parse head gate -/
+
+#print axioms scanFor_some
+#print axioms scanFor_none
+#print axioms headGate_small
+#print axioms headGate_none_of_within
+#print axioms headGate_statuses
+#print axioms headGate_none_bound
+#print axioms headPrefix_small
+#print axioms headPrefix_size_le
 
 end Reactor.Stage.RequestHeadLimit

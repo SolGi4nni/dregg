@@ -35,7 +35,7 @@ no `Lean.ofReduceBool`):
   * `trace_get_gate_agnostic` — `TRACE` and `GET` are BOTH recognized yet distinct tokens:
     the gate treats them identically, which is exactly why the serve is method-blind.
   * `max_forwards_name_wire_bytes` — the exact bytes of the `"Max-Forwards"` request-header
-    field the deployed serve IGNORES (pinned via `ba_toList_eq`, pure-kernel `decide`).
+    field the deployed serve IGNORES (pinned via `Shortcuts.ba_toList_eq`, pure-kernel `decide`).
 
 ## Not proven in-kernel (deliberately, per the honest-gap posture)
 
@@ -47,50 +47,15 @@ the recognized set.
 -/
 
 import Reactor.Stage.RequestValidation
+import Proto.Kernel.Shortcuts
 
 namespace Proto.TraceMaxForwardsProven
 
 open Proto (Bytes Request)
+open Proto.Kernel
 open Reactor.Stage.RequestValidation
   (knownMethods methodKnown versionSupported hostOk mTRACE mGET hostName httpV11
    validationStage validationStage_passes_valid)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
 
 /-! ## `TRACE` is a recognized method — so it is served, not `501`ed -/
 
@@ -142,13 +107,13 @@ theorem trace_get_gate_agnostic :
 def maxForwardsName : Bytes := "Max-Forwards".toUTF8.toList
 
 /-- **`max_forwards_name_wire_bytes`.** The exact bytes of the `"Max-Forwards"` field the
-deployed serve neither reads nor decrements — pinned through the `ba_toList_eq` bridge
+deployed serve neither reads nor decrements — pinned through the `Shortcuts.ba_toList_eq` bridge
 (pure-kernel `decide`, no `native_decide`). Curl: `TRACE … Max-Forwards: 0` still returns
 the ordinary `200` body, so the field has no effect on the wire. -/
 theorem max_forwards_name_wire_bytes :
     maxForwardsName =
       [77, 97, 120, 45, 70, 111, 114, 119, 97, 114, 100, 115] := by
-  simp only [maxForwardsName, ba_toList_eq]; decide
+  simp only [maxForwardsName, Shortcuts.ba_toList_eq]; decide
 
 end Proto.TraceMaxForwardsProven
 

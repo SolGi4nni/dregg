@@ -74,3 +74,4 @@ demo/run/*.png
 orb/conformance/h2c-host/h2c-host
 *.png.skip
 wasm/pkg-mwt/
+orb/conformance/h2c-host/h2c-host

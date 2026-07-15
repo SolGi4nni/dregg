@@ -173,6 +173,22 @@ pub fn load_cert() -> Option<TlsCert> {
 /// serializes with the plaintext serve — the honest single-owner trade). The
 /// accept loop itself never blocks on a connection.
 pub fn run(listener: TcpListener, gw: ServeGateway, cert: TlsCert) {
+    // KEX posture (DRORB_TLS_KEX). The verified server reads this env var itself
+    // and builds the ServerParams accordingly (Dataplane.Tls.KexPosture drives
+    // deployedTlsParams); we surface it here for operator visibility and to flag
+    // a mistyped value. `preferred` (default) offers X25519MLKEM768 + X25519 and
+    // honors the client's best group; `required` pins the hybrid (classical
+    // clients rejected); `classical` offers only X25519 (no post-quantum).
+    let posture = match std::env::var("DRORB_TLS_KEX").ok().as_deref() {
+        Some("required") => "required",
+        Some("classical") => "classical",
+        None | Some("") | Some("preferred") => "preferred",
+        Some(other) => {
+            eprintln!("dataplane: TLS - unknown DRORB_TLS_KEX={other:?}, using preferred");
+            "preferred"
+        }
+    };
+    eprintln!("dataplane: TLS KEX posture = {posture}");
     listener
         .set_nonblocking(true)
         .expect("failed to set the TLS listener non-blocking");

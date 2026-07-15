@@ -363,6 +363,15 @@ lean_lib QuicServer
 @[default_target] lean_lib Framing where
   srcDir := "."
   roots := #[`Body.Framing]
+@[default_target] lean_lib FrameRaw where
+  srcDir := "."
+  roots := #[`Body.FrameRaw]
+@[default_target] lean_lib WsDecode where
+  srcDir := "."
+  roots := #[`Ws.Decode]
+@[default_target] lean_lib WsEncode where
+  srcDir := "."
+  roots := #[`Ws.Encode]
 @[default_target] lean_lib H2PseudoHeader where
   srcDir := "."
   roots := #[`H2.PseudoHeader]
@@ -967,3 +976,64 @@ lean_lib QueryRouteProven where
 @[default_target] lean_lib RateDeployedProven where
   srcDir := "."
   roots := #[`Proto.RateDeployedProven]
+
+@[default_target] lean_lib VaryProven where
+  srcDir := "."
+  roots := #[`Proto.VaryProven]
+
+@[default_target] lean_lib AgeProven where
+  srcDir := "."
+  roots := #[`Proto.AgeProven]
+
+@[default_target] lean_lib ContentDispositionProven where
+  srcDir := "."
+  roots := #[`Proto.ContentDispositionProven]
+
+
+@[default_target] lean_lib ReactorStageProxyProtocol where
+  srcDir := "."
+  roots := #[`Reactor.Stage.ProxyProtocol]
+
+@[default_target] lean_lib ReactorStageCookieSecure where
+  srcDir := "."
+  roots := #[`Reactor.Stage.CookieSecure]
+
+@[default_target] lean_lib KernelShortcuts where
+  srcDir := "."
+  roots := #[`Proto.Kernel.Shortcuts]
+
+@[default_target] lean_lib ReactorStageLinkPreload where
+  srcDir := "."
+  roots := #[`Reactor.Stage.LinkPreload]
+
+@[default_target] lean_lib ReactorStageWarningTransform where
+  srcDir := "."
+  roots := #[`Reactor.Stage.WarningTransform]
+
+@[default_target] lean_lib ReactorStageCacheStatus where
+  srcDir := "."
+  roots := #[`Reactor.Stage.CacheStatus]
+
+@[default_target] lean_lib ReactorStageCrossOriginResource where
+  srcDir := "."
+  roots := #[`Reactor.Stage.CrossOriginResource]
+
+@[default_target] lean_lib ReactorStagePermissionsPolicy where
+  srcDir := "."
+  roots := #[`Reactor.Stage.PermissionsPolicy]
+
+@[default_target] lean_lib ReactorStageAltSvc where
+  srcDir := "."
+  roots := #[`Reactor.Stage.AltSvc]
+
+@[default_target] lean_lib WsUtf8 where
+  srcDir := "."
+  roots := #[`Ws.Utf8]
+
+@[default_target] lean_lib WsReassemblyAdmit where
+  srcDir := "."
+  roots := #[`Ws.ReassemblyAdmit]
+
+@[default_target] lean_lib WsReassemblyClose where
+  srcDir := "."
+  roots := #[`Ws.ReassemblyClose]

@@ -5,8 +5,10 @@
 AES-128-GCM AEAD under AES-ECB header protection) and recovers the TLS
 ClientHello from its CRYPTO frames. That is the *receive* half. This module is
 the *send* half and the connection machine: on a decrypted ClientHello it derives
-the TLS 1.3 handshake secrets (X25519 DHE via `Crypto.x25519` + the
-`TlsCrypto`/`TlsHandshake` key schedule) and emits the server's response flight
+the TLS 1.3 handshake secrets (the REQUIRED `X25519MLKEM768` post-quantum hybrid
+KEX via `TlsHandshake.hybridServerKex` — ML-KEM-768 encaps + `Crypto.x25519` —
+into the `TlsCrypto`/`TlsHandshake` key schedule; a classical-only ClientHello is
+rejected, see § 10a) and emits the server's response flight
 as real QUIC packets —
 
   * a **server Initial** packet carrying an ACK and the ServerHello in a CRYPTO
@@ -821,18 +823,59 @@ structure Conn where
 
 /-! ## (10) Building the server response flight from a decrypted ClientHello -/
 
+/-- The `ServerParams` view of this transport's fixed demo keys, so the QUIC
+handshake can reuse `TlsHandshake.hybridServerKex` (which reads only
+`ephemeralPriv`). Every other field is the transport's own constant; the KEX
+never consults them — EXCEPT `requireHybridKex`, pinned `true`: this transport
+requires the `X25519MLKEM768` hybrid key exchange, matching the TLS edge
+(`Dataplane.deployedTlsParams.requireHybridKex = true`). A classical-only
+ClientHello gets no key exchange (`quicKex_requires_hybrid` below). -/
+def quicServerParams : ServerParams :=
+  { ephemeralPriv := ephemeralPriv, serverRandom := serverRandom,
+    certSeed := certSeed, certData := certData,
+    requireHybridKex := true }
+
+/-- **The QUIC 1-RTT key exchange dispatch.** Prefers the STANDARD
+`X25519MLKEM768` post-quantum hybrid (IETF `draft-ietf-tls-ecdhe-mlkem`, code
+point `0x11EC`) whenever the ClientHello carried a `key_share` for it, exactly
+the wire construction `TlsHandshake.hybridServerKex` proves: parse
+`ml_kem_ek(1184) ‖ x25519_pub(32)`, ML-KEM-encapsulate + X25519-DH, emit
+`ml_kem_ct(1088) ‖ x25519_pub(32)`, and set `dhe := ml_kem_ss ‖ x25519_ss`
+(RAW concat, ML-KEM first) straight into the shared TLS 1.3 key schedule QUIC
+also uses. The transport is hybrid-PINNED (`quicServerParams.requireHybridKex =
+true`, matching the TLS edge): a legacy client that offered no hybrid share gets
+NO key exchange — `none`, never a silent classical downgrade. (The classical
+X25519 arm below is reachable only under a `requireHybridKex = false` parameter
+set, which this transport does not deploy.) Returns the server `key_share`
+bytes, the `dhe`, and the selected named group so the ServerHello echoes the
+negotiated group (never downgraded). `none` on a malformed/short share or any
+crypto fault (fail-closed). -/
+def quicKex (ch : ClientHello) : Option (ByteArray × ByteArray × Nat) :=
+  match ch.keyShareHybrid with
+  | some hy =>
+      (hybridServerKex quicServerParams hy).map
+        (fun p => (p.1, p.2, xwingGroup))
+  | none =>
+      -- Hybrid-pinned peer, no X25519MLKEM768 share offered: fail closed,
+      -- exactly the TLS edge's `requireHybridKex` rejection (§ PQ).
+      if quicServerParams.requireHybridKex then none
+      else do
+        let cpub ← ch.keyShare
+        let serverPub ← x25519Base ephemeralPriv
+        let d ← x25519 ephemeralPriv (ofBytes cpub)
+        pure (serverPub, d, x25519Group)
+
 /-- Given the client's original DCID, the server SCID, the ALPN selection, the
 post-Retry `retry_source_connection_id` (if the connection was retried) and the
 ClientHello handshake-message bytes, derive the handshake secrets and build the
 server's CRYPTO content (raw TLS messages) plus the transcript needed for 1-RTT.
 Returns the ServerHello, the handshake-flight bytes (EE‖Cert‖CV‖Finished), and
-the `Established` transcript material. -/
+the `Established` transcript material. The KEX is `quicKex`: the STANDARD
+`X25519MLKEM768` hybrid, REQUIRED (`buildTlsFlight_requires_hybrid`). -/
 def buildTlsFlight (odcid sscid alpn chMsg : ByteArray) (retryScid : Option ByteArray)
     (ch : ClientHello) : Option (ByteArray × ByteArray × Established) := do
-  let cpub ← ch.keyShare
-  let serverPub ← x25519Base ephemeralPriv
-  let dhe ← x25519 ephemeralPriv (ofBytes cpub)
-  let sh := buildServerHello chachaSuite serverRandom (ofBytes ch.sessionId) serverPub
+  let (serverShare, dhe, group) ← quicKex ch
+  let sh := buildServerHello chachaSuite serverRandom (ofBytes ch.sessionId) serverShare group
   let thHS := sha256 (chMsg ++ sh)
   let ee := buildEncryptedExtensionsQuic odcid sscid alpn retryScid
   let cert := buildCertificate [certData]
@@ -842,8 +885,134 @@ def buildTlsFlight (odcid sscid alpn chMsg : ByteArray) (retryScid : Option Byte
   let cv ← buildCertificateVerify certSeed (sha256 (chMsg ++ sh ++ ee ++ cert))
   let sFin ← buildFinished sHs (sha256 (chMsg ++ sh ++ ee ++ cert ++ cv))
   let thSF := sha256 (chMsg ++ sh ++ ee ++ cert ++ cv ++ sFin)
-  let est : Established := { dhe := dhe, thHS := thHS, thSF := thSF, alpn := .h1 }
+  let est : Established := { dhe := dhe, thHS := thHS, thSF := thSF, alpn := .h1, group := group }
   some (sh, ee ++ cert ++ cv ++ sFin, est)
+
+/-! ## (10a) The QUIC hybrid-KEX soundness.
+
+The QUIC handshake reaches the identical TLS 1.3 key schedule the TLS server
+does — `quicKex`'s hybrid branch is `TlsHandshake.hybridServerKex` verbatim, so
+the `dhe` QUIC feeds the schedule is exactly the raw concatenation
+`ml_kem_ss ‖ x25519_ss` whose composition soundness is proved once, at the TLS
+key-schedule combiner, in `TlsHandshake`. These theorems (1) pin QUIC's KEX to
+that construction — no downgrade, no `xwingCombine` — (2) pin the REQUIREMENT:
+the transport is hybrid-pinned, so a classical-only ClientHello gets no key
+exchange and no flight at all — and (3) inherit the break-one-still-safe /
+harvest-now-decrypt-later guarantees for the QUIC path. -/
+
+/-- **The deployed QUIC transport pins the hybrid KEX.** `requireHybridKex` is
+`true` in `quicServerParams` — the QUIC analogue of the TLS edge's
+`Dataplane.deployedTlsParams_pins_hybrid`. `rfl`-clean: the pin is a literal in
+the parameter set, not a runtime configuration that could drift. -/
+theorem quicServerParams_requires_hybrid :
+    quicServerParams.requireHybridKex = true := rfl
+
+/-- **No classical completion, ever** (the QUIC mirror of
+`TlsHandshake.tls_kex_hybrid_downgrade_safe`): a ClientHello that offered no
+`X25519MLKEM768` share gets NO key exchange from this transport — `quicKex` is
+`none`, fail-closed. There is no input on which QUIC derives a classical-only
+shared secret. -/
+theorem quicKex_requires_hybrid {ch : ClientHello}
+    (hnohybrid : ch.keyShareHybrid = none) : quicKex ch = none := by
+  unfold quicKex; rw [hnohybrid]; rfl
+
+/-- **No hybrid share, no flight** — the requirement lifted to the whole server
+response: `buildTlsFlight` (ServerHello + EE‖Cert‖CV‖Finished + transcript)
+produces NOTHING for a classical-only ClientHello. The connection never reaches
+handshake keys, so the QUIC transport requires the hybrid KEX end-to-end. -/
+theorem buildTlsFlight_requires_hybrid (odcid sscid alpn chMsg : ByteArray)
+    (retryScid : Option ByteArray) {ch : ClientHello}
+    (hnohybrid : ch.keyShareHybrid = none) :
+    buildTlsFlight odcid sscid alpn chMsg retryScid ch = none := by
+  unfold buildTlsFlight
+  rw [quicKex_requires_hybrid hnohybrid]
+  rfl
+
+/-- **No silent downgrade.** When the client offered the `X25519MLKEM768` hybrid
+share and the KEX succeeds, the negotiated group the ServerHello will echo is
+`xwingGroup` (`0x11EC`) — never the classical group. -/
+theorem quicKex_hybrid_group {ch : ClientHello} {hy : Tls.Bytes}
+    {r : ByteArray × ByteArray × Nat}
+    (hh : ch.keyShareHybrid = some hy) (hok : quicKex ch = some r) :
+    r.2.2 = xwingGroup := by
+  have hk : quicKex ch
+      = (hybridServerKex quicServerParams hy).map (fun p => (p.1, p.2, xwingGroup)) := by
+    unfold quicKex; rw [hh]
+  rw [hk] at hok
+  cases hkx : hybridServerKex quicServerParams hy with
+  | none => rw [hkx] at hok; simp at hok
+  | some p =>
+      rw [hkx] at hok
+      injection hok with hok'
+      rw [← hok']
+
+/-- **The QUIC hybrid `dhe` is `hybridServerKex`'s `dhe` verbatim** — the raw
+concat `ml_kem_ss ‖ x25519_ss` (the tripwire against a regression to a classical
+secret or to `xwingCombine`). Combined with
+`TlsHandshake.ecdhe_mlkem_dhe_is_raw_concat`, this fixes the exact bytes QUIC
+hands the schedule. -/
+theorem quicKex_hybrid_dhe {ch : ClientHello} {hy : Tls.Bytes}
+    {r : ByteArray × ByteArray × Nat}
+    (hh : ch.keyShareHybrid = some hy) (hok : quicKex ch = some r) :
+    ∃ p, hybridServerKex quicServerParams hy = some p ∧ r.2.1 = p.2 := by
+  have hk : quicKex ch
+      = (hybridServerKex quicServerParams hy).map (fun p => (p.1, p.2, xwingGroup)) := by
+    unfold quicKex; rw [hh]
+  rw [hk] at hok
+  cases hkx : hybridServerKex quicServerParams hy with
+  | none => rw [hkx] at hok; simp at hok
+  | some p =>
+      rw [hkx] at hok
+      injection hok with hok'
+      exact ⟨p, rfl, by rw [← hok']⟩
+
+/-- **Every completed QUIC key exchange negotiated the hybrid group.** Not just
+"hybrid when offered": ANY successful `quicKex` returns `xwingGroup` (`0x11EC`)
+as the group the ServerHello echoes — the classical `x25519Group` arm is dead
+code under the deployed pin. -/
+theorem quicKex_group_always_hybrid {ch : ClientHello}
+    {r : ByteArray × ByteArray × Nat} (hok : quicKex ch = some r) :
+    r.2.2 = xwingGroup := by
+  cases hh : ch.keyShareHybrid with
+  | some hy => exact quicKex_hybrid_group hh hok
+  | none => rw [quicKex_requires_hybrid hh] at hok; exact Option.noConfusion hok
+
+/-- **Every completed QUIC key exchange carries the hybrid `dhe`.** ANY
+successful `quicKex` got its shared secret from `hybridServerKex` — the raw
+concat `ml_kem_ss ‖ x25519_ss`. With `quicKex_requires_hybrid`, this closes the
+dispatch: reject classical, and anything accepted is the proven hybrid. -/
+theorem quicKex_dhe_always_hybrid {ch : ClientHello}
+    {r : ByteArray × ByteArray × Nat} (hok : quicKex ch = some r) :
+    ∃ hy p, ch.keyShareHybrid = some hy
+      ∧ hybridServerKex quicServerParams hy = some p ∧ r.2.1 = p.2 := by
+  cases hh : ch.keyShareHybrid with
+  | some hy =>
+      obtain ⟨p, hp, hd⟩ := quicKex_hybrid_dhe hh hok
+      exact ⟨hy, p, rfl, hp, hd⟩
+  | none => rw [quicKex_requires_hybrid hh] at hok; exact Option.noConfusion hok
+
+/-- **The QUIC hybrid session key binds BOTH halves** (break-one-still-safe).
+Under the TLS key-schedule dual-PRF, the schedule secret QUIC derives from the
+hybrid `dhe` is UNPREDICTABLE if EITHER the X25519 or the ML-KEM secret source
+is — the composition proved at the shared combiner
+`TlsHandshake.ecdheMlkemKdf`, which QUIC feeds byte-for-byte
+(`quicKex_hybrid_dhe`). -/
+theorem quic_hybrid_kex_binds_both {In : Type} (tr ssx sspq : ByteArray)
+    (sourceX sourcePq : In → ByteArray)
+    (heither : Crypto.Xwing.Unpredictable sourceX ∨ Crypto.Xwing.Unpredictable sourcePq) :
+    Crypto.Xwing.Unpredictable (fun i => ecdheMlkemKdf (sourceX i) sspq tr) ∨
+    Crypto.Xwing.Unpredictable (fun i => ecdheMlkemKdf ssx (sourcePq i) tr) :=
+  tls_ecdhe_mlkem_sound tr ssx sspq sourceX sourcePq heither
+
+/-- **Harvest-now-decrypt-later is defeated on the QUIC hybrid path.** Even with
+the classical X25519 secret fully known to a (quantum) adversary, the QUIC
+session key stays UNPREDICTABLE because the ML-KEM half does — resting on
+dregg's proven ML-KEM IND-CCA (the MLWE floor). A MITM breaking ONLY X25519
+cannot derive the QUIC session key. -/
+theorem quic_hybrid_kex_pq_protects (tr ssx ek : ByteArray) :
+    Crypto.Xwing.Unpredictable
+      (fun coins => ecdheMlkemKdf ssx (Crypto.Xwing.mlKemSource ek coins) tr) :=
+  tls_ecdhe_mlkem_pq_protects tr ssx ek
 
 /-- The server handshake-level packet keys (server + client handshake ChaCha
 keys) from the DHE + the CH..SH transcript hash. -/

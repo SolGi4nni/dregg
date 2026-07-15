@@ -75,7 +75,13 @@ pub fn should_handle(req: &[u8]) -> bool {
 
 /// GET whose target sits under `/static` or `/admin` — the cacheable-route shape
 /// the core's `isCacheableTarget` decides on. A prefilter only: the core re-derives
-/// this and owns the actual cacheability/lifetime.
+/// this and owns the actual cacheability decision — including RFC 7232 conditional
+/// revalidation on the cache path (`Reactor.ServeStep.revalidate`, applied by
+/// `cacheResume` on both HIT and MISS) and the RFC 7233 Range refusal (`hasRange`
+/// inside the proven `cacheableKey`). Conditional and Range requests therefore
+/// cross the seam and the PROVEN core decides them: a conditional GET is answered
+/// 304/412 from the cache path (cache-fast, handler not run on a HIT), a ranged
+/// GET is declined by the core's cache decision and served by the fold (206/416).
 fn is_cacheable_shape(req: &[u8]) -> bool {
     let line_end = match find(req, b"\r\n") {
         Some(e) => e,

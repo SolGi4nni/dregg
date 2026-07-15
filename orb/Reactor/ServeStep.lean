@@ -1,5 +1,7 @@
 import Reactor.Deploy
 import Reactor.ProxyDial
+import Reactor.ServeConformant
+import Reactor.DeployPipeline
 import Cache
 
 /-!
@@ -29,8 +31,11 @@ byte-for-byte store.
 * **cacheLookup / cacheStore** — the RFC 9111 shared cache. The proven core runs
   the GATES first; only for a gate-admitted, cacheable GET does it yield
   `.cacheLookup`. On a HIT the continuation `.done`s the stored bytes WITHOUT
-  running the handler; on a MISS it runs the fold, yields `.cacheStore` with the
-  PROVEN key + lifetime, then `.done`s. Because the gate check runs BEFORE the
+  running the handler — REVALIDATED against the request's preconditions (RFC
+  7232: `If-None-Match` match ⇒ the proven `304`, verbatim for a plain GET); on
+  a MISS it runs the fold (preconditions stripped, so the store holds the plain
+  `200`), yields `.cacheStore` with the PROVEN key + lifetime, then `.done`s the
+  revalidated fold bytes. Because the gate check runs BEFORE the
   lookup, a cache HIT is gate-admitted: a request the gate refuses (e.g. a
   `/admin` path with no valid credential) never reaches the store — it is the
   gate response, not a cached hit. This is the sans-IO cache done correctly, the
@@ -39,16 +44,20 @@ byte-for-byte store.
 
 ## Faithfulness to the deployed serve
 
-* On a **non-cacheable, non-proxy** request, `serveStep` `.done`-s EXACTLY the
-  deployed serve bytes (`Reactor.Deploy.servePipelineFull2 input`, the response
-  component of `deployStepFull2`) — `serveStep_noncacheable`,
-  `serveStep_preserves_deployed`.
+* On a **non-cacheable, non-proxy** request, `serveStep` `.done`-s the
+  consolidated deployed serve bytes (`seamInner input` — the full deployed stage
+  registry `Reactor.DeployPipeline.deployPipelineStages`) crossed by the
+  `revalidate` finisher (`Date` + the conditional rewrites), the same closing
+  stages the bare `conformantServe` default applies — `serveStep_noncacheable`.
 * On a **gate-refused cacheable** request, `serveStep` `.done`-s the deployed
   fold (the gate response) and yields NO cache effect (`serveStep_gate_rejects`).
 * On a **gate-admitted cacheable** request, `serveStep` yields `.cacheLookup key`
   with the proven key, then (on a miss) `.cacheStore key resp lifetime` with the
   proven lifetime (`serveStep_cacheable`, `cacheResume_miss`); on a hit the
-  continuation `.done`s the stored bytes (`cacheResume_hit`).
+  continuation `.done`s the stored bytes REVALIDATED against the request's
+  preconditions (`cacheResume_hit` — `Date`-spliced for a plain GET,
+  `cacheResume_hit_plain`; the proven `304`/`412` for a conditional one,
+  `cacheResume_hit_notModified`/`_preconditionFailed`, RFC 7232 in the core).
 * On a **proxy** request, `serveStep` `.yield`s a `proxyDial` to the proven-picked
   backend (`serveStep_proxy_yields`, `serveStep_backend_up`); the continuation
   runs the full response-transform fold over the reply (`serveStep_proxy_resume`,
@@ -135,12 +144,25 @@ method + request-target). The shell stores/loads under exactly these bytes — i
 never derives a key of its own. -/
 def cacheKeyOf (req : Proto.Request) : Bytes := req.method ++ [32] ++ req.target
 
+/-- `range` (lowercase) — the RFC 7233 request header field-name. -/
+def rangeNameLower : Bytes := [114, 97, 110, 103, 101]
+
+/-- Does the request carry a `Range` header (RFC 7233)? A Range request is NOT
+admitted to the cache path: the store holds the FULL `200` representation and the
+`206`/`416` materialization is the fold's (the app's) job — so the core DECLINES
+the lookup and `serveStep` serves the deployed fold directly
+(`serveStep_noncacheable`), which genuinely answers the range. The decision is in
+the proven core, not a host prefilter. -/
+def hasRange (req : Proto.Request) : Bool :=
+  (Reactor.Stage.ConditionalRequest.headerVal rangeNameLower req.headers).isSome
+
 /-- **The proven cacheability decision (request phase).** `some key` iff the
-request is a cacheable GET; `none` otherwise. Request-only, so a HIT can skip the
-handler entirely. -/
+request is a cacheable, range-free GET; `none` otherwise. Request-only, so a HIT
+can skip the handler entirely. -/
 def cacheableKey (input : Bytes) : Option Bytes :=
   let req := reqOf input
-  if isGet req && isCacheableTarget req.target then some (cacheKeyOf req) else none
+  if isGet req && isCacheableTarget req.target && !hasRange req then some (cacheKeyOf req)
+  else none
 
 /-- The freshness directives the deployed cache resolves for a cacheable route:
 `max-age=60` (no `s-maxage`, no `Expires`). -/
@@ -283,17 +305,195 @@ def proxyRespTransform (input upstream : Bytes) : Bytes :=
   serialize ((runPipeline proxyRespStages
     (fun _ => parseUpstream upstream) (Reactor.Deploy.ctxOf input)).build)
 
+/-! ## Conditional revalidation on the cache path (RFC 7232, IN the core)
+
+A cache HIT serves STORED bytes without the handler — so the precondition
+decision (`If-None-Match` match ⇒ `304`, `If-Match` mismatch ⇒ `412`, RFC 7232
+§3.1/§3.2) must be made HERE, in the proven core, over the stored
+representation. Previously the HIT arm returned the stored full `200` verbatim
+and an unproven Rust prefilter excluded conditional requests from the seam;
+that correctness decision now lives in the core.
+
+The rewrite REUSED is the proven `Reactor.Stage.ConditionalRequest.
+conditionalRewrite` (H1/H2/H3/H5 of the extended conformance probe), applied to
+the parsed stored response (`Proto.ResponseParse.parse`, the proven inverse of
+`serialize` — `parse_serialize`). A precondition-free request takes the
+identity branch and serves the stored bytes VERBATIM (no parse, no re-cons —
+byte-identical to the old behavior; justified against the rewrite by
+`conditionalRewrite_noCond`).
+
+On a MISS the fold runs on the request with its precondition headers STRIPPED
+(`ServeConformant.stripCondReq` — the same discipline the conformant wrapper
+uses, because the deployed app's own direction-blind precondition answer must
+not decide the STORED representation): the store then always holds the plain
+`200`, and the miss continuation revalidates the fold bytes the same way, so a
+conditional request is answered correctly even on a cold cache and can never
+poison the store with a `304`. -/
+
+open Reactor.Stage.ConditionalRequest (conditionalRewrite respETag ifNoneMatchMatches
+  ifMatchFails notModifiedOf preconditionFailedOf headerVal ifNoneMatchNameLower
+  ifMatchNameLower)
+open Reactor.ServeConformant (hasConditional stripCondReq injectDate addDate dateFinish)
+open Reactor.Stage.DateCondition (hasDateCond)
+
+/-- Drop any parsed `Content-Length` header — the serializer re-derives framing
+from the (possibly `304`-stripped) body, the same discipline as `parseUpstream`.
+Without this a `304`'s re-serialization would carry the stored `200`'s stale
+length next to the derived one. -/
+def dropCL (resp : Response) : Response :=
+  { resp with headers := resp.headers.filter (fun kv => !isContentLength kv.1) }
+
+/-- **The RFC finisher the cache-path response bytes cross — the SAME accepted-path
+finisher the bare `conformantServe` default applies** (`Reactor.ServeConformant.
+condRewriteBytes` / `injectDate`), so the effect seam closes a cacheable route
+through the deployed default's closing stages rather than a divergent shortcut.
+Always splices `Date` (F1). For a request carrying a precondition it parses the
+stored representation and applies, over the CL-dropped record, the entity-tag
+`conditionalRewrite` (RFC 7232 — `If-None-Match` match ⇒ `304`, `If-Match`
+mismatch ⇒ `412`) THEN the date-conditional `dateFinish` (RFC 9110 §13.1.3 /
+§13.1.4, with §13.2.2 precedence: the entity-tag verdict runs first), then
+re-serializes with `Date`. A precondition-free request takes the plain `Date`
+splice, byte-identical to the default's non-conditional accept. Total. -/
+def revalidate (req : Proto.Request) (bytes : Bytes) : Bytes :=
+  if hasConditional req then
+    match Proto.ResponseParse.parse bytes with
+    | some resp => serialize (addDate (dateFinish req (conditionalRewrite req (dropCL resp))))
+    | none => injectDate bytes
+  else injectDate bytes
+
+/-- The input the MISS fold runs on: for a conditional request, the request with
+its precondition headers stripped and re-serialized
+(`Proto.RequestSerialize.parse_serialize`-faithful, the `ServeConformant.
+condInnerInput` discipline) so the STORED representation is the plain `200`;
+for everything else, `input` VERBATIM. -/
+def cacheFoldInput (input : Bytes) : Bytes :=
+  if hasConditional (reqOf input) then
+    Proto.RequestSerialize.serialize (stripCondReq (reqOf input))
+  else input
+
+/-- A precondition-free request's fold input is `input` verbatim. -/
+theorem cacheFoldInput_plain (input : Bytes)
+    (h : hasConditional (reqOf input) = false) : cacheFoldInput input = input := by
+  simp [cacheFoldInput, h]
+
+/-- A precondition-free request's revalidation is the plain `Date` splice — the
+same non-conditional accept the `conformantServe` default produces (`injectDate`
+the inner fold bytes). -/
+theorem revalidate_plain (req : Proto.Request) (bytes : Bytes)
+    (h : hasConditional req = false) : revalidate req bytes = injectDate bytes := by
+  simp [revalidate, h]
+
+/-- `dateFinish` is the identity on a request carrying no date conditional
+(`If-Modified-Since` / `If-Unmodified-Since`): an entity-tag-only precondition
+leaves the date-conditional finisher inert. -/
+theorem dateFinish_noDate (req : Proto.Request) (resp : Response)
+    (h : hasDateCond req = false) : dateFinish req resp = resp := by
+  simp [dateFinish, h]
+
+/-- A conditional request's revalidation IS the proven entity-tag
+`conditionalRewrite` THEN the date-conditional `dateFinish` over the parse
+(CL-dropped), re-serialized with `Date` — the default's `condRewriteBytes`. -/
+theorem revalidate_conditional (req : Proto.Request) (bytes : Bytes) (resp : Response)
+    (hc : hasConditional req = true) (hp : Proto.ResponseParse.parse bytes = some resp) :
+    revalidate req bytes
+      = serialize (addDate (dateFinish req (conditionalRewrite req (dropCL resp)))) := by
+  simp [revalidate, hc, hp]
+
+/-- **The identity branch loses nothing:** with no precondition header the proven
+rewrite is itself the identity, on ANY response — so serving the stored bytes
+verbatim on the plain path EQUALS applying `conditionalRewrite` to the parse.
+(This is the byte-level shortcut's faithfulness obligation.) -/
+theorem conditionalRewrite_noCond (req : Proto.Request) (resp : Response)
+    (h : hasConditional req = false) : conditionalRewrite req resp = resp := by
+  have hn : headerVal ifNoneMatchNameLower req.headers = none := by
+    cases ho : headerVal ifNoneMatchNameLower req.headers with
+    | none => rfl
+    | some v =>
+      unfold Reactor.ServeConformant.hasConditional at h
+      rw [ho] at h; simp at h
+  have hm : headerVal ifMatchNameLower req.headers = none := by
+    cases ho : headerVal ifMatchNameLower req.headers with
+    | none => rfl
+    | some v =>
+      unfold Reactor.ServeConformant.hasConditional at h
+      rw [ho] at h; simp at h
+  have him : ∀ etag, ifMatchFails req etag = false := fun etag => by
+    unfold Reactor.Stage.ConditionalRequest.ifMatchFails; rw [hm]
+  have hinm : ∀ etag, ifNoneMatchMatches req etag = false := fun etag => by
+    unfold Reactor.Stage.ConditionalRequest.ifNoneMatchMatches; rw [hn]
+  cases h200 : (resp.status == 200) with
+  | false => exact Reactor.Stage.ConditionalRequest.conditionalRewrite_not200 req resp h200
+  | true =>
+    cases hres : respETag resp with
+    | none => exact Reactor.Stage.ConditionalRequest.conditionalRewrite_noEtag req resp h200 hres
+    | some etag =>
+      exact Reactor.Stage.ConditionalRequest.conditionalRewrite_passes req resp etag
+        h200 hres (him etag) (hinm etag)
+
+/-- `dropCL` recovers the pre-serialization record: the wire form is the record
+plus the ONE derived `Content-Length`, so dropping CL from the parse of
+`serialize resp` gives back `resp` (for a record carrying no CL of its own —
+every built fold response). -/
+theorem dropCL_wireForm (resp : Response)
+    (hcl : ∀ kv ∈ resp.headers, isContentLength kv.1 = false) :
+    dropCL (Proto.ResponseParse.wireForm resp) = resp := by
+  unfold dropCL Proto.ResponseParse.wireForm
+  have hkeep : resp.headers.filter (fun kv => !isContentLength kv.1) = resp.headers :=
+    List.filter_eq_self.mpr (fun kv hkv => by rw [hcl kv hkv]; rfl)
+  have hclname : isContentLength Reactor.clName = true := by decide
+  simp [List.filter_append, hkeep, hclname]
+
+/-- **THE revalidation spec, on serialize-shaped stored bytes.** For a
+precondition-bearing request and ANY stored representation `serialize R`
+(well-formed, CL-free — every built fold response), the byte-level revalidation IS
+the default's conditional finisher: the entity-tag `conditionalRewrite` THEN the
+date-conditional `dateFinish`, re-serialized with `Date`. The parse round-trip
+(`parse_serialize` + `dropCL_wireForm`) recovers `R` from the stored bytes. -/
+theorem revalidate_stored (req : Proto.Request) (R : Response)
+    (hwf : Proto.ResponseParse.WF R)
+    (hcl : ∀ kv ∈ R.headers, isContentLength kv.1 = false)
+    (hc : hasConditional req = true) :
+    revalidate req (serialize R)
+      = serialize (addDate (dateFinish req (conditionalRewrite req R))) := by
+  rw [revalidate_conditional req _ _ hc (Proto.ResponseParse.parse_serialize R hwf),
+    dropCL_wireForm R hcl]
+
 /-! ## The resumable serve -/
 
+/-- **The consolidated deployed fold the effect seam runs.** The SAME ordered stage
+registry the bare host default folds (`Reactor.DeployPipeline.deployPipelineStages`),
+over the non-metered request context (`Reactor.Deploy.ctxOf`): the metered
+IP-filter / rate gates are keyed on accept-path attributes this context omits, so
+they are the identity here — exactly as the seam's own `gateAdmits` is the
+admission authority, and byte-identical to the default serve for any request the
+gates would admit.
+
+This REPLACES the seam's former divergent fourteen-stage fold
+(`Reactor.Deploy.servePipelineFull2`). The stages the default carries but the old
+seam fold did not — `Content-Location` canonicalization (RFC 9110 §8.7),
+`Cache-Control` freshness, `Vary`, the range / revalidation stages — now reach
+every effect-seam route; the `x-corr` scrub is applied at the single `encodeStep`
+DONE exit, and `revalidate` adds `Date` + the conditional rewrites over these
+bytes. So the seam's served bytes ARE the default's `conformantServe`
+accepted-path bytes, and a fix to a pipeline stage or the conditional finisher
+now reaches BOTH serve paths. -/
+def seamInner (input : Bytes) : Bytes :=
+  serialize (Reactor.DeployPipeline.deployPipelineRespOf (Reactor.Deploy.ctxOf input))
+
 /-- Continuation of the cache lookup: on a HIT (non-empty stored bytes) `.done`
-those bytes WITHOUT running the handler; on a MISS ([]) run the deployed fold,
-yield `.cacheStore` with the PROVEN key + lifetime, then `.done` the fold bytes. -/
+the stored bytes REVALIDATED against the request's preconditions — a plain GET
+serves them `Date`-spliced, an `If-None-Match` match serves the proven `304` — the
+handler still never runs; on a MISS ([]) run the deployed fold on the
+precondition-STRIPPED input (so the STORED representation is the plain `200`),
+yield `.cacheStore` with the PROVEN key + lifetime, then `.done` the revalidated
+fold bytes. -/
 def cacheResume (key input : Bytes) : Bytes → Step := fun hit =>
   match hit with
   | [] =>
-    let resp := Reactor.Deploy.servePipelineFull2 input
-    .yield (.cacheStore key resp cacheLifetime) (fun _ => .done resp)
-  | _ => .done hit
+    let resp := seamInner (cacheFoldInput input)
+    .yield (.cacheStore key resp cacheLifetime)
+      (fun _ => .done (revalidate (reqOf input) resp))
+  | _ => .done (revalidate (reqOf input) hit)
 
 /-- **The resumable deployed serve.**
 
@@ -303,7 +503,10 @@ def cacheResume (key input : Bytes) : Bytes → Step := fun hit =>
 * a **gate-admitted cacheable** request `.yield`s `.cacheLookup key` (the proven
   key), with `cacheResume` as its continuation;
 * a **gate-refused cacheable** request, and every **non-cacheable, non-proxy**
-  request, `.done`s the full deployed serve bytes (`servePipelineFull2`).
+  request, `.done`s the consolidated deployed serve bytes — the `seamInner` fold
+  crossed by the same `revalidate` finisher (`Date` + the conditional rewrites)
+  the cache path uses, so a non-cached route is served through the deployed
+  default's closing stages.
 
 Total. `mask` is the shell's one live input (the health/breaker bitmask). -/
 def serveStep (mask : Nat) (input : Bytes) : Step :=
@@ -314,12 +517,12 @@ def serveStep (mask : Nat) (input : Bytes) : Step :=
     | none    => .done (serialize serviceUnavailable503)
   | false =>
     match cacheableKey input with
-    | none => .done (Reactor.Deploy.servePipelineFull2 input)
+    | none => .done (revalidate (reqOf input) (seamInner input))
     | some key =>
       if gateAdmits input then
         .yield (.cacheLookup key) (cacheResume key input)
       else
-        .done (Reactor.Deploy.servePipelineFull2 input)
+        .done (revalidate (reqOf input) (seamInner input))
 
 /-- **The config-driven deployed serve.** Identical to `serveStep`, except the
 reverse-proxy branch dials with a CONFIG-supplied LB policy chain
@@ -336,12 +539,12 @@ def serveStepWith (policies : List Proxy.Policy) (mask : Nat) (input : Bytes) : 
     | none    => .done (serialize serviceUnavailable503)
   | false =>
     match cacheableKey input with
-    | none => .done (Reactor.Deploy.servePipelineFull2 input)
+    | none => .done (revalidate (reqOf input) (seamInner input))
     | some key =>
       if gateAdmits input then
         .yield (.cacheLookup key) (cacheResume key input)
       else
-        .done (Reactor.Deploy.servePipelineFull2 input)
+        .done (revalidate (reqOf input) (seamInner input))
 
 /-- **No regression.** The config-driven serve at the deployed default chain is
 the original serve, byte-for-byte — the config knob defaults to today's behavior. -/
@@ -429,7 +632,13 @@ def be32enc (n : Nat) : Bytes :=
 * `cacheStore …`     → `tagYieldCacheStore :: lifetime(4 BE) :: keyLen(4 BE) :: key :: resp`
 -/
 def encodeStep : Step → Bytes
-  | .done b => tagDone :: b
+  -- The effect-seam serve (`drorb_serve_step` / `drorb_serve_resume`) is NOT wrapped
+  -- by `conformantServe`, so — unlike the metered path — its DONE response would
+  -- otherwise reach the wire carrying the deployed fold's internal `x-corr` /
+  -- `x-upstream` head lines (the cacheable `/static` · `/admin` routes cross here).
+  -- Scrub them at the single DONE exit both the step and the resume replay funnel
+  -- through, so every effect-seam route is scrubbed exactly as the metered path is.
+  | .done b => tagDone :: Reactor.ServeConformant.scrubCorr b
   | .yield (.proxyDial id req) _ => tagYieldProxy :: UInt8.ofNat id :: req
   | .yield (.cacheLookup key) _ => tagYieldCacheLookup :: key
   | .yield (.cacheStore key resp lifetime) _ =>
@@ -500,20 +709,14 @@ theorem decodeResumeWith_default :
 
 ### Behavior preservation (non-cacheable, non-proxy) -/
 
-/-- On a non-cacheable, non-proxy request, `serveStep` `.done`-s EXACTLY the
-current deployed serve bytes. -/
+/-- On a non-cacheable, non-proxy request, `serveStep` `.done`-s the consolidated
+deployed serve bytes: the `seamInner` fold (the full deployed stage registry)
+crossed by the `revalidate` finisher (`Date` + the conditional rewrites) — the
+same closing stages the bare `conformantServe` default applies. -/
 theorem serveStep_noncacheable (mask : Nat) (input : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = none) :
-    serveStep mask input = .done (Reactor.Deploy.servePipelineFull2 input) := by
+    serveStep mask input = .done (revalidate (reqOf input) (seamInner input)) := by
   unfold serveStep; rw [hapi, hc]
-
-/-- The `serveStep` `.done` bytes are the FIRST component of
-`Reactor.Deploy.deployStepFull2` — the bytes `main` writes — on any
-non-cacheable, non-proxy request. -/
-theorem serveStep_preserves_deployed (mask : Nat) (st : Reactor.Observe.ObsState)
-    (input : Bytes) (hapi : isApiPath input = false) (hc : cacheableKey input = none) :
-    serveStep mask input = .done (Reactor.Deploy.deployStepFull2 st input).1 := by
-  rw [serveStep_noncacheable mask input hapi hc, Reactor.Deploy.deployStepFull2_serves]
 
 /-! ### The cache path (gate → lookup → store, proven key + lifetime) -/
 
@@ -526,23 +729,85 @@ theorem serveStep_cacheable (mask : Nat) (input key : Bytes)
     serveStep mask input = .yield (.cacheLookup key) (cacheResume key input) := by
   unfold serveStep; rw [hapi, hc]; simp [hg]
 
-/-- **On a HIT the stored bytes are served WITHOUT the handler.** For any
-non-empty lookup result, `cacheResume` `.done`s exactly those bytes — the
-deployed fold (`servePipelineFull2`) is never evaluated. -/
+/-- **On a HIT the stored bytes are served WITHOUT the handler**, revalidated
+against the request's preconditions. For any non-empty lookup result,
+`cacheResume` `.done`s `revalidate (reqOf input) hit` — the deployed fold
+(`seamInner`) is never evaluated. -/
 theorem cacheResume_hit (key input : Bytes) (hit : Bytes) (h : hit ≠ []) :
-    cacheResume key input hit = .done hit := by
+    cacheResume key input hit = .done (revalidate (reqOf input) hit) := by
   unfold cacheResume
   cases hit with
   | nil => exact absurd rfl h
   | cons a as => rfl
 
-/-- **On a MISS the fold runs, then `.cacheStore` fires with the proven key +
-lifetime, then `.done`.** The store carries the PROVEN key `key` and PROVEN
-`cacheLifetime` — the shell only stores what the core told it. -/
+/-- **The plain HIT is the `Date`-spliced stored bytes** — a precondition-free
+request's HIT serves the stored representation through the default's non-conditional
+accept (`injectDate`), the handler still not run. -/
+theorem cacheResume_hit_plain (key input : Bytes) (hit : Bytes) (h : hit ≠ [])
+    (hp : hasConditional (reqOf input) = false) :
+    cacheResume key input hit = .done (injectDate hit) := by
+  rw [cacheResume_hit key input hit h, revalidate_plain _ _ hp]
+
+/-- **The conditional HIT is the proven `304`, cache-fast.** For a stored
+representation `serialize R` (well-formed, CL-free) whose `200` carries the
+`ETag` the request's `If-None-Match` matches (and whose `If-Match`, if any, is
+satisfied) — an entity-tag-only precondition (`hnd`: no date conditional, so the
+date finisher is inert) — the HIT arm `.done`s `serialize (addDate (notModifiedOf R))`
+— status `304` (`addDate_status`/`notModifiedOf_status`), body stripped — WITHOUT
+running the handler. H1+H2+H3 of the extended probe, on the cache path, in the core. -/
+theorem cacheResume_hit_notModified (key input : Bytes) (R : Response) (etag : Bytes)
+    (hne : serialize R ≠ [])
+    (hwf : Proto.ResponseParse.WF R)
+    (hcl : ∀ kv ∈ R.headers, isContentLength kv.1 = false)
+    (hcond : hasConditional (reqOf input) = true)
+    (hnd : hasDateCond (reqOf input) = false)
+    (h200 : (R.status == 200) = true) (he : respETag R = some etag)
+    (him : ifMatchFails (reqOf input) etag = false)
+    (hinm : ifNoneMatchMatches (reqOf input) etag = true) :
+    cacheResume key input (serialize R) = .done (serialize (addDate (notModifiedOf R))) := by
+  rw [cacheResume_hit key input _ hne, revalidate_stored (reqOf input) R hwf hcl hcond,
+    Reactor.Stage.ConditionalRequest.conditionalRewrite_ifNoneMatch (reqOf input) R etag
+      h200 he him hinm, dateFinish_noDate (reqOf input) _ hnd]
+
+/-- **The failing `If-Match` HIT is the proven `412`.** RFC 7232 §3.1 (H5), on
+the cache path, in the core. -/
+theorem cacheResume_hit_preconditionFailed (key input : Bytes) (R : Response) (etag : Bytes)
+    (hne : serialize R ≠ [])
+    (hwf : Proto.ResponseParse.WF R)
+    (hcl : ∀ kv ∈ R.headers, isContentLength kv.1 = false)
+    (hcond : hasConditional (reqOf input) = true)
+    (hnd : hasDateCond (reqOf input) = false)
+    (h200 : (R.status == 200) = true) (he : respETag R = some etag)
+    (him : ifMatchFails (reqOf input) etag = true) :
+    cacheResume key input (serialize R) = .done (serialize (addDate (preconditionFailedOf R))) := by
+  rw [cacheResume_hit key input _ hne, revalidate_stored (reqOf input) R hwf hcl hcond,
+    Reactor.Stage.ConditionalRequest.conditionalRewrite_ifMatchFails (reqOf input) R etag
+      h200 he him, dateFinish_noDate (reqOf input) _ hnd]
+
+/-- **On a MISS the fold runs (preconditions stripped), then `.cacheStore` fires
+with the proven key + lifetime, then `.done` the revalidated fold bytes.** The
+store carries the PROVEN key `key`, the PROVEN `cacheLifetime`, and the PLAIN
+representation (`cacheFoldInput` strips `If-*` before the fold) — the shell only
+stores what the core told it, and never a `304`. -/
 theorem cacheResume_miss (key input : Bytes) :
     cacheResume key input [] =
-      .yield (.cacheStore key (Reactor.Deploy.servePipelineFull2 input) cacheLifetime)
-        (fun _ => .done (Reactor.Deploy.servePipelineFull2 input)) := rfl
+      .yield (.cacheStore key (seamInner (cacheFoldInput input))
+          cacheLifetime)
+        (fun _ => .done (revalidate (reqOf input)
+          (seamInner (cacheFoldInput input)))) := rfl
+
+/-- **The plain MISS runs the fold on `input`, stores it, and `.done`s it
+`Date`-spliced** — a precondition-free request's MISS serves the stored plain `200`
+through the default's non-conditional accept (`injectDate`). -/
+theorem cacheResume_miss_plain (key input : Bytes)
+    (hp : hasConditional (reqOf input) = false) :
+    cacheResume key input [] =
+      .yield (.cacheStore key (seamInner input) cacheLifetime)
+        (fun _ => .done (injectDate (seamInner input))) := by
+  rw [cacheResume_miss, cacheFoldInput_plain input hp]
+  congr 1
+  funext r
+  rw [revalidate_plain _ _ hp]
 
 /-- **The stored lifetime is the proven `Cache.selectLifetime`.** The `.cacheStore`
 the miss path yields carries `Cache.selectLifetime cacheDirectives`, not a
@@ -558,29 +823,49 @@ never consulted. This is the gate-before-cache guarantee at the seam. -/
 theorem serveStep_gate_rejects (mask : Nat) (input key : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
     (hg : gateAdmits input = false) :
-    serveStep mask input = .done (Reactor.Deploy.servePipelineFull2 input) := by
+    serveStep mask input = .done (revalidate (reqOf input) (seamInner input)) := by
   unfold serveStep; rw [hapi, hc]; simp [hg]
 
 /-- The full cache-miss drive, at the byte level: replaying with the recorded
-`[miss, store-ack]` results ends `.done`-ing the deployed fold bytes — the exact
-bytes the shell then stores and writes. -/
+`[miss, store-ack]` results ends `.done`-ing the revalidated deployed fold bytes
+(the STORED bytes are the plain fold on the precondition-stripped input). -/
 theorem resumeStep_cache_miss (mask : Nat) (input key : Bytes) (ack : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
     (hg : gateAdmits input = true) :
-    resumeStep mask input [[], ack] = .done (Reactor.Deploy.servePipelineFull2 input) := by
+    resumeStep mask input [[], ack]
+      = .done (revalidate (reqOf input)
+          (seamInner (cacheFoldInput input))) := by
   unfold resumeStep
   rw [serveStep_cacheable mask input key hapi hc hg, stepFeed_yield, cacheResume_miss,
     stepFeed_yield, stepFeed_nil]
 
+/-- The plain (precondition-free) cache-miss drive `.done`s the consolidated fold
+bytes on `input`, `Date`-spliced (`injectDate`) — the default's non-conditional accept. -/
+theorem resumeStep_cache_miss_plain (mask : Nat) (input key : Bytes) (ack : Bytes)
+    (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
+    (hg : gateAdmits input = true) (hp : hasConditional (reqOf input) = false) :
+    resumeStep mask input [[], ack] = .done (injectDate (seamInner input)) := by
+  rw [resumeStep_cache_miss mask input key ack hapi hc hg,
+    cacheFoldInput_plain input hp, revalidate_plain _ _ hp]
+
 /-- The full cache-hit drive, at the byte level: replaying with the recorded
-`[hit]` result ends `.done`-ing the stored bytes, WITHOUT the handler. -/
+`[hit]` result ends `.done`-ing the revalidated stored bytes, WITHOUT the handler. -/
 theorem resumeStep_cache_hit (mask : Nat) (input key hit : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
     (hg : gateAdmits input = true) (hne : hit ≠ []) :
-    resumeStep mask input [hit] = .done hit := by
+    resumeStep mask input [hit] = .done (revalidate (reqOf input) hit) := by
   unfold resumeStep
   rw [serveStep_cacheable mask input key hapi hc hg, stepFeed_yield, stepFeed_nil,
     cacheResume_hit key input hit hne]
+
+/-- The plain (precondition-free) cache-hit drive `.done`s the stored bytes
+`Date`-spliced (`injectDate`) — the default's non-conditional accept. -/
+theorem resumeStep_cache_hit_plain (mask : Nat) (input key hit : Bytes)
+    (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
+    (hg : gateAdmits input = true) (hne : hit ≠ [])
+    (hp : hasConditional (reqOf input) = false) :
+    resumeStep mask input [hit] = .done (injectDate hit) := by
+  rw [resumeStep_cache_hit mask input key hit hapi hc hg hne, revalidate_plain _ _ hp]
 
 /-! ### The proxy path -/
 
@@ -705,7 +990,7 @@ theorem serveStep_proxy_no_backend (mask : Nat) (input : Bytes)
 /-! ## Runnable checks — the encode framing round-trips the decision -/
 
 -- A `.done` step encodes tag-0-prefixed.
-example : encodeStep (.done [65, 66]) = [tagDone, 65, 66] := rfl
+example (b : Bytes) : encodeStep (.done b) = tagDone :: Reactor.ServeConformant.scrubCorr b := rfl
 -- A proxy yield encodes tag-1, backend id, then the forwarded request bytes.
 example : encodeStep (.yield (.proxyDial 2 [71, 69, 84]) (fun _ => .done []))
     = [tagYieldProxy, 2, 71, 69, 84] := rfl
@@ -721,13 +1006,80 @@ example : be32 0 0 1 0 = 256 := rfl
 -- The proven cache lifetime is 60s.
 example : cacheLifetime = 60 := rfl
 
+/-! ### Executable witnesses — the cache-path finisher genuinely fires
+
+On the extended probe's exact bytes (`ConditionalRequest`'s witnesses): the
+matching `If-None-Match` HIT re-serializes as the `304` (body stripped, CL
+re-derived to 0), the failing `If-Match` HIT as the `412`, the satisfied `If-Match`
+and the plain request serve the stored `200`. Every accepted answer is now `Date`-
+spliced by the finisher (`revalidate`), the same close the `conformantServe` default
+applies — so a served head carries `Date` on BOTH serve paths. -/
+
+open Reactor.Stage.ConditionalRequest (reqINM reqINMStar reqIMno reqIMyes reqPlain base200)
+
+-- The matching `If-None-Match` HIT re-serializes as the `304` (body stripped)…
+#guard (Proto.ResponseParse.parse (revalidate reqINM (serialize base200))).map
+    (fun r => (r.status, r.body)) == some (304, [])
+#guard (Proto.ResponseParse.parse (revalidate reqINMStar (serialize base200))).map
+    (fun r => (r.status, r.body)) == some (304, [])
+-- …the failing `If-Match` HIT as the `412`…
+#guard (Proto.ResponseParse.parse (revalidate reqIMno (serialize base200))).map
+    (fun r => r.status) == some 412
+-- …and a satisfied `If-Match` / a plain request serve the stored `200`.
+#guard (Proto.ResponseParse.parse (revalidate reqIMyes (serialize base200))).map
+    (fun r => r.status) == some 200
+#guard (Proto.ResponseParse.parse (revalidate reqPlain (serialize base200))).map
+    (fun r => r.status) == some 200
+
+/-- The probe's H1 request over the REAL seam fold, end-to-end through the cache
+arms: a conditional `If-None-Match: *` GET to the deployed static asset. -/
+def condStarInput : Bytes :=
+  str "GET /static/app.js HTTP/1.1\r\nHost: x\r\nIf-None-Match: *\r\n\r\n"
+
+-- The dispatched request genuinely carries the precondition (ground truth for
+-- the `reqOf` parse: headers survive the deployed dispatch).
+#guard hasConditional (reqOf condStarInput) == true
+-- MISS + revalidate on the REAL seam fold: the cold-cache conditional answer is the 304…
+#guard (Proto.ResponseParse.parse (revalidate (reqOf condStarInput)
+    (seamInner (cacheFoldInput condStarInput)))).map
+      (fun r => (r.status, r.body)) == some (304, [])
+-- …while the STORED representation is the plain 200 (never a 304 in the store).
+#guard (Proto.ResponseParse.parse
+    (seamInner (cacheFoldInput condStarInput))).map
+      (fun r => r.status) == some 200
+def plainInput : Bytes := str "GET /static/app.js HTTP/1.1\r\nHost: x\r\n\r\n"
+#guard hasConditional (reqOf plainInput) == false
+#guard cacheFoldInput plainInput == plainInput
+-- **The path-divergence fix, executable.** The consolidated seam fold now stamps
+-- `Content-Location` (RFC 9110 §8.7) on the static 200 — the header the old
+-- fourteen-stage seam fold lacked — and the finisher splices `Date`.
+def queryInput : Bytes := str "GET /static/app.js?v=1 HTTP/1.1\r\nHost: x\r\n\r\n"
+#guard ((Proto.ResponseParse.parse (revalidate (reqOf queryInput) (seamInner queryInput))).map
+    (fun r => (r.status,
+      r.headers.any (fun kv => kv.1 == Reactor.Stage.ContentLocation.contentLocationName))))
+    == some (200, true)
+-- A Range request is DECLINED by the proven cache decision (it takes the fold,
+-- which answers the 206/416) — while the plain and conditional GETs are admitted.
+def rangeInput : Bytes := str "GET /static/app.js HTTP/1.1\r\nHost: x\r\nRange: bytes=0-3\r\n\r\n"
+#guard cacheableKey rangeInput == none
+#guard (cacheableKey plainInput).isSome
+#guard (cacheableKey condStarInput).isSome
+
 #print axioms serveStep_noncacheable
 #print axioms serveStep_cacheable
 #print axioms cacheResume_hit
+#print axioms cacheResume_hit_plain
+#print axioms cacheResume_hit_notModified
+#print axioms cacheResume_hit_preconditionFailed
 #print axioms cacheResume_miss
+#print axioms cacheResume_miss_plain
+#print axioms revalidate_stored
+#print axioms conditionalRewrite_noCond
 #print axioms serveStep_gate_rejects
 #print axioms resumeStep_cache_hit
+#print axioms resumeStep_cache_hit_plain
 #print axioms resumeStep_cache_miss
+#print axioms resumeStep_cache_miss_plain
 #print axioms serveStep_proxy_resume
 #print axioms proxyRespTransform_hsts
 

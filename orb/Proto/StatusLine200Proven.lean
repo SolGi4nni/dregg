@@ -36,63 +36,28 @@ no `Lean.ofReduceBool`):
 
 import Reactor.App
 import Reactor.Serialize
+import Proto.Kernel.Shortcuts
 
 namespace Proto.StatusLine200Proven
 
 open Proto (Bytes)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-! ## The exact version token and reason phrase -/
 
 /-- **`http11_wire_bytes`.** The deployed HTTP-version token `Reactor.http11` equals the 8
 bytes of `"HTTP/1.1"` (connecting the serializer literal to the string bytes through the
-`ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`). -/
+`Shortcuts.ba_toList_eq` bridge — pure-kernel `decide`, no `native_decide`). -/
 theorem http11_wire_bytes : Reactor.http11 = "HTTP/1.1".toUTF8.toList := by
-  simp only [Reactor.http11, ba_toList_eq]; decide
+  simp only [Reactor.http11, Shortcuts.ba_toList_eq]; decide
 
 /-- **`reasonOK_wire_bytes`.** The serializer's `200` reason phrase is exactly `"OK"`. -/
 theorem reasonOK_wire_bytes : Reactor.reasonOK = [79, 75] := rfl
 
 /-- **`reasonFor_200_wire_bytes`.** The application layer's reason phrase for `200` is
-exactly the 2 bytes of `"OK"` — pinned through `ba_toList_eq`. -/
+exactly the 2 bytes of `"OK"` — pinned through `Shortcuts.ba_toList_eq`. -/
 theorem reasonFor_200_wire_bytes : Reactor.App.reasonFor 200 = [79, 75] := by
-  simp only [Reactor.App.reasonFor, ba_toList_eq]; decide
+  simp only [Reactor.App.reasonFor, Shortcuts.ba_toList_eq]; decide
 
 /-! ## The deployed 200 status line — for ANY body -/
 
@@ -105,7 +70,7 @@ theorem deployed_status_line_200 (body : Bytes) :
                            headers := [], body := body }
       = [72, 84, 84, 80, 47, 49, 46, 49, 32, 50, 48, 48, 32, 79, 75] := by
   simp only [Reactor.statusLineOf, Reactor.statusLine, Reactor.build, Reactor.http11,
-             Reactor.natToDec, Reactor.App.reasonFor, ba_toList_eq]
+             Reactor.natToDec, Reactor.App.reasonFor, Shortcuts.ba_toList_eq]
   decide
 
 /-- **`health_status_line`.** Grounding the status line in a deployed handler: the `/health`

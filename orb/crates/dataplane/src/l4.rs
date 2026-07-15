@@ -17,8 +17,10 @@
 //!   `drorb_proxy_pick` and crossed on the runtime-owner serve thread via
 //!   [`crate::serve::Seam::ProxyPick`]. This module never selects a backend.
 //! * the HOST owns the sockets and the byte splice — [`splice`], a blocking
-//!   two-way copy run on the caller's connection thread so a slow peer never
-//!   stalls the serve thread.
+//!   two-way pump run on the caller's connection thread so a slow peer never
+//!   stalls the serve thread. On Linux each direction moves kernel-side via
+//!   `splice(2)` (socket → pipe → socket; the payload never enters this
+//!   process), with the portable userspace copy as the fallback.
 //!
 //! The proven model this shell realises is `Reactor.L4`: `stepTcp` (the TCP
 //! splice state machine) and `udpStep` (the datagram forwarder), whose
@@ -50,7 +52,7 @@ const DIAL_TIMEOUT: Duration = Duration::from_secs(5);
 /// so one source pins to one upstream across connections (the proven rendezvous
 /// policy makes the pick a pure function of this key). No HTTP is parsed, so
 /// there is no cookie/target to key on — the source address is the flow identity.
-fn affinity_key(peer: Option<SocketAddr>) -> Vec<u8> {
+pub(crate) fn affinity_key(peer: Option<SocketAddr>) -> Vec<u8> {
     peer.map(|a| a.ip().to_string().into_bytes())
         .unwrap_or_default()
 }
@@ -60,7 +62,7 @@ fn affinity_key(peer: Option<SocketAddr>) -> Vec<u8> {
 /// output is the decimal-ASCII chosen backend id, or empty when no backend is
 /// eligible (⇒ `None`, the host dials nothing and closes). Identical marshalling
 /// to the reverse-proxy lane — the same export, the same single-owner discipline.
-fn pick_via_seam(
+pub(crate) fn pick_via_seam(
     mask: u8,
     key: &[u8],
     gw: &ServeGateway,
@@ -103,12 +105,28 @@ fn splice(client: TcpStream, upstream: TcpStream) {
 
     // client → upstream on a helper thread; upstream → client on this one.
     let up = std::thread::spawn(move || {
-        let _ = copy(&mut c_read, &mut u_write);
+        pump_dir(&mut c_read, &mut u_write);
         let _ = u_write.shutdown(Shutdown::Write); // client EOF: half-close upstream
     });
-    let _ = copy(&mut u_read, &mut c_write);
+    pump_dir(&mut u_read, &mut c_write);
     let _ = c_write.shutdown(Shutdown::Write); // upstream EOF: half-close client
     let _ = up.join();
+}
+
+/// One direction of the verbatim pump, until EOF on `from`. On Linux the bytes
+/// move kernel-side — `from` socket → pipe → `to` socket via `splice(2)`, never
+/// entering this process — with the portable userspace `io::copy` as the
+/// fallback when the relay cannot run at all (nothing moved, so the copy starts
+/// from byte 0). Byte semantics are identical either way: verbatim, in order,
+/// until `from` closes or the direction fails.
+fn pump_dir(from: &mut TcpStream, to: &mut TcpStream) {
+    #[cfg(target_os = "linux")]
+    {
+        if crate::proxy_dial::splice_to_eof(from, to) {
+            return;
+        }
+    }
+    let _ = copy(from, to);
 }
 
 /// Handle one accepted L4 connection: choose the upstream via `pick` (the proven
@@ -151,7 +169,27 @@ where
 /// connection to the proven-chosen upstream until shutdown. Non-blocking accept
 /// so the SIGINT flag is observed promptly; a thread per connection runs the
 /// splice (and its own reusable reply channel for the pick seam).
+/// Bind `listen_addr` as a raw-TCP passthrough listener. On Linux the flows are
+/// driven by the single-shard `io_uring` SPLICE reactor ([`crate::l4_uring`]) —
+/// one thread, kernel-side splice, the proven lockstep fill/drain — and this
+/// function only falls through to the portable blocking pump below if the ring
+/// could not be initialised. Off Linux the blocking thread-per-connection pump is
+/// the path.
 pub fn run(listen_addr: &str, fleet: Arc<Fleet>, gw: ServeGateway) {
+    #[cfg(target_os = "linux")]
+    {
+        if crate::l4_uring::run(listen_addr, Arc::clone(&fleet), gw.clone()) {
+            return;
+        }
+        eprintln!("dataplane: L4 falling back to the portable blocking splice pump");
+    }
+    run_threaded(listen_addr, fleet, gw);
+}
+
+/// The portable blocking realisation: non-blocking accept, a thread per connection
+/// running the two-way blocking splice. The Linux fallback and the sole path on
+/// every other platform.
+fn run_threaded(listen_addr: &str, fleet: Arc<Fleet>, gw: ServeGateway) {
     let listener = match TcpListener::bind(listen_addr) {
         Ok(l) => l,
         Err(e) => {

@@ -34,7 +34,7 @@ with the complete-length advisory `bytes */35`.
   * `deployed_416` — the deployed handler's rendered `416` for that request is status
     `416`, carries `Content-Range: bytes */35`, and has an empty body — the exact wire.
   * `content_range_416_wire_bytes` — the `Content-Range` name and the `bytes */35` value
-    are exactly these bytes (pinned via `ba_toList_eq`, pure-kernel `decide`; no
+    are exactly these bytes (pinned via `Shortcuts.ba_toList_eq`, pure-kernel `decide`; no
     `native_decide`).
 
 ## Not proven in-kernel (deliberately)
@@ -48,57 +48,20 @@ the merge gate bars it). So reachability is proven here on the already-parsed `R
 
 import StaticFile
 import Reactor.App
+import Proto.Kernel.Shortcuts
 
 namespace Proto.ContentRange416Proven
 
 open StaticFile
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`ByteArray.toList` is well-founded-recursive, so it does NOT reduce in the kernel; this
-rewrites it to the structural `bs.data.toList`, which the kernel DOES reduce, so `toUTF8`
-byte constants close by pure-kernel `decide` (`{propext, Quot.sound}`; no `native_decide`,
-no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The served path segments for the deployed asset `/static/app.js`. -/
 def assetSegs : List String := ["static", "app.js"]
 
-/-- `app.js` is 35 bytes (pinned via `ba_toList_eq`, pure-kernel) — so any range at offset
+/-- `app.js` is 35 bytes (pinned via `Shortcuts.ba_toList_eq`, pure-kernel) — so any range at offset
 `≥ 35` is unsatisfiable. -/
 theorem appJs_len : appJs.length = 35 := by
-  simp only [appJs, strBytes, ba_toList_eq]; decide
+  simp only [appJs, strBytes, Shortcuts.ba_toList_eq]; decide
 
 /-! ## The deployed anchor -/
 
@@ -163,13 +126,13 @@ theorem deployed_416 :
 theorem complete35_str : ("bytes */" ++ toString (35 : Nat)) = "bytes */35" := rfl
 
 /-- **`content_range_416_wire_bytes`.** The `Content-Range` name and the `bytes */35` value
-the deployed `416` emits are exactly these bytes — pinned through `ba_toList_eq`
+the deployed `416` emits are exactly these bytes — pinned through `Shortcuts.ba_toList_eq`
 (pure-kernel `decide`, no `native_decide`), matching the curl `Content-Range: bytes */35`. -/
 theorem content_range_416_wire_bytes :
     strBytes "Content-Range"
       = [67, 111, 110, 116, 101, 110, 116, 45, 82, 97, 110, 103, 101]
   ∧ strBytes "bytes */35" = [98, 121, 116, 101, 115, 32, 42, 47, 51, 53] := by
-  refine ⟨?_, ?_⟩ <;> simp only [strBytes, ba_toList_eq] <;> decide
+  refine ⟨?_, ?_⟩ <;> simp only [strBytes, Shortcuts.ba_toList_eq] <;> decide
 
 end Proto.ContentRange416Proven
 

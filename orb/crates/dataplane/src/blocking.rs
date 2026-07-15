@@ -62,6 +62,52 @@ const RATE_LIMIT_429: &[u8] =
 const SLOWLORIS_408: &[u8] =
     b"HTTP/1.1 408 Request Timeout\r\nContent-Type: text/plain\r\nContent-Length: 23\r\nConnection: close\r\n\r\nrequest header timeout\n";
 
+/// Whether the RESPONSE itself asks the host to close the connection: its head
+/// carries a `Connection` header naming the `close` token (RFC 9112 §9.6). The
+/// request's own keep-alive intent (`request_wants_keepalive`) and the response
+/// framing (`response_is_self_delimited`) are the other two inputs to the
+/// disposition; this is the third, so a response that states `Connection: close`
+/// — a canned error, a forwarded upstream reply, a config `respond`/braid stage
+/// — is honored by closing rather than held open until the idle timeout.
+///
+/// Scans only the head (up to the blank line) and matches `close` as a
+/// comma-separated, OWS-trimmed token so `Connection: keep-alive` does not
+/// false-match on a substring. Self-contained: it reads bytes only, mirroring
+/// the request-side scan, and never rewrites the response.
+fn response_wants_close(resp: &[u8]) -> bool {
+    let head_end = resp
+        .windows(4)
+        .position(|w| w == b"\r\n\r\n")
+        .map(|p| p + 2)
+        .unwrap_or(resp.len());
+    for line in resp[..head_end].split(|&b| b == b'\n') {
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        let Some(colon) = line.iter().position(|&b| b == b':') else {
+            continue;
+        };
+        let (name, rest) = line.split_at(colon);
+        if !name.eq_ignore_ascii_case(b"connection") {
+            continue;
+        }
+        // Each comma-separated token, OWS-trimmed, matched case-insensitively.
+        for tok in rest[1..].split(|&b| b == b',') {
+            let s = tok
+                .iter()
+                .position(|b| !b.is_ascii_whitespace())
+                .unwrap_or(tok.len());
+            let e = tok
+                .iter()
+                .rposition(|b| !b.is_ascii_whitespace())
+                .map(|p| p + 1)
+                .unwrap_or(s);
+            if tok[s..e].eq_ignore_ascii_case(b"close") {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 /// One socket read into a pooled accumulation buffer. Returns bytes read
 /// (0 = clean EOF).
 fn fill(data: &mut Vec<u8>, stream: &mut TcpStream) -> std::io::Result<usize> {
@@ -165,36 +211,37 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
                 }
                 Err(_) => return,
             }
-            if acc.len() >= H2_PREFACE.len() && acc.starts_with(H2_PREFACE) {
-                // h2c prior-knowledge (RFC 9113 §3.3/§3.4): the client writes its
-                // connection preface, SETTINGS, and the request HEADERS as one
-                // opening burst and then WAITS for the server to answer — it sends
-                // nothing more until it gets the server SETTINGS + response frames.
-                // So the host must collect the burst up to the request HEADERS
-                // frame and then serve; a plain blocking read past that point
-                // deadlocks (the client waits on us, we wait on it) and the client
-                // times out. Read with a short grace timeout, stopping as soon as
-                // the HEADERS frame is buffered, then hand the whole burst to the
-                // proven H2 serve once and reply.
-                let _ = stream.set_read_timeout(Some(Duration::from_millis(200)));
-                while !crate::http::h2c_burst_complete(&acc) {
-                    match fill(&mut acc, &mut stream) {
-                        Ok(0) => break, // peer closed
-                        Ok(_) => {}     // more of the burst arrived; rescan
-                        Err(e)
-                            if e.kind() == ErrorKind::WouldBlock
-                                || e.kind() == ErrorKind::TimedOut =>
-                        {
-                            break; // grace elapsed: serve whatever we have
-                        }
-                        Err(_) => return,
-                    }
+            // An h2c preface may arrive split across reads: while the buffered
+            // bytes are still a strict prefix of the preface head, keep reading
+            // before deciding which protocol this connection speaks (the same
+            // slowloris deadline as the HTTP/1.1 header phase guards the wait —
+            // a preface drip past the deadline is dropped).
+            let slow_timeout = crate::config::slowloris_timeout();
+            let wait_start = std::time::Instant::now();
+            while acc.len() < H2_PREFACE.len() && H2_PREFACE.starts_with(&acc) {
+                if crate::standing::header_expired(
+                    slow_timeout,
+                    wait_start,
+                    std::time::Instant::now(),
+                ) {
+                    return;
                 }
-                let mut req = gw.pool().take();
-                req.extend_from_slice(&acc);
-                if let Some(resp) = gw.call(req, &reply_tx, &reply_rx) {
-                    let _ = stream.write_all(&resp);
+                match fill(&mut acc, &mut stream) {
+                    Ok(0) => return, // peer closed mid-preface
+                    Ok(_) => {}
+                    Err(_) => return,
                 }
+            }
+            if acc.starts_with(H2_PREFACE) {
+                // h2c prior-knowledge (RFC 9113 §3.3/§3.4): hand the connection
+                // to the interactive engine host (`h2::host_conn`) — one verified
+                // engine state, threaded across socket reads. A one-shot answer
+                // cannot carry SETTINGS synchronization, PING liveness, or
+                // WINDOW_UPDATE-paced response bodies (everything after the
+                // client's first flight), so the connection leaves the HTTP/1.1
+                // keep-alive loop here for good; the engine's close flag decides
+                // the teardown.
+                crate::h2::host_conn(stream, &acc);
                 return;
             }
         }
@@ -208,6 +255,8 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
         let slow_timeout = crate::config::slowloris_timeout();
         let hdr_start = std::time::Instant::now();
         // Read exactly one complete request into `acc`.
+        // RFC 9110 §10.1.1: at most one interim `100 Continue` per request.
+        let mut interim_100_sent = false;
         let total = loop {
             // Consult the deadline BEFORE framing, so a slow drip that finally completes
             // its head past the deadline is still refused (mirrors the io_uring shard).
@@ -225,16 +274,37 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
             match next_request(&acc) {
                 Frame::Complete(n) => break n,
                 Frame::Oversize => return,
-                Frame::NeedMore => match fill(&mut acc, &mut stream) {
-                    Ok(0) => {
-                        // Clean close only on a request boundary (empty buffer).
-                        return;
+                Frame::NeedMore => {
+                    // RFC 9110 §10.1.1: a paused `Expect: 100-continue` request
+                    // (complete head, body pending) is answered the interim `100`
+                    // once, so the client ships the body it is withholding.
+                    if !interim_100_sent && crate::interim::wants_interim_100(&acc) {
+                        interim_100_sent = true;
+                        let _ = stream.write_all(crate::interim::INTERIM_100);
+                        let _ = stream.flush();
                     }
-                    Ok(_) => {}
-                    Err(_) => return, // I/O error or idle timeout
-                },
+                    match fill(&mut acc, &mut stream) {
+                        Ok(0) => {
+                            // Clean close only on a request boundary (empty buffer).
+                            return;
+                        }
+                        Ok(_) => {}
+                        Err(_) => return, // I/O error or idle timeout
+                    }
+                }
             }
         };
+
+        // MIXED-PORT OPENER CLASSIFICATION: a FIRST flight whose request line has
+        // no `HTTP/` version token is neither protocol's well-formed opener — not
+        // an HTTP/1.x request, and not the H2 preface (that forked to the engine
+        // at the peek above). Terminate without a reply, the one answer both
+        // protocols assign (RFC 9113 §3.4 invalid-preface connection error —
+        // an HTTP/1.1 status line is only frame garbage to an H2 client; RFC 9112
+        // §2.2/§3 close on a malformed request-line).
+        if conn_seq == 0 && crate::http::opener_lacks_http_version(&acc[..total]) {
+            return;
+        }
 
         // Move the request bytes into a pooled buffer, then drop them from the
         // accumulation buffer, retaining any pipelined bytes for the next round.
@@ -296,17 +366,33 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
                 Some(_) => {}   // authorized: no refusal bytes — complete the handshake
                 None => return, // serve thread gone (shutdown)
             }
-            if let Some(resp) = ws::upgrade_response(&req) {
+            if let Some((resp, ws_cfg)) = ws::upgrade_response(&req) {
                 if stream.write_all(&resp).is_err() {
                     return;
                 }
-                eprintln!("dataplane: WS upgrade OK — connection open, proven frame loop");
-                ws_frame_loop(&mut stream, gw, &reply_tx, &reply_rx, &mut acc);
+                ws_frame_loop(&mut stream, gw, &mut acc, ws_cfg);
             }
             return;
         }
 
         let keepalive_req = request_wants_keepalive(&req);
+
+        // CERTIFIED EXPORT-FUNCTION SERVE: the chosen route (`GET /`), when
+        // `DRORB_CAKE_SERVE=1`, is answered by the certified export-function machine
+        // code linked into this process (ffi/cake/serve.S, driven by the re-entrant
+        // cake_serve_ffi.c) rather than the leanc-compiled proven serve. The response
+        // bytes are produced by the machine code. It is delimited by close (no
+        // Content-Length), so this arm writes the bytes and closes the connection.
+        // Returns false for every other request and every non-demo build, so
+        // everything else runs the proven pipeline below.
+        if crate::cake_serve::wants_cake_serve(&req) {
+            let mut cake = gw.pool().take();
+            if crate::cake_serve::serve_cake_into(&req, &mut cake) {
+                emit(&cake, None);
+                let _ = stream.write_all(&cake);
+                return;
+            }
+        }
 
         // GEARS-ENMESH: the exact `GET /health` request, when `DRORB_HEALTH_NATIVE=1`,
         // is answered by cake--pancake-compiled x64 machine code linked into this
@@ -318,7 +404,9 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
         if crate::serve::wants_native_health(&req) {
             let mut native = gw.pool().take();
             if crate::serve::serve_native_into(&req, &mut native) {
-                let keepalive = keepalive_req && response_is_self_delimited(&native);
+                let keepalive = keepalive_req
+                    && response_is_self_delimited(&native)
+                    && !response_wants_close(&native);
                 // The cake bytes are the final wire form (they already carry the
                 // Connection header the leanc path's host annotation adds), so write
                 // them as-is — no re-annotation.
@@ -359,7 +447,9 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
         if crate::interp::enabled() && crate::interp::should_handle(&req) {
             if let Some(mut resp) = crate::interp::run_effect_serve(&req, gw, &reply_tx, &reply_rx)
             {
-                let keepalive = keepalive_req && response_is_self_delimited(&resp);
+                let keepalive = keepalive_req
+                    && response_is_self_delimited(&resp)
+                    && !response_wants_close(&resp);
                 annotate_connection(&mut resp, keepalive);
                 emit(&resp, None);
                 if stream.write_all(&resp).is_err() {
@@ -439,7 +529,9 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
         if let Some(dep) = crate::config::get() {
             if dep.has_routes() {
                 if let Some(mut resp) = gw.call_cfg(&dep.config_text, &req, &reply_tx, &reply_rx) {
-                    let keepalive = keepalive_req && response_is_self_delimited(&resp);
+                    let keepalive = keepalive_req
+                        && response_is_self_delimited(&resp)
+                        && !response_wants_close(&resp);
                     annotate_connection(&mut resp, keepalive);
                     emit(&resp, None);
                     if stream.write_all(&resp).is_err() {
@@ -454,16 +546,22 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
         }
 
         // Host-side static-file streaming lane (roadmap Stage 3, gated on
-        // `DRORB_STATIC_ROOT`): a GET/HEAD under the serving prefix streams the
-        // resolved file to the client with a BOUNDED buffer — the head decided
-        // batch-small (Content-Length + type), the body copied block-by-block, never
-        // materialized whole. The emitted stream reassembles to `serialize` of the
-        // static-file response the core would produce (proven core-side:
-        // `Reactor.ServeStream.staticFile_emit_refines`). Unset ⇒ inert ⇒ the default
-        // serve path is byte-identical.
+        // `DRORB_STATIC_ROOT`): ANY request under the serving prefix is DECIDED by
+        // the proven core and only executed here. The PATH decision (split /
+        // decode-once / UTF-8 gate / clamped dot-walk) crosses the proven
+        // `drorb_static_resolve`; the RESPONSE decision — the 405 method gate, the
+        // 404, the conditional 304 (the proven ConditionalRequest matcher +
+        // exact-date If-Modified-Since), Range (206 single window / 206
+        // multipart/byteranges / 416), every header byte and every file byte
+        // window — crosses `drorb_static_decide` (Route.StaticDecide), and the
+        // host streams the planned windows with a BOUNDED buffer, never
+        // materializing the file. Unset ⇒ inert ⇒ the default serve path is
+        // byte-identical.
         if let Some(sr) = crate::static_serve::get() {
             if sr.is_static_path(&req) {
-                match sr.handle_streaming(&req, keepalive_req, &mut stream) {
+                let resolve = |rel: &[u8]| gw.call_static_resolve(rel, &reply_tx, &reply_rx);
+                let decide = |frame: &[u8]| gw.call_static_decide(frame, &reply_tx, &reply_rx);
+                match sr.handle_streaming(&req, keepalive_req, &mut stream, resolve, decide) {
                     Ok(out) => {
                         emit_streamed(&out.head, out.bytes, None);
                         if !out.keepalive {
@@ -568,7 +666,8 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
         if crate::gzip::enabled() {
             crate::gzip::recompress(&mut resp);
         }
-        let keepalive = keepalive_req && response_is_self_delimited(&resp);
+        let keepalive =
+            keepalive_req && response_is_self_delimited(&resp) && !response_wants_close(&resp);
         annotate_connection(&mut resp, keepalive);
         emit(&resp, None);
         if stream.write_all(&resp).is_err() {
@@ -581,43 +680,46 @@ fn handle_conn(mut stream: TcpStream, gw: &ServeGateway) {
     }
 }
 
-/// The open-connection WebSocket frame loop. After the 101 handshake, every
-/// inbound chunk of frame bytes is handed to the proven `Seam::WsFrame`
-/// (`drorb_serve_ws_frame`: decode + unmask + reassemble + re-encode) and the
-/// proven response bytes are written straight back — a proven-path echo over one
-/// kept-open TCP connection. Any bytes the client pipelined right after the
-/// upgrade (already in `acc`) are fed first. Returns when the peer closes or on
-/// error.
-///
-/// Each chunk is fed to a fresh WebSocket codec (the proven `drorbServeWsFrame`
-/// starts from `{}` per call), so a frame must arrive whole in one recv — true
-/// for the small client frames this demo drives over loopback, and the same
-/// scheduling choice the C shell (`ffi/mac_io.c`) makes. Cross-recv partial-frame
-/// buffering would carry the codec across calls; it is a host scheduling change,
-/// not a change to the proven decoder.
+/// The open-connection WebSocket frame loop (RFC 6455 §5). After the 101
+/// handshake, ONE persistent, bounded, streaming codec
+/// ([`crate::ws_assembly::WsEngine`]) is fed every recv chunk, so frames and
+/// messages may straddle any number of recvs and the per-connection memory is
+/// capped by construction (14-byte header + 125-byte control + one ≤ 16 MiB
+/// reassembly buffer; over-limit messages are refused with close 1009 before
+/// buffering). Echo replies, pongs, and close frames come back in `out` and
+/// are written as produced. `Flow::Shut` means a close frame was emitted (a
+/// close-handshake reply or a §7.1.7 connection failure): write it, let the
+/// peer read it, and drop the connection. Any bytes the client pipelined
+/// right after the upgrade (already in `acc`) are fed first.
 fn ws_frame_loop(
     stream: &mut TcpStream,
     gw: &ServeGateway,
-    reply_tx: &std::sync::mpsc::Sender<PooledBuf>,
-    reply_rx: &std::sync::mpsc::Receiver<PooledBuf>,
     acc: &mut PooledBuf,
+    ws_cfg: crate::ws::WsConfig,
 ) {
+    use crate::ws_assembly::{Flow, WsEngine};
+
     // Frames may sit idle on an open WebSocket; block indefinitely between them.
     let _ = stream.set_read_timeout(None);
 
+    // Carry the handshake's negotiated RFC 7692 permessage-deflate state into
+    // the frame engine (uncompressed when nothing was negotiated).
+    let mut engine = WsEngine::with_config(ws_cfg);
+    let mut out: PooledBuf = gw.pool().take();
+
     // Feed any bytes pipelined right after the upgrade request.
     if !acc.is_empty() {
-        let mut req = gw.pool().take();
-        req.extend_from_slice(acc);
+        let flow = engine.feed(acc, &mut out);
         acc.clear();
-        match gw.call_seam(req, Seam::WsFrame, reply_tx, reply_rx) {
-            Some(out) if !out.is_empty() => {
-                if stream.write_all(&out).is_err() {
-                    return;
-                }
+        if !out.is_empty() {
+            if stream.write_all(&out).is_err() {
+                return;
             }
-            Some(_) => {}
-            None => return,
+            out.clear();
+        }
+        if flow == Flow::Shut {
+            ws_close_drain(stream);
+            return;
         }
     }
 
@@ -628,16 +730,33 @@ fn ws_frame_loop(
             Ok(n) => n,
             Err(_) => return,
         };
-        let mut req = gw.pool().take();
-        req.extend_from_slice(&chunk[..n]);
-        match gw.call_seam(req, Seam::WsFrame, reply_tx, reply_rx) {
-            Some(out) if !out.is_empty() => {
-                if stream.write_all(&out).is_err() {
-                    return;
-                }
+        let flow = engine.feed(&chunk[..n], &mut out);
+        if !out.is_empty() {
+            if stream.write_all(&out).is_err() {
+                return;
             }
-            Some(_) => {}   // control/incomplete frame produced no echo bytes
-            None => return, // serve thread gone
+            out.clear();
+        }
+        if flow == Flow::Shut {
+            ws_close_drain(stream);
+            return;
+        }
+    }
+}
+
+/// After our close frame is on the wire: shut down the write side and briefly
+/// drain the peer, so the close frame is delivered before the socket drops (an
+/// immediate close with unread bytes queued could turn into a reset that
+/// destroys it in flight). Bounded: at most 5 seconds, then the socket drops.
+fn ws_close_drain(stream: &mut TcpStream) {
+    let _ = stream.shutdown(std::net::Shutdown::Write);
+    let _ = stream.set_read_timeout(Some(Duration::from_secs(5)));
+    let deadline = std::time::Instant::now() + Duration::from_secs(5);
+    let mut sink = [0u8; 65536];
+    while std::time::Instant::now() < deadline {
+        match stream.read(&mut sink) {
+            Ok(0) | Err(_) => break, // peer finished (or is gone)
+            Ok(_) => {}              // discard: the connection is already failed
         }
     }
 }
@@ -650,7 +769,17 @@ pub fn run(listener: TcpListener, gw: ServeGateway) {
         .set_nonblocking(true)
         .expect("failed to set the listener non-blocking");
 
-    let gw = Arc::new(gw);
+    // The serve-owner set (`DRORB_SERVE_OWNERS`, default 1 = the original
+    // single-owner model): each accepted connection is PINNED to one owner,
+    // assigned round-robin, so per-connection request/response FIFO order is
+    // preserved while distinct connections' seam crossings overlap across
+    // owners. Owner 0 is the primary runtime owner (the one `main` also hands
+    // to the TLS/UDP/admin paths).
+    let owners: Vec<Arc<ServeGateway>> = crate::serve::serve_owner_set(gw)
+        .into_iter()
+        .map(Arc::new)
+        .collect();
+    let mut next_owner = 0usize;
     loop {
         if crate::SHUTDOWN.load(Ordering::SeqCst) {
             eprintln!("dataplane: SIGINT — stopping accept loop");
@@ -692,7 +821,9 @@ pub fn run(listener: TcpListener, gw: ServeGateway) {
                     continue;
                 }
                 crate::ACTIVE_CONNS.fetch_add(1, Ordering::SeqCst);
-                let gw = Arc::clone(&gw);
+                // Pin this connection to one serve owner (round-robin).
+                let gw = Arc::clone(&owners[next_owner]);
+                next_owner = (next_owner + 1) % owners.len();
                 let _ = std::thread::Builder::new()
                     .name("drorb-conn".into())
                     .spawn(move || {

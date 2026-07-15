@@ -1,0 +1,207 @@
+=== pancake/panLangScript.sml ===
+--- /home/hbox/src/cakeml/pancake/panLangScript.sml	2026-07-02 02:26:38.020120571 -0400
++++ pancake/panLangScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -39,7 +39,7 @@
+ End
+ 
+ Datatype:
+-  panop = (* Div | *)Mul (* | Mod*)
++  panop = Div | Mul | Mod
+ End
+ 
+ Datatype:
+=== pancake/crepLangScript.sml ===
+--- /home/hbox/src/cakeml/pancake/crepLangScript.sml	2026-07-02 02:26:38.019120556 -0400
++++ pancake/crepLangScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -21,7 +21,7 @@
+ Type funname = ``:mlstring``
+ 
+ Datatype:
+-  crepop = (* Div | *)Mul (*| Mod*)
++  crepop = Div | Mul | Mod
+ End
+ 
+ Datatype:
+=== pancake/semantics/panSemScript.sml ===
+--- /home/hbox/src/cakeml/pancake/semantics/panSemScript.sml	2026-07-02 02:26:38.023120618 -0400
++++ pancake/semantics/panSemScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -190,6 +190,8 @@
+ 
+ Definition pan_op_def:
+   pan_op Mul [w1:'a word;w2] = SOME(w1 * w2) ∧
++  pan_op Div [w1:'a word;w2] = (if w2 = 0w then NONE else SOME(word_div w1 w2)) ∧
++  pan_op Mod [w1:'a word;w2] = (if w2 = 0w then NONE else SOME(word_mod w1 w2)) ∧
+   pan_op _ _ = NONE
+ End
+ 
+=== pancake/semantics/crepSemScript.sml ===
+--- /home/hbox/src/cakeml/pancake/semantics/crepSemScript.sml	2026-07-02 02:26:38.023120618 -0400
++++ pancake/semantics/crepSemScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -84,6 +84,8 @@
+ 
+ Definition crep_op_def:
+   crep_op crepLang$Mul [w1:'a word;w2] = SOME(w1 * w2) ∧
++  crep_op crepLang$Div [w1:'a word;w2] = (if w2 = 0w then NONE else SOME(word_div w1 w2)) ∧
++  crep_op crepLang$Mod [w1:'a word;w2] = (if w2 = 0w then NONE else SOME(word_mod w1 w2)) ∧
+   crep_op _ _ = NONE
+ End
+ 
+=== pancake/pan_to_crepScript.sml ===
+--- /home/hbox/src/cakeml/pancake/pan_to_crepScript.sml	2026-07-02 02:26:38.020120571 -0400
++++ pancake/pan_to_crepScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -33,7 +33,9 @@
+ End
+ 
+ Definition compile_panop_def:
+-  compile_panop panLang$Mul = crepLang$Mul
++  compile_panop panLang$Div = crepLang$Div ∧
++  compile_panop panLang$Mul = crepLang$Mul ∧
++  compile_panop panLang$Mod = crepLang$Mod
+ End
+ 
+ Definition compile_exp_def:
+=== pancake/crep_to_loopScript.sml ===
+--- /home/hbox/src/cakeml/pancake/crep_to_loopScript.sml	2026-07-02 02:26:38.020120571 -0400
++++ pancake/crep_to_loopScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -44,7 +44,11 @@
+   if target = ARMv7 then
+     ([Arith (LLongMul tmp (tmp+1) x y)],tmp+1)
+   else
+-    ([Arith (LLongMul tmp tmp x y)],tmp))
++    ([Arith (LLongMul tmp tmp x y)],tmp)) ∧
++  (compile_crepop crepLang$Div target x y tmp l =
++    ([Assign tmp (Const 0w); Arith (LLongDiv (tmp+2) (tmp+1) tmp x y)],tmp+2)) ∧
++  (compile_crepop crepLang$Mod target x y tmp l =
++    ([Assign tmp (Const 0w); Arith (LLongDiv (tmp+1) (tmp+2) tmp x y)],tmp+2))
+ End
+ 
+ Definition compile_exp_def:
+=== pancake/panStaticScript.sml ===
+--- /home/hbox/src/cakeml/pancake/panStaticScript.sml	2026-07-02 02:26:38.020120571 -0400
++++ pancake/panStaticScript.sml	2026-07-14 13:51:05.170988092 -0400
+@@ -598,7 +598,9 @@
+ Definition panop_to_str_def:
+   panop_to_str op =
+     case op of
++    | Div => «Div»
+     | Mul => «Mul»
++    | Mod => «Mod»
+ End
+ 
+ (* Get string name for Pancake primitives *)
+@@ -965,6 +967,16 @@
+       (* check num of op args *)
+       nargs <<- LENGTH exps;
+       case pop of
++      | Div =>
++        if ~(nargs = 2) then
++          error (GenErr $ get_oparg_msg T (strlit "2") (num_to_str nargs)
++            ctxt.loc op_str ctxt.scope)
++        else return ()
++      | Mod =>
++        if ~(nargs = 2) then
++          error (GenErr $ get_oparg_msg T (strlit "2") (num_to_str nargs)
++            ctxt.loc op_str ctxt.scope)
++        else return ()
+       | Mul =>
+         if ~(nargs = 2) then
+           error (GenErr $ get_oparg_msg T (strlit "2") (num_to_str nargs)
+=== pancake/pan_passesScript.sml ===
+--- /home/hbox/src/cakeml/pancake/pan_passesScript.sml	2026-07-02 02:26:38.020120571 -0400
++++ pancake/pan_passesScript.sml	2026-07-14 13:51:05.171988109 -0400
+@@ -166,7 +166,9 @@
+     = insert_es (asm_binop_to_display b) (MAP pan_exp_to_display xs)) ∧
+   (pan_exp_to_display (Panop p xs)
+     = case p of
+-      | Mul => Item NONE «Mul» (MAP pan_exp_to_display xs)) ∧
++      | Div => Item NONE «Div» (MAP pan_exp_to_display xs)
++      | Mul => Item NONE «Mul» (MAP pan_exp_to_display xs)
++      | Mod => Item NONE «Mod» (MAP pan_exp_to_display xs)) ∧
+   (pan_exp_to_display (RField n e)
+     = Item NONE (strlit "RawField") [num_to_display n; pan_exp_to_display e]) ∧
+   (pan_exp_to_display (NField f e) (*#!TEST*)
+@@ -364,7 +366,9 @@
+     = insert_es (asm_binop_to_display b) (MAP crep_exp_to_display xs)) ∧
+   (crep_exp_to_display (Crepop p xs)
+     = case p of
+-      | Mul => Item NONE «Mul» (MAP crep_exp_to_display xs)) ∧
++      | Div => Item NONE «Div» (MAP crep_exp_to_display xs)
++      | Mul => Item NONE «Mul» (MAP crep_exp_to_display xs)
++      | Mod => Item NONE «Mod» (MAP crep_exp_to_display xs)) ∧
+   (crep_exp_to_display (Shift sh e n)
+     = insert_es (shift_to_display sh) [crep_exp_to_display e; num_to_display n])
+ End
+=== pancake/proofs/crep_arithProofScript.sml ===
+--- /home/hbox/src/cakeml/pancake/proofs/crep_arithProofScript.sml	2026-07-02 02:26:38.020120571 -0400
++++ pancake/proofs/crep_arithProofScript.sml	2026-07-14 14:02:34.204679324 -0400
+@@ -64,15 +64,23 @@
+   )
+   >~ [`Case (Crepop _ _)`]
+   >- (
++    Cases_on `op`
++    >~ [`Crepop Mul`]
++    >- (
++      drule OPT_MMAP_EQ_SOME_MONO
++      \\ disch_then (qspec_then `eval (mapc f s) o simp_exp` mp_tac)
++      \\ impl_tac \\ rw []
++      \\ every_case_tac \\ gs [eval_def, MAP_EQ_CONS]
++      \\ gvs [DISJ_IMP_THM, FORALL_AND_THM, OPT_MMAP_MAP_o, combinTheory.o_DEF]
++      \\ every_case_tac \\ fs []
++      \\ imp_res_tac dest_const_thm
++      \\ TRY (irule EQ_TRANS \\ irule_at Any eval_mul_const)
++      \\ gvs [crep_op_def, eval_def, AllCaseEqs()])
++    \\ (* Div, Mod : simp_exp is the identity on these ops *)
+     drule OPT_MMAP_EQ_SOME_MONO
+     \\ disch_then (qspec_then `eval (mapc f s) o simp_exp` mp_tac)
+     \\ impl_tac \\ rw []
+-    \\ every_case_tac \\ gs [eval_def, MAP_EQ_CONS]
+-    \\ gvs [DISJ_IMP_THM, FORALL_AND_THM, OPT_MMAP_MAP_o, combinTheory.o_DEF]
+-    \\ every_case_tac \\ fs []
+-    \\ imp_res_tac dest_const_thm
+-    \\ TRY (irule EQ_TRANS \\ irule_at Any eval_mul_const)
+-    \\ Cases_on `op` \\ fs [crep_op_def, eval_def]
++    \\ gvs [eval_def, OPT_MMAP_MAP_o, combinTheory.o_DEF, AllCaseEqs(), crep_op_def]
+   )
+ QED
+ 
+=== pancake/proofs/crep_to_loopProofScript.sml ===
+--- /home/hbox/src/cakeml/pancake/proofs/crep_to_loopProofScript.sml	2026-07-02 02:26:38.021120587 -0400
++++ pancake/proofs/crep_to_loopProofScript.sml	2026-07-14 14:57:26.769947363 -0400
+@@ -744,6 +744,16 @@
+ Theorem compile_exp_le_tmp_domain = compile_exp_le_tmp_domain_cases |> CONJUNCT1
+ Theorem compile_exps_le_tmp_domain = compile_exp_le_tmp_domain_cases |> CONJUNCT2
+ 
++Triviality w2n_div_lt:
++  (dv:'a word) ≠ 0w ⇒ w2n (dd:'a word) DIV w2n dv < dimword (:'a)
++Proof
++  strip_tac >>
++  ‘ 0 < w2n dv ’ by simp[GSYM arithmeticTheory.NOT_ZERO_LT_ZERO, wordsTheory.w2n_eq_0] >>
++  ‘ w2n dd DIV w2n dv ≤ w2n dd ’ by simp[arithmeticTheory.DIV_LESS_EQ] >>
++  ‘ w2n dd < dimword (:'a) ’ by simp[wordsTheory.w2n_lt] >>
++  DECIDE_TAC
++QED
++
+ Theorem comp_exp_preserves_eval:
+   ∀s e v (t :('a, 'b) loopSem$state) ctxt tmp l p le ntmp nl.
+   eval s e = SOME v /\
+@@ -931,20 +941,22 @@
+           rw[] >>
+           res_tac >>
+           rw[lookup_insert]) >>
+-     gvs[set_var_def] >>
+-     simp[set_var_def,wlab_wloc_def,lookup_insert,GSYM word_mul_def] >>
++     gvs[set_var_def,wlab_wloc_def,lookup_insert] >>
++     (* Mul keeps LLongMul (word_mul); Div/Mod use LLongDiv with a zeroed high
++        word to compute the unsigned word_div/word_mod.  The Div/Mod-only
++        obligation is the div-by-zero partiality bound (w2n_div_lt). *)
++     TRY (rename1 ‘w2n ww DIV w2n wd’ >>
++          ‘w2n ww DIV w2n wd < dimword (:'a)’ by (irule w2n_div_lt >> simp[])) >>
++     ‘ctxt.vmax < tmp'’ by DECIDE_TAC >>
++     gvs[wordsTheory.word_div_def, wordsTheory.word_mod_def,
++         GSYM word_mul_def, lookup_insert] >>
+      simp[word_mul_def] >>
+-     conj_tac >- gvs[state_rel_def] >>
+-     gvs[locals_rel_def,list_insert_def] >>
+-     conj_tac
+-     >- (drule_then match_mp_tac SUBSET_TRANS >>
+-         rw[SUBSET_DEF]) >>

@@ -828,6 +828,13 @@ structure Established where
   extended with EndOfEarlyData (§4.5) after an accepted 0-RTT phase. Empty
   means "not yet extended" — use `thSF`. -/
   thCF : ByteArray := ByteArray.empty
+  /-- The negotiated named group whose ECDHE/hybrid share keyed this session:
+  `xwingGroup` (`0x11EC`) for the X25519MLKEM768 post-quantum hybrid, or a
+  classical `x25519Group` / `p256Group`. The ServerHello `key_share` echoes it,
+  so it is transcript-bound; recorded here so the honest-negotiation facts
+  (`buildFlight_group`, `kex_preferred_honors_hybrid`) are theorems about the
+  established session's group. -/
+  group : Nat := x25519Group
 
 /-- The full `TlsCrypto` key schedule for this session — `deriveSchedulePsk` of
 the PSK, the DHE, and the two transcript hashes (`deriveSchedule` exactly when
@@ -1181,6 +1188,7 @@ def buildFlight (params : ServerParams) (suite : Nat) (alpnSel : Option Tls.Byte
                 let thSF := sha256 (transcript0 ++ sh ++ ee ++ sFin)
                 let est : Established :=
                   { dhe := dhe, thHS := thHS, thSF := thSF, alpn := .h1
+                    group := group
                     suite := suite, alpnProto := alpnSel
                     transcript := transcript0 ++ sh ++ ee ++ sFin
                     psk := psk
@@ -1204,6 +1212,7 @@ def buildFlight (params : ServerParams) (suite : Nat) (alpnSel : Option Tls.Byte
                   let shRecord := wrapPlainHs sh
                   let est : Established :=
                     { dhe := dhe, thHS := thHS, thSF := thSF, alpn := .h1
+                      group := group
                       suite := suite, alpnProto := alpnSel
                       transcript := transcript0 ++ sh ++ ee ++ cert ++ cv ++ sFin }
                   -- The plaintext server flight: the bare handshake messages, in
@@ -1467,8 +1476,32 @@ def kexStep (params : ServerParams) (retried : Option Retry) (ch : ClientHello)
            { flight := flight, hsPlain := hsPlain })
         | none => rejectWith internalErrorDesc
       | none => rejectWith illegalParameterDesc
-    -- Hybrid-pinned peer, no X-Wing share offered: no classical downgrade (§ PQ).
-    | none, true, _ => rejectWith handshakeFailureDesc
+    -- Hybrid-pinned peer, no X-Wing share offered. A CLASSICAL share present
+    -- (x25519 or secp256r1) is fail-closed: rejected with `handshake_failure`,
+    -- never downgraded to a classical secret and never retried — a peer that
+    -- brought a classical share cannot coax the pinned server onto that curve.
+    -- With NO classical share the client simply omitted its `key_share`, so
+    -- RFC 8446 §4.1.4 asks for a retry carrying the pinned group (the server's
+    -- first supported group the client offered — `xwingGroup` in this posture);
+    -- an HRR still cannot complete a classical exchange, so downgrade-safety is
+    -- preserved (`tls_kex_hybrid_downgrade_safe`).
+    | none, true, some _ => rejectWith handshakeFailureDesc
+    | none, true, none =>
+      match ch.keyShareP256 with
+      | some _ => rejectWith handshakeFailureDesc
+      | none =>
+        match retried with
+        | some _ => rejectWith handshakeFailureDesc
+        | none =>
+          match params.groupsSupported.find? (fun g => ch.groups.contains g) with
+          | some g =>
+            (.waitCH2 { transcriptPrefix :=
+                          msgHash chMsg ++ buildHrr suite (ofBytes ch.sessionId) g
+                        suite := suite
+                        group := g },
+             { flight := wrapPlainHs (buildHrr suite (ofBytes ch.sessionId) g)
+               hsPlain := (buildHrr suite (ofBytes ch.sessionId) g).toList })
+          | none => rejectWith handshakeFailureDesc
     | none, false, some cpub =>
       match x25519Base params.ephemeralPriv,
             x25519 params.ephemeralPriv (ofBytes cpub) with
@@ -1755,9 +1788,113 @@ theorem tls_kex_hybrid_downgrade_safe (params : ServerParams) (retried : Option 
     (hpin : params.requireHybridKex = true)
     (hnohybrid : ch.keyShareHybrid = none) :
     (kexStep params retried ch suite alpnSel buf).1 ≠ .waitClientFinished est := by
+  -- Case on the (absent) classical share so the pinned dispatch reduces to a
+  -- single arm: `some _` fails closed, `none` at most emits a HelloRetryRequest.
+  rcases hk : ch.keyShare with _ | cpub
+  all_goals
+    unfold kexStep
+    simp only [hnohybrid, ite_self, hpin, hk]
+    repeat' split
+    all_goals exact fun h => HsState.noConfusion h
+
+/-- **The §4.1.4 retry preserves downgrade-safety** — the fix's honesty
+obligation. Under the hybrid pin (`requireHybridKex = true`) and a ClientHello
+with no hybrid share, the two sub-cases are strictly separated: a classical
+share present (x25519) is fail-closed — the outcome is a *failure*, never a
+HelloRetryRequest and never a flight, so the peer cannot be steered onto the
+classical curve; only a client that brought no share at all is offered a retry.
+Combined with `tls_kex_hybrid_downgrade_safe` (no case reaches
+`waitClientFinished`), the retry is a strictly weaker outcome than
+establishment: no classical secret is ever derived. -/
+theorem tls_kex_hybrid_classical_share_fails_closed (params : ServerParams)
+    (retried : Option Retry) (ch : ClientHello) (suite : Nat)
+    (alpnSel : Option Tls.Bytes) (buf : Tls.Bytes) (cpub : Tls.Bytes)
+    (hpin : params.requireHybridKex = true)
+    (hnohybrid : ch.keyShareHybrid = none)
+    (hclassical : ch.keyShare = some cpub) :
+    (∀ est, (kexStep params retried ch suite alpnSel buf).1 ≠ .waitClientFinished est)
+    ∧ (∀ r, (kexStep params retried ch suite alpnSel buf).1 ≠ .waitCH2 r) := by
+  refine ⟨fun est =>
+    tls_kex_hybrid_downgrade_safe params retried ch suite alpnSel buf est hpin hnohybrid,
+    ?_⟩
+  intro r
   unfold kexStep
-  simp only [hnohybrid, ite_self, hpin]
-  split <;> exact fun h => HsState.noConfusion h
+  simp only [hnohybrid, ite_self, hpin, hclassical]
+  repeat' split
+  all_goals exact fun h => HsState.noConfusion h
+
+/-- **The negotiated group is the one the flight is built for**: the
+`Established` a successful `buildFlight` carries records exactly the named group
+its ServerHello `key_share` echoes (the sibling of `buildFlight_suite`). -/
+theorem buildFlight_group (params : ServerParams) (suite : Nat)
+    (alpnSel : Option Tls.Bytes) (psk? : Option ByteArray) (group : Nat)
+    (sid : Tls.Bytes) (pub dhe t0 : ByteArray)
+    (entry : CertEntry) (statusReq : Bool) (early? : Option ByteArray)
+    (est : Established) (fl : ByteArray) (hp : Tls.Bytes)
+    (h : buildFlight params suite alpnSel psk? group sid pub dhe t0 entry statusReq early?
+          = some (est, fl, hp)) :
+    est.group = group := by
+  simp only [buildFlight] at h
+  repeat' split at h
+  all_goals first
+    | (simp only [Option.some.injEq, Prod.mk.injEq] at h
+       obtain ⟨h1, -, -⟩ := h
+       subst h1
+       rfl)
+    | cases h
+
+/-- **Preferred-posture honest negotiation — no silent downgrade.** Whenever the
+deployment offers the X25519MLKEM768 group (`xwingGroup ∈ groupsSupported`, true
+in both the required and the preferred posture) and the client offers the hybrid
+`key_share`, the negotiated session's group is `xwingGroup` — regardless of the
+`requireHybridKex` pin. So the pragmatic PREFERRED posture (pin off, classical
+fallback allowed) still serves a post-quantum client the X-Wing exchange it
+asked for: honoring the client's best offer is not a downgrade. The negotiated
+group is transcript-bound (the ServerHello `key_share` echoes it, folded into
+the Finished MAC), so an on-path strip is detectable by the client. The
+computation is independent of the pin, so a hybrid client's flight bytes are
+identical under `preferred` and `required`. -/
+theorem kex_preferred_honors_hybrid (params : ServerParams) (retried : Option Retry)
+    (ch : ClientHello) (suite : Nat) (alpnSel : Option Tls.Bytes) (buf : Tls.Bytes)
+    (est : Established)
+    (hsup : params.groupsSupported.contains xwingGroup = true)
+    (hy : Tls.Bytes) (hoff : ch.keyShareHybrid = some hy)
+    (hres : (kexStep params retried ch suite alpnSel buf).1
+              = .waitClientFinished est) :
+    est.group = xwingGroup := by
+  have hfirst : (if params.groupsSupported.contains xwingGroup
+      then ch.keyShareHybrid else none) = some hy := by rw [hsup]; exact hoff
+  unfold kexStep at hres
+  simp only [hfirst] at hres
+  repeat' split at hres
+  all_goals first
+    | (simp [rejectWith] at hres; done)
+    | (injection hres with hst
+       have hg := buildFlight_group _ _ _ _ _ _ _ _ _ _ _ _ _ _ _ (by assumption)
+       rw [← hst]
+       exact hg)
+
+/-- **The classical arm is honest fallback, never a strip.** In a posture that
+offers the hybrid group, if the server completed a CLASSICAL (`x25519Group`)
+exchange then the client offered NO hybrid `key_share` — the only way onto the
+classical path is a client that did not ask for X-Wing. The contrapositive of
+`kex_preferred_honors_hybrid`: the server takes the client's best offered group,
+so a classical session implies a classical-only offer, not a downgraded hybrid
+one. -/
+theorem kex_classical_only_without_hybrid (params : ServerParams) (retried : Option Retry)
+    (ch : ClientHello) (suite : Nat) (alpnSel : Option Tls.Bytes) (buf : Tls.Bytes)
+    (est : Established)
+    (hsup : params.groupsSupported.contains xwingGroup = true)
+    (hres : (kexStep params retried ch suite alpnSel buf).1
+              = .waitClientFinished est)
+    (hclassical : est.group = x25519Group) :
+    ch.keyShareHybrid = none := by
+  rcases hh : ch.keyShareHybrid with _ | hy
+  · rfl
+  · exfalso
+    have := kex_preferred_honors_hybrid params retried ch suite alpnSel buf est hsup hy hh hres
+    rw [hclassical] at this
+    exact absurd this (by decide)
 
 /-- **The negotiated suite is the one the flight is built for**: the
 `Established` a successful flight carries records exactly the suite the
@@ -2092,6 +2229,9 @@ theorem realConfig_shortcut_completes (dhe thHS thAP : ByteArray) (hs : Tls.HsCo
 end TlsHandshake
 
 #print axioms TlsHandshake.tls_kex_hybrid_downgrade_safe
+#print axioms TlsHandshake.tls_kex_hybrid_classical_share_fails_closed
+#print axioms TlsHandshake.kex_preferred_honors_hybrid
+#print axioms TlsHandshake.kex_classical_only_without_hybrid
 #print axioms TlsHandshake.tls_ecdhe_mlkem_sound
 #print axioms TlsHandshake.tls_ecdhe_mlkem_pq_protects
 #print axioms TlsHandshake.ecdhe_mlkem_dhe_is_raw_concat

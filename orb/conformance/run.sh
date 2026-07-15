@@ -75,3 +75,35 @@ echo "-- driving scenarios (parity harness: the reference test suites' catalogue
 # is used for the HTTP/2 conformance group; the group SKIPs cleanly without it.
 export DYLD_LIBRARY_PATH="${DYLD_LIBRARY_PATH:-$HACL_DIST}"
 python3 "$HERE/parity.py"
+
+echo
+echo "-- GATING suite: information-disclosure leak-scan (a leak FAILS the run) --"
+# Unlike the driver/parity tables above — DIAGNOSTICS whose UNWIRED/FAIL rows are
+# findings, not build failures — this is a HARD GATE. The leak-scan battery drives
+# every route x every leak-class (request-byte reflection, internal/debug headers,
+# stack-trace/source leaks, version banners) against a freshly launched serve and
+# exits nonzero the moment any response discloses one. Under `set -e` that nonzero
+# aborts this script, so a header/body leak fails CI — the same gating character as
+# the RFC extended suite's harness-error exit, now covering info-disclosure too.
+#
+# It launches and reaps its OWN dedicated serve on DRORB_LEAK_PORT (default 18990),
+# disjoint from the ports the base/parity suites bound above, so it never collides;
+# override DRORB_LEAK_PORT if 18990 is taken on this host.
+export DRORB_LEAK_PORT="${DRORB_LEAK_PORT:-18990}"
+python3 "$HERE/leak_scan.py" --port "$DRORB_LEAK_PORT"
+echo "-- leak-scan gate: clean (no route disclosed an internal artifact) --"
+
+echo
+echo "-- GATING suite: dual-path conformance + leak scan (BOTH serve paths) --"
+# A HARD GATE across BOTH deployment serve paths: the default conformantServe path
+# and the effect/continuation seam (DRORB_EFFECT_SEAM=1). dual_path.sh drives the
+# core/extended/full RFC probes AND the info-disclosure leak-scan against EACH path
+# on its own dedicated ports, and exits nonzero if EITHER path has a failing check
+# or a disclosed leak, OR if the two paths DIVERGE check-for-check. Under `set -e`
+# that nonzero aborts the run. This catches the class the single-path leak gate
+# above cannot: a gap or disclosure that hides on one serve path but not the other
+# (a leak that hid on the other path; a path-divergent framing/robustness bug). It
+# reaps only the serves it launches, on ports disjoint from the leak-scan gate.
+export DUAL_BASE_PORT="${DUAL_BASE_PORT:-18992}"
+bash "$HERE/dual_path.sh"
+echo "-- dual-path gate: clean (both serve paths agree, no leaks on either) --"

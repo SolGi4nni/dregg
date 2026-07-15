@@ -62,7 +62,7 @@
 //! registered on the kqueue, breaking the `kevent` wait.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr, ToSocketAddrs};
-use std::os::fd::RawFd;
+use std::os::fd::{FromRawFd, RawFd};
 use std::sync::atomic::Ordering;
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::Instant;
@@ -74,7 +74,7 @@ use crate::http::{
     response_is_self_delimited,
 };
 use crate::pool::PooledBuf;
-use crate::serve::{KqDone, Meter, Seam, ServeGateway, ServeReply};
+use crate::serve::{KqDone, Meter, ServeGateway, ServeReply};
 
 /// Bytes offered to the kernel per receive.
 const RECV_CHUNK: usize = 16384;
@@ -883,31 +883,40 @@ impl Reactor {
             }
         }
 
-        // h2c prior-knowledge: hand the whole opening burst to the core once and
-        // serve, then close (no HTTP/1.1 keep-alive on an h2c stream).
+        // h2c prior-knowledge: the connection leaves the reactor for good — the
+        // interactive engine host threads ONE verified engine state across
+        // socket reads on a dedicated thread (the same fork the blocking host
+        // and the io_uring shard make at their preface peeks).
         let is_h2c = {
             let conn = self.slab.get(slot).unwrap();
             !conn.h2c && conn.acc.starts_with(H2_PREFACE)
         };
         if is_h2c {
-            let req = {
-                let conn = self.slab.get(slot).unwrap();
-                conn.h2c = true;
-                conn.req_keepalive = false;
-                conn.headers_done = true; // header phase over (h2c burst framed)
-                let mut req = self.gw.pool().take();
-                req.extend_from_slice(&conn.acc);
-                conn.acc.clear();
-                conn.serving = true;
-                req
-            };
-            return self.submit(slot, req);
+            self.h2c_handoff(slot);
+            return Disp::Closed;
         }
 
         let framed = {
             let conn = self.slab.get(slot).unwrap();
             match next_request(&conn.acc) {
                 Frame::Complete(total) => {
+                    // MIXED-PORT OPENER CLASSIFICATION — the same rule as the
+                    // blocking host and the io_uring shard: a FIRST flight whose
+                    // request line has no `HTTP/` version token is neither
+                    // protocol's well-formed opener — not an HTTP/1.x request, and
+                    // not the H2 preface (that forked to the engine at the peek
+                    // above). Terminate without a reply, the one answer both
+                    // protocols assign (RFC 9113 §3.4 invalid-preface connection
+                    // error — an HTTP/1.1 status line is only frame garbage to an
+                    // H2 client; RFC 9112 §2.2/§3 close on a malformed
+                    // request-line).
+                    if !conn.headers_done
+                        && crate::http::opener_lacks_http_version(&conn.acc[..total])
+                    {
+                        self.close(slot);
+                        return Disp::Closed;
+                    }
+                    let conn = self.slab.get(slot).unwrap();
                     let mut req = self.gw.pool().take();
                     req.extend_from_slice(&conn.acc[..total]);
                     conn.acc.drain(..total);
@@ -929,19 +938,58 @@ impl Reactor {
         }
     }
 
-    /// Hand a framed request across the serve gateway on the NON-metered
-    /// `drorb_serve` seam, delivered back to this reactor's mailbox + self-pipe.
-    /// Used only for the h2c opening burst (an h2c stream carries no HTTP/1.1 head
-    /// for the connection-aware gates to key on), exactly as the io_uring shard
-    /// submits h2c.
-    fn submit(&mut self, slot: u32, req: PooledBuf) -> Disp {
-        let reply = ServeReply::Reactor(self.mtx.clone(), self.wake_wr, slot);
-        if self.gw.submit(req, Seam::Http, reply) {
-            Disp::Served
-        } else {
-            self.close(slot);
-            Disp::Closed
+    /// Fork an h2c prior-knowledge connection out of the reactor to the
+    /// interactive engine host (`h2::host_conn`): ONE verified engine state
+    /// threaded across socket reads on a dedicated thread. SETTINGS
+    /// synchronization, PING liveness probes, and WINDOW_UPDATE-paced response
+    /// bodies all arrive AFTER the client's first flight (RFC 9113
+    /// §6.5.3/§6.7/§6.9), so a one-shot reactor crossing cannot answer them.
+    ///
+    /// Mirrors `close`'s bookkeeping except the fd itself, whose ownership
+    /// moves to the host thread: the kqueue filters are deleted explicitly (the
+    /// fd stays open, so closing cannot deregister them), the per-source
+    /// standing counter decrements (the connection leaves this reactor's
+    /// accounting at handoff, not at connection end), and the slab entry drops.
+    fn h2c_handoff(&mut self, slot: u32) {
+        let (fd, ip, read_armed, write_armed, burst) = {
+            let conn = match self.slab.get(slot) {
+                Some(c) => c,
+                None => return,
+            };
+            let mut burst = Vec::with_capacity(conn.acc.len());
+            burst.extend_from_slice(&conn.acc);
+            (
+                conn.fd,
+                conn.peer_ip,
+                conn.read_armed,
+                conn.write_armed,
+                burst,
+            )
+        };
+        if read_armed {
+            self.changes.push(kev(
+                fd as usize,
+                libc::EVFILT_READ,
+                libc::EV_DELETE,
+                slot as usize,
+            ));
         }
+        if write_armed {
+            self.changes.push(kev(
+                fd as usize,
+                libc::EVFILT_WRITE,
+                libc::EV_DELETE,
+                slot as usize,
+            ));
+        }
+        self.standing.on_close(ip);
+        self.slab.remove(slot); // drops Conn: acc/resp buffers return to pool
+        // SAFETY: the slab entry is gone and its filters are deleted, so the new
+        // TcpStream is the fd's sole owner; it moves to the host thread and
+        // closes there.
+        let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+        let _ = stream.set_nonblocking(false); // host reads block under its timeouts
+        std::thread::spawn(move || crate::h2::host_conn(stream, &burst));
     }
 
     /// Hand a framed HTTP/1.1 request across the METERED serve seam — the same

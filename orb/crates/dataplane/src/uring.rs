@@ -62,7 +62,7 @@
 //! byte-identical — it removes copies, never a byte.
 
 use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
-use std::os::fd::RawFd;
+use std::os::fd::{FromRawFd, RawFd};
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::mpsc::{Receiver, Sender, channel};
 use std::time::{Duration, Instant};
@@ -281,19 +281,32 @@ struct Conn {
     split: Option<Box<SplitSend>>,
 }
 
-/// The state of one in-flight ZERO-COPY-BODY split send (`DRORB_SPAN=15`): the small
-/// Lean-computed response HEAD and the borrowed request body (the held buf_ring slot),
-/// written to the socket as a single `writev` gather so the body goes from its source
-/// buffer straight to the wire — never appended into an output `ByteArray`.
+/// Where a split send's body bytes live — a source referenced at send time and
+/// gathered by `writev`, NEVER copied into an output buffer.
+enum SplitBody {
+    /// ZERO-COPY BODY (`DRORB_SPAN=15`): the borrowed request in the held buf_ring
+    /// lease — `br.slice(bid, body_len)` (the echo body).
+    Lease(u16),
+    /// ZERO-COPY STATIC BODY (`DRORB_SPAN=23`): the process-static constant body
+    /// (`crate::serve::static_bulk_body`) — a process-lifetime buffer, trivially
+    /// valid for any in-flight send.
+    Static(&'static [u8]),
+}
+
+/// The state of one in-flight ZERO-COPY-BODY split send (`DRORB_SPAN=15`/`=23`): the
+/// small Lean-computed response HEAD and the referenced body (a held buf_ring slot, or
+/// the process-static constant body), written to the socket as a single `writev`
+/// gather so the body goes from its source buffer straight to the wire — never
+/// appended into an output `ByteArray`.
 struct SplitSend {
-    /// The response HEAD the serve thread computed (`drorb_serve_split_head`): status
-    /// line + headers + `Content-Length` + the blank-line separator, with the host's
-    /// `Connection:` annotation. Small (no body). Kept alive for the in-flight writev.
+    /// The response HEAD the serve thread computed (`drorb_serve_split_head` /
+    /// `drorb_serve_conformant_zc`): status line + headers + `Content-Length` + the
+    /// blank-line separator, with the host's `Connection:` annotation. Small (no
+    /// body). Kept alive for the in-flight writev.
     head: PooledBuf,
-    /// The borrowed body: the held lease's buffer id and the request length. The body
-    /// bytes are `br.slice(body_bid, body_len)` — the whole request (the echo body),
-    /// sliced at send time and gathered by `writev`, NEVER copied into a buffer.
-    body_bid: u16,
+    /// The body source: sliced/referenced at send time and gathered by `writev`,
+    /// NEVER copied into a buffer.
+    body: SplitBody,
     body_len: usize,
     /// Total response bytes (head + body) acknowledged so far, across re-armed writevs
     /// on a short write.
@@ -493,9 +506,16 @@ impl Slab {
 /// through `gw`. `zc` selects the zero-copy receive/send path. Blocks until every
 /// shard exits (on shutdown).
 pub fn run(listener_fd: RawFd, gw: ServeGateway, shards: usize, zc: bool) {
+    // The serve-owner set (`DRORB_SERVE_OWNERS`, default 1 = the original
+    // single-owner model): each shard is PINNED to one owner, assigned
+    // round-robin, so a shard's per-connection request/response FIFO order is
+    // preserved while different shards' seam crossings overlap across owners.
+    // Owner 0 is the primary runtime owner (the one `main` also hands to the
+    // TLS/UDP/admin paths).
+    let owners = crate::serve::serve_owner_set(gw);
     let mut handles = Vec::new();
     for id in 0..shards {
-        let gw = gw.clone();
+        let gw = owners[id % owners.len()].clone();
         handles.push(
             std::thread::Builder::new()
                 .name(format!("drorb-shard-{id}"))
@@ -898,7 +918,7 @@ fn on_accept(sh: &mut Shard, res: i32, listener_fd: RawFd) {
         REFUSED_503.fetch_add(1, Ordering::Relaxed);
         let mut resp = sh.gw.pool().take();
         resp.extend_from_slice(CONN_LIMIT_503);
-        stage_response(sh, slot, resp);
+        stage_response(sh, slot, resp, false);
     } else if over_rate {
         // Over the per-source request-rate window: answer the REAL `429` and close
         // WITHOUT dispatching. Same teardown funnel as the `503` (keepalive false ⇒
@@ -906,7 +926,7 @@ fn on_accept(sh: &mut Shard, res: i32, listener_fd: RawFd) {
         REFUSED_429.fetch_add(1, Ordering::Relaxed);
         let mut resp = sh.gw.pool().take();
         resp.extend_from_slice(RATE_LIMIT_429);
-        stage_response(sh, slot, resp);
+        stage_response(sh, slot, resp, false);
     } else {
         arm_recv(sh, slot);
     }
@@ -939,7 +959,7 @@ fn on_wakeup(sh: &mut Shard, mrx: &Receiver<ShardDone>, efd_buf: &mut u64) {
             on_step_reply(sh, done.conn, done.resp);
             continue;
         }
-        stage_response(sh, done.conn, done.resp);
+        stage_response(sh, done.conn, done.resp, done.split_static);
     }
     sh.backlog.push(eventfd_sqe(sh.efd, efd_buf));
 }
@@ -949,7 +969,13 @@ fn on_wakeup(sh: &mut Shard, mrx: &Receiver<ShardDone>, efd_buf: &mut u64) {
 /// receive lease exactly once (`Uring.recycle_at_most_once`), records the
 /// keep-alive disposition, annotates the `Connection:` header for HTTP/1.1, and
 /// pushes the send.
-fn stage_response(sh: &mut Shard, slot: u32, resp: PooledBuf) {
+fn stage_response(sh: &mut Shard, slot: u32, resp: PooledBuf, split_static: bool) {
+    // ZERO-COPY STATIC BODY (`DRORB_SPAN=23`): the serve thread returned a HEAD-only
+    // response whose (constant) body is the process-static buffer — gather-write head
+    // + static body via `writev`; the body is never copied per request.
+    if split_static {
+        return stage_static_split_response(sh, slot, resp);
+    }
     // ZERO-COPY BODY (`DRORB_SPAN=15`): when the split seam is active AND this request
     // was borrowed into a still-held lease, `resp` is the response HEAD ONLY (no body
     // append). Write head THEN the borrowed body via `writev`, splicing the body from
@@ -1067,8 +1093,54 @@ fn stage_split_response(sh: &mut Shard, slot: u32, mut head: PooledBuf) {
     if let Some(conn) = sh.slab.get(slot) {
         conn.split = Some(Box::new(SplitSend {
             head,
-            body_bid,
+            body: SplitBody::Lease(body_bid),
             body_len,
+            sent: 0,
+            iov: [libc::iovec {
+                iov_base: std::ptr::null_mut(),
+                iov_len: 0,
+            }; 2],
+            iov_n: 0,
+        }));
+    } else {
+        return;
+    }
+    push_split_send(sh, slot);
+}
+
+/// ZERO-COPY STATIC BODY (`DRORB_SPAN=23`) response staging: `head` is the fused
+/// response HEAD (no body); the body is the process-static constant buffer. Recycle
+/// any held receive lease now (the body does NOT come from it — mirrors the appended
+/// path), annotate the connection disposition on the head, record metrics/access-log,
+/// then arm a `writev` gathering the head and the static body — the body rides by
+/// pointer, copied by nobody in userspace.
+fn stage_static_split_response(sh: &mut Shard, slot: u32, mut head: PooledBuf) {
+    // The request's receive lease (if any) is done with: the request has been served
+    // and the body source is static. Recycle exactly once, as the appended path does.
+    let bid = sh.slab.get(slot).and_then(|c| c.leased_bid.take());
+    if let (Some(bid), Some(br)) = (bid, sh.br.as_mut()) {
+        br.recycle(bid);
+        ZC_RECYCLE.fetch_add(1, Ordering::Relaxed);
+    }
+    let body: &'static [u8] = crate::serve::static_bulk_body();
+    if let Some(conn) = sh.slab.get(slot) {
+        // The head is self-delimited (Content-Length baked in); keep-alive follows
+        // the request's intent, exactly as the appended path.
+        conn.keepalive = !conn.h2c && conn.req_keepalive && response_is_self_delimited(&head);
+        if !conn.h2c {
+            crate::http::annotate_connection(&mut head, conn.keepalive);
+        }
+        if !conn.h2c {
+            // The metrics/log read the head's status + Content-Length (both present).
+            crate::metrics::record(&head, None);
+            if let Some((rl, client)) = &conn.logrec {
+                crate::access_log::log(*client, rl, &head, None, conn.req_start);
+            }
+        }
+        conn.split = Some(Box::new(SplitSend {
+            head,
+            body: SplitBody::Static(body),
+            body_len: body.len(),
             sent: 0,
             iov: [libc::iovec {
                 iov_base: std::ptr::null_mut(),
@@ -1087,18 +1159,31 @@ fn stage_split_response(sh: &mut Shard, slot: u32, mut head: PooledBuf) {
 /// connection's kept-alive `iov` gather array (so it outlives the in-flight SQE) and
 /// returns the `writev` entry. TAG_SEND so `on_send` routes it (via `conn.split`).
 fn split_send_sqe(sh: &mut Shard, slot: u32) -> Option<squeue::Entry> {
-    // The body base pointer, sliced from the registered buf_ring memory (stable while
-    // the lease is held). Computed first, then released before the mutable `conn` borrow.
-    let (body_bid, body_len) = {
+    // The body base pointer: sliced from the registered buf_ring memory (stable while
+    // the lease is held) or the process-static buffer (stable forever). Computed
+    // first, then released before the mutable `conn` borrow.
+    enum Src {
+        Lease(u16, usize),
+        Static(*const u8),
+    }
+    let src = {
         let conn = sh.slab.get(slot)?;
         let sp = conn.split.as_ref()?;
-        (sp.body_bid, sp.body_len)
+        match sp.body {
+            SplitBody::Lease(bid) => Src::Lease(bid, sp.body_len),
+            SplitBody::Static(s) => Src::Static(s.as_ptr()),
+        }
     };
-    // SAFETY: `body_bid` is the still-held lease; `body_len` bytes were received into it.
-    // The registered buffer memory is stable until the lease is recycled (after this send
-    // settles), so the pointer is valid for the writev's lifetime.
-    let body_base =
-        unsafe { sh.br.as_ref()?.slice(body_bid, body_len).as_ptr() } as *mut libc::c_void;
+    let body_base = match src {
+        // SAFETY: `bid` is the still-held lease; `body_len` bytes were received into
+        // it. The registered buffer memory is stable until the lease is recycled
+        // (after this send settles), so the pointer is valid for the writev's lifetime.
+        Src::Lease(bid, len) => {
+            (unsafe { sh.br.as_ref()?.slice(bid, len).as_ptr() }) as *mut libc::c_void
+        }
+        // The process-static body: valid for the process lifetime.
+        Src::Static(p) => p as *mut libc::c_void,
+    };
     let conn = sh.slab.get(slot)?;
     let fd = conn.fd;
     let sp = conn.split.as_mut()?;
@@ -1213,7 +1298,7 @@ fn on_step_reply(sh: &mut Shard, slot: u32, step: PooledBuf) {
             }
             let mut resp = sh.gw.pool().take();
             resp.extend_from_slice(&step[1..]);
-            stage_response(sh, slot, resp);
+            stage_response(sh, slot, resp, false);
         }
 
         // YIELD cacheLookup: the NON-BLOCKING in-memory probe. A fresh HIT or a
@@ -1972,7 +2057,14 @@ fn defer_to_blocking(sh: &mut Shard, slot: u32) {
                 });
             let mut resp = gw.pool().take();
             resp.extend_from_slice(&bytes);
-            if mtx.send(ShardDone { conn: slot, resp }).is_ok() {
+            if mtx
+                .send(ShardDone {
+                    conn: slot,
+                    resp,
+                    split_static: false,
+                })
+                .is_ok()
+            {
                 wake(efd);
             }
         });
@@ -2223,7 +2315,7 @@ fn dispatch_acc(sh: &mut Shard, slot: u32) {
             TIMEDOUT_408.fetch_add(1, Ordering::Relaxed);
             let mut resp = sh.gw.pool().take();
             resp.extend_from_slice(SLOWLORIS_408);
-            stage_response(sh, slot, resp);
+            stage_response(sh, slot, resp, false);
             return;
         }
     }
@@ -2233,27 +2325,33 @@ fn dispatch_acc(sh: &mut Shard, slot: u32) {
     };
 
     // h2c preface: not HTTP/1.1-framed. Wait for the full preface, then hand the
-    // whole opening burst to the core once and close after the response.
+    // connection to the interactive engine host on its own thread (the same fork
+    // the blocking host makes).
     if !conn.h2c && conn.acc.len() < H2_PREFACE.len() && H2_PREFACE.starts_with(&conn.acc) {
         arm_recv(sh, slot);
         return;
     }
     if !conn.h2c && conn.acc.starts_with(H2_PREFACE) {
-        conn.h2c = true;
-        conn.req_keepalive = false;
-        conn.headers_done = true; // header phase over (h2c burst framed)
-        let mut req = sh.gw.pool().take();
-        req.extend_from_slice(&conn.acc);
-        conn.acc.clear();
-        let reply = ServeReply::Shard(sh.mtx.clone(), sh.efd, slot);
-        if !sh.gw.submit(req, crate::serve::Seam::Http, reply) {
-            close(sh, slot);
-        }
-        return;
+        return h2c_handoff(sh, slot);
     }
 
     match next_request(&conn.acc) {
         Frame::Complete(total) => {
+            // MIXED-PORT OPENER CLASSIFICATION — the same rule as
+            // `blocking::handle_conn`: a FIRST flight whose request line has no
+            // `HTTP/` version token is neither protocol's well-formed opener — not
+            // an HTTP/1.x request, and not the H2 preface (that forked to the
+            // engine at the peek above). Terminate without a reply, the one answer
+            // both protocols assign (RFC 9113 §3.4 invalid-preface connection
+            // error — an HTTP/1.1 status line is only frame garbage to an H2
+            // client; RFC 9112 §2.2/§3 close on a malformed request-line).
+            if !conn.headers_done && crate::http::opener_lacks_http_version(&conn.acc[..total]) {
+                return close(sh, slot);
+            }
+            let conn = match sh.slab.get(slot) {
+                Some(c) => c,
+                None => return,
+            };
             let mut req = sh.gw.pool().take();
             req.extend_from_slice(&conn.acc[..total]);
             conn.acc.drain(..total);
@@ -2495,6 +2593,48 @@ fn finish_send(sh: &mut Shard, slot: u32, keepalive: bool) {
     } else {
         close(sh, slot);
     }
+}
+
+/// Fork an h2c prior-knowledge connection out of the shard to the interactive
+/// engine host (`h2::host_conn`): ONE verified engine state threaded across
+/// socket reads on a dedicated thread. SETTINGS synchronization, PING liveness
+/// probes, and WINDOW_UPDATE-paced response bodies all arrive AFTER the
+/// client's first flight (RFC 9113 §6.5.3/§6.7/§6.9), so the connection cannot
+/// be answered by one shard-loop crossing — it leaves the shard for good, the
+/// same fork the blocking host makes at its preface peek.
+///
+/// Mirrors `close`'s bookkeeping except the fd itself, whose ownership moves to
+/// the host thread: any leased receive buffer recycles, any in-flight upstream
+/// dial fd closes, the per-source standing counter decrements (the connection
+/// leaves this shard's accounting at handoff, not at connection end), and the
+/// slab entry drops with NO close SQE.
+fn h2c_handoff(sh: &mut Shard, slot: u32) {
+    let (fd, ip, burst) = match sh.slab.get(slot) {
+        Some(conn) => {
+            let mut burst = Vec::with_capacity(conn.acc.len());
+            burst.extend_from_slice(&conn.acc);
+            (conn.fd, conn.peer_ip, burst)
+        }
+        None => return,
+    };
+    let bid = sh.slab.get(slot).and_then(|c| c.leased_bid.take());
+    if let (Some(bid), Some(br)) = (bid, sh.br.as_mut()) {
+        br.recycle(bid);
+        ZC_RECYCLE.fetch_add(1, Ordering::Relaxed);
+    }
+    if let Some(dial) = take_proxy(sh, slot) {
+        // SAFETY: closing the shard-owned upstream fd exactly once (as `close`).
+        unsafe { libc::close(dial.up_fd) };
+    }
+    sh.standing.on_close(ip);
+    sh.slab.remove(slot); // drops the Conn: acc/resp buffers return to the pool
+    // SAFETY: the slab entry is gone and no SQE references `fd` (the handoff
+    // runs inside a recv-completion handler with no other op armed for this
+    // slot), so the new TcpStream is the fd's sole owner; it moves to the host
+    // thread and closes there.
+    let stream = unsafe { std::net::TcpStream::from_raw_fd(fd) };
+    let _ = stream.set_nonblocking(false); // host reads block under its timeouts
+    std::thread::spawn(move || crate::h2::host_conn(stream, &burst));
 }
 
 fn close(sh: &mut Shard, slot: u32) {

@@ -35,54 +35,19 @@ Theorems:
     `natBytes 1572395042` (re-states `Reactor.Deploy.deploy_emits_upstream`, the LB/DNS
     evidence), pinned through `upstream_value_wire_bytes` to the exact decimal ASCII.
   * `upstream_value_wire_bytes` — `natBytes 1572395042` is exactly the 10 bytes of
-    `"1572395042"` (pure-kernel `decide` via the `ba_toList_eq` bridge, no `native_decide`,
+    `"1572395042"` (pure-kernel `decide` via the `Shortcuts.ba_toList_eq` bridge, no `native_decide`,
     no `Lean.ofReduceBool`), matching the curl `x-upstream: 1572395042`.
 -/
 
 import Reactor.Deploy
 import Reactor.Lifecycle
+import Proto.Kernel.Shortcuts
 
 namespace Proto.XUpstreamProven
 
 open Proto (Bytes)
 open Reactor (RingSubmission)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8`/`natBytes` constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-! ## The deployed `x-upstream` install survives the later `x-corr` stamp -/
 
@@ -107,13 +72,13 @@ theorem upstream_name_wire_bytes :
     Reactor.Deploy.upstreamName = [120, 45, 117, 112, 115, 116, 114, 101, 97, 109] := rfl
 
 /-- **`upstream_value_wire_bytes`.** The deployed value `natBytes 1572395042` is exactly
-the 10 bytes of `"1572395042"` — pinned to an explicit literal through the `ba_toList_eq`
+the 10 bytes of `"1572395042"` — pinned to an explicit literal through the `Shortcuts.ba_toList_eq`
 bridge (pure-kernel `decide`, no `native_decide`), matching the curl `x-upstream:
 1572395042`. -/
 theorem upstream_value_wire_bytes :
     Reactor.Deploy.natBytes 1572395042
       = [49, 53, 55, 50, 51, 57, 53, 48, 52, 50] := by
-  simp only [Reactor.Deploy.natBytes, ba_toList_eq]; decide
+  simp only [Reactor.Deploy.natBytes, Shortcuts.ba_toList_eq]; decide
 
 /-- **`deployed_upstream_value`.** On a real deployed dispatch (`deploySubs input =
 .dispatch req :: rest`), the emitted `x-upstream` header value is exactly the 10 bytes of

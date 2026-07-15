@@ -1,6 +1,5 @@
 import Reactor.Contract
 import Reactor.ServeStep
-import Reactor.ServeStream
 
 /-!
 # Reactor.DriveCache — the Phase-1 effect-scheduler proof (`drive_cache_refines`)
@@ -36,18 +35,21 @@ reactor and is instead consumed HERE, threaded into `resumeStep`.
 * the reactor submits `.cacheLookup key` with the PROVEN key
   (`serveStep_cacheable`);
 * an `effectComplete hit` with the store's answer `hit ≠ []` drives to the stored
-  bytes, the HIT served WITHOUT re-running the handler
-  (`resumeStep_cache_hit`);
+  bytes REVALIDATED against the request's preconditions (verbatim for a plain GET,
+  the proven `304`/`412` for a conditional one), the HIT served WITHOUT re-running
+  the handler (`resumeStep_cache_hit`);
 * an `effectComplete []` (MISS) followed by the store-ack `effectComplete ack`
-  drives to the deployed fold bytes, having yielded `.cacheStore key … cacheLifetime`
-  with the PROVEN key + lifetime in between (`resumeStep_cache_miss`).
+  drives to the revalidated deployed fold bytes (the store holds the plain `200`
+  of the precondition-stripped fold), having yielded `.cacheStore key …
+  cacheLifetime` with the PROVEN key + lifetime in between (`resumeStep_cache_miss`).
 
 The result bytes fed into the continuation are exactly the effect payloads carried by
 the ingress events (`resultsOf`), so this is a real refinement — the reactor feeds the
-store's actual answer, not an invented one. `drive_cache_miss_batch` further composes
-the miss drive with `serveTrace_refines`, so the reactor-driven miss response equals
-the sans-IO batch serve on any recv split (the design's
-`uring_serve = serveTrace_refines ∘ resumeStep_semantics ∘ drive_effects_refines`).
+store's actual answer, not an invented one. Composing the miss drive with the sans-IO
+streaming refinement (`serveTrace_refines`) is now a NAMED RESIDUAL: the seam's miss
+`.done`-s the consolidated conformant serve, which by construction is not the plain
+streaming batch spec `serveTrace_refines` reproduces (see the composing-section note
+below).
 
 **The realization boundary (honest).** This proves the MODEL. The Rust io_uring
 `on_step_reply` cache dispatch (Phase 0) REALIZES this model — it submits the SQEs and
@@ -61,6 +63,7 @@ namespace Reactor.DriveCache
 open Proto (Bytes)
 open Reactor (RingEvent)
 open Reactor.ServeStep
+open Reactor.ServeConformant (hasConditional injectDate)
 
 /-- **Extract the effect-result payloads from a reactor ingress-event trace, in
 order.** Only the `effectComplete` edges carry an effect result (a cache read/write
@@ -93,27 +96,53 @@ def driveServe (mask : Nat) (input : Bytes) (events : List RingEvent) : Step :=
 
 /-- **HIT.** The reactor submits `.cacheLookup key`, receives `effectComplete hit`
 with the store's non-empty answer, feeds it in, and drives to the stored bytes —
-served WITHOUT re-running the handler (`resumeStep_cache_hit`). -/
+served WITHOUT re-running the handler, REVALIDATED against the request's
+preconditions (`resumeStep_cache_hit`: verbatim for a plain GET —
+`drive_cache_hit_plain` — the proven `304`/`412` for a conditional one). -/
 theorem drive_cache_hit (mask : Nat) (input key hit : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
     (hg : gateAdmits input = true) (hne : hit ≠ []) :
-    driveServe mask input [RingEvent.effectComplete hit] = .done hit := by
+    driveServe mask input [RingEvent.effectComplete hit]
+      = .done (revalidate (reqOf input) hit) := by
   unfold driveServe
   rw [resultsOf_lookup]
   exact resumeStep_cache_hit mask input key hit hapi hc hg hne
 
+/-- **HIT, precondition-free** — the stored bytes served through the default's
+non-conditional accept (`Date`-spliced, `injectDate`). -/
+theorem drive_cache_hit_plain (mask : Nat) (input key hit : Bytes)
+    (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
+    (hg : gateAdmits input = true) (hne : hit ≠ [])
+    (hp : hasConditional (reqOf input) = false) :
+    driveServe mask input [RingEvent.effectComplete hit] = .done (injectDate hit) := by
+  rw [drive_cache_hit mask input key hit hapi hc hg hne, revalidate_plain _ _ hp]
+
 /-- **MISS.** The reactor submits `.cacheLookup key`, receives `effectComplete []`
-(the MISS sentinel), runs the deployed fold, yields `.cacheStore key resp cacheLifetime`
-with the PROVEN key + lifetime, receives the store-ack `effectComplete ack`, and drives
-to the deployed fold bytes (`resumeStep_cache_miss`). -/
+(the MISS sentinel), runs the deployed fold on the precondition-stripped input
+(so the STORE always holds the plain `200`, never a `304`), yields
+`.cacheStore key resp cacheLifetime` with the PROVEN key + lifetime, receives the
+store-ack `effectComplete ack`, and drives to the revalidated fold bytes
+(`resumeStep_cache_miss`). -/
 theorem drive_cache_miss (mask : Nat) (input key ack : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
     (hg : gateAdmits input = true) :
     driveServe mask input [RingEvent.effectComplete [], RingEvent.effectComplete ack]
-      = .done (Reactor.Deploy.servePipelineFull2 input) := by
+      = .done (revalidate (reqOf input)
+          (seamInner (cacheFoldInput input))) := by
   unfold driveServe
   rw [resultsOf_miss_store]
   exact resumeStep_cache_miss mask input key ack hapi hc hg
+
+/-- **MISS, precondition-free** — the consolidated fold bytes on `input` served
+through the default's non-conditional accept (`Date`-spliced, `injectDate`). -/
+theorem drive_cache_miss_plain (mask : Nat) (input key ack : Bytes)
+    (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
+    (hg : gateAdmits input = true) (hp : hasConditional (reqOf input) = false) :
+    driveServe mask input [RingEvent.effectComplete [], RingEvent.effectComplete ack]
+      = .done (injectDate (seamInner input)) := by
+  unfold driveServe
+  rw [resultsOf_miss_store]
+  exact resumeStep_cache_miss_plain mask input key ack hapi hc hg hp
 
 /-- **THE PHASE-1 THEOREM — `drive_cache_refines`.** For a gate-admitted cacheable
 request, the reactor threading `effectComplete` CQEs into the proven serve drives the
@@ -121,53 +150,50 @@ cache effect faithfully, all three obligations at once:
 
 1. it first submits `.cacheLookup key` with the PROVEN key (`serveStep_cacheable`);
 2. a lookup whose store HOLDS the key (`effectComplete hit`, `hit ≠ []`) drives to
-   the stored bytes `hit` — the HIT served without the handler;
+   the stored bytes REVALIDATED against the request's preconditions — verbatim for
+   a plain GET, the proven `304`/`412` for a conditional one — the HIT served
+   without the handler;
 3. a lookup MISS (`effectComplete []`) then the store-ack (`effectComplete ack`)
-   drives to the deployed fold bytes `servePipelineFull2 input`.
+   drives to the revalidated deployed fold bytes (the STORE holds the plain `200`
+   of the precondition-stripped fold).
 
 The bytes fed into the continuation are the effect payloads carried by the ingress
 events (`resultsOf`), and the outputs are the proven cache semantics — so the io_uring
 cache dispatch (modelled here) is a faithful interpreter of the proven serve program.
 Not vacuous: each conjunct equates the reactor-driven result with a specific,
-distinct, semantically-correct value (the proven key; the stored bytes; the fold
-bytes), reusing the cache-arm theorems verbatim. -/
+distinct, semantically-correct value (the proven key; the revalidated stored bytes;
+the revalidated fold bytes), reusing the cache-arm theorems verbatim. -/
 theorem drive_cache_refines (mask : Nat) (input key : Bytes)
     (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
     (hg : gateAdmits input = true) :
     serveStep mask input = .yield (.cacheLookup key) (cacheResume key input)
     ∧ (∀ hit : Bytes, hit ≠ [] →
-        driveServe mask input [RingEvent.effectComplete hit] = .done hit)
+        driveServe mask input [RingEvent.effectComplete hit]
+          = .done (revalidate (reqOf input) hit))
     ∧ (∀ ack : Bytes,
         driveServe mask input [RingEvent.effectComplete [], RingEvent.effectComplete ack]
-          = .done (Reactor.Deploy.servePipelineFull2 input)) :=
+          = .done (revalidate (reqOf input)
+              (seamInner (cacheFoldInput input)))) :=
   ⟨serveStep_cacheable mask input key hapi hc hg,
    fun hit hne => drive_cache_hit mask input key hit hapi hc hg hne,
    fun ack => drive_cache_miss mask input key ack hapi hc hg⟩
 
 /-! ## Composing the drive refinement with the sans-IO serve refinement
 
-The design's chain is `uring_serve = serveTrace_refines ∘ resumeStep_semantics ∘
-drive_effects_refines`. `drive_cache_refines` is the `drive_effects_refines` factor;
-`resumeStep_semantics` is the cache-arm theorems it reuses; `serveTrace_refines` is the
-sans-IO factor. Here they compose on the MISS path: the reactor-driven miss response is
-byte-for-byte the sans-IO batch serve, for ANY recv split. -/
-
-/-- **The reactor-driven cache MISS equals the batch serve, on any recv split.** The
-final bytes the reactor produces after driving the cache miss (`drive_cache_miss`) are
-exactly the streaming sans-IO serve's bytes on any windows whose denotations
-concatenate to `input` (`serveTrace_refines`) — the per-scheduler drive refinement
-composed with the sans-IO serve refinement, end to end. -/
-theorem drive_cache_miss_batch (cfg : ServeStream.ServeConfig) (mask : Nat)
-    (input key ack : Bytes) (windows : List Datapath.SpanBytes)
-    (hpart : (windows.map Datapath.SpanBytes.denote).flatten = input)
-    (hapi : isApiPath input = false) (hc : cacheableKey input = some key)
-    (hg : gateAdmits input = true) :
-    stepDone (driveServe mask input
-        [RingEvent.effectComplete [], RingEvent.effectComplete ack])
-      = ServeStream.serveTrace_split cfg windows := by
-  rw [drive_cache_miss mask input key ack hapi hc hg]
-  show Reactor.Deploy.servePipelineFull2 input = ServeStream.serveTrace_split cfg windows
-  exact (ServeStream.serveTrace_refines cfg input windows hpart).symm
+**Named residual (the path-unification consequence).** Before the effect seam was
+routed through the consolidated conformant pipeline, the reactor-driven cache miss
+`.done`-d the plain fourteen-stage fold (`Reactor.Deploy.servePipelineFull2 input`),
+so it composed byte-for-byte with the sans-IO streaming refinement
+(`ServeStream.serveTrace_refines`, which reproduces that same batch spec on any recv
+split). The seam now `.done`-s the consolidated conformant serve
+(`injectDate (seamInner input)` — the full deployed stage registry plus the `Date` /
+`Content-Location` / conditional finisher the bare `conformantServe` default carries),
+so the reactor miss is deliberately NOT the plain streaming batch: they differ by
+exactly the stages the divergence fix added. The sans-IO streaming refinement remains
+a property of the batch spec itself (`ServeStream.serveTrace_refines`, unchanged);
+re-composing it with the conformant seam requires the SAME consolidation on the
+streaming path (`ServeStream`) — a follow-up, tracked here honestly rather than
+asserted. -/
 
 /-! ## Runnable checks — `driveServe` / `resultsOf` are genuine (not constant) -/
 
@@ -191,7 +217,8 @@ example (cfg : Proto.Config) (s : Proto.State) (r : Bytes) :
 
 #print axioms drive_cache_refines
 #print axioms drive_cache_hit
+#print axioms drive_cache_hit_plain
 #print axioms drive_cache_miss
-#print axioms drive_cache_miss_batch
+#print axioms drive_cache_miss_plain
 
 end Reactor.DriveCache

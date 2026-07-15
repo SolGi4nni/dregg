@@ -1,0 +1,21 @@
+[package]
+name = "cake-serve"
+version = "0.0.0"
+edition = "2021"
+publish = false
+description = "Reusable integration pattern for driving a verified export-function serve entry from a per-core-shard reactor over zero-copy buffers, each shard with its own heap."
+
+[lib]
+path = "src/lib.rs"
+
+# Standalone: detach from any ancestor workspace so this builds in isolation
+# and does not perturb the surrounding member list.
+[workspace]
+
+[dev-dependencies]
+# Test-only: pin each shard thread to a distinct core (sched_setaffinity) so the
+# "one heap per core shard" property is exercised on real per-core threads.
+libc = "0.2"
+
+[profile.release]
+opt-level = 2

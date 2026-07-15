@@ -64,6 +64,57 @@ def takeUntil (sep : UInt8) : Bytes → Option (Bytes × Bytes)
     if b == sep then some ([], bs)
     else (takeUntil sep bs).map (fun p => (b :: p.1, p.2))
 
+/-! ### Bounded-stack scans
+
+Each list scan here recurses *inside* `Option.map` (or conses after the
+recursive call), so the compiled code pushes one C stack frame per byte (or per
+header line) — recursion depth = input length, and a large input exhausts the
+thread stack before any byte gate can refuse it. Each scan gets a
+reverse-accumulator (tail-recursive) twin that the compiler emits as a loop —
+`O(1)` stack regardless of input — installed as the compiled implementation by
+`@[csimp]`. Every theorem (the `*_append` inversion lemmas, the round-trips)
+keeps referring to the unchanged spec. -/
+
+/-- Tail-recursive `takeUntil`: the prefix accumulates in reverse, one loop
+iteration per byte, constant stack. -/
+def takeUntilRevGo (sep : UInt8) : Bytes → Bytes → Option (Bytes × Bytes)
+  | _, [] => none
+  | acc, b :: bs =>
+    if b == sep then some (acc.reverse, bs)
+    else takeUntilRevGo sep (b :: acc) bs
+
+/-- The reverse-accumulator scan equals `takeUntil` under the flushed
+accumulator. -/
+theorem takeUntilRevGo_eq (sep : UInt8) (bs : Bytes) :
+    ∀ acc, takeUntilRevGo sep acc bs
+        = (takeUntil sep bs).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  induction bs with
+  | nil => intro acc; rfl
+  | cons b t ih =>
+    intro acc
+    show (if b == sep then some (acc.reverse, t) else takeUntilRevGo sep (b :: acc) t)
+        = (takeUntil sep (b :: t)).map (fun p => (acc.reverse ++ p.1, p.2))
+    rw [takeUntil]
+    by_cases h : b == sep
+    · simp [h]
+    · rw [if_neg h, if_neg h, ih (b :: acc), Option.map_map]
+      rcases takeUntil sep t with _ | ⟨pre, rest⟩
+      · rfl
+      · simp
+
+/-- The loop form `takeUntil` compiles to. -/
+def takeUntilTail (sep : UInt8) (bs : Bytes) : Option (Bytes × Bytes) :=
+  takeUntilRevGo sep [] bs
+
+/-- **The loop/spec agreement.** Installs the constant-stack loop as the
+compiled implementation of `takeUntil`. -/
+@[csimp] theorem takeUntil_eq_tail : @takeUntil = @takeUntilTail := by
+  funext sep bs
+  rw [takeUntilTail, takeUntilRevGo_eq sep bs []]
+  rcases takeUntil sep bs with _ | ⟨pre, rest⟩
+  · rfl
+  · simp
+
 /-- Read up to (and consume) the first `CRLF`; returns the bytes before it and
 the bytes after it. `none` if no `CRLF` occurs. -/
 def takeUntilCrlf : Bytes → Option (Bytes × Bytes)
@@ -72,6 +123,51 @@ def takeUntilCrlf : Bytes → Option (Bytes × Bytes)
   | a :: b :: rest =>
     if a == CR && b == LF then some ([], rest)
     else (takeUntilCrlf (b :: rest)).map (fun p => (a :: p.1, p.2))
+
+/-- Tail-recursive `takeUntilCrlf`: same reverse-accumulator loop shape as
+`takeUntilRevGo`, constant stack. -/
+def takeUntilCrlfRevGo : Bytes → Bytes → Option (Bytes × Bytes)
+  | _, [] => none
+  | _, [_] => none
+  | acc, a :: b :: rest =>
+    if a == CR && b == LF then some (acc.reverse, rest)
+    else takeUntilCrlfRevGo (a :: acc) (b :: rest)
+
+/-- The reverse-accumulator scan equals `takeUntilCrlf` under the flushed
+accumulator. -/
+theorem takeUntilCrlfRevGo_eq (bs : Bytes) :
+    ∀ acc, takeUntilCrlfRevGo acc bs
+        = (takeUntilCrlf bs).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  induction bs with
+  | nil => intro acc; rfl
+  | cons a xs ih =>
+    intro acc
+    match xs, ih with
+    | [], _ => rfl
+    | b :: rest, ih =>
+      show (if a == CR && b == LF then some (acc.reverse, rest)
+              else takeUntilCrlfRevGo (a :: acc) (b :: rest))
+          = (takeUntilCrlf (a :: b :: rest)).map (fun p => (acc.reverse ++ p.1, p.2))
+      rw [takeUntilCrlf]
+      by_cases h : a == CR && b == LF
+      · simp [h]
+      · rw [if_neg h, if_neg h, ih (a :: acc), Option.map_map]
+        rcases takeUntilCrlf (b :: rest) with _ | ⟨pre, rest'⟩
+        · rfl
+        · simp
+
+/-- The loop form `takeUntilCrlf` compiles to. -/
+def takeUntilCrlfTail (bs : Bytes) : Option (Bytes × Bytes) :=
+  takeUntilCrlfRevGo [] bs
+
+/-- **The loop/spec agreement.** Installs the constant-stack loop as the
+compiled implementation of `takeUntilCrlf`. -/
+@[csimp] theorem takeUntilCrlf_eq_tail : @takeUntilCrlf = @takeUntilCrlfTail := by
+  funext bs
+  rw [takeUntilCrlfTail, takeUntilCrlfRevGo_eq bs []]
+  rcases takeUntilCrlf bs with _ | ⟨pre, rest⟩
+  · rfl
+  · simp
 
 /-- Parse one header line `name ":" SP value`: name up to the first `:`, then a
 single `SP`, then the value (the rest of the line). -/
@@ -99,6 +195,57 @@ def parseHeadersFuel : Nat → Bytes → Option (List (Bytes × Bytes) × Bytes)
           match parseHeadersFuel fuel after with
           | none => none
           | some (hs, body) => some (hdr :: hs, body)
+
+/-- Tail-recursive `parseHeadersFuel`: parsed headers accumulate in reverse,
+one loop iteration per header line, constant stack. -/
+def parseHeadersFuelRevGo : Nat → Bytes → List (Bytes × Bytes) →
+    Option (List (Bytes × Bytes) × Bytes)
+  | 0, _, _ => none
+  | fuel + 1, bs, acc =>
+    match stripPrefix crlf bs with
+    | some body => some (acc.reverse, body)
+    | none =>
+      match takeUntilCrlf bs with
+      | none => none
+      | some (line, after) =>
+        match parseHeaderLine line with
+        | none => none
+        | some hdr => parseHeadersFuelRevGo fuel after (hdr :: acc)
+
+/-- The reverse-accumulator pass equals `parseHeadersFuel` under the flushed
+accumulator. -/
+theorem parseHeadersFuelRevGo_eq :
+    ∀ (fuel : Nat) (bs : Bytes) (acc : List (Bytes × Bytes)),
+      parseHeadersFuelRevGo fuel bs acc
+        = (parseHeadersFuel fuel bs).map (fun p => (acc.reverse ++ p.1, p.2)) := by
+  intro fuel
+  induction fuel with
+  | zero => intro bs acc; rfl
+  | succ f ih =>
+    intro bs acc
+    unfold parseHeadersFuelRevGo parseHeadersFuel
+    rcases hsp : stripPrefix crlf bs with _ | body
+    · rcases htc : takeUntilCrlf bs with _ | ⟨line, after⟩
+      · simp [hsp, htc]
+      · rcases hpl : parseHeaderLine line with _ | hdr
+        · simp [hsp, htc, hpl]
+        · rcases hpf : parseHeadersFuel f after with _ | ⟨hs, body⟩ <;>
+            simp [hsp, htc, hpl, hpf, ih after (hdr :: acc)]
+    · simp [hsp]
+
+/-- The loop form `parseHeadersFuel` compiles to. -/
+def parseHeadersFuelTail (fuel : Nat) (bs : Bytes) :
+    Option (List (Bytes × Bytes) × Bytes) :=
+  parseHeadersFuelRevGo fuel bs []
+
+/-- **The loop/spec agreement.** Installs the constant-stack loop as the
+compiled implementation of `parseHeadersFuel`. -/
+@[csimp] theorem parseHeadersFuel_eq_tail : @parseHeadersFuel = @parseHeadersFuelTail := by
+  funext fuel bs
+  rw [parseHeadersFuelTail, parseHeadersFuelRevGo_eq fuel bs []]
+  rcases parseHeadersFuel fuel bs with _ | ⟨hs, body⟩
+  · rfl
+  · simp
 
 /-- Parse the header block (and split off the body). -/
 def parseHeaders (bs : Bytes) : Option (List (Bytes × Bytes) × Bytes) :=

@@ -30,55 +30,20 @@ Theorems:
     output of `securityheadersStage :: rest` (rides `pipeline_stage_effect` +
     `build_addHeaders`, exactly as the deployed HSTS byte-effect does).
   * `nosniff_wire_bytes` — the name/value are exactly the bytes of
-    `"X-Content-Type-Options"` / `"nosniff"` (pinned via the `ba_toList_eq` bridge —
+    `"X-Content-Type-Options"` / `"nosniff"` (pinned via the `Shortcuts.ba_toList_eq` bridge —
     pure-kernel `decide`, no `native_decide`).
 -/
 
 import Reactor.Stage.SecurityHeaders
 import SecurityHeaders
+import Proto.Kernel.Shortcuts
 
 namespace Proto.NoSniffProven
 
 open Reactor.Pipeline
 open Reactor.Stage.SecurityHeaders
 open Proto (Bytes)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`bs.toList = bs.data.toList`, letting `toUTF8` byte constants close by pure-kernel
-`decide` (`{propext, Quot.sound}`; no `native_decide`, no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The `X-Content-Type-Options` header name on the wire. -/
 def nosniffName : Bytes := "X-Content-Type-Options".toUTF8.toList
@@ -129,13 +94,13 @@ theorem securityheaders_nosniff_present (rest : List Stage) (h : Ctx → Reactor
 
 /-- **`nosniff_wire_bytes`.** The header name/value the deployed stage emits are exactly
 the bytes of `"X-Content-Type-Options"` / `"nosniff"` — pinned to explicit literals
-through the `ba_toList_eq` bridge (pure-kernel `decide`, no `native_decide`), matching the
+through the `Shortcuts.ba_toList_eq` bridge (pure-kernel `decide`, no `native_decide`), matching the
 curl `X-Content-Type-Options: nosniff`. -/
 theorem nosniff_wire_bytes :
     nosniffName = [88, 45, 67, 111, 110, 116, 101, 110, 116, 45, 84, 121, 112, 101,
                    45, 79, 112, 116, 105, 111, 110, 115]
   ∧ nosniffVal = [110, 111, 115, 110, 105, 102, 102] := by
-  refine ⟨?_, ?_⟩ <;> simp only [nosniffName, nosniffVal, ba_toList_eq] <;> decide
+  refine ⟨?_, ?_⟩ <;> simp only [nosniffName, nosniffVal, Shortcuts.ba_toList_eq] <;> decide
 
 end Proto.NoSniffProven
 

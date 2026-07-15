@@ -19,7 +19,8 @@ module adds the two seams a multi-protocol host needs, as the SAME kind of
     `IoMacMulti.wsHandle`, only the caller (Rust) differs.
 
   * `drorb_serve_datagram` — one UDP datagram's bytes in (a QUIC long-header
-    Initial packet); the served HTTP response bytes out. The datagram is DECRYPTED
+    Initial packet); a QUIC 1-RTT short-header response packet out (the served HTTP
+    re-encrypted via the proven `QuicServer.buildShortPacket`). The datagram is DECRYPTED
     in Lean by the verified EverCrypt QUIC packet protection (RFC 9001 §5: HKDF
     Initial key schedule, AES-ECB header protection removal §5.4.3, AES-128-GCM
     AEAD open §5.3) before its STREAM frame's HTTP/3 bytes reach the UNCHANGED
@@ -50,6 +51,7 @@ import Reactor.Ws
 import Crypto
 import TlsCrypto
 import QuicHeaderProt
+import QuicServer
 
 namespace Dataplane
 namespace Multi
@@ -212,33 +214,104 @@ def parseStreamFrame (pt : ByteArray) : Option (Nat × List UInt8) :=
       else
         some (sid, bs.drop afterOff)
 
-/-! ## (4) The datagram seam — decrypt → proven H3 dispatch → guarded serve -/
+/-! ## (4) The datagram seam — the QUIC handshake, then H3 dispatch -/
 
-/-- **`drorb_serve_datagram`.** A real UDP datagram's bytes in (a QUIC Initial
-packet); the served HTTP response bytes out. Parse → derive the AES-128-GCM Initial
-keys (EverCrypt HKDF) → `openInitial` (AES-ECB header-protection removal +
-AES-128-GCM AEAD open) → recover the STREAM frame's H3 bytes → drive the UNCHANGED
-proven `Reactor.QuicIngress.datagramServe` (real QUIC/H3 dispatch) → serve through
-the proven guarded pipeline `Reactor.Ingress.serveOverSubs`. On any parse/auth
-failure returns no bytes (the host then sends nothing — an attacker-forged packet is
-silently dropped, exactly as the AEAD's authenticity gate dictates). -/
+/-- **The QUIC handshake completion on the datagram seam.** A received Initial
+whose CRYPTO frames reassemble a complete TLS ClientHello is answered with the
+server response flight: a server Initial carrying the ServerHello and a server
+Handshake carrying EncryptedExtensions ‖ Certificate ‖ CertificateVerify ‖
+Finished, coalesced and padded to 1200 bytes. The whole flight is the proven
+`QuicServer.buildFlightFromCH` over the verified EverCrypt primitives — the
+REQUIRED `X25519MLKEM768` post-quantum hybrid KEX (`QuicServer.quicKex`, pinned
+`requireHybridKex = true`: a classical-only ClientHello gets no flight,
+`QuicServer.buildTlsFlight_requires_hybrid`), the RFC 8446 key schedule, and the
+RFC 9001 §5 packet protection. The client Initial is decrypted with
+`QuicServer.decryptInitialFrames` (verified AES-128-GCM under AES-ECB header
+protection) and its CRYPTO segments reassembled by the proven
+`QuicServer.assembleFrom` (`assembleFrom_exact`).
+
+Stateless, matching this one-datagram seam: the first Initial's ClientHello is
+answered directly with the flight. What this seam does NOT do (it holds no
+connection table across datagrams): stateless-Retry address validation, a
+multi-packet ClientHello spanning Initials, and installing the 1-RTT keys on the
+client Finished. Those need the stateful `QuicServer.stepServer` machine with a
+host-side `ServerState`. `none` when the datagram carries no complete ClientHello
+or the offered KEX is not the required hybrid (fail-closed). -/
+def datagramHandshake (dg : ByteArray) : Option ByteArray := do
+  let loc ← QuicServer.locateLong dg.toList
+  -- Only an Initial packet carries the ClientHello; the AES-128-GCM Initial-key
+  -- decrypt below would fail-closed for any other level anyway.
+  guard (loc.kind == QuicServer.PktKind.initial)
+  let (pn, frs) ← QuicServer.decryptInitialFrames dg.toList loc 0
+  let segs := frs.foldl (fun (acc : List (Nat × List UInt8)) f =>
+    match f with
+    | .crypto off d => QuicServer.insSeg acc off d
+    | _ => acc) []
+  let ch ← QuicServer.completeHsMsg (QuicServer.assembleFrom segs segs.length 0)
+  let (flight, _conn) ← QuicServer.buildFlightFromCH loc.dcid loc.dcid loc.scid
+    ⟨ch.toArray⟩ [pn] 0
+  some flight
+
+/-- DEMO 1-RTT application keys from the client DCID: a labeled demo schedule
+(`HKDF-Expand-Label(HKDF-Extract(initial_salt, DCID), "demo 1rtt", "", 32)` then the
+ChaCha20-Poly1305 `key`/`iv`/`hp`), parallel to the Initial secret. It lets the
+app-over-Initial response be re-encrypted as a REAL QUIC short-header packet by the
+proven `QuicServer.buildShortPacket`, openable by an independent client that derives
+the same DCID-keyed secret. It is NOT the handshake-derived 1-RTT secret; the real
+1-RTT keying is on the stateful `QuicServer.stepServer` path. -/
+def demoAppKeys (dcid : ByteArray) : Option QuicServer.PacketKeys :=
+  (hkdfExtract initialSalt dcid).bind (fun s =>
+    (expandLabel s "demo 1rtt".toUTF8 ByteArray.empty 32).bind
+      QuicServer.deriveChachaKeys)
+
+/-- **`drorb_serve_datagram`.** A real UDP datagram's bytes in (a QUIC long-header
+Initial packet); the datagram(s) to send back out. First the QUIC handshake: a
+CRYPTO-frame ClientHello carrying the required `X25519MLKEM768` hybrid share gets
+the server Initial+Handshake ServerHello flight (`datagramHandshake`). Otherwise
+the datagram is DECRYPTED by the verified EverCrypt QUIC packet protection
+(RFC 9001 §5: HKDF Initial key schedule, AES-ECB header-protection removal §5.4.3,
+AES-128-GCM AEAD open §5.3) and its STREAM frame's HTTP/3 bytes drive the
+UNCHANGED proven `Reactor.QuicIngress.datagramServe` (real QUIC/H3 dispatch),
+served through the proven guarded pipeline `Reactor.Ingress.serveOverSubs`. On any
+parse/auth failure returns no bytes (the host then sends nothing — an
+attacker-forged packet is silently dropped, exactly as the AEAD's authenticity
+gate dictates). -/
 @[export drorb_serve_datagram]
 def drorbServeDatagram (dg : ByteArray) : ByteArray :=
-  match locateInitial dg with
-  | none => ByteArray.empty
-  | some loc =>
-    match openInitial loc with
+  match datagramHandshake dg with
+  | some flight => flight
+  | none =>
+    match locateInitial dg with
     | none => ByteArray.empty
-    | some (_pn, plaintext) =>
-      let (sid, h3) :=
-        match parseStreamFrame plaintext with
-        | some (s, d) => (s, d)
-        | none => (0, plaintext.toList)
-      let ev := Reactor.Quic.DatagramEvent.recvDatagram .appData 0
-                  (Reactor.Quic.Payload.stream sid h3)
-      let subs := (Reactor.QuicIngress.datagramServe
-        Reactor.QuicIngress.demoConfig Reactor.QuicIngress.demoState ev).2
-      ByteArray.mk (Reactor.Ingress.serveFull2OverSubs subs h3).toArray
+    | some loc =>
+      match openInitial loc with
+      | none => ByteArray.empty
+      | some (_pn, plaintext) =>
+        let (sid, h3) :=
+          match parseStreamFrame plaintext with
+          | some (s, d) => (s, d)
+          | none => (0, plaintext.toList)
+        let ev := Reactor.Quic.DatagramEvent.recvDatagram .appData 0
+                    (Reactor.Quic.Payload.stream sid h3)
+        let subs := (Reactor.QuicIngress.datagramServe
+          Reactor.QuicIngress.demoConfig Reactor.QuicIngress.demoState ev).2
+        let served : ByteArray :=
+          ByteArray.mk (Reactor.Ingress.serveFull2OverSubs subs h3).toArray
+        -- RE-ENCRYPT the served HTTP as a QUIC 1-RTT short-header packet
+        -- (RFC 9000 §17.3) via the proven `QuicServer.buildShortPacket`: the
+        -- response is a real ChaCha20-Poly1305-sealed, ChaCha20-header-protected
+        -- 1-RTT packet a client consumes, not raw HTTP. Keys are the DEMO 1-RTT
+        -- schedule (`demoAppKeys`, DCID-derived); the handshake-derived 1-RTT keys
+        -- live on the stateful `QuicServer.stepServer` path. Falls back to the raw
+        -- served bytes if key derivation or the seal fails (unreachable for a
+        -- well-formed response).
+        match demoAppKeys loc.dcid with
+        | none => served
+        | some ap =>
+          let frame := QuicServer.streamFrame sid 0 true served
+          match QuicServer.buildShortPacket loc.dcid 0 false false frame ap with
+          | none => served
+          | some pkt => pkt
 
 /-! ## (5) The protocol-upgrade auth gate — the handshake cannot bypass auth -/
 

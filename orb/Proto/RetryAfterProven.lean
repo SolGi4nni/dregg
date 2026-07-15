@@ -45,7 +45,7 @@ There is **no** `Retry-After` field anywhere on the wire.
   * `resp429_no_retry_after` — for EVERY value `v`, `(Retry-After, v)` is absent from the
     gate's `429` header list: the advisory is genuinely not emitted by the refusal.
   * `retry_after_wire_bytes` — the exact bytes of the `"Retry-After"` name that is ABSENT
-    (pinned via `ba_toList_eq`, pure-kernel `decide`; no `native_decide`).
+    (pinned via `Shortcuts.ba_toList_eq`, pure-kernel `decide`; no `native_decide`).
 
 ## Not proven in-kernel (deliberately)
 
@@ -57,50 +57,13 @@ it: the refusal originates header-less at `rateStage`, and the wire confirms non
 
 import Reactor.Stage.Rate
 import Reactor.Deploy
+import Proto.Kernel.Shortcuts
 
 namespace Proto.RetryAfterProven
 
 open Reactor.Stage.Rate
 open Proto (Bytes)
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`ByteArray.toList` is well-founded-recursive, so it does NOT reduce in the kernel; this
-rewrites it to the structural `bs.data.toList`, which the kernel DOES reduce, so `toUTF8`
-byte constants close by pure-kernel `decide` (`{propext, Quot.sound}`; no `native_decide`,
-no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The `Retry-After` header name that RFC 9110 §15.5.21 recommends on a `429` — and that
 the deployed gate does NOT emit. -/
@@ -127,9 +90,9 @@ theorem resp429_status_429 : resp429.status = 429 := rfl
 matching the wire's `Content-Length: 20`. -/
 theorem resp429_body : resp429.body = "rate limit exceeded\n".toUTF8.toList := rfl
 
-/-- The refusal body is 20 bytes long (pinned via `ba_toList_eq`, pure-kernel). -/
+/-- The refusal body is 20 bytes long (pinned via `Shortcuts.ba_toList_eq`, pure-kernel). -/
 theorem resp429_body_len : resp429.body.length = 20 := by
-  rw [resp429_body]; simp only [ba_toList_eq]; decide
+  rw [resp429_body]; simp only [Shortcuts.ba_toList_eq]; decide
 
 /-- **`resp429_headers_empty`.** The gate's `429` carries NO headers of its own — so it
 attaches no `Retry-After`. Definitional (`error4xx` sets `headers := []`). -/
@@ -147,11 +110,11 @@ theorem resp429_no_retry_after (v : Bytes) : (retryAfterName, v) ∉ resp429.hea
 /-! ## The exact bytes of the absent name -/
 
 /-- **`retry_after_wire_bytes`.** The `"Retry-After"` name whose header is ABSENT from the
-deployed `429` has exactly these bytes — pinned through `ba_toList_eq` (pure-kernel
+deployed `429` has exactly these bytes — pinned through `Shortcuts.ba_toList_eq` (pure-kernel
 `decide`, no `native_decide`). -/
 theorem retry_after_wire_bytes :
     retryAfterName = [82, 101, 116, 114, 121, 45, 65, 102, 116, 101, 114] := by
-  simp only [retryAfterName, ba_toList_eq]; decide
+  simp only [retryAfterName, Shortcuts.ba_toList_eq]; decide
 
 end Proto.RetryAfterProven
 

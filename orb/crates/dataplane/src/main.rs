@@ -36,10 +36,10 @@ mod access_log;
 /// the serve listeners.
 mod admin;
 mod blocking;
-/// The provided-buffer ring (`io_uring` buf_ring) backing zero-copy receive on
-/// the Linux IO path.
-#[cfg(target_os = "linux")]
-mod bufring;
+/// The gated CapTP wire-frame seam (`DRORB_CAPTP_LISTEN`): a minimal listener
+/// that frames/deframes capability-transport messages through the PROVEN codec
+/// (`Captp.Frame`/`Captp.Encode` via `drorb_captp_frame`). Serve path untouched.
+mod captp;
 /// Dataplane-side response cache (store + coalescing) for the proven core's
 /// cacheability decision. Wired into the serve path by the hook reported
 /// alongside this module; unused from non-test code until that hook lands.
@@ -57,27 +57,23 @@ mod config;
 /// stage's (uncompressed) output with real `flate2` DEFLATE. Trusted (principled
 /// TCB, like the crypto FFI), not verified. Opt-in via `DRORB_RUST_GZIP=1`.
 mod gzip;
+/// The interactive h2c host: the verified HTTP/2 connection engine threaded
+/// across socket reads, one engine state per connection (the blocking host
+/// forks here on the h2c prior-knowledge preface).
+mod h2;
 mod http;
 /// The effect/continuation interpreter loop: a dumb executor that drives the
 /// proven resumable serve (`drorb_serve_step`/`drorb_serve_resume`), executing
 /// yielded effects (SEED: proxyDial). Opt-in via `DRORB_EFFECT_SEAM=1`.
 mod interp;
-/// The macOS / BSD IO path: per-core kqueue completion-queue reactors (the
-/// sibling of `uring`; preferred over the blocking fallback on those platforms).
-#[cfg(any(
-    target_os = "macos",
-    target_os = "ios",
-    target_os = "freebsd",
-    target_os = "netbsd",
-    target_os = "openbsd",
-    target_os = "dragonfly"
-))]
-mod kqueue;
+mod interim;
 /// The layer-4 (raw TCP / UDP) passthrough listener: accept, choose the upstream
 /// via the proven `drorb_proxy_pick`, dial it, and splice bytes verbatim. The
 /// running host shell of the proven `Reactor.L4` forwarding model. Binds only
 /// when `DRORB_L4_LISTEN` (TCP) / `DRORB_L4_UDP` (UDP) is set.
 mod l4;
+#[cfg(target_os = "linux")]
+mod l4_uring;
 /// A lightweight operational metrics surface (request/status/byte/backend
 /// counters) and the gated admin listener (`DRORB_ADMIN_LISTEN`) exposing
 /// `GET /metrics` + `GET /healthz`. Untrusted-shell observability, incremented
@@ -93,6 +89,10 @@ mod proxy_dial;
 #[allow(dead_code)]
 mod proxy_grpc;
 mod proxy_hook;
+/// The post-quantum C-ABI seam (drorb_pq_ml_dsa_verify / drorb_pq_ml_kem_*):
+/// the dregg-pq-backed symbols ffi/crypto_shim.o resolves against — the REAL
+/// dregg wire (the pure-Lean exes link ffi/pq_stub.o fail-closed stubs instead).
+mod pq;
 /// Runtime reconfiguration on SIGHUP: re-read + re-parse `DRORB_CONFIG` and
 /// atomically swap the active config, draining in-flight requests per the proven
 /// `Drain` discipline. The untrusted shell that executes the proven drain decision.
@@ -112,13 +112,29 @@ mod stream_serve;
 /// the plaintext listener is unaffected.
 mod tls;
 mod udp;
+/// The provided-buffer ring (`io_uring` buf_ring) backing zero-copy receive on
+/// the Linux IO path.
+#[cfg(target_os = "linux")]
+mod bufring;
 #[cfg(target_os = "linux")]
 mod uring;
+/// The macOS / BSD IO path: per-core kqueue completion-queue reactors (the
+/// sibling of `uring`; preferred over the blocking fallback on those platforms).
+#[cfg(any(
+    target_os = "macos",
+    target_os = "ios",
+    target_os = "freebsd",
+    target_os = "netbsd",
+    target_os = "openbsd",
+    target_os = "dragonfly"
+))]
+mod kqueue;
+mod ws;
+mod ws_assembly;
 /// The multi-worker supervisor (`--workers N`): spawn N independent copies of
 /// this binary behind one SO_REUSEPORT port so the kernel load-balances across N
 /// proven runtimes. A shell-only change — each worker runs the same proven serve.
 mod workers;
-mod ws;
 
 /// Set once a SIGINT is received; the IO paths observe it and stop.
 pub static SHUTDOWN: AtomicBool = AtomicBool::new(false);
@@ -189,7 +205,7 @@ This one process serves, over real sockets, every protocol through the
 leanc-compiled proven serve:
   - TCP: HTTP/1.1 and h2c (HTTP/2 cleartext prior-knowledge, forked to the real
     H2 engine) via `drorb_serve`, and WebSocket (RFC 6455 Upgrade kept open,
-    every frame through the proven `drorb_serve_ws_frame`);
+    frames through the host's bounded streaming codec — `ws`/`ws_assembly`);
   - UDP: QUIC Initial packets, decrypted by verified EverCrypt packet protection
     and dispatched through the proven HTTP/3 path (`drorb_serve_datagram`).
 
@@ -656,6 +672,21 @@ fn main() {
         );
     }
 
+    // The gated CapTP wire-frame seam (DRORB_CAPTP_LISTEN, a bare PORT binds
+    // localhost), SEPARATE from the serve listeners: a minimal listener that
+    // frames/deframes capability-transport messages entirely through the proven
+    // codec (Captp.Frame/Encode, crossed via drorb_captp_frame). Bound only when
+    // the env var is set; the serve path is unaffected. It deploys the wire CODEC
+    // (bounded, crash-safe framing), NOT the full object-capability protocol.
+    if let Ok(captp_listen) = std::env::var("DRORB_CAPTP_LISTEN") {
+        let captp_addr = normalize_addr(&captp_listen);
+        let captp_listener = bind_listener(&captp_addr);
+        std::thread::Builder::new()
+            .name("drorb-captp".into())
+            .spawn(move || captp::run_captp(captp_listener))
+            .expect("failed to spawn the CapTP listener thread");
+    }
+
     let listener = bind_listener(&cfg.bind);
     let local = listener
         .local_addr()
@@ -698,9 +729,7 @@ fn main() {
                 );
             }
             None => {
-                eprintln!(
-                    "dataplane: DRORB_TLS_LISTEN set but no usable cert — TLS listener not bound"
-                );
+                eprintln!("dataplane: DRORB_TLS_LISTEN set but no usable cert — TLS listener not bound");
             }
         }
     }
@@ -790,11 +819,7 @@ fn main() {
             eprintln!(
                 "dataplane: listening on {local} (io_uring, {} shards{}, over the leanc-compiled proven serve; SIGINT to stop)",
                 cfg.shards,
-                if zc {
-                    ", zero-copy (buf_ring recv + SendZc)"
-                } else {
-                    ""
-                }
+                if zc { ", zero-copy (buf_ring recv + SendZc)" } else { "" }
             );
             let fd = listener.as_raw_fd();
             let gw2 = gw.clone();
@@ -820,9 +845,7 @@ fn main() {
             IoMode::Auto | IoMode::Kqueue => true,
             IoMode::Blocking => false,
             IoMode::Uring => {
-                eprintln!(
-                    "dataplane: --io uring requires Linux; falling back to the kqueue reactor"
-                );
+                eprintln!("dataplane: --io uring requires Linux; falling back to the kqueue reactor");
                 true
             }
         };

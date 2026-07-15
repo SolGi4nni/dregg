@@ -40,7 +40,7 @@ No `Content-Language` field anywhere on the wire.
     `GET /static/app.js` is answered `200` and its headers omit `Content-Language`
     (non-vacuous: exhibits a real request that hits the branch — the curl above).
   * `content_language_wire_bytes` — the exact bytes of the `"Content-Language"` name that
-    is ABSENT (pinned via `ba_toList_eq`, pure-kernel `decide`; no `native_decide`).
+    is ABSENT (pinned via `Shortcuts.ba_toList_eq`, pure-kernel `decide`; no `native_decide`).
 
 ## Not proven in-kernel (deliberately)
 
@@ -52,49 +52,12 @@ without the field, and the wire confirms none is added.
 
 import StaticFile
 import Reactor.App
+import Proto.Kernel.Shortcuts
 
 namespace Proto.ContentLanguageProven
 
 open StaticFile
-
-/-- Kernel-reducibility bridge for `toUTF8`-derived byte lists (see `Proto.GzipProven`):
-`ByteArray.toList` is well-founded-recursive, so it does NOT reduce in the kernel; this
-rewrites it to the structural `bs.data.toList`, which the kernel DOES reduce, so `toUTF8`
-byte constants close by pure-kernel `decide` (`{propext, Quot.sound}`; no `native_decide`,
-no `Lean.ofReduceBool`). -/
-private theorem ba_toList_eq (bs : ByteArray) : bs.toList = bs.data.toList := by
-  have key : ∀ (n i : Nat) (r : List UInt8),
-      bs.size - i = n →
-      ByteArray.toList.loop bs i r = r.reverse ++ bs.data.toList.drop i := by
-    intro n
-    induction n with
-    | zero =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hnlt : ¬ i < bs.size := by omega
-      simp only [hnlt, if_false]
-      have hdrop : bs.data.toList.drop i = [] := by
-        apply List.drop_eq_nil_of_le
-        rw [Array.length_toList]
-        have : bs.data.size = bs.size := rfl
-        omega
-      rw [hdrop, List.append_nil]
-    | succ n ih =>
-      intro i r hi
-      rw [ByteArray.toList.loop.eq_def]
-      have hlt : i < bs.size := by omega
-      simp only [hlt, if_true]
-      rw [ih (i+1) (bs.get! i :: r) (by omega)]
-      have hidx : i < bs.data.toList.length := by rw [Array.length_toList]; exact hlt
-      have hsz : i < bs.data.size := by rw [← Array.length_toList]; exact hidx
-      have hget : bs.get! i = bs.data.toList[i]'hidx := by
-        rw [show bs.get! i = bs.data.get! i from rfl, Array.get!_eq_getElem!,
-            getElem!_pos bs.data i hsz, ← Array.getElem_toList hsz]
-      rw [List.drop_eq_getElem_cons hidx, List.reverse_cons, hget, List.append_assoc]
-      rfl
-  have h := key bs.size 0 [] (by omega)
-  rw [ByteArray.toList]
-  simpa using h
+open Proto.Kernel
 
 /-- The served path segments for the deployed asset `/static/app.js`. -/
 def assetSegs : List String := ["static", "app.js"]
@@ -123,11 +86,11 @@ theorem ok_header_names (body : Proto.Bytes) (etag : ETag) :
       = [strBytes "ETag", strBytes "Accept-Ranges", strBytes "Content-Type"] := rfl
 
 /-- The `"Content-Language"` name is not among the three `200` header names — decided on
-explicit bytes through `ba_toList_eq` (pure-kernel `decide`). -/
+explicit bytes through `Shortcuts.ba_toList_eq` (pure-kernel `decide`). -/
 theorem contentLanguageName_notin_ok_names (body : Proto.Bytes) (etag : ETag) :
     contentLanguageName ∉ (toResponse (.ok body etag)).headers.map Prod.fst := by
   rw [ok_header_names]
-  simp only [contentLanguageName, strBytes, ba_toList_eq]
+  simp only [contentLanguageName, strBytes, Shortcuts.ba_toList_eq]
   decide
 
 /-! ## The advisory is genuinely absent from the deployed `200` -/
@@ -165,12 +128,12 @@ theorem plain_get_omits_content_language (v : Proto.Bytes) :
 /-! ## The exact bytes of the absent name -/
 
 /-- **`content_language_wire_bytes`.** The `"Content-Language"` name whose header is ABSENT
-from the deployed `200` has exactly these bytes — pinned through `ba_toList_eq` (pure-kernel
+from the deployed `200` has exactly these bytes — pinned through `Shortcuts.ba_toList_eq` (pure-kernel
 `decide`, no `native_decide`). -/
 theorem content_language_wire_bytes :
     contentLanguageName
       = [67, 111, 110, 116, 101, 110, 116, 45, 76, 97, 110, 103, 117, 97, 103, 101] := by
-  simp only [contentLanguageName, ba_toList_eq]; decide
+  simp only [contentLanguageName, Shortcuts.ba_toList_eq]; decide
 
 end Proto.ContentLanguageProven
 

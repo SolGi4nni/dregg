@@ -13,6 +13,7 @@ in, the deployed guarded response bytes out, `deployStepIngress` over a fresh
 `ObsState.init`. Nothing here knows a socket exists; the host moves the bytes.
 -/
 import Reactor.Deploy
+import Captp.Export
 import Reactor.Ingress
 import Reactor.H2Ingress
 import Reactor.Observe
@@ -33,6 +34,7 @@ import Reactor.ObserveFast
 -- `Reactor/ProxyDial.c.o.export` — without this the `drorb_proxy_pick` symbol is
 -- never built into `libdrorb.a` and the host link fails undefined.
 import Reactor.ProxyDial
+import Reactor.LoadBalance
 import Reactor.Proxy.Connect
 import Reactor.Proxy.Grpc
 -- The multi-protocol seams (`drorb_serve_ws_frame`, `drorb_serve_datagram`) live
@@ -172,6 +174,102 @@ import Datapath.ServeSplit
 -- `initialize_Dataplane` so the export-closure walker compiles its `.c.o.export` object
 -- into `libdrorb.a` for the `DRORB_SPAN=18` seam.
 import Datapath.ServeDenseReal
+-- The CONFORMANT-DENSE serve (`Datapath.ServeConformantDense.serveConformantDenseIdx`,
+-- exported `drorb_serve_conformant_dense`): the RFC-conformance wrapper around the
+-- index-decided DENSE `/bulk` serve — so the deployed-default semantics never re-cons
+-- the 1 MiB body as a `List`. Proven byte-identical to `drorbServeConformant` below
+-- (`serveConformantDenseIdx_eq_drorbServeConformant`). Importing it here places
+-- `initialize_Datapath_ServeConformantDense` in the closure of `initialize_Dataplane`
+-- so the export-closure walker compiles its `.c.o.export` object into `libdrorb.a`
+-- for the `DRORB_SPAN=20` seam.
+import Datapath.ServeConformantDense
+-- The FUSED-POSTPROCESS conformant-dense serve (`drorb_serve_conformant_fast`,
+-- `DRORB_SPAN=22`): the same wrapper + dense inner as `=20`, its `Date`-splice +
+-- `x-corr`-scrub fused to ONE body attach (`scrubDateBA`). Imported so
+-- `initialize_Datapath_ServeConformantFast` rides `initialize_Dataplane`'s closure
+-- and `ffi/build-dataplane-lib.sh` compiles its export object into `libdrorb.a`.
+import Datapath.ServeConformantFast
+-- The ZERO-COPY-BODY split of the fused serve (`drorb_serve_conformant_zc` +
+-- `drorb_bulk_body`, `DRORB_SPAN=23`): the fast `/bulk` arm returns a tagged
+-- head only and the host gather-writes the process-static constant body — no
+-- whole-body copy on the serve path. Imported so
+-- `initialize_Datapath_ServeZc` rides `initialize_Dataplane`'s closure and the
+-- export objects link into `libdrorb.a`.
+import Datapath.ServeZc
+-- The INDEX-NATIVE-HEAD serve (`Datapath.ServeHeadIdx.serveHeadIdx`, exported
+-- `drorb_serve_head_idx`): ONE arena parse per request off the borrowed window,
+-- BOTH dense arms decided by index probes on the arena head (no `arenaToProto` /
+-- `protoReqOf` List materialization on the deciding path), the proven dense
+-- emitters on the arms. Proven byte-identical to the deployed serve
+-- (`serveHeadIdx_refines` + `deployedServeRef_eq_drorbServe`, closed below in
+-- `serveHeadIdx_eq_drorbServe`). THE DEPLOYED `Seam::Http` DEFAULT: the host's
+-- non-metered HTTP seam now crosses it (bare, and via the conformant wrapper
+-- `drorb_serve_conformant_head_idx` below). Importing it here places
+-- `initialize_Datapath_ServeHeadIdx` in the closure of `initialize_Dataplane` so
+-- the export-closure walker compiles its `.c.o.export` object into `libdrorb.a`.
+import Datapath.ServeHeadIdx
+import Datapath.ServeMeteredHeadIdx
+-- The dense-stamped nine-edge metered serve (`Datapath.DenseStamps`,
+-- exported `drorb_serve_metered_plus2_head_idx` /
+-- `drorb_serve_metered_plus2_dense_conformant`): the extended deployed default
+-- with the `/bulk` dense arm restored — the stamped dense head + dense 1 MiB
+-- body, proven byte-identical to `drorbServeMeteredPlus2Conformant`. Importing
+-- it here places `initialize_Datapath_DenseStamps` in the closure of
+-- `initialize_Dataplane` so its `.c.o.export` object lands in `libdrorb.a`.
+import Datapath.DenseStamps
+-- The DEPLOYED-RUNG dense-stamped metered serve (`Datapath.DenseStampsPlus5`,
+-- exported `drorb_serve_metered_plus5_head_idx` /
+-- `drorb_serve_metered_plus5_dense_conformant`): the deployed DEFAULT (the
+-- plus5-conformant fold) with the `/bulk` dense arm — the fully-stamped dense
+-- head (nine plus2 edges + Timing-Allow-Origin + the cookie-hardener map) +
+-- dense 1 MiB body, proven byte-identical to `drorbServeMeteredPlus5Conformant`
+-- for EVERY (peer, seq, input). THE DEFAULT metered crossing re-points here.
+-- Importing it places `initialize_Datapath_DenseStampsPlus5` in the closure of
+-- `initialize_Dataplane` so its `.c.o.export` object lands in `libdrorb.a`.
+import Datapath.DenseStampsPlus5
+-- The plus6 deployed-rung dense serve (`Datapath.DenseStampsPlus6`, exported
+-- `drorb_serve_metered_plus6_head_idx` / `drorb_serve_metered_plus5_dense_conformant`
+-- [the host default symbol, now the plus6 fold] / the honest-named alias
+-- `drorb_serve_metered_plus6_dense_conformant`): three un-inerted stages (405
+-- method allow-list, 413 declared-size, multipart/byteranges 206) + three built
+-- features (CL+TE-conflict 400, negotiated /welcome i18n, /dashboard page) over
+-- the plus5 fold, dense /bulk arm kept, byte-identity proven for every
+-- (peer, seq, input). Importing it places initialize_Datapath_DenseStampsPlus6
+-- in the closure of initialize_Dataplane so its export object lands in the
+-- archive.
+import Datapath.DenseStampsPlus6
+-- The plus7 deployed-rung dense serve (Datapath.DenseStampsPlus7, exported
+-- drorb_serve_metered_plus7_head_idx / drorb_serve_metered_plus5_dense_conformant
+-- [the host default symbol, now the plus7 fold] / the honest-named alias
+-- drorb_serve_metered_plus7_dense_conformant): the date conditionals
+-- (If-Modified-Since 304 / If-Unmodified-Since 412 via the HTTP-date total
+-- order), the If-Range/multi-range decisions on the native range handler (the
+-- unveil), and the static freshness stamps (Cache-Control + Last-Modified)
+-- over the plus6 fold, dense /bulk arm kept, byte-identity proven for every
+-- (peer, seq, input). Importing it places initialize_Datapath_DenseStampsPlus7
+-- in the closure of initialize_Dataplane so its export object lands in the
+-- archive.
+-- import Datapath.DenseStampsPlus7 -- RE-ENABLE when the plus7 wave lands its
+-- module (the import was pre-wired ahead of the file; with the file absent it
+-- breaks the whole build). The default host symbol is owned by
+-- Datapath.DenseStampsPlus8 below until then.
+-- The plus8 deployed-rung dense serve (Datapath.DenseStampsPlus8, exported
+-- drorb_serve_metered_plus8_head_idx / drorb_serve_metered_plus5_dense_conformant
+-- [the host default symbol, now the plus8 fold] / the honest-named alias
+-- drorb_serve_metered_plus8_dense_conformant): the un-inerted /bulk-excluded
+-- Vary: Accept-Encoding stamp + two built refusal surfaces (414 URI Too Long,
+-- 406 language Not Acceptable on the negotiated route) over the plus6 fold
+-- (numbering note: plus7 is reserved for the in-flight range/date wave; this
+-- fold extends plus6 directly and re-parents when that wave lands), dense
+-- /bulk arm kept, byte-identity proven for every (peer, seq, input).
+-- Importing it places initialize_Datapath_DenseStampsPlus8 in the closure of
+-- initialize_Dataplane so its export object lands in the archive.
+import Datapath.DenseStampsPlus8
+-- The consolidated deployed pipeline (Reactor.DeployPipeline) owns the host
+-- default symbol drorb_serve_metered_plus5_dense_conformant, re-homed from
+-- Datapath.DenseStampsPlus8. Importing it places its export object in the
+-- closure of initialize_Dataplane so the archive links the default serve.
+import Reactor.DeployPipeline
 -- The textual-config parser + denotation (`Dsl.Config.parseChars` /
 -- `denoteOn` / `dialChainOfByte`) live in `Dsl.Config.Parse`. Importing it here
 -- places `initialize_Dsl_Config_Parse` in the closure of `initialize_Dataplane`
@@ -208,6 +306,65 @@ import TlsCrypto.Sig
 -- transitive import closure) compiles its `.c.o.export` object into `libdrorb.a`. The
 -- `@[export drorb_serve_conformant]` symbol below instantiates it on `drorbServe`.
 import Reactor.ServeConformant
+-- The static-file path decision (`drorb_static_resolve`): split / percent-decode-ONCE /
+-- UTF-8 gate / clamped dot-segment walk, with the traversal-confinement theorems
+-- (`resolveRel_confined`, `decode_once_only`) proven over every input. It lives in the
+-- `Route` lib, so importing it here places `initialize_Route_StaticResolve` in the
+-- closure of `initialize_Dataplane` and the archive step compiles its `.c.o.export`
+-- object into `libdrorb.a`. The host's static lane crosses it per request instead of
+-- making the traversal decision itself.
+import Route.StaticResolve
+-- The static-file response HEAD decision (`drorb_static_head`): status line /
+-- Connection / Accept-Ranges / Content-Type (extension extraction + ASCII-lowercase +
+-- MIME map on the REAL file name) / Content-Length, and the full `404`, all the
+-- model's own bytes (`okHeadFor_eq_model`, `staticHeadC_notFound`, the ∀-length
+-- `contentLength_roundtrip`). It lives in the `Route` lib; importing it here places
+-- `initialize_Route_StaticHead` in the closure of `initialize_Dataplane` and the
+-- archive step compiles its `.c.o.export` object into `libdrorb.a`. The host's
+-- static lane crosses it per response instead of assembling header bytes itself.
+import Route.StaticHead
+-- The static lane FULL response decision (`drorb_static_decide`): method gate (405),
+-- 404 (the model bytes, HEAD head-half), conditional GET (304 via the PROVEN
+-- `ConditionalRequest.ifNoneMatchMatches` + exact-date If-Modified-Since), and the
+-- range decision (206 single window / 206 multipart/byteranges over the PROVEN
+-- `MultiRange` framing / 416) -- Route.StaticDecide, with the window-exactness and
+-- multipart-reassembly theorems (`window_exact`, `partsWire_eq_multipartBody`,
+-- `multiLen_exact`) and kernel-decided corpus witnesses. Importing it here places
+-- `initialize_Route_StaticDecide` in the closure of `initialize_Dataplane` and the
+-- archive step compiles its `.c.o.export` object into `libdrorb.a`. The host's
+-- static lane crosses it once per request and only EXECUTES the returned plan.
+import Route.StaticDecide
+-- The extended metered serve (drorb_serve_metered_plus2): the deployed metered fold
+-- with the three proven edge stages (Via stamp / PROXY-protocol client recovery /
+-- stale-while-revalidate Cache-Control) prepended -- Reactor.DeployPlus2. Importing
+-- it places initialize_Reactor_DeployPlus2 in initialize_Dataplane closure and its
+-- .c.o.export object in the archive glob, so the host lever (DRORB_PLUS2=1) can
+-- cross it (kept as the DRORB_PLUS2=raw lever for PROXY-preambled deployments).
+import Reactor.DeployPlus2
+-- THE DEPLOYED METERED DEFAULT (drorb_serve_metered_plus2_conformant): the proven
+-- RFC-conformance wrapper (validation/431 -> Date -> x-corr scrub -> HEAD-strip)
+-- composed over the SAME extended fold, so the nine proven edge stages are
+-- deployed-by-default WITH every conformance edge intact. Importing it places
+-- initialize_Reactor_DeployPlus2Conformant in the closure and its .c.o.export
+-- object in the archive glob. DRORB_PLUS2=0 reverts to the dense fold without
+-- the nine edges.
+import Reactor.DeployPlus2Conformant
+-- Three further proven edges over the SAME extended fold (Timing-Allow-Origin
+-- stamp / Content-Location representation pointer / Max-Forwards hop-limit gate)
+-- plus their conformant wrapper export (drorb_serve_metered_plus4_conformant) --
+-- Reactor.DeployPlus4. Importing it places initialize_Reactor_DeployPlus4 in the
+-- initialize_Dataplane closure and its .c.o.export object in the archive glob, so
+-- the host default can cross it (DRORB_PLUS4=0 reverts to the plus2 fold).
+import Reactor.DeployPlus4
+-- Three deepened parity behaviours composed onto the SAME plus4 fold (the
+-- GET /login session-cookie route + the previously-inert cookie hardener, the
+-- GET /events endpoint serving the proven SSE framing, the GET /app/ SPA
+-- fallback serving the proven-selected shell) plus their conformant wrapper
+-- export (drorb_serve_metered_plus5_conformant) -- Reactor.DeployPlus5.
+-- Importing it places initialize_Reactor_DeployPlus5 in the initialize_Dataplane
+-- closure and its .c.o.export object in the archive glob, so the host default
+-- can cross it (DRORB_PLUS5=0 reverts to the plus4 fold).
+import Reactor.DeployPlus5
 
 /-- The proven pipeline as a pure byte function, exported under the C symbol
 `drorb_serve`. One request's bytes in, the deployed response bytes out — the
@@ -231,6 +388,20 @@ def drorbServe (input : ByteArray) : ByteArray :=
     else
       Reactor.Deploy.deployStepFull2 Reactor.Observe.ObsState.init bytes
   ByteArray.mk out.toArray
+
+/-- **THE consolidated deployed metered default**, exported under the honest host
+symbol `drorb_serve_pipeline_conformant`. The proven RFC-conformance wrapper over
+the ONE flat consolidated pipeline
+(`Reactor.DeployPipeline.serveMeteredPipelineConformant` — the 43-stage ordered
+stage registry stated once, definitionally equal to the deployed onion), `/bulk`
+emitted DENSE. Byte-identical to the pre-consolidation default for EVERY
+`(peer, seq, input)` (`serveMeteredPipelineConformant_eq_predecessor` /
+`_eq_deployed`). This is the SINGLE metered default crossing the host takes
+(`serve_metered_dense_conformant_into`). -/
+@[export drorb_serve_pipeline_conformant]
+def drorbServePipelineConformant (peer : ByteArray) (seq : UInt64)
+    (input : ByteArray) : ByteArray :=
+  Reactor.DeployPipeline.serveMeteredPipelineConformant peer seq input
 
 /-- **The RFC-conformance serve** (`drorb_serve_conformant`, DRORB_SPAN=19) — the
 deployed `drorbServe` WRAPPED by the proven conformance stages
@@ -329,6 +500,63 @@ theorem serveDenseReal_eq_drorbServe (input : ByteArray) :
   rw [Datapath.ServeDenseReal.serveDenseReal_refines, deployedServeRef_eq_drorbServe]
 
 #print axioms serveDenseReal_eq_drorbServe
+
+/-- **THE CONFORMANT-DENSE SERVE IS BYTE-IDENTICAL TO THE DEPLOYED CONFORMANT SERVE.**
+For EVERY input, the `DRORB_SPAN=20` serve
+(`Datapath.ServeConformantDense.serveConformantDenseIdx` — the RFC-conformance wrapper
+around the index-decided DENSE `/bulk` serve) produces the IDENTICAL bytes to the
+deployed conformant default `drorbServeConformant = conformantServe drorbServe`:
+the wrapper consults its inner only pointwise (`conformantServe_congr`), and the dense
+inner equals `drorbServe` (`serveDenseIdx_refines` + `deployedServeRef_eq_drorbServe`). -/
+theorem serveConformantDenseIdx_eq_drorbServeConformant (input : ByteArray) :
+    Datapath.ServeConformantDense.serveConformantDenseIdx input
+      = drorbServeConformant input := by
+  rw [Datapath.ServeConformantDense.serveConformantDenseIdx_eq_ref]
+  exact Datapath.ServeConformantDense.conformantServe_congr _ _
+    deployedServeRef_eq_drorbServe input
+
+#print axioms serveConformantDenseIdx_eq_drorbServeConformant
+
+/-- **THE INDEX-NATIVE-HEAD SERVE IS BYTE-IDENTICAL TO THE DEPLOYED `drorbServe`.**
+For EVERY input, the head-idx serve (`Datapath.ServeHeadIdx.serveHeadIdx` — ONE
+arena parse per request, both arms decided by index probes on the arena head, no
+`arenaToProto`/`protoReqOf` on the deciding path, the proven dense emitters on the
+arms) produces the IDENTICAL bytes to the deployed default `drorbServe` (h2c fork,
+both dense arms, AND the off-arm List serve). Chains
+`Datapath.ServeHeadIdx.serveHeadIdx_refines` (head-idx = deployedServeRef) with
+`deployedServeRef_eq_drorbServe`. This is the identity that makes the head-idx
+serve the deployed `Seam::Http` default: swapping the export changes NO served
+byte. -/
+theorem serveHeadIdx_eq_drorbServe (input : ByteArray) :
+    Datapath.ServeHeadIdx.serveHeadIdx input = drorbServe input := by
+  rw [Datapath.ServeHeadIdx.serveHeadIdx_refines, deployedServeRef_eq_drorbServe]
+
+#print axioms serveHeadIdx_eq_drorbServe
+
+/-- **The conformant HEAD-IDX serve** (`drorb_serve_conformant_head_idx`) — the
+RFC-conformance wrapper (`Reactor.ServeConformant.conformantServe`: validation
+gate C1/C2/B2/G1/C3 → inner serve → `Date` (F1) / `HEAD`-strip (B1) finisher)
+around the index-native-head serve. The deployed NON-METERED `Seam::Http` default
+crossing: same conformance edges as `drorb_serve_conformant`, inner swapped for
+the parse-once index-native serve. Byte-identical to `drorbServeConformant` for
+EVERY input (`serveConformantHeadIdx_eq_drorbServeConformant` below). Same
+`ByteArray -> ByteArray` ABI as `drorb_serve`. -/
+@[export drorb_serve_conformant_head_idx]
+def drorbServeConformantHeadIdx (input : ByteArray) : ByteArray :=
+  Reactor.ServeConformant.conformantServe Datapath.ServeHeadIdx.serveHeadIdx input
+
+/-- **THE CONFORMANT HEAD-IDX SERVE IS BYTE-IDENTICAL TO THE DEPLOYED CONFORMANT
+SERVE.** The wrapper consults its inner only pointwise (`conformantServe_congr`),
+and the head-idx inner equals `drorbServe` (`serveHeadIdx_eq_drorbServe`) — so the
+conformance edges are untouched and swapping the deployed non-metered default
+changes NO served byte. -/
+theorem serveConformantHeadIdx_eq_drorbServeConformant (input : ByteArray) :
+    drorbServeConformantHeadIdx input = drorbServeConformant input := by
+  unfold drorbServeConformantHeadIdx drorbServeConformant
+  exact Datapath.ServeConformantDense.conformantServe_congr _ _
+    serveHeadIdx_eq_drorbServe input
+
+#print axioms serveConformantHeadIdx_eq_drorbServeConformant
 
 /-- **The metered serve seam** (`drorb_serve_metered`). The same deployed serve as
 `drorb_serve`, but the native host also supplies the accepted peer address (`peer`,
@@ -1126,6 +1354,32 @@ theorem meteredDenseConformant_rejects_missingHost (peer : ByteArray) (seq : UIn
 #print axioms meteredDenseConformant_head_no_body
 #print axioms meteredDenseConformant_rejects_missingHost
 
+/-- **The INDEX-NATIVE metered-conformant serve IS the deployed metered-conformant
+default.** `Datapath.ServeMeteredHeadIdx.serveMeteredHeadIdxConformant` (the metered
+serve with the arm decision parsed ONCE, index-natively — gates on the host scalars,
+`bulkIdxB`/`healthIdxB` on the arena head) equals `drorbServeMeteredConformant` for
+EVERY `(peer, seq, input)`: `serveMeteredHeadIdxConformant_eq` lands on
+`conformantServe` over `Datapath.ServeMeteredHeadIdx.meteredFoldServe`, whose body IS
+`drorbServeMetered`'s body definitionally. -/
+theorem meteredHeadIdxConformant_eq_meteredConformant
+    (peer : ByteArray) (seq : UInt64) (input : ByteArray) :
+    Datapath.ServeMeteredHeadIdx.serveMeteredHeadIdxConformant peer seq input
+      = drorbServeMeteredConformant peer seq input :=
+  Datapath.ServeMeteredHeadIdx.serveMeteredHeadIdxConformant_eq peer seq input
+
+/-- The index-native metered-conformant serve is ALSO byte-identical to the DENSE
+metered-conformant serve it replaces on the deployed default — both equal the plain
+metered-conformant serve. -/
+theorem meteredHeadIdxConformant_eq_meteredDenseConformant
+    (peer : ByteArray) (seq : UInt64) (input : ByteArray) :
+    Datapath.ServeMeteredHeadIdx.serveMeteredHeadIdxConformant peer seq input
+      = drorbServeMeteredDenseConformant peer seq input :=
+  (meteredHeadIdxConformant_eq_meteredConformant peer seq input).trans
+    (meteredDenseConformant_eq_meteredConformant peer seq input).symm
+
+#print axioms meteredHeadIdxConformant_eq_meteredConformant
+#print axioms meteredHeadIdxConformant_eq_meteredDenseConformant
+
 /-! ## The STREAMING response-emit seam — `drorb_serve_stream`
 
 The seams above return the WHOLE response in one `ByteArray`, so the host holds the
@@ -1301,7 +1555,15 @@ def gateFor (earlyDir : Option String) (params : ServerParams) (chBytes : Tls.By
 and once a complete HTTP request head has arrived (CRLFCRLF) cross the SAME
 proven `drorbServe` the plaintext front runs, sealing its response as a §5
 application_data record under the send keys. Loops until close/EOF. `fuel`
-bounds the record count so the driver is structurally total. -/
+bounds the record count so the driver is structurally total.
+
+The connection disposition after each served response is the SAME proven
+keep-alive decision the plaintext host consults
+(`Reactor.ServeStream.keepAliveOf` — the deployed HTTP/1.1 parse's verdict): a
+request that asked `Connection: close` (or is HTTP/1.0 without keep-alive) gets
+a close_notify (§6.1) and the socket closed RIGHT AFTER its response, so a
+read-to-EOF client sees the FIN promptly instead of waiting out the per-record
+recv timeout. -/
 partial def appLoop (fd : UInt32) (app : AppConn) (reqBuf : List UInt8) : IO Unit := do
   match ← readRecord fd with
   | none => tcpClose fd
@@ -1317,7 +1579,14 @@ partial def appLoop (fd : UInt32) (app : AppConn) (reqBuf : List UInt8) : IO Uni
         match sealRecordAt app'.txKeys app'.txSeq 0x17 resp with
         | some wire => do
           tcpSend fd wire
-          appLoop fd { app' with txSeq := app'.txSeq + 1 } []
+          let app' := { app' with txSeq := app'.txSeq + 1 }
+          if Reactor.ServeStream.keepAliveOf reqBuf then
+            appLoop fd app' []
+          else do
+            -- `Connection: close` honored: a polite close_notify, then FIN now.
+            let (_, bye) := appSeal app' 0x15 closeNotifyPayload
+            if !bye.isEmpty then tcpSend fd bye
+            tcpClose fd
         | none => tcpClose fd
       else appLoop fd app' reqBuf
     | (_, .close, reply) => do tcpSend fd reply; tcpClose fd
@@ -1404,14 +1673,20 @@ partial def enterApp (fd : UInt32) (seed : ByteArray) (maxEarly : Nat)
     if !outWire.isEmpty then tcpSend fd outWire
     if close then tcpClose fd else h2Loop fd app h2
   else
-    let (app, outWire, reqBuf) :=
+    let (app, outWire, reqBuf, keep) :=
       if hasCrlfCrlf earlyBuf then
         match sealRecordAt app.txKeys app.txSeq 0x17 (drorbServe (ofBytes earlyBuf)) with
-        | some w => ({ app with txSeq := app.txSeq + 1 }, tkWire ++ w, [])
-        | none => (app, tkWire, earlyBuf)
-      else (app, tkWire, earlyBuf)
+        | some w => ({ app with txSeq := app.txSeq + 1 }, tkWire ++ w, ([] : List UInt8),
+                     Reactor.ServeStream.keepAliveOf earlyBuf)
+        | none => (app, tkWire, earlyBuf, true)
+      else (app, tkWire, earlyBuf, true)
     if !outWire.isEmpty then tcpSend fd outWire
-    appLoop fd app reqBuf
+    if keep then appLoop fd app reqBuf
+    else do
+      -- The answered 0-RTT request asked `Connection: close`: close_notify + FIN.
+      let (_, bye) := appSeal app 0x15 closeNotifyPayload
+      if !bye.isEmpty then tcpSend fd bye
+      tcpClose fd
 
 /-- The handshake phase: drive `serverStep` over each incoming record until the
 connection is `established`, sending the server flight / HelloRetryRequest /
@@ -1482,6 +1757,121 @@ def deployedCerts (ecdsaCert ecdsaPriv ecdsaSni rsaCert rsaN rsaE rsaD rsaSni : 
          names := if rsaSni.isEmpty then [] else [rsaSni.toList] }]
   ecdsa ++ rsa
 
+/-- **The runtime KEX posture** — the deployment's TLS/QUIC key-exchange policy,
+read from `DRORB_TLS_KEX` at deploy time so an operator flips it without a
+rebuild. `required` pins the X25519MLKEM768 hybrid (a classical-only client is
+rejected — the wave-go-live posture); `preferred` (the pragmatic default) offers
+both and honors the client's best offer (a hybrid client gets X-Wing, a legacy
+client gets X25519); `classical` offers only X25519 (no post-quantum). -/
+inductive KexPosture where
+  | required
+  | preferred
+  | classical
+deriving DecidableEq, Repr
+
+/-- The hybrid-KEX pin implied by a posture: only `required` rejects a
+classical-only client; `preferred`/`classical` allow the classical exchange. -/
+def KexPosture.requireHybrid : KexPosture → Bool
+  | .required => true
+  | .preferred => false
+  | .classical => false
+
+/-- The named groups a posture offers, in preference order. `required` and
+`preferred` both offer `[X25519MLKEM768, X25519]`; `classical` offers only
+`[X25519]`. In every posture the hybrid group, when offered, is preferred (the
+`kexStep` dispatch takes the client's hybrid share first). -/
+def KexPosture.groups : KexPosture → List Nat
+  | .required => [xwingGroup, x25519Group]
+  | .preferred => [xwingGroup, x25519Group]
+  | .classical => [x25519Group]
+
+/-- Parse the `DRORB_TLS_KEX` value. Unset or unrecognized ⇒ the pragmatic
+`preferred` default (serve everyone). -/
+def KexPosture.ofName : Option String → KexPosture
+  | some "required" => .required
+  | some "classical" => .classical
+  | _ => .preferred
+
+/-- **The deployed TLS parameter template** — the one `ServerParams` shape
+`drorbTlsServe` instantiates per connection (fresh `priv`/`rnd` entropy, the
+host's certificate pool). Named so deployment-level facts are theorems about
+THIS term: the deployment offers `[X25519MLKEM768, X25519]` and — since the PQ
+go-live — REQUIRES the hybrid KEX (`requireHybridKex := true`): a
+classical-only ClientHello is rejected, never silently downgraded
+(`deployed_tls_no_classical_downgrade`). -/
+def deployedTlsParams (posture : KexPosture) (priv rnd seed certDer : ByteArray)
+    (certs : List CertEntry) : ServerParams :=
+  { ephemeralPriv := priv
+    serverRandom := rnd
+    certSeed := seed
+    certData := certDer
+    groupsSupported := posture.groups
+    requireHybridKex := posture.requireHybrid
+    certs := certs }
+
+/-- The deployment pins the hybrid KEX — the flip that makes
+`tls_kex_hybrid_downgrade_safe` bite the deployed front door. -/
+theorem deployedTlsParams_requires_hybrid
+    (priv rnd seed certDer : ByteArray) (certs : List CertEntry) :
+    (deployedTlsParams .required priv rnd seed certDer certs).requireHybridKex = true := rfl
+
+/-- **`tls_kex_hybrid_downgrade_safe` instantiated at the deployed params**:
+whatever entropy / certificate material a connection draws, a client that
+offered no `X25519MLKEM768` share never completes the key exchange — the
+deployed front door rejects classical-only clients rather than downgrading
+to a classical shared secret. -/
+theorem deployed_tls_no_classical_downgrade
+    (priv rnd seed certDer : ByteArray) (certs : List CertEntry)
+    (retried : Option Retry) (ch : ClientHello) (suite : Nat)
+    (alpnSel : Option Tls.Bytes) (buf : Tls.Bytes) (est : Established)
+    (hnohybrid : ch.keyShareHybrid = none) :
+    (kexStep (deployedTlsParams .required priv rnd seed certDer certs)
+        retried ch suite alpnSel buf).1 ≠ .waitClientFinished est :=
+  tls_kex_hybrid_downgrade_safe _ retried ch suite alpnSel buf est rfl hnohybrid
+
+/-- The PREFERRED posture leaves the hybrid pin OFF — a classical fallback is
+allowed — while still offering the hybrid group. -/
+theorem deployedTlsParams_preferred_pin_off
+    (priv rnd seed certDer : ByteArray) (certs : List CertEntry) :
+    (deployedTlsParams .preferred priv rnd seed certDer certs).requireHybridKex = false := rfl
+
+/-- Both the required and the preferred posture offer the X25519MLKEM768 group. -/
+theorem deployedTlsParams_preferred_offers_hybrid
+    (priv rnd seed certDer : ByteArray) (certs : List CertEntry) :
+    (deployedTlsParams .preferred priv rnd seed certDer certs).groupsSupported.contains
+      xwingGroup = true := rfl
+
+/-- **PREFERRED deployed front door honors a hybrid client** — the deployed-params
+instantiation of `kex_preferred_honors_hybrid`. Whatever entropy / certificate
+material a connection draws, a client that offers the X25519MLKEM768 share
+negotiates `xwingGroup`, EVEN THOUGH the pin is off in preferred mode: honoring
+the client's best offer is not a downgrade, and a hybrid client's flight is the
+byte-identical hybrid handshake it would get under `required`. -/
+theorem deployed_preferred_honors_hybrid
+    (priv rnd seed certDer : ByteArray) (certs : List CertEntry)
+    (retried : Option Retry) (ch : ClientHello) (suite : Nat)
+    (alpnSel : Option Tls.Bytes) (buf : Tls.Bytes) (est : Established)
+    (hy : Tls.Bytes) (hoff : ch.keyShareHybrid = some hy)
+    (hres : (kexStep (deployedTlsParams .preferred priv rnd seed certDer certs)
+        retried ch suite alpnSel buf).1 = .waitClientFinished est) :
+    est.group = xwingGroup :=
+  kex_preferred_honors_hybrid _ retried ch suite alpnSel buf est (deployedTlsParams_preferred_offers_hybrid priv rnd seed certDer certs) hy hoff hres
+
+/-- **PREFERRED deployed front door: a classical session implies the client
+offered no hybrid share** — the deployed-params instantiation of
+`kex_classical_only_without_hybrid`. No silent downgrade: the deployed preferred
+edge falls to the classical X25519 exchange ONLY for a client that did not offer
+X-Wing. -/
+theorem deployed_preferred_classical_needs_no_hybrid
+    (priv rnd seed certDer : ByteArray) (certs : List CertEntry)
+    (retried : Option Retry) (ch : ClientHello) (suite : Nat)
+    (alpnSel : Option Tls.Bytes) (buf : Tls.Bytes) (est : Established)
+    (hres : (kexStep (deployedTlsParams .preferred priv rnd seed certDer certs)
+        retried ch suite alpnSel buf).1 = .waitClientFinished est)
+    (hclassical : est.group = x25519Group) :
+    ch.keyShareHybrid = none :=
+  kex_classical_only_without_hybrid _ retried ch suite alpnSel buf est (deployedTlsParams_preferred_offers_hybrid priv rnd seed certDer certs) hres hclassical
+
 /-- **`drorb_tls_serve` — the deployed HTTPS front door.** One accepted TCP
 connection (`fd`) and the host's certificate material: the Ed25519 default
 end-entity certificate (`certDer`, DER) with its 32-byte RFC 8032 signing seed
@@ -1494,7 +1884,9 @@ selects from this pool per the client's `signature_algorithms`, then the record
 layer serves real HTTP — HTTP/2 through the proven `H2.Conn.feed` engine when
 ALPN negotiated `h2`, else HTTP/1.1 through `drorbServe` — and close. The X25519 ephemeral and
 the ServerHello random are drawn fresh per connection from the OS entropy source,
-so each connection gets its own DHE. Total; any I/O error closes the socket. -/
+so each connection gets its own DHE. Key exchange is hybrid-PINNED
+(`deployedTlsParams`): a classical-only client is rejected, never downgraded
+(`deployed_tls_no_classical_downgrade`). Total; any I/O error closes the socket. -/
 @[export drorb_tls_serve]
 def drorbTlsServe (fd : UInt32) (certDer seed
     ecdsaCert ecdsaPriv rsaCert rsaN rsaE rsaD : ByteArray) : IO Unit := do
@@ -1511,13 +1903,15 @@ def drorbTlsServe (fd : UInt32) (certDer seed
   match earlyDir with
   | some dir => IO.FS.createDirAll dir
   | none => pure ()
+  -- The KEX posture (`DRORB_TLS_KEX`): `required` pins the X25519MLKEM768 hybrid
+  -- (classical-only clients rejected), `classical` offers only X25519 (no PQ),
+  -- and the default `preferred` offers both and honors the client's best group
+  -- (a hybrid client gets X-Wing, a legacy client gets X25519). Read per
+  -- connection so the posture can flip without a rebuild.
+  let posture := KexPosture.ofName (← IO.getEnv "DRORB_TLS_KEX")
   let params : ServerParams :=
-    { ephemeralPriv := priv
-      serverRandom := rnd
-      certSeed := seed
-      certData := certDer
-      groupsSupported := [xwingGroup, x25519Group]
-      certs := deployedCerts ecdsaCert ecdsaPriv ecdsaSni rsaCert rsaN rsaE rsaD rsaSni }
+    deployedTlsParams posture priv rnd seed certDer
+      (deployedCerts ecdsaCert ecdsaPriv ecdsaSni rsaCert rsaN rsaE rsaD rsaSni)
   let maxEarly := if earlyDir.isSome then params.maxEarlyData else 0
   try
     hsLoop fd params earlyDir maxEarly .waitCH []

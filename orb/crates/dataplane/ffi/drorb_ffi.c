@@ -29,6 +29,19 @@ const uint8_t *drorb_sarray_ptr(lean_object *o) { return lean_sarray_cptr(o); }
 /* Drop an owned Lean object reference. */
 void drorb_obj_dec(lean_object *o) { lean_dec(o); }
 
+/* Destructure an owned pair object (`A × B`): consumes `pair`, hands back its
+ * two fields as owned references. Used by the interactive h2c host to split
+ * `drorb_h2c_conn_feed`'s `(state', octets)` result. */
+void drorb_pair_split(lean_object *pair, lean_object **fst, lean_object **snd) {
+    lean_object *a = lean_ctor_get(pair, 0);
+    lean_object *b = lean_ctor_get(pair, 1);
+    lean_inc(a);
+    lean_inc(b);
+    lean_dec(pair);
+    *fst = a;
+    *snd = b;
+}
+
 /* The RealWorld token threaded through Lean IO / module initializers. */
 lean_object *drorb_io_world(void) { return lean_io_mk_world(); }
 

@@ -1,5 +1,5 @@
 {
-  "generated": "2026-07-08T10:11:04",
+  "generated": "2026-07-08T16:47:51",
   "scenarios": [
     {
       "name": "hs-basic-get",
@@ -222,7 +222,7 @@
       "group": "h2-conformance",
       "ledger": "h2.3",
       "behavior": "h2spec full suite vs the DEPLOYED dataplane cleartext h2c (one-shot shell)",
-      "observed": "56/146 passed, 1 skipped, 89 failed",
+      "observed": "82/146 passed, 1 skipped, 63 failed",
       "verdict": "UNWIRED",
       "note": "the deployed cleartext h2c shell (crates/dataplane/src/blocking.rs h2c prior-knowledge path) is ONE-SHOT: it collects the opening burst, serves once, and closes; multi-flight tests (SETTINGS sync, PING, WINDOW_UPDATE pacing) cannot proceed. Keep-alive h2 IS wired over TLS (see h2spec-deployed-tls-keepalive). Gap: a keep-alive cleartext h2c IO shell."
     },

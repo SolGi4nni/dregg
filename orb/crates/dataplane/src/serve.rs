@@ -24,6 +24,12 @@
 //! on the runtime-owner thread — the deliberate trade, and the one shared
 //! resource in an otherwise share-nothing design (see `SINGLE-OWNER` note in
 //! [`spawn_serve_thread`]).
+//!
+//! `DRORB_SERVE_OWNERS=k` (opt-in, default 1) lifts that serialization for the
+//! byte-serve seams: still ONE process-global runtime, but `k` owner threads
+//! attached to it (`lean_initialize_thread`), each with its own job channel,
+//! with every connection/shard pinned to one owner. The safety argument and its
+//! limits are on [`spawn_attached_owner`].
 
 use std::net::IpAddr;
 use std::slice;
@@ -233,6 +239,81 @@ unsafe extern "C" {
     /// on EVERY HTTP serve job when `DRORB_SPAN=19`. This is the serve the RFC
     /// conformance probe (`conformance/rfc_conformance.py`) drives to 17/17.
     fn drorb_serve_conformant(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_serve_head_idx] serveHeadIdx : ByteArray -> ByteArray`
+    /// (Datapath.ServeHeadIdx) — the INDEX-NATIVE-HEAD serve, THE DEPLOYED
+    /// `Seam::Http` DEFAULT: ONE arena parse per request (`parseArr` off the
+    /// borrowed window), BOTH dense arms decided by index probes on the arena head
+    /// (`bulkIdxB`/`healthIdxB` — no `arenaToProto`/`protoReqOf` List
+    /// materialization on the deciding path), the proven dense emitters on the
+    /// arms; off both arms (and on the h2c preface) the deployed serve verbatim.
+    /// Proven byte-identical to `drorb_serve` for EVERY input
+    /// (`Dataplane.serveHeadIdx_eq_drorbServe` = `serveHeadIdx_refines` +
+    /// `deployedServeRef_eq_drorbServe`), so the cutover changes NO served byte.
+    /// Same `ByteArray -> ByteArray` ABI as `drorb_serve`; also selectable A/B when
+    /// `DRORB_SPAN=24` (`=24` vs `=21` isolates the parse-once head read vs the
+    /// double-parse index-decided serve; `=24` vs `=4` the whole index-native win).
+    fn drorb_serve_head_idx(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_serve_conformant_head_idx] drorbServeConformantHeadIdx :
+    /// ByteArray -> ByteArray` (Dataplane) — the SAME RFC-conformance wrapper as
+    /// `drorb_serve_conformant`, its inner swapped for the index-native-head serve
+    /// (`drorb_serve_head_idx` above). THE DEPLOYED NON-METERED `Seam::Http`
+    /// DEFAULT crossing (no `DRORB_SPAN`): proven byte-identical to
+    /// `drorb_serve_conformant` for EVERY input
+    /// (`Dataplane.serveConformantHeadIdx_eq_drorbServeConformant` — the wrapper
+    /// consults its inner only pointwise), so the conformance edges (C1/C2/B2/G1/C3
+    /// gate, Date F1, HEAD-strip B1) are untouched. Same ABI as `drorb_serve`.
+    fn drorb_serve_conformant_head_idx(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_serve_conformant_dense] serveConformantDenseIdx : ByteArray ->
+    /// ByteArray` (Datapath.ServeConformantDense) — the SAME RFC-conformance wrapper as
+    /// `drorb_serve_conformant`, its inner swapped for the index-decided DENSE serve
+    /// (`Datapath.ServeDenseIdx.serveDenseIdx`): the h2c fork and the `/bulk`-arm guard
+    /// are decided by INDEX PROBES off the borrowed window, and the dense arm emits the
+    /// dense head (constant `x-upstream`, index-native `x-corr`) + the dense 1 MiB
+    /// `Array` body — NO `input.toList` on the dense-arm compute path. Proven
+    /// byte-identical to `drorb_serve_conformant` for EVERY input
+    /// (`serveConformantDenseIdx_eq_drorbServeConformant`). Same ABI; selected when
+    /// `DRORB_SPAN=20`. `=20` vs `=19` on `GET /bulk` isolates the inner body-cliff +
+    /// arm-decision cost under the SAME conformance wrapper.
+    fn drorb_serve_conformant_dense(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_serve_dense_idx] serveDenseIdx : ByteArray -> ByteArray`
+    /// (Datapath.ServeDenseIdx) — the BARE index-decided dense serve (no conformance
+    /// wrapper): h2c fork + /bulk-arm guard decided by INDEX PROBES, dense head with
+    /// constant x-upstream + index-native x-corr, dense 1 MiB body. Byte-identical to
+    /// `drorb_serve` (serveDenseIdx_refines + deployedServeRef_eq_drorbServe). Selected
+    /// when `DRORB_SPAN=21`. `=21` vs `=18` isolates the index-native arm decision +
+    /// dense head scalars vs the List-decided arm with List scalars.
+    fn drorb_serve_dense_idx(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_serve_conformant_fast] serveConformantFastIdx : ByteArray ->
+    /// ByteArray` (Datapath.ServeConformantFast) — the CONFORMANT-DENSE serve with the
+    /// FUSED response post-processor: same conformance gates and same index-decided
+    /// dense inner as `drorb_serve_conformant_dense` (`=20`), but the wrapper's
+    /// `Date`-splice + `x-corr` head-scrub rewrite only the HEAD and attach the
+    /// unchanged 1 MiB body ONCE (`ByteArray.copySlice`, `scrubDateBA`) instead of
+    /// re-copying the full response in each post-processor (`injectDateBA` +
+    /// `scrubCorrBA` — ~4 whole-body memcpys per `/bulk` hit). Byte-identity to `=20`
+    /// is `#guard`-pinned (evaluator) on the real 1 MiB `/bulk` response + adversarial
+    /// head shapes; the general fusion theorem is the named next rung. Same
+    /// `ByteArray -> ByteArray` ABI; selected when `DRORB_SPAN=22`. `=22` vs `=20` on
+    /// `GET /bulk` isolates the wrapper body-recopy cost; `=22` vs `=18` (bare dense)
+    /// is the remaining conformance-wrapper overhead.
+    fn drorb_serve_conformant_fast(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_serve_conformant_zc] serveConformantZcIdx : ByteArray ->
+    /// ByteArray` (Datapath.ServeZc) — the ZERO-COPY-BODY split of the fused
+    /// conformant serve (`=22`): the response is 1-byte-TAGGED. `0x01 :: head`
+    /// when the fast `/bulk` arm fires (the head already fused/scrubbed; the
+    /// HOST attaches the process-static constant body by reference — the 1 MiB
+    /// body never crosses the seam and is never copied), else `0x00 :: full`
+    /// where `full` is byte-for-byte `drorb_serve_conformant_fast`. Reassembly
+    /// identity is `#guard`-pinned on the same battery as the `=22` fusion
+    /// guards. Same `ByteArray -> ByteArray` ABI; selected when `DRORB_SPAN=23`.
+    /// `=23` vs `=22` on `GET /bulk` isolates the remaining whole-body copies
+    /// (inner append + wrapper attach + host seam copy).
+    fn drorb_serve_conformant_zc(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_bulk_body] bulkBodyForHost : ByteArray -> ByteArray`
+    /// (Datapath.ServeZc) — the constant `/bulk` body, fetched ONCE at serve-thread
+    /// boot to materialize the process-static send buffer the `=23` split arm
+    /// gather-writes. The argument is ignored (uniform marshalling).
+    fn drorb_bulk_body(input: *mut LeanObject) -> *mut LeanObject;
     /// `@[export drorb_serve_metered] drorbServeMetered : ByteArray -> UInt64 ->
     /// ByteArray -> ByteArray` — the same deployed HTTP/1.1 fold as `drorb_serve`,
     /// but the host supplies the connection context the two metered gates read:
@@ -242,6 +323,23 @@ unsafe extern "C" {
     /// bucket. Consumes both ByteArray arguments; returns an owned ByteArray. The C
     /// ABI passes `seq` as an unboxed `uint64_t` (leanc lowering).
     fn drorb_serve_metered(
+        peer: *mut LeanObject,
+        seq: u64,
+        input: *mut LeanObject,
+    ) -> *mut LeanObject;
+    /// `@[export drorb_serve_pipeline_conformant] drorbServePipelineConformant :
+    /// ByteArray -> UInt64 -> ByteArray -> ByteArray` (Dataplane) — THE consolidated
+    /// deployed metered default. The proven RFC-conformance wrapper
+    /// (`conformantServe`: 431 head limit -> validation gate -> framing gate -> Date ->
+    /// `x-corr` scrub -> HEAD-strip) over the ONE flat consolidated pipeline
+    /// (`Reactor.DeployPipeline.serveMeteredPipelineConformant` — the 43-stage
+    /// ordered registry stated once, definitionally equal to the deployed onion),
+    /// with the `/bulk` arm emitted DENSE (fully-stamped head + dense 1 MiB body, no
+    /// per-byte `List` cons). Byte-identical to the pre-consolidation default for
+    /// EVERY (peer, seq, input) (`serveMeteredPipelineConformant_eq_predecessor` /
+    /// `_eq_deployed`). This is the SINGLE metered default crossing. Consumes both
+    /// ByteArray arguments; `seq` crosses as an unboxed `uint64_t`.
+    fn drorb_serve_pipeline_conformant(
         peer: *mut LeanObject,
         seq: u64,
         input: *mut LeanObject,
@@ -310,25 +408,6 @@ unsafe extern "C" {
         seq: u64,
         input: *mut LeanObject,
     ) -> *mut LeanObject;
-    /// `@[export drorb_serve_metered_dense_conformant] drorbServeMeteredDenseConformant :
-    /// ByteArray -> UInt64 -> ByteArray -> ByteArray` (Dataplane) — the RFC-conformant
-    /// DENSE metered DEFAULT serve. `Reactor.ServeConformant.conformantServe` wrapped around
-    /// `drorbServeMeteredDense peer seq`: validation (C1/C2/B2/G1/C3) runs FIRST, then the
-    /// metered IP-filter/rate gates fire, then on the admitted `GET /bulk` arm the response
-    /// is emitted DENSE (dense head + DENSE 1 MiB `Array` body, no per-byte `List` cons — the
-    /// body-cliff fix) and off the arm through the deployed metered List fold, then the
-    /// `Date` (F1) / `HEAD`-strip (B1) finisher. Byte-identical to
-    /// `drorb_serve_metered_conformant` for EVERY input
-    /// (`Dataplane.meteredDenseConformant_eq_meteredConformant`) — the gates and conformance
-    /// edges are UNCHANGED; only the `/bulk` body-cliff cons is removed. Same ABI as
-    /// `drorb_serve_metered_conformant`. This is the serve the deployed default (no
-    /// `DRORB_SPAN`, empty `DRORB_CONFIG`) crosses so every metered request is RFC-conformant
-    /// AND dense on the large-body arm.
-    fn drorb_serve_metered_dense_conformant(
-        peer: *mut LeanObject,
-        seq: u64,
-        input: *mut LeanObject,
-    ) -> *mut LeanObject;
     /// `@[export drorb_serve_braided] drorbServeBraided : ByteArray -> ByteArray`
     /// (Dataplane) — the NON-metered braided serve (h2c fork + the braided HTTP/1.1
     /// fold). The `entry`-table twin of the metered braid; same ABI as `drorb_serve`.
@@ -356,6 +435,17 @@ unsafe extern "C" {
     /// `drorb_serve`; crossed only on the runtime-owner thread, then the host
     /// (`proxy_hook`/`proxy_dial`) dials the chosen backend off this thread.
     fn drorb_proxy_pick(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_lb_pick]` (Reactor.LoadBalance) - the proven CONFIG-POLICY +
+    /// load-aware reverse-proxy pick: `Proxy.selectChain` for the config-declared LB
+    /// policy chain over the live-health-masked, load-carrying fleet. Input frame:
+    /// byte 0 = the config LB-policy byte (0 weighted round-robin, 1
+    /// least-connections, 2 weighted-least-connections, else rendezvous hash), byte 1
+    /// = the round counter, byte 2 = the health/breaker mask, byte 3 = the number `n`
+    /// of per-backend load bytes, bytes 4..4+n = the live in-flight counts, the rest =
+    /// the sticky-affinity key. Output = the decimal-ASCII chosen backend id, or EMPTY
+    /// when no backend is eligible. Health ejection holds for EVERY policy byte
+    /// (`Reactor.LoadBalance.pick_health_ejects`).
+    fn drorb_lb_pick(input: *mut LeanObject) -> *mut LeanObject;
     /// `@[export drorb_serve_step]` (Reactor.ServeStep) — the effect/continuation
     /// serve STEP: input byte 0 = the live health mask, bytes 1.. = the request;
     /// output is the encoded `Step` (byte 0 = tag: `0` DONE + response bytes, `1`
@@ -429,6 +519,26 @@ unsafe extern "C" {
     /// host can find the message boundary / enforce max-message-size while
     /// streaming the h2 DATA through. EMPTY if fewer than 5 bytes.
     fn drorb_grpc_frame_len(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_static_resolve]` (Route.StaticResolve) — the static-file
+    /// path decision: the relative target bytes (after the serving prefix) in;
+    /// `0x01 ++ <resolved path, '/'-joined>` on accept, or the single byte `0x00`
+    /// on reject (a decoded segment failed the UTF-8 gate) out. The resolution —
+    /// split, percent-decode ONCE, clamped dot-segment walk — is the proven core's
+    /// (`resolveRel_confined`: no input escapes a clean root, even under a
+    /// `..`-popping filesystem walker), not a host reimplementation.
+    fn drorb_static_resolve(input: *mut LeanObject) -> *mut LeanObject;
+    /// `@[export drorb_static_decide]` (Route.StaticDecide) — the static lane's FULL
+    /// response decision: `flags(1) :: len(8 BE) :: mtime(8 BE) :: nameLen(2 BE) ::
+    /// name :: requestBytes` in (flags bit 0 = keep-alive intent, bit 1 = found);
+    /// the encoded serving PLAN out — `1` a verbatim response (404 / 405 / 416 /
+    /// 304 / every HEAD), `2` a 200 head to stream the whole file after, `3` a 206
+    /// head plus one file window, `4` a 206 multipart/byteranges head plus per-part
+    /// prefaces/windows and the closing tail. The method gate, the conditional
+    /// (If-None-Match via the proven ConditionalRequest matcher + exact-date
+    /// If-Modified-Since), the range parse/resolution, every header byte and every
+    /// window bound are the core's (window_exact, partsWire_eq_multipartBody).
+    /// EMPTY on a malformed frame (the host drops the connection).
+    fn drorb_static_decide(input: *mut LeanObject) -> *mut LeanObject;
     /// `@[export drorb_serve_cfg]` (Dataplane) — serve one request under an operator
     /// config's ROUTE TABLE. Input framing `cfgLen(4 BE) :: configBytes ::
     /// requestBytes`; the proven `Dsl.Config.parseChars` parses the config and, when
@@ -496,6 +606,10 @@ pub enum Seam {
     /// (`Reactor.ProxyDial`): `(mask, key)` bytes in, the chosen backend id (decimal
     /// ASCII) out, or empty when no backend is eligible.
     ProxyPick,
+    /// `drorb_lb_pick` - the proven config-policy + load-aware reverse-proxy pick
+    /// (`Reactor.LoadBalance`): `pol :: round :: mask :: n :: conns :: key` in, the
+    /// chosen backend id (decimal ASCII) out, or empty when no backend is eligible.
+    LbPick,
     /// `drorb_serve_step` — the effect/continuation serve STEP (`Reactor.ServeStep`):
     /// `mask :: request` in, the encoded `Step` out.
     ServeStep,
@@ -544,6 +658,14 @@ pub enum Seam {
     /// `drorb_grpc_frame_len` — the gRPC frame-header parse: the 5-byte header in,
     /// the decimal-ASCII payload length out (empty if short).
     GrpcFrameLen,
+    /// `drorb_static_resolve` — the proven static-file path decision: the relative
+    /// target bytes in, `0x01 ++ resolved` (accept) or `0x00` (reject) out.
+    StaticResolve,
+    /// `drorb_static_decide` — the proven static RESPONSE decision: the
+    /// boundary-fact frame (flags/len/mtime/name + the raw request) in, the encoded
+    /// serving plan out (verbatim reply / whole-file head / 206 window / 206
+    /// multipart parts).
+    StaticDecide,
 }
 
 /// Whether the `DRORB_FLAT` A/B switch selects the flat serve on the HTTP path.
@@ -669,18 +791,23 @@ impl Seam {
             Seam::Http => {
                 // A/B seam: `DRORB_FLAT=1` selects the byte-identical flat serve
                 // (`drorb_serve_flat`, proven `= drorb_serve`) so the flat vs. List
-                // response materialization can be measured through the real host
-                // path; unset keeps the deployed `drorb_serve`.
+                // materialization stays measurable; unset selects the DEPLOYED
+                // DEFAULT — the index-native-head serve (`drorb_serve_head_idx`,
+                // proven `= drorb_serve` for every input by
+                // `Dataplane.serveHeadIdx_eq_drorbServe`): parse ONCE off the
+                // borrowed window, both dense arms index-decided, no head-List
+                // materialization on the deciding path.
                 if flat_serve_enabled() {
                     drorb_serve_flat
                 } else {
-                    drorb_serve
+                    drorb_serve_head_idx
                 }
             }
             Seam::WsFrame => drorb_serve_ws_frame,
             Seam::Datagram => drorb_serve_datagram,
             Seam::UpgradeGate => drorb_upgrade_gate,
             Seam::ProxyPick => drorb_proxy_pick,
+            Seam::LbPick => drorb_lb_pick,
             Seam::ServeStep => drorb_serve_step,
             Seam::ServeResume => drorb_serve_resume,
             Seam::ServeProxyStreamHead => drorb_serve_proxy_stream_head,
@@ -695,6 +822,8 @@ impl Seam {
             Seam::ServeStream => drorb_serve_stream,
             Seam::ConnectGate => drorb_connect_gate,
             Seam::GrpcFrameLen => drorb_grpc_frame_len,
+            Seam::StaticResolve => drorb_static_resolve,
+            Seam::StaticDecide => drorb_static_decide,
         }
     }
 }
@@ -819,6 +948,11 @@ fn span_number() -> Option<u8> {
         Some("17") => Some(17),
         Some("18") => Some(18),
         Some("19") => Some(19),
+        Some("20") => Some(20),
+        Some("21") => Some(21),
+        Some("22") => Some(22),
+        Some("23") => Some(23),
+        Some("24") => Some(24),
         _ => None,
     })
 }
@@ -829,6 +963,73 @@ fn span_number() -> Option<u8> {
 /// The shard reads this at the response-staging point to select the split-write path.
 pub fn is_split_span() -> bool {
     span_number() == Some(15)
+}
+
+/// True when `DRORB_SPAN=23` (the zero-copy STATIC-body split seam): the serve thread
+/// crosses `drorb_serve_conformant_zc` (a 1-byte-tagged response); on the fast `/bulk`
+/// arm only the HEAD comes back, and the io_uring shard gather-writes that head THEN
+/// the process-static constant body — no whole-body copy anywhere on the serve path.
+pub fn is_zc_split_span() -> bool {
+    span_number() == Some(23)
+}
+
+/// The process-static `/bulk` body (`DRORB_SPAN=23`): rendered ONCE at serve-thread
+/// boot from the proven constant (`drorb_bulk_body`) into a leaked, process-lifetime
+/// buffer; every split response references it by pointer. Empty until initialized.
+static BULK_STATIC_BODY: std::sync::OnceLock<&'static [u8]> = std::sync::OnceLock::new();
+
+/// The static body buffer the `=23` split send gathers. Empty slice before
+/// `init_static_bulk_body` has run (the serve thread initializes it at boot, before
+/// any request crosses the `=23` seam).
+pub fn static_bulk_body() -> &'static [u8] {
+    BULK_STATIC_BODY.get().copied().unwrap_or(&[])
+}
+
+/// Fetch the constant body across the seam ONCE and leak it into the process-static
+/// buffer. Runs on the runtime-owner serve thread, after `lean_boot`, before the job
+/// loop — the ONE body copy left in the process's lifetime (not per request).
+fn init_static_bulk_body() {
+    let mut v: Vec<u8> = Vec::new();
+    // SAFETY: same marshalling discipline as `serve_into` — an owned input sarray is
+    // consumed by the export; the returned owned ByteArray's bytes are copied out
+    // (once, at boot) before `drorb_obj_dec`. On the runtime-owner thread.
+    unsafe {
+        let dummy = [0u8; 1];
+        let input = drorb_sarray_of_bytes(dummy.as_ptr(), 0);
+        let output = drorb_bulk_body(input);
+        let len = drorb_sarray_len(output);
+        v.extend_from_slice(slice::from_raw_parts(drorb_sarray_ptr(output), len));
+        drorb_obj_dec(output);
+    }
+    let _ = BULK_STATIC_BODY.set(Box::leak(v.into_boxed_slice()));
+}
+
+/// Marshal `req` across the tagged zero-copy split seam (`drorb_serve_conformant_zc`,
+/// `DRORB_SPAN=23`) and copy the UNTAGGED payload into `out` (cleared first). Returns
+/// `true` when the tag says HEAD-ONLY (`0x01`): `out` is the response head and the
+/// caller must arrange the static body to follow; `false` means `out` is the full
+/// response (byte-for-byte the `=22` serve). The tag is consumed here, off the copy
+/// path (the payload copy starts one byte in — no extra move). Only ever invoked from
+/// the runtime-owner serve thread.
+fn serve_zc_into(req: &[u8], out: &mut Vec<u8>) -> bool {
+    // SAFETY: identical discipline to `serve_into` — the input sarray is consumed by
+    // the seam; the returned owned ByteArray's bytes are copied out before
+    // `drorb_obj_dec`. All on the single runtime-owner thread.
+    unsafe {
+        let input = drorb_sarray_of_bytes(req.as_ptr(), req.len());
+        let output = drorb_serve_conformant_zc(input);
+        let len = drorb_sarray_len(output);
+        let ptr = drorb_sarray_ptr(output);
+        out.clear();
+        let head_only = if len == 0 {
+            false
+        } else {
+            out.extend_from_slice(slice::from_raw_parts(ptr.add(1), len - 1));
+            *ptr == 1
+        };
+        drorb_obj_dec(output);
+        head_only
+    }
 }
 
 fn span_serve_seam() -> Option<unsafe extern "C" fn(*mut LeanObject) -> *mut LeanObject> {
@@ -932,6 +1133,26 @@ fn span_serve_seam() -> Option<unsafe extern "C" fn(*mut LeanObject) -> *mut Lea
         // previously-failing checks (B1/B2/C1/C2/C3/F1/G1). `=19` vs `=4` (bare deployed
         // serve) is the conformance-wrapper delta.
         Some(19) => Some(drorb_serve_conformant),
+        // The CONFORMANT-DENSE serve (`drorb_serve_conformant_dense`, `=20`) — the same
+        // conformance wrapper as `=19`, inner swapped for the index-decided dense serve
+        // (byte-identical, proven). `=20` vs `=19` on `GET /bulk` isolates the 1 MiB
+        // List body-cliff + the List arm-decision under identical wrapper semantics.
+        Some(20) => Some(drorb_serve_conformant_dense),
+        // The BARE index-decided dense serve (`=21`) — `=21` vs `=18` isolates the
+        // index-native arm decision + dense head scalars.
+        Some(21) => Some(drorb_serve_dense_idx),
+        // The FUSED-POSTPROCESS conformant-dense serve (`drorb_serve_conformant_fast`,
+        // `=22`) — the same conformance wrapper + dense inner as `=20`, but the
+        // `Date`-splice + `x-corr`-scrub rebuild only the head and attach the unchanged
+        // body with ONE `copySlice` (single whole-body memcpy instead of ~4). `=22` vs
+        // `=20` on `GET /bulk` isolates the wrapper's body-recopy cost.
+        Some(22) => Some(drorb_serve_conformant_fast),
+        // The BARE index-native-head serve (`drorb_serve_head_idx`, `=24`) — the
+        // deployed `Seam::Http` default, surfaced as a span so it stays A/B-able:
+        // `=24` vs `=21` isolates the parse-once head read (one `parseArr`, arms
+        // decided on the arena head) vs the double-parse index-decided serve;
+        // `=24` vs `=4` (deployed List serve) is the whole index-native win.
+        Some(24) => Some(drorb_serve_head_idx),
         _ => None,
     }
 }
@@ -1061,26 +1282,27 @@ fn serve_metered_conformant_into(req: &[u8], meter: Meter, out: &mut Vec<u8>) {
     }
 }
 
-/// The DEPLOYED-DEFAULT DENSE metered seam crossing (RFC-conformant). Identical to
-/// [`serve_metered_conformant_into`] but crosses `drorb_serve_metered_dense_conformant` —
-/// the proven `conformantServe` wrapper around `drorbServeMeteredDense peer seq`, which is
-/// byte-identical to `drorbServeMetered peer seq`
-/// (`Dataplane.drorbServeMeteredDense_eq`) EXCEPT it emits the deployed `GET /bulk` (1 MiB)
-/// arm DENSE — no per-byte `List` cons on the body-cliff — while keeping the metered
-/// IP-filter/rate gates and the RFC conformance edges. `req` is the RAW HTTP/1.1 request
-/// (NOT cfg-framed). Only ever invoked from the runtime-owner serve thread.
+/// THE DEPLOYED-DEFAULT metered seam crossing (RFC-conformant, DENSE): the ONE
+/// consolidated metered default. Crosses `drorb_serve_pipeline_conformant` — the
+/// proven `conformantServe` wrapper over the single flat 43-stage pipeline
+/// (`Reactor.DeployPipeline`, definitionally the deployed onion), `/bulk` emitted
+/// DENSE (fully-stamped head + dense 1 MiB body, no per-byte `List` cons). Proven
+/// byte-identical to the pre-consolidation default for EVERY (peer, seq, input)
+/// (`serveMeteredPipelineConformant_eq_predecessor` / `_eq_deployed`). Both metered
+/// default entries funnel here (the direct arm and the empty-config cfg divert), so
+/// this one crossing covers them. `req` is the RAW HTTP/1.1 request (NOT cfg-framed).
+/// Only ever invoked from the runtime-owner serve thread.
 fn serve_metered_dense_conformant_into(req: &[u8], meter: Meter, out: &mut Vec<u8>) {
     let mut peer_buf = [0u8; 129];
     let peer_len = encode_addr(meter.client, &mut peer_buf);
-    // SAFETY: identical discipline to `serve_metered_conformant_into` — both ByteArray
-    // arguments are freshly allocated owned sarrays consumed by
-    // `drorb_serve_metered_dense_conformant`; the returned owned ByteArray's bytes are copied
-    // out before the `drorb_obj_dec`. `seq` crosses as an unboxed `uint64_t`. All on the
-    // single runtime-owner thread.
+    // SAFETY: identical discipline to `serve_metered_into` — both ByteArray arguments
+    // are freshly allocated owned sarrays consumed by `drorb_serve_pipeline_conformant`;
+    // the returned owned ByteArray's bytes are copied out before the `drorb_obj_dec`.
+    // `seq` crosses as an unboxed `uint64_t`. All on the single runtime-owner thread.
     unsafe {
         let peer = drorb_sarray_of_bytes(peer_buf.as_ptr(), peer_len);
         let input = drorb_sarray_of_bytes(req.as_ptr(), req.len());
-        let output = drorb_serve_metered_dense_conformant(peer, meter.seq, input);
+        let output = drorb_serve_pipeline_conformant(peer, meter.seq, input);
         let len = drorb_sarray_len(output);
         out.clear();
         out.extend_from_slice(slice::from_raw_parts(drorb_sarray_ptr(output), len));
@@ -1224,6 +1446,10 @@ pub enum ServeReply {
 pub struct ShardDone {
     pub conn: u32,
     pub resp: PooledBuf,
+    /// ZERO-COPY STATIC BODY (`DRORB_SPAN=23`): `resp` is the response HEAD only;
+    /// the shard gather-writes it followed by the process-static constant body
+    /// (`crate::serve::static_bulk_body`) — the body is never copied per request.
+    pub split_static: bool,
 }
 
 /// A response delivered to a kqueue reactor: which connection it belongs to and
@@ -1662,6 +1888,52 @@ impl ServeGateway {
         self.call_seam(framed, Seam::ServeCfg, reply_tx, reply_rx)
     }
 
+    /// Cross the proven static-file path decision (`drorb_static_resolve`):
+    /// the relative target bytes (after the serving prefix) in; on accept the
+    /// '/'-joined resolved relative path out, `None` on reject (the core's
+    /// UTF-8 gate refused a decoded segment — the caller answers `404`) or if
+    /// the serve thread is gone. `reply_tx`/`reply_rx` are the caller's
+    /// reusable per-connection channel.
+    pub fn call_static_resolve(
+        &self,
+        rel: &[u8],
+        reply_tx: &Sender<PooledBuf>,
+        reply_rx: &Receiver<PooledBuf>,
+    ) -> Option<Vec<u8>> {
+        let mut framed = self.pool.take();
+        framed.clear();
+        framed.extend_from_slice(rel);
+        let out = self.call_seam(framed, Seam::StaticResolve, reply_tx, reply_rx)?;
+        match out.split_first() {
+            Some((&1, resolved)) => Some(resolved.to_vec()),
+            _ => None, // 0x00 (core reject) or an unexpected shape: fail safe
+        }
+    }
+
+    /// Cross the proven static RESPONSE decision (`drorb_static_decide`,
+    /// `Route.StaticDecide.staticDecideC`): the boundary-fact frame (found /
+    /// keep-alive flags, file length, mtime, real file name, then the raw request
+    /// bytes) in; the encoded serving plan out. `None` on an EMPTY output (a
+    /// malformed frame — the caller drops the connection, never building response
+    /// bytes itself) or a gone serve thread. `reply_tx`/`reply_rx` are the
+    /// caller's reusable per-connection channel.
+    pub fn call_static_decide(
+        &self,
+        frame: &[u8],
+        reply_tx: &Sender<PooledBuf>,
+        reply_rx: &Receiver<PooledBuf>,
+    ) -> Option<Vec<u8>> {
+        let mut framed = self.pool.take();
+        framed.clear();
+        framed.extend_from_slice(frame);
+        let out = self.call_seam(framed, Seam::StaticDecide, reply_tx, reply_rx)?;
+        if out.is_empty() {
+            None
+        } else {
+            Some(out.to_vec())
+        }
+    }
+
     /// Blocking metered HTTP call — the byte-stream path through
     /// `drorb_serve_metered`, carrying the connection context `meter` (client
     /// address + per-connection sequence) so the proven IP-filter and rate gates
@@ -1735,6 +2007,168 @@ impl ServeGateway {
     }
 }
 
+/// The serve-owner job loop: drain `rx`, cross each job's seam on the
+/// CALLING thread, and deliver each response per its reply route. This is
+/// the single-owner loop body, unchanged — it now runs on the primary
+/// runtime-owner thread and on every attached owner thread
+/// ([`spawn_attached_owner`]), so the caller must first make the calling
+/// thread able to use the runtime: `lean_boot` (primary, exactly once per
+/// process) or `lean_initialize_thread` (attached owners, after the primary
+/// is up).
+fn serve_owner_loop(rx: Receiver<ServeJob>, serve_pool: Arc<BufferPool>) {
+    for job in rx {
+        // A TLS connection: run the whole verified handshake + record-layer
+        // serve on this owner thread, then signal completion. No response
+        // bytes cross back (the seam wrote them straight to the socket).
+        if let Some(tls) = &job.tls {
+            run_tls_conn(tls);
+            // (On non-Linux `ServeReply` has only the `Sync` variant, so
+            // this pattern is irrefutable there; on Linux the io_uring
+            // `Shard` variant makes it refutable — the TLS path always
+            // delivers `Sync`.)
+            #[allow(irrefutable_let_patterns)]
+            if let ServeReply::Sync(tx) = job.reply {
+                let _ = tx.send(serve_pool.take());
+            }
+            continue;
+        }
+        let mut resp = serve_pool.take();
+        // ZERO-COPY STATIC BODY (`DRORB_SPAN=23`): set when `resp` is a
+        // response HEAD whose (static, constant) body rides by reference.
+        let mut split_static = false;
+        // GEARS-ENMESH: the exact `GET /health` request, when
+        // `DRORB_HEALTH_NATIVE=1`, is answered by cake--pancake-compiled
+        // x64 machine code linked into this process (not the leanc serve).
+        // `serve_native_into` returns `false` (leaving `resp` untouched)
+        // for every other request and every non-demo build, so the leanc
+        // pipeline below still runs for everything else.
+        // CERTIFIED EXPORT-FUNCTION SERVE: the chosen route (`GET /`), when
+        // `DRORB_CAKE_SERVE=1`, is answered by the certified export-function
+        // machine code linked into this process (not the leanc serve).
+        // `serve_cake_into` returns `false` (leaving `resp` untouched) for every
+        // other request and every non-demo build, so the leanc pipeline below
+        // still runs for everything else. Checked before the native /health path
+        // and the deployed serve; all three defaults are byte-identical when their
+        // flags are unset.
+        if !crate::cake_serve::serve_cake_into(job.req.bytes(), &mut resp)
+            && !serve_native_into(job.req.bytes(), &mut resp)
+        {
+            // DRORB_SPAN A/B chokepoint: when set, EVERY HTTP serve job (metered
+            // direct/cfg/braided AND the plain `Seam::Http`) is diverted to the
+            // assembled cons-free flat serve (`drorb_serve_span`, DRORB_SPAN=1) or
+            // its byte-identical `List` twin (`drorb_serve_span_list`, =2) instead
+            // of the deployed `drorb_serve_metered`. Gated to the HTTP serve seams
+            // so the effect/proxy/ws/datagram seams are untouched. This is the one
+            // place ALL serve jobs funnel through, so it catches whichever serve
+            // path (borrowed-zero-copy metered, cfg fallback, …) the reactor chose.
+            let is_http_serve = job.meter.is_some() || matches!(job.seam, Seam::Http);
+            if is_zc_split_span() && is_http_serve {
+                // ZERO-COPY STATIC BODY (`DRORB_SPAN=23`): the tagged split seam.
+                // On the fast `/bulk` arm only the HEAD comes back (`true`); the
+                // static constant body is attached by REFERENCE downstream — the
+                // io_uring shard gather-writes head + static buffer, the non-shard
+                // reply paths append it once below (correctness fallback).
+                split_static = serve_zc_into(job.req.bytes(), &mut resp);
+            } else if let (Some(span), true) = (span_serve_seam(), is_http_serve) {
+                serve_into_via(job.req.bytes(), span, &mut resp);
+            } else {
+                // DEPLOYED DEFAULT (no DRORB_SPAN): every HTTP serve path is now
+                // RFC 7230/7231-conformant. The metered variants cross their conformant
+                // twin (`drorb_serve_metered_conformant` / `_cfg_conformant` /
+                // `_braided_conformant`) — the proven `conformantServe` wrapper runs the
+                // request-validation gate FIRST, then the SAME metered IP-filter/rate
+                // fold (peer/seq in scope — the gates are composed WITH conformance, NOT
+                // bypassed), then the Date (F1) / HEAD-strip (B1) finisher. The
+                // non-metered plain HTTP seam crosses `drorb_serve_conformant` (the
+                // wrapper over the non-metered `drorbServe`). The ws/datagram/effect-step
+                // seams are untouched — they are not HTTP request→response byte serves.
+                match job.meter {
+                    // Braid 0: a metered job carrying the `ServeCfg` seam is the
+                    // cfg-FRAMED metered serve; `ServeBraided` serves over the braided
+                    // deployment; every other metered job is the plain metered serve —
+                    // each now wrapped conformant.
+                    Some(meter) => match job.seam {
+                        // `Seam::ServeCfg` (the macOS/io_uring default): the cfg-conformant
+                        // serve, which for the EMPTY-config default diverts to the DENSE
+                        // metered-conformant serve (`/bulk` body-cliff fix) — byte-identical,
+                        // gates + conformance intact.
+                        Seam::ServeCfg => {
+                            serve_metered_cfg_conformant_into(job.req.bytes(), meter, &mut resp)
+                        }
+                        Seam::ServeBraided => {
+                            serve_metered_braided_conformant_into(job.req.bytes(), meter, &mut resp)
+                        }
+                        // The plain metered default (`Seam::Http` + meter, e.g. the io_uring
+                        // borrowed-direct path): the DENSE metered-conformant serve —
+                        // byte-identical to `drorb_serve_metered_conformant`
+                        // (`meteredDenseConformant_eq_meteredConformant`) but dense on `/bulk`.
+                        _ => serve_metered_dense_conformant_into(job.req.bytes(), meter, &mut resp),
+                    },
+                    None => match job.seam {
+                        // The non-metered plain HTTP serve is made conformant too, so
+                        // every deployed HTTP request is RFC-conformant regardless of the
+                        // reactor path — and its INNER is now the index-native-head serve
+                        // (`drorb_serve_conformant_head_idx`, proven byte-identical to
+                        // `drorb_serve_conformant` by
+                        // `Dataplane.serveConformantHeadIdx_eq_drorbServeConformant`).
+                        // (This overrides the DRORB_FLAT A/B on THIS fallback path — a
+                        // measurement lever, not the deployed default.)
+                        Seam::Http => serve_into_via(
+                            job.req.bytes(),
+                            drorb_serve_conformant_head_idx,
+                            &mut resp,
+                        ),
+                        _ => serve_into(job.req.bytes(), job.seam, &mut resp),
+                    },
+                }
+            }
+        }
+        // `job.req` drops here: a pooled request buffer returns to the
+        // pool; a borrowed view is a no-op drop (the shard owns the lease).
+        match job.reply {
+            ServeReply::Sync(tx) => {
+                // Non-shard path: no gather-write available; reassemble (one
+                // append) so the bytes served are identical either way.
+                if split_static {
+                    resp.extend_from_slice(static_bulk_body());
+                }
+                let _ = tx.send(resp);
+            }
+            #[cfg(target_os = "linux")]
+            ServeReply::Shard(mailbox, efd, conn) => {
+                if mailbox
+                    .send(ShardDone {
+                        conn,
+                        resp,
+                        split_static,
+                    })
+                    .is_ok()
+                {
+                    crate::uring::wake(efd);
+                }
+            }
+            #[cfg(any(
+                target_os = "macos",
+                target_os = "ios",
+                target_os = "freebsd",
+                target_os = "netbsd",
+                target_os = "openbsd",
+                target_os = "dragonfly"
+            ))]
+            ServeReply::Reactor(mailbox, wake_fd, conn) => {
+                // The kqueue reactor has no split-send path; reassemble (one
+                // append) so the bytes served are identical either way.
+                if split_static {
+                    resp.extend_from_slice(static_bulk_body());
+                }
+                if mailbox.send(KqDone { conn, resp }).is_ok() {
+                    crate::kqueue::wake(wake_fd);
+                }
+            }
+        }
+    }
+}
+
 /// Boot the runtime on a dedicated thread and return a gateway to it. Blocks
 /// until the runtime is up so bind failures are reported before we accept.
 ///
@@ -1745,7 +2179,10 @@ impl ServeGateway {
 /// across cores; the pure `ByteArray -> ByteArray` transform does not, because
 /// the runtime is a process-global singleton. This is the honest bottleneck to
 /// measure and, if it binds, to lift only by a design that admits multiple
-/// runtime owners.
+/// runtime owners. That design now exists as an opt-in lever: [`serve_owner_set`]
+/// attaches `DRORB_SERVE_OWNERS - 1` additional owner threads to the one booted
+/// runtime (see [`spawn_attached_owner`] for the argument and its limits);
+/// unset, this thread remains the sole caller, exactly as described above.
 pub fn spawn_serve_thread(pool: Arc<BufferPool>) -> ServeGateway {
     let (tx, rx) = channel::<ServeJob>();
     let (ready_tx, ready_rx) = channel::<()>();
@@ -1754,129 +2191,125 @@ pub fn spawn_serve_thread(pool: Arc<BufferPool>) -> ServeGateway {
         .name("drorb-serve".into())
         .spawn(move || {
             lean_boot();
-            let _ = ready_tx.send(());
-            for job in rx {
-                // A TLS connection: run the whole verified handshake + record-layer
-                // serve on this owner thread, then signal completion. No response
-                // bytes cross back (the seam wrote them straight to the socket).
-                if let Some(tls) = &job.tls {
-                    run_tls_conn(tls);
-                    // (On non-Linux `ServeReply` has only the `Sync` variant, so
-                    // this pattern is irrefutable there; on Linux the io_uring
-                    // `Shard` variant makes it refutable — the TLS path always
-                    // delivers `Sync`.)
-                    #[allow(irrefutable_let_patterns)]
-                    if let ServeReply::Sync(tx) = job.reply {
-                        let _ = tx.send(serve_pool.take());
-                    }
-                    continue;
-                }
-                let mut resp = serve_pool.take();
-                // GEARS-ENMESH: the exact `GET /health` request, when
-                // `DRORB_HEALTH_NATIVE=1`, is answered by cake--pancake-compiled
-                // x64 machine code linked into this process (not the leanc serve).
-                // `serve_native_into` returns `false` (leaving `resp` untouched)
-                // for every other request and every non-demo build, so the leanc
-                // pipeline below still runs for everything else.
-                if !serve_native_into(job.req.bytes(), &mut resp) {
-                    // DRORB_SPAN A/B chokepoint: when set, EVERY HTTP serve job (metered
-                    // direct/cfg/braided AND the plain `Seam::Http`) is diverted to the
-                    // assembled cons-free flat serve (`drorb_serve_span`, DRORB_SPAN=1) or
-                    // its byte-identical `List` twin (`drorb_serve_span_list`, =2) instead
-                    // of the deployed `drorb_serve_metered`. Gated to the HTTP serve seams
-                    // so the effect/proxy/ws/datagram seams are untouched. This is the one
-                    // place ALL serve jobs funnel through, so it catches whichever serve
-                    // path (borrowed-zero-copy metered, cfg fallback, …) the reactor chose.
-                    let is_http_serve = job.meter.is_some() || matches!(job.seam, Seam::Http);
-                    if let (Some(span), true) = (span_serve_seam(), is_http_serve) {
-                        serve_into_via(job.req.bytes(), span, &mut resp);
-                    } else {
-                        // DEPLOYED DEFAULT (no DRORB_SPAN): every HTTP serve path is now
-                        // RFC 7230/7231-conformant. The metered variants cross their conformant
-                        // twin (`drorb_serve_metered_conformant` / `_cfg_conformant` /
-                        // `_braided_conformant`) — the proven `conformantServe` wrapper runs the
-                        // request-validation gate FIRST, then the SAME metered IP-filter/rate
-                        // fold (peer/seq in scope — the gates are composed WITH conformance, NOT
-                        // bypassed), then the Date (F1) / HEAD-strip (B1) finisher. The
-                        // non-metered plain HTTP seam crosses `drorb_serve_conformant` (the
-                        // wrapper over the non-metered `drorbServe`). The ws/datagram/effect-step
-                        // seams are untouched — they are not HTTP request→response byte serves.
-                        match job.meter {
-                            // Braid 0: a metered job carrying the `ServeCfg` seam is the
-                            // cfg-FRAMED metered serve; `ServeBraided` serves over the braided
-                            // deployment; every other metered job is the plain metered serve —
-                            // each now wrapped conformant.
-                            Some(meter) => match job.seam {
-                                // `Seam::ServeCfg` (the macOS/io_uring default): the cfg-conformant
-                                // serve, which for the EMPTY-config default diverts to the DENSE
-                                // metered-conformant serve (`/bulk` body-cliff fix) — byte-identical,
-                                // gates + conformance intact.
-                                Seam::ServeCfg => serve_metered_cfg_conformant_into(
-                                    job.req.bytes(),
-                                    meter,
-                                    &mut resp,
-                                ),
-                                Seam::ServeBraided => serve_metered_braided_conformant_into(
-                                    job.req.bytes(),
-                                    meter,
-                                    &mut resp,
-                                ),
-                                // The plain metered default (`Seam::Http` + meter, e.g. the io_uring
-                                // borrowed-direct path): the DENSE metered-conformant serve —
-                                // byte-identical to `drorb_serve_metered_conformant`
-                                // (`meteredDenseConformant_eq_meteredConformant`) but dense on `/bulk`.
-                                _ => serve_metered_dense_conformant_into(
-                                    job.req.bytes(),
-                                    meter,
-                                    &mut resp,
-                                ),
-                            },
-                            None => match job.seam {
-                                // The non-metered plain HTTP serve is made conformant too, so
-                                // every deployed HTTP request is RFC-conformant regardless of the
-                                // reactor path. (This overrides the DRORB_FLAT A/B on THIS
-                                // fallback path — a measurement lever, not the deployed default.)
-                                Seam::Http => serve_into_via(
-                                    job.req.bytes(),
-                                    drorb_serve_conformant,
-                                    &mut resp,
-                                ),
-                                _ => serve_into(job.req.bytes(), job.seam, &mut resp),
-                            },
-                        }
-                    }
-                }
-                // `job.req` drops here: a pooled request buffer returns to the
-                // pool; a borrowed view is a no-op drop (the shard owns the lease).
-                match job.reply {
-                    ServeReply::Sync(tx) => {
-                        let _ = tx.send(resp);
-                    }
-                    #[cfg(target_os = "linux")]
-                    ServeReply::Shard(mailbox, efd, conn) => {
-                        if mailbox.send(ShardDone { conn, resp }).is_ok() {
-                            crate::uring::wake(efd);
-                        }
-                    }
-                    #[cfg(any(
-                        target_os = "macos",
-                        target_os = "ios",
-                        target_os = "freebsd",
-                        target_os = "netbsd",
-                        target_os = "openbsd",
-                        target_os = "dragonfly"
-                    ))]
-                    ServeReply::Reactor(mailbox, wake_fd, conn) => {
-                        if mailbox.send(KqDone { conn, resp }).is_ok() {
-                            crate::kqueue::wake(wake_fd);
-                        }
-                    }
-                }
+            // ZERO-COPY STATIC BODY (`DRORB_SPAN=23`): materialize the process-static
+            // constant body ONCE, before any request crosses the tagged split seam.
+            if is_zc_split_span() {
+                init_static_bulk_body();
             }
+            let _ = ready_tx.send(());
+            serve_owner_loop(rx, serve_pool);
         })
         .expect("failed to spawn the drorb serve thread");
     ready_rx
         .recv()
         .expect("serve thread died before finishing runtime init");
     ServeGateway { tx, pool }
+}
+
+// Attached-owner thread registration (exported by the runtime shared library).
+// A thread the runtime did not create must register itself once, after the
+// process-global runtime is initialized and before its first runtime call, so
+// its thread-local allocator/state exist.
+unsafe extern "C" {
+    fn lean_initialize_thread();
+}
+
+/// How many serve-owner threads this deployment runs: `DRORB_SERVE_OWNERS`,
+/// clamped to `1..=64`. Default (unset/unparsable) is `1` — exactly the
+/// original single-owner model, so the lever is opt-in. Read once (env is
+/// fixed for the process lifetime).
+pub fn serve_owner_count() -> usize {
+    use std::sync::OnceLock;
+    static N: OnceLock<usize> = OnceLock::new();
+    *N.get_or_init(|| {
+        std::env::var("DRORB_SERVE_OWNERS")
+            .ok()
+            .and_then(|v| v.parse::<usize>().ok())
+            .map(|n| n.clamp(1, 64))
+            .unwrap_or(1)
+    })
+}
+
+/// Spawn one ATTACHED serve-owner thread over the ALREADY-BOOTED process-global
+/// runtime and return a gateway whose jobs cross the seam on that thread.
+///
+/// This lifts the SINGLE-OWNER ceiling (see [`spawn_serve_thread`]) without
+/// pretending the runtime can be instantiated twice — it cannot (the module
+/// initializer installs process-global constants once). There is still ONE
+/// runtime; this adds more threads that call into it, each registered with
+/// `lean_initialize_thread`. Why the byte-serve crossings tolerate that:
+///
+/// * every entry routed here is a pure `ByteArray -> ByteArray` export: each
+///   call allocates its working objects on the calling thread's registered
+///   allocator, and the input and response objects are created, consumed, and
+///   dropped on that same thread — no heap object ever crosses between owner
+///   threads;
+/// * the only objects shared BETWEEN owner threads are the module's top-level
+///   constants, and the generated module init marks every `_init_`-computed
+///   global persistent (refcount ops on persistent objects are no-ops), so
+///   concurrent calls never race an inc/dec on shared state;
+/// * the C shims on these paths hold no mutable state: the byte-marshalling
+///   adapter is stateless, and the verified-crypto dispatch table is populated
+///   once by a loader constructor (read-only afterwards);
+/// * thunk forcing and any object the runtime itself shares across threads use
+///   the runtime's own atomic paths (the same machinery its task system relies
+///   on).
+///
+/// NOT covered by that argument, so callers must NOT route them here (keep
+/// them on the primary owner, as `main` wires them): the TLS connection seam
+/// (an IO computation that blocks its owner for the connection lifetime), the
+/// UDP/datagram listener, and the admin/config/reload crossings. The IO hosts
+/// (`blocking::run`, `uring::run`) shard only connection byte-serve traffic
+/// across attached owners; each connection (or shard) is pinned to ONE owner,
+/// so per-connection request/response FIFO order is preserved.
+///
+/// Must be called only after the primary owner is up (enforced by taking its
+/// gateway, which exists only after the boot handshake). Blocks until the new
+/// thread has registered itself.
+pub fn spawn_attached_owner(primary: &ServeGateway, idx: usize) -> ServeGateway {
+    let (tx, rx) = channel::<ServeJob>();
+    let (ready_tx, ready_rx) = channel::<()>();
+    let serve_pool = Arc::clone(&primary.pool);
+    std::thread::Builder::new()
+        .name(format!("drorb-serve-{idx}"))
+        .spawn(move || {
+            // SAFETY: the caller holds the primary gateway, so `lean_boot` has
+            // completed (runtime + module init done); registering this thread
+            // before its first crossing is exactly the documented contract for
+            // threads the runtime did not create.
+            unsafe { lean_initialize_thread() };
+            let _ = ready_tx.send(());
+            serve_owner_loop(rx, serve_pool);
+        })
+        .expect("failed to spawn an attached serve-owner thread");
+    ready_rx
+        .recv()
+        .expect("attached serve owner died during thread registration");
+    ServeGateway {
+        tx,
+        pool: Arc::clone(&primary.pool),
+    }
+}
+
+/// The deployment's serve-owner set: the primary runtime-owner gateway first,
+/// then `serve_owner_count() - 1` attached owners. With `DRORB_SERVE_OWNERS`
+/// unset this is exactly `vec![primary]` — no extra thread, no behavior
+/// change. The IO hosts index into this set to pin each connection (blocking
+/// path) or each reactor shard (io_uring path) to one owner.
+pub fn serve_owner_set(primary: ServeGateway) -> Vec<ServeGateway> {
+    let n = serve_owner_count();
+    let mut owners = Vec::with_capacity(n);
+    owners.push(primary);
+    for i in 1..n {
+        let gw = spawn_attached_owner(&owners[0], i);
+        owners.push(gw);
+    }
+    if n > 1 {
+        eprintln!(
+            "dataplane: {n} serve owners (one runtime; {} attached crossing thread{})",
+            n - 1,
+            if n == 2 { "" } else { "s" }
+        );
+    }
+    owners
 }
