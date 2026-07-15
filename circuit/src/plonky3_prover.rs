@@ -28,8 +28,9 @@
 //! - Extension field: BinomialExtensionField<BabyBear, 4> (degree-4 extension)
 //! - DFT: Radix2DitParallel (parallel NTT)
 //! - FRI: log_blowup=3 (8x), 38 queries, 16 PoW bits (the `PROD_FRI_*` consts / `create_config`;
-//!   ≈130-bit CONJECTURED capacity floor, ≈73-bit literature-proven Johnson — see create_config's
-//!   note and tests/fri_params_soundness_budget.rs)
+//!   ≈130-bit REFUTED-conjecture capacity baseline, 73-bit proven Johnson, and a 116-bit proven
+//!   per-fold posture — every figure computed by the VERIFIED Lean ledger, not here: see
+//!   create_config's note and `circuit-prove/tests/fri_params_soundness_budget.rs`)
 
 use std::sync::LazyLock;
 
@@ -59,8 +60,12 @@ use crate::poseidon2::{
 /// The Poseidon2 permutation over width-16 arrays.
 type Perm16 = Poseidon2BabyBear<16>;
 
-/// Extension field: degree-4 extension of BabyBear.
-type EF = BinomialExtensionField<P3BabyBear, 4>;
+/// Extension field: degree-[`PROD_EXT_DEGREE`] extension of BabyBear. The degree is written as the
+/// exported const, not as a bare `4`, so the FRI ledger gate can PIN it: `ext_deg` fixes the
+/// challenge-space size `|F| = babyBearP ^ ext_deg`, which is a divisor of every per-fold soundness
+/// number (`Dregg2.Circuit.FriLedger.friLedger`). It was previously reachable only as a type
+/// argument, which is why the old gate named it "the remaining un-pinned modeled parameter".
+type EF = BinomialExtensionField<P3BabyBear, PROD_EXT_DEGREE>;
 
 /// The DFT implementation (parallel radix-2).
 type DreggDft = Radix2DitParallel<P3BabyBear>;
@@ -91,15 +96,22 @@ pub type DreggStarkConfig = StarkConfig<TestPcs, EF, TestChallenger>;
 /// A Plonky3 proof object for dregg circuits.
 pub type DreggProof = Proof<DreggStarkConfig>;
 
-/// The PRODUCTION v1 FRI knobs ([`create_config`]), exported so the checked-in
-/// params→bits budget gate (`tests/fri_params_soundness_budget.rs`) computes the
-/// soundness figures FROM the deployed knobs instead of restating them. Moving
-/// any of these moves the wire (FRI shape + Fiat–Shamir) — one rotation epoch.
+/// The PRODUCTION v1 FRI knobs ([`create_config`]), exported so the checked-in params→bits budget
+/// gate (`circuit-prove/tests/fri_params_soundness_budget.rs`) can hand them to the VERIFIED Lean
+/// ledger (`@[export] dregg_fri_ledger` over `Dregg2.Circuit.FriLedger.friLedger`) and PIN them
+/// against the Lean-modeled `FriLedgerSound.prodV1Config`. The gate does not derive soundness numbers
+/// from these — the metatheory does, and the gate reports what it returns. Moving any of these moves
+/// the wire (FRI shape + Fiat–Shamir) — one rotation epoch.
 pub const PROD_FRI_LOG_BLOWUP: usize = 3;
 pub const PROD_FRI_LOG_FINAL_POLY_LEN: usize = 0;
 pub const PROD_FRI_MAX_LOG_ARITY: usize = 3;
 pub const PROD_FRI_NUM_QUERIES: usize = 38;
 pub const PROD_FRI_QUERY_POW_BITS: usize = 16;
+/// The challenge extension degree — `|F| = babyBearP ^ PROD_EXT_DEGREE ≈ 2^123.6`. It is the
+/// denominator of every per-fold proximity-gap bound, so it is a soundness knob as much as the five
+/// above; it is exported (and used to build [`EF`]) so it cannot drift from the modeled `extDeg`
+/// unnoticed.
+pub const PROD_EXT_DEGREE: usize = 4;
 
 pub fn create_config() -> DreggStarkConfig {
     // log_blowup must be >= log2_ceil(max_constraint_degree - 1).
@@ -118,9 +130,12 @@ pub fn create_config() -> DreggStarkConfig {
     // bump (FRI shape + Fiat–Shamir differ) — it lands inside the one
     // VK/commitment rotation epoch by design.
     //
-    // The `≥ 128 conjectured` floor is ENFORCED by `tests/fri_params_soundness_budget.rs`
-    // over these exported knobs — a knob drift below the floor is a red test, not a
-    // silent downgrade.
+    // The `≥ 128 conjectured` drift margin (and the PROVEN Johnson / per-fold floors) are
+    // ENFORCED by `circuit-prove/tests/fri_params_soundness_budget.rs` over these exported
+    // knobs — a knob drift below a floor is a red test, not a silent downgrade. That gate
+    // derives no soundness number itself: it hands these knobs to the VERIFIED Lean ledger
+    // (`@[export] dregg_fri_ledger` over `Dregg2.Circuit.FriLedger.friLedger`) and reports
+    // what comes back, and it PINS them against the Lean-modeled `FriLedgerSound.prodV1Config`.
     create_config_with_fri(
         PROD_FRI_LOG_BLOWUP,
         PROD_FRI_LOG_FINAL_POLY_LEN,

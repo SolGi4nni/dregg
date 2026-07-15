@@ -303,6 +303,16 @@ fn build_dregg2_archive(meta: &Path, sysroot: &Path, archive: &Path, out_dir: &P
         // It lives under `Dregg2/` so its IR emits under `.lake/build/ir/Dregg2/` and the
         // `build_dregg2_archive` splice (which walks `Dregg2/**/*.c`) picks up the export.
         "Dregg2.Bridge.InterchainAdapterDecision",
+        // FRI SOUNDNESS LEDGER extraction: the COMPUTABLE per-config FRI soundness ledger
+        // (`@[export] dregg_fri_ledger` over `friLedger` — the arity / folded-domain / good-challenge
+        // count / per-fold-bits / Johnson / capacity columns of ONE shipped knob set), OUTSIDE the FFI
+        // closure — build it so its `.c` IR is emitted and the splice picks up the export. This is the
+        // object `circuit-prove/tests/fri_params_soundness_budget.rs` routes every deployed config
+        // through, so the gate REPORTS Lean's numbers instead of re-deriving the soundness arithmetic in
+        // a hand-written Rust twin. Deliberately import-thin (`Dregg2.Circuit.FriVerifier` only, core
+        // `Nat` ops): the Mathlib-heavy proofs that JUSTIFY the numbers live in the un-spliced
+        // `Dregg2.Circuit.FriLedgerSound`, which pins each thin op to its modeled counterpart.
+        "Dregg2.Circuit.FriLedger",
     ];
     let lake_status = Command::new("lake")
         .arg("build")
@@ -1390,6 +1400,7 @@ fn main() {
     println!("cargo::rustc-check-cfg=cfg(dregg_grain_r3_verify_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_holding_grant_weight_present)");
     println!("cargo::rustc-check-cfg=cfg(dregg_interchain_reached_consensus_present)");
+    println!("cargo::rustc-check-cfg=cfg(dregg_fri_ledger_present)");
 
     // ── FAIL-LOUD GATE (DREGG_REQUIRE_LEAN) — see docs/BUILD-LEAN-LINKED-NODE.md ─────────────
     // A distribution / CI / validator build REFUSES a silent degrade to the marshal-only shell
@@ -1863,6 +1874,19 @@ fn main() {
         println!("cargo:rustc-cfg=dregg_interchain_reached_consensus_present");
     }
 
+    // FRI SOUNDNESS LEDGER (`Dregg2.Circuit.FriLedger.friLedgerFFI`): the computable per-config FRI
+    // soundness ledger. Same shape as the decisions above — probe the spliced archive, gate the extern +
+    // the C shim string bridge, and (self-contained core — like R3/holding/interchain) NO module
+    // initializer. `circuit-prove/tests/fri_params_soundness_budget.rs` marshals each DEPLOYED knob set
+    // through this so the gate reports the numbers `Dregg2.Circuit.FriLedgerSound` proves, rather than
+    // re-deriving the capacity/Johnson/per-fold arithmetic in hand-written Rust (the twin that gate used
+    // to be). `friLedgerFFI` lives under `Dregg2/`, so its IR emits under `.lake/build/ir/Dregg2/` and
+    // the `build_dregg2_archive` splice picks up the symbol like every other export.
+    let fri_ledger_present = archive_exports(&build_archive, "dregg_fri_ledger");
+    if fri_ledger_present {
+        println!("cargo:rustc-cfg=dregg_fri_ledger_present");
+    }
+
     let mut shim = cc::Build::new();
     shim.file("src/lean_init.c").include(&lean_include);
     // The SINGLE-THREADED / libuv-thread-free init (docs/EMBEDDABLE-LEAN-RUNTIME.md).
@@ -1955,6 +1979,9 @@ fn main() {
     }
     if interchain_reached_consensus_present {
         shim.define("DREGG_INTERCHAIN_REACHED_CONSENSUS", None);
+    }
+    if fri_ledger_present {
+        shim.define("DREGG_FRI_LEDGER", None);
     }
     if direct_present {
         shim.define("DREGG_DIRECT", None);

@@ -637,6 +637,108 @@ pub fn shadow_interchain_reached_consensus(wire: &str) -> Result<String, String>
     ffi::lean_interchain_reached_consensus(wire)
 }
 
+/// One shipped FRI knob set, as the [`fri_ledger`] wire carries it. The five deployed knobs plus the
+/// extension degree that fixes the challenge-field size `|F| = babyBearP ^ ext_deg`.
+///
+/// This struct is a MARSHALLER, not a model: it computes nothing. Every soundness number for a knob
+/// set comes back from Lean's `friLedger` (see [`fri_ledger`]).
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FriKnobs {
+    pub log_blowup: usize,
+    pub num_queries: usize,
+    pub query_pow_bits: usize,
+    pub max_log_arity: usize,
+    pub log_final_poly_len: usize,
+    /// The degree of the challenge extension field. It lives in Rust as a TYPE
+    /// (`BinomialExtensionField<P3BabyBear, 4>`) or a private `const D`, never as an exported `usize`
+    /// — so a caller supplies it explicitly and the pin against the Lean model names it.
+    pub ext_deg: usize,
+}
+
+impl FriKnobs {
+    /// The six-field wire the Lean export reads.
+    pub fn to_wire(self) -> String {
+        format!(
+            "{} {} {} {} {} {}",
+            self.log_blowup,
+            self.num_queries,
+            self.query_pow_bits,
+            self.max_log_arity,
+            self.log_final_poly_len,
+            self.ext_deg
+        )
+    }
+}
+
+/// The FRI soundness ledger of ONE config, as Lean's `friLedger` computed it. Every field is a
+/// distinct quantity with a distinct justification; they are deliberately NOT collapsed into a single
+/// headline. Rust never derives any of these — they are read off the wire.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct FriLedger {
+    /// Fold arity `m = 2 ^ max_log_arity`.
+    pub arity: usize,
+    /// Folded domain size `|κ| = 2 ^ log_blowup`.
+    pub folded_domain: usize,
+    /// `(m − 1) · C(|κ|, 2)` — the good-challenge count
+    /// `FriArityTransfer.good_card_le_of_phase_injective` proves.
+    pub good_count: usize,
+    /// The PROVEN per-fold proximity-gap error exponent: `|Good| / |F| < 2 ^ (−perFoldBits)`
+    /// (`FriLedgerSound.ledger_perFold_soundness`). Carries the `M = 1` fiber bound as a per-config
+    /// HYPOTHESIS — discharged only at arity 2, `log_blowup = 6` in this tree.
+    pub per_fold_bits: usize,
+    /// `num_queries · log_blowup / 2 + query_pow_bits` — the Johnson query ledger, proven for any code.
+    pub johnson_bits: usize,
+    /// `num_queries · log_blowup + query_pow_bits` — the capacity query ledger. The conjecture beneath
+    /// it is REFUTED (Kambiré); a drift baseline, NOT a security number.
+    pub capacity_bits: usize,
+}
+
+/// Whether the linked archive exports the FRI soundness ledger (`dregg_fri_ledger`, the C-ABI entry
+/// over `Dregg2.Circuit.FriLedger.friLedgerFFI`). When false, a caller
+/// (`circuit-prove/tests/fri_params_soundness_budget.rs`) cannot render the Lean-proved per-config
+/// numbers and must surface the archive gap rather than fall back to computing them itself. Distinct
+/// from [`lean_available`]: a stale archive can lack this export.
+pub fn fri_ledger_available() -> bool {
+    ffi::fri_ledger_present() && lean_init_once().is_ok()
+}
+
+/// **Run the FRI SOUNDNESS LEDGER `@[export] dregg_fri_ledger`** — the executable
+/// `Dregg2.Circuit.FriLedger.friLedger`, the function `Dregg2.Circuit.FriLedgerSound` proves about
+/// (`ledger_perFold_soundness`: at any config, a phase-injective word's good folding challenges have
+/// density `< 2 ^ (−per_fold_bits)` in the degree-`ext_deg` extension, instantiating
+/// `FriArityTransfer.good_card_le_of_phase_injective` at that config's arity and folded domain).
+///
+/// This is why the FRI params gate has no soundness arithmetic in it: the metatheory modeled these
+/// numbers in detail, so Rust CALLS the model rather than re-typing its formulas and calling the
+/// agreement a check. A re-derivation agrees with itself by construction; a call cannot.
+///
+/// Returns `Err` if the archive lacks the export, or if the wire came back malformed / fail-closed
+/// (an out-of-window knob set — see `FriLedger.knobsInWindow`).
+pub fn fri_ledger(knobs: FriKnobs) -> Result<FriLedger, String> {
+    ensure_lean_init()?;
+    let out = ffi::lean_fri_ledger(&knobs.to_wire())?;
+    let cols: Vec<&str> = out.split_whitespace().collect();
+    if cols.len() != 6 {
+        return Err(format!(
+            "dregg_fri_ledger refused {:?} (fail-closed) or returned a malformed ledger: {out:?}",
+            knobs.to_wire()
+        ));
+    }
+    let n = |i: usize| -> Result<usize, String> {
+        cols[i]
+            .parse::<usize>()
+            .map_err(|e| format!("ledger column {i} ({:?}) is not a nat: {e}", cols[i]))
+    };
+    Ok(FriLedger {
+        arity: n(0)?,
+        folded_domain: n(1)?,
+        good_count: n(2)?,
+        per_fold_bits: n(3)?,
+        johnson_bits: n(4)?,
+        capacity_bits: n(5)?,
+    })
+}
+
 /// Parse a shadow output wire into a [`ShadowVerdict`], surfacing marshal/parse errors.
 pub fn decode_shadow_verdict(output: &str) -> Result<ShadowVerdict, String> {
     match marshal::unmarshal_result(output) {
@@ -812,6 +914,8 @@ mod ffi {
             out: *mut c_char,
             out_cap: usize,
         ) -> usize;
+        #[cfg(dregg_fri_ledger_present)]
+        fn dregg_fri_ledger_str(in_utf8: *const c_char, out: *mut c_char, out_cap: usize) -> usize;
         #[cfg(dregg_interchain_reached_consensus_present)]
         fn dregg_interchain_reached_consensus_str(
             in_utf8: *const c_char,
@@ -1294,6 +1398,31 @@ mod ffi {
         false
     }
 
+    /// Run the FRI soundness ledger: `"logBlowup numQueries powBits maxLogArity logFinalPolyLen
+    /// extDeg"` → `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits"` (`""`
+    /// fail-closed). This is the computable `Dregg2.Circuit.FriLedger.friLedger`, the object
+    /// `FriLedgerSound`'s parametric per-fold theorem is stated over.
+    #[cfg(dregg_fri_ledger_present)]
+    pub fn lean_fri_ledger(wire: &str) -> Result<String, String> {
+        lean_string_bridge(wire, dregg_fri_ledger_str, "dregg_fri_ledger_str")
+    }
+
+    #[cfg(not(dregg_fri_ledger_present))]
+    pub fn lean_fri_ledger(_wire: &str) -> Result<String, String> {
+        Err("dregg_fri_ledger not exported by the linked archive (rebuild to enable)".into())
+    }
+
+    /// `true` iff the linked archive carries the extracted FRI soundness ledger.
+    #[cfg(dregg_fri_ledger_present)]
+    pub fn fri_ledger_present() -> bool {
+        true
+    }
+
+    #[cfg(not(dregg_fri_ledger_present))]
+    pub fn fri_ledger_present() -> bool {
+        false
+    }
+
     #[cfg(all(test, dregg_fips204_verify_present))]
     mod fips204_verify_extraction {
         use super::*;
@@ -1640,6 +1769,14 @@ mod ffi {
     }
 
     pub fn lean_interchain_reached_consensus(_wire: &str) -> Result<String, String> {
+        Err("Lean static lib not linked".into())
+    }
+
+    pub fn fri_ledger_present() -> bool {
+        false
+    }
+
+    pub fn lean_fri_ledger(_wire: &str) -> Result<String, String> {
         Err("Lean static lib not linked".into())
     }
 }

@@ -114,8 +114,15 @@ pub const OUTER_RATE: usize = 2;
 /// Digest size in BN254 elements: ONE native field element per Merkle node —
 /// this is what makes the gnark opening walk one ~243-R1CS compress per level.
 pub const OUTER_DIGEST_ELEMS: usize = 1;
-/// Challenge extension degree (unchanged from the inner config).
-const D: usize = 4;
+/// Challenge extension degree (unchanged from the inner config). Exported as
+/// [`OUTER_EXT_DEGREE`]; `|F| = babyBearP ^ D` is the denominator of the outer config's per-fold
+/// soundness, so the FRI ledger gate pins it.
+const D: usize = OUTER_EXT_DEGREE;
+
+/// The challenge extension degree of the outer shrink — `|F| = babyBearP ^ 4 ≈ 2^123.6`. Exported so
+/// `circuit-prove/tests/fri_params_soundness_budget.rs` can pin it against the Lean-modeled
+/// `FriLedgerSound.ethWrapOuterConfig.extDeg`.
+pub const OUTER_EXT_DEGREE: usize = 4;
 
 /// FRI log blowup. **Rebalanced from 6 → 3 (blowup 64 → 8) on MEASURED data**: the
 /// native-hash swap made per-query gnark verify cheap (~243 R1CS/hash), which inverted
@@ -129,6 +136,15 @@ pub const OUTER_FRI_LOG_BLOWUP: usize = 3;
 pub const OUTER_FRI_NUM_QUERIES: usize = 38;
 /// FRI query proof-of-work bits.
 pub const OUTER_FRI_QUERY_POW_BITS: usize = 16;
+/// FRI fold arity exponent — **1, i.e. fold by 2**: the arity the gnark ETH-wrap verifier implements
+/// (`chain/gnark/fri_verify_native.go`'s `friFoldRowArity2` hardcodes the arity-2 fold; the gnark
+/// `FriConfig` carries no arity field at all). Was an inline `1` at [`create_outer_config`]'s call
+/// site; exported because arity is a SOUNDNESS lever — it sets the degree of the fold's moment curve
+/// and so the good-challenge count (`Dregg2.Circuit.FriArityTransfer`), worth `log₂(m−1)` bits.
+pub const OUTER_FRI_MAX_LOG_ARITY: usize = 1;
+/// FRI final-polynomial length exponent — 0 (a constant final poly). Was an inline `0`; exported so
+/// the ledger gate pins the WHOLE knob set rather than the subset that happened to be `const`.
+pub const OUTER_FRI_LOG_FINAL_POLY_LEN: usize = 0;
 
 /// Trace/arithmetic field — UNCHANGED: the shrink layer re-verifies BabyBear
 /// arithmetic; only hashing moves to BN254.
@@ -390,10 +406,21 @@ pub fn create_outer_config_with_fri(
     }
 }
 
-/// The production outer "shrink" config: BN254-native hashing at the
-/// `ir2_leaf_wrap` FRI shape (log_blowup 6, arity-2 folds, 19 queries,
-/// 16 query-PoW bits — 130 conjectured bits, the shape
-/// `chain/gnark/fri_verify_native.go` was compiled and measured at).
+/// The production outer "shrink" config: BN254-native hashing at **log_blowup 3, arity-2 folds, 38
+/// queries, 16 query-PoW bits** — the shape `chain/gnark/fri_verify_native.go` was compiled and
+/// measured at, and the config the gnark ETH-wrap circuit actually verifies (it has no knobs of its
+/// own; `apex_shrink_gnark_export.rs` transports these to it as `FixtureFriShape`).
+///
+/// ⚑ This doc used to say "the `ir2_leaf_wrap` FRI shape (log_blowup 6 … 19 queries)". That was stale
+/// prose left behind by the deliberate 6→3 / 19→38 rebalance documented at [`OUTER_FRI_LOG_BLOWUP`];
+/// the `130` total survived the swap (`3·38+16 = 6·19+16`), which is why the wrong sentence read
+/// plausibly for so long. The consts below are the truth.
+///
+/// The knob set is modeled in Lean as `FriLedgerSound.ethWrapOuterConfig` and its soundness ledger is
+/// `friLedger` of that — reported per-config by `tests/fri_params_soundness_budget.rs`. ⚑ Its per-fold
+/// posture is **118 bits**, NOT the ~112.6 often quoted for "the arity-2 wrap": ~112.6 is a statement
+/// about `log_blowup = 6` (`|κ| = 64`), and this config folds a `|κ| = 8` domain
+/// (`FriLedgerSound.ethWrap_is_not_the_112_config`).
 pub fn create_outer_config() -> DreggOuterConfig {
     // Fixed knobs ⇒ identical config on every call; build once per thread,
     // clone on access (Arc bump). Same caching discipline as
@@ -401,8 +428,8 @@ pub fn create_outer_config() -> DreggOuterConfig {
     thread_local! {
         static OUTER_CONFIG: DreggOuterConfig = create_outer_config_with_fri(
             OUTER_FRI_LOG_BLOWUP,
-            0, // log_final_poly_len
-            1, // max_log_arity — fold by 2 (the wrap verifier's arity)
+            OUTER_FRI_LOG_FINAL_POLY_LEN,
+            OUTER_FRI_MAX_LOG_ARITY,
             OUTER_FRI_NUM_QUERIES,
             0, // commit_pow_bits
             OUTER_FRI_QUERY_POW_BITS,

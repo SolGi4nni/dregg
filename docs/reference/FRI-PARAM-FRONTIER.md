@@ -23,9 +23,58 @@ transfer was never mechanized. It is now derived and mechanized
 method at the deployed arity 8 proves **~109.84 bits** (`14112 = 7·2016` good challenges over
 `|F| ≈ 2^123.6`), exactly `log₂ 7 ≈ 2.807` bits below ~112.6, and **~112.6 provably does not hold
 at arity 8** by this method (`arity8_error_not_lt_2e112`). The loss is the degree-7 moment curve
-(§1a). **The standing per-fold posture at the DEPLOYED config is ~109.84 proven bits**, not ~112.6;
-~112.6 remains correct as a statement about arity-2 folding (which only the gnark ETH-wrap runs).
-Both figures sit far above the general Johnson floor (`73`). No query/PoW bump and no config change
+(§1a). **The standing per-fold posture at the DEPLOYED config is ~109.84 proven bits**, not ~112.6.
+
+**⚑ CORRECTED AGAIN (2026-07-15, second pass) — "~112.6 is the arity-2 figure, which the gnark
+ETH-wrap runs" was ALSO wrong, and there is no single per-fold number for this system.** That
+sentence (and the same claim in the old `fri_params_soundness_budget.rs` header) attached a real
+number to the wrong object: ~112.6 is a statement about `log_blowup = 6` (`|κ| = 2^6 = 64`, hence
+`C(64,2) = 2016`), and the BN254 shrink the gnark circuit actually verifies (`create_outer_config`)
+is `log_blowup = 3` — `|κ| = 8`, `|Good| ≤ C(8,2) = 28`, **118 bits**. Arity 2 alone does not pin the
+number; `(arity, log_blowup, ext_deg)` does.
+
+The ledger is now **parametric and EXPORTED**: `Dregg2.Circuit.FriLedger.friLedger : FriParams →
+Ledger` is a computable Lean function, `@[export dregg_fri_ledger]`-ed, and
+`circuit-prove/tests/fri_params_soundness_budget.rs` CALLS it for each of the **7** shipped configs
+rather than re-deriving the arithmetic in Rust. One parametric theorem
+(`FriLedgerSound.ledger_perFold_soundness`, instantiating `good_card_le_of_phase_injective` at each
+config's `m = 2^maxLogArity` and `|κ| = 2^logBlowup`) justifies every row; ~112.6 and ~109.84 are two
+of its instances, not a headline and an exception. **Per-fold, as shipped (all from Lean):**
+
+| config | arity | `\|κ\|` | `\|Good\| ≤` | per-fold | Johnson | capacity |
+|---|---|---|---|---|---|---|
+| `ir2_config` (IR-v2 batch — **deployed wrap**) | 8 | 64 | 14112 | **109** | 73 | 130 |
+| `ir2_leaf_wrap_config` (rotated leaf wrap) | 2 | 64 | 2016 | **112** | 73 | 130 |
+| v1 `create_config` (production prover) | 8 | 8 | 196 | **116** | 73 | 130 |
+| `create_zk_config` (shielded/hiding lane) | 8 | 8 | 196 | **116** | 73 | 130 |
+| `create_outer_config` (**the config gnark verifies**) | 2 | 8 | 28 | **118** | 73 | 130 |
+| `create_gpu_outer_config` (GPU twin) | 2 | 8 | 28 | **118** | 73 | 130 |
+| `create_recursion_config` (recursion default) | 2 | 8 | 28 | **118** | **71** | **128** |
+
+Reading the table honestly, three ways:
+
+* **`ir2_leaf_wrap_config` — arity 2 at `log_blowup = 6` — is the ONE shipped config ~112.6
+  describes.** Not the gnark wrap. ⚑ And note the NAME COLLISION: Lean's `FriVerifier.ir2LeafWrapConfig`
+  models `dregg_circuit::descriptor_ir2::ir2_config` (arity 8), **not** the Rust fn named
+  `ir2_leaf_wrap_config()` (arity 1, via `create_recursion_config_for_inner_fri`'s hardcoded PROBE).
+  Two objects, one name, 109 vs 112. Modeled apart as `ir2LeafWrapConfig` / `ir2LeafWrapRotatedConfig`.
+* **per-fold RISES as `log_blowup` FALLS (118/116 at 3 vs 112/109 at 6), and that is NOT an upgrade.**
+  It is the per-fold proximity-gap factor ONLY: a smaller folded domain has fewer pairs, hence fewer
+  good challenges. The rate is paid for in the QUERY ledger. The two columns are independent — a
+  theorem, not a caveat (`FriLedgerSound.query_ledger_does_not_determine_perFold`: the wrap and v1
+  share a Johnson ledger and differ on per-fold). Never multiply them into one figure.
+* **`create_recursion_config` is the weakest shipped config on both query columns** (capacity exactly
+  `128` — the drift margin with ZERO headroom; Johnson `71`), and the old gate — which judged 2 of the
+  7 — never looked at it. Its `14` query-PoW bits (vs `16` everywhere else) are the whole difference.
+  The gate's Johnson floor is now `71`, pinned to that config by name
+  (`recursion_config_is_the_weakest_link`), so it cannot be quietly lowered without naming who forced it.
+
+⚑ **Every per-fold number carries the `M = 1` fiber bound as a per-config HYPOTHESIS** (`hΦ`).
+DISCHARGED only at arity 2 / `log_blowup = 6` (§8's `far_fiber_card` + `wrap_fiber_le_one`); OPEN at
+the deployed arity 8 (`Arity8FiberBound`) and at every `log_blowup = 3` config. `#assert_axioms` is
+blind to hypotheses — Lake-green is not hypothesis-free.
+
+Every figure sits far above the general Johnson floor (`71`). No query/PoW bump and no config change
 are planned; re-pointing the posture number is ember's call.
 
 Deployed IR-v2 config (`circuit/src/descriptor_ir2.rs:5382-5386`): `log_blowup=6`,

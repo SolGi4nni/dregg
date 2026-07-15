@@ -48,8 +48,29 @@ mod zk_plonky3 {
     use crate::field::BabyBear;
     use crate::plonky3_prover::{P3MerklePoseidon2Air, to_p3};
 
+    /// The SHIELDED/HIDING lane's FRI knobs ([`create_zk_config`]), exported so
+    /// `circuit-prove/tests/fri_params_soundness_budget.rs` can hand them to the VERIFIED Lean ledger
+    /// (`@[export] dregg_fri_ledger`) and PIN them against the Lean-modeled
+    /// `FriLedgerSound.zkConfig`. They were inline literals inside [`create_zk_config`], which is why
+    /// the old params gate never judged this config.
+    ///
+    /// They are (deliberately) the v1 `create_config` knob set, ridden along by THE ROTATION: the
+    /// hiding PCS salts leaves, it does not move the FRI shape. So this lane's soundness ledger is
+    /// v1's, exactly — proved rather than assumed (`FriLedgerSound.zk_ledger_eq_prodV1`).
+    pub const ZK_FRI_LOG_BLOWUP: usize = 3;
+    /// See [`ZK_FRI_LOG_BLOWUP`].
+    pub const ZK_FRI_LOG_FINAL_POLY_LEN: usize = 0;
+    /// See [`ZK_FRI_LOG_BLOWUP`].
+    pub const ZK_FRI_MAX_LOG_ARITY: usize = 3;
+    /// See [`ZK_FRI_LOG_BLOWUP`].
+    pub const ZK_FRI_NUM_QUERIES: usize = 38;
+    /// See [`ZK_FRI_LOG_BLOWUP`].
+    pub const ZK_FRI_QUERY_POW_BITS: usize = 16;
+    /// The challenge extension degree — builds [`EF`], so the two cannot drift.
+    pub const ZK_EXT_DEGREE: usize = 4;
+
     type Perm16 = Poseidon2BabyBear<16>;
-    type EF = BinomialExtensionField<P3BabyBear, 4>;
+    type EF = BinomialExtensionField<P3BabyBear, ZK_EXT_DEGREE>;
     type DreggDft = Radix2DitParallel<P3BabyBear>;
 
     type ZkHash = PaddingFreeSponge<Perm16, 16, 8, 8>;
@@ -115,15 +136,15 @@ mod zk_plonky3 {
         // log_blowup >= log2_ceil(max_constraint_degree - 1). Poseidon2 S-box is
         // degree 7 => log_blowup >= 3, matching the non-ZK config.
         let fri_params = FriParameters {
-            log_blowup: 3,
-            log_final_poly_len: 0,
-            max_log_arity: 3,
+            log_blowup: ZK_FRI_LOG_BLOWUP,
+            log_final_poly_len: ZK_FRI_LOG_FINAL_POLY_LEN,
+            max_log_arity: ZK_FRI_MAX_LOG_ARITY,
             // q = 38 (THE ROTATION's ride-along, matching `create_config`):
             // 38 * 3 + 16 PoW ~= 130 bits conjectured -- the declared 128-bit
             // capacity-bound target. See plonky3_prover.rs::create_config.
-            num_queries: 38,
+            num_queries: ZK_FRI_NUM_QUERIES,
             commit_proof_of_work_bits: 0,
-            query_proof_of_work_bits: 16,
+            query_proof_of_work_bits: ZK_FRI_QUERY_POW_BITS,
             mmcs: challenge_mmcs,
         };
 

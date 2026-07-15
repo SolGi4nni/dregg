@@ -84,6 +84,13 @@ futures-channel = { version = "0.3", default-features = false, features = ["allo
 [dev-dependencies]
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
+# THE FRI SOUNDNESS LEDGER (tests/fri_params_soundness_budget.rs): links the compiled Lean archive so
+# the params gate CALLS `@[export] dregg_fri_ledger` (the verified `Dregg2.Circuit.FriLedger.friLedger`)
+# for each shipped config's soundness numbers, instead of re-deriving the capacity/Johnson/per-fold
+# arithmetic in hand-written Rust. Dev-dep-scoped: the library build is untouched. This crate is the
+# only one that can see BOTH halves — `dregg-circuit`'s and its own configs' knobs, and (via
+# dregg-lean-ffi) the Lean model. No cycle: dregg-lean-ffi depends on dregg-circuit, not on this crate.
+dregg-lean-ffi = { path = "../dregg-lean-ffi" }
 # The note↔order shielded-clearing adapter PoC (tests/shielded_clearing_note_order_poc.rs)
 # drives the REAL fhEgg uniform-price clear/allocate over pool notes sealed as orders.
 # DEV-ONLY: fhegg-solver stays deliberately standalone (its own empty [workspace], no

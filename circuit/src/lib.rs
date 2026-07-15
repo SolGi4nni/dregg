@@ -40,41 +40,59 @@
 //!
 //! ## The FRI soundness ledger — the deployed numbers
 //!
-//! There is no `2^{-128}` here. The three figures below are what the deployed knobs
-//! actually buy; the gate `tests/fri_params_soundness_budget.rs` computes them FROM the
-//! exported production constants (`IR2_FRI_*`, `PROD_FRI_*`) so a knob edit cannot drift
-//! them silently, and the proven figure is carried in Lean rather than in this comment.
+//! There is no `2^{-128}` here — and there is no single per-fold number for this system
+//! either. The ledger is **PARAMETRIC and LEAN-OWNED**: `Dregg2.Circuit.FriLedger.friLedger
+//! : FriParams → Ledger` is a computable Lean function, `@[export dregg_fri_ledger]`-ed, and
+//! `circuit-prove/tests/fri_params_soundness_budget.rs` CALLS it for each of the **7**
+//! shipped configs. Rust derives none of these figures — it marshals knobs in and reports
+//! columns out. (Its predecessor re-typed the formulas in Rust; that twin is deleted.)
 //!
-//! - **~112.6 bits — the accepted standing posture.** For the deployed dim-2
-//!   constant-fold recursion code, the FIELD-INDEPENDENT counting bound
-//!   `|Good| ≤ C(64,2) = 2016` over the quartic-extension challenge field
-//!   (`|F| = babyBearP⁴ ≈ 2^123.6`) proves a **per-fold** soundness error `< 2^{-112}`
-//!   — exactly `≈ 2^{-112.65}`, strictly inside `(2^{-113}, 2^{-112})`. Proven in Lean:
-//!   `wrap_perFold_soundness_capacity` and `wrap_perFold_soundness_capacity_interval` in
-//!   `metatheory/Dregg2/Circuit/FriCorrelatedAgreementSharp.lean` §8 (no `sorry`,
-//!   `#assert_axioms`-clean). This figure is **structure-specific**: it holds for the
-//!   deployed fixed `r = 2`, `n = 64` fold — it is not a bound on FRI in general.
-//! - **73 bits — proven for any code.** The Johnson / list-decoding-to-√rate figure,
-//!   `num_queries × log_blowup / 2 + query_pow_bits`. Reported by the gate.
-//! - **130 bits — REFUTED; a knob-drift baseline, NOT a security claim.** The capacity
-//!   (up-to-`1−ρ`) arithmetic `num_queries × log_blowup + query_pow_bits`
-//!   that production STARKs historically quote. The capacity conjecture it rests on is
-//!   **refuted** for coset Reed–Solomon at rates covering our `ρ = 1/64` (Kambiré, eprint
-//!   2025/2046). The budget gate's `≥ 128` check is a conservative ENGINEERING MARGIN on
-//!   this refuted arithmetic — drift detection only. It is not a proof, and not a claim
-//!   that 128 bits are achieved.
+//! One parametric theorem justifies every row — `FriLedgerSound.ledger_perFold_soundness`,
+//! instantiating `FriArityTransfer.good_card_le_of_phase_injective` at each config's arity
+//! `m = 2^max_log_arity` and folded domain `|κ| = 2^log_blowup`. The three columns:
+//!
+//! - **per-fold bits — PROVEN, and per-config.** The proximity-gap error exponent:
+//!   `|Good| ≤ (m−1)·C(|κ|,2)` over the challenge field `|F| = babyBearP^ext_deg ≈ 2^123.6`.
+//!   It is **structure-specific and config-specific** — not a bound on FRI in general, and
+//!   not one number for the system:
+//!   * `ir2_config` — **the DEPLOYED wrap** — folds at arity **8**: `|Good| ≤ 7·C(64,2) =
+//!     14112`, giving **109 bits** (`FriArityTransfer.arity8_perFold_soundness`). The
+//!     often-quoted ~112.6 is proved for a 2-to-1 fold the deployed prover does NOT run;
+//!     `log₂ 7 ≈ 2.807` bits is the price of the arity-8 moment curve.
+//!   * `ir2_leaf_wrap_config` (arity 2 at `log_blowup 6`) is the ONE shipped config ~112.6
+//!     describes: `|Good| ≤ C(64,2) = 2016` ⇒ **112 bits**.
+//!   * v1 `create_config` / `create_zk_config`: **116**. `create_outer_config` (**the config
+//!     the gnark ETH-wrap verifies**) / its GPU twin / `create_recursion_config`: **118**.
+//!   ⚑ per-fold RISES as `log_blowup` FALLS, and that is NOT an upgrade — a smaller folded
+//!   domain has fewer pairs, hence fewer good challenges. The rate is paid for in the QUERY
+//!   ledger below. The columns are independent (`query_ledger_does_not_determine_perFold`):
+//!   never multiply them into one figure.
+//!   ⚑ Every per-fold number carries the `M = 1` fiber bound as a per-config HYPOTHESIS
+//!   (`hΦ`), DISCHARGED only at arity 2 / `log_blowup 6` and OPEN elsewhere
+//!   (`Arity8FiberBound`). `#assert_axioms` is blind to hypotheses.
+//! - **Johnson bits — proven for any code.** The list-decoding-to-√rate figure,
+//!   `num_queries × log_blowup / 2 + query_pow_bits`. `73` on six shipped configs; **`71` on
+//!   `create_recursion_config`**, whose `14` query-PoW bits make it the weakest shipped
+//!   config and set the gate's floor (`recursion_config_is_the_weakest_link`).
+//! - **capacity bits — REFUTED; a knob-drift baseline, NOT a security claim.** The
+//!   up-to-`1−ρ` arithmetic `num_queries × log_blowup + query_pow_bits` that production
+//!   STARKs historically quote. The conjecture it rests on is **refuted** for coset
+//!   Reed–Solomon at rates covering our `ρ = 1/64` (Kambiré, eprint 2025/2046). The gate's
+//!   `≥ 128` check is a conservative ENGINEERING MARGIN on this refuted arithmetic — drift
+//!   detection only, not a proof and not a claim that 128 bits are achieved. `130` on six
+//!   configs; **exactly `128` — zero headroom — on `create_recursion_config`**.
 //! - **Caps.** All figures are additionally capped by the degree-4 BabyBear extension
-//!   (~2^124 challenge space) and the Poseidon2 commitment hash. The ~112.6 sits under
-//!   this cap.
+//!   (~2^124 challenge space) and the Poseidon2 commitment hash. Every figure sits under it.
 //!
-//! Both deployed configs land on the same ledger, and the gate asserts that parity: v1
+//! The v1 and IR-v2 configs share a QUERY ledger, and the gate asserts that parity: v1
 //! [`plonky3_prover::create_config`] at `(log_blowup 3, 38 queries, 16 PoW)` and IR-v2
-//! `descriptor_ir2::ir2_config` at `(6, 19, 16)` each give capacity `130` / Johnson `73`.
-//! The `(6, 19)` pin is the measured size-optimal point AT that parity.
+//! `descriptor_ir2::ir2_config` at `(6, 19, 16)` each give capacity `130` / Johnson `73`
+//! (proved: `FriLedgerSound.wrap_prodV1_query_ledger_parity`). The `(6, 19)` pin is the
+//! measured size-optimal point AT that parity. ⚑ They do NOT share a per-fold posture
+//! (109 vs 116) — the parity is a fact about two columns, not about "the ledger".
 //!
-//! The ~112.6 bound is sound against Kambiré's refutation: his `n^C` blow-up needs
-//! `n → ∞` and `r > 2`; at our fixed `r = 2`, `n = 64` his own construction caps at
-//! `C(64,2)`.
+//! The counting bounds are sound against Kambiré's refutation: his `n^C` blow-up needs
+//! `n → ∞` and `r > 2`; at our fixed `r = 2` his own construction caps at `C(n,2)`.
 //!
 //! All code in this crate MUST maintain the property that a valid proof implies a valid
 //! witness. Bugs here break the entire trust model -- a soundness bug allows forged

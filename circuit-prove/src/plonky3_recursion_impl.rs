@@ -65,10 +65,52 @@ pub mod recursive {
     // Type definitions matching the recursion library's expected configuration
     // ========================================================================
 
-    const D: usize = 4;
+    const D: usize = RECURSION_EXT_DEGREE;
     const WIDTH: usize = 16;
     const RATE: usize = 8;
     const DIGEST_ELEMS: usize = 8;
+
+    // ========================================================================
+    // The SHIPPED FRI knob sets of this module, exported so
+    // `circuit-prove/tests/fri_params_soundness_budget.rs` can hand each one to the VERIFIED Lean
+    // ledger (`@[export] dregg_fri_ledger` over `Dregg2.Circuit.FriLedger.friLedger`) and PIN it
+    // against its Lean model. They were inline literals inside the two config builders below, which
+    // is why the old params gate — which judged only `PROD_FRI_*` and `IR2_FRI_*` — could not see
+    // them at all: 5 of the 7 shipped configs were ungated.
+    // ========================================================================
+
+    /// The challenge extension degree — `|F| = babyBearP ^ 4 ≈ 2^123.6`, the denominator of every
+    /// per-fold proximity-gap bound. Builds [`D`], so the two cannot drift.
+    pub const RECURSION_EXT_DEGREE: usize = 4;
+
+    /// [`create_recursion_config`]'s FRI log blowup. Must be `≥ 3`: the AIR has degree-7 constraints
+    /// (the `x^7` S-box), so the quotient domain needs blowup `≥ d − 1 = 6`.
+    pub const RECURSION_FRI_LOG_BLOWUP: usize = 3;
+    /// [`create_recursion_config`]'s FRI query count.
+    pub const RECURSION_FRI_NUM_QUERIES: usize = 38;
+    /// [`create_recursion_config`]'s FRI query proof-of-work bits — **14, not the 16 every other
+    /// shipped config carries**. ⚑ That two-bit difference puts its capacity ledger at exactly
+    /// `3·38 + 14 = 128` — on the nose of the drift margin, with zero headroom
+    /// (`FriLedgerSound.recursion_ledger_capacityBits`).
+    pub const RECURSION_FRI_QUERY_POW_BITS: usize = 14;
+    /// [`create_recursion_config`]'s FRI fold arity exponent — 1, i.e. fold by 2.
+    pub const RECURSION_FRI_MAX_LOG_ARITY: usize = 1;
+    /// [`create_recursion_config`]'s FRI final-polynomial length exponent — 0 (constant final poly).
+    pub const RECURSION_FRI_LOG_FINAL_POLY_LEN: usize = 0;
+
+    /// The fold arity exponent [`create_recursion_config_for_inner_fri`] pins — **1 (fold by 2)**,
+    /// the knob that makes `ivc_turn_chain::ir2_leaf_wrap_config()` an ARITY-2 config even though
+    /// `ir2_config` (which it otherwise matches) is arity 8. See the PROBE note at the call site.
+    ///
+    /// ⚑ NAME COLLISION worth knowing: the Lean `FriVerifier.ir2LeafWrapConfig` (`maxLogArity = 3`)
+    /// models `dregg_circuit::descriptor_ir2::ir2_config`, NOT the Rust fn named
+    /// `ir2_leaf_wrap_config()`. The latter's real knob set is `FriLedgerSound.ir2LeafWrapRotatedConfig`
+    /// — and being arity-2 at `logBlowup = 6`, it is the ONE shipped config the standing ~112.6-bit
+    /// per-fold posture actually describes.
+    pub const INNER_FRI_MAX_LOG_ARITY: usize = 1;
+    /// The query count [`create_recursion_config_for_inner_fri`] pins — 19, matching `ir2_config`'s
+    /// security target at log_blowup 6.
+    pub const INNER_FRI_NUM_QUERIES: usize = 19;
 
     type F = P3BabyBear;
     type Challenge = BinomialExtensionField<F, D>;
@@ -282,12 +324,12 @@ pub mod recursive {
         // log_blowup must be >= 3 because our AIR has degree-7 constraints (x^7 S-box).
         // With degree d=7 and blowup B, the quotient domain needs B >= d-1 = 6, so log_blowup >= 3.
         let fri_params = FriParameters {
-            log_blowup: 3,
-            log_final_poly_len: 0,
-            max_log_arity: 1,
-            num_queries: 38,
+            log_blowup: RECURSION_FRI_LOG_BLOWUP,
+            log_final_poly_len: RECURSION_FRI_LOG_FINAL_POLY_LEN,
+            max_log_arity: RECURSION_FRI_MAX_LOG_ARITY,
+            num_queries: RECURSION_FRI_NUM_QUERIES,
             commit_proof_of_work_bits: 0,
-            query_proof_of_work_bits: 14,
+            query_proof_of_work_bits: RECURSION_FRI_QUERY_POW_BITS,
             mmcs: challenge_mmcs,
         };
         let pcs = MyPcs::new(Dft::default(), val_mmcs, fri_params);
@@ -338,10 +380,16 @@ pub mod recursive {
             // in-circuit verifier's recompose path is exercised at arity 1 (fold by 2) in every
             // existing recursion test. Use arity 1 here to isolate whether higher-arity folding
             // is the obstruction; the in-circuit verifier reads the count/arity from the proof.
-            1,
+            //
+            // ⚑ The PROBE has a MEASURED BIT PRICE, and it is a CREDIT here, not a cost: arity is a
+            // soundness lever worth `log₂(m−1)` bits (`Dregg2.Circuit.FriArityTransfer`), so folding
+            // by 2 instead of 8 at this log_blowup takes the per-fold posture from 109 bits UP to 112
+            // (`FriLedgerSound.arity8_costs_seven_times_arity2_at_logBlowup6`). Whichever way this
+            // PROBE resolves, it is a soundness decision as much as a performance one.
+            INNER_FRI_MAX_LOG_ARITY,
             // num_queries: matches `ir2_config`'s security target at log_blowup 6 (19 → ~130
             // conjectured bits); the in-circuit verifier reads the count from the proof.
-            19,
+            INNER_FRI_NUM_QUERIES,
             inner_commit_pow_bits,
             inner_query_pow_bits,
         )

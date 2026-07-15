@@ -320,6 +320,29 @@ extern lean_object *dregg_holding_grant_weight(lean_object *input);
 extern lean_object *dregg_interchain_reached_consensus(lean_object *input);
 #endif
 
+/* The @[export]ed Lean `String -> String` FRI SOUNDNESS LEDGER
+ * (`Dregg2.Circuit.FriLedger.friLedgerFFI`): decodes the wire
+ * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg"` (six decimal nats — one shipped
+ * FRI knob set) and returns `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits"` (the
+ * six `Ledger` columns; `""` fail-closed for a malformed wire or an out-of-window knob set). This is
+ * the per-config soundness ARITHMETIC as leanc-native code: `friLedger` is the very function
+ * `Dregg2.Circuit.FriLedgerSound` proves about (`ledger_perFold_soundness` — the parametric per-fold
+ * bound instantiating `FriArityTransfer.good_card_le_of_phase_injective` at each config's arity and
+ * folded-domain size), so the numbers Rust reports are the numbers Lean proved rather than a
+ * hand-written Rust twin of the same formulas. `circuit-prove/tests/fri_params_soundness_budget.rs`
+ * hands it each deployed knob set and gates/reports what comes back. GATED on DREGG_FRI_LEDGER
+ * (the module is OUTSIDE the FFI closure; build.rs probes + defines it). NOTE: like R3's / holding's /
+ * interchain's export it needs NO module initializer — its generated C hoists the string literals into
+ * STATIC CONST `lean_string_object`s and its closures into LAZY `lean_once_cell`s, so
+ * `dregg_fri_ledger` is self-contained. We therefore deliberately do NOT reference
+ * `initialize_Dregg2_Dregg2_Circuit_FriLedger`: that initializer chains into the `Dregg2.Tactics`
+ * (Mathlib-tactic) import closure's init symbols the leanc-native archive does not carry; leaving it
+ * unreferenced lets `-dead_strip` drop the proof closure — the pure ledger core links and runs on the
+ * always-initialized Init runtime. */
+#ifdef DREGG_FRI_LEDGER
+extern lean_object *dregg_fri_ledger(lean_object *input);
+#endif
+
 /* ── NO-COPY BOUNDARY runtime helpers (linkable wrappers over the `static inline`
  * <lean/lean.h> primitives the no-copy `lean_direct.rs` boundary needs). `lean_inc_ref`,
  * `lean_dec_ref`, `lean_box`, and `lean_string_cstr` are `static inline` in the header (no
@@ -664,6 +687,30 @@ size_t dregg_interchain_reached_consensus_str(const char *in_utf8, char *out, si
     }
     lean_object *in_obj = lean_mk_string(in_utf8);
     lean_object *res = dregg_interchain_reached_consensus(in_obj);
+    const char *cstr = lean_string_cstr(res);
+    size_t full = strlen(cstr);
+    size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);
+    memcpy(out, cstr, copy);
+    out[copy] = '\0';
+    lean_dec_ref(res);
+    return full;
+}
+#endif
+
+#ifdef DREGG_FRI_LEDGER
+/* dregg_fri_ledger_str — the C string bridge over the Lean `String -> String` FRI SOUNDNESS LEDGER
+ * export (`Dregg2.Circuit.FriLedger.friLedgerFFI`). Input:
+ * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg"` (six decimal nats). Output:
+ * `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits"` (`""` fail-closed). Runs
+ * `friLedger` — the function `FriLedgerSound.ledger_perFold_soundness` proves the per-fold bound of,
+ * per config, so no Rust caller re-types the soundness arithmetic. Same return contract as the bridges
+ * above. */
+size_t dregg_fri_ledger_str(const char *in_utf8, char *out, size_t out_cap) {
+    if (out == 0 || out_cap == 0) {
+        return (size_t)-1;
+    }
+    lean_object *in_obj = lean_mk_string(in_utf8);
+    lean_object *res = dregg_fri_ledger(in_obj);
     const char *cstr = lean_string_cstr(res);
     size_t full = strlen(cstr);
     size_t copy = (full < out_cap - 1) ? full : (out_cap - 1);

@@ -5438,16 +5438,26 @@ fn ir2_config() -> DreggStarkConfig {
     IR2_CONFIG.with(|c| c.clone())
 }
 
-/// The PRODUCTION IR-v2 FRI knobs ([`ir2_config`]), exported so the checked-in params→bits
-/// budget gate (`tests/fri_params_soundness_budget.rs`) computes the soundness figures FROM
-/// the deployed knobs. The `(6, 19)` pin is the measured size-optimal security-parity point
-/// (see the [`ir2_config`] doc + `docs/PROOF-ECONOMICS.md` §2c); moving any knob moves the
-/// wire (FRI shape + Fiat–Shamir).
+/// The PRODUCTION IR-v2 FRI knobs ([`ir2_config`]), exported so the checked-in params→bits budget
+/// gate (`circuit-prove/tests/fri_params_soundness_budget.rs`) can hand them to the VERIFIED Lean
+/// ledger (`@[export] dregg_fri_ledger`) and PIN them against the Lean-modeled
+/// `FriVerifier.ir2LeafWrapConfig` — the config every per-fold theorem in the metatheory is stated
+/// about. The gate derives no soundness number from these; Lean does. The `(6, 19)` pin is the
+/// measured size-optimal security-parity point (see the [`ir2_config`] doc + `docs/PROOF-ECONOMICS.md`
+/// §2c); moving any knob moves the wire (FRI shape + Fiat–Shamir).
+///
+/// ⚑ NAME COLLISION, do not be misled: the Lean `ir2LeafWrapConfig` models THIS config (`ir2_config`),
+/// NOT the Rust fn `dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config()`, which is a different
+/// knob set (arity 2, not 8 — see `FriLedgerSound.ir2LeafWrapRotatedConfig`).
 pub const IR2_FRI_LOG_BLOWUP: usize = 6;
 pub const IR2_FRI_LOG_FINAL_POLY_LEN: usize = 0;
 pub const IR2_FRI_MAX_LOG_ARITY: usize = 3;
 pub const IR2_FRI_NUM_QUERIES: usize = 19;
 pub const IR2_FRI_QUERY_POW_BITS: usize = 16;
+/// The challenge extension degree for the IR-v2 batch. `ir2_config` builds on the same
+/// `plonky3_prover` extension type, so this is `PROD_EXT_DEGREE`; it is named here so the ledger gate
+/// pins the IR-v2 config's `|F|` explicitly rather than assuming it.
+pub const IR2_EXT_DEGREE: usize = crate::plonky3_prover::PROD_EXT_DEGREE;
 
 #[allow(clippy::too_many_arguments)]
 fn prove_vm_descriptor2_inner<SC>(
