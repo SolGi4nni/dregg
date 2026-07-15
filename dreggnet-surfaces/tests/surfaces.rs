@@ -232,14 +232,44 @@ fn inventory_renders_owned_notes_as_a_table_populated_and_empty() {
     assert_eq!(rows.len(), 6, "header + 5 item rows");
     assert!(text_contains(items, "Ember Cloak"), "a named item renders");
 
-    // The read-surface exposes no moves; advance is a read-only refusal.
-    assert!(
-        offering.actions(&s).is_empty(),
-        "a read-surface has no actions"
+    // The one interactive move: a Gift action per still-owned note (5), each a real transfer.
+    let acts = offering.actions(&s);
+    assert_eq!(acts.len(), 5, "a gift action per owned note");
+    assert!(acts.iter().all(|a| a.turn == "gift"));
+
+    // GIFT item 0 to a friend — a REAL owner-signed transfer turn (Landed with a receipt).
+    let out = offering.advance(&mut s, act("gift", 0), actor());
+    assert!(out.landed(), "gifting item 0 lands a real turn: {out:?}");
+    assert_eq!(s.held_count(), 4, "one note gifted away");
+    assert_eq!(
+        s.holder_of(0).as_deref(),
+        Some("a friend"),
+        "item 0 now held by the friend on the real substrate"
     );
+    // Only the 4 still-owned notes remain giftable.
+    assert_eq!(
+        offering.actions(&s).len(),
+        4,
+        "the gifted note is no longer giftable"
+    );
+
+    // NON-VACUOUS REFUSED — re-gifting a note the player no longer holds is a genuine executor
+    // refusal (the signature-vs-owner gate), and nothing crosses.
+    let refused = offering.advance(&mut s, act("gift", 0), actor());
     assert!(
-        !offering.advance(&mut s, act("noop", 0), actor()).landed(),
-        "advance is a read-only refusal"
+        !refused.landed(),
+        "a re-gift of an un-held note is refused: {refused:?}"
+    );
+    assert_eq!(s.held_count(), 4, "the refusal crossed nothing");
+    // A wrong verb is a read-only refusal (buy/sell for a price is the market).
+    assert!(!offering.advance(&mut s, act("noop", 0), actor()).landed());
+
+    // The gifted note's holder pill renders on the substrate.
+    let surface = offering.render(&s);
+    let items = find_section(surface.view(), "Items").expect("an Items section");
+    assert!(
+        pill_with_text(items, "gifted"),
+        "a gifted holder pill renders"
     );
 
     // verify() re-verifies every note's provenance off the substrate.
@@ -330,9 +360,35 @@ fn guild_page_renders_roster_and_verified_clears_leaderboard() {
         "the aggregate renders"
     );
 
-    // Read-only; verify re-checks every member genuinely holds the guild cap.
-    assert!(offering.actions(&s).is_empty());
+    // The one interactive move: an Admit action per pending applicant (the demo seeds 2).
+    assert_eq!(s.applicant_count(), 2, "two pending applicants");
+    let acts = offering.actions(&s);
+    assert_eq!(acts.len(), 2, "an admit action per applicant");
+    assert!(acts.iter().all(|a| a.turn == "admit"));
+
+    // ADMIT applicant 0 — a REAL cap grant + committed membership turn (Landed with a receipt).
+    let out = offering.advance(&mut s, act("admit", 0), actor());
+    assert!(
+        out.landed(),
+        "admitting an applicant lands a real turn: {out:?}"
+    );
+    assert_eq!(s.roster_len(), 4, "the roster grew by one");
+    assert_eq!(s.applicant_count(), 1, "one applicant remains");
+    assert_eq!(s.stats().members, 4, "the cap set grew");
+
+    // NON-VACUOUS — the other side of the membership tooth: a stranger (no cap) writing the guild
+    // cell is a genuine `CapabilityNotHeld` executor refusal, never a silent apply.
+    let refusal = s.stranger_write_refused();
+    assert!(
+        refusal.is_some(),
+        "a non-member's write is refused by the executor: {refusal:?}"
+    );
+
+    // A wrong verb / out-of-range applicant is refused.
     assert!(!offering.advance(&mut s, act("noop", 0), actor()).landed());
+    assert!(!offering.advance(&mut s, act("admit", 9), actor()).landed());
+
+    // verify re-checks every rostered member (the newly admitted one included) holds the cap.
     assert!(
         offering.verify(&s).verified,
         "every rostered member holds the cap"

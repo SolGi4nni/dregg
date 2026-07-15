@@ -10,13 +10,20 @@
 //! to the tavern's real slot layout (board post-count + per-patron lane, seat present-flag, party
 //! roster).
 //!
-//! ## Honest scope
+//! ## The surface story — DECIDED: a light presence-read that **links out**
 //!
-//! Read-mostly by classification: `advance` is a read-only refusal (posting/entering is a real
-//! attributed turn on the LIVE tavern node, not a synchronous surface move) and `render` is the
-//! payload. NAMED NEXT (not built here): binding this surface to a booted [`dreggnet_tavern`]
-//! session so `post`/`enter`/`party_up` fire real node turns behind an async host (the mozjs-weight
-//! path the frontend plan keeps off the light layer).
+//! The tavern's real transport is heavy and async (a booted [`dreggnet_tavern`] node behind an
+//! HTTP/mozjs host); the write verbs (`post`/`enter`/`party_up`) are genuine attributed turns on
+//! that node's ledger, not synchronous surface moves. Rather than mint a *fake* synchronous post
+//! path here (which would look playable but commit nothing real), this Offering commits to the
+//! honest classification: it is a **read mirror** of the live board (presence + LFG + party) that
+//! every frontend paints from one [`ViewNode`] tree, PLUS an explicit **link-out** — a
+//! [`ViewNode::Button`] whose `join` verb the host resolves to the live hall (open the booted
+//! node), so the do-once render still carries the actuation to *reach* the real transport. So:
+//! `actions` is empty (nothing commits *here*), the render carries the join link-out, and `advance`
+//! is a precise read-only refusal that points at the live node. NAMED NEXT (deliberately off this
+//! light layer): an async host that binds the join button to a booted [`dreggnet_tavern`] session so
+//! `post`/`enter`/`party_up` fire real node turns.
 
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
@@ -25,6 +32,10 @@ use dreggnet_offerings::{
 
 use crate::{pill, row, section, text};
 use deos_view::ViewNode;
+
+/// The link-out verb the render carries — the host resolves it to *opening the live tavern node*
+/// (the async transport), not to a synchronous surface commit. `advance` of it here is refused.
+pub const TURN_JOIN: &str = "join";
 
 /// A patron at the tavern — a name, a live presence flag (seated / away), and their last LFG post.
 struct Patron {
@@ -159,7 +170,8 @@ impl Offering for TavernOffering {
     /// named-next async path), not a synchronous surface move.
     fn advance(&self, _s: &mut TavernSession, _input: Action, _actor: DreggIdentity) -> Outcome {
         Outcome::Refused(
-            "the tavern board is a read-only surface — post/enter fire on the live tavern node"
+            "the tavern board is a read mirror — use the `join` link-out to open the live tavern \
+             node, where post/enter/party-up fire real attributed turns"
                 .into(),
         )
     }
@@ -237,6 +249,22 @@ impl Offering for TavernOffering {
             let members: Vec<ViewNode> = s.party.iter().map(|m| pill(m, "accent")).collect();
             children.push(section("Party", "genuine", vec![row(members)]));
         }
+
+        // The explicit LINK-OUT — the host resolves this button to opening the live tavern node
+        // (the async transport), where post/enter/party-up are real attributed turns. It rides the
+        // one ViewNode tree so every frontend surfaces the way to reach the real hall.
+        children.push(section(
+            "Join the live hall",
+            "accent",
+            vec![
+                text("This board is a live mirror — enter the hall to post, seat, and party up."),
+                ViewNode::Button {
+                    label: format!("Enter {}", s.hall),
+                    turn: TURN_JOIN.to_string(),
+                    arg: 0,
+                },
+            ],
+        ));
 
         Surface(section(format!("Tavern — {}", s.hall), "accent", children))
     }

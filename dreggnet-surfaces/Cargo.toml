@@ -70,3 +70,14 @@ procgen-dregg = { path = "../procgen-dregg" }
 # (dreggnet-party folds its full receipt to a turn-hash through its public ActOutcome API).
 # default-features=false = gpui-free.
 dregg-app-framework = { path = "../app-framework", default-features = false }
+
+[dev-dependencies]
+# THE LIGHT CROSS-CHANNEL BACKENDS — the SAME `deos-view` dependency, with its gpui-free,
+# deos-js-free bake backends turned on for the golden render tests (`tests/golden_render.rs`):
+#   * `text`    — the shared prose walk (ungated; always present).
+#   * `telegram`— `ViewNode` → Telegram message text (`TelegramBackend`).
+#   * `wechat`  — `ViewNode` → a WeChat OA message + its NUMBERED reply list (the actuation half).
+#   * `web`     — `ViewNode` → an HTML/DOM string.
+# Every one is serde-only (no gpui / no SpiderMonkey), so the do-once ViewNode of each surface is
+# driven through the REAL renderers a frontend uses — a broken surface fails a golden assertion.
+deos-view = { path = "../deos-view", default-features = false, features = ["telegram", "wechat", "web"] }

@@ -1,4 +1,4 @@
-//! # `GuildPage` — a **read-surface** over [`dreggnet_guild`].
+//! # `GuildPage` — the roster + verified-clears surface over [`dreggnet_guild`].
 //!
 //! A guild's roster + its aggregate **verified-clears** leaderboard. Membership is the guild's cap
 //! set (a member holds a real capability to the shared guild cell); the leaderboard is the SUM of
@@ -6,21 +6,34 @@
 //! clear that passed the ugc no-cheat verify) + live-character survivors. Nothing on this page is a
 //! number an officer typed — it is all read off the real substrate aggregate.
 //!
-//! Read-only: joining / clearing happens through the game + membership turns, not this surface;
-//! `render` is the payload. [`demo`](GuildPage::demo) seeds a REAL guild (members admitted via
-//! genuine cap grants + one real verified clear) for the web/discord register state.
+//! ## One interactive move: **admit**
+//!
+//! The substrate exposes [`Guild::admit`] (a real capability grant) + [`Guild::act_on_guild`] (a
+//! real cap-bounded committed turn). So this surface is *lightly playable*: an officer may **admit**
+//! a pending applicant — the applicant is granted the guild cap and its first act on the guild cell
+//! COMMITS a real membership turn (a genuine [`TurnReceipt`]). The teeth are non-vacuous: a
+//! non-member (a stranger with no cap) writing the same guild cell is a real `CapabilityNotHeld`
+//! executor refusal ([`GuildSession::stranger_write_refused`]), never a silent apply. Clearing a
+//! run still happens through the game turns, not this surface; `render` is the payload.
+//! [`demo`](GuildPage::demo) seeds a REAL guild (members admitted via genuine cap grants + one real
+//! verified clear) plus a couple of pending applicants to admit.
 
+use dregg_app_framework::TurnReceipt;
 use dreggnet_guild::{Guild, GuildStats};
 use dreggnet_offerings::character::CharacterSheet;
 use dreggnet_offerings::{
     Action, DreggIdentity, Offering, OfferingError, Outcome, RunCost, SessionConfig, Surface,
     VerifyReport,
 };
+use dungeon_on_dregg::mud::CommandOutcome;
 use dungeon_on_dregg::{CH_CLAIM, CH_DESCEND, CH_TAKE_LANTERN, DUNGEON};
 use ugc_dregg::{Completion, Universe, WinCondition, record_playthrough};
 
-use crate::{pill, row, section, text};
+use crate::{action_menu, menu, pill, row, section, text};
 use deos_view::ViewNode;
+
+/// The affordance verb an officer fires to admit a pending applicant (`arg` = the applicant index).
+pub const TURN_ADMIT: &str = "admit";
 
 /// The built-in winnable dungeon (win = `gold == 500`) the demo guild's verified clear runs on.
 fn salt_shore() -> Universe {
@@ -41,6 +54,8 @@ const WIN_MOVES: [usize; 3] = [CH_TAKE_LANTERN, CH_DESCEND, CH_CLAIM];
 pub struct GuildSession {
     guild: Guild,
     member_names: Vec<String>,
+    /// Applicants who have not yet been admitted (the `admit` action's pool, in a stable order).
+    applicants: Vec<String>,
 }
 
 impl GuildSession {
@@ -52,6 +67,10 @@ impl GuildSession {
     pub fn roster_len(&self) -> usize {
         self.member_names.len()
     }
+    /// The number of pending applicants (admittable via the `admit` action).
+    pub fn applicant_count(&self) -> usize {
+        self.applicants.len()
+    }
     /// Whether the guild is empty (no members).
     pub fn is_empty(&self) -> bool {
         self.member_names.is_empty()
@@ -60,6 +79,19 @@ impl GuildSession {
     pub fn name(&self) -> &str {
         self.guild.name()
     }
+
+    /// **The other side of the membership tooth** — install a stranger (a real inhabitant of the
+    /// guild world holding NO cap to the guild cell) and drive its write on the guild cell. Returns
+    /// `Some(reason)` iff the executor genuinely REFUSED it (`CapabilityNotHeld`) — proof the admit
+    /// action's cap grant is load-bearing, not decorative. `None` would mean a non-member wrote
+    /// through (a broken gate). The guild state is untouched by a refused write (anti-ghost).
+    pub fn stranger_write_refused(&mut self) -> Option<String> {
+        let stranger = self.guild.install_stranger();
+        match self.guild.act_on_guild(stranger) {
+            CommandOutcome::Refused { reason } => Some(reason),
+            CommandOutcome::Committed { .. } => None,
+        }
+    }
 }
 
 /// **The guild-page offering** — a read-surface factory. Construct with the roster to seed
@@ -67,35 +99,56 @@ impl GuildSession {
 pub struct GuildPage {
     name: String,
     members: Vec<String>,
+    applicants: Vec<String>,
     seed_clear: bool,
 }
 
 impl GuildPage {
-    /// An EMPTY guild named `name` (the empty-state surface).
+    /// An EMPTY guild named `name` (the empty-state surface, no applicants).
     pub fn new(name: impl Into<String>) -> Self {
         GuildPage {
             name: name.into(),
             members: Vec::new(),
+            applicants: Vec::new(),
             seed_clear: false,
         }
     }
 
-    /// A guild `name` with `members` (a genuine verified clear seeded iff `seed_clear`).
+    /// A guild `name` with `members` (a genuine verified clear seeded iff `seed_clear`, no
+    /// applicants).
     pub fn with_members(name: impl Into<String>, members: Vec<String>, seed_clear: bool) -> Self {
         GuildPage {
             name: name.into(),
             members,
+            applicants: Vec::new(),
+            seed_clear,
+        }
+    }
+
+    /// A guild `name` seeded with `members` (verified clear iff `seed_clear`) AND `applicants`
+    /// waiting to be admitted (the `admit` action's pool).
+    pub fn with_roster(
+        name: impl Into<String>,
+        members: Vec<String>,
+        applicants: Vec<String>,
+        seed_clear: bool,
+    ) -> Self {
+        GuildPage {
+            name: name.into(),
+            members,
+            applicants,
             seed_clear,
         }
     }
 
     /// A populated DEMO guild — three members admitted via genuine capability grants, one real
-    /// ugc-verified clear on the built-in dungeon, and live-character survivors (the web/discord
-    /// register state).
+    /// ugc-verified clear on the built-in dungeon, live-character survivors, and two pending
+    /// applicants an officer can admit (the web/discord register state).
     pub fn demo(name: impl Into<String>) -> Self {
-        Self::with_members(
+        Self::with_roster(
             name,
             vec!["Aria".to_string(), "Bram".to_string(), "Cyra".to_string()],
+            vec!["Delia".to_string(), "Emrys".to_string()],
             true,
         )
     }
@@ -142,17 +195,53 @@ impl Offering for GuildPage {
         Ok(GuildSession {
             guild,
             member_names,
+            applicants: self.applicants.clone(),
         })
     }
 
-    /// A read-surface exposes no moves.
-    fn actions(&self, _s: &GuildSession) -> Vec<Action> {
-        Vec::new()
+    /// One move per pending applicant: **admit** them (a real cap grant + committed membership turn).
+    fn actions(&self, s: &GuildSession) -> Vec<Action> {
+        s.applicants
+            .iter()
+            .enumerate()
+            .map(|(i, name)| Action::new(format!("Admit {name}"), TURN_ADMIT, i as i64, true))
+            .collect()
     }
 
-    /// Read-only: joining / clearing happens through the membership + game turns, not this page.
-    fn advance(&self, _s: &mut GuildSession, _input: Action, _actor: DreggIdentity) -> Outcome {
-        Outcome::Refused("the guild page is a read-only surface".into())
+    /// **Admit** a pending applicant — grant the guild cap ([`Guild::admit`]) and drive its first
+    /// write on the guild cell ([`Guild::act_on_guild`]), which COMMITS a real membership turn. The
+    /// non-vacuous other side (a non-member's write is a `CapabilityNotHeld` executor refusal) is
+    /// [`GuildSession::stranger_write_refused`]. Clearing a run happens through the game turns.
+    fn advance(&self, s: &mut GuildSession, input: Action, _actor: DreggIdentity) -> Outcome {
+        if input.turn != TURN_ADMIT {
+            return Outcome::Refused(format!(
+                "the guild surface only admits (verb `{TURN_ADMIT}`)"
+            ));
+        }
+        let idx = input.arg.max(0) as usize;
+        let Some(name) = s.applicants.get(idx).cloned() else {
+            return Outcome::Refused(format!("no pending applicant #{idx}"));
+        };
+        let id = DreggIdentity(name.clone());
+        // The cap grant, then the applicant's first cap-bounded write on the guild cell — a real
+        // committed turn (a non-member's identical write would be a `CapabilityNotHeld` refusal).
+        let cell = s.guild.admit(&id);
+        match s.guild.act_on_guild(cell) {
+            CommandOutcome::Committed { receipt } => {
+                s.applicants.remove(idx);
+                s.member_names.push(name);
+                Outcome::Landed {
+                    receipt: TurnReceipt {
+                        turn_hash: receipt,
+                        ..Default::default()
+                    },
+                    ended: false,
+                }
+            }
+            CommandOutcome::Refused { reason } => {
+                Outcome::Refused(format!("admitting `{name}` refused: {reason}"))
+            }
+        }
     }
 
     /// Re-check that every rostered member genuinely holds the guild cap (membership is the cap set).
@@ -200,6 +289,16 @@ impl Offering for GuildPage {
                 ]));
             }
             children.push(section("Roster", "accent", vec![ViewNode::Table(rows)]));
+        }
+
+        // Pending applicants — the `admit` action's pool (a real cap grant + membership turn each).
+        if !s.applicants.is_empty() {
+            let mut kids: Vec<ViewNode> = vec![text(format!(
+                "{} applicant(s) awaiting a cap",
+                s.applicants.len()
+            ))];
+            kids.push(menu(action_menu(self.actions(s))));
+            children.push(section("Applicants", "warn", kids));
         }
 
         // The leaderboard — the aggregate PROVEN stats (nothing here can be padded).
