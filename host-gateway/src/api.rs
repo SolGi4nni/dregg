@@ -41,6 +41,7 @@ use starbridge_domains::DomainRegistry;
 
 use crate::machines::MachineStore;
 use crate::microsite::SiteRegistry;
+use crate::page::Page;
 
 /// The path prefix the console read surfaces are served under.
 pub const API_PREFIX: &str = "/api";
@@ -190,24 +191,26 @@ impl ApiHandler {
                 "no verified subject; the console reads are cap-scoped",
             );
         };
+        // Every array surface is bounded + windowed by the request's ?limit/?offset.
+        let page = Page::from_target(target);
         match path {
-            "/api/sites" => json_array(self.sites_for(subject)),
-            "/api/domains" => json_array(self.domains_for(subject)),
-            "/api/machines" => json_array(self.machines_for(subject)),
-            "/api/servers" => json_array(self.servers_for(subject)),
-            "/api/agents" => json_array(self.agents_for(subject)),
-            "/api/billing/spend" => json_array(self.spend_for(subject)),
+            "/api/sites" => json_array(page.apply(self.sites_for(subject))),
+            "/api/domains" => json_array(page.apply(self.domains_for(subject))),
+            "/api/machines" => json_array(page.apply(self.machines_for(subject))),
+            "/api/servers" => json_array(page.apply(self.servers_for(subject))),
+            "/api/agents" => json_array(page.apply(self.agents_for(subject))),
+            "/api/billing/spend" => json_array(page.apply(self.spend_for(subject))),
             "/api/billing/balances" => json_value(self.balances_for(subject)),
             _ => WebResponse::error(404, "unknown console read surface"),
         }
     }
 
-    /// The subject's published microsites — compact metadata (no asset bodies).
+    /// The subject's published microsites — compact metadata (no asset bodies). O(owned)
+    /// via the registry's owner index.
     fn sites_for(&self, subject: &str) -> Vec<serde_json::Value> {
         self.sites
-            .list()
+            .list_for_owner(subject)
             .into_iter()
-            .filter(|s| s.owner == subject)
             .map(|s| {
                 serde_json::json!({
                     "name": s.name,
@@ -231,12 +234,12 @@ impl ApiHandler {
             .collect()
     }
 
-    /// The subject's fly-machines (scoped by owner).
+    /// The subject's fly-machines (scoped by owner). O(owned) via the store's owner
+    /// index — never a full-store scan.
     fn machines_for(&self, subject: &str) -> Vec<serde_json::Value> {
         self.machines
-            .all()
+            .list_for_owner(subject)
             .into_iter()
-            .filter(|m| m.owner == subject)
             .filter_map(|m| serde_json::to_value(m).ok())
             .collect()
     }

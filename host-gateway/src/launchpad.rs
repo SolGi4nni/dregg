@@ -200,6 +200,61 @@ impl<'a, C: IpfsClient> Launchpad<'a, C> {
     }
 }
 
+/// Compose `launch` into its landing microsite + content-addressed [`LaunchReceipt`]
+/// **without** pinning to an [`IpfsClient`] — the pure content addresses (blake3) are
+/// computed with no I/O ([`crate::content::address`]). The returned site is NOT yet
+/// published; the caller publishes it (so ownership + name validity are enforced
+/// uniformly by [`SiteRegistry::publish`]) and the returned receipt's
+/// [`LaunchReceipt::site_root`] equals the published site's content root.
+///
+/// The HTTP write path uses this: a console runs a launch over HTTP and its metadata +
+/// image are content-addressed; pinning the bytes to a Kubo daemon is a separate,
+/// optional durability step (the same CIDs).
+pub fn compose_unpinned(launch: &Launch, apex: &str) -> (Microsite, LaunchReceipt) {
+    let mut site = Microsite::new(&launch.slug, &launch.owner);
+
+    let metadata_cid = launch.metadata.as_ref().map(|meta| {
+        let bytes = serde_json::to_vec_pretty(meta).unwrap_or_default();
+        let cid = address(&bytes);
+        site = site
+            .clone()
+            .with_asset("/metadata.json", Asset::new("application/json", bytes));
+        cid
+    });
+
+    let mut image_path = None;
+    let image_cid = launch.image.as_ref().map(|(filename, bytes)| {
+        let cid = address(bytes);
+        let path = format!("/{}", filename.trim_start_matches('/'));
+        site = site
+            .clone()
+            .with_asset(&path, Asset::at(&path, bytes.clone()));
+        image_path = Some(path);
+        cid
+    });
+
+    let html = match &launch.landing_html {
+        Some(html) => html.clone(),
+        None => render_landing(launch, image_path.as_deref(), metadata_cid.as_ref()),
+    };
+    site = site.clone().with_asset(
+        "/index.html",
+        Asset::new("text/html; charset=utf-8", html.into_bytes()),
+    );
+
+    let slug = launch.slug.trim().to_ascii_lowercase();
+    let site_root = site.content_root();
+    let receipt = LaunchReceipt {
+        slug: slug.clone(),
+        owner: launch.owner.clone(),
+        landing_host: format!("{slug}.{}", crate::microsite::normalize_apex(apex)),
+        site_root,
+        metadata_cid,
+        image_cid,
+    };
+    (site, receipt)
+}
+
 /// Render the generated, substrate-general landing page. `image_path` (if any) is the
 /// served path of the launch image; `metadata_cid` (if any) is shown as the content
 /// address of the metadata a visitor can re-witness.

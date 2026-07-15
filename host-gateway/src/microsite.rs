@@ -16,17 +16,25 @@
 //! by a different subject is refused (no takeover) — the same shape the custom-domain
 //! binding enforces on-cell.
 
-use std::collections::BTreeMap;
-use std::sync::Mutex;
+use std::collections::{BTreeMap, BTreeSet};
+use std::sync::{Arc, Mutex};
 
 use dregg_ipfs::Cid;
 use http_serve::WebResponse;
+use serde::{Deserialize, Serialize};
 
 use crate::content::address;
+use crate::persist::{NullSites, SitePersistence};
+use crate::util::lock;
+
+/// The largest number of assets a single site may publish (an abuse bound).
+pub const MAX_ASSETS: usize = 4096;
+/// The largest total asset bytes a single site may publish (64 MiB — an abuse bound).
+pub const MAX_SITE_BYTES: u64 = 64 * 1024 * 1024;
 
 /// One published asset: its declared content-type and its raw bytes. The asset's
 /// content address is [`Asset::cid`] (a whole-blob blake3 CID).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Asset {
     /// The `Content-Type` served for this asset.
     pub content_type: String,
@@ -57,7 +65,7 @@ impl Asset {
 
 /// A published site: a named, owner-scoped bundle of content-addressed assets keyed by
 /// request path (`/index.html`, `/style.css`, …).
-#[derive(Debug, Clone, PartialEq, Eq)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct Microsite {
     /// The site `<name>` (its `<name>.<apex>` host serves the bytes).
     pub name: String,
@@ -110,22 +118,51 @@ impl Microsite {
         address(&manifest)
     }
 
-    /// Serve `path` against this site's assets. An empty path or `/` serves
-    /// `/index.html`; an unknown path is a `404`.
+    /// Total asset count.
+    pub fn asset_count(&self) -> usize {
+        self.assets.len()
+    }
+
+    /// Serve `path` against this site's assets. Resolution, in order:
+    ///
+    /// 1. an exact asset at `path`;
+    /// 2. a directory index: a `path` ending in `/` (or the empty / root path) serves
+    ///    `<path>index.html` (so `/`, `/docs/` resolve to their index);
+    /// 3. otherwise a `404`.
+    ///
+    /// A custom `/404.html` asset, if published, is served as the not-found body (with a
+    /// `404` status) — so a tenant styles its own not-found page.
     pub fn serve(&self, path: &str) -> WebResponse {
-        let key = if path.is_empty() || path == "/" {
-            "/index.html"
-        } else {
-            path
-        };
-        match self.assets.get(key) {
-            Some(asset) => WebResponse {
-                status: 200,
-                content_type: asset.content_type.clone(),
-                body: asset.body.clone(),
-            },
-            None => WebResponse::error(404, format!("no asset at `{key}`")),
+        // Exact hit.
+        if let Some(asset) = self.assets.get(path) {
+            return asset_response(200, asset);
         }
+        // Directory index: root, empty, or a trailing-slash path -> `<dir>index.html`.
+        let index_key = if path.is_empty() || path == "/" {
+            "/index.html".to_string()
+        } else if path.ends_with('/') {
+            format!("{path}index.html")
+        } else {
+            String::new()
+        };
+        if !index_key.is_empty() {
+            if let Some(asset) = self.assets.get(&index_key) {
+                return asset_response(200, asset);
+            }
+        }
+        // A tenant-supplied custom 404 page, else the JSON error.
+        match self.assets.get("/404.html") {
+            Some(asset) => asset_response(404, asset),
+            None => WebResponse::error(404, format!("no asset at `{path}`")),
+        }
+    }
+}
+
+fn asset_response(status: u16, asset: &Asset) -> WebResponse {
+    WebResponse {
+        status,
+        content_type: asset.content_type.clone(),
+        body: asset.body.clone(),
     }
 }
 
@@ -136,6 +173,10 @@ pub enum SiteError {
     InvalidName(String),
     /// A republish of an existing site by a subject that is not its owner (no takeover).
     OwnerMismatch { name: String },
+    /// The site exceeds a publish bound (`too many assets` or `too many bytes`).
+    TooLarge { name: String, reason: String },
+    /// A publish with no owner subject (the write path is cap-gated).
+    NoOwner,
 }
 
 impl std::fmt::Display for SiteError {
@@ -145,6 +186,10 @@ impl std::fmt::Display for SiteError {
             SiteError::OwnerMismatch { name } => {
                 write!(f, "only the owner of site `{name}` may republish it")
             }
+            SiteError::TooLarge { name, reason } => {
+                write!(f, "site `{name}` exceeds a publish bound: {reason}")
+            }
+            SiteError::NoOwner => write!(f, "a publish must carry a verified owner subject"),
         }
     }
 }
@@ -155,17 +200,52 @@ impl std::error::Error for SiteError {}
 /// the live source for the cap-scoped `/api/sites` read.
 pub struct SiteRegistry {
     sites: Mutex<BTreeMap<String, Microsite>>,
+    by_owner: Mutex<BTreeMap<String, BTreeSet<String>>>,
+    persistence: Arc<dyn SitePersistence>,
     apex: String,
 }
 
 impl SiteRegistry {
     /// A fresh registry serving `<name>.<apex>` for the deployment's hosting `apex`
-    /// (e.g. `dregg.net`, `dregg.fg-goose.online`). The apex is normalized (leading
-    /// dot / trailing dot stripped, lowercased).
+    /// (e.g. `dregg.net`, `dregg.fg-goose.online`), in-RAM only. The apex is normalized
+    /// (leading dot / trailing dot stripped, lowercased).
     pub fn new(apex: impl AsRef<str>) -> SiteRegistry {
-        SiteRegistry {
+        SiteRegistry::with_persistence(apex, Arc::new(NullSites))
+    }
+
+    /// A registry seeded from — and writing through to — `persistence`, so published
+    /// sites survive a restart. Prior sites are reloaded and indexed at construction.
+    pub fn with_persistence(
+        apex: impl AsRef<str>,
+        persistence: Arc<dyn SitePersistence>,
+    ) -> SiteRegistry {
+        let reg = SiteRegistry {
             sites: Mutex::new(BTreeMap::new()),
+            by_owner: Mutex::new(BTreeMap::new()),
+            persistence,
             apex: normalize_apex(apex.as_ref()),
+        };
+        for site in reg.persistence.load() {
+            reg.index_insert(&site.owner, &site.name);
+            lock(&reg.sites).insert(site.name.clone(), site);
+        }
+        reg
+    }
+
+    fn index_insert(&self, owner: &str, name: &str) {
+        lock(&self.by_owner)
+            .entry(owner.to_string())
+            .or_default()
+            .insert(name.to_string());
+    }
+
+    fn index_remove(&self, owner: &str, name: &str) {
+        let mut idx = lock(&self.by_owner);
+        if let Some(names) = idx.get_mut(owner) {
+            names.remove(name);
+            if names.is_empty() {
+                idx.remove(owner);
+            }
         }
     }
 
@@ -176,52 +256,100 @@ impl SiteRegistry {
 
     /// Publish (or owner-republish) `site` — returns its content root. A republish by a
     /// different subject is refused ([`SiteError::OwnerMismatch`]); an invalid site name
-    /// is [`SiteError::InvalidName`].
+    /// is [`SiteError::InvalidName`]; a site over the asset-count / byte bounds is
+    /// [`SiteError::TooLarge`]. The published site is indexed by owner and persisted.
     pub fn publish(&self, site: Microsite) -> Result<Cid, SiteError> {
         let name = site.name.trim().to_ascii_lowercase();
         if !is_valid_label(&name) {
             return Err(SiteError::InvalidName(name));
         }
-        let mut guard = self.sites.lock().expect("sites poisoned");
-        if let Some(existing) = guard.get(&name) {
-            if existing.owner != site.owner {
-                return Err(SiteError::OwnerMismatch { name });
-            }
+        if site.owner.trim().is_empty() {
+            return Err(SiteError::NoOwner);
         }
-        let root = site.content_root();
+        if site.assets.len() > MAX_ASSETS {
+            return Err(SiteError::TooLarge {
+                name,
+                reason: format!("{} assets exceeds the {MAX_ASSETS} cap", site.assets.len()),
+            });
+        }
+        let bytes = site.bytes();
+        if bytes > MAX_SITE_BYTES {
+            return Err(SiteError::TooLarge {
+                name,
+                reason: format!("{bytes} bytes exceeds the {MAX_SITE_BYTES}-byte cap"),
+            });
+        }
         let mut site = site;
         site.name = name.clone();
-        guard.insert(name, site);
+        let owner = site.owner.clone();
+        let root = site.content_root();
+        // Hold ONLY the sites lock for the owner-check + insert, then release it before
+        // touching the owner index or the durable log — so the sole two-lock path
+        // (list_for_owner: by_owner→sites) never inverts against this one.
+        {
+            let mut guard = lock(&self.sites);
+            if let Some(existing) = guard.get(&name) {
+                if existing.owner != owner {
+                    return Err(SiteError::OwnerMismatch { name });
+                }
+            }
+            guard.insert(name.clone(), site.clone());
+        }
+        self.index_insert(&owner, &name);
+        self.persistence.publish(&site);
         Ok(root)
+    }
+
+    /// Take a site down: removes it from the registry, the owner index, and the durable
+    /// log — but only if `owner` owns it (no cross-tenant takedown). Returns whether a
+    /// site was removed.
+    pub fn take_down(&self, name: &str, owner: &str) -> bool {
+        let name = name.trim().to_ascii_lowercase();
+        let removed = {
+            let mut guard = lock(&self.sites);
+            if guard.get(&name).map(|s| s.owner == owner).unwrap_or(false) {
+                guard.remove(&name)
+            } else {
+                None
+            }
+        };
+        if removed.is_some() {
+            self.index_remove(owner, &name);
+            self.persistence.remove(&name);
+            true
+        } else {
+            false
+        }
     }
 
     /// A clone of the published site `<name>`, if any.
     pub fn get(&self, name: &str) -> Option<Microsite> {
-        self.sites
-            .lock()
-            .expect("sites poisoned")
+        lock(&self.sites)
             .get(&name.trim().to_ascii_lowercase())
             .cloned()
     }
 
     /// All published site names, sorted.
     pub fn names(&self) -> Vec<String> {
-        self.sites
-            .lock()
-            .expect("sites poisoned")
-            .keys()
-            .cloned()
+        lock(&self.sites).keys().cloned().collect()
+    }
+
+    /// The sites owned by `owner`, ordered by name — O(owned) via the owner index.
+    pub fn list_for_owner(&self, owner: &str) -> Vec<Microsite> {
+        let names: Vec<String> = lock(&self.by_owner)
+            .get(owner)
+            .map(|s| s.iter().cloned().collect())
+            .unwrap_or_default();
+        let guard = lock(&self.sites);
+        names
+            .into_iter()
+            .filter_map(|n| guard.get(&n).cloned())
             .collect()
     }
 
     /// All published sites, sorted by name (a snapshot).
     pub fn list(&self) -> Vec<Microsite> {
-        self.sites
-            .lock()
-            .expect("sites poisoned")
-            .values()
-            .cloned()
-            .collect()
+        lock(&self.sites).values().cloned().collect()
     }
 
     /// Resolve an inbound wildcard `Host` (`<name>.<apex>`) to a **published** site

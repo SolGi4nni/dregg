@@ -27,9 +27,12 @@ use starbridge_domains::DomainRegistry;
 
 use crate::api::ApiHandler;
 use crate::auth::SubjectAuth;
-use crate::machines::{MachineStore, MachinesHandler};
+use crate::machines::MachinesHandler;
 use crate::microsite::SiteRegistry;
+use crate::observe::{NullObserver, Observer, RequestEvent};
 use crate::route;
+use crate::util::request_id;
+use crate::write::WriteHandler;
 
 /// The assembled gateway. Holds the resident registries + sub-handlers and the
 /// subject-auth posture; [`handle`](Gateway::handle) routes one request.
@@ -37,8 +40,10 @@ pub struct Gateway {
     sites: Arc<SiteRegistry>,
     domains: Arc<DomainRegistry>,
     api: ApiHandler,
+    write: WriteHandler,
     machines: MachinesHandler,
     auth: SubjectAuth,
+    observer: Arc<dyn Observer>,
     apex: String,
 }
 
@@ -66,14 +71,24 @@ impl Gateway {
             Arc::clone(&domains),
             Arc::clone(machines.store()),
         );
+        let write = WriteHandler::new(Arc::clone(&sites));
         Gateway {
             sites,
             domains,
             api,
+            write,
             machines,
             auth,
+            observer: Arc::new(NullObserver),
             apex,
         }
+    }
+
+    /// Attach a request [`Observer`] (structured logging / metrics). Builder-style,
+    /// before serving. Default: [`NullObserver`] (silent).
+    pub fn with_observer(mut self, observer: Arc<dyn Observer>) -> Gateway {
+        self.observer = observer;
+        self
     }
 
     /// Mutable access to the console-reads handler, to attach server / agent / billing
@@ -101,37 +116,72 @@ impl Gateway {
         self.sites.serves_host(host) || self.domains.is_verified(host)
     }
 
-    /// Route + serve one request.
+    /// Route + serve one request, emitting a structured [`RequestEvent`] (with a minted
+    /// request id) to the observer on the way out.
     pub fn handle(&self, req: &ServeRequest) -> WebResponse {
+        let rid = request_id();
+        let started = std::time::Instant::now();
+        let path = req.target.split('?').next().unwrap_or(&req.target);
+        let mut authenticated = false;
+        let resp = self.route(req, path, &mut authenticated);
+        self.observer.on_request(&RequestEvent {
+            request_id: &rid,
+            method: req.method,
+            path,
+            host: &req.host,
+            authenticated,
+            status: resp.status,
+            elapsed_us: started.elapsed().as_micros(),
+        });
+        resp
+    }
+
+    /// The routing core (`handle` wraps it with observability). `authenticated` is set
+    /// when a request resolved a verified subject.
+    fn route(&self, req: &ServeRequest, path: &str, authenticated: &mut bool) -> WebResponse {
         // 1. A tenant site host serves its content on every path (control API excluded).
         if self.serves_site_host(&req.host) {
             return self.serve_site(&req.host, &req.target);
         }
-
-        let path = req.target.split('?').next().unwrap_or(&req.target);
 
         // 2. The on-demand-TLS ask.
         if path == "/ask" {
             return self.ask(req);
         }
 
-        // 3. The cap-scoped console reads.
+        // 3. The cap-gated write path (POST/PUT/DELETE on the hosting primitives).
+        if WriteHandler::serves(req.method, path) {
+            let subject = self.auth.resolve(req);
+            *authenticated = subject.is_some();
+            let idem = req.header("idempotency-key");
+            return self.write.respond(
+                req.method,
+                &req.target,
+                &req.body,
+                subject.as_deref(),
+                idem,
+            );
+        }
+
+        // 4. The cap-scoped console reads.
         if ApiHandler::serves_path(path) {
             let subject = self.auth.resolve(req);
+            *authenticated = subject.is_some();
             return self
                 .api
                 .respond(req.method, &req.target, subject.as_deref());
         }
 
-        // 4. The fly machines API.
+        // 5. The fly machines API.
         if route::serves_path(path) {
             let subject = self.auth.resolve(req);
+            *authenticated = subject.is_some();
             return self
                 .machines
                 .respond(req.method, &req.target, &req.body, subject.as_deref());
         }
 
-        // 5. Friendly surfaces.
+        // 6. Friendly surfaces.
         match (req.method, path.trim_end_matches('/')) {
             (HttpMethod::Get, "") => self.landing(),
             (HttpMethod::Get, "/status") | (HttpMethod::Get, "/v1") => self.status(),
@@ -193,7 +243,7 @@ impl Gateway {
             "apex": self.apex,
             "sites": self.sites.names().len(),
             "domains": self.domains.list().len(),
-            "machines": self.machines.store().all().len(),
+            "machines": self.machines.store().count(),
         });
         WebResponse::json(body.to_string().into_bytes())
     }
@@ -372,11 +422,22 @@ mod tests {
             headers: vec![("x-dregg-subject".into(), ALICE.into())],
         };
         assert_eq!(g.handle(&create).status, 201);
+        // The list is now owner-scoped: it requires the verified subject (401 without).
+        assert_eq!(
+            g.handle(&req(
+                HttpMethod::Get,
+                "gw",
+                "/v1/apps/app1/machines",
+                vec![]
+            ))
+            .status,
+            401
+        );
         let listed = g.handle(&req(
             HttpMethod::Get,
             "gw",
             "/v1/apps/app1/machines",
-            vec![],
+            vec![("x-dregg-subject", ALICE)],
         ));
         assert_eq!(listed.status, 200);
         // And that machine shows up on the owner's cap-scoped /api/machines.

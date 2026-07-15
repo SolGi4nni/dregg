@@ -36,19 +36,35 @@
 //!
 //! ## Assembling + serving
 //!
+//! The wired default is the **verifying** posture: the gateway verifies a presented
+//! `dga1_` credential itself and derives the cap-scope subject from it (it trusts no
+//! upstream header). Durable state, a real (non-Null) launcher, and structured logging
+//! are attached builder-style.
+//!
 //! ```no_run
 //! use std::sync::Arc;
-//! use host_gateway::{Gateway, SiteRegistry, MachinesHandler, SubjectAuth};
+//! use host_gateway::{
+//!     Gateway, SiteRegistry, MachineStore, MachinesHandler, SandboxLauncher, SubjectAuth,
+//!     JsonlMachines, JsonlSites, StderrObserver,
+//! };
 //! use starbridge_domains::DomainRegistry;
+//! use webauth_core::config::WebAuthConfig;
 //!
-//! let sites = Arc::new(SiteRegistry::new("dregg.net"));
+//! // Durable registries — sites + machines survive a restart (append-only logs).
+//! let sites = Arc::new(SiteRegistry::with_persistence(
+//!     "dregg.net",
+//!     Arc::new(JsonlSites::open("/var/lib/dregg/sites.jsonl").unwrap()),
+//! ));
+//! let store = Arc::new(MachineStore::with_persistence(
+//!     Arc::new(JsonlMachines::open("/var/lib/dregg/machines.jsonl").unwrap()),
+//! ));
+//! // A real launcher (local sandbox lease plane), not the Null admit-only default.
+//! let machines = MachinesHandler::over(store, Arc::new(SandboxLauncher::new()));
 //! let domains = Arc::new(DomainRegistry::new());
-//! let gateway = Gateway::new(
-//!     sites,
-//!     domains,
-//!     MachinesHandler::new(),
-//!     SubjectAuth::trusted_header("x-dregg-subject"),
-//! );
+//! // Verify-don't-trust: the gateway verifies the credential itself.
+//! let auth = SubjectAuth::verified(WebAuthConfig::default(), "console-read");
+//! let gateway = Gateway::new(sites, domains, machines, auth)
+//!     .with_observer(Arc::new(StderrObserver));
 //! http_serve::serve_http("127.0.0.1:8080", gateway.into_service()).unwrap();
 //! ```
 
@@ -56,10 +72,16 @@ pub mod api;
 pub mod auth;
 pub mod content;
 pub mod gateway;
+pub mod launcher;
 pub mod launchpad;
 pub mod machines;
 pub mod microsite;
+pub mod observe;
+pub mod page;
+pub mod persist;
 pub mod route;
+pub mod util;
+pub mod write;
 
 pub use api::{
     AgentSource, AgentView, ApiHandler, BillingSource, ServerSource, ServerView, SpendLine,
@@ -67,13 +89,20 @@ pub use api::{
 pub use auth::SubjectAuth;
 pub use content::{ContentStore, address};
 pub use gateway::Gateway;
-pub use launchpad::{Launch, LaunchError, LaunchReceipt, Launchpad};
+pub use launcher::{LeaseInfo, SandboxLauncher};
+pub use launchpad::{Launch, LaunchError, LaunchReceipt, Launchpad, compose_unpinned};
 pub use machines::{
     CreateMachineRequest, GuestConfig, Machine, MachineConfig, MachineLauncher, MachineState,
     MachineStore, MachinesHandler, NullLauncher,
 };
 pub use microsite::{Asset, Microsite, SiteError, SiteRegistry};
+pub use observe::{NullObserver, Observer, RequestEvent, StderrObserver};
+pub use page::Page;
+pub use persist::{
+    JsonlMachines, JsonlSites, MachinePersistence, NullMachines, NullSites, SitePersistence,
+};
 pub use route::Route;
+pub use write::{AssetSpec, LaunchRequest, PublishSiteRequest, WriteHandler};
 
 // Re-export the resident custom-domain control plane the gateway aggregates, so a
 // caller wires bindings without a second dependency line.

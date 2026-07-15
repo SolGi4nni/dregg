@@ -46,6 +46,9 @@ dregg-ipfs = { path = "../dregg-ipfs" }
 
 serde = { workspace = true, features = ["derive", "std"] }
 serde_json = { workspace = true }
+# OS randomness: machine ids + request ids are unguessable 128-bit / 64-bit tokens,
+# not a sequential counter (enumeration is not a fallback attack).
+getrandom = { workspace = true }
 
 [dev-dependencies]
 # The credential root the cap-scope tests mint sessions under (`RootKey`), verified
