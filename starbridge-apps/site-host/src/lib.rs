@@ -43,25 +43,55 @@
 //!   `<name>.<apex>` to a published cell; the metered serving path is the resident
 //!   `agent-platform` serve loop (not re-implemented here).
 //!
+//! ## Durability, quotas, lifecycle
+//!
+//! - **durable** ([`storage`]) — the registry writes through a [`StorageBackend`]: an
+//!   [`FsStore`](storage::FsStore) persists each cell as an atomically-written file,
+//!   each site's receipts as an append-only log, and the publish sequence as a
+//!   crash-safe counter, so a restart does not erase published sites, receipts, or the
+//!   publish order. [`MemoryStore`](storage::MemoryStore) is the ephemeral test double.
+//! - **metered** ([`funding`]) — the ACCEPT path is charged: a covered publish debits
+//!   a bounded, lease-funded publish allowance, and the lease's lapse is driven by the
+//!   publish clock — so a single lease does not fund unlimited free publishes and a
+//!   stale lease is not trusted.
+//! - **bounded** ([`limits`]) — body/asset/count/total quotas (`413`) and a per-owner
+//!   rate limit (`429`) cap resource use before the expensive decode.
+//! - **lifecycle** ([`registry::SiteRegistry::unpublish`]) — a cap + owner-gated
+//!   delete leaves a signed tombstone receipt; receipt history is retained for signed
+//!   AND unsigned registries.
+//! - **drivers** ([`gateway`], [`cli`]) — an HTTP-request adapter and a CLI adapter
+//!   both drive the ONE [`publish::SitePublishHandler::respond`] turn.
+//!
 //! ## The seam (honest)
 //!
-//! Real + tested here: the content model, the real Poseidon2 commitment, the
-//! cap-gate, the lease-funding gate + x402 hint, the signed receipt, the IPFS-backed
-//! launch page. The remaining seam — an on-chain `Effect::Write` committing the site
-//! cell to a node and a light client witnessing that write in-circuit — is the
-//! circuit epoch, deliberately not done here; the off-chain commitment is real today.
+//! [`SiteCell::serve_verified`](registry::SiteCell::serve_verified) enforces
+//! serve == commit LOCALLY: it recomputes the commitment over the served bytes and
+//! refuses (`500`) divergent content, so a client and the host can re-witness that
+//! served bytes match the receipt. The remaining seam — an on-chain `Effect::Write`
+//! committing the site cell to a node and a light client witnessing that write
+//! in-circuit, binding the host to serve these bytes over the wire — is the circuit
+//! epoch, deliberately not done here; the off-chain commitment + local re-witness are
+//! real today.
 
+pub mod cli;
 pub mod funding;
+pub mod gateway;
 pub mod launch;
+pub mod limits;
+pub mod lock;
 pub mod publish;
 pub mod registry;
 pub mod site;
+pub mod storage;
 
 pub use funding::{FundingDecision, LeaseBook, PublishFunding, TopupHint, TopupReason};
+pub use gateway::{GatewayRequest, handle as gateway_handle};
 pub use launch::{LaunchAssets, LaunchImage, LaunchListing, LaunchMetadata, landing_page};
+pub use limits::{PublishLimits, QuotaError, RateLimiter};
 pub use publish::{HttpMethod, SitePublishHandler, WebResponse, bearer_credential};
 pub use registry::{
     HostConfig, PUBLISH_CAP_PREFIX, PublishCap, PublishError, PublishReceipt, ReceiptAttestation,
     ServedAsset, SiteCell, SiteRegistry, verify_receipt,
 };
 pub use site::{Asset, SiteContent, content_root, is_valid_name};
+pub use storage::{FsStore, MemoryStore, StorageBackend, StorageError};

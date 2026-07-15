@@ -11,13 +11,16 @@ use hosted_lease::{HostedLease, LeaseTerms, field_from_u64};
 use webauth_core::grant::mint_caps;
 use webauth_core::subject_of;
 
-use starbridge_site_host::funding::{LeaseBook, PublishFunding, TopupReason};
+use starbridge_site_host::funding::{LeaseBook, PublishFunding};
+use starbridge_site_host::gateway::{self, GatewayRequest};
+use starbridge_site_host::limits::{PublishLimits, RateLimiter};
 use starbridge_site_host::publish::{HttpMethod, SitePublishHandler, WebResponse};
 use starbridge_site_host::registry::{
     HostConfig, PUBLISH_CAP_PREFIX, SiteRegistry, verify_receipt,
 };
 use starbridge_site_host::site::SiteContent;
-use starbridge_site_host::{LaunchImage, LaunchListing, landing_page};
+use starbridge_site_host::storage::FsStore;
+use starbridge_site_host::{LaunchImage, LaunchListing, cli, landing_page};
 
 const NOW: u64 = 1_000;
 
@@ -25,11 +28,15 @@ fn cid(n: u8) -> CellId {
     CellId::from_bytes([n; 32])
 }
 
-/// A funded hosting lease bound to `owner`: rent 100 / 50 blocks from 1000.
+/// A funded, rent-CURRENT hosting lease bound to `owner`: rent 100 / 50 blocks from
+/// 1000, with period 0 metered (paid) so a clock-driven lapse check at 1000 leaves it
+/// live.
 fn funded_lease() -> HostedLease {
     let cell = Cell::with_balance([7u8; 32], [9u8; 32], 10_000);
     let terms = LeaseTerms::new(cid(2), cid(7), cid(9), 100, 50, 1000, 0);
-    HostedLease::open(cell, terms, field_from_u64(0)).unwrap()
+    let mut lease = HostedLease::open(cell, terms, field_from_u64(0)).unwrap();
+    lease.meter(0, 1000).unwrap();
+    lease
 }
 
 /// A signed registry, a handler over it under a fixed root, a lease book funding the
@@ -275,4 +282,281 @@ fn launch_landing_page_publishes_through_the_same_turn() {
     );
     assert!(cell.content.resolve("/metadata.json").is_some());
     assert!(cell.content.resolve("/media/launch.png").is_some());
+}
+
+// ============================================================================
+// Unhappy paths + the hardened/matured surface (the gaps that were untested).
+// ============================================================================
+
+#[test]
+fn a_bad_json_body_is_a_400() {
+    let (h, registry, _root, cred) = setup();
+    let r = publish(&h, &cred, "blog", b"{not json");
+    assert_eq!(r.status, 400, "bad body: {}", r.body_str());
+    assert!(registry.get("blog").is_none());
+}
+
+#[test]
+fn an_oversized_body_is_a_413_before_decode() {
+    let root = RootKey::from_seed([7u8; 32]);
+    let registry = Arc::new(SiteRegistry::signed([42u8; 32]));
+    let book = LeaseBook::new();
+    let cred = mint_caps(&root, [format!("{PUBLISH_CAP_PREFIX}blog")], None).encode();
+    book.bind(subject_of(&cred).unwrap(), funded_lease());
+    let funding: Arc<dyn PublishFunding> = Arc::new(book);
+    let h = SitePublishHandler::new(
+        Arc::clone(&registry),
+        Some(root.public()),
+        Some(funding),
+        HostConfig::with_apex("example.test"),
+    )
+    .with_limits(PublishLimits {
+        max_body_bytes: 64,
+        ..PublishLimits::default()
+    });
+
+    let big = vec![b'x'; 65];
+    let r = publish(&h, &cred, "blog", &big);
+    assert_eq!(r.status, 413, "oversized body: {}", r.body_str());
+    assert!(registry.get("blog").is_none(), "nothing published");
+}
+
+#[test]
+fn content_quotas_reject_too_many_assets() {
+    let root = RootKey::from_seed([7u8; 32]);
+    let registry = Arc::new(SiteRegistry::signed([42u8; 32]));
+    let book = LeaseBook::new();
+    let cred = mint_caps(&root, [format!("{PUBLISH_CAP_PREFIX}blog")], None).encode();
+    book.bind(subject_of(&cred).unwrap(), funded_lease());
+    let funding: Arc<dyn PublishFunding> = Arc::new(book);
+    let h = SitePublishHandler::new(
+        Arc::clone(&registry),
+        Some(root.public()),
+        Some(funding),
+        HostConfig::with_apex("example.test"),
+    )
+    .with_limits(PublishLimits {
+        max_asset_count: 1,
+        ..PublishLimits::default()
+    });
+
+    let content = SiteContent::new()
+        .with("/index.html", "a")
+        .with("/style.css", "b");
+    let body = serde_json::to_vec(&content).unwrap();
+    let r = publish(&h, &cred, "blog", &body);
+    assert_eq!(r.status, 413, "too many assets: {}", r.body_str());
+    assert!(registry.get("blog").is_none());
+}
+
+#[test]
+fn per_owner_rate_limit_is_a_429() {
+    let root = RootKey::from_seed([7u8; 32]);
+    let registry = Arc::new(SiteRegistry::signed([42u8; 32]));
+    let book = LeaseBook::new();
+    let cred = mint_caps(&root, [format!("{PUBLISH_CAP_PREFIX}blog")], None).encode();
+    book.bind(subject_of(&cred).unwrap(), funded_lease());
+    let funding: Arc<dyn PublishFunding> = Arc::new(book);
+    let h = SitePublishHandler::new(
+        Arc::clone(&registry),
+        Some(root.public()),
+        Some(funding),
+        HostConfig::with_apex("example.test"),
+    )
+    .with_rate_limiter(Arc::new(RateLimiter::new(1, 100)));
+
+    assert_eq!(publish(&h, &cred, "blog", &bundle()).status, 201);
+    let r = publish(&h, &cred, "blog", &bundle());
+    assert_eq!(r.status, 429, "rate-limited: {}", r.body_str());
+    assert!(
+        r.headers.iter().any(|(k, _)| k == "Retry-After"),
+        "429 carries Retry-After"
+    );
+}
+
+#[test]
+fn the_accept_path_is_metered_and_exhausts() {
+    // A single lease funds a BOUNDED number of publishes — not unlimited free ones.
+    let root = RootKey::from_seed([7u8; 32]);
+    let registry = Arc::new(SiteRegistry::signed([42u8; 32]));
+    let book = LeaseBook::new();
+    let cred = mint_caps(&root, [format!("{PUBLISH_CAP_PREFIX}blog")], None).encode();
+    // A publish allowance of exactly 2.
+    book.bind_with_budget(subject_of(&cred).unwrap(), funded_lease(), 2);
+    let funding: Arc<dyn PublishFunding> = Arc::new(book);
+    let h = SitePublishHandler::new(
+        Arc::clone(&registry),
+        Some(root.public()),
+        Some(funding),
+        HostConfig::with_apex("example.test"),
+    );
+
+    assert_eq!(publish(&h, &cred, "blog", &bundle()).status, 201);
+    assert_eq!(publish(&h, &cred, "blog", &bundle()).status, 201);
+    // Third: allowance spent -> 402 with an Exhausted x402 hint.
+    let r = publish(&h, &cred, "blog", &bundle());
+    assert_eq!(r.status, 402, "exhausted: {}", r.body_str());
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["accepts"][0]["reason"], "Exhausted");
+}
+
+#[test]
+fn republish_overwrites_and_retains_receipt_history() {
+    let (h, registry, _root, cred) = setup();
+    let v1 = SiteContent::new().with("/index.html", "<h1>v1</h1>");
+    let v2 = SiteContent::new().with("/index.html", "<h1>v2</h1>");
+    assert_eq!(
+        publish(&h, &cred, "blog", &serde_json::to_vec(&v1).unwrap()).status,
+        201
+    );
+    assert_eq!(
+        publish(&h, &cred, "blog", &serde_json::to_vec(&v2).unwrap()).status,
+        201
+    );
+    // The latest cell is v2 (overwrite); history retains both receipts.
+    assert_eq!(
+        registry.get("blog").unwrap().serve("/").body,
+        b"<h1>v2</h1>"
+    );
+    let hist = registry.receipt_history("blog");
+    assert_eq!(hist.len(), 2, "republish retained prior receipt");
+    assert!(hist[1].seq > hist[0].seq, "monotonic order");
+}
+
+#[test]
+fn unpublish_deletes_cap_and_owner_gated_and_receipted() {
+    let (h, registry, root, cred) = setup();
+    assert_eq!(publish(&h, &cred, "blog", &bundle()).status, 201);
+    assert!(registry.get("blog").is_some());
+
+    // A different principal (valid cap for `blog` minted by the SAME root) cannot
+    // delete a site it does not own.
+    let other = mint_caps(&root, [format!("{PUBLISH_CAP_PREFIX}blog")], None).encode();
+    // (A freshly minted cap has a different subject than `cred`.)
+    if subject_of(&other).unwrap() != subject_of(&cred).unwrap() {
+        let r = h.respond(
+            HttpMethod::Delete,
+            "/v1/sites/blog/publish",
+            Some(&other),
+            &[],
+            NOW,
+        );
+        assert_eq!(r.status, 403, "non-owner delete refused: {}", r.body_str());
+        assert!(registry.get("blog").is_some(), "still published");
+    }
+
+    // The owner deletes it; a signed tombstone receipt is returned.
+    let r = cli::unpublish_site(&h, &cred, "blog", NOW);
+    assert_eq!(r.status, 200, "unpublish: {}", r.body_str());
+    let v: serde_json::Value = serde_json::from_slice(&r.body).unwrap();
+    assert_eq!(v["unpublished"], true);
+    assert_eq!(v["receipt"]["deleted"], true);
+    assert!(registry.get("blog").is_none(), "deleted");
+
+    // The delete tombstone re-witnesses under the registry key.
+    let signer = registry.receipt_signer().unwrap();
+    let tomb = registry.receipt("blog").unwrap();
+    assert!(tomb.deleted && verify_receipt(&tomb, signer));
+}
+
+#[test]
+fn concurrent_publishers_get_unique_monotonic_receipts() {
+    use std::thread;
+    let (h, registry, _root, cred) = setup();
+    let h = Arc::new(h);
+    let cred = Arc::new(cred);
+
+    let n = 16;
+    let mut handles = Vec::new();
+    for _ in 0..n {
+        let h = Arc::clone(&h);
+        let cred = Arc::clone(&cred);
+        handles.push(thread::spawn(move || {
+            let r = publish(&h, &cred, "blog", &bundle());
+            r.status
+        }));
+    }
+    for handle in handles {
+        assert_eq!(handle.join().unwrap(), 201, "concurrent publish ok");
+    }
+    // Every concurrent publish left a receipt; all sequences are distinct.
+    let hist = registry.receipt_history("blog");
+    assert_eq!(hist.len(), n, "one receipt per concurrent publish");
+    let mut seqs: Vec<u64> = hist.iter().map(|r| r.seq).collect();
+    seqs.sort_unstable();
+    seqs.dedup();
+    assert_eq!(
+        seqs.len(),
+        n,
+        "sequences are unique (durable monotonic seq)"
+    );
+}
+
+#[test]
+fn a_durable_fs_backend_survives_a_restart() {
+    let dir = std::env::temp_dir().join(format!("site-host-it-fs-{}-{}", std::process::id(), NOW));
+    let _ = std::fs::remove_dir_all(&dir);
+    let root = RootKey::from_seed([7u8; 32]);
+    let cred = mint_caps(&root, [format!("{PUBLISH_CAP_PREFIX}blog")], None).encode();
+
+    // Publish through a signed, FS-backed registry.
+    {
+        let store = Arc::new(FsStore::open(&dir).unwrap());
+        let registry = Arc::new(SiteRegistry::signed_with_backend([42u8; 32], store));
+        assert!(registry.is_durable());
+        let book = LeaseBook::new();
+        book.bind(subject_of(&cred).unwrap(), funded_lease());
+        let funding: Arc<dyn PublishFunding> = Arc::new(book);
+        let h = SitePublishHandler::new(
+            Arc::clone(&registry),
+            Some(root.public()),
+            Some(funding),
+            HostConfig::with_apex("example.test"),
+        );
+        assert_eq!(publish(&h, &cred, "blog", &bundle()).status, 201);
+    }
+
+    // "Restart": a fresh registry over the same data dir still has the site + receipt.
+    let store = Arc::new(FsStore::open(&dir).unwrap());
+    let registry = SiteRegistry::signed_with_backend([42u8; 32], store);
+    let cell = registry.get("blog").expect("site survived the restart");
+    assert_eq!(cell.serve("/").body, b"<h1>published</h1>");
+    assert!(cell.verify_commitment(), "serve == commit after reload");
+    let signer = registry.receipt_signer().unwrap();
+    let receipt = registry.receipt("blog").expect("receipt survived");
+    assert!(
+        verify_receipt(&receipt, signer),
+        "durable receipt re-witnesses"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[test]
+fn a_gateway_request_and_the_cli_drive_the_same_turn() {
+    let (h, registry, _root, cred) = setup();
+
+    // The gateway adapter: a raw HTTP request -> respond().
+    let req = GatewayRequest::post_publish("/v1/sites/blog/publish", &cred, bundle());
+    let via_gateway = gateway::handle(&h, &req, NOW);
+    assert_eq!(
+        via_gateway.status,
+        201,
+        "gateway: {}",
+        via_gateway.body_str()
+    );
+    let g: serde_json::Value = serde_json::from_slice(&via_gateway.body).unwrap();
+
+    // The CLI adapter drives the SAME turn (republish, so it succeeds too).
+    let via_cli = cli::publish_bytes(&h, &cred, "blog", &bundle(), NOW);
+    assert_eq!(via_cli.status, 201, "cli: {}", via_cli.body_str());
+    let c: serde_json::Value = serde_json::from_slice(&via_cli.body).unwrap();
+
+    // Both produced the same content_root + url for the same bundle.
+    assert_eq!(g["content_root"], c["content_root"]);
+    assert_eq!(g["url"], c["url"]);
+    assert_eq!(
+        registry.receipt_history("blog").len(),
+        2,
+        "both wrote receipts"
+    );
 }
