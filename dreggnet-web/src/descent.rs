@@ -51,7 +51,7 @@ use spween_dregg::{
 use ugc_dregg::{Completion, Universe, record_playthrough, verify_completion};
 
 use crate::descent_store::{DescentRunStore, StoredDay, StoredRun};
-use crate::{STYLE, esc};
+use crate::{document, esc};
 
 /// The author label the day's world is published under (a stable content-address input; the daily
 /// world is anonymous-authored on the no-cheat board).
@@ -730,19 +730,27 @@ fn seed_tag(seed: &CommittedSeed) -> String {
 fn leaderboard_page(day: &Day, rows: &[Row]) -> String {
     let mut table = String::new();
     if rows.is_empty() {
+        // An empty board is a STATEMENT, not a blank: it is empty *because* nothing has proven
+        // itself yet. Say so in the panel's own voice rather than dropping a bare sentence.
         table.push_str(
-            "<p class=\"prose\">No verified runs yet — a run appears here only once it re-executes to \
-             the hoard. A forged or unfinished run never ranks.</p>",
+            "<div class=\"deos-section tag-muted\"><h2>No verified runs yet</h2>\
+             <p class=\"prose\">A run appears here only once it re-executes to the hoard. A forged \
+             or unfinished run never ranks.</p></div>",
         );
     } else {
+        // The table scans: a mono tabular-numeral rank (gold/silver/bronze for the podium), the
+        // player as the row's subject, and the proof link as the mint call to action.
         table.push_str(
-            "<table class=\"board\"><thead><tr><th>#</th><th>player</th><th>turns</th>\
+            "<div class=\"table-wrap\"><table class=\"board\">\
+             <thead><tr><th>#</th><th>player</th><th>turns</th>\
              <th>depth</th><th>proof</th></tr></thead><tbody>",
         );
         for (i, r) in rows.iter().enumerate() {
             table.push_str(&format!(
-                "<tr><td>{rank}</td><td>{player}</td><td>{turns}</td><td>{depth}</td>\
-                 <td><a href=\"{href}\">verify this run →</a></td></tr>",
+                "<tr><td class=\"rank\">{rank}</td><td class=\"player\">{player}</td>\
+                 <td class=\"num\">{turns}</td><td class=\"num\">{depth}</td>\
+                 <td><a href=\"{href}\">verify this run \
+                 <span class=\"arr\" aria-hidden=\"true\">→</span></a></td></tr>",
                 rank = i + 1,
                 player = esc(&r.player),
                 turns = r.turns,
@@ -750,29 +758,39 @@ fn leaderboard_page(day: &Day, rows: &[Row]) -> String {
                 href = esc(&run_share_path(&r.run_id)),
             ));
         }
-        table.push_str("</tbody></table>");
+        table.push_str("</tbody></table></div>");
     }
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>The Descent — {title} · leaderboard</title>{style}</head><body>\
-         <main class=\"session\">\
-         <section class=\"deos-section tag-accent\"><h2>The Descent — {title}</h2>\
-         <p class=\"prose\">Day <code>{key}</code> · seed <code>{seed}</code> · warden HP {whp} · \
-         depth {rooms}</p>\
-         <p class=\"prose\">The no-cheat leaderboard. Every row is <strong>re-verified on this \
-         request</strong> — re-executed from its recorded moves against a fresh identically-seeded \
-         world, required to reach the hoard. A forged or unfinished run does not appear.</p></section>\
+    let body = format!(
+        "<main class=\"session\">\
+         <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
+         <p class=\"eyebrow\">Re-verified on this request</p>\
+         <h1>The Descent — {title}</h1>\
+         <p class=\"deck\">The no-cheat leaderboard. Every row below was re-executed from its \
+         recorded moves against a fresh, identically-seeded world and required to reach the hoard. \
+         A forged or unfinished run does not appear — it is excluded by re-verification, not by \
+         trusting a stored flag.</p></div>\
+         <div class=\"kv\">\
+         <div><p class=\"k\">Day</p><p class=\"v mono\">{key}</p></div>\
+         <div><p class=\"k\">Seed</p><p class=\"v mono\">{seed}</p></div>\
+         <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp}</p></div>\
+         <div><p class=\"k\">Depth</p><p class=\"v mono\">{rooms}</p></div>\
+         </div>\
          {table}\
-         <p class=\"verify ok\">Independent by construction — open any run to re-verify it yourself.</p>\
-         </main></body></html>",
+         <div class=\"receipt ok\"><span class=\"dot\"></span>\
+         <span class=\"label\">independent by construction</span>\
+         <span class=\"detail\">open any run to re-verify it yourself</span></div>\
+         </main>",
         title = esc(&day.day.title),
         key = esc(&day.key),
         seed = esc(&seed_tag(&day.seed)),
         whp = day.day.warden_hp,
         rooms = day.day.deepening_rooms,
-        style = STYLE,
         table = table,
+    );
+    document(
+        &format!("The Descent — {} · leaderboard", day.day.title),
+        "descent",
+        &body,
     )
 }
 
@@ -788,22 +806,30 @@ fn run_card_page(
     depth: u64,
     gold: u64,
 ) -> String {
-    // The verification panel — the whole point of the page.
+    // THE VERDICT — the whole point of the page, so it is built like a certificate rather than
+    // another look-alike navy panel: a stamped PASS/FAIL badge over a mint/rose field. (The old
+    // markup reached for inline `style="border-color:#833"` / `style="color:#f77"` hacks; the
+    // states are real classes now.)
     let panel = if verified {
-        "<section class=\"deos-section tag-genuine\"><h2>Independent verification — PASS</h2>\
-         <p class=\"prose\">This run was <strong>re-executed on this request</strong>: a fresh, \
+        "<section class=\"verdict pass\">\
+         <h2><span class=\"stamp\">PASS</span>Independent verification — PASS</h2>\
+         <p>This run was <strong>re-executed on this request</strong>: a fresh, \
          identically-seeded world was deployed and driven through the recorded moves, and the \
          committed receipt chain re-verified (chain-linkage + replay). You are not trusting a stored \
          result — you are seeing the run <strong>proven</strong>.</p>\
-         <p class=\"verify ok\">verified by re-execution: <strong>yes</strong></p></section>"
+         <p class=\"receipt ok\" style=\"margin-top:.8rem\"><span class=\"dot\"></span>\
+         <span class=\"label\">verified by re-execution</span>\
+         <span class=\"verdict\">yes</span></p></section>"
             .to_string()
     } else {
-        "<section class=\"deos-section tag-accent\" style=\"border-color:#833\">\
-         <h2 style=\"color:#f77\">Independent verification — FAIL</h2>\
-         <p class=\"prose\">Re-execution against a fresh identically-seeded world <strong>rejected</strong> \
+        "<section class=\"verdict fail\">\
+         <h2><span class=\"stamp\">FAIL</span>Independent verification — FAIL</h2>\
+         <p>Re-execution against a fresh identically-seeded world <strong>rejected</strong> \
          this record: the recorded moves do not honestly reproduce the committed chain. This run is \
          <strong>forged or tampered</strong> — its claimed outcome below is NOT proven.</p>\
-         <p class=\"verify refused\">verified by re-execution: <strong>NO</strong></p></section>"
+         <p class=\"receipt refused\" style=\"margin-top:.8rem\"><span class=\"dot\"></span>\
+         <span class=\"label\">verified by re-execution</span>\
+         <span class=\"verdict\">NO</span></p></section>"
             .to_string()
     };
 
@@ -831,20 +857,30 @@ fn run_card_page(
     };
     let turns = run.play.steps.len() + 1; // genesis + committed steps
 
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>The Descent — {player}'s run</title>{style}</head><body>\
+    // The run's facts as a key/value grid — labelled, scannable, the verifiable material in the
+    // mono voice. The old page stacked them as five `Outcome: …` / `Status: …` paragraphs, which
+    // is exactly the debug-dump register this pass is here to kill.
+    let body = format!(
+        "<div class=\"crumb\"><a href=\"/descent/leaderboard?day={key}\">← the no-cheat \
+         leaderboard</a><span class=\"sep\">·</span><strong>{player}</strong>\
+         <span class=\"sep\">·</span><span class=\"sid\">a shared run</span></div>\
          <main class=\"session\">\
-         <section class=\"deos-section tag-accent\"><h2>The Descent — {title}</h2>\
-         <p class=\"prose\"><strong>{player}</strong> · day <code>{key}</code> · seed \
-         <code>{seed}</code></p>\
-         <p class=\"prose\">Character: level {level} · {class}</p>\
-         <p class=\"prose\">Outcome: <strong>{outcome}</strong></p>\
-         <p class=\"prose\">Status: {alive} · {turns} verified turns · warden HP {whp}</p></section>\
+         <div class=\"page-head\" style=\"padding-top:var(--s4)\">\
+         <p class=\"eyebrow\">The Descent — {title}</p>\
+         <h1>{player}'s run</h1>\
+         <p class=\"deck\">{outcome}</p></div>\
+         <div class=\"kv\">\
+         <div><p class=\"k\">Day</p><p class=\"v mono\">{key}</p></div>\
+         <div><p class=\"k\">Seed</p><p class=\"v mono\">{seed}</p></div>\
+         <div><p class=\"k\">Character</p><p class=\"v\">level {level} · {class}</p></div>\
+         <div><p class=\"k\">Status</p><p class=\"v\">{alive}</p></div>\
+         <div><p class=\"k\">Chain</p><p class=\"v mono\">{turns} verified turns</p></div>\
+         <div><p class=\"k\">Warden HP</p><p class=\"v mono\">{whp}</p></div>\
+         </div>\
          {panel}\
-         <p class=\"verify\"><a href=\"/descent/leaderboard?day={key}\">← today's no-cheat leaderboard</a></p>\
-         </main></body></html>",
+         <a class=\"backlink\" href=\"/descent/leaderboard?day={key}\">← today's no-cheat \
+         leaderboard</a>\
+         </main>",
         player = esc(&run.player),
         title = esc(&day.day.title),
         key = esc(&day.key),
@@ -855,8 +891,12 @@ fn run_card_page(
         alive = alive,
         turns = turns,
         whp = day.day.warden_hp,
-        style = STYLE,
         panel = panel,
+    );
+    document(
+        &format!("The Descent — {}'s run", run.player),
+        "descent",
+        &body,
     )
 }
 
@@ -866,23 +906,22 @@ fn leaderboard_missing(key: Option<&str>) -> String {
         Some(k) => format!("No day <code>{}</code> is open.", esc(k)),
         None => "No daily descent is open yet.".to_string(),
     };
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <title>The Descent — leaderboard</title>{style}</head><body>\
-         <main class=\"session\"><div class=\"notice refused\">{what}</div></main></body></html>",
-        style = STYLE,
-        what = what,
-    )
+    let body = format!(
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">{what}</div>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/\">← Back to DreggNet Cloud</a></p>\
+         </main>",
+    );
+    document("The Descent — leaderboard", "descent", &body)
 }
 
 /// The page shown for an unknown run id.
 fn run_missing(id: &str) -> String {
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <title>The Descent — unknown run</title>{style}</head><body>\
-         <main class=\"session\"><div class=\"notice refused\">No such run <code>{id}</code>.</div>\
-         </main></body></html>",
-        style = STYLE,
+    let body = format!(
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No such run \
+         <code>{id}</code>.</div>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/descent\">← The no-cheat leaderboard</a>\
+         </p></main>",
         id = esc(id),
-    )
+    );
+    document("The Descent — unknown run", "descent", &body)
 }

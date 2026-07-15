@@ -45,7 +45,7 @@ use dreggnet_sprite::{render, render_gear};
 /// without a direct `dreggnet-sprite` dependency.
 pub use dreggnet_sprite::AssetKind;
 
-use crate::{STYLE, esc};
+use crate::{document, esc};
 
 /// Parse a sprite `kind` path/handle segment into an [`AssetKind`]. `gear` / `blade` / `weapon` →
 /// [`AssetKind::Gear`]; `card` / `sigil` / `emblem` → [`AssetKind::Card`]; anything else → `None`.
@@ -218,20 +218,17 @@ pub fn gallery_page() -> String {
     for label in GALLERY_CARDS {
         cells.push_str(&gallery_cell(AssetKind::Card, label));
     }
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>DreggNet Cloud — sprite gallery</title>{style}</head><body>\
-         <div class=\"crumb\"><a href=\"/\">← home</a> · <strong>sprite gallery</strong></div>\
-         <main class=\"catalog\"><h1>Deterministic sprite art</h1>\
-         <p class=\"prose\">Every asset is a blake3 content address; its sprite is a pure, \
+    let body = format!(
+        "<main class=\"catalog\"><div class=\"page-head\">\
+         <p class=\"eyebrow\">Deterministic art</p>\
+         <h1>Every sprite is a function of its address.</h1>\
+         <p class=\"deck\">Every asset is a blake3 content address, and its sprite is a pure, \
          byte-identical function of that address (<code>dreggnet-sprite</code>). Same asset ⇒ same \
          art — reload and re-derive the identical SVG. The catalog paints an item's \
-         <code>Tile</code> node with this same renderer.</p>\
-         <div class=\"sprite-grid\">{cells}</div></main></body></html>",
-        style = STYLE,
-        cells = cells,
-    )
+         <code>Tile</code> node with this same renderer.</p></div>\
+         <div class=\"sprite-grid\">{cells}</div></main>",
+    );
+    document("DreggNet Cloud — sprite gallery", "gallery", &body)
 }
 
 /// One gallery cell — the sprite plus its kind + short asset address.

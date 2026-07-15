@@ -32,6 +32,19 @@ async fn get(app: &axum::Router, uri: &str) -> (StatusCode, String) {
     (status, String::from_utf8(bytes.to_vec()).unwrap())
 }
 
+/// **Does `player` actually RANK on this leaderboard?** — i.e. does the board carry a ranked row
+/// whose player cell is that name.
+///
+/// A bare `board.contains("eve")` cannot answer that: the page is a whole HTML document, so the
+/// name only has to appear *somewhere* — and `eve` is a substring of ordinary English ("every",
+/// "never") and of the CSS property `pointer-events`, both of which legitimately occur in the
+/// inlined stylesheet. That made the negative assertion pass for a reason unrelated to ranking, and
+/// fail the moment the page's prose or CSS changed. Matching the rendered player cell asks the
+/// question the test means to ask, and cannot be satisfied by the page's chrome.
+fn ranks(board: &str, player: &str) -> bool {
+    board.contains(&format!("class=\"player\">{player}<"))
+}
+
 async fn post_json(app: &axum::Router, uri: &str, body: serde_json::Value) -> (StatusCode, String) {
     let resp = app
         .clone()
@@ -189,7 +202,7 @@ async fn the_run_ingest_endpoint_accepts_honest_and_rejects_forged() {
 
     let (_, board) = get(&app, "/descent/leaderboard?day=today").await;
     assert!(
-        board.contains("zoe"),
+        ranks(&board, "zoe"),
         "the ingested honest run now appears on the leaderboard: {board}"
     );
 
@@ -234,7 +247,7 @@ async fn the_run_ingest_endpoint_accepts_honest_and_rejects_forged() {
     // ── the forgers never made it onto the no-cheat board.
     let (_, board) = get(&app, "/descent/leaderboard?day=today").await;
     assert!(
-        !board.contains("mallory") && !board.contains("eve"),
+        !ranks(&board, "mallory") && !ranks(&board, "eve"),
         "no forged run ranks (fail-closed): {board}"
     );
 }

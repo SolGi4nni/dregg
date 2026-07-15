@@ -460,50 +460,33 @@ async fn get_verify(
 // Rendering — the deos ViewNode → HTML walk, and the page chrome.
 // ─────────────────────────────────────────────────────────────────────────────
 
-/// Wrap an HTML fragment in a full document with the notice banner + the live verify line.
+/// Wrap an HTML fragment in the full product document: the breadcrumb, the notice banner (*what
+/// just happened*), the surface itself, and the receipt strip (*the chain, re-verified by replay,
+/// right now*).
 fn page(id: &SessionId, notice: Option<&str>, fragment: &str, verify: &VerifyReport) -> String {
-    let notice_html = notice
-        .map(|n| {
-            let cls = if n.starts_with("Refused") {
-                "notice refused"
-            } else {
-                "notice ok"
-            };
-            format!("<div class=\"{cls}\">{}</div>", esc(n))
-        })
-        .unwrap_or_default();
-    let verify_cls = if verify.verified { "ok" } else { "refused" };
-    let verify_html = format!(
-        "<div class=\"verify {cls}\">chain re-verified by replay: <strong>{v}</strong> \
-         ({turns} verified turns) — {detail}</div>",
-        cls = verify_cls,
-        v = if verify.verified { "yes" } else { "NO" },
-        turns = verify.turns,
-        detail = esc(&verify.detail),
-    );
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>DreggNet Cloud — session {id}</title>{style}</head><body>\
-         <main class=\"session\">{notice}{fragment}{verify}</main></body></html>",
+    let body = format!(
+        "<div class=\"crumb\"><a href=\"/offerings\">← all offerings</a>\
+         <span class=\"sep\">·</span><strong>The Warden's Keep</strong>\
+         <span class=\"sep\">·</span><span class=\"sid\">session {id}</span></div>\
+         <main class=\"session\">{notice}{fragment}{receipt}</main>",
         id = esc(&id.0),
-        style = STYLE,
-        notice = notice_html,
+        notice = notice_html(notice),
         fragment = fragment,
-        verify = verify_html,
-    )
+        receipt = receipt_html(verify, "chain re-verified by replay"),
+    );
+    document(&format!("DreggNet Cloud — session {}", id.0), "", &body)
 }
 
 /// The page shown for a `POST` / verify against a session id that is not open.
 fn page_missing(id: &SessionId) -> String {
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <title>DreggNet Cloud — session {id}</title>{style}</head><body>\
-         <main class=\"session\"><div class=\"notice refused\">No such session — \
-         GET /session/{id} to open it.</div></main></body></html>",
+    let body = format!(
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No such session — \
+         GET /session/{id} to open it.</div>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse the offerings</a></p>\
+         </main>",
         id = esc(&id.0),
-        style = STYLE,
-    )
+    );
+    document(&format!("DreggNet Cloud — session {}", id.0), "", &body)
 }
 
 /// The web identity for a request — the `?user=` param, else the `dregg_user` cookie, else
@@ -555,97 +538,458 @@ fn esc(s: &str) -> String {
         .replace('"', "&quot;")
 }
 
-/// The page's inlined stylesheet (self-contained; no external assets). The board (`.coordgrid` +
-/// `.cell` + `tag-*`) ports deos-view's `.deos-coordgrid`/`.deos-cell` design onto this SERVER-FORM
-/// render path (a centered framed grid of square, tinted, clickable cells) — the surface a
-/// no-JS demo user actually sees. The palette is the catalog #0b1020 navy theme.
-const STYLE: &str = "<style>\
-:root{--bg:#0b1020;--fg:#dfe8fb;--muted:#8fa2c4;--accent:#5cc9ff;--accent-ink:#04121f;--border:#243352;--panel:#111a2e;--card:#0f1830;--good:#48d597;--warn:#f2c94c;--bad:#f8737f;--head:#7fdfe0}\
-*{box-sizing:border-box}\
-body{font-family:ui-sans-serif,system-ui,-apple-system,sans-serif;background:radial-gradient(1200px 620px at 50% -10%,#101a34,var(--bg)) fixed,var(--bg);color:var(--fg);margin:0;padding:2rem 1.25rem 3rem;line-height:1.55}\
-.session{max-width:44rem;margin:0 auto}\
-.deos-section{border:1px solid var(--border);border-radius:12px;padding:1rem 1.25rem;margin:1rem 0;background:linear-gradient(180deg,#131f38,var(--panel));box-shadow:0 8px 30px -22px #000,inset 0 1px 0 rgba(255,255,255,.02)}\
-.deos-section h2{margin:0 0 .55rem;font-size:1.02rem;letter-spacing:.01em;color:var(--head);display:flex;align-items:center;gap:.45rem}\
-.deos-section h2::before{content:\"\";width:.5rem;height:.5rem;border-radius:2px;background:currentColor;opacity:.7}\
-.tag-accent h2{color:var(--accent)}.tag-genuine h2,.tag-good h2{color:var(--good)}.tag-warn h2{color:var(--warn)}.tag-muted h2{color:var(--muted);font-weight:600}\
-.prose{margin:.4rem 0;color:#d7e2fb}\
-.prose code{background:#0a1326;border:1px solid var(--border);border-radius:5px;padding:.05rem .35rem;font-size:.88em;color:#bfe0ff}\
-.affordances{display:flex;flex-direction:column;gap:.5rem;margin:.4rem 0}\
-.affordance{margin:0}\
-.affordance button{width:100%;text-align:left;padding:.62rem .95rem;border-radius:9px;border:1px solid #2f4d3f;background:linear-gradient(180deg,#14261d,#0f1c17);color:#e6fff2;font:inherit;font-size:.98rem;font-weight:600;cursor:pointer;transition:border-color .12s,background .12s,transform .07s,box-shadow .12s}\
-.affordance button:hover{border-color:var(--good);background:linear-gradient(180deg,#1a3a2a,#123);transform:translateY(-1px);box-shadow:0 6px 18px -10px var(--good)}\
-.affordance button:active{transform:translateY(0)}\
-.affordance.dimmed button{border-color:#3a2a2a;color:#8a7676;background:#1a1414;cursor:not-allowed;opacity:.6;box-shadow:none;transform:none}\
-.affordance input.arg{width:100%;margin-bottom:.4rem;padding:.45rem .65rem;border-radius:8px;border:1px solid var(--border);background:#0a1326;color:var(--fg);font:inherit;font-size:.95rem}\
-.affordance input.arg:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 2px rgba(92,201,255,.2)}\
-.notice{padding:.65rem .95rem;border-radius:9px;margin-bottom:1rem;font-weight:600;border:1px solid var(--border)}\
-.notice.ok{background:rgba(72,213,151,.1);color:#9df3c6;border-color:#2f6b4d}\
-.notice.refused{background:rgba(248,115,127,.1);color:#ffb0b6;border-color:#7a3a3f}\
-.verify{margin-top:1rem;font-size:.85rem;color:var(--muted)}\
-.verify.ok strong{color:var(--good)}.verify.refused strong{color:var(--bad)}\
-.catalog{max-width:44rem;margin:0 auto}\
-.catalog-group{margin:1.6rem 0}\
-.catalog-group>.group-h{font-size:1.06rem;color:var(--head);margin:.2rem 0 .35rem;padding-bottom:.35rem;border-bottom:1px solid var(--border);display:flex;align-items:center;gap:.45rem}\
-.catalog-group>.group-h::before{content:\"\";width:.5rem;height:.5rem;border-radius:2px;background:var(--accent);opacity:.85}\
-.catalog-group>.prose{color:var(--muted);font-size:.9rem;margin:.15rem 0 .7rem}\
-.catalog h1,.session h1{font-size:1.5rem;letter-spacing:-.01em;color:var(--head);margin:.2rem 0 1rem}\
-.offering-card{border:1px solid var(--border);border-radius:12px;padding:1.1rem 1.3rem;margin:1rem 0;background:linear-gradient(180deg,#131f38,var(--panel));box-shadow:0 8px 30px -22px #000;transition:border-color .12s,transform .12s}\
-.offering-card:hover{border-color:var(--accent);transform:translateY(-2px)}\
-.offering-card h2{margin:0 0 .35rem;font-size:1.12rem;color:var(--accent)}\
-.offering-card a.play{display:inline-block;margin-top:.65rem;padding:.5rem 1rem;border-radius:9px;border:1px solid #2f4d3f;background:linear-gradient(180deg,#14261d,#0f1c17);color:#e6fff2;font-weight:600;text-decoration:none;transition:border-color .12s,background .12s,transform .07s}\
-.offering-card a.play:hover{border-color:var(--good);background:#1a3a2a;transform:translateY(-1px)}\
-.crumb{max-width:44rem;margin:0 auto 1rem;font-size:.85rem;color:var(--muted)}\
-.crumb a{color:var(--head);text-decoration:none}.crumb a:hover{text-decoration:underline}\
-table.board{width:100%;border-collapse:collapse;margin:1rem 0;font-size:.95rem}\
-table.board th,table.board td{text-align:left;padding:.55rem .65rem;border-bottom:1px solid var(--border)}\
-table.board th{color:var(--head);font-size:.78rem;text-transform:uppercase;letter-spacing:.06em}\
-table.board tr:hover td{background:rgba(92,201,255,.04)}\
-table.board td a{color:var(--good);text-decoration:none;font-weight:600}table.board td a:hover{text-decoration:underline}\
-/* THE GAME BOARD — a centered, framed grid of square, tinted, clickable cells (ported from deos-view). */\
-.coordgrid{display:grid;gap:.35rem;width:100%;max-width:24rem;margin:1rem auto;padding:.55rem;background:#0a1326;border:1px solid var(--border);border-radius:14px;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35),0 10px 30px -18px #000}\
-.coordgrid .cell{display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-width:1.9rem;border:1px solid var(--border);border-radius:8px;background:#0d1830;color:var(--muted);font-size:1.25rem;font-weight:700;line-height:1;margin:0;transition:border-color .12s,background .12s,color .12s,transform .07s,box-shadow .12s}\
-.coordgrid form.cell{padding:0;cursor:pointer}\
-.coordgrid form.cell button{width:100%;height:100%;display:flex;align-items:center;justify-content:center;border:0;border-radius:inherit;background:transparent;color:inherit;font:inherit;font-size:1.25rem;font-weight:700;cursor:pointer;padding:0}\
-.coordgrid form.cell:hover{border-color:var(--accent);background:#15315a;color:#fff;transform:translateY(-1px);box-shadow:0 5px 16px -7px var(--accent)}\
-.coordgrid form.cell:active{transform:translateY(0)}\
-.coordgrid .cell.highlighted{color:#eaf5ff;border-color:var(--good);box-shadow:inset 0 0 0 1px var(--good),0 0 12px -4px var(--good)}\
-.coordgrid form.cell.highlighted:hover{border-color:var(--good);box-shadow:0 5px 16px -6px var(--good)}\
-.coordgrid .cell.tag-good{color:var(--good)}\
-.coordgrid .cell.tag-warn{color:var(--warn);border-color:var(--warn);box-shadow:inset 0 0 0 1px var(--warn)}\
-.coordgrid .cell.tag-accent{color:#f2fbff;border-color:var(--accent);background:radial-gradient(circle at 50% 42%,rgba(92,201,255,.34),#0d1830 72%);box-shadow:inset 0 0 0 1px var(--accent),0 0 14px -4px var(--accent)}\
-.coordgrid .cell.tag-muted{color:#4d6187}\
-/* THE GOAL SQUARE — a teal dashed objective ring; distinct from a plain vacant (dim) cell and */\
-/* still legible when the goal is also a lit legal-move target (green). */\
-.coordgrid .cell.goal{border:1px dashed var(--head);color:var(--head);background:radial-gradient(circle at 50% 50%,rgba(127,223,224,.14),#0d1830 70%);box-shadow:inset 0 0 0 1px rgba(127,223,224,.28)}\
-.coordgrid .cell.goal.highlighted,.coordgrid form.cell.goal:hover{border-style:dashed;border-color:var(--good);box-shadow:inset 0 0 0 1px var(--good),0 0 12px -4px var(--good)}\
-/* TABLES / ROWS / LISTS — a Table paints as a bordered, row-divided grid (its Rows are flex */\
-/* columns), so a surface's tabular state reads as a table, not a wall of stacked paragraphs. */\
-.deos-table{border:1px solid var(--border);border-radius:10px;overflow:hidden;margin:.6rem 0;background:#0c1526}\
-.deos-row{display:flex;gap:.6rem;align-items:center;padding:.42rem .7rem}\
-.deos-row>*{flex:1 1 0;min-width:0;margin:0}\
-.deos-row>.pill,.deos-row>.icon{flex:0 0 auto}\
-.deos-table>.deos-row{border-bottom:1px solid var(--border)}\
-.deos-table>.deos-row:last-child{border-bottom:0}\
-.deos-table>.deos-row:hover{background:rgba(92,201,255,.04)}\
-.deos-row.header{background:#0a1326;text-transform:uppercase;letter-spacing:.05em;font-size:.74rem;color:var(--head);font-weight:700}\
-.deos-list{display:flex;flex-direction:column;gap:.3rem;margin:.5rem 0;padding:.5rem .7rem;border:1px solid var(--border);border-radius:10px;background:#0c1526}\
-.deos-list .prose,.deos-row .prose{margin:0}\
-.pill{display:inline-block;padding:.18rem .6rem;margin:.15rem .35rem .15rem 0;border-radius:999px;border:1px solid var(--border);background:#0a1326;font-size:.8rem;font-weight:600;color:var(--muted)}\
-.pill.tag-accent{color:var(--accent);border-color:#2b5f7a}.pill.tag-good{color:var(--good);border-color:#2f6b4d}.pill.tag-warn{color:var(--warn);border-color:#6b5b24}\
-.icon{font-size:1.05rem}.icon.tag-accent{color:var(--accent)}.icon.tag-good{color:var(--good)}.icon.tag-warn{color:var(--warn)}\
-hr{border:0;border-top:1px solid var(--border);margin:1rem 0}\
-/* SPRITE ART — the deterministic SVG tile + gallery. */\
-.sprite-tile{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--border);border-radius:12px;background:#0a1326;padding:.35rem;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}\
-.sprite-tile svg{width:100%;height:100%;display:block}\
-.sprite-tile.placeholder{color:var(--muted);font-size:.8rem;padding:.6rem;min-width:4rem;min-height:4rem}\
-.sprite-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));gap:1rem;margin:1.25rem 0}\
-.sprite-cell{margin:0;padding:.7rem;border:1px solid var(--border);border-radius:12px;background:linear-gradient(180deg,#131f38,var(--panel));text-align:center;box-shadow:0 8px 30px -22px #000;transition:border-color .12s,transform .12s}\
-.sprite-cell:hover{border-color:var(--accent);transform:translateY(-2px)}\
-.sprite-art{width:100%;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center}\
-.sprite-art svg{width:100%;height:100%;display:block}\
-.sprite-cell figcaption{margin-top:.5rem;font-size:.82rem;color:var(--muted)}\
-.sprite-cell figcaption code{font-size:.72rem}\
-</style>";
+/// The page's inlined stylesheet — **the design system** for every served surface
+/// (self-contained; no external assets, no client JS).
+///
+/// ## The system
+/// - **Elevation, not one navy.** Five deliberate ink steps (`--ink-950` … `--ink-600`): the page
+///   floor, recessed wells (the board frame, table headers), panels, raised cards. The old sheet
+///   painted every container the same `#111a2e`; depth now carries hierarchy.
+/// - **The palette IS the argument.** Colour is semantic, never decorative: `--good` = *proven /
+///   landed / legal*, `--warn` = *sealed / pending / yours*, `--bad` = *refused / failed*,
+///   `--accent` = *the machine* (the automaton, identity, links). A surface's tag (`tag-good`,
+///   `tag-warn`, …) therefore reads as meaning, on the board and in a section header alike.
+/// - **A type scale** (`--t-micro` … `--t-display`, ~1.22 ratio) and a **4px spacing rhythm**
+///   (`--s1` … `--s8`) — every margin/pad is a step on the scale, not an ad-hoc value.
+/// - **The mono voice.** `--mono` carries the verifiable material: hashes, seeds, keys, turn
+///   counters, and the board glyphs (so `R`/`A`/`@`/`·` sit on one optical grid).
+/// - **States.** Every interactive thing has hover / active / `:focus-visible` / disabled. Motion
+///   is short (≤ .18s), clarifies (a cell lift, a banner arrival), and is fully disabled under
+///   `prefers-reduced-motion`.
+/// - **Phone-first.** One breakpoint family at 44rem; the board keeps ≥ 44px touch targets, tables
+///   scroll in their own well, and the shell never scrolls horizontally.
+///
+/// The board (`.coordgrid` + `.cell` + `tag-*`) is the hero: a recessed, checkered well of square
+/// cells where a *piece* reads solid (an untagged cell — previously dimmed to `--muted`, the bug
+/// that made the grid look like a debug dump), *vacant* recedes to a faint small dot, a *legal
+/// target* is a bright mint hint, a *selected* piece rings amber, and the *automaton* glows cyan.
+const STYLE: &str = r##"<style>
+/* ═══ TOKENS ═════════════════════════════════════════════════════════════ */
+:root{
+color-scheme:dark;
+--font:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,"Helvetica Neue",Arial,sans-serif;
+--mono:ui-monospace,SFMono-Regular,"SF Mono",Menlo,Consolas,"Liberation Mono",monospace;
+/* elevation — the page floor up to a raised card */
+--ink-950:#05080f;--ink-900:#080d1a;--ink-850:#0b1020;--ink-800:#0d1425;--ink-700:#121b31;--ink-600:#18243f;
+--line:#243553;--line-soft:#1b2740;--line-lit:#334c73;
+/* ink — three deliberate levels, all AA+ on the floor */
+--fg:#e9eefc;--fg-2:#b8c6e3;--fg-3:#8a9cbe;
+/* semantic — colour means something */
+--accent:#5cc9ff;--good:#4fdca0;--warn:#f5c85c;--bad:#ff7b86;--head:#8ce3e4;--violet:#a78bfa;
+--bg:var(--ink-900);--muted:var(--fg-3);--panel:var(--ink-700);--card:var(--ink-600);--border:var(--line);
+/* type scale */
+--t-micro:.6875rem;--t-sm:.8125rem;--t-body:1rem;--t-lead:1.0625rem;
+--t-h3:1.0625rem;--t-h2:1.25rem;--t-h1:1.75rem;--t-display:clamp(2rem,6.4vw,3.15rem);
+/* rhythm */
+--s1:.25rem;--s2:.5rem;--s3:.75rem;--s4:1rem;--s5:1.5rem;--s6:2rem;--s7:3rem;--s8:4.5rem;
+--r-sm:8px;--r-md:12px;--r-lg:16px;--r-pill:999px;
+--shell:60rem;--measure:46rem;
+--ease:cubic-bezier(.2,.7,.3,1);
+}
+/* ═══ BASE ═══════════════════════════════════════════════════════════════ */
+*{box-sizing:border-box}
+html{-webkit-text-size-adjust:100%}
+body{font-family:var(--font);font-size:var(--t-body);line-height:1.6;color:var(--fg);margin:0;min-height:100vh;
+background:radial-gradient(1100px 560px at 50% -8%,rgba(92,201,255,.10),transparent 62%),radial-gradient(820px 460px at 88% 4%,rgba(79,220,160,.055),transparent 58%),var(--ink-900);
+background-attachment:fixed;-webkit-font-smoothing:antialiased;overflow-x:hidden}
+h1,h2,h3{font-weight:700;letter-spacing:-.015em}
+a{color:var(--accent)}
+code{font-family:var(--mono);font-size:.86em;background:rgba(92,201,255,.09);border:1px solid rgba(92,201,255,.16);border-radius:6px;padding:.08rem .36rem;color:#bfe4ff;white-space:nowrap}
+strong{font-weight:700;color:var(--fg)}
+:focus-visible{outline:2px solid var(--accent);outline-offset:2px;border-radius:4px}
+.sr-only{position:absolute;width:1px;height:1px;padding:0;margin:-1px;overflow:hidden;clip:rect(0 0 0 0);white-space:nowrap;border:0}
+/* ═══ SHELL — the topbar/footer that make every surface ONE product ═══════ */
+.topbar{position:sticky;top:0;z-index:20;background:rgba(5,8,15,.72);border-bottom:1px solid var(--line-soft);backdrop-filter:blur(14px) saturate(150%);-webkit-backdrop-filter:blur(14px) saturate(150%)}
+.topbar-in{max-width:var(--shell);margin:0 auto;padding:.6rem 1.25rem;display:flex;align-items:center;justify-content:space-between;gap:var(--s4)}
+.brand{display:inline-flex;align-items:center;gap:.55rem;text-decoration:none;color:var(--fg);font-weight:700;font-size:var(--t-sm);letter-spacing:.01em;white-space:nowrap}
+.brand svg{width:1.3rem;height:1.3rem;display:block;flex:0 0 auto}
+.brand svg rect{fill:var(--line-lit);transition:fill .2s var(--ease)}
+.brand svg rect.lit{fill:var(--good)}
+.brand:hover svg rect{fill:#43608f}
+.brand:hover svg rect.lit{fill:var(--accent)}
+.topnav{display:flex;gap:.1rem;font-size:var(--t-sm)}
+.topnav a{color:var(--fg-3);text-decoration:none;padding:.35rem .6rem;border-radius:var(--r-sm);font-weight:600;transition:color .14s,background .14s}
+.topnav a:hover{color:var(--fg);background:rgba(255,255,255,.055)}
+.topnav a[aria-current=page]{color:var(--fg);background:rgba(92,201,255,.13);box-shadow:inset 0 0 0 1px rgba(92,201,255,.24)}
+.foot{max-width:var(--shell);margin:var(--s7) auto 0;padding:var(--s5) 1.25rem var(--s6);border-top:1px solid var(--line-soft);display:flex;flex-wrap:wrap;gap:var(--s2) var(--s5);align-items:center;justify-content:space-between;font-size:var(--t-sm);color:var(--fg-3)}
+.foot p{margin:0}
+.foot nav{display:flex;gap:var(--s4)}
+.foot a{color:var(--fg-2);text-decoration:none}
+.foot a:hover{color:var(--accent)}
+.session{max-width:var(--measure);margin:0 auto;padding:var(--s5) 1.25rem 0}
+.catalog{max-width:var(--shell);margin:0 auto;padding:0 1.25rem}
+.crumb{max-width:var(--measure);margin:var(--s5) auto -.35rem;padding:0 1.25rem;font-size:var(--t-sm);color:var(--fg-3);display:flex;flex-wrap:wrap;align-items:center;gap:.45rem}
+.crumb a{color:var(--fg-2);text-decoration:none}
+.crumb a:hover{color:var(--accent)}
+.crumb .sep{color:var(--line-lit)}
+.crumb strong{color:var(--fg)}
+.crumb .sid{font-family:var(--mono);font-size:var(--t-micro);color:var(--fg-3)}
+/* ═══ TYPE ═══════════════════════════════════════════════════════════════ */
+.page-head{padding:var(--s6) 0 var(--s2)}
+.page-head h1{font-size:var(--t-h1);margin:0 0 .5rem;color:var(--fg)}
+.deck{font-size:var(--t-lead);color:var(--fg-2);margin:0;max-width:62ch;line-height:1.62}
+.eyebrow{display:inline-flex;align-items:center;gap:.45rem;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.14em;font-weight:800;color:var(--good);margin:0 0 .85rem}
+.eyebrow::before{content:"";width:.4rem;height:.4rem;border-radius:50%;background:currentColor;box-shadow:0 0 10px currentColor}
+.prose{margin:.45rem 0;color:var(--fg-2)}
+.prose:first-child{margin-top:0}
+.prose:last-child{margin-bottom:0}
+/* A surface's TOP-LEVEL prose is its headline state — the automatafl phase line ("turn 0 · phase: */
+/* COMMIT"), the market's standing. It sits outside every panel, so without this it read as a naked */
+/* stray paragraph. Set as a lead, with the surface's top-level pills as its status chips. */
+.session>.prose{font-size:var(--t-lead);color:var(--fg);font-weight:600;margin:.9rem 0 .5rem;letter-spacing:-.005em}
+.session>.pill{margin-bottom:.6rem}
+/* ═══ LANDING ════════════════════════════════════════════════════════════ */
+.hero{max-width:var(--shell);margin:0 auto;padding:clamp(1.75rem,6vw,3.5rem) 1.25rem var(--s4);display:grid;grid-template-columns:1.12fr .88fr;gap:clamp(1.5rem,4vw,3rem);align-items:center}
+.hero h1{font-size:var(--t-display);line-height:1.02;letter-spacing:-.035em;margin:0 0 .8rem;font-weight:800;background:linear-gradient(176deg,#fff 8%,#a9c4ea);-webkit-background-clip:text;background-clip:text;color:transparent}
+.hero .deck{margin:0 0 var(--s5);max-width:36ch}
+.cta-row{display:flex;flex-wrap:wrap;gap:.65rem}
+.hero-art{display:flex;flex-direction:column;align-items:center;gap:.7rem}
+.hero-art .coordgrid{margin:0;max-width:19rem}
+.hero-cap{margin:0;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.11em;color:var(--fg-3);text-align:center}
+.hero-board .cell{cursor:default}
+.steps{max-width:var(--shell);margin:0 auto;padding:var(--s5) 1.25rem 0;display:grid;grid-template-columns:repeat(3,1fr);gap:.85rem}
+.step{padding:1.05rem 1.15rem;border:1px solid var(--line-soft);border-radius:var(--r-lg);background:linear-gradient(180deg,rgba(24,36,63,.62),rgba(13,20,37,.5))}
+.step .n{display:inline-flex;align-items:center;justify-content:center;width:1.55rem;height:1.55rem;border-radius:var(--r-sm);font-size:var(--t-micro);font-weight:800;font-family:var(--mono);background:rgba(92,201,255,.13);color:var(--accent);box-shadow:inset 0 0 0 1px rgba(92,201,255,.26);margin-bottom:.6rem}
+.step h3{margin:0 0 .25rem;font-size:var(--t-h3);color:var(--fg)}
+.step p{margin:0;font-size:var(--t-sm);color:var(--fg-3);line-height:1.6}
+/* ═══ BUTTONS ════════════════════════════════════════════════════════════ */
+.btn{display:inline-flex;align-items:center;gap:.45rem;padding:.7rem 1.15rem;border-radius:11px;font-family:inherit;font-weight:700;font-size:var(--t-body);text-decoration:none;border:1px solid transparent;cursor:pointer;transition:transform .1s var(--ease),box-shadow .18s,background .18s,border-color .18s,color .18s}
+.btn .arr{transition:transform .18s var(--ease)}
+.btn:hover .arr{transform:translateX(3px)}
+.btn:active{transform:translateY(0) scale(.99)}
+.btn-primary{background:linear-gradient(180deg,#63e9b1,#2fb87e);color:#02251a;box-shadow:0 10px 26px -13px rgba(79,220,160,.75)}
+.btn-primary:hover{transform:translateY(-1px);box-shadow:0 16px 34px -13px rgba(79,220,160,.9)}
+.btn-ghost{border-color:var(--line-lit);color:var(--fg);background:rgba(255,255,255,.035)}
+.btn-ghost:hover{border-color:var(--accent);color:#fff;background:rgba(92,201,255,.1);transform:translateY(-1px)}
+/* ═══ CATALOG ════════════════════════════════════════════════════════════ */
+.catalog-group{margin:var(--s6) 0}
+.catalog-group>.group-h{display:flex;align-items:center;gap:.55rem;font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.15em;font-weight:800;color:var(--fg-2);margin:0;padding:0 0 .6rem;border-bottom:1px solid var(--line-soft)}
+.catalog-group>.group-h::before{content:"";flex:0 0 auto;width:.8rem;height:2px;border-radius:2px;background:var(--shelf,var(--accent));box-shadow:0 0 8px var(--shelf,var(--accent))}
+.catalog-group>.group-h .count{margin-left:auto;font-family:var(--mono);letter-spacing:.04em;color:var(--fg-3);font-weight:700;padding:.1rem .45rem;border:1px solid var(--line-soft);border-radius:var(--r-pill);background:rgba(5,8,15,.5)}
+.catalog-group>.prose{color:var(--fg-3);font-size:var(--t-sm);margin:.6rem 0 0;max-width:70ch}
+.shelf-games{--shelf:var(--good)}
+.shelf-features{--shelf:var(--violet)}
+.shelf-services{--shelf:var(--accent)}
+.shelf-more{--shelf:var(--fg-3)}
+.card-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(15.5rem,1fr));gap:.8rem;margin:var(--s4) 0 0}
+.offering-card{position:relative;display:flex;flex-direction:column;gap:.35rem;padding:1.05rem 1.1rem 1rem;border:1px solid var(--line-soft);border-radius:var(--r-lg);background:linear-gradient(180deg,var(--ink-600),var(--ink-800));box-shadow:0 14px 34px -28px #000,inset 0 1px 0 rgba(255,255,255,.03);overflow:hidden;transition:border-color .18s,transform .18s var(--ease),box-shadow .18s}
+.offering-card::before{content:"";position:absolute;inset:0 0 auto;height:2px;background:linear-gradient(90deg,transparent,var(--shelf,var(--accent)),transparent);opacity:0;transition:opacity .22s}
+.offering-card:hover{border-color:var(--line-lit);transform:translateY(-2px);box-shadow:0 24px 46px -26px #000}
+.offering-card:hover::before{opacity:.9}
+.offering-card:focus-within{border-color:var(--shelf,var(--accent))}
+.offering-card h3{margin:0;font-size:var(--t-h3);color:var(--fg);line-height:1.35}
+.offering-card .tagline{margin:0;font-size:var(--t-sm);color:var(--fg-3);line-height:1.55}
+.offering-card .meta{margin:.15rem 0 0;font-size:var(--t-micro);color:var(--fg-3);display:flex;flex-wrap:wrap;align-items:center;gap:.4rem;font-family:var(--mono)}
+.offering-card .meta .dot{width:.3rem;height:.3rem;border-radius:50%;background:var(--line-lit)}
+.offering-card .meta .live{background:var(--good);box-shadow:0 0 7px var(--good)}
+.offering-card a.play{margin-top:auto;padding-top:.85rem;display:inline-flex;align-items:center;gap:.35rem;color:var(--shelf,var(--accent));font-weight:700;font-size:var(--t-sm);text-decoration:none}
+.offering-card a.play::after{content:"";position:absolute;inset:0;border-radius:inherit}
+.offering-card a.play .arr{transition:transform .18s var(--ease)}
+.offering-card:hover a.play .arr{transform:translateX(3px)}
+/* ═══ SECTIONS — a surface's panels. The tag dot is the instant read. ═════ */
+.deos-section{border:1px solid var(--line-soft);border-radius:var(--r-lg);padding:1.05rem 1.15rem 1.1rem;margin:var(--s4) 0;background:linear-gradient(180deg,rgba(24,36,63,.6),rgba(13,20,37,.48));box-shadow:0 16px 40px -32px #000,inset 0 1px 0 rgba(255,255,255,.03)}
+.deos-section h2{margin:0 0 .55rem;font-size:var(--t-h3);font-weight:700;color:var(--head);display:flex;align-items:center;gap:.5rem;line-height:1.35}
+.deos-section h2::before{content:"";flex:0 0 auto;width:.42rem;height:.42rem;border-radius:50%;background:currentColor;box-shadow:0 0 9px currentColor}
+.deos-section.tag-accent{border-color:rgba(92,201,255,.2)}
+.deos-section.tag-accent h2{color:var(--accent)}
+.deos-section.tag-good,.deos-section.tag-genuine{border-color:rgba(79,220,160,.22)}
+.deos-section.tag-good h2,.deos-section.tag-genuine h2{color:var(--good)}
+.deos-section.tag-warn{border-color:rgba(245,200,92,.22)}
+.deos-section.tag-warn h2{color:var(--warn)}
+.deos-section.tag-bad h2{color:var(--bad)}
+.deos-section.tag-muted h2{color:var(--fg-3)}
+/* ═══ AFFORDANCES ════════════════════════════════════════════════════════ */
+.affordances{display:flex;flex-direction:column;gap:.45rem;margin:.6rem 0 .1rem}
+.affordance{margin:0;display:flex;gap:.45rem;align-items:stretch}
+.affordance button{flex:1 1 auto;text-align:left;padding:.62rem .9rem;border-radius:10px;border:1px solid rgba(79,220,160,.28);background:linear-gradient(180deg,rgba(35,72,56,.75),rgba(16,34,27,.7));color:#dbfced;font:inherit;font-size:var(--t-sm);font-weight:650;cursor:pointer;min-height:2.6rem;transition:border-color .14s,background .14s,transform .09s var(--ease),box-shadow .18s,color .14s}
+.affordance button:hover{border-color:var(--good);background:linear-gradient(180deg,rgba(48,99,76,.9),rgba(20,45,35,.85));color:#fff;transform:translateY(-1px);box-shadow:0 8px 20px -11px var(--good)}
+.affordance button:active{transform:translateY(0)}
+/* Not-yet-available is NEUTRAL, not red: rose means REFUSED (the executor said no). A dimmed */
+/* affordance has not been refused — it is simply not offered on this surface yet. */
+.affordance.dimmed button{border-color:var(--line-soft);color:#5b6884;background:rgba(255,255,255,.02);cursor:not-allowed;box-shadow:none;transform:none;font-weight:600}
+.affordance.dimmed button:hover{transform:none;box-shadow:none;border-color:var(--line-soft);background:rgba(255,255,255,.02);color:#5b6884}
+.affordance input.arg{flex:0 0 5.5rem;width:5.5rem;padding:.45rem .6rem;border-radius:10px;border:1px solid var(--line);background:var(--ink-950);color:var(--fg);font-family:var(--mono);font-size:var(--t-sm);text-align:center;transition:border-color .14s,box-shadow .18s}
+.affordance input.arg:focus{outline:none;border-color:var(--accent);box-shadow:0 0 0 3px rgba(92,201,255,.18)}
+.affordance input.arg:disabled{opacity:.45;cursor:not-allowed}
+/* ═══ NOTICE — what just happened ════════════════════════════════════════ */
+.notice{display:flex;align-items:flex-start;gap:.6rem;padding:.7rem .9rem;border-radius:var(--r-md);margin:0 0 var(--s4);font-size:var(--t-sm);font-weight:600;border:1px solid var(--line);animation:notice-in .26s var(--ease) both}
+.notice::before{flex:0 0 auto;width:1.15rem;height:1.15rem;border-radius:50%;display:grid;place-items:center;font-size:.7rem;font-weight:800;margin-top:.06rem}
+.notice.ok{background:rgba(79,220,160,.09);color:#a9f5d1;border-color:rgba(79,220,160,.32)}
+.notice.ok::before{content:"✓";background:rgba(79,220,160,.18);color:var(--good)}
+.notice.refused{background:rgba(255,123,134,.09);color:#ffc0c5;border-color:rgba(255,123,134,.32)}
+.notice.refused::before{content:"✕";background:rgba(255,123,134,.18);color:var(--bad)}
+@keyframes notice-in{from{opacity:0;transform:translateY(-5px)}to{opacity:1;transform:none}}
+/* ═══ RECEIPT — the product's signature line ═════════════════════════════ */
+.receipt{display:flex;flex-wrap:wrap;align-items:center;gap:.5rem;margin:var(--s4) 0 0;padding:.6rem .8rem;border:1px solid var(--line-soft);border-radius:var(--r-md);background:rgba(5,8,15,.55);font-family:var(--mono);font-size:var(--t-micro);color:var(--fg-3);line-height:1.5}
+.receipt .dot{flex:0 0 auto;width:.42rem;height:.42rem;border-radius:50%;background:var(--fg-3)}
+.receipt .label{text-transform:uppercase;letter-spacing:.1em;font-weight:700}
+.receipt .verdict{font-weight:800;letter-spacing:.06em}
+.receipt .detail{color:var(--fg-3);opacity:.85;flex:1 1 12rem;min-width:0;overflow-wrap:anywhere}
+.receipt.ok{border-color:rgba(79,220,160,.26);background:rgba(79,220,160,.05)}
+.receipt.ok .dot{background:var(--good);box-shadow:0 0 9px var(--good)}
+.receipt.ok .verdict{color:var(--good)}
+.receipt.refused{border-color:rgba(255,123,134,.3);background:rgba(255,123,134,.05)}
+.receipt.refused .dot{background:var(--bad);box-shadow:0 0 9px var(--bad)}
+.receipt.refused .verdict{color:var(--bad)}
+.backlink{display:inline-flex;align-items:center;gap:.4rem;margin:var(--s5) 0 0;font-size:var(--t-sm);color:var(--fg-2);text-decoration:none;font-weight:600}
+.backlink:hover{color:var(--accent)}
+/* ═══ THE BOARD — the hero surface ═══════════════════════════════════════ */
+.coordgrid{display:grid;gap:.4rem;width:100%;max-width:24rem;margin:1.1rem auto;padding:.6rem;border:1px solid var(--line);border-radius:14px;background:radial-gradient(130% 120% at 50% 0%,#0d1731,#060a15);box-shadow:inset 0 1px 0 rgba(255,255,255,.045),inset 0 0 44px -14px #000,0 20px 46px -26px #000}
+.coordgrid .cell{position:relative;display:flex;align-items:center;justify-content:center;aspect-ratio:1/1;min-width:1.9rem;border:1px solid var(--line-soft);border-radius:9px;background:rgba(255,255,255,.02);color:var(--fg);font-family:var(--mono);font-size:1.15rem;font-weight:700;line-height:1;margin:0;transition:border-color .14s,background .14s,color .14s,transform .09s var(--ease),box-shadow .18s}
+/* The checker — a 5-wide grid only (an odd width ⇒ nth-child alternation IS a checkerboard; a */
+/* tug hand of another width just stays flat). `:where()` zeroes the selector's specificity, so a */
+/* tinted cell (tag-accent/warn) keeps its own field and only the plain squares checker. */
+:where(.coordgrid[style*="repeat(5,"]) .cell:nth-child(2n){background-image:linear-gradient(rgba(255,255,255,.032),rgba(255,255,255,.032))}
+.coordgrid form.cell{padding:0;cursor:pointer}
+.coordgrid form.cell button{width:100%;height:100%;display:flex;align-items:center;justify-content:center;border:0;border-radius:inherit;background:transparent;color:inherit;font:inherit;font-size:inherit;font-weight:inherit;cursor:pointer;padding:0}
+.coordgrid form.cell button:focus-visible{outline:2px solid var(--accent);outline-offset:1px;border-radius:inherit}
+.coordgrid form.cell:hover{border-color:var(--accent);background:rgba(92,201,255,.14);color:#fff;transform:translateY(-1px);box-shadow:0 7px 18px -8px var(--accent)}
+.coordgrid form.cell:active{transform:translateY(0) scale(.97)}
+/* LIT — a live cell (target / selected / the automaton). Green by default: the legal-move ring. */
+.coordgrid .cell.highlighted{color:#eaf5ff;border-color:var(--good);box-shadow:inset 0 0 0 1px var(--good),0 0 16px -5px var(--good)}
+.coordgrid form.cell.highlighted:hover{border-color:var(--good);box-shadow:0 7px 18px -7px var(--good)}
+/* A LEGAL TARGET — a bright mint move-hint (the surface paints a vacant target's glyph `·`). */
+.coordgrid .cell.tag-good{color:var(--good);font-size:1.45rem}
+/* A SELECTED piece — yours, amber. */
+.coordgrid .cell.tag-warn{color:var(--warn);border-color:var(--warn);background:rgba(245,200,92,.07);box-shadow:inset 0 0 0 1px var(--warn),0 0 15px -6px var(--warn)}
+/* THE AUTOMATON — the machine, a cyan well. */
+.coordgrid .cell.tag-accent{color:#f2fbff;border-color:var(--accent);background:radial-gradient(circle at 50% 42%,rgba(92,201,255,.36),rgba(13,24,48,.9) 72%);box-shadow:inset 0 0 0 1px var(--accent),0 0 18px -4px var(--accent)}
+/* VACANT — recedes. The dot is a whisper, not a wall of debris (an untagged cell is a PIECE and */
+/* keeps the bright base colour — the fix for a board that read as `· · A ·`). */
+.coordgrid .cell.tag-muted{color:#3f5074;font-size:.72rem}
+/* THE GOAL SQUARE — a teal dashed objective ring; distinct from a plain vacant (dim) cell and */
+/* still legible when the goal is also a lit legal-move target (green). */
+.coordgrid .cell.goal{border:1px dashed var(--head);color:var(--head);font-size:.92rem;background:radial-gradient(circle at 50% 50%,rgba(140,227,228,.13),rgba(13,24,48,.4) 70%);box-shadow:inset 0 0 0 1px rgba(140,227,228,.24)}
+.coordgrid .cell.goal.highlighted,.coordgrid form.cell.goal:hover{border-style:dashed;border-color:var(--good);color:#eaf5ff;box-shadow:inset 0 0 0 1px var(--good),0 0 14px -4px var(--good)}
+/* The board legend — what the colours mean, stated on the surface. */
+.legend{display:flex;flex-wrap:wrap;justify-content:center;gap:.35rem .9rem;margin:-.3rem auto .2rem;max-width:24rem;font-size:var(--t-micro);color:var(--fg-3)}
+.legend span{display:inline-flex;align-items:center;gap:.35rem;white-space:nowrap}
+.legend i{width:.5rem;height:.5rem;border-radius:2px;font-style:normal;flex:0 0 auto}
+.legend .k-auto{background:var(--accent);box-shadow:0 0 7px var(--accent)}
+.legend .k-sel{background:var(--warn);box-shadow:0 0 7px var(--warn)}
+.legend .k-tgt{background:var(--good);box-shadow:0 0 7px var(--good)}
+.legend .k-goal{border:1px dashed var(--head);border-radius:50%}
+/* ═══ TABLES / ROWS / LISTS / PILLS ══════════════════════════════════════ */
+.table-wrap{overflow-x:auto;margin:var(--s4) 0;border:1px solid var(--line-soft);border-radius:var(--r-lg);background:rgba(5,8,15,.4)}
+table.board{width:100%;border-collapse:collapse;font-size:var(--t-sm);font-variant-numeric:tabular-nums}
+table.board th,table.board td{text-align:left;padding:.6rem .8rem;border-bottom:1px solid var(--line-soft);white-space:nowrap}
+table.board thead th{background:rgba(5,8,15,.6);color:var(--fg-3);font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.12em;font-weight:800}
+table.board tbody tr:last-child td{border-bottom:0}
+table.board tbody tr{transition:background .14s}
+table.board tbody tr:hover td{background:rgba(92,201,255,.045)}
+table.board td{color:var(--fg-2)}
+table.board td.rank{font-family:var(--mono);font-weight:800;color:var(--fg-3);width:1%}
+table.board tbody tr:nth-child(1) td.rank{color:var(--warn)}
+table.board tbody tr:nth-child(2) td.rank{color:#cfdcf2}
+table.board tbody tr:nth-child(3) td.rank{color:#d9a273}
+table.board td.player{color:var(--fg);font-weight:650}
+table.board td.num{font-family:var(--mono);color:var(--fg-2)}
+table.board td a{display:inline-flex;align-items:center;gap:.3rem;color:var(--good);text-decoration:none;font-weight:700}
+table.board td a:hover{text-decoration:underline}
+table.board td a .arr{transition:transform .18s var(--ease)}
+table.board tr:hover td a .arr{transform:translateX(3px)}
+.deos-table{border:1px solid var(--line-soft);border-radius:var(--r-md);overflow:hidden;margin:.7rem 0;background:rgba(5,8,15,.4)}
+.deos-row{display:flex;gap:.6rem;align-items:center;padding:.48rem .75rem;font-size:var(--t-sm)}
+.deos-row>*{flex:1 1 0;min-width:0;margin:0}
+.deos-row>.pill,.deos-row>.icon{flex:0 0 auto}
+.deos-table>.deos-row{border-bottom:1px solid var(--line-soft)}
+.deos-table>.deos-row:last-child{border-bottom:0}
+.deos-table>.deos-row:hover{background:rgba(92,201,255,.045)}
+.deos-row.header{background:rgba(5,8,15,.6);text-transform:uppercase;letter-spacing:.12em;font-size:var(--t-micro);color:var(--fg-3);font-weight:800}
+.deos-row.header:hover{background:rgba(5,8,15,.6)}
+.deos-list{display:flex;flex-direction:column;gap:.3rem;margin:.6rem 0;padding:.55rem .75rem;border:1px solid var(--line-soft);border-radius:var(--r-md);background:rgba(5,8,15,.4);font-size:var(--t-sm)}
+.deos-list .prose,.deos-row .prose{margin:0;color:var(--fg-2)}
+.pill{display:inline-flex;align-items:center;padding:.16rem .55rem;margin:.12rem .3rem .12rem 0;border-radius:var(--r-pill);border:1px solid var(--line);background:rgba(5,8,15,.6);font-size:var(--t-micro);font-weight:700;color:var(--fg-3);letter-spacing:.02em;white-space:nowrap}
+.pill.tag-accent{color:var(--accent);border-color:rgba(92,201,255,.34);background:rgba(92,201,255,.09)}
+.pill.tag-good,.pill.tag-genuine{color:var(--good);border-color:rgba(79,220,160,.34);background:rgba(79,220,160,.09)}
+.pill.tag-warn{color:var(--warn);border-color:rgba(245,200,92,.34);background:rgba(245,200,92,.09)}
+.pill.tag-bad{color:var(--bad);border-color:rgba(255,123,134,.34);background:rgba(255,123,134,.09)}
+.icon{font-size:1.05rem;font-family:var(--mono)}
+.icon.tag-accent{color:var(--accent)}.icon.tag-good{color:var(--good)}.icon.tag-warn{color:var(--warn)}.icon.tag-bad{color:var(--bad)}
+hr{border:0;border-top:1px solid var(--line-soft);margin:var(--s4) 0}
+/* ═══ KEY/VALUE — a run's facts, not a debug dump ════════════════════════ */
+.kv{display:grid;grid-template-columns:repeat(auto-fit,minmax(8rem,1fr));gap:.85rem 1.1rem;margin:.75rem 0 0}
+.kv>div{min-width:0}
+.kv dt,.kv .k{font-size:var(--t-micro);text-transform:uppercase;letter-spacing:.12em;font-weight:800;color:var(--fg-3);margin:0 0 .2rem}
+.kv dd,.kv .v{margin:0;font-size:var(--t-sm);color:var(--fg);font-weight:650;overflow-wrap:anywhere}
+.kv .v.mono{font-family:var(--mono);font-weight:600}
+/* ═══ VERDICT — the certificate. The whole point of a run-card. ══════════ */
+.verdict{position:relative;border-radius:var(--r-lg);padding:1.15rem 1.2rem;margin:var(--s4) 0;overflow:hidden}
+.verdict h2{display:flex;align-items:center;gap:.6rem;margin:0 0 .5rem;font-size:var(--t-h3);letter-spacing:-.005em}
+.verdict .stamp{flex:0 0 auto;display:inline-grid;place-items:center;min-width:3.1rem;padding:.2rem .5rem;border-radius:var(--r-sm);font-family:var(--mono);font-size:var(--t-micro);font-weight:800;letter-spacing:.14em}
+.verdict p{margin:0 0 .55rem;font-size:var(--t-sm);line-height:1.62}
+.verdict p:last-child{margin-bottom:0}
+.verdict.pass{border:1px solid rgba(79,220,160,.38);background:linear-gradient(180deg,rgba(79,220,160,.11),rgba(13,20,37,.55))}
+.verdict.pass h2{color:var(--good)}
+.verdict.pass .stamp{background:var(--good);color:#02251a}
+.verdict.pass p{color:#c6f3de}
+.verdict.fail{border:1px solid rgba(255,123,134,.4);background:linear-gradient(180deg,rgba(255,123,134,.11),rgba(13,20,37,.55))}
+.verdict.fail h2{color:var(--bad)}
+.verdict.fail .stamp{background:var(--bad);color:#2b0409}
+.verdict.fail p{color:#ffd3d6}
+/* ═══ SPRITES ════════════════════════════════════════════════════════════ */
+.sprite-tile{display:inline-flex;align-items:center;justify-content:center;border:1px solid var(--line-soft);border-radius:var(--r-md);background:rgba(5,8,15,.6);padding:.35rem;overflow:hidden;box-shadow:inset 0 0 0 1px rgba(0,0,0,.35)}
+.sprite-tile svg{width:100%;height:100%;display:block}
+.sprite-tile.placeholder{color:var(--fg-3);font-size:var(--t-micro);font-family:var(--mono);padding:.6rem;min-width:4rem;min-height:4rem}
+.sprite-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(9rem,1fr));gap:.8rem;margin:var(--s5) 0 0}
+.sprite-cell{margin:0;padding:.7rem;border:1px solid var(--line-soft);border-radius:var(--r-lg);background:linear-gradient(180deg,var(--ink-600),var(--ink-800));text-align:center;box-shadow:0 14px 34px -28px #000;transition:border-color .18s,transform .18s var(--ease)}
+.sprite-cell:hover{border-color:var(--line-lit);transform:translateY(-2px)}
+.sprite-art{width:100%;aspect-ratio:1/1;display:flex;align-items:center;justify-content:center}
+.sprite-art svg{width:100%;height:100%;display:block}
+.sprite-cell figcaption{margin-top:.55rem;font-size:var(--t-micro);color:var(--fg-3);line-height:1.6}
+.sprite-cell figcaption code{font-size:.68rem;white-space:normal;overflow-wrap:anywhere}
+/* ═══ RESPONSIVE — it must look right on a PHONE ═════════════════════════ */
+@media (max-width:44rem){
+.hero{grid-template-columns:1fr;padding-top:var(--s5);gap:var(--s5)}
+.hero-art{order:-1}
+.hero-art .coordgrid{max-width:15rem}
+.steps{grid-template-columns:1fr}
+.card-grid{grid-template-columns:1fr}
+.topbar-in{padding:.5rem .9rem}
+.brand-name{display:none}
+.session,.catalog{padding-left:.9rem;padding-right:.9rem}
+.crumb{padding-left:.9rem;padding-right:.9rem}
+.hero,.steps{padding-left:.9rem;padding-right:.9rem}
+.foot{padding-left:.9rem;padding-right:.9rem;flex-direction:column;align-items:flex-start;gap:.75rem}
+/* ≥44px touch targets on the board */
+.coordgrid{gap:.3rem;padding:.45rem;max-width:100%}
+.coordgrid .cell{min-width:2.75rem;border-radius:8px}
+.affordance{flex-direction:column}
+.affordance input.arg{flex:1 1 auto;width:100%;text-align:left}
+.affordance button{min-height:2.85rem}
+.kv{grid-template-columns:repeat(auto-fit,minmax(7rem,1fr))}
+}
+@media (max-width:26rem){.topnav a{padding:.35rem .45rem}}
+/* ═══ MOTION — only where it clarifies, and never against the user ═══════ */
+@media (prefers-reduced-motion:reduce){
+*,*::before,*::after{animation-duration:.001ms!important;animation-iteration-count:1!important;transition-duration:.001ms!important;scroll-behavior:auto!important}
+}
+</style>"##;
+
+// ─────────────────────────────────────────────────────────────────────────────
+// THE PAGE SHELL — one chrome across every served surface.
+//
+// Before this, each page was a bare `<main>` with its own ad-hoc heading: the landing, the catalog,
+// a game board, and the leaderboard had no shared frame, so they read as four unrelated debug
+// dumps. `document` gives all of them the SAME topbar (brand + nav, with the current surface marked
+// `aria-current="page"`) and the SAME footer — the cheapest, largest coherence win available.
+// Purely presentational: no route, no game logic, no POST contract is touched.
+// ─────────────────────────────────────────────────────────────────────────────
+
+/// The brand mark — four squares, one lit: a board where a move landed. Inline SVG (no external
+/// asset, no request), `aria-hidden` because the adjacent brand text is the accessible name.
+const MARK: &str = "<svg viewBox=\"0 0 24 24\" aria-hidden=\"true\" focusable=\"false\">\
+     <rect x=\"1.5\" y=\"1.5\" width=\"9.5\" height=\"9.5\" rx=\"2.6\"></rect>\
+     <rect x=\"13\" y=\"1.5\" width=\"9.5\" height=\"9.5\" rx=\"2.6\"></rect>\
+     <rect x=\"1.5\" y=\"13\" width=\"9.5\" height=\"9.5\" rx=\"2.6\"></rect>\
+     <rect class=\"lit\" x=\"13\" y=\"13\" width=\"9.5\" height=\"9.5\" rx=\"2.6\"></rect></svg>";
+
+/// The sticky top bar — the product mark plus the three real surfaces. `active` names the current
+/// one (`""` for none) so it can carry `aria-current="page"`.
+fn topbar(active: &str) -> String {
+    let item = |href: &str, key: &str, label: &str| -> String {
+        let cur = if active == key {
+            " aria-current=\"page\""
+        } else {
+            ""
+        };
+        format!("<a href=\"{href}\"{cur}>{label}</a>")
+    };
+    format!(
+        "<header class=\"topbar\"><div class=\"topbar-in\">\
+         <a class=\"brand\" href=\"/\">{MARK}<span class=\"brand-name\">DreggNet Cloud</span></a>\
+         <nav class=\"topnav\" aria-label=\"Surfaces\">{offerings}{descent}{gallery}</nav>\
+         </div></header>",
+        MARK = MARK,
+        offerings = item("/offerings", "offerings", "Offerings"),
+        descent = item("/descent", "descent", "The Descent"),
+        gallery = item("/gallery", "gallery", "Gallery"),
+    )
+}
+
+/// The page footer — states the one property the whole product rests on, and repeats the nav.
+const FOOTER: &str = "<footer class=\"foot\">\
+     <p>Verification is in-process re-execution — no node, no testnet.</p>\
+     <nav aria-label=\"Footer\"><a href=\"/offerings\">Offerings</a>\
+     <a href=\"/descent\">The Descent</a><a href=\"/gallery\">Gallery</a>\
+     <a href=\"/health\">Status</a></nav></footer>";
+
+/// **Wrap a body fragment in the full product document** — head (charset / viewport / title / the
+/// inlined [`STYLE`]) + the shared [`topbar`] + the fragment + the [`FOOTER`]. Every served surface
+/// goes through here, which is what makes them one product rather than a pile of pages.
+///
+/// `title` is the `<title>` text (escaped here — callers pass raw); `active` marks the current nav
+/// item (`"offerings"` / `"descent"` / `"gallery"` / `""`).
+pub(crate) fn document(title: &str, active: &str, body: &str) -> String {
+    format!(
+        "<!doctype html><html lang=\"en\"><head><meta charset=\"utf-8\">\
+         <meta name=\"viewport\" content=\"width=device-width, initial-scale=1\">\
+         <meta name=\"color-scheme\" content=\"dark\">\
+         <title>{title}</title>{style}</head><body>{topbar}{body}{footer}</body></html>",
+        title = esc(title),
+        style = STYLE,
+        topbar = topbar(active),
+        body = body,
+        footer = FOOTER,
+    )
+}
+
+/// A breadcrumb strip — `← all offerings · **Title** · session {id}`. The session id is set in the
+/// mono voice (it is verifiable material, like a hash or a seed).
+fn crumb(title: &str, id: &SessionId) -> String {
+    format!(
+        "<div class=\"crumb\"><a href=\"/offerings\">← all offerings</a>\
+         <span class=\"sep\">·</span><strong>{title}</strong>\
+         <span class=\"sep\">·</span><span class=\"sid\">session {id}</span></div>",
+        title = esc(title),
+        id = esc(&id.0),
+    )
+}
+
+/// The notice banner — *what just happened*. A refusal is honest and red; a landed turn is green.
+/// The `✓`/`✕` glyph is drawn by CSS (`.notice::before`), so the text stays clean for a reader.
+fn notice_html(notice: Option<&str>) -> String {
+    notice
+        .map(|n| {
+            let cls = if n.starts_with("Refused") {
+                "notice refused"
+            } else {
+                "notice ok"
+            };
+            format!("<div class=\"{cls}\" role=\"status\">{}</div>", esc(n))
+        })
+        .unwrap_or_default()
+}
+
+/// The receipt strip — the product's signature line, in the mono voice: the chain, re-verified by
+/// replay, right now, with its turn count and the verifier's own detail.
+fn receipt_html(verify: &VerifyReport, label: &str) -> String {
+    let cls = if verify.verified { "ok" } else { "refused" };
+    format!(
+        "<div class=\"receipt {cls}\"><span class=\"dot\"></span>\
+         <span class=\"label\">{label}</span><span class=\"verdict\">{v}</span>\
+         <span>{turns}</span><span class=\"detail\">{detail}</span></div>",
+        cls = cls,
+        label = esc(label),
+        v = if verify.verified {
+            "verified"
+        } else {
+            "NOT VERIFIED"
+        },
+        turns = turn_count(verify.turns),
+        detail = esc(&verify.detail),
+    )
+}
+
+/// `"1 verified turn"` / `"5 verified turns"` — the count, pluralised properly (the old line always
+/// said "turns", so a one-turn session read "1 verified turns").
+fn turn_count(turns: usize) -> String {
+    if turns == 1 {
+        "1 verified turn".to_string()
+    } else {
+        format!("{turns} verified turns")
+    }
+}
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
 // THE MULTI-OFFERING WEB CATALOG — the generic offering router lifted to the core.
@@ -1103,11 +1447,11 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
         // a highlighted cell (the legal-move set / the selected piece / the automaton) gets the
         // `highlighted` class. An inert cell is a plain span — never a button.
         ViewNode::CoordGrid { cols, cells } => {
+            let cols_n = (*cols).max(1);
             out.push_str(&format!(
-                "<div class=\"coordgrid\" style=\"grid-template-columns:repeat({},1fr)\">",
-                (*cols).max(1)
+                "<div class=\"coordgrid\" style=\"grid-template-columns:repeat({cols_n},1fr)\">",
             ));
-            for cell in cells {
+            for (i, cell) in cells.iter().enumerate() {
                 let hl = if cell.highlight { " highlighted" } else { "" };
                 let tag = if cell.tag.is_empty() {
                     String::new()
@@ -1131,17 +1475,27 @@ fn catalog_node(node: &ViewNode, key: &str, id: &str, out: &mut String) {
                         glyph = esc(&cell.glyph),
                     ));
                 } else {
+                    // A clickable square's accessible name: the glyph alone ("·", "R") tells a
+                    // screen-reader user nothing. The verb plus the square's row/column — derived
+                    // purely from the cell's position in the row-major grid, so no game knowledge
+                    // is assumed and no logic is touched — makes the board keyboard-playable in
+                    // earnest, not just focusable. Visually hidden (`.sr-only`).
+                    let (row, col) = (i / cols_n + 1, i % cols_n + 1);
                     out.push_str(&format!(
                         "<form class=\"cell{hl}{tag}{goal}\" method=\"post\" \
                          action=\"/offerings/{key}/session/{id}/act\">\
                          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
                          <input type=\"hidden\" name=\"arg\" value=\"{arg}\">\
-                         <button type=\"submit\">{glyph}</button></form>",
+                         <button type=\"submit\">{glyph}\
+                         <span class=\"sr-only\">{turn} row {row}, column {col}</span>\
+                         </button></form>",
                         key = esc(key),
                         id = esc(id),
                         turn = esc(&cell.turn),
                         arg = cell.arg,
                         glyph = esc(&cell.glyph),
+                        row = row,
+                        col = col,
                     ));
                 }
             }
@@ -1259,7 +1613,8 @@ fn catalog_form(key: &str, id: &str, it: &MenuItem) -> String {
     format!(
         "<form class=\"{cls}\" method=\"post\" action=\"/offerings/{key}/session/{id}/act\">\
          <input type=\"hidden\" name=\"turn\" value=\"{turn}\">\
-         <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\">\
+         <input class=\"arg\" type=\"number\" name=\"arg\" value=\"{arg}\" \
+         aria-label=\"{turn} value\"{disabled}>\
          <button type=\"submit\"{disabled}>{label}</button></form>",
         cls = cls,
         key = esc(key),
@@ -1278,10 +1633,15 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     // surfaces (the do-once render path), and the verifiable SERVICES. Any offering outside the
     // known sets falls into a catch-all "More" shelf (so a future registration still shows up).
     const GAMES: &[&str] = &["dungeon", "council", "market", "tug", "automatafl"];
+    // NOTE `cheevos`, not `cheevo`: `dreggnet_surfaces::register_surfaces` registers the
+    // achievements surface under the PLURAL key. The singular never matched, so Achievements has
+    // been silently falling through to the catch-all "More" shelf instead of sitting with the other
+    // seven feature surfaces. (The per-shelf count added by this design pass is what surfaced it:
+    // the shelf read "7".)
     const FEATURES: &[&str] = &[
         "trade",
         "inventory",
-        "cheevo",
+        "cheevos",
         "guild",
         "craft",
         "companion",
@@ -1291,32 +1651,52 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
     const SERVICES: &[&str] = &["doc", "names", "compute", "grain", "hermes"];
 
     let card = |o: &OfferingInfo, verb: &str| -> String {
+        // An offering's registered title is `Name — the tagline (details)`. Rendered whole it is a
+        // three-line heading in a dense grid; split at the em-dash it becomes a scannable NAME plus
+        // a quiet tagline. Presentation only — the registry string is untouched, and both halves
+        // are still on the page.
+        let (name, tagline) = split_title(&o.title);
+        let tagline_html = if tagline.is_empty() {
+            String::new()
+        } else {
+            format!("<p class=\"tagline\">{}</p>", esc(tagline))
+        };
+        // A live session is worth SEEING (a lit dot), not just counting.
+        let live = if o.open_sessions > 0 { " live" } else { "" };
         format!(
-            "<div class=\"offering-card\"><h2>{title}</h2>\
-             <p class=\"prose\">key <code>{key}</code> · {n} open session(s)</p>\
-             <a class=\"play\" href=\"/offerings/{key}/session/{key}-web\">▶ {verb} {key}</a></div>",
-            title = esc(&o.title),
+            "<div class=\"offering-card\"><h3>{name}</h3>{tagline}\
+             <p class=\"meta\"><span class=\"dot{live}\"></span>{key} · {n} open</p>\
+             <a class=\"play\" href=\"/offerings/{key}/session/{key}-web\">{verb} \
+             <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>",
+            name = esc(name),
+            tagline = tagline_html,
+            live = live,
             key = esc(&o.key),
             n = o.open_sessions,
             verb = verb,
         )
     };
-    let group = |heading: &str, blurb: &str, keys: &[&str], verb: &str| -> String {
+    let group = |heading: &str, shelf: &str, blurb: &str, keys: &[&str], verb: &str| -> String {
         let mut cards = String::new();
+        let mut n = 0usize;
         for o in offerings {
             if keys.contains(&o.key.as_str()) {
                 cards.push_str(&card(o, verb));
+                n += 1;
             }
         }
         if cards.is_empty() {
             return String::new();
         }
         format!(
-            "<section class=\"catalog-group\"><h2 class=\"group-h\">{}</h2>\
-             <p class=\"prose\">{}</p>{}</section>",
-            esc(heading),
-            esc(blurb),
-            cards,
+            "<section class=\"catalog-group shelf-{shelf}\">\
+             <h2 class=\"group-h\">{heading}<span class=\"count\">{n}</span></h2>\
+             <p class=\"prose\">{blurb}</p><div class=\"card-grid\">{cards}</div></section>",
+            shelf = shelf,
+            heading = esc(heading),
+            n = n,
+            blurb = esc(blurb),
+            cards = cards,
         )
     };
 
@@ -1337,23 +1717,22 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         String::new()
     } else {
         format!(
-            "<section class=\"catalog-group\"><h2 class=\"group-h\">More</h2>{}</section>",
-            more,
+            "<section class=\"catalog-group shelf-more\">\
+             <h2 class=\"group-h\">More</h2><div class=\"card-grid\">{more}</div></section>",
         )
     };
 
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>DreggNet Cloud — offerings</title>{style}</head><body>\
-         <main class=\"catalog\"><h1>DreggNet Cloud — all offerings, any surface</h1>\
-         <p class=\"prose\">Every offering is a confined, verifiable, per-session thing on the real \
-         dregg substrate — pick one to play it in your browser, each move a real executor turn \
-         refereed on the substrate. No node, no testnet: verification is in-process re-execution.</p>\
-         {games}{features}{services}{more}</main></body></html>",
-        style = STYLE,
+    let body = format!(
+        "<main class=\"catalog\"><div class=\"page-head\">\
+         <p class=\"eyebrow\">All offerings, any surface</p>\
+         <h1>Pick a thing and play it.</h1>\
+         <p class=\"deck\">Every offering is a confined, verifiable, per-session thing on the real \
+         dregg substrate. Each move is a real executor turn, refereed on the substrate — no node, \
+         no testnet: verification is in-process re-execution.</p></div>\
+         {games}{features}{services}{more}</main>",
         games = group(
             "Games",
+            "games",
             "Play to win or verify — a board, a market, a hidden-hand tug. Every move commits a real \
              receipt (or is refused).",
             GAMES,
@@ -1361,6 +1740,7 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         ),
         features = group(
             "Feature surfaces",
+            "features",
             "The RPG surfaces — trade, inventory, achievements, guilds, crafting, companions, taverns, \
              parties. Each is a real render→turn surface on the substrate.",
             FEATURES,
@@ -1368,13 +1748,25 @@ fn catalog_page(offerings: &[OfferingInfo]) -> String {
         ),
         services = group(
             "Services",
+            "services",
             "Verifiable infrastructure — a document store, a naming service, a compute market, metered \
              grain, and a message relay.",
             SERVICES,
             "Open",
         ),
         more = more_section,
-    )
+    );
+    document("DreggNet Cloud — offerings", "offerings", &body)
+}
+
+/// Split a registered offering title `Name — the tagline` into its two halves (the tagline is `""`
+/// when the title carries no em-dash). Presentation only: both halves are rendered, so the full
+/// registry string still reads on the page.
+fn split_title(title: &str) -> (&str, &str) {
+    match title.split_once(" — ") {
+        Some((name, tagline)) => (name, tagline),
+        None => (title, ""),
+    }
 }
 
 /// Wrap an offering session's fragment in a full HTML page (breadcrumb + notice + verify line).
@@ -1385,51 +1777,41 @@ fn offering_page(
     fragment: &str,
     verify: &VerifyReport,
 ) -> String {
-    let notice_html = notice
-        .map(|n| {
-            let cls = if n.starts_with("Refused") {
-                "notice refused"
-            } else {
-                "notice ok"
-            };
-            format!("<div class=\"{cls}\">{}</div>", esc(n))
-        })
-        .unwrap_or_default();
-    let verify_cls = if verify.verified { "ok" } else { "refused" };
-    let verify_html = format!(
-        "<div class=\"verify {cls}\">chain re-verified: <strong>{v}</strong> \
-         ({turns} verified turns) — {detail}</div>",
-        cls = verify_cls,
-        v = if verify.verified { "yes" } else { "NO" },
-        turns = verify.turns,
-        detail = esc(&verify.detail),
-    );
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>DreggNet Cloud — {title}</title>{style}</head><body>\
-         <div class=\"crumb\"><a href=\"/offerings\">← all offerings</a> · \
-         <strong>{title}</strong> · session {id}</div>\
-         <main class=\"session\">{notice}{fragment}{verify}</main></body></html>",
-        title = esc(title),
-        id = esc(&id.0),
-        style = STYLE,
-        notice = notice_html,
+    // The crumb names the offering; the surface's own sections carry the rest. The full registered
+    // title still reaches the page (name + tagline), so a reader — and the portfolio test — sees it.
+    let (name, tagline) = split_title(title);
+    let tagline_html = if tagline.is_empty() {
+        String::new()
+    } else {
+        format!(
+            "<p class=\"deck\" style=\"font-size:var(--t-sm)\">{}</p>",
+            esc(tagline)
+        )
+    };
+    let body = format!(
+        "{crumb}<main class=\"session\">{notice}\
+         <div class=\"page-head\" style=\"padding-top:var(--s4)\"><h1>{name}</h1>{tagline}</div>\
+         {fragment}{receipt}</main>",
+        crumb = crumb(name, id),
+        notice = notice_html(notice),
+        name = esc(name),
+        tagline = tagline_html,
         fragment = fragment,
-        verify = verify_html,
-    )
+        receipt = receipt_html(verify, "chain re-verified by replay"),
+    );
+    document(&format!("DreggNet Cloud — {title}"), "offerings", &body)
 }
 
 /// The page shown for a `GET`/`POST` against an unregistered offering key.
 fn catalog_missing_offering(key: &str) -> String {
-    format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <title>DreggNet Cloud — unknown offering</title>{style}</head><body>\
-         <main class=\"session\"><div class=\"notice refused\">No offering registered under \
-         <code>{key}</code>. <a href=\"/offerings\">Browse the catalog.</a></div></main></body></html>",
+    let body = format!(
+        "<main class=\"session\"><div class=\"notice refused\" role=\"status\">No offering \
+         registered under <code>{key}</code>.</div>\
+         <p class=\"prose\"><a class=\"backlink\" href=\"/offerings\">← Browse the catalog</a></p>\
+         </main>",
         key = esc(key),
-        style = STYLE,
-    )
+    );
+    document("DreggNet Cloud — unknown offering", "offerings", &body)
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════
@@ -1682,28 +2064,101 @@ async fn health() -> impl IntoResponse {
     Json(serde_json::json!({ "status": "ok" }))
 }
 
-/// `GET /` — the demo landing page: what this is + links to the catalog and the no-cheat board.
+/// **The landing hero's board** — a still of a real automatafl mid-turn, painted with the SAME
+/// `.coordgrid`/`.cell`/`tag-*` classes the live board uses, so the landing literally previews the
+/// product and teaches its colour language before a stranger clicks anything. Inert spans,
+/// `aria-hidden` (the adjacent legend states the same thing in text); no assets, no requests.
+fn hero_board() -> String {
+    /// The selected piece at (1,1) — its rook line is the lit legal-move set.
+    const SEL: usize = 6;
+    /// The automaton at the centre (2,2).
+    const AUTO: usize = 12;
+    /// An unselected piece at (3,3) — untagged, so it reads solid.
+    const PIECE: usize = 18;
+    /// Seat A's goal square (0,0) / seat B's (4,4).
+    const GOAL_A: usize = 0;
+    const GOAL_B: usize = 24;
+
+    let mut out = String::from(
+        "<div class=\"coordgrid hero-board\" style=\"grid-template-columns:repeat(5,1fr)\" \
+         aria-hidden=\"true\">",
+    );
+    for i in 0..25usize {
+        let (r, c) = (i / 5, i % 5);
+        // The selected piece's rook cross — the legal-move set the live surface would light.
+        let lit = r == 1 || c == 1;
+        let (glyph, cls) = match i {
+            AUTO => ("@", "cell highlighted tag-accent"),
+            SEL => ("A", "cell highlighted tag-warn"),
+            PIECE => ("R", "cell"),
+            GOAL_A => ("a", "cell tag-muted goal"),
+            GOAL_B => ("b", "cell tag-muted goal"),
+            _ if lit => ("·", "cell highlighted tag-good"),
+            _ => ("·", "cell tag-muted"),
+        };
+        out.push_str(&format!("<span class=\"{cls}\">{glyph}</span>"));
+    }
+    out.push_str("</div>");
+    out
+}
+
+/// `GET /` — the landing. One glance: **what this is** (play verifiable games — every move is a
+/// receipt), **what it looks like** (a real board mid-turn, with its colour language labelled), and
+/// **why it is different** (play → commit → re-verify), then the three surfaces.
 async fn index() -> Html<String> {
-    Html(format!(
-        "<!doctype html><html lang=en><head><meta charset=utf-8>\
-         <meta name=viewport content=\"width=device-width, initial-scale=1\">\
-         <title>DreggNet Cloud — play + verify</title>{style}</head><body>\
-         <main class=\"catalog\"><h1>DreggNet Cloud</h1>\
-         <p class=\"prose\">Play verifiable games and browse feature offerings in your browser — \
-         every move is a real executor turn, refereed on the substrate. The no-cheat leaderboard \
-         re-verifies each run by replay: a forged run shows FAIL, not a fake pass. No node, no \
-         testnet — verification is in-process re-execution.</p>\
-         <div class=\"offering-card\"><h2>All offerings</h2>\
-         <p class=\"prose\">The five games + the eight feature surfaces.</p>\
-         <a class=\"play\" href=\"/offerings\">▶ Browse the catalog</a></div>\
-         <div class=\"offering-card\"><h2>The Descent — no-cheat leaderboard</h2>\
-         <p class=\"prose\">Independently re-verified runs of the daily descent.</p>\
-         <a class=\"play\" href=\"/descent\">▶ Open the leaderboard</a></div>\
-         <div class=\"offering-card\"><h2>Sprite gallery — deterministic art</h2>\
-         <p class=\"prose\">Every asset's SVG sprite is a byte-identical function of its content \
-         address.</p>\
-         <a class=\"play\" href=\"/gallery\">▶ Open the gallery</a></div>\
-         </main></body></html>",
-        style = STYLE,
-    ))
+    let body = format!(
+        "<section class=\"hero\">\
+         <div class=\"hero-copy\">\
+         <p class=\"eyebrow\">Verifiable games · node-free</p>\
+         <h1>Every move is a receipt.</h1>\
+         <p class=\"deck\">Play a board, a market, a hidden-hand tug — in your browser, with no \
+         client JavaScript. Every move is a real executor turn, refereed on the substrate. Nothing \
+         here is taken on trust: a run re-executes, or it fails.</p>\
+         <div class=\"cta-row\">\
+         <a class=\"btn btn-primary\" href=\"/offerings\">Browse the offerings \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a>\
+         <a class=\"btn btn-ghost\" href=\"/descent\">Open the leaderboard</a>\
+         </div></div>\
+         <div class=\"hero-art\">{board}\
+         <div class=\"legend\">\
+         <span><i class=\"k-auto\"></i>automaton</span>\
+         <span><i class=\"k-sel\"></i>your piece</span>\
+         <span><i class=\"k-tgt\"></i>legal move</span>\
+         <span><i class=\"k-goal\"></i>goal</span></div>\
+         <p class=\"hero-cap\">Automatafl · mid-turn</p></div>\
+         </section>\
+         <section class=\"steps\" aria-label=\"How it works\">\
+         <div class=\"step\"><span class=\"n\">1</span><h3>Play</h3>\
+         <p>Open an offering and take a turn. Every affordance is cap-gated, and the executor — \
+         never the page — is the sole referee.</p></div>\
+         <div class=\"step\"><span class=\"n\">2</span><h3>Commit</h3>\
+         <p>A legal move lands a real verified receipt. An illegal one is refused and nothing \
+         commits: no ghost state, no fake pass.</p></div>\
+         <div class=\"step\"><span class=\"n\">3</span><h3>Re-verify</h3>\
+         <p>Anyone can replay the whole committed chain. On the no-cheat board a forged run shows \
+         <strong>FAIL</strong> — it never ranks.</p></div>\
+         </section>\
+         <main class=\"catalog\">\
+         <section class=\"catalog-group\">\
+         <h2 class=\"group-h\">Start here</h2>\
+         <div class=\"card-grid\">\
+         <div class=\"offering-card shelf-games\"><h3>All offerings</h3>\
+         <p class=\"tagline\">Five games, eight feature surfaces and five services — each one \
+         playable in the browser through the same verbs.</p>\
+         <a class=\"play\" href=\"/offerings\">Browse the catalog \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
+         <div class=\"offering-card shelf-services\"><h3>The Descent</h3>\
+         <p class=\"tagline\">A no-cheat leaderboard. Every run is re-executed on render — a \
+         forged one shows FAIL, not a fake pass.</p>\
+         <a class=\"play\" href=\"/descent\">Open the leaderboard \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
+         <div class=\"offering-card shelf-features\"><h3>Sprite gallery</h3>\
+         <p class=\"tagline\">Every asset's SVG sprite is a byte-identical function of its \
+         content address — re-derivable, like everything else here.</p>\
+         <a class=\"play\" href=\"/gallery\">Open the gallery \
+         <span class=\"arr\" aria-hidden=\"true\">→</span></a></div>\
+         </div></section></main>",
+        board = hero_board(),
+    );
+    Html(document("DreggNet Cloud — play + verify", "", &body))
 }
