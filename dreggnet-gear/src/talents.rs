@@ -163,6 +163,42 @@ pub const TALENT_TREE: [Talent; 4] = [IRONHIDE, DEEP_DELVER, ARCANE_MASTERY, BAT
 ///
 /// Additive to every existing progression / meta turn — a real [`CellProgram::Cases`] the
 /// executor enforces move-for-move.
+/// The full gate set a talent claim must satisfy in the [`WriteOnce`] tree: the echoes price,
+/// the landed marker, the one-shot write, and any prereq / class gate.
+///
+/// **These gates hang off a [`SlotChanged`](TransitionGuard::SlotChanged) guard, not (only) the
+/// claim method** — see [`talent_tree_story`] for why that distinction is the whole tooth.
+fn talent_gate_constraints(t: Talent) -> Vec<StateConstraint> {
+    let mut constraints = vec![
+        // THE ECHOES GATE: bought only with enough accrued death-earned echoes.
+        StateConstraint::FieldGte {
+            index: ECHOES_SLOT,
+            value: field_from_u64(t.price),
+        },
+        // Lands the talent marker, once.
+        StateConstraint::FieldEquals {
+            index: t.slot,
+            value: field_from_u64(1),
+        },
+        StateConstraint::WriteOnce { index: t.slot },
+    ];
+    if let Some(prereq) = t.prereq_slot {
+        // THE TREE EDGE: the prerequisite talent must already be held.
+        constraints.push(StateConstraint::FieldGte {
+            index: prereq,
+            value: field_from_u64(1),
+        });
+    }
+    if let Some(class) = t.class {
+        // THE CLASS BRANCH: only the right class may buy this talent.
+        constraints.push(StateConstraint::FieldEquals {
+            index: CLASS_SLOT,
+            value: field_from_u64(class),
+        });
+    }
+    constraints
+}
+
 pub fn talent_tree_story() -> CompiledStory {
     let mut story = meta::meta_hero_story();
 
@@ -186,40 +222,34 @@ pub fn talent_tree_story() -> CompiledStory {
             .push(StateConstraint::WriteOnce { index: t.slot });
     }
 
-    // 2. A claim case per talent — echoes-gated, plus any prereq / class gate.
     for t in TALENT_TREE {
-        let mut constraints = vec![
-            // THE ECHOES GATE: bought only with enough accrued death-earned echoes.
-            StateConstraint::FieldGte {
-                index: ECHOES_SLOT,
-                value: field_from_u64(t.price),
-            },
-            // Lands the talent marker, once.
-            StateConstraint::FieldEquals {
-                index: t.slot,
-                value: field_from_u64(1),
-            },
-            StateConstraint::WriteOnce { index: t.slot },
-        ];
-        if let Some(prereq) = t.prereq_slot {
-            // THE TREE EDGE: the prerequisite talent must already be held.
-            constraints.push(StateConstraint::FieldGte {
-                index: prereq,
-                value: field_from_u64(1),
-            });
-        }
-        if let Some(class) = t.class {
-            // THE CLASS BRANCH: only the right class may buy this talent.
-            constraints.push(StateConstraint::FieldEquals {
-                index: CLASS_SLOT,
-                value: field_from_u64(class),
-            });
-        }
+        // 2. THE SLOT-BOUND GATE — the tooth that makes the price real.
+        //
+        // A `MethodIs` case gates only turns that PRESENT the claim method. But `apply_raw` is
+        // public: a client can staple `SetField(talent_slot, 1)` onto ANY other method's turn
+        // (e.g. a legitimate `meta/grant_echoes`), where no `talent/claim/<name>` case matches
+        // and the global `WriteOnce` happily permits the FIRST write — so the talent lands with
+        // NO price, prereq, or class check. (Driven: `a_stapled_talent_write_cannot_ride_
+        // another_methods_turn`.)
+        //
+        // `SlotChanged` binds the gates to the WRITE rather than the method: the case fires on
+        // ANY transition that moves this talent's slot, whoever authored it. The evaluator runs
+        // EVERY matching case (`cell/src/program/eval.rs:104-120`), so these gates now compose
+        // with the authoring method's own constraints instead of being skipped by it.
+        cases.push(TransitionCase {
+            guard: TransitionGuard::SlotChanged { index: t.slot },
+            constraints: talent_gate_constraints(t),
+        });
+
+        // 3. The claim case — the method a legitimate claim dispatches under. `SlotChanged` is
+        //    NOT method-dispatching (`TransitionGuard::is_method_dispatching`), so without this
+        //    case the claim method would be an unknown symbol and default-deny. It carries the
+        //    same gates (defence in depth; the SlotChanged case is the load-bearing one).
         cases.push(TransitionCase {
             guard: TransitionGuard::MethodIs {
                 method: symbol(t.method),
             },
-            constraints,
+            constraints: talent_gate_constraints(t),
         });
     }
 
@@ -263,6 +293,47 @@ pub const RESPEC_PRICE: u64 = 20;
 ///
 /// The no-P2W teeth are untouched (the ONLY currency is death-earned echoes). A wrong-value
 /// claim, a rewind, or a claim below price is a real [`WorldError::Refused`].
+/// The gate set a claim must satisfy in the RESPEC (generation-keyed) tree: the echoes price,
+/// the exact `slot == generation + 1` marker bounds, and any in-generation prereq / class gate.
+fn respec_talent_gate_constraints(t: Talent) -> Vec<StateConstraint> {
+    let mut constraints = vec![
+        // THE ECHOES GATE.
+        StateConstraint::FieldGte {
+            index: ECHOES_SLOT,
+            value: field_from_u64(t.price),
+        },
+        // THE GENERATION KEY: slot == generation + 1 (a claim stamps THIS generation).
+        //   slot <= gen + 1
+        StateConstraint::FieldLteOther {
+            index: t.slot,
+            other: RESPEC_SLOT,
+            delta: 1,
+        },
+        //   gen <= slot - 1   (i.e. slot >= gen + 1)
+        StateConstraint::FieldLteOther {
+            index: RESPEC_SLOT,
+            other: t.slot,
+            delta: -1,
+        },
+    ];
+    if let Some(prereq) = t.prereq_slot {
+        // THE TREE EDGE, generation-aware: the prerequisite must be held IN THIS generation
+        // (prereq_slot >= gen + 1; a stale prereq from before a respec does not count).
+        constraints.push(StateConstraint::FieldLteOther {
+            index: RESPEC_SLOT,
+            other: prereq,
+            delta: -1,
+        });
+    }
+    if let Some(class) = t.class {
+        constraints.push(StateConstraint::FieldEquals {
+            index: CLASS_SLOT,
+            value: field_from_u64(class),
+        });
+    }
+    constraints
+}
+
 pub fn respec_talent_tree_story() -> CompiledStory {
     let mut story = meta::meta_hero_story();
 
@@ -277,49 +348,21 @@ pub fn respec_talent_tree_story() -> CompiledStory {
         panic!("the meta hero story is a Cases program");
     };
 
-    // A claim case per talent — the marker is generation-keyed (no global WriteOnce).
+    // A claim case per talent — the marker is generation-keyed (no global WriteOnce). The gates
+    // hang off `SlotChanged` so a write STAPLED onto another method's turn faces them too (this
+    // tree has no `WriteOnce` backstop at all, so the slot binding is the only tooth).
     for t in TALENT_TREE {
-        let mut constraints = vec![
-            // THE ECHOES GATE.
-            StateConstraint::FieldGte {
-                index: ECHOES_SLOT,
-                value: field_from_u64(t.price),
-            },
-            // THE GENERATION KEY: slot == generation + 1 (a claim stamps THIS generation).
-            //   slot <= gen + 1
-            StateConstraint::FieldLteOther {
-                index: t.slot,
-                other: RESPEC_SLOT,
-                delta: 1,
-            },
-            //   gen <= slot - 1   (i.e. slot >= gen + 1)
-            StateConstraint::FieldLteOther {
-                index: RESPEC_SLOT,
-                other: t.slot,
-                delta: -1,
-            },
-        ];
-        if let Some(prereq) = t.prereq_slot {
-            // THE TREE EDGE, generation-aware: the prerequisite must be held IN THIS
-            // generation (prereq_slot >= gen + 1; a stale prereq from before a respec does
-            // not count).
-            constraints.push(StateConstraint::FieldLteOther {
-                index: RESPEC_SLOT,
-                other: prereq,
-                delta: -1,
-            });
-        }
-        if let Some(class) = t.class {
-            constraints.push(StateConstraint::FieldEquals {
-                index: CLASS_SLOT,
-                value: field_from_u64(class),
-            });
-        }
+        cases.push(TransitionCase {
+            guard: TransitionGuard::SlotChanged { index: t.slot },
+            constraints: respec_talent_gate_constraints(t),
+        });
+        // The dispatch case — `SlotChanged` is not method-dispatching, so the claim method still
+        // needs a `MethodIs` case or it default-denies as an unknown symbol.
         cases.push(TransitionCase {
             guard: TransitionGuard::MethodIs {
                 method: symbol(t.method),
             },
-            constraints,
+            constraints: respec_talent_gate_constraints(t),
         });
     }
 
@@ -649,6 +692,161 @@ mod tests {
             has_talent(&world, IRONHIDE),
             "bought with earned echoes, never dregg"
         );
+    }
+
+    // ── 2b. THE STAPLED-WRITE FALSIFIER ──────────────────────────────────────────────
+
+    /// THE FALSIFIER: a LEGITIMATE `meta/grant_echoes` turn (dead == 1, a real strictly-positive
+    /// accrual) with an EXTRA `SetField(IRONHIDE.slot, 1)` STAPLED ON. The talent gates
+    /// (`FieldGte(echoes, price)` / prereq / class) live ONLY on the `talent/claim/<name>` case,
+    /// which this turn's method does NOT match — so if the kernel evaluated only the matching
+    /// case, this rides a free talent in under another method's turn.
+    ///
+    /// The hero here has 15 echoes (a shallow death) — HALF Ironhide's 30 price. If this commits,
+    /// a player unlocks any talent for free.
+    #[test]
+    fn a_stapled_talent_write_cannot_ride_another_methods_turn() {
+        let world = deploy_talent_hero(70);
+        progression::choose_class(&world, MAGE).expect("class");
+        progression::perish(&world).expect("a real death");
+        let cell = world.cell_id();
+
+        // A legitimate grant_echoes payload: dead == 1, echoes 0 -> 15 (strictly monotone).
+        let echoes_amount = meta::echoes_for_depth(1); // 15 < IRONHIDE.price (30)
+        assert!(
+            echoes_amount < IRONHIDE.price,
+            "the hero cannot afford Ironhide"
+        );
+
+        let stapled = world.apply_raw(
+            meta::GRANT_ECHOES_METHOD,
+            vec![
+                // The normal echoes write — this part is entirely legitimate.
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as usize,
+                    value: field_from_u64(echoes_amount),
+                },
+                // The stapled-on free talent.
+                Effect::SetField {
+                    cell,
+                    index: IRONHIDE.slot as usize,
+                    value: field_from_u64(1),
+                },
+            ],
+        );
+
+        assert!(
+            matches!(stapled, Err(WorldError::Refused(_))),
+            "a talent write stapled onto a grant_echoes turn must be REFUSED, got {stapled:?}"
+        );
+        assert!(
+            !has_talent(&world, IRONHIDE),
+            "anti-ghost: no free talent rode in on another method's turn"
+        );
+
+        // The AUTHORING method is not the pivot — the same staple under the OTHER meta method
+        // (`meta/claim_boon`, itself perfectly legitimate here) is refused too.
+        meta::grant_echoes(&world, 6).expect("a real death funds 40 echoes");
+        let via_boon = world.apply_raw(
+            meta::CLAIM_BOON_METHOD,
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: 7, // meta::BOON_SLOT — the legitimate half of the turn
+                    value: field_from_u64(meta::BOON_VALUE),
+                },
+                // A MAGE hero stapling the WARRIOR-only Battle Fury: the class gate must bite
+                // even though this turn never presents a talent method.
+                Effect::SetField {
+                    cell,
+                    index: BATTLE_FURY.slot as usize,
+                    value: field_from_u64(1),
+                },
+            ],
+        );
+        assert!(
+            matches!(via_boon, Err(WorldError::Refused(_))),
+            "a class-violating talent stapled onto a claim_boon turn must be REFUSED, got {via_boon:?}"
+        );
+        assert!(
+            !has_talent(&world, BATTLE_FURY),
+            "anti-ghost: the class gate binds the WRITE, not the method"
+        );
+
+        // THE PREREQ AXIS: 40 echoes covers Deep Delver's 60? No — but Ironhide (30) is
+        // affordable, so staple Deep Delver (prereq: Ironhide, unheld) onto a grant turn.
+        let staple_prereq = world.apply_raw(
+            meta::GRANT_ECHOES_METHOD,
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as usize,
+                    value: field_from_u64(meta::echoes(&world) + 60),
+                },
+                Effect::SetField {
+                    cell,
+                    index: DEEP_DELVER.slot as usize,
+                    value: field_from_u64(1),
+                },
+            ],
+        );
+        assert!(
+            matches!(staple_prereq, Err(WorldError::Refused(_))),
+            "a prereq-skipping talent stapled onto a grant turn must be REFUSED, got {staple_prereq:?}"
+        );
+        assert!(
+            !has_talent(&world, DEEP_DELVER),
+            "anti-ghost: no free tree edge"
+        );
+
+        // THE LEGITIMATE PATHS STILL WORK — the guard is a gate, not a wall.
+        meta::grant_echoes(&world, 6).expect("a legitimate grant_echoes still commits");
+        claim_talent(&world, IRONHIDE).expect("a legitimate, funded claim still commits");
+        assert!(
+            has_talent(&world, IRONHIDE),
+            "the real unlock path is intact"
+        );
+    }
+
+    /// The RESPEC tree has NO `WriteOnce` backstop (its markers are generation-keyed), so a
+    /// stapled write there is even freer — the same falsifier must be refused.
+    #[test]
+    fn a_stapled_talent_write_cannot_ride_a_respec_tree_turn() {
+        let world = deploy_respec_hero(71);
+        progression::choose_class(&world, MAGE).expect("class");
+        progression::perish(&world).expect("a real death");
+        let cell = world.cell_id();
+
+        let stapled = world.apply_raw(
+            meta::GRANT_ECHOES_METHOD,
+            vec![
+                Effect::SetField {
+                    cell,
+                    index: ECHOES_SLOT as usize,
+                    value: field_from_u64(meta::echoes_for_depth(1)), // 15 < IRONHIDE.price
+                },
+                Effect::SetField {
+                    cell,
+                    index: IRONHIDE.slot as usize,
+                    value: field_from_u64(1), // generation 0 -> a valid gen+1 marker
+                },
+            ],
+        );
+        assert!(
+            matches!(stapled, Err(WorldError::Refused(_))),
+            "a talent write stapled onto a respec-tree grant turn must be REFUSED, got {stapled:?}"
+        );
+        assert!(
+            !has_talent_gen(&world, IRONHIDE),
+            "anti-ghost: no free generation-keyed talent"
+        );
+
+        // The legitimate respec-tree paths still work.
+        meta::grant_echoes(&world, 6).expect("a legitimate grant still commits");
+        claim_talent_gen(&world, IRONHIDE).expect("a legitimate gen-keyed claim still commits");
+        assert!(has_talent_gen(&world, IRONHIDE), "the real path is intact");
+        respec(&world).expect("a legitimate respec still commits");
     }
 
     // ── 3. RESPEC — the generation-keyed re-key sink ─────────────────────────────────
