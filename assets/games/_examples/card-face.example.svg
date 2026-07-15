@@ -1,0 +1,15 @@
+<!-- EXAMPLE PLACEHOLDER — a multiway-tug card face.
+     TWO valid sizes (see assets/games/README.md):
+       * 128x128 square  → drop-in for the EXISTING card-sprite slot (dreggnet-sprite card kind).
+       * 500x700 portrait → the DESIGNED full-card-face slot (larger art; wired at merge).
+     This example is the 128x128 square drop-in. Keep the viewBox; transparent outside the frame. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img"
+     data-kind="card" data-slot="multiway-tug/cards" data-example="1">
+  <rect x="8" y="8" width="112" height="112" rx="10" fill="#0f1830" stroke="#5cc9ff" stroke-width="3"/>
+  <path d="M64 34 L71 55 L93 55 L75 68 L82 89 L64 76 L46 89 L53 68 L35 55 L57 55 Z"
+        fill="#5cc9ff" stroke="#dfe8fb" stroke-width="1.5" stroke-linejoin="round"/>
+  <circle cx="54" cy="104" r="2.5" fill="#f2c94c"/>
+  <circle cx="64" cy="104" r="2.5" fill="#f2c94c"/>
+  <circle cx="74" cy="104" r="2.5" fill="#f2c94c"/>
+  <text x="64" y="24" text-anchor="middle" font-family="monospace" font-size="8" fill="#8fa2c4">FAVOR</text>
+</svg>

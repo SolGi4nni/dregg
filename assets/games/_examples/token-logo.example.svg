@@ -1,0 +1,11 @@
+<!-- EXAMPLE PLACEHOLDER — a token / microsite logo mark.
+     Brand art (launchpad + microsite) is the LOWEST-friction real slot: static files are already
+     served (launchpad-web/public/, the root assets/). A square logo mark, transparent background.
+     Ship at 512x512 (source) plus a 256 and 128 export; add a 1200x630 OG image separately. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img"
+     data-kind="logo" data-slot="brand/logo" data-example="1">
+  <rect x="4" y="4" width="120" height="120" rx="26" fill="#0b1020" stroke="#243352" stroke-width="2"/>
+  <path d="M40 40 L40 88 Q64 96 88 88 L88 40 Q64 32 40 40 Z" fill="#111a2e" stroke="#5cc9ff" stroke-width="3"/>
+  <path d="M52 56 L76 56 M52 68 L76 68 M52 80 L68 80" stroke="#7fdfe0" stroke-width="3" stroke-linecap="round"/>
+  <text x="64" y="118" text-anchor="middle" font-family="monospace" font-size="9" fill="#8fa2c4">brand mark</text>
+</svg>

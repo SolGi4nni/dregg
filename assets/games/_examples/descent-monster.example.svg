@@ -1,0 +1,15 @@
+<!-- EXAMPLE PLACEHOLDER — copy this as a starting template for a Descent monster sprite.
+     Canvas: 128x128 (matches dreggnet-sprite CANVAS, dreggnet-sprite/src/svg.rs:88).
+     Palette: the deos-view designed look (deos-view/src/web.rs:1654).
+     Replace the guts; keep the viewBox, the transparent background, and the 128x128 box.
+     A hand-drawn/AI raster export goes to a sibling .webp/.png at the same 128 (or 256) size. -->
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 128 128" width="128" height="128" role="img"
+     data-kind="monster" data-slot="descent/monsters" data-example="1">
+  <!-- transparent background: no <rect> fill covering the whole canvas -->
+  <circle cx="64" cy="60" r="34" fill="#152444" stroke="#5cc9ff" stroke-width="2"/>
+  <circle cx="52" cy="54" r="6" fill="#f8737f"/>
+  <circle cx="76" cy="54" r="6" fill="#f8737f"/>
+  <path d="M46 78 Q64 92 82 78" fill="none" stroke="#dfe8fb" stroke-width="3" stroke-linecap="round"/>
+  <path d="M40 34 L48 48 M88 34 L80 48" stroke="#8fa2c4" stroke-width="3" stroke-linecap="round"/>
+  <text x="64" y="120" text-anchor="middle" font-family="monospace" font-size="9" fill="#8fa2c4">example: replace me</text>
+</svg>
