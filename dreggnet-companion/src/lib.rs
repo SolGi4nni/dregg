@@ -59,13 +59,34 @@
 //! leveling cell). As in [`multicell`], the embedded host recomputes the peer's finalized
 //! value from its own committed ledger (turns commit synchronously); a production finalized-
 //! root channel furnishing the peer root from an independently-finalized chain is the named
-//! transport add. The cross-cell gate pins a SPECIFIC level checkpoint (the
-//! `ObservedFieldEquals` equality-at-root semantics); a native cross-cell `>=` predicate
-//! (buff applies at level N *or higher*) is a named residual. Other NAMED residuals: a
-//! companion's ABILITIES (an ability keyed to the companion's level/rarity), BREEDING (two
-//! companions -> an egg via a fair draw, the [`dreggnet_craft`]-style two-input sink),
-//! companion TRADING through the `escrow-market` swap (the transfer primitive is here), and
-//! richer permadeath BONDS (a death-earned keepsake).
+//! transport add.
+//!
+//! ## Matured surface (built here, driven in [`tests/integration.rs`])
+//!
+//! * **A native cross-cell `>=` buff** ([`CompanionRoost::arm_buff_at_least`]) — the exact
+//!   gate pins one level checkpoint; the `>=` gate's predicate carries a cross-cell
+//!   [`StateConstraint::ObservedFieldEquals`] (binding the buff slot to the companion's live
+//!   `level` — an un-forgeable kernel read) AND a [`StateConstraint::FieldGte`]`(slot, N)` floor,
+//!   so it admits at level N *or higher* (below N the floor refuses it).
+//! * **Abilities** keyed to class/level/rarity ([`CompanionRoost::use_ability`]) — a real
+//!   class-locked kernel turn advancing the `abilities_used` counter (a wrong-class use is a
+//!   real refusal); the level/rarity keying is a host eligibility read (the kernel-provable
+//!   "at level N" form is the `>=` buff above).
+//! * **Breeding** ([`CompanionRoost::breed`]) — the two-input sink: both parents are SPENT
+//!   on-chain (the asset layer's own re-spend tooth — a consumed parent's re-trade is refused)
+//!   and one fair-draw egg is minted whose species binds both parents (re-derivable lineage).
+//! * **Escrow-market trading** ([`CompanionRoost::open_swap`] / [`CompanionRoost::settle_swap`])
+//!   — a two-party atomic swap through a neutral escrow holder (deposit both, settle to the
+//!   counterparties; a non-owner deposit is refused; the refund abort path returns deposits).
+//!
+//! ## Remaining NAMED residuals
+//!
+//! Binding the buff onto the REAL Descent run-cell (a [`dreggnet_adventure`] world-cell gating
+//! an aid on the companion, sharing ONE finalized-root channel) is a cross-crate transport add
+//! (the `>=` buff here is the exact mechanism such a world-cell uses). Also open: richer
+//! permadeath BONDS (a death-earned keepsake note), a catalyst/weighted breeding curve where a
+//! parent's rarity biases the egg tail, and abilities whose LEVEL gate is itself a kernel
+//! predicate on the companion cell (rather than the host eligibility read used here).
 
 use std::collections::{HashMap, HashSet};
 
@@ -78,10 +99,19 @@ use dregg_turn::action::{WitnessBlob, WitnessKind};
 use dreggnet_asset::{AssetError, AssetId, AssetWorld, ProvenanceReport, TransferReceipt};
 use dungeon_on_dregg::loot::{Rarity, rarity_of_roll};
 use dungeon_on_dregg::progression::{
-    DEAD_SLOT, GAIN_XP_METHOD, HARDCORE_PERISH_METHOD, HARDCORE_RESURRECT_METHOD, LEVEL_SLOT,
-    XP_SLOT, hero_story, level_up_method, xp_threshold,
+    ABILITY_SLOT, CHOOSE_CLASS_METHOD, CLASS_SLOT, DEAD_SLOT, GAIN_XP_METHOD,
+    HARDCORE_PERISH_METHOD, HARDCORE_RESURRECT_METHOD, LEVEL_SLOT, MAGE, MAX_LEVEL, ROGUE, WARRIOR,
+    XP_SLOT, ability_method, hero_story, level_up_method, xp_threshold,
 };
 use procgen_dregg::CommittedSeed;
+
+// Re-export the substrate types a caller (and the integration tests) needs to drive the roost
+// without pulling the sibling crates into their own manifest: the fairness anchor, the rarity
+// tier, the class ids, and the level ceiling.
+pub use dungeon_on_dregg::loot::Rarity as RarityTier;
+pub use dungeon_on_dregg::progression::{MAGE as CLASS_MAGE, MAX_LEVEL as COMPANION_MAX_LEVEL};
+pub use dungeon_on_dregg::progression::{ROGUE as CLASS_ROGUE, WARRIOR as CLASS_WARRIOR};
+pub use procgen_dregg::CommittedSeed as HatchBeacon;
 
 // ── Fair-hatch constants ───────────────────────────────────────────────────────────
 
@@ -243,6 +273,28 @@ fn hatch_commitment(draw: &HatchDraw) -> Vec<u8> {
     h.finalize().as_bytes().to_vec()
 }
 
+/// The domain tag for a bred egg's species label (so a bred hatch's fair-draw stream is
+/// distinct from a fresh-egg stream and re-derivable from the parents).
+const DOMAIN_BRED_SPECIES: &[u8] = b"dreggnet-companion/bred-species/v1";
+
+/// The **species label of an egg bred from two parents** — a domain-separated hash of the SORTED
+/// parent asset ids, so the pairing is order-independent (`breed(a, b)` and `breed(b, a)` are the
+/// same egg species) and the offspring's provenance binds its lineage. Fed to [`roll_hatch`] as a
+/// normal species, so a bred egg is a real fair draw that [`reverify_hatch`] accepts.
+fn bred_species(parent_a: AssetId, parent_b: AssetId) -> String {
+    let (lo, hi) = if parent_a.bytes() <= parent_b.bytes() {
+        (parent_a.bytes(), parent_b.bytes())
+    } else {
+        (parent_b.bytes(), parent_a.bytes())
+    };
+    let mut h = blake3::Hasher::new();
+    h.update(DOMAIN_BRED_SPECIES);
+    h.update(&lo);
+    h.update(&hi);
+    let tag = h.finalize();
+    format!("companion:bred/{}", &tag.to_hex().as_str()[..16])
+}
+
 /// A hatched **companion** — the fusion. Its [`AssetId`] is the owned, content-addressed
 /// identity (in the asset layer); its `cell` is the real leveling cell (in the shared run
 /// executor). Together they are the provable bond: an un-dupable identity you genuinely
@@ -264,17 +316,44 @@ pub struct Companion {
     pub(crate) seed: u32,
 }
 
-/// A **run buff gate** — a real cross-cell predicate cell pinned at a companion's finalized
-/// level-N checkpoint. [`CompanionRoost::attempt_buff`] drives a turn on it; the executor
-/// admits it IFF the companion is AT the checkpoint (its live commitment == [`Self::checkpoint`])
-/// and the written value matches the companion's `level` at that root.
+/// Whether a [`BuffGate`] pins an EXACT level checkpoint or admits at level-N-**or-higher**.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum BuffKind {
+    /// The gate's single [`StateConstraint::ObservedFieldEquals`] pins the companion's
+    /// level-`required_level` checkpoint EXACTLY (`level == N`). Above the level the companion's
+    /// commitment moves off the checkpoint and the buff no longer applies.
+    Exact,
+    /// The native cross-cell `>=`: the buff cell's [`CellProgram::Predicate`] carries BOTH a
+    /// cross-cell [`StateConstraint::ObservedFieldEquals`] (binding the buff slot to the
+    /// companion's LIVE `level` — the value cannot be forged, it is the kernel-observed peer
+    /// field) AND a [`StateConstraint::FieldGte`]`(buff_slot, N)` floor. Together they admit IFF
+    /// the companion's live level is `>= N`: the observation forces the written value to be the
+    /// real level, and the `FieldGte` refuses it below `N` (fail-closed on the floor). Because the
+    /// embedded host's finalized-root authority recognizes only the peer's CURRENT commitment, the
+    /// cross-cell read is (re)bound to the live commitment at each activation — the buff applies at
+    /// level N *or higher*, for as long as the companion holds there.
+    AtLeast,
+}
+
+/// A **run buff gate** — a real cross-cell predicate cell over a companion's finalized `level`.
+/// [`CompanionRoost::attempt_buff`] drives a turn on it; the executor admits it IFF the
+/// cross-cell observation of the companion's `level` holds (and, for [`BuffKind::AtLeast`], the
+/// `>=` floor).
+///
+/// * [`BuffKind::Exact`] pins ONE checkpoint (level == N) on a persistent cell.
+/// * [`BuffKind::AtLeast`] is the native `>=`: an `ObservedFieldEquals` + `FieldGte(N)` predicate,
+///   (re)bound to the companion's live commitment at each activation (level N-or-higher).
 #[derive(Clone, Debug)]
 pub struct BuffGate {
-    /// The buff cell (its `ObservedFieldEquals` names the companion's `level` slot).
+    /// The buff cell (its predicate names the companion's `level` slot cross-cell). For
+    /// [`BuffKind::AtLeast`] this is refreshed to the live-commitment-bound cell on each activation.
     pub buff_cell: CellId,
-    /// The companion level this buff requires.
+    /// The companion level this buff requires (the FLOOR for [`BuffKind::AtLeast`]).
     pub required_level: u64,
-    /// The companion's finalized commitment upon reaching `required_level` — the pinned root.
+    /// Whether the gate is an exact-level or a level-`>=` predicate.
+    pub kind: BuffKind,
+    /// The companion's finalized commitment the cross-cell read is bound to (the pinned checkpoint
+    /// for [`BuffKind::Exact`]; the last live commitment activated against for [`BuffKind::AtLeast`]).
     pub checkpoint: [u8; 32],
     /// The companion asset the buff belongs to (its owner is re-checked at activation).
     pub asset_id: AssetId,
@@ -302,6 +381,16 @@ pub enum CompanionError {
     Asset(AssetError),
     /// No companion with this asset id has been hatched in this roost.
     Unknown,
+    /// The companion was already consumed as a breeding input — it cannot be bred/traded again.
+    Consumed,
+    /// A companion does not meet a level/rarity/class precondition for an ability or a breeding
+    /// (e.g. an ability used below its unlock level, or a breed of a companion whose rarity is
+    /// too low). Carries the exact reason. Distinct from a kernel [`Self::Refused`]: this is the
+    /// host eligibility read the roost performs before ever issuing the turn.
+    Ineligible(String),
+    /// An escrow swap operation cannot proceed in the swap's current state (e.g. a settle before
+    /// both sides deposited, or a double-settle). Carries the reason.
+    Swap(String),
 }
 
 impl std::fmt::Display for CompanionError {
@@ -313,11 +402,133 @@ impl std::fmt::Display for CompanionError {
             CompanionError::Refused(w) => write!(f, "run turn refused: {w}"),
             CompanionError::Asset(e) => write!(f, "asset layer refused: {e}"),
             CompanionError::Unknown => write!(f, "unknown companion"),
+            CompanionError::Consumed => write!(f, "companion already consumed by breeding"),
+            CompanionError::Ineligible(w) => write!(f, "companion ineligible: {w}"),
+            CompanionError::Swap(w) => write!(f, "escrow swap refused: {w}"),
         }
     }
 }
 
 impl std::error::Error for CompanionError {}
+
+// ── Abilities (keyed to class / level / rarity) ─────────────────────────────────────
+
+/// A total order on rarity (Common < Uncommon < Rare < Legendary) — the `min_rarity` floor an
+/// ability / a breeding uses.
+pub fn rarity_rank(r: Rarity) -> u8 {
+    match r {
+        Rarity::Common => 0,
+        Rarity::Uncommon => 1,
+        Rarity::Rare => 2,
+        Rarity::Legendary => 3,
+    }
+}
+
+/// A companion **ability** — a class-locked move keyed to a minimum level and rarity. Its
+/// EXECUTION is a real kernel-gated turn on the companion's leveling cell (the progression
+/// program's `ability/<class>` case: [`StateConstraint::FieldEquals`]`(class, class_id)` — a
+/// wrong-class / no-class use is a real executor refusal — plus [`StateConstraint::StrictMonotonic`]
+/// advancing the `abilities_used` counter). The `unlock_level` / `min_rarity` are eligibility
+/// preconditions the roost reads off committed state before issuing the turn (a host read, not a
+/// kernel predicate — the kernel-provable "at level N" form is [`CompanionRoost::arm_buff_at_least`]).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct Ability {
+    /// A stable ability name (e.g. `"shield_bash"`).
+    pub id: &'static str,
+    /// The class this ability is locked to (`WARRIOR` / `MAGE` / `ROGUE`) — the kernel lock.
+    pub class: u64,
+    /// The companion level at which the ability unlocks.
+    pub unlock_level: u64,
+    /// The minimum rarity the ability requires (a rarer companion has a deeper kit).
+    pub min_rarity: Rarity,
+}
+
+/// The built-in ability catalog — a small, deterministic kit per class, gated by level + rarity.
+pub fn ability_catalog() -> Vec<Ability> {
+    vec![
+        Ability {
+            id: "shield_bash",
+            class: WARRIOR,
+            unlock_level: 1,
+            min_rarity: Rarity::Common,
+        },
+        Ability {
+            id: "rallying_cry",
+            class: WARRIOR,
+            unlock_level: 3,
+            min_rarity: Rarity::Rare,
+        },
+        Ability {
+            id: "arcane_bolt",
+            class: MAGE,
+            unlock_level: 1,
+            min_rarity: Rarity::Common,
+        },
+        Ability {
+            id: "meteor",
+            class: MAGE,
+            unlock_level: 4,
+            min_rarity: Rarity::Legendary,
+        },
+        Ability {
+            id: "backstab",
+            class: ROGUE,
+            unlock_level: 2,
+            min_rarity: Rarity::Uncommon,
+        },
+    ]
+}
+
+// ── Escrow-market swap (an atomic two-companion trade through escrow) ────────────────
+
+/// The label of the neutral escrow holder a swap deposits into (its own asset-layer key).
+const ESCROW_HOLDER: &str = "companion:escrow";
+
+/// The lifecycle phase of an [`EscrowSwap`].
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum SwapPhase {
+    /// Opened; neither side deposited.
+    Open,
+    /// One side deposited into escrow, awaiting the other.
+    HalfDeposited,
+    /// Both companions are in escrow — ready to [`CompanionRoost::settle_swap`].
+    Ready,
+    /// Settled — each companion delivered to the counterparty.
+    Settled,
+    /// Refunded — deposited companions returned to their original owners.
+    Refunded,
+}
+
+/// A **two-party escrow swap** — the trading residual, built through the asset layer's owner-gated
+/// transfer primitive (the escrow-market swap shape). Party A trades companion A for party B's
+/// companion B: each deposits its companion into the neutral [`ESCROW_HOLDER`] (an owner-gated
+/// transfer — a non-owner deposit is a real asset refusal), and only once BOTH are in escrow does
+/// [`CompanionRoost::settle_swap`] deliver each to the counterparty. A swap that never fills can be
+/// [`CompanionRoost::refund_swap`]ed — the deposited companion returns to its owner. Atomic: no
+/// single-sided settle, and after settlement the origin versions are spent (a re-trade is refused).
+#[derive(Clone, Debug)]
+pub struct EscrowSwap {
+    /// The swap id (distinct per opened swap).
+    pub id: u64,
+    /// Companion A and its original owner label.
+    pub asset_a: AssetId,
+    pub party_a: String,
+    /// Companion B and its original owner label.
+    pub asset_b: AssetId,
+    pub party_b: String,
+    /// Whether each side's companion is currently held in escrow.
+    a_in_escrow: bool,
+    b_in_escrow: bool,
+    /// The swap phase.
+    phase: SwapPhase,
+}
+
+impl EscrowSwap {
+    /// The swap's current phase.
+    pub fn phase(&self) -> SwapPhase {
+        self.phase
+    }
+}
 
 // ── Shared-executor cell assembly (mirrors `multicell`) ─────────────────────────────
 
@@ -524,8 +735,14 @@ pub struct CompanionRoost {
     hatches: HashMap<[u8; 32], HatchDraw>,
     /// The hatch commitments already claimed (a hatch mints exactly once).
     claimed: HashSet<Vec<u8>>,
+    /// asset ids CONSUMED as a breeding input (their live version was spent into an egg). A
+    /// consumed companion cannot be bred/traded again — the asset layer refuses the re-spend,
+    /// and the roost refuses the operation up front for a clear error.
+    consumed: HashSet<[u8; 32]>,
     /// The next run-cell seed (distinct per leveling / buff cell in the shared executor).
     next_seed: u32,
+    /// The next escrow-swap id (distinct per opened swap).
+    next_swap: u64,
 }
 
 impl Default for CompanionRoost {
@@ -546,7 +763,9 @@ impl CompanionRoost {
             companions: HashMap::new(),
             hatches: HashMap::new(),
             claimed: HashSet::new(),
+            consumed: HashSet::new(),
             next_seed: 1,
+            next_swap: 1,
         }
     }
 
@@ -700,10 +919,66 @@ impl CompanionRoost {
         BuffGate {
             buff_cell,
             required_level,
+            kind: BuffKind::Exact,
             checkpoint,
             asset_id: comp.asset_id,
             companion_cell: comp.cell,
         }
+    }
+
+    /// **Arm a native cross-cell `>=` buff** requiring the companion at `min_level` **or higher**
+    /// — the level-N-or-higher residual, closed with a real KERNEL predicate (not host `>=`
+    /// bookkeeping). The buff cell's [`CellProgram::Predicate`] carries two teeth:
+    ///
+    /// 1. a cross-cell [`StateConstraint::ObservedFieldEquals`] binding the buff slot to the
+    ///    companion's LIVE `level` (the observed peer value cannot be forged — it is the kernel's
+    ///    finalized read of the companion cell), and
+    /// 2. a [`StateConstraint::FieldGte`]`(buff_slot, min_level)` floor.
+    ///
+    /// Their conjunction admits IFF the companion's live level is `>= min_level`: the observation
+    /// forces the written value to be the real level, the `FieldGte` refuses it below the floor.
+    /// Because the embedded host's finalized-root authority recognizes only the peer's CURRENT
+    /// commitment (a `>=` gate cannot pin a fixed historical root and still fire across levels),
+    /// [`Self::attempt_buff`] (re)binds the read to the companion's live commitment at each
+    /// activation. `min_level` is clamped to `1..=MAX_LEVEL`.
+    pub fn arm_buff_at_least(&mut self, comp: &Companion, min_level: u64) -> BuffGate {
+        let min_level = min_level.clamp(1, MAX_LEVEL);
+        let checkpoint = commitment_of(&self.exec, comp.cell);
+        let buff_cell = self.install_at_least_cell(comp.cell, checkpoint, min_level);
+        BuffGate {
+            buff_cell,
+            required_level: min_level,
+            kind: BuffKind::AtLeast,
+            checkpoint,
+            asset_id: comp.asset_id,
+            companion_cell: comp.cell,
+        }
+    }
+
+    /// Install a fresh `>=` buff cell bound to `at_root` (a companion's live commitment) with the
+    /// `ObservedFieldEquals` + `FieldGte(min_level)` program. Called at arm time and re-called at
+    /// each `>=` activation (the read must track the companion's CURRENT commitment).
+    fn install_at_least_cell(
+        &mut self,
+        companion_cell: CellId,
+        at_root: [u8; 32],
+        min_level: u64,
+    ) -> CellId {
+        let seed = self.take_seed();
+        let program = CellProgram::Predicate(vec![
+            StateConstraint::ObservedFieldEquals {
+                local_field: BUFF_SLOT,
+                source_cell: *companion_cell.as_bytes(),
+                source_field: LEVEL_SLOT,
+                at_root,
+                proof_witness_index: 0,
+            },
+            StateConstraint::FieldGte {
+                index: BUFF_SLOT,
+                value: field_from_u64(min_level),
+            },
+        ]);
+        install(&self.exec, self.driver, run_cell(seed, program))
     }
 
     /// **Attempt to activate a buff** — the cross-cell aid. `player` must OWN the companion
@@ -715,7 +990,7 @@ impl CompanionRoost {
     /// a stripped witness, it is a real refusal.
     pub fn attempt_buff(
         &mut self,
-        gate: &BuffGate,
+        gate: &mut BuffGate,
         player: &str,
         with_witness: bool,
     ) -> Result<TurnReceipt, CompanionError> {
@@ -723,10 +998,27 @@ impl CompanionRoost {
         if self.assets.current_owner(gate.asset_id) != Some(pk) {
             return Err(CompanionError::NotOwner);
         }
+        // The value written into the buff cell must equal the peer's finalized `level` at the bound
+        // root. For an EXACT gate that is `required_level` at the pinned checkpoint; for an `>=`
+        // gate it is the companion's CURRENT level, and the cross-cell read is (re)bound to the
+        // companion's LIVE commitment (the host authority recognizes only the current commitment).
+        let (written, blob_root) = match gate.kind {
+            BuffKind::Exact => (gate.required_level, gate.checkpoint),
+            BuffKind::AtLeast => {
+                let live_level = read_u64(&self.exec, gate.companion_cell, LEVEL_SLOT);
+                let live_root = commitment_of(&self.exec, gate.companion_cell);
+                // Refresh the buff cell to bind the read to the companion's live commitment (the
+                // `FieldGte(N)` floor is what still refuses a below-level companion).
+                gate.buff_cell =
+                    self.install_at_least_cell(gate.companion_cell, live_root, gate.required_level);
+                gate.checkpoint = live_root;
+                (live_level, live_root)
+            }
+        };
         let blobs = if with_witness {
             vec![WitnessBlob::new(
                 WitnessKind::MerklePath,
-                gate.checkpoint.to_vec(),
+                blob_root.to_vec(),
             )]
         } else {
             vec![]
@@ -739,7 +1031,7 @@ impl CompanionRoost {
             vec![set_field(
                 gate.buff_cell,
                 BUFF_SLOT,
-                field_from_u64(gate.required_level),
+                field_from_u64(written),
             )],
             blobs,
         )
@@ -764,6 +1056,9 @@ impl CompanionRoost {
         from: &str,
         to: &str,
     ) -> Result<TransferReceipt, CompanionError> {
+        if self.consumed.contains(&asset_id.bytes()) {
+            return Err(CompanionError::Consumed);
+        }
         let receipt = self
             .assets
             .transfer(asset_id, from, to)
@@ -786,6 +1081,292 @@ impl CompanionRoost {
         self.assets
             .attempt_respend(asset_id, version_index)
             .map_err(CompanionError::Asset)
+    }
+
+    // ── Abilities (class-locked kernel turns, keyed to level / rarity) ───────────────
+
+    /// **Choose a companion's class** — a real one-time [`CHOOSE_CLASS_METHOD`] turn writing the
+    /// `class` slot (`WARRIOR` / `MAGE` / `ROGUE`). The kernel's global `WriteOnce(class)` admits
+    /// the first choice and REFUSES a re-class; the `choose_class` case's `AnyOf` refuses an
+    /// invalid class id. A class is the prerequisite for the class-locked abilities.
+    pub fn choose_class(
+        &mut self,
+        comp: &Companion,
+        class_id: u64,
+    ) -> Result<TurnReceipt, CompanionError> {
+        issue(
+            &self.exec,
+            &self.cclerk,
+            comp.cell,
+            CHOOSE_CLASS_METHOD,
+            vec![set_field(comp.cell, CLASS_SLOT, field_from_u64(class_id))],
+            vec![],
+        )
+        .map_err(CompanionError::Refused)
+    }
+
+    /// The companion's committed `class` id (`0` = unset).
+    pub fn class_of(&self, comp: &Companion) -> u64 {
+        read_u64(&self.exec, comp.cell, CLASS_SLOT)
+    }
+    /// The companion's committed `abilities_used` counter.
+    pub fn abilities_used_of(&self, comp: &Companion) -> u64 {
+        read_u64(&self.exec, comp.cell, ABILITY_SLOT)
+    }
+
+    /// The abilities this companion has UNLOCKED — the catalog filtered by its chosen class, its
+    /// committed level (`>= unlock_level`), and its hatch rarity (`>= min_rarity`).
+    pub fn unlocked_abilities(&self, comp: &Companion) -> Vec<Ability> {
+        let class = self.class_of(comp);
+        let level = self.level_of(comp);
+        ability_catalog()
+            .into_iter()
+            .filter(|a| {
+                a.class == class
+                    && level >= a.unlock_level
+                    && rarity_rank(comp.rarity) >= rarity_rank(a.min_rarity)
+            })
+            .collect()
+    }
+
+    /// **Use a companion ability** — a real kernel-gated `ability/<class>` turn advancing the
+    /// `abilities_used` counter. The kernel enforces the class LOCK
+    /// ([`StateConstraint::FieldEquals`]`(class, ability.class)` — a wrong-class or no-class use is
+    /// a real [`CompanionError::Refused`]) and [`StateConstraint::StrictMonotonic`] on the counter.
+    /// The level / rarity KEYING is a host eligibility read of committed state performed first (a
+    /// dead / under-level / under-rarity companion is [`CompanionError::Ineligible`], no turn
+    /// issued) — the kernel-provable "companion at level N" form is [`Self::arm_buff_at_least`].
+    pub fn use_ability(
+        &mut self,
+        comp: &Companion,
+        ability: &Ability,
+    ) -> Result<TurnReceipt, CompanionError> {
+        if self.is_dead(comp) {
+            return Err(CompanionError::Ineligible(
+                "a dead companion cannot act".into(),
+            ));
+        }
+        let level = self.level_of(comp);
+        if level < ability.unlock_level {
+            return Err(CompanionError::Ineligible(format!(
+                "ability `{}` unlocks at level {}, companion is level {level}",
+                ability.id, ability.unlock_level
+            )));
+        }
+        if rarity_rank(comp.rarity) < rarity_rank(ability.min_rarity) {
+            return Err(CompanionError::Ineligible(format!(
+                "ability `{}` needs rarity {:?} or higher, companion is {:?}",
+                ability.id, ability.min_rarity, comp.rarity
+            )));
+        }
+        let used = self.abilities_used_of(comp);
+        issue(
+            &self.exec,
+            &self.cclerk,
+            comp.cell,
+            &ability_method(ability.class),
+            vec![set_field(comp.cell, ABILITY_SLOT, field_from_u64(used + 1))],
+            vec![],
+        )
+        .map_err(CompanionError::Refused)
+    }
+
+    // ── Breeding (a two-input sink: two parents SPENT → one fair-draw egg) ───────────
+
+    /// **Breed two companions into an egg** — the two-input sink. `breeder` must OWN both parents
+    /// (a non-owner is [`CompanionError::NotOwner`]); neither may be dead or already consumed. Both
+    /// parents' live versions are SPENT on-chain (the asset layer's own [`AssetWorld::attempt_respend`]
+    /// tooth — genuinely destroyed, not bookkept: a re-trade/re-breed of a consumed parent is a real
+    /// refusal), and a fresh **egg** companion is hatched from a provably-fair draw whose species
+    /// label binds BOTH parents (order-independent) — so the offspring is re-derivable, un-fakeable,
+    /// and its provenance encodes its lineage. The egg is owned by `breeder`.
+    pub fn breed(
+        &mut self,
+        breeder: &str,
+        parent_a: AssetId,
+        parent_b: AssetId,
+        beacon: &CommittedSeed,
+        seq: u64,
+    ) -> Result<Companion, CompanionError> {
+        let pk = self.assets.pubkey_of(breeder);
+        for p in [parent_a, parent_b] {
+            let comp = self
+                .companions
+                .get(&p.bytes())
+                .ok_or(CompanionError::Unknown)?
+                .clone();
+            if self.consumed.contains(&p.bytes()) {
+                return Err(CompanionError::Consumed);
+            }
+            if self.assets.current_owner(p) != Some(pk) {
+                return Err(CompanionError::NotOwner);
+            }
+            if self.is_dead(&comp) {
+                return Err(CompanionError::Ineligible(
+                    "a dead companion cannot breed".into(),
+                ));
+            }
+        }
+        if parent_a.bytes() == parent_b.bytes() {
+            return Err(CompanionError::Ineligible(
+                "a companion cannot breed with itself".into(),
+            ));
+        }
+
+        // The egg's species binds both parents (sorted, so the pairing is order-independent).
+        let species = bred_species(parent_a, parent_b);
+        let draw = roll_hatch(beacon, &species, seq);
+
+        // Consume both parents on-chain BEFORE minting the egg (the sink bites first).
+        self.consume_parent(parent_a)?;
+        self.consume_parent(parent_b)?;
+
+        // Mint the egg (re-verifies the fair draw, mints the owned identity, deploys its cell).
+        self.hatch(breeder, &draw)
+    }
+
+    /// Whether a companion was consumed as a breeding input (its live version spent into an egg).
+    pub fn is_consumed(&self, asset_id: AssetId) -> bool {
+        self.consumed.contains(&asset_id.bytes())
+    }
+
+    /// Spend a parent's live version on-chain (the breeding sink), marking it consumed.
+    fn consume_parent(&mut self, asset_id: AssetId) -> Result<(), CompanionError> {
+        let tail = self.assets.lineage_len(asset_id);
+        if tail == 0 {
+            return Err(CompanionError::Unknown);
+        }
+        self.assets
+            .attempt_respend(asset_id, tail - 1)
+            .map_err(CompanionError::Asset)?;
+        self.consumed.insert(asset_id.bytes());
+        Ok(())
+    }
+
+    // ── Escrow-market swap (an atomic two-companion trade through escrow) ────────────
+
+    /// **Open a two-party escrow swap** — companion A (owned by `party_a`) for companion B (owned
+    /// by `party_b`). Nothing moves yet; each side [`Self::deposit`]s its companion into escrow,
+    /// then [`Self::settle_swap`] delivers each to the counterparty once both are held. A consumed
+    /// or unknown companion cannot be swapped.
+    pub fn open_swap(
+        &mut self,
+        asset_a: AssetId,
+        party_a: &str,
+        asset_b: AssetId,
+        party_b: &str,
+    ) -> Result<EscrowSwap, CompanionError> {
+        for a in [asset_a, asset_b] {
+            if !self.companions.contains_key(&a.bytes()) {
+                return Err(CompanionError::Unknown);
+            }
+            if self.consumed.contains(&a.bytes()) {
+                return Err(CompanionError::Consumed);
+            }
+        }
+        let id = self.next_swap;
+        self.next_swap += 1;
+        Ok(EscrowSwap {
+            id,
+            asset_a,
+            party_a: party_a.to_string(),
+            asset_b,
+            party_b: party_b.to_string(),
+            a_in_escrow: false,
+            b_in_escrow: false,
+            phase: SwapPhase::Open,
+        })
+    }
+
+    /// **Deposit one side's companion into escrow** — `a_side` selects companion A (else B). A
+    /// real owner-gated transfer of the companion from its party into the neutral [`ESCROW_HOLDER`]
+    /// (a non-owner / already-deposited side is a real asset refusal). Advances the swap phase.
+    pub fn deposit(
+        &mut self,
+        swap: &mut EscrowSwap,
+        a_side: bool,
+    ) -> Result<TransferReceipt, CompanionError> {
+        let (asset, from, already) = if a_side {
+            (swap.asset_a, swap.party_a.clone(), swap.a_in_escrow)
+        } else {
+            (swap.asset_b, swap.party_b.clone(), swap.b_in_escrow)
+        };
+        if already {
+            return Err(CompanionError::Swap("side already deposited".into()));
+        }
+        let receipt = self.move_asset(asset, &from, ESCROW_HOLDER)?;
+        if a_side {
+            swap.a_in_escrow = true;
+        } else {
+            swap.b_in_escrow = true;
+        }
+        swap.phase = if swap.a_in_escrow && swap.b_in_escrow {
+            SwapPhase::Ready
+        } else {
+            SwapPhase::HalfDeposited
+        };
+        Ok(receipt)
+    }
+
+    /// **Settle a fully-deposited escrow swap** — delivers companion A to `party_b` and companion
+    /// B to `party_a` (each an owner-gated transfer out of escrow). Refused with [`CompanionError::Swap`]
+    /// unless BOTH sides are in escrow (no single-sided settle) or if already settled. Atomic: both
+    /// deliveries commit, and the pre-swap origin versions are now spent (a re-trade is refused).
+    pub fn settle_swap(&mut self, swap: &mut EscrowSwap) -> Result<(), CompanionError> {
+        if swap.phase != SwapPhase::Ready {
+            return Err(CompanionError::Swap(format!(
+                "swap not ready to settle (phase {:?})",
+                swap.phase
+            )));
+        }
+        let party_a = swap.party_a.clone();
+        let party_b = swap.party_b.clone();
+        self.move_asset(swap.asset_a, ESCROW_HOLDER, &party_b)?;
+        self.move_asset(swap.asset_b, ESCROW_HOLDER, &party_a)?;
+        swap.a_in_escrow = false;
+        swap.b_in_escrow = false;
+        swap.phase = SwapPhase::Settled;
+        Ok(())
+    }
+
+    /// **Refund an un-settled escrow swap** — returns any escrow-held companion to its original
+    /// owner (the abort path, e.g. one side never deposited). Refused if already settled.
+    pub fn refund_swap(&mut self, swap: &mut EscrowSwap) -> Result<(), CompanionError> {
+        if swap.phase == SwapPhase::Settled {
+            return Err(CompanionError::Swap(
+                "a settled swap cannot be refunded".into(),
+            ));
+        }
+        let party_a = swap.party_a.clone();
+        let party_b = swap.party_b.clone();
+        if swap.a_in_escrow {
+            self.move_asset(swap.asset_a, ESCROW_HOLDER, &party_a)?;
+            swap.a_in_escrow = false;
+        }
+        if swap.b_in_escrow {
+            self.move_asset(swap.asset_b, ESCROW_HOLDER, &party_b)?;
+            swap.b_in_escrow = false;
+        }
+        swap.phase = SwapPhase::Refunded;
+        Ok(())
+    }
+
+    /// An owner-gated companion transfer (the shared move behind trade / escrow), updating the
+    /// recorded owner on commit.
+    fn move_asset(
+        &mut self,
+        asset_id: AssetId,
+        from: &str,
+        to: &str,
+    ) -> Result<TransferReceipt, CompanionError> {
+        let receipt = self
+            .assets
+            .transfer(asset_id, from, to)
+            .map_err(CompanionError::Asset)?;
+        if let Some(comp) = self.companions.get_mut(&asset_id.bytes()) {
+            comp.owner = receipt.new_owner;
+        }
+        Ok(receipt)
     }
 
     /// The current owner's pubkey of a companion (from the asset layer).
@@ -984,10 +1565,10 @@ mod tests {
         assert_eq!(roost.level_of(&comp), 2);
 
         // Arm the buff (requires level 3). Its gate pins the companion's level-3 checkpoint.
-        let gate = roost.arm_buff(&comp, 3);
+        let mut gate = roost.arm_buff(&comp, 3);
 
         // BELOW LEVEL: the buff is refused (fail-closed — companion not at the checkpoint).
-        let refused = roost.attempt_buff(&gate, "alice", true);
+        let refused = roost.attempt_buff(&mut gate, "alice", true);
         assert!(
             refused.is_err(),
             "the buff must refuse below the required level, got {refused:?}"
@@ -1004,7 +1585,7 @@ mod tests {
 
         // AT LEVEL: the same buff turn commits — the cross-cell gate bit.
         let ok = roost
-            .attempt_buff(&gate, "alice", true)
+            .attempt_buff(&mut gate, "alice", true)
             .expect("at level 3, the buff applies");
         assert_ne!(ok.turn_hash, [0u8; 32]);
         assert_eq!(
@@ -1022,10 +1603,10 @@ mod tests {
         let draw = roll_hatch(&beacon(17), "companion:owl", 0);
         let comp = roost.hatch("alice", &draw).expect("hatch");
         roost.raise_to(&comp, 3).expect("raise to level 3");
-        let gate = roost.arm_buff(&comp, 3);
+        let mut gate = roost.arm_buff(&comp, 3);
 
         // A stripped witness fails closed even at the right level.
-        let no_witness = roost.attempt_buff(&gate, "alice", false);
+        let no_witness = roost.attempt_buff(&mut gate, "alice", false);
         assert!(
             no_witness.is_err(),
             "a stripped-witness buff fails closed, got {no_witness:?}"
@@ -1033,7 +1614,7 @@ mod tests {
         assert_eq!(roost.buff_value(&gate), 0, "the buff did not apply");
 
         // A non-owner cannot activate the buff (the asset-layer ownership gate).
-        let not_owner = roost.attempt_buff(&gate, "mallory", true);
+        let not_owner = roost.attempt_buff(&mut gate, "mallory", true);
         assert!(
             matches!(not_owner, Err(CompanionError::NotOwner)),
             "a non-owner buff is refused, got {not_owner:?}"
@@ -1042,7 +1623,7 @@ mod tests {
 
         // The owner with the witness, at level, commits.
         roost
-            .attempt_buff(&gate, "alice", true)
+            .attempt_buff(&mut gate, "alice", true)
             .expect("owner at level applies the buff");
         assert_eq!(roost.buff_value(&gate), 3);
     }
