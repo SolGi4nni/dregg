@@ -36,6 +36,12 @@ use serde::Deserialize;
 
 use crate::AgentPlatform;
 
+/// The largest request body the control endpoint will read. Every route reads
+/// `req.body` whole into memory and `serde_json`-parses it; without a cap an
+/// unbounded body is a trivial memory-exhaustion DoS. 1 MiB is far above any real
+/// rent/drive/checkpoint payload and is refused fail-closed (`413`) before any parse.
+pub const MAX_BODY_BYTES: usize = 1 << 20;
+
 /// A remote request to rent an agent grain (POSTed to the control endpoint). The
 /// grain runs as — and is owned by — the caller's verified `X-Dregg-Subject`, not
 /// any body-supplied account (which would be forgeable).
@@ -177,6 +183,54 @@ impl AgentPlatform {
         let path = req.target.split('?').next().unwrap_or(&req.target);
         let query = req.target.split('?').nth(1).unwrap_or("");
 
+        // Unbounded request bodies are a trivial memory-exhaustion DoS: every route
+        // below reads `req.body` whole and `serde_json`-parses it. Cap it fail-closed
+        // (413) BEFORE any parse. The doc pages above are empty-body GETs, unaffected.
+        if req.body.len() > MAX_BODY_BYTES {
+            return HttpResponse::error(
+                413,
+                format!("request body exceeds the {MAX_BODY_BYTES}-byte cap"),
+            );
+        }
+
+        // Liveness/observability — public, unauthenticated, no existence oracle (it
+        // reveals only an aggregate count). An operator or load balancer polls it.
+        if req.method == HttpMethod::Get && path == "/healthz" {
+            return HttpResponse::json(
+                format!("{{\"status\":\"ok\",\"grains\":{}}}", self.grain_count()).into_bytes(),
+            );
+        }
+
+        // The operator's grain census + GC sweep (control host, operator-only — same
+        // gate as /clock). `GET /grains` lists every hosted grain and its lifecycle
+        // state; `POST /reap` sweeps reclaimed (lapsed/terminal) grains out of memory.
+        if req.host == control_host
+            && ((req.method == HttpMethod::Get && path == "/grains")
+                || (req.method == HttpMethod::Post && path == "/reap"))
+        {
+            let Some(operator) = operator else {
+                return HttpResponse::error(404, format!("no route for {} {}", req.method, path));
+            };
+            let Some(subject) = req.header("x-dregg-subject") else {
+                return HttpResponse::error(401, "this route requires a verified X-Dregg-Subject");
+            };
+            if subject != operator {
+                return HttpResponse::error(403, "this route requires the operator subject");
+            }
+            if path == "/grains" {
+                let mut items = String::new();
+                for (i, (host, state)) in self.grain_states().iter().enumerate() {
+                    if i > 0 {
+                        items.push(',');
+                    }
+                    items.push_str(&format!("{{\"host\":\"{host}\",\"state\":\"{state:?}\"}}"));
+                }
+                return HttpResponse::json(format!("{{\"grains\":[{items}]}}").into_bytes());
+            }
+            let swept = self.sweep_reclaimed(self.clock());
+            return HttpResponse::json(format!("{{\"swept\":{}}}", swept.len()).into_bytes());
+        }
+
         // The operator's clock tick — how the block height reaches a served
         // platform, so delinquent grains actually lapse. Fail-closed: with no
         // operator configured the route does not exist (404); a non-operator
@@ -234,6 +288,11 @@ impl AgentPlatform {
             if std::fs::create_dir_all(&workdir).is_err() {
                 return HttpResponse::error(500, "could not create grain workdir");
             }
+            // A non-UTF-8 workdir must NOT silently root the grain at CWD (`.`) — that
+            // would push the confinement outside the intended base. Fail closed.
+            let Some(workdir_str) = workdir.to_str() else {
+                return HttpResponse::error(500, "grain workdir path is not valid UTF-8");
+            };
             // R1: parse the optional renter anchor (hex → 32 bytes). A malformed hex
             // is a client error, not a silent drop — and the anchor is BOTH fields
             // or NEITHER (`RenterAnchor` is whole on purpose: the R1 teeth need the
@@ -268,7 +327,7 @@ impl AgentPlatform {
                 &subject,
                 &spec.caps,
                 spec.budget,
-                workdir.to_str().unwrap_or("."),
+                workdir_str,
                 terms,
                 anchor,
             ) {
@@ -278,6 +337,10 @@ impl AgentPlatform {
                 Err(crate::AgentPlatformError::GrainOccupied(_)) => {
                     HttpResponse::error(409, "a grain is already hosted at that host")
                 }
+                Err(crate::AgentPlatformError::TooManyGrains(_)) => HttpResponse::error(
+                    429,
+                    "the per-owner grain cap is reached; evict or let a grain lapse first",
+                ),
                 Err(crate::AgentPlatformError::BadTerms(e)) => HttpResponse::error(400, e),
                 Err(e) => HttpResponse::error(500, e.to_string()),
             };
@@ -397,6 +460,27 @@ impl AgentPlatform {
                 ),
                 Err(crate::AgentPlatformError::Unauthorized(_)) => {
                     HttpResponse::error(403, "unsharing this grain requires the admin role")
+                }
+                Err(crate::AgentPlatformError::NoSuchGrain(_)) => {
+                    HttpResponse::error(404, "no grain hosted here")
+                }
+                Err(e) => HttpResponse::error(500, e.to_string()),
+            };
+        }
+
+        // Evict the grain — owner/Admin tears it down and its memory is reclaimed.
+        if req.method == HttpMethod::Post && path == "/evict" {
+            let (caller, role) = match self.authorize(req) {
+                Ok(pair) => pair,
+                Err(resp) => return resp,
+            };
+            if !role.can_admin() {
+                return HttpResponse::error(403, "evicting this grain requires the admin role");
+            }
+            return match self.evict(&req.host, &caller) {
+                Ok(()) => HttpResponse::json(b"{\"evicted\":true}".to_vec()),
+                Err(crate::AgentPlatformError::Unauthorized(_)) => {
+                    HttpResponse::error(403, "evicting this grain requires the admin role")
                 }
                 Err(crate::AgentPlatformError::NoSuchGrain(_)) => {
                     HttpResponse::error(404, "no grain hosted here")
@@ -738,9 +822,20 @@ fn resolve_browser_shim(req: &ServeRequest) -> Option<ServeRequest> {
     })
 }
 
-/// A filesystem-safe grain workdir segment from a host.
+/// A filesystem-safe grain workdir segment from a host — traversal-proof.
+///
+/// The sanitized string is used as a SINGLE `workdir_base.join(...)` component, so
+/// the only escapes are a component that `join` reads as the parent (`..`) or the
+/// current dir (`.`), or an empty component (which resolves to the base itself).
+/// Non-`[A-Za-z0-9-.]` maps to `_` (so a path separator can never survive to split
+/// the component), THEN any leading `.` is folded to `_` — that alone makes `.`/`..`
+/// /a dotfile-root component unrepresentable (an interior `a..b` is a single literal
+/// child, not traversal). A component left with no alphanumeric anchor (all dots/
+/// dashes/underscores, or empty) is refused into a stable hashed token so a crafted
+/// host can never root a grain's confinement outside its intended base.
 fn sanitize(host: &str) -> String {
-    host.chars()
+    let mut s: String = host
+        .chars()
         .map(|c| {
             if c.is_ascii_alphanumeric() || c == '-' || c == '.' {
                 c
@@ -748,7 +843,18 @@ fn sanitize(host: &str) -> String {
                 '_'
             }
         })
-        .collect()
+        .collect();
+    // Fold leading dots: a component can never be "." / ".." / a hidden dotfile root.
+    let lead = s.chars().take_while(|&c| c == '.').count();
+    if lead > 0 {
+        s.replace_range(0..lead, &"_".repeat(lead));
+    }
+    // No alphanumeric anchor (empty, or only ./-/_): refuse to a stable safe token
+    // rather than emit a component a join could read as traversal or the base itself.
+    if !s.bytes().any(|b| b.is_ascii_alphanumeric()) {
+        return format!("grain_{}", &blake3::hash(host.as_bytes()).to_hex()[..16]);
+    }
+    s
 }
 
 /// Serve the platform over HTTP with the self-serve control endpoint. `operator`
@@ -766,14 +872,22 @@ pub fn serve_platform(
     platform: Arc<AgentPlatform>,
 ) -> std::io::Result<()> {
     serve_http(bind, move |req: &ServeRequest| {
-        platform.handle_request(
-            &control_host,
-            provider,
-            asset,
-            &workdir_base,
-            operator.as_deref(),
-            req,
-        )
+        // Isolate a panicking request: catch the unwind so one faulting handler
+        // returns a clean 500 rather than tearing down the connection with an opaque
+        // failure. Paired with the platform's poison-recovering locks (`LockRecover`),
+        // this means a single-request fault never escalates to a platform-wide DoS —
+        // the mutex is not left poisoned and the next request is served normally.
+        let handled = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+            platform.handle_request(
+                &control_host,
+                provider,
+                asset,
+                &workdir_base,
+                operator.as_deref(),
+                req,
+            )
+        }));
+        handled.unwrap_or_else(|_| HttpResponse::error(500, "internal error handling the request"))
     })
 }
 
@@ -1692,6 +1806,183 @@ mod tests {
             .status,
             404,
             "a non-member still 404s"
+        );
+    }
+
+    /// **`sanitize` is traversal-proof.** A crafted grain host can never yield a
+    /// workdir COMPONENT that a `join` reads as the parent (`..`), the current dir
+    /// (`.`), or the base itself (empty) — so a grain's confinement root can never be
+    /// pushed outside its intended base. Interior dots survive as a single literal
+    /// child (not traversal); a no-alphanumeric host folds to a stable safe token.
+    #[test]
+    fn sanitize_never_escapes_the_workdir_base() {
+        let base = Path::new("/srv/grains");
+        for host in [
+            "..", ".", "...", "....", "./", "../", ".x.", "..\\..", "/", "", "-", "._.",
+        ] {
+            let seg = sanitize(host);
+            assert!(!seg.is_empty(), "host {host:?} → non-empty component");
+            assert_ne!(seg, ".", "host {host:?} must not sanitize to `.`");
+            assert_ne!(seg, "..", "host {host:?} must not sanitize to `..`");
+            assert!(
+                !seg.starts_with('.'),
+                "host {host:?} → {seg:?} must not start with a dot"
+            );
+            // The joined path stays strictly under the base (its parent is the base).
+            let joined = base.join(&seg);
+            assert_eq!(
+                joined.parent(),
+                Some(base),
+                "host {host:?} → {joined:?} escaped the base"
+            );
+        }
+        // A legitimate host is preserved (dots kept for interior separators).
+        assert_eq!(sanitize("alice.grain-1"), "alice.grain-1");
+        // A leading dot is folded but the rest survives.
+        assert_eq!(sanitize(".hidden"), "_hidden");
+    }
+
+    /// **An oversized request body is refused fail-closed (413) before any parse.**
+    #[test]
+    fn an_oversized_body_is_refused() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        let big = "x".repeat(MAX_BODY_BYTES + 1);
+        let r = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Post, CONTROL, "/rent", Some(OWNER), &big),
+        );
+        assert_eq!(r.status, 413, "an over-cap body is refused before parse");
+        // A right-sized (if malformed) body still reaches the parser (400, not 413).
+        let small = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Post, CONTROL, "/rent", Some(OWNER), "not json"),
+        );
+        assert_eq!(
+            small.status, 400,
+            "an in-cap malformed body reaches the parser"
+        );
+    }
+
+    /// **`/healthz` is public and reports the live grain count.**
+    #[test]
+    fn healthz_reports_liveness_and_grain_count() {
+        let wd = workdir();
+        let platform = rented_platform(&wd);
+        // No subject header at all — healthz is unauthenticated.
+        let r = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Get, CONTROL, "/healthz", None, ""),
+        );
+        assert_eq!(r.status, 200);
+        assert!(
+            r.body_str().contains("\"status\":\"ok\""),
+            "{}",
+            r.body_str()
+        );
+        assert!(r.body_str().contains("\"grains\":1"), "{}", r.body_str());
+    }
+
+    /// **`POST /evict` (Admin) removes the grain over HTTP; the operator census +
+    /// GC sweep are operator-gated.** A Viewer cannot evict (403); a non-member 404s;
+    /// the owner evicts → the grain is gone (subsequent routes 404). `GET /grains` and
+    /// `POST /reap` on the control host require the operator subject.
+    #[test]
+    fn the_evict_route_and_operator_census_gate_and_reclaim() {
+        let wd = workdir();
+        let platform = rented_platform(&wd);
+        platform
+            .share(GRAIN, OWNER, VIEWER, crate::Role::Viewer)
+            .expect("share viewer");
+
+        // ── operator census lists the grain; a non-operator is refused ────────────
+        let grains = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Get, CONTROL, "/grains", Some(OPERATOR), ""),
+        );
+        assert_eq!(grains.status, 200, "operator lists grains");
+        assert!(
+            grains.body_str().contains(GRAIN),
+            "census names the grain: {}",
+            grains.body_str()
+        );
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Get, CONTROL, "/grains", Some(OWNER), "")
+            )
+            .status,
+            403,
+            "a non-operator cannot list the census"
+        );
+
+        // ── a Viewer cannot evict (403); a non-member 404s ────────────────────────
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Post, GRAIN, "/evict", Some(VIEWER), "")
+            )
+            .status,
+            403,
+            "a viewer cannot evict"
+        );
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Post, GRAIN, "/evict", Some(MALLORY), "")
+            )
+            .status,
+            404,
+            "a non-member 404s (no existence oracle)"
+        );
+
+        // ── the owner evicts → the grain is gone (every route now 404s) ───────────
+        let ev = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Post, GRAIN, "/evict", Some(OWNER), ""),
+        );
+        assert_eq!(ev.status, 200, "owner evicts: {}", ev.body_str());
+        assert!(platform.owner_of(GRAIN).is_none(), "the grain is removed");
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Get, GRAIN, "/verify", Some(OWNER), "")
+            )
+            .status,
+            404,
+            "the evicted grain no longer exists"
+        );
+
+        // ── the operator GC sweep runs (nothing delinquent here → 0 swept) ────────
+        let reap = call(
+            &platform,
+            &wd,
+            req(HttpMethod::Post, CONTROL, "/reap", Some(OPERATOR), ""),
+        );
+        assert_eq!(reap.status, 200, "operator sweep runs");
+        assert!(
+            reap.body_str().contains("\"swept\":0"),
+            "{}",
+            reap.body_str()
+        );
+        assert_eq!(
+            call(
+                &platform,
+                &wd,
+                req(HttpMethod::Post, CONTROL, "/reap", Some(OWNER), "")
+            )
+            .status,
+            403,
+            "a non-operator cannot sweep"
         );
     }
 }

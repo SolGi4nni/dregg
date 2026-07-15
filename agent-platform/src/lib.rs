@@ -50,9 +50,35 @@ pub use node::{LocalNode, NodeError, NodeMinter};
 pub use share::Role;
 
 use std::collections::HashMap;
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, MutexGuard};
 
 use serde::{Deserialize, Serialize};
+
+/// **Poison-recovering lock.** Every platform/tenant lock is taken through this
+/// instead of `.lock().expect("poisoned")`. A panic inside a locked op (e.g. a
+/// serialize edge in one tenant) formerly poisoned the mutex, turning EVERY
+/// subsequent request touching that lock — or the whole tenant map — into a
+/// process-crashing panic: a single-request fault escalated to a platform-wide
+/// DoS. Recovering the guard (`into_inner`) keeps the platform serving the other
+/// grains; a genuinely half-mutated tenant is still caught by the next
+/// [`AgentPlatform::verify`] / [`image_binds`] tooth (the durable image no longer
+/// binds), so availability is bought without laundering a corrupt session as sound.
+trait LockRecover<T> {
+    fn lock_recover(&self) -> MutexGuard<'_, T>;
+}
+
+impl<T> LockRecover<T> for Mutex<T> {
+    fn lock_recover(&self) -> MutexGuard<'_, T> {
+        self.lock().unwrap_or_else(|poisoned| poisoned.into_inner())
+    }
+}
+
+/// The most agent grains a single owner subject may hold at once. A public `/rent`
+/// front door with no per-subject cap is a trivial memory-exhaustion DoS (each grain
+/// retains a session + report + node + lease); this bounds one subject's footprint.
+/// An owner at the cap must [`evict`](AgentPlatform::evict) or let grains lapse-and-
+/// be-swept ([`sweep_reclaimed`](AgentPlatform::sweep_reclaimed)) before renting more.
+pub const MAX_GRAINS_PER_OWNER: usize = 256;
 
 use dregg_agent::agent::{AgentBrain, AgentRunReport, AgentVerified, GrainTurnMinter};
 use dregg_agent::receipt::ReceiptBody;
@@ -323,6 +349,10 @@ pub enum AgentPlatformError {
     NoSuchGrain(String),
     /// A grain is already hosted at that host (rent does not evict an incumbent).
     GrainOccupied(String),
+    /// The owner subject already holds [`MAX_GRAINS_PER_OWNER`] grains — renting
+    /// more is refused (the per-subject memory-exhaustion backstop). Evict or let a
+    /// grain lapse-and-be-swept first.
+    TooManyGrains(String),
     /// **R1** — a checkpoint could not be offered / accepted (see the message):
     /// the session has committed nothing yet, no renter key was pinned at rent, the
     /// countersignature is wrong, or the checkpoint does not match the chain.
@@ -362,6 +392,10 @@ impl std::fmt::Display for AgentPlatformError {
             AgentPlatformError::Session(e) => write!(f, "session open refused: {e}"),
             AgentPlatformError::NoSuchGrain(h) => write!(f, "no agent grain hosted at `{h}`"),
             AgentPlatformError::GrainOccupied(h) => write!(f, "a grain is already hosted at `{h}`"),
+            AgentPlatformError::TooManyGrains(s) => write!(
+                f,
+                "subject `{s}` is at the per-owner grain cap ({MAX_GRAINS_PER_OWNER}); evict or let a grain lapse first"
+            ),
             AgentPlatformError::Checkpoint(e) => write!(f, "renter checkpoint refused: {e}"),
             AgentPlatformError::Unauthorized(s) => write!(f, "not authorized for this grain: {s}"),
             AgentPlatformError::BadTerms(e) => write!(f, "ill-formed rental terms: {e}"),
@@ -483,8 +517,7 @@ impl AgentPlatform {
     /// operation without holding the platform-wide map lock across it.
     fn tenant_arc(&self, host: &str) -> Result<Arc<Mutex<Tenant>>, AgentPlatformError> {
         self.tenants
-            .lock()
-            .expect("platform poisoned")
+            .lock_recover()
             .get(host)
             .cloned()
             .ok_or_else(|| AgentPlatformError::NoSuchGrain(host.to_string()))
@@ -516,7 +549,7 @@ impl AgentPlatform {
         // Never evict an incumbent: renting an occupied host is refused, not a
         // silent overwrite (which would destroy a live tenant's session + lease).
         {
-            let tenants = self.tenants.lock().expect("platform poisoned");
+            let tenants = self.tenants.lock_recover();
             if tenants.contains_key(&host) {
                 return Err(AgentPlatformError::GrainOccupied(host));
             }
@@ -581,10 +614,22 @@ impl AgentPlatform {
             read_state(&lease_cell).map_err(|e| AgentPlatformError::Lifecycle(format!("{e:?}")))?;
         let lease = HostedLease::from_cell_prepaid(lease_cell, prepaid_terms);
 
-        let mut tenants = self.tenants.lock().expect("platform poisoned");
+        let mut tenants = self.tenants.lock_recover();
         // Re-check under the write lock (TOCTOU with the read check above).
         if tenants.contains_key(&host) {
             return Err(AgentPlatformError::GrainOccupied(host));
+        }
+        // Per-owner memory-exhaustion backstop: a public `/rent` front door with no
+        // per-subject cap lets one subject retain unbounded sessions/leases/nodes.
+        // Count this owner's live grains under the same write lock (each owner read is
+        // a brief tenant lock; the lock order is always map→tenant, never the reverse,
+        // so no drive can be mid-flight holding a tenant lock while waiting on the map).
+        let owned = tenants
+            .values()
+            .filter(|arc| arc.lock_recover().owner == account)
+            .count();
+        if owned >= MAX_GRAINS_PER_OWNER {
+            return Err(AgentPlatformError::TooManyGrains(account.to_string()));
         }
         tenants.insert(
             host.clone(),
@@ -614,13 +659,8 @@ impl AgentPlatform {
     /// against this before driving.
     pub fn owner_of(&self, host: &str) -> Option<String> {
         // Brief map lock to clone the Arc, then read the owner off the tenant.
-        let arc = self
-            .tenants
-            .lock()
-            .expect("platform poisoned")
-            .get(host)
-            .cloned()?;
-        let owner = arc.lock().expect("tenant poisoned").owner.clone();
+        let arc = self.tenants.lock_recover().get(host).cloned()?;
+        let owner = arc.lock_recover().owner.clone();
         Some(owner)
     }
 
@@ -630,13 +670,8 @@ impl AgentPlatform {
     /// on every route, so a non-member gets no existence oracle (a grain that isn't
     /// theirs is indistinguishable from a grain that isn't there).
     pub fn role_of(&self, host: &str, subject: &str) -> Option<Role> {
-        let arc = self
-            .tenants
-            .lock()
-            .expect("platform poisoned")
-            .get(host)
-            .cloned()?;
-        let t = arc.lock().expect("tenant poisoned");
+        let arc = self.tenants.lock_recover().get(host).cloned()?;
+        let t = arc.lock_recover();
         if t.owner == subject {
             return Some(Role::Admin);
         }
@@ -663,7 +698,7 @@ impl AgentPlatform {
             None => return Err(AgentPlatformError::NoSuchGrain(host.to_string())),
         }
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         if guard.owner == subject {
             // The owner is already implicit Admin; do not shadow them in the ACL.
             return Ok(());
@@ -690,7 +725,7 @@ impl AgentPlatform {
             None => return Err(AgentPlatformError::NoSuchGrain(host.to_string())),
         }
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         guard.acl.remove(subject);
         Ok(())
     }
@@ -701,19 +736,13 @@ impl AgentPlatform {
     /// Any member (Viewer+) may read it; the serve layer gates that.
     pub fn transcript(&self, host: &str) -> Result<String, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         Ok(transcript::transcript_stream(host, &guard.session))
     }
 
     /// The hosts currently served.
     pub fn hosts(&self) -> Vec<String> {
-        let mut hosts: Vec<String> = self
-            .tenants
-            .lock()
-            .expect("platform poisoned")
-            .keys()
-            .cloned()
-            .collect();
+        let mut hosts: Vec<String> = self.tenants.lock_recover().keys().cloned().collect();
         hosts.sort();
         hosts
     }
@@ -826,7 +855,7 @@ impl AgentPlatform {
         attestation: Option<[u8; 32]>,
     ) -> Result<GoalReport, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         let tenant = &mut *guard;
         // Audit the rent schedule at the operator's clock — a grain behind on rent
         // lapses ON USE rather than trusting a stale flag (the "free hosting" fix).
@@ -1001,7 +1030,7 @@ impl AgentPlatform {
         settlement: &S,
     ) -> Result<SettleReceipt, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         let tenant = &mut *guard;
         // GATE (read-only): refuse off-schedule / replay / over-draw / over-reserve
         // BEFORE any value moves. `rent` is the amount this period WILL draw.
@@ -1049,7 +1078,7 @@ impl AgentPlatform {
     /// ([`grain_verify::WHOLE_HISTORY_GAP`]).
     pub fn verify(&self, host: &str) -> Result<AgentVerified, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         let verified = guard
             .session
             .verify()
@@ -1071,7 +1100,7 @@ impl AgentPlatform {
     /// not re-execute the turns (that is the whole-history STARK leg).
     pub fn verify_r2(&self, host: &str) -> Result<grain_verify::R2Verified, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         image_binds(&guard)?;
         self.attestation_of(&guard)
             .verify_r2(&guard.committed_turns)
@@ -1097,7 +1126,7 @@ impl AgentPlatform {
     /// or the chain fails structural verification.
     pub fn verify_landed(&self, host: &str) -> Result<Landed, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         let node = guard.node.as_ref().ok_or_else(|| {
             AgentPlatformError::Verify("grain has no local node (never driven-minted)".into())
         })?;
@@ -1137,7 +1166,7 @@ impl AgentPlatform {
     ) -> Result<Landed, AgentPlatformError> {
         let landed = self.verify_landed(host)?;
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         let minter = guard.node_minter.as_ref().ok_or_else(|| {
             AgentPlatformError::Verify("grain has no node minter (never driven-minted)".into())
         })?;
@@ -1195,7 +1224,7 @@ impl AgentPlatform {
         // the node's committed grain-turn cell (read off the finalized ledger, not
         // off any host claim).
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         let minter = guard.node_minter.as_ref().ok_or_else(|| {
             AgentPlatformError::Verify("grain has no node minter (never driven-minted)".into())
         })?;
@@ -1228,7 +1257,7 @@ impl AgentPlatform {
     /// the grain is reclaimed and driving it is refused. Returns whether it lapsed.
     pub fn reap_if_behind(&self, host: &str, clock: i64) -> Result<bool, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         let lapsed = guard
             .lease
             .lapse_if_behind(clock)
@@ -1242,13 +1271,91 @@ impl AgentPlatform {
         Ok(lapsed)
     }
 
+    /// **Evict the grain at `host` — actually FREE it** (owner/Admin only). Where
+    /// [`reap_if_behind`](Self::reap_if_behind) only flips lifecycle state and refuses
+    /// future drives (the `Tenant` — session + report + carrier + node + committed
+    /// turns — stays in the map forever), this REMOVES the tenant from the map, so its
+    /// memory is reclaimed. The single-writer front door for an owner tearing down a
+    /// grain they no longer want. Idempotent shape: a non-member — or no grain here —
+    /// is [`NoSuchGrain`](AgentPlatformError::NoSuchGrain) (404, no existence oracle);
+    /// a member below Admin is [`Unauthorized`](AgentPlatformError::Unauthorized).
+    pub fn evict(&self, host: &str, caller: &str) -> Result<(), AgentPlatformError> {
+        match self.role_of(host, caller) {
+            Some(Role::Admin) => {}
+            Some(_) => return Err(AgentPlatformError::Unauthorized(caller.to_string())),
+            None => return Err(AgentPlatformError::NoSuchGrain(host.to_string())),
+        }
+        self.tenants
+            .lock_recover()
+            .remove(host)
+            .map(|_| ())
+            .ok_or_else(|| AgentPlatformError::NoSuchGrain(host.to_string()))
+    }
+
+    /// **Sweep every reclaimed grain out of the map — the operator GC** that makes
+    /// "reap" actually reap. Audits each grain's rent schedule at `clock` (lapsing the
+    /// delinquent, mirroring the vat tooth), then REMOVES from the map every grain whose
+    /// lease has lapsed or whose vat lifecycle is terminal (`Lapsed`/`Reaped`), freeing
+    /// its retained session/report/node. Returns the hosts swept. An operator biller
+    /// loop calls this on a schedule so a served platform's memory does not grow without
+    /// bound as grains fall delinquent (the missing eviction/GC leg).
+    pub fn sweep_reclaimed(&self, clock: i64) -> Vec<String> {
+        let mut map = self.tenants.lock_recover();
+        let mut swept = Vec::new();
+        map.retain(|host, arc| {
+            let mut guard = arc.lock_recover();
+            // Lapse-on-audit first, so a delinquent-but-not-yet-flagged grain is caught
+            // in the same sweep (ignore a transition refusal — a terminal grain is
+            // swept regardless).
+            let _ = guard.lease.lapse_if_behind(clock);
+            if guard.lease.is_lapsed() && guard.vat != VatState::Lapsed && !guard.vat.is_terminal()
+            {
+                let _ = guard.transition(host, VatTransition::Lapse);
+            }
+            let reclaimed = guard.lease.is_lapsed() || guard.vat.is_terminal();
+            if reclaimed {
+                swept.push(host.clone());
+            }
+            !reclaimed
+        });
+        swept.sort();
+        swept
+    }
+
+    /// **Operator introspection — every hosted grain and its lifecycle state.** The
+    /// library-plus-served surface an operator uses to see what is running
+    /// (created / running / sleeping / lapsed / reaped) without driving anything.
+    /// Sorted by host for a stable listing.
+    pub fn grain_states(&self) -> Vec<(String, VatState)> {
+        let arcs: Vec<(String, Arc<Mutex<Tenant>>)> = self
+            .tenants
+            .lock_recover()
+            .iter()
+            .map(|(h, a)| (h.clone(), a.clone()))
+            .collect();
+        let mut out: Vec<(String, VatState)> = arcs
+            .into_iter()
+            .map(|(h, a)| {
+                let v = a.lock_recover().vat;
+                (h, v)
+            })
+            .collect();
+        out.sort_by(|a, b| a.0.cmp(&b.0));
+        out
+    }
+
+    /// The number of grains currently hosted (for `/healthz` and capacity checks).
+    pub fn grain_count(&self) -> usize {
+        self.tenants.lock_recover().len()
+    }
+
     /// **Sleep the grain at `host`** — checkpoint-and-tear-down. Routes the vat
     /// `Running → Sleeping` transition: the box goes dark and metering stops; the
     /// durable image is what follows. Refused if the grain is not Running (the
     /// machine's own tooth). The session + committed history are retained for the wake.
     pub fn sleep(&self, host: &str) -> Result<VatState, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         guard.transition(host, VatTransition::Sleep)
     }
 
@@ -1258,7 +1365,7 @@ impl AgentPlatform {
     /// Refused if the grain is not Sleeping (the machine's own tooth).
     pub fn wake(&self, host: &str) -> Result<VatState, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         guard.transition(host, VatTransition::BringUp)
     }
 
@@ -1284,7 +1391,7 @@ impl AgentPlatform {
     /// carrier does not reconstitute.
     pub fn wake_from_lease(&self, host: &str) -> Result<AgentVerified, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         let tenant = &mut *guard;
         // Read + reassemble + root-tooth-verify the carrier off the committed heap.
         let carrier = read_carrier(tenant)?;
@@ -1328,7 +1435,7 @@ impl AgentPlatform {
     /// [`NoSuchGrain`](AgentPlatformError::NoSuchGrain).
     pub fn grain_state(&self, host: &str) -> Result<VatState, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         read_state(guard.lease.cell()).map_err(|e| AgentPlatformError::Lifecycle(format!("{e:?}")))
     }
 
@@ -1347,7 +1454,7 @@ impl AgentPlatform {
     /// completeness ("did nothing else").
     pub fn attest(&self, host: &str) -> Result<grain_verify::GrainAttestation, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         Ok(self.attestation_of(&guard))
     }
 
@@ -1377,7 +1484,7 @@ impl AgentPlatform {
         host: &str,
     ) -> Result<grain_verify::RenterCheckpoint, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let guard = arc.lock().expect("tenant poisoned");
+        let guard = arc.lock_recover();
         grain_verify::GrainAttestation::attest(&guard.session)
             .checkpoint_to_countersign()
             .ok_or_else(|| {
@@ -1399,7 +1506,7 @@ impl AgentPlatform {
         cs: grain_verify::CountersignedCheckpoint,
     ) -> Result<(), AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let mut guard = arc.lock().expect("tenant poisoned");
+        let mut guard = arc.lock_recover();
         let tenant = &mut *guard;
         let pinned = tenant.anchor.map(|a| a.pubkey).ok_or_else(|| {
             AgentPlatformError::Checkpoint(
@@ -1449,7 +1556,7 @@ impl AgentPlatform {
     /// The consumed budget of the grain at `host` (its running meter).
     pub fn consumed(&self, host: &str) -> Result<i64, AgentPlatformError> {
         let arc = self.tenant_arc(host)?;
-        let consumed = arc.lock().expect("tenant poisoned").session.consumed();
+        let consumed = arc.lock_recover().session.consumed();
         Ok(consumed)
     }
 }
@@ -3169,5 +3276,159 @@ mod tests {
                 "an unsigned grain turn is refused by the forge check (not forge-admissible)"
             );
         }
+    }
+
+    /// **Eviction actually FREES the grain** (where `reap_if_behind` only flips
+    /// state and leaves the tenant in the map forever). The owner (implicit Admin)
+    /// evicts → the grain is gone (`role_of` None, count drops); a Viewer share is
+    /// Unauthorized; a non-member is NoSuchGrain (no existence oracle).
+    #[test]
+    fn evict_removes_the_tenant_from_the_map() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        let host = platform
+            .rent(
+                "e.agents.dregg",
+                "dga1_owner",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("rent");
+        platform
+            .share(&host, "dga1_owner", "dga1_viewer", Role::Viewer)
+            .expect("share viewer");
+        assert_eq!(platform.grain_count(), 1);
+
+        // A member below Admin cannot evict; a non-member gets no existence oracle.
+        assert!(matches!(
+            platform.evict(&host, "dga1_viewer"),
+            Err(AgentPlatformError::Unauthorized(_))
+        ));
+        assert!(matches!(
+            platform.evict(&host, "dga1_mallory"),
+            Err(AgentPlatformError::NoSuchGrain(_))
+        ));
+        assert_eq!(platform.grain_count(), 1, "a refused evict frees nothing");
+
+        // The owner evicts — the tenant is REMOVED (memory reclaimed), not just flagged.
+        platform.evict(&host, "dga1_owner").expect("owner evicts");
+        assert_eq!(platform.grain_count(), 0, "the tenant is gone from the map");
+        assert!(platform.role_of(&host, "dga1_owner").is_none());
+        assert!(matches!(
+            platform.evict(&host, "dga1_owner"),
+            Err(AgentPlatformError::NoSuchGrain(_))
+        ));
+    }
+
+    /// **The operator GC sweep reclaims delinquent grains' memory.** A grain behind
+    /// on rent at the swept clock is lapsed (the vat tooth) AND removed from the map;
+    /// a grain still within its rent window survives the sweep.
+    #[test]
+    fn sweep_reclaimed_removes_delinquent_grains() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        // Delinquent grain: rent due at 1000, no bills paid.
+        platform
+            .rent(
+                "late.agents.dregg",
+                "dga1_a",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("rent late");
+        // Fresh grain due far in the future — not delinquent at the swept clock.
+        let future = LeaseTerms::new(cid(2), cid(8), cid(9), 100, 50, 1_000_000, 0);
+        platform
+            .rent(
+                "fresh.agents.dregg",
+                "dga1_b",
+                "fs",
+                10_000,
+                wd.to_str().unwrap(),
+                future,
+                None,
+            )
+            .expect("rent fresh");
+        assert_eq!(platform.grain_count(), 2);
+
+        // Sweep at a clock past the delinquent grain's first due block.
+        let swept = platform.sweep_reclaimed(2000);
+        assert_eq!(swept, vec!["late.agents.dregg".to_string()]);
+        assert_eq!(platform.grain_count(), 1, "only the fresh grain survives");
+        assert!(platform.role_of("late.agents.dregg", "dga1_a").is_none());
+        assert!(platform.role_of("fresh.agents.dregg", "dga1_b").is_some());
+        // The census reflects what remains.
+        let states = platform.grain_states();
+        assert_eq!(states.len(), 1);
+        assert_eq!(states[0].0, "fresh.agents.dregg");
+    }
+
+    /// **The per-owner grain cap is a hard memory-exhaustion backstop.** One subject
+    /// may hold up to [`MAX_GRAINS_PER_OWNER`] grains; the next rent is `TooManyGrains`.
+    /// The cap is per-owner: a different subject is unaffected. Eviction frees a slot.
+    #[test]
+    fn rent_enforces_the_per_owner_grain_cap() {
+        let wd = workdir();
+        let platform = AgentPlatform::new();
+        for i in 0..MAX_GRAINS_PER_OWNER {
+            platform
+                .rent(
+                    format!("g{i}.cap.dregg"),
+                    "dga1_greedy",
+                    "fs",
+                    1_000,
+                    wd.to_str().unwrap(),
+                    terms(),
+                    None,
+                )
+                .unwrap_or_else(|e| panic!("rent {i} within cap: {e}"));
+        }
+        assert_eq!(platform.grain_count(), MAX_GRAINS_PER_OWNER);
+        // One past the cap is refused.
+        assert!(matches!(
+            platform.rent(
+                "over.cap.dregg",
+                "dga1_greedy",
+                "fs",
+                1_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None
+            ),
+            Err(AgentPlatformError::TooManyGrains(_))
+        ));
+        // A DIFFERENT owner is unaffected by the greedy subject's cap.
+        platform
+            .rent(
+                "other.cap.dregg",
+                "dga1_other",
+                "fs",
+                1_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("a different owner rents fine");
+        // Evicting frees a slot: the greedy owner can rent again.
+        platform
+            .evict("g0.cap.dregg", "dga1_greedy")
+            .expect("evict one");
+        platform
+            .rent(
+                "again.cap.dregg",
+                "dga1_greedy",
+                "fs",
+                1_000,
+                wd.to_str().unwrap(),
+                terms(),
+                None,
+            )
+            .expect("a freed slot admits a new rent");
     }
 }
