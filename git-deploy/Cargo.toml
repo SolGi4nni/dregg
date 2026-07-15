@@ -1,0 +1,58 @@
+# git-deploy — a git -> detect -> build (cap-bounded) -> publish pipeline that runs
+# an UNTRUSTED repo's build inside a deny-default OS cage, records a source
+# commitment, and publishes a content-addressed site tree through an injected
+# publish target. The pipeline is a crash-resumable, exactly-once, budget-metered
+# durable workflow driven by an owned on-disk checkpoint journal.
+#
+# WELDS to resident substrate through INJECTION SEAMS (never re-shipping an engine):
+#   * the wasm compute tier plugs an injected `ComputeRunner` (the resident owned
+#     `dregg-sandbox::run_workload` — an empty-Linker wasmi interpreter — is the
+#     canonical backing; the default runner is an honest fail-closed seam).
+#   * the publish step writes through an injected `PublishTarget` (the default
+#     `DirPublishTarget` content-addresses each asset with sha256; a hosting
+#     registry / launchpad landing-page target is the integrator's weld).
+#   * the durable workflow drives a `DurableJournal` (the default `FileJournal`
+#     is an on-disk JSON-lines checkpoint log; a general durable-workflow engine
+#     implements the same trait to take over crash-resume + exactly-once).
+#
+# STANDALONE WORKSPACE (declares its own `[workspace]`): it is NOT a member of the
+# breadstuffs root, so it builds disjointly with
+#   cargo build --manifest-path git-deploy/Cargo.toml
+#   cargo test  --manifest-path git-deploy/Cargo.toml
+# Deliberately light deps (no proof tree, no `[patch]`) so the pull is buildable in
+# isolation. Promoting it to a root member is a one-line `members += "git-deploy"`.
+
+[package]
+name = "git-deploy"
+description = "git -> detect -> build (deny-default OS cage) -> content-addressed publish, as a crash-resumable metered durable workflow"
+version = "0.1.0"
+edition = "2021"
+rust-version = "1.80"
+license = "MIT OR Apache-2.0"
+
+[lib]
+name = "git_deploy"
+path = "src/lib.rs"
+
+[dependencies]
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.5"
+# Content addressing: each published asset is keyed by sha256(body); the site's
+# `content_root` is sha256 over the sorted (path, asset-hash) pairs. This is the
+# content-addressed publish surface a CID/IPFS-backed target (resident `dregg-ipfs`)
+# composes onto.
+sha2 = "0.10"
+
+# The deny-default build cage (drop rlimits + a fresh process group onto the
+# untrusted-repo build subprocess). Unix-only (the cage primitives are POSIX).
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[dev-dependencies]
+# The crash-resume test uses an on-disk journal + on-disk workdir in a temp dir, so
+# the durable checkpoint log + the built tree genuinely survive an engine teardown.
+tempfile = "3"
+
+[workspace]
