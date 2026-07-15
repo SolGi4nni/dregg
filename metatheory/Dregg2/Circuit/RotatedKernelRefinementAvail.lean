@@ -51,6 +51,7 @@ the audit documents; this module is the proof that the flip CLOSES the forgery.
 are read-only.
 -/
 import Dregg2.Circuit.RotatedKernelRefinement
+import Dregg2.Circuit.Emit.GraduateWideNarrow
 
 namespace Dregg2.Circuit.RotatedKernelRefinementAvail
 
@@ -126,6 +127,39 @@ theorem RotTableSideW.toFaithfulW {permOut : List ℤ → List ℤ} {hash : List
     chipHashIsLane0 := hside.chipHashIsLane0
     chipTableFaithful := hside.chipTableFaithful
     rangeTablesWideFaithful := hside.rangesWide }
+
+/-! ## §1N — the NARROW-base table side (the tuple-narrowing bus) + its faithful assembler.
+
+The narrow mirror of `RotTableSideW`: on the 18-wide narrow chip bus, the genuine rows encode
+`hash ins` DIRECTLY as out0 (`ChipTableSoundNarrow hash`), so there is NO `permOut` indirection to
+carry — the structure holds the narrow chip soundness as a field plus the per-width range pins. It
+is the single missing witness-provider that lets the whole availability refinement tower consume a
+`Satisfied2FaithfulWideNarrow` (the narrow-graduated members of `GraduateWideNarrow` /
+`AvailWideMembersNarrow`) instead of the 25-wide `Satisfied2FaithfulWide`. -/
+
+/-- The NARROW-base table side — the narrow mirror of `RotTableSideW`. Its chip field is
+`ChipTableSoundNarrow hash (t.tf poseidon2narrow)` (the reserved `.custom 3` narrow bus, no
+`permOut` / lane indirection); the per-width range pins are carried verbatim. -/
+structure RotTableSideNarrow (hash : List ℤ → ℤ) (t : VmTrace) : Prop where
+  /-- THE NARROW CHIP-TABLE-FAITHFUL CONJUNCT, bound to `t.tf poseidon2narrow`. -/
+  chipTableFaithfulNarrow : ChipTableSoundNarrow hash (t.tf poseidon2narrow)
+  /-- THE PER-WIDTH RANGE-FAITHFUL CONJUNCT: every allowed width's table is its genuine limb table. -/
+  rangesWide : ∀ b ∈ WIDE_RANGE_WIDTHS, t.tf (rangeTidW b) = rangeRows b
+
+/-- Assemble the NARROW faithful object from the narrow table side + a `Satisfied2` witness (the
+narrow mirror of `RotTableSideW.toFaithfulW`) — how the narrowed tower threads
+`Satisfied2FaithfulWideNarrow` into `rotV3FrozenWideNarrow_sound_v1` / `wideEmbeddedNarrow_sound_v1`
+with no free lever. Fills EXACTLY the narrow struct's two extra fields. -/
+theorem RotTableSideNarrow.toFaithfulWNarrow {hash : List ℤ → ℤ}
+    {d : EffectVmDescriptor2} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
+    (hside : RotTableSideNarrow hash t)
+    (hsat : Satisfied2 hash d minit mfin maddrs t) :
+    Satisfied2FaithfulWideNarrow hash d minit mfin maddrs t :=
+  { hsat with
+    chipTableFaithfulNarrow := hside.chipTableFaithfulNarrow
+    rangeTablesWideFaithful := hside.rangesWide }
+
+#assert_axioms RotTableSideNarrow.toFaithfulWNarrow
 
 /-- The hardened descriptor's per-row v1 denotation IMPLIES the bare descriptor's: the weld is
 purely ADDITIVE (constraints appended, ranges appended, hash sites verbatim), so every bare
