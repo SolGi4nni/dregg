@@ -45,11 +45,12 @@ dreggnet-craft = { path = "../dreggnet-craft" }        # the run's loot forged i
 dreggnet-trade = { path = "../dreggnet-trade" }        # the crafted note traded (the SAME note-cell)
 dregg-season = { path = "../dregg-season" }            # a season champion -> the hall-of-fame
 
-# ── the reused adapter: ONE canonical player across the crates ──
-# `dreggnet_saga::PlayerIdentity` derives ONE name into the party seat key, the guild
-# member handle, and the asset holder label (gear owner / companion owner / craft holder).
-# Reused verbatim — the same committed identity adapter the saga proved.
-dreggnet-saga = { path = "../dreggnet-saga" }
+# ── the ONE canonical player adapter, FOLDED IN from the saga ──
+# `PlayerIdentity` (native to this crate now) derives ONE name into the party seat's ed25519
+# custody key, the guild member handle, and the asset holder label (gear / companion / craft /
+# trade holder). Folded in verbatim from `dreggnet_saga` so the flagship no longer depends on
+# the saga weave for a single small adapter — the two weaves overlapped only here.
+dregg-types = { path = "../types" }                 # PublicKey — the party seat's ballot key type
 
 # ── the shared substrate the handoffs ride ──
 ugc-dregg = { path = "../ugc-dregg" }              # the Completion / Universe run currency + verify_completion
