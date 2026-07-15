@@ -5,20 +5,21 @@ edition = "2021"
 license = "AGPL-3.0-or-later"
 description = "fhEgg Stage-2 NO-VIEWER FHE clearing PoC: uniform-price batch auction cleared entirely on TFHE ciphertexts (nobody decrypts the orders), plus one PDHG flow-LP iteration under FHE. Real tfhe-rs, measured envelope."
 
-# Standalone probe/tool crate — deliberately NOT a breadstuffs workspace member
-# (empty [workspace] opts out of the root workspace), exactly like the Stage-1
-# fhegg-solver sibling. This is the NO-VIEWER stage: orders are submitted as
-# TFHE ciphertexts (unary price-bucket increments, Cryptobazaar-style) and the
-# clearing is computed HOMOMORPHICALLY. Nobody — not this binary, not any
-# committee — ever holds a plaintext order; only the public clearing price p*
-# (and the aggregate volume V*) is decrypted at the end.
+# The NO-VIEWER stage: orders are submitted as TFHE ciphertexts (unary
+# price-bucket increments, Cryptobazaar-style) and the clearing is computed
+# HOMOMORPHICALLY. Nobody — not this binary, not any committee — ever holds a
+# plaintext order; only the public clearing price p* (and the aggregate volume
+# V*) is decrypted at the end.
 #
-# Kept standalone to avoid feature-unifying the heavy tfhe-rs FHE dependency
-# onto the protocol crates, and to build/run the honest CPU benchmark locally.
-# See docs/deos/DREX-NO-VIEWER-SURPASS.md (the FHE-feasibility estimates this
-# crate VALIDATES against real numbers), docs/deos/FHEGG-KERNEL.md (§2 the fold
+# FOLDED into the root workspace (members, NOT default-members — its heavy
+# tfhe-rs FHE dep stays out of the bare dev loop, exactly like the Stage-1
+# fhegg-solver sibling). The fold was previously blocked because its `tfhe 1.6`
+# needs `rayon ^1.11` while the root locked `rayon 1.10.0` — that lock came from
+# poly-commitment's over-strict `rayon = "=1.10.0"` exact-pin, now relaxed via
+# the emberian/proof-systems fork ([patch] in the root Cargo.toml). With the
+# root on rayon 1.12, poly-commitment (storage kzg) and tfhe (here) co-resolve.
+# See docs/deos/DREX-NO-VIEWER-SURPASS.md, docs/deos/FHEGG-KERNEL.md (§2 the fold
 # + crossing), docs/deos/PRIVATE-CONVEX-ENGINE.md (§2.x PDHG, §1.4 FHE cost).
-[workspace]
 
 [dependencies]
 tfhe = { version = "1.6", features = ["integer"] }
@@ -57,7 +58,3 @@ path = "src/bin/additive_bench.rs"
 [[bin]]
 name = "fhe-mpc-bench"
 path = "src/bin/mpc_bench.rs"
-
-[profile.release]
-opt-level = 3
-lto = "thin"
