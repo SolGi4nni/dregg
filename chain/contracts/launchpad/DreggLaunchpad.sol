@@ -5,6 +5,7 @@ import {DreggLaunchToken} from "./DreggLaunchToken.sol";
 import {DreggSolventPool} from "./DreggSolventPool.sol";
 import {ILaunchEligibility} from "./ILaunchEligibility.sol";
 import {IClearingAttestor} from "./IClearingAttestor.sol";
+import {IDeployerGate} from "./IDeployerGate.sol";
 
 /// @title DreggLaunchpad
 /// @notice The provably-fair token launchpad — the EVM realization of the four
@@ -131,6 +132,25 @@ contract DreggLaunchpad {
     /// windows are DISJOINT in time, so a clearing and a refund can never both apply.
     uint64 public constant REFUND_GRACE = 7 days;
 
+    /// The OPTIONAL, PINNED deployer gate — WHO may register a launch at all
+    /// (`IDeployerGate`), the complement to the per-launch `ILaunchEligibility`
+    /// that gates BIDDERS at `commitBid`. `address(0)` = permissionless deploy.
+    ///
+    /// IMMUTABLE by design: a launchpad's deploy policy is a public, unchangeable
+    /// fact of that deployment. There is no admin door to add, drop, or swap the
+    /// gate under a live launch — so "this launchpad gates its deployers" is a
+    /// property a bidder reads once, not a promise an operator can revoke.
+    ///
+    /// The launchpad pins only the GATE, never an ARM: which capability satisfies
+    /// it (conduct bond / skeptical-Opus interview / cleared audit, public or
+    /// anonymous) stays the gate's own pluggable policy
+    /// (`DreggDeployerGate.acceptedArms`).
+    IDeployerGate public immutable deployerGate;
+
+    constructor(IDeployerGate deployerGate_) {
+        deployerGate = deployerGate_;
+    }
+
     uint256 public launchCount;
     mapping(uint256 => Launch) private _launches;
     mapping(uint256 => mapping(address => Bid)) private _bids;
@@ -163,6 +183,10 @@ contract DreggLaunchpad {
 
     // ─── Errors ───────────────────────────────────────────────────────────────
     error SupplyDoesNotClose(uint256 sale, uint256 creator, uint256 total); // hidden supply
+    /// The deployer presented no valid deploy capability for THIS schedule — the
+    /// pinned `deployerGate` refused. Gating WHO may deploy (the complement to
+    /// `NotEligible`, which gates who may bid).
+    error DeployerNotGated(address deployer);
     error BadWindow();
     error NoSuchLaunch(uint256 launchId);
     error NotCommitPhase();
@@ -204,6 +228,17 @@ contract DreggLaunchpad {
     ///         undisclosed allocation. A hard-capped token is minted ONCE for the
     ///         whole disclosed supply into launchpad custody: `saleSupply` for the
     ///         raise, `creatorAllocation` held under the vesting lock.
+    ///
+    ///         If this launchpad pins a `deployerGate`, registration additionally
+    ///         REQUIRES a valid deploy capability for THIS EXACT schedule: the
+    ///         capability is scoped to `keccak256(abi.encode(s))`, the same hash
+    ///         committed as `scheduleCommit`. So the authorization a deployer
+    ///         obtained (a bond, a passed skeptical-Opus interview, a cleared
+    ///         `tools/dregg-audit` report on the factory-emitted token) is bound to
+    ///         the schedule that actually launches — it cannot be obtained for one
+    ///         disclosure and spent on another.
+    /// @param capability the deploy capability (`abi.encode(uint8 arm, bytes
+    ///        armData)`); ignored when no gate is pinned.
     function registerLaunch(
         string calldata tokenName,
         string calldata tokenSymbol,
@@ -211,7 +246,8 @@ contract DreggLaunchpad {
         uint64 commitDuration,
         uint64 revealDuration,
         ILaunchEligibility gate,
-        IClearingAttestor attestor
+        IClearingAttestor attestor,
+        bytes calldata capability
     ) external returns (uint256 launchId) {
         // NO HIDDEN SUPPLY: the disclosed parts — sale + creator + pool — must
         // exactly account for the cap. The pool allocation is disclosed up front,
@@ -221,6 +257,13 @@ contract DreggLaunchpad {
         }
         if (commitDuration == 0 || revealDuration == 0) revert BadWindow();
         if (s.graduationBps > 10000) revert BadWindow();
+
+        // THE DEPLOYER GATE — WHO may deploy, scoped to WHAT they disclosed.
+        // Mirrors the bidder gate at `commitBid` below.
+        bytes32 paramsHash = keccak256(abi.encode(s));
+        if (address(deployerGate) != address(0) && !deployerGate.authorizeDeploy(msg.sender, paramsHash, capability)) {
+            revert DeployerNotGated(msg.sender);
+        }
 
         launchId = ++launchCount;
 
@@ -235,7 +278,7 @@ contract DreggLaunchpad {
         Launch storage L = _launches[launchId];
         L.creator = msg.sender;
         L.token = token;
-        L.scheduleCommit = keccak256(abi.encode(s));
+        L.scheduleCommit = paramsHash; // == the capability's scope
         L.totalSupply = s.totalSupply;
         L.saleSupply = s.saleSupply;
         L.creatorAllocation = s.creatorAllocation;

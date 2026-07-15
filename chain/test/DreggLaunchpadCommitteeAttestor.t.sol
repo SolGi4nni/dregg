@@ -7,6 +7,7 @@ import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
 import {CommitteeAttestor} from "../contracts/launchpad/CommitteeAttestor.sol";
+import {IDeployerGate} from "../contracts/launchpad/IDeployerGate.sol";
 
 /// The v1 committee-signature attestor (the PROVED-grade trust anchor) + its
 /// fraud-proof/challenge backstop. Adversarial: a valid quorum attests and the
@@ -33,7 +34,7 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
     uint256 constant G = 1e9;
 
     function setUp() public {
-        pad = new DreggLaunchpad();
+        pad = new DreggLaunchpad(IDeployerGate(address(0))); // permissionless deploy
         address[] memory signers = new address[](3);
         signers[0] = vm.addr(PK1);
         signers[1] = vm.addr(PK2);
@@ -61,7 +62,9 @@ contract DreggLaunchpadCommitteeAttestorTest is Test {
 
     function _register(IClearingAttestor a) internal returns (uint256 id) {
         vm.prank(creator);
-        id = pad.registerLaunch("DreggMeme", "DMEME", _schedule(), COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), a);
+        id = pad.registerLaunch(
+            "DreggMeme", "DMEME", _schedule(), COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), a, ""
+        );
     }
 
     function _commit(uint256 id, address who, uint256 price, uint256 qty, bytes32 salt) internal {

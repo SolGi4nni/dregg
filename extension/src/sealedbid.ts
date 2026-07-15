@@ -84,6 +84,121 @@ export function checkReveal(
   };
 }
 
+// ─── The DreggLaunchpad seal (the deployed launchpad's canonical encoding) ─────
+//
+// `buildCommitment` above is the GENERIC ceremony: it seals an arbitrary order
+// object (`keccak256(bidder ‖ keccak(canonicalJson(order)) ‖ salt)`), which is
+// what a DrEX-style escrow over free-form orders wants.
+//
+// `chain/contracts/launchpad/DreggLaunchpad.sol` is NOT that shape. Its book is
+// a typed `(price, qty)` pair and its seal is the ABI encoding
+// `keccak256(abi.encode(price, qty, salt, bidder))` (`sealOf`, and the exact
+// recomputation `revealBid` checks against the stored `sealedHash`). A bid
+// sealed with the generic commitment can NEVER be revealed on that launchpad —
+// `BidMismatch`. So a frontend driving the real launchpad must derive the seal
+// the way the contract does; that is what this section provides.
+//
+// The two encodings are cross-checked against the contract itself by a shared
+// vector: `test/sealedbid.test.mjs` and
+// `chain/test/P0ParityLaunchLoop.t.sol::test_SealVector_MatchesTheExtensionDerivation`
+// assert the SAME bytes32 — a drift on either side turns one of them red.
+
+/** Left-pad a non-negative integer into a 32-byte big-endian ABI word. */
+function abiWordUint(value: bigint): Uint8Array {
+  if (value < 0n) throw new Error("abiWordUint: negative value");
+  if (value >= 1n << 256n) throw new Error("abiWordUint: value exceeds uint256");
+  const out = new Uint8Array(32);
+  let v = value;
+  for (let i = 31; i >= 0 && v > 0n; i--) {
+    out[i] = Number(v & 0xffn);
+    v >>= 8n;
+  }
+  return out;
+}
+
+/** A 20-byte address as a 32-byte left-padded ABI word. */
+function abiWordAddress(address: string): Uint8Array {
+  const a = fromHex0x(address);
+  if (a.length !== 20) throw new Error("abiWordAddress: address must be 20 bytes");
+  const out = new Uint8Array(32);
+  out.set(a, 12);
+  return out;
+}
+
+/** A 32-byte value as an ABI word (bytes32 is already word-sized). */
+function abiWordBytes32(value: string): Uint8Array {
+  const b = fromHex0x(value);
+  if (b.length !== 32) throw new Error("abiWordBytes32: must be 32 bytes");
+  return b;
+}
+
+/** A sealed launchpad bid: the seal to escrow, plus the opening to keep. */
+export interface LaunchpadSeal {
+  /** `0x…` the `sealedHash` argument of `DreggLaunchpad.commitBid`. */
+  seal: string;
+  /** wei per WHOLE token. */
+  price: string;
+  /** whole tokens demanded. */
+  qty: string;
+  /** `0x…` the 32-byte hiding nonce — required to reveal; losing it forfeits the bid. */
+  salt: string;
+  /** The wei to escrow with `commitBid`: `price * qty` (the bidder's own maximum
+   *  payment). A smaller deposit is refused at reveal (`UnderCollateralized`);
+   *  the excess over the UNIFORM clearing price is refunded at settlement. */
+  deposit: string;
+}
+
+/**
+ * Derive the `DreggLaunchpad` sealed bid: `keccak256(abi.encode(uint256 price,
+ * uint256 qty, bytes32 salt, address bidder))` — byte-identical to the
+ * contract's `sealOf(price, qty, salt, bidder)`.
+ *
+ * The bidder escrows only `seal` during the commit window (no price, no size,
+ * nothing to front-run), then reveals `(price, qty, salt)` in the reveal window;
+ * the contract recomputes this hash and rejects anything that does not open the
+ * commitment exactly (no late-switch).
+ */
+export function launchpadSeal(
+  price: bigint,
+  qty: bigint,
+  saltHex: string,
+  bidderAddress: string,
+): LaunchpadSeal {
+  const seal = keccak256(
+    abiWordUint(price),
+    abiWordUint(qty),
+    abiWordBytes32(saltHex),
+    abiWordAddress(bidderAddress),
+  );
+  return {
+    seal: hex0x(seal),
+    price: price.toString(),
+    qty: qty.toString(),
+    salt: saltHex.toLowerCase(),
+    deposit: (price * qty).toString(),
+  };
+}
+
+/**
+ * The reveal check for a launchpad bid: recompute the seal from the opening and
+ * confirm it binds. `DreggLaunchpad.revealBid` runs this exact recomputation and
+ * reverts `BidMismatch` when it fails.
+ */
+export function checkLaunchpadReveal(
+  price: bigint,
+  qty: bigint,
+  saltHex: string,
+  bidderAddress: string,
+  expectedSeal: string,
+): { ok: boolean; recomputed: string; expected: string } {
+  const rebuilt = launchpadSeal(price, qty, saltHex, bidderAddress);
+  return {
+    ok: rebuilt.seal.toLowerCase() === expectedSeal.toLowerCase(),
+    recomputed: rebuilt.seal,
+    expected: expectedSeal,
+  };
+}
+
 /** EIP-712 domain for a launchpad `SealedAuction` escrow. */
 export function sealedAuctionDomain(chainId: number, verifyingContract: string): Eip712Domain {
   return { name: "DreggSealedAuction", version: "1", chainId, verifyingContract };

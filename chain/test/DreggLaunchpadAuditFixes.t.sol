@@ -6,6 +6,7 @@ import {DreggLaunchpad} from "../contracts/launchpad/DreggLaunchpad.sol";
 import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
+import {IDeployerGate} from "../contracts/launchpad/IDeployerGate.sol";
 
 /// Exploit-then-confirm tests for the independent codex audit (docs/deos/LAUNCHPAD-CONTRACT-AUDIT.md).
 /// Each test FAILS on the pre-fix contract and PASSES on the fixed one.
@@ -22,7 +23,7 @@ contract DreggLaunchpadAuditFixesTest is Test {
     uint256 constant G = 1e9;
 
     function setUp() public {
-        pad = new DreggLaunchpad();
+        pad = new DreggLaunchpad(IDeployerGate(address(0))); // permissionless deploy
         vm.deal(creator, 1 ether);
         vm.deal(alice, 1 ether);
         vm.deal(bob, 1 ether);
@@ -44,7 +45,14 @@ contract DreggLaunchpadAuditFixesTest is Test {
     function _register() internal returns (uint256 id) {
         vm.prank(creator);
         id = pad.registerLaunch(
-            "DreggMeme", "DMEME", _schedule(), COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), IClearingAttestor(address(0))
+            "DreggMeme",
+            "DMEME",
+            _schedule(),
+            COMMIT_DUR,
+            REVEAL_DUR,
+            ILaunchEligibility(address(0)),
+            IClearingAttestor(address(0)),
+            ""
         );
     }
 

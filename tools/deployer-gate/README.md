@@ -97,17 +97,31 @@ cd tools/deployer-gate && cargo test        # 14 tests
 cd chain && forge test --match-contract DreggDeployerGateTest   # 17 tests
 ```
 
-## The launchpad hook
+## The launchpad hook — LANDED
 
-The intended 3-line addition to `DreggLaunchpad.registerLaunch`, mirroring the
-bidder gate at line 274 (composed, not clobbered — the launchpad is unchanged
-here):
+`DreggLaunchpad.registerLaunch` now enforces the gate, mirroring the bidder gate
+at `commitBid`:
 
 ```solidity
-if (address(deployerGate) != address(0)
-    && !deployerGate.authorizeDeploy(msg.sender, keccak256(abi.encode(s)), capability))
+bytes32 paramsHash = keccak256(abi.encode(s));
+if (address(deployerGate) != address(0) && !deployerGate.authorizeDeploy(msg.sender, paramsHash, capability)) {
     revert DeployerNotGated(msg.sender);
+}
 ```
+
+The gate is **pinned at construction and immutable** (`new DreggLaunchpad(gate)`;
+`address(0)` = permissionless deploy) — a launchpad's deploy policy is a public
+fact of that deployment, not a switch an operator can flip under a live launch.
+The launchpad pins only the GATE; which arm satisfies it stays this crate's
+pluggable policy. Both polarities in
+`chain/test/P0ParityLaunchLoop.t.sol`: a bonded deployer and an audit-cleared
+deployer each register; an ungated one is refused `DeployerNotGated`, and a
+deployer whose accepted arm the operator disabled is refused too.
 
 Composes with the AI-token-factory lane (`tools/token-factory`): a
 **proven-safe token** + a **proven-gated deployer** = the two anti-scam layers.
+The audit arm carries the factory's VERIFIED-SAFE bundle hash, and
+`attestAuditFor(reportHash, launchParamsHash, cleared)` **binds that clearance to
+one disclosed schedule** — an audit obtained for one disclosure cannot be spent
+on another (`auditScope`). `attestAudit` remains the unscoped, deployer-level
+form.

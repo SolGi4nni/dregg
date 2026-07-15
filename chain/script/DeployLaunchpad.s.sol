@@ -7,6 +7,7 @@ import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
 import {DreggSolventPool} from "../contracts/launchpad/DreggSolventPool.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
+import {IDeployerGate} from "../contracts/launchpad/IDeployerGate.sol";
 
 /// @title DeployLaunchpad
 /// @notice Deploys the provably-fair `DreggLaunchpad` (the launch flow of
@@ -65,7 +66,12 @@ contract DeployLaunchpad is Script {
 
         // ---- the broadcast: deploy the launchpad (the one live contract) ----
         vm.startBroadcast(deployerPk);
-        DreggLaunchpad pad = new DreggLaunchpad();
+        // The deployer gate is PINNED AT CONSTRUCTION and immutable. `address(0)`
+        // = permissionless deploy (this demo's posture). To run a deployer-gated
+        // launchpad, deploy a `DreggDeployerGate` first (choosing its arms: bond /
+        // skeptical-Opus interview / cleared audit) and pass it here — the choice
+        // is a property of the deployment, not a switch an operator can flip later.
+        DreggLaunchpad pad = new DreggLaunchpad(IDeployerGate(vm.envOr("DREGG_DEPLOYER_GATE", address(0))));
         vm.stopBroadcast();
 
         console.log("-----------------------------------------------------------");
@@ -111,7 +117,9 @@ contract DeployLaunchpad is Script {
         });
         vm.prank(creator);
         uint256 id =
-            pad.registerLaunch("DreggDemo", "DDEMO", s, 100, 100, ILaunchEligibility(address(0)), IClearingAttestor(address(0)));
+            pad.registerLaunch(
+            "DreggDemo", "DDEMO", s, 100, 100, ILaunchEligibility(address(0)), IClearingAttestor(address(0)), ""
+        );
         console.log("  launch id            :", id);
         console.log("  launch token         :", pad.tokenOf(id));
         console.log("  schedule disclosed OK :", pad.checkSchedule(id, s));

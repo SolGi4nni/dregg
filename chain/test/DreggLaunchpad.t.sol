@@ -7,6 +7,7 @@ import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
 import {DreggSolventPool} from "../contracts/launchpad/DreggSolventPool.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
+import {IDeployerGate} from "../contracts/launchpad/IDeployerGate.sol";
 
 // ─── Mocks (the same MockSettlement pattern as DreggStateOracle.t.sol) ──────────
 
@@ -60,7 +61,7 @@ contract DreggLaunchpadTest is Test {
     uint256 constant G = 1e9;
 
     function setUp() public {
-        pad = new DreggLaunchpad();
+        pad = new DreggLaunchpad(IDeployerGate(address(0))); // permissionless deploy
         vm.deal(creator, 1 ether);
         vm.deal(alice, 1 ether);
         vm.deal(bob, 1 ether);
@@ -85,7 +86,7 @@ contract DreggLaunchpadTest is Test {
         returns (uint256 id)
     {
         vm.prank(creator);
-        id = pad.registerLaunch("DreggMeme", "DMEME", s, COMMIT_DUR, REVEAL_DUR, gate, att);
+        id = pad.registerLaunch("DreggMeme", "DMEME", s, COMMIT_DUR, REVEAL_DUR, gate, att, "");
     }
 
     function _commit(uint256 id, address who, uint256 price, uint256 qty, bytes32 salt) internal {
@@ -193,7 +194,9 @@ contract DreggLaunchpadTest is Test {
         vm.expectRevert(
             abi.encodeWithSelector(DreggLaunchpad.SupplyDoesNotClose.selector, uint256(1000), uint256(200), uint256(5000))
         );
-        pad.registerLaunch("X", "X", s, COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), IClearingAttestor(address(0)));
+        pad.registerLaunch(
+            "X", "X", s, COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), IClearingAttestor(address(0)), ""
+        );
     }
 
     /// The token has NO second mint door — a hidden post-launch inflation reverts.

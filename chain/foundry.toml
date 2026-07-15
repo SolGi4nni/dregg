@@ -8,7 +8,14 @@ optimizer_runs = 200
 evm_version = "paris"
 # The real-Groth16 settlement test replays the proof fixture emitted by
 # chain/gnark/settlement_snark_test.go (TestSettlementGroth16EndToEnd).
-fs_permissions = [{ access = "read", path = "./test/fixtures" }]
+# The p0-parity loop test reads the REAL token-factory artifacts (the
+# VERIFIED-SAFE / REJECTED bundles `tools/token-factory/token-factory` emitted)
+# and hashes them into the deployer gate's audit arm — the create step composes
+# the actual factory output, not a stand-in hash.
+fs_permissions = [
+    { access = "read", path = "./test/fixtures" },
+    { access = "read", path = "../tools/token-factory/artifacts" },
+]
 
 [rpc_endpoints]
 base_sepolia = "${BASE_SEPOLIA_RPC_URL}"

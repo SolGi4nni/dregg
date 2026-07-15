@@ -58,6 +58,18 @@ contract DreggDeployerGate is IDeployerGate {
     mapping(bytes32 => bool) public interviewPassed;
     /// Audit report hashes the auditor has marked as cleared.
     mapping(bytes32 => bool) public auditCleared;
+    /// The launch a cleared audit report is BOUND to (`keccak256(abi.encode(
+    /// Schedule))`), set by `attestAuditFor`. `0` = unscoped (the report
+    /// authorizes any schedule from a deployer who presents it).
+    ///
+    /// Scoping is what makes the token-factory compose into CREATE: the factory's
+    /// VERIFIED-SAFE artifact proves a property of the TOKEN (a Halmos-proven hard
+    /// cap, no rug doors), while the launch's DISCLOSED SCHEDULE (total supply,
+    /// creator allocation, vesting cliff) is a separate public input. The auditor —
+    /// which read both — attests the PAIR, so an audit cleared for one disclosure
+    /// cannot be spent on another (e.g. a 1B-cap artifact reused to launch a
+    /// different supply). Without a scope nothing on-chain ties the two.
+    mapping(bytes32 => bytes32) public auditScope;
 
     // ─── Private (ZK) arm ──────────────────────────────────────────────────────
     /// The anonymous-credential verifier for the reveal-nothing interview arm.
@@ -74,6 +86,8 @@ contract DreggDeployerGate is IDeployerGate {
     event BondWithdrawn(address indexed deployer, uint256 amount);
     event InterviewAttested(bytes32 indexed commitment, bool passed);
     event AuditAttested(bytes32 indexed reportHash, bool cleared);
+    /// A cleared audit bound to exactly one launch disclosure.
+    event AuditScoped(bytes32 indexed reportHash, bytes32 indexed launchParamsHash);
     event AcceptedArmsSet(uint8 mask);
 
     // ─── Errors ────────────────────────────────────────────────────────────────
@@ -165,11 +179,28 @@ contract DreggDeployerGate is IDeployerGate {
         emit InterviewAttested(verdictCommitment, passed);
     }
 
-    /// The audit oracle marks a report hash as cleared.
+    /// The audit oracle marks a report hash as cleared, UNSCOPED — it authorizes
+    /// any schedule the presenting deployer registers. Use this only for a
+    /// standing deployer-level clearance; the launch-bound form below is what the
+    /// token-factory create path uses.
     function attestAudit(bytes32 reportHash, bool cleared) external {
         if (msg.sender != auditor) revert Unauthorized();
         auditCleared[reportHash] = cleared;
         emit AuditAttested(reportHash, cleared);
+    }
+
+    /// The audit oracle clears a report AND BINDS it to one launch's disclosed
+    /// schedule (`keccak256(abi.encode(Schedule))` — the same hash the launchpad
+    /// commits as `scheduleCommit` and scopes the capability to). This is the
+    /// token-factory composition: the auditor attests "THIS VERIFIED-SAFE artifact
+    /// is the token of THIS disclosure", and the report authorizes nothing else.
+    /// Un-clearing (`cleared = false`) also drops the scope.
+    function attestAuditFor(bytes32 reportHash, bytes32 launchParamsHash, bool cleared) external {
+        if (msg.sender != auditor) revert Unauthorized();
+        auditCleared[reportHash] = cleared;
+        auditScope[reportHash] = cleared ? launchParamsHash : bytes32(0);
+        emit AuditAttested(reportHash, cleared);
+        emit AuditScoped(reportHash, cleared ? launchParamsHash : bytes32(0));
     }
 
     // ─── The authorization gate (the registerLaunch hook) ─────────────────────
@@ -202,6 +233,11 @@ contract DreggDeployerGate is IDeployerGate {
         if (arm == ARM_AUDIT) {
             bytes32 reportHash = abi.decode(armData, (bytes32));
             if (!auditCleared[reportHash]) return false;
+            // A launch-BOUND report authorizes exactly the disclosure it was
+            // cleared for — an audit obtained for one schedule cannot be spent on
+            // another. (An unscoped report — `attestAudit` — is deployer-level.)
+            bytes32 scope = auditScope[reportHash];
+            if (scope != bytes32(0) && scope != launchParamsHash) return false;
             emit DeployAuthorized(deployer, launchParamsHash, arm);
             return true;
         }

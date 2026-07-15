@@ -6,6 +6,7 @@ import {DreggLaunchpad} from "../contracts/launchpad/DreggLaunchpad.sol";
 import {DreggLaunchToken} from "../contracts/launchpad/DreggLaunchToken.sol";
 import {ILaunchEligibility} from "../contracts/launchpad/ILaunchEligibility.sol";
 import {IClearingAttestor} from "../contracts/launchpad/IClearingAttestor.sol";
+import {IDeployerGate} from "../contracts/launchpad/IDeployerGate.sol";
 
 /// A never-attesting attestor: `attestClearing` always returns false. Stands in for
 /// a dead devnet / a committee that never returns — the launch cannot finalize and
@@ -33,7 +34,7 @@ contract DreggLaunchpadRefundTest is Test {
     uint256 constant G = 1e9;
 
     function setUp() public {
-        pad = new DreggLaunchpad();
+        pad = new DreggLaunchpad(IDeployerGate(address(0))); // permissionless deploy
         vm.deal(creator, 1 ether);
         vm.deal(alice, 1 ether);
         vm.deal(bob, 1 ether);
@@ -54,7 +55,9 @@ contract DreggLaunchpadRefundTest is Test {
 
     function _register(IClearingAttestor att) internal returns (uint256 id) {
         vm.prank(creator);
-        id = pad.registerLaunch("DreggMeme", "DMEME", _schedule(), COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), att);
+        id = pad.registerLaunch(
+            "DreggMeme", "DMEME", _schedule(), COMMIT_DUR, REVEAL_DUR, ILaunchEligibility(address(0)), att, ""
+        );
     }
 
     function _commit(uint256 id, address who, uint256 price, uint256 qty, bytes32 salt) internal {
