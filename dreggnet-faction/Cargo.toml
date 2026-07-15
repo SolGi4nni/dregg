@@ -37,6 +37,15 @@ spween = { git = "https://github.com/emberian/spween", rev = "95980f7d1e10913849
 # `Monotonic` / `WriteOnce` / `FieldEquals` teeth the v0 compiler does not emit and
 # INTROSPECT the installed program (proof each faction rule is a kernel predicate).
 dregg-app-framework = { path = "../app-framework", default-features = false }
+# THE VIEW VOCAB — the serializable deos affordance tree (`Section`/`Table`/`Row`/`Progress`/
+# `Pill`/`Text`). The standing-bars READ-surface renders faction standing as a plain `ViewNode`,
+# so every frontend (web/discord/telegram/wechat) paints it for free — the do-once path
+# `dreggnet-surfaces` follows. default-features=false = no gpui (the same knob surfaces uses).
+deos-view = { path = "../deos-view", default-features = false }
+# Persistence: standing snapshots per-identity serialize to JSON (the `StandingStore`). The same
+# serde the workspace pins.
+serde = { workspace = true }
+serde_json = { workspace = true }
 
 # A workspace MEMBER of the breadstuffs root (registered in `members`). The root
 # `[workspace]` + `[patch]` tables apply; no standalone `[workspace]`/`[patch]`.

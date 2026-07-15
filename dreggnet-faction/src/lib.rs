@@ -85,6 +85,13 @@ use dregg_app_framework::{CellProgram, StateConstraint, TransitionGuard, field_f
 use spween::{Choice, PassageContent, Scene, Value};
 use spween_dregg::{CompiledStory, WorldCell, choice_method, compile_scene, parse};
 
+pub mod roster;
+pub mod standing;
+pub mod surface;
+
+pub use roster::{FactionDef, FactionLines, Roster};
+pub use standing::{FactionStanding, StandingSnapshot, StandingStore};
+
 // ── The factions (the rival pair the whole feud turns on) ─────────────────────────
 
 /// The fire-cult that keeps the moor's beacons — faction A.
@@ -240,7 +247,7 @@ pub fn feud_scene() -> Scene {
 
 /// Look up a var's compiled cell slot (panics on an unnamed var — every var below is
 /// named by an effect/condition in [`FEUD`], so it always resolves).
-fn faction_slot(story: &CompiledStory, name: &str) -> u8 {
+pub(crate) fn faction_slot(story: &CompiledStory, name: &str) -> u8 {
     (*story
         .var_slots
         .get(name)
@@ -251,7 +258,7 @@ fn faction_slot(story: &CompiledStory, name: &str) -> u8 {
 /// faction tooth the v0 compiler does not emit). Panics on a coordinate typo. Mirrors
 /// [`dungeon_on_dregg`]'s `augment_case`; an augmented case is enforced identically to a
 /// compiled one — the executor never distinguishes who authored a [`TransitionCase`].
-fn augment_case(program: &mut CellProgram, method: &str, extra: Vec<StateConstraint>) {
+pub(crate) fn augment_case(program: &mut CellProgram, method: &str, extra: Vec<StateConstraint>) {
     let m = symbol(method);
     let CellProgram::Cases(cases) = program else {
         panic!("feud program is Cases");
