@@ -57,24 +57,23 @@ them:
     over-debiting/wrong-asset matching never FORMS (`Market.overdebit_refused` / `wrongAsset_refused`,
     reused), and a value-minting output makes the commitment excess NON-zero (`#guard`).
 
-**HONEST GRADE — Lean SPEC, circuit fold NAMED.** This lands the *specification* of DrEX rung 3: the
-private-matching clearing is a machine-checked theorem composing the shielded-spend leaf + the ring +
-the nullifier freshness. Two scope edges are named, not hidden:
+**HONEST GRADE — Lean SPEC + note-level circuit, endpoint fold NAMED.** This lands the
+*specification* of DrEX rung 3: the private-matching clearing is a machine-checked theorem composing
+the shielded-spend leaf + the ring + the nullifier freshness.  The deployed Rust AIR now also realizes
+the two-leg and N-leg note-algebra layer.  Two scope edges are named, not hidden:
 
-  * The **matching layer (`MatchNode`) and the shielded-spend claim are composed as two layers**, not
-    yet fused by an in-AIR constraint tying `node.offerAsset`/`offerAmount` to the hidden note's
-    `asset`/`value`. Fusing them (so the matcher's committed offer IS the note's hidden asset) is the
-    **value-commitments-in-AIR weld** (ABI §4.1(c), `DREGGFI-VISION.md §7`) — the same seam
-    `ClaimRefinement` names ATTESTED. Here per-asset conservation over hidden values is PROVED at the
-    homomorphic-commitment layer (`shielded_ring_value_conserves_hidden`) and the AUTHORIZED +
-    NO-DOUBLE-SPEND half is PROVED in-refinement; the *arithmetic link* between the two is the circuit's
-    ATTESTED Schnorr excess.
-  * The **circuit realization** — folding N `prove_shielded_spend_leaf_with_claim` leaves
-    (`circuit-prove/src/shielded_spend_leaf_adapter.rs`) into a ring-clearing apex that verifies the
-    conserving cycle over the hidden commitments — is NAMED as the finishing step. The leaf + the
-    binding nodes (`prove_shielded_spend_binding_node`, `prove_shielded_spend_root_binding_node_segmented`)
-    already exist; the ring-clearing apex above them is a MEDIUM→RESEARCH AIR build. This module does
-    NOT claim that circuit; it proves the SPEC it must realize.
+  * The **matching layer (`MatchNode`) and the shielded-spend claim are fused in the deployed ring
+    AIR**, which constrains `offerAsset`/`offerAmount` to the spent note's `asset`/`value`; the Lean
+    theorem `LedgerRealizationExt.shielded_ring_fused_clears` states the corresponding `LegFused`
+    composition.  What remains is not this note-algebra weld but a Lean-authored descriptor refinement
+    from the serialized AIR trace to that semantic object.
+  * The **endpoint circuit realization** remains named: the two-leg and N-leg Rust AIRs fold real
+    shielded-spend leaves and enforce fusion/cycle/conservation, but publish only note-level claims.
+    They do not publish or constrain creators, the faithful eight-lane kernel pre/post endpoints,
+    action count, lifecycle/authorization state, or the receipt-log transition required by
+    `Market.ProtocolAssurance.ShieldedRingDescriptorRefines`.  Closing this requires a Lean-authored
+    endpoint-carrying outer descriptor and recursive binding to the two ordinary balance-action
+    traces.  This module does not claim that absent endpoint theorem.
 
 ## THE PAYOFF — this deletes the `intent/src/trustless.rs` DECRYPT committee.
 

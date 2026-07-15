@@ -1,5 +1,46 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑ cap-graph GENUINE-NON-AMP emit is BROKEN — two column/index defects found by the MOVE-3 test lane (named 2026-07-15)
+Writing the behavioural non-amp tooth the plan asked for (CRATE-EXCELLENCE-PLAN §4 MOVE 3(c)) required
+reading the emitted descriptor, and the descriptor falsifies its own module doc. `dregg-effectvm-attenuateA-v1-genuine-nonamp.json`
+carries TWO independent Lean-emit defects. Neither is live (nothing routes to this descriptor — it is the
+dead "ARGUS linchpin" of the S9 finding), so both are LATENT, not holes.
+
+**(1) The two legs do NOT interlock — the mask recon binds the wrong columns.** The emitted gates are
+`v7 − Σ heldBit_i·2ⁱ` and `v4 − Σ grantedBit_i·2ⁱ`. The `rights` felt the cap-root edge leaf hashes is
+col 72. Columns 4 and 7 are EFFECT-SELECTOR columns (selector block is `0..54`) and nothing relates them
+to col 72. Cause: `EffectVmEmitCapReshape.dcol.GRANTED_MASK := EffectVmEmitCapRoot.cp.RIGHTS`, and
+`cp.RIGHTS = 4` is a param INDEX — the column is `prmCol 4 = PARAM_BASE + 4 = 72` — but `gMaskRecon`
+consumes a raw column (`eCol maskCol`). `dcol.HELD_MASK := 7` is the same shape (intended col 75).
+The mint-flavour `col.HELD_MASK`/`col.SLOT`/`col.TARGET` are built identically, so `cap_reshape_descriptor`
+almost certainly carries the same defect — UNVERIFIED, and the next thing to check.
+What SURVIVES: `capDeleg_nonAmp_in_circuit` / `capDeleg_rejects_amplify` are proved and TRUE — they
+quantify over `dcol.grantedBit i`/`dcol.heldBit i` (cols 128+i/120+i) and the submask gate really does
+force `gᵢ ≤ hᵢ` there. What does NOT survive is the LINK to the hashed rights, which the Lean doc-comment
+on `capDeleg_nonAmp_in_circuit` asserts ("Since the granted bits reconstruct `cp.RIGHTS` … this binds the
+very rights the recomputed `cap_root` commits"). This is the [[feedback-no-named-carrier-laundering]]
+shape: the theorem is real, the sentence connecting it to the deployed artifact is not.
+
+**(2) The state-commit's GROUP-4 digest ordinals were never rebased.** Site 5 (`digest_col` 88 =
+`state_commit`) reads digests `0,1,2`. The two cap-root sites were PREPENDED to the site list, so those
+resolve to cols `102, 87, 98` (edge leaf, cap root, `hash[state_after[0..3]]`) where the GROUP-4 chain
+intends `98, 99, 100`. So `state_after[4..10]` (cols 80..86) are NOT committed by `state_commit`, and
+sites 3/4 (cols 99/100) are dead carriers that must still carry genuine digests but feed nothing.
+Audited all 28 emitted descriptors: this is the ONLY one affected — every other one indexes correctly.
+
+**Pinned, not papered over.** `circuit/src/cap_delegation_nonamp_descriptor.rs` now carries
+`nonamp_leg_does_not_bind_the_hashed_rights_felt` (proves an amplifying `rights` felt is ACCEPTED) and
+`state_commit_group4_chain_is_misindexed`. Both assert the CURRENT WRONG behaviour and are designed to
+go RED when the emit is fixed — that red is the signal, not a regression. Their failure messages say so.
+
+**Closure lane (Lean-side, out of the test lane's scope):** `prmCol`-wrap `dcol.GRANTED_MASK`/`dcol.HELD_MASK`
+(and audit the mint-flavour `col.*` twins) in `metatheory/Dregg2/Circuit/Emit/EffectVmEmitCapReshape.lean`;
+rebase the state-commit `Digest k` ordinals in `EffectVmEmitAttenuateA.lean`; fix the false doc-comment on
+`capDeleg_nonAmp_in_circuit`; re-emit (`scripts/emit-descriptors.sh`), re-pin `GENUINE_NONAMP_FP`,
+re-run the drift gate; then DELETE the two defect pins. Bundle with MOVE 5's "resolve the cap-descriptor
+orphans" — there is no point routing the six cap-graph effects to this descriptor until the gates bind
+the right columns. Do NOT wire it first.
+
 ## setField VALUE8 epoch STAGED → the controlled adoption re-point (named 2026-07-14, `circuit/descriptors/rotation-v3-setfield-value8-staged-registry.tsv`)
 The faithful per-trader setField weld is BUILT + verified but STAGED (live wire untouched). Lean
 `EffectVmEmitRotationV3Refused.v3RegistrySetFieldValue8` (8 `setFieldValue8VmDescriptor2-{slot}R24`
@@ -40,9 +81,15 @@ each leg. Both polarities GREEN (genuine circuit non-sat: nonconserving `#15`, m
 liveness and the reverse-prepended receipt log. NAMED next rungs: (1) **P0 endpoint descriptor** — the
 current Rust-authored leaf exposes only `[nf₀,root₀,vb₀,nf₁,root₁,vb₁]`; it has no creators, eight-lane
 kernel pre/post commitments, turn count, authorization/lifecycle state, or receipt-chain output, and so
-cannot prove `ShieldedRingDescriptorRefines` / `ShieldedRingApexStep`. Per architectural law #1, emit a
-Lean-authored outer descriptor which binds the two note rows to the two ordinary balance actions and the
-batch commitment surface, then register/fold it at the Market apex. (2) **N-leg generalization** — a variable-length cycle
+cannot prove `ShieldedRingDescriptorRefines` / `ShieldedRingApexStep`.  The refinement surface now
+explicitly carries `tracePublishedCommit t = pc`; omitting that equality allowed an unrelated decoded
+commitment and was unsound as an endpoint theorem shape.  The attempted single-action shortcut is now
+formally REFUTED: `not_marketEffectApexLiftResidual_balance` proves tag zero grows the receipt log by one
+while every fused two-leg apex grows it by two.  Per architectural law #1, emit a Lean-authored outer
+descriptor which binds the two note rows to the two ordinary balance actions and the batch's faithful
+eight-lane commitment surface, then register/fold it at the Market apex.  Do not add unattached public
+lanes to the Rust note AIR: without action/state constraints they would be carrier-only metadata.
+(2) **N-leg generalization** — a variable-length cycle
 and the general `offer_amount ≥ want_min` partial-fill inequality (needs an in-AIR range gadget; today the
 demo swap is TIGHT so equality suffices); (3) **launchpad/DEX integration** — carry the endpoint apex into the
 shielded batch (§3.3/§3.12) and DrEX (§3.13). Closure shape: widen the descriptor to a length-parametric
@@ -63,6 +110,29 @@ laws plus `FhEggTfheSourceRefinementResidual` (direct source-expression correspo
 instantiate the laws from tfhe-rs's integer correctness specification and byte/source-pin the internal
 `fhe_clear` expression to `tfheEval`; threshold-key/decryption security remains a deployment theorem,
 not implied by this value-semantics reduction.
+
+## CertQp Rust denotation split from the stronger exact certificate (2026-07-15, `Market/CertQpRustDenotation.lean`)
+The stale claim that Lean `CertifiedQP` “matches `qp.rs::CertQp::check`” is repaired. They are distinct
+certificates: Lean proves ε-optimality from exact stationarity plus explicit lower/upper multipliers and
+a complementarity-gap bound; deployed Rust uses OSQP form `l ≤ Ax ≤ u` with one dual `y`. The audit
+found and FIXED a real soundness bug: the old checker tested only primal feasibility and stationarity,
+so for `min ½x²−x` on `[0,2]` the suboptimal `x=0,y=+1` forged both residuals to zero and was accepted at
+`epsilon=0`. `CertQp::check` now also enforces the normal-cone identity
+`Ax = clamp(Ax+y,l,u)` (dual sign + complementarity), rejects non-finite/malformed inputs fail-closed,
+rejects overflowing intermediate arithmetic, and has Rust regressions for all three attacks.
+`rustCertQpCheck_iff` gives the repaired exact-rational
+three-residual denotation, `rustCertQpCheck_ignores_stored_reports` proves stored report fields are not
+trusted, `rustExactKkt_optimal` proves that exact repaired feasibility + stationarity + normal-cone
+membership yields global optimality for every feasible OSQP point, `rustForgedDual_rejected` mirrors
+the zero-residual forgery tooth, and
+`rustApprox_accepts_nonexact_stationarity` records that positive tolerance still differs from exact
+`CertifiedQP`. NAMED remaining:
+`CertQpRustF64RefinementResidual` must instantiate an IEEE-754 carrier, shape/finite decoder, and the
+deployed checker execution, with an explicit rounding envelope and NaN/∞ treatment; separately prove
+the inexact OSQP residual certificate's optimality bound (including dual sign/complementarity and box
+diameter terms), and bind the certificate's public `P` to the product registry's symmetric-PSD matrix
+(`rustExactKkt_optimal` takes `PsdSymm`; the residual checker cannot cheaply establish PSD itself). Do
+not reuse `qp_certifies_epsilon_optimal` until those missing premises are derived.
 
 ## state-field 32-byte residual — v13 wire+kernel widening (named 2026-07-13, `docs/FINDING-state-field-truncation.md`)
 The acute truncation bug (unrelated turn shreds a pinned 32-byte field) is FIXED
@@ -821,12 +891,15 @@ plane; content-addressed static-site hosting.
      public roots. The full allocation lowering is now CLOSED by
      `recKExecAsset_refines_balanceMovement`, `settleRing_refines_turnSpec`, and
      `drexClearing_refines_turnSpec`, including derived destination liveness and the exact receipt log.
-     `marketEffectAllocationIdentity_of_apex_lift` reduces allocation identity to the sole remaining
-     `MarketEffectApexLiftResidual`; the direct `lightclient_market_seam_of_shielded_descriptor` exports
-     the exact action list once `ShieldedRingDescriptorRefines` holds. The current six-lane note apex
-     cannot supply creators or kernel endpoints, so close with the Lean-authored endpoint descriptor
-     named in the top-of-ledger shielded-ring entry. `MarketBoundaryBinding` retains its wrong-post tooth
-     and concrete nonempty `demoFill` witness.
+     The historical `marketEffectAllocationIdentity_of_apex_lift` implication remains a useful shape
+     reduction, but its deployed tag-zero premise is now formally impossible:
+     `not_marketEffectApexLiftResidual_balance` proves the one-receipt dispatcher cannot equal a
+     two-receipt fused ring.  The direct `lightclient_market_seam_of_shielded_descriptor` is therefore
+     the sole viable route and exports the exact action list once `ShieldedRingDescriptorRefines`
+     holds.  That residual now includes the load-bearing `tracePublishedCommit t = pc` premise.  The
+     current six-lane note apex cannot supply creators or faithful eight-lane kernel endpoints, so
+     close with the Lean-authored endpoint descriptor named in the top-of-ledger shielded-ring entry.
+     `MarketBoundaryBinding` retains its wrong-post tooth and concrete nonempty `demoFill` witness.
   2. **fhEgg deployed denotation (P0, CLOSED; later repair supersedes the original finding).** Rust,
      MPC, and Lean now share strict executed-volume argmax with the lowest-price tie; no-clear and
      FheUint32 aggregation agree. The Task-8 audit also fixed the last unary encoder defect: an
@@ -842,12 +915,17 @@ plane; content-addressed static-site hosting.
      `accepted_settlement_binds_packed_roots` proves lane extraction binds the recorded keccak roots
      without claiming keccak injectivity. Remaining: Groth16/recursive-STARK accept must extract a
      fair kernel-real clearing under the faithful eight-lane state codec.
-  5. **fhEgg→ledger content binding + shielded apex denotation (P1, OPEN).** No theorem maps an fhEgg
-     order book/output `(p*,V*)` into the `MatchNode`/`DrexClearing` that `settleRing` executes. The
-     Rust N-leg shielded AIR now exists, contrary to `ShieldedClearing.lean`'s stale “finishing build”
-     prose, but no Lean-authored descriptor/refinement proves that satisfying its serialized trace
-     yields `shielded_ring_clears`, nor is it routed into the Market STARK extractor. This is the exact
-     order-book/hidden-note/settled-fill identity theorem still missing.
+  5. **fhEgg→ledger content binding CLOSED at the spec boundary; deployed source routing OPEN.**
+     `Market/FhEggLedgerBinding.lean::fhEgg_output_executes_exact_drex_clearing` constructs the exact
+     two-node allocation from `(p*,V*)`: the buyer pays `V*p` numeraire, the seller delivers `V` base,
+     the nodes are `CycleValid` with positive wants, and that exact `MatchNode` list executes through
+     `settleRing`; `workBook_exact_drex_clearing` is the non-vacuous `(1,8)` tooth and zero volume is
+     refused.  Remaining is cryptographic/API source routing: bind the deployed encrypted fhEgg output
+     proof and participant identities to this constructor, now named exactly as
+     `FhEggLedgerSourceBindingResidual`.  Separately, the Rust N-leg shielded AIR
+     exists and `ShieldedClearing.lean`'s stale prose is repaired, but no Lean-authored serialized-trace
+     descriptor proves that AIR yields the endpoint-carrying `shielded_ring_clears` object or routes it
+     into the Market extractor.
   6. **`AggregateBindingScalarFloorResidual` CLOSED at the real-ring reduction boundary (P1).**
      `Market.AggregateBinding.BDLOP` now uses the repository's genuine
      `Z_q[X]/(X^256+1)`, `R_q^5→R_q^6` module shape, Hermine coordinate/product short norm,
@@ -8426,3 +8504,22 @@ NAMED FOLLOW-UP (the one thing left):
   `v3RegistryHeap`'s transfer/burn entries (the apex then quantifies over what the light client actually
   verifies), re-checking the 34 sibling rungs (they consume `Rfix e` unchanged) and the `Rfix_transfer` /
   completeness-dual consumers. A registry flag-day, NOT a proof gap.
+
+## 2026-07-15 — Solana bridge: three codex-flagged soundness suspects (TRIAGE-REQUIRED)
+A hostile external review (codex gpt-5.6-sol, read-only, during Solana-grant drafting; log at the
+07-15 session scratchpad `codex-review.log`) flagged three candidate soundness gaps in the
+trustless Solana lane — each spot-checked plausible at the code level, none yet confirmed-exploitable:
+1. **Finality semantics**: `verify_consensus_anchored` (`bridge/src/solana_trustless.rs:746`) proves
+   an exact-slot ≥2/3 supermajority — closer to optimistic confirmation than ROOTED finality; the wire
+   parser takes only the newest slot/hash from Vote/TowerSync (`solana_wire.rs:337`), lockout/root
+   history unverified. `ConsensusEvidence.slot` doc says "finalized" (`solana_trustless.rs:69`) — over-claims.
+2. **Stake-set completeness after rotation**: `derive_stake_table` (`solana_provenance.rs:457`) proves
+   supplied accounts' MEMBERSHIP, nothing proves COMPLETENESS; `rotate` (`solana_provenance.rs:697`)
+   derives the next trusted table from the supplied subset — omitting stake accounts shrinks the
+   denominator → minority "supermajority" in later epochs. Check whether the stake-history sysvar
+   total is (or could be) cross-checked as a completeness floor.
+3. **Rotation uses the weaker signer check**: rotation tallies with plain `verify_supermajority`
+   (documented at `solana_provenance.rs:702-705`), NOT `tally_authorized`'s authorized-voter binding —
+   a witness tx's signer isn't bound to the vote account's on-chain authorized voter on the rotation path.
+Closure lane: confirm/refute each with adversarial tests; fix or explicitly bound the verified relation
+(anchor-epoch-only, rotation excluded) — the grant's M1 audit scope mirrors exactly this list.

@@ -2,7 +2,7 @@
 # Market.CertQp — the fhEgg convex-QP soundness core: `CertQp` (KKT / complementarity-gap ⇒ ε-optimality).
 
 **The verify-not-find keystone for the SECOND convex product on the same engine.** `fhegg-solver/src/qp.rs`
-(the `CertQp` certificate) and `docs/deos/PRIVATE-CONVEX-ENGINE.md §2.5, §3` name the QP sibling of the
+(the deployed residual checker) and `docs/deos/PRIVATE-CONVEX-ENGINE.md §2.5, §3` name the QP sibling of the
 flow-LP `Cert-F`: the private convex engine is not one program but a FAMILY — *a product is a convex
 program + a prox + its duality certificate*. Here the program is the convex quadratic program
 
@@ -13,8 +13,17 @@ operator). The private data are `q, b, l, u` and the certified `x`. A **KKT cert
 tuple `(x, ν, λ⁻, λ⁺)` with `λ⁻, λ⁺ ≥ 0`, exact stationarity `Px + q + Aᵀν − λ⁻ + λ⁺ = 0`, and small
 **complementarity gap** `γ = λ⁻ᵀ(x−l) + λ⁺ᵀ(u−x) ≤ ε` — CERTIFIES that `x` is ε-optimal, **independent of
 how `(x, ν, λ⁻, λ⁺)` was found.** The T iterations of the OSQP/ADMM solver (`solve_admm`) are an
-*untrusted search*; this certificate is the *checked output*. This is the exact QP analogue of
-`Market/CertF.lean`'s `certifies_epsilon_optimal`, and it matches `qp.rs`'s `CertQp::check`.
+*untrusted search*; this stronger certificate is the intended proof-carrying output. This is the exact
+QP analogue of `Market/CertF.lean`'s `certifies_epsilon_optimal`.
+
+**Important deployed distinction.** This proposition is NOT what Rust `CertQp::check` currently
+checks. Rust uses OSQP form `l ≤ Ax ≤ u` with one dual vector `y` and accepts bounded infinity residuals
+for constraint violation, stationarity, and the normal-cone identity
+`Ax = clamp(Ax+y,l,u)`. It does not construct the explicit lower/upper multipliers or scalar
+complementarity-gap bound used here. The exact-rational source denotation, exact-zero optimality theorem,
+and a positive-tolerance non-equivalence tooth live in `Market/CertQpRustDenotation.lean`. Relating the
+bounded floating-point residual certificate to an inexact optimality theorem remains named; it is not
+smuggled into this exact keystone.
 
 ## What is proved (honest scope)
 
@@ -36,8 +45,9 @@ how `(x, ν, λ⁻, λ⁺)` was found.** The T iterations of the OSQP/ADMM solve
 the CERTIFICATE is sound: a KKT check ⇒ ε-optimality. The solver (`solve_admm`) that produces the tuple is
 UNTRUSTED and OUT OF SCOPE — exactly dregg's verify-not-find. **Named residual (precise):** the keystone
 requires EXACT stationarity `Px + q + Aᵀν − λ⁻ + λ⁺ = 0` (mirroring `Cert-F`'s exact dual feasibility). The
-inexact case `qp.rs` also accepts (a nonzero dual residual `‖Px+q+Aᵀν−λ⁻+λ⁺‖ ≤ ε_stat`, contributing an
-`ε_stat · diam(box)` term to the optimality bound) is the named **QP-KKT edge case** — not proved here.
+deployed OSQP check instead accepts bounded nonzero primal, stationarity, and normal-cone residuals.
+Deriving an optimality bound from that different certificate requires a dual/sign interpretation plus
+rounding and box-diameter terms; this is the named **QP-KKT edge case** — not proved here.
 
 **Emittability.** The stationarity rows are LINEAR in the witness (`P, A` public); the gap `γ` is
 quadratic-then-linear (`λ·(x−l)` products). Demonstrated on a worked 1-D instance: the AIR system is
@@ -109,9 +119,9 @@ def PrimalFeasibleQP (qp : QP n m) (x : n → ℚ) : Prop :=
   * **exact stationarity** `Px + q + Aᵀν − λ⁻ + λ⁺ = 0` (the KKT gradient of the Lagrangian; `ν ᵥ* A = Aᵀν`);
   * **complementarity gap** `γ = λ⁻ᵀ(x−l) + λ⁺ᵀ(u−x) ≤ ε`.
 
-The ENTIRE object the hidden proof checks; sound ⇒ `x` is `ε`-optimal (`qp_certifies_epsilon_optimal`),
-independent of how the tuple was found. Matches `qp.rs`'s `CertQp::check` (recomputes the residuals, does
-not trust the search). -/
+The entire exact proof-carrying object needed by `qp_certifies_epsilon_optimal`, independent of how the
+tuple was found. This is the intended stronger certificate, not a description of the deployed Rust
+residual-only checker; see `Market.CertQpRustDenotation`. -/
 def CertifiedQP (qp : QP n m) (x : n → ℚ) (ν : m → ℚ) (lamL lamU : n → ℚ) : Prop :=
   PrimalFeasibleQP qp x ∧
     (0 ≤ lamL ∧ 0 ≤ lamU ∧

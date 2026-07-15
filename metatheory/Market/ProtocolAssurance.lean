@@ -15,9 +15,10 @@ This module makes the seam explicit without inventing it:
   step extracted for the designated effect are realized by a proof-carrying clearing.  The ordinary
   STARK extraction, witness decode, and commitment binding are no longer hidden in a second accept-level
   hypothesis; the theorems below invoke `lightclient_unfoolable` themselves.
-* The exact clearing-allocation lowering is now proved by `drexClearing_refines_turnSpec`.
-  `DrexClearingEffectRefinementResidual` reduces to the one fact still absent: the apex descriptor must
-  retain/extract the fused ring and its endpoints rather than erase it to one arbitrary action.
+* The exact clearing-allocation lowering is now proved by `drexClearing_refines_turnSpec`.  The former
+  proposal to recover that two-leg allocation from tag zero's single `dispatchArm` is refuted by
+  `not_marketEffectApexLiftResidual_balance`: their receipt-log arities differ.  The direct ring
+  descriptor must retain/extract the fused ring and its endpoints instead.
 * `starkMarketClaimExtraction_of_effect_step`, `lightclient_market_seam`, and
   `accepted_market_settles_on_same_commitment_surface` prove everything above that exact descriptor
   fact: the decoded STARK transition is the fair, kernel-real clearing; it conserves every asset; and
@@ -52,7 +53,7 @@ open Dregg2.Circuit.StateCommit (AccountsWF)
 open Dregg2.Circuit.CircuitSoundness
 open Dregg2.Circuit.DescriptorIR2 (EffectVmDescriptor2 Satisfied2)
 open Dregg2.Circuit.Poseidon2Binding (Poseidon2SpongeCR)
-open Dregg2.Circuit.ActionDispatch (fullActionStep turnSpec)
+open Dregg2.Circuit.ActionDispatch (actionTag fullActionStep turnSpec)
 open Dregg2.Circuit.Spec.BalanceMovement (BalanceMovementSpec recCexecAsset_iff_spec)
 open Dregg2.Exec.TurnExecutorFull
   (FullActionA acceptsEffects acceptsEffects_eq_cellLifecycleLive recCexecAsset)
@@ -373,12 +374,19 @@ def ShieldedRingApexStep (pre post : RecChainedState) : Prop :=
     post.log = ringReceiptLog (settlementsOf f.clearing.nodes) pre.log
 
 /-- **The exact remaining descriptor refinement.**  A satisfying shielded-ring descriptor whose
-published endpoints decode to `pre/post` must yield the whole fused clearing above.  This is stronger
-than recognizing six `[nullifier, root, value_binding]` lanes: it binds creators, allocation rows,
-kernel endpoints, and the receipt chain. -/
+*own trace publication* is the commitment decoded as `pre/post` must yield the whole fused clearing
+above.  The explicit `tracePublishedCommit t = pc` premise is load-bearing: without it a descriptor
+theorem could decode an unrelated public commitment.  This is stronger than recognizing six
+`[nullifier, root, value_binding]` lanes: it binds creators, allocation rows, kernel endpoints, and
+the receipt chain. -/
 def ShieldedRingDescriptorRefines (S : CommitSurface) (hash : List Int → Int)
     (d : EffectVmDescriptor2) : Prop :=
-  descriptorRefines S hash d ShieldedRingApexStep
+  Poseidon2SpongeCR hash →
+  ∀ minit mfin maddrs t pc pre post,
+    Satisfied2 hash d minit mfin maddrs t →
+    tracePublishedCommit t = pc →
+    StateDecode S pc pre post →
+    ShieldedRingApexStep pre post
 
 abbrev ShieldedRingApexRefinementResidual := ShieldedRingDescriptorRefines
 
@@ -420,10 +428,21 @@ theorem shieldedRingApexStep_realizable :
       ⟨fusedSettlePost, ringReceiptLog (settlementsOf fusedCycle) []⟩ :=
   ⟨fusedDrexWitness, rfl, rfl, rfl⟩
 
+/-- A shielded-ring apex is observably a two-action transition: its truthful receipt chain grows by
+exactly two entries.  This is the structural tooth that separates the ring apex from the ordinary
+single-action dispatcher. -/
+theorem ShieldedRingApexStep.log_length {pre post : RecChainedState}
+    (h : ShieldedRingApexStep pre post) : post.log.length = pre.log.length + 2 := by
+  obtain ⟨f, _hcpre, _hcpost, hlog⟩ := h
+  rw [hlog]
+  simp [ringReceiptLog, settlementsOf, chainedRing, f.twoLeg]
+  omega
+
 #guard (settlementsOf fusedDrexWitness.clearing.nodes).length == 2
 #guard fusedDrexWitness.ring.all fun leg => leg.node.offerAmount > 0
 #assert_axioms fusedSettle_settles
 #assert_axioms shieldedRingApexStep_realizable
+#assert_axioms ShieldedRingApexStep.log_length
 
 /-- **`DrexClearingEffectRefinementResidual` (OPEN):** the missing per-effect/whole-turn descriptor
 theorem.  Besides matching kernel endpoints, the extracted step must denote the exact list of ordinary
@@ -446,8 +465,10 @@ receipt append.  `recKExecAsset_refines_balanceMovement` states the exact step; 
 ring success derive destination liveness, and `settleRing_refines_turnSpec` performs the fold with the
 exact reverse-prepended receipt log.
 
-The sole remaining bridge is the APEX-LIFT: the verifying descriptor must extract the whole
-`CycleValid`+`LegFused` ring and its kernel endpoints, not one `FullActionA`.  The current Rust-authored
+The viable remaining bridge is the DIRECT APEX-LIFT: the verifying ring descriptor must extract the
+whole `CycleValid`+`LegFused` ring and its kernel endpoints.  It cannot pass through one `FullActionA`:
+`not_marketEffectApexLiftResidual_balance` proves the tag-zero route inconsistent with the two-receipt
+ring transition.  The current Rust-authored
 `shielded-ring-clear-2` leaf cannot discharge that proposition: its public claim is exactly the six
 note lanes `[nf₀,root₀,vb₀,nf₁,root₁,vb₁]`; neither creator, eight-lane kernel pre/post commitments,
 turn count, authorization/lifecycle state, nor receipt-chain output is present.  It proves the hidden-
@@ -462,18 +483,21 @@ def MarketEffectAllocationIdentity (marketEffect : EffectIdx) : Prop :=
 
 abbrev DrexClearingEffectRefinementResidual := MarketEffectAllocationIdentity
 
-/-- **The dispatch-level apex lift, and now the only residual inside allocation identity.**  The
-designated registry arm must extract the fused two-leg clearing rather than erase it to an arbitrary
-single `FullActionA`.  All settlement-list semantics below this fact are proved. -/
+/-- **The historical dispatch-level apex lift.**  This proposition records the once-proposed route
+through the ordinary single-action registry arm.  The negative theorem below shows that route is
+actually impossible for the deployed balance tag `0`: a balance arm appends one receipt, whereas a
+fused clearing appends two.  The viable route is therefore the direct endpoint-carrying ring
+descriptor `ShieldedRingDescriptorRefines`, not a coercion of the ring to one `FullActionA`. -/
 def MarketEffectExtractsShieldedRing (marketEffect : EffectIdx) : Prop :=
   ∀ (pre post : RecChainedState), dispatchArm marketEffect pre post →
     ShieldedRingApexStep pre post
 
 abbrev MarketEffectApexLiftResidual := MarketEffectExtractsShieldedRing
 
-/-- **`DrexClearingEffectRefinementResidual` reduces exactly to the apex lift.**  Once dispatch retains
-the fused clearing and its endpoint/log binding, `drexClearing_refines_turnSpec` supplies the exact
-ordinary action list unconditionally. -/
+/-- If a registry arm did retain the fused clearing and its endpoint/log binding,
+`drexClearing_refines_turnSpec` would supply the exact ordinary action list.  The implication is useful
+as a shape theorem, but `not_marketEffectApexLiftResidual_balance` below proves that its tag-zero
+premise cannot hold; the direct ring-descriptor route is the deployable one. -/
 theorem marketEffectAllocationIdentity_of_apex_lift (marketEffect : EffectIdx)
     (h : MarketEffectApexLiftResidual marketEffect) :
     MarketEffectAllocationIdentity marketEffect := by
@@ -482,6 +506,40 @@ theorem marketEffectAllocationIdentity_of_apex_lift (marketEffect : EffectIdx)
   refine ⟨f.clearing, hcpre, hcpost, ?_⟩
   have hlower := drexClearing_refines_turnSpec f.clearing pre.log
   simpa [hcpre, hcpost, ← hlog] using hlower
+
+/-- Tag zero names exactly the ordinary per-asset balance constructor. -/
+theorem actionTag_eq_zero_iff (fa : FullActionA) :
+    actionTag fa = 0 ↔ ∃ t a, fa = .balanceA t a := by
+  cases fa <;> simp [actionTag]
+
+/-- Every successful tag-zero dispatcher arm is one receipt long. -/
+theorem dispatchArm_balance_log_length {pre post : RecChainedState}
+    (h : dispatchArm 0 pre post) : post.log.length = pre.log.length + 1 := by
+  obtain ⟨fa, htag, hstep⟩ := h
+  obtain ⟨t, a, rfl⟩ := (actionTag_eq_zero_iff fa).mp htag
+  change BalanceMovementSpec pre t a post at hstep
+  rw [hstep.2.2.1]
+  simp
+
+/-- **The dispatch route is refuted, not merely unfinished.**  The funded fused witness supplies a
+real first balance step, whose log grows by one.  If tag zero extracted a whole fused ring, the same
+post-log would have to grow by two.  Thus `MarketEffectApexLiftResidual 0` is uninhabited; an honest
+APEX-LIFT must use the direct ring descriptor and its whole-turn endpoints. -/
+theorem not_marketEffectApexLiftResidual_balance : ¬ MarketEffectApexLiftResidual 0 := by
+  intro hlift
+  have hlower := drexClearing_refines_turnSpec fusedDrexWitness.clearing ([] : List Turn)
+  have hlen : (settlementsOf fusedDrexWitness.clearing.nodes).length = 2 := by
+    simp [settlementsOf, chainedRing, fusedDrexWitness.twoLeg]
+  cases hr : settlementsOf fusedDrexWitness.clearing.nodes with
+  | nil => simp [hr] at hlen
+  | cons leg rest =>
+      simp only [clearingActions, ringActions, hr, List.map_cons, turnSpec] at hlower
+      obtain ⟨mid, hstep, _htail⟩ := hlower
+      have hdispatch : dispatchArm 0 ⟨fusedDrexWitness.clearing.pre, []⟩ mid :=
+        ⟨.balanceA leg.toTurn leg.asset, rfl, hstep⟩
+      have hone := dispatchArm_balance_log_length hdispatch
+      have htwo := ShieldedRingApexStep.log_length (hlift _ _ hdispatch)
+      omega
 
 /-- Exact allocation refinement implies the endpoint fragment used by the current commitment-surface
 composition.  The converse is intentionally absent. -/
@@ -497,6 +555,9 @@ theorem marketEffectStepExtractsClearing_of_allocation_identity
   (settlementsOf demoFill.nodes).reverse.map RingLeg.toTurn
 #assert_axioms drexClearing_refines_turnSpec
 #assert_axioms marketEffectAllocationIdentity_of_apex_lift
+#assert_axioms actionTag_eq_zero_iff
+#assert_axioms dispatchArm_balance_log_length
+#assert_axioms not_marketEffectApexLiftResidual_balance
 #assert_axioms marketEffectStepExtractsClearing_of_allocation_identity
 
 /-- The historical outward statement: for the registry's designated Market effect, an accepted STARK
@@ -567,7 +628,7 @@ theorem shieldedRingApexStep_of_accept
   have hsatMarket : Satisfied2 hash (R marketEffect) minit mfin maddrs t := by
     simpa only [heffect] using hsat
   have hapex : ShieldedRingApexStep pre post :=
-    hmarket hCR minit mfin maddrs t pi.toPublished pre post hsatMarket hdecode
+    hmarket hCR minit mfin maddrs t pi.toPublished pre post hsatMarket hpub hdecode
   exact ⟨pre, post, hdecode, hapex⟩
 
 /-- The historical accept-level Market extraction follows from the exact shielded descriptor
