@@ -297,21 +297,117 @@ mod tests {
 
     #[test]
     fn disjoint_cells_no_conflict() {
-        // With 256 bits and k=8, two random cells have a very low probability
-        // of collision. Test with cells that are very different.
+        // `may_conflict_with` is a pure function of the two cell IDs (keyed
+        // BLAKE3 → k=8 fixed bit positions), so for a FIXED pair it either
+        // collides or it does not; there is no probability left to hedge
+        // against and the answer can simply be asserted.
+        //
+        // The previous version computed the answer, dropped it with `let _`,
+        // and asserted NOTHING — it would have passed if `may_conflict_with`
+        // returned `true` unconditionally (i.e. if the scheduler had declared
+        // every pair of turns conflicting and serialized the whole chain). It
+        // declined to assert on the grounds that the false-positive rate was
+        // "(1 - e^(-8/256))^8 ≈ 0.00000009". That number is WRONG for this
+        // function — see `false_positive_rate_matches_the_any_bit_overlap_design`,
+        // which measures the real rate at ~22.7%. The old note quoted the
+        // standard Bloom FPR (the chance ALL k bits of a queried element are
+        // set); `may_conflict_with` reports a conflict when ANY single bit
+        // overlaps, which is ~11 orders of magnitude more likely.
         let cell_a = make_cell_id(1);
         let cell_b = make_cell_id(200);
         let mut cs1 = ConflictSet::new();
         let mut cs2 = ConflictSet::new();
         cs1.insert(&cell_a);
         cs2.insert(&cell_b);
-        // This MIGHT have a false positive, but it's very unlikely with k=8, m=256, n=1.
-        // FPR for n=1: (1 - e^(-8/256))^8 ≈ 0.00000009
-        // We test deterministically by checking the specific cells.
-        let conflicts = cs1.may_conflict_with(&cs2);
-        // Don't assert false — Bloom filters can have false positives.
-        // Instead verify that the commitment is deterministic.
-        let _ = conflicts;
+        assert!(
+            !cs1.may_conflict_with(&cs2),
+            "these two specific disjoint cells must not be reported as conflicting"
+        );
+        // Symmetric: conflict is a relation on the pair, not on the order.
+        assert!(
+            !cs2.may_conflict_with(&cs1),
+            "may_conflict_with must be symmetric"
+        );
+        // Deterministic: the property the old comment promised and never checked.
+        assert_eq!(
+            cs1.may_conflict_with(&cs2),
+            cs1.may_conflict_with(&cs2),
+            "may_conflict_with must be deterministic"
+        );
+    }
+
+    /// ⚑ THE LOAD-BEARING DIRECTION: no FALSE NEGATIVES.
+    ///
+    /// A false positive costs throughput (two independent turns get serialized);
+    /// a false negative costs CORRECTNESS (two turns touching the same cell are
+    /// declared independent and may be reordered/parallelized). Only this
+    /// direction is a soundness property, so it is asserted with zero tolerance
+    /// over a swept set rather than on the single pair `same_cell_conflicts`
+    /// checks.
+    #[test]
+    fn shared_cells_always_conflict_across_a_swept_set() {
+        let ids: Vec<CellId> = (0u8..64).map(make_cell_id).collect();
+        for shared in &ids {
+            for other in &ids {
+                let mut cs1 = ConflictSet::new();
+                let mut cs2 = ConflictSet::new();
+                // Both sets contain `shared`; cs2 additionally contains `other`.
+                cs1.insert(shared);
+                cs2.insert(shared);
+                cs2.insert(other);
+                assert!(
+                    cs1.may_conflict_with(&cs2),
+                    "FALSE NEGATIVE: sets sharing cell {shared:?} were reported independent \
+                     (cs2 also held {other:?}) — the scheduler would run conflicting turns \
+                     concurrently"
+                );
+            }
+        }
+    }
+
+    /// Pins the PRECISION of the filter to its actual design.
+    ///
+    /// `may_conflict_with` ORs together k=8 bits per cell over m=256 and reports
+    /// a conflict on ANY overlap, so two unrelated single-cell sets collide with
+    /// probability 1 - C(248,8)/C(256,8) ≈ 0.227 — NOT the ≈1e-7 the old
+    /// `disjoint_cells_no_conflict` comment claimed. This measures the real rate
+    /// over every unordered pair of a fixed 64-cell set and pins it to a band
+    /// around the analytic value.
+    ///
+    /// The band is a genuine gate in both directions: a filter that saturates
+    /// (every pair conflicts → the scheduler serializes everything) blows the
+    /// upper bound, and one that never sets bits (every pair independent → false
+    /// negatives) blows the lower bound. Widening k or shrinking m moves the rate
+    /// and reds here, which is the point — the number stops being folklore.
+    #[test]
+    fn false_positive_rate_matches_the_any_bit_overlap_design() {
+        let sets: Vec<ConflictSet> = (0u8..64)
+            .map(|s| {
+                let mut cs = ConflictSet::new();
+                cs.insert(&make_cell_id(s));
+                cs
+            })
+            .collect();
+        let mut pairs = 0usize;
+        let mut collisions = 0usize;
+        for i in 0..sets.len() {
+            for j in (i + 1)..sets.len() {
+                pairs += 1;
+                if sets[i].may_conflict_with(&sets[j]) {
+                    collisions += 1;
+                }
+            }
+        }
+        let rate = collisions as f64 / pairs as f64;
+        // Analytic: 1 - C(248,8)/C(256,8) ≈ 0.2271. Band allows sampling spread
+        // over 2016 pairs while still catching a saturated or dead filter.
+        assert!(
+            (0.12..0.34).contains(&rate),
+            "single-cell false-conflict rate {rate:.4} ({collisions}/{pairs}) is outside the \
+             band the k=8/m=256 any-bit-overlap design predicts (≈0.227). Above it: the filter \
+             is saturating and the scheduler serializes independent turns. Below it: too few \
+             bits are being set, which threatens the false-negative direction."
+        );
     }
 
     #[test]
