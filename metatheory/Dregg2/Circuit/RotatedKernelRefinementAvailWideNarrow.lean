@@ -19,7 +19,11 @@ lemmas (`transferAvail_derives_availability_row` / `burnAvail_derives_availabili
 `transferFeeAvail_derives_availability_row` / `transferFeeAvail_credit_exact`) are consumed VERBATIM
 — they are descriptor-independent (rows/ledger ties only), so every conclusion here is byte-identical
 to its deployed wide twin, only the input descriptor is the narrow-base crown member and the witness
-side is `RotTableSideNarrow`. In particular every TOOTH is preserved:
+side is `RotTableSideNarrow`. The availability / over-debit / over-burn / fee-leg / audit-forgery teeth
+are preserved (below). ⚠ NOT-YET-TWINNED residual: the EFF facet-selector tooth
+`wideCapOpenEffAvail_rejects_wrong_facet` (clear `EFF_TRANSFER` mask ⟹ ¬Satisfied2) has NO narrow twin
+here — it depends on the narrow face's column layout, so it is an honest TODO (`effNarrow_rejects_wrong_facet`),
+NOT preserved by the derives-availability keystone. The teeth that ARE reproduced byte-identical:
 
     transfer/TB/EFF:  `tr.amt ≤ pre.bal src a ∧ post.bal src a = pre.bal src a − tr.amt`;
                       any over-debit / the audit forgery (`pre.bal=0, amt=10⁹`) is UNSAT.
