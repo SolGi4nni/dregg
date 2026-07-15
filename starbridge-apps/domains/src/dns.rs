@@ -20,11 +20,46 @@ use serde::{Deserialize, Serialize};
 /// The DNS label a TXT challenge is published under: `_dregg-verify.<domain>`.
 pub const TXT_CHALLENGE_PREFIX: &str = "_dregg-verify.";
 
-/// The platform apex custom domains bind *onto* — a binding's site `<name>` serves at
+/// The environment variable that overrides the hosting apex when set — so an operator
+/// picks the deployment's apex (`dregg.fg-goose.online`, `dregg.net`, an arbitrary
+/// domain) without a rebuild. Empty/unset falls back to [`DEFAULT_HOSTING_APEX`].
+pub const HOSTING_APEX_ENV: &str = "DREGG_HOSTING_APEX";
+
+/// The fallback platform apex when nothing is configured. A generic placeholder — the
+/// real deployment apex is supplied by [`HOSTING_APEX_ENV`] or
+/// [`DomainRegistry::with_apex`](crate::DomainRegistry::with_apex), never hardcoded to
+/// one product's domain.
+pub const DEFAULT_HOSTING_APEX: &str = "acme.dev";
+
+/// Normalize an apex to its comparison form: trimmed, no trailing dot, lowercased.
+/// An empty result is not a usable apex (the caller substitutes the default).
+pub fn normalize_apex(apex: &str) -> String {
+    apex.trim().trim_end_matches('.').to_ascii_lowercase()
+}
+
+/// The apex custom domains bind *onto* — a binding's site `<name>` serves at
 /// `<name>.<apex>`, and a CNAME challenge points the custom domain here. A `<x>.<apex>`
 /// host is the platform wildcard path, not a "custom" domain, so it is refused by
 /// [`is_valid_domain`].
-pub const HOSTING_APEX: &str = "acme.dev";
+///
+/// Resolution order: the [`HOSTING_APEX_ENV`] environment variable (normalized), else
+/// [`DEFAULT_HOSTING_APEX`]. A [`DomainRegistry`](crate::DomainRegistry) reads this at
+/// construction and can be overridden explicitly with
+/// [`with_apex`](crate::DomainRegistry::with_apex), so the apex is configuration, not a
+/// compile-time constant.
+pub fn apex_from_env() -> String {
+    match std::env::var(HOSTING_APEX_ENV) {
+        Ok(v) => {
+            let n = normalize_apex(&v);
+            if n.is_empty() {
+                DEFAULT_HOSTING_APEX.to_string()
+            } else {
+                n
+            }
+        }
+        Err(_) => DEFAULT_HOSTING_APEX.to_string(),
+    }
+}
 
 /// Which DNS record proves control of a custom domain.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
@@ -159,16 +194,19 @@ pub fn challenge_satisfied(challenge: &DnsChallenge, dns: &impl DnsResolver) -> 
     }
 }
 
-/// Whether `domain` is a usable custom domain: a multi-label FQDN whose labels are
-/// each valid DNS labels, and which is NOT the platform apex or a `<x>.<apex>` host
-/// (that is the wildcard hosting path, served without a binding).
-pub fn is_valid_domain(domain: &str) -> bool {
+/// Whether `domain` is a usable custom domain under the given `apex`: a multi-label
+/// FQDN whose labels are each valid DNS labels, and which is NOT the platform `apex`
+/// or a `<x>.<apex>` host (that is the wildcard hosting path, served without a
+/// binding). The `apex` is the deployment's configured apex (see [`apex_from_env`] /
+/// [`DomainRegistry::with_apex`](crate::DomainRegistry::with_apex)).
+pub fn is_valid_domain(domain: &str, apex: &str) -> bool {
     let domain = domain.trim().trim_end_matches('.').to_ascii_lowercase();
+    let apex = normalize_apex(apex);
     if domain.is_empty() || domain.len() > 253 {
         return false;
     }
     // A custom domain owns its own apex; the platform wildcard is not "custom".
-    if domain == HOSTING_APEX || domain.ends_with(&format!(".{HOSTING_APEX}")) {
+    if !apex.is_empty() && (domain == apex || domain.ends_with(&format!(".{apex}"))) {
         return false;
     }
     let labels: Vec<&str> = domain.split('.').collect();
@@ -222,16 +260,30 @@ mod tests {
 
     #[test]
     fn domain_validity() {
-        assert!(is_valid_domain("blog.example.com"));
-        assert!(is_valid_domain("shop.example.co.uk"));
-        assert!(!is_valid_domain(""));
-        assert!(!is_valid_domain("localhost")); // single label
-        assert!(!is_valid_domain("has space.com"));
-        assert!(!is_valid_domain("-bad.com"));
-        assert!(!is_valid_domain("bad-.com"));
+        let apex = DEFAULT_HOSTING_APEX;
+        assert!(is_valid_domain("blog.example.com", apex));
+        assert!(is_valid_domain("shop.example.co.uk", apex));
+        assert!(!is_valid_domain("", apex));
+        assert!(!is_valid_domain("localhost", apex)); // single label
+        assert!(!is_valid_domain("has space.com", apex));
+        assert!(!is_valid_domain("-bad.com", apex));
+        assert!(!is_valid_domain("bad-.com", apex));
         // The platform wildcard path is not a "custom" domain.
-        assert!(!is_valid_domain(HOSTING_APEX));
-        assert!(!is_valid_domain(&format!("blog.{HOSTING_APEX}")));
+        assert!(!is_valid_domain(apex, apex));
+        assert!(!is_valid_domain(&format!("blog.{apex}"), apex));
+    }
+
+    #[test]
+    fn apex_is_configurable_not_hardcoded() {
+        // A different deployment apex reclassifies which hosts are "custom".
+        let apex = "dregg.fg-goose.online";
+        // Under this apex, a `.dregg.fg-goose.online` host is the platform wildcard.
+        assert!(!is_valid_domain(apex, apex));
+        assert!(!is_valid_domain("launch.dregg.fg-goose.online", apex));
+        // A truly custom domain is still valid, and the old default apex is now just
+        // an ordinary custom domain (nothing is hardcoded to it).
+        assert!(is_valid_domain("blog.example.com", apex));
+        assert!(is_valid_domain(&format!("x.{DEFAULT_HOSTING_APEX}"), apex));
     }
 
     #[test]

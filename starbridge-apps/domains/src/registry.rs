@@ -22,8 +22,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::cap::{DomainCap, verify_bind_authority};
 use crate::dns::{
-    ChallengeMethod, DnsChallenge, DnsResolver, HOSTING_APEX, TXT_CHALLENGE_PREFIX,
-    VerificationState, challenge_satisfied, challenge_token, is_valid_domain, is_valid_label,
+    ChallengeMethod, DnsChallenge, DnsResolver, TXT_CHALLENGE_PREFIX, VerificationState,
+    apex_from_env, challenge_satisfied, challenge_token, is_valid_domain, is_valid_label,
+    normalize_apex,
 };
 
 /// A **domain binding** — the routing-plane record backing a custom-domain -> site
@@ -88,8 +89,11 @@ impl DomainBinding {
         }
     }
 
-    /// The DNS record an owner must publish to satisfy this binding's challenge.
-    pub fn dns_challenge(&self) -> DnsChallenge {
+    /// The DNS record an owner must publish to satisfy this binding's challenge, under
+    /// the deployment's configured `apex` (the CNAME target is `<site>.<apex>`). The
+    /// TXT method does not depend on the apex; the CNAME method points at the apex the
+    /// owning [`DomainRegistry`] was constructed with.
+    pub fn dns_challenge(&self, apex: &str) -> DnsChallenge {
         match self.method {
             ChallengeMethod::Txt => DnsChallenge {
                 record_type: ChallengeMethod::Txt,
@@ -99,7 +103,7 @@ impl DomainBinding {
             ChallengeMethod::Cname => DnsChallenge {
                 record_type: ChallengeMethod::Cname,
                 record_name: self.domain.clone(),
-                expected_value: format!("{}.{HOSTING_APEX}", self.site),
+                expected_value: format!("{}.{}", self.site, normalize_apex(apex)),
             },
         }
     }
@@ -184,7 +188,6 @@ impl std::fmt::Display for DomainError {
 impl std::error::Error for DomainError {}
 
 /// The registry of domain bindings — the custom-domain control plane.
-#[derive(Default)]
 pub struct DomainRegistry {
     bindings: Mutex<BTreeMap<String, DomainBinding>>,
     next_seq: AtomicU64,
@@ -193,13 +196,32 @@ pub struct DomainRegistry {
     /// [`DomainRegistry::new`] default) = no authority → every bind is refused
     /// (fail-closed); the verify / route / `ask` read paths do not need it.
     authority: Option<PublicKey>,
+    /// The deployment's hosting apex — the CNAME challenge target base (`<site>.<apex>`)
+    /// and the wildcard host `is_valid_domain` refuses as "not custom". Configuration,
+    /// not a compile-time constant: defaults to [`apex_from_env`] (the
+    /// [`HOSTING_APEX_ENV`](crate::dns::HOSTING_APEX_ENV) variable, else
+    /// [`DEFAULT_HOSTING_APEX`](crate::dns::DEFAULT_HOSTING_APEX)) and is overridable
+    /// with [`with_apex`](Self::with_apex).
+    apex: String,
+}
+
+impl Default for DomainRegistry {
+    fn default() -> DomainRegistry {
+        DomainRegistry {
+            bindings: Mutex::new(BTreeMap::new()),
+            next_seq: AtomicU64::new(0),
+            authority: None,
+            apex: apex_from_env(),
+        }
+    }
 }
 
 impl DomainRegistry {
     /// A fresh, empty registry with **no** binding authority configured — verify /
     /// route / cert-`ask` work, but [`bind`](Self::bind) is refused (fail-closed)
     /// until a root is set. A gateway adopts this read side; the binding control
-    /// surface uses [`with_authority`](Self::with_authority).
+    /// surface uses [`with_authority`](Self::with_authority). The hosting apex is read
+    /// from the environment (see [`apex`](Self::apex)).
     pub fn new() -> DomainRegistry {
         DomainRegistry::default()
     }
@@ -213,6 +235,24 @@ impl DomainRegistry {
             authority: Some(root),
             ..Default::default()
         }
+    }
+
+    /// Set the deployment's hosting apex explicitly (e.g. `dregg.fg-goose.online`,
+    /// `dregg.net`), overriding the environment-derived default. Builder form: chains
+    /// after [`new`](Self::new) / [`with_authority`](Self::with_authority). An empty /
+    /// whitespace apex is ignored (the prior value is kept).
+    pub fn with_apex(mut self, apex: impl AsRef<str>) -> DomainRegistry {
+        let normalized = normalize_apex(apex.as_ref());
+        if !normalized.is_empty() {
+            self.apex = normalized;
+        }
+        self
+    }
+
+    /// The deployment's configured hosting apex (the CNAME challenge target base and
+    /// the wildcard host refused as "not custom").
+    pub fn apex(&self) -> &str {
+        &self.apex
     }
 
     /// Bind a custom domain to a site as a cap-gated turn (Pending).
@@ -234,7 +274,7 @@ impl DomainRegistry {
         method: ChallengeMethod,
     ) -> Result<BindReceipt, DomainError> {
         let domain = domain.trim().to_ascii_lowercase();
-        if !is_valid_domain(&domain) {
+        if !is_valid_domain(&domain, &self.apex) {
             return Err(DomainError::InvalidDomain(domain));
         }
         if cap.domain != domain {
@@ -262,7 +302,7 @@ impl DomainRegistry {
             domain: domain.clone(),
             site: site.to_string(),
             owner: owner.clone(),
-            challenge: binding.dns_challenge(),
+            challenge: binding.dns_challenge(&self.apex),
         };
         // Owner-gated rebind, atomic with the insert: a different subject cannot
         // overwrite (takeover) or reset (takedown) a victim's existing binding.
@@ -299,7 +339,7 @@ impl DomainRegistry {
                 .cloned()
                 .ok_or_else(|| DomainError::NotBound(domain.clone()))?
         };
-        if !challenge_satisfied(&snapshot.dns_challenge(), dns) {
+        if !challenge_satisfied(&snapshot.dns_challenge(&self.apex), dns) {
             return Err(DomainError::ChallengeUnmet { domain });
         }
         // Re-acquire to commit. The binding may have been rebound (a fresh nonce)
@@ -556,5 +596,44 @@ mod tests {
             reg.verify("nope.example.com", &MockDns::new()),
             Err(DomainError::NotBound("nope.example.com".into())),
         );
+    }
+
+    #[test]
+    fn configured_apex_threads_into_the_cname_challenge_and_verify() {
+        // A registry configured for a concrete deployment apex (no hardcoded value).
+        let reg = registry().with_apex("dregg.fg-goose.online");
+        assert_eq!(reg.apex(), "dregg.fg-goose.online");
+
+        // The CNAME challenge target is `<site>.<configured-apex>`, not any built-in.
+        let r = reg
+            .bind(
+                &cap("www.example.com"),
+                "www.example.com",
+                "blog",
+                ChallengeMethod::Cname,
+            )
+            .expect("bind");
+        assert_eq!(r.challenge.expected_value, "blog.dregg.fg-goose.online");
+
+        // A CNAME pointing at that configured target verifies (trailing dot tolerated).
+        let dns = MockDns::new().with_cname("www.example.com", "blog.dregg.fg-goose.online.");
+        let b = reg.verify("www.example.com", &dns).expect("verify");
+        assert!(b.is_verified());
+        assert_eq!(
+            reg.site_for_host("www.example.com").as_deref(),
+            Some("blog")
+        );
+
+        // Under this apex a `<x>.dregg.fg-goose.online` host is the platform wildcard,
+        // not a bindable custom domain.
+        assert!(matches!(
+            reg.bind(
+                &cap("launch.dregg.fg-goose.online"),
+                "launch.dregg.fg-goose.online",
+                "launch",
+                ChallengeMethod::Cname
+            ),
+            Err(DomainError::InvalidDomain(_)),
+        ));
     }
 }
