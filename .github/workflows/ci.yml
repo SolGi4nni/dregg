@@ -15,6 +15,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -31,6 +33,8 @@ jobs:
         os: [ubuntu-latest, macos-latest]
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - if: runner.os == 'Linux'
         run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
       # Reclaim the ~25 GB of preinstalled toolchains we never use. The hosted
@@ -102,6 +106,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -121,6 +127,8 @@ jobs:
     continue-on-error: true
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
       - uses: dtolnay/rust-toolchain@master
         with:
@@ -136,6 +144,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -151,6 +161,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: stable
@@ -185,6 +197,8 @@ jobs:
     # Skips gracefully when libdregg_lean.a is absent (see scripts/check-lean-marshal.sh).
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -196,6 +210,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - run: bash scripts/no-unchecked-auth.sh
 
   no-degraded-felt:
@@ -205,6 +221,8 @@ jobs:
     # reach a state-commitment position. See docs/FAITHFUL-COMMITMENT-LAW.md.
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
       - name: Install ast-grep (sg)
         run: npm install -g @ast-grep/cli@0.44.0
       - name: Faithful-commitment gate
@@ -221,6 +239,8 @@ jobs:
       MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       # Install elan + the toolchain named in metatheory/lean-toolchain.
       - name: Install elan (Lean toolchain manager)
@@ -264,6 +284,8 @@ jobs:
       MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true
 
       - name: Install elan (Lean toolchain manager)
         run: |

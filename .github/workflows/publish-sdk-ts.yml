@@ -35,6 +35,8 @@ jobs:
       NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true   # include_str!'d staged registries live in LFS (.gitattributes)
 
       - uses: actions/setup-node@v4
         with:

@@ -21,6 +21,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true   # include_str!'d staged registries live in LFS (.gitattributes)
 
       - name: Install Rust nightly
         uses: dtolnay/rust-toolchain@nightly

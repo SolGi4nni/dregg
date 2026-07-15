@@ -69,7 +69,10 @@ DREGG-COMPUTER.md
 DREGG*-MIGRATION.md
 
 # regenerable artifacts (stitch)
-circuit/descriptors/*staged*.tsv
+# NOTE: circuit/descriptors/*staged*.tsv are Lean-emitted but include_str!'d at
+# compile time, so a fresh clone cannot build dregg-circuit without them. They are
+# tracked via Git LFS (see .gitattributes) rather than ignored. Regenerate with
+# scripts/emit-descriptors.sh on the Lean host; they change only on VK-epoch flips.
 demo/run/*.png
 orb/conformance/h2c-host/h2c-host
 *.png.skip

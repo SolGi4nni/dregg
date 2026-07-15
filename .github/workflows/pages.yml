@@ -62,6 +62,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -95,6 +97,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
@@ -125,6 +129,8 @@ jobs:
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
+        with:
+          lfs: true   # the include_str!'d staged registries live in LFS (see .gitattributes)
       - uses: dtolnay/rust-toolchain@master
         with:
           toolchain: nightly
