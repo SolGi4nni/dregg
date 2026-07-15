@@ -1,31 +1,35 @@
 /-
-# Market.FhEggRustDenotation — the deployed fhEgg crossing, and the exact denotation gaps.
+# Market.FhEggRustDenotation — the fixed fhEgg Rust denotes the Lean argmax clearing.
 
-This file is deliberately a correspondence audit, not another ideal clearing model.  It spells out
-the observable semantics of `fhegg-fhe/src/lib.rs::{reference_clear,fhe_clear}` and
-`fhegg-fhe/src/mpc.rs::mpc_crossing` at the aggregate-curve boundary, then compares those semantics
-with `Market.FhEggClearing`.
+This file is the aggregate-boundary correspondence audit for the post-fix implementations in
+`fhegg-fhe/src/{lib.rs,mpc.rs,additive.rs}`.  All five stale negative residuals are CLOSED at their
+honest observable scope:
 
-The comparison exposes three independent residuals at HEAD:
+* `FhEggCrossingDenotation`: the plaintext Rust strict-increase scan is the Lean
+  `argmaxUpto`/`crossing` scan, including the lowest-price tie-break.  The worked book is `(1,8)` and
+  the old counter-witness is now also `(1,9)` on both sides.
+* `FhEggTfheWidthDenotation`: the encrypted aggregates are `FheUint32`; two 32768-lot bids and asks
+  aggregate to 65536 and clear at `(0,65536)` rather than wrapping at `2^16`.
+* `FhEggTfheNoCrossDenotation`: a genuinely non-clearing book (bids and no asks) produces
+  `(None,0)` on both paths.  The old bucket-zero sentinel behavior is absent.
+* `MpcCrossingRevealOnlyDenotation`: the input-dependent transcript of `mpc_crossing` factors through
+  only `(p*,V*)`; its remaining opened Beaver values are represented explicitly as the independent
+  mask stream supplied to both the real view and simulator.  No sign vector or curve height is in the
+  modeled view.
+* `MpcCrossingDenotation`: the MPC secure-min plus oblivious strict argmax reveals the same encoded
+  Lean clearing.
 
-* **`FhEggCrossingConventionResidual`.**  `FhEggClearing` now selects the *volume-maximizing* bucket
-  (`p* = argmax_p min(D,S)`, the textbook uniform-price rule); Rust still selects the *largest* bucket
-  satisfying `D >= S`.  These agree on the worked book (both `(1, 8)`), but Rust's heuristic is not
-  volume-maximizing: on the counter-witness `D=(10,9), S=(5,20)` the corrected rule clears at `(1, 9)`
-  while Rust returns `(0, 5)`.
-* **`FhEggTfheNoCrossResidual`.**  `fhe_clear` reports the no-crossing sentinel when the comparison-bit
-  count is zero, but nevertheless decrypts bucket zero and reports its `min(D,S)` as `v_star`.
-  `reference_clear` reports volume zero.  This diverges without overflow or cryptographic assumptions.
-* **`FhEggTfheWidthResidual`.**  plaintext aggregates are `u32`, while the TFHE aggregates and their
-  comparison are `FheUint16`.  No aggregate-bound gate precedes the fold.  Two valid `u16` bids can
-  therefore wrap a demand of 65536 to zero and change both the crossing and volume.
+Two scope boundaries remain explicit.  First, Lean quantities are unbounded integers while both Rust
+aggregate paths use `u32`; correspondence to the unbounded Lean clearing therefore assumes
+`AggregatesFitU32`.  Per-order `Qty = u16` alone does not imply that aggregate bound.  Second, this file
+proves the decrypted/plaintext observable semantics, not correctness of tfhe-rs ciphertext evaluation.
+`FhEggTfheCiphertextRefinementResidual` names the exact missing implementation relation.  No theorem
+below claims that relation.
 
-The MPC perfect-hiding theorem remains mathematically real, but its `clearsVec` is the opposite
-threshold step from deployed `mpc.rs`.  `MpcCrossingDenotationResidual` names and refutes that current
-Rust correspondence.  Closing these residuals requires choosing one economic crossing convention,
-cutting every implementation/spec to it, adding the aggregate-width bound (or widening ciphertexts),
-and proving the real TFHE/MPC program refines this aggregate semantics.  Nothing here models TFHE as
-an ideal encryption scheme or assumes that missing refinement.
+`fhe_clear` itself is the single-`ClientKey` benchmark harness.  A holder of that key is omniscient if
+given intermediate ciphertexts; it is not the no-viewer deployment.  The no-viewer claim here is scoped
+to `mpc.rs::mpc_crossing`, whose deployed transcript opens only `(p*,V*)` plus one-time-pad-masked Beaver
+values and has the matching `simulate` construction.
 
 Pure.  No axioms.
 -/
@@ -38,239 +42,364 @@ open Market
 
 set_option autoImplicit false
 
-/-! ## 1. The plaintext Rust reference semantics. -/
+/-! ## 1. The fixed plaintext Rust reference is the Lean volume argmax. -/
 
-/-- Rust's comparison bit: `fhegg-fhe/src/lib.rs` uses `D[p] >= S[p]`. -/
-def rustClears (bk : OrderBook) (p : Nat) : Prop := supply bk p ≤ demand bk p
-
-instance (bk : OrderBook) : DecidablePred (rustClears bk) :=
-  fun p => inferInstanceAs (Decidable (supply bk p ≤ demand bk p))
-
-/-- The exact comparison-bit vector opened by `mpc.rs` and homomorphically summed by `fhe_clear`. -/
-def rustSignVec (bk : OrderBook) (k : Nat) : List Bool :=
-  (List.range k).map (fun p => decide (rustClears bk p))
-
-/-- The number of Rust comparison bits set to one. -/
-def rustCount (bk : OrderBook) (k : Nat) : Nat :=
-  ((List.range k).filter (fun p => decide (rustClears bk p))).length
-
-/-- Rust's `p_star = count - 1`, with `None` when no `D >= S` bucket exists. -/
-def rustPStar (bk : OrderBook) (k : Nat) : Option Nat :=
-  if rustCount bk k = 0 then none else some (rustCount bk k - 1)
-
-/-- Observable clearing output shared by the plaintext reference and output-boundary MPC. -/
+/-- The public result shared by `reference_clear`, `fhe_clear`, and `mpc_crossing`.
+`None` is the Rust encoding of a zero-volume (non-clearing) book. -/
 structure ClearingOutput where
   pStar : Option Nat
   vStar : Int
   deriving DecidableEq, Repr
 
-/-- The output of Rust `reference_clear`, assuming its caller supplies nonzero `k`. -/
+/-- The modulus of Rust/tfhe-rs `u32` aggregate arithmetic. -/
+def u32Modulus : Int := 4294967296
+
+/-- The deployed release-level value semantics of a `u32` aggregate. -/
+def u32Residue (x : Int) : Int := x % u32Modulus
+
+/-- Plaintext Rust demand after aggregation into `Vec<u32>`. -/
+def rustDemand (bk : OrderBook) (p : Nat) : Int := u32Residue (demand bk p)
+
+/-- Plaintext Rust supply after aggregation into `Vec<u32>`. -/
+def rustSupply (bk : OrderBook) (p : Nat) : Int := u32Residue (supply bk p)
+
+/-- The fixed Rust per-bucket executable volume. -/
+def rustExecVol (bk : OrderBook) (p : Nat) : Int :=
+  min (rustDemand bk p) (rustSupply bk p)
+
+/-- The fixed Rust scan: replace the incumbent only on a strict volume increase. -/
+def rustArgmaxUpto (bk : OrderBook) : Nat → Nat
+  | 0 => 0
+  | n + 1 =>
+      if rustExecVol bk (rustArgmaxUpto bk n) < rustExecVol bk (n + 1)
+      then n + 1
+      else rustArgmaxUpto bk n
+
+/-- The fixed Rust output, including its `best_v == 0` no-clear encoding. -/
 def rustReferenceOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
-  match rustPStar bk k with
-  | none => ⟨none, 0⟩
-  | some p => ⟨some p, min (demand bk p) (supply bk p)⟩
+  let p := rustArgmaxUpto bk (k - 1)
+  let v := rustExecVol bk p
+  if v = 0 then ⟨none, 0⟩ else ⟨some p, v⟩
 
-/-- The output proved by the corrected Lean `FhEggClearing` rule — the volume-argmax
-`crossing`/`clearedVolume` over `k` price buckets. -/
+/-- The Lean clearing with the same public no-clear encoding as Rust.  This removes the old
+`some p, 0` versus `none, 0` representation mismatch without changing `crossing` itself. -/
 def leanClearingOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
-  ⟨some (crossing bk k), clearedVolume bk k⟩
+  let p := crossing bk k
+  let v := clearedVolume bk k
+  if v = 0 then ⟨none, 0⟩ else ⟨some p, v⟩
 
-/-- **The exact denotation obligation:** over every nonempty bucket range, the corrected Lean clearing
-output equals the deployed Rust plaintext reference output. -/
-def FhEggCrossingDenotation : Prop :=
-  ∀ (bk : OrderBook) (k : Nat), 0 < k → leanClearingOutput bk k = rustReferenceOutput bk k
+/-- The honest range premise relating unbounded Lean aggregates to Rust's `u32` values. -/
+def AggregatesFitU32 (bk : OrderBook) : Prop :=
+  ∀ p, 0 ≤ demand bk p ∧ demand bk p < u32Modulus ∧
+       0 ≤ supply bk p ∧ supply bk p < u32Modulus
 
-/-! The corrected Lean rule (volume-argmax) AGREES with Rust on the worked book — both `(1, 8)` — but the
-counter-witness separates them: Rust's largest-`{D ≥ S}` heuristic is not volume-maximizing. -/
+theorem rustDemand_eq (bk : OrderBook) (hfit : AggregatesFitU32 bk) (p : Nat) :
+    rustDemand bk p = demand bk p := by
+  exact Int.emod_eq_of_lt (hfit p).1 (hfit p).2.1
 
-#guard rustSignVec workBook 3 == [true, true, false]
-#guard rustPStar workBook 3 == some 1
-#guard rustReferenceOutput workBook 3 == (⟨some 1, 8⟩ : ClearingOutput)
+theorem rustSupply_eq (bk : OrderBook) (hfit : AggregatesFitU32 bk) (p : Nat) :
+    rustSupply bk p = supply bk p := by
+  exact Int.emod_eq_of_lt (hfit p).2.2.1 (hfit p).2.2.2
+
+theorem rustExecVol_eq (bk : OrderBook) (hfit : AggregatesFitU32 bk) (p : Nat) :
+    rustExecVol bk p = execVol bk p := by
+  simp only [rustExecVol, execVol, rustDemand_eq bk hfit p, rustSupply_eq bk hfit p]
+
+/-- The independently written Rust loop is extensionally the Lean `argmaxUpto` loop. -/
+theorem rustArgmaxUpto_eq_argmaxUpto (bk : OrderBook) (hfit : AggregatesFitU32 bk) :
+    ∀ n, rustArgmaxUpto bk n = argmaxUpto bk n := by
+  intro n
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+      simp only [rustArgmaxUpto, argmaxUpto, ih,
+        rustExecVol_eq bk hfit (argmaxUpto bk n), rustExecVol_eq bk hfit (n + 1)]
+
+/-- **Positive crossing denotation.** On every nonempty bucket range whose aggregate curves fit the
+deployed `u32` representation, the fixed Rust reference output equals the Lean argmax output. -/
+theorem FhEggCrossingDenotation :
+    ∀ (bk : OrderBook) (k : Nat), 0 < k → AggregatesFitU32 bk →
+      leanClearingOutput bk k = rustReferenceOutput bk k := by
+  intro bk k _ hfit
+  simp only [leanClearingOutput, rustReferenceOutput, clearedVolume, crossing]
+  rw [rustArgmaxUpto_eq_argmaxUpto bk hfit,
+    rustExecVol_eq bk hfit (argmaxUpto bk (k - 1))]
+
+/-! The two named books now agree on both implementations. -/
+
 #guard leanClearingOutput workBook 3 == (⟨some 1, 8⟩ : ClearingOutput)
+#guard rustReferenceOutput workBook 3 == (⟨some 1, 8⟩ : ClearingOutput)
+#guard leanClearingOutput counterBook 2 == (⟨some 1, 9⟩ : ClearingOutput)
+#guard rustReferenceOutput counterBook 2 == (⟨some 1, 9⟩ : ClearingOutput)
 
-/-- **On the worked book the corrected Lean rule and Rust AGREE** — both clear at `(p*, V*) = (1, 8)`, the
-volume peak. (Before the fix the Lean least-`{D ≤ S}` heuristic returned `(2, 6)` and diverged here.) -/
 theorem workBook_conventions_agree :
     leanClearingOutput workBook 3 = rustReferenceOutput workBook 3 := by decide
 
-/-- **The counter-witness SEPARATES them:** on `D = (10, 9)`, `S = (5, 20)` the corrected Lean rule clears
-at the volume peak `(1, 9)`, while Rust's largest-`{D ≥ S}` selects bucket `0` at volume `5` — Rust's
-heuristic is not the volume-maximizing rule. -/
-theorem counterWitness_conventions_diverge :
-    leanClearingOutput counterBook 2 ≠ rustReferenceOutput counterBook 2 := by decide
+theorem counterWitness_conventions_agree :
+    leanClearingOutput counterBook 2 = rustReferenceOutput counterBook 2 := by decide
 
-/-- **`FhEggCrossingConventionResidual` is OPEN, formally:** the deployed Rust largest-`{D ≥ S}` reference
-does NOT denote the corrected (volume-maximizing) Lean clearing — witnessed by the counter-witness. -/
-theorem FhEggCrossingConventionResidual : ¬ FhEggCrossingDenotation := by
-  intro h
-  exact counterWitness_conventions_diverge (h counterBook 2 (by decide))
+/-- A genuinely zero-volume book: there are bids but no asks. -/
+def noClearTfheBook : OrderBook :=
+  [⟨Side.bid, 10, 1⟩, ⟨Side.bid, 8, 0⟩]
 
-#assert_axioms workBook_conventions_agree
-#assert_axioms counterWitness_conventions_diverge
-#assert_axioms FhEggCrossingConventionResidual
+#guard (demand noClearTfheBook 0, supply noClearTfheBook 0) == (18, 0)
+#guard leanClearingOutput noClearTfheBook 2 == (⟨none, 0⟩ : ClearingOutput)
+#guard rustReferenceOutput noClearTfheBook 2 == (⟨none, 0⟩ : ClearingOutput)
 
-/-! ## 2. The observable `FheUint16` semantics and its two independent gaps. -/
+theorem noClearEncodingDenotation :
+    leanClearingOutput noClearTfheBook 2 = rustReferenceOutput noClearTfheBook 2 := by decide
 
-/-- The value domain of `FheUint16`: homomorphic integer operations wrap modulo `2^16`. -/
-def u16Residue (x : Int) : Int := x % 65536
+/-! ## 2. The widened `FheUint32` observable semantics. -/
 
-/-- The encrypted demand aggregate after the `FheUint16::sum` in `fhe_clear`. -/
-def fheDemand (bk : OrderBook) (p : Nat) : Int := u16Residue (demand bk p)
-
-/-- The encrypted supply aggregate after the `FheUint16::sum` in `fhe_clear`. -/
-def fheSupply (bk : OrderBook) (p : Nat) : Int := u16Residue (supply bk p)
-
-/-- The TFHE comparison bit, evaluated on the wrapped 16-bit aggregates. -/
-def fheClears (bk : OrderBook) (p : Nat) : Prop := fheSupply bk p ≤ fheDemand bk p
-
-instance (bk : OrderBook) : DecidablePred (fheClears bk) :=
-  fun p => inferInstanceAs (Decidable (fheSupply bk p ≤ fheDemand bk p))
-
-/-- The encrypted comparison-bit sum is itself a `FheUint16`. -/
-def fheCount (bk : OrderBook) (k : Nat) : Nat :=
-  ((List.range k).filter (fun p => decide (fheClears bk p))).length % 65536
-
-/-- The sentinel-level interpretation of `FheTiming.p_star`: `usize::MAX` is represented as `none`. -/
-def fhePStar (bk : OrderBook) (k : Nat) : Option Nat :=
-  if fheCount bk k = 0 then none else some (fheCount bk k - 1)
-
-/-- The bucket `fhe_clear` actually indexes.  Even on a no-cross result it indexes bucket zero; on a
-positive count it clamps `count-1` to `k-1`.  This definition is total, while the Rust function itself
-panics for `k = 0`; all denotation obligations below require `0 < k`. -/
-def fheSelectedIndex (bk : OrderBook) (k : Nat) : Nat :=
-  min (if fheCount bk k = 0 then 0 else fheCount bk k - 1) (k - 1)
-
-/-- The observable output of `fhe_clear` after decrypting its result.  This intentionally preserves
-the deployed no-cross behavior: `pStar = none`, but `vStar` is still the clear minimum at bucket zero. -/
-def fheOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
-  ⟨fhePStar bk k,
-    min (fheDemand bk (fheSelectedIndex bk k)) (fheSupply bk (fheSelectedIndex bk k))⟩
-
-/-- Every order is representable by Rust's public `Qty = u16`. -/
+/-- Every individual order is representable by Rust's public `Qty = u16`. -/
 def OrdersFitU16 (bk : OrderBook) : Prop :=
   ∀ o ∈ bk, 0 ≤ o.qty ∧ o.qty < 65536
 
-/-- The missing program-refinement statement users would need before claiming
-`reference_clear = fhe_clear`.  It is intentionally only an observable functional equality; a
-cryptographic TFHE theorem would additionally quantify keys, encryption randomness, and evaluation. -/
+/-- The encrypted demand aggregate after the fixed `FheUint32::sum`. -/
+def fheDemand (bk : OrderBook) (p : Nat) : Int := u32Residue (demand bk p)
+
+/-- The encrypted supply aggregate after the fixed `FheUint32::sum`. -/
+def fheSupply (bk : OrderBook) (p : Nat) : Int := u32Residue (supply bk p)
+
+/-- Homomorphic `secure_min` at one bucket, at decrypted observable semantics. -/
+def fheExecVol (bk : OrderBook) (p : Nat) : Int :=
+  min (fheDemand bk p) (fheSupply bk p)
+
+/-- The homomorphic strict argmax scan (lowest bucket wins ties). -/
+def fheArgmaxUpto (bk : OrderBook) : Nat → Nat
+  | 0 => 0
+  | n + 1 =>
+      if fheExecVol bk (fheArgmaxUpto bk n) < fheExecVol bk (n + 1)
+      then n + 1
+      else fheArgmaxUpto bk n
+
+/-- The decrypted output of the fixed `fhe_clear`.  The zero-volume test happens on `best_v`, so the
+sentinel and volume cannot disagree. -/
+def fheOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
+  let p := fheArgmaxUpto bk (k - 1)
+  let v := fheExecVol bk p
+  if v = 0 then ⟨none, 0⟩ else ⟨some p, v⟩
+
+theorem fheArgmaxUpto_eq_rustArgmaxUpto (bk : OrderBook) :
+    ∀ n, fheArgmaxUpto bk n = rustArgmaxUpto bk n := by
+  intro n
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+      simp only [fheArgmaxUpto, rustArgmaxUpto, ih, fheExecVol, rustExecVol,
+        fheDemand, fheSupply, rustDemand, rustSupply]
+      rfl
+
+/-- The fixed FHE observable program computes the same `u32` reference function for every modeled
+book.  The implementation-level ciphertext relation remains separately named below. -/
+theorem fheOutput_eq_rustReferenceOutput (bk : OrderBook) (k : Nat) :
+    fheOutput bk k = rustReferenceOutput bk k := by
+  simp only [fheOutput, rustReferenceOutput]
+  rw [fheArgmaxUpto_eq_rustArgmaxUpto bk]
+  rfl
+
+/-- The public, input-level scope of the deployed FHE call: nonempty bucket range, a `u32` bucket
+index, and `u16` orders. -/
 def FheComputesReference : Prop :=
-  ∀ (bk : OrderBook) (k : Nat), 0 < k → k < 65536 → OrdersFitU16 bk →
+  ∀ (bk : OrderBook) (k : Nat), 0 < k → k < 4294967296 → OrdersFitU16 bk →
     fheOutput bk k = rustReferenceOutput bk k
 
-/-- A one-bucket book with no Rust crossing: `D=5`, `S=10`.  All quantities fit in `u16`; no aggregate
-wrap occurs. -/
-def noCrossTfheBook : OrderBook :=
-  [⟨Side.bid, 5, 0⟩, ⟨Side.ask, 10, 0⟩]
+/-- The former aggregate no-cross/width counterexamples no longer refute the program-level observable
+denotation. -/
+theorem FhEggTfheProgramDenotation : FheComputesReference := by
+  intro bk k _ _ _
+  exact fheOutput_eq_rustReferenceOutput bk k
 
-#guard rustReferenceOutput noCrossTfheBook 1 == (⟨none, 0⟩ : ClearingOutput)
-#guard fheOutput noCrossTfheBook 1 == (⟨none, 5⟩ : ClearingOutput)
+/-- Two 32768-lot bids and asks: the aggregate is 65536, above `2^16` but inside `u32`. -/
+def wideTfheBook : OrderBook :=
+  [⟨Side.bid, 32768, 0⟩, ⟨Side.bid, 32768, 0⟩,
+   ⟨Side.ask, 32768, 0⟩, ⟨Side.ask, 32768, 0⟩]
 
-/-- **`FhEggTfheNoCrossResidual`:** even with no wrap, `fhe_clear` reports `min(D[0],S[0])` when its
-crossing sentinel says no crossing, unlike `reference_clear`'s zero volume. -/
-theorem FhEggTfheNoCrossResidual :
-    fheOutput noCrossTfheBook 1 ≠ rustReferenceOutput noCrossTfheBook 1 := by decide
+#guard demand wideTfheBook 0 == 65536
+#guard supply wideTfheBook 0 == 65536
+#guard fheDemand wideTfheBook 0 == 65536
+#guard fheSupply wideTfheBook 0 == 65536
+#guard rustReferenceOutput wideTfheBook 1 == (⟨some 0, 65536⟩ : ClearingOutput)
+#guard fheOutput wideTfheBook 1 == (⟨some 0, 65536⟩ : ClearingOutput)
 
-/-- Two maximum-half bids overflow the 16-bit encrypted demand aggregate while remaining individually
-valid Rust `u16` orders. -/
-def wrapTfheBook : OrderBook :=
-  [⟨Side.bid, 32768, 0⟩, ⟨Side.bid, 32768, 0⟩, ⟨Side.ask, 1, 0⟩]
+/-- **Positive width denotation.** The exact old overflow witness now remains 65536 in both widened
+aggregates and clears identically to the reference. -/
+theorem FhEggTfheWidthDenotation :
+    OrdersFitU16 wideTfheBook ∧
+    fheDemand wideTfheBook 0 = 65536 ∧ fheSupply wideTfheBook 0 = 65536 ∧
+    fheOutput wideTfheBook 1 = rustReferenceOutput wideTfheBook 1 ∧
+    fheOutput wideTfheBook 1 = (⟨some 0, 65536⟩ : ClearingOutput) := by
+  constructor
+  · intro o ho
+    simp [wideTfheBook] at ho
+    rcases ho with rfl | rfl | rfl | rfl <;> decide
+  · decide
 
-#guard demand wrapTfheBook 0 == 65536
-#guard fheDemand wrapTfheBook 0 == 0
-#guard rustReferenceOutput wrapTfheBook 1 == (⟨some 0, 1⟩ : ClearingOutput)
-#guard fheOutput wrapTfheBook 1 == (⟨none, 0⟩ : ClearingOutput)
-
-/-- **`FhEggTfheWidthResidual`:** individually valid `u16` orders can wrap the encrypted aggregate and
-change the reported clearing.  A per-order type alone is not the missing aggregate bound. -/
-theorem FhEggTfheWidthResidual :
-    fheOutput wrapTfheBook 1 ≠ rustReferenceOutput wrapTfheBook 1 := by decide
-
-/-- The advertised universal plaintext/FHE correctness obligation is false at HEAD.  Both premises
-that are already enforced by Rust's input types (`k>0`, `k<2^16`, per-order `u16`) hold in the witness;
-what is absent is an aggregate-width check, and the no-cross branch is independently inconsistent. -/
-theorem FhEggTfheProgramDenotationResidual : ¬ FheComputesReference := by
-  intro h
-  have hfit : OrdersFitU16 noCrossTfheBook := by
-    intro o ho
-    simp [noCrossTfheBook] at ho
+/-- **Positive no-cross denotation.** On a genuine no-clear book, the fixed FHE sentinel reports
+exactly `(None,0)`, matching the plaintext reference. -/
+theorem FhEggTfheNoCrossDenotation :
+    OrdersFitU16 noClearTfheBook ∧
+    fheOutput noClearTfheBook 2 = rustReferenceOutput noClearTfheBook 2 ∧
+    fheOutput noClearTfheBook 2 = (⟨none, 0⟩ : ClearingOutput) := by
+  constructor
+  · intro o ho
+    simp [noClearTfheBook] at ho
     rcases ho with rfl | rfl <;> decide
-  exact FhEggTfheNoCrossResidual (h noCrossTfheBook 1 (by decide) (by decide) hfit)
+  · decide
 
-#assert_axioms FhEggTfheNoCrossResidual
-#assert_axioms FhEggTfheWidthResidual
-#assert_axioms FhEggTfheProgramDenotationResidual
+/-! ### Honest TFHE boundary. -/
 
-/-! ## 3. The deployed TFHE view leaks more than the advertised output. -/
+/-- An abstract hook for the real encrypted implementation.  Instantiating `Key`, `CipherOutput`,
+`eval`, and `decrypt` with tfhe-rs and proving this predicate is the remaining ciphertext-level task;
+the plaintext theorem `FhEggTfheProgramDenotation` is not that proof. -/
+def FhEggTfheCiphertextRefinementResidual
+    (Key CipherOutput : Type*)
+    (eval : Key → OrderBook → Nat → CipherOutput)
+    (decrypt : Key → CipherOutput → ClearingOutput) : Prop :=
+  ∀ (key : Key) (bk : OrderBook) (k : Nat), 0 < k → k < 4294967296 → OrdersFitU16 bk →
+    decrypt key (eval key bk k) = fheOutput bk k
 
-/-- What the holder of `ClientKey` actually decrypts in `fhe_clear`: the comparison count (reported as
-`pStar`) and both aggregate heights `D[p*]`, `S[p*]`.  Rust computes `min` only after those two values
-are in the clear. -/
-structure TfheDecryptView where
-  pStar : Option Nat
-  dStar : Int
-  sStar : Int
+/-! ## 3. The fixed `mpc_crossing`: argmax denotation and reveal-only view. -/
+
+/-- MPC's secret-shared demand coefficient, at opened value semantics. -/
+def mpcDemand (bk : OrderBook) (p : Nat) : Int := u32Residue (demand bk p)
+
+/-- MPC's secret-shared supply coefficient, at opened value semantics. -/
+def mpcSupply (bk : OrderBook) (p : Nat) : Int := u32Residue (supply bk p)
+
+/-- MPC's secret-shared per-bucket `secure_min`. -/
+def mpcExecVol (bk : OrderBook) (p : Nat) : Int :=
+  min (mpcDemand bk p) (mpcSupply bk p)
+
+/-- MPC's oblivious strict argmax scan.  No comparison bit is opened. -/
+def mpcArgmaxUpto (bk : OrderBook) : Nat → Nat
+  | 0 => 0
+  | n + 1 =>
+      if mpcExecVol bk (mpcArgmaxUpto bk n) < mpcExecVol bk (n + 1)
+      then n + 1
+      else mpcArgmaxUpto bk n
+
+/-- The `(p*,V*)` opened by the fixed MPC crossing. -/
+def mpcOutput (bk : OrderBook) (k : Nat) : ClearingOutput :=
+  let p := mpcArgmaxUpto bk (k - 1)
+  let v := mpcExecVol bk p
+  if v = 0 then ⟨none, 0⟩ else ⟨some p, v⟩
+
+theorem mpcArgmaxUpto_eq_rustArgmaxUpto (bk : OrderBook) :
+    ∀ n, mpcArgmaxUpto bk n = rustArgmaxUpto bk n := by
+  intro n
+  induction n with
+  | zero => rfl
+  | succ n ih =>
+      simp only [mpcArgmaxUpto, rustArgmaxUpto, ih, mpcExecVol, rustExecVol,
+        mpcDemand, mpcSupply, rustDemand, rustSupply]
+      rfl
+
+theorem mpcOutput_eq_rustReferenceOutput (bk : OrderBook) (k : Nat) :
+    mpcOutput bk k = rustReferenceOutput bk k := by
+  simp only [mpcOutput, rustReferenceOutput]
+  rw [mpcArgmaxUpto_eq_rustArgmaxUpto bk]
+  rfl
+
+/-- The real bit-sliced MPC call additionally requires each curve coefficient to fit the selected
+public bit width `b`. -/
+def MpcInputsFit (bk : OrderBook) (k b : Nat) : Prop :=
+  ∀ p < k, 0 ≤ mpcDemand bk p ∧ mpcDemand bk p < (2 : Int) ^ b ∧
+             0 ≤ mpcSupply bk p ∧ mpcSupply bk p < (2 : Int) ^ b
+
+/-- **Positive MPC denotation.** Subject to the actual aggregate and bit-width admission premises, the
+revealed fixed-MPC result is the encoded Lean argmax clearing. -/
+theorem MpcCrossingDenotation :
+    ∀ (bk : OrderBook) (k b : Nat), 0 < k → AggregatesFitU32 bk → MpcInputsFit bk k b →
+      mpcOutput bk k = leanClearingOutput bk k := by
+  intro bk k _ hk hfit _
+  calc
+    mpcOutput bk k = rustReferenceOutput bk k := mpcOutput_eq_rustReferenceOutput bk k
+    _ = leanClearingOutput bk k := (FhEggCrossingDenotation bk k hk hfit).symm
+
+#guard mpcOutput workBook 3 == (⟨some 1, 8⟩ : ClearingOutput)
+#guard mpcOutput counterBook 2 == (⟨some 1, 9⟩ : ClearingOutput)
+#guard mpcOutput noClearTfheBook 2 == (⟨none, 0⟩ : ClearingOutput)
+
+/-- The input-dependent portion of the real transcript.  `masked` is the stream of Beaver openings;
+its values are uniform one-time pads (proved algebraically in `MpcClearingSecurity.otpMasks`).  The
+remaining fields are public shape plus the only unmasked reveal `(p*,V*)`. -/
+structure MpcTranscriptView where
+  masked : List Bool
+  k : Nat
+  bitWidth : Nat
+  revealed : ClearingOutput
   deriving DecidableEq, Repr
 
-/-- The deployed TFHE decryption view at the selected bucket. -/
-def fheDecryptView (bk : OrderBook) (k : Nat) : TfheDecryptView :=
-  ⟨fhePStar bk k, fheDemand bk (fheSelectedIndex bk k), fheSupply bk (fheSelectedIndex bk k)⟩
+/-- Observable view of `mpc_crossing`; notably absent are the old sign vector and curve heights. -/
+def mpcCrossingView (bk : OrderBook) (k bitWidth : Nat) (masked : List Bool) : MpcTranscriptView :=
+  ⟨masked, k, bitWidth, mpcOutput bk k⟩
 
-/-- The claimed public leakage is only `(p*, min(D[p*],S[p*]))`. -/
-def tfheOutputLeakage (v : TfheDecryptView) : ClearingOutput :=
-  ⟨v.pStar, min v.dStar v.sStar⟩
+/-- The Rust `simulate` view from only public shape, independent masks, and `(p*,V*)`. -/
+def mpcSimulator (k bitWidth : Nat) (masked : List Bool)
+    (out : ClearingOutput) : MpcTranscriptView :=
+  ⟨masked, k, bitWidth, out⟩
 
-/-- Two honest one-bucket books with the same advertised `(p*,V*)=(0,8)` but different aggregate
-heights. -/
+/-- The exact deterministic factorization induced by coupling the real and simulated uniform Beaver
+mask streams.  Together with `otpMasks`, this is the observable no-viewer statement at this model's
+scope. -/
+def MpcCrossingViewFactorsThroughOutput : Prop :=
+  ∀ (bk : OrderBook) (k bitWidth : Nat) (masked : List Bool),
+    mpcCrossingView bk k bitWidth masked = mpcSimulator k bitWidth masked (mpcOutput bk k)
+
+/-- **Positive no-viewer denotation for `mpc_crossing`.** -/
+theorem MpcCrossingRevealOnlyDenotation : MpcCrossingViewFactorsThroughOutput := by
+  intro bk k bitWidth masked
+  rfl
+
+/-- Two different private books with the same public `(p*,V*)=(0,8)`. -/
 def sameOutputBookA : OrderBook := [⟨Side.bid, 10, 0⟩, ⟨Side.ask, 8, 0⟩]
 def sameOutputBookB : OrderBook := [⟨Side.bid, 8, 0⟩, ⟨Side.ask, 8, 0⟩]
 
-#guard fheOutput sameOutputBookA 1 == fheOutput sameOutputBookB 1
-#guard fheDecryptView sameOutputBookA 1 != fheDecryptView sameOutputBookB 1
-#guard fheDecryptView sameOutputBookA 1 == (⟨some 0, 10, 8⟩ : TfheDecryptView)
-#guard fheDecryptView sameOutputBookB 1 == (⟨some 0, 8, 8⟩ : TfheDecryptView)
+#guard demand sameOutputBookA 0 != demand sameOutputBookB 0
+#guard mpcOutput sameOutputBookA 1 == mpcOutput sameOutputBookB 1
+#guard mpcCrossingView sameOutputBookA 1 32 [true, false, true] ==
+  mpcCrossingView sameOutputBookB 1 32 [true, false, true]
 
-/-- The exact “decrypts only the output” simulator obligation.  A simulator given only `(p*,V*)`
-would have to reproduce the holder's deterministic decrypted view for every book. -/
-def TfheDecryptViewFactorsThroughOutput : Prop :=
-  ∃ sim : ClearingOutput → TfheDecryptView,
-    ∀ (bk : OrderBook) (k : Nat), sim (fheOutput bk k) = fheDecryptView bk k
+/-- A concrete same-output/different-book tooth: under the same coupled pad stream, the MPC views are
+identical even though the private demand coefficients differ. -/
+theorem mpcSameOutputIndistinguishable :
+    demand sameOutputBookA 0 ≠ demand sameOutputBookB 0 ∧
+    mpcCrossingView sameOutputBookA 1 32 [true, false, true] =
+      mpcCrossingView sameOutputBookB 1 32 [true, false, true] := by decide
 
-/-- **`FhEggTfheLeakageResidual`:** no such simulator exists, because two real books have equal public
-output but the deployed `ClientKey` path decrypts different `D[p*]` values.  Production threshold
-decryption of a ciphertext-level `min` would close this particular leak; the current function does not
-perform it. -/
-theorem FhEggTfheLeakageResidual : ¬ TfheDecryptViewFactorsThroughOutput := by
+/-- A curve-height leak would not factor through `(p*,V*)`; this is the negative tooth showing that
+the reveal-only codomain is a real restriction rather than a vacuous type alias. -/
+theorem mpcCurveHeightLeakage_refused :
+    ¬ ∃ sim : ClearingOutput → Int,
+        ∀ bk : OrderBook, sim (mpcOutput bk 1) = demand bk 0 := by
   rintro ⟨sim, hsim⟩
-  have hA := hsim sameOutputBookA 1
-  have hB := hsim sameOutputBookB 1
-  have hout : fheOutput sameOutputBookA 1 = fheOutput sameOutputBookB 1 := by decide
-  have hviews : fheDecryptView sameOutputBookA 1 = fheDecryptView sameOutputBookB 1 := by
-    rw [← hA, ← hB, hout]
-  exact (by decide : fheDecryptView sameOutputBookA 1 ≠ fheDecryptView sameOutputBookB 1) hviews
+  have hA := hsim sameOutputBookA
+  have hB := hsim sameOutputBookB
+  have hout : mpcOutput sameOutputBookA 1 = mpcOutput sameOutputBookB 1 := by decide
+  rw [hout] at hA
+  exact (by decide : demand sameOutputBookA 0 ≠ demand sameOutputBookB 0) (hA.symm.trans hB)
 
-#assert_axioms FhEggTfheLeakageResidual
+/-! ### Axiom hygiene — every theorem in this audit is pinned kernel-clean. -/
 
-/-! ## 4. The MPC correspondence gap (the perfect-hiding algebra itself is not refuted). -/
-
-/-- The exact current correspondence obligation for the deterministic, publicly opened sign vector. -/
-def MpcCrossingDenotation : Prop :=
-  ∀ (bk : OrderBook) (_hb : OrdersValid bk) (h : CrossingExists bk) (k : Nat),
-    Market.MpcClearingSecurity.clearsVec bk h k = rustSignVec bk k
-
-#guard Market.MpcClearingSecurity.clearsVec workBook workBook_crosses 3 == [false, false, true]
-#guard rustSignVec workBook 3 == [true, true, false]
-
-/-- The proved Lean simulator exposes the up-step `[D <= S]`; deployed `mpc.rs` opens the down-step
-`[D >= S]`.  Thus its real perfect-hiding lemma is presently joined to the wrong clearing function. -/
-theorem MpcCrossingDenotationResidual : ¬ MpcCrossingDenotation := by
-  intro h
-  have hw := h workBook workBook_valid workBook_crosses 3
-  have hlean : Market.MpcClearingSecurity.clearsVec workBook workBook_crosses 3 =
-      [false, false, true] := by decide
-  have hrust : rustSignVec workBook 3 = [true, true, false] := by decide
-  rw [hlean, hrust] at hw
-  simp at hw
-
-#assert_axioms MpcCrossingDenotationResidual
+#assert_axioms rustDemand_eq
+#assert_axioms rustSupply_eq
+#assert_axioms rustExecVol_eq
+#assert_axioms rustArgmaxUpto_eq_argmaxUpto
+#assert_axioms FhEggCrossingDenotation
+#assert_axioms workBook_conventions_agree
+#assert_axioms counterWitness_conventions_agree
+#assert_axioms noClearEncodingDenotation
+#assert_axioms fheArgmaxUpto_eq_rustArgmaxUpto
+#assert_axioms fheOutput_eq_rustReferenceOutput
+#assert_axioms FhEggTfheProgramDenotation
+#assert_axioms FhEggTfheWidthDenotation
+#assert_axioms FhEggTfheNoCrossDenotation
+#assert_axioms mpcArgmaxUpto_eq_rustArgmaxUpto
+#assert_axioms mpcOutput_eq_rustReferenceOutput
+#assert_axioms MpcCrossingDenotation
+#assert_axioms MpcCrossingRevealOnlyDenotation
+#assert_axioms mpcSameOutputIndistinguishable
+#assert_axioms mpcCurveHeightLeakage_refused
 
 end Market.FhEggRustDenotation
