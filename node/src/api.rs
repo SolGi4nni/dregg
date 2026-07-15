@@ -3952,11 +3952,11 @@ async fn post_submit_encrypted_turn(
     // `EncryptedTurn` envelope carries no signature of its own; without this
     // check a stranger could POST any postcard blob and force the node to
     // X25519-decrypt + execute it (a fee-DoS — the cleartext `/turns/submit`
-    // path avoids this by `signer.verify`-ing before doing work). `verify_stark`
+    // path avoids this by `signer.verify`-ing before doing work). `verify_admission_binding`
     // checks the Phase-1 submitter authentication (Ed25519 over the public
     // inputs + key→agent binding) fail-closed, so an unauthenticated or forged
     // envelope is rejected here — before the node spends decrypt work.
-    if let Err(err) = encrypted.verify_stark() {
+    if let Err(err) = encrypted.verify_admission_binding() {
         crate::metrics::inc_turns_executed("rejected");
         return Ok(Json(SubmitEncryptedTurnResponse {
             accepted: false,

@@ -330,17 +330,22 @@ fn set_field_dyn_proves_on_deployed_wide_path() {
 ///
 /// An honest custom turn (a user program + its GENUINE external sub-proof) MUST prove on
 /// `prove_effect_vm_rotated_wide` + VERIFY against `customVmDescriptor2R24` (the 789-wide member, host
-/// 581 + 208 carriers), AND its bound sub-proof MUST light-client-verify through the deployed
-/// `custom_proof_bind` engine. A FORGED sub-proof MUST be rejected by that engine.
+/// 581 + 208 carriers).
 ///
-/// BEFORE: a Custom lead fell through to the transfer-shape producer (816-wide) → UNSAT vs the
-/// 789-wide custom descriptor, so a custom turn minted NO wide receipt (the LAST liveness gap). AFTER
-/// routing it to `generate_rotated_custom_wide`: it proves + verifies. The Custom row's `(vk, commit)`
-/// columns (68 / 72) carry the verifying `BoundCustomProof`'s exposed binding
+/// A Custom lead that fell through to the transfer-shape producer (816-wide) was UNSAT vs the
+/// 789-wide custom descriptor, so a custom turn minted NO wide receipt. Routed to
+/// `generate_rotated_custom_wide` it proves + verifies. The Custom row's `(vk, commit)`
+/// columns (68 / 72) carry the `BoundCustomProof`'s exposed binding
 /// (`vk_hash_felts()` / `proof_commitment()`), threaded onto the wire via
-/// `Turn::with_custom_program_proofs`; the light client re-runs `verify_proof_bind` against that same
-/// binding. This is the deployed, end-to-end path: the wide receipt AND the sub-proof bind the SAME
-/// verifying STARK.
+/// `Turn::with_custom_program_proofs`.
+///
+/// SCOPE: this test covers the WIDE-RECEIPT pole only. There is no off-AIR `verify_proof_bind`
+/// engine to light-client-verify against — it died with stark-kill. What BINDS the claimed
+/// commitment for a pure light client is the deployed recursion fold's in-circuit `connect`
+/// (`prove_custom_binding_node_segmented`, wired in `prove_chain_core_rotated`); its poles live
+/// in `circuit-prove/tests/custom_binding_deployed_tooth.rs` + `custom_binding_production_path.rs`
+/// and the in-lib `every_forged_commitment_lane_is_rejected_by_the_fold`. This test does NOT
+/// exercise a forged sub-proof.
 #[test]
 fn custom_proves_on_deployed_wide_path() {
     use dregg_circuit::dsl::circuit::{

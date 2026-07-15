@@ -550,12 +550,18 @@ impl Turn {
     }
 
     /// Thread the GENUINE custom sub-proofs into `custom_program_proofs` — the
-    /// wire field a custom turn carries so the light client can run the deployed
-    /// `proof_bind` recursion (`dregg_circuit_prove::custom_proof_bind::verify_proof_bind`)
-    /// against each effect's bound `(commit, vk)` columns.
+    /// wire field a custom turn carries so a RE-EXECUTING validator can dispatch each
+    /// effect's proof through its `CustomEffectRegistry` (see
+    /// `executor::proof_verify::enforce_custom_effect_proofs`).
     ///
-    /// Each [`dregg_circuit_prove::custom_proof_bind::BoundCustomProof`] (minted by
-    /// `prove_custom_program`, the genuine STARK + its public inputs) is projected
+    /// This wire field is NOT what binds the commitment for a pure light client: that is
+    /// the deployed recursion fold's in-circuit `connect`
+    /// (`dregg_circuit_prove::joint_turn_recursive::prove_custom_binding_node_segmented`,
+    /// wired in `prove_chain_core_rotated`), which needs no wire proof at all. There is no
+    /// off-AIR `verify_proof_bind` engine — it died with stark-kill.
+    ///
+    /// Each [`dregg_circuit_prove::custom_proof_bind::BoundCustomProof`] (the genuine
+    /// STARK + its public inputs) is projected
     /// to the on-wire [`CustomProgramProof`] (proof bytes + raw-u32 public inputs),
     /// in effect order. Both are bound into [`Turn::hash`] so the sub-proof bytes /
     /// PI cannot be swapped after the fact without changing the turn identity. The

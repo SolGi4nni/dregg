@@ -584,7 +584,8 @@ impl RotatedParticipantLeg {
 
 impl CustomWitnessBundle {
     /// Build the prover-side re-provable bundle from a [`crate::custom_proof_bind::BoundCustomProof`]
-    /// minted by [`crate::custom_proof_bind::prove_custom_program`] (which retains the trace witness).
+    /// whose `witness_values` / `num_rows` are populated (the prover-side-only retained trace
+    /// witness; a bundle reconstructed from the wire has `None` and cannot be folded).
     ///
     /// This is the RETENTION SEAM that graduates the custom binding from RE-EXEC-ONLY to REAL-FOLDED:
     /// the turn-build path proves the custom sub-proof (yielding a `BoundCustomProof`), and this

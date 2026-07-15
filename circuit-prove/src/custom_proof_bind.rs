@@ -1,49 +1,74 @@
-//! The genuine `proof_bind` engine for the `custom` effect — a REAL recursive
-//! sub-proof verification, not a bounds check.
+//! Types + the canonical PI-commitment derivation for the `custom` effect's
+//! `proof_bind`. **The binding itself is NOT enforced here** — it is enforced by the
+//! deployed recursion fold. This module is the host-side derivation surface that fold
+//! binds.
 //!
-//! ## What this closes
+//! ## Where the binding actually lives
 //!
-//! The deployed `customVmDescriptor2R24` carries one `DescriptorIR2.ProofBind`
-//! op binding the Custom row's `custom_proof_commitment` column (var 72) and
-//! `custom_program_vk_hash` column (var 68). At the descriptor-IR level the op
-//! only *declares* the binding; the in-AIR check is a bounds check
-//! (`descriptor_ir2.rs`, `VmConstraint2::ProofBind`), and the EffectVM AIR's
-//! Custom leg (`effect_vm/air.rs`) explicitly does NOT verify the external
-//! proof — it only records its hash commitment and warns:
+//! The deployed `customVmDescriptor2R24` carries one `DescriptorIR2.ProofBind` op naming
+//! the Custom row's `custom_proof_commitment` column (var 72) and `custom_program_vk_hash`
+//! column (var 68). At the descriptor-IR level that op only *declares* the binding: the
+//! in-AIR check is a bounds check (`descriptor_ir2.rs`, `VmConstraint2::ProofBind`), and
+//! the EffectVM AIR's Custom leg (`effect_vm/air.rs`) does NOT verify the external proof.
+//! On its own the row's claimed commitment is therefore UNBACKED.
 //!
-//! > "Verifiers MUST independently verify the external proof against the
-//! >  committed program VK hash. Without this check, a malicious prover can
-//! >  claim any custom_proof_commitment without having a valid external proof."
+//! It is backed IN-CIRCUIT by the chain prover's custom fold arm:
+//! [`crate::joint_turn_recursive::prove_custom_binding_node_segmented`], wired into
+//! [`crate::ivc_turn_chain::prove_chain_core_rotated`]. That node folds two leaves — the
+//! effect-vm leg as a DUAL-EXPOSE leaf (chain segment + the claimed 8-felt commitment from
+//! PI 46..53) and the custom SUB-PROOF leaf re-proven from the retained
+//! `CustomWitnessBundle` ([`crate::custom_leaf_adapter::prove_custom_leaf_with_commitment`],
+//! whose commitment is computed in-circuit) — and `connect`s the claimed lanes to the
+//! genuine ones.
 //!
-//! That independent verification is what this module makes a deployed,
-//! SDK-reachable, light-client-runnable check. It is the REAL engine the
-//! descriptor-semantic toy (`descriptor_ir2.rs::ToyEngine`) modeled: the proof
-//! carrier is a genuine [`dregg_circuit::dsl::circuit::CellProgram`] STARK, the verifier
-//! accepts exactly the proofs that the program's AIR accepts, and a verifying
-//! proof's exposed `(commit, vk)` are the canonical PI-commitment and the
-//! program's VK hash.
+//! **The tooth:** a turn whose effect-vm row claims a commitment no verifying sub-proof
+//! backs is UNSAT. There is no satisfying custom leaf whose exposed commitment equals the
+//! claimed slots, so the aggregate does not prove — no root, and a pure light client
+//! (which folds the recursion tree and never witnesses the sub-proof off-AIR) never
+//! receives a verifying artifact.
 //!
-//! ## The soundness property
+//! ## Provenance of this module's shape
 //!
-//! [`verify_proof_bind`] turns the descriptor's `proof_bind` gate from "the
-//! columns are in range" into "the bound proof VERIFIED, its public-input
-//! commitment EQUALS the bound `commit` column, and its program VK EQUALS the
-//! bound `vk` column." A custom effect carrying a FORGED sub-proof — a
-//! non-verifying STARK, a commitment that does not match the proof's public
-//! inputs, or a VK that does not match the program — is REJECTED.
+//! The off-AIR hand-STARK engine that used to live here — `prove_custom_program` /
+//! `verify_bound_custom_proof` / `verify_proof_bind` — died with stark-kill (`dd038c08e`).
+//! Nothing in the tree verifies a proof-bind off-AIR any more. What survives here is
+//! types + [`custom_proof_pi_commitment`], the canonical derivation the fold binds against.
+//!
+//! ## The teeth (both polarities, and where they run)
+//!
+//! * `every_forged_commitment_lane_is_rejected_by_the_fold` (in-lib, `joint_turn_recursive`)
+//!   — the MECHANISM tooth. Forges each of the 8 lanes INDEPENDENTLY (`k in 0..8`), which is
+//!   what makes the SECOND squeeze block load-bearing: a node binding only the first 4 would
+//!   accept the `k in 4..8` forgeries. It runs on a plain `cargo test -p dregg-circuit-prove`
+//!   (no `#[ignore]`). **Scope:** it drives
+//!   [`crate::joint_turn_recursive::prove_custom_binding_node`] — the single-claim variant —
+//!   over a stand-in leg. That is the connect MECHANISM, not the deployed wiring.
+//! * `circuit-prove/tests/custom_binding_deployed_tooth.rs` and
+//!   `custom_binding_production_path.rs` — the DEPLOYED poles: honest-accept + forged-reject
+//!   end-to-end through `prove_turn_chain_recursive` → `verify_turn_chain_recursive`.
+//!   **⚠ Both are `#[ignore]`d and nothing in CI passes `--ignored`, so the deployed
+//!   end-to-end poles are not exercised in automation at HEAD** (`CRATE-EXCELLENCE-PLAN.md`
+//!   §4 MOVE 2 is the lane that arms them).
+//!
+//! So at HEAD the connect mechanism is gated in automation and the deployed wiring is not.
 //!
 //! ## How the sub-proof binds (the two columns)
 //!
 //! * `custom_program_vk_hash` (8 felts, EffectVM PI `CUSTOM_PROOFS_BASE + i*12 +
 //!   0..8`; column 68 in the rotated descriptor) — the program identity, the
 //!   32-byte [`CellProgram::vk_hash`] mapped through
-//!   [`dregg_circuit::effect_vm::bytes32_to_8_limbs`]. The verifier looks the
-//!   program up by this hash; an unknown program fails closed.
+//!   [`dregg_circuit::effect_vm::bytes32_to_8_limbs`]. A re-executing validator resolves
+//!   the program by this hash through the host [`ProgramRegistry`], where an unregistered
+//!   `vk_hash` does not resolve. On the deployed FOLD path there is no registry lookup:
+//!   the sub-proof leaf is re-proven from the program carried on the retained
+//!   `CustomWitnessBundle`.
 //! * `custom_proof_commitment` (8 felts, EffectVM PI `... + 8..16`; limbs 0..4
 //!   at column 72, limbs 4..8 on the member-local commit-teeth columns)
-//!   — [`custom_proof_pi_commitment`] of the sub-proof's public inputs. The
-//!   verifier recomputes it from the verified sub-proof's PI and requires
-//!   equality; a swapped or fabricated commitment fails closed.
+//!   — [`custom_proof_pi_commitment`] of the sub-proof's public inputs. The fold's
+//!   custom leaf computes this commitment IN-CIRCUIT from the sub-proof's real PIs
+//!   ([`crate::custom_leaf_adapter::incircuit_custom_pi_commitment`]) and `connect`s it,
+//!   lane by lane, to the claimed column; a swapped or fabricated commitment has no
+//!   satisfying partner and the aggregation is UNSAT.
 //!
 //! Both are bound into the turn hash (`turn::Turn::hash`) via
 //! `custom_program_proofs`, so the sub-proof bytes + PI cannot be swapped after
@@ -138,9 +163,11 @@ impl BoundCustomProof {
 }
 
 /// The claimed binding read off the EffectVM Custom row / PI: the columns the
-/// descriptor's `proof_bind` op pins. The verifier checks the sub-proof against
-/// exactly THESE claimed values, so a row that lies about either column is
-/// rejected even when the sub-proof itself verifies.
+/// descriptor's `proof_bind` op names. These are the CLAIMED values — carrying them
+/// checks nothing on its own. The deployed fold
+/// ([`crate::joint_turn_recursive::prove_custom_binding_node_segmented`]) `connect`s the
+/// claimed `commitment` lanes to the sub-proof leaf's in-circuit-computed commitment, so a
+/// row that lies about the commitment leaves the aggregation UNSAT.
 #[derive(Clone, Copy, Debug, PartialEq, Eq)]
 pub struct ClaimedProofBind {
     /// The Custom row's `custom_program_vk_hash` column (8 felts, var 68).
@@ -149,58 +176,3 @@ pub struct ClaimedProofBind {
     /// limbs 4..8 on the commit-teeth columns).
     pub commitment: ProofBindCommitment,
 }
-
-/// Why a `proof_bind` verification failed — every variant is a forged or
-/// malformed binding the genuine engine REJECTS (where the old bounds-check
-/// would have accepted).
-#[derive(Clone, Debug, PartialEq, Eq)]
-pub enum ProofBindError {
-    /// The bound VK hash names no program in the host registry — fail closed.
-    UnknownProgram { vk_hash: [BabyBear; 8] },
-    /// The resolved program's VK does not match the Custom row's bound VK column.
-    VkMismatch {
-        claimed: [BabyBear; 8],
-        program: [BabyBear; 8],
-    },
-    /// The sub-proof's public-input commitment does not match the bound
-    /// `custom_proof_commitment` column.
-    CommitmentMismatch {
-        claimed: ProofBindCommitment,
-        recomputed: ProofBindCommitment,
-    },
-    /// The external STARK sub-proof did not verify under the program's AIR.
-    SubProofVerifyFailed(String),
-    /// The sub-proof could not be proven (prove side only).
-    SubProofProveFailed(String),
-}
-
-impl std::fmt::Display for ProofBindError {
-    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
-        match self {
-            ProofBindError::UnknownProgram { .. } => {
-                write!(
-                    f,
-                    "proof_bind: bound VK names no registered program (fail closed)"
-                )
-            }
-            ProofBindError::VkMismatch { .. } => {
-                write!(
-                    f,
-                    "proof_bind: program VK does not match the bound vk column"
-                )
-            }
-            ProofBindError::CommitmentMismatch { .. } => write!(
-                f,
-                "proof_bind: sub-proof PI commitment does not match the bound commit column"
-            ),
-            ProofBindError::SubProofVerifyFailed(e) => {
-                write!(f, "proof_bind: external sub-proof failed verification: {e}")
-            }
-            ProofBindError::SubProofProveFailed(e) => {
-                write!(f, "proof_bind: external sub-proof could not be proven: {e}")
-            }
-        }
-    }
-}
-
-impl std::error::Error for ProofBindError {}

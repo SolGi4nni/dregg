@@ -349,9 +349,9 @@ fn verify_chain_signatures(
             return Err(VerifyError::ExecutorSignatureInvalid { index: i });
         }
         let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
-        // Stage 9 R-4: the executor signs the canonical narrow message
-        // (see `TurnReceipt::canonical_executor_signed_message`), not the
-        // full `receipt_hash()`. Verifiers reproduce that message here.
+        // The executor signs the v3 canonical message: a domain string over the FULL
+        // `receipt_hash()` (see `TurnReceipt::canonical_executor_signed_message`).
+        // Verifiers reproduce that message here.
         let msg = receipt.canonical_executor_signed_message();
         let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
 
@@ -408,9 +408,9 @@ pub fn verify_receipt_signature_with_keys(
         return Err(VerifyError::ExecutorSignatureInvalid { index: 0 });
     }
     let sig_array: [u8; 64] = sig_bytes[..64].try_into().unwrap();
-    // Stage 9 R-4: the executor signs the canonical narrow message (see
-    // `TurnReceipt::canonical_executor_signed_message`), not the full
-    // `receipt_hash()`. Verifiers reproduce that message here.
+    // The executor signs the v3 canonical message: a domain string over the FULL
+    // `receipt_hash()` (see `TurnReceipt::canonical_executor_signed_message`).
+    // Verifiers reproduce that message here.
     let msg = receipt.canonical_executor_signed_message();
     let signature = ed25519_dalek::Signature::from_bytes(&sig_array);
 
@@ -648,8 +648,8 @@ mod tests {
         assert_eq!(r1.receipt_hash(), r2.receipt_hash());
     }
 
-    /// Stage 9 R-4 (P3.C): the executor's signature round-trips through the
-    /// canonical narrow message and is rejected under a foreign key.
+    /// The executor's signature round-trips through the v3 canonical message
+    /// (domain || full `receipt_hash()`) and is rejected under a foreign key.
     #[test]
     fn test_executor_signature_roundtrip_canonical_message() {
         let agent = CellId::from_bytes([1u8; 32]);

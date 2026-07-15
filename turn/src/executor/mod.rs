@@ -931,18 +931,25 @@ pub struct TurnExecutor {
     /// When set, the encrypted-turn admission path
     /// ([`Self::execute_encrypted_turn`] / [`Self::apply_encrypted_turn`])
     /// requires the envelope's `TurnValidityProof` to verify
-    /// ([`crate::encrypted::EncryptedTurn::verify_stark`]) BEFORE the turn is
+    /// ([`crate::encrypted::EncryptedTurn::verify_admission_binding`]) BEFORE the turn is
     /// decrypted and ordered — closing the fee-DoS hole where an unproven
     /// encrypted blob consumes an ordering slot.
     ///
-    /// FAIL-CLOSED when on: because the validity-proof *producer* is not yet
-    /// wired (every envelope ships `proof_bytes = vec![]`), enabling this flag
-    /// currently rejects ALL encrypted turns via `InvalidValidityProof`. It is
-    /// therefore OFF by default (additive: the existing decrypt round-trips and
-    /// SDK callers, which build placeholder proofs, keep working). A node that
-    /// wants to refuse unproven encrypted submissions sets this; once a real
-    /// prover lands, `verify_stark` checks the proof instead of emptiness and
-    /// this becomes the always-on production gate.
+    /// What it enforces when ON: [`crate::encrypted::EncryptedTurn::verify_admission_binding`]
+    /// — an Ed25519 `submitter_auth` over the validity-proof public inputs, by a key that
+    /// derives the claimed `agent` cell. It does **not** require a validity STARK: no
+    /// prover exists, so `proof_bytes` must be EMPTY (a non-empty one is rejected as
+    /// unverifiable). So this flag admits an *authenticated* encrypted turn and rejects an
+    /// *unauthenticated* one — it is fee-DoS admission control, not proof enforcement.
+    ///
+    /// It is **not** "fail-closed against every encrypted turn": the crate's own
+    /// `encrypted_turn_accepts_authenticated_when_gated` sets this flag and commits a turn.
+    /// Both poles are pinned — see also `encrypted_turn_requires_validity_proof_when_gated`.
+    ///
+    /// OFF by default (additive: existing decrypt round-trips and SDK callers that build
+    /// placeholder proofs keep working). A node that wants to refuse unauthenticated
+    /// encrypted submissions sets this. The Phase-2 remainder — a real validity STARK
+    /// proving nonce + fee in zero knowledge — is named in `verify_admission_binding`'s doc.
     pub require_validity_proof: bool,
     /// Optional 32-byte Ed25519 signing key seed used to populate
     /// `TurnReceipt::executor_signature` on every committed receipt.
@@ -1310,13 +1317,13 @@ impl TurnExecutor {
         self.turn_decryption_keypair = Some((secret, *public.as_bytes()));
     }
 
-    /// Require that encrypted-turn submissions carry a verifiable
-    /// `TurnValidityProof` before being decrypted/ordered (see
-    /// [`Self::require_validity_proof`]). FAIL-CLOSED while the validity-proof
-    /// producer is unwired: turning this on rejects every encrypted turn (empty
-    /// `proof_bytes`) via `InvalidValidityProof`, which is the correct stance
-    /// for a node that must not let unproven encrypted blobs consume ordering
-    /// slots. Builder form.
+    /// Require that encrypted-turn submissions carry submitter authentication binding the
+    /// signing key to the claimed agent cell, before being decrypted/ordered (see
+    /// [`Self::require_validity_proof`] for exactly what is and is not enforced —
+    /// notably, this does NOT require a validity STARK, and an authenticated turn is
+    /// ACCEPTED). Turning it on rejects *unauthenticated* encrypted blobs, which is the
+    /// correct stance for a node that must not let them consume ordering slots.
+    /// Builder form.
     pub fn with_require_validity_proof(mut self, require: bool) -> Self {
         self.require_validity_proof = require;
         self
@@ -1435,12 +1442,13 @@ impl TurnExecutor {
             };
         }
 
-        // 1b. Validity-proof (STARK) gate, when required. Closes the fee-DoS
-        //     hole: an unproven encrypted blob must not be decrypted/ordered.
-        //     FAIL-CLOSED while the producer is unwired (verify_stark rejects
-        //     empty proof_bytes). OFF by default — see `require_validity_proof`.
+        // 1b. Admission-binding gate, when required. Closes the fee-DoS hole: an
+        //     UNAUTHENTICATED encrypted blob must not be decrypted/ordered. This checks
+        //     submitter auth + the agent binding, NOT a validity STARK (none exists; a
+        //     non-empty proof_bytes is rejected as unverifiable). An authenticated turn is
+        //     ACCEPTED. OFF by default — see `require_validity_proof`.
         if self.require_validity_proof {
-            if let Err(e) = encrypted.verify_stark() {
+            if let Err(e) = encrypted.verify_admission_binding() {
                 return TurnResult::Rejected {
                     reason: TurnError::InvalidEffect {
                         reason: format!("encrypted turn validity proof invalid: {:?}", e),
@@ -1562,12 +1570,11 @@ impl TurnExecutor {
                 reason: format!("encrypted turn metadata invalid: {:?}", e),
             })?;
 
-        // 1b. Validity-proof (STARK) gate, when required (see
-        //     `execute_encrypted_turn` for the rationale; fail-closed fee-DoS
-        //     gate, OFF by default).
+        // 1b. Admission-binding gate, when required (see `execute_encrypted_turn` for the
+        //     rationale; rejects unauthenticated envelopes, OFF by default).
         if self.require_validity_proof {
             encrypted
-                .verify_stark()
+                .verify_admission_binding()
                 .map_err(|e| TurnError::InvalidEffect {
                     reason: format!("encrypted turn validity proof invalid: {:?}", e),
                 })?;
@@ -1625,13 +1632,12 @@ impl TurnExecutor {
     fn maybe_sign_receipt(&self, receipt: &TurnReceipt) -> Option<Vec<u8>> {
         let seed = self.executor_signing_key.as_ref()?;
         let sk = ed25519_dalek::SigningKey::from_bytes(seed);
-        // Stage 9 R-4: sign the canonical narrow message
-        // (`executor-receipt-sig-v1:` || turn_hash || pre_state || post_state ||
-        // timestamp), not the broader `receipt_hash()`. This keeps the
-        // executor's claim recoverable by downstream verifiers that do not yet
-        // understand the v2 receipt's auxiliary fields (routing directives,
-        // derivation records, emitted events, finality). See
-        // `TurnReceipt::canonical_executor_signed_message`.
+        // Sign the v3 canonical message: `executor-receipt-sig-v3:` || receipt_hash() —
+        // the FULL receipt hash, so the signature attests to every field bound into it
+        // (effects_hash, computrons_used, derivation_records, routing directives, emitted
+        // events, finality, was_encrypted, was_burn, the chain link). The narrow v2 prefix
+        // left all of those unsigned; see `TurnReceipt::canonical_executor_signed_message`
+        // and audit P0 #76 for the recovery attacks that closed.
         let msg = receipt.canonical_executor_signed_message();
         use ed25519_dalek::Signer;
         let sig = sk.sign(&msg);

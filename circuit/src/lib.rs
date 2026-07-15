@@ -29,14 +29,52 @@
 //!
 //! - **Soundness**: All proofs are independently verifiable by any party with access to
 //!   the public inputs and verification key. A valid proof guarantees that the prover
-//!   knows a witness satisfying the circuit constraints, with negligible soundness error
-//!   (2^{-128} for STARK, conjectured for Plonky3).
+//!   knows a witness satisfying the circuit constraints, up to the FRI soundness error
+//!   ledgered below.
 //! - **Assumptions**: Cryptographic hardness of the hash function (BLAKE3/Poseidon2),
 //!   correct circuit constraint encoding, and honest verifier randomness (Fiat-Shamir).
 //!   No trust in any federation member, operator, or third party.
 //! - **Verifiable by**: Anyone. Proofs are publicly verifiable with O(log n) verification
 //!   time. Light clients, external auditors, and cross-federation peers can all verify
 //!   independently.
+//!
+//! ## The FRI soundness ledger — the deployed numbers
+//!
+//! There is no `2^{-128}` here. The three figures below are what the deployed knobs
+//! actually buy; the gate `tests/fri_params_soundness_budget.rs` computes them FROM the
+//! exported production constants (`IR2_FRI_*`, `PROD_FRI_*`) so a knob edit cannot drift
+//! them silently, and the proven figure is carried in Lean rather than in this comment.
+//!
+//! - **~112.6 bits — the accepted standing posture.** For the deployed dim-2
+//!   constant-fold recursion code, the FIELD-INDEPENDENT counting bound
+//!   `|Good| ≤ C(64,2) = 2016` over the quartic-extension challenge field
+//!   (`|F| = babyBearP⁴ ≈ 2^123.6`) proves a **per-fold** soundness error `< 2^{-112}`
+//!   — exactly `≈ 2^{-112.65}`, strictly inside `(2^{-113}, 2^{-112})`. Proven in Lean:
+//!   `wrap_perFold_soundness_capacity` and `wrap_perFold_soundness_capacity_interval` in
+//!   `metatheory/Dregg2/Circuit/FriCorrelatedAgreementSharp.lean` §8 (no `sorry`,
+//!   `#assert_axioms`-clean). This figure is **structure-specific**: it holds for the
+//!   deployed fixed `r = 2`, `n = 64` fold — it is not a bound on FRI in general.
+//! - **73 bits — proven for any code.** The Johnson / list-decoding-to-√rate figure,
+//!   `num_queries × log_blowup / 2 + query_pow_bits`. Reported by the gate.
+//! - **130 bits — REFUTED; a knob-drift baseline, NOT a security claim.** The capacity
+//!   (up-to-`1−ρ`) arithmetic `num_queries × log_blowup + query_pow_bits`
+//!   that production STARKs historically quote. The capacity conjecture it rests on is
+//!   **refuted** for coset Reed–Solomon at rates covering our `ρ = 1/64` (Kambiré, eprint
+//!   2025/2046). The budget gate's `≥ 128` check is a conservative ENGINEERING MARGIN on
+//!   this refuted arithmetic — drift detection only. It is not a proof, and not a claim
+//!   that 128 bits are achieved.
+//! - **Caps.** All figures are additionally capped by the degree-4 BabyBear extension
+//!   (~2^124 challenge space) and the Poseidon2 commitment hash. The ~112.6 sits under
+//!   this cap.
+//!
+//! Both deployed configs land on the same ledger, and the gate asserts that parity: v1
+//! [`plonky3_prover::create_config`] at `(log_blowup 3, 38 queries, 16 PoW)` and IR-v2
+//! `descriptor_ir2::ir2_config` at `(6, 19, 16)` each give capacity `130` / Johnson `73`.
+//! The `(6, 19)` pin is the measured size-optimal point AT that parity.
+//!
+//! The ~112.6 bound is sound against Kambiré's refutation: his `n^C` blow-up needs
+//! `n → ∞` and `r > 2`; at our fixed `r = 2`, `n = 64` his own construction caps at
+//! `C(64,2)`.
 //!
 //! All code in this crate MUST maintain the property that a valid proof implies a valid
 //! witness. Bugs here break the entire trust model -- a soundness bug allows forged
@@ -75,19 +113,30 @@
 //!
 //! # Features
 //!
-//! - `mock` (default): Uses a constraint satisfaction checker that evaluates
-//!   AIR constraints directly without generating real STARK proofs.
-//!   This validates circuit correctness and is suitable for development/testing.
+//! - `plonky3` (default, always-on no-op): retained so the existing
+//!   `#[cfg(feature = "plonky3")]` sites resolve true on the verify floor. Every p3
+//!   dependency of this crate is non-optional — `dregg-circuit` IS the prover-free
+//!   batch-STARK verify surface plus the recursion-free `prove_batch` provers. Turning
+//!   this off does not remove Plonky3. See `Cargo.toml`'s split-policy note.
 //!
-//! - `plonky3` (optional): Plonky3 dependencies available for future optimized prover.
+//! There is no `mock` feature. The old `verifier` / `prover` features are gone: their
+//! items are now unconditional or moved to `dregg-circuit-prove`, which owns the
+//! recursion tower (`cargo tree -p dregg-circuit` is recursion-free, and that is
+//! load-bearing).
 //!
 //! # Proof Backends
 //!
-//! - [`stark`]: Real STARK proof generation with FRI-based polynomial commitment.
-//!   Produces actual cryptographic proofs (~24 KiB for a 4-level Merkle membership).
-//!   Uses BLAKE3 Merkle trees, Fiat-Shamir transform, and Reed-Solomon encoding.
-//! - [`constraint_prover`]: Constraint satisfaction checker that validates circuit
-//!   logic by evaluating AIR constraints directly on the execution trace.
+//! - [`plonky3_prover`]: the deployed Plonky3 STARK prover/verifier (FRI + Poseidon2
+//!   Merkle + Fiat-Shamir), including the production FRI knobs (`PROD_FRI_*`) the
+//!   soundness ledger above is computed from.
+//! - [`descriptor_ir2`]: the IR-v2 descriptor interpreter and its deployed FRI config
+//!   (`IR2_FRI_*`) — the path a light client verifies against.
+//! - [`lean_descriptor_air`]: parses a Lean-emitted `EffectVmDescriptor` and rebuilds
+//!   the AIR from the descriptor alone (the prover authors no constraint).
+//! - [`constraint_prover`]: constraint satisfaction checker that validates circuit
+//!   logic by evaluating AIR constraints directly on the execution trace. It generates
+//!   no cryptographic proof — it is a development/testing oracle, not a backend a
+//!   verifier trusts.
 //!
 //! # Security Properties
 //!
@@ -103,11 +152,19 @@
 //! - [`field`]: BabyBear field arithmetic (p = 2^31 - 1).
 //! - [`poseidon2`]: SNARK-friendly hash function for in-circuit hashing.
 //! - [`merkle_air`]: 4-ary Merkle membership proof circuit.
-//! - [`derivation_air`]: Single Datalog derivation step circuit.
-//! - [`fold_air`]: Attenuation (fold) step circuit.
-//! - [`presentation`]: Complete presentation proof combining all pieces.
-//! - [`constraint_prover`]: Constraint satisfaction evaluator.
-//! - [`stark`]: Real STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
+//! - [`constraint_prover`]: Constraint satisfaction evaluator (no cryptographic proof).
+//! - [`plonky3_prover`]: the deployed STARK prover/verifier (FRI + Merkle + Fiat-Shamir).
+//! - [`descriptor_ir2`] / [`lean_descriptor_air`]: the verified descriptor path.
+//!
+//! Hand-written dregg1 AIRs, retained and `#[deprecated]` — see the header warning above;
+//! they are NOT the source of truth and retire one frontier at a time:
+//! [`derivation_air`] (single Datalog derivation step), [`fold_air`] (attenuation step),
+//! [`presentation`] (the composed presentation proof).
+
+// A deleted item must never again be documented as live: the front door claimed a `stark`
+// module and a `verify_proof_bind` engine long after both were gone, and nothing red-flagged
+// it. This makes that class a build error at `cargo doc` time rather than a reader's problem.
+#![deny(rustdoc::broken_intra_doc_links)]
 
 pub mod air_descriptor;
 pub mod babybear8;
@@ -183,7 +240,7 @@ pub mod cap_reshape_descriptor;
 /// Merkle tree over a cell's c-list. The SINGLE source of truth for the
 /// `cap_root` value — `dregg-cell`'s `compute_canonical_capability_root` calls
 /// it, and the EffectVM circuit seeds its `cap_root` column from the same value
-/// (cap Phase A). Pure Poseidon2 (no plonky3): available in the `mock` build.
+/// (cap Phase A). Pure Poseidon2 — no plonky3 dependency, so it builds on any consumer.
 pub mod cap_root;
 #[allow(deprecated)]
 pub mod committed_threshold;
@@ -199,7 +256,7 @@ pub mod garbled;
 /// generalizing `cap_root` with the generic `hash[addr, value]` leaf. The
 /// SINGLE source of truth for the `heap_root` register value; the descriptor
 /// gadget (`EffectVmEmitHeapRoot.lean`) recomputes its address/leaf images
-/// in-row. Pure Poseidon2 (no plonky3): available in the `mock` build.
+/// in-row. Pure Poseidon2 — no plonky3 dependency, so it builds on any consumer.
 pub mod heap_root;
 pub mod native_signature;
 #[allow(deprecated)]
@@ -388,6 +445,15 @@ pub mod backends;
 // `dregg-circuit-prove`.
 pub mod proof_forest;
 pub mod proof_tier;
+
+/// The shared REFUSAL DISCRIMINATOR for adversarial tests — `must_refuse` (require a fail-closed
+/// `Err`), `must_refuse_or_unsat_panic` (accept the p3 debug prover's DOCUMENTED unsat panic, and
+/// only that), and `must_accept` (the honest pole, so a paired negative is not vacuous).
+///
+/// Public rather than `#[cfg(test)]` because `dregg-circuit-prove` depends on this crate normally
+/// and its `tests/` link it as an external rlib; see the module docs for why this is not a Cargo
+/// feature. The module has no accept path, so it arms nothing in a production build.
+pub mod refusal;
 
 // `shielded` moved to `dregg-circuit-prove`.
 

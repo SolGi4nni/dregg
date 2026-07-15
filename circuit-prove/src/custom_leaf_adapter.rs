@@ -979,8 +979,8 @@ fn lower_cellprogram(program: &CellProgram) -> Result<Lowered, String> {
 
 /// Prove a `CellProgram` transition as a RECURSION-FOLDABLE IR-v2 leaf.
 ///
-/// `witness_values` / `num_rows` are the `CellProgram` trace witness (the same the
-/// off-AIR `prove_custom_program` consumes); `public_inputs` are the sub-proof's
+/// `witness_values` / `num_rows` are the `CellProgram` trace witness (retained prover-side
+/// on [`crate::custom_proof_bind::BoundCustomProof`]); `public_inputs` are the sub-proof's
 /// public inputs, carried as the leaf's descriptor PIs (bound in-circuit) and
 /// committed by [`custom_proof_pi_commitment`]. `public_inputs.len()` MUST equal the
 /// program's `descriptor.public_input_count`.

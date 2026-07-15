@@ -847,12 +847,15 @@ impl WitnessedPredicateRegistry {
     }
 
     /// Construct a registry with stub verifiers for every built-in
-    /// kind. Each stub returns `Ok(())` only when the proof bytes are
-    /// not empty and have the kind's documented length-prefix shape;
-    /// otherwise returns `Rejected`. Stubs do NOT replace real
-    /// cryptographic verification — they exist so callers that want
-    /// to exercise the registry plumbing without pulling in the
+    /// kind. Each stub inspects the proof bytes for EMPTINESS and nothing else:
+    /// non-empty accepts, empty returns `Rejected`. It performs no shape check, no
+    /// length check, and no cryptography — a single arbitrary byte is accepted for
+    /// any kind. Stubs do NOT replace real cryptographic verification; they exist so
+    /// callers that want to exercise the registry plumbing without pulling in the
     /// circuit crate can do so.
+    ///
+    /// That accept path is compiled ONLY under `cfg(test)` or the `test-stubs` feature;
+    /// in any other build `StubVerifier::verify` rejects unconditionally.
     ///
     /// Production callers should register real verifiers from the
     /// `dregg-circuit` (or app-side) crates before evaluating any

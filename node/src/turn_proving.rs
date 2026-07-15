@@ -1,8 +1,17 @@
 //! Full-turn STARK proving on the node's finalized-turn commit path.
 //!
-//! This module makes the public claim — *every committed state transition is
-//! proven* — TRUE for the running node. When the devnet enables full-turn
-//! proving, [`crate::blocklace_sync::execute_finalized_turn`] calls
+//! This module carries the public claim — *every committed state transition is proven* —
+//! for the running node, with **one named exception stated here at the headline rather
+//! than 70 lines downstream**: a `NoteSpend` whose canonical nullifier set exceeds the
+//! non-revocation AIR's hardwired `TREE_DEPTH = 4` (i.e. more than 14 entries) is
+//! **committed with NO freshness-bound proof**. The circuit refuses to truncate the set
+//! (that would be unsound) and `canonical_revocation_root_for_set` returns
+//! `Err(RevocationCapacityExceeded)`; the turn still commits, logged loudly. So the
+//! freshness leg is a 14-nullifier toy until the depth-parameterized non-revocation AIR
+//! lands. See "Capacity bound (honest)" below for the full statement.
+//!
+//! When the devnet enables full-turn proving,
+//! [`crate::blocklace_sync::execute_finalized_turn`] calls
 //! [`prove_and_verify_finalized_turn`] for each finalized turn:
 //!
 //! 1. **Prove.** The turn's effects (projected onto the actor cell) are

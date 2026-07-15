@@ -121,8 +121,8 @@ pub fn mpt_holding_hash_felt(
 
 /// Build the MPT holding-commitment `CellProgram` (P0). Registered in the host
 /// [`dregg_circuit::dsl::circuit::ProgramRegistry`] under its `vk_hash`
-/// ([`MPT_HOLDING_VK_HASH_HEX`]); an unknown program fails closed
-/// (`custom_proof_bind::ProofBindError::UnknownProgram`).
+/// ([`MPT_HOLDING_VK_HASH_HEX`]); an unregistered `vk_hash` does not resolve
+/// (`ProgramRegistry::get` → `None`).
 pub fn mpt_holding_program() -> CellProgram {
     let p_minus_1 = BabyBear::new(BABYBEAR_P - 1);
 

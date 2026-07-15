@@ -2862,7 +2862,7 @@ impl AgentCipherclerk {
     /// commitment / conflict-set commitment (so `EncryptedTurn::verify_metadata`
     /// succeeds) and whose `submitter_auth` is a genuine Ed25519 signature by
     /// this cipherclerk's identity over those public inputs. That submitter
-    /// authentication is what `EncryptedTurn::verify_stark` checks at ingress —
+    /// authentication is what `EncryptedTurn::verify_admission_binding` checks at ingress —
     /// it lets a node reject an unauthenticated encrypted blob *before*
     /// decrypting, closing the fee-DoS seam. The full nonce/fee validity STARK
     /// (`proof_bytes`) remains a future phase (Phase-2 STARK-validity ceremony);
@@ -2907,7 +2907,7 @@ impl AgentCipherclerk {
         };
 
         // Phase-1 submitter authentication: sign the public-input digest with
-        // this cipherclerk's identity. The node's `verify_stark` checks this
+        // this cipherclerk's identity. The node's `verify_admission_binding` checks this
         // signature + the key→agent binding before decrypting, so only the agent
         // that controls this key can make the node spend decrypt/execute work.
         let submitter_auth = {

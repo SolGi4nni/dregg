@@ -9405,7 +9405,7 @@ mod privacy_wiring {
 
     /// Build an EncryptedTurn whose agent cell is `derive_raw(key, default)` and
     /// whose `submitter_auth` is a genuine Ed25519 signature over the validity
-    /// public inputs — the shape `verify_stark` accepts. Returns the envelope +
+    /// public inputs — the shape `verify_admission_binding` accepts. Returns the envelope +
     /// the agent CellId so the caller can fund the matching cell.
     fn build_authenticated_encrypted_turn(
         seed: u8,

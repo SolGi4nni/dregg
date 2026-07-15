@@ -3,13 +3,19 @@
 //! An `EncryptedTurn` bundles:
 //! - The encrypted turn body (ChaCha20-Poly1305)
 //! - A commitment to the plaintext turn (BLAKE3 hash)
-//! - A conflict set (Bloom filter over accessed cells)
-//! - A validity proof (STARK proving nonce + fee sufficiency without revealing content)
+//! - A conflict set (Bloom filter over accessed cells) — **submitter-declared and
+//!   unverified**; see the named seam on [`EncryptedTurn::verify_admission_binding`]
+//! - A [`TurnValidityProof`] which, at HEAD, carries submitter AUTHENTICATION and an
+//!   EMPTY `proof_bytes` — there is no validity STARK in the tree
 //!
-//! The federation can order encrypted turns by:
-//! 1. Verifying the validity proof (agent can pay, nonce is fresh)
-//! 2. Detecting conflicts via Bloom filter overlap
-//! 3. Serializing conflicting turns, parallelizing non-conflicting ones
+//! The federation orders encrypted turns by:
+//! 1. Checking admission ([`EncryptedTurn::verify_admission_binding`]): an Ed25519
+//!    signature by the key controlling the claimed `agent`. **It does NOT check that the
+//!    agent can pay or that the nonce is fresh** — those are the standard executor gates
+//!    downstream, after decryption. Proving them in zero knowledge is the Phase-2 STARK,
+//!    which is named, not built.
+//! 2. Detecting conflicts via Bloom filter overlap — on the filter the SUBMITTER declared.
+//! 3. Serializing conflicting turns, parallelizing non-conflicting ones.
 //!
 //! After ordering is finalized, the turn is revealed (either by the agent publishing
 //! the decryption key, or via threshold decryption by the validator set).
@@ -76,24 +82,33 @@ pub struct EncryptedTurn {
     /// Used for conflict detection without revealing specific cell IDs.
     pub conflict_set: ConflictSet,
 
-    /// STARK proof that this encrypted turn is valid.
-    /// Proves: nonce correctness + fee sufficiency (Phase 1).
-    /// Future: + conservation + authorization.
+    /// The validity carrier. At HEAD this is submitter AUTHENTICATION with empty
+    /// `proof_bytes` — it proves neither nonce correctness nor fee sufficiency. See
+    /// [`TurnValidityProof`] for exactly what is and is not enforced.
     pub validity_proof: TurnValidityProof,
 
     /// Submission timestamp (for ordering within conflict buckets).
     pub submitted_at: i64,
 }
 
-/// A STARK proof that an encrypted turn is valid without revealing its content.
+/// The validity carrier for an encrypted turn. **Despite the name, no STARK is carried or
+/// verified at HEAD**: `proof_bytes` is empty and the only enforced leg is
+/// [`SubmitterAuth`].
 ///
-/// Phase 1 proves:
-/// - The prover knows a Turn T such that BLAKE3(T) = turn_commitment
-/// - T.agent = claimed agent (binding)
-/// - T.nonce = current nonce for agent cell (replay protection)
-/// - agent_cell.balance >= T.fee (fee sufficiency)
+/// What is ACTUALLY enforced today ([`EncryptedTurn::verify_admission_binding`]):
+/// - an Ed25519 signature over [`TurnValidityPublicInputs::signing_message`], by a key
+///   whose `derive_raw` equals the claimed agent cell (so only the controlling agent can
+///   make a node spend decrypt/execute work, bound to this exact envelope).
 ///
-/// Future phases will add conservation and authorization proofs.
+/// What the Phase-2 STARK is NAMED to prove — and does not, because no prover exists:
+/// - knowledge of a Turn T with `BLAKE3(T) = turn_commitment`;
+/// - `T.nonce` = the agent cell's current nonce (replay protection);
+/// - `agent_cell.balance >= T.fee` (fee sufficiency);
+/// - and the conflict set matching the cells T touches (see the seam on
+///   `verify_admission_binding`).
+///
+/// Until then those are ordinary executor gates applied AFTER decryption, not
+/// zero-knowledge guarantees held at ordering time.
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct TurnValidityProof {
     /// The STARK proof bytes (serialized StarkProof from dregg-circuit).
@@ -121,7 +136,7 @@ pub struct TurnValidityProof {
     /// blobs can be rejected at ingress *before* the node decrypts/executes.
     ///
     /// `None` = no submitter authentication (the Phase-0 placeholder); rejected
-    /// fail-closed by [`EncryptedTurn::verify_stark`].
+    /// fail-closed by [`EncryptedTurn::verify_admission_binding`].
     #[serde(default)]
     pub submitter_auth: Option<SubmitterAuth>,
 }
@@ -130,7 +145,7 @@ pub struct TurnValidityProof {
 /// by the key controlling the agent cell over the validity proof's public
 /// inputs.
 ///
-/// This is the carrier `verify_stark` checks today. It binds the (otherwise
+/// This is the carrier `verify_admission_binding` checks today. It binds the (otherwise
 /// unauthenticated) encrypted envelope to a key the node can map to the
 /// `agent` cell, so only that agent can make the node spend decrypt/execute
 /// work — closing the fee-DoS without yet building the full validity STARK.
@@ -370,9 +385,13 @@ impl EncryptedTurn {
         *blake3::hash(b"default").as_bytes()
     }
 
-    /// Verify the carried *validity* proof — that this encrypted turn is
-    /// authorized by the agent it claims to charge — the part `verify_metadata`
-    /// deliberately skips. FAIL-CLOSED.
+    /// Verify that this encrypted turn is ADMISSIBLE — that it is authenticated by the
+    /// agent it claims to charge — the part `verify_metadata` deliberately skips.
+    /// FAIL-CLOSED against an unauthenticated envelope.
+    ///
+    /// **This verifies no STARK.** It was named `verify_stark` until 2026-07-15, which was
+    /// simply false: the body checks an Ed25519 signature and an agent binding. The
+    /// validity STARK is the Phase-2 remainder below, and no prover for it exists.
     ///
     /// # The fee-DoS this closes
     ///
@@ -403,10 +422,29 @@ impl EncryptedTurn {
     /// the tree yet, so a non-empty `proof_bytes` is conservatively rejected as
     /// unverifiable rather than admitted.
     ///
+    /// # ⚠ NAMED SEAM: `conflict_set` is submitter-declared and UNVERIFIED (2026-07-15)
+    ///
+    /// This method does not — and no code in the tree does — check that the envelope's
+    /// [`Self::conflict_set`] reflects the cells the encrypted turn actually touches. The
+    /// contents are encrypted, so nothing can check it pre-decrypt today.
+    /// `verify_metadata` binds the filter to `conflict_set_commitment`, but BOTH are
+    /// submitter-chosen: that is self-consistency, not honesty.
+    ///
+    /// The consequence, stated plainly because it was previously unnamed:
+    /// [`order_encrypted_turns`] buckets on [`Self::may_conflict_with`], which reads only
+    /// these declared Bloom filters. A submitter who declares an EMPTY filter is bucketed
+    /// as parallel-safe against turns it really conflicts with; one who declares a FULL
+    /// filter serializes the whole batch. So ordering TRUSTS the submitter's conflict
+    /// declaration. `ConflictSet`'s false-positive-only guarantee holds for an HONEST
+    /// filter and says nothing about an adversarial one.
+    ///
+    /// Closing it needs the conflict set proven against the encrypted contents — the same
+    /// Phase-2 validity STARK named above (it is the natural statement to add).
+    ///
     /// Kept SEPARATE from `verify_metadata` (whose "does not verify the proof"
     /// contract existing decrypt round-trips depend on); invoked on the
     /// admission path when `TurnExecutor::require_validity_proof` is set.
-    pub fn verify_stark(&self) -> Result<(), EncryptedTurnError> {
+    pub fn verify_admission_binding(&self) -> Result<(), EncryptedTurnError> {
         // Phase-2 remainder: a real validity STARK is not yet wired. If a
         // (non-empty) proof shows up, reject rather than admit unverified.
         if !self.validity_proof.proof_bytes.is_empty() {
@@ -604,7 +642,7 @@ mod tests {
                     min_fee: 100,
                     conflict_set_commitment,
                 },
-                submitter_auth: None, // dummy: unauthenticated (verify_stark rejects)
+                submitter_auth: None, // dummy: unauthenticated (verify_admission_binding rejects)
             },
             submitted_at: 0,
         }
@@ -700,71 +738,71 @@ mod tests {
     }
 
     #[test]
-    fn verify_stark_rejects_unauthenticated_turn() {
+    fn admission_binding_rejects_unauthenticated_turn() {
         // The fee-DoS tooth: an envelope with no validity proof AND no submitter
         // authentication (the Phase-0 placeholder) MUST be rejected via
         // InvalidValidityProof — a stranger's blob cannot make the node decrypt.
         let et = dummy_encrypted_turn(1, &[10, 20, 30]);
         assert!(et.validity_proof.proof_bytes.is_empty());
         assert!(et.validity_proof.submitter_auth.is_none());
-        match et.verify_stark() {
+        match et.verify_admission_binding() {
             Err(EncryptedTurnError::InvalidValidityProof(_)) => {}
             other => panic!("expected InvalidValidityProof, got {other:?}"),
         }
     }
 
     #[test]
-    fn verify_stark_accepts_authenticated_turn() {
+    fn admission_binding_accepts_authenticated_turn() {
         // A genuine encrypted turn — signed by the key that controls the agent
         // cell — passes the gate (so real traffic is not broken by the DoS fix).
         let (et, _sk) = authenticated_encrypted_turn(7);
         assert_eq!(et.verify_metadata(), Ok(()));
-        assert_eq!(et.verify_stark(), Ok(()));
+        assert_eq!(et.verify_admission_binding(), Ok(()));
     }
 
     #[test]
-    fn verify_stark_rejects_forged_agent_binding() {
+    fn admission_binding_rejects_forged_agent_binding() {
         // A valid signature whose key does NOT control the claimed agent is
         // rejected: an attacker cannot sign for a victim's agent cell.
         let (mut et, _sk) = authenticated_encrypted_turn(7);
         et.agent = make_cell_id(99); // claim a different agent than the key controls
         // (verify_metadata would now also fail, but the STARK gate must reject on
         //  the key→agent binding regardless.)
-        match et.verify_stark() {
+        match et.verify_admission_binding() {
             Err(EncryptedTurnError::InvalidValidityProof(_)) => {}
             other => panic!("expected InvalidValidityProof, got {other:?}"),
         }
     }
 
     #[test]
-    fn verify_stark_rejects_tampered_signature() {
+    fn admission_binding_rejects_tampered_signature() {
         // Flipping a public input after signing breaks the signature → rejected.
         let (mut et, _sk) = authenticated_encrypted_turn(7);
         et.validity_proof.public_inputs.claimed_nonce ^= 1; // signed-over field changed
-        match et.verify_stark() {
+        match et.verify_admission_binding() {
             Err(EncryptedTurnError::InvalidValidityProof(_)) => {}
             other => panic!("expected InvalidValidityProof, got {other:?}"),
         }
     }
 
     #[test]
-    fn verify_stark_is_separate_from_metadata() {
+    fn admission_binding_is_separate_from_metadata() {
         // The gate must NOT be folded into verify_metadata: an unauthenticated
         // envelope still passes metadata (existing decrypt round-trips depend on
         // this contract) but fails the explicit validity gate. This keeps the
         // closure additive.
         let et = dummy_encrypted_turn(1, &[10, 20, 30]);
         assert_eq!(et.verify_metadata(), Ok(()));
-        assert!(et.verify_stark().is_err());
+        assert!(et.verify_admission_binding().is_err());
     }
 
     #[test]
-    fn verify_stark_rejects_unverifiable_nonempty_proof() {
+    fn admission_binding_rejects_unverifiable_nonempty_proof() {
         // A non-empty STARK proof with no verifier wired is conservatively
         // rejected (never admitted unverified) — Phase-2 remainder.
         let (mut et, _sk) = authenticated_encrypted_turn(7);
         et.validity_proof.proof_bytes = vec![0xDE, 0xAD, 0xBE, 0xEF];
-        match et.verify_stark() {
+        match et.verify_admission_binding() {
             Err(EncryptedTurnError::InvalidValidityProof(_)) => {}
             other => panic!("expected InvalidValidityProof, got {other:?}"),
         }

@@ -234,8 +234,8 @@ impl TurnExecutor {
     /// refused fail-closed; a turn with no custom proofs still passes.
     ///
     /// **DoS cap (FINDING 1, `docs/deos/AIR-COMPOSITION-AND-PROOF-COUNT-AUDIT.md`).**
-    /// Each entry of `turn.custom_program_proofs` is a full recursive STARK verify
-    /// (`custom_proof_bind::verify_proof_bind`). The wire vec is attacker-chosen, so
+    /// Each entry of `turn.custom_program_proofs` costs a full registry-dispatched STARK
+    /// verify ([`Self::custom_effect_registry`]'s `verify`). The wire vec is attacker-chosen, so
     /// BEFORE running any verify we reject the turn if its length exceeds the cell's
     /// declared `max_custom_effects` (via [`Self::read_cell_max_custom_effects`],
     /// itself hard-capped at [`MAX_CUSTOM_EFFECTS_HARD_CAP`] = 64). This bounds

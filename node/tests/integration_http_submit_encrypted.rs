@@ -20,9 +20,9 @@ use zeroize::Zeroizing;
 const TURN_UNSEALER_DOMAIN: &str = "dregg-turn-unsealer-v1";
 
 // ---------------------------------------------------------------------------
-// F-DOS-PRIV: the live ingress validity gate (verify_stark before decrypt).
+// F-DOS-PRIV: the live ingress validity gate (verify_admission_binding before decrypt).
 //
-// `POST /turns/submit-encrypted` now calls `encrypted.verify_stark()` BEFORE
+// `POST /turns/submit-encrypted` now calls `encrypted.verify_admission_binding()` BEFORE
 // doing any X25519-decrypt / execute work. These tests assert the gate's two
 // load-bearing behaviors at the envelope level (the exact check the handler
 // runs at ingress):
@@ -33,7 +33,7 @@ const TURN_UNSEALER_DOMAIN: &str = "dregg-turn-unsealer-v1";
 // ---------------------------------------------------------------------------
 
 /// A stranger's unauthenticated encrypted blob is rejected by the ingress gate
-/// (`verify_stark`) before the node decrypts — the fee-DoS is closed.
+/// (`verify_admission_binding`) before the node decrypts — the fee-DoS is closed.
 #[test]
 fn unauthenticated_encrypted_turn_rejected_at_ingress() {
     use dregg_turn::{ConflictSet, EncryptedTurn, TurnValidityProof, TurnValidityPublicInputs};
@@ -75,7 +75,7 @@ fn unauthenticated_encrypted_turn_rejected_at_ingress() {
 
     // The ingress gate (the exact pre-decrypt check the handler runs).
     assert!(
-        encrypted.verify_stark().is_err(),
+        encrypted.verify_admission_binding().is_err(),
         "an unauthenticated encrypted turn must be rejected at ingress (fee-DoS)"
     );
 }
@@ -92,7 +92,7 @@ fn authenticated_encrypted_turn_passes_ingress() {
     };
 
     let sender_cclerk = make_cclerk("ingress-pass-sender");
-    // The agent is the sender's default cell — the binding `verify_stark` checks.
+    // The agent is the sender's default cell — the binding `verify_admission_binding` checks.
     let agent = sender_cclerk.cell_id("default");
     let turn = valid_turn(agent, 0);
     let encrypted = sender_cclerk
@@ -100,7 +100,7 @@ fn authenticated_encrypted_turn_passes_ingress() {
         .expect("make_encrypted_turn must succeed");
 
     assert!(
-        encrypted.verify_stark().is_ok(),
+        encrypted.verify_admission_binding().is_ok(),
         "a genuine SDK-built encrypted turn must pass the ingress validity gate"
     );
 }

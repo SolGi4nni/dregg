@@ -411,8 +411,8 @@ mod structural {
     }
 
     /// `ProgramRegistry` registration round-trip: the program validates, deploys
-    /// under its vk_hash, and resolves back — the fail-closed lookup surface
-    /// (`ProofBindError::UnknownProgram`) has a genuine registered target.
+    /// under its vk_hash, and resolves back — the host lookup surface has a genuine
+    /// registered target (an unregistered `vk_hash` resolves to `None`).
     #[test]
     fn program_registers_and_resolves() {
         let program = mpt_holding_program();
