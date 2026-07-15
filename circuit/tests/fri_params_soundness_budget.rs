@@ -51,12 +51,35 @@
 //! **Therefore this file does NOT invent a numeric bound for them.** It pins them by EQUALITY to
 //! the modeled config, which is the honest and derivable gate — see below.
 //!
-//! ⚠ **NAMED RESIDUAL (model-vs-deployment, not closed here).** The Lean per-fold model folds
-//! **2-to-1** (`Fin (2^7) → Fin (2^6)`, `Fold geom α f = E f + α·O f`), while the deployed config
-//! folds with arity up to **8** (`max_log_arity = 3`). The transfer of the ~112.6 per-fold bound to
-//! arity-8 folding is NOT mechanized in-tree. (The gnark ETH-wrap verifier runs arity-2 —
-//! `circuit-prove/tests/apex_shrink_blowup_sweep.rs:186`.) The `ModelDrift` pin below exists exactly
-//! so that moving arity cannot happen silently while this residual is open.
+//! ⚑ **RESIDUAL RESOLVED (2026-07-15) — and the answer LOWERS the deployed posture to ~109.84.**
+//! The residual read: the Lean per-fold model folds **2-to-1** (`Fin (2^7) → Fin (2^6)`,
+//! `Fold geom α f = E f + α·O f`) while the deployed config folds at arity **8**
+//! (`max_log_arity = 3`), and the transfer was NOT mechanized. It is now derived and mechanized in
+//! `metatheory/Dregg2/Circuit/FriArityTransfer.lean` (Lake-green, `sorry`-free, in the `Dregg2`
+//! build target). The finding, reported unmassaged:
+//!
+//!   * The deployed fold really IS arity-8 and really IS a degree-7 **moment curve**: the pinned
+//!     plonky3 rev (`82cfad73`, `fri/src/two_adic_pcs.rs:109-131`) computes
+//!     `lagrange_interpolate_at(xs, evals, beta)` ⇒ `Fold_β f (y) = Σ_{i<8} β^i · g_i(y)`. §8's
+//!     `2×2` Vandermonde (which pins PAIRWISE intersections to `≤ 1`, and is the whole engine of the
+//!     `C(64,2)` count) does NOT survive: two challenges give only 2 equations in 8 unknowns.
+//!   * The arity-generic count (`good_card_le_of_phase_injective`) replaces it: for `y ≠ z`,
+//!     `H y − H z` is a nonzero degree-`≤ m−1` polynomial whose roots are exactly the good
+//!     challenges folding both fibres to the same constant, so each PAIR lies in `≤ m−1` agreement
+//!     sets ⇒ `|Good| · C(s,2) ≤ (m−1) · C(|κ|,2)`. It **recovers §8's `2016` EXACTLY at `m = 2`**
+//!     (`arity2_recovers_capacity_count`) — the check that it is the right generalization.
+//!   * At the deployed `m = 8`: `|Good| ≤ 7 · C(64,2) = 14112`, so the per-fold error is
+//!     `14112 / babyBearP⁴ < 2⁻¹⁰⁹` — **~109.84 proven bits, `log₂ 7 ≈ 2.807` BELOW the ~112.6**,
+//!     and ~112.6 provably does NOT hold at arity 8 by this method (`arity8_error_not_lt_2e112`).
+//!
+//! So `max_log_arity` **IS** a security lever (contra the older "not a security lever" note, now
+//! corrected in `docs/reference/FRI-PARAM-FRONTIER.md` §1a) — worth `2.807` bits, the price of the
+//! measured +9% proof-size saving arity-8 buys. (The gnark ETH-wrap verifier runs arity-2 —
+//! `circuit-prove/tests/apex_shrink_blowup_sweep.rs:186` — so ~112.6 is the right figure THERE.)
+//! NAMED OBLIGATION (open): the `M = 1` fiber bound is carried as the HYPOTHESIS `hΦ`
+//! (`Arity8FiberBound`); discharging it needs the `|L| = 512`, dim-`8`, rate-`1/64` arity-8 setup
+//! the metatheory does not build. The `ModelDrift` pin below still exists so that moving arity
+//! cannot happen silently — it now pins a knob with a KNOWN bit price.
 //!
 //! ## What this gate is (and is NOT)
 //!

@@ -14,9 +14,19 @@ knob-drift *engineering* ledger, **not** an approachable security target. The **
 what we stand behind: the general Johnson (`√ρ`) bound gives `73` bits at the deployed config, and —
 for the deployed **dim-2 constant-fold recursion code specifically** — the field-independent counting
 bound proves **~112.6 bits** (`wrap_perFold_soundness_capacity`,
-`metatheory/Dregg2/Circuit/FriCorrelatedAgreementSharp.lean` §8, `03a6ee758`). **~112.6 is the
-STANDING, ACCEPTED proven posture** (ember, 2026-07-13): a strong, honest, structure-specific
-theorem — no query/PoW bump and no config change are planned.
+`metatheory/Dregg2/Circuit/FriCorrelatedAgreementSharp.lean` §8, `03a6ee758`).
+
+**⚑ CORRECTED (2026-07-15) — the ~112.6 is proved at an arity the deployed prover does NOT run.**
+§8's model folds **2-to-1**; the deployed config folds at **arity 8** (`max_log_arity=3`). The
+transfer was never mechanized. It is now derived and mechanized
+(`metatheory/Dregg2/Circuit/FriArityTransfer.lean`, Lake-green, `sorry`-free): the same counting
+method at the deployed arity 8 proves **~109.84 bits** (`14112 = 7·2016` good challenges over
+`|F| ≈ 2^123.6`), exactly `log₂ 7 ≈ 2.807` bits below ~112.6, and **~112.6 provably does not hold
+at arity 8** by this method (`arity8_error_not_lt_2e112`). The loss is the degree-7 moment curve
+(§1a). **The standing per-fold posture at the DEPLOYED config is ~109.84 proven bits**, not ~112.6;
+~112.6 remains correct as a statement about arity-2 folding (which only the gnark ETH-wrap runs).
+Both figures sit far above the general Johnson floor (`73`). No query/PoW bump and no config change
+are planned; re-pointing the posture number is ember's call.
 
 Deployed IR-v2 config (`circuit/src/descriptor_ir2.rs:5382-5386`): `log_blowup=6`,
 `log_final_poly_len=0`, `max_log_arity=3` (arity 8), `num_queries=19`, `query_pow_bits=16`.
@@ -54,10 +64,30 @@ proven   (Johnson)      = num_queries · log_blowup / 2   + pow_bits     (intege
   extension `2^124` (`circuit/src/plonky3_prover.rs:63`, `type EF = BinomialExtensionField<BabyBear,4>`;
   comment `:113`) — and by the Poseidon2 commitment hash. The ~112.6 proven figure already lives
   under this cap (`123.6 − 11 = 112.6`).
-- **`max_log_arity` and `log_final_poly_len` do NOT enter the soundness formula.** Arity is the
-  FRI folding factor; `arity=8` (`max_log_arity=3`) is already measured-optimal (dropping to
-  arity 2 costs **+9%** size — PROOF-ECONOMICS §1). `log_final_poly_len` is an early-stop knob
-  (~-3% at 2⁴, marginal). Neither is a security lever; leave both pinned.
+- **⚑ CORRECTED (2026-07-15): `max_log_arity` IS a security lever — it costs `log₂ 7 ≈ 2.807`
+  bits.** This bullet previously read "`max_log_arity` and `log_final_poly_len` do NOT enter the
+  soundness formula … Neither is a security lever". That is **REFUTED** for `max_log_arity` by
+  `metatheory/Dregg2/Circuit/FriArityTransfer.lean` (Lake-green, `sorry`-free). The ~112.6 figure
+  is proved over a **2-to-1** fold (`FriCorrelatedAgreementSharp` §8,
+  `Fold geom α f = E f + α·O f`, `Fin (2^7) → Fin (2^6)`), but the deployed prover folds at
+  **arity 8**: the pinned plonky3 rev (`82cfad73`, `fri/src/two_adic_pcs.rs:109-131`) computes
+  `lagrange_interpolate_at(xs, evals, beta)`, i.e. `Fold_β f (y) = Σ_{i<8} β^i · g_i(y)` — a
+  degree-**7 moment curve**, not an affine line. §8's count rests on a `2×2` Vandermonde pinning
+  PAIRWISE intersections to `≤ 1`; at arity 8 two challenges give only 2 equations in 8 unknowns,
+  so that step does not survive. The arity-generic count
+  (`good_card_le_of_phase_injective`: each pair `{y,z}` lies in `≤ m−1` agreement sets, since
+  `H y − H z` is a nonzero degree-`≤ m−1` polynomial whose roots are exactly the good challenges
+  folding both to the same constant) gives `|Good| · C(s,2) ≤ (m−1) · C(|κ|,2)`. It **recovers
+  §8's `2016` exactly at `m = 2`** — and at the deployed `m = 8` gives `7 · 2016 = 14112`, i.e.
+  **~109.84 proven bits** (`arity8_perFold_soundness`, `< 2⁻¹⁰⁹`), NOT ~112.6
+  (`arity8_error_not_lt_2e112`). **The deployed per-fold posture is ~109.84 bits.** The ~112.6 is
+  recovered at arity 8 only for the weaker inner radius `dIn ≤ 60` (`arity8_at_dIn60_clears_112`).
+  Residual: the `M = 1` fiber bound is carried as the HYPOTHESIS `hΦ` (`Arity8FiberBound`) —
+  discharging it needs the `|L| = 512`, dim-`8`, rate-`1/64` setup this tree does not build.
+- **`log_final_poly_len` does NOT enter the soundness formula** and remains inert (an early-stop
+  knob, ~-3% at 2⁴, marginal). Arity `8` remains measured-optimal on COST (dropping to arity 2
+  costs **+9%** size — PROOF-ECONOMICS §1) — that trade is now priced at `2.807` bits, and moving
+  it is ember's call, not this map's.
 
 Deployed reads: capacity (refuted) `6·19+16 = 130`, proven-Johnson `6·19//2+16 = 73`,
 **proven ~112.6** for the recursion fold. Effective field cap `~124`.

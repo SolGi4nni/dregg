@@ -741,6 +741,7 @@ import Dregg2.Circuit.BabyBearFriField
 import Dregg2.Circuit.BabyBearFriSetup
 import Dregg2.Circuit.BabyBearFriDeployed
 import Dregg2.Circuit.FriFoldArity
+import Dregg2.Circuit.FriArityTransfer   -- THE ARITY-8 PROXIMITY-GAP COUNT: the standing ~112.6-bit per-fold posture (FriCorrelatedAgreementSharp §8, wrap_perFold_soundness_capacity) is proved over a 2-to-1 fold; the DEPLOYED config folds at ARITY 8 (IR2_FRI_MAX_LOG_ARITY = 3). good_card_le_of_phase_injective generalizes §8's pair count to arity m by a PAIR double-count: for y ≠ z, H y − H z is a nonzero degree-≤(m−1) polynomial and every good β folding both to the same constant is a ROOT, so each pair lies in ≤ m−1 agreement sets ⟹ |Good|·C(s,2) ≤ (m−1)·C(|κ|,2). Recovers §8's 2016 EXACTLY at m=2 (arity2_recovers_capacity_count). ⚑ THE HONEST FINDING: at the deployed m=8 the count is 7·2016 = 14112, giving ~109.84 proven bits (arity8_perFold_soundness, < 2⁻¹⁰⁹) — log₂7 ≈ 2.807 bits BELOW the ~112.6, which does NOT hold at the deployed arity (arity8_error_not_lt_2e112, a both-truth tooth). Complements FriFoldArity (the unique-decoding n²·d reconstruction, whose |Good| < n count needs the degenerate d = 0 radius). NAMED OBLIGATION: the M=1 fiber bound is the HYPOTHESIS hΦ (Arity8FiberBound) — discharging it needs the |L|=512 dim-8 rate-1/64 setup this tree does not build; #assert_axioms is blind to hypotheses.
 import Dregg2.Circuit.FriProximityBridge
 import Dregg2.Circuit.FriBridgeDeployedArity
 import Dregg2.Circuit.FriQuerySoundness
