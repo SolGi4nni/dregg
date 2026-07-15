@@ -1,0 +1,58 @@
+# dregg-gateway-ask — the public gateway's on-demand-TLS `ask` + capability
+# forward-auth sidecar, plus the launchpad microsite composer.
+#
+# ── WORKSPACE MEMBERSHIP ──────────────────────────────────────────────────────
+# This crate carries its OWN `[workspace]` so it builds + tests standalone
+# (`cd deploy/gateway-ask && cargo build`) — DISJOINT from the shared root
+# manifest (swarm-safe: no edit to a file other agents are mid-flight on). It
+# path-depends (transitively, through starbridge-domains → app-framework →
+# dregg-sdk) on the ark-serialize fork, so the standalone workspace MUST mirror
+# the root's `[patch.crates-io]` ark redirect below — a workspace's `[patch]`
+# governs the build it roots, and `workspace = true` dep VALUES still resolve
+# against each crate's home (root) workspace, so only the patch needs mirroring.
+#
+# The main loop MAY instead promote this into the root `members` list (removing
+# this `[workspace]` + `[patch]`) so the ark patch is inherited rather than
+# mirrored — cleaner once the tree is quiet, but a root-manifest edit. Flagged
+# touched_root_manifest so the main loop makes that call. Either builds.
+[workspace]
+
+# Mirror of the root `[patch.crates-io]` ark-serialize fork (emberian/algebra):
+# the `serde_with` feature the transitive `dregg-hints`/`dregg-sdk` graph needs
+# is only on the fork, not crates.io 0.5.0. Kept in lockstep with the root patch.
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+[package]
+name = "dregg-gateway-ask"
+version = "0.1.0"
+edition = "2024"
+description = "The public gateway's on-demand-TLS `ask` endpoint (backed by the verified custom-domain registry's is_verified read) + the capability forward-auth gate (offline dregg-auth credential verification) + the launchpad microsite composer (a launch gets a content-addressed landing page, IPFS-backed token metadata). Replaces per-surface hardcoded Caddy site blocks with one wildcard-plus-ask block."
+
+[[bin]]
+name = "gateway-ask"
+path = "src/main.rs"
+
+[lib]
+name = "dregg_gateway_ask"
+path = "src/lib.rs"
+
+[dependencies]
+# The portable std-net HTTP/1.1 serve core (ServeRequest / WebResponse / serve_http).
+http-serve = { path = "../../http-serve" }
+# The verified custom-domain registry — `is_verified(host)` is the on-demand-TLS
+# `ask` oracle; `site_for_host` is the routing read; `adopt` seeds a verified
+# microsite binding for a launch.
+starbridge-domains = { path = "../../starbridge-apps/domains" }
+# Offline capability verification for the forward-auth gate: `verify_offline`
+# checks an operator's printable token against the issuer public key with no
+# network, returning the confined subject.
+dregg-auth = { path = "../../dregg-auth" }
+# Content-addressing for launch token metadata + images: pin bytes, commit the CID.
+dregg-ipfs = { path = "../../dregg-ipfs" }
+
+serde = { version = "1", features = ["derive"] }
+
+[dev-dependencies]
+# A local TCP round-trip in the integration test uses only std.

@@ -1,0 +1,141 @@
+# ==============================================================================
+# The gateway's ONE on-demand-TLS + capability-auth Caddy config.
+# ==============================================================================
+#
+# This REPLACES the per-surface hardcoded site blocks (deploy/aws/caddy/Caddyfile,
+# deploy/games/caddy/Caddyfile.games, deploy/launchpad/caddy/Caddyfile.launchpad),
+# where every hosted face was its own block with a hardcoded domain + upstream.
+# Here a single wildcard block serves every VERIFIED custom domain, and Caddy
+# mints its certificate on demand — gated by an `ask` to the `gateway-ask`
+# sidecar, which answers from the verified custom-domain registry
+# (`starbridge-domains::DomainRegistry::is_verified`). A new site going live is a
+# registry write (a `verify` turn / a launch), NOT a Caddyfile patch + reload.
+#
+# ── PARAMETERIZATION (no hardcoded apex/domain) ───────────────────────────────
+#   {$HOSTING_APEX}         the deployment's hosting apex (e.g. example.host).
+#                           The wildcard face is *.{$HOSTING_APEX}; the operator
+#                           faces are ops.{$HOSTING_APEX} etc. Set it in caddy's
+#                           environment; there is NO baked-in domain here.
+#   {$GATEWAY_ASK_UPSTREAM} the gateway-ask sidecar (default 127.0.0.1:8799).
+#   {$SITE_UPSTREAM}        the app that serves the hosted sites (over the private
+#                           network / tailnet; default 127.0.0.1:8790).
+#   {$ACME_EMAIL}           the Let's Encrypt account contact.
+#
+# ── THE SIDECAR CONTRACT ──────────────────────────────────────────────────────
+#   on_demand_tls ask  →  GET {$GATEWAY_ASK_UPSTREAM}/internal/site-exists?domain=<sni>
+#                         200 = verified site, mint a cert;  4xx = refuse.
+#   forward_auth       →  GET {$GATEWAY_ASK_UPSTREAM}/auth?cap=<name>
+#                         2xx = admit;  401 = sign in;  403 = denied;  503 = gate
+#                         fail-closed (no issuer key). See gateway-ask/README.md.
+
+{
+	email {$ACME_EMAIL}
+	# Clients that dial by raw IP send no SNI; present the internal cert so an
+	# https://<ip>/ handshake still completes before the real certs land.
+	default_sni localhost
+	# ON-DEMAND TLS — the single gate that lets one wildcard block replace every
+	# hardcoded per-surface block. Caddy asks the sidecar, per inbound SNI,
+	# whether it is a site we are AUTHORIZED to serve (a verified binding). Only
+	# then does it request a Let's Encrypt certificate. Fail-closed: an unknown /
+	# pending / forged name gets a 4xx and NO cert (no unbounded issuance).
+	on_demand_tls {
+		ask http://{$GATEWAY_ASK_UPSTREAM:127.0.0.1:8799}/internal/site-exists
+	}
+}
+
+# The capability login flow — PUBLIC (no auth) so a denied operator CAN sign in
+# with their capability. Imported into every gated face. Caddy strips the
+# `/.dregg-auth` prefix so the auth service serves /login, /logout, /healthz.
+(cap_login) {
+	handle_path /.dregg-auth/* {
+		reverse_proxy {$GATEWAY_ASK_UPSTREAM:127.0.0.1:8799}
+	}
+}
+
+# NO-FORGE: delete every client-supplied identity header BEFORE the forward_auth
+# subrequest, so the upstream ever only sees values the sidecar sets on a verified
+# 200 — never a client forgery. Import inside EVERY gated `handle`, ahead of
+# forward_auth. (The second half of the discipline: the gated upstreams are
+# reachable only from Caddy on the private network, never host-published.)
+(strip_forged_identity) {
+	request_header -X-Dregg-Subject
+	request_header -X-Dregg-Cap
+	request_header -X-Dregg-Auth
+}
+
+# CORS ownership: Caddy is the single owner of the Access-Control-* headers. Strip
+# any upstream copy so the browser never sees a duplicate Allow-Origin.
+(strip_upstream_cors) {
+	header_down -Access-Control-Allow-Origin
+	header_down -Access-Control-Allow-Methods
+	header_down -Access-Control-Allow-Headers
+}
+
+# ── THE PUBLIC WILDCARD FACE — every verified custom domain + microsite ────────
+# One block for ALL hosted sites. `tls { on_demand }` defers certificate issuance
+# to the `ask` above, so this single block serves blog.example.com, a launch's
+# <slug>.{$HOSTING_APEX} landing, and any other verified binding — with no
+# per-site config. The site app resolves the inbound Host to its content.
+*.{$HOSTING_APEX}, {$EXTRA_WILDCARD:*.example.invalid} {
+	tls {
+		on_demand
+	}
+	encode gzip
+	request_body {
+		max_size 4MB
+	}
+	handle {
+		reverse_proxy {$SITE_UPSTREAM:127.0.0.1:8790} {
+			import strip_upstream_cors
+		}
+	}
+	header X-Content-Type-Options "nosniff"
+	header X-Frame-Options "SAMEORIGIN"
+	header Content-Security-Policy "frame-ancestors 'self'"
+	header Referrer-Policy "strict-origin-when-cross-origin"
+	log {
+		output stderr
+		format console
+	}
+}
+
+# ── THE OPERATOR FACE — CAP-GATED (ops-admin) ─────────────────────────────────
+# The idiom for any gated surface: import the login flow (public), strip forged
+# identity, forward_auth to the sidecar for a named capability, then proxy. Copy
+# the pattern per gated face (grafana → grafana-view, a control API → gateway-admin).
+ops.{$HOSTING_APEX} {
+	import cap_login
+	handle {
+		import strip_forged_identity
+		forward_auth {$GATEWAY_ASK_UPSTREAM:127.0.0.1:8799} {
+			uri /auth?cap=ops-admin
+			# copy_headers passes the sidecar's VERIFIED identity upstream. With
+			# the base serve writer the sidecar enforces admit/deny by STATUS and
+			# does not yet emit these as HTTP headers (gateway-ask/README.md,
+			# "Identity pass-through" — a labeled follow-up); the gate is fully
+			# functional without them.
+			copy_headers X-Dregg-Subject X-Dregg-Cap
+		}
+		reverse_proxy {$OPS_UPSTREAM:127.0.0.1:8090} {
+			import strip_upstream_cors
+		}
+	}
+}
+
+# ── RAW-IP / PRE-DNS FALLBACK — CAP-GATED (gateway-admin) ─────────────────────
+# Reachable by IP before public DNS/certs land (Caddy internal CA; test with
+# `curl -k`). By raw IP no Host-based cap resolves, so the explicit ?cap= governs.
+:443 {
+	tls internal
+	import cap_login
+	handle {
+		import strip_forged_identity
+		forward_auth {$GATEWAY_ASK_UPSTREAM:127.0.0.1:8799} {
+			uri /auth?cap=gateway-admin
+			copy_headers X-Dregg-Subject X-Dregg-Cap
+		}
+		reverse_proxy {$SITE_UPSTREAM:127.0.0.1:8790} {
+			import strip_upstream_cors
+		}
+	}
+}
