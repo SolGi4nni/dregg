@@ -74,6 +74,106 @@ const DOMAIN_SEAL: &[u8] = b"dreggnet-cheevo/soulbound-seal/v1";
 // The achievement predicate.
 // ═══════════════════════════════════════════════════════════════════════════════
 
+/// How an authorable predicate REDUCES a scene variable's per-step trajectory to a single
+/// value before comparing it. The whole trajectory (genesis + every committed post-state)
+/// is in scope — a peak, a trough, the final committed value, the initial value, or the sum.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Aggregate {
+    /// The maximum the var reached at any point (e.g. peak depth).
+    Peak,
+    /// The minimum the var fell to at any point.
+    Trough,
+    /// The var's value in the final committed (winning) state.
+    Final,
+    /// The var's value in the genesis state.
+    Initial,
+    /// The sum of the var across every committed state (a crude "total accrued").
+    Sum,
+}
+
+impl Aggregate {
+    fn slug(self) -> &'static str {
+        match self {
+            Aggregate::Peak => "peak",
+            Aggregate::Trough => "trough",
+            Aggregate::Final => "final",
+            Aggregate::Initial => "initial",
+            Aggregate::Sum => "sum",
+        }
+    }
+    fn tag(self) -> u8 {
+        match self {
+            Aggregate::Peak => 0,
+            Aggregate::Trough => 1,
+            Aggregate::Final => 2,
+            Aggregate::Initial => 3,
+            Aggregate::Sum => 4,
+        }
+    }
+    /// Reduce a sequence of a var's per-step values to the single aggregate value.
+    fn reduce(self, vals: &[u64]) -> u64 {
+        match self {
+            Aggregate::Peak => vals.iter().copied().max().unwrap_or(0),
+            Aggregate::Trough => vals.iter().copied().min().unwrap_or(0),
+            Aggregate::Final => vals.last().copied().unwrap_or(0),
+            Aggregate::Initial => vals.first().copied().unwrap_or(0),
+            Aggregate::Sum => vals.iter().copied().fold(0u64, |a, b| a.saturating_add(b)),
+        }
+    }
+}
+
+/// The comparison an authorable predicate applies between the aggregated var value (LHS)
+/// and the author's threshold (RHS).
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Cmp {
+    /// `>=` (the reached-depth shape).
+    Ge,
+    /// `>`.
+    Gt,
+    /// `<=` (the no-death / speed shape: stayed at or below a bound).
+    Le,
+    /// `<`.
+    Lt,
+    /// `==`.
+    Eq,
+    /// `!=`.
+    Ne,
+}
+
+impl Cmp {
+    fn slug(self) -> &'static str {
+        match self {
+            Cmp::Ge => ">=",
+            Cmp::Gt => ">",
+            Cmp::Le => "<=",
+            Cmp::Lt => "<",
+            Cmp::Eq => "==",
+            Cmp::Ne => "!=",
+        }
+    }
+    fn tag(self) -> u8 {
+        match self {
+            Cmp::Ge => 0,
+            Cmp::Gt => 1,
+            Cmp::Le => 2,
+            Cmp::Lt => 3,
+            Cmp::Eq => 4,
+            Cmp::Ne => 5,
+        }
+    }
+    /// Does `lhs <cmp> rhs` hold?
+    fn holds(self, lhs: u64, rhs: u64) -> bool {
+        match self {
+            Cmp::Ge => lhs >= rhs,
+            Cmp::Gt => lhs > rhs,
+            Cmp::Le => lhs <= rhs,
+            Cmp::Lt => lhs < rhs,
+            Cmp::Eq => lhs == rhs,
+            Cmp::Ne => lhs != rhs,
+        }
+    }
+}
+
 /// An **anchored achievement predicate** — the shape of an un-fakeable achievement. Each
 /// is a predicate over a VERIFIED run (or, for [`Achievement::SeasonChampion`], over a
 /// season's no-cheat hall-of-fame). The `var`/`flag` name a spween scene variable read
@@ -109,6 +209,35 @@ pub enum Achievement {
         /// The hall-of-fame cutoff.
         top_n: usize,
     },
+    /// **An AUTHORABLE var-threshold predicate.** Reduce `var`'s real committed trajectory
+    /// by `agg`, then require `aggregated <cmp> value`. This is the parameterized path: a
+    /// universe author defines a NEW cheevo (e.g. "hoarded >= 1000 gold", "never dropped
+    /// below 1 shield", "finished with exactly 0 keys left") WITHOUT a code change — the
+    /// fixed [`Achievement::ReachedDepth`] is exactly `Peak Ge` and [`Achievement::NoDeathClear`]
+    /// is exactly `Peak Le 0` over the flag. `label` is a display name the author chooses.
+    /// Still un-fakeable: it is evaluated over the SAME no-cheat-verified trajectory.
+    VarThreshold {
+        /// A human display name for the authored cheevo.
+        label: String,
+        /// The scene variable to read off the run's trajectory.
+        var: String,
+        /// How to reduce the var's per-step values to one number.
+        agg: Aggregate,
+        /// The comparison to apply against `value`.
+        cmp: Cmp,
+        /// The threshold the aggregated value must satisfy.
+        value: u64,
+    },
+    /// **A composite (conjunction) cheevo.** Earned IFF every `part` holds over the SAME
+    /// verified run — e.g. "reached depth 3 AND flawless AND under 6 turns" as one badge.
+    /// Empty conjunctions and any [`Achievement::SeasonChampion`] part are rejected (a
+    /// champion is not a single-run predicate). `label` is the author's display name.
+    All {
+        /// A human display name for the composite cheevo.
+        label: String,
+        /// The sub-predicates that must all hold over the run.
+        parts: Vec<Achievement>,
+    },
 }
 
 impl Achievement {
@@ -119,6 +248,53 @@ impl Achievement {
             Achievement::NoDeathClear { .. } => "no-death-clear",
             Achievement::SpeedClear { .. } => "speed-clear",
             Achievement::SeasonChampion { .. } => "season-champion",
+            Achievement::VarThreshold { .. } => "var-threshold",
+            Achievement::All { .. } => "composite",
+        }
+    }
+
+    /// The author-chosen display title for a cheevo (falls back to the kind slug for the
+    /// fixed built-ins, which have no free-text title).
+    pub fn title(&self) -> &str {
+        match self {
+            Achievement::VarThreshold { label, .. } | Achievement::All { label, .. } => label,
+            other => other.slug(),
+        }
+    }
+
+    /// Whether this predicate is evaluable over a SINGLE verified run (everything except a
+    /// [`Achievement::SeasonChampion`], which is a predicate over a whole season board). A
+    /// composite is single-run iff all its parts are.
+    pub fn is_single_run(&self) -> bool {
+        match self {
+            Achievement::SeasonChampion { .. } => false,
+            Achievement::All { parts, .. } => parts.iter().all(Achievement::is_single_run),
+            _ => true,
+        }
+    }
+
+    /// Ergonomic constructor for an authored var-threshold cheevo.
+    pub fn threshold(
+        label: impl Into<String>,
+        var: impl Into<String>,
+        agg: Aggregate,
+        cmp: Cmp,
+        value: u64,
+    ) -> Achievement {
+        Achievement::VarThreshold {
+            label: label.into(),
+            var: var.into(),
+            agg,
+            cmp,
+            value,
+        }
+    }
+
+    /// Ergonomic constructor for a composite (conjunction) cheevo.
+    pub fn all(label: impl Into<String>, parts: Vec<Achievement>) -> Achievement {
+        Achievement::All {
+            label: label.into(),
+            parts,
         }
     }
 }
@@ -155,6 +331,20 @@ pub enum Witness {
         /// The verified turns of the championship run.
         turns: usize,
     },
+    /// An authored var-threshold held: the observed aggregate value that satisfied the
+    /// comparison (the evidence, so the display can show "hoarded 1500 gold").
+    Threshold {
+        /// The var the predicate read.
+        var: String,
+        /// The observed aggregated value over the run.
+        observed: u64,
+    },
+    /// A composite held: the witness of every part (in order), so the whole provenance is
+    /// re-derivable.
+    Composite {
+        /// The evidence for each sub-predicate.
+        parts: Vec<Witness>,
+    },
 }
 
 /// Serialize a witness into the seal (a canonical, injective byte encoding).
@@ -182,6 +372,21 @@ fn witness_bytes(w: &Witness) -> Vec<u8> {
             v.extend_from_slice(&(*rank as u64).to_le_bytes());
             v.extend_from_slice(&(*turns as u64).to_le_bytes());
         }
+        Witness::Threshold { var, observed } => {
+            v.push(4);
+            v.extend_from_slice(&(var.len() as u64).to_le_bytes());
+            v.extend_from_slice(var.as_bytes());
+            v.extend_from_slice(&observed.to_le_bytes());
+        }
+        Witness::Composite { parts } => {
+            v.push(5);
+            v.extend_from_slice(&(parts.len() as u64).to_le_bytes());
+            for p in parts {
+                let pb = witness_bytes(p);
+                v.extend_from_slice(&(pb.len() as u64).to_le_bytes());
+                v.extend_from_slice(&pb);
+            }
+        }
     }
     v
 }
@@ -208,6 +413,33 @@ fn achievement_bytes(a: &Achievement) -> Vec<u8> {
         Achievement::SeasonChampion { top_n } => {
             v.push(3);
             v.extend_from_slice(&(*top_n as u64).to_le_bytes());
+        }
+        Achievement::VarThreshold {
+            label,
+            var,
+            agg,
+            cmp,
+            value,
+        } => {
+            v.push(4);
+            v.extend_from_slice(&(label.len() as u64).to_le_bytes());
+            v.extend_from_slice(label.as_bytes());
+            v.extend_from_slice(&(var.len() as u64).to_le_bytes());
+            v.extend_from_slice(var.as_bytes());
+            v.push(agg.tag());
+            v.push(cmp.tag());
+            v.extend_from_slice(&value.to_le_bytes());
+        }
+        Achievement::All { label, parts } => {
+            v.push(5);
+            v.extend_from_slice(&(label.len() as u64).to_le_bytes());
+            v.extend_from_slice(label.as_bytes());
+            v.extend_from_slice(&(parts.len() as u64).to_le_bytes());
+            for p in parts {
+                let pb = achievement_bytes(p);
+                v.extend_from_slice(&(pb.len() as u64).to_le_bytes());
+                v.extend_from_slice(&pb);
+            }
         }
     }
     v
@@ -551,6 +783,84 @@ impl CheevoLedger {
     pub fn earner_of(&mut self, player: &str) -> [u8; 32] {
         self.assets.pubkey_of(player)
     }
+
+    /// **THE CROSS-GAME REGISTRY.** Every cheevo SOULBOUND to `earner`, across every
+    /// universe/game — the identity's whole achievement wall, regardless of which world
+    /// each was earned on. A cheevo's [`Cheevo::earner`] is the same key for the same
+    /// player in every universe, so this genuinely spans games.
+    pub fn cheevos_of(&self, earner: &[u8; 32]) -> Vec<&Cheevo> {
+        self.minted.iter().filter(|c| &c.earner == earner).collect()
+    }
+
+    /// **The per-identity profile** — the unified achievement view for `player` that spans
+    /// games: every earned cheevo, the distinct universes (games) they were earned on, and
+    /// the distinct achievement kinds unlocked. This is the profile surface a frontend
+    /// reads; it is derived, not a second source of truth (the ledger's mints are).
+    pub fn profile(&mut self, player: &str) -> CheevoProfile {
+        let earner = self.assets.pubkey_of(player);
+        let cheevos: Vec<Cheevo> = self
+            .minted
+            .iter()
+            .filter(|c| c.earner == earner)
+            .cloned()
+            .collect();
+
+        let mut universes: Vec<UniverseId> = Vec::new();
+        for c in &cheevos {
+            if !universes.contains(&c.universe) {
+                universes.push(c.universe);
+            }
+        }
+        let mut kinds: Vec<&'static str> = Vec::new();
+        for c in &cheevos {
+            let slug = c.achievement.slug();
+            if !kinds.contains(&slug) {
+                kinds.push(slug);
+            }
+        }
+        CheevoProfile {
+            player: player.to_string(),
+            earner,
+            cheevos,
+            universes,
+            kinds,
+        }
+    }
+}
+
+/// A **cross-game achievement profile** for one identity — the unified wall a frontend
+/// renders: every soulbound cheevo the player earned, spanning every universe/game, plus
+/// the distinct games and achievement kinds unlocked. Derived from the ledger's mints (the
+/// single source of truth), so it re-derives identically on every call.
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub struct CheevoProfile {
+    /// The player's display name.
+    pub player: String,
+    /// The player's stable soulbound identity (the same across every game).
+    pub earner: [u8; 32],
+    /// Every cheevo soulbound to this identity, in mint order.
+    pub cheevos: Vec<Cheevo>,
+    /// The distinct universes (games) the player has earned a cheevo on.
+    pub universes: Vec<UniverseId>,
+    /// The distinct achievement kinds (slugs) the player has unlocked.
+    pub kinds: Vec<&'static str>,
+}
+
+impl CheevoProfile {
+    /// How many cheevos this identity has earned in total.
+    pub fn count(&self) -> usize {
+        self.cheevos.len()
+    }
+
+    /// How many distinct games this identity has earned a cheevo on — the cross-game reach.
+    pub fn games_spanned(&self) -> usize {
+        self.universes.len()
+    }
+
+    /// Whether the identity has earned any cheevo of the given kind slug (e.g. `"speed-clear"`).
+    pub fn has_kind(&self, slug: &str) -> bool {
+        self.kinds.iter().any(|k| *k == slug)
+    }
 }
 
 // ═══════════════════════════════════════════════════════════════════════════════
@@ -604,6 +914,52 @@ fn eval_run_predicate(
                     "the clear took {turns} turns, above the max {max_turns}"
                 )))
             }
+        }
+        Achievement::VarThreshold {
+            var,
+            agg,
+            cmp,
+            value,
+            label,
+        } => {
+            let slot = slot_of(universe, var)?;
+            let vals: Vec<u64> = trajectory(&completion.play)
+                .map(|st| st.get(slot).copied().unwrap_or(0))
+                .collect();
+            let observed = agg.reduce(&vals);
+            if cmp.holds(observed, *value) {
+                Ok(Witness::Threshold {
+                    var: var.clone(),
+                    observed,
+                })
+            } else {
+                Err(CheevoError::PredicateNotMet(format!(
+                    "`{label}`: {agg} `{var}` was {observed}, not {cmp} {value}",
+                    agg = agg.slug(),
+                    cmp = cmp.slug(),
+                )))
+            }
+        }
+        Achievement::All { label, parts } => {
+            if parts.is_empty() {
+                return Err(CheevoError::PredicateNotMet(format!(
+                    "`{label}`: a composite cheevo needs at least one predicate"
+                )));
+            }
+            let mut witnesses = Vec::with_capacity(parts.len());
+            for part in parts {
+                // A champion part is not evaluable over a single run — reject the whole
+                // composite (structural, not a run failure).
+                if !part.is_single_run() {
+                    return Err(CheevoError::PredicateNotMet(format!(
+                        "`{label}`: a season-champion cannot be a part of a single-run composite"
+                    )));
+                }
+                // Any failing part fails the conjunction (non-vacuous: ALL must hold).
+                let w = eval_run_predicate(universe, completion, part)?;
+                witnesses.push(w);
+            }
+            Ok(Witness::Composite { parts: witnesses })
         }
         Achievement::SeasonChampion { .. } => Err(CheevoError::PredicateNotMet(
             "a season-champion cheevo is earned via earn_champion, not a single run".into(),
@@ -691,4 +1047,294 @@ fn seal_of(
     field(&mut h, anchor);
     field(&mut h, &witness_bytes(witness));
     *h.finalize().as_bytes()
+}
+
+// ═══════════════════════════════════════════════════════════════════════════════
+// Inline unit tests — the pure predicate/seal machinery, at the source, with no
+// dev-dependency scaffolding. (The end-to-end earn/mint/reverify flow is DRIVEN in
+// `tests/cheevos.rs`.)
+// ═══════════════════════════════════════════════════════════════════════════════
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ugc_dregg::{Completion, Universe, WinCondition, record_playthrough};
+
+    // A tiny two-step descent: two "go deeper" steps each bump `depth`, then grab the
+    // relic (`gold == 500`) and END. `depth` peaks at 2; `gold` finishes at 500.
+    const SCENE: &str = r#"---
+id: cheevo-unit
+title: Cheevo Unit Scene
+weight: 1
+---
+
+=== start
+
+The mouth of a shaft.
+
+* [Go deeper]
+  ~ depth += 1
+  -> mid
+
+=== mid
+
+Deeper.
+
+* [Go deeper still]
+  ~ depth += 1
+  -> grab
+
+=== grab
+
+A relic gleams.
+
+* [Grab it and leave]
+  ~ gold += 500
+  -> END
+"#;
+
+    fn universe() -> Universe {
+        Universe::authored(
+            "Cheevo Unit Scene",
+            "cheevo-unit-author",
+            SCENE,
+            WinCondition::ended_with(&[("gold", 500)]),
+        )
+        .expect("valid unit universe")
+    }
+
+    fn run(u: &Universe, moves: &[usize]) -> Completion {
+        let play = record_playthrough(u, moves).expect("honest run drives");
+        Completion {
+            universe: u.id(),
+            player: "unit".into(),
+            play,
+            claimed_turns: moves.len(),
+        }
+    }
+
+    // ── Aggregate::reduce ────────────────────────────────────────────────────────
+    #[test]
+    fn aggregate_reduce_covers_each_kind() {
+        let v = [3u64, 1, 4, 1, 5];
+        assert_eq!(Aggregate::Peak.reduce(&v), 5);
+        assert_eq!(Aggregate::Trough.reduce(&v), 1);
+        assert_eq!(Aggregate::Final.reduce(&v), 5);
+        assert_eq!(Aggregate::Initial.reduce(&v), 3);
+        assert_eq!(Aggregate::Sum.reduce(&v), 14);
+        // Empty is a safe zero (no panic).
+        assert_eq!(Aggregate::Peak.reduce(&[]), 0);
+        assert_eq!(Aggregate::Trough.reduce(&[]), 0);
+    }
+
+    #[test]
+    fn aggregate_sum_saturates_not_overflows() {
+        assert_eq!(Aggregate::Sum.reduce(&[u64::MAX, 5]), u64::MAX);
+    }
+
+    // ── Cmp::holds ───────────────────────────────────────────────────────────────
+    #[test]
+    fn cmp_holds_each_operator() {
+        assert!(Cmp::Ge.holds(3, 3) && Cmp::Ge.holds(4, 3) && !Cmp::Ge.holds(2, 3));
+        assert!(Cmp::Gt.holds(4, 3) && !Cmp::Gt.holds(3, 3));
+        assert!(Cmp::Le.holds(3, 3) && Cmp::Le.holds(2, 3) && !Cmp::Le.holds(4, 3));
+        assert!(Cmp::Lt.holds(2, 3) && !Cmp::Lt.holds(3, 3));
+        assert!(Cmp::Eq.holds(3, 3) && !Cmp::Eq.holds(3, 4));
+        assert!(Cmp::Ne.holds(3, 4) && !Cmp::Ne.holds(3, 3));
+    }
+
+    // ── Encoding injectivity (no seal collisions across kinds) ────────────────────
+    #[test]
+    fn achievement_bytes_are_kind_tagged_no_shape_collision() {
+        // ReachedDepth(depth>=3) and the AUTHORABLE Peak>=3 over `depth` are the SAME
+        // semantics, but distinct achievement records — their encodings must differ so
+        // their seals never collide.
+        let fixed = Achievement::ReachedDepth {
+            var: "depth".into(),
+            min: 3,
+        };
+        let authored = Achievement::threshold("Deep", "depth", Aggregate::Peak, Cmp::Ge, 3);
+        assert_ne!(achievement_bytes(&fixed), achievement_bytes(&authored));
+
+        // Each authored field is load-bearing in the encoding.
+        let base = Achievement::threshold("L", "depth", Aggregate::Peak, Cmp::Ge, 3);
+        let diff_agg = Achievement::threshold("L", "depth", Aggregate::Final, Cmp::Ge, 3);
+        let diff_cmp = Achievement::threshold("L", "depth", Aggregate::Peak, Cmp::Le, 3);
+        let diff_val = Achievement::threshold("L", "depth", Aggregate::Peak, Cmp::Ge, 4);
+        let diff_var = Achievement::threshold("L", "gold", Aggregate::Peak, Cmp::Ge, 3);
+        let diff_lbl = Achievement::threshold("M", "depth", Aggregate::Peak, Cmp::Ge, 3);
+        for other in [diff_agg, diff_cmp, diff_val, diff_var, diff_lbl] {
+            assert_ne!(achievement_bytes(&base), achievement_bytes(&other));
+        }
+    }
+
+    #[test]
+    fn witness_bytes_distinguish_composite_from_parts() {
+        let a = Witness::Threshold {
+            var: "depth".into(),
+            observed: 2,
+        };
+        let b = Witness::Threshold {
+            var: "depth".into(),
+            observed: 3,
+        };
+        assert_ne!(witness_bytes(&a), witness_bytes(&b));
+        let comp = Witness::Composite {
+            parts: vec![a.clone()],
+        };
+        assert_ne!(witness_bytes(&a), witness_bytes(&comp));
+    }
+
+    // ── seal_of binds every field ─────────────────────────────────────────────────
+    #[test]
+    fn seal_binds_earner_achievement_and_witness() {
+        let u = universe();
+        let ach = Achievement::threshold("Deep", "depth", Aggregate::Peak, Cmp::Ge, 2);
+        let wit = Witness::Threshold {
+            var: "depth".into(),
+            observed: 2,
+        };
+        let e1 = [1u8; 32];
+        let e2 = [2u8; 32];
+        let anchor = [9u8; 32];
+        let base = seal_of(&e1, &ach, u.id(), &anchor, &wit);
+        // Deterministic.
+        assert_eq!(base, seal_of(&e1, &ach, u.id(), &anchor, &wit));
+        // Re-binding to another earner (laundering) changes the seal.
+        assert_ne!(base, seal_of(&e2, &ach, u.id(), &anchor, &wit));
+        // Editing the witness changes the seal.
+        let wit2 = Witness::Threshold {
+            var: "depth".into(),
+            observed: 99,
+        };
+        assert_ne!(base, seal_of(&e1, &ach, u.id(), &anchor, &wit2));
+        // Editing the achievement changes the seal.
+        let ach2 = Achievement::threshold("Deep", "depth", Aggregate::Peak, Cmp::Ge, 3);
+        assert_ne!(base, seal_of(&e1, &ach2, u.id(), &anchor, &wit));
+    }
+
+    // ── slug / title / is_single_run ──────────────────────────────────────────────
+    #[test]
+    fn slug_title_and_single_run_classification() {
+        let vt = Achievement::threshold("Hoarder", "gold", Aggregate::Final, Cmp::Ge, 1000);
+        assert_eq!(vt.slug(), "var-threshold");
+        assert_eq!(vt.title(), "Hoarder");
+        assert!(vt.is_single_run());
+
+        let fixed = Achievement::ReachedDepth {
+            var: "depth".into(),
+            min: 3,
+        };
+        // A fixed built-in has no free-text title; it falls back to its slug.
+        assert_eq!(fixed.title(), "reached-depth");
+
+        let champ = Achievement::SeasonChampion { top_n: 1 };
+        assert!(!champ.is_single_run());
+
+        let comp_ok = Achievement::all("Legend", vec![vt.clone(), fixed.clone()]);
+        assert!(comp_ok.is_single_run());
+        assert_eq!(comp_ok.slug(), "composite");
+        let comp_bad = Achievement::all("Bad", vec![vt, champ]);
+        assert!(!comp_bad.is_single_run());
+    }
+
+    // ── eval_run_predicate over a REAL recorded run ──────────────────────────────
+    #[test]
+    fn authored_threshold_earns_over_a_real_run() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]); // depth peaks at 2, gold ends at 500
+        let ach = Achievement::threshold("Deep", "depth", Aggregate::Peak, Cmp::Ge, 2);
+        let w = eval_run_predicate(&u, &c, &ach).expect("peak depth 2 >= 2 earns");
+        assert_eq!(
+            w,
+            Witness::Threshold {
+                var: "depth".into(),
+                observed: 2
+            }
+        );
+    }
+
+    #[test]
+    fn authored_threshold_is_non_vacuous() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]); // depth peaks at 2
+        let too_deep = Achievement::threshold("Abyss", "depth", Aggregate::Peak, Cmp::Ge, 3);
+        let out = eval_run_predicate(&u, &c, &too_deep);
+        assert!(
+            matches!(out, Err(CheevoError::PredicateNotMet(_))),
+            "peak 2 must not satisfy >= 3, got {out:?}"
+        );
+    }
+
+    #[test]
+    fn authored_final_and_trough_aggregates_read_the_real_trajectory() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]);
+        // gold FINISHES at 500.
+        let final_gold = Achievement::threshold("Rich", "gold", Aggregate::Final, Cmp::Eq, 500);
+        assert!(eval_run_predicate(&u, &c, &final_gold).is_ok());
+        // gold's TROUGH (genesis) is 0.
+        let trough_gold = Achievement::threshold("Broke", "gold", Aggregate::Trough, Cmp::Eq, 0);
+        assert!(eval_run_predicate(&u, &c, &trough_gold).is_ok());
+    }
+
+    #[test]
+    fn composite_earns_only_when_all_parts_hold() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]);
+        let deep = Achievement::threshold("Deep", "depth", Aggregate::Peak, Cmp::Ge, 2);
+        let rich = Achievement::threshold("Rich", "gold", Aggregate::Final, Cmp::Ge, 500);
+        // Both hold → composite earns, carrying both witnesses.
+        let both = Achievement::all("DeepAndRich", vec![deep.clone(), rich.clone()]);
+        let w = eval_run_predicate(&u, &c, &both).expect("both parts hold");
+        match w {
+            Witness::Composite { parts } => assert_eq!(parts.len(), 2),
+            other => panic!("expected composite witness, got {other:?}"),
+        }
+        // One part fails → the whole conjunction fails (non-vacuous).
+        let unreachable = Achievement::threshold("Abyss", "depth", Aggregate::Peak, Cmp::Ge, 99);
+        let bad = Achievement::all("Impossible", vec![deep, unreachable]);
+        assert!(matches!(
+            eval_run_predicate(&u, &c, &bad),
+            Err(CheevoError::PredicateNotMet(_))
+        ));
+    }
+
+    #[test]
+    fn empty_composite_and_champion_part_are_refused() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]);
+        let empty = Achievement::all("Nothing", vec![]);
+        assert!(matches!(
+            eval_run_predicate(&u, &c, &empty),
+            Err(CheevoError::PredicateNotMet(_))
+        ));
+        let with_champ = Achievement::all("Mixed", vec![Achievement::SeasonChampion { top_n: 1 }]);
+        assert!(matches!(
+            eval_run_predicate(&u, &c, &with_champ),
+            Err(CheevoError::PredicateNotMet(_))
+        ));
+    }
+
+    #[test]
+    fn unknown_var_is_refused() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]);
+        let ach = Achievement::threshold("Ghost", "no_such_var", Aggregate::Peak, Cmp::Ge, 1);
+        assert!(matches!(
+            eval_run_predicate(&u, &c, &ach),
+            Err(CheevoError::UnknownVar(_))
+        ));
+    }
+
+    // ── run_anchor determinism + sensitivity ─────────────────────────────────────
+    #[test]
+    fn run_anchor_is_deterministic_and_player_sensitive() {
+        let u = universe();
+        let c = run(&u, &[0, 0, 0]);
+        let a1 = run_anchor("ada", &c.play);
+        let a2 = run_anchor("ada", &c.play);
+        let a3 = run_anchor("bob", &c.play);
+        assert_eq!(a1, a2);
+        assert_ne!(a1, a3);
+    }
 }
