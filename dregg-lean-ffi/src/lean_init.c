@@ -700,11 +700,21 @@ size_t dregg_interchain_reached_consensus_str(const char *in_utf8, char *out, si
 #ifdef DREGG_FRI_LEDGER
 /* dregg_fri_ledger_str — the C string bridge over the Lean `String -> String` FRI SOUNDNESS LEDGER
  * export (`Dregg2.Circuit.FriLedger.friLedgerFFI`). Input:
- * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg"` (six decimal nats). Output:
- * `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits"` (`""` fail-closed). Runs
- * `friLedger` — the function `FriLedgerSound.ledger_perFold_soundness` proves the per-fold bound of,
- * per config, so no Rust caller re-types the soundness arithmetic. Same return contract as the bridges
- * above. */
+ * `"logBlowup numQueries powBits maxLogArity logFinalPolyLen extDeg logD0 bciksM"` (EIGHT decimal
+ * nats). Output:
+ * `"arity foldedDomain goodCount perFoldBits johnsonBits capacityBits commitBits"` (SEVEN decimal
+ * nats; `""` fail-closed). Runs `friLedger` — the function `FriLedgerSound.ledger_perFold_soundness`
+ * proves the per-fold bound of — and `friCommitLedger`, whose `commitBits` is BCIKS20's commit-phase
+ * error eps_C (`FriLedgerSound.ledger_epsC_soundness`), so no Rust caller re-types the soundness
+ * arithmetic. Same return contract as the bridges above.
+ *
+ * `logD0` and `bciksM` are NOT FRI knobs and are deliberately not in `FriParams`: |D^(0)| = 2^logD0
+ * is the FRI domain (trace height x blowup, a property of the STATEMENT being proved) and bciksM is
+ * BCIKS20 Thm 8.3's proximity parameter m >= 3 (a parameter of the ANALYSIS). The export refuses
+ * (`""`) for m < 3, which is the paper's own hypothesis, rather than return a number no theorem
+ * backs. This function is length-agnostic (it copies whatever Lean returns and reports the full
+ * length), so a column added on the Lean side cannot silently truncate here — but the caller's
+ * column count must match, and `FriLedgerSound`'s #guards go red on a wire drift first. */
 size_t dregg_fri_ledger_str(const char *in_utf8, char *out, size_t out_cap) {
     if (out == 0 || out_cap == 0) {
         return (size_t)-1;
