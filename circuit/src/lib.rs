@@ -463,6 +463,12 @@ pub mod note_spend_witness;
 /// two adjacent committed sorted leaves (hence NOT revoked). See module docs.
 pub mod non_revocation_witness;
 
+/// Depth-general production witness builder for the composed Lean-emitted non-revocation descriptor
+/// (`dregg-non-revocation-adjacency::poseidon2-fact-v1`). Unlike the legacy depth-2 witness rail,
+/// this emits one genuine authentication row per revocation-tree level and preserves the deployed
+/// depth-4 / 16-leaf tree.
+pub mod non_revocation_adjacency_witness;
+
 /// Rust witness builder for the Lean-emitted whole-history turn-chain binding descriptor
 /// (`dregg-turn-chain-binding-v2`). It builds the 14-column shared-Poseidon2-chip trace and the
 /// four scalar public inputs, including the continuing-hash padding rows used by the deployed fold.

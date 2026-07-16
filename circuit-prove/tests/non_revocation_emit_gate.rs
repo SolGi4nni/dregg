@@ -1,9 +1,9 @@
 //! # The emit-from-Lean EQUALITY GATE — sorted-tree NON-MEMBERSHIP (the `revocation` family).
 //!
-//! Validates that the non-revocation (freshness) statement the hand-written non-revocation AIR
-//! (`circuit/src/dsl/revocation.rs::non_revocation_circuit_descriptor`) enforces is faithfully
-//! EMITTED from Lean as an `EffectVmDescriptor2` and gates green through the REAL
+//! Validates the historical depth-2 non-revocation descriptor emitted from Lean as an
+//! `EffectVmDescriptor2` and gates green through the REAL
 //! `prove_vm_descriptor2` / `verify_vm_descriptor2`.
+//! The deployed depth-4 path is separately pinned by `non_revocation_adjacency_emit_gate`.
 //!
 //! The descriptor is AUTHORED in Lean (`metatheory/Dregg2/Circuit/Emit/NonRevocationEmit.lean`,
 //! `nonRevocationDesc`) and its wire string is byte-pinned there (`emitVmJson2` `#guard`). This test

@@ -32,13 +32,21 @@
 //! ## Where the descriptors come from (byte-pinned)
 //!
 //! Each predicate descriptor is emitted from Lean (`metatheory/Dregg2/Circuit/Emit/*Emit.lean`)
-//! and byte-pinned there by an `emitVmJson2` `#guard`; the identical string is proven+verified
-//! by its `circuit-prove/tests/*_emit_gate.rs`. The consts below embed those exact byte-pinned
-//! goldens (`circuit/descriptors/by-name/*.json`, extracted verbatim) and decode them via
-//! [`crate::descriptor_ir2::parse_vm_descriptor2`] — the same decode the emit-gate tests use, so
-//! a byte drift on either side breaks the Lean `#guard`, the emit-gate `assert_eq!`, or this
-//! module's `dispatch_names_decode_and_check` test. The depth-general Merkle membership is built
-//! by [`membership_descriptor_of_depth`] (Foundation 2), not parsed.
+//! and byte-pinned there by an `emitVmJson2` `#guard`. The consts below `include_str!` the
+//! checked-in `circuit/descriptors/by-name/*.json` files and decode them via
+//! [`crate::descriptor_ir2::parse_vm_descriptor2`].
+//!
+//! What ties those files to the Lean is `EmitByName.lean` + `scripts/emit-descriptors.sh`: every
+//! by-name descriptor is now RE-DERIVED from its Lean author on each drift-check run
+//! (`scripts/check-descriptor-drift.sh`), and `scripts/emit_descriptors.py`'s coverage check
+//! recurses into `by-name/`, so a file no emitter reproduces is a routing-gap failure. This closed
+//! a real hole: the by-name goldens used to reach disk by an UNGATED hand transcription of the Lean
+//! `#guard` string, and `predicate-arith.json` had drifted through it to a 5-wide re-authoring with
+//! both Poseidon2 weld legs missing — a deployed, demonstrated forgery. The route now forbids that
+//! divergence; the falsifier is `circuit/tests/predicate_arith_fact_weld_canary.rs`.
+//!
+//! The depth-general Merkle membership is built by [`membership_descriptor_of_depth`]
+//! (Foundation 2), not parsed.
 
 use std::collections::HashMap;
 use std::sync::LazyLock;
@@ -90,6 +98,10 @@ const STATIC_GOLDENS: &[(&str, &str)] = &[
     (
         "dregg-non-revocation-sorted-tree::poseidon2-v1",
         NON_REVOCATION_JSON,
+    ),
+    (
+        "dregg-non-revocation-adjacency::poseidon2-fact-v1",
+        NON_REVOCATION_ADJACENCY_JSON,
     ),
     ("dregg-turn-chain-binding-v2", TURN_CHAIN_BINDING_JSON),
     ("dregg-accumulator-nonrev-emit-v2", ACCUMULATOR_NONREV_JSON),
@@ -144,7 +156,8 @@ pub use crate::membership_descriptor_4ary::{
 pub use crate::membership_descriptor_general::membership_descriptor_of_depth;
 pub use crate::note_spend_witness::{NOTE_SPEND_LEAF_NAME, note_spend_leaf_descriptor};
 
-// ---- The byte-pinned emitted predicate-descriptor goldens (verbatim from the Lean #guards). ----
+// ---- The predicate-descriptor goldens: `include_str!` of the by-name files each Lean `#guard`
+// ---- emits and `scripts/emit-descriptors.sh` re-derives (see the module header). ----
 const DFA_ROUTING_JSON: &str = include_str!("../descriptors/by-name/dfa-routing.json");
 const TEMPORAL_PREDICATE_JSON: &str =
     include_str!("../descriptors/by-name/temporal-predicate.json");
@@ -155,6 +168,11 @@ const ADJACENCY_MEMBERSHIP_JSON: &str =
 const QUANTIFIED_ABSENCE_JSON: &str =
     include_str!("../descriptors/by-name/quantified-absence.json");
 const NON_REVOCATION_JSON: &str = include_str!("../descriptors/by-name/non-revocation.json");
+/// The deployed depth-general sorted-tree non-revocation descriptor: two private fact-domain
+/// membership paths + internalized reconstructed-index consecutiveness + strict ordering, composed
+/// and proved in `NonRevocationAdjacencyEmit.lean`.
+const NON_REVOCATION_ADJACENCY_JSON: &str =
+    include_str!("../descriptors/by-name/non-revocation-adjacency.json");
 /// The **turn-chain binding** family (`dregg-turn-chain-binding-v2`), authored in
 /// `metatheory/Dregg2/Circuit/Emit/EffectVmEmitTurnChainBinding.lean` (proved there, with refutation
 /// teeth for forged continuity / idx-step / real_count). Byte source: `metatheory/EmitTurnChain.lean`.
@@ -168,9 +186,22 @@ const BRIDGE_ACTION_JSON: &str = include_str!("../descriptors/by-name/bridge-act
 const PREDICATE_ARITH_JSON: &str = include_str!("../descriptors/by-name/predicate-arith.json");
 /// The arithmetic COMPARISON goldens (`≤`/`>`/`<`/`≠`/InRange), authored + byte-pinned in
 /// `metatheory/Dregg2/Circuit/Emit/Predicates{Le,Gt,Lt,Neq,InRange}Emit.lean`. The `≥` sibling above
-/// (`PREDICATE_ARITH_JSON`) carries the Poseidon2 value↔fact weld; these leaner comparison descriptors
-/// carry the same C1/C2/C3/C5/C6 comparison teeth with `fact_commitment` as the pass-through PI. Their
-/// Rust witness builders are in `crate::predicate_comparison_witness`.
+/// (`PREDICATE_ARITH_JSON`) carries the Poseidon2 value↔fact weld — the two chip lookups that force
+/// `fact_commitment = hash_2_to_1(hash_fact(pred, [value, ..]), state_root)` INSIDE the circuit, so
+/// the comparison and the committed fact share the compared column.
+///
+/// **These leaner comparison descriptors do NOT carry that weld.** They emit the C1/C2/C3/C5/C6
+/// comparison teeth with `fact_commitment` as a pass-through public input — their Lean authors
+/// genuinely emit the unwelded shape (disk byte-matches Lean; these are NOT re-authored). But that
+/// makes them honestly-leaner, not sound: the compared column and the `fact_commitment` column sit
+/// in DISJOINT constraint sets, exactly the shape the `≥` forgery exploited before the weld landed.
+/// A prover can satisfy `value ≤/>/</≠ threshold` on a value of its choosing while pinning an
+/// unrelated `fact_commitment`. Closing this is a FOLLOW-UP (a HORIZONLOG workstream): each sibling
+/// needs the same two weld legs its Lean author currently defers as "orthogonal hardening". Until
+/// then, only the `≥` path binds its predicate to token state in-circuit; the sibling paths bind it
+/// only through `prove_predicate_for_fact` deriving the commitment from the value out-of-circuit
+/// (`bridge/src/present.rs`), which a caller that reaches the witness builders directly bypasses.
+/// Their Rust witness builders are in `crate::predicate_comparison_witness`.
 const PREDICATE_ARITH_LE_JSON: &str =
     include_str!("../descriptors/by-name/predicate-arith-le.json");
 const PREDICATE_ARITH_GT_JSON: &str =
@@ -259,6 +290,7 @@ pub fn descriptor_names_for_kind(kind: PredicateKind) -> &'static [&'static str]
             "quantified-absence-quotient-accumulator::babybear4-v1",
         ],
         PredicateKind::BlindedSet => &[
+            "dregg-non-revocation-adjacency::poseidon2-fact-v1",
             "dregg-non-revocation-sorted-tree::poseidon2-v1",
             "dregg-accumulator-nonrev-emit-v2",
         ],
@@ -370,6 +402,34 @@ mod tests {
                 });
             }
         }
+    }
+
+    /// STRUCTURAL ANTI-FORK GATE for the `≥` predicate: the dispatched descriptor MUST carry the two
+    /// Poseidon2 value↔fact weld legs. This encodes the module doc's claim (that the `≥` sibling
+    /// carries the weld) as a CHECK on the served bytes, not prose — a prose claim is what let the
+    /// deployed file drift to a 5-wide re-authoring with both legs missing while every by-name test
+    /// stayed green. If the dispatched `predicate-arith.json` ever loses a leg, this fails.
+    #[test]
+    fn ge_descriptor_carries_both_poseidon2_weld_legs() {
+        use crate::descriptor_ir2::{TID_P2, VmConstraint2};
+        use crate::predicate_arith_witness::PREDICATE_ARITH_NAME;
+        let desc =
+            descriptor_by_name(PREDICATE_ARITH_NAME).expect("the ge predicate must dispatch");
+        let poseidon2_lookups = desc
+            .constraints
+            .iter()
+            .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_P2))
+            .count();
+        assert_eq!(
+            poseidon2_lookups, 2,
+            "the deployed `≥` descriptor must carry BOTH weld legs (leg 1: hash_fact -> FACT_HASH, \
+             leg 2: hash_2_to_1(FACT_HASH, STATE_ROOT) -> FACT_COMMITMENT) — without them the \
+             predicate proof does not bind the compared value to the committed fact"
+        );
+        assert_eq!(
+            desc.trace_width, 24,
+            "the deployed `≥` descriptor must be the Lean-emitted 24-wide welded shape"
+        );
     }
 
     /// PedersenEquality has NO descriptor (off-STARK) — its name list is empty and no

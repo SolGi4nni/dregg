@@ -120,11 +120,12 @@ pub struct UnlinkablePredicateProof {
 pub struct NonRevocationProof {
     /// The non-revocation proof, `postcard`-encoded on the audited Plonky3 wire
     /// format (`postcard(DslP3Proof)` = `postcard(Ir2BatchProof)`). It carries the
-    /// SAME sorted-tree non-membership statement the retired hand STARK did — the
-    /// depth-`TREE_DEPTH` `hash_fact` tree, `non_revocation_dsl_circuit()`, public
-    /// inputs `[revocation_root, queried_item]` — but is produced/checked by
-    /// `prove_non_revocation_p3` / `verify_non_revocation_p3` (`p3-batch-stark`,
-    /// real terminal FRI), never `stark::prove`/`stark::verify`.
+    /// SAME deployed depth-`TREE_DEPTH` `hash_fact` sorted-tree statement, with
+    /// public inputs `[revocation_root, queried_item]`, but its constraints come
+    /// exclusively from the byte-pinned Lean descriptor
+    /// `dregg-non-revocation-adjacency::poseidon2-fact-v1`. Rust emits one
+    /// witness row per Merkle level and the IR2 prover/interpreter supplies the
+    /// real terminal FRI proof.
     pub proof: Vec<u8>,
     /// The revocation set root this proof was generated against.
     ///
@@ -610,13 +611,11 @@ impl AgentCipherclerk {
             }
         }
 
-        // Prove non-revocation through the AUDITED Plonky3 prover
-        // (`prove_non_revocation_p3` → `p3-batch-stark`), not the retired hand
-        // `crate::stark` engine. This carries the SAME statement — the depth-`TREE_DEPTH`
-        // sorted-tree non-membership over the deployed `hash_fact` node hash,
-        // `non_revocation_dsl_circuit()`, public inputs `[revocation_root, queried_item]`
-        // — with a real terminal FRI low-degree test, then `postcard`-encodes the proof
-        // (the NEW opaque wire format that replaces `stark::proof_to_bytes`).
+        // Prove non-revocation through the byte-pinned Lean-emitted IR2
+        // descriptor. It composes depth-general adjacent membership with strict
+        // ordering over the deployed depth-`TREE_DEPTH` `hash_fact` tree, with
+        // public inputs `[revocation_root, queried_item]`; Rust only constructs
+        // the one-row-per-level witness before the real terminal FRI proof.
         let inv = |e: String| SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(e));
         let p3_proof = prove_non_revocation_p3(revocation_tree, *primary_hash)
             .map_err(|e| inv(format!("non-revocation proof generation failed: {e}")))?;
@@ -626,8 +625,8 @@ impl AgentCipherclerk {
         Ok(NonRevocationProof {
             proof,
             revocation_root,
-            // The queried item is the primary ancestor (root-issuer) hash, surfaced as
-            // `pi[QUERIED_ITEM]` and bound in-circuit by the row-0 QUERIED_ITEM boundary.
+            // The queried item is the primary ancestor hash, surfaced as pi[1]
+            // and bound by the emitted first-row constraint on ordering wire X.
             item_hash: *primary_hash,
         })
     }
@@ -756,9 +755,9 @@ pub fn verify_non_revocation_proof(proof: &NonRevocationProof) -> Result<(), Str
     // fail-closed rejection (Err), never a silent accept.
     let p3_proof: DslP3Proof = postcard::from_bytes(&proof.proof)
         .map_err(|e| format!("non-revocation proof bytes could not be deserialized: {e}"))?;
-    // Verify on the AUDITED Plonky3 verifier against `[revocation_root, queried_item]`; both are
-    // bound in-circuit (the row-0 root + QUERIED_ITEM boundaries), so a freshness proof for a
-    // different root or a different item publishes different public inputs and is rejected.
+    // Verify on the audited Plonky3 verifier against `[revocation_root, queried_item]`; both are
+    // bound in-circuit (the two last-row path-root pins and the first-row X binding), so a proof
+    // for a different root or queried item publishes different public inputs and is rejected.
     verify_non_revocation_p3(&p3_proof, proof.revocation_root, proof.item_hash)
 }
 
@@ -977,11 +976,11 @@ mod tests {
         );
     }
 
-    /// GATE RUNTIME round-trip for the non-revocation `StarkProof` → audited-p3 wire
+    /// GATE RUNTIME round-trip for the non-revocation `StarkProof` → Lean-emitted IR2 wire
     /// migration. The proof blob is opaque `postcard` bytes, so `cargo build` cannot see the
     /// byte-format flip (`stark::proof_to_bytes(StarkProof)` → `postcard(DslP3Proof)`) nor the
     /// backend swap (`stark::prove`/`stark::verify` → `prove_non_revocation_p3` /
-    /// `verify_non_revocation_p3` on `p3-batch-stark`) — this test is the gate the build cannot
+    /// `verify_non_revocation_p3` on the emitted descriptor) — this test is the gate the build cannot
     /// provide. It drives the exact producer→consumer contract through the REAL prover/verifier
     /// (never a mock):
     ///   PRODUCER: honest non-revoked token → `prove_not_revoked` → `postcard(DslP3Proof)`.
@@ -1007,7 +1006,7 @@ mod tests {
             .collect();
         let tree = DslRevocationTree::new(revoked_hashes, 4);
 
-        // ── PRODUCER: honest non-revoked token → audited-p3 proof, postcard-encoded. ──
+        // ── PRODUCER: honest non-revoked token → emitted-IR2 proof, postcard-encoded. ──
         let honest = cclerk
             .prove_not_revoked(&token, &tree)
             .expect("a non-revoked token must produce a valid non-revocation proof");
@@ -1022,7 +1021,7 @@ mod tests {
             "the honest non-revocation proof must ACCEPT through verify_non_revocation_proof",
         );
 
-        // ── NEGATIVE 1 — a forged revocation root: the row-0 root boundary bites. ──
+        // ── NEGATIVE 1 — a forged revocation root: both last-row root pins bite. ──
         let mut forged_root = honest.clone();
         forged_root.revocation_root += BabyBear::ONE;
         assert!(
@@ -1030,7 +1029,7 @@ mod tests {
             "a forged revocation root must be REJECTED (root PI binding)"
         );
 
-        // ── NEGATIVE 2 — a forged queried item: the row-0 QUERIED_ITEM boundary bites. ──
+        // ── NEGATIVE 2 — a forged queried item: the first-row X binding bites. ──
         let mut forged_item = honest.clone();
         forged_item.item_hash += BabyBear::ONE;
         assert!(

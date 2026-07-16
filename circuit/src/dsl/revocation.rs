@@ -1,19 +1,16 @@
-//! Production non-revocation proving via DSL circuit.
+//! Production non-revocation proving via a Lean-emitted IR-v2 descriptor.
 //!
-//! This module provides the canonical implementation for non-revocation proofs:
+//! This module provides the canonical witness data for non-revocation proofs:
 //! - [`DslRevocationTree`] — sorted binary Merkle tree (hash_fact-based)
 //! - [`revocation_hash_to_field`] — convert 32-byte revocation hash to BabyBear
+//! - [`generate_non_revocation_trace`] — the retained legacy trace generator (Rust witness
+//!   generation is legitimate; production constraints are the Lean-emitted composed descriptor)
 //!
 //! Supersedes the old `dregg_circuit::non_revocation_air` (4-ary, hand-written AIR)
 //! and the test-only `dregg_dsl_tests::non_revocation_dsl`.
 
 use crate::field::BabyBear;
 use crate::poseidon2::{hash_fact, hash_many};
-
-use crate::dsl::circuit::{
-    BoundaryDef, BoundaryRow, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, DslCircuit,
-    PolyTerm,
-};
 
 // ============================================================================
 // Constants
@@ -36,7 +33,7 @@ pub const REVOCATION_TREE_DEPTH: usize = TREE_DEPTH;
 /// values that pass the 16-bit check but violate the ordering property.
 pub const ORDERING_BITS: usize = 30;
 
-/// Trace width for the non-revocation DSL circuit.
+/// Trace width for the retained legacy non-revocation trace format.
 /// 5 shared + 1 diff_left + 30 diff_left_bits (`HALF−diff`) + 1 diff_right
 /// + 30 diff_right_bits (`HALF−diff`) + 30 diff_left DIRECT bits + 30 diff_right
 /// DIRECT bits + 3 selectors + 1 sentinel selector = 131.
@@ -60,7 +57,7 @@ pub const SENTINEL_MAX: BabyBear = BabyBear(2013265920);
 // Column layout
 // ============================================================================
 
-/// Column indices for the non-revocation DSL circuit.
+/// Column indices for the retained legacy non-revocation trace format.
 pub mod col {
     use super::ORDERING_BITS;
 
@@ -112,424 +109,6 @@ pub mod col {
     pub const fn diff_right_direct_bit(i: usize) -> usize {
         DIFF_RIGHT_DIRECT_BITS_START + i
     }
-}
-
-/// Public input indices.
-pub mod pi {
-    pub const REVOCATION_ROOT: usize = 0;
-
-    /// The queried item (`ancestor_hash`), exposed as a PUBLIC input so a
-    /// composing verifier can bind the proven-fresh item to a turn's nullifier
-    /// (no-double-spend binding "b"). This is a REAL binding, not a free wire:
-    /// the same value occupies control-row `COL_0`, which the ordering
-    /// constraints C6/C7/C10/C11 pin strictly between two adjacent sorted
-    /// leaves, and a row-0 `PiBinding` (see `boundaries`) ties that cell to
-    /// `pi[1]` in-circuit. A prover who publishes a `QUERIED_ITEM` other than
-    /// the bracketed item violates the row-0 boundary and the proof is UNSAT.
-    pub const QUERIED_ITEM: usize = 1;
-}
-
-// ============================================================================
-// Circuit descriptor
-// ============================================================================
-
-/// Build the non-revocation CircuitDescriptor.
-///
-/// Encodes constraints C1-C12 for sorted-tree non-membership with 30-bit
-/// ordering range checks and binary Merkle path authentication.
-pub fn non_revocation_circuit_descriptor() -> CircuitDescriptor {
-    let mut constraints = vec![
-        // C1-C3: Row type selectors are binary
-        ConstraintExpr::Binary {
-            col: col::IS_CONTROL,
-        },
-        ConstraintExpr::Binary {
-            col: col::IS_MERKLE_LEFT,
-        },
-        ConstraintExpr::Binary {
-            col: col::IS_MERKLE_RIGHT,
-        },
-        ConstraintExpr::Binary {
-            col: col::RIGHT_IS_SENTINEL,
-        },
-        // C4: direction_bit (col 3) is binary on Merkle rows
-        ConstraintExpr::Gated {
-            selector_col: col::IS_MERKLE_LEFT,
-            inner: Box::new(ConstraintExpr::Binary { col: col::COL_3 }),
-        },
-        ConstraintExpr::Gated {
-            selector_col: col::IS_MERKLE_RIGHT,
-            inner: Box::new(ConstraintExpr::Binary { col: col::COL_3 }),
-        },
-        // C5: Hash binding for Merkle rows: col2 = hash_fact(col0, [col1])
-        ConstraintExpr::Gated {
-            selector_col: col::IS_MERKLE_LEFT,
-            inner: Box::new(ConstraintExpr::Hash {
-                output_col: col::COL_2,
-                input_cols: vec![col::COL_0, col::COL_1],
-            }),
-        },
-        ConstraintExpr::Gated {
-            selector_col: col::IS_MERKLE_RIGHT,
-            inner: Box::new(ConstraintExpr::Hash {
-                output_col: col::COL_2,
-                input_cols: vec![col::COL_0, col::COL_1],
-            }),
-        },
-        // C6: Ordering diff_left consistency (control row):
-        // diff_left == ancestor_hash - left_neighbor - 1
-        // => col5 - col0 + col1 + 1 == 0
-        ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Polynomial {
-                terms: vec![
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![col::DIFF_LEFT],
-                    },
-                    PolyTerm {
-                        coeff: -BabyBear::ONE,
-                        col_indices: vec![col::COL_0],
-                    },
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![col::COL_1],
-                    },
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![],
-                    }, // constant +1
-                ],
-            }),
-        },
-        // C7: Ordering diff_right consistency (control row, unless the upper
-        // neighbor is the max sentinel):
-        // diff_right == right_neighbor - ancestor_hash - 1
-        // => col_DIFF_RIGHT - col2 + col0 + 1 == 0
-        ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::InvertedGated {
-                selector_col: col::RIGHT_IS_SENTINEL,
-                inner: Box::new(ConstraintExpr::Polynomial {
-                    terms: vec![
-                        PolyTerm {
-                            coeff: BabyBear::ONE,
-                            col_indices: vec![col::DIFF_RIGHT],
-                        },
-                        PolyTerm {
-                            coeff: -BabyBear::ONE,
-                            col_indices: vec![col::COL_2],
-                        },
-                        PolyTerm {
-                            coeff: BabyBear::ONE,
-                            col_indices: vec![col::COL_0],
-                        },
-                        PolyTerm {
-                            coeff: BabyBear::ONE,
-                            col_indices: vec![],
-                        }, // constant +1
-                    ],
-                }),
-            }),
-        },
-        // C7b: A disabled right-gap check is allowed only for the canonical max sentinel.
-        ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Polynomial {
-                terms: vec![
-                    PolyTerm {
-                        coeff: BabyBear::ONE,
-                        col_indices: vec![col::RIGHT_IS_SENTINEL, col::COL_2],
-                    },
-                    PolyTerm {
-                        coeff: -SENTINEL_MAX,
-                        col_indices: vec![col::RIGHT_IS_SENTINEL],
-                    },
-                ],
-            }),
-        },
-    ];
-
-    // C8: diff_left bits are binary (gated by is_control)
-    for i in 0..ORDERING_BITS {
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Binary {
-                col: col::diff_left_bit(i),
-            }),
-        });
-    }
-
-    // C9: diff_right bits are binary (gated by is_control)
-    for i in 0..ORDERING_BITS {
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Binary {
-                col: col::diff_right_bit(i),
-            }),
-        });
-    }
-
-    // C10: diff_left range check reconstruction (gated by is_control):
-    // sum(diff_left_bits[i] * 2^i) == HALF_P_MINUS_1 - diff_left
-    // => sum(bits[i] * 2^i) + diff_left - HALF_P_MINUS_1 == 0
-    {
-        let mut terms = Vec::new();
-        let mut power_of_two = BabyBear::ONE;
-        for i in 0..ORDERING_BITS {
-            terms.push(PolyTerm {
-                coeff: power_of_two,
-                col_indices: vec![col::diff_left_bit(i)],
-            });
-            power_of_two = power_of_two + power_of_two;
-        }
-        terms.push(PolyTerm {
-            coeff: BabyBear::ONE,
-            col_indices: vec![col::DIFF_LEFT],
-        });
-        terms.push(PolyTerm {
-            coeff: -BabyBear::new(HALF_P_MINUS_1),
-            col_indices: vec![],
-        });
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Polynomial { terms }),
-        });
-    }
-
-    // C11: diff_right range check reconstruction (gated by is_control):
-    // sum(diff_right_bits[i] * 2^i) == HALF_P_MINUS_1 - diff_right
-    // => sum(bits[i] * 2^i) + diff_right - HALF_P_MINUS_1 == 0
-    {
-        let mut terms = Vec::new();
-        let mut power_of_two = BabyBear::ONE;
-        for i in 0..ORDERING_BITS {
-            terms.push(PolyTerm {
-                coeff: power_of_two,
-                col_indices: vec![col::diff_right_bit(i)],
-            });
-            power_of_two = power_of_two + power_of_two;
-        }
-        terms.push(PolyTerm {
-            coeff: BabyBear::ONE,
-            col_indices: vec![col::DIFF_RIGHT],
-        });
-        terms.push(PolyTerm {
-            coeff: -BabyBear::new(HALF_P_MINUS_1),
-            col_indices: vec![],
-        });
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::InvertedGated {
-                selector_col: col::RIGHT_IS_SENTINEL,
-                inner: Box::new(ConstraintExpr::Polynomial { terms }),
-            }),
-        });
-    }
-
-    // ---- DIRECT diff decompositions (member-forgery guard) ----
-    // The C8-C11 groups above range-check `HALF−diff`, which only bounds `diff`
-    // ABOVE (diff ≤ HALF). A NEGATIVE diff — the boundary member case x==L (=>
-    // diff_left = -1) or x==R (=> diff_right = -1), where -1 = p-1 — also passes
-    // that upper bound (HALF−(p-1) = HALF+1 < 2^30). To pin `diff ∈ [0, HALF]`
-    // we ALSO decompose `diff` DIRECTLY into 30 bits: the reconstructed value is
-    // a 30-bit field element in [0, 2^30) (< p, no wrap), and `p-1` cannot be so
-    // reconstructed. Intersection of `HALF−diff ∈ [0,2^30)` and
-    // `diff ∈ [0,2^30)` ⟺ `diff ∈ [0, HALF]` (completeness unchanged: honest
-    // brackets already required diff ≤ HALF).
-
-    // C13: diff_left DIRECT bits are binary (gated by is_control)
-    for i in 0..ORDERING_BITS {
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Binary {
-                col: col::diff_left_direct_bit(i),
-            }),
-        });
-    }
-
-    // C14: diff_right DIRECT bits are binary (gated by is_control)
-    for i in 0..ORDERING_BITS {
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Binary {
-                col: col::diff_right_direct_bit(i),
-            }),
-        });
-    }
-
-    // C15: diff_left DIRECT reconstruction (gated by is_control):
-    // sum(diff_left_direct_bits[i] * 2^i) == diff_left
-    // => sum(bits[i] * 2^i) - diff_left == 0
-    {
-        let mut terms = Vec::new();
-        let mut power_of_two = BabyBear::ONE;
-        for i in 0..ORDERING_BITS {
-            terms.push(PolyTerm {
-                coeff: power_of_two,
-                col_indices: vec![col::diff_left_direct_bit(i)],
-            });
-            power_of_two = power_of_two + power_of_two;
-        }
-        terms.push(PolyTerm {
-            coeff: -BabyBear::ONE,
-            col_indices: vec![col::DIFF_LEFT],
-        });
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::Polynomial { terms }),
-        });
-    }
-
-    // C16: diff_right DIRECT reconstruction (gated by is_control, disabled for
-    // the max sentinel exactly like C11):
-    // sum(diff_right_direct_bits[i] * 2^i) == diff_right
-    {
-        let mut terms = Vec::new();
-        let mut power_of_two = BabyBear::ONE;
-        for i in 0..ORDERING_BITS {
-            terms.push(PolyTerm {
-                coeff: power_of_two,
-                col_indices: vec![col::diff_right_direct_bit(i)],
-            });
-            power_of_two = power_of_two + power_of_two;
-        }
-        terms.push(PolyTerm {
-            coeff: -BabyBear::ONE,
-            col_indices: vec![col::DIFF_RIGHT],
-        });
-        constraints.push(ConstraintExpr::Gated {
-            selector_col: col::IS_CONTROL,
-            inner: Box::new(ConstraintExpr::InvertedGated {
-                selector_col: col::RIGHT_IS_SENTINEL,
-                inner: Box::new(ConstraintExpr::Polynomial { terms }),
-            }),
-        });
-    }
-
-    // C12: Adjacency constraint (control row): right_position - left_position - 1 == 0
-    // col4 - col3 - 1 == 0
-    constraints.push(ConstraintExpr::Gated {
-        selector_col: col::IS_CONTROL,
-        inner: Box::new(ConstraintExpr::Polynomial {
-            terms: vec![
-                PolyTerm {
-                    coeff: BabyBear::ONE,
-                    col_indices: vec![col::COL_4],
-                },
-                PolyTerm {
-                    coeff: -BabyBear::ONE,
-                    col_indices: vec![col::COL_3],
-                },
-                PolyTerm {
-                    coeff: -BabyBear::ONE,
-                    col_indices: vec![],
-                }, // constant -1
-            ],
-        }),
-    });
-
-    // Boundary constraints: bind revocation_root to Merkle path tops, and bind
-    // the queried item (control-row COL_0) to the second public input.
-    let boundaries = vec![
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::Index(TREE_DEPTH),
-            col: col::COL_2,
-            pi_index: pi::REVOCATION_ROOT,
-        },
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::Index(2 * TREE_DEPTH),
-            col: col::COL_2,
-            pi_index: pi::REVOCATION_ROOT,
-        },
-        // QUERIED-ITEM binding (no-double-spend tooth "b"): the control row is
-        // row 0, where COL_0 holds `ancestor_hash` — the item being proven
-        // fresh. The ordering constraints C6/C7/C10/C11 already pin COL_0
-        // strictly between two adjacent sorted leaves, so exposing it as
-        // `pi[QUERIED_ITEM]` via this row-0 boundary is a REAL binding, not a
-        // free wire: a proof whose published `pi[1]` differs from the bracketed
-        // item violates this boundary and is UNSAT.
-        BoundaryDef::PiBinding {
-            row: BoundaryRow::Index(0),
-            col: col::COL_0,
-            pi_index: pi::QUERIED_ITEM,
-        },
-    ];
-
-    // Column definitions
-    let columns = vec![
-        ColumnDef {
-            name: "col0_ancestor_or_current".into(),
-            index: col::COL_0,
-            kind: ColumnKind::Value,
-        },
-        ColumnDef {
-            name: "col1_left_or_sibling".into(),
-            index: col::COL_1,
-            kind: ColumnKind::Value,
-        },
-        ColumnDef {
-            name: "col2_right_or_parent".into(),
-            index: col::COL_2,
-            kind: ColumnKind::Hash,
-        },
-        ColumnDef {
-            name: "col3_leftpos_or_dir".into(),
-            index: col::COL_3,
-            kind: ColumnKind::Value,
-        },
-        ColumnDef {
-            name: "col4_rightpos".into(),
-            index: col::COL_4,
-            kind: ColumnKind::Value,
-        },
-        ColumnDef {
-            name: "diff_left".into(),
-            index: col::DIFF_LEFT,
-            kind: ColumnKind::Value,
-        },
-        ColumnDef {
-            name: "diff_right".into(),
-            index: col::DIFF_RIGHT,
-            kind: ColumnKind::Value,
-        },
-        ColumnDef {
-            name: "is_control".into(),
-            index: col::IS_CONTROL,
-            kind: ColumnKind::Binary,
-        },
-        ColumnDef {
-            name: "is_merkle_left".into(),
-            index: col::IS_MERKLE_LEFT,
-            kind: ColumnKind::Binary,
-        },
-        ColumnDef {
-            name: "is_merkle_right".into(),
-            index: col::IS_MERKLE_RIGHT,
-            kind: ColumnKind::Binary,
-        },
-        ColumnDef {
-            name: "right_is_sentinel".into(),
-            index: col::RIGHT_IS_SENTINEL,
-            kind: ColumnKind::Binary,
-        },
-    ];
-
-    CircuitDescriptor {
-        name: "dregg-non-revocation-dsl-v1".into(),
-        trace_width: TRACE_WIDTH,
-        max_degree: 3, // Gated(Binary) is degree 3: selector * col * (col - 1)
-        columns,
-        constraints,
-        boundaries,
-        public_input_count: 2, // [revocation_root, queried_item]
-        lookup_tables: vec![],
-    }
-}
-
-/// Create a DslCircuit from the non-revocation descriptor.
-pub fn non_revocation_dsl_circuit() -> DslCircuit {
-    DslCircuit::new(non_revocation_circuit_descriptor())
 }
 
 // ============================================================================
@@ -824,28 +403,25 @@ pub fn generate_non_revocation_trace(
         trace.push(row);
     }
 
-    // PI layout: [revocation_root, queried_item]. The queried item is
-    // `ancestor_hash` — the control-row COL_0 value the row-0 QUERIED_ITEM
-    // boundary binds and the ordering constraints bracket.
+    // Legacy PI layout retained for trace consumers. Production proving uses
+    // `non_revocation_adjacency_witness`, whose emitted descriptor binds the
+    // same pair `[revocation_root, queried_item]`.
     let public_inputs = vec![revocation_root, witness.ancestor_hash];
     (trace, public_inputs)
 }
 
 // ============================================================================
-// AUDITED p3 non-revocation proving / verification (`p3-batch-stark`)
+// Lean-emitted p3 non-revocation proving / verification (`p3-batch-stark`)
 // ============================================================================
 //
-// These route the SAME non-revocation (sorted-tree non-membership) statement
-// through the audited Plonky3 verifier (`dsl_p3_air::prove_dsl_p3` /
-// `verify_dsl_p3` → `p3-batch-stark`) instead of the bespoke `crate::stark`.
-// The non-revocation circuit is algebraic except its two `ConstraintExpr::Hash`
-// (`hash_fact` sponge) node-hash constraints, which `dsl_p3_air` arithmetizes
-// via the real in-circuit Poseidon2 gadget. The proof carries a REAL terminal
-// low-degree test (FRI). Public inputs: `[revocation_root]`.
+// These route the sorted-tree non-membership statement through the byte-pinned descriptor authored
+// in `NonRevocationAdjacencyEmit.lean`. Rust builds one fact-domain authentication row per tree level;
+// `descriptor_ir2` only interprets the emitted constraints. Public inputs remain
+// `[revocation_root, queried_item]`.
 
-/// Prove `item_hash` is NOT revoked through the AUDITED Plonky3 prover
-/// (`p3-batch-stark`). Returns `Err` if the item IS in the tree (cannot prove
-/// non-membership) or the audited prover/verifier rejects.
+/// Prove `item_hash` is NOT revoked through the Lean-emitted, depth-general composed descriptor.
+/// Returns `Err` if the item IS in the tree (cannot produce adjacent bracketing paths), the tree
+/// depth cannot be represented as a power-of-two trace height, or the IR-v2 prover rejects.
 pub fn prove_non_revocation_p3(
     tree: &DslRevocationTree,
     item_hash: BabyBear,
@@ -854,27 +430,44 @@ pub fn prove_non_revocation_p3(
         .prove_non_membership(&item_hash)
         .ok_or_else(|| "item is in the revocation tree (revoked)".to_string())?;
     let root = tree.root();
-    let (trace, public_inputs) = generate_non_revocation_trace(&witness, root);
-    let circuit = non_revocation_dsl_circuit();
-    crate::dsl::dsl_p3_air::prove_dsl_p3(&circuit, &trace, &public_inputs)
-        .map_err(|e| format!("non-revocation p3 proof failed: {e}"))
+    let (trace, public_inputs) =
+        crate::non_revocation_adjacency_witness::non_revocation_adjacency_witness(&witness, root)?;
+    let descriptor = crate::descriptor_by_name::descriptor_by_name(
+        crate::non_revocation_adjacency_witness::NON_REVOCATION_ADJACENCY_NAME,
+    )
+    .ok_or_else(|| {
+        "Lean-emitted non-revocation adjacency descriptor is not registered".to_string()
+    })?;
+    crate::descriptor_ir2::prove_vm_descriptor2(
+        &descriptor,
+        &trace,
+        &public_inputs,
+        &crate::descriptor_ir2::MemBoundaryWitness::default(),
+        &[],
+    )
+    .map_err(|e| format!("Lean-emitted non-revocation proof failed: {e}"))
 }
 
-/// Verify a non-revocation proof on the AUDITED Plonky3 verifier
-/// (`p3-batch-stark`). The verifier supplies the revocation `root` AND the
+/// Verify a non-revocation proof through the Lean-emitted IR-v2 descriptor. The verifier supplies
+/// the revocation `root` AND the
 /// `item_hash` whose freshness it expects this proof to attest; both are public
 /// inputs (`[revocation_root, queried_item]`) bound in-circuit. A proof of
 /// freshness for a DIFFERENT item publishes a different `pi[1]` and is rejected
-/// by the row-0 QUERIED_ITEM boundary.
+/// by the emitted first-row binding on the ordering wire `X`.
 pub fn verify_non_revocation_p3(
     proof: &crate::dsl::dsl_p3_air::DslP3Proof,
     root: BabyBear,
     item_hash: BabyBear,
 ) -> Result<(), String> {
-    let circuit = non_revocation_dsl_circuit();
+    let descriptor = crate::descriptor_by_name::descriptor_by_name(
+        crate::non_revocation_adjacency_witness::NON_REVOCATION_ADJACENCY_NAME,
+    )
+    .ok_or_else(|| {
+        "Lean-emitted non-revocation adjacency descriptor is not registered".to_string()
+    })?;
     let public_inputs = vec![root, item_hash];
-    crate::dsl::dsl_p3_air::verify_dsl_p3(&circuit, proof, &public_inputs)
-        .map_err(|e| format!("non-revocation p3 verification failed: {e}"))
+    crate::descriptor_ir2::verify_vm_descriptor2(&descriptor, proof, &public_inputs)
+        .map_err(|e| format!("Lean-emitted non-revocation verification failed: {e}"))
 }
 
 // ============================================================================
@@ -921,10 +514,10 @@ mod p3_tests {
 
     /// ANTI-FORGERY (no-double-spend binding "b"): a non-revocation proof that
     /// genuinely proves freshness for item X MUST be rejected when the verifier
-    /// expects a DIFFERENT item Y. The queried item is now a public input
-    /// (`pi[QUERIED_ITEM]`) bound in-circuit to control-row COL_0 (the value the
-    /// ordering constraints bracket), so verifying with the wrong item supplies
-    /// a `pi[1]` the row-0 boundary cannot satisfy.
+    /// expects a DIFFERENT item Y. The queried item is public input `pi[1]`,
+    /// bound in-circuit to the same first-row `X` wire used by the strict
+    /// ordering constraints, so verifying with the wrong item cannot satisfy
+    /// that emitted binding.
     #[test]
     fn p3_non_revocation_rejects_wrong_queried_item() {
         let tree = build_tree(20);
