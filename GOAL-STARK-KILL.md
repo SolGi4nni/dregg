@@ -1389,3 +1389,26 @@ law1_enforcement_gate ratchet holds it.
   `docs/PG-DREGG.md` (89 lines, incl. a Cargo.toml `[workspace]` justification).
 - [E] **328 zero-use pub items** (dead API) across the 8 core crates; 323 mod decls checked.
 - [B] misnamed files beyond `*_air` (constraint_prover, etc.).
+
+### Lie-hunt Lane A (dangling citations) — CLOSED (2026-07-16)
+- `da4e45a8d` — the 2 I created (schnorr_air/turn_auth).
+- `5325fb01c` — 6 (Fable): effect_vm_descriptors CI-gate, relational_predicate_air::prove_value_comparison
+  (+ resolved a COMMITTED merge conflict from the fresh cut, orphaned but broken), has_equivocation_in_past
+  rename ×4, DropRef/ValidateHandoff retired verbs, EffectVmAir fail-closed contract, dfa_lookup_descriptor.
+- `0dc1bc2de` — 3 more (DfaAcceptanceAir + CircuitEmitGadgets, same dfa corpse).
+Every fix VERIFIED (identifier resolved to zero-defs, replacement found or named, file re-elaborated/checked).
+
+### AWAITING EMBER — the one BEHAVIORAL decision (not a reversible cleanup)
+`NodeMcpMockIvcResidual`: the node's live MCP "IVC compression" verify tool returns "valid" for MOCK
+synthetic data (discards the real receipt chain, proves a `create_test_chain` via the mock `prove_ivc`).
+The real recursive IVC (`ivc_turn_chain::WholeChainProof`, just emitted, used by lightclient) exists.
+Two honest paths: (1) wire it real, (2) honest-report (stop claiming "valid"). Surfaced; not touched —
+changing a shipped verify surface's behavior is ember's call.
+
+### DELEGATABLE QUEUE (safe, non-behavioral — paced for the shared tree, awaiting ember's priority)
+- Lane D: 629 lines citing 85 non-existent `docs/*.md` (archived). Mechanical, high-churn.
+- Lane E: 328 zero-use pub items (dead API) across 8 core crates. Needs per-item deadness confirmation.
+- Lane C: verify the "3 emit-equality gates pin a retired wire string" claim (some may be stale vs the
+  turn-chain/revocation emits I just byte-verified). Assurance-critical if real.
+- srot sweep (persvati): grinding dregg-lean-ffi's leanc build (145 C facets, cold lane) — the empirical
+  non-compiling-test map. Harvest when it lands.
