@@ -633,6 +633,9 @@ fn auth_custom_signed_for_federation_a_rejects_on_federation_b() {
 #[allow(dead_code)]
 fn touch_every_authorization(a: &Authorization) -> &'static str {
     match a {
+        // HybridSignature (added 2026-07-16): same tripwire as every_variant_roundtrip — this fn exists
+        // to NAME every variant, a new one landed, nobody updated it, and the whole target went silent.
+        Authorization::HybridSignature { .. } => "hybrid_signature",
         Authorization::Signature(_, _) => "signature",
         Authorization::Proof { .. } => "proof",
         Authorization::Breadstuff(_) => "breadstuff",

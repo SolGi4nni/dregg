@@ -390,6 +390,11 @@ fn all_effect_variants() -> Vec<Variant> {
 #[allow(dead_code)]
 fn assert_variant_coverage(e: &Effect) -> &'static str {
     match e {
+        // ShieldedTransfer (added 2026-07-16): this fn's job is to NAME every variant so adding one
+        // forces a compile error here — it did exactly that, and nobody updated it, which silently kept
+        // this whole test target out of the build. Its circuit-witness coverage is enforced separately by
+        // `circuit/tests/effect_enum_descriptor_residual_gate.rs` (descriptor-or-NAMED-residual, passing).
+        Effect::ShieldedTransfer { .. } => "ShieldedTransfer",
         Effect::SetField { .. } => "SetField",
         Effect::Transfer { .. } => "Transfer",
         Effect::GrantCapability { .. } => "GrantCapability",
