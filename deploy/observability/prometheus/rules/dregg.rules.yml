@@ -6,9 +6,14 @@
 # Dropped from the old set as dead-by-design here (their signal source was the
 # the prior operated layer ops json-exporter feed / blackbox probes over the operated fabric,
 # none of which exist natively): BackendDown, GatewayDown,
-# PostgresConnectionPressure, BridgeConservationBreach. If a bridge
-# conservation gauge ever lands on the node's /metrics, resurrect the breach
-# page — it was the single most important page in the old set.
+# PostgresConnectionPressure.
+#
+# BridgeConservationBreach is RESTORED below (group dregg-bridge) as a seam-gated
+# page: the rule is live, but its metric `dregg_bridge_conservation_ok` is the
+# ONE thing the bridge crate still owes /metrics (see docs/ops/MONITORING.md
+# §"Known gaps" and deploy/observability/README.md). Until that gauge lands the
+# rule matches no series and cannot fire; the moment `bridge/` emits it, the
+# single most important page in the old set is live with zero further ops work.
 
 groups:
   - name: dregg-consensus
@@ -159,6 +164,32 @@ groups:
         annotations:
           summary: "sandbox denials observed ({{ $labels.node }})"
           description: "dregg_sandbox_denials_total advanced — confined code attempted something outside its cage."
+
+  - name: dregg-bridge
+    rules:
+      # PAGE — the worst bridge failure class: value out exceeded value in.
+      # A conserving bridge mints/releases on the destination chain ONLY against
+      # value locked/burned on the source; a breach means the bridge paid out
+      # unbacked value (a mint without a matching lock, a double-mint, or a
+      # relayer forging a lock attestation) — the single most important page.
+      #
+      # SEAM (do not fabricate a metric): this fires on
+      # `dregg_bridge_conservation_ok`, a gauge the bridge crate does NOT YET
+      # emit on the node's /metrics. Semantics owed by `bridge/`: value 1 when
+      # cumulative destination value-out <= source value-in (+epsilon), 0 the
+      # instant that invariant is violated. Closure is named in
+      # docs/ops/MONITORING.md §"Known gaps" and deploy/observability/README.md.
+      # Until that gauge lands this rule matches no series (inert, cannot fire);
+      # once `bridge/` emits it the page is live with no further ops change.
+      # `min` collapses the per-node vector so one breaching node pages.
+      - alert: BridgeConservationBreach
+        expr: min(dregg_bridge_conservation_ok) == 0
+        for: 1m
+        labels:
+          severity: page
+        annotations:
+          summary: "BRIDGE CONSERVATION BREACH — value out exceeded value in"
+          description: "dregg_bridge_conservation_ok dropped to 0: the bridge released more value on the destination chain than was locked/burned on the source. HALT the relayer and freeze mints NOW — this is an unbacked-value emission (double-mint / forged lock attestation). Runbook: docs/ops/INCIDENT-RESPONSE.md."
 
   - name: dregg-proving
     rules:
