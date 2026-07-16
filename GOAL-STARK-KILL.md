@@ -1160,3 +1160,19 @@ not a STARK prover. So it is test scaffolding, NOT a deployed law-#1 violation: 
 an IVC test for ZERO assurance gain. Production derivation already proves via the emitted
 `dregg-derivation-v1`, whose teeth exist and pass (`forged_derived_hash_column_refuses`,
 `forged_conclusion_pi_refuses`, `forged_state_root_pi_refuses`). Not deleting it is the correct call.
+
+### `EveryVariantRoundtripResidual` (NEW, pre-existing) — blocks the duplicate-DslP3Air deletion
+The tree went quiet (0 codex procs) and `dregg-turn` recovered, so I retried the `dsl_pipeline` migration
+that unblocks deleting the 868-line duplicate `DslP3Air`. **Still blocked, but by something else:**
+`cargo check -p dregg-tests --tests` is RED with non-exhaustive matches —
+`tests/src/every_variant_roundtrip.rs:392` (`&dregg_sdk::Effect::ShieldedTransfer { .. }` not covered) and
+`tests/src/authorization_variants.rs:635` (`&Authorization::HybridSignature { .. }` not covered).
+NOT in-flight — those files are COMMITTED and broken; `ShieldedTransfer` arrived with the fresh cut
+`ddd2408c5`. New SDK variants landed without updating the exhaustive matches in a test named *every
+variant roundtrip*.
+**Not mine to close, and a `todo!()` arm would be a FAKE** — it would defeat the very property the test
+asserts (that EVERY variant round-trips). The honest fix is a real round-trip case per new variant, which
+belongs to whoever owns the SDK effect/authorization variants.
+Consequence for this lane: `tests/src/dsl_pipeline.rs` cannot be migrated+verified (cargo builds the whole
+crate's tests), so `DuplicateDslP3AirResidual`'s DELETION stays blocked. The repoint that mattered — the
+differential harness now driving the shipped interpreter — is already landed (`a5f7a0a87`).
