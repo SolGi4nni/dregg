@@ -32,6 +32,21 @@ export interface NodeClientOptions {
    * an unconfigured solo node (the devnet shape).
    */
   federationId?: Uint8Array | string;
+  /**
+   * Pin the acting cell's turn nonce, for OFFLINE signing.
+   *
+   * `dregg-action-sig-v3` binds the submitting turn's nonce into every action
+   * signature, so `TurnBuilder.sign()` must know it. Normally it is read from
+   * the node (the cell's live replay counter); pinning it — the exact parallel
+   * of [`federationId`] — lets `.sign()` produce a real, verifiable signature
+   * with no node round trip.
+   *
+   * ⚠ The pin must be the nonce the turn will actually ride: a signature bound
+   * to the wrong nonce verifies nowhere. `submit()` still re-reads the live
+   * nonce and re-signs if it has moved, so an offline-signed turn submitted
+   * later stays correct.
+   */
+  nonce?: bigint | number;
   /** Request timeout (ms). Default 15000. */
   timeoutMs?: number;
 }
@@ -102,6 +117,7 @@ export class NodeClient {
   readonly baseUrl: string;
   private readonly opts: NodeClientOptions;
   private cachedFederationId: Uint8Array | undefined;
+  private readonly noncePin: bigint | undefined;
 
   constructor(baseUrl: string, opts: NodeClientOptions = {}) {
     this.baseUrl = baseUrl.replace(/\/+$/, "");
@@ -112,6 +128,15 @@ export class NodeClient {
           ? hexDecodeExact(opts.federationId, 32)
           : Uint8Array.from(opts.federationId);
     }
+    this.noncePin = opts.nonce !== undefined ? BigInt(opts.nonce) : undefined;
+  }
+
+  /**
+   * The pinned turn nonce, if the caller supplied one — see
+   * [`NodeClientOptions.nonce`]. `undefined` means "read it from the node".
+   */
+  pinnedNonce(): bigint | undefined {
+    return this.noncePin;
   }
 
   private headers(extra: Record<string, string> = {}): Record<string, string> {
@@ -448,8 +473,16 @@ export class AgentRuntime {
     return this.econ().pay(to, amount, asset);
   }
 
-  /** The agent cell's current nonce (0 for a never-seen cell). */
+  /**
+   * The agent cell's current nonce (0 for a never-seen cell) — the value
+   * `dregg-action-sig-v3` binds into the action signature.
+   *
+   * A pinned [`NodeClientOptions.nonce`] wins (the offline-signing path);
+   * otherwise it is read from the node's live cell state.
+   */
   async currentNonce(): Promise<bigint> {
+    const pinned = this.node.pinnedNonce();
+    if (pinned !== undefined) return pinned;
     try {
       const cell = await this.node.cell(this.identity.cellId());
       return cell.found ? BigInt(cell.nonce) : 0n;

@@ -12,26 +12,29 @@
 // Any drift in the postcard layout, the effect/action hash preimages, or the
 // hash domains fails here.
 //
-// ⚠ SIGNATURE SHAPE — CLASSICAL vs HYBRID (read this before "fixing" a red run).
+// ⚠ SIGNATURE SHAPE — HYBRID POST-QUANTUM IS THE DEFAULT ON BOTH SIDES.
 // The Rust DEFAULT signer (`AgentCipherclerk::sign_action`, which `sign_turn_v3`
-// calls for an `Unchecked` action) now emits `Authorization::HybridSignature`
+// calls for an `Unchecked` action) emits `Authorization::HybridSignature`
 // (variant 10): ed25519 (64B) + an ML-DSA-65 (FIPS 204) signature (3309B) + the
-// ML-DSA public key (1952B). The TS SDK signs CLASSICAL only
-// (`Authorization::Signature`, variant 0, 64B) — it has no post-quantum crypto.
-// So a TS-signed turn is byte-identical to `sign_action_classical`, NOT to the
-// default hybrid signer, and the two turn encodings CANNOT match byte-for-byte.
+// ML-DSA public key (1952B). The TS SDK's `Identity.signAction` now emits the
+// SAME shape (`@noble/post-quantum` ML-DSA-65, deterministic, same ctx, key
+// derived from the same ed25519 seed), so a TS-signed turn is byte-identical to
+// the CURRENT Rust default signer — the `differential: TS HYBRID-signed turn ==
+// Rust default-signed turn` test below drives exactly that, end to end, with
+// BOTH sides signing (no pre-signing dodge).
 //
-// This differential therefore isolates the ENCODER by pre-signing on the TS side
-// (classical) and handing the oracle the ALREADY-signed turn: `sign_call_tree`
-// only signs `Unchecked` actions, so the oracle re-encodes the classical turn
-// through the real Rust `postcard` serializer WITHOUT re-signing. That proves the
-// encoder (incl. `provenance`) and the v3 hash are byte-faithful.
+// ⚠ THE ORACLE SIGNS AT NONCE 0. `sign_turn_v3` → `sign_call_forest` →
+// `cclerk.sign_action`, which binds `next_turn_nonce()` = the clerk's
+// receipt-chain length = 0 for a fresh clerk — REGARDLESS of `turn.nonce`.
+// `dregg-action-sig-v3` binds that nonce into the signature, so any turn the
+// oracle signs is only self-consistent at nonce 0. The differentials therefore
+// use nonce 0 (where the oracle's binding and the turn's real nonce agree);
+// signing at other nonces is covered by the Rust-verifier harness instead.
 //
-// The SIGNING MESSAGE is checked separately (`ed25519 signing message` test):
-// the TS classical signature must equal the ed25519 HALF of the Rust hybrid
-// signature over the same canonical `compute_signing_message`. And the classical
-// vs hybrid wire-shape gap itself is guarded loud (`hybrid authorization
-// boundary` test) so it can never silently regress to a false "byte-faithful".
+// The classical path stays exercised (`classical signing` test) because the node
+// still accepts it while `require_pq` is off, and the CANARY test pins that
+// signing classical where hybrid is expected makes the differential go RED —
+// i.e. that this differential can still fail.
 
 import { test } from "node:test";
 import assert from "node:assert/strict";
@@ -46,6 +49,14 @@ function authToJson(a) {
   switch (a.kind) {
     case "signature":
       return { Signature: [arr(a.r), arr(a.s)] };
+    case "hybridSignature":
+      return {
+        HybridSignature: {
+          ed25519: arr(a.ed25519),
+          ml_dsa: arr(a.mlDsa),
+          ml_dsa_pk: arr(a.mlDsaPk),
+        },
+      };
     case "unchecked":
       return "Unchecked";
     default:
@@ -160,19 +171,32 @@ function richEffects(rawMod, acting) {
 }
 
 /**
- * Re-encode a TS-built turn through the REAL Rust `postcard` serializer WITHOUT
- * re-signing it. `sign_turn_v3` only signs `Unchecked` actions; a turn whose
- * action already carries a classical `Authorization::Signature` is decoded,
- * left as-is, and re-serialized — so `turn_bytes` is the genuine Rust encoding
- * of THIS turn (the encoder oracle) and `turn_id` is the genuine Rust
- * `Turn::hash` (v3).
+ * Hand a turn to the oracle. `sign_turn_v3` signs every `Unchecked` action
+ * through the REAL Rust default path (`AgentCipherclerk::sign_action` → HYBRID),
+ * then re-encodes with the real `postcard`. Pass an UNSIGNED turn to get Rust's
+ * own default-signed bytes; pass an already-signed turn to get a pure re-encode
+ * (signing is skipped for non-`Unchecked` actions).
  */
-function rustReencode(wasm, seed32, federationId, tsTurn) {
+function rustOracle(wasm, seed32, federationId, tsTurn) {
   const jsonBytes = new TextEncoder().encode(JSON.stringify(turnToJson(tsTurn)));
   return wasm.sign_turn_v3(jsonBytes, seed32, federationId);
 }
 
-test("differential: TS turn bytes + canonical hash == Rust encoder (every effect, incl. provenance)", async () => {
+/**
+ * The nonce the oracle binds into every action signature. `sign_turn_v3` builds
+ * a FRESH cipherclerk, whose `next_turn_nonce()` (receipt-chain length) is 0 —
+ * it does not read `turn.nonce`. Differentials that compare SIGNATURES must
+ * therefore ride nonce 0, or the two sides bind different `sig-v3` messages.
+ */
+const ORACLE_NONCE = 0n;
+
+test("differential: TS HYBRID-signed turn == Rust DEFAULT-signed turn, byte for byte (every effect, incl. provenance)", async () => {
+  // THE GATE. Both sides SIGN (no pre-signing dodge): TS signs hybrid through
+  // `Identity.signAction`; the oracle is handed the UNSIGNED turn and signs it
+  // through the real `AgentCipherclerk::sign_action` default path. The bytes
+  // must be identical — which requires the postcard layout, the `sig-v3`
+  // signing message, the ML-DSA-65 key DERIVATION (same seed → same PQ key),
+  // the deterministic ML-DSA signature, and the FIPS 204 ctx to ALL agree.
   const wasm = await loadWasmOracle();
   const rawMod = await raw();
   const { Identity } = await import("../dist/index.mjs");
@@ -185,38 +209,39 @@ test("differential: TS turn bytes + canonical hash == Rust encoder (every effect
   // A turn that exercises every modeled effect + the optional turn fields.
   const effects = richEffects(rawMod, agent);
   const unsigned = rawMod.unsignedActionNamed(agent, "execute", effects);
-  const signedAction = identity.signAction(unsigned, federationId); // classical Signature
-  assert.equal(signedAction.authorization.kind, "signature", "TS SDK must sign classical here");
+  const signedAction = identity.signAction(unsigned, federationId, ORACLE_NONCE);
+  assert.equal(signedAction.authorization.kind, "hybridSignature", "TS SDK must sign HYBRID by default");
 
-  const turn = {
+  const base = {
     agent,
-    nonce: 7n,
-    roots: [{ action: signedAction, children: [] }],
+    nonce: ORACLE_NONCE,
     fee: 10_000n,
     memo: "differential",
     validUntil: 1765432100n,
     previousReceiptHash: cell(0x33),
     dependsOn: [cell(0x44)],
   };
-
-  const oracle = rustReencode(wasm, seed32, federationId, turn);
+  const tsTurn = { ...base, roots: [{ action: signedAction, children: [] }] };
+  // The oracle signs this one itself (its action is still Unchecked).
+  const oracle = rustOracle(wasm, seed32, federationId, {
+    ...base,
+    roots: [{ action: unsigned, children: [] }],
+  });
   assert.equal(oracle.signer_pubkey, identity.publicKeyHex, "key derivation drift");
 
-  const tsBytes = rawMod.encodeTurn(turn);
   assert.equal(
-    hex(tsBytes),
+    hex(rawMod.encodeTurn(tsTurn)),
     hex(Uint8Array.from(oracle.turn_bytes)),
-    "postcard Turn encoding drifted from Rust (a field/enum/layout in wire.ts disagrees with the Rust type)",
+    "TS hybrid-signed turn diverged from the Rust DEFAULT signer (layout, sig-v3 message, ML-DSA derivation, determinism, or ctx)",
   );
-
   assert.equal(
-    rawMod.turnHashHex(turn),
+    rawMod.turnHashHex(tsTurn),
     oracle.turn_id,
     "canonical Turn::hash (v3) drifted from Rust",
   );
 });
 
-test("differential: minimal single-effect turn (all options None)", async () => {
+test("differential: minimal single-effect HYBRID turn (all options None)", async () => {
   const wasm = await loadWasmOracle();
   const rawMod = await raw();
   const { Identity } = await import("../dist/index.mjs");
@@ -229,18 +254,68 @@ test("differential: minimal single-effect turn (all options None)", async () => 
   const unsigned = rawMod.unsignedActionNamed(agent, "execute", [
     { kind: "incrementNonce", cell: agent },
   ]);
-  const signedAction = identity.signAction(unsigned, federationId);
-  const turn = { agent, nonce: 0n, roots: [{ action: signedAction, children: [] }], fee: 0n };
+  const signedAction = identity.signAction(unsigned, federationId, ORACLE_NONCE);
+  const tsTurn = { agent, nonce: ORACLE_NONCE, roots: [{ action: signedAction, children: [] }], fee: 0n };
 
-  const oracle = rustReencode(wasm, seed32, federationId, turn);
-  assert.equal(hex(rawMod.encodeTurn(turn)), hex(Uint8Array.from(oracle.turn_bytes)));
-  assert.equal(rawMod.turnHashHex(turn), oracle.turn_id);
+  const oracle = rustOracle(wasm, seed32, federationId, {
+    agent,
+    nonce: ORACLE_NONCE,
+    roots: [{ action: unsigned, children: [] }],
+    fee: 0n,
+  });
+  assert.equal(hex(rawMod.encodeTurn(tsTurn)), hex(Uint8Array.from(oracle.turn_bytes)));
+  assert.equal(rawMod.turnHashHex(tsTurn), oracle.turn_id);
 });
 
-test("ed25519 signing message: TS classical sig == the ed25519 half of the Rust HYBRID signature", async () => {
-  // Proves the canonical `compute_signing_message` (dregg-action-sig-v2,
-  // federation-bound) is byte-identical: both signers cover the SAME message,
-  // so the classical 64 bytes TS emits equal the ed25519 leg of the hybrid.
+test("CANARY: signing CLASSICAL where the Rust default is HYBRID makes the differential go RED", async () => {
+  // The differential above is only worth something if it can FAIL. This
+  // reproduces the exact bug it now guards (PUBLISHED-VERIFY correction 2: the
+  // TS SDK signed classical while the Rust default was hybrid) and pins that
+  // the comparison catches it. If this test ever goes green-by-equality, the
+  // differential has stopped discriminating and is blessing anything.
+  const wasm = await loadWasmOracle();
+  const rawMod = await raw();
+  const { Identity } = await import("../dist/index.mjs");
+
+  const seed32 = Uint8Array.from({ length: 32 }, (_, i) => 0x10 + i);
+  const identity = Identity.fromKeyBytes(seed32);
+  const agent = identity.cellId();
+  const federationId = new Uint8Array(32);
+
+  const unsigned = rawMod.unsignedActionNamed(agent, "execute", [{ kind: "incrementNonce", cell: agent }]);
+  const classical = identity.signActionClassical(unsigned, federationId, ORACLE_NONCE);
+  assert.equal(classical.authorization.kind, "signature", "the canary must sign the LEGACY classical shape");
+
+  const classicalTurn = { agent, nonce: ORACLE_NONCE, roots: [{ action: classical, children: [] }], fee: 0n };
+  const oracle = rustOracle(wasm, seed32, federationId, {
+    agent,
+    nonce: ORACLE_NONCE,
+    roots: [{ action: unsigned, children: [] }],
+    fee: 0n,
+  });
+
+  assert.notEqual(
+    hex(rawMod.encodeTurn(classicalTurn)),
+    hex(Uint8Array.from(oracle.turn_bytes)),
+    "CANARY FAILED: a classical-signed turn compared EQUAL to the Rust hybrid default — the differential is not discriminating",
+  );
+
+  // And the same turn signed HYBRID does match — so the RED above is caused by
+  // the signature shape, not by some unrelated breakage in the fixture.
+  const hybridTurn = {
+    agent,
+    nonce: ORACLE_NONCE,
+    roots: [{ action: identity.signAction(unsigned, federationId, ORACLE_NONCE), children: [] }],
+    fee: 0n,
+  };
+  assert.equal(
+    hex(rawMod.encodeTurn(hybridTurn)),
+    hex(Uint8Array.from(oracle.turn_bytes)),
+    "hybrid must be the shape that matches",
+  );
+});
+
+test("classical signing stays available + explicit (the pre-flip shape the node still accepts)", async () => {
   const wasm = await loadWasmOracle();
   const rawMod = await raw();
   const { Identity } = await import("../dist/index.mjs");
@@ -253,27 +328,32 @@ test("ed25519 signing message: TS classical sig == the ed25519 half of the Rust 
   const unsigned = rawMod.unsignedActionNamed(agent, "execute", [
     { kind: "incrementNonce", cell: agent },
   ]);
-  const tsSigned = identity.signAction(unsigned, federationId); // classical
-  const tsSigHex = hex(tsSigned.authorization.r) + hex(tsSigned.authorization.s);
+  const classical = identity.signActionClassical(unsigned, federationId, ORACLE_NONCE);
+  const hybrid = identity.signAction(unsigned, federationId, ORACLE_NONCE);
 
-  // Hand the oracle the UNSIGNED turn so it signs through the default (hybrid) path.
-  const unsignedTurn = { agent, nonce: 0n, roots: [{ action: unsigned, children: [] }], fee: 0n };
-  const jsonBytes = new TextEncoder().encode(JSON.stringify(turnToJson(unsignedTurn)));
-  const oracle = wasm.sign_turn_v3(jsonBytes, seed32, federationId);
-  const signedJson = JSON.parse(Buffer.from(Uint8Array.from(oracle.turn_bytes_json)).toString("utf8"));
-  const oracleAuth = signedJson.call_forest.roots[0].action.authorization;
+  // The classical 64 bytes are exactly the ed25519 HALF of the hybrid: both
+  // halves cover the SAME canonical `compute_signing_message` (sig-v3).
+  assert.equal(
+    hex(classical.authorization.r) + hex(classical.authorization.s),
+    hex(hybrid.authorization.ed25519),
+    "classical signature must equal the hybrid's ed25519 leg (same signing message)",
+  );
 
-  assert.ok(oracleAuth.HybridSignature, "Rust default signer must emit HybridSignature");
-  const oracleEd = hex(Uint8Array.from(oracleAuth.HybridSignature.ed25519));
-  assert.equal(tsSigHex, oracleEd, "TS classical ed25519 signature diverged from Rust's ed25519 half (signing message drift)");
+  // The classical turn re-encodes through the real Rust postcard unchanged
+  // (`sign_turn_v3` only signs Unchecked actions) — the legacy shape is still
+  // byte-faithful, so pre-flip consumers are not broken.
+  const classicalTurn = { agent, nonce: ORACLE_NONCE, roots: [{ action: classical, children: [] }], fee: 0n };
+  const reencoded = rustOracle(wasm, seed32, federationId, classicalTurn);
+  assert.equal(hex(rawMod.encodeTurn(classicalTurn)), hex(Uint8Array.from(reencoded.turn_bytes)));
+  assert.equal(rawMod.turnHashHex(classicalTurn), reencoded.turn_id);
 });
 
-test("hybrid authorization boundary: the Rust default is post-quantum; the TS SDK signs classical only", async () => {
-  // A LOUD guard on the ONE remaining wire-shape divergence (not silent drift):
-  // Rust default → Authorization::HybridSignature (variant 10) with ML-DSA-65;
-  // the TS SDK → Authorization::Signature (variant 0), classical ed25519 only.
-  // If this ever stops being true, a signed-turn byte differential is possible
-  // again and this test — not a false "byte-faithful" claim — is where you learn it.
+test("hybrid authorization boundary: the Rust default IS post-quantum (the standing tripwire)", async () => {
+  // The tripwire from PUBLISHED-VERIFY correction 2, KEPT: it pins that the
+  // Rust default signer is hybrid ML-DSA-65 with the exact FIPS 204 lengths.
+  // The TS SDK now MATCHES that shape rather than diverging from it, so this
+  // guards the other direction: if Rust's default ever stops being hybrid, the
+  // TS default silently becomes wrong, and this is where you learn it.
   const wasm = await loadWasmOracle();
   const rawMod = await raw();
   const { Identity } = await import("../dist/index.mjs");
@@ -285,28 +365,51 @@ test("hybrid authorization boundary: the Rust default is post-quantum; the TS SD
 
   const unsigned = rawMod.unsignedActionNamed(agent, "execute", [{ kind: "incrementNonce", cell: agent }]);
 
-  // TS side: classical.
-  const tsSigned = identity.signAction(unsigned, federationId);
-  assert.equal(tsSigned.authorization.kind, "signature", "TS SDK emits the classical Signature variant");
+  // TS side: hybrid, by default.
+  const tsSigned = identity.signAction(unsigned, federationId, ORACLE_NONCE);
+  assert.equal(tsSigned.authorization.kind, "hybridSignature", "TS SDK emits the HybridSignature variant by default");
 
   // Rust default side: hybrid, with the two large PQ halves.
-  const unsignedTurn = { agent, nonce: 0n, roots: [{ action: unsigned, children: [] }], fee: 0n };
+  const unsignedTurn = { agent, nonce: ORACLE_NONCE, roots: [{ action: unsigned, children: [] }], fee: 0n };
   const oracle = wasm.sign_turn_v3(new TextEncoder().encode(JSON.stringify(turnToJson(unsignedTurn))), seed32, federationId);
   const auth = JSON.parse(Buffer.from(Uint8Array.from(oracle.turn_bytes_json)).toString("utf8"))
     .call_forest.roots[0].action.authorization;
 
   assert.ok(auth.HybridSignature, "Rust default authorization is HybridSignature");
   assert.equal(auth.HybridSignature.ed25519.length, 64, "hybrid carries a 64-byte ed25519 leg");
-  assert.equal(auth.HybridSignature.ml_dsa.length, 3309, "hybrid carries a 3309-byte ML-DSA-65 signature the TS SDK cannot produce");
-  assert.equal(auth.HybridSignature.ml_dsa_pk.length, 1952, "hybrid carries a 1952-byte ML-DSA-65 public key the TS SDK cannot produce");
+  assert.equal(auth.HybridSignature.ml_dsa.length, 3309, "hybrid carries a 3309-byte ML-DSA-65 signature");
+  assert.equal(auth.HybridSignature.ml_dsa_pk.length, 1952, "hybrid carries a 1952-byte ML-DSA-65 public key");
 
-  // The default-signed hybrid turn is far larger than the TS classical turn:
-  // concrete proof the wire shapes differ (so a byte differential over the
-  // default signer is not achievable from TS today).
-  const tsClassicalTurn = { agent, nonce: 0n, roots: [{ action: tsSigned, children: [] }], fee: 0n };
-  const tsLen = rawMod.encodeTurn(tsClassicalTurn).length;
+  // The TS side produces those SAME lengths and the SAME derived PQ public key.
+  assert.equal(tsSigned.authorization.mlDsa.length, 3309, "TS emits a 3309-byte ML-DSA-65 signature");
+  assert.equal(tsSigned.authorization.mlDsaPk.length, 1952, "TS emits a 1952-byte ML-DSA-65 public key");
+  assert.equal(
+    hex(tsSigned.authorization.mlDsaPk),
+    hex(Uint8Array.from(auth.HybridSignature.ml_dsa_pk)),
+    "TS ML-DSA-65 public key must equal Rust's (same ed25519 seed → same ML-DSA.KeyGen(ξ))",
+  );
+
+  // The PQ material is not free: a hybrid turn carries ~5.2 KB the classical
+  // one does not. Pin the cost so a size regression is visible, and pin that
+  // the TS hybrid turn is now the SAME size as Rust's (not the classical one).
+  const tsHybridLen = rawMod.encodeTurn({
+    agent,
+    nonce: ORACLE_NONCE,
+    roots: [{ action: tsSigned, children: [] }],
+    fee: 0n,
+  }).length;
+  const tsClassicalLen = rawMod.encodeTurn({
+    agent,
+    nonce: ORACLE_NONCE,
+    roots: [{ action: identity.signActionClassical(unsigned, federationId, ORACLE_NONCE), children: [] }],
+    fee: 0n,
+  }).length;
   const hybridLen = Uint8Array.from(oracle.turn_bytes).length;
-  assert.ok(hybridLen > tsLen + 5000, `hybrid turn (${hybridLen}B) dwarfs the classical TS turn (${tsLen}B)`);
+  assert.equal(tsHybridLen, hybridLen, "the TS hybrid turn must be exactly Rust's size");
+  assert.ok(
+    tsHybridLen > tsClassicalLen + 5000,
+    `hybrid turn (${tsHybridLen}B) carries ~5.2KB of PQ material over classical (${tsClassicalLen}B)`,
+  );
 });
 
 test("the SignedTurn envelope verifies and frames as turn ++ sig ++ signer", async () => {
@@ -319,7 +422,7 @@ test("the SignedTurn envelope verifies and frames as turn ++ sig ++ signer", asy
   const unsigned = rawMod.unsignedActionNamed(agent, "execute", [
     { kind: "incrementNonce", cell: agent },
   ]);
-  const action = identity.signAction(unsigned, new Uint8Array(32));
+  const action = identity.signAction(unsigned, new Uint8Array(32), 1n);
   const turn = { agent, nonce: 1n, roots: [{ action, children: [] }], fee: 100n };
 
   const envelope = identity.signTurnEnvelope(turn);

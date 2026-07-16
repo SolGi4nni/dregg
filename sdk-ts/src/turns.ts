@@ -205,8 +205,20 @@ export class TurnBuilder {
     const federationId = await this.runtime.node.federationId();
     const unsigned = unsignedActionNamed(target, this.methodName, this.effectList);
     unsigned.args = this.argList;
-    const action = this.runtime.identity.signAction(unsigned, federationId);
-    return new AuthorizedTurn(this.runtime, action, this.feeValue ?? DEFAULT_FEE);
+    // `dregg-action-sig-v3` binds the SUBMITTING turn's nonce into the action
+    // signature, so the nonce must be known here. `submit()` re-signs if the
+    // live counter has moved on by then (mirror of the Rust
+    // `resign_full_commitment_at` repair).
+    const nonce = await this.runtime.currentNonce();
+    const action = this.runtime.identity.signAction(unsigned, federationId, nonce);
+    return new AuthorizedTurn(
+      this.runtime,
+      unsigned,
+      action,
+      federationId,
+      nonce,
+      this.feeValue ?? DEFAULT_FEE,
+    );
   }
 }
 
@@ -216,13 +228,28 @@ export class TurnBuilder {
  */
 export class AuthorizedTurn {
   private readonly runtime: AgentRuntime;
-  private readonly signedAction: Action;
+  /** The unsigned scaffold, kept so a moved nonce can be re-signed (v3). */
+  private readonly unsignedAction: Action;
+  private signedAction: Action;
+  private readonly federationId: Uint8Array;
+  /** The turn nonce `signedAction`'s signature is bound to (`sig-v3`). */
+  private signedNonce: bigint;
   private readonly fee: bigint;
   private submitted = false;
 
-  constructor(runtime: AgentRuntime, action: Action, fee: bigint) {
+  constructor(
+    runtime: AgentRuntime,
+    unsignedAction: Action,
+    action: Action,
+    federationId: Uint8Array,
+    signedNonce: bigint,
+    fee: bigint,
+  ) {
     this.runtime = runtime;
+    this.unsignedAction = unsignedAction;
     this.signedAction = action;
+    this.federationId = federationId;
+    this.signedNonce = signedNonce;
     this.fee = fee;
   }
 
@@ -246,9 +273,11 @@ export class AuthorizedTurn {
    * receipt-chain head (`previous_receipt_hash` causal binding), and a
    * one-hour validity horizon; the envelope signature binds the canonical
    * `Turn::hash` (v3). A chain-head race (another commit landing between
-   * read and submit) is retried once with fresh bindings — the per-action
-   * signature stays valid; only the envelope is re-signed. One-shot: a
-   * second call is refused (the consumed turn would replay-fail anyway).
+   * read and submit) is retried once with fresh bindings. Because
+   * `dregg-action-sig-v3` binds the turn nonce into the ACTION signature, a
+   * moved nonce means the action is re-signed too — not just the envelope.
+   * One-shot: a second call is refused (the consumed turn would replay-fail
+   * anyway).
    */
   async submit(): Promise<Receipt> {
     if (this.submitted) {
@@ -258,6 +287,17 @@ export class AuthorizedTurn {
     let lastError: unknown;
     for (let attempt = 0; attempt < 2; attempt++) {
       const nonce = await this.runtime.currentNonce();
+      // v3: the action signature covers the turn nonce. If the live counter
+      // moved since `sign()`, the banked signature is bound to a stale nonce
+      // and would be rejected — re-sign over the live one.
+      if (nonce !== this.signedNonce) {
+        this.signedAction = this.runtime.identity.signAction(
+          this.unsignedAction,
+          this.federationId,
+          nonce,
+        );
+        this.signedNonce = nonce;
+      }
       const previousReceiptHash = await this.runtime.node.receiptChainHead();
       const turn: Turn = {
         agent: this.runtime.identity.cellId(),

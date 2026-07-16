@@ -348,6 +348,20 @@ var utf8 = {
   encode: (s) => new TextEncoder().encode(s)
 };
 
+// src/internal/mldsa.ts
+var import_ml_dsa = require("@noble/post-quantum/ml-dsa.js");
+var HYBRID_TURN_PQ_CTX = utf8.encode("dregg-hybrid-turn-v1");
+function mlDsaKeypairFromEd25519Seed(seed32) {
+  const { publicKey, secretKey } = import_ml_dsa.ml_dsa65.keygen(seed32);
+  return { publicKey, secretKey };
+}
+function mlDsaSign(secretKey, message) {
+  return import_ml_dsa.ml_dsa65.sign(message, secretKey, {
+    context: HYBRID_TURN_PQ_CTX,
+    extraEntropy: false
+  });
+}
+
 // src/internal/wire.ts
 function symbol(name) {
   return blake3(utf8.encode(name));
@@ -501,6 +515,9 @@ function writeAuthorization(w, a) {
     case "signature":
       w.varint(0).bytes(exactBytes(a.r, 32, "sig r")).bytes(exactBytes(a.s, 32, "sig s"));
       break;
+    case "hybridSignature":
+      w.varint(10).byteSeq(exactBytes(a.ed25519, 64, "hybrid ed25519")).byteSeq(a.mlDsa).byteSeq(a.mlDsaPk);
+      break;
     case "unchecked":
       w.varint(4);
       break;
@@ -586,6 +603,9 @@ function authHashUpdate(h, a) {
     case "signature":
       h.update(Uint8Array.from([0])).update(a.r).update(a.s);
       break;
+    case "hybridSignature":
+      h.update(Uint8Array.from([10])).update(a.ed25519).update(u64le(a.mlDsa.length)).update(a.mlDsa).update(u64le(a.mlDsaPk.length)).update(a.mlDsaPk);
+      break;
     case "unchecked":
       h.update(Uint8Array.from([3]));
       break;
@@ -610,10 +630,11 @@ function actionHash(a) {
   h.update(u64le(0));
   return h.finalize();
 }
-function actionSigningMessage(a, federationId) {
+function actionSigningMessage(a, federationId, turnNonce) {
   const h = Blake3Hasher.new();
-  h.update(utf8.encode("dregg-action-sig-v2:"));
+  h.update(utf8.encode("dregg-action-sig-v3:"));
   h.update(exactBytes(federationId, 32, "federationId"));
+  h.update(u64le(turnNonce));
   h.update(a.target);
   h.update(a.method);
   for (const arg of a.args) h.update(arg);
@@ -725,13 +746,65 @@ var Identity = class _Identity {
   signBytes(message) {
     return ed25519Sign(this.seed, message);
   }
+  mlDsaKey() {
+    return this.mlDsaCache ?? (this.mlDsaCache = mlDsaKeypairFromEd25519Seed(this.seed));
+  }
   /**
-   * Sign an action over the canonical federation-bound signing message
-   * (`dregg-action-sig-v2`), replacing its authorization with a real
-   * `Signature` — the ONLY way an action leaves the authorized flow.
+   * This identity's serialized ML-DSA-65 public key (1952 bytes) — the PQ half
+   * of the hybrid identity, derived from the same seed as the ed25519 key.
+   * A verifier cannot derive it from the ed25519 *public* key, which is why
+   * every hybrid authorization carries it.
    */
-  signAction(action, federationId) {
-    const message = actionSigningMessage(action, federationId);
+  mlDsaPublicKey() {
+    return this.mlDsaKey().publicKey;
+  }
+  /**
+   * Sign an action with a HYBRID (ed25519 + ML-DSA-65) authorization — the
+   * DEFAULT, byte-identical to Rust's `AgentCipherclerk::sign_action`.
+   *
+   * Both halves cover the SAME canonical signing message
+   * (`dregg-action-sig-v3`); the ML-DSA half is deterministic (FIPS 204
+   * `rnd = {0}^32`) so the turn hash it is bound into stays stable, and the
+   * derived PQ public key is carried in the authorization so the verifier is
+   * self-contained.
+   *
+   * `turnNonce` MUST be the nonce of the turn this action will ride
+   * (`turn.nonce == agent.state.nonce()` at commit) — v3 binds it into the
+   * signature, so a mismatched nonce fails verification at commit.
+   *
+   * STAGED: the node accepts this alongside the classical
+   * {@link signActionClassical} shape today and fail-closes on a
+   * present-but-invalid PQ half; whether the PQ half is *required* is gated
+   * node-side by `TurnExecutor::require_pq` (default off). Signing hybrid by
+   * default is what makes that flip a no-op for TS callers.
+   */
+  signAction(action, federationId, turnNonce) {
+    const message = actionSigningMessage(action, federationId, turnNonce);
+    const ed25519 = this.signBytes(message);
+    const pq = this.mlDsaKey();
+    return {
+      ...action,
+      authorization: {
+        kind: "hybridSignature",
+        ed25519,
+        mlDsa: mlDsaSign(pq.secretKey, message),
+        mlDsaPk: pq.publicKey
+      }
+    };
+  }
+  /**
+   * Sign an action with the LEGACY CLASSICAL (ed25519-only)
+   * `Authorization::Signature` shape — mirror of Rust's
+   * `AgentCipherclerk::sign_action_classical`.
+   *
+   * {@link signAction} emits the hybrid variant by default; this remains for
+   * consumers that must produce the pre-hybrid wire shape (a verifier that
+   * predates `Authorization::HybridSignature`). It is accepted by the node
+   * only while `require_pq` is off — it is the shape that goes dark the day
+   * that flag flips.
+   */
+  signActionClassical(action, federationId, turnNonce) {
+    const message = actionSigningMessage(action, federationId, turnNonce);
     const sig = this.signBytes(message);
     return {
       ...action,
@@ -1302,7 +1375,9 @@ function explainEffect(effect) {
 function authMode(auth) {
   switch (auth.kind) {
     case "signature":
-      return "an Ed25519 signature";
+      return "an Ed25519 signature (classical only \u2014 no post-quantum half)";
+    case "hybridSignature":
+      return auth.mlDsa.length > 0 ? "a HYBRID signature (Ed25519 + ML-DSA-65 post-quantum; both halves must verify)" : "a HYBRID signature with the post-quantum half ABSENT (Ed25519 alone \u2014 rejected once the node requires PQ)";
     case "unchecked":
       return "NO authorization (unchecked \u2014 only valid if the cell permits)";
     default: {
@@ -1486,15 +1561,26 @@ var TurnBuilder = class {
     const federationId = await this.runtime.node.federationId();
     const unsigned = unsignedActionNamed(target, this.methodName, this.effectList);
     unsigned.args = this.argList;
-    const action = this.runtime.identity.signAction(unsigned, federationId);
-    return new AuthorizedTurn(this.runtime, action, this.feeValue ?? DEFAULT_FEE);
+    const nonce = await this.runtime.currentNonce();
+    const action = this.runtime.identity.signAction(unsigned, federationId, nonce);
+    return new AuthorizedTurn(
+      this.runtime,
+      unsigned,
+      action,
+      federationId,
+      nonce,
+      this.feeValue ?? DEFAULT_FEE
+    );
   }
 };
 var AuthorizedTurn = class {
-  constructor(runtime, action, fee) {
+  constructor(runtime, unsignedAction2, action, federationId, signedNonce, fee) {
     this.submitted = false;
     this.runtime = runtime;
+    this.unsignedAction = unsignedAction2;
     this.signedAction = action;
+    this.federationId = federationId;
+    this.signedNonce = signedNonce;
     this.fee = fee;
   }
   /**
@@ -1515,9 +1601,11 @@ var AuthorizedTurn = class {
    * receipt-chain head (`previous_receipt_hash` causal binding), and a
    * one-hour validity horizon; the envelope signature binds the canonical
    * `Turn::hash` (v3). A chain-head race (another commit landing between
-   * read and submit) is retried once with fresh bindings — the per-action
-   * signature stays valid; only the envelope is re-signed. One-shot: a
-   * second call is refused (the consumed turn would replay-fail anyway).
+   * read and submit) is retried once with fresh bindings. Because
+   * `dregg-action-sig-v3` binds the turn nonce into the ACTION signature, a
+   * moved nonce means the action is re-signed too — not just the envelope.
+   * One-shot: a second call is refused (the consumed turn would replay-fail
+   * anyway).
    */
   async submit() {
     if (this.submitted) {
@@ -1527,6 +1615,14 @@ var AuthorizedTurn = class {
     let lastError;
     for (let attempt = 0; attempt < 2; attempt++) {
       const nonce = await this.runtime.currentNonce();
+      if (nonce !== this.signedNonce) {
+        this.signedAction = this.runtime.identity.signAction(
+          this.unsignedAction,
+          this.federationId,
+          nonce
+        );
+        this.signedNonce = nonce;
+      }
       const previousReceiptHash = await this.runtime.node.receiptChainHead();
       const turn = {
         agent: this.runtime.identity.cellId(),
@@ -1797,6 +1893,14 @@ var NodeClient = class {
     if (opts.federationId !== void 0) {
       this.cachedFederationId = typeof opts.federationId === "string" ? hexDecodeExact(opts.federationId, 32) : Uint8Array.from(opts.federationId);
     }
+    this.noncePin = opts.nonce !== void 0 ? BigInt(opts.nonce) : void 0;
+  }
+  /**
+   * The pinned turn nonce, if the caller supplied one — see
+   * [`NodeClientOptions.nonce`]. `undefined` means "read it from the node".
+   */
+  pinnedNonce() {
+    return this.noncePin;
   }
   headers(extra = {}) {
     const h = { ...extra };
@@ -2079,8 +2183,16 @@ var AgentRuntime = class {
   pay(to, amount, asset) {
     return this.econ().pay(to, amount, asset);
   }
-  /** The agent cell's current nonce (0 for a never-seen cell). */
+  /**
+   * The agent cell's current nonce (0 for a never-seen cell) — the value
+   * `dregg-action-sig-v3` binds into the action signature.
+   *
+   * A pinned [`NodeClientOptions.nonce`] wins (the offline-signing path);
+   * otherwise it is read from the node's live cell state.
+   */
   async currentNonce() {
+    const pinned = this.node.pinnedNonce();
+    if (pinned !== void 0) return pinned;
     try {
       const cell = await this.node.cell(this.identity.cellId());
       return cell.found ? BigInt(cell.nonce) : 0n;

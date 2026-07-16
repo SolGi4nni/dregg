@@ -1,0 +1,22 @@
+[package]
+name = "dregg-ts-sdk-verifier-harness"
+version = "0.0.0"
+edition = "2021"
+publish = false
+license = "AGPL-3.0-or-later"
+
+# A STANDALONE workspace (not a member of the repo root): this is a test-only
+# harness owned by `sdk-ts/`, and it must never feature-unify onto the main
+# workspace's resolve. It builds via `--manifest-path` from
+# `sdk-ts/test/hybrid-verify.test.mjs`.
+[workspace]
+
+# `default-features = false` mirrors what `wasm/Cargo.toml` does: the executor +
+# the `pq` module (unconditional in `dregg-turn`) are all this harness needs, and
+# the light config keeps arkworks / the Lean archive out of the build.
+[dependencies]
+dregg-turn = { path = "../../../turn", default-features = false }
+dregg-cell = { path = "../../../cell", default-features = false }
+dregg-types = { path = "../../../types" }
+postcard = { version = "1", features = ["alloc"] }
+serde_json = "1"

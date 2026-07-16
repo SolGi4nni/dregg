@@ -20,8 +20,13 @@ function bytes(fill) {
 async function makeRuntime() {
   const { AgentRuntime, Identity } = await sdk();
   const identity = Identity.fromKeyBytes(Uint8Array.from({ length: 32 }, (_, i) => 0x11 + i));
-  // Pin the federation id so .sign() needs no node round trip.
-  const runtime = new AgentRuntime(identity, "http://127.0.0.1:1", { federationId: PINNED_FED });
+  // Pin the federation id AND the nonce so .sign() needs no node round trip:
+  // `dregg-action-sig-v3` binds the turn nonce into the action signature, so
+  // offline signing must pin it exactly as it pins the federation binding.
+  const runtime = new AgentRuntime(identity, "http://127.0.0.1:1", {
+    federationId: PINNED_FED,
+    nonce: 0n,
+  });
   return { runtime, identity };
 }
 

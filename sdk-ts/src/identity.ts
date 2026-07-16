@@ -17,6 +17,8 @@
 import { blake3DeriveKey } from "./internal/blake3";
 import { ed25519PublicKey, ed25519Sign } from "./internal/ed25519";
 import { exactBytes, hexEncode } from "./internal/bytes";
+import type { MlDsaKeypair } from "./internal/mldsa";
+import { mlDsaKeypairFromEd25519Seed, mlDsaSign } from "./internal/mldsa";
 import type { Action, CellId, Turn } from "./internal/wire";
 import { actionSigningMessage, deriveCellId, encodeSignedTurn, turnHash } from "./internal/wire";
 
@@ -85,12 +87,79 @@ export class Identity {
   }
 
   /**
-   * Sign an action over the canonical federation-bound signing message
-   * (`dregg-action-sig-v2`), replacing its authorization with a real
-   * `Signature` — the ONLY way an action leaves the authorized flow.
+   * The identity's ML-DSA-65 keypair, derived deterministically from the SAME
+   * ed25519 seed (`MlDsaTurnKey::from_ed25519_seed`). Cached: keygen is the
+   * expensive part of hybrid signing, and the key is a pure function of the
+   * seed.
    */
-  signAction(action: Action, federationId: Uint8Array): Action {
-    const message = actionSigningMessage(action, federationId);
+  private mlDsaCache?: MlDsaKeypair;
+
+  private mlDsaKey(): MlDsaKeypair {
+    return (this.mlDsaCache ??= mlDsaKeypairFromEd25519Seed(this.seed));
+  }
+
+  /**
+   * This identity's serialized ML-DSA-65 public key (1952 bytes) — the PQ half
+   * of the hybrid identity, derived from the same seed as the ed25519 key.
+   * A verifier cannot derive it from the ed25519 *public* key, which is why
+   * every hybrid authorization carries it.
+   */
+  mlDsaPublicKey(): Uint8Array {
+    return this.mlDsaKey().publicKey;
+  }
+
+  /**
+   * Sign an action with a HYBRID (ed25519 + ML-DSA-65) authorization — the
+   * DEFAULT, byte-identical to Rust's `AgentCipherclerk::sign_action`.
+   *
+   * Both halves cover the SAME canonical signing message
+   * (`dregg-action-sig-v3`); the ML-DSA half is deterministic (FIPS 204
+   * `rnd = {0}^32`) so the turn hash it is bound into stays stable, and the
+   * derived PQ public key is carried in the authorization so the verifier is
+   * self-contained.
+   *
+   * `turnNonce` MUST be the nonce of the turn this action will ride
+   * (`turn.nonce == agent.state.nonce()` at commit) — v3 binds it into the
+   * signature, so a mismatched nonce fails verification at commit.
+   *
+   * STAGED: the node accepts this alongside the classical
+   * {@link signActionClassical} shape today and fail-closes on a
+   * present-but-invalid PQ half; whether the PQ half is *required* is gated
+   * node-side by `TurnExecutor::require_pq` (default off). Signing hybrid by
+   * default is what makes that flip a no-op for TS callers.
+   */
+  signAction(action: Action, federationId: Uint8Array, turnNonce: bigint | number): Action {
+    const message = actionSigningMessage(action, federationId, turnNonce);
+    const ed25519 = this.signBytes(message);
+    const pq = this.mlDsaKey();
+    return {
+      ...action,
+      authorization: {
+        kind: "hybridSignature",
+        ed25519,
+        mlDsa: mlDsaSign(pq.secretKey, message),
+        mlDsaPk: pq.publicKey,
+      },
+    };
+  }
+
+  /**
+   * Sign an action with the LEGACY CLASSICAL (ed25519-only)
+   * `Authorization::Signature` shape — mirror of Rust's
+   * `AgentCipherclerk::sign_action_classical`.
+   *
+   * {@link signAction} emits the hybrid variant by default; this remains for
+   * consumers that must produce the pre-hybrid wire shape (a verifier that
+   * predates `Authorization::HybridSignature`). It is accepted by the node
+   * only while `require_pq` is off — it is the shape that goes dark the day
+   * that flag flips.
+   */
+  signActionClassical(
+    action: Action,
+    federationId: Uint8Array,
+    turnNonce: bigint | number,
+  ): Action {
+    const message = actionSigningMessage(action, federationId, turnNonce);
     const sig = this.signBytes(message);
     return {
       ...action,

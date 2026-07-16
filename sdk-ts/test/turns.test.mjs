@@ -123,9 +123,14 @@ test("full round trip: verbs -> sign -> explain -> submit -> Receipt", async () 
     const builder = runtime.turn().transfer(to, 25n).writeU64(1, 42n).incrementNonce().fee(2000);
     const authorized = await builder.sign();
 
-    // The anti-blind-signing reading: faithful, total, sem-tagged.
+    // The anti-blind-signing reading: faithful, total, sem-tagged. The default
+    // signer is HYBRID post-quantum, and the reading says so — a citizen is
+    // told which perimeter they are authorizing under, not just "a signature".
     const explanation = authorized.explain();
-    assert.ok(explanation.includes("authorized by an Ed25519 signature"));
+    assert.ok(
+      explanation.includes("authorized by a HYBRID signature (Ed25519 + ML-DSA-65 post-quantum"),
+      `explain() must name the hybrid PQ perimeter, got: ${explanation}`,
+    );
     assert.ok(explanation.includes("transfer 25 computrons"));
     assert.ok(explanation.includes("set state field #1"));
     assert.ok(explanation.includes("increment the nonce"));
@@ -135,12 +140,26 @@ test("full round trip: verbs -> sign -> explain -> submit -> Receipt", async () 
     // (unconfigured solo node → blake3(node operator pubkey)).
     const fedId = rawMod.blake3(nodePubkey);
     const action = authorized.action();
-    assert.equal(action.authorization.kind, "signature");
-    const msg = rawMod.actionSigningMessage(action, fedId);
-    const sig64 = rawMod.concatBytes(action.authorization.r, action.authorization.s);
+    // The DEFAULT front-door signer is HYBRID post-quantum.
+    assert.equal(action.authorization.kind, "hybridSignature");
+    // The mock's `/api/cell/` serves nonce 7, so that is the live replay
+    // counter `sign()` read and the value `sig-v3` binds into the signature.
+    // (Signing over any other nonce verifies nowhere — see the wrong-nonce
+    // falsifier in `hybrid-verify.test.mjs`.)
+    const msg = rawMod.actionSigningMessage(action, fedId, 7n);
     assert.ok(
-      rawMod.ed25519Verify(identity.publicKey, msg, sig64),
-      "per-action signature must verify over the canonical federation-bound message",
+      rawMod.ed25519Verify(identity.publicKey, msg, action.authorization.ed25519),
+      "the ed25519 half must verify over the canonical federation+nonce-bound message",
+    );
+    // BOTH halves cover that same message — the PQ half is real, not decorative.
+    assert.ok(
+      rawMod.mlDsaVerify(action.authorization.mlDsaPk, msg, action.authorization.mlDsa),
+      "the ML-DSA-65 half must verify over the SAME message under the turn ctx",
+    );
+    assert.equal(
+      hex(action.authorization.mlDsaPk),
+      hex(identity.mlDsaPublicKey()),
+      "the carried PQ public key is the one derived from this identity's seed",
     );
 
     const receipt = await authorized.submit();

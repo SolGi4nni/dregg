@@ -8,8 +8,9 @@
  *
  *   1. builds the turn through `AgentRuntime.turn()` (the inescapable authorized
  *      builder — there is NO `Unchecked` path on this surface);
- *   2. `.sign()`s it (a real Ed25519 signature, byte-identical to the native
- *      SDK — the same `@noble` path the CLI/SDK pin to a golden vector);
+ *   2. `.sign()`s it (a real HYBRID post-quantum signature — Ed25519 + ML-DSA-65
+ *      — byte-identical to the native SDK's default signer, on the same `@noble`
+ *      path the CLI/SDK pin to a golden vector);
  *   3. renders the faithful `explain()` reading + per-effect plain language and
  *      calls the injected `approve(view)` gate (the human in the loop);
  *   4. `.submit()`s ONLY if `approve` resolves true, and returns the `Receipt`.
@@ -91,7 +92,7 @@ export class TrustedPathMediator {
     // (1)(2) Build through the inescapable authorized builder and sign.
     const builder = this.runtime.turn();
     applySpec(builder, spec, signer);
-    const signed = await builder.sign(); // real Ed25519 signature (no Unchecked path)
+    const signed = await builder.sign(); // real hybrid PQ signature (no Unchecked path)
 
     // (3) The anti-blind-signing reading — derived from the SAME signed action.
     const view = buildApprovalView({

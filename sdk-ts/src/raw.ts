@@ -65,6 +65,22 @@ export {
 
 export { blake3, blake3DeriveKey, Blake3Hasher } from "./internal/blake3";
 export { ed25519PublicKey, ed25519Sign, ed25519Verify } from "./internal/ed25519";
+/**
+ * The ML-DSA-65 (FIPS 204) post-quantum half of a HYBRID authorization —
+ * mirrors `dregg-pq` / `turn/src/pq.rs`. The key derives from the SAME 32-byte
+ * ed25519 seed the classical identity uses, so a hybrid identity needs no new
+ * key material.
+ */
+export {
+  HYBRID_TURN_PQ_CTX,
+  ML_DSA_PK_LEN,
+  ML_DSA_SIG_LEN,
+  ML_DSA_SK_LEN,
+  mlDsaKeypairFromEd25519Seed,
+  mlDsaSign,
+  mlDsaVerify,
+} from "./internal/mldsa";
+export type { MlDsaKeypair } from "./internal/mldsa";
 export {
   bytesEqual,
   concatBytes,

@@ -34,7 +34,7 @@ import {
   portalUrl,
   renderTurn,
   resolveDomains
-} from "./chunk-KDHOF3U6.mjs";
+} from "./chunk-H4QX52BK.mjs";
 import {
   DreggPgError,
   KERNEL_ROLE,
@@ -46,7 +46,7 @@ import {
   Blake3Hasher,
   fieldFromU64,
   symbol
-} from "./chunk-Z6EODM4N.mjs";
+} from "./chunk-FIRH2UU5.mjs";
 import {
   exactBytes,
   hexDecode,

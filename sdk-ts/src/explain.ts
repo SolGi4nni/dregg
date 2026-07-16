@@ -74,7 +74,11 @@ export function explainEffect(effect: Effect): string {
 function authMode(auth: Authorization): string {
   switch (auth.kind) {
     case "signature":
-      return "an Ed25519 signature";
+      return "an Ed25519 signature (classical only — no post-quantum half)";
+    case "hybridSignature":
+      return auth.mlDsa.length > 0
+        ? "a HYBRID signature (Ed25519 + ML-DSA-65 post-quantum; both halves must verify)"
+        : "a HYBRID signature with the post-quantum half ABSENT (Ed25519 alone — rejected once the node requires PQ)";
     case "unchecked":
       return "NO authorization (unchecked — only valid if the cell permits)";
     default: {

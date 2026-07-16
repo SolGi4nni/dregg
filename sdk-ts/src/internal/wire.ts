@@ -129,9 +129,25 @@ export type Effect =
   | { kind: "incrementNonce"; cell: CellId } // 5
   | { kind: "createCell"; publicKey: Bytes32; tokenId: Bytes32; balance: number | bigint }; // 6
 
-/** `dregg_turn::Authorization` (the two variants the authorized flow emits). */
+/** `dregg_turn::Authorization` (the variants the authorized flow emits). */
 export type Authorization =
+  /** Classical ed25519 only — the LEGACY shape (`sign_action_classical`). */
   | { kind: "signature"; r: Bytes32; s: Bytes32 } // postcard variant 0
+  /**
+   * HYBRID (ed25519 + ML-DSA-65) — the DEFAULT, matching Rust's
+   * `AgentCipherclerk::sign_action`. Both halves cover the SAME canonical
+   * signing message; the ML-DSA half is bound into `Action::hash` under
+   * discriminant 10 so an outer signed-turn envelope covers it (anti-strip).
+   */
+  | {
+      kind: "hybridSignature"; // postcard variant 10
+      /** The ed25519 signature over the canonical signing message (64 bytes). */
+      ed25519: Uint8Array;
+      /** The ML-DSA-65 signature (3309 bytes). Empty ⇒ PQ half absent. */
+      mlDsa: Uint8Array;
+      /** The signer's serialized ML-DSA-65 public key (1952 bytes). */
+      mlDsaPk: Uint8Array;
+    }
   | { kind: "unchecked" }; // postcard variant 4
 
 /** `dregg_turn::Action` with every optional field at its default. */
@@ -337,7 +353,20 @@ function writeEffect(w: Writer, e: Effect): void {
 function writeAuthorization(w: Writer, a: Authorization): void {
   switch (a.kind) {
     case "signature":
+      // `Signature([u8; 32], [u8; 32])` — fixed-size arrays: NO length prefix.
       w.varint(0).bytes(exactBytes(a.r, 32, "sig r")).bytes(exactBytes(a.s, 32, "sig s"));
+      break;
+    case "hybridSignature":
+      // `HybridSignature { ed25519, ml_dsa, ml_dsa_pk }`. All three are
+      // LENGTH-PREFIXED seqs: `ed25519` is `[u8; 64]` but rides
+      // `#[serde(with = "serde_sig64")]`, which serializes it as a *slice*
+      // (`bytes.as_slice().serialize(ser)`) — so postcard emits varint(64)
+      // first, exactly like the `Vec<u8>` halves. This is why it is `byteSeq`
+      // and not `bytes` (which the fixed-array `Signature` case above uses).
+      w.varint(10)
+        .byteSeq(exactBytes(a.ed25519, 64, "hybrid ed25519"))
+        .byteSeq(a.mlDsa)
+        .byteSeq(a.mlDsaPk);
       break;
     case "unchecked":
       w.varint(4);
@@ -447,6 +476,21 @@ function authHashUpdate(h: Blake3Hasher, a: Authorization): void {
     case "signature":
       h.update(Uint8Array.from([0])).update(a.r).update(a.s);
       break;
+    case "hybridSignature":
+      // Discriminant 10 — distinct from `Signature` (0), so a classical and a
+      // hybrid authorization over the same action never collide in the action
+      // hash. Binding the PQ material (signature + public key) here is what
+      // makes the OUTER turn envelope's signature cover it: a tampering
+      // executor cannot swap or strip the PQ half under a signed envelope.
+      // NB the length prefixes here are u64-LE (`(len as u64).to_le_bytes()`),
+      // NOT the postcard varints the wire encoding uses.
+      h.update(Uint8Array.from([10]))
+        .update(a.ed25519)
+        .update(u64le(a.mlDsa.length))
+        .update(a.mlDsa)
+        .update(u64le(a.mlDsaPk.length))
+        .update(a.mlDsaPk);
+      break;
     case "unchecked":
       h.update(Uint8Array.from([3]));
       break;
@@ -475,15 +519,29 @@ export function actionHash(a: Action): Bytes32 {
 }
 
 /**
- * `TurnExecutor::compute_signing_message` — the canonical, federation-bound
- * action signing preimage (`dregg-action-sig-v2`). Computed over the action
- * with the authorization field IGNORED (the Rust path zeroes it first; this
- * preimage never reads it).
+ * `TurnExecutor::compute_signing_message` — the canonical action signing
+ * preimage (`dregg-action-sig-v3`). Computed over the action with the
+ * authorization field IGNORED (the Rust path zeroes it first; this preimage
+ * never reads it).
+ *
+ * ## v3 binds the SUBMITTING turn's nonce
+ *
+ * v2 added the federation binding; **v3 added `turn_nonce`** (the Full-
+ * commitment replay closure). `turnNonce` MUST be the nonce of the turn this
+ * action will ride — the executor recomputes this preimage over
+ * `turn.nonce` and rejects the signature otherwise. It is a REQUIRED
+ * parameter, not a defaulted one, precisely because a silently-wrong nonce
+ * produces a signature that verifies nowhere.
  */
-export function actionSigningMessage(a: Action, federationId: Uint8Array): Bytes32 {
+export function actionSigningMessage(
+  a: Action,
+  federationId: Uint8Array,
+  turnNonce: bigint | number,
+): Bytes32 {
   const h = Blake3Hasher.new();
-  h.update(utf8.encode("dregg-action-sig-v2:"));
+  h.update(utf8.encode("dregg-action-sig-v3:"));
   h.update(exactBytes(federationId, 32, "federationId"));
+  h.update(u64le(turnNonce));
   h.update(a.target);
   h.update(a.method);
   for (const arg of a.args) h.update(arg);
