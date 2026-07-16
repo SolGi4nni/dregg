@@ -8,16 +8,23 @@ and `SOUND-FIX-VERDICT.md`.
 The static file proves: every *committed* generic adversary (outputs a degree-≤D representation
 polynomial with the trapdoor τ absent) wins t-SDH on ≤ (D+1)/(p−1) of trapdoors. That is the q=0
 fragment. This file builds the ADAPTIVE object: an adversary that makes `q` oracle queries —
-group operations (linear combinations), pairings (polynomial products), and EQUALITY tests between
-opaque handles — before committing its output. The oracle answers equality *symbolically* (formal
-polynomial equality), never revealing τ.
+group operations (linear combinations) and EQUALITY tests between opaque handles — before
+committing its output. The oracle answers equality *symbolically* (formal polynomial equality),
+never revealing τ.
+
+The oracle has **no pairing move**: ArkLib's `tSdhAdversary D` is `Vector G₁ (D+1) × Vector G₂ 2 →
+… (Option (ZMod p × G₁))` — it must output a `G₁` element and is granted **no pairing map**
+`e : G₁ × G₂ → Gₜ`. Every handle it can form is therefore a `ZMod p`-linear combination of the seed
+`{1, X, …, X^D}`, degree ≤ D (never a product). This is the linear-oracle model on the critical path
+(δ = D); the conservative pairing-aware δ = 2D variant is off it (`GgmDegreeInvariant.buildPaired`).
 
 The Shoup argument, mechanized here at the counting/set level (no probability monad — same honest
 idiom as the static file):
 
   1. THE GENERIC-GROUP ORACLE (§ Oracle): handles are ℕ indices into a table of formal polynomials
      in `(ZMod p)[X]`, seeded with the SRS `1, X, …, X^D` (G₁), `1, X` (G₂). Moves append linear
-     combinations / pairing products; equality is answered by an abstract `AnswerFn`.
+     combinations of existing handles (no pairing product — the ArkLib t-SDH adversary has no
+     pairing); equality is answered by an abstract `AnswerFn`.
 
   2. IDENTICAL-UNTIL-BAD (§ Coincidence), the crux, PROVEN not assumed: run the adversary against
      TWO answer functions. If they agree on every pair actually queried in the first run, the runs
@@ -78,11 +85,16 @@ commits an output `(offset c, handle index k)`. The oracle answers equality via 
 abbrev AnswerFn (p : ℕ) := (ZMod p)[X] → (ZMod p)[X] → Bool
 
 /-- A generic-group move. `lin` forms a `ZMod p`-linear combination of existing handles (group
-add / negate / scalar-mul); `pair` forms the pairing product `e(Hᵢ, Hⱼ)` (G₁×G₂→Gₜ); `query`
-issues an equality test whose boolean answer feeds forward into the adversary's next decision. -/
+add / negate / scalar-mul); `query` issues an equality test whose boolean answer feeds forward
+into the adversary's next decision.
+
+There is **no pairing move**: ArkLib's `tSdhAdversary D` receives `Vector G₁ (D+1) × Vector G₂ 2`
+and must output a `G₁` element, with **no pairing map** `e : G₁ × G₂ → Gₜ` in its interface. So
+every handle it can form is a `ZMod p`-linear combination of the seed `{1, X, …, X^D}`, degree ≤ D
+(never a product — no `≤ 2D` term). This is the linear-oracle model on the critical path; the
+pairing-aware `≤ 2D` variant lives off it in `GgmDegreeInvariant` (`buildPaired`). -/
 inductive Move (p : ℕ) where
   | lin   : List (ZMod p × ℕ) → Move p
-  | pair  : ℕ → ℕ → Move p
   | query : ℕ → ℕ → Move p
 
 /-- A generic (adaptive) adversary: a decision function from the history of equality answers to
@@ -110,8 +122,6 @@ noncomputable def runAux (ans : AnswerFn p) (strat : Strat p) :
     | Sum.inr (c, k) => ((c, st.table.getD k 0), [])
     | Sum.inl (Move.lin spec) =>
         runAux ans strat fuel ⟨st.table ++ [combine spec st.table], st.hist⟩
-    | Sum.inl (Move.pair i j) =>
-        runAux ans strat fuel ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩
     | Sum.inl (Move.query i j) =>
         let a := st.table.getD i 0
         let b := st.table.getD j 0
@@ -146,16 +156,6 @@ theorem runAux_congr_of_agree {ans1 ans2 : AnswerFn p} (strat : Strat p) :
           simp only [runAux, hdec]
         have e2 : runAux ans2 strat (fuel + 1) st
             = runAux ans2 strat fuel ⟨st.table ++ [combine spec st.table], st.hist⟩ := by
-          simp only [runAux, hdec]
-        rw [e2, e1]
-        exact ih _ (by rw [e1] at h; exact h)
-      | pair i j =>
-        -- pair move: no query; recurse on the extended table.
-        have e1 : runAux ans1 strat (fuel + 1) st
-            = runAux ans1 strat fuel ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
-          simp only [runAux, hdec]
-        have e2 : runAux ans2 strat (fuel + 1) st
-            = runAux ans2 strat fuel ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
           simp only [runAux, hdec]
         rw [e2, e1]
         exact ih _ (by rw [e1] at h; exact h)
@@ -202,11 +202,6 @@ theorem runAux_queries_length_le (ans : AnswerFn p) (strat : Strat p) :
       | lin spec =>
         have e : runAux ans strat (fuel + 1) st
             = runAux ans strat fuel ⟨st.table ++ [combine spec st.table], st.hist⟩ := by
-          simp only [runAux, hdec]
-        rw [e]; exact (ih _).trans (Nat.le_succ _)
-      | pair i j =>
-        have e : runAux ans strat (fuel + 1) st
-            = runAux ans strat fuel ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
           simp only [runAux, hdec]
         rw [e]; exact (ih _).trans (Nat.le_succ _)
       | query i j =>
@@ -350,7 +345,9 @@ noncomputable def adaptiveExperiment : ℚ := (realWinSet strat st₀ fuel).card
 /-- **THE ADAPTIVE GGM SECURITY BOUND (sorry-free).** Every adaptive generic t-SDH adversary
 making ≤ `fuel` oracle queries wins on at most a `(fuel·Δ + (D+1))/(p−1)` fraction of trapdoors.
 This is the full Shoup / Boneh–Boyen shape — the static `(D+1)/(p−1)` root event plus the
-`(#queries)·Δ/(p−1)` collision event — with `Δ = D+1` at faithful SRS degrees.
+`(#queries)·Δ/(p−1)` collision event — with `Δ = D` at faithful SRS degrees (the oracle has no
+pairing, so every handle is a linear combination of the seed `{1, X, …, X^D}`, degree ≤ D, and
+a difference of two such handles has degree ≤ D — never a product term).
 
 The two degree hypotheses are the SRS degree invariant (output handle is a G₁ element of degree
 ≤ D; queried-handle differences have degree ≤ Δ), true structurally for the faithful group-op

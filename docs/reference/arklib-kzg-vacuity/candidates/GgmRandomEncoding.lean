@@ -147,8 +147,6 @@ noncomputable def runTable (ans : AnswerFn p) (strat : Strat p) :
     | Sum.inr _ => st.table
     | Sum.inl (Move.lin spec) =>
         runTable ans strat fuel ⟨st.table ++ [combine spec st.table], st.hist⟩
-    | Sum.inl (Move.pair i j) =>
-        runTable ans strat fuel ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩
     | Sum.inl (Move.query i j) =>
         runTable ans strat fuel
           ⟨st.table, st.hist ++ [ans (st.table.getD i 0) (st.table.getD j 0)]⟩
@@ -169,14 +167,6 @@ theorem table_prefix_runTable (ans : AnswerFn p) (strat : Strat p) :
           simp only [runTable, hdec]
         rw [e]
         exact (List.prefix_append _ _).trans (ih ⟨st.table ++ [combine spec st.table], st.hist⟩)
-      | pair i j =>
-        have e : runTable ans strat (fuel + 1) st
-            = runTable ans strat fuel
-                ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
-          simp only [runTable, hdec]
-        rw [e]
-        exact (List.prefix_append _ _).trans
-          (ih ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩)
       | query i j =>
         have e : runTable ans strat (fuel + 1) st
             = runTable ans strat fuel
@@ -205,15 +195,6 @@ theorem runTable_length_le (ans : AnswerFn p) (strat : Strat p) :
           simp only [runTable, hdec]
         rw [e]
         have := ih ⟨st.table ++ [combine spec st.table], st.hist⟩
-        simp only [List.length_append, List.length_cons, List.length_nil] at this
-        omega
-      | pair i j =>
-        have e : runTable ans strat (fuel + 1) st
-            = runTable ans strat fuel
-                ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
-          simp only [runTable, hdec]
-        rw [e]
-        have := ih ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩
         simp only [List.length_append, List.length_cons, List.length_nil] at this
         omega
       | query i j =>
@@ -265,18 +246,6 @@ theorem runAux_pairs_mem_runTable (ans : AnswerFn p) (strat : Strat p) :
         rw [e] at hab
         rw [eT]
         exact ih ⟨st.table ++ [combine spec st.table], st.hist⟩ ab hab
-      | pair i j =>
-        have e : runAux ans strat (fuel + 1) st
-            = runAux ans strat fuel
-                ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
-          simp only [runAux, hdec]
-        have eT : runTable ans strat (fuel + 1) st
-            = runTable ans strat fuel
-                ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ := by
-          simp only [runTable, hdec]
-        rw [e] at hab
-        rw [eT]
-        exact ih ⟨st.table ++ [st.table.getD i 0 * st.table.getD j 0], st.hist⟩ ab hab
       | query i j =>
         have e : runAux ans strat (fuel + 1) st
             = ((runAux ans strat fuel
@@ -454,6 +423,85 @@ theorem rand_encoding_bound_srs (strat : Strat p) (fuel : ℕ) (D : ℕ) (hp : 2
   rw [srsSt_table_length]
   omega
 
+/-! ## § Bound at δ = D — the linear-oracle instantiation (critical path)
+
+ArkLib's `tSdhAdversary D` receives `Vector G₁ (D+1) × Vector G₂ 2`, must output a `G₁` element, and
+is granted **no pairing map** `e : G₁ × G₂ → Gₜ`. So — matching `GgmAdaptive`'s pairing-free `Move`
+— every handle it can form is a `ZMod p`-linear combination of the seed `{1, X, …, X^D}`, degree ≤ D
+(never a product). The honest collision degree is therefore **δ = D**, not 2D: a difference of two
+degree-≤D handles has degree ≤ D (`natDegree_sub_le` — the max, not the sum). This section is the
+δ = D sibling of the `2D` chain above, re-parametrized through the *general-Δ* `card_pairRootUnion_le`
+at Δ = D. It is the exact `~(q+D)²·D/p` Shoup socket the end-to-end theorem consumes. The `2D`
+chain above is retained as the conservative pairing-aware variant (off the ArkLib critical path). -/
+
+/-- The δ = D instance of the all-pairs root-union bound: a set of degree-≤D handle polynomials has
+all-pairs collision set of card ≤ `C(n,2) · D`. Direct from the general-Δ `card_pairRootUnion_le`. -/
+theorem card_pairRootUnion_le_D {ps : Finset ((ZMod p)[X])} {D : ℕ}
+    (hdeg : ∀ q ∈ ps, q.natDegree ≤ D) :
+    (pairRootUnion ps).card ≤ ps.card.choose 2 * D :=
+  card_pairRootUnion_le hdeg
+
+/-- **The all-pairs counting bound at δ = D.** Under the linear-oracle degree invariant (every
+handle polynomial has degree ≤ D — no pairing, so no product term) and the output-degree invariant,
+the adaptive adversary wins on ≤ `C(#handles, 2)·D + (D + 1)` trapdoors. δ = D sibling of
+`card_realWinSet_le_allPairs`. -/
+theorem card_realWinSet_le_allPairs_D (strat : Strat p) (st₀ : St p) (fuel : ℕ) (D : ℕ)
+    (hdeg_out : (symOutput strat st₀ fuel).2.natDegree ≤ D)
+    (hdeg_handles : ∀ q ∈ handlePolys symAns strat fuel st₀, q.natDegree ≤ D) :
+    (realWinSet strat st₀ fuel).card ≤
+      (handlePolys symAns strat fuel st₀).card.choose 2 * D + (D + 1) := by
+  classical
+  refine (Finset.card_le_card (realWinSet_subset strat st₀ fuel D hdeg_out)).trans ?_
+  refine (Finset.card_union_le _ _).trans ?_
+  have hbad : (badSet strat st₀ fuel).card ≤
+      (handlePolys symAns strat fuel st₀).card.choose 2 * D :=
+    (Finset.card_le_card (badSet_subset_pairRootUnion strat st₀ fuel)).trans
+      (card_pairRootUnion_le_D hdeg_handles)
+  exact Nat.add_le_add hbad (card_winningPoints_le _)
+
+/-- The δ = D counting bound at an abstract table-size bound `n`. δ = D sibling of
+`card_realWinSet_le_encoding`. -/
+theorem card_realWinSet_le_encoding_D (strat : Strat p) (st₀ : St p) (fuel : ℕ) (D n : ℕ)
+    (hdeg_out : (symOutput strat st₀ fuel).2.natDegree ≤ D)
+    (hdeg_handles : ∀ q ∈ handlePolys symAns strat fuel st₀, q.natDegree ≤ D)
+    (hn : st₀.table.length + fuel + 1 ≤ n) :
+    (realWinSet strat st₀ fuel).card ≤ n.choose 2 * D + (D + 1) := by
+  refine (card_realWinSet_le_allPairs_D strat st₀ fuel D hdeg_out hdeg_handles).trans ?_
+  have hcard : (handlePolys symAns strat fuel st₀).card ≤ n :=
+    (card_handlePolys_le symAns strat fuel st₀).trans hn
+  exact Nat.add_le_add_right (Nat.mul_le_mul_right _ (Nat.choose_le_choose 2 hcard)) _
+
+/-- **THE RANDOM-ENCODING GGM SECURITY BOUND AT δ = D (sorry-free).** Every adaptive generic t-SDH
+adversary in the linear (pairing-free) oracle model whose handle table stays within `n` polynomials
+wins on at most a `(C(n,2)·D + (D + 1))/(p − 1)` fraction of trapdoors — the exact `~(q+D)²·D/p`
+Shoup socket for ArkLib's `tSdhExperiment`, whose adversary cannot pair. δ = D sibling of
+`rand_encoding_bound`. -/
+theorem rand_encoding_bound_D (strat : Strat p) (st₀ : St p) (fuel : ℕ) (D n : ℕ) (hp : 2 ≤ p)
+    (hdeg_out : (symOutput strat st₀ fuel).2.natDegree ≤ D)
+    (hdeg_handles : ∀ q ∈ handlePolys symAns strat fuel st₀, q.natDegree ≤ D)
+    (hn : st₀.table.length + fuel + 1 ≤ n) :
+    adaptiveExperiment strat st₀ fuel ≤
+      ((n.choose 2 * D + (D + 1) : ℕ) : ℚ) / (p - 1) := by
+  unfold adaptiveExperiment
+  have hnum : ((realWinSet strat st₀ fuel).card : ℚ)
+      ≤ ((n.choose 2 * D + (D + 1) : ℕ) : ℚ) := by
+    exact_mod_cast card_realWinSet_le_encoding_D strat st₀ fuel D n hdeg_out hdeg_handles hn
+  have hden : (0 : ℚ) < (p : ℚ) - 1 := by
+    have : (2 : ℚ) ≤ (p : ℚ) := by exact_mod_cast hp
+    linarith
+  gcongr
+
+/-- **The δ = D bound at the SRS seeding**: table size `n = fuel + D + 4`, giving the concrete
+`(C(fuel+D+4, 2)·D + (D + 1))/(p − 1)`. δ = D sibling of `rand_encoding_bound_srs`. -/
+theorem rand_encoding_bound_srs_D (strat : Strat p) (fuel : ℕ) (D : ℕ) (hp : 2 ≤ p)
+    (hdeg_out : (symOutput strat (srsSt D) fuel).2.natDegree ≤ D)
+    (hdeg_handles : ∀ q ∈ handlePolys symAns strat fuel (srsSt D), q.natDegree ≤ D) :
+    adaptiveExperiment strat (srsSt D) fuel ≤
+      (((fuel + D + 4).choose 2 * D + (D + 1) : ℕ) : ℚ) / (p - 1) := by
+  refine rand_encoding_bound_D strat (srsSt D) fuel D (fuel + D + 4) hp hdeg_out hdeg_handles ?_
+  rw [srsSt_table_length]
+  omega
+
 end GgmRandomEncoding
 
 -- Axiom receipts: every headline theorem is sorry-free on the standard three axioms.
@@ -467,3 +515,8 @@ end GgmRandomEncoding
 #print axioms GgmRandomEncoding.rand_encoding_bound
 #print axioms GgmRandomEncoding.rand_encoding_bound_lt_one
 #print axioms GgmRandomEncoding.rand_encoding_bound_srs
+#print axioms GgmRandomEncoding.card_pairRootUnion_le_D
+#print axioms GgmRandomEncoding.card_realWinSet_le_allPairs_D
+#print axioms GgmRandomEncoding.card_realWinSet_le_encoding_D
+#print axioms GgmRandomEncoding.rand_encoding_bound_D
+#print axioms GgmRandomEncoding.rand_encoding_bound_srs_D
