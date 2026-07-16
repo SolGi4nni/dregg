@@ -658,9 +658,16 @@ deployed bytes are one artifact. That is why law #1 says EMIT, not LOWER.
   `derivation_air` — they have LIVE algebra in dialects 2/3; renaming would have BURIED violations.**
 
 ### CURRENT THRUST + NEXT 3
-1. **Non-revocation cutover** — `NonRevocationEmit.lean` exists, byte-pinned in `descriptor_by_name.rs`
-   STATIC_GOLDENS (`dregg-non-revocation-sorted-tree::poseidon2-v1`), emit-gate test — yet
-   `sdk/src/privacy.rs:621,762` + `full_turn_proof.rs:4692,4999` STILL run the hand circuit. Merkle mold.
+1. ~~Non-revocation cutover~~ **BLOCKED — DEPTH GAP (named, not forced).** The emitter exists AND a
+   production witness builder exists (`circuit/src/non_revocation_witness.rs`, 0 consumers — rail built,
+   unused). BUT the emitted descriptor is **depth-2 / 4-leaf**: `root = hash_2_to_1(hash_2_to_1(L,R),
+   sib1)`, ONE `level1_sibling` (`non_revocation_root_depth2(&[BabyBear;4])`; `NonRevocationEmit.lean:44`
+   — "the depth-2 tree's BOTTOM SIBLINGS sharing the path to the root"). The DEPLOYED
+   `DslRevocationTree` is **`TREE_DEPTH = 4` / 16 leaves** (`dsl/revocation.rs:22-24`). Cutting over would
+   SHRINK the tree 16→4 = a functional regression dressed as compliance. **NAMED RESIDUAL:
+   `NonRevocationDepthResidual`** — the emitter must be generalized to depth-4 (or a parameterized depth /
+   an iterated path fold) before `sdk/privacy.rs:621,762` + `full_turn_proof.rs:4692,4999` can move.
+   Do NOT hand-author the extra levels in Rust.
 2. **Delete dead `dsl/derivation.rs`** (59 sites, NO callers outside `dsl/`, emitted twin `DERIVATION_JSON`
    already in STATIC_GOLDENS).
 3. **Fix the fictions**: `Claims.lean:383` false-cognate ("algebraic ConstraintExpr circuits emit
