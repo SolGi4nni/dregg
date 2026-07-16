@@ -23,6 +23,7 @@ task D (the embedding) is the one genuinely-hard piece.
    laundering into the socket) — fires when A,B,C,D land. Then re-cut the two-pager.
 
 ## Done-log
+- **task B DONE** (`115099abe`): degree discharge on the REAL runTable (not the peer model) — hdeg_out/pairs/handles are now theorems; hypothesis-free _of_run corollaries for E; closes the peer-model gap. Only 1≤D/2≤p side conds.
 - **task C DONE** (`eed762a00`): prob threading — game_collapse + experiment_eq_count (tSdhExperiment = winSet.card/(p−1)), sorry-free/axiom-clean vs real ArkLib; leaves the resultOf/hdet socket that D's embed fills.
 - **task A DONE** (`f71c50f70`): linear-oracle refactor — Move.pair removed (never load-bearing), degree≤D structural, rand_encoding_bound_D added; 5 files green/sorry-free/axiom-clean. B now unblocked.
 - vacuity finding mechanized (`KzgVacuity`, sorry-free, 3-way confirmed vs real ArkLib @ d72f8392)
