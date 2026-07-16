@@ -1075,3 +1075,33 @@ or a legitimate interpreter.** The residuals that remain are NOT missing semanti
   MSISHardQuant` + **sorryAx hygiene failures** in `Market/AggregateBinding.lean` — Market does not replay.
 - `SharedTreeRefusalGauntletResidual`: broad nextest stops at 135 passes on concurrent dirty `refusal.rs`.
 Flagged, not touched: 3 codex processes are live and the tree is a mix.
+
+### `a5f7a0a87` — the differential harness now drives the interpreter we SHIP
+Repointed `dregg-dsl-differential/src/plonky3_runner.rs` off `dregg_dsl_runtime::{prove,verify}_dsl_plonky3`
+(the 868-line name-colliding duplicate `DslP3Air`, p3-uni-stark, zero production consumers, cannot express
+`Hash`, enforced `BoundaryRow::Index(n>0)` on row 0 only) onto `dregg_circuit::dsl::dsl_p3_air::
+{prove_dsl_p3, verify_dsl_p3}` — the p3-batch-stark rail `shielded/spend_circuit.rs:661` + `attest.rs:543`
+actually ship. Green incl. --tests; harness tests pass.
+
+**CORRECTED THE SKIP — BY PROBING, not by believing either doc.** The audit's payoff claim (repointing
+"likely un-skips the membership cases") is **WRONG**, and I nearly shipped it. Throwaway probe:
+`DslP3Air::try_from_dsl(merkle_poseidon2_circuit())` -> `NonAlgebraicConstraint { index: 1, form:
+"MerkleHash (use the Lean-emitted IR2 descriptor...)" }`. Membership stays skipped for a REAL reason: the
+shipped interpreter DELIBERATELY routes MerkleHash to the Lean-authored IR2 rail (law #1) — there is no
+DSL-side arithmetization to differ against. Coverage is NOT lost; it is on that rail (`merkle_air`'s
+membership_p3 teeth). Skip reason now says exactly that.
+**Deletion of the duplicate BLOCKED (named)**: `tests/src/dsl_pipeline.rs:22,507,511,~641` needs BYTES
+(`turn.execution_proof = Some(proof_bytes)` + a byte-tamper test) while production returns a `DslP3Proof`
+struct -> a postcard round-trip migration, its own unit. (My grep missed this consumer; the AUDIT had it
+right. Checked before deleting — the teasting lesson held.)
+
+### `BrokenDslProcMacroResidual` (NEW, pre-existing, NOT mine — measured before my repoint)
+`cargo check -p dregg-tests --tests` is RED, and not from dsl_pipeline: the **DSL PROC-MACRO** fails —
+`dregg-dsl/src/gen_plonky3.rs:111` (`Result<proc_macro2::TokenStream, syn::Error>: quote::ToTokens`
+unsatisfied) + `:307`/`:263` (fn takes 6 args, 5 supplied).
+**The subtle part:** `cargo check -p dregg-dsl` is GREEN, and `--all-features` is GREEN — it only breaks
+inside `dregg-tests`' dependency graph. `mod gen_plonky3;` is NOT feature-gated and dregg-dsl has no
+`[features]` table, so this is **FEATURE UNIFICATION** shifting `syn`/`quote`/`proc-macro2` versions under
+a different dep graph. `dregg-dsl` IS a default-member and `circuit/Cargo.toml` depends on it, so CI green
+here is an artifact of which graph CI resolves. Deserves its own pass — it is a dependency-hygiene scar,
+not a circuit scar.
