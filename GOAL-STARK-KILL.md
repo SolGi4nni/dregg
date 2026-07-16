@@ -1105,3 +1105,26 @@ inside `dregg-tests`' dependency graph. `mod gen_plonky3;` is NOT feature-gated 
 a different dep graph. `dregg-dsl` IS a default-member and `circuit/Cargo.toml` depends on it, so CI green
 here is an artifact of which graph CI resolves. Deserves its own pass — it is a dependency-hygiene scar,
 not a circuit scar.
+
+### `67395c5fb` — 4 crypto crates folded into the workspace: 55 passing tests CI had NEVER run
+`CratesOutsideCIResidual`, partially closed. **The audit's "no reason recorded" was WRONG — and the truth
+is a better scar.** All four DO record a reason, and each cites the SAME model: "mirrors crypto-hermine" /
+"like crypto-hermine" / "exactly like crypto-hermine". **`crypto-hermine` is a member AND default-member
+with no `[workspace]` of its own** (verified). The model GRADUATED into the workspace; the four crates
+citing it as their reason to stay out were left behind. **Cargo-culted rationale pointing at a false
+premise** — so their own stated intent argued for folding them in. Added to `members`, NOT
+`default-members` (CI's `--workspace` reaches them; default build stays fast — the pattern already used for
+~60 heavy crates). Safe by construction: each has exactly ONE dep (blake3, pure Rust, no C) so none of the
+version/`links` conflicts behind the real `exclude` entries apply. Verified: builds green THROUGH the
+workspace, **55 tests pass** there, and dregg-circuit + crypto-hermine still green (root undisturbed).
+STILL OPEN in that residual: `cosmos-settlement` (5 tests), `cosmos-lock` (12), `tools/deployer-gate` (14)
+— they carry a DIFFERENT rationale ("build/test standalone") and their `solana-*` siblings sit in
+`exclude`, so they need their own decide-and-record pass.
+
+### `BrokenDslProcMacroResidual` — RETRACTED (it was transient, my error)
+The `gen_plonky3.rs` proc-macro errors did NOT reproduce. `cargo check -p dregg-tests --tests` now fails
+elsewhere: `turn/src/pending.rs:86` ("lifetime may not live long enough"), and `turn/` is DIRTY with
+another lane's in-flight edits (`turn/src/error.rs`, `turn/src/executor/proof_verify.rs`). **I read a
+concurrent lane's mid-edit state and named it as a finding.** Lesson for a shared tree with 3 live codex
+procs: a build error in a DIRTY file is not evidence until the tree is quiet. `dsl_pipeline` migration
+(which unblocks deleting the duplicate `DslP3Air`) stays blocked on that lane, NOT on the proc-macro.
