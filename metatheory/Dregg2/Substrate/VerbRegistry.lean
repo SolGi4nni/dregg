@@ -11,9 +11,14 @@ exhaustive by the compiler, the kernel-reduction census:
     monotonicity; `write` = heap update under the frame; `create` = cell birth; `lifecycle`
     = the seal/destroy/sovereign custody automaton);
 
-  * the live 27-variant `Effect` enum (`turn/src/action.rs`, post VERB-LOCKSTEP), reified as
+  * the live 34-variant `Effect` enum (`turn/src/action.rs`: the 27 post-VERB-LOCKSTEP
+    survivors + the 7 later-authored verbs — `SetProgram`, the reactive triple
+    `Promise`/`Notify`/`React`, `Mint`, `ShieldedTransfer`, `Custom`), reified as
     `EffectTag` — ONE constructor per current variant, so the Lean compiler's exhaustiveness
-    check IS the completeness proof: a new wire variant that is not classified will not compile;
+    check IS the completeness proof: a new wire variant that is not classified will not compile.
+    The RUST side of the same ratchet is `turn/tests/verb_registry_gate.rs`, which pins this
+    file's `allEffectTags` roster (and `classify` arm census) against the wire enum through a
+    compile-time exhaustive match — the two gates close the two drift directions;
 
   * the §HISTORICAL DOOMED→FACTORY census (a comment in §6): the 25 deleted variants paired
     with the factory pattern (`FactoryPattern`) that re-provides each family's behavior as a
@@ -88,7 +93,7 @@ inductive Substance
 
 /-- The EIGHT survivor verbs — the entire dregg3 kernel signature (DREGG3 §2.3).
 `shieldUnshield` is one verb with two directions (note-create / note-spend), the evidence
-substance's structural rule. Everything else among the live 52 `Effect` variants is either a
+substance's structural rule. Everything else among the live 34 `Effect` variants is either a
 turn-structure artifact (`TurnStructure`) or a cell-program pattern (`FactoryPattern`). -/
 inductive Verb
   /-- mint a new four-substance cell (incl. factory instantiation). -/
@@ -188,9 +193,12 @@ inductive Classification
 
 /-! ## §6 — The reified live `Effect` enum (one tag per `turn/src/action.rs` variant).
 
-ONE constructor per current wire variant (27, post VERB-LOCKSTEP). The Lean compiler's
-exhaustiveness check on `classify` below is the COMPLETENESS proof: a wire variant added without
-a registry entry will not compile. The order mirrors `action.rs`.
+ONE constructor per current wire variant (34: the 27 post-VERB-LOCKSTEP survivors + `SetProgram` +
+the reactive triple `Promise`/`Notify`/`React` + `Mint` + `ShieldedTransfer` + `Custom`). The Lean
+compiler's exhaustiveness check on `classify` below is the COMPLETENESS proof: a wire variant added
+without a registry entry will not compile — and the Rust-side gate
+(`turn/tests/verb_registry_gate.rs`) fails when `action.rs` grows a variant this roster lacks, so
+the cover cannot drift from EITHER side. The order mirrors `action.rs`.
 
 §HISTORICAL — the 25 DELETED tags (the verb lockstep, the Rust catch-up to F1b/F2b/F3).
 These no longer exist ANYWHERE: not in `turn/src/action.rs`, not on the wire, not in the
@@ -209,27 +217,34 @@ cells. The census, for the record (tag → factory pattern):
                    DropRef, ValidateHandoff                            → FactoryPattern.capsInSlots
 -/
 
-/-- The 27 live `Effect` variants, reified. Faithful 1:1 to `turn/src/action.rs`. -/
+/-- The 34 live `Effect` variants, reified. Faithful 1:1 to `turn/src/action.rs`, in wire
+declaration order (`SetProgram` sits between `SetVerificationKey` and `NoteSpend`; the six
+postcard-appended verbs `Promise`/`Notify`/`React`/`Mint`/`ShieldedTransfer`/`Custom` close
+the enum). -/
 inductive EffectTag
   | SetField | Transfer | GrantCapability | RevokeCapability | EmitEvent | IncrementNonce
-  | CreateCell | SetPermissions | SetVerificationKey | NoteSpend | NoteCreate
+  | CreateCell | SetPermissions | SetVerificationKey | SetProgram | NoteSpend | NoteCreate
   | SpawnWithDelegation | RefreshDelegation | RevokeDelegation | BridgeMint
   | Introduce | PipelinedSend | ExerciseViaCapability
   | MakeSovereign | CreateCellFromFactory
   | Refusal | CellSeal | CellUnseal | CellDestroy | Burn | AttenuateCapability
   | ReceiptArchive
+  | Promise | Notify | React | Mint | ShieldedTransfer | Custom
   deriving DecidableEq, Repr
 
 /-- The complete roster of live tags — used to state completeness as a list cover and to witness
-the count (27). Kept in sync with `EffectTag` by the same compiler that checks `classify`. -/
+the count (34). Kept in sync with `EffectTag` by the same compiler that checks `classify`
+(`roster_complete` below proves it lists EVERY constructor), and pinned against the wire enum by
+`turn/tests/verb_registry_gate.rs` (which requires EXACT declaration-order equality). -/
 def allEffectTags : List EffectTag :=
   [ .SetField, .Transfer, .GrantCapability, .RevokeCapability, .EmitEvent, .IncrementNonce,
-    .CreateCell, .SetPermissions, .SetVerificationKey, .NoteSpend, .NoteCreate,
+    .CreateCell, .SetPermissions, .SetVerificationKey, .SetProgram, .NoteSpend, .NoteCreate,
     .SpawnWithDelegation, .RefreshDelegation, .RevokeDelegation, .BridgeMint,
     .Introduce, .PipelinedSend, .ExerciseViaCapability,
     .MakeSovereign, .CreateCellFromFactory,
     .Refusal, .CellSeal, .CellUnseal, .CellDestroy, .Burn, .AttenuateCapability,
-    .ReceiptArchive ]
+    .ReceiptArchive,
+    .Promise, .Notify, .React, .Mint, .ShieldedTransfer, .Custom ]
 
 /-! ## §7 — THE TOTAL COVER (completeness, exhaustive by the compiler).
 
@@ -242,8 +257,36 @@ def classify : EffectTag → Classification
   | .SetField           => .survivor .write           -- guarded field write under the frame
   | .SetPermissions     => .survivor .write           -- program/policy write (applied LAST, frame-safe)
   | .SetVerificationKey => .survivor .write           -- vk write (frame-safe, applied LAST)
+  -- SetProgram: a guarded PROGRAM write under the frame — the state discipline, nothing else.
+  -- Executor (`apply_set_program`, turn/src/executor/apply.rs): journaled in-place update of
+  -- `cell.program`, Live-ONLY (kernel `setProgramA` routes to the bare authority-gated
+  -- `stateStep`, Exec/EffectsState.lean), cross-cell gated on the SetVerificationKey permission
+  -- + `EFFECT_SET_PROGRAM` facet (a cell's program and VK are ONE authority surface, so this is
+  -- the same write verb `SetVerificationKey` instantiates, over the program half). No value
+  -- moves, no authority is produced or narrowed, no evidence ledger grows.
+  | .SetProgram         => .survivor .write
+  -- Custom: THE CUSTOM-VK DOOR is still just a WRITE — a proof-guarded sovereign-state advance.
+  -- Adjudicated ONLY on the proof-carrying path (`verify_and_commit_proof`): the registered
+  -- custom program's sub-proof is the GUARD (`Pred` generalized to a full VK), the weld binds
+  -- `[old_commit8, new_commit8]` to the cell's committed pre/post roots, and the ONLY mutation
+  -- is advancing `cell`'s sovereign commitment — the frame holds (no other cell's state, no
+  -- value, no authority, no evidence ledger). The classical apply path refuses it fail-closed
+  -- (`CustomEffectRequiresProofCarryingTurn`), which is an admission gate, not a substance.
+  | .Custom             => .survivor .write
   | .Transfer           => .survivor .move            -- linear exchange, Σδ = 0
   | .Burn               => .survivor .move            -- issuer-well move (fees/burn = moves, §2.2)
+  -- Mint: an ISSUER-MOVE under the value discipline — the sign-flipped dual of `Burn`, NOT a
+  -- generative verb. The W1 conservation reshape (Exec/IssuerMove.lean, Substrate/IssuerLedger
+  -- `mint_preserves`) rebuilt mint as well → holder: the issuer well (carrying −supply) is
+  -- debited negative-capably, the recipient credited, so Σδ = 0 per-asset EXACTLY — this is
+  -- what lets `reachable_total_zero` (Exec/ReachableConservation.lean) need NO zero-net
+  -- hypothesis (`ledgerDeltaAsset_eq_zero`: the kernel has no non-conserving verb left; the
+  -- legacy supply-INCREMENT mint provably breaks it — `oldMint_breaks_conservation`). The
+  -- executor mirrors the reshape line for line (`apply_mint`: well resolution off `token_id`,
+  -- well ≠ recipient, self-mint refused). The mint-cap gate (`mintAuthorizedB`, control-grade
+  -- authority over the ISSUER well — never bare ownership) governs WHO may move from the well;
+  -- a guard on the mover does not change the substance the verb exercises.
+  | .Mint               => .survivor .move
   | .GrantCapability    => .survivor .grant           -- authorized production along one edge
   | .AttenuateCapability=> .survivor .grant           -- the narrowing half of grant (§2.1, one edge)
   | .SpawnWithDelegation=> .survivor .create          -- child birth + snapshot grant; birth dominates
@@ -253,6 +296,41 @@ def classify : EffectTag → Classification
   | .NoteCreate         => .survivor .shieldUnshield  -- shield: add a commitment (evidence ↑)
   | .NoteSpend          => .survivor .shieldUnshield  -- unshield: reveal a nullifier (evidence ↑)
   | .BridgeMint         => .survivor .shieldUnshield  -- credit a bridged note = shield from a portable proof
+  -- ShieldedTransfer: BOTH directions of the evidence verb in one wire variant — which is
+  -- precisely why `shieldUnshield` is ONE verb. Executor (`apply_shielded_transfer`): each
+  -- hidden input's revealed nullifier is consumed once into the production `note_nullifiers`
+  -- set (unshield, evidence ↑, the same double-spend gate as `NoteSpend`); each hidden output
+  -- commitment is added (shield, evidence ↑); the Pedersen homomorphic leg proves Σin = Σout
+  -- with per-output range proofs, so the composite conserves without ever being a `move` on
+  -- the cleartext ledger. Self-authorizing like `NoteSpend`/`BridgeMint` — the ZK ownership
+  -- proof IS the authority, no capability gate — so no authority substance is touched.
+  | .ShieldedTransfer   => .survivor .shieldUnshield
+  -- The reactive triple rides the SAME evidence discipline — the design keystone
+  -- (docs/deos/REACTIVE-EFFECTS.md §4, action.rs Track-2 header): "a promise-hole IS a
+  -- nullifier; to React is to SPEND the hole." Promise/Notify are hole-MINTS (shield
+  -- direction: commit to a wake turn, the hole id = the wake-turn hash); React is the
+  -- hole-SPEND (unshield direction: `pending_id` consumed into the production
+  -- `note_nullifiers` set with the identical non-membership gate `NoteSpend` rides). Their
+  -- one-shot linearity is not LIKE the evidence law — it IS the evidence law, enforced by the
+  -- same monotone ledger. (`LinearityClass` in action.rs agrees: Promise/Notify Generative,
+  -- React Terminal — the shield/unshield polarity in wire clothing.)
+  --
+  -- Promise: hole-mint into the actor's OWN registry (`apply_promise` gates cell == actor —
+  -- a cell makes its own standing commitments; no cross-cell promise injection). The mutable
+  -- registry entry is the redundant tooth; the load-bearing one-shot state is the nullifier
+  -- set the paired React grows.
+  | .Promise            => .survivor .shieldUnshield
+  -- Notify: the same hole-mint, deposited CROSS-CELL under provenance + agent binding
+  -- (`apply_notify` gates from == actor — no spoofed sender — and wake.agent == to — the
+  -- recipient only ever commits to turns IT would run). Like `NoteCreate` crediting a
+  -- recipient's note, a shield may target a peer; the discipline is the hole's, not the
+  -- recipient's heap (no state write lands on `to`'s cell).
+  | .Notify             => .survivor .shieldUnshield
+  -- React: the unshield. `apply_react` binds nullifier↔turn (wake.hash() = pending_id, so a
+  -- react cannot spend one hole while resolving another), verifies the resolution proof
+  -- (wrong/expired proofs spend NOTHING — fail-closed), then spends `pending_id` into
+  -- `note_nullifiers` with double-spend rejection, journaled. Evidence ↑, exactly once.
+  | .React              => .survivor .shieldUnshield
   | .CreateCell         => .survivor .create          -- bare cell birth
   | .CreateCellFromFactory => .survivor .create       -- THE create verb: factory instantiation
   | .CellSeal           => .survivor .lifecycle       -- → Sealed
@@ -276,11 +354,20 @@ manifest can consume it: every tag in `allEffectTags` has a classification. -/
 theorem classify_total : ∀ t ∈ allEffectTags, ∃ c, classify t = c := by
   intro t _; exact ⟨classify t, rfl⟩
 
-/-- The roster lists exactly the 27 live variants (52 pre-lockstep − the 25 dissolved). -/
-theorem effect_tag_count : allEffectTags.length = 27 := by decide
+/-- The roster lists exactly the 34 live variants (52 pre-lockstep − the 25 dissolved = 27,
++ the 7 later-authored verbs: SetProgram · Promise · Notify · React · Mint · ShieldedTransfer ·
+Custom). The Rust gate (`turn/tests/verb_registry_gate.rs`) greps for THIS statement's RHS, so
+the census here cannot silently understate the wire enum. -/
+theorem effect_tag_count : allEffectTags.length = 34 := by decide
 
 /-- `allEffectTags` has no duplicates — it is a faithful, non-redundant census of the wire enum. -/
 theorem effect_tags_nodup : allEffectTags.Nodup := by decide
+
+/-- ROSTER COMPLETENESS: the roster lists EVERY `EffectTag` constructor — so a pin against the
+roster (the Rust gate reads the roster TEXT) is a pin against the TYPE `classify` is total over.
+With `effect_tags_nodup`, the roster is exactly the constructor set, once each. -/
+theorem roster_complete : ∀ t : EffectTag, t ∈ allEffectTags := by
+  intro t; cases t <;> simp [allEffectTags]
 
 /-- NON-VACUITY of the cover: it populates BOTH live buckets (it is not a degenerate
 cover that, say, sends everything to `turnStructure`). We exhibit one tag per bucket. -/
@@ -389,8 +476,18 @@ private instance : BEq Classification where
 #guard classify .IncrementNonce == .turnStructure .prologue
 #guard classify .Refusal == .turnStructure .refusal
 #guard classify .PipelinedSend == .turnStructure .pipelining
+-- the seven later-authored verbs land where their executor semantics put them:
+#guard classify .SetProgram == .survivor .write
+#guard classify .Custom == .survivor .write
+#guard classify .Mint == .survivor .move            -- the issuer-move, agreeing with Burn's bucket
+#guard classify .Mint == classify .Burn             -- mint/burn are duals: SAME verb, per the reshape
+#guard classify .ShieldedTransfer == .survivor .shieldUnshield
+#guard classify .Promise == .survivor .shieldUnshield
+#guard classify .Notify == .survivor .shieldUnshield
+#guard classify .React == .survivor .shieldUnshield
+#guard classify .React == classify .NoteSpend       -- a react IS a nullifier spend
 -- the roster counts:
-#guard allEffectTags.length == 27
+#guard allEffectTags.length == 34
 #guard survivors.length == 7          -- 7 constructors (shield/unshield folded)
 #guard survivorDirectionCount == 8    -- the human-facing eight
 
@@ -399,6 +496,7 @@ private instance : BEq Classification where
 #assert_axioms classify_total
 #assert_axioms effect_tag_count
 #assert_axioms effect_tags_nodup
+#assert_axioms roster_complete
 #assert_axioms cover_hits_both
 #assert_axioms no_live_factory_tags
 #assert_axioms mem_survivors
