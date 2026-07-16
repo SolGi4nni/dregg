@@ -815,3 +815,16 @@ rotated` (trace-gen is legit Rust). Only after (4) is the law satisfied on that 
   production witness builder; (4) cut `prove_turn_chain_recursive_without_host_gate` onto
   parse/prove_vm_descriptor2, KEEPING `generate_chain_trace_rotated`. Until (4), `grain-verify/r3.rs:139`
   still runs the hand AIR.
+
+### Brick 3 recon — the width 14 vs 359 question RESOLVED (the cutover is viable)
+The hand `TurnChainBindingAir` is **width 359** = 7 scalar cols + a **352-col inline Poseidon2 permutation
+aux block** (`BINDING_AUX0 = 7`). The emitted `dregg-turn-chain-binding-v2` is **width 14** = `7 +
+(CHIP_OUT_LANES - 1)` because it replaces those 352 inline columns with a **CHIP LOOKUP** —
+`{"t":"lookup","table":1,"tuple":[const 4, var 2 (acc_in), var 0 (old_root), var 1 (new_root), var 4
+(idx), ...]}` — i.e. exactly the turn-chain preimage `[acc_in, old_root, new_root, idx]`, served by the
+shared Poseidon2 chip table.
+**The scalar layouts MATCH EXACTLY**: Lean `Chain.{OLD_ROOT=0, NEW_ROOT=1, ACC_IN=2, ACC_OUT=3, IDX=4,
+IS_REAL=5, REAL_COUNT=6}` ≡ Rust `{COL_OLD_ROOT=0 … COL_REAL_COUNT=6}`. So the emitted descriptor is a
+faithful + strictly leaner realization (352 fewer columns, chip-shared). The cutover is NOT a drop-in only
+because the trace must be rebuilt in the chip-lane layout instead of the inline-aux one — that is brick 3
+(the witness builder), and `prove_vm_descriptor2`'s `trace_with_chip_lanes` refills the chip lanes.
