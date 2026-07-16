@@ -368,6 +368,7 @@ theorem adaptive_ggm_sound (D Δ : ℕ) (hp : 2 ≤ p)
     linarith
   gcongr
 
+omit [Fact (Nat.Prime p)] in
 /-- **Non-vacuity of the adaptive bound.** Whenever `fuel·Δ + (D+1) < p − 1` the adaptive bound is
 a genuine rational `< 1`: at cryptographic parameters (`p ≈ 2²⁵⁴`, `D ≈ 2²⁰`, `fuel = q ≈ 2⁶⁰`)
 `fuel·Δ ≈ 2⁸⁰ ≪ p`, so the bound is `≈ 2⁻¹⁷⁴`. -/

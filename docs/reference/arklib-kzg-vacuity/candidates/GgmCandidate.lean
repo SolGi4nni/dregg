@@ -141,6 +141,7 @@ theorem ggm_tSdh_sound {D : ℕ} (A : GenericAdversary D p) (hp : 2 ≤ p) :
     linarith
   gcongr
 
+omit [Fact (Nat.Prime p)] in
 /-- **Non-vacuity is now built in.** For `p > D + 2` the bound `(D+1)/(p-1)` is a genuine rational
 strictly below `1`: the assumption `∀ A, ggmExperiment A ≤ (D+1)/(p-1)` is TRUE (proved above, over
 the whole type), not refutable, and its bound is nontrivial. Contrast `not_tSdhAssumption`, which
