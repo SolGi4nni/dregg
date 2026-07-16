@@ -1412,3 +1412,25 @@ changing a shipped verify surface's behavior is ember's call.
   turn-chain/revocation emits I just byte-verified). Assurance-critical if real.
 - srot sweep (persvati): grinding dregg-lean-ffi's leanc build (145 C facets, cold lane) — the empirical
   non-compiling-test map. Harvest when it lands.
+
+## ⚡ NEW ACTIVE THRUST (ember, 2026-07-16): PURGE THE MOCK PROOFS — wire to real
+ember: "get rid of all that mock shit, wire to real — and look for MORE of those sorts of things."
+A mock proof/verify surface is the worst lie: reports "valid"/"proved" for data it never proved.
+
+THE MOCK ENGINES: `circuit/src/ivc.rs` (simulated IVC — prove_ivc/verify_ivc = a BLAKE3 digest recompute,
+create_test_chain, simulated_proof_size_bytes) + `circuit/src/constraint_prover.rs` ("a trace digest is
+not a STARK, nothing here is sound"; generate_unchecked checks nothing).
+KNOWN LIVE CONSUMER: `node/mcp/handlers_verify.rs` (MCP tool, returns "valid" for create_test_chain synthetic
+data). Others: preflight/checks/*, dregg-genesis-snapshot.
+THE REAL PROVER: `ivc_turn_chain::prove_turn_chain_recursive(&[FinalizedTurn]) -> WholeChainProof` +
+`verify_whole_chain_proof_bytes` (used for real by lightclient).
+
+THE CRUX (why some mocks aren't laziness): `FinalizedTurn` wraps a `DescriptorParticipant` (the rotated
+turn descriptor, produced at PROVING time). `TurnReceipt` (what node/cclerk retains) is only HASHES. So a
+mock may exist because the real provable data is NOT at that layer → wiring real needs PLUMBING/retention,
+not a one-line swap. The scout (`wh0frxr57`) classifies each: WIRE-FEASIBLE / NEEDS-PLUMBING / HONEST-RETIRE,
++ the real-data availability map (where DescriptorParticipants are produced + whether retained).
+PLAN: wire the feasible ones to the real prover; for needs-plumbing, thread/retain the participants (or
+name exactly what must be, honest-fail meanwhile — NEVER a mock that says "valid"); retire the mock engines
+(ivc.rs simulated, constraint_prover) once nothing production rides them; add a ratchet so no new mock-proof
+surface returns "valid".
