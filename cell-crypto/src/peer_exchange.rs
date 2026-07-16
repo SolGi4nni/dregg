@@ -46,9 +46,8 @@ pub struct PeerStateTransition {
     pub signature: [u8; 64],
     /// Optional STARK proof of the state transition — a RETIRED path
     /// (corrected 2026-07-16): the v1 hand-AIR (`EffectVmAir`) verify no longer
-    /// exists. Under the `zkvm` feature, `verify_transition` REJECTS any `Some`
-    /// value (fails closed); without the feature the proof is ignored and the
-    /// exchange is signature-only. The rotated proof-carrying turn is the
+    /// exists. `verify_transition` REJECTS any `Some` value UNCONDITIONALLY
+    /// (fails closed, on every build). The rotated proof-carrying turn is the
     /// transition attestation path.
     ///
     /// NB: `skip_serializing_if` is intentionally NOT used here even though
@@ -252,12 +251,14 @@ impl PeerExchange {
     /// 2. `old_commitment` matches our `last_known_commitment` for this peer
     /// 3. `sequence == last_sequence + 1` (monotonic, no skips)
     /// 4. `timestamp >= last_updated` (no going back in time)
-    /// 5. If `transition_proof` is Some: under the `zkvm` feature the transition is
-    ///    REJECTED — the v1 hand-AIR (`EffectVmAir`) STARK verify is RETIRED and this
-    ///    step fails closed, so callers must NOT expect a proof-carrying transition to
-    ///    be accepted. Without the feature the proof is IGNORED (signature-only path).
-    ///    The rotated proof-carrying turn carries transition attestation.
-    ///    (Corrected 2026-07-16.)
+    /// 5. If `transition_proof` is Some the transition is REJECTED,
+    ///    UNCONDITIONALLY on every build — the v1 hand-AIR (`EffectVmAir`) STARK
+    ///    verify is RETIRED and this step fails closed, so callers must NOT
+    ///    expect a proof-carrying transition to be accepted. The rotated
+    ///    proof-carrying turn carries transition attestation. (Corrected
+    ///    2026-07-16: this was formerly `#[cfg(feature = "zkvm")]`-gated in a
+    ///    crate with no `zkvm` feature, so it silently accepted the proof —
+    ///    fail-open. Now unconditional, matching the executor sibling gate.)
     ///
     /// If all pass, updates `peer_views` with the new state.
     pub fn verify_transition(
@@ -308,16 +309,22 @@ impl PeerExchange {
             return Err(PeerExchangeError::TimestampRegression);
         }
 
-        // 5. Verify STARK transition proof if present.
-        #[cfg(feature = "zkvm")]
+        // 5. A v1 hand-AIR (`EffectVmAir`) STARK transition proof fails closed —
+        //    UNCONDITIONALLY, on every build. The v1 witness-STARK verify is
+        //    RETIRED; the rotated proof-carrying turn is the sole transition
+        //    attestation path. This mirrors the executor's sibling gate
+        //    (`turn/src/executor/execute.rs`, sovereign-witness rule 8) so the
+        //    two verify paths AGREE: neither silently accepts a proof-carrying
+        //    transition. (Previously this was `#[cfg(feature = "zkvm")]`-gated —
+        //    but `dregg-cell-crypto` declares no such feature, so the gate
+        //    compiled to nothing and a `Some` proof was silently IGNORED, i.e.
+        //    fail-OPEN, contradicting the doc that claimed fail-closed. Corrected
+        //    2026-07-16.)
         if let Some(proof_bytes) = &transition.transition_proof {
-            Self::verify_stark_transition(
-                proof_bytes,
-                &transition.cell_id,
-                &transition.old_commitment,
-                &transition.new_commitment,
-                &transition.effects_hash,
-            )?;
+            let _ = proof_bytes;
+            return Err(PeerExchangeError::InvalidTransitionProof(
+                "v1 hand-AIR transition STARK verify is retired".to_string(),
+            ));
         }
 
         // All checks pass — update our view.
@@ -327,50 +334,6 @@ impl PeerExchange {
         view.last_updated = transition.timestamp;
 
         Ok(())
-    }
-
-    /// Verify a STARK proof binding old_commitment -> new_commitment + effects_hash + cell_id.
-    ///
-    /// Public inputs layout (Effect VM, 7+ BabyBear elements):
-    ///   [old_commit(1), new_commit(1), net_delta_mag(1), net_delta_sign(1),
-    ///    effects_hash_lo(1), effects_hash_hi(1), custom_count(1),
-    ///    ...custom_entries(8 per custom effect)]
-    #[cfg(feature = "zkvm")]
-    fn verify_stark_transition(
-        proof_bytes: &[u8],
-        _cell_id: &CellId,
-        old_commitment: &[u8; 32],
-        new_commitment: &[u8; 32],
-        _effects_hash: &[u8; 32],
-    ) -> Result<(), PeerExchangeError> {
-        // RETIRED (v1 hand-AIR transition verify): the `EffectVmAir` STARK verify is gone.
-        // A v1 `transition_proof` in a peer exchange fails closed (the rotated proof-carrying
-        // turn is the transition attestation path).
-        let _ = (proof_bytes, old_commitment, new_commitment);
-        Err(PeerExchangeError::InvalidTransitionProof(
-            "v1 hand-AIR transition STARK verify is retired".to_string(),
-        ))
-    }
-
-    /// Stage 1: encode a stored [u8; 32] commitment as 4 BabyBear felts.
-    ///
-    /// Decodes the 4-felt Poseidon2 commitment from the 32-byte stored format
-    /// (4 LE u32 values in bytes 0..15). This matches the format written by
-    /// `TurnExecutor::commitment_4bb_to_bytes` and matches what
-    /// `CellState::compute_commitment_4` puts into PI[OLD_COMMIT_BASE..+4].
-    ///
-    /// Replaces the former `canonical_32_to_felts_4` call (GitHub #99 fix):
-    /// that function hashed the stored bytes, producing values unrelated to
-    /// `compute_commitment_4`'s output, causing proof verification to always fail.
-    #[cfg(feature = "zkvm")]
-    fn commitment_to_4bb(bytes: &[u8; 32]) -> [dregg_circuit::field::BabyBear; 4] {
-        use dregg_circuit::field::BabyBear;
-        [
-            BabyBear::new(u32::from_le_bytes(bytes[0..4].try_into().unwrap())),
-            BabyBear::new(u32::from_le_bytes(bytes[4..8].try_into().unwrap())),
-            BabyBear::new(u32::from_le_bytes(bytes[8..12].try_into().unwrap())),
-            BabyBear::new(u32::from_le_bytes(bytes[12..16].try_into().unwrap())),
-        ]
     }
 
     /// Get our current view of a peer's state commitment.
@@ -687,5 +650,62 @@ mod tests {
         }
 
         assert_eq!(alice.sequence(), 5);
+    }
+
+    /// ADVERSARIAL (fail-closed, retired v1 STARK path): a peer transition that
+    /// is otherwise fully valid — correct Ed25519 signature over the canonical
+    /// message, matching old_commitment, monotonic sequence, non-regressing
+    /// timestamp — but which ALSO carries a v1 `transition_proof` MUST be
+    /// rejected with `InvalidTransitionProof`, unconditionally on every build.
+    ///
+    /// This is the red-flag test for executor-parity: the sovereign-witness
+    /// sibling gate (`turn::executor::execute`, rule 8) already fails closed on
+    /// a v1 proof; peer_exchange must AGREE, never silently accept. Before the
+    /// 2026-07-16 fix the reject was `#[cfg(feature = "zkvm")]`-gated in a crate
+    /// with no `zkvm` feature, so the proof was silently IGNORED (fail-OPEN) and
+    /// this exact transition was ACCEPTED. If someone re-adds a phantom feature
+    /// gate around the check, this test flags RED.
+    #[test]
+    fn peer_transition_carrying_v1_stark_proof_rejected() {
+        let alice_key = test_signing_key(1);
+        let bob_key = test_signing_key(2);
+        let alice_cell = test_cell_id(1);
+        let bob_cell = test_cell_id(2);
+
+        let mut alice = PeerExchange::new(alice_cell, alice_key);
+        let mut bob = PeerExchange::new(bob_cell, bob_key);
+
+        let c0 = [0xAA; 32];
+        bob.register_peer(alice_cell, c0);
+
+        // Build a transition that is valid in every OTHER respect, then attach a
+        // v1 STARK proof blob. `create_transition` signs the canonical message
+        // (which does NOT cover the proof field), so the signature stays valid —
+        // this is precisely the fail-open surface: signature-valid + proof-bearing.
+        let mut transition = alice.create_transition(c0, [0xBB; 32], [0xCC; 32]);
+        transition.transition_proof = Some(vec![0u8; 4096]);
+
+        let alice_pubkey = alice.public_key();
+        let result = bob.verify_transition(&transition, &alice_pubkey);
+        assert!(
+            matches!(result, Err(PeerExchangeError::InvalidTransitionProof(_))),
+            "a v1 transition_proof-bearing peer transition must fail closed, got: {result:?}"
+        );
+
+        // And the fail-closed reject must NOT have mutated Bob's view of Alice.
+        assert_eq!(
+            bob.peer_commitment(&alice_cell),
+            Some(c0),
+            "a rejected proof-bearing transition must not advance the peer view"
+        );
+
+        // Control: the SAME transition without the proof is accepted — proving the
+        // rejection is caused by the proof, not some other defect in the fixture.
+        transition.transition_proof = None;
+        assert!(
+            bob.verify_transition(&transition, &alice_pubkey).is_ok(),
+            "the identical transition without a v1 proof must verify"
+        );
+        assert_eq!(bob.peer_commitment(&alice_cell), Some([0xBB; 32]));
     }
 }

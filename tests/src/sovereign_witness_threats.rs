@@ -1050,3 +1050,232 @@ fn turn_sovereign_witnesses_field_is_a_map_and_constructs_empty() {
     };
     assert!(turn.sovereign_witnesses.is_empty());
 }
+
+// ===========================================================================
+// Executor rules 7 & 8 — the fail-closed gates that had NO red-flag test
+// (added 2026-07-16, lane 3).
+//
+// Every pre-existing witness in this file is built by
+// `signed_sovereign_witness_with_new_commitment`, which (a) hard-codes
+// `transition_proof: None` and (b) COERCES an all-zero `effects_hash` into a
+// non-zero hash. So rules 7 and 8 in `turn/src/executor/execute.rs` — three
+// unconditional `return TurnResult::Rejected` guards — were structurally
+// UNTRIPPABLE through this suite: deleting any of them broke no test. These
+// tests trip each one directly.
+// ===========================================================================
+
+/// A sovereign witness signed EXACTLY as the executor's rule-5 check demands,
+/// with caller-chosen `new_commitment` / `effects_hash` passed through VERBATIM
+/// (no zero-coercion) and an optional v1 `transition_proof` attached AFTER
+/// signing.
+///
+/// Attaching post-signing is faithful to the threat: the canonical signing
+/// message (`SovereignCellWitness::signing_message_for_federation`) does NOT
+/// cover `transition_proof`, so a proof-bearing witness carries a fully VALID
+/// signature. The proof field is wire-malleable; only rule 8 stops it.
+fn raw_sovereign_witness(
+    federation_id: &[u8; 32],
+    cell: &Cell,
+    signing_key: &SigningKey,
+    old_commitment: [u8; 32],
+    new_commitment: [u8; 32],
+    effects_hash: [u8; 32],
+    sequence: u64,
+    transition_proof: Option<Vec<u8>>,
+) -> SovereignCellWitness {
+    let cell_id = cell.id();
+    let timestamp = 0;
+    let message = SovereignCellWitness::signing_message_for_federation(
+        federation_id,
+        &cell_id,
+        &old_commitment,
+        &new_commitment,
+        &effects_hash,
+        timestamp,
+        sequence,
+    );
+    SovereignCellWitness {
+        cell_id,
+        old_commitment,
+        new_commitment,
+        effects_hash,
+        timestamp,
+        sequence,
+        signature: sign(signing_key, &message).0,
+        cell_state: cell.clone(),
+        transition_proof,
+    }
+}
+
+/// SECURITY (executor rule 8, `execute.rs`): the v1 hand-AIR witness-STARK
+/// verify is RETIRED, so a sovereign witness carrying a `transition_proof`
+/// MUST fail closed on every build with `InvalidExecutionProof`.
+///
+/// This is the highest-blast-radius gate in the sovereign path: the witness is
+/// otherwise PERFECT (correct old/new commitments, valid signature, correct
+/// sequence) — the control leg below proves the identical witness COMMITS once
+/// the proof is removed. So the ONLY thing standing between an unverified 4 KiB
+/// proof blob and a committed sovereign transition is rule 8. If someone
+/// "un-retires" the path by deleting the guard (or re-gates it behind a phantom
+/// feature, as `cell-crypto::peer_exchange` had done), this test flags RED.
+///
+/// NB `dregg_turn::turn` still documents that a `Some` proof "is verified via
+/// EffectVmAir" and lets the executor "verify in lieu of re-executing" — stale
+/// prose describing a capability the code rejects outright. Named, not fixed.
+#[test]
+fn sovereign_witness_carrying_v1_transition_proof_fails_closed() {
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(3);
+    let new_commitment = post_set_field_commitment(&sovereign, 0, [1u8; 32]);
+    let effects_hash = *blake3::hash(b"dregg-sovereign-witness-empty-effects").as_bytes();
+
+    let witness = raw_sovereign_witness(
+        &[0u8; 32],
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        new_commitment,
+        effects_hash,
+        1,
+        Some(vec![0u8; 4096]),
+    );
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, witness);
+    let turn = set_field_turn(agent_id, sovereign_id, witnesses);
+
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    match &result {
+        TurnResult::Rejected { reason, .. } => assert!(
+            matches!(reason, TurnError::InvalidExecutionProof(_)),
+            "a v1 transition_proof-bearing sovereign witness must be rejected with \
+             InvalidExecutionProof, got: {reason:?}"
+        ),
+        other => panic!("expected Rejected (fail-closed), got: {other:?}"),
+    }
+    // The rejected turn must not have advanced the sovereign replay sequence.
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        0,
+        "a fail-closed reject must not advance the sovereign replay sequence"
+    );
+
+    // CONTROL: the byte-identical witness WITHOUT the proof commits. This is what
+    // makes the test BITE — it proves the rejection is caused by the proof field
+    // alone, not by some unrelated defect in the fixture. Run against a FRESH
+    // fixture: the rejected turn above still bumps the agent's nonce (reject-path
+    // nonce charging), so replaying into the same ledger would trip NonceReplay
+    // and mask what we are actually asserting.
+    let (mut ledger2, agent2, sovereign2_id, sovereign2, key2, old2) = sovereign_fixture(3);
+    let control = raw_sovereign_witness(
+        &[0u8; 32],
+        &sovereign2,
+        &key2,
+        old2,
+        post_set_field_commitment(&sovereign2, 0, [1u8; 32]),
+        effects_hash,
+        1,
+        None,
+    );
+    let mut control_witnesses = HashMap::new();
+    control_witnesses.insert(sovereign2_id, control);
+    let control_turn = set_field_turn(agent2, sovereign2_id, control_witnesses);
+    let control_result =
+        TurnExecutor::new(ComputronCosts::zero()).execute(&control_turn, &mut ledger2);
+    assert!(
+        matches!(&control_result, TurnResult::Committed { .. }),
+        "control: the same witness without a v1 proof must commit, got: {control_result:?}"
+    );
+}
+
+/// SECURITY (executor rule 7a, `execute.rs`): an all-zero `new_commitment` is a
+/// legacy placeholder, NOT an explicit no-op commitment. A no-op sovereign
+/// transition must still sign the real unchanged state commitment. Accepting the
+/// zero sentinel would let a sovereign cell commit a transition to an
+/// UNSPECIFIED post-state — the executor would have no declared post-state to
+/// check its re-execution against.
+#[test]
+fn sovereign_witness_zero_new_commitment_placeholder_rejects() {
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(4);
+    let effects_hash = *blake3::hash(b"dregg-sovereign-witness-empty-effects").as_bytes();
+
+    // Signed correctly OVER the zero placeholder — so rules 2-6 all pass and
+    // only rule 7 can reject this.
+    let witness = raw_sovereign_witness(
+        &[0u8; 32],
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        [0u8; 32],
+        effects_hash,
+        1,
+        None,
+    );
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, witness);
+    let turn = set_field_turn(agent_id, sovereign_id, witnesses);
+
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    match &result {
+        TurnResult::Rejected { reason, .. } => {
+            let msg = format!("{reason:?}");
+            assert!(
+                msg.contains("zero new_commitment"),
+                "expected the rule-7 zero-new_commitment placeholder rejection, got: {msg}"
+            );
+        }
+        other => panic!("a zero new_commitment placeholder must be rejected, got: {other:?}"),
+    }
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        0,
+        "a rejected placeholder witness must not advance the replay sequence"
+    );
+}
+
+/// SECURITY (executor rule 7b, `execute.rs`): an all-zero `effects_hash` is a
+/// legacy placeholder. A sovereign transition with an empty/local effect set
+/// must still sign the canonical hash of that empty set, never the zero
+/// sentinel — otherwise `EffectsHashMismatch` has nothing real to bind the
+/// declared effects to.
+///
+/// This gate is why `signed_sovereign_witness_with_new_commitment` coerces zero
+/// -> `blake3("dregg-sovereign-witness-empty-effects")`. That coercion is also
+/// exactly why no test in this suite could trip the gate until now.
+#[test]
+fn sovereign_witness_zero_effects_hash_placeholder_rejects() {
+    let (mut ledger, agent_id, sovereign_id, sovereign, signing_key, old_commitment) =
+        sovereign_fixture(5);
+    let new_commitment = post_set_field_commitment(&sovereign, 0, [1u8; 32]);
+
+    let witness = raw_sovereign_witness(
+        &[0u8; 32],
+        &sovereign,
+        &signing_key,
+        old_commitment,
+        new_commitment,
+        [0u8; 32],
+        1,
+        None,
+    );
+    let mut witnesses = HashMap::new();
+    witnesses.insert(sovereign_id, witness);
+    let turn = set_field_turn(agent_id, sovereign_id, witnesses);
+
+    let result = TurnExecutor::new(ComputronCosts::zero()).execute(&turn, &mut ledger);
+    match &result {
+        TurnResult::Rejected { reason, .. } => {
+            let msg = format!("{reason:?}");
+            assert!(
+                msg.contains("zero effects_hash"),
+                "expected the rule-7 zero-effects_hash placeholder rejection, got: {msg}"
+            );
+        }
+        other => panic!("a zero effects_hash placeholder must be rejected, got: {other:?}"),
+    }
+    assert_eq!(
+        ledger.last_sovereign_witness_sequence(&sovereign_id),
+        0,
+        "a rejected placeholder witness must not advance the replay sequence"
+    );
+}
