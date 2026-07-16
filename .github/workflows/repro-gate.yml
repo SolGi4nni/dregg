@@ -1,0 +1,113 @@
+name: Reproducible Build Gate
+
+# Rung D2 (docs/reference/REPRODUCIBLE-BUILD-AND-FREEZE.md §4, lines 189-201): the
+# load-bearing falsifier for "works on my machine". It clones the commit under test
+# into an EMPTY home with no sibling ~/dev repos and NO warm cargo cache, then resolves
+# + builds under --locked. A [patch]-to-sibling path, an unpushed fork rev, a re-floated
+# mutable branch, or a Cargo.lock/manifest drift turns this RED on the PR that introduces
+# it — instead of being a discovery weeks later.
+#
+# This is a NEW workflow, separate from ci.yml (which another lane owns): ci.yml's
+# `check`/`test` jobs run on a cache-restored checkout that inherits ember's sibling
+# layout and never pass --locked, so they cannot see a reproducibility escape. This one
+# is the check that can.
+#
+# The mirror-gates discipline (scripts/check-mirror-gates.sh): a gate that cannot bark is
+# worse than none, so this runs the CANARY first — it injects a sibling path and REQUIRES
+# the gate to go red — before trusting any green.
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: repro-gate-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+env:
+  CARGO_TERM_COLOR: always
+  CARGO_INCREMENTAL: 0
+
+jobs:
+  # ── ARMED on every push/PR: canary + light-spine bare-clone build ────────────────
+  # Scope = default-members (Cargo.toml:19-23), the gpui/servo/mozjs-free protocol/
+  # circuit spine — the set a stranger reproduces first, and where the plonky3-recursion
+  # sibling-[patch] escape lived. Affordable without a cache; the full --workspace tree
+  # is the separate manual job below.
+  repro-gate:
+    name: Bare-clone repro gate (light spine)
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      # The apt set is ci.yml:38's block verbatim — a guaranteed SUPERSET of what the
+      # light spine needs (ci's `check` job proves the whole workspace builds with it),
+      # so the gate never reds on an under-provisioned runner rather than on a real
+      # reproducibility defect.
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          # Matches ci.yml:39-41 (rolling `nightly`, resolved from rust-toolchain.toml).
+          # NOTE (pending, REPRODUCIBLE-BUILD-AND-FREEZE.md §2.2 / Rung D0): the toolchain
+          # is a ROLLING nightly, not date-pinned, so this gate can still red on a day
+          # with zero code changes. Date-pinning it is D0's job, not D2's; when D0 lands,
+          # change this and the repo pin together.
+          toolchain: nightly
+      # DELIBERATELY NO Swatinem/rust-cache: restoring the shared cache would let a
+      # cached git dep or sibling artifact mask an escape. The gate must fetch cold.
+      - name: Canary — prove the gate can go RED
+        run: bash scripts/bare-clone-repro-gate.sh --canary
+      - name: Gate — bare clone into empty ~/dev, resolve + build the light spine
+        run: bash scripts/bare-clone-repro-gate.sh --source "$GITHUB_WORKSPACE"
+
+  # ── PENDING on every push (cost/disk): the FULL workspace, elephants included ─────
+  # `cargo build --workspace --locked` from a cold clone pulls the gpui/servo/mozjs
+  # crates whose [patch] entries point at IN-REPO vendored dirs (Cargo.toml:190,197,200)
+  # — those must travel with the clone, and a missing one reds here. This is HEAVY: the
+  # whole tree with no cache overruns the hosted runner's small disk exactly as ci.yml's
+  # test job documents (ci.yml:104-113), so it needs the disk-reclaim + debuginfo-off
+  # treatment. Kept as workflow_dispatch (manual) rather than per-push until D0 date-pins
+  # the toolchain and the runtime is measured; run it before a freeze / on demand.
+  #   LABEL: pending — needs per-push budget; today it is manual (Actions ▸ Run workflow).
+  repro-gate-full-workspace:
+    name: Bare-clone repro gate (FULL --workspace, manual)
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 300
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          lfs: true
+      - run: sudo apt-get update && sudo apt-get install -y libdbus-1-dev libfontconfig1-dev libxkbcommon-dev libxkbcommon-x11-dev libwayland-dev libxcb1-dev libgl1-mesa-dev libegl-dev libgles-dev libharfbuzz-dev libfreetype-dev libxcb-render0-dev libxcb-shape0-dev libxcb-xfixes0-dev libx11-dev libxext-dev libxrandr-dev libxi-dev libxcursor-dev libxinerama-dev libgstreamer1.0-dev libgstreamer-plugins-base1.0-dev gperf libunwind-dev
+      # Reclaim ~25 GB the full target/ would overrun (ci.yml:85-92 root-cause note).
+      - name: Reclaim runner disk
+        run: |
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/lib/android /opt/hostedtoolcache/CodeQL \
+            /usr/local/share/powershell /usr/share/swift
+          sudo docker image prune --all --force || true
+          df -h /
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: nightly
+      - name: Gate — bare clone, FULL --workspace build (debuginfo off, no cache)
+        # debuginfo off slashes on-disk object footprint + link memory so the whole-tree
+        # link fits the hosted runner (ci.yml:122-123).
+        env:
+          CARGO_PROFILE_DEV_DEBUG: "0"
+          CARGO_PROFILE_TEST_DEBUG: "0"
+        run: bash scripts/bare-clone-repro-gate.sh --full --source "$GITHUB_WORKSPACE"
+
+# ── What this workflow does NOT assert (labeled, so a green is not misread) ──────────
+# - Faithfulness (Lean↔Rust): that is ci.yml's `lean-marshal-gate`, self-arming until the
+#   Lean seed is PUBLISHED (Rung D1, ember-gated push). Out of scope here.
+# - Sub-workspace locks (solana-lock, wasm, sdk-py, discord-bot, dregg-tui, …): this gate
+#   is the ROOT workspace. The nine uncovered sub-workspace `--locked` checks are Rung D0
+#   item 4 (REPRODUCIBLE-BUILD-AND-FREEZE.md §4), a separate follow-up.
+# - Toolchain date-pin: PENDING (Rung D0) — the rolling nightly above is a known gap.

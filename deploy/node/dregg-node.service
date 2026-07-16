@@ -1,0 +1,134 @@
+# dregg-node — the hbox solo devnet node, as a DURABLE systemd USER unit.
+#
+# This is TODO-1 from deploy/README.md, and it closes the exact gap that already
+# cost the devnet ledger once: the previous :8420 node was HAND-RUN with an
+# ephemeral --data-dir (`nohup`, `mktemp`-style), the box was hard-killed by
+# build load, and the operator cell + every anchored Descent run were
+# permanently lost (deploy/PRACTICES.md §2). This unit fixes both halves of that
+# incident:
+#
+#   • it is a UNIT with `loginctl enable-linger` (survives logout AND reboot —
+#     the same durability the co-resident dregg-web-games-funnel.service already
+#     demonstrated across this session's hard reboot), and
+#   • its --data-dir is a PERSISTENT, named, backup-able path
+#     (%h/.local/state/dregg-node), listed in ReadWritePaths= — NEVER a temp dir.
+#
+# It is the anchor target dregg-web-games-funnel.service points at
+# (DREGG_NODE_URL=http://127.0.0.1:8420). Until this unit runs, a submitted
+# Descent run ranks in-process but cannot anchor (fail-closed, `cell not found`)
+# — see deploy/games/RUNBOOK-FUNNEL.md step (a).
+#
+# SCOPE (honest): a SOLO committee-of-one devnet faucet node over the verified
+# Lean executor, bound to LOOPBACK (127.0.0.1:8420). This is NOT the multi-node
+# federation, NOT an on-chain settle, and NOT a public surface. The public path
+# is Tailscale Funnel in front of the games web unit; this node itself is never
+# funneled and never binds 0.0.0.0. Same posture as docs/ops/PRIVATE-NODE.md and
+# scripts/private-node.sh — this unit is the durable, reboot-surviving form of
+# that same launch.
+#
+# hbox is a CO-TENANT box (24c/123G; it also runs the GPU/prove workload and
+# codex's datacake HOL build). Because this node runs with --prove-turns it
+# hosts an async STARK prove-pool — a prover — and per deploy/PRACTICES.md §1 the
+# prover is the thing that gets capped so it can never participate in the
+# OOM-spiral that hard-killed the box. The [Service] resource caps below bound
+# THIS unit for exactly that reason. They are a running-service cap (small), NOT
+# the 96G swarm-build cgroup — a running solo node proving one small cohort turn
+# at a time has a modest footprint; the cap exists to fail politely, never to
+# take the host down. Tune on the box (see RUNBOOK.md "resource caps").
+#
+# INSTALL (on hbox, as the login user — see deploy/node/RUNBOOK.md):
+#   mkdir -p ~/.config/systemd/user
+#   cp ~/dev/breadstuffs/deploy/node/dregg-node.service ~/.config/systemd/user/
+#   loginctl enable-linger "$USER"
+#   systemctl --user daemon-reload
+#   systemctl --user enable --now dregg-node
+
+[Unit]
+Description=dregg solo devnet node (verified Lean executor, faucet, prove-turns, loopback:8420)
+After=network-online.target
+Wants=network-online.target
+# Restart-storm brake (same discipline as dregg-web-games-funnel.service). A hard
+# crash loop stops the unit instead of pegging the box; re-arm after a fix with
+# `systemctl --user reset-failed dregg-node`.
+StartLimitIntervalSec=600
+StartLimitBurst=10
+
+[Service]
+Type=simple
+
+# --- one-time genesis init, idempotent -------------------------------------
+# `dregg-node run` REFUSES to start if the data dir has no node.key
+# (node/src/lib.rs:831 "data directory does not exist. Run init first."). This
+# guard runs `init` exactly once — only when node.key is absent — so a restart or
+# reboot NEVER re-inits and NEVER wipes existing ledger state. `init` creates the
+# data dir and writes a 0600 node.key (node/src/lib.rs:1793).
+ExecStartPre=/bin/sh -c 'test -f %h/.local/state/dregg-node/node.key || %h/dev/breadstuffs/target/release/dregg-node init --data-dir %h/.local/state/dregg-node'
+
+# --- the node -------------------------------------------------------------
+# Solo committee-of-one, blocklace consensus, faucet on, prove-turns on, bound to
+# LOOPBACK. Identical shape to scripts/private-node.sh's launch (the verified
+# single-node foundation), made durable. NEVER --bind 0.0.0.0.
+#   --enable-faucet : the games' one-time operator-cell materialize needs it
+#                     (RUNBOOK-FUNNEL.md step a.3); loopback devnet faucet only.
+#   --prove-turns   : every committed turn gets a self-verified full-turn STARK
+#                     proof (the "every state transition is proven" posture;
+#                     docs/ops/PRIVATE-NODE.md). Equivalent to DREGG_PROVE_TURNS=1
+#                     (node/src/lib.rs:1466) if you prefer to toggle it via an
+#                     EnvironmentFile without editing this unit. Drop it only if
+#                     the box is under build pressure and you want the anchor
+#                     node to stop proving (it will still execute + commit).
+ExecStart=%h/dev/breadstuffs/target/release/dregg-node run \
+    --data-dir %h/.local/state/dregg-node \
+    --bind 127.0.0.1 \
+    --port 8420 \
+    --gossip-port 9420 \
+    --federation-size 1 \
+    --federation-mode solo \
+    --consensus blocklace \
+    --enable-faucet \
+    --prove-turns
+
+WorkingDirectory=%h/dev/breadstuffs
+Environment=RUST_LOG=info
+# The node links the host-native Lean executor archive (libdregg_lean.a); it must
+# have been built ON hbox (linux/amd64) — a macOS-built binary will not link.
+# See deploy/node/RUNBOOK.md "build the Lean-linked node" and
+# docs/BUILD-LEAN-LINKED-NODE.md. If lean_available() is false the node REFUSES
+# to start unless DREGG_ALLOW_UNVERIFIED_CONSENSUS=1 — which we do NOT set here.
+
+# Restart on crash (NOT Restart=always: a clean stop stays stopped; the
+# StartLimit brake above caps a crash loop).
+Restart=on-failure
+RestartSec=5
+
+# --- security hardening (user-unit-safe subset) ---------------------------
+# NO ProtectHome: both the binary (%h/dev/breadstuffs/...) and the data dir
+# (%h/.local/state/dregg-node) live under $HOME, same as dregg-web-games-funnel.
+NoNewPrivileges=true
+ProtectSystem=strict
+ReadWritePaths=%h/.local/state/dregg-node
+PrivateTmp=true
+ProtectKernelTunables=true
+ProtectKernelModules=true
+ProtectControlGroups=true
+
+# --- resource caps (co-tenant box — deploy/PRACTICES.md §1) ---------------
+# Bound the prove-pool so it can never OOM-spiral the shared box. These are
+# ceilings, not reservations: a running solo node proving one cohort turn at a
+# time sits far below them; the cap only stops a pathological spike from taking
+# the host down (the incident PRACTICES §1 describes). Verify/tune against real
+# proving load on the box before treating these as final (RUNBOOK.md).
+#   hbox: 24 cores / 123G. CPUQuota=1200% ≈ 12 cores leaves headroom for the
+#   co-resident GPU/prove + datacake builds; the memory ceiling is a small slice
+#   of 123G. earlyoom on hbox preferentially kills poly/lean/cargo/rustc/Holmake
+#   (not dregg-node), so this cap is what keeps THIS unit from being the cause.
+CPUWeight=100
+CPUQuota=1200%
+MemoryHigh=8G
+MemoryMax=16G
+TasksMax=4096
+LimitNOFILE=65536
+LimitNPROC=8192
+
+[Install]
+WantedBy=default.target
