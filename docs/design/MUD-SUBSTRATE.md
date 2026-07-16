@@ -199,34 +199,114 @@ named precisely:
 
 ---
 
-## Decisions that are genuinely ember's call
+## Decisions — two DECIDED by ember, two still open
 
-The model makes a defensible default for each and flags it here; these are policy,
-not engineering:
+Of the four policy items the model originally flagged, ember has DECIDED two. They
+are now built and driven; the other two remain policy calls.
 
-- **Membrane observation semantics (§9.4).** The model chose "an instance pins its
-  parent realm root at birth" (a child sees a fixed parent). The alternative is "a
-  child observes a moving parent." This affects determinism, concurrency, and what
-  "the same daily seed" means across a settling realm. **ember's call.**
-- **Settle-back conflict / certification policy.** The model settles a result by
-  additively advancing the realm hoard. Real realms need: who may settle, whether
-  a settle requires a proof of the instance's terminal state, conflict behavior
-  when two instances settle concurrently, and which results are eligible to cross
-  the membrane (the §9.4 "terminal export policy"). **ember's call.**
-- **Identity key rotation / recovery / device delegation (§9.5).** The model binds
-  surfaces onto a canonical identity and resolves them; it does NOT implement key
-  rotation, account recovery, or re-binding a surface to a new identity (a
-  compromised-account flow). The `CanonicalIdentity.id` is stable by construction,
-  which is the precondition for rotation, but the rotation protocol itself is
-  **ember's call**. Also: the model uses the legacy ed25519 `derive_raw`; a
-  production identity should use the hybrid PQ derivation
-  (`CellId::derive_hybrid_raw`) — **ember's call** whether Stage 1 commits to PQ
-  identities.
+### DECIDED — Membrane is PER-REALM (§9.4), ember chose "Both"
+
+The membrane is a **property of the realm**, committed on the realm cell
+([`realm::field::MEMBRANE`]), not one fixed engine policy. Each realm declares a
+[`Membrane`]:
+
+- **`PinAtBirth`** (the original committed behavior) — the instance snapshots the
+  realm root at open; concurrent realm changes are INVISIBLE until settle.
+  Deterministic and replayable — a fair daily roguelite run (The Descent's daily
+  seed), where two players on the same seed must see the same world regardless of
+  what the shared realm did meanwhile.
+- **`MovingParent`** (new) — the instance tracks the realm HEAD; concurrent realm
+  changes are VISIBLE as they happen. A live shared world (a persistent town like
+  Hearthspire), where an instance is a window onto the moving realm.
+
+`RealmWorld::visible_parent(instance)` is the load-bearing read: under `PinAtBirth`
+it returns the birth pin, under `MovingParent` the live realm head. The property
+is genuine — **flip a realm's membrane and the same instance's visible parent
+flips** (the canary).
+
+**What `MovingParent` needs that `PinAtBirth` did not — the settle-back conflict.**
+Under a moving parent the settle-back becomes a live interaction, not a snapshot
+merge. Two shapes:
+
+- The **additive settle** (`settle_instance`) is a *commutative accumulator* —
+  read-live-head + add — so it is **conflict-free** even under `MovingParent`: two
+  concurrent settles both land, no lost update. Driven.
+- A **non-commutative settle** (a result that is a function of the head it read)
+  can lose an update if the head moved underneath it. The model provides an
+  **optimistic-concurrency settle** (`settle_instance_expecting(expected_head)`)
+  that **DETECTS** the conflict (`Refused::SettleConflict`) and refuses rather than
+  clobbering the concurrent advance. Driven (conflict detected + refused; rebased
+  settle lands). The **conflict-RESOLUTION** policy once detected — rebase the
+  result onto the new head, three-way merge, or last-writer-wins — is **still
+  ember's call** (see the open decisions below; `MovingParent` is what forces it).
+
+**Driven** (`tests/membrane_per_realm.rs`): per-realm membrane read off the cell;
+`PinAtBirth` hides a concurrent advance while `MovingParent` shows it; flip →
+visibility flips (canary); additive settles conflict-free; OCC settle detects a
+moved head and refuses.
+
+### DECIDED — Hybrid-PQ identity from ONE seed, with succession + guardian recovery (§9.5), ember chose "recommended"
+
+A `CanonicalIdentity`'s key is a **hybrid** key — ed25519 AND ML-DSA-65 — derived
+from ONE 32-byte seed, exactly as the shipped hybrid signer does
+(`turn/src/pq.rs`: `MlDsaTurnKey::from_ed25519_seed` = `ML-DSA.KeyGen(ξ = seed)`,
+ctx `dregg-hybrid-turn-v1`; the ed25519 half from the same seed bytes). The
+canonical id is a **durable cell whose state NAMES the current key**
+([`identity::field::KEY_COMMIT`]) — the cell id is the stable durable principal;
+the key is state that succeeds.
+
+- **Rotation.** A succession turn SIGNED BY THE OLD KEY advances the committed
+  current-key commitment (`rotate_identity`). The succession is **hybrid-signed**
+  (ed25519 ∧ ML-DSA-65 over one canonical `succession_message`). The identity's id
+  is unchanged, so **every surface binding still resolves to the same canonical id
+  across the rotation** — the durable-principal property survives a key change. A
+  resolver `follow_chain` walks the succession chain from genesis to the current
+  key. **Canary:** a rotation signed by a non-current, non-guardian key is
+  REFUSED (`Refused::WrongSuccessionKey`) — accepting it would be a stolen
+  identity; the message binds the target, so signing one commit and submitting
+  another also fails (`BadSuccessionSignature`).
+- **Recovery.** A pre-registered **K-of-N guardian set** (`register_guardians`,
+  guardian key commitments listed non-vacuously in the cell's committed field map,
+  the catalog pattern) can co-sign a succession (`recover_identity`) so a lost key
+  is not a lost identity. The gate counts DISTINCT registered guardians whose
+  hybrid co-sign verifies and requires ≥ threshold. **Canary:** below threshold
+  fails (`Refused::BelowGuardianThreshold`); a non-guardian cannot pad a quorum;
+  one guardian signing twice counts once.
+
+The anti-forgery tooth is a **key commitment**, not a raw signature: the cell
+commits to the current key's `(ed_pk, ml_pk)` via `commit_hybrid`; a succession
+supplies the signer's public keys, and the gate recomputes the commitment and
+checks it against the committed value (or membership in the guardian set) before
+verifying the hybrid signature — a stranger cannot substitute their own keys.
+
+**Driven** (`tests/hybrid_identity_succession.rs`): rotate → current key advances,
+epoch advances, id unchanged, chain resolves to current, both surfaces still
+resolve to the same id; wrong-key + tampered-target refused; the retired key
+cannot succeed again; 2-of-3 guardian recovery lands, 1-of-3 (and a
+non-guardian-padded set, and a doubled single guardian) refused; the hybrid
+signature fails closed on either a broken PQ half or a broken classical half.
+
+### Still ember's call
+
+- **Settle-back conflict RESOLUTION + certification policy.** `MovingParent` now
+  FORCES the conflict question (above): the model DETECTS a non-commutative
+  settle-back conflict (`settle_instance_expecting` → `SettleConflict`), but the
+  *resolution* — rebase onto the new head, three-way merge, or last-writer-wins —
+  is a policy call, as are: who may settle, whether a settle requires a proof of
+  the instance's terminal state, and which results are eligible to cross the
+  membrane (the §9.4 "terminal export policy"). **ember's call.**
 - **Catalog governance + activation.** The model exposes `list_ruleset` /
   `unlist_ruleset` as direct operations. §9.2 asks for activation height/time,
   catalog inclusion proofs, deprecation-without-deletion, emergency refusal, and
   governance authority (who may append a root). The model deliberately does not
   pick a governance scheme. **ember's call.**
+
+Additionally, **who may amend the guardian set** in production is the same
+`set_state` authority the shipped guardian-rotation weld pins
+(`sdk/src/guardian_rotation.rs` — `install_guardian_council_authority`); in this
+model the owner installs guardians directly. And **device delegation / re-binding
+a surface to a new identity** (a distinct account-migration flow) is still not
+modeled here.
 
 ---
 
@@ -241,7 +321,33 @@ not engineering:
 - the catalog gates the cited `ruleset_root` (unlisted refused, listed admitted,
   canary non-vacuous);
 - the instance-scope membrane (an in-instance turn cannot forge the durable realm
-  cell).
+  cell);
+- **the per-realm membrane** — `PinAtBirth` (deterministic) vs `MovingParent`
+  (live) committed on the realm cell, load-bearing (flip → visibility flips), the
+  additive settle conflict-free and the OCC settle conflict-detecting;
+- **hybrid-PQ identity succession + guardian recovery** — a real ed25519 + ML-DSA
+  hybrid signature (the shipped `turn/src/pq.rs` derivation) gates every
+  succession; rotation by the current key, K-of-N guardian recovery, the durable
+  id surviving a key change, and all the canaries above are driven.
+
+**Prototype / what the node + executor must enforce (named):**
+- The **succession gate** (`rotate_identity` / `recover_identity`) is modeled as a
+  `RealmWorld` method. In production it is the SAME wiring the catalog needs
+  (items 1–2 above): the cited succession is a real `Turn` whose authorization is
+  `Authorization::HybridSignature` (the shipped hybrid perimeter,
+  `turn/src/executor/authorize.rs::verify_hybrid_signature`), the current-key
+  commitment + guardian set live in the identity cell's committed state, and the
+  executor checks *signer-commitment == committed-current-key* (or guardian
+  membership + threshold) BEFORE admitting the `SetField` that advances
+  `KEY_COMMIT`. The shipped guardian-rotation program
+  (`sdk/src/guardian_rotation.rs`) is the production shape for the guarded
+  key/council slot; this model's succession is the same guarded-advance discipline
+  applied to the identity's current-key slot, with the recovery quorum on the
+  cell's `set_state` authority. The succession chain, like the realm receipt
+  chain, needs the durable node-served history (below) to be replayable across
+  restart.
+- The **OCC settle** detects a conflict but does not resolve it — the resolution
+  policy is ember's open call (above).
 
 **Prototype** (models the semantics; production moves it):
 - the admission gate is a standalone function in `RealmWorld::admit`. In

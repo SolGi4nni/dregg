@@ -9,9 +9,12 @@
 //! a scoped child cell of a realm:
 //!
 //! * **pins a parent root at birth** — [`Instance::parent_pin`] snapshots the
-//!   realm's durable value at open time, so a child sees a fixed parent (the
-//!   doc's "child pins a parent root at birth" option, chosen here and named as
-//!   ember's call vs "observe a moving parent" in the design doc);
+//!   realm's durable value at open time. Whether the instance USES that pin (a
+//!   fixed parent) or tracks the realm HEAD (a moving parent) is now the realm's
+//!   OWN choice — its [`crate::realm::Membrane`] (ember's DECIDED per-realm
+//!   membrane). The pin is always recorded at birth; a `PinAtBirth` realm reads
+//!   it as the visible parent, a `MovingParent` realm reads the live head. See
+//!   [`crate::world::RealmWorld::visible_parent`];
 //! * **has its own scratch state** — the instance cell's fields; these RESET
 //!   with the instance (a fresh instance = a fresh cell);
 //! * **settles a certified result back** — on finalize, its result is applied to

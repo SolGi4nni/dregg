@@ -24,9 +24,12 @@ use dregg_cell::{Cell, CellId, Ledger};
 use dregg_turn::action::Effect;
 
 use crate::catalog::{RulesetCatalog, catalog_key, listed_value};
-use crate::identity::{CanonicalIdentity, SurfaceRef};
+use crate::identity::{
+    CanonicalIdentity, HybridKey, HybridSig, SuccessionKind, SuccessionRecord, SurfaceRef,
+    field as idfield, guardian_ext_key, succession_message,
+};
 use crate::instance::{Instance, InstanceStatus, field as ifield};
-use crate::realm::{Realm, field as rfield};
+use crate::realm::{Membrane, Realm, field as rfield};
 use crate::{
     RulesetRoot, default_token_id, derive_cell_id, derive_pubkey, open_permissions, pack_u64,
     unpack_u64,
@@ -95,6 +98,35 @@ pub enum Refused {
     UnsupportedEffect,
     /// A ledger-level failure applying an admitted effect.
     Ledger(String),
+    /// The cited identity cell is not known to this world.
+    UnknownIdentity(CellId),
+    /// A succession (rotation) was NOT signed by the identity's CURRENT key —
+    /// the signer's key commitment does not equal the cell's committed key. This
+    /// is the stolen-identity refusal: a wrong key cannot succeed the identity.
+    WrongSuccessionKey {
+        identity: CellId,
+        expected_commit: [u8; 32],
+        got_commit: [u8; 32],
+    },
+    /// A succession's hybrid signature failed to verify over the canonical
+    /// succession message (a present-but-invalid half fails closed).
+    BadSuccessionSignature { identity: CellId },
+    /// A guardian recovery did not reach the identity's threshold of DISTINCT,
+    /// valid, registered guardian co-signs.
+    BelowGuardianThreshold {
+        identity: CellId,
+        have: u32,
+        need: u32,
+    },
+    /// An OCC settle (MovingParent live settle) was computed against a realm head
+    /// that has since MOVED — the settle-back conflict this membrane forces. The
+    /// resolution policy (rebase / merge / abort) is named as ember's open call;
+    /// this variant is the DETECTION (the update is not silently lost).
+    SettleConflict {
+        realm: CellId,
+        expected_head: u64,
+        found_head: u64,
+    },
 }
 
 /// The living world: realms, their instances, canonical identities, catalogs —
@@ -102,6 +134,9 @@ pub enum Refused {
 pub struct RealmWorld {
     ledger: Ledger,
     identities: HashMap<CellId, CanonicalIdentity>,
+    /// Per-identity succession chain (genesis → … → current). The chain OUTLIVES
+    /// any single key; a resolver follows it to reach the current key.
+    succession: HashMap<CellId, Vec<SuccessionRecord>>,
     realms: HashMap<CellId, Realm>,
     realms_by_name: HashMap<String, CellId>,
     instances: HashMap<CellId, Instance>,
@@ -120,6 +155,7 @@ impl RealmWorld {
         RealmWorld {
             ledger: Ledger::new(),
             identities: HashMap::new(),
+            succession: HashMap::new(),
             realms: HashMap::new(),
             realms_by_name: HashMap::new(),
             instances: HashMap::new(),
@@ -184,22 +220,55 @@ impl RealmWorld {
 
     /// Mint a canonical identity from a principal seed. It exists FIRST and
     /// independently of any surface — surfaces bind onto it, never mint it.
+    ///
+    /// The identity's key is the HYBRID-PQ key (ed25519 + ML-DSA-65) derived from
+    /// ONE 32-byte seed ([`crate::identity::hybrid_seed`], the shipped
+    /// `ML-DSA.KeyGen(ξ = seed)` posture). The durable cell's state NAMES the
+    /// current key ([`idfield::KEY_COMMIT`]) — the cell id is the stable durable
+    /// principal, the key is state that succeeds. Genesis seeds the succession
+    /// chain at epoch 1.
     pub fn mint_identity(
         &mut self,
         label: &str,
         principal_seed: &str,
     ) -> Result<CanonicalIdentity, Refused> {
-        let seed = format!("realm-identity:{principal_seed}");
-        let id = self.spawn_cell(&seed)?;
-        // Stamp a version marker (rotation epoch = 1) — the durable identity record.
-        self.write_field(&id, 0, pack_u64(1))?;
+        let cell_seed = format!("realm-identity:{principal_seed}");
+        let id = self.spawn_cell(&cell_seed)?;
+
+        // The birth hybrid key, from the single 32-byte seed.
+        let birth = HybridKey::from_principal_seed(principal_seed);
+        let birth_commit = birth.commitment();
+
+        // Stamp the durable identity record: succession epoch 1, current key.
+        self.write_field(&id, idfield::EPOCH, pack_u64(1))?;
+        self.write_field(&id, idfield::KEY_COMMIT, birth_commit)?;
+        self.write_field(&id, idfield::GUARDIAN_COUNT, pack_u64(0))?;
+        self.write_field(&id, idfield::GUARDIAN_THRESHOLD, pack_u64(0))?;
+
         let identity = CanonicalIdentity {
             id,
-            principal_pk: derive_pubkey(&seed),
+            principal_pk: birth.ed_pk(),
+            birth_key_commit: birth_commit,
             label: label.to_string(),
         };
         self.identities.insert(id, identity.clone());
+        self.succession.insert(
+            id,
+            vec![SuccessionRecord {
+                epoch: 1,
+                from: [0u8; 32],
+                to: birth_commit,
+                kind: SuccessionKind::Genesis,
+            }],
+        );
         Ok(identity)
+    }
+
+    /// The birth hybrid key of an identity minted from `principal_seed` — the
+    /// deterministic reconstruction a holder (or a driven test) uses to SIGN a
+    /// succession while it is still the current key. Derives, does not read state.
+    pub fn birth_key(&self, principal_seed: &str) -> HybridKey {
+        HybridKey::from_principal_seed(principal_seed)
     }
 
     /// Bind a surface ref onto an EXISTING canonical identity. The binding is a
@@ -237,11 +306,27 @@ impl RealmWorld {
     // ── §9.4 REALM + INSTANCE ─────────────────────────────────────────────────
 
     /// Create a persistent realm (a durable cell) plus its ruleset catalog cell.
+    /// Defaults to [`Membrane::PinAtBirth`] — the deterministic, replayable
+    /// behavior (a fair daily seed). Use [`RealmWorld::create_realm_with_membrane`]
+    /// for a live shared world ([`Membrane::MovingParent`]).
     pub fn create_realm(&mut self, name: &str) -> Result<Realm, Refused> {
+        self.create_realm_with_membrane(name, Membrane::PinAtBirth)
+    }
+
+    /// Create a persistent realm with an explicit [`Membrane`] — ember's DECIDED
+    /// per-realm observation semantics. The membrane is COMMITTED on the realm
+    /// cell ([`rfield::MEMBRANE`]), so it is a property of the realm, not host
+    /// config: a resolver reads it off the cell and instance visibility follows.
+    pub fn create_realm_with_membrane(
+        &mut self,
+        name: &str,
+        membrane: Membrane,
+    ) -> Result<Realm, Refused> {
         let realm_seed = format!("realm:{name}");
         let realm_id = self.spawn_cell(&realm_seed)?;
         self.write_field(&realm_id, rfield::EPOCH, pack_u64(0))?;
         self.write_field(&realm_id, rfield::HOARD, pack_u64(0))?;
+        self.write_field(&realm_id, rfield::MEMBRANE, pack_u64(membrane.as_u64()))?;
 
         let catalog_seed = format!("realm-catalog:{name}");
         let catalog_id = self.spawn_cell(&catalog_seed)?;
@@ -250,10 +335,32 @@ impl RealmWorld {
             id: realm_id,
             name: name.to_string(),
             catalog: catalog_id,
+            membrane,
         };
         self.realms.insert(realm_id, realm.clone());
         self.realms_by_name.insert(name.to_string(), realm_id);
         Ok(realm)
+    }
+
+    /// The COMMITTED membrane of a realm, read off its cell (the authority).
+    pub fn membrane_of(&self, realm: &CellId) -> Membrane {
+        Membrane::from_u64(self.read_field_u64(realm, rfield::MEMBRANE))
+    }
+
+    /// What an OPEN instance currently sees of its parent realm — the load-bearing
+    /// per-realm property. Under [`Membrane::PinAtBirth`] this is the value pinned
+    /// at birth (concurrent realm changes are INVISIBLE: deterministic). Under
+    /// [`Membrane::MovingParent`] this is the realm's CURRENT head (concurrent
+    /// realm changes are VISIBLE: live). Flip the realm's membrane, and the same
+    /// instance's visible parent flips — that is the canary.
+    pub fn visible_parent(&self, instance: &CellId) -> u64 {
+        let Some(inst) = self.instances.get(instance) else {
+            return 0;
+        };
+        match self.membrane_of(&inst.realm) {
+            Membrane::PinAtBirth => self.read_field_u64(instance, ifield::PARENT_PIN),
+            Membrane::MovingParent => self.realm_hoard(&inst.realm),
+        }
     }
 
     /// The realm's catalog handle.
@@ -526,6 +633,280 @@ impl RealmWorld {
         // ledger; the `Instance` struct mirrors only seed/realm/pin.
         self.write_field(&instance, ifield::STATUS, pack_u64(1))?;
         Ok(receipt)
+    }
+
+    /// SETTLE with optimistic-concurrency detection — the settle-back a live
+    /// [`Membrane::MovingParent`] realm forces. The caller passes `expected_head`,
+    /// the realm head its result was computed against. If the realm head has
+    /// MOVED since (a concurrent instance settled underneath this one), the settle
+    /// is REFUSED with [`Refused::SettleConflict`] rather than silently clobbering
+    /// or losing the concurrent advance.
+    ///
+    /// The ADDITIVE [`RealmWorld::settle_instance`] is conflict-FREE (a commutative
+    /// accumulator: read-live-head + add — two concurrent settles both land, no
+    /// lost update); this OCC variant is for a NON-commutative settle whose result
+    /// is a function of the head it read. The CONFLICT-RESOLUTION policy once a
+    /// conflict is detected — rebase the result onto the new head, three-way
+    /// merge, or last-writer-wins — is **ember's open call** (the design doc names
+    /// it). This method commits to the sound minimum: DETECT the conflict, refuse,
+    /// leave the ledger unchanged.
+    pub fn settle_instance_expecting(
+        &mut self,
+        actor: SurfaceRef,
+        instance: CellId,
+        ruleset_root: RulesetRoot,
+        expected_head: u64,
+    ) -> Result<RealmReceipt, Refused> {
+        let inst = self
+            .instances
+            .get(&instance)
+            .cloned()
+            .ok_or(Refused::UnknownInstance(instance))?;
+        if self.instance_status(&instance) == InstanceStatus::Finalized {
+            return Err(Refused::InstanceFinalized(instance));
+        }
+        let realm = inst.realm;
+        let found_head = self.realm_hoard(&realm);
+        if found_head != expected_head {
+            return Err(Refused::SettleConflict {
+                realm,
+                expected_head,
+                found_head,
+            });
+        }
+        // Head matches what the result was computed against — the settle is safe.
+        self.settle_instance(actor, instance, ruleset_root)
+    }
+
+    // ── §9.5 IDENTITY SUCCESSION + GUARDIAN RECOVERY (hybrid-PQ) ───────────────
+
+    /// The commitment to the identity's CURRENT key, read off the durable cell.
+    /// A resolver reads THIS to reach the current key — it survives every
+    /// rotation/recovery (the id does not change; this field advances).
+    pub fn current_key_commit(&self, identity: &CellId) -> Option<[u8; 32]> {
+        if !self.identities.contains_key(identity) {
+            return None;
+        }
+        self.read_field_bytes(identity, idfield::KEY_COMMIT)
+    }
+
+    /// The identity's succession epoch (1 at genesis, +1 per rotation/recovery).
+    pub fn identity_epoch(&self, identity: &CellId) -> u64 {
+        self.read_field_u64(identity, idfield::EPOCH)
+    }
+
+    /// The identity's succession chain (genesis → … → current).
+    pub fn succession_chain(&self, identity: &CellId) -> &[SuccessionRecord] {
+        self.succession
+            .get(identity)
+            .map(|v| v.as_slice())
+            .unwrap_or(&[])
+    }
+
+    /// FOLLOW the succession chain from genesis and return the key commitment it
+    /// reaches — the resolver's job. Returns `None` if the chain is broken (a
+    /// record's `from` does not equal the running commitment) or missing. A sound
+    /// chain's followed endpoint EQUALS [`RealmWorld::current_key_commit`].
+    pub fn follow_chain(&self, identity: &CellId) -> Option<[u8; 32]> {
+        let chain = self.succession.get(identity)?;
+        let mut cur: Option<[u8; 32]> = None;
+        for rec in chain {
+            match cur {
+                None => {
+                    // genesis link: from is zero, to is the birth key.
+                    cur = Some(rec.to);
+                }
+                Some(prev) => {
+                    if rec.from != prev {
+                        return None; // broken chain
+                    }
+                    cur = Some(rec.to);
+                }
+            }
+        }
+        cur
+    }
+
+    /// Register (or replace) an identity's guardian recovery set: `guardians` are
+    /// the guardian key commitments ([`commit_hybrid`]), `threshold` the K-of-N
+    /// co-sign floor. Each guardian is listed in the cell's committed field map
+    /// (value = its commitment, so membership is a full-32-byte equality — the
+    /// non-vacuous catalog pattern). In this model the owner installs guardians;
+    /// WHO may amend the guardian set in production is the same `set_state`
+    /// authority the shipped guardian-rotation weld pins (named in the doc).
+    pub fn register_guardians(
+        &mut self,
+        identity: &CellId,
+        guardians: &[[u8; 32]],
+        threshold: u32,
+    ) -> Result<(), Refused> {
+        if !self.identities.contains_key(identity) {
+            return Err(Refused::UnknownIdentity(*identity));
+        }
+        for g in guardians {
+            let key = guardian_ext_key(g);
+            let value: FieldElement = *g;
+            self.ledger
+                .update_with(identity, |c| {
+                    c.state.set_field_ext(key, value);
+                })
+                .map_err(|e| Refused::Ledger(format!("{e:?}")))?;
+        }
+        self.write_field(
+            identity,
+            idfield::GUARDIAN_COUNT,
+            pack_u64(guardians.len() as u64),
+        )?;
+        self.write_field(
+            identity,
+            idfield::GUARDIAN_THRESHOLD,
+            pack_u64(threshold as u64),
+        )?;
+        Ok(())
+    }
+
+    /// Is `commit` a registered guardian of `identity`? Reads the committed field
+    /// map: the stored value must EQUAL the commitment (not just a key hit).
+    fn is_guardian(&self, identity: &CellId, commit: &[u8; 32]) -> bool {
+        let key = guardian_ext_key(commit);
+        self.ledger
+            .get(identity)
+            .and_then(|c| c.state.get_field_ext(key))
+            .map(|v| &v == commit)
+            .unwrap_or(false)
+    }
+
+    /// ROTATE the identity's key: a succession SIGNED BY THE CURRENT KEY advances
+    /// [`idfield::KEY_COMMIT`] to `new_key_commit`. The `sig` must be a hybrid
+    /// signature (ed25519 ∧ ML-DSA-65) by the CURRENT key over the canonical
+    /// succession message. The identity's durable id is UNCHANGED — the principal
+    /// outlives the key, and every surface binding still resolves to the same id.
+    ///
+    /// Refuses ([`Refused::WrongSuccessionKey`]) a signer whose key commitment is
+    /// not the current one — the stolen-identity canary: a non-current key cannot
+    /// succeed the identity.
+    pub fn rotate_identity(
+        &mut self,
+        identity: &CellId,
+        new_key_commit: [u8; 32],
+        sig: &HybridSig,
+    ) -> Result<SuccessionRecord, Refused> {
+        let current = self
+            .current_key_commit(identity)
+            .ok_or(Refused::UnknownIdentity(*identity))?;
+        // Tooth 1: the signer IS the current key (commitment equality).
+        let signer = sig.signer_commitment();
+        if signer != current {
+            return Err(Refused::WrongSuccessionKey {
+                identity: *identity,
+                expected_commit: current,
+                got_commit: signer,
+            });
+        }
+        // Tooth 2: the hybrid signature verifies over the canonical message.
+        let epoch = self.identity_epoch(identity);
+        let msg = succession_message(
+            identity,
+            epoch,
+            &current,
+            &new_key_commit,
+            SuccessionKind::SelfSigned,
+        );
+        if !sig.verify(&msg) {
+            return Err(Refused::BadSuccessionSignature {
+                identity: *identity,
+            });
+        }
+        self.apply_succession(
+            identity,
+            current,
+            new_key_commit,
+            epoch,
+            SuccessionKind::SelfSigned,
+        )
+    }
+
+    /// RECOVER a locked-out identity: a threshold of registered guardians co-sign
+    /// a succession to `new_key_commit` (the OLD key did NOT sign — a lost key is
+    /// not a lost identity). Each `guardian_sigs` entry must be a hybrid signature
+    /// by a REGISTERED guardian over the canonical recovery message; the gate
+    /// counts DISTINCT valid guardians and requires `>= threshold`.
+    ///
+    /// Refuses ([`Refused::BelowGuardianThreshold`]) below the committed floor —
+    /// the canary: a sub-threshold set of guardians cannot rotate the identity.
+    pub fn recover_identity(
+        &mut self,
+        identity: &CellId,
+        new_key_commit: [u8; 32],
+        guardian_sigs: &[HybridSig],
+    ) -> Result<SuccessionRecord, Refused> {
+        let current = self
+            .current_key_commit(identity)
+            .ok_or(Refused::UnknownIdentity(*identity))?;
+        let threshold = self.read_field_u64(identity, idfield::GUARDIAN_THRESHOLD) as u32;
+        let epoch = self.identity_epoch(identity);
+        let msg = succession_message(
+            identity,
+            epoch,
+            &current,
+            &new_key_commit,
+            SuccessionKind::GuardianRecovery,
+        );
+
+        // Count DISTINCT registered guardians whose hybrid co-sign verifies.
+        let mut seen: Vec<[u8; 32]> = Vec::new();
+        for gsig in guardian_sigs {
+            let gc = gsig.signer_commitment();
+            if seen.contains(&gc) {
+                continue; // no double-counting one guardian
+            }
+            if self.is_guardian(identity, &gc) && gsig.verify(&msg) {
+                seen.push(gc);
+            }
+        }
+        let have = seen.len() as u32;
+        if threshold == 0 || have < threshold {
+            return Err(Refused::BelowGuardianThreshold {
+                identity: *identity,
+                have,
+                need: threshold,
+            });
+        }
+        self.apply_succession(
+            identity,
+            current,
+            new_key_commit,
+            epoch,
+            SuccessionKind::GuardianRecovery,
+        )
+    }
+
+    /// Shared tail of rotate/recover: advance the committed key + epoch and append
+    /// the succession record. Refuses a null successor (would strand the identity).
+    fn apply_succession(
+        &mut self,
+        identity: &CellId,
+        from: [u8; 32],
+        to: [u8; 32],
+        epoch: u64,
+        kind: SuccessionKind,
+    ) -> Result<SuccessionRecord, Refused> {
+        if to == [0u8; 32] {
+            return Err(Refused::BadSuccessionSignature {
+                identity: *identity,
+            });
+        }
+        let new_epoch = epoch.saturating_add(1);
+        self.write_field(identity, idfield::KEY_COMMIT, to)?;
+        self.write_field(identity, idfield::EPOCH, pack_u64(new_epoch))?;
+        let rec = SuccessionRecord {
+            epoch: new_epoch,
+            from,
+            to,
+            kind,
+        };
+        self.succession.entry(*identity).or_default().push(rec);
+        Ok(rec)
     }
 }
 

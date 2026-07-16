@@ -18,6 +18,10 @@ dregg-cell = { path = "../cell" }
 dregg-turn = { path = "../turn" }
 dregg-types = { path = "../types" }
 blake3 = "1"
+# The classical half of the HYBRID-PQ identity: ed25519, derived from the SAME
+# 32-byte seed as the ML-DSA-65 half (`dregg_turn::pq::MlDsaTurnKey`). Matches the
+# turn/ hybrid signer perimeter exactly — a succession is signed by BOTH halves.
+ed25519-dalek = { version = "2", features = ["hazmat"] }
 
 # Standalone workspace: this crate is NOT a member of the root breadstuffs
 # workspace (the main loop adds it after). An empty `[workspace]` table makes
