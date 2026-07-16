@@ -6,8 +6,13 @@
 use dregg_bridge::BridgePresentationProof;
 #[allow(deprecated)] // test helpers intentionally use the simpler legacy verification API
 use dregg_bridge::present::verify_presentation;
-use dregg_circuit::BabyBear;
-use dregg_circuit::dsl::predicates::PredicateProof;
+// NOTE (2026-07-16): the circuit-level predicate prove/verify API these helpers wrapped
+// (`dregg_circuit::dsl::predicates::{PredicateProof, verify_predicate}`) was deleted in
+// 8cc7ef821 (the `*_air` shim cleanup); predicate proving/verifying now lives at the bridge
+// layer (`dregg_bridge::present::{prove_predicate_for_fact, verify_predicate_proof}`). The
+// two `assert_predicate_*` helpers were removed; `teasting/tests/predicate_soundness.rs` is
+// MIGRATED onto the bridge API directly (it inlines the calls, mirroring the comprehensive
+// `bridge::present::comparison_predicates_prove_and_verify_end_to_end`).
 
 /// Assert that a presentation proof is structurally valid (all sub-proofs present and consistent).
 pub fn assert_proof_valid(proof: &BridgePresentationProof) {
@@ -38,33 +43,9 @@ pub fn assert_proof_rejects(proof: &BridgePresentationProof, federation_root: &[
     );
 }
 
-/// Assert that a predicate proof verifies against expected public inputs.
-pub fn assert_predicate_verifies(
-    proof: &PredicateProof,
-    threshold: BabyBear,
-    fact_commitment: BabyBear,
-) {
-    use dregg_circuit::dsl::predicates::verify_predicate;
-    assert!(
-        verify_predicate(proof, threshold, fact_commitment).is_ok(),
-        "Predicate proof failed verification: threshold={:?}, fact_commitment={:?}",
-        threshold,
-        fact_commitment,
-    );
-}
-
-/// Assert that a predicate proof does NOT verify (forge detection).
-pub fn assert_predicate_rejects(
-    proof: &PredicateProof,
-    threshold: BabyBear,
-    fact_commitment: BabyBear,
-) {
-    use dregg_circuit::dsl::predicates::verify_predicate;
-    assert!(
-        verify_predicate(proof, threshold, fact_commitment).is_err(),
-        "Predicate proof SHOULD have been rejected but passed verification",
-    );
-}
+// `assert_predicate_verifies` / `assert_predicate_rejects` removed 2026-07-16 — they used the
+// deleted circuit-level `verify_predicate(proof, threshold, fact_commitment)` API. TODO: reinstate
+// against `dregg_bridge::present::verify_predicate_proof(&BridgePredicateProof, fact_commitment)`.
 
 /// Assert that two byte slices are NOT equal (unlinkability check).
 pub fn assert_unlinkable(a: &[u8], b: &[u8], context: &str) {
