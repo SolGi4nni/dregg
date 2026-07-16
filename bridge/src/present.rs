@@ -2602,12 +2602,34 @@ pub struct BridgePredicateProof {
     /// Per the [`Blinding`] doc: blinding rerandomizes WHICH commitment names a fact; it cannot
     /// change WHICH fact is named.
     ///
-    /// # What it costs privacy
+    /// # What it costs privacy — READ THIS BEFORE RELYING ON UNLINKABILITY HERE
     ///
-    /// Nothing against the parties unlinkability is for. Deriving requires already holding the
-    /// fact's value, so anyone who can use this decommitment to correlate two showings could
-    /// equally correlate them from the trusted state they must already hold. Parties who do not
-    /// hold the proof still see only unlinkable commitments.
+    /// Against a party who holds the COMMITMENT but not the proof: nothing. Those parties see only
+    /// rerandomized commitments, which is the property the blinded weld delivers and which
+    /// `teasting/tests/privacy_unlinkability.rs` drives.
+    ///
+    /// Against a party who holds THIS STRUCT: the blinding buys ~nothing, and it is dishonest to
+    /// imply otherwise. `commitment_of` is a hash of `[fact_hash, state_root, blinding, 0]`, so a
+    /// proof-holder given `blinding` can TEST any candidate value by recomputing
+    /// `hash_4_to_1([hash_fact(sym, [v, t1, t2]), state_root, blinding, 0])` and comparing. It does
+    /// not need to already hold the value — it only needs to GUESS it, and predicate values are
+    /// typically low-entropy (an age, a tier, a small balance). So a proof-holder can recover the
+    /// value by brute force over a small domain.
+    ///
+    /// This is not a REGRESSION — the unblinded commitment was a deterministic hash of the same
+    /// low-entropy value and was equally brute-forceable. It is a statement of what this rung does
+    /// and does not close: the blinded weld makes the COMMITMENT unlinkable; it does not by itself
+    /// make a decommitted proof private.
+    ///
+    /// # The real fix, and why it is not here
+    ///
+    /// The decommitment exists only because [`verify_predicate_proof`] pins the commitment by
+    /// EQUALITY, which forces the verifier to reproduce it. The sound shape for a blinded scheme is
+    /// for the verifier to check that the presented commitment OPENS into trusted state (a
+    /// membership / opening proof) rather than to re-derive it — then the blinding never leaves the
+    /// prover and unlinkability survives contact with the verifier. That is a protocol rung above
+    /// this lane's descriptor work; it is NAMED in HORIZONLOG, not silently assumed. Until it lands,
+    /// treat this field as the honest admission that the verifier side is still equality-pinned.
     ///
     /// Stored as the raw field element rather than [`Blinding`] because the circuit-side newtype
     /// carries no serde derives; [`Blinding`] is reconstructed at the derivation site.

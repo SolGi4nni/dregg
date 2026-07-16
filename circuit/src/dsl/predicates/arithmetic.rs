@@ -1632,7 +1632,25 @@ fn fill_aux_columns(
     }
 }
 
-/// Backward-compatible: compute fact commitment for arithmetic predicates.
-pub fn compute_arithmetic_fact_commitment(fact_hash: BabyBear, state_root: BabyBear) -> BabyBear {
-    crate::poseidon2::hash_2_to_1(fact_hash, state_root)
+/// **The arithmetic-predicate family's fact commitment — UNIFORMLY BLINDED.**
+///
+/// `Poseidon2_4to1([fact_hash, state_root, blinding, 0])`. This is byte-equal to the in-circuit
+/// weld's leg 2 (the arity-4 Poseidon2 chip lookup the Lean emitters author): `chip_absorb_lanes 4`
+/// takes the `seed456 = false` branch, seeding `st[0..4] = inputs` and `st[4] = arity = 4`, which is
+/// exactly [`crate::poseidon2::hash_4_to_1`]'s seeding. The chip's arity-4 absorb IS `hash_4_to_1`,
+/// so blinding the weld costs the production hash NOTHING.
+///
+/// **The scheme is uniformly arity-4** — there is no unblinded branch. `blinding = 0` is the
+/// DEGENERATE case (`Blinding::NONE`), representable in-circuit as a zero `BLINDING` column, not a
+/// different hash shape. A `if blinding == 0 { hash_2_to_1(..) }` branch (the shape
+/// [`crate::dsl::predicates::compute_blinded_fact_commitment`] used to carry) cannot be reproduced
+/// by a single descriptor: an arity-4 leg forces the arity-4 image on EVERY row, so a zero-blinding
+/// caller computing an arity-2 commitment out-of-circuit would be REFUSED by its own weld. One
+/// shape, one descriptor, one VK — and privacy is structural rather than opt-in.
+pub fn compute_arithmetic_fact_commitment(
+    fact_hash: BabyBear,
+    state_root: BabyBear,
+    blinding: BabyBear,
+) -> BabyBear {
+    crate::poseidon2::hash_4_to_1(&[fact_hash, state_root, blinding, BabyBear::ZERO])
 }

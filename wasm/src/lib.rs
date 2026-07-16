@@ -584,7 +584,9 @@ pub fn generate_predicate_proof(
     };
     use dregg_circuit::field::BabyBear;
     use dregg_circuit::poseidon2;
-    use dregg_circuit::predicate_arith_witness::{PREDICATE_ARITH_NAME, predicate_arith_witness};
+    use dregg_circuit::predicate_arith_witness::{
+        Blinding, PI_FACT_COMMITMENT, PREDICATE_ARITH_NAME, predicate_arith_witness,
+    };
     use dregg_circuit::predicate_comparison_witness::{
         PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME,
         PREDICATE_ARITH_NEQ_NAME, predicate_gt_witness, predicate_le_witness, predicate_lt_witness,
@@ -607,41 +609,53 @@ pub fn generate_predicate_proof(
     let mut blinding_bytes = [0u8; 8];
     getrandom::fill(&mut blinding_bytes)
         .map_err(|e| JsError::new(&format!("getrandom failed: {e}")))?;
-    let blinding = BabyBear::from_u64(u64::from_le_bytes(blinding_bytes));
-
-    // The fact commitment binds the predicate to token state (opaque pass-through public input of
-    // the arithmetic-predicate descriptors). Unchanged blinded Poseidon2 commitment: only
-    // `predicate_types::{prove,verify}_predicate` were deleted; `predicate_types` survives as a
-    // backward-compat alias and still re-exports `compute_blinded_fact_commitment`.
-    let fact_commitment = dregg_circuit::predicate_types::compute_blinded_fact_commitment(
-        fact_hash,
-        state_root_bb,
-        blinding,
-    );
+    let blinding = Blinding(BabyBear::from_u64(u64::from_le_bytes(blinding_bytes)));
 
     // Map the predicate op -> the emitted IR-v2 arithmetic-predicate descriptor + its witness
     // builder (the analog of `bridge::present::prove_predicate_for_fact`). The descriptor is the
     // judge: a FALSE comparison wraps the range/nonzero diff and `prove_vm_descriptor2` REFUSES.
+    //
+    // Every descriptor in the family is WELDED **and BLINDED**: leg 1 binds the compared `INPUT` to
+    // `fact_hash`, leg 2 is an arity-4 Poseidon2 chip lookup forcing
+    // `fact_commitment = hash_4_to_1([fact_hash, state_root, blinding, 0])`. So the builder COMPUTES
+    // the commitment from the value, the fact identity, AND the blinding factor drawn above — the
+    // commitment is an OUTPUT (`pis[PI_FACT_COMMITMENT]`), never an opaque input a caller could point
+    // at someone else's fact.
+    //
+    // **The blinding factor reaches the PROOF, not the bin.** It is a private witness column
+    // constrained by leg 2, so every showing of the same attribute carries a different public
+    // `fact_commitment` (unlinkable) while remaining bound to the value compared (sound). An earlier
+    // shape here computed a blinded commitment out-of-circuit and then DISCARDED it, proving against
+    // an unblinded weld — that silently unblinds every predicate type on this surface. The gates
+    // against a regression are `two_showings_of_the_same_attribute_are_unlinkable` and
+    // `every_predicate_type_is_unlinkable` (`wasm/tests/predicate_blinding_reaches_the_proof.rs`),
+    // which drive THIS entry point twice and demand the emitted commitments differ.
+    let fact = dregg_circuit::predicate_arith_witness::FactBinding {
+        predicate_sym: fact_hash,
+        term1: BabyBear::ZERO,
+        term2: BabyBear::ZERO,
+        state_root: state_root_bb,
+    };
     let (desc_name, built) = match predicate_type {
         "gte" | "Gte" | "GTE" | ">=" => (
             PREDICATE_ARITH_NAME,
-            predicate_arith_witness(v, t, fact_commitment, 2),
+            predicate_arith_witness(v, t, fact, blinding, 2),
         ),
         "lte" | "Lte" | "LTE" | "<=" => (
             PREDICATE_ARITH_LE_NAME,
-            predicate_le_witness(v, t, fact_commitment, 2),
+            predicate_le_witness(v, t, fact, blinding, 2),
         ),
         "gt" | "Gt" | "GT" | ">" => (
             PREDICATE_ARITH_GT_NAME,
-            predicate_gt_witness(v, t, fact_commitment, 2),
+            predicate_gt_witness(v, t, fact, blinding, 2),
         ),
         "lt" | "Lt" | "LT" | "<" => (
             PREDICATE_ARITH_LT_NAME,
-            predicate_lt_witness(v, t, fact_commitment, 2),
+            predicate_lt_witness(v, t, fact, blinding, 2),
         ),
         "neq" | "Neq" | "NEQ" | "!=" => (
             PREDICATE_ARITH_NEQ_NAME,
-            predicate_neq_witness(v, t, fact_commitment, 2),
+            predicate_neq_witness(v, t, fact, blinding, 2),
         ),
         other => return Err(JsError::new(&format!("unknown predicate type: {other}"))),
     };
@@ -695,7 +709,10 @@ pub fn generate_predicate_proof(
         generation_time_ms: elapsed_ms,
         predicate_type: predicate_type.to_string(),
         threshold,
-        fact_commitment: fact_commitment.as_u32(),
+        // The commitment the PROOF actually binds (its `pi[1]`), not the pre-match `fact_commitment`
+        // variable — for the WELDED `≥` arm those differ (the builder computes the unblinded weld),
+        // and a verifier is handed this value, so it must match the envelope's public input.
+        fact_commitment: pis[PI_FACT_COMMITMENT].as_u32(),
         verified,
     };
     Ok(serde_wasm_bindgen::to_value(&result)?)

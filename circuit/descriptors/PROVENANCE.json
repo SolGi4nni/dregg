@@ -1,8 +1,8 @@
 {
   "version": 1,
   "mode": "emit",
-  "dregg2_tree_hash": "09e9e01e122b9fac57206dd803c81ec7adf373f6",
-  "repo_head": "2ec5f4e094f7a3f5f1781a7ff566a50725d149ca",
+  "dregg2_tree_hash": "2f4ace305ff37bdd0326bb1275761f640b85fd53",
+  "repo_head": "ce164d75947628260bdccdd090a446a4f92460c7",
   "source_dirty": true,
   "lean_toolchain": "leanprover/lean4:v4.30.0",
   "emitters": [
@@ -21,7 +21,7 @@
     "EmitByName.lean",
     "EmitCertF.lean"
   ],
-  "generated_utc": "2026-07-16T17:24:44Z",
+  "generated_utc": "2026-07-16T19:31:28Z",
   "operator": "ember@nextop.local",
   "descriptor_sha256": {
     "dregg-bilateral-aggregation-v2.json": "47222a8cbc3e7809e3a6dc15e5c01faa09eba3bd244f52eb45003fc5fb77277d",
@@ -117,12 +117,12 @@
     "non-revocation.json": "2b2362c626c36543e626c3f1ec4a315cbc000d8340d35c567ff40a63827107a7",
     "note-spend-leaf.json": "f5a5683bd0d2cfdeba90d6585bd6aeb275e933c961da004e2ac5684e37b18ee1",
     "poseidon2-hash-arity2.json": "a6d83cebc30903678ffb03e94c68325e81a1791a16ad67ff7ee04fac42b090b2",
-    "predicate-arith-gt.json": "84c3ad7fbc4a5c133c1a85d9176b2a85e3fe469e7310cfe934a4eedbd793d4b5",
-    "predicate-arith-inrange.json": "d87630dfc3535280aa0460e6b406decaf252c742ad4734649c8a67b5c7eb05a6",
-    "predicate-arith-le.json": "56cbd07ab1bec7fbaa2d21a5c185c44add3112ea6dceb31406bd490e73501c77",
-    "predicate-arith-lt.json": "6fabb92c6e9c4b34eb264eaa574df12498ff8a5310a8db4d8e16cbb6d0190f9b",
-    "predicate-arith-neq.json": "504d36ebbef61d19e3a0f50caf882a7b6f602b02062fafb20f0de36e0af63a8f",
-    "predicate-arith.json": "a2116aeeb1b6bf8d64584bd70667ceff8b4a179cfb37d35e231ad14da55f38f2",
+    "predicate-arith-gt.json": "a3ccc4bf4bd5247555f1749850f8eb6e254540a1874e43bfe5963a6b6f07228b",
+    "predicate-arith-inrange.json": "bb435c81b1f5dcc6f176225e73c0374eb4129f1078f751f29acfc9786d8ef2e5",
+    "predicate-arith-le.json": "6b50c13fe3fb90050ab2ebfb392863e9bb89f138f0faf4af3ccac546e7744b8a",
+    "predicate-arith-lt.json": "29af23e7f07cbf4357dbd7093bdadc45e6ca4bf34d2e06e29f51c12b795a7ade",
+    "predicate-arith-neq.json": "b7be63ed9a2409615599699bc2083e37d357098f0d2dfa660858d242e27514ee",
+    "predicate-arith.json": "a2847c679dc35519f2e13cdda5c07476cca2b4e34e0ee6510c3d55f949299726",
     "presentation-freshness.json": "a7e65a972579a42aed5a50b2b761cf81a8f819dfbaf121f302f3b9432778575d",
     "quantified-absence.json": "cdea18170618761b2323d2710ff32da24f689bf08a49fdf86994ce0cc71e846e",
     "temporal-predicate.json": "4d0beec5ebd01163748e7ddd750359d434db00d22646ea8821d090805f0d39c8",

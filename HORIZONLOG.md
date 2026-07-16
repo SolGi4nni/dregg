@@ -1,5 +1,91 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ⚑ BLINDED WELD — "privacy vs soundness" REFUTED, wasm un-rotted (2026-07-16, on disk, uncommitted)
+A prior lane called the commitment BLINDING and the value↔fact WELD "mutually exclusive", then retracted it.
+The code refutes the claim outright, and the descriptor family now carries BOTH at once.
+
+**Why they were never a tradeoff.** Leg 2 is one hash over four slots:
+`FACT_COMMITMENT = hash_4_to_1([FACT_HASH, STATE_ROOT, BLINDING, 0])`. The weld pins `FACT_HASH` (leg 1 forces it
+to `hash_fact(pred, [INPUT, ..])` over the SAME `INPUT` the range gadget bounds); privacy moves `BLINDING`. They
+touch DIFFERENT arguments. A prover free to choose `BLINDING` reaches every point in the image of
+`hash_4_to_1([fact_hash, state_root, ·, 0])` — and every one still opens to the value compared. Blinding
+rerandomizes WHICH commitment names the fact; it cannot change WHICH fact is named.
+
+**Authored in Lean** (source of truth; JSON regenerated from it, never hand-edited), all 6 emitters of the family
+(`≥ · ≤ · > · < · ≠ · InRange`): leg 2 arity 2 → 4, `BLINDING` a PRIVATE witness column (widths 24→25, 25→26,
+26→27), byte-pins REGENERATED from Lean's own `emitVmJson2` output and re-`#guard`ed green. The chip's arity-4
+absorb IS `hash_4_to_1` (`chip_absorb_lanes 4` → `seed456=false` → `st[0..4]=inputs, st[4]=4`) — verified by
+reading both, so the blinded weld costs the production hash NOTHING.
+
+**DESIGN FORK (decided): the scheme is UNIFORMLY arity-4.** `compute_blinded_fact_commitment`'s
+`if blinding == 0 { hash_2_to_1(..) }` branch is DELETED. Rationale: one descriptor is one arity, so a
+zero-blinding caller taking an arity-2 branch out-of-circuit would present a commitment its OWN weld cannot
+produce — refused at runtime for no reason a caller could see. `blinding = 0` is now the degenerate case
+(`Blinding::NONE`), a zero column that AGREES with the circuit. Rejected: (a) always-nonzero (leaves the branch as
+a landmine), (b) two descriptors blinded+unblinded (2 VKs, and a name-dispatch DOWNGRADE surface — privacy would
+be opt-in; it should be structural). Non-predicate users of the 2-ary `compute_fact_commitment`
+(`committed_threshold`, membership verifier) are UNCHANGED; the arity tag domain-separates the shapes.
+
+**VK/epoch delta:** all 6 predicate descriptors re-keyed (authorized regen, `DREGG_VK_REGEN_ACK` + ALLOW_DIRTY;
+provenance stamped, `docs/VK-REGEN-LOG.md` row appended). Exactly 6 descriptor files changed, 0 FP-bearing Rust.
+
+**⚑ THE wasm BREAK — a DOUBLE invisibility, root-caused.** HEAD's `wasm/src/lib.rs` did not compile against HEAD's
+circuit (E0308 ×5, every predicate arm) because it is invisible TWICE:
+  1. `wasm` is in the root workspace `exclude` (Cargo.toml:68) — `cargo check --workspace` never sees it; AND
+  2. the only two workflows that build it (`pages.yml`, `publish-sdk-ts.yml`) are **`workflow_dispatch`-only /
+     tag-triggered** — `ci.yml` (push + PR) has ZERO `wasm32` steps. So an API change lands, CI is green, and wasm
+     rots until someone manually dispatches a Pages deploy. This is also why its ~78 tests are published untested.
+The in-flight working tree had taken the WRONG fix (all 5 arms on an unblinded `ge_fact` while `getrandom` still
+drew a blinding factor that was computed and DISCARDED — silently unblinding every predicate type on the surface).
+Not shipped. wasm now COMPILES on the BLINDED path, the drawn factor reaching the proof.
+
+**FOLLOW-UP (proposed, NOT unilaterally done — needs ember):** do NOT fold `wasm` into the workspace. It declares
+its own `[workspace]` and is standalone for real reasons: its `[patch]` path-points plonky3-recursion at a sibling
+checkout (patches do not cross workspace boundaries), and it force-enables wasm32-only features
+(`clear_on_drop/no_cc`, `lockstitch/portable`, `biscuit-auth/wasm`) that feature-unification would then push onto
+NATIVE builds — a real degradation. The CHEAP fix is the one the repo already uses for the OTHER excluded
+standalone crate: `ci.yml`'s `solana-lock (standalone workspace)` job is the exact template. Add a sibling
+`wasm (standalone workspace)` job: checkout → clone `plonky3-recursion` at rev `0a4a554` (copy the step from
+pages.yml) → `rust-toolchain` with `targets: wasm32-unknown-unknown` → `cargo check --target
+wasm32-unknown-unknown` in `wasm/`, and (rung 2) `wasm-pack test --node` to retire the ~78-test publish-untested
+hole. Cost = the sibling clone + a cold recursion-tower build; warm incremental was ~50s.
+
+**⚑ RESIDUAL — THE VERIFIER SIDE IS STILL EQUALITY-PINNED (the honest boundary of this lane).**
+`verify_predicate_proof` pins `expected_fact_commitment` by EQUALITY, so the verifier must REPRODUCE the
+commitment — which under a real blinding it cannot do. To keep that API from degenerating into the `x == x` gate
+(feeding the proof's own commitment back in, which accepts everything), `BridgePredicateProof` now carries its
+`blinding` as a DECOMMITMENT. Soundness is unaffected (the prover already chose the blinding; the VALUE still
+comes from trusted state, and matching a forged value would need a Poseidon2 collision). **Privacy is:** a
+proof-HOLDER given the blinding recovers a low-entropy value by BRUTE FORCE — it need not know the value, only
+guess it. That is DRIVEN, not asserted: `teasting/tests/privacy_unlinkability.rs::
+a_decommitted_proof_leaks_a_low_entropy_value_to_brute_force` recovers age 37 from (commitment, blinding) in 130
+tries. NOT a regression (the unblinded commitment was a deterministic hash of the same low-entropy value and was
+equally brute-forceable) — it is the boundary: **the blinded weld makes the COMMITMENT unlinkable to parties who
+see only commitments; it does not by itself make a DECOMMITTED proof private.** The real fix is for the verifier
+to check the commitment OPENS into trusted state (membership/opening) instead of re-deriving it — then the
+blinding never leaves the prover. That is a protocol rung ABOVE this lane's descriptor work. NOTE
+`verify_predicate_proof` currently has NO production caller (tests only), so this is a design debt, not a live
+hole. `committed_threshold` remains an unblinded (arity-2) family — deliberate, out of scope here.
+
+**⚑ ALSO FOUND (fixed): wasm's tests could not COMPILE — the mechanism behind "published untested".**
+`wasm-bindgen-test = "0.3"` sat directly under `[dependencies.web-sys]`, which in TOML made it a stray KEY inside
+web-sys's dependency spec (`{version, features, wasm-bindgen-test}`) rather than a dependency. There was no
+`[dev-dependencies]` section at all, so every `use wasm_bindgen_test::*;` failed to resolve and NO wasm test could
+build. Moved to `[dev-dependencies]`. With that plus the blinded fix, `wasm/tests/
+predicate_blinding_reaches_the_proof.rs` (NEW) now RUNS in real headless Chrome — 4/4 green, driving the
+`#[wasm_bindgen]` entry twice per predicate type and demanding the emitted commitments differ.
+
+**PRE-EXISTING RED, unowned (NOT mine, NOT worked around):** `dregg-turn --lib membership_verifier` →
+`live_routing_verifier_*` 4 fail (`failed constraints = [#0, #11]`), the DFA routing verifier — no
+predicate/blinding/commitment involvement. Needs an owner.
+
+**API SHARP EDGE surfaced while driving:** `prove_predicate_for_fact` can PANIC rather than return `None` on a
+false statement — `Neq(t)` at `value == t` violates the degree-2 nonzero BASE gate, which p3's debug
+`check_constraints` reports by panicking; the bridge does not `catch_unwind`. The teasting gate routes it through
+`dregg_circuit::refusal::classify` so the documented unsat panic counts as a refusal while any OTHER panic still
+REDs. The bridge's `Option` contract is a debug-build fiction at that pole.
+
+
 ## ✅ EXCELLENCE BRAID 1 — ALL 10 LANES LANDED (2026-07-16)
 All committed + verified on the healed tree: bridge holes+live-feed (`72561117d`), verb-registry classify+ratchet
 (`5a6358093`), FRI cutover+extraction docs (`4609a507e`), bond design+paper refs (`c77c5ddd7`), weighted-cast
@@ -8871,3 +8957,102 @@ not measure it. The cheap decider: assert `dpis(pad 0) == dpis(pad 10)` for a tr
 holds, the three sites want a comment saying WHY a pad-0 producer is sound for PI-only use (they read
 as the same bug and will be "fixed" wrongly by the next reader); if it does not hold, that is a live
 executor break and a much bigger fish than the teeth.
+
+## 2026-07-16 — THE STATE-BINDING FLIP: the deployed chain prover now REQUIRES the in-circuit custom-proof state weld
+
+`prove_chain_core_rotated`'s Custom arm mints `prove_custom_leaf_with_state_commitment` (24-lane
+claim) under `prove_custom_binding_node_state_segmented` — the DEPLOYED DEFAULT, unconditional. The
+pre-flip pair (8-lane leaf + commitment-only node) is retired from the deployed path and kept only
+as the mechanism tooth + the canary the state node is measured against.
+
+**Driven on persvati (all real folds, no fixtures standing in for the deployed entry):**
+`custom_binding_deployed_tooth` 4/4 in 903s — honest state-bound chain FOLDS + light-client
+VERIFIES; forged COMMITMENT refused; forged ROOT refused *through the deployed prover*
+(`WitnessConflict{existing: 824778818, new: 900}` — `900` is `forged_old8[0]` meeting the leg's real
+rotated root, i.e. the state connect biting); and the DEPLOYED-SHAPE canary (real
+`customVmDescriptor2R24` leg, not a stand-in): the pre-flip pair ACCEPTS the same forged-root fold
+the state pair REFUSES.
+
+`custom_binding_production_path` 3/3 in 432s — the SAME three poles through the PRODUCTION minter
+(`dregg_turn::rotation_witness::mint_custom_wide_rotated_participant_leg` + the
+`from_bound_custom_proof` retention seam, not the test-only `with_custom_witness` setter): honest
+FOLDS + light-client VERIFIES, forged commitment REJECTED, forged ROOT REJECTED. So the flip bites
+on the path production actually populates, not only on a hand-attached witness.
+
+`ivc_turn_chain_rotated` 5/5. `mpt_holding_fold_pilot` 6/6 structural.
+
+**VK/epoch scope — NOTHING needs re-pinning.** `derive_deployed_apex_vk_identity_and_check_fixture`
+re-derived the apex VK from a real 2-turn fold at HEAD-with-the-flip and byte-matched the
+governance-pinned `DREGG_APEX_RECURSION_VK` = `3ad1c9c601686a…` (fixture unchanged on disk). Its
+chain is no-custom, and `aggregate_tree`'s parent circuit depends on child SHAPE not child VK value
+(`recursion_vk_fingerprint` excludes `public_values`) — so a no-custom chain's root VK is unmoved.
+Measured: the state node's parent claim is **25 lanes → 25 lanes**, identical to the commitment-only
+node's, so `aggregate_tree` consumes the same thing. What DOES re-key: the custom leaf's + custom
+node's runtime-derived VKs (never pinned anywhere), invalidating previously-minted CUSTOM fold
+artifacts only — none hold value. One pin moved and was re-derived: `MPT_HOLDING_VK_HASH_HEX`
+`1169e013…` → `8fb9eca4…` (its descriptor deliberately changed, below). No `DREGG_VK_REGEN_ACK`.
+
+**Budget** (`budget__the_state_weld_costs_this_much`, honest inputs, both pairs accept): node fold
+298.3s → 381.4s (**+28%**), total 311s → 386s (+24%); leaf claim lanes 8→24, node connects 8→24. The
+leaf-prove delta in that single sample (13.1s → 4.8s) is first-run warmup noise, NOT a speedup — the
+wider leaf is not faster; re-measure with warm repeats before quoting a leaf number.
+
+**A REAL DOC BUG FOUND AND FIXED (the wire was right, the name was wrong).** `custom_state_binding`'s
+ABI doc said the prefix is `CellState::compute_commitment_8` / the EffectVM
+`PI[OLD_COMMIT_BASE..+8]`. Both false on the deployed wide path. The executor compares against
+`bytes32_to_felt8(stored/claimed)` = `compute_canonical_state_commitment_v9_felt8` =
+`wire_commit_8_chip` over the 178 rotated limbs + iroot — which is byte-identical to the leg's LAST
+16 tail PIs, i.e. exactly the segment anchors the fold connects. (`CellState::compute_commitment_8`
+is a 5-node `hash_4_to_1` tree over a strict SUBSET of the limbs; the two can never be equal and
+nothing pins them.) That identity is WHY the flip is sound: the fold now enforces in-circuit
+precisely what the executor enforces off-AIR. Doc corrected in the same breath.
+
+### ⚑ STILL OWED #1 — the Lean statement cannot SEE the new tooth (do not claim it does)
+`CustomBindingFromFold.SatCustomFold` carries `connect : f.leafCommit = f.c` and models the leaf
+claim as `leafCommit : ℤ` — a SCALAR. So `custom_binding_from_fold` still states only the COMMITMENT
+binding. It does not break (the model is width-agnostic and the commitment connect still exists),
+but the state weld is presently Rust-driven-and-canary'd, NOT Lean-witnessed. The addition (not a
+re-emit): an `oldNew` connect field on `SatCustomFold` + the corresponding conclusion. Until then,
+"the light client witnesses the custom transition is about THIS cell's roots" is a claim backed by
+the driven teeth and the canary — not by the apex proof.
+
+### ⚑ STILL OWED #2 — the carriers the flip fail-closes (NOT special-cased; the prover now agrees with the executor)
+The flip refuses any custom sub-program publishing < 16 PIs. **This is not new reach**: the deployed
+executor ALREADY refused those turns at `enforce_custom_proof_state_binding`
+(`PublicInputsTooShort`, `proof_verify.rs:620`, unconditional). The pre-flip prover was happily
+minting chains no executor would ever accept; the flip closes that prover/verifier divergence. Every
+carrier below therefore needed this work regardless — the flip only made the bill arrive.
+
+FIXED HERE (owned): `custom_binding_deployed_tooth` + `custom_binding_production_path` (2 PIs → 18,
+the ABI); `mpt_holding_leaf` re-authored 13 → **29** PIs
+(`[old8 ‖ new8 ‖ root0..7, token, holder, slot, balance, holding_hash]`), `bundle()`/`public_inputs()`
+now take the leg's roots, KAT re-pinned, pilot updated. NB `root0..7` is the EIP-1186 FOREIGN-chain
+state_root and is NOT the prefix — the cheap wrong fix (reuse it, or pad to 16) passes the width
+check and then dies at the connect; pinned by `structural::the_state_prefix_is_not_the_eth_state_root`.
+
+NOT FIXED (not owned; each needs its AIR to publish the ABI prefix):
+* `game-turn-slice/tests/game_turn_slice.rs` (combat_program, 2 PIs) — EASIEST, the
+  `leg_real_roots` two-phase probe lifts directly.
+* `dregg-automatafl/tests/prove_fold.rs` (D1/D2/D3 2 PIs, sealed 3) — `Builder::add_pi` only
+  APPENDS; the ABI needs the prefix at index 0..16, so the builders need prefix-first construction.
+* `dregg-multiway-tug/src/fold.rs` — **the hard one, and it is PRODUCT code**, reached from
+  `dreggnet-game-board::prove_match`, `dreggnet-prove-service::fold_played_match`, and the wasm
+  `fold_tug_match_core`. Its PIs are fixed at LOWERING time in
+  `game-turn-slice/src/compiler.rs::lower_witnessed_merkle_membership`, before any leg exists, so
+  the two-phase probe does NOT lift — the roots must be threaded down to the lowering layer. That is
+  a design question, not a fixture edit.
+
+⚑ THE POINT worth stating plainly: **the games' custom sub-proofs are not about the cell's roots.**
+Their PIs are game values (`[hp_old, hp_new]`, `[card_leaf, root]`). "Every move is a receipt" is
+currently a receipt that SOME verifying sub-proof backs a commitment — not that it is about the cell
+the turn moved. The flip is what makes that gap visible instead of latent.
+
+### ⚑ STILL OWED #3 — three negative poles were passing VACUOUSLY (two fixed, audit the rest)
+`must_refuse` accepts ANY `Err`, and post-flip the ABI-width check fires BEFORE the forgery under
+test — so a fixture that drifted narrow would keep a forgery tooth green while testing nothing.
+Fixed by asserting the REASON (`assert_refused_by_binding_node`, which pins `WitnessConflict` inside
+the named node) on `production_custom_turn_forged_rejected` and
+`deployed_mpt_holding_turn_forged_commitment_rejected`. `game_turn_slice.rs::forged_game_commitment_rejected`
+(`catch_unwind` + `Ok(Err(_)) => {}`) is the same shape and is NOT fixed (not owned). Any negative
+pole reached by the Custom arm wants the reason-assertion, or fixing its PI count silently converts
+a real tooth into a tautology.

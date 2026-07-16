@@ -228,6 +228,16 @@ features = ["Performance", "Window"]
 # card-in-the-tab loop (`tests/card_fires_a_verified_turn.rs`) runs the EXACT
 # bytes the browser runs — a button-click → a cap-gated verified turn → the
 # bound slot re-paints.
+#
+# 2026-07-16: this line USED TO SIT DIRECTLY UNDER `[dependencies.web-sys]`, which in TOML made it a
+# stray key INSIDE web-sys's dependency spec (`{version, features, wasm-bindgen-test}`) rather than a
+# dependency of this crate. So `wasm-bindgen-test` was never actually depended on, every
+# `use wasm_bindgen_test::*;` in `tests/` failed to resolve, and NONE of this crate's tests could
+# COMPILE — the concrete mechanism behind "wasm's tests are published untested". It was invisible
+# because `wasm` is workspace-`exclude`d AND no push/PR CI job builds it (only the
+# `workflow_dispatch`-only `pages.yml` / tag-triggered `publish-sdk-ts.yml`, neither of which runs
+# tests). A dev-dependency is what this always meant to be.
+[dev-dependencies]
 wasm-bindgen-test = "0.3"
 
 # standalone (excluded from the root workspace — see root Cargo.toml)

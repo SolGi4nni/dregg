@@ -643,17 +643,28 @@ pub fn compute_fact_commitment(fact_hash: BabyBear, state_root: BabyBear) -> Bab
     poseidon2::hash_2_to_1(fact_hash, state_root)
 }
 
-/// Compute blinded fact commitment: Poseidon2_4to1([fact_hash, state_root, blinding, 0]).
+/// Compute blinded fact commitment: `Poseidon2_4to1([fact_hash, state_root, blinding, 0])`.
+///
+/// **Uniformly arity-4.** This function previously branched — `blinding == 0` fell back to
+/// `hash_2_to_1(fact_hash, state_root)` (the unblinded commitment) and any other blinding took the
+/// arity-4 path. That branch was a trap once the value↔fact weld moved in-circuit: the weld's leg 2
+/// is ONE arity-4 chip lookup, so it forces the arity-4 image on every row. A zero-blinding caller
+/// getting an arity-2 commitment out of this function would present a commitment its own proof
+/// cannot produce — refused by its own weld, at runtime, for no reason a caller could see.
+///
+/// `blinding = 0` is now the DEGENERATE blinding, not a different hash: it is a zero `BLINDING`
+/// witness column, and it agrees with the circuit. Callers who want the genuinely unblinded 2-ary
+/// commitment (non-predicate uses: `committed_threshold`, the membership verifier) call
+/// [`compute_fact_commitment`], which is unchanged.
+///
+/// The arity tag (`st[4]`) domain-separates the two shapes, so no arity-2 commitment collides with
+/// an arity-4 one.
 pub fn compute_blinded_fact_commitment(
     fact_hash: BabyBear,
     state_root: BabyBear,
     blinding: BabyBear,
 ) -> BabyBear {
-    if blinding == BabyBear::ZERO {
-        poseidon2::hash_2_to_1(fact_hash, state_root)
-    } else {
-        poseidon2::hash_4_to_1(&[fact_hash, state_root, blinding, BabyBear::ZERO])
-    }
+    poseidon2::hash_4_to_1(&[fact_hash, state_root, blinding, BabyBear::ZERO])
 }
 
 /// A single STARK trace paired with its public inputs.

@@ -88,9 +88,14 @@ def FACT_COMMITMENT : Nat := 4
 `fact_commitment` (col 4) was ONLY PI-pinned, with `INPUT` (the value the range gadget bounds) a FREE
 witness — a prover could prove `value ≥ threshold` about a value they do NOT hold, against a
 `fact_commitment` naming a DIFFERENT real fact. The credentialed fact model is
-`fact_commitment = Poseidon2(hash_fact(pred, [value, term1, term2]), state_root)`. The weld opens both
-hashes IN-CIRCUIT via two Poseidon2 chip lookups feeding the SAME `INPUT` column, so a satisfying
-assignment forces `INPUT` to be the committed fact's value (Poseidon2 CR). -/
+`fact_commitment = Poseidon2_4to1([hash_fact(pred, [value, term1, term2]), state_root, blinding, 0])`.
+The weld opens both hashes IN-CIRCUIT via two Poseidon2 chip lookups feeding the SAME `INPUT` column,
+so a satisfying assignment forces `INPUT` to be the committed fact's value (Poseidon2 CR).
+
+`blinding` is a PRIVATE witness column ([`BLINDING`]) and it is why privacy and the weld are NOT a
+tradeoff: it rerandomizes WHICH commitment names this fact (unlinkability across presentations),
+while leg 1 keeps every reachable commitment bound to the `INPUT` the comparison bounds (soundness).
+See [`BLINDING`] for the argument. -/
 
 /-- The fact's predicate symbol (`hash_fact` `state[0]`). Witness. -/
 def PREDICATE_SYM : Nat := 5
@@ -108,12 +113,27 @@ def FACT_HASH : Nat := 9
 def FACT_MARK : Int := 64207
 /-- The seven out-lanes 1..7 of the arity-7 fact-hash chip lookup (out0 = `FACT_HASH`). -/
 def FACTHASH_LANES : List Nat := [10, 11, 12, 13, 14, 15, 16]
-/-- The seven out-lanes 1..7 of the arity-2 fact-commitment chip lookup (out0 = `FACT_COMMITMENT`). -/
+/-- The seven out-lanes 1..7 of the arity-4 fact-commitment chip lookup (out0 = `FACT_COMMITMENT`). -/
 def FACTCOMMIT_LANES : List Nat := [17, 18, 19, 20, 21, 22, 23]
 
+/-- **The commitment BLINDING factor** — a PRIVATE witness column, leg 2's input 2.
+
+The blinding factor is what makes two presentations of the SAME fact carry DIFFERENT
+`fact_commitment` public inputs, so colluding verifiers cannot correlate them. It is a witness
+column and NOT PI-bound: the prover chooses it, and the verifier never learns it.
+
+That freedom costs the weld NOTHING. Leg 2 forces `FACT_COMMITMENT` to be the chip image of
+`[FACT_HASH, STATE_ROOT, BLINDING, 0]`, and leg 1 forces `FACT_HASH = hash_fact(pred, [INPUT, …])`
+over the SAME `INPUT` column the range gadget bounds. A prover free to pick `BLINDING` can move
+the commitment ANYWHERE in the image of the hash — but it cannot move it to the image of a
+DIFFERENT value: every reachable commitment still opens to the `INPUT` the comparison bounds.
+Blinding rerandomizes WHICH commitment names this fact; it cannot change WHICH fact is named.
+Privacy and the value↔fact weld are therefore independent, not a tradeoff. -/
+def BLINDING : Nat := 24
+
 /-- Total base-trace width (the diff limbs are appended by the assembler, not counted here): the 5
-predicate columns + 5 fact witness columns + 2×7 fact chip lanes. -/
-def PRED_WIDTH : Nat := 24
+predicate columns + 5 fact witness columns + 2×7 fact chip lanes + the blinding factor. -/
+def PRED_WIDTH : Nat := 25
 
 /-- Public-input slot for the threshold (`arithmetic.rs::PI_THRESHOLD = 0`). -/
 def PI_THRESHOLD : Nat := 0
@@ -159,11 +179,20 @@ def factHashLookup : VmConstraint2 :=
     chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
                      .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES⟩
 
-/-- **THE VALUE↔FACT WELD, leg 2** — arity-2 fact-commitment chip lookup binding `FACT_COMMITMENT =
-Poseidon2(fact_hash, state_root)`, tying the PI-pinned commitment to the opened fact hash. -/
+/-- **THE VALUE↔FACT WELD, leg 2 (BLINDED)** — arity-4 fact-commitment chip lookup binding
+`FACT_COMMITMENT = Poseidon2_4to1([fact_hash, state_root, blinding, 0])`, tying the PI-pinned
+commitment to the opened fact hash while leaving it rerandomizable by the private `BLINDING`.
+
+The arity-4 chip absorb IS `hash_4_to_1`: `chip_absorb_lanes 4` takes the `seed456 = false` branch
+(`arity ∉ {7, wide, node8}`), seeding `st[0..4] = inputs` and `st[4] = arity = 4` — exactly
+`poseidon2.rs::hash_4_to_1`, which seeds `st[0..4] = inputs` and `st[4] = 4` (the arity tag). So
+this leg binds the production blinded commitment with ZERO change to the hash function; only the
+arity tag the chip already carries distinguishes it from the arity-2 unblinded absorb (which is
+what domain-separates the two shapes and rules out a cross-arity collision). -/
 def factCommitLookup : VmConstraint2 :=
   .lookup ⟨TableId.poseidon2,
-    chipLookupTuple [.var FACT_HASH, .var STATE_ROOT] FACT_COMMITMENT FACTCOMMIT_LANES⟩
+    chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+      FACT_COMMITMENT FACTCOMMIT_LANES⟩
 
 /-- **`predicateGeDesc`** — the arithmetic `GreaterThanOrEqual(value, threshold)` descriptor.
 `tables` declares the range table (its `bits` feeds the assembler's `decomp_cols`); the byte
@@ -181,7 +210,7 @@ def predicateGeDesc : EffectVmDescriptor2 :=
 /-! ## §3 — The byte-pinned wire golden (the Rust decoder ingests THIS string). -/
 
 #guard emitVmJson2 predicateGeDesc ==
-  "{\"name\":\"dregg-predicate-arith-ge::threshold-v1\",\"ir\":2,\"trace_width\":24,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"var\",\"v\":2}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":2},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":8},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]}],\"hash_sites\":[],\"ranges\":[]}"
+  "{\"name\":\"dregg-predicate-arith-ge::threshold-v1\",\"ir\":2,\"trace_width\":25,\"public_input_count\":2,\"tables\":[{\"id\":2,\"name\":\"range\",\"arity\":1,\"sem\":\"range\",\"bits\":29}],\"constraints\":[{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":2,\"pi_index\":0},{\"t\":\"pi_binding\",\"row\":\"first\",\"col\":4,\"pi_index\":1},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":1},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":0}}}},{\"t\":\"gate\",\"body\":{\"t\":\"add\",\"l\":{\"t\":\"add\",\"l\":{\"t\":\"var\",\"v\":3},\"r\":{\"t\":\"mul\",\"l\":{\"t\":\"const\",\"v\":-1},\"r\":{\"t\":\"var\",\"v\":1}}},\"r\":{\"t\":\"var\",\"v\":2}}},{\"t\":\"lookup\",\"table\":2,\"tuple\":[{\"t\":\"var\",\"v\":3}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":7},{\"t\":\"var\",\"v\":5},{\"t\":\"var\",\"v\":0},{\"t\":\"var\",\"v\":6},{\"t\":\"var\",\"v\":7},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":64207},{\"t\":\"const\",\"v\":1},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":10},{\"t\":\"var\",\"v\":11},{\"t\":\"var\",\"v\":12},{\"t\":\"var\",\"v\":13},{\"t\":\"var\",\"v\":14},{\"t\":\"var\",\"v\":15},{\"t\":\"var\",\"v\":16}]},{\"t\":\"lookup\",\"table\":1,\"tuple\":[{\"t\":\"const\",\"v\":4},{\"t\":\"var\",\"v\":9},{\"t\":\"var\",\"v\":8},{\"t\":\"var\",\"v\":24},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"const\",\"v\":0},{\"t\":\"var\",\"v\":4},{\"t\":\"var\",\"v\":17},{\"t\":\"var\",\"v\":18},{\"t\":\"var\",\"v\":19},{\"t\":\"var\",\"v\":20},{\"t\":\"var\",\"v\":21},{\"t\":\"var\",\"v\":22},{\"t\":\"var\",\"v\":23}]}],\"hash_sites\":[],\"ranges\":[]}"
 
 /-! ## §4 — Genuinely-proven, non-vacuous semantic lemmas (the gate teeth).
 
@@ -225,8 +254,14 @@ example : ¬ (([2 ^ 29] : List ℤ) ∈ rangeRows DIFF_BITS) := by
 #guard (chipLookupTuple [.var PREDICATE_SYM, .var INPUT, .var TERM1, .var TERM2,
                          .const 0, .const FACT_MARK, .const 1] FACT_HASH FACTHASH_LANES).length
          == CHIP_RATE + 1 + CHIP_OUT_LANES
-#guard (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT] FACT_COMMITMENT FACTCOMMIT_LANES).length
+#guard (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+                        FACT_COMMITMENT FACTCOMMIT_LANES).length
          == CHIP_RATE + 1 + CHIP_OUT_LANES
+-- The blinded leg is arity-4 (tag 4 = `hash_4_to_1`'s `st[4]`), NOT the arity-2 unblinded absorb.
+#guard (chipLookupTuple [.var FACT_HASH, .var STATE_ROOT, .var BLINDING, .const 0]
+                        FACT_COMMITMENT FACTCOMMIT_LANES).head? == some (.const 4)
+-- `BLINDING` is a real column of the trace, and it is NOT PI-bound (a witness, never revealed).
+#guard BLINDING < PRED_WIDTH
 
 #assert_axioms c3_body_zero_iff
 #assert_axioms c5_body_zero_iff

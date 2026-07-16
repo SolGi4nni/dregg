@@ -8,9 +8,22 @@
 //!
 //! That statement is a conjunction with a SHARED variable. `value ≥ threshold` alone is worthless:
 //! it is a claim about a number the prover chose. What makes it a claim about TOKEN STATE is the
-//! second conjunct, `fact_commitment = hash_2_to_1(hash_fact(pred, [value, t1, t2]), state_root)`,
+//! second conjunct,
+//! `fact_commitment = hash_4_to_1([hash_fact(pred, [value, t1, t2]), state_root, blinding, 0])`,
 //! binding the compared column to the committed fact. Both conjuncts are in the circuit, and the
 //! variable they share is `INPUT` (col 0).
+//!
+//! ## Privacy and soundness are NOT a tradeoff here
+//!
+//! The commitment is BLINDED by a private witness column ([`BLINDING`], col 24) that the prover
+//! draws fresh per presentation, so two proofs about the SAME fact carry DIFFERENT public
+//! `fact_commitment`s and colluding verifiers cannot correlate them. This costs the weld nothing:
+//! blinding moves the commitment within the image of `hash_4_to_1([fact_hash, state_root, ·, 0])`,
+//! while leg 1 pins `fact_hash` to the compared `INPUT`. Every commitment any blinding can reach
+//! still opens to the value being compared. Unlinkability rerandomizes WHICH commitment names the
+//! fact; the weld fixes WHICH fact is named. The two properties touch different arguments of the
+//! same hash, which is why the earlier "blinding and the weld are mutually exclusive" reading was
+//! wrong — and why the descriptor carries both at once. See [`Blinding`].
 //!
 //! ## The layout (a single logical row, repeated to a power-of-two height)
 //!
@@ -29,7 +42,8 @@
 //! | 8       | `STATE_ROOT`        | the token state root the commitment covers                      |
 //! | 9       | `FACT_HASH`         | `hash_fact(pred, [INPUT, t1, t2])` — the weld's leg-1 DIGEST    |
 //! | 10..=16 | `FACTHASH_LANES`    | out-lanes 1..7 of the arity-7 fact-hash chip lookup             |
-//! | 17..=23 | `FACTCOMMIT_LANES`  | out-lanes 1..7 of the arity-2 fact-commitment chip lookup       |
+//! | 17..=23 | `FACTCOMMIT_LANES`  | out-lanes 1..7 of the arity-4 fact-commitment chip lookup       |
+//! | 24      | `BLINDING`          | the PRIVATE per-presentation blinding factor (leg-2 input 2)   |
 //!
 //! The diff range-decomposition limbs the hand AIR lays down as ~30 explicit bit columns are NOT
 //! base columns here: the descriptor's `⟨range, [DIFF]⟩` lookup makes the IR-v2 assembler
@@ -52,7 +66,8 @@
 //!   * **the two Poseidon2 chip lookups are the VALUE↔FACT WELD** — leg 1 forces
 //!     `FACT_HASH = hash_fact(PREDICATE_SYM, [INPUT, TERM1, TERM2])` over the SAME `INPUT` column
 //!     the comparison bounds, and leg 2 forces
-//!     `FACT_COMMITMENT = hash_2_to_1(FACT_HASH, STATE_ROOT)`. Together they make col 4's constraint
+//!     `FACT_COMMITMENT = hash_4_to_1([FACT_HASH, STATE_ROOT, BLINDING, 0])`. Together they make
+//!     col 4's constraint
 //!     set intersect col 0's, which is the whole point: without them the AIR is the FREE CONJUNCTION
 //!     of "some value is ≥ threshold" and "here is a commitment I was handed", and a prover can
 //!     satisfy the comparison on a value of its choosing while presenting the honest,
@@ -81,7 +96,7 @@ pub const THRESHOLD: usize = 2;
 /// The comparison difference (`arithmetic.rs` `diff_col`); range-proved into `[0, 2^29)`.
 pub const DIFF: usize = 3;
 /// The fact commitment (`arithmetic.rs` `fact_commitment_col`), PI-bound to `PI_FACT_COMMITMENT`
-/// AND forced by the weld's leg 2 to be `hash_2_to_1(FACT_HASH, STATE_ROOT)`.
+/// AND forced by the weld's leg 2 to be `hash_4_to_1([FACT_HASH, STATE_ROOT, BLINDING, 0])`.
 pub const FACT_COMMITMENT: usize = 4;
 /// The predicate symbol entering `hash_fact` (the weld's leg-1 input 0).
 pub const PREDICATE_SYM: usize = 5;
@@ -95,11 +110,14 @@ pub const STATE_ROOT: usize = 8;
 pub const FACT_HASH: usize = 9;
 /// The seven out-lanes 1..7 of the arity-7 fact-hash chip lookup (filled by the prover).
 pub const FACTHASH_LANES: std::ops::RangeInclusive<usize> = 10..=16;
-/// The seven out-lanes 1..7 of the arity-2 fact-commitment chip lookup (filled by the prover).
+/// The seven out-lanes 1..7 of the arity-4 fact-commitment chip lookup (filled by the prover).
 pub const FACTCOMMIT_LANES: std::ops::RangeInclusive<usize> = 17..=23;
+/// The commitment BLINDING factor — a PRIVATE witness column, the weld's leg-2 input 2.
+/// See [`Blinding`] for why it costs the weld nothing.
+pub const BLINDING: usize = 24;
 /// Total base-trace width (the diff limbs are appended by the assembler, not counted here): the 5
-/// predicate columns + 5 fact witness columns + 2×7 fact chip lanes.
-pub const PRED_WIDTH: usize = 24;
+/// predicate columns + 5 fact witness columns + 2×7 fact chip lanes + the blinding factor.
+pub const PRED_WIDTH: usize = 25;
 
 /// PI slot: the public threshold (`arithmetic.rs::PI_THRESHOLD`).
 pub const PI_THRESHOLD: usize = 0;
@@ -121,8 +139,44 @@ pub const FACT_MARK: u32 = 0xFACF;
 /// The dispatched AIR-name of this descriptor (the [`crate::descriptor_by_name`] key).
 pub const PREDICATE_ARITH_NAME: &str = "dregg-predicate-arith-ge::threshold-v1";
 
+/// **The per-presentation commitment BLINDING factor** — the privacy half of the weld.
+///
+/// A newtype rather than a bare `BabyBear` for two reasons: it cannot be swapped with a `term`/
+/// `state_root` argument by position, and [`Blinding::NONE`] makes "I am deliberately not blinding
+/// this" an explicit, greppable choice instead of an anonymous `BabyBear::ZERO`.
+///
+/// It is deliberately NOT a field of [`FactBinding`]. `FactBinding` is the fact's IDENTITY — what
+/// the commitment covers, fixed by token state. The blinding factor is per-PRESENTATION randomness,
+/// freshly drawn each time the SAME fact is presented; that is precisely what makes two
+/// presentations unlinkable. Folding it into the identity type would conflate "which fact" with
+/// "which showing of it".
+///
+/// ## Why this costs the weld nothing
+///
+/// The blinding factor is a private witness column the prover chooses freely. That freedom lets it
+/// move the commitment anywhere in the image of `hash_4_to_1([fact_hash, state_root, ·, 0])` — but
+/// leg 1 independently forces `fact_hash = hash_fact(pred, [INPUT, ..])` over the SAME `INPUT`
+/// column the comparison bounds, so every commitment reachable by any choice of blinding still
+/// opens to the value being compared. Blinding rerandomizes WHICH commitment names this fact; it
+/// cannot change WHICH fact is named. Privacy and soundness are independent here, not traded.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub struct Blinding(pub BabyBear);
+
+impl Blinding {
+    /// The DEGENERATE, non-private blinding (`0`): the commitment becomes a deterministic function
+    /// of the fact, so two presentations of it are CORRELATABLE. Sound — the weld holds exactly as
+    /// it does under a random blinding — but not unlinkable. Use it only where linkability is
+    /// intended (fixtures, KATs, a deliberately public fact).
+    pub const NONE: Blinding = Blinding(BabyBear::ZERO);
+
+    /// The underlying field element (the value written into the [`BLINDING`] column).
+    pub fn as_field(self) -> BabyBear {
+        self.0
+    }
+}
+
 /// The identity of the fact whose value the predicate speaks about — everything the commitment
-/// covers EXCEPT the value itself.
+/// covers EXCEPT the value itself and the per-presentation [`Blinding`].
 ///
 /// The value is deliberately NOT a field here: it is passed separately to
 /// [`predicate_arith_witness`] and becomes `terms[0]` of the hashed fact, so a caller cannot pair a
@@ -149,13 +203,20 @@ impl FactBinding {
         hash_fact(self.predicate_sym, &[value, self.term1, self.term2])
     }
 
-    /// The genuine fact commitment for `value`: `hash_2_to_1(fact_hash_of(value), state_root)`.
-    /// This is what the descriptor's weld FORCES col 4 to equal, and what a verifier independently
-    /// derives from trusted token state.
-    pub fn commitment_of(&self, value: BabyBear) -> BabyBear {
+    /// The genuine BLINDED fact commitment for `value` under `blinding`:
+    /// `hash_4_to_1([fact_hash_of(value), state_root, blinding, 0])`. This is what the descriptor's
+    /// weld FORCES col 4 to equal.
+    ///
+    /// Note the shape of the verifier's side: under a random `blinding` the commitment is NOT
+    /// re-derivable from token state alone (that is the point — an unlinkable commitment is not a
+    /// deterministic function of the fact). Deriving-and-comparing is available only at
+    /// [`Blinding::NONE`]. What the weld gives a verifier at any blinding is the binding itself:
+    /// whatever commitment is presented, the compared value is the one it covers.
+    pub fn commitment_of(&self, value: BabyBear, blinding: Blinding) -> BabyBear {
         crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment(
             self.fact_hash_of(value),
             self.state_root,
+            blinding.as_field(),
         )
     }
 }
@@ -184,6 +245,7 @@ pub fn predicate_arith_witness(
     value: u64,
     threshold: u64,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     if height < 2 || !height.is_power_of_two() {
@@ -203,10 +265,7 @@ pub fn predicate_arith_witness(
     // THE WELD, producer side: the two digest columns the chip lookups bind. Computed from `value`
     // — which is what makes the commitment a statement ABOUT the compared number.
     let fact_hash = fact.fact_hash_of(value_f);
-    let fact_commitment = crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment(
-        fact_hash,
-        fact.state_root,
-    );
+    let fact_commitment = fact.commitment_of(value_f, blinding);
 
     let mut row = vec![BabyBear::ZERO; PRED_WIDTH];
     row[INPUT] = value_f;
@@ -219,6 +278,12 @@ pub fn predicate_arith_witness(
     row[TERM2] = fact.term2;
     row[STATE_ROOT] = fact.state_root;
     row[FACT_HASH] = fact_hash;
+    // THE BLINDING FACTOR REACHES THE PROOF. Leg 2 is an arity-4 chip lookup over
+    // `[FACT_HASH, STATE_ROOT, BLINDING, 0]`: this column is a genuine input to the constrained
+    // permutation, not decoration. Drop it (leave the column zero while computing a blinded
+    // commitment) and the lookup's image no longer matches col 4 — the proof is REFUSED, not
+    // silently unblinded. That is the canary in `blinding_reaches_the_proof`.
+    row[BLINDING] = blinding.as_field();
     // Cols 10..=23 (the 2×7 chip out-lanes) stay zero: `prove_vm_descriptor2`'s
     // `trace_with_chip_lanes` fills them from the genuine permutation.
 
@@ -247,6 +312,13 @@ mod tests {
         }
     }
 
+    /// A REAL, non-zero per-presentation blinding — the DEFAULT these tests are driven under, so
+    /// every tooth below is exercised in the deployed (blinded) posture rather than at the
+    /// degenerate [`Blinding::NONE`]. Not a `const` because `BabyBear::new` is not a `const fn`.
+    fn test_blinding() -> Blinding {
+        Blinding(BabyBear::new(0xB11D1))
+    }
+
     /// `true` iff `(trace, pis)` is REJECTED end-to-end (prove refuses OR the produced proof fails
     /// to verify). Prove-THEN-verify is the faithful consumer-posture gate.
     fn rejects(desc: &EffectVmDescriptor2, trace: &[Vec<BabyBear>], pis: &[BabyBear]) -> bool {
@@ -265,7 +337,7 @@ mod tests {
     }
 
     /// The dispatched descriptor decodes, carries the expected name, and has the LEAN-EMITTED shape:
-    /// width 24, 2 PIs, one range lookup (C6) AND **both Poseidon2 weld legs**.
+    /// width 25 (the 24 welded columns + the BLINDING witness column), 2 PIs, one range lookup (C6) AND **both Poseidon2 weld legs**.
     ///
     /// The `poseidon2_lookups == 2` assert is the structural anti-fork gate. Its predecessor
     /// asserted `trace_width == 5` / `range_lookups == 1` with no chip check — which RATIFIED the
@@ -278,8 +350,8 @@ mod tests {
         assert_eq!(desc.name, PREDICATE_ARITH_NAME);
         assert_eq!(desc.trace_width, PRED_WIDTH);
         assert_eq!(
-            desc.trace_width, 24,
-            "PRED_WIDTH must be the Lean-emitted 24"
+            desc.trace_width, 25,
+            "PRED_WIDTH must be the Lean-emitted 25 (24 welded columns + the BLINDING column)"
         );
         assert_eq!(desc.public_input_count, PRED_PI_COUNT);
         // exactly one range lookup (C6) on the diff column.
@@ -289,7 +361,8 @@ mod tests {
             .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_RANGE))
             .count();
         assert_eq!(range_lookups, 1, "the single diff range lookup (C6)");
-        // BOTH weld legs: hash_fact -> FACT_HASH, and hash_2_to_1(FACT_HASH, STATE_ROOT) -> col 4.
+        // BOTH weld legs: hash_fact -> FACT_HASH, and hash_4_to_1([FACT_HASH, STATE_ROOT,
+        // BLINDING, 0]) -> col 4.
         let poseidon2_lookups = desc
             .constraints
             .iter()
@@ -308,19 +381,23 @@ mod tests {
     fn computed_commitment_matches_production_binding() {
         let f = fact();
         let value = BabyBear::from_u64(100);
-        let (_, pis) = predicate_arith_witness(100, 40, f, 4).expect("witness");
+        let (_, pis) = predicate_arith_witness(100, 40, f, test_blinding(), 4).expect("witness");
 
         let expected_fact_hash =
             crate::poseidon2::hash_fact(f.predicate_sym, &[value, f.term1, f.term2]);
         let expected = crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment(
             expected_fact_hash,
             f.state_root,
+            test_blinding().as_field(),
         );
         assert_eq!(
             pis[PI_FACT_COMMITMENT], expected,
             "the witness's computed fact commitment must equal the production binding"
         );
-        assert_eq!(pis[PI_FACT_COMMITMENT], f.commitment_of(value));
+        assert_eq!(
+            pis[PI_FACT_COMMITMENT],
+            f.commitment_of(value, test_blinding())
+        );
     }
 
     /// THE POSITIVE POLE: an honest `value ≥ threshold` witness proves through the DISPATCHED
@@ -331,13 +408,14 @@ mod tests {
         let f = fact();
 
         for height in [2usize, 4, 8] {
-            let (trace, pis) = predicate_arith_witness(100, 40, f, height).expect("witness builds");
+            let (trace, pis) = predicate_arith_witness(100, 40, f, test_blinding(), height)
+                .expect("witness builds");
             assert_eq!(trace.len(), height);
             assert_eq!(trace[0].len(), PRED_WIDTH);
             assert_eq!(pis[PI_THRESHOLD], BabyBear::new(40));
             assert_eq!(
                 pis[PI_FACT_COMMITMENT],
-                f.commitment_of(BabyBear::from_u64(100)),
+                f.commitment_of(BabyBear::from_u64(100), test_blinding()),
                 "the computed fact commitment is the pinned public input (C2)"
             );
 
@@ -358,14 +436,16 @@ mod tests {
         let f = fact();
 
         // non-vacuity: value 100 ≥ threshold 40 is ACCEPTED.
-        let (ok_trace, ok_pis) = predicate_arith_witness(100, 40, f, 4).expect("witness");
+        let (ok_trace, ok_pis) =
+            predicate_arith_witness(100, 40, f, test_blinding(), 4).expect("witness");
         assert!(
             !rejects(&desc, &ok_trace, &ok_pis),
             "honest value ≥ threshold must be accepted — else the canary is vacuous"
         );
 
         // value 30 < threshold 40 ⇒ diff = p − 10, out of [0, 2^29). C3 and C5 still hold; ONLY C6 fails.
-        let (bad_trace, bad_pis) = predicate_arith_witness(30, 40, f, 4).expect("witness");
+        let (bad_trace, bad_pis) =
+            predicate_arith_witness(30, 40, f, test_blinding(), 4).expect("witness");
         let err = match prove_vm_descriptor2(
             &desc,
             &bad_trace,
@@ -388,7 +468,8 @@ mod tests {
     #[test]
     fn tampered_diff_refuses_on_c5() {
         let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
-        let (mut trace, pis) = predicate_arith_witness(100, 40, fact(), 4).expect("witness");
+        let (mut trace, pis) =
+            predicate_arith_witness(100, 40, fact(), test_blinding(), 4).expect("witness");
         assert!(
             !rejects(&desc, &trace, &pis),
             "honest accepts (non-vacuity)"
@@ -407,7 +488,8 @@ mod tests {
     #[test]
     fn tampered_slot_refuses_on_c3() {
         let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
-        let (mut trace, pis) = predicate_arith_witness(100, 40, fact(), 4).expect("witness");
+        let (mut trace, pis) =
+            predicate_arith_witness(100, 40, fact(), test_blinding(), 4).expect("witness");
         assert!(
             !rejects(&desc, &trace, &pis),
             "honest accepts (non-vacuity)"
@@ -427,7 +509,8 @@ mod tests {
     #[test]
     fn forged_threshold_pi_refuses_on_c1() {
         let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
-        let (trace, pis) = predicate_arith_witness(100, 40, fact(), 4).expect("witness");
+        let (trace, pis) =
+            predicate_arith_witness(100, 40, fact(), test_blinding(), 4).expect("witness");
         assert!(!rejects(&desc, &trace, &pis));
         let forged = vec![BabyBear::new(41), pis[PI_FACT_COMMITMENT]];
         assert!(
@@ -440,7 +523,8 @@ mod tests {
     #[test]
     fn forged_fact_pi_refuses_on_c2() {
         let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
-        let (trace, pis) = predicate_arith_witness(100, 40, fact(), 4).expect("witness");
+        let (trace, pis) =
+            predicate_arith_witness(100, 40, fact(), test_blinding(), 4).expect("witness");
         assert!(!rejects(&desc, &trace, &pis));
         let forged = vec![BabyBear::new(40), BabyBear::new(99999)];
         assert!(
@@ -455,7 +539,8 @@ mod tests {
     #[test]
     fn audit_tampered_trace_fact_refuses() {
         let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
-        let (mut trace, pis) = predicate_arith_witness(100, 40, fact(), 4).expect("witness");
+        let (mut trace, pis) =
+            predicate_arith_witness(100, 40, fact(), test_blinding(), 4).expect("witness");
         assert!(
             !rejects(&desc, &trace, &pis),
             "honest accepts (non-vacuity)"
@@ -478,7 +563,8 @@ mod tests {
     fn tampered_fact_hash_refuses_on_weld_leg1() {
         let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
         let f = fact();
-        let (mut trace, pis) = predicate_arith_witness(100, 40, f, 4).expect("witness");
+        let (mut trace, pis) =
+            predicate_arith_witness(100, 40, f, test_blinding(), 4).expect("witness");
         assert!(
             !rejects(&desc, &trace, &pis),
             "honest accepts (non-vacuity)"
@@ -488,6 +574,7 @@ mod tests {
         let forged_commit = crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment(
             forged_hash,
             f.state_root,
+            test_blinding().as_field(),
         );
         for row in &mut trace {
             row[FACT_HASH] = forged_hash;
@@ -501,11 +588,81 @@ mod tests {
         );
     }
 
+    /// THE BLINDING CANARY (named by this module's header): the [`BLINDING`] column is a genuine
+    /// constrained input to leg 2's arity-4 chip lookup, not decoration.
+    ///
+    /// Zero the column while leaving the blinded commitment (and its PI) honest — the shape a
+    /// "the blinding never reaches the circuit" bug would produce. Leg 2's image becomes
+    /// `hash_4_to_1([FACT_HASH, STATE_ROOT, 0, 0])`, which is not col 4, so the lookup names a chip
+    /// row no genuine permutation serves → REFUSED. The proof is never silently unblinded.
+    ///
+    /// Non-vacuous in both directions: the untampered blinded witness ACCEPTS, and a
+    /// [`Blinding::NONE`] witness (zero column AND the matching zero-blinded commitment) also
+    /// ACCEPTS — so the refusal is the column/commitment DISAGREEMENT, not "a zero column".
+    #[test]
+    fn blinding_reaches_the_proof() {
+        let desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("dispatch");
+        let f = fact();
+
+        // Pole 1 (non-vacuity): the honest BLINDED witness proves and verifies.
+        let (trace, pis) =
+            predicate_arith_witness(100, 40, f, test_blinding(), 4).expect("witness");
+        assert!(
+            !rejects(&desc, &trace, &pis),
+            "the honest blinded witness must be ACCEPTED — else this canary proves nothing"
+        );
+
+        // Pole 2 (non-vacuity): the DEGENERATE blinding is sound too — a zero BLINDING column is
+        // fine when the commitment is the zero-blinded one. So a zero column is not itself the
+        // refusal.
+        let (none_trace, none_pis) =
+            predicate_arith_witness(100, 40, f, Blinding::NONE, 4).expect("witness");
+        assert!(
+            !rejects(&desc, &none_trace, &none_pis),
+            "a Blinding::NONE witness must be ACCEPTED (sound, merely correlatable)"
+        );
+        assert_ne!(
+            pis[PI_FACT_COMMITMENT], none_pis[PI_FACT_COMMITMENT],
+            "a non-zero blinding must move the commitment — else it is not blinding anything"
+        );
+
+        // THE TAMPER: drop the blinding from the trace, keep the blinded commitment + PI.
+        let mut dropped = trace.clone();
+        for row in &mut dropped {
+            row[BLINDING] = BabyBear::ZERO;
+        }
+        assert!(
+            rejects(&desc, &dropped, &pis),
+            "a BLINDING column that disagrees with the commitment it blinded must be REJECTED — \
+             the blinding is a constrained input to weld leg 2, not decoration"
+        );
+    }
+
+    /// UNLINKABILITY, producer side: the SAME fact and the SAME value presented under two different
+    /// blindings carry DIFFERENT public fact commitments, so colluding verifiers holding both
+    /// presentations cannot correlate them on the commitment. (The weld is unaffected — see
+    /// [`Blinding`] — which `blinding_reaches_the_proof` exercises.)
+    #[test]
+    fn distinct_blindings_rerandomize_the_commitment() {
+        let f = fact();
+        let (_, pis_a) = predicate_arith_witness(100, 40, f, test_blinding(), 4).expect("witness");
+        let (_, pis_b) = predicate_arith_witness(100, 40, f, Blinding(BabyBear::new(0x5EED)), 4)
+            .expect("witness");
+        assert_eq!(
+            pis_a[PI_THRESHOLD], pis_b[PI_THRESHOLD],
+            "the same public threshold — only the commitment rerandomizes"
+        );
+        assert_ne!(
+            pis_a[PI_FACT_COMMITMENT], pis_b[PI_FACT_COMMITMENT],
+            "two presentations of the SAME fact under different blindings must be UNLINKABLE"
+        );
+    }
+
     /// Malformed heights (non-power-of-two, < 2) are refused at build time.
     #[test]
     fn malformed_witness_refuses() {
-        assert!(predicate_arith_witness(100, 40, fact(), 3).is_err()); // not a power of two
-        assert!(predicate_arith_witness(100, 40, fact(), 1).is_err()); // < 2
-        assert!(predicate_arith_witness(100, 40, fact(), 0).is_err());
+        assert!(predicate_arith_witness(100, 40, fact(), test_blinding(), 3).is_err()); // not a power of two
+        assert!(predicate_arith_witness(100, 40, fact(), test_blinding(), 1).is_err()); // < 2
+        assert!(predicate_arith_witness(100, 40, fact(), test_blinding(), 0).is_err());
     }
 }

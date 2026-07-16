@@ -8,8 +8,13 @@
 //!
 //! A comparison alone (`value ≤ threshold`) is worthless: it is a claim about a number the prover
 //! chose. What makes it a claim about TOKEN STATE is the second conjunct —
-//! `fact_commitment = hash_2_to_1(hash_fact(pred, [value, t1, t2]), state_root)` — and the variable
-//! the two conjuncts share is `INPUT` (col 0). Both are in the circuit.
+//! `fact_commitment = hash_4_to_1([hash_fact(pred, [value, t1, t2]), state_root, blinding, 0])` — and
+//! the variable the two conjuncts share is `INPUT` (col 0). Both are in the circuit.
+//!
+//! The commitment is BLINDED by a private witness column, and that costs the weld nothing: blinding
+//! moves the commitment's `blinding` slot, the weld pins its `fact_hash` slot. Two showings of the
+//! same fact are unlinkable; both still open to the value compared. Privacy and soundness here are
+//! independent, not traded. See [`crate::predicate_arith_witness::Blinding`].
 //!
 //! **These five descriptors used to carry only the first conjunct.** `fact_commitment` was a
 //! pass-through public input in a constraint set DISJOINT from the compared column, so a prover could
@@ -25,17 +30,20 @@
 //!
 //! | op        | welded width | diff(s)                                        | judge tooth        |
 //! |-----------|--------------|------------------------------------------------|--------------------|
-//! | `≤` (le)  | 24           | `diff = threshold − value`                     | range `[0,2^29)`   |
-//! | `>` (gt)  | 24           | `diff = value − threshold − 1`                 | range `[0,2^29)`   |
-//! | `<` (lt)  | 24           | `diff = threshold − value − 1`                 | range `[0,2^29)`   |
-//! | `≠` (neq) | 25           | `diff = value − threshold`, `diff_inv`         | `diff·diff_inv = 1`|
-//! | InRange   | 26           | `diff_lo = value − lo`, `diff_hi = hi − value` | two range checks   |
+//! | `≤` (le)  | 25           | `diff = threshold − value`                     | range `[0,2^29)`   |
+//! | `>` (gt)  | 25           | `diff = value − threshold − 1`                 | range `[0,2^29)`   |
+//! | `<` (lt)  | 25           | `diff = threshold − value − 1`                 | range `[0,2^29)`   |
+//! | `≠` (neq) | 26           | `diff = value − threshold`, `diff_inv`         | `diff·diff_inv = 1`|
+//! | InRange   | 27           | `diff_lo = value − lo`, `diff_hi = hi − value` | two range checks   |
+//!
+//! (Each width is one MORE than its pre-blinding value: the last column is `BLINDING`.)
 //!
 //! On TOP of that tooth every one of them now carries the **VALUE↔FACT WELD**: two Poseidon2 chip
 //! lookups forcing `FACT_HASH = hash_fact(PREDICATE_SYM, [INPUT, TERM1, TERM2])` over the SAME
-//! `INPUT` the comparison bounds, and `FACT_COMMITMENT = hash_2_to_1(FACT_HASH, STATE_ROOT)`. The
-//! `≤`/`>`/`<` layouts are byte-identical to `≥` (weld cols 5..23); `≠` carries `DIFF_INV` so its
-//! weld starts at col 6; InRange carries `LO`/`HI`/`DIFF_LO`/`DIFF_HI` so its weld starts at col 7.
+//! `INPUT` the comparison bounds, and
+//! `FACT_COMMITMENT = hash_4_to_1([FACT_HASH, STATE_ROOT, BLINDING, 0])`. The `≤`/`>`/`<` layouts are
+//! byte-identical to `≥` (weld cols 5..23, `BLINDING` at 24); `≠` carries `DIFF_INV` so its weld
+//! starts at col 6; InRange carries `LO`/`HI`/`DIFF_LO`/`DIFF_HI` so its weld starts at col 7.
 //!
 //! Accordingly the fact commitment is **not an argument to these builders — it is an OUTPUT.** A
 //! caller supplies the fact's identity ([`FactBinding`]) and the value; the commitment is COMPUTED.
@@ -51,7 +59,7 @@
 //! job, and they are the weld.
 
 use crate::field::BabyBear;
-use crate::predicate_arith_witness::FactBinding;
+use crate::predicate_arith_witness::{Blinding, FactBinding};
 
 /// The range-tooth width shared by the one-sided ops and InRange (`arithmetic.rs` @736: 29 bits).
 pub const DIFF_BITS: usize = 29;
@@ -86,7 +94,11 @@ pub const OS_STATE_ROOT: usize = 8;
 /// `hash_fact(PREDICATE_SYM, [INPUT, TERM1, TERM2])` — leg 1's digest, leg 2's input 0.
 pub const OS_FACT_HASH: usize = 9;
 /// The welded one-sided base-trace width (5 predicate + 5 fact witness + 2×7 chip lanes).
-pub const OS_WIDTH: usize = 24;
+/// The commitment BLINDING factor — a PRIVATE witness column, the weld's leg-2 input 2
+/// (`le` / `gt` / `lt` layout). See [`crate::predicate_arith_witness::Blinding`].
+pub const OS_BLINDING: usize = 24;
+/// The welded one-sided base-trace width, incl. the blinding factor.
+pub const OS_WIDTH: usize = 25;
 
 // ---- `≠` welded layout: the one-sided layout with `DIFF_INV` inserted at col 4.
 pub const NEQ_INPUT: usize = 0;
@@ -102,7 +114,10 @@ pub const NEQ_TERM2: usize = 8;
 pub const NEQ_STATE_ROOT: usize = 9;
 pub const NEQ_FACT_HASH: usize = 10;
 /// The welded `≠` base-trace width (6 predicate + 5 fact witness + 2×7 chip lanes).
-pub const NEQ_WIDTH: usize = 25;
+/// The commitment BLINDING factor — a PRIVATE witness column (`neq` layout).
+pub const NEQ_BLINDING: usize = 25;
+/// The welded `≠` base-trace width, incl. the blinding factor.
+pub const NEQ_WIDTH: usize = 26;
 
 // ---- InRange welded layout: two bounds + two diffs, so the weld starts at col 7.
 pub const IR_INPUT: usize = 0;
@@ -117,8 +132,10 @@ pub const IR_TERM1: usize = 8;
 pub const IR_TERM2: usize = 9;
 pub const IR_STATE_ROOT: usize = 10;
 pub const IR_FACT_HASH: usize = 11;
-/// The welded InRange base-trace width (7 predicate + 5 fact witness + 2×7 chip lanes).
-pub const IR_WIDTH: usize = 26;
+/// The commitment BLINDING factor — a PRIVATE witness column (`InRange` layout).
+pub const IR_BLINDING: usize = 26;
+/// The welded InRange base-trace width (7 predicate + 5 fact witness + 2×7 chip lanes + blinding).
+pub const IR_WIDTH: usize = 27;
 
 /// Reject a non-power-of-two / `< 2` height at build time (the trace-height requirement).
 fn check_height(height: usize) -> Result<(), String> {
@@ -138,6 +155,7 @@ struct WeldCols {
     term2: usize,
     state_root: usize,
     fact_hash: usize,
+    blinding: usize,
 }
 
 /// **THE WELD, producer side.** Write the five fact-witness columns and BOTH digest columns the two
@@ -149,12 +167,20 @@ struct WeldCols {
 /// ([`crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment`] over
 /// [`crate::poseidon2::hash_fact`]) — pinned by KAT asserts in this module's tests, so the in-circuit
 /// chip image and the production binding are proven equal rather than assumed.
-fn fill_weld(row: &mut [BabyBear], value_f: BabyBear, fact: FactBinding, c: WeldCols) -> BabyBear {
+fn fill_weld(
+    row: &mut [BabyBear],
+    value_f: BabyBear,
+    fact: FactBinding,
+    blinding: Blinding,
+    c: WeldCols,
+) -> BabyBear {
     let fact_hash = fact.fact_hash_of(value_f);
-    let fact_commitment = crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment(
-        fact_hash,
-        fact.state_root,
-    );
+    let fact_commitment = fact.commitment_of(value_f, blinding);
+    // THE BLINDING FACTOR REACHES THE PROOF: leg 2 is an arity-4 chip lookup over
+    // `[FACT_HASH, STATE_ROOT, BLINDING, 0]`, so this column is a constrained input to the
+    // permutation. Leaving it zero while committing under a nonzero blinding makes the lookup image
+    // disagree with the commitment column — REFUSED, never silently unblinded.
+    row[c.blinding] = blinding.as_field();
     row[c.fact_commitment] = fact_commitment;
     row[c.predicate_sym] = fact.predicate_sym;
     row[c.term1] = fact.term1;
@@ -173,6 +199,7 @@ fn os_weld_cols() -> WeldCols {
         term2: OS_TERM2,
         state_root: OS_STATE_ROOT,
         fact_hash: OS_FACT_HASH,
+        blinding: OS_BLINDING,
     }
 }
 
@@ -183,6 +210,7 @@ fn one_sided_row(
     threshold: u64,
     diff: BabyBear,
     fact: FactBinding,
+    blinding: Blinding,
 ) -> (Vec<BabyBear>, BabyBear) {
     let value_f = BabyBear::from_u64(value);
     let mut row = vec![BabyBear::ZERO; OS_WIDTH];
@@ -190,7 +218,7 @@ fn one_sided_row(
     row[OS_SLOT_A] = value_f;
     row[OS_THRESHOLD] = BabyBear::from_u64(threshold);
     row[OS_DIFF] = diff;
-    let fact_commitment = fill_weld(&mut row, value_f, fact, os_weld_cols());
+    let fact_commitment = fill_weld(&mut row, value_f, fact, blinding, os_weld_cols());
     // Cols 10..=23 (the 2×7 chip out-lanes) stay zero: the prover's `fill_chip_lanes` fills them.
     (row, fact_commitment)
 }
@@ -201,10 +229,11 @@ fn one_sided_witness(
     threshold: u64,
     diff: BabyBear,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     check_height(height)?;
-    let (row, fact_commitment) = one_sided_row(value, threshold, diff, fact);
+    let (row, fact_commitment) = one_sided_row(value, threshold, diff, fact, blinding);
     let pis = vec![BabyBear::from_u64(threshold), fact_commitment];
     Ok((vec![row; height], pis))
 }
@@ -217,10 +246,11 @@ pub fn predicate_le_witness(
     value: u64,
     threshold: u64,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let diff = BabyBear::from_u64(threshold) - BabyBear::from_u64(value);
-    one_sided_witness(value, threshold, diff, fact, height)
+    one_sided_witness(value, threshold, diff, fact, blinding, height)
 }
 
 /// **`>`** — `diff = value − threshold − 1`. Honest `value > threshold` ⟹ `diff ≥ 0`.
@@ -228,10 +258,11 @@ pub fn predicate_gt_witness(
     value: u64,
     threshold: u64,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let diff = BabyBear::from_u64(value) - BabyBear::from_u64(threshold) - BabyBear::ONE;
-    one_sided_witness(value, threshold, diff, fact, height)
+    one_sided_witness(value, threshold, diff, fact, blinding, height)
 }
 
 /// **`<`** — `diff = threshold − value − 1`. Honest `value < threshold` ⟹ `diff ≥ 0`.
@@ -239,10 +270,11 @@ pub fn predicate_lt_witness(
     value: u64,
     threshold: u64,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     let diff = BabyBear::from_u64(threshold) - BabyBear::from_u64(value) - BabyBear::ONE;
-    one_sided_witness(value, threshold, diff, fact, height)
+    one_sided_witness(value, threshold, diff, fact, blinding, height)
 }
 
 /// **`≠`** — `diff = value − threshold`, `diff_inv = diff⁻¹` (field inverse; `0` if `diff = 0`, which
@@ -252,6 +284,7 @@ pub fn predicate_neq_witness(
     value: u64,
     threshold: u64,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     check_height(height)?;
@@ -270,6 +303,7 @@ pub fn predicate_neq_witness(
         &mut row,
         value_f,
         fact,
+        blinding,
         WeldCols {
             fact_commitment: NEQ_FACT_COMMITMENT,
             predicate_sym: NEQ_PREDICATE_SYM,
@@ -277,6 +311,7 @@ pub fn predicate_neq_witness(
             term2: NEQ_TERM2,
             state_root: NEQ_STATE_ROOT,
             fact_hash: NEQ_FACT_HASH,
+            blinding: NEQ_BLINDING,
         },
     );
     let pis = vec![BabyBear::from_u64(threshold), fact_commitment];
@@ -292,6 +327,7 @@ pub fn predicate_inrange_witness(
     lo: u64,
     hi: u64,
     fact: FactBinding,
+    blinding: Blinding,
     height: usize,
 ) -> Result<(Vec<Vec<BabyBear>>, Vec<BabyBear>), String> {
     check_height(height)?;
@@ -307,6 +343,7 @@ pub fn predicate_inrange_witness(
         &mut row,
         value_f,
         fact,
+        blinding,
         WeldCols {
             fact_commitment: IR_FACT_COMMITMENT,
             predicate_sym: IR_PREDICATE_SYM,
@@ -314,6 +351,7 @@ pub fn predicate_inrange_witness(
             term2: IR_TERM2,
             state_root: IR_STATE_ROOT,
             fact_hash: IR_FACT_HASH,
+            blinding: IR_BLINDING,
         },
     );
     let pis = vec![
@@ -333,6 +371,13 @@ mod tests {
         verify_vm_descriptor2,
     };
     use crate::refusal::{Outcome, classify};
+
+    /// A REAL, non-zero per-presentation blinding — the DEFAULT these tests are driven under, so
+    /// every tooth below is exercised in the deployed (blinded) posture rather than at the
+    /// degenerate `Blinding::NONE`. Not a `const` because `BabyBear::new` is not a `const fn`.
+    fn test_blinding() -> Blinding {
+        Blinding(BabyBear::new(0xB11D1))
+    }
 
     /// The scenario's fact identity, shared by the tests below.
     fn fact() -> FactBinding {
@@ -402,31 +447,32 @@ mod tests {
     #[test]
     fn computed_commitments_match_production_binding() {
         let f = fact();
-        let expected = f.commitment_of(BabyBear::from_u64(40));
-        let (_, p) = predicate_le_witness(40, 100, f, 4).expect("le witness");
+        let expected = f.commitment_of(BabyBear::from_u64(40), test_blinding());
+        let (_, p) = predicate_le_witness(40, 100, f, test_blinding(), 4).expect("le witness");
         assert_eq!(
             p[1], expected,
             "le commitment must be the production binding"
         );
-        let (_, p) = predicate_lt_witness(40, 101, f, 4).expect("lt witness");
+        let (_, p) = predicate_lt_witness(40, 101, f, test_blinding(), 4).expect("lt witness");
         assert_eq!(
             p[1], expected,
             "lt commitment must be the production binding"
         );
-        let (_, p) = predicate_inrange_witness(40, 10, 100, f, 4).expect("inrange witness");
+        let (_, p) =
+            predicate_inrange_witness(40, 10, 100, f, test_blinding(), 4).expect("inrange witness");
         assert_eq!(
             p[2], expected,
             "inrange commitment must be the production binding"
         );
-        let (_, p) = predicate_neq_witness(40, 7, f, 4).expect("neq witness");
+        let (_, p) = predicate_neq_witness(40, 7, f, test_blinding(), 4).expect("neq witness");
         assert_eq!(
             p[1], expected,
             "neq commitment must be the production binding"
         );
-        let (_, p) = predicate_gt_witness(101, 40, f, 4).expect("gt witness");
+        let (_, p) = predicate_gt_witness(101, 40, f, test_blinding(), 4).expect("gt witness");
         assert_eq!(
             p[1],
-            f.commitment_of(BabyBear::from_u64(101)),
+            f.commitment_of(BabyBear::from_u64(101), test_blinding()),
             "gt commitment must be the production binding"
         );
     }
@@ -436,10 +482,10 @@ mod tests {
         let desc = descriptor_by_name(PREDICATE_ARITH_LE_NAME).expect("dispatch");
         let f = fact();
         // honest: 40 ≤ 100 accepts.
-        let (t, p) = predicate_le_witness(40, 100, f, 4).expect("witness");
+        let (t, p) = predicate_le_witness(40, 100, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &t, &p), "40 ≤ 100 must ACCEPT");
         // violation: 110 > 100 rejects (diff wraps out of range).
-        let (bt, bp) = predicate_le_witness(110, 100, f, 4).expect("witness");
+        let (bt, bp) = predicate_le_witness(110, 100, f, test_blinding(), 4).expect("witness");
         assert!(rejects(&desc, &bt, &bp), "110 ≤ 100 must REJECT");
         // forged PI: honest trace, forged threshold rejects (C1).
         assert!(
@@ -457,12 +503,12 @@ mod tests {
     fn gt_honest_accepts_violation_rejects() {
         let desc = descriptor_by_name(PREDICATE_ARITH_GT_NAME).expect("dispatch");
         let f = fact();
-        let (t, p) = predicate_gt_witness(101, 40, f, 4).expect("witness");
+        let (t, p) = predicate_gt_witness(101, 40, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &t, &p), "101 > 40 must ACCEPT");
         // equal value is NOT strictly greater — rejects (diff = -1 wraps).
-        let (bt, bp) = predicate_gt_witness(40, 40, f, 4).expect("witness");
+        let (bt, bp) = predicate_gt_witness(40, 40, f, test_blinding(), 4).expect("witness");
         assert!(rejects(&desc, &bt, &bp), "40 > 40 must REJECT");
-        let (bt2, bp2) = predicate_gt_witness(30, 40, f, 4).expect("witness");
+        let (bt2, bp2) = predicate_gt_witness(30, 40, f, test_blinding(), 4).expect("witness");
         assert!(rejects(&desc, &bt2, &bp2), "30 > 40 must REJECT");
     }
 
@@ -470,11 +516,11 @@ mod tests {
     fn lt_honest_accepts_violation_rejects() {
         let desc = descriptor_by_name(PREDICATE_ARITH_LT_NAME).expect("dispatch");
         let f = fact();
-        let (t, p) = predicate_lt_witness(40, 101, f, 4).expect("witness");
+        let (t, p) = predicate_lt_witness(40, 101, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &t, &p), "40 < 101 must ACCEPT");
-        let (bt, bp) = predicate_lt_witness(101, 101, f, 4).expect("witness");
+        let (bt, bp) = predicate_lt_witness(101, 101, f, test_blinding(), 4).expect("witness");
         assert!(rejects(&desc, &bt, &bp), "101 < 101 must REJECT");
-        let (bt2, bp2) = predicate_lt_witness(150, 101, f, 4).expect("witness");
+        let (bt2, bp2) = predicate_lt_witness(150, 101, f, test_blinding(), 4).expect("witness");
         assert!(rejects(&desc, &bt2, &bp2), "150 < 101 must REJECT");
     }
 
@@ -483,13 +529,13 @@ mod tests {
         let desc = descriptor_by_name(PREDICATE_ARITH_NEQ_NAME).expect("dispatch");
         let f = fact();
         // honest: 41 ≠ 40 accepts (diff = 1 has an inverse).
-        let (t, p) = predicate_neq_witness(41, 40, f, 4).expect("witness");
+        let (t, p) = predicate_neq_witness(41, 40, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &t, &p), "41 ≠ 40 must ACCEPT");
         // a larger genuine inequality also accepts (real field inverse).
-        let (t2, p2) = predicate_neq_witness(1000, 7, f, 4).expect("witness");
+        let (t2, p2) = predicate_neq_witness(1000, 7, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &t2, &p2), "1000 ≠ 7 must ACCEPT");
         // violation: 40 = 40 rejects (diff = 0, no inverse → nonzero gate UNSAT).
-        let (bt, bp) = predicate_neq_witness(40, 40, f, 4).expect("witness");
+        let (bt, bp) = predicate_neq_witness(40, 40, f, test_blinding(), 4).expect("witness");
         assert!(
             rejects(&desc, &bt, &bp),
             "40 ≠ 40 must REJECT (nonzero tooth)"
@@ -501,24 +547,29 @@ mod tests {
         let desc = descriptor_by_name(PREDICATE_ARITH_INRANGE_NAME).expect("dispatch");
         let f = fact();
         // honest: 10 ≤ 40 ≤ 100 accepts.
-        let (t, p) = predicate_inrange_witness(40, 10, 100, f, 4).expect("witness");
+        let (t, p) =
+            predicate_inrange_witness(40, 10, 100, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &t, &p), "10 ≤ 40 ≤ 100 must ACCEPT");
         // below lo: 5 < 10 rejects (diff_lo wraps).
-        let (bt, bp) = predicate_inrange_witness(5, 10, 100, f, 4).expect("witness");
+        let (bt, bp) =
+            predicate_inrange_witness(5, 10, 100, f, test_blinding(), 4).expect("witness");
         assert!(rejects(&desc, &bt, &bp), "5 < 10 must REJECT (low tooth)");
         // above hi: 150 > 100 rejects (diff_hi wraps).
-        let (bt2, bp2) = predicate_inrange_witness(150, 10, 100, f, 4).expect("witness");
+        let (bt2, bp2) =
+            predicate_inrange_witness(150, 10, 100, f, test_blinding(), 4).expect("witness");
         assert!(
             rejects(&desc, &bt2, &bp2),
             "150 > 100 must REJECT (high tooth)"
         );
         // boundary inclusivity: value = lo and value = hi accept.
-        let (lo_t, lo_p) = predicate_inrange_witness(10, 10, 100, f, 4).expect("witness");
+        let (lo_t, lo_p) =
+            predicate_inrange_witness(10, 10, 100, f, test_blinding(), 4).expect("witness");
         assert!(
             accepts(&desc, &lo_t, &lo_p),
             "value = lo must ACCEPT (inclusive)"
         );
-        let (hi_t, hi_p) = predicate_inrange_witness(100, 10, 100, f, 4).expect("witness");
+        let (hi_t, hi_p) =
+            predicate_inrange_witness(100, 10, 100, f, test_blinding(), 4).expect("witness");
         assert!(
             accepts(&desc, &hi_t, &hi_p),
             "value = hi must ACCEPT (inclusive)"
@@ -532,13 +583,15 @@ mod tests {
     fn tampered_fact_hash_refuses_on_weld_leg1() {
         let desc = descriptor_by_name(PREDICATE_ARITH_LE_NAME).expect("dispatch");
         let f = fact();
-        let (mut trace, pis) = predicate_le_witness(40, 100, f, 4).expect("witness");
+        let (mut trace, pis) =
+            predicate_le_witness(40, 100, f, test_blinding(), 4).expect("witness");
         assert!(accepts(&desc, &trace, &pis), "honest accepts (non-vacuity)");
 
         let forged_hash = BabyBear::new(0xBADF00D);
         let forged_commit = crate::dsl::predicates::arithmetic::compute_arithmetic_fact_commitment(
             forged_hash,
             f.state_root,
+            test_blinding().as_field(),
         );
         for row in &mut trace {
             row[OS_FACT_HASH] = forged_hash;
@@ -554,10 +607,10 @@ mod tests {
     #[test]
     fn malformed_heights_refuse() {
         let f = fact();
-        assert!(predicate_le_witness(1, 2, f, 3).is_err());
-        assert!(predicate_gt_witness(1, 2, f, 1).is_err());
-        assert!(predicate_neq_witness(1, 2, f, 0).is_err());
-        assert!(predicate_inrange_witness(1, 0, 2, f, 6).is_err()); // 6 not a power of two
-        assert!(predicate_inrange_witness(1, 0, 2, f, 8).is_ok()); // 8 is
+        assert!(predicate_le_witness(1, 2, f, test_blinding(), 3).is_err());
+        assert!(predicate_gt_witness(1, 2, f, test_blinding(), 1).is_err());
+        assert!(predicate_neq_witness(1, 2, f, test_blinding(), 0).is_err());
+        assert!(predicate_inrange_witness(1, 0, 2, f, test_blinding(), 6).is_err()); // 6 not a power of two
+        assert!(predicate_inrange_witness(1, 0, 2, f, test_blinding(), 8).is_ok()); // 8 is
     }
 }
