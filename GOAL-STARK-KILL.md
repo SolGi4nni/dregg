@@ -893,3 +893,14 @@ NonRevocationEmit's Merkle shape to per-level rows. i.e. the deployed `TREE_DEPT
 precisely the gap the adjacency emit just FIXED by internalizing consecutiveness (it lived in a wrapper a
 caller could bypass). Still NAMED, not forced: `sdk/privacy.rs:621,762` stays on the hand circuit until the
 composed descriptor exists.
+
+### ⚠ OPERATIONAL HAZARD (2026-07-16) — MULTIPLE codex processes; the dirty tree is a MIX
+`pgrep -f 'codex exec'` shows **3 concurrent codex processes** — mine (the turn-chain cutover) plus the
+parallel terminal's. **A running codex is NOT necessarily yours** (ember flagged this after I misread one
+as mine). The working tree therefore contains OTHER LANES' uncommitted work: e.g. `metatheory/Dregg2/
+Circuit/VacuitySweepTeeth.lean` + `metatheory/Dregg2/Crypto/HardQuantVacuity.lean` appeared mid-run and are
+NOT part of any stark-kill unit.
+**RULE for this lane:** commit ONLY files that the deputized run's own REPORT names, cross-checked against
+the brief. Never `git add -A`; never infer ownership from "it is dirty and it builds". (Cost of getting
+this wrong, already paid once tonight: `ece829fc2` swept a rename into a WIRE IDENTIFIER —
+`bridge_action_air_v1` -> `..._witness_v1` — which the dispatch gate caught in `eeb6ccbe9`.)
