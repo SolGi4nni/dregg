@@ -4336,6 +4336,10 @@ async fn execute_finalized_turn(
         &s,
         crate::executor_setup::BlockHeightMode::Next,
     );
+    // HYBRID PERIMETER — DEPLOYED POSTURE (require_pq = ON) at the finalized-turn
+    // admission boundary: a classical-only authorization is rejected on the
+    // authoritative cross-node commit path, matching the HTTP submit ingress.
+    crate::executor_setup::require_pq_admission(&executor);
 
     // boundary-P1 (bug 1): plumb the NODE-fed admission context onto the per-turn executor so the
     // verified Lean shadow's clock / chain-head / budget legs are decided by THIS node's own state

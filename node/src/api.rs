@@ -617,6 +617,19 @@ pub struct CellDetailResponse {
     /// not a compacted rebuild.
     #[serde(default)]
     pub capability_tombstones: Vec<u32>,
+    /// The agent's RECEIPT-CHAIN HEAD — the `receipt_hash` of the last committed
+    /// turn by this cell (as agent), or `None` if it has none yet. A client
+    /// stamps this into the NEXT turn's `previous_receipt_hash` so the executor's
+    /// per-agent chain check (`TurnExecutor::check_previous_receipt_hash`)
+    /// accepts it under a PERSISTENT executor. Served from the node's persistent
+    /// receipt chain (`s.cclerk.receipt_chain()`), NOT projected from `s.ledger`
+    /// (a cell carries no receipt head) — that was the persistence time bomb:
+    /// the head lives in the executor's `last_receipt_hash` map, and this exposes
+    /// the authoritative persistent equivalent so the six `None`-hardcoding
+    /// callers can chain. `None` for a first turn (matches a fresh executor's
+    /// stored head), so the genesis case is served correctly too.
+    #[serde(default)]
+    pub last_receipt_hash: Option<String>,
 }
 
 #[derive(Serialize)]
@@ -3532,11 +3545,12 @@ async fn post_submit_signed_turn(
     // like a local one (its SDK stamps `valid_until`, so it does not fall off
     // the wire marshal).
     let executor = crate::executor_setup::new_submit_executor(&s);
-    // HYBRID perimeter (staged): when this node REQUIRES the post-quantum half,
-    // reject an outer envelope that carries no PQ signature. A present PQ half
-    // was already fail-closed-verified above; here we enforce presence. Default
-    // off (`require_pq()` false) — the classical envelope is accepted during the
-    // rollout, matching the consensus HybridPq default-off flip.
+    // HYBRID perimeter (DEPLOYED POSTURE — require_pq ON): the node requires the
+    // post-quantum half, so an outer envelope carrying no PQ signature is
+    // rejected here (presence enforcement; a present PQ half was already
+    // fail-closed-verified above). `require_pq()` is set true for every executor
+    // built through `executor_setup::configure_turn_executor` — the staged
+    // rollout is closed for the node's admission surface (both SDKs emit hybrid).
     if executor.require_pq() && signed.pq_signature.is_empty() {
         return Ok(Json(SubmitSignedTurnResponse {
             accepted: false,
@@ -4264,13 +4278,43 @@ async fn get_cell_detail(
     let cell_id_bytes: [u8; 32] = hex_decode(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let cell_id = dregg_cell::CellId(cell_id_bytes);
 
-    Ok(Json(cell_detail_response(id, s.ledger.get(&cell_id))))
+    let head = persistent_receipt_head(&s, &cell_id);
+    Ok(Json(cell_detail_response(id, s.ledger.get(&cell_id), head)))
+}
+
+/// The agent's PERSISTENT receipt-chain head — the `receipt_hash()` of the last
+/// receipt in the node's cipherclerk chain whose `agent` is `cell_id`, or `None`.
+///
+/// This is the authoritative, cross-request-durable equivalent of the executor's
+/// per-agent `last_receipt_hash` map (`TurnExecutor::get_last_receipt_hash`): the
+/// executor is rebuilt fresh per request, but `s.cclerk.receipt_chain()` persists,
+/// so scanning it for the agent's last receipt yields exactly the head a PERSISTENT
+/// executor would hold and check the next turn's `previous_receipt_hash` against.
+/// Deliberately reads the chain, NOT `s.ledger` — a cell carries no receipt head,
+/// which is why `/api/cell/{id}` could not serve it before (the persistence bomb).
+pub(crate) fn persistent_receipt_head(
+    s: &crate::state::NodeStateInner,
+    cell_id: &dregg_cell::CellId,
+) -> Option<[u8; 32]> {
+    s.cclerk
+        .receipt_chain()
+        .iter()
+        .rev()
+        .find(|r| r.agent == *cell_id)
+        .map(|r| r.receipt_hash())
 }
 
 /// Build the `CellDetailResponse` projection for a cell (or the not-found stub).
 /// Shared by `GET /api/cell/{id}` and the inclusion-proof endpoint so both serve a
-/// byte-identical cell view.
-fn cell_detail_response(id: String, cell: Option<&dregg_cell::Cell>) -> CellDetailResponse {
+/// byte-identical cell view. `last_receipt_hash` is the agent's persistent chain
+/// head (see [`persistent_receipt_head`]) — served even for a not-found cell, since
+/// a cell with committed receipts but no ledger presence still has a chain head.
+fn cell_detail_response(
+    id: String,
+    cell: Option<&dregg_cell::Cell>,
+    last_receipt_hash: Option<[u8; 32]>,
+) -> CellDetailResponse {
+    let last_receipt_hash = last_receipt_hash.map(|h| hex_encode(&h));
     match cell {
         Some(cell) => CellDetailResponse {
             id: id.clone(),
@@ -4297,6 +4341,7 @@ fn cell_detail_response(id: String, cell: Option<&dregg_cell::Cell>) -> CellDeta
             fields: cell.state.fields.iter().map(|f| hex_encode(f)).collect(),
             capabilities: cell.capabilities.iter().cloned().collect(),
             capability_tombstones: cell.capabilities.tombstoned_slots().collect(),
+            last_receipt_hash,
         },
         None => CellDetailResponse {
             id,
@@ -4318,6 +4363,7 @@ fn cell_detail_response(id: String, cell: Option<&dregg_cell::Cell>) -> CellDeta
             fields: Vec::new(),
             capabilities: Vec::new(),
             capability_tombstones: Vec::new(),
+            last_receipt_hash,
         },
     }
 }
@@ -4383,7 +4429,8 @@ async fn get_cell_proof(
     let cell_id_bytes: [u8; 32] = hex_decode(&id).map_err(|_| StatusCode::BAD_REQUEST)?;
     let cell_id = dregg_cell::CellId(cell_id_bytes);
 
-    let cell = cell_detail_response(id, s.ledger.get(&cell_id));
+    let head = persistent_receipt_head(&s, &cell_id);
+    let cell = cell_detail_response(id, s.ledger.get(&cell_id), head);
 
     // Full sorted leaf set + flat root of the CURRENT ledger. Construction is
     // byte-identical to the attested root (both fold through
@@ -9448,6 +9495,129 @@ mod tests {
             executor.get_last_receipt_hash(&agent),
             Some(head),
             "fresh per-request executors must inherit the node's committed receipt head"
+        );
+    }
+
+    /// THE PERSISTENCE TIME-BOMB, DEFUSED (AUDIT-wallet.md P3-6). Under a
+    /// PERSISTENT executor (one instance across turns, not fresh-per-request) the
+    /// per-agent receipt chain is REAL: a turn stamping the correct
+    /// `previous_receipt_hash` is accepted and one stamping a stale/forged hash is
+    /// refused with `ReceiptChainMismatch`. The endpoint plumbing serves that head
+    /// (`cell_detail_response.last_receipt_hash`) from the persistent chain, so a
+    /// client can fetch it and chain — and the CANARY proves the old
+    /// project-from-`s.ledger` path serves `None`, which is exactly why every
+    /// non-first turn broke.
+    #[test]
+    fn receipt_chain_head_served_and_bites_under_persistent_executor() {
+        // ONE executor instance across every turn below — the non-fresh path the
+        // realm/MUD work needs, where the chain actually has to hold.
+        let executor = dregg_turn::TurnExecutor::new(ComputronCosts::default());
+
+        // A no-auth agent cell: `Authorization::Unchecked` + `Permissions::None`
+        // isolates the RECEIPT-CHAIN gate (which runs before auth in `execute`),
+        // so this test proves the chain, not the signature.
+        let public_key = [0x51; 32];
+        let token_id = *blake3::hash(b"default").as_bytes();
+        let agent = dregg_cell::CellId::derive_raw(&public_key, &token_id);
+        let mut ledger = dregg_cell::Ledger::new();
+        let mut cell = dregg_cell::Cell::with_balance(public_key, token_id, 1_000_000);
+        cell.permissions = dregg_cell::Permissions {
+            send: dregg_cell::AuthRequired::None,
+            receive: dregg_cell::AuthRequired::None,
+            set_state: dregg_cell::AuthRequired::None,
+            set_permissions: dregg_cell::AuthRequired::None,
+            set_verification_key: dregg_cell::AuthRequired::None,
+            increment_nonce: dregg_cell::AuthRequired::None,
+            delegate: dregg_cell::AuthRequired::None,
+            access: dregg_cell::AuthRequired::None,
+        };
+        ledger.insert_cell(cell).expect("insert agent cell");
+
+        let mk_turn = |nonce: u64, prev: Option<[u8; 32]>| -> Turn {
+            let action = Action {
+                target: agent,
+                method: *blake3::hash(b"chain-test-increment").as_bytes(),
+                args: vec![],
+                authorization: Authorization::Unchecked,
+                preconditions: dregg_cell::Preconditions::default(),
+                effects: vec![Effect::IncrementNonce { cell: agent }],
+                may_delegate: DelegationMode::None,
+                commitment_mode: CommitmentMode::Full,
+                balance_change: None,
+                witness_blobs: vec![],
+            };
+            let mut call_forest = CallForest::new();
+            call_forest.add_root(action);
+            Turn {
+                agent,
+                nonce,
+                fee: 1_000,
+                memo: None,
+                valid_until: None,
+                call_forest,
+                depends_on: vec![],
+                previous_receipt_hash: prev,
+                conservation_proof: None,
+                sovereign_witnesses: std::collections::HashMap::new(),
+                execution_proof: None,
+                execution_proof_cell: None,
+                execution_proof_new_commitment: None,
+                custom_program_proofs: None,
+                effect_binding_proofs: Vec::new(),
+                cross_effect_dependencies: Vec::new(),
+                effect_witness_index_map: Vec::new(),
+            }
+        };
+
+        // Genesis turn: prev = None matches the fresh executor's stored head.
+        let turn1 = mk_turn(0, None);
+        let (_, receipt1, _) = executor.execute(&turn1, &mut ledger).unwrap_committed();
+        let head1 = receipt1.receipt_hash();
+        assert_eq!(
+            executor.get_last_receipt_hash(&agent),
+            Some(head1),
+            "the persistent executor records the committed receipt as the agent's chain head"
+        );
+
+        // ENDPOINT parity: what `/api/cell/{id}` serves (persistent_receipt_head
+        // over the chain) IS head1 — the value the next turn must stamp.
+        let served = cell_detail_response("id".into(), ledger.get(&agent), Some(head1));
+        assert_eq!(
+            served.last_receipt_hash,
+            Some(hex_encode(&head1)),
+            "the endpoint serves the persistent chain head a client chains against"
+        );
+
+        // CANARY: the OLD behavior projected the head from `s.ledger`. A cell
+        // carries no receipt head, so that path serves None — under a persistent
+        // executor the head is UNSERVABLE and every non-first turn breaks.
+        let ledger_only = cell_detail_response("id".into(), ledger.get(&agent), None);
+        assert_eq!(
+            ledger_only.last_receipt_hash, None,
+            "projecting from s.ledger cannot serve the head — the persistence bomb"
+        );
+
+        // WRONG CHAIN: correct nonce, forged prev — refused on the SAME persistent
+        // executor. turn1 advanced the cell nonce to 2 (turn-level commit + the
+        // explicit `IncrementNonce` effect), so nonce == 2 passes the nonce check
+        // and the rejection is the receipt-chain gate, not a nonce error.
+        let turn_wrong = mk_turn(2, Some([0xFF; 32]));
+        match executor.execute(&turn_wrong, &mut ledger) {
+            dregg_turn::TurnResult::Rejected { reason, .. } => assert!(
+                matches!(reason, dregg_turn::TurnError::ReceiptChainMismatch { .. }),
+                "a wrong previous_receipt_hash must be refused as ReceiptChainMismatch, got {reason:?}"
+            ),
+            other => panic!("a wrong-prev turn must be REJECTED under persistence, got {other:?}"),
+        }
+
+        // The refused turn left the head intact; the CORRECTLY-chained turn (prev =
+        // the served head1) still lands on the same persistent executor.
+        let turn2 = mk_turn(2, Some(head1));
+        let (_, receipt2, _) = executor.execute(&turn2, &mut ledger).unwrap_committed();
+        assert_eq!(
+            executor.get_last_receipt_hash(&agent),
+            Some(receipt2.receipt_hash()),
+            "a correctly-chained turn advances the persistent head"
         );
     }
 

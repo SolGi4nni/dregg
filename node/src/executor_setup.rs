@@ -263,7 +263,33 @@ pub fn new_submit_executor(s: &NodeStateInner) -> TurnExecutor {
     let mut executor = TurnExecutor::new(dregg_turn::ComputronCosts::default())
         .with_shadow_observer(dregg_exec_lean::LeanShadowObserver::arc());
     configure_turn_executor(&mut executor, s, BlockHeightMode::Next);
+    require_pq_admission(&executor);
     executor
+}
+
+/// HYBRID PERIMETER — DEPLOYED POSTURE (require_pq = ON) at the ADMISSION
+/// boundary. Called on the executors the node uses to ADMIT a turn for commit:
+/// the thin-HTTP + signed-envelope submit path (`new_submit_executor`, reached by
+/// `commit_effects_as` and the queue drainers too) and the blocklace
+/// finalized-turn path (`blocklace_sync::execute_finalized_turn`). Requiring the
+/// post-quantum half rejects a classical-only `Authorization::Signature` and an
+/// outer envelope lacking a PQ signature (`api.rs::post_submit_signed_turn` reads
+/// `require_pq()`); a present hybrid `HybridSignature` (ed25519 + ML-DSA-65) is
+/// accepted. The Rust default signer and both SDKs (sdk-ts ML-DSA-65, sdk-py
+/// hybrid) already emit the hybrid shape, so this closes the staged rollout for
+/// the node's admission surface. NOT applied to `new_verify_executor`: read/proof
+/// re-execution replays turns already admitted (possibly pre-flip classical
+/// history), so gating it on PQ presence would wrongly reject a legitimate read.
+/// A present-but-invalid PQ half is fail-closed in EITHER mode regardless.
+///
+/// DEPLOYED DEFAULT is ON. The staged-rollout ops override `DREGG_REQUIRE_PQ=0`
+/// forces it OFF for a migration window (mirrors the consensus HybridPq knob) —
+/// the default with the var unset, or set to anything but `0`/`false`, is ON.
+pub fn require_pq_admission(executor: &TurnExecutor) {
+    let disabled = std::env::var("DREGG_REQUIRE_PQ")
+        .map(|v| v == "0" || v.eq_ignore_ascii_case("false"))
+        .unwrap_or(false);
+    executor.set_require_pq(!disabled);
 }
 
 /// Build a fresh executor at the current attested height (verify / read paths). Injects the
