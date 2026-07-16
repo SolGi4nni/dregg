@@ -1482,3 +1482,21 @@ The predicate-weld lane (`FactBinding` / `predicate_arith_witness`) holds: `node
 mock-purge targets INCLUDING the flagship (`dregg_compress_history`) and the plumbing site (`turn/`).
 Not racing them — a rename/edit collision in a shared tree is how wire identifiers get corrupted (already
 paid for that once). Working the clean surfaces meanwhile; the contested ones resume when that lane lands.
+
+### `e7c692453` — first 2 mock surfaces PURGED (ratchet baseline shrinks by 2)
+- **preflight/checks/sovereign.rs** WIRED TO REAL: the promotion-gate "ivc_history_compression" check now
+  mints real turns (`mint_rotated_participant_leg` -> `FinalizedTurn` -> `prove_turn_chain_recursive` +
+  `verify_whole_chain_proof_bytes`), mock imports REMOVED, TWO real adversarial teeth (forged continuity +
+  tampered publics both rejected). Type-checks in isolation; heavy integration test blocked by the
+  contested lane's exec-lean breakage (named, not ours).
+- **dregg-genesis-snapshot** history leg DROPPED: the mock `history: IvcProof` a forger could mint himself
+  is gone; tamper-resistance rests on the voucher + re-addressing (where it actually lived). 5/5 tests pass,
+  consumer (dregg-season) updated, mock dep removed from Cargo.toml.
+- Ratchet re-verified PASSES with both baseline entries removed.
+
+REMAINING PURGE (mostly gated on the predicate-weld lane freeing handlers_verify/bridge-present/turn):
+- CONTESTED: `dregg_compress_history` (NEEDS-PLUMBING via finalized_turn_from_full_turn), `dregg_compose_proofs`
+  (RETIRE — verifies nothing), preflight/{proofs,composition,backends}, bridge/present.
+- HONEST-RETIRE: presentation.rs(21) + multi_step_witness + backends/mod.rs — dead but armed.
+- ENGINES LAST: circuit/src/ivc.rs(79) + constraint_prover.rs(17) — once nothing production rides them.
+Fable poll task (bixyxmfo6) waits on exec-lean to run the heavy sovereign test.
