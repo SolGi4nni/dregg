@@ -1500,3 +1500,20 @@ REMAINING PURGE (mostly gated on the predicate-weld lane freeing handlers_verify
 - HONEST-RETIRE: presentation.rs(21) + multi_step_witness + backends/mod.rs — dead but armed.
 - ENGINES LAST: circuit/src/ivc.rs(79) + constraint_prover.rs(17) — once nothing production rides them.
 Fable poll task (bixyxmfo6) waits on exec-lean to run the heavy sovereign test.
+
+### Purge progress (2026-07-16 pm) — predicate-weld lane PARTIALLY landed
+- `node/mcp/handlers_verify.rs`, `bridge/present.rs`, `turn/executor/membership_verifier.rs` are now CLEAN
+  (committed). But `authorize.rs` + `preflight/checks/proofs.rs` still dirty, and `dregg-exec-lean` STILL
+  breaks (`compute_signing_message` takes 3 args, 2 supplied — their in-flight signature change). So the
+  NODE crate cannot compile → the node-side purge (flagship `dregg_compress_history` + `dregg_compose_proofs`)
+  is code-workable (files clean) but NOT VERIFIABLE yet. Not writing node code I can't compile.
+- FLAGSHIP is otherwise unblocked: all its files (handlers_verify, blocklace_sync, rotation_witness,
+  dispatch, tools_def) are clean. The moment exec-lean compiles: persist `FinalizedTurn` (via
+  `finalized_turn_from_full_turn`) at `blocklace_sync.rs::execute_finalized_turn:4287` keyed by turn hash,
+  then `tool_compress_history` loads the real chain + `prove_turn_chain_recursive`. Clean pickup.
+- `dregg_compose_proofs` (verifies NOTHING, valid=true for every mode, handlers_verify.rs:459-462) — also
+  blocked on node compiling. HONEST-RETIRE when unblocked.
+- IN FLIGHT (Fable, uncontested — circuit+bridge compile independent of exec-lean): retire the DEAD-BUT-ARMED
+  presentation IVC mock (presentation.rs 21 + bridge/present 4 + multi_step 3 + backends 2 + the
+  IvcPresentationProof/IvcBuilder/IvcBackend surface in ivc.rs). Explicitly NOT deleting the core engine fns
+  (prove_ivc/verify_ivc/create_test_chain) — still ridden by the blocked node. Lowers the ratchet baseline.
