@@ -1,0 +1,60 @@
+# entity-compose — THE HOARDLIGHT SUBSTRATE, WIRED END TO END, GAME-FREE.
+#
+# A real ENTITY (a cell whose wide extended plane carries a bounded typed param
+# vector) + a param-compose proof that a named OUTCOME is the composition a
+# ruleset licenses over the entity's params + a state-welded turn through the
+# Door = a committed, verifiable outcome. Nothing dragon-specific: HOARDLIGHT's
+# creatures are ONE ruleset + content over this, not a fork.
+#
+# STANDALONE workspace (its own root — deliberately NOT a member of the repo-root
+# workspace; the main loop owns shared manifests and will fold it in later).
+# Path-deps into the tree are root-workspace members, so THEIR `workspace = true`
+# fields (edition/version, p3-*, dregg-* locals) resolve against the ROOT; this
+# manifest references none of them that way. `[patch.crates-io]` replicates only
+# the root patch this graph consumes — the `ark-serialize` serde-integration fork
+# that `dregg-hints` (pulled transitively by `dregg-circuit`) needs. The plonky3
+# recursion deps are direct git deps in the root `[workspace.dependencies]` (no
+# patch) and resolve via the path-dep'd circuit/circuit-prove crates' root
+# membership. Follows the `dregg-tui` standalone template.
+[workspace]
+members = ["."]
+resolver = "2"
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+
+[package]
+name = "dregg-entity-compose"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+license = "AGPL-3.0-or-later"
+publish = false
+description = "The HOARDLIGHT substrate wired end to end: a param-carrying entity (cell wide plane) whose params compose (dregg-param-compose) into a committed, state-welded outcome landed as a turn through the Custom-VK Door. Engine-general — no game content."
+
+[features]
+# The SLOW real-STARK leaf-prove path (`tests/leaf_prove.rs`). Off by default so the fast
+# substrate tests (`end_to_end`, `budget`) never pull the plonky3 recursion prover.
+#   cargo test -p dregg-entity-compose --features prove --test leaf_prove -- --ignored
+prove = ["dep:dregg-circuit-prove"]
+
+[dependencies]
+# The composition AIR: N typed subjects (identity + role + bounded params) composed
+# by a versioned ruleset (linear terms + nonlinear knots) into a committed outcome.
+dregg-param-compose = { path = "../param-compose" }
+# The BabyBear field + the Custom-VK door's state-binding ABI (the [old8 ‖ new8] prefix)
+# + the custom-leaf lowering the budget census measures.
+dregg-circuit = { path = "../circuit" }
+# The entity's home: a cell whose wide extended plane (SetField key >= 16 -> fields_map)
+# carries the params, and whose v9 chip commitment the Door welds.
+dregg-cell = { path = "../cell" }
+# The Door + executor: Effect::Custom reaches TurnExecutor::execute, passing the state weld.
+dregg-turn = { path = "../turn" }
+# SLOW prove path (feature `prove` only): the composition AIR proves as a real
+# commitment-exposing foldable leaf, bound to the entity's state.
+dregg-circuit-prove = { path = "../circuit-prove", optional = true }
+
+[dev-dependencies]
+blake3 = "1"
+postcard = { version = "1", features = ["alloc"] }
