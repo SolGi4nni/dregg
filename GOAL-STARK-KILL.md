@@ -1537,3 +1537,17 @@ builds → the flagship purge is live.** Two Fable agents now running on DISJOIN
 exec-lean is fixed, but two Fable agents are actively editing, so an rsync-based workspace sweep would be
 confounded by their WIP again (the same lesson as before: a remote sweep is only as clean as the tree).
 Re-run once both land + are committed.
+
+### `3388f5aef` — 3rd surface PURGED: the presentation IVC mock (DEAD BUT ARMED) — -626 lines
+`is_valid()` counted a MOCK `ivc_proof` as cryptographic backing and the mock rode the WIRE TYPE — a trap
+for the next caller. **Disarmed**: is_valid now rests solely on `real_stark_proof`. Deleted (each with a
+grep dead-proof): PresentationAir::prove_ivc/_no_folds · BridgePresentationBuilder::prove_ivc ·
+IvcPresentationProof(+verify) · the `ivc_proof` field on BOTH the presentation + wire types ·
+multi_step/presentation `prove_authorization` + AuthorizationProof · IvcBackend trait + IvcOutput + the
+backend enums + finalize_with_backend · the dead bench + 3 tests.
+WIRE DECISION reasoned: removing `ivc_proof` is SAFE (no sender ever set it — constant `None` byte; no
+golden vectors; endpoints version together; presentations are nonce-bound/ephemeral; mismatch fails CLOSED).
+CORE ENGINE untouched (node still rides it — retires last).
+RATCHET SHRANK: ivc 79->70 · presentation 21->11 · bridge/present 4->**0** · multi_step 3->**0** ·
+backends 2->**0**. Verified: circuit lib 673 passed, gate passes.
+**Purge scoreboard: 3 of 7 surfaces done (preflight-wired, genesis-dropped, presentation-retired).**
