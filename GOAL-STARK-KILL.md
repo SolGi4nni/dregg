@@ -1690,3 +1690,26 @@ own gate-run queued behind the swarm build lock (lane reported 23 passed / 6 ver
   ed25519 fix above.
 WHEN THEY LAND: gate each lane's fix, separate lanes (206 dirty files = commit surgically per subsystem),
 merge TESTQALOG, re-run srot on the quiet tree.
+
+### `bac9e2b95` — SECOND forgery-class fix: dregg-credentials default present+verify did ZERO crypto
+The PROMOTED production credential surface (re-exported by starbridge-apps/identity): present() shipped the
+`i_know_this_is_not_cryptographically_sound()` LocalOnly path as its DEFAULT while the doc promised "Full
+STARK cross-trust-boundary"; verify() waved LocalOnly through (gated on require_anonymous=false by Default).
+DEFAULT present→verify did ZERO crypto and returned VerifiedPresentation — mint-a-consistent-fake. Opus
+REWIRED to real STARK; verify() rejects LocalOnly unconditionally + requires is_valid(); unsafe path survives
+only behind explicit `present_local_only_unsafe`; the "30s cost" justification was stale (<1s). Tamper test
+was self-asserting theater — now asserts real rejection.
+
+### TWO forgery-class security fixes in one turn, both from the validation swarms
+`8258de1c8` (ed25519 non-strict) + `bac9e2b95` (credentials zero-crypto). Both mint-a-consistent-fake, both
+on real surfaces, both invisible to the existing (large) test suite, both caught by asking "what real break
+would this catch?" This IS ember's thesis: scale deceived, power was missing. Lane 1's honest summary: "the
+estate is strong at the CORE; the rot is SILENCE mechanics, not missing teeth."
+7 TESTQALOG entries and climbing; both swarms still live (holding the build lock — not contending). Gate the
+rest per-subsystem on completion; re-confirm both committed fixes' tests once the lock frees.
+
+### MORE from the swarms (read, not yet gated):
+- Lane 3: a fail-closed guard that never COMPILED + a gate named `peer_exchange` that never ran peer exchange.
+- mocks/deos-tui: the "Verify" tab called a RETIRED verifier (theater, failed SAFE-direction so it hid).
+- mocks/harnesses: a Lean faithfulness gate that could not be red — armed.
+- Lane 5: the crypto floor's 2 load-bearing constants were prose — rigged as algebraic invariants.
