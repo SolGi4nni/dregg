@@ -29,8 +29,13 @@ use dregg_teasting::agent::{SimAgent, shared_root_key};
 /// deserialized proof (and that it still rejects wrong public inputs).
 #[test]
 fn test_stark_proof_bytes_round_trip() {
-    use dregg_circuit::plonky3_prover::{
-        DreggProof, generate_sound_merkle_trace, prove_plonky3, verify_plonky3,
+    // Retargeted onto the LAW-#1 path: the Merkle membership algebra is the byte-pinned IR2
+    // descriptor emitted by `MerkleMembership4aryEmit.lean`, proved through the assured
+    // interpreter. (This test previously drove `plonky3_prover::{prove,verify}_plonky3`, the
+    // hand-authored `P3MerklePoseidon2Air` retired under law #1 — same inputs, same assertions.)
+    use dregg_circuit::field::BabyBear;
+    use dregg_circuit::merkle_air::{
+        MembershipP3Proof, membership_public_inputs, prove_membership_p3, verify_membership_p3,
     };
 
     // Build a Poseidon2-compatible Merkle path (depth 4).
@@ -47,77 +52,50 @@ fn test_stark_proof_bytes_round_trip() {
         ]);
     }
 
-    // Generate the trace; public inputs are [leaf, root].
-    let (trace, public_inputs) = generate_sound_merkle_trace(leaf_hash, &siblings, &positions);
-    assert_eq!(public_inputs[0], leaf_hash);
+    // The public inputs the descriptor pins: [leaf, root].
+    let pis = membership_public_inputs(leaf_hash, &siblings, &positions)
+        .expect("witness must yield public inputs");
+    assert_eq!(pis[0], leaf_hash);
 
-    // Generate a real STARK proof.
-    let proof = prove_plonky3(&trace, &public_inputs);
+    // Prove membership through the Lean-emitted descriptor.
+    let proof = prove_membership_p3(leaf_hash, &siblings, &positions)
+        .expect("honest membership witness must prove");
 
-    // Serialize to bytes (simulates wire transmission).
+    // Serialize to bytes (simulates wire transmission) and recover.
     let bytes = postcard::to_allocvec(&proof).expect("STARK proof should serialize");
     assert!(!bytes.is_empty(), "Serialized proof should be non-empty");
-
-    // Deserialize from bytes.
-    let recovered: DreggProof =
+    let recovered: MembershipP3Proof =
         postcard::from_bytes(&bytes).expect("STARK proof should deserialize");
 
-    // Verify the recovered proof using the same public inputs.
-    let result = verify_plonky3(&recovered, &public_inputs);
-    assert!(
-        result.is_ok(),
-        "Deserialized STARK proof should verify: {:?}",
-        result.err()
-    );
+    // The deserialized proof must still verify against the honest public inputs.
+    verify_membership_p3(&recovered, &pis).expect("deserialized STARK proof should verify");
 
-    // The deserialized proof must still bind its public inputs: wrong root fails.
-    let wrong_pis = vec![public_inputs[0], BabyBear::new(0xBAD)];
+    // ... and must still REJECT forged public inputs (the wrong-PI tooth this test exists for).
+    let wrong_leaf = vec![BabyBear::new(0xBAD), pis[1]];
     assert!(
-        verify_plonky3(&recovered, &wrong_pis).is_err(),
-        "Deserialized proof must reject wrong public inputs"
+        verify_membership_p3(&recovered, &wrong_leaf).is_err(),
+        "a proof must NOT verify against a forged leaf"
+    );
+    let wrong_root = vec![pis[0], BabyBear::new(0xBAD)];
+    assert!(
+        verify_membership_p3(&recovered, &wrong_root).is_err(),
+        "a proof must NOT verify against a forged root"
     );
 }
 
-/// Presentation proof: full bridge proof survives postcard serialization.
-///
-/// NOTE: This test documents a known serialization gap: the WirePresentationProof
-/// may fail to round-trip via postcard due to nested proof field layout.
-/// If this test fails with DeserializeUnexpectedEnd, that's a real wire protocol bug
-/// that needs fixing (the prover and verifier disagree on the binary format).
-#[test]
-fn test_presentation_proof_round_trip() {
-    let mut alice = SimAgent::new("Alice");
-    let root_key = shared_root_key("roundtrip-svc");
-    let root_token = alice.mint_token_with_key(&root_key, "roundtrip");
-
-    let request = AuthRequest {
-        service: Some("roundtrip".into()),
-        action: Some("r".into()),
-        ..Default::default()
-    };
-
-    // Generate a full presentation proof.
-    let proof = alice.prove_authorization(&root_token, &request).unwrap();
-    assert!(proof.is_valid());
-
-    // Convert to wire format (this is what gets transmitted over the network).
-    let wire_proof = proof.into_wire_proof();
-
-    // Serialize the wire proof.
-    let bytes = postcard::to_allocvec(&wire_proof).expect("wire proof serializes");
-
-    // Deserialize the wire proof.
-    let recovered: dregg_bridge::WirePresentationProof =
-        postcard::from_bytes(&bytes).expect("wire proof deserializes");
-
-    // Verify the recovered proof's STARK issuer membership proof.
-    let real_stark = recovered
-        .real_stark_proof
-        .as_ref()
-        .expect("recovered proof should have real STARK proof");
-    assert_eq!(
-        real_stark.verify(),
-        dregg_circuit::PresentationVerification::Valid,
-        "Recovered STARK proof should verify after round-trip"
-    );
-}
+// RETIRED (2026-07-16): `test_presentation_proof_round_trip` targeted the API of the RETIRED
+// `dregg_circuit::RealPresentationProof` — it called `real_stark.verify() ->
+// PresentationVerification::Valid`, but the live `bridge::present::RealPresentationProof`
+// (`bridge/src/present.rs:153`, which "replaced the retired dregg_circuit::RealPresentationProof"
+// per its own docstring at :146) exposes only `total_proof_size_bytes`/`proof_size_display`;
+// verification moved to the free fn `verify_presentation_full(&BridgePresentationProof,
+// federation_root, expected_action, now, max_proof_age)`. So the test could not compile and
+// therefore documented NOTHING — it was a comment wearing a #[test] hat, and it kept this whole
+// file (including the STARK round-trip below/above) out of the build.
+//
+// ITS INTENT IS WORTH KEEPING and is recorded as a named residual in GOAL-STARK-KILL.md
+// (`PresentationRoundTripResidual`): it asserted that a full bridge presentation proof survives
+// postcard serialization, and was written to catch `DeserializeUnexpectedEnd` — "a real wire
+// protocol bug (the prover and verifier disagree on the binary format)". Re-landing it means
+// porting to `BridgePresentationProof` + `verify_presentation_full`. Related live coverage:
+// `tests/src/wire_format_e2e.rs` (the presentation wire format e2e).
