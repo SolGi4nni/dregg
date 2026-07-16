@@ -59,7 +59,10 @@ pub struct AuthContext<'a> {
     /// The action's position in the call forest (root index). Used only for
     /// `CommitmentMode::Partial` signing.
     pub forest_position: usize,
-    /// The turn nonce. Used only for `CommitmentMode::Partial` signing.
+    /// The turn nonce of the SUBMITTING turn (`agent.state.nonce()` at commit
+    /// time). Bound into BOTH `CommitmentMode::Full` and
+    /// `CommitmentMode::Partial` signing messages (replay closure — the
+    /// executor recomputes the message over `turn.nonce`).
     pub turn_nonce: u64,
 }
 
@@ -116,9 +119,11 @@ impl Authorizer for SignedAuthorizer {
         use ed25519_dalek::Signer;
 
         let message = match ctx.action.commitment_mode {
-            CommitmentMode::Full => {
-                TurnExecutor::compute_signing_message(ctx.action, &ctx.federation_id)
-            }
+            CommitmentMode::Full => TurnExecutor::compute_signing_message(
+                ctx.action,
+                &ctx.federation_id,
+                ctx.turn_nonce,
+            ),
             CommitmentMode::Partial => TurnExecutor::compute_partial_signing_message(
                 ctx.action,
                 ctx.forest_position,

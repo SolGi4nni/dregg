@@ -111,11 +111,16 @@ pub(super) fn build_forest_with_effects(
 /// produced by `cipherclerk.sign_bytes` against `TurnExecutor::compute_signing_message`
 /// in Full commitment mode using the executor's default federation id
 /// (`[0u8; 32]`) — which matches `TurnExecutor::new(...).local_federation_id`.
+///
+/// `turn_nonce` must be the nonce the enclosing turn is submitted under
+/// (`dregg-action-sig-v3` binds it into the signing message; callers here
+/// stamp `turn.nonce = cclerk.receipt_chain_length()`).
 pub(super) fn build_signed_forest(
     target: CellId,
     effects: Vec<dregg_turn::Effect>,
     cclerk: &dregg_sdk::AgentCipherclerk,
     federation_id: &[u8; 32],
+    turn_nonce: u64,
 ) -> CallForest {
     let mut action = dregg_turn::Action {
         target,
@@ -132,7 +137,7 @@ pub(super) fn build_signed_forest(
     // Compute the canonical signing message and replace Unchecked with
     // Authorization::Signature so cells with `delegate: Signature` accept
     // the action.
-    let msg = dregg_turn::TurnExecutor::compute_signing_message(&action, federation_id);
+    let msg = dregg_turn::TurnExecutor::compute_signing_message(&action, federation_id, turn_nonce);
     let sig = cclerk.sign_bytes(&msg);
     let mut r = [0u8; 32];
     let mut s = [0u8; 32];

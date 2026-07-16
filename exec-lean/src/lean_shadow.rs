@@ -2138,6 +2138,7 @@ fn sig_echo_wire(
         CommitmentMode::Full => dregg_turn::executor::TurnExecutor::compute_signing_message(
             action,
             &sig_ctx.federation_id,
+            sig_ctx.turn_nonce,
         ),
     };
 

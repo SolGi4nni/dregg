@@ -167,6 +167,14 @@ impl AppCipherclerk {
         self.read().sign_action(action, &self.federation_id)
     }
 
+    /// The turn nonce the next submitted turn will carry (the underlying
+    /// cipherclerk's receipt-chain length) — the value [`Self::sign_action`]
+    /// binds into the signature (`dregg-action-sig-v3`). Verifiers of a
+    /// framework-signed action recompute the signing message over this nonce.
+    pub fn next_turn_nonce(&self) -> u64 {
+        self.read().next_turn_nonce()
+    }
+
     /// Wrap a signed [`Action`] in a [`Turn`] ready for submission.
     ///
     /// The Turn's `agent` is `self.cell_id()`, `previous_receipt_hash` is
@@ -551,6 +559,27 @@ impl EmbeddedExecutor {
             turn.fee = 10_000;
         }
         turn.nonce = rt.nonce();
+        // dregg-action-sig-v3 binds the SUBMITTING turn's nonce into every
+        // Full-commitment action signature. App clerks sign at build time over
+        // their next-turn nonce (the receipt-chain length), which can LAG the
+        // live replay counter stamped above: the executor's Phase-1 fee+nonce
+        // commit is never rolled back, so a REFUSED turn still burns an
+        // on-ledger nonce without growing the receipt chain. Repair EXACTLY
+        // the signatures this identity's own clerk produced over that stale
+        // nonce (`resign_full_commitment_at` verifies ownership before
+        // re-signing) — foreign or adversarial authorizations are never
+        // rewritten.
+        {
+            let clerk = rt.cipherclerk().read().unwrap_or_else(|e| e.into_inner());
+            let stale_nonce = clerk.next_turn_nonce();
+            let live_nonce = turn.nonce;
+            if stale_nonce != live_nonce {
+                let fed = rt.local_federation_id();
+                for root in &mut turn.call_forest.roots {
+                    resign_own_stale_signatures(&clerk, &fed, stale_nonce, live_nonce, root);
+                }
+            }
+        }
         let receipt = rt
             .execute_turn(&turn)
             .map_err(|e| ExecutorSubmitError(e.to_string()))?;
@@ -573,6 +602,28 @@ impl EmbeddedExecutor {
     ) -> Result<TurnReceipt, ExecutorSubmitError> {
         let turn = cipherclerk.make_turn(action);
         self.submit_turn(&turn)
+    }
+}
+
+/// Walk a call tree re-signing every action whose Full-commitment
+/// authorization is PROVABLY `clerk`'s own signature over `stale_nonce`
+/// (see [`AgentCipherclerk::resign_full_commitment_at`] — ownership is
+/// verified before any rewrite, so foreign/adversarial signatures pass
+/// through untouched).
+fn resign_own_stale_signatures(
+    clerk: &AgentCipherclerk,
+    federation_id: &[u8; 32],
+    stale_nonce: u64,
+    live_nonce: u64,
+    tree: &mut dregg_turn::forest::CallTree,
+) {
+    if let Some(resigned) =
+        clerk.resign_full_commitment_at(&tree.action, federation_id, stale_nonce, live_nonce)
+    {
+        tree.action = resigned;
+    }
+    for child in &mut tree.children {
+        resign_own_stale_signatures(clerk, federation_id, stale_nonce, live_nonce, child);
     }
 }
 

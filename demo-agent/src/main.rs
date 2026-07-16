@@ -226,7 +226,11 @@ fn main() {
             value: result_hash,
         })
         .build();
-    let signing_message = TurnExecutor::compute_signing_message(&unsigned_action, &federation_id);
+    // Turn nonce 0: the turn below is built as `TurnBuilder::new(agent_id, 0)`
+    // (the agent cell's first turn), and dregg-action-sig-v3 binds the
+    // submitting turn's nonce into the signature.
+    let signing_message =
+        TurnExecutor::compute_signing_message(&unsigned_action, &federation_id, 0);
     let signature: [u8; 64] = agent_sk.sign(&signing_message).to_bytes();
 
     item("  Action: SetField(target, slot=0, computation_result)");

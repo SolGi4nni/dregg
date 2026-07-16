@@ -6,7 +6,7 @@
 //! human-readable spec in its `args`, and signed with the poster's real Ed25519
 //! key through the canonical `AppCipherclerk::sign_action` path. The
 //! authorization is a real `Authorization::Signature` over
-//! `TurnExecutor::compute_signing_message(action, federation_id)` — NOT a mock
+//! `TurnExecutor::compute_signing_message(action, federation_id, turn_nonce)` — NOT a mock
 //! string. Anyone can verify the signature against the poster's public key.
 //!
 //! # Why a signed Action, not `dregg_intent::Intent`
@@ -32,6 +32,11 @@ pub struct SignedIntent {
     pub poster_pk: [u8; 32],
     /// The federation id the signature is bound to.
     pub federation_id: [u8; 32],
+    /// The turn nonce the signature is bound to (`dregg-action-sig-v3`): the
+    /// poster's next submitting-turn nonce at sign time
+    /// (`AppCipherclerk::next_turn_nonce`). Verifiers recompute the signing
+    /// message over exactly this value.
+    pub turn_nonce: u64,
     /// The human-readable spec, echoed for display.
     pub spec: String,
 }
@@ -50,6 +55,10 @@ pub fn build_signed_intent(cclerk: &AppCipherclerk, spec: &str) -> SignedIntent 
     let spec_hash = *blake3::hash(spec.as_bytes()).as_bytes();
     let mut action = cclerk.make_action(target, "intent.post", Vec::new());
     action.args = vec![spec_hash];
+    // The nonce `sign_action` binds into the signature (dregg-action-sig-v3):
+    // the poster's next submitting-turn nonce. Captured here so verifiers can
+    // recompute the exact signing message.
+    let turn_nonce = cclerk.next_turn_nonce();
     // Re-sign now that args carry the spec hash (make_action signed the empty form).
     let action = cclerk.sign_action(action);
 
@@ -57,6 +66,7 @@ pub fn build_signed_intent(cclerk: &AppCipherclerk, spec: &str) -> SignedIntent 
         action,
         poster_pk: cclerk.public_key().0,
         federation_id: *cclerk.federation_id(),
+        turn_nonce,
         spec: spec.to_string(),
     }
 }
@@ -64,7 +74,12 @@ pub fn build_signed_intent(cclerk: &AppCipherclerk, spec: &str) -> SignedIntent 
 /// Verify a signed intent's Ed25519 authorization against the poster's public
 /// key. This is the canonical check the node executor performs.
 pub fn verify_signed_intent(intent: &SignedIntent) -> bool {
-    verify_action_signature(&intent.action, &intent.poster_pk, &intent.federation_id)
+    verify_action_signature(
+        &intent.action,
+        &intent.poster_pk,
+        &intent.federation_id,
+        intent.turn_nonce,
+    )
 }
 
 /// Canonical Ed25519 verification of a signed action — classical
@@ -72,7 +87,7 @@ pub fn verify_signed_intent(intent: &SignedIntent) -> bool {
 /// the framework signing path emits since the hybrid flip.
 ///
 /// Verifies the ed25519 signature against
-/// `compute_signing_message(action, federation_id)` — exactly as
+/// `compute_signing_message(action, federation_id, turn_nonce)` — exactly as
 /// `dregg_turn`'s executor does, using `dregg_types::PublicKey::verify`
 /// (`verify_strict` under the hood, rejecting malleable signatures). For the
 /// hybrid variant it mirrors the executor's fail-closed rule: a
@@ -81,6 +96,7 @@ pub fn verify_action_signature(
     action: &Action,
     signer_pk: &[u8; 32],
     federation_id: &[u8; 32],
+    turn_nonce: u64,
 ) -> bool {
     use dregg_turn::executor::TurnExecutor;
     use dregg_types::{PublicKey, Signature};
@@ -100,7 +116,7 @@ pub fn verify_action_signature(
         _ => return false,
     };
 
-    let message = TurnExecutor::compute_signing_message(action, federation_id);
+    let message = TurnExecutor::compute_signing_message(action, federation_id, turn_nonce);
     if !PublicKey(*signer_pk).verify(&message, &Signature(sig_bytes)) {
         return false;
     }

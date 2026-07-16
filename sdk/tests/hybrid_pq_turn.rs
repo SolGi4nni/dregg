@@ -41,12 +41,13 @@ fn sign_action_produces_verifiable_hybrid() {
         other => panic!("sign_action must produce a HybridSignature, got {other:?}"),
     };
 
-    // Both halves cover the SAME compute_signing_message.
+    // Both halves cover the SAME compute_signing_message (over the same
+    // next-turn nonce `sign_action` bound).
     let unsigned = Action {
         authorization: Authorization::Unchecked,
         ..signed.clone()
     };
-    let msg = TurnExecutor::compute_signing_message(&unsigned, &fed);
+    let msg = TurnExecutor::compute_signing_message(&unsigned, &fed, cclerk.next_turn_nonce());
     // Classical half verifies against the clerk's ed25519 identity.
     assert!(cclerk.public_key().verify(&msg, &Signature(ed25519)));
     // Post-quantum half is present and verifies against the carried pk.
@@ -213,12 +214,13 @@ fn anti_strip_binding_preserved_pq_material_is_bound() {
     );
 
     // (3) The genuine hybrid still verifies end-to-end (no soundness regression):
-    // both halves cover compute_signing_message over the unsigned action.
+    // both halves cover compute_signing_message over the unsigned action (and
+    // the same next-turn nonce `sign_action` bound).
     let unsigned = Action {
         authorization: Authorization::Unchecked,
         ..signed.clone()
     };
-    let msg = TurnExecutor::compute_signing_message(&unsigned, &fed);
+    let msg = TurnExecutor::compute_signing_message(&unsigned, &fed, cclerk.next_turn_nonce());
     assert!(cclerk.public_key().verify(&msg, &Signature(ed25519)));
     assert!(dregg_turn::pq::ml_dsa_verify(&ml_dsa_pk, &msg, &ml_dsa));
 }

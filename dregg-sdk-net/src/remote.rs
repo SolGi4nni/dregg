@@ -19,9 +19,11 @@
 //!    solo node binds `blake3(operator pubkey)` rather than the placeholder
 //!    its `/api/federations` serves.
 //!  * **nonce / receipt-chain head** — the turn rides the agent cell's live
-//!    replay counter and the node's committed receipt head (causal binding);
-//!    a race with another commit is retried once with fresh bindings (the
-//!    per-action signature stays valid; only the envelope is re-signed).
+//!    replay counter (fetched at SIGN time: `dregg-action-sig-v3` binds the
+//!    turn nonce into the per-action signature) and the node's committed
+//!    receipt head (causal binding); a chain-head race with another commit is
+//!    retried once with a fresh head (only the envelope is re-signed), while
+//!    a nonce race invalidates the action signature and requires re-signing.
 //!
 //! Every turn is stamped with a `valid_until` horizon BEFORE the envelope is
 //! signed. This is load-bearing beyond expiry: the verified Lean producer's
@@ -293,12 +295,17 @@ impl RemoteRuntime {
     /// Sign `unsigned` over the canonical federation-bound signing message
     /// with this identity's key — the remote twin of the local runtime's
     /// `sign_action_for_runtime` (the ONLY way an action leaves this runtime).
-    fn sign_action(&self, unsigned: Action, federation_id: &[u8; 32]) -> Action {
+    ///
+    /// `turn_nonce` must be the nonce the submitted turn will carry (the
+    /// agent cell's live replay counter) — `dregg-action-sig-v3` binds it
+    /// into the signing message, so the envelope's `turn.nonce` and the
+    /// action signature must agree or the node's executor rejects.
+    fn sign_action(&self, unsigned: Action, federation_id: &[u8; 32], turn_nonce: u64) -> Action {
         let unsigned = Action {
             authorization: Authorization::Unchecked,
             ..unsigned
         };
-        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id);
+        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id, turn_nonce);
         let sig = self.cipherclerk.sign_bytes(&message);
         Action {
             authorization: Authorization::from_sig_bytes(sig.0),
@@ -404,7 +411,29 @@ impl<'rt> RemoteTurnBuilder<'rt> {
     /// federation-bound signing message, yielding a [`RemoteAuthorizedTurn`]
     /// ready to [`submit`](RemoteAuthorizedTurn::submit). After this point the
     /// act is credentialed; there is no way back to an unauthorized shape.
+    ///
+    /// The signature binds the turn nonce (`dregg-action-sig-v3`), so this
+    /// fetches the agent cell's live replay counter from the node and signs
+    /// over it; [`RemoteAuthorizedTurn::submit`] rides EXACTLY that nonce. If
+    /// another commit advances the counter between sign and submit, the node
+    /// rejects and the caller must re-sign (see [`Self::sign_at`] to supply a
+    /// known nonce without the network round-trip).
     pub async fn sign(self) -> Result<RemoteAuthorizedTurn<'rt>, SdkError> {
+        if self.effects.is_empty() {
+            return Err(SdkError::Rejected(
+                "refusing to sign an empty turn (no effects staged)".to_string(),
+            ));
+        }
+        let turn_nonce = self.runtime.current_nonce().await?;
+        self.sign_at(turn_nonce).await
+    }
+
+    /// [`Self::sign`] with an explicitly supplied turn nonce — for callers
+    /// that already know the agent cell's current replay counter (offline
+    /// signing, or batching against a locally tracked nonce). The signature
+    /// is bound to `turn_nonce` and [`RemoteAuthorizedTurn::submit`] rides
+    /// it; a stale value is rejected by the node's executor.
+    pub async fn sign_at(self, turn_nonce: u64) -> Result<RemoteAuthorizedTurn<'rt>, SdkError> {
         if self.effects.is_empty() {
             return Err(SdkError::Rejected(
                 "refusing to sign an empty turn (no effects staged)".to_string(),
@@ -413,10 +442,13 @@ impl<'rt> RemoteTurnBuilder<'rt> {
         let federation_id = self.runtime.federation_id().await?;
         let target = self.acting_cell();
         let unsigned = raw::unsigned_action_named(target, &self.method, self.effects);
-        let action = self.runtime.sign_action(unsigned, &federation_id);
+        let action = self
+            .runtime
+            .sign_action(unsigned, &federation_id, turn_nonce);
         Ok(RemoteAuthorizedTurn {
             runtime: self.runtime,
             action,
+            turn_nonce,
             fee: self.fee.unwrap_or(DEFAULT_REMOTE_FEE),
             submitted: false,
         })
@@ -428,6 +460,9 @@ impl<'rt> RemoteTurnBuilder<'rt> {
 pub struct RemoteAuthorizedTurn<'rt> {
     runtime: &'rt RemoteRuntime,
     action: Action,
+    /// The turn nonce the action signature is bound to (`dregg-action-sig-v3`);
+    /// `submit` rides exactly this value.
+    turn_nonce: u64,
     fee: u64,
     submitted: bool,
 }
@@ -473,11 +508,14 @@ impl RemoteAuthorizedTurn<'_> {
         }
     }
 
-    /// Build the turn envelope with live node bindings (nonce, receipt-chain
-    /// head, `valid_until` horizon), envelope-sign it, and submit. A chain-head
-    /// race (another commit landing between read and submit) is retried once
-    /// with fresh bindings — the per-action signature stays valid; only the
-    /// envelope is re-signed. One-shot.
+    /// Build the turn envelope with live node bindings (receipt-chain head,
+    /// `valid_until` horizon) around the SIGNED nonce, envelope-sign it, and
+    /// submit. The turn nonce is the one the action signature was bound to at
+    /// [`RemoteTurnBuilder::sign`] time (`dregg-action-sig-v3`) — it cannot be
+    /// rebound here. A chain-HEAD race (another commit landing between read
+    /// and submit) is retried once with a fresh head — only the envelope is
+    /// re-signed; a NONCE race invalidates the action signature itself, so it
+    /// surfaces as a rejection and the caller must re-sign. One-shot.
     pub async fn submit(mut self) -> Result<RemoteReceipt, SdkError> {
         if self.submitted {
             return Err(SdkError::Rejected(
@@ -488,9 +526,8 @@ impl RemoteAuthorizedTurn<'_> {
 
         let mut last_error = String::new();
         for attempt in 0..2 {
-            let nonce = self.runtime.current_nonce().await?;
             let previous_receipt_hash = self.runtime.receipt_chain_head().await?;
-            let turn = self.build_turn(nonce, previous_receipt_hash);
+            let turn = self.build_turn(self.turn_nonce, previous_receipt_hash);
             let resp = self.runtime.submit_envelope(&turn).await?;
             if resp.accepted {
                 return Ok(RemoteReceipt {
@@ -500,10 +537,9 @@ impl RemoteAuthorizedTurn<'_> {
             last_error = resp
                 .error
                 .unwrap_or_else(|| "node refused the turn".to_string());
-            let racy = last_error.contains("receipt chain mismatch")
-                || last_error.to_ascii_lowercase().contains("nonce");
+            let racy = last_error.contains("receipt chain mismatch");
             if attempt == 0 && racy {
-                continue; // a racing commit moved the bindings; rebind once
+                continue; // a racing commit moved the chain head; rebind once
             }
             break;
         }
@@ -593,7 +629,7 @@ mod tests {
                 .transfer(other, 42)
                 .write_u64(3, 77)
                 .increment_nonce()
-                .sign(),
+                .sign_at(0),
         )
         .expect("sign");
 
@@ -633,7 +669,7 @@ mod tests {
                 .turn()
                 .on(target)
                 .transfer(CellId([6u8; 32]), 1)
-                .sign(),
+                .sign_at(0),
         )
         .expect("sign");
         assert_eq!(authorized.action().target, target);
@@ -649,7 +685,7 @@ mod tests {
     fn signed_action_verifies_over_the_federation_bound_message() {
         let runtime = offline_runtime();
         let authorized =
-            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign_at(0)).expect("sign");
         let action = authorized.action();
 
         let Authorization::Signature(r, s) = &action.authorization else {
@@ -668,7 +704,7 @@ mod tests {
             authorization: Authorization::Unchecked,
             ..action.clone()
         };
-        let message = TurnExecutor::compute_signing_message(&unsigned, &TEST_FED);
+        let message = TurnExecutor::compute_signing_message(&unsigned, &TEST_FED, 0);
         let pk = runtime.cipherclerk.public_key();
         assert!(
             pk.verify(&message, &Signature(sig)),
@@ -677,7 +713,7 @@ mod tests {
 
         // Cross-federation replay refuses: the same signature under a
         // DIFFERENT federation id must not verify.
-        let foreign = TurnExecutor::compute_signing_message(&unsigned, &[8u8; 32]);
+        let foreign = TurnExecutor::compute_signing_message(&unsigned, &[8u8; 32], 0);
         assert!(
             !pk.verify(&foreign, &Signature(sig)),
             "signature must be federation-bound"
@@ -690,7 +726,7 @@ mod tests {
     fn build_turn_stamps_valid_until_and_bindings() {
         let runtime = offline_runtime();
         let authorized =
-            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign_at(0)).expect("sign");
 
         let prev = Some([0xCD; 32]);
         let before = now_secs();
@@ -727,7 +763,7 @@ mod tests {
     fn envelope_tamper_fails_the_node_ingress_predicate() {
         let runtime = offline_runtime();
         let authorized =
-            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign_at(0)).expect("sign");
         let turn = authorized.build_turn(0, None);
 
         let signed = runtime.cipherclerk.sign_turn(&turn);
@@ -753,7 +789,7 @@ mod tests {
     fn submit_is_one_shot() {
         let runtime = offline_runtime();
         let mut authorized =
-            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign()).expect("sign");
+            poll_ready(runtime.turn().transfer(CellId([9u8; 32]), 5).sign_at(0)).expect("sign");
         authorized.submitted = true;
         let err = poll_ready(authorized.submit()).expect_err("second submit must refuse");
         assert!(

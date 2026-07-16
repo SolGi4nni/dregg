@@ -9690,7 +9690,10 @@ mod tests {
             balance_change: None,
             witness_blobs: vec![],
         };
-        let message = dregg_turn::TurnExecutor::compute_signing_message(&unsigned, &fed_id);
+        // Bound to the turn nonce below (`nonce: 0` — the faucet-born agent
+        // cell's first turn): dregg-action-sig-v3 binds the submitting turn's
+        // nonce into the signature.
+        let message = dregg_turn::TurnExecutor::compute_signing_message(&unsigned, &fed_id, 0);
         let sig = clerk.sign_bytes(&message);
         let action = Action {
             authorization: Authorization::from_sig_bytes(sig.0),

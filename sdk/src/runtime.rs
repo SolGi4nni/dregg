@@ -529,6 +529,12 @@ impl AgentRuntime {
         self.executor.set_local_federation_id(id);
     }
 
+    /// The federation id the embedded executor verifies action signatures
+    /// against (see [`Self::set_local_federation_id`]).
+    pub fn local_federation_id(&self) -> [u8; 32] {
+        self.executor.local_federation_id
+    }
+
     /// Set the block height the embedded executor evaluates time-gated
     /// program constraints against (`TemporalGate` and friends, via
     /// `EvalContext.block_height`).
@@ -650,11 +656,23 @@ impl AgentRuntime {
     /// to `Unchecked`) the SDK cipherclerk uses. This makes every AgentRuntime
     /// turn carry the post-quantum half, so the runtime path is `require_pq`-
     /// acceptable rather than a live classical-only producer.
-    pub(crate) fn sign_action_for_runtime(&self, unsigned: Action) -> Action {
+    ///
+    /// `turn_nonce` must be the nonce the submitted turn will carry
+    /// (`dregg-action-sig-v3` binds it into the signing message): the
+    /// runtime's own counter for agent turns
+    /// ([`Self::next_agent_turn_nonce`]), or the CELL's on-ledger replay
+    /// counter for cell-agent turns (`execute_as`).
+    pub(crate) fn sign_action_for_runtime(&self, unsigned: Action, turn_nonce: u64) -> Action {
         self.cipherclerk
             .read()
             .unwrap_or_else(|e| e.into_inner())
-            .sign_action_hybrid(unsigned, &self.executor.local_federation_id)
+            .sign_action_hybrid(unsigned, &self.executor.local_federation_id, turn_nonce)
+    }
+
+    /// The nonce the next AGENT turn will be submitted under — the value
+    /// `submit_signed_action_as_agent` draws from the runtime counter.
+    pub(crate) fn next_agent_turn_nonce(&self) -> u64 {
+        *self.nonce.lock().unwrap()
     }
 
     /// Submit a SIGNED root action as an ordinary agent turn: this agent
@@ -799,11 +817,10 @@ impl AgentRuntime {
     #[must_use = "dropping the TurnReceipt silently discards proof of execution"]
     pub fn execute(&self, effects: Vec<Effect>) -> Result<TurnReceipt, SdkError> {
         // Sign before acquiring the ledger lock since signing is pure.
-        let action = self.sign_action_for_runtime(raw::unsigned_action_named(
-            self.cell_id,
-            "execute",
-            effects,
-        ));
+        let action = self.sign_action_for_runtime(
+            raw::unsigned_action_named(self.cell_id, "execute", effects),
+            self.next_agent_turn_nonce(),
+        );
         self.submit_signed_action_as_agent(action, 10_000)
     }
 
@@ -832,8 +849,23 @@ impl AgentRuntime {
         effects: Vec<Effect>,
         fee: u64,
     ) -> Result<TurnReceipt, SdkError> {
-        let action =
-            self.sign_action_for_runtime(raw::unsigned_action_named(cell, "execute", effects));
+        // The signature binds the turn nonce (`dregg-action-sig-v3`), and a
+        // cell-agent turn rides the CELL's on-ledger replay counter — read it
+        // fresh, sign over it, then submit (which re-reads the same counter).
+        let turn_nonce = {
+            let ledger = self.ledger.lock().unwrap();
+            ledger
+                .get(&cell)
+                .ok_or(SdkError::Turn(dregg_turn::TurnError::CellNotFound {
+                    id: cell,
+                }))?
+                .state
+                .nonce()
+        };
+        let action = self.sign_action_for_runtime(
+            raw::unsigned_action_named(cell, "execute", effects),
+            turn_nonce,
+        );
         self.submit_signed_action_as_cell(cell, action, fee)
     }
 
@@ -854,8 +886,10 @@ impl AgentRuntime {
         target: CellId,
         effects: Vec<Effect>,
     ) -> Result<TurnReceipt, SdkError> {
-        let action =
-            self.sign_action_for_runtime(raw::unsigned_action_named(target, "execute", effects));
+        let action = self.sign_action_for_runtime(
+            raw::unsigned_action_named(target, "execute", effects),
+            self.next_agent_turn_nonce(),
+        );
         self.submit_signed_action_as_agent(action, 10_000)
     }
 
@@ -1642,7 +1676,8 @@ mod runtime_signer_hybrid_tests {
             "execute",
             vec![Effect::IncrementNonce { cell: rt.cell_id() }],
         );
-        let signed = rt.sign_action_for_runtime(unsigned);
+        let turn_nonce = rt.next_agent_turn_nonce();
+        let signed = rt.sign_action_for_runtime(unsigned, turn_nonce);
 
         let (ed25519, ml_dsa, ml_dsa_pk) = match &signed.authorization {
             Authorization::HybridSignature {
@@ -1658,7 +1693,11 @@ mod runtime_signer_hybrid_tests {
             authorization: Authorization::Unchecked,
             ..signed.clone()
         };
-        let msg = TurnExecutor::compute_signing_message(&zeroed, &rt.executor.local_federation_id);
+        let msg = TurnExecutor::compute_signing_message(
+            &zeroed,
+            &rt.executor.local_federation_id,
+            turn_nonce,
+        );
         let pk = rt
             .cipherclerk
             .read()
