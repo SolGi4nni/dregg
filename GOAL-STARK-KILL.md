@@ -677,8 +677,21 @@ deployed bytes are one artifact. That is why law #1 says EMIT, not LOWER.
    only the Rust-authored CIRCUIT (`derivation_circuit_descriptor`/`derivation_dsl_circuit`), still
    consumed by `derivation_air.rs:372` + `dsl/descriptors.rs:734`. **Unit = point those two at the emitted
    descriptor; KEEP the trace generator** (trace-gen is legitimate Rust; the constraints are not).
-3. **Fix the fictions**: `Claims.lean:383` false-cognate ("algebraic ConstraintExpr circuits emit
-   faithfully" — different grammar + DEAD target); mark `EmittedDescriptor`/`LeanDescriptorAir` retired.
+3. ✅ **DONE `59a601aab` — the fictions are dead.** `Claims.lean` §23 carries a SCOPE note (CircuitEmit
+   proves its OWN grammar on the DEAD IR-v1 rail; NOT the Rust DSL's `ConstraintExpr`; `#assert_namespace_
+   axioms` checks axiom hygiene only — which is how it survived). Dead rail marked at BOTH ends
+   (`lean_descriptor_air.rs` "RETIRED / IR-v1", `Exec/CircuitEmit.lean` "DEAD IR-v1 RAIL"). Verified: lake
+   build Dregg2 9697 jobs green + cargo check green.
+
+### NEXT 3 (rolling)
+1. **Derivation cutover** — point `derivation_air.rs:372` + `dsl/descriptors.rs:734` off
+   `dsl::derivation::derivation_circuit_descriptor()` (Rust-authored constraints) onto the emitted
+   `dregg-derivation-v1` (`DerivationEmit.lean`, live via `derivation_witness.rs`). KEEP
+   `generate_derivation_trace_dsl` (trace-gen is legit Rust).
+2. **`ivc.rs::StateTransitionAir`** — its emitter (`dregg-ivc-state-transition-v2`) EXISTS and round-trips
+   in 2 tests but NO production path consumes it. Pure Merkle-mold cutover.
+3. **`garbled_air.rs`** (16 sites, closure dialect) — `GarbledEvalEmit.lean` exists; check coverage before
+   moving (learn from the non-rev depth trap: verify the emitter COVERS the deployed shape first).
 
 ### NAMED RESIDUALS (do NOT hand-author)
 - `ivc_turn_chain.rs` (14 sites): **no emitter covers it** — needs `EffectVmEmitTurnChainBinding.lean`
