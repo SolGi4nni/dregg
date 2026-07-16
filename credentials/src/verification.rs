@@ -5,7 +5,10 @@
 //! (which schema? what disclosure must be present? what predicates were
 //! requested?). Verification rejects:
 //!
-//! 1. Bridge proof failure (the underlying STARK / constraint check fails).
+//! 1. Bridge proof failure (the underlying STARK fails), OR the absence of
+//!    a real STARK at all — a `LocalOnly` constraint check is refused
+//!    unconditionally, since the verifier cannot re-check work the prover
+//!    did on its own machine.
 //! 2. Schema mismatch (the disclosed attributes do not belong to the
 //!    expected schema).
 //! 3. Predicate mismatch (the proof does not cover the predicate the
@@ -95,7 +98,7 @@ pub enum VerificationError {
     #[error("credential is revoked")]
     Revoked,
     #[error(
-        "anonymous presentation requires a real cryptographic proof, got a non-cryptographic LocalOnly proof"
+        "presentation carries no real STARK proof (LocalOnly = a constraint check the prover ran on its own machine); verification requires a cryptographic proof"
     )]
     LocalOnlyRejected,
     #[error("predicate proof for `{attribute}` failed cryptographic verification")]
@@ -106,6 +109,10 @@ pub enum VerificationError {
     RevocationRootMismatch,
     #[error("non-revocation proof anchored against an untrusted revocation root")]
     RevocationUnexpectedRoot,
+    #[error(
+        "disclosed cleartext does not match the revealed-facts commitment the proof witnesses (tampered or mismatched disclosure)"
+    )]
+    RevealedFactsMismatch,
 }
 
 /// Verify a presentation against the verifier's expectations.
@@ -145,30 +152,32 @@ fn verify_inner(
         return Err(VerificationError::AnonymityMismatch);
     }
 
-    // 2. Bridge proof check.
+    // 2. Bridge proof check — FAIL CLOSED, unconditionally.
     //
-    // Anonymous presentations carry an unlinkability guarantee that only a
-    // real STARK (ring-blinded issuer membership) can back. A `LocalOnly`
-    // constraint-check proof has no cryptographic backing and no blinded
-    // leaf, so accepting one for an anonymous presentation would be a
-    // soundness lie: the verifier would "trust" an unlinkability claim that
-    // was never proven. Reject `LocalOnly` whenever anonymity is required,
-    // and additionally require the proof to actually carry a real STARK.
+    // A `LocalOnly` proof is a constraint check the PROVER ran on its own
+    // machine. It carries no STARK, so a verifier cannot re-check any of it;
+    // accepting one means believing the presenter's own report about its own
+    // credential. That is exactly the `verified: bool` this crate exists to
+    // replace (see the module doc on `apps/identity`), so there is no option
+    // — `require_anonymous` or otherwise — that makes it acceptable.
+    //
+    // 2026-07-16: this check used to fire only when `options.require_anonymous`
+    // was set, which is FALSE by default. Since `present()` also only ever
+    // produced LocalOnly proofs, the crate's default present→verify round trip
+    // performed zero cryptographic verification while returning a
+    // `VerifiedPresentation`. Both halves are now fixed; this is the half that
+    // must stay fixed even if a prover elsewhere regresses.
     match &proof.verification {
         PresentationVerification::Valid => {}
-        PresentationVerification::LocalOnly => {
-            if options.require_anonymous {
-                return Err(VerificationError::LocalOnlyRejected);
-            }
-        }
+        PresentationVerification::LocalOnly => return Err(VerificationError::LocalOnlyRejected),
         other => return Err(VerificationError::Bridge(other.clone())),
     }
 
-    // For anonymous presentations, also require a real STARK proof object
-    // (the ring-blinded issuer membership). `is_valid()` returns true only
-    // when a real STARK / IVC proof is present AND verification is `Valid`,
-    // so this rejects a hand-crafted `verification = Valid` with no proof.
-    if options.require_anonymous && !proof.is_valid() {
+    // Require a real STARK proof object. `is_valid()` returns true only when a
+    // real STARK proof is present AND verification is `Valid`, so this rejects
+    // a hand-crafted `verification = Valid` carrying no proof — the mint-a-
+    // consistent-fake attack that a field-tamper test never reaches.
+    if !proof.is_valid() {
         return Err(VerificationError::LocalOnlyRejected);
     }
 
@@ -189,6 +198,35 @@ fn verify_inner(
         if !disclosed.iter().any(|(n, _)| n == expected) {
             return Err(VerificationError::MissingDisclosure(expected.clone()));
         }
+    }
+
+    // 4b. Revealed-facts commitment: the cleartext the holder sent must be the
+    //     cleartext the proof witnesses.
+    //
+    // `disclosed` is plain data travelling beside the proof — the holder can put
+    // anything in it. The STARK binds `revealed_facts_commitment` as a public
+    // input (bridge/src/present.rs:250), so recomputing it from the cleartext and
+    // comparing is what makes the disclosure trustworthy. Without this, a holder
+    // presents a genuine proof and then swaps the values: `verify()` hands the
+    // caller a `VerifiedPresentation` carrying the ATTACKER's numbers.
+    //
+    // 2026-07-16: this check did not exist, though the module doc above has always
+    // listed it as rejection reason 4. It could not have worked before today —
+    // every non-anonymous `present()` produced a LocalOnly proof whose commitment
+    // nothing bound. Now that `present()` emits a real STARK, the check has teeth.
+    //
+    // The empty case is not a hole to skip but a claim to check: a proof built with
+    // no disclosures leaves the commitment at `WideHash::ZERO`, so a holder who
+    // strips the cleartext out of a proof that HAD disclosures fails here rather
+    // than downgrading to "disclosed nothing".
+    let recomputed = if disclosed.is_empty() {
+        dregg_circuit::binding::WideHash::ZERO
+    } else {
+        let terms: Vec<[u8; 32]> = disclosed.iter().map(|(_, v)| v.to_fact_term()).collect();
+        crate::presentation::compute_revealed_terms_commitment(&terms)
+    };
+    if recomputed != proof.revealed_facts_commitment {
+        return Err(VerificationError::RevealedFactsMismatch);
     }
 
     // 5. Expected predicates must be present AND cryptographically valid.

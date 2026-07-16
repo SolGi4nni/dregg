@@ -66,6 +66,7 @@ mod verification;
 pub use issuance::{Credential, IssuanceError, IssuerKeys, issue};
 pub use presentation::{
     Presentation, PresentationError, PresentationOptions, present, present_anonymous,
+    present_local_only_unsafe,
 };
 pub use revocation::{RevocationProof, RevocationRegistry, revoke};
 pub use schema::{AttrValue, AttributeAttenuation, CredentialAttributes, CredentialSchema};
@@ -77,7 +78,8 @@ pub use verification::{
 // `dregg-bridge` directly when composing their own flows. This is the
 // "promote to dedicated module" goal of G31.
 pub use dregg_bridge::present::{
-    BridgePresentationProof, FederationRegistry, Predicate, WirePresentationProof,
+    BridgePresentationProof, FederationRegistry, Predicate, UnsafeLocalOnlyMarker,
+    WirePresentationProof,
 };
 
 // Re-export PredicateRequest from our schema module (different from the

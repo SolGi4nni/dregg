@@ -13,6 +13,23 @@
 //!   blinding factor to the issuer-membership proof so multi-show is
 //!   unlinkable. Composes the bridge's existing blinded-leaf machinery
 //!   (`WitnessedPredicateKind::BlindedSet` per `cell::predicate`).
+//! - **Local constraint check** (`present_local_only_unsafe`) — NOT
+//!   cryptographically sound, and gated behind
+//!   `UnsafeLocalOnlyMarker`. It exists for the development loop only;
+//!   [`crate::verify`] rejects what it produces.
+//!
+//! # 2026-07-16 — the default was a lie
+//!
+//! Until this date the doc above was aspiration, not description:
+//! `present()` unconditionally called
+//! `BridgePresentationBuilder::prove_local_constraint_check_only()` — the
+//! path the bridge documents as "NOT CRYPTOGRAPHICALLY SOUND ... Do NOT
+//! use for untrusted provers or cross-trust-boundary verification" —
+//! while a stale comment promised a `prove_real = true` option that never
+//! existed. Every non-anonymous presentation this crate has ever produced
+//! was a constraint check the *prover* ran on its own machine. `present()`
+//! now calls `prove()` (the real STARK) as the doc always claimed, and the
+//! LocalOnly path is reachable only by naming it.
 
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -161,7 +178,49 @@ pub fn present(
     request: &AuthRequest,
     options: &PresentationOptions,
 ) -> Result<Presentation, PresentationError> {
-    present_impl(credential, request, options, false)
+    present_impl(credential, request, options, false, Prover::RealStark)
+}
+
+/// Produce a presentation backed ONLY by a local constraint check —
+/// **not a cryptographic proof**.
+///
+/// This runs the circuit constraints on the *prover's own machine* and
+/// emits a proof carrying `PresentationVerification::LocalOnly` and no
+/// STARK. It proves nothing to anyone else: a holder who can call this
+/// can produce a passing "proof" for any request their own constraints
+/// happen to accept, and a verifier has no way to re-check the work.
+///
+/// [`crate::verify`] rejects the result with
+/// [`crate::VerificationError::LocalOnlyRejected`]. That is deliberate,
+/// and is the whole reason this function is safe to expose: there is no
+/// configuration of this crate in which its output is accepted.
+///
+/// Suitable ONLY for the development loop — iterating on constraints
+/// without paying the real prover's cost — and for tests that need a
+/// LocalOnly proof to assert it is refused.
+pub fn present_local_only_unsafe(
+    credential: &Credential,
+    request: &AuthRequest,
+    options: &PresentationOptions,
+    marker: &dregg_bridge::present::UnsafeLocalOnlyMarker,
+) -> Result<Presentation, PresentationError> {
+    present_impl(
+        credential,
+        request,
+        options,
+        false,
+        Prover::LocalConstraintCheckOnly(marker),
+    )
+}
+
+/// Which prover backs a presentation.
+enum Prover<'m> {
+    /// The real STARK (`BridgePresentationBuilder::prove`).
+    RealStark,
+    /// Local constraint check only — no cryptographic backing. Carries the
+    /// bridge's marker so this variant cannot be constructed without the
+    /// caller having named `i_know_this_is_not_cryptographically_sound()`.
+    LocalConstraintCheckOnly(&'m dregg_bridge::present::UnsafeLocalOnlyMarker),
 }
 
 /// Produce an anonymous credential presentation (blinded membership).
@@ -178,7 +237,7 @@ pub fn present_anonymous(
     request: &AuthRequest,
     options: &PresentationOptions,
 ) -> Result<Presentation, PresentationError> {
-    present_impl(credential, request, options, true)
+    present_impl(credential, request, options, true, Prover::RealStark)
 }
 
 fn present_impl(
@@ -186,6 +245,7 @@ fn present_impl(
     request: &AuthRequest,
     options: &PresentationOptions,
     anonymous: bool,
+    prover: Prover<'_>,
 ) -> Result<Presentation, PresentationError> {
     // The macaroon backend retains the issuer's HMAC key, so we can
     // reconstruct the root token, then re-apply the *same attenuations*
@@ -272,13 +332,17 @@ fn present_impl(
         builder.set_revealed_facts_commitment(commitment);
     }
 
-    // Run the prover. We default to `prove_local_constraint_check_only`
-    // (the fast path) because the full STARK takes ~30s; callers that
-    // need the cryptographic proof can rebuild a `PresentationOptions`
-    // with `prove_real = true` after this lands.
+    // Run the prover. Both `present()` and `present_anonymous()` take the REAL
+    // STARK path (`prove`). The LocalOnly path is reachable only via
+    // `present_local_only_unsafe`, whose output `verify()` refuses.
     //
-    // Anonymous presentations always use the Poseidon2 path because the
-    // blinding-factor mechanism lives only on `prove_real`.
+    // The comment this replaced justified defaulting to the unsound path
+    // because "the full STARK takes ~30s". That number appears to be stale:
+    // measured 2026-07-16, `present()` + `verify()` over the 4-attribute
+    // employee-v1 fixture completes in well under a second in a debug build
+    // (credentials/tests/anonymity_soundness.rs). The cost that bought the
+    // mock was not being paid. Anyone reinstating a fast path should measure
+    // first, at their own trace size, and then not reinstate it.
     let mut proof_request = request.clone();
     // UNLINKABILITY: only bind the holder identity into the request for
     // non-anonymous presentations. Anonymous presentations leave
@@ -292,19 +356,17 @@ fn present_impl(
         }
     }
 
-    let proof = if anonymous {
-        // Anonymous path: real STARK with per-presentation ring-blinding.
-        // `prove()` generates a fresh `blinding_factor` each call, so the
-        // public `blinded_leaf` differs across shows of the same credential
-        // — the genuine unlinkable machinery from `bridge::present`.
-        builder
+    let proof = match prover {
+        // The real STARK. For anonymous presentations `prove()` additionally
+        // draws a fresh `blinding_factor` each call, so the public
+        // `blinded_leaf` differs across shows of the same credential — the
+        // genuine unlinkable machinery from `bridge::present`.
+        Prover::RealStark => builder
             .prove(&proof_request)
-            .map_err(|e| PresentationError::Bridge(format!("{e:?}")))?
-    } else {
-        let marker = dregg_bridge::present::UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
-        builder
-            .prove_local_constraint_check_only(&marker, &proof_request)
-            .map_err(|e| PresentationError::Bridge(format!("{e:?}")))?
+            .map_err(|e| PresentationError::Bridge(format!("{e:?}")))?,
+        Prover::LocalConstraintCheckOnly(marker) => builder
+            .prove_local_constraint_check_only(marker, &proof_request)
+            .map_err(|e| PresentationError::Bridge(format!("{e:?}")))?,
     };
 
     // Predicate proofs (one per `PredicateRequest`).
@@ -343,8 +405,19 @@ fn present_impl(
             }
             .bind(state_root);
 
-            let pred_proof = prove_predicate_for_fact(predicate_value, binding, &req.predicate)
-                .ok_or_else(|| PresentationError::PredicateProof(req.attribute.clone()))?;
+            // A FRESH blinding factor per predicate proof, drawn from OS randomness. This is what
+            // keeps the MULTI-SHOW unlinkability this module promises (see the header) true of the
+            // predicate proofs too, not just the issuer-membership ring: the fact commitment is
+            // `hash_4_to_1([fact_hash, state_root, blinding, 0])`, so two showings of the same
+            // attribute emit different commitments while the in-circuit weld still binds each to the
+            // value it covers.
+            let pred_proof = prove_predicate_for_fact(
+                predicate_value,
+                binding,
+                dregg_bridge::present::fresh_predicate_blinding(),
+                &req.predicate,
+            )
+            .ok_or_else(|| PresentationError::PredicateProof(req.attribute.clone()))?;
 
             predicate_proofs.push(NamedPredicateProof {
                 attribute: req.attribute.clone(),
@@ -365,7 +438,14 @@ fn present_impl(
 ///
 /// Mirrors `dregg_bridge::present::compute_revealed_facts_commitment` but
 /// works against our `AttrValue`-derived fact-term bytes.
-fn compute_revealed_terms_commitment(terms: &[[u8; 32]]) -> dregg_circuit::binding::WideHash {
+///
+/// `pub(crate)` so [`crate::verify`] can recompute it from the cleartext the
+/// holder sent and compare against the commitment the STARK binds — the
+/// disclosure-tamper check. Prover and verifier MUST use this one function;
+/// a second copy on the verifier side would be a shadow to drift against.
+pub(crate) fn compute_revealed_terms_commitment(
+    terms: &[[u8; 32]],
+) -> dregg_circuit::binding::WideHash {
     // Hash each term into BabyBear, then fold via Poseidon2.
     let mut hashes = Vec::with_capacity(terms.len());
     for term in terms {

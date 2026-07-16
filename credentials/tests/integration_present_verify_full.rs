@@ -108,16 +108,23 @@ fn selective_disclosure_one_attribute() {
 
 #[test]
 fn tampered_disclosed_value_is_caught_by_verifier() {
-    // The verifier checks that the disclosed attribute name is present, but
-    // also that the bridge proof commits to the revealed facts. A holder that
-    // swaps out the disclosed value after presentation construction will have
-    // a mismatch between `proof.revealed_facts_commitment` and the cleartext
-    // `disclosed` list — this surfaces as a verification failure because the
-    // verifier cannot independently reconstruct the commitment from the tampered
-    // cleartext.
+    // A holder that swaps the cleartext disclosed value after presentation
+    // construction must be REJECTED: the STARK binds
+    // `proof.revealed_facts_commitment` as a public input, and the verifier
+    // recomputes that commitment from the cleartext it was handed.
     //
-    // In the constraint-check path the commitment comparison is exact, so
-    // replacing the cleartext value and re-running verify must fail.
+    // 2026-07-16 — this test used to assert NOTHING. It ran `verify()` on the
+    // tampered presentation and then said:
+    //
+    //     if let Ok(ref vp) = result { assert_eq!(vp.disclosed[0].1, Integer(99)); }
+    //
+    // i.e. if the verifier ACCEPTED the tamper, the test checked that the value
+    // it accepted was exactly the attacker's value — and passed. Twenty lines of
+    // prose ("Either outcome is documented") talked this into sounding like a
+    // boundary. Its name claimed the tamper "is_caught_by_verifier"; nothing in
+    // the body required that, and in fact the verifier had no revealed-facts
+    // check at all. The real break — present honestly, then lie in the cleartext —
+    // went unflagged. It now fails closed and this test requires the rejection.
 
     let issuer = fixture_issuer();
     let schema = fixture_schema();
@@ -137,37 +144,46 @@ fn tampered_disclosed_value_is_caught_by_verifier() {
         ..Default::default()
     };
 
-    // Verification must fail (bridge commitment mismatch or schema check).
-    // Because we are on the fast (LocalOnly) path, the bridge won't re-verify
-    // the commitment contents — but the verifier's schema + disclosure
-    // cross-check layer will catch that the tampered value doesn't belong to
-    // the expected schema OR the proof itself will report a mismatch.
-    // Importantly: the tamper is NOT silently accepted.
-    //
-    // If the constraint-check path passes through (it's a valid attribute name),
-    // the test asserts the *presentation construction* catches the issue: the
-    // revealed_facts_commitment is computed over the original value, so a
-    // verifier equipped with `expected_schema` asking for the specific value
-    // cannot be fooled. This is the "no silent tamper" property.
-    //
-    // If the bridge commitment check is strict, `verify` returns Err; if it is
-    // deferred to the STARK path, we at minimum assert the disclosed value is
-    // not what the attacker chose — the test documents the expected boundary.
-    let result = verify(&presentation, &verify_opts);
-    // Either it fails, or — on the fast path — the attribute value round-trips
-    // as the tampered value (in which case the commitment mismatch is
-    // documented as a TODO for the STARK path). We assert the *verifiable
-    // property*: if it passes, the returned value must equal what was tampered
-    // (no silent substitution with a third value).
-    if let Ok(ref vp) = result {
-        // Fast path accepted it: verify the disclosed value is exactly what
-        // we tampered to (not some third party value). This is still correct
-        // behavior for the constraint-check-only path, which cannot verify the
-        // commitment binding without the STARK proof.
-        assert_eq!(vp.disclosed[0].1, AttrValue::Integer(99));
+    // The tamper must be REJECTED. No "either outcome is documented".
+    match verify(&presentation, &verify_opts) {
+        Err(dregg_credentials::VerificationError::RevealedFactsMismatch) => {}
+        Err(other) => panic!("expected RevealedFactsMismatch, got {other:?}"),
+        Ok(vp) => panic!(
+            "SOUNDNESS: verify() ACCEPTED a tampered disclosure and reported \
+             clearance_level = {:?} (the credential says 3). The holder presented a \
+             genuine proof and then rewrote the cleartext beside it.",
+            vp.disclosed[0].1
+        ),
     }
-    // Either outcome is documented; the important property is that no SILENT
-    // substitution happened (the verifier does not return a third integer value).
+}
+
+#[test]
+fn stripped_disclosure_is_caught_by_verifier() {
+    // The companion to the tamper: a holder who DELETES the cleartext disclosure
+    // from a proof that committed to one must not be able to downgrade to
+    // "disclosed nothing". The commitment the STARK binds is non-zero; an empty
+    // cleartext recomputes to WideHash::ZERO, so this fails closed.
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let attrs = fixture_attrs();
+    let h = holder();
+
+    let cred = issue(&issuer, &schema, h, attrs, 1_700_000_000, None).unwrap();
+    let opts = PresentationOptions::new().disclose("clearance_level");
+    let mut presentation = present(&cred, &fixture_request(), &opts).unwrap();
+
+    presentation.disclosed.clear();
+
+    // A verifier that asks for nothing in particular must still refuse: the proof
+    // it was handed does not match the cleartext it was handed.
+    match verify(&presentation, &VerificationOptions::new()) {
+        Err(dregg_credentials::VerificationError::RevealedFactsMismatch) => {}
+        Err(other) => panic!("expected RevealedFactsMismatch, got {other:?}"),
+        Ok(_) => panic!(
+            "SOUNDNESS: verify() ACCEPTED a presentation whose cleartext disclosures \
+             were stripped away from a proof that commits to them"
+        ),
+    }
 }
 
 #[test]

@@ -13,8 +13,8 @@
 
 use dregg_credentials::{
     AttrValue, CredentialAttributes, CredentialSchema, IssuerKeys, Predicate, PredicateRequest,
-    PresentationOptions, RevocationRegistry, VerificationOptions, issue, present,
-    present_anonymous, revoke, verify, verify_anonymous,
+    PresentationOptions, RevocationRegistry, UnsafeLocalOnlyMarker, VerificationOptions, issue,
+    present, present_anonymous, present_local_only_unsafe, revoke, verify, verify_anonymous,
 };
 use dregg_token::AuthRequest;
 
@@ -87,20 +87,37 @@ fn blinded_leaf(p: &dregg_credentials::Presentation) -> u32 {
 
 // ── (a) LocalOnly rejected for anonymous verification ─────────────────────────
 
-#[test]
-fn local_only_proof_rejected_by_verify_anonymous() {
+/// Build a genuinely LocalOnly (non-cryptographic) presentation — the thing a
+/// verifier must refuse. This is the ONLY way to get one out of this crate now;
+/// `present()` produces a real STARK.
+fn local_only_presentation() -> dregg_credentials::Presentation {
     let issuer = fixture_issuer();
     let schema = fixture_schema();
-    let h = holder();
-    let cred = issue(&issuer, &schema, h, fixture_attrs(), 1_700_000_000, None).unwrap();
-
-    // A NON-anonymous presentation uses the fast `prove_local_constraint_check_only`
-    // path → `LocalOnly` verification (no cryptographic backing, no blinded leaf).
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
     let opts = PresentationOptions::new().disclose("active");
-    let local_only = present(&cred, &fixture_request(), &opts).unwrap();
+    let marker = UnsafeLocalOnlyMarker::i_know_this_is_not_cryptographically_sound();
+    let p = present_local_only_unsafe(&cred, &fixture_request(), &opts, &marker).unwrap();
+    assert!(
+        p.proof.real_stark_proof.is_none(),
+        "fixture precondition: the LocalOnly path must carry no STARK"
+    );
+    p
+}
+
+#[test]
+fn local_only_proof_rejected_by_verify_anonymous() {
+    let local_only = local_only_presentation();
     assert!(
         !local_only.anonymous,
-        "non-anonymous present() must not be marked anonymous"
+        "the LocalOnly path must not be marked anonymous"
     );
 
     // Asking for an anonymous verification of a LocalOnly proof must FAIL:
@@ -119,6 +136,74 @@ fn local_only_proof_rejected_by_verify_anonymous() {
         | dregg_credentials::VerificationError::LocalOnlyRejected => {}
         other => panic!("expected LocalOnlyRejected/AnonymityMismatch, got {other:?}"),
     }
+}
+
+// ── (a2) LocalOnly rejected by the DEFAULT verify() — the real tooth ──────────
+//
+// 2026-07-16. The test above never bit the thing it named: it fed `verify_anonymous`
+// a NON-anonymous proof, so check 1 (`AnonymityMismatch`) fired before the LocalOnly
+// check was ever reached — and it accepted either error. Meanwhile the DEFAULT path
+// (`require_anonymous: false`, which is `Default`) waved LocalOnly straight through.
+// So the crate's own present()+verify() round trip did zero cryptographic
+// verification and returned a `VerifiedPresentation` for it.
+//
+// This test pins the fail-closed contract at the DEFAULT settings, where the hole was.
+
+#[test]
+fn local_only_proof_rejected_by_default_verify() {
+    let local_only = local_only_presentation();
+
+    // The DEFAULT verifier: require_anonymous is false. This is what every
+    // caller who did not think about anonymity gets.
+    let verify_opts = VerificationOptions::new();
+    let result = verify(&local_only, &verify_opts);
+
+    match result {
+        Err(dregg_credentials::VerificationError::LocalOnlyRejected) => {}
+        Err(other) => panic!("expected LocalOnlyRejected, got {other:?}"),
+        Ok(v) => panic!(
+            "SOUNDNESS: default verify() ACCEPTED a non-cryptographic LocalOnly proof \
+             and returned a VerifiedPresentation ({v:?}). The 'verification' that ran \
+             happened on the presenter's own machine and was never re-checked."
+        ),
+    }
+}
+
+// ── (a3) present() must produce a REAL STARK, not a local constraint check ────
+//
+// The companion half. `present()`'s doc has always claimed "Full STARK ... suitable
+// for cross-trust-boundary verification"; until 2026-07-16 it called
+// `prove_local_constraint_check_only` for every non-anonymous presentation. If this
+// regresses, (a2) turns the crate's default round trip red rather than silently
+// restoring the mock.
+
+#[test]
+fn present_produces_a_real_stark_proof() {
+    let issuer = fixture_issuer();
+    let schema = fixture_schema();
+    let cred = issue(
+        &issuer,
+        &schema,
+        holder(),
+        fixture_attrs(),
+        1_700_000_000,
+        None,
+    )
+    .unwrap();
+
+    let opts = PresentationOptions::new().disclose("active");
+    let p = present(&cred, &fixture_request(), &opts).unwrap();
+
+    assert!(
+        p.proof.real_stark_proof.is_some(),
+        "present() must carry a real STARK proof — a verifier who did not run the \
+         prover has nothing to check otherwise"
+    );
+    assert!(
+        p.proof.is_valid(),
+        "present()'s proof must be cryptographically valid, not LocalOnly"
+    );
+    verify(&p, &VerificationOptions::new()).expect("a real present() proof must verify by default");
 }
 
 #[test]
