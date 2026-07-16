@@ -38,12 +38,18 @@ exponent, it does not introduce `X⁻¹`, and this is exactly why a winning `1/(
 unrepresentable and forces a bounded-degree root event), a simulation theorem plus Schwartz–Zippel yield
 Boneh–Boyen's bound `ε ≤ (q_G + D + 3)²(D + 1)/(p − 1) = O((q_G + D)²·D / p)` — a `q`-type,
 degree-dependent bound, **not** a clean `q²/p`. We give the full argument, verified line by line against
-Boneh–Boyen's own Theorem 12. Finally, we are scrupulous about the mechanization boundary: the vacuity
-refutation and the reduction repair are `sorry`-free in Lean today; the opaque symbolic model and the
-simulation theorem are a named formalization frontier, whose missing Mathlib/VCVio primitives we
-enumerate. As far as our census of ArkLib and its dependencies could determine, no generic-group-model
-security *theorem* exists in Lean — ArkLib's own `AGM/Basic.lean` is a `sorry` stub with zero theorems —
-so the mechanized GGM development this paper specifies would be the first of its kind.
+Boneh–Boyen's own Theorem 12. Finally, we are scrupulous about the mechanization boundary. Three things
+are `sorry`-free in Lean today: the vacuity refutation, the reduction repair, and — new in this
+revision — the *static* generic-group numeric survives-attack bound, `ε ≤ (D + 1)/(p − 1) < 1`, proved
+by Schwartz–Zippel over the entire committed-generic (zero-group-operation-query) adversary class. What
+remains a named formalization frontier is the **full adaptive** model: the opaque symbolic simulation
+under `q` adaptive equality queries, whose collision term lifts the static number to the
+`(q_G + D + 3)²(D + 1)/(p − 1)` shape. As far as our census of ArkLib and its dependencies could
+determine, no generic-group-model security *theorem* previously existed in Lean — ArkLib's own
+`AGM/Basic.lean` is a `sorry` stub with zero theorems, and is moreover *unsound as written* (its
+adversary is a `ReaderT` over the concrete group table, so it can read discrete logs) — so the static
+bound here is, to our knowledge, the first mechanized generic-group security statement of its kind, and
+the adaptive development this paper specifies would complete it.
 
 ---
 
@@ -96,12 +102,16 @@ The finding is small to state and (once seen) elementary; its value is threefold
    of options: KZG's generic-group security is public, classical mathematics, and the honest form of the
    fix is to state it correctly and completely.
 
-3. **The first generic-group-model security formalization in Lean (as far as our census found).** ArkLib's
-   own `AGM/Basic.lean` is a work-in-progress stub — its adversary's `run` function is literally `sorry`,
-   it proves *zero* theorems, and it is orphaned from the rest of the tree. Nowhere in ArkLib or its
-   dependencies (VCVio, Mathlib) is there a generic- or algebraic-group-model *security theorem*. The
-   mechanized GGM development this paper specifies would therefore be new to the ecosystem, and we give
-   its precise shape and its missing primitives.
+3. **A mechanized static generic-group security bound — the first in Lean (as far as our census found).**
+   ArkLib's own `AGM/Basic.lean` is a work-in-progress stub — its adversary's `run` function is literally
+   `sorry`, it proves *zero* theorems, it is orphaned from the rest of the tree, and (as we detail in
+   §3.6) it is unsound as written. Nowhere in ArkLib or its dependencies (VCVio, Mathlib) is there a
+   generic- or algebraic-group-model *security theorem*. This revision supplies one for the **static**
+   (committed, zero-query) generic class: a `sorry`-free, axiom-clean Schwartz–Zippel bound
+   `ε ≤ (D+1)/(p−1)` proved for the whole committed-generic adversary type (§8.2, §9.1). We are careful
+   that this is the *static* fragment: it kills the exact attack and exhibits the correct number, but the
+   **full adaptive** Shoup/Boneh–Boyen bound — same shape, strictly larger, over `q`-query adversaries —
+   remains the frontier, and we give its precise shape and its missing primitives.
 
 ### 1.3 Reproducibility and honesty commitments
 
@@ -269,6 +279,45 @@ places, before we ever looked at ArkLib. The discipline that surfaced it — "tr
 at deployed parameters" — is the transferable content here; the ArkLib instance is a clean, public,
 mechanized exemplar of a mistake that is easy to make and invisible to the usual gate.
 
+### 3.6 The vacuity is the *pattern*, not the theorem: q-DLOG and the AGM stub
+
+The natural first instinct on seeing the t-SDH refutation is "then reduce KZG binding to a *different*
+base assumption." That does not escape the hole, and we mechanized why. State the natural q-strong-DLOG
+assumption — recover the trapdoor `τ` from the KZG power-SRS — in ArkLib's **own** idiom, i.e. with the
+identical unrestricted adversary type `… → StateT unifSpec.QueryCache ProbComp (Option _)`:
+
+```lean
+theorem not_qDlogAssumption (hg₂ : g₂ ≠ 1) (D : ℕ) (error : ℝ≥0) (herr : (error : ℝ≥0∞) < 1) :
+    ¬ qDlogAssumption D error                              -- FALSE below 1, same Classical.choice attack
+```
+
+`qDlogExperiment_trapdoorAdversary` shows the same trapdoor adversary — reading `g₂^τ`, recovering `τ`,
+returning it, zero oracle queries — wins with probability exactly `1`; a canary
+(`experiment_discriminates`: the giving-up adversary scores `0`) confirms the experiment is not
+constantly `1`. Both `sorry`-free against genuine ArkLib at `d72f8392`, axioms
+`[propext, Classical.choice, Quot.sound]`. So **renaming the assumption (t-SDH → q-DLOG) does not close
+the vacuity**; the base assumption must be restated over a *sound adversary class*, which is where any
+number comes from (§4–§8).
+
+The disease is confirmed a second way by ArkLib's *own* algebraic-group-model scaffolding.
+`AGM/Basic.lean` is not merely incomplete — it is **unsound as written**, and its author flags it:
+
+- Its adversary's runner is a placeholder: `def run … : List G × α := sorry` (`AGM/Basic.lean:164–165`).
+- Decisively, the adversary type is `Adversary := ReaderT (GroupValTable ι G) (OracleComp …) (List ι × α)`
+  (`AGM/Basic.lean:149–153`) — a reader over the **concrete** group table `GroupValTable ι G = Π₀ _ : ι,
+  Option G`, over the concrete group `G`. Handed the actual group elements, the adversary's
+  scalar/control-flow outputs can still depend on discrete logs, i.e. it is *not* opaque. This is the
+  exact leak that makes the unrestricted t-SDH adversary vacuous, reappearing inside the model that was
+  meant to remove it.
+- The source comments name the open problem verbatim: *"TODO: need to be sure this definition is
+  correct"* (line 147); *"How to make the adversary truly independent of the group description? It could
+  have had `G` hardwired."* (lines 169–173).
+
+Taken together: the vacuity is **not** a t-SDH typo but the whole **unrestricted-adversary pattern** in
+this idiom. Any concrete-group assumption of the shape `∀ (unrestricted adversary), Pr[win] ≤ ε < 1` is
+`Classical.choice`-false, and the ecosystem has no sound generic/algebraic adversary class to state it
+against. That absence is precisely what the mechanized static bound of §8.2 begins to fill.
+
 ---
 
 ## 4. The generic bilinear group model
@@ -276,8 +325,10 @@ mechanized exemplar of a mistake that is easy to make and invisible to the usual
 The vacuity has two honest cures (Section 8). The one that supplies an actual *number* — a concrete
 `ε` for which `binding … ε` is true and non-trivial — is the generic-group model. This section defines
 it precisely; Sections 5–7 prove the bound. The development is the classical Boneh–Boyen argument
-[BB08, §6], which we reproduce faithfully because it is the mathematics the fix must contain, and because
-mechanizing it is the named frontier of Section 9.
+[BB08, §6], which we reproduce faithfully because it is the mathematics the fix must contain. Its
+**static** (zero-query) fragment — the Schwartz–Zippel survives-attack number `(D+1)/(p−1)` — is
+mechanized (§8.2, §9.1); mechanizing the **full adaptive** argument (equality queries, collision
+branching) is the named frontier of Section 9.
 
 ### 4.1 Opaque handles and symbolic polynomials
 
@@ -568,6 +619,37 @@ bound; then `binding` becomes true and non-trivial, with `Adv^{eval-binding}_{KZ
 This is the finished theorem: the extraction-shaped bound as the unconditional content, the generic-group
 bound as its quantitative closure.
 
+**The static fragment of this bound is mechanized** (`GgmCandidate.lean`, `sorry`-free, axioms
+`[propext, Classical.choice, Quot.sound]`). Model the committed-generic adversary as a bare
+`(offset c, representation polynomial f)` with `deg f ≤ D` and **no group-element input** — faithful,
+because from the SRS handles `g₁^{τ⁰}, …, g₁^{τ^D}` the reachable exponents are exactly
+`span{1, τ, …, τ^D}`, the degree-≤D polynomials. Winning requires `f(τ)·(τ+c) = 1`, so every winning `τ`
+is a root of the nonzero degree-≤(D+1) polynomial `f·(X+c) − 1`; Schwartz–Zippel caps the winning set at
+`D+1`, giving
+
+```lean
+theorem ggm_tSdh_sound (A : GenericAdversary D p) (hp : 2 ≤ p) :
+    ggmExperiment A ≤ (D + 1 : ℚ) / (p - 1)                   -- over the FULL generic adversary type
+theorem ggm_bound_lt_one (hp : D + 2 < p) : ((D : ℚ) + 1) / (p - 1) < 1
+```
+
+The theorem quantifies over the *entire* `GenericAdversary` type, so every `Classical.choice`-definable
+inhabitant provably obeys the bound; the exact `tauExtractingAdversary` cannot even be typed here (no
+group element in, so no `∃ a, · = g^a` to invert). This is a real number, not a definitional dodge: the
+type is richly inhabited (every offset, every degree-≤D `f`), the bound is a genuine `< 1` (≈ `2⁻²³⁴` at
+`p ≈ 2²⁵⁴`, `D ≈ 2²⁰`), and it is *tight* — interpolating `f` through `D+1` targets `1/(τᵢ+c)` wins on
+exactly `D+1` trapdoors.
+
+**Two scope limits, stated precisely.** (i) This is the **static** (`q = 0`, zero group-operation/equality
+queries) fragment; the number `(D+1)/(p-1)` is the static-class number and does **not** upper-bound the
+adaptive adversary, whose bound is the larger, same-shape `(q_G+D+3)²(D+1)/(p-1)` — that requires the
+adaptive analysis of §4–§7 (the collision term). (ii) The win predicate is stated at the **field** level
+(`f(τ) = 1/(τ+c)`); its equivalence to the group-level t-SDH win rests on injectivity of `a ↦ g₁^{a.val}`
+in a prime-order group (ArkLib's `Algebra.lean`), which is standard but **argued**, so `GgmCandidate.lean`
+is a self-contained model not yet wired to ArkLib's `tSdhExperiment` — the reduction transport of §7
+(and §9.2) is what connects them. What is mechanized is genuinely the static-generic *survives-attack
+number*; what is not is the adaptive term and the field→group reduction.
+
 ### 8.3 The algebraic-group-model alternative
 
 The other honest cure is the *algebraic* group model (AGM) [FKL18]. There an adversary that outputs a
@@ -621,12 +703,29 @@ non-vacuous* from *paper argument, frontier*.
 - **The repair survives the attack.** `repair_survives_attack`: the exact trapdoor adversary still refutes
   the assumption below error `1`, while the repaired bound holds unconditionally — both in one `sorry`-free
   closure. (`RepairSurvives.lean`.)
+- **The static generic-group numeric survives-attack bound.** `ggm_tSdh_sound` (with
+  `card_winningPoints_le`, `winPoly_ne_zero`, `winPoly_natDegree_le`, `ggm_bound_lt_one`): over the
+  **entire** committed-generic adversary type `GenericAdversary D p` (offset, degree-≤D representation
+  polynomial, no group-element input), the success experiment is `≤ (D+1)/(p−1)`, a genuine rational
+  `< 1` for `p > D+2`. Proved by the Schwartz–Zippel root count on `f·(X+c) − 1`; the exact trapdoor
+  adversary is untypable in this class. This is the **static** (`q = 0`) fragment of §4–§7's bound and its
+  win predicate is field-level (group-faithfulness argued, §8.2); it is a self-contained model, not yet
+  wired to ArkLib's `tSdhExperiment`. Axioms `[propext, Classical.choice, Quot.sound]`. (`GgmCandidate.lean`;
+  the equivalent algebraic-model framing is `AlgebraicTSdh.lean`.)
+- **The vacuity is systemic, not t-SDH-specific.** `not_qDlogAssumption` (`KzgQDlogVacuity.lean`): the
+  natural q-DLOG base assumption in ArkLib's own unrestricted-adversary idiom is *equally* false below
+  error `1`, by the identical `Classical.choice` extraction (with a discriminating canary,
+  `experiment_discriminates`). Confirms §3.6: renaming the assumption does not escape the pattern. Imports
+  genuine ArkLib at `d72f8392`; axiom-clean.
 
 ### 9.2 Paper argument, named formalization frontier (NOT yet in Lean)
 
-The generic-group development of Sections 4–7 is **not** mechanized. It is the classical Boneh–Boyen
-argument, verified here against the source, and stated as the theorem the fix should eventually contain —
-but the following are open, and we name them rather than fake them:
+With the **static** generic-group bound now mechanized (§9.1), the frontier has narrowed to the **full
+adaptive** Boneh–Boyen / Shoup development of Sections 4–7 — the `q`-query adversary with equality tests
+and collision branching, whose bound is the same shape but strictly larger,
+`(q_G + D + 3)²(D + 1)/(p − 1)`. It is the classical argument, verified here against the source, and stated
+as the theorem the fix should eventually contain — but the following are open, and we name them rather than
+fake them:
 
 - **The opaque symbolic model (Section 4).** ArkLib's `AGM/Basic.lean` is a WIP stub, not a foundation:
   its `Adversary.run` is literally `sorry` (line 165), it proves *zero* theorems, it is orphaned (nothing
@@ -647,14 +746,17 @@ but the following are open, and we name them rather than fake them:
   binding adversary; to inherit the generic-group bound, that construction must itself be re-typed as a
   straight-line/symbolic program and carried into the restricted adversary class.
 
-**Missing primitives, concretely.** Mathlib's `MvPolynomial.SchwartzZippel` and ArkLib's
-`SchwartzZippelCounting` supply the *terminal root-counting lemma* of Section 6 — and nothing else. There
-is no opaque-encoding oracle abstraction with a proven opacity invariant; no symbolic-execution semantics
-for a bilinear-group oracle set; no simulation/coupling lemma of the Section-5 form; and no `q`-DLog or
-`q`-SDH generic-group hardness *theorem* (nor any numeric group-hardness bound of any kind) anywhere in
-ArkLib, VCVio, or Mathlib. This is why we characterize the numeric fix as a from-scratch, paper-sized
-development — and why the mechanized version of Sections 4–7 would, as far as our census found, be the
-first generic-group-model security theorem in Lean.
+**Missing primitives, concretely.** The **static** bound of §8.2 needs only Mathlib's single-variable
+`Polynomial.card_roots'` (the `f·(X+c)−1` root count) and `Field (ZMod p)` from `Fact (Nat.Prime p)` —
+both present, hence its mechanization. The **adaptive** development needs infrastructure that is absent:
+there is no opaque-encoding oracle abstraction with a proven opacity invariant; no symbolic-execution
+semantics for a bilinear-group oracle set; no simulation/coupling lemma of the Section-5 form; and no
+`q`-DLog or `q`-SDH generic-group hardness *theorem* for the adaptive class anywhere in ArkLib, VCVio, or
+Mathlib. (Mathlib's `MvPolynomial.SchwartzZippel` and ArkLib's `SchwartzZippelCounting` would supply the
+*multivariate* terminal root-count the adaptive collision analysis needs — and nothing else.) This is why
+we characterize the **adaptive** numeric fix as a from-scratch, paper-sized development, while the static
+survives-attack number is done: the static bound is, as far as our census found, the first
+generic-group-model security theorem in Lean, and the adaptive theorem would complete it.
 
 ### 9.3 What is verified vs. asserted, for the bounds
 
@@ -737,6 +839,14 @@ Mechanized files (this directory), all against ArkLib `d72f8392`:
 - `KzgVacuity.lean` — the vacuity refutation (`t`-SDH and ARSDH), `sorry`-free, with canaries.
 - `binding-repair.patch` — the `+41/−14` extraction-shaped repair of `Binding.lean`.
 - `RepairSurvives.lean` — `repair_survives_attack`: repair coexists with the exact attack, `sorry`-free.
+- `candidates/GgmCandidate.lean` — the **static** generic-group numeric survives-attack bound
+  `ggm_tSdh_sound : ε ≤ (D+1)/(p−1)` over the whole `GenericAdversary` type, `sorry`-free, axiom-clean.
+  (`candidates/AlgebraicTSdh.lean` is the equivalent algebraic-model framing.)
+- `candidates/KzgQDlogVacuity.lean` — `not_qDlogAssumption`: the q-DLOG idiom is equally vacuous
+  (§3.6), `sorry`-free against genuine ArkLib, with a discriminating canary.
+- `candidates/` (`agm-sound`, `extraction`, `ggm`, `qdlog-direct`, `novel`) — the five elaborated
+  candidate fixes and their writeups.
+- `SOUND-FIX-VERDICT.md` — the integrator's re-verified comparison, per-goal winner, and recommendation.
 - `DISCLOSURE-DRAFT.md` — the maintainer-facing writeup of the finding.
 - `REPAIR.md`, `WHY-FINDING-ONLY.md` — the repair rationale and the tractability map for the numeric fix.
 - `FACTCHECK-FABLE.md` — an independent second checker's from-scratch confirmation (real upstream, green
