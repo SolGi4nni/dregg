@@ -507,12 +507,20 @@ impl AgentCipherclerk {
         let blinded_fact_commitment =
             poseidon2::hash_many(&[fact_hash, state_root, blinding, BabyBear::ZERO]);
 
-        // Generate the predicate proof.
+        // Generate the predicate proof over the UNBLINDED fact. blinding is a separate output
+        // field (blinded_fact_commitment above); the proof itself binds the plain fact.
+        // 2026-07-16: FactBinding migration — the value flows in as term[0], so the old
+        // [value, 0, 0] terms become term1 = term2 = ZERO.
+        let binding = dregg_bridge::present::FactTerms {
+            predicate_sym: attr_bb,
+            term1: BabyBear::ZERO,
+            term2: BabyBear::ZERO,
+        }
+        .bind(state_root);
         let bridge_predicate = Self::predicate_type_to_bridge(predicate_type, threshold.as_u32());
         let predicate_proof = dregg_bridge::prove_predicate_for_fact(
             attribute_value,
-            fact_hash,
-            state_root,
+            binding,
             &bridge_predicate,
         )
         .ok_or_else(|| {

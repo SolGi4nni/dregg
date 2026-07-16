@@ -2980,12 +2980,37 @@ impl AgentCipherclerk {
     /// and required only under the staged `require_pq` gate. Callers that need
     /// the legacy classical-only shape can use
     /// [`sign_action_classical`](Self::sign_action_classical).
+    ///
+    /// # Turn-nonce binding
+    ///
+    /// Since `dregg-action-sig-v3` the canonical signing message also binds the
+    /// SUBMITTING turn's nonce (Full-commitment replay closure — see
+    /// `TurnExecutor::compute_signing_message`). This convenience wrapper signs
+    /// over [`Self::next_turn_nonce`] (`receipt_chain.len()`), which is the
+    /// SAME value every cipherclerk submission path stamps on the turn it
+    /// builds (`make_sovereign`, the node MCP handlers'
+    /// `receipt_chain_length()`, the shared app-framework runtime whose
+    /// counter advances in lockstep with `append_receipt`). If the action will
+    /// ride a turn with a DIFFERENT nonce (e.g. a cell-agent turn riding the
+    /// CELL's on-ledger replay counter), use
+    /// [`sign_action_hybrid`](Self::sign_action_hybrid) with that nonce
+    /// explicitly — a mismatched nonce fails signature verification at commit.
     pub fn sign_action(
         &self,
         action: dregg_turn::action::Action,
         federation_id: &[u8; 32],
     ) -> dregg_turn::action::Action {
-        self.sign_action_hybrid(action, federation_id)
+        self.sign_action_hybrid(action, federation_id, self.next_turn_nonce())
+    }
+
+    /// The nonce the NEXT turn this cipherclerk submits will carry: the
+    /// receipt-chain length. Every committed turn appends one receipt
+    /// ([`Self::append_receipt`]), so the chain length tracks the agent's
+    /// on-ledger replay counter (`agent.state.nonce()`), which the executor
+    /// requires `turn.nonce` to equal — and, since `dregg-action-sig-v3`,
+    /// binds into every Full-commitment action signature.
+    pub fn next_turn_nonce(&self) -> u64 {
+        self.receipt_chain.len() as u64
     }
 
     /// Sign an action with the legacy CLASSICAL (ed25519-only)
@@ -2993,10 +3018,14 @@ impl AgentCipherclerk {
     /// now emits the hybrid variant by default; this remains for consumers
     /// that must produce the pre-hybrid wire shape (e.g. talking to a verifier
     /// that predates `Authorization::HybridSignature`).
+    /// `turn_nonce` must be the nonce of the turn this action will ride
+    /// (`turn.nonce == agent.state.nonce()` at commit) — the executor
+    /// recomputes the signing message over it (`dregg-action-sig-v3`).
     pub fn sign_action_classical(
         &self,
         action: dregg_turn::action::Action,
         federation_id: &[u8; 32],
+        turn_nonce: u64,
     ) -> dregg_turn::action::Action {
         use dregg_turn::action::{Action, Authorization};
         use dregg_turn::executor::TurnExecutor;
@@ -3004,12 +3033,70 @@ impl AgentCipherclerk {
             authorization: Authorization::Unchecked,
             ..action
         };
-        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id);
+        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id, turn_nonce);
         let sig = self.signing_key.sign(&message);
         Action {
             authorization: Authorization::from_sig_bytes(sig.to_bytes()),
             ..unsigned
         }
+    }
+
+    /// If `action`'s Full-commitment authorization is provably THIS clerk's
+    /// own signature over `stale_nonce`, re-sign it over `live_nonce`
+    /// (preserving the classical/hybrid shape) and return the re-signed
+    /// action. Returns `None` when the authorization is anything else — a
+    /// foreign or adversarial signature is NEVER rewritten (it stays exactly
+    /// as the caller supplied it, for the executor to judge).
+    ///
+    /// Why this exists: `dregg-action-sig-v3` binds the SUBMITTING turn's
+    /// nonce into every Full-commitment signature, and app clerks sign at
+    /// build time over [`Self::next_turn_nonce`] (the receipt-chain length).
+    /// The live replay counter can run AHEAD of that (the executor's Phase-1
+    /// fee+nonce commit is never rolled back, so a REFUSED turn still burns an
+    /// on-ledger nonce). An embedded submission path that knows the live nonce
+    /// calls this to repair exactly its own stale signatures at submit time.
+    pub fn resign_full_commitment_at(
+        &self,
+        action: &dregg_turn::action::Action,
+        federation_id: &[u8; 32],
+        stale_nonce: u64,
+        live_nonce: u64,
+    ) -> Option<dregg_turn::action::Action> {
+        use dregg_turn::action::{Action, Authorization, CommitmentMode};
+        use dregg_turn::executor::TurnExecutor;
+
+        if action.commitment_mode != CommitmentMode::Full {
+            return None;
+        }
+        let (ed25519, hybrid) = match &action.authorization {
+            Authorization::Signature(r, s) => {
+                let mut b = [0u8; 64];
+                b[..32].copy_from_slice(r);
+                b[32..].copy_from_slice(s);
+                (b, false)
+            }
+            Authorization::HybridSignature { ed25519, .. } => (*ed25519, true),
+            _ => return None,
+        };
+        let unsigned = Action {
+            authorization: Authorization::Unchecked,
+            ..action.clone()
+        };
+        let stale_msg =
+            TurnExecutor::compute_signing_message(&unsigned, federation_id, stale_nonce);
+        // The identification gate: the existing signature must be OURS over the
+        // stale message. Anything else is left untouched.
+        if !self
+            .public_key()
+            .verify(&stale_msg, &dregg_types::Signature(ed25519))
+        {
+            return None;
+        }
+        Some(if hybrid {
+            self.sign_action_hybrid(unsigned, federation_id, live_nonce)
+        } else {
+            self.sign_action_classical(unsigned, federation_id, live_nonce)
+        })
     }
 
     /// Sign an action with a HYBRID (ed25519 + ML-DSA-65) authorization — the
@@ -3027,10 +3114,14 @@ impl AgentCipherclerk {
     /// Distinct from [`sign_action`](Self::sign_action) so the app layer can
     /// adopt the per-action PQ half incrementally during the rollout without a
     /// wire-shape flag-day on every existing signed-action consumer.
+    /// `turn_nonce` must be the nonce of the turn this action will ride
+    /// (`turn.nonce == agent.state.nonce()` at commit) — the executor
+    /// recomputes the signing message over it (`dregg-action-sig-v3`).
     pub fn sign_action_hybrid(
         &self,
         action: dregg_turn::action::Action,
         federation_id: &[u8; 32],
+        turn_nonce: u64,
     ) -> dregg_turn::action::Action {
         use dregg_turn::action::{Action, Authorization};
         use dregg_turn::executor::TurnExecutor;
@@ -3038,7 +3129,7 @@ impl AgentCipherclerk {
             authorization: Authorization::Unchecked,
             ..action
         };
-        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id);
+        let message = TurnExecutor::compute_signing_message(&unsigned, federation_id, turn_nonce);
         let sig = self.signing_key.sign(&message);
         let pq = self.ml_dsa_key();
         let ml_dsa = pq.sign(&message).unwrap_or_default();
@@ -7177,6 +7268,79 @@ mod tests {
     use super::*;
     use dregg_turn::TurnReceipt;
 
+    /// DRIVEN FINDING (1) — THE DUAL-REDUCTION MISMATCH.
+    ///
+    /// `extract_fact_value` and `trace_fact_terms_bb` reduce a `Term::Const` symbol by two
+    /// CATEGORICALLY DIFFERENT functions:
+    ///   * `extract_fact_value`  = `u32::from_le_bytes(sym[0..4]) % BABYBEAR_P` — the symbol's FIRST
+    ///     4-byte limb, raw.
+    ///   * `trace_fact_terms_bb` = `bytes_to_babybear(sym)` = `poseidon2::hash_many(encode_hash(sym))`
+    ///     — a Poseidon2 HASH of all 8 limbs.
+    ///
+    /// The welded predicate path feeds `extract_fact_value` in as the compared value (which the weld
+    /// makes `terms[0]` of the hashed fact), while every canonical fact-hashing site
+    /// (`bridge/src/present.rs`, and this file's own `trace_fact_terms_bb`) builds `terms[0]` with
+    /// `bytes_to_babybear`. If they disagree, the prover's welded commitment covers a DIFFERENT fact
+    /// than the one token state commits to, and the honest proof cannot match a verifier's expected
+    /// commitment.
+    ///
+    /// The committed call site (`:2578`) asserts in PROSE that these agree
+    /// ("extract_fact_value == term_bbs[0] for the Int values this arithmetic path proves").
+    /// This test checks that claim instead of trusting it — for BOTH term kinds.
+    #[test]
+    fn driven_extract_fact_value_vs_terms_bb_reduction() {
+        // --- Term::Const: the two reductions on a real 32-byte symbol.
+        let sym: [u8; 32] = *blake3::hash(b"credit-score").as_bytes();
+        let fact_const = TraceFact {
+            predicate: *blake3::hash(b"has-score").as_bytes(),
+            terms: vec![dregg_trace::Term::Const(sym)],
+        };
+        let value_const = AgentCipherclerk::extract_fact_value(&fact_const).expect("const value");
+        let terms_const = AgentCipherclerk::trace_fact_terms_bb(&fact_const);
+        let value_const_bb = BabyBear::new(value_const);
+        println!("CONST: extract_fact_value = {}", value_const_bb.as_u32());
+        println!(
+            "CONST: trace_fact_terms_bb[0] = {}",
+            terms_const[0].as_u32()
+        );
+        println!("CONST: AGREE = {}", value_const_bb == terms_const[0]);
+
+        // --- Term::Int in [0, u32::MAX]: the case the prose claim covers.
+        let fact_int = TraceFact {
+            predicate: *blake3::hash(b"has-score").as_bytes(),
+            terms: vec![dregg_trace::Term::Int(720)],
+        };
+        let value_int = AgentCipherclerk::extract_fact_value(&fact_int).expect("int value");
+        let terms_int = AgentCipherclerk::trace_fact_terms_bb(&fact_int);
+        println!(
+            "INT(720): extract = {} | terms[0] = {} | AGREE = {}",
+            BabyBear::new(value_int).as_u32(),
+            terms_int[0].as_u32(),
+            BabyBear::new(value_int) == terms_int[0]
+        );
+
+        // --- Term::Int NEGATIVE: extract clamps to 0; terms_bb casts to u64 (two's complement).
+        let fact_neg = TraceFact {
+            predicate: *blake3::hash(b"has-score").as_bytes(),
+            terms: vec![dregg_trace::Term::Int(-5)],
+        };
+        let value_neg = AgentCipherclerk::extract_fact_value(&fact_neg).expect("neg value");
+        let terms_neg = AgentCipherclerk::trace_fact_terms_bb(&fact_neg);
+        println!(
+            "INT(-5): extract = {} | terms[0] = {} | AGREE = {}",
+            BabyBear::new(value_neg).as_u32(),
+            terms_neg[0].as_u32(),
+            BabyBear::new(value_neg) == terms_neg[0]
+        );
+
+        // The prose claim holds ONLY for non-negative in-range Int.
+        assert_eq!(
+            BabyBear::new(value_int),
+            terms_int[0],
+            "the prose claim's own case (in-range Int) must agree"
+        );
+    }
+
     /// Helper: create a mock receipt with given state hashes.
     fn mock_receipt(agent: CellId, pre_state: [u8; 32], post_state: [u8; 32]) -> TurnReceipt {
         TurnReceipt {
@@ -8960,12 +9124,13 @@ mod tests {
         let action = root_action(&turn);
 
         // Recompute the canonical signing message (must match what
-        // sign_action did internally), then verify with the cipherclerk pubkey.
+        // sign_action did internally — it signs over `next_turn_nonce()`),
+        // then verify with the cipherclerk pubkey.
         let unsigned = Action {
             authorization: Authorization::Unchecked,
             ..action.clone()
         };
-        let msg = TurnExecutor::compute_signing_message(&unsigned, &fed);
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &fed, cclerk.next_turn_nonce());
 
         let sig_bytes = ed25519_half(action);
         let sig = Signature::from_bytes(&sig_bytes);

@@ -19,8 +19,8 @@ use std::collections::HashSet;
 use thiserror::Error;
 
 use dregg_bridge::present::{
-    BridgePredicateProof, BridgePresentationBuilder, BridgePresentationProof, FederationRegistry,
-    prove_predicate_for_fact,
+    BridgePredicateProof, BridgePresentationBuilder, BridgePresentationProof, FactTerms,
+    FederationRegistry, prove_predicate_for_fact,
 };
 use dregg_circuit::poseidon2;
 use dregg_token::AuthRequest;
@@ -328,23 +328,23 @@ fn present_impl(
                 .to_predicate_value()
                 .ok_or_else(|| PresentationError::NonPredicateAttribute(req.attribute.clone()))?;
 
-            // Compute the fact hash the bridge expects: hash_fact(
-            //   blake3_to_bb("feature"), [predicate_symbol, value, 0]
-            // ). We synthesize a placeholder fact hash by hashing the
-            // attribute name into BabyBear.
+            // 2026-07-16: prove_predicate_for_fact now takes a structured FactBinding built from
+            // the fact's PREIMAGE TERMS + state_root, not a pre-hashed opaque fact_hash. The prover
+            // reconstructs the fact as `fact_hash_of(value) = hash_fact(predicate_sym, [value, term1,
+            // term2])` (predicate_arith_witness.rs:148) — the VALUE is term[0], supplied separately.
+            // The original hashed `hash_fact(attr_symbol, [predicate_value, 0, 0])`, so with the
+            // value flowing in as term[0], term1 = term2 = ZERO (NOT `predicate_value` — that would
+            // bind hash_fact(attr, [value, value, 0]), a different fact).
             let attr_symbol = blake3_to_babybear(req.attribute.as_bytes());
-            let fact_hash = poseidon2::hash_fact(
-                attr_symbol,
-                &[
-                    dregg_circuit::field::BabyBear::new(predicate_value),
-                    dregg_circuit::field::BabyBear::ZERO,
-                    dregg_circuit::field::BabyBear::ZERO,
-                ],
-            );
+            let binding = FactTerms {
+                predicate_sym: attr_symbol,
+                term1: dregg_circuit::field::BabyBear::ZERO,
+                term2: dregg_circuit::field::BabyBear::ZERO,
+            }
+            .bind(state_root);
 
-            let pred_proof =
-                prove_predicate_for_fact(predicate_value, fact_hash, state_root, &req.predicate)
-                    .ok_or_else(|| PresentationError::PredicateProof(req.attribute.clone()))?;
+            let pred_proof = prove_predicate_for_fact(predicate_value, binding, &req.predicate)
+                .ok_or_else(|| PresentationError::PredicateProof(req.attribute.clone()))?;
 
             predicate_proofs.push(NamedPredicateProof {
                 attribute: req.attribute.clone(),
