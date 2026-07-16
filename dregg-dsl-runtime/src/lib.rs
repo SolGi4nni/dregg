@@ -70,10 +70,7 @@ pub use dregg_circuit::dsl::revocation::{
 };
 
 // Re-export DSL-native fold proving API.
-pub use dregg_circuit::dsl::fold::{
-    FOLD_DSL_PI_COUNT, FOLD_DSL_WIDTH, fold_circuit_descriptor, fold_dsl_circuit,
-    generate_fold_trace,
-};
+pub use dregg_circuit::dsl::fold::{FOLD_DSL_PI_COUNT, FOLD_DSL_WIDTH, generate_fold_trace};
 
 // Re-export DSL-native note spending proving API.
 pub use dregg_circuit::dsl::note_spending::{

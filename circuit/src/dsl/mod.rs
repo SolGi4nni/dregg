@@ -80,8 +80,7 @@ pub use revocation::{
 pub use fold::{
     FOLD_AIR_WIDTH, FOLD_DSL_PI_COUNT, FOLD_DSL_WIDTH, FoldAir, FoldWitness, RemovedFact,
     build_membership_proof, build_shared_tree, compute_root_transition_hash,
-    compute_test_checks_commitment, create_test_fold, fold_circuit_descriptor, fold_dsl_circuit,
-    generate_fold_trace, verify_root_transition,
+    compute_test_checks_commitment, create_test_fold, generate_fold_trace, verify_root_transition,
 };
 
 // Re-export legacy Merkle types for backward compatibility.
@@ -104,10 +103,7 @@ pub use accumulator::{
 };
 
 // Re-export DSL-native committed-threshold proving API.
-pub use committed_threshold::{
-    committed_threshold_circuit_descriptor, committed_threshold_dsl_circuit,
-    generate_committed_threshold_trace,
-};
+pub use committed_threshold::generate_committed_threshold_trace;
 
 // Re-export DSL-native derivation proving API.
 pub use derivation::{
