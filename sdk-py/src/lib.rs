@@ -245,11 +245,29 @@ fn fetch_federation_id(node_url: &str) -> Result<[u8; 32], String> {
     Ok(*blake3::hash(&pk).as_bytes())
 }
 
-fn fetch_cell_nonce(node_url: &str, cell_hex: &str) -> u64 {
-    get_json(&format!("{node_url}/api/cell/{cell_hex}"))
-        .ok()
-        .and_then(|v| v.get("nonce").and_then(|n| n.as_u64()))
-        .unwrap_or(0)
+/// The agent cell's LIVE replay counter from the node — the nonce `.sign()`
+/// stamps on the turn AND binds the action signature to.
+///
+/// FAILS LOUD. This used to `.unwrap_or(0)`: an unreachable node, a devnet-key
+/// rejection, an unknown cell, or a renamed field all silently became "nonce 0",
+/// so the SDK would confidently sign a turn bound to the wrong replay counter
+/// and the citizen got an opaque refusal from the node instead of the real cause
+/// (the node is down / this cell does not exist). A default of 0 is never a
+/// safe guess for a value the signature commits to — the ONE nonce it is
+/// accidentally right for is a brand-new cell's first turn, which is exactly the
+/// case every test pinned. Pin `.nonce(n)` for offline construction.
+fn fetch_cell_nonce(node_url: &str, cell_hex: &str) -> Result<u64, String> {
+    let body = get_json(&format!("{node_url}/api/cell/{cell_hex}"))
+        .map_err(|e| format!("could not read the acting cell's live nonce from {node_url}: {e}"))?;
+    if body.get("found").and_then(|f| f.as_bool()) == Some(false) {
+        return Err(format!(
+            "the acting cell {cell_hex} does not exist on {node_url} — it has never been funded \
+             or created, so it has no nonce to sign against"
+        ));
+    }
+    body.get("nonce")
+        .and_then(|n| n.as_u64())
+        .ok_or_else(|| format!("node {node_url} returned no `nonce` for cell {cell_hex}"))
 }
 
 fn post_signed_turn(
@@ -426,6 +444,92 @@ impl Identity {
     }
 }
 
+// ─── the wire constructions (shared by the pymethods and the drift-killer) ───
+
+/// The [`CapabilityRef`] `TurnBuilder.grant()` mints — the ONE construction that
+/// path uses, extracted so the drift-killer can drive the SHIPPED code rather
+/// than re-authoring it (a test that builds its own cap verifies only itself:
+/// dropping `provenance` in `grant()` would leave such a test green, which is
+/// how sdk-ts shipped a provenance-dropping encoder to npm under a passing
+/// "byte-faithful" claim).
+///
+/// `provenance` is the canonical MINT-rooted derivation, identical to the
+/// c-list's own `grant_with_breadstuff` (cell/src/capability.rs): parent =
+/// `mint_provenance()` (a context-free grant is a root/mint), turn context =
+/// `NO_TURN_CONTEXT` (`[0u8; 32]`). It is `#[serde(default)]` with NO
+/// `skip_serializing_if`, so postcard emits its 32 bytes positionally — a
+/// dropped field slides every subsequent field on the wire.
+pub fn mint_cap_ref(
+    target: CellId,
+    slot: u32,
+    permissions: AuthRequired,
+    expires_at: Option<u64>,
+) -> CapabilityRef {
+    CapabilityRef {
+        target,
+        slot,
+        permissions,
+        breadstuff: None,
+        expires_at,
+        allowed_effects: None,
+        stored_epoch: None,
+        provenance: dregg_cell::derivation::cap_provenance(
+            &target,
+            slot,
+            &dregg_cell::derivation::mint_provenance(),
+            &[0u8; 32],
+        ),
+    }
+}
+
+// ─── the signing path (shared by `TurnBuilder.sign()` and the drift-killer) ───
+
+/// Build the canonical [`SignedTurn`] for a staged turn — the ONE construction
+/// `TurnBuilder.sign()` uses.
+///
+/// It is a free function (not a `#[pymethods]` body) precisely so the
+/// executor-level drift-killer (`tests/wire_drift_killer.rs`) can drive the
+/// REAL signing path instead of re-authoring a mirror of it. A mirror would
+/// verify itself and pass while the shipped path stayed broken — which is
+/// exactly how this function's own nonce bug survived undetected.
+///
+/// # The nonce bind (`dregg-action-sig-v3`)
+///
+/// The action signature covers the nonce of the turn it will RIDE
+/// (`TurnExecutor::compute_signing_message` folds in `turn_nonce`), so the
+/// action MUST be signed against the same `nonce` stamped on the turn below.
+/// This path previously went through `AgentCipherclerk::make_action`, which
+/// binds `next_turn_nonce()` = `receipt_chain.len()` — and sdk-py never
+/// appends to the receipt chain, so that was ALWAYS 0. Every turn from an
+/// agent whose on-ledger nonce had advanced past 0 carried a signature bound
+/// to nonce 0 and was refused at commit. `sign_action_hybrid` with the live
+/// nonce is the documented fix (see its rustdoc: "If the action will ride a
+/// turn with a DIFFERENT nonce … use `sign_action_hybrid` with that nonce
+/// explicitly — a mismatched nonce fails signature verification at commit").
+#[allow(clippy::too_many_arguments)]
+pub fn build_signed_turn(
+    clerk: &AgentCipherclerk,
+    domain: &str,
+    method: &str,
+    effects: Vec<Effect>,
+    federation_id: &[u8; 32],
+    nonce: u64,
+    fee: u64,
+    memo: Option<String>,
+    valid_until: i64,
+) -> SignedTurn {
+    let target = clerk.cell_id(domain);
+    let unsigned = dregg_sdk::raw::unsigned_action_named(target, method, effects);
+    // Bind the action signature to the nonce the turn ACTUALLY carries.
+    let action = clerk.sign_action_hybrid(unsigned, federation_id, nonce);
+    let mut turn = clerk.make_turn_for(domain, action);
+    turn.nonce = nonce;
+    turn.fee = fee;
+    turn.memo = memo;
+    turn.valid_until = Some(valid_until);
+    clerk.sign_turn(&turn)
+}
+
 // ─── TurnBuilder ───
 
 /// The typed verb builder: stage effects, then `.sign()`.
@@ -528,21 +632,7 @@ impl TurnBuilder {
             .map(|t| parse_cell(t, "target"))
             .transpose()?
             .unwrap_or(from);
-        let cap = CapabilityRef {
-            target,
-            slot,
-            permissions: parse_auth_required(permissions)?,
-            breadstuff: None,
-            expires_at,
-            allowed_effects: None,
-            stored_epoch: None,
-            provenance: dregg_cell::derivation::cap_provenance(
-                &(target),
-                (slot),
-                &dregg_cell::derivation::mint_provenance(),
-                &[0u8; 32],
-            ),
-        };
+        let cap = mint_cap_ref(target, slot, parse_auth_required(permissions)?, expires_at);
         slf.effects.push(Effect::GrantCapability { from, to, cap });
         Ok(slf)
     }
@@ -616,25 +706,23 @@ impl TurnBuilder {
         let agent_hex = hex::encode(ident.clerk.cell_id("default").0);
         let nonce = match self.nonce {
             Some(n) => n,
-            None => py.detach(|| fetch_cell_nonce(&node_url, &agent_hex)),
+            None => py
+                .detach(|| fetch_cell_nonce(&node_url, &agent_hex))
+                .map_err(err)?,
         };
 
-        let action = ident.clerk.make_action(
-            ident.clerk.cell_id("default"),
+        let signed = build_signed_turn(
+            &ident.clerk,
+            "default",
             &self.method,
             self.effects.clone(),
             &federation_id,
-        );
-        let mut turn = ident.clerk.make_turn_for("default", action);
-        turn.nonce = nonce;
-        turn.fee = self.fee.unwrap_or(10_000);
-        turn.memo = self.memo.clone();
-        turn.valid_until = Some(
+            nonce,
+            self.fee.unwrap_or(10_000),
+            self.memo.clone(),
             self.valid_until
                 .unwrap_or_else(|| now_secs() + TURN_VALIDITY_HORIZON_SECS),
         );
-
-        let signed = ident.clerk.sign_turn(&turn);
         Ok(AuthorizedTurn {
             signed,
             node_url: self.node_url.clone(),
@@ -2026,8 +2114,15 @@ fn rust_executor_probe() -> Result<(bool, String), String> {
         .insert_cell(Cell::with_balance(pk, dst_token, 10))
         .map_err(|e| format!("fund dst: {e:?}"))?;
 
-    let action = clerk.make_action(
-        from,
+    // Ride the SAME `build_signed_turn` the shipped `.sign()` uses — one signing
+    // path in this crate, so the probe cannot certify a construction the SDK does
+    // not actually ship. (This probe pinned nonce 0, the one value at which the
+    // old `make_action` nonce bind was accidentally correct; it would have gone on
+    // reporting a healthy executor while every real Python turn past the first was
+    // refused.)
+    let signed = build_signed_turn(
+        &clerk,
+        "default",
         "execute",
         vec![Effect::Transfer {
             from,
@@ -2035,12 +2130,11 @@ fn rust_executor_probe() -> Result<(bool, String), String> {
             amount: 5,
         }],
         &fed,
+        0,
+        10_000,
+        None,
+        4_000_000_000, // far future; never expired at ts 0
     );
-    let mut turn = clerk.make_turn_for("default", action);
-    turn.nonce = 0;
-    turn.fee = 10_000;
-    turn.valid_until = Some(4_000_000_000); // far future; never expired at ts 0
-    let signed = clerk.sign_turn(&turn);
 
     engine
         .execute_turn(&signed.turn)

@@ -275,3 +275,47 @@ build, the proved `Exec.recKExec` in the kernel build). The deploy/pg surfaces
 have their own files
 (`test_deploy.py`, `test_pg*.py`; pg integration is skip-gated on a live
 postgres).
+
+### The drift-killer (`cargo test`, from THIS directory)
+
+```sh
+cd sdk-py && cargo test          # sdk-py is EXCLUDED from the root workspace
+```
+
+`tests/wire_drift_killer.rs` is the gate that keeps this SDK honest about the
+protocol. sdk-py is in the root workspace's `exclude` list, so no root
+`cargo build`/`cargo test` and no CI job ever compiles it — **it is only built
+when built from this directory.** The gate drives the SHIPPED signing path
+(`build_signed_turn`, the exact function `TurnBuilder.sign()` calls) through the
+REAL `TurnExecutor` and pins four things: turns commit at every nonce (not just
+an agent's first), actions carry a VERIFYING hybrid ed25519 + ML-DSA-65
+authorization, `CapabilityRef::provenance` is canonical and survives the wire,
+and `.write()` reaches the wide ext plane past the 16 fixed slots. Its vocabulary
+leg reads `../turn/src/action.rs` at test time and FAILS LOUD if the protocol
+grows an `Effect` variant sdk-py has never considered — there is no cached oracle
+that can rot into a false green.
+
+**Why this SDK does not re-implement the codec.** Unlike `sdk-ts` (which must
+port the postcard codec to TypeScript, and shipped an npm release that silently
+dropped `CapabilityRef::provenance`), sdk-py depends on `dregg-turn` /
+`dregg-cell` **by path** and encodes with the same `postcard` the node decodes
+with. Mis-encoding is therefore structurally impossible here — but that buys
+less than it sounds like: it says nothing about whether a turn is *accepted*,
+which is why the gate commits turns through the executor rather than stopping at
+bytes.
+
+### Named residual: the receipt chain is not plumbed
+
+`AgentCipherclerk::make_turn_for` takes `previous_receipt_hash` from the clerk's
+`receipt_chain`, and this SDK never appends to it (a `.submit()` returns the
+node's JSON, not a `TurnReceipt`), so every Python turn claims
+`previous_receipt_hash: None`. This is accepted today **only because the node
+builds a fresh executor per request** (`executor_setup::new_submit_executor`), so
+the per-agent `last_receipt_hash` map the check consults is always empty. The
+executor's own source calls this out as the client's debt to pay
+(`turn/src/executor/execute.rs`, `REVIEW[cclerk-coord]`: "the cclerk must be
+updated to plumb the prior receipt hash … This check should NOT be relaxed").
+If a node ever holds a persistent executor across submits, every non-first
+Python turn breaks with `ReceiptChainMismatch`. Closing it needs either a node
+endpoint exposing an agent's chain head (`/api/cell/{id}` does not carry one
+today) or a `.submit()` that folds the returned receipt back into the clerk.
