@@ -783,3 +783,19 @@ The all-row `is_real` boolean law deliberately uses `windowGate { onTransition :
 `.base (.gate ...)` is transition-only and would omit Rust's last-row assertion. Local
 `lake build Dregg2` is green (9699 jobs). **No semantic or IR-expressibility residual.** The production
 Rust path still needs the separate descriptor-consumption cutover; this authoring turn changed no Rust.
+
+### `d7d170aa3` — turn-chain EMITTER landed (semantics), but it is NOT yet deployable — honest scope
+`EffectVmEmitTurnChainBinding.lean` (32.5KB) is GREEN (lake build Dregg2, 9699 jobs), forbidden-clean, 18
+`#assert_axioms`, wired into the root, with REAL refutation teeth (`turnChain_rejects_broken_continuity` /
+`_bad_idx_step` / `_bad_real_count`) + a 4-row two-real/two-padding witness proving continuity across
+real→pad AND pad→pad, frozen padding count, `real_count == num_turns`.
+**What it is NOT (verified by my own gate, not taken on report):** there is **no JSON emission** — no
+`toJson`/emit entry, no `circuit/descriptors/by-name/*turn-chain*`, no `descriptor_by_name` STATIC_GOLDENS
+registration. So the deployed `grain-verify/r3.rs:139` path STILL runs the hand `TurnChainBindingAir`.
+The module is the LEAN AUTHORSHIP of the constraints; the deployable artifact does not exist yet.
+**Remaining bricks (in order):** (1) emit the descriptor JSON from the Lean module; (2) byte-pin it —
+`descriptors/by-name/turn-chain-binding.json` + STATIC_GOLDENS + an emit-gate test with a `GOLDEN_JSON`
+const (the `accumulator_nonrev_emit_gate.rs` pattern); (3) a production witness/trace builder (the
+`non_revocation_witness.rs` / `membership_witness_4ary` analog); (4) cut `prove_turn_chain_recursive_
+without_host_gate` onto `parse_vm_descriptor2`/`prove_vm_descriptor2`, keeping `generate_chain_trace_
+rotated` (trace-gen is legit Rust). Only after (4) is the law satisfied on that path.
