@@ -1463,3 +1463,22 @@ ONLY the FullTurnProof (:5031-5035). **Persist the FinalizedTurn there (postcard
 `dregg_compress_history` can load the real chain and call `prove_turn_chain_recursive`.** That is the whole
 unlock — for the MCP tool AND the genesis-snapshot history leg.
 BLOCKER: `turn/` + `node/mcp` + `bridge/present` are held by the predicate-weld lane (FactBinding).
+
+### srot sweep (persvati) — CONFOUNDED by the contested lane; needs a quiet tree
+`cargo test --workspace --no-run` on the remote `srot` lane exited 101 at the FIRST compile failure:
+`dregg-turn` (lib test) — `turn/src/executor/membership_verifier.rs:2872,3033: expected FactBinding, found
+BabyBear`. That is the **predicate-weld lane's in-flight WIP** (they are threading `FactBinding` through and
+have not updated the turn tests), NOT durable silent rot. `--no-run` halts on the first compile error, so
+the sweep never reached the rest of the workspace.
+**Lesson (the same shared-tree hazard, now at remote scale): an empirical sweep rsync's whatever WIP is in
+the tree, so its verdict is only as clean as the tree.** Re-run when the predicate-weld lane lands. The
+sweep MECHANISM is proven (it built the whole dep graph incl. dregg-lean-ffi's 145-facet leanc build and
+reported a real error) — it just needs a quiet moment.
+Heads-up worth passing to that lane: their WIP currently breaks `dregg-turn`'s lib test.
+
+### CONTENTION BLOCKER (2026-07-16)
+The predicate-weld lane (`FactBinding` / `predicate_arith_witness`) holds: `node/mcp/handlers_verify.rs`,
+`bridge/src/present.rs`, `preflight/checks/{proofs,composition,backends}.rs`, `turn/**`. Those are 5 of the
+mock-purge targets INCLUDING the flagship (`dregg_compress_history`) and the plumbing site (`turn/`).
+Not racing them — a rename/edit collision in a shared tree is how wire identifiers get corrupted (already
+paid for that once). Working the clean surfaces meanwhile; the contested ones resume when that lane lands.
