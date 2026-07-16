@@ -6,7 +6,9 @@
 
 use dregg_circuit::dsl::fold::FoldAir;
 use dregg_circuit::{BabyBear, ConstraintProver, PresentationVerification};
-use dregg_commit::{Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain};
+use dregg_commit::{
+    CheckPolicy, Fact, FactSet, FieldElement, SymbolTable, TokenState, verify_fold_chain,
+};
 use dregg_token::{Attenuation, AuthRequest, AuthToken, MacaroonToken};
 use dregg_trace::Conclusion;
 
@@ -301,12 +303,19 @@ fn test_fold_chain_verification() {
 
     let (state2, delta2) = further_attenuation_delta(&state1, &[new_fact], &symbols).unwrap();
 
-    // Verify individual deltas.
-    assert!(delta1.apply_and_verify(), "delta1 should verify");
-    assert!(delta2.apply_and_verify(), "delta2 should verify");
+    // Verify individual deltas against their real pre-states.
+    let policy = CheckPolicy::RuleNames(crate::delta::VALID_CHECK_PREDICATES);
+    assert!(
+        delta1.apply_and_verify(&state0, &policy),
+        "delta1 should verify"
+    );
+    assert!(
+        delta2.apply_and_verify(&state1, &policy),
+        "delta2 should verify"
+    );
 
-    // Verify the chain.
-    assert!(verify_fold_chain(&[delta1, delta2]));
+    // Verify the chain, walked forward from the genesis state.
+    assert!(verify_fold_chain(&state0, &[delta1, delta2], &policy));
 
     // The states should have increasing content.
     assert_eq!(state0.len(), 1); // just unrestricted
@@ -705,7 +714,7 @@ fn test_fold_delta_from_raw_states() {
     assert!(delta.is_some());
 
     let delta = delta.unwrap();
-    assert!(delta.apply_and_verify());
+    assert!(delta.apply_and_verify(&state, &CheckPolicy::RuleNames(&["no_secret_access"])));
     assert_eq!(delta.num_removed(), 1);
     assert_eq!(delta.num_added_checks(), 1);
 

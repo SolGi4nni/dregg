@@ -223,7 +223,7 @@ pub fn initial_attenuation_delta(
 /// Only predicates in this set are accepted as valid check prefixes.
 /// This prevents an attacker from injecting arbitrary rule-prefixed facts
 /// that could influence the derivation engine.
-const VALID_CHECK_PREDICATES: &[&str] = &[
+pub const VALID_CHECK_PREDICATES: &[&str] = &[
     "app",
     "service",
     "feature",
@@ -314,7 +314,12 @@ pub fn further_attenuation_delta(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use dregg_commit::verify_fold_chain;
+    use dregg_commit::{CheckPolicy, verify_fold_chain};
+
+    /// Verifiers in these tests admit exactly the allowlist production admits.
+    fn policy() -> CheckPolicy<'static> {
+        CheckPolicy::RuleNames(VALID_CHECK_PREDICATES)
+    }
 
     #[test]
     fn test_initial_attenuation_delta() {
@@ -332,8 +337,8 @@ mod tests {
         // Old state should have had the unrestricted fact.
         assert_eq!(old_state.len(), 1);
 
-        // Delta should verify.
-        assert!(delta.apply_and_verify());
+        // Delta should verify against the real pre-state.
+        assert!(delta.apply_and_verify(&old_state, &policy()));
 
         // New state should have the check fact.
         assert!(!new_state.is_empty());
@@ -349,7 +354,7 @@ mod tests {
             ..Default::default()
         };
 
-        let (_, state1, delta1) = initial_attenuation_delta(&att1, &mut symbols).unwrap();
+        let (state0, state1, delta1) = initial_attenuation_delta(&att1, &mut symbols).unwrap();
 
         // Second: further restrict with a user confinement.
         let user_pred = symbols.intern("confine_user");
@@ -361,12 +366,12 @@ mod tests {
 
         let (_state2, delta2) = result.unwrap();
 
-        // Both deltas should verify.
-        assert!(delta1.apply_and_verify());
-        assert!(delta2.apply_and_verify());
+        // Both deltas should verify against their real pre-states.
+        assert!(delta1.apply_and_verify(&state0, &policy()));
+        assert!(delta2.apply_and_verify(&state1, &policy()));
 
-        // Chain should verify.
-        assert!(verify_fold_chain(&[delta1, delta2]));
+        // Chain should verify, walked forward from the genesis state.
+        assert!(verify_fold_chain(&state0, &[delta1, delta2], &policy()));
     }
 
     #[test]
@@ -388,7 +393,7 @@ mod tests {
         assert!(delta.is_some());
 
         let delta = delta.unwrap();
-        assert!(delta.apply_and_verify());
+        assert!(delta.apply_and_verify(&state, &CheckPolicy::NoAddedChecks));
         assert_eq!(delta.num_removed(), 2);
     }
 
@@ -397,11 +402,11 @@ mod tests {
         let mut state = TokenState::new();
         state.add_fact(Fact::from_symbols("access", &["resource"]));
 
-        let delta = compute_fold_delta(&state, vec![], vec![("expires", &["2025-12-31"])]);
+        let delta = compute_fold_delta(&state, vec![], vec![("valid_until", &["2025-12-31"])]);
         assert!(delta.is_some());
 
         let delta = delta.unwrap();
-        assert!(delta.apply_and_verify());
+        assert!(delta.apply_and_verify(&state, &policy()));
         assert_eq!(delta.num_removed(), 0);
         assert_eq!(delta.num_added_checks(), 1);
     }

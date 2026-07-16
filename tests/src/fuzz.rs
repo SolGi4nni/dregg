@@ -6,7 +6,9 @@
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_circuit::poseidon2::{hash_2_to_1, hash_4_to_1, hash_fact, hash_many};
 use dregg_commit::Fact as CommitFact;
-use dregg_commit::{FactSet, FieldElement, FoldDeltaBuilder, TokenState, verify_fold_chain};
+use dregg_commit::{
+    CheckPolicy, FactSet, FieldElement, FoldDeltaBuilder, TokenState, verify_fold_chain,
+};
 use dregg_trace::policy::minimal_policy;
 use dregg_trace::types::*;
 use dregg_trace::{Evaluator, symbol_from_str, verify_trace};
@@ -303,7 +305,7 @@ fn random_fold_deltas_preserve_subset_invariant() {
 
         if let Some(delta) = builder.build() {
             assert!(
-                delta.apply_and_verify(),
+                delta.apply_and_verify(&state, &CheckPolicy::NoAddedChecks),
                 "Valid fold delta must verify (trial {trial})"
             );
 
@@ -350,6 +352,9 @@ fn random_fold_chain_verifies() {
         // Build a chain of 2-4 fold steps
         let chain_len = (rng.next_u32() % 3 + 2) as usize;
         let mut deltas = Vec::new();
+        // Keep the pre-state of deltas[0]: the chain verifier walks forward from it,
+        // recomputing every intermediate root rather than trusting the deltas' own.
+        let genesis_state = state.clone();
         let mut current_state = state;
         let mut remaining_facts = facts.clone();
 
@@ -378,7 +383,7 @@ fn random_fold_chain_verifies() {
 
         if deltas.len() >= 2 {
             assert!(
-                verify_fold_chain(&deltas),
+                verify_fold_chain(&genesis_state, &deltas, &CheckPolicy::NoAddedChecks),
                 "Random fold chain must verify (trial {trial})"
             );
         }

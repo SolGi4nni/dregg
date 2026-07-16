@@ -59,13 +59,13 @@ pub use accumulator::{AccumulatorWitness, BabyBear4, PolynomialAccumulator};
 pub use fact::Fact;
 pub use factset::FactSet;
 pub use field::FieldElement;
-pub use fold::{FoldDelta, FoldDeltaBuilder, FoldVerification, verify_fold_chain};
+pub use fold::{CheckPolicy, FoldDelta, FoldDeltaBuilder, FoldVerification, verify_fold_chain};
 pub use hash::{HASH_ARITY, hash_leaf, hash_node};
 pub use merkle::{MerkleProof, MerkleTree, NonMembershipProof, SurvivalWitness};
 pub use poseidon2_tree::{
     Poseidon2MerkleProof, Poseidon2MerkleTree, commitment_to_field, hash_bytes_to_field,
 };
-pub use state::{StateCommitment, TokenState};
+pub use state::{RULE_PREFIX, StateCommitment, TokenState};
 pub use symbol::SymbolTable;
 
 #[cfg(test)]
@@ -105,7 +105,10 @@ mod integration_tests {
             .build()
             .expect("delta1 should build");
 
-        assert!(delta1.apply_and_verify(), "delta1 should verify");
+        assert!(
+            delta1.apply_and_verify(&state, &CheckPolicy::RuleNames(&["no_write"])),
+            "delta1 should verify"
+        );
         assert_eq!(delta1.old_root, initial_root);
 
         // Reconstruct state after first attenuation.
@@ -123,13 +126,20 @@ mod integration_tests {
             .build()
             .expect("delta2 should build");
 
-        assert!(delta2.apply_and_verify(), "delta2 should verify");
+        assert!(
+            delta2.apply_and_verify(&state1, &CheckPolicy::NoAddedChecks),
+            "delta2 should verify"
+        );
 
         // Final state should only have public.txt access.
         let final_state = delta2.reconstruct_new_state(&state1).unwrap();
 
         // Verify the chain.
-        assert!(verify_fold_chain(&[delta1, delta2]));
+        assert!(verify_fold_chain(
+            &state,
+            &[delta1, delta2],
+            &CheckPolicy::RuleNames(&["no_write"])
+        ));
         assert!(final_state.contains(&Fact::from_symbols("owns", &["alice", "public.txt"])));
         assert!(final_state.contains(&Fact::from_symbols("can_read", &["alice", "public.txt"])));
         assert!(final_state.contains(&Fact::from_symbols("can_write", &["alice", "public.txt"])));
@@ -268,12 +278,12 @@ mod integration_tests {
         let mut state = TokenState::new();
         state.add_fact(Fact::from_symbols("access", &["resource"]));
 
-        let delta = FoldDeltaBuilder::new(state)
+        let delta = FoldDeltaBuilder::new(state.clone())
             .add_named_check("expires", &["tomorrow"])
             .build()
             .unwrap();
 
-        assert!(delta.apply_and_verify());
+        assert!(delta.apply_and_verify(&state, &CheckPolicy::RuleNames(&["expires"])));
         assert_eq!(delta.num_removed(), 0);
         assert_eq!(delta.num_added_checks(), 1);
     }
@@ -294,6 +304,9 @@ mod integration_tests {
                 unchanged_subtrees: vec![],
             },
         };
-        assert_eq!(delta.verify(), FoldVerification::EmptyDelta);
+        assert_eq!(
+            delta.verify(&TokenState::new(), &CheckPolicy::NoAddedChecks),
+            FoldVerification::EmptyDelta
+        );
     }
 }

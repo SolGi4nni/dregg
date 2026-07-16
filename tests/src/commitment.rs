@@ -7,9 +7,9 @@
 //! - State collision attacks
 
 use dregg_commit::{
-    Fact, FactSet, FieldElement, FoldDelta, FoldDeltaBuilder, FoldVerification, MerkleProof,
-    MerkleTree, NonMembershipProof, StateCommitment, SurvivalWitness, TokenState, hash_leaf,
-    hash_node, verify_fold_chain,
+    CheckPolicy, Fact, FactSet, FieldElement, FoldDelta, FoldDeltaBuilder, FoldVerification,
+    MerkleProof, MerkleTree, NonMembershipProof, StateCommitment, SurvivalWitness, TokenState,
+    hash_leaf, hash_node, verify_fold_chain,
 };
 
 // =============================================================================
@@ -416,12 +416,16 @@ fn fold_chain_broken_by_reordering() {
         .build()
         .unwrap();
 
-    // Correct order verifies
-    assert!(verify_fold_chain(&[delta1.clone(), delta2.clone()]));
+    // Correct order verifies, walked forward from the genesis state.
+    assert!(verify_fold_chain(
+        &state0,
+        &[delta1.clone(), delta2.clone()],
+        &CheckPolicy::NoAddedChecks
+    ));
 
-    // Reversed order fails (delta2's old_root != delta1's new_root)
+    // Reversed order fails: delta2's old_root is not the root of state0.
     assert!(
-        !verify_fold_chain(&[delta2, delta1]),
+        !verify_fold_chain(&state0, &[delta2, delta1], &CheckPolicy::NoAddedChecks),
         "Reversed fold chain must fail verification"
     );
 }
@@ -432,7 +436,7 @@ fn fold_delta_with_tampered_old_root() {
     state.add_fact(Fact::from_symbols("x", &["1"]));
     state.add_fact(Fact::from_symbols("y", &["2"]));
 
-    let mut delta = FoldDeltaBuilder::new(state)
+    let mut delta = FoldDeltaBuilder::new(state.clone())
         .remove_fact(Fact::from_symbols("x", &["1"]))
         .build()
         .unwrap();
@@ -441,7 +445,7 @@ fn fold_delta_with_tampered_old_root() {
     delta.old_root = [0xAA; 32];
 
     assert!(
-        !delta.apply_and_verify(),
+        !delta.apply_and_verify(&state, &CheckPolicy::NoAddedChecks),
         "Delta with tampered old_root must fail"
     );
 }
@@ -452,7 +456,7 @@ fn fold_delta_with_tampered_new_root() {
     state.add_fact(Fact::from_symbols("x", &["1"]));
     state.add_fact(Fact::from_symbols("y", &["2"]));
 
-    let mut delta = FoldDeltaBuilder::new(state)
+    let mut delta = FoldDeltaBuilder::new(state.clone())
         .remove_fact(Fact::from_symbols("x", &["1"]))
         .build()
         .unwrap();
@@ -461,34 +465,103 @@ fn fold_delta_with_tampered_new_root() {
     delta.new_root = [0xBB; 32];
 
     assert!(
-        !delta.apply_and_verify(),
+        !delta.apply_and_verify(&state, &CheckPolicy::NoAddedChecks),
         "Delta with tampered new_root must fail"
     );
 }
 
+/// The above two tests only break a self-consistency match — the CHEAP forgery.
+/// The real attack is minting a delta that is internally CONSISTENT: tamper
+/// `new_root` and the survival witness's copy of it together, so every field
+/// agrees with every other field. Nothing but recomputing the root from our own
+/// pre-state can refuse this.
+#[test]
+fn fold_delta_with_consistently_tampered_new_root() {
+    let mut state = TokenState::new();
+    state.add_fact(Fact::from_symbols("x", &["1"]));
+    state.add_fact(Fact::from_symbols("y", &["2"]));
+
+    let mut delta = FoldDeltaBuilder::new(state.clone())
+        .remove_fact(Fact::from_symbols("x", &["1"]))
+        .build()
+        .unwrap();
+
+    // Tamper with BOTH copies so the delta is self-consistent.
+    delta.new_root = [0xBB; 32];
+    delta.surviving_proof.new_root = [0xBB; 32];
+
+    assert_eq!(
+        delta.verify(&state, &CheckPolicy::NoAddedChecks),
+        FoldVerification::RootMismatch,
+        "a self-consistent delta naming a post-state it did not produce must fail"
+    );
+}
+
+/// A fold must only ever NARROW. `FoldDeltaBuilder` has no `add_fact`, but a
+/// verifier never sees the builder — it sees a struct the author filled in, so the
+/// refusal has to come from `verify`, not from the builder's API surface.
+///
+/// Note what this test does NOT do: leave `removed` and `added_checks` both empty.
+/// That trips the `EmptyDelta` guard before any root is examined, and proves nothing
+/// about widening. Each case below carries a real declared operation.
 #[test]
 fn fold_delta_adding_capability_without_check() {
-    // Verify that you cannot ADD a fact via fold (only remove or add checks)
     let mut state = TokenState::new();
     state.add_fact(Fact::from_symbols("can_read", &["alice", "public"]));
+    let real_root = state.root();
 
-    // You can only narrow - the FoldDeltaBuilder only supports remove_fact and add_check
-    // There is no "add_fact" method, which is the enforcement mechanism.
-    // We test the verify() path by constructing a malformed delta manually
-    let delta = FoldDelta {
-        old_root: state.root(),
+    // (i) A delta naming a post-state root of the author's choosing — one that
+    // would include extra facts. It declares a real, well-formed added check, so
+    // it clears every self-consistency check; only recomputation refuses it.
+    let forged_root = FoldDelta {
+        old_root: real_root,
         new_root: [0x42; 32], // fake root that would include extra facts
         removed: vec![],
-        added_checks: vec![], // no changes at all
+        added_checks: vec![TokenState::make_rule("valid_until", &["2030"])],
         surviving_proof: SurvivalWitness {
-            old_root: state.root(),
+            old_root: real_root,
             new_root: [0x42; 32],
             unchanged_subtrees: vec![],
         },
     };
-
     assert_eq!(
-        delta.verify(),
+        forged_root.verify(&state, &CheckPolicy::RuleNames(&["valid_until"])),
+        FoldVerification::RootMismatch,
+        "a delta claiming a post-state it did not produce must be rejected"
+    );
+
+    // (ii) The honest-looking widening: smuggle a CAPABILITY in as an "added
+    // check". Its root really is old+capability, so recomputation cannot refuse
+    // it — the rule-prefix policy must.
+    let widened = FoldDeltaBuilder::new(state.clone())
+        .add_check(Fact::from_symbols("can_write", &["alice", "secret"]))
+        .build()
+        .unwrap();
+    assert!(
+        widened.reconstruct_new_state(&state).is_some(),
+        "this forgery is root-consistent; only the check policy can refuse it"
+    );
+    assert_eq!(
+        widened.verify(&state, &CheckPolicy::RuleNames(&["valid_until"])),
+        FoldVerification::InvalidCheck { index: 0 },
+        "a capability added as a 'check' must be rejected"
+    );
+
+    // (iii) The empty delta is refused too — but that is a SEPARATE guard, and on
+    // its own it says nothing about widening.
+    let empty = FoldDelta {
+        old_root: real_root,
+        new_root: [0x42; 32],
+        removed: vec![],
+        added_checks: vec![],
+        surviving_proof: SurvivalWitness {
+            old_root: real_root,
+            new_root: [0x42; 32],
+            unchanged_subtrees: vec![],
+        },
+    };
+    assert_eq!(
+        empty.verify(&state, &CheckPolicy::NoAddedChecks),
         FoldVerification::EmptyDelta,
         "Empty delta (no narrowing) must be rejected"
     );

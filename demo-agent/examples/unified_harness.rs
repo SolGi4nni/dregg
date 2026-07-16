@@ -464,7 +464,16 @@ fn run_multi_org_delegation(_issuer_key: &[u8; 32]) -> Result<(), Box<dyn Error>
                 &presentation,
                 bytes_to_babybear(&federation_root_bytes)
             ));
-            assert!(presentation.verify_issuer_stark().unwrap().is_ok());
+            // MIGRATED: `verify_issuer_stark` was removed on the StarkProof ->
+            // Ir2BatchProof wire flip; `verify_presentation_bb` above IS the
+            // cryptographic verification (both committed descriptor wires, bound to the
+            // EXTERNAL root). Require the real STARK backing, and the wrong-root
+            // refusal tooth so the root binding is demonstrably enforced.
+            assert!(presentation.has_real_stark_proof());
+            assert!(!verify_presentation_bb(
+                &presentation,
+                bytes_to_babybear(&federation_root_bytes) + BabyBear::ONE
+            ));
         }
         Err(_) => {
             // The fold chain's internal verification may reject if the attenuation
@@ -547,9 +556,9 @@ fn run_token_revocation(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn 
         &nullifier_set.root()
     ));
 
-    nullifier_set.insert(nul_a)?;
+    nullifier_set.insert(nul_a, note_a.value())?;
     assert!(nullifier_set.contains(&nul_a));
-    assert!(nullifier_set.insert(nul_a).is_err());
+    assert!(nullifier_set.insert(nul_a, note_a.value()).is_err());
     assert!(!nullifier_set.contains(&nul_b));
 
     let rules = standard_policy();
@@ -808,12 +817,12 @@ fn run_nft_mint_transfer(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn
     let nft_a = Note::with_randomness(apk, [asset_id, 0, 1, 1700000000, 0, 0, 0, 0], [0x42u8; 32]);
     assert!(!nft_a.is_fungible());
     let nul_a = nft_a.nullifier(&ask);
-    nullifier_set.insert(nul_a)?;
+    nullifier_set.insert(nul_a, nft_a.value())?;
 
     let nft_b = Note::with_randomness(bpk, [asset_id, 0, 1, 1700000000, 0, 0, 0, 0], [0x43u8; 32]);
     assert_eq!(nft_a.fields[0], nft_b.fields[0]);
     assert_ne!(nft_a.owner, nft_b.owner);
-    assert!(nullifier_set.insert(nul_a).is_err());
+    assert!(nullifier_set.insert(nul_a, nft_a.value()).is_err());
 
     let bnul = nft_b.nullifier(&bsk);
     let proof = nullifier_set.prove_non_membership(&bnul).unwrap();
@@ -833,17 +842,25 @@ fn run_note_privacy(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Erro
     let cpk = blake3::derive_key("privacy-carol-owner-v1", b"carol-privacy");
 
     let an = Note::with_randomness(apk, [GOLD, 100, 0, 0, 0, 0, 0, 0], [0xA0u8; 32]);
-    nullifier_set.insert(an.nullifier(&ask))?;
+    nullifier_set.insert(an.nullifier(&ask), an.value())?;
 
     let bn = Note::with_randomness(bpk, [GOLD, 100, 0, 0, 0, 0, 0, 0], [0xB0u8; 32]);
-    nullifier_set.insert(bn.nullifier(&bsk))?;
+    nullifier_set.insert(bn.nullifier(&bsk), bn.value())?;
 
     let cn = Note::with_randomness(cpk, [GOLD, 60, 0, 0, 0, 0, 0, 0], [0xC0u8; 32]);
     let bc = Note::with_randomness(bpk, [GOLD, 40, 0, 0, 0, 0, 0, 0], [0xB1u8; 32]);
     assert_eq!(bn.value(), cn.value() + bc.value());
 
-    assert!(nullifier_set.insert(an.nullifier(&ask)).is_err());
-    assert!(nullifier_set.insert(bn.nullifier(&bsk)).is_err());
+    assert!(
+        nullifier_set
+            .insert(an.nullifier(&ask), an.value())
+            .is_err()
+    );
+    assert!(
+        nullifier_set
+            .insert(bn.nullifier(&bsk), bn.value())
+            .is_err()
+    );
 
     let csk = blake3::derive_key("privacy-carol-spending-v1", b"carol-privacy");
     assert!(!nullifier_set.contains(&cn.nullifier(&csk)));
@@ -968,10 +985,10 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
     assert_eq!(ai, ao);
     assert_eq!(bi, bo);
 
-    nullifier_set.insert(a_nul)?;
-    nullifier_set.insert(b_nul)?;
-    assert!(nullifier_set.insert(a_nul).is_err());
-    assert!(nullifier_set.insert(b_nul).is_err());
+    nullifier_set.insert(a_nul, an.value())?;
+    nullifier_set.insert(b_nul, bn.value())?;
+    assert!(nullifier_set.insert(a_nul, an.value()).is_err());
+    assert!(nullifier_set.insert(b_nul, bn.value()).is_err());
     Ok(())
 }
 
@@ -981,7 +998,9 @@ fn run_atomic_swap(nullifier_set: &mut NullifierSet) -> Result<(), Box<dyn Error
 
 #[allow(unused_assignments)]
 fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
-    use dregg_commit::{Fact as CommitFact, FoldDeltaBuilder, TokenState, verify_fold_chain};
+    use dregg_commit::{
+        CheckPolicy, Fact as CommitFact, FoldDeltaBuilder, TokenState, verify_fold_chain,
+    };
 
     let mut state = TokenState::new();
     state.add_fact(CommitFact::from_symbols("can_read", &["alice", "database"]));
@@ -997,6 +1016,8 @@ fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
     ));
 
     let mut deltas = Vec::new();
+    // The pre-state of deltas[0]: the chain verifier walks forward from it.
+    let genesis_state = state.clone();
 
     // Step 1: Remove can_admin
     let delta = FoldDeltaBuilder::new(state.clone())
@@ -1024,7 +1045,12 @@ fn run_ivc_attenuation_chain() -> Result<(), Box<dyn Error>> {
     }
 
     assert!(!deltas.is_empty());
-    assert!(verify_fold_chain(&deltas));
+    // This chain only removes facts, so no rule allowlist is needed.
+    assert!(verify_fold_chain(
+        &genesis_state,
+        &deltas,
+        &CheckPolicy::NoAddedChecks
+    ));
     Ok(())
 }
 

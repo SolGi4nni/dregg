@@ -1043,7 +1043,7 @@ pub fn evaluate_datalog(facts_json: &str, request_json: &str) -> Result<JsValue,
 /// Returns JSON with old_root, new_root, verification status.
 #[wasm_bindgen]
 pub fn demonstrate_fold(facts_json: &str, remove_json: &str) -> Result<JsValue, JsError> {
-    use dregg_commit::{Fact, FieldElement, FoldDeltaBuilder, TokenState};
+    use dregg_commit::{CheckPolicy, Fact, FieldElement, FoldDeltaBuilder, TokenState};
 
     let fact_strs: Vec<String> =
         serde_json::from_str(facts_json).map_err(|e| JsError::new(&e.to_string()))?;
@@ -1096,7 +1096,10 @@ pub fn demonstrate_fold(facts_json: &str, remove_json: &str) -> Result<JsValue, 
 
     match builder.build() {
         Some(delta) => {
-            let verified = delta.apply_and_verify();
+            // This demo only ever removes facts, so the verifier needs no rule
+            // allowlist: `NoAddedChecks` refuses any added check outright.
+            // `state` is our own pre-state, which is what makes the roots evidence.
+            let verified = delta.apply_and_verify(&state, &CheckPolicy::NoAddedChecks);
             let result = FoldResult {
                 old_root_hex: hex_encode(&old_root),
                 new_root_hex: hex_encode(&delta.new_root),

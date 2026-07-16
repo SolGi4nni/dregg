@@ -18,7 +18,7 @@ use dregg_circuit::ivc::{
     FoldDelta, IvcBuilder, IvcVerification, verify_ivc, verify_ivc_with_roots,
 };
 use dregg_circuit::poseidon2::hash_fact;
-use dregg_commit::{Fact, FoldDeltaBuilder, TokenState, verify_fold_chain};
+use dregg_commit::{CheckPolicy, Fact, FoldDeltaBuilder, TokenState, verify_fold_chain};
 
 fn main() {
     println!("=== Dregg IVC Attenuation Chain Demo ===\n");
@@ -85,7 +85,11 @@ fn main() {
             builder = builder.remove_fact(*fact);
         }
         let delta = builder.build().expect("fold delta should build");
-        assert!(delta.apply_and_verify(), "delta {} should verify", i + 1);
+        assert!(
+            delta.apply_and_verify(&current_state, &CheckPolicy::NoAddedChecks),
+            "delta {} should verify",
+            i + 1
+        );
 
         let new_state = delta
             .reconstruct_new_state(&current_state)
@@ -107,7 +111,7 @@ fn main() {
 
     // Verify the entire chain at the commitment layer.
     assert!(
-        verify_fold_chain(&deltas),
+        verify_fold_chain(&state, &deltas, &CheckPolicy::NoAddedChecks),
         "Commitment-layer fold chain must verify"
     );
     println!();
