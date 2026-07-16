@@ -57,10 +57,20 @@ jobs:
         with:
           toolchain: nightly
 
+      # A publish workflow that runs no tests will ship whatever is on the tag.
+      # This one nearly did: sdk-py's signing bound every signature to nonce 0, so
+      # every turn after an agent's first was refused forever — and the wheel would
+      # have gone to PyPI regardless. The drift-killer (tests/wire_drift_killer.rs)
+      # is sdk-py's only Rust test target; gate the release on it.
+      - name: Test before publishing (the release gate)
+        run: cargo test --manifest-path sdk-py/Cargo.toml
+
       - name: Build the light wheel (maturin, default features = light)
         uses: PyO3/maturin-action@v1
         with:
-          # sdk-py is a workspace member; build from its manifest.
+          # sdk-py is EXCLUDED from the root workspace (Cargo.toml `exclude`), so
+          # nothing else compiles or tests it — which is why its drift was invisible.
+          # Build from its own manifest.
           working-directory: sdk-py
           target: ${{ matrix.platform.target }}
           args: --release --out dist
