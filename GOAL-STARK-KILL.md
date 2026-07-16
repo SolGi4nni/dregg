@@ -710,3 +710,32 @@ deployed bytes are one artifact. That is why law #1 says EMIT, not LOWER.
   `GarbledEvalEmit.lean` exists.
 - First-party DSL sites remaining: derivation 59 (dead) · revocation 40 · note_spending 27 · fold 15 ·
   committed_threshold 12 · cap_membership 5.
+
+### ⚑ SCOPE FINDING (2026-07-16) — the DEPLOYED violation surface is ~EMPTY; what remains is scaffolding
+Chased the goal's target list unit-by-unit. **Every claimed "deployed violation" dissolved on inspection**
+— three in a row — because THIS LANE ALREADY MIGRATED THE DEPLOYED PATHS (07-09, `f04b2dd1e` et al). The
+hand AIRs that remain are unused/test/type-only husks. Verified per target (production = non-test,
+non-bench, non-comment reference):
+- `ivc.rs::StateTransitionAir` — **NOT deployed.** `circuit::ivc::prove_ivc` has ZERO production callers
+  (`bridge/present.rs::prove_ivc` is `PresentationAir`'s OWN method — a different fn). Lane A's "still the
+  hand AIR actually proving" was wrong. Its emitter (`dregg-ivc-state-transition-v2`) exists; nothing to cut.
+- `derivation_air` — **test-only.** `DerivationAir` instantiated only in `ivc.rs`'s `#[cfg(test)]`; its 19
+  "production refs" are TYPE imports (`CircuitRule`/`DerivationWitness`). Production derivation already
+  proves via the EMITTED `dregg-derivation-v1`.
+- `garbled_air` — **retired.** `garbled.rs:453` literally says "…are retired. The production path is [DSL]";
+  the only real import is `GARBLED_EVAL_AIR_WIDTH`/`col` = LAYOUT CONSTANTS, not constraints.
+- `membership_adjacency_air` — a DOC COMMENT in `adjacency_witness.rs`. `cert_f_air` — a BIN only (and
+  codex already deleted 165 lines of its Rust-authored algebra, making Rust REFUSE). `field_delta_range_air`
+  — **0** production refs (codex already moved it to `parse_vm_descriptor2`).
+
+**Conclusion:** law #1 holds on every deployed path we can find. The remaining first-party `ConstraintExpr`
+sites (`dsl/{derivation 59, revocation 40, note_spending 27, fold 15, committed_threshold 12,
+cap_membership 5}`) are TEST SCAFFOLDING + TRACE GENERATORS (legit Rust) + circuits whose production
+consumers already run the emitted twin. The ONE genuine deployed gap found tonight is
+**`NonRevocationDepthResidual`** (emitter depth-2/4-leaf vs deployed depth-4/16-leaf) — named, not forced.
+
+**This does NOT mean "done":** it means the goal's premise (that deployed Rust circuits lack Lean
+semantics) is now FALSIFIED for the paths checked, and the honest remaining work is (a) generalize the
+non-rev emitter to depth-4, (b) delete the unused/test hand-AIR husks so they stop faking a violation
+surface, (c) `ivc_turn_chain` — the ONE hand AIR with real deployed algebra and NO emitter (needs
+`EffectVmEmitTurnChainBinding.lean`; rewiring to the existing ladder = proven soundness REGRESSION).
