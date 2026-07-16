@@ -1,5 +1,21 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## ✅ EXCELLENCE BRAID 1 — ALL 10 LANES LANDED (2026-07-16)
+All committed + verified on the healed tree: bridge holes+live-feed (`72561117d`), verb-registry classify+ratchet
+(`5a6358093`), FRI cutover+extraction docs (`4609a507e`), bond design+paper refs (`c77c5ddd7`), weighted-cast
+(`bc512214f`, collective-choice 23/23 + dregg-governance 59/59), computron-policy (`0c2c3fb04`, relay_service
+21/21), nonce-binding rollout (`1ad07a173`, nonce_replay 1/1 + downstream suites green). The nonce lane hit a
+value-drain (a captured Full-commitment sig replayable onto an advanced nonce, draining the victim twice) — core
+fix was already in HEAD; this completed the call-site threading. Verification was blocked ~1h by a concurrent
+FactBinding migration (`hash_2_to_1`→`hash_4_to_1`) that left dregg-circuit red; waited (did NOT hand-fix the
+foreign mid-save file), verified when it healed. Foreign files left uncommitted for their owner:
+sdk/cipherclerk.rs (FactBinding), sdk/full_turn_proof.rs, dregg-dsl-runtime/lib.rs.
+Standing residuals for the NEXT braid: production relayer/geyser must supply ROOTED attestations (exact-slot
+builders now correctly hit SlotNotRooted); mainnet SnapshotFeed (designed, not built) + operator anchor pin;
+FRI cutover EXECUTION (plan in `docs/reference/FRI-CUTOVER-PLAN.md`); trustless outbound release; protocol-native
+payments (kill the custodial pile); the $DREGG bond rung-1 (`docs/deos/DREGG-BOND-DESIGN.md`); dregg-pay mainnet
+flip (ember-gated); migrate dregg-interchain-gov off the demoted HostBallotBox shim.
+
 ## ⚑ EXCELLENCE BRAID 1 — named residuals → closures (2026-07-16, landing)
 The "have excellence, not honesty" pass. Committed so far: bridge value-path holes + rung-1 live-feed
 (`72561117d`), FRI cutover + extraction-floor design docs (`4609a507e`), bond design + paper refs (`c77c5ddd7`).
