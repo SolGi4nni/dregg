@@ -1745,3 +1745,29 @@ FIXES GATED + COMMITTED (each verified or self-evident, surgical mid-swarm):
 STILL UNCOMMITTED from the audit (Lane 4 seam test, Lane 6 gap fixes) + the mocks/mirrors swarm (`ws5jksoc3`,
 STILL RUNNING) — gate holistically once the tree settles; several audit fixes have runtime-verification
 PENDING behind the swarm build lock (the sidetable tooth; preflight §4). Re-run those + srot on the quiet tree.
+
+## ⚑ MOCKS/MIRRORS/FAKES HUNT COMPLETE (`ws5jksoc3`) — the harvest + a HEAD break
+`ca2bdab56` **SECURITY (4th this session)** — fold-delta verify never recomputed new_root: attenuation that
+ESCALATES returned Valid (privilege escalation on a production auth path via `bridge/present.rs::verify_chain`).
+Rewired to the sound `reconstruct_new_state`; teeth mutation-tested (revert → `left: Valid`); 131/131.
+Also credentials' 3rd fix (`RevealedFactsMismatch` — a missing revealed-facts-commitment check + a theater
+test that asserted nothing) landed in `bac9e2b95`.
+
+### ⚠ THE `git add -A` HAZARD BIT FOR REAL — HEAD did not compile
+A concurrent commit `1cdc7fe66` (another lane) did `git add -A` and swept in the fold-delta opus's
+uncommitted `present.rs::verify_chain` rewrite WITHOUT the files defining `CheckPolicy`/`VALID_CHECK_PREDICATES`
+— so HEAD referenced undefined symbols. `ca2bdab56` landed the definitions to restore coherence. **This is
+the exact swarm-safety rule this session has repeated: commit NAMED files, NEVER `git add -A` on a shared
+tree.** Worth a note to that lane.
+
+### SECURITY SCOREBOARD — 4 forgery-class fixes this session, all from the validation swarms
+`8258de1c8` ed25519 non-strict (universal forgery) · `bac9e2b95` credentials zero-crypto (mint-a-fake) ·
+`e93d0f1c1` peer-exchange fail-OPEN (phantom cfg) · `ca2bdab56` fold-delta escalation. **None visible to the
+~15k-test suite that already existed.** ember's thesis, proven four times: scale deceived; power was missing.
+
+### REMAINING HARVEST (159 dirty files, both swarms) — settled-tree pass
+The HIGH security fixes are extracted + committed. What remains: the other mocks slices (circuit-core &
+node-net returned CLEAN — good signal; harnesses/lean-mirrors/misc-crates fixes) + the audit's Lane 4 (seam
+test) / Lane 6 (verification↔validation gap) fixes. All lower-severity. GATE per-subsystem once the build
+lock frees + HEAD compiles holistically (watch for OTHER `git add -A` casualties from `1cdc7fe66`). Then
+re-run the runtime-PENDING checks (sidetable tooth, preflight §4) + the srot sweep on the quiet tree.
