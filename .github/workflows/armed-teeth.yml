@@ -22,16 +22,16 @@
 #     that says nothing about the code. They run via `scripts/test-gauntlet.sh gpu` on a GPU box.
 #     There is no hosted GPU lane to add them to; wiring one needs a self-hosted GPU runner.
 #
-#   * THE LEAN HARD-MODE SOAK LANE (`DREGG_TEST_REQUIRE_LEAN=1` + `DREGG_TEST_REQUIRE_FINALITY=1`).
-#     It CANNOT run on a GitHub-hosted runner today, and saying so is more useful than shipping a
-#     lane that is red every night for a reason that is not a defect. The hard mode panics unless
-#     `libdregg_lean.a` is linked; that archive is gitignored and ~180 MB, `scripts/fetch-lean-seed.sh`
-#     is the minutes-long fast path — and `dregg-lean-ffi/lean-seed.pin` has `TAG=` EMPTY, i.e. NO
-#     seed release has ever been cut, so fetch dies. The only other path is a cold `lake` bootstrap,
-#     which `lean-seed.yml`'s own header says a hosted runner is too weak to do. So the hard-mode
-#     lane is defined below as `lean-hard-mode`, gated to a SELF-HOSTED runner that has the archive
-#     (the same posture `lean-seed.yml` takes), and is `workflow_dispatch`-only until a seed release
-#     exists. Cut a seed (see docs/LEAN-SEED-ARTIFACT.md), then add the schedule.
+#   * THE LEAN HARD-MODE SOAK LANE (`DREGG_TEST_REQUIRE_LEAN=1`). This used to be self-hosted-only
+#     and `workflow_dispatch`-gated, i.e. it had never run: the hard mode panics unless
+#     `libdregg_lean.a` is linked, that archive is gitignored, and `lean-seed.pin` had `TAG=` EMPTY
+#     so `scripts/fetch-lean-seed.sh` died. The premise has changed. `lean-seed.yml` now BUILDS the
+#     seed on a self-hosted host and PUBLISHES it as a content-keyed release asset on every push to
+#     `metatheory/**`. BUILDING the seed is what a hosted runner is too weak for; FETCHING one is a
+#     download and a link. ubuntu-latest is Linux-x86_64 — the platform that lane publishes — so
+#     `lean-hard-mode` below now runs HOSTED, on the nightly schedule, fetching the seed. It arms
+#     itself off the pin: while `TAG=` is empty it says so loudly instead of failing nightly for
+#     infrastructure that does not exist yet; the first publish flips it on with no edit here.
 name: Armed teeth
 
 on:
@@ -42,15 +42,10 @@ on:
   workflow_dispatch:
     inputs:
       runner:
-        description: "Self-hosted runner label for the lean-hard-mode job (needs a seeded libdregg_lean.a)."
+        description: "Override the lean-hard-mode runner label (e.g. a self-hosted host that already has a seeded libdregg_lean.a). Leave EMPTY to run hosted and fetch the CI-published seed."
         required: false
-        default: "lassie"
+        default: ""
         type: string
-      lean_hard_mode:
-        description: "Also run the DREGG_TEST_REQUIRE_LEAN=1 soak lane on the self-hosted runner."
-        required: false
-        default: false
-        type: boolean
 
 env:
   CARGO_TERM_COLOR: always
@@ -143,23 +138,47 @@ jobs:
   # turns every one of those skips into a PANIC, mirroring the DREGG_REQUIRE_LEAN *build* gate.
   # This job is the only thing that makes that hard mode more than an available flag.
   #
-  # It requires a seeded `dregg-lean-ffi/libdregg_lean.a`, which a hosted runner cannot get today
-  # (see the header). Hence: self-hosted, and opt-in until a seed release exists.
+  # It requires a seeded `dregg-lean-ffi/libdregg_lean.a`. A hosted runner cannot BUILD one, but it
+  # can FETCH the seed lean-seed.yml publishes for Linux-x86_64 — which is what ubuntu-latest is.
   lean-hard-mode:
     name: Verified-gate hard mode (DREGG_TEST_REQUIRE_LEAN=1)
-    if: ${{ github.event_name == 'workflow_dispatch' && inputs.lean_hard_mode }}
-    runs-on: ["self-hosted", "${{ inputs.runner }}"]
+    runs-on: ${{ inputs.runner || 'ubuntu-latest' }}
     timeout-minutes: 180
     steps:
       - uses: actions/checkout@v4
 
+      - name: Is a seed release published? (reads dregg-lean-ffi/lean-seed.pin)
+        id: pin
+        run: |
+          set -euo pipefail
+          tag="$(sed -n 's/^TAG=//p' dregg-lean-ffi/lean-seed.pin | head -1)"
+          if [ -n "$tag" ]; then
+            echo "armed=1" >> "$GITHUB_OUTPUT"
+            echo "::notice::seed release '$tag' is pinned — arming the verified-gate hard mode."
+          else
+            echo "armed=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::lean-seed.pin TAG is EMPTY — no seed release exists, so the ~43 verified-gate tests behind `if !<x>_available() { SKIP }` CANNOT be armed and this lane is asserting NOTHING about them. Run the 'Publish Lean seed' workflow (needs a self-hosted runner registered with the lean-seed + linux-x86_64 labels); it writes TAG and this lane arms itself."
+          fi
+
+      - name: Install elan + zstd, fetch the CI-published seed
+        if: steps.pin.outputs.armed == '1' && !inputs.runner
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y zstd
+          curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+          bash scripts/fetch-lean-seed.sh
+
       # FAIL LOUD, EARLY. Without this the job's first symptom would be a wall of demand_lean
       # panics that read like the gates are broken, when the real cause is a runner with no seed.
       - name: Require a seeded Lean archive (the whole point of this lane)
+        if: steps.pin.outputs.armed == '1'
         run: |
           set -euo pipefail
           if [ ! -f dregg-lean-ffi/libdregg_lean.a ]; then
-            echo "::error::no dregg-lean-ffi/libdregg_lean.a on this runner. DREGG_TEST_REQUIRE_LEAN=1 asserts the VERIFIED gates actually ran; without the archive every gate would panic for the wrong reason. Seed it (./scripts/bootstrap.sh) or point `runner` at a host that has one."
+            echo "::error::no dregg-lean-ffi/libdregg_lean.a after fetch. DREGG_TEST_REQUIRE_LEAN=1 asserts the VERIFIED gates actually ran; without the archive every gate would panic for the wrong reason. Check the 'Publish Lean seed' lane cut a Linux-x86_64 asset for THIS commit's Dregg2 tree hash (scripts/lean-seed-key.sh)."
             exit 1
           fi
           echo "seed present: $(du -h dregg-lean-ffi/libdregg_lean.a | cut -f1)"
@@ -167,6 +186,7 @@ jobs:
       # The verified-gate unit tests: finality_gate (4), coord_gate, finalization_votes, plus the
       # lean_producer_mode integration tests. Under the hard mode these can no longer self-skip.
       - name: node verified-gate tests, hard mode
+        if: steps.pin.outputs.armed == '1'
         env:
           DREGG_TEST_REQUIRE_LEAN: "1"
           DREGG_REQUIRE_LEAN: "1"
@@ -183,6 +203,7 @@ jobs:
       # such in the test's own header. Arming it here would red this lane every run for a reason
       # its authors already wrote down. That is the frontier's job, not the arming lane's.
       - name: consensus-under-failure soak (production producer default)
+        if: steps.pin.outputs.armed == '1'
         env:
           DREGG_TEST_REQUIRE_LEAN: "1"
           DREGG_REQUIRE_LEAN: "1"

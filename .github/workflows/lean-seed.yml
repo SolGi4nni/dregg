@@ -1,120 +1,272 @@
-# lean-seed.yml — build + publish the HEAD-matching Lean seed archive as a release asset.
+# lean-seed.yml — CI BUILDS and CI PUBLISHES the Lean seed archive. No human ever uploads a file.
 #
-# WHY: dregg-lean-ffi/libdregg_lean.a (the ~180 MB native archive of the compiled verified Lean
-# executor + its whole mathlib closure) is gitignored and per-host. A fresh clone that lacks it
-# silently builds MARSHAL-ONLY (the un-verified Rust executor); regenerating it from source is a
-# long cold `lake` bootstrap — the ~6000-object Dregg2+deps leanc compile; mathlib itself arrives
-# as prebuilt oleans in minutes (`lake exe cache get`), it is NOT the cost. Publishing a prebuilt
-# seed as a release asset turns a fresh verified-node build into MINUTES: scripts/fetch-lean-seed.sh downloads it,
-# verifies the checksum + exports, and drops it in place. See docs/LEAN-SEED-ARTIFACT.md.
+# WHY: dregg-lean-ffi/libdregg_lean.a (the ~100-195 MB native archive of the compiled verified Lean
+# executor + its whole mathlib closure) is gitignored and per-host. A clone that lacks it silently
+# builds MARSHAL-ONLY (the un-verified Rust executor), and every `if !<x>_available() { SKIP }` gate
+# reports `ok` having asserted NOTHING. Publishing the seed as a release asset is what lets a hosted
+# ubuntu runner link a VERIFIED build in minutes — which is what turns those skips into real checks.
 #
-# WHERE IT RUNS: seeding compiles thousands of leanc objects. metatheory/lakefile.toml pins mathlib
-# as a PORTABLE git+rev dependency, so lake fetches it on any host — but a stock GitHub-hosted
-# runner is too weak for the corpus compile (and starts with a cold `.lake`). So this runs on a SELF-HOSTED
-# beefy build host (David's lassie), where bootstrap.sh pulls the prebuilt mathlib oleans
-# (`lake exe cache get`, minutes) and seeds the archive. The `runner` input lets you point at a
-# different self-hosted label. The manual `gh release`-from-lassie path is documented in
-# docs/LEAN-SEED-ARTIFACT.md for when the workflow host is unavailable.
+# CONTENT-KEYED ASSETS, STABLE TAG. scripts/lean-seed-key.sh hashes (platform, lean-toolchain,
+# mathlib rev, Dregg2 tree) into a KEY, and the asset name embeds it:
+#     libdregg_lean-<platform>-<leantag>-<key>.a.zst
+# Because the name IS the identity, one long-lived release tag (`lean-seed`) can accumulate every
+# platform × every source revision, and fetch-lean-seed.sh always asks for the asset matching ITS
+# checkout. Consequence: the pin's TAG is set ONCE and then never needs bumping again — there is no
+# per-commit bot-push treadmill, and no window where the pin points at an asset that does not exist.
+# (The pin's provenance triple is still refreshed opportunistically; it only drives a drift WARNING.)
+#
+# WHERE IT RUNS: seeding compiles thousands of leanc objects (1300+ Dregg2 files). metatheory/
+# lakefile.toml pins mathlib as a PORTABLE git+rev dependency so lake fetches it on any host, and
+# mathlib itself arrives as prebuilt oleans in minutes (`lake exe cache get`) — mathlib is NOT the
+# cost. The Dregg2 corpus compile is. A stock GitHub-hosted runner (4 cores, 14 GB disk) is too weak
+# and too small for it, so the BUILD side is SELF-HOSTED. The CONSUME side is not: linking a
+# prebuilt archive is cheap, which is the whole point (see ci.yml's lean-marshal-gate).
+#
+# PREREQUISITE (one-time, human): a self-hosted runner must be REGISTERED on the repo with the
+# labels below. As of writing, `gh api repos/emberian/dregg/actions/runners` returns total_count=0 —
+# no runner exists, so this workflow cannot run yet. Register one (Settings → Actions → Runners):
+#     Linux x86_64 host (e.g. hbox) → labels: self-hosted, lean-seed, linux-x86_64
+#     Darwin arm64 host (e.g. nextop) → labels: self-hosted, lean-seed, darwin-arm64
+# The host needs elan (lake on PATH), cargo, zstd, ar/ranlib/nm. Nothing else is gated: GITHUB_TOKEN
+# with `contents: write` (granted below) is sufficient to cut the release — no PAT, no extra secret.
 name: Publish Lean seed
 
 on:
+  # AUTOMATIC: any change to the Lean source changes the Dregg2 tree hash, which changes the KEY,
+  # which means every existing published asset is stale for the new HEAD. That is exactly when a
+  # fresh seed must be cut — otherwise the marshal gate downstream has nothing to fetch.
+  push:
+    branches: [main]
+    paths:
+      - 'metatheory/**'
+      - 'dregg-lean-ffi/build.rs'
+      - 'dregg-lean-ffi/scripts/**'
+      - 'scripts/bootstrap.sh'
+      - 'scripts/lean-seed-key.sh'
+      - '.github/workflows/lean-seed.yml'
+  # A safety net: catches a seed that was missed because its runner was offline when main moved.
+  # The key-idempotency check below makes a no-op run cheap (no rebuild when the asset exists).
+  schedule:
+    - cron: '0 7 * * *'
   workflow_dispatch:
     inputs:
       tag:
-        description: "Release tag to publish the seed under (e.g. lean-seed-2026-07-01). Created if absent."
-        required: true
-        type: string
-      runner:
-        description: "Self-hosted runner label with elan + the mathlib pin (the beefy build host)."
+        description: "Release tag to publish under. Leave as `lean-seed` — assets are content-keyed, so one tag serves every platform and revision."
         required: false
-        default: "lassie"
+        default: "lean-seed"
         type: string
-      bump_pin:
-        description: "Commit the updated dregg-lean-ffi/lean-seed.pin back to the branch."
+      platforms:
+        description: "Which platform seeds to cut."
         required: false
-        default: true
+        default: "linux-x86_64"
+        type: choice
+        options:
+          - linux-x86_64
+          - darwin-arm64
+          - "linux-x86_64,darwin-arm64"
+      force:
+        description: "Rebuild + republish even if an asset for this content key already exists."
+        required: false
+        default: false
         type: boolean
 
 permissions:
   contents: write
 
+concurrency:
+  # Never cut two seeds for the same ref at once — they would race the same release + pin commit.
+  group: lean-seed-${{ github.ref }}
+  cancel-in-progress: false
+
 jobs:
+  # Resolve the trigger into a platform list + tag WITHOUT burning the self-hosted host. `inputs.*`
+  # is null on push/schedule, so every value needs an explicit default here rather than in `on:`.
+  plan:
+    runs-on: ubuntu-latest
+    outputs:
+      matrix: ${{ steps.p.outputs.matrix }}
+      tag: ${{ steps.p.outputs.tag }}
+    steps:
+      - id: p
+        run: |
+          set -euo pipefail
+          tag='${{ inputs.tag }}'; [ -n "$tag" ] || tag='lean-seed'
+          # push/schedule cut the platform CI itself consumes (ubuntu-latest is Linux x86_64).
+          # Darwin-arm64 is a developer-fetch convenience and is dispatch-selectable.
+          plats='${{ inputs.platforms }}'; [ -n "$plats" ] || plats='linux-x86_64'
+          json="$(printf '%s' "$plats" | tr ',' '\n' | sed 's/^[[:space:]]*//; s/[[:space:]]*$//' \
+                  | grep -v '^$' | jq -R . | jq -sc .)"
+          echo "tag=$tag"       >> "$GITHUB_OUTPUT"
+          echo "matrix=$json"   >> "$GITHUB_OUTPUT"
+          echo "planned: tag=$tag platforms=$json"
+
   seed:
-    # A self-hosted, mathlib-provisioned host. GitHub-hosted runners cannot build this (see header).
-    runs-on: ["self-hosted", "${{ inputs.runner }}"]
+    needs: plan
+    strategy:
+      fail-fast: false
+      matrix:
+        platform: ${{ fromJSON(needs.plan.outputs.matrix) }}
+    # A self-hosted, elan-provisioned host. GitHub-hosted runners cannot BUILD this (see header).
+    runs-on: ["self-hosted", "lean-seed", "${{ matrix.platform }}"]
     timeout-minutes: 240
     steps:
       - uses: actions/checkout@v4
 
-      - name: Toolchain sanity (elan/lake + zstd on PATH)
+      - name: Toolchain sanity (elan/lake + zstd + ar on PATH)
         run: |
           set -euo pipefail
-          command -v lake >/dev/null || { echo "::error::lake not on PATH — install elan on this runner"; exit 1; }
-          command -v zstd >/dev/null || { echo "::error::zstd not on PATH"; exit 1; }
-          echo "lake: $(command -v lake)"; echo "cargo: $(command -v cargo)"
+          command -v lake  >/dev/null || { echo "::error::lake not on PATH — install elan on this runner"; exit 1; }
+          command -v zstd  >/dev/null || { echo "::error::zstd not on PATH"; exit 1; }
+          command -v cargo >/dev/null || { echo "::error::cargo not on PATH"; exit 1; }
+          command -v ar    >/dev/null || { echo "::error::ar not on PATH"; exit 1; }
+          echo "lake: $(command -v lake) · cargo: $(command -v cargo) · $(uname -sm)"
 
-      # Refresh the warm .lake and (re)seed a HEAD-matching archive. bootstrap.sh is idempotent:
-      # it checks the mathlib pin, lake-builds the FFI closure, seeds libdregg_lean.a, and verifies
-      # the link fails loud if it came out marshal-only.
-      - name: Bootstrap + seed the Lean archive (HEAD-matching)
-        run: ./scripts/bootstrap.sh
-
+      # The KEY is computed from the CHECKOUT, before any build, so the idempotency check below can
+      # skip the expensive compile entirely when this exact source has already been published.
       - name: Compute provenance + asset name
         id: key
         run: |
           set -euo pipefail
-          eval "$(scripts/lean-seed-key.sh | sed 's/^/K_/')"   # K_KEY, K_PLATFORM, K_ASSET, K_LEAN_TOOLCHAIN, K_MATHLIB_REV, K_DREGG_TREE_HASH
-          echo "asset=$K_ASSET"                >> "$GITHUB_OUTPUT"
-          echo "key=$K_KEY"                    >> "$GITHUB_OUTPUT"
-          echo "platform=$K_PLATFORM"          >> "$GITHUB_OUTPUT"
-          echo "lean_toolchain=$K_LEAN_TOOLCHAIN" >> "$GITHUB_OUTPUT"
-          echo "mathlib_rev=$K_MATHLIB_REV"    >> "$GITHUB_OUTPUT"
-          echo "dregg_tree=$K_DREGG_TREE_HASH" >> "$GITHUB_OUTPUT"
+          eval "$(bash scripts/lean-seed-key.sh | sed 's/^/K_/')"
+          # The runner's real platform must match the label it was scheduled onto, or we would
+          # publish a Mach-O archive under a linux-x86_64 label and poison every Linux consumer.
+          want='${{ matrix.platform }}'
+          got="$(echo "$K_PLATFORM" | tr '[:upper:]' '[:lower:]')"
+          if [ "$got" != "$want" ]; then
+            echo "::error::runner platform mismatch — labelled '$want' but uname says '$K_PLATFORM'. Fix the runner's labels; publishing here would poison the '$want' fetch path."
+            exit 1
+          fi
+          for v in asset:K_ASSET key:K_KEY platform:K_PLATFORM lean_toolchain:K_LEAN_TOOLCHAIN \
+                   mathlib_rev:K_MATHLIB_REV dregg_tree:K_DREGG_TREE_HASH; do
+            echo "${v%%:*}=$(eval "echo \"\$${v##*:}\"")" >> "$GITHUB_OUTPUT"
+          done
+          bash scripts/lean-seed-key.sh
+
+      # Same key ⇒ interchangeable seed (lean-seed-key.sh's own contract). If the asset is already
+      # up there, the corpus compile is pure waste — this is what makes the nightly net nearly free.
+      - name: Already published for this content key?
+        id: have
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          asset='${{ steps.key.outputs.asset }}'
+          hit=no
+          if [ '${{ inputs.force }}' = 'true' ]; then
+            echo "force=true — rebuilding regardless."
+          elif gh release view '${{ needs.plan.outputs.tag }}' --json assets \
+                 --jq '.assets[].name' 2>/dev/null | grep -Fxq "$asset"; then
+            hit=yes
+            echo "::notice::$asset is already published — this source is already seeded. Skipping the build."
+          fi
+          echo "hit=$hit" >> "$GITHUB_OUTPUT"
+
+      # bootstrap.sh SKIPS the seed step when libdregg_lean.a already exists (step 4 of that
+      # script). On a warm self-hosted runner the archive PERSISTS across runs, so bootstrap alone
+      # would happily republish a STALE Dregg2 slice under a FRESH key — a silently wrong seed, the
+      # worst possible failure for a content-addressed artifact. rebuild-dregg2-closure.sh exists
+      # for exactly this ("Use this only to refresh the seed"): it recompiles the Dregg2 :c closure
+      # at HEAD and splices it into the archive, keeping the expensive mathlib/batteries/aesop
+      # objects. That is the ~20-minute warm path, and it is also the CORRECT one.
+      - name: Bootstrap the Lean closure (mathlib oleans from cache; seeds if absent)
+        if: steps.have.outputs.hit != 'yes'
+        run: ./scripts/bootstrap.sh
+
+      - name: Re-splice the Dregg2 slice at HEAD (a warm runner's archive is stale by construction)
+        if: steps.have.outputs.hit != 'yes'
+        run: ./dregg-lean-ffi/scripts/rebuild-dregg2-closure.sh
+
+      # Do not publish an archive we have not proven links + answers. bootstrap.sh already runs the
+      # smoke binary, but the re-splice above happened AFTER it, so the exports get re-checked here
+      # against the artifact we are actually about to upload.
+      - name: Verify the archive is a VERIFIED seed (exports + live kernel round-trip)
+        if: steps.have.outputs.hit != 'yes'
+        run: |
+          set -euo pipefail
+          arch=dregg-lean-ffi/libdregg_lean.a
+          [ -f "$arch" ] || { echo "::error::no $arch after bootstrap+re-splice"; exit 1; }
+          NM=nm; command -v nm >/dev/null 2>&1 || NM=llvm-nm
+          for sym in dregg_exec_full_forest_auth dregg_tau_order; do
+            "$NM" "$arch" 2>/dev/null | grep -q "$sym" \
+              || { echo "::error::archive lacks the verified-executor export '$sym' — refusing to publish a seed that fetch-lean-seed.sh would reject."; exit 1; }
+          done
+          # DREGG_REQUIRE_LEAN=1: fail loud rather than let a marshal-only degrade be published.
+          DREGG_REQUIRE_LEAN=1 cargo run -q -p dregg-lean-ffi --features lean-lib --bin dregg-lean-ffi
+          echo "seed verified: $(du -h "$arch" | cut -f1 | tr -d ' '), exports present, kernel round-trips."
 
       - name: Compress + checksum the seed
         id: pack
+        if: steps.have.outputs.hit != 'yes'
         run: |
           set -euo pipefail
           asset='${{ steps.key.outputs.asset }}'
           zstd -q -19 --long=27 -T0 dregg-lean-ffi/libdregg_lean.a -o "$asset"
-          sha256sum "$asset" > "$asset.sha256"
+          # fetch-lean-seed.sh reads `awk '{print $1}'` off this sidecar — sha256sum's format.
+          if command -v sha256sum >/dev/null 2>&1; then sha256sum "$asset" > "$asset.sha256";
+          else shasum -a 256 "$asset" > "$asset.sha256"; fi
           ls -la "$asset" "$asset.sha256"
 
       - name: Publish to the release
+        if: steps.have.outputs.hit != 'yes'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ needs.plan.outputs.tag }}
           ASSET: ${{ steps.key.outputs.asset }}
         run: |
           set -euo pipefail
           if ! gh release view "$TAG" >/dev/null 2>&1; then
-            gh release create "$TAG" --title "Lean seed $TAG" \
-              --notes "Prebuilt verified-executor Lean seed archives (libdregg_lean.a). Fetch with scripts/fetch-lean-seed.sh. Provenance: toolchain ${{ steps.key.outputs.lean_toolchain }}, mathlib ${{ steps.key.outputs.mathlib_rev }}, Dregg2 tree ${{ steps.key.outputs.dregg_tree }}."
-          fi
-          # --clobber so re-publishing the same platform asset replaces it.
-          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+            gh release create "$TAG" --title "Lean seed archives" --notes \
+              "Prebuilt verified-executor Lean seed archives (libdregg_lean.a), built and published by .github/workflows/lean-seed.yml.
 
-      - name: Bump the committed pin
-        if: ${{ inputs.bump_pin }}
+          Assets are CONTENT-KEYED: \`libdregg_lean-<platform>-<leantoolchain>-<key>.a.zst\`, where key = sha256(platform, lean-toolchain, mathlib rev, Dregg2 tree)[:16]. This tag accumulates them, so it never needs to change — \`scripts/fetch-lean-seed.sh\` computes the key for YOUR checkout and asks for the matching asset.
+
+          Fetch: \`scripts/fetch-lean-seed.sh\` · then \`DREGG_REQUIRE_LEAN=1 cargo build -p dregg-node --release\`."
+          fi
+          gh release upload "$TAG" "$ASSET" "$ASSET.sha256" --clobber
+          echo "::notice::published $ASSET to release $TAG"
+
+      - name: Clean the packed asset off the runner
+        if: always()
+        run: rm -f '${{ steps.key.outputs.asset }}' '${{ steps.key.outputs.asset }}.sha256' || true
+
+  # The pin is a POINTER, not a per-commit ledger. Because assets are content-keyed, TAG only ever
+  # needs to be written ONCE — the first successful publish flips the repo from "no seed exists"
+  # (fetch dies, marshal gate can only skip) to "seeds are fetchable" (the gate arms itself). This
+  # job is what performs that flip automatically, so no human edits the pin by hand either.
+  pin:
+    needs: [plan, seed]
+    if: ${{ github.event_name != 'pull_request' && !cancelled() && !contains(needs.seed.result, 'failure') }}
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.ref_name }}
+      - name: Bump the pin (TAG once; provenance opportunistically)
         env:
-          TAG: ${{ inputs.tag }}
+          TAG: ${{ needs.plan.outputs.tag }}
         run: |
           set -euo pipefail
           pin=dregg-lean-ffi/lean-seed.pin
-          now="$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+          eval "$(bash scripts/lean-seed-key.sh | sed 's/^/K_/')"
           {
-            sed -n '1,/^$/p' "$pin" | sed '/^$/d'   # keep the leading comment block
+            sed -n '1,/^$/p' "$pin" | sed '/^$/d' | grep -v '^# TAG empty' || true
             echo
             echo "TAG=$TAG"
-            echo "LEAN_TOOLCHAIN=${{ steps.key.outputs.lean_toolchain }}"
-            echo "MATHLIB_REV=${{ steps.key.outputs.mathlib_rev }}"
-            echo "DREGG_TREE_HASH=${{ steps.key.outputs.dregg_tree }}"
-            echo "GENERATED_UTC=$now"
-            echo "NOTE=published by the lean-seed workflow"
+            echo "LEAN_TOOLCHAIN=$K_LEAN_TOOLCHAIN"
+            echo "MATHLIB_REV=$K_MATHLIB_REV"
+            echo "DREGG_TREE_HASH=$K_DREGG_TREE_HASH"
+            echo "GENERATED_UTC=$(date -u +%Y-%m-%dT%H:%M:%SZ)"
+            echo "NOTE=Published by .github/workflows/lean-seed.yml. Assets under this tag are CONTENT-KEYED (see scripts/lean-seed-key.sh), so TAG is stable and this provenance is a reference snapshot for the drift warning only — fetch-lean-seed.sh always resolves the asset from YOUR checkout's key, not from these values."
           } > "$pin.new"
           mv "$pin.new" "$pin"
+          git diff --quiet -- "$pin" && { echo "pin unchanged — nothing to commit."; exit 0; }
           git config user.name  "dregg-seed-bot"
           git config user.email "noreply@dregg"
           git add "$pin"
-          git -c commit.gpgsign=false commit -m "chore(seed): publish Lean seed $TAG + bump pin" || echo "pin unchanged"
-          git push || echo "::warning::could not push the pin bump — commit it manually"
+          git -c commit.gpgsign=false commit -m "chore(seed): point lean-seed.pin at the CI-published seed release ($TAG)"
+          # Rebase rather than clobber: main moves under long seed builds by construction.
+          for i in 1 2 3; do
+            git pull --rebase --autostash origin '${{ github.ref_name }}' && git push && exit 0
+            echo "push race ($i/3) — retrying"; sleep 5
+          done
+          echo "::warning::could not push the pin bump (protected branch?). Set TAG=$TAG in $pin manually — ONCE; it never needs bumping again."

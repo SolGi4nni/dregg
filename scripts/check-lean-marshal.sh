@@ -9,21 +9,48 @@
 #       the canonical check the byte-identity differential could not make; without it
 #       a Lean↔Rust *evaluation* divergence would go uncaught.
 #
-# Requires `dregg-lean-ffi/libdregg_lean.a` (produced by
-# `dregg-lean-ffi/scripts/rebuild-dregg2-closure.sh`). When the archive is absent
-# the script skips gracefully so CI without a Lean build still passes.
+# Requires `dregg-lean-ffi/libdregg_lean.a`. Get one in MINUTES with
+# `scripts/fetch-lean-seed.sh` (a CI-published seed release), or build one locally with
+# `./scripts/bootstrap.sh`.
+#
+# THE SKIP IS A LIE DETECTOR, NOT A PASS. When the archive is absent this script has checked
+# NOTHING — there is no live Lean kernel to be faithful to. It still exits 0 by default so a
+# developer running the whole script set on a marshal-only checkout is not blocked. But a CI job
+# that means to ASSERT faithfulness must set:
+#
+#     DREGG_REQUIRE_LEAN_GATE=1
+#
+# which turns the absent archive into a FAILURE. Without this, the gate is a checkmark that is
+# structurally incapable of being red — it reports the same green whether the Lean↔Rust executors
+# agree or whether nobody looked. ci.yml's lean-marshal-gate sets it (and fetches a seed first).
 #
 # Usage:  scripts/check-lean-marshal.sh
-# Exit:   0 = gate passed or skipped; nonzero = build or differential failure.
+# Exit:   0 = gate passed (or skipped, when NOT armed); nonzero = failure, or armed-but-unseeded.
 set -euo pipefail
 
 ROOT="$(cd "$(dirname "$0")/.." && pwd)"
 LEAN_LIB="$ROOT/dregg-lean-ffi/libdregg_lean.a"
 
+# Accept 1/true/yes/on, case-insensitively; anything else (incl. unset) leaves the gate unarmed.
+armed=0
+case "$(printf '%s' "${DREGG_REQUIRE_LEAN_GATE:-}" | tr '[:upper:]' '[:lower:]')" in
+  1|true|yes|on) armed=1 ;;
+esac
+
 if [ ! -f "$LEAN_LIB" ]; then
-  echo "check-lean-marshal: SKIP — Lean static lib not built."
+  if [ "$armed" -eq 1 ]; then
+    echo "check-lean-marshal: FAIL — DREGG_REQUIRE_LEAN_GATE=1 but there is no Lean archive." >&2
+    echo "  Expected: $LEAN_LIB" >&2
+    echo "  This gate asserts the VERIFIED Lean executor and the Rust executor AGREE. With no" >&2
+    echo "  archive there is no Lean executor to compare against, so a green here would mean" >&2
+    echo "  nothing. Fetch a CI-published seed:  scripts/fetch-lean-seed.sh" >&2
+    echo "  (or build one locally:  ./scripts/bootstrap.sh)" >&2
+    exit 1
+  fi
+  echo "check-lean-marshal: SKIP — Lean static lib not built. NOTHING WAS CHECKED."
   echo "  Expected: $LEAN_LIB"
-  echo "  Build first: dregg-lean-ffi/scripts/rebuild-dregg2-closure.sh"
+  echo "  Get one in minutes: scripts/fetch-lean-seed.sh   (or: ./scripts/bootstrap.sh)"
+  echo "  To make this absence a FAILURE instead of a skip: DREGG_REQUIRE_LEAN_GATE=1"
   exit 0
 fi
 

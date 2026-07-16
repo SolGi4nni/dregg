@@ -88,6 +88,7 @@ fn status_code(status_line: &str) -> Option<u16> {
 }
 
 #[test]
+#[ignore = "live devnet red-team: needs DREGG_DEVNET_REDTEAM=1 + DREGG_DEVNET_HOST/PORT (a plaintext origin). Without it this asserts NOTHING — an #[ignore] reports `ignored` (honest), not `ok` (a lie)."]
 fn devnet_garbage_does_not_5xx() {
     if !gated() {
         eprintln!("devnet_adversarial: SKIPPED (set DREGG_DEVNET_REDTEAM=1 + DREGG_DEVNET_HOST/PORT to a plaintext origin)");
@@ -150,6 +151,7 @@ fn devnet_garbage_does_not_5xx() {
 /// run WITHOUT `DREGG_STATUS_EXPOSE_COUNTS=1`), while the coarse liveness signal
 /// is still present. Pre-fix this asserted the counters WERE present (FINDING).
 #[test]
+#[ignore = "live devnet red-team: needs DREGG_DEVNET_REDTEAM=1 + DREGG_DEVNET_HOST/PORT (a plaintext origin). Without it this asserts NOTHING — an #[ignore] reports `ignored` (honest), not `ok` (a lie)."]
 fn devnet_status_withholds_private_counts_f8() {
     if !gated() {
         eprintln!(
@@ -185,6 +187,7 @@ fn devnet_status_withholds_private_counts_f8() {
 /// that sustained abuse is eventually throttled (429) rather than unbounded.
 /// (Network-gated; behind TLS this is a documentation smoke — see devnet_probe.sh.)
 #[test]
+#[ignore = "live devnet red-team: needs DREGG_DEVNET_REDTEAM=1 + DREGG_DEVNET_HOST/PORT (a plaintext origin). Without it this asserts NOTHING — an #[ignore] reports `ignored` (honest), not `ok` (a lie)."]
 fn devnet_rotating_xff_does_not_mint_fresh_buckets_f1() {
     if !gated() {
         eprintln!(

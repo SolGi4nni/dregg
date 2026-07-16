@@ -194,7 +194,19 @@ jobs:
   lean-marshal-gate:
     name: Lean marshal gate
     runs-on: ubuntu-latest
-    # Skips gracefully when libdregg_lean.a is absent (see scripts/check-lean-marshal.sh).
+    # THE FAITHFULNESS GATE, ARMED. This job used to be a checkmark that could not be red: with no
+    # libdregg_lean.a on a hosted runner, check-lean-marshal.sh exited 0 having compared the Rust
+    # executor against nothing at all. It is now armed by FETCHING a seed.
+    #
+    # A hosted runner cannot BUILD the seed (the Dregg2 corpus compile — see lean-seed.yml), but it
+    # does not need to: ubuntu-latest IS Linux-x86_64, the platform lean-seed.yml publishes on every
+    # push to metatheory/**. Consuming a prebuilt archive is a download + a link, which is minutes.
+    # That asymmetry — build heavy on self-hosted, consume cheap on hosted — is what un-fakes this.
+    #
+    # SELF-ARMING: until the first seed release exists, the pin's TAG is empty and fetch cannot
+    # resolve anything, so the gate reports its unarmed state loudly instead of failing every PR for
+    # infrastructure that has not been stood up yet. lean-seed.yml's `pin` job writes TAG on the
+    # first successful publish — at which point this gate arms itself with no further edit here.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -203,7 +215,44 @@ jobs:
         with:
           toolchain: nightly
       - uses: Swatinem/rust-cache@v2
-      - run: bash scripts/check-lean-marshal.sh
+
+      - name: Is a seed release published? (reads dregg-lean-ffi/lean-seed.pin)
+        id: pin
+        run: |
+          set -euo pipefail
+          tag="$(sed -n 's/^TAG=//p' dregg-lean-ffi/lean-seed.pin | head -1)"
+          if [ -n "$tag" ]; then
+            echo "armed=1" >> "$GITHUB_OUTPUT"
+            echo "::notice::seed release '$tag' is pinned — arming the faithfulness gate."
+          else
+            echo "armed=0" >> "$GITHUB_OUTPUT"
+            echo "::warning::lean-seed.pin TAG is EMPTY — no seed release exists yet, so this gate can only SKIP and is asserting NOTHING. Run the 'Publish Lean seed' workflow (needs a registered self-hosted runner with the lean-seed + linux-x86_64 labels); it writes TAG and this gate arms itself automatically."
+          fi
+
+      # The seed links against the pinned toolchain's Lean runtime/stdlib, so elan is required even
+      # on the fetch path. It installs in ~a minute and does NOT compile mathlib.
+      - name: Install elan + the pinned Lean toolchain
+        if: steps.pin.outputs.armed == '1'
+        run: |
+          set -euo pipefail
+          curl -sSf https://elan.lean-lang.org/elan-init.sh | sh -s -- -y --default-toolchain none
+          echo "$HOME/.elan/bin" >> "$GITHUB_PATH"
+
+      - name: Fetch the CI-published Lean seed for this checkout
+        if: steps.pin.outputs.armed == '1'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          sudo apt-get update && sudo apt-get install -y zstd
+          bash scripts/fetch-lean-seed.sh
+
+      - name: Faithfulness gate (Lean↔Rust; armed — an absent seed is now a FAILURE)
+        env:
+          # Armed only when a seed was actually fetchable. When it was not, this stays 0 and the
+          # script prints "NOTHING WAS CHECKED" rather than a green that means nothing.
+          DREGG_REQUIRE_LEAN_GATE: ${{ steps.pin.outputs.armed }}
+        run: bash scripts/check-lean-marshal.sh
 
   no-unchecked-auth:
     name: No-Unchecked-Auth grep guard (P2.F)

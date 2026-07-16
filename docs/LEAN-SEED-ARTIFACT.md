@@ -63,21 +63,44 @@ local `./scripts/bootstrap.sh` (the slow, hours-long path) or cutting a release 
 build panics with the exact cause instead. (Confirmed wired: `dregg-lean-ffi/build.rs`
 `degrade_guard`, and a `--release` native build defaults the gate ON.)
 
-## Cutting a seed release (needs a beefy build host — "lassie")
+## Cutting a seed release — CI builds it, CI publishes it
 
 Seeding compiles thousands of leanc objects. `metatheory/lakefile.toml` pins mathlib as a
 **portable `git`+`rev` dependency**, so `lake` fetches it on any host with no clone-location
 assumption — but a stock GitHub-hosted runner is too weak for the corpus compile (and starts
-with a cold `.lake`). Cut seeds on a **self-hosted beefy host** (David's *lassie*, Linux, 128t/1TB).
+with a cold `.lake`). So the **build** runs on a self-hosted host; the **publish** is CI, and
+nobody hand-uploads a file.
 
-### Via the workflow (preferred)
+### Automatic (the model)
 
-`Actions → Publish Lean seed → Run workflow`, with a `tag` (e.g. `lean-seed-2026-07-05`) and the
-self-hosted `runner` label. It runs `bootstrap.sh`, compresses, uploads the asset + `.sha256` to
-the release, and commits the pin bump. Run it once **per platform** you want to serve (each
-self-hosted host contributes its own native asset to the same tag).
+`.github/workflows/lean-seed.yml` runs on **every push to `metatheory/**`** (plus a nightly
+safety net, plus manual dispatch). It computes the content **key** for the checkout
+(`scripts/lean-seed-key.sh`), and — unless an asset for that exact key already exists on the
+`lean-seed` release — it re-splices the Dregg2 slice at HEAD
+(`dregg-lean-ffi/scripts/rebuild-dregg2-closure.sh`), verifies the archive links and the kernel
+round-trips, compresses, and uploads `<asset>.a.zst` + `.sha256` to the release with
+`GITHUB_TOKEN`. A follow-up `pin` job writes `TAG=lean-seed` into `dregg-lean-ffi/lean-seed.pin`
+on the **first** publish and never needs to touch it again — assets are **content-keyed**, so one
+stable tag accumulates every platform × every revision and `fetch-lean-seed.sh` always resolves
+the asset for *its* checkout.
 
-### By hand on lassie — the exact cold-bootstrap recipe (copy-paste)
+**One-time human prerequisite:** a self-hosted runner must be **registered** on `emberian/dregg`
+(Settings → Actions → Runners) with the labels `self-hosted`, `lean-seed`, and its platform
+(`linux-x86_64` for a Linux host such as *lassie*/hbox; `darwin-arm64` for a Mac such as nextop).
+The host needs `elan` (lake), `cargo`, `zstd`, and `ar`/`ranlib`/`nm` on PATH. That is the whole
+bootstrap: once a runner answers those labels, every future `metatheory/**` push seeds itself, and
+the downstream faithfulness gate (`ci.yml`) + verified-gate hard mode (`armed-teeth.yml`) arm
+themselves off the pin with no further edits. Until a runner is registered, the `seed` job simply
+queues (nothing hand-uploads in the meantime), and the consumer gates report their unarmed state
+loudly rather than faking a green.
+
+Serve Linux-x86_64 first — it is the platform `ci.yml`'s hosted runners consume; Darwin-arm64 is a
+developer-fetch convenience, dispatch-selectable via the workflow's `platforms` input.
+
+### By hand on a build host — the cold-bootstrap recipe (fallback only)
+
+Prefer the workflow above. This manual recipe is a **break-glass fallback** for when no runner is
+registered yet and someone needs a seed immediately; the workflow does all of it automatically.
 
 This is the full ordered command list to cut the **first** seed on a fresh Linux box. Nothing here
 depends on a host-specific path — mathlib is git-fetched by lake.
