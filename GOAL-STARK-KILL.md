@@ -1352,3 +1352,40 @@ PLAN: gate codex's revocation on the stable tree (a cutover that shrinks TREE_DE
 harvest srot + lie-hunt; then engage Fable implementers on the concrete residuals (duplicate DslP3Air
 deletion — now unblocked since dregg-tests compiles; the *_air renames; VerifyTcbReentry wiring) once the
 tree stabilizes.
+
+## ⚑⚑⚑ GOAL CORE DONE + the lie-hunt opened the REAL healing surface (2026-07-16)
+`23cd63264`: **revocation emitted — every DEPLOYED first-party Rust-authored circuit is now Lean-emitted.**
+depth-4 (not shrunk), byte-identical, teeth 3/3, hand algebra 0. The goal's stated scope is met; the
+law1_enforcement_gate ratchet holds it.
+
+`da4e45a8d`: fixed the two metatheory lies I CREATED (schnorr_air/turn_auth citations after my deletion).
+
+### The 6-lane workspace lie-hunt (`w076khjpe`) — findings by severity:
+**HIGH / BEHAVIORAL (a live surface lies about what it does):**
+- **[F#1] The node's MCP "IVC compression" verify tool returns "valid" for MOCK SYNTHETIC data.**
+  `node/src/mcp/handlers_verify.rs`: gathers the real receipt chain (:84), then `create_test_chain(steps)`
+  (:101) DISCARDS it and proves a SYNTHETIC chain of matching length via `prove_ivc` — the MOCK prover
+  (`constraint_prover.rs` says of itself "a trace digest is not a STARK, nothing here is sound against a
+  prover that lies"; `verify_ivc` just recomputes BLAKE3). Returns `"verification":"valid"`, comment calls
+  it "a genuine fold chain". It is a LIVE-REGISTERED MCP tool (`tools_def.rs:609`). The REAL recursive IVC
+  (`ivc_turn_chain::WholeChainProof`, which I just emitted + `lightclient` uses) exists to do it for real.
+  → SURFACED to ember: wire the real IVC over the real receipts, or honest-report (stop claiming "valid").
+  A live verify tool lying "valid" is the most serious scar found. `NodeMcpMockIvcResidual`.
+- **[F#2]** `dregg-genesis-snapshot/src/lib.rs:63` calls the mock IVC "the real prover/verifier" (false
+  cognate: real-vs-retired-hand-STARK, not real-vs-mock). Carries a named unsound caveat, but the phrase lies.
+- **[B#1]** `constraint_prover.rs` — a "prover" whose `generate_unchecked` proves nothing (its own doc
+  concedes it); the mock IVC's engine. Name lies.
+
+**HIGH / GATE-INTEGRITY (a ratchet that gives false confidence):**
+- **[C#1]** THREE emit-equality gates (5 test files, e.g. `derivation_emit_gate.rs:4`) claim CURRENT
+  byte-identity while pinning a RETIRED Lean wire string — the mirror-failure INSIDE the gate family.
+  Needs verification (some may be stale vs my/codex's recent emits). `EmitGateRetiredPinResidual`.
+
+**MEDIUM / PROSE-LIES + CLEANUP (safe to delegate, no behavioral decision):**
+- [A] ~9 dangling Lean/Rust citations to deleted/renamed symbols (2 mine, FIXED; rest: effect_vm_descriptors
+  CI-gate, relational_predicate_air::prove_value_comparison, ordering.rs::has_equivocation_in_past renamed,
+  action.rs DropRef/ValidateHandoff retired-but-modeled, EffectVmAir fail-closed contract, dfa_lookup_descriptor).
+- [D] **629 live lines cite 85 non-existent `docs/*.md`** (archived to `.docs-history-noclaude/`). Top:
+  `docs/PG-DREGG.md` (89 lines, incl. a Cargo.toml `[workspace]` justification).
+- [E] **328 zero-use pub items** (dead API) across the 8 core crates; 323 mod decls checked.
+- [B] misnamed files beyond `*_air` (constraint_prover, etc.).
