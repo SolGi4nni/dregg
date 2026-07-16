@@ -19,7 +19,7 @@ use dregg_circuit::fold_types::{FoldWitness, RemovedFact};
 use dregg_circuit::merkle_air::{MerkleLevelWitness, MerkleWitness};
 use dregg_circuit::merkle_types::compute_parent_poseidon2;
 use dregg_circuit::poseidon2;
-use dregg_circuit::predicate_arith_witness::FactBinding;
+use dregg_circuit::predicate_arith_witness::{Blinding, FactBinding};
 use dregg_circuit::presentation::{
     DescriptorProofWire, build_descriptor_wire, verify_descriptor_wire,
 };
@@ -995,13 +995,19 @@ impl BridgePresentationBuilder {
         // final step (above), so the caller cannot aim a predicate at a state it does not hold.
         let mut pred_proofs = Vec::with_capacity(predicate_facts.len());
         for &(value, terms, ref predicate) in predicate_facts {
-            let proof = prove_predicate_for_fact(value, terms.bind(state_root), predicate)
-                .ok_or_else(|| {
-                    AuthError::InvalidRequest(format!(
-                        "predicate proof generation failed for value {} with {:?}",
-                        value, predicate
-                    ))
-                })?;
+            // A FRESH blinding factor PER PREDICATE PROOF — the same discipline as the ring-membership
+            // `generate_blinding_factor` and the presentation tag above. Two disclosures of the same
+            // fact therefore carry different `fact_commitment` PIs and cannot be correlated, while the
+            // in-circuit weld still binds each to the value it covers.
+            let blinding = fresh_predicate_blinding();
+            let proof =
+                prove_predicate_for_fact(value, terms.bind(state_root), blinding, predicate)
+                    .ok_or_else(|| {
+                        AuthError::InvalidRequest(format!(
+                            "predicate proof generation failed for value {} with {:?}",
+                            value, predicate
+                        ))
+                    })?;
             pred_proofs.push(proof);
         }
 
@@ -1792,6 +1798,26 @@ fn generate_blinding_factor() -> BabyBear {
     BabyBear::new(val)
 }
 
+/// **Draw a fresh per-presentation predicate [`Blinding`] from OS randomness.**
+///
+/// The blinding factor for the predicate family's fact commitment: leg 2 of the in-circuit weld is
+/// an arity-4 Poseidon2 lookup over `[fact_hash, state_root, blinding, 0]`, so a fresh draw per
+/// showing makes two presentations of the SAME fact carry different public `fact_commitment`s. This
+/// is the predicate-side twin of [`generate_blinding_factor`] (ring membership) and
+/// [`generate_presentation_randomness`] (the presentation tag) — the same unlinkability discipline,
+/// applied to the third public artifact a presentation emits.
+///
+/// Non-zero like its siblings, though for a different reason: zero blinding is not a *leak* here
+/// (the weld's arity-4 image is not the identity), it is merely the DEGENERATE, correlatable case
+/// ([`Blinding::NONE`]). Every presentation path should draw, not default.
+///
+/// Exposed so callers that drive [`prove_predicate_for_fact`] directly (the SDK / credentials
+/// selective-disclosure paths) get the unlinkable blinding by DEFAULT rather than reaching for
+/// [`Blinding::NONE`].
+pub fn fresh_predicate_blinding() -> Blinding {
+    Blinding(generate_blinding_factor())
+}
+
 /// Generate fresh randomness for the presentation tag.
 ///
 /// This produces a non-zero BabyBear field element from OS randomness.
@@ -2556,6 +2582,36 @@ pub struct BridgePredicateProof {
     pub proof: BridgePredicateProofInner,
     /// The fact commitment (public input -- binds the proof to a specific token state).
     pub fact_commitment: BabyBear,
+    /// The DECOMMITMENT: the per-presentation [`Blinding`] used to build `fact_commitment`
+    /// (`hash_4_to_1([fact_hash, state_root, blinding, 0])`).
+    ///
+    /// # Why this must travel with the proof
+    ///
+    /// [`verify_predicate_proof`] pins `expected_fact_commitment` as the descriptor's `pi[1]`, and
+    /// that parameter is sound only if the verifier DERIVES it from token state it trusts. With the
+    /// blinding drawn fresh per proof and then discarded, no verifier can reproduce the commitment
+    /// for a fact it trusts — the parameter has no sound source at all, and the only feed that ever
+    /// "works" is the proof's own commitment, i.e. the `x != x` gate that accepts everything. The
+    /// blinding is the missing half of the opening.
+    ///
+    /// # Why publishing it costs no soundness
+    ///
+    /// The prover already chooses the blinding freely; handing it over adds no freedom. A verifier
+    /// derives `commitment_of(TRUSTED_value, blinding)` — the blinding comes from the prover, but
+    /// the VALUE does not, so matching a forged value's commitment would need a Poseidon2 collision.
+    /// Per the [`Blinding`] doc: blinding rerandomizes WHICH commitment names a fact; it cannot
+    /// change WHICH fact is named.
+    ///
+    /// # What it costs privacy
+    ///
+    /// Nothing against the parties unlinkability is for. Deriving requires already holding the
+    /// fact's value, so anyone who can use this decommitment to correlate two showings could
+    /// equally correlate them from the trusted state they must already hold. Parties who do not
+    /// hold the proof still see only unlinkable commitments.
+    ///
+    /// Stored as the raw field element rather than [`Blinding`] because the circuit-side newtype
+    /// carries no serde derives; [`Blinding`] is reconstructed at the derivation site.
+    pub blinding: BabyBear,
 }
 
 /// Inner proof representation -- single proof for simple predicates, pair for InRange.
@@ -2629,6 +2685,7 @@ impl FactTerms {
 pub fn prove_predicate_for_fact(
     private_value: u32,
     fact: FactBinding,
+    blinding: Blinding,
     predicate: &Predicate,
 ) -> Option<BridgePredicateProof> {
     use dregg_circuit::descriptor_by_name::descriptor_by_name;
@@ -2644,9 +2701,14 @@ pub fn prove_predicate_for_fact(
     // The fact commitment is DERIVED from the value being proved about — it is not a caller-supplied
     // parameter that could name a different value's fact. Every descriptor in the family now ALSO
     // welds this relation INSIDE the circuit (the two Poseidon2 legs), so the derivation is checked,
-    // not merely performed here: this value is what each builder independently recomputes and what a
-    // verifier derives from trusted token state.
-    let fact_commitment = fact.commitment_of(BabyBear::from_u64(v));
+    // not merely performed here: this value is what each builder independently recomputes.
+    //
+    // The commitment is BLINDED: leg 2 is an arity-4 chip lookup over
+    // `[fact_hash, state_root, blinding, 0]`, so a fresh `blinding` per presentation makes two
+    // showings of the SAME fact carry different commitments (unlinkable) while leg 1 keeps each
+    // bound to the value compared. `prove_with_disclosure` draws it fresh; a caller passing
+    // `Blinding::NONE` gets the sound-but-correlatable degenerate case.
+    let fact_commitment = fact.commitment_of(BabyBear::from_u64(v), blinding);
 
     // Prove ONE single-bound witness against `desc_name`; `None` when the witness cannot be built or
     // the comparison is FALSE (prove refuses — the false-statement pole, per-op range / nonzero tooth).
@@ -2666,32 +2728,32 @@ pub fn prove_predicate_for_fact(
     let inner = match predicate {
         Predicate::Gte(t) => BridgePredicateProofInner::Single(prove_one(
             PREDICATE_ARITH_NAME,
-            predicate_arith_witness(v, *t as u64, fact, 2),
+            predicate_arith_witness(v, *t as u64, fact, blinding, 2),
         )?),
         Predicate::Lte(t) => BridgePredicateProofInner::Single(prove_one(
             PREDICATE_ARITH_LE_NAME,
-            predicate_le_witness(v, *t as u64, fact, 2),
+            predicate_le_witness(v, *t as u64, fact, blinding, 2),
         )?),
         Predicate::Gt(t) => BridgePredicateProofInner::Single(prove_one(
             PREDICATE_ARITH_GT_NAME,
-            predicate_gt_witness(v, *t as u64, fact, 2),
+            predicate_gt_witness(v, *t as u64, fact, blinding, 2),
         )?),
         Predicate::Lt(t) => BridgePredicateProofInner::Single(prove_one(
             PREDICATE_ARITH_LT_NAME,
-            predicate_lt_witness(v, *t as u64, fact, 2),
+            predicate_lt_witness(v, *t as u64, fact, blinding, 2),
         )?),
         Predicate::Neq(t) => BridgePredicateProofInner::Single(prove_one(
             PREDICATE_ARITH_NEQ_NAME,
-            predicate_neq_witness(v, *t as u64, fact, 2),
+            predicate_neq_witness(v, *t as u64, fact, blinding, 2),
         )?),
         Predicate::InRange(low, high) => {
             let low_proof = prove_one(
                 PREDICATE_ARITH_NAME,
-                predicate_arith_witness(v, *low as u64, fact, 2),
+                predicate_arith_witness(v, *low as u64, fact, blinding, 2),
             )?;
             let high_proof = prove_one(
                 PREDICATE_ARITH_LE_NAME,
-                predicate_le_witness(v, *high as u64, fact, 2),
+                predicate_le_witness(v, *high as u64, fact, blinding, 2),
             )?;
             BridgePredicateProofInner::Range(low_proof, high_proof)
         }
@@ -2700,6 +2762,9 @@ pub fn prove_predicate_for_fact(
         predicate: predicate.clone(),
         proof: inner,
         fact_commitment,
+        // The opening a trusted-state verifier needs to reproduce `fact_commitment`. Without it the
+        // commitment is unreproducible and the verifier's gate has nothing sound to compare against.
+        blinding: blinding.as_field(),
     })
 }
 
@@ -3999,10 +4064,13 @@ mod ir2_issuer_wire_roundtrip {
         ];
 
         for (value, predicate, expect_true) in cases {
-            // The commitment a verifier derives from token state for THIS value's fact. It is
-            // value-dependent: that dependence is the weld.
-            let fc = binding.commitment_of(BabyBear::from_u64(*value as u64));
-            let proof = prove_predicate_for_fact(*value, binding, predicate);
+            println!("-- case: value={value} {predicate:?} expect_true={expect_true}");
+            // A fresh per-showing blinding, as production draws it.
+            let blinding = fresh_predicate_blinding();
+            // The commitment a verifier derives from token state for THIS value's fact, opened with
+            // the blinding the proof carries. It is value-dependent: that dependence is the weld.
+            let fc = binding.commitment_of(BabyBear::from_u64(*value as u64), blinding);
+            let proof = prove_predicate_for_fact(*value, binding, blinding, predicate);
             if *expect_true {
                 let proof = proof
                     .unwrap_or_else(|| panic!("true statement {value} {predicate:?} must PROVE"));

@@ -166,11 +166,11 @@ pub use present::{
     BridgePresentationBuilder, BridgePresentationProof, DEFAULT_MAX_PROOF_AGE_SECS,
     FederationRegistry, Predicate, ProgramProveError, UnsafeLocalOnlyMarker, VerifiedPresentation,
     VerifierConfig, VerifyError, WirePresentationProof, bb_from_bytes, bb_to_bytes,
-    compute_revealed_facts_commitment, prove_committed_threshold, prove_predicate_for_fact,
-    prove_predicate_program, prove_predicate_program_full, verify_committed_threshold_proof,
-    verify_fold_chain, verify_predicate_program, verify_predicate_proof,
-    verify_presentation_complete, verify_presentation_full, verify_proof_complete,
-    verify_revealed_facts_commitment, verify_wire_fold_chain,
+    compute_revealed_facts_commitment, fresh_predicate_blinding, prove_committed_threshold,
+    prove_predicate_for_fact, prove_predicate_program, prove_predicate_program_full,
+    verify_committed_threshold_proof, verify_fold_chain, verify_predicate_program,
+    verify_predicate_proof, verify_presentation_complete, verify_presentation_full,
+    verify_proof_complete, verify_revealed_facts_commitment, verify_wire_fold_chain,
 };
 pub use solana_consensus::{
     BankHashComponents, EpochStakeTable, PohAnchorPolicy, PohError, PohSegment, ValidatorVote,

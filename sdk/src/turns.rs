@@ -209,7 +209,24 @@ impl<'rt> TurnBuilder<'rt> {
         // them (the `set_field_with_preimage` shape in the executor's
         // coverage tests).
         unsigned.witness_blobs = self.witness_blobs;
-        let action = self.runtime.sign_action_for_runtime(unsigned);
+        // The signature binds the turn nonce (`dregg-action-sig-v3`): the
+        // runtime counter for agent-paid turns, the CELL's on-ledger replay
+        // counter for `.as_cell(..)` turns — the same values `submit` stamps
+        // on the turn.
+        let turn_nonce = match self.acting {
+            Acting::Agent | Acting::On(_) => self.runtime.next_agent_turn_nonce(),
+            Acting::AsCell(cell, _) => {
+                let ledger = self.runtime.ledger().lock().unwrap();
+                ledger
+                    .get(&cell)
+                    .ok_or(SdkError::Turn(dregg_turn::TurnError::CellNotFound {
+                        id: cell,
+                    }))?
+                    .state
+                    .nonce()
+            }
+        };
+        let action = self.runtime.sign_action_for_runtime(unsigned, turn_nonce);
         Ok(AuthorizedTurn {
             runtime: self.runtime,
             acting: self.acting,

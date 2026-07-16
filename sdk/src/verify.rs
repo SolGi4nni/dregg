@@ -345,19 +345,35 @@ pub fn verify_selective_presentation(presentation: &crate::AuthorizationPresenta
     }
 }
 
-/// Verify a disclosure presentation: revealed facts + predicate proofs.
+/// Verify the revealed-facts half of a disclosure presentation.
 ///
-/// This verifies:
-/// 1. The revealed facts commitment matches the plaintext revealed facts.
-/// 2. Each predicate proof verifies against its stated fact commitment.
+/// This verifies ONE thing: the revealed facts commitment matches the plaintext revealed facts.
+/// It does NOT verify the STARK proof itself (use `verify_authorization_proof` for that).
 ///
-/// Note: This does NOT verify the STARK proof itself (use
-/// `verify_authorization_proof` for that). This function checks the
-/// *selective disclosure layer* on top of the STARK.
+/// # Predicate proofs are NOT verified here — and CANNOT be
+///
+/// A predicate proof is a claim about a fact the verifier never sees, pinned to a
+/// `fact_commitment`. Checking it requires the commitment the VERIFIER derives from token state it
+/// trusts (`dregg_bridge::verify_predicate_proof`'s `expected_fact_commitment`). Nothing in an
+/// `AuthorizationPresentation` is such a source: `predicate_proofs` carries only the prover's own
+/// `fact_commitment`, and the authorization STARK binds `revealed_facts_commitment` but does not
+/// attest the predicate facts' commitments as public inputs.
+///
+/// This function previously "verified" them by feeding `verify_predicate_proof` the proof's own
+/// commitment — reducing its gate to `x != x`, always false, never rejecting. Every predicate proof
+/// passed, including one about a fact of the prover's own invention. That is fail-OPEN, so it is
+/// gone. A presentation carrying predicate proofs now fails CLOSED here (mirroring
+/// [`verify_validated_ivc_proof`]): this function has no trusted state, so it never accepts a claim
+/// it cannot check.
+///
+/// Callers holding trusted token state must use
+/// [`verify_disclosure_presentation_against_state`], which derives each expected commitment
+/// canonically and is the only sound way to accept a predicate proof.
 ///
 /// # Returns
 ///
-/// `true` if the revealed facts commitment matches AND all predicate proofs verify.
+/// `true` if the revealed facts commitment matches AND the presentation carries no predicate
+/// proofs. `false` for any other variant, a commitment mismatch, or any predicate proof present.
 pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresentation) -> bool {
     match presentation {
         crate::AuthorizationPresentation::Selective {
@@ -374,9 +390,84 @@ pub fn verify_disclosure_presentation(presentation: &crate::AuthorizationPresent
                 return false;
             }
 
-            // 2. Verify each predicate proof.
-            for (_fact_index, pred_proof) in predicate_proofs {
-                if !dregg_bridge::verify_predicate_proof(pred_proof, pred_proof.fact_commitment) {
+            // 2. FAIL-CLOSED: no trusted state here, so no predicate proof can be checked. Never
+            //    accept one on the prover's say-so.
+            predicate_proofs.is_empty()
+        }
+        _ => false,
+    }
+}
+
+/// Verify a disclosure presentation against TRUSTED token state: revealed facts + predicate proofs.
+///
+/// This is the sound counterpart to [`verify_disclosure_presentation`]. It verifies:
+/// 1. The revealed facts commitment matches the plaintext revealed facts.
+/// 2. Every predicate proof verifies against the fact commitment the VERIFIER derives from
+///    `trusted_facts` — never the commitment the proof presents.
+///
+/// It does NOT verify the STARK proof itself (use `verify_authorization_proof` for that).
+///
+/// # The derivation is the whole point
+///
+/// `dregg_bridge::verify_predicate_proof` pins `expected_fact_commitment` as the descriptor's
+/// `pi[1]`, and the descriptor's value↔fact weld forces the compared value to be the one that
+/// commitment covers. So the chain closes only if `expected_fact_commitment` comes from somewhere
+/// the prover does not control. Here it comes from `trusted_facts[fact_index]` via
+/// [`AgentCipherclerk::derive_fact_commitment`] — the same construction the prover uses, so an
+/// honest proof about that fact matches, and a proof about any other fact or value does not.
+///
+/// # Arguments
+///
+/// * `presentation` — the presentation to check.
+/// * `trusted_facts` — the verifier's OWN copy of the derivation's facts, in trace order (the
+///   `derived_fact` of each step, which is what `fact_index` indexes). This must come from state
+///   the verifier trusts — re-evaluating the policy itself, an issuer-side record — NOT from the
+///   presentation.
+/// * `state_root` — the token-state root the commitments are taken against
+///   ([`AgentCipherclerk::fact_commitment_state_root`] of the trusted token).
+///
+/// # Returns
+///
+/// `true` if the revealed facts commitment matches AND every predicate proof verifies against its
+/// derived expected commitment. Fail-closed: a `fact_index` with no trusted fact, a fact whose
+/// value cannot be canonically derived, or any failed proof yields `false`.
+pub fn verify_disclosure_presentation_against_state(
+    presentation: &crate::AuthorizationPresentation,
+    trusted_facts: &[dregg_trace::Fact],
+    state_root: dregg_circuit::BabyBear,
+) -> bool {
+    match presentation {
+        crate::AuthorizationPresentation::Selective {
+            revealed_facts,
+            revealed_facts_commitment,
+            predicate_proofs,
+            ..
+        } => {
+            // 1. Verify revealed facts commitment.
+            if !dregg_bridge::verify_revealed_facts_commitment(
+                revealed_facts,
+                *revealed_facts_commitment,
+            ) {
+                return false;
+            }
+
+            // 2. Verify each predicate proof against a commitment DERIVED FROM TRUSTED STATE.
+            for (fact_index, pred_proof) in predicate_proofs {
+                // A proof pointing at an index the verifier has no trusted fact for is refused:
+                // the verifier cannot say what fact it is about, so it cannot accept it.
+                let Some(trusted_fact) = trusted_facts.get(*fact_index) else {
+                    return false;
+                };
+                // The VALUE comes from trusted state; only the blinding (the opening) comes from the
+                // proof, and that freedom cannot move which fact the commitment names.
+                let Ok(expected) = crate::AgentCipherclerk::derive_fact_commitment(
+                    trusted_fact,
+                    state_root,
+                    dregg_circuit::predicate_arith_witness::Blinding(pred_proof.blinding),
+                ) else {
+                    return false;
+                };
+                if !dregg_bridge::verify_predicate_proof(pred_proof, expected) {
                     return false;
                 }
             }

@@ -110,7 +110,7 @@ impl AgentRuntime {
         .map_err(|e| SdkError::Rejected(format!("payable pay route refused: {e}")))?;
         // Sign the resolved `pay`-method action (preserving `action.method == pay`
         // in the committed turn) and submit it as an ordinary agent turn.
-        let signed = self.sign_action_for_runtime(action);
+        let signed = self.sign_action_for_runtime(action, self.next_agent_turn_nonce());
         self.submit_signed_action_as_agent(signed, SERVICE_TURN_FEE)
     }
 
@@ -208,7 +208,7 @@ impl AgentRuntime {
         let (action, _sig) = self
             .invoke_service_resolved(target, method, args, work, authority, pay)
             .map_err(|e| SdkError::Rejected(format!("service invocation refused: {e}")))?;
-        let signed = self.sign_action_for_runtime(action);
+        let signed = self.sign_action_for_runtime(action, self.next_agent_turn_nonce());
         self.submit_signed_action_as_agent(signed, SERVICE_TURN_FEE)
     }
 }

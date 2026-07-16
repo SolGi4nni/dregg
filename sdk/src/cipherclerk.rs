@@ -2549,10 +2549,9 @@ impl AgentCipherclerk {
         let mut revealed_facts: Vec<TraceFact> = Vec::new();
         let mut predicate_proofs: Vec<(usize, BridgePredicateProof)> = Vec::new();
 
-        // Compute a state root for predicate fact commitments.
-        // The issuer_key is always the derived proof key (never the raw root key),
-        // whether this is a root token or an attenuated token.
-        let state_root = Self::bytes_to_babybear(token.issuer_key());
+        // The state root predicate fact commitments are taken against. A verifier that trusts this
+        // token's state derives the SAME root and the SAME commitments (`derive_fact_commitment`).
+        let state_root = Self::fact_commitment_state_root(token);
 
         for (fact_index, disclosure_mode) in &disclosure.facts {
             let fact = match all_facts.get(*fact_index) {
@@ -2568,26 +2567,26 @@ impl AgentCipherclerk {
                     predicate_type,
                     threshold,
                 } => {
+                    // `prove_predicate_for_fact` rebuilds the fact as
+                    // `hash_fact(predicate_sym, [value, term1, term2])` — the compared VALUE is
+                    // `terms[0]` (predicate_arith_witness.rs:148) — so the binding carries
+                    // term_bbs[1]/[2] and `value` carries term_bbs[0]. That `value == term_bbs[0]`
+                    // is guaranteed by `extract_fact_value` returning `trace_fact_terms_bb[0]`
+                    // itself (it Errs on the kinds where no such value exists), not by a comment.
+                    // The verifier reproduces this exact commitment via `derive_fact_commitment`.
                     let value = Self::extract_fact_value(fact)?;
-                    let pred_bb = Self::trace_fact_predicate_bb(fact);
-                    let term_bbs = Self::trace_fact_terms_bb(fact);
-                    // 2026-07-16: prove_predicate_for_fact now takes a FactBinding; it rebuilds the
-                    // fact as hash_fact(predicate_sym, [value, term1, term2]) — the VALUE is term[0]
-                    // (predicate_arith_witness.rs:148). Old: hash_fact(pred_bb, term_bbs). So
-                    // term1/term2 = term_bbs[1]/[2]; term_bbs[0] is carried by `value`
-                    // (extract_fact_value == term_bbs[0] for the Int values this arithmetic path proves).
-                    let binding = dregg_bridge::present::FactTerms {
-                        predicate_sym: pred_bb,
-                        term1: term_bbs[1],
-                        term2: term_bbs[2],
-                    }
-                    .bind(state_root);
+                    let binding = Self::fact_binding(fact, state_root);
                     let bridge_predicate =
                         Self::predicate_type_to_bridge(*predicate_type, threshold.as_u32());
+                    // A FRESH blinding per predicate proof, so two disclosures of the same fact
+                    // carry different commitments. It rides along in the proof as the decommitment
+                    // a trusted-state verifier opens `fact_commitment` with.
+                    let blinding = dregg_bridge::fresh_predicate_blinding();
 
                     let proof = dregg_bridge::prove_predicate_for_fact(
                         value,
                         binding,
+                        blinding,
                         &bridge_predicate,
                     )
                     .ok_or_else(|| {
@@ -2634,6 +2633,12 @@ impl AgentCipherclerk {
                             committed_proof.proof,
                         ),
                         fact_commitment: committed_proof.fact_commitment,
+                        // The committed-threshold commitment is built by its own path
+                        // (`prove_committed_threshold`), which does not take an arithmetic
+                        // `Blinding`. `NONE` records that: there is no arithmetic-family
+                        // decommitment to hand a verifier here. The arm is fail-closed at verify
+                        // (no IR-v2 committed-threshold descriptor is emitted), so nothing opens it.
+                        blinding: dregg_circuit::field::BabyBear::ZERO,
                     };
                     predicate_proofs.push((*fact_index, bridge_proof));
                 }
@@ -2671,35 +2676,125 @@ impl AgentCipherclerk {
         })
     }
 
-    /// Extract a numeric value from a trace fact's first term.
+    /// The compared value of a trace fact — ONE REDUCTION with [`Self::trace_fact_terms_bb`].
     ///
-    /// Returns an error if the term is a variable — predicate proofs cannot
-    /// operate on unground variables because there is no concrete value to prove
-    /// a predicate over.
-    fn extract_fact_value(fact: &TraceFact) -> Result<u32, SdkError> {
-        if let Some(term) = fact.terms.first() {
-            match term {
-                dregg_trace::Term::Int(v) => Ok((*v).max(0).min(u32::MAX as i64) as u32),
-                dregg_trace::Term::Const(sym) => {
-                    Ok(u32::from_le_bytes([sym[0], sym[1], sym[2], sym[3]])
-                        % dregg_circuit::field::BABYBEAR_P)
-                }
-                dregg_trace::Term::Var(_) => Err(SdkError::InvalidWitness(
-                    "cannot prove predicates on unground variables".into(),
-                )),
+    /// The predicate descriptor compares `terms[0]` of the fact its commitment covers
+    /// (`hash_fact(predicate_sym, [value, term1, term2])`, `predicate_arith_witness.rs:148`). So the
+    /// value this returns MUST be the same field element `trace_fact_terms_bb` puts at `terms[0]`,
+    /// or the prover's welded commitment covers a fact that no verifier deriving from trusted token
+    /// state will ever reproduce. That agreement used to be asserted in PROSE at the call site and
+    /// was FALSE for three of the four term kinds (driven: `Const` reduced by a raw first-limb read
+    /// here vs a Poseidon2 hash there; negative `Int` clamped to 0 here vs two's-complement-reduced
+    /// there). It is now true BY CONSTRUCTION: every `Ok` arm returns `trace_fact_terms_bb(fact)[0]`
+    /// itself, so `BabyBear::new(extract_fact_value(f)?) == trace_fact_terms_bb(f)[0]` always.
+    ///
+    /// Term kinds that have no meaningful COMPARED value fail LOUD rather than reduce to something
+    /// a threshold comparison would silently mis-answer:
+    ///
+    /// * `Const` — `terms[0]` is `poseidon2(symbol)`. `hash >= threshold` is not a statement about
+    ///   the symbol; it is noise with a truth value. Refused (this is why the excluded kinds must
+    ///   `Err` rather than fall back to the old raw-limb read: the old read made the nonsense
+    ///   comparison *succeed*).
+    /// * `Int` outside `[0, BABYBEAR_P)` — the field reduction is not the integer, so the proven
+    ///   comparison is about the residue, not the number the caller means. Refused.
+    /// * `Var` — unground; no concrete value exists. Refused (as before).
+    pub fn extract_fact_value(fact: &TraceFact) -> Result<u32, SdkError> {
+        // The canonical reduction. Every accepting arm below returns THIS element's `u32`, which is
+        // what makes `value == terms[0]` a construction rather than a comment.
+        let term_bbs = Self::trace_fact_terms_bb(fact);
+        match fact.terms.first() {
+            // No terms: `trace_fact_terms_bb` leaves `terms[0] = ZERO`; the compared value is 0.
+            None => Ok(term_bbs[0].as_u32()),
+            Some(dregg_trace::Term::Int(v))
+                if *v >= 0 && (*v as u64) < dregg_circuit::field::BABYBEAR_P as u64 =>
+            {
+                Ok(term_bbs[0].as_u32())
             }
-        } else {
-            Ok(0)
+            Some(dregg_trace::Term::Int(v)) => Err(SdkError::InvalidWitness(format!(
+                "cannot prove predicates on Int({v}): outside [0, {}), so the field element the \
+                 fact commitment covers is not this integer",
+                dregg_circuit::field::BABYBEAR_P
+            ))),
+            Some(dregg_trace::Term::Const(_)) => Err(SdkError::InvalidWitness(
+                "cannot prove arithmetic predicates on a Const symbol: the fact commitment covers \
+                 poseidon2(symbol), and comparing a hash against a threshold is not a statement \
+                 about the symbol"
+                    .into(),
+            )),
+            Some(dregg_trace::Term::Var(_)) => Err(SdkError::InvalidWitness(
+                "cannot prove predicates on unground variables".into(),
+            )),
         }
     }
 
+    /// The identity of the fact a predicate speaks about — everything the fact commitment covers
+    /// EXCEPT the compared value (which is `terms[0]`, carried separately into the witness).
+    ///
+    /// Shared by the prover (below) and the verifier's canonical derivation
+    /// ([`Self::derive_fact_commitment`]) so the two cannot drift apart.
+    pub fn fact_binding(
+        fact: &TraceFact,
+        state_root: BabyBear,
+    ) -> dregg_circuit::predicate_arith_witness::FactBinding {
+        let term_bbs = Self::trace_fact_terms_bb(fact);
+        dregg_bridge::present::FactTerms {
+            predicate_sym: Self::trace_fact_predicate_bb(fact),
+            term1: term_bbs[1],
+            term2: term_bbs[2],
+        }
+        .bind(state_root)
+    }
+
+    /// THE VERIFIER'S DERIVATION: the fact commitment a predicate proof about `fact` MUST present,
+    /// computed from TRUSTED token state (`fact` + `state_root`) — the VALUE never comes from the
+    /// prover.
+    ///
+    /// This is the value `dregg_bridge::verify_predicate_proof`'s `expected_fact_commitment`
+    /// parameter is for. Feeding that parameter the proof's own `fact_commitment` reduces its gate
+    /// to `x != x` — always false, never rejects — which lets a prover pick whatever fact it likes
+    /// and prove a true statement about THAT. The weld inside the descriptor forces the compared
+    /// value to be the one the presented commitment covers; it is this derivation that forces the
+    /// presented commitment to be the one trusted state covers. Neither half is sufficient alone.
+    ///
+    /// Byte-identical to what the prover's `prove_predicate_for_fact` computes internally
+    /// (`fact.commitment_of(BabyBear::from_u64(value), blinding)`), via the shared
+    /// [`Self::fact_binding`] and the single [`Self::extract_fact_value`] reduction — so an honest
+    /// proof about `fact` matches and a proof about any other fact/value does not.
+    ///
+    /// # Arguments
+    ///
+    /// * `fact` — the TRUSTED fact. Its `terms[0]` is the compared value; it must come from state
+    ///   the verifier trusts, never from the presentation.
+    /// * `state_root` — the token-state root the commitment is taken against
+    ///   ([`Self::fact_commitment_state_root`]).
+    /// * `blinding` — the per-presentation blinding the proof carries
+    ///   (`BridgePredicateProof::blinding`). This one DOES come from the prover, and costs nothing:
+    ///   it rerandomizes which commitment names a fact, but cannot change which fact is named
+    ///   (`Blinding`'s doc). Pinning the value is what the trusted `fact` does.
+    pub fn derive_fact_commitment(
+        fact: &TraceFact,
+        state_root: BabyBear,
+        blinding: dregg_circuit::predicate_arith_witness::Blinding,
+    ) -> Result<BabyBear, SdkError> {
+        let value = Self::extract_fact_value(fact)?;
+        Ok(Self::fact_binding(fact, state_root).commitment_of(BabyBear::new(value), blinding))
+    }
+
+    /// The token-state root fact commitments are taken against, from a held token.
+    ///
+    /// The issuer_key is always the derived proof key (never the raw root key), whether this is a
+    /// root token or an attenuated one — matching what the prover commits to.
+    pub fn fact_commitment_state_root(token: &HeldToken) -> BabyBear {
+        Self::bytes_to_babybear(token.issuer_key())
+    }
+
     /// Convert a trace fact's predicate symbol to a BabyBear field element.
-    fn trace_fact_predicate_bb(fact: &TraceFact) -> BabyBear {
+    pub fn trace_fact_predicate_bb(fact: &TraceFact) -> BabyBear {
         Self::bytes_to_babybear(&fact.predicate)
     }
 
     /// Convert a trace fact's terms to BabyBear field elements (up to 3).
-    fn trace_fact_terms_bb(fact: &TraceFact) -> [BabyBear; 3] {
+    pub fn trace_fact_terms_bb(fact: &TraceFact) -> [BabyBear; 3] {
         let mut term_bbs = [BabyBear::ZERO; 3];
         for (i, term) in fact.terms.iter().take(3).enumerate() {
             term_bbs[i] = match term {
@@ -4086,9 +4181,14 @@ impl AgentCipherclerk {
         .bind(state_root);
 
         // Generate the predicate proof via the bridge.
+        // A FRESH blinding factor per proof: the fact commitment is
+        // `hash_4_to_1([fact_hash, state_root, blinding, 0])`, so two showings of the same attribute
+        // emit DIFFERENT commitments (unlinkable) while the in-circuit weld keeps each bound to the
+        // value compared (sound).
         let proof = dregg_bridge::prove_predicate_for_fact(
             attribute_value,
             binding,
+            dregg_bridge::present::fresh_predicate_blinding(),
             &predicate,
         )
         .ok_or_else(|| {
@@ -4328,14 +4428,19 @@ impl AgentCipherclerk {
             .bind(state_root);
 
             // Generate the predicate proof.
-            let bridge_proof =
-                dregg_bridge::prove_predicate_for_fact(*value as u32, binding, &predicate)
-                    .ok_or_else(|| {
-                        SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
-                            "predicate proof failed for '{}': value {} does not satisfy {:?}",
-                            req.attribute, value, predicate
-                        )))
-                    })?;
+            // A FRESH blinding factor per proof (unlinkable showings; the weld still binds).
+            let bridge_proof = dregg_bridge::prove_predicate_for_fact(
+                *value as u32,
+                binding,
+                dregg_bridge::present::fresh_predicate_blinding(),
+                &predicate,
+            )
+            .ok_or_else(|| {
+                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
+                    "predicate proof failed for '{}': value {} does not satisfy {:?}",
+                    req.attribute, value, predicate
+                )))
+            })?;
 
             // Carry the bridge's descriptor-backed proof directly. It is exactly the type
             // the migrated `FulfillmentWithPredicates.predicate_proofs` consumes and is
@@ -7268,77 +7373,87 @@ mod tests {
     use super::*;
     use dregg_turn::TurnReceipt;
 
-    /// DRIVEN FINDING (1) — THE DUAL-REDUCTION MISMATCH.
+    /// THE UNIFIED REDUCTION — `extract_fact_value` IS `trace_fact_terms_bb[0]`.
     ///
-    /// `extract_fact_value` and `trace_fact_terms_bb` reduce a `Term::Const` symbol by two
-    /// CATEGORICALLY DIFFERENT functions:
-    ///   * `extract_fact_value`  = `u32::from_le_bytes(sym[0..4]) % BABYBEAR_P` — the symbol's FIRST
-    ///     4-byte limb, raw.
-    ///   * `trace_fact_terms_bb` = `bytes_to_babybear(sym)` = `poseidon2::hash_many(encode_hash(sym))`
-    ///     — a Poseidon2 HASH of all 8 limbs.
+    /// These two once reduced a term by CATEGORICALLY DIFFERENT functions, and the call site
+    /// asserted their agreement in PROSE ("extract_fact_value == term_bbs[0] for the Int values this
+    /// arithmetic path proves"). Driven, that claim held for exactly ONE of four term kinds:
     ///
-    /// The welded predicate path feeds `extract_fact_value` in as the compared value (which the weld
-    /// makes `terms[0]` of the hashed fact), while every canonical fact-hashing site
-    /// (`bridge/src/present.rs`, and this file's own `trace_fact_terms_bb`) builds `terms[0]` with
-    /// `bytes_to_babybear`. If they disagree, the prover's welded commitment covers a DIFFERENT fact
-    /// than the one token state commits to, and the honest proof cannot match a verifier's expected
-    /// commitment.
+    /// | kind      | old `extract_fact_value`        | `trace_fact_terms_bb[0]`      | agreed |
+    /// |-----------|---------------------------------|-------------------------------|--------|
+    /// | `Const`   | `u32::from_le_bytes(sym[0..4])`  | `poseidon2(sym)`              | NO (971892236 vs 1956025275) |
+    /// | `Int` ≥ 0 | `v`                              | `v`                           | yes    |
+    /// | `Int` < 0 | clamped to `0`                   | two's-complement mod `p`      | NO (0 vs 1172168158) |
+    /// | `Var`     | `Err`                            | `ZERO`                        | n/a    |
     ///
-    /// The committed call site (`:2578`) asserts in PROSE that these agree
-    /// ("extract_fact_value == term_bbs[0] for the Int values this arithmetic path proves").
-    /// This test checks that claim instead of trusting it — for BOTH term kinds.
+    /// Where they disagree, the prover's welded commitment covers a DIFFERENT fact than the one
+    /// token state commits to, so a verifier deriving its expected commitment canonically REJECTS
+    /// the honest proof. That completeness break sat armed behind the vacuous `x != x` verifier gate
+    /// (nothing was ever rejected, so nothing ever surfaced it) and would have fired the moment the
+    /// gate started deriving — which is why the two were fixed together.
+    ///
+    /// The prose is now a construction: every `Ok` arm RETURNS `trace_fact_terms_bb(fact)[0]`, and
+    /// the kinds with no meaningful compared value `Err`. This test drives all four kinds and pins
+    /// that invariant — for `Ok`, agreement; for `Err`, a refusal rather than a silent mis-compare.
     #[test]
     fn driven_extract_fact_value_vs_terms_bb_reduction() {
-        // --- Term::Const: the two reductions on a real 32-byte symbol.
         let sym: [u8; 32] = *blake3::hash(b"credit-score").as_bytes();
-        let fact_const = TraceFact {
-            predicate: *blake3::hash(b"has-score").as_bytes(),
-            terms: vec![dregg_trace::Term::Const(sym)],
+        let pred = *blake3::hash(b"has-score").as_bytes();
+        let fact_of = |terms: Vec<dregg_trace::Term>| TraceFact {
+            predicate: pred,
+            terms,
         };
-        let value_const = AgentCipherclerk::extract_fact_value(&fact_const).expect("const value");
-        let terms_const = AgentCipherclerk::trace_fact_terms_bb(&fact_const);
-        let value_const_bb = BabyBear::new(value_const);
-        println!("CONST: extract_fact_value = {}", value_const_bb.as_u32());
-        println!(
-            "CONST: trace_fact_terms_bb[0] = {}",
-            terms_const[0].as_u32()
-        );
-        println!("CONST: AGREE = {}", value_const_bb == terms_const[0]);
 
-        // --- Term::Int in [0, u32::MAX]: the case the prose claim covers.
-        let fact_int = TraceFact {
-            predicate: *blake3::hash(b"has-score").as_bytes(),
-            terms: vec![dregg_trace::Term::Int(720)],
-        };
-        let value_int = AgentCipherclerk::extract_fact_value(&fact_int).expect("int value");
-        let terms_int = AgentCipherclerk::trace_fact_terms_bb(&fact_int);
-        println!(
-            "INT(720): extract = {} | terms[0] = {} | AGREE = {}",
-            BabyBear::new(value_int).as_u32(),
-            terms_int[0].as_u32(),
-            BabyBear::new(value_int) == terms_int[0]
-        );
+        let cases: Vec<(&str, TraceFact)> = vec![
+            ("Const", fact_of(vec![dregg_trace::Term::Const(sym)])),
+            ("Int>=0", fact_of(vec![dregg_trace::Term::Int(720)])),
+            ("Int<0", fact_of(vec![dregg_trace::Term::Int(-5)])),
+            (
+                "Int out-of-range",
+                fact_of(vec![dregg_trace::Term::Int(
+                    dregg_circuit::field::BABYBEAR_P as i64,
+                )]),
+            ),
+            ("Var", fact_of(vec![dregg_trace::Term::Var(0)])),
+            ("no terms", fact_of(vec![])),
+        ];
 
-        // --- Term::Int NEGATIVE: extract clamps to 0; terms_bb casts to u64 (two's complement).
-        let fact_neg = TraceFact {
-            predicate: *blake3::hash(b"has-score").as_bytes(),
-            terms: vec![dregg_trace::Term::Int(-5)],
-        };
-        let value_neg = AgentCipherclerk::extract_fact_value(&fact_neg).expect("neg value");
-        let terms_neg = AgentCipherclerk::trace_fact_terms_bb(&fact_neg);
-        println!(
-            "INT(-5): extract = {} | terms[0] = {} | AGREE = {}",
-            BabyBear::new(value_neg).as_u32(),
-            terms_neg[0].as_u32(),
-            BabyBear::new(value_neg) == terms_neg[0]
-        );
+        for (name, fact) in &cases {
+            let terms = AgentCipherclerk::trace_fact_terms_bb(fact);
+            match AgentCipherclerk::extract_fact_value(fact) {
+                Ok(v) => {
+                    println!(
+                        "{name}: extract = {v} | terms[0] = {} | ONE REDUCTION",
+                        terms[0].as_u32()
+                    );
+                    assert_eq!(
+                        BabyBear::new(v),
+                        terms[0],
+                        "{name}: an accepted compared value MUST BE terms[0]"
+                    );
+                }
+                Err(e) => println!("{name}: REFUSED — {e}"),
+            }
+        }
 
-        // The prose claim holds ONLY for non-negative in-range Int.
+        // The kinds the arithmetic path can honestly prove about round-trip...
         assert_eq!(
-            BabyBear::new(value_int),
-            terms_int[0],
-            "the prose claim's own case (in-range Int) must agree"
+            AgentCipherclerk::extract_fact_value(&cases[1].1).expect("Int>=0 round-trips"),
+            720
         );
+        assert_eq!(
+            AgentCipherclerk::extract_fact_value(&cases[5].1).expect("no terms => 0"),
+            0
+        );
+        // ...and every kind with no meaningful compared value FAILS LOUD. `Const` is the one that
+        // regressed: the old raw-limb read made `poseidon2-hash >= threshold` *succeed*.
+        for idx in [0usize, 2, 3, 4] {
+            let (name, fact) = &cases[idx];
+            assert!(
+                AgentCipherclerk::extract_fact_value(fact).is_err(),
+                "{name}: must fail loud, never silently mis-compare"
+            );
+        }
     }
 
     /// Helper: create a mock receipt with given state hashes.
