@@ -871,3 +871,25 @@ Then the same descriptor serves the deployed `TREE_DEPTH = 4` (16 leaves) and th
 depth-general. This is Lean work in `NonRevocationEmit.lean` (+ its witness builder), NOT a Rust patch.
 Until then `sdk/privacy.rs:621,762` + `full_turn_proof.rs:4692,4999` correctly stay on the hand circuit —
 cutting over would SHRINK the revocation tree 16 -> 4 leaves.
+
+### `NonRevocationDepthResidual` — the FIX is COMPOSITION, not a restructure (refined 2026-07-16)
+Chased it further and found the pieces already exist; the depth-2 limit does NOT require redesigning
+`NonRevocationEmit`. A sorted-tree non-revocation proof = **(a) the two neighbours are ADJACENT MEMBERS**
++ **(b) the queried item is STRICTLY BRACKETED, L < x < R**. Those two halves are split across two
+already-emitted descriptors:
+- **(a) is SOLVED and DEPTH-GENERAL** — `dregg-membership-adjacency::poseidon2-v1` (kind `NonMembership`).
+  Its builder `circuit/src/adjacency_witness.rs` emits a 32-col trace with **ONE BINARY-TREE LEVEL PER ROW**
+  (two parallel authentication paths lower ‖ upper + a shared power-of-two index accumulator), PIs
+  `[root, leaf_lower, leaf_upper, idx_lower, idx_upper]`. Consecutiveness (`idx_upper - idx_lower == 1`) is
+  INTERNALIZED in the descriptor (the wide-bracket forge `(5,7)` — both real members, not adjacent — is
+  REJECTED). Depth-general because the co-path folds ACROSS ROWS, exactly like `membership_witness_4ary`.
+- **(b) is where the depth-2 shape lives** — `dregg-non-revocation-sorted-tree::poseidon2-v1` (kind
+  `BlindedSet`) carries the ORDERING algebra (`DIFF_L`, `DIFF_R`, `RL`, `RR` + the 30-bit range wires) but
+  welds it to a single-active-row depth-2 Merkle shape (`root = hash_2_to_1(hash_2_to_1(L,R), sib1)`).
+**THE FIX:** keep the depth-general adjacency descriptor for the membership half and emit the ORDERING
+half against it (the `L < x < R` range wires already proved in `NonRevocationEmit`), instead of restructuring
+NonRevocationEmit's Merkle shape to per-level rows. i.e. the deployed `TREE_DEPTH = 4` non-revocation is
+`adjacency (depth-general) ∘ ordering`. **Do NOT put the ordering in a Rust verifier wrapper** — that is
+precisely the gap the adjacency emit just FIXED by internalizing consecutiveness (it lived in a wrapper a
+caller could bypass). Still NAMED, not forced: `sdk/privacy.rs:621,762` stays on the hand circuit until the
+composed descriptor exists.
