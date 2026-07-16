@@ -38,7 +38,6 @@ idiom as the static file):
      the concrete `(D+1 + #pairs·Δ)/(p−1)` ~ `(q+D)²·D/p`.
 -/
 import GgmCandidate
-import Mathlib.Algebra.Order.BigOperators.Group.Finset
 
 open Polynomial
 
