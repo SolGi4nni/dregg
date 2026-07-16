@@ -5,6 +5,23 @@ on:
     branches: [main]
   pull_request:
 
+# Explicit least-privilege. The repo default is ALREADY `read`
+# (`gh api repos/emberian/dregg/actions/permissions/workflow`), so this is
+# defense-in-depth, not a hole being closed: every job here runs `cargo build`/
+# `cargo test`, i.e. executes the PR-under-test's `build.rs`, so if the repo
+# default is ever flipped to read/write this lane must not inherit it.
+permissions:
+  contents: read
+
+# Cancel superseded PR runs: once a new push lands on a PR, the older run's verdict
+# is about code nobody will merge. Each run here is a FULL workspace compile on two
+# OSes, so this is the single biggest CI-minute saving available.
+# main is deliberately NOT cancelled: a per-commit verdict is what tells you WHICH
+# commit broke it, and this repo's main takes rapid pushes from several terminals.
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
 env:
   CARGO_TERM_COLOR: always
   CARGO_INCREMENTAL: 0
@@ -13,6 +30,7 @@ jobs:
   check:
     name: Check
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -32,6 +50,7 @@ jobs:
   solana-lock:
     name: solana-lock (standalone workspace)
     runs-on: ubuntu-latest
+    timeout-minutes: 45
     steps:
       - uses: actions/checkout@v4
         with:
@@ -48,6 +67,7 @@ jobs:
   test:
     name: Test (${{ matrix.os }})
     runs-on: ${{ matrix.os }}
+    timeout-minutes: 150
     strategy:
       fail-fast: false
       matrix:
@@ -125,6 +145,7 @@ jobs:
   live-brain:
     name: Live brain (hermetic HTTP)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -139,6 +160,7 @@ jobs:
   clippy:
     name: Clippy (advisory)
     runs-on: ubuntu-latest
+    timeout-minutes: 30
     # ADVISORY, not a gate. CI's clippy (even pinned) carries lints the local
     # same-dated clippy lacks (chunks_exact_to_as_chunks, doc_lazy_continuation,
     # manual_is_multiple_of, …) AND the deos-* elephant crates don't inherit the
@@ -163,6 +185,7 @@ jobs:
   fmt:
     name: Format
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -180,6 +203,7 @@ jobs:
   audit:
     name: Security Audit
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     steps:
       - uses: actions/checkout@v4
         with:
@@ -215,6 +239,7 @@ jobs:
   lean-marshal-gate:
     name: Lean marshal gate
     runs-on: ubuntu-latest
+    timeout-minutes: 60
     # THE FAITHFULNESS GATE, ARMED. This job used to be a checkmark that could not be red: with no
     # libdregg_lean.a on a hosted runner, check-lean-marshal.sh exited 0 having compared the Rust
     # executor against nothing at all. It is now armed by FETCHING a seed.
@@ -278,6 +303,7 @@ jobs:
   no-unchecked-auth:
     name: No-Unchecked-Auth grep guard (P2.F)
     runs-on: ubuntu-latest
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
         with:
@@ -287,6 +313,7 @@ jobs:
   no-degraded-felt:
     name: Faithful-commitment gate (no degraded felt)
     runs-on: ubuntu-latest
+    timeout-minutes: 20
     # ast-grep tripwire: a lossy 256->31-bit `fold_bytes32_to_bb` fold must not
     # reach a state-commitment position. See docs/FAITHFUL-COMMITMENT-LAW.md.
     steps:
@@ -301,6 +328,7 @@ jobs:
   metatheory-no-sorry:
     name: Metatheory zero-sorry guard
     runs-on: ubuntu-latest
+    timeout-minutes: 330
     # Pin the Lean toolchain via metatheory/lean-toolchain (leanprover/lean4:v4.30.0).
     # mathlib is a *local-path* require (../../../src/mathlib4); CI reconstructs
     # that checkout at the pinned rev, then pulls the prebuilt mathlib cache so
@@ -343,6 +371,7 @@ jobs:
   descriptor-drift:
     name: Descriptor Lean↔JSON drift gate
     runs-on: ubuntu-latest
+    timeout-minutes: 330
     # The circuit descriptor JSONs (circuit/descriptors/*.json) and their *_FP
     # sha256 constants are MACHINE-GENERATED from the verified Lean emit (the
     # source of truth). This gate regenerates them via scripts/emit-descriptors.sh
