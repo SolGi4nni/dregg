@@ -353,12 +353,12 @@ fn test_byzantine_double_spend_nullifier_replay() {
     let nullifier = Nullifier(nullifier_bytes);
 
     // First spend: legitimate
-    let result = nullifier_set.insert(nullifier);
+    let result = nullifier_set.insert(nullifier, 1);
     assert!(result.is_ok(), "First spend should succeed");
     assert!(nullifier_set.contains(&nullifier));
 
     // Byzantine double-spend: same nullifier again
-    let replay_result = nullifier_set.insert(nullifier);
+    let replay_result = nullifier_set.insert(nullifier, 1);
     assert!(
         replay_result.is_err(),
         "SAFETY: Double-spend MUST be rejected. Nullifier uniqueness is the core \
@@ -373,7 +373,7 @@ fn test_byzantine_double_spend_nullifier_replay() {
     for i in 0..10u8 {
         let nf_bytes = blake3::hash(&[i; 32]).as_bytes().clone();
         let nf = Nullifier(nf_bytes);
-        nullifier_set.insert(nf).unwrap();
+        nullifier_set.insert(nf, 1).unwrap();
         all_nullifiers.push(nf_bytes);
     }
 
@@ -384,7 +384,7 @@ fn test_byzantine_double_spend_nullifier_replay() {
     // Byzantine node tries to replay any of them — all must fail
     for nf_bytes in &all_nullifiers {
         let nf = Nullifier(*nf_bytes);
-        let result = nullifier_set.insert(nf);
+        let result = nullifier_set.insert(nf, 1);
         assert!(result.is_err(), "Replay of ANY nullifier must be rejected");
     }
 }
