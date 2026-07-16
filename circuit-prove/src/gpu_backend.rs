@@ -824,7 +824,14 @@ impl DftCtx {
     }
 
     fn ensure_bufs(&mut self, need_u32s: usize) {
-        let need = need_u32s.next_power_of_two().max(1 << 22);
+        // The full recursion fold can land just below an adapter's maximum
+        // storage-buffer binding size. Rounding that legal request up to the
+        // next power of two crosses the device limit (on RADV/AMDVLK the
+        // observed boundary is 2^31 - 1 bytes). DFT kernels use only the
+        // requested prefix and require u32, not power-of-two, capacity, so
+        // grow exactly at this boundary. Small buffers retain the old 16 MiB
+        // floor to avoid allocation churn.
+        let need = need_u32s.max(1 << 22);
         if self.bufs.as_ref().is_none_or(|b| b.cap_u32s < need) {
             let sz = (need * 4) as u64;
             let mk = |label: &str| {
@@ -2935,7 +2942,7 @@ fn permute16(st: ptr<function, array<u32, 16>>) {
 @group(0) @binding(1) var<storage, read> desc: array<u32>;
 @group(0) @binding(2) var<storage, read_write> outd: array<u32>;
 
-// desc = [n_mats, base_row, n_rows, _, (off, w) * n_mats]
+// desc = [n_mats, src_base_row, n_rows, out_base_row, (off, w) * n_mats]
 // One thread = one leaf row: PaddingFreeSponge<Perm,16,8,8> over the row's
 // concatenation across all matrices in the height group. Overwrite-mode absorb:
 // rate lanes [0,8) overwritten one element at a time, permute after every 8;
@@ -2947,6 +2954,7 @@ fn leaf_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     let n_rows = desc[2];
     if (i >= n_rows) { return; }
     let row = desc[1] + i;
+    let out_row = desc[3] + i;
     let n_mats = desc[0];
 
     var s: array<u32, 16>;
@@ -2968,7 +2976,7 @@ fn leaf_main(@builtin(global_invocation_id) gid: vec3<u32>) {
     if (pos != 0u) {
         permute16(&s);
     }
-    for (var k = 0u; k < 8u; k++) { outd[row * 8u + k] = s[k]; }
+    for (var k = 0u; k < 8u; k++) { outd[out_row * 8u + k] = s[k]; }
 }
 
 // desc = [n_out, base, _, _]; src = prev-layer digests (Montgomery u32x8);
@@ -3131,6 +3139,17 @@ impl BbHashCtx {
         buf
     }
 
+    /// Avoid one driver-side temporary allocation proportional to a full
+    /// recursion table when a non-resident matrix must be uploaded.
+    fn write_u32s_chunked(&self, dst: &wgpu::Buffer, dst_word_offset: usize, words: &[u32]) {
+        const UPLOAD_WORDS: usize = (16 << 20) / 4;
+        for (chunk_index, chunk) in words.chunks(UPLOAD_WORDS).enumerate() {
+            let word_offset = dst_word_offset + chunk_index * UPLOAD_WORDS;
+            self.queue
+                .write_buffer(dst, (word_offset * 4) as u64, bytemuck::cast_slice(chunk));
+        }
+    }
+
     /// Dispatch the leaf sponge over `n_rows` rows in watchdog-safe chunks.
     fn dispatch_leaf(
         &self,
@@ -3139,6 +3158,8 @@ impl BbHashCtx {
         out: &wgpu::Buffer,
         n_mats: u32,
         mat_descs: &[u32],
+        src_base_row: usize,
+        out_base_row: usize,
         n_rows: usize,
         perms_per_row: usize,
     ) {
@@ -3148,7 +3169,12 @@ impl BbHashCtx {
         let mut base = 0usize;
         while base < n_rows {
             let rows = rows_per_chunk.min(n_rows - base);
-            let mut desc = vec![n_mats, base as u32, rows as u32, 0];
+            let mut desc = vec![
+                n_mats,
+                (src_base_row + base) as u32,
+                rows as u32,
+                (out_base_row + base) as u32,
+            ];
             desc.extend_from_slice(mat_descs);
             let chunk_desc = self.descriptor_buffer("bb_leaf_desc", &desc);
             let bindg = self.bind(arena, &chunk_desc, out);
@@ -3324,57 +3350,86 @@ impl GpuBabyBearMmcs {
         let hash_group =
             |group: &[usize], h: usize, out: &wgpu::Buffer, desc_buf: &wgpu::Buffer| {
                 let total_w: usize = group.iter().map(|&i| leaves[i].width()).sum();
-                let arena_u32s: usize = h * total_w;
-                let arena = ctx.storage_buffer("bb_leaf_arena", arena_u32s, true);
-                let mut mat_descs: Vec<u32> = Vec::with_capacity(group.len() * 2);
-                let mut blits: Vec<(wgpu::Buffer, usize)> = Vec::new();
-                let mut off = 0usize;
-                for &i in group {
-                    let m = &leaves[i];
-                    let w = m.width();
-                    if let Some(resident) = take_resident_lde(m) {
-                        LDE_RESIDENT_HITS.fetch_add(1, Ordering::Relaxed);
-                        blits.push((resident, off));
-                    } else {
-                        LDE_RESIDENT_MISSES.fetch_add(1, Ordering::Relaxed);
-                        let mut staging = vec![0u32; h * w];
-                        staging.par_chunks_mut(w).enumerate().for_each(|(r, dst)| {
-                            let row = m.row_slice(r).expect("row in range");
-                            dst.copy_from_slice(bb_as_u32s(&row));
-                        });
-                        ctx.queue.write_buffer(
-                            &arena,
-                            (off * 4) as u64,
-                            bytemuck::cast_slice(&staging),
-                        );
-                    }
-                    mat_descs.push(off as u32);
-                    mat_descs.push(w as u32);
-                    off += h * w;
-                }
-                if !blits.is_empty() {
-                    let mut enc = ctx.device.create_command_encoder(&Default::default());
-                    for (resident, boff) in &blits {
-                        enc.copy_buffer_to_buffer(
-                            resident,
-                            0,
-                            &arena,
-                            (*boff * 4) as u64,
-                            resident.size(),
-                        );
-                    }
-                    ctx.queue.submit([enc.finish()]);
-                }
+                // A whole height group can exceed Vulkan/WebGPU's single
+                // storage-binding limit even though each row is independent.
+                // Stream bounded row windows through compact per-matrix
+                // slices; the leaf shader writes them at their global output
+                // rows, so the resulting digest layer is byte-identical to
+                // the monolithic arena. Keep windows modest enough that a
+                // host upload never creates a multi-GiB staging allocation.
+                const TARGET_ARENA_U32S: usize = (256 << 20) / 4;
+                let arena_cap = ctx.max_binding_u32s.min(TARGET_ARENA_U32S);
+                let rows_per_arena = (arena_cap / total_w).max(1).min(h);
+
+                let residents: Vec<Option<wgpu::Buffer>> = group
+                    .iter()
+                    .map(|&i| {
+                        let resident = take_resident_lde(&leaves[i]);
+                        if resident.is_some() {
+                            LDE_RESIDENT_HITS.fetch_add(1, Ordering::Relaxed);
+                        } else {
+                            LDE_RESIDENT_MISSES.fetch_add(1, Ordering::Relaxed);
+                        }
+                        resident
+                    })
+                    .collect();
+
                 let perms_per_row = total_w.div_ceil(8).max(1);
-                ctx.dispatch_leaf(
-                    &arena,
-                    desc_buf,
-                    out,
-                    group.len() as u32,
-                    &mat_descs,
-                    h,
-                    perms_per_row,
-                );
+                let mut base_row = 0usize;
+                while base_row < h {
+                    let rows = rows_per_arena.min(h - base_row);
+                    let arena = ctx.storage_buffer("bb_leaf_arena", rows * total_w, true);
+                    let mut mat_descs: Vec<u32> = Vec::with_capacity(group.len() * 2);
+                    let mut blits: Vec<(&wgpu::Buffer, u64, usize, u64)> = Vec::new();
+                    let mut off = 0usize;
+                    for (slot, &i) in group.iter().enumerate() {
+                        let m = &leaves[i];
+                        let w = m.width();
+                        if let Some(resident) = residents[slot].as_ref() {
+                            blits.push((
+                                resident,
+                                (base_row * w * 4) as u64,
+                                off,
+                                (rows * w * 4) as u64,
+                            ));
+                        } else {
+                            let mut staging = vec![0u32; rows * w];
+                            staging.par_chunks_mut(w).enumerate().for_each(|(r, dst)| {
+                                let row = m.row_slice(base_row + r).expect("row in range");
+                                dst.copy_from_slice(bb_as_u32s(&row));
+                            });
+                            ctx.write_u32s_chunked(&arena, off, &staging);
+                        }
+                        mat_descs.push(off as u32);
+                        mat_descs.push(w as u32);
+                        off += rows * w;
+                    }
+                    if !blits.is_empty() {
+                        let mut enc = ctx.device.create_command_encoder(&Default::default());
+                        for (resident, src_off, dst_off, bytes) in &blits {
+                            enc.copy_buffer_to_buffer(
+                                resident,
+                                *src_off,
+                                &arena,
+                                (*dst_off * 4) as u64,
+                                *bytes,
+                            );
+                        }
+                        ctx.queue.submit([enc.finish()]);
+                    }
+                    ctx.dispatch_leaf(
+                        &arena,
+                        desc_buf,
+                        out,
+                        group.len() as u32,
+                        &mat_descs,
+                        0,
+                        base_row,
+                        rows,
+                        perms_per_row,
+                    );
+                    base_row += rows;
+                }
             };
 
         let desc_buf = ctx.storage_buffer("bb_desc", 4 + 2 * leaves.len().max(2), true);
@@ -3435,11 +3490,13 @@ impl Mmcs<BabyBear> for GpuBabyBearMmcs {
         #[cfg(not(target_arch = "wasm32"))]
         if gpu_able && let Some(gm) = self.gpu() {
             let ctx = gm.lock().unwrap();
-            let mut group_arena: HashMap<usize, usize> = HashMap::new();
+            let mut group_width: HashMap<usize, usize> = HashMap::new();
             for &(h, w) in &shapes {
-                *group_arena.entry(h).or_default() += h * w;
+                *group_width.entry(h).or_default() += w;
             }
-            if group_arena.values().all(|&u| u <= ctx.max_binding_u32s) {
+            // Only one ROW must fit now; oversized height groups are streamed
+            // through bounded arenas in build_gpu_tree.
+            if group_width.values().all(|&u| u <= ctx.max_binding_u32s) {
                 let tree = self.build_gpu_tree(&ctx, inputs);
                 let root = tree.digest_layers.last().expect("non-empty tree")[0];
                 let commitment = MerkleCap::new(vec![bb8_from_monty(&root)]);

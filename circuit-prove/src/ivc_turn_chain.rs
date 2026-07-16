@@ -720,7 +720,7 @@ const HASH_ARITY_TAG: u32 = 4;
 ///      `acc_in == 0`; last row `acc_out == chain_digest`.
 ///   5. **per-row hash binding (THE #2 fix):** `acc_out == poseidon2([acc_in,
 ///      old_root, new_root, idx], arity=4)[0]`, the genuine in-circuit Poseidon2
-///      (the same Poseidon2 arithmetization the descriptor interpreter uses, via
+///      (the SAME arithmetization `P3MerklePoseidon2Air` uses, via
 ///      [`poseidon2_permute_expr`]). `acc_out` is no longer free — a forged
 ///      `chain_digest` has no satisfying witness.
 ///   6. **idx counter:** `idx == 0` on the first row, `idx[i+1] == idx[i] + 1`
@@ -3127,7 +3127,7 @@ fn prove_chain_core_rotated(
             // published mint identity), (3) re-prove the REAL foreign note-spend STARK as the
             // G2 backing leaf (`prove_note_spend_leaf_with_claim` — spending-key knowledge +
             // Merkle membership + full-width commitment, with the mint identity recomputed
-            // IN-AIR at lane 6; the binding-only `bridge_action_witness` was REFUSED as backing),
+            // IN-AIR at lane 6; the binding-only `bridge_action_air` was REFUSED as backing),
             // (4) fold under the mint-hash binding node — the in-circuit `connect` makes a
             // published mint identity no verifying note-spend backs UNSAT.
             Some(CarrierWitness::Bridge(bundle)) => {
