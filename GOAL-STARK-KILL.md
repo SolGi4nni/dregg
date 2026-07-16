@@ -769,3 +769,17 @@ and does NOT transfer. `generate_chain_trace_rotated` (`ivc_turn_chain.rs:1044-1
 `old_root = new_root = final_root`, still-incrementing `idx`, and a genuinely-continued hash chain — so
 continuity holds across real→pad and among pads, and `onTransition := true` IS sound here. Carry the FULL
 gate set; do not inherit the base module's faithful-omission posture.
+
+### ✅ EMITTER + RUNG 2 CLOSED (uncommitted supervisor handoff)
+`EffectVmEmitTurnChainBinding.lean` now emits byte-pinned `dregg-turn-chain-binding-v2`: all fourteen
+`TurnChainBindingAir::eval` sites, including full real→padding root/acc/index continuity and the exact
+turn-chain preimage `[acc_in, old_root, new_root, idx]`. The shared Poseidon2 chip reduces the main trace
+from the hand AIR's 359 columns to 14 without changing the hash equation. Rung 1 proves descriptor
+satisfaction over any sound chip table implies the direct Rust-row semantics; Rung 2 proves the full
+constraint set iff those semantics against the canonical genuine chip row. A four-row two-real/two-pad
+witness is SAT, and concrete continuity/index/real-count forgeries are each formally UNSAT. All 18
+theorems are individually `#assert_axioms`-pinned; no `sorry`/`admit`/`native_decide`/axiom declaration.
+The all-row `is_real` boolean law deliberately uses `windowGate { onTransition := false }`: IR-v2
+`.base (.gate ...)` is transition-only and would omit Rust's last-row assertion. Local
+`lake build Dregg2` is green (9699 jobs). **No semantic or IR-expressibility residual.** The production
+Rust path still needs the separate descriptor-consumption cutover; this authoring turn changed no Rust.
