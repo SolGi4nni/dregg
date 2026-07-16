@@ -38,7 +38,8 @@ use dregg_circuit::field::BabyBear;
 
 use crate::builder::{Builder, Head, fb};
 use crate::digest::{
-    ABSORB_RATE, DOMAIN_EXPLANATION, DOMAIN_OUTCOME, DOMAIN_RULESET, DOMAIN_SUBJECTS, lane_iv,
+    ABSORB_RATE, DIGEST_FELTS, DOMAIN_EXPLANATION, DOMAIN_OUTCOME, DOMAIN_RULESET, DOMAIN_SUBJECTS,
+    iv8,
 };
 use crate::model::{ComposeError, Composition, Subject};
 use crate::reference::compose_over;
@@ -107,34 +108,46 @@ pub fn build(
     build_forged(shape, comp, old8, new8, &Forgery::default())
 }
 
-/// The `W` parallel domain-separated 4-ary absorb chains of `crate::digest`, over
-/// witnessed columns. In-circuit twin of [`crate::digest::wide_digest`].
+/// The `cap_node8` Merkle-Damgård chain of `crate::digest`, over witnessed columns.
+/// In-circuit twin of [`crate::digest::wide_digest`].
+///
+/// Seed an 8-felt accumulator with the domain IV, then absorb `data_cols` 8 felts at a
+/// time via `acc8 := cap_node8(acc8, block8)` — ONE `MerkleHash8` (arity-16 `node8`) site
+/// per block, all 8 output lanes program-owned. Returns the 8 columns of the final
+/// accumulator (the root), which the caller PI-binds.
 fn wide_chain(
     b: &mut Builder,
     tag: &str,
     domain: u64,
     data_cols: &[usize],
-    w: usize,
     zero_col: usize,
 ) -> Vec<usize> {
-    let mut roots = Vec::with_capacity(w);
-    for lane in 0..w {
-        let iv = lane_iv(domain, lane);
-        let mut acc = b.alloc_f(format!("{tag}_l{lane}_iv"), ColumnKind::Value, iv);
-        b.assert_const(acc, iv);
-        for (bi, block) in data_cols.chunks(ABSORB_RATE).enumerate() {
-            let mut ins = [acc, zero_col, zero_col, zero_col];
-            for (i, &c) in block.iter().enumerate() {
-                ins[i + 1] = c;
-            }
-            let out_val = b.hash4to1_value(ins);
-            let out = b.alloc_f(format!("{tag}_l{lane}_h{bi}"), ColumnKind::Value, out_val);
-            b.push_hash4to1(out, ins);
-            acc = out;
+    let iv = iv8(domain);
+    // The 8-felt seed accumulator, each lane pinned to its domain-separated IV.
+    let mut acc: [usize; DIGEST_FELTS] = core::array::from_fn(|lane| {
+        let c = b.alloc_f(format!("{tag}_iv{lane}"), ColumnKind::Value, iv[lane]);
+        b.assert_const(c, iv[lane]);
+        c
+    });
+    for (bi, block) in data_cols.chunks(ABSORB_RATE).enumerate() {
+        // The 8-felt data block, zero-padded past the stream end (the shared zero column).
+        let mut right = [zero_col; DIGEST_FELTS];
+        for (i, &c) in block.iter().enumerate() {
+            right[i] = c;
         }
-        roots.push(acc);
+        // out8 = cap_node8(acc8, block8) — 8 fresh program-owned digest columns.
+        let out_vals = b.cap_node8_value(acc, right);
+        let out: [usize; DIGEST_FELTS] = core::array::from_fn(|lane| {
+            b.alloc_f(
+                format!("{tag}_h{bi}_l{lane}"),
+                ColumnKind::Value,
+                out_vals[lane],
+            )
+        });
+        b.push_merkle_hash8(out, acc, right);
+        acc = out;
     }
-    roots
+    acc.to_vec()
 }
 
 /// A boolean prefix indicator vector of `n` slots whose sum is pinned to `count_col`.
@@ -280,7 +293,6 @@ pub fn build_forged(
         max_params: p_max,
         max_linear: l_max,
         max_knots: k_max,
-        digest_felts: w,
         identity_bits,
     } = *shape;
     // A shape whose identity width defeats the ordering comparison's non-vacuity is
@@ -293,7 +305,7 @@ pub fn build_forged(
     }
 
     let mut b = Builder::new(format!(
-        "param-compose-v{PARAM_COMPOSE_ABI_VERSION}-n{n}p{p_max}l{l_max}k{k_max}w{w}i{identity_bits}"
+        "param-compose-v{PARAM_COMPOSE_ABI_VERSION}-n{n}p{p_max}l{l_max}k{k_max}w{DIGEST_FELTS}i{identity_bits}"
     ));
 
     // The shared zero column: the canonical absent value, and the absorb padding.
@@ -593,7 +605,7 @@ pub fn build_forged(
         subj_stream.push(srole[i]);
         subj_stream.extend_from_slice(&sparams[i]);
     }
-    let subjects_root_cols = wide_chain(&mut b, "subjroot", DOMAIN_SUBJECTS, &subj_stream, w, zero);
+    let subjects_root_cols = wide_chain(&mut b, "subjroot", DOMAIN_SUBJECTS, &subj_stream, zero);
 
     let mut rule_stream = vec![rid, rver, linear_count, knot_count];
     for c in &lin_cols {
@@ -602,20 +614,13 @@ pub fn build_forged(
     for c in &knot_cols {
         rule_stream.extend_from_slice(c);
     }
-    let ruleset_root_cols = wide_chain(&mut b, "ruleroot", DOMAIN_RULESET, &rule_stream, w, zero);
+    let ruleset_root_cols = wide_chain(&mut b, "ruleroot", DOMAIN_RULESET, &rule_stream, zero);
 
-    let outcome_root_cols = wide_chain(&mut b, "outroot", DOMAIN_OUTCOME, &[outcome_col], w, zero);
+    let outcome_root_cols = wide_chain(&mut b, "outroot", DOMAIN_OUTCOME, &[outcome_col], zero);
 
     let mut expl_stream = lin_contrib.clone();
     expl_stream.extend_from_slice(&knot_contrib);
-    let expl_root_cols = wide_chain(
-        &mut b,
-        "explroot",
-        DOMAIN_EXPLANATION,
-        &expl_stream,
-        w,
-        zero,
-    );
+    let expl_root_cols = wide_chain(&mut b, "explroot", DOMAIN_EXPLANATION, &expl_stream, zero);
 
     // ---- the public inputs, in `crate::pi` layout order ----
     for x in old8.iter().chain(new8.iter()) {

@@ -9,14 +9,14 @@
 //!    18       param_count          active params/subject  (<= shape.max_params)
 //!    19       linear_count         active linear terms    (<= shape.max_linear)
 //!    20       knot_count           active knots           (<= shape.max_knots)
-//!   [21.. 21+ W)  ruleset_root     THE NAMED COMPOSITION LAW
-//!   [21+ W..21+2W) subjects_root   the canonical ordered (identity, role, params) list
-//!   [21+2W..21+3W) outcome_commitment
-//!   [21+3W..21+4W) explanation_root  the per-term contribution vector
+//!   [21..29)  ruleset_root     THE NAMED COMPOSITION LAW (8 felts)
+//!   [29..37)  subjects_root    the canonical ordered (identity, role, params) list
+//!   [37..45)  outcome_commitment
+//!   [45..53)  explanation_root  the per-term contribution vector
 //! ```
 //!
-//! At the deployable `W = 8`: **53 PIs**, of which 37 are app PIs — inside the door's
-//! 48-app / 64-total budget.
+//! At the fixed `DIGEST_FELTS = 8` binding width: **53 PIs**, of which 37 are app PIs —
+//! inside the door's 48-app / 64-total budget.
 //!
 //! # Why per-subject roots are NOT in the PIs
 //!
@@ -34,6 +34,8 @@
 
 use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
 
+use crate::digest::DIGEST_FELTS;
+
 /// The door's `[old_commit8 ‖ new_commit8]` prefix width (16). App PIs start here.
 pub const APP_BASE: usize = CUSTOM_PI_STATE_PREFIX_LEN;
 
@@ -47,32 +49,33 @@ pub const PARAM_COUNT: usize = APP_BASE + 2;
 pub const LINEAR_COUNT: usize = APP_BASE + 3;
 /// PI slot: active knots.
 pub const KNOT_COUNT: usize = APP_BASE + 4;
-/// First root slot. Roots follow in order: ruleset, subjects, outcome, explanation.
+/// First root slot. Roots follow in order: ruleset, subjects, outcome, explanation, each
+/// [`DIGEST_FELTS`] felts wide.
 pub const ROOTS_BASE: usize = APP_BASE + 5;
 
-/// Offset of `ruleset_root` for binding width `w`.
-pub const fn ruleset_root_base(_w: usize) -> usize {
+/// Offset of `ruleset_root`.
+pub const fn ruleset_root_base() -> usize {
     ROOTS_BASE
 }
-/// Offset of `subjects_root` for binding width `w`.
-pub const fn subjects_root_base(w: usize) -> usize {
-    ROOTS_BASE + w
+/// Offset of `subjects_root`.
+pub const fn subjects_root_base() -> usize {
+    ROOTS_BASE + DIGEST_FELTS
 }
-/// Offset of `outcome_commitment` for binding width `w`.
-pub const fn outcome_commitment_base(w: usize) -> usize {
-    ROOTS_BASE + 2 * w
+/// Offset of `outcome_commitment`.
+pub const fn outcome_commitment_base() -> usize {
+    ROOTS_BASE + 2 * DIGEST_FELTS
 }
-/// Offset of `explanation_root` for binding width `w`.
-pub const fn explanation_root_base(w: usize) -> usize {
-    ROOTS_BASE + 3 * w
-}
-
-/// Total public inputs at binding width `w` (including the 16-felt door prefix).
-pub const fn public_input_count(w: usize) -> usize {
-    ROOTS_BASE + 4 * w
+/// Offset of `explanation_root`.
+pub const fn explanation_root_base() -> usize {
+    ROOTS_BASE + 3 * DIGEST_FELTS
 }
 
-/// App public inputs at binding width `w` (what the door's 48-PI app budget is spent on).
-pub const fn app_public_input_count(w: usize) -> usize {
-    public_input_count(w) - APP_BASE
+/// Total public inputs (including the 16-felt door prefix).
+pub const fn public_input_count() -> usize {
+    ROOTS_BASE + 4 * DIGEST_FELTS
+}
+
+/// App public inputs (what the door's 48-PI app budget is spent on).
+pub const fn app_public_input_count() -> usize {
+    public_input_count() - APP_BASE
 }

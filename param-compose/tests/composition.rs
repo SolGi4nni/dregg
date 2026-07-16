@@ -9,8 +9,10 @@
 //! The role tags below are opaque `u64`s with deliberately meaningless names. This crate
 //! knows no roles; a test that used `ROLE_DRAGON` would be smuggling in a game.
 
+use dregg_circuit::dsl::circuit::ColumnKind;
 use dregg_circuit::field::BabyBear;
 use dregg_param_compose::air::{Forgery, build, build_forged};
+use dregg_param_compose::builder::Builder;
 use dregg_param_compose::digest::wide_digest;
 use dregg_param_compose::field::fb;
 use dregg_param_compose::model::{ComposeError, Composition, Knot, LinearTerm, Ruleset, Subject};
@@ -22,7 +24,7 @@ const ROLE_P: u64 = 101;
 const ROLE_Q: u64 = 202;
 const ROLE_R: u64 = 303;
 
-/// A small shape that fits the leaf budget at the deployable W=8 binding width.
+/// A small shape that fits the leaf budget at the fixed 8-felt node8 binding width.
 fn shape() -> ComposeShape {
     ComposeShape::new(3, 4, 3, 2)
 }
@@ -123,7 +125,7 @@ fn public_input_layout_matches_the_host_roots() {
     let c = composition();
     let air = build(&sh, &c, &old8(), &new8()).expect("builds");
     let pis = &air.builder.pis;
-    let w = sh.digest_felts;
+    let w = dregg_param_compose::DIGEST_FELTS;
 
     assert_eq!(
         pis.len(),
@@ -138,22 +140,22 @@ fn public_input_layout_matches_the_host_roots() {
 
     let slice = |base: usize| pis[base..base + w].to_vec();
     assert_eq!(
-        slice(pi::ruleset_root_base(w)),
+        slice(pi::ruleset_root_base()),
         c.ruleset_root(&sh),
         "ruleset_root PI must be the host's digest of the canonical ruleset stream"
     );
     assert_eq!(
-        slice(pi::subjects_root_base(w)),
+        slice(pi::subjects_root_base()),
         c.subjects_root(&sh).unwrap(),
         "subjects_root PI must be the host's digest of the canonical subjects stream"
     );
     assert_eq!(
-        slice(pi::outcome_commitment_base(w)),
+        slice(pi::outcome_commitment_base()),
         c.outcome_commitment(&sh).unwrap(),
         "outcome_commitment PI must be the host's digest of the composed outcome"
     );
     assert_eq!(
-        slice(pi::explanation_root_base(w)),
+        slice(pi::explanation_root_base()),
         c.explanation_root(&sh).unwrap(),
         "explanation_root PI must be the host's digest of the per-term contributions"
     );
@@ -177,7 +179,6 @@ fn the_in_circuit_chain_is_the_host_digest() {
         wide_digest(
             dregg_param_compose::digest::DOMAIN_RULESET,
             &c.ruleset_stream(&sh),
-            sh.digest_felts
         )
     );
 }
@@ -512,9 +513,9 @@ fn a_different_ruleset_root_licenses_a_different_outcome() {
     let air_b = build(&sh, &b, &old8(), &new8()).expect("builds");
     assert!(air_a.builder.air_accepts());
     assert!(air_b.builder.air_accepts());
-    let w = sh.digest_felts;
+    let w = dregg_param_compose::DIGEST_FELTS;
     let root_of = |air: &dregg_param_compose::ComposeAir| {
-        air.builder.pis[pi::ruleset_root_base(w)..pi::ruleset_root_base(w) + w].to_vec()
+        air.builder.pis[pi::ruleset_root_base()..pi::ruleset_root_base() + w].to_vec()
     };
     assert_eq!(root_of(&air_a), a.ruleset_root(&sh));
     assert_eq!(root_of(&air_b), b.ruleset_root(&sh));
@@ -724,8 +725,7 @@ fn the_shape_fuel_bound_is_the_airs_real_site_count() {
         shape(),
         ComposeShape::new(2, 4, 1, 1),
         ComposeShape::new(5, 6, 4, 3),
-        shape().with_digest_felts(1),
-        shape().with_digest_felts(4),
+        ComposeShape::new(2, 4, 1, 1).with_identity_bits(16),
     ] {
         let air = build(&sh, &composition(), &old8(), &new8()).expect("builds");
         assert_eq!(
@@ -849,6 +849,101 @@ fn two_unrelated_rulesets_share_one_vk() {
     assert_ne!(a1.builder.pis, a2.builder.pis);
 }
 
+// ===========================================================================
+// 9. THE NODE8 DIGEST — genuinely 8-felt (~124-bit), and its site binds its inputs.
+// ===========================================================================
+
+/// **THE DIGEST IS 8-FELT WIDE, NOT ONE LANE REPEATED.** The multi-output `node8` site's
+/// own bar: all 8 root lanes are distinct, and flipping ONE input felt moves EVERY output
+/// lane. A digest that only bound lane 0 (the old single-output squeeze) would fail both.
+#[test]
+fn the_node8_digest_is_genuinely_124_bit_wide() {
+    let sh = shape();
+    let c = composition();
+    let air = build(&sh, &c, &old8(), &new8()).expect("builds");
+
+    // (a) All 8 lanes of a root are distinct field elements — a real 8-felt digest.
+    let root: Vec<BabyBear> = c.subjects_root(&sh).unwrap();
+    assert_eq!(root.len(), 8, "the binding width is 8 felts");
+    for i in 0..8 {
+        for j in (i + 1)..8 {
+            assert_ne!(
+                root[i], root[j],
+                "root lanes {i} and {j} coincide — the digest is not genuinely 8-felt wide"
+            );
+        }
+    }
+    // The in-circuit root columns carry the same 8 distinct lanes.
+    let incirc: Vec<BabyBear> = air
+        .subjects_root_cols
+        .iter()
+        .map(|&col| air.builder.value(col))
+        .collect();
+    assert_eq!(incirc, root, "the in-circuit root equals the host digest");
+
+    // (b) AVALANCHE: flip ONE input felt (a single param) and EVERY output lane must move.
+    let mut c2 = composition();
+    c2.subjects[0].params[3] += 1; // one felt, deep in the subjects stream
+    let root2 = c2.subjects_root(&sh).unwrap();
+    assert_ne!(root, root2, "a changed input must change the digest");
+    for lane in 0..8 {
+        assert_ne!(
+            root[lane], root2[lane],
+            "output lane {lane} did not move when an input felt flipped — a single-output \
+             digest (lane 0 only) would leave lanes 1..7 free; node8 binds all 8"
+        );
+    }
+}
+
+/// **THE NODE8 FORGERY CANARY.** A `MerkleHash8` site binds its 16 inputs to its 8 outputs
+/// via the genuine `cap_node8` permutation: forging an input (without the matching output)
+/// is UNSAT. The canary makes the site demonstrably load-bearing — NEUTER it (omit the
+/// constraint) and the same forged witness composes; RESTORE it and the forgery is refused.
+#[test]
+fn a_forged_input_to_a_node8_site_is_refused() {
+    // A standalone one-site chip: out8 = cap_node8(left8, right8).
+    let mk = |with_site: bool, tamper_left0: Option<i128>| -> Builder {
+        let mut b = Builder::new("node8-canary");
+        let left: [usize; 8] = core::array::from_fn(|i| {
+            b.alloc_f(format!("l{i}"), ColumnKind::Value, fb(3 + i as i128))
+        });
+        let right: [usize; 8] = core::array::from_fn(|i| {
+            b.alloc_f(format!("r{i}"), ColumnKind::Value, fb(50 + i as i128))
+        });
+        let out_vals = b.cap_node8_value(left, right);
+        let out: [usize; 8] =
+            core::array::from_fn(|i| b.alloc_f(format!("o{i}"), ColumnKind::Value, out_vals[i]));
+        if with_site {
+            b.push_merkle_hash8(out, left, right);
+        }
+        // The forgery: overwrite an INPUT lane, leaving the honest output in place.
+        if let Some(v) = tamper_left0 {
+            b.tamper(left[0], v);
+        }
+        b
+    };
+
+    // Honest, site present: accepts.
+    assert!(
+        mk(true, None).air_accepts(),
+        "the honest node8 witness must self-accept"
+    );
+
+    // Forged input, site present: REFUSED (the output no longer equals cap_node8(inputs)).
+    assert!(
+        !mk(true, Some(999)).air_accepts(),
+        "a forged input to a node8 site must have no satisfying witness"
+    );
+
+    // NEUTER the site (omit the MerkleHash8 constraint): the SAME forged witness composes,
+    // proving the refusal above was the site doing the work — not decoration.
+    assert!(
+        mk(false, Some(999)).air_accepts(),
+        "with the node8 site removed, the forged input composes — the canary confirms the \
+         site is what refuses the forgery"
+    );
+}
+
 /// The VK is a function of the SHAPE (crossing a bound is a new size class, like a bigger
 /// board) — and of nothing else.
 #[test]
@@ -863,7 +958,7 @@ fn the_vk_tracks_the_shape_and_only_the_shape() {
         ComposeShape::new(3, 5, 3, 2),
         ComposeShape::new(3, 4, 4, 2),
         ComposeShape::new(3, 4, 3, 3),
-        shape().with_digest_felts(4),
+        shape().with_identity_bits(24),
     ] {
         let vk = build(&bigger, &composition(), &old8(), &new8())
             .unwrap()

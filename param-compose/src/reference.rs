@@ -298,32 +298,20 @@ impl Composition {
         out
     }
 
-    /// `ruleset_root` — THE NAMED COMPOSITION LAW, at the shape's binding width.
+    /// `ruleset_root` — THE NAMED COMPOSITION LAW, at the fixed 8-felt binding width.
     pub fn ruleset_root(&self, shape: &ComposeShape) -> Vec<BabyBear> {
-        wide_digest(
-            DOMAIN_RULESET,
-            &self.ruleset_stream(shape),
-            shape.digest_felts,
-        )
+        wide_digest(DOMAIN_RULESET, &self.ruleset_stream(shape))
     }
 
     /// `subjects_root` — the canonical ordered projection list.
     pub fn subjects_root(&self, shape: &ComposeShape) -> Result<Vec<BabyBear>, ComposeError> {
-        Ok(wide_digest(
-            DOMAIN_SUBJECTS,
-            &self.subjects_stream(shape)?,
-            shape.digest_felts,
-        ))
+        Ok(wide_digest(DOMAIN_SUBJECTS, &self.subjects_stream(shape)?))
     }
 
     /// `outcome_commitment`.
     pub fn outcome_commitment(&self, shape: &ComposeShape) -> Result<Vec<BabyBear>, ComposeError> {
         let c = self.compose()?;
-        Ok(wide_digest(
-            DOMAIN_OUTCOME,
-            &[fb(c.outcome)],
-            shape.digest_felts,
-        ))
+        Ok(wide_digest(DOMAIN_OUTCOME, &[fb(c.outcome)]))
     }
 
     /// The explanation stream: the per-term contributions, padded to the shape's maxima.
@@ -345,7 +333,6 @@ impl Composition {
         Ok(wide_digest(
             DOMAIN_EXPLANATION,
             &self.explanation_stream(shape)?,
-            shape.digest_felts,
         ))
     }
 }

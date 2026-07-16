@@ -4,7 +4,7 @@
 //! constraint vanishes. Forgery tests `tamper` a named column and re-check.
 //!
 //! Only constraint kinds the CUSTOM-LEAF lowering carries are used (Polynomial / Binary /
-//! ConditionalNonzero / Hash4to1), so `air_accepts` is a faithful shadow of "the leaf
+//! ConditionalNonzero / MerkleHash8), so `air_accepts` is a faithful shadow of "the leaf
 //! proves" — an AIR built here reaches the door rather than only the DSL evaluator.
 //!
 //! This is a sibling of `dregg-automatafl`'s builder (same repo, same posture). It is
@@ -248,23 +248,31 @@ impl Builder {
         out
     }
 
-    /// A Poseidon2 `Hash4to1` site: `output_col == hash_4_to_1(inputs)`. Lowers to a
-    /// `TID_P2` chip lookup, so a program carrying it PROVES-FOLDS as a custom leaf.
-    pub fn push_hash4to1(&mut self, output_col: usize, inputs: [usize; 4]) {
-        self.push(ConstraintExpr::Hash4to1 {
-            output_col,
-            input_cols: inputs,
+    /// A Poseidon2 `MerkleHash8` site: `output_cols[0..8] == cap_node8(left_cols[0..8],
+    /// right_cols[0..8])` — the native arity-16 `node8` compression, all 8 output lanes
+    /// bound. Lowers to ONE `TID_P2` chip lookup whose 8 outputs are program-owned
+    /// (`ChipOut::Lanes8`), so it costs ZERO lane columns while binding the full 8-felt
+    /// (~124-bit) digest — the single-output `Hash4to1` form squeezed lane 0 alone and paid
+    /// 7 witness columns per site to do it.
+    pub fn push_merkle_hash8(
+        &mut self,
+        output_cols: [usize; 8],
+        left_cols: [usize; 8],
+        right_cols: [usize; 8],
+    ) {
+        self.push(ConstraintExpr::MerkleHash8 {
+            output_cols,
+            left_cols,
+            right_cols,
         });
     }
 
-    /// The honest `hash_4_to_1` of four columns' current witness values.
-    pub fn hash4to1_value(&self, inputs: [usize; 4]) -> BabyBear {
-        dregg_circuit::poseidon2::hash_4_to_1(&[
-            self.values[inputs[0]],
-            self.values[inputs[1]],
-            self.values[inputs[2]],
-            self.values[inputs[3]],
-        ])
+    /// The honest `cap_node8` of two 8-felt column groups' current witness values.
+    pub fn cap_node8_value(&self, left: [usize; 8], right: [usize; 8]) -> [BabyBear; 8] {
+        dregg_circuit::cap_root::cap_node8(
+            core::array::from_fn(|i| self.values[left[i]]),
+            core::array::from_fn(|i| self.values[right[i]]),
+        )
     }
 
     /// Bind an existing column to a FRESH public input, pinning `col == pi[index]`.
@@ -350,11 +358,12 @@ impl Builder {
     }
 
     /// Poseidon2 chip sites emitted — the fuel meter (`ComposeShape::hash_sites` is its
-    /// shape-only twin, and `tests/size.rs` pins the two together).
+    /// shape-only twin, and `tests/size.rs` pins the two together). Each `MerkleHash8` is
+    /// ONE arity-16 `node8` permutation.
     pub fn hash_site_count(&self) -> usize {
         self.constraints
             .iter()
-            .filter(|c| matches!(c, ConstraintExpr::Hash4to1 { .. }))
+            .filter(|c| matches!(c, ConstraintExpr::MerkleHash8 { .. }))
             .count()
     }
 }

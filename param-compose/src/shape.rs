@@ -19,32 +19,24 @@
 pub use dregg_circuit::dsl::circuit::{MAX_CONSTRAINT_DEGREE, MAX_PUBLIC_INPUTS, MAX_TRACE_WIDTH};
 
 /// **THE BINDING WIDTH.** Number of BabyBear felts in a committed root (`ruleset_root`,
-/// `subjects_root`, `outcome_commitment`, `explanation_root`).
+/// `subjects_root`, `outcome_commitment`, `explanation_root`) — the native output width of
+/// the `cap_node8` compression the digest is built from (see [`crate::digest`]).
 ///
-/// Each felt carries ~31 bits, so `W = 8` gives a ~248-bit digest — a ~124-bit collision
+/// Each felt carries ~31 bits, so 8 felts give a ~248-bit digest with a ~124-bit collision
 /// floor, matching the deployed 8-felt `WideHash` / `CellState::compute_commitment_8` and
-/// sitting above the ~112.6-bit FRI soundness floor. **This is the only deployable
-/// setting.**
+/// sitting above the ~112.6-bit FRI soundness floor.
 ///
-/// # Why a width parameter exists at all (the measured substrate boundary)
+/// # It is not a knob (it used to be)
 ///
-/// The one-site 8-felt primitive — [`ConstraintExpr::MerkleHash8`], the native
-/// `cap_node8` arity-16 compression — is **REFUSED by the custom-leaf lowering**
-/// (`circuit/src/custom_leaf_lowering.rs:625`): it is an 8-OUTPUT Poseidon2 site and the
-/// IR-v2 chip adapter carries single-output (`out0`) sites only. A custom leaf that must
-/// FOLD (i.e. reach the door) therefore has only the 4-ary single-output forms
-/// (`Hash4to1`, `Hash2to1`, `Hash3Cap`) available, each yielding a ~31-bit lane-0 digest.
-///
-/// So this AIR reaches ~124 bits the only way the substrate allows: `W` parallel
-/// domain-separated 4-ary absorb chains (see `crate::digest`). That costs `W`x the hash
-/// sites. `W = 1` is **INSECURE and measurement-only** (a 31-bit root is a 2^31
-/// second-preimage / 2^15.5 collision — an adversary grinds a second rule table with the
-/// same root and the "committed" ruleset stops being load-bearing). It exists so the
-/// per-lane cost of the missing primitive is a NUMBER rather than an argument.
-///
-/// The named follow-up that retires the multiplier: teach the IR-v2 chip adapter to carry
-/// multi-output chip sites, at which point `MerkleHash8` gives `W = 8` for ONE site.
-pub const DEPLOYABLE_DIGEST_FELTS: usize = 8;
+/// The digest is a Merkle-Damgård chain over `ConstraintExpr::MerkleHash8` — the native
+/// `cap_node8` arity-16 compression, ONE Poseidon2 site whose 8 output lanes are all
+/// program-owned columns. So all 8 felts are bound by one site at zero lane-column cost.
+/// This width used to be a `ComposeShape` field (`W`) because the custom-leaf lowering
+/// once REFUSED `MerkleHash8` and the AIR reached ~124 bits only via `W = 8` parallel
+/// 4-ary (`Hash4to1`) chains — paying an 8× site multiplier and 7 lane columns per site in
+/// the lowered leaf. That refusal is gone (`circuit/src/custom_leaf_lowering.rs`), so the
+/// multiplier and the knob are gone with it.
+pub const DIGEST_FELTS: usize = 8;
 
 /// Default width of the subject-identity namespace, in bits (268M identities).
 ///
@@ -88,14 +80,13 @@ pub struct ComposeShape {
     pub max_linear: usize,
     /// Max sparse KNOTS (signed pairwise products) the ruleset may carry.
     pub max_knots: usize,
-    /// Felts per committed root. See [`DEPLOYABLE_DIGEST_FELTS`].
-    pub digest_felts: usize,
     /// Width of the subject-identity namespace, in bits. See [`DEFAULT_IDENTITY_BITS`].
     pub identity_bits: usize,
 }
 
 impl ComposeShape {
-    /// A shape at the deployable binding width and the default identity namespace.
+    /// A shape at the default identity namespace. The binding width is fixed at
+    /// [`DIGEST_FELTS`] (the native `cap_node8` output width).
     pub fn new(
         max_subjects: usize,
         max_params: usize,
@@ -107,7 +98,6 @@ impl ComposeShape {
             max_params,
             max_linear,
             max_knots,
-            digest_felts: DEPLOYABLE_DIGEST_FELTS,
             identity_bits: DEFAULT_IDENTITY_BITS,
         }
     }
@@ -131,24 +121,20 @@ impl ComposeShape {
         self.identity_bits >= 1 && self.identity_bits <= MAX_SOUND_IDENTITY_BITS
     }
 
-    /// The same bounds at an explicit binding width. `digest_felts < 8` is
-    /// **measurement-only**; see [`DEPLOYABLE_DIGEST_FELTS`].
-    pub fn with_digest_felts(mut self, w: usize) -> Self {
-        self.digest_felts = w;
-        self
-    }
-
     /// **THE FUEL BOUND.** Total Poseidon2 chip sites the AIR emits at this shape — the
     /// dominant prover cost and the DoS meter a host prices a composition by. Every term
     /// is a bound from the shape alone: a caller can price a composition WITHOUT seeing
     /// its content.
+    ///
+    /// One `MerkleHash8` (arity-16 `node8`) site absorbs [`crate::digest::ABSORB_RATE`] (8)
+    /// felts, so each of the four streams costs `ceil(len / 8)` sites — no `W` multiplier,
+    /// because one node8 site binds all 8 digest felts.
     pub fn hash_sites(&self) -> usize {
-        let chunks = |n: usize| n.div_ceil(crate::digest::ABSORB_RATE);
-        self.digest_felts
-            * (chunks(self.subjects_stream_len())
-                + chunks(self.ruleset_stream_len())
-                + chunks(1)
-                + chunks(self.explanation_stream_len()))
+        let chunks = |n: usize| n.div_ceil(crate::digest::ABSORB_RATE).max(1);
+        chunks(self.subjects_stream_len())
+            + chunks(self.ruleset_stream_len())
+            + chunks(1)
+            + chunks(self.explanation_stream_len())
     }
 
     /// Felts in the canonical subjects stream (`crate::digest`).
@@ -168,7 +154,7 @@ impl ComposeShape {
 
     /// Public inputs this shape publishes, including the 16-felt door state prefix.
     pub fn public_input_count(&self) -> usize {
-        crate::pi::public_input_count(self.digest_felts)
+        crate::pi::public_input_count()
     }
 
     /// Whether the PI layout fits the deployed 64-PI cap.

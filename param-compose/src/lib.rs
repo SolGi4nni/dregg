@@ -55,16 +55,18 @@
 //! ## The budget (measured — `tests/size.rs`)
 //!
 //! Against the deployed caps `MAX_TRACE_WIDTH = 1024`, `MAX_CONSTRAINT_DEGREE = 8`,
-//! `MAX_PUBLIC_INPUTS = 64`, all at the deployable `W = 8` binding width:
+//! `MAX_PUBLIC_INPUTS = 64`. `prog` is the AIR's own columns; `lane` is the extra columns
+//! the custom-leaf lowering allocates per single-output hash site; `leaf = prog + lane` is
+//! the width the folded leaf actually carries. The digest is `MerkleHash8` (`node8`), whose
+//! 8 outputs are program-owned, so it pays **zero lane columns**:
 //!
 //! ```text
-//!   shape                      cols   deg  PIs  app  sites   verdict
-//!   n2 p2  l1  k1               259    3    53   37    88    FITS
-//!   n3 p4  l3  k2               475    3    53   37   168    FITS   <- proved as a leaf
-//!   n4 p8  l8  k6 (realistic)  1027    3    53   37   368    3 OVER  (identity_bits=28)
-//!   n4 p8  l8  k6 (realistic)   999    3    53   37   368    FITS    (identity_bits=24)
-//!   n6 p8  l12 k10             1654    3    53   37   560    EXCEEDS -> segment
-//!   n8 p16 l16 k16             3079    3    53   37   952    EXCEEDS -> segment
+//!   shape                       prog   lane   leaf   deg  PIs  app  sites  verdict
+//!   n2 p2  l1  k1                219      0    219    3    53   37     6    FITS
+//!   n3 p4  l3  k2                379      0    379    3    53   37     9    FITS   <- proved as a leaf
+//!   n4 p8  l8  k6 (realistic)    803      0    803    3    53   37    18    FITS   (identity_bits=28)
+//!   n6 p8  l12 k10              1310      0   1310    3    53   37    27    EXCEEDS -> segment
+//!   n8 p16 l16 k16             2495      0   2495    3    53   37    46    EXCEEDS -> segment
 //! ```
 //!
 //! Degree is **3** everywhere (cap 8) — the knot `coeff · val_a · val_b` and the
@@ -72,22 +74,26 @@
 //! constraint. PIs are **53/64 (37/48 app)** and CONSTANT in every bound — growing the
 //! scene never touches the layout.
 //!
-//! **Segmentation is NOT needed at the realistic shape.** It lands 3 columns over at the
-//! default 28-bit identity namespace and fits at 999/1024 over a 24-bit one (16.7M
-//! identities) — `tests/prove_fold.rs` proves that saturated shape as a SINGLE foldable
-//! leaf. The lever is real rather than a fudge: the ordering tooth's range gadgets are the
-//! AIR's biggest cost (`identity_bits` per subject + `identity_bits+1` per comparison,
-//! ~200 columns at n=4), which is exactly why the namespace width is a SHAPE field.
+//! **Segmentation is NOT needed at the realistic shape — and now the DEFAULT 28-bit
+//! identity namespace fits, with room to spare.** The realistic shape carries an 803-column
+//! leaf (no hidden lane columns), 221 under the 1024 cap, and `tests/prove_fold.rs` proves
+//! that saturated shape as a SINGLE foldable leaf. This was the previously-unstated price
+//! `node8` erased: the old 8-chain digest paid 368 node hash sites, each costing 7 lane
+//! columns in the lowered leaf, so the "999-column" realistic shape actually folded a
+//! 3575-column leaf (999 + 368×7 = 2576 lane columns). One `node8` site per 8-felt block
+//! binds the same ~124 bits at zero lane cost, and the digest chains fell from ~400 program
+//! columns to ~176.
 //!
 //! ### The segmentation plan (needed for growth past ~n4/p8, not for Stage 1)
 //!
-//! The digest chains are the natural cut: they are 368 of the 1027 columns and the only
-//! part that scales with `W`.
+//! The digest chains are no longer the dominant cost (they are ~176 of the 803 columns and
+//! carry no lane columns). Past the realistic shape the ordering tooth's range gadgets
+//! dominate — the natural cut is the AIR's own body, not the digest.
 //!
 //! * **Segment A (composition)** — subjects, ruleset, role/param resolution, the knots,
-//!   the outcome, the contributions. Everything except the four wide chains (~659 cols).
+//!   the outcome, the contributions.
 //! * **Segments B_d (digest)**, one per stream `d ∈ {subjects, ruleset, outcome,
-//!   explanation}` — the `W` chains over that stream's felts.
+//!   explanation}` — the `node8` chain over that stream's felts.
 //!
 //! The seam is the pattern the deployed fold ALREADY uses for the custom leaf's
 //! commitment (`prove_custom_binding_node_segmented` `connect`s a claimed commitment,
@@ -110,9 +116,12 @@
 //! 2. **Identity faithfulness is the projection layer's obligation.** The duplicate tooth
 //!    refuses two subjects sharing an identity, over the identities it is GIVEN; that an
 //!    identity names a distinct real entity is upstream (see [`model::Subject::identity`]).
-//! 3. **The binding width costs 8x what it should.** The one-site 8-felt primitive
-//!    (`MerkleHash8`) is refused by the custom-leaf lowering, so ~124-bit roots are built
-//!    from 8 parallel 4-ary chains. See [`digest`] and [`shape::DEPLOYABLE_DIGEST_FELTS`].
+//! 3. **The binding width is a single `node8` site per block (was 8× costlier).** ~124-bit
+//!    roots are a `cap_node8` Merkle-Damgård chain over `ConstraintExpr::MerkleHash8` —
+//!    one arity-16 Poseidon2 site whose 8 outputs are program-owned, so it costs zero lane
+//!    columns. This used to be 8 parallel 4-ary (`Hash4to1`) chains because the custom-leaf
+//!    lowering refused `MerkleHash8`; that refusal is gone. See [`digest`] and
+//!    [`shape::DIGEST_FELTS`].
 //! 4. **The identity namespace is bounded** (`identity_bits <= 28`, a shape field). Not a
 //!    hidden count, but a real limit: the ordering comparison goes VACUOUS on a full-width
 //!    31-bit value, so an unbounded identity would give an ordering tooth that looks
@@ -138,6 +147,7 @@ pub mod shape;
 
 pub use air::{ComposeAir, Forgery, build, build_forged};
 pub use builder::{Builder, Head};
+pub use digest::DIGEST_FELTS;
 pub use model::{ComposeError, Composition, Knot, LinearTerm, Ruleset, Subject};
 pub use reference::{Composed, compose_over};
-pub use shape::{ComposeShape, DEPLOYABLE_DIGEST_FELTS, PARAM_COMPOSE_ABI_VERSION};
+pub use shape::{ComposeShape, PARAM_COMPOSE_ABI_VERSION};

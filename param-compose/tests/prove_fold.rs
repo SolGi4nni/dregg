@@ -16,7 +16,7 @@ const ROLE_P: u64 = 101;
 const ROLE_Q: u64 = 202;
 
 /// The shape driven here: small enough to prove in a test, with every mechanism live
-/// (multiple subjects, a linear term, a KNOT, the deployable W=8 binding width).
+/// (multiple subjects, a linear term, a KNOT, the 8-felt node8 binding width).
 fn shape() -> ComposeShape {
     ComposeShape::new(3, 4, 3, 2)
 }
@@ -110,13 +110,15 @@ fn composition_leaf_proves_and_binds_its_commitment() {
 }
 
 /// **THE REALISTIC SHAPE PROVES AS ONE LEAF.** The HOARDLIGHT-scale composition the task
-/// names — ~8 params x ~4 subjects + ~6 knots, saturated (every bound full), at the
-/// deployable W=8 binding width — over a 24-bit identity namespace (16.7M identities).
+/// names — ~8 params x ~4 subjects + ~6 knots, saturated (every bound full), at the 8-felt
+/// node8 binding width — over the DEFAULT 28-bit identity namespace (268M identities).
 ///
-/// `tests/size.rs` measures this shape at 999/1024 columns. That is a fact about the
-/// DESCRIPTOR; this test is the fact about the PROVER: it really does mint one foldable
-/// leaf, so the realistic shape needs NO segmentation. (At the default 28-bit namespace
-/// the same shape is 1027 columns and would.)
+/// `tests/size.rs` measures this shape at an 803-column leaf (program == leaf: the node8
+/// digest allocates ZERO lowering lane columns). That is a fact about the DESCRIPTOR; this
+/// test is the fact about the PROVER: it really does mint one foldable leaf, so the
+/// realistic shape needs NO segmentation and NO identity narrowing. (The old 8-chain
+/// digest folded a 3575-column leaf here — 999 program + 2576 lane columns — and this shape
+/// only "fit" because the report never counted the lane columns.)
 #[test]
 #[ignore = "SLOW: real leaf prove of the realistic (saturated n4 p8 l8 k6) composition"]
 fn the_realistic_shape_proves_as_a_single_leaf() {
@@ -127,7 +129,7 @@ fn the_realistic_shape_proves_as_a_single_leaf() {
     use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
     use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
 
-    let sh = ComposeShape::new(4, 8, 8, 6).with_identity_bits(24);
+    let sh = ComposeShape::new(4, 8, 8, 6);
 
     // A composition saturating every one of the shape's bounds — the worst case a VK of
     // this shape must carry, not a lucky sparse one.
@@ -187,9 +189,10 @@ fn the_realistic_shape_proves_as_a_single_leaf() {
         "in-circuit commitment must byte-match the host binding"
     );
     eprintln!(
-        "REALISTIC LEAF (n4 p8 l8 k6, W=8, identity_bits=24): w={}/{MAX_TRACE_WIDTH} cols, {} \
-         constraints, {} Poseidon2 sites, {} PIs — PROVED as a SINGLE foldable leaf. \
-         NO SEGMENTATION NEEDED at the realistic shape.",
+        "REALISTIC LEAF (n4 p8 l8 k6, node8 8-felt digest, identity_bits=28): \
+         w={}/{MAX_TRACE_WIDTH} cols (0 lowering lane columns), {} \
+         constraints, {} node8 sites, {} PIs — PROVED as a SINGLE foldable leaf. \
+         NO SEGMENTATION, NO IDENTITY NARROWING at the realistic shape.",
         program.descriptor.trace_width,
         program.descriptor.constraints.len(),
         air.builder.hash_site_count(),
