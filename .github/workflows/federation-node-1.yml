@@ -147,6 +147,10 @@ jobs:
             git push origin federation-state
           }
 
+      # NOT AN ALARM, and kept anyway: this fires identically on success and failure (so its firing
+      # tells you nothing), it notifies the discovery bot rather than a human, and
+      # `continue-on-error` means it cannot fail. Discovery may depend on it — leave it. The alarm
+      # is the `page-on-red` job below.
       - name: Notify discovery service
         if: always()
         uses: peter-evans/repository-dispatch@v3
@@ -154,3 +158,52 @@ jobs:
           event-type: node-state-updated
           client-payload: '{"node": "1", "role": "node-1"}'
         continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # This lane is `schedule` + `workflow_dispatch`, so it is not a PR check and its red shows up on
+  # no checkmark anyone reads. All three federation nodes and the intent service have been red on
+  # schedule, silently, while the only thing wired to their outcome was the discovery dispatch above
+  # — which fires just as cheerfully on a red.
+  #
+  # ONE ISSUE FOR ALL THREE NODES, shared by title with federation-node-2/-3. A per-node issue means
+  # three near-identical issues every night for what is usually one cause (a shared build break, an
+  # unreachable gateway peer); the node number lives in the comment. The crons are staggered by
+  # hours (node-1 `0 */5`, node-2 `40 1,6,…`, node-3 `20 3,8,…`) and each run is up to 5h45m, so two
+  # nodes racing to CREATE the issue in the same instant is not a realistic shape.
+  page-on-red:
+    name: Page a human when node 1 is red
+    needs: [run-node]
+    if: ${{ always() && needs.run-node.result == 'failure' }}
+    runs-on: ubuntu-latest
+    # Job-level, so this job gets ONLY `issues: write` — not the `contents: write` the node job
+    # needs to push the federation-state branch.
+    permissions:
+      issues: write
+    steps:
+      - name: Open or refresh the standing federation-red issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE='federation: a scheduled node lane is RED'
+          {
+            printf '%s\n\n' "**Federation Node 1** failed on its schedule: ${RUN_URL}"
+            printf '%s\n' 'One issue covers nodes 1/2/3 — check the comment thread for whether the siblings are'
+            printf '%s\n\n' 'red too, which distinguishes a shared cause from a single-node fault.'
+            printf '%s\n' 'Likely shapes, cheapest first: a `cargo build --release -p dregg-node` break (shared —'
+            printf '%s\n' 'the siblings will be red within hours); the node process exiting early (the run log'
+            printf '%s\n' 'says `Node process exited unexpectedly at <n>s`); an unreachable `GATEWAY_PEER`; or the'
+            printf '%s\n\n' '`federation-state` branch push failing.'
+            printf '%s\n' 'NOTE: the `Notify discovery service` step in this lane is not an alarm — it is'
+            printf '%s\n' '`if: always()` + `continue-on-error`, so it fires the same on green and red and'
+            printf '%s\n' 'notifies a bot. This issue is the human-facing signal, and it did not exist before'
+            printf '%s\n' 'now: the lane has been failing on a schedule with nothing reporting it.'
+          } > /tmp/body.md
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body-file /tmp/body.md
+            echo "refreshed existing issue #${EXISTING}"
+          else
+            gh issue create --title "${TITLE}" --body-file /tmp/body.md
+          fi

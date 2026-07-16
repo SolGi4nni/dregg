@@ -50,6 +50,7 @@ jobs:
           echo "duration=$DURATION" >> "$GITHUB_OUTPUT"
 
       - name: Run all demo-agent examples
+        id: examples
         run: |
           EXAMPLES=(
             multi_org_delegation
@@ -76,6 +77,12 @@ jobs:
 
           mkdir -p /tmp/demo_results
 
+          # Track whether ANY example returned non-zero. The `set +e` below keeps the loop going so
+          # every demo's result lands in the report (that is the report's whole value), but a demo
+          # that panics is a FAILURE, not a data point — this flag is what makes the lane able to go
+          # red at all. It is checked in the final step, after the report is written and uploaded.
+          FAILED_EXAMPLES=""
+
           for example in "${EXAMPLES[@]}"; do
             echo "::group::Running $example"
             START=$(date +%s%3N)
@@ -100,8 +107,12 @@ jobs:
 
             if [ $EXIT_CODE -ne 0 ]; then
               echo "::warning::Example $example exited with code $EXIT_CODE"
+              FAILED_EXAMPLES="${FAILED_EXAMPLES} ${example}(${EXIT_CODE})"
             fi
           done
+
+          # Surface the tally for the final gate step. Trimmed of the leading space.
+          echo "failed_examples=${FAILED_EXAMPLES# }" >> "$GITHUB_OUTPUT"
 
           # Also add main demo result
           MAIN_OUTPUT=$(cat /tmp/demo_main.txt | jq -Rs .)
@@ -143,3 +154,29 @@ jobs:
           name: demo-results
           path: site/demos/results.json
           retention-days: 30
+
+      # THE GATE THIS LANE NEVER HAD. Everything above uses `set +e` and captures each demo's exit
+      # code into the report as DATA — nothing ever compared it to zero, so every demo could panic
+      # on every push and this lane stayed green, reporting the panics as content. The report is the
+      # valuable part and is fully written and uploaded above; this step only decides pass/fail from
+      # the exit codes already captured. It runs LAST and with `always()` so the report ships even
+      # when a demo failed — the failure is surfaced, not swallowed.
+      - name: Fail if any demo exited non-zero
+        if: always()
+        env:
+          MAIN_EXIT: ${{ steps.main_demo.outputs.exit_code }}
+          FAILED_EXAMPLES: ${{ steps.examples.outputs.failed_examples }}
+        run: |
+          rc=0
+          if [ "${MAIN_EXIT:-0}" != "0" ]; then
+            echo "::error::dregg-demo (main binary) exited with code ${MAIN_EXIT}"
+            rc=1
+          fi
+          if [ -n "${FAILED_EXAMPLES}" ]; then
+            echo "::error::demo-agent examples failed (name(exit_code)):${FAILED_EXAMPLES:+ }${FAILED_EXAMPLES}"
+            rc=1
+          fi
+          if [ "$rc" -eq 0 ]; then
+            echo "All demos exited 0."
+          fi
+          exit "$rc"

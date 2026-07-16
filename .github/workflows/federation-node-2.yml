@@ -147,6 +147,9 @@ jobs:
             git push origin federation-state
           }
 
+      # NOT AN ALARM, and kept anyway: fires identically on success and failure, notifies the
+      # discovery bot not a human, and `continue-on-error` means it cannot fail. Discovery may
+      # depend on it — leave it. The alarm is the `page-on-red` job below.
       - name: Notify discovery service
         if: always()
         uses: peter-evans/repository-dispatch@v3
@@ -154,3 +157,39 @@ jobs:
           event-type: node-state-updated
           client-payload: '{"node": "2", "role": "node-2"}'
         continue-on-error: true
+
+  # See federation-node-1.yml's page-on-red for the full rationale. ONE shared issue for nodes
+  # 1/2/3 (same TITLE); the node number is in the comment body. This lane is schedule-only, so a
+  # red here is on no checkmark anyone reads.
+  page-on-red:
+    name: Page a human when node 2 is red
+    needs: [run-node]
+    if: ${{ always() && needs.run-node.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or refresh the standing federation-red issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE='federation: a scheduled node lane is RED'
+          {
+            printf '%s\n\n' "**Federation Node 2** failed on its schedule: ${RUN_URL}"
+            printf '%s\n' 'One issue covers nodes 1/2/3 — check the comment thread for whether the siblings are'
+            printf '%s\n\n' 'red too, which distinguishes a shared cause from a single-node fault.'
+            printf '%s\n' 'Likely shapes, cheapest first: a `cargo build --release -p dregg-node` break (shared);'
+            printf '%s\n' 'the node process exiting early (`Node process exited unexpectedly at <n>s`); an'
+            printf '%s\n\n' 'unreachable gateway peer; or the `federation-state` branch push failing.'
+            printf '%s\n' 'The `Notify discovery service` step is not an alarm (`always()` + `continue-on-error`,'
+            printf '%s\n' 'notifies a bot). This issue is the human-facing signal, newly wired.'
+          } > /tmp/body.md
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body-file /tmp/body.md
+            echo "refreshed existing issue #${EXISTING}"
+          else
+            gh issue create --title "${TITLE}" --body-file /tmp/body.md
+          fi

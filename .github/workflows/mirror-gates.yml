@@ -57,3 +57,54 @@ jobs:
             echo 'A NEW mirror fails this job. A FIXED one must leave the baseline, or this job fails'
             echo 'as stale — so the file can only shrink.'
           } >> "$GITHUB_STEP_SUMMARY"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # WHY A NOTIFIER ON A JOB THAT IS ALREADY A PR CHECK. The header above is right that a PR check is
+  # the correct home for this gate — and it is red on `main` anyway. Being visible on a PR is not the
+  # same as being REQUIRED on a PR: nothing in this repo's branch protection blocks a merge on this
+  # job, so the red was seen, or not seen, and merged either way. It is currently reporting
+  # `FAIL G2 DID NOT BARK on G2__oracle_stale/ — the gate is asleep` — i.e. the meta-canary's own
+  # verdict is that G2's GREEN carries no information. That is the map's mechanism (4) live: nobody
+  # audits the auditor. A red on main needs a durable signal that outlives the PR page.
+  #
+  # Scoped to `push` (main): on a pull_request event this fires as noise the author already sees on
+  # their own checks page, and `gh issue` from a fork PR has no write token anyway.
+  page-on-red:
+    name: Page a human when the mirror gate is red on main
+    needs: [mirror-gates]
+    if: ${{ always() && github.event_name == 'push' && needs.mirror-gates.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or refresh the standing mirror-gate issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          SHA: ${{ github.sha }}
+        run: |
+          set -euo pipefail
+          TITLE='mirror-gates: RED on main'
+          {
+            printf '%s\n\n' "**Mirror gates** failed on \`main\` at \`${SHA}\`: ${RUN_URL}"
+            printf '%s\n' 'This job has two distinct failure modes and they need opposite responses — the run'
+            printf '%s\n\n' 'log distinguishes them:'
+            printf '%s\n' '1. **A gate DID NOT BARK.** The meta-canary reintroduces a known mirror per gate and'
+            printf '%s\n' '   requires each to go RED first. `FAIL G<n> DID NOT BARK on G<n>__*/ — the gate is'
+            printf '%s\n' '   asleep` means the gate cannot be trusted to bark, **so its GREEN carries no'
+            printf '%s\n' '   information**. Fix the gate. Do not delete the canary fixture.'
+            printf '%s\n' '2. **A NEW mirror landed**, or `scripts/mirror-gates/baseline.txt` went stale (a fixed'
+            printf '%s\n\n' '   finding that never left the baseline). Fix the mirror or shrink the baseline.'
+            printf '%s\n' 'Reproduce with `./scripts/check-mirror-gates.sh --report`.'
+            printf '%s\n' 'This job is a PR check but is not REQUIRED, so red does not block a merge — which is'
+            printf '%s\n' 'why this issue exists rather than a checkmark being enough. The map it defends closes'
+            printf '%s\n' 'with: "Fixing 21 and shipping no gate returns this map to its current length within'
+            printf '%s\n' 'two quarters." A gate that is red and unread is the same as no gate.'
+          } > /tmp/body.md
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body-file /tmp/body.md
+            echo "refreshed existing issue #${EXISTING}"
+          else
+            gh issue create --title "${TITLE}" --body-file /tmp/body.md
+          fi

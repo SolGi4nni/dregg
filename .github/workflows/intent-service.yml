@@ -143,6 +143,9 @@ jobs:
             git push origin federation-state
           }
 
+      # NOT AN ALARM, and kept anyway: fires identically on success and failure, notifies the
+      # discovery bot not a human, and `continue-on-error` means it cannot fail. Discovery may
+      # depend on it — leave it. The alarm is the `page-on-red` job below.
       - name: Notify discovery service
         if: always()
         uses: peter-evans/repository-dispatch@v3
@@ -150,3 +153,44 @@ jobs:
           event-type: node-state-updated
           client-payload: '{"node": "intent", "role": "intent-service"}'
         continue-on-error: true
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # This lane is `schedule` + `workflow_dispatch`, so its red is on no checkmark. It gets its OWN
+  # issue (not the shared federation-nodes one): the intent pool is a distinct service, and folding
+  # it into the nodes' issue would blur "the pool is down" with "a consensus node is down". One
+  # issue per outage, a comment per subsequent red run.
+  page-on-red:
+    name: Page a human when the intent service is red
+    needs: [run-intent-service]
+    if: ${{ always() && needs.run-intent-service.result == 'failure' }}
+    runs-on: ubuntu-latest
+    # Job-level, so this job gets ONLY `issues: write` — not the `contents: write` the service job
+    # needs to push the federation-state branch.
+    permissions:
+      issues: write
+    steps:
+      - name: Open or refresh the standing intent-service-red issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          TITLE='intent-service: the scheduled intent-pool lane is RED'
+          {
+            printf '%s\n\n' "**Intent Pool Service** failed on its schedule: ${RUN_URL}"
+            printf '%s\n' 'Likely shapes, cheapest first: a `cargo build --release -p dregg-node` break (would also'
+            printf '%s\n' 'red the federation nodes — check for their issue); the service process exiting early'
+            printf '%s\n' '(`Intent service exited unexpectedly at <n>s` in the run log); no reachable federation'
+            printf '%s\n\n' 'peers; or the `federation-state` branch push failing.'
+            printf '%s\n' 'NOTE: the `Notify discovery service` step is not an alarm — `if: always()` +'
+            printf '%s\n' '`continue-on-error`, so it fires the same on green and red and notifies a bot. This'
+            printf '%s\n' 'issue is the human-facing signal, and it did not exist before now: the lane has been'
+            printf '%s\n' 'failing on a schedule with nothing reporting it.'
+          } > /tmp/body.md
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body-file /tmp/body.md
+            echo "refreshed existing issue #${EXISTING}"
+          else
+            gh issue create --title "${TITLE}" --body-file /tmp/body.md
+          fi

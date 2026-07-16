@@ -24,6 +24,12 @@ jobs:
     # Same elan + pinned-mathlib setup as ci.yml's metatheory-no-sorry job (the canary needs `lake`).
     env:
       MATHLIB_REV: 1c2b90b13009c65b090d95a83c98e248deafb6f1
+    # The gate's VERDICT LINES, handed to page-on-red below. The canary already prints exactly which
+    # leg decayed (`⛔ LEDGER-SPEC-DROP: GREEN — …`); a link to a run is not the same thing as the
+    # sentence, and the sentence is what a human needs to act. Carried as a job output rather than an
+    # artifact so the notify job needs no `actions: read`.
+    outputs:
+      verdict: ${{ steps.verdict.outputs.verdict }}
     steps:
       - uses: actions/checkout@v4
 
@@ -46,5 +52,71 @@ jobs:
 
       # The gate: BASELINE must be GREEN, then AUTH-GRAPH-DROP + LEDGER-SPEC-DROP must each go RED.
       # Exits nonzero (failing the job) iff a load-bearing C-c1 proof regressed to decorative.
+      # `tee` does not soften that: the runner's default shell is `bash -e -o pipefail`, so the
+      # script's nonzero status still fails this step.
       - name: Mutation canary — C-c1 keystones must stay load-bearing
-        run: bash scripts/mutation-canary.sh GATE
+        run: bash scripts/mutation-canary.sh GATE 2>&1 | tee /tmp/canary.log
+
+      # Lift the gate's own verdict lines out of the log so page-on-red can quote them. `always()`:
+      # the interesting case is precisely the one where the step above just failed.
+      - name: Extract the verdict lines
+        id: verdict
+        if: always()
+        run: |
+          {
+            echo 'verdict<<CANARY_EOF'
+            grep -E '⛔|MUTATION GATE:|BASELINE|RESULT:' /tmp/canary.log 2>/dev/null | head -40 \
+              || echo '(no verdict lines found — the lane died before the gate printed one; read the run log)'
+            echo 'CANARY_EOF'
+          } >> "$GITHUB_OUTPUT"
+
+  # ─────────────────────────────────────────────────────────────────────────────
+  # THE MISSING HALF. The gate above has been RED since 2026-07-14 (green 07-12 and 07-13),
+  # reporting `⛔ LEDGER-SPEC-DROP: GREEN — the fullActionInvA value leg regressed to DECORATIVE`
+  # and `MUTATION GATE: FAIL`. That is this repo's own anti-vacuity guarantee announcing that a
+  # load-bearing leg of `deployed_system_secure` decayed — and it announced it into a scheduled
+  # run's log, which is not a PR check, appears on no checkmark, and nobody opened for three days.
+  # The instrument worked perfectly. Nothing was wired to the alarm.
+  #
+  # One issue per outage, a comment per subsequent red run. This does not gate anything; it makes
+  # a red canary reach a human, and it carries the ⛔ lines with it — the detail never arriving is
+  # the entire failure being fixed here.
+  page-on-red:
+    name: Page a human when the canary is red
+    needs: [mutation-canary]
+    if: ${{ always() && needs.mutation-canary.result == 'failure' }}
+    runs-on: ubuntu-latest
+    permissions:
+      issues: write
+    steps:
+      - name: Open or refresh the standing decayed-proof issue
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RUN_URL: ${{ github.server_url }}/${{ github.repository }}/actions/runs/${{ github.run_id }}
+          VERDICT: ${{ needs.mutation-canary.outputs.verdict }}
+        run: |
+          set -euo pipefail
+          TITLE='proof-integrity-canary: a load-bearing proof regressed to DECORATIVE'
+          {
+            printf '%s\n\n' "The daily **Proof-integrity mutation canary** failed: ${RUN_URL}"
+            printf '%s\n' 'The canary MUTATES the kernel and requires each mutation to RED. A mutation that'
+            printf '%s\n' 'stays GREEN means the proof it targets no longer depends on the thing it claims to'
+            printf '%s\n' 'be about — a load-bearing leg of `deployed_system_secure` has decayed to decorative.'
+            printf '%s\n\n' 'The gate said so itself; here is what it said:'
+            printf '```\n'
+            if [ -n "${VERDICT}" ]; then printf '%s\n' "${VERDICT}"; else printf '%s\n' '(verdict lines unavailable — open the run log)'; fi
+            printf '```\n\n'
+            printf '%s\n' 'Read the `⛔` lines above: each names the exact leg (e.g. `LEDGER-SPEC-DROP` = the'
+            printf '%s\n' '`fullActionInvA` value leg; `AUTH-GRAPH-DROP` = the `authConnects` authority leg;'
+            printf '%s\n' '`NONAMP-WEAKEN` = the `*_non_amplifying` keystones). A `⛔ BASELINE: RED` instead'
+            printf '%s\n\n' 'means a pre-existing build break and the gate could not run at all — fix that first.'
+            printf '%s\n' 'Do NOT silence this lane to make it green. `scripts/mutation-canary.sh GATE` reproduces'
+            printf '%s\n' 'it locally; `scripts/mutation-canary.sh <NAME>` runs one mutation.'
+          } > /tmp/body.md
+          EXISTING="$(gh issue list --state open --search "${TITLE} in:title" --json number --jq '.[0].number // empty')"
+          if [ -n "${EXISTING}" ]; then
+            gh issue comment "${EXISTING}" --body-file /tmp/body.md
+            echo "refreshed existing issue #${EXISTING}"
+          else
+            gh issue create --title "${TITLE}" --body-file /tmp/body.md
+          fi
