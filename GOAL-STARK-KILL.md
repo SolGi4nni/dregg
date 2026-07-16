@@ -1713,3 +1713,35 @@ rest per-subsystem on completion; re-confirm both committed fixes' tests once th
 - mocks/deos-tui: the "Verify" tab called a RETIRED verifier (theater, failed SAFE-direction so it hid).
 - mocks/harnesses: a Lean faithfulness gate that could not be red — armed.
 - Lane 5: the crypto floor's 2 load-bearing constants were prose — rigged as algebraic invariants.
+
+## ⚑ VALIDATION-POWER AUDIT COMPLETE (`w3bckg8xe`) — census + fixes gated
+**Census: ~14,981 test fns across 179 crates.** Lane 1's verdict, which I trust: *"the estate is strong at
+the CORE; the rot is SILENCE mechanics, not missing teeth."* Differential testing is a real institution
+(exec-lean 9-suite Rust⇔Lean; 7-backend DSL agreement matrix); core security crates have genuine rejection
+teeth; persist really tests torn-tail/crash. The failure mode is SILENCE, not absence — exactly the thesis.
+
+FIXES GATED + COMMITTED (each verified or self-evident, surgical mid-swarm):
+- `8258de1c8` **SECURITY** ed25519 non-strict = universal forgery (Lane 5).
+- `bac9e2b95` **SECURITY** dregg-credentials default present+verify did ZERO crypto (mocks/sdk-bridge).
+- `e93d0f1c1` **SECURITY** peer-exchange rule-5 fail-OPEN (phantom cfg) + un-trippable executor threat
+  rules 7b/8 (Lane 3).
+- `5fe426a0d` un-silenced the ENTIRE Rust⇔Lean differential estate (17 sites/13 files self-skipped;
+  demand_lean was node-only) — 67 tests now RUN. + rewrote a 173-line ZERO-TEST HUSK as a real tooth.
+- `982008076` un-gated `ReqwestTransport` — the "production PIR discovery transport" was compiled OUT of
+  every build (phantom `cfg(feature="reqwest")`, no such feature) (Lane 2).
+
+### TWO DECISIONS SURFACED TO EMBER
+1. **`Cargo.toml:322 unexpected_cfgs = "allow"`** disables the lint that flags phantom cfg gates (a
+   `cfg(feature=X)` where X is never declared → always false → silently compiles code to nothing). It is
+   WHY the fail-open guard AND the production transport compiled silent. Lanes 2+3 found **11 in-effect
+   phantom gates across 4 crates**. Flip to warn/deny → surfaces all 11 + prevents new ones, but lights up
+   the whole workspace at once. **ember's call.** (Other named phantoms incl. `dregg-sdk-net`'s
+   `unilateral_attestation` declared-never-read, and cfg-gated match arms in workspace-excluded `wasm`.)
+2. **CI**: a GitHub remote went live TODAY (`origin git@github.com:emberian/dregg.git`) — my earlier "no
+   remote, ci.yml never runs" root-cause is now PARTIALLY addressed. Whether GitHub Actions is enabled and
+   actually GATING (red-on-break) is unverifiable from here — worth confirming the `cargo check --workspace
+   --all-targets` job runs on push, since that is the one check that catches every silent-rot instance.
+
+STILL UNCOMMITTED from the audit (Lane 4 seam test, Lane 6 gap fixes) + the mocks/mirrors swarm (`ws5jksoc3`,
+STILL RUNNING) — gate holistically once the tree settles; several audit fixes have runtime-verification
+PENDING behind the swarm build lock (the sidetable tooth; preflight §4). Re-run those + srot on the quiet tree.
