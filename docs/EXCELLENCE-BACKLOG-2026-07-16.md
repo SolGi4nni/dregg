@@ -9,6 +9,36 @@ item; a doc that lied because time passed is not.
 Ranked by value. "CHEAP" = under a day; "LANE" = its own workstream. Items marked
 ✓verified were re-checked against code at HEAD on 2026-07-16.
 
+## LANDED (2026-07-16 continuation)
+
+Fixed + committed this session (each verified; teeth where applicable):
+- **#1 TurnExecuted** (`856f8e4df`) — verifier now checks the executor's canonical
+  message; the vacuous green test corrected + a reject-the-bare-hash tooth added.
+- **#6 endpoints default** (`1c269ce5c`) — SDK defaults + lib doc repointed off the
+  dead fg-goose host onto the dregg.net product family.
+- **de-fossil** (`ac444e13d`) — three stale comments corrected (cohort widths
+  1581→1647; ShieldedClearing endpoint descriptor BUILT not NAMED; wasm p3-rev).
+- **missing gates** (`+ gitleaks/docs-refs/p3-rev`) — doc ref-integrity linter,
+  plonky3-rev single-source, gitleaks-in-CI.
+- **bridge-conservation alert** (`c6ceadbcd`) — restored as a real seam-gated rule.
+
+New follow-up lanes surfaced while fixing (each named, none laundered):
+- **RECURSION_P3_REV drift** — the VK-hash constant (`c14b5fc0…`) has ALREADY
+  drifted from the authoritative fork pin (`0a4a554e…`): the VK-custody wound made
+  real. `check-p3-rev.sh` WARNs on it. Fix re-keys the VK → ember's ceremony call.
+- **bridge must emit `dregg_bridge_conservation_ok`** — the alert is gated on a
+  metric `bridge/` does not yet emit (node emits 30 dregg_* metrics, none bridge).
+- **`docs/THE-GRAIN.md` + `docs/ASSURANCE.md`** — dead refs across ~12 grain-*
+  crates; the grain R-ladder is a real present feature, so CREATE the docs.
+- **468 dead doc refs** — cleanup pass, then re-enable the docs-refs PR trigger.
+- **repo-wide fg-goose sweep** — discord bot, TUI, deploy Caddyfile still carry it.
+- **ShieldedRingDescriptorRefines** — the serialized-trace→apex refinement residual
+  the ShieldedClearing header keeps named; a candidate closure lane.
+
+Held for careful single-driver / ember: **cap-graph non-amp emit** and **zkOracle
+binding** (Lean, need build cycles); **VK custody** (commitment-shaped, ceremony
+sequencing); **Custom-VK cluster** (another terminal actively driving it).
+
 ## Biggest single-day wins
 
 ### 1. `TurnExecuted` verifies the WRONG signing message — CHEAP ✓verified
