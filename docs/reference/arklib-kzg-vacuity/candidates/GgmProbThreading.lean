@@ -57,6 +57,7 @@ computation built from `M : ProbComp (Option α)` equals, in the plain `ProbComp
 probability that the sampled `Option` is `some a` with `P a`. Failure (`none`) never counts
 toward the event. Proven by reindexing the event subtype through `a ↦ some a`, so there is no
 `ℝ≥0∞` subtraction of the failure mass. -/
+omit [∀ i, SampleableType (unifSpec.Range i)] in
 lemma probEvent_optionT_mk {α : Type} (M : ProbComp (Option α)) (P : α → Prop) :
     Pr[P | (OptionT.mk M : OptionT ProbComp α)]
       = Pr[fun o => ∃ a, o = some a ∧ P a | M] := by
@@ -92,6 +93,7 @@ noncomputable def collapsedGameRun (resultOf : ZMod p → Option (ZMod p × G₁
   sampleNonzeroZMod (p := p) >>= fun τ =>
     pure ((resultOf τ).map (fun ((c, h) : ZMod p × G₁) => (τ, c, h)))
 
+omit [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] in
 /-- **(c1) `game_collapse`.** Peel the game monad: with the adversary deterministic-given-τ
 from the empty cache (`hdet`), `tSdhGame` equals `OptionT.mk` of the collapsed run. -/
 theorem game_collapse (D : ℕ) (A : tSdhAdversary D (G₁ := G₁) (G₂ := G₂) (p := p))
@@ -108,6 +110,7 @@ theorem game_collapse (D : ℕ) (A : tSdhAdversary D (G₁ := G₁) (G₂ := G�
 The nonzero-trapdoor sampler is `(i ↦ (i+1 : ZMod p)) <$> $ᵗ(Fin (p-1))`, so any event over
 it is `(filter).card / (p-1)` by `probEvent_map` + `probEvent_uniformSample`. -/
 
+omit [∀ i, SampleableType (unifSpec.Range i)] in
 /-- Every event over the nonzero-trapdoor sampler is a `Fin (p-1)` count over `p-1`.
 `(i : Fin (p-1))` maps to trapdoor `(i+1 : ZMod p)`, ranging over the nonzero residues. -/
 lemma probEvent_sampleNonzeroZMod (q : ZMod p → Prop) :
@@ -129,6 +132,7 @@ def winPred (resultOf : ZMod p → Option (ZMod p × G₁)) (g₁ : G₁) :
     resultOf ((i : ℕ) + 1 : ZMod p) = some ch ∧
       tSdhCondition (p := p) (g₁ := g₁) (((i : ℕ) + 1 : ZMod p), ch.1, ch.2)
 
+omit [PrimeOrderWith G₁ p] [PrimeOrderWith G₂ p] in
 /-- **(c2) `experiment_eq_count`.** ArkLib's `tSdhExperiment` for a deterministic-given-τ
 adversary equals the counting fraction `(winSet.card) / (p - 1)` in `ℝ≥0∞`. -/
 theorem experiment_eq_count (D : ℕ) (A : tSdhAdversary D (G₁ := G₁) (G₂ := G₂) (p := p))

@@ -65,13 +65,13 @@ noncomputable def stratResult (g₁ : G₁) (D fuel : ℕ) (strat : Strat p) :
   fun τ => some ((runOutput (realAns τ) strat fuel (srsSt D)).1,
     g₁ ^ ((runOutput (realAns τ) strat fuel (srsSt D)).2.eval τ).val)
 
-omit [∀ i, SampleableType (unifSpec.Range i)] in
+omit [∀ i, SampleableType (unifSpec.Range i)] [PrimeOrderWith G₂ p] in
 /-- **`embed strat` is deterministic-given-τ from the empty cache**, with output `stratResult`.
 `embed strat srs = pure (runEmbed … srs)`, so `.run' ∅ = pure (runEmbed …)`, and D's
 `embed_run_correspondence` identifies `runEmbed …` on `PowerSrs.generate D τ` with `stratResult τ`.
 This is the exact `hdet` hypothesis of C's `game_collapse` / `experiment_eq_count`. -/
 theorem embed_det (hord₁ : orderOf g₁ = p) (hD : 1 ≤ D) (strat : Strat p) (fuel : ℕ) :
-    ∀ τ, (embed g₁ g₂ D fuel strat
+    ∀ τ, (embed g₁ D fuel strat
         (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ)).run' ∅
       = pure (stratResult g₁ D fuel strat τ) := by
   intro τ
@@ -133,6 +133,7 @@ theorem winIndex_card_le (hord₁ : orderOf g₁ = p) (hp : 2 ≤ p)
 
 /-! ## 3. ⚑ THE CAPSTONE. -/
 
+omit [PrimeOrderWith G₂ p] in
 /-- **`tSdh_ggm_sound` — the single end-to-end t-SDH GGM soundness theorem.** For every generic
 strategy `strat : Strat p`, the embedded ArkLib adversary `embed strat` wins ArkLib's REAL t-SDH
 experiment with probability at most the Shoup random-encoding number
@@ -148,12 +149,12 @@ experiment with probability at most the Shoup random-encoding number
 The theorem is about the IMAGE of `embed`, a genuinely rich strategy space — NOT the full
 `tSdhAdversary` type (over which the statement is false). -/
 theorem tSdh_ggm_sound
-    (hg₁ : g₁ ≠ 1) (hord₁ : orderOf g₁ = p) (hg₂ : g₂ ≠ 1)
+    (hord₁ : orderOf g₁ = p)
     (hp : 2 ≤ p) (hD : 1 ≤ D) (strat : Strat p) (fuel : ℕ) :
-    tSdhExperiment (g₁ := g₁) (g₂ := g₂) D (embed g₁ g₂ D fuel strat)
+    tSdhExperiment (g₁ := g₁) (g₂ := g₂) D (embed g₁ D fuel strat)
       ≤ (((fuel + D + 4).choose 2 * D + (D + 1) : ℕ) : ℝ≥0∞) / ((p - 1 : ℕ) : ℝ≥0∞) := by
   -- (C) collapse the experiment to a count over `Fin (p−1)`
-  rw [experiment_eq_count D (embed g₁ g₂ D fuel strat) (stratResult g₁ D fuel strat)
+  rw [experiment_eq_count D (embed g₁ D fuel strat) (stratResult g₁ D fuel strat)
     (embed_det hord₁ hD strat fuel)]
   -- the numerator is bounded, in ℕ, by the Shoup number
   have hcard : (Finset.univ.filter (winPred (stratResult g₁ D fuel strat) g₁)).card
@@ -169,16 +170,17 @@ theorem tSdh_ggm_sound
 
 /-! ## 4. Real content: the bound is `< 1` in the standard regime. -/
 
+omit [PrimeOrderWith G₂ p] in
 /-- **`tSdh_ggm_sound_lt_one`.** Under the standard security regime
 `C(fuel+D+4, 2)·D + (D+1) < p − 1`, the t-SDH advantage of `embed strat` is a genuine `< 1` — the
 theorem has real content (it is not a restated `≤ 1`). Composing with `tSdh_ggm_sound` gives
 `tSdhExperiment D (embed strat) < 1`. -/
 theorem tSdh_ggm_sound_lt_one
-    (hg₁ : g₁ ≠ 1) (hord₁ : orderOf g₁ = p) (hg₂ : g₂ ≠ 1)
+    (hord₁ : orderOf g₁ = p)
     (hp : 2 ≤ p) (hD : 1 ≤ D) (strat : Strat p) (fuel : ℕ)
     (hreg : (fuel + D + 4).choose 2 * D + (D + 1) < p - 1) :
-    tSdhExperiment (g₁ := g₁) (g₂ := g₂) D (embed g₁ g₂ D fuel strat) < 1 := by
-  refine lt_of_le_of_lt (tSdh_ggm_sound hg₁ hord₁ hg₂ hp hD strat fuel) ?_
+    tSdhExperiment (g₁ := g₁) (g₂ := g₂) D (embed g₁ D fuel strat) < 1 := by
+  refine lt_of_le_of_lt (tSdh_ggm_sound hord₁ hp hD strat fuel) ?_
   have hb0 : ((p - 1 : ℕ) : ℝ≥0∞) ≠ 0 := by
     rw [Ne, Nat.cast_eq_zero]; omega
   have hbtop : ((p - 1 : ℕ) : ℝ≥0∞) ≠ ⊤ := ENNReal.natCast_ne_top _

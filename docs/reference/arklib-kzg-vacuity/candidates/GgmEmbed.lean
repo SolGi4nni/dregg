@@ -12,7 +12,7 @@ REAL `Groups.tSdhAdversary`, `Groups.PowerSrs.generate/tower`, and our `GgmAdapt
 pairing-free `Move`) / `GgmArkLibTransport` (`gpow_val_inj_iff`). Nothing is restated.
 
 THE CONSTRUCTION (honest, generic-restricted). `embed strat : tSdhAdversary D` is
-`fun srs => pure (runEmbed g₁ g₂ D fuel strat srs)`. `runEmbed` receives ONLY the SRS group vectors
+`fun srs => pure (runEmbed g₁ D fuel strat srs)`. `runEmbed` receives ONLY the SRS group vectors
 (never τ), seeds a `List G₁` handle table from the G₁ tower, interprets `strat`'s linear-combination
 moves by REAL group products (`combineG`), answers `strat`'s equality queries by REAL group equality
 (`DecidableEq` classically) of the realized handles, and returns the committed `(offset, G₁ elt)`. It
@@ -58,12 +58,14 @@ combination through to `combineG`'s group-linear combination. -/
 
 lemma encode_zero (g : G₁) : g ^ (0 : ZMod p).val = 1 := by simp
 
+omit [PrimeOrderWith G₁ p] in
 /-- `E g (a + b) = E g a * E g b`. -/
 lemma encode_add {g : G₁} (hord : orderOf g = p) (a b : ZMod p) :
     g ^ (a + b).val = g ^ a.val * g ^ b.val := by
   rw [← pow_add]
   exact (Groups.gpow_eq_of_nat_cast_eq hord _ _ (by push_cast [ZMod.natCast_zmod_val]; ring)).symm
 
+omit [PrimeOrderWith G₁ p] in
 /-- `E g (c * a) = (E g a) ^ c.val` — scalar multiplication becomes group exponentiation. -/
 lemma encode_mul {g : G₁} (hord : orderOf g = p) (c a : ZMod p) :
     g ^ (c * a).val = (g ^ a.val) ^ c.val := by
@@ -127,17 +129,19 @@ polynomial table `[X^0,…,X^D, 1, X]` entry-for-entry. -/
 noncomputable def seedG (srs1 : List G₁) (D : ℕ) : List G₁ :=
   ((List.range (D + 1)).map (fun i => srs1.getD i 1)) ++ [srs1.getD 0 1, srs1.getD 1 1]
 
-/-- **`runEmbed`** — run `strat` against the real-group SRS. Reads only `srs.1` (the G₁ tower); the
-pairing-free adversary needs neither `srs.2` nor τ. -/
-noncomputable def runEmbed (g₁ : G₁) (g₂ : G₂) (D fuel : ℕ) (strat : Strat p)
+/-- **`runEmbed`** — run `strat` against the real-group SRS. A function of the G₁ generator `g₁`
+and the SRS alone: it reads only `srs.1` (the G₁ tower), so — being pairing-free — it needs neither
+the G₂ generator, nor `srs.2`, nor τ. -/
+noncomputable def runEmbed (g₁ : G₁) (D fuel : ℕ) (strat : Strat p)
     (srs : Vector G₁ (D + 1) × Vector G₂ 2) : Option (ZMod p × G₁) :=
   runEmbedAux g₁ strat fuel (seedG srs.1.toList D, [])
 
 /-- **`embed : Strat p → tSdhAdversary D`.** Deterministic, empty-cache; its IMAGE is the
-"generic-restricted" adversary class the target theorem quantifies over. -/
-noncomputable def embed (g₁ : G₁) (g₂ : G₂) (D fuel : ℕ) (strat : Strat p) :
+"generic-restricted" adversary class the target theorem quantifies over. Pairing-free: a function of
+`g₁` and the SRS only (the G₂ generator is never consulted). -/
+noncomputable def embed (g₁ : G₁) (D fuel : ℕ) (strat : Strat p) :
     Groups.tSdhAdversary D (G₁ := G₁) (G₂ := G₂) (p := p) :=
-  fun srs => pure (runEmbed g₁ g₂ D fuel strat srs)
+  fun srs => pure (runEmbed g₁ D fuel strat srs)
 
 /-! ## 4. The correspondence: `runEmbedAux` steps in lockstep with `runAux (realAns τ)`. -/
 
@@ -282,6 +286,7 @@ lemma seedG_Inv (g : G₁) (hord : orderOf g = p) (τ : ZMod p) (D : ℕ) (hD : 
             List.getD_eq_default _ _ (by simp only [List.length_cons, List.length_nil]; omega)]
         simp
 
+omit [PrimeOrderWith G₂ p] in
 /-- **THE DELIVERABLE (§2b, verbatim).** `runEmbed` on the real SRS `PowerSrs.generate D τ` returns
 the committed offset of the SYMBOLIC run `runOutput (realAns τ) strat fuel (srsSt D)` and the
 real-group encoding `g₁ ^ (output.eval τ).val` of its committed output polynomial. This certifies
@@ -289,7 +294,7 @@ real-group encoding `g₁ ^ (output.eval τ).val` of its committed output polyno
 inverting the encoding), and is the socket the end-to-end composition (task E) consumes. -/
 theorem embed_run_correspondence {g₁ : G₁} {g₂ : G₂} (hord : orderOf g₁ = p)
     (D : ℕ) (hD : 1 ≤ D) (τ : ZMod p) (strat : Strat p) (fuel : ℕ) :
-    runEmbed g₁ g₂ D fuel strat (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ)
+    runEmbed g₁ D fuel strat (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ)
       = some ((runOutput (realAns τ) strat fuel (srsSt D)).1,
               g₁ ^ ((runOutput (realAns τ) strat fuel (srsSt D)).2.eval τ).val) := by
   have hsrs1 : (PowerSrs.generate (g₁ := g₁) (g₂ := g₂) D τ).1 = PowerSrs.tower g₁ τ D := rfl
