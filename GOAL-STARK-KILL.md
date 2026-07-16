@@ -1792,3 +1792,26 @@ non-compiling list, then gate the remaining swarm fixes per-subsystem on the set
   gate un-silenced, the soundness suite scope-corrected.
 - **2 decisions surfaced to ember**: flip `unexpected_cfgs = "allow"` (11 phantom gates); confirm the new
   GitHub remote actually gates CI.
+
+### `64bff9501` — flipped `unexpected_cfgs` "allow" -> "warn" (ember: "flips permitted")
+The durable fix for the phantom-cfg class (a `cfg(feature=X)` on an undeclared feature = always-false =
+code silently compiled to nothing; it hid the peer-exchange fail-open AND the compiled-out production
+transport). `warn` not `deny` — greenfield under daily surgery; surface every phantom without blocking;
+escalate to `deny` once cleared. Verified `prover` (turn/circuit/lightclient) IS a real declared feature, so
+it correctly does NOT warn.
+**Note to self, honestly:** my STATIC enumeration of remaining phantoms (grep cfg sites + parse [features])
+was NOISY — it flagged 10 pairs/42 sites but included COMMENTS mentioning cfg (cell-crypto:259,
+dregg-sdk-net:18 are `///`/`//!` history notes, not live gates) and missed features declared via
+dev-deps/forwarding. **The same grep-vs-truth trap as the 3-dialect lesson: rustc's `warn` output is the
+authoritative phantom list, my grep is not.** The real cleanup list comes from a post-flip build's warnings,
+not my static pass. CI/ember-context reframed (ember): a solo greenfield repo under major daily ops is
+NOT expected "green everywhere unconditionally"; the ratchets + persvati sweep ARE the CI substitute for
+this stage, working toward full gating as fast as ember can. Dropped the moralizing.
+
+### CI reframe (ember, 2026-07-16) — accepted
+"it's just a solo project rn… still very greenfield and I'm still doing MAJOR operations multiple times
+every day so things are rarely 'green everywhere unconditionally,' although I AM working towards that."
+So: the earlier "CI never runs = biggest lie" framing was too harsh. The local ratchets (law-#1, mock-purge,
+effect-enum, mock-proof, unexpected_cfgs=warn) + the remote srot sweep are the right tools for THIS stage —
+they bite when run, catch regressions, and don't block the daily surgery. Green-everywhere is the direction,
+not the current bar.
