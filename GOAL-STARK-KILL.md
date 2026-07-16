@@ -1517,3 +1517,23 @@ Fable poll task (bixyxmfo6) waits on exec-lean to run the heavy sovereign test.
   presentation IVC mock (presentation.rs 21 + bridge/present 4 + multi_step 3 + backends 2 + the
   IvcPresentationProof/IvcBuilder/IvcBackend surface in ivc.rs). Explicitly NOT deleting the core engine fns
   (prove_ivc/verify_ivc/create_test_chain) — still ridden by the blocked node. Lowers the ratchet baseline.
+
+### FLAGSHIP UNBLOCKED + IN FLIGHT (2026-07-16 pm)
+The predicate-weld lane committed `authorize.rs` → **`dregg-exec-lean` compiles again → the node crate
+builds → the flagship purge is live.** Two Fable agents now running on DISJOINT files:
+- **Fable A** — retire the dead-but-armed presentation IVC mock (`circuit/{ivc,presentation,
+  multi_step_witness,backends/mod}.rs` + `bridge/present.rs` + the ratchet baseline).
+- **Fable B — THE FLAGSHIP**: (1) PLUMB — at `blocklace_sync.rs::execute_finalized_turn`'s `Ok(proven)`
+  branch (~:5031, which today persists only the FullTurnProof), also mint the REAL `FinalizedTurn` via
+  `finalized_turn_from_full_turn` (its docstring: its args are "exactly the turn's execution context the
+  node holds" HERE) and persist it by turn hash. (2) WIRE — `tool_compress_history` loads the retained real
+  chain and calls `prove_turn_chain_recursive` + `verify_whole_chain_proof_bytes`, reporting a REAL proof
+  size + REAL verdict; `create_test_chain`/`prove_ivc`/`verify_ivc` deleted from the file. (3) FAIL CLOSED
+  honestly for turns predating retention — never "valid" for anything not really proved. (4) RETIRE
+  `dregg_compose_proofs` (verifies NOTHING: valid=true for every mode).
+  B is forbidden from touching the ratchet file (A holds it) — B reports its count, I lower the baseline.
+
+### srot sweep — RE-RUN GATED ON A QUIET TREE
+exec-lean is fixed, but two Fable agents are actively editing, so an rsync-based workspace sweep would be
+confounded by their WIP again (the same lesson as before: a remote sweep is only as clean as the tree).
+Re-run once both land + are committed.
