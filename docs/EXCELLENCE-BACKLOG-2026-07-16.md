@@ -21,6 +21,27 @@ Fixed + committed this session (each verified; teeth where applicable):
 - **missing gates** (`+ gitleaks/docs-refs/p3-rev`) — doc ref-integrity linter,
   plonky3-rev single-source, gitleaks-in-CI.
 - **bridge-conservation alert** (`c6ceadbcd`) — restored as a real seam-gated rule.
+- **#10 zkOracle binding, honestly reframed** (`772a6bf3f`) — deep-read REVERSED the
+  premise: the cross-leg binding is DEPLOYED (`zkoracle-prove/src/attestation.rs`
+  `content_commitment` + `CrossLegMismatch` + committed-substring), not absent — the
+  Lean theorem is just weaker than the code. Doc now states that gap accurately.
+
+Two soundness lanes deep-scoped this session (fix-shapes, ready to drive):
+- **zkOracle cross-leg-binding lane** — lift the deployed `content_commitment`
+  binding into `zkOracle_sound`: model a shared `contentCommitment` witness the
+  three legs each bind to. HARD PART: the legs are three type universes
+  (`PaymentFacts` / `List T` / `List Value`) with no common substrate — needs them
+  unified onto a byte-response model before a binding hypothesis is faithful.
+- **cap-graph non-amp emit lane** — `circuit/src/cap_delegation_nonamp_descriptor.rs`
+  test `nonamp_leg_does_not_bind_the_hashed_rights_felt:411` pins the defect: col 4
+  (`DELEG_GRANTED_MASK_RECON_COL`, the reconstructed granted mask) and col 72 (the
+  rights felt `siteCapEdgeLeaf` hashes) are related by NO constraint, so a prover
+  can tamper the rights felt while keeping granted bits honest → confer arbitrary
+  rights. FIX: add a binding constraint (col 4 ↔ col 72) in the LEAN EMIT (law #1 —
+  the descriptor is Lean-emitted, loaded here), regen the descriptor, flip the two
+  pinning tests red→correct. Latent (descriptor UNWIRED), so no VK epoch, but it IS
+  a descriptor regen. `state_commit` group-4 chain misindex (`:508`) rides the same
+  emit pass.
 
 New follow-up lanes surfaced while fixing (each named, none laundered):
 - **RECURSION_P3_REV drift** — the VK-hash constant (`c14b5fc0…`) has ALREADY
