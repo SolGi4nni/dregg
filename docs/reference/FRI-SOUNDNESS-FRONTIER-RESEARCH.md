@@ -794,8 +794,9 @@ reconstruction that reproduces BCSS25 Thm 4.2 exactly):**
   its full stated generality (arbitrary real weights, no grid, where Thm 4.3 is genuinely doing extra
   work). The honest claim is *"`[Sta25]` is eliminable for the FRI application"*, not *"the public
   ingredients reproduce Corollary 4.4"*. `FriWeightingTransfer` mechanizes the general (lossy) Lemma
-  7.5; the denominator-rounding to zero loss is the FRI-specific step (`CoCurvilinearity`, the named
-  residual).
+  7.5 **and, as of 07-16, the denominator-rounding Lemma 7.6** that removes its loss
+  (`weighting_transfer_rounded`); the remaining residual is `CoCurvilinearity` (see below — the `Prop`
+  was vacuous as first stated and has been corrected).
 
 * **The improved `ε_C` is genuinely LINEAR in `|D⁽⁰⁾|`.** The constant reconstruction pins it to
   `|S| > d·( 2(m+½)⁵/(3ρ^{3/2})·n + (m+½)/√ρ·(W·n+1) )` — reproducing Thm 4.2 at the unweighted target
@@ -818,14 +819,41 @@ reconstruction that reproduces BCSS25 Thm 4.2 exactly):**
   multiplicity parameter `m = 2h` where the binary line (Thm 1.5) allows `m = h`, inflating the
   `(m+½)⁵` constant. The win is real, robust at low rate, and modest.
 
-**Residual (public, names no personal communication).** Fully closing this needs BCSS25 §3.2's
-improved interpolant bookkeeping mechanized — `D_X, D_Y, D_Z` at `O(1)` `Z`-degree — so Step-4's `S′`
-provably clears Lemma 7.6's `|S′| ≥ (|D⁰|+1)·l`. That is `~15` pages of Guruswami–Sudan analysis over
-`𝔽_q(Z)`, PROVED in BCSS25 §3, unmechanized here. `FriWeightingTransfer.CoCurvilinearity` names it as a
-`Prop` with a concrete falsifier. **The verdict: `61` is not "what we can prove until StarkWare
-publishes [Sta25]"; it is "what we can prove until someone mechanizes BCSS25 §3, all of whose
-ingredients are public" — and the honest new number, once that is done, is `~+7` bits at the deployed
-wrap, capped by the query column, not `+17…+31`.**
+**Residual (public, names no personal communication) — RE-SCOPED 2026-07-16, and it is LARGE.** The
+earlier text here said the residual was "`~15` pages of Guruswami–Sudan analysis over `𝔽_q(Z)`, PROVED
+in BCSS25 §3". Read against the primary source, that is **wrong in a way that matters**: BCSS25 §3.2
+does not prove Step 4. It opens by calling itself *"a brief summary of the steps from **[BCI⁺20,
+Section 5]**… the underlying field is the field of rational functions `K = 𝔽_q(Z)`, and the required
+finite extension is an **algebraic function field**, which makes concrete computations **quite
+technical**"*, and Step 4 says outright: *"Reaching this conclusion is **the major part of the proof,
+comprising sections 5.2.5 – 5.2.7 as well as Appendix A of [BCI⁺20]**."* BCSS25 §3.2's own contribution
+is the BOOKKEEPING (`2D_X D_Y³ D_Z` → `2D_X D_Y² D_Z + (γn+1)D_Y`). **The `[Sta25]`-free headline
+survives** — BCI⁺20 is public (eprint 2020/654) — but the obligation is a Hensel lift over an algebraic
+function field, not 15 pages of bookkeeping.
+
+**⚑ And the named residual `Prop` was VACUOUS.** `FriWeightingTransfer.CoCurvilinearity` quantified
+`∃ v` over ARBITRARY words, with the codeword constraint only in a docstring aside ("tracked by the
+caller" — nothing tracked it). `v := u` proves it outright; the advertised "concrete falsifier" refuted
+the matrix of an existential, not the existential. Discharging it as stated would have earned **zero
+bits**. Fixed 07-16: it now carries `∀ j ≤ l, IsRSCodeword pt k (v j)`, and non-vacuity is PROVED by a
+falsifier theorem, with the unconstrained shape retained as a tooth proving it *was* a theorem.
+
+**Mathlib gap, scoped (the feasibility answer).** No coding theory whatsoever (no RS, no linear codes,
+no minimum distance, no Johnson, no list decoding). `MvPolynomial.weightedTotalDegree` has a definition
+and four lemmas — no `_mul_le`, and the GS degree bound *is* a statement about weighted degree of
+products. **No bivariate multiplicity** (no multivariate Hasse derivative, no MvPolynomial Taylor
+shift) — the deepest hole. No bivariate root extraction. What IS free: the interpolation-by-counting
+step (`LinearMap.ker_ne_bot_of_finrank_lt` + `MvPolynomial.basisMonomials`), bivariate polys, and
+`RatFunc F` for `K = 𝔽_q(Z)`. **GS layer alone ≈ 3000–6000 lines; the Hensel lift sits on top. This is
+multi-month-to-paper, not a week.**
+
+**Banked instead (07-16): BCIKS20 Lemma 7.6 is now mechanized** (`OnGrid`, `grid_round`,
+`weighting_transfer_rounded`) — the grid rounding that removes Lemma 7.5's loss, previously asserted in
+prose while only the lossy 7.5 was proved. Given `CoCurvilinearity`, FRI's denominator-bounded weights
+now yield `µ(D′) ≥ α` EXACTLY (`exact_weighted_agreement_of_coCurvilinear`), the shape Lemma 8.2
+consumes. **The verdict: `61` stands, and the `+7` is NOT banked. It is not "what we can prove until
+StarkWare publishes [Sta25]" — it is "what we can prove until someone mechanizes BCI⁺20 §5's Hensel
+lift, all of whose ingredients are public."**
 
 ---
 
