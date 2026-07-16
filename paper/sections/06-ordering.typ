@@ -51,6 +51,29 @@ supermajority, post-GST progress holds
 assurance floor (@sec-assurance); the proofs do not diffuse it through the
 safety arguments.
 
+== What runs
+
+This fabric runs as a four-validator federation: distinct Ed25519+ML-DSA
+validator keys under one committee genesis, blocklace synchronization over
+QUIC, and finality gated on a committee quorum rather than on any single node
+(`docs/LOCAL-FEDERATION.md`). A turn submitted to one node is super-ratified by
+the committee; its receipt and its finalized height then replicate identically
+on every node. Committee size is where the threshold separation above becomes a
+deployment choice. At $n = 3$ the supermajority threshold is unanimity, so a
+single asymmetrically delivered block keeps waves from closing and the
+finalized height plateaus; at $n = 4$ each wave-closing round tolerates one
+laggard, and a committee spanning two machines on a real network streams
+finality, the height climbing identically on all four nodes
+(`docs/STAGE5-N4-RESULT.md`). Safety holds at both sizes; the change is a
+deployment parameter, not code. With the verified ordering gate as the finality
+authority, committed state is machine-independent: a Linux release build and a
+Darwin debug build of the Lean executor commit byte-identical roots for the
+same turns. The residual cost of that gate is performance, not safety: the
+verified order is recomputed over the whole lace on each poll, so under
+cross-machine catch-up churn committed-turn throughput can fall below block
+production and finality crawls; the DAGs remain identical and no state is
+corrupted (`docs/CROSS-MACHINE-FINALITY-FINDING.md`).
+
 == Revocation is consensus-bound
 
 The ordering logic is where revocation earns its meaning. Bumping a revocation
@@ -59,8 +82,7 @@ relevant views agree the epoch advanced, which is a finality fact, not a local
 one. Revocation therefore needs consensus
 (#lean("Liveness.revocation_needs_consensus")), and its dual ---
 whether a capability is dead from a given partial view --- is undecidable
-(#lean("Liveness.dead_undecidable")), pinned alongside as the honest statement of
-the limit. A partitioned network stalls a revocation's finality; it cannot forge
+(#lean("Liveness.dead_undecidable")), pinned alongside to state the limit. A partitioned network stalls a revocation's finality; it cannot forge
 the revocation, and it cannot un-revoke. Safety survives partition; liveness is
 exactly as strong as the carrier.
 

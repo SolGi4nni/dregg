@@ -13,8 +13,18 @@ statement now `docs/TOKENOMICS.md`. Follow-ups minted:
   "BURNED" — reconcile before quoting supply mechanics externally (mechanism as coded = Transfer to remainder_dest).
 - **dregg-pay mainnet go-live runbook unfired** (`docs/ops/PAYMENTS-GO-LIVE.md`): zero real $DREGG ever accepted for
   a service; the deployed game surface carries no payment env.
-- **Paper**: 22-lane reground/rewrite swarm launched (17 rewrites + games/interchain/economics/PQ new sections +
-  abstract redraft); integrate includes + typst compile + adversarial audit after harvest.
+- **Paper**: 22-lane reground/rewrite LANDED (17 rewrites + games/interchain/economics/PQ new sections + abstract);
+  compiles clean, all 209 lean() citations resolve. Lane-audit follow-ups minted:
+  - **Wire-effect classification drift**: `turn/src/action.rs` has 33 Effect variants vs the Lean registry's 27
+    reified tags — SetProgram/Mint/ShieldedTransfer/Promise/Notify/React UNCLASSIFIED; "a wire variant without a
+    classification does not build" is FALSE at HEAD. Close the cover or ratchet it.
+  - **Signing-message nonce**: `compute_signing_message` binds federation/action/effects but NOT the nonce (only
+    the partial-commitment variant does) — verify replay protection story and the paper claim stay aligned.
+  - **refs.yml keys missing** for new related-work stubs (ethSTARK/BCIKS20/BCSS25/IBC/zkBridge/DarkForest/MUD/PQ-TLS)
+    — cited in prose for now; add keys + convert.
+  - **Stale in-repo prose contradicting HEAD** (not carried into paper): `circuit/src/garbled.rs:454` names deleted
+    DSL fns; sel4/README.md + dregg.system still claim on-device STARK prove (predates stark-kill);
+    `law1_enforcement_gate.rs` header still lists dsl/revocation.rs as residual (predates 23cd63264).
 
 ## ⚑ LAUNCH-READINESS AUDIT + workstreams (2026-07-15) — "no mainnet/product yet?" is FAIR; the disease is "green on ember's laptop"
 Inbound "No mainnet or working product yet? @DreggNet" → 4 harsh parallel audits (buildability, VK/pinning,

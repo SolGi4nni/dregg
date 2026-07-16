@@ -38,9 +38,9 @@ authorization proved for one context cannot be replayed into another.
 
 The characteristic --- and easily-missed --- fact: *authority is produced, not
 merely spent.* A model in which every step only narrows (a monotone descent down
-a meet-semilattice) is _wrong_: it forbids exactly the patterns that give
-capabilities their power. The real dynamics have a generative half and a
-restrictive half, disciplined by one law.
+a meet-semilattice) forbids exactly the patterns that give capabilities their
+power. The real dynamics have a generative half and a restrictive half,
+disciplined by one law.
 
 *Generative (the graph grows):*
 
@@ -77,11 +77,12 @@ held initially or descends by conferral from an authorized generative step ---
 none ex nihilo);
 #lean("EffectsAuthority.introduce_non_amplifying") (a conferred capability is a
 genuine subset of the held one, over the real attenuation lattice);
-#lean("EffectsAuthority.amplifying_grant_rejected") (the teeth: a grant
-conferring authority the holder lacks is rejected --- the predicate is
-two-valued); #lean("AuthModes.captp_granted_le_held") (the dispatcher gate on
-delivered handoffs); #lean("FullForestAuth.execFullForestG_no_amplify") (every
-delegation edge of a committed forest, at the running entry).
+#lean("EffectsAuthority.amplifying_grant_rejected") (the discriminating
+direction: a grant conferring authority the holder lacks is rejected --- the
+predicate is two-valued); #lean("AuthModes.captp_granted_le_held") (the
+dispatcher gate on delivered handoffs);
+#lean("FullForestAuth.execFullForestG_no_amplify") (every delegation edge of a
+committed forest, at the running entry).
 
 == Three logics over a step
 

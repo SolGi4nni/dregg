@@ -6,25 +6,26 @@
 = The guard algebra <sec-guards>
 
 Everything that constrains a turn is one algebra of decidable predicates over
-the proposed step. The same `Pred` the executor evaluates is compiled to the
-circuit obligation a proof discharges: an installable guard and a provable
-property are one mechanism. This section gives the algebra, its closures, and
-the two prices it computes.
+the proposed step. The guard the executor evaluates and the obligation a proof
+discharges are compiled from the same object: an installable guard and a
+provable property are one mechanism. This section gives the algebra, its
+closures, its compiled form, and the two prices it computes.
 
-== One `Pred`, four polarities
+== One guard, four polarities
 
-A predicate is one object:
+A guard is one object (#lean("Spec.Guard")):
 
 ```
-Pred = curated atoms ⊕ all/any/not ⊕ witnessed(vk) ⊕ thirdParty(discharge)
+Guard = firstParty(p) ⊕ all/any/not ⊕ witnessed(s)
 ```
 
-It is either *first-party* --- decidable now against the old and new state ---
-or *witnessed*: `witnessed(vk)` defers to a registered verifier, which is how a
-third-party discharge, a range proof, or an arbitrary proof-carrying claim
-enters the same grammar. The novelty is not the grammar but its reach: the one
-algebra appears at four *polarities* that are four separate mechanisms in most
-systems.
+A *first-party* branch is decidable now, against the old and new state. A
+*witnessed* branch defers its statement to the verify seam
+(#lean("Spec.Guard.admits")). That seam is the single site where external
+evidence enters the grammar; a third-party discharge, a range proof, and an
+arbitrary proof-carrying claim all arrive there. The novelty is not the grammar
+but its reach: the one algebra appears at four *polarities* that are four
+separate mechanisms in most systems.
 
 #figure(
   table(
@@ -50,20 +51,22 @@ demand $tack.l$ supply adjunction is what discharges it.
 
 == The grammar and its closures
 
-The curated atoms are small decidable shapes over a cell's slots --- equality,
-bounds, write-once, immutability, monotone and strictly-monotone updates,
-deltas, sums, allowed-transition automata, membership, prefix. The roster of
-record is enumerable and lives in the generated predicate catalog
-(`studio/predicate-catalog.generated.json`); the paper cites it rather than
-fixing it here. Two closures keep the grammar from ossifying into axis-aligned
-special cases.
+The first-party atoms are small decidable shapes over a cell's slots ---
+equality, bounds, write-once, immutability, monotone updates, deltas, sums,
+allowed-transition automata, membership, prefix, and typed identity atoms over
+symbol and digest slots. The catalog of record is the
+#lean("Exec.StateConstraint") inductive; the executor's Boolean algebra over it
+(#lean("PredAlgebra.Pred"), evaluated by #lean("PredAlgebra.Pred.eval")) closes
+the atoms under negation, conjunction, and n-ary disjunction at every level.
+Two further closures keep the grammar from ossifying into axis-aligned special
+cases.
 
 *Relational closure* (`Authority/RelationalClosure.lean`). Any affine relation
 over the post-state --- $"head" lt.eq "tail" + "capacity"$, $Sigma "slots" =
-"const"$ --- is the same `Pred` object (#lean("RelationalClosure.RelPred")), with
-#lean("RelationalClosure.ofFieldLteOther_eq") recovering the single-slot atoms as
-instances. There is no new atom per shape: the guard language is the internal
-predicate logic of the state object, bounded only by decidability and
+"const"$ --- is the same predicate object (#lean("RelationalClosure.RelPred")),
+with #lean("RelationalClosure.ofFieldLteOther_eq") recovering the single-slot
+atoms as instances. There is no new atom per shape: the guard language is the
+internal predicate logic of the state object, bounded only by decidability and
 circuit-expressibility.
 
 *Quantified closure* (`Authority/QuantifiedPredicate.lean`). Bounded $forall$ and
@@ -72,6 +75,32 @@ constraint budget: #lean("QuantifiedPredicate.compile_sound") welds the compiled
 form to the quantified meaning, and #lean("QuantifiedPredicate.andFold_budget") /
 #lean("QuantifiedPredicate.orFold_budget") bound the cost. Quantifiers cost what
 they cost, and the cost is a theorem.
+
+== The compiled form
+
+The comparison atoms compile to circuit descriptors authored in Lean, not to
+circuits authored beside the kernel. The threshold descriptor
+(#lean("PredicatesArithmeticEmit.predicateGeDesc"), registered as
+`dregg-predicate-arith-ge::threshold-v1`) is representative. It proves a
+conjunction with a shared variable: the compared value satisfies $"value"
+gt.eq "threshold"$ for a public threshold, *and* the public fact commitment
+hashes over the same column being compared, binding the claim to committed
+token state. Without the shared column the circuit would prove an inequality
+about a number the prover chose. The comparison refuses by range: the circuit
+range-proves $"diff" = "value" - "threshold"$ into $[0, 2^29)$, and a
+$"value" < "threshold"$ witness wraps `diff` far outside that interval in the
+field, where no limb decomposition exists.
+
+The descriptor bytes are pinned twice. The Lean source pins its own emitted
+wire string with a `#guard`, and an emit gate
+(`circuit-prove/tests/predicates_arithmetic_emit_gate.rs`) embeds the identical
+string, proves an honest witness through the node's one proving entry
+(@sec-proofs), and runs mutation canaries that each tamper one thing and
+assert the refusal bites the named constraint. Sibling descriptors cover the
+$<$, $lt.eq$, $>$, $eq.not$, and in-range atoms, the relational and compound
+forms, and the temporal predicate, each with its own gate. Descriptor installs
+are recorded in the append-only regeneration log (`docs/VK-REGEN-LOG.md`); the
+predicate-arithmetic family's current registry entry is the 2026-07-16 row.
 
 == The coordination dial
 
@@ -96,8 +125,8 @@ forces ordering, and the difference is reported, not legislated.
 == The disclosure dial
 
 The second computed price is disclosure: how much a guard reveals while being
-checked. The principle is that *what the proof does not need, it does not ask to
-see*. The ladder, most to least disclosed:
+checked. The principle is that what the proof does not need, it does not ask to
+see. The ladder, most to least disclosed:
 
 #figure(
   table(
@@ -127,8 +156,13 @@ parties evaluate one gate over private inputs
 (#lean("GarbledJoint.garbled_input_private"),
 #lean("GarbledJoint.joint_turn_private_gate")), and its disclosure floor is
 acceptance-only --- the verdict and nothing else
-(#lean("GarbledJoint.garbledDialFloor_is_bot")). The Poseidon2 garbling
-construction that makes this rung STARK-provable is @app-garbled.
+(#lean("GarbledJoint.garbledDialFloor_is_bot")). This rung's proof path is the
+same descriptor prover as every other: the garbled-evaluation descriptor is
+authored in Lean (#lean("GarbledEvalEmit.garbledEvalDesc")), byte-pinned there,
+and mutation-gated in `circuit-prove/tests/garbled_eval_emit_gate.rs`. The
+descriptor proves the decryption algebra over the garbled tables; the
+Poseidon2 garbling-hash binding is a named carrier computed by the executor,
+and @app-garbled gives the construction and its scope.
 
 Selective disclosure of a receipt --- hide, reveal, predicate,
 committed-threshold --- is the same dial applied to *Q* (@sec-proofs): a

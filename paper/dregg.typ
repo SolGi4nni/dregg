@@ -74,59 +74,51 @@
 #heading(level: 1, numbering: none)[Abstract]
 
 dregg is a distributed object-capability substrate whose proofs witness the
-protocol's correct evolution: a verifier holding one aggregate root learns that
-every state transition in the system's history was authorized, conservative,
-and correctly committed --- re-executing nothing and trusting no executor.
+protocol's evolution. A verifier holding one aggregate root learns that every
+state transition in the system's history was authorized, conservative, and
+correctly committed. It re-executes nothing and trusts no executor.
 
-The model is small. State lives in *cells*; a *turn* is the exercise of an
-attenuable, proof-carrying token over owned state, leaving a verifiable
-receipt. The kernel governs four substances, each under its own discipline of
-use --- value is linear ($Sigma delta = 0$, exactly), authority is produced
-under non-forgeability, evidence is monotone, state is guarded-mutable --- and
-its signature is eight verbs, each the structural rule of one substance's
-discipline. Minimality of the signature is a theorem, not an aesthetic.
+State lives in cells. A turn is the exercise of an attenuable, proof-carrying
+token over owned state, and it leaves a verifiable receipt. The kernel governs
+four substances, each under its own discipline of use: value is linear,
+authority is produced under non-forgeability, evidence is monotone, state is
+guarded-mutable. The kernel signature is eight verbs, one structural rule per
+discipline. Minimality of the signature is a theorem
+(#lean("VerbRegistry.minimality")), not an aesthetic.
 
-Authority is treated as _constructive knowledge_: to hold a capability is to be
-able to exhibit a witness that authorizes an act, never merely to assert it.
-The system is organized around the asymmetry that proof-checking is cheap and
-trusted while proof-search is undecidable and untrusted, and its central
-authority law is generative rather than monotone: authority genuinely grows ---
-introduction, sealer/unsealer amplification, minting --- but only through
-authorized, receipt-disclosed construction from connectivity already held.
-
-Everything that constrains a turn is one predicate algebra appearing at four
-polarities (caveats on delegated power, programs on owned state, preconditions
-on turns, demands on the world), with two computed prices: a coordination dial
-(a confluence-stable guard runs coordination-free; one that is not provably so
-forces ordering) and a disclosure dial (committed, range-proved, and
-jointly-garbled evaluation; what the proof does not need, it does not see).
+Authority is constructive: to hold a capability is to be able to exhibit a
+witness that authorizes an act. Authority grows through introduction,
+amplification, and minting, but only by authorized, receipt-disclosed
+construction from connectivity already held. Every constraint on a turn is one
+predicate algebra at four polarities, priced by a coordination dial and a
+disclosure dial.
 
 The semantics are a Lean 4 kernel that is also the deployed executor, reached
-by FFI from the node; the proof system is a STARK whose circuit is _emitted
-from_ that kernel rather than hand-authored. The assurance case is organized by
-guarantee --- authority, conservation, integrity, freshness, unfoolability, and
-a running-entry guarantee stating the first three over the exact function the
-node invokes --- with every keystone machine-pinned to the Lean kernel's three
-axioms plus an explicit eight-carrier cryptographic and liveness floor.
-Applications are factory-minted cells whose rules are predicate programs
-enforced by the same executor, so application contracts are inherited from
-kernel theorems rather than re-established per app.
+by FFI from the node. The STARK circuit is emitted from that kernel: no
+deployed first-party circuit is authored in Rust, and a build gate fails any
+constraint algebra added there. One proving path exists, the descriptor
+prover; the hand-written engine is deleted. At the deployed recursion apex the
+FRI carrier calculates to 57.98 bits of soundness under the proximity-gaps
+bound the prover cites --- a bound on a supplied proof, not an extraction
+theorem --- while a configuration at extension degree eight clears 120. The
+assurance case is itself a Lean artifact: each guarantee's keystone is pinned
+to the kernel's three axioms plus an explicit cryptographic and liveness
+floor.
 
-The capability is one abstraction across a distance parameter. At its near end
-a local microkernel object and at its far end a distributed cell are the same
-attenuable reference, and the single-machine case is the collapsed limit where
-revocation is immediate and a commit is synchronous, not a degraded subset. On
-that axis the substrate descends to a capability-secure microkernel ($"seL4"$),
-where the kernel's capability graph isolates the protection domains and dregg's
-mediates the cells inside them, with a real prover checking proofs on the
-device; and it descends to a database, where reads are SQL and writes are
-verified turns. It surfaces, too: a window is a capability, an interaction is a
-turn, and a rendered scene is a per-viewer projection whose non-interference,
-attenuation, and liveness-typed rehydration are kernel theorems restated for
-pixels. The proof architecture keeps these claims honest as it evolves --- the
-circuit shape rotates under proof of equivalent enforcement, and every finalized
-turn stays verifiable across shapes --- so a light client's one check covers the
-whole history regardless of where and how it was produced.
+The capability is one abstraction across a distance parameter: a local
+microkernel object and a distributed cell are the same attenuable reference.
+On seL4 the verified executor runs inside a protection domain and commits a
+turn with the same accepted receipt the host produces; the microkernel's
+capability graph isolates the domains while dregg's mediates the cells within.
+The circuit shape rotates under proof of equivalent enforcement, and every
+finalized turn remains verifiable across shapes, so a light client's one check
+covers the whole history.
+
+Applications are factory-minted cells whose rules are predicate programs
+enforced by the same executor, so their contracts are inherited from kernel
+theorems rather than re-established per app; a deployed portfolio of verified
+games, holding-weighted governance, and cross-chain settlement each exercise
+the same receipt object.
 
 #v(1em)
 
@@ -144,6 +136,10 @@ whole history regardless of where and how it was produced.
 #include "sections/10-deos.typ"
 #include "sections/11-sel4.typ"
 #include "sections/12-pg-dregg.typ"
+#include "sections/17-games.typ"
+#include "sections/18-interchain.typ"
+#include "sections/19-economics.typ"
+#include "sections/20-postquantum.typ"
 #include "sections/13-assurance.typ"
 #include "sections/14-related.typ"
 #include "sections/15-limitations.typ"

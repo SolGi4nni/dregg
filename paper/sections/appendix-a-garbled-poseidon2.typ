@@ -7,226 +7,400 @@
 
 This appendix details the garbled rung of the disclosure dial (@sec-guards): the
 two-party gate at which each party learns the verdict and nothing else. The Lean
-spec it must meet is `Crypto/GarbledJoint.lean` --- correctness
-(#lean("GarbledJoint.garbled_input_private") states the dual privacy carrier) and
-the joint-turn weld #lean("GarbledJoint.joint_turn_private_gate"), with the
-disclosure floor pinned to acceptance-only
-(#lean("GarbledJoint.garbledDialFloor_is_bot")). The construction below is the
-cryptographic realization the Rust garbled-circuit machinery
-(`circuit/src/garbled.rs`) implements to discharge that spec.
+specification is `metatheory/Dregg2/Crypto/GarbledJoint.lean` --- correctness
+(#lean("GarbledJoint.garbled_correct")), input privacy
+(#lean("GarbledJoint.garbled_input_private")), the joint-turn weld
+(#lean("GarbledJoint.joint_turn_private_gate")), and the disclosure floor pinned
+to acceptance-only (#lean("GarbledJoint.garbledDialFloor_is_bot")). The
+cryptographic realization is the garbling machinery in `circuit/src/garbled.rs`.
+Its proof path is the descriptor #lean("GarbledEvalEmit.garbledEvalDesc")
+(`metatheory/Dregg2/Circuit/Emit/GarbledEvalEmit.lean`), authored in Lean and
+proved through `prove_vm_descriptor2`, with its correctness and mutation gate in
+`circuit-prove/tests/garbled_eval_emit_gate.rs`.
 
 == Motivation
 
-Standard garbled circuit constructions instantiate the garbling PRF with AES or SHA-256---primitives optimized for hardware execution but catastrophically expensive inside arithmetic STARKs. We observe that Poseidon2 @poseidon2, a permutation designed for efficient arithmetization over prime fields, can serve as the garbling function in a Yao-style garbled circuit @yao86 while remaining _natively provable_ in a BabyBear STARK. This yields verifiable garbled circuits @jawurek13 with three orders of magnitude fewer constraints per gate than AES-based alternatives.
+Standard garbled-circuit constructions instantiate the garbling PRF with AES or
+SHA-256, primitives optimized for hardware execution but expensive inside
+arithmetic STARKs. Poseidon2 @poseidon2 is a permutation designed for efficient
+arithmetization over prime fields. Used as the garbling function in a Yao-style
+garbled circuit @yao86, it keeps the evaluation trace natively provable in a
+BabyBear STARK. The result is a verifiable garbled circuit @jawurek13 whose
+per-gate constraint cost is roughly three orders of magnitude below an AES-based
+equivalent (@app-cost).
 
-== The Construction
+== The construction
 
 === Notation
 
-Let $FF_p$ denote the BabyBear field ($p = 2^(31) - 2^(27) + 1$). A _label_ is a vector $bold(l) in FF_p^8$ (8 field elements, providing 248 bits of entropy). For a wire $w$ carrying a Boolean value $b in {0,1}$, we write $bold(l)_w^b$ for the label encoding value $b$ on wire $w$. The function $"P2": FF_p^(16) -> FF_p^8$ denotes the first 8 output elements of a width-16 Poseidon2 permutation with $alpha = 7$ and 21 rounds (8 external + 13 internal).
+Let $FF_p$ denote the BabyBear field ($p = 2^(31) - 2^(27) + 1$). A _label_ is a
+vector $bold(l) in FF_p^8$: eight field elements, approximately 248 bits of
+entropy. For a wire $w$ carrying a Boolean value $b in {0,1}$, $bold(l)_w^b$ is
+the label encoding value $b$ on wire $w$. The function $"P2": FF_p^(16) ->
+FF_p^8$ is the first 8 output elements of a width-16 Poseidon2 permutation with
+S-box $x^7$ and 21 rounds (8 external, 13 internal), the parameterization pinned
+in `circuit/src/poseidon2.rs`.
 
-=== Gate Garbling
+=== Gate garbling
 
-For a gate $g$ with left input wire $a$, right input wire $b$, output wire $c$, and Boolean function $f_g: {0,1}^2 -> {0,1}$, the garbled table consists of four ciphertexts:
+For a gate $g$ with left input wire $a$, right input wire $b$, output wire $c$,
+and Boolean function $f_g : {0,1}^2 -> {0,1}$, the garbling key for input pair
+$(i,j)$ is
 
-$ bold(C)_g^(i,j) = "P2"(bold(l)_a^i || bold(l)_b^j || bold(e)_g) xor bold(l)_c^(f_g (i,j)) quad forall (i,j) in {0,1}^2 $
+$ "key"_(i,j,g) = "P2"(bold(l)_a^i || bold(l)_b^j [0..6] || (bold(l)_b^j [7] + g)). $
 
-where $bold(e)_g in FF_p^8$ is a _gate encoding_ vector: the gate index $g$ placed in the first element with the remaining elements set to zero (preventing cross-gate correlation of PRF outputs), and $||$ denotes concatenation forming the 16-element input to P2.
+The 16-element permutation input packs the full left label, the first seven
+elements of the right label, and, in the final position, the right label's
+eighth element plus the gate index (`garbling_hash` in
+`circuit/src/garbled.rs`). Two distinct gates therefore feed the permutation
+distinct inputs except on a collision of the wire labels themselves. The
+garbled table consists of four ciphertexts,
 
-The XOR operation ($xor$) is defined component-wise over the unsigned 32-bit integer representation of each field element---that is, interpreting each $x in FF_p$ as an element of $ZZ_(2^(32))$ via canonical reduction, XORing the bit patterns, and retaining the result as an element of $ZZ_(2^(32))$ (which may exceed $p$). We emphasize: this is _not_ field subtraction.
+$ bold(C)_g^(i,j) = bold(l)_c^(f_g (i,j)) + "key"_(i,j,g) quad forall (i,j) in {0,1}^2, $
 
-=== Point-and-Permute
+where $+$ is component-wise addition in $FF_p$. Evaluation recovers the output
+label by component-wise field subtraction:
 
-The garbled table rows are permuted using the least significant bit of the first element of each input label. Define $pi(bold(l)) = bold(l)[0] mod 2$. The evaluator uses $(pi(bold(l)_a), pi(bold(l)_b))$ as a 2-bit index to select the correct row, reducing evaluation from four trial decryptions to one.
+$ bold(C)_g^(i,j) - "key"_(i,j,g) = bold(l)_c^(f_g (i,j)). $
 
-Label generation enforces that for each wire $w$, $pi(bold(l)_w^0) != pi(bold(l)_w^1)$: the garbler samples $bold(l)_w^0$ uniformly, then sets $bold(l)_w^1[0] = bold(l)_w^0[0] xor 1$ (flipping the LSB) with remaining elements sampled independently.
+=== Encryption over the field <app-field-pad>
 
-=== Circuit Garbling
+A garbled table entry is a one-time pad: each ciphertext masks an output label
+with a key used exactly once. Classical constructions take the pad over the XOR
+group ${0,1}^lambda$; this construction takes it over the additive group of
+$FF_p^8$. Both are one-time pads over a group, and the hiding argument is the
+same: if the mask is indistinguishable from a uniform group element, adding it
+hides the label. Under the PRF assumption each of a gate's four keys is an
+independent pseudorandom vector --- the four permutation inputs are distinct ---
+so each ciphertext individually reveals nothing about the label it masks.
 
-Given a Boolean circuit $C$ with $n$ gates and input/output wires:
+The field pad and the XOR pad differ in two respects, one gained and one given
+up. Gained: the field pad stays inside the arithmetization. Decryption,
+$"output" = "table entry" - "hash"$, is a single linear constraint per element
+in a BabyBear AIR, and it is exactly the decryption constraint the deployed
+descriptor enforces (#lean("GarbledEvalEmit.decryption_body_zero_iff")). A
+bitwise XOR over the 32-bit integer representations would leave the field (the
+result can exceed $p$) and would cost a bit decomposition of roughly 31 binary
+constraints per element --- the cost the choice of Poseidon2 is meant to avoid.
+Given up: the two-torsion structure of XOR ($x xor x = 0$), on which free-XOR
+optimizations rely (@app-prior). The construction samples every wire's two
+labels independently and correlates nothing across wires, so no algebraic
+relation spans two ciphertexts for the field structure to preserve --- and no
+free-XOR-style optimization is available. Every gate carries four ciphertexts.
 
-+ *Label generation:* For each wire $w$, sample $bold(l)_w^0 arrow.l.long FF_p^8$ uniformly; derive $bold(l)_w^1$ per the point-and-permute constraint above.
-+ *Table construction:* For each gate $g$, compute the four ciphertexts $bold(C)_g^(i,j)$ and permute rows by $(pi(bold(l)_a^i), pi(bold(l)_b^j))$.
-+ *Circuit commitment:* $h_C = "Poseidon2"("Poseidon2"(bold(C)_1) || ... || "Poseidon2"(bold(C)_n))$, a Merkle-style hash binding the garbled tables.
-+ *Output commitment:* For each output wire $w_"out"$, publish $h_"out"^b = "Poseidon2"(bold(l)_(w_"out")^b)$ for both $b in {0,1}$.
+=== Point-and-permute
 
-== Security Argument
+The garbled table rows are ordered by the least significant bit of the first
+element of each input label: $pi(bold(l)) = bold(l)[0] mod 2$. The evaluator
+uses $(pi(bold(l)_a), pi(bold(l)_b))$ as a 2-bit index and performs one
+decryption instead of four trial decryptions. Label generation forces opposite
+color bits: the two labels of a wire are sampled independently, then the first
+element's low bit is cleared on the zero-label and set on the one-label
+(`random_label_pair`).
 
-=== Garbling Privacy
+=== The comparison circuit
 
-We argue security in the simulation-based framework of Bellare, Hoang, and Rogaway @bhr12.
+The deployed application is a private threshold comparison: the garbler holds a
+threshold $t$, the evaluator holds a value $v$, and the joint predicate is $v
+>= t$ over 31-bit values. The circuit is an LSB-first borrow chain
+(`garble_comparison_circuit`): the borrow out of bit position $i$ is a Boolean
+function of the borrow into it and the evaluator's bit $v_i$, with the garbler's
+known bit $t_i$ wired into the gate's truth table. Each bit position is one
+two-input garbled gate, so a 31-bit comparison is 31 gates; the garbler's input
+occupies no gates at all. The comparison holds exactly when the final borrow is
+zero, so the zero-label of the last borrow wire is the "true" output label.
+
+Two commitments bind the artifact. The circuit commitment is a domain-separated
+Poseidon2 sponge hash (`WideHash`: eight field elements, approximately 124-bit
+birthday collision resistance) over all garbled table entries; each output
+label is committed by the same hash. The evaluator's input labels are specified
+to arrive by oblivious transfer; the in-tree tests hand the evaluator its labels
+directly, and the repository contains no wire-level OT implementation.
+
+== Security argument
+
+=== Garbling privacy
+
+Privacy is argued in the simulation framework of Bellare, Hoang, and Rogaway
+@bhr12.
 
 #quote(block: true)[
-*Theorem (informal).* If Poseidon2 (width-16, $alpha = 7$, 21 rounds over $FF_p$) is a pseudorandom function when keyed by a uniformly random 16-element input, then the construction above satisfies garbling privacy (prv.sim security) with computational security $lambda >= 124$ bits.
+*Theorem (informal).* If Poseidon2 (width-16, $x^7$, 21 rounds over $FF_p$)
+truncated to its first eight outputs is a pseudorandom function of its
+16-element input, then the construction above satisfies garbling privacy
+(prv.sim) with computational security $lambda >= 124$ bits at the garbling
+layer.
 ]
 
-*Proof sketch.* The simulator, given only the topology and the output labels corresponding to the true output, must produce garbled tables indistinguishable from real ones. Under the PRF assumption on P2:
+*Proof sketch.* The simulator, given only the circuit topology and the output
+labels of the true output, must produce garbled tables indistinguishable from
+real ones. Under the PRF assumption on P2:
 
-+ For each gate $g$ and each input pair $(i,j)$ not on the evaluation path, the ciphertext $bold(C)_g^(i,j) = "P2"("key"_(i,j,g)) xor bold(l)_c^(f_g(i,j))$ is indistinguishable from uniform, since $"P2"("key"_(i,j,g))$ is pseudorandom and XOR with a fixed value preserves pseudorandomness.
++ For each gate $g$ and each input pair $(i,j)$ off the evaluation path, the
+  ciphertext $bold(C)_g^(i,j) = bold(l)_c^(f_g (i,j)) + "key"_(i,j,g)$ is
+  indistinguishable from uniform: the key is pseudorandom, and adding a fixed
+  value to a uniform element of $FF_p^8$ yields a uniform element (the group
+  one-time pad of @app-field-pad).
 
-+ For the single row $(i^*, j^*)$ on the evaluation path, the evaluator recovers $bold(l)_c^(f_g(i^*,j^*))$ but learns nothing about $bold(l)_c^(1 - f_g(i^*,j^*))$ since the other rows remain pseudorandom.
++ For the single on-path row $(i^*, j^*)$, the evaluator recovers
+  $bold(l)_c^(f_g (i^*, j^*))$ and learns nothing about the opposite label,
+  whose rows remain pseudorandom.
 
-+ The gate encoding $bold(e)_g$ ensures domain separation: even if two gates receive identical input labels, distinct gate indices produce independent PRF outputs under standard multi-key PRF security.
++ Gates are domain-separated through the key's final input element (the gate
+  index added to a label element): two gates collide on a permutation input
+  only if their wire labels collide, which the 248-bit label space makes
+  negligible.
 
-The 248-bit label space provides a birthday bound of $2^(124)$, meaning an adversary must evaluate P2 on the order of $2^(124)$ distinct inputs before observing a collision that could distinguish real garbled tables from simulated ones.
+The 248-bit label space gives a birthday bound of $2^(124)$: an adversary must
+evaluate P2 on the order of $2^(124)$ distinct inputs before observing a
+collision that could distinguish real garbled tables from simulated ones.
 
-=== XOR Correctness and Security
+=== The mechanized privacy carrier
 
-The choice of bitwise XOR (over $ZZ_(2^(32))$) rather than field subtraction (over $FF_p$) is security-critical.
+The Lean development states the privacy property over an abstract garbling
+kernel rather than the concrete permutation.
+#lean("GarbledJoint.garbled_input_private") proves that the evaluator's
+transcript equals a simulator applied to the output bit alone;
+#lean("GarbledJoint.garbled_input_private_indistinguishable") sharpens this to:
+two runs with the same outcome produce identical transcripts, whatever the
+private inputs. #lean("GarbledJoint.joint_turn_private_gate") welds the kernel
+to the joint turn: a two-cell turn whose admission gate is a garbled predicate
+admits exactly when the joint condition holds, discloses only that one bit, and
+inherits the joint turn's atomicity unchanged. The floor of the disclosure dial
+for this rung is acceptance-only, formally the dial's bottom
+(#lean("GarbledJoint.garbledDialFloor_is_bot")). These theorems model the
+protocol --- garble, evaluate, transcript --- not the STARK trace layout; the
+PRF assumption on Poseidon2 is the carrier connecting the model to the concrete
+construction.
 
-*Correctness.* Evaluation recovers the output label:
+=== What the STARK proves <app-stark-scope>
 
-$ bold(C)_g^(i,j) xor "P2"(bold(l)_a^i || bold(l)_b^j || bold(e)_g) = bold(l)_c^(f_g(i,j)) $
+The proof layer wraps evaluation in a STARK: the evaluator proves it performed
+the decryption chain correctly, so a third party can check the verdict without
+trusting the evaluator's report. The circuit statement is the 56-column
+descriptor #lean("GarbledEvalEmit.garbledEvalDesc"), authored in Lean with its
+emitted wire string byte-pinned by a `#guard`, and proved through
+`prove_vm_descriptor2`, the production descriptor prover. One trace row is one
+gate evaluation. The constraint families are:
 
-by definition of XOR's self-inverse property.
+- decryption correctness on every non-padding row --- $"output"(i) = "table
+  entry"(i) - "hash"(i)$ for each of the eight label elements, the
+  field-subtraction decryption of @app-field-pad
+  (#lean("GarbledEvalEmit.decryption_body_zero_iff"));
+- booleanity of the six selector columns and exclusivity of the four gate-type
+  flags;
+- wire chaining across rows: where a row's chain flag is set, the next row's
+  left label equals this row's output label (eight two-row window gates);
+- first-row binding of the circuit commitment and output-label hash to the
+  public inputs, and a first-row gate-index boundary (the every-row constraint
+  families are additionally re-lowered as last-row boundaries, so no row
+  escapes them).
 
-*Security.* Under the PRF assumption, $"P2"(bold(l)_a^i || bold(l)_b^j || bold(e)_g)$ is computationally indistinguishable from a uniform element of ${0, ..., 2^(32)-1}^8$. Bitwise XOR of a uniform mask with any fixed value produces a uniform distribution (one-time pad). Thus each ciphertext individually reveals no information about $bold(l)_c^(f_g(i,j))$.
+The gate test `circuit-prove/tests/garbled_eval_emit_gate.rs` decodes the
+descriptor, checks it against an independently hand-built twin, proves an
+honest two-gate evaluation and re-verifies it, then refuses six mutated
+witnesses --- a forged commitment input, a forged table ciphertext, a
+non-boolean selector, an ambiguous gate type, a broken wire chain, and a forged
+first-row boundary --- each mutation biting a distinct constraint family.
 
-Had we used field subtraction, the algebraic structure of $FF_p$ would be preserved: an adversary could exploit the fact that $a - b + b = a$ in the field to construct linear relations between ciphertexts across gates sharing wires. Bitwise XOR destroys this algebraic structure---it is not a group operation over $FF_p$ and admits no useful homomorphic properties.
+Three scope facts bound what such a proof establishes; each is named in the
+artifact itself.
 
-=== STARK Proof Composition
++ *The garbling hash is not constrained in-circuit.* The hash columns are free
+  witness values; the digests --- the per-gate P2 keys and both commitments ---
+  are computed by the witness generator in `circuit/src/garbled.rs`. The AIR
+  proves the decryption algebra over those digests, and the digest-correctness
+  binding is a named executor-verified carrier, stated as such in
+  `GarbledEvalEmit.lean`.
 
-The STARK proves the following compound statement:
++ *The commitments are bound in-circuit by a four-element prefix* of the
+  eight-element digest. The full-digest equality is specified as a
+  verifier-side check that has not been written; the repository prices the
+  enforced prefix at roughly 62 bits.
 
-#quote(block: true)[
-"I know labels $bold(l)_1, ..., bold(l)_m$ and a circuit evaluation path such that:
-1. For each gate $g$ on the path, $"P2"(bold(l)_(a_g) || bold(l)_(b_g) || bold(e)_g) xor bold(l)_(c_g) = bold(C)_g^(pi(bold(l)_(a_g)), pi(bold(l)_(b_g)))$
-2. The output label $bold(l)_"out"$ satisfies $"Poseidon2"(bold(l)_"out") = h_"out"^1$ (the committed 'true' hash)"
-]
++ *The path has no live consumer.* The descriptor, its gate test, and the
+  garbling machinery exist and are exercised; no deployed surface currently
+  issues or verifies garbled-evaluation proofs.
 
-*Public inputs:* Circuit commitment $h_C$, output label hash $h_"out"^1$.
+=== Composed security posture
 
-*Private witness:* All wire labels on the evaluation path, the garbled table entries accessed, the Poseidon2 intermediate states.
+The 124-bit figure above is a privacy bound at the garbling layer; it is not
+the security level of the composed artifact. A garbled-evaluation proof is
+checked by the same engine as every other proof in the system, and the engine's
+quantified posture bounds what acceptance is worth. At the deployed recursion
+apex (logarithmic blowup 6, 19 queries, 16 bits of proof-of-work grinding,
+tables floored at $2^(16)$ rows), the analysis of record prices the apex at
+about 58 bits under the BCIKS20 accounting and about 71 bits under BCSS25
+(`docs/reference/FRI-BOTH-WIN-LEVERS.md`). Those figures are analytic bounds on
+a supplied proof; the mechanized ledger carries no adversary or grinding model.
+The composed posture is therefore the minimum across layers: about 58 bits of
+engine soundness at deployed parameters, about 62 bits of enforced commitment
+binding, and 124 bits of garbling privacy. The engine posture and the
+commitment prefix, not the garbling function, set the composed level; both have
+identified, costed levers in the same analysis.
 
-*Zero-knowledge property:* The verifier learns only that the evaluator possesses labels consistent with an output of 1. The garbled tables are entirely within the private witness---the verifier sees only $h_C$ (binding the proof to a specific circuit) and $h_"out"^1$ (binding to the expected "true" output). The delegation chain, input values, and intermediate wire labels remain hidden.
+== Why Poseidon2 (not AES, not SHA-256) <app-cost>
 
-=== Verifiable Evaluation: What the STARK Adds
+The choice of garbling PRF is dictated by constraint cost inside a BabyBear
+STARK. The figures below are analytic estimates --- constraint counts derived
+from each primitive's structure, not measured prover benchmarks. They price the
+design point at which the garbling hash is proved in-circuit; in the deployed
+descriptor the hash is an executor-verified carrier (@app-stark-scope), so the
+estimates bound the cost of closing that seam and explain why the seam is
+closable at all.
 
-In standard Yao garbled circuits, the garbler must trust that the evaluator reports the output honestly (or reveal a decoding table). The STARK proof eliminates this trust assumption:
+*AES-128.* Each of the 160 S-boxes (10 rounds, 16 bytes) computes an inversion
+in $"GF"(2^8)$; expressed over $FF_p$ this costs several hundred to a thousand
+multiplication constraints per S-box, on the order of $10^5$ constraints per
+AES call.
 
-- *Completeness:* An honest evaluator with valid input labels can always produce a valid proof.
-- *Soundness:* A cheating evaluator cannot produce a valid proof for output 1 unless they actually possess labels that evaluate to 1.
-- *Zero-knowledge:* The proof reveals nothing beyond the single output bit.
+*SHA-256.* The compression function performs roughly 1,100 32-bit AND, XOR,
+and rotate operations; each requires bit decomposition in a prime field. With
+gadgets that amortize decomposition across related operations, the cost is on
+the order of $2.5 times 10^4$ constraints per call.
 
-This achieves the same goal as the verifiable garbled circuits of Jawurek, Kerschbaum, and Orlandi @jawurek13, but replaces their cut-and-choose mechanism with a STARK. The STARK approach is _non-interactive_ (no multi-round protocol), _publicly verifiable_ (any third party can check the proof), and _succinct_ (~24 KiB regardless of circuit size).
-
-== Why Poseidon2 (Not AES, Not SHA-256)
-
-The choice of garbling PRF is dictated by the constraint cost inside a BabyBear STARK.
-
-=== AES-128
-
-Each AES S-box computes inversion in $"GF"(2^8)$. Expressing this as a degree-254 polynomial over $FF_p$ requires approximately 1,000 multiplication constraints per S-box. With 160 S-boxes across 10 rounds:
-
-$ "Constraints per AES call" approx 160 times 1000 = 100,000 $
-
-For a single gate evaluation (one AES call as PRF): ~100,000 constraints.
-
-=== SHA-256
-
-SHA-256 uses 32-bit AND, XOR, and ROTATE operations. In a prime-field STARK, each bit operation requires bit decomposition (31 binary constraints) plus reconstruction. The compression function performs ~1,100 such operations:
-
-$ "Constraints per SHA-256 call" approx 1,100 times 23 approx 25,000 $
-
-(using optimized gadgets that amortize decomposition across related operations).
-
-=== Poseidon2 (Width-16, BabyBear)
-
-Poseidon2 over $FF_p$ is _native_ to the STARK: each round consists of field multiplications and additions that are single constraints. With 21 rounds and width 16:
-
-$ "Constraints per Poseidon2 call" approx 21 times 8 = 168 $
-
-(8 degree-7 S-box constraints per round, with the MDS matrix application being linear and thus "free" in the AIR).
-
-=== Cost Comparison
+*Poseidon2 (width-16, BabyBear).* The permutation is native to the STARK: 141
+S-boxes (8 external rounds of 16 lanes plus 13 internal rounds of one lane),
+each a single degree-7 constraint, with the linear layers constraint-free in
+the AIR --- on the order of $1.5 times 10^2$ constraints per permutation.
 
 #figure(
   table(
-    columns: (auto, auto, auto, auto),
-    align: (left, right, right, right),
-    table.header([*Garbling PRF*], [*Constraints/gate*], [*62-gate circuit*], [*Est. proving time*]),
-    [AES-128], [$tilde$100,000], [$tilde$6,200,000], [$tilde$60 s],
-    [SHA-256], [$tilde$25,000], [$tilde$1,550,000], [$tilde$15 s],
-    [Poseidon2 (ours)], [$tilde$170], [$tilde$10,500], [$tilde$50 ms],
+    columns: (auto, auto, auto),
+    align: (left, right, right),
+    table.header([*Garbling PRF*], [*Constraints/call (est.)*], [*31-gate circuit (est.)*]),
+    [AES-128], [$tilde 100,000$], [$tilde 3,100,000$],
+    [SHA-256], [$tilde 25,000$], [$tilde 775,000$],
+    [Poseidon2], [$tilde 150$], [$tilde 4,650$],
   ),
-  caption: [Constraint cost per garbled gate evaluation inside a BabyBear STARK. The 62-gate column corresponds to a 31-bit integer comparison circuit. Proving times estimated on a single core at $tilde$200K constraints/second.],
+  caption: [Analytic constraint-cost estimates per garbled-gate decryption
+  inside a BabyBear STARK. The 31-gate column is the deployed comparison
+  circuit (one gate per bit of a 31-bit comparison). No entry is a measured
+  benchmark.],
 )
 
-The 600x reduction from Poseidon2 vs. AES makes the difference between "impractical" and "real-time on commodity hardware."
+The gap of roughly three orders of magnitude is the design's premise: with
+Poseidon2 the garbling hash is affordable in-circuit; with AES it is not.
 
-== Concrete Parameters
-
-For a 31-bit BabyBear integer comparison (the motivating application: proving a private value exceeds a threshold without revealing either):
+== Concrete parameters
 
 #figure(
   table(
     columns: (auto, auto),
     align: (left, left),
     table.header([*Parameter*], [*Value*]),
-    [Label entropy], [8 $times$ BabyBear = 248 bits (124-bit security)],
-    [Circuit topology], [62 AND gates + free XOR (half-gates)],
-    [Garbled table size], [62 gates $times$ 4 rows $times$ 32 bytes = 7,936 bytes],
-    [STARK trace dimensions], [62 rows $times$ $tilde$40 columns (Poseidon2 state + I/O)],
-    [STARK proof size], [$tilde$24 KiB (FRI over BabyBear4)],
-    [Proving time], [$tilde$50--100 ms (single core)],
-    [Verification time], [$tilde$2 ms],
-    [Total protocol payload], [$tilde$32 KiB (circuit + proof + OT messages)],
+    [Label entropy], [8 $times$ BabyBear $approx$ 248 bits],
+    [Circuit topology], [31 gates (LSB-first borrow chain, threshold wired into truth tables)],
+    [Garbled table size], [31 gates $times$ 4 rows $times$ 32 bytes = 3,968 bytes],
+    [Commitments], [`WideHash`: 8-element Poseidon2 sponge, $tilde$124-bit birthday collision resistance],
+    [STARK trace dimensions], [32 rows $times$ 56 columns],
+    [In-circuit public inputs], [8 field elements (a 4-element prefix of each commitment)],
   ),
-  caption: [Concrete parameters for a 31-bit comparison garbled circuit with STARK verification.],
+  caption: [Parameters of the 31-bit comparison garbled circuit, derived from
+  `circuit/src/garbled.rs` and `GarbledEvalEmit.lean` at the revision of
+  record.],
 )
 
-== Limitations and Assumptions
+Proof size and timing are deliberately not restated. Earlier figures for this
+construction predate both the cutover to the descriptor prover and the current
+GPU prover, and no re-measurement accompanies this revision.
 
-=== One-Time Evaluation
+== Limitations and assumptions
 
-Each garbled circuit supports exactly one evaluation (standard Yao limitation). The labels for a given wire encode a single Boolean value; reuse would allow the evaluator to learn both labels and decrypt all four rows. For repeated comparisons against the same threshold, fresh circuits must be garbled.
+=== One-time evaluation
 
-=== Evaluator Learns Output
+Each garbled circuit supports exactly one evaluation, the standard Yao
+limitation. A wire's labels encode a single Boolean value; reuse would let the
+evaluator learn both labels and decrypt all four rows of downstream gates.
+Repeated comparisons against the same threshold require freshly garbled
+circuits.
 
-The evaluator (prover) necessarily learns the comparison result. This is inherent to garbled circuit evaluation---the evaluator decrypts output labels and can identify which corresponds to "true" vs. "false." Only the _threshold_ (garbled into the circuit by the garbler) remains hidden from the evaluator. The STARK proof conveys this result to third parties without revealing anything else.
+=== Evaluator learns the output
 
-=== Semi-Honest Security
+The evaluator necessarily learns the comparison result: the output labels ship
+with the circuit for decoding, and the evaluator identifies which one it
+recovered. Only the threshold, wired into the truth tables by the garbler,
+stays hidden from the evaluator. The STARK proof conveys the result to third
+parties without revealing anything else.
 
-The basic construction provides security against semi-honest adversaries (both parties follow the protocol but may attempt to extract additional information from their view). For malicious security---where the garbler might construct an incorrect circuit---standard techniques apply:
+=== Semi-honest security
 
-- *Cut-and-choose:* Generate $kappa$ garbled circuits, open $kappa/2$ for verification, evaluate the remainder. Overhead: $2$--$3 times$ in computation, $kappa times$ in communication.
-- *Dual execution:* Both parties garble and evaluate; compare outputs via equality test. Overhead: $2 times$ in computation with only 1-bit leakage to a malicious adversary.
+The construction provides security against semi-honest adversaries: both
+parties follow the protocol but may try to extract information from their
+views. Against a malicious garbler --- one who garbles an incorrect circuit ---
+standard techniques exist: cut-and-choose (garble $kappa$ circuits, open half
+for inspection, evaluate the rest) and dual execution (both parties garble and
+evaluate, then compare via an equality test, with one bit of leakage). Either
+composes with STARK verification, which proves correct evaluation of whichever
+circuit is selected. Neither is implemented in the repository.
 
-These extensions compose naturally with STARK verification (the STARK proves correct evaluation of whichever circuit was selected in cut-and-choose).
+=== PRF assumption on Poseidon2
 
-=== PRF Assumption on Poseidon2
+Poseidon2 @poseidon2 is a 2023 construction. The permutation has been analyzed
+for collision resistance, preimage resistance, and algebraic attacks
+(Gröbner basis, interpolation, differential and linear), with claimed
+complexities above $2^(128)$ for this parameterization, but it has not received
+the decades of cryptanalysis applied to AES. A future break of Poseidon2's PRF
+security would invalidate garbling privacy; it would not affect the integrity
+properties of the surrounding STARK.
 
-Poseidon2 @poseidon2 is a relatively recent construction (2023). While the permutation has been analyzed for collision resistance, preimage resistance, and algebraic attacks (Grobner basis, interpolation, differential/linear), it has not undergone the decades of cryptanalytic scrutiny applied to AES. The concrete security bounds from @poseidon2 give:
+== Relation to prior work <app-prior>
 
-- Algebraic attack complexity: $> 2^(128)$ for the 21-round parameterization
-- Statistical attack complexity: $> 2^(128)$ (wide trail strategy)
+*Yao @yao86* introduced garbled circuits as the foundational technique for
+secure two-party computation. The construction here follows the standard Yao
+framework, differing in the garbling PRF and in the encryption group.
 
-We consider this adequate for the application (private threshold comparisons with economic, not nation-state, adversaries) but note that a future break of Poseidon2's PRF security would invalidate garbling privacy.
+*Bellare, Hoang, and Rogaway @bhr12* formalized garbling-scheme security via
+simulation-based definitions. The security argument above targets prv.sim: the
+garbled circuit together with the output labels is simulatable from the circuit
+topology and the output alone.
 
-== Relation to Prior Work
+*Jawurek, Kerschbaum, and Orlandi @jawurek13* introduced verifiable garbled
+circuits, where the evaluator proves correct evaluation in zero knowledge,
+using Sigma protocols and cut-and-choose. Replacing that mechanism with a STARK
+yields a non-interactive, publicly verifiable, succinct proof of evaluation.
 
-*Yao @yao86* introduced garbled circuits as the foundational technique for secure two-party computation. Our construction follows the standard Yao framework, differing only in the choice of garbling PRF.
+*Grassi et al. @poseidon2* designed Poseidon2 as an arithmetization-friendly
+hash for use inside SNARKs and STARKs. The construction here extends its role
+from commitment and hashing to garbling: a PRF for encryption rather than a
+compression function for Merkle trees.
 
-*Bellare, Hoang, and Rogaway @bhr12* formalized garbling scheme security via simulation-based definitions (prv.sim, prv.ind, obv.sim). Our security argument targets prv.sim: the garbled circuit together with the output labels can be simulated given only the circuit topology and the output.
+*CAPSS @capss24* builds signatures from arithmetization-oriented permutations
+inside proof systems --- the closest prior work in spirit: an AO primitive
+supplying cryptographic functionality (signatures there, garbling here) inside
+an arithmetic circuit.
 
-*Jawurek, Kerschbaum, and Orlandi @jawurek13* introduced verifiable garbled circuits, where the evaluator proves correct evaluation via zero-knowledge proofs. Their construction uses Sigma protocols and cut-and-choose. We replace this with a STARK, gaining non-interactivity, public verifiability, and succinctness.
+*Free XOR and half-gates* (Kolesnikov and Schneider 2008; Zahur, Rosulek, and
+Evans 2015) reduce garbled-circuit size using the involutive structure of XOR
+over correlated labels (a global offset). The field-additive encryption used
+here samples labels independently and has no two-torsion, so these
+optimizations do not transfer; every gate carries four ciphertexts. For the
+31-gate comparison circuit the absolute cost is small.
 
-*Grassi et al. @poseidon2* designed Poseidon2 as an arithmetization-friendly hash for use inside SNARKs/STARKs. We extend its application from commitment/hashing to garbling---using it as a PRF for encryption rather than merely for Merkle trees.
+== Security definitions
 
-*CAPSS @capss24* constructs digital signatures from arithmetization-oriented permutations inside proof systems. This is the closest prior work in spirit: both use AO primitives for cryptographic functionality (signatures there, garbling here) inside arithmetic circuits.
+For completeness, the formal target.
 
-*Free XOR and Half-Gates* (Kolesnikov and Schneider 2008; Zahur, Rosulek, and Evans 2015) reduce garbled circuit size by encoding XOR gates without ciphertexts. These optimizations are orthogonal to our PRF choice and apply directly: XOR gates require no Poseidon2 evaluations, and half-gates reduce AND gate cost by 50%.
-
-== Security Definitions
-
-For completeness, we state the formal security property.
-
-*Definition (prv.sim, adapted from @bhr12).* A garbling scheme $cal(G) = ("Garble", "Eval", "Decode")$ satisfies prv.sim if there exists a PPT simulator $cal(S)$ such that for all PPT distinguishers $cal(D)$, circuits $C$, and inputs $x$:
+*Definition (prv.sim, adapted from @bhr12).* A garbling scheme $cal(G) =
+("Garble", "Eval", "Decode")$ satisfies prv.sim if there exists a PPT simulator
+$cal(S)$ such that for all PPT distinguishers $cal(D)$, circuits $C$, and
+inputs $x$:
 
 $ |Pr[cal(D)("Garble"(C, x)) = 1] - Pr[cal(D)(cal(S)(C, C(x))) = 1]| <= "negl"(lambda) $
 
-where $"Garble"(C, x)$ outputs the garbled circuit $tilde(C)$ and input labels $tilde(x)$, and $cal(S)(C, C(x))$ receives only the circuit topology and the output value.
+where $"Garble"(C, x)$ outputs the garbled circuit $tilde(C)$ and input labels
+$tilde(x)$, and $cal(S)(C, C(x))$ receives only the circuit topology and the
+output value.
 
-*Claim.* Under the assumption that $"P2": FF_p^(16) -> FF_p^8$ (first 8 outputs of width-16 Poseidon2) is a $(t, epsilon)$-secure PRF for $t = 2^(124)$ and $epsilon = 2^(-124)$, our construction satisfies prv.sim with $lambda = 124$.
+*Claim.* Under the assumption that $"P2": FF_p^(16) -> FF_p^8$ (the first 8
+outputs of the width-16 Poseidon2 permutation) is a $(t, epsilon)$-secure PRF
+for $t = 2^(124)$ and $epsilon = 2^(-124)$, the construction satisfies prv.sim
+with $lambda = 124$ at the garbling layer.
 
-The reduction is standard: the simulator constructs fake garbled tables by replacing all non-output labels with fresh random values and computing ciphertexts as $"P2"("random input") xor "random label"$. Distinguishing real from simulated requires distinguishing P2 outputs from random, contradicting the PRF assumption.
+The reduction is standard: the simulator replaces all non-output labels with
+fresh random values and computes ciphertexts as $"P2"("random input") +
+"random label"$; distinguishing real from simulated tables then requires
+distinguishing P2 outputs from uniform, contradicting the PRF assumption. The
+composed posture of a proof-carrying verdict remains as stated in
+@app-stark-scope: the engine's quantified soundness at the deployed apex, not
+this bound, is the governing figure.

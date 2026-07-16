@@ -6,8 +6,8 @@
 = The proof architecture: ARGUS and path preservation <sec-proof-arch>
 
 @sec-proofs states what a proof says: a verifier holding one root learns the
-whole history. This section is how that claim is kept *honest as the proof system
-itself changes shape*. The arithmetization is not frozen --- the field, the
+whole history. This section is how that claim survives change in the proof
+system itself. The arithmetization is not frozen --- the field, the
 commitment layout, and the per-effect circuits evolve --- and a verified
 substrate has to guarantee that evolution never opens a gap the @sec-intro
 adversary, the server that ran the protocol wrong, can slip through. The
@@ -22,12 +22,12 @@ certificate *about* a run but an internal witness *of the protocol's correct
 evolution*. A light client that checks one aggregate root is fooled exactly when
 it can be convinced of a transition the kernel would not have produced; the
 circuit is built so that no such proof exists. This is the negation @sec-intro
-names --- the *pale ghost*, a history that verifies but never happened --- and
-the whole circuit architecture is derived from ruling it out, not from matching
-whatever the executor's host implementation happened to compute.
+names --- a history that verifies but never happened --- and the circuit
+architecture is derived from ruling it out, not from matching whatever the
+executor's host implementation happened to compute.
 
 Unfoolability decomposes into three properties the per-turn proof must have
-jointly, and each is a discharged obligation rather than a hope:
+jointly, and each is a discharged obligation:
 
 - *non-malleable* --- the proof binds every guarantee-relevant field of the
   transition, so it cannot be re-pointed at a different pre-state, post-state,
@@ -53,9 +53,7 @@ and the circuit reading (`compile`) are obtained from the *same* descriptor, and
 the receipt-level weld #lean("Argus.Receipt.argus_circuit_executor_receipts_agree")
 proves they cannot disagree. Because the circuit reading is generated, not
 hand-authored, there is no second source of truth to drift: a coverage gap is
-closed by emitting from a proved Lean module, and the worthwhile semantics the
-proof attests is *derived from the unfoolability requirement*, never inherited
-from a lossy host encoding. The per-effect statements live in
+closed by emitting from a proved Lean module. The per-effect statements live in
 `Circuit/Argus/Effects/`; the aggregate realization is the Argus strand
 (#lean("Argus.Aggregate.argus_strand_light_client"),
 #lean("Argus.Aggregate.tampered_argus_strand_rejected")).
@@ -149,12 +147,44 @@ system's own evolution*: the aggregate a light client checks
 rotated, chained legs, so no finalized turn need fall back to an unverified path on
 account of its shape.
 
-#emph[Scope.] The rotated cohort covers the live-path effects; two effect kinds
-whose circuits require constructions the current per-row arithmetization does not
-express (a capability-revocation circuit under active reshaping, and a custom
-recursive-binding effect) resolve fail-closed to the monolithic path rather than
-to a rotated descriptor. The chaining mechanism and its per-leg binding are proven,
-and the chained path is staged additively beside the monolithic legacy path --- the
-fail-closed floor that keeps every shape provable --- with the live cutover of
-every heterogeneous shape, and the consequent retirement of the legacy path, the
-in-progress edge. @sec-limitations states this as a checkable fact, not a roadmap.
+#emph[Scope.] The rotated cohort covers every live effect kind. The resolver
+that names a descriptor for an effect returns one for every selector the wire
+enum carries; its fail-closed arm is reached only by the structural no-op and by
+unknown selectors, and a registry test pins the resolver's output to the exact
+membership of the Lean-emitted registry
+(`residue_is_empty_every_live_selector_resolves` in
+`circuit/src/effect_vm/trace_rotated.rs`). The two effect kinds that formerly
+resolved outside the cohort now resolve inside it. Capability revocation proves
+through its rotated descriptor, a held-membership map read composed with a
+zero-value removal write; separately, the revocation-freshness circuit --- the
+last deployed first-party circuit whose constraints were authored in Rust --- is
+emitted from a proved Lean module (`Circuit/Emit/NonRevocationAdjacencyEmit`) as
+a depth-general composition of a membership-adjacency half and an ordering half,
+with the emitted bytes pinned to the committed golden the prover loads. The
+custom effect --- a cell program whose domain constraints are proven in an
+external sub-proof --- resolves to a descriptor carrying the
+recursive-proof-binding constraint kind (#lean("DescriptorIR2.ProofBind")): the
+row's proof-commitment and program-key columns are published as public inputs
+(#lean("EffectVmEmitRotationV3.customPiExposure")), and the per-turn fold ties
+them to the folded sub-proof leaf. That binding is a theorem on the same floor
+as every other effect --- a verifying aggregate forces the published commitment
+to be backed by a verifying sub-proof whose program key is uniquely determined,
+and a forged commitment with no backing sub-proof makes the aggregate
+unsatisfiable (#lean("CustomBindingFromFold.custom_binding_from_fold"),
+#lean("CustomBindingFromFold.custom_companion_grounded")).
+
+There is no unproven path beneath this coverage. The hand-rolled STARK engine is
+deleted from the tree; the descriptor prover over the byte-pinned registry is
+the only production proving path, and a resolver miss is a typed refusal, never
+a route to a hand-authored circuit. A repository gate keeps the coverage claim
+from rotting: `circuit-prove/tests/law1_enforcement_gate.rs` scans every source
+file of the two circuit crates for constraint algebra in each of the three
+dialects it can take --- symbolic builder calls, evaluation closures, and
+constraint-expression data --- against a frozen per-file baseline. A new file
+containing constraint algebra fails the build; a listed file that grows fails
+the build; shrinking is always allowed. The baseline's remaining entries are
+classified rather than amnestied: interpreters that evaluate Lean-emitted
+constraints, a proved-faithful encoding lowering, drift-detector twins the
+emitted paths check against at build time, and the user-facing predicate
+grammar. A hand-authored constraint therefore cannot re-enter a deployed
+circuit without turning the build red.

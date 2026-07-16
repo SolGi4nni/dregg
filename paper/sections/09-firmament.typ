@@ -113,13 +113,41 @@ seal, ship, restore-verified, unseal.
 
 == Status
 
-The firmament is a design with a runnable core and a characterized frontier.
-The local#h(0pt)$arrow.l.r$#h(0pt)distributed capability bridge runs against the
-real executor (@sec-realization); the snapshot model and its root tooth are live
-in the durable store; and the seL4 realization of the substrate --- the protection
-domains, the on-device prover, and the boundary between them --- is the subject of
-@sec-sel4, where the heart that runs the verified executor on the microkernel is
-the one characterized blocker. The firmament's claims that are *theorems today*
-are the capability unification, the `n = 1` collapse, and the recovery equation;
-its claims that are *engineering in progress* are the executor protection domain
-and the device edges, stated plainly in @sec-sel4 and @sec-limitations.
+The section's claims divide into theorems and running artifacts. The theorems
+are the capability unification, the `n = 1` collapse, and the recovery
+equation, each cited above to its Lean name. Three artifacts run.
+
+The capability bridge runs against the real executor. The bridge crate
+(`sel4/dregg-firmament/`) routes local and distributed invocations through the
+attenuation gate the Lean development proves, and its tests exercise both
+backings, including boot, isolation, and surface migration.
+
+The snapshot model and its root tooth are live in the durable store
+(`persist/src/snapshot.rs`). The shipper records the reconstructed root with
+the snapshot; the joiner recomputes the root from `checkpoint ⊕ overlay` and
+refuses a mismatch.
+
+The executor protection domain runs. The verified entry the node calls ---
+`dregg_exec_full_forest_auth`, the admission gate over `execFullForestG` ---
+commits a turn inside a seL4 protection domain booted under
+`qemu-system-aarch64` and emits the accepted receipt over serial. The boot
+evidence and the build pipeline that produced it are in-tree
+(`sel4/dregg-pd/executor-rootserver/`, `sel4/dregg-pd/executor-pd/`): the
+proof closure recompiled to ELF under `leanc`, the Lean runtime rebuilt from
+the toolchain's sources with its event-loop dependency excised, and GMP
+cross-built for the target. The same executor is a Microkit protection domain
+in the multi-PD assembly (`sel4/dregg.system`); its capability partition
+grants the turn-input region read-only and the commit-output region
+read-write, and no device capability. An ingress domain accepts a signed turn
+over TCP, verifies the Ed25519 signature at the edge, and stages only an
+accepted turn into the executor's input region (`sel4/dregg-pd/net-client/`).
+
+The device edges that remain, surveyed at the current tree: the durable-store
+domain holds its seat in the assembly but not yet a block-device capability,
+so durable commit without leaving the assembly --- the store backend over a
+raw block capability --- is open; the display domain scans out as the sole
+holder of the display device capability, and the verified per-viewer
+projection as that domain's render path is open (@sec-deos); the verifier
+domain enforces the one-way executor-to-verifier edge through its capability
+partition, and on-device checking of the deployed descriptor proofs is open
+(@sec-sel4). @sec-sel4 takes up the protection-domain partition in full.

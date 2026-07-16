@@ -7,8 +7,8 @@
 
 deos is the firmament made visual. It is the userlayer a human or an agent
 touches --- windows, the surfaces they render, the compositor that draws them ---
-built so that every visual and interactive primitive *reduces to a kernel
-theorem*. It adds no new trust: a window is a capability, an interaction is a
+built so that every visual and interactive primitive reduces to a kernel
+theorem. It adds no new trust: a window is a capability, an interaction is a
 turn, and what a viewer may see or do is decided by the capabilities they hold.
 The mathematics is the firmament's existing mathematics --- attenuation, the
 admission gate, the receipt chain, unfoolability --- restated for pixels,
@@ -23,8 +23,9 @@ notify-only surface confers no Granovetter edge at all
 showing someone a window does not hand them the power to act through it. Narrowing
 a surface to fewer rights cannot amplify
 (#lean("Deos.surface_attenuate_no_amplify"), an instance of the @sec-authority
-attenuation law). This is the foundation deos shares with no conventional desktop:
-the right to see is separated from the right to act, and both are capabilities.
+attenuation law). This separates deos from a conventional desktop at the
+foundation: the right to see is distinct from the right to act, and both are
+capabilities.
 
 The interaction model is declarative and server-rendered in the web's style, with
 the ambient-authority soup removed. A cell publishes named, typed *affordances*
@@ -66,7 +67,7 @@ the rendered surface, the central web-framework guarantee
 
 == The rehydratable surface
 
-The primitive that only this substrate can offer is the *rehydratable surface*. A
+The primitive this architecture makes possible is the *rehydratable surface*. A
 deos snapshot --- a "screenshot" --- is a frame of the certified compositor over
 the witness graph, and what it actually embeds is a *sturdy reference behind a
 membrane*: a persistable, attenuable capability that, when the image is opened,
@@ -98,25 +99,43 @@ graph captured the scene's nondeterminism --- so the membrane *types* every
 reacquisition with one of three values: ${"Live", "ReplayedDeterministic",
 "ReconstructedApproximate"}$. The type is not a label of good intent; it is a
 *proven confinement readout*, computed from what the witness graph actually
-attested. The crown theorem is that #emph[ReplayedDeterministic] is *exactly* the
-confined fragment: for a non-live context, it classifies as ReplayedDeterministic
-if and only if every interaction it made was a witnessed, attested turn
-(#lean("Deos.replayedDeterministic_iff_confined")). A context whose nondeterminism
-all flowed through attested turns can be replayed deterministically by construction
-(#lean("Deos.replayedDeterministic_replays"), riding the receipt-chain
-tamper-evidence of @sec-proofs); a context that reached for nondeterminism *outside*
-the membrane --- an unwitnessed clock, an ambient random draw, an un-attested
-external call --- is intrinsically #emph[ReconstructedApproximate], because the
-very thing that made it nondeterministic was never captured. So the liveness type
-is a readout of confinement, not a claim of honesty: the system cannot misreport
-which kind of true an opened image hands a viewer, because the classification is
+attested. The central theorem is that #emph[ReplayedDeterministic] is *exactly*
+the confined fragment: for a non-live context, it classifies as
+ReplayedDeterministic if and only if every interaction it made was a witnessed,
+attested turn (#lean("Deos.replayedDeterministic_iff_confined")). A context whose
+nondeterminism all flowed through attested turns can be replayed deterministically
+by construction (#lean("Deos.replayedDeterministic_replays"), riding the
+receipt-chain tamper-evidence of @sec-proofs); a context that reached for
+nondeterminism *outside* the membrane --- an unwitnessed clock, an ambient random
+draw, an un-attested external call --- is intrinsically
+#emph[ReconstructedApproximate], because the very thing that made it
+nondeterministic was never captured. The classifier partitions non-live contexts
+with no third bucket (#lean("Deos.reconstructedApproximate_iff_unconfined")), and
+a structurally invalid attestation --- one lacking quorum --- cannot launder a
+context into the replayable class
+(#lean("Deos.invalidAttestation_not_replayed")). So the liveness type is a
+readout of confinement, not a claim of honesty: the system cannot misreport which
+kind of true an opened image hands a viewer, because the classification is
 derived from the attested record rather than asserted over it.
+
+== What runs
 
 The Lean development is kernel-clean throughout: each of these is an existing
 kernel proof --- attenuation, the admission gate, the receipt chain, projection
---- restated for surfaces, with the one honest seam being the digest
-collision-resistance the replay payoff carries as a named hypothesis (the same
-floor carrier of @sec-assurance), never an axiom and never an admitted goal. The
-Rust realization of the rehydration and affordance stack ships in
-`starbridge-web-surface`; the certified compositor as a sole-framebuffer
-protection domain is the frontier piece, @sec-sel4.
+--- restated for surfaces. The single named hypothesis is the receipt-digest
+injectivity the replay payoff carries (the same floor carrier of @sec-assurance),
+stated as a hypothesis, never an axiom and never an admitted goal. The Rust
+realization of the rehydration and affordance stack ships in
+`starbridge-web-surface`.
+
+On the microkernel, the display edge boots. `dregg-graphical.system` is a seL4
+Microkit image whose compositor-fb protection domain is the sole holder of the
+display device capability --- the `fw_cfg` MMIO region --- and of a 2 MiB DMA
+framebuffer. The domain configures the `ramfb` scanout over `fw_cfg`, draws into
+the framebuffer, and the scanned-out frame matches the written bytes pixel for
+pixel (`sel4/build/dregg-graphical.img`;
+`docs/desktop-os-research/GRAPHICAL-SEL4-BOOT.md`). The one-device-cap-per-domain
+discipline of @sec-sel4 therefore reaches glass. What remains is the render path
+above it: the pixels that domain currently draws are a static splash, and the
+open piece is running the verified per-viewer projection as that domain's frame
+source, with the compositing theorems gating what reaches the framebuffer.
