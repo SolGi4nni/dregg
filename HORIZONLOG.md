@@ -1,5 +1,21 @@
 # HORIZONLOG — the named-follow-up burn-down
 
+## TOKENOMICS grounding sweep → docs/TOKENOMICS.md canonical + paper swarm (2026-07-16)
+7-lane grounding sweep (dreggfi/fhegg/vault/computrons/launchpad/games/holdings) + full paper census; canonical
+statement now `docs/TOKENOMICS.md`. Follow-ups minted:
+- **Computron purchase path is an open DESIGN DECISION**: no peg/oracle/purchase path computron↔any-token exists;
+  docking points = `relay_service.rs` `FeePolicy.external_rate_micros` (disabled), Payable rail, fee-well cells.
+  "Pay in any unit" is policy-layer, not kernel; DrEX rings the natural market-rate venue (VISION).
+- **$DREGG bond sink unbuilt + counseled-against naïvely**: operator stake/slash runs on computrons; launchpad bonds
+  ETH; `FHEGG-CODEX-ROUND4.md:263` argues token-denominated bonds lose value exactly at misconduct → any $DREGG
+  collateral design must be quote-asset-aware. (There is NO fhegg lockup-collateral mechanism in the repo.)
+- **relay_dispute.rs doc contradiction**: `:120-121` says remainder is a CONSERVING transfer, `:123,:356` say
+  "BURNED" — reconcile before quoting supply mechanics externally (mechanism as coded = Transfer to remainder_dest).
+- **dregg-pay mainnet go-live runbook unfired** (`docs/ops/PAYMENTS-GO-LIVE.md`): zero real $DREGG ever accepted for
+  a service; the deployed game surface carries no payment env.
+- **Paper**: 22-lane reground/rewrite swarm launched (17 rewrites + games/interchain/economics/PQ new sections +
+  abstract redraft); integrate includes + typst compile + adversarial audit after harvest.
+
 ## ⚑ LAUNCH-READINESS AUDIT + workstreams (2026-07-15) — "no mainnet/product yet?" is FAIR; the disease is "green on ember's laptop"
 Inbound "No mainnet or working product yet? @DreggNet" → 4 harsh parallel audits (buildability, VK/pinning,
 deployed-vs-claimed, soundness). ONE disease across all axes: the real system lives in ember's ~/dev layout +
