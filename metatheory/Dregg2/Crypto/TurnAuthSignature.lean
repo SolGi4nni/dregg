@@ -6,12 +6,20 @@
 rejects a wrong `R`, double-and-add `daa_correct` realizes the scalar action, and `SchnorrDLHard` is
 the named curve assumption at the bottom.
 
-This file closes the LIGHT-CLIENT gap above that structure: the proof-carrying rotated path performs
-NO signature check, so a ledgerless verifier concludes only "SOME valid transition exists", NOT "the
-RIGHTFUL AGENT authorized THIS turn". The turn IS signed (the agent signs the turn hash), but that
-signature is verified OFF-circuit. Here we model the IN-CIRCUIT forcing layer
-(`circuit/src/turn_auth_signature_air.rs`): a signature-bearing turn-auth descriptor whose verified
-boundary equation BINDS the agent public key and the signed turn hash, so
+This file models the IN-CIRCUIT forcing layer that WOULD close the LIGHT-CLIENT gap above that structure:
+the proof-carrying rotated path performs NO signature check, so a ledgerless verifier concludes only
+"SOME valid transition exists", NOT "the RIGHTFUL AGENT authorized THIS turn". The turn IS signed (the
+agent signs the turn hash) and that signature is verified OFF-circuit (native ed25519, in `turn/`).
+
+⚠ **RETIREMENT NOTE (2026-07-16) — this is a NAMED OPEN OBLIGATION, not a closed hole.** The Rust that
+would realize this in-circuit forcing, `circuit/src/turn_auth_signature_air.rs`, was self-described
+"ADDITIVE; not live-wired" and was DELETED (commit `f7d09d5f5`) as dead pre-law algebra. So the in-circuit
+forcing is NOT deployed: today, turn-auth rests on OFF-circuit ed25519 verification, and a light-client that
+sees only the rotated proof still cannot conclude the rightful agent authorized this turn. The theorems
+below prove the abstract forcing STRUCTURE — the specification a future Lean-EMITTED turn-auth circuit must
+discharge (law #1: emit it, do not hand-author). Earlier prose called this "the named scale obligation
+(Rust module), NOT an open hole"; with the additive AIR retired, it is honestly a named OPEN obligation.
+The modeled descriptor is: a signature-bearing turn-auth descriptor whose verified
 
   `TurnAuthVerified ⟹ the holder of `agentPk` signed `turnHash``  (under the named curve assumption).
 

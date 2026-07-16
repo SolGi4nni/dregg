@@ -2,9 +2,19 @@
 # Dregg2.Crypto.SchnorrCurveField — the soundness STRUCTURE under the in-circuit Schnorr curve.
 
 The confidential-VALUE path runs an in-circuit Schnorr signature over an elliptic curve defined over
-`BabyBear^8 = F_p[z]/(z^8 - 11)` (`p = 2^31 - 2^27 + 1`). The Rust side
-(`circuit/src/babybear8.rs`, `circuit/src/schnorr_curve.rs`, `circuit/src/schnorr_air.rs`) rebuilt
-this to a REAL field over a PRIME-order curve and pins it with Rust tests + a PARI point-count.
+`BabyBear^8 = F_p[z]/(z^8 - 11)` (`p = 2^31 - 2^27 + 1`). The Rust field/curve primitives
+(`circuit/src/babybear8.rs`, `circuit/src/schnorr_curve.rs`) rebuilt this to a REAL field over a
+PRIME-order curve and pin it with Rust tests + a PARI point-count.
+
+⚠ **RETIREMENT NOTE (2026-07-16).** The Rust AIR this file's §3 pillar mirrored,
+`circuit/src/schnorr_air.rs`, was DELETED (commit `f7d09d5f5`) as dead pre-law hand-authored algebra —
+591 lines, no Lean twin, unassured, reachable only through the never-live-wired `turn_auth_signature_air`.
+So the theorems below remain kernel-clean structure results, but their DEPLOYED anchor for the AIR-side
+pillar (§3) is retired: there is currently NO deployed in-circuit Schnorr verification AIR. Per architectural
+law #1, when a confidential-value signature circuit is deployed it must be EMITTED FROM LEAN
+(`Dregg2/Circuit/Emit/*.lean`), not hand-authored — at which point this structure discharges its emission,
+not a corpse. `babybear8.rs` + `schnorr_curve.rs` (the field/curve primitives) DO still exist and are cited
+truthfully above; only the AIR limb was dead.
 
 Three facts carry the soundness of that rebuild. This file separates, for each, the part that is a
 genuine THEOREM (provable structure — formalized here, kernel-clean) from the part that stays a
@@ -254,9 +264,11 @@ theorem composite_annihilator_proper_suborder :
 
 /-! ## §3 — Pillar 3: the AIR enforces the Schnorr verification relation `s·G + e·pk == R`.
 
-`schnorr_air.rs::check_trace_constraints` witnesses `s·G` and `e·pk` via double-and-add and the
-final boundary asserts `s·G + e·pk == R`. The soundness-relevant content is: an accepting trace on
-public `R'` PINS `R' = s·G + e·pk`. We state the verification relation as a first-class predicate over
+The RETIRED `schnorr_air.rs::check_trace_constraints` (see the retirement note at the top — deleted as
+dead pre-law algebra) witnessed `s·G` and `e·pk` via double-and-add with a final boundary asserting
+`s·G + e·pk == R`. The soundness-relevant content this file formalizes ABSTRACTLY is: an accepting trace
+on public `R'` PINS `R' = s·G + e·pk`. This is now the specification a FUTURE Lean-EMITTED value-path
+signature circuit must satisfy, not a mirror of deployed Rust. We state the verification relation as a first-class predicate over
 an abstract additive group of curve points (the group law is mathlib's `AddCommGroup`; the curve's
 specific `add`/`double` are the Rust executable model, exercised by `scan_computes_scalar_products`),
 parameterised by a `ScalarMul` action giving `s·G`. The forgery tooth mirrors
