@@ -36,10 +36,6 @@
 //! - `output_label_hash`: Poseidon2 hash of the output label (verifier checks against
 //!   known true/false label hashes).
 
-use crate::constraint_prover::{Air, Constraint};
-use crate::field::BabyBear;
-use crate::garbled::GateEvalRecord;
-
 // ============================================================================
 // Column layout
 // ============================================================================
