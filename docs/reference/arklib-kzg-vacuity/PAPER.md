@@ -712,51 +712,84 @@ non-vacuous* from *paper argument, frontier*.
   win predicate is field-level (group-faithfulness argued, §8.2); it is a self-contained model, not yet
   wired to ArkLib's `tSdhExperiment`. Axioms `[propext, Classical.choice, Quot.sound]`. (`GgmCandidate.lean`;
   the equivalent algebraic-model framing is `AlgebraicTSdh.lean`.)
+- **The ADAPTIVE generic-group numeric bound — `q`-query, identical-until-bad proven.**
+  `adaptive_ggm_sound` (with `card_realWinSet_le`, `realWinSet_subset`, `runAux_congr_of_agree`,
+  `card_rootUnion_le`, `adaptive_bound_lt_one`, `adaptive_generalizes_static`): the `q = 0` static bound
+  above pushed to an adversary that makes up to `fuel` **adaptive oracle queries** — group operations
+  (`ZMod p`-linear combinations), pairings (`G₁×G₂→Gₜ` polynomial products), and **equality tests** — before
+  committing its output. The generic-group oracle (`runAux`) carries handles as `ℕ` indices into a table of
+  formal `Z_p[X]` polynomials seeded with the SRS, and answers equality *symbolically* (τ never enters the
+  adversary's view). The crux, **Shoup's identical-until-bad, is PROVEN by induction not assumed**
+  (`runAux_congr_of_agree`: two oracles agreeing on every queried pair produce identical runs), yielding the
+  set-level `W₀ ⊆ W₁ ∪ F` (`realWinSet_subset`) — the real winning trapdoors are contained in the bad-event
+  set plus the static win set of the τ-independent symbolic output. Composed with the union Schwartz–Zippel
+  bad-event bound and the reused static core, the success experiment is
+  `≤ (fuel·Δ + (D+1))/(p−1)` — Boneh–Boyen's static root event `(D+1)` plus Shoup's collision event
+  `(#queries)·Δ` — a genuine rational `< 1` whenever `fuel·Δ + (D+1) < p−1`. At faithful SRS degrees
+  `Δ = D+1`; `fuel = 0` recovers exactly the static `(D+1)/(p−1)` (`adaptive_generalizes_static`). Axioms
+  `[propext, Classical.choice, Quot.sound]`. **Scope (honest):** this is the *explicit-equality-oracle*
+  (Maurer abstract-handle) GGM, in which learning equality costs a query — hence the bound is **linear in
+  the number of equality queries**, strictly tighter than the classical `~(q_G+D)²(D+1)/(p−1)` of Shoup's
+  *random-encoding* model, where equality of visible encodings is free and the bad event ranges over all
+  table pairs (§9.2). The two degree facts (output handle degree ≤ D; queried-handle differences degree
+  ≤ Δ) enter as explicit hypotheses — the SRS degree invariant, the same idiom as the static adversary's
+  `degree_le` field — satisfied structurally by the faithful group-op discipline and discharged
+  automatically at `fuel = 0`. Not yet wired to ArkLib's `tSdhExperiment` (§9.2). (`GgmAdaptive.lean`.)
 - **The vacuity is systemic, not t-SDH-specific.** `not_qDlogAssumption` (`KzgQDlogVacuity.lean`): the
   natural q-DLOG base assumption in ArkLib's own unrestricted-adversary idiom is *equally* false below
   error `1`, by the identical `Classical.choice` extraction (with a discriminating canary,
   `experiment_discriminates`). Confirms §3.6: renaming the assumption does not escape the pattern. Imports
   genuine ArkLib at `d72f8392`; axiom-clean.
 
-### 9.2 Paper argument, named formalization frontier (NOT yet in Lean)
+### 9.2 What remains: from the mechanized adaptive core to the classical Shoup number
 
-With the **static** generic-group bound now mechanized (§9.1), the frontier has narrowed to the **full
-adaptive** Boneh–Boyen / Shoup development of Sections 4–7 — the `q`-query adversary with equality tests
-and collision branching, whose bound is the same shape but strictly larger,
-`(q_G + D + 3)²(D + 1)/(p − 1)`. It is the classical argument, verified here against the source, and stated
-as the theorem the fix should eventually contain — but the following are open, and we name them rather than
-fake them:
+The **static** bound is mechanized (§9.1), and the **adaptive** identical-until-bad development of
+Sections 4–7 is now mechanized *for the explicit-equality-oracle (Maurer) model* (`GgmAdaptive.lean`,
+§9.1): the opaque symbolic oracle, the simulation/coupling lemma, and the composed `q`-query bound all
+build sorry-free with a clean axiom closure. What was, in the prior draft of this section, the full
+frontier is now three *named, scoped* residuals — smaller and sharper than "a from-scratch paper-sized
+development":
 
-- **The opaque symbolic model (Section 4).** ArkLib's `AGM/Basic.lean` is a WIP stub, not a foundation:
-  its `Adversary.run` is literally `sorry` (line 165), it proves *zero* theorems, it is orphaned (nothing
-  in the tree references it), and — decisively — it is **not opaque**: the `Adversary` is a
-  `ReaderT (GroupValTable ι G) …` handed the *actual* group table over the *concrete* group `G`, so its
-  scalar/control-flow outputs can still depend on discrete logs. Its own source comments carry the open
-  design questions ("*TODO: need to be sure this definition is correct*", "*How to make the adversary
-  truly independent of the group description?*", "*talk about AGM in the pairing setting*"). Building the
-  model means: three opaque handle tables initialized with the SRS as `Z_p[X]` polynomials; symbolic
-  execution of every oracle including the pairing; and an *opacity/parametricity invariant* (the adversary
-  must be a function of handles, not of `G`) — the last being the real gap, of which `run = sorry` is only
-  the smallest visible symptom.
-- **The simulation theorem (Section 5).** No identical-until-bad simulation between a concrete-group
-  experiment and a symbolic experiment exists in the tree. VCVio has `IdenticalUntilBad` lemmas, but they
-  consume `IsQueryBoundP` and are shaped for random-oracle reasoning, not generic-group simulation; they
-  are a *starting point*, not the theorem.
-- **The reduction transport (Section 7).** `binding_reduces_to_tSdh` *builds* a `tSdhAdversary` from a
-  binding adversary; to inherit the generic-group bound, that construction must itself be re-typed as a
-  straight-line/symbolic program and carried into the restricted adversary class.
+- **The classical quadratic (Shoup random-encoding) bound.** Our mechanized adaptive bound is
+  `(fuel·Δ + (D+1))/(p−1)`, **linear** in the number of equality queries, because our oracle *charges a
+  query for each equality test* (Maurer abstract-handle model) and the bad event `F` ranges over the
+  ≤ `fuel` *queried* pairs (`runAux_congr_of_agree` is exactly agreement on the queried pairs). Shoup's
+  original **random-encoding** model gives equality *for free* — the adversary compares any two visible
+  encoding strings — so there `F` ranges over all `\binom{N}{2}` same-group table pairs with
+  `N ≤ q_G + D + 4`, yielding the classical `~(q_G+D)²(D+1)/(p−1)`. Reaching that number means: (i) an
+  all-table-pairs bad event (not just queried pairs), and (ii) a whole-table degree invariant to bound
+  every pair's difference degree by `Δ`. Both are additions to the present development, not corrections
+  of it; our tighter linear bound is *sound for the model we state*, and is the honest number for an
+  explicit-equality-oracle GGM.
+- **Structural discharge of the degree invariant.** The two degree facts (`hdeg_out`, `hdeg_pairs`) are
+  supplied as hypotheses — the SRS/group-op degree bounds, the same idiom as the static adversary's
+  `degree_le` field, and discharged automatically at `fuel = 0` (`adaptive_generalizes_static`). Proving
+  them *structurally* for every faithful run (a degree-tracking oracle that tags handles by group `G₁/G₂/Gₜ`
+  and proves `lin` preserves the per-group degree bound and `pair : G₁×G₂→Gₜ` reaches only `D+1`) would
+  remove the hypotheses. This is bookkeeping over the same `runAux`, not new mathematics; it is named, not
+  faked.
+- **The reduction transport (Section 7, unchanged).** `binding_reduces_to_tSdh` *builds* a `tSdhAdversary`
+  from a binding adversary; to inherit the generic-group bound, that construction must be re-typed as a
+  straight-line/symbolic program in the `Strat` class and its field-level win predicate connected to
+  ArkLib's group-level `tSdhExperiment` via prime-order injectivity (`Limit (b)` of `SOUND-FIX-VERDICT`).
+  This is the field→group wiring that both the static and adaptive self-contained models still await.
+
+**On ArkLib's own `AGM/Basic.lean`.** It remains a WIP stub, not a foundation: `Adversary.run` is literally
+`sorry` (line 165), it proves *zero* theorems, it is orphaned, and — decisively — it is **not opaque**: the
+`Adversary` is a `ReaderT (GroupValTable ι G) …` handed the *actual* group table over the *concrete* group
+`G`, so its outputs can still depend on discrete logs. `GgmAdaptive.lean`'s oracle takes the opposite,
+sound stance: the adversary is a `Strat := List Bool → Move ⊕ Output` that receives **only** equality-query
+booleans, never `G`, never τ — the opacity invariant is *structural in the type*, which is exactly why the
+identical-until-bad induction goes through and the trapdoor-extraction attack is untypable.
 
 **Missing primitives, concretely.** The **static** bound of §8.2 needs only Mathlib's single-variable
-`Polynomial.card_roots'` (the `f·(X+c)−1` root count) and `Field (ZMod p)` from `Fact (Nat.Prime p)` —
-both present, hence its mechanization. The **adaptive** development needs infrastructure that is absent:
-there is no opaque-encoding oracle abstraction with a proven opacity invariant; no symbolic-execution
-semantics for a bilinear-group oracle set; no simulation/coupling lemma of the Section-5 form; and no
-`q`-DLog or `q`-SDH generic-group hardness *theorem* for the adaptive class anywhere in ArkLib, VCVio, or
-Mathlib. (Mathlib's `MvPolynomial.SchwartzZippel` and ArkLib's `SchwartzZippelCounting` would supply the
-*multivariate* terminal root-count the adaptive collision analysis needs — and nothing else.) This is why
-we characterize the **adaptive** numeric fix as a from-scratch, paper-sized development, while the static
-survives-attack number is done: the static bound is, as far as our census found, the first
-generic-group-model security theorem in Lean, and the adaptive theorem would complete it.
+`Polynomial.card_roots'` and `Field (ZMod p)`. The **adaptive** core (`GgmAdaptive.lean`) needed, and now
+supplies from scratch, what was absent from ArkLib/VCVio/Mathlib: an opaque-handle bilinear-group oracle
+(`runAux`), a generic-group identical-until-bad simulation lemma (`runAux_congr_of_agree` — VCVio's
+`IdenticalUntilBad`/`IsQueryBoundP` are ROM-shaped and were not reused), and a union Schwartz–Zippel
+bad-event bound (`card_rootUnion_le`) over Mathlib's `card_roots'`. As far as our census found, this is the
+first **adaptive** generic-group-model security theorem in Lean; the static bound was the first
+generic-group security theorem of any kind, and the residuals above sharpen — they do not gate — the claim.
 
 ### 9.3 What is verified vs. asserted, for the bounds
 

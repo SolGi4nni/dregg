@@ -21,6 +21,7 @@ closure printed. All are `sorry`-free with axioms exactly `[propext, Classical.c
 | Artifact | Headline theorem(s) | Build | Axioms |
 |---|---|---|---|
 | `GgmCandidate.lean` | `ggm_tSdh_sound`, `card_winningPoints_le`, `ggm_bound_lt_one` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
+| `GgmAdaptive.lean` (ADAPTIVE) | `adaptive_ggm_sound`, `runAux_congr_of_agree`, `realWinSet_subset`, `card_rootUnion_le`, `adaptive_generalizes_static` | exit 0 | `[propext, Classical.choice, Quot.sound]` |
 | `AlgebraicTSdh.lean` (novel) | `algExperiment_le`, `alg_survives_attack`, `algExperiment_zeroPoly` (canary) | exit 0 | clean |
 | `RepairSurvives.lean` (extraction) | `binding_reduces_to_tSdh`, `repair_survives_attack`, `t_sdh_cond_of_two_valid_openings` | exit 0 | clean |
 | `KzgQDlogVacuity.lean` (qdlog) | `not_qDlogAssumption`, `qDlogExperiment_trapdoorAdversary`, `experiment_discriminates` (canary) | exit 0 | clean |
@@ -86,13 +87,20 @@ and it delivers a real `ε`.
 
 ### Two honest scope limits (must travel with every citation)
 
-- **(a) STATIC, not adaptive.** The bound is the `q = 0` fragment: the adversary commits to one
-  output and makes **zero** group-operation / equality-test queries. The full Shoup / Boneh–Boyen
-  guarantee admits `q` adaptive queries with branching on observed collisions, giving a bound of
-  the *same shape but strictly larger*, `~(q + D + 3)²(D+1)/(p-1)`. The static number therefore
-  **does not upper-bound the adaptive adversary.** Full adaptive needs a formalized generic-group
-  oracle (equality-query transcript + distinct-polynomials-collide hybrid) that **neither Mathlib
-  nor VCVio has** — a multi-week formalization.
+- **(a) STATIC, now EXTENDED to ADAPTIVE (explicit-oracle model) — `GgmAdaptive.lean`.** The
+  `GgmCandidate.lean` bound is the `q = 0` fragment: the adversary commits to one output and makes
+  **zero** queries. This limit is now **closed for the explicit-equality-oracle (Maurer) GGM**:
+  `adaptive_ggm_sound` admits an adversary making up to `fuel` adaptive queries — linear combinations,
+  pairings, and equality tests — and bounds its success by `(fuel·Δ + (D+1))/(p−1)`, sorry-free,
+  axioms `[propext, Classical.choice, Quot.sound]`. **The identical-until-bad hybrid is PROVEN by
+  induction** (`runAux_congr_of_agree`), not assumed; `fuel = 0` recovers the static number exactly.
+  Two residuals remain (see PAPER §9.2), named not faked: (i) the *classical quadratic*
+  `~(q_G+D)²(D+1)/(p−1)` is Shoup's *random-encoding* model (free equality comparison → bad event over
+  all table pairs); our tighter **linear-in-queries** number is the honest bound for the model where
+  equality costs a query; (ii) the two degree facts enter as hypotheses (the SRS degree invariant,
+  same idiom as the static `degree_le` field), discharged at `fuel = 0` and structurally dischargeable
+  by a group-tagged degree-tracking oracle. The generic-group oracle + simulation lemma that **neither
+  Mathlib nor VCVio had** are now built from scratch in `GgmAdaptive.lean`.
 
 - **(b) FIELD-LEVEL win predicate, group-faithfulness ARGUED.** The win condition is stated at the
   field level (`f.eval τ = 1/(τ+c)`), not against ArkLib's actual group-level `tSdhExperiment`.
@@ -118,10 +126,13 @@ number holds.
   mechanized candidate that delivers a real `ε = (D+1)/(p-1) < 1` proven for the whole generic
   adversary type. Scope it as **static** every time.
 
-- **Full numeric bound (adaptive) → FRONTIER.** No candidate reaches the full adaptive
-  Boneh–Boyen / Shoup bound; it needs the generic-group oracle that is absent from Mathlib/VCVio.
-  `AGM` and `qdlog-direct` both correctly conclude the number ultimately routes back through this
-  generic-group hardness — they *relocate* the obligation, they do not discharge it.
+- **Adaptive numeric bound (explicit-oracle GGM) → `GgmAdaptive.lean` (MECHANIZED).** The
+  generic-group oracle that was absent from Mathlib/VCVio is now built, and the adaptive `q`-query
+  bound `(fuel·Δ + (D+1))/(p−1)` is proven sorry-free with the identical-until-bad hybrid mechanized
+  by induction. The classical *quadratic* Shoup (random-encoding) number and the field→group ArkLib
+  wiring are the two named residuals (PAPER §9.2). `AGM` and `qdlog-direct` correctly route their
+  numbers back through exactly this generic-group hardness — which `GgmAdaptive.lean` now discharges
+  for the static-and-adaptive explicit-oracle class.
 
 ---
 
