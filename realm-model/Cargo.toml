@@ -1,0 +1,38 @@
+[package]
+name = "realm-model"
+version = "0.1.0"
+edition = "2024"
+rust-version = "1.94.0"
+description = "The living-world MUD substrate model — persistent REALM / child INSTANCE, canonical IDENTITY, and the committed RULESET CATALOG, as first-class cell-backed objects. Engine-general, no game content. §9.2/§9.4/§9.5 of HOARDLIGHT-LIVING-WORLD.md."
+license = "AGPL-3.0-or-later"
+
+[dependencies]
+# The REAL cell/ledger primitives — the same Ledger + Cell + CellState +
+# FieldElement that node/src/mud_e2e.rs and node/src/shared_world.rs stand a
+# world up on. Realm state, instance state, identity, and the catalog are all
+# genuine cells on a genuine Ledger.
+dregg-cell = { path = "../cell" }
+# The REAL effect vocabulary — a realm turn carries `dregg_turn::action::Effect`,
+# the exact type mud_e2e fires (`Effect::SetField { cell, index, value }`), so
+# this model FITS that path rather than inventing a parallel one.
+dregg-turn = { path = "../turn" }
+dregg-types = { path = "../types" }
+blake3 = "1"
+
+# Standalone workspace: this crate is NOT a member of the root breadstuffs
+# workspace (the main loop adds it after). An empty `[workspace]` table makes
+# realm-model its own workspace root, exactly like dregg-tui — its path-deps
+# (dregg-cell / dregg-turn / dregg-types) ARE root-workspace members, so THEIR
+# `version.workspace = true` inheritance still resolves against the root.
+#
+# The path-dep crates' `p3-* = { workspace = true }` inherit from the ROOT
+# workspace (they are root members), so no p3 pins are needed here. But a
+# `[patch]` is scoped to the workspace being BUILT — it is NOT inherited from a
+# path-dep's workspace — so the one patch the dregg-turn graph requires
+# (dregg-hints needs `ark-serialize`'s `serde_with` feature, which lives only on
+# the emberian/algebra fork) must be repeated here, exactly as dregg-tui does.
+[workspace]
+
+[patch.crates-io]
+ark-serialize = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
+ark-serialize-derive = { git = "https://github.com/emberian/algebra", branch = "serde-integration" }
