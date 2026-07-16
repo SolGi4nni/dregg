@@ -15,6 +15,25 @@ exist and are **hand-reimplemented in Rust in multiple crates** without a portal
 Verdicts: CONFIRMED by the verify pass, DOWNGRADE (real but lower criticality),
 `?` (verify did not clearly match — treat as candidate, re-check before porting).
 
+## ⚠ Scoping the campaign — three portability tiers
+
+Not every finding is portable now. Classify each by whether the Lean *exists*:
+
+- **PORT-NOW** — a verified, exportable Lean decider exists today; the work is
+  `@[export]` + shim + wire + delete-Rust + differential-test. (The DUAL_AUTHORED
+  findings whose `lean_ref` is real: derives, the sorted-Merkle accumulator,
+  `QuorumThreshold` for non-Solana consumers, `grantWeightCore`.)
+- **AUTHOR-NEW** — no Lean yet, but authorable now (not chain-gated): a Lean
+  decider must be written first, then ported. (Datalog evaluator; DFA acceptance if
+  not covered by `derives`.) Bigger lanes.
+- **🔒 GRANT-GATED HOLD** — the Solana consensus/provenance/rooting/rotation model
+  (**Cluster B**, and the Solana-specific sites inside Cluster A). This is
+  DELIBERATELY not-yet-Lean: the formal Solana work is held pending the Solana
+  Foundation grant decision (yes → do it; no → pivot to a different chain). These
+  are **not wounds** — do NOT port them now. The chain-agnostic `QuorumThreshold`
+  arithmetic underneath them CAN be ported for the *non-Solana* consumers
+  (persist, lightclient, verifier-net); the Solana tally/rooting/rotation waits.
+
 ## Leverage clusters — port by shared decider, not file-by-file
 
 ### Cluster A — the quorum/supermajority tally (HIGHEST leverage)
@@ -94,12 +113,21 @@ structure / root-acceptance* logic is a candidate. Discern per-file before porti
 - The consensus-ordering lane found a STRONG-FORM export-swap already deployed for
   tau/2pc — the blocklace portal precedent to imitate.
 
-## Recommended sequence (leverage × readiness)
-1. **Cluster A quorum portal** — one `@[export]` supermajority decider, six consumers, retires the most-duplicated soundness arithmetic. Highest leverage, bounded.
-2. **Cluster E injection** (approved) → dfa — cheapest, deletes Rust against a verified decider; proves the byte-wire matcher portal.
-3. **Cluster D revocation** — reuse the already-deployed accumulator; two crates.
-4. **Cluster B Solana model** — biggest, HIGH; the trustless-bridge accept becomes a verified Lean object.
-5. **Cluster C Datalog** — the through-line; largest conceptual effort, most central.
+## Recommended sequence (leverage × readiness, grant-gating respected)
+PORT-NOW first (verified Lean exists), AUTHOR-NEW next, Solana HELD:
+1. **Cluster E injection** (approved) → dfa — PORT-NOW, cheapest; deletes Rust
+   against the verified `derives`; proves the byte-wire matcher portal end-to-end.
+2. **Cluster A quorum portal — NON-Solana consumers only** — PORT-NOW; `@[export]`
+   `QuorumThreshold.supermajorityThreshold`, wire persist/lightclient/verifier-net.
+   (The Solana bridge tally sites are 🔒 grant-gated — they inherit the same portal
+   later, for free, when the grant lands.)
+3. **Cluster D revocation** — PORT-NOW; reuse the already-deployed sorted-Merkle
+   accumulator; two crates (token + credentials).
+4. **Cluster C Datalog** — AUTHOR-NEW; the through-line, largest conceptual effort;
+   author the Lean Datalog evaluator, then port. Not chain-gated.
+5. **🔒 Cluster B Solana model** — HELD pending the Solana Foundation grant. When
+   it lands, it is the biggest single win (the trustless-bridge accept becomes a
+   verified Lean object) and it inherits the Cluster A quorum portal already built.
 
 Each port follows the ML-KEM shape: author/`@[export]` the Lean decider (byte-wire
 or `lean_object*` boundary), a `dregg-lean-ffi` shim, install it as the authority,
