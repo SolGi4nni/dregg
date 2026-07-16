@@ -35,11 +35,12 @@
 //! means ~hundreds of small proofs. Plonky3's `p3_uni_stark` over BabyBear
 //! is fast enough at this scale that the full crate runs in a few seconds.
 
+use dregg_circuit::dsl::circuit::DslCircuit;
+use dregg_circuit::dsl::dsl_p3_air::{prove_dsl_p3, verify_dsl_p3};
 use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 use dregg_dsl_runtime::circuit::{
     CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
 };
-use dregg_dsl_runtime::{prove_dsl_plonky3, verify_dsl_plonky3};
 
 use crate::predicates::Requirement;
 
@@ -73,8 +74,19 @@ fn drive(req: &Requirement) -> Result<Verdict, String> {
         Requirement::NotEqualU64(l, r) => Ok(drive_nonequality_u64(*l, *r)),
         Requirement::EqualBytes32(l, r) => Ok(drive_equality_bytes(l, r)),
         Requirement::NotEqualBytes32(l, r) => Ok(drive_nonequality_bytes(l, r)),
+        // Membership is skipped for a REAL reason (corrected 2026-07-16 — the old reason, "membership
+        // needs Poseidon2 gadgets which DslP3Air cannot inline at runtime", was a limitation of the
+        // RETIRED duplicate interpreter in dregg-dsl-runtime, not of the shipped one).
+        // Empirically probed: `DslP3Air::try_from_dsl(merkle_poseidon2_circuit())` ->
+        // `NonAlgebraicConstraint { index: 1, form: "MerkleHash (use the Lean-emitted IR2 descriptor for
+        // position-indexed Merkle hashing)" }`. The production interpreter DELIBERATELY routes MerkleHash
+        // to the Lean-authored IR2 rail (architectural law #1), so there is nothing for a DSL-vs-IR
+        // differential to compare here. Membership's real coverage lives on that rail:
+        // `circuit/src/merkle_air.rs`'s membership_p3 teeth (honest proof + forged root / forged leaf /
+        // non-member leaf all rejected), byte-pinned to `MerkleMembership4aryEmit.lean`.
         Requirement::Membership { .. } => Ok(Verdict::Skip {
-            reason: "membership needs Poseidon2 gadgets which DslP3Air cannot inline at runtime",
+            reason: "membership is MerkleHash-shaped: the shipped DslP3Air routes it to the Lean-emitted \
+                     IR2 descriptor (law #1), so there is no DSL-side arithmetization to differ against",
         }),
     }
 }
@@ -340,9 +352,14 @@ fn drive_nonequality_bytes(l: &[u8; 32], r: &[u8; 32]) -> Verdict {
     drive_nonequality_u64(ll, rl)
 }
 
-/// Wrap [`prove_dsl_plonky3`] + [`verify_dsl_plonky3`] so a prover-side
-/// panic (which `p3_uni_stark` uses to reject impossible traces) is
-/// caught and converted into [`Verdict::Reject`].
+/// Wrap [`prove_dsl_p3`] + [`verify_dsl_p3`] so a prover-side panic (which the p3 prover uses to reject
+/// impossible traces) is caught and converted into [`Verdict::Reject`].
+///
+/// Repointed 2026-07-16 off `dregg_dsl_runtime::{prove,verify}_dsl_plonky3` — a SECOND, name-colliding
+/// `DslP3Air` (p3-uni-stark) with no production consumer, which cannot express `Hash` and enforced
+/// `BoundaryRow::Index(n>0)` on row 0 only. A differential harness must drive the interpreter the product
+/// actually ships: `dregg_circuit::dsl::dsl_p3_air` (p3-batch-stark), the one `shielded/spend_circuit.rs`
+/// and `attest.rs` use.
 fn round_trip(
     descriptor: &CircuitDescriptor,
     trace: &[Vec<BabyBear>],
@@ -350,10 +367,11 @@ fn round_trip(
     ir_ok: bool,
 ) -> Verdict {
     let prove_result = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-        prove_dsl_plonky3(descriptor, trace, pi)
+        let dsl = DslCircuit::new(descriptor.clone());
+        prove_dsl_p3(&dsl, trace, pi).map(|proof| (dsl, proof))
     }));
     match prove_result {
-        Ok(Ok(proof_bytes)) => match verify_dsl_plonky3(descriptor, &proof_bytes, pi) {
+        Ok(Ok((dsl, proof))) => match verify_dsl_p3(&dsl, &proof, pi).map(|()| true) {
             Ok(true) => {
                 if ir_ok {
                     Verdict::Accept
