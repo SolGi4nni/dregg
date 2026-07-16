@@ -97,6 +97,9 @@ use dregg_bridge::solana_holdings::ProvenHolding;
 
 use crate::proven_foreign_holding::{ChainId, ProvenForeignHolding};
 use crate::{CastOutcome, HostBallotBox, HostVoteEngine, OptionId, PollId, VoterId};
+// The verified executor engine's `tally`/`resolve`/`cast` live on its
+// `VoteEngine` trait (the inherent weighted methods ride alongside).
+use collective_choice::VoteEngine as _;
 
 /// Domain separator for the owner→voter binding signature. Committing to a domain keeps
 /// a signature made for this purpose from being replayable as any other Ed25519 message
@@ -657,6 +660,12 @@ pub enum GrantError {
         /// The verdict weight that exceeds `u64::MAX`.
         weight: u128,
     },
+    /// The verified executor engine refused the ballot turn for a reason other
+    /// than its one-vote-per-voter rule (which is the in-band
+    /// [`CastOutcome::RefusedDoubleVote`]). Carries the engine's refusal.
+    /// FAIL-CLOSED: no ballot was cast and the `(poll, holding)` nullifier is
+    /// NOT consumed, so a later valid attempt still counts.
+    EngineRefused(String),
 }
 
 /// FAIL-CLOSED narrowing at the ballot boundary: a [`ForeignWeightGrant::weight`]
@@ -790,37 +799,34 @@ pub fn grant_foreign_weight<B: HolderBinding>(
 /// only records `(poll, token_account)` pairs so the same holding cannot be counted
 /// twice in one poll.
 ///
-/// # NAMED RESIDUAL — this registry's ballots still land in the host ballot box
-///
-/// Every other governance face in this crate now casts on the verified executor
-/// ([`collective_choice`]); this one does not, and the reason is concrete rather than
-/// neglect.
+/// # The ballot box: the VERIFIED weighted engine is the front door
 ///
 /// A holding-weight ballot is **weighted**: a holder with a proven balance of `W` casts
-/// a ballot worth `W`. The executor engine has no such ballot.
-/// `collective_choice::VoteEngine::cast` takes `(poll, &BallotCap, option)` — no weight
-/// argument — and bumps the option's `Monotonic` tally slot by exactly one (`live + 1`).
-/// One cap, one count. Expressing a weight-`W` ballot as a verified turn therefore needs
-/// a weighted cast *inside* `collective-choice` (the tally bump, the `AffineLe`
-/// coefficients, and the `CountGe` distinct-approver witness all have to agree on what a
-/// "weight" is), and this lane consumes that crate read-only.
+/// a ballot worth `W`. `collective_choice::CollectiveChoice::cast_weighted` is that
+/// ballot as a real executor turn — the option's `Monotonic` tally slot is bumped by
+/// exactly `W`, under the engine's one-ballot-per-voter gates (`WriteOnce(VOTE)` +
+/// nullifier), with the weight quorum an in-cell `AffineLe` and the genuine-approver
+/// floor a `CountGe` witness. [`grant_and_cast`](Self::grant_and_cast) /
+/// [`foreign_grant_and_cast`](Self::foreign_grant_and_cast) route through any
+/// [`WeightedBallotEngine`]; **the front door is [`VerifiedHoldingBallotBox`]** (the
+/// executor engine behind this registry's poll ids). Lean mirror:
+/// `Dregg2.Apps.MultisigVote.castVoteW` (weight conservation, one-cast-per-voter under
+/// weights, zero-weight/authority refusals — kernel-checked).
 ///
-/// Casting `W` separate ballots instead is not a substitute — it is exactly the
-/// amplification the delegation lattice exists to forbid.
+/// **What is verified**: the *verdict* — the weight decision is rendered by the
+/// Lean-proven `grantWeightCore` over the FFI ([`grant_foreign_weight`]), fail-closed
+/// with no Rust reimplementation fallback, after fail-closed pre-checks
+/// (consensus-proof, owner→voter binding, positive amount) — and now the *tally*: the
+/// cast, the monotone board, and the one-vote rule are executor turns on
+/// [`VerifiedHoldingBallotBox`]. The snapshot pin and the per-`(poll,
+/// chain+holder+asset)` nullifier below are host-side bookkeeping and are honest about
+/// it.
 ///
-/// **What is verified today, and must not regress**: the *verdict*. The weight decision
-/// is rendered by the Lean-proven `grantWeightCore` over the FFI
-/// ([`grant_foreign_weight`]), fail-closed with no Rust reimplementation fallback, after
-/// fail-closed pre-checks (consensus-proof, owner→voter binding, positive amount). The
-/// snapshot pin and the per-`(poll, chain+holder+asset)` nullifier below are host-side
-/// bookkeeping and are honest about it.
-///
-/// **What is not**: the ballot box the granted weight lands in
-/// ([`grant_and_cast`](Self::grant_and_cast) /
-/// [`foreign_grant_and_cast`](Self::foreign_grant_and_cast) take a [`HostBallotBox`]),
-/// whose one-vote and quorum gates are a `HashSet` and a `>=`. Closing this means
-/// teaching `collective-choice` a weighted cast; it is the last front-door flow on the
-/// demoted box.
+/// **Demoted residual**: [`HostBallotBox`] also implements [`WeightedBallotEngine`] —
+/// kept ONLY as the causal-log derivation aid for out-of-lane consumers
+/// (`dregg-interchain-gov`) pending their migration; its one-vote and quorum gates are
+/// a `HashSet` and a `>=`. No test or doc in THIS crate points the holding-weight flow
+/// at it as a gate.
 #[derive(Clone, Debug, Default)]
 pub struct HoldingWeightRegistry {
     /// The fired nullifiers: present once a holding's weight has been granted into
@@ -969,11 +975,13 @@ impl HoldingWeightRegistry {
     /// End-to-end cross-chain convenience — the foreign analog of
     /// [`grant_and_cast`](Self::grant_and_cast): grant `holding`'s weight into `poll`
     /// (snapshot-pinned, dedup-guarded, whatever chain it was proven on) and cast a
-    /// ballot for `choice` carrying that weight into the [`HostBallotBox`] engine as
-    /// the bound voter.
+    /// ballot for `choice` carrying that weight on the given
+    /// [`WeightedBallotEngine`] as the bound voter — the front door is
+    /// [`VerifiedHoldingBallotBox`], where the weighted ballot is a real executor
+    /// turn.
     ///
     /// **The u128 → u64 NARROWING SEAM, fail-closed**: [`ForeignWeightGrant::weight`]
-    /// is a `u128` (sized for EVM-scale balances) but [`VoteBlock::weight`](crate::VoteBlock::weight) is a `u64`.
+    /// is a `u128` (sized for EVM-scale balances) but the ballot weight is a `u64`.
     /// The narrowing runs through [`narrow_ballot_weight`] BEFORE the engine sees a
     /// ballot: a weight above `u64::MAX` is [`GrantError::WeightOverflow`] — the cast is
     /// REFUSED, never saturated or truncated, and the nullifier is left unspent (so the
@@ -981,12 +989,13 @@ impl HoldingWeightRegistry {
     /// re-proof).
     ///
     /// As with [`grant_and_cast`](Self::grant_and_cast), the nullifier is consumed only
-    /// after the engine accepts a ballot box, so [`GrantError::PollNotOpen`] does not
-    /// burn it; and the engine's own one-vote-per-voter rule still applies on top
+    /// after the engine accepts the ballot (any in-band [`CastOutcome`]), so
+    /// [`GrantError::PollNotOpen`] and [`GrantError::EngineRefused`] do not burn it;
+    /// and the engine's own one-vote-per-voter rule still applies on top
     /// ([`CastOutcome::RefusedDoubleVote`]).
-    pub fn foreign_grant_and_cast<B: HolderBinding>(
+    pub fn foreign_grant_and_cast<B: HolderBinding, E: WeightedBallotEngine>(
         &mut self,
-        engine: &mut HostBallotBox,
+        engine: &mut E,
         poll: PollId,
         choice: OptionId,
         holding: &ProvenForeignHolding,
@@ -997,12 +1006,11 @@ impl HoldingWeightRegistry {
         let grant = self.check_foreign_grant(poll, holding, binding)?;
         // FAIL-CLOSED narrowing: u128 verdict → u64 ballot domain, or a typed refusal.
         let weight = narrow_ballot_weight(grant.weight)?;
-        let block = engine
-            .next_block(poll, grant.voter, choice, weight)
-            .ok_or(GrantError::PollNotOpen)?; // unknown poll: no ballot box — nullifier untouched
-        // The engine accepted a ballot box: NOW consume the nullifier and cast.
+        // Unknown poll / engine refusal: an `Err` — the nullifier stays untouched.
+        let outcome = engine.cast_weighted_ballot(poll, grant.voter, choice, weight)?;
+        // The engine accepted the ballot: NOW consume the nullifier.
         self.spent.insert((poll, grant.nullifier));
-        Ok(engine.cast(poll, block))
+        Ok(outcome)
     }
 
     /// The pure fail-closed grant check — runs the full [`grant_weight`] verification,
@@ -1037,17 +1045,20 @@ impl HoldingWeightRegistry {
     }
 
     /// End-to-end convenience: grant `holding`'s weight into `poll` (dedup-guarded) and
-    /// cast a ballot for `choice` carrying that weight into the [`HostBallotBox`]
-    /// engine as the bound voter. The engine applies its OWN one-vote-per-voter rule on
-    /// top, so a second holding bound to the same voter is refused there
+    /// cast a ballot for `choice` carrying that weight on the given
+    /// [`WeightedBallotEngine`] as the bound voter — the front door is
+    /// [`VerifiedHoldingBallotBox`], where the weighted ballot is a real executor turn
+    /// (a `Monotonic` tally bump of exactly the granted weight under the executor's
+    /// one-ballot-per-voter gates). The engine applies its OWN one-vote-per-voter rule
+    /// on top, so a second holding bound to the same voter is refused there
     /// ([`CastOutcome::RefusedDoubleVote`]) even though it is a distinct token-account
     /// nullifier here.
     ///
     /// Note the two guards are complementary: the nullifier stops the *same account*
-    /// voting twice; the engine's voted-set stops the *same voter* voting twice.
-    pub fn grant_and_cast(
+    /// voting twice; the engine's one-vote rule stops the *same voter* voting twice.
+    pub fn grant_and_cast<E: WeightedBallotEngine>(
         &mut self,
-        engine: &mut HostBallotBox,
+        engine: &mut E,
         poll: PollId,
         choice: OptionId,
         holding: &ProvenHolding,
@@ -1056,14 +1067,210 @@ impl HoldingWeightRegistry {
         // Verify WITHOUT consuming the nullifier first — so a poll-not-open failure
         // does not permanently burn this (poll, token_account).
         let grant = self.check_grant(poll, holding, binding)?;
-        let block = engine
-            .next_block(poll, grant.voter, choice, grant.weight)
-            .ok_or(GrantError::PollNotOpen)?; // unknown poll: no ballot box — nullifier untouched
-        // The engine accepted a ballot box: NOW consume the nullifier and cast — the
-        // unified (poll, chain+holder+asset) key, so the two registry paths share it.
+        // Unknown poll / engine refusal: an `Err` — the nullifier stays untouched.
+        let outcome = engine.cast_weighted_ballot(poll, grant.voter, choice, grant.weight)?;
+        // The engine accepted the ballot: NOW consume the nullifier — the unified
+        // (poll, chain+holder+asset) key, so the two registry paths share it.
         self.spent
             .insert((poll, ProvenForeignHolding::from(holding).nullifier_key()));
-        Ok(engine.cast(poll, block))
+        Ok(outcome)
+    }
+}
+
+// ═════════════════════════════════════════════════════════════════════════════
+//  The weighted ballot engines — where a granted weight lands.
+// ═════════════════════════════════════════════════════════════════════════════
+
+/// The seam between the registry's fail-closed GRANT (snapshot pin, Lean-proven
+/// verdict, consume-once nullifier) and the ballot box the granted weight lands
+/// in. [`grant_and_cast`](HoldingWeightRegistry::grant_and_cast) /
+/// [`foreign_grant_and_cast`](HoldingWeightRegistry::foreign_grant_and_cast)
+/// cast through this trait.
+///
+/// **The front door is [`VerifiedHoldingBallotBox`]** — the verified executor
+/// engine (`collective_choice::CollectiveChoice::cast_weighted`): the weighted
+/// tally bump, the one-ballot-per-voter rule, and the quorum gates are real
+/// executor turns. [`HostBallotBox`] also implements this trait, DEMOTED: a
+/// causal-log derivation aid whose gates are a `HashSet` and a `>=`, retained
+/// for out-of-lane consumers pending migration — do not point new flows at it.
+pub trait WeightedBallotEngine {
+    /// Cast a ballot of `weight` for `voter` into `poll`.
+    ///
+    /// Contract (the registry's nullifier depends on it):
+    /// - `Err(`[`GrantError::PollNotOpen`]`)` — the poll is unknown here; the
+    ///   caller must NOT consume its nullifier.
+    /// - `Err(`[`GrantError::EngineRefused`]`)` — the engine refused the turn
+    ///   out-of-band (no ballot recorded); nullifier must stay unconsumed.
+    /// - `Ok(outcome)` — the engine adjudicated the ballot in-band
+    ///   ([`CastOutcome::Accepted`], or a refusal like
+    ///   [`CastOutcome::RefusedDoubleVote`]); the caller consumes the nullifier
+    ///   exactly as the pre-weld flow did.
+    fn cast_weighted_ballot(
+        &mut self,
+        poll: PollId,
+        voter: VoterId,
+        choice: OptionId,
+        weight: u64,
+    ) -> Result<CastOutcome, GrantError>;
+}
+
+/// DEMOTED — the host box as a weighted ballot target: `next_block` + `cast`,
+/// the pre-weld flow verbatim. Kept only for out-of-lane consumers
+/// (`dregg-interchain-gov`); the holding-weight front door is
+/// [`VerifiedHoldingBallotBox`].
+impl WeightedBallotEngine for HostBallotBox {
+    fn cast_weighted_ballot(
+        &mut self,
+        poll: PollId,
+        voter: VoterId,
+        choice: OptionId,
+        weight: u64,
+    ) -> Result<CastOutcome, GrantError> {
+        let block = self
+            .next_block(poll, voter, choice, weight)
+            .ok_or(GrantError::PollNotOpen)?;
+        Ok(self.cast(poll, block))
+    }
+}
+
+/// **The verified weighted ballot box** — the holding-weight registry's front
+/// door onto the verified executor engine
+/// ([`collective_choice::CollectiveChoice`]).
+///
+/// Each poll opened here is a REAL executor poll: the granted weight lands via
+/// [`cast_weighted`](collective_choice::CollectiveChoice::cast_weighted) — a
+/// `WriteOnce(VOTE)` ballot turn plus a `Monotonic` tally bump of exactly the
+/// granted weight — so the one-vote rule is the executor's nullifier +
+/// `WriteOnce`, not a `HashSet`, and the weight quorum is the in-cell
+/// `AffineLe` with a `CountGe` genuine-approver floor, not a `>=`.
+///
+/// Eligibility is the registry's fail-closed GRANT (consensus proof →
+/// owner→voter binding → the Lean-proven `grantWeightCore` verdict), so the
+/// executor poll's electorate is DYNAMIC: the ballot cap is minted to the
+/// granted voter at cast time. WrongSnapshot / AlreadyCounted / PollNotOpen
+/// semantics are the registry's and are unchanged.
+///
+/// Supported rules: [`DecisionRule::Plurality`] (total-weight quorum) and
+/// [`DecisionRule::Threshold`] (per-option weight gate).
+/// [`DecisionRule::Supermajority`] is a closed-electorate HEADCOUNT rule — it
+/// has no weighted expression and is refused at open (use the governance face).
+pub struct VerifiedHoldingBallotBox {
+    engine: collective_choice::CollectiveChoice,
+    /// registry poll id (the content-addressed [`PollSpec::id`]) → executor poll.
+    polls: BTreeMap<PollId, collective_choice::PollId>,
+}
+
+impl VerifiedHoldingBallotBox {
+    /// Stand up the verified box (its own embedded executor + operator).
+    pub fn new(federation_id: [u8; 32]) -> Self {
+        VerifiedHoldingBallotBox {
+            engine: collective_choice::CollectiveChoice::new(federation_id),
+            polls: BTreeMap::new(),
+        }
+    }
+
+    /// Open `spec` as a REAL executor poll and return the registry-facing
+    /// [`PollId`] (the same content-addressed [`PollSpec::id`] the snapshot pin
+    /// and nullifiers key on).
+    ///
+    /// The weight quorum is `spec.rule`'s: `Plurality { quorum }` gates the
+    /// decision-turn on total weight ≥ `quorum`; `Threshold { option, min }`
+    /// gates on that option's weight ≥ `min`. `Supermajority` is refused (a
+    /// closed-electorate headcount rule — no weighted expression).
+    pub fn open_weighted_poll(
+        &mut self,
+        spec: &crate::PollSpec,
+    ) -> Result<PollId, collective_choice::VoteError> {
+        let cc_spec = |quorum_m: u64| collective_choice::PollSpec {
+            question: spec.question.clone(),
+            options: spec.options.clone(),
+            // DYNAMIC electorate: eligibility is the registry's verified grant.
+            electorate: Vec::new(),
+            quorum_m,
+        };
+        let cc_poll = match spec.rule {
+            crate::DecisionRule::Plurality { quorum } => {
+                self.engine.open_poll_weighted(cc_spec(quorum))?
+            }
+            crate::DecisionRule::Threshold { option, min } => self
+                .engine
+                .open_poll_weighted_gated(cc_spec(min), option.0 as usize)?,
+            crate::DecisionRule::Supermajority => {
+                return Err(collective_choice::VoteError::BadPollSpec(
+                    "Supermajority is a closed-electorate headcount rule; a weighted \
+                     holding poll uses Plurality or Threshold"
+                        .into(),
+                ));
+            }
+        };
+        let id = spec.id();
+        self.polls.insert(id, cc_poll);
+        Ok(id)
+    }
+
+    /// The executor's stored monotone tally (`None` if the poll is unknown here).
+    pub fn tally(&self, poll: PollId) -> Option<collective_choice::Tally> {
+        let cc_poll = *self.polls.get(&poll)?;
+        self.engine.tally(cc_poll).ok()
+    }
+
+    /// The light-client recompute over the append-only cast log — when it
+    /// agrees with [`tally`](Self::tally) the board is unforged.
+    pub fn light_client_tally(&self, poll: PollId) -> Option<collective_choice::Tally> {
+        let cc_poll = *self.polls.get(&poll)?;
+        self.engine.light_client_tally(cc_poll).ok()
+    }
+
+    /// Attempt the decision-turn (the `AffineLe` weight quorum + `CountGe`
+    /// genuine-approver floor adjudicate it). `Ok(None)` below quorum.
+    pub fn resolve(
+        &mut self,
+        poll: PollId,
+    ) -> Result<Option<collective_choice::Decision>, collective_choice::VoteError> {
+        let cc_poll = *self
+            .polls
+            .get(&poll)
+            .ok_or(collective_choice::VoteError::NoSuchPoll)?;
+        self.engine.resolve(cc_poll)
+    }
+
+    /// The underlying executor engine (read access, for audits).
+    pub fn engine(&self) -> &collective_choice::CollectiveChoice {
+        &self.engine
+    }
+}
+
+impl WeightedBallotEngine for VerifiedHoldingBallotBox {
+    fn cast_weighted_ballot(
+        &mut self,
+        poll: PollId,
+        voter: VoterId,
+        choice: OptionId,
+        weight: u64,
+    ) -> Result<CastOutcome, GrantError> {
+        use collective_choice::VoteError as CcErr;
+        // Unknown poll: no executor poll — the caller's nullifier must survive.
+        let cc_poll = *self.polls.get(&poll).ok_or(GrantError::PollNotOpen)?;
+        // Mint (idempotently) the granted voter's single ballot cap. The poll's
+        // electorate is dynamic, so the mint follows the verified grant.
+        let cap = match self.engine.issue_ballot(cc_poll, voter) {
+            Ok(cap) => cap,
+            Err(CcErr::NoSuchPoll) => return Err(GrantError::PollNotOpen),
+            Err(e) => return Err(GrantError::EngineRefused(e.to_string())),
+        };
+        match self
+            .engine
+            .cast_weighted(cc_poll, &cap, choice.0 as usize, weight)
+        {
+            Ok(_) => Ok(CastOutcome::Accepted),
+            // In-band adjudications — the ballot box judged the ballot; the
+            // registry consumes its nullifier exactly as the pre-weld flow did.
+            Err(CcErr::DoubleVote) => Ok(CastOutcome::RefusedDoubleVote),
+            Err(CcErr::BadOption) => Ok(CastOutcome::RefusedUnknownOption),
+            // Out-of-band refusals — no ballot recorded, nullifier must survive.
+            Err(CcErr::NoSuchPoll | CcErr::WrongPoll) => Err(GrantError::PollNotOpen),
+            Err(e) => Err(GrantError::EngineRefused(e.to_string())),
+        }
     }
 }
 
@@ -1367,6 +1574,230 @@ mod tests {
             777,
             "the double-voter's second holding added no weight",
         );
+    }
+
+    // ── the VERIFIED front door: grants land on the executor engine ─────────
+
+    /// The end-to-end flow on the VERIFIED box: the Lean-verdicted weight
+    /// becomes a real executor turn — the tally that holds 777 is a `Monotonic`
+    /// slot on a poll cell, the double-vote refusal is the executor engine's
+    /// nullifier (not a `HashSet`), and the light-client replay agrees with the
+    /// stored board.
+    #[test]
+    fn verified_end_to_end_grant_and_cast_lands_on_the_executor() {
+        if !lean_verdict_core_or_skip() {
+            return;
+        }
+        let mut engine = VerifiedHoldingBallotBox::new([9u8; 32]);
+        let poll = engine
+            .open_weighted_poll(&PollSpec {
+                question: "ship it?".into(),
+                options: vec!["no".into(), "yes".into()],
+                electorate: Electorate::Open,
+                rule: DecisionRule::Plurality { quorum: 1 },
+                enact_on_pass: false,
+                nonce: 0,
+            })
+            .expect("weighted executor poll opens");
+
+        let owner = owner_key(7);
+        let owner_pk = owner.verifying_key().to_bytes();
+        let voter: VoterId = [6u8; 32];
+        let h = proven(owner_pk, [48u8; 32], 777, 20);
+        let binding = bind(&owner, voter);
+        let mut reg = HoldingWeightRegistry::new();
+        reg.open_snapshot(poll, 20);
+
+        let outcome = reg
+            .grant_and_cast(&mut engine, poll, OptionId(1), &h, &binding)
+            .expect("grant succeeds");
+        assert_eq!(outcome, CastOutcome::Accepted);
+
+        // The proven balance N became N units of vote weight — ON THE EXECUTOR.
+        let tally = engine.tally(poll).expect("executor tally");
+        assert_eq!(tally.per_option, vec![0, 777]);
+        assert_eq!(tally.total, 777);
+        // The light-client replay of the cast log agrees with the stored board.
+        assert_eq!(engine.light_client_tally(poll).unwrap(), tally);
+
+        // A DIFFERENT holder bound to the SAME voter clears the registry
+        // nullifier (distinct holder) and dies at the EXECUTOR's one-vote rule:
+        // the voter's single ballot cell is already consumed.
+        let owner2 = owner_key(8);
+        let owner2_pk = owner2.verifying_key().to_bytes();
+        let binding2 = bind(&owner2, voter);
+        let h2 = proven(owner2_pk, [49u8; 32], 111, 20);
+        let outcome2 = reg
+            .grant_and_cast(&mut engine, poll, OptionId(1), &h2, &binding2)
+            .expect("a distinct holder clears the nullifier; the executor judges the voter");
+        assert_eq!(outcome2, CastOutcome::RefusedDoubleVote);
+        assert_eq!(
+            engine.tally(poll).unwrap().per_option,
+            vec![0, 777],
+            "the double-voter's second holding added no weight to the executor board",
+        );
+
+        // The weight quorum (Plurality { quorum: 1 } → total weight >= 1)
+        // resolves as a real decision-turn.
+        let decision = engine
+            .resolve(poll)
+            .expect("resolve adjudicates")
+            .expect("777 >= 1 weight resolves");
+        assert_eq!(decision.winner, 1);
+        assert_eq!(decision.winner_tally, 777);
+    }
+
+    /// Registry semantics are UNCHANGED on the verified box: a holding proven
+    /// at the wrong slot is `WrongSnapshot`; re-presenting the same account in
+    /// the same poll is `AlreadyCounted`. Neither reaches the executor.
+    #[test]
+    fn verified_box_keeps_wrong_snapshot_and_already_counted_semantics() {
+        if !lean_verdict_core_or_skip() {
+            return;
+        }
+        let mut engine = VerifiedHoldingBallotBox::new([9u8; 32]);
+        let poll = engine
+            .open_weighted_poll(&PollSpec {
+                question: "semantics?".into(),
+                options: vec!["no".into(), "yes".into()],
+                electorate: Electorate::Open,
+                rule: DecisionRule::Plurality { quorum: 1 },
+                enact_on_pass: false,
+                nonce: 1,
+            })
+            .unwrap();
+
+        let owner = owner_key(21);
+        let owner_pk = owner.verifying_key().to_bytes();
+        let voter: VoterId = [21u8; 32];
+        let binding = bind(&owner, voter);
+        let mut reg = HoldingWeightRegistry::new();
+        reg.open_snapshot(poll, 30);
+
+        // WRONG SNAPSHOT: proven at 31, pinned at 30 — refused before any cast.
+        let stale = proven(owner_pk, [0xA1u8; 32], 500, 31);
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, poll, OptionId(1), &stale, &binding),
+            Err(GrantError::WrongSnapshot {
+                holding_slot: 31,
+                poll_snapshot: 30,
+            }),
+        );
+        assert_eq!(engine.tally(poll).unwrap().total, 0);
+
+        // The right slot counts…
+        let good = proven(owner_pk, [0xA1u8; 32], 500, 30);
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, poll, OptionId(1), &good, &binding)
+                .unwrap(),
+            CastOutcome::Accepted,
+        );
+        // …and re-presenting the SAME account is the registry's consume-once
+        // nullifier, exactly as before.
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, poll, OptionId(1), &good, &binding),
+            Err(GrantError::AlreadyCounted),
+        );
+        assert_eq!(engine.tally(poll).unwrap().per_option, vec![0, 500]);
+    }
+
+    /// MINOR-2 on the verified box: a poll the executor engine has never opened
+    /// must NOT consume the `(poll, token_account)` nullifier — the later valid
+    /// attempt (once the poll opens) still counts.
+    #[test]
+    fn verified_box_poll_not_open_does_not_burn_the_nullifier() {
+        if !lean_verdict_core_or_skip() {
+            return;
+        }
+        let mut engine = VerifiedHoldingBallotBox::new([9u8; 32]);
+        let owner = owner_key(31);
+        let owner_pk = owner.verifying_key().to_bytes();
+        let voter: VoterId = [31u8; 32];
+        let h = proven(owner_pk, [0xC4u8; 32], 640, 42);
+        let binding = bind(&owner, voter);
+        let mut reg = HoldingWeightRegistry::new();
+
+        let ghost = PollId([0xEDu8; 32]);
+        reg.open_snapshot(ghost, 42);
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, ghost, OptionId(0), &h, &binding),
+            Err(GrantError::PollNotOpen),
+        );
+        assert!(
+            !reg.is_spent(ghost, &h),
+            "a poll-not-open failure must leave the nullifier available",
+        );
+
+        let real = engine
+            .open_weighted_poll(&PollSpec {
+                question: "later".into(),
+                options: vec!["a".into(), "b".into()],
+                electorate: Electorate::Open,
+                rule: DecisionRule::Plurality { quorum: 1 },
+                enact_on_pass: false,
+                nonce: 2,
+            })
+            .unwrap();
+        reg.open_snapshot(real, 42);
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, real, OptionId(0), &h, &binding)
+                .unwrap(),
+            CastOutcome::Accepted,
+        );
+        assert_eq!(engine.tally(real).unwrap().per_option, vec![640, 0]);
+    }
+
+    /// The weight quorum on the verified box reads WEIGHT, not headcount: one
+    /// holding below the quorum leaves the poll pending; a second holding
+    /// (different account, different voter) tips the total weight over and the
+    /// decision-turn commits.
+    #[test]
+    fn verified_box_weight_quorum_resolves_on_weight() {
+        if !lean_verdict_core_or_skip() {
+            return;
+        }
+        let mut engine = VerifiedHoldingBallotBox::new([9u8; 32]);
+        let poll = engine
+            .open_weighted_poll(&PollSpec {
+                question: "weight quorum?".into(),
+                options: vec!["no".into(), "yes".into()],
+                electorate: Electorate::Open,
+                rule: DecisionRule::Plurality { quorum: 1000 },
+                enact_on_pass: false,
+                nonce: 3,
+            })
+            .unwrap();
+
+        let mut reg = HoldingWeightRegistry::new();
+        reg.open_snapshot(poll, 50);
+
+        let owner = owner_key(41);
+        let voter: VoterId = [41u8; 32];
+        let h = proven(owner.verifying_key().to_bytes(), [0xB1u8; 32], 600, 50);
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, poll, OptionId(1), &h, &bind(&owner, voter))
+                .unwrap(),
+            CastOutcome::Accepted,
+        );
+        assert!(
+            engine.resolve(poll).unwrap().is_none(),
+            "600 < 1000 total weight must stay pending",
+        );
+
+        let owner2 = owner_key(42);
+        let voter2: VoterId = [42u8; 32];
+        let h2 = proven(owner2.verifying_key().to_bytes(), [0xB2u8; 32], 700, 50);
+        assert_eq!(
+            reg.grant_and_cast(&mut engine, poll, OptionId(1), &h2, &bind(&owner2, voter2))
+                .unwrap(),
+            CastOutcome::Accepted,
+        );
+        let decision = engine
+            .resolve(poll)
+            .unwrap()
+            .expect("1300 >= 1000 total weight resolves");
+        assert_eq!(decision.winner, 1);
+        assert_eq!(decision.winner_tally, 1300);
     }
 
     #[test]

@@ -37,6 +37,22 @@
 //! `WriteOnce(VOTE)` caveat, (ii) the single per-voter ballot cell (a
 //! deterministic blinding token — a voter has exactly one ballot per poll), and
 //! (iii) the engine nullifier set.
+//!
+//! ## Weighted ballots (the holding-weight cast)
+//!
+//! [`CollectiveChoice::cast_weighted`] casts ONE ballot worth a granted weight
+//! `W` (a holder with a proven balance of `W` votes with `W`): the option's
+//! `Monotonic` tally slot is bumped by exactly `W` in a real executor turn,
+//! under the SAME one-ballot-per-voter gates as [`VoteEngine::cast`]. A
+//! weighted poll ([`CollectiveChoice::open_poll_weighted`]) reads its
+//! `quorum_m` as a **weight** quorum in the `AffineLe` decision gate, with the
+//! `CountGe` witness demanding at least one GENUINE distinct approver, and its
+//! electorate is dynamic — eligibility is the caller's fail-closed verified
+//! grant (`dregg-governance::holding_weight`, the Lean-proven `grantWeightCore`
+//! verdict). Zero weights are refused before the ballot is touched
+//! ([`VoteError::ZeroWeight`]). Lean mirror:
+//! `Dregg2.Apps.MultisigVote.castVoteW` (§10 — weight conservation,
+//! one-cast-per-voter under weights, zero-weight/authority refusals).
 
 #![forbid(unsafe_code)]
 
@@ -176,6 +192,11 @@ pub enum VoteError {
     Ineligible,
     /// The nullifier for this ballot has already been consumed (double vote).
     DoubleVote,
+    /// A weighted cast of weight zero — refused outright, BEFORE the ballot's
+    /// nullifier or `WriteOnce(VOTE)` is touched, so a worthless cast never
+    /// burns the voter's single ballot. (The holding-weight grant path refuses
+    /// zero weights upstream too; this is the engine's own fail-closed floor.)
+    ZeroWeight,
     /// The verified executor refused a submitted turn (the caveat that bit is in
     /// the message — e.g. `WriteOnce`, `Monotonic`, or the quorum `AffineLe`).
     Executor(String),
@@ -192,6 +213,7 @@ impl std::fmt::Display for VoteError {
             VoteError::WrongPoll => write!(f, "ballot cap is for a different poll"),
             VoteError::Ineligible => write!(f, "voter is not in the electorate"),
             VoteError::DoubleVote => write!(f, "ballot nullifier already consumed"),
+            VoteError::ZeroWeight => write!(f, "a zero-weight cast is refused (ballot not burned)"),
             VoteError::Executor(m) => write!(f, "executor refused: {m}"),
             VoteError::Ledger(m) => write!(f, "ledger error: {m}"),
         }
@@ -253,9 +275,18 @@ struct PollRecord {
     /// actor inflating a tally slot never grows THIS set, so it can no longer
     /// forge a quorum (the substrate gap `CountGe` was minted to close).
     quorum_voters: BTreeSet<[u8; 32]>,
-    /// Append-only cast log — what a light client replays to recompute the
-    /// tally independently of the stored slots.
-    receipts: Vec<usize>,
+    /// Is this a WEIGHTED (holding-weight) poll with a **dynamic** electorate?
+    /// A weighted poll's eligibility is the caller's fail-closed verified
+    /// GRANT (the Lean-proven `grantWeightCore` verdict in the holding-weight
+    /// registry), not a pre-enrolled cap-mint set — so [`issue_ballot`]
+    /// (`CollectiveChoice::issue_ballot`) mints to any granted voter. Every
+    /// other engine gate (one ballot per voter, `WriteOnce(VOTE)`, the
+    /// nullifier, `Monotonic` tallies, the quorum gates) applies unchanged.
+    dynamic_electorate: bool,
+    /// Append-only cast log `(option, weight)` — what a light client replays
+    /// to recompute the tally independently of the stored slots. Unweighted
+    /// casts log weight `1`.
+    receipts: Vec<(usize, u64)>,
     /// Ballots already issued (voter pk → ballot cell), so re-issue is idempotent.
     issued: HashMap<[u8; 32], CellId>,
 }
@@ -315,7 +346,10 @@ impl CollectiveChoice {
     ) -> Result<BallotCap, VoteError> {
         let operator = self.operator_pk();
         let record = self.polls.get(&poll.0).ok_or(VoteError::NoSuchPoll)?;
-        if !record.electorate.contains(&voter_pk) {
+        // A weighted (holding-weight) poll's electorate is DYNAMIC: eligibility
+        // is the caller's fail-closed verified grant, so the mint follows the
+        // grant instead of a pre-enrolled set. Closed polls refuse as ever.
+        if !record.dynamic_electorate && !record.electorate.contains(&voter_pk) {
             return Err(VoteError::Ineligible);
         }
 
@@ -411,8 +445,8 @@ impl CollectiveChoice {
     pub fn light_client_tally(&self, poll: PollId) -> Result<Tally, VoteError> {
         let record = self.polls.get(&poll.0).ok_or(VoteError::NoSuchPoll)?;
         let mut per_option = vec![0u64; record.option_count];
-        for &opt in &record.receipts {
-            per_option[opt] += 1;
+        for &(opt, weight) in &record.receipts {
+            per_option[opt] += weight;
         }
         let total = per_option.iter().sum();
         Ok(Tally { per_option, total })
@@ -430,13 +464,46 @@ impl CollectiveChoice {
         spec: PollSpec,
         gate_option: usize,
     ) -> Result<PollId, VoteError> {
-        self.open_poll_inner(spec, Some(gate_option))
+        self.open_poll_inner(spec, Some(gate_option), false)
+    }
+
+    /// **Weighted (holding-weight) poll** — `quorum_m` is a **WEIGHT** quorum:
+    /// the `AffineLe` decision gate reads `M·RESOLVED − Σ TALLY ≤ 0` over
+    /// tallies that [`cast_weighted`](Self::cast_weighted) bumps by each
+    /// ballot's granted weight, so the poll resolves once the total *weight*
+    /// reaches `M` — one voter whose grant clears `M` alone is a legitimate
+    /// quorum. The `CountGe` witness therefore demands at least ONE genuine
+    /// distinct approver (never zero — a forged tally jump with no real voter
+    /// still cannot arm `RESOLVED`), not `M` of them.
+    ///
+    /// The electorate is **dynamic** (`spec.electorate` may be empty):
+    /// eligibility for a holding-weight ballot is the caller's fail-closed
+    /// verified grant (the Lean-proven `grantWeightCore` verdict), so
+    /// [`issue_ballot`](Self::issue_ballot) mints to any granted voter.
+    ///
+    /// Fail-closed at open: a `quorum_m` above `i64::MAX` would wrap the
+    /// `AffineLe` coefficient negative (a vacuously-true quorum) and is
+    /// refused as [`VoteError::BadPollSpec`].
+    pub fn open_poll_weighted(&mut self, spec: PollSpec) -> Result<PollId, VoteError> {
+        self.open_poll_inner(spec, None, true)
+    }
+
+    /// Like [`open_poll_weighted`](Self::open_poll_weighted) but the weight
+    /// quorum gates on ONE option's weighted tally (`M·RESOLVED − TALLY_gate ≤ 0`)
+    /// — the constitutional Threshold shape, weighted.
+    pub fn open_poll_weighted_gated(
+        &mut self,
+        spec: PollSpec,
+        gate_option: usize,
+    ) -> Result<PollId, VoteError> {
+        self.open_poll_inner(spec, Some(gate_option), true)
     }
 
     fn open_poll_inner(
         &mut self,
         spec: PollSpec,
         gate_option: Option<usize>,
+        weighted: bool,
     ) -> Result<PollId, VoteError> {
         let option_count = spec.options.len();
         if option_count == 0 || option_count > MAX_OPTIONS {
@@ -446,6 +513,14 @@ impl CollectiveChoice {
         }
         if spec.quorum_m == 0 {
             return Err(VoteError::BadPollSpec("quorum_m must be >= 1".into()));
+        }
+        if weighted && spec.quorum_m > i64::MAX as u64 {
+            // The AffineLe coefficient is an i64; a larger weight quorum would
+            // wrap negative and arm RESOLVED unconditionally. Fail closed.
+            return Err(VoteError::BadPollSpec(format!(
+                "weight quorum {} exceeds the AffineLe i64 coefficient domain",
+                spec.quorum_m
+            )));
         }
         if let Some(g) = gate_option
             && g >= option_count
@@ -467,7 +542,23 @@ impl CollectiveChoice {
         .as_bytes();
         let poll_cell = CellId::derive_raw(&operator, &token);
 
-        let program = Self::poll_program(spec.quorum_m, option_count, gate_option, operator);
+        // The CountGe distinct-approver floor: an unweighted quorum M IS a
+        // distinct-voter count; a WEIGHT quorum is not (one whale may clear it
+        // alone), so the weighted floor is 1 — at least one GENUINE distinct
+        // approver must be exhibited, keeping the forged-tally-jump attack
+        // dead while a legitimate single-whale quorum resolves.
+        let min_distinct: u32 = if weighted {
+            1
+        } else {
+            u32::try_from(spec.quorum_m).unwrap_or(u32::MAX)
+        };
+        let program = Self::poll_program(
+            spec.quorum_m,
+            option_count,
+            gate_option,
+            operator,
+            min_distinct,
+        );
         let electorate: BTreeSet<[u8; 32]> = spec.electorate.iter().copied().collect();
 
         // Seed the poll (tally-board) cell: install the full program so the
@@ -515,6 +606,7 @@ impl CollectiveChoice {
                 option_count,
                 gate_option,
                 quorum_voters: BTreeSet::new(),
+                dynamic_electorate: weighted,
                 receipts: Vec::new(),
                 issued: HashMap::new(),
             },
@@ -527,6 +619,7 @@ impl CollectiveChoice {
         option_count: usize,
         gate_option: Option<usize>,
         operator: [u8; 32],
+        min_distinct: u32,
     ) -> CellProgram {
         let mut cs: Vec<StateConstraint> = vec![
             StateConstraint::WriteOnce {
@@ -573,7 +666,9 @@ impl CollectiveChoice {
         // `0 → M` jump — so one actor inflating ONE slot forges a quorum without
         // `M` distinct voters. `CountGe` closes it: the `RESOLVED` flip must
         // EXHIBIT (in the resolve turn's `Cleartext` witness blob) a set of at
-        // least `M` DISTINCT voter identities whose sorted-set commitment opens
+        // least `min_distinct` DISTINCT voter identities (the quorum `M` itself
+        // for an unweighted poll; `1` for a weighted poll, whose `M` is a
+        // weight) whose sorted-set commitment opens
         // [`VOTER_SET_COMMITMENT_SLOT`]. Distinctness is structural (`BTreeSet`),
         // nothing accumulates in a fakeable counter, so `M` cannot be
         // counterfeited by arithmetic aliasing. Gated behind `Immutable{RESOLVED}`
@@ -585,7 +680,7 @@ impl CollectiveChoice {
                     index: RESOLVED_SLOT,
                 },
                 SimpleStateConstraint::CountGe {
-                    threshold: quorum_m as u32,
+                    threshold: min_distinct,
                     set_commitment_slot: VOTER_SET_COMMITMENT_SLOT,
                 },
             ],
@@ -608,20 +703,49 @@ impl CollectiveChoice {
 
         CellProgram::always(cs)
     }
-}
 
-impl VoteEngine for CollectiveChoice {
-    type Error = VoteError;
-
-    fn open_poll(&mut self, spec: PollSpec) -> Result<PollId, VoteError> {
-        self.open_poll_inner(spec, None)
-    }
-
-    fn cast(
+    /// **The weighted cast** — a ballot worth its GRANTED weight: bumps the
+    /// option's `Monotonic` tally slot by exactly `weight` (`live + weight`)
+    /// through a real executor turn, under the SAME one-ballot-per-voter gates
+    /// as [`VoteEngine::cast`] (the ballot's `WriteOnce(VOTE)`, the engine
+    /// nullifier, the single per-voter ballot cell). Weights change what a
+    /// ballot is WORTH, never how many ballots a voter has: a second
+    /// `cast_weighted` on the same ballot — at any weight — is
+    /// [`VoteError::DoubleVote`].
+    ///
+    /// A `weight` of `0` is [`VoteError::ZeroWeight`], refused BEFORE the
+    /// ballot turn: a worthless cast never consumes the voter's single ballot.
+    ///
+    /// This is the executor expression of the holding-weight ballot (`W`
+    /// proven tokens ⇒ one ballot of weight `W`); the weight itself is decided
+    /// upstream by the Lean-proven `grantWeightCore` verdict, fail-closed.
+    /// Casting `W` separate weight-1 ballots is NOT equivalent — it is exactly
+    /// the amplification the delegation lattice forbids; here `W` rides ONE
+    /// nullifier. Lean mirror: `Dregg2.Apps.MultisigVote.castVoteW` (§10 —
+    /// weight conservation, one-cast-per-voter under weights, zero-weight and
+    /// authority refusals, all kernel-checked).
+    pub fn cast_weighted(
         &mut self,
         poll: PollId,
         ballot: &BallotCap,
         option: usize,
+        weight: u64,
+    ) -> Result<TurnReceipt, VoteError> {
+        if weight == 0 {
+            return Err(VoteError::ZeroWeight);
+        }
+        self.cast_inner(poll, ballot, option, weight)
+    }
+
+    /// The one cast path (unweighted = weight `1`): ballot gates, the
+    /// `WriteOnce(VOTE)` turn, the nullifier, then the `live + weight`
+    /// monotone tally turn with the quorum-set commitment mirror.
+    fn cast_inner(
+        &mut self,
+        poll: PollId,
+        ballot: &BallotCap,
+        option: usize,
+        weight: u64,
     ) -> Result<TurnReceipt, VoteError> {
         if ballot.poll != poll {
             return Err(VoteError::WrongPoll);
@@ -641,6 +765,23 @@ impl VoteEngine for CollectiveChoice {
             return Err(VoteError::DoubleVote);
         }
 
+        // The tally bump is `live + weight` (the weighted bump; `1` for an
+        // unweighted cast). Read the live monotone slot and guard the u64 tally
+        // domain BEFORE the ballot turn — an overflowing bump is refused
+        // fail-closed WITHOUT burning the voter's single ballot (never wrapped,
+        // never saturated). The ballot turn below touches only the BALLOT cell,
+        // so the poll slot cannot move in between.
+        let live = self
+            .exec
+            .cell_state(poll_cell)
+            .map(|s| field_to_u64(&s.fields[TALLY_BASE as usize + option]))
+            .unwrap_or(0);
+        let bumped = live.checked_add(weight).ok_or_else(|| {
+            VoteError::Executor(format!(
+                "tally overflow: {live} + {weight} exceeds the u64 tally domain"
+            ))
+        })?;
+
         // Depth (i): the ballot's `WriteOnce(VOTE)` — the choice code is the
         // option index + 1 (non-zero so WriteOnce treats it as "set").
         let choice = option as u64 + 1;
@@ -652,15 +793,6 @@ impl VoteEngine for CollectiveChoice {
 
         // Only now consume the nullifier (the ballot turn committed).
         self.nullifiers.insert(nullifier);
-
-        // The tally is a verifiable turn: read the live monotone slot and write
-        // `live + 1`. `Monotonic(TALLY_i)` re-enforced — a stale value cannot
-        // shrink the board.
-        let live = self
-            .exec
-            .cell_state(poll_cell)
-            .map(|s| field_to_u64(&s.fields[TALLY_BASE as usize + option]))
-            .unwrap_or(0);
         // Grow the DISTINCT quorum-approver set (the CountGe witness) when this
         // vote counts toward quorum, and mirror its commitment into
         // `VOTER_SET_COMMITMENT_SLOT` in the SAME turn as the tally bump. For a
@@ -681,10 +813,8 @@ impl VoteEngine for CollectiveChoice {
         };
 
         let bump = match commitment {
-            Some(c) => {
-                build_tally_bump_with_commitment(&self.clerk, poll_cell, option, live + 1, c)
-            }
-            None => build_tally_bump(&self.clerk, poll_cell, option, live + 1),
+            Some(c) => build_tally_bump_with_commitment(&self.clerk, poll_cell, option, bumped, c),
+            None => build_tally_bump(&self.clerk, poll_cell, option, bumped),
         };
         self.exec
             .submit_action(&self.clerk, bump)
@@ -694,9 +824,26 @@ impl VoteEngine for CollectiveChoice {
         if relevant {
             rec.quorum_voters.insert(ballot.voter_pk);
         }
-        rec.receipts.push(option);
+        rec.receipts.push((option, weight));
 
         Ok(receipt)
+    }
+}
+
+impl VoteEngine for CollectiveChoice {
+    type Error = VoteError;
+
+    fn open_poll(&mut self, spec: PollSpec) -> Result<PollId, VoteError> {
+        self.open_poll_inner(spec, None, false)
+    }
+
+    fn cast(
+        &mut self,
+        poll: PollId,
+        ballot: &BallotCap,
+        option: usize,
+    ) -> Result<TurnReceipt, VoteError> {
+        self.cast_inner(poll, ballot, option, 1)
     }
 
     fn tally(&self, poll: PollId) -> Result<Tally, VoteError> {

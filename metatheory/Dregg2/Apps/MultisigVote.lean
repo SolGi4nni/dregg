@@ -32,6 +32,18 @@ four end-user guarantees:
 
 TEETH (decide on a concrete fixture): a sub-threshold proposal does NOT pass; a double-voter is
 counted once; an outsider is rejected; the cap-bearer is admitted. Runs on real kernel state.
+
+§10+ adds the **WEIGHTED cast** (`castVoteW`) — the holding-weight ballot: a voter with a granted
+weight `g voter` casts a ballot worth exactly that weight onto a monotone board, mirroring
+`collective_choice::CollectiveChoice::cast_weighted` (Rust: the tally bump is `live + weight`, one
+ballot cap per voter, zero weight refused). Keystones: **WEIGHT CONSERVATION** (the board equals the
+sum of the granted weights of the counted ballots — `castVoteW_preserves_WFW` /
+`board_eq_sum_of_granted`), **ONE-CAST-PER-VOTER under weights** (`weighted_second_cast_refused`,
+via the SAME kernel nullifier gate as the unweighted cast), and the discriminating negatives: a
+ZERO-weight cast is refused outright and changes nothing (`zero_weight_cast_changes_nothing` — the
+voter is enfranchised and unspent, so the refusal is specifically the weight), and a positive weight
+buys NO authority (`outsider_weight_buys_nothing`). Weighted teeth discriminate weight from
+headcount: two casts of weights 50+100 pass a 120-WEIGHT quorum while the headcount tally is 2.
 -/
 import Dregg2.Exec.RecordKernel
 
@@ -316,5 +328,378 @@ Quot.sound}` — any stray axiom anywhere would fail the build. -/
 #assert_axioms votes_reach_quorum
 #assert_axioms subquorum_does_not_pass
 #assert_axioms capbearer_counts_toward_quorum
+
+/-! ## §10 — The WEIGHTED cast (`castVoteW`): holding-weighted ballots on the same kernel gates.
+
+A holding-weight ballot is worth its GRANTED weight `g voter` (in deployment `g` is the
+Lean-proven `grantWeightCore` verdict over a consensus-proven holding — see
+`Dregg2.Bridge.ProofOfHoldingsGeneric` / `HoldingWeightedTally`; here it is an arbitrary
+assignment, so every theorem quantifies over ALL grants). `castVoteW` mirrors the deployed
+`collective_choice::CollectiveChoice::cast_weighted`:
+
+  * the ONE-CAST gate is the SAME kernel nullifier discipline as the unweighted `castVote`
+    (a second cast by the same voter is refused no matter the weight);
+  * the BOARD bump is `board + g voter` — the Rust `live + weight` monotone tally turn;
+  * a ZERO weight is refused OUTRIGHT (`none`), before the nullifier is consumed — the ballot
+    is not burned by a worthless cast (mirrors `VoteError::ZeroWeight`);
+  * the append-only `log` is the cast log a light client replays
+    (`CollectiveChoice::light_client_tally`). -/
+
+/-- **`WeightedBox`** — the weighted poll state: the kernel (whose `nullifiers` seen-set is the
+one-cast gate and whose `caps`/registry are the enfranchisement gate), the monotone tally
+`board` (the Rust `Monotonic` tally slot), and the append-only cast `log` of
+`(voter, granted weight)` pairs (the light-client replay object). -/
+structure WeightedBox where
+  /-- the real kernel state — nullifier one-cast gate + cap/registry enfranchisement. -/
+  kernel : RecordKernelState
+  /-- the monotone weighted tally board (`Monotonic` slot mirror). -/
+  board  : Nat
+  /-- the append-only cast log: `(voter, granted weight)` per counted ballot. -/
+  log    : List (CellId × Nat)
+
+/-- A fresh weighted box over kernel state `k`: empty board, empty log. -/
+def freshWBox (k : RecordKernelState) : WeightedBox := ⟨k, 0, []⟩
+
+/-- **`castVoteW p g b voter`** — cast `voter`'s ballot worth its granted weight `g voter`.
+Fail-closed (`none`) if the grant is ZERO (a worthless cast must not burn the ballot), if the
+voter is not enfranchised, or if the voter already cast (the kernel nullifier gate — the SAME
+`castVote` gate as the unweighted engine). On success the board grows by EXACTLY `g voter`
+(the Rust `live + weight` bump) and the cast is appended to the log. -/
+def castVoteW (p : Proposal) (g : CellId → Nat) (b : WeightedBox) (voter : CellId) :
+    Option WeightedBox :=
+  if g voter = 0 then none
+  else
+    match castVote p b.kernel voter with
+    | none => none
+    | some k' => some ⟨k', b.board + g voter, (voter, g voter) :: b.log⟩
+
+/-- The weighted total a light client replays from the cast log: the sum of the logged
+weights (the `light_client_tally` fold). -/
+def logWeight (log : List (CellId × Nat)) : Nat := (log.map Prod.snd).sum
+
+/-- **`passesW p b`** — the WEIGHT-quorum gate: the poll passes once the weighted board
+reaches the threshold (`threshold` read in WEIGHT units — the `AffineLe`
+`M·RESOLVED − Σ TALLY ≤ 0` face of the deployed weighted poll). -/
+def passesW (p : Proposal) (b : WeightedBox) : Bool := decide (p.threshold ≤ b.board)
+
+/-- `castVote` success, characterized: exactly enfranchisement + unspent nullifier, and the
+post-state is the nullifier insert. The workhorse for every weighted keystone. -/
+theorem castVote_some_iff {p : Proposal} {k k' : RecordKernelState} {voter : CellId} :
+    castVote p k voter = some k'
+      ↔ enfranchisedB p k voter = true ∧ voter ∉ k.nullifiers
+          ∧ k' = { k with nullifiers := voter :: k.nullifiers } := by
+  unfold castVote
+  by_cases hg : enfranchisedB p k voter = true ∧ voter ∉ k.nullifiers
+  · rw [if_pos hg]
+    constructor
+    · intro h
+      simp only [Option.some.injEq] at h
+      exact ⟨hg.1, hg.2, h.symm⟩
+    · rintro ⟨_, _, rfl⟩
+      rfl
+  · rw [if_neg hg]
+    constructor
+    · intro h
+      exact absurd h (by simp)
+    · rintro ⟨h1, h2, _⟩
+      exact absurd ⟨h1, h2⟩ hg
+
+/-- `castVoteW` success, characterized: a NONZERO grant, enfranchisement, an unspent
+nullifier, and the post-box is exactly (nullifier insert, board `+ g voter`, log cons). -/
+theorem castVoteW_some_iff {p : Proposal} {g : CellId → Nat} {b b' : WeightedBox}
+    {voter : CellId} :
+    castVoteW p g b voter = some b'
+      ↔ g voter ≠ 0 ∧ enfranchisedB p b.kernel voter = true ∧ voter ∉ b.kernel.nullifiers
+          ∧ b' = ⟨{ b.kernel with nullifiers := voter :: b.kernel.nullifiers },
+                  b.board + g voter, (voter, g voter) :: b.log⟩ := by
+  unfold castVoteW
+  by_cases h0 : g voter = 0
+  · rw [if_pos h0]
+    constructor
+    · intro h
+      exact absurd h (by simp)
+    · rintro ⟨hne, _⟩
+      exact absurd h0 hne
+  · rw [if_neg h0]
+    cases hc : castVote p b.kernel voter with
+    | none =>
+      constructor
+      · intro h
+        exact absurd h (by simp)
+      · rintro ⟨_, he, hn, _⟩
+        have hs : castVote p b.kernel voter
+            = some { b.kernel with nullifiers := voter :: b.kernel.nullifiers } :=
+          castVote_some_iff.mpr ⟨he, hn, rfl⟩
+        rw [hc] at hs
+        exact absurd hs (by simp)
+    | some k' =>
+      obtain ⟨he, hn, hk⟩ := castVote_some_iff.mp hc
+      constructor
+      · intro h
+        simp only [Option.some.injEq] at h
+        refine ⟨h0, he, hn, ?_⟩
+        rw [← h, hk]
+      · rintro ⟨_, _, _, rfl⟩
+        subst hk
+        rfl
+
+/-! ### The keystones — zero-weight refusal, one-cast-per-voter, authority, the exact bump. -/
+
+/-- **ZERO-WEIGHT REFUSED (fail-closed, ballot not burned).** A zero-grant cast is `none` —
+no state transition AT ALL: the board does not move AND the voter's nullifier is NOT consumed
+(the refusal happens before the kernel cast), so a later genuine grant can still cast. -/
+theorem castVoteW_zero_refused (p : Proposal) (g : CellId → Nat) (b : WeightedBox)
+    (voter : CellId) (h : g voter = 0) : castVoteW p g b voter = none := by
+  unfold castVoteW
+  rw [if_pos h]
+
+/-- A voter already in the kernel nullifier set is refused by the WEIGHTED cast — the same
+seen-set gate as the unweighted `revote_rejected`, untouched by weights. -/
+theorem castVoteW_spent_refused {p : Proposal} {g : CellId → Nat} {b : WeightedBox}
+    {voter : CellId} (h : voter ∈ b.kernel.nullifiers) : castVoteW p g b voter = none := by
+  unfold castVoteW
+  by_cases h0 : g voter = 0
+  · rw [if_pos h0]
+  · rw [if_neg h0, revote_rejected h]
+
+/-- **ONE-CAST-PER-VOTER PRESERVED UNDER WEIGHTS (the safety headline).** A committed
+weighted cast consumes the voter's nullifier, so a SECOND weighted cast by the same voter —
+at ANY weight — is refused. Weights change what a ballot is worth, never how many ballots a
+voter has. -/
+theorem weighted_second_cast_refused {p : Proposal} {g : CellId → Nat} {b b' : WeightedBox}
+    {voter : CellId} (h : castVoteW p g b voter = some b') :
+    castVoteW p g b' voter = none := by
+  obtain ⟨h0, he, hn, rfl⟩ := castVoteW_some_iff.mp h
+  exact castVoteW_spent_refused (List.mem_cons_self ..)
+
+/-- **AUTHORITY carried over** — a committed weighted cast was cast by an ENFRANCHISED voter
+(the registry/cap gate, inherited from `castVote`). -/
+theorem castVoteW_enfranchised {p : Proposal} {g : CellId → Nat} {b b' : WeightedBox}
+    {voter : CellId} (h : castVoteW p g b voter = some b') :
+    enfranchisedB p b.kernel voter = true :=
+  (castVoteW_some_iff.mp h).2.1
+
+/-- **AUTHORITY fail-closed** — a non-enfranchised voter is refused by the weighted cast no
+matter how large the grant: weight buys NO authority. -/
+theorem unenfranchised_weighted_cast_rejected {p : Proposal} {g : CellId → Nat}
+    {b : WeightedBox} {voter : CellId} (h : enfranchisedB p b.kernel voter = false) :
+    castVoteW p g b voter = none := by
+  unfold castVoteW
+  by_cases h0 : g voter = 0
+  · rw [if_pos h0]
+  · rw [if_neg h0, unenfranchised_vote_rejected h]
+
+/-- **THE EXACT BUMP** — a committed weighted cast grows the board by EXACTLY the granted
+weight (the Rust `live + weight` law): never `1`, never `0`, never an amplification. -/
+theorem castVoteW_board {p : Proposal} {g : CellId → Nat} {b b' : WeightedBox}
+    {voter : CellId} (h : castVoteW p g b voter = some b') :
+    b'.board = b.board + g voter := by
+  obtain ⟨_, _, _, rfl⟩ := castVoteW_some_iff.mp h
+  rfl
+
+/-! ### §11 — WEIGHT CONSERVATION: the board is exactly the sum of granted weights of the
+counted ballots, an invariant every weighted cast preserves. -/
+
+/-- Every counted (logged) ballot is genuine: its weight IS the granted weight of its voter,
+its voter is enfranchised, and its voter's nullifier is consumed (so it can never be counted
+again). -/
+def Counted (p : Proposal) (g : CellId → Nat) (b : WeightedBox) : Prop :=
+  ∀ e ∈ b.log, e.2 = g e.1 ∧ enfranchisedB p b.kernel e.1 = true ∧ e.1 ∈ b.kernel.nullifiers
+
+/-- **`WFW`** — the weighted-box invariant: (1) WEIGHT CONSERVATION — the board equals the
+logged weight total; (2) every counted ballot is genuine (`Counted`); (3) ONE BALLOT PER
+VOTER — the logged voters are pairwise distinct. -/
+def WFW (p : Proposal) (g : CellId → Nat) (b : WeightedBox) : Prop :=
+  b.board = logWeight b.log ∧ Counted p g b ∧ (b.log.map Prod.fst).Nodup
+
+/-- A fresh box is well-formed (board `0` = empty log, vacuously counted, trivially
+distinct). -/
+theorem wfw_fresh (p : Proposal) (g : CellId → Nat) (k : RecordKernelState) :
+    WFW p g (freshWBox k) := by
+  refine ⟨rfl, ?_, List.nodup_nil⟩
+  intro e he
+  simp [freshWBox] at he
+
+/-- **THE CONSERVATION KEYSTONE — every weighted cast preserves `WFW`.** In particular the
+tally board NEVER drifts from the sum of the granted weights of the counted ballots, no
+counted ballot's weight was forged (each equals its voter's grant), and no voter is counted
+twice. The proof leans on the kernel nullifier: a logged voter is spent, a casting voter is
+unspent, so the new voter is fresh in the log. -/
+theorem castVoteW_preserves_WFW {p : Proposal} {g : CellId → Nat} {b b' : WeightedBox}
+    {voter : CellId} (hwf : WFW p g b) (h : castVoteW p g b voter = some b') :
+    WFW p g b' := by
+  obtain ⟨hcons, hcnt, hnd⟩ := hwf
+  obtain ⟨h0, he, hn, rfl⟩ := castVoteW_some_iff.mp h
+  refine ⟨?_, ?_, ?_⟩
+  · -- (1) conservation: board + g voter = g voter + Σ logged weights.
+    show b.board + g voter = logWeight ((voter, g voter) :: b.log)
+    simp only [logWeight, List.map_cons, List.sum_cons] at *
+    omega
+  · -- (2) every counted ballot stays genuine; the new head is genuine by construction.
+    intro e hemem
+    rcases List.mem_cons.mp hemem with hhd | htl
+    · subst hhd
+      exact ⟨rfl, he, List.mem_cons_self ..⟩
+    · obtain ⟨hw, hen, hnul⟩ := hcnt e htl
+      exact ⟨hw, hen, List.mem_cons_of_mem _ hnul⟩
+  · -- (3) the casting voter is fresh in the log: every logged voter is spent, this one
+    -- was not.
+    show (((voter, g voter) :: b.log).map Prod.fst).Nodup
+    simp only [List.map_cons, List.nodup_cons]
+    refine ⟨?_, hnd⟩
+    intro hmem
+    obtain ⟨e, hetl, hfst⟩ := List.mem_map.mp hmem
+    have hspent := (hcnt e hetl).2.2
+    rw [hfst] at hspent
+    exact hn hspent
+
+/-- **THE WORK-ORDER STATEMENT, verbatim: the tally total equals the sum of the GRANTED
+weights of the counted ballots.** Under `WFW`, the board is `Σ (g voter)` over the cast log —
+not the logged numerals, the GRANTS: a forged log weight is already excluded by `Counted`. -/
+theorem board_eq_sum_of_granted {p : Proposal} {g : CellId → Nat} {b : WeightedBox}
+    (hwf : WFW p g b) : b.board = (b.log.map (fun e => g e.1)).sum := by
+  obtain ⟨hcons, hcnt, _⟩ := hwf
+  rw [hcons]
+  unfold logWeight
+  have hmap : ∀ (l : List (CellId × Nat)), (∀ e ∈ l, e.2 = g e.1) →
+      (l.map Prod.snd).sum = (l.map (fun e => g e.1)).sum := by
+    intro l
+    induction l with
+    | nil => intro _; rfl
+    | cons a t ih =>
+      intro hall
+      simp only [List.map_cons, List.sum_cons]
+      rw [hall a (List.mem_cons_self ..), ih (fun e he => hall e (List.mem_cons_of_mem _ he))]
+  exact hmap b.log (fun e he => (hcnt e he).1)
+
+/-! ### §12 — WEIGHTED TEETH on the concrete fixture (decide — real discriminating
+instances).
+
+`grantsFix` grants voter `0 ↦ 50`, `1 ↦ 100`, `2 ↦ 0` (enfranchised but worthless — the
+zero-weight probe), `3 ↦ 7` (an OUTSIDER with a positive grant — the weight-buys-no-authority
+probe), `4 ↦ 25`. `propW` sets a WEIGHT quorum of `120` (weight units, not headcount). -/
+
+/-- The fixture grant assignment (in deployment: the Lean-proven `grantWeightCore` verdicts). -/
+def grantsFix : CellId → Nat := fun v =>
+  if v = 0 then 50 else if v = 1 then 100 else if v = 3 then 7 else if v = 4 then 25 else 0
+
+/-- The fixture weighted box over the §6 kernel fixture (no casts yet). -/
+def wbox0 : WeightedBox := freshWBox voteK0
+
+/-- A WEIGHT-quorum proposal: registry `{0,1,2}`, threshold `120` WEIGHT units. -/
+def propW : Proposal := { proposalCell := 100, registry := {0, 1, 2}, threshold := 120 }
+
+/-- A smaller weight quorum (`90`) one whale's grant (`100`) clears alone. -/
+def propWhale : Proposal := { proposalCell := 100, registry := {0, 1, 2}, threshold := 90 }
+
+/-- **TEETH (weights flow, not headcount).** Voters `0` (weight 50) and `1` (weight 100)
+cast: the board is `150` — NOT `2`. The weighted engine counts weight; the bump is
+`+ g voter`, not `+ 1`. -/
+theorem weighted_board_is_weight_not_headcount :
+    ((castVoteW propW grantsFix wbox0 0).bind
+      (fun b => castVoteW propW grantsFix b 1)).map (fun b => b.board) = some 150 := by
+  decide
+
+/-- **TEETH (the weight quorum discriminates from headcount).** After the same two casts the
+WEIGHT quorum `120 ≤ 150` PASSES while the HEADCOUNT `passes` (2 distinct voters against the
+same threshold read as a count) does NOT — the weighted gate is genuinely reading weight. -/
+theorem weighted_quorum_passes_headcount_does_not :
+    ((castVoteW propW grantsFix wbox0 0).bind
+      (fun b => castVoteW propW grantsFix b 1)).map
+        (fun b => (passesW propW b, passes propW b.kernel)) = some (true, false) := by
+  decide
+
+/-- **TEETH (one whale is a legitimate weight quorum).** ONE voter with grant `100` clears
+the `90`-weight quorum alone — with a headcount of `1`. Weighted quorum ≠ distinct-voter
+quorum, by design (mirrors the deployed weighted poll's `CountGe` demanding at least one
+GENUINE distinct approver while `AffineLe` reads the weight). -/
+theorem single_weighted_voter_meets_weight_quorum :
+    (castVoteW propWhale grantsFix wbox0 1).map
+      (fun b => (passesW propWhale b, passes propWhale b.kernel)) = some (true, false) := by
+  decide
+
+/-- **TEETH (sub-quorum weight refused).** One cast of weight `50` does NOT pass the
+`120`-weight quorum. -/
+theorem subquorum_weight_does_not_pass :
+    (castVoteW propW grantsFix wbox0 0).map (fun b => passesW propW b) = some false := by
+  decide
+
+/-- **TEETH (second cast by the same voter refused, weights notwithstanding).** Voter `0`
+casts (weight 50), then re-casts: the second cast is `none` — the kernel nullifier gate — so
+the board holds exactly ONE ballot's weight. -/
+theorem weighted_double_cast_refused_fixture :
+    ((castVoteW propW grantsFix wbox0 0).bind
+      (fun b => castVoteW propW grantsFix b 0)) = none
+    ∧ (castVoteW propW grantsFix wbox0 0).map (fun b => b.board) = some 50 := by
+  constructor
+  · decide
+  · decide
+
+/-- **TEETH (a zero-weight cast changes NOTHING — and the refusal is SPECIFICALLY the
+weight).** Voter `2` is enfranchised (registry) and unspent — the UNWEIGHTED cast admits it —
+yet its grant is `0`, so the weighted cast is `none`: no board move, no nullifier burn. -/
+theorem zero_weight_cast_changes_nothing :
+    castVoteW propW grantsFix wbox0 2 = none
+    ∧ (castVote propW voteK0 2).isSome = true := by
+  constructor
+  · decide
+  · decide
+
+/-- **TEETH (weight buys no authority).** Voter `3` carries a POSITIVE grant (`7`) but is an
+outsider (not in the registry, no vote-cap): the weighted cast is refused. Enfranchisement is
+the same gate as ever; the grant cannot open it. -/
+theorem outsider_weight_buys_nothing :
+    castVoteW propW grantsFix wbox0 3 = none := by
+  decide
+
+/-- **DEGENERACY CHECK (unit weights recover headcount).** Under the constant grant `1`, the
+weighted board after two casts equals the unweighted distinct-enfranchised tally (`2`) — the
+weighted engine strictly generalizes the unweighted one. -/
+theorem unit_weights_recover_headcount :
+    ((castVoteW prop0 (fun _ => 1) wbox0 0).bind
+      (fun b => castVoteW prop0 (fun _ => 1) b 1)).map
+        (fun b => (b.board, tally prop0 b.kernel)) = some (2, 2) := by
+  decide
+
+/-! ### `#guard` smoke — the weighted laws, decided by the model alone. -/
+
+-- weights flow: 50 + 100 = 150 on the board, log holds both grants.
+#guard (((castVoteW propW grantsFix wbox0 0).bind
+          (fun b => castVoteW propW grantsFix b 1)).map
+            (fun b => (b.board, logWeight b.log))) == some (150, 150)
+-- zero-weight cast refused outright; the unweighted gate would have admitted the voter.
+#guard (castVoteW propW grantsFix wbox0 2).isSome == false
+#guard (castVote propW voteK0 2).isSome == true
+-- double weighted cast refused; board keeps exactly one ballot's weight.
+#guard (((castVoteW propW grantsFix wbox0 0).bind
+          (fun b => castVoteW propW grantsFix b 0))).isSome == false
+-- outsider with positive weight refused.
+#guard (castVoteW propW grantsFix wbox0 3).isSome == false
+-- weight quorum: 150 ≥ 120 passes; 50 < 120 does not.
+#guard (((castVoteW propW grantsFix wbox0 0).bind
+          (fun b => castVoteW propW grantsFix b 1)).map (passesW propW ·)) == some true
+#guard ((castVoteW propW grantsFix wbox0 0).map (passesW propW ·)) == some false
+
+/-! ### §13 — Axiom hygiene for the weighted keystones. -/
+
+#assert_axioms castVote_some_iff
+#assert_axioms castVoteW_some_iff
+#assert_axioms castVoteW_zero_refused
+#assert_axioms castVoteW_spent_refused
+#assert_axioms weighted_second_cast_refused
+#assert_axioms castVoteW_enfranchised
+#assert_axioms unenfranchised_weighted_cast_rejected
+#assert_axioms castVoteW_board
+#assert_axioms wfw_fresh
+#assert_axioms castVoteW_preserves_WFW
+#assert_axioms board_eq_sum_of_granted
+#assert_axioms weighted_board_is_weight_not_headcount
+#assert_axioms weighted_quorum_passes_headcount_does_not
+#assert_axioms single_weighted_voter_meets_weight_quorum
+#assert_axioms subquorum_weight_does_not_pass
+#assert_axioms weighted_double_cast_refused_fixture
+#assert_axioms zero_weight_cast_changes_nothing
+#assert_axioms outsider_weight_buys_nothing
+#assert_axioms unit_weights_recover_headcount
 
 end Dregg2.Apps.MultisigVote
