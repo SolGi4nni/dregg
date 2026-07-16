@@ -1,5 +1,49 @@
 # ArkLib's `KZG.binding` is vacuous, via a false `tSdhAssumption`
 
+> ## ⚖ ADVERSARIAL FACTCHECK — VERDICT: **CONFIRMED** (2026-07-16)
+>
+> An independent lane tried to **refute** this claim — the single biggest risk being that a
+> prior factcheck attempt had been working against *placeholder* restatements of ArkLib's
+> types, not the real library. **That risk is resolved: this builds against pristine upstream
+> ArkLib.** Every axis checks out:
+>
+> - **(a) Real ArkLib, not a restatement.** `KzgVacuity.lean` `import`s
+>   `ArkLib.Commitments.Functional.KZG.Binding` and uses `Groups.tSdhAssumption`,
+>   `Groups.tSdhAdversary`, `Groups.exists_zmod_power_of_generator`, `Groups.sampleNonzeroZMod`
+>   directly — no local `def` of any of them. Rebuilt from scratch by the factcheck lane against
+>   a genuine checkout at **`d72f8392`** (`ArkLib.lean` root includes `KZG.Binding`; git working
+>   tree of the checkout has **zero** modifications to tracked files — only the untracked
+>   `Scratch/`), toolchain `v4.31.0`: `Built ArkLib.Scratch.KzgVacuity (23s)`,
+>   `Build completed successfully (2995 jobs)`. The committed `KzgVacuity.lean` is **byte-identical**
+>   to the one that built. `#print axioms` on every headline theorem **and on
+>   `KZG.CommitmentScheme.binding` itself** → `[propext, Classical.choice, Quot.sound]` — no `sorryAx`.
+> - **(b) `g₂ ≠ 1` is FORCED by `binding`'s own `hpair`, not assumed.** The real `pairing` is
+>   `(Additive G₁) →ₗ[ZMod p] (Additive G₂) →ₗ[ZMod p] (Additive Gₜ)` (genuinely `ZMod p`-bilinear);
+>   `map_zero` gives `pairing g₁ 1 = 0`, so `hpair : pairing g₁ g₂ ≠ 0 ⇒ g₂ ≠ 1`. Mechanized in
+>   `g₂_ne_one_of_pairing_ne_zero`, whose hypothesis is defeq to `binding`'s real `hpair`.
+> - **(c) `tSdhAssumption` genuinely is `binding`'s assumption.** Exactly **one** `tSdhAssumption`
+>   exists (`HardnessAssumptions.lean:88`, unrestricted); `binding` (`Binding.lean:745`) consumes it
+>   directly. **No** query-bounded / AGM / restricted variant exists. `IsQueryBound` appears in
+>   ArkLib only in **one commented-out line**.
+> - **(d) Probability exactly 1 is genuine.** `not_tSdhAssumption` / `tSdhExperiment_..Adversary`
+>   are sorry-free; the giving-up canary proves the experiment is not constantly 1. The extracting
+>   adversary is a legal `noncomputable` inhabitant — the type carries **no** computability /
+>   measurability / query side-condition.
+> - **(e) `binding` is NOT WIP-labelled.** It is an exported theorem in the `ArkLib.lean` root, with
+>   a finished module docstring and no TODO/experimental marker (the blueprint's `% TODO: add KZG`
+>   is about *documentation*, not code status).
+> - **(f) Codex, deputized independently** (its own separate ArkLib checkout, even building a
+>   `binding_of_one_le` proof of the `error ≥ 1` triviality): **"NO FLAW — the claim holds."**
+>
+> **THE WEAKEST LINK** an ArkLib maintainer attacks first is **not** a correctness gap — it is
+> *severity/novelty framing*: "this is the generic standard-model phenomenon — *any* computational
+> assumption written `∀ A, adv A ≤ ε` with no resource bound on the adversary *type* is Lean-false
+> via `Classical.choice`; `tSdhAssumption` is a stand-in for the informal assumption and the
+> reduction in `Binding.lean` is the real content." That objection does not touch the mechanized
+> fact (the exported theorem *is* sorry-free and *is* vacuous), and this writeup already concedes it
+> squarely ("a formalization gap, not a break of KZG or t-SDH; nothing in `Binding.lean` needs
+> discarding"). The framing below is fair. **Nothing filed; nothing published — ember's call.**
+
 **Status:** mechanized, `sorry`-free, axiom-clean. **Not disclosed.** Publication is ember's call.
 
 **Target:** [ArkLib](https://github.com/Verified-zkEVM/ArkLib) @ `d72f8392ff03047dc5386f4f4bb513743e7ada65`
