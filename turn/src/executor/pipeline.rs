@@ -276,6 +276,11 @@ fn rewrite_effect_targets(effects: &mut [Effect], placeholder: &CellId, resolved
             // ShieldedTransfer carries only nullifiers / commitments / proofs —
             // no CellId fields to rewrite.
             | Effect::ShieldedTransfer { .. }
+            // Custom's `cell` is a concrete, pre-registered SOVEREIGN cell (a
+            // custom transition is only admissible on the proof-carrying sovereign
+            // path against an already-registered commitment) — never a pipeline
+            // output placeholder, so there is nothing to resolve here.
+            | Effect::Custom { .. }
             | Effect::CreateCellFromFactory { .. } => {} // These effects don't have mutable CellId fields needing rewrite:
         }
     }

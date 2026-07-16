@@ -306,6 +306,21 @@ pub enum TurnError {
         got: String,
     },
 
+    /// **THE CUSTOM-EFFECT PATH REFUSAL** — an [`Effect::Custom`](crate::action::Effect::Custom)
+    /// reached the CLASSICAL apply path (a turn with no `execution_proof`).
+    ///
+    /// A custom transition's ENTIRE authority is its paired
+    /// [`CustomProgramProof`](crate::turn::CustomProgramProof): the registry-dispatched
+    /// sub-proof verify, the `[old_commit8, new_commit8]` state weld against the cell's
+    /// committed roots, and the sovereign-commitment store. None of those exist off the
+    /// proof-carrying sovereign path — there is no proof to dispatch, no claimed post-root
+    /// to weld to, and no sovereign commitment to advance. Applying it there would be
+    /// applying an app-defined transition with NO adjudication at all, so it is refused
+    /// fail-closed rather than treated as a no-op (a silent no-op would let a turn carry a
+    /// custom effect that a receipt observer reads as "a custom transition happened" while
+    /// nothing verified it).
+    CustomEffectRequiresProofCarryingTurn { cell: CellId },
+
     /// The cell targeted by a proof-carrying turn has no stored sovereign commitment.
     SovereignNotRegistered { cell: CellId },
 
@@ -861,6 +876,15 @@ impl core::fmt::Display for TurnError {
                     "custom-effect sub-proof #{index} is not bound to this turn's committed state: \
                      {which} mismatch (expected {expected}, got {got}); the proof may be valid but \
                      it is not provably about this cell's transition — rejected fail-closed"
+                )
+            }
+            TurnError::CustomEffectRequiresProofCarryingTurn { cell } => {
+                write!(
+                    f,
+                    "Effect::Custom on cell {cell} reached the classical apply path: a custom \
+                     transition's authority IS its paired custom_program_proofs sub-proof \
+                     (registry verify + [old8,new8] state weld + sovereign-commitment store), \
+                     none of which exists on a turn with no execution_proof — rejected fail-closed"
                 )
             }
             TurnError::SovereignNotRegistered { cell } => {

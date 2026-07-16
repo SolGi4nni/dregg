@@ -166,6 +166,16 @@ fn effect_body(effect: &Effect) -> String {
             "mint a note locally from a portable cross-federation spend proof".to_string()
         }
 
+        Effect::Custom {
+            cell,
+            program_vk_hash,
+            ..
+        } => format!(
+            "advance sovereign cell {} under custom program 0x{} (an external STARK proves the app-defined transition; its post-state is welded to the committed roots)",
+            hx32(cell.as_bytes()),
+            hx32(program_vk_hash)
+        ),
+
         Effect::Introduce {
             introducer,
             recipient,

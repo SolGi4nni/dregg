@@ -811,10 +811,11 @@ impl TurnExecutor {
         use dregg_circuit::descriptor_ir2::{parse_vm_descriptor2, verify_vm_descriptor2};
         use dregg_circuit::effect_vm::trace_rotated::{
             ROT_PI_COUNT, RotatedBlockWitness, V1_PI_COUNT, empty_caveat_manifest,
-            generate_rotated_note_create_wide, generate_rotated_note_spend_wide,
-            generate_rotated_record_pin_wide, generate_rotated_transfer_shape_wide,
-            generate_rotated_transfer_shape_with_fee_wide, rotated_descriptor_name_for_effect,
-            rotated_descriptor_name_for_effect_fee, transfer_caveat_manifest,
+            generate_rotated_custom_wide, generate_rotated_note_create_wide,
+            generate_rotated_note_spend_wide, generate_rotated_record_pin_wide,
+            generate_rotated_transfer_shape_wide, generate_rotated_transfer_shape_with_fee_wide,
+            rotated_descriptor_name_for_effect, rotated_descriptor_name_for_effect_fee,
+            transfer_caveat_manifest,
         };
         use dregg_circuit::effect_vm_descriptors::{
             WIDE_REGISTRY_STAGED_TSV, WIDE_UMEM_WELD_REGISTRY_TSV,
@@ -941,10 +942,23 @@ impl TurnExecutor {
         //     cap-open-routed: it never surfaces as `name`, and its bare/welded cap-open members ride the
         //     additive `cap_open_descs` set below — listed here for intent.)
         // This mirrors the SDK wire verifier's `bound.extend(collect_bound(WIDE_UMEM_WELD_REGISTRY_TSV))`.
-        const LIVE_ONLY_BARE_KEYS: [&str; 3] = [
+        //   * CUSTOM (the Custom-VK door): a custom transition is STATE-PASSTHROUGH at the
+        //     kernel layer — the Effect VM enforces balance/nonce/fields/cap_root continuity
+        //     and the app's meaning lives entirely in the sub-proof. So the record-kernel diff
+        //     the weld projects (`project_diff_ops`) is EMPTY, the deployed producer's weld
+        //     predicate (`single_domain = !ops.is_empty() && …`) is FALSE, and the producer
+        //     mints the BARE wide custom leg by construction. `customVmDescriptor2R24` DOES
+        //     have a welded twin in the 57/57 registry, but no real custom trace can satisfy it
+        //     (there is no umem op to witness), so requiring welded here would reject EVERY
+        //     honest custom turn — a liveness break, not a soundness gate. It is admitted bare
+        //     for exactly the reason the other three are: the weld refuses its genuine
+        //     projection. (Latent until now only because the door was closed: no custom turn
+        //     could reach this verifier at all.)
+        const LIVE_ONLY_BARE_KEYS: [&str; 4] = [
             "heapWriteVmDescriptor2R24",
             "supplyMintVmDescriptor2R24",
             "transferCapOpenTBVmDescriptor2R24",
+            "customVmDescriptor2R24",
         ];
         let welded_desc = WIDE_UMEM_WELD_REGISTRY_TSV
             .lines()
@@ -1047,6 +1061,29 @@ impl TurnExecutor {
             // MakeSovereign joins: its record pin welds the AFTER authority-digest limb (folding the
             // flipped mode byte) — see `trace_rotated::record_pin_offset`.
             generate_rotated_record_pin_wide(
+                &initial_vm_state,
+                &vm_effects,
+                &placeholder,
+                &placeholder,
+                &caveat,
+            )
+        } else if matches!(lead, dregg_circuit::effect_vm::Effect::Custom { .. }) {
+            // THE CUSTOM-VK DOOR (the reconstruction leg). A Custom lead routes the 789-wide
+            // `customVmDescriptor2R24` member — a Custom row, no Blum-memory / grow-gate leg
+            // (`map_heaps = []`, `mem_boundary = default`) — and MUST route IDENTICALLY to the
+            // producer (`cipherclerk`'s Custom arm / `prove_effect_vm_rotated_wide`), or the
+            // reconstructed PI vector diverges from the prover's and Fiat–Shamir rejects an
+            // HONEST turn. Without this arm a Custom lead fell through to the `else` transfer
+            // shape below: a different trace shape and PI count, so the descriptor's PI-count
+            // gate (or the transcript) rejected every custom turn — the reconstruction half of
+            // the same structural unreachability the bridge arm closes.
+            //
+            // The row's bound `(vk, commit)` columns come from the reconstructed `vm_effects`
+            // — i.e. from the turn's OWN `Effect::Custom` fields via
+            // `convert_turn_effects_to_vm` — so the published binding is EXECUTOR-DERIVED, never
+            // a prover-supplied free PI. The 16 wide commit anchors are overridden from the
+            // trusted before/after commits below exactly as for every other family.
+            generate_rotated_custom_wide(
                 &initial_vm_state,
                 &vm_effects,
                 &placeholder,

@@ -594,6 +594,50 @@ pub fn convert_turn_effects_to_vm(
                     });
                 }
 
+                // ────────────────────────────────────────────────────
+                // THE CUSTOM-VK DOOR (the reachability leg).
+                //
+                // Without this arm the projection NEVER emits `VmEffect::Custom`, so
+                // `enforce_custom_proof_count_committed` computes `committed = 0` for EVERY
+                // turn and any turn carrying `custom_program_proofs` is rejected with
+                // `CustomProofCountMismatch { wire: n, committed: 0 }`. The Custom-VK
+                // extension point was therefore real, general, and STRUCTURALLY UNREACHABLE.
+                // This arm is the door: it makes the i-th `Effect::Custom` the i-th
+                // `VmEffect::Custom` row, so the in-circuit committed Custom count equals the
+                // wire sub-proof count and the paired (effect ↔ row ↔ sub-proof) indexing the
+                // entry binding relies on is positional and total.
+                //
+                // The two projections are the SAME encodings the welds compare against:
+                //   * `program_vk_hash` → `bytes32_to_8_limbs` — byte-identical to
+                //     `enforce_custom_proof_entry_binding`'s `bytes32_to_8_limbs(&proof.vk_hash)`,
+                //     so the committed VK PI and the wire sub-proof's VK are comparable.
+                //   * `proof_commitment` → `bytes32_to_felt8` — the canonical 8-felt carrier
+                //     round-trip (`felt8_to_bytes32`'s inverse, the SAME pair the sovereign
+                //     commitment uses). NOT `bytes32_to_8_limbs`: that is a lossy
+                //     4-bytes-per-limb-mod-p projection, fine for an opaque IDENTIFIER like a
+                //     vk_hash but wrong for real field elements, and the fold connects these
+                //     felts lane-for-lane to the sub-proof leaf's in-circuit commitment.
+                //
+                // Values are taken from the EFFECT, never re-derived from the wire sub-proof:
+                // the STARK binds what this arm produces, and the executor then independently
+                // checks the wire sub-proof backs it (registry verify + state weld). Deriving
+                // the committed PI from the wire proof instead would make the entry binding
+                // compare a value to itself — vacuous.
+                Effect::Custom {
+                    cell,
+                    program_vk_hash,
+                    proof_commitment,
+                } if cell == cell_id => {
+                    vm_effects.push(VmEffect::Custom {
+                        program_vk_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(
+                            program_vk_hash,
+                        ),
+                        proof_commitment: dregg_cell::commitment::bytes32_to_felt8(
+                            proof_commitment,
+                        ),
+                    });
+                }
+
                 _ => {
                     // Effects not targeting `cell_id` or arms covered by
                     // explicit guards above (e.g., a cross-cell effect

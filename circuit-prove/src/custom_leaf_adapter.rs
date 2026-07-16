@@ -574,6 +574,167 @@ pub fn prove_custom_leaf_with_commitment(
     .map_err(|e| format!("custom-leaf commitment leaf-wrap failed: {e:?}"))
 }
 
+/// The width of the claim a [`prove_custom_leaf_with_state_commitment`] leaf exposes:
+/// the 8-felt PI-commitment followed by the 16-felt `[old_commit8 ‖ new_commit8]` state
+/// prefix — `[commitment(8) ‖ pis[0..16]]`, 24 lanes.
+///
+/// Lane map (the contract
+/// [`crate::joint_turn_recursive::prove_custom_binding_node_state_segmented`] connects against):
+///
+/// ```text
+///   [0  .. 8 )  = custom_proof_pi_commitment (the same value the 8-lane leaf exposes)
+///   [8  .. 16)  = pis[0..8]   = the sub-proof's CLAIMED pre-state  commitment (old8)
+///   [16 .. 24)  = pis[8..16]  = the sub-proof's CLAIMED post-state commitment (new8)
+/// ```
+pub const CUSTOM_STATE_CLAIM_LEN: usize = crate::custom_proof_bind::PROOF_BIND_COMMIT_WIDTH
+    + dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
+
+/// **THE IN-CIRCUIT STATE-BINDING LEG** — as [`prove_custom_leaf_with_commitment`], but the
+/// exposed claim is `[commitment(8) ‖ pis[0..16]]` instead of `[commitment(8)]`: the leaf ALSO
+/// re-exposes, as bound public lanes, the `[old_commit8, new_commit8]` state prefix its public
+/// inputs carry per the
+/// [`custom_state_binding`](dregg_circuit::effect_vm::custom_state_binding) ABI.
+///
+/// ## What this buys (and why the 8-lane leaf is not enough)
+///
+/// [`prove_custom_leaf_with_commitment`]'s claim binds **which public inputs the sub-proof
+/// used** — the commitment is an opaque hash over them. The deployed fold connects that
+/// commitment to the leg's claimed one, so "a verifying sub-proof backs this commitment" is
+/// witnessed by a pure light client. But nothing in the TREE said what those public inputs
+/// SAY. The executor checks that off-AIR
+/// (`TurnExecutor::enforce_custom_proof_state_binding`), so a re-executing validator is
+/// safe — a PURE LIGHT CLIENT, folding only the recursion tree, was not.
+///
+/// Exposing the prefix as its own lanes lets the binding node `connect` them to the
+/// dual-expose leg's REAL descriptor-bound rotated roots (`ivc_turn_chain::SEG_FIRST_OLD`
+/// lanes `0..8`, `SEG_LAST_NEW` lanes `8..16`). Then a custom sub-proof about a DIFFERENT
+/// transition — a forged `old`/`new` — is a `connect` conflict: UNSAT, no root, and the light
+/// client never receives a verifying artifact. That closes the named remainder on
+/// `custom_state_binding`'s "two teeth" doc.
+///
+/// Because the prefix lanes are read from the leaf's REAL in-circuit-bound descriptor PI
+/// targets (the same targets the commitment absorbs), a prover cannot expose a prefix that
+/// disagrees with the PIs the leaf actually proves — exposure and execution are welded.
+///
+/// ## Fail-closed on a non-state-binding program
+///
+/// A sub-program whose `public_input_count < CUSTOM_PI_STATE_PREFIX_LEN` (16) cannot express
+/// the binding at all, so it is REFUSED here rather than zero-padded into a false prefix —
+/// the in-circuit mirror of `extract_custom_pi_state_roots` returning `None`. A state-binding
+/// custom program publishes `[old8, new8, ..app]`; the demo/Merkle programs (2 PIs) are NOT
+/// state-binding programs and keep the 8-lane leaf.
+pub fn prove_custom_leaf_with_state_commitment(
+    program: &CellProgram,
+    witness_values: &HashMap<String, Vec<BabyBear>>,
+    num_rows: usize,
+    public_inputs: &[BabyBear],
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, String> {
+    use dregg_circuit::effect_vm::custom_state_binding::CUSTOM_PI_STATE_PREFIX_LEN;
+
+    if public_inputs.len() < CUSTOM_PI_STATE_PREFIX_LEN {
+        return Err(format!(
+            "custom state-binding leaf: the sub-program publishes {} public input(s), but the \
+             state-binding ABI requires at least {CUSTOM_PI_STATE_PREFIX_LEN} \
+             ([old_commit8 ‖ new_commit8] ‖ ..app). A program that cannot express the binding is \
+             refused rather than zero-padded into a false one.",
+            public_inputs.len()
+        ));
+    }
+
+    let lowered = lower_cellprogram(program)?;
+    let desc2 = &lowered.desc;
+
+    let base_trace =
+        augmented_base_trace(&lowered, program, witness_values, num_rows, public_inputs)?;
+
+    let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+        desc2,
+        &base_trace,
+        public_inputs,
+        &MemBoundaryWitness::default(),
+        &[],
+        &UMemBoundaryWitness::default(),
+        config,
+    )
+    .map_err(|e| format!("custom-leaf inner IR-v2 prove failed: {e}"))?;
+
+    let (airs, table_public_inputs, common) =
+        ir2_airs_and_common_for_config(desc2, &inner, public_inputs, config)
+            .map_err(|e| format!("custom-leaf verify-triple build failed: {e}"))?;
+
+    let input: RecursionInput<'_, DreggRecursionConfig, Ir2Air> =
+        RecursionInput::NativeBatchStark {
+            airs: &airs,
+            proof: &inner,
+            common_data: &common,
+            table_public_inputs,
+        };
+
+    // Same coeff-forced backend as the 8-lane leaf: the commitment expose still decomposes an
+    // ext limb into consecutive base lanes, whose per-coefficient values must ride the
+    // `WitnessChecks` bus via the `recompose/coeff` table. (The 16 prefix lanes are the leaf's
+    // OWN bound PI targets — already bus-present, no decompose needed for them.)
+    let backend = create_recursion_backend_with_coeff_lookups();
+
+    let num_pi = public_inputs.len();
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>, apt: &[Vec<Target>]| {
+        let main = apt
+            .first()
+            .expect("custom leaf has a main instance carrying the descriptor PIs");
+        debug_assert!(
+            main.len() >= num_pi,
+            "main instance must carry all {num_pi} descriptor PIs"
+        );
+        let pis: Vec<Target> = (0..num_pi).map(|k| main[k]).collect();
+        let commit = incircuit_custom_pi_commitment(cb, &pis)
+            .expect("in-circuit custom-PI commitment builds for the bound descriptor PIs");
+
+        // `[commitment(8) ‖ pis[0..16]]` — the prefix lanes are the leaf's REAL bound PI
+        // targets, so what is exposed IS what is proven.
+        let mut claim: Vec<Target> = Vec::with_capacity(CUSTOM_STATE_CLAIM_LEN);
+        claim.extend_from_slice(&commit);
+        claim.extend_from_slice(&pis[..CUSTOM_PI_STATE_PREFIX_LEN]);
+        debug_assert_eq!(claim.len(), CUSTOM_STATE_CLAIM_LEN);
+        cb.expose_as_public_output(&claim);
+    };
+
+    build_and_prove_next_layer_with_expose::<DreggRecursionConfig, Ir2Air, _, D>(
+        &input,
+        config,
+        &backend,
+        &ProveNextLayerParams::default(),
+        Some(&expose),
+    )
+    .map_err(|e| format!("custom-leaf state-commitment leaf-wrap failed: {e:?}"))
+}
+
+/// Read the `[old_commit8, new_commit8]` state prefix a
+/// [`prove_custom_leaf_with_state_commitment`] leaf exposes (lanes `[8..24)` of its
+/// `expose_claim`). Returns `None` when the proof carries no claim or exposes fewer than the
+/// full [`CUSTOM_STATE_CLAIM_LEN`] lanes — a truncated / 8-lane artifact is REFUSED here, never
+/// silently read as a binding it does not carry.
+pub fn read_exposed_state_prefix(
+    output: &RecursionOutput<DreggRecursionConfig>,
+) -> Option<([BabyBear; 8], [BabyBear; 8])> {
+    use crate::custom_proof_bind::PROOF_BIND_COMMIT_WIDTH;
+    let claims: Vec<BabyBear> = output
+        .0
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")?
+        .public_values
+        .iter()
+        .map(|&v| BabyBear::new(v.as_canonical_u32()))
+        .collect();
+    if claims.len() < CUSTOM_STATE_CLAIM_LEN {
+        return None;
+    }
+    let old = core::array::from_fn(|k| claims[PROOF_BIND_COMMIT_WIDTH + k]);
+    let new = core::array::from_fn(|k| claims[PROOF_BIND_COMMIT_WIDTH + 8 + k]);
+    Some((old, new))
+}
+
 /// Read the full 8-felt [`ProofBindCommitment`] a
 /// [`prove_custom_leaf_with_commitment`] leaf exposes through its
 /// `expose_claim` table. Returns `None` if the proof carries no exposed claim

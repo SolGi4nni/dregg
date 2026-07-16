@@ -361,6 +361,14 @@ impl Effect {
             Effect::RevokeDelegation { .. } => {
                 Inversion::Committed(CommittedReason::AuthorityRevoked)
             }
+            // A custom transition is PROOF-CARRYING: it advances a sovereign
+            // commitment under an external STARK whose inverse would be "un-proving"
+            // the transition — there is no structural inverse effect. The honest
+            // compensation is a fresh custom transition proving the reverse app-move
+            // (which the app's own AIR must admit). Committed, by design.
+            Effect::Custom { .. } => {
+                Inversion::Committed(CommittedReason::GenerativeOrProofCarrying)
+            }
             // Terminal lifecycle transitions.
             Effect::CellDestroy { .. } => Inversion::Committed(CommittedReason::TerminalLifecycle),
             Effect::MakeSovereign { .. } => {

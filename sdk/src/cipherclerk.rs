@@ -2571,14 +2571,23 @@ impl AgentCipherclerk {
                     let value = Self::extract_fact_value(fact)?;
                     let pred_bb = Self::trace_fact_predicate_bb(fact);
                     let term_bbs = Self::trace_fact_terms_bb(fact);
-                    let fact_hash = poseidon2::hash_fact(pred_bb, &term_bbs);
+                    // 2026-07-16: prove_predicate_for_fact now takes a FactBinding; it rebuilds the
+                    // fact as hash_fact(predicate_sym, [value, term1, term2]) — the VALUE is term[0]
+                    // (predicate_arith_witness.rs:148). Old: hash_fact(pred_bb, term_bbs). So
+                    // term1/term2 = term_bbs[1]/[2]; term_bbs[0] is carried by `value`
+                    // (extract_fact_value == term_bbs[0] for the Int values this arithmetic path proves).
+                    let binding = dregg_bridge::present::FactTerms {
+                        predicate_sym: pred_bb,
+                        term1: term_bbs[1],
+                        term2: term_bbs[2],
+                    }
+                    .bind(state_root);
                     let bridge_predicate =
                         Self::predicate_type_to_bridge(*predicate_type, threshold.as_u32());
 
                     let proof = dregg_bridge::prove_predicate_for_fact(
                         value,
-                        fact_hash,
-                        state_root,
+                        binding,
                         &bridge_predicate,
                     )
                     .ok_or_else(|| {
@@ -3964,23 +3973,31 @@ impl AgentCipherclerk {
         // Decode the token to verify it's valid.
         let _decoded = token.decode()?;
 
-        // Compute the fact hash for the attribute.
+        // Identify the fact the predicate speaks about.
         // The fact is modeled as: predicate=hash(attribute_name), terms=[value, 0, 0].
+        // 2026-07-16: prove_predicate_for_fact now takes a FactBinding built from the fact's
+        // PREIMAGE terms + state_root; it rebuilds the fact as
+        // hash_fact(predicate_sym, [value, term1, term2]) with the VALUE as term[0]
+        // (predicate_arith_witness.rs:148). Old terms were [value, 0, 0], so term1 = term2 = ZERO.
         let attr_bytes = blake3::hash(attribute.as_bytes());
         let attr_bb = Self::bytes_to_babybear(attr_bytes.as_bytes());
-        let value_bb = BabyBear::new(attribute_value);
-        let fact_hash = poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
 
         // Compute a state root from the token's derived proof key (deterministic for testing).
         // In production, this would come from the committed Merkle tree of the token state.
         let proof_key = Self::derive_proof_key(token.root_key());
         let state_root = Self::bytes_to_babybear(&proof_key);
 
+        let binding = dregg_bridge::present::FactTerms {
+            predicate_sym: attr_bb,
+            term1: BabyBear::ZERO,
+            term2: BabyBear::ZERO,
+        }
+        .bind(state_root);
+
         // Generate the predicate proof via the bridge.
         let proof = dregg_bridge::prove_predicate_for_fact(
             attribute_value,
-            fact_hash,
-            state_root,
+            binding,
             &predicate,
         )
         .ok_or_else(|| {
@@ -4207,26 +4224,27 @@ impl AgentCipherclerk {
                 }
             };
 
-            // Compute the fact hash for this attribute.
+            // Identify the fact this attribute names. Old terms were [value, 0, 0]; with the
+            // value now supplied separately as term[0], term1 = term2 = ZERO (see the note in
+            // `prove_predicate` above).
             let attr_bytes = blake3::hash(req.attribute.as_bytes());
             let attr_bb = Self::bytes_to_babybear(attr_bytes.as_bytes());
-            let value_bb = BabyBear::new(*value as u32);
-            let fact_hash =
-                poseidon2::hash_fact(attr_bb, &[value_bb, BabyBear::ZERO, BabyBear::ZERO]);
+            let binding = dregg_bridge::present::FactTerms {
+                predicate_sym: attr_bb,
+                term1: BabyBear::ZERO,
+                term2: BabyBear::ZERO,
+            }
+            .bind(state_root);
 
             // Generate the predicate proof.
-            let bridge_proof = dregg_bridge::prove_predicate_for_fact(
-                *value as u32,
-                fact_hash,
-                state_root,
-                &predicate,
-            )
-            .ok_or_else(|| {
-                SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
-                    "predicate proof failed for '{}': value {} does not satisfy {:?}",
-                    req.attribute, value, predicate
-                )))
-            })?;
+            let bridge_proof =
+                dregg_bridge::prove_predicate_for_fact(*value as u32, binding, &predicate)
+                    .ok_or_else(|| {
+                        SdkError::Auth(dregg_bridge::AuthError::InvalidRequest(format!(
+                            "predicate proof failed for '{}': value {} does not satisfy {:?}",
+                            req.attribute, value, predicate
+                        )))
+                    })?;
 
             // Carry the bridge's descriptor-backed proof directly. It is exactly the type
             // the migrated `FulfillmentWithPredicates.predicate_proofs` consumes and is
@@ -6765,6 +6783,31 @@ impl AgentCipherclerk {
                     vm_effects.push(VmEffect::Refusal {
                         target: target_hash,
                         reason_hash,
+                    });
+                }
+
+                // THE CUSTOM-VK DOOR (producer twin of
+                // `dregg_turn::executor::effect_vm_bridge::convert_turn_effects_to_vm`'s
+                // Custom arm — MUST stay byte-for-byte in lock-step, asserted by the
+                // `effect_vm_differential` invariant). Projects the turn-level
+                // `Effect::Custom` into the `VmEffect::Custom` row so the producer's
+                // proven trace carries the Custom row the executor reconstructs.
+                //   * `program_vk_hash` via `bytes32_to_8_limbs` (the identifier encoding
+                //     the entry-binding weld compares against);
+                //   * `proof_commitment` via `bytes32_to_felt8` (the canonical 8-felt
+                //     carrier round-trip — real field elements, not a hashed identifier).
+                Effect::Custom {
+                    cell,
+                    program_vk_hash,
+                    proof_commitment,
+                } if cell == cell_id => {
+                    vm_effects.push(VmEffect::Custom {
+                        program_vk_hash: dregg_circuit::effect_vm::bytes32_to_8_limbs(
+                            program_vk_hash,
+                        ),
+                        proof_commitment: dregg_cell::commitment::bytes32_to_felt8(
+                            proof_commitment,
+                        ),
                     });
                 }
 

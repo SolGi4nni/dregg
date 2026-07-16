@@ -74,6 +74,12 @@ impl TurnExecutor {
             // Shielded transfer: per-input hidden-STARK verify + Pedersen
             // conservation/range verify — proof-heavy, charged as a proof_verify.
             Effect::ShieldedTransfer { .. } => self.costs.proof_verify,
+            // Custom: the executor dispatches the paired custom sub-proof to its
+            // registered verifier (a recursive STARK verify) and the state weld —
+            // proof-heavy, charged as a proof_verify like the other verify-gated
+            // effects. (The per-turn DoS cap on the sub-proof COUNT lives in
+            // `enforce_custom_effect_proofs`; this is the per-effect base charge.)
+            Effect::Custom { .. } => self.costs.proof_verify,
         };
         base.saturating_add(extra)
             .saturating_add((effect.data_bytes() as u64).saturating_mul(self.costs.per_byte))

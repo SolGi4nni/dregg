@@ -955,7 +955,7 @@ impl TurnExecutor {
                 )
             }
             CommitmentMode::Full => {
-                Self::compute_signing_message(action, &self.local_federation_id)
+                Self::compute_signing_message(action, &self.local_federation_id, turn_nonce)
             }
         };
 
@@ -1023,7 +1023,7 @@ impl TurnExecutor {
                 )
             }
             CommitmentMode::Full => {
-                Self::compute_signing_message(action, &self.local_federation_id)
+                Self::compute_signing_message(action, &self.local_federation_id, turn_nonce)
             }
         };
 
@@ -2088,11 +2088,35 @@ impl TurnExecutor {
     /// The `federation_id` binds the signature to a specific federation, preventing
     /// cross-federation replay where a valid signature from federation A could be
     /// submitted to federation B.
-    pub fn compute_signing_message(action: &Action, federation_id: &[u8; 32]) -> [u8; 32] {
+    ///
+    /// `turn_nonce` binds the signature to the SUBMITTING turn's nonce — the
+    /// agent nonce the commit path checks (`agent.state.nonce() == turn.nonce`,
+    /// `executor/execute.rs`). Without this bind the nonce gate is NOT a replay
+    /// defense for a captured Full-commitment signature: neither `turn.nonce`
+    /// nor `turn.previous_receipt_hash` carries its own signature, and the
+    /// executor verifies no turn-level signature, so an adversary who observes
+    /// the (public) current on-ledger nonce and receipt-chain head can lift a
+    /// captured signed action onto the advanced (nonce, head) pair and
+    /// re-commit it — a value-draining replay (see
+    /// `turn/tests/nonce_replay_full_commitment.rs`). Binding the nonce makes
+    /// the signature single-use: after a commit the agent nonce advances to
+    /// `N+1`, so any submittable replay must carry `turn.nonce == N+1`, but the
+    /// signature was computed over `N`, so the recomputed message differs and
+    /// verification fails. This is the SAME `turn_nonce` bind the Partial
+    /// ([`compute_partial_signing_message`]) and Custom
+    /// ([`compute_custom_signing_message`]) paths already apply — the Full path
+    /// now matches them.
+    pub fn compute_signing_message(
+        action: &Action,
+        federation_id: &[u8; 32],
+        turn_nonce: u64,
+    ) -> [u8; 32] {
         let mut hasher = blake3::Hasher::new();
-        // Domain separation: version-bumped to v2 when federation binding was added.
-        hasher.update(b"dregg-action-sig-v2:");
+        // Domain separation: v2 added federation binding; v3 added turn_nonce
+        // binding (Full-commitment replay closure).
+        hasher.update(b"dregg-action-sig-v3:");
         hasher.update(federation_id);
+        hasher.update(&turn_nonce.to_le_bytes());
         hasher.update(action.target.as_bytes());
         hasher.update(&action.method);
         for arg in &action.args {
@@ -2411,7 +2435,14 @@ impl TurnExecutor {
                 | Effect::Promise { .. }
                 | Effect::Notify { .. }
                 | Effect::React { .. }
-                | Effect::ShieldedTransfer { .. } => {}
+                | Effect::ShieldedTransfer { .. }
+                // Custom is SELF-AUTHORIZING via its proof: the custom sub-proof's
+                // registry verify + the `[old8,new8]` state weld ARE the authority
+                // (the cell's own committed pre-root is the pre-image the proof
+                // binds), adjudicated on the proof-carrying sovereign path. It needs
+                // no `action.target` permission here — like NoteSpend / Mint, whose
+                // authority is likewise the ZK/cap-gated proof, not a target ACL.
+                | Effect::Custom { .. } => {}
             }
         }
 
@@ -3090,7 +3121,7 @@ mod cap1_authority_tests {
             },
             Authorization::Unchecked,
         );
-        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED);
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED, 0);
         let sig = sk.sign(&msg).to_bytes();
         let signed = action_with(
             vid,
@@ -3118,7 +3149,7 @@ mod cap1_authority_tests {
             certificate: death_cert(vid),
         };
         let unsigned = action_with(vid, mk(), Authorization::Unchecked);
-        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED);
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED, 0);
         let sig = sk.sign(&msg).to_bytes();
         let signed = action_with(vid, mk(), Authorization::from_sig_bytes(sig));
         let res = exec().verify_authorization(&signed, &victim, &ledger, &vid, &[0], 0);
@@ -3247,7 +3278,7 @@ mod hybrid_pq_tests {
     fn hybrid_auth(seed: [u8; 32], target: CellId, forge_pq: bool, omit_pq: bool) -> Authorization {
         let sk = SigningKey::from_bytes(&seed);
         let unsigned = set_field_action(target, Authorization::Unchecked);
-        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED);
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED, 0);
         let ed25519 = sk.sign(&msg).to_bytes();
         let pq = crate::pq::MlDsaTurnKey::from_ed25519_seed(&seed);
         let ml_dsa = if omit_pq {
@@ -3269,7 +3300,7 @@ mod hybrid_pq_tests {
     fn classical_auth(seed: [u8; 32], target: CellId) -> Authorization {
         let sk = SigningKey::from_bytes(&seed);
         let unsigned = set_field_action(target, Authorization::Unchecked);
-        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED);
+        let msg = TurnExecutor::compute_signing_message(&unsigned, &FED, 0);
         Authorization::from_sig_bytes(sk.sign(&msg).to_bytes())
     }
 

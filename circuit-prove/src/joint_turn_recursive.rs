@@ -605,6 +605,163 @@ pub fn prove_custom_binding_node_segmented(
     )
 }
 
+/// **THE IN-CIRCUIT STATE-BINDING FOLD** — as [`prove_custom_binding_node_segmented`], but it
+/// ALSO `connect`s the custom sub-proof's CLAIMED `[old_commit8, new_commit8]` state prefix to
+/// the leg's REAL descriptor-bound rotated roots, so a PURE LIGHT CLIENT witnesses that the
+/// custom transition is about THIS cell's actual roots — not merely that some verifying
+/// sub-proof backs the claimed commitment.
+///
+/// ## The gap this closes (the named remainder on `custom_state_binding`)
+///
+/// [`prove_custom_binding_node_segmented`] binds WHICH public inputs the sub-proof used (the
+/// commitment is an opaque hash of them). It never bound what those inputs SAY. So a custom AIR
+/// could prove a beautiful transition `R1 -> R2` while the turn commits `S1 -> S2`, and every
+/// in-tree gate passed. The EXECUTOR refuses that off-AIR
+/// (`TurnExecutor::enforce_custom_proof_state_binding`), but a light client folding only the
+/// tree could not see it. That was tooth 2 of the two-teeth doc, explicitly "NOT landed".
+///
+/// ## The three connects
+///
+/// The dual-expose leg leaf already carries the REAL roots in its exposed segment — no leg-side
+/// change was needed. The custom sub-proof leaf now re-exposes its bound PI prefix
+/// ([`crate::custom_leaf_adapter::prove_custom_leaf_with_state_commitment`]). This node welds
+/// them:
+///
+/// ```text
+///   ev[SEG_WIDTH + k]        == cs[k]                        k in 0..8   the commitment (as before)
+///   ev[SEG_FIRST_OLD + k]    == cs[CUSTOM_COMMIT_LEN + k]     k in 0..8   REAL old root == claimed old
+///   ev[SEG_LAST_NEW  + k]    == cs[CUSTOM_COMMIT_LEN + 8 + k] k in 0..8   REAL new root == claimed new
+/// ```
+///
+/// A sub-proof whose PIs declare roots the leg's transition did not produce is a per-lane
+/// `connect` CONFLICT ⇒ the aggregation is UNSAT ⇒ no root exists ⇒ the light client never
+/// receives a verifying artifact. Every lane of both roots is connected: a node binding only
+/// some would accept a forgery in the rest.
+///
+/// ## Why this is a DEDICATED node, not a widened `prove_custom_binding_node_segmented`
+///
+/// The state connect requires the custom leaf to expose [`CUSTOM_STATE_CLAIM_LEN`] (24) lanes,
+/// which in turn requires the sub-program to publish >= 16 PIs (the state-binding ABI). The
+/// existing mechanism/demo carriers publish 2 PIs, and the DSL/Dfa carrier binds a 4-felt
+/// claim — neither can serve the prefix. Making the connect CONDITIONAL on `cs.len() >= 24`
+/// inside the shared node would be worse than useless: a forging prover would simply mint the
+/// 8-lane leaf and the state connect would silently not fire — a dodgeable gate. So the state
+/// binding is its OWN node that REQUIRES the 24-lane claim and always connects. Callers choose
+/// the tooth they want; neither weakens the other.
+///
+/// `config` must be [`crate::ivc_turn_chain::ir2_leaf_wrap_config`].
+pub fn prove_custom_binding_node_state_segmented(
+    dual_expose_leg_leaf: &RecursionOutput<DreggRecursionConfig>,
+    custom_subproof_leaf: &RecursionOutput<DreggRecursionConfig>,
+    config: &DreggRecursionConfig,
+) -> Result<RecursionOutput<DreggRecursionConfig>, JointAggError> {
+    use crate::custom_leaf_adapter::CUSTOM_STATE_CLAIM_LEN;
+    use crate::ivc_turn_chain::{
+        SEG_ANCHOR_WIDTH, SEG_FIRST_OLD, SEG_LAST_NEW, SEG_WIDTH, expose_claim_instance_index,
+    };
+    use crate::plonky3_recursion_impl::recursive::create_recursion_backend_with_coeff_lookups;
+    use p3_circuit::CircuitBuilder;
+    use p3_recursion::{Target, build_and_prove_aggregation_layer_with_expose};
+
+    type RecursionChallenge = <DreggRecursionConfig as p3_uni_stark::StarkGenericConfig>::Challenge;
+
+    let ev_idx = expose_claim_instance_index(&dual_expose_leg_leaf.0).ok_or_else(|| {
+        JointAggError::AggregationProofInvalid {
+            reason: "dual-expose custom leg leaf carries no expose_claim table — it must be \
+                     wrapped via prove_descriptor_leaf_dual_expose (segment ++ commitment)"
+                .to_string(),
+        }
+    })?;
+    let cs_idx = expose_claim_instance_index(&custom_subproof_leaf.0).ok_or_else(|| {
+        JointAggError::AggregationProofInvalid {
+            reason: "custom sub-proof leaf carries no exposed claim (expose_claim) table — the \
+                     state-binding fold requires a leaf minted via \
+                     prove_custom_leaf_with_state_commitment (commitment ++ [old8 ‖ new8])"
+                .to_string(),
+        }
+    })?;
+
+    // FAIL-CLOSED on an 8-lane (commitment-only) custom leaf: without the exposed prefix there
+    // is nothing to weld the roots to, and silently degrading to a commitment-only connect
+    // would hand back a proof that LOOKS state-bound and is not.
+    //
+    // NB: read the table by op_type, NOT by `cs_idx` — `expose_claim_instance_index` returns an
+    // index into the in-circuit `air_public_targets` (primitive tables FIRST, then
+    // non-primitives), so it is offset by `NUM_PRIMITIVE_TABLES` and must not be used to index
+    // `non_primitives` directly.
+    let cs_lanes = custom_subproof_leaf
+        .0
+        .non_primitives
+        .iter()
+        .find(|e| e.op_type.as_str() == "expose_claim")
+        .map(|e| e.public_values.len())
+        .unwrap_or(0);
+    if cs_lanes < CUSTOM_STATE_CLAIM_LEN {
+        return Err(JointAggError::AggregationProofInvalid {
+            reason: format!(
+                "custom sub-proof leaf exposes {cs_lanes} claim lane(s) but the state-binding fold \
+                 requires {CUSTOM_STATE_CLAIM_LEN} (commitment(8) ‖ old8 ‖ new8) — mint it with \
+                 prove_custom_leaf_with_state_commitment. Refusing rather than degrading to a \
+                 commitment-only connect."
+            ),
+        });
+    }
+
+    let left = dual_expose_leg_leaf.into_recursion_input::<BatchOnly>();
+    let right = custom_subproof_leaf.into_recursion_input::<BatchOnly>();
+
+    let backend = create_recursion_backend_with_coeff_lookups();
+    let params = ProveNextLayerParams::default();
+
+    let expose = move |cb: &mut CircuitBuilder<RecursionChallenge>,
+                       left_apt: &[Vec<Target>],
+                       right_apt: &[Vec<Target>]| {
+        let ev = left_apt
+            .get(ev_idx)
+            .expect("dual-expose leg's claim instance present");
+        let cs = right_apt
+            .get(cs_idx)
+            .expect("custom sub-proof's exposed claim instance present");
+        debug_assert!(
+            ev.len() >= SEG_WIDTH + CUSTOM_COMMIT_LEN && cs.len() >= CUSTOM_STATE_CLAIM_LEN,
+            "leg must carry segment ++ commitment; custom leaf must carry commitment ++ [old8 ‖ new8]"
+        );
+
+        // 1. THE COMMITMENT TOOTH (unchanged): the leg's CLAIMED commitment must equal the
+        //    sub-proof's GENUINE in-circuit commitment.
+        for k in 0..CUSTOM_COMMIT_LEN {
+            cb.connect(ev[SEG_WIDTH + k], cs[k]);
+        }
+        // 2. THE STATE TOOTH (new): the sub-proof's CLAIMED pre/post roots must equal the leg's
+        //    REAL descriptor-bound rotated roots. This is what makes the light client's fold say
+        //    "the custom transition is about THIS cell's roots", not just "some sub-proof backs
+        //    this hash".
+        for k in 0..SEG_ANCHOR_WIDTH {
+            cb.connect(ev[SEG_FIRST_OLD + k], cs[CUSTOM_COMMIT_LEN + k]);
+            cb.connect(
+                ev[SEG_LAST_NEW + k],
+                cs[CUSTOM_COMMIT_LEN + SEG_ANCHOR_WIDTH + k],
+            );
+        }
+
+        // RE-EXPOSE ONLY THE SEGMENT, so this node folds into `aggregate_tree` exactly like a
+        // plain per-turn segment leaf (identical parent shape to the commitment-only node).
+        let seg: Vec<Target> = (0..SEG_WIDTH).map(|k| ev[k]).collect();
+        cb.expose_as_public_output(&seg);
+    };
+
+    build_and_prove_aggregation_layer_with_expose::<
+        DreggRecursionConfig,
+        BatchOnly,
+        BatchOnly,
+        _,
+        D,
+    >(&left, &right, config, &backend, &params, None, Some(&expose))
+    .map_err(|e| JointAggError::AggregationProofInvalid {
+        reason: format!("state-binding custom fold aggregation node failed: {e:?}"),
+    })
+}
+
 /// **THE CLAIM-LEN-PARAMETRIC SEGMENT-PRESERVING BINDING NODE** —
 /// [`prove_custom_binding_node_segmented`] with the connected claim width made explicit.
 /// The CUSTOM carrier binds the full 8-felt rotated `custom_proof_commitment`
@@ -1252,5 +1409,421 @@ mod custom_fold_wire_tests {
                 || prove_custom_binding_node(&ev_leaf, &custom_leaf, &config),
             );
         }
+    }
+}
+
+// ============================================================================
+// THE IN-CIRCUIT STATE-BINDING FOLD TEETH (in-lib — no rotated mint needed).
+//
+// These exercise the leg the `custom_state_binding` doc named as NOT LANDED: making a
+// PURE LIGHT CLIENT (folding only the recursion tree) witness that a custom sub-proof's
+// declared `[old8, new8]` prefix IS the leg's REAL descriptor-bound roots — not merely
+// that some verifying sub-proof backs the claimed commitment.
+//
+// The leg leaf here is a minimal stand-in for the 789-wide deployed `customVmDescriptor2R24`
+// at the SAME two exposure surfaces the real member has: the 8-felt commitment claim at IR2
+// PI [46..54) and the 16 wide anchors in the LAST 16 PIs (the deployed custom member ships at
+// 78 PIs = 62 base + 16 wide, so the claim and the anchors do not overlap — mirrored here).
+// ============================================================================
+#[cfg(test)]
+// The `canary__*` name uses a double underscore to set the CANARY label off from the
+// property it measures — clearer in `cargo test` output than one long snake run.
+#[allow(non_snake_case)]
+mod custom_state_fold_wire_tests {
+    use super::*;
+    use crate::custom_leaf_adapter::{
+        prove_custom_leaf_with_state_commitment, read_exposed_pi_commitment,
+        read_exposed_state_prefix,
+    };
+    use crate::custom_proof_bind::custom_proof_pi_commitment;
+    use crate::ivc_turn_chain::{
+        SEG_ANCHOR_WIDTH, ir2_leaf_wrap_config, prove_descriptor_leaf_dual_expose,
+    };
+    use dregg_circuit::descriptor_ir2::{
+        EffectVmDescriptor2, MemBoundaryWitness, UMemBoundaryWitness, VmConstraint2,
+        prove_vm_descriptor2_for_config,
+    };
+    use dregg_circuit::dsl::circuit::{
+        CellProgram, CircuitDescriptor, ColumnDef, ColumnKind, ConstraintExpr, PolyTerm,
+    };
+    use dregg_circuit::effect_vm::custom_state_binding::{
+        CUSTOM_PI_STATE_PREFIX_LEN, custom_pi_state_prefix,
+    };
+    use dregg_circuit::field::BABYBEAR_P;
+    use dregg_circuit::lean_descriptor_air::{VmConstraint, VmRow};
+    use dregg_circuit::refusal::must_refuse;
+    use std::collections::HashMap;
+
+    /// PI count of the stand-in leg — the deployed custom wide member's shape (62 base + 16
+    /// wide anchors). Keeps the claim slice [46..54) and the anchors [62..78) disjoint, and is
+    /// >= `WIDE_PI_COUNT` (66) so `prove_descriptor_leaf_dual_expose` takes the WIDE anchor
+    /// branch (sourcing the genuine 8-felt roots rather than broadcasting a single felt).
+    const STANDIN_LEG_PI_COUNT: usize = 78;
+
+    /// A STATE-BINDING custom program: the same minimal-but-REAL conservation shape as the
+    /// demo, but publishing the `custom_state_binding` ABI's public inputs —
+    /// `[old_commit8 ‖ new_commit8 ‖ old_bal, new_bal]` (18 PIs). The 2-PI demo program is NOT
+    /// a state-binding program and cannot serve this fold (it cannot express the prefix).
+    fn state_binding_program() -> CellProgram {
+        let p_minus_1 = BabyBear::new(BABYBEAR_P - 1);
+        let descriptor = CircuitDescriptor {
+            name: "dregg-custom-state-binding-demo-v1".to_string(),
+            trace_width: 4,
+            max_degree: 2,
+            columns: vec![
+                ColumnDef {
+                    name: "old".into(),
+                    index: 0,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "amt".into(),
+                    index: 1,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "new".into(),
+                    index: 2,
+                    kind: ColumnKind::Value,
+                },
+                ColumnDef {
+                    name: "dir".into(),
+                    index: 3,
+                    kind: ColumnKind::Binary,
+                },
+            ],
+            constraints: vec![
+                ConstraintExpr::Binary { col: 3 },
+                ConstraintExpr::Polynomial {
+                    terms: vec![
+                        PolyTerm {
+                            coeff: BabyBear::ONE,
+                            col_indices: vec![2],
+                        },
+                        PolyTerm {
+                            coeff: p_minus_1,
+                            col_indices: vec![0],
+                        },
+                        PolyTerm {
+                            coeff: p_minus_1,
+                            col_indices: vec![1],
+                        },
+                        PolyTerm {
+                            coeff: BabyBear::new(2),
+                            col_indices: vec![3, 1],
+                        },
+                    ],
+                },
+            ],
+            boundaries: vec![],
+            // [old8 ‖ new8] ‖ two app PIs — the ABI shape (16 + 2).
+            public_input_count: CUSTOM_PI_STATE_PREFIX_LEN + 2,
+            lookup_tables: vec![],
+        };
+        CellProgram::new(descriptor, 1)
+    }
+
+    fn honest_witness() -> (HashMap<String, Vec<BabyBear>>, usize) {
+        let rows = 4;
+        let mut w = HashMap::new();
+        w.insert("old".into(), vec![BabyBear::new(10); rows]);
+        w.insert("amt".into(), vec![BabyBear::new(5); rows]);
+        w.insert("new".into(), vec![BabyBear::new(15); rows]);
+        w.insert("dir".into(), vec![BabyBear::ZERO; rows]);
+        (w, rows)
+    }
+
+    /// A distinct 8-felt root fixture.
+    fn root8(base: u32) -> [BabyBear; 8] {
+        core::array::from_fn(|k| BabyBear::new(base + k as u32))
+    }
+
+    /// The state-binding sub-proof's public inputs: `[old8 ‖ new8 ‖ 10, 15]`.
+    fn state_pis(old8: &[BabyBear; 8], new8: &[BabyBear; 8]) -> Vec<BabyBear> {
+        let mut pis = custom_pi_state_prefix(old8, new8).to_vec();
+        pis.push(BabyBear::new(10));
+        pis.push(BabyBear::new(15));
+        pis
+    }
+
+    /// A DUAL-EXPOSE stand-in leg leaf carrying BOTH surfaces the deployed custom member has:
+    /// the claimed 8-felt commitment at IR2 PI [46..54), and the REAL 8-felt rotated roots in
+    /// the last 16 PIs. Every published lane is pinned to a trace column by a `PiBinding`, so
+    /// the exposed values are FRI-bound, not free scalars.
+    fn dual_expose_leg_leaf(
+        claim: crate::custom_proof_bind::ProofBindCommitment,
+        real_old8: &[BabyBear; 8],
+        real_new8: &[BabyBear; 8],
+        config: &DreggRecursionConfig,
+    ) -> RecursionOutput<DreggRecursionConfig> {
+        let n = STANDIN_LEG_PI_COUNT;
+        let old_first = n - 2 * SEG_ANCHOR_WIDTH; // 62
+        let new_first = n - SEG_ANCHOR_WIDTH; // 70
+
+        // cols 0..8 = the claim; 8..16 = old8; 16..24 = new8.
+        let mut constraints: Vec<VmConstraint2> = (0..CUSTOM_COMMIT_LEN)
+            .map(|k| {
+                VmConstraint2::Base(VmConstraint::PiBinding {
+                    row: VmRow::First,
+                    col: k,
+                    pi_index: CUSTOM_COMMIT_PI_LO + k,
+                })
+            })
+            .collect();
+        for k in 0..SEG_ANCHOR_WIDTH {
+            constraints.push(VmConstraint2::Base(VmConstraint::PiBinding {
+                row: VmRow::First,
+                col: CUSTOM_COMMIT_LEN + k,
+                pi_index: old_first + k,
+            }));
+            constraints.push(VmConstraint2::Base(VmConstraint::PiBinding {
+                row: VmRow::First,
+                col: CUSTOM_COMMIT_LEN + SEG_ANCHOR_WIDTH + k,
+                pi_index: new_first + k,
+            }));
+        }
+
+        let trace_width = CUSTOM_COMMIT_LEN + 2 * SEG_ANCHOR_WIDTH; // 24
+        let desc = EffectVmDescriptor2 {
+            name: "customVmDescriptor2R24-dual-expose-standin".to_string(),
+            trace_width,
+            public_input_count: n,
+            tables: vec![],
+            constraints,
+            hash_sites: vec![],
+            ranges: vec![],
+        };
+
+        let mut row: Vec<BabyBear> = Vec::with_capacity(trace_width);
+        row.extend_from_slice(&claim);
+        row.extend_from_slice(real_old8);
+        row.extend_from_slice(real_new8);
+        let trace: Vec<Vec<BabyBear>> = (0..4).map(|_| row.clone()).collect();
+
+        let mut pis = vec![BabyBear::ZERO; n];
+        for k in 0..CUSTOM_COMMIT_LEN {
+            pis[CUSTOM_COMMIT_PI_LO + k] = claim[k];
+        }
+        for k in 0..SEG_ANCHOR_WIDTH {
+            pis[old_first + k] = real_old8[k];
+            pis[new_first + k] = real_new8[k];
+        }
+
+        let inner = prove_vm_descriptor2_for_config::<DreggRecursionConfig>(
+            &desc,
+            &trace,
+            &pis,
+            &MemBoundaryWitness::default(),
+            &[],
+            &UMemBoundaryWitness::default(),
+            config,
+        )
+        .expect("dual-expose leg stand-in proves (its published lanes are internally consistent)");
+
+        prove_descriptor_leaf_dual_expose(&desc, &inner, &pis, config)
+            .expect("dual-expose leg leaf exposes segment ++ the claimed commitment")
+    }
+
+    /// The custom leaf's exposed claim IS `[commitment(8) ‖ old8 ‖ new8]`, and the prefix lanes
+    /// are the leaf's REAL bound PIs — so exposure and execution are welded. (The cheap
+    /// structural pole, before the folds.)
+    #[test]
+    #[ignore = "mints a STARK + leaf-wrap (minutes); run with --ignored on the build box"]
+    fn state_leaf_exposes_the_commitment_and_the_bound_state_prefix() {
+        let config = ir2_leaf_wrap_config();
+        let program = state_binding_program();
+        let (w, rows) = honest_witness();
+        let (old8, new8) = (root8(100), root8(200));
+        let pis = state_pis(&old8, &new8);
+
+        let leaf = prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config)
+            .expect("the state-binding custom leaf proves");
+
+        assert_eq!(
+            read_exposed_pi_commitment(&leaf).expect("commitment lanes present"),
+            custom_proof_pi_commitment(&pis),
+            "lanes [0..8) must be the host-identical PI commitment"
+        );
+        assert_eq!(
+            read_exposed_state_prefix(&leaf).expect("state prefix lanes present"),
+            (old8, new8),
+            "lanes [8..24) must re-expose the sub-proof's OWN bound [old8, new8] prefix"
+        );
+    }
+
+    /// A sub-program that cannot express the binding (fewer than 16 PIs) is REFUSED — never
+    /// zero-padded into a false prefix. The in-circuit mirror of `extract_custom_pi_state_roots`
+    /// returning `None`.
+    #[test]
+    fn a_program_too_narrow_for_the_state_prefix_is_refused() {
+        let config = ir2_leaf_wrap_config();
+        // The 2-PI demo shape — a real program, but not a state-binding one.
+        let mut program = state_binding_program();
+        program.descriptor.public_input_count = 2;
+        let (w, rows) = honest_witness();
+        let pis = vec![BabyBear::new(10), BabyBear::new(15)];
+
+        must_refuse(
+            "a sub-program with 2 PIs minted a state-binding leaf",
+            || prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config),
+        );
+    }
+
+    /// **THE POSITIVE POLE.** An HONEST custom turn — the sub-proof's declared `[old8, new8]`
+    /// prefix IS the leg's real descriptor-bound roots, and the leg's claimed commitment is the
+    /// genuine one — binds in the state fold.
+    #[test]
+    #[ignore = "folds two leaves through an aggregation layer (minutes); run with --ignored"]
+    fn honest_state_bound_custom_turn_binds_in_the_fold() {
+        let config = ir2_leaf_wrap_config();
+        let program = state_binding_program();
+        let (w, rows) = honest_witness();
+        let (old8, new8) = (root8(100), root8(200));
+        let pis = state_pis(&old8, &new8);
+        let real = custom_proof_pi_commitment(&pis);
+
+        let custom_leaf =
+            prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config)
+                .expect("the state-binding custom sub-proof leaf proves");
+        // The leg publishes the SAME roots the sub-proof declares.
+        let leg = dual_expose_leg_leaf(real, &old8, &new8, &config);
+
+        prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config)
+            .expect("an honest state-bound custom turn must bind in the fold");
+    }
+
+    /// **THE TOOTH.** A custom sub-proof about a DIFFERENT transition — it VERIFIES, and the
+    /// leg honestly claims ITS commitment (so the commitment connect PASSES) — has no
+    /// satisfying partner: its declared roots are not the leg's real roots, so the state
+    /// `connect` is a conflict ⇒ UNSAT ⇒ no root ⇒ the light client never receives a verifying
+    /// artifact.
+    ///
+    /// This is the exact forgery `custom_state_binding`'s module doc describes: "a custom AIR
+    /// could prove a beautiful transition `R1 -> R2` while the turn commits `S1 -> S2`, and
+    /// every existing gate passed."
+    #[test]
+    #[ignore = "folds two leaves through an aggregation layer (minutes); run with --ignored"]
+    fn forged_root_custom_proof_is_rejected_by_the_state_fold() {
+        let config = ir2_leaf_wrap_config();
+        let program = state_binding_program();
+        let (w, rows) = honest_witness();
+
+        // The leg's REAL transition.
+        let (real_old8, real_new8) = (root8(100), root8(200));
+        // The sub-proof is about an UNRELATED transition.
+        let (forged_old8, forged_new8) = (root8(900), root8(950));
+        let forged_pis = state_pis(&forged_old8, &forged_new8);
+        // The leg claims the sub-proof's GENUINE commitment — so the commitment tooth passes
+        // and ONLY the state tooth can bite. (Isolating the new gate.)
+        let claim = custom_proof_pi_commitment(&forged_pis);
+
+        let custom_leaf =
+            prove_custom_leaf_with_state_commitment(&program, &w, rows, &forged_pis, &config)
+                .expect("the forged-root sub-proof still PROVES — that is the whole problem");
+        let leg = dual_expose_leg_leaf(claim, &real_old8, &real_new8, &config);
+
+        must_refuse(
+            "a custom proof about a DIFFERENT transition minted a verifying state-bound fold",
+            || prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config),
+        );
+    }
+
+    /// **THE CANARY — the connects are load-bearing, shown without editing code.**
+    ///
+    /// The SAME forged-root inputs that the state fold above REFUSES are ACCEPTED by the
+    /// commitment-only node (`prove_custom_binding_node_segmented`). That is not a bug in the
+    /// old node — it is precisely its documented reach ("binds WHICH public inputs the
+    /// sub-proof used ... does NOT bind what those public inputs SAY"). Running both over one
+    /// forgery measures exactly what the state connects add: disable them (i.e. use the old
+    /// node) and the forged-root proof folds cleanly.
+    #[test]
+    #[ignore = "folds the same forgery through two aggregation nodes (minutes); run with --ignored"]
+    fn canary__the_commitment_only_node_accepts_the_forgery_the_state_node_refuses() {
+        let config = ir2_leaf_wrap_config();
+        let program = state_binding_program();
+        let (w, rows) = honest_witness();
+
+        let (real_old8, real_new8) = (root8(100), root8(200));
+        let (forged_old8, forged_new8) = (root8(900), root8(950));
+        let forged_pis = state_pis(&forged_old8, &forged_new8);
+        let claim = custom_proof_pi_commitment(&forged_pis);
+
+        let custom_leaf =
+            prove_custom_leaf_with_state_commitment(&program, &w, rows, &forged_pis, &config)
+                .expect("the forged-root sub-proof proves");
+        let leg = dual_expose_leg_leaf(claim, &real_old8, &real_new8, &config);
+
+        // THE CANARY: the state connects DISABLED (the pre-leg node) => the forgery PASSES.
+        prove_custom_binding_node_segmented(&leg, &custom_leaf, &config).expect(
+            "CANARY BROKEN: the commitment-only node was expected to ACCEPT this forged-root \
+             proof (that acceptance is the gap the state leg closes). If this now refuses, the \
+             forged-root tooth below is passing for some OTHER reason and no longer measures \
+             the state connects.",
+        );
+
+        // THE LEG: the state connects ENABLED => the same forgery is UNSAT.
+        must_refuse(
+            "the state-bound node accepted a forged-root proof the canary proves is forgeable",
+            || prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config),
+        );
+    }
+
+    /// **THE PER-LANE TOOTH.** Every one of the 16 state-prefix lanes is load-bearing: a node
+    /// binding only some would accept a forgery in the rest. For each lane k, the sub-proof
+    /// declares roots differing from the leg's ONLY in lane k, and the fold must be UNSAT.
+    #[test]
+    #[ignore = "16 fold attempts (very slow); run with --ignored on the build box"]
+    fn every_state_prefix_lane_is_bound_by_the_state_fold() {
+        let config = ir2_leaf_wrap_config();
+        let program = state_binding_program();
+        let (w, rows) = honest_witness();
+        let (real_old8, real_new8) = (root8(100), root8(200));
+
+        for k in 0..CUSTOM_PI_STATE_PREFIX_LEN {
+            let mut old8 = real_old8;
+            let mut new8 = real_new8;
+            if k < SEG_ANCHOR_WIDTH {
+                old8[k] = BabyBear::new((old8[k].0 + 1) % BABYBEAR_P);
+            } else {
+                new8[k - SEG_ANCHOR_WIDTH] =
+                    BabyBear::new((new8[k - SEG_ANCHOR_WIDTH].0 + 1) % BABYBEAR_P);
+            }
+            let pis = state_pis(&old8, &new8);
+            let claim = custom_proof_pi_commitment(&pis); // honest for the forged PIs
+            let custom_leaf =
+                prove_custom_leaf_with_state_commitment(&program, &w, rows, &pis, &config)
+                    .expect("the lane-forged sub-proof proves");
+            let leg = dual_expose_leg_leaf(claim, &real_old8, &real_new8, &config);
+            must_refuse(
+                "a root forged in ONE state-prefix lane minted a verifying state-bound fold — \
+                 that lane is NOT bound",
+                || prove_custom_binding_node_state_segmented(&leg, &custom_leaf, &config),
+            );
+        }
+    }
+
+    /// FAIL-CLOSED: an 8-lane (commitment-only) custom leaf cannot be laundered through the
+    /// state-binding node — it is REFUSED rather than silently degraded to a commitment-only
+    /// connect that would LOOK state-bound and not be.
+    #[test]
+    #[ignore = "mints a STARK + leaf-wrap (minutes); run with --ignored"]
+    fn a_commitment_only_leaf_is_refused_by_the_state_node() {
+        use crate::custom_leaf_adapter::prove_custom_leaf_with_commitment;
+        let config = ir2_leaf_wrap_config();
+        let program = state_binding_program();
+        let (w, rows) = honest_witness();
+        let (old8, new8) = (root8(100), root8(200));
+        let pis = state_pis(&old8, &new8);
+        let claim = custom_proof_pi_commitment(&pis);
+
+        // A leaf minted with the 8-lane (commitment-only) wrap.
+        let thin_leaf = prove_custom_leaf_with_commitment(&program, &w, rows, &pis, &config)
+            .expect("the commitment-only leaf proves");
+        let leg = dual_expose_leg_leaf(claim, &old8, &new8, &config);
+
+        must_refuse(
+            "a commitment-only leaf was accepted by the state-binding node",
+            || prove_custom_binding_node_state_segmented(&leg, &thin_leaf, &config),
+        );
     }
 }

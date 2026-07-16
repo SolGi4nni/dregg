@@ -251,6 +251,13 @@ fn extract_tree_access(
                     }
                 }
             }
+            // A custom transition ADVANCES the sovereign commitment of `cell`, so
+            // it conflicts with any concurrent turn touching that cell — the
+            // scheduler must serialize them. (An empty write-set here would let two
+            // custom turns racing the same sovereign root be scheduled concurrently.)
+            Effect::Custom { cell, .. } => {
+                write_set.push(*cell);
+            }
             // Note effects, bridge effects, obligation effects don't target specific cells
             // beyond what's already captured by the action target.
             _ => {}

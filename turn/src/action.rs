@@ -1544,6 +1544,54 @@ pub enum Effect {
         /// value-commitment legs + range proofs + the conservation proof).
         payload: ShieldedTransferPayload,
     },
+    /// **THE CUSTOM-VK DOOR** — apply a custom-program transition to a sovereign
+    /// cell, adjudicated by an external STARK sub-proof. This is the turn-level
+    /// leg of the Custom-VK extension point (`circuit::effect_vm::Effect::Custom` /
+    /// `customVmDescriptor2R24`): the marker that makes a proof-carrying turn
+    /// carrying `Turn::custom_program_proofs` REACHABLE — without it
+    /// `convert_turn_effects_to_vm` never emits `VmEffect::Custom`, the in-circuit
+    /// committed Custom-effect count is 0, and the turn is rejected
+    /// (`CustomProofCountMismatch`). It is the substrate leg a Custom-VK game (the
+    /// Braid resolver) rides.
+    ///
+    /// ## Where its authority lives, and where it is REFUSED
+    ///
+    /// A custom transition carries authority ONLY through its paired
+    /// [`CustomProgramProof`](crate::turn::CustomProgramProof) (same index in
+    /// `Turn::custom_program_proofs`), verified on the proof-carrying sovereign
+    /// path ([`crate::executor::TurnExecutor::verify_and_commit_proof`]). There the
+    /// executor (a) dispatches the sub-proof to its REGISTERED verifier
+    /// (fail-closed on an unregistered `program_vk_hash`); (b) WELDS the sub-proof's
+    /// `[old_commit8, new_commit8]` public-input prefix to the cell's committed
+    /// pre-state root and this turn's claimed post-state root
+    /// (`dregg_circuit::effect_vm::custom_state_binding` ABI); (c) STORES the
+    /// attested post-state as the cell's new sovereign commitment (provably equal
+    /// to the sub-proof's `new_commit8` by the weld). On ANY other path there is no
+    /// proof, no weld, and no sovereign commitment to store, so the classical
+    /// apply path REFUSES this effect fail-closed
+    /// ([`crate::error::TurnError::CustomEffectRequiresProofCarryingTurn`]).
+    ///
+    /// ## The carried fields (the bridge preimage)
+    ///
+    /// * `cell` — the sovereign cell whose committed root this transition advances
+    ///   (must equal the proof-carrying turn's `execution_proof_cell`).
+    /// * `program_vk_hash` — the 32-byte custom-program identity (the registry
+    ///   dispatch key). Projected to the `VmEffect::Custom.program_vk_hash` 8-felt
+    ///   PI via `dregg_circuit::effect_vm::bytes32_to_8_limbs` — the SAME encoding
+    ///   `enforce_custom_proof_entry_binding` uses, so the wire sub-proof's
+    ///   `vk_hash` and the in-circuit committed VK agree.
+    /// * `proof_commitment` — the 32-byte carrier
+    ///   (`dregg_cell::commitment::felt8_to_bytes32`) of the 8-felt
+    ///   `custom_proof_pi_commitment(public_inputs)` the Custom row PUBLISHES and
+    ///   the per-turn fold binds to the sub-proof leaf. Set independently of the
+    ///   wire proof so the STARK binds it and the executor cross-checks the wire
+    ///   proof backs it — a lie here is caught by the fold (no backing sub-proof ⇒
+    ///   no aggregate root) or by the sub-proof's own registry verify.
+    Custom {
+        cell: CellId,
+        program_vk_hash: [u8; 32],
+        proof_commitment: [u8; 32],
+    },
 }
 
 /// Why a [`Effect::Refusal`] was issued. Refusals are *evidence of
@@ -1926,6 +1974,13 @@ impl Effect {
             Effect::RefreshDelegation { .. } => LinearityClass::Neutral,
             Effect::PipelinedSend { .. } => LinearityClass::Neutral,
             Effect::ExerciseViaCapability { .. } => LinearityClass::Neutral,
+
+            // A custom transition mutates only the SOVEREIGN COMMITMENT (an opaque
+            // 8-felt root); it debits/credits no substrate-tracked linear resource
+            // (balance/notes/caps). Conservation of the app's own resources is the
+            // custom AIR's job, proven in the sub-proof and welded to the committed
+            // roots — not a turn-effect-layer linearity obligation. So: Neutral.
+            Effect::Custom { .. } => LinearityClass::Neutral,
         }
     }
 
@@ -2430,6 +2485,16 @@ impl Effect {
                 hasher.update(&(c.len() as u64).to_le_bytes());
                 hasher.update(&c);
             }
+            Effect::Custom {
+                cell,
+                program_vk_hash,
+                proof_commitment,
+            } => {
+                hasher.update(&[64u8]);
+                hasher.update(cell.as_bytes());
+                hasher.update(program_vk_hash);
+                hasher.update(proof_commitment);
+            }
         }
         *hasher.finalize().as_bytes()
     }
@@ -2565,6 +2630,11 @@ impl Effect {
                         .sum::<usize>()
                     + 96 // the three 32-byte ConservationProof fields
             }
+            // Custom: the bridge preimage only — cell + program vk_hash + the
+            // 8-felt PI-commitment carrier. The sub-proof BYTES are not carried by
+            // the effect; they ride `Turn::custom_program_proofs` (and are charged
+            // where the turn is sized), so this is the effect's own data footprint.
+            Effect::Custom { .. } => 32 + 32 + 32,
         }
     }
 
@@ -2631,6 +2701,10 @@ impl Effect {
             // A shielded transfer consumes (hidden) note nullifiers — the same
             // note-spend facet a faceted capability gates `NoteSpend` with.
             Effect::ShieldedTransfer { .. } => dregg_cell::EFFECT_NOTE_SPEND,
+            // A custom transition advances a SOVEREIGN cell's committed root under
+            // an external proof — the sovereign-ops facet, the same class a faceted
+            // capability would gate `MakeSovereign` / proof-carrying operation with.
+            Effect::Custom { .. } => dregg_cell::EFFECT_SOVEREIGN_OPS,
         }
     }
 }

@@ -425,6 +425,26 @@ impl TurnExecutor {
             Effect::ShieldedTransfer { payload } => {
                 self.apply_shielded_transfer(path, journal, payload)
             }
+            // THE CUSTOM-VK DOOR, closed on THIS side (fail-closed).
+            //
+            // `Effect::Custom` is adjudicated ONLY on the proof-carrying sovereign path
+            // (`verify_and_commit_proof`): registry-dispatched sub-proof verify, the
+            // `[old_commit8, new_commit8]` weld against the cell's committed roots, and the
+            // sovereign-commitment store. This function is the CLASSICAL apply path — reached
+            // only when `turn.execution_proof` is None (`execute.rs` PHASE 3 returns before
+            // here otherwise). There is no proof to dispatch, no claimed post-root to weld,
+            // and no sovereign commitment to advance, so the custom transition has NO
+            // adjudication whatsoever here.
+            //
+            // Refused rather than no-op'd on purpose: a silent no-op would land a receipt
+            // whose effect list says "a custom transition happened" while nothing verified
+            // it — the exact playable-path/proven-path divergence the state weld exists to
+            // kill. Rejecting also keeps the count binding honest: a turn cannot smuggle an
+            // unproven `Effect::Custom` past the classical path.
+            Effect::Custom { cell, .. } => Err((
+                TurnError::CustomEffectRequiresProofCarryingTurn { cell: *cell },
+                path.to_vec(),
+            )),
         }
     }
 
