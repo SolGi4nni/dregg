@@ -1246,3 +1246,24 @@ have NO production callers — so it is test-only scaffolding, same class as Sta
 **The gate I just built is what caught this.** I have now made the same dialect error the audits made — in
 a commit whose whole subject was that error. That is precisely why the enforcement had to be mechanical
 rather than a lesson I keep re-learning. The baseline records `dsl/fold.rs` at 15 with that reason.
+
+### ⚠⚠ `VerifyTcbReentryResidual` (NEW, HIGH, NOT this lane's to fix) — found by unblocking a silent gate
+`6940bb654`: two match arms unblocked `dregg-tests` (red since the fresh cut `ddd2408c5`) → **249 tests now
+run and pass** → and that exposed **`every_verifying_binary_is_routed_or_allowlisted` FAILING**. It is the
+"a crate silently re-enters the verify TCB" regression gate, and it has been UNABLE TO RUN.
+**SIX binaries reach the ML-DSA verify stack while neither installing the Lean-verified core nor sitting on
+the reviewed DELEGATES_VERIFY allowlist**: `dregg-intent`(drex_clear) · `dregg-doc`(dregg-forge) ·
+`dungeon-service` · `real-dungeon-service` · `dreggnet-web`(dreggnet-web-server) ·
+`dregg-gateway-ask`(gateway-ask). Fix per the gate: wire `install_lean_verify_core_real` + a non-dev
+`dregg-lean-ffi` dep, OR add a JUSTIFIED DELEGATES_VERIFY entry. Not done here — a justification is a
+decision, not a cleanup, and this is the verify-routing lane's domain.
+
+**THE THESIS, LANDED TWICE:** this codebase HAS good ratchets — `effect_enum_descriptor_residual_gate`
+(every Effect variant: descriptor-or-named-residual), `every_verifying_binary_is_routed_or_allowlisted`
+(no silent verify-TCB re-entry), and now my `law1_enforcement_gate`. **But a ratchet that cannot COMPILE
+cannot bite.** Two unexhausted match arms muted an entire crate for weeks, and the verify-TCB regression it
+was built to catch sailed straight through. A non-compiling test target is SILENT, not red — that is the
+single most dangerous failure mode in this tree, and it is the same mechanism that hid ~39 orphaned
+teasting tests and let me break `proof_round_trip` unnoticed.
+**Corollary for the law-#1 gate I added: it must stay COMPILING to matter.** It lives in
+`circuit-prove/tests/`, a crate that builds — deliberately, not by luck.
