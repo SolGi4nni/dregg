@@ -1,8 +1,19 @@
 //! DSL circuit runtime: descriptors, trace generators, prove/verify functions.
 //!
-//! This module contains the production DSL infrastructure that was previously
-//! split across `dregg-dsl-runtime`. It lives here to avoid a circular dependency
-//! (circuit depends on dsl-runtime which depends on circuit).
+//! This module contains the production DSL **circuit-interpreting** infrastructure, which moved here
+//! from `dregg-dsl-runtime` to avoid a circular dependency (circuit depends on dsl-runtime which
+//! depends on circuit).
+//!
+//! **Scope note (corrected 2026-07-16 — the earlier wording said the infrastructure "was previously
+//! split across `dregg-dsl-runtime`", which reads as though that crate is now an empty husk. It is
+//! NOT, and an audit went looking for a husk that isn't there.)** `dregg-dsl-runtime` remains live and
+//! load-bearing: ~2200 lines of unique code (`composition.rs`, `diff_witness.rs`, and the
+//! `AirConstraintSet` / `Kimchi*` / `EffectDescriptor` topology types), 17 dependent crates, and —
+//! decisively — the `dregg-dsl` **proc-macro emits code that names `dregg_dsl_runtime::` paths**
+//! (`dregg-dsl/src/gen_rust.rs:190`, `gen_kimchi.rs:60`), so it is the runtime contract for generated
+//! code and cannot fold into `dregg-circuit` without rewriting codegen. What lives HERE is the
+//! interpreter + descriptors + trace generators; what lives THERE is composition, the topology
+//! descriptors, and the macro-facing surface.
 //!
 //! The [`circuit`] sub-module provides the runtime-interpreted `StarkAir` implementation
 //! driven by a [`circuit::CircuitDescriptor`], enabling DSL macros to emit data

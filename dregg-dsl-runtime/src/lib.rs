@@ -205,12 +205,3 @@ pub struct EffectDescriptor {
     /// Required permission to invoke this effect (e.g., "Send").
     pub required_permission: Option<&'static str>,
 }
-
-/// Descriptor for a membership constraint (used for set operations).
-#[derive(Debug, Clone)]
-pub struct MembershipConstraint {
-    /// Depth of the Merkle tree.
-    pub tree_depth: usize,
-    /// Identifier for the hash function used (e.g., "poseidon", "sha256").
-    pub hash_function: &'static str,
-}

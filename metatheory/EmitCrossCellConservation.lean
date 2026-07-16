@@ -3,7 +3,7 @@
 as byte-exact JSON.
 
 Prints the verified emission of `Dregg2/Circuit/CrossCellConservation.lean` — the byte source of
-`circuit/descriptors/dregg-cross-cell-conservation-v1.json`. SCRATCH executable: run with
+`circuit/descriptors/dregg-cross-cell-conservation-v2.json` (the live artifact; this pointed at a `-v1.json` that does not exist — a fossil of the phantom-commit episode). SCRATCH executable: run with
 `lake env lean --run EmitCrossCellConservation.lean`.
 -/
 import Dregg2.Circuit.CrossCellConservation
