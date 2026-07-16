@@ -47,6 +47,7 @@ use dregg_circuit::BabyBear;
 use dregg_circuit::adjacency_witness::{
     PI_IDX_LOWER as ADJ_PI_IDX_LOWER, PI_IDX_UPPER as ADJ_PI_IDX_UPPER, adjacency_witness,
 };
+use dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2;
 use dregg_circuit::descriptor_by_name::{MEMBERSHIP_4ARY_NAME_PREFIX, descriptor_by_name};
 use dregg_circuit::descriptor_ir2::{
     DreggStarkConfig, Ir2BatchProof, MemBoundaryWitness, prove_vm_descriptor2,
@@ -62,7 +63,6 @@ use dregg_circuit::predicate_comparison_witness::{
     PREDICATE_ARITH_NEQ_NAME,
 };
 use dregg_circuit::temporal_predicate_dsl::TemporalPredicateRequirement;
-use dregg_circuit_prove::custom_leaf_adapter::cellprogram_to_descriptor2;
 
 /// The emitted temporal-predicate (≥) descriptor name (`descriptor_by_name` key);
 /// PIs are `[num_steps, threshold, initial_state_root, final_state_root]`.
@@ -2855,22 +2855,28 @@ mod tests {
         op: PredicateType,
         threshold: u32,
     ) -> ([u8; 32], BabyBear, Ir2BatchProof<DreggStarkConfig>) {
+        use dregg_circuit::predicate_arith_witness::FactBinding;
         use dregg_circuit::predicate_arith_witness::predicate_arith_witness;
         use dregg_circuit::predicate_comparison_witness::{
             predicate_gt_witness, predicate_le_witness, predicate_lt_witness, predicate_neq_witness,
         };
-        let fact_hash = BabyBear::new(0xFACE);
         let state_root = BabyBear::new(0xB00C);
-        let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+        // The `≥` descriptor is now WELDED: its witness builder takes the fact identity and computes
+        // the commitment from the compared value (cols 5..23 + the two Poseidon2 legs). The siblings
+        // remain unwelded (opaque pass-through commitment).
+        let fact = FactBinding {
+            predicate_sym: BabyBear::new(0xFACE),
+            term1: BabyBear::ZERO,
+            term2: BabyBear::ZERO,
+            state_root,
+        };
+        let fact_commitment = fact.commitment_of(BabyBear::from_u64(value as u64));
         let v = value as u64;
         let t = threshold as u64;
         // Pick the emitted single-bound descriptor + honest witness for this operator
         // (mirror of `single_comparison_descriptor` + dregg-bridge's `prove_predicate_for_fact`).
         let (desc_name, built) = match op {
-            PredicateType::Gte => (
-                PREDICATE_ARITH_NAME,
-                predicate_arith_witness(v, t, fact_commitment, 2),
-            ),
+            PredicateType::Gte => (PREDICATE_ARITH_NAME, predicate_arith_witness(v, t, fact, 2)),
             PredicateType::Lte => (
                 PREDICATE_ARITH_LE_NAME,
                 predicate_le_witness(v, t, fact_commitment, 2),
@@ -3018,9 +3024,17 @@ mod tests {
     /// rejected.
     #[test]
     fn bridge_predicate_real_verifier_in_range_accept_and_reject() {
-        let fact_hash = BabyBear::new(0x1234);
+        use dregg_circuit::predicate_arith_witness::FactBinding;
         let state_root = BabyBear::new(0x5678);
-        let fact_commitment = compute_fact_commitment(fact_hash, state_root);
+        // The InRange low bound goes through the WELDED `≥` descriptor: the commitment is computed
+        // from the compared value. The high bound (`≤`) stays unwelded.
+        let fact = FactBinding {
+            predicate_sym: BabyBear::new(0x1234),
+            term1: BabyBear::ZERO,
+            term2: BabyBear::ZERO,
+            state_root,
+        };
+        let fact_commitment = fact.commitment_of(BabyBear::from_u64(50));
         let commitment = bridge_predicate_commitment_bytes(fact_commitment);
         let dummy = [0u8; 32];
 
@@ -3030,7 +3044,7 @@ mod tests {
         use dregg_circuit::predicate_comparison_witness::predicate_le_witness;
         let low_desc = descriptor_by_name(PREDICATE_ARITH_NAME).expect("ge descriptor registered");
         let (low_trace, low_pis) =
-            predicate_arith_witness(50, 10, fact_commitment, 2).expect("honest low bound builds");
+            predicate_arith_witness(50, 10, fact, 2).expect("honest low bound builds");
         let low_p = prove_vm_descriptor2(
             &low_desc,
             &low_trace,

@@ -834,13 +834,11 @@ impl TurnExecutor {
             if let Some(vk) = vk_hash {
                 if let Some(program) = self.program_registry.get(&vk) {
                     let desc =
-                        dregg_circuit_prove::custom_leaf_adapter::cellprogram_to_descriptor2(
-                            program,
-                        )
-                        .map_err(|e| AtomicTurnError::ProofFailed {
-                            cell: entry.cell_id,
-                            reason: e,
-                        })?;
+                        dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2(program)
+                            .map_err(|e| AtomicTurnError::ProofFailed {
+                                cell: entry.cell_id,
+                                reason: e,
+                            })?;
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         dregg_circuit::descriptor_ir2::verify_vm_descriptor2(
                             &desc,
@@ -1179,13 +1177,11 @@ impl TurnExecutor {
             if let Some(vk) = vk_hash {
                 if let Some(program) = self.program_registry.get(&vk) {
                     let desc =
-                        dregg_circuit_prove::custom_leaf_adapter::cellprogram_to_descriptor2(
-                            program,
-                        )
-                        .map_err(|e| AtomicTurnError::ProofFailed {
-                            cell: entry.cell_id,
-                            reason: e,
-                        })?;
+                        dregg_circuit::custom_leaf_lowering::cellprogram_to_descriptor2(program)
+                            .map_err(|e| AtomicTurnError::ProofFailed {
+                                cell: entry.cell_id,
+                                reason: e,
+                            })?;
                     std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                         dregg_circuit::descriptor_ir2::verify_vm_descriptor2(
                             &desc,

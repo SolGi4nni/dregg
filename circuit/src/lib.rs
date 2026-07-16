@@ -362,6 +362,12 @@ pub mod plonky3_recursion;
 /// `p3-uni-stark`), so the whole module is unconditional in the verify floor.
 pub mod descriptor_ir2;
 
+/// `CellProgram` → IR-v2 [`descriptor_ir2::EffectVmDescriptor2`] LOWERING (the
+/// prover-free half of the custom-leaf adapter), on the verify floor so the turn
+/// executor's Custom-VK VERIFY path never links the recursion prover. The PROVE
+/// half stays in `dregg-circuit-prove::custom_leaf_adapter`. See module docs.
+pub mod custom_leaf_lowering;
+
 // `custom_proof_bind` and `recursive_witness_bundle` moved to `dregg-circuit-prove`.
 
 /// Stage 7-γ.2 Phase 2 joint bilateral aggregation AIR. Consumes N per-cell
