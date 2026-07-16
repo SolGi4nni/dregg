@@ -6,6 +6,47 @@
 use dregg_cell::{AuthRequired, CellId, ChannelId};
 use serde::{Deserialize, Serialize};
 
+/// Which leg of the custom-proof binding failed
+/// ([`TurnError::CustomProofStateBindingMismatch`]).
+///
+/// Typed rather than stringly so a federation peer / light client can branch on the
+/// refusal reason across the wire, and so adding a leg is a compile error at every match
+/// rather than a silently-unhandled string.
+#[derive(Clone, Copy, Debug, PartialEq, Eq, Serialize, Deserialize)]
+pub enum CustomBindingLeg {
+    /// The sub-proof's PI prefix names a pre-state that is not this turn's stored
+    /// OLD commitment — the proof did not start where this turn says the cell was.
+    PreStateRoot,
+    /// The sub-proof's PI prefix names a post-state that is not the NEW commitment this
+    /// turn claims — the host proved one transition and committed another.
+    PostStateRoot,
+    /// `custom_proof_pi_commitment_8(wire PIs)` != the commitment the EffectVM proof
+    /// committed — the dispatched sub-proof is not the one the circuit bound.
+    PiCommitment,
+    /// The wire `vk_hash` != the committed `custom_program_vk_hash` — the dispatched
+    /// verifier is not the program the transition committed to.
+    ProgramVkHash,
+    /// The sub-proof's PIs are too short to carry the state-binding prefix at all. It
+    /// cannot express the binding, so it is refused rather than zero-padded into a match.
+    PublicInputsTooShort,
+    /// The proof's committed custom entry is absent from the public-input vector.
+    CommittedEntryAbsent,
+}
+
+impl std::fmt::Display for CustomBindingLeg {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        let s = match self {
+            CustomBindingLeg::PreStateRoot => "pre-state root",
+            CustomBindingLeg::PostStateRoot => "post-state root",
+            CustomBindingLeg::PiCommitment => "PI commitment",
+            CustomBindingLeg::ProgramVkHash => "program vk_hash",
+            CustomBindingLeg::PublicInputsTooShort => "public inputs too short",
+            CustomBindingLeg::CommittedEntryAbsent => "committed custom entry absent",
+        };
+        f.write_str(s)
+    }
+}
+
 /// All possible failure modes when executing a turn.
 #[derive(Clone, Debug, PartialEq, Eq, Serialize, Deserialize)]
 pub enum TurnError {
@@ -244,6 +285,26 @@ pub enum TurnError {
     /// count must equal the in-circuit Custom-row count the proof binds, else the
     /// wire vec could carry more (or fewer) sub-proofs than the turn commits to.
     CustomProofCountMismatch { wire: usize, committed: usize },
+
+    /// **THE CUSTOM-PROOF STATE-BINDING REFUSAL** — a custom sub-proof verified, but it
+    /// is not provably ABOUT the cell-state transition this turn commits.
+    ///
+    /// A custom proof's public inputs are, by the ABI
+    /// (`dregg_circuit::effect_vm::custom_state_binding`), prefixed by the cell's
+    /// `[pre_commit(8), post_commit(8)]`. Without that binding a host could staple a
+    /// beautiful proof of SOME transition (a different pre-state, a different post-root,
+    /// another cell entirely) onto a turn committing an unrelated one: the sub-proof
+    /// verifies, its commitment binds its own PIs, and nothing tied those PIs to this
+    /// cell's roots. Refused fail-closed.
+    ///
+    /// `which` names the failing leg; `index` is the sub-proof's position in
+    /// `turn.custom_program_proofs`.
+    CustomProofStateBindingMismatch {
+        index: usize,
+        which: CustomBindingLeg,
+        expected: String,
+        got: String,
+    },
 
     /// The cell targeted by a proof-carrying turn has no stored sovereign commitment.
     SovereignNotRegistered { cell: CellId },
@@ -787,6 +848,19 @@ impl core::fmt::Display for TurnError {
                     f,
                     "custom-effect sub-proof count mismatch: {wire} on the wire but the proof \
                      commits to {committed} (PI[CUSTOM_EFFECT_COUNT]); rejected fail-closed"
+                )
+            }
+            TurnError::CustomProofStateBindingMismatch {
+                index,
+                which,
+                expected,
+                got,
+            } => {
+                write!(
+                    f,
+                    "custom-effect sub-proof #{index} is not bound to this turn's committed state: \
+                     {which} mismatch (expected {expected}, got {got}); the proof may be valid but \
+                     it is not provably about this cell's transition — rejected fail-closed"
                 )
             }
             TurnError::SovereignNotRegistered { cell } => {

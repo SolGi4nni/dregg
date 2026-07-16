@@ -3,6 +3,12 @@
 //! Extracted from `executor/mod.rs` (lines 1279-2993 of pre-decomposition file).
 
 use super::*;
+use crate::error::CustomBindingLeg;
+
+/// Render a felt slice for a refusal message (canonical u32 values, in lane order).
+fn felts_dbg(v: &[dregg_circuit::field::BabyBear]) -> String {
+    format!("{:?}", v.iter().map(|f| f.0).collect::<Vec<_>>())
+}
 
 /// One leg of a multi-cohort sovereign turn's proof chain (the WHOLE-TURN FOREST wire, foolable
 /// gap #2). A turn is N maximal homogeneous cohort runs; each run is proven as its OWN rotated
@@ -291,6 +297,171 @@ impl TurnExecutor {
         Ok(())
     }
 
+    /// **THE CUSTOM-PROOF STATE-BINDING WELD** — require every custom sub-proof to be
+    /// provably ABOUT the cell-state transition this turn commits.
+    ///
+    /// ## The gap this closes
+    ///
+    /// [`Self::enforce_custom_effect_proofs`] establishes that each sub-proof VERIFIES
+    /// under its registered verifier, and [`Self::enforce_custom_proof_count_committed`]
+    /// that the wire count equals the in-circuit committed count. Neither says the proof
+    /// has anything to do with THIS cell's state. The in-circuit
+    /// `custom_proof_commitment` binds the sub-proof's public inputs — but as an opaque
+    /// hash: it never constrained what those inputs SAY. So a host could staple a
+    /// perfectly valid proof of a DIFFERENT transition (another pre-state, another
+    /// post-root, another cell's board) onto a turn committing an unrelated one, and
+    /// every existing gate passed. That is the "playable path and proven path are
+    /// parallel lanes" disease at its root.
+    ///
+    /// ## The weld (fail-closed)
+    ///
+    /// For each sub-proof `i`, the sub-proof's public-input prefix must be this turn's
+    /// `[old_commit8, new_commit8]` per the
+    /// [`custom_state_binding`](dregg_circuit::effect_vm::custom_state_binding) ABI.
+    /// `old_commit8` is the cell's STORED commitment (from the ledger) and `new_commit8`
+    /// the commitment this turn claims — the SAME two values the EffectVM proof binds at
+    /// `PI[OLD_COMMIT_BASE]` / `PI[NEW_COMMIT_BASE]` and that the rotated verify anchors.
+    /// So this makes "the custom AIR proved the transition from THIS pre-root to THIS
+    /// committed post-root" a CHECKED statement rather than a host assertion.
+    ///
+    /// A sub-proof whose PIs are too short to express the binding is REFUSED — never
+    /// zero-padded into a match against a genuine all-zero root.
+    ///
+    /// The companion [`Self::enforce_custom_proof_entry_binding`] welds the wire
+    /// sub-proof to the in-circuit committed `(vk_hash, proof_commitment)` entry; it is
+    /// separate because it needs the WIDE `pi::` public-input vector, which only the
+    /// bundle path reconstructs (the rotated sovereign path carries a 38-PI descriptor
+    /// vector instead). Each function is fail-closed within its own contract rather than
+    /// gating on an optional input.
+    ///
+    /// ## Reach (honest scope)
+    ///
+    /// This is the OFF-AIR leg: an executor / re-executing validator enforces it. A PURE
+    /// LIGHT CLIENT that only folds the recursion tree does not yet witness it — the
+    /// in-circuit leg (connecting the custom leaf's exposed PI lanes `0..16` to the
+    /// dual-expose leg's segment roots) is the named remainder documented on
+    /// [`custom_state_binding`](dregg_circuit::effect_vm::custom_state_binding).
+    ///
+    /// Does not weaken any existing gate: it is an ADDITIONAL refusal after the registry
+    /// dispatch, the DoS cap, and the count binding have all passed. A turn carrying no
+    /// custom proofs is a no-op pass (byte-identical to the pre-weld path).
+    pub(super) fn enforce_custom_proof_state_binding(
+        turn: &Turn,
+        old_commit8: &[dregg_circuit::field::BabyBear; 8],
+        new_commit8: &[dregg_circuit::field::BabyBear; 8],
+    ) -> Result<(), TurnError> {
+        use dregg_circuit::effect_vm::custom_state_binding::{
+            CUSTOM_PI_STATE_PREFIX_LEN, extract_custom_pi_state_roots,
+        };
+
+        let proofs = match &turn.custom_program_proofs {
+            Some(p) if !p.is_empty() => p,
+            _ => return Ok(()),
+        };
+
+        for (i, proof) in proofs.iter().enumerate() {
+            let wire_pis = proof.public_inputs_babybear();
+            let (claimed_old, claimed_new) =
+                extract_custom_pi_state_roots(&wire_pis).ok_or_else(|| {
+                    TurnError::CustomProofStateBindingMismatch {
+                        index: i,
+                        which: CustomBindingLeg::PublicInputsTooShort,
+                        expected: format!(
+                            ">= {CUSTOM_PI_STATE_PREFIX_LEN} felts (state-binding prefix)"
+                        ),
+                        got: format!("{} felts", wire_pis.len()),
+                    }
+                })?;
+            if &claimed_old != old_commit8 {
+                return Err(TurnError::CustomProofStateBindingMismatch {
+                    index: i,
+                    which: CustomBindingLeg::PreStateRoot,
+                    expected: felts_dbg(old_commit8),
+                    got: felts_dbg(&claimed_old),
+                });
+            }
+            if &claimed_new != new_commit8 {
+                return Err(TurnError::CustomProofStateBindingMismatch {
+                    index: i,
+                    which: CustomBindingLeg::PostStateRoot,
+                    expected: felts_dbg(new_commit8),
+                    got: felts_dbg(&claimed_new),
+                });
+            }
+        }
+        Ok(())
+    }
+
+    /// **THE WIRE↔IN-CIRCUIT ENTRY WELD** — bind each wire sub-proof to the
+    /// `(vk_hash, proof_commitment)` entry the EffectVM proof actually committed at
+    /// `PI[CUSTOM_PROOFS_BASE + i*CUSTOM_ENTRY_SIZE]`.
+    ///
+    /// Companion to [`Self::enforce_custom_proof_state_binding`]. Without this, the bytes
+    /// the executor verified and the commitment the circuit proved are INDEPENDENT
+    /// objects: the fold binds the claimed commitment to *a* backing sub-proof, but
+    /// nothing said the executor dispatched *that* sub-proof.
+    ///
+    /// Two legs, both fail-closed:
+    ///
+    /// 1. **program vk_hash** — the wire `vk_hash` must equal the committed
+    ///    `PI[base .. base+8]`, so the dispatched verifier is the one the transition
+    ///    committed to (not a weaker registered sibling).
+    /// 2. **PI commitment** — `custom_proof_pi_commitment_8(wire.public_inputs)` must
+    ///    equal the committed `PI[base+8 .. base+16]`. Combined with the state-binding
+    ///    weld, the in-circuit-committed commitment now determines a PI vector whose
+    ///    prefix IS this cell's roots.
+    ///
+    /// Requires the WIDE `pi::` layout vector (the bundle path's reconstruction).
+    pub(super) fn enforce_custom_proof_entry_binding(
+        turn: &Turn,
+        public_inputs: &[dregg_circuit::field::BabyBear],
+    ) -> Result<(), TurnError> {
+        use dregg_circuit::effect_vm::custom_state_binding::custom_proof_pi_commitment_8;
+        use dregg_circuit::effect_vm::pi;
+
+        let proofs = match &turn.custom_program_proofs {
+            Some(p) if !p.is_empty() => p,
+            _ => return Ok(()),
+        };
+
+        for (i, proof) in proofs.iter().enumerate() {
+            let base = pi::CUSTOM_PROOFS_BASE + i * pi::CUSTOM_ENTRY_SIZE;
+            if base + pi::CUSTOM_ENTRY_SIZE > public_inputs.len() {
+                return Err(TurnError::CustomProofStateBindingMismatch {
+                    index: i,
+                    which: CustomBindingLeg::CommittedEntryAbsent,
+                    expected: format!("PI length >= {}", base + pi::CUSTOM_ENTRY_SIZE),
+                    got: format!("PI length {}", public_inputs.len()),
+                });
+            }
+
+            let committed_vk: [dregg_circuit::field::BabyBear; 8] =
+                core::array::from_fn(|j| public_inputs[base + j]);
+            let wire_vk = dregg_circuit::effect_vm::bytes32_to_8_limbs(&proof.vk_hash);
+            if wire_vk != committed_vk {
+                return Err(TurnError::CustomProofStateBindingMismatch {
+                    index: i,
+                    which: CustomBindingLeg::ProgramVkHash,
+                    expected: felts_dbg(&committed_vk),
+                    got: felts_dbg(&wire_vk),
+                });
+            }
+
+            let committed_commit: [dregg_circuit::field::BabyBear; 8] =
+                core::array::from_fn(|j| public_inputs[base + 8 + j]);
+            let wire_commit = custom_proof_pi_commitment_8(&proof.public_inputs_babybear());
+            if wire_commit != committed_commit {
+                return Err(TurnError::CustomProofStateBindingMismatch {
+                    index: i,
+                    which: CustomBindingLeg::PiCommitment,
+                    expected: felts_dbg(&committed_commit),
+                    got: felts_dbg(&wire_commit),
+                });
+            }
+        }
+        Ok(())
+    }
+
     /// FINDING 1 binding leg (`docs/deos/AIR-COMPOSITION-AND-PROOF-COUNT-AUDIT.md`):
     /// bind the off-circuit custom-sub-proof dispatch count to the in-circuit
     /// committed count `PI[CUSTOM_EFFECT_COUNT]`.
@@ -438,6 +609,15 @@ impl TurnExecutor {
         use dregg_cell::commitment::bytes32_to_felt8;
         let stored_old8 = bytes32_to_felt8(&old_commitment);
         let claimed_new8 = bytes32_to_felt8(&new_commitment);
+
+        // THE CUSTOM-PROOF STATE-BINDING WELD. `stored_old8` / `claimed_new8` are the
+        // turn's committed endpoints — the anchors every leg below is bound to. Any
+        // custom sub-proof this turn carries must prove a transition BETWEEN THEM, per
+        // the `custom_state_binding` ABI. Without this, a sub-proof that verifies (the
+        // registry dispatch above already accepted it) could be about an entirely
+        // different pre-state / post-root / cell, stapled onto this turn by the host.
+        // Refused fail-closed here, BEFORE any leg verify commits the transition.
+        Self::enforce_custom_proof_state_binding(turn, &stored_old8, &claimed_new8)?;
 
         if runs.len() > 1 {
             // MULTI-COHORT: deserialize the N-leg chain wire + verify every leg + chain-check.
@@ -3420,5 +3600,366 @@ mod custom_effect_dispatch_tests {
         let turn = empty_turn(cell_id(10));
         ex.enforce_custom_proof_count_committed(&turn.agent, &turn)
             .expect("wire 0 == committed 0 must pass");
+    }
+}
+
+// ─────────────────────────────────────────────────────────────────────
+// THE CUSTOM-PROOF STATE-BINDING WELD — driven poles.
+//
+// THE GAP THESE DRIVE: `Effect::Custom` binds a sub-proof's `vk_hash` + an opaque
+// `custom_proof_commitment` (a hash over the sub-proof's public inputs) into the
+// EffectVM's PI, and the deployed fold connects that claimed commitment to the
+// commitment the custom leaf computes in-circuit. That chain binds WHICH public inputs
+// the sub-proof used — never what they SAY. So a host could staple a perfectly valid
+// proof of a DIFFERENT transition onto a turn committing an unrelated one: the
+// sub-proof verifies, its commitment binds its own PIs, and nothing tied those PIs to
+// this cell's roots. `enforce_custom_proof_state_binding` is that tie.
+//
+// NON-VACUITY: `weld_canary_mismatched_state_is_accepted_without_the_weld` runs the
+// EXACT mismatched proof past every gate that existed BEFORE this weld (registry
+// dispatch, DoS cap, count binding) and shows they ALL ACCEPT it. The weld is what
+// refuses it. Remove the weld and the forgery commits.
+//
+// SCOPE: these drive the executor's enforcement function against real committed
+// endpoints + real commitment derivations. They are NOT a full proof-carrying turn
+// (that needs a minted rotated `Ir2BatchProof`); and the in-circuit leg — a pure light
+// client folding the tree — remains the named remainder (see `custom_state_binding`).
+// ─────────────────────────────────────────────────────────────────────
+#[cfg(test)]
+mod custom_proof_state_binding_weld {
+    use super::*;
+    use crate::action::{Action, Authorization, DelegationMode};
+    use crate::forest::{CallForest, CallTree};
+    use crate::turn::{CustomProgramProof, Turn};
+    use dregg_circuit::effect_vm::custom_state_binding::{
+        CUSTOM_PI_STATE_PREFIX_LEN, custom_pi_state_prefix, custom_proof_pi_commitment_8,
+    };
+    use dregg_circuit::field::BabyBear;
+
+    fn cell_id(seed: u8) -> CellId {
+        let mut id = [0u8; 32];
+        id[0] = seed;
+        CellId::from_bytes(id)
+    }
+
+    fn turn_with(agent: CellId, proofs: Vec<CustomProgramProof>) -> Turn {
+        let action = Action {
+            target: agent,
+            method: [0u8; 32],
+            args: vec![],
+            authorization: Authorization::Unchecked,
+            preconditions: dregg_cell::Preconditions::default(),
+            effects: vec![],
+            may_delegate: DelegationMode::None,
+            commitment_mode: Default::default(),
+            balance_change: None,
+            witness_blobs: vec![],
+        };
+        Turn {
+            agent,
+            nonce: 0,
+            call_forest: CallForest {
+                roots: vec![CallTree {
+                    action,
+                    children: vec![],
+                    hash: [0u8; 32],
+                }],
+                forest_hash: [0u8; 32],
+            },
+            fee: 0,
+            memo: None,
+            valid_until: None,
+            previous_receipt_hash: None,
+            depends_on: vec![],
+            conservation_proof: None,
+            sovereign_witnesses: std::collections::HashMap::new(),
+            execution_proof: None,
+            execution_proof_cell: None,
+            execution_proof_new_commitment: None,
+            custom_program_proofs: Some(proofs),
+            effect_binding_proofs: Vec::new(),
+            cross_effect_dependencies: Vec::new(),
+            effect_witness_index_map: Vec::new(),
+        }
+    }
+
+    /// This turn's committed endpoints — the anchors the rotated verify binds.
+    fn old8() -> [BabyBear; 8] {
+        core::array::from_fn(|j| BabyBear::new(1_000 + j as u32))
+    }
+    fn new8() -> [BabyBear; 8] {
+        core::array::from_fn(|j| BabyBear::new(2_000 + j as u32))
+    }
+    /// A DIFFERENT cell's / a different turn's endpoints.
+    fn other8() -> [BabyBear; 8] {
+        core::array::from_fn(|j| BabyBear::new(9_000 + j as u32))
+    }
+
+    /// The app-specific tail — a game's move claim. Identical across honest and forged
+    /// proofs, so the ONLY difference under test is the state prefix.
+    fn app_pis() -> Vec<BabyBear> {
+        vec![BabyBear::new(42), BabyBear::new(7), BabyBear::new(13)]
+    }
+
+    fn proof_binding(old: &[BabyBear; 8], new: &[BabyBear; 8]) -> CustomProgramProof {
+        let mut pis = custom_pi_state_prefix(old, new).to_vec();
+        pis.extend_from_slice(&app_pis());
+        CustomProgramProof {
+            vk_hash: [0x5A; 32],
+            proof_bytes: vec![1, 2, 3, 4],
+            public_inputs: pis.iter().map(|f| f.0).collect(),
+        }
+    }
+
+    // ---- THE LEGITIMATE PATH ----
+
+    #[test]
+    fn honest_custom_proof_about_this_turns_state_is_accepted() {
+        let turn = turn_with(cell_id(1), vec![proof_binding(&old8(), &new8())]);
+        TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect("a custom proof whose PIs ARE this turn's committed roots must be admitted");
+    }
+
+    #[test]
+    fn a_turn_carrying_no_custom_proofs_is_a_noop_pass() {
+        let mut turn = turn_with(cell_id(1), vec![]);
+        turn.custom_program_proofs = None;
+        TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect("the overwhelmingly common case must be byte-identical to the pre-weld path");
+        turn.custom_program_proofs = Some(vec![]);
+        TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect("an empty custom vec must pass");
+    }
+
+    // ---- THE REFUSALS (the weld biting) ----
+
+    /// A proof about a DIFFERENT PRE-STATE. The transition it proves may be beautiful;
+    /// it did not start where this turn says the cell was.
+    #[test]
+    fn proof_about_a_different_pre_state_is_refused() {
+        let turn = turn_with(cell_id(1), vec![proof_binding(&other8(), &new8())]);
+        let err = TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect_err("a proof about a different pre-state must be REFUSED");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofStateBindingMismatch {
+                    which: CustomBindingLeg::PreStateRoot,
+                    index: 0,
+                    ..
+                }
+            ),
+            "expected a pre-state-root refusal, got: {err}"
+        );
+    }
+
+    /// A proof claiming a DIFFERENT POST-ROOT than the turn commits — the host proves
+    /// one board and commits another.
+    #[test]
+    fn proof_claiming_a_different_post_root_is_refused() {
+        let turn = turn_with(cell_id(1), vec![proof_binding(&old8(), &other8())]);
+        let err = TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect_err("a proof claiming a different post-root must be REFUSED");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofStateBindingMismatch {
+                    which: CustomBindingLeg::PostStateRoot,
+                    ..
+                }
+            ),
+            "expected a post-state-root refusal, got: {err}"
+        );
+    }
+
+    /// A proof lifted from ANOTHER CELL's turn: both endpoints are that cell's.
+    #[test]
+    fn proof_lifted_from_another_cells_turn_is_refused() {
+        let foreign_old: [BabyBear; 8] = core::array::from_fn(|j| BabyBear::new(7_000 + j as u32));
+        let turn = turn_with(cell_id(1), vec![proof_binding(&foreign_old, &other8())]);
+        TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect_err("a proof about another cell's transition must be REFUSED");
+    }
+
+    /// EVERY lane of both roots is load-bearing: a weld binding only some lanes would
+    /// admit a forgery in the rest. Drives all 16 independently.
+    #[test]
+    fn every_state_prefix_lane_is_load_bearing() {
+        for k in 0..CUSTOM_PI_STATE_PREFIX_LEN {
+            let mut honest = proof_binding(&old8(), &new8());
+            honest.public_inputs[k] += 1;
+            let turn = turn_with(cell_id(1), vec![honest]);
+            assert!(
+                TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8()).is_err(),
+                "state-prefix lane {k} is NOT load-bearing: a forgery in it was ADMITTED"
+            );
+        }
+    }
+
+    /// A proof whose PIs cannot even EXPRESS the binding is refused — never zero-padded
+    /// into a match.
+    #[test]
+    fn public_inputs_too_short_to_express_the_binding_are_refused() {
+        let mut p = proof_binding(&old8(), &new8());
+        p.public_inputs.truncate(CUSTOM_PI_STATE_PREFIX_LEN - 1);
+        let turn = turn_with(cell_id(1), vec![p]);
+        let err = TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect_err("PIs too short to express the binding must be REFUSED");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofStateBindingMismatch {
+                    which: CustomBindingLeg::PublicInputsTooShort,
+                    ..
+                }
+            ),
+            "expected a too-short refusal, got: {err}"
+        );
+    }
+
+    /// A forgery in ANY position is caught, not just index 0 — the loop covers the vec.
+    #[test]
+    fn a_forged_proof_at_a_later_index_is_refused() {
+        let turn = turn_with(
+            cell_id(1),
+            vec![
+                proof_binding(&old8(), &new8()),
+                proof_binding(&old8(), &other8()),
+            ],
+        );
+        let err = TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8())
+            .expect_err("a forgery at index 1 must be REFUSED");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofStateBindingMismatch { index: 1, .. }
+            ),
+            "expected the refusal to name index 1, got: {err}"
+        );
+    }
+
+    // ---- THE CANARY: the weld is what bites ----
+
+    /// **NON-VACUITY.** The mismatched proof of `proof_claiming_a_different_post_root_is_refused`
+    /// is run past every gate that existed BEFORE this weld. They ALL ACCEPT it — the
+    /// forged proof is well-formed, its commitment correctly binds its own (forged) PIs,
+    /// and the pre-weld executor had no reason to refuse. Only the weld refuses. This is
+    /// the canary: disable the weld and this exact turn commits.
+    #[test]
+    fn weld_canary_mismatched_state_is_accepted_without_the_weld() {
+        let forged = proof_binding(&old8(), &other8());
+        let turn = turn_with(cell_id(1), vec![forged.clone()]);
+
+        // Pre-weld gate 1 — the sub-proof is well-formed and dispatchable: non-empty
+        // bytes + a vk_hash a registry can resolve. Nothing here inspects the PIs.
+        assert!(
+            !forged.proof_bytes.is_empty(),
+            "the forged sub-proof is a well-formed dispatchable artifact"
+        );
+
+        // Pre-weld gate 2 — the DoS cap admits it (1 proof, well under any cap).
+        assert!(
+            turn.custom_program_proofs.as_ref().unwrap().len() <= 4,
+            "the DoS cap admits this turn"
+        );
+
+        // Pre-weld gate 3 — the in-circuit commitment binding HOLDS for the forgery.
+        // This is the decisive canary step: the commitment the fold connects is a hash
+        // over the sub-proof's OWN public inputs, so a proof about another transition
+        // has a perfectly valid commitment. The pre-weld chain is satisfied.
+        let forged_pis = forged.public_inputs_babybear();
+        let committed_commit = custom_proof_pi_commitment_8(&forged_pis);
+        assert_eq!(
+            custom_proof_pi_commitment_8(&forged.public_inputs_babybear()),
+            committed_commit,
+            "the forged proof's commitment correctly binds its own PIs — the pre-weld \
+             in-circuit chain ACCEPTS it"
+        );
+        let entry_pis = {
+            let mut v = vec![BabyBear::ZERO; dregg_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE];
+            v.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(
+                &forged.vk_hash,
+            ));
+            v.extend_from_slice(&committed_commit);
+            v
+        };
+        TurnExecutor::enforce_custom_proof_entry_binding(&turn, &entry_pis).expect(
+            "THE CANARY: the wire↔in-circuit entry binding ACCEPTS the forged proof — it \
+             binds which PIs were used, never what they say",
+        );
+
+        // THE WELD is the only thing that refuses it.
+        TurnExecutor::enforce_custom_proof_state_binding(&turn, &old8(), &new8()).expect_err(
+            "THE WELD BITES: the same proof every pre-weld gate accepted is REFUSED because \
+             its PIs are not this turn's committed roots",
+        );
+    }
+
+    // ---- The entry weld (wire ↔ in-circuit committed entry) ----
+
+    fn entry_pis_for(p: &CustomProgramProof) -> Vec<BabyBear> {
+        let mut v = vec![BabyBear::ZERO; dregg_circuit::effect_vm::pi::CUSTOM_PROOFS_BASE];
+        v.extend_from_slice(&dregg_circuit::effect_vm::bytes32_to_8_limbs(&p.vk_hash));
+        v.extend_from_slice(&custom_proof_pi_commitment_8(&p.public_inputs_babybear()));
+        v
+    }
+
+    #[test]
+    fn entry_weld_admits_the_committed_subproof() {
+        let p = proof_binding(&old8(), &new8());
+        let pis = entry_pis_for(&p);
+        let turn = turn_with(cell_id(1), vec![p]);
+        TurnExecutor::enforce_custom_proof_entry_binding(&turn, &pis)
+            .expect("the sub-proof the circuit committed to must be admitted");
+    }
+
+    /// A host swaps the wire sub-proof for a different one AFTER the circuit committed:
+    /// the committed commitment no longer matches the bytes dispatched.
+    #[test]
+    fn entry_weld_refuses_a_swapped_subproof() {
+        let committed = proof_binding(&old8(), &new8());
+        let pis = entry_pis_for(&committed);
+
+        let mut swapped = committed.clone();
+        swapped.public_inputs.push(BabyBear::new(999).0);
+        let turn = turn_with(cell_id(1), vec![swapped]);
+
+        let err = TurnExecutor::enforce_custom_proof_entry_binding(&turn, &pis)
+            .expect_err("a sub-proof swapped after the commitment must be REFUSED");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofStateBindingMismatch {
+                    which: CustomBindingLeg::PiCommitment,
+                    ..
+                }
+            ),
+            "expected a PI-commitment refusal, got: {err}"
+        );
+    }
+
+    /// A host dispatches a DIFFERENT (weaker) registered program than the transition
+    /// committed to.
+    #[test]
+    fn entry_weld_refuses_a_swapped_program_vk() {
+        let committed = proof_binding(&old8(), &new8());
+        let pis = entry_pis_for(&committed);
+
+        let mut swapped = committed.clone();
+        swapped.vk_hash = [0x77; 32];
+        let turn = turn_with(cell_id(1), vec![swapped]);
+
+        let err = TurnExecutor::enforce_custom_proof_entry_binding(&turn, &pis)
+            .expect_err("a swapped program vk_hash must be REFUSED");
+        assert!(
+            matches!(
+                err,
+                TurnError::CustomProofStateBindingMismatch {
+                    which: CustomBindingLeg::ProgramVkHash,
+                    ..
+                }
+            ),
+            "expected a vk_hash refusal, got: {err}"
+        );
     }
 }

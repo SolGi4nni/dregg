@@ -182,6 +182,7 @@ pub mod bare_floor_refuse_weld;
 pub mod burn_avail_weld;
 pub mod carrier_floor_weld;
 mod cell_state;
+pub mod custom_state_binding;
 pub mod discharge_weld;
 mod effect;
 mod helpers;
@@ -205,6 +206,11 @@ pub use columns::{
 
 // ---- Re-export types ----
 pub use cell_state::CellState;
+pub use custom_state_binding::{
+    CUSTOM_PI_NEW_COMMIT_BASE, CUSTOM_PI_NEW_COMMIT_LEN, CUSTOM_PI_OLD_COMMIT_BASE,
+    CUSTOM_PI_OLD_COMMIT_LEN, CUSTOM_PI_STATE_PREFIX_LEN, custom_pi_state_prefix,
+    custom_proof_pi_commitment_8, extract_custom_pi_state_roots,
+};
 pub use effect::{AttenuateWitness, Effect, RevokeWitness};
 
 // ---- Re-export helpers ----
