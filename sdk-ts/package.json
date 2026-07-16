@@ -45,6 +45,8 @@
     "build:browser-esm": "tsup src/browser.ts --format esm --no-splitting --platform browser --out-dir dist",
     "typecheck": "tsc --noEmit",
     "lint": "eslint src/",
+    "build:oracle": "wasm-pack build ../wasm --target web --out-dir pkg",
+    "pretest": "npm run build:oracle",
     "test": "npm run build && node --test 'test/*.test.mjs'",
     "prepublishOnly": "npm run build"
   },

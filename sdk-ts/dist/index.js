@@ -467,6 +467,7 @@ function writeCapabilityRef(w, cap) {
   w.option(cap.expiresAt, (e) => w.varint(e));
   w.u8(0);
   w.option(cap.storedEpoch, (e) => w.varint(e));
+  w.bytes(exactBytes(cap.provenance ?? new Uint8Array(32), 32, "cap.provenance"));
 }
 function writeEffect(w, e) {
   switch (e.kind) {

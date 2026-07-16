@@ -107,6 +107,16 @@ export interface CapabilityRef {
    * differential green).
    */
   storedEpoch?: number | bigint;
+  /**
+   * The capability-instance PROVENANCE hash (`cell/src/capability.rs`,
+   * `CapabilityRef::provenance`). Same serde rule as `allowed_effects`:
+   * `#[serde(default)]` ONLY, NO `skip_serializing_if`, so postcard EMITS
+   * its 32 bytes positionally after `stored_epoch`. It is a bare `[u8; 32]`
+   * (NOT an `Option`) — there is no discriminant, just the 32 raw bytes.
+   * `[0u8; 32]` is the legacy/unprovenanced sentinel (the correct default
+   * for a direct grant), so an omitted `provenance` encodes as 32 zeros.
+   */
+  provenance?: Bytes32;
 }
 
 /** The typed-verb `Effect` subset (Rust declaration indexes in comments). */
@@ -284,6 +294,13 @@ function writeCapabilityRef(w: Writer, cap: CapabilityRef): void {
   // literal `None` to stay byte-identical to the Rust serializer.
   w.u8(0);
   w.option(cap.storedEpoch, (e) => w.varint(e));
+  // provenance: `[u8; 32]` carrying `#[serde(default)]` ONLY (NOT
+  // skip_serializing_if — cell/src/capability.rs:133) — the IDENTICAL rule the
+  // allowed_effects note above quotes — so postcard emits its 32 bytes
+  // positionally, as a bare fixed array (no Option discriminant). Missing this
+  // was the M30 drift: the node reads the 32 bytes following the cap as
+  // provenance and desyncs. `[0u8;32]` is the unprovenanced sentinel.
+  w.bytes(exactBytes(cap.provenance ?? new Uint8Array(32), 32, "cap.provenance"));
 }
 
 function writeEffect(w: Writer, e: Effect): void {
