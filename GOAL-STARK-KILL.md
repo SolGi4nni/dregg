@@ -739,3 +739,33 @@ semantics) is now FALSIFIED for the paths checked, and the honest remaining work
 non-rev emitter to depth-4, (b) delete the unused/test hand-AIR husks so they stop faking a violation
 surface, (c) `ivc_turn_chain` — the ONE hand AIR with real deployed algebra and NO emitter (needs
 `EffectVmEmitTurnChainBinding.lean`; rewiring to the existing ladder = proven soundness REGRESSION).
+
+### ⚑⚑ THE ONE GENUINE DEPLOYED VIOLATION (2026-07-16) — `ivc_turn_chain` (confirmed, not dissolved)
+Unlike every other target tonight, this one is REAL and PRODUCTION:
+- `grain-verify/src/r3.rs:139` calls `prove_turn_chain_recursive_without_host_gate(finalized, &selectors)`
+  + `verify_whole_chain_proof_bytes` (imports at `:44-47`) — the WHOLE-HISTORY chain proof a renter
+  verifies (`r3_verify`). Also live in `grain-turn/src/finalize.rs`, `lightclient/src/bin/{produce_history
+  _envelope,whole_history_demo}.rs`.
+- It rides `circuit-prove/src/ivc_turn_chain.rs`'s `TurnChainBindingAir` — **14 hand-authored constraint
+  sites, width 359, and NO emitter covers it.** Its algebra (chain continuity `new_root[i]==old_root[i+1]`,
+  the acc digest chain, idx increment, the is_real/real_count padding subsystem, an INLINED
+  poseidon2_permute_expr) is the deployed whole-history binding.
+- **Rewiring to the existing IVC ladder is a PROVEN soundness REGRESSION** — `EffectVmEmitIvcStateTransition*`
+  emits a DIFFERENT circuit (width 11, chains over accumulated HASH not state ROOT, preimage leads with
+  IVC_DOMAIN_TAG not acc_in), and `Rung2Full::ivc_anchor_insufficient` PROVES it admits a forged history
+  ("every old_hash for i>0 is a FREE column; the public commitment carries NO binding on intermediate
+  roots"). Consuming it would delete the temporal tooth closing CRITICAL HOLES #1/#2/#6.
+
+**THE WORK (the goal's real content):** author `metatheory/Dregg2/Circuit/Emit/EffectVmEmitTurnChainBinding
+.lean` emitting `dregg-turn-chain-binding-v2` — two `windowGate`s w/ `onTransition` (root continuity + idx
+increment), the acc digest chain (boundary + windowGate), `piBinding .last` for final_root, a `perRowHash`
+lookup with the TURN-CHAIN preimage `[acc_in, old_root, new_root, idx]`, and the is_real/real_count
+subsystem (bool gate + 2 windowGates + first-row boundary + last-row piBinding). **No IR-v2 extension
+needed** — `windowGate`/`onTransition` exists (`DescriptorIR2.lean:390-397`) and `descriptor_ir2.rs`
+already decodes it (`:644-671`, `:1054-1063`); 12 emitters use it.
+**One correction for whoever writes it:** the base module omits continuity citing padding-safety
+("would fire on the padded copies") — that reasoning is specific to `ivc.rs`'s duplicate-last-row padding
+and does NOT transfer. `generate_chain_trace_rotated` (`ivc_turn_chain.rs:1044-1054`) pads with
+`old_root = new_root = final_root`, still-incrementing `idx`, and a genuinely-continued hash chain — so
+continuity holds across real→pad and among pads, and `onTransition := true` IS sound here. Carry the FULL
+gate set; do not inherit the base module's faithful-omission posture.
