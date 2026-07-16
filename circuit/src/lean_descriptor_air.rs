@@ -1,5 +1,13 @@
 //! Generic Plonky3 AIR driven by a Lean-emitted circuit descriptor.
 //!
+//! ⚠ **RETIRED / IR-v1 — NOT the live law-#1 rail (marked 2026-07-16).** `LeanDescriptorAir` here is
+//! referenced ONLY inside this file: no deployed path instantiates it. It was "the FIRST concrete swap"
+//! and has been SUPERSEDED by IR-v2 — `circuit/src/descriptor_ir2.rs` (`Ir2Air` / `parse_vm_descriptor2`),
+//! fed by `metatheory/Dregg2/Circuit/Emit/*.lean` (174 modules, 110 Rust consumers). Lean's
+//! `Exec/CircuitEmit.lean` (`emit_faithful`) emits to THIS v1 `EmittedDescriptor` target, so those
+//! faithfulness theorems are real but land on a path nothing runs. New circuits go through IR-v2; do not
+//! read `Claims.lean` §23 as covering the Rust DSL (see its SCOPE note).
+//!
 //! This module is the FIRST concrete "swap": instead of hand-coding one AIR per
 //! circuit, we ingest a *data-driven* descriptor — the Rust mirror of Lean's
 //! `Dregg2.Exec.CircuitEmit.EmittedDescriptor` — and interpret it at `eval`-time

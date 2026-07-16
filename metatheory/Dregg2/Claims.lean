@@ -380,7 +380,23 @@ schedule-agnostic commit; coupled Σ=0 ⇒ ¬∃ schedule-agnostic commit), `Cry
 `Exec.TurnExecutor` (all 4 StepInv conjuncts, step-complete by construction) +
 `Exec.Forest` (nested delegated call-forest, Granovetter-preserving, N-ary Σ=0
 conservation) = the replacement turn-executor. `Exec.CircuitEmit` (kernel + Merkle +
-algebraic ConstraintExpr circuits emit faithfully to the fingerprint-bound Rust backend).
+algebraic circuits emit faithfully to the fingerprint-bound Rust backend — see the SCOPE note below).
+
+⚠ **SCOPE (corrected 2026-07-16 — this line previously said "algebraic ConstraintExpr circuits", a FALSE
+COGNATE that read as "the Rust DSL is covered"; it is not, and that misreading burned four audits).**
+`Exec.CircuitEmit` proves `emit_faithful` about **its OWN grammar** (`Dregg2.Circuit.Expr` = var|const|
+add|mul, plus `EmittedConstraintM`'s merkleHash/transition/piBindingFirst) emitting to
+`EmittedDescriptor`. That is NOT `circuit/src/dsl/circuit.rs`'s `ConstraintExpr` (Equality |
+Multiplication | Binary | PiBinding | Transition | Polynomial | Hash | MerkleHash) — a different,
+Rust-authored grammar. Two further facts this line must not obscure:
+* **The `EmittedDescriptor` target is DEAD**: its interpreter `circuit/src/lean_descriptor_air.rs`
+  (`LeanDescriptorAir`) is referenced only inside its own file — IR-v1, superseded by IR-v2.
+* **The LIVE law-#1 path is a different module family**: `Dregg2/Circuit/Emit/*.lean` (174 modules) →
+  `EffectVmDescriptor2` → `circuit/src/descriptor_ir2.rs` (`Ir2Air`), with 110 Rust consumers.
+So this §23 claim is about kernel/Merkle emission on the v1 rail; it asserts NOTHING about the
+first-party Rust-authored DSL circuits (`dsl/{revocation,derivation,note_spending,fold,...}.rs`), whose
+constraints have no Lean model. `#assert_namespace_axioms` below checks AXIOM HYGIENE only — it cannot
+notice a claim pointing at a dead system with a different grammar.
 `Proof.CoinductiveAdversary` (`obsBisim_of_uptoComm`) closes the coinductive open via
 vendored Paco (gupaco up-to-context closure). -/
 #assert_namespace_axioms Dregg2.Exec.TurnExecutor

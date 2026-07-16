@@ -31,6 +31,19 @@ The Rust side (in `dregg-lean-ffi`) decodes the printed wire string back into a 
 `circuit::dsl::CircuitDescriptor` and checks its `AirDescriptor::fingerprint` equals the
 Rust-native AIR's — the binding "the AIR the backend runs IS the AIR Lean proved the bridge
 for". See `dregg-lean-ffi/src/circuit_decode.rs`.
+
+## ⚠ SCOPE — this module emits to the DEAD IR-v1 RAIL (marked 2026-07-16)
+
+`emit`/`emit_faithful` here are REAL theorems about THIS module's grammar (`Circuit.Expr` =
+var|const|add|mul; `EmittedConstraintM` = merkleHash|transition|piBindingFirst) serialized to
+`EmittedDescriptor`. But the Rust interpreter of `EmittedDescriptor` — `circuit/src/lean_descriptor_air.rs`
+(`LeanDescriptorAir`) — is referenced only inside its own file: **no deployed path runs it** (IR-v1,
+superseded by IR-v2).
+
+The LIVE law-#1 rail is `Dregg2/Circuit/Emit/*.lean` → `EffectVmDescriptor2` → `circuit/src/
+descriptor_ir2.rs` (`Ir2Air`), 110 consumers. This module's grammar is ALSO not the Rust DSL's
+`ConstraintExpr` (Equality|Multiplication|Binary|PiBinding|Transition|Polynomial|Hash|MerkleHash) — same
+word, different language. `Claims.lean` §23 previously read as though it covered the DSL; corrected there.
 -/
 import Dregg2.Circuit
 import Dregg2.Circuit.Lookup
