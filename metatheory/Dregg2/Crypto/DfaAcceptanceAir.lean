@@ -3,7 +3,7 @@
 
 `Dregg2.Crypto.Dfa` models a GENERIC DFA-acceptance bridge over an arbitrary transition *relation*
 `δ`, and its header asserts "NO `compress`/hash anywhere — pure structural matching". That is
-faithful to the simple `dfa_lookup_descriptor` DSL test (`circuit.rs:1746`, one `Lookup`
+faithful to the simple RETIRED `dfa_lookup_descriptor` DSL test builder (deleted with the hand-STARK engine, 2026-07-16; deployed anchor is `dfa-routing-toggle-2state::poseidon2-v1` via descriptor_by_name, emitted by `DfaRoutingEmit.lean`) (one `Lookup`
 constraint), but it is NOT the AIR that underwrites the deliverable
 
     "this input was correctly classified by DFA D (commitment C) to state S".

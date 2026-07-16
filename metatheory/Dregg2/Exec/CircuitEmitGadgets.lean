@@ -447,7 +447,7 @@ def satisfiedEmittedDfa {State Sym : Type u} (δ : State → Sym → State → P
     (∀ s ∈ circuit.trace, stepValid δ s) ∧
     chained circuit.trace
 
-/-- The AIR identity string the DFA wire form carries (= the Rust `dfa_lookup_descriptor` family). -/
+/-- The AIR identity string the DFA wire form carries (mirrors the RETIRED Rust `dfa_lookup_descriptor` family — deleted with the hand-STARK engine, 2026-07-16; the LIVE anchor is the emitted `dfa-routing-toggle-2state::poseidon2-v1`). -/
 def dfaAirName : String := "dregg-dfa-lookup-v1"
 
 /-- The DFA AIR public-input count (`[q₀, accept-marker]`). -/
@@ -456,7 +456,7 @@ def dfaPublicInputCount : Nat := 2
 /-- The DFA trace width: the `[state, byte, next_state]` column triple. -/
 def dfaTraceWidth : Nat := 3
 
-/-- The reference `dfa_lookup_table` id (the abstract `δ` table the decoder loads). -/
+/-- The reference DFA-lookup table id (the abstract `δ` table the decoder loads; the Rust `dfa_lookup_table` this named was retired with the hand-STARK engine). -/
 def dfaLookupTableId : Nat := 0
 
 /-- **`emittedDfa`** — the emitted DFA descriptor. Pure printable data, proved faithful to
