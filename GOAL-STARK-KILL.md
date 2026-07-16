@@ -1267,3 +1267,88 @@ single most dangerous failure mode in this tree, and it is the same mechanism th
 teasting tests and let me break `proof_round_trip` unnoticed.
 **Corollary for the law-#1 gate I added: it must stay COMPILING to matter.** It lives in
 `circuit-prove/tests/`, a crate that builds — deliberately, not by luck.
+
+### `NonRevocationDepthResidual` — CLOSED (2026-07-16). The last deployed Rust-authored circuit is gone.
+
+The composition is emitted by `Dregg2/Circuit/Emit/NonRevocationAdjacencyEmit.lean` as
+`dregg-non-revocation-adjacency::poseidon2-fact-v1` (width 37, 2 PIs, 39 constraints). It reuses the
+depth-general two-path/index/consecutiveness algebra of `AdjacencyMembershipEmit`, specializes only
+the node lookup to the DEPLOYED fact-domain seed `[left,right,0,0,0,0xFACF,1]` so the root remains
+`hash_fact(left,[right])`, and conjoins `NonRevocationEmit`'s direct+complement 30-bit strict-ordering
+range teeth. The exact `DescriptorIR2.emitVmJson2` output is checked in at
+`circuit/descriptors/by-name/non-revocation-adjacency.json`, byte-pinned by
+`non_revocation_adjacency_emit_gate`, reproduced by the repository-wide `EmitByName.lean` drift
+route, and production-dispatched by `descriptor_by_name`.
+
+The production builder `non_revocation_adjacency_witness.rs` emits ONE REAL ROW PER MERKLE LEVEL:
+row `i+1` consumes row `i`'s parent and advances both reconstructed indices and their shared power of
+two. At HEAD, `dsl/revocation.rs::TREE_DEPTH == 4`; the honest gate has four genuine folds and both
+last-row parents equal the existing `DslRevocationTree` root. Thus this is still the deployed
+depth-4 / 16-leaf `hash_fact` tree — neither trace padding nor a 4-leaf epoch change.
+
+`prove_non_revocation_p3` and `verify_non_revocation_p3` now load the emitted artifact by name and call
+`prove_vm_descriptor2` / `verify_vm_descriptor2`. Therefore both SDK producer call sites
+(`privacy.rs` and `full_turn_proof.rs`) now prove via the Lean descriptor. The 505-line deployed
+`non_revocation_circuit_descriptor` / `non_revocation_dsl_circuit` Rust constraint constructor was
+deleted; AST search finds zero calls and zero `ConstraintExpr` sites in `dsl/revocation.rs`.
+`generate_non_revocation_trace` remains, deliberately, as legitimate Rust witness generation.
+
+Formal teeth, all `#assert_axioms`-clean:
+
+- `diffL_body_zero_iff`: `diffLBody.eval a = 0 ↔ a DIFF_L = a X - a L_CUR - 1`.
+- `diffR_body_zero_iff`: `diffRBody.eval a = 0 ↔ a DIFF_R = a U_CUR - a X - 1`.
+- `rangeLBind_body_zero_iff`: `rangeLBindBody.eval a = 0 ↔ a RL = HALF_P_MINUS_1 - a DIFF_L`.
+- `rangeRBind_body_zero_iff`: `rangeRBindBody.eval a = 0 ↔ a RR = HALF_P_MINUS_1 - a DIFF_R`.
+- `ordering_forces_strict_bracket`: the two diff bindings plus nonnegative range witnesses imply
+  `a L_CUR < a X ∧ a X < a U_CUR`.
+- `forged_lower_bracket_refuted`: the lower binding + range + `a X ≤ a L_CUR` imply `False`.
+- `forged_upper_bracket_refuted`: the upper binding + range + `a U_CUR ≤ a X` imply `False`.
+- `nonadjacent_pair_refuted`: `a U_IDX_OUT ≠ a L_IDX_OUT + 1` implies
+  `consecutiveBody.eval a ≠ 0`.
+
+The real prover gate is non-vacuous: honest depth-4 ACCEPTS; `x == L`, `x == R`, a wide bracket made
+from two real members at positions 2 and 4, a forged leaf, a forged sibling, and a forged public root
+each REJECT. Public API tests additionally reject a wrong queried-item PI and committed members.
+
+Verification:
+
+- `lake build Dregg2` — GREEN (9710 jobs); `lake env lean Dregg2/Claims.lean` — GREEN; exact emitter
+  output `cmp` against the checked-in JSON — GREEN.
+- `cargo nextest run -p dregg-circuit-prove -E 'binary(non_revocation_adjacency_emit_gate) |
+  binary(non_revocation_p3_boundary)'` — 6/6 GREEN.
+- Focused `dregg-circuit` deployed p3 + depth-4 witness tests — 4/4 GREEN. Focused SDK emitted-PI and
+  privacy wire producer/consumer gates — 2/2 GREEN.
+- `cargo check -p dregg-circuit -p dregg-dsl-runtime -p dregg-sdk -p dregg-circuit-prove
+  --all-targets` — GREEN.
+- Requested default `cargo nextest run -p dregg-circuit -p dregg-sdk --no-fail-fast` completed all
+  1482 tests: 1411 passed, 71 failed, 10 skipped. Every standalone non-revocation test passed; the
+  broad failures are concurrent shared-tree EffectVM/UMem/cap-root/fields/heap descriptor work.
+
+No non-revocation residual remains. Two external blockers are named, not papered over:
+
+- **`SharedTreeEffectVmDescriptorDriftResidual`** — the full-turn tests whose names mention freshness
+  fail before the non-revocation leg in the shared dirty EffectVM proving path (row-0 descriptor
+  constraints; the direct SDK privacy non-revocation round-trip is green). This is part of the same
+  71-failure cross-lane cluster above, not a revocation refusal.
+- **`SharedTreeBridgePredicateSignatureResidual`** — the immediate SDK-consumer sweep reaches
+  `bridge/src/present.rs` and stops on pre-existing concurrent edits: missing `FactBinding` at :2664
+  and a stale 4-argument call to the now-3-argument `prove_predicate_for_fact` at :1061. The changed
+  circuit/runtime/prove/SDK targets themselves build all-targets green.
+
+### ⚡ CAPACITY UNLOCKED (2026-07-16) — remote boxes + Fable, three streams parallel
+ember replenished all subscriptions + pointed at remote build boxes. Local cargo-lock is no longer the
+bottleneck. Now running:
+- **persvati** (24-core, `scripts/pbuild <lane> <cmd>` — rsyncs local tree, warm per-lane cargo cache,
+  refuses cold lanes): lane `srot` doing `cargo test --workspace --no-run` — the EMPIRICAL silent-rot
+  ground truth (every non-compiling test target). hbox also warm (games-deploy 3977 deps) if needed.
+- **workspace-lie-hunt swarm** (`w076khjpe`, 6 Fable-model read-only lanes): vanished-symbol refs ·
+  misnamed files · ratchet/gate integrity (which gates are SILENT/toothless) · cargo-culted rationale ·
+  dead pub API · duplicate parallel systems. The "load-bearing lies in prose" thesis mapped workspace-wide.
+- **codex** (local): landing the revocation composition — `NonRevocationAdjacencyEmit.lean` +
+  `EmitNonRevocationAdjacency.lean` + `non-revocation-adjacency.json` + `non_revocation_adjacency_witness.rs`
+  + `non_revocation_adjacency_emit_gate.rs` — EXACTLY the adjacency∘ordering fix specced for
+  `NonRevocationDepthResidual` (the last deployed first-party Rust-authored circuit).
+PLAN: gate codex's revocation on the stable tree (a cutover that shrinks TREE_DEPTH from 4 is a regression);
+harvest srot + lie-hunt; then engage Fable implementers on the concrete residuals (duplicate DslP3Air
+deletion — now unblocked since dregg-tests compiles; the *_air renames; VerifyTcbReentry wiring) once the
+tree stabilizes.
