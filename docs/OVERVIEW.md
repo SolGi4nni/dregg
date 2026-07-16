@@ -49,6 +49,23 @@ Everything below is how it is true.
   (`metatheory/Dregg2/Exec/DistributedExports.lean`) let the Rust runtime compute its
   verdict *from* the verified Lean.
 
+## The system, told five ways
+
+Five orientation pieces, each written from the code and proofs and pinned to the tree:
+
+- [`THE-LINKING-TOWER.md`](THE-LINKING-TOWER.md) — what a light client holding one
+  root is entitled to believe, rung by rung, with every rung's assumptions named.
+- [`CIRCUITS-FROM-PROOFS.md`](CIRCUITS-FROM-PROOFS.md) — architectural law #1 as a
+  mechanism: every deployed circuit emitted from Lean, byte-pinned, and a CI gate
+  that fails on any Rust-authored constraint.
+- [`QUANTUM-AWARE-FINALITY.md`](QUANTUM-AWARE-FINALITY.md) — the hybrid
+  ed25519+ML-DSA identity and the metatheory chain from crypto floor to
+  quantum-safe finality.
+- [`GAMES-AS-RECEIPTS.md`](GAMES-AS-RECEIPTS.md) — the verified game portfolio: an
+  illegal move is not forbidden by app code, it is unprovable at the kernel.
+- [`PATH-TO-FIRST-PRODUCT.md`](PATH-TO-FIRST-PRODUCT.md) — the launch plan (labeled
+  as one): why the rung-1 launchpad ships first, and what each gate unblocks.
+
 ## Where to go next
 
 - To run a node, log an agent in, or drive the self-hosting loop: the runnable how-tos
