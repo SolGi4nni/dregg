@@ -1551,3 +1551,23 @@ CORE ENGINE untouched (node still rides it — retires last).
 RATCHET SHRANK: ivc 79->70 · presentation 21->11 · bridge/present 4->**0** · multi_step 3->**0** ·
 backends 2->**0**. Verified: circuit lib 673 passed, gate passes.
 **Purge scoreboard: 3 of 7 surfaces done (preflight-wired, genesis-dropped, presentation-retired).**
+
+## ⚑⚑⚑ ROOT CAUSE OF THE SILENT-ROT DISEASE (2026-07-16) — the CI gate never runs here
+Three ratchets went silent TODAY (`every_verifying_binary_is_routed_or_allowlisted` hid a live verify-TCB
+regression behind 249 un-compiled tests; `effect_enum_descriptor_residual_gate` went non-exhaustive on the
+turn lane's new `Effect::Custom`, `621088ca7`; plus ~39 orphaned teasting tests + the `proof_round_trip` I
+broke myself). I kept fixing instances. The CAUSE is upstream and singular:
+**`.github/workflows/ci.yml` ALREADY runs `cargo check --workspace --all-targets`** — which compiles EVERY
+test target and WOULD have caught every one of these. **But `git remote -v` in this clone shows only
+`devnetbox` (ssh://ubuntu@34.224.208.52:/opt/dregg) — there is NO GitHub remote, so GitHub Actions never
+fires here.** The CI config is decorative in this workshop: the gate is written, correct, and never
+executed. That is the biggest load-bearing lie in the tree — a `.github/workflows/` full of guards that
+never run, which is indistinguishable from having no guards, except that it LOOKS protected.
+(Honest scope: this clone. Whether these workflows fire on a mirror/clean-artifact repo elsewhere is
+unknown to me — but the rot proves nothing is enforcing them against THIS tree, which is where the work
+happens.)
+**THE FIX IS ALREADY BUILT**: my persvati `srot` sweep (`scripts/pbuild srot 'cargo test --workspace
+--no-run'`) IS the missing CI — the same check, on a 24-core remote box, off the laptop. Standing it up on a
+schedule (or as a pre-push hook) would close the entire class: no test target could go silent again, and
+every ratchet (law-#1, mock-purge, effect-enum, verify-routing) would actually bite.
+→ SURFACED to ember: this is an infra decision (wire a real CI remote vs schedule the persvati sweep).
