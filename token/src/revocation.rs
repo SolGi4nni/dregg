@@ -334,12 +334,23 @@ impl AttestedRevocationRoot {
         let msg = Self::signing_message(&self.merkle_root, self.count, self.timestamp);
 
         // Classical half: ed25519 under the enrolled key.
-        use ed25519_dalek::Verifier;
+        //
+        // `verify_strict`, NOT `verify` — the repo-wide ed25519 contract (see
+        // `sel4/dregg-pd/executor-pd/crypto-floor/src/ed25519.rs:6`, `lightclient/src/lib.rs:389`,
+        // `cell-crypto/src/capability_proof.rs:529`: every other verification site in the tree is
+        // strict). Non-strict `verify` is cofactored and accepts small-order public keys, under
+        // which a `(R = s·B, s)` pair verifies for EVERY message — a universal forgery of the
+        // classical half. Here the authority key is enrolled+pinned (line 330) and the ML-DSA half
+        // still gates below, so this site was not exploitable; it was a DRIFT from the stated
+        // contract, and a drifted primitive is one enrollment mistake away from being the hole.
+        // The `Ed25519EufCma` carrier the Lean reduction closes over
+        // (`metatheory/Dregg2/Crypto/Ed25519Reduction.lean`) is the STRICT scheme; this site now
+        // matches the scheme the model is about.
         let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(&authority.ed25519) else {
             return false;
         };
         let sig = ed25519_dalek::Signature::from_bytes(&self.signature);
-        if vk.verify(&msg, &sig).is_err() {
+        if vk.verify_strict(&msg, &sig).is_err() {
             return false;
         }
 
