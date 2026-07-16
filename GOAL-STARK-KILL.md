@@ -904,3 +904,54 @@ NOT part of any stark-kill unit.
 the brief. Never `git add -A`; never infer ownership from "it is dirty and it builds". (Cost of getting
 this wrong, already paid once tonight: `ece829fc2` swept a rename into a WIRE IDENTIFIER —
 `bridge_action_air_v1` -> `..._witness_v1` — which the dispatch gate caught in `eeb6ccbe9`.)
+
+### ⚑ SCAR AUDIT (2026-07-16) — and it caught a scar *I* made tonight
+Ran a 3-lane read-only scar hunt. **It killed 2 of my 3 premises** — the corrections are the finding:
+- **`dregg-dsl-runtime` is NOT a husk.** 17 crates depend on it, and `dregg-dsl/src/gen_rust.rs:190` +
+  `gen_kimchi.rs:60` make the **proc-macro emit code naming `dregg_dsl_runtime::` paths** — it is the
+  runtime contract for generated code and cannot fold into `dregg-circuit` without rewriting codegen.
+  What IS true: `circuit/src/dsl/mod.rs:3-5`'s docstring ("previously split across dregg-dsl-runtime")
+  reads as though the migration finished. It did not — 2217 lines of unique code remain there. **Fix the
+  prose, not the code.** (This is the docstring that would send audit #5 hunting a husk that isn't there.)
+- **The two descriptor dirs are NOT a scar** — different purposes, **zero orphans** (every json is
+  `include_str!`d). The IR-v1 rail **cannot** be deleted either.
+- **REAL FIND (HIGH): a second, name-colliding `DslP3Air`.** `dregg-dsl-runtime/src/dsl_plonky3.rs:41`
+  (868 lines, p3-uni-stark) duplicates the production `circuit/src/dsl/dsl_p3_air.rs:88` (1341 lines,
+  p3-batch-stark) — and the duplicate **cannot express `Hash`** and **silently enforces `BoundaryRow::
+  Index(n>0)` on row 0**. Zero non-test consumers. The kicker: the **differential harness**
+  (`dregg-dsl-differential`) — whose whole job is catching a backend disagree — round-trips through the
+  NON-production interpreter and SKIPS membership coverage citing "DslP3Air cannot inline Poseidon2"
+  (`plonky3_runner.rs:77`) — TRUE of the duplicate, **FALSE of production**. It is skipping coverage
+  because of a rail nobody ships. Fix = repoint the harness at `dsl_p3_air::{prove,verify}_dsl_p3`, then
+  delete the duplicate; the payoff is UN-SKIPPING membership.
+- **`MembershipConstraint`** (`dregg-dsl-runtime/src/lib.rs:211`) — verified 1 tree-wide hit (its own def).
+  Pure orphan, safe delete.
+- **7 crates fell OUT of the build entirely** (own `[workspace]`, never in CI, zero dependents):
+  `crypto-tanuki` (1496 LOC/22 tests), `crypto-traccoon` (1426/17), `crypto-hashrand` (803/8),
+  `crypto-xmvrf` (642/17), `cosmos-settlement` (809/5), `cosmos-lock` (541/12), `tools/deployer-gate`
+  (710/14) — **~6,400 LOC and 95 tests that have NEVER run in CI**, 64 of them on CRYPTO code. The tell it
+  is drift not intent: `exclude` lists `solana-lock`/`solana-settlement` but NOT their siblings
+  `cosmos-*`, and every other exclude entry carries a one-line reason; these have none. (Also: it is 201
+  members / 140 default-members, not 182. And "zero-dependent = dead" is FALSE here — all 15 candidates
+  are leaf apps/harnesses with real tests. **No crate is safe to delete.**)
+- **LOW**: `dregg-cert-f-ir2.json` is `include_str!`d but is the ONLY flat descriptor absent from
+  `descriptors/PROVENANCE.json`'s 74 sha256 pins (which was itself cut from a dirty tree,
+  `PROVENANCE.json:6 "source_dirty": true`). `metatheory/EmitCrossCellConservation.lean:6` points at a
+  `-v1.json` that does not exist (live is `-v2`) — the only dangling descriptor reference in the tree.
+
+### `2b5c26728` — the audit caught a scar I MADE tonight. Fixed.
+My law-#1 commit `9ba02881b` retired `plonky3_prover::{prove,verify}_plonky3` — and
+`teasting/tests/proof_round_trip.rs:33` USED them. My gate that day was `cargo check -p dregg-circuit -p
+dregg-circuit-prove --tests`; **teasting is a different crate, so my own gate could not see it.**
+**LESSON (recorded): a `--tests` gate must cover the crates that CONSUME the API you delete, not just the
+crate you edit.** Fixed by RETARGETING (not deleting) onto `merkle_air::{membership_public_inputs,
+prove_membership_p3, verify_membership_p3}` — the emitted descriptor — and STRENGTHENED it: forged leaf AND
+forged root now rejected. `test_stark_proof_bytes_round_trip` PASSES.
+Also retired `test_presentation_proof_round_trip` (pre-existing rot: it called the RETIRED
+`dregg_circuit::RealPresentationProof::verify`; the live type has no such method). Intent named as
+**`PresentationRoundTripResidual`** — it guarded `DeserializeUnexpectedEnd`, "a real wire protocol bug";
+re-landing means porting to `BridgePresentationProof` + `verify_presentation_full`.
+**Named residual: `OrphanedTeastingTestsResidual`** — 4 more teasting tests import symbols with zero
+tree-wide defs (`bridge_four_phase.rs:532`, `defi_primitives.rs:10`, `negation_proofs.rs:8`,
+`privacy_unlinkability.rs:11`). Unlike proof_round_trip these look genuinely never-compiled; each needs a
+retarget-or-retire decision. NOT swept blind — I already learned that lesson.
