@@ -1771,3 +1771,24 @@ node-net returned CLEAN — good signal; harnesses/lean-mirrors/misc-crates fixe
 test) / Lane 6 (verification↔validation gap) fixes. All lower-severity. GATE per-subsystem once the build
 lock frees + HEAD compiles holistically (watch for OTHER `git add -A` casualties from `1cdc7fe66`). Then
 re-run the runtime-PENDING checks (sidetable tooth, preflight §4) + the srot sweep on the quiet tree.
+
+### HEAD coherence CONFIRMED + validating sweep launched (2026-07-16 pm)
+`bm4srg4ky` exited 0 = `cargo check -p dregg-commit && cargo test -p dregg-commit` both passed → HEAD
+compiles + the fold-delta security teeth pass. Launched the persvati `srot` sweep on the CURRENT tree
+(committed HEAD + the 159 completed swarm fixes) — dual-purpose: (a) validates the whole swarm harvest
+compiles workspace-wide (catches any other `git add -A` casualty from `1cdc7fe66`), (b) regenerates the
+silent-rot map (every non-compiling test target). Remote = off the busy laptop. Harvest the SROT2_EXIT + the
+non-compiling list, then gate the remaining swarm fixes per-subsystem on the settled tree.
+
+### SESSION SCOREBOARD (for orientation)
+- **Goal core DONE**: every deployed first-party Rust-authored circuit emitted from Lean (turn-chain,
+  merkle, revocation); law-#1 ratchet (48 files/757 sites, 3 dialects) holds it.
+- **Mock purge 6/7**: flagship `compress_history` wired to the REAL recursive prover; compose_proofs +
+  presentation + genesis + preflight-sovereign done; mock-purge ratchet holds; only the 3 contested
+  preflight checks remain before the engine deletes.
+- **4 forgery-class SECURITY fixes** (all from the validation swarms, none visible to the ~15k-test suite):
+  ed25519, credentials, peer-fail-open, fold-delta escalation.
+- **Silence killed**: differential estate un-silenced (67 tests run), ReqwestTransport un-gated, effect-enum
+  gate un-silenced, the soundness suite scope-corrected.
+- **2 decisions surfaced to ember**: flip `unexpected_cfgs = "allow"` (11 phantom gates); confirm the new
+  GitHub remote actually gates CI.
