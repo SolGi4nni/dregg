@@ -54,9 +54,11 @@
 //! per-surface code — proven by the cross-backend golden tests (`tests/golden_render.rs`) that walk
 //! each surface through the real `text`/`telegram`/`wechat`/`web` backends. NAMED NEXT (not built here): the
 //! discord command shells (the generic `/offering` adapter gives discord these for free once
-//! registered); a booted-node tavern post path (the mozjs-weight async surface); and the *games'*
-//! Offerings (which need `render_for(viewer)` for the hidden hand + a coordinate-grid ViewNode —
-//! Tier C, gated on the game fold lanes).
+//! registered); a booted-node tavern post path (the mozjs-weight async surface). The *games'*
+//! Offerings — once gated here as Tier C — are BUILT in their own crates and registered in the web
+//! catalog: `dregg_multiway_tug::surface::TugOffering` (per-viewer `render_for` hidden-hand fog) and
+//! `dregg_automatafl::surface::AutomataflOffering` (the `ViewNode::CoordGrid` board, rendered by
+//! every backend).
 
 pub mod cheevo;
 pub mod companion;

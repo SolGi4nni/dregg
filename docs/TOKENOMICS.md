@@ -50,11 +50,18 @@ rendered by the extracted Lean core with no Rust fallback
 (`dregg-governance/src/holding_weight.rs`). Snapshot semantics are deliberate: weight
 is fixed per poll at a pinned slot with a consume-once nullifier per (poll, holder,
 asset) — this is what defeats flash-loan weight and buy-vote-sell-revote, not a
-fluidity bug. **RUNS in test** (13/13 bridge holdings polarities, 51/51 governance lib
-tests, forged 1-key stake table rejected); **no live Solana feed has been ingested
-yet**, so no real mainnet holding has been proven end-to-end, and holding-weighted
-ballots still land in a host-side ballot box (a named residual in the code) rather than
-the verified vote engine.
+fluidity bug. **RUNS in test** (13/13 bridge holdings polarities, 59/59 governance lib
+tests, forged 1-key stake table rejected); **no mainnet feed has been ingested yet**, so no real
+mainnet holding has been proven end-to-end — but rung-1 live-feed ingestion is landed
+(`72561117d`: the gated e2e boots its own `solana-test-validator`, mints a real
+750-token SPL holding, and ingests it over live RPC to ConsensusVerified against the
+caller's governance anchor; the mainnet `SnapshotFeed` is designed, unfired). Holding-weighted ballots
+land on the verified vote engine: `VerifiedHoldingBallotBox` opens each poll as a real
+`collective_choice` poll and casts via `cast_weighted` — one consume-once nullifier per
+weighted ballot, the tally bumped by exactly the granted weight under the same
+one-ballot-per-voter gates (`dregg-governance/src/holding_weight.rs`). The old
+host-side ballot box survives only as a demoted in-crate compat shim with no external
+consumers.
 
 **3. It becomes spendable inside dregg through the vault.** To *spend* (rather than
 reference) $DREGG inside dregg, you lock into the Solana vault program
@@ -67,10 +74,14 @@ test); the **consensus-verified** inbound successor (bank-state-derived stake ta
 authorized-voter-bound tally, weak-subjectivity anchor) is built and green against
 fixture clusters (`bridge/tests/solana_lock_trustless.rs`) but has never verified real
 mainnet consensus; **release is oracle-custodial on every path** (there is no trustless
-outbound yet). Three soundness suspects flagged 2026-07-15 (finality over-claim,
-stake-set completeness, rotation signer binding) remain open — logged P1, "close
-value-path holes before holding real value" (`HORIZONLOG.md`). Nothing in this leg is
-deployed holding real value today.
+outbound yet). The three soundness suspects flagged 2026-07-15 are CLOSED (`72561117d`,
+each red-first both-polarity): value-release now requires a rooted-finality leg (an
+exact-slot optimistic grade survives only under an explicitly-named `_optimistic`
+entry); `derive_stake_table` enforces a total-effective-stake floor cross-checked
+against the proven StakeHistory sysvar (an under-supplied stake set is
+`StakeBelowHistoryFloor`, refused); and `rotate()` tallies via `tally_authorized`,
+binding rotation witnesses to the trusted epoch's on-chain authorized voters. Nothing
+in this leg is deployed holding real value today.
 
 **4. Collateral and bonds — mostly not $DREGG, and deliberately so.** The bonded
 subsystems that exist are denominated in other units: relay operator bonds and slashing
