@@ -213,6 +213,7 @@ impl WitnessBundle {
 /// feature, this entry point becomes a link-time error — which is the
 /// honest signal: opt-in recursive compression requires the recursion
 /// substrate.
+#[cfg(feature = "prover")]
 fn produce_recursive_variant(
     trace: &[Vec<dregg_circuit::field::BabyBear>],
     public_inputs_u32: &[u32],
@@ -431,8 +432,10 @@ impl WitnessedReceipt {
     ) -> Self {
         let (witness_bundle, witness_hash) = match trace {
             Some(t) => {
+                #[cfg_attr(not(feature = "prover"), allow(unused_mut))]
                 let mut wb = WitnessBundle::inline_from_trace(t);
                 if recursive_compress {
+                    #[cfg(feature = "prover")]
                     if let Ok(rp) = produce_recursive_variant(t, &public_inputs) {
                         wb.recursive_proof = Some(rp);
                     }
@@ -456,6 +459,7 @@ impl WitnessedReceipt {
     /// Like [`Self::from_components_with_compression`] but hard-fails if
     /// recursive compression cannot be produced. Use when the caller
     /// requires the Golden Vision form.
+    #[cfg(feature = "prover")]
     pub fn from_components_strict_recursive(
         receipt: TurnReceipt,
         proof_bytes: Vec<u8>,

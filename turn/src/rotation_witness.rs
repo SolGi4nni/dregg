@@ -1122,6 +1122,7 @@ pub fn mint_welded_wide_umem_rotated_participant_leg(
 /// lead whose base carries a map_op but is given no witness — or any non-cap-WRITE lead — fails closed
 /// at the dispatcher (the cap-open weld never fabricates a post-cap-root). STAGED: a welded WIDE
 /// descriptor BESIDE the deployed wide registry; no VK bump, nothing on the wire.
+#[cfg(feature = "prover")]
 #[allow(clippy::too_many_arguments)]
 pub fn mint_welded_wide_umem_cap_write_rotated_participant_leg(
     initial_state: &dregg_circuit::effect_vm::CellState,
