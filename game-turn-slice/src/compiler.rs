@@ -187,11 +187,34 @@ impl GameProgramCompiler {
         }
     }
 
-    /// Declare the number of public inputs the leaf carries (committed by the in-circuit
-    /// PI-commitment). Kept minimal, exactly as the de-risk's combat program does.
+    /// Declare a RAW public-input count with NO binding — every slot is committed by the
+    /// in-circuit PI-commitment but constrained to NOTHING (a value the prover may publish
+    /// freely). This is the shape the disease lives in; prefer [`Self::bind_public_input`],
+    /// which makes each PI a CONSTRAINED output of the trace. Retained only for the door's
+    /// state-binding prefix (`[old8 ‖ new8]`), whose lanes are fold-connected, not AIR-bound.
     pub fn with_public_inputs(mut self, n: usize) -> Self {
-        self.public_input_count = n;
+        self.public_input_count = self.public_input_count.max(n);
         self
+    }
+
+    /// **CONSTRAIN a public input.** Bind the `new`-side output slot `index` to the NEXT public
+    /// input via a real `ConstraintExpr::PiBinding` (`local[col] − pi[idx] == 0`, lowered by the
+    /// custom-leaf adapter to `Base(PiBinding{First,..})` — the validated foldable path). The
+    /// bound slot is an ordinary trace column the teeth CONSTRAIN, so "this turn published
+    /// `pi[idx] = winner`" becomes "`winner` is exactly what the constrained transition
+    /// produced" — the structural cure for `boundaries: vec![]`: a published output that is
+    /// bound AND derived, not merely bound. Returns the assigned `pi_index`.
+    ///
+    /// Call AFTER any door prefix has claimed the low PI slots (via [`Self::with_public_inputs`]):
+    /// bindings are appended above `public_input_count`, so the caller controls the layout, exactly
+    /// as `param-compose`/`automatafl` emit `[old8 ‖ new8 ‖ ..bound_app_pis]`.
+    pub fn bind_public_input(&mut self, index: u8) -> usize {
+        let col = self.slot_col(SlotRef::New(index));
+        let pi_index = self.public_input_count;
+        self.public_input_count += 1;
+        self.constraints
+            .push(ConstraintExpr::PiBinding { col, pi_index });
+        pi_index
     }
 
     fn col_name(slot: SlotRef) -> String {
@@ -666,6 +689,10 @@ impl GameProgramCompiler {
             max_degree: self.max_degree,
             columns: self.columns.clone(),
             constraints: self.constraints.clone(),
+            // No `BoundaryDef`s: PI bindings ride `ConstraintExpr::PiBinding` inside `constraints`
+            // (from [`Self::bind_public_input`]), which the custom-leaf adapter lowers to
+            // `Base(PiBinding{First,..})` — the validated foldable path automatafl/param-compose
+            // use. A bound output is therefore a CONSTRAINED published PI, not a free value.
             boundaries: vec![],
             public_input_count: self.public_input_count,
             lookup_tables: vec![],

@@ -372,6 +372,131 @@ impl Builder {
         out
     }
 
+    /// A Poseidon2 `Hash4to1` SITE: constrain `output_col == hash_4_to_1(inputs)`. The
+    /// output column's witness value is NOT touched here (the caller pins it to the
+    /// committed hash — the sealed-move commitment); the constraint recomputes the hash
+    /// of the four INPUT columns and equates it. `cellprogram_to_descriptor2` lowers this
+    /// to a `TID_P2` Poseidon2 chip lookup, so a program carrying it PROVES-FOLDS as a
+    /// custom leaf (unlike the `Hash` fact-sponge, which the IR-v2 chip adapter refuses).
+    pub fn push_hash4to1(&mut self, output_col: usize, inputs: [usize; 4]) {
+        self.push(ConstraintExpr::Hash4to1 {
+            output_col,
+            input_cols: inputs,
+        });
+    }
+
+    /// The honest `hash_4_to_1` of four columns' witness values — the host commitment a
+    /// caller pins a commit column to (so `air_accepts` shadows the real chip hash).
+    pub fn hash4to1_value(&self, inputs: [usize; 4]) -> BabyBear {
+        dregg_circuit::poseidon2::hash_4_to_1(&[
+            self.values[inputs[0]],
+            self.values[inputs[1]],
+            self.values[inputs[2]],
+            self.values[inputs[3]],
+        ])
+    }
+
+    /// A native 8-felt cap-tree node compression SITE: constrain `output_cols == cap_node8(left, right)`
+    /// — the arity-16 `node8` Poseidon2 compression, ALL 8 output lanes bound. Lowers to exactly ONE
+    /// `TID_P2` chip lookup with ZERO auxiliary lane columns (`custom_leaf_lowering`), so a program
+    /// carrying it PROVES-FOLDS as a custom leaf while binding the FULL 8-felt (~124-bit) digest —
+    /// unlike `Hash4to1` (a ~31-bit lane-0 squeeze paying 7 witness columns). The output columns'
+    /// witness values are set by the caller (from [`Self::merkle_hash8_value`]); the constraint
+    /// recomputes `cap_node8` of the two 8-felt inputs and equates all eight lanes.
+    pub fn push_merkle_hash8(
+        &mut self,
+        output_cols: [usize; 8],
+        left_cols: [usize; 8],
+        right_cols: [usize; 8],
+    ) {
+        self.push(ConstraintExpr::MerkleHash8 {
+            output_cols,
+            left_cols,
+            right_cols,
+        });
+    }
+
+    /// The honest `cap_node8(left, right)` 8-felt compression — the value a caller fills a
+    /// node's output columns with (so `air_accepts` shadows the real node8 chip hash).
+    pub fn merkle_hash8_value(&self, left: [usize; 8], right: [usize; 8]) -> [BabyBear; 8] {
+        let l: [BabyBear; 8] = core::array::from_fn(|i| self.values[left[i]]);
+        let r: [BabyBear; 8] = core::array::from_fn(|i| self.values[right[i]]);
+        dregg_circuit::cap_root::cap_node8(l, r)
+    }
+
+    /// **THE BOARD-STATE ROOT.** Build a CONSTRAINED 8-felt Poseidon2 (`cap_node8`) Merkle root
+    /// over `cell_cols` (each a single-felt board square). The `k` cells are packed into
+    /// `ceil(k/8)` 8-felt leaves (zero-padded on the last), then folded pairwise by a binary
+    /// tree of `MerkleHash8` (arity-16 node8) sites into ONE 8-felt root. Every site is a real
+    /// `ConstraintExpr::MerkleHash8`, so the returned root columns are EQUALITY-CONSTRAINED to
+    /// the exact board columns the transition gadget reads: a forged root has no satisfying
+    /// witness (it would need a full-width node8 collision). The leaf felts ARE the board
+    /// columns themselves — no new leaf columns — so the root commits to precisely the board
+    /// the AIR proves `new == apply_turn(old, moves)` over. Returns the 8 root column indices,
+    /// which the caller `bind_pi`s so the ~124-bit board commitment becomes a published,
+    /// constrained descriptor public input.
+    pub fn board_root8(&mut self, tag: &str, cell_cols: &[usize]) -> [usize; 8] {
+        // A shared zero column for padding leaves / odd siblings.
+        let zero = self.col_by_name("mh8_zero").unwrap_or_else(|| {
+            let z = self.alloc("mh8_zero", ColumnKind::Value, 0);
+            self.assert_zero(&Head::lin(1, z));
+            z
+        });
+        // Pack cells into 8-felt leaves.
+        let mut level: Vec<[usize; 8]> = Vec::new();
+        let mut i = 0;
+        while i < cell_cols.len() {
+            let leaf: [usize; 8] = core::array::from_fn(|j| {
+                if i + j < cell_cols.len() {
+                    cell_cols[i + j]
+                } else {
+                    zero
+                }
+            });
+            level.push(leaf);
+            i += 8;
+        }
+        // A single leaf still commits through a node8 (with a zero sibling), so the root is
+        // always a genuine compression rather than a bare copy.
+        if level.len() == 1 {
+            level.push([zero; 8]);
+        }
+        // Fold pairwise up to a single root.
+        let mut round = 0usize;
+        while level.len() > 1 {
+            let mut next: Vec<[usize; 8]> = Vec::new();
+            for (pidx, ch) in level.chunks(2).enumerate() {
+                let left = ch[0];
+                let right = if ch.len() == 2 { ch[1] } else { [zero; 8] };
+                let out_val = self.merkle_hash8_value(left, right);
+                let out_cols: [usize; 8] = core::array::from_fn(|j| {
+                    self.alloc(
+                        format!("{tag}_r{round}_n{pidx}_l{j}"),
+                        ColumnKind::Value,
+                        out_val[j].0 as i128,
+                    )
+                });
+                self.push_merkle_hash8(out_cols, left, right);
+                next.push(out_cols);
+            }
+            level = next;
+            round += 1;
+        }
+        level[0]
+    }
+
+    /// Bind an existing column to a FRESH public input: append the column's witness value
+    /// as the next PI and pin `col == pi[index]` with a `PiBinding` constraint. Returns the
+    /// PI index. The sealed-move commit column rides a PI this way, so the committed hash is
+    /// a published descriptor PI (and is bound into the leaf's exposed PI commitment).
+    pub fn bind_pi(&mut self, col: usize) -> usize {
+        let pi_index = self.pis.len();
+        self.pis.push(self.values[col]);
+        self.public_input_count = self.pis.len();
+        self.push(ConstraintExpr::PiBinding { col, pi_index });
+        pi_index
+    }
+
     // -------- witness self-evaluation (the `air_accepts` shadow) --------
 
     /// Evaluate every emitted constraint over the single witness row; return the list

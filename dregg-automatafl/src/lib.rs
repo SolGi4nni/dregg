@@ -29,7 +29,12 @@ pub mod moves;
 pub mod reference;
 pub mod surface;
 
-pub use air::{build_d1, build_d1_honest, build_d2, build_d2_honest, build_d3, build_d3_honest};
+pub use air::{
+    SealedMove, build_d1, build_d1_bound, build_d1_honest, build_d1_honest_bound, build_d2,
+    build_d2_bound, build_d2_honest, build_d2_honest_bound, build_d3, build_d3_bound,
+    build_d3_honest, build_d3_honest_bound, build_sealed, build_sealed_bound, build_sealed_honest,
+    build_sealed_honest_bound, placeholder_roots,
+};
 pub use builder::Builder;
 pub use game::{AutomataflGame, Deployment, MatchState};
 pub use reference::{Board, Move, apply_turn, automaton_step};

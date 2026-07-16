@@ -23,6 +23,7 @@
 //! future work), and the concrete Lean `Refines` discharge is the long pole.
 
 use dregg_circuit::dsl::circuit::ColumnKind;
+use dregg_circuit::field::BabyBear;
 
 use crate::air::{alloc_board_pub, automaton_on_mid};
 use crate::builder::{Builder, Head};
@@ -306,7 +307,18 @@ fn write_mid_witnessed(
 }
 
 /// **STAGE D2** — single move: `claimed_next == apply_turn(old, [m])`.
-pub fn build_d2(old: &Board, m: &Move, claimed_next: &Board) -> Builder {
+///
+/// PUBLIC INPUTS: the door's state-binding prefix `[old8 ‖ new8]` (the cell roots, add_pi'd)
+/// followed by the two CONSTRAINED board-state roots (old board, claimed-next board). See
+/// [`crate::air::build_d1_bound`] for the layout and semantics. The bare [`build_d2`] uses
+/// placeholder door roots; this `_bound` form takes the leg's REAL roots (the fold driver).
+pub fn build_d2_bound(
+    old: &Board,
+    m: &Move,
+    claimed_next: &Board,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
     let n = old.n;
     let mut b = Builder::new(format!("automatafl-d2-n{n}"));
     let old_cols = alloc_board_pub(&mut b, "old", old);
@@ -322,7 +334,10 @@ pub fn build_d2(old: &Board, m: &Move, claimed_next: &Board) -> Builder {
     );
     let mid_cols = alloc_board_pub(&mut b, "mid", &mid);
     let new_cols = alloc_board_pub(&mut b, "new", claimed_next);
-    b.add_pi((old.auto.1 as i128) * n as i128 + old.auto.0 as i128);
+    // PI[0..16): the door's state-binding prefix (cell roots; fold-connected).
+    for x in old8.iter().chain(new8.iter()) {
+        b.add_pi(x.0 as i128);
+    }
 
     let one = one_col(&mut b);
     let (fx, fy, tx, ty, fp) = validate_move(&mut b, "m0", old, m, &old_cols, one);
@@ -369,9 +384,15 @@ pub fn build_d2(old: &Board, m: &Move, claimed_next: &Board) -> Builder {
 
     // then the automaton steps on mid
     automaton_on_mid(&mut b, n, &mid_cols, &mid, &new_cols);
-    let s = apply_turn(old, &[*m]);
-    b.add_pi((s.auto.1 as i128) * n as i128 + s.auto.0 as i128);
+    // PI[16..32): the CONSTRAINED board-state roots (bind_pi'd app PIs).
+    crate::air::bind_board_roots(&mut b, &old_cols, &new_cols);
     b
+}
+
+/// **STAGE D2** with placeholder door roots (the fast battery).
+pub fn build_d2(old: &Board, m: &Move, claimed_next: &Board) -> Builder {
+    let (old8, new8) = crate::air::placeholder_roots();
+    build_d2_bound(old, m, claimed_next, old8, new8)
 }
 
 pub fn build_d2_honest(old: &Board, m: &Move) -> Builder {
@@ -379,11 +400,29 @@ pub fn build_d2_honest(old: &Board, m: &Move) -> Builder {
     build_d2(old, m, &next)
 }
 
+/// The honest D2 program bound to the leg's REAL cell-state roots (the fold driver).
+pub fn build_d2_honest_bound(
+    old: &Board,
+    m: &Move,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
+    let next = apply_turn(old, &[*m]);
+    build_d2_bound(old, m, &next, old8, new8)
+}
+
 /// **STAGE D3** — the n=2 resolution: `claimed_next == apply_turn(old, [a, b])`.
 /// The 6 pattern bits, the fork/collide/survive selection, and each surviving
 /// piece's chain-endpoint destination are RE-DERIVED IN-CIRCUIT from the witnessed
 /// coordinates + source particles (no value taken from the reference resolution).
-pub fn build_d3(old: &Board, ma: &Move, mb: &Move, claimed_next: &Board) -> Builder {
+pub fn build_d3_bound(
+    old: &Board,
+    ma: &Move,
+    mb: &Move,
+    claimed_next: &Board,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
     let n = old.n;
     let mut bld = Builder::new(format!("automatafl-d3-n{n}"));
     let old_cols = alloc_board_pub(&mut bld, "old", old);
@@ -397,7 +436,10 @@ pub fn build_d3(old: &Board, ma: &Move, mb: &Move, claimed_next: &Board) -> Buil
     let mid = apply_moves(old, &resolved);
     let mid_cols = alloc_board_pub(&mut bld, "mid", &mid);
     let new_cols = alloc_board_pub(&mut bld, "new", claimed_next);
-    bld.add_pi((old.auto.1 as i128) * n as i128 + old.auto.0 as i128);
+    // PI[0..16): the door's state-binding prefix (cell roots; fold-connected).
+    for x in old8.iter().chain(new8.iter()) {
+        bld.add_pi(x.0 as i128);
+    }
 
     let one = one_col(&mut bld);
     let srcs = vec![ma.frm, mb.frm];
@@ -566,12 +608,197 @@ pub fn build_d3(old: &Board, ma: &Move, mb: &Move, claimed_next: &Board) -> Buil
     );
 
     automaton_on_mid(&mut bld, n, &mid_cols, &mid, &new_cols);
-    let s = apply_turn(old, &[*ma, *mb]);
-    bld.add_pi((s.auto.1 as i128) * n as i128 + s.auto.0 as i128);
+    // PI[16..32): the CONSTRAINED board-state roots (bind_pi'd app PIs).
+    crate::air::bind_board_roots(&mut bld, &old_cols, &new_cols);
     bld
+}
+
+/// **STAGE D3** with placeholder door roots (the fast battery).
+pub fn build_d3(old: &Board, ma: &Move, mb: &Move, claimed_next: &Board) -> Builder {
+    let (old8, new8) = crate::air::placeholder_roots();
+    build_d3_bound(old, ma, mb, claimed_next, old8, new8)
 }
 
 pub fn build_d3_honest(old: &Board, ma: &Move, mb: &Move) -> Builder {
     let next = apply_turn(old, &[*ma, *mb]);
     build_d3(old, ma, mb, &next)
+}
+
+/// The honest D3 program bound to the leg's REAL cell-state roots (the fold driver).
+pub fn build_d3_honest_bound(
+    old: &Board,
+    ma: &Move,
+    mb: &Move,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
+    let next = apply_turn(old, &[*ma, *mb]);
+    build_d3_bound(old, ma, mb, &next, old8, new8)
+}
+
+// ============================================================================
+// THE IN-PROOF SEALED MOVE — the commit→reveal enforced INSIDE the AIR.
+//
+// automatafl's two seats submit their moves SIMULTANEOUSLY and SECRETLY. In D1–D3 that
+// secrecy is a host discipline (the executor's commit→reveal teeth withhold the move
+// until reveal). This module makes the secrecy CRYPTOGRAPHIC and IN-PROOF, the analogue
+// of `dregg-multiway-tug`'s hidden-hand: each seat's move is committed as a Poseidon2
+// `hash_4_to_1([frm, to, seat, nonce])` (the `*_commit` column, bound to a published
+// descriptor PI); the reveal OPENS a move in-circuit — witnessing its coordinates,
+// re-deriving the flattened `(frm, to)` indices, and re-hashing them (with the revealed
+// seat + nonce) through the SAME `Hash4to1` Poseidon2 chip site. The `Hash4to1`
+// constraint forces `commit == hash(opened)`, so opening a move that differs from the
+// committed one (a post-reveal swap) needs a Poseidon2 collision — it has NO satisfying
+// leaf. The simultaneous-secret is thus enforced by the PROOF, not by host non-reveal.
+// ============================================================================
+
+/// A sealed (committed) simultaneous secret move: the seat, the move, and a per-move
+/// blinding nonce. The commitment `hash_4_to_1([frm_idx, to_idx, seat, nonce])` HIDES the
+/// move (the nonce blinds the tiny coordinate space) and BINDS the seat to exactly it.
+#[derive(Clone, Copy, Debug)]
+pub struct SealedMove {
+    /// Which seat submitted this move (0 or 1) — revealed on open.
+    pub seat: u32,
+    /// The (secret until reveal) move.
+    pub mv: Move,
+    /// The blinding nonce (revealed on open to re-derive the commitment).
+    pub nonce: u32,
+}
+
+impl SealedMove {
+    /// The board-flattened `(frm_idx, to_idx)` at board size `n`.
+    fn indices(&self, n: usize) -> (u32, u32) {
+        let frm = (self.mv.frm.1 as u32) * n as u32 + self.mv.frm.0 as u32;
+        let to = (self.mv.to.1 as u32) * n as u32 + self.mv.to.0 as u32;
+        (frm, to)
+    }
+
+    /// The Poseidon2 commitment felt `hash_4_to_1([frm, to, seat, nonce])` — the exact
+    /// hash the in-AIR `Hash4to1` chip site recomputes (so the in-circuit commit column
+    /// byte-matches this host value).
+    pub fn commit(&self, n: usize) -> BabyBear {
+        let (frm, to) = self.indices(n);
+        dregg_circuit::poseidon2::hash_4_to_1(&[
+            BabyBear::new(frm),
+            BabyBear::new(to),
+            BabyBear::new(self.seat),
+            BabyBear::new(self.nonce),
+        ])
+    }
+}
+
+/// Emit one seat's sealed commit + in-circuit open. `committed` drives the published PI
+/// commitment; `opened` is the move actually revealed (== `committed.mv` on the honest
+/// path; a DIFFERENT valid move on a forged reveal, which the `Hash4to1` rejects).
+fn seal_seat(
+    bld: &mut Builder,
+    tag: &str,
+    old_cols: &[usize],
+    old: &Board,
+    committed: &SealedMove,
+    opened: &Move,
+    one: usize,
+) {
+    let n = old.n;
+    // The opened move is a genuine, VALIDATED automatafl move; its coordinates are the
+    // witnessed columns the commitment reopens.
+    let (fx, fy, tx, ty, _fp) = validate_move(bld, tag, old, opened, old_cols, one);
+    // Re-derive the flattened source/dest indices from the WITNESSED coordinates.
+    let of = (opened.frm.1 as i128) * n as i128 + opened.frm.0 as i128;
+    let ot = (opened.to.1 as i128) * n as i128 + opened.to.0 as i128;
+    let frm = bld.alloc(format!("{tag}_frm"), ColumnKind::Value, of);
+    bld.assert_zero(&Head::lin(1, frm).add_lin(-(n as i128), fy).add_lin(-1, fx));
+    let to = bld.alloc(format!("{tag}_to"), ColumnKind::Value, ot);
+    bld.assert_zero(&Head::lin(1, to).add_lin(-(n as i128), ty).add_lin(-1, tx));
+    // The revealed seat (pinned public) and the revealed blinding nonce (a witnessed
+    // opening — private, learned only at reveal).
+    let seat = bld.alloc(
+        format!("{tag}_seat"),
+        ColumnKind::Binary,
+        committed.seat as i128,
+    );
+    bld.assert_binary(seat);
+    bld.assert_zero(&Head::lin(1, seat).add_const(-(committed.seat as i128)));
+    let nonce = bld.alloc(
+        format!("{tag}_nonce"),
+        ColumnKind::Value,
+        committed.nonce as i128,
+    );
+    // The commit column is PINNED to the COMMITTED hash (the published PI); the `Hash4to1`
+    // site forces it to equal `hash(opened frm, to, seat, nonce)`. Honest: opened ==
+    // committed, so they agree. Forged: opening ≠ committed ⇒ the recomputed hash ≠ the
+    // committed PI ⇒ UNSAT.
+    let host = committed.commit(n);
+    let commit = bld.alloc(format!("{tag}_commit"), ColumnKind::Hash, host.0 as i128);
+    bld.push_hash4to1(commit, [frm, to, seat, nonce]);
+    bld.bind_pi(commit);
+}
+
+/// **THE SEALED-MOVE REVEAL LEAF** — both seats' committed moves, opened in-circuit. A
+/// hash-carrying (Poseidon2 `Hash4to1`) foldable custom leaf: it PROVES a committed +
+/// opened pair, and a forged reveal (opening a different move than committed) has no
+/// satisfying leaf. `committed_*` drives each seat's published PI commitment; `opened_*`
+/// is the revealed move.
+pub fn build_sealed_bound(
+    old: &Board,
+    committed_a: &SealedMove,
+    opened_a: &Move,
+    committed_b: &SealedMove,
+    opened_b: &Move,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
+    let n = old.n;
+    let mut bld = Builder::new(format!("automatafl-sealed-n{n}"));
+    let old_cols = alloc_board_pub(&mut bld, "old", old);
+    // PI[0..16): the door's state-binding prefix (cell roots; fold-connected).
+    for x in old8.iter().chain(new8.iter()) {
+        bld.add_pi(x.0 as i128);
+    }
+    // PI[16..24): the CONSTRAINED board root of the pre-reveal board the seals commit against.
+    let old_root = bld.board_root8("boardold", &old_cols);
+    for c in old_root {
+        bld.bind_pi(c);
+    }
+    let one = one_col(&mut bld);
+    // PI[24..]: each seat's in-circuit-opened Poseidon2 move commitment (bind_pi'd in seal_seat).
+    seal_seat(&mut bld, "sa", &old_cols, old, committed_a, opened_a, one);
+    seal_seat(&mut bld, "sb", &old_cols, old, committed_b, opened_b, one);
+    bld
+}
+
+/// The sealed reveal with placeholder door roots (the fast battery).
+pub fn build_sealed(
+    old: &Board,
+    committed_a: &SealedMove,
+    opened_a: &Move,
+    committed_b: &SealedMove,
+    opened_b: &Move,
+) -> Builder {
+    let (old8, new8) = crate::air::placeholder_roots();
+    build_sealed_bound(
+        old,
+        committed_a,
+        opened_a,
+        committed_b,
+        opened_b,
+        old8,
+        new8,
+    )
+}
+
+/// The honest sealed reveal: each seat opens exactly the move it committed.
+pub fn build_sealed_honest(old: &Board, a: &SealedMove, b: &SealedMove) -> Builder {
+    build_sealed(old, a, &a.mv, b, &b.mv)
+}
+
+/// The honest sealed reveal bound to the leg's REAL cell-state roots (the fold driver).
+pub fn build_sealed_honest_bound(
+    old: &Board,
+    a: &SealedMove,
+    b: &SealedMove,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
+    build_sealed_bound(old, a, &a.mv, b, &b.mv, old8, new8)
 }

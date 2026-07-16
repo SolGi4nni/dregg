@@ -13,6 +13,21 @@ use crate::reference::{
     self as r, AUTO, Board, DIRS, SCORE_ATT, SCORE_PRI, automaton_sense, automaton_step,
 };
 
+/// Placeholder cell-state door roots for the AIR SELF-TESTS (`air_accepts`, size/refinement).
+/// The door prefix `[old8 ‖ new8]` is opaque to the board AIR — it is `add_pi`'d and
+/// fold-connected to the leg's real rotated roots, never constrained here — so any 8-felt
+/// values serve the fast battery. The FOLD driver supplies the leg's GENUINE roots instead.
+pub fn placeholder_roots() -> (
+    [dregg_circuit::field::BabyBear; 8],
+    [dregg_circuit::field::BabyBear; 8],
+) {
+    use dregg_circuit::field::BabyBear;
+    (
+        core::array::from_fn(|i| BabyBear::new(100 + i as u32)),
+        core::array::from_fn(|i| BabyBear::new(200 + i as u32)),
+    )
+}
+
 /// Range width for the score comparison (scores < 4*PRI ≈ 4e5 < 2^19).
 const SCORE_RBITS: usize = 20;
 /// Range width for small distance/coordinate comparisons (values < N ≤ 9 < 2^4).
@@ -636,23 +651,83 @@ fn automaton_gadget(
 
 /// **STAGE D1** — the automaton-step-only AIR. `old` has no player moves; the AIR
 /// checks `claimed_next == automaton_step(old)`.
-pub fn build_d1(old: &Board, claimed_next: &Board) -> Builder {
+///
+/// PUBLIC INPUTS (the Custom-VK door's state-binding ABI —
+/// `dregg_circuit::effect_vm::custom_state_binding`):
+///
+/// ```text
+///   [ 0.. 8)  old8            the CELL's pre-state root  (the leg's rotated anchor — add_pi'd,
+///   [ 8..16)  new8            the CELL's post-state root  fold-connected, opaque to this AIR)
+///   [16..24)  board_old_root  CONSTRAINED: cap_node8 Merkle root over the OLD board columns
+///   [24..32)  board_new_root  CONSTRAINED: cap_node8 Merkle root over the claimed-next columns
+/// ```
+///
+/// `old8`/`new8` are the SUBSTRATE commitment the deployed state-binding fold
+/// (`prove_custom_binding_node_state_segmented`) `connect`s to the turn leg's REAL rotated
+/// roots — so a leaf about a DIFFERENT cell transition is UNSAT. They are opaque here (the
+/// board AIR does not, and cannot, recompute the cell's v9 chip commit). The two BOARD roots
+/// are the game-semantic commitment: `board_root8` binds every board square at ~124 bits via
+/// real `MerkleHash8` sites, and the roots ride app PI slots the `custom_proof_commitment`
+/// already hashes in full — so "this leaf published board_new_root" is now "the 25-cell board
+/// transitioned exactly so, provably", not a free-floating value.
+///
+/// The bare [`build_d1`] uses [`placeholder_roots`] for the door prefix (the fast self-tests
+/// are opaque to it); the FOLD driver calls this `_bound` form with the leg's REAL roots.
+pub fn build_d1_bound(
+    old: &Board,
+    claimed_next: &Board,
+    old8: [dregg_circuit::field::BabyBear; 8],
+    new8: [dregg_circuit::field::BabyBear; 8],
+) -> Builder {
     let n = old.n;
     let mut b = Builder::new(format!("automatafl-d1-n{n}"));
     let old_cols = alloc_board(&mut b, "old", old);
     let new_cols = alloc_board(&mut b, "new", claimed_next);
-    // PIs (committed, not constraint-referenced): old & new automaton indices.
-    b.add_pi((old.auto.1 as i128) * n as i128 + old.auto.0 as i128);
-    let s = automaton_step(old);
-    b.add_pi((s.auto.1 as i128) * n as i128 + s.auto.0 as i128);
+    // PI[0..16): the door's state-binding prefix (the cell roots; add_pi'd, fold-connected).
+    for x in old8.iter().chain(new8.iter()) {
+        b.add_pi(x.0 as i128);
+    }
     automaton_gadget(&mut b, n, &old_cols, old, &new_cols);
+    // PI[16..32): the CONSTRAINED board-state roots (bind_pi'd app PIs).
+    bind_board_roots(&mut b, &old_cols, &new_cols);
     b
 }
 
-/// The honest D1 program: `claimed_next = automaton_step(old)`.
+/// Emit + bind the two CONSTRAINED board-state roots (old board, claimed-next board) as the
+/// app public inputs `[16..24)` and `[24..32)`. Each is a `cap_node8` Merkle root over the
+/// board columns — a genuine ~124-bit commitment the AIR forces (a forged root is UNSAT).
+pub(crate) fn bind_board_roots(b: &mut Builder, old_cols: &[usize], new_cols: &[usize]) {
+    let old_root = b.board_root8("boardold", old_cols);
+    for c in old_root {
+        b.bind_pi(c);
+    }
+    let new_root = b.board_root8("boardnew", new_cols);
+    for c in new_root {
+        b.bind_pi(c);
+    }
+}
+
+/// **STAGE D1** with placeholder door roots (the fast battery — the board AIR is opaque to
+/// the cell-state prefix). See [`build_d1_bound`] for the fold-driving form.
+pub fn build_d1(old: &Board, claimed_next: &Board) -> Builder {
+    let (old8, new8) = placeholder_roots();
+    build_d1_bound(old, claimed_next, old8, new8)
+}
+
+/// The honest D1 program: `claimed_next = automaton_step(old)` (placeholder door roots).
 pub fn build_d1_honest(old: &Board) -> Builder {
     let next = automaton_step(old);
     build_d1(old, &next)
+}
+
+/// The honest D1 program bound to the leg's REAL cell-state roots (the fold driver).
+pub fn build_d1_honest_bound(
+    old: &Board,
+    old8: [dregg_circuit::field::BabyBear; 8],
+    new8: [dregg_circuit::field::BabyBear; 8],
+) -> Builder {
+    let next = automaton_step(old);
+    build_d1_bound(old, &next, old8, new8)
 }
 
 // ============================================================================
@@ -660,7 +735,11 @@ pub fn build_d1_honest(old: &Board) -> Builder {
 // same automaton gadget on mid. (Refinement-tested; see crate::moves.)
 // ============================================================================
 
-pub use crate::moves::{build_d2, build_d2_honest, build_d3, build_d3_honest};
+pub use crate::moves::{
+    SealedMove, build_d2, build_d2_bound, build_d2_honest, build_d2_honest_bound, build_d3,
+    build_d3_bound, build_d3_honest, build_d3_honest_bound, build_sealed, build_sealed_bound,
+    build_sealed_honest, build_sealed_honest_bound,
+};
 
 /// Shared entry: validate `claimed_next == apply_turn(old, moves)` given the already
 /// move-resolved `mid` columns. Used by D2/D3.
