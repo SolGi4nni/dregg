@@ -22,7 +22,10 @@ task D (the embedding) is the one genuinely-hard piece.
 3. **E** (compose `tSdh_ggm_sound`; apply the sufficient test to the FINAL theorem — no peer-model
    laundering into the socket) — fires when A,B,C,D land. Then re-cut the two-pager.
 
+## ⚑ GOAL COMPLETE (end-to-end sound argument mechanized)
+
 ## Done-log
+- ⚑⚑ **task E DONE — GOAL COMPLETE** (`e03adb630`): `tSdh_ggm_sound` — the CAPSTONE, over ArkLib's REAL `tSdhExperiment`, quantifying over `embed strat` (the construction, NOT all adversaries → escapes the vacuity), sorry-free/axiom-clean. Chain: C(experiment_eq_count)∘D(embed_det/correspondence)∘transport(winIndex)∘A(rand_encoding_bound_D)∘B(degree discharge on the REAL runTable). `tSdh_ggm_sound_lt_one` = genuine <1 (mutation-canaried). Sufficient-test PASSED: richly-inhabited, real target, no laundering. Side-conds: 1≤D, 2≤p, generator, ArkLib SampleableType, the <1 regime. **The vacuity repair + a complete end-to-end SOUND cryptographic argument: DONE.**
 - **task D DONE** (`9c1aa7721`): the EMBEDDING — embed:Strat→real tSdhAdversary + embed_run_correspondence (mirrors real runAux; equality-query crux via real gpow_val_inj_iff), sorry-free/axiom-clean. Honest side cond 1≤D (D=0 genuinely false: no pairing). A+B+C+D ALL DONE → E now.
 - **task B DONE** (`115099abe`): degree discharge on the REAL runTable (not the peer model) — hdeg_out/pairs/handles are now theorems; hypothesis-free _of_run corollaries for E; closes the peer-model gap. Only 1≤D/2≤p side conds.
 - **task C DONE** (`eed762a00`): prob threading — game_collapse + experiment_eq_count (tSdhExperiment = winSet.card/(p−1)), sorry-free/axiom-clean vs real ArkLib; leaves the resultOf/hdet socket that D's embed fills.
