@@ -487,15 +487,19 @@ fn resolve_inner(
                 );
             }
 
-            // The executor signs the receipt hash (not the turn hash).
-            let receipt_hash = receipt.receipt_hash();
+            // The executor signs the domain-prefixed canonical message
+            // (`executor-receipt-sig-v3:` ‖ receipt_hash), NOT the bare receipt
+            // hash — the same message every other executor-signature verifier in
+            // the tree checks (node `identity_export`, `api`). Verifying the bare
+            // hash here rejected every honestly-signed receipt.
+            let signed_message = receipt.canonical_executor_signed_message();
             let mut sig_arr = [0u8; 64];
             sig_arr.copy_from_slice(sig_bytes);
             let signature = ed25519_dalek::Signature::from_bytes(&sig_arr);
 
             let verified = trusted_executor_keys.iter().any(|key_bytes| {
                 if let Ok(vk) = ed25519_dalek::VerifyingKey::from_bytes(key_bytes) {
-                    vk.verify_strict(&receipt_hash, &signature).is_ok()
+                    vk.verify_strict(&signed_message, &signature).is_ok()
                 } else {
                     false
                 }
@@ -948,9 +952,10 @@ mod tests {
             was_burn: false,
             consumed_capabilities: vec![],
         };
-        // Sign the receipt hash with the executor key.
-        let receipt_hash = receipt.receipt_hash();
-        let sig = executor_key.sign(&receipt_hash);
+        // Sign the canonical executor message — the exact bytes the real
+        // executor signs (`turn::executor::mod` calls
+        // `receipt.canonical_executor_signed_message()`), NOT the bare hash.
+        let sig = executor_key.sign(&receipt.canonical_executor_signed_message());
         receipt.executor_signature = Some(sig.to_bytes().to_vec());
 
         let proof = ConditionProof::Receipt(receipt);
@@ -967,6 +972,67 @@ mod tests {
             trusted_keys,
         );
         assert_eq!(result, ConditionalResult::Resolved);
+    }
+
+    /// Regression: a receipt whose signature covers the BARE `receipt_hash()`
+    /// (the shape the old verifier and its fixture both used) must now be
+    /// REJECTED — the verifier binds the domain-prefixed canonical message the
+    /// executor actually signs, so a bare-hash signature is a forgery here. This
+    /// is the tooth for the fix: sign-the-bare-hash was green only because the
+    /// verifier was equally wrong.
+    #[test]
+    fn test_turn_executed_rejects_bare_hash_signature() {
+        use ed25519_dalek::{Signer, SigningKey};
+
+        let turn_hash = [0xAB; 32];
+        let condition = ProofCondition::TurnExecuted { turn_hash };
+
+        let executor_key = SigningKey::from_bytes(&[0x42; 32]);
+        let executor_pub = executor_key.verifying_key().to_bytes();
+
+        let mut receipt = TurnReceipt {
+            turn_hash,
+            forest_hash: [0u8; 32],
+            pre_state_hash: [0u8; 32],
+            post_state_hash: [0u8; 32],
+            timestamp: 1000,
+            effects_hash: [0u8; 32],
+            computrons_used: 500,
+            action_count: 1,
+            previous_receipt_hash: None,
+            agent: dregg_cell::CellId([0u8; 32]),
+            federation_id: [0u8; 32],
+            routing_directives: vec![],
+            introduction_exports: vec![],
+            derivation_records: vec![],
+            emitted_events: vec![],
+            executor_signature: None,
+            finality: Default::default(),
+            was_encrypted: false,
+            was_burn: false,
+            consumed_capabilities: vec![],
+        };
+        // Sign the BARE receipt hash — the pre-fix (wrong) form.
+        let sig = executor_key.sign(&receipt.receipt_hash());
+        receipt.executor_signature = Some(sig.to_bytes().to_vec());
+
+        let proof = ConditionProof::Receipt(receipt);
+        let mut n = nullifiers();
+        let trusted_keys: &[[u8; 32]] = &[executor_pub];
+        let result = resolve_condition(
+            &condition,
+            &proof,
+            10,
+            100,
+            &[],
+            DEFAULT_MAX_ROOT_AGE,
+            &mut n,
+            trusted_keys,
+        );
+        assert!(
+            matches!(result, ConditionalResult::InvalidProof(_)),
+            "a signature over the bare receipt_hash must be rejected, got {result:?}"
+        );
     }
 
     #[test]
