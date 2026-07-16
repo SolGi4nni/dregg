@@ -299,13 +299,29 @@ pub mod recursive {
     /// FRI parameters: log_blowup=3 (for degree-7 AIR), max_log_arity=1,
     /// 38 queries + 14 query-PoW bits.
     ///
-    /// Security: conjectured (ethSTARK capacity bound) soundness is
-    /// `log_blowup * num_queries + query_pow_bits = 3*38 + 14 = 128 bits` —
-    /// the same bar the per-turn production config (`create_config`: q=50,
-    /// pow=16, ~166 bits) clears, applied to the artifact a light client
-    /// actually keeps. Every proof in the recursion tree — leaf wraps,
-    /// aggregation layers, and the ROOT — runs at this strength, and the
-    /// in-circuit FRI verifier re-verifies all 38 queries (plus the PoW
+    /// ⚠ **The `128` this config is often quoted at is the REFUTED capacity column, and it
+    /// is not a security number.** `log_blowup * num_queries + query_pow_bits = 3*38 + 14 =
+    /// 128` is the up-to-`(1−ρ)` arithmetic whose correlated-agreement conjecture is
+    /// disproved (Crites–Stewart, eprint 2025/2046, *On Reed–Solomon Proximity Gaps
+    /// Conjectures*; Kambiré, arXiv 2604.09724, *Proximity Gaps Conjecture Fails Near
+    /// Capacity over Prime Fields*). It is carried as a knob-drift baseline ONLY — and this
+    /// config sits at EXACTLY the `128` drift margin with ZERO headroom, so any knob move
+    /// down is a red gate.
+    ///
+    /// The honest columns for this config, all from the Lean ledger
+    /// (`Dregg2.Circuit.FriLedger`, reported by
+    /// `circuit-prove/tests/fri_params_soundness_budget.rs`):
+    /// * **Johnson query column: `71`** — `38*3/2 + 14`. Its `14` query-PoW bits (vs `16`
+    ///   everywhere else) make this the WEAKEST shipped config on both query columns; it
+    ///   pins the gate's Johnson floor (`recursion_config_is_the_weakest_link`). This column
+    ///   is BCIKS20's `m → ∞` idealisation and drops the commit-phase term `ε_C`, so it is
+    ///   the query ledger, not "the proven soundness".
+    /// * **per-fold: `118`** — at the NEAR-CAPACITY radius (96.9% farness), not at the
+    ///   Johnson radius FRI operates at (see `Dregg2.Circuit.FriJohnsonRadiusGap`).
+    ///
+    /// The columns are independent and are never multiplied into one figure. Every proof in
+    /// the recursion tree — leaf wraps, aggregation layers, and the ROOT — runs at these
+    /// knobs, and the in-circuit FRI verifier re-verifies all 38 queries (plus the PoW
     /// witness, via `check_pow_witness`) of every wrapped child.
     pub fn create_recursion_config() -> DreggRecursionConfig {
         // Fixed knobs ⇒ identical config on every call; build once per thread, clone on access

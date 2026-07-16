@@ -18,9 +18,11 @@
 //! - Extension field: BinomialExtensionField<BabyBear, 4> (degree-4 extension)
 //! - DFT: Radix2DitParallel (parallel NTT)
 //! - FRI: log_blowup=3 (8x), 38 queries, 16 PoW bits (the `PROD_FRI_*` consts / `create_config`;
-//!   ≈130-bit REFUTED-conjecture capacity baseline, 73-bit proven Johnson, and a 116-bit proven
-//!   per-fold posture — every figure computed by the VERIFIED Lean ledger, not here: see
-//!   create_config's note and `circuit-prove/tests/fri_params_soundness_budget.rs`)
+//!   ≈130-bit REFUTED-conjecture capacity baseline, a 73-bit Johnson QUERY column — which is the
+//!   `m → ∞` idealisation and drops BCIKS20's commit-phase term `ε_C`, so it is not a soundness
+//!   headline — and a 116-bit per-fold posture at the NEAR-CAPACITY radius. Every figure is
+//!   computed by the VERIFIED Lean ledger, not here: see create_config's note and
+//!   `circuit-prove/tests/fri_params_soundness_budget.rs`)
 
 use std::sync::LazyLock;
 
@@ -107,11 +109,19 @@ pub fn create_config() -> DreggStarkConfig {
     // log_blowup must be >= log2_ceil(max_constraint_degree - 1).
     // For Poseidon2 S-box (degree 7): log2_ceil(6) = 3, so log_blowup >= 3.
     //
-    // Security at these settings (FRI batched soundness, per query):
-    //   conjectured (capacity bound): ~log_blowup bits/query
-    //     => 38 * 3 + 16 PoW = ~130 bits conjectured
-    //   proven (Johnson bound, list-decoding to sqrt(rate)): ~log_blowup/2 bits/query
-    //     => 38 * 1.5 + 16 PoW = ~73 bits proven
+    // The QUERY LEDGER at these settings (two columns; neither is "the soundness"):
+    //   capacity column (REFUTED conjecture): ~log_blowup bits/query
+    //     => 38 * 3 + 16 PoW = 130 — a knob-drift baseline only. The up-to-capacity
+    //     correlated-agreement conjecture is disproved (Crites-Stewart, eprint 2025/2046;
+    //     Kambire, arXiv 2604.09724).
+    //   Johnson query column (list-decoding to sqrt(rate)): ~log_blowup/2 bits/query
+    //     => 38 * 1.5 + 16 PoW = 73 — the QUERY COLUMN, not "proven soundness". It is the
+    //     m -> infinity idealisation of BCIKS20's alpha = sqrt(rho)*(1 + 1/2m) and DROPS the
+    //     commit-phase term eps_C of Thm 8.3 (eps_FRI = eps_C + alpha^s). eps_C is Lean's
+    //     `FriLedger.friCommitLedger`; it depends on the TRACE HEIGHT, which is not an FRI
+    //     knob, and it binds. Composing as ethSTARK eq. (20) does
+    //     (lambda >= min{-log2 eps_C, zeta - s*log2 alpha} - 1) reads ~70 at the deployed
+    //     wrap's |D^(0)| = 2^12, not 73.
     // (both additionally capped by the degree-4 extension field, ~2^124, and the
     // Poseidon2 commitment hash.) See docs/PROOF-ECONOMICS.md for the measured
     // size/prover-time tradeoff of these knobs: q = 50 → 38 (the rotation's

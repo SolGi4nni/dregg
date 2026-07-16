@@ -102,9 +102,14 @@ the soundness of the writes themselves.
   quantum search (with substantial caveats — Grover parallelizes poorly, and the
   collision speedup via BHT is closer to `n/3` and rarely worth it in practice).
 - **The honest sizing question for umem.** The STARK floor (`docs/STARK-FLOOR.md:97-114`)
-  states the soundness envelope as `130` bits conjectured / `73` bits proven, with the
-  field challenge space `|EF| ≈ 2^124` and the Poseidon2 commitment hash as additional
-  caps. Under Grover the relevant question is the **hash output / commitment width**,
+  states the query ledger as `130` bits conjectured (a REFUTED conjecture — Crites–Stewart,
+  eprint 2025/2046; Kambiré, arXiv 2604.09724 — kept as a drift baseline) / `73` bits on the
+  Johnson QUERY column, with the field challenge space `|EF| ≈ 2^124` and the Poseidon2
+  commitment hash as additional caps. ⚑ `73` is the query column, not the soundness: it is
+  the `m → ∞` idealisation of BCIKS20's `α` and drops the commit-phase term `ε_C`, which at
+  the deployed wrap reads `71` and BINDS (`Dregg2.Circuit.FriLedger.friCommitLedger`);
+  composed as ethSTARK eq. (20) the pair reads `~70`. Under Grover the relevant question is
+  the **hash output / commitment width**,
   not the FRI query count: FRI soundness error is an interactive-protocol bound that
   Grover does not generically halve, but the **Poseidon2 Merkle commitment** and any
   fixed-output digest are subject to Grover preimage / BHT collision search. The
@@ -153,14 +158,17 @@ trust" — fully post-quantum, three changes:
 
 3. **Size the hashes for Grover.** Keep Poseidon2/BLAKE3/FRI, but pin the commitment
    and digest widths so post-Grover margins meet the target. The commitment surface is
-   already matched to the FRI `~130`-bit envelope: the faithful `8-felt` (`~124`-bit)
+   already matched to the FRI `~130`-bit drift baseline: the faithful `8-felt` (`~124`-bit)
    commitment is DEPLOYED at HEAD (`docs/FAITHFUL-COMMITMENT-LAW.md` /
    `docs/reference/faithful-commitment.md`; the historical widening analysis is
    archived at `.docs-history-noclaude/FAITHFUL-STATE-COMMITMENT.md`), so this is a
-   margin-tuning knob rather than open work. Prefer the proven
-   (Johnson-bound `73`-bit) parameter envelope or raise queries if a quantum margin is
-   demanded. X25519 transport → a PQ KEM (ML-KEM) closes the adjacent confidentiality
-   leg.
+   margin-tuning knob rather than open work. Read the FRI side on the Johnson QUERY column
+   (`73`) and the commit-phase column (`71`) separately — and note that **raising queries
+   cannot buy a margin here**: `ε_C` contains neither `num_queries` nor `pow_bits`, so at
+   the deployed degree-4 extension the eq. (20) composite saturates at `~77.98` no matter
+   how many queries are bought (`docs/reference/FRI-PARAM-FRONTIER.md` FRONTIER B). The one
+   lever on that ceiling is the extension degree, at `log₂ p = 30.91` bits per degree.
+   X25519 transport → a PQ KEM (ML-KEM) closes the adjacent confidentiality leg.
 
 Note FRI/STARK itself needs **no** redesign — it is already a transparent, hash-based
 proof system. That is the whole reason this analysis comes out favorable.

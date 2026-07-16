@@ -133,8 +133,11 @@ literally **cannot** assert *why* a reject fired.
 and it is systematic.
 
 - `circuit/src/lib.rs:33` — the Trust Model, the first paragraph any auditor reads — claims "negligible
-  soundness error (2^{-128} for STARK)". The crate's **own gate** says capacity 130 is refuted (Kambiré, eprint
-  2025/2046) and the standing posture is ~112.6 structure-specific / 73 Johnson. The honest text already exists
+  soundness error (2^{-128} for STARK)". The crate's **own gate** says capacity 130 is refuted (Crites–Stewart,
+  eprint 2025/2046, disprove the conjecture by reduction; Kambiré, arXiv 2604.09724, gives a prime-field
+  counterexample) and the standing columns are per-fold 109 at the deployed arity 8 (~112.6 is the arity-2
+  figure, and both are claims at 96.9% farness, not at the Johnson radius FRI operates at) / Johnson QUERY
+  column 73 / commit-phase `ε_C` 71, composing under ethSTARK eq. (20) to ~70. The honest text already exists
   at `descriptor_ir2.rs:5416-5425`; it just never reached the top of the file. Same header: a documented `mock`
   feature that **does not exist** in Cargo.toml, and three intra-doc links to a `stark` module that **does not
   exist**.
@@ -435,8 +438,11 @@ We already pass this. Hold the line:
 
 ### S8 — Every floor is stated at its real resolution, and someone has tried to prove it false
 
-- Security figures are the **proven** number, not the aspirational one: `~112.6 structure-specific / 73 Johnson /
-  130 refuted` — stated at the front door, not only in the gate.
+- Security figures are stated **per column, each labeled with what it is a claim about** — never as one
+  headline: `per-fold 109` at the deployed arity 8 (`~112.6` is arity 2; both at 96.9% farness, not the
+  operating Johnson radius) / `73` Johnson QUERY column (the `m → ∞` idealisation, which DROPS BCIKS20's
+  `ε_C`) / `71` commit-phase `ε_C` at the `2^12` fixture (it BINDS) / `~70` the ethSTARK eq. (20) composite /
+  `130` refuted-capacity drift baseline. Stated at the front door, not only in the gate.
 - Every knob the bound depends on is **pinned by a gate**. If the surviving bound is structure-specific (dim-2
   constant-fold, r=2, n=64), the **structural** knobs are gated, not just the arithmetic ones.
 - The non-vacuity test for a gate **perturbs the deployed constants and requires a red** — it does not evaluate
@@ -562,11 +568,12 @@ Small diffs, and they convert green-that-means-nothing into evidence.
 
 Every item is a known-false sentence sitting where an auditor lands.
 
-- **`circuit/src/lib.rs:1-110`** — replace `2^{-128}` with the ledger the crate **already computes** (~112.6
-  proven structure-specific / 73 Johnson / 130 refuted-capacity), pointing at
-  `tests/fri_params_soundness_budget.rs` and `wrap_perFold_soundness_capacity`. Delete the `mock` feature
-  paragraph (the feature does not exist). Fix or drop the three broken `[stark]` links. The honest text exists at
-  `descriptor_ir2.rs:5416-5425`; move it up.
+- **`circuit/src/lib.rs:1-110`** — replace `2^{-128}` with the ledger the crate **already computes**, per
+  column and labeled (per-fold 109 at the deployed arity 8, at 96.9% farness / 73 Johnson QUERY column, which
+  drops `ε_C` / 71 commit-phase `ε_C` / ~70 eq. (20) composite / 130 refuted-capacity), pointing at
+  `circuit-prove/tests/fri_params_soundness_budget.rs`, `Dregg2.Circuit.FriLedger`, and
+  `wrap_perFold_soundness_capacity`. Delete the `mock` feature paragraph (the feature does not exist). Fix or
+  drop the three broken `[stark]` links. The honest text exists at `descriptor_ir2.rs:5416-5425`; move it up.
 - **`cap_delegation_nonamp_descriptor.rs:35`** — delete "The sdk authority-binding routes cap-graph rows to it by
   name" **today**. It is the only outright untrue claim found in `circuit` and it sits on the ARGUS linchpin.
 - **`custom_proof_bind.rs`** — rewrite the module doc to what is true: the binding is enforced by the recursion

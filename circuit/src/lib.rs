@@ -73,14 +73,34 @@
 //!   (deployed arity 8: `arity8_phase_injective`, `dOut ≥ 496`), which builds the
 //!   arity-`2^k` rate-`2^(−b)` RS setups the tree previously lacked. `#assert_axioms` is
 //!   blind to hypotheses — the discharge is a theorem, not an axiom-check result.
-//! - **Johnson bits — proven for any code.** The list-decoding-to-√rate figure,
-//!   `num_queries × log_blowup / 2 + query_pow_bits`. `73` on six shipped configs; **`71` on
-//!   `create_recursion_config`**, whose `14` query-PoW bits make it the weakest shipped
-//!   config and set the gate's floor (`recursion_config_is_the_weakest_link`).
+//!   ⚑ **These numbers are claims about NEAR-CAPACITY words, not about the operating
+//!   radius.** The `hΦ` discharge fires only for words `dOut ≥ |L| − 2·arity`-far — `496` of
+//!   `512` = **96.9%** at the deployed wrap — while FRI's proven argument runs at the
+//!   **Johnson radius** `1 − √ρ` = **87.5%** (`dOut = 448`). `M = 1` is **FALSE** in the band
+//!   `[448, 496)`: `Dregg2.Circuit.FriJohnsonRadiusGap.deployed_M1_false_at_johnson` exhibits
+//!   a `448`-far word with a non-injective phase map, and `deployed_discharge_threshold_tight`
+//!   shows `496` cannot be weakened by even one. So `109` is TRUE and NON-VACUOUS about
+//!   `96.9%`-far words and does not cover the operating regime. At the Johnson radius the
+//!   fiber bound is `M ≤ 7` and the honest count is `arity8_johnson_good_card_le`'s `3528` ⟹
+//!   **~111 bits** — HIGHER only because it is a WEAKER claim (it bounds the `dIn = 56`
+//!   challenge family, not the larger `dIn = 62` one). Different objects; neither dominates.
+//! - **Johnson bits — the QUERY column, proven for any code.** The list-decoding-to-√rate
+//!   figure, `num_queries × log_blowup / 2 + query_pow_bits`. `73` on six shipped configs;
+//!   **`71` on `create_recursion_config`**, whose `14` query-PoW bits make it the weakest
+//!   shipped config and set the gate's floor (`recursion_config_is_the_weakest_link`).
+//!   ⚑ **This column is the `m → ∞` IDEALISATION and it DROPS `ε_C`.** `log_blowup/2` is
+//!   `−log₂ α` in the limit of BCIKS20's `α = √ρ·(1 + 1/2m)` (eprint 2020/654, Lemma 8.2 /
+//!   Thm 8.3, printed pp. 40–41); the paper's actual bound is `ε_FRI = ε_C + α^s`. The
+//!   dropped commit-phase term is `FriLedger.friCommitLedger`'s `commitBits`, and at the
+//!   deployed wrap it BINDS: `71` at `|D⁽⁰⁾| = 2^12`. Composing them as ethSTARK eq. (20)
+//!   does (`λ ≥ min{−log₂ ε_C, ζ − s·log₂ α} − 1`) reads **~70**, not `73`. Read `73` as the
+//!   query ledger it is — never as "the proven soundness".
 //! - **capacity bits — REFUTED; a knob-drift baseline, NOT a security claim.** The
 //!   up-to-`1−ρ` arithmetic `num_queries × log_blowup + query_pow_bits` that production
-//!   STARKs historically quote. The conjecture it rests on is **refuted** for coset
-//!   Reed–Solomon at rates covering our `ρ = 1/64` (Kambiré, eprint 2025/2046). The gate's
+//!   STARKs historically quote. The conjecture it rests on is **refuted**: Crites–Stewart
+//!   (eprint 2025/2046, *On Reed–Solomon Proximity Gaps Conjectures*) disprove it by
+//!   reduction, and Kambiré (arXiv 2604.09724, *Proximity Gaps Conjecture Fails Near
+//!   Capacity over Prime Fields*) exhibits a counterexample over prime fields. The gate's
 //!   `≥ 128` check is a conservative ENGINEERING MARGIN on this refuted arithmetic — drift
 //!   detection only, not a proof and not a claim that 128 bits are achieved. `130` on six
 //!   configs; **exactly `128` — zero headroom — on `create_recursion_config`**.
@@ -94,8 +114,18 @@
 //! measured size-optimal point AT that parity. ⚑ They do NOT share a per-fold posture
 //! (109 vs 116) — the parity is a fact about two columns, not about "the ledger".
 //!
-//! The counting bounds are sound against Kambiré's refutation: his `n^C` blow-up needs
-//! `n → ∞` and `r > 2`; at our fixed `r = 2` his own construction caps at `C(n,2)`.
+//! ⚑ No published counterexample instantiates at BabyBear — and that is NOT a defence.
+//! Kambiré's Thm 1 picks the prime AFTER the block length ("there exist infinitely many block
+//! lengths `n` … there exists a prime `p < n^A` with `p ≡ 1 (mod n)`", via a quantitative
+//! Linnik theorem), so `p` GROWS with `n` while dregg runs a FIXED 31-bit prime
+//! (`p = 2³¹ − 2²⁷ + 1`); and his radius `δ = (1−ρ) − Ω(1/log n)` sits vanishingly close to
+//! CAPACITY, far above the Johnson radius this system runs at. Also refuting, none reaching
+//! us: Diamond–Gruen (eprint 2025/2010, rate → 0 only) and BCHKS (ECCC TR25-169 Thm 1.6,
+//! constant rate — `ρ = 1/64` exactly at `τ = 4` — but characteristic 2 and a random
+//! `F₂`-subspace domain, where ours is an odd-characteristic multiplicative coset).
+//! A conjecture refuted in general is not a security basis for anyone, whatever the
+//! field-cardinality technicality — which is exactly why the capacity column is carried only
+//! as a drift canary and every claim here stands on the Johnson and per-fold columns.
 //!
 //! All code in this crate MUST maintain the property that a valid proof implies a valid
 //! witness. Bugs here break the entire trust model -- a soundness bug allows forged
