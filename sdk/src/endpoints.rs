@@ -5,18 +5,18 @@
 //! browser extensions, the deploy Caddyfile, …). Pointing the system at a new
 //! domain (production, a fork, a private deployment) was therefore an 83-edit
 //! chore. This module decouples that: the named endpoints live HERE, default to
-//! the current `*.fg-goose.online` / `dregg.studio` / `dregg.works` values
-//! (so nothing changes until someone overrides), and are driven by env vars.
+//! the current product `dregg.net` family (so a client with no override points
+//! at a real host), and are driven by env vars.
 //!
 //! The domains serve DIFFERENT purposes and are kept as distinct NAMED
 //! endpoints (they are not collapsed into one):
 //!
 //! | Field             | Default                          | Env var                | Purpose |
 //! |-------------------|----------------------------------|------------------------|---------|
-//! | [`api`]           | `dregg.fg-goose.online`          | `DREGG_API_DOMAIN`     | The main / canonical API host. |
-//! | [`devnet`]        | `devnet.dregg.fg-goose.online`   | `DREGG_DEVNET_DOMAIN`  | The public devnet node (HTTP + WSS). |
-//! | [`auth`]          | `auth.dregg.fg-goose.online`     | `DREGG_AUTH_DOMAIN`    | The auth / credential surface. |
-//! | [`gateway`]       | `gateway.dregg.fg-goose.online`  | `DREGG_GATEWAY_DOMAIN` | The macaroon discharge gateway. |
+//! | [`api`]           | `dregg.net`                      | `DREGG_API_DOMAIN`     | The main / canonical API host. |
+//! | [`devnet`]        | `node.dregg.net`                 | `DREGG_DEVNET_DOMAIN`  | The public devnet node (HTTP + WSS). |
+//! | [`auth`]          | `auth.dregg.net`                 | `DREGG_AUTH_DOMAIN`    | The auth / credential surface. |
+//! | [`gateway`]       | `gateway.dregg.net`              | `DREGG_GATEWAY_DOMAIN` | The macaroon discharge gateway. |
 //! | [`hosting`]       | `dregg.works`                    | `DREGG_HOSTING_DOMAIN` | The WebOfCells cell-hosting wildcard. |
 //! | [`portal`]        | `portal.dregg.studio`            | `DREGG_PORTAL_DOMAIN`  | The static portal / "live" network view. |
 //!
@@ -34,9 +34,9 @@
 //!
 //! // Pure defaults (no env reads) — useful in const-ish contexts and tests.
 //! let e = DreggEndpoints::production();
-//! assert_eq!(e.devnet, "devnet.dregg.fg-goose.online");
-//! assert_eq!(e.devnet_url(), "https://devnet.dregg.fg-goose.online");
-//! assert_eq!(e.devnet_wss_url(), "wss://devnet.dregg.fg-goose.online/ws");
+//! assert_eq!(e.devnet, "node.dregg.net");
+//! assert_eq!(e.devnet_url(), "https://node.dregg.net");
+//! assert_eq!(e.devnet_wss_url(), "wss://node.dregg.net/ws");
 //!
 //! // Env-driven: each field falls back to its production default when the
 //! // corresponding DREGG_*_DOMAIN var is unset/empty, so behavior is unchanged
@@ -47,14 +47,14 @@
 /// The default (current production) domains. Changing the live deployment is a
 /// matter of setting the `DREGG_*_DOMAIN` env vars — see [`DreggEndpoints::from_env`].
 pub mod defaults {
-    /// The main / canonical API host (the non-prefixed `dregg.fg-goose.online`).
-    pub const API: &str = "dregg.fg-goose.online";
+    /// The main / canonical API host (the non-prefixed product `dregg.net`).
+    pub const API: &str = "dregg.net";
     /// The public devnet node host (HTTP API + WSS event stream).
-    pub const DEVNET: &str = "devnet.dregg.fg-goose.online";
+    pub const DEVNET: &str = "node.dregg.net";
     /// The auth / credential surface.
-    pub const AUTH: &str = "auth.dregg.fg-goose.online";
+    pub const AUTH: &str = "auth.dregg.net";
     /// The macaroon discharge gateway.
-    pub const GATEWAY: &str = "gateway.dregg.fg-goose.online";
+    pub const GATEWAY: &str = "gateway.dregg.net";
     /// The WebOfCells cell-hosting wildcard root.
     pub const HOSTING: &str = "dregg.works";
     /// The static portal / "live" network view.
@@ -172,10 +172,10 @@ mod tests {
     #[test]
     fn production_matches_current_domains() {
         let e = DreggEndpoints::production();
-        assert_eq!(e.api, "dregg.fg-goose.online");
-        assert_eq!(e.devnet, "devnet.dregg.fg-goose.online");
-        assert_eq!(e.auth, "auth.dregg.fg-goose.online");
-        assert_eq!(e.gateway, "gateway.dregg.fg-goose.online");
+        assert_eq!(e.api, "dregg.net");
+        assert_eq!(e.devnet, "node.dregg.net");
+        assert_eq!(e.auth, "auth.dregg.net");
+        assert_eq!(e.gateway, "gateway.dregg.net");
         assert_eq!(e.hosting, "dregg.works");
         assert_eq!(e.portal, "portal.dregg.studio");
     }
@@ -183,10 +183,10 @@ mod tests {
     #[test]
     fn url_helpers_preserve_current_literals() {
         let e = DreggEndpoints::production();
-        assert_eq!(e.devnet_url(), "https://devnet.dregg.fg-goose.online");
-        assert_eq!(e.devnet_wss_url(), "wss://devnet.dregg.fg-goose.online/ws");
-        assert_eq!(e.api_url(), "https://dregg.fg-goose.online");
-        assert_eq!(e.gateway_url(), "https://gateway.dregg.fg-goose.online");
+        assert_eq!(e.devnet_url(), "https://node.dregg.net");
+        assert_eq!(e.devnet_wss_url(), "wss://node.dregg.net/ws");
+        assert_eq!(e.api_url(), "https://dregg.net");
+        assert_eq!(e.gateway_url(), "https://gateway.dregg.net");
         assert_eq!(e.portal_url(), "https://portal.dregg.studio");
     }
 

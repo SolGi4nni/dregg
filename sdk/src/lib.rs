@@ -124,8 +124,8 @@ pub mod sealed_governance;
 // `WireCodec` over it lives in `dregg-sdk-net`.
 pub mod embed;
 // The ONE source of truth for the dregg production domains (api / devnet / auth
-// / gateway / hosting / portal). Defaults to the current `*.fg-goose.online`
-// values; overridable via the `DREGG_*_DOMAIN` env vars. See `endpoints.rs`.
+// / gateway / hosting / portal). Defaults to the `dregg.net` product family;
+// overridable via the `DREGG_*_DOMAIN` env vars. See `endpoints.rs`.
 pub mod endpoints;
 pub mod error;
 pub mod explain;
