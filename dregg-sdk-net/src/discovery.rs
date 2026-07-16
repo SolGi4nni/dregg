@@ -9,9 +9,17 @@
 //!
 //! # HTTP Transport
 //!
-//! This module defines the discovery logic and an `HttpTransport` trait for the
-//! actual HTTP calls. A default implementation is provided when the `reqwest`
-//! feature is available; otherwise callers must supply their own transport.
+//! This module defines the discovery logic and a `PirTransport` trait for the
+//! actual HTTP calls. [`ReqwestTransport`] is the provided production
+//! implementation (reqwest is an unconditional dependency of this crate);
+//! callers may supply their own transport (e.g. a mock for tests).
+//!
+//! HISTORY (2026-07-16, Lane 2 config-space audit): `ReqwestTransport` used to
+//! hide behind `#[cfg(feature = "reqwest")]` — a feature this crate NEVER
+//! declared (reqwest is a plain, non-optional dep, which creates no implicit
+//! feature). The "production transport" was therefore compiled OUT of every
+//! possible build while its dependency was always compiled IN. The gates are
+//! removed: the transport now exists unconditionally and is compile-covered.
 
 use dregg_circuit::field::BabyBear;
 use dregg_intent::pir::{
@@ -61,19 +69,17 @@ pub trait PirTransport: Send + Sync {
 }
 
 // ---------------------------------------------------------------------------
-// Default HTTP transport (uses reqwest if available, otherwise stub)
+// Default HTTP transport (reqwest — an unconditional dep of this crate)
 // ---------------------------------------------------------------------------
 
 /// HTTP transport using `reqwest`.
 ///
 /// This is the production transport. It issues real HTTP requests to dregg node
 /// endpoints `/pir/info` (GET) and `/pir/query` (POST).
-#[cfg(feature = "reqwest")]
 pub struct ReqwestTransport {
     client: reqwest::Client,
 }
 
-#[cfg(feature = "reqwest")]
 impl ReqwestTransport {
     pub fn new() -> Self {
         Self {
@@ -82,7 +88,6 @@ impl ReqwestTransport {
     }
 }
 
-#[cfg(feature = "reqwest")]
 #[async_trait::async_trait]
 impl PirTransport for ReqwestTransport {
     async fn get_pir_info(&self, base_url: &str) -> Result<PirInfoResponse, SdkError> {
@@ -147,10 +152,11 @@ impl PirTransport for ReqwestTransport {
 /// use dregg_sdk_net::discovery::PrivateDiscoveryClient;
 ///
 /// # async fn example() -> Result<(), dregg_sdk::SdkError> {
-/// // In production, use ReqwestTransport (with `reqwest` feature)
-/// // let transport = dregg_sdk_net::discovery::ReqwestTransport::new();
-/// // let client = PrivateDiscoveryClient::new("http://node-a:8080", "http://node-b:8080", transport);
-/// // let ids = client.discover_intents("action:read").await?;
+/// // In production, use the provided ReqwestTransport:
+/// let transport = dregg_sdk_net::discovery::ReqwestTransport::new();
+/// let client = dregg_sdk_net::discovery::PrivateDiscoveryClient::new(
+///     "http://node-a:8080", "http://node-b:8080", transport);
+/// let ids = client.discover_intents("action:read").await?;
 /// # Ok(())
 /// # }
 /// ```
