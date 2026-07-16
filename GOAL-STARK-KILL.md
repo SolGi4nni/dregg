@@ -828,3 +828,24 @@ IS_REAL=5, REAL_COUNT=6}` ≡ Rust `{COL_OLD_ROOT=0 … COL_REAL_COUNT=6}`. So t
 faithful + strictly leaner realization (352 fewer columns, chip-shared). The cutover is NOT a drop-in only
 because the trace must be rebuilt in the chip-lane layout instead of the inline-aux one — that is brick 3
 (the witness builder), and `prove_vm_descriptor2`'s `trace_with_chip_lanes` refills the chip lanes.
+
+### `7e56e5439` + `e9cd79030` — the last two DEAD hand-authored circuits deleted (dialects 2 and 3)
+- **`garbled_air.rs` 459 -> 139**: `GarbledEvaluationAir` + its **16 closure-dialect** constraints deleted.
+  Never instantiated outside its own tests; only the LIVE layout constants (`GARBLED_EVAL_AIR_WIDTH`,
+  `col`) kept. No coverage lost — the emitted path's teeth are stronger and I RAN them: 6/6 pass
+  (forged_commitment_pi / forged_table_entry / forged_gate_index_delta / non_boolean_selector /
+  broken_wire_chaining / ambiguous_gate_type). **This is the file I nearly renamed to a husk name earlier
+  — which would have BURIED 16 live constraints behind a truthful-sounding filename.**
+- **`membership_adjacency_air.rs` 561 -> 339**: `adjacency_descriptor()` (**10 data-dialect** sites) +
+  `adjacency_circuit()` (zero callers) deleted. Production already ran the emitted
+  `dregg-membership-adjacency::poseidon2-v1`. **The emitted version is STRICTLY STRONGER**: the
+  `idx_upper - idx_lower == 1` tooth lived only in a RUST VERIFIER WRAPPER and was ABSENT from the hand
+  descriptor; the Lean emit INTERNALIZES it into the circuit, closing the wide-bracket forge a caller
+  could otherwise bypass. Emitting didn't just move algebra — it FIXED A GAP. Emitted teeth: 10/10 pass.
+
+**Scoreboard**: every `*_air.rs` in circuit/ + circuit-prove/ now reports **0 constraint sites across all
+three dialects**, except the legitimate INTERPRETERS (`descriptor_ir2` 117, `lean_descriptor_air` 9 [dead
+IR-v1, marked], `effect_vm_p3_air` 9 [self-disclaiming shape probe], `bilateral_aggregation_air` 7
+[emitted], `lean_lookup_air` 3 [proven range gadget]). The ONE remaining hand-authored circuit on a
+DEPLOYED path is `ivc_turn_chain` — its emitter now exists + is registered (bricks 1-2); the cutover
+(bricks 3-4) is in flight with codex.
