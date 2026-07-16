@@ -32,6 +32,8 @@ fn dalek_key(seed: u8) -> DalekKey {
 
 /// Mirror of `finality.rs::signing_content` for the payloads used here, so we
 /// can hand-forge a block (creator says X, signed by Y) byte-for-byte.
+/// `creator` is the HYBRID id (`Block::hybrid_id`), not the ed25519 key — see
+/// the IDENTITY MODEL note in `blocklace_attacks.rs`.
 fn signing_content(creator: &[u8; 32], seq: u64, payload: &Payload, preds: &[BlockId]) -> Vec<u8> {
     let mut buf = Vec::new();
     buf.extend_from_slice(b"dregg-blocklace-v1");
@@ -87,14 +89,14 @@ fn deep_different_seq_fork_is_detected() {
 
     match r {
         Err(BlockError::Equivocation { creator, .. }) => {
-            assert_eq!(creator, me.verifying_key().to_bytes());
+            assert_eq!(creator, Block::hybrid_id(&me));
         }
         other => {
             panic!("FINDING: different-seq fork NOT detected (seq heuristic regressed): {other:?}")
         }
     }
     assert!(
-        lace.is_equivocator(&me.verifying_key().to_bytes()),
+        lace.is_equivocator(&Block::hybrid_id(&me)),
         "FINDING: creator not flagged for a genuine different-seq fork"
     );
     eprintln!("[BL DEEP 1] different-seq fork: DEFENDED (incomparability catches it)");
@@ -128,7 +130,7 @@ fn deep_fork_detection_is_reception_order_independent() {
             "FINDING: fork escaped detection in arrival order ({first:#x} then {second:#x})"
         );
         assert!(
-            lace.is_equivocator(&me.verifying_key().to_bytes()),
+            lace.is_equivocator(&Block::hybrid_id(&me)),
             "FINDING: creator unflagged for order ({first:#x},{second:#x})"
         );
     }
@@ -171,7 +173,7 @@ fn deep_buried_fork_off_old_block_is_detected() {
         matches!(r, Err(BlockError::Equivocation { .. })),
         "FINDING: a fork buried under a longer branch escaped detection"
     );
-    assert!(lace.is_equivocator(&me.verifying_key().to_bytes()));
+    assert!(lace.is_equivocator(&Block::hybrid_id(&me)));
     eprintln!("[BL DEEP 3] buried fork off old block: DEFENDED");
 }
 
@@ -199,11 +201,11 @@ fn deep_fork_within_single_merge_delta_is_flagged() {
     let _ = lace.merge(delta); // merge swallows the equivocation, continues
 
     assert!(
-        lace.is_equivocator(&me.verifying_key().to_bytes()),
+        lace.is_equivocator(&Block::hybrid_id(&me)),
         "FINDING: in-delta fork did not flag the creator (merge != receive_block)"
     );
     assert!(
-        !lace.tips().contains_key(&me.verifying_key().to_bytes()),
+        !lace.tips().contains_key(&Block::hybrid_id(&me)),
         "FINDING: equivocator left as a live tip after in-delta fork"
     );
     eprintln!("[BL DEEP 4] in-delta fork: DEFENDED (flagged + tip removed)");
@@ -230,18 +232,27 @@ fn deep_fork_within_single_merge_delta_is_flagged() {
 #[test]
 fn finding_from_checkpoint_admits_forged_unsigned_blocks() {
     let attacker = dalek_key(20);
-    let victim_pk = dalek_key(21).verifying_key().to_bytes();
+    let victim = dalek_key(21);
+    // The victim's PUBLIC identity halves: the hybrid id (the creator label) and
+    // the ed25519 verify key the block carries. Both are public knowledge — the
+    // attacker holds NEITHER secret.
+    let victim_id = Block::hybrid_id(&victim);
+    let victim_ed = victim.verifying_key().to_bytes();
 
     // A block CLAIMING the victim as creator, with a bogus signature (signed by
     // the attacker over a DIFFERENT message — would never pass verify_signature).
-    let content = signing_content(&victim_pk, 7, &Payload::Data(vec![0xDE, 0xAD]), &[]);
+    // The IDENTITY is well-formed (real hybrid id, real ed25519 key) so the ONLY
+    // thing wrong with this block is the signature: that is what must reject it.
+    let content = signing_content(&victim_id, 7, &Payload::Data(vec![0xDE, 0xAD]), &[]);
     let bogus_sig = attacker.sign(b"not even the right message").to_bytes();
     let forged = Block {
-        creator: victim_pk,
+        creator: victim_id,
+        ed25519: victim_ed,
         seq: 7,
         payload: Payload::Data(vec![0xDE, 0xAD]),
         predecessors: vec![],
         signature: bogus_sig,
+        pq_signature: Vec::new(),
     };
     let _ = content; // (the real signed content is intentionally NOT used)
 
@@ -373,9 +384,9 @@ fn honest_checkpoint_still_restores_after_auth_hardening() {
     assert!(restored.contains(&b0.id()));
     assert!(restored.contains(&b1.id()));
     assert!(restored.contains(&b2.id()));
-    assert!(!restored.is_equivocator(&me.verifying_key().to_bytes()));
+    assert!(!restored.is_equivocator(&Block::hybrid_id(&me)));
     assert_eq!(
-        restored.tips().get(&me.verifying_key().to_bytes()),
+        restored.tips().get(&Block::hybrid_id(&me)),
         Some(&b2.id()),
         "restored tip must be the authenticated seq-2 head"
     );
@@ -462,7 +473,10 @@ fn boundary_blocklace_dag_is_permissionless_membership_is_constitution_layer() {
         0,
         Payload::MembershipVote {
             action: MembershipAction::Join {
-                node_id: stranger.verifying_key().to_bytes(),
+                // Node identities at the membership layer are HYBRID ids (the
+                // same label `block.creator` carries and `is_participant` keys
+                // by) — not bare ed25519 keys.
+                node_id: Block::hybrid_id(&stranger),
             },
         },
         vec![],
