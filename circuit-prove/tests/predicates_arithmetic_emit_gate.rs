@@ -46,22 +46,34 @@ use dregg_circuit::descriptor_ir2::{
 };
 use dregg_circuit::field::BabyBear;
 use dregg_circuit::lean_descriptor_air::{LeanExpr, VmConstraint, VmRow};
-use dregg_circuit::poseidon2::{hash_2_to_1, hash_fact};
+use dregg_circuit::poseidon2::{hash_4_to_1, hash_fact};
 use dregg_circuit::refusal::{Outcome, classify};
 
 /// The fixed fact context the honest witness commits; the honest fact's VALUE is the proven value.
 const FIXED_PRED: u32 = 42;
 const FIXED_STATE_ROOT: u32 = 99_999;
 const FACT_MARK: u32 = 0xFACF;
+/// The REAL, non-zero per-presentation blinding every witness here is built under, so this gate
+/// drives the deployed (BLINDED) posture rather than the degenerate `Blinding::NONE`. Fixed rather
+/// than random because a round-trip gate must be reproducible; the blinding's privacy property is
+/// exercised in `predicate_arith_witness`'s `distinct_blindings_rerandomize_the_commitment`.
+const FIXED_BLINDING: u32 = 0xB11D1;
 
 /// The credentialed fact commitment for a fact whose value is `value`:
-/// `hash_2_to_1(hash_fact(pred, [value, 0, 0]), state_root)`.
+/// `hash_4_to_1([hash_fact(pred, [value, 0, 0]), state_root, blinding, 0])` — the production
+/// out-of-circuit binding (`compute_arithmetic_fact_commitment`), which the weld's arity-4 leg 2
+/// reproduces in-circuit.
 fn derived_fact(value: u32) -> BabyBear {
     let fh = hash_fact(
         BabyBear::new(FIXED_PRED),
         &[BabyBear::new(value), BabyBear::ZERO, BabyBear::ZERO],
     );
-    hash_2_to_1(fh, BabyBear::new(FIXED_STATE_ROOT))
+    hash_4_to_1(&[
+        fh,
+        BabyBear::new(FIXED_STATE_ROOT),
+        BabyBear::new(FIXED_BLINDING),
+        BabyBear::ZERO,
+    ])
 }
 
 /// The DEPLOYED descriptor bytes — the exact file `circuit/src/descriptor_by_name.rs`
@@ -84,7 +96,7 @@ const GOLDEN_JSON: &str = include_str!("../../circuit/descriptors/by-name/predic
 // production builder hard-coded `PRED_WIDTH = 5`, and `assert_eq!(decoded.trace_width, PRED_WIDTH)`
 // compared 24 to 24 — green, and blind to the deployed 5-wide bytes.
 use dregg_circuit::predicate_arith_witness::{
-    DIFF, DIFF_BITS, FACT_COMMITMENT, FACT_HASH, INPUT, PI_FACT_COMMITMENT, PI_THRESHOLD,
+    BLINDING, DIFF, DIFF_BITS, FACT_COMMITMENT, FACT_HASH, INPUT, PI_FACT_COMMITMENT, PI_THRESHOLD,
     PRED_WIDTH, PREDICATE_SYM, SLOT_A, STATE_ROOT, TERM1, TERM2, THRESHOLD,
 };
 
@@ -114,8 +126,10 @@ fn chip_lookup(inputs: &[LeanExpr], out_col: usize, lane_base: usize) -> VmConst
 }
 
 /// The value↔fact weld's two lookups (descriptor order: after the range lookup): arity-7
-/// `fact_hash = hash_fact(pred, [INPUT, term1, term2])`, then arity-2
-/// `fact_commitment = hash_2_to_1(fact_hash, state_root)`.
+/// `fact_hash = hash_fact(pred, [INPUT, term1, term2])`, then arity-4
+/// `fact_commitment = hash_4_to_1([fact_hash, state_root, BLINDING, 0])`. Leg 2's third input is the
+/// PRIVATE blinding column — that is what makes two showings of the same fact unlinkable, and it is
+/// a constrained input to the permutation, not decoration.
 fn fact_hash_lookup() -> VmConstraint2 {
     chip_lookup(
         &[
@@ -133,7 +147,12 @@ fn fact_hash_lookup() -> VmConstraint2 {
 }
 fn fact_commit_lookup() -> VmConstraint2 {
     chip_lookup(
-        &[LeanExpr::Var(FACT_HASH), LeanExpr::Var(STATE_ROOT)],
+        &[
+            LeanExpr::Var(FACT_HASH),
+            LeanExpr::Var(STATE_ROOT),
+            LeanExpr::Var(BLINDING),
+            LeanExpr::Const(0),
+        ],
         FACT_COMMITMENT,
         FC_LANE_BASE,
     )
@@ -194,9 +213,10 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
 /// One honest predicate row for `(value, threshold)` with `value ≥ threshold`: `slot_a = value`
 /// (C3), `diff = value − threshold` (C5), AND the value↔fact weld columns filled for a fact whose
 /// VALUE is exactly `value` — `fact_hash = hash_fact(pred, [value, 0, 0])` (arity-7 lookup out0,
-/// over the SAME `INPUT` column) and `fact_commitment = hash_2_to_1(fact_hash, state_root)` (arity-2
-/// lookup out0). Chip LANE columns are left zero — the prover fills them. The range limb columns are
-/// appended by the assembler.
+/// over the SAME `INPUT` column) and
+/// `fact_commitment = hash_4_to_1([fact_hash, state_root, blinding, 0])` (arity-4 lookup out0, over
+/// the SAME `BLINDING` column leg 2 absorbs). Chip LANE columns are left zero —
+/// the prover fills them. The range limb columns are appended by the assembler.
 fn honest_row(value: u32, threshold: u32) -> Vec<BabyBear> {
     let pred = BabyBear::new(FIXED_PRED);
     let sr = BabyBear::new(FIXED_STATE_ROOT);
@@ -213,7 +233,8 @@ fn honest_row(value: u32, threshold: u32) -> Vec<BabyBear> {
             BabyBear::ONE,
         ],
     )[0];
-    let fact_commitment = hash_2_to_1(fact_hash, sr);
+    let blinding = BabyBear::new(FIXED_BLINDING);
+    let fact_commitment = hash_4_to_1(&[fact_hash, sr, blinding, BabyBear::ZERO]);
     let mut row = vec![BabyBear::ZERO; PRED_WIDTH];
     row[INPUT] = v;
     row[SLOT_A] = v;
@@ -223,6 +244,9 @@ fn honest_row(value: u32, threshold: u32) -> Vec<BabyBear> {
     row[PREDICATE_SYM] = pred;
     row[STATE_ROOT] = sr;
     row[FACT_HASH] = fact_hash;
+    // The PRIVATE blinding column — leg 2's third absorbed input. Leaving it zero here while
+    // `fact_commitment` is blinded would make leg 2's image disagree with col 4 (a REFUSAL).
+    row[BLINDING] = blinding;
     row
 }
 
@@ -285,7 +309,7 @@ fn predicate_ge_emit_decodes_to_hand_built() {
         .filter(|c| matches!(c, VmConstraint2::Lookup(l) if l.table == TID_RANGE))
         .count();
     assert_eq!(range_lookups, 1, "the single diff range lookup (C6)");
-    // the two value<->fact weld chip lookups (arity-7 fact-hash + arity-2 fact-commitment).
+    // the two value<->fact weld chip lookups (arity-7 fact-hash + arity-4 fact-commitment).
     let chip_lookups = decoded
         .constraints
         .iter()
@@ -425,8 +449,9 @@ fn forged_fact_pi_refuses_on_c2() {
 /// STEP 3f — MUTATION CANARY (THE VALUE↔FACT WELD / held forgery #2): prove `value 100 >= threshold
 /// 40` but commit to a DIFFERENT real fact whose value is `30` (a fact the prover holds that FAILS
 /// the threshold). Before the weld, `fact_commitment` was a free PI, so this passed. Now the arity-7
-/// fact-hash lookup forces `fact_hash = hash_fact(pred, [INPUT=100, 0, 0])` and the arity-2 lookup
-/// forces `fact_commitment = hash_2_to_1(fact_hash, state_root)`; pinning `fact_commitment` to the
+/// fact-hash lookup forces `fact_hash = hash_fact(pred, [INPUT=100, 0, 0])` and the arity-4 lookup
+/// forces `fact_commitment = hash_4_to_1([fact_hash, state_root, blinding, 0])`; pinning
+/// `fact_commitment` to the
 /// value-30 fact names a chip row no genuine permutation serves → LogUp UNSAT. Honest ACCEPTS.
 #[test]
 fn forge_committed_value_neq_fact_rejects() {

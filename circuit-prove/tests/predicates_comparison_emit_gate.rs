@@ -28,7 +28,7 @@ use dregg_circuit::descriptor_ir2::{
     verify_vm_descriptor2,
 };
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::predicate_arith_witness::FactBinding;
+use dregg_circuit::predicate_arith_witness::{Blinding, FactBinding};
 use dregg_circuit::predicate_comparison_witness::{
     IR_WIDTH, NEQ_WIDTH, OS_WIDTH, PREDICATE_ARITH_GT_NAME, PREDICATE_ARITH_INRANGE_NAME,
     PREDICATE_ARITH_LE_NAME, PREDICATE_ARITH_LT_NAME, PREDICATE_ARITH_NEQ_NAME,
@@ -75,6 +75,13 @@ fn weld_legs(desc: &EffectVmDescriptor2) -> usize {
 
 const HEIGHT: usize = 4;
 
+/// A REAL, non-zero per-presentation blinding — the DEFAULT every witness here is built under, so
+/// the round-trips run in the deployed (blinded) posture. Not a `const` because `BabyBear::new` is
+/// not a `const fn`.
+fn test_blinding() -> Blinding {
+    Blinding(BabyBear::new(0xB11D1))
+}
+
 /// THE STRUCTURAL ANTI-FORK GATE: every dispatched sibling carries the Lean-emitted welded shape.
 /// A prose claim that these descriptors are welded is what let the family sit unwelded while every
 /// by-name test stayed green; this asserts it on the SERVED bytes.
@@ -95,7 +102,8 @@ fn every_sibling_dispatches_with_both_weld_legs() {
             weld_legs(&desc),
             2,
             "{name}: the deployed descriptor must carry BOTH weld legs (leg 1: hash_fact -> \
-             FACT_HASH, leg 2: hash_2_to_1(FACT_HASH, STATE_ROOT) -> FACT_COMMITMENT) — without \
+             FACT_HASH, leg 2: hash_4_to_1([FACT_HASH, STATE_ROOT, BLINDING, 0]) -> \
+             FACT_COMMITMENT) — without \
              them the predicate proof does not bind the compared value to the committed fact"
         );
     }
@@ -107,10 +115,10 @@ fn le_round_trip() {
     assert_eq!(desc.trace_width, OS_WIDTH);
     assert_eq!(desc.public_input_count, 2);
     // ACCEPT: 40 ≤ 100.
-    let (t, p) = predicate_le_witness(40, 100, fact(), HEIGHT).unwrap();
+    let (t, p) = predicate_le_witness(40, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(accepts(&desc, &t, &p), "40 ≤ 100 must prove+verify");
     // REJECT: 110 > 100 (range tooth).
-    let (bt, bp) = predicate_le_witness(110, 100, fact(), HEIGHT).unwrap();
+    let (bt, bp) = predicate_le_witness(110, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(rejects(&desc, &bt, &bp), "110 ≤ 100 must REJECT");
     // REJECT: forged public threshold (C1).
     assert!(
@@ -127,24 +135,24 @@ fn le_round_trip() {
 #[test]
 fn gt_round_trip() {
     let desc = descriptor_by_name(PREDICATE_ARITH_GT_NAME).expect("> dispatches");
-    let (t, p) = predicate_gt_witness(101, 40, fact(), HEIGHT).unwrap();
+    let (t, p) = predicate_gt_witness(101, 40, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(accepts(&desc, &t, &p), "101 > 40 must prove+verify");
     // equality is NOT strictly greater.
-    let (bt, bp) = predicate_gt_witness(40, 40, fact(), HEIGHT).unwrap();
+    let (bt, bp) = predicate_gt_witness(40, 40, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(rejects(&desc, &bt, &bp), "40 > 40 must REJECT");
     // below also rejects.
-    let (bt2, bp2) = predicate_gt_witness(30, 40, fact(), HEIGHT).unwrap();
+    let (bt2, bp2) = predicate_gt_witness(30, 40, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(rejects(&desc, &bt2, &bp2), "30 > 40 must REJECT");
 }
 
 #[test]
 fn lt_round_trip() {
     let desc = descriptor_by_name(PREDICATE_ARITH_LT_NAME).expect("< dispatches");
-    let (t, p) = predicate_lt_witness(40, 101, fact(), HEIGHT).unwrap();
+    let (t, p) = predicate_lt_witness(40, 101, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(accepts(&desc, &t, &p), "40 < 101 must prove+verify");
-    let (bt, bp) = predicate_lt_witness(101, 101, fact(), HEIGHT).unwrap();
+    let (bt, bp) = predicate_lt_witness(101, 101, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(rejects(&desc, &bt, &bp), "101 < 101 must REJECT");
-    let (bt2, bp2) = predicate_lt_witness(150, 101, fact(), HEIGHT).unwrap();
+    let (bt2, bp2) = predicate_lt_witness(150, 101, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(rejects(&desc, &bt2, &bp2), "150 < 101 must REJECT");
 }
 
@@ -153,12 +161,12 @@ fn neq_round_trip() {
     let desc = descriptor_by_name(PREDICATE_ARITH_NEQ_NAME).expect("≠ dispatches");
     assert_eq!(desc.trace_width, NEQ_WIDTH);
     // ACCEPT: genuine inequalities (real field inverse).
-    let (t, p) = predicate_neq_witness(41, 40, fact(), HEIGHT).unwrap();
+    let (t, p) = predicate_neq_witness(41, 40, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(accepts(&desc, &t, &p), "41 ≠ 40 must prove+verify");
-    let (t2, p2) = predicate_neq_witness(1_000_000, 7, fact(), HEIGHT).unwrap();
+    let (t2, p2) = predicate_neq_witness(1_000_000, 7, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(accepts(&desc, &t2, &p2), "1000000 ≠ 7 must prove+verify");
     // REJECT: equal value has diff = 0, no inverse (nonzero tooth UNSAT).
-    let (bt, bp) = predicate_neq_witness(40, 40, fact(), HEIGHT).unwrap();
+    let (bt, bp) = predicate_neq_witness(40, 40, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(
         rejects(&desc, &bt, &bp),
         "40 ≠ 40 must REJECT (nonzero tooth)"
@@ -171,22 +179,25 @@ fn inrange_round_trip() {
     assert_eq!(desc.trace_width, IR_WIDTH);
     assert_eq!(desc.public_input_count, 3);
     // ACCEPT: interior and both inclusive boundaries.
-    let (t, p) = predicate_inrange_witness(40, 10, 100, fact(), HEIGHT).unwrap();
+    let (t, p) = predicate_inrange_witness(40, 10, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(accepts(&desc, &t, &p), "10 ≤ 40 ≤ 100 must prove+verify");
-    let (lo_t, lo_p) = predicate_inrange_witness(10, 10, 100, fact(), HEIGHT).unwrap();
+    let (lo_t, lo_p) =
+        predicate_inrange_witness(10, 10, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(
         accepts(&desc, &lo_t, &lo_p),
         "value = lo must ACCEPT (inclusive)"
     );
-    let (hi_t, hi_p) = predicate_inrange_witness(100, 10, 100, fact(), HEIGHT).unwrap();
+    let (hi_t, hi_p) =
+        predicate_inrange_witness(100, 10, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(
         accepts(&desc, &hi_t, &hi_p),
         "value = hi must ACCEPT (inclusive)"
     );
     // REJECT: below lo (low tooth) and above hi (high tooth).
-    let (bt, bp) = predicate_inrange_witness(5, 10, 100, fact(), HEIGHT).unwrap();
+    let (bt, bp) = predicate_inrange_witness(5, 10, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(rejects(&desc, &bt, &bp), "5 < 10 must REJECT (low tooth)");
-    let (bt2, bp2) = predicate_inrange_witness(150, 10, 100, fact(), HEIGHT).unwrap();
+    let (bt2, bp2) =
+        predicate_inrange_witness(150, 10, 100, fact(), test_blinding(), HEIGHT).unwrap();
     assert!(
         rejects(&desc, &bt2, &bp2),
         "150 > 100 must REJECT (high tooth)"

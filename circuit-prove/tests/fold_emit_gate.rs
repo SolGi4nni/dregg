@@ -13,8 +13,10 @@
 //!      commitments) through [`prove_vm_descriptor2`], asserts ACCEPT, re-verifies;
 //!   4. the MUTATION CANARIES — each tampers ONE witness/PI coordinate and asserts the prove-or-verify
 //!      REFUSES (real UNSAT), bitten by a NAMED constraint: the arity-7 chip lookup (fact-hash), the
-//!      `membership_root_matches` gate, the `removal_count_increment` window, the summary root PI
-//!      boundary, the `removal_hash_required` gate, and the pi4-carrier constancy window.
+//!      `membership_root_matches` gate, the `removal_count_increment` window, the
+//!      `first_removal_count` origin pin (via the CONSISTENT count-inflation canary — the attack the
+//!      pre-2026-07-16 17-constraint descriptor admitted), the summary root PI boundary, the
+//!      `removal_hash_required` gate, and the pi4-carrier constancy window.
 //!
 //! The canaries are NON-VACUOUS by construction: each first asserts the honest witness is ACCEPTED,
 //! then that the tampered one is REJECTED.
@@ -40,7 +42,7 @@ use dregg_circuit::refusal::{Outcome, classify};
 /// The BYTE-IDENTICAL wire string Lean's `emitVmJson2 foldDesc` emits (pinned by the `#guard` in
 /// `FoldEmit.lean`). If Lean's emitter drifts, that `#guard` fails; if this literal drifts, the
 /// `decoded == hand_built` assertion fails. Neither can silently diverge.
-const GOLDEN_JSON: &str = r#"{"name":"dregg-fold-step-v2","ir":2,"trace_width":21,"public_input_count":6,"tables":[],"constraints":[{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":11}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":7},{"t":"var","v":7},{"t":"var","v":8},{"t":"var","v":9},{"t":"var","v":10},{"t":"const","v":0},{"t":"const","v":64207},{"t":"const","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":1},{"t":"var","v":14},{"t":"var","v":15},{"t":"var","v":16},{"t":"var","v":17},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20}]},{"t":"pi_binding","row":"first","col":3,"pi_index":0},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":3}}}},{"t":"pi_binding","row":"first","col":4,"pi_index":1},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}}},{"t":"pi_binding","row":"last","col":13,"pi_index":4},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":13}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":13}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"last","col":5,"pi_index":2},{"t":"pi_binding","row":"last","col":6,"pi_index":3},{"t":"pi_binding","row":"last","col":2,"pi_index":4}],"hash_sites":[],"ranges":[]}"#;
+const GOLDEN_JSON: &str = r#"{"name":"dregg-fold-step-v2","ir":2,"trace_width":21,"public_input_count":6,"tables":[],"constraints":[{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":11},"r":{"t":"add","l":{"t":"var","v":11},"r":{"t":"const","v":-1}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":3}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":11}}}}},{"t":"lookup","table":1,"tuple":[{"t":"const","v":7},{"t":"var","v":7},{"t":"var","v":8},{"t":"var","v":9},{"t":"var","v":10},{"t":"const","v":0},{"t":"const","v":64207},{"t":"const","v":1},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"const","v":0},{"t":"var","v":1},{"t":"var","v":14},{"t":"var","v":15},{"t":"var","v":16},{"t":"var","v":17},{"t":"var","v":18},{"t":"var","v":19},{"t":"var","v":20}]},{"t":"pi_binding","row":"first","col":3,"pi_index":0},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":3},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":3}}}},{"t":"pi_binding","row":"first","col":4,"pi_index":1},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":4},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":4}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":0}}},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":12}}}}},{"t":"gate","body":{"t":"mul","l":{"t":"add","l":{"t":"const","v":1},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":0}}},"r":{"t":"add","l":{"t":"var","v":12},"r":{"t":"add","l":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":5}},"r":{"t":"const","v":-1}}}}},{"t":"window_gate","on_transition":true,"body":{"t":"mul","l":{"t":"loc","c":0},"r":{"t":"add","l":{"t":"nxt","c":5},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"loc","c":5}}}}},{"t":"boundary","row":"first","body":{"t":"var","v":5}},{"t":"pi_binding","row":"last","col":13,"pi_index":4},{"t":"window_gate","on_transition":true,"body":{"t":"add","l":{"t":"loc","c":13},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"nxt","c":13}}}},{"t":"gate","body":{"t":"mul","l":{"t":"var","v":0},"r":{"t":"add","l":{"t":"var","v":2},"r":{"t":"mul","l":{"t":"const","v":-1},"r":{"t":"var","v":13}}}}},{"t":"boundary","row":"last","body":{"t":"add","l":{"t":"var","v":0},"r":{"t":"const","v":-1}}},{"t":"pi_binding","row":"last","col":5,"pi_index":2},{"t":"pi_binding","row":"last","col":6,"pi_index":3},{"t":"pi_binding","row":"last","col":2,"pi_index":4}],"hash_sites":[],"ranges":[]}"#;
 
 // --- Trace column layout (must match `FoldEmit.lean` §1). ---
 const ROW_TYPE: usize = 0;
@@ -165,6 +167,32 @@ fn hand_built_desc() -> EffectVmDescriptor2 {
             wadd(WindowExpr::Const(1), wneg(wloc(ROW_TYPE))),
             wadd(wnxt(REMOVAL_COUNT), wneg(wloc(REMOVAL_COUNT_PLUS_ONE))),
         )),
+        // removal_count_plus_one: (1-ROW_TYPE)*(RC_PLUS_ONE - RC - 1) — the aux column is
+        // DEFINED, not free. Without this gate a prover picks RC_PLUS_ONE at will and walks
+        // the published removal count anywhere (the inflation attack the 17-constraint
+        // ancestor of this descriptor ADMITTED).
+        gate(LeanExpr::mul(
+            one_minus(ROW_TYPE),
+            LeanExpr::add(
+                LeanExpr::Var(REMOVAL_COUNT_PLUS_ONE),
+                LeanExpr::add(
+                    LeanExpr::mul(LeanExpr::Const(-1), LeanExpr::Var(REMOVAL_COUNT)),
+                    LeanExpr::Const(-1),
+                ),
+            ),
+        )),
+        // removal_count_carry: ROW_TYPE*(nxt RC - loc RC) — the summary's count rides
+        // constant across the pad tail to the last row, where pi[2] is pinned.
+        wgate(wmul(
+            wloc(ROW_TYPE),
+            wadd(wnxt(REMOVAL_COUNT), wneg(wloc(REMOVAL_COUNT))),
+        )),
+        // first_removal_count: RC = 0 on row 0 — the count starts at zero, so with the
+        // plus-one definition + increment window the last-row count IS the removal total.
+        VmConstraint2::Base(VmConstraint::Boundary {
+            row: VmRow::First,
+            body: LeanExpr::Var(REMOVAL_COUNT),
+        }),
         // pi4 carrier: last pin + constancy, then the summary-gated root-transition binding
         pib(VmRow::Last, PI4_CARRIER, 4),
         wgate(constancy(PI4_CARRIER)),
@@ -240,19 +268,17 @@ fn honest_trace() -> (Vec<Vec<BabyBear>>, Vec<BabyBear>) {
         row[MEMBERSHIP_ROOT] = old_root; // membership_root_matches: on removal rows MR == OLD_ROOT
         row[OLD_ROOT] = old_root;
         row[NEW_ROOT] = new_root;
-        row[REMOVAL_COUNT] = BabyBear::new((i + 1) as u32);
+        // RC counts removals BEFORE this row (first_removal_count pins row 0 to 0); the
+        // plus-one aux is DEFINED as RC + 1 (removal_count_plus_one), so the summary row
+        // inherits RC = n via the increment window — no special-casing of the last removal.
+        row[REMOVAL_COUNT] = BabyBear::new(i as u32);
         row[CHECK_COUNT] = BabyBear::new(NUM_CHECKS);
         row[FACT_PRED] = *pred;
         row[FACT_TERM0] = terms[0];
         row[FACT_TERM1] = terms[1];
         row[FACT_TERM2] = terms[2];
         row[HASH_VALID] = BabyBear::ONE;
-        let is_last_removal = (i + 1) as u32 == n;
-        row[REMOVAL_COUNT_PLUS_ONE] = if is_last_removal {
-            BabyBear::new(n)
-        } else {
-            BabyBear::new((i + 2) as u32)
-        };
+        row[REMOVAL_COUNT_PLUS_ONE] = BabyBear::new((i + 1) as u32);
         row[PI4_CARRIER] = t;
         trace.push(row);
     }
@@ -326,8 +352,8 @@ fn fold_emit_decodes_to_hand_built() {
         .filter(|c| matches!(c, VmConstraint2::WindowGate(_)))
         .count();
     assert_eq!(
-        windows, 4,
-        "old/new-root + pi4 constancy, and removal-count increment"
+        windows, 5,
+        "old/new-root + pi4 constancy, removal-count increment, and summary-tail count carry"
     );
 }
 
@@ -417,6 +443,35 @@ fn broken_removal_increment_refuses() {
     assert!(
         rejects(&desc, &bad, &pis),
         "a broken removal-count increment must be REJECTED"
+    );
+}
+
+/// STEP 4c' — CANARY (removal-count INFLATION): shift every count coordinate CONSISTENTLY
+/// (`RC += 5`, `RC_PLUS_ONE += 5`, summary/pad `RC += 5`) and claim `pi[2] = n + 5`. Every
+/// increment window and the plus-one relation still hold row-to-row — the ONLY teeth that
+/// refuse are `first_removal_count` (row-0 `RC = 0`) and the plus-one definition anchoring
+/// the chain to it. The 17-constraint ancestor of this descriptor (certified by this very
+/// gate until 2026-07-16) ACCEPTED this witness: nothing pinned the chain's origin, so a
+/// prover could publish any removal total. THE TOOTH THIS REVISION EXISTS FOR.
+#[test]
+fn inflated_removal_count_refuses() {
+    let desc = parse_vm_descriptor2(GOLDEN_JSON).expect("decode");
+    let (trace, pis) = honest_trace();
+    assert!(
+        !rejects(&desc, &trace, &pis),
+        "honest must be accepted — else vacuous"
+    );
+    let shift = BabyBear::new(5);
+    let mut bad = trace.clone();
+    for row in &mut bad {
+        row[REMOVAL_COUNT] += shift;
+        row[REMOVAL_COUNT_PLUS_ONE] += shift;
+    }
+    let mut forged = pis.clone();
+    forged[2] += shift; // claim n + 5 removals with n removal rows
+    assert!(
+        rejects(&desc, &bad, &forged),
+        "a consistently inflated removal count must be REJECTED (first-row origin pin)"
     );
 }
 
