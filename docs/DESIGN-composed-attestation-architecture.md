@@ -103,6 +103,31 @@ Localized gaps (each named, none blocking a capability):
 - **Fold heterogeneity** — token-span segment endpoints + leaf-kind tag + multi-VK root
   admission.
 
+## Performance — the named post-convergence deliverable
+
+The efficiency claims here are **estimates from column counts and structure, not measured**.
+Before this is called production-ready, benchmark a realistic/production-like schema on the
+deployed config — because the numbers are *entirely layer-dependent* and the two that matter
+most do not exist yet:
+
+- **What exists now** (plaintext `CompactCert` / per-hole `derives` re-check): verify is O(tokens),
+  the "receipt" is derivation-sized — cheap to check, but **not succinct**. Measuring *this* would
+  give a profile that does not reflect the intended product.
+- **What determines the real story** (unbuilt — the parse-as-derivation circuit): STARK prove
+  (expensive, ~seconds), STARK verify (fast, ~ms), proof size (succinct, ~KB). The perf question
+  is meaningful only *after the zk-succinct path lands*, which is exactly why "after it converges."
+
+The benchmark must **exercise the efficiency dial**, or it proves nothing: a realistic schema is
+mostly simple regular-guard holes (cheap DFA leaves) with *some* nested/CF structure. Measure
+prove/verify/proof-size across the layers — plaintext re-check vs DFA-leaf STARK vs CF-derivation
+STARK vs the *folded composed* form — on the deployed FRI config (`ir2_config`, `log_blowup=6`),
+real Poseidon2 params, real prover hardware, over a realistic document size + hole count + guard
+(regex→DFA) complexity. The headline number to confirm-or-refute: **does pushing regular leaves to
+the 7-column DFA circuit and reserving the 371-column derivation circuit for genuine nesting
+actually buy the ~50× on a real workload** — and how the fold's per-leaf recursion cost trades
+against it. (Security is a *separate* axis with its own asterisk — see the deployed-FRI-bits
+reality; a fast proof at a weak soundness radius is not the same product.)
+
 **The through-line, as engineering:** distinction = recognition = derivation = rewrite — one
 certificate substrate (`Cert R`), an efficiency dial across circuits (cheap regular leaves, CF
 structure, folded to one root), Lean-authored witnesses exported to Rust/wasm, the browser
