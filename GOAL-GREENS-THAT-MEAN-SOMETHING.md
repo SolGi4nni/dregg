@@ -31,10 +31,38 @@ frees. **Integrator = single cargo-lock owner. Fan reads wide, keep builds narro
 ## Open / flagged for ember
 - Sign-floor CI step costs ~22 min via `CryptoVerifyAll`; narrowing that ONE step to
   `Dregg2.Crypto.AcvpKats` = ~130 s for the same sign-floor coverage (loses `=spec`/NttFaithful).
+- **In flight:** a P→P laundering in the crypto TCB — `HermineHashCRRegrounded.lean:121`
+  `hermine_concurrent_forgery_advantage_bound` carries a FREE ensemble discharged by its own `hmsis`
+  hypothesis (the exact pattern the VRF sibling `VrfRegrounded` was repaired for). HashCR leg is
+  sound; only the MSIS leg is rotten. Repair = port `uniqBreakToMsisSolver` (a real extractor +
+  sampled-MSIS bridge over the real dichotomy `concurrent_forgery_breaks_hashcr_or_msis`). Lane firing.
 - `check-emit-gate-weld.py` is RED on main — real descriptor drift (`dregg-derivation-v1` Rust 379 vs
   Lean 393; garbled-eval 32 vs 47) from another lane's mid-flight circuit refactor. Gate working.
 
+## In flight
+- **FINDING-2 sweep: ~20 injective-hash floor carriers re-grounding** — 3 empowered lanes (clusters:
+  1=Poseidon2WideCR/Compress8CR/compress4Injective; 2=StateCommit/Factory/CommitmentBinding/
+  MacaroonDischarge; 3=QueueRoot/PreRotation/Council/FriVerifier/Sponge/Blake3/Beacon/DomainSep).
+  These are false-as-named at deployed params, used as free HYPOTHESES, none re-grounded. Template =
+  the just-landed `HermineHashCRRegrounded` (4fe326cce) + `HashFloorHonesty` + `FloorRegroundedConsumers`.
+  ⚑ LESSON (ember): dispatch a surfaced backlog to empowered agents IMMEDIATELY — logging it =
+  it never gets done. [[feedback-swarm-delegate-identified-work-immediately]]
+
 ## Done log
+- 04:58 — **Crypto-TCB laundering repaired: `hermine_concurrent_forgery_advantage_bound`** (`4fe326cce`,
+  pushed): the free `hmsis : MSISHardQuantShape` hypothesis (a P→P) is GONE; the MSIS advantage now
+  comes from a real extractor `forgeryToMsisSolver` DERIVED from the forger, union-bounded (forger ≤
+  derived-MSIS + derived-collision), each a real game advantage, with the honest undischarged `Eff`.
+  Canary bites (break the extractor challenge coord → `sorryAx` cascades RED). `#assert_all_clean: 14`.
+- 04:55 — **Proof engineering round 2: 3 strengthenings, each canary-proven** (`47413e3e9`,
+  `9984063f7`, `986bc1c2b`). `transfer_safety`: discharged the laundered acceptance hypothesis —
+  transported the shield across the membrane so the floor holds for EVERY controller, no acceptance
+  assumption (canary: a `decide`-proven adversary reaches dist=9 without the shield). `lift_collapse`:
+  refuted round 1's "decorative" charge (3 internal uses) — contraposed it into `not_apex_of_violation`,
+  the operationally-real direction. `polisFloorProp_inhabited`: verified the "inherent" excuse is true
+  of the SHAPE, then supplied the honest nontrivial leg over concrete `Obs=Bool`. Refused 2 more that
+  would degrade (`EnergyGame.unitBase.floor` deliberately isolates the grade). Found + FLAGGED (not
+  rushed) the HermineHashCR P→P laundering — see Open.
 - 04:36 — **ML-DSA Array UInt32/UInt64 ring twins** (`87ee60ab3`): additive; UInt64 accumulators
   (products hit 2⁴⁶ — a bare UInt32 multiply truncates); 6 fast-vs-**pure** `#guard`s; AcvpKats
   byte-exact KAT gate green. **MEASURED ~2%, not the 10× I claimed** (Lean unboxes small Nats; the
