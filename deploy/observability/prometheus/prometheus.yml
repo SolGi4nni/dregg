@@ -67,17 +67,18 @@ scrape_configs:
           node: node-3
 
   # --- the dreggnet-web live surface: native Prometheus exposition ----------
-  # The public games demo (dreggnet-web-server). It binds LOOPBACK
-  # (DREGGNET_WEB_BIND=127.0.0.1:8790 — the funnel unit's bind), so the scrape
-  # is local to the box running the web unit. Series (all real at
-  # dreggnet-web/src/metrics.rs): dregg_web_sessions_open,
-  # dregg_web_sessions_evicted_total, dregg_web_opens_refused_total{limit},
-  # dregg_web_anchor_failures_total, dregg_web_turns_refused_total,
-  # dregg_web_session_resume_failures_total.
+  # The public games demo (dreggnet-web-server) serves /metrics on a SEPARATE
+  # loopback listener (DREGGNET_WEB_METRICS_BIND=127.0.0.1:9790), NOT its main
+  # app port (127.0.0.1:8790, the funnel-able one) — so a public tailscale funnel
+  # of the demo never exposes the counters, and this scrape is local to the box
+  # running the web unit. Series (all real at dreggnet-web/src/metrics.rs):
+  # dregg_web_sessions_open, dregg_web_sessions_evicted_total,
+  # dregg_web_opens_refused_total{limit}, dregg_web_anchor_failures_total,
+  # dregg_web_turns_refused_total, dregg_web_session_resume_failures_total.
   - job_name: dregg-web
     metrics_path: /metrics
     static_configs:
-      - targets: ["127.0.0.1:8790"]
+      - targets: ["127.0.0.1:9790"]
         labels:
           surface: games-funnel
 

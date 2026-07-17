@@ -243,18 +243,16 @@ systemctl --user stop dregg-web-games-funnel
 ## Caveats (named, once)
 - **Funnel serves LOOPBACK.** The unit binds `127.0.0.1:8790`; Funnel proxies the local
   port. Never bind `0.0.0.0` / the tailnet iface for the funnel variant.
-- **Observability.** The web surface now exposes Prometheus metrics at `GET /metrics`
-  on its one bind (`dreggnet-web/src/metrics.rs` — session opens/evictions, policy
-  refusals, executor turn refusals, anchor + resume failures). The
-  `deploy/observability` stack scrapes it **on loopback** — `http://127.0.0.1:8790/metrics`
-  from the same box (the `dregg-web` job in `prometheus.yml`; alert rules `DreggWebDown`,
-  `WebAnchorFailureSpike`, `WebSessionEvictionStorm` in `rules/dregg.rules.yml`), so the
-  scrape path never leaves the machine. Honest edge note: `tailscale funnel 8790` proxies
-  the **whole** local port, so after the go-live flip `/metrics` is also publicly
-  *readable* at the funnel URL — it serves only aggregate operational counters (no session
-  content, no identities, no keys); if even that is unwanted, use the path-scoped form
-  (`tailscale serve --bg --set-path / http://127.0.0.1:8790` per app path) instead of the
-  whole-port funnel.
+- **Observability.** The web surface exposes Prometheus metrics at `GET /metrics`
+  (`dreggnet-web/src/metrics.rs` — session opens/evictions, policy refusals, executor turn
+  refusals, anchor + resume failures) on a **SEPARATE loopback listener**
+  (`DREGGNET_WEB_METRICS_BIND`, default `127.0.0.1:9790`), deliberately NOT the funnel-able
+  app port `:8790`. So `tailscale funnel 8790` — which proxies the *whole* app port — can
+  never reach `/metrics`: the operational counters stay on-box by construction, not by
+  convention. The `deploy/observability` stack scrapes `http://127.0.0.1:9790/metrics` from
+  the same box (the `dregg-web` job in `prometheus.yml`; alert rules `DreggWebDown`,
+  `WebAnchorFailureSpike`, `WebSessionEvictionStorm` in `rules/dregg.rules.yml`). A failed
+  metrics-port bind is non-fatal — the demo serves without a scrape target.
 - **The `:8420` node is the anchor.** The one-time unlock + faucet-materialize (step a) is
   required before runs anchor; until then a submitted run still ranks in-process, but its
   settle is refused (`cell not found`) — fail-closed, not a silent success.
