@@ -222,6 +222,27 @@ is the most mature ops surface.
   `dregg-node:n5` image build (TODO-7), stale `deploy/hbox/RUNBOOK.md` + `deploy/gateway-ask/` unverified, dangling
   `systemctl restart dregg-gateway` pointers in `redteam/` findings docs (historical, low harm).
 
+## ⚑ CAMPAIGN WAVE 1 — plan d-d-d-i-breezy-grove (2026-07-17)
+Approved plan: drive the four-track frontier + parallel hardening, focused-steady, persvati/hbox-verified. Freeze
+DE-SCOPED per ember: NO MPC ceremony (we are the only party; VK not final) → eventual freeze = single-party setup +
+careful toxic-waste disposal + hex-KAT pin, VK-final-gated; Groth work now = G1 PERF NUMBER only (hbox). Devnet runs
+the deployed ~58-bit config (attack = grind-a-forgery ~2^58, no ZK impact, no real value).
+- ✅ **D0 toolchain pin** (`80cd71310`): nightly→`nightly-2026-06-21` across rust-toolchain.toml + ci.yml(7) +
+  repro-gate.yml(2). Unblocks D2 (gate no longer rides a moving nightly). HELD (lock-coordination): ark-serialize
+  branch→rev + `--locked` (collide with a concurrent dregg-param-compose Cargo.lock add). Follow-up: ~13 aux-workflow pins.
+- ✅ **B Floor Stage 1** (`223fbad0d`): `FriVerifierOracle.lean` — verifyAlgoO + faithfulness lemma verifyAlgoO_run_eq
+  (additive, non-vacuous, no soundness change). lake-green local. Unblocks floor stages 2-5. Not yet Dregg2.lean-imported.
+- ✅ **A Rung 1** (`cc2a81416`): VoteHarvester seam + LedgerVoteHarvester; feed supplies rooted votes. persvati 4/4 + 11/11.
+- ✅ **C Rung 2a** (`9be8f1e82`): protocol-native run budget — conserved run-credit via resolve_pay, no Seed/Sweeper on
+  the accept path (rung 2b = 1-line asset swap to bridged $DREGG). persvati 2/2.
+- ⏸️ **commit_turn rollback** HELD (code-complete, world.rs-isolated, statically audited): starbridge-v2 won't compile
+  due to a FOREIGN mid-migration break in `document_composer.rs` (Faithful8 8-felt + AtomContent::contains) — verify +
+  commit when the crate compiles. The fix reorders dual_write to GATE the in-RAM advance + snapshot-restores the ledger
+  on failure. Self-scoped residual: executor-internal accumulators (note nullifiers) not unwound — conservative, needs
+  an executor journal API (out of world.rs scope).
+- **Verification doctrine held:** heavy Rust → persvati pbuild (marshal-only, interpret Lean-producer failures as
+  artifacts); Lean → local lake (warm); G1/RAM-bound → hbox. reclaim-space.sh between waves.
+
 ## ✅ FORWARD WAVE 1 — both rungs landed + verified on persvati (2026-07-16)
 - **Track A · gov off the HostBallotBox shim** (`e5dc08766`): dregg-interchain-gov repointed onto VerifiedHoldingBallotBox, the demoted shim DELETED. Closes the weighted-cast residual — last governance flow now on the verified engine. persvati: governance 57/57, interchain-gov all-green.
 - **Track C · two-tranche $DREGG bond rung-1** (`21ccce981`): quote/computron senior (floor) + $DREGG junior first-loss, PRICE-FREE (`junior_forfeit` takes no mark arg; compile_fail doctest proves it), conserving third Effect::Transfer, no burn. 3 named canaries green on persvati. Reconciled the burn-vs-conserving doc contradiction.
