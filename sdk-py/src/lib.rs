@@ -40,16 +40,19 @@ use dregg_cell::program::{
 };
 use dregg_cell::state::FieldElement;
 use dregg_cell::{AuthRequired, CapabilityRef, Cell, field_from_u64};
-use dregg_sdk::cipherclerk::{AgentCipherclerk, HeldToken, SignedTurn};
+use dregg_sdk::cipherclerk::{
+    AgentCipherclerk, AuthorizationPresentation, FactIndex, HeldToken, SignedTurn, VerificationMode,
+};
 use dregg_sdk::explain::{explain_action, explain_turn};
 use dregg_sdk::profiles;
 use dregg_sdk::{
-    AgentRuntime as SdkRuntime, Attenuation, ExecutionLease, InvokeAuthority, LeaseTerms, PayLeg,
-    SubAgent,
+    AgentRuntime as SdkRuntime, Attenuation, AuthRequest, ExecutionLease, InvokeAuthority,
+    LeaseTerms, PayLeg, SubAgent,
 };
 use dregg_turn::Effect;
 use dregg_turn::TurnReceipt;
 use dregg_turn::action::Action;
+use dregg_turn::action::{WitnessBlob, WitnessKind};
 use dregg_types::CellId;
 
 // ─── exceptions ───
@@ -395,6 +398,8 @@ impl Identity {
             node_url: node_url.trim_end_matches('/').to_string(),
             method: "execute".to_string(),
             effects: Vec::new(),
+            target: None,
+            witnesses: Vec::new(),
             fee: None,
             memo: None,
             nonce: None,
@@ -433,6 +438,108 @@ impl Identity {
             identity: slf.clone().unbind(),
             base_url: relay_url.trim_end_matches('/').to_string(),
         }
+    }
+
+    // ─── the token / presentation surface (macaroon-backed authorization) ───
+
+    /// Mint a root authorization token for `service` under `root_key`
+    /// (hex str or 32 bytes — the service's verification secret). Forwards
+    /// to `AgentCipherclerk::mint_token`.
+    fn mint_token(&mut self, root_key: &Bound<'_, PyAny>, service: &str) -> PyResult<Token> {
+        let key = parse_32(root_key, "root_key")?;
+        Ok(Token {
+            inner: self.clerk.mint_token(&key, service),
+        })
+    }
+
+    /// Attenuate `token` — narrowing only, never expanding (the core refuses
+    /// an empty restriction set). Field names mirror the Rust `Attenuation`
+    /// struct: `services`/`apps` are `(name, action_mask)` pairs (e.g.
+    /// `("dns", "r")`), `not_after`/`not_before` unix seconds.
+    #[pyo3(signature = (token, services=None, apps=None, features=None, not_after=None, not_before=None, confine_user=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn attenuate(
+        &mut self,
+        token: &Token,
+        services: Option<Vec<(String, String)>>,
+        apps: Option<Vec<(String, String)>>,
+        features: Option<Vec<String>>,
+        not_after: Option<i64>,
+        not_before: Option<i64>,
+        confine_user: Option<String>,
+    ) -> PyResult<Token> {
+        let restrictions = Attenuation {
+            services: services.unwrap_or_default(),
+            apps: apps.unwrap_or_default(),
+            features: features.unwrap_or_default(),
+            not_after,
+            not_before,
+            confine_user,
+            ..Attenuation::default()
+        };
+        let attenuated = self
+            .clerk
+            .attenuate(&token.inner, &restrictions)
+            .map_err(|e| refused(e.to_string()))?;
+        Ok(Token { inner: attenuated })
+    }
+
+    /// Authorize a request against `token`, producing a [`Presentation`].
+    ///
+    /// `mode` selects the Rust `VerificationMode`:
+    /// - `"trusted"` — local Datalog evaluation, full clearance + trace
+    ///   (for verifiers holding the root key).
+    /// - `"selective"` — STARK proof with the facts at `reveal` indices
+    ///   disclosed (committed via Poseidon2), the rest private witness.
+    /// - `"private"` — STARK proof; the verifier learns only the conclusion.
+    ///
+    /// The request fields mirror the Rust `AuthRequest` (unset = unconstrained).
+    #[pyo3(signature = (token, mode="trusted", reveal=None, service=None, action=None, app_id=None, user_id=None, features=None, now=None))]
+    #[allow(clippy::too_many_arguments)]
+    fn authorize(
+        &self,
+        token: &Token,
+        mode: &str,
+        reveal: Option<Vec<usize>>,
+        service: Option<String>,
+        action: Option<String>,
+        app_id: Option<String>,
+        user_id: Option<String>,
+        features: Option<Vec<String>>,
+        now: Option<i64>,
+    ) -> PyResult<Presentation> {
+        let request = AuthRequest {
+            app_id,
+            service,
+            action,
+            features: features.unwrap_or_default(),
+            user_id,
+            now,
+            ..AuthRequest::default()
+        };
+        let mode = match mode.to_ascii_lowercase().as_str() {
+            "trusted" => VerificationMode::Trusted,
+            "selective" => VerificationMode::SelectiveDisclosure {
+                reveal: reveal
+                    .unwrap_or_default()
+                    .into_iter()
+                    .map(FactIndex)
+                    .collect(),
+            },
+            "private" => VerificationMode::FullyPrivate,
+            other => {
+                return Err(PyValueError::new_err(format!(
+                    "mode: expected one of trusted/selective/private, got {other:?}"
+                )));
+            }
+        };
+        let presentation = self
+            .clerk
+            .authorize(&token.inner, &request, mode)
+            .map_err(|e| refused(e.to_string()))?;
+        Ok(Presentation {
+            inner: presentation,
+        })
     }
 
     fn __repr__(&self) -> String {
@@ -506,20 +613,33 @@ pub fn mint_cap_ref(
 /// nonce is the documented fix (see its rustdoc: "If the action will ride a
 /// turn with a DIFFERENT nonce … use `sign_action_hybrid` with that nonce
 /// explicitly — a mismatched nonce fails signature verification at commit").
+/// # `action_target` / `witness_blobs`
+///
+/// `action_target` is the `.on(target)` verb: the action targets another cell
+/// the identity administers (the executor verifies the signature against the
+/// TARGET's owner — the builder does not pre-judge); `None` targets the acting
+/// agent cell. `witness_blobs` is the `.reveal(preimage)` verb: the blobs are
+/// attached to the unsigned action BEFORE signing so the signature covers them
+/// (a blob attached after signing would be strippable in flight).
 #[allow(clippy::too_many_arguments)]
 pub fn build_signed_turn(
     clerk: &AgentCipherclerk,
     domain: &str,
     method: &str,
     effects: Vec<Effect>,
+    action_target: Option<CellId>,
+    witness_blobs: Vec<WitnessBlob>,
     federation_id: &[u8; 32],
     nonce: u64,
     fee: u64,
     memo: Option<String>,
     valid_until: i64,
 ) -> SignedTurn {
-    let target = clerk.cell_id(domain);
-    let unsigned = dregg_sdk::raw::unsigned_action_named(target, method, effects);
+    let target = action_target.unwrap_or_else(|| clerk.cell_id(domain));
+    let mut unsigned = dregg_sdk::raw::unsigned_action_named(target, method, effects);
+    // Witnesses attach BEFORE signing so the signature covers them (the
+    // `set_field_with_preimage` shape in the executor's coverage tests).
+    unsigned.witness_blobs = witness_blobs;
     // Bind the action signature to the nonce the turn ACTUALLY carries.
     let action = clerk.sign_action_hybrid(unsigned, federation_id, nonce);
     let mut turn = clerk.make_turn_for(domain, action);
@@ -542,6 +662,11 @@ struct TurnBuilder {
     node_url: String,
     method: String,
     effects: Vec<Effect>,
+    /// `.on(target)`: the action targets this administered cell instead of the
+    /// acting agent cell (the Rust `TurnBuilder::on` shape).
+    target: Option<CellId>,
+    /// `.reveal(preimage)` witness blobs, attached under the signature.
+    witnesses: Vec<WitnessBlob>,
     fee: Option<u64>,
     memo: Option<String>,
     nonce: Option<u64>,
@@ -551,8 +676,12 @@ struct TurnBuilder {
 }
 
 impl TurnBuilder {
+    /// The cell whose authority this turn exercises — the default `from` /
+    /// write target for the typed verbs (`.on(target)` when set, else the
+    /// identity's agent cell; mirrors the Rust builder's `acting_cell`).
     fn acting_cell(&self, py: Python<'_>) -> CellId {
-        self.identity.borrow(py).clerk.cell_id("default")
+        self.target
+            .unwrap_or_else(|| self.identity.borrow(py).clerk.cell_id("default"))
     }
 }
 
@@ -644,6 +773,41 @@ impl TurnBuilder {
         slf
     }
 
+    /// Target another cell this identity administers (the Rust
+    /// `TurnBuilder::on` verb): the action targets `target`, this agent signs
+    /// and pays, and the executor verifies the signature against `target`'s
+    /// owner key. Call BEFORE staging verbs — the typed verbs capture the
+    /// acting cell at call time (same as the Rust builder).
+    fn on<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        target: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        if !slf.effects.is_empty() {
+            return Err(refused(
+                ".on(target) must be called before staging verbs — the effects already staged \
+                 were built against the previous acting cell",
+            ));
+        }
+        slf.target = Some(parse_cell(target, "target")?);
+        Ok(slf)
+    }
+
+    /// Exhibit a 32-byte preimage witness with this turn (the Rust
+    /// `TurnBuilder::reveal` verb). The blob rides `Action::witness_blobs`
+    /// UNDER the signature and is what `PreimageGate` cell programs verify
+    /// against the committed digest (`dregg.program.preimage_gate`).
+    fn reveal<'py>(
+        mut slf: PyRefMut<'py, Self>,
+        preimage: &Bound<'py, PyAny>,
+    ) -> PyResult<PyRefMut<'py, Self>> {
+        let preimage = parse_32(preimage, "preimage")?;
+        slf.witnesses.push(WitnessBlob {
+            kind: WitnessKind::Preimage32,
+            bytes: preimage.to_vec(),
+        });
+        Ok(slf)
+    }
+
     /// Set the action's method verb (default "execute").
     fn method<'py>(mut slf: PyRefMut<'py, Self>, name: &str) -> PyRefMut<'py, Self> {
         slf.method = name.to_string();
@@ -716,6 +880,8 @@ impl TurnBuilder {
             "default",
             &self.method,
             self.effects.clone(),
+            self.target,
+            self.witnesses.clone(),
             &federation_id,
             nonce,
             self.fee.unwrap_or(10_000),
@@ -1153,9 +1319,12 @@ fn explain(turn: &Bound<'_, PyAny>) -> PyResult<String> {
         let py = turn.py();
         let ident = builder.identity.borrow(py);
         // Render the draft as the unsigned action it would become — the same
-        // explain the signed turn will carry, marked as a draft.
+        // explain the signed turn will carry, marked as a draft. Honors
+        // `.on(target)` so the draft names the cell the act will target.
         let action = dregg_sdk::raw::unsigned_action_named(
-            ident.clerk.cell_id("default"),
+            builder
+                .target
+                .unwrap_or_else(|| ident.clerk.cell_id("default")),
             &builder.method,
             builder.effects.clone(),
         );
@@ -2129,6 +2298,8 @@ fn rust_executor_probe() -> Result<(bool, String), String> {
             to,
             amount: 5,
         }],
+        None,
+        Vec::new(),
         &fed,
         0,
         10_000,
@@ -2818,6 +2989,210 @@ impl ServiceRuntime {
     }
 }
 
+// ─── tokens & presentations (the macaroon-backed authorization surface) ───
+
+/// A held authorization token (the Rust `HeldToken`): macaroon-backed,
+/// attenuable (narrowing only), presentable via [`Identity::authorize`].
+#[pyclass(unsendable, module = "dregg", name = "Token")]
+struct Token {
+    inner: HeldToken,
+}
+
+#[pymethods]
+impl Token {
+    /// Human-readable label.
+    #[getter]
+    fn label(&self) -> String {
+        self.inner.label().to_string()
+    }
+
+    /// The service this token grants access to.
+    #[getter]
+    fn service(&self) -> String {
+        self.inner.service().to_string()
+    }
+
+    /// Unique local id (used by the clerk's revocation bookkeeping).
+    #[getter]
+    fn id(&self) -> String {
+        self.inner.id().to_string()
+    }
+
+    /// The encoded token string (`em2_`-prefixed) — the portable form.
+    #[getter]
+    fn encoded(&self) -> String {
+        self.inner.encoded().to_string()
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Token(label={:?}, service={:?})",
+            self.inner.label(),
+            self.inner.service()
+        )
+    }
+}
+
+/// `dregg_trace::Term` → Python (hex str for symbols, int for integers).
+fn term_to_py<'py>(py: Python<'py>, t: &dregg_trace::Term) -> PyResult<Bound<'py, PyAny>> {
+    Ok(match t {
+        dregg_trace::Term::Const(sym) => hex::encode(sym).into_pyobject(py)?.into_any(),
+        dregg_trace::Term::Int(i) => i.into_pyobject(py)?.into_any(),
+        // Facts are ground; a Var here would be a core invariant violation —
+        // surface it visibly rather than silently rendering something.
+        dregg_trace::Term::Var(v) => format!("var:{v}").into_pyobject(py)?.into_any(),
+    })
+}
+
+/// An authorization presentation (the Rust `AuthorizationPresentation`) —
+/// what a prover hands a verifier. Postcard-portable via
+/// `to_bytes`/`from_bytes`.
+#[pyclass(unsendable, module = "dregg", name = "Presentation")]
+struct Presentation {
+    inner: AuthorizationPresentation,
+}
+
+#[pymethods]
+impl Presentation {
+    /// `"trusted"` / `"selective"` / `"private"` — which Rust variant this is.
+    #[getter]
+    fn kind(&self) -> &'static str {
+        match &self.inner {
+            AuthorizationPresentation::Trusted { .. } => "trusted",
+            AuthorizationPresentation::Selective { .. } => "selective",
+            AuthorizationPresentation::Private { .. } => "private",
+        }
+    }
+
+    /// Whether authorization was granted.
+    ///
+    /// SECURITY: for `"selective"`/`"private"` this is the PROVER's
+    /// self-reported field (UX only — the Rust type says the same); a
+    /// verifier must rely on proof verification, never this flag. For
+    /// `"trusted"` it is the local Datalog conclusion.
+    #[getter]
+    fn conclusion(&self) -> bool {
+        match &self.inner {
+            AuthorizationPresentation::Trusted { trace, .. } => {
+                matches!(trace.conclusion, dregg_trace::Conclusion::Allow { .. })
+            }
+            AuthorizationPresentation::Selective { conclusion, .. }
+            | AuthorizationPresentation::Private { conclusion, .. } => *conclusion,
+        }
+    }
+
+    /// The revealed facts of a `"selective"` presentation as dicts
+    /// (`predicate` hex + `terms` list); `None` for other kinds.
+    #[getter]
+    fn revealed_facts<'py>(&self, py: Python<'py>) -> PyResult<Option<Bound<'py, PyList>>> {
+        let AuthorizationPresentation::Selective { revealed_facts, .. } = &self.inner else {
+            return Ok(None);
+        };
+        let out = PyList::empty(py);
+        for fact in revealed_facts {
+            let d = PyDict::new(py);
+            d.set_item("predicate", hex::encode(fact.predicate))?;
+            let terms = PyList::empty(py);
+            for t in &fact.terms {
+                terms.append(term_to_py(py, t)?)?;
+            }
+            d.set_item("terms", terms)?;
+            out.append(d)?;
+        }
+        Ok(Some(out))
+    }
+
+    /// Canonical wire bytes (postcard `AuthorizationPresentation`).
+    fn to_bytes<'py>(&self, py: Python<'py>) -> PyResult<Bound<'py, PyBytes>> {
+        let bytes = postcard::to_stdvec(&self.inner)
+            .map_err(|e| err(format!("failed to encode presentation: {e}")))?;
+        Ok(PyBytes::new(py, &bytes))
+    }
+
+    /// Decode a presentation from its postcard wire bytes (fail-closed).
+    #[staticmethod]
+    fn from_bytes(data: &[u8]) -> PyResult<Presentation> {
+        let inner: AuthorizationPresentation = postcard::from_bytes(data)
+            .map_err(|e| refused(format!("presentation bytes do not decode: {e}")))?;
+        Ok(Presentation { inner })
+    }
+
+    fn __repr__(&self) -> String {
+        format!(
+            "Presentation(kind={:?}, conclusion={})",
+            self.kind(),
+            self.conclusion()
+        )
+    }
+}
+
+/// Verify the revealed-facts half of a `"selective"` presentation — the exact
+/// Rust `dregg_sdk::verify::verify_disclosure_presentation`, fail-closed:
+/// `True` iff the Poseidon2 revealed-facts commitment matches the plaintext
+/// revealed facts AND the presentation carries no predicate proofs (which
+/// cannot be checked without trusted state). Any other kind → `False`.
+/// It does NOT verify the STARK proof itself (that check is
+/// `verify_authorization_proof`, which needs the federation root — unbound
+/// here; see the named gaps in the module docs).
+#[pyfunction]
+fn verify_disclosure_presentation(presentation: &Presentation) -> bool {
+    dregg_sdk::verify::verify_disclosure_presentation(&presentation.inner)
+}
+
+// ─── lightclient: the whole-history light-client verify ───
+
+/// Verify a whole-history aggregate ENVELOPE (`WholeChainProofBytes`
+/// postcard bytes) against the caller-held VK trust anchor (hex str or 32
+/// bytes — the `RecursionVk` fingerprint pinned from configuration, NEVER
+/// from the artifact). On success returns the attestation dict:
+/// `{"genesis_root": [8 ints], "final_root": [8 ints],
+///   "chain_digest": [8 ints], "num_turns": int}` — the Rust
+/// `AttestedHistory`. Raises `DreggRefused` (fail-closed) on a malformed or
+/// wrong-version envelope, a VK mismatch, or a failing STARK verify.
+/// Forwards to `dregg_lightclient::verify_history_bytes`; cost is
+/// independent of history length.
+#[pyfunction]
+#[pyo3(name = "verify_history")]
+fn lightclient_verify_history<'py>(
+    py: Python<'py>,
+    envelope_bytes: &[u8],
+    expected_vk: &Bound<'_, PyAny>,
+) -> PyResult<Bound<'py, PyDict>> {
+    let vk =
+        dregg_circuit_prove::ivc_turn_chain::RecursionVk(parse_32(expected_vk, "expected_vk")?);
+    let envelope = envelope_bytes.to_vec();
+    let attested = py
+        .detach(move || dregg_lightclient::verify_history_bytes(&envelope, &vk))
+        .map_err(|e| refused(e.to_string()))?;
+    let d = PyDict::new(py);
+    d.set_item(
+        "genesis_root",
+        attested
+            .genesis_root
+            .iter()
+            .map(|b| b.as_u32())
+            .collect::<Vec<u32>>(),
+    )?;
+    d.set_item(
+        "final_root",
+        attested
+            .final_root
+            .iter()
+            .map(|b| b.as_u32())
+            .collect::<Vec<u32>>(),
+    )?;
+    d.set_item(
+        "chain_digest",
+        attested
+            .chain_digest
+            .iter()
+            .map(|b| b.as_u32())
+            .collect::<Vec<u32>>(),
+    )?;
+    d.set_item("num_turns", attested.num_turns)?;
+    Ok(d)
+}
+
 // ─── module ───
 
 #[pymodule]
@@ -2844,6 +3219,10 @@ fn dregg(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     m.add_class::<Worker>()?;
     m.add_class::<Lease>()?;
     m.add_class::<TxReceipt>()?;
+    // The token / presentation surface.
+    m.add_class::<Token>()?;
+    m.add_class::<Presentation>()?;
+    m.add_function(wrap_pyfunction!(verify_disclosure_presentation, m)?)?;
     m.add_function(wrap_pyfunction!(method_symbol_py, m)?)?;
     m.add_function(wrap_pyfunction!(subscribe, m)?)?;
     m.add_function(wrap_pyfunction!(faucet, m)?)?;
@@ -2880,6 +3259,14 @@ fn dregg(py: Python<'_>, m: &Bound<'_, PyModule>) -> PyResult<()> {
     py.import("sys")?
         .getattr("modules")?
         .set_item("dregg.deploy", &deploy)?;
+
+    // dregg.lightclient — the whole-history light-client verify (bytes-level).
+    let lightclient = PyModule::new(py, "lightclient")?;
+    lightclient.add_function(wrap_pyfunction!(lightclient_verify_history, &lightclient)?)?;
+    m.add_submodule(&lightclient)?;
+    py.import("sys")?
+        .getattr("modules")?
+        .set_item("dregg.lightclient", &lightclient)?;
 
     Ok(())
 }
