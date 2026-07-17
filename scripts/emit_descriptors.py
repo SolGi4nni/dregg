@@ -43,6 +43,10 @@ Modes:
                          requires a clean source (source_dirty=false) and that
                          the stamp's tree hash matches THIS checkout's
                          HEAD:metatheory/Dregg2. No Lean needed.
+  --list-emitter-modules print the Lean modules the emitters import (one per line)
+                         — the set that must be `lake build`-ed for the emit to run
+                         on a cold checkout. Derived from the emitters' own imports;
+                         no Lean run. `check-descriptor-drift.sh` builds this.
 
 Exit codes: 0 = ok/no-op · 1 = routing/verify failure · 2 = emitter failed ·
 3 = REGEN REFUSED (unauthorized byte-changing install; tree left untouched).
@@ -97,12 +101,17 @@ EMITTERS = [
     "EmitLayoutManifest.lean",               # the rotated COLUMN LAYOUT, exported from Lean AS RUST
     "EmitByName.lean",                       # the by-name/ dispatch surface descriptor_by_name() serves
     "EmitCertF.lean",                        # the ring-3 Cert-F IR2 descriptor (cert_f_air.rs include_str!s it)
+    "EmitCertFMarket4.lean",                 # the market4 (3-asset/4-order, ε>0) Cert-F IR2 descriptor
 ]
 
 # The checked-in artifact `circuit-prove/src/cert_f_air.rs:297` include_str!s. It was the ONLY flat
 # descriptor no emitter reproduced (tracked in GOAL-STARK-KILL.md) — include_str!'d into a live AIR
 # yet outside the re-derivation, so the drift gate could not see it move.
 CERT_F_FILE = "dregg-cert-f-ir2.json"
+
+# The market4 registered Cert-F program (the first REAL market shape past the ring-3 toy;
+# authored as `certFDescriptorOf market4Prog` in Market/CertFDescriptor.lean §4b).
+CERT_F_MARKET4_FILE = "dregg-cert-f-market4-ir2.json"
 
 # The by-name descriptors that are checked in WITH a trailing newline. The directory's convention is
 # mixed (21 bare, 5 newline-terminated) and it is purely cosmetic — JSON does not care — but the
@@ -120,6 +129,65 @@ BY_NAME_NEWLINE_TERMINATED = frozenset({
 
 def run(cmd, **kw):
     return subprocess.run(cmd, check=True, capture_output=True, text=True, **kw)
+
+
+def emitter_modules() -> list[str]:
+    """The Lean library modules that must be BUILT for `emit()` to run at all.
+
+    `lake env lean --run <emitter>` loads its imports from COMPILED oleans; it does not
+    build them. So the emit only works where something already warmed those oleans —
+    and `lake build` (default targets: Dregg2/Metatheory/Polis/Market) does NOT warm all
+    of them. Measured at the time of writing: 17 of `EmitByName.lean`'s 26 imports are
+    reachable from NO default target (the `Dregg2.Circuit.Emit.*Emit` authors under
+    DfaRouting/Predicates/Presentation/… — nothing in the `Dregg2` root import closure
+    pulls them in). On a cold checkout the by-name emit therefore died with 'object file
+    does not exist' and `emit_descriptors.py` exited 2 — i.e. the drift gate was green
+    only where an EARLIER build step, outside the gate, happened to warm the cache. The
+    emitters the gate RAN were not the emitters the gate BUILT.
+
+    This DERIVES the build set from the emitters' own `import` lines rather than pinning
+    a hand-written list, so adding an emitter (or an import to one) cannot silently
+    reintroduce the hole. Direct imports suffice: `lake build M` builds M's deps too.
+    Imports with no in-tree source file are dependencies of the toolchain/mathlib and are
+    dropped — `lake build` cannot take them as targets.
+    """
+    mods: list[str] = []
+    dropped: list[str] = []
+    for lean_file in EMITTERS:
+        path = META / lean_file
+        if not path.exists():
+            sys.exit(f"emit_descriptors: emitter source missing: {path}")
+        for line in path.read_text().splitlines():
+            m = re.match(r"^import\s+([A-Za-z0-9_.]+)", line)
+            if not m:
+                continue
+            mod = m.group(1)
+            if (META / (mod.replace(".", "/") + ".lean")).exists():
+                if mod not in mods:
+                    mods.append(mod)
+            elif mod not in dropped:
+                dropped.append(mod)
+    # A dropped import is normally a mathlib/toolchain dep (`lake build` cannot take
+    # it as a target, and it is built transitively via the in-tree modules that use
+    # it). But dropping is the same "built set != run set" shape the derived list
+    # exists to prevent, so REPORT the drops rather than swallowing them silently: a
+    # future emitter whose only imports are out-of-tree would otherwise contribute
+    # nothing to the build set with no word said. Visible + auditable, behaviour
+    # unchanged.
+    if dropped:
+        print(
+            "emit_descriptors: derived build set drops "
+            f"{len(dropped)} out-of-tree import(s) (toolchain/mathlib deps, built "
+            f"transitively): {', '.join(sorted(dropped))}",
+            file=sys.stderr,
+        )
+    if not mods:
+        sys.exit(
+            "emit_descriptors: derived build set is EMPTY — every emitter import was "
+            "dropped as out-of-tree. Refusing to build nothing and re-depend on a warm "
+            "cache (the exact hole this derivation closes)."
+        )
+    return mods
 
 
 def emit(lean_file: str) -> str:
@@ -601,6 +669,17 @@ def split_cert_f(stdout: str, written):
     write_file(CERT_F_FILE, blob, written)
 
 
+def split_cert_f_market4(stdout: str, written):
+    """`EmitCertFMarket4.lean` — same convention as `EmitCertF.lean` (bare JSON, no trailing
+    newline in the checked-in artifact)."""
+    blob = stdout.rstrip("\n")
+    if not blob.startswith('{"name":"cert-f"'):
+        sys.exit(
+            f"emit_descriptors: cert-f-market4 emitter produced unexpected output: {blob[:80]!r}"
+        )
+    write_file(CERT_F_MARKET4_FILE, blob, written)
+
+
 def split_cross_cell_conservation(stdout: str, written):
     """`EmitCrossCellConservation.lean` emits the bare descriptor JSON via `IO.println`
     (no TSV prefix), so its stdout is the descriptor JSON + one trailing newline — exactly
@@ -725,9 +804,15 @@ def main():
     if "--stamp-existing" in argv:
         stamp_existing()
         return
+    if "--list-emitter-modules" in argv:
+        # The build set the emitters need (see emitter_modules). No Lean run; pure source
+        # scan, so `scripts/check-descriptor-drift.sh` can build exactly what it runs.
+        print("\n".join(emitter_modules()))
+        return
     if argv:
         sys.exit(f"emit_descriptors: unknown arguments {argv!r} "
-                 "(expected none, --stamp-existing, or --verify-provenance [--strict])")
+                 "(expected none, --stamp-existing, --list-emitter-modules, "
+                 "or --verify-provenance [--strict])")
 
     if not (META / "lakefile.lean").exists() and not (META / "lakefile.toml").exists():
         sys.exit(f"emit_descriptors: not a lake project at {META}")
@@ -767,6 +852,8 @@ def main():
             split_member_tsv(out, written, SETFIELD_VALUE8_TSV)
         elif lean.endswith("EmitByName.lean"):
             split_by_name(out, written)
+        elif lean.endswith("EmitCertFMarket4.lean"):
+            split_cert_f_market4(out, written)
         elif lean.endswith("EmitCertF.lean"):
             split_cert_f(out, written)
         else:

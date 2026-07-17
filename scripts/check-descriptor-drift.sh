@@ -28,8 +28,28 @@ fi
 # The emitters import the compiled `Dregg2.Circuit.Emit.*` oleans (NOT the source),
 # so the corpus must be built first or `lake env lean --run` will emit from STALE
 # oleans and the gate would be blind to an un-rebuilt Lean change.
+#
+# BUILD WHAT WE RUN. `lake build Dregg2` alone is NOT that set: 17 of `EmitByName.lean`'s
+# 26 imports (the `Dregg2.Circuit.Emit.*Emit` authors behind the DEPLOYED by-name dispatch
+# surface) are reachable from NO default lake target — nothing in the `Dregg2` root's
+# import closure pulls them in. Their oleans existed only by accident of an earlier build,
+# so on a COLD checkout `lake env lean --run EmitByName.lean` died with 'object file does
+# not exist' and emit_descriptors.py exited 2. This gate was green only where something
+# OUTSIDE its own build step had warmed the cache. The build set is DERIVED from the
+# emitters' own import lines (`--list-emitter-modules`), never hand-listed, so a new
+# emitter — or a new import to an existing one — cannot silently reopen the hole.
 echo "check-descriptor-drift: building the Lean corpus (fresh oleans)..."
-( cd "$ROOT/metatheory" && lake build Dregg2 )
+EMIT_MODULES=()
+while IFS= read -r m; do
+  [ -n "$m" ] && EMIT_MODULES+=("$m")
+done < <(python3 "$ROOT/scripts/emit_descriptors.py" --list-emitter-modules)
+if [ "${#EMIT_MODULES[@]}" -eq 0 ]; then
+  echo "check-descriptor-drift: FATAL — derived an EMPTY emitter build set (the module" >&2
+  echo "  scan broke; building nothing would make this gate depend on a warm cache)." >&2
+  exit 2
+fi
+echo "check-descriptor-drift:   ${#EMIT_MODULES[@]} modules the emitters import"
+( cd "$ROOT/metatheory" && lake build Dregg2 "${EMIT_MODULES[@]}" )
 
 # The artifacts the emit OWNS (regenerates): the descriptor files and the four
 # Rust sources that carry generated `*_FP` constants. We measure ONLY the effect
