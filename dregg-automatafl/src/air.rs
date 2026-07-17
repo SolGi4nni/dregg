@@ -298,13 +298,26 @@ fn automaton_gadget(
     // membership product — the same range, under the constraint-degree cap as the board grows.
     b.decompose_coord_le("ax", ax_col, n as i128 - 1);
     b.decompose_coord_le("ay", ay_col, n as i128 - 1);
-    let auto_idx = (ay as usize) * n + (ax as usize);
-    let auto_index_head = Head::lin(n as i128, ay_col).add_lin(1, ax_col);
-    let sel_auto = b.one_hot("auto", k, auto_idx, &auto_index_head);
-    // pin src[auto] == AUTO
+    // Row×column √n read (C.2): pin the auto row/column with two n-wide one-hots
+    // (`sel_auto_row[ay]`, `sel_auto_col[ax]`) instead of one k-wide one-hot. The cell
+    // `(x,y)` is addressed by the product `sel_auto_row[y]·sel_auto_col[x]`.
+    let (sel_auto_row, sel_auto_col) = b.one_hot_rowcol(
+        "auto",
+        n,
+        ax as usize,
+        &Head::lin(1, ax_col),
+        ay as usize,
+        &Head::lin(1, ay_col),
+    );
+    // pin src[auto] == AUTO: AUTO == Σ_y Σ_x sel_row[y]·sel_col[x]·board[y·n+x].
     let mut h = Head::c(-(AUTO as i128));
-    for j in 0..k {
-        h = h.add_prod(1, vec![sel_auto[j], board_cols[j]]);
+    for y in 0..n {
+        for x in 0..n {
+            h = h.add_prod(
+                1,
+                vec![sel_auto_row[y], sel_auto_col[x], board_cols[y * n + x]],
+            );
+        }
     }
     b.assert_zero(&h);
 
@@ -356,8 +369,21 @@ fn automaton_gadget(
             // — the ray-scan reduction that collapses the 4n³ selector blowup to n².
             let cell_val = src.cell_at((cx, cy)) as i128; // 0 if OOB
             let rc = b.alloc(format!("{dtag}_rc{kk}"), ColumnKind::Value, cell_val);
-            let off = n as i128 * kk as i128 * dy as i128 + kk as i128 * dx as i128;
-            b.shifted_read_gated(&sel_auto, board_cols, ib, off, rc);
+            // Reuse the auto row×column one-hots shifted by the cardinal step (sx,sy) =
+            // (kk·dx, kk·dy) — no fresh selectors, exactly as the flat ray scan reused
+            // `sel_auto`, now over the row×column pair.
+            let sx = kk as i128 * dx as i128;
+            let sy = kk as i128 * dy as i128;
+            b.shifted_read_rowcol_gated(
+                &sel_auto_row,
+                &sel_auto_col,
+                board_cols,
+                n,
+                ib,
+                sx,
+                sy,
+                rc,
+            );
             rc_cols.push(rc);
         }
 
@@ -580,24 +606,26 @@ fn automaton_gadget(
         * (b.value(by1).0 as i128);
     let tib = b.alloc("tib", ColumnKind::Binary, tib_val);
     b.assert_zero(&Head::lin(1, tib).add_prod(-1, vec![bx0, bx1, by0, by1]));
-    // target read (gated by tib): tcell = src[target] (0 if OOB)
+    // target read (gated by tib): tcell = src[target] (0 if OOB). Row×column √n read:
+    // the target row is `ay+oy`, the column `ax+ox`.
     let tcell_val = src.cell_at((tx, ty)) as i128;
     let tcell = b.alloc("tcell", ColumnKind::Value, tcell_val);
-    let target_index_head = Head::lin(n as i128, ay_col)
-        .add_lin(1, ax_col)
-        .add_lin(n as i128, oy_col)
-        .add_lin(1, ox_col);
-    let target_idx = if src.in_bounds((tx, ty)) {
-        (ty as usize) * n + (tx as usize)
+    let target_x_head = Head::lin(1, ax_col).add_lin(1, ox_col);
+    let target_y_head = Head::lin(1, ay_col).add_lin(1, oy_col);
+    let (tx_hot, ty_hot) = if src.in_bounds((tx, ty)) {
+        (tx as usize, ty as usize)
     } else {
-        0
+        (0, 0) // gate off ⇒ the hot index is ignored (all selectors zero)
     };
-    b.one_hot_read_gated(
+    b.read_rowcol_gated(
         "targ",
         board_cols,
+        n,
         tib,
-        target_idx,
-        &target_index_head,
+        tx_hot,
+        &target_x_head,
+        ty_hot,
+        &target_y_head,
         tcell,
     );
     // targ_vac = [tcell==0] = 1 - [tcell>=1]
@@ -623,18 +651,36 @@ fn automaton_gadget(
     // m = offnz*tib*targ_vac
     let m = b.alloc("moved", ColumnKind::Binary, moved as i128);
     b.assert_zero(&Head::lin(1, m).add_prod(-1, vec![offnz, tib, targ_vac]));
-    // sel_target: gated one-hot at target (gate m)
-    let sel_target = b.one_hot_gated("targw", k, m, target_idx, &target_index_head);
+    // sel_target: gated row×column one-hot at target (gate m). The write cell `(x,y)` is
+    // addressed by `sel_target_row[y]·sel_target_col[x]`.
+    let (sel_target_row, sel_target_col) = b.one_hot_rowcol_gated(
+        "targw",
+        n,
+        m,
+        tx_hot,
+        &target_x_head,
+        ty_hot,
+        &target_y_head,
+    );
 
     // --- board update output equalities ---
-    // new[c] - old[c] - 3*m*sel_target[c] + m*sel_target[c]*old[c] + m*sel_auto[c]*old[c] == 0
+    // new[c] - old[c] - 3*m*sel_target[c] + m*sel_target[c]*old[c] + m*sel_auto[c]*old[c] == 0,
+    // with sel_target[c] = sel_target_row[y]·sel_target_col[x] and likewise for sel_auto.
     for c in 0..k {
+        let x = c % n;
+        let y = c / n;
         b.assert_zero(
             &Head::lin(1, out_cols[c])
                 .add_lin(-1, board_cols[c])
-                .add_prod(-(AUTO as i128), vec![m, sel_target[c]])
-                .add_prod(1, vec![m, sel_target[c], board_cols[c]])
-                .add_prod(1, vec![m, sel_auto[c], board_cols[c]]),
+                .add_prod(
+                    -(AUTO as i128),
+                    vec![m, sel_target_row[y], sel_target_col[x]],
+                )
+                .add_prod(
+                    1,
+                    vec![m, sel_target_row[y], sel_target_col[x], board_cols[c]],
+                )
+                .add_prod(1, vec![m, sel_auto_row[y], sel_auto_col[x], board_cols[c]]),
         );
     }
 }

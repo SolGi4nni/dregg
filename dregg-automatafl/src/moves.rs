@@ -186,15 +186,24 @@ fn validate_move(
             .add_const(-(ay as i128 * ay as i128)),
     );
     b.cond_nonzero(&format!("{tag}_tna"), one, ta, ta_val);
-    // source particle: read from old at the WITNESSED source index n*fy+fx.
-    let src_idx = (m.frm.1 as usize) * n + (m.frm.0 as usize);
-    let src_head = Head::lin(n as i128, fy).add_lin(1, fx);
+    // source particle: read from old at the WITNESSED source (fx,fy) via a row×column √n
+    // read — `fp == old[n*fy+fx]`, the row `fy` and column `fx` each pinned by an n-wide
+    // one-hot (2n selectors, not n²).
     let fp = b.alloc(
         format!("{tag}_fp_v"),
         ColumnKind::Value,
         old.cell_at(m.frm) as i128,
     );
-    b.one_hot_read(&format!("{tag}_fp"), old_cols, src_idx, &src_head, fp);
+    b.read_rowcol(
+        &format!("{tag}_fp"),
+        old_cols,
+        n,
+        m.frm.0 as usize,
+        &Head::lin(1, fx),
+        m.frm.1 as usize,
+        &Head::lin(1, fy),
+        fp,
+    );
     (fx, fy, tx, ty, fp)
 }
 
@@ -263,13 +272,19 @@ fn validate_occlusion(
     occ
 }
 
-/// One surviving piece's placement data: its witnessed source index + head, its
-/// (in-circuit-derived) destination index + head, its particle column and carry bit.
+/// One surviving piece's placement data: its witnessed source row/column hot indices +
+/// heads, its (in-circuit-derived) destination row/column hot indices + heads, its particle
+/// column and carry bit. The row×column form addresses each cell by a product of two n-wide
+/// one-hots (2n selectors per endpoint, not n²).
 struct Placement {
-    src_idx: usize,
-    src_head: Head,
-    dest_idx: usize,
-    dest_head: Head,
+    src_x_hot: usize,
+    src_x_head: Head,
+    src_y_hot: usize,
+    src_y_head: Head,
+    dest_x_hot: usize,
+    dest_x_head: Head,
+    dest_y_hot: usize,
+    dest_y_head: Head,
     particle: usize,
     carry: usize,
 }
@@ -289,20 +304,40 @@ fn write_mid_witnessed(
     pieces: Vec<Placement>,
 ) {
     let k = n * n;
-    let mut sels: Vec<(Vec<usize>, Vec<usize>)> = Vec::with_capacity(pieces.len());
+    // Each endpoint is a row×column one-hot pair; cell (x,y) is addressed by the product
+    // `sel_row[y]·sel_col[x]` — 2n selectors per endpoint instead of n².
+    #[allow(clippy::type_complexity)]
+    let mut sels: Vec<(Vec<usize>, Vec<usize>, Vec<usize>, Vec<usize>)> =
+        Vec::with_capacity(pieces.len());
     for (i, p) in pieces.iter().enumerate() {
-        let sel_src = b.one_hot(&format!("wsrc{i}"), k, p.src_idx, &p.src_head);
-        let sel_dst = b.one_hot(&format!("wdst{i}"), k, p.dest_idx, &p.dest_head);
-        sels.push((sel_src, sel_dst));
+        let (src_row, src_col) = b.one_hot_rowcol(
+            &format!("wsrc{i}"),
+            n,
+            p.src_x_hot,
+            &p.src_x_head,
+            p.src_y_hot,
+            &p.src_y_head,
+        );
+        let (dst_row, dst_col) = b.one_hot_rowcol(
+            &format!("wdst{i}"),
+            n,
+            p.dest_x_hot,
+            &p.dest_x_head,
+            p.dest_y_hot,
+            &p.dest_y_head,
+        );
+        sels.push((src_row, src_col, dst_row, dst_col));
     }
     for c in 0..k {
+        let x = c % n;
+        let y = c / n;
         let mut expr = Head::lin(1, old_cols[c]);
         for (i, p) in pieces.iter().enumerate() {
-            let (ssrc, sdst) = &sels[i];
-            // clear carried source: - carry * sel_src[c] * old[c]
-            expr = expr.add_prod(-1, vec![p.carry, ssrc[c], old_cols[c]]);
-            // place at dest: + carry * sel_dst[c] * particle
-            expr = expr.add_prod(1, vec![p.carry, sdst[c], p.particle]);
+            let (src_row, src_col, dst_row, dst_col) = &sels[i];
+            // clear carried source: - carry * sel_src_row[y] * sel_src_col[x] * old[c]
+            expr = expr.add_prod(-1, vec![p.carry, src_row[y], src_col[x], old_cols[c]]);
+            // place at dest: + carry * sel_dst_row[y] * sel_dst_col[x] * particle
+            expr = expr.add_prod(1, vec![p.carry, dst_row[y], dst_col[x], p.particle]);
         }
         b.assert_zero(&Head::lin(1, mid_cols[c]).append(&expr.scale(-1)));
     }
@@ -365,20 +400,20 @@ pub fn build_d2_bound(
             .add_prod(1, vec![src_nz, occ]),
     );
     // destination = to when carries (single move: dest is m.to, indexed by witnessed tx,ty).
-    let src_head = Head::lin(n as i128, fy).add_lin(1, fx);
-    let dest_head = Head::lin(n as i128, ty).add_lin(1, tx);
-    let src_idx = (m.frm.1 as usize) * n + (m.frm.0 as usize);
-    let dest_idx = (m.to.1 as usize) * n + (m.to.0 as usize);
     write_mid_witnessed(
         &mut b,
         n,
         &old_cols,
         &mid_cols,
         vec![Placement {
-            src_idx,
-            src_head,
-            dest_idx,
-            dest_head,
+            src_x_hot: m.frm.0 as usize,
+            src_x_head: Head::lin(1, fx),
+            src_y_hot: m.frm.1 as usize,
+            src_y_head: Head::lin(1, fy),
+            dest_x_hot: m.to.0 as usize,
+            dest_x_head: Head::lin(1, tx),
+            dest_y_hot: m.to.1 as usize,
+            dest_y_head: Head::lin(1, ty),
             particle: fp,
             carry,
         }],
@@ -558,31 +593,26 @@ pub fn build_d3_bound(
     let fb3 = bld.alloc_prod("ftb3", fb2, n_occa);
     let ft_b = bld.alloc_prod("ft_b", fb3, n_eqab);
 
-    let ne = n as i128;
-    let toa_idx = (ma.to.1 as usize) * n + (ma.to.0 as usize);
-    let tob_idx = (mb.to.1 as usize) * n + (mb.to.0 as usize);
     let ft_a_val = bld.value(ft_a).0 as i128;
     let ft_b_val = bld.value(ft_b).0 as i128;
-    // dest_a index = to_a_idx + ft_a*(to_b_idx - to_a_idx), a proven fn of the coords + ft_a.
-    let dest_a_idx = (toa_idx as i128 + ft_a_val * (tob_idx as i128 - toa_idx as i128)) as usize;
-    let dest_a_head = Head::lin(ne, tya)
-        .add_lin(1, txa)
-        .add_prod(ne, vec![ft_a, tyb])
+    // dest_a x-index = to_a.x + ft_a*(to_b.x - to_a.x); y-index likewise. Each a proven fn
+    // of the (witnessed) coords + ft_a — the row/column split of the flow-through endpoint.
+    let dest_a_x_hot = (ma.to.0 as i128 + ft_a_val * (mb.to.0 as i128 - ma.to.0 as i128)) as usize;
+    let dest_a_y_hot = (ma.to.1 as i128 + ft_a_val * (mb.to.1 as i128 - ma.to.1 as i128)) as usize;
+    let dest_a_x_head = Head::lin(1, txa)
         .add_prod(1, vec![ft_a, txb])
-        .add_prod(-ne, vec![ft_a, tya])
         .add_prod(-1, vec![ft_a, txa]);
-    let dest_b_idx = (tob_idx as i128 + ft_b_val * (toa_idx as i128 - tob_idx as i128)) as usize;
-    let dest_b_head = Head::lin(ne, tyb)
-        .add_lin(1, txb)
-        .add_prod(ne, vec![ft_b, tya])
+    let dest_a_y_head = Head::lin(1, tya)
+        .add_prod(1, vec![ft_a, tyb])
+        .add_prod(-1, vec![ft_a, tya]);
+    let dest_b_x_hot = (mb.to.0 as i128 + ft_b_val * (ma.to.0 as i128 - mb.to.0 as i128)) as usize;
+    let dest_b_y_hot = (mb.to.1 as i128 + ft_b_val * (ma.to.1 as i128 - mb.to.1 as i128)) as usize;
+    let dest_b_x_head = Head::lin(1, txb)
         .add_prod(1, vec![ft_b, txa])
-        .add_prod(-ne, vec![ft_b, tyb])
         .add_prod(-1, vec![ft_b, txb]);
-
-    let src_a_idx = (ma.frm.1 as usize) * n + (ma.frm.0 as usize);
-    let src_b_idx = (mb.frm.1 as usize) * n + (mb.frm.0 as usize);
-    let src_a_head = Head::lin(ne, fya).add_lin(1, fxa);
-    let src_b_head = Head::lin(ne, fyb).add_lin(1, fxb);
+    let dest_b_y_head = Head::lin(1, tyb)
+        .add_prod(1, vec![ft_b, tya])
+        .add_prod(-1, vec![ft_b, tyb]);
 
     write_mid_witnessed(
         &mut bld,
@@ -591,18 +621,26 @@ pub fn build_d3_bound(
         &mid_cols,
         vec![
             Placement {
-                src_idx: src_a_idx,
-                src_head: src_a_head,
-                dest_idx: dest_a_idx,
-                dest_head: dest_a_head,
+                src_x_hot: ma.frm.0 as usize,
+                src_x_head: Head::lin(1, fxa),
+                src_y_hot: ma.frm.1 as usize,
+                src_y_head: Head::lin(1, fya),
+                dest_x_hot: dest_a_x_hot,
+                dest_x_head: dest_a_x_head,
+                dest_y_hot: dest_a_y_hot,
+                dest_y_head: dest_a_y_head,
                 particle: fpa,
                 carry: carry_a,
             },
             Placement {
-                src_idx: src_b_idx,
-                src_head: src_b_head,
-                dest_idx: dest_b_idx,
-                dest_head: dest_b_head,
+                src_x_hot: mb.frm.0 as usize,
+                src_x_head: Head::lin(1, fxb),
+                src_y_hot: mb.frm.1 as usize,
+                src_y_head: Head::lin(1, fyb),
+                dest_x_hot: dest_b_x_hot,
+                dest_x_head: dest_b_x_head,
+                dest_y_hot: dest_b_y_hot,
+                dest_y_head: dest_b_y_head,
                 particle: fpb,
                 carry: carry_b,
             },

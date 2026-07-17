@@ -426,6 +426,146 @@ impl Builder {
         self.assert_zero(&rd);
     }
 
+    // -------- row×column √n reads/writes (C.2) --------
+    //
+    // A board read `board[y·n+x]` addressed by ONE n²-wide one-hot costs n² selector
+    // columns. The row×column form pins the row and column INDEPENDENTLY with two n-wide
+    // one-hots `sel_row[y]` (pinned to `y_head`) and `sel_col[x]` (pinned to `x_head`) —
+    // 2n selectors, not n² — and addresses cell `(x,y)` by the PRODUCT `sel_row[y]·sel_col[x]`.
+    // `val = Σ_y Σ_x sel_row[y]·sel_col[x]·board[y·n+x]` is hash/lookup-free, degree 3, and
+    // SEMANTICS-PRESERVING: `sel_row`/`sel_col` are each a single-hot (Σ=1, Σ index-pinned),
+    // so exactly one product term is 1 and the read is the genuine addressed cell.
+
+    /// A row×column pair of one-hots over an `n`×`n` board: `sel_row` (n-wide, hot at
+    /// `y_hot`, pinned to `y_head`) and `sel_col` (n-wide, hot at `x_hot`, pinned to
+    /// `x_head`). 2n selectors instead of the n² of a flat one-hot. Addressing cell
+    /// `(x,y)` is the product `sel_row[y]·sel_col[x]`.
+    pub fn one_hot_rowcol(
+        &mut self,
+        tag: &str,
+        n: usize,
+        x_hot: usize,
+        x_head: &Head,
+        y_hot: usize,
+        y_head: &Head,
+    ) -> (Vec<usize>, Vec<usize>) {
+        let sel_row = self.one_hot(&format!("{tag}_r"), n, y_hot, y_head);
+        let sel_col = self.one_hot(&format!("{tag}_c"), n, x_hot, x_head);
+        (sel_row, sel_col)
+    }
+
+    /// Random-access board read via a row×column one-hot pair: `value_col == board[y·n+x]`,
+    /// where the row `y` is pinned to `y_head` and the column `x` to `x_head`. Degree 3
+    /// (`sel_row·sel_col·board`). The n²-wide twin of [`Self::one_hot_read`], at 2n selectors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_rowcol(
+        &mut self,
+        tag: &str,
+        board_cols: &[usize],
+        n: usize,
+        x_hot: usize,
+        x_head: &Head,
+        y_hot: usize,
+        y_head: &Head,
+        value_col: usize,
+    ) {
+        let (sel_row, sel_col) = self.one_hot_rowcol(tag, n, x_hot, x_head, y_hot, y_head);
+        // value - Σ_y Σ_x sel_row[y]·sel_col[x]·board[y·n+x] == 0.
+        let mut rd = Head::lin(1, value_col);
+        for y in 0..n {
+            for x in 0..n {
+                rd = rd.add_prod(-1, vec![sel_row[y], sel_col[x], board_cols[y * n + x]]);
+            }
+        }
+        self.assert_zero(&rd);
+    }
+
+    /// A GATED row×column one-hot pair: each of `sel_row`/`sel_col` sums to `gate` (all
+    /// zero when the gate is off), and when on one-hots at `y_head`/`x_head`. So the cell
+    /// address `sel_row[y]·sel_col[x]` is zero everywhere when `gate == 0`, and the single
+    /// addressed cell when `gate == 1`. The row×column twin of [`Self::one_hot_gated`].
+    #[allow(clippy::too_many_arguments)]
+    pub fn one_hot_rowcol_gated(
+        &mut self,
+        tag: &str,
+        n: usize,
+        gate_col: usize,
+        x_hot: usize,
+        x_head: &Head,
+        y_hot: usize,
+        y_head: &Head,
+    ) -> (Vec<usize>, Vec<usize>) {
+        let sel_row = self.one_hot_gated(&format!("{tag}_r"), n, gate_col, y_hot, y_head);
+        let sel_col = self.one_hot_gated(&format!("{tag}_c"), n, gate_col, x_hot, x_head);
+        (sel_row, sel_col)
+    }
+
+    /// Gated random-access read via a row×column one-hot pair: `value_col == board[y·n+x]`
+    /// when `gate` is on, else `value_col == 0` (the OOB/wall convention — the gated
+    /// selectors are all zero, so the sum vanishes). Degree 3. The row×column twin of
+    /// [`Self::one_hot_read_gated`], at 2n selectors.
+    #[allow(clippy::too_many_arguments)]
+    pub fn read_rowcol_gated(
+        &mut self,
+        tag: &str,
+        board_cols: &[usize],
+        n: usize,
+        gate_col: usize,
+        x_hot: usize,
+        x_head: &Head,
+        y_hot: usize,
+        y_head: &Head,
+        value_col: usize,
+    ) {
+        let (sel_row, sel_col) =
+            self.one_hot_rowcol_gated(tag, n, gate_col, x_hot, x_head, y_hot, y_head);
+        // value - Σ_y Σ_x sel_row[y]·sel_col[x]·board[y·n+x] == 0 (the gated selectors zero
+        // the whole sum when the gate is off, giving value == 0).
+        let mut rd = Head::lin(1, value_col);
+        for y in 0..n {
+            for x in 0..n {
+                rd = rd.add_prod(-1, vec![sel_row[y], sel_col[x], board_cols[y * n + x]]);
+            }
+        }
+        self.assert_zero(&rd);
+    }
+
+    /// Ray-scan read reusing an already-proven row×column one-hot pair (`sel_row`/`sel_col`
+    /// pinned to the auto position), shifted by a COMPILE-TIME cardinal step `(sx, sy)`:
+    /// `value_col == board[(y+sy)·n + (x+sx)]` when `gate` is on and the shifted cell is in
+    /// bounds, else `value_col == 0`. Allocates NO new selector columns — the row×column twin
+    /// of [`Self::shifted_read_gated`]. The 2-D bounds check (both `x+sx` and `y+sy` in range)
+    /// is exact (no flat-index row-wrap). Degree 4 (`gate·sel_row·sel_col·board`).
+    #[allow(clippy::too_many_arguments)]
+    pub fn shifted_read_rowcol_gated(
+        &mut self,
+        sel_row: &[usize],
+        sel_col: &[usize],
+        board_cols: &[usize],
+        n: usize,
+        gate_col: usize,
+        sx: i128,
+        sy: i128,
+        value_col: usize,
+    ) {
+        let mut rd = Head::lin(1, value_col);
+        for y in 0..n {
+            let ty = y as i128 + sy;
+            if ty < 0 || ty as usize >= n {
+                continue;
+            }
+            for x in 0..n {
+                let tx = x as i128 + sx;
+                if tx < 0 || tx as usize >= n {
+                    continue;
+                }
+                let idx = (ty as usize) * n + (tx as usize);
+                rd = rd.add_prod(-1, vec![gate_col, sel_row[y], sel_col[x], board_cols[idx]]);
+            }
+        }
+        self.assert_zero(&rd);
+    }
+
     /// A fresh column pinned to the product of two columns (`out == a*b`).
     pub fn alloc_prod(&mut self, name: &str, a: usize, b: usize) -> usize {
         let v = (self.values[a] * self.values[b]).0 as i128;
