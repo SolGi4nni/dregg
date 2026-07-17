@@ -53,6 +53,7 @@
 
 use std::collections::HashMap;
 
+use dregg_intent::call_clearing::{Ask, Bid, clear_uniform_price};
 use dregg_payable::{AssetId, InvokeAuthority, InvokeRefused, resolve_pay};
 use dregg_turn::action::{Action, Effect};
 use dregg_types::CellId;
@@ -86,6 +87,68 @@ pub enum RunSettlementMode {
     /// balance in the internal run-credit asset; a run is one conserving
     /// `Effect::Transfer` from the user's cell. No custody key, no sweeper.
     ProtocolNative,
+}
+
+/// **How a run's price (in run-credits) is chosen — Track C rung 3.**
+///
+/// Additive over the fixed-price rail: [`RunPricing::Fixed`] is the default and
+/// charges a hardcoded constant (rung 2a's [`DEFAULT_RUN_PRICE_CREDITS`]);
+/// [`RunPricing::Drex`] instead **discovers** the price by clearing a two-sided
+/// book of bids and asks through the DrEX uniform-price call auction
+/// ([`dregg_intent::call_clearing`]). Selecting a mode changes only the *scalar*
+/// the run is priced at — the charge is still exactly one conserving
+/// `Effect::Transfer` (per-asset Σδ = 0), so conservation is independent of where
+/// the price came from.
+///
+/// The DrEX mode is **fail-closed on a non-crossing book**: if bids do not cross
+/// asks (an empty side, or every bid below every ask), the clearing yields no
+/// price and the run falls back to `fallback` rather than charge a garbage price
+/// (e.g. `0`, which would give away runs, or an inflated bid).
+#[derive(Clone, Debug, PartialEq, Eq)]
+pub enum RunPricing {
+    /// Charge a fixed, hardcoded price in run-credits. The rung-2a behaviour.
+    Fixed(u64),
+    /// Discover the price by DrEX ring-clearing the given book. On a non-crossing
+    /// book, fall back to `fallback` credits (fail-closed, no garbage price).
+    Drex {
+        /// The demand side of the run-credit book (buyers of run capacity).
+        bids: Vec<Bid>,
+        /// The supply side of the run-credit book (sellers of run capacity).
+        asks: Vec<Ask>,
+        /// The safe price charged when the book does not cross.
+        fallback: u64,
+    },
+}
+
+impl RunPricing {
+    /// The default fixed-price rail: charge exactly [`DEFAULT_RUN_PRICE_CREDITS`].
+    pub fn fixed_default() -> Self {
+        Self::Fixed(DEFAULT_RUN_PRICE_CREDITS)
+    }
+
+    /// **Resolve the price this run charges, in run-credits.**
+    ///
+    /// * [`RunPricing::Fixed`] → the constant, unchanged.
+    /// * [`RunPricing::Drex`] → the DrEX uniform clearing price when the book
+    ///   crosses; otherwise `fallback` (fail-closed — a non-crossing book never
+    ///   charges the raw bid or `0`).
+    ///
+    /// Pure: this only reads the book to price it. It moves no value — the
+    /// returned scalar feeds the single conserving [`RunBudgetLedger::charge_run`]
+    /// transfer.
+    pub fn resolve(&self) -> u64 {
+        match self {
+            Self::Fixed(p) => *p,
+            Self::Drex {
+                bids,
+                asks,
+                fallback,
+            } => match clear_uniform_price(bids, asks) {
+                Some(result) => result.price,
+                None => *fallback,
+            },
+        }
+    }
 }
 
 /// Why a protocol-native run charge was refused. Every variant is fail-closed:
@@ -272,6 +335,31 @@ impl RunBudgetLedger {
             remaining,
         })
     }
+
+    /// **Settle a run at a DrEX-discovered price (Track C rung 3).**
+    ///
+    /// Identical to [`RunBudgetLedger::charge_run`] except the price is chosen by
+    /// `pricing` rather than passed in: [`RunPricing::Fixed`] keeps the hardcoded
+    /// constant (the default rail), [`RunPricing::Drex`] charges the uniform
+    /// clearing price of a two-sided book (or its safe fallback on a non-crossing
+    /// book). The charge is still exactly **one** conserving `Effect::Transfer` —
+    /// only the amount differs — so per-asset Σδ = 0 regardless of pricing mode.
+    ///
+    /// Fail-closed end to end: a garbage clearing cannot charge a garbage price
+    /// (the fallback is charged instead), and a resolved price above the user's
+    /// budget refuses the run and moves nothing exactly as [`charge_run`] does.
+    ///
+    /// [`charge_run`]: RunBudgetLedger::charge_run
+    pub fn charge_run_priced(
+        &mut self,
+        user: CellId,
+        operator: CellId,
+        pricing: &RunPricing,
+        authority: InvokeAuthority,
+    ) -> Result<RunReceipt, ChargeError> {
+        let price = pricing.resolve();
+        self.charge_run(user, operator, price, authority)
+    }
 }
 
 #[cfg(test)]
@@ -424,5 +512,153 @@ mod tests {
     fn run_credit_asset_is_stable_and_domain_separated() {
         assert_eq!(run_credit_asset(), run_credit_asset());
         assert_ne!(run_credit_asset(), [0u8; 32]);
+    }
+
+    // ----- Track C rung 3: DrEX-priced run credit ---------------------------
+
+    /// A DrEX-priced run charges the CLEARED price, not the fixed constant, and
+    /// the transfer still conserves (per-asset Σδ = 0). Non-vacuous: the cleared
+    /// price (10) differs from `DEFAULT_RUN_PRICE_CREDITS` (1), so a rail that
+    /// ignored the clearing and charged the constant would fail the debit assert.
+    #[test]
+    fn drex_run_charges_the_cleared_price_conserving() {
+        let (mut l, user, operator) = ledger(20);
+        let total_before = l.total();
+
+        // Buyer bids up to 12, seller asks down to 8 → uniform clearing price 10.
+        let pricing = RunPricing::Drex {
+            bids: vec![Bid::new(12, 5)],
+            asks: vec![Ask::new(8, 5)],
+            fallback: DEFAULT_RUN_PRICE_CREDITS,
+        };
+        assert_eq!(pricing.resolve(), 10, "the book clears at the midpoint 10");
+        assert_ne!(
+            pricing.resolve(),
+            DEFAULT_RUN_PRICE_CREDITS,
+            "the cleared price is NOT the fixed constant"
+        );
+
+        let receipt = l
+            .charge_run_priced(user, operator, &pricing, InvokeAuthority::Signature)
+            .expect("a funded budget settles the DrEX-priced run");
+
+        assert_eq!(receipt.debited, 10, "charged the DrEX-cleared price, not 1");
+        assert_eq!(
+            l.total(),
+            total_before,
+            "per-asset Σδ must be 0 across the run"
+        );
+        assert_eq!(
+            l.balance(&user),
+            10,
+            "user debited exactly the cleared price"
+        );
+        assert_eq!(
+            l.balance(&operator),
+            10,
+            "operator credited exactly the cleared price"
+        );
+        assert_eq!(
+            receipt.transfer(),
+            Some((user, operator, 10)),
+            "one conserving Transfer of the cleared price from the user cell"
+        );
+    }
+
+    /// An empty (non-crossing) clearing falls back SAFELY: it charges the fallback
+    /// price, never a garbage price such as 0 (which would give the run away).
+    #[test]
+    fn empty_clearing_falls_back_safely() {
+        let (mut l, user, operator) = ledger(20);
+
+        // No asks: the book cannot cross. Fallback = 3 credits.
+        let pricing = RunPricing::Drex {
+            bids: vec![Bid::new(50, 10)],
+            asks: vec![],
+            fallback: 3,
+        };
+        assert_eq!(
+            pricing.resolve(),
+            3,
+            "a non-crossing book charges the fallback"
+        );
+        assert_ne!(pricing.resolve(), 0, "never a free run on empty clearing");
+
+        let receipt = l
+            .charge_run_priced(user, operator, &pricing, InvokeAuthority::Signature)
+            .expect("the fallback price settles");
+        assert_eq!(
+            receipt.debited, 3,
+            "charged the safe fallback, not a garbage price"
+        );
+        assert_eq!(l.balance(&user), 17);
+        assert_eq!(l.balance(&operator), 3);
+    }
+
+    /// The clearing is a REAL crossing: a bid strictly below the ask does not
+    /// clear, so the run charges the fallback — NOT the bid, the ask, or 0. A
+    /// stub that "cleared" any non-empty book would charge a market price here.
+    #[test]
+    fn bid_below_ask_does_not_clear_and_falls_back() {
+        let (mut l, user, operator) = ledger(20);
+
+        // Bid 5 is strictly below ask 10 → no crossing.
+        let pricing = RunPricing::Drex {
+            bids: vec![Bid::new(5, 10)],
+            asks: vec![Ask::new(10, 10)],
+            fallback: 2,
+        };
+        assert_eq!(
+            pricing.resolve(),
+            2,
+            "a bid below the ask does not clear; the fallback is charged"
+        );
+
+        let receipt = l
+            .charge_run_priced(user, operator, &pricing, InvokeAuthority::Signature)
+            .expect("the fallback settles");
+        assert_eq!(
+            receipt.debited, 2,
+            "no crossing ⇒ fallback, not the bid/ask"
+        );
+        assert_eq!(l.balance(&user), 18);
+        assert_eq!(l.balance(&operator), 2);
+    }
+
+    /// The fixed-price mode remains the default rail: `RunPricing::fixed_default()`
+    /// resolves to the constant and charges exactly it (rung 2a behaviour intact).
+    #[test]
+    fn fixed_price_mode_is_unchanged_default() {
+        let (mut l, user, operator) = ledger(5);
+        let pricing = RunPricing::fixed_default();
+        assert_eq!(pricing.resolve(), DEFAULT_RUN_PRICE_CREDITS);
+        let receipt = l
+            .charge_run_priced(user, operator, &pricing, InvokeAuthority::Signature)
+            .expect("fixed default settles");
+        assert_eq!(receipt.debited, DEFAULT_RUN_PRICE_CREDITS);
+        assert_eq!(l.balance(&user), 4);
+    }
+
+    /// A DrEX-cleared price above the user's budget refuses the run and moves
+    /// nothing — fail-closed exactly like the fixed rail.
+    #[test]
+    fn drex_price_over_budget_refuses_and_moves_nothing() {
+        let (mut l, user, operator) = ledger(3);
+        let total_before = l.total();
+        // Clears at 10, but the user holds only 3.
+        let pricing = RunPricing::Drex {
+            bids: vec![Bid::new(12, 5)],
+            asks: vec![Ask::new(8, 5)],
+            fallback: DEFAULT_RUN_PRICE_CREDITS,
+        };
+        let err = l
+            .charge_run_priced(user, operator, &pricing, InvokeAuthority::Signature)
+            .expect_err("a cleared price above budget must refuse");
+        assert!(
+            matches!(err, ChargeError::InsufficientBudget { have: 3, need: 10 }),
+            "fail-closed on a cleared price over budget, got {err:?}"
+        );
+        assert_eq!(l.total(), total_before, "a refused run moves nothing");
+        assert_eq!(l.balance(&user), 3, "user balance untouched");
     }
 }

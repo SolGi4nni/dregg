@@ -63,6 +63,7 @@
 
 pub mod agent_mandate;
 pub mod bond;
+pub mod call_clearing;
 pub mod commit_reveal_fulfillment;
 pub mod cross_fed;
 pub mod delay_pool;

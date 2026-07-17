@@ -34,6 +34,13 @@ collective-choice = { path = "../collective-choice" }
 # construction (builds an `Action`; never runs the executor / Lean producer). No
 # cycle: dregg-payable depends only on types/cell/turn, none of which touch dregg-pay.
 dregg-payable = { path = "../dregg-payable" }
+# The DrEX uniform-price call-clearing primitive (`call_clearing`): a run credit's
+# price is DISCOVERED by a two-sided book crossing (Track C rung 3) instead of a
+# hardcoded constant. Read-only reuse of a PURE price-discovery function — it moves
+# no value; the cleared scalar feeds the same one conserving `resolve_pay` Transfer.
+# No cycle: dregg-intent depends on {cell,circuit,bridge,turn,…}, none of which is
+# dregg-pay, and dregg-pay already pulls dregg-intent transitively via dregg-governance.
+dregg-intent = { path = "../intent" }
 # The kernel `Effect::Transfer` type the run desugars to, and the `CellId` value id.
 dregg-turn = { path = "../turn" }
 dregg-types = { path = "../types" }
