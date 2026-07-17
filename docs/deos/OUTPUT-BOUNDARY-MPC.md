@@ -324,15 +324,51 @@ committed coefficients — the novel part (the MPC comparison on real shares) is
 runs; the RLWE→shares step is native threshold-FHE, not built here. (iv) semi-honest
 security; malicious-secure online phase is §8.
 
+### §7.5 MASKED DECRYPT-TO-SHARES — the decrypt-into-shares step, made real (measured)
+
+The one modelled step above — "sharing the true committed coefficients" — is now a
+real protocol (`fhegg-fhe/src/boundary.rs` + `fhe-boundary-bench`), and it dissolves
+the missing primitive the same way §4 dissolved the scheme-switch: **mask, THEN
+decrypt.** Each party homomorphically adds an encrypted uniform `Z_t` mask to the
+folded curve ciphertext (`ct' = ct ⊞ Enc(r_0) ⊞ … ⊞ Enc(r_{n-1})` — n more
+carry-free adds); the decryption then opens ONLY `y = (m + Σr_i) mod t`, an **exact
+one-time pad** (enumeration-proven over the full mask space, even against a
+coalition knowing all-but-one mask — `pad_is_exact_and_secret_independent`); each
+party derives its mod-t share LOCALLY (`σ_0 = y − r_0`, `σ_i = −r_i`); one
+`a2b_mod_t` bridge (exact secret-shared sum + n−1 oblivious conditional
+subtractions of the public `t`) feeds the UNCHANGED crossing. So production needs
+no new partial-decrypt primitive at all — the EXISTING federation threshold-decrypt
+is pointed at `ct'`, because its output is now safe to open.
+
+Measured (M2 Max, real BFV + real MPC, every row exactly equal to the plaintext
+reference; `AGG→p*` = mask + decrypt + a2b + crossing — the R4 decisive metric):
+
+| N | K | n | fold | mask | decrypt | a2b | crossing | **AGG→p\*** |
+|---|---|---|---|---|---|---|---|---|
+| 32 | 64 | 3 | 0.3 ms | 4.6 ms | 1.0 ms | 9.8 ms | 1.9 ms | **17.4 ms** |
+| 128 | 64 | 4 | 1.4 ms | 6.4 ms | 1.0 ms | 13.5 ms | 2.1 ms | **23.1 ms** |
+| 512 | 64 | 3 | 5.8 ms | 5.1 ms | 1.1 ms | 8.8 ms | 2.0 ms | **16.9 ms** |
+| 128 | 256 | 4 | 1.4 ms | 6.5 ms | 1.0 ms | 59.4 ms | 8.7 ms | **75.6 ms** |
+
+The Tier-0 value channel now has **no modelled step**: fold (carry-free BFV) →
+masked opening (one-time pad) → mod-t shares → a2b → Beaver crossing → `(p*,V*)`,
+all measured, tens of milliseconds of compute end-to-end after order encryption.
+Honest scope: the PoC decrypts `ct'` with the in-process key (production = the
+existing federation threshold decrypt); the decryption NOISE channel (IND-CPA-D)
+still wants standard smudging noise in the threshold decrypt — named below.
+
 ---
 
 ## 8. The named frontier (honest residuals)
 
-- **Threshold-BFV partial-decrypt-into-shares.** Native to the scheme (each party
-  applies its key share to the aggregate ciphertext, yielding a plaintext share)
-  but not implemented in `fhe.rs`/`tfhe-rs` — the real deployment builds it on the
-  threshold-FHE stack (Zama TKMS or the in-house `federation/threshold_decrypt`
-  extended to BFV). **Grade: named, standard, un-built here.**
+- **Threshold-BFV partial-decrypt-into-shares — CLOSED at PoC scope (§7.5).** The
+  masked-decrypt construction removes the need for a dedicated primitive: masking
+  makes the decryption's output a one-time-padded value, so the EXISTING
+  threshold-decrypt stack (the in-house `federation/threshold_decrypt` pointed at
+  BFV, or Zama TKMS) is the whole production requirement. Remaining: run that
+  existing stack against `ct'` (deployment wiring, not a new primitive), and add
+  smudging noise for the decryption-noise channel (below). **Grade: value channel
+  built + measured + KAT'd; threshold wiring + noise smudging named.**
 - **Malicious security.** The PoC online phase is semi-honest. Malicious security
   (a deviating party cannot learn more than `(p*,V*)` nor force an undetected wrong
   result beyond what the STARK catches) needs authenticated shares (SPDZ MACs) +

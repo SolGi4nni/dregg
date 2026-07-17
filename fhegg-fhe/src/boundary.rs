@@ -70,7 +70,7 @@ use crate::mpc::{
     const_int, geq, mpc_crossing, secure_add, select_int, share_int, triples_needed, Crossing,
     SharedInt, Transcript, TriplePool,
 };
-use crate::{Order, Side};
+use crate::Order;
 
 /// Bits needed to hold `x` (`⌈log₂(x+1)⌉`, min 1).
 fn bits_for(x: u64) -> usize {
@@ -345,7 +345,7 @@ pub fn masked_opening_histogram(
 mod tests {
     use super::*;
     use crate::additive::pick_params;
-    use crate::reference_clear;
+    use crate::{reference_clear, Side};
     use rand::rngs::StdRng;
     use rand::SeedableRng;
 
