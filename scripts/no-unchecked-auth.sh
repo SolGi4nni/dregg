@@ -187,6 +187,18 @@ offenders=()
 # shellcheck disable=SC2207
 files=($(git ls-files '*.rs' 2>/dev/null || find . -name '*.rs' -type f))
 
+# ARM THE GATE. If the enumeration yields ZERO `.rs` files this scan reports "ok"
+# having examined NOTHING — the classic silent no-op (e.g. run from a tree with no
+# sources, or a `git ls-files` that succeeded-but-empty so the `|| find` fallback
+# never fired). A production auth-literal tripwire that scanned nothing must never
+# be mistaken for a clean tree. Fail LOUD instead.
+if [ "${#files[@]}" -eq 0 ]; then
+    echo "no-unchecked-auth.sh: FATAL — found ZERO .rs files to scan under $ROOT." >&2
+    echo "  The guard examined nothing; a green here would be meaningless. Run from the" >&2
+    echo "  repo root (or pass it as \$1) so the production auth surface is actually scanned." >&2
+    exit 2
+fi
+
 for file in "${files[@]}"; do
     # Skip test-shaped paths.
     case "$file" in
