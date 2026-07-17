@@ -277,9 +277,20 @@ jobs:
           test -s site/dist/light-client/history.json
           # the atlas + its materialized (non-LFS-stub) images
           test -f site/dist/atlas/index.html
-          if head -c 20 site/dist/atlas/ui-states/HOME_.jpg 2>/dev/null | grep -q '^version https://gi'; then
-            echo "ERROR: atlas image is an unmaterialized LFS pointer — checkout needs lfs:true" && exit 1
-          fi
+          # The atlas image MUST exist AND not be an unmaterialized LFS pointer. The old
+          # `head -c 20 … | grep -q` form was TWICE-blind: (1) `2>/dev/null` on a MISSING
+          # file made the pipe empty, grep -q returned no-match, and a wholly-absent image
+          # sailed through as "fine"; (2) under `set -o pipefail`, grep -q exiting on the
+          # first matched line SIGPIPEs `head`, so a genuine pointer could flip the pipeline
+          # to non-zero and be read as "no pointer". Capture the header (existence is a hard
+          # `test -f`, so absence fails LOUD) and match with `case` — no pipe, no SIGPIPE.
+          atlas_img=site/dist/atlas/ui-states/HOME_.jpg
+          test -f "$atlas_img" || { echo "ERROR: atlas image $atlas_img is MISSING from the built dist" && exit 1; }
+          atlas_hdr="$(head -c 20 "$atlas_img")"
+          case "$atlas_hdr" in
+            'version https://gi'*)
+              echo "ERROR: atlas image is an unmaterialized LFS pointer — checkout needs lfs:true" && exit 1 ;;
+          esac
           echo "dist OK: $(find site/dist -type f | wc -l) files"
 
       - name: Upload Pages artifact
