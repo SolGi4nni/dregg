@@ -29,14 +29,18 @@
 //!     evaluating that single constraint, so the reject cannot be credited to a
 //!     neighbouring tooth);
 //!   * an **over-deep stack** — breaks the overflow guard, the honest statement of the
-//!     `D` bound (a push that does not fit REJECTS instead of silently dropping).
+//!     `D` bound (a push that does not fit REJECTS instead of silently dropping);
+//!   * a **WRAPPED / out-of-range depth** — breaks the depth range `0 ≤ STACK_DEPTH ≤ D`
+//!     (isolated to that single vanishing poly). The depth deltas are field congruences,
+//!     so a depth of `p − 1` reads as `−1` and satisfies every one of them; only the
+//!     range tooth refuses it.
 
 use dregg_circuit::dsl::circuit::{CircuitDescriptor, ConstraintExpr};
 use dregg_circuit::dsl::dyck_stack::{
-    RULE_EMPTY, SYM_CL, SYM_EMPTY, build_brackets_witness, build_nested_witness, col,
+    RULE_EMPTY, STACK_D, SYM_CL, SYM_EMPTY, build_brackets_witness, build_nested_witness, col,
     dyck_parse_descriptor, dyck_satisfied, pi,
 };
-use dregg_circuit::field::BabyBear;
+use dregg_circuit::field::{BABYBEAR_P, BabyBear};
 
 const NAME: &str = "dregg-dyck-parse-v1";
 
@@ -141,6 +145,158 @@ fn find_bracket_overflow_guard(desc: &CircuitDescriptor, stack_col: usize) -> &C
         .unwrap_or_else(|| {
             panic!("the descriptor must contain the SEL_BRACKET overflow guard on col {stack_col}")
         })
+}
+
+/// Find the depth-range vanishing poly on `depth_col` — the degree-`(D+1)` product
+/// `∏_{v=0}^{D} (depth − v)`, recognised as the only bare `Polynomial` all of whose terms
+/// are powers of that one column, up to the grid degree. Panics if it was never wired
+/// (which would mean the depth is pinned only by congruences — the pre-range hole).
+fn find_depth_range(desc: &CircuitDescriptor, depth_col: usize) -> &ConstraintExpr {
+    desc.constraints
+        .iter()
+        .find(|c| match c {
+            ConstraintExpr::Polynomial { terms } => {
+                terms.iter().any(|t| t.col_indices.len() == STACK_D + 1)
+                    && terms
+                        .iter()
+                        .all(|t| t.col_indices.iter().all(|&i| i == depth_col))
+            }
+            _ => false,
+        })
+        .unwrap_or_else(|| {
+            panic!("the descriptor must contain the depth-range poly on col {depth_col}")
+        })
+}
+
+// ============================================================================
+// The depth-range canaries: a WRAPPED depth is REFUSED
+// ============================================================================
+
+/// Canary — **wrap the stack depth**. On the honest `"[]"` run, row 3 is `term ']'` at
+/// depth `1 → 0`. Rewrite it as depth `p − 1` (`= −1`) with `DEPTH_NEXT = p − 2` (`= −2`):
+/// a stack that popped below empty and wrapped the field.
+///
+/// The reject is ISOLATED to the range tooth, and the test first PROVES the wrap is
+/// invisible to the constraint that was supposed to be pinning the depth: the `term` delta
+/// `IS_TERM·(DEPTH_NEXT − STACK_DEPTH + 1)` still evaluates to zero, because
+/// `(−2) − (−1) + 1 = 0` holds over the field just as it does over ℤ. Only the vanishing
+/// poly sees that `p − 1` is not one of `{0, …, D}`.
+#[test]
+fn tamper_wrapped_depth_rejects() {
+    let desc = dyck_parse_descriptor(NAME);
+    let (trace, pi_vals) = build_brackets_witness();
+    assert!(
+        dyck_satisfied(&desc, &trace, &pi_vals),
+        "the honest '[]' parse must satisfy the descriptor"
+    );
+
+    const ROW_TERM_CLOSE: usize = 3;
+    let mut tampered = trace.clone();
+    tampered[ROW_TERM_CLOSE][col::STACK_DEPTH] = -BabyBear::ONE; // p - 1
+    tampered[ROW_TERM_CLOSE][col::DEPTH_NEXT] = -BabyBear::new(2); // p - 2
+
+    // The wrapped cells really are the huge field elements, not small negatives.
+    assert_eq!(
+        tampered[ROW_TERM_CLOSE][col::STACK_DEPTH],
+        BabyBear::new(BABYBEAR_P - 1),
+        "the tampered depth is p - 1"
+    );
+
+    // FIRST: the depth DELTA — the tooth that was supposed to pin depth — does NOT bite.
+    let delta = desc
+        .constraints
+        .iter()
+        .find(|c| {
+            matches!(c, ConstraintExpr::Gated { selector_col, inner }
+            if *selector_col == col::IS_TERM
+               && matches!(**inner, ConstraintExpr::Polynomial { .. }))
+        })
+        .expect("the term depth delta must exist");
+    assert_eq!(
+        delta.evaluate(
+            &tampered[ROW_TERM_CLOSE],
+            &tampered[ROW_TERM_CLOSE + 1],
+            &pi_vals
+        ),
+        BabyBear::ZERO,
+        "the wrap is INVISIBLE to the depth delta — this is the hole the range closes"
+    );
+
+    // SECOND: the RANGE tooth, isolated — honest zero, tampered nonzero.
+    let range = find_depth_range(&desc, col::STACK_DEPTH);
+    assert_eq!(
+        range.evaluate(&trace[ROW_TERM_CLOSE], &trace[ROW_TERM_CLOSE + 1], &pi_vals),
+        BabyBear::ZERO,
+        "the honest depth is ON the grid"
+    );
+    assert_ne!(
+        range.evaluate(
+            &tampered[ROW_TERM_CLOSE],
+            &tampered[ROW_TERM_CLOSE + 1],
+            &pi_vals
+        ),
+        BabyBear::ZERO,
+        "THE TOOTH: the wrapped depth is OFF the grid"
+    );
+
+    // And the whole descriptor refuses the trace.
+    assert!(
+        !dyck_satisfied(&desc, &tampered, &pi_vals),
+        "a wrapped STACK_DEPTH must REJECT"
+    );
+}
+
+/// Canary — **an over-deep depth**. `STACK_DEPTH = D + 1` is one push past the buffer: a
+/// legal-looking small integer that is nonetheless not an occupancy the `D`-cell stack can
+/// have. The range tooth refuses it.
+#[test]
+fn tamper_overflowing_depth_rejects() {
+    let desc = dyck_parse_descriptor(NAME);
+    let (trace, pi_vals) = build_brackets_witness();
+    let range = find_depth_range(&desc, col::STACK_DEPTH);
+
+    let mut tampered = trace.clone();
+    tampered[ROW_TERM_OPEN][col::STACK_DEPTH] = BabyBear::new(STACK_D as u32 + 1);
+
+    assert_ne!(
+        range.evaluate(
+            &tampered[ROW_TERM_OPEN],
+            &tampered[ROW_TERM_OPEN + 1],
+            &pi_vals
+        ),
+        BabyBear::ZERO,
+        "a depth of D + 1 is off the grid"
+    );
+    assert!(
+        !dyck_satisfied(&desc, &tampered, &pi_vals),
+        "an over-deep STACK_DEPTH must REJECT"
+    );
+}
+
+/// The `DEPTH_NEXT` witness column carries its OWN range tooth — it is not left to be read
+/// back through the `Transition{STACK_DEPTH <- DEPTH_NEXT}` (which would leave the last
+/// row's `DEPTH_NEXT` free).
+#[test]
+fn depth_next_carries_its_own_range() {
+    let desc = dyck_parse_descriptor(NAME);
+    let (trace, pi_vals) = build_brackets_witness();
+    let range = find_depth_range(&desc, col::DEPTH_NEXT);
+
+    let mut tampered = trace.clone();
+    tampered[ROW_RULE_BRACKET][col::DEPTH_NEXT] = -BabyBear::ONE;
+    assert_ne!(
+        range.evaluate(
+            &tampered[ROW_RULE_BRACKET],
+            &tampered[ROW_RULE_BRACKET + 1],
+            &pi_vals
+        ),
+        BabyBear::ZERO,
+        "a wrapped DEPTH_NEXT is off the grid"
+    );
+    assert!(
+        !dyck_satisfied(&desc, &tampered, &pi_vals),
+        "a wrapped DEPTH_NEXT must REJECT"
+    );
 }
 
 // ============================================================================

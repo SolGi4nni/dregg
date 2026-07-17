@@ -58,10 +58,23 @@
 //!
 //! The Lean inductive refinement (`parse_sat_imp_replay` — a satisfying trace
 //! *implies* a `CfgCompact.Replay`) is slice 3. So is the depth↔occupancy invariant
-//! (nothing yet ties `STACK_DEPTH` to which cells are nonzero); the boundaries and
-//! the per-action depth deltas pin the endpoints, not every intermediate cell.
+//! (nothing yet ties `STACK_DEPTH` to *which* cells are nonzero); the boundaries, the
+//! per-action depth deltas, and the depth range pin the depth's VALUE on every row, not
+//! the identity of the occupied cells.
+//!
+//! # The depth range (the field-congruence hole, closed)
+//!
+//! The four depth deltas (`+2`/`−1`/`−1`/`0`) are polynomial gates, hence FIELD
+//! congruences: on their own they pin `STACK_DEPTH` mod `p` and nothing more, so a depth
+//! of `p − 1` reads as `−1` and a run could push past `D` and wrap. The two
+//! [`vanishing_on_grid`] pins `∏_{v=0}^{D} (depth − v) == 0` on `STACK_DEPTH` and
+//! `DEPTH_NEXT` are the design's `0 ≤ STACK_DEPTH ≤ D` column property emitted as a real
+//! constraint: over a field the degree-`(D+1)` product vanishes at exactly the `D + 1`
+//! grid points, so an off-grid (wrapped, negative, or overflowing) depth REJECTS.
+//! `circuit-prove/tests/dyck_parse_tamper.rs` fires a `p − 1` depth at the tooth and
+//! watches it bite.
 
-use crate::field::BabyBear;
+use crate::field::{BABYBEAR_P, BabyBear};
 use crate::poseidon2::{hash_2_to_1, hash_4_to_1};
 
 use crate::dsl::circuit::{
@@ -240,6 +253,55 @@ fn sel_pins_rule(sel: usize, r: u32) -> ConstraintExpr {
             },
         ],
     }
+}
+
+/// Reduce a signed integer coefficient into BabyBear (handles negatives via the field
+/// modulus). Twin of `dfa_routing::int_to_field`.
+fn int_to_field(c: i128) -> BabyBear {
+    let p = BABYBEAR_P as i128;
+    let r = ((c % p) + p) % p;
+    BabyBear::new(r as u32)
+}
+
+/// **The range constraint** pinning column `col` to the small grid `values`:
+/// `∏_{v ∈ values} (col − v) == 0`, expanded into monomial `PolyTerm`s over the repeated
+/// column index (degree `|values|`). This is the deployed small-domain-pin idiom, copied
+/// from `dfa_routing::vanishing_on_grid` (`dfa_routing.rs:287`), where it pins the
+/// `TableFunction` inputs to the state/symbol grids.
+///
+/// Why it is the RIGHT tooth for `STACK_DEPTH`: a `Polynomial` gate is a FIELD identity, so
+/// on its own the depth deltas (`+2`/`−1`/`−1`/`0`) only pin depth's residue class mod `p`.
+/// A vanishing product over `{0, …, D}` is the only thing that says the residue IS one of
+/// those `D + 1` integers — over a field, `∏ (x − v) = 0` iff `x ∈ {values}` exactly (a
+/// degree-`(D+1)` polynomial has no other roots). A wrapped depth (`p − 1` masquerading as
+/// `−1`, or `D + 1` after one push too many) is off-grid and therefore REJECTS.
+fn vanishing_on_grid(col: usize, values: &[u32]) -> ConstraintExpr {
+    // Expand ∏ (x − v) into ascending-degree coefficients [c_0, …, c_d], from the constant 1.
+    let mut coeffs: Vec<i128> = vec![1];
+    for &v in values {
+        let mut next = vec![0i128; coeffs.len() + 1];
+        for (k, &c) in coeffs.iter().enumerate() {
+            next[k + 1] += c; // x · c_k
+            next[k] -= c * v as i128; // −v · c_k
+        }
+        coeffs = next;
+    }
+    let terms: Vec<PolyTerm> = coeffs
+        .iter()
+        .enumerate()
+        .filter(|(_, c)| **c != 0)
+        .map(|(k, &c)| PolyTerm {
+            coeff: int_to_field(c),
+            col_indices: vec![col; k],
+        })
+        .collect();
+    ConstraintExpr::Polynomial { terms }
+}
+
+/// The legal depth grid `{0, 1, …, D}` — the `D + 1` integers a `D`-cell stack's occupancy
+/// can take. `[`vanishing_on_grid`] over this grid IS the design's `0 ≤ STACK_DEPTH ≤ D`.
+fn depth_grid() -> Vec<u32> {
+    (0..=STACK_D as u32).collect()
 }
 
 fn gated(selector_col: usize, inner: ConstraintExpr) -> ConstraintExpr {
@@ -464,6 +526,18 @@ pub fn dyck_parse_descriptor(name: &str) -> CircuitDescriptor {
         gated(col::IS_DONE, eq_const(col::STACK_DEPTH, 0)),
         // ---- input-pointer helper -----------------------------------------
         diff_is(col::INPUT_POS_P1, col::INPUT_POS, 1), // INPUT_POS_P1 == INPUT_POS + 1
+        // ---- DEPTH RANGE: 0 <= STACK_DEPTH <= D, and the same for DEPTH_NEXT --
+        // The design (`DESIGN-parse-as-derivation.md` §2) specifies the depth bound as a
+        // COLUMN PROPERTY; without it emitted as a constraint the four depth deltas below
+        // are only congruences mod `p` and a WRAPPED depth is not excluded. These two
+        // vanishing polys are that property, in the `dfa_routing::vanishing_on_grid` idiom.
+        //
+        // BOTH columns are pinned, not just `STACK_DEPTH`: the `Transition{STACK_DEPTH <-
+        // DEPTH_NEXT}` below would carry the range from `STACK_DEPTH` back onto `DEPTH_NEXT`
+        // for rows `0..n-1` only, leaving the LAST row's `DEPTH_NEXT` free. Pinning both
+        // makes the bound hold on every row of both columns with no boundary reasoning.
+        vanishing_on_grid(col::STACK_DEPTH, &depth_grid()),
+        vanishing_on_grid(col::DEPTH_NEXT, &depth_grid()),
         // ---- depth-delta helper (per action) ------------------------------
         // rBracket: depth += 2 (pop 1, push 3).
         gated(
@@ -536,9 +610,11 @@ pub fn dyck_parse_descriptor(name: &str) -> CircuitDescriptor {
     // done: the machine has stopped; the stack holds.
     constraints.extend(hold_stack(col::IS_DONE));
 
-    // Degree: the gated rule-membership polynomial is degree 3 (selector · quadratic);
-    // everything else is ≤ 2. Keep headroom to match the derivation descriptor envelope.
-    let max_degree = 4usize;
+    // Degree: the two depth-range vanishing polys are degree `D + 1 = 6` (the grid size —
+    // the same accounting `dfa_routing` does with `range_degree = |a_values|.max(|b_values|)`).
+    // The gated rule-membership polynomial is degree 3 (selector · quadratic); everything
+    // else is ≤ 2. `MAX_CONSTRAINT_DEGREE` is 8, so the grid pin fits with headroom.
+    let max_degree = (STACK_D + 1).max(4);
 
     let boundaries = vec![
         // first row starts at [initial]: STACK0 == pi[INITIAL_SYMBOL], depth 1.
@@ -1026,5 +1102,194 @@ mod tests {
             "the remainder must survive the push, shifted by |rhs| - 1 = 2"
         );
         assert_eq!(trace[3][col::STACK_DEPTH], BabyBear::new(4));
+    }
+
+    /// The depth-range tooth EXISTS and is degree `D + 1` over the right column.
+    #[test]
+    fn depth_range_constraint_is_wired() {
+        let desc = dyck_parse_descriptor(NAME);
+        for c in [col::STACK_DEPTH, col::DEPTH_NEXT] {
+            let found = desc
+                .constraints
+                .iter()
+                .find(|k| match k {
+                    ConstraintExpr::Polynomial { terms } => {
+                        terms.iter().any(|t| t.col_indices.len() == STACK_D + 1)
+                            && terms.iter().all(|t| t.col_indices.iter().all(|&i| i == c))
+                    }
+                    _ => false,
+                })
+                .unwrap_or_else(|| panic!("no depth-range vanishing poly on column {c}"));
+            assert_eq!(found.degree(), STACK_D + 1);
+        }
+    }
+
+    /// **The tooth, evaluated directly**: the depth-range poly is zero at EVERY legal depth
+    /// `0..=D` and NONZERO everywhere else it is asked — including the wrapped values a
+    /// field congruence cannot distinguish from a legal one.
+    #[test]
+    fn depth_range_vanishes_exactly_on_the_grid() {
+        let range = vanishing_on_grid(col::STACK_DEPTH, &depth_grid());
+        let mut row = vec![BabyBear::ZERO; DYCK_WIDTH];
+        let pi: Vec<BabyBear> = vec![];
+
+        for d in 0..=STACK_D as u32 {
+            row[col::STACK_DEPTH] = BabyBear::new(d);
+            assert_eq!(
+                range.evaluate(&row, &row, &pi),
+                BabyBear::ZERO,
+                "the legal depth {d} must be ON the grid"
+            );
+        }
+        // D + 1 (one push too many) and D + 2 are off-grid.
+        for d in [STACK_D as u32 + 1, STACK_D as u32 + 2, 100] {
+            row[col::STACK_DEPTH] = BabyBear::new(d);
+            assert_ne!(
+                range.evaluate(&row, &row, &pi),
+                BabyBear::ZERO,
+                "the overflowing depth {d} must be OFF the grid"
+            );
+        }
+        // The WRAPPED depths: `-1` and `-2` as field elements. These satisfy the `-1` depth
+        // delta as congruences and are exactly what the range tooth exists to refuse.
+        for d in [BABYBEAR_P - 1, BABYBEAR_P - 2] {
+            row[col::STACK_DEPTH] = BabyBear::new(d);
+            assert_ne!(
+                range.evaluate(&row, &row, &pi),
+                BabyBear::ZERO,
+                "the WRAPPED depth {d} (= -{}) must be OFF the grid",
+                BABYBEAR_P - d
+            );
+        }
+    }
+
+    /// **The canary the gate is for**: a trace whose depth column WRAPS negative satisfies
+    /// every depth delta as a field congruence, yet the range tooth REJECTS it.
+    ///
+    /// The synthetic violation is built to be maximally sneaky: take the honest `"[]"` run
+    /// and subtract `p` from... nothing — instead drive the range poly at the wrapped value
+    /// the deltas would happily accept, and confirm the whole-descriptor predicate flips.
+    #[test]
+    fn wrapped_depth_rejects() {
+        let desc = dyck_parse_descriptor(NAME);
+        let (trace, pi) = build_brackets_witness();
+        assert!(dyck_satisfied(&desc, &trace, &pi), "honest baseline");
+
+        // Row 3 is `term ']'` at depth 1 -> 0. Rewrite it as depth `p - 1` (= -1) with
+        // DEPTH_NEXT `p - 2` (= -2): the `term` delta `DEPTH_NEXT - STACK_DEPTH + 1 == 0`
+        // STILL holds (-2 - (-1) + 1 = 0 over the field), and so does the threading into
+        // row 4 if we carry it. A pure-congruence circuit cannot see this.
+        let mut tampered = trace.clone();
+        tampered[3][col::STACK_DEPTH] = -BabyBear::ONE;
+        tampered[3][col::DEPTH_NEXT] = -BabyBear::new(2);
+
+        // The DELTA constraint the wrap was built to slip past: still satisfied.
+        let delta = gated(col::IS_TERM, diff_is(col::DEPTH_NEXT, col::STACK_DEPTH, -1));
+        assert_eq!(
+            delta.evaluate(&tampered[3], &tampered[4], &pi),
+            BabyBear::ZERO,
+            "the wrap is invisible to the depth DELTA — this is the hole the range closes"
+        );
+
+        // The RANGE tooth, isolated: honest zero, tampered nonzero.
+        let range = vanishing_on_grid(col::STACK_DEPTH, &depth_grid());
+        assert_eq!(
+            range.evaluate(&trace[3], &trace[4], &pi),
+            BabyBear::ZERO,
+            "the honest depth is on the grid"
+        );
+        assert_ne!(
+            range.evaluate(&tampered[3], &tampered[4], &pi),
+            BabyBear::ZERO,
+            "THE TOOTH: the wrapped depth is off the grid"
+        );
+
+        // And the whole descriptor rejects.
+        assert!(
+            !dyck_satisfied(&desc, &tampered, &pi),
+            "a wrapped STACK_DEPTH must REJECT"
+        );
+    }
+
+    /// The dual synthetic violation: an OVERFLOWING depth (`D + 1`) rejects. A run that
+    /// pushed once past the buffer would land here.
+    #[test]
+    fn overflowing_depth_rejects() {
+        let desc = dyck_parse_descriptor(NAME);
+        let (trace, pi) = build_brackets_witness();
+        let mut tampered = trace.clone();
+        tampered[0][col::STACK_DEPTH] = BabyBear::new(STACK_D as u32 + 1);
+        assert!(
+            !dyck_satisfied(&desc, &tampered, &pi),
+            "a depth of D + 1 must REJECT"
+        );
+    }
+
+    /// **The wrapped-depth trace is REJECTED — and this test does NOT establish that the
+    /// range tooth is why.**
+    ///
+    /// It previously claimed to be a mutation canary ("with the range tooth removed the wrap
+    /// would be ACCEPTED"). That claim was false and untested: it never asserted
+    /// `dyck_satisfied(&weakened, ..)`, and that assert would FAIL — row 4 is the `done` row,
+    /// and `gated(IS_DONE, eq_const(STACK_DEPTH, 0))` is not stripped by the filter below
+    /// (it is `Gated`, not a bare `Polynomial`) and evaluates to -2 on the tampered depth. So
+    /// the weakened descriptor rejects the wrap too, and the canary canaried nothing.
+    ///
+    /// So this test shows two true things — the congruence-only depth teeth (deltas +
+    /// threading) do NOT catch a wrap, and the full descriptor DOES reject it — and it does
+    /// NOT show which tooth is responsible. Strip-and-hope is the wrong shape for that
+    /// question anyway: it can only isolate a tooth if every OTHER constraint is known to
+    /// pass, and here the `done` pin does not.
+    ///
+    /// The real evidence that the range poly bites lives in
+    /// `circuit-prove/tests/dyck_parse_tamper.rs`, which does it the right way: it ISOLATES
+    /// the single degree-`(D+1)` vanishing poly (`find_depth_range`) and fires a `p − 1`
+    /// depth directly at that constraint. That is a constraint-level fact and needs no
+    /// argument about what else might also reject.
+    #[test]
+    fn the_full_descriptor_rejects_a_wrapped_depth() {
+        let desc = dyck_parse_descriptor(NAME);
+        let (trace, pi) = build_brackets_witness();
+        let mut tampered = trace.clone();
+        tampered[3][col::STACK_DEPTH] = -BabyBear::ONE;
+        tampered[3][col::DEPTH_NEXT] = -BabyBear::new(2);
+        tampered[4][col::STACK_DEPTH] = -BabyBear::new(2);
+        tampered[4][col::DEPTH_NEXT] = -BabyBear::new(2);
+
+        // Strip ONLY the two depth-range polys.
+        let grid_len = STACK_D + 1;
+        let mut weakened = desc.clone();
+        weakened.constraints.retain(|c| {
+            !matches!(c, ConstraintExpr::Polynomial { terms }
+                if terms.iter().any(|t| t.col_indices.len() == grid_len))
+        });
+        assert_eq!(
+            weakened.constraints.len(),
+            desc.constraints.len() - 2,
+            "exactly the two range polys were stripped"
+        );
+
+        // The congruence-only depth teeth (deltas + threading) do NOT catch the wrap — this
+        // is true and is the part worth pinning. It is NOT sufficient to show the range tooth
+        // is load-bearing: the `done`-row pin (not stripped above) also rejects, per the doc.
+        for c in [
+            gated(col::IS_TERM, diff_is(col::DEPTH_NEXT, col::STACK_DEPTH, -1)),
+            ConstraintExpr::Transition {
+                next_col: col::STACK_DEPTH,
+                local_col: col::DEPTH_NEXT,
+            },
+        ] {
+            assert_eq!(
+                c.evaluate(&tampered[3], &tampered[4], &pi),
+                BabyBear::ZERO,
+                "the wrap slips past every congruence-only depth tooth"
+            );
+        }
+
+        // The FULL descriptor bites. (Which tooth bites first is NOT established here.)
+        assert!(
+            !dyck_satisfied(&desc, &tampered, &pi),
+            "the descriptor REJECTS the wrapped depth"
+        );
     }
 }
