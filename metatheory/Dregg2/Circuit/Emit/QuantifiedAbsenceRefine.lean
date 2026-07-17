@@ -47,6 +47,7 @@ the descriptor declares NO tables, hash sites, ranges, or mem/map ops (`tables=[
 so the bridge is pure base-gate + PI-binding algebra. NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.QuantifiedAbsenceEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 import Dregg2.Circuit.DecideSatisfied2
 
 namespace Dregg2.Circuit.Emit.QuantifiedAbsenceRefine
@@ -58,9 +59,29 @@ open Dregg2.Circuit.Emit.EffectVmEmit
 open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Satisfied2 VmTrace envAt zeroAsg memLog mapLog)
 open Dregg2.Circuit.Argus.InterpCore (decideConstraint decideConstraint_iff)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff)
 open Dregg2.Circuit.Emit.QuantifiedAbsenceEmit
 
 set_option autoImplicit false
+
+/-! ## §0 — field-denotation glue. The DEPLOYED `VmConstraint.holdsVm` pins every gate/PI only
+`≡ 0 [ZMOD p]` / `≡ pub [ZMOD p]` (`p` the BabyBear prime), NOT `= 0` over ℤ. For the BabyBear⁴
+quotient certificate the extension MULTIPLICATION `w ⊗ diff` is a genuine field product (its ℤ value
+overflows the canonical window, so no range-check can lift it to an ℤ identity) — so the faithful
+semantics is the field relation, stated `≡ [ZMOD p]` per limb (the same convention the deployed
+`ExtElem::mul` computes, and that green `EffectActionBindingRefine`/`GarbledEvalRefine` use). The two
+glue lemmas move a mod-`p` congruence into `ZMod p` (a `CommRing`, where `ring`/`rw` discharge the
+whole extension-field algebra) and back. -/
+
+/-- A mod-`p` congruence IS an equality of the two integers cast into `ZMod p`. -/
+theorem toZMod {a b : ℤ} (h : a ≡ b [ZMOD 2013265921]) :
+    (a : ZMod 2013265921) = (b : ZMod 2013265921) := by
+  rwa [ZMod.intCast_eq_intCast_iff]
+
+/-- …and conversely: equality in `ZMod p` recovers the mod-`p` congruence. -/
+theorem ofZMod {a b : ℤ} (h : (a : ZMod 2013265921) = (b : ZMod 2013265921)) :
+    a ≡ b [ZMOD 2013265921] := by
+  rwa [ZMod.intCast_eq_intCast_iff] at h
 
 /-! ## §1 — The semantic relation: the BabyBear⁴ quotient-division certificate (the authored spec). -/
 
@@ -90,12 +111,18 @@ def extMul : Ext → Ext → Ext
 circuit computes over BabyBear⁴: the witness `(elem, w, v)` is a polynomial-division certificate binding
 the public accumulator value `accAll` at the challenge `alpha`:
 
-    w ⊗ (alpha ⊖ elem) ⊕ v  =  accAll .
+    w ⊗ (alpha ⊖ elem) ⊕ v  =  accAll   (as elements of 𝔽_p⁴, i.e. per limb `≡ [ZMOD p]`).
 
-(For the intended semantics, `accAll` is the characteristic value `∏(alpha − hᵢ)` of the satisfying set;
-this relation is the quotient-with-remainder certificate against the factor `(alpha − elem)`.) -/
+The equality is stated per limb over the BabyBear field `𝔽_p` (`≡ [ZMOD p]`) — the FAITHFUL semantics
+of the deployed field circuit: `ExtElem::mul` reduces mod `p`, and the extension product overflows the
+canonical ℤ window, so no ℤ identity is enforced. (For the intended semantics, `accAll` is the
+characteristic value `∏(alpha − hᵢ)` of the satisfying set; this relation is the quotient-with-remainder
+certificate against the factor `(alpha − elem)`.) -/
 def QuotientAbsenceRel (elem w v accAll alpha : Ext) : Prop :=
-  extAdd (extMul w (extSub alpha elem)) v = accAll
+  match extAdd (extMul w (extSub alpha elem)) v, accAll with
+  | (r0, r1, r2, r3), (a0, a1, a2, a3) =>
+      r0 ≡ a0 [ZMOD 2013265921] ∧ r1 ≡ a1 [ZMOD 2013265921]
+      ∧ r2 ≡ a2 [ZMOD 2013265921] ∧ r3 ≡ a3 [ZMOD 2013265921]
 
 /-! ## §2 — Membership of each constraint group into the whole descriptor's constraint list.
 `quantifiedAbsenceDesc.constraints = diffGates ++ prodGates ++ sumGates ++ sumPins ++ alphaPins`. -/
@@ -135,24 +162,25 @@ section Bridge
 
 variable {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
 
-/-- A declared `.gate body` forces `body.eval = 0` on the active first row. -/
+/-- A declared `.gate body` forces `body.eval ≡ 0 [ZMOD p]` on the active first row (the DEPLOYED
+field constraint). -/
 theorem gate_holds0
     (h : Satisfied2 hash quantifiedAbsenceDesc minit mfin maddrs t) (h2 : 2 ≤ t.rows.length)
     (body : EmittedExpr)
     (hin : VmConstraint2.base (.gate body) ∈ quantifiedAbsenceDesc.constraints) :
-    body.eval (envAt t 0).loc = 0 := by
+    body.eval (envAt t 0).loc ≡ 0 [ZMOD 2013265921] := by
   have hlen : 0 < t.rows.length := by omega
   have hlast : (0 + 1 == t.rows.length) = false := by rw [beq_eq_false_iff_ne]; omega
   have g := h.rowConstraints 0 hlen _ hin
   simp only [VmConstraint2.holdsAt, hlast, holdsVm_gate_false] at g
   exact g
 
-/-- A declared first-row `.piBinding` forces `loc col = pub k` on the active first row. -/
+/-- A declared first-row `.piBinding` forces `loc col ≡ pub k [ZMOD p]` on the active first row. -/
 theorem pin_holds0
     (h : Satisfied2 hash quantifiedAbsenceDesc minit mfin maddrs t) (h2 : 2 ≤ t.rows.length)
     (col k : Nat)
     (hin : VmConstraint2.base (.piBinding .first col k) ∈ quantifiedAbsenceDesc.constraints) :
-    (envAt t 0).loc col = (envAt t 0).pub k := by
+    (envAt t 0).loc col ≡ (envAt t 0).pub k [ZMOD 2013265921] := by
   have hlen : 0 < t.rows.length := by omega
   have g := h.rowConstraints 0 hlen _ hin
   simp only [VmConstraint2.holdsAt, show (0 == 0) = true from rfl, holdsVm_piFirst_true] at g
@@ -177,7 +205,7 @@ theorem quantifiedAbsence_refines
        (envAt t 0).pub (PI_ACC0 + 2), (envAt t 0).pub (PI_ACC0 + 3))                     -- Acc_all
       ((envAt t 0).pub (PI_ALPHA0 + 0), (envAt t 0).pub (PI_ALPHA0 + 1),
        (envAt t 0).pub (PI_ALPHA0 + 2), (envAt t 0).pub (PI_ALPHA0 + 3)) := by            -- α
-  -- α materialization: the ALPHA columns carry the α public challenge.
+  -- α materialization: the ALPHA columns carry the α public challenge (mod-`p`).
   have gA0 := pin_holds0 h h2 A0 (PI_ALPHA0 + 0) (mem_of_alphaPin (List.mem_cons.mpr (Or.inl rfl)))
   have gA1 := pin_holds0 h h2 A1 (PI_ALPHA0 + 1)
     (mem_of_alphaPin (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))
@@ -185,63 +213,64 @@ theorem quantifiedAbsence_refines
     (mem_of_alphaPin (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))
   have gA3 := pin_holds0 h h2 A3 (PI_ALPHA0 + 3)
     (mem_of_alphaPin (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))))
-  -- diff gates + α pins ⟹ `diff = α − elem` (per limb).
-  have hD0 : (envAt t 0).loc D0 = (envAt t 0).pub (PI_ALPHA0 + 0) - (envAt t 0).loc E0 := by
-    have g := gate_holds0 h h2 (diffBody D0 A0 E0) (mem_of_diff (List.mem_cons.mpr (Or.inl rfl)))
-    simp only [diffBody, subCols, EmittedExpr.eval] at g; linear_combination g + gA0
-  have hD1 : (envAt t 0).loc D1 = (envAt t 0).pub (PI_ALPHA0 + 1) - (envAt t 0).loc E1 := by
-    have g := gate_holds0 h h2 (diffBody D1 A1 E1)
-      (mem_of_diff (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))
-    simp only [diffBody, subCols, EmittedExpr.eval] at g; linear_combination g + gA1
-  have hD2 : (envAt t 0).loc D2 = (envAt t 0).pub (PI_ALPHA0 + 2) - (envAt t 0).loc E2 := by
-    have g := gate_holds0 h h2 (diffBody D2 A2 E2)
-      (mem_of_diff (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))
-    simp only [diffBody, subCols, EmittedExpr.eval] at g; linear_combination g + gA2
-  have hD3 : (envAt t 0).loc D3 = (envAt t 0).pub (PI_ALPHA0 + 3) - (envAt t 0).loc E3 := by
-    have g := gate_holds0 h h2 (diffBody D3 A3 E3)
-      (mem_of_diff (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))))
-    simp only [diffBody, subCols, EmittedExpr.eval] at g; linear_combination g + gA3
-  -- product gates ⟹ `prod = w ⊗ diff` (per limb; the `X⁴−11` bilinear form).
-  have hP0 : (envAt t 0).loc P0 = (envAt t 0).loc Q0 * (envAt t 0).loc D0
+  -- diff gates ⟹ `diff ≡ α_col − elem [ZMOD p]` (per limb; α_col substituted to the PI below).
+  have hD0 : (envAt t 0).loc D0 ≡ (envAt t 0).loc A0 - (envAt t 0).loc E0 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [diffBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (diffBody D0 A0 E0) (mem_of_diff (List.mem_cons.mpr (Or.inl rfl))))
+  have hD1 : (envAt t 0).loc D1 ≡ (envAt t 0).loc A1 - (envAt t 0).loc E1 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [diffBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (diffBody D1 A1 E1)
+        (mem_of_diff (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))
+  have hD2 : (envAt t 0).loc D2 ≡ (envAt t 0).loc A2 - (envAt t 0).loc E2 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [diffBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (diffBody D2 A2 E2)
+        (mem_of_diff (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))))
+  have hD3 : (envAt t 0).loc D3 ≡ (envAt t 0).loc A3 - (envAt t 0).loc E3 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [diffBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (diffBody D3 A3 E3)
+        (mem_of_diff (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))))))
+  -- product gates ⟹ `prod ≡ w ⊗ diff [ZMOD p]` (per limb; the `X⁴−11` bilinear form).
+  have hP0 : (envAt t 0).loc P0 ≡ (envAt t 0).loc Q0 * (envAt t 0).loc D0
       + 11 * ((envAt t 0).loc Q1 * (envAt t 0).loc D3 + (envAt t 0).loc Q2 * (envAt t 0).loc D2
-              + (envAt t 0).loc Q3 * (envAt t 0).loc D1) := by
-    have g := gate_holds0 h h2 (prodBody P0 prodC0) (mem_of_prod (List.mem_cons.mpr (Or.inl rfl)))
-    simp only [prodBody, prodC0, vv, w11, EmittedExpr.eval] at g; linear_combination g
-  have hP1 : (envAt t 0).loc P1 = (envAt t 0).loc Q0 * (envAt t 0).loc D1
+              + (envAt t 0).loc Q3 * (envAt t 0).loc D1) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [prodBody, prodC0, vv, w11, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (prodBody P0 prodC0) (mem_of_prod (List.mem_cons.mpr (Or.inl rfl))))
+  have hP1' : (envAt t 0).loc P1 ≡ (envAt t 0).loc Q0 * (envAt t 0).loc D1
       + (envAt t 0).loc Q1 * (envAt t 0).loc D0
-      + 11 * ((envAt t 0).loc Q2 * (envAt t 0).loc D3 + (envAt t 0).loc Q3 * (envAt t 0).loc D2) := by
-    have g := gate_holds0 h h2 (prodBody P1 prodC1)
-      (mem_of_prod (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))
-    simp only [prodBody, prodC1, vv, w11, EmittedExpr.eval] at g; linear_combination g
-  have hP2 : (envAt t 0).loc P2 = (envAt t 0).loc Q0 * (envAt t 0).loc D2
+      + 11 * ((envAt t 0).loc Q2 * (envAt t 0).loc D3 + (envAt t 0).loc Q3 * (envAt t 0).loc D2)
+      [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [prodBody, prodC1, vv, w11, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (prodBody P1 prodC1)
+        (mem_of_prod (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))
+  have hP2' : (envAt t 0).loc P2 ≡ (envAt t 0).loc Q0 * (envAt t 0).loc D2
       + (envAt t 0).loc Q1 * (envAt t 0).loc D1 + (envAt t 0).loc Q2 * (envAt t 0).loc D0
-      + 11 * ((envAt t 0).loc Q3 * (envAt t 0).loc D3) := by
-    have g := gate_holds0 h h2 (prodBody P2 prodC2)
-      (mem_of_prod (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))
-    simp only [prodBody, prodC2, vv, w11, EmittedExpr.eval] at g; linear_combination g
-  have hP3 : (envAt t 0).loc P3 = (envAt t 0).loc Q0 * (envAt t 0).loc D3
+      + 11 * ((envAt t 0).loc Q3 * (envAt t 0).loc D3) [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [prodBody, prodC2, vv, w11, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (prodBody P2 prodC2)
+        (mem_of_prod (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))))
+  have hP3' : (envAt t 0).loc P3 ≡ (envAt t 0).loc Q0 * (envAt t 0).loc D3
       + (envAt t 0).loc Q1 * (envAt t 0).loc D2 + (envAt t 0).loc Q2 * (envAt t 0).loc D1
-      + (envAt t 0).loc Q3 * (envAt t 0).loc D0 := by
-    have g := gate_holds0 h h2 (prodBody P3 prodC3)
-      (mem_of_prod (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))))
-    simp only [prodBody, prodC3, vv, EmittedExpr.eval] at g; linear_combination g
-  -- sum gates ⟹ `sum = prod + v` (per limb).
-  have hS0 : (envAt t 0).loc S0 = (envAt t 0).loc P0 + (envAt t 0).loc V0 := by
-    have g := gate_holds0 h h2 (sumBody S0 P0 V0) (mem_of_sum (List.mem_cons.mpr (Or.inl rfl)))
-    simp only [sumBody, subCols, EmittedExpr.eval] at g; linear_combination g
-  have hS1 : (envAt t 0).loc S1 = (envAt t 0).loc P1 + (envAt t 0).loc V1 := by
-    have g := gate_holds0 h h2 (sumBody S1 P1 V1)
-      (mem_of_sum (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))
-    simp only [sumBody, subCols, EmittedExpr.eval] at g; linear_combination g
-  have hS2 : (envAt t 0).loc S2 = (envAt t 0).loc P2 + (envAt t 0).loc V2 := by
-    have g := gate_holds0 h h2 (sumBody S2 P2 V2)
-      (mem_of_sum (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))
-    simp only [sumBody, subCols, EmittedExpr.eval] at g; linear_combination g
-  have hS3 : (envAt t 0).loc S3 = (envAt t 0).loc P3 + (envAt t 0).loc V3 := by
-    have g := gate_holds0 h h2 (sumBody S3 P3 V3)
-      (mem_of_sum (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))))
-    simp only [sumBody, subCols, EmittedExpr.eval] at g; linear_combination g
-  -- boundary: `sum = Acc_all` (the four SUM pins to the accumulator public inputs).
+      + (envAt t 0).loc Q3 * (envAt t 0).loc D0 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [prodBody, prodC3, vv, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (prodBody P3 prodC3)
+        (mem_of_prod (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))))))
+  -- sum gates ⟹ `sum ≡ prod + v [ZMOD p]` (per limb).
+  have hS0 : (envAt t 0).loc S0 ≡ (envAt t 0).loc P0 + (envAt t 0).loc V0 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [sumBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (sumBody S0 P0 V0) (mem_of_sum (List.mem_cons.mpr (Or.inl rfl))))
+  have hS1 : (envAt t 0).loc S1 ≡ (envAt t 0).loc P1 + (envAt t 0).loc V1 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [sumBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (sumBody S1 P1 V1)
+        (mem_of_sum (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))
+  have hS2 : (envAt t 0).loc S2 ≡ (envAt t 0).loc P2 + (envAt t 0).loc V2 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [sumBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (sumBody S2 P2 V2)
+        (mem_of_sum (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))))
+  have hS3 : (envAt t 0).loc S3 ≡ (envAt t 0).loc P3 + (envAt t 0).loc V3 [ZMOD 2013265921] :=
+    (gate_modEq_iff (by simp only [sumBody, subCols, EmittedExpr.eval]; ring)).mp
+      (gate_holds0 h h2 (sumBody S3 P3 V3)
+        (mem_of_sum (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl))))))))))
+  -- boundary: `sum ≡ Acc_all [ZMOD p]` (the four SUM pins to the accumulator public inputs).
   have hC0 := pin_holds0 h h2 S0 (PI_ACC0 + 0) (mem_of_sumPin (List.mem_cons.mpr (Or.inl rfl)))
   have hC1 := pin_holds0 h h2 S1 (PI_ACC0 + 1)
     (mem_of_sumPin (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))
@@ -249,13 +278,29 @@ theorem quantifiedAbsence_refines
     (mem_of_sumPin (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))
   have hC3 := pin_holds0 h h2 S3 (PI_ACC0 + 3)
     (mem_of_sumPin (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inr (List.mem_cons.mpr (Or.inl rfl)))))))))
-  -- assemble the four limbs into the extension-field identity.
-  simp only [QuotientAbsenceRel, extSub, extMul, extAdd, Prod.mk.injEq]
-  refine ⟨?_, ?_, ?_, ?_⟩
-  · rw [← hC0, hS0, hP0, hD0, hD1, hD2, hD3]
-  · rw [← hC1, hS1, hP1, hD0, hD1, hD2, hD3]
-  · rw [← hC2, hS2, hP2, hD0, hD1, hD2, hD3]
-  · rw [← hC3, hS3, hP3, hD0, hD1, hD2, hD3]
+  -- cast every mod-`p` fact into `ZMod p` (a `CommRing`), substituting α_col → PI and diff → α−elem,
+  -- so the four limbs close by ring algebra.
+  have zA0 := toZMod gA0; have zA1 := toZMod gA1; have zA2 := toZMod gA2; have zA3 := toZMod gA3
+  have zD0 := toZMod hD0; push_cast at zD0; rw [zA0] at zD0
+  have zD1 := toZMod hD1; push_cast at zD1; rw [zA1] at zD1
+  have zD2 := toZMod hD2; push_cast at zD2; rw [zA2] at zD2
+  have zD3 := toZMod hD3; push_cast at zD3; rw [zA3] at zD3
+  have zP0 := toZMod hP0; push_cast at zP0
+  have zP1 := toZMod hP1'; push_cast at zP1
+  have zP2 := toZMod hP2'; push_cast at zP2
+  have zP3 := toZMod hP3'; push_cast at zP3
+  have zS0 := toZMod hS0; push_cast at zS0
+  have zS1 := toZMod hS1; push_cast at zS1
+  have zS2 := toZMod hS2; push_cast at zS2
+  have zS3 := toZMod hS3; push_cast at zS3
+  have zC0 := toZMod hC0; have zC1 := toZMod hC1; have zC2 := toZMod hC2; have zC3 := toZMod hC3
+  -- assemble the four limbs into the extension-field identity (in `ZMod p`).
+  simp only [QuotientAbsenceRel, extSub, extMul, extAdd]
+  refine ⟨ofZMod ?_, ofZMod ?_, ofZMod ?_, ofZMod ?_⟩
+  · push_cast; rw [← zC0, zS0, zP0, zD0, zD1, zD2, zD3]
+  · push_cast; rw [← zC1, zS1, zP1, zD0, zD1, zD2, zD3]
+  · push_cast; rw [← zC2, zS2, zP2, zD0, zD1, zD2, zD3]
+  · push_cast; rw [← zC3, zS3, zP3, zD0, zD1, zD2, zD3]
 
 end Bridge
 
@@ -332,11 +377,12 @@ theorem quantifiedAbsence_sat_relation (hash : List ℤ → ℤ) :
 `Acc_all = 8`, false when `Acc_all` is perturbed to `9`. -/
 theorem quotientAbsenceRel_true :
     QuotientAbsenceRel (1, 0, 0, 0) (3, 0, 0, 0) (5, 0, 0, 0) (8, 0, 0, 0) (2, 0, 0, 0) := by
-  unfold QuotientAbsenceRel extAdd extMul extSub; decide
+  unfold QuotientAbsenceRel extAdd extMul extSub; refine ⟨?_, ?_, ?_, ?_⟩ <;> decide
 
 theorem quotientAbsenceRel_false :
     ¬ QuotientAbsenceRel (1, 0, 0, 0) (3, 0, 0, 0) (5, 0, 0, 0) (9, 0, 0, 0) (2, 0, 0, 0) := by
-  unfold QuotientAbsenceRel extAdd extMul extSub; decide
+  unfold QuotientAbsenceRel extAdd extMul extSub
+  intro hrel; exact absurd hrel.1 (by decide)
 
 /-! ### The FAILING witness — the same trace with `sum[0]` perturbed to `999`, so the `sum = Acc_all`
 pin (`loc S0 = pub[0]`) is violated: `999 ≠ 8`. -/

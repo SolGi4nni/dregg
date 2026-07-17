@@ -55,6 +55,7 @@ falsifiable). Hypothesis inhabited-and-constraining; conclusion true-and-false.
 family internalizes NO Poseidon2 hashing, so NO CR carrier enters). NEW file; imports read-only.
 -/
 import Dregg2.Circuit.Emit.PresentationEmit
+import Dregg2.Circuit.Emit.EffectVmEmitTransfer
 
 namespace Dregg2.Circuit.Emit.PresentationRefine
 
@@ -67,10 +68,33 @@ open Dregg2.Circuit.DescriptorIR2
   (EffectVmDescriptor2 VmConstraint2 Lookup TableId TraceFamily VmTrace Satisfied2 envAt
    rangeRows range_row_mem_iff lookup_replaces_range lookup_range_complete memOpsOf mapOpsOf
    memLog mapLog)
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff eqToModEq)
 open Dregg2.Circuit.Emit.PresentationEmit
 open Dregg2.Crypto
 
 set_option autoImplicit false
+
+/-! ## §0 — field-denotation glue. The DEPLOYED `VmConstraint.holdsVm` pins each gate/PI only
+`≡ 0 [ZMOD p]` / `≡ pub [ZMOD p]` (`p` the BabyBear prime), NOT `= 0`. The genuine ℤ summary/anchor
+equalities are recovered off the DEPLOYED range-check canonicality envelope `PresCanon`; the two
+freshness range LOOKUPS already deliver honest ℤ bounds on `DIFF`/`HI`, so the wrap-free windows make
+the diff/bound gate congruences genuine ℤ identities. -/
+
+/-- Two canonical field cells congruent mod `p` are EQUAL over ℤ. -/
+theorem eq_of_modEq_canon {a b : ℤ} (h : a ≡ b [ZMOD 2013265921])
+    (ha0 : 0 ≤ a) (ha1 : a < 2013265921) (hb0 : 0 ≤ b) (hb1 : b < 2013265921) : a = b := by
+  rw [Int.modEq_iff_dvd] at h; obtain ⟨k, hk⟩ := h; omega
+
+/-- **The deployed range-check canonicality envelope for the summary row.** The 19 summary cells and
+their public inputs are canonical field cells (`0 ≤ · < p`); the `VERIFIER` / `NOT_AFTER` block-height
+cells sit in the LOW HALF (`2·x < p`), so — with `DIFF ∈ [0, p/2]` (the two range teeth + bound gate)
+— the field subtraction `not_after − verifier` is wrap-free over ℤ. Inhabited by `honest_canon`. -/
+def PresCanon (env : VmRowEnv) : Prop :=
+  (∀ i, i < SUMMARY_WIDTH →
+      (0 ≤ env.loc i ∧ env.loc i < 2013265921) ∧ (0 ≤ env.pub i ∧ env.pub i < 2013265921))
+  ∧ (0 ≤ env.loc VERIFIER ∧ 2 * env.loc VERIFIER < 2013265921)
+  ∧ (0 ≤ env.pub PI_VERIFIER ∧ env.pub PI_VERIFIER < 2013265921)
+  ∧ (0 ≤ env.loc NOT_AFTER ∧ 2 * env.loc NOT_AFTER < 2013265921)
 
 /-! ## §1 — THE FUNCTIONAL SPEC (authored here — no prior Lean model existed). -/
 
@@ -100,23 +124,36 @@ theorem presentation_satisfied2_fresh
     (hash : List ℤ → ℤ) (minit : ℤ → ℤ) (mfin : ℤ → ℤ × Nat) (maddrs : List ℤ) (t : VmTrace)
     (hrange : t.tf .range = rangeRows FRESH_BITS)
     (hlen : 1 < t.rows.length)
-    (hsat : Satisfied2 hash presentationFreshnessDesc minit mfin maddrs t) :
+    (hsat : Satisfied2 hash presentationFreshnessDesc minit mfin maddrs t)
+    (hcanon : PresCanon (envAt t 0)) :
     PresentationFresh (envAt t 0) := by
   have hi0 : 0 < t.rows.length := by omega
   have hrow := hsat.rowConstraints 0 hi0
   have hf : (0 == 0) = true := rfl
   have hl : (0 + 1 == t.rows.length) = false := by
     rw [beq_eq_false_iff_ne]; omega
-  -- diff-binding gate: DIFF = NOT_AFTER − VERIFIER.
-  have hdc : (envAt t 0).loc DIFF = (envAt t 0).loc NOT_AFTER - (envAt t 0).loc VERIFIER := by
-    have hmem : diffBindGate ∈ presentationFreshnessDesc.constraints := by
+  obtain ⟨hcSum, hcVer, hcPubVer, hcNa⟩ := hcanon
+  -- diff range lookup: DIFF ∈ [0, 2^30) (an honest ℤ bound — the lookup is not a field congruence).
+  have hdr : 0 ≤ (envAt t 0).loc DIFF ∧ (envAt t 0).loc DIFF < 2 ^ FRESH_BITS := by
+    have hmem : diffRangeLookup ∈ presentationFreshnessDesc.constraints := by
       simp only [presentationFreshnessDesc]
       exact List.mem_append_right _ (by simp)
-    have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
-        (.gate diffBindBody) := hrow _ hmem
-    rw [hl, holdsVm_gate_false] at h
-    exact (diffBind_body_zero_iff _).mp h
-  -- bound gate: DIFF + HI = p/2.
+    have h : Lookup.holdsAt t.tf (envAt t 0) ⟨.range, [.var DIFF]⟩ := hrow _ hmem
+    exact lookup_replaces_range FRESH_BITS t.tf hrange (envAt t 0) DIFF h
+  -- hi range lookup: HI ∈ [0, 2^30).
+  have hhr : 0 ≤ (envAt t 0).loc HI ∧ (envAt t 0).loc HI < 2 ^ FRESH_BITS := by
+    have hmem : hiRangeLookup ∈ presentationFreshnessDesc.constraints := by
+      simp only [presentationFreshnessDesc]
+      exact List.mem_append_right _ (by simp)
+    have h : Lookup.holdsAt t.tf (envAt t 0) ⟨.range, [.var HI]⟩ := hrow _ hmem
+    exact lookup_replaces_range FRESH_BITS t.tf hrange (envAt t 0) HI h
+  have hdr' : 0 ≤ (envAt t 0).loc DIFF ∧ (envAt t 0).loc DIFF < 2 ^ 30 := by
+    simpa [FRESH_BITS] using hdr
+  have hhr' : 0 ≤ (envAt t 0).loc HI ∧ (envAt t 0).loc HI < 2 ^ 30 := by
+    simpa [FRESH_BITS] using hhr
+  have h30 : ((2 : ℤ) ^ 30) = 1073741824 := by norm_num
+  -- bound gate (mod `p`): DIFF + HI ≡ p/2. With both in `[0, 2^30)` (sum `< 2^31 < p/2 + p`), the
+  -- congruence is the genuine ℤ identity `DIFF + HI = p/2`.
   have hbe : (envAt t 0).loc DIFF + (envAt t 0).loc HI = HALF_P := by
     have hmem : boundGate ∈ presentationFreshnessDesc.constraints := by
       simp only [presentationFreshnessDesc]
@@ -124,33 +161,36 @@ theorem presentation_satisfied2_fresh
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.gate boundBody) := hrow _ hmem
     rw [hl, holdsVm_gate_false] at h
-    exact (bound_body_zero_iff _).mp h
-  -- diff range lookup: DIFF ∈ [0, 2^30).
-  have hdr : 0 ≤ (envAt t 0).loc DIFF ∧ (envAt t 0).loc DIFF < 2 ^ FRESH_BITS := by
-    have hmem : diffRangeLookup ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
-      exact List.mem_append_right _ (by simp)
-    have h : Lookup.holdsAt t.tf (envAt t 0) ⟨.range, [.var DIFF]⟩ := hrow _ hmem
-    exact lookup_replaces_range FRESH_BITS t.tf hrange (envAt t 0) DIFF h
-  -- hi range lookup: HI ∈ [0, 2^30) (closes the exact p/2 bound).
-  have hhr : 0 ≤ (envAt t 0).loc HI ∧ (envAt t 0).loc HI < 2 ^ FRESH_BITS := by
-    have hmem : hiRangeLookup ∈ presentationFreshnessDesc.constraints := by
-      simp only [presentationFreshnessDesc]
-      exact List.mem_append_right _ (by simp)
-    have h : Lookup.holdsAt t.tf (envAt t 0) ⟨.range, [.var HI]⟩ := hrow _ hmem
-    exact lookup_replaces_range FRESH_BITS t.tf hrange (envAt t 0) HI h
+    have hmod : (envAt t 0).loc DIFF + (envAt t 0).loc HI ≡ HALF_P [ZMOD 2013265921] :=
+      (gate_modEq_iff (by simp only [boundBody, HALF_P, EmittedExpr.eval]; ring)).mp h
+    rw [Int.modEq_iff_dvd] at hmod
+    obtain ⟨k, hk⟩ := hmod
+    simp only [HALF_P] at hk ⊢
+    rw [h30] at hdr' hhr'
+    omega
   -- fold the two range teeth + the bound gate through the byte-pinned soundness lemma.
-  have hbound : (envAt t 0).loc DIFF ≤ HALF_P := by
-    have hdr' : 0 ≤ (envAt t 0).loc DIFF ∧ (envAt t 0).loc DIFF < 2 ^ 30 := by
-      simpa [FRESH_BITS] using hdr
-    have hhr' : 0 ≤ (envAt t 0).loc HI ∧ (envAt t 0).loc HI < 2 ^ 30 := by
-      simpa [FRESH_BITS] using hhr
-    exact freshness_bound_sound _ _ hdr' hhr' hbe
+  have hbound : (envAt t 0).loc DIFF ≤ HALF_P := freshness_bound_sound _ _ hdr' hhr' hbe
+  -- diff-binding gate (mod `p`): DIFF ≡ NOT_AFTER − VERIFIER. With `DIFF ∈ [0, p/2]` and the low-half
+  -- windows on the two block heights, the field subtraction is wrap-free, so this is the ℤ identity.
+  have hdc : (envAt t 0).loc DIFF = (envAt t 0).loc NOT_AFTER - (envAt t 0).loc VERIFIER := by
+    have hmem : diffBindGate ∈ presentationFreshnessDesc.constraints := by
+      simp only [presentationFreshnessDesc]
+      exact List.mem_append_right _ (by simp)
+    have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
+        (.gate diffBindBody) := hrow _ hmem
+    rw [hl, holdsVm_gate_false] at h
+    have hmod : (envAt t 0).loc DIFF
+        ≡ (envAt t 0).loc NOT_AFTER - (envAt t 0).loc VERIFIER [ZMOD 2013265921] :=
+      (gate_modEq_iff (by simp only [diffBindBody, EmittedExpr.eval]; ring)).mp h
+    rw [Int.modEq_iff_dvd] at hmod
+    obtain ⟨k, hk⟩ := hmod
+    simp only [HALF_P] at hbound
+    omega
   refine
     { summaryFaithful := ?_
       verifierAnchored := ?_
       tokenFresh := ?_ }
-  · -- 19 summary piBindings → summary faithfulness.
+  · -- 19 summary piBindings (mod `p`) → summary faithfulness (lifted off canonicality of both sides).
     intro j hj
     have hmem : (VmConstraint2.base (.piBinding VmRow.first j j))
         ∈ presentationFreshnessDesc.constraints := by
@@ -159,15 +199,16 @@ theorem presentation_satisfied2_fresh
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.piBinding VmRow.first j j) := hrow _ hmem
     rw [hf, holdsVm_piFirst_true] at h
-    exact h
-  · -- verifier piBinding → verifier anchoring.
+    obtain ⟨⟨hl0, hl1⟩, hp0, hp1⟩ := hcSum j hj
+    exact eq_of_modEq_canon h hl0 hl1 hp0 hp1
+  · -- verifier piBinding (mod `p`) → verifier anchoring (lifted off canonicality of both sides).
     have hmem : verifierPin ∈ presentationFreshnessDesc.constraints := by
       simp only [presentationFreshnessDesc]
       exact List.mem_append_right _ (by simp)
     have h : VmConstraint.holdsVm (envAt t 0) (0 == 0) (0 + 1 == t.rows.length)
         (.piBinding VmRow.first VERIFIER PI_VERIFIER) := hrow _ hmem
     rw [hf, holdsVm_piFirst_true] at h
-    exact h
+    exact eq_of_modEq_canon h hcVer.1 (by omega) hcPubVer.1 hcPubVer.2
   · -- freshness: 0 ≤ not_after − verifier ≤ p/2 (via DIFF = not_after − verifier).
     rw [← hdc]
     exact ⟨hdr.1, hbound⟩
@@ -274,26 +315,26 @@ theorem honest_satisfies :
         show VmConstraint.holdsVm (envAt honestTrace 0) (0 == 0) (0 + 1 == 2)
           (.piBinding VmRow.first j j)
         rw [show (0 == 0) = true from rfl, holdsVm_piFirst_true]
-        show honestRow j = honestPub j
-        rw [honestRow_summary j hjr, honestPub_summary j hjr]
+        exact eqToModEq (by show honestRow j = honestPub j
+                            rw [honestRow_summary j hjr, honestPub_summary j hjr])
       · simp only [List.mem_cons, List.not_mem_nil, or_false] at htail
         rcases htail with rfl | rfl | rfl | rfl | rfl | rfl | rfl
         · show VmConstraint.holdsVm (envAt honestTrace 0) (0 == 0) (0 + 1 == 2)
             (.piBinding VmRow.first VERIFIER PI_VERIFIER)
           rw [show (0 == 0) = true from rfl, holdsVm_piFirst_true]
-          show honestRow VERIFIER = honestPub PI_VERIFIER
-          rw [honestRow_verifier, honestPub_verifier]
+          exact eqToModEq (by show honestRow VERIFIER = honestPub PI_VERIFIER
+                              rw [honestRow_verifier, honestPub_verifier])
         · show VmConstraint.holdsVm (envAt honestTrace 0) (0 == 0) (0 + 1 == 2) (.gate diffBindBody)
           rw [show (0 + 1 == 2) = false from rfl, holdsVm_gate_false]
-          show diffBindBody.eval honestRow = 0
-          simp only [diffBindBody, EmittedExpr.eval, honestRow_diff, honestRow_notafter,
-            honestRow_verifier]
-          norm_num
+          exact eqToModEq (by show diffBindBody.eval honestRow = 0
+                              simp only [diffBindBody, EmittedExpr.eval, honestRow_diff,
+                                honestRow_notafter, honestRow_verifier]
+                              norm_num)
         · show VmConstraint.holdsVm (envAt honestTrace 0) (0 == 0) (0 + 1 == 2) (.gate boundBody)
           rw [show (0 + 1 == 2) = false from rfl, holdsVm_gate_false]
-          show boundBody.eval honestRow = 0
-          simp only [boundBody, EmittedExpr.eval, honestRow_diff, honestRow_hi]
-          norm_num
+          exact eqToModEq (by show boundBody.eval honestRow = 0
+                              simp only [boundBody, EmittedExpr.eval, honestRow_diff, honestRow_hi]
+                              norm_num)
         · exact honest_range_lookup 0 DIFF 500 rfl (by norm_num) (by norm_num [FRESH_BITS])
         · exact honest_range_lookup 0 HI 1006632460 rfl (by norm_num) (by norm_num [FRESH_BITS])
         · -- diffBindLast (boundary .last) on row 0 (not last) — vacuous.
@@ -316,17 +357,17 @@ theorem honest_satisfies :
           show VmConstraint.holdsVm (envAt honestTrace 1) (1 == 0) (1 + 1 == 2)
             (.boundary VmRow.last diffBindBody)
           rw [show (1 + 1 == 2) = true from rfl, holdsVm_boundaryLast_true]
-          show diffBindBody.eval honestRow = 0
-          simp only [diffBindBody, EmittedExpr.eval, honestRow_diff, honestRow_notafter,
-            honestRow_verifier]
-          norm_num
+          exact eqToModEq (by show diffBindBody.eval honestRow = 0
+                              simp only [diffBindBody, EmittedExpr.eval, honestRow_diff,
+                                honestRow_notafter, honestRow_verifier]
+                              norm_num)
         · -- boundLast (boundary .last) on row 1 (last) — FIRES; holds by construction.
           show VmConstraint.holdsVm (envAt honestTrace 1) (1 == 0) (1 + 1 == 2)
             (.boundary VmRow.last boundBody)
           rw [show (1 + 1 == 2) = true from rfl, holdsVm_boundaryLast_true]
-          show boundBody.eval honestRow = 0
-          simp only [boundBody, EmittedExpr.eval, honestRow_diff, honestRow_hi]
-          norm_num
+          exact eqToModEq (by show boundBody.eval honestRow = 0
+                              simp only [boundBody, EmittedExpr.eval, honestRow_diff, honestRow_hi]
+                              norm_num)
   · intro i _
     simp only [presentationFreshnessDesc]
     exact True.intro
@@ -340,11 +381,28 @@ theorem honest_satisfies :
   · rw [hml]; rfl
   · rw [hmpl]; rfl
 
+/-- **The canonicality envelope is genuinely INHABITED** — the honest witness's summary cells and
+public inputs are `0` (canonical) and the block heights `verifier = 1000` / `not_after = 1500` sit deep
+in the low half. So the bridge does NOT rest on a vacuous range-check hypothesis. -/
+theorem honest_canon : PresCanon (envAt honestTrace 0) := by
+  refine ⟨fun i hi => ?_, ?_, ?_, ?_⟩
+  · have hl : (envAt honestTrace 0).loc i = 0 := by
+      rw [show (envAt honestTrace 0).loc i = honestRow i from rfl]; exact honestRow_summary i hi
+    have hp : (envAt honestTrace 0).pub i = 0 := by
+      rw [show (envAt honestTrace 0).pub i = honestPub i from rfl]; exact honestPub_summary i hi
+    rw [hl, hp]; refine ⟨⟨?_, ?_⟩, ?_, ?_⟩ <;> decide
+  · rw [show (envAt honestTrace 0).loc VERIFIER = honestRow VERIFIER from rfl, honestRow_verifier]
+    exact ⟨by decide, by decide⟩
+  · rw [show (envAt honestTrace 0).pub PI_VERIFIER = honestPub PI_VERIFIER from rfl, honestPub_verifier]
+    exact ⟨by decide, by decide⟩
+  · rw [show (envAt honestTrace 0).loc NOT_AFTER = honestRow NOT_AFTER from rfl, honestRow_notafter]
+    exact ⟨by decide, by decide⟩
+
 /-- **`bridge_fires_on_honest`** — the whole-descriptor bridge run end-to-end on the concrete honest
 witness: the genuine relation holds on its summary row. -/
 theorem bridge_fires_on_honest : PresentationFresh (envAt honestTrace 0) :=
   presentation_satisfied2_fresh (fun _ => 0) (fun _ => 0) (fun _ => (0, 0)) [] honestTrace
-    honestTrace_range (by decide) honest_satisfies
+    honestTrace_range (by decide) honest_satisfies honest_canon
 
 /-! ## §4 — NON-VACUITY (reject): a CONCRETE failing witness — an expired token. -/
 
@@ -399,6 +457,7 @@ theorem expired_not_fresh : ¬ PresentationFresh (envAt expiredTrace 0) := by
 
 #assert_axioms presentation_satisfied2_fresh
 #assert_axioms honest_satisfies
+#assert_axioms honest_canon
 #assert_axioms bridge_fires_on_honest
 #assert_axioms expired_not_satisfied
 #assert_axioms expired_not_fresh

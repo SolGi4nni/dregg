@@ -49,6 +49,7 @@ open Dregg2.Circuit (Assignment)
 open Dregg2.Exec.CircuitEmit (EmittedExpr)
 open Dregg2.Circuit.Emit.EffectVmEmit (VmRowEnv VmConstraint)
 open Dregg2.Circuit.DescriptorIR2
+open Dregg2.Circuit.Emit.EffectVmEmitTransfer (gate_modEq_iff eqToModEq)
 open Dregg2.Circuit.Emit.TemporalPredicateEmit
 open Dregg2.Circuit.Emit.TemporalPredicateRefine
 
@@ -77,19 +78,21 @@ theorem tp_window_forces {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin :
     (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
     {w : WindowConstraint} (hw : VmConstraint2.windowGate w ∈ temporalPredicateDesc.constraints)
     (honT : w.onTransition = true) :
-    w.body.eval (envAt t i) = 0 := by
+    w.body.eval (envAt t i) ≡ 0 [ZMOD 2013265921] := by
   have hrc := hsat.rowConstraints i hi _ hw
   have hlf : (i + 1 == t.rows.length) = false := by simpa using hnl
   simp only [VmConstraint2.holdsAt, WindowConstraint.holdsAt, honT, if_true] at hrc
   exact hrc hlf
 
-/-- **T3 constancy off `Satisfied2` (per non-last transition).** The threshold column copies forward
-across every active window: `threshold` at row `i+1` equals `threshold` at row `i`. -/
+/-- **T3 constancy off `Satisfied2` (per non-last transition), MOD `p`.** The threshold column copies
+forward across every active window: `threshold` at row `i+1` congruent to `threshold` at row `i` (the
+DEPLOYED field constraint; the ℤ constancy is recovered off canonicality at the no-forgery step). -/
 theorem window_t3_forces {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ}
     {t : VmTrace} (hsat : Satisfied2 hash temporalPredicateDesc minit mfin maddrs t) {i : Nat}
     (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length) :
-    (envAt t i).nxt THRESHOLD = (envAt t i).loc THRESHOLD :=
-  (t3_constancy_zero_iff (envAt t i)).mp (tp_window_forces hsat hi hnl mem_t3 rfl)
+    (envAt t i).nxt THRESHOLD ≡ (envAt t i).loc THRESHOLD [ZMOD 2013265921] :=
+  (gate_modEq_iff (by simp only [t3Body, WindowExpr.eval]; ring)).mp
+    (tp_window_forces hsat hi hnl mem_t3 rfl)
 
 /-! ## §2 — The constancy chain: `THRESHOLD` is constant across the whole run. -/
 
@@ -99,17 +102,18 @@ multi-row binding Rung 1 leaves open (it only pinned row 0). -/
 theorem threshold_constant {hash : List ℤ → ℤ} {minit : ℤ → ℤ} {mfin : ℤ → ℤ × Nat}
     {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash temporalPredicateDesc minit mfin maddrs t) :
-    ∀ i, i < t.rows.length → (envAt t i).loc THRESHOLD = (envAt t 0).loc THRESHOLD
-  | 0, _ => rfl
+    ∀ i, i < t.rows.length →
+      (envAt t i).loc THRESHOLD ≡ (envAt t 0).loc THRESHOLD [ZMOD 2013265921]
+  | 0, _ => Int.ModEq.refl _
   | (i + 1), hi => by
-      have hstep : (envAt t i).nxt THRESHOLD = (envAt t i).loc THRESHOLD :=
+      have hstep : (envAt t i).nxt THRESHOLD ≡ (envAt t i).loc THRESHOLD [ZMOD 2013265921] :=
         window_t3_forces hsat (Nat.lt_of_succ_lt hi) (Nat.ne_of_lt hi)
-      have hih : (envAt t i).loc THRESHOLD = (envAt t 0).loc THRESHOLD :=
+      have hih : (envAt t i).loc THRESHOLD ≡ (envAt t 0).loc THRESHOLD [ZMOD 2013265921] :=
         threshold_constant hsat i (Nat.lt_of_succ_lt hi)
       calc (envAt t (i + 1)).loc THRESHOLD
           = (envAt t i).nxt THRESHOLD := rfl
-        _ = (envAt t i).loc THRESHOLD := hstep
-        _ = (envAt t 0).loc THRESHOLD := hih
+        _ ≡ (envAt t i).loc THRESHOLD [ZMOD 2013265921] := hstep
+        _ ≡ (envAt t 0).loc THRESHOLD [ZMOD 2013265921] := hih
 
 /-- **Every row's threshold column IS the published threshold.** Constancy (§2) composed with the
 row-0 PI pin (`temporalPredicate_threshold_is_published`): the residual "single-row spec vs. multi-row
@@ -118,9 +122,9 @@ theorem temporalPredicate_threshold_col_published {hash : List ℤ → ℤ} {min
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash temporalPredicateDesc minit mfin maddrs t) (hlen : 0 < t.rows.length)
     (i : Nat) (hi : i < t.rows.length) :
-    (envAt t i).loc THRESHOLD = t.pub PI_THRESHOLD := by
-  rw [threshold_constant hsat i hi]
-  exact temporalPredicate_threshold_is_published hash minit mfin maddrs t hsat hlen
+    (envAt t i).loc THRESHOLD ≡ t.pub PI_THRESHOLD [ZMOD 2013265921] :=
+  (threshold_constant hsat i hi).trans
+    (temporalPredicate_threshold_is_published hash minit mfin maddrs t hsat hlen)
 
 /-! ## §3 — THE RUNG-2 NO-FORGERY THEOREM. -/
 
@@ -134,22 +138,33 @@ theorem temporalPredicate_no_forgery {hash : List ℤ → ℤ} {minit : ℤ → 
     {maddrs : List ℤ} {t : VmTrace}
     (hsat : Satisfied2 hash temporalPredicateDesc minit mfin maddrs t)
     (hlen : 0 < t.rows.length)
-    (i : Nat) (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length) :
+    (i : Nat) (hi : i < t.rows.length) (hnl : i + 1 ≠ t.rows.length)
+    (hcanon : TpCanon (envAt t i))
+    (hpubc : 0 ≤ t.pub PI_THRESHOLD ∧ t.pub PI_THRESHOLD < 2013265921) :
     t.pub PI_THRESHOLD ≤ (envAt t i).loc VALUE := by
   have horder : (envAt t i).loc THRESHOLD ≤ (envAt t i).loc VALUE :=
-    temporalPredicate_satisfied2_sound hash minit mfin maddrs t hsat i hi hnl
-  have hpub : (envAt t i).loc THRESHOLD = t.pub PI_THRESHOLD :=
+    temporalPredicate_satisfied2_sound hash minit mfin maddrs t hsat i hi hnl hcanon
+  -- the published-threshold binding is a mod-`p` congruence; both cells are canonical (threshold in
+  -- the low half by `TpCanon`, the PI by `hpubc`), so it lifts to the genuine ℤ equality.
+  have hpubm : (envAt t i).loc THRESHOLD ≡ t.pub PI_THRESHOLD [ZMOD 2013265921] :=
     temporalPredicate_threshold_col_published hsat hlen i hi
+  have hpub : (envAt t i).loc THRESHOLD = t.pub PI_THRESHOLD := by
+    obtain ⟨_, _, _, hcTh⟩ := hcanon
+    obtain ⟨hpc0, hpc1⟩ := hpubc
+    rw [Int.modEq_iff_dvd] at hpubm; obtain ⟨k, hk⟩ := hpubm
+    omega
   calc t.pub PI_THRESHOLD = (envAt t i).loc THRESHOLD := hpub.symm
     _ ≤ (envAt t i).loc VALUE := horder
 
 /-- **The no-forgery property on EVERY active step** — the whole-run reading of the discharge. -/
 theorem temporalPredicate_no_forgery_every_step {hash : List ℤ → ℤ} {minit : ℤ → ℤ}
     {mfin : ℤ → ℤ × Nat} {maddrs : List ℤ} {t : VmTrace}
-    (hsat : Satisfied2 hash temporalPredicateDesc minit mfin maddrs t) (hlen : 0 < t.rows.length) :
+    (hsat : Satisfied2 hash temporalPredicateDesc minit mfin maddrs t) (hlen : 0 < t.rows.length)
+    (hcanon : ∀ i, i < t.rows.length → i + 1 ≠ t.rows.length → TpCanon (envAt t i))
+    (hpubc : 0 ≤ t.pub PI_THRESHOLD ∧ t.pub PI_THRESHOLD < 2013265921) :
     ∀ i, i < t.rows.length → i + 1 ≠ t.rows.length →
       t.pub PI_THRESHOLD ≤ (envAt t i).loc VALUE :=
-  fun i hi hnl => temporalPredicate_no_forgery hsat hlen i hi hnl
+  fun i hi hnl => temporalPredicate_no_forgery hsat hlen i hi hnl (hcanon i hi hnl) hpubc
 
 #assert_axioms mem_t3
 #assert_axioms window_t3_forces
@@ -199,7 +214,7 @@ enforce the constancy the Rung-2 discharge consumes. -/
 theorem cheatTrace_not_satisfied :
     ¬ Satisfied2 hash0 temporalPredicateDesc (fun _ => 0) (fun _ => (0, 0)) [] cheatTrace := by
   intro hsat
-  have h : (envAt cheatTrace 0).nxt THRESHOLD = (envAt cheatTrace 0).loc THRESHOLD :=
+  have h : (envAt cheatTrace 0).nxt THRESHOLD ≡ (envAt cheatTrace 0).loc THRESHOLD [ZMOD 2013265921] :=
     window_t3_forces (i := 0) hsat (by decide) (by decide)
   exact absurd h (by decide)
 
@@ -252,7 +267,7 @@ theorem wt_gate_holds {g : EmittedExpr} (h0 : g.eval acceptLoc = 0) (i : Nat) (h
     VmConstraint2.holdsAt hash0 wtTrace.tf (envAt wtTrace i) (i == 0) (i + 1 == 2)
       (.base (.gate g)) := by
   interval_cases i
-  · exact h0
+  · exact eqToModEq h0
   · exact trivial
 
 /-- An `onTransition` window gate whose body vanishes on the row-0 window holds at any row (forced on
@@ -262,7 +277,7 @@ theorem wt_window_holds {body : WindowExpr} (h0 : body.eval (envAt wtTrace 0) = 
     VmConstraint2.holdsAt hash0 wtTrace.tf (envAt wtTrace i) (i == 0) (i + 1 == 2)
       (.windowGate ⟨body, true⟩) := by
   interval_cases i
-  · exact fun _ => h0
+  · exact fun _ => eqToModEq h0
   · exact fun hc => absurd hc (by decide)
 
 /-- A first-row boundary whose body vanishes on `acceptLoc` holds at any row (forced on the first
@@ -271,7 +286,7 @@ theorem wt_bfirst_holds {b : EmittedExpr} (h0 : b.eval acceptLoc = 0) (i : Nat) 
     VmConstraint2.holdsAt hash0 wtTrace.tf (envAt wtTrace i) (i == 0) (i + 1 == 2)
       (.base (.boundary .first b)) := by
   interval_cases i
-  · exact fun _ => h0
+  · exact fun _ => eqToModEq h0
   · exact fun hc => absurd hc (by decide)
 
 /-- A first-row PI pin met on `acceptLoc` holds at any row (forced on the first row, vacuous off it). -/
@@ -279,7 +294,7 @@ theorem wt_pifirst_holds {col k : Nat} (h0 : acceptLoc col = wtPub k) (i : Nat) 
     VmConstraint2.holdsAt hash0 wtTrace.tf (envAt wtTrace i) (i == 0) (i + 1 == 2)
       (.base (.piBinding .first col k)) := by
   interval_cases i
-  · exact fun _ => h0
+  · exact fun _ => eqToModEq h0
   · exact fun hc => absurd hc (by decide)
 
 /-- A last-row PI pin met on `wtRow1` holds at any row (forced on the last row 1, vacuous off it). -/
@@ -288,7 +303,7 @@ theorem wt_pilast_holds {col k : Nat} (h0 : wtRow1 col = wtPub k) (i : Nat) (hi 
       (.base (.piBinding .last col k)) := by
   interval_cases i
   · exact fun hc => absurd hc (by decide)
-  · exact fun _ => h0
+  · exact fun _ => eqToModEq h0
 
 /-- **The witness PROVABLY satisfies the emitted descriptor.** Row 0's range gadget + counters vanish,
 the three windows thread across the transition (including T3 constancy `3 = 3`), the boundary + PI
@@ -336,6 +351,7 @@ trace recovers `pi[PI_THRESHOLD] ≤ VALUE` on the active row 0 — WITHOUT any 
 theorem wtTrace_no_forgery_fires :
     wtTrace.pub PI_THRESHOLD ≤ (envAt wtTrace 0).loc VALUE :=
   temporalPredicate_no_forgery wtTrace_satisfies (by decide) 0 (by decide) (by decide)
+    acceptEnv_canon ⟨by decide, by decide⟩
 
 /-- The recovered numbers are real and distinct (`3 ≤ 8`), the threshold the published one — the
 conclusion is a genuine bound, not a `True`/`P → P` shell. -/
@@ -346,7 +362,7 @@ theorem wtTrace_no_forgery_value :
 /-- **The T3 constancy machinery genuinely fires on the witness** — `threshold_constant` at row 1
 (an inductive step through `window_t3_forces` at the transition) forces `threshold₁ = threshold₀`. -/
 theorem wtTrace_threshold_propagates :
-    (envAt wtTrace 1).loc THRESHOLD = (envAt wtTrace 0).loc THRESHOLD :=
+    (envAt wtTrace 1).loc THRESHOLD ≡ (envAt wtTrace 0).loc THRESHOLD [ZMOD 2013265921] :=
   threshold_constant wtTrace_satisfies 1 (by decide)
 
 #assert_axioms acceptLoc_bit_zero
