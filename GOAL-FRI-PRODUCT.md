@@ -39,6 +39,8 @@ at all times · sophistication proportionate to the challenge, NO further · ACT
   ⚑ PRIORITY REPAIR = #4 (reconcile argmax/balance-threshold split). ⚠ fhegg-clearing lane LIVE on
   these files → fix AFTER it lands (clobber); flag ember. 9-item ranked plan in the doc.
 
+- **factory ✅** (0057c5bf1, ac0106b4e, 9f6910b34, dea9008bd): honesty REPAIRED BY CODE — emit_safe now reads+derives DreggLaunchToken.sol byte-for-byte (10 tests, drift fails loud); 4 Halmos invariant families committed both-polarity (honest 3/9 doors + reentrancy, 6 grep-only=P6); pipeline wired spec→emit→audit→gate→capability (deploy-gate CLI, NotGated refusal); interview labeled honest (frozen transcripts, live=P7). Proposed: real deploy, on-chain audit_registry.
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
