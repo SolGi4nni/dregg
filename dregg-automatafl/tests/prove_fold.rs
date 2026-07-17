@@ -125,8 +125,10 @@ fn d1_forged_next_does_not_prove() {
 
 use dregg_automatafl::reference::Move;
 use dregg_automatafl::{
-    SealedMove, build_d2, build_d2_honest, build_d2_honest_bound, build_d3, build_d3_honest,
-    build_d3_honest_bound, build_sealed, build_sealed_honest, build_sealed_honest_bound,
+    SealedMove, build_a_honest, build_a_honest_bound, build_d2, build_d2_honest,
+    build_d2_honest_bound, build_d3, build_d3_honest, build_d3_honest_bound, build_r,
+    build_r_honest, build_r_honest_bound, build_sealed, build_sealed_honest,
+    build_sealed_honest_bound,
 };
 
 /// A width-fitting (≤1024) D2 board at n=3: a single move, corner-parked daemon.
@@ -310,6 +312,124 @@ fn d3_forged_next_does_not_prove() {
             eprintln!("D3 LEAF REJECT: a forged n=2 resolution had no satisfying leaf.")
         }
         Ok(Ok(_)) => panic!("a FORGED D3 resolution minted a foldable leaf — soundness OPEN"),
+    }
+}
+
+// ============================================================================
+// C.5 — THE FOLD-LEG SPLIT. The monolithic turn is carved into two foldable custom
+// leaves connected by the intermediate board root `mid_root`: Leg R (old → mid, the
+// m=2 resolution) and Leg A (mid → new, the automaton gadget). Each PROVES as a leaf
+// (both narrower than the D3 monolith, `tests/leg_split.rs::each_leg_fits_the_prover`:
+// n3 R=248/A=361 vs mono 583); a forged mid in Leg R has no satisfying leaf; and the
+// two legs FOLD as a K=2 sub-turn chain the light client accepts (mod fold below).
+// ============================================================================
+
+#[test]
+#[ignore = "SLOW: real leaf prove of Leg R (old → mid resolution) + commitment expose"]
+fn leg_r_leaf_proves_and_binds_commitment() {
+    use dregg_circuit_prove::custom_leaf_adapter::{
+        prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
+    };
+    use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
+    use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+
+    let (old, a, bmv) = d3_case();
+    let prog = build_r_honest(&old, &a, &bmv);
+    assert!(prog.air_accepts(), "sanity: honest Leg R must self-accept");
+    let program = prog.cellprogram();
+    let w = prog.trace_witness(2);
+    let pis = prog.pis.clone();
+    let config = ir2_leaf_wrap_config();
+    let out = prove_custom_leaf_with_commitment(&program, &w, 2, &pis, &config).expect(
+        "the honest Leg R (old → mid) AIR must prove as a commitment-exposing foldable leaf",
+    );
+    let exposed =
+        read_exposed_pi_commitment(&out).expect("Leg R leaf exposes an 8-felt commitment");
+    let host = custom_proof_pi_commitment(&pis);
+    assert_eq!(
+        exposed, host,
+        "Leg R commitment must byte-match the host binding"
+    );
+    eprintln!(
+        "LEG R LEAF: resolution AIR (w={}, {} constraints) PROVED; publishes mid_root at PI[24..32]={:?}",
+        program.descriptor.trace_width,
+        program.descriptor.constraints.len(),
+        pis[24..32].iter().map(|f| f.0).collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+#[ignore = "SLOW: real leaf prove of Leg A (mid → new automaton) + commitment expose"]
+fn leg_a_leaf_proves_and_binds_commitment() {
+    use dregg_automatafl::reference::resolve_mid;
+    use dregg_circuit_prove::custom_leaf_adapter::{
+        prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
+    };
+    use dregg_circuit_prove::custom_proof_bind::custom_proof_pi_commitment;
+    use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+
+    let (old, a, bmv) = d3_case();
+    let mid = resolve_mid(&old, &[a, bmv]);
+    let prog = build_a_honest(&mid);
+    assert!(prog.air_accepts(), "sanity: honest Leg A must self-accept");
+    let program = prog.cellprogram();
+    let w = prog.trace_witness(2);
+    let pis = prog.pis.clone();
+    let config = ir2_leaf_wrap_config();
+    let out = prove_custom_leaf_with_commitment(&program, &w, 2, &pis, &config).expect(
+        "the honest Leg A (mid → new) AIR must prove as a commitment-exposing foldable leaf",
+    );
+    let exposed =
+        read_exposed_pi_commitment(&out).expect("Leg A leaf exposes an 8-felt commitment");
+    let host = custom_proof_pi_commitment(&pis);
+    assert_eq!(
+        exposed, host,
+        "Leg A commitment must byte-match the host binding"
+    );
+    eprintln!(
+        "LEG A LEAF: automaton AIR (w={}, {} constraints) PROVED; consumes mid_root at PI[16..24]={:?}",
+        program.descriptor.trace_width,
+        program.descriptor.constraints.len(),
+        pis[16..24].iter().map(|f| f.0).collect::<Vec<_>>(),
+    );
+}
+
+#[test]
+#[ignore = "SLOW: real leaf prove attempt on a FORGED Leg R mid"]
+fn leg_r_forged_mid_does_not_prove() {
+    use dregg_automatafl::reference::resolve_mid;
+    use dregg_circuit_prove::custom_leaf_adapter::prove_custom_leaf_with_commitment;
+    use dregg_circuit_prove::ivc_turn_chain::ir2_leaf_wrap_config;
+
+    let (old, a, bmv) = d3_case();
+    let honest_mid = resolve_mid(&old, &[a, bmv]);
+    // Forge the mid: claim the resolution produced a different board (flip one non-auto cell).
+    let mut forged_mid = honest_mid.clone();
+    for i in 0..forged_mid.cells.len() {
+        let coord = ((i % forged_mid.n) as i32, (i / forged_mid.n) as i32);
+        if coord != forged_mid.auto {
+            forged_mid.cells[i] = if forged_mid.cells[i] == 0 { 2 } else { 0 };
+            break;
+        }
+    }
+    assert_ne!(forged_mid, honest_mid, "the forged mid must differ");
+    let prog = build_r(&old, &a, &bmv, &forged_mid);
+    assert!(
+        !prog.air_accepts(),
+        "sanity: a forged Leg R mid must self-reject"
+    );
+    let program = prog.cellprogram();
+    let w = prog.trace_witness(2);
+    let pis = prog.pis.clone();
+    let config = ir2_leaf_wrap_config();
+    let res = std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+        prove_custom_leaf_with_commitment(&program, &w, 2, &pis, &config)
+    }));
+    match res {
+        Err(_) | Ok(Err(_)) => {
+            eprintln!("LEG R REJECT: a forged (old → mid) resolution had no satisfying leaf.")
+        }
+        Ok(Ok(_)) => panic!("a FORGED Leg R mid minted a foldable leaf — soundness OPEN"),
     }
 }
 
@@ -686,6 +806,77 @@ mod fold {
         let (old, a, b) = super::d3_case();
         let (pis, bundle) = bundle_of(&super::build_d3_honest_bound(&old, &a, &b, old8, new8));
         fold_and_accept(pis, bundle, "D3");
+    }
+
+    /// **C.5 — the two legs FOLD as chained sub-turns and the light client ACCEPTS.**
+    /// Turn 0 is Leg R (`old → mid`), turn 1 is Leg A (`mid → new`), both on the SAME cell:
+    /// the deployed continuity tooth (`new_root[0] == old_root[1]`) sequences them via the
+    /// cell's rotated roots (nonce 0 → 1), and each leaf's `[old8 ‖ new8]` prefix is welded to
+    /// its leg's real roots by the state-binding fold. On the honest path Leg R's published
+    /// `mid_root` (app PI[24..32]) is byte-identical to Leg A's consumed old-root (app
+    /// PI[16..24]) — asserted here on the bound bundles — so the composed receipt is exactly
+    /// `automaton_step ∘ resolve_mid == apply_turn`.
+    ///
+    /// REMAINING (see the module test-plan): the cell-continuity tooth binds the CELL rotated
+    /// roots, not the board content, so the mid_root byte-identity is enforced at the app-PI
+    /// level (this assert) but is not YET a per-lane connect CONFLICT inside the fold. Landing
+    /// that cross-turn board-root weld is the one open fold-driver hook.
+    #[test]
+    #[ignore = "SLOW: deployed two-sub-turn (Leg R ∘ Leg A) fold + light-client accept"]
+    fn two_subturn_r_then_a_folds_and_lightclient_accepts() {
+        use dregg_automatafl::reference::resolve_mid;
+        let balance = 1000i64;
+        let (old, a, b) = super::d3_case();
+        let mid = resolve_mid(&old, &[a, b]);
+
+        // Turn 0 = Leg R (old → mid), bound to the cell's real rotated roots at nonce 0.
+        let (r_old8, r_new8) = leg_real_roots(balance, 0);
+        let (r_pis, r_bundle) =
+            bundle_of(&super::build_r_honest_bound(&old, &a, &b, r_old8, r_new8));
+        // Turn 1 = Leg A (mid → new), bound to the cell's real rotated roots at nonce 1.
+        let (a_old8, a_new8) = leg_real_roots(balance, 1);
+        let (a_pis, a_bundle) = bundle_of(&super::build_a_honest_bound(&mid, a_old8, a_new8));
+
+        // THE SEAM (published/consumed byte-identity): Leg R's mid_root == Leg A's old-root.
+        assert_eq!(
+            &r_pis[24..32],
+            &a_pis[16..24],
+            "Leg R's published mid_root must weld Leg A's consumed old-root"
+        );
+
+        let r_commit = custom_proof_pi_commitment(&r_pis);
+        let a_commit = custom_proof_pi_commitment(&a_pis);
+        let t0_leg = mint_custom_leg(balance, 0, r_commit, Some(r_bundle));
+        let t1_leg = mint_custom_leg(balance, 1, a_commit, Some(a_bundle));
+        let t0 = FinalizedTurn::new(DescriptorParticipant::rotated(t0_leg));
+        let t1 = FinalizedTurn::new(DescriptorParticipant::rotated(t1_leg));
+        assert_eq!(
+            t0.new_root(),
+            t1.old_root(),
+            "Leg R sub-turn links to Leg A sub-turn (cell continuity)"
+        );
+        let turns = vec![t0, t1];
+        let mut whole = prove_turn_chain_recursive(&turns).expect(
+            "the honest two-sub-turn (R then A) chain must fold through the deployed prover",
+        );
+        let vk = whole.root_vk_fingerprint();
+        let attested = verify_history(&whole, &vk)
+            .expect("the REAL light client must ACCEPT the honest two-sub-turn sequence");
+        assert_eq!(attested.num_turns, 2);
+        eprintln!(
+            "LEG SPLIT ACCEPT: Leg R (old→mid) then Leg A (mid→new) -> fold(K=2) -> verify_history OK. \
+             num_turns={}, mid_root[0]={}",
+            attested.num_turns, r_pis[24].0,
+        );
+        // Non-vacuous: a relabeled final_root is REJECTED.
+        let honest_final = whole.final_root;
+        whole.final_root[0] = honest_final[0] + BabyBear::new(1);
+        assert!(
+            verify_history(&whole, &vk).is_err(),
+            "a spliced final_root must be rejected"
+        );
+        whole.final_root = honest_final;
+        verify_history(&whole, &vk).expect("restored honest artifact verifies again");
     }
 
     #[test]

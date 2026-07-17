@@ -30,10 +30,12 @@ pub mod reference;
 pub mod surface;
 
 pub use air::{
-    SealedMove, build_d1, build_d1_bound, build_d1_honest, build_d1_honest_bound, build_d2,
-    build_d2_bound, build_d2_honest, build_d2_honest_bound, build_d3, build_d3_bound,
-    build_d3_honest, build_d3_honest_bound, build_sealed, build_sealed_bound, build_sealed_honest,
-    build_sealed_honest_bound, placeholder_roots,
+    SealedMove, build_a, build_a_bound, build_a_honest, build_a_honest_bound, build_d1,
+    build_d1_bound, build_d1_honest, build_d1_honest_bound, build_d2, build_d2_bound,
+    build_d2_honest, build_d2_honest_bound, build_d3, build_d3_bound, build_d3_honest,
+    build_d3_honest_bound, build_r, build_r_bound, build_r_honest, build_r_honest_bound,
+    build_sealed, build_sealed_bound, build_sealed_honest, build_sealed_honest_bound,
+    placeholder_roots,
 };
 pub use builder::Builder;
 pub use game::{AutomataflGame, Deployment, MatchState};

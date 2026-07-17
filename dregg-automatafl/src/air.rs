@@ -772,9 +772,11 @@ pub fn build_d1_honest_bound(
 // ============================================================================
 
 pub use crate::moves::{
-    SealedMove, build_d2, build_d2_bound, build_d2_honest, build_d2_honest_bound, build_d3,
-    build_d3_bound, build_d3_honest, build_d3_honest_bound, build_sealed, build_sealed_bound,
-    build_sealed_honest, build_sealed_honest_bound,
+    SealedMove, build_a, build_a_bound, build_a_honest, build_a_honest_bound, build_d2,
+    build_d2_bound, build_d2_honest, build_d2_honest_bound, build_d3, build_d3_bound,
+    build_d3_honest, build_d3_honest_bound, build_r, build_r_bound, build_r_honest,
+    build_r_honest_bound, build_sealed, build_sealed_bound, build_sealed_honest,
+    build_sealed_honest_bound,
 };
 
 /// Shared entry: validate `claimed_next == apply_turn(old, moves)` given the already

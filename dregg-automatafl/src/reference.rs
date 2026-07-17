@@ -1,7 +1,7 @@
 //! The reference automatafl transition — the WITNESS ORACLE and the refinement
 //! target. Ported faithfully from the committed Lean contract
 //! `metatheory/Dregg2/Games/Automatafl.lean` (`applyTurn` and its fragments),
-//! which itself mirrors the o1Labs reference engine `~/dev/automatafl/logic`.
+//! which itself mirrors the automatafl reference engine `~/dev/automatafl/logic`.
 //!
 //! Particle codes match the Lean/DSL board felt encoding:
 //! `0 = vacuum, 1 = repulsor, 2 = attractor, 3 = automaton`.
@@ -381,13 +381,13 @@ fn follow_chain(
 pub fn apply_moves(b: &Board, moves: &[Move]) -> Board {
     let srcs: Vec<Coord> = moves.iter().map(|m| m.frm).collect();
     // A source counts as a MOVING piece only if it carries a particle AND its move
-    // is not occluded. This mirrors the o1Labs `apply_moves`, which inserts a source
+    // is not occluded. This mirrors the automatafl `apply_moves`, which inserts a source
     // into `initial_piece_coords` only inside `if !is_occluded` (all sources are
     // marked passable first, so `occluded` here matches). An OCCLUDED move's source
     // is therefore NOT journeyed and NOT cleared — it stays put as a static occupant,
     // and another piece's chain may flow onto and overwrite it. (Including occluded
     // sources here would spawn a spurious stationary journey that blocks the incoming
-    // piece — a divergence from o1Labs the 11×11 differential surfaces.)
+    // piece — a divergence from automatafl the 11×11 differential surfaces.)
     let mut piece_srcs: Vec<Coord> = Vec::new();
     for m in moves {
         if b.cell_at(m.frm) != VAC && !occluded(b, &srcs, m) && !piece_srcs.contains(&m.frm) {
@@ -450,18 +450,27 @@ pub fn chain_endpoint(b: &Board, moves: &[Move], src: Coord) -> Option<Coord> {
     Some(follow_chain(&next_c, &piece_srcs, src, &mut visited, fuel))
 }
 
-/// **THE PURE TRANSITION** (`applyTurn`): validity-filter → conflict-resolve →
-/// apply-all → automaton step.
-pub fn apply_turn(b: &Board, ms: &[Move]) -> Board {
+/// The move-resolved intermediate board `mid` — validity-filter → conflict-resolve →
+/// apply-all, STOPPING BEFORE the automaton step. This is the exact C.5 fold-leg split:
+/// `apply_turn = automaton_step ∘ resolve_mid`. Leg R proves `old → mid` (this function),
+/// Leg A proves `mid → new` (`automaton_step`), and the composed refinement is exactly
+/// this equation.
+pub fn resolve_mid(b: &Board, ms: &[Move]) -> Board {
     let valid: Vec<Move> = ms.iter().filter(|m| move_valid(b, m)).copied().collect();
     let resolved = conflict_resolve(b, &valid);
-    let mid = apply_moves(b, &resolved);
-    automaton_step(&mid)
+    apply_moves(b, &resolved)
+}
+
+/// **THE PURE TRANSITION** (`applyTurn`): validity-filter → conflict-resolve →
+/// apply-all → automaton step. Factored as `automaton_step ∘ resolve_mid` — the two
+/// composed fold legs (Leg R then Leg A).
+pub fn apply_turn(b: &Board, ms: &[Move]) -> Board {
+    automaton_step(&resolve_mid(b, ms))
 }
 
 // ============================================================================
 // The REAL 11×11 two-player game: the stock opening, the goal corners, the win
-// check. Faithful to the o1Labs reference `~/dev/automatafl/logic`
+// check. Faithful to the automatafl reference `~/dev/automatafl/logic`
 // (`board.rs::stock_two_player`, `game.rs::try_complete_round`'s goal check) and
 // the README ruleset. TWO-PLAYER ONLY (m=2). The transition itself is the same
 // `apply_turn` above — it is fully parameterized by `Board::n`, so nothing about
@@ -472,13 +481,13 @@ pub fn apply_turn(b: &Board, ms: &[Move]) -> Board {
 pub const N11: usize = 11;
 
 /// **The stock two-player opening (11×11).** A byte-for-byte transcription of the
-/// o1Labs `Board::stock_two_player` grid (`~/dev/automatafl/logic/src/board.rs`):
+/// automatafl `Board::stock_two_player` grid (`~/dev/automatafl/logic/src/board.rs`):
 /// a repulsor/attractor ring around the flanks, four attractor pairs and repulsor
 /// pairs, and the Automaton dead centre at `(5,5)`. Rows are `y = 0..11` from the
-/// top of the `arr2` literal (o1Labs indexes `particles[[y, x]]`, matching our
+/// top of the `arr2` literal (automatafl indexes `particles[[y, x]]`, matching our
 /// `cells[y*n + x]`).
 pub fn stock_two_player() -> Board {
-    // `.` vacuum, `r` repulsor, `a` attractor, `d` automaton — the exact o1Labs grid.
+    // `.` vacuum, `r` repulsor, `a` attractor, `d` automaton — the exact automatafl grid.
     const GRID: [&[u8; N11]; N11] = [
         b"rroorrroorr", // y = 0
         b"oooarrraooo", // y = 1
@@ -531,7 +540,7 @@ pub const GOAL_CORNERS_2P: [(Coord, u32); 4] = [
 ];
 
 /// **The win check.** The seat whose goal corner the Automaton currently occupies,
-/// or `None`. Mirrors the o1Labs `try_complete_round` goal scan
+/// or `None`. Mirrors the automatafl `try_complete_round` goal scan
 /// (`goals.iter().find(|(c, _)| c == automaton_location)`), evaluated on the
 /// post-`apply_turn` board.
 pub fn win_owner(b: &Board, goals: &[(Coord, u32)]) -> Option<u32> {

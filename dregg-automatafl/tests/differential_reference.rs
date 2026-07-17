@@ -1,8 +1,8 @@
-//! **The DIFFERENTIAL test vs the real o1Labs reference engine.**
+//! **The DIFFERENTIAL test vs the real automatafl reference engine.**
 //!
 //! The dregg reference oracle ([`dregg_automatafl::reference`]) is the AIR's
 //! refinement target — the off-circuit `apply_turn` the in-circuit AIR re-checks.
-//! This battery drives the ACTUAL o1Labs engine (`~/dev/automatafl/logic`, the
+//! This battery drives the ACTUAL automatafl engine (`~/dev/automatafl/logic`, the
 //! `automatafl-logic` crate) move-for-move on the REAL 11×11 two-player board and
 //! asserts the two engines agree: same opening, same board rewrite, same Automaton
 //! step, same win. It is a genuine differential (two independent implementations),
@@ -43,7 +43,7 @@ impl Rng {
 }
 
 // ---------------------------------------------------------------------------
-// Conversions between the o1Labs world and the dregg reference world.
+// Conversions between the automatafl world and the dregg reference world.
 // ---------------------------------------------------------------------------
 fn particle_code(p: o1::Particle) -> u8 {
     match p {
@@ -54,14 +54,14 @@ fn particle_code(p: o1::Particle) -> u8 {
     }
 }
 
-/// Snapshot an o1Labs board as the equivalent dregg reference [`DBoard`].
+/// Snapshot an automatafl board as the equivalent dregg reference [`DBoard`].
 fn to_dregg(board: &o1::Board) -> DBoard {
     let n = board.size.x as usize;
     assert_eq!(n, board.size.y as usize, "square board");
     let mut cells = vec![dref::VAC; n * n];
     for y in 0..n {
         for x in 0..n {
-            // o1Labs indexes particles[[y, x]] (row-major, y is the row).
+            // automatafl indexes particles[[y, x]] (row-major, y is the row).
             cells[y * n + x] = particle_code(board.particles[[y, x]].what);
         }
     }
@@ -76,7 +76,7 @@ fn to_dregg(board: &o1::Board) -> DBoard {
     }
 }
 
-/// Set the standard two-player goals on an o1Labs `Game` (mirrors [`GOAL_CORNERS_2P`]).
+/// Set the standard two-player goals on an automatafl `Game` (mirrors [`GOAL_CORNERS_2P`]).
 /// Pushes into the public `goals` field so we never have to name the `SmallVec` type
 /// (smallvec is only a transitive dependency here).
 fn set_goals(game: &mut o1::Game) {
@@ -105,8 +105,8 @@ fn new_stock_game() -> o1::Game {
 }
 
 // ---------------------------------------------------------------------------
-// Random LEGAL two-player move generation, played against the LIVE o1Labs board.
-// A legal move (per o1Labs `propose_move`): both endpoints in-bounds, neither the
+// Random LEGAL two-player move generation, played against the LIVE automatafl board.
+// A legal move (per automatafl `propose_move`): both endpoints in-bounds, neither the
 // Automaton, source != destination, rook-aligned. The source need not carry a
 // piece (vacuum-source flow-through is legal automatafl).
 // ---------------------------------------------------------------------------
@@ -164,7 +164,7 @@ fn to_dmove(m: &o1::Move) -> DMove {
 }
 
 /// Would the dregg oracle keep BOTH moves (no fork / no destination-collision)?
-/// The non-conflict subset is where the interactive o1Labs conflict pause and the
+/// The non-conflict subset is where the interactive automatafl conflict pause and the
 /// dregg single-round drop coincide, so a full board-for-board comparison is valid.
 fn non_conflicting(old: &DBoard, a: &DMove, b: &DMove) -> bool {
     let valid: Vec<DMove> = [*a, *b]
@@ -207,7 +207,7 @@ fn dump_divergence(
     panic!(
         "DIVERGENCE seed {seed} turn {turn}\n\
          move A = {a:?}\n move B = {b:?}\n auto_before = {:?}\n\
-         --- OLD ---\n{}\n--- o1Labs NEXT (auto {:?}) ---\n{}\n--- dregg NEXT (auto {:?}) ---\n{}\n\
+         --- OLD ---\n{}\n--- automatafl NEXT (auto {:?}) ---\n{}\n--- dregg NEXT (auto {:?}) ---\n{}\n\
          differing indices = {diffs:?}",
         old.auto,
         grid(old),
@@ -223,7 +223,7 @@ fn boards_agree(o1_board: &o1::Board, dboard: &DBoard, ctx: &str) {
     let converted = to_dregg(o1_board);
     assert_eq!(
         converted.cells, dboard.cells,
-        "{ctx}: board cells diverge\n o1Labs={:?}\n dregg ={:?}",
+        "{ctx}: board cells diverge\n automatafl={:?}\n dregg ={:?}",
         converted.cells, dboard.cells
     );
     assert_eq!(
@@ -264,7 +264,7 @@ fn full_turn_differential_11x11_two_player() {
             if game.winner.is_some() {
                 break;
             }
-            // The dregg `old` is the current live o1Labs board.
+            // The dregg `old` is the current live automatafl board.
             let old = to_dregg(&game.board);
 
             // Draw a non-conflicting legal move pair (regenerate on conflict; the
@@ -296,16 +296,16 @@ fn full_turn_differential_11x11_two_player() {
                 chain_or_step += 1;
             }
 
-            // Drive the SAME two moves through the o1Labs engine.
+            // Drive the SAME two moves through the automatafl engine.
             let f0 = game.propose_move(a);
             assert!(
                 matches!(f0, o1::ProposeFeedback::Accepted),
-                "o1Labs rejected legal move A: {f0:?}"
+                "automatafl rejected legal move A: {f0:?}"
             );
             let f1 = game.propose_move(b);
             assert!(
                 matches!(f1, o1::ProposeFeedback::AcceptedAndReady),
-                "o1Labs did not become ready after move B: {f1:?}"
+                "automatafl did not become ready after move B: {f1:?}"
             );
             match game.try_complete_round() {
                 o1::CompleteRoundFeedback::CompletedMoves(_) => {}
@@ -349,7 +349,7 @@ fn full_turn_differential_11x11_two_player() {
 
 // ===========================================================================
 // (3) Automaton-step differential in isolation: for many random boards, the dregg
-//     `automaton_step` and the o1Labs `automaton_move` land the daemon on the same
+//     `automaton_step` and the automatafl `automaton_move` land the daemon on the same
 //     square. This isolates the raycast/priority logic from move resolution.
 // ===========================================================================
 #[test]
@@ -402,7 +402,7 @@ fn automaton_step_differential() {
             o1_board.place(c, p);
         }
 
-        // o1Labs: where would the automaton move? (use_column_rule = true)
+        // automatafl: where would the automaton move? (use_column_rule = true)
         let mut game = o1::Game::new(
             o1_board.clone(),
             2,
@@ -438,9 +438,9 @@ fn automaton_step_differential() {
 
 // ===========================================================================
 // (4) Conflict DETECTION agrees. Where the two engines' post-conflict flow differs
-//     (o1Labs pauses the round to re-collect; dregg drops-and-continues in one
+//     (automatafl pauses the round to re-collect; dregg drops-and-continues in one
 //     round), what MUST still coincide is *which* moves are conflicted. We feed
-//     deliberately-conflicting pairs and check the o1Labs conflicted set equals the
+//     deliberately-conflicting pairs and check the automatafl conflicted set equals the
 //     dregg dropped set.
 // ===========================================================================
 #[test]
@@ -492,7 +492,7 @@ fn conflict_detection_matches_o1labs() {
         assert_eq!(
             o1_conflicted.len(),
             2,
-            "o1Labs must flag both forked moves as conflicted"
+            "automatafl must flag both forked moves as conflicted"
         );
     }
 
@@ -544,14 +544,14 @@ fn conflict_detection_matches_o1labs() {
         assert_eq!(
             o1_conflicted.len(),
             2,
-            "o1Labs must flag both colliding moves as conflicted"
+            "automatafl must flag both colliding moves as conflicted"
         );
     }
 }
 
 // ===========================================================================
 // (5) Win condition: a move that pulls the automaton into a goal corner wins for
-//     that corner's owner, agreeing with o1Labs.
+//     that corner's owner, agreeing with automatafl.
 // ===========================================================================
 #[test]
 fn win_condition_matches_o1labs() {
@@ -620,7 +620,7 @@ fn win_condition_matches_o1labs() {
     );
     set_goals(&mut game);
     game.update_automaton();
-    // Emulate the o1Labs post-step goal scan.
+    // Emulate the automatafl post-step goal scan.
     let o1_win = game
         .goals
         .iter()
@@ -630,5 +630,5 @@ fn win_condition_matches_o1labs() {
 
     let dregg_win = dref::win_owner(&dstepped, &GOAL_CORNERS_2P);
     assert_eq!(dregg_win, Some(1), "seat 1 owns corner (10,10)");
-    assert_eq!(dregg_win, o1_win, "win verdict must agree with o1Labs");
+    assert_eq!(dregg_win, o1_win, "win verdict must agree with automatafl");
 }

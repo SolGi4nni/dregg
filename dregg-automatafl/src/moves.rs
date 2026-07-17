@@ -448,42 +448,28 @@ pub fn build_d2_honest_bound(
     build_d2_bound(old, m, &next, old8, new8)
 }
 
-/// **STAGE D3** — the n=2 resolution: `claimed_next == apply_turn(old, [a, b])`.
-/// The 6 pattern bits, the fork/collide/survive selection, and each surviving
-/// piece's chain-endpoint destination are RE-DERIVED IN-CIRCUIT from the witnessed
-/// coordinates + source particles (no value taken from the reference resolution).
-pub fn build_d3_bound(
+/// **THE m=2 RESOLUTION BODY** (shared by Leg R and the monolithic D3). Emits every
+/// constraint carving `mid == resolve_mid(old, [ma, mb])` over the pre-allocated `old_cols`
+/// / `mid_cols`: both moves validated, the 6 pattern bits + fork/collide/survive selection
+/// + each surviving piece's chain-endpoint destination RE-DERIVED IN-CIRCUIT from the
+/// witnessed coordinates + source particles (no value taken from the reference resolution),
+/// then the one-hot board rewrite `write_mid_witnessed`. `mid_cols` holds the CLAIMED
+/// intermediate board; a forged `mid` fails the per-cell rewrite equalities (UNSAT).
+fn emit_resolution(
+    bld: &mut Builder,
     old: &Board,
     ma: &Move,
     mb: &Move,
-    claimed_next: &Board,
-    old8: [BabyBear; 8],
-    new8: [BabyBear; 8],
-) -> Builder {
+    old_cols: &[usize],
+    mid_cols: &[usize],
+) {
     let n = old.n;
-    let mut bld = Builder::new(format!("automatafl-d3-n{n}"));
-    let old_cols = alloc_board_pub(&mut bld, "old", old);
-
-    // reference resolution (drives the honest witness + the public `mid`/`new`)
-    let valid: Vec<Move> = [*ma, *mb]
-        .into_iter()
-        .filter(|m| move_valid(old, m))
-        .collect();
-    let resolved = conflict_resolve(old, &valid);
-    let mid = apply_moves(old, &resolved);
-    let mid_cols = alloc_board_pub(&mut bld, "mid", &mid);
-    let new_cols = alloc_board_pub(&mut bld, "new", claimed_next);
-    // PI[0..16): the door's state-binding prefix (cell roots; fold-connected).
-    for x in old8.iter().chain(new8.iter()) {
-        bld.add_pi(x.0 as i128);
-    }
-
-    let one = one_col(&mut bld);
+    let one = one_col(bld);
     let srcs = vec![ma.frm, mb.frm];
 
     // Validate both moves (rejects an invalid move); source reads bound to (fx,fy).
-    let (fxa, fya, txa, tya, fpa) = validate_move(&mut bld, "ma", old, ma, &old_cols, one);
-    let (fxb, fyb, txb, tyb, fpb) = validate_move(&mut bld, "mb", old, mb, &old_cols, one);
+    let (fxa, fya, txa, tya, fpa) = validate_move(bld, "ma", old, ma, old_cols, one);
+    let (fxb, fyb, txb, tyb, fpb) = validate_move(bld, "mb", old, mb, old_cols, one);
 
     // Occlusion per move (sources passable).
     let occa_ref = interior(ma.frm, ma.to)
@@ -492,8 +478,8 @@ pub fn build_d3_bound(
     let occb_ref = interior(mb.frm, mb.to)
         .iter()
         .any(|&c| old.cell_at(c) != VAC && !srcs.contains(&c));
-    let occa = validate_occlusion(&mut bld, "ma", old, ma, &old_cols, &srcs, occa_ref);
-    let occb = validate_occlusion(&mut bld, "mb", old, mb, &old_cols, &srcs, occb_ref);
+    let occa = validate_occlusion(bld, "ma", old, ma, old_cols, &srcs, occa_ref);
+    let occb = validate_occlusion(bld, "mb", old, mb, old_cols, &srcs, occb_ref);
 
     // Source non-vacuum bits (vac_fa = 1-anz, vac_fb = 1-bnz).
     let anz = bld.forced_ge0(
@@ -511,17 +497,17 @@ pub fn build_d3_bound(
 
     // --- the 6 pattern bits, is-zero over the WITNESSED coordinates ---
     let eq_ff = eq_coords(
-        &mut bld, "eqff", fxa, fya, fxb, fyb, ma.frm.0, ma.frm.1, mb.frm.0, mb.frm.1,
+        bld, "eqff", fxa, fya, fxb, fyb, ma.frm.0, ma.frm.1, mb.frm.0, mb.frm.1,
     );
     let eq_tt = eq_coords(
-        &mut bld, "eqtt", txa, tya, txb, tyb, ma.to.0, ma.to.1, mb.to.0, mb.to.1,
+        bld, "eqtt", txa, tya, txb, tyb, ma.to.0, ma.to.1, mb.to.0, mb.to.1,
     );
     // eq_ab = [to_a == frm_b], eq_ba = [to_b == frm_a] (the chain relations).
     let eq_ab = eq_coords(
-        &mut bld, "eqab", txa, tya, fxb, fyb, ma.to.0, ma.to.1, mb.frm.0, mb.frm.1,
+        bld, "eqab", txa, tya, fxb, fyb, ma.to.0, ma.to.1, mb.frm.0, mb.frm.1,
     );
     let eq_ba = eq_coords(
-        &mut bld, "eqba", txb, tyb, fxa, fya, mb.to.0, mb.to.1, ma.frm.0, ma.frm.1,
+        bld, "eqba", txb, tyb, fxa, fya, mb.to.0, mb.to.1, ma.frm.0, ma.frm.1,
     );
 
     // --- the n=2 SELECTION truth table, derived from the bits ---
@@ -538,7 +524,7 @@ pub fn build_d3_bound(
             .add_lin(-1, eq_ff)
             .add_prod(1, vec![eq_ff, eq_tt]),
     );
-    let neq_ff = not_bit(&mut bld, "neqff", eq_ff);
+    let neq_ff = not_bit(bld, "neqff", eq_ff);
     let col1 = bld.alloc_prod("col_c1", eq_tt, neq_ff);
     let col2 = bld.alloc_prod("col_c2", col1, anz);
     let collide_c = bld.alloc_prod("collide", col2, bnz);
@@ -577,17 +563,17 @@ pub fn build_d3_bound(
     // resolved unoccluded move continues the chain), A flows THROUGH to B's dest.
     //   ft_a = eq_ab ∧ ¬vac... : eq_ab ∧ ¬bnz ∧ survive ∧ ¬occb ∧ ¬eq_ba  → dest_a = to_b
     //   ft_b = eq_ba ∧ ¬anz ∧ survive ∧ ¬occa ∧ ¬eq_ab                     → dest_b = to_a
-    let n_bnz = not_bit(&mut bld, "nbnz", bnz);
-    let n_occb = not_bit(&mut bld, "noccb", occb);
-    let n_eqba = not_bit(&mut bld, "neqba", eq_ba);
+    let n_bnz = not_bit(bld, "nbnz", bnz);
+    let n_occb = not_bit(bld, "noccb", occb);
+    let n_eqba = not_bit(bld, "neqba", eq_ba);
     let fa1 = bld.alloc_prod("fta1", eq_ab, n_bnz);
     let fa2 = bld.alloc_prod("fta2", fa1, surv);
     let fa3 = bld.alloc_prod("fta3", fa2, n_occb);
     let ft_a = bld.alloc_prod("ft_a", fa3, n_eqba);
 
-    let n_anz = not_bit(&mut bld, "nanz", anz);
-    let n_occa = not_bit(&mut bld, "nocca", occa);
-    let n_eqab = not_bit(&mut bld, "neqab", eq_ab);
+    let n_anz = not_bit(bld, "nanz", anz);
+    let n_occa = not_bit(bld, "nocca", occa);
+    let n_eqab = not_bit(bld, "neqab", eq_ab);
     let fb1 = bld.alloc_prod("ftb1", eq_ba, n_anz);
     let fb2 = bld.alloc_prod("ftb2", fb1, surv);
     let fb3 = bld.alloc_prod("ftb3", fb2, n_occa);
@@ -615,10 +601,10 @@ pub fn build_d3_bound(
         .add_prod(-1, vec![ft_b, tyb]);
 
     write_mid_witnessed(
-        &mut bld,
+        bld,
         n,
-        &old_cols,
-        &mid_cols,
+        old_cols,
+        mid_cols,
         vec![
             Placement {
                 src_x_hot: ma.frm.0 as usize,
@@ -646,11 +632,141 @@ pub fn build_d3_bound(
             },
         ],
     );
+}
 
+/// **STAGE D3** — the n=2 resolution: `claimed_next == apply_turn(old, [a, b])`.
+/// The MONOLITH: resolution (`emit_resolution`, `old → mid`) AND the automaton
+/// (`mid → new`) in one AIR. The C.5 fold-leg split ([`build_r_bound`] +
+/// [`build_a_bound`]) carves these apart; this one-receipt form remains for the fast
+/// self-tests / size census.
+pub fn build_d3_bound(
+    old: &Board,
+    ma: &Move,
+    mb: &Move,
+    claimed_next: &Board,
+    old8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
+    let n = old.n;
+    let mut bld = Builder::new(format!("automatafl-d3-n{n}"));
+    let old_cols = alloc_board_pub(&mut bld, "old", old);
+
+    // reference resolution (drives the honest witness + the public `mid`/`new`)
+    let mid = r::resolve_mid(old, &[*ma, *mb]);
+    let mid_cols = alloc_board_pub(&mut bld, "mid", &mid);
+    let new_cols = alloc_board_pub(&mut bld, "new", claimed_next);
+    // PI[0..16): the door's state-binding prefix (cell roots; fold-connected).
+    for x in old8.iter().chain(new8.iter()) {
+        bld.add_pi(x.0 as i128);
+    }
+
+    emit_resolution(&mut bld, old, ma, mb, &old_cols, &mid_cols);
     automaton_on_mid(&mut bld, n, &mid_cols, &mid, &new_cols);
     // PI[16..32): the CONSTRAINED board-state roots (bind_pi'd app PIs).
     crate::air::bind_board_roots(&mut bld, &old_cols, &new_cols);
     bld
+}
+
+/// **LEG R — the resolution leg (`old → mid`).** Validity + m=2 conflict
+/// (fork/collide/survive) + the 2-move chain-follow/flow-through + the board rewrite,
+/// producing the resolved board `mid` from `old` and the two moves (via
+/// [`emit_resolution`]). It does NOT step the automaton — that is Leg A's job.
+///
+/// PUBLIC INPUTS (the state-binding door ABI, exactly as D1–D3):
+/// ```text
+///   [ 0.. 8)  old8            the CELL's pre-state root  (add_pi'd, fold-connected)
+///   [ 8..16)  mid8            the CELL's post-state root (== Leg A's old8 — the seam)
+///   [16..24)  board_old_root  CONSTRAINED board_root8(old)
+///   [24..32)  board_mid_root  CONSTRAINED board_root8(mid)  ← THE PUBLISHED mid_root
+/// ```
+/// Leg R publishes `mid_root = board_root8(mid)` as its NEW-root app PI; Leg A consumes
+/// the byte-identical `board_root8(mid)` as its OLD-root app PI. Modeled as two chained
+/// sub-turns on the same cell, R's post-state door prefix `mid8` welds to A's pre-state
+/// prefix through the deployed cell-continuity connect (`new_root[i] == old_root[i+1]`),
+/// which SEQUENCES the two legs. A forged `mid` INSIDE Leg R is a leaf conflict: `mid_cols`
+/// holds the CLAIMED `mid` and the `emit_resolution` rewrite equalities reject any
+/// `mid ≠ resolve_mid(old, [ma, mb])` (no satisfying leaf). The board `mid_root` published
+/// here / consumed by Leg A is byte-identical on the honest path; the cross-turn connect
+/// that makes a mid DISAGREEMENT between the two legs UNSAT at the fold level is the one
+/// open fold-driver hook (see `tests/prove_fold.rs::fold`).
+pub fn build_r_bound(
+    old: &Board,
+    ma: &Move,
+    mb: &Move,
+    claimed_mid: &Board,
+    old8: [BabyBear; 8],
+    mid8: [BabyBear; 8],
+) -> Builder {
+    let n = old.n;
+    let mut bld = Builder::new(format!("automatafl-legR-n{n}"));
+    let old_cols = alloc_board_pub(&mut bld, "old", old);
+    let mid_cols = alloc_board_pub(&mut bld, "mid", claimed_mid);
+    // PI[0..16): the door's state-binding prefix (cell roots; fold-connected). Leg R's
+    // post-state prefix `mid8` is what Leg A re-exposes as its pre-state prefix.
+    for x in old8.iter().chain(mid8.iter()) {
+        bld.add_pi(x.0 as i128);
+    }
+    emit_resolution(&mut bld, old, ma, mb, &old_cols, &mid_cols);
+    // PI[16..32): the CONSTRAINED board-state roots — old board, and the PUBLISHED mid_root.
+    crate::air::bind_board_roots(&mut bld, &old_cols, &mid_cols);
+    bld
+}
+
+/// Leg R with placeholder door roots (the fast battery).
+pub fn build_r(old: &Board, ma: &Move, mb: &Move, claimed_mid: &Board) -> Builder {
+    let (old8, mid8) = crate::air::placeholder_roots();
+    build_r_bound(old, ma, mb, claimed_mid, old8, mid8)
+}
+
+/// The honest Leg R: `claimed_mid = resolve_mid(old, [ma, mb])` (placeholder door roots).
+pub fn build_r_honest(old: &Board, ma: &Move, mb: &Move) -> Builder {
+    let mid = r::resolve_mid(old, &[*ma, *mb]);
+    build_r(old, ma, mb, &mid)
+}
+
+/// The honest Leg R bound to the leg's REAL cell-state roots (the fold driver).
+pub fn build_r_honest_bound(
+    old: &Board,
+    ma: &Move,
+    mb: &Move,
+    old8: [BabyBear; 8],
+    mid8: [BabyBear; 8],
+) -> Builder {
+    let mid = r::resolve_mid(old, &[*ma, *mb]);
+    build_r_bound(old, ma, mb, &mid, old8, mid8)
+}
+
+/// **LEG A — the automaton leg (`mid → new`).** The existing automaton gadget on the
+/// already-resolved board `mid`, producing `new = automaton_step(mid)`. Structurally this
+/// is D1 with `mid` as the input board: it publishes `board_root8(mid)` as its OLD-root app
+/// PI (the SAME `mid_root` Leg R published) and `board_root8(new)` as its NEW-root app PI.
+/// Its door prefix is `[mid8 ‖ new8]`; `mid8` is welded to Leg R's post-state prefix by the
+/// deployed continuity connect.
+pub fn build_a_bound(
+    mid: &Board,
+    claimed_new: &Board,
+    mid8: [BabyBear; 8],
+    new8: [BabyBear; 8],
+) -> Builder {
+    crate::air::build_d1_bound(mid, claimed_new, mid8, new8)
+}
+
+/// Leg A with placeholder door roots (the fast battery).
+pub fn build_a(mid: &Board, claimed_new: &Board) -> Builder {
+    let (mid8, new8) = crate::air::placeholder_roots();
+    build_a_bound(mid, claimed_new, mid8, new8)
+}
+
+/// The honest Leg A: `claimed_new = automaton_step(mid)` (placeholder door roots).
+pub fn build_a_honest(mid: &Board) -> Builder {
+    let new = crate::reference::automaton_step(mid);
+    build_a(mid, &new)
+}
+
+/// The honest Leg A bound to the leg's REAL cell-state roots (the fold driver).
+pub fn build_a_honest_bound(mid: &Board, mid8: [BabyBear; 8], new8: [BabyBear; 8]) -> Builder {
+    let new = crate::reference::automaton_step(mid);
+    build_a_bound(mid, &new, mid8, new8)
 }
 
 /// **STAGE D3** with placeholder door roots (the fast battery).
