@@ -13,11 +13,13 @@
 //!   present the offering's [`Surface`] as the Telegram inline keyboard + text;
 //! - **advance** — [`TelegramHost::press`]: a button press → [`TelegramFrontend::collect`] the
 //!   typed [`Action`] → [`OfferingHost::advance`] ONE real turn on the substrate → re-present;
-//! - **verify** — [`TelegramHost::verify`]: re-verify an offering session's committed chain.
+//! - **verify** — [`TelegramHost::verify`]: re-verify an offering session's committed chain; ALSO
+//!   routed through [`TelegramHost::press`] as the reserved [`TURN_VERIFY`] verb, so a shell's
+//!   `/verify` input (or a pinned button) reaches the real re-verifier through the ONE router.
 //!
 //! ## The `!Send` host + the [`HostThread`] handle (mirrors `dreggnet-web`)
 //! The [`OfferingHost`] owns heterogeneous offering sessions, some `!Send` (a
-//! [`CouncilOffering`](dreggnet_council::CouncilOffering) session holds `Rc`-backed ballot caps).
+//! `CouncilOffering` session holds `Rc`-backed ballot caps).
 //! So the host cannot be shared behind a plain `Send` handle; it lives on ONE owning thread and
 //! every access is a job shipped to it — only the job's plain-data result (a [`Surface`], an
 //! [`Outcome`], a [`VerifyReport`], a `Vec<OfferingInfo>`, all `Send`) crosses back. The
@@ -47,15 +49,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
 
 use deos_view::ViewNode;
-use dregg_automatafl::AutomataflOffering;
-use dreggnet_compute::ComputeOffering;
-use dreggnet_council::{CandidateProposal, CouncilOffering};
-use dreggnet_doc::DocOffering;
-use dreggnet_grain::GrainOffering;
-use dreggnet_hermes::HermesOffering;
-use dreggnet_market::MarketOffering;
-use dreggnet_names::NamesOffering;
-use dreggnet_offerings::dungeon::DungeonOffering;
+use dreggnet_catalog::CatalogConfig;
 use dreggnet_offerings::{
     Action, DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId,
     Surface, VerifyReport,
@@ -68,6 +62,15 @@ use crate::{ChatId, TelegramFrontend, TelegramUserId};
 /// The affordance verb the offerings-menu buttons carry — a host-level control (open the offering
 /// at `arg` in this chat), distinct from any offering's own turn verbs.
 pub const TURN_OPEN: &str = "open";
+
+/// The RESERVED host-level verify verb — "⛓ re-verify chain" as a routable input. It is never
+/// presented as an offering affordance (surfaces stay byte-stable), so [`TelegramHost::press`]
+/// routes it WITHOUT the offered check: a runtime shell binds any input it likes (a `/verify`
+/// command, a pinned button minting `encode_callback(TURN_VERIFY, 0)`) and the press reaches the
+/// chat's active offering's REAL re-verifier ([`TelegramHost::verify`]), coming back as
+/// [`HostPress::Verified`]. Mirrors the Discord bot's standing `verifychain:<key>` button
+/// (`discord-bot/src/commands/verify_chain.rs`) — same verb string, same ethos.
+pub const TURN_VERIFY: &str = "verifychain";
 
 /// The sentinel "active key" a chat carries while it is showing the offerings menu (not yet
 /// playing an offering). Not a registered offering key, so it never collides.
@@ -131,6 +134,16 @@ pub enum HostPress {
         /// The real substrate outcome.
         outcome: Outcome,
     },
+    /// A [`TURN_VERIFY`] press re-verified the active offering's committed chain and hands back
+    /// the REAL [`VerifyReport`] (`None` if the offering exposes no verifier) — verify-don't-trust
+    /// routed through the same router every play press takes. Read-only: the presented surface is
+    /// untouched, so the next press still resolves against the live keyboard.
+    Verified {
+        /// The offering key whose chain was re-checked.
+        key: String,
+        /// The re-verification report, replayed just now on the host thread.
+        report: Option<VerifyReport>,
+    },
     /// The press did not match any affordance currently on the chat's surface — an honest
     /// frontend-level refusal, BEFORE the substrate (the executor is never reached).
     NotOffered,
@@ -158,10 +171,10 @@ pub struct TelegramHost<T: Transport> {
 }
 
 impl<T: Transport> TelegramHost<T> {
-    /// Build a host over the DEFAULT offerings (dungeon + council + market), sending through
-    /// `transport`, with the council electorate derived from `council_member_uids` (Telegram user
-    /// ids whose derived identities are registered as council members — so those users can really
-    /// vote). See [`telegram_default_host`].
+    /// Build a host over the FULL shared catalog (the same 18 offerings every frontend exposes —
+    /// see [`telegram_default_host`]), sending through `transport`, with the council electorate
+    /// derived from `council_member_uids` (Telegram user ids whose derived identities are
+    /// registered as council members — so those users can really vote).
     pub fn new(bot_secret: [u8; 32], transport: T, council_member_uids: &[TelegramUserId]) -> Self {
         // Derive the council electorate on THIS thread (a pure derivation → `[u8; 32]` pubkeys,
         // Send), then move it into the host-thread build closure. The member identity a proposal /
@@ -206,7 +219,8 @@ impl<T: Transport> TelegramHost<T> {
     }
 
     /// The council-member public key a Telegram user id derives to — register these as a
-    /// [`CouncilOffering`] electorate so those users can vote. Pure; no host needed.
+    /// council electorate ([`CatalogConfig::council_members`]) so those users can vote.
+    /// Pure; no host needed.
     pub fn council_member_pubkey(bot_secret: &[u8; 32], uid: TelegramUserId) -> [u8; 32] {
         TelegramCipherclerk::derive(bot_secret, uid).public_key_bytes()
     }
@@ -335,6 +349,19 @@ impl<T: Transport> TelegramHost<T> {
         let Some((turn, arg)) = crate::api::decode_callback(&ev.data) else {
             return HostPress::NotOffered;
         };
+        // The reserved host-level verify verb: never presented as an offering affordance, so it
+        // bypasses the offered check — any shell input can demand the re-check of the chat's
+        // active offering. Read-only: the presented surface is left exactly as it was.
+        if turn == TURN_VERIFY {
+            if active == MENU_KEY {
+                return HostPress::NotOffered;
+            }
+            let report = self.verify(&active, &sid);
+            return HostPress::Verified {
+                key: active,
+                report,
+            };
+        }
         let offered = self
             .frontend
             .session(&sid)
@@ -398,88 +425,20 @@ impl<T: Transport> TelegramHost<T> {
     }
 }
 
-/// **The default Telegram catalog host** — registers the FULL portfolio the web catalog
-/// ([`dreggnet_web::demo_host`]) does, so Telegram reaches offering parity with the browser: the
-/// five games (dungeon · council · market · multiway-tug · automatafl), the eight do-once RPG
-/// feature surfaces ([`dreggnet_surfaces::register_surfaces`]: trade · inventory · cheevos · guild ·
-/// craft · companion · tavern · party), and the five non-game offerings (doc · names · compute ·
-/// grain · hermes). Built on the host's owning thread, so each offering's `!Send` internals stay
-/// confined.
+/// **The default Telegram catalog host** — the FULL shared portfolio, from the ONE registrar
+/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the five games
+/// (dungeon · council · market · multiway-tug · automatafl, `tug` wrapped in the shared
+/// seat-claiming [`crate::seated::SeatedTug`] adapter), the eight do-once RPG feature surfaces
+/// (trade · inventory · cheevos · guild · craft · companion · tavern · party), and the five
+/// service offerings (doc · names · compute · grain · hermes) — the same 18 the web catalog
+/// (`dreggnet_web::demo_host`) serves, by construction rather than by a duplicated list
+/// (docs/BOT-SHARED-BACKEND-DESIGN.md). Call it on the host's owning thread (inside
+/// [`HostThread::spawn`]'s build closure) so each offering's `!Send` internals stay confined.
 ///
-/// `tug` is wrapped in the seat-claiming [`crate::seated::SeatedTug`] adapter (the byte-peer of the
-/// web `seated` module) because `TugOffering` names its seats by fixed canonical strings while a
-/// Telegram user's identity is a derived key — the adapter claims a seat for the first two identities
-/// that act, changing nothing in the game crate. `automatafl` claims seats natively, so it registers
-/// directly. `council_members` is the electorate (member public keys — a Telegram user whose derived
+/// `council_members` is the electorate (member public keys — a Telegram user whose derived
 /// identity is one of these can vote); pass the [`TelegramHost::council_member_pubkey`] of each
-/// voter's Telegram id.
+/// voter's Telegram id. Every other catalog knob (quorum 2, the two candidate proposals, grain
+/// budget 1000) is [`CatalogConfig`]'s deployed default.
 pub fn telegram_default_host(council_members: Vec<[u8; 32]>) -> OfferingHost {
-    let mut host = OfferingHost::new();
-
-    // ── The five portfolio games ────────────────────────────────────────────────────────────────
-    host.register(
-        "dungeon",
-        "The Warden's Keep — a verifiable dungeon (offering #0)",
-        DungeonOffering::new(),
-    );
-    host.register(
-        "council",
-        "DreggNet Council — propose · vote · enact",
-        CouncilOffering::new(
-            council_members,
-            vec![
-                CandidateProposal::new("Fund the archive", 42),
-                CandidateProposal::new("Ratify the charter", 7),
-            ],
-            2, // quorum M = 2 (both members must approve)
-        ),
-    );
-    host.register(
-        "market",
-        "DreggNet Market — a sealed-bid auction (list · bid · settle)",
-        MarketOffering::new(),
-    );
-    host.register(
-        "tug",
-        "Multiway-Tug — a hidden-hand tug of influence (seven guilds · eight actions)",
-        crate::seated::SeatedTug::new(),
-    );
-    host.register(
-        "automatafl",
-        "Automatafl — the simultaneous-move board (seal a move · reveal · the automaton steps)",
-        AutomataflOffering,
-    );
-
-    // ── The eight do-once RPG feature surfaces (trade · inventory · cheevos · guild · craft ·
-    //    companion · tavern · party) — the ONE call web makes, reused verbatim. ────────────────────
-    dreggnet_surfaces::register_surfaces(&mut host);
-
-    // ── The five non-game offerings (mirrors web's `register_non_game_offerings`). ────────────────
-    host.register(
-        "doc",
-        "DreggNet Doc — a verifiable document store (author · amend · verify)",
-        DocOffering::new(),
-    );
-    host.register(
-        "names",
-        "DreggNet Names — an identity / naming service (register · transfer · resolve)",
-        NamesOffering::new(),
-    );
-    host.register(
-        "compute",
-        "DreggNet Compute — a confined compute-job market (post · claim · settle)",
-        ComputeOffering::new(),
-    );
-    host.register(
-        "grain",
-        "DreggNet Grain — metered work under a spend budget (request · grant)",
-        GrainOffering::new(1000),
-    );
-    host.register(
-        "hermes",
-        "DreggNet Hermes — the message relay (send · deliver · ack)",
-        HermesOffering::new(),
-    );
-
-    host
+    dreggnet_catalog::full_catalog_host(&CatalogConfig::with_council_members(council_members))
 }

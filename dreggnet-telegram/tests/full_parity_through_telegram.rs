@@ -5,9 +5,13 @@
 //! This closes the gap the audit found: Telegram (and WeChat) registered only three each while the
 //! web catalog ([`dreggnet_web::demo_host`]) registers eighteen — the five games (incl. automatafl +
 //! multiway-tug) and the eight do-once RPG feature surfaces were ABSENT because their crates were not
-//! deps. Now [`telegram_default_host`] deps them and registers the full set. This drives:
+//! deps. Now [`telegram_default_host`] builds through the ONE shared registrar
+//! (`dreggnet_catalog::build_full_catalog` — docs/BOT-SHARED-BACKEND-DESIGN.md). This drives:
 //!
-//! - **all 18 offering keys are registered** on the Telegram host (the exact gap);
+//! - **BOTH-POLARITY offering-set parity against the LIVE web catalog**: the Telegram host,
+//!   driven over [`MockTransport`], registers exactly the key set `dreggnet_web::demo_host()`
+//!   registers — an offering missing from Telegram fails, and an offering Telegram grows that web
+//!   lacks fails too (no hand-copied list on either side of the comparison);
 //! - a newly-registered game (**automatafl**) is REACHABLE and renders a NON-EMPTY surface (a
 //!   CoordGrid board degrades to a text grid on the text-only Telegram renderer — expected, not a
 //!   silent drop);
@@ -28,32 +32,6 @@ const BOT_SECRET: [u8; 32] = [7u8; 32];
 const ALICE: u64 = 1001;
 const BOB: u64 = 1002;
 
-/// The full 18-offering set the web catalog registers (`dreggnet_web::demo_host`): the five games,
-/// the eight do-once RPG feature surfaces, and the five non-game offerings.
-const EXPECTED_KEYS: [&str; 18] = [
-    // the five games
-    "dungeon",
-    "council",
-    "market",
-    "tug",
-    "automatafl",
-    // the eight do-once RPG feature surfaces (dreggnet_surfaces::register_surfaces)
-    "trade",
-    "inventory",
-    "cheevos",
-    "guild",
-    "craft",
-    "companion",
-    "tavern",
-    "party",
-    // the five non-game offerings
-    "doc",
-    "names",
-    "compute",
-    "grain",
-    "hermes",
-];
-
 fn host() -> TelegramHost<MockTransport> {
     TelegramHost::new(BOT_SECRET, MockTransport::new(), &[ALICE, BOB])
 }
@@ -68,24 +46,49 @@ fn last_text(h: &TelegramHost<MockTransport>) -> String {
         .clone()
 }
 
-/// **All 18 offerings the web catalog registers are registered on the Telegram host** — the exact
-/// gap the audit found (automatafl, multiway-tug, and the eight RPG surface keys were absent).
+/// **BOTH-POLARITY parity with the LIVE web catalog.** The Telegram host — driven over
+/// [`MockTransport`] through its real `HostThread` — registers exactly the offering-key set
+/// `dreggnet_web::demo_host()` registers. Polarity 1: every web offering is reachable on Telegram
+/// (the audit's original gap). Polarity 2: Telegram registers NOTHING web lacks (no silent
+/// re-fork of the catalog). Both sides are live hosts, not hand-copied lists, so drift in either
+/// direction — in either frontend — fails here; both build through
+/// `dreggnet_catalog::build_full_catalog` at HEAD, and this test is the referee that keeps it so.
 #[test]
-fn the_telegram_host_registers_the_full_eighteen_offering_portfolio() {
+fn telegram_and_the_web_catalog_register_the_same_offering_set_both_polarities() {
     let h = host();
-    let offs = h.list_offerings();
-    let keys: Vec<&str> = offs.iter().map(|o| o.key.as_str()).collect();
-    for want in EXPECTED_KEYS {
+    let mut telegram_keys: Vec<String> = h.list_offerings().into_iter().map(|o| o.key).collect();
+    telegram_keys.sort();
+
+    let web = dreggnet_web::demo_host();
+    let mut web_keys: Vec<String> = web.list_offerings().into_iter().map(|o| o.key).collect();
+    web_keys.sort();
+
+    // Polarity 1 — nothing the web serves is missing on Telegram.
+    for want in &web_keys {
         assert!(
-            keys.contains(&want),
-            "offering `{want}` is registered on Telegram (full web parity): {keys:?}"
+            telegram_keys.contains(want),
+            "web offering `{want}` is missing from the Telegram host: {telegram_keys:?}"
         );
     }
-    assert!(
-        offs.len() >= EXPECTED_KEYS.len(),
-        "the host lists at least the 18 portfolio offerings: {} < {}",
-        offs.len(),
-        EXPECTED_KEYS.len()
+    // Polarity 2 — Telegram serves nothing the web lacks.
+    for got in &telegram_keys {
+        assert!(
+            web_keys.contains(got),
+            "Telegram offering `{got}` is absent from the web catalog: {web_keys:?}"
+        );
+    }
+    // And the sets are exactly equal (multiplicity included).
+    assert_eq!(
+        telegram_keys, web_keys,
+        "the Telegram host and the web catalog register the SAME offering set"
+    );
+
+    // The set is the shared catalog's contract — the ONE list both frontends now build from.
+    let mut contract: Vec<&str> = dreggnet_catalog::CATALOG_KEYS.to_vec();
+    contract.sort();
+    assert_eq!(
+        telegram_keys, contract,
+        "the shared set IS dreggnet_catalog::CATALOG_KEYS"
     );
 }
 

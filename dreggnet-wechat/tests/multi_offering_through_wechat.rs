@@ -18,7 +18,7 @@
 
 use dreggnet_offerings::dungeon::TURN_CHOOSE;
 use dreggnet_offerings::{Outcome, SessionId};
-use dreggnet_wechat::host::{TURN_OPEN, WeChatHost, WeChatReply};
+use dreggnet_wechat::host::{TURN_OPEN, TURN_VERIFY, WeChatHost, WeChatReply};
 use dreggnet_wechat::transport::MockTransport;
 use dreggnet_wechat::{WeChatFrontend, WeChatMessage};
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON, KP_SEIZE};
@@ -283,5 +283,43 @@ fn an_unoffered_reply_is_refused_before_the_substrate() {
     match h.reply(WeChatMessage::text(BOB, "1")) {
         WeChatReply::NoSession => {}
         other => panic!("a reply from an unopened conversation is NoSession, got {other:?}"),
+    }
+}
+
+/// The RESERVED verify verb: a `#verifychain:0` marked reply routes through `reply()` to the
+/// offering's REAL re-verifier — the input a runtime shell binds a "verify" keyword to. It is
+/// never on the presented numbered list (surfaces stay byte-stable) and the shared codec fires
+/// marked ids off-list, so it works from any conversation with an offering active; while the
+/// participant is browsing the offerings menu it is honestly refused.
+#[test]
+fn the_verify_verb_routes_through_reply_to_the_real_reverifier() {
+    let mut h = host();
+    h.open("dungeon", ALICE).expect("the dungeon opens");
+    let n = reply_number_for(&h, ALICE, TURN_CHOOSE, KP_PRESS_ON as i64);
+    assert_landed(h.reply(WeChatMessage::text(ALICE, n)));
+
+    match h.reply(WeChatMessage::text(ALICE, format!("#{TURN_VERIFY}:0"))) {
+        WeChatReply::Verified { key, report } => {
+            assert_eq!(key, "dungeon", "the report names the active offering");
+            let report = report.expect("the dungeon exposes a verifier");
+            assert!(
+                report.verified,
+                "the committed chain re-verifies by replay: {}",
+                report.detail
+            );
+            assert_eq!(report.turns, 2, "genesis + one committed turn");
+        }
+        other => panic!("a verify reply must hand back the report, got {other:?}"),
+    }
+
+    // Verify is read-only: the surface is untouched, so the NEXT numbered reply still resolves.
+    let n = reply_number_for(&h, ALICE, TURN_CHOOSE, KP_CLAIM_RED as i64);
+    assert_landed(h.reply(WeChatMessage::text(ALICE, n)));
+
+    // While browsing the offerings menu there is nothing to verify — honest refusal.
+    h.present_offerings_menu(BOB);
+    match h.reply(WeChatMessage::text(BOB, format!("#{TURN_VERIFY}:0"))) {
+        WeChatReply::NotOffered => {}
+        other => panic!("verify on the menu is refused before the substrate, got {other:?}"),
     }
 }

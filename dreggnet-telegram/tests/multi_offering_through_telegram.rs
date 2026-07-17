@@ -17,7 +17,7 @@
 use dreggnet_offerings::Outcome;
 use dreggnet_telegram::CallbackQuery;
 use dreggnet_telegram::api::encode_callback;
-use dreggnet_telegram::host::{HostPress, TURN_OPEN, TelegramHost};
+use dreggnet_telegram::host::{HostPress, TURN_OPEN, TURN_VERIFY, TelegramHost};
 use dreggnet_telegram::transport::MockTransport;
 use dungeon_on_dregg::{KP_CLAIM_RED, KP_DESCEND, KP_PRESS_ON, KP_SEIZE};
 
@@ -271,5 +271,60 @@ fn an_unoffered_turn_is_refused_before_the_substrate() {
     )) {
         HostPress::NoSession => {}
         other => panic!("a press in an unopened chat is NoSession, got {other:?}"),
+    }
+}
+
+/// The RESERVED verify verb routes through `press()` to the offering's REAL re-verifier — the
+/// input a runtime shell binds a `/verify` command (or a pinned button) to. It is never on the
+/// presented keyboard (surfaces stay byte-stable), so it must work from any chat state with an
+/// offering active; while the chat is browsing the offerings menu it is honestly refused.
+#[test]
+fn the_verify_verb_routes_through_press_to_the_real_reverifier() {
+    let mut h = host();
+    let chat: i64 = 77;
+    let _sid = h
+        .open("dungeon", chat, None, ALICE)
+        .expect("the dungeon opens");
+    assert_landed(h.press(CallbackQuery::press(
+        chat,
+        ALICE,
+        encode_callback("choose", KP_PRESS_ON as i64),
+    )));
+
+    match h.press(CallbackQuery::press(
+        chat,
+        ALICE,
+        encode_callback(TURN_VERIFY, 0),
+    )) {
+        HostPress::Verified { key, report } => {
+            assert_eq!(key, "dungeon", "the report names the active offering");
+            let report = report.expect("the dungeon exposes a verifier");
+            assert!(
+                report.verified,
+                "the committed chain re-verifies by replay: {}",
+                report.detail
+            );
+            assert_eq!(report.turns, 2, "genesis + one committed turn");
+        }
+        other => panic!("a verify press must hand back the report, got {other:?}"),
+    }
+
+    // Verify is read-only: the surface is untouched, so the NEXT play press still resolves.
+    assert_landed(h.press(CallbackQuery::press(
+        chat,
+        ALICE,
+        encode_callback("choose", KP_CLAIM_RED as i64),
+    )));
+
+    // While a chat is browsing the offerings menu there is nothing to verify — honest refusal.
+    let menu_chat: i64 = 78;
+    h.present_offerings_menu(menu_chat, None);
+    match h.press(CallbackQuery::press(
+        menu_chat,
+        ALICE,
+        encode_callback(TURN_VERIFY, 0),
+    )) {
+        HostPress::NotOffered => {}
+        other => panic!("verify on the menu is refused before the substrate, got {other:?}"),
     }
 }

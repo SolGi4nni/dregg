@@ -14,7 +14,10 @@
 //!   on the host and present the offering's [`Surface`] as the WeChat OA numbered reply list;
 //! - **advance** — [`WeChatHost::reply`]: an inbound numbered reply → [`WeChatFrontend::collect`]
 //!   the typed [`Action`] → [`OfferingHost::advance`] ONE real turn on the substrate → re-present;
-//! - **verify** — [`WeChatHost::verify`]: re-verify an offering session's committed chain.
+//! - **verify** — [`WeChatHost::verify`]: re-verify an offering session's committed chain; ALSO
+//!   routed through [`WeChatHost::reply`] as the reserved [`TURN_VERIFY`] marked reply
+//!   (`#verifychain:0`), so a shell's "verify" input reaches the real re-verifier through the ONE
+//!   router.
 //!
 //! ## The Surface → numbered-reply mapping (mirrors the Telegram keyboard mapping)
 //! An offering's [`Surface`] is a deos view-tree; its cap-gated [`Action`]s are the moves. WeChat OA
@@ -35,7 +38,7 @@
 //!
 //! ## The `!Send` host + the [`HostThread`] handle (mirrors `dreggnet-web` / the Telegram host)
 //! The [`OfferingHost`] owns heterogeneous offering sessions, some `!Send` (a
-//! [`CouncilOffering`](dreggnet_council::CouncilOffering) session holds `Rc`-backed ballot caps). So
+//! `CouncilOffering` session holds `Rc`-backed ballot caps). So
 //! the host cannot be shared behind a plain `Send` handle; it lives on ONE owning thread and every
 //! access is a job shipped to it — only the job's plain-data result (a [`Surface`], an [`Outcome`], a
 //! [`VerifyReport`], a `Vec<OfferingInfo>`, all `Send`) crosses back. The [`WeChatFrontend`] itself
@@ -69,15 +72,7 @@ use std::collections::HashMap;
 use std::sync::mpsc::{SyncSender, sync_channel};
 
 use deos_view::{MenuItem, ViewNode};
-use dregg_automatafl::AutomataflOffering;
-use dreggnet_compute::ComputeOffering;
-use dreggnet_council::{CandidateProposal, CouncilOffering};
-use dreggnet_doc::DocOffering;
-use dreggnet_grain::GrainOffering;
-use dreggnet_hermes::HermesOffering;
-use dreggnet_market::MarketOffering;
-use dreggnet_names::NamesOffering;
-use dreggnet_offerings::dungeon::DungeonOffering;
+use dreggnet_catalog::CatalogConfig;
 use dreggnet_offerings::{
     Action, DreggIdentity, Frontend, HostError, OfferingHost, OfferingInfo, Outcome, SessionId,
     Surface, VerifyReport,
@@ -90,6 +85,15 @@ use crate::{OpenId, WeChatFrontend, WeChatMessage};
 /// The affordance verb the offerings-menu options carry — a host-level control (open the offering at
 /// `arg` for this user), distinct from any offering's own turn verbs.
 pub const TURN_OPEN: &str = "open";
+
+/// The RESERVED host-level verify verb — "⛓ re-verify chain" as a routable input. It is never on
+/// the presented numbered list (surfaces stay byte-stable), but the shared codec fires marked ids
+/// that are not on the list, so a `#verifychain:0` reply (or a shell binding a "verify" keyword to
+/// that marked id) routes through [`WeChatHost::reply`] to the active room's REAL re-verifier
+/// ([`WeChatHost::verify`]), coming back as [`WeChatReply::Verified`]. Mirrors the Discord bot's
+/// standing `verifychain:<key>` button (`discord-bot/src/commands/verify_chain.rs`) and the
+/// Telegram host's `TURN_VERIFY` — same verb string, same ethos.
+pub const TURN_VERIFY: &str = "verifychain";
 
 /// The sentinel "active key" a participant carries while showing the offerings menu (not yet playing
 /// an offering). Not a registered offering key, so it never collides.
@@ -161,6 +165,16 @@ pub enum WeChatReply {
         key: String,
         /// The real substrate outcome.
         outcome: Outcome,
+    },
+    /// A [`TURN_VERIFY`] marked reply re-verified the active room's committed chain and hands back
+    /// the REAL [`VerifyReport`] (`None` if the offering exposes no verifier) — verify-don't-trust
+    /// routed through the same router every play reply takes. Read-only: the presented surface is
+    /// untouched, so the next reply still resolves against the live numbered list.
+    Verified {
+        /// The offering key whose chain was re-checked.
+        key: String,
+        /// The re-verification report, replayed just now on the host thread.
+        report: Option<VerifyReport>,
     },
     /// The reply did not resolve to any affordance currently on the participant's surface — an honest
     /// frontend-level refusal, BEFORE the substrate (the executor is never reached).
@@ -238,7 +252,7 @@ impl<T: Transport> WeChatHost<T> {
     }
 
     /// The council-member public key a WeChat OpenID derives to — register these as a
-    /// [`CouncilOffering`] electorate so those users can vote. Pure; no host needed.
+    /// `CouncilOffering` electorate so those users can vote. Pure; no host needed.
     pub fn council_member_pubkey(bot_secret: &[u8; 32], openid: &str) -> [u8; 32] {
         WeChatCipherclerk::derive(bot_secret, openid)
             .agent()
@@ -422,6 +436,20 @@ impl<T: Transport> WeChatHost<T> {
             return WeChatReply::NotOffered;
         };
 
+        // The reserved host-level verify verb (a `#verifychain:0` marked reply — the shared codec
+        // fires marked ids that are not on the presented list): re-verify the participant's active
+        // room WITHOUT touching the presented surface. Read-only; the executor is never reached.
+        if action.turn == TURN_VERIFY {
+            if active.key == MENU_KEY {
+                return WeChatReply::NotOffered;
+            }
+            let report = self.verify(&active.key, &active.room);
+            return WeChatReply::Verified {
+                key: active.key,
+                report,
+            };
+        }
+
         if active.key == MENU_KEY {
             // A menu reply: open (solo) the offering the number names (by stable catalog index).
             if action.turn != TURN_OPEN {
@@ -474,86 +502,21 @@ impl<T: Transport> WeChatHost<T> {
     }
 }
 
-/// **The default WeChat catalog host** — registers the FULL portfolio the web catalog
-/// ([`dreggnet_web::demo_host`]) and [`dreggnet_telegram::host::telegram_default_host`] do, so WeChat
-/// reaches offering parity: the five games (dungeon · council · market · multiway-tug · automatafl),
-/// the eight do-once RPG feature surfaces ([`dreggnet_surfaces::register_surfaces`]: trade ·
-/// inventory · cheevos · guild · craft · companion · tavern · party), and the five non-game
-/// offerings (doc · names · compute · grain · hermes). Built on the host's owning thread, so each
-/// offering's `!Send` internals stay confined — only the surface (the OA numbered reply) differs.
+/// **The default WeChat catalog host** — the FULL shared portfolio, from the ONE registrar
+/// every frontend builds through ([`dreggnet_catalog::build_full_catalog`]): the five games
+/// (dungeon · council · market · multiway-tug · automatafl, `tug` wrapped in the shared
+/// seat-claiming [`crate::seated::SeatedTug`] adapter), the eight do-once RPG feature surfaces
+/// (trade · inventory · cheevos · guild · craft · companion · tavern · party), and the five
+/// service offerings (doc · names · compute · grain · hermes) — the same 18 the web catalog
+/// (`dreggnet_web::demo_host`) and the Telegram host serve, by construction rather than by a
+/// duplicated list (docs/BOT-SHARED-BACKEND-DESIGN.md). Call it on the host's owning thread
+/// (inside [`HostThread::spawn`]'s build closure) so each offering's `!Send` internals stay
+/// confined.
 ///
-/// `tug` is wrapped in the seat-claiming [`crate::seated::SeatedTug`] adapter (the byte-peer of the
-/// web `seated` module) because `TugOffering` names its seats by fixed canonical strings while a
-/// WeChat user's identity is a derived key; `automatafl` claims seats natively. `council_members` is
-/// the electorate (member public keys — a WeChat user whose derived identity is one of these can
-/// vote); pass the [`WeChatHost::council_member_pubkey`] of each voter's OpenID.
+/// `council_members` is the electorate (member public keys — a WeChat user whose derived
+/// identity is one of these can vote); pass the [`WeChatHost::council_member_pubkey`] of each
+/// voter's OpenID. Every other catalog knob (quorum 2, the two candidate proposals, grain
+/// budget 1000) is [`CatalogConfig`]'s deployed default.
 pub fn wechat_default_host(council_members: Vec<[u8; 32]>) -> OfferingHost {
-    let mut host = OfferingHost::new();
-
-    // ── The five portfolio games ────────────────────────────────────────────────────────────────
-    host.register(
-        "dungeon",
-        "The Warden's Keep — a verifiable dungeon (offering #0)",
-        DungeonOffering::new(),
-    );
-    host.register(
-        "council",
-        "DreggNet Council — propose · vote · enact",
-        CouncilOffering::new(
-            council_members,
-            vec![
-                CandidateProposal::new("Fund the archive", 42),
-                CandidateProposal::new("Ratify the charter", 7),
-            ],
-            2, // quorum M = 2 (both members must approve)
-        ),
-    );
-    host.register(
-        "market",
-        "DreggNet Market — a sealed-bid auction (list · bid · settle)",
-        MarketOffering::new(),
-    );
-    host.register(
-        "tug",
-        "Multiway-Tug — a hidden-hand tug of influence (seven guilds · eight actions)",
-        crate::seated::SeatedTug::new(),
-    );
-    host.register(
-        "automatafl",
-        "Automatafl — the simultaneous-move board (seal a move · reveal · the automaton steps)",
-        AutomataflOffering,
-    );
-
-    // ── The eight do-once RPG feature surfaces (trade · inventory · cheevos · guild · craft ·
-    //    companion · tavern · party) — the ONE call web makes, reused verbatim. ────────────────────
-    dreggnet_surfaces::register_surfaces(&mut host);
-
-    // ── The five non-game offerings (mirrors web's `register_non_game_offerings`). ────────────────
-    host.register(
-        "doc",
-        "DreggNet Doc — a verifiable document store (author · amend · verify)",
-        DocOffering::new(),
-    );
-    host.register(
-        "names",
-        "DreggNet Names — an identity / naming service (register · transfer · resolve)",
-        NamesOffering::new(),
-    );
-    host.register(
-        "compute",
-        "DreggNet Compute — a confined compute-job market (post · claim · settle)",
-        ComputeOffering::new(),
-    );
-    host.register(
-        "grain",
-        "DreggNet Grain — metered work under a spend budget (request · grant)",
-        GrainOffering::new(1000),
-    );
-    host.register(
-        "hermes",
-        "DreggNet Hermes — the message relay (send · deliver · ack)",
-        HermesOffering::new(),
-    );
-
-    host
+    dreggnet_catalog::full_catalog_host(&CatalogConfig::with_council_members(council_members))
 }

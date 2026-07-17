@@ -65,7 +65,7 @@ impl TelegramCipherclerk {
     }
 
     /// The user's Ed25519 public key as raw bytes — the electorate handle a
-    /// [`dreggnet_council::CouncilOffering`] registers a member by (its
+    /// `CouncilOffering` (via `dreggnet_catalog::CatalogConfig::council_members`) registers a member by (its
     /// [`identity`](Self::identity) is the lowercase-hex of these bytes, so a member's press
     /// matches the registered council member).
     pub fn public_key_bytes(&self) -> [u8; 32] {

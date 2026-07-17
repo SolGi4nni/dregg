@@ -30,25 +30,12 @@ description = "A TelegramFrontend implementing dreggnet-offerings' Frontend trai
 # (offering #0) over the real substrate. This crate is a `Frontend` impl; it does NOT
 # re-implement any offering logic.
 dreggnet-offerings = { path = "../dreggnet-offerings" }
-# THE OTHER OFFERINGS — registered alongside the dungeon in the multi-offering `TelegramHost`
-# (`src/host.rs`), so a council (governance) and a market (commerce) play on Telegram through the
-# SAME `OfferingHost` the web catalog drives. Consumed as `Offering`s; no offering logic reimplemented.
-dreggnet-council = { path = "../dreggnet-council" }
-dreggnet-market = { path = "../dreggnet-market" }
-# THE FULL PORTFOLIO — the same offering crates the web catalog (`dreggnet_web::demo_host`) deps, so
-# Telegram registers the SAME 18 offerings: the two portfolio games (automatafl + multiway-tug), the
-# eight do-once RPG feature surfaces (`dreggnet-surfaces::register_surfaces`), and the four remaining
-# non-game offerings (doc · names · compute · grain — hermes/council/market already above). Consumed
-# as `Offering`s; no offering logic reimplemented (the seat-claiming tug adapter is `src/seated.rs`,
-# the byte-peer of the web `seated` module).
-dregg-automatafl = { path = "../dregg-automatafl" }
-dregg-multiway-tug = { path = "../dregg-multiway-tug" }
-dreggnet-surfaces = { path = "../dreggnet-surfaces" }
-dreggnet-doc = { path = "../dreggnet-doc" }
-dreggnet-names = { path = "../dreggnet-names" }
-dreggnet-compute = { path = "../dreggnet-compute" }
-dreggnet-grain = { path = "../dreggnet-grain" }
-dreggnet-hermes = { path = "../dreggnet-hermes" }
+# THE FULL PORTFOLIO — the ONE shared registrar (`dreggnet_catalog::build_full_catalog`), so
+# Telegram registers the SAME 18 offerings the web catalog (`dreggnet_web::demo_host`) does — the
+# five games (incl. the shared seat-claiming `SeatedTug` tug adapter, re-exported at
+# `src/seated.rs`), the eight do-once RPG feature surfaces, the five service offerings — from ONE
+# list instead of this crate's own hand-maintained copy (docs/BOT-SHARED-BACKEND-DESIGN.md).
+dreggnet-catalog = { path = "../dreggnet-catalog" }
 # THE DEOS SURFACE — `ViewNode`, the serializable affordance view-tree an offering's
 # `render` produces. The Telegram renderer walks it into message text + an inline
 # keyboard. `default-features = false` = the gpui-free view-tree model only; the
@@ -81,6 +68,10 @@ serde_json = { workspace = true }
 # winning / illegal line with (exactly as `dreggnet-offerings/tests/driven.rs` does). A
 # test-only dep: the frontend itself is offering-agnostic (it renders any `Offering`).
 dungeon-on-dregg = { path = "../dungeon-on-dregg" }
+# THE PARITY REFEREE — the both-polarity offering-set test drives this crate's host over
+# `MockTransport` and compares its key set against the LIVE web catalog (`demo_host`), not a
+# hand-copied list, so web↔telegram drift in EITHER direction fails the test.
+dreggnet-web = { path = "../dreggnet-web" }
 
 [lints]
 workspace = true
