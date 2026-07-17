@@ -125,6 +125,8 @@ ALL 5 STAGES DONE. Verdict = honest, NOT laundered:
 
 - **launchpad P1/P2 ✅** (0ec6cd1e6): reproducibility wound CLOSED — forge-std restored as tracked submodule @ v1.16.2 (pin triangulated via gitdir+describe+foundry.lock+ls-remote), lib/ un-ignored, .gitmodules created, forge-test CI job added (.github/workflows/forge.yml, submodules:recursive). 259 forge tests pass (>122 cited). Launchpad now off-laptop-reproducible → P3 testnet deploy is ember's button.
 
+- **CIRC analysis ✅** (1095f3fde, CIRC-COMPETITIVE-ANALYSIS.md): $CIRC = pump.fun agent-infra token, FDV~$55K, early. ⚑ KILLER (their own doc): flywheel fed by pump.fun DEV REWARDS = the token's OWN trading fees — self-referential speculation, NOT usage revenue. Verdict: CIRC flywheel VISIBLE not VERIFIED (key-enforced split, front-runnable buy, chart-not-conservation). dregg-surpasses design graded PROVEN/BUILT/NAMED-WELD (sealed-bid clearing=fairness proven, contract-enforced split, conservation proven, attested receipts; welds flagged: price-binding trusted, RecycleFlywheel.sol to-build). → BUILD+MEASURE lane firing (the usecase).
+
 ## Standing
 - ArkLib **PR #655 LIVE + green** (import-check fixed, 78306878). Maintainers' call now.
 - Discipline: sufficient-test every floor · additive soundness gets THOUGHT · never `-A` ·
