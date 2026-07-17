@@ -1,0 +1,67 @@
+# THE LANTERN OF THE FEN
+#
+# A small, fully-solvable adventure authored ENTIRELY in the dungeon DSL — no Rust, no
+# recompile. It plays to a WIN through the same GameSession as the four bundled dungeons, and
+# re-verifies as an authentic on-chain hash chain. Every gate forces the order:
+#   lantern -> descend the dark stair -> the brass key -> the friar's warding charm ->
+#   level the iron span -> break the fen-gargoyle -> carry the Fen-Heart into the shrine.
+
+name: The Lantern of the Fen
+start: causeway
+objective: reach sanctum holding fen_heart
+lose: slain >= 1 -> "cut down by the fen-gargoyle"
+
+room causeway "The Sunken Causeway"
+  A rope of black stone across the reed-water; a warden's lantern still hangs from an iron hook.
+  items: lantern
+  exit north -> gatehouse
+
+room gatehouse "The Drowned Gatehouse"
+  A roofless gatehouse choked with sedge. A stair drops into lightless water below.
+  exit south -> causeway
+  # The undercroft stair is pitch-black — impassable without a light in hand.
+  exit down -> undercroft requires item lantern
+
+room undercroft "The Reed Undercroft"
+  Knee-deep in cold fen-water; a brass key lies caught in a drowned grate.
+  items: brass_key
+  exit up -> gatehouse
+  exit north -> vestibule
+
+room vestibule "The Chapel Vestibule"
+  A mildewed antechapel. Brother Aldous, a fen-hermit, keeps a small green fire here.
+  exit south -> undercroft
+  exit east -> gallery
+
+room gallery "The Mechanism Gallery"
+  A hall of seized clockwork; a great iron span lies canted and dead across the gap north.
+  exit west -> vestibule
+  # The span is dead iron until the warding charm wakes its mechanism.
+  exit north -> iron_span requires flag span_level
+
+room iron_span "The Iron Span"
+  The span groans level over the drop. A fen-gargoyle of wet green stone unfolds to bar the way.
+  exit south -> gallery
+  exit north -> sanctum requires flag gargoyle_broken
+
+room sanctum "The Fen-Heart Sanctum"
+  A domed shrine above the water-line; on a silt-black altar rests the Fen-Heart, faintly aglow.
+  items: fen_heart
+  exit south -> iron_span
+
+# Brother Aldous gives his warding charm ONLY to one who already holds the brass key — no
+# flattery moves him (talking is narration; the world grants only what the rule permits).
+npc friar "Brother Aldous" in vestibule
+  about "a fen-hermit who trades only for proof of purpose"
+  topic charm requires item brass_key -> gives charm "Aldous eyes the brass key, then presses a warding charm into your palm." else "'Bring me the key from the undercroft, pilgrim. Then we speak of charms.'"
+  topic lore -> reveals "'The gargoyle is old stone and older spite. My charm is ward enough — set the span, then face it.'"
+
+# The warding charm, laid against the dead mechanism, wakes it and levels the span.
+use charm on mechanism in gallery -> flag span_level "The charm hums against cold brass; gears wake, and the iron span grinds level."
+
+# The fen-gargoyle falls to one who bears the warding charm; bare-handed, it is death.
+hostile gargoyle in iron_span defeated_by charm
+  victory flag gargoyle_broken
+  victory "You raise the warding charm; the gargoyle's green stone cracks, dulls, and crumbles into the reeds."
+  death flag slain
+  death "Without the ward the gargoyle's claw finds you, and the fen keeps another pilgrim."

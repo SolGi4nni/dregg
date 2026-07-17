@@ -87,6 +87,15 @@ pub mod mud;
 /// non-grindable `ServerVrf`/`Hybrid` sources are a named `dregg-dice` follow-up.
 pub mod dice_combat;
 
+/// THE AUTHORING LANE (backlog G7) — the `.dungeon` DSL parser/validator (ported from
+/// `attested-dm`, pure) + the `GameWorld` → substrate COMPILER with translation
+/// validation: a hand-written `.dungeon` text becomes a deployed [`spween_dregg::WorldCell`]
+/// whose gates are real executor `StateConstraint` teeth, and a lowering that does not
+/// match the source ruleset (a missing gate tooth, a phantom constraint) is a named
+/// `CompileError::ValidationFailed`, never a deploy. See [`dsl::compile`] for the
+/// lowering table and the named unsupported residuals.
+pub mod dsl;
+
 pub mod bloodgate;
 pub mod combat;
 /// LOOT-AS-ASSETS — a Descent reward is a real OWNED, TRANSFERABLE [`dreggnet_asset`] item,
