@@ -165,9 +165,30 @@ binding-hashes forces equality of the bound tails (the `injective` consequence o
 the protocol ACTUALLY hashes). A collapsing `bindingHash` (constant) makes `BindingCR` provably FALSE
 (`Demo.collapseBinding`), so the no-replay theorem cannot be discharged for free. -/
 
-/-- `BindingHashCR bindingHash` — the carrier: `bindingHash` is injective on tails (CR ⇒ no two
-distinct root tails share a binding caveat body; weaker form of full collision-resistance, the exact
-property the no-replay reduction consumes). -/
+/-- `BindingHashCR bindingHash` — ⚠ **WRONG SHAPE (injectivity, not collision-resistance)** — but, ⚑
+UNLIKE its ~20 `VACUITY-SWEEP.md` FINDING-2 siblings, **NOT refuted at deployed parameters, and that
+distinction is proved rather than assumed.** `crypto::binding_hash` is SHA-256 of a 32-byte macaroon tail
+producing a 32-byte caveat body: `|Tag| = |Bytes|`, the map does NOT compress, and the counting core has
+nothing to say — injectivity there is *consistent* (unprovable and unfalsifiable, but not false). The
+sweep's blanket "FALSE-AS-NAMED at deployed parameters" is wrong about this one; see
+`Crypto.FactoryBindingFloorRegrounded` §1c.
+
+The defect that IS present: injectivity is adversary-independent EXISTENCE, while what
+`binding_body_distinguishes_roots` / `rebinding_changes_replay` actually need is that an attacker cannot
+FIND a colliding tail — which is what the §5 PORTAL note below already CLAIMS this carrier is ("SHA-256
+CR"). And this carrier quantifies over a GENERIC `Tag` with nothing bounding it (`MacKernel.mac` maps
+unbounded `Bytes` into it), so at any unbounded-tail instantiation it IS false
+(`FactoryBindingFloorRegrounded.bindingHashCR_false_of_infinite_tag`); it is false outright whenever the
+binding hash compresses (`bindingHashCR_false_of_compressing`).
+
+⚑ Honest replacement: `Crypto.FactoryBindingFloorRegrounded.rebinding_advantage_bound` — a re-binder (one
+discharge, two DISTINCT parent tails, ONE replay) reduces (peeling the final MAC step with this file's own
+`hmacInj` premise) to a genuine binding-hash collision, negligible under `FloorGames.HashCRHardQuant _ Eff`
+at an EXPLICIT adversary class. KEPT for the record.
+
+As originally intended: `bindingHash` is injective on tails (CR ⇒ no two distinct root tails share a
+binding caveat body; weaker form of full collision-resistance, the exact property the no-replay reduction
+consumes). -/
 def BindingHashCR (bindingHash : Tag → Bytes) : Prop :=
   ∀ a b : Tag, bindingHash a = bindingHash b → a = b
 

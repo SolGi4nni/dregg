@@ -64,14 +64,29 @@ invariant*, then ALSO provide a concrete injective instance so the `#eval` demos
 binding* (a §8 obligation in the real system: collision-resistance of BLAKE3). -/
 opaque factoryHash : Schema → RecordProgram → FactoryVk
 
-/-- **`factoryHash_injective` (§8 OBLIGATION, stated as a hypothesis-carrying structure).**
-Content-addressing means the hash binds its preimage: two factories with the same `vk` published
-the same `(schema, program)`. This is exactly collision-resistance of the content hash, which is a
-crypto-interface obligation (the hash *circuit's* extractability), NOT a Lean theorem. We surface
-it as an explicit hypothesis on the theorems that need it (`vk_determines_invariants`) rather than
-hiding it — the Lean cell proves "*if* the hash is injective *then* equal-vk ⇒ equal-contract",
-and the circuit discharges the injectivity. (Cf. `REORIENT.md §6`: crypto-soundness is never
-merged into the Lean law.) -/
+/-- **`HashInjective` (§8 OBLIGATION)** — ⚠ **BROKEN / VACUOUS AT BLAKE3's REAL OUTPUT WIDTH.**
+Stated as injectivity of the content hash, which is FALSE by cardinality
+(`Crypto.FactoryBindingFloorRegrounded.hashInjective_false_blake3`): the published content
+`Schema × RecordProgram` is INFINITE while `factory_vk` is *"BLAKE3 of the descriptor"*
+(`STORAGE-AS-CELL-PROGRAMS.md §2`) — a 256-bit digest — so pigeonhole forces two distinct contracts to
+share a `vk`. So `vk_determines_invariants` / `vk_determines_program` below, the formal content of
+CONSTRUCTOR TRANSPARENCY, are VACUOUSLY TRUE at deployed parameters. `#assert_axioms` is blind to it: the
+proofs are clean; the *hypothesis* is the flaw. KEPT for the record (`VACUITY-SWEEP.md` FINDING 2).
+
+⚑ The docstring below was always RIGHT about the KIND of assumption ("collision-resistance of the content
+hash") and wrong about its SHAPE: collision-resistance means collisions are hard to FIND, never that they
+do not EXIST. Honest replacement:
+`Crypto.FactoryBindingFloorRegrounded.vk_determines_invariants_advantage_bound` — a factory forger
+(two WELL-FORMED descriptors, one `vk`, different contracts) reduces to a genuine `factoryHash` collision,
+negligible under `FloorGames.HashCRHardQuant _ Eff` at an EXPLICIT adversary class. NOT
+`HashFloorHonesty.CollisionResistant`, which is that floor at `⊤` and itself false
+(`FloorGames.collisionResistant_false_of_compressing`).
+
+As originally intended: content-addressing means the hash binds its preimage — two factories with the same
+`vk` published the same `(schema, program)`. A crypto-interface obligation (the hash *circuit's*
+extractability), NOT a Lean theorem; surfaced as an explicit hypothesis on the theorems that need it
+(`vk_determines_invariants`) rather than hidden. (Cf. `REORIENT.md §6`: crypto-soundness is never merged
+into the Lean law.) -/
 def HashInjective : Prop :=
   ∀ s₁ s₂ p₁ p₂, factoryHash s₁ p₁ = factoryHash s₂ p₂ → s₁ = s₂ ∧ p₁ = p₂
 

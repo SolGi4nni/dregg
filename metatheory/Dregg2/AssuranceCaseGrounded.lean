@@ -324,7 +324,10 @@ theorem grounded_capstone_engine_fires_v2
 The historical capstone imported none of the ML-KEM/BLS/DECO/Hermine results, so even their proved
 reductions were invisible at the assurance apex.  `BroaderCryptoReductionSuite` collects their exact
 strongest reusable conclusions: real-dimension FIPS-203 correctness, weighted-quorum extraction,
-authenticated-payment extraction, and the proper collision-resistance + Module-SIS advantage bound.
+authenticated-payment extraction, and the Hermine concurrent-forgery advantage bound — the last now at
+its REPAIRED strength (a genuine union-bound reduction onto the MSIS and commit-collision games at
+EXPLICIT `Eff` classes, not the pre-`4fe326cce` free-ensemble `MSISHardQuantShape` P→P; see the field's
+own note).
 It does not claim that every deployed turn invokes all four mechanisms.  The remaining protocol-use
 binding — identifying the concrete handshake/certificate/DECO/commit-reveal values consumed on one run
 with these theorem parameters — stays named separately in the horizon ledger. -/
@@ -356,13 +359,31 @@ structure BroaderCryptoReductionSuite : Prop where
         MK.Tagged w.sessionKey w.transcriptCommit w.tag ∧
         w.transcriptCommit = KD.compress (KD.encode stmt.facts) w.salt ∧
         1 ≤ stmt.facts.amountCents
-  hermine_rushing : ∀ {F : Dregg2.Circuit.HashFloorHonesty.KeyedHashFamily} {Solver : Type}
-    (_hCR : Dregg2.Circuit.HashFloorHonesty.CollisionResistant F)
-    (equivocator : Dregg2.Circuit.HashFloorHonesty.CollisionFinder F)
-    (adv : Solver → Dregg2.Crypto.ConcreteSecurity.Ensemble) (solver : Solver),
-    Dregg2.Crypto.ProbCrypto.MSISHardQuantShape adv →
+  /-- ⚑ RE-STATED 07-17 to mirror `hermine_concurrent_forgery_advantage_bound`'s REPAIRED signature
+  (`4fe326cce`), which this field had silently fallen behind — the suite still declared the PRE-repair
+  shape (`MSISHardQuantShape adv` on a FREE ensemble, discharged by `hmsis solver`: the content-free
+  `P → P` that `VACUITY-SWEEP.md` FINDING 1 documented at this exact site), so the capstone was
+  advertising the laundered bound the repair had already deleted. The signature change made this a type
+  error; nothing here weakens, and the field now carries the REAL reduction: the forger is a first-class
+  game, its advantage is union-bounded by the advantages of the MSIS solver and commit-collision finder
+  EXTRACTED from it, and both floors bite at those extracted adversaries under an EXPLICIT `Eff` class
+  (undischarged — the tree has no cost model, `FloorGames` §8). -/
+  hermine_rushing : ∀ (F : Dregg2.Crypto.HermineHashCRRegrounded.ConcurrentForgeryFamily)
+    (Eff : Dregg2.Crypto.FloorGames.Adversary
+      (Dregg2.Crypto.FloorGames.msisGame
+        (Dregg2.Crypto.HermineHashCRRegrounded.cfMsisFamily F)) → Prop)
+    (EffH : Dregg2.Crypto.FloorGames.Adversary
+      (Dregg2.Crypto.HermineHashCRRegrounded.cfEquivGame F) → Prop)
+    (A : Dregg2.Crypto.FloorGames.Adversary
+      (Dregg2.Crypto.HermineHashCRRegrounded.concurrentForgeryGame F)),
+    Eff (Dregg2.Crypto.HermineHashCRRegrounded.forgeryToMsisSolver F A) →
+    EffH (Dregg2.Crypto.HermineHashCRRegrounded.forgeryToEquivFinder F A) →
+    Dregg2.Crypto.FloorGames.MSISHardQuant
+      (Dregg2.Crypto.HermineHashCRRegrounded.cfMsisFamily F) Eff →
+    Dregg2.Crypto.FloorGames.Hard (Dregg2.Crypto.HermineHashCRRegrounded.cfEquivGame F) EffH →
     Dregg2.Crypto.ConcreteSecurity.Negl
-      (fun n => Dregg2.Circuit.HashFloorHonesty.collisionAdv F equivocator n + adv solver n)
+      (Dregg2.Crypto.FloorGames.gameAdv
+        (Dregg2.Crypto.HermineHashCRRegrounded.concurrentForgeryGame F) A)
 
 /-- The wider suite is genuinely assembled from the four reduction theorems, rather than merely
 co-imported. -/

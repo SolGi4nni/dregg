@@ -224,14 +224,45 @@ As originally intended: the sponge `h` over a list of leaves is injective:
 `h xs = h ys ⇒ xs = ys`. The standard collision-resistance of a Poseidon sponge (REALIZABLE). -/
 def compressNInjective (h : List ℤ → ℤ) : Prop := ∀ xs ys : List ℤ, h xs = h ys → xs = ys
 
-/-- **CR carrier `cellLeafInjective CH`** — the per-cell leaf encoding is injective in the `Value`:
-`CH c v = CH c w ⇒ v = w` (a fixed cell's leaf binds its whole `Value`). REALIZABLE (a canonical
-serialization + Poseidon leaf hash). -/
+/-- **CR carrier `cellLeafInjective CH`** — ⚠ **BROKEN / VACUOUS FOR A RANGE-BOUNDED LEAF HASH.**
+Stated as injectivity of `CH c : Value → ℤ`, which is FALSE by cardinality
+(`StateCommitFloorRegrounded.cellLeafInjective_false_babyBear`): `Value` is INFINITE (`Value.int` injects
+`ℤ`) and a real Poseidon2 leaf lands in ONE BabyBear element, so pigeonhole forces two distinct `Value`s
+to one leaf. The discharge route is worse than the hypothesis: `Poseidon2Binding.LeafRealization` carries
+`Poseidon2SpongeCR` as a FIELD, so a deployed realization VALUE cannot exist
+(`StateCommitFloorRegrounded.leafRealization_uninhabitable_babyBear`) — only the toy
+`Encodable.encode` sponge satisfies it. KEPT for the record (`VACUITY-SWEEP.md` FINDING 2).
+
+⚑ Honest replacement: **NOT** `HashFloorHonesty.CollisionResistant` — that is
+`FloorGames.HashCRHardQuant _ ⊤` and is ITSELF false at deployed parameters
+(`FloorGames.collisionResistant_false_of_compressing`). The re-grounded consumer is
+`StateCommitFloorRegrounded.stateCommit_equivocation_advantage_bound`: the equivocation game reduces to
+collision games at the leaf/node/sponge families under `HashCRHardQuant _ Eff`, with the `Eff` obligation
+explicit (`FloorGames` §8 — the tree has no cost model).
+
+As originally intended: the per-cell leaf encoding is injective in the `Value` (a fixed cell's leaf binds
+its whole `Value`) — a canonical serialization + Poseidon leaf hash. -/
 def cellLeafInjective : Prop := ∀ (c : CellId) (v w : Value), CH c v = CH c w → v = w
 
-/-- **CR carrier `logHashInjective LH`** — the receipt-chain hash is injective:
-`LH xs = LH ys ⇒ xs = ys`. The standard collision-resistance of a Poseidon log/Merkle accumulator
-(REALIZABLE). The portal a log-GROWING effect (`setFieldA`, …) needs (unlike a frozen-log effect like
+/-- **CR carrier `logHashInjective LH`** — ⚠ **BROKEN / VACUOUS AT REAL PARAMS** (the same predicate as
+`compressNInjective`/`Poseidon2SpongeCR` over the receipt chain): injectivity of `List Turn → ℤ` is FALSE
+for any bounded-range accumulator (`StateCommitFloorRegrounded.logHashInjective_false_babyBear`) — the
+chain GROWS without bound and the digest is one field element. And `Poseidon2Binding.LogRealization`
+carries `Poseidon2SpongeCR` as a FIELD, so a deployed realization VALUE cannot exist
+(`StateCommitFloorRegrounded.logRealization_uninhabitable_babyBear`); in particular
+`Verify/KeystoneAuditArgusReceipt.LH₀_inj` discharges this carrier only through
+`Reference.refLogRealization`, whose sponge is the toy injective `Encodable.encode`. KEPT for the record
+(`VACUITY-SWEEP.md` FINDING 2).
+
+⚑ Honest replacement: `FloorGames.HashCRHardQuant (StateCommitFloorRegrounded.scLogFamily F) Eff` at an
+EXPLICIT adversary class — see `StateCommitFloorRegrounded.log_equivocation_advantage_bound` (existence →
+finding) and `scLogFamily_CR_of_logHashInjective` (this carrier was STRICTLY STRONGER than needed, AND
+unsatisfiable). NOT `HashFloorHonesty.CollisionResistant`, which is that floor at `⊤` and itself false
+(`FloorGames.collisionResistant_false_of_compressing`).
+
+As originally intended: the receipt-chain hash is injective (`LH xs = LH ys ⇒ xs = ys`) — the standard
+collision-resistance of a Poseidon log/Merkle accumulator. The portal a log-GROWING effect
+(`setFieldA`, …) needs (unlike a frozen-log effect like
 `Transfer`). RELOCATED here (beside the other CR carriers) so the generic `EffectCommit` framework can
 import the log CR portal from `StateCommit` directly, not from a specific instance. (Takes `LH` as an
 explicit binder — the `Surface` section variables `CH`/`RH`/… are irrelevant to it.) -/

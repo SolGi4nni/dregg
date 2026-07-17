@@ -45,10 +45,32 @@ open Dregg2.Circuit.StateCommit (compressInjective)
 is the `CompressionCR` collision peeled once (plus the structural injectivity of the 2-element
 packing). NO new crypto beyond the one permutation call. -/
 
-/-- **`Compress1CR compress1`** — a single-permutation-call compression `compress1 : List ℤ → ℤ`
-(`squeeze ∘ perm ∘ absorb s0`) is collision-resistant: equal outputs force equal input blocks. This
-IS the squeeze-level reading of `SpongeReduction.CompressionCR` for the LAST (here: only) block — the
-same one-permutation-call primitive #4, stated at the digest level for a fixed initial state. -/
+/-- **`Compress1CR compress1`** — ⚠ **BROKEN / VACUOUS FOR A RANGE-BOUNDED COMPRESSION.**
+Stated as injectivity of `List ℤ → ℤ`, which is FALSE by cardinality
+(`Crypto.FactoryBindingFloorRegrounded.compress1CR_false_babyBear`) — `List ℤ` is infinite and a BabyBear
+squeeze is one bounded field element. It is the same predicate as the already-flagged
+`StateCommit.compressNInjective` / `Poseidon2Binding.Poseidon2SpongeCR`, and it shares their fate.
+
+⚑ **WORSE THAN A HYPOTHESIS:** this is a FIELD of `Compress2` (`compress1CR`), so a deployed `Compress2`
+VALUE CANNOT EXIST (`FactoryBindingFloorRegrounded.compress2_uninhabitable_babyBear`) — the
+`Compress8CR`-in-`Cap8Scheme` shape `VACUITY-SWEEP.md` FINDING 2 named the priority. Consequence for
+this file's own headline claim (§1 header: *"the `StateCommit.recStateCommit_binds` root-binding portal
+thereby stands on the permutation CR, NOT a separate assumption"*): at BabyBear it stands on nothing —
+`compressInjective_of_compress2`'s premise is uninhabitable, and only `Reference.refCompress2`
+(`compress1 = Encodable.encode`, range NOT bounded) satisfies it. Toy witness satisfiable; real
+instantiation false. KEPT for the record.
+
+⚑ Honest replacement: `Crypto.FactoryBindingFloorRegrounded.compress2_node_advantage_bound` — a node-hash
+collision finder reduces (by the injective packing) to a `compress1` collision finder, negligible under
+`FloorGames.HashCRHardQuant _ Eff` at an EXPLICIT adversary class. NO new crypto: the sole content is
+still the ONE permutation call (primitive #4), now stated as something an adversary must FIND. NOT
+`HashFloorHonesty.CollisionResistant`, which is that floor at `⊤` and itself false
+(`FloorGames.collisionResistant_false_of_compressing`).
+
+As originally intended: a single-permutation-call compression `compress1 : List ℤ → ℤ`
+(`squeeze ∘ perm ∘ absorb s0`) is collision-resistant: equal outputs force equal input blocks. The
+squeeze-level reading of `SpongeReduction.CompressionCR` for the LAST (here: only) block — the same
+one-permutation-call primitive #4, stated at the digest level for a fixed initial state. -/
 def Compress1CR (compress1 : List ℤ → ℤ) : Prop :=
   ∀ a b : List ℤ, compress1 a = compress1 b → a = b
 
