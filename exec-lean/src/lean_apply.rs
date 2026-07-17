@@ -468,6 +468,13 @@ pub enum ExtractError {
     /// than the cell commitment). Outside the default-on COVERED set; falls back to Rust. `kind` is
     /// the first offending effect kind, so the fallback names exactly which gap blocked it.
     RootGap { kind: &'static str },
+    /// A ROOT targets a cell other than `turn.agent` without a bearer proof (issue #56). The wire
+    /// model binds the acting principal as the TARGET, so the Lean authority gate would authorize
+    /// the write via its owner disjunct with NO capability edge — but the deployed Rust gate
+    /// enforces AGENT-REACH (`CapabilityNotHeld` when the agent holds no edge to a non-owned
+    /// target). The turn is fenced OUT of the covered set onto the Rust producer, which enforces
+    /// agent-reach, so the verified producer never installs a cross-cell write Rust would reject.
+    AgentReach,
 }
 
 impl std::fmt::Display for ExtractError {
@@ -501,6 +508,14 @@ impl std::fmt::Display for ExtractError {
                     "turn touches the characterized root-gap effect `{kind}` (Lean-reconstituted \
                      root provably diverges from Rust) — outside the swap-safe covered set, fell \
                      back to the Rust producer"
+                )
+            }
+            ExtractError::AgentReach => {
+                write!(
+                    f,
+                    "a root targets a non-agent cell without a bearer proof — the wire model would \
+                     authorize it via the owner disjunct with no capability edge, but the deployed \
+                     Rust gate enforces agent-reach; fenced onto the Rust producer (issue #56)"
                 )
             }
         }
@@ -1710,7 +1725,14 @@ pub fn produce_via_lean(
     // Lean root known to disagree with the rest of the chain (and never a silent Rust-everywhere).
     if !lean_shadow::forest_is_root_agreeing(turn) {
         let result = executor.execute(turn, ledger);
-        let reason = if lean_shadow::forest_is_marshallable(turn) {
+        let reason = if !lean_shadow::forest_agent_reaches_roots(turn) {
+            // AGENT-REACH FENCE (issue #56): a root targets a non-agent cell without a bearer
+            // proof. The wire binds the acting principal as the TARGET, so the Lean gate would
+            // authorize the write via its owner disjunct with NO capability edge — but the deployed
+            // Rust gate rejects it (`CapabilityNotHeld`) unless the agent holds the edge. Fence onto
+            // the Rust producer so the verified producer never installs a write Rust would reject.
+            ExtractError::AgentReach
+        } else if lean_shadow::forest_is_marshallable(turn) {
             // Marshallable but NOT root-agreeing ⇒ a characterized root-GAP effect. Name the first
             // offending kind so the fence is honest about WHICH gap blocked the producer.
             ExtractError::RootGap {

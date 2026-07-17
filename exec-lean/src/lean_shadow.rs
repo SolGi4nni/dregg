@@ -815,9 +815,44 @@ pub fn forest_is_root_agreeing(turn: &Turn) -> bool {
     if !forest_is_marshallable(turn) {
         return false;
     }
+    if !forest_agent_reaches_roots(turn) {
+        return false;
+    }
     turn_effect_kinds(turn)
         .iter()
         .all(|k| producer_root_agrees_kind(k))
+}
+
+/// **THE AGENT-REACH FENCE (issue #56 — the deepest hole).** True iff every ROOT of the forest is
+/// one whose authority the wire model faithfully mirrors, so installing the Lean verdict cannot
+/// admit a cross-cell write the DEPLOYED Rust authority gate forbids.
+///
+/// The wire binds the acting principal as `actor := action.target` (`tree_to_wforest`), and the
+/// Lean kernel gate `stateAuthB` = `authorizedB { actor, src := target, dst := target }` short-
+/// circuits on the OWNER disjunct `actor = src`. So for a root whose `action.target` differs from
+/// `turn.agent`, the Lean model authorizes the write as if the TARGET cell were self-writing — with
+/// NO capability edge required. But the Rust executor enforces AGENT-REACH: for a root, the agent
+/// (the root's `parent_cell`) must OWN the target (`target == agent`), hold a c-list edge to it, or
+/// carry a bearer proof — else `CapabilityNotHeld` (`execute_tree.rs:451`). When agent ≠ target and
+/// the agent holds no edge, Rust REJECTS while Lean COMMITS; the default-on producer would then
+/// INSTALL a cross-cell write the authority model forbids.
+///
+/// The producer gate cannot see the ledger here (no c-list to test the edge), so it fences
+/// CONSERVATIVELY on the two shapes the wire model provably mirrors:
+///   * `turn.agent == root.action.target` — the owner disjunct is FAITHFUL (agent acts on its own
+///     cell); Rust's `target == parent_cell` short-circuit and Lean's `actor = src` agree.
+///   * the root is BEARER-authorized — Rust bypasses the c-list check (`is_bearer_auth`) and the
+///     wire carries the bearer WHO-leg, so authority is the carried proof, not agent-reach.
+///
+/// Any OTHER root (agent ≠ target, non-bearer) is fenced OUT of the covered set: it falls to the
+/// Rust producer, which enforces agent-reach (committing the legitimate agent-holds-the-edge case,
+/// rejecting the unreachable one). This is a pure SAFETY-NET tightening of which turns the verified
+/// producer INSTALLS for — no production behavior change (Rust already decides these), it only stops
+/// the producer from loosening past Rust. Decided identically in both builds (no FFI, no ledger).
+pub(crate) fn forest_agent_reaches_roots(turn: &Turn) -> bool {
+    turn.call_forest.roots.iter().all(|r| {
+        r.action.target == turn.agent || matches!(&r.action.authorization, Authorization::Bearer(_))
+    })
 }
 
 /// The FIRST effect kind in `turn` that is a characterized root-GAP (mappable but not root-agreeing)
