@@ -1875,3 +1875,16 @@ security forgery fixes stand on real gate-runs.
 - ~143 dirty files: other lanes' WIP (deploy/docs/realm/arklib — visible in the log) — not mine.
 Nothing productive + non-blocked remains that doesn't risk sweeping another lane's work. Wakeup re-checks the
 preflight-freeing.
+
+### PUSHING THRU (ember: "that other lane is gone, push thru") — 2026-07-16 late
+The contested preflight lane VANISHED, leaving its 295-line stark-kill migration UNCOMMITTED + stranded.
+Did NOT discard it (never discard another lane's work blind) — read it, found it coherent + goal-aligned +
+compiling, and LANDED it (`6eadb0365`): composition/proofs checks migrated off the deleted
+`prove_authorization_with_membership` hand engine onto the emitted `dregg-derivation-v1` descriptor path
+(new `derivation_descriptor.rs` helper with a forged-conclusion tooth), honest residual named (no emitted
+twin for the multi-step accumulated-hash chain), my sovereign.rs mock-purge wiring preserved.
+NOW (Fable, on top): wire the 4 preflight IVC checks (`check_ivc_chain`/`check_ivc_recursive`/
+`check_ivc_proof`/`check_ivc_wrong_initial_root`) off the MOCK onto the REAL `prove_turn_chain_recursive`
+(the sovereign.rs template), sharing ONE `mint_real_turn` (not a copied minter = a mirror), keeping the
+wrong-root rejection tooth against the REAL verifier. Then the promotion gate certifies the real prover, not
+the mock. Full engine deletion still gated on the OTHER riders (bridge/sdk/circuit-tests — a later step).
