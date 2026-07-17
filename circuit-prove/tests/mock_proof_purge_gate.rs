@@ -6,10 +6,11 @@
 //! below only ever SHRINKS.
 //!
 //! ## What counts as a mock prover (the engines, characterized from source — not from their comments)
-//! * `circuit/src/ivc.rs` — the SIMULATED IVC. `prove_ivc` (:637) builds a hash-chain "proof";
-//!   `verify_ivc` (:938) only recomputes a BLAKE3 digest over the proof's OWN public data (:966-975).
-//!   **Anyone who can call `prove_ivc` can mint a passing proof for any root walk.** Proof sizes are
-//!   fabricated (`simulated_proof_size_bytes`, :774). `create_test_chain` fabricates the data itself.
+//! * `circuit/src/ivc.rs` — WAS the SIMULATED IVC: `prove_ivc` built a hash-chain "proof";
+//!   `verify_ivc` only recomputed a BLAKE3 digest over the proof's OWN public data.
+//!   **Anyone who could call `prove_ivc` could mint a passing proof for any root walk.** Proof sizes
+//!   were fabricated; `create_test_chain` fabricated the data itself. DELETED 2026-07-16 (final cut) —
+//!   only the real Poseidon2 hash-chain primitives remain in that file.
 //! * `circuit/src/constraint_prover.rs` — says it of itself (:5-8): *"a trace digest … **not** a
 //!   cryptographic proof … nothing here is sound against a prover that lies"*; `generate_unchecked`
 //!   (:256) skips even the local constraint check.
@@ -58,9 +59,13 @@ fn count_mock_sites(src: &str) -> usize {
 const BASELINE: &[(&str, usize)] = &[
         // ── THE MOCK ENGINES themselves (retire once nothing production rides them) ──
         // 2026-07-16: presentation-IVC surface retired (`IvcPresentationProof` + verify,
-        // `IvcBackend`/`IvcBackendProof`/`finalize_with_backend`): 79 -> 70. The remaining
-        // sites are the core simulated engine, still ridden by node MCP handlers.
-        ("circuit/src/ivc.rs", 70),
+        // `IvcBackend`/`IvcBackendProof`/`finalize_with_backend`): 79 -> 70.
+        // circuit/src/ivc.rs: PURGED 2026-07-16 (final cut) — the simulated engine ITSELF is
+        // DELETED (prove/verify/builder/proof types/IvcAir/create_test_chain, plus its dead
+        // riders: cipherclerk's never-enabled `enable_ivc` path, the soundness.rs mock tests,
+        // the ivc_attenuation_chain example). 70 -> 0. What remains in ivc.rs are the REAL
+        // Poseidon2 hash-chain primitives + the state-transition trace shape, which contain
+        // zero mock sites.
         ("circuit/src/constraint_prover.rs", 17),
         // node/src/mcp/handlers_verify.rs: PURGED 2026-07-16 — dregg_compress_history now proves via
         // the REAL prove_turn_chain_recursive over retained FinalizedTurns (plumbed at the node commit

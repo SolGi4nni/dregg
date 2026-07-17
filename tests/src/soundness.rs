@@ -1,22 +1,25 @@
 //! Proof soundness tests.
 //!
-//! ⚠ **SCOPE CORRECTION (mock-proof purge, 2026-07-16) — the four `ivc_*` tests below do NOT test
-//! soundness.** They exercise `dregg_circuit::ivc::{prove_ivc, verify_ivc}` — the **SIMULATED** IVC, whose
+//! ⚠ **SCOPE CORRECTION (mock-proof purge, 2026-07-16) — the four `ivc_*` tests that used to live
+//! here did NOT test soundness, and were RETIRED with the simulated engine later the same day
+//! (`ivc_empty_fold_chain_rejected`, `ivc_fold_chain_with_swapped_roots`,
+//! `ivc_proof_tampered_accumulated_hash`, `ivc_proof_tampered_step_count`).**
+//! They exercised `dregg_circuit::ivc::{prove_ivc, verify_ivc}` — the **SIMULATED** IVC, whose
 //! `verify_ivc` only recomputes a BLAKE3 digest over the proof's OWN public data. Their assertions
 //! ("Tampered hash must fail", "broken root chain must fail") pass TRIVIALLY: mutating a stored field
 //! breaks the digest match. That is self-consistency, not soundness. **The attack a real prover must
 //! withstand is not tampering an existing proof — it is MINTING a consistent fake, and anyone who can call
 //! `prove_ivc` can do exactly that for any root walk** (`circuit/src/constraint_prover.rs:5-8` says it of
-//! itself: "nothing here is sound against a prover that lies"). So these four tests certify a mock and
-//! must not be read as IVC soundness evidence.
+//! itself: "nothing here is sound against a prover that lies"). So those four tests certified a mock and
+//! were never IVC soundness evidence.
 //!
 //! **The REAL whole-chain soundness teeth live at `circuit-prove/tests/ivc_turn_chain_rotated.rs`**
 //! (`k_fold_turn_chain_proves_and_verifies`, `whole_chain_proof_bytes_roundtrip_and_tamper`): a genuine
 //! recursive fold over real `FinalizedTurn`s, with forged-digest / forged-count / broken-order /
 //! root / descriptor / public / VK / version / truncation all REJECTED — 5/5 passing, byte-pinned to
-//! `Emit/EffectVmEmitTurnChainBinding.lean`. These `ivc_*` tests retire with the simulated engine
-//! (their production riders are gone; only the contested `preflight/checks/{composition,backends}.rs`
-//! remain — see `circuit-prove/tests/mock_proof_purge_gate.rs`).
+//! `Emit/EffectVmEmitTurnChainBinding.lean`. The `ivc_*` tests here are now retired WITH the simulated
+//! engine (deleted from `circuit/src/ivc.rs` 2026-07-16 — see
+//! `circuit-prove/tests/mock_proof_purge_gate.rs`).
 //!
 //! These tests verify that the circuit proof system rejects forged, tampered,
 //! and inconsistent witnesses. A sound proof system must never accept a proof
@@ -30,7 +33,6 @@
 
 use dregg_circuit::dsl::fold::{FoldAir, FoldWitness, RemovedFact};
 use dregg_circuit::field::BabyBear;
-use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
 use dregg_circuit::mock_prover::MockProver;
 use dregg_circuit::presentation::{
     PresentationAir, PresentationVerification, create_test_presentation,
@@ -85,107 +87,6 @@ fn presentation_with_unverified_membership() {
     let air = PresentationAir::new(witness);
     let result = air.verify_all();
     assert_ne!(result, PresentationVerification::Valid);
-}
-
-// =============================================================================
-// 5. IVC: wider capability attacks
-// =============================================================================
-
-#[test]
-fn ivc_empty_fold_chain_rejected() {
-    // Cannot prove anything with zero steps (would be meaningless)
-    let initial_root = BabyBear::new(12345);
-    let result = prove_ivc(initial_root, vec![]);
-    // An empty chain should either reject or produce a trivially invalid proof
-    assert!(
-        result.is_none(),
-        "Empty IVC chain should not produce a proof"
-    );
-}
-
-#[test]
-fn ivc_fold_chain_with_swapped_roots() {
-    let initial_root = BabyBear::new(100);
-    let mid_root = BabyBear::new(200);
-    let final_root = BabyBear::new(300);
-
-    let fold1 = FoldWitness {
-        old_root: initial_root,
-        new_root: mid_root,
-        removed_facts: vec![RemovedFact {
-            predicate: BabyBear::new(1),
-            terms: [BabyBear::new(2), BabyBear::ZERO, BabyBear::ZERO],
-            membership_verified: true,
-        }],
-        num_added_checks: 0,
-    };
-
-    // fold2 has WRONG old_root (should be mid_root but is initial_root)
-    let fold2 = FoldWitness {
-        old_root: initial_root, // WRONG - should be mid_root
-        new_root: final_root,
-        removed_facts: vec![RemovedFact {
-            predicate: BabyBear::new(3),
-            terms: [BabyBear::new(4), BabyBear::ZERO, BabyBear::ZERO],
-            membership_verified: true,
-        }],
-        num_added_checks: 0,
-    };
-
-    let deltas = vec![FoldDelta::new(fold1), FoldDelta::new(fold2)];
-    let result = prove_ivc(initial_root, deltas);
-    // Should fail because roots don't chain
-    assert!(result.is_none(), "IVC with broken root chain must fail");
-}
-
-#[test]
-fn ivc_proof_tampered_accumulated_hash() {
-    let initial_root = BabyBear::new(100);
-    let mid_root = BabyBear::new(200);
-
-    let fold1 = FoldWitness {
-        old_root: initial_root,
-        new_root: mid_root,
-        removed_facts: vec![RemovedFact {
-            predicate: BabyBear::new(10),
-            terms: [BabyBear::new(20), BabyBear::ZERO, BabyBear::ZERO],
-            membership_verified: true,
-        }],
-        num_added_checks: 1,
-    };
-
-    let deltas = vec![FoldDelta::new(fold1)];
-    if let Some(mut proof) = prove_ivc(initial_root, deltas) {
-        // Tamper with accumulated hash
-        proof.accumulated_hash = BabyBear::new(0xDEAD);
-        let result = verify_ivc(&proof, None);
-        assert_ne!(result, IvcVerification::Valid, "Tampered hash must fail");
-    }
-}
-
-#[test]
-fn ivc_proof_tampered_step_count() {
-    let initial_root = BabyBear::new(100);
-    let mid_root = BabyBear::new(200);
-
-    let fold1 = FoldWitness {
-        old_root: initial_root,
-        new_root: mid_root,
-        removed_facts: vec![RemovedFact {
-            predicate: BabyBear::new(10),
-            terms: [BabyBear::new(20), BabyBear::ZERO, BabyBear::ZERO],
-            membership_verified: true,
-        }],
-        num_added_checks: 1,
-    };
-
-    let deltas = vec![FoldDelta::new(fold1)];
-    if let Some(mut proof) = prove_ivc(initial_root, deltas) {
-        // Claim more steps than actually performed
-        proof.step_count = 5;
-        let result = verify_ivc(&proof, None);
-        assert_ne!(result, IvcVerification::Valid, "Wrong step count must fail");
-    }
 }
 
 // =============================================================================

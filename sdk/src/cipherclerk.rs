@@ -26,9 +26,7 @@ use dregg_cell_crypto::stealth::{
     StealthAddress, StealthAnnouncement, StealthKeys, StealthMetaAddress,
 };
 use dregg_circuit::BabyBear;
-use dregg_circuit::IvcProof;
 use dregg_circuit::PredicateType;
-use dregg_circuit::ivc::IvcBuilder;
 use dregg_circuit::merkle_air::compute_parent_poseidon2;
 use dregg_circuit::poseidon2;
 use dregg_intent::sse::EncryptedIntent;
@@ -1038,11 +1036,6 @@ pub struct AgentCipherclerk {
     /// proof-carrying state representation — anyone can verify the chain
     /// without contacting a federation.
     receipt_chain: Vec<dregg_turn::TurnReceipt>,
-    /// Optional IVC builder for incrementally accumulating state transition proofs.
-    /// When enabled, each appended receipt extends the IVC chain, producing a
-    /// constant-size proof of the entire state transition history.
-    /// Skipped during serialization as it is runtime-only state.
-    ivc_builder: Option<IvcBuilder>,
     /// The HD seed from which this cipherclerk's key was derived (if created from mnemonic).
     /// Stored encrypted at rest; zeroized on drop.
     seed: Option<[u8; 64]>,
@@ -1194,7 +1187,6 @@ impl AgentCipherclerk {
             tokens: Vec::new(),
             next_token_id: 0,
             receipt_chain: Vec::new(),
-            ivc_builder: None,
             seed: None,
             mnemonic_phrase: None,
             derivation_path: None,
@@ -1269,7 +1261,6 @@ impl AgentCipherclerk {
             tokens: Vec::new(),
             next_token_id: 0,
             receipt_chain: Vec::new(),
-            ivc_builder: None,
             seed: Some(seed),
             mnemonic_phrase: None,
             derivation_path: Some(path.to_string()),
@@ -2179,44 +2170,6 @@ impl AgentCipherclerk {
         // value; fills in when the caller left it unset).
         receipt.previous_receipt_hash = expected_prev;
 
-        // Extend the IVC chain if enabled.
-        if let Some(ref mut builder) = self.ivc_builder {
-            use dregg_circuit::fold_types::{FoldWitness, RemovedFact};
-            use dregg_circuit::ivc::FoldDelta;
-
-            // Encode the state transition as a fold step: the pre_state transitions
-            // to post_state. We model this as a removal of the pre-state fact and
-            // the new_root being derived from the post-state hash.
-            let pre_bb = Self::bytes_to_babybear(&receipt.pre_state_hash);
-            let post_bb = Self::bytes_to_babybear(&receipt.post_state_hash);
-            let turn_bb = Self::bytes_to_babybear(&receipt.turn_hash);
-
-            let fold = FoldWitness {
-                old_root: pre_bb,
-                new_root: post_bb,
-                removed_facts: vec![RemovedFact {
-                    predicate: turn_bb,
-                    terms: [
-                        pre_bb,
-                        post_bb,
-                        BabyBear::new(receipt.computrons_used as u32),
-                    ],
-                    membership_proof: None,
-                }],
-                num_added_checks: 1,
-                added_checks_commitment: dregg_circuit::dsl::fold::compute_test_checks_commitment(
-                    1,
-                ),
-            };
-            // Best-effort: if the fold fails (e.g., root mismatch on first step),
-            // we still append the receipt but skip IVC extension.
-            // Don't append to IVC state — it would be inconsistent.
-            let receipt_hash = receipt.receipt_hash();
-            if let Err(e) = builder.add_fold(FoldDelta::new(fold)) {
-                tracing::warn!("IVC fold failed for receipt {:?}: {}", receipt_hash, e);
-            }
-        }
-
         self.receipt_chain.push(receipt);
         Ok(())
     }
@@ -2262,38 +2215,11 @@ impl AgentCipherclerk {
         dregg_turn::verify_receipt_chain(&self.receipt_chain)
     }
 
-    // =========================================================================
-    // IVC (Incrementally Verifiable Computation)
-    // =========================================================================
-
-    /// Enable IVC accumulation for this cipherclerk's receipt chain.
-    ///
-    /// Once enabled, every call to [`append_receipt`](Self::append_receipt) will
-    /// extend the IVC chain with the state transition, building a constant-size
-    /// proof of the entire state transition history.
-    ///
-    /// # Arguments
-    ///
-    /// * `initial_root` - The initial state root (typically the pre_state_hash of
-    ///   the first receipt, encoded as a BabyBear field element).
-    pub fn enable_ivc(&mut self, initial_root: BabyBear) {
-        self.ivc_builder = Some(IvcBuilder::new(initial_root));
-    }
-
-    /// Export the current IVC state proof.
-    ///
-    /// Returns a constant-size [`IvcProof`] covering the entire receipt chain
-    /// accumulated since [`enable_ivc`](Self::enable_ivc) was called. Returns
-    /// `None` if IVC is not enabled or no receipts have been appended since
-    /// IVC was enabled.
-    pub fn export_state_proof(&self) -> Option<IvcProof> {
-        self.ivc_builder.as_ref()?.finalize_with_air()
-    }
-
-    /// Check whether IVC is currently enabled on this cipherclerk.
-    pub fn ivc_enabled(&self) -> bool {
-        self.ivc_builder.is_some()
-    }
+    // DELETED 2026-07-16 (mock-proof purge, final cut): the mock-IVC path —
+    // `enable_ivc` / `export_state_proof` / `ivc_enabled` and the `ivc_builder`
+    // field + `append_receipt` fold branch. It rode the deleted simulated
+    // `dregg_circuit::ivc` engine and was provably dead: `enable_ivc` (the only
+    // setter) had ZERO callers, so `export_state_proof` always returned `None`.
 
     // =========================================================================
     // v12 carrier-witness retention (the SDK attach sites)
@@ -7362,7 +7288,6 @@ impl std::fmt::Debug for AgentCipherclerk {
             .field("public_key", &self.public_key)
             .field("tokens_held", &self.tokens.len())
             .field("receipt_chain_length", &self.receipt_chain.len())
-            .field("ivc_enabled", &self.ivc_builder.is_some())
             .field("has_seed", &self.seed.is_some())
             .field("has_mnemonic", &self.mnemonic_phrase.is_some())
             .field("derivation_path", &self.derivation_path)

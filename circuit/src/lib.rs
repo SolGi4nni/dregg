@@ -560,10 +560,10 @@ pub use effect_vm::{
     generate_effect_vm_trace, verify_balance_limb_pis,
 };
 pub use field::BabyBear;
-pub use ivc::{
-    FoldDelta, FoldStepWitness, IvcBuilder, IvcProof, IvcVerification, MAX_FOLD_DEPTH,
-    StateTransitionAir, prove_ivc, verify_ivc,
-};
+// The simulated IVC engine (`prove_ivc`/`verify_ivc`, `IvcProof`, `IvcBuilder`,
+// `FoldDelta`, …) was DELETED 2026-07-16 (mock-proof purge, final cut); only the
+// real hash primitives and trace shape remain in `ivc`.
+pub use ivc::{MAX_FOLD_DEPTH, StateTransitionAir};
 pub use non_membership::{
     NonMembershipCheck, NonMembershipProver, SetIdentifier, compute_set_accumulator,
     derive_alpha_for_set,

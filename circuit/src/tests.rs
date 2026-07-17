@@ -622,64 +622,11 @@ fn field_arithmetic_stress() {
     }
 }
 
-/// Test: IVC proof produces constant-size output regardless of chain length.
-#[test]
-fn ivc_constant_size_proof() {
-    use crate::ivc::{IvcVerification, create_test_chain, prove_ivc, verify_ivc};
-
-    println!("\n=== IVC Constant-Size Proof ===");
-
-    let mut ivc_sizes = Vec::new();
-    let mut sequential_sizes = Vec::new();
-
-    for chain_len in [1, 2, 5, 10] {
-        // IVC path: single proof
-        let (initial_root, deltas) = create_test_chain(chain_len);
-        let ivc_proof = prove_ivc(initial_root, deltas.clone()).unwrap();
-
-        let result = verify_ivc(&ivc_proof, Some(initial_root));
-        assert_eq!(result, IvcVerification::Valid);
-
-        let ivc_size = ivc_proof.proof_size_bytes();
-        ivc_sizes.push((chain_len, ivc_size));
-
-        // Sequential path: N separate proofs
-        let folds: Vec<crate::dsl::fold::FoldWitness> =
-            deltas.iter().map(|d| d.fold.clone()).collect();
-        let seq_size: usize = folds
-            .iter()
-            .map(|f| {
-                let air = FoldAir::new(f.clone());
-                crate::mock_prover::MockProof::generate(&air)
-                    .unwrap()
-                    .simulated_proof_size_bytes
-            })
-            .sum();
-        sequential_sizes.push((chain_len, seq_size));
-
-        println!(
-            "  Chain {chain_len:>2}: IVC = {ivc_size:>6} B, Sequential = {seq_size:>6} B, \
-             Savings = {:.0}%",
-            (1.0 - ivc_size as f64 / seq_size as f64) * 100.0
-        );
-    }
-
-    // Key property: IVC 10-step should not be 10x of IVC 1-step
-    let (_, size_1) = ivc_sizes[0];
-    let (_, size_10) = ivc_sizes[3];
-    let ivc_ratio = size_10 as f64 / size_1 as f64;
-    println!("  IVC growth ratio (10-step / 1-step): {ivc_ratio:.2}x");
-    assert!(ivc_ratio < 5.0, "IVC should provide sub-linear growth");
-
-    // Sequential 10-step should be ~10x of sequential 1-step (linear)
-    let (_, seq_1) = sequential_sizes[0];
-    let (_, seq_10) = sequential_sizes[3];
-    let seq_ratio = seq_10 as f64 / seq_1 as f64;
-    println!("  Sequential growth ratio (10-step / 1-step): {seq_ratio:.2}x");
-}
-
 // RETIRED 2026-07-16 (mock-proof purge): `ivc_presentation_end_to_end` exercised
 // `PresentationAir::prove_ivc` / `IvcPresentationProof`, both deleted.
+// DELETED 2026-07-16 (mock-proof purge, final cut): `ivc_constant_size_proof`
+// exercised the simulated engine (`create_test_chain`/`prove_ivc`/`verify_ivc`),
+// deleted from `circuit/src/ivc.rs` with the engine.
 
 /// Test: Proof size scaling with chain length.
 #[test]
