@@ -339,29 +339,45 @@ fn automaton_gadget(
         for kk in 1..=n {
             let cx = ax + (kk as i32) * dx;
             let cy = ay + (kk as i32) * dy;
-            // In-bounds along the varying axis (the other axis is constant & in-range).
-            let (d_head, d_val) = if dx == 1 {
-                (
-                    Head::c(n as i128 - 1 - kk as i128).add_lin(-1, ax_col),
-                    n as i128 - 1 - kk as i128 - ax as i128,
-                )
-            } else if dx == -1 {
-                (
-                    Head::lin(1, ax_col).add_const(-(kk as i128)),
-                    ax as i128 - kk as i128,
-                )
-            } else if dy == 1 {
-                (
-                    Head::c(n as i128 - 1 - kk as i128).add_lin(-1, ay_col),
-                    n as i128 - 1 - kk as i128 - ay as i128,
-                )
-            } else {
-                (
-                    Head::lin(1, ay_col).add_const(-(kk as i128)),
-                    ay as i128 - kk as i128,
-                )
-            };
-            let ib = b.forced_ge0(&format!("{dtag}_ib{kk}"), &d_head, d_val, SMALL_RBITS);
+            // In-bounds bit for this step, derived as a PREFIX SUM of the already-proven auto
+            // one-hot (`sel_auto_row`/`sel_auto_col`) rather than an independent range gadget.
+            // The step `auto + kk·d` is in bounds iff the auto's along-axis coordinate lies in
+            // the window that keeps it on the board:
+            //   (+x): ax ≤ n-1-kk   (-x): ax ≥ kk   (+y): ay ≤ n-1-kk   (-y): ay ≥ kk.
+            // Since `sel_auto_*` is a single-hot pinned to (ax,ay), the sum of the in-window
+            // selectors is EXACTLY [step in bounds] — a proven degree-1 function of the auto
+            // position, so this drops the 5 range bits `forced_ge0` allocated per step (the n=11
+            // width lever) while binding in-bounds MORE tightly (directly to the auto pin).
+            let mut ib_head = Head::zero();
+            for t in 0..n {
+                let in_window = if dx == 1 {
+                    (t as i128) <= n as i128 - 1 - kk as i128
+                } else if dx == -1 {
+                    (t as i128) >= kk as i128
+                } else {
+                    false
+                };
+                if in_window {
+                    ib_head = ib_head.add_lin(1, sel_auto_col[t]);
+                }
+            }
+            for t in 0..n {
+                let in_window = if dy == 1 {
+                    (t as i128) <= n as i128 - 1 - kk as i128
+                } else if dy == -1 {
+                    (t as i128) >= kk as i128
+                } else {
+                    false
+                };
+                if in_window {
+                    ib_head = ib_head.add_lin(1, sel_auto_row[t]);
+                }
+            }
+            let ib_val = src.in_bounds((cx, cy)) as i128;
+            let ib = b.alloc(format!("{dtag}_ib{kk}"), ColumnKind::Binary, ib_val);
+            b.assert_binary(ib);
+            // ib == Σ (in-window auto selectors).
+            b.assert_zero(&Head::lin(1, ib).append(&ib_head.scale(-1)));
             ib_cols.push(ib);
             // Read src[cell] gated by ib (0 when OOB = wall vacuum). The cell sits at a
             // COMPILE-TIME flat offset from the auto pin, so we REUSE `sel_auto` (the proven

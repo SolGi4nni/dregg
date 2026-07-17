@@ -146,12 +146,11 @@ fn forged_mid_self_rejects_11x11() {
     );
 }
 
-/// The n=11 width census. Leg R FITS under `MAX_TRACE_WIDTH = 1024` (hard gate, provable).
-/// **Leg A does NOT** — the automaton leaf at the real board size measures ~1121 cols, over
-/// the deployed cap, so the real 11×11 automaton leaf is WIDTH-BLOCKED (the 11×11 cutover
-/// waits on narrowing it below 1024). This is a truthful characterization gate: if a future
-/// reduction lands, the `> MAX_TRACE_WIDTH` assertion RED-flips, forcing the author to promote
-/// it to a `<=` fit gate and enable the Leg A prove + fold tests below. Never weaken it.
+/// The n=11 width census. BOTH legs FIT under `MAX_TRACE_WIDTH = 1024` (hard gates, provable).
+/// Leg A was formerly width-blocked (~1121 cols); the prefix-sum in-bounds reduction in the ray
+/// scan (deriving each step's in-bounds bit as a prefix sum of the proven auto one-hot instead of
+/// an independent per-step range gadget) drops the 5 range bits/step and lands Leg A at 901 cols,
+/// so the real 11×11 automaton leaf now proves and the fold + light-client tests below are live.
 #[test]
 fn legs_width_census_11x11() {
     let (old, a, b) = turn();
@@ -199,13 +198,10 @@ fn legs_width_census_11x11() {
         "Leg A degree {} exceeds cap 8",
         da.max_degree
     );
-    // KNOWN WALL: Leg A (the automaton gadget on the 11×11 board + the two board-root
-    // MerkleHash8 sites) exceeds the deployed cap. When narrowed below 1024, flip this to a
-    // fit gate and enable `leg_a_leaf_proves_11x11` + the fold tests.
+    // Leg A now FITS (hard gate) after the prefix-sum in-bounds ray-scan reduction (901 cols).
     assert!(
-        da.trace_width > MAX_TRACE_WIDTH,
-        "Leg A n=11 now fits ({} <= {}): promote this to a `<= cap` gate and enable the Leg A \
-         prove + the 11×11 fold tests",
+        da.trace_width <= MAX_TRACE_WIDTH,
+        "Leg A n=11 width {} exceeds {}",
         da.trace_width,
         MAX_TRACE_WIDTH
     );
@@ -288,8 +284,7 @@ fn leg_r_leaf_proves_11x11() {
 }
 
 #[test]
-#[ignore = "BLOCKED+SLOW: Leg A n=11 width ~1121 > 1024 cap — the deployed prover rejects it \
-            until the automaton leaf is narrowed; enable when `legs_width_census_11x11` red-flips"]
+#[ignore = "SLOW: real n=11 Leg A (mid→new automaton) leaf prove (unblocked: 901 ≤ 1024)"]
 fn leg_a_leaf_proves_11x11() {
     use dregg_circuit_prove::custom_leaf_adapter::{
         prove_custom_leaf_with_commitment, read_exposed_pi_commitment,
@@ -498,8 +493,8 @@ mod fold {
     /// deployed continuity tooth sequences them (nonce 0→1). Leg R's published mid_root
     /// (PI[24..32]) is byte-identical to Leg A's consumed old-root (PI[16..24]) — the seam.
     #[test]
-    #[ignore = "BLOCKED+SLOW: needs the Leg A n=11 leaf, which is width-blocked (~1121 > 1024); \
-                enable when Leg A is narrowed below the cap"]
+    #[ignore = "SLOW: the honest 11×11 two-sub-turn fold + light-client accept (unblocked: Leg A \
+                901 ≤ 1024). Run on the build box with --ignored"]
     fn honest_11x11_two_subturn_folds_and_lightclient_accepts() {
         let balance = 1000i64;
         let (old, a, b) = super::turn();
@@ -553,8 +548,8 @@ mod fold {
     /// board mismatch. If `verify_history` ACCEPTS, the cross-turn board-root weld is MISSING
     /// (the residual). If it REJECTS, the seam is enforced in-fold. This test RECORDS which.
     #[test]
-    #[ignore = "BLOCKED+SLOW: needs the Leg A n=11 leaf (width-blocked ~1121 > 1024). The n=5 \
-                twin `mismatched_mid_fold_probe_n5` below runs the SAME soundness probe today"]
+    #[ignore = "SLOW: the mismatched-mid soundness probe at 11×11 (unblocked: Leg A 901 ≤ 1024). \
+                The n=5 twin `mismatched_mid_fold_probe_n5` runs the SAME probe faster"]
     fn mismatched_mid_fold_probe_11x11() {
         let balance = 1000i64;
         let (old, a, b) = super::turn();
