@@ -8,7 +8,11 @@ pub mod captp;
 pub mod cells;
 pub mod cli;
 pub mod composition;
+// The MIGRATED derivation+membership composite (replaces the stark-killed
+// `dregg_circuit::{prove,verify}_authorization_with_membership`): the emitted
+// `dregg-derivation-v1` + 4-ary Merkle-membership descriptors, bound together.
 pub mod demo_agent;
+pub mod derivation_descriptor;
 pub mod effect_vm;
 pub mod federation;
 pub mod intents;

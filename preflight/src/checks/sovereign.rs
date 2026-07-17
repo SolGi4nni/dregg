@@ -104,8 +104,13 @@ fn check_factory_deploy() -> Result<(), String> {
 }
 
 fn check_sovereign_peer_exchange() -> Result<(), String> {
-    // Sovereign cells exchange state commitments.
-    // We simulate: cell A registers as sovereign, stores commitment, retrieves it.
+    // The sovereign-commitment STORE (register / get / update on the Ledger).
+    // NB this half is CRUD, not protocol: `update_sovereign_commitment` writes
+    // the store directly, bypassing every `PeerExchange::verify_transition`
+    // guard. Until 2026-07-16 this CRUD was the ENTIRE `peer_exchange` check —
+    // a gate named for a security protocol that exercised none of it, and which
+    // stayed GREEN no matter what the protocol's guards did. The real
+    // peer-exchange leg is below.
     let mut ledger = Ledger::new();
 
     let cell_a_key = test_key("sovereign-a");
@@ -142,6 +147,100 @@ fn check_sovereign_peer_exchange() -> Result<(), String> {
         .ok_or("commitment lost after update")?;
     if *updated != new_commitment {
         return Err("commitment should be updated".into());
+    }
+
+    // ---------------------------------------------------------------------
+    // The ACTUAL peer-exchange protocol: two `PeerExchange` sessions, a real
+    // signed transition, and the adversarial legs. Each leg below asserts a
+    // guard REJECTS — a happy path alone would certify nothing.
+    // ---------------------------------------------------------------------
+    check_peer_exchange_protocol()
+}
+
+/// Drive `dregg_cell_crypto::peer_exchange::PeerExchange` end-to-end: one legal
+/// transition must be ACCEPTED, and each of the protocol's fail-closed guards
+/// must REJECT. This is the leg that actually binds the preflight gate to the
+/// peer-exchange security claims.
+fn check_peer_exchange_protocol() -> Result<(), String> {
+    use dregg_cell_crypto::peer_exchange::{PeerExchange, PeerExchangeError};
+
+    let alice_cell = CellId::derive_raw(&test_key("px-alice"), &test_key("px-token"));
+    let bob_cell = CellId::derive_raw(&test_key("px-bob"), &test_key("px-token"));
+
+    let mut alice = PeerExchange::new(alice_cell, test_key("px-alice-sk"));
+    let mut bob = PeerExchange::new(bob_cell, test_key("px-bob-sk"));
+
+    let c0 = *blake3::hash(b"px-state-0").as_bytes();
+    let c1 = *blake3::hash(b"px-state-1").as_bytes();
+    let effects = *blake3::hash(b"px-effects-1").as_bytes();
+    bob.register_peer(alice_cell, c0);
+    let alice_pk = alice.public_key();
+
+    // 1. HAPPY PATH: a legitimately signed transition is accepted and advances
+    //    Bob's view.
+    let t1 = alice.create_transition(c0, c1, effects);
+    bob.verify_transition(&t1, &alice_pk)
+        .map_err(|e| format!("legal peer transition must verify, got: {e}"))?;
+    if bob.peer_commitment(&alice_cell) != Some(c1) {
+        return Err("accepted peer transition must advance Bob's view to c1".into());
+    }
+
+    // 2. UNKNOWN PEER: a cell Bob never registered is refused.
+    let carol_cell = CellId::derive_raw(&test_key("px-carol"), &test_key("px-token"));
+    let mut carol = PeerExchange::new(carol_cell, test_key("px-carol-sk"));
+    let t_carol = carol.create_transition(c0, c1, effects);
+    match bob.verify_transition(&t_carol, &carol.public_key()) {
+        Err(PeerExchangeError::UnknownPeer(_)) => {}
+        other => return Err(format!("unregistered peer must be refused, got: {other:?}")),
+    }
+
+    // 3. REPLAY: re-submitting the already-accepted transition is refused
+    //    (its old_commitment no longer matches Bob's advanced view).
+    match bob.verify_transition(&t1, &alice_pk) {
+        Err(PeerExchangeError::CommitmentMismatch { .. }) => {}
+        other => {
+            return Err(format!(
+                "replayed transition must be refused, got: {other:?}"
+            ));
+        }
+    }
+
+    // 4. RETIRED v1 STARK PROOF fails closed. The canonical signing message does
+    //    NOT cover `transition_proof`, so this transition carries a VALID
+    //    signature — only the fail-closed guard stops it. Mirrors the executor's
+    //    sovereign-witness rule 8.
+    //
+    //    ORDER MATTERS: `verify_transition` checks signature -> commitment ->
+    //    sequence -> timestamp -> proof. `create_transition` bumps Alice's
+    //    sequence counter on every call, so this leg must be minted BEFORE any
+    //    other transition that Bob rejects, or it arrives with a gapped sequence
+    //    and trips `SequenceGap` first — asserting a guard we did not mean to
+    //    test. Bob's `last_sequence` is 1 here, so this is sequence 2.
+    let c2 = *blake3::hash(b"px-state-2").as_bytes();
+    let mut proof_bearing = alice.create_transition(c1, c2, effects);
+    proof_bearing.transition_proof = Some(vec![0u8; 256]);
+    match bob.verify_transition(&proof_bearing, &alice_pk) {
+        Err(PeerExchangeError::InvalidTransitionProof(_)) => {}
+        other => {
+            return Err(format!(
+                "a v1 transition_proof-bearing transition must fail closed, got: {other:?}"
+            ));
+        }
+    }
+
+    // 5. FORGED SIGNATURE: a transition Bob's peer did not sign is refused.
+    //    Safe to mint last: the signature check runs FIRST, so this leg's
+    //    (now gapped) sequence never gets reached.
+    let mut forged = alice.create_transition(c1, c2, effects);
+    forged.signature[0] ^= 0xFF;
+    match bob.verify_transition(&forged, &alice_pk) {
+        Err(PeerExchangeError::InvalidSignature) => {}
+        other => return Err(format!("forged signature must be refused, got: {other:?}")),
+    }
+
+    // Every rejection above must have left Bob's view untouched at c1.
+    if bob.peer_commitment(&alice_cell) != Some(c1) {
+        return Err("rejected peer transitions must not mutate Bob's view".into());
     }
 
     Ok(())

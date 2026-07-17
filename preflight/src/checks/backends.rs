@@ -1,41 +1,48 @@
-//! Cross-backend checks: same circuit proven via custom STARK and Plonky3, Kimchi, Pickles.
+//! Cross-backend checks: the derivation + Merkle-membership composite, proven on the
+//! deployed Lean-emitted descriptor prover, plus IVC recursion.
 //!
-//! The Plonky3, Kimchi, and recursive Pickles backends require feature gates on
-//! dregg-circuit. These checks exercise what is available at compile time and
-//! skip (with a clear message) what requires optional features.
+//! The legacy custom-STARK vs Plonky3 backend comparison these checks named is gone: the
+//! stark-kill campaign (`f04b2dd1e`) DELETED the hand-rolled STARK engine and its
+//! `prove_authorization_with_membership` composite. Every production consumer now runs on
+//! the single descriptor prover (`prove_vm_descriptor2` / `verify_vm_descriptor2`), so there
+//! is no longer a second backend to cross-check against — the "custom" and "plonky3" paths
+//! are the SAME prover. These checks therefore exercise the deployed composite
+//! (`crate::checks::derivation_descriptor`) and assert it accepts an honest proof AND refuses
+//! a forged conclusion.
 
 use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
-use dregg_circuit::multi_step_witness::{ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::multi_step_witness::ALLOW_PREDICATE;
 use dregg_circuit::poseidon2::hash_fact;
-use dregg_circuit::{
-    BabyBear, BodyFactMerkleProof, prove_authorization_with_membership,
-    verify_authorization_with_membership,
-};
+use dregg_circuit::{BabyBear, BodyFactMerkleProof};
 use dregg_commit::poseidon2_tree::Poseidon2MerkleTree;
 
+use crate::checks::derivation_descriptor::{
+    forged_conclusion_is_refused, prove_verify_step_with_membership,
+};
 use crate::report::{CheckResult, run_check};
 
 pub fn run() -> Vec<CheckResult> {
     vec![
-        run_check("stark", check_custom_stark),
-        run_check("plonky3", check_plonky3_backend),
+        run_check("descriptor-composite", check_descriptor_composite),
+        run_check("descriptor-forged-refused", check_forged_conclusion_refused),
         run_check("ivc-recursive", check_ivc_recursive),
     ]
 }
 
-/// Build a standard test witness for backend comparison.
-fn build_test_witness() -> (
-    dregg_circuit::multi_step_witness::MultiStepWitness,
-    BabyBear,
-    Poseidon2MerkleTree,
-    usize,
-) {
-    let mut tree = Poseidon2MerkleTree::with_depth(4);
-    let pred = BabyBear::new(500);
+/// Build one honest firing derivation step (`derived(t0,t1)` from `body(t0,t1)`) whose body
+/// fact hash is the exact felt the `dregg-derivation-v1` descriptor recomputes and pins, plus
+/// a depth-4 Poseidon2 tree containing that leaf and its position. Constructed the way
+/// `dregg_circuit::derivation_witness`'s in-tree honest witness is, so the descriptor's
+/// exported body-fact pin equals `step.body_fact_hashes[0]` (== the inserted leaf).
+fn build_honest_step() -> (DerivationWitness, Poseidon2MerkleTree, usize) {
+    let body_pred = BabyBear::new(500);
     let alice = BabyBear::new(1000);
     let app = BabyBear::new(2000);
-    let fact = hash_fact(pred, &[alice, app, BabyBear::ZERO, BabyBear::ZERO]);
-    let fact_pos = tree.append(fact);
+    // The descriptor recomputes the body fact hash over the 3 body-atom term slots.
+    let body_hash = hash_fact(body_pred, &[alice, app, BabyBear::ZERO]);
+
+    let mut tree = Poseidon2MerkleTree::with_depth(4);
+    let fact_pos = tree.append(body_hash);
     for i in 1..8u32 {
         tree.append(BabyBear::new(i * 3333));
     }
@@ -56,7 +63,7 @@ fn build_test_witness() -> (
                 (false, BabyBear::ZERO),
             ],
             body_atoms: vec![BodyAtomPattern {
-                predicate: pred,
+                predicate: body_pred,
                 terms: [
                     (true, BabyBear::new(0)),
                     (true, BabyBear::new(1)),
@@ -69,7 +76,7 @@ fn build_test_witness() -> (
             lt_check: None,
         },
         state_root,
-        body_fact_hashes: vec![fact],
+        body_fact_hashes: vec![body_hash],
         substitution: vec![alice, app],
         derived_predicate: allow_pred,
         derived_terms: [alice, app, BabyBear::ZERO, BabyBear::ZERO],
@@ -77,10 +84,7 @@ fn build_test_witness() -> (
         org_id_hash: BabyBear::ZERO,
         budget_remaining: BabyBear::ZERO,
     };
-
-    let request_hash = BabyBear::new(888);
-    let witness = build_multi_step_witness(state_root, request_hash, vec![step]);
-    (witness, state_root, tree, fact_pos)
+    (step, tree, fact_pos)
 }
 
 fn make_membership_proof(tree: &Poseidon2MerkleTree, position: usize) -> BodyFactMerkleProof {
@@ -94,52 +98,28 @@ fn make_membership_proof(tree: &Poseidon2MerkleTree, position: usize) -> BodyFac
     }
 }
 
-fn body_fact_hashes_from_witness(
-    witness: &dregg_circuit::multi_step_witness::MultiStepWitness,
-) -> Vec<BabyBear> {
-    let mut hashes = Vec::new();
-    for step in &witness.steps {
-        for &h in &step.body_fact_hashes {
-            if !hashes.contains(&h) {
-                hashes.push(h);
-            }
-        }
-    }
-    hashes
-}
-
-fn check_custom_stark() -> Result<(), String> {
-    let (witness, _, tree, fact_pos) = build_test_witness();
+/// The derivation + Merkle-membership composite proves and verifies on the deployed
+/// descriptor prover — the single prover every production consumer now runs (the "custom
+/// STARK vs plonky3" backend comparison this file once made is moot: they are the same
+/// prover after stark-kill).
+fn check_descriptor_composite() -> Result<(), String> {
+    let (step, tree, fact_pos) = build_honest_step();
     let body_proofs = vec![make_membership_proof(&tree, fact_pos)];
-
-    let proof = prove_authorization_with_membership(&witness, &body_proofs);
-    if proof.derivation_proof.trace_len == 0 {
-        return Err("custom STARK proof should have non-zero trace".into());
+    let bytes = prove_verify_step_with_membership(&step, &body_proofs)?;
+    if bytes < 1000 {
+        return Err(format!(
+            "real descriptor proofs should exceed 1 KiB, got {bytes} bytes"
+        ));
     }
-
-    let conclusion = witness.conclusion();
-    let acc_hash = witness.final_accumulated_hash();
-    let expected_hashes = body_fact_hashes_from_witness(&witness);
-    verify_authorization_with_membership(&proof, conclusion, acc_hash, &expected_hashes)
-        .map_err(|e| format!("custom STARK verification failed: {e}"))?;
-
     Ok(())
 }
 
-// NOTE: this was previously wrapped in `#[cfg(feature = "plonky3")]` — but preflight
-// declares NO `plonky3` feature, so the cfg was ALWAYS FALSE and the check passed
-// vacuously (a preflight gate that never ran). Preflight depends on dregg-circuit with
-// default features (plonky3 on), so the check is now unconditional and real.
-fn check_plonky3_backend() -> Result<(), String> {
-    let (witness, _, tree, fact_pos) = build_test_witness();
-    let body_proofs = vec![make_membership_proof(&tree, fact_pos)];
-    let proof = prove_authorization_with_membership(&witness, &body_proofs);
-    let conclusion = witness.conclusion();
-    let acc_hash = witness.final_accumulated_hash();
-    let expected_hashes = body_fact_hashes_from_witness(&witness);
-    verify_authorization_with_membership(&proof, conclusion, acc_hash, &expected_hashes)
-        .map_err(|e| format!("plonky3-compatible STARK failed: {e}"))?;
-    Ok(())
+/// ADVERSARIAL: the `dregg-derivation-v1` descriptor must REFUSE a forged conclusion pin.
+/// Without this tooth the composite check above could not distinguish a real verifier from
+/// an unconditional `Ok(())`.
+fn check_forged_conclusion_refused() -> Result<(), String> {
+    let (step, _tree, _pos) = build_honest_step();
+    forged_conclusion_is_refused(&step)
 }
 
 fn check_ivc_recursive() -> Result<(), String> {

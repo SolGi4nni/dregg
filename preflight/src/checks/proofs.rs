@@ -1,18 +1,20 @@
 //! Proof generation and verification checks:
 //! STARK (MerklePoseidon2), derivation, temporal predicate, effect VM.
 
-use dregg_bridge::present::{BridgePresentationBuilder, bytes_to_babybear, hash_index};
+use dregg_bridge::present::{
+    BridgePresentationBuilder, bytes_to_babybear, hash_index, verify_presentation_bb,
+};
 use dregg_circuit::derivation_air::{BodyAtomPattern, CircuitRule, DerivationWitness};
 use dregg_circuit::ivc::{FoldDelta, IvcVerification, prove_ivc, verify_ivc};
-use dregg_circuit::multi_step_witness::{ALLOW_PREDICATE, build_multi_step_witness};
+use dregg_circuit::multi_step_witness::ALLOW_PREDICATE;
 use dregg_circuit::poseidon2::hash_fact;
-use dregg_circuit::{
-    BabyBear, BodyFactMerkleProof, prove_authorization_with_membership,
-    verify_authorization_with_membership,
-};
+use dregg_circuit::{BabyBear, BodyFactMerkleProof};
 use dregg_commit::poseidon2_tree::Poseidon2MerkleTree;
 use dregg_token::{Attenuation, AuthRequest, MacaroonToken};
 
+use crate::checks::derivation_descriptor::{
+    forged_conclusion_is_refused, prove_verify_step_with_membership,
+};
 use crate::report::{CheckResult, run_check};
 
 fn test_key(name: &str) -> [u8; 32] {
@@ -102,22 +104,32 @@ fn check_stark_proof() -> Result<(), String> {
         return Err("proof should contain a real STARK".into());
     }
 
-    // Verify the STARK proof
-    let stark_result = proof.verify_issuer_stark();
-    match stark_result {
-        Some(Ok(())) => {}
-        Some(Err(e)) => return Err(format!("STARK verification failed: {e:?}")),
-        None => return Err("no STARK proof to verify".into()),
+    // MIGRATED verification: the legacy opaque issuer-STARK accessors
+    // (`verify_issuer_stark` / `issuer_proof_bytes`) were removed on the
+    // `StarkProof` → `Ir2BatchProof` wire flip (stark-kill). The retained
+    // cryptographic verifier is `verify_presentation_bb`, which checks BOTH
+    // committed descriptor wires (bound-presentation + blinded ring-membership)
+    // and binds them to the EXTERNAL federation root.
+    if !verify_presentation_bb(&proof, federation_root_bb) {
+        return Err("presentation proof failed cryptographic verification".into());
     }
 
-    // Sanity on the emitted artifact: a real membership STARK is well over 1 KiB.
-    let proof_bytes = proof
-        .issuer_proof_bytes()
-        .ok_or("should have proof bytes")?;
-    if proof_bytes.len() < 1000 {
+    // ADVERSARIAL tooth: the same proof MUST be refused against a WRONG federation
+    // root — else the root binding is not actually enforced (non-vacuity).
+    let wrong_root = federation_root_bb + BabyBear::ONE;
+    if verify_presentation_bb(&proof, wrong_root) {
+        return Err("presentation verifier ACCEPTED a wrong federation root".into());
+    }
+
+    // Sanity on the emitted artifact: the two committed descriptor blobs are well over 1 KiB.
+    let real = proof
+        .real_stark_proof
+        .as_ref()
+        .ok_or("should have a real STARK proof")?;
+    let proof_bytes = real.total_proof_size_bytes();
+    if proof_bytes < 1000 {
         return Err(format!(
-            "real STARK proof should be > 1KB, got {} bytes",
-            proof_bytes.len()
+            "real descriptor proofs should be > 1KB, got {proof_bytes} bytes"
         ));
     }
 
@@ -132,7 +144,9 @@ fn check_derivation_proof() -> Result<(), String> {
     let alice = BabyBear::new(1000);
     let app1 = BabyBear::new(2000);
     let read_perm = BabyBear::new(3000);
-    let body_fact_hash = hash_fact(has_cap_pred, &[alice, app1, read_perm, BabyBear::ZERO]);
+    // The `dregg-derivation-v1` descriptor recomputes and pins the body fact hash over the
+    // rule's 3 body-atom term slots, so the tree leaf must match that exact felt.
+    let body_fact_hash = hash_fact(has_cap_pred, &[alice, app1, read_perm]);
     let fact_pos = tree.append(body_fact_hash);
 
     // Add filler leaves
@@ -144,7 +158,6 @@ fn check_derivation_proof() -> Result<(), String> {
     let state_root = tree_for_root.root();
 
     let allow_pred = BabyBear::new(ALLOW_PREDICATE);
-    let request_hash = BabyBear::new(42);
 
     let step = DerivationWitness {
         rule: CircuitRule {
@@ -181,12 +194,7 @@ fn check_derivation_proof() -> Result<(), String> {
         budget_remaining: BabyBear::ZERO,
     };
 
-    let witness = build_multi_step_witness(state_root, request_hash, vec![step]);
-    if witness.conclusion() != BabyBear::ONE {
-        return Err("witness should conclude ALLOW".into());
-    }
-
-    // Generate membership proof for the body fact
+    // Generate membership proof for the body fact.
     let mp = tree
         .prove_membership(fact_pos)
         .expect("fact must be in tree");
@@ -196,27 +204,16 @@ fn check_derivation_proof() -> Result<(), String> {
         positions: mp.positions,
     };
 
-    // Generate the STARK proof for the derivation
-    let stark_proof = prove_authorization_with_membership(&witness, &[body_proof]);
-    if stark_proof.derivation_proof.trace_len == 0 {
-        return Err("derivation proof trace should be non-empty".into());
+    // Prove + verify the derivation + Merkle-membership composite on the deployed descriptor
+    // prover (the migrated successor of the stark-killed
+    // `prove_authorization_with_membership`).
+    let bytes = prove_verify_step_with_membership(&step, &[body_proof])?;
+    if bytes == 0 {
+        return Err("descriptor proofs should be non-empty".into());
     }
 
-    // Verify
-    let conclusion = witness.conclusion();
-    let accumulated_hash = witness.final_accumulated_hash();
-    let body_hashes: Vec<BabyBear> = witness
-        .steps
-        .iter()
-        .flat_map(|s| s.body_fact_hashes.clone())
-        .collect();
-    let verify_result = verify_authorization_with_membership(
-        &stark_proof,
-        conclusion,
-        accumulated_hash,
-        &body_hashes,
-    );
-    verify_result.map_err(|e| format!("derivation proof verification failed: {e}"))?;
+    // ADVERSARIAL tooth: a forged conclusion pin must be refused (non-vacuity).
+    forged_conclusion_is_refused(&step)?;
 
     Ok(())
 }

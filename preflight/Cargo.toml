@@ -19,7 +19,13 @@ dregg-sdk = { path = "../sdk" }
 # layer (`dregg-sdk-net::names`); the nameservice preflight check links them here.
 dregg-sdk-net = { path = "../dregg-sdk-net" }
 dregg-circuit = { path = "../circuit" }
-dregg-turn = { path = "../turn" }
+# The REAL whole-chain prover (`ivc_turn_chain::prove_turn_chain_recursive` /
+# `verify_whole_chain_proof_bytes`) — the sovereign IVC-history check drives it
+# over genuinely minted rotated turns instead of the simulated IVC.
+dregg-circuit-prove = { path = "../circuit-prove" }
+# `prover` gates `rotation_witness::mint_rotated_participant_leg`, the production
+# recipe that mints the real rotated turn legs the whole-chain fold consumes.
+dregg-turn = { path = "../turn", features = ["prover"] }
 dregg-cell = { path = "../cell" }
 dregg-cell-crypto = { path = "../cell-crypto" }
 dregg-intent = { path = "../intent" }
