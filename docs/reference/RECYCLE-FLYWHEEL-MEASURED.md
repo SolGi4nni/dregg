@@ -30,7 +30,7 @@ premium.*
   LP-add is real (matching CIRC's 100%-locked-LP credit, analysis §2.2).
 - **`RecycleFlywheelAB.t.sol`** — 9 adversarial A/B tests (a real `SandwichBot`, a
   real deviating tx). `forge test`: **9/9 green**; the full `chain/` suite stays
-  **268/268 green**.
+  **269/269 green** (268 prior + the `RecycleFlywheelGasSlope` measurement test).
 
 ---
 
@@ -44,22 +44,27 @@ premium.*
 | **Conservation** | **`netQuote = 0`, `netToken = 0`** asserted on-chain; `accrued 80 = spent 30 (→sellers) + quoteSeed 50 (→pool)`; flywheel drains to **0** ETH / **0** token residue | **no cert** — a sandwiched recycle **leaks 1.781 ETH to MEV** with nothing to catch it | `test_4` |
 | **Re-checkability** | **non-witness verifies** — recompute head from public bundle `== receiptHead`; operator signature verifies; any tamper (price −, seed −) breaks the chain | **raw transfer + event** — no signed chain, no verify-only path (no such surface) | `test_5` |
 | **Provenance** | **measurable** — `provenanceBps = 10000` when every inflow is tagged; **6666** with one opaque inflow | **0** — `recycle` takes raw ETH, no source-receipt parameter | `test_6` |
-| **Gas (headline step)** | `finalizeRecycle` (clear + split + seed + conserve + sign) = **~1,567,062 gas** (`gasleft`) / **1,623,240** cold (`--gas-report`) | `recycle` (market-buy + LP-add) = **~84,597 gas** (`gasleft`) / **96,084** report → dregg premium **≈ 16–19×** on this step | `test_7` |
-| **Gas (whole turn) + latency** | whole verifiable turn ≈ **~2.67M gas** across a **commit→reveal→clear→settle** lifecycle (multiple txns + a commit→reveal window) | **~96k gas**, a **single tx**, no commit→reveal wait → dregg premium **≈ 28×** + a real latency the mock skips | per-op table below |
+| **Gas (headline step)** | `finalizeRecycle` (clear + split + seed + conserve + sign) = **372,485 gas** (`gasleft`) / **437,063** cold (`--gas-report`) — down from 1,627,006 / 1,623,240 pre-optimization (`docs/reference/GAS-OPTIMIZATION-MEASURED.md`) | `recycle` (market-buy + LP-add) = **~84,597 gas** (`gasleft`) / **96,084** report → dregg premium **≈ 4.4×** on this step | `test_7` |
+| **Gas (whole turn) + latency** | whole verifiable turn ≈ **~1.27M gas** across a **commit→reveal→clear→settle** lifecycle (multiple txns + a commit→reveal window); was ~2.68M pre-optimization | **~96k gas**, a **single tx**, no commit→reveal wait → dregg premium **≈ 13×** + a real latency the mock skips | per-op table below |
 
 ### 1.1 Per-operation dregg gas (`forge test --gas-report`)
 
 | `RecycleFlywheel` op | gas (avg / max) |
 |---|---|
-| `accrueFee` | 41,033 – 114,917 |
-| `commitAsk` | 104,122 – 121,234 |
-| `revealAsk` | 107,111 – 144,335 |
-| `finalizeRecycle` | **1,623,240** (the clearing + cert + signature step) |
-| `settleAsk` | 66,842 |
+| `accrueFee` | 71,324 / 92,960 |
+| `commitAsk` | 110,031 / 121,435 |
+| `revealAsk` | 75,496 / 100,312 |
+| `finalizeRecycle` | **437,063** (the clearing + cert + signature step) |
+| `settleAsk` | 45,546 |
 
 The premium concentrates in `finalizeRecycle` — the on-chain permutation-checked
 clearing + pool seeding + conservation + signature verification. It is **real and
-bounded**, and it is the price of the four guarantees the mock cannot make.
+bounded** (~4.4× the mock's step after the measured optimization campaign —
+storage-redundancy elimination, packing, EIP-1167 pool clones; per-change
+numbers in `docs/reference/GAS-OPTIMIZATION-MEASURED.md`), and it is the price
+of the four guarantees the mock cannot make. For large books the O(n) walk is
+replaced by a FLAT Groth16 clearing proof (prototyped:
+`chain/gnark/clearing_snark.go`; crossover ≈ 44 asks).
 
 ---
 
@@ -87,8 +92,11 @@ bounded**, and it is the price of the four guarantees the mock cannot make.
 - **The receipt does NOT bind the clearing to an in-circuit price proof.** A
   non-witness re-derives the uniform price from the **public** book (rung-1
   REPLAYABLE), so a corrupt operator can **withhold** but cannot **misprice**. Binding
-  the clearing tuple inside a Groth16 statement (`cert_f_air.rs` apex→Groth16) is
-  **future work** — the price-binding weld stays open.
+  the clearing tuple inside a Groth16 statement is **prototyped at the circuit
+  level** (`chain/gnark/clearing_snark.go`: the clearing tuple proved against the
+  contract's exact book-fold layout, adversarial mutations rejected) — the weld
+  stays open until the on-chain verify entry point lands
+  (`docs/reference/GAS-OPTIMIZATION-MEASURED.md` §4).
 - **`.sol ↔ Lean` correspondence is prose, not mechanized** (§4.3.2). The Lean proves
   the *mechanism* (`uniform_price_no_arbitrage`, `priced_clearing_keystone`,
   `pool_solvent_forever`); this contract is a faithful **REPLAYABLE** realization, not
@@ -96,7 +104,8 @@ bounded**, and it is the price of the four guarantees the mock cannot make.
 - **The measured MEV/order-dependence numbers are pool-size specific** — they scale
   with trade-size-to-liquidity, not universal constants. The *sign* is what is
   structural: mock **> 0**, dregg **= 0**.
-- **dregg is NOT cheaper or faster.** The ~16–28× gas premium and the commit→reveal
+- **dregg is NOT cheaper or faster.** The ~4.4× headline / ~13× whole-turn gas
+  premium (post-optimization; was ~16–28×) and the commit→reveal
   latency are real. The claim is precisely: *front-run-immune + deviation-proof +
   conserving + re-checkable, at a stated bounded premium.*
 - **A fairly-recycled worthless token is still worthless** (`DREGG-LAUNCHPAD-DESIGN`

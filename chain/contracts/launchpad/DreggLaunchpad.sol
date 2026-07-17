@@ -6,6 +6,7 @@ import {DreggSolventPool} from "./DreggSolventPool.sol";
 import {ILaunchEligibility} from "./ILaunchEligibility.sol";
 import {IClearingAttestor} from "./IClearingAttestor.sol";
 import {IDeployerGate} from "./IDeployerGate.sol";
+import {LibClone1167} from "./LibClone1167.sol";
 
 /// @title DreggLaunchpad
 /// @notice The provably-fair token launchpad — the EVM realization of the four
@@ -147,8 +148,14 @@ contract DreggLaunchpad {
     /// (`DreggDeployerGate.acceptedArms`).
     IDeployerGate public immutable deployerGate;
 
+    /// The ONE inert `DreggSolventPool` implementation every graduation clones
+    /// (EIP-1167) — deployed once here, amortized over every launch; a full
+    /// per-graduation code deposit (~713k gas) becomes a ~41k proxy create.
+    address public immutable poolImplementation;
+
     constructor(IDeployerGate deployerGate_) {
         deployerGate = deployerGate_;
+        poolImplementation = address(new DreggSolventPool());
     }
 
     uint256 public launchCount;
@@ -625,13 +632,14 @@ contract DreggLaunchpad {
 
         uint256 fQuote = (correctQuote * FLOOR_BPS) / 10000;
         uint256 fToken = (correctToken * FLOOR_BPS) / 10000;
-        DreggSolventPool p =
-            new DreggSolventPool(address(L.token), launchId, fQuote, fToken, POOL_FEE_BPS);
+        // An EIP-1167 clone of the one inert implementation — created, funded, and
+        // seeded ATOMICALLY in this tx (an un-initialized pool is never observable).
+        DreggSolventPool p = DreggSolventPool(LibClone1167.clone(poolImplementation));
         L.pool = p;
 
         // Seed: token reserve pre-transferred, quote reserve sent with initialize.
         L.token.transfer(address(p), correctToken);
-        p.initialize{value: correctQuote}(correctToken);
+        p.initialize{value: correctQuote}(address(L.token), launchId, fQuote, fToken, POOL_FEE_BPS, correctToken);
 
         emit Graduated(launchId, address(p), correctQuote, correctToken, fQuote, fToken);
         return address(p);

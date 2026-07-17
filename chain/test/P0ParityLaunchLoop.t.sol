@@ -38,7 +38,7 @@ import {IDeployerGate} from "../contracts/launchpad/IDeployerGate.sol";
 /// - **(b) hidden supply** → `test_Abuse_B_HiddenSupplyRefused_CapIsAbsolute`:
 ///   `AlreadyMinted` / `CapExceeded` / `SupplyDoesNotClose`.
 /// - **(c) LP / owner drain** → `test_Abuse_C_LpAndOwnerDrainRefused`:
-///   `PoolFloorBreached` / `CreatorLockActive` / `NotGraduation`.
+///   `PoolFloorBreached` / `CreatorLockActive` / `AlreadyInitialized`.
 ///
 /// Both polarities throughout, and the HONEST pole runs first
 /// (`test_1_HonestLaunch_CreateGateLaunchClearLock`) — a negative asserted against
@@ -640,14 +640,16 @@ contract P0ParityLaunchLoopTest is Test {
         assertEq(rq1, rq0 + 0.05 ether, "and the refused drain moved nothing");
         assertEq(rt1, rt0 - out, "reserves reflect only the honest trade");
 
-        // (2) THE OWNER DRAIN: the pool has no owner. Its seeding door is closed
-        //     to everyone but the graduation, and only once (typed).
+        // (2) THE OWNER DRAIN: the pool has no owner. Its seeding door closed
+        //     PERMANENTLY when the graduation created+seeded it in one atomic tx
+        //     — re-initialization is typed-refused for everyone, the graduation
+        //     included (an un-initialized pool is never observable on-chain).
         vm.prank(creator);
-        vm.expectRevert(DreggSolventPool.NotGraduation.selector);
-        pool.initialize{value: 1 ether}(1);
+        vm.expectRevert(DreggSolventPool.AlreadyInitialized.selector);
+        pool.initialize{value: 1 ether}(address(0), 0, 0, 0, 0, 1);
         vm.prank(address(pad));
         vm.expectRevert(DreggSolventPool.AlreadyInitialized.selector);
-        pool.initialize{value: 1 ether}(1);
+        pool.initialize{value: 1 ether}(address(0), 0, 0, 0, 0, 1);
         // (There is no `withdraw`/`skim`/`setOwner` on DreggSolventPool to call —
         // the drain door is absent by construction, not merely guarded.)
 

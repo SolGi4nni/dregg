@@ -70,6 +70,7 @@ contract RecycleFlywheelABTest is Test {
     function setUp() public {
         OPERATOR = vm.addr(OPERATOR_PK);
         token = new DreggLaunchToken("Recycle Token", "RCY", CAP, address(this));
+        poolImpl = address(new DreggSolventPool());
         token.mint(address(this), CAP);
         vm.deal(address(this), 1_000_000 ether);
     }
@@ -78,8 +79,12 @@ contract RecycleFlywheelABTest is Test {
     // Shared drivers
     // ══════════════════════════════════════════════════════════════════════════
 
+    /// The one inert pool implementation every recycle's pool is a clone of —
+    /// deployed once per chain (here: once in setUp), a committed public input.
+    address poolImpl;
+
     function _newFlywheel() internal returns (RecycleFlywheel fw) {
-        fw = new RecycleFlywheel(address(token), uint16(BUY_BPS), OPERATOR, COMMIT_DUR, REVEAL_DUR);
+        fw = new RecycleFlywheel(address(token), uint16(BUY_BPS), OPERATOR, COMMIT_DUR, REVEAL_DUR, poolImpl);
     }
 
     /// Fund `seller`, approve, and commit a sealed ask escrowing `qty` whole tokens.

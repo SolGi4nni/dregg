@@ -3,6 +3,7 @@ pragma solidity ^0.8.20;
 
 import {DreggLaunchToken} from "../launchpad/DreggLaunchToken.sol";
 import {DreggSolventPool} from "../launchpad/DreggSolventPool.sol";
+import {LibClone1167} from "../launchpad/LibClone1167.sol";
 
 /// @title RecycleFlywheel
 /// @notice The dregg VERIFIABLE recycle mechanism — the CIRC-style fee-flywheel
@@ -43,7 +44,10 @@ import {DreggSolventPool} from "../launchpad/DreggSolventPool.sol";
 /// - NAMED WELD, unclosed (§4.3.1): the receipt does NOT bind the clearing to an
 ///   in-circuit price proof — a non-witness re-derives the price from the PUBLIC
 ///   book (rung-1 replayable), so a corrupt operator can WITHHOLD but cannot
-///   MISPRICE; binding the clearing tuple inside a Groth16 statement is future work.
+///   MISPRICE; binding the clearing tuple inside a Groth16 statement is future work
+///   (PROTOTYPED at the circuit level: `chain/gnark/clearing_snark.go` proves the
+///   clearing tuple against this contract's exact book-fold layout; the on-chain
+///   verify entry point is the named remaining piece).
 /// - `.sol ↔ Lean` correspondence is prose, not mechanized (§4.3.2).
 ///
 /// Single-lifecycle per instance (one recycle), for a clean A/B measurement.
@@ -68,26 +72,41 @@ contract RecycleFlywheel {
         Cleared // 2 — buy cleared, pool seeded, receipt emitted
     }
 
+    // `phase`, the signature v byte, and the pool address share ONE slot (8+8+160
+    // bits) — finalize turns three cold SSTOREs into warm writes of a slot the
+    // reveal already opened. Public getters are unchanged.
     Phase public phase;
+    uint8 private _sigV;
+    DreggSolventPool public pool;
+
     uint64 public immutable commitEnd;
     uint64 public immutable revealEnd;
 
     // ─── Accrual + provenance ───────────────────────────────────────────────────
     uint256 public accrued; // total fees in (wei)
-    uint256 public inflowCount; // number of accrue() calls
-    uint256 public provenancedCount; // inflows carrying a nonzero source-receipt hash
+    // The two counters share a slot (each bounded by the number of txs ever, far
+    // under 2^128); getters keep their selectors (return-type width is not part
+    // of a selector and decodes identically).
+    uint128 public inflowCount; // number of accrue() calls
+    uint128 public provenancedCount; // inflows carrying a nonzero source-receipt hash
     bytes32 public provenanceRoot; // fold of (sourceReceiptHash, amount) — the provenance chain
 
     // ─── Sealed asks (the sell-side of the recycle buy) ─────────────────────────
+    // Packed to 3 slots (was 7). The widths are DOCUMENTED RANGE BOUNDS enforced
+    // by checked casts at entry (revert `ValueOutOfRange`, never truncate):
+    // price < 2^128 wei/token (~3.4e20 ETH/token), qty < 2^96 whole tokens
+    // (~7.9e28), escrow < 2^128 base units — all astronomically above any real
+    // book. Packing makes reveal (price+qty+flag), the clearing's fill write, and
+    // settle's flag write WARM single-slot updates instead of cold 20k SSTOREs.
     struct Ask {
-        bytes32 sealedHash; // H(price‖qty‖salt‖seller)
-        uint256 escrow; // tokens escrowed at commit (>= revealed qty)
-        bool committed;
-        bool revealed;
-        uint256 price; // wei per whole token (ask), revealed
-        uint256 qty; // whole tokens offered, revealed
-        uint256 filled; // whole tokens taken by the clearing
-        bool settled;
+        bytes32 sealedHash; // slot 0: H(price‖qty‖salt‖seller)
+        uint128 escrow; // slot 1: tokens escrowed at commit (>= revealed qty)
+        uint96 filled; // slot 1: whole tokens taken by the clearing
+        bool settled; // slot 1
+        uint128 price; // slot 2: wei per whole token (ask), revealed
+        uint96 qty; // slot 2: whole tokens offered, revealed
+        bool committed; // slot 2
+        bool revealed; // slot 2
     }
 
     mapping(address => Ask) private _asks;
@@ -96,15 +115,14 @@ contract RecycleFlywheel {
     uint256 public constant TOKEN_UNIT = 1e18;
 
     // ─── Cleared result ─────────────────────────────────────────────────────────
-    uint256 public buyHalf; // committed-split buy leg (wei)
-    uint256 public poolHalf; // committed-split pool leg (wei)
-    uint256 public uniformPrice; // the single price every filled seller is paid (wei/token)
-    uint256 public boughtTokens; // whole tokens the recycle bought
-    uint256 public spentQuote; // wei paid to sellers = uniformPrice * boughtTokens
-    uint256 public quoteSeed; // wei seeded into the pool (poolHalf + unspent budget)
-    uint256 public tokenSeed; // token base units seeded into the pool
+    // Only the PRIMARY cleared facts are stored; everything else in the receipt is
+    // a pure function of them + the committed inputs, recomputed by view (identical
+    // values, the redundant SSTOREs removed — the receipt stays fully re-derivable,
+    // which is its entire point). Price+quantity share a slot: the price is an ask
+    // price (already < 2^128 by the reveal bound); the quantity is checked-cast.
+    uint128 public uniformPrice; // the single price every filled seller is paid (wei/token)
+    uint128 public boughtTokens; // whole tokens the recycle bought
     bytes32 public bookCommit; // fold of the whole revealed book (order-independent content)
-    DreggSolventPool public pool;
 
     // ─── The receipt (prev-hash-chained, operator-signed, re-checkable) ─────────
     struct Receipt {
@@ -131,9 +149,13 @@ contract RecycleFlywheel {
         int256 netToken;
     }
 
-    Receipt private _receipt;
+    // The receipt itself is NOT stored: every field is a pure function of public
+    // state (see `_liveReceipt`), so storing it would be ~14 redundant SSTOREs.
+    // Only the signed chain head + the operator signature (as r‖s‖v) persist.
     bytes32 public receiptHead; // the signed chain head
-    bytes private _receiptSig; // the operator's signature over receiptHead
+    bytes32 private _sigR;
+    bytes32 private _sigS;
+    // (the signature v byte lives packed with `phase` + `pool` above)
 
     // ─── Events ─────────────────────────────────────────────────────────────────
     event FeeAccrued(address indexed from, uint256 amount, bytes32 sourceReceiptHash, bytes32 provenanceRoot);
@@ -167,21 +189,34 @@ contract RecycleFlywheel {
     error ReceiptHeadMismatch(bytes32 computed);
     error NothingBought();
     error NothingToSettle();
+    /// A value exceeds its documented packed-field bound (price < 2^128 wei/token,
+    /// qty < 2^96 whole tokens, escrow < 2^128 base units) — refused at entry,
+    /// never truncated.
+    error ValueOutOfRange();
+
+    /// The one inert `DreggSolventPool` implementation this recycle's pool is an
+    /// EIP-1167 clone of — a COMMITTED public input like `token`/`buyBps`
+    /// (deployed once per chain, shared with the launchpad; ~41k proxy create
+    /// instead of a ~713k per-recycle code deposit).
+    address public immutable poolImplementation;
 
     constructor(
         address token_,
         uint16 buyBps_,
         address operator_,
         uint64 commitDuration,
-        uint64 revealDuration
+        uint64 revealDuration,
+        address poolImplementation_
     ) {
         require(buyBps_ > 0 && buyBps_ < 10000, "buyBps");
+        require(poolImplementation_ != address(0), "poolImpl");
         token = DreggLaunchToken(token_);
         buyBps = buyBps_;
         operator = operator_;
         commitEnd = uint64(block.timestamp) + commitDuration;
         revealEnd = commitEnd + revealDuration;
         phase = Phase.Commit;
+        poolImplementation = poolImplementation_;
     }
 
     // ─── (1) ACCRUE — fee in, WITH provenance ───────────────────────────────────
@@ -196,8 +231,11 @@ contract RecycleFlywheel {
     function accrueFee(bytes32 sourceReceiptHash) external payable {
         if (phase != Phase.Commit || block.timestamp >= commitEnd) revert NotCommitPhase();
         accrued += msg.value;
-        inflowCount += 1;
-        if (sourceReceiptHash != bytes32(0)) provenancedCount += 1;
+        unchecked {
+            // Each counter increments once per tx — 2^128 is unreachable.
+            inflowCount += 1;
+            if (sourceReceiptHash != bytes32(0)) provenancedCount += 1;
+        }
         provenanceRoot = keccak256(abi.encode(provenanceRoot, sourceReceiptHash, msg.value));
         emit FeeAccrued(msg.sender, msg.value, sourceReceiptHash, provenanceRoot);
     }
@@ -212,10 +250,11 @@ contract RecycleFlywheel {
         if (phase != Phase.Commit || block.timestamp >= commitEnd) revert NotCommitPhase();
         Ask storage a = _asks[msg.sender];
         if (a.committed) revert AlreadyCommitted();
+        if (tokenEscrow > type(uint128).max) revert ValueOutOfRange();
         if (!token.transferFrom(msg.sender, address(this), tokenEscrow)) revert TransferFromFailed();
         a.committed = true;
         a.sealedHash = sealedHash;
-        a.escrow = tokenEscrow;
+        a.escrow = uint128(tokenEscrow);
         emit AskCommitted(msg.sender, sealedHash, tokenEscrow);
     }
 
@@ -231,10 +270,11 @@ contract RecycleFlywheel {
         if (keccak256(abi.encode(price, qty, salt, msg.sender)) != a.sealedHash) revert AskMismatch();
         // qty is WHOLE tokens; escrow is base units — cover qty·1e18 (mirrors the
         // launchpad's wei-deposit ≥ price·qty check, applied to the token side).
+        if (price > type(uint128).max || qty > type(uint96).max) revert ValueOutOfRange();
         if (a.escrow < qty * TOKEN_UNIT) revert UnderEscrowed(a.escrow, qty * TOKEN_UNIT);
         a.revealed = true;
-        a.price = price;
-        a.qty = qty;
+        a.price = uint128(price);
+        a.qty = uint96(qty);
         _revealedSellers.push(msg.sender);
         emit AskRevealed(msg.sender, price, qty);
     }
@@ -264,8 +304,6 @@ contract RecycleFlywheel {
         if (claimedBuyHalf != correctBuy || claimedPoolHalf != correctPool) {
             revert SplitMismatch(correctBuy, correctPool);
         }
-        buyHalf = correctBuy;
-        poolHalf = correctPool;
 
         // (3) THE SEALED-BID UNIFORM-PRICE CLEARING — order-invariant, no swap to
         //     sandwich. (4) SEED the pool. (5a) CONSERVE. (Kept in a helper to stay
@@ -276,7 +314,7 @@ contract RecycleFlywheel {
         _emitReceipt(claimedReceiptHead, signature);
 
         phase = Phase.Cleared;
-        emit RecycleCleared(uniformPrice, boughtTokens, spentQuote, bookCommit);
+        emit RecycleCleared(uniformPrice, boughtTokens, uint256(uniformPrice) * boughtTokens, bookCommit);
         emit ReceiptEmitted(receiptHead);
     }
 
@@ -284,23 +322,25 @@ contract RecycleFlywheel {
     function _clearSeedConserve(uint256[] calldata order, uint256 correctBuy, uint256 correctPool) private {
         (uint256 uPrice, uint256 bought, uint256 spent, bytes32 bCommit) = _runAskClearing(order, correctBuy);
         if (bought == 0) revert NothingBought();
-        uniformPrice = uPrice;
-        boughtTokens = bought;
-        spentQuote = spent;
+        // uPrice is an ask price (< 2^128 by the reveal bound); bought is a sum of
+        // fills — checked casts, revert on the unreachable overflow.
+        if (bought > type(uint128).max) revert ValueOutOfRange();
+        uniformPrice = uint128(uPrice);
+        boughtTokens = uint128(bought);
         bookCommit = bCommit;
 
         // (4) SEED THE PROVABLY-SOLVENT POOL with the bought tokens + the pool-half
         //     + any unspent budget (all disclosed, floor-guarded).
         uint256 qSeed = correctPool + (correctBuy - spent); // pool-half + unspent budget
         uint256 tSeed = bought * TOKEN_UNIT; // base units seeded into the pool
-        quoteSeed = qSeed;
-        tokenSeed = tSeed;
         uint256 fQuote = (qSeed * FLOOR_BPS) / 10000;
         uint256 fToken = (tSeed * FLOOR_BPS) / 10000;
-        DreggSolventPool p = new DreggSolventPool(address(token), 0, fQuote, fToken, POOL_FEE_BPS);
+        // Clone + fund + seed ATOMICALLY (an un-initialized pool is never
+        // observable on-chain); the floor guard is the same rung-6 tooth.
+        DreggSolventPool p = DreggSolventPool(LibClone1167.clone(poolImplementation));
         pool = p;
         token.transfer(address(p), tSeed); // tokens taken from filled sellers' escrow
-        p.initialize{value: qSeed}(tSeed);
+        p.initialize{value: qSeed}(address(token), 0, fQuote, fToken, POOL_FEE_BPS, tSeed);
         emit PoolSeeded(address(p), qSeed, tSeed, fQuote, fToken);
 
         // (5a) CONSERVATION — per-asset netFlow = 0 (the on-chain twin of
@@ -312,32 +352,53 @@ contract RecycleFlywheel {
         if (netQuote != 0 || netToken != 0) revert ConservationBroken(netQuote, netToken);
     }
 
-    /// Build the receipt from cleared storage, fold it, and require the operator's
-    /// signed head matches.
-    function _emitReceipt(bytes32 claimedReceiptHead, bytes calldata signature) private {
-        _receipt = Receipt({
+    /// The receipt, REBUILT from public state — every field is a pure function of
+    /// the stored cleared facts + committed inputs (nothing here is a new claim;
+    /// `spentQuote ≡ uniformPrice·boughtTokens` is exact by construction of the
+    /// clearing, and the nets are 0 or `finalizeRecycle` reverted). Storing this
+    /// struct would be pure redundancy; deriving it keeps the receipt re-checkable
+    /// from the SAME public data a non-witness uses.
+    function _liveReceipt() internal view returns (Receipt memory r) {
+        (uint256 bH, uint256 pH) = splitOf(accrued);
+        uint256 uP = uniformPrice;
+        uint256 bT = boughtTokens;
+        uint256 spent = uP * bT;
+        uint256 qS = pH + (bH - spent);
+        uint256 tS = bT * TOKEN_UNIT;
+        r = Receipt({
             accrued: accrued,
             provenanceRoot: provenanceRoot,
             inflowCount: inflowCount,
-            buyHalf: buyHalf,
-            poolHalf: poolHalf,
+            buyHalf: bH,
+            poolHalf: pH,
             buyBps: buyBps,
-            uniformPrice: uniformPrice,
-            boughtTokens: boughtTokens,
-            spentQuote: spentQuote,
+            uniformPrice: uP,
+            boughtTokens: bT,
+            spentQuote: spent,
             bookCommit: bookCommit,
-            quoteSeed: quoteSeed,
-            tokenSeed: tokenSeed,
-            floorQuote: (quoteSeed * FLOOR_BPS) / 10000,
-            floorToken: (tokenSeed * FLOOR_BPS) / 10000,
+            quoteSeed: qS,
+            tokenSeed: tS,
+            floorQuote: (qS * FLOOR_BPS) / 10000,
+            floorToken: (tS * FLOOR_BPS) / 10000,
             netQuote: int256(0),
             netToken: int256(0)
         });
-        bytes32 head = _foldReceipt(_receipt);
+    }
+
+    /// Fold the (memory-rebuilt) receipt and require the operator's signed head
+    /// matches; persist only the head + signature (r‖s‖v).
+    function _emitReceipt(bytes32 claimedReceiptHead, bytes calldata signature) private {
+        bytes32 head = _foldReceipt(_liveReceipt());
         if (head != claimedReceiptHead) revert ReceiptHeadMismatch(head);
-        if (_recoverSigner(head, signature) != operator) revert BadReceiptSignature();
+        if (signature.length != 65) revert BadReceiptSignature();
+        bytes32 sigR = bytes32(signature[0:32]);
+        bytes32 sigS = bytes32(signature[32:64]);
+        uint8 sigV = uint8(signature[64]);
+        if (_recover(head, sigV, sigR, sigS) != operator) revert BadReceiptSignature();
         receiptHead = head;
-        _receiptSig = signature;
+        _sigR = sigR;
+        _sigS = sigS;
+        _sigV = sigV;
     }
 
     /// @notice Settle one seller after clearing: a filled seller is paid the UNIFORM
@@ -349,11 +410,12 @@ contract RecycleFlywheel {
         Ask storage a = _asks[seller];
         if (!a.committed || a.settled) revert NothingToSettle();
         a.settled = true;
-        uint256 paid = uniformPrice * a.filled; // uniform price, not the seller's ask
-        uint256 returned = a.escrow - a.filled * TOKEN_UNIT; // filled tokens went to the pool
+        uint256 filled = a.filled;
+        uint256 paid = uint256(uniformPrice) * filled; // uniform price, not the seller's ask
+        uint256 returned = uint256(a.escrow) - filled * TOKEN_UNIT; // filled tokens went to the pool
         if (paid > 0) _sendEth(seller, paid);
         if (returned > 0) _sendToken(seller, returned);
-        emit AskSettled(seller, a.filled, paid, returned);
+        emit AskSettled(seller, filled, paid, returned);
     }
 
     // ─── The clearing (dual of DreggLaunchpad._runClearing) ─────────────────────
@@ -374,29 +436,46 @@ contract RecycleFlywheel {
         returns (uint256 clearingPrice, uint256 bought, uint256 spent, bytes32 bCommit)
     {
         address[] storage revealed = _revealedSellers;
-        _assertPermutation(order, revealed.length);
+        uint256 n = revealed.length;
+        if (order.length != n) revert BadPermutation();
+        // The no-drop/no-insert check runs MERGED into the walk (one pass, a bitmap
+        // instead of a bool[]) — the checked property is identical: `order` must be
+        // a permutation of [0,n).
+        uint256[] memory seen = new uint256[]((n >> 8) + 1);
 
         uint256 prevPrice = 0;
-        for (uint256 i = 0; i < order.length; i++) {
+        for (uint256 i = 0; i < n;) {
+            _markSeen(seen, order[i], n);
+
             address seller = revealed[order[i]];
             Ask storage a = _asks[seller];
+            uint256 price = a.price;
+            uint256 qty = a.qty;
             // Ascending (the canonical uniform-clearing order for a buy-side budget).
-            if (a.price < prevPrice) revert NotSortedAscending();
-            prevPrice = a.price;
+            if (price < prevPrice) revert NotSortedAscending();
+            prevPrice = price;
 
-            bCommit = keccak256(abi.encodePacked(bCommit, seller, a.price, a.qty));
+            // Same preimage widths as before the packing (uint256-encoded).
+            bCommit = keccak256(abi.encodePacked(bCommit, seller, price, qty));
 
-            if (a.price > 0) {
-                uint256 affordable = budget / a.price; // total tokens if uniform == a.price
+            if (price > 0) {
+                uint256 affordable = budget / price; // total tokens if uniform == price
                 if (affordable > bought) {
-                    uint256 room = affordable - bought;
-                    uint256 fill = a.qty < room ? a.qty : room;
-                    if (fill > 0) {
-                        a.filled = fill;
-                        bought += fill;
-                        clearingPrice = a.price; // marginal = highest filled ask
+                    unchecked {
+                        // affordable > bought ⇒ the subtraction is safe;
+                        // fill ≤ qty < 2^96 ⇒ the cast is safe;
+                        // bought + fill ≤ affordable ≤ budget ⇒ no overflow.
+                        uint256 fill = qty < affordable - bought ? qty : affordable - bought;
+                        if (fill > 0) {
+                            a.filled = uint96(fill);
+                            bought += fill;
+                            clearingPrice = price; // marginal = highest filled ask
+                        }
                     }
                 }
+            }
+            unchecked {
+                ++i;
             }
         }
         spent = clearingPrice * bought; // uniform price × total = wei paid to sellers
@@ -413,39 +492,48 @@ contract RecycleFlywheel {
         returns (uint256 clearingPrice, uint256 bought, uint256 spent, bytes32 bCommit)
     {
         address[] storage revealed = _revealedSellers;
-        _assertPermutation(order, revealed.length);
+        uint256 n = revealed.length;
+        if (order.length != n) revert BadPermutation();
+        uint256[] memory seen = new uint256[]((n >> 8) + 1);
         uint256 prevPrice = 0;
-        for (uint256 i = 0; i < order.length; i++) {
+        for (uint256 i = 0; i < n;) {
+            _markSeen(seen, order[i], n);
+
             address seller = revealed[order[i]];
             Ask storage a = _asks[seller];
-            if (a.price < prevPrice) revert NotSortedAscending();
-            prevPrice = a.price;
-            bCommit = keccak256(abi.encodePacked(bCommit, seller, a.price, a.qty));
-            if (a.price > 0) {
-                uint256 affordable = budget / a.price;
+            uint256 price = a.price;
+            uint256 qty = a.qty;
+            if (price < prevPrice) revert NotSortedAscending();
+            prevPrice = price;
+            bCommit = keccak256(abi.encodePacked(bCommit, seller, price, qty));
+            if (price > 0) {
+                uint256 affordable = budget / price;
                 if (affordable > bought) {
-                    uint256 room = affordable - bought;
-                    uint256 fill = a.qty < room ? a.qty : room;
-                    if (fill > 0) {
-                        bought += fill;
-                        clearingPrice = a.price;
+                    unchecked {
+                        uint256 fill = qty < affordable - bought ? qty : affordable - bought;
+                        if (fill > 0) {
+                            bought += fill;
+                            clearingPrice = price;
+                        }
                     }
                 }
+            }
+            unchecked {
+                ++i;
             }
         }
         spent = clearingPrice * bought;
     }
 
-    /// The no-drop / no-insert check: `order` must be a permutation of [0,n).
-    /// Mirrors `DreggLaunchpad._assertPermutation` / `Market/Aggregation.lean`.
-    function _assertPermutation(uint256[] calldata order, uint256 n) private pure {
-        if (order.length != n) revert BadPermutation();
-        bool[] memory seen = new bool[](n);
-        for (uint256 i = 0; i < n; i++) {
-            uint256 idx = order[i];
-            if (idx >= n || seen[idx]) revert BadPermutation();
-            seen[idx] = true;
-        }
+    /// The no-drop/no-insert tooth, one index at a time: `idx` must be in [0,n)
+    /// and not yet seen. Same property `_assertPermutation` checked, fused into
+    /// the walk (bitmap words instead of a bool[]).
+    function _markSeen(uint256[] memory seen, uint256 idx, uint256 n) private pure {
+        if (idx >= n) revert BadPermutation();
+        uint256 w = seen[idx >> 8];
+        uint256 bit = 1 << (idx & 0xff);
+        if (w & bit != 0) revert BadPermutation();
+        seen[idx >> 8] = w | bit;
     }
 
     // ─── Split — the committed pure function ────────────────────────────────────
@@ -485,23 +573,65 @@ contract RecycleFlywheel {
     ///         not ex-post block-explorer trust. Returns true iff all three hold.
     function verifyReceipt() external view returns (bool) {
         if (phase != Phase.Cleared) return false;
-        bytes32 head = _foldReceipt(_receipt);
+        bytes32 head = _foldReceipt(_liveReceipt());
         if (head != receiptHead) return false;
-        return _recoverSigner(head, _receiptSig) == operator;
+        return _recover(head, _sigV, _sigR, _sigS) == operator;
     }
 
-    /// @notice The stored receipt + head + signature — the public re-check bundle.
+    /// @notice The receipt (rebuilt from public state) + head + signature — the
+    ///         public re-check bundle. Identical bytes to the pre-optimization
+    ///         stored bundle; all-zero before the recycle clears.
     function receiptBundle() external view returns (Receipt memory r, bytes32 head, bytes memory sig) {
-        return (_receipt, receiptHead, _receiptSig);
+        if (phase != Phase.Cleared) {
+            return (r, bytes32(0), "");
+        }
+        return (_liveReceipt(), receiptHead, abi.encodePacked(_sigR, _sigS, _sigV));
     }
 
     // ─── Views ──────────────────────────────────────────────────────────────────
+
+    // Derived cleared facts — pure functions of the stored primaries + committed
+    // inputs, identical to the values previously stored (0 until Cleared, exactly
+    // as the storage variables were).
+
+    /// @notice Committed-split buy leg (wei); 0 until the recycle clears.
+    function buyHalf() external view returns (uint256) {
+        if (phase != Phase.Cleared) return 0;
+        (uint256 b,) = splitOf(accrued);
+        return b;
+    }
+
+    /// @notice Committed-split pool leg (wei); 0 until the recycle clears.
+    function poolHalf() external view returns (uint256) {
+        if (phase != Phase.Cleared) return 0;
+        (, uint256 p) = splitOf(accrued);
+        return p;
+    }
+
+    /// @notice Wei paid to sellers = uniformPrice × boughtTokens (exact by
+    ///         construction of the clearing); 0 until the recycle clears.
+    function spentQuote() external view returns (uint256) {
+        return uint256(uniformPrice) * boughtTokens;
+    }
+
+    /// @notice Wei seeded into the pool = poolHalf + unspent buy budget; 0 until
+    ///         the recycle clears.
+    function quoteSeed() external view returns (uint256) {
+        if (phase != Phase.Cleared) return 0;
+        (uint256 b, uint256 p) = splitOf(accrued);
+        return p + (b - uint256(uniformPrice) * boughtTokens);
+    }
+
+    /// @notice Token base units seeded into the pool; 0 until the recycle clears.
+    function tokenSeed() external view returns (uint256) {
+        return boughtTokens * TOKEN_UNIT;
+    }
 
     /// @notice Fraction of inflows carrying a verifiable source receipt, in bps.
     ///         (dregg: measurable; the mock's opaque transfers: 0.)
     function provenanceBps() external view returns (uint256) {
         if (inflowCount == 0) return 0;
-        return (provenancedCount * 10000) / inflowCount;
+        return (uint256(provenancedCount) * 10000) / inflowCount;
     }
 
     function revealedCount() external view returns (uint256) {
@@ -525,16 +655,7 @@ contract RecycleFlywheel {
     // ─── Internal ─────────────────────────────────────────────────────────────
 
     /// EIP-191 personal-sign recovery over the 32-byte receipt head.
-    function _recoverSigner(bytes32 head, bytes memory signature) internal pure returns (address) {
-        if (signature.length != 65) return address(0);
-        bytes32 r;
-        bytes32 s;
-        uint8 v;
-        assembly {
-            r := mload(add(signature, 0x20))
-            s := mload(add(signature, 0x40))
-            v := byte(0, mload(add(signature, 0x60)))
-        }
+    function _recover(bytes32 head, uint8 v, bytes32 r, bytes32 s) internal pure returns (address) {
         bytes32 digest = keccak256(abi.encodePacked("\x19Ethereum Signed Message:\n32", head));
         return ecrecover(digest, v, r, s);
     }

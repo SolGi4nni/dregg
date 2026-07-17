@@ -36,12 +36,23 @@ import {DreggLaunchToken} from "./DreggLaunchToken.sol";
 ///   frames it (the floor is the guarantee; the curve is the policy).
 ///
 /// Quote currency is native ETH (Robinhood Chain / Base-Sepolia gas token).
+/// ## Deployment shape (gas): EIP-1167 clones of ONE inert implementation
+/// A full `new DreggSolventPool` costs ~713k gas of code deposit alone. Every pool
+/// is instead a 45-byte EIP-1167 minimal proxy (`LibClone1167`) of a single
+/// implementation deployed once per chain; the config that used to be
+/// constructor-set immutables is SET ONCE in `initialize` and has NO setter — the
+/// disclosed floors/fee are exactly as unchangeable as before (`AlreadyInitialized`
+/// guards every field, and creation + seeding happen atomically in the creator's
+/// tx, so an un-initialized pool is never observable on-chain). The implementation
+/// self-bricks in its constructor (`initialized = true`), so only clones can ever
+/// be seeded. The floor guard on every swap is byte-for-byte the same tooth.
 contract DreggSolventPool {
-    DreggLaunchToken public immutable token;
-    /// The launchpad that graduated the launch — the only address allowed to seed.
-    address public immutable graduation;
+    DreggLaunchToken public token;
+    /// The creator that seeded this pool (launchpad graduation / recycle flywheel)
+    /// — recorded at `initialize` (creation and seeding are atomic).
+    address public graduation;
     /// Provenance: which launch this pool graduated from.
-    uint256 public immutable launchId;
+    uint256 public launchId;
 
     /// The live reserves (tracked internally, not via `balanceOf`, so a token
     /// donation cannot move the price or the solvency accounting).
@@ -49,14 +60,14 @@ contract DreggSolventPool {
     uint256 public reserveToken; // token base units
 
     /// The DISCLOSED reserve floors — the minimum each reserve may never drop
-    /// below. Set at graduation to a disclosed fraction of the seed. `floor = 0`
-    /// is the exact rung-6 never-negative case.
-    uint256 public immutable floorQuote;
-    uint256 public immutable floorToken;
+    /// below. Set ONCE at initialize to a disclosed fraction of the seed (no
+    /// setter exists). `floor = 0` is the exact rung-6 never-negative case.
+    uint256 public floorQuote;
+    uint256 public floorToken;
 
     /// The swap fee in basis points (e.g. 30 = 0.30%). The fee makes `x·y`
     /// strictly grow — the constant-product invariant is non-decreasing.
-    uint16 public immutable feeBps;
+    uint16 public feeBps;
 
     bool public initialized;
 
@@ -70,7 +81,6 @@ contract DreggSolventPool {
     );
 
     // ─── Errors ───────────────────────────────────────────────────────────────
-    error NotGraduation();
     error AlreadyInitialized();
     error NotInitialized();
     error ZeroInput();
@@ -84,32 +94,37 @@ contract DreggSolventPool {
     error TransferFromFailed();
     error TransferFailed();
 
-    constructor(
+    /// The IMPLEMENTATION self-bricks: only EIP-1167 clones (whose "constructor"
+    /// never runs) start un-initialized and can be seeded.
+    constructor() {
+        initialized = true;
+    }
+
+    /// @notice Configure + seed the pool ONCE, atomically in the creator's tx.
+    ///         ETH arrives as `msg.value` (the quote reserve); `tokenSeed` tokens
+    ///         must already have been transferred in (the token reserve). The
+    ///         caller is recorded as `graduation`; every config field is set-once
+    ///         (no setter exists — the disclosed floors/fee are as unchangeable as
+    ///         the former constructor immutables).
+    function initialize(
         address token_,
         uint256 launchId_,
         uint256 floorQuote_,
         uint256 floorToken_,
-        uint16 feeBps_
-    ) {
+        uint16 feeBps_,
+        uint256 tokenSeed
+    ) external payable {
+        if (initialized) revert AlreadyInitialized();
+        if (msg.value == 0 || tokenSeed == 0) revert ZeroInput();
+        uint256 bal = DreggLaunchToken(token_).balanceOf(address(this));
+        if (bal < tokenSeed) revert SeedTokensMissing(bal, tokenSeed);
+        initialized = true;
         token = DreggLaunchToken(token_);
         graduation = msg.sender;
         launchId = launchId_;
         floorQuote = floorQuote_;
         floorToken = floorToken_;
         feeBps = feeBps_;
-    }
-
-    /// @notice Seed the pool ONCE (called by the graduation). ETH arrives as
-    ///         `msg.value` (the quote reserve); `tokenSeed` tokens must already
-    ///         have been transferred in (the token reserve). Only the graduation
-    ///         can seed, and only once.
-    function initialize(uint256 tokenSeed) external payable {
-        if (msg.sender != graduation) revert NotGraduation();
-        if (initialized) revert AlreadyInitialized();
-        if (msg.value == 0 || tokenSeed == 0) revert ZeroInput();
-        uint256 bal = token.balanceOf(address(this));
-        if (bal < tokenSeed) revert SeedTokensMissing(bal, tokenSeed);
-        initialized = true;
         reserveQuote = msg.value;
         reserveToken = tokenSeed;
         emit Initialized(reserveQuote, reserveToken, floorQuote, floorToken);
